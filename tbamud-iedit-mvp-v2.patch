@@ -1,0 +1,339 @@
+diff --git a/src/structs.h b/src/structs.h
+index 0000000..0000000 100644
+--- a/src/structs.h
++++ b/src/structs.h
+@@ -439,10 +439,11 @@
+ #define CON_PREFEDIT      29 /**< OLC mode - preference edit */
+ #define CON_IBTEDIT       30 /**< OLC mode - idea/bug/typo edit */
+ #define CON_MSGEDIT       31 /**< OLC mode - message editor */
+-#define CON_GET_PROTOCOL  32 /**< Used at log-in while attempting to get protocols > */
++#define CON_IEDIT         32 /**< OLC mode - object instance editor */
++#define CON_GET_PROTOCOL  33 /**< Used at log-in while attempting to get protocols > */
+ /* OLC States range - used by IS_IN_OLC and IS_PLAYING */
+ #define FIRST_OLC_STATE   CON_OEDIT /**< The first CON_ state that is an OLC */
+-#define LAST_OLC_STATE    CON_MSGEDIT /**< The last CON_ state that is an OLC */
++#define LAST_OLC_STATE    CON_IEDIT /**< The last CON_ state that is an OLC */
+ 
+ /* Character equipment positions: used as index for char_data.equipment[] */
+ /* NOTE: Don't confuse these constants with the ITEM_ bitvectors which control
+diff --git a/src/oasis.h b/src/oasis.h
+index 0000000..0000000 100644
+--- a/src/oasis.h
++++ b/src/oasis.h
+@@ -59,6 +59,7 @@ struct oasis_olc_data {
+   struct char_data *mob;        /* used for 'medit' */
+   struct room_data *room;       /* used for 'redit' */
+   struct obj_data *obj;         /* used for 'oedit' */
++  struct obj_data *iedit_obj;   /* live object instance used for 'iedit' */
+   struct zone_data *zone;       /* used for 'zedit' */
+   struct shop_data *shop;       /* used for 'sedit' */
+   struct config_data *config;   /* used for 'cedit' */
+@@ -89,6 +90,7 @@ extern const char *nrm, *grn, *cyn, *yel;
+ #define OLC_STORAGE(d)  (OLC(d)->storage)  /**< char pointer. */
+ #define OLC_ROOM(d)     (OLC(d)->room)     /**< Room structure. */
+ #define OLC_OBJ(d)      (OLC(d)->obj)      /**< Object structure. */
++#define OLC_IEDIT_OBJ(d) (OLC(d)->iedit_obj) /**< Live object instance for iedit. */
+ #define OLC_ZONE(d)     (OLC(d)->zone)     /**< Zone structure. */
+ #define OLC_MOB(d)      (OLC(d)->mob)      /**< Mobile structure. */
+ #define OLC_SHOP(d)     (OLC(d)->shop)     /**< Shop structure. */
+@@ -668,8 +670,10 @@ void oedit_setup_existing(struct descriptor_data *d, int rnum);
+ void oedit_save_internally(struct descriptor_data *d);
+ void oedit_parse(struct descriptor_data *d, char *arg);
+ void oedit_string_cleanup(struct descriptor_data *d, int terminator);
+ ACMD(do_oasis_oedit);
++void iedit_parse(struct descriptor_data *d, char *arg);
++ACMD(do_oasis_iedit);
+ 
+ /* public functions from redit.c */
+ void redit_setup_existing(struct descriptor_data *d, int rnum);
+ void redit_string_cleanup(struct descriptor_data *d, int terminator);
+diff --git a/src/interpreter.c b/src/interpreter.c
+index 0000000..0000000 100644
+--- a/src/interpreter.c
++++ b/src/interpreter.c
+@@ -304,5 +304,6 @@ cpp_extern const struct command_info cmd_info[] = {
+   { "house"    , "house"    , POS_RESTING , do_house     , 0, 0 },
+   { "inventory", "i"        , POS_DEAD    , do_inventory , 0, 0 },
++  { "iedit"    , "iedit"    , POS_DEAD    , do_oasis_iedit, LVL_BUILDER, 0 },
+   { "identify" , "id"       , POS_STANDING, do_not_here  , 1, 0 },
+   { "idea"     , "ide"      , POS_DEAD    , do_ibt       , 0, SCMD_IDEA },
+   { "imotd"    , "imo"      , POS_DEAD    , do_gen_ps    , LVL_IMMORT, SCMD_IMOTD },
+@@ -1515,5 +1516,6 @@ void nanny(struct descriptor_data *d, char *arg)
+   } olc_functions[] = {
+     { CON_OEDIT, oedit_parse },
++    { CON_IEDIT, iedit_parse },
+     { CON_ZEDIT, zedit_parse },
+     { CON_SEDIT, sedit_parse },
+     { CON_MEDIT, medit_parse },
+diff --git a/src/modify.c b/src/modify.c
+index 0000000..0000000 100644
+--- a/src/modify.c
++++ b/src/modify.c
+@@ -130,6 +130,7 @@ void string_add(struct descriptor_data *d, char *str)
+     case CON_REDIT:
+     case CON_MEDIT:
+     case CON_OEDIT:
++    case CON_IEDIT:
+     case CON_PLR_DESC:
+     case CON_TRIGEDIT:
+     case CON_HEDIT:
+@@ -166,6 +167,7 @@ void string_add(struct descriptor_data *d, char *str)
+       { CON_CEDIT    , cedit_string_cleanup },
+       { CON_MEDIT    , medit_string_cleanup },
+       { CON_OEDIT    , oedit_string_cleanup },
++      { CON_IEDIT    , oedit_string_cleanup },
+       { CON_REDIT    , redit_string_cleanup },
+       { CON_TEDIT    , tedit_string_cleanup },
+       { CON_TRIGEDIT , trigedit_string_cleanup },
+diff --git a/src/oedit.c b/src/oedit.c
+index 0000000..0000000 100644
+--- a/src/oedit.c
++++ b/src/oedit.c
+@@ -16,6 +16,7 @@
+ #include "genolc.h"
+ #include "genobj.h"
+ #include "genzon.h"
++#include "handler.h"
+ #include "oasis.h"
+ #include "improved-edit.h"
+ #include "dg_olc.h"
+@@ -38,11 +39,22 @@ static void oedit_disp_extra_menu(struct descriptor_data *d);
+ static void oedit_disp_wear_menu(struct descriptor_data *d);
+ static void oedit_disp_menu(struct descriptor_data *d);
+ static void oedit_disp_perm_menu(struct descriptor_data *d);
+ static void oedit_save_to_disk(int zone_num);
++static int iedit_object_still_exists(struct obj_data *obj);
++static int iedit_is_prototype_string(struct obj_data *obj, char *str, int field);
++static void iedit_replace_string(struct obj_data *obj, char **field, char *new_string, int field);
++static void iedit_save_internally(struct descriptor_data *d);
++static int iedit_is_forbidden_main_menu_choice(char *arg);
+ 
+ /* handy macro */
+ #define S_PRODUCT(s, i) ((s)->producing[(i)])
++
++/* iedit only copies string fields back into the live instance in this MVP. */
++#define IEDIT_STRING_NAME   0
++#define IEDIT_STRING_LONG   1
++#define IEDIT_STRING_SHORT  2
++#define IEDIT_STRING_ACTION 3
+ 
+ /* Utility and exported functions */
+ ACMD(do_oasis_oedit)
+ {
+@@ -196,6 +212,164 @@ ACMD(do_oasis_oedit)
+          GET_NAME(ch), zone_table[OLC_ZNUM(d)].number, GET_OLC_ZONE(ch));
+ }
++
++ACMD(do_oasis_iedit)
++{
++  struct descriptor_data *d;
++  struct obj_data *obj = NULL;
++  struct char_data *vict = NULL;
++  char arg[MAX_INPUT_LENGTH];
++
++  one_argument(argument, arg);
++
++  if (IS_NPC(ch) || !ch->desc || STATE(ch->desc) != CON_PLAYING)
++    return;
++
++  if (!*arg) {
++    send_to_char(ch, "Edit which object instance?\r\n");
++    return;
++  }
++
++  generic_find(arg, FIND_OBJ_EQUIP | FIND_OBJ_INV | FIND_OBJ_ROOM,
++               ch, &vict, &obj);
++
++  if (!obj) {
++    send_to_char(ch, "You don't see that object here.\r\n");
++    return;
++  }
++
++  d = ch->desc;
++
++  if (d->olc) {
++    mudlog(BRF, LVL_IMMORT, TRUE,
++           "SYSERR: do_oasis_iedit: Player already had an OLC structure.");
++    cleanup_olc(d, CLEANUP_ALL);
++  }
++
++  CREATE(d->olc, struct oasis_olc_data, 1);
++
++  OLC_IEDIT_OBJ(d) = obj;
++  OLC_NUM(d) = GET_OBJ_VNUM(obj);
++  OLC_ZNUM(d) = NOWHERE;
++
++  CREATE(OLC_OBJ(d), struct obj_data, 1);
++  clear_object(OLC_OBJ(d));
++  copy_object(OLC_OBJ(d), obj);
++
++  /* The OLC copy is only a scratch object.  Do not share scripts. */
++  SCRIPT(OLC_OBJ(d)) = NULL;
++  OLC_OBJ(d)->proto_script = OLC_SCRIPT(d) = NULL;
++  OLC_VAL(d) = 0;
++  OLC_ITEM_TYPE(d) = OBJ_TRIGGER;
++
++  oedit_disp_menu(d);
++  STATE(d) = CON_IEDIT;
++
++  act("$n starts using OLC.", TRUE, d->character, 0, 0, TO_ROOM);
++  SET_BIT_AR(PLR_FLAGS(ch), PLR_WRITING);
++
++  mudlog(CMP, MAX(LVL_IMMORT, GET_INVIS_LEV(ch)), TRUE,
++         "OLC: %s starts iediting %s",
++         GET_NAME(ch), obj->short_description ? obj->short_description : "an object");
++}
++
++static int iedit_object_still_exists(struct obj_data *target)
++{
++  struct obj_data *obj;
++
++  for (obj = object_list; obj; obj = obj->next)
++    if (obj == target)
++      return TRUE;
++
++  return FALSE;
++}
++
++static int iedit_is_prototype_string(struct obj_data *obj, char *str, int field)
++{
++  obj_rnum rnum;
++
++  if (!obj || !str || GET_OBJ_RNUM(obj) == NOTHING)
++    return FALSE;
++
++  rnum = GET_OBJ_RNUM(obj);
++
++  switch (field) {
++  case IEDIT_STRING_NAME:
++    return str == obj_proto[rnum].name;
++  case IEDIT_STRING_LONG:
++    return str == obj_proto[rnum].description;
++  case IEDIT_STRING_SHORT:
++    return str == obj_proto[rnum].short_description;
++  case IEDIT_STRING_ACTION:
++    return str == obj_proto[rnum].action_description;
++  default:
++    return FALSE;
++  }
++}
++
++static void iedit_replace_string(struct obj_data *obj, char **field,
++                                 char *new_string, int field_id)
++{
++  if (*field && !iedit_is_prototype_string(obj, *field, field_id))
++    free(*field);
++
++  *field = new_string ? strdup(new_string) : NULL;
++}
++
++static void iedit_save_internally(struct descriptor_data *d)
++{
++  struct obj_data *target = OLC_IEDIT_OBJ(d);
++  struct obj_data *edited = OLC_OBJ(d);
++  struct obj_data *top_obj;
++  struct char_data *owner = NULL;
++
++  if (!target || !edited || !iedit_object_still_exists(target)) {
++    write_to_output(d, "The object you were editing no longer exists.\r\n");
++    return;
++  }
++
++  iedit_replace_string(target, &target->name, edited->name, IEDIT_STRING_NAME);
++  iedit_replace_string(target, &target->short_description, edited->short_description, IEDIT_STRING_SHORT);
++  iedit_replace_string(target, &target->description, edited->description, IEDIT_STRING_LONG);
++  iedit_replace_string(target, &target->action_description, edited->action_description, IEDIT_STRING_ACTION);
++
++  /* If the object, or its top-level container, belongs to a player, make sure
++   * the crash/rent save code notices the change. */
++  for (top_obj = target; top_obj->in_obj; top_obj = top_obj->in_obj)
++    ;
++
++  if (top_obj->carried_by)
++    owner = top_obj->carried_by;
++  else if (top_obj->worn_by)
++    owner = top_obj->worn_by;
++
++  if (owner && !IS_NPC(owner))
++    SET_BIT_AR(PLR_FLAGS(owner), PLR_CRASH);
++}
++
++static int iedit_is_forbidden_main_menu_choice(char *arg)
++{
++  switch (*arg) {
++  case '5': /* Type */
++  case '6': /* Extra flags */
++  case '7': /* Wear flags */
++  case '8': /* Weight */
++  case '9': /* Cost */
++  case 'a': case 'A': /* Cost per day */
++  case 'b': case 'B': /* Timer */
++  case 'c': case 'C': /* Values */
++  case 'd': case 'D': /* Applies */
++  case 'e': case 'E': /* Extra descriptions */
++  case 'm': case 'M': /* Min level */
++  case 'p': case 'P': /* Permanent affects */
++  case 's': case 'S': /* Script */
++  case 'w': case 'W': /* Copy object */
++  case 'x': case 'X': /* Delete object */
++    return TRUE;
++  default:
++    return FALSE;
++  }
++}
+ 
+ static void oedit_setup_new(struct descriptor_data *d)
+ {
+   CREATE(OLC_OBJ(d), struct obj_data, 1);
+@@ -874,7 +1062,51 @@ void oedit_parse(struct descriptor_data *d, char *arg)
+   OLC_VAL(d) = 1;
+   oedit_disp_menu(d);
+ }
++
++void iedit_parse(struct descriptor_data *d, char *arg)
++{
++  switch (OLC_MODE(d)) {
++  case OEDIT_CONFIRM_SAVESTRING:
++    switch (*arg) {
++    case 'y':
++    case 'Y':
++      iedit_save_internally(d);
++      mudlog(CMP, MAX(LVL_BUILDER, GET_INVIS_LEV(d->character)), TRUE,
++             "OLC: %s iedits object instance %s",
++             GET_NAME(d->character),
++             (OLC_IEDIT_OBJ(d) && OLC_IEDIT_OBJ(d)->short_description) ?
++               OLC_IEDIT_OBJ(d)->short_description : "unknown");
++      write_to_output(d, "Object instance saved.\r\n");
++      cleanup_olc(d, CLEANUP_ALL);
++      return;
++    case 'n':
++    case 'N':
++      cleanup_olc(d, CLEANUP_ALL);
++      return;
++    case 'a':
++    case 'A':
++      oedit_disp_menu(d);
++      return;
++    default:
++      write_to_output(d, "Invalid choice!\r\n");
++      write_to_output(d, "Do you wish to save your changes? : ");
++      return;
++    }
++
++  case OEDIT_MAIN_MENU:
++    if (iedit_is_forbidden_main_menu_choice(arg)) {
++      write_to_output(d,
++        "That field is disabled in this first iedit version.\r\n"
++        "For now, iedit only changes keywords and descriptions.\r\n");
++      oedit_disp_menu(d);
++      return;
++    }
++    break;
++  }
++
++  oedit_parse(d, arg);
++}
+ 
+ void oedit_string_cleanup(struct descriptor_data *d, int terminator)
+ {
+   switch (OLC_MODE(d)) {
