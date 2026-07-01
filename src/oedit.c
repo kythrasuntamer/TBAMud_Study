@@ -172,6 +172,22 @@ static void iedit_replace_ex_descriptions(struct obj_data *target, struct obj_da
     copy_ex_descriptions(&target->ex_description, edited->ex_description);
 }
 
+static void iedit_replace_values(struct obj_data *target, struct obj_data *edited)
+{
+  int i;
+
+  if (!target || !edited)
+    return;
+
+  /* Values only make sense relative to the object type. iedit does not allow
+   * changing type, but this guard keeps the save path defensive. */
+  if (GET_OBJ_TYPE(target) != GET_OBJ_TYPE(edited))
+    return;
+
+  for (i = 0; i < NUM_OBJ_VAL_POSITIONS; i++)
+    GET_OBJ_VAL(target, i) = GET_OBJ_VAL(edited, i);
+}
+
 static void iedit_save_internally(struct descriptor_data *d)
 {
   struct obj_data *target = OLC_IEDIT_OBJ(d);
@@ -189,6 +205,7 @@ static void iedit_save_internally(struct descriptor_data *d)
   iedit_replace_string(target, &target->description, edited->description, IEDIT_STRING_LONG);
   iedit_replace_string(target, &target->action_description, edited->action_description, IEDIT_STRING_ACTION);
   iedit_replace_ex_descriptions(target, edited);
+  iedit_replace_values(target, edited);
 
   /* If the object, or its top-level container, belongs to a player, make sure
    * the crash/rent save code notices the change. */
@@ -214,7 +231,6 @@ static int iedit_is_forbidden_main_menu_choice(char *arg)
   case '9': /* Cost */
   case 'a': case 'A': /* Cost per day */
   case 'b': case 'B': /* Timer */
-  case 'c': case 'C': /* Values */
   case 'd': case 'D': /* Applies */
   case 'm': case 'M': /* Min level */
   case 'p': case 'P': /* Permanent affects */
@@ -250,6 +266,7 @@ static int iedit_is_prototype_string(struct obj_data *obj, char *str, int field)
 static int iedit_is_prototype_ex_description(struct obj_data *obj);
 static void iedit_replace_string(struct obj_data *obj, char **field, char *new_string, int field_id);
 static void iedit_replace_ex_descriptions(struct obj_data *target, struct obj_data *edited);
+static void iedit_replace_values(struct obj_data *target, struct obj_data *edited);
 static void iedit_save_internally(struct descriptor_data *d);
 static int iedit_is_forbidden_main_menu_choice(char *arg);
 
@@ -1457,7 +1474,7 @@ void iedit_parse(struct descriptor_data *d, char *arg)
     if (iedit_is_forbidden_main_menu_choice(arg)) {
       write_to_output(d,
         "That field is disabled in iedit.\r\n"
-        "iedit can change keywords, descriptions, and extra descriptions.\r\n"
+        "iedit can change keywords, descriptions, extra descriptions, and values.\r\n"
         "Prototype/state fields must still be edited with oedit.\r\n");
       oedit_disp_menu(d);
       return;
