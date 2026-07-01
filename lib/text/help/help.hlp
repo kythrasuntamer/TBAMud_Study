@@ -5757,6 +5757,48 @@ SPLIT                             - For dividing gold between party members.
 DEPOSIT WITHDRAW BALANCE          - Used to communicate in banks.
 BUY SELL LIST VALUE               - Used to communicate in shops.
 #0
+IEDIT INSTANCE-EDIT INSTANCE-EDITOR OBJECT-INSTANCE-EDIT LIVE-OBJECT-EDIT
+
+Usage: iedit <object>
+
+iedit edits one live object instance instead of editing the object prototype.
+
+Use oedit when you want to change every object made from a prototype.
+Use iedit when you want to customize one specific object that already exists
+in the game, such as an object carried by a player, worn by a player, or lying
+in the room.
+
+iedit currently allows editing:
+  - keywords
+  - short description
+  - long description
+  - action description
+  - extra descriptions
+  - object values
+
+iedit does not currently allow editing:
+  - object type
+  - extra flags
+  - wear flags
+  - weight
+  - cost
+  - cost per day
+  - timer
+  - applies
+  - minimum level
+  - permanent affects
+  - scripts
+  - copy object
+  - delete object
+
+Object values are type-specific. A weapon's values do not mean the same thing
+as a container's values, a drink container's values, or a wand's values. Check
+the object type before changing values.
+
+Changes made with iedit affect only the selected object instance.
+
+See also: OEDIT, OEDIT-MENU, OLIST, OLC
+#0
 OEDIT OBJECT-CREATION OCREATE OEDIT-CREATE CREATE-OBJECT 
 
 Usage: oedit <obj vnum>
@@ -5767,7 +5809,7 @@ number.
 
 @RGOTO 9@n to enter The Builder Academy hallway on how to use oedit.
 
-See also: OEDIT-MENU, OLIST, OLC
+See also: IEDIT, OEDIT-MENU, OLIST, OLC
 #31
 OEDIT-A-DESC A-DESC ADESC ACTION-DESCRIPTION OEDIT-ADESC ACTION_DESCRIPTION  
 
