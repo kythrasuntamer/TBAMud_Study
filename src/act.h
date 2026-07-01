@@ -61,6 +61,7 @@ void free_history(struct char_data *ch, int type);
 void free_recent_players(void);
 /* functions with subcommands */
 /* do_commands */
+ACMD(do_alive);
 ACMD(do_commands);
 #define SCMD_COMMANDS 0
 #define SCMD_SOCIALS  1

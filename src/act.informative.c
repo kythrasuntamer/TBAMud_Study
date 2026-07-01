@@ -1073,6 +1073,12 @@ int search_help(const char *argument, int level)
   return NOWHERE;
 }
 
+
+ACMD(do_alive)
+{
+    send_to_char(ch, "Yep. Your connection is Solid.\r\n");
+}
+
 ACMD(do_help)
 {
   int mid = 0;
