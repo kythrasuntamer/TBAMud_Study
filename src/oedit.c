@@ -1456,8 +1456,9 @@ void iedit_parse(struct descriptor_data *d, char *arg)
   case OEDIT_MAIN_MENU:
     if (iedit_is_forbidden_main_menu_choice(arg)) {
       write_to_output(d,
-        "That field is disabled in this first iedit version.\r\n"
-        "For now, iedit only changes keywords and descriptions.\r\n");
+        "That field is disabled in iedit.\r\n"
+        "iedit can change keywords, descriptions, and extra descriptions.\r\n"
+        "Prototype/state fields must still be edited with oedit.\r\n");
       oedit_disp_menu(d);
       return;
     }
