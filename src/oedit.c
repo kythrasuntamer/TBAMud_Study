@@ -146,6 +146,32 @@ static void iedit_replace_string(struct obj_data *obj, char **field,
   *field = new_string ? strdup(new_string) : NULL;
 }
 
+static int iedit_is_prototype_ex_description(struct obj_data *obj)
+{
+  obj_rnum rnum;
+
+  if (!obj || !obj->ex_description || GET_OBJ_RNUM(obj) == NOTHING)
+    return FALSE;
+
+  rnum = GET_OBJ_RNUM(obj);
+
+  return obj->ex_description == obj_proto[rnum].ex_description;
+}
+
+static void iedit_replace_ex_descriptions(struct obj_data *target, struct obj_data *edited)
+{
+  if (!target || !edited)
+    return;
+
+  if (target->ex_description && !iedit_is_prototype_ex_description(target))
+    free_ex_descriptions(target->ex_description);
+
+  target->ex_description = NULL;
+
+  if (edited->ex_description)
+    copy_ex_descriptions(&target->ex_description, edited->ex_description);
+}
+
 static void iedit_save_internally(struct descriptor_data *d)
 {
   struct obj_data *target = OLC_IEDIT_OBJ(d);
@@ -162,6 +188,7 @@ static void iedit_save_internally(struct descriptor_data *d)
   iedit_replace_string(target, &target->short_description, edited->short_description, IEDIT_STRING_SHORT);
   iedit_replace_string(target, &target->description, edited->description, IEDIT_STRING_LONG);
   iedit_replace_string(target, &target->action_description, edited->action_description, IEDIT_STRING_ACTION);
+  iedit_replace_ex_descriptions(target, edited);
 
   /* If the object, or its top-level container, belongs to a player, make sure
    * the crash/rent save code notices the change. */
@@ -189,7 +216,6 @@ static int iedit_is_forbidden_main_menu_choice(char *arg)
   case 'b': case 'B': /* Timer */
   case 'c': case 'C': /* Values */
   case 'd': case 'D': /* Applies */
-  case 'e': case 'E': /* Extra descriptions */
   case 'm': case 'M': /* Min level */
   case 'p': case 'P': /* Permanent affects */
   case 's': case 'S': /* Script */
@@ -221,7 +247,9 @@ static void oedit_disp_perm_menu(struct descriptor_data *d);
 static void oedit_save_to_disk(int zone_num);
 static int iedit_object_still_exists(struct obj_data *obj);
 static int iedit_is_prototype_string(struct obj_data *obj, char *str, int field);
+static int iedit_is_prototype_ex_description(struct obj_data *obj);
 static void iedit_replace_string(struct obj_data *obj, char **field, char *new_string, int field_id);
+static void iedit_replace_ex_descriptions(struct obj_data *target, struct obj_data *edited);
 static void iedit_save_internally(struct descriptor_data *d);
 static int iedit_is_forbidden_main_menu_choice(char *arg);
 
