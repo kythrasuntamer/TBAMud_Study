@@ -30,7 +30,7 @@
 #include "quest.h"
 
 /* prototypes of local functions */
-/* do_diagnose utility functions */
+/* do_diagnose utility functions *
 static void diag_char_to_char(struct char_data *i, struct char_data *ch);
 /* do_look and do_examine utility functions */
 static void do_auto_exits(struct char_data *ch);
@@ -1073,10 +1073,33 @@ int search_help(const char *argument, int level)
   return NOWHERE;
 }
 
+ACMD(do_pulse)
+{
+send_to_char(ch, "You release a tiny pulse of energy.\r\n");
+act("$n releases a tiny pulse of energy.\r\n", FALSE, ch, 0, 0, TO_ROOM);
+}
 
 ACMD(do_alive)
 {
+    char arg[MAX_INPUT_LENGTH];
+    one_argument(argument, arg);
+    
+    if (!*arg) {  
     send_to_char(ch, "Yep. Your connection is Solid.\r\n");
+    return;
+    }
+
+    if (!strcmp(arg, "server")) {
+    send_to_char(ch, "the server is awake and listening.\r\n");
+    return;
+   }
+
+   if(!strcmp(arg, "me")) {
+   send_to_char(ch, "You are definitely still here.\r\n");
+   return;
+   }
+
+send_to_char(ch, "Alive does not understand '%s'. \r\n", arg);
 }
 
 ACMD(do_help)
@@ -2738,4 +2761,5 @@ ACMD(do_scan)
   if (!found) {
     send_to_char(ch, "You don't see anything nearby!\r\n");
   }
-} // end of do_scan
+ }
+ // end of do_scan

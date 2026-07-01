@@ -49,7 +49,7 @@ ACMD(do_tell);
 ACMD(do_write);
 /*****************************************************************************
  * Begin Functions and defines for act.informative.c
- ****************************************************************************/
+****************************************************************************/
 /* Utility Functions */
 /** @todo Move to a utility library */
 char *find_exdesc(char *word, struct extra_descr_data *list);
@@ -95,6 +95,8 @@ ACMD(do_help);
 ACMD(do_history);
 ACMD(do_inventory);
 ACMD(do_levels);
+ACMD(do_pulse);
+
 ACMD(do_scan);
 ACMD(do_score);
 ACMD(do_time);
