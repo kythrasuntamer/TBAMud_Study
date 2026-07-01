@@ -1100,10 +1100,13 @@ obj_save_data *objsave_parse_objects(FILE *fl)
         struct extra_descr_data *new_desc;
         char error[40];
         snprintf(error, sizeof(error)-1, "rent(Edes): %s", temp->name);
-        if (temp->item_number != NOTHING && /* Regular object */
-            temp->ex_description &&   /* with ex_desc == prototype */
-            (temp->ex_description == obj_proto[real_object(temp->item_number)].ex_description))
-          temp->ex_description = NULL;
+        if (temp->item_number != NOTHING && temp->ex_description) {
+          obj_rnum proto_rnum = real_object(temp->item_number);
+
+          if (proto_rnum != NOTHING &&
+              temp->ex_description == obj_proto[proto_rnum].ex_description)
+            temp->ex_description = NULL;
+        }
         CREATE(new_desc, struct extra_descr_data, 1);
         new_desc->keyword = fread_string(fl, error);
         new_desc->description = fread_string(fl, error);
