@@ -1073,6 +1073,34 @@ int search_help(const char *argument, int level)
   return NOWHERE;
 }
 
+ACMD(do_ping)
+    {
+        char arg[MAX_INPUT_LENGTH];
+        struct char_data *vict;
+        one_argument(argument, arg);
+        
+        if (!*arg)  {
+            send_to_char(ch, "Ping Whom?/r/n");
+            return;
+            }
+vict = get_char_vis(ch, arg, NULL, FIND_CHAR_ROOM);
+
+    if(!vict) {
+        send_to_char(ch, "You don't see anyone named '%s' here.\r\n", arg);
+        return;
+        }
+if (vict == ch) {
+    send_to_char(ch, "You ping yourself. Yep. Still there.\r\n");
+    return;
+    }
+
+act("You ping $N.\r\n", FALSE, ch, 0, vict, TO_CHAR);
+act("$n pings you.\r\n", FALSE, ch, 0, vict, TO_VICT);
+act("$n pings you.\r\n", FALSE, ch, 0, vict, TO_NOTVICT);
+
+}
+
+
 ACMD(do_pulse)
 {
 send_to_char(ch, "You release a tiny pulse of energy.\r\n");

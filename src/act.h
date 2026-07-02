@@ -95,8 +95,8 @@ ACMD(do_help);
 ACMD(do_history);
 ACMD(do_inventory);
 ACMD(do_levels);
+ACMD(do_ping);
 ACMD(do_pulse);
-
 ACMD(do_scan);
 ACMD(do_score);
 ACMD(do_time);
