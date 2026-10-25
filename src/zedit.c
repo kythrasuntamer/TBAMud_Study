@@ -378,7 +378,7 @@ static void zedit_disp_flag_menu(struct descriptor_data *d)
   clear_screen(d);
   column_list(d->character, 0, zone_bits, NUM_ZONE_FLAGS, TRUE);
 
-  sprintbitarray(OLC_ZONE(d)->zone_flags, zone_bits, ZN_ARRAY_MAX, bits);
+  sprintbitarray(OLC_ZONE(d)->zone_flags, zone_bits, ZN_ARRAY_MAX, bits, sizeof(bits));
   write_to_output(d, "\r\nZone flags: \tc%s\tn\r\n"
          "Enter Zone flags, 0 to quit : ", bits);
   OLC_MODE(d) = ZEDIT_ZONE_FLAGS;
@@ -419,7 +419,7 @@ static void zedit_disp_menu(struct descriptor_data *d)
   get_char_colors(d->character);
   clear_screen(d);
 
-  sprintbitarray(OLC_ZONE(d)->zone_flags, zone_bits, ZN_ARRAY_MAX, buf1);
+  sprintbitarray(OLC_ZONE(d)->zone_flags, zone_bits, ZN_ARRAY_MAX, buf1, sizeof(buf1));
   levels_set = zedit_get_levels(d, lev_string);
 
   /* Menu header */
