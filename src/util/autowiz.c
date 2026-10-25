@@ -77,7 +77,7 @@ void read_file(void)
 
   tb_snprintf(index_name, sizeof(index_name), "%s%s", LIB_PLRFILES, INDEX_FILE);
   if (!(fl = fopen(index_name, "r"))) {
-    perror("Error opening playerfile");
+    TB_REPORT_ERRNO("fopen", index_name);
     exit(1);
   }
   /* count the number of players in the index */
@@ -86,7 +86,7 @@ void read_file(void)
     if (*line != '~')
       recs++;
   if (fseek(fl, 0L, SEEK_SET) != 0) {
-    tb_fprintf(stderr, "Unable to rewind player index: %s\n", strerror(errno));
+    TB_REPORT_ERRNO("fseek", index_name);
     tb_fclose(fl);
     exit(1);
   }
@@ -240,7 +240,7 @@ int main(int argc, char **argv)
 
   fl = fopen(argv[2], "w");
   if (!fl) {
-    perror(argv[2]);
+    TB_REPORT_ERRNO("fopen", argv[2]);
     return 1;
   }
   write_wizlist(fl, wizlevel, LVL_IMPL);
@@ -248,7 +248,7 @@ int main(int argc, char **argv)
 
   fl = fopen(argv[4], "w");
   if (!fl) {
-    perror(argv[4]);
+    TB_REPORT_ERRNO("fopen", argv[4]);
     return 1;
   }
   write_wizlist(fl, immlevel, wizlevel - 1);
