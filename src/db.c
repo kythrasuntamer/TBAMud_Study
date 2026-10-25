@@ -4005,18 +4005,33 @@ static int check_object_level(struct obj_data *obj, int val)
 
 static int check_bitvector_names(bitvector_t bits, size_t namecount, const char *whatami, const char *whatbits)
 {
-  unsigned int flagnum;
+  const size_t width = sizeof(bitvector_t) * CHAR_BIT;
+  bitvector_t known_mask;
+  size_t flagnum;
   bool error = FALSE;
 
-  /* See if any bits are set above the ones we know about. */
-  if (bits <= (~(bitvector_t)0 >> (sizeof(bitvector_t) * 8 - namecount)))
+  /*
+   * Avoid shifts by the width of the type.  If namecount covers the whole
+   * bitvector there cannot be an unknown flag; if it is zero, no bits are
+   * known and the mask is therefore zero.
+   */
+  if (namecount >= width)
     return (FALSE);
 
-  for (flagnum = namecount; flagnum < sizeof(bitvector_t) * 8; flagnum++)
-    if (((bitvector_t)1 << flagnum) & bits) {
-      log("SYSERR: %s has unknown %s flag, bit %d (0 through %d known).", whatami, whatbits, flagnum, (int)namecount - 1);
+  known_mask = (namecount == 0)
+                 ? (bitvector_t)0
+                 : (~(bitvector_t)0 >> (width - namecount));
+
+  if ((bits & ~known_mask) == 0)
+    return (FALSE);
+
+  for (flagnum = namecount; flagnum < width; flagnum++) {
+    if ((((bitvector_t)1u << flagnum) & bits) != 0) {
+      log("SYSERR: %s has unknown %s flag, bit %zu (0 through %d known).",
+          whatami, whatbits, flagnum, (int)namecount - 1);
       error = TRUE;
     }
+  }
 
   return (error);
 }
