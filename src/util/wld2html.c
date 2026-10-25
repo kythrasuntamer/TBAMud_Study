@@ -356,7 +356,7 @@ long asciiflag_conv(char *flag)
   }
 
   if (is_number)
-    flags = atol(flag);
+    flags = tb_parse_long_or_zero(flag);
 
   return (flags);
 }
@@ -400,7 +400,7 @@ void parse_room(FILE * fl, int virtual_nr)
     }
     switch (*line) {
     case 'D':
-      setup_dir(fl, room_nr, atoi(line + 1));
+      setup_dir(fl, room_nr, tb_parse_int_or_zero(line + 1));
       break;
     case 'E':
       CREATE(new_descr, struct extra_descr_data, 1);
@@ -492,7 +492,7 @@ char *fread_string(FILE * fl, char *error)
       log(error);
       exit(1);
     } else {
-      strcat(buf + length, tmp);
+      strlcat(buf, tmp, sizeof(buf));
       length += templength;
     }
   } while (!done);
@@ -500,7 +500,7 @@ char *fread_string(FILE * fl, char *error)
   /* allocate space for the new string and copy it */
   if (strlen(buf) > 0) {
     CREATE(rslt, char, length + 1);
-    strcpy(rslt, buf);
+    strlcpy(rslt, buf, MAX_STRING_LENGTH);
   } else
     rslt = NULL;
 
