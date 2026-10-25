@@ -1798,7 +1798,7 @@ static void PerformSubnegotiation( descriptor_t *apDescriptor, char aCmd, char *
 
             if ( PrefixString("MTTS ", pClientName) )
             {
-               pProtocol->pVariables[eMSDP_CLIENT_VERSION]->ValueInt = atoi(pClientName+5);
+               pProtocol->pVariables[eMSDP_CLIENT_VERSION]->ValueInt = tb_parse_int_or_zero(pClientName+5);
 
                if (pProtocol->pVariables[eMSDP_CLIENT_VERSION]->ValueInt & 1)
                {
@@ -2160,7 +2160,7 @@ static void ExecuteMSDPPair( descriptor_t *apDescriptor, const char *apVariable,
 
                      if ( *apValue != '\0' && IsNumber(apValue) )
                      {
-                        int Value = atoi(apValue);
+                        int Value = tb_parse_int_or_zero(apValue);
                         if ( Value >= VariableNameTable[i].Min && 
                            Value <= VariableNameTable[i].Max )
                         {
