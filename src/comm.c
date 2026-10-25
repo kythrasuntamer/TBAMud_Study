@@ -307,9 +307,14 @@ int main(int argc, char **argv)
 		 argv[0]
       );
       exit(0);
-    default:
-      printf("SYSERR: Unknown option -%c in argument string.\n", *(argv[pos] + 1));
+    default: {
+      char option_context[96];
+      tb_snprintf(option_context, sizeof(option_context),
+                  "unknown command-line option -%c", *(argv[pos] + 1));
+      TB_REPORT_DOMAIN_ERROR(TB_SEV_ERROR, TB_ERR_BOOT,
+                             "parse-options", option_context);
       break;
+    }
     }
     pos++;
   }
@@ -319,7 +324,11 @@ int main(int argc, char **argv)
       printf("Usage: %s [-c] [-m] [-q] [-r] [-s] [-d pathname] [port #]\n", argv[0]);
       exit(1);
     } else if ((port = tb_parse_int_or_zero(argv[pos])) <= 1024) {
-      printf("SYSERR: Illegal port number %d.\n", port);
+      char port_context[96];
+      tb_snprintf(port_context, sizeof(port_context),
+                  "illegal port number %d from argument '%s'", port, argv[pos]);
+      TB_REPORT_DOMAIN_ERROR(TB_SEV_FATAL, TB_ERR_BOOT,
+                             "parse-port", port_context);
       exit(1);
     }
   }
@@ -2768,7 +2777,8 @@ static void setup_log(const char *filename, int fd)
     return;
 
   /* Erp, that didn't work either, just die. */
-  puts("SYSERR: Couldn't open anything to log to, giving up.");
+  TB_REPORT_FATAL(TB_ERR_BOOT, "setup-log",
+                  "could not open any logging destination; giving up");
   exit(1);
 }
 
@@ -2785,10 +2795,8 @@ static int open_logfile(const char *filename, FILE *stderr_fp)
     return (TRUE);
   }
 
-  { int saved_errno = errno;
-    printf("SYSERR: operation=fopen context=%s error=\"%s\" errno=%d source=%s:%d function=%s\n",
-           filename, strerror(saved_errno), saved_errno, __FILE__, __LINE__, __func__);
-  }
+  TB_REPORT_DOMAIN_ERRNO(TB_SEV_ERROR, TB_ERR_PERSISTENCE,
+                         "fopen", filename);
   return (FALSE);
 }
 
