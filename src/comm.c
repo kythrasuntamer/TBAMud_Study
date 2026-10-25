@@ -1487,6 +1487,57 @@ static void init_descriptor (struct descriptor_data *newd, int desc)
   
 }
 
+/* Fixed-size IPv4 connection admission table. Avoids allocating memory for
+ * unauthenticated connection attempts. Counts are reset after each window;
+ * denied attempts do not extend the window indefinitely. */
+#define TB_RATE_SLOTS 256
+#define TB_RATE_WINDOW_SECONDS 60
+#define TB_RATE_MAX_ATTEMPTS 12
+
+struct tb_rate_entry {
+  unsigned long addr;
+  time_t window_start;
+  time_t last_seen;
+  unsigned int attempts;
+};
+
+static struct tb_rate_entry tb_rate_entries[TB_RATE_SLOTS];
+
+static int tb_admit_connection(unsigned long addr, time_t now)
+{
+  size_t i, slot = 0;
+  int found = 0;
+
+  for (i = 0; i < TB_RATE_SLOTS; ++i) {
+    if (tb_rate_entries[i].attempts != 0 &&
+        tb_rate_entries[i].addr == addr) {
+      slot = i;
+      found = 1;
+      break;
+    }
+    if (tb_rate_entries[i].attempts == 0) {
+      slot = i;
+      found = 2;
+      break;
+    }
+    if (tb_rate_entries[i].last_seen < tb_rate_entries[slot].last_seen)
+      slot = i;
+  }
+
+  if (found != 1 ||
+      now < tb_rate_entries[slot].window_start ||
+      now - tb_rate_entries[slot].window_start >= TB_RATE_WINDOW_SECONDS) {
+    tb_rate_entries[slot].addr = addr;
+    tb_rate_entries[slot].window_start = now;
+    tb_rate_entries[slot].attempts = 0;
+  }
+  tb_rate_entries[slot].last_seen = now;
+  if (tb_rate_entries[slot].attempts >= TB_RATE_MAX_ATTEMPTS)
+    return 0;
+  ++tb_rate_entries[slot].attempts;
+  return 1;
+}
+
 static int new_descriptor(socket_t s)
 {
   socket_t desc;
@@ -1506,6 +1557,12 @@ static int new_descriptor(socket_t s)
     log("SYSERR: accept failed on mother descriptor: Winsock error #%d", WSAGetLastError());
 #endif
     return (-1);
+  }
+  /* Drop bursts before hostname lookup, allocation, or protocol negotiation.
+   * Deliberately do not log individual denials to avoid disk-log amplification. */
+  if (!tb_admit_connection((unsigned long)peer.sin_addr.s_addr, time(NULL))) {
+    CLOSE_SOCKET(desc);
+    return (0);
   }
   /* keep it from blocking */
   nonblock(desc);
