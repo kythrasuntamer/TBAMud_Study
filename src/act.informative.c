@@ -122,7 +122,7 @@ static void show_obj_to_char(struct obj_data *obj, struct char_data *ch, int mod
       if (obj->action_description) {
         char notebuf[MAX_NOTE_LENGTH + 64];
 
-        snprintf(notebuf, sizeof(notebuf), "There is something written on it:\r\n\r\n%s", obj->action_description);
+        tb_snprintf(notebuf, sizeof(notebuf), "There is something written on it:\r\n\r\n%s", obj->action_description);
         page_string(ch->desc, notebuf, TRUE);
       } else
     send_to_char(ch, "It's blank.\r\n");
@@ -1541,7 +1541,7 @@ ACMD(do_users)
     } else
       strcpy(classname, "   -   ");
 
-    strftime(timestr, sizeof(timestr), "%H:%M:%S", localtime(&(d->login_time)));
+    tb_strftime(timestr, sizeof(timestr), "%H:%M:%S", localtime(&(d->login_time)));
 
     if (STATE(d) == CON_PLAYING && d->original)
       strlcpy(state, "Switched", sizeof(state));
@@ -1777,14 +1777,14 @@ static void perform_immort_where(char_data *ch, const char *arg)
             nlen = snprintf(buf + len, buf_size - len, "[TRIGS]");
 
           if (len + nlen >= buf_size) {
-            snprintf(buf + len, buf_size - len, "%s", error_message);
+            tb_snprintf(buf + len, buf_size - len, "%s", error_message);
             break;
           }
           len += nlen;
         }
         nlen = snprintf(buf + len, buf_size - len, "%s\r\n", QNRM);
         if (len + nlen >= buf_size) {
-          snprintf(buf + len, buf_size - len, "%s", error_message);
+          tb_snprintf(buf + len, buf_size - len, "%s", error_message);
           break;
         }
         len += nlen;
@@ -1793,7 +1793,7 @@ static void perform_immort_where(char_data *ch, const char *arg)
     if (PRF_FLAGGED(ch, PRF_VERBOSE) && len < buf_size) {
       nlen = snprintf(buf + len, buf_size - len, "  ###  Object name                 Location\r\n");
       if (len + nlen >= buf_size) {
-        snprintf(buf + len, buf_size - len, "%s", error_message);
+        tb_snprintf(buf + len, buf_size - len, "%s", error_message);
       }
       len += nlen;
     }
@@ -1804,7 +1804,7 @@ static void perform_immort_where(char_data *ch, const char *arg)
           found = 1;
           len = print_object_location(++num, k, ch, buf, len, buf_size, TRUE);
           if (len >= buf_size) {
-            snprintf(buf + buf_size, sizeof(buf) - buf_size, "%s", error_message);
+            tb_snprintf(buf + buf_size, sizeof(buf) - buf_size, "%s", error_message);
             break;
           }
         }
@@ -1898,7 +1898,7 @@ ACMD(do_levels)
   }
 
   if (len < sizeof(buf) && max_lev == LVL_IMMORT)
-    snprintf(buf + len, sizeof(buf) - len, "[%2d] %8d          : Immortality\r\n",
+    tb_snprintf(buf + len, sizeof(buf) - len, "[%2d] %8d          : Immortality\r\n",
         LVL_IMMORT, level_exp(GET_CLASS(ch), LVL_IMMORT));
   page_string(ch->desc, buf, TRUE);
 }
@@ -2090,7 +2090,7 @@ ACMD(do_toggle)
     if (!GET_WIMP_LEV(ch))
       strlcpy(buf2, "OFF", sizeof(buf2));        /* strcpy: OK */
     else
-      snprintf(buf2, sizeof(buf2), "%-3.3d", GET_WIMP_LEV(ch));  /* thanks to Ironfist for the fix for the buffer overrun here */
+      tb_snprintf(buf2, sizeof(buf2), "%-3.3d", GET_WIMP_LEV(ch));  /* thanks to Ironfist for the fix for the buffer overrun here */
       
 
     if (GET_LEVEL(ch) == LVL_IMPL) {
@@ -2472,9 +2472,9 @@ void add_history(struct char_data *ch, char *str, int type)
 
   tmp = GET_HISTORY(ch, type);
   ct = time(0);
-  strftime(time_str, sizeof(time_str), "%H:%M ", localtime(&ct));
+  tb_strftime(time_str, sizeof(time_str), "%H:%M ", localtime(&ct));
 
-  snprintf(buf, sizeof(buf), "%s%s", time_str, str);
+  tb_snprintf(buf, sizeof(buf), "%s%s", time_str, str);
 
   if (!tmp) {
     CREATE(GET_HISTORY(ch, type), struct txt_block, 1);
@@ -2544,7 +2544,7 @@ ACMD(do_whois)
   send_to_char(ch, "Level: %d\r\n", GET_LEVEL(victim));
 
   if (!(GET_LEVEL(victim) < LVL_IMMORT) || (GET_LEVEL(ch) >= GET_LEVEL(victim))) {
-    strftime(buf, sizeof(buf), "%a %b %d %Y", localtime(&(victim->player.time.logon)));
+    tb_strftime(buf, sizeof(buf), "%a %b %d %Y", localtime(&(victim->player.time.logon)));
 
     hours = (time(0) - victim->player.time.logon) / 3600;
 
@@ -2594,21 +2594,21 @@ static bool get_zone_levels(zone_rnum znum, char *buf, size_t buflen)
 {
   /* Create a string for the level restrictions for this zone. */
   if ((zone_table[znum].min_level == -1) && (zone_table[znum].max_level == -1)) {
-    snprintf(buf, buflen, "<Not Set!>");
+    tb_snprintf(buf, buflen, "<Not Set!>");
     return FALSE;
   }
 
   if (zone_table[znum].min_level == -1) {
-    snprintf(buf, buflen, "Up to level %d", zone_table[znum].max_level);
+    tb_snprintf(buf, buflen, "Up to level %d", zone_table[znum].max_level);
     return TRUE;
   }
 
   if (zone_table[znum].max_level == -1) {
-    snprintf(buf, buflen, "Above level %d", zone_table[znum].min_level);
+    tb_snprintf(buf, buflen, "Above level %d", zone_table[znum].min_level);
     return TRUE;
   }
 
-  snprintf(buf, buflen, "Levels %d to %d", zone_table[znum].min_level, zone_table[znum].max_level);
+  tb_snprintf(buf, buflen, "Levels %d to %d", zone_table[znum].min_level, zone_table[znum].max_level);
   return TRUE;
 }
 
@@ -2696,7 +2696,7 @@ ACMD(do_areas)
   len += tmp_len;
 
   if (overlap_shown) {
-    snprintf(buf+len, sizeof(buf)-len, "Areas shown in \trred\tn may have some creatures outside the specified range.\r\n");
+    tb_snprintf(buf+len, sizeof(buf)-len, "Areas shown in \trred\tn may have some creatures outside the specified range.\r\n");
   }
 
   if (zcount == 0)
@@ -2743,7 +2743,7 @@ distance, int door)
     if (!CAN_SEE(ch, i))
       continue;
     if (!*buf)
-      snprintf(buf, sizeof(buf), "You see %s", GET_NAME(i));
+      tb_snprintf(buf, sizeof(buf), "You see %s", GET_NAME(i));
     else
       strncat(buf, GET_NAME(i), sizeof(buf) - strlen(buf) - 1);
     if (--count > 1)
@@ -2751,7 +2751,7 @@ distance, int door)
     else if (count == 1)
       strncat(buf, " and ", sizeof(buf) - strlen(buf) - 1);
     else {
-      snprintf(buf2, sizeof(buf2), " %s %s.\r\n", how_far[distance], dirs[door]);
+      tb_snprintf(buf2, sizeof(buf2), " %s %s.\r\n", how_far[distance], dirs[door]);
       strncat(buf, buf2, sizeof(buf) - strlen(buf) - 1);
     }
 
