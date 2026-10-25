@@ -52,7 +52,7 @@ void add_var(struct trig_var_data **var_list, const char *name, const char *valu
     CREATE(vd, struct trig_var_data, 1);
 
     CREATE(vd->name, char, strlen(name) + 1);
-    strcpy(vd->name, name);                            /* strcpy: ok*/
+    strlcpy(vd->name, name, strlen(name) + 1);
 
     CREATE(vd->value, char, strlen(value) + 1);
 
@@ -61,7 +61,7 @@ void add_var(struct trig_var_data **var_list, const char *name, const char *valu
     *var_list = vd;
   }
 
-  strcpy(vd->value, value);                            /* strcpy: ok*/
+  strlcpy(vd->value, value, strlen(value) + 1);
 }
 
 /* perhaps not the best place for this, but I didn't want a new file */
@@ -200,9 +200,9 @@ int text_processed(char *field, char *subfield, struct trig_var_data *vd,
     return TRUE;
   } else if (!str_cmp(field, "contains")) {            /* contains  */
     if (str_str(vd->value, subfield))
-      strcpy(str, "1");
+      strlcpy(str, "1", slen);
     else
-      strcpy(str, "0");
+      strlcpy(str, "0", slen);
     return TRUE;
   } else if (!str_cmp(field, "car")) {                 /* car       */
     char *car = vd->value;
@@ -221,7 +221,7 @@ int text_processed(char *field, char *subfield, struct trig_var_data *vd,
   } else if (!str_cmp(field, "charat")) {              /* CharAt    */
     size_t len = strlen(vd->value), cindex = tb_parse_int_or_zero(subfield);
     if (cindex > len || cindex < 1)
-      strcpy(str, "");
+      strlcpy(str, "", slen);
     else
       tb_snprintf(str, slen, "%c", vd->value[cindex - 1]);
     return TRUE;
@@ -467,14 +467,14 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
       else if (!str_cmp(var, "findmob")) {
         if (!*field || !subfield || !*subfield) {
           script_log("findmob.vnum(mvnum) - illegal syntax");
-          strcpy(str, "0");
+          strlcpy(str, "0", slen);
         } else {
           room_rnum rrnum = real_room(tb_parse_int_or_zero(field));
           mob_vnum mvnum = tb_parse_int_or_zero(subfield);
 
           if (rrnum == NOWHERE) {
             script_log("findmob.vnum(ovnum): No room with vnum %d", tb_parse_int_or_zero(field));
-            strcpy(str, "0");
+            strlcpy(str, "0", slen);
           } else {
             for (i = 0, ch = world[rrnum].people; ch; ch = ch->next_in_room)
               if (GET_MOB_VNUM(ch) == mvnum)
@@ -488,13 +488,13 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
       else if (!str_cmp(var, "findobj")) {
         if (!*field || !subfield || !*subfield) {
           script_log("findobj.vnum(ovnum) - illegal syntax");
-          strcpy(str, "0");
+          strlcpy(str, "0", slen);
         } else {
           room_rnum rrnum = real_room(tb_parse_int_or_zero(field));
 
           if (rrnum == NOWHERE) {
             script_log("findobj.vnum(ovnum): No room with vnum %d", tb_parse_int_or_zero(field));
-            strcpy(str, "0");
+            strlcpy(str, "0", slen);
           } else {
             /* item_in_list looks within containers as well. */
             tb_snprintf(str, slen, "%d", item_in_list(subfield, world[rrnum].contents));
@@ -602,11 +602,11 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
             if (subfield && *subfield) {
               int spell = find_skill_num(subfield);
               if (affected_by_spell(c, spell))
-                strcpy(str, "1");
+                strlcpy(str, "1", slen);
               else
-                strcpy(str, "0");
+                strlcpy(str, "0", slen);
             } else
-              strcpy(str, "0");
+              strlcpy(str, "0", slen);
           }
           else if (!str_cmp(field, "alias"))
             tb_snprintf(str, slen, "%s", GET_PC_NAME(c));
@@ -624,9 +624,9 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
         case 'c':
           if (!str_cmp(field, "canbeseen")) {
             if ((type == MOB_TRIGGER) && !CAN_SEE(((char_data *)go), c))
-              strcpy(str, "0");
+              strlcpy(str, "0", slen);
             else
-              strcpy(str, "1");
+              strlcpy(str, "1", slen);
           }
           else if (!str_cmp(field, "cha")) {
             if (subfield && *subfield) {
@@ -701,7 +701,7 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
                   break;
                 }
               if (j > 0)
-                strcpy(str,"1");
+                strlcpy(str, "1", slen);
               else
                 *str = '\0';
             } else if ((pos = find_eq_pos_script(subfield)) < 0 || !GET_EQ(c, pos))
@@ -791,9 +791,9 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
           /* new check for pc/npc status */
           else if (!str_cmp(field, "is_pc")) {
             if (IS_NPC(c))
-              strcpy(str, "0");
+              strlcpy(str, "0", slen);
             else
-              strcpy(str, "1");
+              strlcpy(str, "1", slen);
           }
           else if (!str_cmp(field, "int")) {
             if (subfield && *subfield) {
@@ -832,9 +832,9 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
                 REMOVE_BIT_AR(PLR_FLAGS(c), PLR_KILLER);
             }
             if (PLR_FLAGGED(c, PLR_KILLER))
-              strcpy(str, "1");
+              strlcpy(str, "1", slen);
             else
-              strcpy(str, "0");
+              strlcpy(str, "0", slen);
           }
           else if (!str_cmp(field, "is_thief")) {
             if (subfield && *subfield) {
@@ -844,9 +844,9 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
                 REMOVE_BIT_AR(PLR_FLAGS(c), PLR_THIEF);
             }
             if (PLR_FLAGGED(c, PLR_THIEF))
-              strcpy(str, "1");
+              strlcpy(str, "1", slen);
             else
-              strcpy(str, "0");
+              strlcpy(str, "0", slen);
           }
           break;
         case 'l':
@@ -951,11 +951,11 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
             if (subfield && *subfield) {
               int pref = get_flag_by_name(preference_bits, subfield);
               if (!IS_NPC(c) && pref != NOFLAG && PRF_FLAGGED(c, pref))
-                strcpy(str, "1");
+                strlcpy(str, "1", slen);
               else
-                strcpy(str, "0");
+                strlcpy(str, "0", slen);
             } else
-              strcpy(str, "0");
+              strlcpy(str, "0", slen);
           }
           break;
         case 'q':
@@ -973,19 +973,19 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
                if (!IS_NPC(c) && (GET_QUEST(c) != NOTHING) && (real_quest(GET_QUEST(c)) != NOTHING))
                  tb_snprintf(str, slen, "%d", GET_QUEST(c));
                else
-                 strcpy(str, "0");
+                 strlcpy(str, "0", slen);
              }
            else if (!str_cmp(field, "questdone"))
            {
                if (!IS_NPC(c) && subfield && *subfield) {
                  int q_num = tb_parse_int_or_zero(subfield);
                  if (is_complete(c, q_num))
-                   strcpy(str, "1");
+                   strlcpy(str, "1", slen);
                  else
-                   strcpy(str, "0");
+                   strlcpy(str, "0", slen);
                }
                else
-                 strcpy(str, "0");
+                 strlcpy(str, "0", slen);
              }
           break;
         case 'r':
@@ -1097,12 +1097,12 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
 	case 'v':
           if (!str_cmp(field, "varexists")) {
             struct trig_var_data *remote_vd;
-            strcpy(str, "0");
+            strlcpy(str, "0", slen);
             if (SCRIPT(c)) {
               for (remote_vd = SCRIPT(c)->global_vars; remote_vd; remote_vd = remote_vd->next) {
                 if (!str_cmp(remote_vd->name, subfield)) break;
               }
-              if (remote_vd) strcpy(str, "1");
+              if (remote_vd) strlcpy(str, "1", slen);
             }
           }
           else if (!str_cmp(field, "vnum")) {
@@ -1121,7 +1121,7 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
                * - this is deprecated - use %actor.is_pc% to check
                * instead of %actor.vnum% == -1  --Welcor 09/03
                */
-                strcpy(str, "-1");
+                strlcpy(str, "-1", slen);
             }
           }
           break;
@@ -1223,7 +1223,7 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
             if (GET_OBJ_TYPE(o) == ITEM_CONTAINER)
               tb_snprintf(str, slen, "%d", item_in_list(subfield, o->contains));
             else
-            	strcpy(str, "0");
+            	strlcpy(str, "0", slen);
           }
           break;
         case 'e':
@@ -1244,7 +1244,7 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
             if (GET_OBJ_TYPE(o) == ITEM_CONTAINER)
               tb_snprintf(str, slen, "%s", (item_in_list(subfield, o->contains) ? "1" : "0"));
             else
-              strcpy(str, "0");
+              strlcpy(str, "0", slen);
           }
           else if (!str_cmp(field, "hasattached")) {
             if (!(subfield && *subfield))
@@ -1266,7 +1266,7 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
               *str = '\0';
           }
           else if (!str_cmp(field, "is_pc")) {
-            strcpy(str, "-1");
+            strlcpy(str, "-1", slen);
           }
 	  break;
         case 'n':
@@ -1284,9 +1284,9 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
           if (!str_cmp(field, "oset")) {
             if (subfield && *subfield) {
               if (handle_oset(o, subfield))
-                strcpy(str, "1");
+                strlcpy(str, "1", slen);
               else
-                strcpy(str, "0");
+                strlcpy(str, "0", slen);
             }
           }
           break;
@@ -1639,13 +1639,14 @@ void var_subst(void *go, struct script_data *sc, trig_data *trig,
 
   /* skip out if no %'s */
   if (!strchr(line, '%')) {
-    strlcpy(buf, line, sizeof(buf));
+    strlcpy(buf, line, MAX_INPUT_LENGTH);
     return;
   }
   /*lets just empty these to start with*/
   *repl_str = *tmp = *tmp2 = '\0';
 
-  p = strlcpy(tmp, line, sizeof(tmp));
+  strlcpy(tmp, line, sizeof(tmp));
+  p = tmp;
   subfield_p = subfield;
 
   left = MAX_INPUT_LENGTH - 1;
@@ -1686,7 +1687,7 @@ void var_subst(void *go, struct script_data *sc, trig_data *trig,
             if (*repl_str) {
               tb_snprintf(tmp2, sizeof(tmp2), "eval tmpvr %s", repl_str); //temp var
               process_eval(go, sc, trig, type, tmp2);
-              strcpy(var, "tmpvr");
+              strlcpy(var, "tmpvr", sizeof(tmp) - (size_t)(var - tmp));
               field = p;
               dots = 0;
               continue;
@@ -1712,15 +1713,19 @@ void var_subst(void *go, struct script_data *sc, trig_data *trig,
 
       if (*subfield) {
         var_subst(go, sc, trig, type, subfield, tmp2);
-        strcpy(subfield, tmp2);
+        strlcpy(subfield, tmp2, sizeof(subfield));
       }
 
       find_replacement(go, sc, trig, type, var, field, subfield, repl_str, sizeof(repl_str));
 
-      strncat(buf, repl_str, left);
-      len = strlen(repl_str);
-      buf += len;
-      left -= len;
+      {
+        size_t copied = strlcpy(buf, repl_str, (size_t)left + 1);
+        if (copied > (size_t)left)
+          copied = (size_t)left;
+        len = (int)copied;
+        buf += len;
+        left -= len;
+      }
     } /* else if *p .. */
   } /* while *p .. */
   *buf = '\0';
