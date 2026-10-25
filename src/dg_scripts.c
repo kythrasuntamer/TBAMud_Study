@@ -1426,78 +1426,78 @@ static void eval_op(char *op, char *lhs, char *rhs, char *result, void *go,
   /* find the op, and figure out the value */
   if (!strcmp("||", op)) {
     if ((!*lhs || (*lhs == '0')) && (!*rhs || (*rhs == '0')))
-      strlcpy(result, "0", sizeof(result));
+      strlcpy(result, "0", MAX_INPUT_LENGTH);
     else
-      strlcpy(result, "1", sizeof(result));
+      strlcpy(result, "1", MAX_INPUT_LENGTH);
   }
 
   else if (!strcmp("&&", op)) {
     if (!*lhs || (*lhs == '0') || !*rhs || (*rhs == '0'))
-      strcpy (result, "0");
+      strlcpy(result, "0", MAX_INPUT_LENGTH);
     else
-      strcpy (result, "1");
+      strlcpy(result, "1", MAX_INPUT_LENGTH);
   }
 
   else if (!strcmp("==", op)) {
     if (is_num(lhs) && is_num(rhs))
-      tb_snprintf(result, sizeof(result), "%d", script_int_value(lhs) == script_int_value(rhs));
+      tb_snprintf(result, MAX_INPUT_LENGTH, "%d", script_int_value(lhs) == script_int_value(rhs));
     else
-      tb_snprintf(result, sizeof(result), "%d", !str_cmp(lhs, rhs));
+      tb_snprintf(result, MAX_INPUT_LENGTH, "%d", !str_cmp(lhs, rhs));
   }
 
   else if (!strcmp("!=", op)) {
     if (is_num(lhs) && is_num(rhs))
-      tb_snprintf(result, sizeof(result), "%d", script_int_value(lhs) != script_int_value(rhs));
+      tb_snprintf(result, MAX_INPUT_LENGTH, "%d", script_int_value(lhs) != script_int_value(rhs));
     else
-      tb_snprintf(result, sizeof(result), "%d", str_cmp(lhs, rhs));
+      tb_snprintf(result, MAX_INPUT_LENGTH, "%d", str_cmp(lhs, rhs));
   }
 
   else if (!strcmp("<=", op)) {
     if (is_num(lhs) && is_num(rhs))
-      tb_snprintf(result, sizeof(result), "%d", script_int_value(lhs) <= script_int_value(rhs));
+      tb_snprintf(result, MAX_INPUT_LENGTH, "%d", script_int_value(lhs) <= script_int_value(rhs));
     else
-      tb_snprintf(result, sizeof(result), "%d", str_cmp(lhs, rhs) <= 0);
+      tb_snprintf(result, MAX_INPUT_LENGTH, "%d", str_cmp(lhs, rhs) <= 0);
   }
 
   else if (!strcmp(">=", op)) {
     if (is_num(lhs) && is_num(rhs))
-      tb_snprintf(result, sizeof(result), "%d", script_int_value(lhs) >= script_int_value(rhs));
+      tb_snprintf(result, MAX_INPUT_LENGTH, "%d", script_int_value(lhs) >= script_int_value(rhs));
     else
-      tb_snprintf(result, sizeof(result), "%d", str_cmp(lhs, rhs) >= 0);
+      tb_snprintf(result, MAX_INPUT_LENGTH, "%d", str_cmp(lhs, rhs) >= 0);
   }
 
   else if (!strcmp("<", op)) {
     if (is_num(lhs) && is_num(rhs))
-      tb_snprintf(result, sizeof(result), "%d", script_int_value(lhs) < script_int_value(rhs));
+      tb_snprintf(result, MAX_INPUT_LENGTH, "%d", script_int_value(lhs) < script_int_value(rhs));
     else
-      tb_snprintf(result, sizeof(result), "%d", str_cmp(lhs, rhs) < 0);
+      tb_snprintf(result, MAX_INPUT_LENGTH, "%d", str_cmp(lhs, rhs) < 0);
   }
 
   else if (!strcmp(">", op)) {
     if (is_num(lhs) && is_num(rhs))
-      tb_snprintf(result, sizeof(result), "%d", script_int_value(lhs) > script_int_value(rhs));
+      tb_snprintf(result, MAX_INPUT_LENGTH, "%d", script_int_value(lhs) > script_int_value(rhs));
     else
-      tb_snprintf(result, sizeof(result), "%d", str_cmp(lhs, rhs) > 0);
+      tb_snprintf(result, MAX_INPUT_LENGTH, "%d", str_cmp(lhs, rhs) > 0);
   }
 
   else if (!strcmp("/=", op))
-    tb_snprintf(result, sizeof(result), "%c", str_str(lhs, rhs) ? '1' : '0');
+    tb_snprintf(result, MAX_INPUT_LENGTH, "%c", str_str(lhs, rhs) ? '1' : '0');
 
   else if (!strcmp("*", op)) {
     lhs_num = script_int_value(lhs);
     rhs_num = script_int_value(rhs);
     arithmetic = (long long)lhs_num * (long long)rhs_num;
-    tb_snprintf(result, sizeof(result), "%d", clamp_script_int(arithmetic));
+    tb_snprintf(result, MAX_INPUT_LENGTH, "%d", clamp_script_int(arithmetic));
   }
 
   else if (!strcmp("/", op)) {
     lhs_num = script_int_value(lhs);
     rhs_num = script_int_value(rhs);
     if (rhs_num == 0)
-      strlcpy(result, "0", sizeof(result));
+      strlcpy(result, "0", MAX_INPUT_LENGTH);
     else {
       arithmetic = (long long)lhs_num / (long long)rhs_num;
-      tb_snprintf(result, sizeof(result), "%d", clamp_script_int(arithmetic));
+      tb_snprintf(result, MAX_INPUT_LENGTH, "%d", clamp_script_int(arithmetic));
     }
   }
 
@@ -1505,21 +1505,21 @@ static void eval_op(char *op, char *lhs, char *rhs, char *result, void *go,
     lhs_num = script_int_value(lhs);
     rhs_num = script_int_value(rhs);
     arithmetic = (long long)lhs_num + (long long)rhs_num;
-    tb_snprintf(result, sizeof(result), "%d", clamp_script_int(arithmetic));
+    tb_snprintf(result, MAX_INPUT_LENGTH, "%d", clamp_script_int(arithmetic));
   }
 
   else if (!strcmp("-", op)) {
     lhs_num = script_int_value(lhs);
     rhs_num = script_int_value(rhs);
     arithmetic = (long long)lhs_num - (long long)rhs_num;
-    tb_snprintf(result, sizeof(result), "%d", clamp_script_int(arithmetic));
+    tb_snprintf(result, MAX_INPUT_LENGTH, "%d", clamp_script_int(arithmetic));
   }
 
   else if (!strcmp("!", op)) {
     if (is_num(rhs))
-      tb_snprintf(result, sizeof(result), "%d", !script_int_value(rhs));
+      tb_snprintf(result, MAX_INPUT_LENGTH, "%d", !script_int_value(rhs));
     else
-      tb_snprintf(result, sizeof(result), "%d", !*rhs);
+      tb_snprintf(result, MAX_INPUT_LENGTH, "%d", !*rhs);
   }
 }
 
@@ -1605,7 +1605,8 @@ static int eval_lhs_op_rhs(char *expr, char *result, void *go, struct script_dat
     { NULL }
   };
 
-  p = strlcpy(line, expr, sizeof(line));
+  strlcpy(line, expr, sizeof(line));
+  p = line;
 
   /* Initialize tokens, an array of pointers to locations in line where the 
    * ops could possibly occur. */
