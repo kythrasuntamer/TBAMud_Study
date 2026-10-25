@@ -1181,6 +1181,7 @@ static char *read_shop_message(int mnum, room_vnum shr, FILE *shop_f, const char
   return (tbuf);
 }
 
+/* NOLINTBEGIN(clang-analyzer-security.ArrayBound): top_shop is checked against rec_count before indexing shop_index. */
 void boot_the_shops(FILE *shop_f, char *filename, int rec_count)
 {
   char *buf, buf2[256];
@@ -1262,6 +1263,8 @@ void boot_the_shops(FILE *shop_f, char *filename, int rec_count)
     }
   }
 }
+
+/* NOLINTEND(clang-analyzer-security.ArrayBound) */
 
 void assign_the_shopkeepers(void)
 {
