@@ -548,7 +548,7 @@ static void remove_cmd_from_list(struct reset_com **list, int pos)
   /* Even tighter loop to copy old list and skip unwanted command. */
   for (i = 0, l = 0; i < count; i++) {
     if (i != pos) {
-      newlist[l++] = (*list)[i];
+      newlist[l++] = (*list)[i]; /* NOLINT(clang-analyzer-security.ArrayBound): one of count entries is skipped. */
     }
   }
   /* Add the terminator, then insert the new list. */
