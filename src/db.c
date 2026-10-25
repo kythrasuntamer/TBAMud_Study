@@ -219,6 +219,40 @@ static int parse_long_text_strict(const char *text, long *value)
   return 1;
 }
 
+static int parse_dice_text(const char *text, int *count, int *size, int *bonus)
+{
+  char *end;
+  long a, b, d;
+
+  if (text == NULL || count == NULL || size == NULL || bonus == NULL)
+    return 0;
+
+  errno = 0;
+  a = strtol(text, &end, 10);
+  if (text == end || errno == ERANGE || a < INT_MIN || a > INT_MAX ||
+      (*end != 'd' && *end != 'D'))
+    return 0;
+
+  text = end + 1;
+  errno = 0;
+  b = strtol(text, &end, 10);
+  if (text == end || errno == ERANGE || b < INT_MIN || b > INT_MAX ||
+      *end != '+')
+    return 0;
+
+  text = end + 1;
+  errno = 0;
+  d = strtol(text, &end, 10);
+  if (text == end || errno == ERANGE || d < INT_MIN || d > INT_MAX ||
+      *end != '\0')
+    return 0;
+
+  *count = (int)a;
+  *size = (int)b;
+  *bonus = (int)d;
+  return 1;
+}
+
 /* routines for booting the system */
 char *fread_action(FILE *fl, int nr)
 {
@@ -1370,6 +1404,7 @@ void parse_room(FILE *fl, int virtual_nr)
   int t[10], i, retval;
   char line[READ_SIZE], flags[128], flags2[128], flags3[128];
   char flags4[128], buf2[MAX_STRING_LENGTH], buf[128];
+  char room_num_text[32], sector_text[32];
   struct extra_descr_data *new_descr;
   char letter;
 
@@ -1396,7 +1431,16 @@ void parse_room(FILE *fl, int virtual_nr)
     exit(1);
   }
 
-  if (((retval = sscanf(line, " %d %s %s %s %s %d ", t, flags, flags2, flags3, flags4, t + 2)) == 3) && (bitwarning == TRUE)) {
+  retval = sscanf(line, " %31s %127s %127s %127s %127s %31s ",
+                  room_num_text, flags, flags2, flags3, flags4, sector_text);
+  if (retval >= 1 && !parse_int_text_strict(room_num_text, &t[0]))
+    retval = -1;
+  if (retval == 3 && !parse_int_text_strict(flags2, &t[2]))
+    retval = -1;
+  if (retval == 6 && !parse_int_text_strict(sector_text, &t[2]))
+    retval = -1;
+
+  if ((retval == 3) && (bitwarning == TRUE)) {
     log("WARNING: Conventional world files detected. See config.c.");
     exit(1);
   } else if ((retval == 3) && (bitwarning == FALSE)) {
@@ -1411,7 +1455,7 @@ void parse_room(FILE *fl, int virtual_nr)
     world[room_nr].room_flags[3] = 0;
 
     /* In the old-style files, the 3rd item was the sector-type */
-    world[room_nr].sector_type = tb_parse_int_or_zero(flags2);
+    world[room_nr].sector_type = t[2];
 
    tb_snprintf(flags, sizeof(flags), "room #%d", virtual_nr);	/* sprintf: OK (until 399-bit integers) */
 
@@ -1647,6 +1691,7 @@ static void parse_simple_mob(FILE *mob_f, int i, int nr)
 {
   int j, t[10];
   char line[READ_SIZE];
+  char n0[32], n1[32], n2[32], dice1[64], dice2[64];
 
   mob_proto[i].real_abils.str = 11;
   mob_proto[i].real_abils.intel = 11;
@@ -1660,8 +1705,13 @@ static void parse_simple_mob(FILE *mob_f, int i, int nr)
     exit(1);
   }
 
-  if (sscanf(line, " %d %d %d %dd%d+%d %dd%d+%d ",
-	  t, t + 1, t + 2, t + 3, t + 4, t + 5, t + 6, t + 7, t + 8) != 9) {
+  if (sscanf(line, " %31s %31s %31s %63s %63s ",
+             n0, n1, n2, dice1, dice2) != 5 ||
+      !parse_int_text_strict(n0, &t[0]) ||
+      !parse_int_text_strict(n1, &t[1]) ||
+      !parse_int_text_strict(n2, &t[2]) ||
+      !parse_dice_text(dice1, &t[3], &t[4], &t[5]) ||
+      !parse_dice_text(dice2, &t[6], &t[7], &t[8])) {
     log("SYSERR: Format error in mob #%d, first line after S flag\n"
 	"...expecting line of form '# # # #d#+# #d#+#'", nr);
     exit(1);
@@ -1857,6 +1907,7 @@ void parse_mobile(FILE *mob_f, int nr)
   int j, t[10], retval;
   char line[READ_SIZE], *tmpptr, letter;
   char f1[128], f2[128], f3[128], f4[128], f5[128], f6[128], f7[128], f8[128], buf2[128];
+  char alignment_text[32];
 
   mob_index[i].vnum = nr;
   mob_index[i].number = 0;
@@ -1888,7 +1939,12 @@ void parse_mobile(FILE *mob_f, int nr)
     exit(1);
   }
 
-  if (((retval = sscanf(line, "%s %s %s %s %s %s %s %s %d %c", f1, f2, f3, f4, f5, f6, f7, f8, t + 2, &letter)) != 10) && (bitwarning == TRUE)) {
+  retval = sscanf(line, "%127s %127s %127s %127s %127s %127s %127s %127s %31s %c",
+                  f1, f2, f3, f4, f5, f6, f7, f8, alignment_text, &letter);
+  if (retval == 10 && !parse_int_text_strict(alignment_text, &t[2]))
+    retval = -1;
+
+  if ((retval != 10) && (bitwarning == TRUE)) {
     /* Let's make the implementor read some, before converting his world files. */
     log("WARNING: Conventional mobile files detected. See config.c.");
     exit(1);
@@ -2011,6 +2067,7 @@ char *parse_object(FILE *obj_f, int nr)
   char *tmpptr, buf2[128], f1[READ_SIZE], f2[READ_SIZE], f3[READ_SIZE], f4[READ_SIZE];
   char f5[READ_SIZE], f6[READ_SIZE], f7[READ_SIZE], f8[READ_SIZE];
   char f9[READ_SIZE], f10[READ_SIZE], f11[READ_SIZE], f12[READ_SIZE];
+  char obj_type_text[32];
   struct extra_descr_data *new_descr;
 
   obj_index[i].vnum = nr;
@@ -2044,8 +2101,12 @@ char *parse_object(FILE *obj_f, int nr)
     exit(1);
   }
 
-  if (((retval = sscanf(line, " %d %s %s %s %s %s %s %s %s %s %s %s %s", t, f1, f2, f3,
-      f4, f5, f6, f7, f8, f9, f10, f11, f12)) == 4) && (bitwarning == TRUE)) {
+  retval = sscanf(line, " %31s %255s %255s %255s %255s %255s %255s %255s %255s %255s %255s %255s %255s",
+                  obj_type_text, f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12);
+  if (retval >= 1 && !parse_int_text_strict(obj_type_text, &t[0]))
+    retval = -1;
+
+  if ((retval == 4) && (bitwarning == TRUE)) {
     /* Let's make the implementor read some, before converting his world files. */
     log("WARNING: Conventional object files detected. Please see config.c.");
     exit(1);

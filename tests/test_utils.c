@@ -226,10 +226,10 @@ void test_file_numlines_counts_newlines_only(void)
 
     TEST_ASSERT_NOT_NULL(fp);
     TEST_ASSERT_TRUE(fputs("one\ntwo\nthree", fp) >= 0);
-    fflush(fp);
+    TEST_ASSERT_EQUAL_INT(0, fflush(fp));
 
     TEST_ASSERT_EQUAL_INT(2, file_numlines(fp));
-    fclose(fp);
+    TEST_ASSERT_EQUAL_INT(0, fclose(fp));
 }
 
 /* =========================================================
