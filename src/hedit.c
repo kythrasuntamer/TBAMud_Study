@@ -337,7 +337,7 @@ void hedit_parse(struct descriptor_data *d, char *arg)
     break;
 
   case HEDIT_MIN_LEVEL:
-    number = atoi(arg);
+    number = tb_parse_int_or_zero(arg);
     if ((number < 0) || (number > LVL_IMPL))
       write_to_output(d, "That is not a valid choice!\r\nEnter min level:-\r\n] ");
     else {
