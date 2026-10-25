@@ -306,15 +306,12 @@ void save_ibt_file(int mode)
                      return;
    }
 
-   if (( fp = fopen(filename,"w")) == NULL) {
+   if ((fp = fopen(filename, "w")) == NULL) {
      TB_REPORT_ERRNO("fopen", filename);
-   {
      log("SYSERR: Unable to open IBT file for writing in save_ibt_file");
      log("        IBT File: %s", filename);
      return;
-   }
-   else
-   {
+   } else {
      for (ibtData = first_ibt;ibtData;ibtData=ibtData->next)
      {
        if (ibtData->text && *(ibtData->text))
