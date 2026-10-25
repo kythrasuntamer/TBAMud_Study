@@ -900,7 +900,7 @@ const char *CopyoverGet( descriptor_t *apDescriptor )
 
    if ( pProtocol != NULL )
    {
-      sprintf(Buffer, "%d/%d", pProtocol->ScreenWidth, pProtocol->ScreenHeight);
+      snprintf(Buffer, sizeof(Buffer), "%d/%d", pProtocol->ScreenWidth, pProtocol->ScreenHeight);
 
       /* Skip to the end */
       while ( *pBuffer != '\0' )
@@ -1379,7 +1379,7 @@ const char *MXPCreateTag( descriptor_t *apDescriptor, const char *apTag )
       strlen(apTag) < 1000 )
    {
       static char MXPBuffer [1024];
-      sprintf( MXPBuffer, "\033[1z%s\033[7z", apTag );
+      snprintf(MXPBuffer, sizeof(MXPBuffer), "\033[1z%s\033[7z", apTag);
       return MXPBuffer;
    }
    else /* Leave the tag as-is, don't try to MXPify it */
@@ -1396,7 +1396,7 @@ void MXPSendTag( descriptor_t *apDescriptor, const char *apTag )
       strlen(apTag) < 1000 )
    {
       char MXPBuffer [1024];
-      sprintf(MXPBuffer, "\033[1z%s\033[7z\r\n", apTag );
+      snprintf(MXPBuffer, sizeof(MXPBuffer), "\033[1z%s\033[7z\r\n", apTag);
       Write(apDescriptor, MXPBuffer);
    }
 }
@@ -2037,10 +2037,10 @@ static void ExecuteMSDPPair( descriptor_t *apDescriptor, const char *apVariable,
                if ( !VariableNameTable[i].bGUI )
                {
                   /* Add the separator between variables */
-                  strcat( MSDPCommands, " " );
+                  strlcat(MSDPCommands, " ", sizeof(MSDPCommands));
 
                   /* Add the variable to the list */
-                  strcat( MSDPCommands, VariableNameTable[i].pName );
+                  strlcat(MSDPCommands, VariableNameTable[i].pName, sizeof(MSDPCommands));
                }
             }
 
@@ -2057,10 +2057,10 @@ static void ExecuteMSDPPair( descriptor_t *apDescriptor, const char *apVariable,
                {
                   /* Add the separator between variables */
                   if ( MSDPCommands[0] != '\0' )
-                     strcat( MSDPCommands, " " );
+                     strlcat(MSDPCommands, " ", sizeof(MSDPCommands));
 
                   /* Add the variable to the list */
-                  strcat( MSDPCommands, VariableNameTable[i].pName );
+                  strlcat(MSDPCommands, VariableNameTable[i].pName, sizeof(MSDPCommands));
                }
             }
 
@@ -2077,10 +2077,10 @@ static void ExecuteMSDPPair( descriptor_t *apDescriptor, const char *apVariable,
                {
                   /* Add the separator between variables */
                   if ( MSDPCommands[0] != '\0' )
-                     strcat( MSDPCommands, " " );
+                     strlcat(MSDPCommands, " ", sizeof(MSDPCommands));
 
                   /* Add the variable to the list */
-                  strcat( MSDPCommands, VariableNameTable[i].pName );
+                  strlcat(MSDPCommands, VariableNameTable[i].pName, sizeof(MSDPCommands));
                }
             }
 
@@ -2097,10 +2097,10 @@ static void ExecuteMSDPPair( descriptor_t *apDescriptor, const char *apVariable,
                {
                   /* Add the separator between variables */
                   if ( MSDPCommands[0] != '\0' )
-                     strcat( MSDPCommands, " " );
+                     strlcat(MSDPCommands, " ", sizeof(MSDPCommands));
 
                   /* Add the variable to the list */
-                  strcat( MSDPCommands, VariableNameTable[i].pName );
+                  strlcat(MSDPCommands, VariableNameTable[i].pName, sizeof(MSDPCommands));
                }
             }
 
@@ -2262,14 +2262,14 @@ static void SendATCP( descriptor_t *apDescriptor, const char *apVariable, const 
 static const char *GetMSSP_Players()
 {
    static char Buffer[32];
-   sprintf( Buffer, "%d", s_Players );
+   snprintf(Buffer, sizeof(Buffer), "%d", s_Players);
    return Buffer;
 }
 
 static const char *GetMSSP_Uptime()
 {
    static char Buffer[32];
-   sprintf( Buffer, "%d", (int)s_Uptime );
+   snprintf(Buffer, sizeof(Buffer), "%d", (int)s_Uptime);
    return Buffer;
 }
 
@@ -2400,7 +2400,7 @@ static void SendMSSP( descriptor_t *apDescriptor )
    };
 
    /* Begin the subnegotiation sequence */
-   sprintf( MSSPBuffer, "%c%c%c", IAC, SB, TELOPT_MSSP );
+   snprintf(MSSPBuffer, sizeof(MSSPBuffer), "%c%c%c", IAC, SB, TELOPT_MSSP);
 
    for ( i = 0; MSSPTable[i].pName != NULL; ++i )
    {
@@ -2415,14 +2415,14 @@ static void SendMSSP( descriptor_t *apDescriptor )
       SizePair = strlen(MSSPPair);
       if ( SizePair+SizeBuffer < MAX_MSSP_BUFFER-4 )
       {
-         strcat( MSSPBuffer, MSSPPair );
+         strlcat(MSSPBuffer, MSSPPair, sizeof(MSSPBuffer));
          SizeBuffer += SizePair;
       }
    }
 
    /* End the subnegotiation sequence */
-   sprintf( MSSPPair, "%c%c", IAC, SE );
-   strcat( MSSPBuffer, MSSPPair );
+   snprintf(MSSPPair, sizeof(MSSPPair), "%c%c", IAC, SE);
+   strlcat(MSSPBuffer, MSSPPair, sizeof(MSSPBuffer));
 
    /* Send the sequence */
    Write( apDescriptor, MSSPBuffer );
