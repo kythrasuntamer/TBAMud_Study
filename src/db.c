@@ -1207,10 +1207,15 @@ bitvector_t asciiflag_conv(char *flag)
   char *p;
 
   for (p = flag; *p; p++) {
-    if (islower(*p))
-      flags |= (bitvector_t)1 << (*p - 'a');
-    else if (isupper(*p))
-      flags |= (bitvector_t)1 << (26 + (*p - 'A'));
+    if (islower(*p)) {
+      unsigned int bit = (unsigned int)(*p - 'a');
+      if (bit < sizeof(bitvector_t) * CHAR_BIT)
+        flags |= (bitvector_t)1 << bit;
+    } else if (isupper(*p)) {
+      unsigned int bit = (unsigned int)(26 + (*p - 'A'));
+      if (bit < sizeof(bitvector_t) * CHAR_BIT)
+        flags |= (bitvector_t)1 << bit;
+    }
 
     /* Allow the first character to be a minus sign */
     if (!isdigit(*p) && (*p != '-' || p != flag))
@@ -1230,10 +1235,15 @@ static bitvector_t asciiflag_conv_aff(char *flag)
   char *p;
 
   for (p = flag; *p; p++) {
-    if (islower(*p))
-      flags |= (bitvector_t)1 << (*p - 'a' + 1);
-    else if (isupper(*p))
-      flags |= (bitvector_t)1 << (26 + (*p - 'A' + 1));
+    if (islower(*p)) {
+      unsigned int bit = (unsigned int)(*p - 'a' + 1);
+      if (bit < sizeof(bitvector_t) * CHAR_BIT)
+        flags |= (bitvector_t)1 << bit;
+    } else if (isupper(*p)) {
+      unsigned int bit = (unsigned int)(26 + (*p - 'A' + 1));
+      if (bit < sizeof(bitvector_t) * CHAR_BIT)
+        flags |= (bitvector_t)1 << bit;
+    }
 
     /* Allow the first character to be a minus sign */
     if (!isdigit(*p) && (*p != '-' || p != flag))
