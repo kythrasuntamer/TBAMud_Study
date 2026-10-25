@@ -2123,12 +2123,17 @@ static void load_zones(FILE *fl, char *zonename)
   for (tmp = 0; tmp < 3; tmp++)
     get_line(fl, buf);
 
-  /* More accurate count. Previous was always 4 or 5 too high. -gg Note that if
-   * a new zone command is added to reset_zone(), this string will need to be
-   * updated to suit. - ae. */
-  while (get_line(fl, buf))
-    if ((strchr("MOPGERDTV", buf[0]) && buf[1] == ' ') || (buf[0] == 'S' && buf[1] == '\0'))
-      num_of_cmds++;
+  /* Count every non-comment line the parser below can consume.  The
+   * allocation must never be smaller than the parser's command count. */
+  while (get_line(fl, buf)) {
+    ptr = buf;
+    skip_spaces(&ptr);
+    if (*ptr == '*')
+      continue;
+    num_of_cmds++;
+    if (*ptr == 'S' || *ptr == '$')
+      break;
+  }
 
   rewind(fl);
 
@@ -2215,6 +2220,11 @@ static void load_zones(FILE *fl, char *zonename)
     ptr = buf;
     skip_spaces(&ptr);
 
+    if (cmd_no >= num_of_cmds) {
+      log("SYSERR: More commands in %s than the %d counted.", zname, num_of_cmds);
+      exit(1);
+    }
+
     if ((ZCMD.command = *ptr) == '*')
       continue;
 
@@ -2250,11 +2260,6 @@ static void load_zones(FILE *fl, char *zonename)
     }
     ZCMD.line = line_num;
     cmd_no++;
-  }
-
-  if (num_of_cmds != cmd_no + 1) {
-    log("SYSERR: Zone command count mismatch for %s. Estimated: %d, Actual: %d", zname, num_of_cmds, cmd_no + 1);
-    exit(1);
   }
 
   top_of_zone_table = zone++;
@@ -2794,13 +2799,14 @@ void reset_zone(zone_rnum zone)
         add_trigger(SCRIPT(tobj), read_trigger(ZCMD.arg2), -1);
         last_cmd = 1;
       } else if (ZCMD.arg1==WLD_TRIGGER) {
-        if (ZCMD.arg3 == NOWHERE || ZCMD.arg3>top_of_world) {
+        if (ZCMD.arg3 == NOWHERE || ZCMD.arg3 > top_of_world) {
           ZONE_ERROR("Invalid room number in trigger assignment");
+        } else {
+          if (!world[ZCMD.arg3].script)
+            CREATE(world[ZCMD.arg3].script, struct script_data, 1);
+          add_trigger(world[ZCMD.arg3].script, read_trigger(ZCMD.arg2), -1);
+          last_cmd = 1;
         }
-        if (!world[ZCMD.arg3].script)
-          CREATE(world[ZCMD.arg3].script, struct script_data, 1);
-        add_trigger(world[ZCMD.arg3].script, read_trigger(ZCMD.arg2), -1);
-        last_cmd = 1;
       }
 
       break;
