@@ -12,6 +12,7 @@ import json
 from pathlib import Path
 import tarfile
 import urllib.request
+import sys
 
 MAX_DOWNLOAD = 150_000_000
 MAX_FILE = 8_000_000
@@ -46,11 +47,12 @@ def main():
         print(entry["repo"], entry["format"], "AUDIT ONLY")
     if not args.apply:
         print("Dry run; use --apply to fetch source tarballs (no game installation).")
-        return
+        return 0
     if args.destination.exists():
         raise ValueError("Destination must not exist")
     args.destination.mkdir(parents=True)
     report = []
+    failures = 0
     for entry in catalog["sources"]:
         repo = entry["repo"]
         url = f"https://api.github.com/repos/{repo}/tarball/HEAD"
@@ -62,10 +64,14 @@ def main():
             if len(raw) > MAX_DOWNLOAD:
                 raise ValueError("Archive exceeds limit")
             extracted = scan_archive(raw, entry)
+            if not extracted:
+                raise ValueError("No matching source files; catalog glob or source layout changed")
             name = repo.replace("/", "__")
             folder = args.destination / name
             folder.mkdir()
             for rel, data in extracted:
+                if Path(rel).is_absolute() or ".." in Path(rel).parts:
+                    raise ValueError(f"Unsafe archive path: {rel}")
                 dest = folder / rel
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 dest.write_bytes(data)
@@ -75,8 +81,12 @@ def main():
             print(f"{repo}: {len(extracted)} eligible-format files inventoried")
         except Exception as exc:
             report.append({"repo": repo, "error": str(exc), "status": "FAILED"})
+            failures += 1
             print(f"FAILED {repo}: {exc}")
     (args.destination / "provenance.json").write_text(json.dumps(report, indent=2) + "\n")
+    if failures:
+        print(f"{failures} source downloads failed; quarantine is incomplete", file=sys.stderr)
+    return 1 if failures else 0
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
