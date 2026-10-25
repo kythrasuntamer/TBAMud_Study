@@ -390,7 +390,7 @@ int main()
 
 /* Multiple frees test */
   tmp = (unsigned char*)malloc(200);
-  strcpy(tmp, "This should show up in the dump but truncated to MAX_ZDUMP_SIZE chars");
+  memcpy(tmp, "This should show up in the dump but truncated to MAX_ZDUMP_SIZE chars", sizeof("This should show up in the dump but truncated to MAX_ZDUMP_SIZE chars"));
   free(tmp);
   free(tmp);
 
@@ -400,7 +400,7 @@ int main()
 
 /* Unfreed mem test... You should see "UNfreed mem at line 370" (at end) because of this */
   tmp = (unsigned char*)malloc(200);
-  strcpy(tmp, "This is unfreed memory!");
+  memcpy(tmp, "This is unfreed memory!", sizeof("This is unfreed memory!"));
 
 /* Buffer overrun test... You should see an ERR:endPad here */
   tmp = (unsigned char*)malloc(200);

@@ -140,8 +140,8 @@ void sort_names(void)
       for (b = a->next; b; b = b->next) {
 	if (strcmp(a->name, b->name) > 0) {
 	  strlcpy(temp, a->name, sizeof(temp));
-	  strcpy(a->name, b->name);
-	  strcpy(b->name, temp);
+	  strlcpy(a->name, b->name, sizeof(a->name));
+	  strlcpy(b->name, temp, sizeof(b->name));
 	}
       }
     }

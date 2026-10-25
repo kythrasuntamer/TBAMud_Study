@@ -1945,7 +1945,7 @@ static int process_input(struct descriptor_data *t)
       for (; cnt != starting_pos; cnt--) {
 	if (t->history[cnt] && is_abbrev(commandln, t->history[cnt])) {
 	  strlcpy(tmp, t->history[cnt], sizeof(tmp));	/* strcpy: OK (by mutual MAX_INPUT_LENGTH) */
-	  strcpy(t->last_input, tmp);	/* strcpy: OK (by mutual MAX_INPUT_LENGTH) */
+	  strlcpy(t->last_input, tmp, sizeof(t->last_input));	/* strcpy: OK (by mutual MAX_INPUT_LENGTH) */
           write_to_output(t, "%s\r\n", tmp);
 	  break;
 	}
