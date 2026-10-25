@@ -52,7 +52,7 @@ void add_var(struct trig_var_data **var_list, const char *name, const char *valu
     CREATE(vd, struct trig_var_data, 1);
 
     CREATE(vd->name, char, strlen(name) + 1);
-    strlcpy(vd->name, name, strlen(name) + 1);
+    memcpy(vd->name, name, strlen(name) + 1);
 
     CREATE(vd->value, char, strlen(value) + 1);
 
@@ -61,7 +61,7 @@ void add_var(struct trig_var_data **var_list, const char *name, const char *valu
     *var_list = vd;
   }
 
-  strlcpy(vd->value, value, strlen(value) + 1);
+  memcpy(vd->value, value, strlen(value) + 1);
 }
 
 /* perhaps not the best place for this, but I didn't want a new file */
