@@ -54,8 +54,8 @@
 #define VDOOR_DIAGNE (-9)
 #define VDOOR_DIAGNW (-10)
 #define DOOR_UP_AND_NE (-11)
-#define DOOR_DOWN_AND_SE -12
-#define DOOR_NONE        -13
+#define DOOR_DOWN_AND_SE (-12)
+#define DOOR_NONE        (-13)
 #define NUM_DOOR_TYPES 13
 
 #define MAP_CIRCLE    0
