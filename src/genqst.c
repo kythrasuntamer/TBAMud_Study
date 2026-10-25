@@ -260,15 +260,23 @@ int save_quests(zone_rnum zone_num)
       }
     }
   }
-  /* Write the final line and close it.  */
+  /* Write the final line and commit only a fully flushed temporary file. */
   tb_fprintf(sf, "$~\n");
-  tb_fclose(sf);
+  {
+    int flush_ok = tb_fflush_checked(sf, filename);
+    int close_ok = tb_fclose_checked(sf, filename);
+    if (!flush_ok || !close_ok) {
+      if (remove(filename) != 0 && errno != ENOENT)
+        TB_REPORT_ERRNO("remove", filename);
+      return FALSE;
+    }
+  }
 
   /* Old file we're replacing. */
   tb_snprintf(oldname, sizeof(oldname), "%s/%d.qst",
            QST_PREFIX, zone_table[zone_num].number);
-  remove(oldname);
-  rename(filename, oldname);
+  if (!tb_replace_file_checked(filename, oldname))
+    return FALSE;
 
   /* Do we need to update the index file? */
   if (num_quests > 0)
