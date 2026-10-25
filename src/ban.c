@@ -71,7 +71,7 @@ void load_banned(void)
     ban_list = next_node;
   }
 
-  fclose(fl);
+  tb_fclose(fl);
 }
 
 int isbanned(char *hostname)
@@ -98,7 +98,7 @@ static void write_one_node(FILE *fp, struct ban_list_element *node)
 {
   if (node) {
     write_one_node(fp, node->next);
-    fprintf(fp, "%s %s %ld %s\n", ban_types[node->type],
+    tb_fprintf(fp, "%s %s %ld %s\n", ban_types[node->type],
 	    node->site, (long) node->date, node->name);
   }
 }
@@ -112,7 +112,7 @@ static void write_ban_list(void)
     return;
   }
   write_one_node(fl, ban_list);/* recursively write from end to start */
-  fclose(fl);
+  tb_fclose(fl);
   return;
 }
 
@@ -142,7 +142,7 @@ ACMD(do_ban)
 
     for (ban_node = ban_list; ban_node; ban_node = ban_node->next) {
       if (ban_node->date) {
-        strftime(timestr, sizeof(timestr), "%a %b %d %Y", localtime(&(ban_node->date)));
+        tb_strftime(timestr, sizeof(timestr), "%a %b %d %Y", localtime(&(ban_node->date)));
       } else
 	strlcpy(timestr, "Unknown", sizeof(timestr));	/* strcpy: OK (strlen("Unknown") < 16) */
 
@@ -304,5 +304,5 @@ void read_invalid_list(void)
     exit(1);
   }
 
-  fclose(fp);
+  tb_fclose(fp);
 }
