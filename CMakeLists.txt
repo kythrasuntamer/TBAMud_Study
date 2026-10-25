@@ -467,6 +467,13 @@ if(ENABLE_SANITIZERS)
     endif()
 endif()
 
+# Re-run conf.h generation after optional build modes (notably sanitizers)
+# have finalized provenance values.
+configure_file(
+        ${CMAKE_SOURCE_DIR}/src/conf.h.cmake.in
+        ${CMAKE_BINARY_DIR}/conf.h
+)
+
 # ========== Source-filer ==========
 file(GLOB SRC_FILES src/*.c)
 
