@@ -214,12 +214,12 @@ void basic_mud_vlog(const char *format, va_list args)
     format = "SYSERR: log() received a NULL format.";
 
   for (i=0;i<21;i++) timestr[i]=0;
-  strftime(timestr, sizeof(timestr), "%b %d %H:%M:%S %Y", localtime(&ct));
+  tb_strftime(timestr, sizeof(timestr), "%b %d %H:%M:%S %Y", localtime(&ct));
 
-  fprintf(logfile, "%-20.20s :: ", timestr);
+  tb_fprintf(logfile, "%-20.20s :: ", timestr);
   vfprintf(logfile, format, args);
-  fputc('\n', logfile);
-  fflush(logfile);
+  tb_fputc('\n', logfile);
+  tb_fflush(logfile);
 }
 
 /** Log messages directly to syslog on disk, no display to in game immortals.
@@ -250,7 +250,7 @@ int touch(const char *path)
     log("SYSERR: %s: %s", path, strerror(errno));
     return (-1);
   } else {
-    fclose(fl);
+    tb_fclose(fl);
     return (0);
   }
 }
@@ -734,7 +734,7 @@ int get_filename(char *filename, size_t fbufsize, int mode, const char *orig_nam
     break;
   }
 
-  snprintf(filename, fbufsize, "%s%s"SLASH"%s.%s", prefix, middle, name, suffix);
+  tb_snprintf(filename, fbufsize, "%s%s"SLASH"%s.%s", prefix, middle, name, suffix);
   return (1);
 }
 
@@ -770,11 +770,11 @@ void core_dump_real(const char *who, int line)
 #if 1	/* By default, let's not litter. */
 #if defined(CIRCLE_UNIX)
   /* These would be duplicated otherwise...make very sure. */
-  fflush(stdout);
-  fflush(stderr);
-  fflush(logfile);
+  tb_fflush(stdout);
+  tb_fflush(stderr);
+  tb_fflush(logfile);
   /* Everything, just in case, for the systems that support it. */
-  fflush(NULL);
+  tb_fflush(NULL);
 
   /* Kill the child so the debugger or script doesn't think the MUD crashed.
    * The 'autorun' script would otherwise run it again. */
@@ -1033,7 +1033,7 @@ void column_list(struct char_data *ch, int num_cols, const char **list, int list
    }
 
    if (len >= sizeof(buf))
-     snprintf((buf + MAX_STRING_LENGTH) - 22, 22, "\r\n*** OVERFLOW ***\r\n");
+     tb_snprintf((buf + MAX_STRING_LENGTH) - 22, 22, "\r\n*** OVERFLOW ***\r\n");
 
    /* Send the list to the player */
    page_string(ch->desc, buf, TRUE);
@@ -1118,10 +1118,10 @@ int file_head(FILE *file, char *buf, size_t bufsize, int lines_to_read)
 
     if (olen + 1 >= bufsize) {
       core_dump();
-      snprintf(buf, bufsize, "%s", overflow);
+      tb_snprintf(buf, bufsize, "%s", overflow);
     } else {
       size_t start = (buflen > olen) ? buflen - olen : 0;
-      snprintf(buf + start, bufsize - start, "%s", overflow);
+      tb_snprintf(buf + start, bufsize - start, "%s", overflow);
     }
   }
 
@@ -1205,10 +1205,10 @@ int file_tail(FILE *file, char *buf, size_t bufsize, int lines_to_read)
 
     if (olen + 1 >= bufsize) {
       core_dump();
-      snprintf(buf, bufsize, "%s", overflow);
+      tb_snprintf(buf, bufsize, "%s", overflow);
     } else {
       size_t start = (buflen > olen) ? buflen - olen : 0;
-      snprintf(buf + start, bufsize - start, "%s", overflow);
+      tb_snprintf(buf + start, bufsize - start, "%s", overflow);
     }
   }
 
