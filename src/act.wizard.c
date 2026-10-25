@@ -2210,6 +2210,8 @@ ACMD(do_wiznet)
   switch (*argument) {
   case '*':
     emote = TRUE;
+    /* Intentional fall through: emotes share the #level parsing path. */
+    /* fall through */
   case '#':
     one_argument(argument + 1, buf1);
     if (is_number(buf1)) {
@@ -4072,6 +4074,7 @@ static void trg_checkload(struct char_data *ch, trig_vnum tvnum)
           lastroom_r = 0;
           lastobj_r = 0;
           lastmob_r = 0;
+          break;
         case 'T':                   /* trigger to something */
           if (ZCMD2.arg2 != trnum)
             break;
