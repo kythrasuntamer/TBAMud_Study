@@ -289,7 +289,7 @@ void parse_edit_action(int command, char *string, struct descriptor_data *d)
     }
     *buf = '\0';
     if (line_high < 999999 || line_low > 1)
-      snprintf(buf, sizeof(buf), "Current buffer range [%d - %d]:\r\n", line_low, line_high);
+      tb_snprintf(buf, sizeof(buf), "Current buffer range [%d - %d]:\r\n", line_low, line_high);
     i = 1;
     total_len = 0;
     s = *d->str;
@@ -317,7 +317,7 @@ void parse_edit_action(int command, char *string, struct descriptor_data *d)
     } else
       strncat(buf, t, sizeof(buf) - strlen(buf) - 1);
     /* This is kind of annoying...but some people like it. */
-    snprintf(buf + strlen(buf), sizeof(buf) - strlen(buf), "\r\n%d line%sshown.\r\n", total_len, (total_len != 1) ? "s " : " ");
+    tb_snprintf(buf + strlen(buf), sizeof(buf) - strlen(buf), "\r\n%d line%sshown.\r\n", total_len, (total_len != 1) ? "s " : " ");
     page_string(d, buf, TRUE);
     break;
   case PARSE_LIST_NUM:
@@ -368,7 +368,7 @@ void parse_edit_action(int command, char *string, struct descriptor_data *d)
         temp = *s;
         *s = '\0';
         char buf3[13];
-        sprintf(buf3, "%4d: ", (i - 1));
+        tb_snprintf(buf3, sizeof(buf3), "%4d: ", (i - 1));
         strncat(buf, buf3, sizeof(buf) - strlen(buf) - 1);
         strncat(buf, t, sizeof(buf) - strlen(buf) - 1);
         *s = temp;
@@ -391,7 +391,7 @@ void parse_edit_action(int command, char *string, struct descriptor_data *d)
       write_to_output(d, "You must specify a line number before which to insert text.\r\n");
       return;
     }
-    line_low = atoi(buf);
+    line_low = tb_parse_int_or_zero(buf);
     strncat(buf2, "\r\n", sizeof(buf2) - strlen(buf2) - 1);
 
     i = 1;
@@ -425,7 +425,7 @@ void parse_edit_action(int command, char *string, struct descriptor_data *d)
         strncat(buf, s, sizeof(buf) - strlen(buf) - 1);
       RECREATE(*d->str, char, strlen(buf) + 3);
 
-      strcpy(*d->str, buf);
+      memcpy(*d->str, buf, strlen(buf) + 1);
       write_to_output(d, "Line inserted.\r\n");
     } else {
       write_to_output(d, "Line number must be higher than 0.\r\n");
@@ -439,7 +439,7 @@ void parse_edit_action(int command, char *string, struct descriptor_data *d)
       write_to_output(d, "You must specify a line number at which to change text.\r\n");
       return;
     }
-    line_low = atoi(buf);
+    line_low = tb_parse_int_or_zero(buf);
     strncat(buf2, "\r\n", sizeof(buf2) - strlen(buf2) - 1);
 
     i = 1;
@@ -487,7 +487,7 @@ void parse_edit_action(int command, char *string, struct descriptor_data *d)
       }
       /* Change the size of the REAL buffer to fit the new text. */
       RECREATE(*d->str, char, strlen(buf) + 3);
-      strcpy(*d->str, buf);
+      memcpy(*d->str, buf, strlen(buf) + 1);
       write_to_output(d, "Line changed.\r\n");
     } else {
       write_to_output(d, "Line number must be higher than 0.\r\n");
@@ -528,7 +528,8 @@ int format_text(char **ptr_string, int mode, struct descriptor_data *d, unsigned
       write_to_output(d, "There aren't that many lines!\r\n");
       return 0;
     }
-    strncat(formatted, strcat(start, "\n"), sizeof(formatted) - strlen(formatted) - 1);
+    strlcat(formatted, start, sizeof(formatted));
+    strlcat(formatted, "\n", sizeof(formatted));
     if ((flow = strstr(flow, "\n")) == NULL) {
       write_to_output(d, "There aren't that many lines!\r\n");
       return 0;
@@ -631,7 +632,7 @@ int format_text(char **ptr_string, int mode, struct descriptor_data *d, unsigned
         color_chars = count_color_chars(start);
       } else if (*flow == '\"' || *flow == '\'') {
         char buf[MAX_STRING_LENGTH - 1];
-        snprintf(buf, sizeof(buf), "%c  ", *flow);
+        tb_snprintf(buf, sizeof(buf), "%c  ", *flow);
         strncat(formatted, buf, sizeof(formatted) - strlen(formatted) - 1);
         flow++;
         line_chars++;
@@ -710,7 +711,7 @@ int replace_str(char **string, char *pattern, char *replacement, int rep_all, un
     return i;
   } else {
     RECREATE(*string, char, strlen(replace_buffer) + 3);
-    strcpy(*string, replace_buffer);
+    memcpy(*string, replace_buffer, strlen(replace_buffer) + 1);
   }
   free(replace_buffer);
   return i;

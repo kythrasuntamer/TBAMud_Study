@@ -96,7 +96,7 @@ int isname(const char *str, const char *namelist)
   for(curtok = strtok(newlist, WHITESPACE); curtok; curtok = strtok(NULL, WHITESPACE))
     if(curtok && is_abbrev(str, curtok)) {
       /* Don't allow abbreviated numbers. - Sryth */
-      if (isdigit(*str) && (atoi(str) != atoi(curtok))) {
+      if (isdigit(*str) && (tb_parse_int_or_zero(str) != tb_parse_int_or_zero(curtok))) {
         free(newlist);
         return 0;
       }
@@ -605,13 +605,13 @@ int get_number(char **name)
   if ((ppos = strchr(*name, '.')) != NULL) {
     *ppos++ = '\0';
     strlcpy(number, *name, sizeof(number));
-    strcpy(*name, ppos);	/* strcpy: OK (always smaller) */
+    memmove(*name, ppos, strlen(ppos) + 1);	/* strcpy: OK (always smaller) */
 
     for (i = 0; *(number + i); i++)
       if (!isdigit(*(number + i)))
 	return (0);
 
-    return (atoi(number));
+    return (tb_parse_int_or_zero(number));
   }
   return (1);
 }
@@ -1323,21 +1323,21 @@ struct obj_data *create_money(int amount)
   } else {
     obj->name = strdup("coins gold");
     obj->short_description = strdup(money_desc(amount));
-    snprintf(buf, sizeof(buf), "%s is lying here.", money_desc(amount));
+    tb_snprintf(buf, sizeof(buf), "%s is lying here.", money_desc(amount));
     obj->description = strdup(CAP(buf));
 
     new_descr->keyword = strdup("coins gold");
     if (amount < 10)
-      snprintf(buf, sizeof(buf), "There are %d coins.", amount);
+      tb_snprintf(buf, sizeof(buf), "There are %d coins.", amount);
     else if (amount < 100)
-      snprintf(buf, sizeof(buf), "There are about %d coins.", 10 * (amount / 10));
+      tb_snprintf(buf, sizeof(buf), "There are about %d coins.", 10 * (amount / 10));
     else if (amount < 1000)
-      snprintf(buf, sizeof(buf), "It looks to be about %d coins.", 100 * (amount / 100));
+      tb_snprintf(buf, sizeof(buf), "It looks to be about %d coins.", 100 * (amount / 100));
     else if (amount < 100000)
-      snprintf(buf, sizeof(buf), "You guess there are, maybe, %d coins.",
+      tb_snprintf(buf, sizeof(buf), "You guess there are, maybe, %d coins.",
 	      1000 * ((amount / 1000) + rand_number(0, (amount / 1000))));
     else
-      strcpy(buf, "There are a LOT of coins.");	/* strcpy: OK (is < 200) */
+      strlcpy(buf, "There are a LOT of coins.", sizeof(buf));	/* strcpy: OK (is < 200) */
     new_descr->description = strdup(buf);
   }
 

@@ -79,7 +79,7 @@ ACMD(do_oasis_zedit)
         send_to_char(ch, "Format: zedit new <zone number> <bottom-room> "
            "<upper-room>\r\n");
       else {
-        if (atoi(stop) < 0 || atoi(sbot) < 0) {
+        if (tb_parse_int_or_zero(stop) < 0 || tb_parse_int_or_zero(sbot) < 0) {
           send_to_char(ch, "Zones cannot contain negative vnums.\r\n");
           return;
         }
@@ -378,7 +378,7 @@ static void zedit_disp_flag_menu(struct descriptor_data *d)
   clear_screen(d);
   column_list(d->character, 0, zone_bits, NUM_ZONE_FLAGS, TRUE);
 
-  sprintbitarray(OLC_ZONE(d)->zone_flags, zone_bits, ZN_ARRAY_MAX, bits);
+  sprintbitarray(OLC_ZONE(d)->zone_flags, zone_bits, ZN_ARRAY_MAX, bits, sizeof(bits));
   write_to_output(d, "\r\nZone flags: \tc%s\tn\r\n"
          "Enter Zone flags, 0 to quit : ", bits);
   OLC_MODE(d) = ZEDIT_ZONE_FLAGS;
@@ -389,21 +389,21 @@ static bool zedit_get_levels(struct descriptor_data *d, char *buf)
 {
   /* Create a string for the recommended levels for this zone. */
   if ((OLC_ZONE(d)->min_level == -1) && (OLC_ZONE(d)->max_level == -1)) {
-    sprintf(buf, "<Not Set!>");
+    tb_snprintf(buf, MAX_INPUT_LENGTH, "<Not Set!>");
     return FALSE;
   }
 
   if (OLC_ZONE(d)->min_level == -1) {
-    sprintf(buf, "Up to level %d", OLC_ZONE(d)->max_level);
+    tb_snprintf(buf, MAX_INPUT_LENGTH, "Up to level %d", OLC_ZONE(d)->max_level);
     return TRUE;
   }
 
   if (OLC_ZONE(d)->max_level == -1) {
-    sprintf(buf, "Above level %d", OLC_ZONE(d)->min_level);
+    tb_snprintf(buf, MAX_INPUT_LENGTH, "Above level %d", OLC_ZONE(d)->min_level);
     return TRUE;
   }
 
-  sprintf(buf, "Levels %d to %d", OLC_ZONE(d)->min_level, OLC_ZONE(d)->max_level);
+  tb_snprintf(buf, MAX_INPUT_LENGTH, "Levels %d to %d", OLC_ZONE(d)->min_level, OLC_ZONE(d)->max_level);
   return TRUE;
 }
 
@@ -419,7 +419,7 @@ static void zedit_disp_menu(struct descriptor_data *d)
   get_char_colors(d->character);
   clear_screen(d);
 
-  sprintbitarray(OLC_ZONE(d)->zone_flags, zone_bits, ZN_ARRAY_MAX, buf1);
+  sprintbitarray(OLC_ZONE(d)->zone_flags, zone_bits, ZN_ARRAY_MAX, buf1, sizeof(buf1));
   levels_set = zedit_get_levels(d, lev_string);
 
   /* Menu header */
@@ -870,7 +870,7 @@ void zedit_parse(struct descriptor_data *d, char *arg)
 
 /*-------------------------------------------------------------------*/
   case ZEDIT_LEV_MIN:
-    pos = atoi(arg);
+    pos = tb_parse_int_or_zero(arg);
     OLC_ZONE(d)->min_level = MIN(MAX(pos,-1), 100);
     OLC_ZONE(d)->number = 1;
     zedit_disp_levels(d);
@@ -878,7 +878,7 @@ void zedit_parse(struct descriptor_data *d, char *arg)
 
 /*-------------------------------------------------------------------*/
   case ZEDIT_LEV_MAX:
-    pos = atoi(arg);
+    pos = tb_parse_int_or_zero(arg);
     OLC_ZONE(d)->max_level = MIN(MAX(pos,-1), 100);
     OLC_ZONE(d)->number = 1;
     zedit_disp_levels(d);
@@ -887,7 +887,7 @@ void zedit_parse(struct descriptor_data *d, char *arg)
 /*-------------------------------------------------------------------*/
   case ZEDIT_NEW_ENTRY:
     /* Get the line number and insert the new line. */
-    pos = atoi(arg);
+    pos = tb_parse_int_or_zero(arg);
     if (isdigit(*arg) && new_command(OLC_ZONE(d), pos)) {
       if (start_change_command(d, pos)) {
 	zedit_disp_comtype(d);
@@ -900,7 +900,7 @@ void zedit_parse(struct descriptor_data *d, char *arg)
 /*-------------------------------------------------------------------*/
   case ZEDIT_DELETE_ENTRY:
     /* Get the line number and delete the line. */
-    pos = atoi(arg);
+    pos = tb_parse_int_or_zero(arg);
     if (isdigit(*arg)) {
       delete_zone_command(OLC_ZONE(d), pos);
       OLC_ZONE(d)->age = 1;
@@ -920,7 +920,7 @@ void zedit_parse(struct descriptor_data *d, char *arg)
       break;
     }
 
-    pos = atoi(arg);
+    pos = tb_parse_int_or_zero(arg);
     if (isdigit(*arg) && start_change_command(d, pos)) {
       zedit_disp_comtype(d);
       OLC_ZONE(d)->age = 1;
@@ -978,7 +978,7 @@ void zedit_parse(struct descriptor_data *d, char *arg)
     }
     switch (OLC_CMD(d).command) {
     case 'M':
-      if ((pos = real_mobile(atoi(arg))) != NOBODY) {
+      if ((pos = real_mobile(tb_parse_int_or_zero(arg))) != NOBODY) {
 	OLC_CMD(d).arg1 = pos;
 	zedit_disp_arg2(d);
       } else
@@ -988,7 +988,7 @@ void zedit_parse(struct descriptor_data *d, char *arg)
     case 'P':
     case 'E':
     case 'G':
-      if ((pos = real_object(atoi(arg))) != NOTHING) {
+      if ((pos = real_object(tb_parse_int_or_zero(arg))) != NOTHING) {
 	OLC_CMD(d).arg1 = pos;
 	zedit_disp_arg2(d);
       } else
@@ -996,10 +996,10 @@ void zedit_parse(struct descriptor_data *d, char *arg)
       break;
     case 'T':
     case 'V':
-      if (atoi(arg)<MOB_TRIGGER || atoi(arg)>WLD_TRIGGER)
+      if (tb_parse_int_or_zero(arg)<MOB_TRIGGER || tb_parse_int_or_zero(arg)>WLD_TRIGGER)
         write_to_output(d, "Invalid input.");
       else {
-       OLC_CMD(d).arg1 = atoi(arg);
+       OLC_CMD(d).arg1 = tb_parse_int_or_zero(arg);
         zedit_disp_arg2(d);
       }
       break;
@@ -1024,35 +1024,35 @@ void zedit_parse(struct descriptor_data *d, char *arg)
     switch (OLC_CMD(d).command) {
     case 'M':
     case 'O':
-      OLC_CMD(d).arg2 = MIN(MAX_DUPLICATES, atoi(arg));
+      OLC_CMD(d).arg2 = MIN(MAX_DUPLICATES, tb_parse_int_or_zero(arg));
       OLC_CMD(d).arg3 = real_room(OLC_NUM(d));
       zedit_disp_menu(d);
       break;
     case 'G':
-      OLC_CMD(d).arg2 = MIN(MAX_DUPLICATES, atoi(arg));
+      OLC_CMD(d).arg2 = MIN(MAX_DUPLICATES, tb_parse_int_or_zero(arg));
       zedit_disp_menu(d);
       break;
     case 'P':
     case 'E':
-      OLC_CMD(d).arg2 = MIN(MAX_DUPLICATES, atoi(arg));
+      OLC_CMD(d).arg2 = MIN(MAX_DUPLICATES, tb_parse_int_or_zero(arg));
       zedit_disp_arg3(d);
       break;
     case 'V':
-      OLC_CMD(d).arg2 = atoi(arg); /* context */
+      OLC_CMD(d).arg2 = tb_parse_int_or_zero(arg); /* context */
       OLC_CMD(d).arg3 = real_room(OLC_NUM(d));
       write_to_output(d, "Enter the global name : ");
       OLC_MODE(d) = ZEDIT_SARG1;
       break;
     case 'T':
-      if (real_trigger(atoi(arg)) != NOTHING) {
-        OLC_CMD(d).arg2 = real_trigger(atoi(arg)); /* trigger */
+      if (real_trigger(tb_parse_int_or_zero(arg)) != NOTHING) {
+        OLC_CMD(d).arg2 = real_trigger(tb_parse_int_or_zero(arg)); /* trigger */
         OLC_CMD(d).arg3 = real_room(OLC_NUM(d));
         zedit_disp_menu(d);
       } else
         write_to_output(d, "That trigger does not exist, try again : ");
       break;
     case 'D':
-      pos = atoi(arg);
+      pos = tb_parse_int_or_zero(arg);
       /* Count directions. */
       if (pos < 0 || pos > DIR_COUNT)
 	write_to_output(d, "Try again : ");
@@ -1062,7 +1062,7 @@ void zedit_parse(struct descriptor_data *d, char *arg)
       }
       break;
     case 'R':
-      if ((pos = real_object(atoi(arg))) != NOTHING) {
+      if ((pos = real_object(tb_parse_int_or_zero(arg))) != NOTHING) {
 	OLC_CMD(d).arg2 = pos;
 	zedit_disp_menu(d);
       } else
@@ -1086,7 +1086,7 @@ void zedit_parse(struct descriptor_data *d, char *arg)
     }
     switch (OLC_CMD(d).command) {
     case 'E':
-      pos = atoi(arg) - 1;
+      pos = tb_parse_int_or_zero(arg) - 1;
       /* Count number of wear positions. */
       if (pos < 0 || pos >= NUM_WEARS)
 	write_to_output(d, "Try again : ");
@@ -1096,14 +1096,14 @@ void zedit_parse(struct descriptor_data *d, char *arg)
       }
       break;
     case 'P':
-      if ((pos = real_object(atoi(arg))) != NOTHING) {
+      if ((pos = real_object(tb_parse_int_or_zero(arg))) != NOTHING) {
 	OLC_CMD(d).arg3 = pos;
 	zedit_disp_menu(d);
       } else
 	write_to_output(d, "That object does not exist, try again : ");
       break;
     case 'D':
-      pos = atoi(arg);
+      pos = tb_parse_int_or_zero(arg);
       if (pos < 0 || pos > 2)
 	write_to_output(d, "Try again : ");
       else {
@@ -1176,7 +1176,7 @@ void zedit_parse(struct descriptor_data *d, char *arg)
 /*-------------------------------------------------------------------*/
   case ZEDIT_ZONE_RESET:
     /* Parse and add new reset_mode and return to main menu. */
-    pos = atoi(arg);
+    pos = tb_parse_int_or_zero(arg);
     if (!isdigit(*arg) || pos < 0 || pos > 2)
       write_to_output(d, "Try again (0-2) : ");
     else {
@@ -1189,7 +1189,7 @@ void zedit_parse(struct descriptor_data *d, char *arg)
 /*-------------------------------------------------------------------*/
   case ZEDIT_ZONE_LIFE:
     /* Parse and add new lifespan and return to main menu. */
-    pos = atoi(arg);
+    pos = tb_parse_int_or_zero(arg);
     if (!isdigit(*arg) || pos < 0 || pos > 240)
       write_to_output(d, "Try again (0-240) : ");
     else {
@@ -1201,7 +1201,7 @@ void zedit_parse(struct descriptor_data *d, char *arg)
 
 /*-------------------------------------------------------------------*/
   case ZEDIT_ZONE_FLAGS:
-    number = atoi(arg);
+    number = tb_parse_int_or_zero(arg);
     if (number < 0 || number > NUM_ZONE_FLAGS) {
       write_to_output(d, "That is not a valid choice!\r\n");
       zedit_disp_flag_menu(d);
@@ -1223,9 +1223,9 @@ void zedit_parse(struct descriptor_data *d, char *arg)
   case ZEDIT_ZONE_BOT:
     /* Parse and add new bottom room in zone and return to main menu. */
     if (OLC_ZNUM(d) == 0)
-      OLC_ZONE(d)->bot = LIMIT(atoi(arg), 0, OLC_ZONE(d)->top);
+      OLC_ZONE(d)->bot = LIMIT(tb_parse_int_or_zero(arg), 0, OLC_ZONE(d)->top);
     else
-      OLC_ZONE(d)->bot = LIMIT(atoi(arg), zone_table[OLC_ZNUM(d) - 1].top + 1, OLC_ZONE(d)->top);
+      OLC_ZONE(d)->bot = LIMIT(tb_parse_int_or_zero(arg), zone_table[OLC_ZNUM(d) - 1].top + 1, OLC_ZONE(d)->top);
     OLC_ZONE(d)->number = 1;
     zedit_disp_menu(d);
     break;
@@ -1234,9 +1234,9 @@ void zedit_parse(struct descriptor_data *d, char *arg)
   case ZEDIT_ZONE_TOP:
     /* Parse and add new top room in zone and return to main menu. */
     if (OLC_ZNUM(d) == top_of_zone_table)
-      OLC_ZONE(d)->top = LIMIT(atoi(arg), genolc_zonep_bottom(OLC_ZONE(d)), 32000);
+      OLC_ZONE(d)->top = LIMIT(tb_parse_int_or_zero(arg), genolc_zonep_bottom(OLC_ZONE(d)), 32000);
     else
-      OLC_ZONE(d)->top = LIMIT(atoi(arg), genolc_zonep_bottom(OLC_ZONE(d)), genolc_zone_bottom(OLC_ZNUM(d) + 1) - 1);
+      OLC_ZONE(d)->top = LIMIT(tb_parse_int_or_zero(arg), genolc_zonep_bottom(OLC_ZONE(d)), genolc_zone_bottom(OLC_ZNUM(d) + 1) - 1);
     OLC_ZONE(d)->number = 1;
     zedit_disp_menu(d);
     break;

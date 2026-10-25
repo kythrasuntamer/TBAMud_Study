@@ -257,7 +257,7 @@ int main(int argc, char **argv)
       break;
     case 'C': /* -C<socket number> - recover from copyover, this is the control socket */
        fCopyOver = TRUE;
-       mother_desc = atoi(argv[pos]+2);
+       mother_desc = tb_parse_int_or_zero(argv[pos]+2);
       break;
     case 'd':
       if (*(argv[pos] + 2))
@@ -318,7 +318,7 @@ int main(int argc, char **argv)
     if (!isdigit(*argv[pos])) {
       printf("Usage: %s [-c] [-m] [-q] [-r] [-s] [-d pathname] [port #]\n", argv[0]);
       exit(1);
-    } else if ((port = atoi(argv[pos])) <= 1024) {
+    } else if ((port = tb_parse_int_or_zero(argv[pos])) <= 1024) {
       printf("SYSERR: Illegal port number %d.\n", port);
       exit(1);
     }
@@ -333,7 +333,7 @@ int main(int argc, char **argv)
   log("%s", tbamud_version);
 
   if (chdir(dir) < 0) {
-    perror("SYSERR: Fatal error changing to data directory");
+    TB_REPORT_ERRNO("chdir", "data directory");
     exit(1);
   }
   log("Using %s as data directory.", dir);
@@ -399,7 +399,7 @@ void copyover_recover()
   fp = fopen (COPYOVER_FILE, "r");
   /* there are some descriptors open which will hang forever then ? */
   if (!fp) {
-    perror ("copyover_recover:fopen");
+    TB_REPORT_ERRNO("fopen", COPYOVER_FILE);
     log ("Copyover file not found. Exitting.\n\r");
     exit (1);
   }
@@ -412,10 +412,10 @@ void copyover_recover()
 
   if (i != 1) {
     if (ferror(fp))
-      log("SYSERR: Error reading boot time from %s: %s", COPYOVER_FILE, strerror(errno));
+      TB_REPORT_ERRNO("fscanf", COPYOVER_FILE);
     else
       log("SYSERR: Invalid or truncated boot time in %s.", COPYOVER_FILE);
-    fclose(fp);
+    tb_fclose(fp);
     exit(1);
   }
 
@@ -428,10 +428,10 @@ void copyover_recover()
       }
 
       if (ferror(fp))
-        log("SYSERR: error reading copyover file %s: %s", COPYOVER_FILE, strerror(errno));
+        TB_REPORT_ERRNO("fscanf", COPYOVER_FILE);
       else
         log("SYSERR: could not scan line in copyover file %s.", COPYOVER_FILE);
-      fclose(fp);
+      tb_fclose(fp);
       exit(1);
     }
 
@@ -449,7 +449,7 @@ void copyover_recover()
     memset ((char *) d, 0, sizeof (struct descriptor_data));
     init_descriptor (d,desc); /* set up various stuff */
 
-    strcpy(d->host, host);
+    strlcpy(d->host, host, sizeof(d->host));
     d->next = descriptor_list;
     descriptor_list = d;
 
@@ -501,7 +501,7 @@ void copyover_recover()
       }
     }
   }
-  fclose (fp);
+  tb_fclose(fp);
 }
 
 /* Init sockets, run game, and cleanup sockets */
@@ -609,7 +609,7 @@ static socket_t init_socket(ush_int local_port)
    * number anyway, so the point is (hopefully) moot. */
 
   if ((s = socket(PF_INET, SOCK_STREAM, 0)) < 0) {
-    perror("SYSERR: Error creating socket");
+    TB_REPORT_ERRNO("socket", "mother descriptor");
     exit(1);
   }
 #endif				/* CIRCLE_WINDOWS */
@@ -617,7 +617,7 @@ static socket_t init_socket(ush_int local_port)
 #if defined(SO_REUSEADDR) && !defined(CIRCLE_MACINTOSH)
   opt = 1;
   if (setsockopt(s, SOL_SOCKET, SO_REUSEADDR, (char *) &opt, sizeof(opt)) < 0){
-    perror("SYSERR: setsockopt REUSEADDR");
+    TB_REPORT_ERRNO("setsockopt", "SO_REUSEADDR on mother descriptor");
     exit(1);
   }
 #endif
@@ -633,7 +633,7 @@ static socket_t init_socket(ush_int local_port)
     ld.l_onoff = 0;
     ld.l_linger = 0;
     if (setsockopt(s, SOL_SOCKET, SO_LINGER, (char *) &ld, sizeof(ld)) < 0)
-      perror("SYSERR: setsockopt SO_LINGER");	/* Not fatal I suppose. */
+      TB_REPORT_ERRNO("setsockopt", "SO_LINGER on mother descriptor"); /* non-fatal */
   }
 #endif
 
@@ -645,12 +645,16 @@ static socket_t init_socket(ush_int local_port)
   sa.sin_addr = *(get_bind_addr());
 
   if (bind(s, (struct sockaddr *) &sa, sizeof(sa)) < 0) {
-    perror("SYSERR: bind");
+    TB_REPORT_ERRNO("bind", "mother descriptor");
     CLOSE_SOCKET(s);
     exit(1);
   }
   nonblock(s);
-  listen(s, 5);
+  if (listen(s, 5) < 0) {
+    TB_REPORT_ERRNO("listen", "mother descriptor backlog=5");
+    CLOSE_SOCKET(s);
+    exit(1);
+  }
   return (s);
 }
 
@@ -672,7 +676,7 @@ static int get_max_players(void)
     /* find the limit of file descs */
     method = "rlimit";
     if (getrlimit(RLIMIT_NOFILE, &limit) < 0) {
-      perror("SYSERR: calling getrlimit");
+      TB_REPORT_ERRNO("getrlimit", "RLIMIT_NOFILE");
       exit(1);
     }
 
@@ -685,7 +689,7 @@ static int get_max_players(void)
       limit.rlim_cur = OPEN_MAX;
 #endif
       if (setrlimit(RLIMIT_NOFILE, &limit) < 0) {
-        perror("SYSERR: calling setrlimit");
+        TB_REPORT_ERRNO("setrlimit", "RLIMIT_NOFILE");
         exit(1);
       }
     }
@@ -716,7 +720,7 @@ static int get_max_players(void)
     if (errno == 0)
       max_descs = CONFIG_MAX_PLAYING + NUM_RESERVED_DESCS;
     else {
-      perror("SYSERR: Error calling sysconf");
+      TB_REPORT_ERRNO("sysconf", "_SC_OPEN_MAX");
       exit(1);
     }
   }
@@ -774,7 +778,7 @@ void game_loop(socket_t local_mother_desc)
 	if (errno == EINTR)
 	  log("Waking up to process signal.");
 	else
-	  perror("SYSERR: Select coma");
+	  TB_REPORT_ERRNO("select", "idle mother descriptor wait");
       } else
 	log("New connection.  Waking up.");
       gettimeofday(&last_time, (struct timezone *) 0);
@@ -832,7 +836,7 @@ void game_loop(socket_t local_mother_desc)
 
     /* Poll (without blocking) for new input, output, and exceptions */
     if (select(maxdesc + 1, &input_set, &output_set, &exc_set, &null_time) < 0) {
-      perror("SYSERR: Select poll");
+      TB_REPORT_ERRNO("select", "main descriptor poll");
       return;
     }
     /* If there are new connections waiting, accept them. */
@@ -1129,11 +1133,11 @@ static char *make_prompt(struct descriptor_data *d)
   /* Note, prompt is truncated at MAX_PROMPT_LENGTH chars (structs.h) */
 
   if (d->showstr_count)
-    snprintf(prompt, sizeof(prompt),
+    tb_snprintf(prompt, sizeof(prompt),
       "[ Return to continue, (q)uit, (r)efresh, (b)ack, or page number (%d/%d) ]",
       d->showstr_page, d->showstr_count);
   else if (d->str)
-    strcpy(prompt, "] ");	/* strcpy: OK (for 'MAX_PROMPT_LENGTH >= 3') */
+    strlcpy(prompt, "] ", sizeof(prompt));	/* strcpy: OK (for 'MAX_PROMPT_LENGTH >= 3') */
   else if (STATE(d) == CON_PLAYING && !IS_NPC(d->character)) {
     int count;
     size_t len = 0;
@@ -1212,7 +1216,7 @@ static char *make_prompt(struct descriptor_data *d)
     if (len < sizeof(prompt))
       strncat(prompt, "> ", sizeof(prompt) - len - 1);	/* strncat: OK */
   } else if (STATE(d) == CON_PLAYING && IS_NPC(d->character))
-    snprintf(prompt, sizeof(prompt), "%s> ", GET_NAME(d->character));
+    tb_snprintf(prompt, sizeof(prompt), "%s> ", GET_NAME(d->character));
   else
     *prompt = '\0';
 
@@ -1248,7 +1252,7 @@ static int get_from_q(struct txt_q *queue, char *dest, int *aliased)
   if (!queue->head)
     return (0);
 
-  strcpy(dest, queue->head->text);	/* strcpy: OK (mutual MAX_INPUT_LENGTH) */
+  strlcpy(dest, queue->head->text, MAX_INPUT_LENGTH);	/* strcpy: OK (mutual MAX_INPUT_LENGTH) */
   *aliased = queue->head->aliased;
 
   tmp = queue->head;
@@ -1301,7 +1305,7 @@ size_t vwrite_to_output(struct descriptor_data *t, const char *format, va_list a
 
   wantsize = size = vsnprintf(txt, sizeof(txt), format, args);
 
-  strcpy(txt, ProtocolOutput( t, txt, (int*)&wantsize )); /* <--- Add this line */
+  strlcpy(txt, ProtocolOutput( t, txt, (int*)&wantsize ), sizeof(txt)); /* <--- Add this line */
   size = wantsize;                    /* <--- Add this line */
   if ( t->pProtocol->WriteOOB > 0 )   /* <--- Add this line */
     --t->pProtocol->WriteOOB;         /* <--- Add this line */
@@ -1309,7 +1313,7 @@ size_t vwrite_to_output(struct descriptor_data *t, const char *format, va_list a
   /* If exceeding the size of the buffer, truncate it for the overflow message */
   if (size < 0 || wantsize >= sizeof(txt)) {
     size = sizeof(txt) - 1;
-    strcpy(txt + size - strlen(text_overflow), text_overflow);	/* strcpy: OK */
+    strlcpy(txt + size - strlen(text_overflow), text_overflow, sizeof(txt) - (size_t)(size - strlen(text_overflow)));	/* strcpy: OK */
   }
 
   /* If the text is too big to fit into even a large buffer, truncate
@@ -1324,7 +1328,7 @@ size_t vwrite_to_output(struct descriptor_data *t, const char *format, va_list a
   /* If we have enough space, just write to buffer and that's it! If the
    * text just barely fits, then it's switched to a large buffer instead. */
   if (t->bufspace > size) {
-    strcpy(t->output + t->bufptr, txt);	/* strcpy: OK (size checked above) */
+    strlcpy(t->output + t->bufptr, txt, (size_t)t->bufspace);	/* strcpy: OK (size checked above) */
     t->bufspace -= size;
     t->bufptr += size;
     return (t->bufspace);
@@ -1342,9 +1346,9 @@ size_t vwrite_to_output(struct descriptor_data *t, const char *format, va_list a
     buf_largecount++;
   }
 
-  strcpy(t->large_outbuf->text, t->output);	/* strcpy: OK (size checked previously) */
+  strlcpy(t->large_outbuf->text, t->output, LARGE_BUFSIZE);	/* strcpy: OK (size checked previously) */
   t->output = t->large_outbuf->text;	/* make big buffer primary */
-  strcat(t->output, txt);	/* strcat: OK (size checked) */
+  strlcat(t->output, txt, LARGE_BUFSIZE);	/* strcat: OK (size checked) */
 
   /* set the pointer for the next write */
   t->bufptr = strlen(t->output);
@@ -1442,7 +1446,7 @@ static int set_sendbuf(socket_t s)
   int opt = MAX_SOCK_BUF;
 
   if (setsockopt(s, SOL_SOCKET, SO_SNDBUF, (char *) &opt, sizeof(opt)) < 0) {
-    perror("SYSERR: setsockopt SNDBUF");
+    TB_REPORT_ERRNO("setsockopt", "SO_SNDBUF");
     return (-1);
   }
 #endif
@@ -1486,7 +1490,11 @@ static int new_descriptor(socket_t s)
   /* accept the new connection */
   i = sizeof(peer);
   if ((desc = accept(s, (struct sockaddr *) &peer, &i)) == INVALID_SOCKET) {
-    perror("SYSERR: accept");
+#ifndef CIRCLE_WINDOWS
+    TB_REPORT_ERRNO("accept", "mother descriptor");
+#else
+    log("SYSERR: accept failed on mother descriptor: Winsock error #%d", WSAGetLastError());
+#endif
     return (-1);
   }
   /* keep it from blocking */
@@ -1516,8 +1524,15 @@ static int new_descriptor(socket_t s)
 		             sizeof(peer.sin_addr), AF_INET))) {
 
     /* resolution failed */
-    if (!CONFIG_NS_IS_SLOW)
-      perror("SYSERR: gethostbyaddr");
+    if (!CONFIG_NS_IS_SLOW) {
+#ifdef CIRCLE_WINDOWS
+      log("SYSERR: gethostbyaddr failed for %s (Winsock error #%d)",
+          inet_ntoa(peer.sin_addr), WSAGetLastError());
+#else
+      log("SYSERR: gethostbyaddr failed for %s (h_errno=%d)",
+          inet_ntoa(peer.sin_addr), h_errno);
+#endif
+    }
 
     /* find the numeric site address */
     strncpy(newd->host, (char *)inet_ntoa(peer.sin_addr), HOST_LENGTH);	/* strncpy: OK (n->host:HOST_LENGTH+1) */
@@ -1567,22 +1582,22 @@ static int process_output(struct descriptor_data *t)
   int result;
 
   /* we may need this \r\n for later -- see below */
-  strcpy(i, "\r\n");	/* strcpy: OK (for 'MAX_SOCK_BUF >= 3') */
+  strlcpy(i, "\r\n", sizeof(i));	/* strcpy: OK (for 'MAX_SOCK_BUF >= 3') */
 
   /* now, append the 'real' output */
-  strcpy(osb, t->output);	/* strcpy: OK (t->output:LARGE_BUFSIZE < osb:MAX_SOCK_BUF-2) */
+  strlcpy(osb, t->output, sizeof(i) - 2);	/* strcpy: OK (t->output:LARGE_BUFSIZE < osb:MAX_SOCK_BUF-2) */
 
   /* if we're in the overflow state, notify the user */
   if (t->bufspace == 0)
-    strcat(osb, "**OVERFLOW**\r\n");	/* strcpy: OK (osb:MAX_SOCK_BUF-2 reserves space) */
+    strlcat(osb, "**OVERFLOW**\r\n", sizeof(i) - 2);	/* strcpy: OK (osb:MAX_SOCK_BUF-2 reserves space) */
 
   /* add the extra CRLF if the person isn't in compact mode */
   if (STATE(t) == CON_PLAYING && t->character && !IS_NPC(t->character) && !PRF_FLAGGED(t->character, PRF_COMPACT))
     if ( !t->pProtocol->WriteOOB ) 
-      strcat(osb, "\r\n");	/* strcpy: OK (osb:MAX_SOCK_BUF-2 reserves space) */
+      strlcat(osb, "\r\n", sizeof(i) - 2);	/* strcpy: OK (osb:MAX_SOCK_BUF-2 reserves space) */
 
   if (!t->pProtocol->WriteOOB) /* add a prompt */
-    strcat(i, make_prompt(t));	/* strcpy: OK (i:MAX_SOCK_BUF reserves space) */
+    strlcat(i, make_prompt(t), sizeof(i));	/* strcpy: OK (i:MAX_SOCK_BUF reserves space) */
 
   /* now, send the output.  If this is an 'interruption', use the prepended
    * CRLF, otherwise send the straight output sans CRLF. */
@@ -1625,7 +1640,7 @@ static int process_output(struct descriptor_data *t)
     if ((unsigned int)result < strlen(osb)) {
       size_t savetextlen = strlen(osb + result);
 
-      strcat(t->output, osb + result);
+      strlcat(t->output, osb + result, SMALL_BUFSIZE);
       t->bufptr   -= savetextlen;
       t->bufspace += savetextlen;
     }
@@ -1741,8 +1756,17 @@ int write_to_descriptor(socket_t desc, const char *txt)
     bytes_written = perform_socket_write(desc, txt, total);
 
     if (bytes_written < 0) {
-      /* Fatal error.  Disconnect the player. */
-      perror("SYSERR: Write to socket");
+      /* Fatal error.  Disconnect the player, preserving the originating descriptor. */
+#ifndef CIRCLE_WINDOWS
+      {
+        int saved_errno = errno;
+        log("SYSERR: socket write failed on descriptor %ld: %s (errno=%d)",
+            (long)desc, strerror(saved_errno), saved_errno);
+      }
+#else
+      log("SYSERR: socket write failed on descriptor %ld: Winsock error #%d",
+          (long)desc, WSAGetLastError());
+#endif
       return (-1);
     } else if (bytes_written == 0) {
       /* Temporary failure -- socket buffer full. */
@@ -1816,7 +1840,16 @@ static ssize_t perform_socket_read(socket_t desc, char *read_point, size_t space
 
   /* We don't know what happened, cut them off. This qualifies for
    * a SYSERR because we have no idea what happened at this point.*/
-  perror("SYSERR: perform_socket_read: about to lose connection");
+#ifndef CIRCLE_WINDOWS
+  {
+    int saved_errno = errno;
+    log("SYSERR: socket read failed on descriptor %ld: %s (errno=%d); disconnecting",
+        (long)desc, strerror(saved_errno), saved_errno);
+  }
+#else
+  log("SYSERR: socket read failed on descriptor %ld: Winsock error #%d; disconnecting",
+      (long)desc, WSAGetLastError());
+#endif
   return (-1);
 }
 
@@ -1858,7 +1891,7 @@ static int process_input(struct descriptor_data *t)
     /* Since we have recieved atleast 1 byte of data from the socket, lets run it through
      * ProtocolInput() and rip out anything that is Out Of Band */ 
     if ( bytes_read > 0 )
-      bytes_read = ProtocolInput( t, read_buf, bytes_read, t->inbuf );
+      bytes_read = ProtocolInput(t, read_buf, bytes_read, t->inbuf, sizeof(t->inbuf));
 
     if (bytes_read < 0)	/* Error, disconnect them. */
       return (-1);
@@ -1926,7 +1959,7 @@ static int process_input(struct descriptor_data *t)
     if ((space_left <= 0) && (ptr < nl_pos)) {
       char buffer[MAX_INPUT_LENGTH + 64];
 
-      snprintf(buffer, sizeof(buffer), "Line too long.  Truncated to:\r\n%s\r\n", tmp);
+      tb_snprintf(buffer, sizeof(buffer), "Line too long.  Truncated to:\r\n%s\r\n", tmp);
       if (write_to_descriptor(t->descriptor, buffer) < 0)
 	return (-1);
     }
@@ -1935,7 +1968,7 @@ static int process_input(struct descriptor_data *t)
     failed_subst = 0;
 
     if (*tmp == '!' && !(*(tmp + 1)))	/* Redo last command. */
-      strcpy(tmp, t->last_input);	/* strcpy: OK (by mutual MAX_INPUT_LENGTH) */
+      strlcpy(tmp, t->last_input, sizeof(tmp));	/* strcpy: OK (by mutual MAX_INPUT_LENGTH) */
     else if (*tmp == '!' && *(tmp + 1)) {
       char *commandln = (tmp + 1);
       int starting_pos = t->history_pos,
@@ -1944,8 +1977,8 @@ static int process_input(struct descriptor_data *t)
       skip_spaces(&commandln);
       for (; cnt != starting_pos; cnt--) {
 	if (t->history[cnt] && is_abbrev(commandln, t->history[cnt])) {
-	  strcpy(tmp, t->history[cnt]);	/* strcpy: OK (by mutual MAX_INPUT_LENGTH) */
-	  strcpy(t->last_input, tmp);	/* strcpy: OK (by mutual MAX_INPUT_LENGTH) */
+	  strlcpy(tmp, t->history[cnt], sizeof(tmp));	/* strcpy: OK (by mutual MAX_INPUT_LENGTH) */
+	  strlcpy(t->last_input, tmp, sizeof(t->last_input));	/* strcpy: OK (by mutual MAX_INPUT_LENGTH) */
           write_to_output(t, "%s\r\n", tmp);
 	  break;
 	}
@@ -1954,9 +1987,9 @@ static int process_input(struct descriptor_data *t)
       }
     } else if (*tmp == '^') {
       if (!(failed_subst = perform_subst(t, t->last_input, tmp)))
-	strcpy(t->last_input, tmp);	/* strcpy: OK (by mutual MAX_INPUT_LENGTH) */
+	strlcpy(t->last_input, tmp, sizeof(t->last_input));	/* strcpy: OK (by mutual MAX_INPUT_LENGTH) */
     } else {
-      strcpy(t->last_input, tmp);	/* strcpy: OK (by mutual MAX_INPUT_LENGTH) */
+      strlcpy(t->last_input, tmp, sizeof(t->last_input));	/* strcpy: OK (by mutual MAX_INPUT_LENGTH) */
       if (t->history[t->history_pos])
 	free(t->history[t->history_pos]);	/* Clear the old line. */
       t->history[t->history_pos] = strdup(tmp);	/* Save the new. */
@@ -2038,7 +2071,7 @@ static int perform_subst(struct descriptor_data *t, char *orig, char *subst)
 
   /* terminate the string in case of an overflow from strncat */
   newsub[MAX_INPUT_LENGTH - 1] = '\0';
-  strcpy(subst, newsub);	/* strcpy: OK (by mutual MAX_INPUT_LENGTH) */
+  strlcpy(subst, newsub, MAX_INPUT_LENGTH);	/* strcpy: OK (by mutual MAX_INPUT_LENGTH) */
 
   return (0);
 }
@@ -2200,7 +2233,7 @@ void nonblock(socket_t s)
   int val = 1;
 
   if (ioctl(s, FIONBIO, &val) < 0) {
-    perror("SYSERR: Fatal error executing nonblock (comm.c)");
+    TB_REPORT_ERRNO("ioctl", "FIONBIO nonblocking socket");
     exit(1);
   }
 }
@@ -2216,9 +2249,13 @@ static void nonblock(socket_t s)
   int flags;
 
   flags = fcntl(s, F_GETFL, 0);
+  if (flags < 0) {
+    TB_REPORT_ERRNO("fcntl", "F_GETFL for nonblocking socket");
+    exit(1);
+  }
   flags |= O_NONBLOCK;
   if (fcntl(s, F_SETFL, flags) < 0) {
-    perror("SYSERR: Fatal error executing nonblock (comm.c)");
+    TB_REPORT_ERRNO("fcntl", "F_SETFL O_NONBLOCK");
     exit(1);
   }
 }
@@ -2340,7 +2377,7 @@ void game_info(const char *format, ...)
   char messg[MAX_STRING_LENGTH];
   if (format == NULL)
     return;
-  sprintf(messg, "\tcInfo: \ty");
+  tb_snprintf(messg, sizeof(messg), "\tcInfo: \ty");
   for (i = descriptor_list; i; i = i->next) {
     if (STATE(i) != CON_PLAYING)
       continue;
@@ -2661,7 +2698,7 @@ char *act(const char *str, int hide_invisible, struct char_data *ch,
           !PLR_FLAGGED(i->character, PLR_WRITING) &&
           !ROOM_FLAGGED(IN_ROOM(i->character), ROOM_SOUNDPROOF)) {
 
-        sprintf(buf, "%s%s%s", CCYEL(i->character, C_NRM), str, CCNRM(i->character, C_NRM));
+        tb_snprintf(buf, sizeof(buf), "%s%s%s", CCYEL(i->character, C_NRM), str, CCNRM(i->character, C_NRM));
         perform_act(buf, ch, obj, vict_obj, i->character);
       }
     }
@@ -2748,7 +2785,10 @@ static int open_logfile(const char *filename, FILE *stderr_fp)
     return (TRUE);
   }
 
-  printf("SYSERR: Error opening file '%s': %s\n", filename, strerror(errno));
+  { int saved_errno = errno;
+    printf("SYSERR: operation=fopen context=%s error=\"%s\" errno=%d source=%s:%d function=%s\n",
+           filename, strerror(saved_errno), saved_errno, __FILE__, __LINE__, __func__);
+  }
   return (FALSE);
 }
 
@@ -2764,7 +2804,7 @@ static void circle_sleep(struct timeval *timeout)
 {
   if (select(0, (fd_set *) 0, (fd_set *) 0, (fd_set *) 0, timeout) < 0) {
     if (errno != EINTR) {
-      perror("SYSERR: Select sleep");
+      TB_REPORT_ERRNO("select", "game-loop sleep");
       exit(1);
     }
   }

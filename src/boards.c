@@ -68,6 +68,37 @@ static void init_boards(void);
 static void board_reset_board(int board_type);
 static void board_clear_board(int board_type);
 
+static int board_write_exact(const void *ptr, size_t size, size_t count, FILE *fl,
+                             int board_type, int message_index, const char *field)
+{
+  size_t written;
+
+  if (fl == NULL || (ptr == NULL && size != 0 && count != 0)) {
+    log("SYSERR: board %d save has invalid write arguments at message %d field %s",
+        board_type, message_index, field ? field : "(unknown)");
+    return FALSE;
+  }
+
+  written = fwrite(ptr, size, count, fl);
+  if (written != count) {
+    if (ferror(fl)) {
+      int saved_errno = errno;
+      log("SYSERR: board %d write failed for %s message %d field %s: wrote %lu/%lu elements: %s (errno=%d)",
+          board_type, FILENAME(board_type), message_index,
+          field ? field : "(unknown)", (unsigned long)written,
+          (unsigned long)count, strerror(saved_errno), saved_errno);
+    } else {
+      log("SYSERR: board %d short write for %s message %d field %s: wrote %lu/%lu elements",
+          board_type, FILENAME(board_type), message_index,
+          field ? field : "(unknown)", (unsigned long)written,
+          (unsigned long)count);
+    }
+    return FALSE;
+  }
+
+  return TRUE;
+}
+
 static int find_slot(void)
 {
   int i;
@@ -199,10 +230,10 @@ int board_write_message(int board_type, struct char_data *ch, char *arg, struct 
     return (1);
   }
   ct = time(0);
-  strftime(tmstr, sizeof(tmstr), "%a %b %d %Y", localtime(&ct));
+  tb_strftime(tmstr, sizeof(tmstr), "%a %b %d %Y", localtime(&ct));
 
-  snprintf(buf2, sizeof(buf2), "(%s)", GET_NAME(ch));
-  snprintf(buf, sizeof(buf), "%s %-12s :: %s", tmstr, buf2, arg);
+  tb_snprintf(buf2, sizeof(buf2), "(%s)", GET_NAME(ch));
+  tb_snprintf(buf, sizeof(buf), "%s %-12s :: %s", tmstr, buf2, arg);
   NEW_MSG_INDEX(board_type).heading = strdup(buf);
   NEW_MSG_INDEX(board_type).level = GET_LEVEL(ch);
 
@@ -290,7 +321,7 @@ int board_display_msg(int board_type, struct char_data *ch, char *arg, struct ob
     return (board_show_board(board_type, ch, arg, board));
   if (!is_number(number))	/* read 2.mail, look 2.sword */
     return (0);
-  if (!(msg = atoi(number)))
+  if (!(msg = tb_parse_int_or_zero(number)))
     return (0);
 
   if (GET_LEVEL(ch) < READ_LVL(board_type)) {
@@ -324,7 +355,7 @@ int board_display_msg(int board_type, struct char_data *ch, char *arg, struct ob
     send_to_char(ch, "That message seems to be empty.\r\n");
     return (1);
   }
-  snprintf(buffer, sizeof(buffer), "Message %d : %s\r\n\r\n%s\r\n", msg,
+  tb_snprintf(buffer, sizeof(buffer), "Message %d : %s\r\n\r\n%s\r\n", msg,
 	  MSG_HEADING(board_type, ind),
 	  msg_storage[MSG_SLOTNUM(board_type, ind)]);
 
@@ -343,7 +374,7 @@ int board_remove_msg(int board_type, struct char_data *ch, char *arg, struct obj
 
   if (!*number || !is_number(number))
     return (0);
-  if (!(msg = atoi(number)))
+  if (!(msg = tb_parse_int_or_zero(number)))
     return (0);
 
   if (!num_of_msgs[board_type]) {
@@ -363,7 +394,7 @@ int board_remove_msg(int board_type, struct char_data *ch, char *arg, struct obj
     send_to_char(ch, "That message appears to be screwed up.\r\n");
     return (1);
   }
-  snprintf(buf, sizeof(buf), "(%s)", GET_NAME(ch));
+  tb_snprintf(buf, sizeof(buf), "(%s)", GET_NAME(ch));
   if (GET_LEVEL(ch) < REMOVE_LVL(board_type) &&
       !(strstr(MSG_HEADING(board_type, ind), buf))) {
     send_to_char(ch, "You are not holy enough to remove other people's messages.\r\n");
@@ -399,7 +430,7 @@ int board_remove_msg(int board_type, struct char_data *ch, char *arg, struct obj
   num_of_msgs[board_type]--;
 
   send_to_char(ch, "Message removed.\r\n");
-  snprintf(buf, sizeof(buf), "$n just removed message %d.", msg);
+  tb_snprintf(buf, sizeof(buf), "$n just removed message %d.", msg);
   act(buf, FALSE, ch, 0, 0, TO_ROOM);
   board_save_board(board_type);
 
@@ -411,16 +442,40 @@ void board_save_board(int board_type)
   FILE *fl;
   int i;
   char *tmp1, *tmp2 = NULL;
+  char tmpname[MAX_STRING_LENGTH], bakname[MAX_STRING_LENGTH];
+  int name_result;
 
   if (!num_of_msgs[board_type]) {
-    remove(FILENAME(board_type));
+    if (remove(FILENAME(board_type)) != 0 && errno != ENOENT) {
+      int saved_errno = errno;
+      log("SYSERR: remove empty board %d file %s failed: %s (errno=%d)",
+          board_type, FILENAME(board_type), strerror(saved_errno), saved_errno);
+    }
     return;
   }
-  if (!(fl = fopen(FILENAME(board_type), "wb"))) {
-    perror("SYSERR: Error writing board");
+
+  name_result = snprintf(tmpname, sizeof(tmpname), "%s.tmp", FILENAME(board_type));
+  if (name_result < 0 || (size_t)name_result >= sizeof(tmpname)) {
+    log("SYSERR: board %d temporary filename is too long for %s",
+        board_type, FILENAME(board_type));
     return;
   }
-  fwrite(&(num_of_msgs[board_type]), sizeof(int), 1, fl);
+  name_result = snprintf(bakname, sizeof(bakname), "%s.bak", FILENAME(board_type));
+  if (name_result < 0 || (size_t)name_result >= sizeof(bakname)) {
+    log("SYSERR: board %d backup filename is too long for %s",
+        board_type, FILENAME(board_type));
+    return;
+  }
+
+  if (!(fl = fopen(tmpname, "wb"))) {
+    TB_REPORT_ERRNO("fopen", tmpname);
+    log("SYSERR: board %d could not open temporary file %s for writing",
+        board_type, tmpname);
+    return;
+  }
+  if (!board_write_exact(&(num_of_msgs[board_type]), sizeof(int), 1, fl,
+                         board_type, -1, "message-count header"))
+    goto write_fail;
 
   for (i = 0; i < num_of_msgs[board_type]; i++) {
     if ((tmp1 = MSG_HEADING(board_type, i)) != NULL)
@@ -435,14 +490,66 @@ void board_save_board(int board_type)
     else
       msg_index[board_type][i].message_len = strlen(tmp2) + 1;
 
-    fwrite(&(msg_index[board_type][i]), sizeof(struct board_msginfo), 1, fl);
-    if (tmp1)
-      fwrite(tmp1, sizeof(char), msg_index[board_type][i].heading_len, fl);
-    if (tmp2)
-      fwrite(tmp2, sizeof(char), msg_index[board_type][i].message_len, fl);
+    if (!board_write_exact(&(msg_index[board_type][i]), sizeof(struct board_msginfo), 1,
+                           fl, board_type, i, "message metadata"))
+      goto write_fail;
+    if (tmp1 && !board_write_exact(tmp1, sizeof(char), msg_index[board_type][i].heading_len,
+                                   fl, board_type, i, "heading"))
+      goto write_fail;
+    if (tmp2 && !board_write_exact(tmp2, sizeof(char), msg_index[board_type][i].message_len,
+                                   fl, board_type, i, "body"))
+      goto write_fail;
   }
 
-  fclose(fl);
+  {
+    int flush_ok = tb_fflush_checked(fl, tmpname);
+    int close_ok = tb_fclose_checked(fl, tmpname);
+    if (!flush_ok || !close_ok) {
+      log("SYSERR: board %d save could not be committed because temporary file %s did not flush/close cleanly",
+          board_type, tmpname);
+      if (remove(tmpname) != 0 && errno != ENOENT)
+        TB_REPORT_ERRNO("remove", tmpname);
+      return;
+    }
+  }
+
+  /* POSIX rename replaces atomically; some platforms require a backup dance. */
+  if (rename(tmpname, FILENAME(board_type)) != 0) {
+    int replace_errno = errno;
+
+    if (remove(bakname) != 0 && errno != ENOENT)
+      TB_REPORT_ERRNO("remove", bakname);
+
+    if (rename(FILENAME(board_type), bakname) != 0) {
+      errno = replace_errno;
+      TB_REPORT_ERRNO("rename", FILENAME(board_type));
+      log("SYSERR: board %d save left original file intact; temporary file is %s",
+          board_type, tmpname);
+      return;
+    }
+
+    if (rename(tmpname, FILENAME(board_type)) != 0) {
+      int commit_errno = errno;
+      log("SYSERR: board %d replacement failed; attempting rollback from %s",
+          board_type, bakname);
+      if (rename(bakname, FILENAME(board_type)) != 0)
+        TB_REPORT_ERRNO("rename", FILENAME(board_type));
+      errno = commit_errno;
+      TB_REPORT_ERRNO("rename", tmpname);
+      return;
+    }
+
+    if (remove(bakname) != 0 && errno != ENOENT)
+      TB_REPORT_ERRNO("remove", bakname);
+  }
+  return;
+
+write_fail:
+  log("SYSERR: Aborting save of board %d (%s) at the first failed write",
+      board_type, FILENAME(board_type));
+  (void)tb_fclose_checked(fl, tmpname);
+  if (remove(tmpname) != 0 && errno != ENOENT)
+    TB_REPORT_ERRNO("remove", tmpname);
 }
 
 void board_load_board(int board_type)
@@ -452,35 +559,44 @@ void board_load_board(int board_type)
   char *tmp1, *tmp2;
 
   if (!(fl = fopen(FILENAME(board_type), "rb"))) {
-    if (errno != ENOENT)
-      perror("SYSERR: Error reading board");
+    int saved_errno = errno;
+    if (saved_errno != ENOENT)
+      log("SYSERR: board %d could not open %s for reading: %s (errno=%d)",
+          board_type, FILENAME(board_type), strerror(saved_errno), saved_errno);
     return;
   }
   if (fread(&(num_of_msgs[board_type]), sizeof(int), 1, fl) != 1) {
-    fclose(fl);
+    if (ferror(fl)) {
+      int saved_errno = errno;
+      log("SYSERR: board %d failed reading message-count header from %s: %s (errno=%d)",
+          board_type, FILENAME(board_type), strerror(saved_errno), saved_errno);
+    } else
+      log("SYSERR: board %d file %s ended before message-count header", board_type, FILENAME(board_type));
+    tb_fclose(fl);
     return;
   }
   if (num_of_msgs[board_type] < 1 || num_of_msgs[board_type] > MAX_BOARD_MESSAGES) {
     log("SYSERR: Board file %d corrupt.  Resetting.", board_type);
-    fclose(fl);
+    tb_fclose(fl);
     board_reset_board(board_type);
     return;
   }
   for (i = 0; i < num_of_msgs[board_type]; i++) {
     if (fread(&(msg_index[board_type][i]), sizeof(struct board_msginfo), 1, fl) != 1) {
       if (feof(fl))
-        log("SYSERR: Unexpected EOF encountered in board file %d! Resetting.", board_type);
+        log("SYSERR: Unexpected EOF in board %d file %s while loading message %d; resetting.", board_type, FILENAME(board_type), i);
       else if (ferror(fl))
-        log("SYSERR: Error reading board file %d: %s. Resetting.", board_type, strerror(errno));
+        { int saved_errno = errno; log("SYSERR: I/O error reading board %d file %s at message %d: %s (errno=%d); resetting.", board_type, FILENAME(board_type), i, strerror(saved_errno), saved_errno); }
       else
-        log("SYSERR: Error reading board file %d. Resetting.", board_type);
-      fclose(fl);
+        log("SYSERR: Short read in board %d file %s at message %d; resetting.", board_type, FILENAME(board_type), i);
+      tb_fclose(fl);
       board_reset_board(board_type);
       return;
     }
     if ((len1 = msg_index[board_type][i].heading_len) <= 0) {
-      log("SYSERR: Board file %d corrupt!  Resetting.", board_type);
-      fclose(fl);
+      log("SYSERR: Board %d file %s has invalid heading length %d at message %d; resetting.",
+          board_type, FILENAME(board_type), len1, i);
+      tb_fclose(fl);
       board_reset_board(board_type);
       return;
     }
@@ -489,13 +605,13 @@ void board_load_board(int board_type)
 
     if (fread(tmp1, sizeof(char), (size_t)len1, fl) != (size_t)len1) {
       if (feof(fl))
-        log("SYSERR: Unexpected EOF encountered in board file %d! Resetting.", board_type);
+        log("SYSERR: Unexpected EOF in board %d file %s while loading message %d; resetting.", board_type, FILENAME(board_type), i);
       else if (ferror(fl))
-        log("SYSERR: Error reading board file %d: %s. Resetting.", board_type, strerror(errno));
+        { int saved_errno = errno; log("SYSERR: I/O error reading board %d file %s at message %d: %s (errno=%d); resetting.", board_type, FILENAME(board_type), i, strerror(saved_errno), saved_errno); }
       else
-        log("SYSERR: Error reading board file %d. Resetting.", board_type);
+        log("SYSERR: Short read in board %d file %s at message %d; resetting.", board_type, FILENAME(board_type), i);
       free(tmp1);
-      fclose(fl);
+      tb_fclose(fl);
       board_reset_board(board_type);
       return;
     }
@@ -504,7 +620,7 @@ void board_load_board(int board_type)
 
     if ((MSG_SLOTNUM(board_type, i) = find_slot()) == -1) {
       log("SYSERR: Out of slots booting board %d!  Resetting...", board_type);
-      fclose(fl);
+      tb_fclose(fl);
       board_reset_board(board_type);
       return;
     }
@@ -512,13 +628,13 @@ void board_load_board(int board_type)
       CREATE(tmp2, char, len2);
       if (fread(tmp2, sizeof(char), (size_t)len2, fl) != (size_t)len2) {
         if (feof(fl))
-          log("SYSERR: Unexpected EOF encountered in board file %d! Resetting.", board_type);
+          log("SYSERR: Unexpected EOF in board %d file %s while loading message %d; resetting.", board_type, FILENAME(board_type), i);
         else if (ferror(fl))
-          log("SYSERR: Error reading board file %d: %s. Resetting.", board_type, strerror(errno));
+          { int saved_errno = errno; log("SYSERR: I/O error reading board %d file %s at message %d: %s (errno=%d); resetting.", board_type, FILENAME(board_type), i, strerror(saved_errno), saved_errno); }
         else
-          log("SYSERR: Error reading board file %d. Resetting.", board_type);
+          log("SYSERR: Short read in board %d file %s at message %d; resetting.", board_type, FILENAME(board_type), i);
         free(tmp2);
-        fclose(fl);
+        tb_fclose(fl);
         board_reset_board(board_type);
         return;
       }
@@ -528,7 +644,7 @@ void board_load_board(int board_type)
       msg_storage[MSG_SLOTNUM(board_type, i)] = NULL;
   }
 
-  fclose(fl);
+  tb_fclose(fl);
 }
 
 /* When shutting down, clear all boards. */
@@ -563,5 +679,9 @@ void board_clear_board(int board_type)
 static void board_reset_board(int board_type)
 {
   board_clear_board(board_type);
-  remove(FILENAME(board_type));
+  if (remove(FILENAME(board_type)) != 0 && errno != ENOENT) {
+    int saved_errno = errno;
+    log("SYSERR: reset board %d remove failed for %s: %s (errno=%d)",
+        board_type, FILENAME(board_type), strerror(saved_errno), saved_errno);
+  }
 }

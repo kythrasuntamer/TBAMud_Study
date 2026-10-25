@@ -78,7 +78,7 @@ void load_messages(void)
   char chk[128];
 
   if (!(fl = fopen(MESS_FILE, "r"))) {
-    log("SYSERR: Error reading combat message file %s: %s", MESS_FILE, strerror(errno));
+    { int saved_errno = errno; log("SYSERR: combat-message read failed for %s: %s (errno=%d)", MESS_FILE, strerror(saved_errno), saved_errno); }
     exit(1);
   }
 
@@ -94,7 +94,7 @@ void load_messages(void)
         if (feof(fl))
           break;
         else if(ferror(fl))
-          log("SYSERR: Error reading combat message file %s: %s", MESS_FILE, strerror(errno));
+          { int saved_errno = errno; log("SYSERR: combat-message read failed for %s: %s (errno=%d)", MESS_FILE, strerror(saved_errno), saved_errno); }
         else
           log("SYSERR: Error reading combat message file %s", MESS_FILE);
         exit(1);
@@ -112,7 +112,7 @@ void load_messages(void)
           break;
         }
         else if(ferror(fl))
-          log("SYSERR: Error reading combat message file %s: %s", MESS_FILE, strerror(errno));
+          { int saved_errno = errno; log("SYSERR: combat-message read failed for %s: %s (errno=%d)", MESS_FILE, strerror(saved_errno), saved_errno); }
         else
           log("SYSERR: Error reading combat message file %s", MESS_FILE);
         exit(1);
@@ -145,7 +145,7 @@ void load_messages(void)
       messages->god_msg.room_msg = fread_action(fl, i);
     }
   }
-  fclose(fl);
+  tb_fclose(fl);
   log("Loaded %d Combat Messages...", i);
 }
 
@@ -165,11 +165,11 @@ static void show_messages(struct char_data *ch)
         len += snprintf(buf + len, sizeof(buf) - len, "%-2d) [%-3d] %d, %-18s\r\n", half, fight_messages[half].a_type, fight_messages[half].number_of_attacks, fight_messages[half].a_type < TOP_SPELL_DEFINE ? spell_info[fight_messages[half].a_type].name : "Unknown");
     }
     
-  snprintf(buf + len, sizeof(buf) - len, "Total Messages: %d\r\n", count);  
+  tb_snprintf(buf + len, sizeof(buf) - len, "Total Messages: %d\r\n", count);  
   page_string(ch->desc, buf, TRUE);
 }
 
-#define PRINT_MSG(msg) (msg == NULL ? "#" : msg)
+#define PRINT_MSG(msg) (((msg) == NULL) ? "#" : (msg))
 
 void save_messages_to_disk(void)
 {
@@ -178,22 +178,22 @@ void save_messages_to_disk(void)
   struct message_type *msg;
 
   if (!(fp = fopen(MESS_FILE, "w"))) {
-    log("SYSERR: Error writing combat message file %s: %s", MESS_FILE, strerror(errno));
+    { int saved_errno = errno; log("SYSERR: combat-message fopen for write failed for %s: %s (errno=%d)", MESS_FILE, strerror(saved_errno), saved_errno); }
     exit(1);
   }
  
-  fprintf(fp, "* TBAMUD 3.64 Combat Message File\n");
+  tb_fprintf(fp, "* TBAMUD 3.64 Combat Message File\n");
  
   for (i = 0; i < MAX_MESSAGES; i++) {
     if (fight_messages[i].msg == NULL)
       continue;
     if (fight_messages[i].a_type > 0 && fight_messages[i].a_type < TOP_SPELL_DEFINE)
-      fprintf(fp, "* %s %d\n", PRINT_MSG(spell_info[fight_messages[i].a_type].name), fight_messages[i].a_type);
+      tb_fprintf(fp, "* %s %d\n", PRINT_MSG(spell_info[fight_messages[i].a_type].name), fight_messages[i].a_type);
     else
-      fprintf(fp, "* %d\n", fight_messages[i].a_type);
+      tb_fprintf(fp, "* %d\n", fight_messages[i].a_type);
              
     for (msg = fight_messages[i].msg; msg; msg = msg->next){
-      fprintf(fp, "M\n"
+      tb_fprintf(fp, "M\n"
                   "%d\n"
                   "%s\n"
                   "%s\n" 
@@ -224,7 +224,7 @@ void save_messages_to_disk(void)
     }
   }  
   
-  fclose(fp);
+  tb_fclose(fp);
 }
 
 static void msgedit_setup(struct descriptor_data *d)
@@ -308,7 +308,7 @@ ACMD(do_msgedit)
     return;  
   }
   
-  if ((num = atoi(argument)) < 0) {
+  if ((num = tb_parse_int_or_zero(argument)) < 0) {
     send_to_char(ch, "You must select a message # between 0 and %d.\r\n", MAX_MESSAGES);
     return;
   }
@@ -556,7 +556,7 @@ void msgedit_parse(struct descriptor_data *d, char *arg)
       msgedit_main_menu(d);
     return;
     case MSGEDIT_TYPE:
-      OLC_MSG_LIST(d)->a_type = LIMIT(atoi(arg), 0, 500);
+      OLC_MSG_LIST(d)->a_type = LIMIT(tb_parse_int_or_zero(arg), 0, 500);
     break;
     case MSGEDIT_DEATH_CHAR:
       if (!genolc_checkstring(d, arg))

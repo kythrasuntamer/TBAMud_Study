@@ -16,8 +16,8 @@
 * should have their declarations moved here.  
 *
 */
-#ifndef _MODIFY_H_
-#define _MODIFY_H_
+#ifndef TBAMUD_MODIFY_H_INCLUDED
+#define TBAMUD_MODIFY_H_INCLUDED
 
 /* Public functions */
 void show_string(struct descriptor_data *d, char *input);
@@ -35,4 +35,4 @@ void  page_string(struct descriptor_data *d, char *str, int keep_internal);
 #define PAGE_LENGTH 22
 #define PAGE_WIDTH  80
 
-#endif /* _MODIFY_H_*/
+#endif /* TBAMUD_MODIFY_H_INCLUDED*/

@@ -9,8 +9,8 @@
 * Copyright (C) 1993, 94 by the Trustees of the Johns Hopkins University
 * CircleMUD is based on DikuMUD, Copyright (C) 1990, 1991.
 */
-#ifndef _CONSTANTS_H_
-#define _CONSTANTS_H_
+#ifndef TBAMUD_CONSTANTS_H_INCLUDED
+#define TBAMUD_CONSTANTS_H_INCLUDED
 
 extern const char *tbamud_version;
 extern const char *dirs[];
@@ -59,4 +59,4 @@ extern size_t affected_bits_count;
 extern size_t extra_bits_count;
 extern size_t wear_bits_count;
 
-#endif /* _CONSTANTS_H_ */
+#endif /* TBAMUD_CONSTANTS_H_INCLUDED */

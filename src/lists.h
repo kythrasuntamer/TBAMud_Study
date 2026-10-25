@@ -10,8 +10,8 @@
 * Copyright 2012 by Joseph Arnusch.                                                    
 */
 
-#ifndef _LISTS_HEADER
-#define _LISTS_HEADER
+#ifndef TBAMUD_LISTS_H_INCLUDED
+#define TBAMUD_LISTS_H_INCLUDED
 
 struct item_data {
   struct item_data * pPrevItem;

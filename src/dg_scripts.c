@@ -148,7 +148,7 @@ obj_data *get_obj_in_list(char *name, obj_data *list)
     long id;
 
     if (*name == UID_CHAR){
-      id = atoi(name + 1);
+      id = tb_parse_int_or_zero(name + 1);
 
       for (i = list; i; i = i->next_content)
         if (id == i->script_id)
@@ -179,20 +179,20 @@ obj_data *get_object_in_equip(char_data * ch, char *name)
   long id;
 
   if (*name == UID_CHAR) {
-    id = atoi(name + 1);
+    id = tb_parse_int_or_zero(name + 1);
 
     for (j = 0; j < NUM_WEARS; j++)
       if ((obj = GET_EQ(ch, j)))
         if (id == obj->script_id)
           return (obj);
   } else if (is_number(name)) {
-    obj_vnum ovnum = atoi(name);
+    obj_vnum ovnum = tb_parse_int_or_zero(name);
     for (j = 0; j < NUM_WEARS; j++)
       if ((obj = GET_EQ(ch, j)))
         if (GET_OBJ_VNUM(obj) == ovnum)
           return (obj);
   } else {
-    snprintf(tmpname, sizeof(tmpname), "%s", name);
+    tb_snprintf(tmpname, sizeof(tmpname), "%s", name);
     if (!(number = get_number(&tmp)))
       return NULL;
 
@@ -243,7 +243,7 @@ int find_eq_pos_script(char *arg)
     {"none", -1}
   };
 
-  if (is_number(arg) && (i = atoi(arg)) >= 0 && i < NUM_WEARS)
+  if (is_number(arg) && (i = tb_parse_int_or_zero(arg)) >= 0 && i < NUM_WEARS)
     return i;
 
   for (i = 0;eq_pos[i].where != -1;i++) {
@@ -339,7 +339,7 @@ char_data *get_char(char *name)
   char_data *i;
 
   if (*name == UID_CHAR) {
-    i = find_char(atoi(name + 1));
+    i = find_char(tb_parse_int_or_zero(name + 1));
 
     if (i && valid_dg_target(i, DG_ALLOW_GODS))
       return i;
@@ -367,7 +367,7 @@ char_data *get_char_near_obj(obj_data *obj, char *name)
   char_data *ch;
 
   if (*name == UID_CHAR) {
-    ch = find_char(atoi(name + 1));
+    ch = find_char(tb_parse_int_or_zero(name + 1));
 
     if (ch && valid_dg_target(ch, DG_ALLOW_GODS))
       return ch;
@@ -398,7 +398,7 @@ char_data *get_char_in_room(room_data *room, char *name)
 
 
   if (*name == UID_CHAR) {
-    ch = find_char(atoi(name + 1));
+    ch = find_char(tb_parse_int_or_zero(name + 1));
 
     if (ch && valid_dg_target(ch, DG_ALLOW_GODS))
       return ch;
@@ -436,7 +436,7 @@ obj_data *get_obj_near_obj(obj_data *obj, char *name)
   /* or outside ? */
   if (obj->in_obj) {
     if (*name == UID_CHAR) {
-       id = atoi(name + 1);
+       id = tb_parse_int_or_zero(name + 1);
 
       if (id == obj->in_obj->script_id)
         return obj->in_obj;
@@ -469,7 +469,7 @@ obj_data *get_obj(char *name)
   obj_data *obj;
 
   if (*name == UID_CHAR)
-    return find_obj(atoi(name + 1));
+    return find_obj(tb_parse_int_or_zero(name + 1));
   else {
     for (obj = object_list; obj; obj = obj->next)
       if (isname(name, obj->name))
@@ -485,8 +485,8 @@ room_data *get_room(char *name)
   room_rnum nr;
 
   if (*name == UID_CHAR)
-    return find_room(atoi(name + 1));
-  else if ((nr = real_room(atoi(name))) == NOWHERE)
+    return find_room(tb_parse_int_or_zero(name + 1));
+  else if ((nr = real_room(tb_parse_int_or_zero(name))) == NOWHERE)
     return NULL;
   else
     return &world[nr];
@@ -499,7 +499,7 @@ char_data *get_char_by_obj(obj_data *obj, char *name)
   char_data *ch;
 
   if (*name == UID_CHAR) {
-    ch = find_char(atoi(name + 1));
+    ch = find_char(tb_parse_int_or_zero(name + 1));
 
     if (ch && valid_dg_target(ch, DG_ALLOW_GODS))
       return ch;
@@ -530,7 +530,7 @@ char_data *get_char_by_room(room_data *room, char *name)
   char_data *ch;
 
   if (*name == UID_CHAR) {
-    ch = find_char(atoi(name + 1));
+    ch = find_char(tb_parse_int_or_zero(name + 1));
 
     if (ch && valid_dg_target(ch, DG_ALLOW_GODS))
       return ch;
@@ -557,7 +557,7 @@ obj_data *get_obj_by_obj(obj_data *obj, char *name)
   int rm;
 
   if (*name == UID_CHAR)
-    return find_obj(atoi(name + 1));
+    return find_obj(tb_parse_int_or_zero(name + 1));
 
   if (!str_cmp(name, "self") || !str_cmp(name, "me"))
     return obj;
@@ -589,7 +589,7 @@ obj_data *get_obj_in_room(room_data *room, char *name)
   long id;
 
   if (*name == UID_CHAR) {
-      id = atoi(name + 1);
+      id = tb_parse_int_or_zero(name + 1);
       for (obj = room->contents; obj; obj = obj->next_content)
           if (id == obj->script_id)
               return obj;
@@ -608,7 +608,7 @@ obj_data *get_obj_by_room(room_data *room, char *name)
   obj_data *obj;
 
   if (*name == UID_CHAR)
-    return find_obj(atoi(name+1));
+    return find_obj(tb_parse_int_or_zero(name+1));
 
   for (obj = room->contents; obj; obj = obj->next_content)
     if (isname(name, obj->name))
@@ -794,7 +794,7 @@ static void do_stat_trigger(struct char_data *ch, trig_data *trig)
         len += snprintf(sb + len, sizeof(sb)-len, "%s\r\n", cmd_list->cmd);
 
       if (len>MAX_STRING_LENGTH-80) {
-        snprintf(sb + len, sizeof(sb)-len, "*** Overflow - script too long! ***\r\n");
+        tb_snprintf(sb + len, sizeof(sb)-len, "*** Overflow - script too long! ***\r\n");
         break;
       }
       
@@ -811,11 +811,11 @@ void find_uid_name(char *uid, char *name, size_t nlen)
   obj_data *obj;
 
   if ((ch = get_char(uid)))
-    snprintf(name, nlen, "%s", ch->player.name);
+    tb_snprintf(name, nlen, "%s", ch->player.name);
   else if ((obj = get_obj(uid)))
-    snprintf(name, nlen, "%s", obj->name);
+    tb_snprintf(name, nlen, "%s", obj->name);
   else
-    snprintf(name, nlen, "uid = %s, (not found)", uid + 1);
+    tb_snprintf(name, nlen, "uid = %s, (not found)", uid + 1);
 }
 
 /* general function to display stats on script sc */
@@ -831,7 +831,7 @@ static void script_stat (char_data *ch, struct script_data *sc)
   send_to_char(ch, "Global context: %ld\r\n", sc->context);
 
   for (tv = sc->global_vars; tv; tv = tv->next) {
-    snprintf(namebuf, sizeof(namebuf), "%s:%ld", tv->name, tv->context);
+    tb_snprintf(namebuf, sizeof(namebuf), "%s:%ld", tv->name, tv->context);
     if (*(tv->value) == UID_CHAR) {
       find_uid_name(tv->value, name, sizeof(name));
       send_to_char(ch, "    %15s:  %s\r\n", tv->context?namebuf:tv->name, name);
@@ -955,9 +955,9 @@ ACMD(do_attach)
     return;
   }
 
-  num_arg = atoi(targ_name);
-  tn = atoi(trig_name);
-  loc = (*loc_name) ? atoi(loc_name) : -1;
+  num_arg = tb_parse_int_or_zero(targ_name);
+  tn = tb_parse_int_or_zero(trig_name);
+  loc = (*loc_name) ? tb_parse_int_or_zero(loc_name) : -1;
 
   if (is_abbrev(arg, "mobile") || is_abbrev(arg, "mtr")) {
     victim = get_char_vis(ch, targ_name, NULL, FIND_CHAR_WORLD);
@@ -1097,11 +1097,11 @@ static int remove_trigger(struct script_data *sc, char *name)
     string = TRUE;
     if (cname) {
       *cname = '\0';
-      num = atoi(name);
+      num = tb_parse_int_or_zero(name);
       name = ++cname;
     }
   } else
-    num = atoi(name);
+    num = tb_parse_int_or_zero(name);
 
   for (n = 0, j = NULL, i = TRIGGERS(sc); i; j = i, i = i->next) {
     if (string) {
@@ -1153,7 +1153,7 @@ ACMD(do_detach)
 
   argument = two_arguments(argument, arg1, arg2);
   one_argument(argument, arg3);
-  tn = atoi(arg3);
+  tn = tb_parse_int_or_zero(arg3);
   rn = real_trigger(tn);
   trig = read_trigger(rn);
 
@@ -1164,7 +1164,7 @@ ACMD(do_detach)
   }
 
   /* vnum of mob/obj, if given */
-  num_arg = atoi(arg2);
+  num_arg = tb_parse_int_or_zero(arg2);
 
   if (!str_cmp(arg1, "room") || !str_cmp(arg1, "wtr")) {
     if (!*arg3 || (strchr(arg2, '.')))
@@ -1323,8 +1323,18 @@ void script_vlog(const char *format, va_list args)
   char output[MAX_STRING_LENGTH];
   struct descriptor_data *i;
 
-  /* parse the args, making the error message */ 
-  vsnprintf(output, sizeof(output) - 2, format, args); 
+  /* Parse the args without letting a logging failure hide the script error. */
+  {
+    int result = vsnprintf(output, sizeof(output), format, args);
+
+    if (result < 0) {
+      TB_REPORT_ERRNO("vsnprintf", "script_vlog");
+      strlcpy(output, "(script error message formatting failed)", sizeof(output));
+    } else if ((size_t)result >= sizeof(output)) {
+      basic_mud_log("SCRIPT ERROR LOGGER: message truncated (required=%d, capacity=%zu)",
+                    result + 1, sizeof(output));
+    }
+  }
 
   /* Save to the syslog file */ 
   basic_mud_log("SCRIPT ERROR: %s", output); 
@@ -1426,78 +1436,78 @@ static void eval_op(char *op, char *lhs, char *rhs, char *result, void *go,
   /* find the op, and figure out the value */
   if (!strcmp("||", op)) {
     if ((!*lhs || (*lhs == '0')) && (!*rhs || (*rhs == '0')))
-      strcpy(result, "0");
+      strlcpy(result, "0", MAX_INPUT_LENGTH);
     else
-      strcpy(result, "1");
+      strlcpy(result, "1", MAX_INPUT_LENGTH);
   }
 
   else if (!strcmp("&&", op)) {
     if (!*lhs || (*lhs == '0') || !*rhs || (*rhs == '0'))
-      strcpy (result, "0");
+      strlcpy(result, "0", MAX_INPUT_LENGTH);
     else
-      strcpy (result, "1");
+      strlcpy(result, "1", MAX_INPUT_LENGTH);
   }
 
   else if (!strcmp("==", op)) {
     if (is_num(lhs) && is_num(rhs))
-      sprintf(result, "%d", script_int_value(lhs) == script_int_value(rhs));
+      tb_snprintf(result, MAX_INPUT_LENGTH, "%d", script_int_value(lhs) == script_int_value(rhs));
     else
-      sprintf(result, "%d", !str_cmp(lhs, rhs));
+      tb_snprintf(result, MAX_INPUT_LENGTH, "%d", !str_cmp(lhs, rhs));
   }
 
   else if (!strcmp("!=", op)) {
     if (is_num(lhs) && is_num(rhs))
-      sprintf(result, "%d", script_int_value(lhs) != script_int_value(rhs));
+      tb_snprintf(result, MAX_INPUT_LENGTH, "%d", script_int_value(lhs) != script_int_value(rhs));
     else
-      sprintf(result, "%d", str_cmp(lhs, rhs));
+      tb_snprintf(result, MAX_INPUT_LENGTH, "%d", str_cmp(lhs, rhs));
   }
 
   else if (!strcmp("<=", op)) {
     if (is_num(lhs) && is_num(rhs))
-      sprintf(result, "%d", script_int_value(lhs) <= script_int_value(rhs));
+      tb_snprintf(result, MAX_INPUT_LENGTH, "%d", script_int_value(lhs) <= script_int_value(rhs));
     else
-      sprintf(result, "%d", str_cmp(lhs, rhs) <= 0);
+      tb_snprintf(result, MAX_INPUT_LENGTH, "%d", str_cmp(lhs, rhs) <= 0);
   }
 
   else if (!strcmp(">=", op)) {
     if (is_num(lhs) && is_num(rhs))
-      sprintf(result, "%d", script_int_value(lhs) >= script_int_value(rhs));
+      tb_snprintf(result, MAX_INPUT_LENGTH, "%d", script_int_value(lhs) >= script_int_value(rhs));
     else
-      sprintf(result, "%d", str_cmp(lhs, rhs) >= 0);
+      tb_snprintf(result, MAX_INPUT_LENGTH, "%d", str_cmp(lhs, rhs) >= 0);
   }
 
   else if (!strcmp("<", op)) {
     if (is_num(lhs) && is_num(rhs))
-      sprintf(result, "%d", script_int_value(lhs) < script_int_value(rhs));
+      tb_snprintf(result, MAX_INPUT_LENGTH, "%d", script_int_value(lhs) < script_int_value(rhs));
     else
-      sprintf(result, "%d", str_cmp(lhs, rhs) < 0);
+      tb_snprintf(result, MAX_INPUT_LENGTH, "%d", str_cmp(lhs, rhs) < 0);
   }
 
   else if (!strcmp(">", op)) {
     if (is_num(lhs) && is_num(rhs))
-      sprintf(result, "%d", script_int_value(lhs) > script_int_value(rhs));
+      tb_snprintf(result, MAX_INPUT_LENGTH, "%d", script_int_value(lhs) > script_int_value(rhs));
     else
-      sprintf(result, "%d", str_cmp(lhs, rhs) > 0);
+      tb_snprintf(result, MAX_INPUT_LENGTH, "%d", str_cmp(lhs, rhs) > 0);
   }
 
   else if (!strcmp("/=", op))
-    sprintf(result, "%c", str_str(lhs, rhs) ? '1' : '0');
+    tb_snprintf(result, MAX_INPUT_LENGTH, "%c", str_str(lhs, rhs) ? '1' : '0');
 
   else if (!strcmp("*", op)) {
     lhs_num = script_int_value(lhs);
     rhs_num = script_int_value(rhs);
     arithmetic = (long long)lhs_num * (long long)rhs_num;
-    sprintf(result, "%d", clamp_script_int(arithmetic));
+    tb_snprintf(result, MAX_INPUT_LENGTH, "%d", clamp_script_int(arithmetic));
   }
 
   else if (!strcmp("/", op)) {
     lhs_num = script_int_value(lhs);
     rhs_num = script_int_value(rhs);
     if (rhs_num == 0)
-      strcpy(result, "0");
+      strlcpy(result, "0", MAX_INPUT_LENGTH);
     else {
       arithmetic = (long long)lhs_num / (long long)rhs_num;
-      sprintf(result, "%d", clamp_script_int(arithmetic));
+      tb_snprintf(result, MAX_INPUT_LENGTH, "%d", clamp_script_int(arithmetic));
     }
   }
 
@@ -1505,21 +1515,21 @@ static void eval_op(char *op, char *lhs, char *rhs, char *result, void *go,
     lhs_num = script_int_value(lhs);
     rhs_num = script_int_value(rhs);
     arithmetic = (long long)lhs_num + (long long)rhs_num;
-    sprintf(result, "%d", clamp_script_int(arithmetic));
+    tb_snprintf(result, MAX_INPUT_LENGTH, "%d", clamp_script_int(arithmetic));
   }
 
   else if (!strcmp("-", op)) {
     lhs_num = script_int_value(lhs);
     rhs_num = script_int_value(rhs);
     arithmetic = (long long)lhs_num - (long long)rhs_num;
-    sprintf(result, "%d", clamp_script_int(arithmetic));
+    tb_snprintf(result, MAX_INPUT_LENGTH, "%d", clamp_script_int(arithmetic));
   }
 
   else if (!strcmp("!", op)) {
     if (is_num(rhs))
-      sprintf(result, "%d", !script_int_value(rhs));
+      tb_snprintf(result, MAX_INPUT_LENGTH, "%d", !script_int_value(rhs));
     else
-      sprintf(result, "%d", !*rhs);
+      tb_snprintf(result, MAX_INPUT_LENGTH, "%d", !*rhs);
   }
 }
 
@@ -1570,7 +1580,7 @@ static void eval_expr(char *line, char *result, void *go, struct script_data *sc
   if (eval_lhs_op_rhs(line, result, go, sc, trig, type));
 
   else if (*line == '(') {
-    strcpy(expr, line);
+    strlcpy(expr, line, sizeof(expr));
     p = matching_paren(expr);
     *p = '\0';
     eval_expr(expr + 1, result, go, sc, trig, type);
@@ -1605,7 +1615,8 @@ static int eval_lhs_op_rhs(char *expr, char *result, void *go, struct script_dat
     { NULL }
   };
 
-  p = strcpy(line, expr);
+  strlcpy(line, expr, sizeof(line));
+  p = line;
 
   /* Initialize tokens, an array of pointers to locations in line where the 
    * ops could possibly occur. */
@@ -1905,7 +1916,7 @@ static void process_attach(void *go, struct script_data *sc, trig_data *trig,
     return;
   }
 
-  if (!id_p || !*id_p || atoi(id_p)==0) {
+  if (!id_p || !*id_p || tb_parse_int_or_zero(id_p)==0) {
     script_log("Trigger: %s, VNum %d. attach invalid id arg: '%s'",
             GET_TRIG_NAME(trig), GET_TRIG_VNUM(trig), cmd);
     return;
@@ -1913,7 +1924,7 @@ static void process_attach(void *go, struct script_data *sc, trig_data *trig,
 
   /* parse and locate the id specified */
   eval_expr(id_p, result, go, sc, trig, type);
-  if (!(id = atoi(result))) {
+  if (!(id = tb_parse_int_or_zero(result))) {
     script_log("Trigger: %s, VNum %d. attach invalid id arg: '%s'",
             GET_TRIG_NAME(trig), GET_TRIG_VNUM(trig), cmd);
     return;
@@ -1932,7 +1943,7 @@ static void process_attach(void *go, struct script_data *sc, trig_data *trig,
   }
 
   /* locate and load the trigger specified */
-  trignum = real_trigger(atoi(trignum_s));
+  trignum = real_trigger(tb_parse_int_or_zero(trignum_s));
   if (trignum == NOTHING || !(newtrig=read_trigger(trignum))) {
     script_log("Trigger: %s, VNum %d. attach invalid trigger: '%s'",
             GET_TRIG_NAME(trig), GET_TRIG_VNUM(trig), trignum_s);
@@ -1986,7 +1997,7 @@ static void process_detach(void *go, struct script_data *sc, trig_data *trig,
     return;
   }
 
-  if (!id_p || !*id_p || atoi(id_p)==0) {
+  if (!id_p || !*id_p || tb_parse_int_or_zero(id_p)==0) {
     script_log("Trigger: %s, VNum %d. detach invalid id arg: '%s'",
             GET_TRIG_NAME(trig), GET_TRIG_VNUM(trig), cmd);
     return;
@@ -1994,7 +2005,7 @@ static void process_detach(void *go, struct script_data *sc, trig_data *trig,
 
   /* parse and locate the id specified */
   eval_expr(id_p, result, go, sc, trig, type);
-  if (!(id = atoi(result))) {
+  if (!(id = tb_parse_int_or_zero(result))) {
     script_log("Trigger: %s, VNum %d. detach invalid id arg: '%s'",
             GET_TRIG_NAME(trig), GET_TRIG_VNUM(trig), cmd);
     return;
@@ -2094,11 +2105,11 @@ static void makeuid_var(void *go, struct script_data *sc, trig_data *trig,
     return;
   }
 
-  if (atoi(arg)!=0) { /* easy, if you pass an id number */
+  if (tb_parse_int_or_zero(arg)!=0) { /* easy, if you pass an id number */
     char result[MAX_INPUT_LENGTH];
 
     eval_expr(arg, result, go, sc, trig, type);
-    snprintf(uid, sizeof(uid), "%c%s", UID_CHAR, result);
+    tb_snprintf(uid, sizeof(uid), "%c%s", UID_CHAR, result);
   } else { /* a lot more work without it */
     if (!*name) {
       script_log("Trigger: %s, VNum %d. makeuid needs name: '%s'",
@@ -2120,7 +2131,7 @@ static void makeuid_var(void *go, struct script_data *sc, trig_data *trig,
           break;
       }
       if (c)
-        snprintf(uid, sizeof(uid), "%c%ld", UID_CHAR, char_script_id(c));
+        tb_snprintf(uid, sizeof(uid), "%c%ld", UID_CHAR, char_script_id(c));
     } else if (is_abbrev(arg, "obj")) {
       struct obj_data *o = NULL;
       switch (type) {
@@ -2138,7 +2149,7 @@ static void makeuid_var(void *go, struct script_data *sc, trig_data *trig,
           break;
       }
       if (o)
-        snprintf(uid, sizeof(uid), "%c%ld", UID_CHAR, obj_script_id(o));
+        tb_snprintf(uid, sizeof(uid), "%c%ld", UID_CHAR, obj_script_id(o));
     } else if (is_abbrev(arg, "room")) {
       room_rnum r = NOWHERE;
       switch (type) {
@@ -2153,7 +2164,7 @@ static void makeuid_var(void *go, struct script_data *sc, trig_data *trig,
           break;
       }
       if (r != NOWHERE)
-        snprintf(uid, sizeof(uid), "%c%ld", UID_CHAR, room_script_id(world + r));
+        tb_snprintf(uid, sizeof(uid), "%c%ld", UID_CHAR, room_script_id(world + r));
     } else {
       script_log("Trigger: %s, VNum %d. makeuid syntax error: '%s'",
             GET_TRIG_NAME(trig), GET_TRIG_VNUM(trig), cmd);
@@ -2180,7 +2191,7 @@ static int process_return(trig_data *trig, char *cmd)
     return 1;
   }
 
-  return atoi(arg2);
+  return tb_parse_int_or_zero(arg2);
 }
 
 /* Removes a variable from the global vars of sc, or the local vars of trig if 
@@ -2247,7 +2258,7 @@ static void process_remote(struct script_data *sc, trig_data *trig, char *cmd)
     return;
   }
   /* find the target script from the uid number */
-  uid = atoi(buf2);
+  uid = tb_parse_int_or_zero(buf2);
   if (uid<=0) {
     script_log("Trigger: %s, VNum %d. remote: illegal uid '%s'",
             GET_TRIG_NAME(trig), GET_TRIG_VNUM(trig), buf2);
@@ -2302,7 +2313,7 @@ ACMD(do_vdelete)
   }
 
   /* find the target script from the uid number */
-  uid = atoi(buf2);
+  uid = tb_parse_int_or_zero(buf2);
   if (uid<=0) {
     send_to_char(ch, "vdelete: illegal id specified.\r\n");
     return;
@@ -2410,7 +2421,7 @@ static void process_rdelete(struct script_data *sc, trig_data *trig, char *cmd)
   }
 
   /* find the target script from the uid number */
-  uid = atoi(buf2);
+  uid = tb_parse_int_or_zero(buf2);
   if (uid<=0) {
     script_log("Trigger: %s, VNum %d. rdelete: illegal uid '%s'",
             GET_TRIG_NAME(trig), GET_TRIG_VNUM(trig), buf2);
@@ -2495,7 +2506,7 @@ static void process_context(struct script_data *sc, trig_data *trig, char *cmd)
     return;
   }
 
-  sc->context = atol(var);
+  sc->context = tb_parse_long_or_zero(var);
 }
 
 static void extract_value(struct script_data *sc, trig_data *trig, char *cmd)
@@ -2507,9 +2518,9 @@ static void extract_value(struct script_data *sc, trig_data *trig, char *cmd)
 
   buf3 = any_one_arg(cmd, buf);
   half_chop(buf3, buf2, buf);
-  strcpy(to, buf2);
+  strlcpy(to, buf2, sizeof(to));
 
-  num = atoi(buf);
+  num = tb_parse_int_or_zero(buf);
   if (num < 1) {
     script_log("extract number < 1!");
     return;
@@ -2546,7 +2557,7 @@ static void dg_letter_value(struct script_data *sc, trig_data *trig, char *cmd)
   half_chop(cmd, varname, cmd);
   half_chop(cmd, num_s, string);
 
-  num = atoi(num_s);
+  num = tb_parse_int_or_zero(num_s);
 
   script_log("The use of dg_letter is deprecated");
   script_log("- Use 'set <new variable> %%<text/var>.charat(index)%%' instead.");
@@ -2873,7 +2884,7 @@ ACMD(do_tstat)
 
   half_chop(argument, str, argument);
   if (*str) {
-    rnum = real_trigger(atoi(str));
+    rnum = real_trigger(tb_parse_int_or_zero(str));
     if (rnum == NOTHING) {
       send_to_char(ch, "That vnum does not exist.\r\n");
       return;
@@ -2981,14 +2992,14 @@ void read_saved_vars(struct char_data *ch)
       temp = any_one_arg(temp, context_str);
       skip_spaces(&temp); /* temp now points to the rest of the line */
 
-      context = atol(context_str);
+      context = tb_parse_long_or_zero(context_str);
       add_var(&(SCRIPT(ch)->global_vars), varname, temp, context);
       free(p); /* plug memory hole */
     }
   } while( !feof(file) );
 
   /* close the file and return */
-  fclose(file);
+  tb_fclose(file);
 }
 
 /* save a characters variables out to disk */
@@ -3014,20 +3025,20 @@ void save_char_vars(struct char_data *ch)
 
   file = fopen(fn,"wt");
   if (!file) {
-    mudlog( NRM, LVL_GOD, TRUE,
-            "SYSERR: Could not open player variable file %s for writing.:%s",
-            fn, strerror(errno));
+    TB_REPORT_ERRNO("fopen", fn);
+    mudlog(NRM, LVL_GOD, TRUE,
+           "SYSERR: Could not open player variable file %s for writing.", fn);
     return;
   }
   /* Note that currently, context will always be zero. This may change in the 
    * future. */
   while (vars) {
     if (*vars->name != '-') /* don't save if it begins with - */
-      fprintf(file, "%s %ld %s\n", vars->name, vars->context, vars->value);
+      tb_fprintf(file, "%s %ld %s\n", vars->name, vars->context, vars->value);
     vars = vars->next;
   }
 
-  fclose(file);
+  tb_fclose(file);
 }
 
 /* load in a character's saved variables from an ASCII pfile*/
@@ -3058,7 +3069,7 @@ void read_saved_vars_ascii(FILE *file, struct char_data *ch, int count)
       temp = any_one_arg(temp, context_str);
       skip_spaces(&temp); /* temp now points to the rest of the line */
 
-      context = atol(context_str);
+      context = tb_parse_long_or_zero(context_str);
       add_var(&(SCRIPT(ch)->global_vars), varname, temp, context);
       free(p); /* plug memory hole */
     }
@@ -3087,11 +3098,11 @@ void save_char_vars_ascii(FILE *file, struct char_data *ch)
       count++;
 
   if (count != 0) {
-	  fprintf(file, "Vars: %d\n", count);
+	  tb_fprintf(file, "Vars: %d\n", count);
 
   for (vars = ch->script->global_vars;vars;vars = vars->next)
     if (*vars->name != '-') /* don't save if it begins with - */
-      fprintf(file, "%s %ld %s\n", vars->name, vars->context, vars->value);
+      tb_fprintf(file, "%s %ld %s\n", vars->name, vars->context, vars->value);
   }
 }
 

@@ -202,17 +202,22 @@ static void aedit_save_internally(struct descriptor_data *d) {
 
 static void aedit_save_to_disk(struct descriptor_data *d) {
    FILE *fp;
-   int i;
-   char buf[MAX_STRING_LENGTH];
-   if (!(fp = fopen(SOCMESS_FILE_NEW, "w+")))  {
-     char error[MAX_STRING_LENGTH];
-     snprintf(error, sizeof(error), "Can't open socials file '%s'", SOCMESS_FILE);
-     perror(error);
-     exit(1);
+   int i, name_result;
+   char buf[MAX_STRING_LENGTH], temp_file[MAX_STRING_LENGTH];
+
+   name_result = snprintf(temp_file, sizeof(temp_file), "%s.tmp", SOCMESS_FILE_NEW);
+   if (name_result < 0 || (size_t)name_result >= sizeof(temp_file)) {
+     log("SYSERR: socials temporary filename is too long for %s", SOCMESS_FILE_NEW);
+     return;
+   }
+
+   if (!(fp = fopen(temp_file, "w+")))  {
+     TB_REPORT_ERRNO("fopen", temp_file);
+     return;
    }
 
    for (i = 0; i <= top_of_socialt; i++)  {
-      fprintf(fp, "~%s %s %d %d %d %d\n",
+      tb_fprintf(fp, "~%s %s %d %d %d %d\n",
               soc_mess_list[i].command,
               soc_mess_list[i].sort_as,
               soc_mess_list[i].hide,
@@ -220,34 +225,46 @@ static void aedit_save_to_disk(struct descriptor_data *d) {
               soc_mess_list[i].min_victim_position,
               soc_mess_list[i].min_level_char);
               
-      sprintf(buf, "%s\n%s\n%s\n%s\n",
+      tb_snprintf(buf, sizeof(buf), "%s\n%s\n%s\n%s\n",
               ((soc_mess_list[i].char_no_arg)?soc_mess_list[i].char_no_arg:"#"),
               ((soc_mess_list[i].others_no_arg)?soc_mess_list[i].others_no_arg:"#"),
               ((soc_mess_list[i].char_found)?soc_mess_list[i].char_found:"#"),
               ((soc_mess_list[i].others_found)?soc_mess_list[i].others_found:"#"));
-      fprintf(fp, "%s", convert_from_tabs(buf));
+      tb_fprintf(fp, "%s", convert_from_tabs(buf));
       
-      sprintf(buf, "%s\n%s\n%s\n%s\n",
+      tb_snprintf(buf, sizeof(buf), "%s\n%s\n%s\n%s\n",
               ((soc_mess_list[i].vict_found)?soc_mess_list[i].vict_found:"#"),
               ((soc_mess_list[i].not_found)?soc_mess_list[i].not_found:"#"),
               ((soc_mess_list[i].char_auto)?soc_mess_list[i].char_auto:"#"),
               ((soc_mess_list[i].others_auto)?soc_mess_list[i].others_auto:"#"));
-      fprintf(fp, "%s", convert_from_tabs(buf));
+      tb_fprintf(fp, "%s", convert_from_tabs(buf));
       
-      sprintf(buf, "%s\n%s\n%s\n",
+      tb_snprintf(buf, sizeof(buf), "%s\n%s\n%s\n",
               ((soc_mess_list[i].char_body_found)?soc_mess_list[i].char_body_found:"#"),
               ((soc_mess_list[i].others_body_found)?soc_mess_list[i].others_body_found:"#"),
               ((soc_mess_list[i].vict_body_found)?soc_mess_list[i].vict_body_found:"#"));
-      fprintf(fp, "%s", convert_from_tabs(buf));
+      tb_fprintf(fp, "%s", convert_from_tabs(buf));
       
-      sprintf(buf, "%s\n%s\n\n",
+      tb_snprintf(buf, sizeof(buf), "%s\n%s\n\n",
               ((soc_mess_list[i].char_obj_found)?soc_mess_list[i].char_obj_found:"#"),
               ((soc_mess_list[i].others_obj_found)?soc_mess_list[i].others_obj_found:"#"));
-      fprintf(fp, "%s", convert_from_tabs(buf));
+      tb_fprintf(fp, "%s", convert_from_tabs(buf));
    }
 
-   fprintf(fp, "$\n");
-   fclose(fp);
+   tb_fprintf(fp, "$\n");
+   {
+     int flush_ok = tb_fflush_checked(fp, temp_file);
+     int close_ok = tb_fclose_checked(fp, temp_file);
+     if (!flush_ok || !close_ok) {
+       if (remove(temp_file) != 0 && errno != ENOENT)
+         TB_REPORT_ERRNO("remove", temp_file);
+       return;
+     }
+   }
+
+   if (!tb_replace_file_checked(temp_file, SOCMESS_FILE_NEW))
+     return;
+
    remove_from_save_list(AEDIT_PERMISSION, SL_ACT);
 }
 
@@ -578,7 +595,7 @@ void aedit_parse(struct descriptor_data * d, char *arg) {
         aedit_disp_menu(d);
         return;
       }
-      i = atoi(arg);
+      i = tb_parse_int_or_zero(arg);
       if ((i < POS_DEAD) && (i > POS_STANDING))  {
         aedit_disp_menu(d);
         return;
@@ -594,7 +611,7 @@ void aedit_parse(struct descriptor_data * d, char *arg) {
         aedit_disp_menu(d);
         return;
       }
-      i = atoi(arg);
+      i = tb_parse_int_or_zero(arg);
       if ((i < 0) && (i > LVL_IMPL))  {
         aedit_disp_menu(d);
         return;

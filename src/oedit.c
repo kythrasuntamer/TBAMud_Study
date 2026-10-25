@@ -302,7 +302,7 @@ ACMD(do_oasis_oedit)
     save = TRUE;
 
     if (is_number(buf2))
-      number = atoi(buf2);
+      number = tb_parse_int_or_zero(buf2);
     else if (GET_OLC_ZONE(ch) > 0) {
       zone_rnum zlok;
 
@@ -320,7 +320,7 @@ ACMD(do_oasis_oedit)
 
   /* If a numeric argument was given, get it. */
   if (number == NOWHERE)
-    number = atoi(buf1);
+    number = tb_parse_int_or_zero(buf1);
 
   if (number < IDXTYPE_MIN || number > IDXTYPE_MAX) {
     send_to_char(ch, "That object VNUM can't exist.\r\n");
@@ -799,7 +799,7 @@ static void oedit_disp_extra_menu(struct descriptor_data *d)
     write_to_output(d, "%s%2d%s) %-20.20s %s", grn, counter + 1, nrm,
 		extra_bits[counter], !(++columns % 2) ? "\r\n" : "");
   }
-  sprintbitarray(GET_OBJ_EXTRA(OLC_OBJ(d)), extra_bits, EF_ARRAY_MAX, bits);
+  sprintbitarray(GET_OBJ_EXTRA(OLC_OBJ(d)), extra_bits, EF_ARRAY_MAX, bits, sizeof(bits));
   write_to_output(d, "\r\nObject flags: %s%s%s\r\n"
 	  "Enter object extra flag (0 to quit) : ",
 	  cyn, bits, nrm);
@@ -817,7 +817,7 @@ static void oedit_disp_perm_menu(struct descriptor_data *d)
   for (counter = 1; counter < NUM_AFF_FLAGS; counter++) {
     write_to_output(d, "%s%2d%s) %-20.20s %s", grn, counter, nrm, affected_bits[counter], !(++columns % 2) ? "\r\n" : "");
   }
-  sprintbitarray(GET_OBJ_AFFECT(OLC_OBJ(d)), affected_bits, EF_ARRAY_MAX, bits);
+  sprintbitarray(GET_OBJ_AFFECT(OLC_OBJ(d)), affected_bits, EF_ARRAY_MAX, bits, sizeof(bits));
   write_to_output(d, "\r\nObject permanent flags: %s%s%s\r\n"
           "Enter object perm flag (0 to quit) : ", cyn, bits, nrm);
 }
@@ -835,7 +835,7 @@ static void oedit_disp_wear_menu(struct descriptor_data *d)
     write_to_output(d, "%s%2d%s) %-20.20s %s", grn, counter + 1, nrm,
 		wear_bits[counter], !(++columns % 2) ? "\r\n" : "");
   }
-  sprintbitarray(GET_OBJ_WEAR(OLC_OBJ(d)), wear_bits, TW_ARRAY_MAX, bits);
+  sprintbitarray(GET_OBJ_WEAR(OLC_OBJ(d)), wear_bits, TW_ARRAY_MAX, bits, sizeof(bits));
   write_to_output(d, "\r\nWear flags: %s%s%s\r\n"
 	  "Enter wear flag, 0 to quit : ", cyn, bits, nrm);
 }
@@ -853,7 +853,7 @@ static void oedit_disp_menu(struct descriptor_data *d)
 
   /* Build buffers for first part of menu. */
   sprinttype(GET_OBJ_TYPE(obj), item_types, buf1, sizeof(buf1));
-  sprintbitarray(GET_OBJ_EXTRA(obj), extra_bits, EF_ARRAY_MAX, buf2);
+  sprintbitarray(GET_OBJ_EXTRA(obj), extra_bits, EF_ARRAY_MAX, buf2, sizeof(buf2));
 
   /* Build first half of menu. */
   write_to_output(d,
@@ -874,8 +874,8 @@ static void oedit_disp_menu(struct descriptor_data *d)
 	  grn, nrm, cyn, buf2
 	  );
   /* Send first half then build second half of menu. */
-  sprintbitarray(GET_OBJ_WEAR(OLC_OBJ(d)), wear_bits, EF_ARRAY_MAX, buf1);
-  sprintbitarray(GET_OBJ_AFFECT(OLC_OBJ(d)), affected_bits, EF_ARRAY_MAX, buf2);
+  sprintbitarray(GET_OBJ_WEAR(OLC_OBJ(d)), wear_bits, EF_ARRAY_MAX, buf1, sizeof(buf1));
+  sprintbitarray(GET_OBJ_AFFECT(OLC_OBJ(d)), affected_bits, EF_ARRAY_MAX, buf2, sizeof(buf2));
 
   write_to_output(d,
 	  "%s7%s) Wear flags  : %s%s\r\n"
@@ -1101,7 +1101,7 @@ void oedit_parse(struct descriptor_data *d, char *arg)
     break;
 
   case OEDIT_TYPE:
-    number = atoi(arg);
+    number = tb_parse_int_or_zero(arg);
     if ((number < 0) || (number >= NUM_ITEM_TYPES)) {
       write_to_output(d, "Invalid choice, try again : ");
       return;
@@ -1113,7 +1113,7 @@ void oedit_parse(struct descriptor_data *d, char *arg)
     break;
 
   case OEDIT_EXTRAS:
-    number = atoi(arg);
+    number = tb_parse_int_or_zero(arg);
     if ((number < 0) || (number > NUM_ITEM_FLAGS)) {
       oedit_disp_extra_menu(d);
       return;
@@ -1126,7 +1126,7 @@ void oedit_parse(struct descriptor_data *d, char *arg)
     }
 
   case OEDIT_WEAR:
-    number = atoi(arg);
+    number = tb_parse_int_or_zero(arg);
     if ((number < 0) || (number > NUM_ITEM_WEARS)) {
       write_to_output(d, "That's not a valid choice!\r\n");
       oedit_disp_wear_menu(d);
@@ -1140,27 +1140,27 @@ void oedit_parse(struct descriptor_data *d, char *arg)
     }
 
   case OEDIT_WEIGHT:
-    GET_OBJ_WEIGHT(OLC_OBJ(d)) = LIMIT(atoi(arg), 0, MAX_OBJ_WEIGHT);
+    GET_OBJ_WEIGHT(OLC_OBJ(d)) = LIMIT(tb_parse_int_or_zero(arg), 0, MAX_OBJ_WEIGHT);
     break;
 
   case OEDIT_COST:
-    GET_OBJ_COST(OLC_OBJ(d)) = LIMIT(atoi(arg), 0, MAX_OBJ_COST);
+    GET_OBJ_COST(OLC_OBJ(d)) = LIMIT(tb_parse_int_or_zero(arg), 0, MAX_OBJ_COST);
     break;
 
   case OEDIT_COSTPERDAY:
-    GET_OBJ_RENT(OLC_OBJ(d)) = LIMIT(atoi(arg), 0, MAX_OBJ_RENT);
+    GET_OBJ_RENT(OLC_OBJ(d)) = LIMIT(tb_parse_int_or_zero(arg), 0, MAX_OBJ_RENT);
     break;
 
   case OEDIT_TIMER:
-    GET_OBJ_TIMER(OLC_OBJ(d)) = LIMIT(atoi(arg), 0, MAX_OBJ_TIMER);
+    GET_OBJ_TIMER(OLC_OBJ(d)) = LIMIT(tb_parse_int_or_zero(arg), 0, MAX_OBJ_TIMER);
     break;
 
   case OEDIT_LEVEL:
-    GET_OBJ_LEVEL(OLC_OBJ(d)) = LIMIT(atoi(arg), 0, LVL_IMPL);
+    GET_OBJ_LEVEL(OLC_OBJ(d)) = LIMIT(tb_parse_int_or_zero(arg), 0, LVL_IMPL);
     break;
 
   case OEDIT_PERM:
-    if ((number = atoi(arg)) == 0)
+    if ((number = tb_parse_int_or_zero(arg)) == 0)
       break;
     if (number > 0 && number < NUM_AFF_FLAGS) {
       /* Setting AFF_CHARM on objects like this is dangerous. */
@@ -1172,7 +1172,7 @@ void oedit_parse(struct descriptor_data *d, char *arg)
     return;
 
   case OEDIT_VALUE_1:
-    number = atoi(arg);
+    number = tb_parse_int_or_zero(arg);
     switch (GET_OBJ_TYPE(OLC_OBJ(d))) {
     case ITEM_FURNITURE:
       if (number < 0 || number > MAX_PEOPLE)
@@ -1183,20 +1183,20 @@ void oedit_parse(struct descriptor_data *d, char *arg)
       }
       break;
     case ITEM_WEAPON:
-      GET_OBJ_VAL(OLC_OBJ(d), 0) = MIN(MAX(atoi(arg), -50), 50);
+      GET_OBJ_VAL(OLC_OBJ(d), 0) = MIN(MAX(tb_parse_int_or_zero(arg), -50), 50);
       break;
     case ITEM_CONTAINER:
-      GET_OBJ_VAL(OLC_OBJ(d), 0) = LIMIT(atoi(arg), -1, MAX_CONTAINER_SIZE);
+      GET_OBJ_VAL(OLC_OBJ(d), 0) = LIMIT(tb_parse_int_or_zero(arg), -1, MAX_CONTAINER_SIZE);
       break;
     default:
-      GET_OBJ_VAL(OLC_OBJ(d), 0) = atoi(arg);
+      GET_OBJ_VAL(OLC_OBJ(d), 0) = tb_parse_int_or_zero(arg);
     }
     /* proceed to menu 2 */
     oedit_disp_val2_menu(d);
     return;
   case OEDIT_VALUE_2:
     /* Here, I do need to check for out of range values. */
-    number = atoi(arg);
+    number = tb_parse_int_or_zero(arg);
     switch (GET_OBJ_TYPE(OLC_OBJ(d))) {
     case ITEM_SCROLL:
     case ITEM_POTION:
@@ -1230,7 +1230,7 @@ void oedit_parse(struct descriptor_data *d, char *arg)
     return;
 
   case OEDIT_VALUE_3:
-    number = atoi(arg);
+    number = tb_parse_int_or_zero(arg);
     /* Quick'n'easy error checking. */
     switch (GET_OBJ_TYPE(OLC_OBJ(d))) {
     case ITEM_SCROLL:
@@ -1271,7 +1271,7 @@ void oedit_parse(struct descriptor_data *d, char *arg)
     return;
 
   case OEDIT_VALUE_4:
-    number = atoi(arg);
+    number = tb_parse_int_or_zero(arg);
     switch (GET_OBJ_TYPE(OLC_OBJ(d))) {
     case ITEM_SCROLL:
     case ITEM_POTION:
@@ -1301,7 +1301,7 @@ void oedit_parse(struct descriptor_data *d, char *arg)
     break;
 
   case OEDIT_PROMPT_APPLY:
-    if ((number = atoi(arg)) == 0)
+    if ((number = tb_parse_int_or_zero(arg)) == 0)
       break;
     else if (number < 0 || number > MAX_OBJ_AFFECT) {
       oedit_disp_prompt_apply_menu(d);
@@ -1313,7 +1313,7 @@ void oedit_parse(struct descriptor_data *d, char *arg)
     return;
 
   case OEDIT_APPLY:
-    if (((number = atoi(arg)) == 0) || ((number = atoi(arg)) == 1)) {
+    if (((number = tb_parse_int_or_zero(arg)) == 0) || ((number = tb_parse_int_or_zero(arg)) == 1)) {
       OLC_OBJ(d)->affected[OLC_VAL(d)].location = 0;
       OLC_OBJ(d)->affected[OLC_VAL(d)].modifier = 0;
       oedit_disp_prompt_apply_menu(d);
@@ -1339,7 +1339,7 @@ void oedit_parse(struct descriptor_data *d, char *arg)
     return;
 
   case OEDIT_APPLYMOD:
-    OLC_OBJ(d)->affected[OLC_VAL(d)].modifier = atoi(arg);
+    OLC_OBJ(d)->affected[OLC_VAL(d)].modifier = tb_parse_int_or_zero(arg);
     oedit_disp_prompt_apply_menu(d);
     return;
 
@@ -1353,7 +1353,7 @@ void oedit_parse(struct descriptor_data *d, char *arg)
     return;
 
   case OEDIT_EXTRADESC_MENU:
-    switch ((number = atoi(arg))) {
+    switch ((number = tb_parse_int_or_zero(arg))) {
     case 0:
       if (!OLC_DESC(d)->keyword || !OLC_DESC(d)->description) {
         struct extra_descr_data *temp;
@@ -1410,7 +1410,7 @@ void oedit_parse(struct descriptor_data *d, char *arg)
     break;
 
   case OEDIT_COPY:
-    if ((number = real_object(atoi(arg))) != NOTHING) {
+    if ((number = real_object(tb_parse_int_or_zero(arg))) != NOTHING) {
       oedit_setup_existing(d, number);
     } else
       write_to_output(d, "That object does not exist.\r\n");

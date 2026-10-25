@@ -135,7 +135,7 @@ static IBT_DATA *read_ibt( char *filename, FILE *fp )
       letter = getc( fp );
       if( feof(fp) )
       {
-         fclose( fp );
+         tb_fclose( fp );
          return NULL;
       }
    }
@@ -165,11 +165,11 @@ static IBT_DATA *read_ibt( char *filename, FILE *fp )
             if (!str_cmp(word, "End"))
             {
               if ( id_num ) {
-                ibtData->id_num = atol(id_num);
+                ibtData->id_num = tb_parse_long_or_zero(id_num);
                 STRFREE( id_num );
               }  
               if ( dated ) {
-                ibtData->dated = atol(dated);
+                ibtData->dated = tb_parse_long_or_zero(dated);
                 STRFREE( dated );
               }  
               if ( !ibtData->name )
@@ -253,11 +253,11 @@ void load_ibt_file(int mode)
    IBT_DATA *ibtData;
 
    switch(mode) {
-     case SCMD_BUG : sprintf( filename, "%s",BUGS_FILE );
+     case SCMD_BUG : snprintf(filename, sizeof(filename), "%s",BUGS_FILE);
                      break;
-     case SCMD_IDEA: sprintf( filename, "%s",IDEAS_FILE );
+     case SCMD_IDEA: snprintf(filename, sizeof(filename), "%s",IDEAS_FILE);
                      break;
-     case SCMD_TYPO: sprintf( filename, "%s",TYPOS_FILE );
+     case SCMD_TYPO: snprintf(filename, sizeof(filename), "%s",TYPOS_FILE);
                      break;
      default       : log("SYSERR: Invalid mode (%d) in load_ibt_file", mode);
                      return;
@@ -267,6 +267,7 @@ void load_ibt_file(int mode)
    free_ibt_list(mode);
 
    if( ( fp = fopen( filename, "r" ) ) == NULL ) {
+     TB_REPORT_ERRNO("fopen", filename);
       log("No File: %s", filename);
       return;
    }
@@ -292,48 +293,46 @@ void save_ibt_file(int mode)
    char filename[256];
 
    switch(mode) {
-     case SCMD_BUG : sprintf( filename, "%s",BUGS_FILE );
+     case SCMD_BUG : snprintf(filename, sizeof(filename), "%s",BUGS_FILE);
                      first_ibt = first_bug;
                      break;
-     case SCMD_IDEA: sprintf( filename, "%s",IDEAS_FILE );
+     case SCMD_IDEA: snprintf(filename, sizeof(filename), "%s",IDEAS_FILE);
                      first_ibt = first_idea;
                      break;
-     case SCMD_TYPO: sprintf( filename, "%s",TYPOS_FILE );
+     case SCMD_TYPO: snprintf(filename, sizeof(filename), "%s",TYPOS_FILE);
                      first_ibt = first_typo;
                      break;
      default       : log("SYSERR: Invalid mode (%d) in save_ibt_file", mode);
                      return;
    }
 
-   if (( fp = fopen(filename,"w")) == NULL)
-   {
+   if ((fp = fopen(filename, "w")) == NULL) {
+     TB_REPORT_ERRNO("fopen", filename);
      log("SYSERR: Unable to open IBT file for writing in save_ibt_file");
      log("        IBT File: %s", filename);
      return;
-   }
-   else
-   {
+   } else {
      for (ibtData = first_ibt;ibtData;ibtData=ibtData->next)
      {
        if (ibtData->text && *(ibtData->text))
-         fprintf(fp,"Text      %s~\n",ibtData->text);
+         tb_fprintf(fp,"Text      %s~\n",ibtData->text);
        if (ibtData->body && *(ibtData->body))
-         fprintf(fp,"Body      %s~\n",ibtData->body);
+         tb_fprintf(fp,"Body      %s~\n",ibtData->body);
        if (ibtData->name && *(ibtData->name))
-         fprintf(fp,"Name      %s~\n",ibtData->name);
+         tb_fprintf(fp,"Name      %s~\n",ibtData->name);
        if (ibtData->notes && *(ibtData->notes))
-         fprintf(fp,"Notes     %s~\n",ibtData->notes);
+         tb_fprintf(fp,"Notes     %s~\n",ibtData->notes);
        if (ibtData->id_num != NOBODY)
-         fprintf(fp,"IdNum     %ld\n",ibtData->id_num);
+         tb_fprintf(fp,"IdNum     %ld\n",ibtData->id_num);
        if (ibtData->dated != 0)
-         fprintf(fp,"Dated     %ld\n",ibtData->dated);
-       fprintf(fp,"Level     %d\n",ibtData->level);
-       fprintf(fp,"Room      %d\n",ibtData->room);
-       fprintf(fp,"Flags     %d %d %d %d\n",ibtData->flags[0],ibtData->flags[1],
+         tb_fprintf(fp,"Dated     %ld\n",ibtData->dated);
+       tb_fprintf(fp,"Level     %d\n",ibtData->level);
+       tb_fprintf(fp,"Room      %d\n",ibtData->room);
+       tb_fprintf(fp,"Flags     %d %d %d %d\n",ibtData->flags[0],ibtData->flags[1],
                                             ibtData->flags[2],ibtData->flags[3]);
-       fprintf(fp,"End\n");
+       tb_fprintf(fp,"End\n");
      }
-     fclose(fp);
+     tb_fclose(fp);
      return;
    }
 }
@@ -488,7 +487,7 @@ ACMD(do_ibt)
       send_to_char(ch, "Show which %s?\r\n", CMD_NAME);
       return;
     }
-    ano = atoi(arg2);
+    ano = tb_parse_int_or_zero(arg2);
 
     if ((ibtData = get_ibt_by_num(subcmd, ano)) == NULL) {
       send_to_char(ch, "That %s doesn't exist.\r\n", CMD_NAME);
@@ -499,9 +498,9 @@ ACMD(do_ibt)
       } else {
         send_to_char(ch, "%s%s by %s%s\r\n",QCYN, ibt_types[subcmd], QYEL, ibtData->name);
         if (ibtData->dated != 0) {
-          strftime(timestr, sizeof(timestr), "%c", localtime(&(ibtData->dated)));
+          tb_strftime(timestr, sizeof(timestr), "%c", localtime(&(ibtData->dated)));
         } else {
-          strcpy(timestr, "Unknown");
+          strlcpy(timestr, "Unknown", sizeof(timestr));
         }
         send_to_char(ch, "%sSubmitted: %s%s\r\n", QCYN, QYEL, timestr);
         if (GET_LEVEL(ch) >= LVL_IMMORT) {
@@ -547,9 +546,9 @@ ACMD(do_ibt)
 
         /* Set up the 'important' flag */
         if (IBT_FLAGGED(ibtData, IBT_IMPORTANT))
-          sprintf(imp, "%s!%s", QBFRED, QNRM);
+          tb_snprintf(imp, sizeof(imp), "%s!%s", QBFRED, QNRM);
         else
-          sprintf(imp, "%c", ' ');
+          tb_snprintf(imp, sizeof(imp), "%c", ' ');
 
         if (IBT_FLAGGED(ibtData, IBT_RESOLVED)) {
           if (GET_LEVEL(ch) < LVL_IMMORT) {
@@ -653,7 +652,7 @@ ACMD(do_ibt)
       if (nlen < 0 || len + nlen >= sizeof(buf))
         buf[len] = '\0';
     } else {
-      snprintf(buf + len, sizeof(buf) - len, "No %ss have been reported!\r\n", CMD_NAME);
+      tb_snprintf(buf + len, sizeof(buf) - len, "No %ss have been reported!\r\n", CMD_NAME);
     }
 
     page_string(ch->desc, buf, TRUE);
@@ -681,7 +680,7 @@ ACMD(do_ibt)
     send_to_char(ch, "Write your %s.\r\n", CMD_NAME);
     send_editor_help(ch->desc);
 
-    sprintf(buf, "$n starts to give %s %s.", TANA(CMD_NAME), CMD_NAME);
+    tb_snprintf(buf, sizeof(buf), "$n starts to give %s %s.", TANA(CMD_NAME), CMD_NAME);
     act(buf, TRUE, ch, 0, 0, TO_ROOM);
 
     string_write(ch->desc, &(ibtData->body),MAX_IBT_LENGTH, 0, NULL);
@@ -716,7 +715,7 @@ ACMD(do_ibt)
       send_to_char(ch, "Resolve which %s?\r\n", CMD_NAME);
       return;
     }
-    ano = atoi(arg2);
+    ano = tb_parse_int_or_zero(arg2);
 
     if ((ibtData = get_ibt_by_num(subcmd, ano)) == NULL) {
       send_to_char(ch, "%s not found\r\n", ibt_types[subcmd]);
@@ -743,7 +742,7 @@ ACMD(do_ibt)
       send_to_char(ch, "Remove which %s?\r\n", CMD_NAME);
       return;
     }
-    ano = atoi(arg2);
+    ano = tb_parse_int_or_zero(arg2);
 
     if ((ibtData = get_ibt_by_num(subcmd, ano)) == NULL) {
       send_to_char(ch, "%s not found\r\n", ibt_types[subcmd]);
@@ -812,7 +811,7 @@ ACMD(do_oasis_ibtedit)
 
   /* If a numeric argument was given (like a room number), get it. */
   if (number == NOTHING)
-    number = atoi(buf1);
+    number = tb_parse_int_or_zero(buf1);
 
   /* Validate that the IBT number exists */
   if (get_ibt_by_num(subcmd, number) == NULL) {
@@ -973,7 +972,7 @@ static void ibtedit_disp_main_menu(struct descriptor_data *d)
   clear_screen(d);
 
   rr = real_room(OLC_IBT(d)->room);
-  sprintbitarray(OLC_IBT(d)->flags, ibt_bits, IBT_ARRAY_MAX, flg_text);
+  sprintbitarray(OLC_IBT(d)->flags, ibt_bits, IBT_ARRAY_MAX, flg_text, sizeof(flg_text));
 
   send_to_char(ch, "%s-- Edit %s Number %s[%s%d%s]\r\n"
                    "%s1%s) Reported By: %s%-12s\r\n"
@@ -1006,7 +1005,7 @@ static void ibtedit_disp_flags(struct descriptor_data *d)
 
   column_list(d->character, 2, ibt_bits, NUM_IBT_FLAGS, TRUE);
 
-  sprintbitarray(OLC_IBT(d)->flags, ibt_bits, IBT_ARRAY_MAX, buf);
+  sprintbitarray(OLC_IBT(d)->flags, ibt_bits, IBT_ARRAY_MAX, buf, sizeof(buf));
   write_to_output(d, "\r\nCurrent flags : %s%s%s\r\nEnter flags (0 to quit) : ",
 		  cyn, buf, nrm);
 
@@ -1108,7 +1107,7 @@ void ibtedit_parse(struct descriptor_data *d, char *arg)
       break;
 
     case IBTEDIT_ROOM:
-      i = atoi(arg);
+      i = tb_parse_int_or_zero(arg);
       if (i == 0) { /* Cancel option */
         ibtedit_disp_main_menu(d);
         return;
@@ -1129,7 +1128,7 @@ void ibtedit_parse(struct descriptor_data *d, char *arg)
       break;
 
     case IBTEDIT_FLAGS:
-      if ((i = atoi(arg)) <= 0)
+      if ((i = tb_parse_int_or_zero(arg)) <= 0)
         break;
       else if (i <= NUM_IBT_FLAGS)
         TOGGLE_BIT_AR(IBT_FLAGS(OLC_IBT(d)), (i - 1));

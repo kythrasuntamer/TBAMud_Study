@@ -130,7 +130,8 @@ char *strdup(const char *source)
   char *new_z;
 
   CREATE(new_z, char, strlen(source) + 1);
-  return (strcpy(new_z, source)); /* strcpy: OK */
+  strlcpy(new_z, source, strlen(source) + 1);
+  return new_z; /* strcpy: OK */
 }
 #endif
 
@@ -214,12 +215,12 @@ void basic_mud_vlog(const char *format, va_list args)
     format = "SYSERR: log() received a NULL format.";
 
   for (i=0;i<21;i++) timestr[i]=0;
-  strftime(timestr, sizeof(timestr), "%b %d %H:%M:%S %Y", localtime(&ct));
+  tb_strftime(timestr, sizeof(timestr), "%b %d %H:%M:%S %Y", localtime(&ct));
 
-  fprintf(logfile, "%-20.20s :: ", timestr);
+  tb_fprintf(logfile, "%-20.20s :: ", timestr);
   vfprintf(logfile, format, args);
-  fputc('\n', logfile);
-  fflush(logfile);
+  tb_fputc('\n', logfile);
+  tb_fflush(logfile);
 }
 
 /** Log messages directly to syslog on disk, no display to in game immortals.
@@ -247,10 +248,10 @@ int touch(const char *path)
   FILE *fl;
 
   if (!(fl = fopen(path, "a"))) {
-    log("SYSERR: %s: %s", path, strerror(errno));
+    TB_REPORT_ERRNO("fopen", path);
     return (-1);
   } else {
-    fclose(fl);
+    tb_fclose(fl);
     return (0);
   }
 }
@@ -283,11 +284,11 @@ void mudlog(int type, int level, int file, const char *str, ...)
   if (level < 0)
     return;
 
-  strcpy(buf, "[ ");	/* strcpy: OK */
+  strlcpy(buf, "[ ", sizeof(buf));	/* strcpy: OK */
   va_start(args, str);
   vsnprintf(buf + 2, sizeof(buf) - 6, str, args);
   va_end(args);
-  strcat(buf, " ]\r\n");	/* strcat: OK */
+  strlcat(buf, " ]\r\n", sizeof(buf));	/* strcat: OK */
 
   for (i = descriptor_list; i; i = i->next) {
     if (STATE(i) != CON_PLAYING || IS_NPC(i->character)) /* switch */
@@ -393,7 +394,7 @@ size_t sprinttype(int type, const char *names[], char *result, size_t reslen)
  * Will be set to "NOBITS" if no bits are set in bitarray (ie all bits in the
  * bitarray are equal to 0).
  */
-void sprintbitarray(int bitvector[], const char *names[], int maxar, char *result)
+void sprintbitarray(int bitvector[], const char *names[], int maxar, char *result, size_t reslen)
 {
   int nr, teller, found = FALSE;
 
@@ -659,7 +660,7 @@ int get_line(FILE *fl, char *buf)
   while (sl > 0 && (temp[sl - 1] == '\n' || temp[sl - 1] == '\r'))
     temp[--sl] = '\0';
 
-  strcpy(buf, temp); /* strcpy: OK, if buf >= READ_SIZE (256) */
+  strlcpy(buf, temp, sizeof(buf)); /* strcpy: OK, if buf >= READ_SIZE (256) */
   return (lines);
 }
 
@@ -734,7 +735,7 @@ int get_filename(char *filename, size_t fbufsize, int mode, const char *orig_nam
     break;
   }
 
-  snprintf(filename, fbufsize, "%s%s"SLASH"%s.%s", prefix, middle, name, suffix);
+  tb_snprintf(filename, fbufsize, "%s%s"SLASH"%s.%s", prefix, middle, name, suffix);
   return (1);
 }
 
@@ -770,11 +771,11 @@ void core_dump_real(const char *who, int line)
 #if 1	/* By default, let's not litter. */
 #if defined(CIRCLE_UNIX)
   /* These would be duplicated otherwise...make very sure. */
-  fflush(stdout);
-  fflush(stderr);
-  fflush(logfile);
+  tb_fflush(stdout);
+  tb_fflush(stderr);
+  tb_fflush(logfile);
   /* Everything, just in case, for the systems that support it. */
-  fflush(NULL);
+  tb_fflush(NULL);
 
   /* Kill the child so the debugger or script doesn't think the MUD crashed.
    * The 'autorun' script would otherwise run it again. */
@@ -1033,7 +1034,7 @@ void column_list(struct char_data *ch, int num_cols, const char **list, int list
    }
 
    if (len >= sizeof(buf))
-     snprintf((buf + MAX_STRING_LENGTH) - 22, 22, "\r\n*** OVERFLOW ***\r\n");
+     tb_snprintf((buf + MAX_STRING_LENGTH) - 22, 22, "\r\n*** OVERFLOW ***\r\n");
 
    /* Send the list to the player */
    page_string(ch->desc, buf, TRUE);
@@ -1118,15 +1119,16 @@ int file_head(FILE *file, char *buf, size_t bufsize, int lines_to_read)
 
     if (olen + 1 >= bufsize) {
       core_dump();
-      snprintf(buf, bufsize, "%s", overflow);
+      tb_snprintf(buf, bufsize, "%s", overflow);
     } else {
       size_t start = (buflen > olen) ? buflen - olen : 0;
-      snprintf(buf + start, bufsize - start, "%s", overflow);
+      tb_snprintf(buf + start, bufsize - start, "%s", overflow);
     }
   }
 
   clearerr(file);
-  fseek(file, 0L, SEEK_SET);
+  if (fseek(file, 0L, SEEK_SET) != 0)
+    TB_REPORT_ERRNO("fseek", "restore file position in line reader");
   return lines_read;
 }
 
@@ -1205,15 +1207,16 @@ int file_tail(FILE *file, char *buf, size_t bufsize, int lines_to_read)
 
     if (olen + 1 >= bufsize) {
       core_dump();
-      snprintf(buf, bufsize, "%s", overflow);
+      tb_snprintf(buf, bufsize, "%s", overflow);
     } else {
       size_t start = (buflen > olen) ? buflen - olen : 0;
-      snprintf(buf + start, bufsize - start, "%s", overflow);
+      tb_snprintf(buf + start, bufsize - start, "%s", overflow);
     }
   }
 
   clearerr(file);
-  fseek(file, 0L, SEEK_SET);
+  if (fseek(file, 0L, SEEK_SET) != 0)
+    TB_REPORT_ERRNO("fseek", "restore file position in line reader");
   return lines_read;
 }
 
@@ -1240,7 +1243,8 @@ size_t file_sizeof(FILE *file)
     numbytes++;
 
   clearerr(file);
-  fseek(file, 0L, SEEK_SET);
+  if (fseek(file, 0L, SEEK_SET) != 0)
+    TB_REPORT_ERRNO("fseek", "restore file position after size scan");
   return numbytes;
 }
 
@@ -1268,7 +1272,8 @@ int file_numlines(FILE *file)
       numlines++;
 
   clearerr(file);
-  fseek(file, 0L, SEEK_SET);
+  if (fseek(file, 0L, SEEK_SET) != 0)
+    TB_REPORT_ERRNO("fseek", "restore file position after line count");
   return numlines;
 }
 
@@ -1493,7 +1498,7 @@ char *strpaste(char *str1, char *str2, char *joiner)
     /* Add the joiner */
     if((rp - ret) + jlen >= MAX_STRING_LENGTH)
       break;
-    strcpy(rp, joiner);
+    memcpy(rp, joiner, (size_t)jlen);
     rp += jlen;
 
      /* Copy line from str2 */
@@ -1542,7 +1547,7 @@ char * convert_from_tabs(char * string)
 {
   static char buf[MAX_STRING_LENGTH * 8];
   
-  strcpy(buf, string);
+  strlcpy(buf, string, sizeof(buf));
   parse_tab(buf);
   return(buf);
 }

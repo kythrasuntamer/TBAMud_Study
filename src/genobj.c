@@ -196,7 +196,7 @@ int save_objects(zone_rnum zone_num)
     return FALSE;
   }
 
-  snprintf(filename, sizeof(filename), "%s/%d.new", OBJ_PREFIX, zone_table[zone_num].number);
+  tb_snprintf(filename, sizeof(filename), "%s/%d.new", OBJ_PREFIX, zone_table[zone_num].number);
   if (!(fp = fopen(filename, "w+"))) {
     mudlog(BRF, LVL_IMMORT, TRUE, "SYSERR: OLC: Cannot open objects file %s!", filename);
     return FALSE;
@@ -227,7 +227,7 @@ int save_objects(zone_rnum zone_num)
         mudlog(BRF, LVL_BUILDER, TRUE,
                "SYSERR: Could not format object #%d for saving; zone %d not saved.",
                GET_OBJ_VNUM(obj), zone_table[zone_num].number);
-        fclose(fp);
+        tb_fclose(fp);
         remove(filename);
         return FALSE;
       }
@@ -237,12 +237,12 @@ int save_objects(zone_rnum zone_num)
                "SYSERR: Could not save object #%d due to size (%d >= maximum of %d); "
                "zone %d not saved.",
                GET_OBJ_VNUM(obj), n, MAX_STRING_LENGTH, zone_table[zone_num].number);
-        fclose(fp);
+        tb_fclose(fp);
         remove(filename);
         return FALSE;
       }
       
-      fprintf(fp, "%s", convert_from_tabs(buf2));
+      tb_fprintf(fp, "%s", convert_from_tabs(buf2));
 
       sprintascii(ebuf1, GET_OBJ_EXTRA(obj)[0]);
       sprintascii(ebuf2, GET_OBJ_EXTRA(obj)[1]);
@@ -257,7 +257,7 @@ int save_objects(zone_rnum zone_num)
       sprintascii(pbuf3, GET_OBJ_AFFECT(obj)[2]);
       sprintascii(pbuf4, GET_OBJ_AFFECT(obj)[3]);
 
-      fprintf(fp, "%d %s %s %s %s %s %s %s %s %s %s %s %s\n"
+      tb_fprintf(fp, "%d %s %s %s %s %s %s %s %s %s %s %s %s\n"
           "%d %d %d %d\n"
           "%d %d %d %d %d\n",
 
@@ -284,7 +284,7 @@ int save_objects(zone_rnum zone_num)
 	  }
 	  strlcpy(buf, ex_desc->description, sizeof(buf));
 	  strip_cr(buf);
-	  fprintf(fp, "E\n"
+	  tb_fprintf(fp, "E\n"
 		  "%s~\n"
 		  "%s~\n", ex_desc->keyword, buf);
 	}
@@ -292,18 +292,26 @@ int save_objects(zone_rnum zone_num)
       /* Do we have affects? */
       for (counter2 = 0; counter2 < MAX_OBJ_AFFECT; counter2++)
 	if (obj->affected[counter2].modifier)
-	  fprintf(fp, "A\n"
+	  tb_fprintf(fp, "A\n"
 		  "%d %d\n", obj->affected[counter2].location,
 		  obj->affected[counter2].modifier);
     }
   }
 
-  /* Write the final line, close the file. */
-  fprintf(fp, "$~\n");
-  fclose(fp);
-  snprintf(buf, sizeof(buf), "%s/%d.obj", OBJ_PREFIX, zone_table[zone_num].number);
-  remove(buf);
-  rename(filename, buf);
+  /* Write the final line and commit only a fully flushed temporary file. */
+  tb_fprintf(fp, "$~\n");
+  {
+    int flush_ok = tb_fflush_checked(fp, filename);
+    int close_ok = tb_fclose_checked(fp, filename);
+    if (!flush_ok || !close_ok) {
+      if (remove(filename) != 0 && errno != ENOENT)
+        TB_REPORT_ERRNO("remove", filename);
+      return FALSE;
+    }
+  }
+  tb_snprintf(buf, sizeof(buf), "%s/%d.obj", OBJ_PREFIX, zone_table[zone_num].number);
+  if (!tb_replace_file_checked(filename, buf))
+    return FALSE;
 
   if (in_save_list(zone_table[zone_num].number, SL_OBJ))
     remove_from_save_list(zone_table[zone_num].number, SL_OBJ);
@@ -526,7 +534,7 @@ bool oset_apply(struct obj_data *obj, char * argument)
   
   skip_spaces(&argument);
   
-  if ((value = atoi(argument)) == 0)
+  if ((value = tb_parse_int_or_zero(argument)) == 0)
     return FALSE;
   
   while (*apply_types[i] != '\n') {
@@ -543,7 +551,7 @@ bool oset_apply(struct obj_data *obj, char * argument)
   for (i = 0; i < MAX_OBJ_AFFECT; i++) {
     if (obj->affected[i].location == apply) {
       location = i;
-      mod = obj->affected[i].modifier;
+      mod = (int)obj->affected[i].modifier;
       break;
     } else if (obj->affected[i].location == APPLY_NONE && empty == -1) {
       empty = i;

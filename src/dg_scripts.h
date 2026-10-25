@@ -12,8 +12,8 @@
 * $Date: 2004/10/11 12:07:00$
 * $Revision: 1.0.14 $
 */
-#ifndef _DG_SCRIPTS_H_
-#define _DG_SCRIPTS_H_
+#ifndef TBAMUD_DG_SCRIPTS_H_INCLUDED
+#define TBAMUD_DG_SCRIPTS_H_INCLUDED
 
 #include "utils.h" /* To make sure ACMD is defined */
 
@@ -202,7 +202,7 @@ typedef struct char_data char_data;
 
 
 /* function prototypes from dg_triggers.c */
-char *one_phrase(char *arg, char *first_arg);
+char *one_phrase(char *arg, char *first_arg, size_t first_arg_size);
 int is_substring(char *sub, char *string);
 int word_check(char *str, char *wordlist);
 
@@ -456,4 +456,4 @@ extern int has_obj_by_uid_in_lookup_table(long uid);
 
 #define room_script_id(room)  ((long)(room)->number + ROOM_ID_BASE)
 
-#endif /* _DG_SCRIPTS_H_ */
+#endif /* TBAMUD_DG_SCRIPTS_H_INCLUDED */

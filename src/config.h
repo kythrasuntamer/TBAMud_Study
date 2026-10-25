@@ -10,8 +10,8 @@
 * CircleMUD is based on DikuMUD, Copyright (C) 1990, 1991.
 *
 */
-#ifndef _CONFIG_H_
-#define _CONFIG_H_
+#ifndef TBAMUD_CONFIG_H_INCLUDED
+#define TBAMUD_CONFIG_H_INCLUDED
 
 /* Global variable declarations, all settable by cedit */
 extern int pk_setting;
@@ -88,4 +88,4 @@ extern int auto_pwipe;
 extern struct pclean_criteria_data pclean_criteria[];
 extern int selfdelete_fastwipe;
 
-#endif /* _CONFIG_H_*/
+#endif /* TBAMUD_CONFIG_H_INCLUDED*/

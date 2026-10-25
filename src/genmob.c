@@ -299,7 +299,7 @@ int save_mobiles(zone_rnum rznum)
   }
 
   vznum = zone_table[rznum].number;
-  snprintf(mobfname, sizeof(mobfname), "%s%d.new", MOB_PREFIX, vznum);
+  tb_snprintf(mobfname, sizeof(mobfname), "%s%d.new", MOB_PREFIX, vznum);
   if ((mobfd = fopen(mobfname, "w")) == NULL) {
     mudlog(BRF, LVL_GOD, TRUE, "SYSERR: GenOLC: Cannot open mob file for writing.");
     return FALSE;
@@ -310,17 +310,25 @@ int save_mobiles(zone_rnum rznum)
       continue;
     check_mobile_strings(&mob_proto[rmob]);
     if (!write_mobile_record(i, &mob_proto[rmob], mobfd)) {
-      fclose(mobfd);
+      tb_fclose(mobfd);
         remove(mobfname);
       return FALSE;
     }
   }
-  fputs("$\n", mobfd);
+  tb_fputs("$\n", mobfd);
   written = ftell(mobfd);
-  fclose(mobfd);
-  snprintf(usedfname, sizeof(usedfname), "%s%d.mob", MOB_PREFIX, vznum);
-  remove(usedfname);
-  rename(mobfname, usedfname);
+  {
+    int flush_ok = tb_fflush_checked(mobfd, mobfname);
+    int close_ok = tb_fclose_checked(mobfd, mobfname);
+    if (!flush_ok || !close_ok) {
+      if (remove(mobfname) != 0 && errno != ENOENT)
+        TB_REPORT_ERRNO("remove", mobfname);
+      return FALSE;
+    }
+  }
+  tb_snprintf(usedfname, sizeof(usedfname), "%s%d.mob", MOB_PREFIX, vznum);
+  if (!tb_replace_file_checked(mobfname, usedfname))
+    return FALSE;
 
   if (in_save_list(vznum, SL_MOB))
     remove_from_save_list(vznum, SL_MOB);
@@ -331,32 +339,32 @@ int save_mobiles(zone_rnum rznum)
 int write_mobile_espec(mob_vnum mvnum, struct char_data *mob, FILE *fd)
 {
   if (GET_ATTACK(mob) != 0)
-    fprintf(fd, "BareHandAttack: %d\n", GET_ATTACK(mob));
+    tb_fprintf(fd, "BareHandAttack: %d\n", GET_ATTACK(mob));
   if (GET_STR(mob) != 11)
-    fprintf(fd, "Str: %d\n", GET_STR(mob));
+    tb_fprintf(fd, "Str: %d\n", GET_STR(mob));
   if (GET_ADD(mob) != 0)
-    fprintf(fd, "StrAdd: %d\n", GET_ADD(mob));
+    tb_fprintf(fd, "StrAdd: %d\n", GET_ADD(mob));
   if (GET_DEX(mob) != 11)
-    fprintf(fd, "Dex: %d\n", GET_DEX(mob));
+    tb_fprintf(fd, "Dex: %d\n", GET_DEX(mob));
   if (GET_INT(mob) != 11)
-    fprintf(fd, "Int: %d\n", GET_INT(mob));
+    tb_fprintf(fd, "Int: %d\n", GET_INT(mob));
   if (GET_WIS(mob) != 11)
-    fprintf(fd, "Wis: %d\n", GET_WIS(mob));
+    tb_fprintf(fd, "Wis: %d\n", GET_WIS(mob));
   if (GET_CON(mob) != 11)
-    fprintf(fd, "Con: %d\n", GET_CON(mob));
+    tb_fprintf(fd, "Con: %d\n", GET_CON(mob));
   if (GET_CHA(mob) != 11)
-    fprintf(fd, "Cha: %d\n", GET_CHA(mob));
+    tb_fprintf(fd, "Cha: %d\n", GET_CHA(mob));
   if (GET_SAVE(mob, SAVING_PARA) != 0)
-    fprintf(fd, "SavingPara: %d\n", GET_SAVE(mob, SAVING_PARA));
+    tb_fprintf(fd, "SavingPara: %d\n", GET_SAVE(mob, SAVING_PARA));
   if (GET_SAVE(mob, SAVING_ROD) != 0)
-    fprintf(fd, "SavingRod: %d\n", GET_SAVE(mob, SAVING_ROD));
+    tb_fprintf(fd, "SavingRod: %d\n", GET_SAVE(mob, SAVING_ROD));
   if (GET_SAVE(mob, SAVING_PETRI) != 0)
-    fprintf(fd, "SavingPetri: %d\n", GET_SAVE(mob, SAVING_PETRI));
+    tb_fprintf(fd, "SavingPetri: %d\n", GET_SAVE(mob, SAVING_PETRI));
   if (GET_SAVE(mob, SAVING_BREATH) != 0)
-    fprintf(fd, "SavingBreath: %d\n", GET_SAVE(mob, SAVING_BREATH));
+    tb_fprintf(fd, "SavingBreath: %d\n", GET_SAVE(mob, SAVING_BREATH));
   if (GET_SAVE(mob, SAVING_SPELL) != 0)
-    fprintf(fd, "SavingSpell: %d\n", GET_SAVE(mob, SAVING_SPELL));
-  fputs("E\n", fd);
+    tb_fprintf(fd, "SavingSpell: %d\n", GET_SAVE(mob, SAVING_SPELL));
+  tb_fputs("E\n", fd);
   return TRUE;
 }
 
@@ -395,9 +403,9 @@ int write_mobile_record(mob_vnum mvnum, struct char_data *mob, FILE *fd)
     return FALSE;
   }
 
-  fprintf(fd, "%s", convert_from_tabs(buf));
+  tb_fprintf(fd, "%s", convert_from_tabs(buf));
 
-  fprintf(fd, "%d %d %d %d %d %d %d %d %d E\n"
+  tb_fprintf(fd, "%d %d %d %d %d %d %d %d %d E\n"
       "%d %d %d %dd%d+%d %dd%d+%d\n",
       MOB_FLAGS(mob)[0], MOB_FLAGS(mob)[1],
       MOB_FLAGS(mob)[2], MOB_FLAGS(mob)[3],
@@ -408,7 +416,7 @@ int write_mobile_record(mob_vnum mvnum, struct char_data *mob, FILE *fd)
       GET_MANA(mob), GET_MOVE(mob), GET_NDD(mob), GET_SDD(mob),
       GET_DAMROLL(mob));
 
-  fprintf(fd, "%d %d\n"
+  tb_fprintf(fd, "%d %d\n"
       "%d %d %d\n",
       GET_GOLD(mob), GET_EXP(mob),
       GET_POS(mob), GET_DEFAULT_POS(mob), GET_SEX(mob));
@@ -437,7 +445,7 @@ void check_mobile_string(mob_vnum i, char **string, const char *desc)
 {
   if (*string == NULL || **string == '\0') {
     char smbuf[128];
-    sprintf(smbuf, "GenOLC: Mob #%d has an invalid %s.", i, desc);
+    tb_snprintf(smbuf, sizeof(smbuf), "GenOLC: Mob #%d has an invalid %s.", i, desc);
     mudlog(BRF, LVL_GOD, TRUE, "%s", smbuf);
     if (*string)
       free(*string);

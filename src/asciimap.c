@@ -33,7 +33,7 @@
 
 #define DEFAULT_MAP_SIZE CONFIG_MAP_SIZE
 
-#define MAX_MAP_SIZE (CANVAS_WIDTH - 1)/4
+#define MAX_MAP_SIZE ((CANVAS_WIDTH - 1) / 4)
 #define MAX_MAP      CANVAS_WIDTH
 
 #define MAX_MAP_DIR 10
@@ -43,19 +43,19 @@
 #define SECT_STRANGE (SECT_EMPTY + 1)
 #define SECT_HERE  (SECT_STRANGE + 1)
 
-#define DOOR_NS   -1
-#define DOOR_EW   -2
-#define DOOR_UP   -3
-#define DOOR_DOWN -4
-#define DOOR_DIAGNE      -5
-#define DOOR_DIAGNW      -6
-#define VDOOR_NS         -7
-#define VDOOR_EW         -8
-#define VDOOR_DIAGNE     -9
-#define VDOOR_DIAGNW     -10
-#define DOOR_UP_AND_NE   -11
-#define DOOR_DOWN_AND_SE -12
-#define DOOR_NONE        -13
+#define DOOR_NS (-1)
+#define DOOR_EW (-2)
+#define DOOR_UP (-3)
+#define DOOR_DOWN (-4)
+#define DOOR_DIAGNE (-5)
+#define DOOR_DIAGNW (-6)
+#define VDOOR_NS (-7)
+#define VDOOR_EW (-8)
+#define VDOOR_DIAGNE (-9)
+#define VDOOR_DIAGNW (-10)
+#define DOOR_UP_AND_NE (-11)
+#define DOOR_DOWN_AND_SE (-12)
+#define DOOR_NONE        (-13)
 #define NUM_DOOR_TYPES 13
 
 #define MAP_CIRCLE    0
@@ -374,11 +374,11 @@ static char *StringMap(int centre, int size)
        map_info[map[x][y]].disp ;
       else
  tmp = map_info[SECT_EMPTY].disp;
-      strcpy(mp, tmp);
-      mp += strlen(tmp);
+      strlcpy(mp, tmp, sizeof(strmap) - (size_t)(mp - strmap));
+      mp += strlen(mp);
     }
-    strcpy(mp, "\r\n");
-    mp+=2;
+    strlcpy(mp, "\r\n", sizeof(strmap) - (size_t)(mp - strmap));
+    mp += 2;
   }
   *mp='\0';
   return strmap;
@@ -415,14 +415,15 @@ static char *WorldMap(int centre, int size, int mapshape, int maptype )
 
       if((mapshape == MAP_RECTANGLE && abs(centre - y) <= size*2  && abs(centre - x) <= size ) ||
    ((mapshape == MAP_CIRCLE) && (centre-x)*(centre-x) + (centre-y)*(centre-y)/4 <= (size * size + 1))) {
-        strcpy(mp, world_map_info[map[x][y]].disp);
-        mp += strlen(world_map_info[map[x][y]].disp);
+        strlcpy(mp, world_map_info[map[x][y]].disp,
+                sizeof(strmap) - (size_t)(mp - strmap));
+        mp += strlen(mp);
       } else {
- strcpy(mp++, " ");
+ *mp++ = ' ';
       }
     }
-    strcpy(mp, "\tn\r\n");
-    mp+=4;
+    strlcpy(mp, "\tn\r\n", sizeof(strmap) - (size_t)(mp - strmap));
+    mp += 4;
   }
   *mp='\0';
   return strmap;
@@ -438,15 +439,16 @@ static char *CompactStringMap(int centre, int size)
   for (x = centre - size; x <= centre + size; x++) {
     /* every column */
     for (y = centre - size; y <= centre + size; y++) {
-      strcpy(mp, (map[x][y]<0) ? \
-       compact_door_info[NUM_DOOR_TYPES + map[x][y]].disp : \
-       map_info[map[x][y]].disp);
+      strlcpy(mp, (map[x][y] < 0) ?
+               compact_door_info[NUM_DOOR_TYPES + map[x][y]].disp :
+               map_info[map[x][y]].disp,
+               sizeof(strmap) - (size_t)(mp - strmap));
       mp += strlen((map[x][y]<0) ? \
        compact_door_info[NUM_DOOR_TYPES + map[x][y]].disp : \
        map_info[map[x][y]].disp);
     }
-    strcpy(mp, "\r\n");
-    mp+=2;
+    strlcpy(mp, "\r\n", sizeof(strmap) - (size_t)(mp - strmap));
+    mp += 2;
   }
   *mp='\0';
   return strmap;
@@ -465,7 +467,7 @@ static void perform_map( struct char_data *ch, char *argument, bool worldmap )
   two_arguments( argument, arg1 , arg2 );
   if(*arg1)
   {
-    size = atoi(arg1);
+    size = tb_parse_int_or_zero(arg1);
   }
   if (*arg2)
   {
@@ -508,41 +510,41 @@ static void perform_map( struct char_data *ch, char *argument, bool worldmap )
   send_to_char(ch, " \tY-\tytbaMUD Map System\tY-\tn\r\n"
                    "\tD  .-.__--.,--.__.-.\tn\r\n" );
 
-  count += sprintf(buf + count, "\tn\tn\tn%s Up\\\\", door_info[NUM_DOOR_TYPES + DOOR_UP].disp);
-  count += sprintf(buf + count, "\tn\tn\tn%s Down\\\\", door_info[NUM_DOOR_TYPES + DOOR_DOWN].disp);
-  count += sprintf(buf + count, "\tn%s You\\\\", map_info[SECT_HERE].disp);
-  count += sprintf(buf + count, "\tn%s Inside\\\\", map_info[SECT_INSIDE].disp);
-  count += sprintf(buf + count, "\tn%s City\\\\", map_info[SECT_CITY].disp);
-  count += sprintf(buf + count, "\tn%s Field\\\\", map_info[SECT_FIELD].disp);
-  count += sprintf(buf + count, "\tn%s Forest\\\\", map_info[SECT_FOREST].disp);
-  count += sprintf(buf + count, "\tn%s Hills\\\\", map_info[SECT_HILLS].disp);
-  count += sprintf(buf + count, "\tn%s Mountain\\\\", map_info[SECT_MOUNTAIN].disp);
-  count += sprintf(buf + count, "\tn%s Swim\\\\", map_info[SECT_WATER_SWIM].disp);
-  count += sprintf(buf + count, "\tn%s Boat\\\\", map_info[SECT_WATER_NOSWIM].disp);
-  count += sprintf(buf + count, "\tn%s Flying\\\\", map_info[SECT_FLYING].disp);
-  sprintf(buf + count, "\tn%s Underwater\\\\", map_info[SECT_UNDERWATER].disp);
+  count += snprintf(buf + count, sizeof(buf) - (size_t)count, "\tn\tn\tn%s Up\\\\", door_info[NUM_DOOR_TYPES + DOOR_UP].disp);
+  count += snprintf(buf + count, sizeof(buf) - (size_t)count, "\tn\tn\tn%s Down\\\\", door_info[NUM_DOOR_TYPES + DOOR_DOWN].disp);
+  count += snprintf(buf + count, sizeof(buf) - (size_t)count, "\tn%s You\\\\", map_info[SECT_HERE].disp);
+  count += snprintf(buf + count, sizeof(buf) - (size_t)count, "\tn%s Inside\\\\", map_info[SECT_INSIDE].disp);
+  count += snprintf(buf + count, sizeof(buf) - (size_t)count, "\tn%s City\\\\", map_info[SECT_CITY].disp);
+  count += snprintf(buf + count, sizeof(buf) - (size_t)count, "\tn%s Field\\\\", map_info[SECT_FIELD].disp);
+  count += snprintf(buf + count, sizeof(buf) - (size_t)count, "\tn%s Forest\\\\", map_info[SECT_FOREST].disp);
+  count += snprintf(buf + count, sizeof(buf) - (size_t)count, "\tn%s Hills\\\\", map_info[SECT_HILLS].disp);
+  count += snprintf(buf + count, sizeof(buf) - (size_t)count, "\tn%s Mountain\\\\", map_info[SECT_MOUNTAIN].disp);
+  count += snprintf(buf + count, sizeof(buf) - (size_t)count, "\tn%s Swim\\\\", map_info[SECT_WATER_SWIM].disp);
+  count += snprintf(buf + count, sizeof(buf) - (size_t)count, "\tn%s Boat\\\\", map_info[SECT_WATER_NOSWIM].disp);
+  count += snprintf(buf + count, sizeof(buf) - (size_t)count, "\tn%s Flying\\\\", map_info[SECT_FLYING].disp);
+  tb_snprintf(buf + count, sizeof(buf) - (size_t)count, "\tn%s Underwater\\\\", map_info[SECT_UNDERWATER].disp);
 
-  strcpy(buf, strfrmt(buf, LEGEND_WIDTH, CANVAS_HEIGHT + 2, FALSE, TRUE, TRUE));
+  strlcpy(buf, strfrmt(buf, LEGEND_WIDTH, CANVAS_HEIGHT + 2, FALSE, TRUE, TRUE), sizeof(buf));
 
   /* Start with an empty column */
-  strcpy(buf1, strfrmt("",0, CANVAS_HEIGHT + 2, FALSE, FALSE, TRUE));
+  strlcpy(buf1, strfrmt("",0, CANVAS_HEIGHT + 2, FALSE, FALSE, TRUE), sizeof(buf1));
 
   /* Paste the legend */
-  strcpy(buf2, strpaste(buf1, buf, "\tD | \tn"));
+  strlcpy(buf2, strpaste(buf1, buf, "\tD | \tn"), sizeof(buf2));
 
   /* Set up the map */
   memset(buf, ' ', CANVAS_WIDTH);
   count = (CANVAS_WIDTH);
   if(worldmap)
-    count += sprintf(buf + count , "\r\n%s", WorldMap(centre, size, mapshape, MAP_NORMAL));
+    count += snprintf(buf + count, sizeof(buf) - (size_t)count, "\r\n%s", WorldMap(centre, size, mapshape, MAP_NORMAL));
   else
-    count += sprintf(buf + count , "\r\n%s", StringMap(centre, size));
+    count += snprintf(buf + count, sizeof(buf) - (size_t)count, "\r\n%s", StringMap(centre, size));
   memset(buf + count, ' ', CANVAS_WIDTH);
-  strcpy(buf + count + CANVAS_WIDTH, "\r\n");
+  strlcpy(buf + count + CANVAS_WIDTH, "\r\n", sizeof(buf) - (size_t)(count + CANVAS_WIDTH));
   /* Paste it on */
-  strcpy(buf2, strpaste(buf2, buf, "\tD | \tn"));
+  strlcpy(buf2, strpaste(buf2, buf, "\tD | \tn"), sizeof(buf2));
   /* Paste on the right border */
-  strcpy(buf2, strpaste(buf2, buf1, "  "));
+  strlcpy(buf2, strpaste(buf2, buf1, "  "), sizeof(buf2));
   /* Print it all out */
   send_to_char(ch, "%s", buf2);
 

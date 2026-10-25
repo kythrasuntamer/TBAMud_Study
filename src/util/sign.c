@@ -33,13 +33,13 @@ int init_socket(int port)
    */
 
   if ((s = socket(PF_INET, SOCK_STREAM, 0)) < 0) {
-    perror("Create socket");
+    TB_REPORT_ERRNO("socket", "sign listener");
     exit(1);
   }
 #if defined(SO_REUSEADDR)
   opt = 1;
   if (setsockopt(s, SOL_SOCKET, SO_REUSEADDR, (char *) &opt, sizeof(opt)) < 0) {
-    perror("setsockopt REUSEADDR");
+    TB_REPORT_ERRNO("setsockopt", "SO_REUSEADDR sign listener");
     exit(1);
   }
 #endif
@@ -51,7 +51,7 @@ int init_socket(int port)
     ld.l_onoff = 0;
     ld.l_linger = 0;
     if (setsockopt(s, SOL_SOCKET, SO_LINGER, (char *) &ld, sizeof(ld)) < 0) {
-      perror("setsockopt LINGER");
+      TB_REPORT_ERRNO("setsockopt", "SO_LINGER sign listener");
       exit(1);
     }
   }
@@ -62,11 +62,15 @@ int init_socket(int port)
   sa.sin_addr.s_addr = htonl(INADDR_ANY);
 
   if (bind(s, (struct sockaddr *) &sa, sizeof(sa)) < 0) {
-    perror("bind");
+    TB_REPORT_ERRNO("bind", "sign listener");
     close(s);
     exit(1);
   }
-  listen(s, 5);
+  if (listen(s, 5) < 0) {
+    TB_REPORT_ERRNO("listen", "sign listener backlog=5");
+    (void)close(s);
+    exit(1);
+  }
   return (s);
 }
 
@@ -76,18 +80,20 @@ char *get_text(char *fname)
   static char t[MAX_FILESIZE];
   char tmp[LINEBUF_SIZE + 2];
   FILE *fl = NULL;
+  int close_stream = 0;
 
   *t = '\0';
 
   if (!strcmp(fname, "-")) {
     fl = stdin;
     if (isatty(STDIN_FILENO))
-      fprintf(stderr, "Enter sign text; terminate with Ctrl-D.\n");
+      tb_fprintf(stderr, "Enter sign text; terminate with Ctrl-D.\n");
   } else {
     if (!(fl = fopen(fname, "r"))) {
-      perror(fname);
+      TB_REPORT_ERRNO("fopen", fname);
       exit(1);
     }
+    close_stream = 1;
   }
 
   while (fgets(tmp, LINEBUF_SIZE, fl)) {
@@ -98,13 +104,13 @@ char *get_text(char *fname)
       strlcat(t, tmp, MAX_FILESIZE);
       strlcat(t, "\r", MAX_FILESIZE);
     } else {
-      fprintf(stderr, "String too long.  Truncated.\n");
+      tb_fprintf(stderr, "String too long.  Truncated.\n");
       break;
     }
   }
 
-  if (fl != stdin)
-    fclose(fl);
+  if (close_stream)
+    tb_fclose(fl);
 
   return (t);
 }
@@ -113,46 +119,81 @@ char *get_text(char *fname)
 /* clean up our zombie kids to avoid defunct processes */
 RETSIGTYPE reap(int sig)
 {
-  while (waitpid(-1, NULL, WNOHANG) > 0);
+  (void)sig;
 
-  signal(SIGCHLD, reap);
+  while (waitpid(-1, NULL, WNOHANG) > 0)
+    ;
 }
 
 
 int main(int argc, char *argv[])
 {
   char *txt;
-  int desc, remaining, bytes_written, len, s, port, child;
+  int desc, remaining, len, s, port;
+  pid_t child;
+  ssize_t bytes_written;
+  struct sigaction sa;
 
-  if (argc != 3 || (port = atoi(argv[1])) < 1024) {
-    fprintf(stderr, "usage: %s <portnum> <\"-\" | filename>\n", argv[0]);
+  if (argc != 3 || (port = tb_parse_int_or_zero(argv[1])) < 1024) {
+    tb_fprintf(stderr, "usage: %s <portnum> <\"-\" | filename>\n", argv[0]);
     exit(1);
   }
   s = init_socket(port);
   len = strlen(txt = get_text(argv[2]));
 
-  if ((child = fork()) > 0) {
-    fprintf(stderr, "Sign started on port %d (pid %d).\n", port, child);
-    exit(0);
+  child = fork();
+  if (child < 0) {
+    TB_REPORT_ERRNO("fork", "sign daemon");
+    return 1;
   }
-  signal(SIGCHLD, reap);
+  if (child > 0) {
+    tb_fprintf(stderr, "Sign started on port %d (pid %d).\n", port, (int)child);
+    return 0;
+  }
+
+  memset(&sa, 0, sizeof(sa));
+  sa.sa_handler = reap;
+  if (sigemptyset(&sa.sa_mask) != 0 || sigaction(SIGCHLD, &sa, NULL) != 0) {
+    TB_REPORT_ERRNO("sigaction", "SIGCHLD");
+    return 1;
+  }
 
   for (;;) {
-    if ((desc = accept(s, (struct sockaddr *) NULL, 0)) < 0)
+    if ((desc = accept(s, (struct sockaddr *)NULL, NULL)) < 0) {
+      if (errno == EINTR)
+        continue;
+      TB_REPORT_ERRNO("accept", "sign listener");
       continue;
-
-    if (fork() == 0) {
-      remaining = len;
-      do {
-	if ((bytes_written = write(desc, txt, remaining)) < 0)
-	  exit(0);
-	else {
-	  txt += bytes_written;
-	  remaining -= bytes_written;
-	}
-      } while (remaining > 0);
-      exit(0);
     }
-    close(desc);
+
+    child = fork();
+    if (child < 0) {
+      TB_REPORT_ERRNO("fork", "sign client handler");
+      (void)close(desc);
+      continue;
+    }
+    if (child == 0) {
+      char *out = txt;
+
+      remaining = len;
+      while (remaining > 0) {
+        bytes_written = write(desc, out, (size_t)remaining);
+        if (bytes_written < 0) {
+          if (errno == EINTR)
+            continue;
+          TB_REPORT_ERRNO("write", "sign client socket");
+          (void)close(desc);
+          _exit(1);
+        }
+        if (bytes_written == 0)
+          break;
+        out += bytes_written;
+        remaining -= (int)bytes_written;
+      }
+      (void)close(desc);
+      _exit(0);
+    }
+    if (close(desc) != 0)
+      TB_REPORT_ERRNO("close", "sign client socket");
   }
 }

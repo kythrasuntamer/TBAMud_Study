@@ -100,7 +100,7 @@ ACMD(do_put)
   one_argument(two_arguments(argument, arg1, arg2), arg3);	/* three_arguments */
 
   if (*arg3 && is_number(arg1)) {
-    howmany = atoi(arg1);
+    howmany = tb_parse_int_or_zero(arg1);
     theobj = arg2;
     thecont = arg3;
   } else {
@@ -232,7 +232,7 @@ void get_from_container(struct char_data *ch, struct obj_data *cont,
     if (!(obj = get_obj_in_list_vis(ch, arg, NULL, cont->contains))) {
       char buf[MAX_STRING_LENGTH];
 
-      snprintf(buf, sizeof(buf), "There doesn't seem to be %s %s in $p.", AN(arg), arg);
+      tb_snprintf(buf, sizeof(buf), "There doesn't seem to be %s %s in $p.", AN(arg), arg);
       act(buf, FALSE, ch, cont, 0, TO_CHAR);
     } else {
       struct obj_data *obj_next;
@@ -261,7 +261,7 @@ void get_from_container(struct char_data *ch, struct obj_data *cont,
       else {
         char buf[MAX_STRING_LENGTH];
 
-	snprintf(buf, sizeof(buf), "You can't seem to find any %ss in $p.", arg);
+	tb_snprintf(buf, sizeof(buf), "You can't seem to find any %ss in $p.", arg);
 	act(buf, FALSE, ch, cont, 0, TO_CHAR);
       }
     }
@@ -343,13 +343,13 @@ ACMD(do_get)
   else if (!*arg2)
     get_from_room(ch, arg1, 1);
   else if (is_number(arg1) && !*arg3)
-    get_from_room(ch, arg2, atoi(arg1));
+    get_from_room(ch, arg2, tb_parse_int_or_zero(arg1));
   else {
     int amount = 1;
     if (is_number(arg1)) {
-      amount = atoi(arg1);
-      strcpy(arg1, arg2); /* strcpy: OK (sizeof: arg1 == arg2) */
-      strcpy(arg2, arg3); /* strcpy: OK (sizeof: arg2 == arg3) */
+      amount = tb_parse_int_or_zero(arg1);
+      strlcpy(arg1, arg2, sizeof(arg1)); /* strcpy: OK (sizeof: arg1 == arg2) */
+      strlcpy(arg2, arg3, sizeof(arg2)); /* strcpy: OK (sizeof: arg2 == arg3) */
     }
     cont_dotmode = find_all_dots(arg2);
     if (cont_dotmode == FIND_INDIV) {
@@ -426,7 +426,7 @@ static void perform_drop_gold(struct char_data *ch, int amount, byte mode, room_
           return;
         }
 
-	      snprintf(buf, sizeof(buf), "$n drops %s.", money_desc(amount));
+	      tb_snprintf(buf, sizeof(buf), "$n drops %s.", money_desc(amount));
 	      act(buf, TRUE, ch, 0, 0, TO_ROOM);
 
 	      send_to_char(ch, "You drop some gold.\r\n");
@@ -435,7 +435,7 @@ static void perform_drop_gold(struct char_data *ch, int amount, byte mode, room_
     } else {
       char buf[MAX_STRING_LENGTH];
 
-      snprintf(buf, sizeof(buf), "$n drops %s which disappears in a puff of smoke!", money_desc(amount));
+      tb_snprintf(buf, sizeof(buf), "$n drops %s which disappears in a puff of smoke!", money_desc(amount));
       act(buf, FALSE, ch, 0, 0, TO_ROOM);
 
       send_to_char(ch, "You drop some gold which disappears in a puff of smoke!\r\n");
@@ -444,7 +444,7 @@ static void perform_drop_gold(struct char_data *ch, int amount, byte mode, room_
   }
 }
 
-#define VANISH(mode) ((mode == SCMD_DONATE || mode == SCMD_JUNK) ? \
+#define VANISH(mode) ((((mode) == SCMD_DONATE) || ((mode) == SCMD_JUNK)) ? \
 		      "  It vanishes in a puff of smoke!" : "")
 static int perform_drop(struct char_data *ch, struct obj_data *obj,
 		     byte mode, const char *sname, room_rnum RDR)
@@ -466,15 +466,15 @@ static int perform_drop(struct char_data *ch, struct obj_data *obj,
     return 0; // item was extracted by script
 
   if (OBJ_FLAGGED(obj, ITEM_NODROP) && !PRF_FLAGGED(ch, PRF_NOHASSLE)) {
-    snprintf(buf, sizeof(buf), "You can't %s $p, it must be CURSED!", sname);
+    tb_snprintf(buf, sizeof(buf), "You can't %s $p, it must be CURSED!", sname);
     act(buf, FALSE, ch, obj, 0, TO_CHAR);
     return (0);
   }
 
-  snprintf(buf, sizeof(buf), "You %s $p.%s", sname, VANISH(mode));
+  tb_snprintf(buf, sizeof(buf), "You %s $p.%s", sname, VANISH(mode));
   act(buf, FALSE, ch, obj, 0, TO_CHAR);
 
-  snprintf(buf, sizeof(buf), "$n %ss $p.%s", sname, VANISH(mode));
+  tb_snprintf(buf, sizeof(buf), "$n %ss $p.%s", sname, VANISH(mode));
   act(buf, TRUE, ch, obj, 0, TO_ROOM);
 
   obj_from_char(obj);
@@ -553,7 +553,7 @@ ACMD(do_drop)
     send_to_char(ch, "What do you want to %s?\r\n", sname);
     return;
   } else if (is_number(arg)) {
-    multi = atoi(arg);
+    multi = tb_parse_int_or_zero(arg);
     one_argument(argument, arg);
     if (!str_cmp("coins", arg) || !str_cmp("coin", arg))
       perform_drop_gold(ch, multi, mode, RDR);
@@ -679,10 +679,10 @@ static void perform_give_gold(struct char_data *ch, struct char_data *vict,
   }
   send_to_char(ch, "%s", CONFIG_OK);
 
-  snprintf(buf, sizeof(buf), "$n gives you %d gold coin%s.", amount, amount == 1 ? "" : "s");
+  tb_snprintf(buf, sizeof(buf), "$n gives you %d gold coin%s.", amount, amount == 1 ? "" : "s");
   act(buf, FALSE, ch, 0, vict, TO_VICT);
 
-  snprintf(buf, sizeof(buf), "$n gives %s to $N.", money_desc(amount));
+  tb_snprintf(buf, sizeof(buf), "$n gives %s to $N.", money_desc(amount));
   act(buf, TRUE, ch, 0, vict, TO_NOTVICT);
 
   if (IS_NPC(ch) || (GET_LEVEL(ch) < LVL_GOD))
@@ -704,7 +704,7 @@ ACMD(do_give)
   if (!*arg)
     send_to_char(ch, "Give what to who?\r\n");
   else if (is_number(arg)) {
-    amount = atoi(arg);
+    amount = tb_parse_int_or_zero(arg);
     argument = one_argument(argument, arg);
     if (!str_cmp("coins", arg) || !str_cmp("coin", arg)) {
       one_argument(argument, arg);
@@ -812,8 +812,11 @@ void name_to_drinkcon(struct obj_data *obj, int type)
   if (!obj || (GET_OBJ_TYPE(obj) != ITEM_DRINKCON && GET_OBJ_TYPE(obj) != ITEM_FOUNTAIN))
     return;
 
-  CREATE(new_name, char, strlen(obj->name) + strlen(drinknames[type]) + 2);
-  sprintf(new_name, "%s %s", obj->name, drinknames[type]); /* sprintf: OK */
+  {
+    size_t new_name_size = strlen(obj->name) + strlen(drinknames[type]) + 2;
+    CREATE(new_name, char, new_name_size);
+    tb_snprintf(new_name, new_name_size, "%s %s", obj->name, drinknames[type]);
+  }
 
   if (GET_OBJ_RNUM(obj) == NOTHING || obj->name != obj_proto[GET_OBJ_RNUM(obj)].name)
     free(obj->name);
@@ -844,7 +847,7 @@ ACMD(do_drink)
         if ((GET_COND(ch, HUNGER) > 20) && (GET_COND(ch, THIRST) > 0)) {
           send_to_char(ch, "Your stomach can't contain anymore!\r\n");
         }
-        snprintf(buf, sizeof(buf), "$n takes a refreshing drink.");
+        tb_snprintf(buf, sizeof(buf), "$n takes a refreshing drink.");
         act(buf, TRUE, ch, 0, 0, TO_ROOM);
         send_to_char(ch, "You take a refreshing drink.\r\n");
         gain_condition(ch, THIRST, 1);
@@ -893,7 +896,7 @@ ACMD(do_drink)
   if (subcmd == SCMD_DRINK) {
     char buf[MAX_STRING_LENGTH];
 
-    snprintf(buf, sizeof(buf), "$n drinks %s from $p.", drinks[DRINK_CON_TYPE(temp)]);
+    tb_snprintf(buf, sizeof(buf), "$n drinks %s from $p.", drinks[DRINK_CON_TYPE(temp)]);
     act(buf, TRUE, ch, temp, 0, TO_ROOM);
 
     send_to_char(ch, "You drink the %s.\r\n", drinks[DRINK_CON_TYPE(temp)]);

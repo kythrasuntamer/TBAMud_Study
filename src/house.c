@@ -48,7 +48,7 @@ static int House_get_filename(room_vnum vnum, char *filename, size_t maxlen)
   if (vnum == NOWHERE)
     return (0);
 
-  snprintf(filename, maxlen, LIB_HOUSE"%d.house", vnum);
+  tb_snprintf(filename, maxlen, LIB_HOUSE"%d.house", vnum);
   return (1);
 }
 
@@ -64,8 +64,13 @@ static int House_load(room_vnum vnum)
     return (0);
   if (!House_get_filename(vnum, filename, sizeof(filename)))
     return (0);
-  if (!(fl = fopen(filename, "r")))	/* no file found */
+  if (!(fl = fopen(filename, "r"))) {
+    int saved_errno = errno;
+    if (saved_errno != ENOENT)
+      log("SYSERR: House_load could not open %s for house #%d: %s (errno=%d)",
+          filename, vnum, strerror(saved_errno), saved_errno);
     return (0);
+  }
 
 	loaded = objsave_parse_objects(fl);
 
@@ -81,7 +86,7 @@ static int House_load(room_vnum vnum)
 		free(current);
 	}
 
-  fclose(fl);
+  tb_fclose(fl);
 
   return (1);
 }
@@ -129,14 +134,16 @@ void House_crashsave(room_vnum vnum)
   if (!House_get_filename(vnum, buf, sizeof(buf)))
     return;
   if (!(fp = fopen(buf, "wb"))) {
-    perror("SYSERR: Error saving house file");
+    int saved_errno = errno;
+    log("SYSERR: House_crashsave could not open %s for house #%d: %s (errno=%d)",
+        buf, vnum, strerror(saved_errno), saved_errno);
     return;
   }
   if (!House_save(world[rnum].contents, fp)) {
-    fclose(fp);
+    tb_fclose(fp);
     return;
   }
-  fclose(fp);
+  tb_fclose(fp);
   House_restore_weight(world[rnum].contents);
   REMOVE_BIT_AR(ROOM_FLAGS(rnum), ROOM_HOUSE_CRASH);
 }
@@ -151,12 +158,14 @@ static void House_delete_file(room_vnum vnum)
     return;
   if (!(fl = fopen(filename, "rb"))) {
     if (errno != ENOENT)
-      log("SYSERR: Error deleting house file #%d. (1): %s", vnum, strerror(errno));
+      { int saved_errno = errno; log("SYSERR: house %d open-for-delete failed for %s: %s (errno=%d)", vnum, filename, strerror(saved_errno), saved_errno); }
     return;
   }
-  fclose(fl);
-  if (remove(filename) < 0)
-    log("SYSERR: Error deleting house file #%d. (2): %s", vnum, strerror(errno));
+  tb_fclose(fl);
+  if (remove(filename) < 0) {
+    int saved_errno = errno;
+    log("SYSERR: house %d remove failed for %s: %s (errno=%d)", vnum, filename, strerror(saved_errno), saved_errno);
+  }
 }
 
 /* List all objects in a house file */
@@ -171,7 +180,14 @@ static void House_listrent(struct char_data *ch, room_vnum vnum)
   if (!House_get_filename(vnum, filename, sizeof(filename)))
     return;
   if (!(fl = fopen(filename, "rb"))) {
-    send_to_char(ch, "No objects on file for house #%d.\r\n", vnum);
+    int saved_errno = errno;
+    if (saved_errno == ENOENT)
+      send_to_char(ch, "No objects on file for house #%d.\r\n", vnum);
+    else {
+      log("SYSERR: House_listrent could not open %s for house #%d: %s (errno=%d)",
+          filename, vnum, strerror(saved_errno), saved_errno);
+      send_to_char(ch, "House object file exists but could not be opened; see server log.\r\n");
+    }
     return;
   }
   *buf = '\0';
@@ -194,7 +210,7 @@ static void House_listrent(struct char_data *ch, room_vnum vnum)
 	}
 
 	page_string(ch->desc,buf,0);
-  fclose(fl);
+  tb_fclose(fl);
 }
 
 /* Functions for house administration (creation, deletion, etc. */
@@ -215,16 +231,23 @@ static void House_save_control(void)
   FILE *fl;
 
   if (!(fl = fopen(HCONTROL_FILE, "wb"))) {
-    perror("SYSERR: Unable to open house control file.");
+    TB_REPORT_ERRNO("fopen", HCONTROL_FILE);
     return;
   }
-  /* write all the house control recs in one fell swoop.  Pretty nifty, eh? */
+  /* write all the house control recs in one fell swoop. */
   if (fwrite(house_control, sizeof(struct house_control_rec), num_of_houses, fl) != (size_t)num_of_houses) {
-    perror("SYSERR: Unable to save house control file.");
-    return;	  
+    if (ferror(fl)) {
+      int saved_errno = errno;
+      log("SYSERR: house control write failed for %s after %d records: %s (errno=%d)",
+          HCONTROL_FILE, num_of_houses, strerror(saved_errno), saved_errno);
+    } else
+      log("SYSERR: short write saving %d house-control records to %s",
+          num_of_houses, HCONTROL_FILE);
+    tb_fclose(fl);
+    return;
   }
 
-  fclose(fl);
+  tb_fclose(fl);
 }
 
 /* Call from boot_db - will load control recs, load objs, set atrium bits. 
@@ -240,8 +263,11 @@ void House_boot(void)
   if (!(fl = fopen(HCONTROL_FILE, "rb"))) {
     if (errno == ENOENT)
       log("   No houses to load. File '%s' does not exist.", HCONTROL_FILE);
-    else
-      perror("SYSERR: " HCONTROL_FILE);
+    else {
+      int saved_errno = errno;
+      log("SYSERR: Unable to open house control file %s: %s (errno=%d)",
+          HCONTROL_FILE, strerror(saved_errno), saved_errno);
+    }
     return;
   }
   while (!feof(fl) && num_of_houses < MAX_HOUSES) {
@@ -277,7 +303,7 @@ void House_boot(void)
     House_load(temp_house.vnum);
   }
 
-  fclose(fl);
+  tb_fclose(fl);
   House_save_control();
 }
 
@@ -300,7 +326,7 @@ void hcontrol_list_houses(struct char_data *ch, char *arg)
 		if (*arg == '.')
 			toshow = GET_ROOM_VNUM(IN_ROOM(ch));
 		else
-			toshow = atoi(arg);
+			toshow = tb_parse_int_or_zero(arg);
 
 	  if ((i = find_house(toshow)) == NOWHERE) {
   	  send_to_char(ch, "Unknown house, \"%s\".\r\n", arg);
@@ -324,17 +350,17 @@ void hcontrol_list_houses(struct char_data *ch, char *arg)
       continue;
 
     if (house_control[i].built_on) {
-      strftime(built_on, sizeof(built_on), "%a %b %d %Y", localtime(&(house_control[i].built_on)));
+      tb_strftime(built_on, sizeof(built_on), "%a %b %d %Y", localtime(&(house_control[i].built_on)));
     } else
-      strcpy(built_on, "Unknown"); /* strcpy: OK */
+      strlcpy(built_on, "Unknown", sizeof(built_on)); /* strcpy: OK */
 
     if (house_control[i].last_payment) {
-      strftime(last_pay, sizeof(last_pay), "%a %b %d %Y", localtime(&(house_control[i].last_payment)));
+      tb_strftime(last_pay, sizeof(last_pay), "%a %b %d %Y", localtime(&(house_control[i].last_payment)));
     } else
-      strcpy(last_pay, "None");	/* strcpy: OK */
+      strlcpy(last_pay, "None", sizeof(last_pay));	/* strcpy: OK */
 
     /* Now we need a copy of the owner's name to capitalize. -gg 6/21/98 */
-    strcpy(own_name, temp);	/* strcpy: OK (names guaranteed <= MAX_NAME_LENGTH+1) */
+    strlcpy(own_name, temp, sizeof(own_name));	/* strcpy: OK (names guaranteed <= MAX_NAME_LENGTH+1) */
     send_to_char(ch, "%7d %7d  %-15s    %2d    %-12s %s\r\n",
 	    house_control[i].vnum, house_control[i].atrium, built_on,
 	    house_control[i].num_of_guests, CAP(own_name), last_pay);
@@ -363,7 +389,7 @@ static void hcontrol_build_house(struct char_data *ch, char *arg)
     send_to_char(ch, "%s", HCONTROL_FORMAT);
     return;
   }
-  virt_house = atoi(arg1);
+  virt_house = tb_parse_int_or_zero(arg1);
   if ((real_house = real_room(virt_house)) == NOWHERE) {
     send_to_char(ch, "No such room exists.\r\n");
     return;
@@ -436,17 +462,17 @@ static void hcontrol_destroy_house(struct char_data *ch, char *arg)
     send_to_char(ch, "%s", HCONTROL_FORMAT);
     return;
   }
-  if ((i = find_house(atoi(arg))) == NOWHERE) {
+  if ((i = find_house(tb_parse_int_or_zero(arg))) == NOWHERE) {
     send_to_char(ch, "Unknown house.\r\n");
     return;
   }
   if ((real_atrium = real_room(house_control[i].atrium)) == NOWHERE)
-    log("SYSERR: House %d had invalid atrium %d!", atoi(arg), house_control[i].atrium);
+    log("SYSERR: House %d had invalid atrium %d!", tb_parse_int_or_zero(arg), house_control[i].atrium);
   else
     REMOVE_BIT_AR(ROOM_FLAGS(real_atrium), ROOM_ATRIUM);
 
   if ((real_house = real_room(house_control[i].vnum)) == NOWHERE)
-    log("SYSERR: House %d had invalid vnum %d!", atoi(arg), house_control[i].vnum);
+    log("SYSERR: House %d had invalid vnum %d!", tb_parse_int_or_zero(arg), house_control[i].vnum);
   else {
     REMOVE_BIT_AR(ROOM_FLAGS(real_house), ROOM_HOUSE);
     REMOVE_BIT_AR(ROOM_FLAGS(real_house), ROOM_PRIVATE);
@@ -475,7 +501,7 @@ static void hcontrol_pay_house(struct char_data *ch, char *arg)
 
   if (!*arg)
     send_to_char(ch, "%s", HCONTROL_FORMAT);
-  else if ((i = find_house(atoi(arg))) == NOWHERE)
+  else if ((i = find_house(tb_parse_int_or_zero(arg))) == NOWHERE)
     send_to_char(ch, "Unknown house.\r\n");
   else {
     mudlog(NRM, MAX(LVL_IMMORT, GET_INVIS_LEV(ch)), TRUE, "Payment for house %s collected by %s.", arg, GET_NAME(ch));
@@ -665,21 +691,32 @@ static int ascii_convert_house(struct char_data *ch, obj_vnum vnum)
 
   House_get_filename(vnum, infile, sizeof(infile));
 
-	CREATE(outfile, char, strlen(infile)+7);
-	sprintf(outfile, "%s.ascii", infile);
+	{
+	  size_t outfile_size = strlen(infile) + 7;
+	  CREATE(outfile, char, outfile_size);
+	  tb_snprintf(outfile, outfile_size, "%s.ascii", infile);
+	}
 
-  if (!(in = fopen(infile, "r+b")))	/* no file found */
-  {
-  	send_to_char(ch, "...no object file found\r\n");
-  	free(outfile);
+  if (!(in = fopen(infile, "r+b"))) {
+    int saved_errno = errno;
+    if (saved_errno == ENOENT)
+      send_to_char(ch, "...no object file found\r\n");
+    else {
+      log("SYSERR: house conversion could not open %s: %s (errno=%d)",
+          infile, strerror(saved_errno), saved_errno);
+      send_to_char(ch, "...object file exists but could not be opened; see server log\r\n");
+    }
+    free(outfile);
     return (0);
   }
 
-  if (!(out = fopen(outfile, "w")))
-  {
-  	send_to_char(ch, "...cannot open output file\r\n");
-		free(outfile);
-		fclose(in);
+  if (!(out = fopen(outfile, "w"))) {
+    int saved_errno = errno;
+    log("SYSERR: house conversion could not create %s from %s: %s (errno=%d)",
+        outfile, infile, strerror(saved_errno), saved_errno);
+    send_to_char(ch, "...cannot open output file; see server log\r\n");
+    free(outfile);
+    tb_fclose(in);
     return (0);
   }
 
@@ -689,11 +726,13 @@ static int ascii_convert_house(struct char_data *ch, obj_vnum vnum)
 
     if (nread != 1) {
       if (ferror(in)) {
-        perror("SYSERR: Reading house file in House_load");
-        send_to_char(ch, "...read error in house rent file.\r\n");
+        int saved_errno = errno;
+        log("SYSERR: house conversion read failed in %s at record %d: %s (errno=%d)",
+            infile, j, strerror(saved_errno), saved_errno);
+        send_to_char(ch, "...read error in house rent file; see server log.\r\n");
         free(outfile);
-        fclose(in);
-        fclose(out);
+        tb_fclose(in);
+        tb_fclose(out);
         return 0;
       }
       break;
@@ -703,17 +742,17 @@ static int ascii_convert_house(struct char_data *ch, obj_vnum vnum)
     if (!tmp || !objsave_save_obj_record(tmp, out, i)) {
       send_to_char(ch, "...write error in house rent file.\r\n");
       free(outfile);
-      fclose(in);
-      fclose(out);
+      tb_fclose(in);
+      tb_fclose(out);
       return 0;
     }
     j++;
   }
 
-	fprintf(out, "$~\n");
+	tb_fprintf(out, "$~\n");
 
-	fclose(in);
-	fclose(out);
+	tb_fclose(in);
+	tb_fclose(out);
 
 	free(outfile);
 

@@ -122,7 +122,7 @@ static void show_obj_to_char(struct obj_data *obj, struct char_data *ch, int mod
       if (obj->action_description) {
         char notebuf[MAX_NOTE_LENGTH + 64];
 
-        snprintf(notebuf, sizeof(notebuf), "There is something written on it:\r\n\r\n%s", obj->action_description);
+        tb_snprintf(notebuf, sizeof(notebuf), "There is something written on it:\r\n\r\n%s", obj->action_description);
         page_string(ch->desc, notebuf, TRUE);
       } else
     send_to_char(ch, "It's blank.\r\n");
@@ -508,7 +508,7 @@ void look_at_room(struct char_data *ch, int ignore_brief)
   if (!IS_NPC(ch) && PRF_FLAGGED(ch, PRF_SHOWVNUMS)) {
     char buf[MAX_STRING_LENGTH];
 
-    sprintbitarray(ROOM_FLAGS(IN_ROOM(ch)), room_bits, RF_ARRAY_MAX, buf);
+    sprintbitarray(ROOM_FLAGS(IN_ROOM(ch)), room_bits, RF_ARRAY_MAX, buf, sizeof(buf));
     send_to_char(ch, "[%5d] ", GET_ROOM_VNUM(IN_ROOM(ch)));
     send_to_char(ch, "%s[ %s][ %s ]", world[IN_ROOM(ch)].name, buf, sector_types[world[IN_ROOM(ch)].sector_type]);
 
@@ -742,10 +742,12 @@ ACMD(do_look)
     half_chop(argument, arg, arg2);
 
     if (subcmd == SCMD_READ) {
-      if (!*arg)
-    send_to_char(ch, "Read what?\r\n");
-      else
-    look_at_target(ch, strcpy(tempsave, arg));
+      if (!*arg) {
+        send_to_char(ch, "Read what?\r\n");
+      } else {
+        strlcpy(tempsave, arg, sizeof(tempsave));
+        look_at_target(ch, tempsave);
+      }
       return;
     }
     if (!*arg)            /* "look" alone, without an argument at all */
@@ -755,9 +757,10 @@ ACMD(do_look)
     /* did the char type 'look <direction>?' */
     else if ((look_type = search_block(arg, dirs, FALSE)) >= 0)
       look_in_direction(ch, look_type);
-    else if (is_abbrev(arg, "at"))
-      look_at_target(ch, strcpy(tempsave, arg2));
-    else if (is_abbrev(arg, "around")) {
+    else if (is_abbrev(arg, "at")) {
+      strlcpy(tempsave, arg2, sizeof(tempsave));
+      look_at_target(ch, tempsave);
+    } else if (is_abbrev(arg, "around")) {
       struct extra_descr_data *i;
 
       for (i = world[IN_ROOM(ch)].ex_description; i; i = i->next) {
@@ -769,8 +772,10 @@ ACMD(do_look)
       }
       if (!found)
          send_to_char(ch, "You couldn't find anything noticeable.\r\n");
-    } else
-      look_at_target(ch, strcpy(tempsave, arg));
+    } else {
+      strlcpy(tempsave, arg, sizeof(tempsave));
+      look_at_target(ch, tempsave);
+    }
   }
 }
 
@@ -788,7 +793,8 @@ ACMD(do_examine)
   }
 
   /* look_at_target() eats the number. */
-  look_at_target(ch, strcpy(tempsave, arg));    /* strcpy: OK */
+  strlcpy(tempsave, arg, sizeof(tempsave));
+  look_at_target(ch, tempsave);
 
   generic_find(arg, FIND_OBJ_INV | FIND_OBJ_ROOM | FIND_CHAR_ROOM |
               FIND_OBJ_EQUIP, ch, &tmp_char, &tmp_object);
@@ -1215,7 +1221,7 @@ ACMD(do_who)
   };
 
   skip_spaces(&argument);
-  strcpy(buf, argument);   /* strcpy: OK (sizeof: argument == buf) */
+  strlcpy(buf, argument, sizeof(buf));   /* strcpy: OK (sizeof: argument == buf) */
   name_search[0] = '\0';
 
   while (*buf) {
@@ -1224,32 +1230,32 @@ ACMD(do_who)
     half_chop(buf, arg, buf1);
     if (isdigit(*arg)) {
       sscanf(arg, "%d-%d", &low, &high);
-      strcpy(buf, buf1);   /* strcpy: OK (sizeof: buf1 == buf) */
+      strlcpy(buf, buf1, sizeof(buf));   /* strcpy: OK (sizeof: buf1 == buf) */
     } else if (*arg == '-') {
       mode = *(arg + 1);       /* just in case; we destroy arg in the switch */
       switch (mode) {
       case 'k':
         outlaws = 1;
-        strcpy(buf, buf1);   /* strcpy: OK (sizeof: buf1 == buf) */
+        strlcpy(buf, buf1, sizeof(buf));   /* strcpy: OK (sizeof: buf1 == buf) */
         break;
       case 'z':
         localwho = 1;
-        strcpy(buf, buf1);   /* strcpy: OK (sizeof: buf1 == buf) */
+        strlcpy(buf, buf1, sizeof(buf));   /* strcpy: OK (sizeof: buf1 == buf) */
         break;
       case 's':
         short_list = 1;
-        strcpy(buf, buf1);   /* strcpy: OK (sizeof: buf1 == buf) */
+        strlcpy(buf, buf1, sizeof(buf));   /* strcpy: OK (sizeof: buf1 == buf) */
         break;
       case 'q':
         questwho = 1;
-        strcpy(buf, buf1);   /* strcpy: OK (sizeof: buf1 == buf) */
+        strlcpy(buf, buf1, sizeof(buf));   /* strcpy: OK (sizeof: buf1 == buf) */
         break;
       case 'n':
         half_chop(buf1, name_search, buf);
         break;
       case 'r':
         who_room = 1;
-        strcpy(buf, buf1);   /* strcpy: OK (sizeof: buf1 == buf) */
+        strlcpy(buf, buf1, sizeof(buf));   /* strcpy: OK (sizeof: buf1 == buf) */
         break;
       case 'c':
         half_chop(buf1, arg, buf);
@@ -1257,11 +1263,11 @@ ACMD(do_who)
         break;
       case 'l':
         showleader = 1;
-        strcpy(buf, buf1);   /* strcpy: OK (sizeof: buf1 == buf) */
+        strlcpy(buf, buf1, sizeof(buf));   /* strcpy: OK (sizeof: buf1 == buf) */
         break;
       case 'g':
         showgroup = 1;
-        strcpy(buf, buf1);   /* strcpy: OK (sizeof: buf1 == buf) */
+        strlcpy(buf, buf1, sizeof(buf));   /* strcpy: OK (sizeof: buf1 == buf) */
         break;
       default:
         send_to_char(ch, "%s", WHO_FORMAT);
@@ -1449,7 +1455,7 @@ ACMD(do_users)
 
   host_search[0] = name_search[0] = '\0';
 
-  strcpy(buf, argument);    /* strcpy: OK (sizeof: argument == buf) */
+  strlcpy(buf, argument, sizeof(buf));    /* strcpy: OK (sizeof: argument == buf) */
   while (*buf) {
     char buf1[MAX_INPUT_LENGTH];
 
@@ -1461,15 +1467,15 @@ ACMD(do_users)
       case 'k':
     outlaws = 1;
     playing = 1;
-    strcpy(buf, buf1);    /* strcpy: OK (sizeof: buf1 == buf) */
+    strlcpy(buf, buf1, sizeof(buf));    /* strcpy: OK (sizeof: buf1 == buf) */
     break;
       case 'p':
     playing = 1;
-    strcpy(buf, buf1);    /* strcpy: OK (sizeof: buf1 == buf) */
+    strlcpy(buf, buf1, sizeof(buf));    /* strcpy: OK (sizeof: buf1 == buf) */
     break;
       case 'd':
     deadweight = 1;
-    strcpy(buf, buf1);    /* strcpy: OK (sizeof: buf1 == buf) */
+    strlcpy(buf, buf1, sizeof(buf));    /* strcpy: OK (sizeof: buf1 == buf) */
     break;
       case 'l':
     playing = 1;
@@ -1533,41 +1539,41 @@ ACMD(do_users)
         continue;
 
       if (d->original)
-    sprintf(classname, "[%2d %s]", GET_LEVEL(d->original),
+    tb_snprintf(classname, sizeof(classname), "[%2d %s]", GET_LEVEL(d->original),
         CLASS_ABBR(d->original));
       else
-    sprintf(classname, "[%2d %s]", GET_LEVEL(d->character),
+    tb_snprintf(classname, sizeof(classname), "[%2d %s]", GET_LEVEL(d->character),
         CLASS_ABBR(d->character));
     } else
-      strcpy(classname, "   -   ");
+      strlcpy(classname, "   -   ", sizeof(classname));
 
-    strftime(timestr, sizeof(timestr), "%H:%M:%S", localtime(&(d->login_time)));
+    tb_strftime(timestr, sizeof(timestr), "%H:%M:%S", localtime(&(d->login_time)));
 
     if (STATE(d) == CON_PLAYING && d->original)
-      strcpy(state, "Switched");
+      strlcpy(state, "Switched", sizeof(state));
     else
-      strcpy(state, connected_types[STATE(d)]);
+      strlcpy(state, connected_types[STATE(d)], sizeof(state));
 
     if (d->character && STATE(d) == CON_PLAYING)
-      sprintf(idletime, "%5d", d->character->char_specials.timer *
+      tb_snprintf(idletime, sizeof(idletime), "%5d", d->character->char_specials.timer *
           SECS_PER_MUD_HOUR / SECS_PER_REAL_MIN);
     else
-      strcpy(idletime, "     ");
+      strlcpy(idletime, "     ", sizeof(idletime));
 
-    sprintf(line, "%3d %-7s %-12s %-14s %-3s %-8s ", d->desc_num, classname,
+    tb_snprintf(line, sizeof(line), "%3d %-7s %-12s %-14s %-3s %-8s ", d->desc_num, classname,
     d->original && d->original->player.name ? d->original->player.name :
     d->character && d->character->player.name ? d->character->player.name :
     "UNDEFINED",
     state, idletime, timestr);
 
     if (*d->host)
-      sprintf(line + strlen(line), "[%s]\r\n", d->host);
+      tb_snprintf(line + strlen(line), sizeof(line) - strlen(line), "[%s]\r\n", d->host);
     else
-      strcat(line, "[Hostname unknown]\r\n");
+      strlcat(line, "[Hostname unknown]\r\n", sizeof(line));
 
     if (STATE(d) != CON_PLAYING) {
-      sprintf(line2, "%s%s%s", CCGRN(ch, C_SPR), line, CCNRM(ch, C_SPR));
-      strcpy(line, line2);
+      tb_snprintf(line2, sizeof(line2), "%s%s%s", CCGRN(ch, C_SPR), line, CCNRM(ch, C_SPR));
+      strlcpy(line, line2, sizeof(line));
     }
     if (STATE(d) != CON_PLAYING || (STATE(d) == CON_PLAYING && tch && CAN_SEE(ch, tch))) {
       send_to_char(ch, "%s", line);
@@ -1777,14 +1783,14 @@ static void perform_immort_where(char_data *ch, const char *arg)
             nlen = snprintf(buf + len, buf_size - len, "[TRIGS]");
 
           if (len + nlen >= buf_size) {
-            snprintf(buf + len, buf_size - len, "%s", error_message);
+            tb_snprintf(buf + len, buf_size - len, "%s", error_message);
             break;
           }
           len += nlen;
         }
         nlen = snprintf(buf + len, buf_size - len, "%s\r\n", QNRM);
         if (len + nlen >= buf_size) {
-          snprintf(buf + len, buf_size - len, "%s", error_message);
+          tb_snprintf(buf + len, buf_size - len, "%s", error_message);
           break;
         }
         len += nlen;
@@ -1793,7 +1799,7 @@ static void perform_immort_where(char_data *ch, const char *arg)
     if (PRF_FLAGGED(ch, PRF_VERBOSE) && len < buf_size) {
       nlen = snprintf(buf + len, buf_size - len, "  ###  Object name                 Location\r\n");
       if (len + nlen >= buf_size) {
-        snprintf(buf + len, buf_size - len, "%s", error_message);
+        tb_snprintf(buf + len, buf_size - len, "%s", error_message);
       }
       len += nlen;
     }
@@ -1804,7 +1810,7 @@ static void perform_immort_where(char_data *ch, const char *arg)
           found = 1;
           len = print_object_location(++num, k, ch, buf, len, buf_size, TRUE);
           if (len >= buf_size) {
-            snprintf(buf + buf_size, sizeof(buf) - buf_size, "%s", error_message);
+            tb_snprintf(buf + buf_size, sizeof(buf) - buf_size, "%s", error_message);
             break;
           }
         }
@@ -1898,7 +1904,7 @@ ACMD(do_levels)
   }
 
   if (len < sizeof(buf) && max_lev == LVL_IMMORT)
-    snprintf(buf + len, sizeof(buf) - len, "[%2d] %8d          : Immortality\r\n",
+    tb_snprintf(buf + len, sizeof(buf) - len, "[%2d] %8d          : Immortality\r\n",
         LVL_IMMORT, level_exp(GET_CLASS(ch), LVL_IMMORT));
   page_string(ch->desc, buf, TRUE);
 }
@@ -2088,9 +2094,9 @@ ACMD(do_toggle)
 
   if (!*arg) {
     if (!GET_WIMP_LEV(ch))
-      strcpy(buf2, "OFF");        /* strcpy: OK */
+      strlcpy(buf2, "OFF", sizeof(buf2));        /* strcpy: OK */
     else
-      snprintf(buf2, sizeof(buf2), "%-3.3d", GET_WIMP_LEV(ch));  /* thanks to Ironfist for the fix for the buffer overrun here */
+      tb_snprintf(buf2, sizeof(buf2), "%-3.3d", GET_WIMP_LEV(ch));  /* thanks to Ironfist for the fix for the buffer overrun here */
       
 
     if (GET_LEVEL(ch) == LVL_IMPL) {
@@ -2296,7 +2302,7 @@ ACMD(do_toggle)
       }
     }
     if (isdigit(*arg2)) {
-      if ((wimp_lev = atoi(arg2)) != 0) {
+      if ((wimp_lev = tb_parse_int_or_zero(arg2)) != 0) {
         if (wimp_lev < 0)
           send_to_char(ch, "Heh, heh, heh.. we are jolly funny today, eh?\r\n");
         else if (wimp_lev > GET_MAX_HIT(ch))
@@ -2318,7 +2324,7 @@ ACMD(do_toggle)
     if (!*arg2)
       send_to_char(ch, "Your current page length is set to %d lines.", GET_PAGE_LENGTH(ch));
     else if (is_number(arg2)) {
-      GET_PAGE_LENGTH(ch) = MIN(MAX(atoi(arg2), 5), 255);
+      GET_PAGE_LENGTH(ch) = MIN(MAX(tb_parse_int_or_zero(arg2), 5), 255);
       send_to_char(ch, "Okay, your page length is now set to %d lines.", GET_PAGE_LENGTH(ch));
     } else
       send_to_char(ch, "Please specify a number of lines (5 - 255).");
@@ -2327,7 +2333,7 @@ ACMD(do_toggle)
     if (!*arg2)
       send_to_char(ch, "Your current screen width is set to %d characters.", GET_SCREEN_WIDTH(ch));
     else if (is_number(arg2)) {
-      GET_SCREEN_WIDTH(ch) = MIN(MAX(atoi(arg2), 40), 200);
+      GET_SCREEN_WIDTH(ch) = MIN(MAX(tb_parse_int_or_zero(arg2), 40), 200);
       send_to_char(ch, "Okay, your screen width is now set to %d characters.", GET_SCREEN_WIDTH(ch));
     } else
       send_to_char(ch, "Please specify a number of characters (40 - 200).");
@@ -2472,9 +2478,9 @@ void add_history(struct char_data *ch, char *str, int type)
 
   tmp = GET_HISTORY(ch, type);
   ct = time(0);
-  strftime(time_str, sizeof(time_str), "%H:%M ", localtime(&ct));
+  tb_strftime(time_str, sizeof(time_str), "%H:%M ", localtime(&ct));
 
-  sprintf(buf, "%s%s", time_str, str);
+  tb_snprintf(buf, sizeof(buf), "%s%s", time_str, str);
 
   if (!tmp) {
     CREATE(GET_HISTORY(ch, type), struct txt_block, 1);
@@ -2544,7 +2550,7 @@ ACMD(do_whois)
   send_to_char(ch, "Level: %d\r\n", GET_LEVEL(victim));
 
   if (!(GET_LEVEL(victim) < LVL_IMMORT) || (GET_LEVEL(ch) >= GET_LEVEL(victim))) {
-    strftime(buf, sizeof(buf), "%a %b %d %Y", localtime(&(victim->player.time.logon)));
+    tb_strftime(buf, sizeof(buf), "%a %b %d %Y", localtime(&(victim->player.time.logon)));
 
     hours = (time(0) - victim->player.time.logon) / 3600;
 
@@ -2590,25 +2596,25 @@ ACMD(do_whois)
     free_char (victim);
 }
 
-static bool get_zone_levels(zone_rnum znum, char *buf)
+static bool get_zone_levels(zone_rnum znum, char *buf, size_t buflen)
 {
   /* Create a string for the level restrictions for this zone. */
   if ((zone_table[znum].min_level == -1) && (zone_table[znum].max_level == -1)) {
-    sprintf(buf, "<Not Set!>");
+    tb_snprintf(buf, buflen, "<Not Set!>");
     return FALSE;
   }
 
   if (zone_table[znum].min_level == -1) {
-    sprintf(buf, "Up to level %d", zone_table[znum].max_level);
+    tb_snprintf(buf, buflen, "Up to level %d", zone_table[znum].max_level);
     return TRUE;
   }
 
   if (zone_table[znum].max_level == -1) {
-    sprintf(buf, "Above level %d", zone_table[znum].min_level);
+    tb_snprintf(buf, buflen, "Above level %d", zone_table[znum].min_level);
     return TRUE;
   }
 
-  sprintf(buf, "Levels %d to %d", zone_table[znum].min_level, zone_table[znum].max_level);
+  tb_snprintf(buf, buflen, "Levels %d to %d", zone_table[znum].min_level, zone_table[znum].max_level);
   return TRUE;
 }
 
@@ -2628,17 +2634,17 @@ ACMD(do_areas)
       if (second == arg)
         lolev = 0;
       else
-        lolev = atoi(arg);
+        lolev = tb_parse_int_or_zero(arg);
 
       /* Check for 2nd value */
       if (*(second+1) == '\0' || !isdigit(*(second+1)) )
         hilev = 100;
       else
-        hilev = atoi(second+1);
+        hilev = tb_parse_int_or_zero(second+1);
 
     } else {
       /* No range - single number */
-      lolev = atoi(arg);
+      lolev = tb_parse_int_or_zero(arg);
       hilev = -1;  /* No high level - indicates single level */
     }
   }
@@ -2685,7 +2691,7 @@ ACMD(do_areas)
 
     if (show_zone) {
       if (overlap) overlap_shown = TRUE;
-      lev_set = get_zone_levels(i, lev_str);
+      lev_set = get_zone_levels(i, lev_str, sizeof(lev_str));
       tmp_len = snprintf(buf+len, sizeof(buf)-len, "\tn(%3d) %s%-*s\tn %s%s\tn\r\n", ++zcount, overlap ? QRED : QCYN,
                  count_color_chars(zone_table[i].name)+30, zone_table[i].name,
                  lev_set ? "\tc" : "\tn", lev_set ? lev_str : "All Levels");
@@ -2696,7 +2702,7 @@ ACMD(do_areas)
   len += tmp_len;
 
   if (overlap_shown) {
-    snprintf(buf+len, sizeof(buf)-len, "Areas shown in \trred\tn may have some creatures outside the specified range.\r\n");
+    tb_snprintf(buf+len, sizeof(buf)-len, "Areas shown in \trred\tn may have some creatures outside the specified range.\r\n");
   }
 
   if (zcount == 0)
@@ -2743,7 +2749,7 @@ distance, int door)
     if (!CAN_SEE(ch, i))
       continue;
     if (!*buf)
-      snprintf(buf, sizeof(buf), "You see %s", GET_NAME(i));
+      tb_snprintf(buf, sizeof(buf), "You see %s", GET_NAME(i));
     else
       strncat(buf, GET_NAME(i), sizeof(buf) - strlen(buf) - 1);
     if (--count > 1)
@@ -2751,7 +2757,7 @@ distance, int door)
     else if (count == 1)
       strncat(buf, " and ", sizeof(buf) - strlen(buf) - 1);
     else {
-      snprintf(buf2, sizeof(buf2), " %s %s.\r\n", how_far[distance], dirs[door]);
+      tb_snprintf(buf2, sizeof(buf2), " %s %s.\r\n", how_far[distance], dirs[door]);
       strncat(buf, buf2, sizeof(buf) - strlen(buf) - 1);
     }
 

@@ -173,11 +173,11 @@ static int isname_obj(char *search, char *list)
   int i;
 
   /* Force to lowercase for string comparisons */
-  sprintf(searchname, "%s", search);
+  tb_snprintf(searchname, sizeof(searchname), "%s", search);
   for (i = 0; searchname[i]; i++)
     searchname[i] = LOWER(searchname[i]);
 
-  sprintf(namelist, "%s", list);
+  tb_snprintf(namelist, sizeof(namelist), "%s", list);
   for (i = 0; namelist[i]; i++)
     namelist[i] = LOWER(namelist[i]);
 
@@ -220,7 +220,7 @@ ASPELL(spell_locate_object)
   }
 
   /*  added a global var to catch 2nd arg. */
-  sprintf(name, "%s", cast_arg2);
+  tb_snprintf(name, sizeof(name), "%s", cast_arg2);
 
   j = GET_LEVEL(ch) / 2;  /* # items to show = twice char's level */
 
@@ -305,11 +305,11 @@ ASPELL(spell_identify)
     send_to_char(ch, "You feel informed:\r\nObject '%s', Item type: %s\r\n", obj->short_description, bitbuf);
 
     if (GET_OBJ_AFFECT(obj)) {
-      sprintbitarray(GET_OBJ_AFFECT(obj), affected_bits, AF_ARRAY_MAX, bitbuf);
+      sprintbitarray(GET_OBJ_AFFECT(obj), affected_bits, AF_ARRAY_MAX, bitbuf, sizeof(bitbuf));
       send_to_char(ch, "Item will give you following abilities:  %s\r\n", bitbuf);
     }
 
-    sprintbitarray(GET_OBJ_EXTRA(obj), extra_bits, EF_ARRAY_MAX, bitbuf);
+    sprintbitarray(GET_OBJ_EXTRA(obj), extra_bits, EF_ARRAY_MAX, bitbuf, sizeof(bitbuf));
     send_to_char(ch, "Item is: %s\r\n", bitbuf);
 
     send_to_char(ch, "Weight: %d, Value: %d, Rent: %d, Min. level: %d\r\n",
@@ -333,7 +333,7 @@ ASPELL(spell_identify)
       }
 
       if (GET_OBJ_VAL(obj, 3) >= 1 && len < sizeof(bitbuf)) {
-	snprintf(bitbuf + len, sizeof(bitbuf) - len, " %s", skill_name(GET_OBJ_VAL(obj, 3)));
+	tb_snprintf(bitbuf + len, sizeof(bitbuf) - len, " %s", skill_name(GET_OBJ_VAL(obj, 3)));
       }
 
       send_to_char(ch, "This %s casts: %s\r\n", item_types[(int) GET_OBJ_TYPE(obj)], bitbuf);

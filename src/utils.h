@@ -15,8 +15,8 @@
 * functions, move functions, char_from_furniture) out of utils and declare /
 * define elsewhere.
 */
-#ifndef _UTILS_H_ /* Begin header file protection */
-#define _UTILS_H_
+#ifndef TBAMUD_UTILS_H_INCLUDED /* Begin header file protection */
+#define TBAMUD_UTILS_H_INCLUDED
 
 /** Definition of the action command, for the do_ series of in game functions.
  * This macro is placed here (for now) because it's too general of a macro
@@ -44,7 +44,7 @@ int	rand_number(int from, int to);
 int	dice(int number, int size);
 size_t	sprintbit(bitvector_t vektor, const char *names[], char *result, size_t reslen);
 size_t	sprinttype(int type, const char *names[], char *result, size_t reslen);
-void sprintbitarray(int bitvector[], const char *names[], int maxar, char *result);
+void sprintbitarray(int bitvector[], const char *names[], int maxar, char *result, size_t reslen);
 int get_line(FILE *fl, char *buf);
 int get_filename(char *filename, size_t fbufsize, int mode, const char *orig_name);
 time_t mud_time_to_secs(struct time_info_data *now);
@@ -203,9 +203,17 @@ void char_from_furniture(struct char_data *ch);
 #define ONOFF(a) ((a) ? "ON" : "OFF")
 
 /** If c is an upper case letter, return the upper case. */
-#define LOWER(c)   (((c)>='A'  && (c) <= 'Z') ? ((c)+('a'-'A')) : (c))
+static inline int circle_lower(int c)
+{
+  return (c >= 'A' && c <= 'Z') ? c + ('a' - 'A') : c;
+}
+#define LOWER(c) circle_lower((c))
 /** If c is a lower case letter, return the upper case. */
-#define UPPER(c)   (((c)>='a'  && (c) <= 'z') ? ((c)+('A'-'a')) : (c) )
+static inline int circle_upper(int c)
+{
+  return (c >= 'a' && c <= 'z') ? c + ('A' - 'a') : c;
+}
+#define UPPER(c) circle_upper((c))
 
 /** If ch is equal to either a newline or a carriage return, return 1,
  * else 0.
@@ -220,24 +228,40 @@ void char_from_furniture(struct char_data *ch);
  * @param result Pointer to created memory.
  * @param type The type of memory (int, struct char_data, etc.).
  * @param number How many of type to make. */
-#define CREATE(result, type, number)  do {\
-	if ((number) * sizeof(type) <= 0)	\
-		log("SYSERR: Zero bytes or less requested at %s:%d.", __FILE__, __LINE__);	\
-	if (!((result) = (type *) calloc ((number), sizeof(type))))	\
-		{ perror("SYSERR: malloc failure"); abort(); } } while(0)
+#define CREATE(result, type, number) do { \
+  size_t create_count = (size_t)(number); \
+  if (create_count == 0 || create_count > ((size_t)-1) / sizeof(type)) { \
+    log("SYSERR: Invalid allocation size requested at %s:%d.", __FILE__, __LINE__); \
+    abort(); \
+  } \
+  (result) = (type *)calloc(create_count, sizeof(type)); \
+  if (!(result)) { \
+    int create_errno = errno; \
+    tb_report_error_at("calloc", "CREATE allocation", create_errno, __FILE__, __LINE__, __func__); \
+    abort(); \
+  } \
+} while (0)
 
 /** A realloc based memory reallocation macro. Reminder: realloc can reduce
  * the size of an array as well as increase it.
  * @param result Pointer to created memory.
  * @param type The type of memory (int, struct char_data, etc.).
  * @param number How many of type to make. */
-#define RECREATE(result, type, number) do {\
-  size_t recreate_count = (size_t)(number);\
-  void *recreate_new_ptr = realloc((result), sizeof(type) * recreate_count);\
-  if (!recreate_new_ptr && recreate_count != 0)\
-    { perror("SYSERR: realloc failure"); abort(); }\
-  (result) = (type *)recreate_new_ptr;\
-} while(0)
+#define RECREATE(result, type, number) do { \
+  size_t recreate_count = (size_t)(number); \
+  void *recreate_new_ptr; \
+  if (recreate_count == 0 || recreate_count > ((size_t)-1) / sizeof(type)) { \
+    log("SYSERR: Invalid reallocation size requested at %s:%d.", __FILE__, __LINE__); \
+    abort(); \
+  } \
+  recreate_new_ptr = realloc((result), sizeof(type) * recreate_count); \
+  if (!recreate_new_ptr) { \
+    int recreate_errno = errno; \
+    tb_report_error_at("realloc", "RECREATE allocation", recreate_errno, __FILE__, __LINE__, __func__); \
+    abort(); \
+  } \
+  (result) = (type *)recreate_new_ptr; \
+} while (0)
 
 /** Remove an item from a linked list and reset the links.
  * If item is at the list head, change the head, else traverse the
@@ -250,16 +274,17 @@ void char_from_furniture(struct char_data *ch);
  * @param head Pointer to the head of the linked list.
  * @param next The variable name pointing to the next in the list.
  * */
-#define REMOVE_FROM_LIST(item, head, next)	\
-   if ((item) == (head))		\
-      (head) = (item)->next;		\
-   else {				\
-      temp = (head);			\
-      while (temp && (temp->next != (item))) \
-	 temp = temp->next;		\
-      if (temp)				\
-         temp->next = (item)->next;	\
-   }					\
+#define REMOVE_FROM_LIST(item, head, next) do { \
+  if ((item) == (head)) { \
+    (head) = (item)->next; \
+  } else { \
+    temp = (head); \
+    while (temp && temp->next != (item)) \
+      temp = temp->next; \
+    if (temp) \
+      temp->next = (item)->next; \
+  } \
+} while (0)
 
 /* Connect 'link' to the end of a double-linked list
  * The new item becomes the last in the linked list, and the last
@@ -1078,4 +1103,4 @@ do                                                              \
 /** What is the minimum level character to put on the wizlist? */
 #define CONFIG_MIN_WIZLIST_LEV  config_info.autowiz.min_wizlist_lev
 
-#endif /* _UTILS_H_ */
+#endif /* TBAMUD_UTILS_H_INCLUDED */

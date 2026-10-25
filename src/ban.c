@@ -28,7 +28,7 @@ static char *invalid_list[MAX_INVALID_NAMES];
 
 /* local utility functions */
 static void write_ban_list(void);
-static void _write_one_node(FILE *fp, struct ban_list_element *node);
+static void write_one_node(FILE *fp, struct ban_list_element *node);
 
 static const char *ban_types[] = {
   "no",
@@ -50,7 +50,7 @@ void load_banned(void)
 
   if (!(fl = fopen(BAN_FILE, "r"))) {
     if (errno != ENOENT) {
-      log("SYSERR: Unable to open banfile '%s': %s", BAN_FILE, strerror(errno));
+      { int saved_errno = errno; log("SYSERR: fopen banfile %s for read failed: %s (errno=%d)", BAN_FILE, strerror(saved_errno), saved_errno); }
     } else
       log("   Ban file '%s' doesn't exist.", BAN_FILE);
     return;
@@ -71,7 +71,7 @@ void load_banned(void)
     ban_list = next_node;
   }
 
-  fclose(fl);
+  tb_fclose(fl);
 }
 
 int isbanned(char *hostname)
@@ -94,11 +94,11 @@ int isbanned(char *hostname)
   return (i);
 }
 
-static void _write_one_node(FILE *fp, struct ban_list_element *node)
+static void write_one_node(FILE *fp, struct ban_list_element *node)
 {
   if (node) {
-    _write_one_node(fp, node->next);
-    fprintf(fp, "%s %s %ld %s\n", ban_types[node->type],
+    write_one_node(fp, node->next);
+    tb_fprintf(fp, "%s %s %ld %s\n", ban_types[node->type],
 	    node->site, (long) node->date, node->name);
   }
 }
@@ -108,11 +108,11 @@ static void write_ban_list(void)
   FILE *fl;
 
   if (!(fl = fopen(BAN_FILE, "w"))) {
-    perror("SYSERR: Unable to open '" BAN_FILE "' for writing");
+    TB_REPORT_ERRNO("fopen", BAN_FILE);
     return;
   }
-  _write_one_node(fl, ban_list);/* recursively write from end to start */
-  fclose(fl);
+  write_one_node(fl, ban_list);/* recursively write from end to start */
+  tb_fclose(fl);
   return;
 }
 
@@ -142,9 +142,9 @@ ACMD(do_ban)
 
     for (ban_node = ban_list; ban_node; ban_node = ban_node->next) {
       if (ban_node->date) {
-        strftime(timestr, sizeof(timestr), "%a %b %d %Y", localtime(&(ban_node->date)));
+        tb_strftime(timestr, sizeof(timestr), "%a %b %d %Y", localtime(&(ban_node->date)));
       } else
-	strcpy(timestr, "Unknown");	/* strcpy: OK (strlen("Unknown") < 16) */
+	strlcpy(timestr, "Unknown", sizeof(timestr));	/* strcpy: OK (strlen("Unknown") < 16) */
 
       send_to_char(ch, BAN_LIST_FORMAT, ban_node->site, ban_types[ban_node->type], timestr, ban_node->name);
     }
@@ -291,7 +291,7 @@ void read_invalid_list(void)
   char temp[256];
 
   if (!(fp = fopen(XNAME_FILE, "r"))) {
-    perror("SYSERR: Unable to open '" XNAME_FILE "' for reading");
+    TB_REPORT_ERRNO("fopen", XNAME_FILE);
     return;
   }
 
@@ -304,5 +304,5 @@ void read_invalid_list(void)
     exit(1);
   }
 
-  fclose(fp);
+  tb_fclose(fp);
 }

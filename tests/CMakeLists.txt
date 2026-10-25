@@ -21,6 +21,14 @@ enable_testing()
 set(UNITY_SRC  ${CMAKE_CURRENT_SOURCE_DIR}/vendor/unity/unity.c)
 set(STUBS_SRC  ${CMAKE_CURRENT_SOURCE_DIR}/test_stubs.c)
 
+# Keep third-party Unity code byte-for-byte upstream. CERT/clang-tidy findings
+# are enforced on tbaMUD-owned code, not vendored test framework internals.
+add_library(unity_vendor OBJECT ${UNITY_SRC})
+set_target_properties(unity_vendor PROPERTIES C_CLANG_TIDY "")
+target_include_directories(unity_vendor PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/vendor/unity
+)
+
 set(MUD_SRCDIR ${CMAKE_SOURCE_DIR}/src)
 
 # Include paths: mud source dir for conf.h / structs.h etc.,
@@ -47,7 +55,7 @@ endif()
 # Creates an executable, registers it with CTest.
 macro(add_mud_test TEST_NAME)
     add_executable(${TEST_NAME}
-        ${UNITY_SRC}
+        $<TARGET_OBJECTS:unity_vendor>
         ${STUBS_SRC}
         ${ARGN}
     )

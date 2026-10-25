@@ -10,8 +10,8 @@
 * CircleMUD is based on DikuMUD, Copyright (C) 1990, 1991.               
 *
 */
-#ifndef _CLASS_H_
-#define _CLASS_H_
+#ifndef TBAMUD_CLASS_H_INCLUDED
+#define TBAMUD_CLASS_H_INCLUDED
 
 /* Functions available through class.c */
 int backstab_mult(int level);
@@ -34,4 +34,4 @@ extern const char *class_menu;
 extern int prac_params[][NUM_CLASSES];
 extern struct guild_info_type guild_info[];
 
-#endif /* _CLASS_H_*/
+#endif /* TBAMUD_CLASS_H_INCLUDED*/

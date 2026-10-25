@@ -157,12 +157,19 @@ static void hedit_save_internally(struct descriptor_data *d)
 static void hedit_save_to_disk(struct descriptor_data *d)
 {
   FILE *fp;
-  char buf1[MAX_STRING_LENGTH], index_name[READ_SIZE];
-  int i;
+  char buf1[MAX_STRING_LENGTH], index_name[READ_SIZE], temp_name[READ_SIZE];
+  int i, name_result;
 
-  snprintf(index_name, sizeof(index_name), "%s%s", HLP_PREFIX, HELP_FILE);
-  if (!(fp = fopen(index_name, "w"))) {
-    log("SYSERR: Could not write help index file");
+  tb_snprintf(index_name, sizeof(index_name), "%s%s", HLP_PREFIX, HELP_FILE);
+  name_result = snprintf(temp_name, sizeof(temp_name), "%s.tmp", index_name);
+  if (name_result < 0 || (size_t)name_result >= sizeof(temp_name)) {
+    log("SYSERR: help temporary filename is too long for %s", index_name);
+    return;
+  }
+
+  if (!(fp = fopen(temp_name, "w"))) {
+    TB_REPORT_ERRNO("fopen", temp_name);
+    log("SYSERR: Could not write temporary help index file");
     return;
   }
 
@@ -173,16 +180,27 @@ static void hedit_save_to_disk(struct descriptor_data *d)
     strip_cr(buf1);
 
     /* Forget making a buffer, lets just write the thing now. */
-    fprintf(fp, "%s#%d\n", convert_from_tabs(buf1), help_table[i].min_level);
+    tb_fprintf(fp, "%s#%d\n", convert_from_tabs(buf1), help_table[i].min_level);
   }
-  /* Write final line and close. */
-  fprintf(fp, "$~\n");
-  fclose(fp);
+  /* Write final line and commit only a verified temporary file. */
+  tb_fprintf(fp, "$~\n");
+  {
+    int flush_ok = tb_fflush_checked(fp, temp_name);
+    int close_ok = tb_fclose_checked(fp, temp_name);
+    if (!flush_ok || !close_ok) {
+      if (remove(temp_name) != 0 && errno != ENOENT)
+        TB_REPORT_ERRNO("remove", temp_name);
+      return;
+    }
+  }
+
+  if (!tb_replace_file_checked(temp_name, index_name))
+    return;
 
   remove_from_save_list(HEDIT_PERMISSION, SL_HLP);
 
-  /* Reboot the help files. */
-  free_help_table();     
+  /* Reboot the help files only after the replacement committed. */
+  free_help_table();
   index_boot(DB_BOOT_HLP);
 }
 
@@ -216,7 +234,7 @@ void hedit_parse(struct descriptor_data *d, char *arg)
     switch (*arg) {
     case 'y':
     case 'Y':
-      snprintf(buf, sizeof(buf), "OLC: %s edits help for %s.", GET_NAME(d->character),
+      tb_snprintf(buf, sizeof(buf), "OLC: %s edits help for %s.", GET_NAME(d->character),
                OLC_HELP(d)->keywords);
       mudlog(TRUE, MAX(LVL_BUILDER, GET_INVIS_LEV(d->character)), CMP, "%s", buf);
       write_to_output(d, "Help saved to disk.\r\n");
@@ -337,7 +355,7 @@ void hedit_parse(struct descriptor_data *d, char *arg)
     break;
 
   case HEDIT_MIN_LEVEL:
-    number = atoi(arg);
+    number = tb_parse_int_or_zero(arg);
     if ((number < 0) || (number > LVL_IMPL))
       write_to_output(d, "That is not a valid choice!\r\nEnter min level:-\r\n] ");
     else {
@@ -385,7 +403,7 @@ ACMD(do_helpcheck)
     }
   }
   if (count % 3 && len < sizeof(buf))
-    snprintf(buf + len, sizeof(buf) - len, "\r\n");
+    tb_snprintf(buf + len, sizeof(buf) - len, "\r\n");
 
   if (ch->desc) {
 	if (len == 0)
@@ -533,7 +551,7 @@ ACMD(do_hindex)
       buf[len] = '\0';
   }
   if (!count2)
-    snprintf(buf2 + len2, (size_t)(limit - len2), "  None.\r\n");
+    tb_snprintf(buf2 + len2, (size_t)(limit - len2), "  None.\r\n");
 
   /* Join the two listings.  Copy what fits and cut back to the last
    * complete line rather than dropping the second listing whole: it is
@@ -570,7 +588,7 @@ ACMD(do_hindex)
    * above took only part of the second listing.  Without the line saying
    * so, a short listing under a large total reads as a display fault
    * rather than as a listing that would not fit. */
-  snprintf(buf + len, sizeof(buf) - len,
+  tb_snprintf(buf + len, sizeof(buf) - len,
            "%s\t1Applicable Index Entries: \t3%d\r\n"
            "\t1Total Index Entries: \t3%d\tn\r\n",
            (cut || cut2) ? "\t1The listing was too long to show in full.\tn\r\n" : "",

@@ -9,8 +9,8 @@
 * is attributed to:
 * Copyright 1996 by Harvey Gilpin, 1997-2001 by George Greer.                                                    
 */
-#ifndef _GENOBJ_H_
-#define _GENOBJ_H_
+#ifndef TBAMUD_GENOBJ_H_INCLUDED
+#define TBAMUD_GENOBJ_H_INCLUDED
 
 void free_object_strings_proto(struct obj_data *obj);
 void free_object_strings(struct obj_data *obj);
@@ -28,4 +28,4 @@ bool oset_apply(struct obj_data *obj, char * argument);
 bool oset_short_description(struct obj_data *obj, char * argument);
 bool oset_long_description(struct obj_data *obj, char * argument);
 
-#endif /* _GENOBJ_H_ */
+#endif /* TBAMUD_GENOBJ_H_INCLUDED */

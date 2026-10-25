@@ -2,6 +2,7 @@ Checks: >
   -*,
   clang-analyzer-*,
   bugprone-*,
+  cert-*,
   performance-*,
   portability-*,
   -bugprone-assignment-in-if-condition,
@@ -13,16 +14,13 @@ Checks: >
   -bugprone-multi-level-implicit-pointer-conversion,
   -bugprone-narrowing-conversions,
   -bugprone-reserved-identifier,
-  -bugprone-signed-char-misuse,
   -bugprone-suspicious-string-compare,
   -bugprone-switch-missing-default-case,
   -bugprone-too-small-loop-variable,
-  -bugprone-unsafe-functions,
   -clang-analyzer-deadcode.DeadStores,
-  -clang-analyzer-optin.performance.Padding,
-  -clang-analyzer-security.insecureAPI.strcpy,
-  -clang-analyzer-unix.Errno
-# Keep memory-safety, ownership, null-dereference, bounds, stream and
-# resource analyzers enabled.  The disabled checks above are legacy API/style
-# diagnostics that do not represent defects in this C codebase.
+  -clang-analyzer-optin.performance.Padding
+# CERT C checks are enabled explicitly. Keep memory-safety, ownership,
+# null-dereference, bounds, stream, resource, errno and insecure-API
+# analyzers enabled so CERT-relevant defects are not hidden by legacy
+# suppressions.
 HeaderFilterRegex: 'src/.*'

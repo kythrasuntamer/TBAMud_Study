@@ -11,8 +11,8 @@
 * $Date: 2004/10/11 12:07:00$                                            
 * $Revision: 1.0.14 $                                                    
 */
-#ifndef _DG_OLC_H_
-#define _DG_OLC_H_
+#ifndef TBAMUD_DG_OLC_H_INCLUDED
+#define TBAMUD_DG_OLC_H_INCLUDED
 
 #include "dg_scripts.h"
 
@@ -46,4 +46,4 @@ void dg_script_menu(struct descriptor_data *d);
 int dg_script_edit_parse(struct descriptor_data *d, char *arg);
 
 
-#endif /* _DG_OLC_H_ */
+#endif /* TBAMUD_DG_OLC_H_INCLUDED */

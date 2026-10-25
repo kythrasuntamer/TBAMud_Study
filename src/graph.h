@@ -11,10 +11,10 @@
 *
 * @todo the functions here should perhaps be a part of another module?
 */
-#ifndef _GRAPH_H_
-#define _GRAPH_H_
+#ifndef TBAMUD_GRAPH_H_INCLUDED
+#define TBAMUD_GRAPH_H_INCLUDED
 
 ACMD(do_track);
 void hunt_victim(struct char_data *ch);
 
-#endif /* _GRAPH_H_*/
+#endif /* TBAMUD_GRAPH_H_INCLUDED*/

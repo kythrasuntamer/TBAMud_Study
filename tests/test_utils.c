@@ -214,10 +214,10 @@ void test_file_sizeof_counts_exact_bytes(void)
 
     TEST_ASSERT_NOT_NULL(fp);
     TEST_ASSERT_TRUE(fputs("abc", fp) >= 0);
-    fflush(fp);
+    TEST_ASSERT_EQUAL_INT(0, fflush(fp));
 
     TEST_ASSERT_EQUAL_size_t(3, file_sizeof(fp));
-    fclose(fp);
+    TEST_ASSERT_EQUAL_INT(0, fclose(fp));
 }
 
 void test_file_numlines_counts_newlines_only(void)
@@ -225,11 +225,11 @@ void test_file_numlines_counts_newlines_only(void)
     FILE *fp = tmpfile();
 
     TEST_ASSERT_NOT_NULL(fp);
-    fputs("one\ntwo\nthree", fp);
-    fflush(fp);
+    TEST_ASSERT_TRUE(fputs("one\ntwo\nthree", fp) >= 0);
+    TEST_ASSERT_EQUAL_INT(0, fflush(fp));
 
     TEST_ASSERT_EQUAL_INT(2, file_numlines(fp));
-    fclose(fp);
+    TEST_ASSERT_EQUAL_INT(0, fclose(fp));
 }
 
 /* =========================================================

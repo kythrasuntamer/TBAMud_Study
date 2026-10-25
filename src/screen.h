@@ -9,8 +9,8 @@
 * Copyright (C) 1993, 94 by the Trustees of the Johns Hopkins University 
 * CircleMUD is based on DikuMUD, Copyright (C) 1990, 1991.               
 */
-#ifndef _SCREEN_H_
-#define _SCREEN_H_
+#ifndef TBAMUD_SCREEN_H_INCLUDED
+#define TBAMUD_SCREEN_H_INCLUDED
 
 #define CNRM  "\x1B[0;0m"     /* "Normal"                            */ 
 #define CNUL  ""              /* No Change                           */ 
@@ -180,4 +180,4 @@
 #define QBKCYN CBKCYN(ch,C_SPR) 
 #define QBKWHT CBKWHT(ch,C_SPR) 
 
-#endif /* _SCREEN_H_ */
+#endif /* TBAMUD_SCREEN_H_INCLUDED */

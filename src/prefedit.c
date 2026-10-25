@@ -103,10 +103,10 @@ static void prefedit_disp_main_menu(struct descriptor_data *d)
   /* Set up the required variables and strings */
   vict = PREFEDIT_GET_CHAR;
 
-  sprintf(prompt_string, "%s%s%s", PREFEDIT_FLAGGED(PRF_DISPHP) ? "H" : "",   PREFEDIT_FLAGGED(PRF_DISPMANA) ? "M" : "",
+  tb_snprintf(prompt_string, sizeof(prompt_string), "%s%s%s", PREFEDIT_FLAGGED(PRF_DISPHP) ? "H" : "",   PREFEDIT_FLAGGED(PRF_DISPMANA) ? "M" : "",
                                    PREFEDIT_FLAGGED(PRF_DISPMOVE) ? "V" : "" );
 
-  sprintf(color_string, "%s", multi_types[(PREFEDIT_FLAGGED(PRF_COLOR_1) ? 1 : 0) + (PREFEDIT_FLAGGED(PRF_COLOR_2) ? 2 : 0)]);
+  tb_snprintf(color_string, sizeof(color_string), "%s", multi_types[(PREFEDIT_FLAGGED(PRF_COLOR_1) ? 1 : 0) + (PREFEDIT_FLAGGED(PRF_COLOR_2) ? 2 : 0)]);
 
   send_to_char(d->character, "\r\n%sPreferences for %s%s\r\n",
                               CCYEL(d->character, C_NRM),
@@ -140,7 +140,7 @@ static void prefedit_disp_main_menu(struct descriptor_data *d)
   /* Imm Prefs */
   if (GET_LEVEL(PREFEDIT_GET_CHAR) >= LVL_IMMORT)
   {
-    sprintf(syslog_string, "%s", multi_types[((PREFEDIT_FLAGGED(PRF_LOG1) ? 1 : 0)+ (PREFEDIT_FLAGGED(PRF_LOG2) ? 2 : 0))] );
+    tb_snprintf(syslog_string, sizeof(syslog_string), "%s", multi_types[((PREFEDIT_FLAGGED(PRF_LOG1) ? 1 : 0)+ (PREFEDIT_FLAGGED(PRF_LOG2) ? 2 : 0))] );
 
     send_to_char(d->character, "\r\n"
                                "%sImmortal Preferences\r\n"
@@ -303,9 +303,9 @@ static void prefedit_disp_prompt_menu(struct descriptor_data *d)
   char prompt_string[7];
 
   if (PREFEDIT_FLAGGED(PRF_DISPAUTO))
-    sprintf(prompt_string, "<Auto>");
+    tb_snprintf(prompt_string, sizeof(prompt_string), "<Auto>");
   else
-    sprintf(prompt_string, "%s%s%s", PREFEDIT_FLAGGED(PRF_DISPHP) ? "H" : "",   PREFEDIT_FLAGGED(PRF_DISPMANA) ? "M" : "",
+    tb_snprintf(prompt_string, sizeof(prompt_string), "%s%s%s", PREFEDIT_FLAGGED(PRF_DISPHP) ? "H" : "",   PREFEDIT_FLAGGED(PRF_DISPMANA) ? "M" : "",
                                      PREFEDIT_FLAGGED(PRF_DISPMOVE) ? "V" : "");
 
   send_to_char(d->character, "%sPrompt Settings\r\n"
@@ -543,22 +543,22 @@ void prefedit_parse(struct descriptor_data * d, char *arg)
     break;
 
   case PREFEDIT_PAGELENGTH:
-    number = atoi(arg);
+    number = tb_parse_int_or_zero(arg);
     OLC_PREFS(d)->page_length = MAX(10, MIN(number, 60));
     break;
 
   case PREFEDIT_SCREENWIDTH:
-    number = atoi(arg);
+    number = tb_parse_int_or_zero(arg);
     OLC_PREFS(d)->screen_width = MAX(40, MIN(number, 120));
     break;
 
   case PREFEDIT_WIMPY:
-    number = atoi(arg);
+    number = tb_parse_int_or_zero(arg);
     OLC_PREFS(d)->wimp_level = MAX(0, MIN(number, 500));
     break;
 
   case PREFEDIT_COLOR:
-    number = atoi(arg) - 1;
+    number = tb_parse_int_or_zero(arg) - 1;
     if ((number < 0) || (number > 3)) {
       send_to_char(d->character, "%sThat's not a valid choice!%s\r\n", CBRED(d->character, C_NRM), CCNRM(d->character, C_NRM));
       prefedit_disp_color_menu(d);
@@ -710,7 +710,7 @@ void prefedit_parse(struct descriptor_data * d, char *arg)
     return;
 
   case PREFEDIT_SYSLOG:
-    number = atoi(arg) - 1;
+    number = tb_parse_int_or_zero(arg) - 1;
     if ((number < 0) || (number > 3)) {
       send_to_char(d->character, "%sThat's not a valid choice!%s\r\n", CBRED(d->character, C_NRM), CCNRM(d->character, C_NRM));
       prefedit_disp_color_menu(d);
@@ -727,7 +727,7 @@ void prefedit_parse(struct descriptor_data * d, char *arg)
 
   /* Sub-menu's and flag toggle menu's */
   case PREFEDIT_PROMPT:
-    number = atoi(arg);
+    number = tb_parse_int_or_zero(arg);
     if ((number < 0) || (number > 7)) {
       send_to_char(d->character, "%sThat's not a valid choice!%s\r\n", CBRED(d->character, C_NRM), CCNRM(d->character, C_NRM));
       prefedit_disp_prompt_menu(d);
@@ -978,7 +978,7 @@ ACMD(do_oasis_prefedit)
         if (ch == vict)
           send_to_char(ch, "Your preferences are currently being edited by %s.\r\n", PERS(d->character, ch));
         else
-          sprintf(buf, "$S$u preferences are currently being edited by %s.", PERS(d->character, ch));
+          tb_snprintf(buf, sizeof(buf), "$S$u preferences are currently being edited by %s.", PERS(d->character, ch));
         act(buf, FALSE, ch, 0, vict, TO_CHAR);
         return;
       }

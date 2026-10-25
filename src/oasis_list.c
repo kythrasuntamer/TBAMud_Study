@@ -46,7 +46,7 @@ static void perform_mob_flag_list(struct char_data * ch, char *arg)
   struct char_data *mob;
   char buf[MAX_STRING_LENGTH];
 
-  mob_flag = atoi(arg);
+  mob_flag = tb_parse_int_or_zero(arg);
 
   if (mob_flag < 0 || mob_flag > NUM_MOB_FLAGS) {
     send_to_char(ch, "Invalid flag number!\r\n");
@@ -83,7 +83,7 @@ static void perform_mob_level_list(struct char_data * ch, char *arg)
   struct char_data *mob;
   char buf[MAX_STRING_LENGTH];
 
-  mob_level = atoi(arg);
+  mob_level = tb_parse_int_or_zero(arg);
 
   if (mob_level < 0 || mob_level > 99) {
     send_to_char(ch, "Invalid mob level!\r\n");
@@ -139,7 +139,7 @@ static void perform_obj_type_list(struct char_data * ch, char *arg)
   obj_rnum r_num;
   char buf[MAX_STRING_LENGTH];
 
-  itemtype = atoi(arg);
+  itemtype = tb_parse_int_or_zero(arg);
 
   len = snprintf(buf, sizeof(buf), "Listing all objects of type %s[%s]%s\r\n",
        QYEL, item_types[itemtype], QNRM);
@@ -259,7 +259,7 @@ static void perform_obj_aff_list(struct char_data * ch, char *arg)
     lst[i].vobj = NOTHING;
     lst[i].val  = 0;
   }
-  apply = atoi(arg);
+  apply = tb_parse_int_or_zero(arg);
 
   if (apply <= 0 || apply >= NUM_APPLIES) {
      send_to_char(ch, "Not a valid affect");
@@ -308,7 +308,7 @@ static void perform_obj_aff_list(struct char_data * ch, char *arg)
       if (obj_proto[num].affected[i].modifier) {
         if (obj_proto[num].affected[i].location == apply){
           ov = obj_index[num].vnum;
-          v1 = obj_proto[num].affected[i].modifier;
+          v1 = (int)obj_proto[num].affected[i].modifier;
 
           if ((r_num = real_object(ov)) != NOTHING)
             add_to_obj_list(lst, MAX_OBJ_LIST, ov, v1);
@@ -375,7 +375,7 @@ ACMD(do_oasis_list)
   if (!*smin || *smin == '.') {
     rzone = world[IN_ROOM(ch)].zone;
   } else if (!*smax) {
-    rzone = real_zone(atoi(smin));
+    rzone = real_zone(tb_parse_int_or_zero(smin));
 
     if ((rzone == NOWHERE || rzone == 0) && subcmd == SCMD_OASIS_ZLIST && !isdigit(*smin)) {
       /* Must be zlist, with builder name as arg */
@@ -386,8 +386,8 @@ ACMD(do_oasis_list)
     }
   } else {
     /* Listing by min vnum / max vnum.  Retrieve the numeric values. */
-    vmin = atoi(smin);
-    vmax = atoi(smax);
+    vmin = tb_parse_int_or_zero(smin);
+    vmax = tb_parse_int_or_zero(smax);
 
     if (vmin > vmax) {
       send_to_char(ch, "List from %d to %d - Aren't we funny today!\r\n", vmin, vmax);
@@ -521,7 +521,7 @@ ACMD(do_oasis_links)
     zrnum = world[IN_ROOM(ch)].zone;
     zvnum = zone_table[zrnum].number;
   } else {
-    zvnum = atoi(arg);
+    zvnum = tb_parse_int_or_zero(arg);
     zrnum = real_zone(zvnum);
   }
 
@@ -866,7 +866,7 @@ void print_zone(struct char_data *ch, zone_vnum vnum)
       size_trigs++;
 
   size_quests = count_quests(bottom, top);
-  sprintbitarray(zone_table[rnum].zone_flags, zone_bits, ZN_ARRAY_MAX, buf);
+  sprintbitarray(zone_table[rnum].zone_flags, zone_bits, ZN_ARRAY_MAX, buf, sizeof(buf));
 
   /* Display all of the zone information at once. */
   send_to_char(ch,

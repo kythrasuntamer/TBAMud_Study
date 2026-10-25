@@ -28,7 +28,7 @@ int main(void)
   FILE *index = 0, *outfile = 0;
 
   if (!(index = fopen(INDEX_NAME, "w"))) {
-    perror("error opening index for write");
+    TB_REPORT_ERRNO("fopen", INDEX_NAME);
     exit(1);
   }
   while (fgets(line, BSZ, stdin)) {
@@ -36,22 +36,22 @@ int main(void)
       *(strchr(line, '\n')) = '\0';
       if (outfile) {
 /*	fputs("$\n", outfile);*/
-	fclose(outfile);
+	tb_fclose(outfile);
       }
       if (!(outfile = fopen((line + 1), "a"))) {
-	perror("Error opening output file");
+	TB_REPORT_ERRNO("fopen", line + 1);
 	exit(0);
       }
-      fputs(line + 1, index);
-      fputs("\n", index);
+      tb_fputs(line + 1, index);
+      tb_fputs("\n", index);
     } else if (outfile)
-      fputs(line, outfile);
+      tb_fputs(line, outfile);
   }
 
-  fputs("$\r\n", index);
-  fclose(index);
+  tb_fputs("$\r\n", index);
+  tb_fclose(index);
   if (outfile)
-    fclose(outfile);
+    tb_fclose(outfile);
 
   return (0);
 }

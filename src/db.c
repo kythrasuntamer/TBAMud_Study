@@ -151,6 +151,108 @@ static void free_extra_descriptions(struct extra_descr_data *edesc);
 static bitvector_t asciiflag_conv_aff(char *flag);
 static int hsort(const void *a, const void *b);
 
+static int parse_int_fields(const char *text, int *values, size_t max_fields)
+{
+  const char *p = text;
+  char *end;
+  size_t count = 0;
+  long value;
+
+  if (text == NULL || values == NULL)
+    return -1;
+
+  while (count < max_fields) {
+    while (isspace((unsigned char)*p))
+      p++;
+    if (*p == '\0')
+      break;
+
+    errno = 0;
+    value = strtol(p, &end, 10);
+    if (p == end || errno == ERANGE || value < INT_MIN || value > INT_MAX)
+      return -1;
+
+    values[count++] = (int)value;
+    p = end;
+  }
+
+  while (isspace((unsigned char)*p))
+    p++;
+  if (*p != '\0')
+    return -1;
+
+  return (int)count;
+}
+
+static int parse_int_text_strict(const char *text, int *value)
+{
+  int parsed[1];
+  int count = parse_int_fields(text, parsed, 1);
+
+  if (count != 1)
+    return 0;
+  *value = parsed[0];
+  return 1;
+}
+
+static int parse_long_text_strict(const char *text, long *value)
+{
+  const char *p = text;
+  char *end;
+  long parsed;
+
+  if (text == NULL || value == NULL)
+    return 0;
+
+  while (isspace((unsigned char)*p))
+    p++;
+  errno = 0;
+  parsed = strtol(p, &end, 10);
+  if (p == end || errno == ERANGE)
+    return 0;
+  while (isspace((unsigned char)*end))
+    end++;
+  if (*end != '\0')
+    return 0;
+
+  *value = parsed;
+  return 1;
+}
+
+static int parse_dice_text(const char *text, int *count, int *size, int *bonus)
+{
+  char *end;
+  long a, b, d;
+
+  if (text == NULL || count == NULL || size == NULL || bonus == NULL)
+    return 0;
+
+  errno = 0;
+  a = strtol(text, &end, 10);
+  if (text == end || errno == ERANGE || a < INT_MIN || a > INT_MAX ||
+      (*end != 'd' && *end != 'D'))
+    return 0;
+
+  text = end + 1;
+  errno = 0;
+  b = strtol(text, &end, 10);
+  if (text == end || errno == ERANGE || b < INT_MIN || b > INT_MAX ||
+      *end != '+')
+    return 0;
+
+  text = end + 1;
+  errno = 0;
+  d = strtol(text, &end, 10);
+  if (text == end || errno == ERANGE || d < INT_MIN || d > INT_MAX ||
+      *end != '\0')
+    return 0;
+
+  *count = (int)a;
+  *size = (int)b;
+  *bonus = (int)d;
+  return 1;
+}
+
 /* routines for booting the system */
 char *fread_action(FILE *fl, int nr)
 {
@@ -164,7 +266,7 @@ char *fread_action(FILE *fl, int nr)
       * marker before it is able to read in the expected string.  This can be
       * caused by a truncated socials file. */
     } else {
-      log("SYSERR: fread_action: read error near action #%d: %s", nr, strerror(errno));
+      TB_REPORT_ERRNO("fgets", "social action text");
     }
     exit(1);
   }
@@ -191,11 +293,12 @@ static void boot_social_messages(void)
   FILE *fl;
   int line_number, nr = 0, hide, min_char_pos, min_pos, min_lvl, curr_soc = -1;
   char next_soc[MAX_STRING_LENGTH], sorted[MAX_INPUT_LENGTH];
+  char hide_text[32], min_char_text[32], min_pos_text[32], min_lvl_text[32];
 
   if (CONFIG_NEW_SOCIALS == TRUE) {
     /* open social file */
     if (!(fl = fopen(SOCMESS_FILE_NEW, "r"))) {
-      log("SYSERR: can't open socials file '%s': %s", SOCMESS_FILE_NEW, strerror(errno));
+      TB_REPORT_ERRNO("fopen", SOCMESS_FILE_NEW);
       /* SYSERR_DESC: This error, from boot_social_messages(), occurs when the
        * server fails to open the file containing the social messages.  The
        * error at the end will indicate the reason why. */
@@ -207,14 +310,14 @@ static void boot_social_messages(void)
       if (*next_soc == '~') top_of_socialt++;
 
     if(ferror(fl)) {
-      log("SYSERR: error encountered reading socials file %s: %s", SOCMESS_FILE_NEW, strerror(errno));
+      TB_REPORT_ERRNO("fgets", SOCMESS_FILE_NEW);
       exit(1);
     }
   } else { /* old style */
 
     /* open social file */
     if (!(fl = fopen(SOCMESS_FILE, "r"))) {
-      log("SYSERR: can't open socials file '%s': %s", SOCMESS_FILE, strerror(errno));
+      TB_REPORT_ERRNO("fopen", SOCMESS_FILE);
       /* SYSERR_DESC: This error, from boot_social_messages(), occurs when the
        * server fails to open the file containing the social messages.  The
        * error at the end will indicate the reason why. */
@@ -225,13 +328,16 @@ static void boot_social_messages(void)
       if (*next_soc == '\n' || *next_soc == '\r') top_of_socialt++; /* all socials are followed by a blank line */
 
     if(ferror(fl)) {
-      log("SYSERR: error encountered reading socials file %s: %s", SOCMESS_FILE_NEW, strerror(errno));
+      TB_REPORT_ERRNO("fgets", SOCMESS_FILE);
       exit(1);
     }
   }
 
   log("Social table contains %d socials.", top_of_socialt);
-  rewind(fl);
+  if (fseek(fl, 0L, SEEK_SET) != 0) {
+    TB_REPORT_ERRNO("fseek", CONFIG_NEW_SOCIALS == TRUE ? SOCMESS_FILE_NEW : SOCMESS_FILE);
+    exit(1);
+  }
 
   CREATE(soc_mess_list, struct social_messg, top_of_socialt + 1);
 
@@ -241,15 +347,19 @@ static void boot_social_messages(void)
       if(feof(fl))
         log("SYSERR: unexpected end of file encountered in socials file %s", SOCMESS_FILE_NEW);
       else if(ferror(fl))
-        log("SYSERR: error reading socials file %s: %s", SOCMESS_FILE_NEW, strerror(errno));
+        TB_REPORT_ERRNO("fscanf", CONFIG_NEW_SOCIALS == TRUE ? SOCMESS_FILE_NEW : SOCMESS_FILE);
       else
         log("SYSERR: format error in social file near line %d", line_number);
       exit(1);
     }
     if (*next_soc == '$') break;
     if (CONFIG_NEW_SOCIALS == TRUE) {
-      if (fscanf(fl, " %s %d %d %d %d \n",
-  		sorted, &hide, &min_char_pos, &min_pos, &min_lvl) != 5) {
+      if (fscanf(fl, " %255s %31s %31s %31s %31s \n",
+                 sorted, hide_text, min_char_text, min_pos_text, min_lvl_text) != 5 ||
+          !parse_int_text_strict(hide_text, &hide) ||
+          !parse_int_text_strict(min_char_text, &min_char_pos) ||
+          !parse_int_text_strict(min_pos_text, &min_pos) ||
+          !parse_int_text_strict(min_lvl_text, &min_lvl)) {
       log("SYSERR: format error in social file near social '%s'", next_soc);
       /* SYSERR_DESC: From boot_social_messages(), this error is output when
        * the server is expecting to find the remainder of the first line of the
@@ -267,7 +377,9 @@ static void boot_social_messages(void)
       soc_mess_list[curr_soc].min_victim_position = min_pos;
       soc_mess_list[curr_soc].min_level_char = min_lvl;
     } else {  /* old style */
-      if (fscanf(fl, " %d %d \n", &hide, &min_pos) != 2) {
+      if (fscanf(fl, " %31s %31s \n", hide_text, min_pos_text) != 2 ||
+          !parse_int_text_strict(hide_text, &hide) ||
+          !parse_int_text_strict(min_pos_text, &min_pos)) {
         log("SYSERR: format error in social file near social '%s'", next_soc);
       /* SYSERR_DESC: From boot_social_messages(), this error is output when the
        * server is expecting to find the remainder of the first line of the
@@ -321,7 +433,7 @@ static void boot_social_messages(void)
   }
 
   /* close file & set top */
-  fclose(fl);
+  tb_fclose(fl);
   assert(curr_soc <= top_of_socialt);
   top_of_socialt = curr_soc;
 }
@@ -826,18 +938,22 @@ static void reset_time(void)
 {
   time_t beginning_of_time = 0;
   FILE *bgtime;
+  char time_text[64];
+  long parsed_time;
 
   if ((bgtime = fopen(TIME_FILE, "r")) == NULL)
     log("No time file '%s' starting from the beginning.", TIME_FILE);
   else {
-    if(fscanf(bgtime, "%ld\n", (long *)&beginning_of_time) == EOF) {
-      if(feof(bgtime)) {
+    if (fscanf(bgtime, "%63s", time_text) != 1 ||
+        !parse_long_text_strict(time_text, &parsed_time)) {
+      if (feof(bgtime))
         log("SYSERR: reset_time: unexpected end of file encountered reading %s.", TIME_FILE);
-      } else if(ferror(bgtime)) {
-        log("SYSERR: reset_time: unexpected end of file encountered reading %s: %s.", TIME_FILE, strerror(errno));
-      }
+      else
+        log("SYSERR: reset_time: invalid time value in %s.", TIME_FILE);
+    } else {
+      beginning_of_time = (time_t)parsed_time;
     }
-    fclose(bgtime);
+    tb_fclose(bgtime);
   }
 
   if (beginning_of_time == 0)
@@ -885,8 +1001,8 @@ void save_mud_time(struct time_info_data *when)
   if ((bgtime = fopen(TIME_FILE, "w")) == NULL)
     log("SYSERR: Can't write to '%s' time file.", TIME_FILE);
   else {
-    fprintf(bgtime, "%ld\n", (long)mud_time_to_secs(when));
-    fclose(bgtime);
+    tb_fprintf(bgtime, "%ld\n", (long)mud_time_to_secs(when));
+    tb_fclose(bgtime);
   }
 }
 
@@ -987,9 +1103,9 @@ void index_boot(int mode)
   else
     index_filename = INDEX_FILE;
 
-  snprintf(buf2, sizeof(buf2), "%s%s", prefix, index_filename);
+  tb_snprintf(buf2, sizeof(buf2), "%s%s", prefix, index_filename);
   if (!(db_index = fopen(buf2, "r"))) {
-    log("SYSERR: opening index file '%s': %s", buf2, strerror(errno));
+    TB_REPORT_ERRNO("fopen", buf2);
     exit(1);
   }
 
@@ -1001,8 +1117,7 @@ void index_boot(int mode)
             "Ensure that the last line of the file starts with the character '$'.",
             prefix, index_filename);
       else if (ferror(db_index))
-        log("SYSERR: boot error -- unexpected end of file encountered in index file ./%s%s: %s",
-            prefix, index_filename, strerror(errno));
+        TB_REPORT_ERRNO("fscanf", buf2);
       else
         log("SYSERR: boot error -- error parsing index file %s%s on line %d",
             prefix, index_filename, line_number);
@@ -1012,10 +1127,9 @@ void index_boot(int mode)
     if (*buf1 == '$')
       break;
 
-    snprintf(buf2, sizeof(buf2), "%s%s", prefix, buf1);
+    tb_snprintf(buf2, sizeof(buf2), "%s%s", prefix, buf1);
     if (!(db_file = fopen(buf2, "r"))) {
-      log("SYSERR: File '%s' listed in '%s/%s': %s", buf2, prefix,
-          index_filename, strerror(errno));
+      TB_REPORT_ERRNO("fopen", buf2);
     } else {
       if (mode == DB_BOOT_ZON)
         rec_count++;
@@ -1023,19 +1137,19 @@ void index_boot(int mode)
         rec_count += count_alias_records(db_file);
       else
         rec_count += count_hash_records(db_file);
-      fclose(db_file);
+      tb_fclose(db_file);
     }
   }
 
   /* Exit if 0 records, unless this is shops */
   if (!rec_count) {
     if (mode == DB_BOOT_SHP || mode == DB_BOOT_QST) {
-      fclose(db_index);
+      tb_fclose(db_index);
       return;
     }
     log("SYSERR: boot error - 0 records counted in %s/%s.", prefix,
 	index_filename);
-    fclose(db_index);
+    tb_fclose(db_index);
     exit(1);
   }
 
@@ -1080,7 +1194,10 @@ void index_boot(int mode)
     break;
   }
 
-  rewind(db_index);
+  if (fseek(db_index, 0L, SEEK_SET) != 0) {
+    TB_REPORT_ERRNO("fseek", buf2);
+    exit(1);
+  }
 
   for (line_number = 1;; ++line_number) {
     if (fscanf(db_index, "%s\n", buf1) != 1) {
@@ -1088,8 +1205,7 @@ void index_boot(int mode)
         log("SYSERR: boot error -- unexpected end of file encountered in index file ./%s%s",
             prefix, index_filename);
       else if (ferror(db_index))
-        log("SYSERR: boot error -- unexpected end of file encountered in index file ./%s%s: %s",
-            prefix, index_filename, strerror(errno));
+        TB_REPORT_ERRNO("fscanf", buf2);
       else
         log("SYSERR: boot error -- error parsing index file ./%s%s on line %d",
             prefix, index_filename, line_number);
@@ -1099,9 +1215,9 @@ void index_boot(int mode)
     if (*buf1 == '$')
       break;
 
-    snprintf(buf2, sizeof(buf2), "%s%s", prefix, buf1);
+    tb_snprintf(buf2, sizeof(buf2), "%s%s", prefix, buf1);
     if (!(db_file = fopen(buf2, "r"))) {
-      log("SYSERR: %s: %s", buf2, strerror(errno));
+      TB_REPORT_ERRNO("fopen", buf2);
       exit(1);
     }
     switch (mode) {
@@ -1123,9 +1239,9 @@ void index_boot(int mode)
       break;
     }
 
-    fclose(db_file);
+    tb_fclose(db_file);
   }
-  fclose(db_index);
+  tb_fclose(db_index);
 
   /* Sort the help index. */
   if (mode == DB_BOOT_HLP) {
@@ -1161,7 +1277,7 @@ void discrete_load(FILE *fl, int mode, char *filename)
 
     if (*line == '#') {
       last = nr;
-      if (sscanf(line, "#%d", &nr) != 1) {
+      if (!parse_int_text_strict(line + 1, &nr)) {
 	log("SYSERR: Format error after %s #%d", modes[mode], last);
 	exit(1);
       }
@@ -1226,7 +1342,7 @@ bitvector_t asciiflag_conv(char *flag)
   }
 
   if (is_num)
-    flags = atol(flag);
+    flags = tb_parse_long_or_zero(flag);
 
   return (flags);
 }
@@ -1254,7 +1370,7 @@ static bitvector_t asciiflag_conv_aff(char *flag)
   }
 
   if (is_num)
-    flags = atol(flag);
+    flags = tb_parse_long_or_zero(flag);
 
   return (flags);
 }
@@ -1271,7 +1387,8 @@ void ensure_newline_terminated(struct extra_descr_data* new_descr) {
   end = strchr(new_descr->description, '\0');
   if (end > new_descr->description && *(end - 1) != '\n') {
     CREATE(with_term, char, strlen(new_descr->description) + 3);
-    sprintf(with_term, "%s\r\n", new_descr->description); /* snprintf ok : size checked above*/
+    tb_snprintf(with_term, strlen(new_descr->description) + 3,
+                "%s\r\n", new_descr->description); /* snprintf ok : size checked above*/
     free(new_descr->description);
     new_descr->description = with_term;
   }
@@ -1284,11 +1401,12 @@ void parse_room(FILE *fl, int virtual_nr)
   int t[10], i, retval;
   char line[READ_SIZE], flags[128], flags2[128], flags3[128];
   char flags4[128], buf2[MAX_STRING_LENGTH], buf[128];
+  char room_num_text[32], sector_text[32];
   struct extra_descr_data *new_descr;
   char letter;
 
   /* This really had better fit or there are other problems. */
-  snprintf(buf2, sizeof(buf2), "room #%d", virtual_nr);
+  tb_snprintf(buf2, sizeof(buf2), "room #%d", virtual_nr);
 
   if (virtual_nr < zone_table[zone].bot) {
     log("SYSERR: Room #%d is below zone %d (bot=%d, top=%d).", virtual_nr, zone_table[zone].number, zone_table[zone].bot, zone_table[zone].top);
@@ -1310,7 +1428,16 @@ void parse_room(FILE *fl, int virtual_nr)
     exit(1);
   }
 
-  if (((retval = sscanf(line, " %d %s %s %s %s %d ", t, flags, flags2, flags3, flags4, t + 2)) == 3) && (bitwarning == TRUE)) {
+  retval = sscanf(line, " %31s %127s %127s %127s %127s %31s ",
+                  room_num_text, flags, flags2, flags3, flags4, sector_text);
+  if (retval >= 1 && !parse_int_text_strict(room_num_text, &t[0]))
+    retval = -1;
+  if (retval == 3 && !parse_int_text_strict(flags2, &t[2]))
+    retval = -1;
+  if (retval == 6 && !parse_int_text_strict(sector_text, &t[2]))
+    retval = -1;
+
+  if ((retval == 3) && (bitwarning == TRUE)) {
     log("WARNING: Conventional world files detected. See config.c.");
     exit(1);
   } else if ((retval == 3) && (bitwarning == FALSE)) {
@@ -1325,9 +1452,9 @@ void parse_room(FILE *fl, int virtual_nr)
     world[room_nr].room_flags[3] = 0;
 
     /* In the old-style files, the 3rd item was the sector-type */
-    world[room_nr].sector_type = atoi(flags2);
+    world[room_nr].sector_type = t[2];
 
-   sprintf(flags, "room #%d", virtual_nr);	/* sprintf: OK (until 399-bit integers) */
+   tb_snprintf(flags, sizeof(flags), "room #%d", virtual_nr);	/* sprintf: OK (until 399-bit integers) */
 
     /* No need to scan the other three sections; they're 0 anyway. */
     check_bitvector_names(world[room_nr].room_flags[0], room_bits_count, flags, "room");
@@ -1346,7 +1473,7 @@ void parse_room(FILE *fl, int virtual_nr)
     world[room_nr].room_flags[2] = asciiflag_conv(flags3);
     world[room_nr].room_flags[3] = asciiflag_conv(flags4);
 
-    sprintf(flags, "room #%d", virtual_nr);	/* sprintf: OK (until 399-bit integers) */
+    tb_snprintf(flags, sizeof(flags), "room #%d", virtual_nr);	/* sprintf: OK (until 399-bit integers) */
     for(taeller=0; taeller < AF_ARRAY_MAX; taeller++)
       check_bitvector_names(world[room_nr].room_flags[taeller], room_bits_count, flags, "room");
 
@@ -1369,7 +1496,7 @@ void parse_room(FILE *fl, int virtual_nr)
 
   world[room_nr].ex_description = NULL;
 
-  snprintf(buf, sizeof(buf), "SYSERR: Format error in room #%d (expecting D/E/S)", virtual_nr);
+  tb_snprintf(buf, sizeof(buf), "SYSERR: Format error in room #%d (expecting D/E/S)", virtual_nr);
 
   for (;;) {
     if (!get_line(fl, line)) {
@@ -1378,7 +1505,7 @@ void parse_room(FILE *fl, int virtual_nr)
     }
     switch (*line) {
     case 'D':
-      setup_dir(fl, room_nr, atoi(line + 1));
+      setup_dir(fl, room_nr, tb_parse_int_or_zero(line + 1));
       break;
     case 'E':
       CREATE(new_descr, struct extra_descr_data, 1);
@@ -1392,11 +1519,17 @@ void parse_room(FILE *fl, int virtual_nr)
     case 'S':			/* end of room */
       /* DG triggers -- script is defined after the end of the room */
       letter = fread_letter(fl);
-      ungetc(letter, fl);
+      if (ungetc(letter, fl) == EOF) {
+        log("SYSERR: parse_room: unable to push back trigger marker");
+        exit(1);
+      }
       while (letter=='T') {
         dg_read_trigger(fl, &world[room_nr], WLD_TRIGGER);
         letter = fread_letter(fl);
-        ungetc(letter, fl);
+        if (ungetc(letter, fl) == EOF) {
+          log("SYSERR: parse_room: unable to push back trigger marker");
+          exit(1);
+        }
       }
       top_of_world = room_nr++;
       return;
@@ -1413,7 +1546,7 @@ void setup_dir(FILE *fl, int room, int dir)
   int t[5];
   char line[READ_SIZE], buf2[128];
 
-  snprintf(buf2, sizeof(buf2), "room #%d, direction D%d", GET_ROOM_VNUM(room)+1, dir);
+  tb_snprintf(buf2, sizeof(buf2), "room #%d, direction D%d", GET_ROOM_VNUM(room)+1, dir);
 
   if (!CONFIG_DIAGONAL_DIRS && IS_DIAGONAL(dir)) {
     log("Warning: Diagonal direction disabled: %s", buf2);
@@ -1428,7 +1561,7 @@ void setup_dir(FILE *fl, int room, int dir)
     log("SYSERR: Format error, %s", buf2);
     exit(1);
   }
-  if (sscanf(line, " %d %d %d ", t, t + 1, t + 2) != 3) {
+  if (parse_int_fields(line, t, 3) != 3) {
     log("SYSERR: Format error, %s", buf2);
     exit(1);
   }
@@ -1542,7 +1675,7 @@ static void renum_zone_table(void)
       }
       if (a == NOWHERE || b == NOWHERE || c == NOWHERE) {
 	if (!mini_mud) {
-	  snprintf(buf, sizeof(buf), "Invalid vnum %d, cmd disabled",
+	  tb_snprintf(buf, sizeof(buf), "Invalid vnum %d, cmd disabled",
 			 a == NOWHERE ? olda : b == NOWHERE ? oldb : oldc);
 	  log_zone_error(zone, cmd_no, buf);
 	}
@@ -1555,6 +1688,7 @@ static void parse_simple_mob(FILE *mob_f, int i, int nr)
 {
   int j, t[10];
   char line[READ_SIZE];
+  char n0[32], n1[32], n2[32], dice1[64], dice2[64];
 
   mob_proto[i].real_abils.str = 11;
   mob_proto[i].real_abils.intel = 11;
@@ -1568,8 +1702,13 @@ static void parse_simple_mob(FILE *mob_f, int i, int nr)
     exit(1);
   }
 
-  if (sscanf(line, " %d %d %d %dd%d+%d %dd%d+%d ",
-	  t, t + 1, t + 2, t + 3, t + 4, t + 5, t + 6, t + 7, t + 8) != 9) {
+  if (sscanf(line, " %31s %31s %31s %63s %63s ",
+             n0, n1, n2, dice1, dice2) != 5 ||
+      !parse_int_text_strict(n0, &t[0]) ||
+      !parse_int_text_strict(n1, &t[1]) ||
+      !parse_int_text_strict(n2, &t[2]) ||
+      !parse_dice_text(dice1, &t[3], &t[4], &t[5]) ||
+      !parse_dice_text(dice2, &t[6], &t[7], &t[8])) {
     log("SYSERR: Format error in mob #%d, first line after S flag\n"
 	"...expecting line of form '# # # #d#+# #d#+#'", nr);
     exit(1);
@@ -1598,7 +1737,7 @@ static void parse_simple_mob(FILE *mob_f, int i, int nr)
       exit(1);
     }
 
-  if (sscanf(line, " %d %d ", t, t + 1) != 2) {
+  if (parse_int_fields(line, t, 2) != 2) {
     log("SYSERR: Format error in mob #%d, second line after S flag\n"
 	"...expecting line of form '# #'", nr);
     exit(1);
@@ -1613,7 +1752,7 @@ static void parse_simple_mob(FILE *mob_f, int i, int nr)
     exit(1);
   }
 
-  if (sscanf(line, " %d %d %d ", t, t + 1, t + 2) != 3) {
+  if (parse_int_fields(line, t, 3) != 3) {
     log("SYSERR: Format error in last line of mob #%d\n"
 	"...expecting line of form '# # #'", nr);
     exit(1);
@@ -1650,7 +1789,7 @@ static void interpret_espec(const char *keyword, const char *value, int i, int n
   /* If there isn't a colon, there is no value.  While Boolean options are
    * possible, we don't actually have any.  Feel free to make some. */
   if (value)
-    num_arg = atoi(value);
+    num_arg = tb_parse_int_or_zero(value);
 
   CASE("BareHandAttack") {
     RANGE(0, NUM_ATTACK_TYPES - 1);
@@ -1765,6 +1904,7 @@ void parse_mobile(FILE *mob_f, int nr)
   int j, t[10], retval;
   char line[READ_SIZE], *tmpptr, letter;
   char f1[128], f2[128], f3[128], f4[128], f5[128], f6[128], f7[128], f8[128], buf2[128];
+  char alignment_text[32];
 
   mob_index[i].vnum = nr;
   mob_index[i].number = 0;
@@ -1776,7 +1916,7 @@ void parse_mobile(FILE *mob_f, int nr)
    * The only reason we have every mob in the game share this copy of the
    * structure is to save newbie coders from themselves. -gg */
   mob_proto[i].player_specials = &dummy_mob;
-  sprintf(buf2, "mob vnum %d", nr);	/* sprintf: OK (for 'buf2 >= 19') */
+  tb_snprintf(buf2, sizeof(buf2), "mob vnum %d", nr);	/* sprintf: OK (for 'buf2 >= 19') */
 
   /* String data */
   mob_proto[i].player.name = fread_string(mob_f, buf2);
@@ -1796,7 +1936,12 @@ void parse_mobile(FILE *mob_f, int nr)
     exit(1);
   }
 
-  if (((retval = sscanf(line, "%s %s %s %s %s %s %s %s %d %c", f1, f2, f3, f4, f5, f6, f7, f8, t + 2, &letter)) != 10) && (bitwarning == TRUE)) {
+  retval = sscanf(line, "%127s %127s %127s %127s %127s %127s %127s %127s %31s %c",
+                  f1, f2, f3, f4, f5, f6, f7, f8, alignment_text, &letter);
+  if (retval == 10 && !parse_int_text_strict(alignment_text, &t[2]))
+    retval = -1;
+
+  if ((retval != 10) && (bitwarning == TRUE)) {
     /* Let's make the implementor read some, before converting his world files. */
     log("WARNING: Conventional mobile files detected. See config.c.");
     exit(1);
@@ -1813,7 +1958,7 @@ void parse_mobile(FILE *mob_f, int nr)
     AFF_FLAGS(mob_proto + i)[2] = 0;
     AFF_FLAGS(mob_proto + i)[3] = 0;
 
-    GET_ALIGNMENT(mob_proto + i) = atoi(f3);
+    GET_ALIGNMENT(mob_proto + i) = tb_parse_int_or_zero(f3);
 
     /* Make some basic checks. */
     REMOVE_BIT_AR(AFF_FLAGS(mob_proto + i), AFF_CHARM);
@@ -1886,11 +2031,17 @@ void parse_mobile(FILE *mob_f, int nr)
 
   /* DG triggers -- script info follows mob S/E section */
   letter = fread_letter(mob_f);
-  ungetc(letter, mob_f);
+  if (ungetc(letter, mob_f) == EOF) {
+    log("SYSERR: parse_mobile: unable to push back trigger marker");
+    exit(1);
+  }
   while (letter=='T') {
     dg_read_trigger(mob_f, &mob_proto[i], MOB_TRIGGER);
     letter = fread_letter(mob_f);
-    ungetc(letter, mob_f);
+    if (ungetc(letter, mob_f) == EOF) {
+      log("SYSERR: parse_mobile: unable to push back trigger marker");
+      exit(1);
+    }
   }
 
   mob_proto[i].aff_abils = mob_proto[i].real_abils;
@@ -1913,6 +2064,7 @@ char *parse_object(FILE *obj_f, int nr)
   char *tmpptr, buf2[128], f1[READ_SIZE], f2[READ_SIZE], f3[READ_SIZE], f4[READ_SIZE];
   char f5[READ_SIZE], f6[READ_SIZE], f7[READ_SIZE], f8[READ_SIZE];
   char f9[READ_SIZE], f10[READ_SIZE], f11[READ_SIZE], f12[READ_SIZE];
+  char obj_type_text[32];
   struct extra_descr_data *new_descr;
 
   obj_index[i].vnum = nr;
@@ -1922,7 +2074,7 @@ char *parse_object(FILE *obj_f, int nr)
   clear_object(obj_proto + i);
   obj_proto[i].item_number = i;
 
-  sprintf(buf2, "object #%d", nr);	/* sprintf: OK (for 'buf2 >= 19') */
+  tb_snprintf(buf2, sizeof(buf2), "object #%d", nr);	/* sprintf: OK (for 'buf2 >= 19') */
 
   /* string data */
   if ((obj_proto[i].name = fread_string(obj_f, buf2)) == NULL) {
@@ -1946,8 +2098,12 @@ char *parse_object(FILE *obj_f, int nr)
     exit(1);
   }
 
-  if (((retval = sscanf(line, " %d %s %s %s %s %s %s %s %s %s %s %s %s", t, f1, f2, f3,
-      f4, f5, f6, f7, f8, f9, f10, f11, f12)) == 4) && (bitwarning == TRUE)) {
+  retval = sscanf(line, " %31s %255s %255s %255s %255s %255s %255s %255s %255s %255s %255s %255s %255s",
+                  obj_type_text, f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12);
+  if (retval >= 1 && !parse_int_text_strict(obj_type_text, &t[0]))
+    retval = -1;
+
+  if ((retval == 4) && (bitwarning == TRUE)) {
     /* Let's make the implementor read some, before converting his world files. */
     log("WARNING: Conventional object files detected. Please see config.c.");
     exit(1);
@@ -2005,7 +2161,7 @@ char *parse_object(FILE *obj_f, int nr)
     log("SYSERR: Expecting second numeric line of %s, but file ended!", buf2);
     exit(1);
   }
-  if ((retval = sscanf(line, "%d %d %d %d", t, t + 1, t + 2, t + 3)) != 4) {
+  if ((retval = parse_int_fields(line, t, 4)) != 4) {
     log("SYSERR: Format error in second numeric line (expecting 4 args, got %d), %s", retval, buf2);
     exit(1);
   }
@@ -2018,7 +2174,7 @@ char *parse_object(FILE *obj_f, int nr)
     log("SYSERR: Expecting third numeric line of %s, but file ended!", buf2);
     exit(1);
   }
-  if ((retval = sscanf(line, "%d %d %d %d %d", t, t + 1, t + 2, t + 3, t + 4)) != 5) {
+  if ((retval = parse_int_fields(line, t, 5)) != 5) {
     if (retval == 3) {
       t[3] = 0;
       t[4] = 0;
@@ -2051,8 +2207,8 @@ char *parse_object(FILE *obj_f, int nr)
     obj_proto[i].affected[j].modifier = 0;
   }
 
-  strcat(buf2, ", after numeric constants\n" /* strcat: OK (for 'buf2 >= 87') */
-	 "...expecting 'E', 'A', '$', or next object number");
+  strlcat(buf2, ", after numeric constants\n"
+          "...expecting 'E', 'A', '$', or next object number", sizeof(buf2));
   j = 0;
 
   for (;;) {
@@ -2079,7 +2235,7 @@ char *parse_object(FILE *obj_f, int nr)
 	exit(1);
       }
 
-      if ((retval = sscanf(line, " %d %d ", t, t + 1)) != 2) {
+      if ((retval = parse_int_fields(line, t, 2)) != 2) {
 	log("SYSERR: Format error in 'A' field, %s\n"
 	    "...expecting 2 numeric arguments, got %d\n"
 	    "...offending line: '%s'", buf2, retval, line);
@@ -2135,7 +2291,10 @@ static void load_zones(FILE *fl, char *zonename)
       break;
   }
 
-  rewind(fl);
+  if (fseek(fl, 0L, SEEK_SET) != 0) {
+    TB_REPORT_ERRNO("fseek", zname);
+    exit(1);
+  }
 
   if (num_of_cmds == 0) {
     log("SYSERR: %s is empty!", zname);
@@ -2149,7 +2308,7 @@ static void load_zones(FILE *fl, char *zonename)
     log("SYSERR: Format error in %s, line %d", zname, line_num);
     exit(1);
   }
-  snprintf(buf2, sizeof(buf2), "beginning of zone #%d", Z.number);
+  tb_snprintf(buf2, sizeof(buf2), "beginning of zone #%d", Z.number);
 
   line_num += get_line(fl, buf);
   if ((ptr = strchr(buf, '~')) != NULL) /* take off the '~' if it's there */
@@ -2313,7 +2472,7 @@ void load_help(FILE * fl, char *name)
 
   get_one_line(fl, key);
   while (*key != '$') {
-    strcat(key, "\r\n"); /* strcat: OK (READ_SIZE - "\n"  "\r\n" == READ_SIZE  1) */
+    strlcat(key, "\r\n", sizeof(key)); /* strcat: OK (READ_SIZE - "\n"  "\r\n" == READ_SIZE  1) */
     entrylen = strlcpy(entry, key, sizeof(entry));
 
     /* Read in the corresponding help entry. */
@@ -2322,7 +2481,7 @@ void load_help(FILE * fl, char *name)
       entrylen += strlcpy(entry + entrylen, line, sizeof(entry) - entrylen);
 
       if (entrylen + 2 < sizeof(entry) - 1) {
-        strcpy(entry + entrylen, "\r\n"); /* strcpy: OK (size checked above) */
+        strlcpy(entry + entrylen, "\r\n", sizeof(entry) - entrylen); /* strcpy: OK (size checked above) */
         entrylen += 2;
       }
       get_one_line(fl, line);
@@ -2332,7 +2491,7 @@ void load_help(FILE * fl, char *name)
       int keysize;
       const char *truncmsg = "\r\n*TRUNCATED*\r\n";
 
-      strcpy(entry + sizeof(entry) - strlen(truncmsg) - 1, truncmsg); /* strcpy: OK (assuming sane 'entry' size) */
+      memcpy(entry + sizeof(entry) - strlen(truncmsg) - 1, truncmsg, strlen(truncmsg) + 1); /* strcpy: OK (assuming sane 'entry' size) */
 
       keysize = strlen(key) - 2;
       log("SYSERR: Help entry exceeded buffer space: %.*s", keysize, key);
@@ -2699,7 +2858,7 @@ void reset_zone(zone_rnum zone)
     case 'G':			/* obj_to_char */
       if (!mob) {
 	char error[MAX_INPUT_LENGTH];
-	snprintf(error, sizeof(error), "attempt to give obj #%d to non-existant mob, command disabled", obj_index[ZCMD.arg1].vnum);
+	tb_snprintf(error, sizeof(error), "attempt to give obj #%d to non-existant mob, command disabled", obj_index[ZCMD.arg1].vnum);
 	ZONE_ERROR(error);
 	ZCMD.command = '*';
 	break;
@@ -2718,7 +2877,7 @@ void reset_zone(zone_rnum zone)
     case 'E':			/* object to equipment list */
       if (!mob) {
 	char error[MAX_INPUT_LENGTH];
-	snprintf(error, sizeof(error), "trying to equip non-existant mob with obj #%d, command disabled", obj_index[ZCMD.arg1].vnum);
+	tb_snprintf(error, sizeof(error), "trying to equip non-existant mob with obj #%d, command disabled", obj_index[ZCMD.arg1].vnum);
 	ZONE_ERROR(error);
 	ZCMD.command = '*';
 	break;
@@ -2726,7 +2885,7 @@ void reset_zone(zone_rnum zone)
       if (obj_index[ZCMD.arg1].number < ZCMD.arg2) {
 	if (ZCMD.arg3 < 0 || ZCMD.arg3 >= NUM_WEARS) {
           char error[MAX_INPUT_LENGTH];
-	  snprintf(error, sizeof(error), "invalid equipment pos number (mob %s, obj %d, pos %d)", GET_NAME(mob), obj_index[ZCMD.arg2].vnum, ZCMD.arg3);
+	  tb_snprintf(error, sizeof(error), "invalid equipment pos number (mob %s, obj %d, pos %d)", GET_NAME(mob), obj_index[ZCMD.arg2].vnum, ZCMD.arg3);
 	  ZONE_ERROR(error);
 	} else {
 	  obj = read_object(ZCMD.arg1, REAL);
@@ -2758,7 +2917,7 @@ void reset_zone(zone_rnum zone)
       if (ZCMD.arg2 < 0 || ZCMD.arg2 >= DIR_COUNT ||
 	  (world[ZCMD.arg1].dir_option[ZCMD.arg2] == NULL)) {
         char error[MAX_INPUT_LENGTH];
-        snprintf(error, sizeof(error), "door does not exist in room %d - dir %d, command disabled",  world[ZCMD.arg1].number, ZCMD.arg2);
+        tb_snprintf(error, sizeof(error), "door does not exist in room %d - dir %d, command disabled",  world[ZCMD.arg1].number, ZCMD.arg2);
 	ZONE_ERROR(error);
 	ZCMD.command = '*';
       } else
@@ -2920,7 +3079,7 @@ char *fread_string(FILE *fl, const char *error)
       log("%s", error);
       exit(1);
     } else {
-      strcat(buf + length, tmp);	/* strcat: OK (size checked above) */
+      strlcat(buf, tmp, sizeof(buf));	/* strcat: OK (size checked above) */
       length += templength;
     }
   } while (!done);
@@ -2976,7 +3135,7 @@ char *fread_clean_string(FILE *fl, const char *error)
       log("%s", error);
       exit(1);
     } else {
-      strcat(buf + length, tmp);	/* strcat: OK (size checked above) */
+      strlcat(buf, tmp, sizeof(buf));	/* strcat: OK (size checked above) */
       length += templength;
     }
   } while (!done);
@@ -3159,7 +3318,7 @@ int fread_flags(FILE *fp, int *fg, int fg_size)
   /* We now have a line of text with all the flags on it - let's convert it */
   for (i=0,tmp_txt=line;tmp_txt && *tmp_txt && i<fg_size;i++) {
     tmp_txt = one_argument(tmp_txt,val_txt);  /* Grab a number  */
-    fg[i]   = atoi(val_txt);                  /* Convert to int */
+    fg[i]   = tb_parse_int_or_zero(val_txt);                  /* Convert to int */
   }
 
   return (i);
@@ -3426,7 +3585,7 @@ static int file_to_string(const char *name, char *buf)
   *buf = '\0';
 
   if (!(fl = fopen(name, "r"))) {
-    log("SYSERR: reading %s: %s", name, strerror(errno));
+    TB_REPORT_ERRNO("fopen", name);
     return (-1);
   }
 
@@ -3447,18 +3606,18 @@ static int file_to_string(const char *name, char *buf)
       break;
     if ((len = strlen(tmp)) > 0)
       tmp[len - 1] = '\0'; /* take off the trailing \n */
-    strcat(tmp, "\r\n");	/* strcat: OK (tmp:READ_SIZE+3) */
+    strlcat(tmp, "\r\n", sizeof(tmp));	/* strcat: OK (tmp:READ_SIZE+3) */
 
     if (strlen(buf) + strlen(tmp) + 1 > MAX_STRING_LENGTH) {
       log("SYSERR: %s: string too big (%d max)", name, MAX_STRING_LENGTH);
       *buf = '\0';
-      fclose(fl);
+      tb_fclose(fl);
       return (-1);
     }
-    strcat(buf, tmp);	/* strcat: OK (size checked above) */
+    strlcat(buf, tmp, sizeof(buf));	/* strcat: OK (size checked above) */
   }
 
-  fclose(fl);
+  tb_fclose(fl);
 
   return (0);
 }
@@ -3734,7 +3893,7 @@ static int check_object(struct obj_data *obj)
     log("SYSERR: Object #%d (%s) has negative cost/day (%d).",
 	GET_OBJ_VNUM(obj), obj->short_description, GET_OBJ_RENT(obj));
 
-  snprintf(objname, sizeof(objname), "Object #%d (%s)", GET_OBJ_VNUM(obj), obj->short_description);
+  tb_snprintf(objname, sizeof(objname), "Object #%d (%s)", GET_OBJ_VNUM(obj), obj->short_description);
   for(y = 0; y < TW_ARRAY_MAX; y++) {
     error |= check_bitvector_names(GET_OBJ_WEAR(obj)[y], wear_bits_count, objname, "object wear");
     error |= check_bitvector_names(GET_OBJ_EXTRA(obj)[y], extra_bits_count, objname, "object extra");
@@ -3956,17 +4115,17 @@ void load_config( void )
 
   load_default_config();
 
-  snprintf(buf, sizeof(buf), "%s/%s", CONFIG_DFLT_DIR, CONFIG_CONFFILE);
+  tb_snprintf(buf, sizeof(buf), "%s/%s", CONFIG_DFLT_DIR, CONFIG_CONFFILE);
   if ( !(fl = fopen(CONFIG_CONFFILE, "r")) && !(fl = fopen(buf, "r")) ) {
-    snprintf(buf, sizeof(buf), "No %s file, using defaults", CONFIG_CONFFILE);
-    perror(buf);
+    TB_REPORT_ERRNO("fopen", buf);
+    log("SYSERR: No %s file found; using defaults.", CONFIG_CONFFILE);
     return;
   }
 
   /* Load the game configuration file. */
   while (get_line(fl, line)) {
     split_argument(line, tag);
-    num = atoi(line);
+    num = tb_parse_int_or_zero(line);
 
     switch (LOWER(*tag)) {
       case 'a':
@@ -4043,7 +4202,7 @@ void load_config( void )
           char tmp[READ_SIZE];
           if (CONFIG_HUH)
             free(CONFIG_HUH);
-          snprintf(tmp, sizeof(tmp), "%s\r\n", line);
+          tb_snprintf(tmp, sizeof(tmp), "%s\r\n", line);
           CONFIG_HUH = strdup(tmp);
         }
         break;
@@ -4120,13 +4279,13 @@ void load_config( void )
           char tmp[READ_SIZE];
           if (CONFIG_NOPERSON)
             free(CONFIG_NOPERSON);
-          snprintf(tmp, sizeof(tmp), "%s\r\n", line);
+          tb_snprintf(tmp, sizeof(tmp), "%s\r\n", line);
           CONFIG_NOPERSON = strdup(tmp);
         } else if (!str_cmp(tag, "noeffect")) {
           char tmp[READ_SIZE];
           if (CONFIG_NOEFFECT)
             free(CONFIG_NOEFFECT);
-          snprintf(tmp, sizeof(tmp), "%s\r\n", line);
+          tb_snprintf(tmp, sizeof(tmp), "%s\r\n", line);
           CONFIG_NOEFFECT = strdup(tmp);
         }
         break;
@@ -4136,7 +4295,7 @@ void load_config( void )
           char tmp[READ_SIZE];
           if (CONFIG_OK)
             free(CONFIG_OK);
-          snprintf(tmp, sizeof(tmp), "%s\r\n", line);
+          tb_snprintf(tmp, sizeof(tmp), "%s\r\n", line);
           CONFIG_OK = strdup(tmp);
         }
         break;
@@ -4199,5 +4358,5 @@ void load_config( void )
     }
   }
 
-  fclose(fl);
+  tb_fclose(fl);
 }

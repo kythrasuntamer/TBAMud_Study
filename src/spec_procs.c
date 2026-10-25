@@ -117,7 +117,7 @@ void list_skills(struct char_data *ch)
     }
   }
   if (len >= sizeof(buf2))
-    strcpy(buf2 + sizeof(buf2) - strlen(overflow) - 1, overflow); /* strcpy: OK */
+    memcpy(buf2 + sizeof(buf2) - strlen(overflow) - 1, overflow, strlen(overflow) + 1); /* strcpy: OK */
 
   page_string(ch->desc, buf2, TRUE);
 }
@@ -272,13 +272,17 @@ SPECIAL(mayor)
     break;
 
   case 'O':
-    do_gen_door(ch, strcpy(actbuf, "gate"), 0, SCMD_UNLOCK);	/* strcpy: OK */
-    do_gen_door(ch, strcpy(actbuf, "gate"), 0, SCMD_OPEN);	/* strcpy: OK */
+    strlcpy(actbuf, "gate", sizeof(actbuf));
+    do_gen_door(ch, actbuf, 0, SCMD_UNLOCK);	/* strcpy: OK */
+    strlcpy(actbuf, "gate", sizeof(actbuf));
+    do_gen_door(ch, actbuf, 0, SCMD_OPEN);	/* strcpy: OK */
     break;
 
   case 'C':
-    do_gen_door(ch, strcpy(actbuf, "gate"), 0, SCMD_CLOSE);	/* strcpy: OK */
-    do_gen_door(ch, strcpy(actbuf, "gate"), 0, SCMD_LOCK);	/* strcpy: OK */
+    strlcpy(actbuf, "gate", sizeof(actbuf));
+    do_gen_door(ch, actbuf, 0, SCMD_CLOSE);	/* strcpy: OK */
+    strlcpy(actbuf, "gate", sizeof(actbuf));
+    do_gen_door(ch, actbuf, 0, SCMD_LOCK);	/* strcpy: OK */
     break;
 
   case '.':
@@ -469,16 +473,20 @@ SPECIAL(puff)
 
   switch (rand_number(0, 60)) {
     case 0:
-      do_say(ch, strcpy(actbuf, "My god!  It's full of stars!"), 0, 0);	/* strcpy: OK */
+      strlcpy(actbuf, "My god!  It's full of stars!", sizeof(actbuf));
+      do_say(ch, actbuf, 0, 0);	/* strcpy: OK */
       return (TRUE);
     case 1:
-      do_say(ch, strcpy(actbuf, "How'd all those fish get up here?"), 0, 0);	/* strcpy: OK */
+      strlcpy(actbuf, "How'd all those fish get up here?", sizeof(actbuf));
+      do_say(ch, actbuf, 0, 0);	/* strcpy: OK */
       return (TRUE);
     case 2:
-      do_say(ch, strcpy(actbuf, "I'm a very female dragon."), 0, 0);	/* strcpy: OK */
+      strlcpy(actbuf, "I'm a very female dragon.", sizeof(actbuf));
+      do_say(ch, actbuf, 0, 0);	/* strcpy: OK */
       return (TRUE);
     case 3:
-      do_say(ch, strcpy(actbuf, "I've got a peaceful, easy feeling."), 0, 0);	/* strcpy: OK */
+      strlcpy(actbuf, "I've got a peaceful, easy feeling.", sizeof(actbuf));
+      do_say(ch, actbuf, 0, 0);	/* strcpy: OK */
       return (TRUE);
     default:
       return (FALSE);
@@ -631,11 +639,11 @@ SPECIAL(pet_shops)
     SET_BIT_AR(AFF_FLAGS(pet), AFF_CHARM);
 
     if (*pet_name) {
-      snprintf(buf, sizeof(buf), "%s %s", pet->player.name, pet_name);
+      tb_snprintf(buf, sizeof(buf), "%s %s", pet->player.name, pet_name);
       /* free(pet->player.name); don't free the prototype! */
       pet->player.name = strdup(buf);
 
-      snprintf(buf, sizeof(buf), "%sA small sign on a chain around the neck says 'My name is %s'\r\n",
+      tb_snprintf(buf, sizeof(buf), "%sA small sign on a chain around the neck says 'My name is %s'\r\n",
 	      pet->player.description, pet_name);
       /* free(pet->player.description); don't free the prototype! */
       pet->player.description = strdup(buf);
@@ -669,7 +677,7 @@ SPECIAL(bank)
       send_to_char(ch, "You currently have no money deposited.\r\n");
     return (TRUE);
   } else if (CMD_IS("deposit")) {
-    if ((amount = atoi(argument)) <= 0) {
+    if ((amount = tb_parse_int_or_zero(argument)) <= 0) {
       send_to_char(ch, "How much do you want to deposit?\r\n");
       return (TRUE);
     }
@@ -683,7 +691,7 @@ SPECIAL(bank)
     act("$n makes a bank transaction.", TRUE, ch, 0, FALSE, TO_ROOM);
     return (TRUE);
   } else if (CMD_IS("withdraw")) {
-    if ((amount = atoi(argument)) <= 0) {
+    if ((amount = tb_parse_int_or_zero(argument)) <= 0) {
       send_to_char(ch, "How much do you want to withdraw?\r\n");
       return (TRUE);
     }

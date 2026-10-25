@@ -194,30 +194,83 @@ void set_title(struct char_data *ch, char *title)
 
 void run_autowiz(void)
 {
-#if defined(CIRCLE_UNIX) || defined(CIRCLE_WINDOWS)
-  if (CONFIG_USE_AUTOWIZ) {
-    size_t res;
-    char buf[256];
-
 #if defined(CIRCLE_UNIX)
-    res = snprintf(buf, sizeof(buf), "nice ../bin/autowiz %d %s %d %s %d &",
-	CONFIG_MIN_WIZLIST_LEV, WIZLIST_FILE, LVL_IMMORT, IMMLIST_FILE, (int) getpid());
-#elif defined(CIRCLE_WINDOWS)
-    res = snprintf(buf, sizeof(buf), "autowiz %d %s %d %s",
-	CONFIG_MIN_WIZLIST_LEV, WIZLIST_FILE, LVL_IMMORT, IMMLIST_FILE);
-#endif /* CIRCLE_WINDOWS */
+  if (CONFIG_USE_AUTOWIZ) {
+    char min_wiz[32], imm_level[32], parent_pid[32];
+    pid_t launcher;
+    int status;
 
-    /* Abusing signed -> unsigned conversion to avoid '-1' check. */
-    if (res < sizeof(buf)) {
+    if (snprintf(min_wiz, sizeof(min_wiz), "%d", CONFIG_MIN_WIZLIST_LEV) < 0 ||
+        snprintf(imm_level, sizeof(imm_level), "%d", LVL_IMMORT) < 0 ||
+        snprintf(parent_pid, sizeof(parent_pid), "%d", (int)getpid()) < 0) {
+      log("Cannot run autowiz: failed to format arguments.");
+      return;
+    }
+
+    mudlog(CMP, LVL_IMMORT, FALSE, "Initiating autowiz.");
+    reboot_wizlists();
+
+    launcher = fork();
+    if (launcher < 0) {
+      { int saved_errno = errno;
+        mudlog(BRF, LVL_IMMORT, TRUE,
+               "SYSERR: autowiz launcher fork failed: %s (errno=%d) at %s:%d in %s()",
+               strerror(saved_errno), saved_errno, __FILE__, __LINE__, __func__);
+      }
+      return;
+    }
+
+    if (launcher == 0) {
+      pid_t worker = fork();
+      if (worker < 0) {
+        TB_REPORT_ERRNO("fork", "autowiz worker");
+        _exit(127);
+      }
+      if (worker > 0)
+        _exit(0);
+
+      (void)setsid();
+      execlp("nice", "nice", "../bin/autowiz", min_wiz, WIZLIST_FILE,
+             imm_level, IMMLIST_FILE, parent_pid, (char *)NULL);
+      TB_REPORT_ERRNO("execlp", "../bin/autowiz");
+      _exit(127);
+    }
+
+    {
+      pid_t waited;
+      do {
+        status = 0;
+        waited = waitpid(launcher, &status, 0);
+      } while (waited < 0 && errno == EINTR);
+
+      if (waited < 0) {
+        int saved_errno = errno;
+        mudlog(BRF, LVL_IMMORT, TRUE,
+               "SYSERR: waitpid for autowiz launcher failed: %s (errno=%d)",
+               strerror(saved_errno), saved_errno);
+        return;
+      }
+    }
+
+    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0)
+      mudlog(BRF, LVL_IMMORT, TRUE,
+             "SYSERR: autowiz launcher exited abnormally (status=%d)", status);
+  }
+#elif defined(CIRCLE_WINDOWS)
+  if (CONFIG_USE_AUTOWIZ) {
+    char buf[256];
+    int res = snprintf(buf, sizeof(buf), "autowiz %d %s %d %s",
+                       CONFIG_MIN_WIZLIST_LEV, WIZLIST_FILE, LVL_IMMORT, IMMLIST_FILE);
+    if (res >= 0 && (size_t)res < sizeof(buf)) {
       mudlog(CMP, LVL_IMMORT, FALSE, "Initiating autowiz.");
       reboot_wizlists();
-      int rval = system(buf);
-      if(rval != 0)
-        mudlog(BRF, LVL_IMMORT, TRUE, "Warning: autowiz failed with return value %d", rval);
-    } else
+      if (system(buf) != 0)
+        mudlog(BRF, LVL_IMMORT, TRUE, "Warning: autowiz failed.");
+    } else {
       log("Cannot run autowiz: command-line doesn't fit in buffer.");
+    }
   }
-#endif /* CIRCLE_UNIX || CIRCLE_WINDOWS */
+#endif
 }
 
 void gain_exp(struct char_data *ch, int gain)

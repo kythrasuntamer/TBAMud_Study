@@ -197,10 +197,10 @@ static void make_corpse(struct char_data *ch)
   IN_ROOM(corpse) = NOWHERE;
   corpse->name = strdup("corpse");
 
-  snprintf(buf2, sizeof(buf2), "The corpse of %s is lying here.", GET_NAME(ch));
+  tb_snprintf(buf2, sizeof(buf2), "The corpse of %s is lying here.", GET_NAME(ch));
   corpse->description = strdup(buf2);
 
-  snprintf(buf2, sizeof(buf2), "the corpse of %s", GET_NAME(ch));
+  tb_snprintf(buf2, sizeof(buf2), "the corpse of %s", GET_NAME(ch));
   corpse->short_description = strdup(buf2);
 
   GET_OBJ_TYPE(corpse) = ITEM_CONTAINER;
@@ -795,7 +795,7 @@ int damage(struct char_data *ch, struct char_data *victim, int dam, int attackty
         increase_gold(victim, happy_gold);
       }
       local_gold = GET_GOLD(victim);
-      sprintf(local_buf,"%ld", (long)local_gold);
+      tb_snprintf(local_buf, sizeof(local_buf), "%ld", (long)local_gold);
     }
 
     die(victim, ch);

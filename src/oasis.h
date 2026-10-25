@@ -9,15 +9,15 @@
 * is attributed to:
 * By Levork. Copyright 1996 by Harvey Gilpin, 1997-2001 by George Greer.
 */
-#ifndef _OASIS_H_
-#define _OASIS_H_
+#ifndef TBAMUD_OASIS_H_INCLUDED
+#define TBAMUD_OASIS_H_INCLUDED
 
 #include "utils.h" /* for ACMD macro */
 
-#define _OASISOLC	0x206   /* 2.0.6 */
+#define TBAMUD_OASISOLC	0x206   /* 2.0.6 */
 
 /* Used to determine what version of OasisOLC is installed.
-   Ex: #if _OASISOLC >= OASIS_VERSION(2,0,0) */
+   Ex: #if TBAMUD_OASISOLC >= OASIS_VERSION(2,0,0) */
 #define OASIS_VERSION(x,y,z)	(((x) << 8 | (y) << 4 | (z))
 
 #define AEDIT_PERMISSION  999  /* arbitrary number higher than max zone vnum*/
@@ -28,8 +28,8 @@
    to adjust these numbers if you ever add more. Note: Most of the NUM_ and
    MAX_ limits have been moved to more appropriate locations. */
 
-#define TOGGLE_VAR(var)	if (var == YES) { var = NO; } else { var = YES; }
-#define CHECK_VAR(var)  ((var == YES) ? "Yes" : "No")
+#define TOGGLE_VAR(var) do { if ((var) == YES) { (var) = NO; } else { (var) = YES; } } while (0)
+#define CHECK_VAR(var)  (((var) == YES) ? "Yes" : "No")
 
 #define MAX_PEOPLE 10 /* Max # of people you want to sit in furniture. */
 
@@ -483,4 +483,4 @@ void print_zone(struct char_data *ch, zone_rnum rnum);
 ACMD(do_oasis_links);
 ACMD(do_oasis_list);
 
-#endif /* _OASIS_H_ */
+#endif /* TBAMUD_OASIS_H_INCLUDED */

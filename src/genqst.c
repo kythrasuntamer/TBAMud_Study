@@ -196,10 +196,10 @@ int save_quests(zone_rnum zone_num)
         zone_table[zone_num].number,
  genolc_zone_bottom(zone_num), zone_table[zone_num].top);
 
-  snprintf(filename, sizeof(filename), "%s/%d.new",
+  tb_snprintf(filename, sizeof(filename), "%s/%d.new",
  QST_PREFIX, zone_table[zone_num].number);
   if (!(sf = fopen(filename, "w"))) {
-    perror("SYSERR: save_quests");
+    TB_REPORT_ERRNO("fopen", filename);
     return FALSE;
   }
   for (i = genolc_zone_bottom(zone_num); i <= zone_table[zone_num].top; i++) {
@@ -251,7 +251,7 @@ int save_quests(zone_rnum zone_num)
       );
       
       if(n < MAX_STRING_LENGTH) {
-        fprintf(sf, "%s", convert_from_tabs(buf));
+        tb_fprintf(sf, "%s", convert_from_tabs(buf));
         num_quests++;
       } else {
         mudlog(BRF,LVL_BUILDER,TRUE, 
@@ -260,15 +260,23 @@ int save_quests(zone_rnum zone_num)
       }
     }
   }
-  /* Write the final line and close it.  */
-  fprintf(sf, "$~\n");
-  fclose(sf);
+  /* Write the final line and commit only a fully flushed temporary file. */
+  tb_fprintf(sf, "$~\n");
+  {
+    int flush_ok = tb_fflush_checked(sf, filename);
+    int close_ok = tb_fclose_checked(sf, filename);
+    if (!flush_ok || !close_ok) {
+      if (remove(filename) != 0 && errno != ENOENT)
+        TB_REPORT_ERRNO("remove", filename);
+      return FALSE;
+    }
+  }
 
   /* Old file we're replacing. */
-  snprintf(oldname, sizeof(oldname), "%s/%d.qst",
+  tb_snprintf(oldname, sizeof(oldname), "%s/%d.qst",
            QST_PREFIX, zone_table[zone_num].number);
-  remove(oldname);
-  rename(filename, oldname);
+  if (!tb_replace_file_checked(filename, oldname))
+    return FALSE;
 
   /* Do we need to update the index file? */
   if (num_quests > 0)

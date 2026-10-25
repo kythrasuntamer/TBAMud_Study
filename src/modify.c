@@ -147,14 +147,14 @@ void string_add(struct descriptor_data *d, char *str)
   else if (!(*d->str)) {
     if (strlen(str) + 3 > d->max_str) { /* \r\n\0 */
       send_to_char(d->character, "String too long - Truncated.\r\n");
-      strcpy(&str[d->max_str - 3], "\r\n");	/* strcpy: OK (size checked) */
+      memcpy(&str[d->max_str - 3], "\r\n", 3);	/* strcpy: OK (size checked) */
       CREATE(*d->str, char, d->max_str);
-      strcpy(*d->str, str);	/* strcpy: OK (size checked) */
+      strlcpy(*d->str, str, d->max_str);	/* strcpy: OK (size checked) */
       if (!using_improved_editor)
         action = STRINGADD_SAVE;
     } else {
       CREATE(*d->str, char, strlen(str) + 3);
-      strcpy(*d->str, str);	/* strcpy: OK (size checked) */
+      memcpy(*d->str, str, strlen(str) + 1);	/* strcpy: OK (size checked) */
     }
   } else {
     if (strlen(str) + strlen(*d->str) + 3 > d->max_str) { /* \r\n\0 */
@@ -164,8 +164,9 @@ void string_add(struct descriptor_data *d, char *str)
       else if (action == STRINGADD_OK)
         action = STRINGADD_ACTION;    /* No appending \r\n\0, but still let them save. */
     } else {
-      RECREATE(*d->str, char, strlen(*d->str) + strlen(str) + 3); /* \r\n\0 */
-      strcat(*d->str, str);	/* strcat: OK (size precalculated) */
+      size_t new_size = strlen(*d->str) + strlen(str) + 3; /* \r\n\0 */
+      RECREATE(*d->str, char, new_size);
+      strlcat(*d->str, str, new_size);	/* strcat: OK (size precalculated) */
     }
   }
 
@@ -245,7 +246,7 @@ void string_add(struct descriptor_data *d, char *str)
       REMOVE_BIT_AR(PLR_FLAGS(d->character), PLR_WRITING);
     }
   } else if (action != STRINGADD_ACTION && strlen(*d->str) + 3 <= d->max_str) /* 3 = \r\n\0 */
-     strcat(*d->str, "\r\n");
+     strlcat(*d->str, "\r\n", strlen(*d->str) + 3);
 }
 
 static void playing_string_cleanup(struct descriptor_data *d, int action)
@@ -339,7 +340,7 @@ ACMD(do_skillset)
     return;
   }
   skip_spaces(&argument);
-  pc = GET_CLASS(vict);
+  pc = (int)GET_CLASS(vict);
   pl = GET_LEVEL(vict);
 
   /* If there is no chars in argument */
@@ -360,7 +361,7 @@ ACMD(do_skillset)
     send_to_char(ch, "Skill must be enclosed in: ''\r\n");
     return;
   }
-  strcpy(helpbuf, (argument + 1));	/* strcpy: OK (MAX_INPUT_LENGTH <= MAX_STRING_LENGTH) */
+  strlcpy(helpbuf, argument + 1, sizeof(helpbuf));	/* strcpy: OK (MAX_INPUT_LENGTH <= MAX_STRING_LENGTH) */
   helpbuf[qend - 1] = '\0';
   if ((skill = find_skill_num(helpbuf)) <= 0) {
     send_to_char(ch, "Unrecognized skill.\r\n");
@@ -373,7 +374,7 @@ ACMD(do_skillset)
     send_to_char(ch, "Learned value expected.\r\n");
     return;
   }
-  value = atoi(buf);
+  value = tb_parse_int_or_zero(buf);
   if (value < 0) {
     send_to_char(ch, "Minimum value for learned is 0.\r\n");
     return;
@@ -534,7 +535,7 @@ void show_string(struct descriptor_data *d, char *input)
 
   /* Type the number of the page and you are there! */
   else if (isdigit(*buf))
-    d->showstr_page = MAX(0, MIN(atoi(buf) - 1, d->showstr_count - 1));
+    d->showstr_page = MAX(0, MIN(tb_parse_int_or_zero(buf) - 1, d->showstr_count - 1));
 
   else if (*buf) {
     send_to_char(d->character, "Valid commands while paging are RETURN, Q, R, B, or a numeric value.\r\n");
@@ -576,11 +577,11 @@ void show_string(struct descriptor_data *d, char *input)
     if (diff >= 2 && buffer[diff - 2] == '\r' && buffer[diff - 1] == '\n')
       buffer[diff] = '\0';
     else if (diff >= 2 && buffer[diff - 2] == '\n' && buffer[diff - 1] == '\r')
-      strcpy(buffer + diff - 2, "\r\n");
+      memcpy(buffer + diff - 2, "\r\n", 3);
     else if (diff >= 1 && (buffer[diff - 1] == '\r' || buffer[diff - 1] == '\n'))
-      strcpy(buffer + diff - 1, "\r\n");
+      memcpy(buffer + diff - 1, "\r\n", 3);
     else
-      strcpy(buffer + diff, "\r\n");
+      memcpy(buffer + diff, "\r\n", 3);
 
     send_to_char(d->character, "%s", buffer);
     d->showstr_page++;

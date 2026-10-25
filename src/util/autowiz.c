@@ -75,9 +75,9 @@ void read_file(void)
   char name[MAX_NAME_LENGTH];
   long id = 0;
 
-  sprintf(index_name, "%s%s", LIB_PLRFILES, INDEX_FILE);
+  tb_snprintf(index_name, sizeof(index_name), "%s%s", LIB_PLRFILES, INDEX_FILE);
   if (!(fl = fopen(index_name, "r"))) {
-    perror("Error opening playerfile");
+    TB_REPORT_ERRNO("fopen", index_name);
     exit(1);
   }
   /* count the number of players in the index */
@@ -85,7 +85,11 @@ void read_file(void)
   while (get_line(fl, line))
     if (*line != '~')
       recs++;
-  rewind(fl);
+  if (fseek(fl, 0L, SEEK_SET) != 0) {
+    TB_REPORT_ERRNO("fseek", index_name);
+    tb_fclose(fl);
+    exit(1);
+  }
 
   for (i = 0; i < recs; i++) {
     get_line(fl, line);
@@ -97,7 +101,7 @@ void read_file(void)
 	!(IS_SET(flags, PINDEX_DELETED)))
 	add_name(level, name);
   }
-  fclose(fl);
+  tb_fclose(fl);
 }
 
 void add_name(byte level, char *name)
@@ -114,7 +118,7 @@ void add_name(byte level, char *name)
       return;
 
   tmp = (struct name_rec *) malloc(sizeof(struct name_rec));
-  strcpy(tmp->name, name);
+  strlcpy(tmp->name, name, sizeof(tmp->name));
   tmp->next = 0;
 
   curr_level = levels;
@@ -135,9 +139,9 @@ void sort_names(void)
     for (a = curr_level->names; a && a->next; a = a->next) {
       for (b = a->next; b; b = b->next) {
 	if (strcmp(a->name, b->name) > 0) {
-	  strcpy(temp, a->name);
-	  strcpy(a->name, b->name);
-	  strcpy(b->name, temp);
+	  strlcpy(temp, a->name, sizeof(temp));
+	  strlcpy(a->name, b->name, sizeof(a->name));
+	  strlcpy(b->name, temp, sizeof(b->name));
 	}
       }
     }
@@ -154,7 +158,7 @@ void write_wizlist(FILE * out, int minlev, int maxlev)
   struct name_rec *curr_name;
   int i, j;
 
-  fprintf(out,
+  tb_fprintf(out,
 "*******************************************************************************\n"
 "*          The following people have reached immortality on tbaMUD.           *\n"
 "*******************************************************************************\n\n");
@@ -165,50 +169,50 @@ void write_wizlist(FILE * out, int minlev, int maxlev)
       continue;
     i = 39 - ((int)strlen(curr_level->params->level_name) >> 1);
     for (j = 1; j <= i; j++)
-      fputc(' ', out);
-    fprintf(out, "%s\n", curr_level->params->level_name);
+      tb_fputc(' ', out);
+    tb_fprintf(out, "%s\n", curr_level->params->level_name);
     for (j = 1; j <= i; j++)
-      fputc(' ', out);
+      tb_fputc(' ', out);
     for (j = 1; j <= (int)strlen(curr_level->params->level_name); j++)
-      fputc('~', out);
-    fprintf(out, "\n");
+      tb_fputc('~', out);
+    tb_fprintf(out, "\n");
 
-    strcpy(buf, "");
+    strlcpy(buf, "", sizeof(buf));
     curr_name = curr_level->names;
     while (curr_name) {
-      strcat(buf, curr_name->name);
+      strlcat(buf, curr_name->name, sizeof(buf));
       if (strlen(buf) > LINE_LEN) {
 	if (curr_level->params->level <= COL_LEVEL)
-	  fprintf(out, IMM_LMARG);
+	  tb_fprintf(out, IMM_LMARG);
 	else {
 	  i = 40 - (strlen(buf) >> 1);
 	  for (j = 1; j <= i; j++)
-	    fputc(' ', out);
+	    tb_fputc(' ', out);
 	}
-	fprintf(out, "%s\n", buf);
-	strcpy(buf, "");
+	tb_fprintf(out, "%s\n", buf);
+	strlcpy(buf, "", sizeof(buf));
       } else {
 	if (curr_level->params->level <= COL_LEVEL) {
 	  for (j = 1; j <= (IMM_NSIZE - (int)strlen(curr_name->name)); j++)
-	    strcat(buf, " ");
+	    strlcat(buf, " ", sizeof(buf));
 	}
 	if (curr_level->params->level > COL_LEVEL)
-	  strcat(buf, "   ");
+	  strlcat(buf, "   ", sizeof(buf));
       }
       curr_name = curr_name->next;
     }
 
     if (*buf) {
       if (curr_level->params->level <= COL_LEVEL)
-	fprintf(out, "%s%s\n", IMM_LMARG, buf);
+	tb_fprintf(out, "%s%s\n", IMM_LMARG, buf);
       else {
 	i = 40 - (strlen(buf) >> 1);
 	for (j = 1; j <= i; j++)
-	  fputc(' ', out);
-	fprintf(out, "%s\n", buf);
+	  tb_fputc(' ', out);
+	tb_fprintf(out, "%s\n", buf);
       }
     }
-    fprintf(out, "\n");
+    tb_fprintf(out, "\n");
   }
 }
 
@@ -222,12 +226,12 @@ int main(int argc, char **argv)
 	   argv[0]);
     exit(0);
   }
-  wizlevel = atoi(argv[1]);
-  immlevel = atoi(argv[3]);
+  wizlevel = tb_parse_int_or_zero(argv[1]);
+  immlevel = tb_parse_int_or_zero(argv[3]);
 
 #ifdef CIRCLE_UNIX	/* Perhaps #ifndef CIRCLE_WINDOWS but ... */
   if (argc == 6)
-    pid = atoi(argv[5]);
+    pid = tb_parse_int_or_zero(argv[5]);
 #endif
 
   initialize();
@@ -236,19 +240,19 @@ int main(int argc, char **argv)
 
   fl = fopen(argv[2], "w");
   if (!fl) {
-    perror(argv[2]);
+    TB_REPORT_ERRNO("fopen", argv[2]);
     return 1;
   }
   write_wizlist(fl, wizlevel, LVL_IMPL);
-  fclose(fl);
+  tb_fclose(fl);
 
   fl = fopen(argv[4], "w");
   if (!fl) {
-    perror(argv[4]);
+    TB_REPORT_ERRNO("fopen", argv[4]);
     return 1;
   }
   write_wizlist(fl, immlevel, wizlevel - 1);
-  fclose(fl);
+  tb_fclose(fl);
 
 #ifdef CIRCLE_UNIX	/* ... I don't have the platforms to test. */
   if (pid)
@@ -280,7 +284,7 @@ int get_line(FILE * fl, char *buf)
   } while (*temp == '*' || *temp == '\n');
 
   temp[strlen(temp) - 1] = '\0';
-  strcpy(buf, temp);
+  strlcpy(buf, temp, sizeof(buf));
   return (lines);
 }
 
@@ -301,7 +305,7 @@ bitvector_t asciiflag_conv(char *flag)
   }
 
   if (is_number)
-    flags = atol(flag);
+    flags = tb_parse_long_or_zero(flag);
 
   return (flags);
 }

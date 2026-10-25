@@ -121,7 +121,7 @@ static int find_first_step(room_rnum src, room_rnum target)
   /* now, do the classic BFS. */
   while (queue_head) {
     if (queue_head->room == target) {
-      curr_dir = queue_head->dir;
+      curr_dir = (int)queue_head->dir;
       bfs_clear_queue();
       return (curr_dir);
     } else {
@@ -219,7 +219,7 @@ void hunt_victim(struct char_data *ch)
   if ((dir = find_first_step(IN_ROOM(ch), IN_ROOM(HUNTING(ch)))) < 0) {
     char buf[MAX_INPUT_LENGTH];
 
-    snprintf(buf, sizeof(buf), "Damn!  I lost %s!", HMHR(HUNTING(ch)));
+    tb_snprintf(buf, sizeof(buf), "Damn!  I lost %s!", HMHR(HUNTING(ch)));
     do_say(ch, buf, 0, 0);
     HUNTING(ch) = NULL;
   } else {

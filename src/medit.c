@@ -67,7 +67,7 @@ ACMD(do_oasis_medit)
     save = TRUE;
 
     if (is_number(buf2))
-      number = atoi(buf2);
+      number = tb_parse_int_or_zero(buf2);
     else if (GET_OLC_ZONE(ch) > 0) {
       zone_rnum zlok;
 
@@ -85,7 +85,7 @@ ACMD(do_oasis_medit)
 
   /* If a numeric argument was given (like a room number), get it. */
   if (number == NOBODY)
-    number = atoi(buf1);
+    number = tb_parse_int_or_zero(buf1);
 
   if (number < IDXTYPE_MIN || number > IDXTYPE_MAX) {
     send_to_char(ch, "That mobile VNUM can't exist.\r\n");
@@ -385,7 +385,7 @@ static void medit_disp_mob_flags(struct descriptor_data *d)
                 !(++columns % 2) ? "\r\n" : "");
   }
 
-  sprintbitarray(MOB_FLAGS(OLC_MOB(d)), action_bits, AF_ARRAY_MAX, flags);
+  sprintbitarray(MOB_FLAGS(OLC_MOB(d)), action_bits, AF_ARRAY_MAX, flags, sizeof(flags));
   write_to_output(d, "\r\nCurrent flags : %s%s%s\r\nEnter mob flags (0 to quit) : ", cyn, flags, nrm);
 }
 
@@ -398,7 +398,7 @@ static void medit_disp_aff_flags(struct descriptor_data *d)
   clear_screen(d);
   /* +1/-1 antics needed because AFF_FLAGS doesn't start at 0. */
   column_list(d->character, 0, affected_bits + 1, NUM_AFF_FLAGS - 1, TRUE);
-  sprintbitarray(AFF_FLAGS(OLC_MOB(d)), affected_bits, AF_ARRAY_MAX, flags);
+  sprintbitarray(AFF_FLAGS(OLC_MOB(d)), affected_bits, AF_ARRAY_MAX, flags, sizeof(flags));
   write_to_output(d, "\r\nCurrent flags   : %s%s%s\r\nEnter aff flags (0 to quit) : ",
                           cyn, flags, nrm);
 }
@@ -428,8 +428,8 @@ static void medit_disp_menu(struct descriptor_data *d)
 	  grn, nrm, yel, GET_DDESC(mob)
 	  );
 
-  sprintbitarray(MOB_FLAGS(mob), action_bits, AF_ARRAY_MAX, flags);
-  sprintbitarray(AFF_FLAGS(mob), affected_bits, AF_ARRAY_MAX, flag2);
+  sprintbitarray(MOB_FLAGS(mob), action_bits, AF_ARRAY_MAX, flags, sizeof(flags));
+  sprintbitarray(AFF_FLAGS(mob), affected_bits, AF_ARRAY_MAX, flag2, sizeof(flag2));
   write_to_output(d,
 	  "%s6%s) Position  : %s%s\r\n"
 	  "%s7%s) Default   : %s%s\r\n"
@@ -469,7 +469,7 @@ static void medit_disp_stats_menu(struct descriptor_data *d)
   clear_screen(d);
 
   /* Color codes have to be used here, for count_color_codes to work */
-  sprintf(buf, "(range \ty%d\tn to \ty%d\tn)", GET_HIT(mob) + GET_MOVE(mob), (GET_HIT(mob) * GET_MANA(mob)) + GET_MOVE(mob));
+  tb_snprintf(buf, sizeof(buf), "(range \ty%d\tn to \ty%d\tn)", GET_HIT(mob) + GET_MOVE(mob), (GET_HIT(mob) * GET_MANA(mob)) + GET_MOVE(mob));
 
   /* Top section - standard stats */
   write_to_output(d,
@@ -531,7 +531,7 @@ void medit_parse(struct descriptor_data *d, char *arg)
   char *oldtext = NULL;
 
   if (OLC_MODE(d) > MEDIT_NUMERICAL_RESPONSE) {
-    i = atoi(arg);
+    i = tb_parse_int_or_zero(arg);
     if (!*arg || (!isdigit(arg[0]) && ((*arg == '-') && !isdigit(arg[1])))) {
       write_to_output(d, "Try again : ");
       return;
@@ -866,7 +866,7 @@ void medit_parse(struct descriptor_data *d, char *arg)
       free(GET_LDESC(OLC_MOB(d)));
     if (arg && *arg) {
       char buf[MAX_INPUT_LENGTH];
-      snprintf(buf, sizeof(buf), "%s\r\n", arg);
+  tb_snprintf(buf, sizeof(buf), "%s\r\n", arg);
       GET_LDESC(OLC_MOB(d)) = strdup(buf);
     } else
       GET_LDESC(OLC_MOB(d)) = strdup("undefined");
@@ -883,7 +883,7 @@ void medit_parse(struct descriptor_data *d, char *arg)
     break;
 
   case MEDIT_NPC_FLAGS:
-    if ((i = atoi(arg)) <= 0)
+    if ((i = tb_parse_int_or_zero(arg)) <= 0)
       break;
     else if ( (j = medit_get_mob_flag_by_number(i)) == -1) {
        write_to_output(d, "Invalid choice!\r\n");
@@ -896,7 +896,7 @@ void medit_parse(struct descriptor_data *d, char *arg)
     return;
 
   case MEDIT_AFF_FLAGS:
-    if ((i = atoi(arg)) <= 0)
+    if ((i = tb_parse_int_or_zero(arg)) <= 0)
       break;
     else if (i < NUM_AFF_FLAGS)
       TOGGLE_BIT_AR(AFF_FLAGS(OLC_MOB(d)), i);
@@ -1065,7 +1065,7 @@ void medit_parse(struct descriptor_data *d, char *arg)
     return;
 
   case MEDIT_COPY:
-    if ((i = real_mobile(atoi(arg))) != NOWHERE) {
+    if ((i = real_mobile(tb_parse_int_or_zero(arg))) != NOWHERE) {
       medit_setup_existing(d, i);
     } else
       write_to_output(d, "That mob does not exist.\r\n");

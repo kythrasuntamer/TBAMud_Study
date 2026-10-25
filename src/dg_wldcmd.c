@@ -61,7 +61,7 @@ void wld_log(room_data *room, const char *format, ...)
   va_list args;
   char output[MAX_STRING_LENGTH];
 
-  snprintf(output, sizeof(output), "Room %d :: %s", room->number, format);
+  tb_snprintf(output, sizeof(output), "Room %d :: %s", room->number, format);
 
   va_start(args, format);
   script_vlog(output, args);
@@ -169,11 +169,11 @@ WCMD(do_wzoneecho)
     if (!*room_num || !*msg)
         wld_log(room, "wzoneecho called with too few args");
 
-    else if ((zone = real_zone_by_thing(atoi(room_num))) == NOWHERE)
+    else if ((zone = real_zone_by_thing(tb_parse_int_or_zero(room_num))) == NOWHERE)
         wld_log(room, "wzoneecho called for nonexistant zone");
 
     else {
-        sprintf(buf, "%s\r\n", msg);
+        tb_snprintf(buf, sizeof(buf), "%s\r\n", msg);
         send_to_zone(buf, zone);
     }
 }
@@ -191,7 +191,7 @@ WCMD(do_wrecho)
     if (!*msg || !*start || !*finish || !is_number(start) || !is_number(finish))
       wld_log(room, "wrecho: too few args");
     else
-      send_to_range(atoi(start), atoi(finish), "%s\r\n", msg);
+      send_to_range(tb_parse_int_or_zero(start), tb_parse_int_or_zero(finish), "%s\r\n", msg);
 
 }
 
@@ -272,24 +272,30 @@ WCMD(do_wdoor)
         case 1:  /* description */
             if (newexit->general_description)
                 free(newexit->general_description);
-            CREATE(newexit->general_description, char, strlen(value) + 3);
-            strcpy(newexit->general_description, value);
-            strcat(newexit->general_description, "\r\n");
+            {
+                size_t desc_size = strlen(value) + 3;
+                CREATE(newexit->general_description, char, desc_size);
+                strlcpy(newexit->general_description, value, desc_size);
+                strlcat(newexit->general_description, "\r\n", desc_size);
+            }
             break;
         case 2:  /* flags       */
             newexit->exit_info = (sh_int)asciiflag_conv(value);
             break;
         case 3:  /* key         */
-            newexit->key = atoi(value);
+            newexit->key = tb_parse_int_or_zero(value);
             break;
         case 4:  /* name        */
             if (newexit->keyword)
                 free(newexit->keyword);
-            CREATE(newexit->keyword, char, strlen(value) + 1);
-            strcpy(newexit->keyword, value);
+            {
+                size_t keyword_size = strlen(value) + 1;
+                CREATE(newexit->keyword, char, keyword_size);
+                strlcpy(newexit->keyword, value, keyword_size);
+            }
             break;
         case 5:  /* room        */
-            if ((to_room = real_room(atoi(value))) != NOWHERE)
+            if ((to_room = real_room(tb_parse_int_or_zero(value))) != NOWHERE)
                 newexit->to_room = to_room;
             else {
                 newexit->to_room = NOWHERE;
@@ -313,7 +319,7 @@ WCMD(do_wteleport)
         return;
     }
 
-    nr = atoi(arg2);
+    nr = tb_parse_int_or_zero(arg2);
     target = real_room(nr);
 
     if (target == NOWHERE)
@@ -457,7 +463,7 @@ WCMD(do_wload)
 
     target = two_arguments(argument, arg1, arg2);
 
-    if (!*arg1 || !*arg2 || !is_number(arg2) || ((number = atoi(arg2)) < 0)) {
+    if (!*arg1 || !*arg2 || !is_number(arg2) || ((number = tb_parse_int_or_zero(arg2)) < 0)) {
         wld_log(room, "wload: bad syntax");
         return;
     }
@@ -468,7 +474,7 @@ WCMD(do_wload)
       if (!target || !*target) {
         rnum = real_room(room->number);
       } else {
-        if (!isdigit(*target) || (rnum = real_room(atoi(target))) == NOWHERE) {
+        if (!isdigit(*target) || (rnum = real_room(tb_parse_int_or_zero(target))) == NOWHERE) {
           wld_log(room, "wload: room target vnum doesn't exist (loading mob vnum %d to room %s)", number, target);
           return;
         }
@@ -480,7 +486,7 @@ WCMD(do_wload)
       char_to_room(mob, rnum);
       if (SCRIPT(room)) { /* It _should_ have, but it might be detached. */
         char buf[MAX_INPUT_LENGTH];
-        sprintf(buf, "%c%ld", UID_CHAR, char_script_id(mob));
+        tb_snprintf(buf, sizeof(buf), "%c%ld", UID_CHAR, char_script_id(mob));
         add_var(&(SCRIPT(room)->global_vars), "lastloaded", buf, 0);
       }
       load_mtrigger(mob);
@@ -496,7 +502,7 @@ WCMD(do_wload)
         obj_to_room(object, real_room(room->number));
         if (SCRIPT(room)) { /* It _should_ have, but it might be detached. */
           char buf[MAX_INPUT_LENGTH];
-          sprintf(buf, "%c%ld", UID_CHAR, obj_script_id(object));
+          tb_snprintf(buf, sizeof(buf), "%c%ld", UID_CHAR, obj_script_id(object));
           add_var(&(SCRIPT(room)->global_vars), "lastloaded", buf, 0);
         }
         load_otrigger(object);
@@ -545,7 +551,7 @@ WCMD(do_wdamage) {
     return;
   }
 
-  dam = atoi(amount);
+  dam = tb_parse_int_or_zero(amount);
   ch = get_char_by_room(room, name);
 
   if (!ch) {
@@ -576,7 +582,7 @@ WCMD(do_wat)
     return;
   }
 
-  if (isdigit(*arg)) loc = real_room(atoi(arg));
+  if (isdigit(*arg)) loc = real_room(tb_parse_int_or_zero(arg));
   else if ((ch = get_char_by_room(room, arg))) loc = IN_ROOM(ch);
   
   if (loc == NOWHERE) {
@@ -599,7 +605,7 @@ WCMD(do_wmove)
         return;
     }
 
-    nr = atoi(arg2);
+    nr = tb_parse_int_or_zero(arg2);
     target = real_room(nr);
 
     if (target == NOWHERE) {

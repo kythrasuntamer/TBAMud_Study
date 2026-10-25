@@ -52,7 +52,7 @@ void add_var(struct trig_var_data **var_list, const char *name, const char *valu
     CREATE(vd, struct trig_var_data, 1);
 
     CREATE(vd->name, char, strlen(name) + 1);
-    strcpy(vd->name, name);                            /* strcpy: ok*/
+    memcpy(vd->name, name, strlen(name) + 1);
 
     CREATE(vd->value, char, strlen(value) + 1);
 
@@ -61,7 +61,7 @@ void add_var(struct trig_var_data **var_list, const char *name, const char *valu
     *var_list = vd;
   }
 
-  strcpy(vd->value, value);                            /* strcpy: ok*/
+  memcpy(vd->value, value, strlen(value) + 1);
 }
 
 /* perhaps not the best place for this, but I didn't want a new file */
@@ -73,7 +73,7 @@ char *skill_percent(struct char_data *ch, char *skill)
   skillnum = find_skill_num(skill);
   if (skillnum<=0) return("unknown skill");
 
-  snprintf(retval, sizeof(retval), "%d", GET_SKILL(ch, skillnum));
+  tb_snprintf(retval, sizeof(retval), "%d", GET_SKILL(ch, skillnum));
   return retval;
 }
 
@@ -89,7 +89,7 @@ int item_in_list(char *item, obj_data *list)
     return 0;
 
   if (*item == UID_CHAR) {
-    long id = atol(item + 1);
+    long id = tb_parse_long_or_zero(item + 1);
 
     for (i = list; i; i = i->next_content) {
       if (id == i->script_id)
@@ -98,7 +98,7 @@ int item_in_list(char *item, obj_data *list)
         count += item_in_list(item, i->contains);
     }
   } else if (is_number(item)) { /* check for vnum */
-    obj_vnum ovnum = atoi(item);
+    obj_vnum ovnum = tb_parse_int_or_zero(item);
 
     for (i = list; i; i = i->next_content) {
       if (GET_OBJ_VNUM(i) == ovnum)
@@ -177,16 +177,16 @@ int text_processed(char *field, char *subfield, struct trig_var_data *vd,
   char tmpvar[MAX_STRING_LENGTH];
 
   if (!str_cmp(field, "strlen")) {                     /* strlen    */
-    snprintf(str, slen, "%d", (int)strlen(vd->value));
+    tb_snprintf(str, slen, "%d", (int)strlen(vd->value));
     return TRUE;
   } else if (!str_cmp(field, "toupper")) {             /* toupper   */
     char *upper = vd->value;
     if (*upper)
-      snprintf(str, slen, "%c%s", UPPER(*upper), upper + 1);
+      tb_snprintf(str, slen, "%c%s", UPPER(*upper), upper + 1);
     return TRUE;
   } else if (!str_cmp(field, "trim")) {                /* trim      */
     /* trim whitespace from ends */
-    snprintf(tmpvar, sizeof(tmpvar)-1 , "%s", vd->value); /* -1 to use later*/
+    tb_snprintf(tmpvar, sizeof(tmpvar)-1 , "%s", vd->value); /* -1 to use later*/
     p = tmpvar;
     p2 = tmpvar + strlen(tmpvar) - 1;
     while (*p && isspace(*p)) p++;
@@ -196,13 +196,13 @@ int text_processed(char *field, char *subfield, struct trig_var_data *vd,
       return TRUE;
     }
     *(++p2) = '\0';                                         /* +1 ok (see above) */
-    snprintf(str, slen, "%s", p);
+    tb_snprintf(str, slen, "%s", p);
     return TRUE;
   } else if (!str_cmp(field, "contains")) {            /* contains  */
     if (str_str(vd->value, subfield))
-      strcpy(str, "1");
+      strlcpy(str, "1", slen);
     else
-      strcpy(str, "0");
+      strlcpy(str, "0", slen);
     return TRUE;
   } else if (!str_cmp(field, "car")) {                 /* car       */
     char *car = vd->value;
@@ -216,14 +216,14 @@ int text_processed(char *field, char *subfield, struct trig_var_data *vd,
     while (*cdr && !isspace(*cdr)) cdr++; /* skip 1st field */
     while (*cdr && isspace(*cdr)) cdr++;  /* skip to next */
 
-    snprintf(str, slen, "%s", cdr);
+    tb_snprintf(str, slen, "%s", cdr);
     return TRUE;
   } else if (!str_cmp(field, "charat")) {              /* CharAt    */
-    size_t len = strlen(vd->value), cindex = atoi(subfield);
+    size_t len = strlen(vd->value), cindex = tb_parse_int_or_zero(subfield);
     if (cindex > len || cindex < 1)
-      strcpy(str, "");
+      strlcpy(str, "", slen);
     else
-      snprintf(str, slen, "%c", vd->value[cindex - 1]);
+      tb_snprintf(str, slen, "%c", vd->value[cindex - 1]);
     return TRUE;
   } else if (!str_cmp(field, "mudcommand")) {
     /* find the mud command returned from this text */
@@ -239,7 +239,7 @@ int text_processed(char *field, char *subfield, struct trig_var_data *vd,
     if (*cmd_info[cmd].command == '\n')
       *str = '\0';
     else
-      snprintf(str, slen, "%s", cmd_info[cmd].command);
+      tb_snprintf(str, slen, "%s", cmd_info[cmd].command);
     return TRUE;
   }
 
@@ -294,58 +294,58 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
 
   if (!*field) {
     if (vd)
-      snprintf(str, slen, "%s", vd->value);
+      tb_snprintf(str, slen, "%s", vd->value);
     else {
       if (!str_cmp(var, "self")) {
         switch (type) {
         case MOB_TRIGGER:
-          snprintf(str, slen, "%c%ld", UID_CHAR, char_script_id((char_data *) go));
+          tb_snprintf(str, slen, "%c%ld", UID_CHAR, char_script_id((char_data *) go));
           break;
         case OBJ_TRIGGER:
-          snprintf(str, slen, "%c%ld", UID_CHAR, obj_script_id((obj_data *) go));
+          tb_snprintf(str, slen, "%c%ld", UID_CHAR, obj_script_id((obj_data *) go));
           break;
         case WLD_TRIGGER:
-          snprintf(str, slen, "%c%ld", UID_CHAR, room_script_id((room_data *)go));
+          tb_snprintf(str, slen, "%c%ld", UID_CHAR, room_script_id((room_data *)go));
           break;
         }
       }
       else if (!str_cmp(var, "global")) {
         /* so "remote varname %global%" will work */
-        snprintf(str, slen, "%d", ROOM_ID_BASE);
+        tb_snprintf(str, slen, "%d", ROOM_ID_BASE);
         return;
       }
       else if (!str_cmp(var, "door"))
-        snprintf(str, slen, "%s", door[type]);
+        tb_snprintf(str, slen, "%s", door[type]);
       else if (!str_cmp(var, "force"))
-        snprintf(str, slen, "%s", force[type]);
+        tb_snprintf(str, slen, "%s", force[type]);
       else if (!str_cmp(var, "load"))
-        snprintf(str, slen, "%s", load[type]);
+        tb_snprintf(str, slen, "%s", load[type]);
       else if (!str_cmp(var, "purge"))
-        snprintf(str, slen, "%s", purge[type]);
+        tb_snprintf(str, slen, "%s", purge[type]);
       else if (!str_cmp(var, "teleport"))
-        snprintf(str, slen, "%s", teleport[type]);
+        tb_snprintf(str, slen, "%s", teleport[type]);
       else if (!str_cmp(var, "damage"))
-        snprintf(str, slen, "%s", xdamage[type]);
+        tb_snprintf(str, slen, "%s", xdamage[type]);
       else if (!str_cmp(var, "send"))
-        snprintf(str, slen, "%s", send_cmd[type]);
+        tb_snprintf(str, slen, "%s", send_cmd[type]);
       else if (!str_cmp(var, "echo"))
-        snprintf(str, slen, "%s", echo_cmd[type]);
+        tb_snprintf(str, slen, "%s", echo_cmd[type]);
       else if (!str_cmp(var, "echoaround"))
-        snprintf(str, slen, "%s", echoaround_cmd[type]);
+        tb_snprintf(str, slen, "%s", echoaround_cmd[type]);
       else if (!str_cmp(var, "zoneecho"))
-        snprintf(str, slen, "%s", zoneecho[type]);
+        tb_snprintf(str, slen, "%s", zoneecho[type]);
       else if (!str_cmp(var, "asound"))
-        snprintf(str, slen, "%s", asound[type]);
+        tb_snprintf(str, slen, "%s", asound[type]);
       else if (!str_cmp(var, "at"))
-        snprintf(str, slen, "%s", at[type]);
+        tb_snprintf(str, slen, "%s", at[type]);
       else if (!str_cmp(var, "transform"))
-        snprintf(str, slen, "%s", transform[type]);
+        tb_snprintf(str, slen, "%s", transform[type]);
       else if (!str_cmp(var, "recho"))
-        snprintf(str, slen, "%s", recho[type]);
+        tb_snprintf(str, slen, "%s", recho[type]);
       else if (!str_cmp(var, "move"))
-        snprintf(str, slen, "%s", omove[type]);
+        tb_snprintf(str, slen, "%s", omove[type]);
       else if (!str_cmp(var, "log"))
-        snprintf(str, slen, "%s", log_cmd[type]);
+        tb_snprintf(str, slen, "%s", log_cmd[type]);
       else
         *str = '\0';
     }
@@ -424,33 +424,33 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
             break;
 
         if (vd)
-          snprintf(str, slen, "%s", vd->value);
+          tb_snprintf(str, slen, "%s", vd->value);
 
         return;
       }
       else if (!str_cmp(var, "people")) {
-        snprintf(str, slen, "%d",((num = atoi(field)) > 0) ? trgvar_in_room(num) : 0);
+        tb_snprintf(str, slen, "%d",((num = tb_parse_int_or_zero(field)) > 0) ? trgvar_in_room(num) : 0);
         return;
       }
       else if (!str_cmp(var, "happyhour")) {
         if (!str_cmp(field, "qp") && IS_HAPPYHOUR)
-          snprintf(str, slen, "%d", HAPPY_QP);
+          tb_snprintf(str, slen, "%d", HAPPY_QP);
         else if (!str_cmp(field, "exp") && IS_HAPPYHOUR)
-          snprintf(str, slen, "%d", HAPPY_EXP);
+          tb_snprintf(str, slen, "%d", HAPPY_EXP);
         else if (!str_cmp(field, "gold") && IS_HAPPYHOUR)
-          snprintf(str, slen, "%d", HAPPY_GOLD);
+          tb_snprintf(str, slen, "%d", HAPPY_GOLD);
         else snprintf(str, slen, "%d", HAPPY_TIME);
         return;
       }
       else if (!str_cmp(var, "time")) {
         if (!str_cmp(field, "hour"))
-          snprintf(str, slen, "%d", time_info.hours);
+          tb_snprintf(str, slen, "%d", time_info.hours);
         else if (!str_cmp(field, "day"))
-          snprintf(str, slen, "%d", time_info.day + 1);
+          tb_snprintf(str, slen, "%d", time_info.day + 1);
         else if (!str_cmp(field, "month"))
-          snprintf(str, slen, "%d", time_info.month + 1);
+          tb_snprintf(str, slen, "%d", time_info.month + 1);
         else if (!str_cmp(field, "year"))
-          snprintf(str, slen, "%d", time_info.year);
+          tb_snprintf(str, slen, "%d", time_info.year);
         else *str = '\0';
         return;
       }
@@ -467,20 +467,20 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
       else if (!str_cmp(var, "findmob")) {
         if (!*field || !subfield || !*subfield) {
           script_log("findmob.vnum(mvnum) - illegal syntax");
-          strcpy(str, "0");
+          strlcpy(str, "0", slen);
         } else {
-          room_rnum rrnum = real_room(atoi(field));
-          mob_vnum mvnum = atoi(subfield);
+          room_rnum rrnum = real_room(tb_parse_int_or_zero(field));
+          mob_vnum mvnum = tb_parse_int_or_zero(subfield);
 
           if (rrnum == NOWHERE) {
-            script_log("findmob.vnum(ovnum): No room with vnum %d", atoi(field));
-            strcpy(str, "0");
+            script_log("findmob.vnum(ovnum): No room with vnum %d", tb_parse_int_or_zero(field));
+            strlcpy(str, "0", slen);
           } else {
             for (i = 0, ch = world[rrnum].people; ch; ch = ch->next_in_room)
               if (GET_MOB_VNUM(ch) == mvnum)
                 i++;
 
-            snprintf(str, slen, "%d", i);
+            tb_snprintf(str, slen, "%d", i);
           }
         }
       }
@@ -488,16 +488,16 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
       else if (!str_cmp(var, "findobj")) {
         if (!*field || !subfield || !*subfield) {
           script_log("findobj.vnum(ovnum) - illegal syntax");
-          strcpy(str, "0");
+          strlcpy(str, "0", slen);
         } else {
-          room_rnum rrnum = real_room(atoi(field));
+          room_rnum rrnum = real_room(tb_parse_int_or_zero(field));
 
           if (rrnum == NOWHERE) {
-            script_log("findobj.vnum(ovnum): No room with vnum %d", atoi(field));
-            strcpy(str, "0");
+            script_log("findobj.vnum(ovnum): No room with vnum %d", tb_parse_int_or_zero(field));
+            strlcpy(str, "0", slen);
           } else {
             /* item_in_list looks within containers as well. */
-            snprintf(str, slen, "%d", item_in_list(subfield, world[rrnum].contents));
+            tb_snprintf(str, slen, "%d", item_in_list(subfield, world[rrnum].contents));
           }
         }
       }
@@ -539,7 +539,7 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
           }
 
           if (rndm)
-            snprintf(str, slen, "%c%ld", UID_CHAR, char_script_id(rndm));
+            tb_snprintf(str, slen, "%c%ld", UID_CHAR, char_script_id(rndm));
           else
             *str = '\0';
         }
@@ -575,12 +575,12 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
                 if (R_EXIT(room, doors))
                   break;
               }
-              snprintf(str, slen, "%s", dirs[doors]);
+              tb_snprintf(str, slen, "%s", dirs[doors]);
             }
           }
         }
         else
-          snprintf(str, slen, "%d", ((num = atoi(field)) > 0) ? rand_number(1, num) : 0);
+          tb_snprintf(str, slen, "%d", ((num = tb_parse_int_or_zero(field)) > 0) ? rand_number(1, num) : 0);
 
         return;
       }
@@ -602,91 +602,91 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
             if (subfield && *subfield) {
               int spell = find_skill_num(subfield);
               if (affected_by_spell(c, spell))
-                strcpy(str, "1");
+                strlcpy(str, "1", slen);
               else
-                strcpy(str, "0");
+                strlcpy(str, "0", slen);
             } else
-              strcpy(str, "0");
+              strlcpy(str, "0", slen);
           }
           else if (!str_cmp(field, "alias"))
-            snprintf(str, slen, "%s", GET_PC_NAME(c));
+            tb_snprintf(str, slen, "%s", GET_PC_NAME(c));
 
           else if (!str_cmp(field, "align")) {
             if (subfield && *subfield) {
-              int addition = atoi(subfield);
+              int addition = tb_parse_int_or_zero(subfield);
              GET_ALIGNMENT(c) = MAX(-1000, MIN(addition, 1000));
             }
-	    snprintf(str, slen, "%d", GET_ALIGNMENT(c));
+	    tb_snprintf(str, slen, "%d", GET_ALIGNMENT(c));
           }
           else if (!str_cmp(field, "armor"))
-            snprintf(str, slen, "%d", compute_armor_class(c));
+            tb_snprintf(str, slen, "%d", compute_armor_class(c));
           break;
         case 'c':
           if (!str_cmp(field, "canbeseen")) {
             if ((type == MOB_TRIGGER) && !CAN_SEE(((char_data *)go), c))
-              strcpy(str, "0");
+              strlcpy(str, "0", slen);
             else
-              strcpy(str, "1");
+              strlcpy(str, "1", slen);
           }
           else if (!str_cmp(field, "cha")) {
             if (subfield && *subfield) {
-              int addition = atoi(subfield);
+              int addition = tb_parse_int_or_zero(subfield);
               int max = (IS_NPC(c) || GET_LEVEL(c) >= LVL_GRGOD) ? 25 : 18;
               c->real_abils.cha += addition;
               if (c->real_abils.cha > max) c->real_abils.cha = max;
               if (c->real_abils.cha < 3) c->real_abils.cha = 3;
               affect_total(c);
             }
-            snprintf(str, slen, "%d", GET_CHA(c));
+            tb_snprintf(str, slen, "%d", GET_CHA(c));
           }
           else if (!str_cmp(field, "class")) {
             if (subfield && *subfield) {
               int cl = get_class_by_name(subfield);
               if (cl != -1) {
                 GET_CLASS(c) = cl;
-                snprintf(str, slen, "1");
+                tb_snprintf(str, slen, "1");
               } else {
-                snprintf(str, slen, "0");
+                tb_snprintf(str, slen, "0");
               }
             } else
               sprinttype(GET_CLASS(c), pc_class_types, str, slen);
           }
           else if (!str_cmp(field, "con")) {
             if (subfield && *subfield) {
-              int addition = atoi(subfield);
+              int addition = tb_parse_int_or_zero(subfield);
               int max = (IS_NPC(c) || GET_LEVEL(c) >= LVL_GRGOD) ? 25 : 18;
               c->real_abils.con += addition;
               if (c->real_abils.con > max) c->real_abils.con = max;
               if (c->real_abils.con < 3) c->real_abils.con = 3;
               affect_total(c);
             }
-            snprintf(str, slen, "%d", GET_CON(c));
+            tb_snprintf(str, slen, "%d", GET_CON(c));
           }
           break;
         case 'd':
           if (!str_cmp(field, "damroll")) {
             if (subfield && *subfield) {
-              int addition = atoi(subfield);
+              int addition = tb_parse_int_or_zero(subfield);
               GET_DAMROLL(c) = MAX(1, GET_DAMROLL(c) + addition);
             }
-            snprintf(str, slen, "%d", GET_DAMROLL(c));
+            tb_snprintf(str, slen, "%d", GET_DAMROLL(c));
             } else if (!str_cmp(field, "dex")) {
               if (subfield && *subfield) {
-                int addition = atoi(subfield);
+                int addition = tb_parse_int_or_zero(subfield);
                 int max = (IS_NPC(c) || GET_LEVEL(c) >= LVL_GRGOD) ? 25 : 18;
                 c->real_abils.dex += addition;
                 if (c->real_abils.dex > max) c->real_abils.dex = max;
                 if (c->real_abils.dex < 3) c->real_abils.dex = 3;
                 affect_total(c);
               }
-            snprintf(str, slen, "%d", GET_DEX(c));
+            tb_snprintf(str, slen, "%d", GET_DEX(c));
           }
           else if (!str_cmp(field, "drunk")) {
             if (subfield && *subfield) {
-              int addition = atoi(subfield);
+              int addition = tb_parse_int_or_zero(subfield);
               GET_COND(c, DRUNK) = MAX(-1, MIN(addition, 24));
             }
-            snprintf(str, slen, "%d", GET_COND(c, DRUNK));
+            tb_snprintf(str, slen, "%d", GET_COND(c, DRUNK));
           }
           break;
         case 'e':
@@ -701,27 +701,27 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
                   break;
                 }
               if (j > 0)
-                strcpy(str,"1");
+                strlcpy(str, "1", slen);
               else
                 *str = '\0';
             } else if ((pos = find_eq_pos_script(subfield)) < 0 || !GET_EQ(c, pos))
               *str = '\0';
             else
-              snprintf(str, slen, "%c%ld",UID_CHAR, obj_script_id(GET_EQ(c, pos)));
+              tb_snprintf(str, slen, "%c%ld",UID_CHAR, obj_script_id(GET_EQ(c, pos)));
           }
           else if (!str_cmp(field, "exp")) {
             if (subfield && *subfield) {
-              int addition = MIN(atoi(subfield), 1000);
+              int addition = MIN(tb_parse_int_or_zero(subfield), 1000);
 
               gain_exp(c, addition);
             }
-            snprintf(str, slen, "%d", GET_EXP(c));
+            tb_snprintf(str, slen, "%d", GET_EXP(c));
           }
           break;
         case 'f':
           if (!str_cmp(field, "fighting")) {
             if (FIGHTING(c))
-              snprintf(str, slen, "%c%ld", UID_CHAR, char_script_id(FIGHTING(c)));
+              tb_snprintf(str, slen, "%c%ld", UID_CHAR, char_script_id(FIGHTING(c)));
             else
               *str = '\0';
           }
@@ -729,16 +729,16 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
             if (!c->followers || !c->followers->follower)
               *str = '\0';
             else
-              snprintf(str, slen, "%c%ld", UID_CHAR, char_script_id(c->followers->follower));
+              tb_snprintf(str, slen, "%c%ld", UID_CHAR, char_script_id(c->followers->follower));
           }
           break;
         case 'g':
           if (!str_cmp(field, "gold")) {
             if (subfield && *subfield) {
-              int addition = atoi(subfield);
+              int addition = tb_parse_int_or_zero(subfield);
               increase_gold(c, addition);
             }
-            snprintf(str, slen, "%d", GET_GOLD(c));
+            tb_snprintf(str, slen, "%d", GET_GOLD(c));
           }
           break;
         case 'h':
@@ -746,71 +746,71 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
             if (!(subfield && *subfield))
               *str = '\0';
             else
-              snprintf(str, slen, "%d", char_has_item(subfield, c));
+              tb_snprintf(str, slen, "%d", char_has_item(subfield, c));
           }
           else if (!str_cmp(field, "hasattached")) {
             if (!(subfield && *subfield) || !IS_NPC(c))
               *str = '\0';
             else {
-              i = atoi(subfield);
-              snprintf(str, slen, "%d", trig_is_attached(SCRIPT(c), i));
+              i = tb_parse_int_or_zero(subfield);
+              tb_snprintf(str, slen, "%d", trig_is_attached(SCRIPT(c), i));
             }
           }
           else if (!str_cmp(field, "heshe"))
-            snprintf(str, slen, "%s", HSSH(c));
+            tb_snprintf(str, slen, "%s", HSSH(c));
           else if (!str_cmp(field, "himher"))
-            snprintf(str, slen, "%s", HMHR(c));
+            tb_snprintf(str, slen, "%s", HMHR(c));
           else if (!str_cmp(field, "hisher"))
-            snprintf(str, slen, "%s", HSHR(c));
+            tb_snprintf(str, slen, "%s", HSHR(c));
           else if (!str_cmp(field, "hitp")) {
             if (subfield && *subfield) {
-              int addition = atoi(subfield);
+              int addition = tb_parse_int_or_zero(subfield);
               GET_HIT(c) += addition;
               update_pos(c);
             }
-            snprintf(str, slen, "%d", GET_HIT(c));
+            tb_snprintf(str, slen, "%d", GET_HIT(c));
           }
           else if (!str_cmp(field, "hitroll")) {
             if (subfield && *subfield) {
-              int addition = atoi(subfield);
+              int addition = tb_parse_int_or_zero(subfield);
               GET_HITROLL(c) = MAX(1, GET_HITROLL(c) + addition);
             }
-            snprintf(str, slen, "%d", GET_HITROLL(c));
+            tb_snprintf(str, slen, "%d", GET_HITROLL(c));
           }
           else if (!str_cmp(field, "hunger")) {
             if (subfield && *subfield) {
-              int addition = atoi(subfield);
+              int addition = tb_parse_int_or_zero(subfield);
               GET_COND(c, HUNGER) = MAX(-1, MIN(addition, 24));
             }
-            snprintf(str, slen, "%d", GET_COND(c, HUNGER));
+            tb_snprintf(str, slen, "%d", GET_COND(c, HUNGER));
           }
           break;
         case 'i':
           if (!str_cmp(field, "id"))
-            snprintf(str, slen, "%ld", char_script_id(c));
+            tb_snprintf(str, slen, "%ld", char_script_id(c));
           /* new check for pc/npc status */
           else if (!str_cmp(field, "is_pc")) {
             if (IS_NPC(c))
-              strcpy(str, "0");
+              strlcpy(str, "0", slen);
             else
-              strcpy(str, "1");
+              strlcpy(str, "1", slen);
           }
           else if (!str_cmp(field, "int")) {
             if (subfield && *subfield) {
-              int addition = atoi(subfield);
+              int addition = tb_parse_int_or_zero(subfield);
               int max = (IS_NPC(c) || GET_LEVEL(c) >= LVL_GRGOD) ? 25 : 18;
               c->real_abils.intel += addition;
               if (c->real_abils.intel > max) c->real_abils.intel = max;
               if (c->real_abils.intel < 3) c->real_abils.intel = 3;
               affect_total(c);
             }
-            snprintf(str, slen, "%d", GET_INT(c));
+            tb_snprintf(str, slen, "%d", GET_INT(c));
           }
           else if (!str_cmp(field, "inventory")) {
             if(subfield && *subfield) {
               for (obj = c->carrying;obj;obj=obj->next_content) {
-                if(GET_OBJ_VNUM(obj)==atoi(subfield)) {
-                  snprintf(str, slen, "%c%ld", UID_CHAR, obj_script_id(obj)); /* arg given, found */
+                if(GET_OBJ_VNUM(obj)==tb_parse_int_or_zero(subfield)) {
+                  tb_snprintf(str, slen, "%c%ld", UID_CHAR, obj_script_id(obj)); /* arg given, found */
                   return;
                 }
               }
@@ -818,7 +818,7 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
                 *str = '\0'; /* arg given, not found */
             } else { /* no arg given */
               if (c->carrying) {
-                snprintf(str, slen, "%c%ld", UID_CHAR, obj_script_id(c->carrying));
+                tb_snprintf(str, slen, "%c%ld", UID_CHAR, obj_script_id(c->carrying));
               } else {
                 *str = '\0';
               }
@@ -832,9 +832,9 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
                 REMOVE_BIT_AR(PLR_FLAGS(c), PLR_KILLER);
             }
             if (PLR_FLAGGED(c, PLR_KILLER))
-              strcpy(str, "1");
+              strlcpy(str, "1", slen);
             else
-              strcpy(str, "0");
+              strlcpy(str, "0", slen);
           }
           else if (!str_cmp(field, "is_thief")) {
             if (subfield && *subfield) {
@@ -844,84 +844,84 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
                 REMOVE_BIT_AR(PLR_FLAGS(c), PLR_THIEF);
             }
             if (PLR_FLAGGED(c, PLR_THIEF))
-              strcpy(str, "1");
+              strlcpy(str, "1", slen);
             else
-              strcpy(str, "0");
+              strlcpy(str, "0", slen);
           }
           break;
         case 'l':
           if (!str_cmp(field, "level")) {
             if (subfield && *subfield) {
-              int lev = atoi(subfield);
+              int lev = tb_parse_int_or_zero(subfield);
               GET_LEVEL(c) = MIN(MAX(lev, 0), LVL_IMMORT-1);
             } else
-              snprintf(str, slen, "%d", GET_LEVEL(c));
+              tb_snprintf(str, slen, "%d", GET_LEVEL(c));
           }
           break;
         case 'm':
           if (!str_cmp(field, "mana")) {
             if (subfield && *subfield) {
-              int addition = atoi(subfield);
+              int addition = tb_parse_int_or_zero(subfield);
               GET_MANA(c) += addition;
             }
-            snprintf(str, slen, "%d", GET_MANA(c));
+            tb_snprintf(str, slen, "%d", GET_MANA(c));
           }
           else if (!str_cmp(field, "master")) {
             if (!c->master)
               *str = '\0';
             else
-              snprintf(str, slen, "%c%ld", UID_CHAR, char_script_id(c->master));
+              tb_snprintf(str, slen, "%c%ld", UID_CHAR, char_script_id(c->master));
           }
           else if (!str_cmp(field, "maxhitp")) {
             if (subfield && *subfield) {
-              int addition = atoi(subfield);
+              int addition = tb_parse_int_or_zero(subfield);
               GET_MAX_HIT(c) = MAX(GET_MAX_HIT(c) + addition, 1);
             }
-            snprintf(str, slen, "%d", GET_MAX_HIT(c));
+            tb_snprintf(str, slen, "%d", GET_MAX_HIT(c));
           }
           else if (!str_cmp(field, "maxmana")) {
             if (subfield && *subfield) {
-              int addition = atoi(subfield);
+              int addition = tb_parse_int_or_zero(subfield);
               GET_MAX_MANA(c) = MAX(GET_MAX_MANA(c) + addition, 1);
             }
-            snprintf(str, slen, "%d", GET_MAX_MANA(c));
+            tb_snprintf(str, slen, "%d", GET_MAX_MANA(c));
           }
           else if (!str_cmp(field, "maxmove")) {
             if (subfield && *subfield) {
-              int addition = atoi(subfield);
+              int addition = tb_parse_int_or_zero(subfield);
               GET_MAX_MOVE(c) = MAX(GET_MAX_MOVE(c) + addition, 1);
             }
-            snprintf(str, slen, "%d", GET_MAX_MOVE(c));
+            tb_snprintf(str, slen, "%d", GET_MAX_MOVE(c));
           }
           else if (!str_cmp(field, "move")) {
             if (subfield && *subfield) {
-              int addition = atoi(subfield);
+              int addition = tb_parse_int_or_zero(subfield);
               GET_MOVE(c) += addition;
             }
-            snprintf(str, slen, "%d", GET_MOVE(c));
+            tb_snprintf(str, slen, "%d", GET_MOVE(c));
           }
           break;
         case 'n':
           if (!str_cmp(field, "name"))
-            snprintf(str, slen, "%s", GET_NAME(c));
+            tb_snprintf(str, slen, "%s", GET_NAME(c));
 
           else if (!str_cmp(field, "next_in_room")) {
             if (c->next_in_room)
-              snprintf(str, slen,"%c%ld",UID_CHAR, char_script_id(c->next_in_room));
+              tb_snprintf(str, slen,"%c%ld",UID_CHAR, char_script_id(c->next_in_room));
             else
               *str = '\0';
           }
           else if (!str_cmp(field, "npcflag")) {
             if (subfield && *subfield) {
                char buf[MAX_STRING_LENGTH];
-               sprintbitarray(MOB_FLAGS(c), action_bits, PM_ARRAY_MAX, buf);
+               sprintbitarray(MOB_FLAGS(c), action_bits, PM_ARRAY_MAX, buf, sizeof(buf));
                 if (str_str(buf, subfield))
-                  snprintf(str, slen, "1");
+                  tb_snprintf(str, slen, "1");
                 else
-                  snprintf(str, slen, "0");
+                  tb_snprintf(str, slen, "0");
               }
               else {
-                snprintf(str, slen, "0");
+                tb_snprintf(str, slen, "0");
               }
             }
           break;
@@ -938,24 +938,24 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
                 }
               }
             }
-            snprintf(str, slen, "%s", position_types[GET_POS(c)]);
+            tb_snprintf(str, slen, "%s", position_types[GET_POS(c)]);
           }
           else if (!str_cmp(field, "prac")) {
             if (subfield && *subfield) {
-              int addition = atoi(subfield);
+              int addition = tb_parse_int_or_zero(subfield);
               GET_PRACTICES(c) = MAX(0, GET_PRACTICES(c) + addition);
             }
-            snprintf(str, slen, "%d", GET_PRACTICES(c));
+            tb_snprintf(str, slen, "%d", GET_PRACTICES(c));
           }
           else if (!str_cmp(field, "pref")) {
             if (subfield && *subfield) {
               int pref = get_flag_by_name(preference_bits, subfield);
               if (!IS_NPC(c) && pref != NOFLAG && PRF_FLAGGED(c, pref))
-                strcpy(str, "1");
+                strlcpy(str, "1", slen);
               else
-                strcpy(str, "0");
+                strlcpy(str, "0", slen);
             } else
-              strcpy(str, "0");
+              strlcpy(str, "0", slen);
           }
           break;
         case 'q':
@@ -963,82 +963,82 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
               !str_cmp(field, "qp") || !str_cmp(field, "qpnts")))
           {
             if (subfield && *subfield) {
-              int addition = atoi(subfield);
+              int addition = tb_parse_int_or_zero(subfield);
               GET_QUESTPOINTS(c) += addition;
             }
-            snprintf(str, slen, "%d", GET_QUESTPOINTS(c));
+            tb_snprintf(str, slen, "%d", GET_QUESTPOINTS(c));
           }
            else if (!str_cmp(field, "quest"))
            {
                if (!IS_NPC(c) && (GET_QUEST(c) != NOTHING) && (real_quest(GET_QUEST(c)) != NOTHING))
-                 snprintf(str, slen, "%d", GET_QUEST(c));
+                 tb_snprintf(str, slen, "%d", GET_QUEST(c));
                else
-                 strcpy(str, "0");
+                 strlcpy(str, "0", slen);
              }
            else if (!str_cmp(field, "questdone"))
            {
                if (!IS_NPC(c) && subfield && *subfield) {
-                 int q_num = atoi(subfield);
+                 int q_num = tb_parse_int_or_zero(subfield);
                  if (is_complete(c, q_num))
-                   strcpy(str, "1");
+                   strlcpy(str, "1", slen);
                  else
-                   strcpy(str, "0");
+                   strlcpy(str, "0", slen);
                }
                else
-                 strcpy(str, "0");
+                 strlcpy(str, "0", slen);
              }
           break;
         case 'r':
           if (!str_cmp(field, "room")) {  /* in NOWHERE, return the void */
 /* see note in dg_scripts.h */
 #ifdef ACTOR_ROOM_IS_UID
-            snprintf(str, slen, "%c%ld",UID_CHAR,
+            tb_snprintf(str, slen, "%c%ld",UID_CHAR,
                (IN_ROOM(c)!= NOWHERE) ? room_script_id(world + IN_ROOM(c)) : ROOM_ID_BASE);
 #else
-            snprintf(str, slen, "%d", (IN_ROOM(c)!= NOWHERE) ? world[IN_ROOM(c)].number : 0);
+            tb_snprintf(str, slen, "%d", (IN_ROOM(c)!= NOWHERE) ? world[IN_ROOM(c)].number : 0);
 #endif
           }
           break;
         case 's':
           if (!str_cmp(field, "saving_breath")) {
             if (subfield && *subfield) {
-              int addition = atoi(subfield);
+              int addition = tb_parse_int_or_zero(subfield);
               GET_SAVE(c, SAVING_BREATH) += addition;
             }
-            snprintf(str, slen, "%d", GET_SAVE(c, SAVING_BREATH));
+            tb_snprintf(str, slen, "%d", GET_SAVE(c, SAVING_BREATH));
           }
           else if (!str_cmp(field, "saving_para")) {
             if (subfield && *subfield) {
-              int addition = atoi(subfield);
+              int addition = tb_parse_int_or_zero(subfield);
               GET_SAVE(c, SAVING_PARA) += addition;
             }
-            snprintf(str, slen, "%d", GET_SAVE(c, SAVING_PARA));
+            tb_snprintf(str, slen, "%d", GET_SAVE(c, SAVING_PARA));
           }
           else if (!str_cmp(field, "saving_petri")) {
             if (subfield && *subfield) {
-              int addition = atoi(subfield);
+              int addition = tb_parse_int_or_zero(subfield);
               GET_SAVE(c, SAVING_PETRI) += addition;
             }
-            snprintf(str, slen, "%d", GET_SAVE(c, SAVING_PETRI));
+            tb_snprintf(str, slen, "%d", GET_SAVE(c, SAVING_PETRI));
           }
           else if (!str_cmp(field, "saving_rod")) {
             if (subfield && *subfield) {
-              int addition = atoi(subfield);
+              int addition = tb_parse_int_or_zero(subfield);
               GET_SAVE(c, SAVING_ROD) += addition;
             }
-            snprintf(str, slen, "%d", GET_SAVE(c, SAVING_ROD));
+            tb_snprintf(str, slen, "%d", GET_SAVE(c, SAVING_ROD));
           }
           else if (!str_cmp(field, "saving_spell")) {
             if (subfield && *subfield) {
-              int addition = atoi(subfield);
+              int addition = tb_parse_int_or_zero(subfield);
               GET_SAVE(c, SAVING_SPELL) += addition;
             }
-            snprintf(str, slen, "%d", GET_SAVE(c, SAVING_SPELL));
+            tb_snprintf(str, slen, "%d", GET_SAVE(c, SAVING_SPELL));
           }
           else if (!str_cmp(field, "sex"))
-            snprintf(str, slen, "%s", genders[(int)GET_SEX(c)]);
+            tb_snprintf(str, slen, "%s", genders[(int)GET_SEX(c)]);
           else if (!str_cmp(field, "skill"))
-            snprintf(str, slen, "%s", skill_percent(c, subfield));
+            tb_snprintf(str, slen, "%s", skill_percent(c, subfield));
           else if (!str_cmp(field, "skillset")) {
             if (!IS_NPC(c) && subfield && *subfield) {
               char skillname[MAX_INPUT_LENGTH], *amount;
@@ -1047,7 +1047,7 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
               if (amount && *amount && is_number(amount)) {
                 int skillnum = find_skill_num(skillname);
                 if (skillnum > 0) {
-                  int new_value = MAX(0, MIN(100, atoi(amount)));
+                  int new_value = MAX(0, MIN(100, tb_parse_int_or_zero(amount)));
                   SET_SKILL(c, skillnum, new_value);
                 }
               }
@@ -1056,53 +1056,53 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
           }
           else if (!str_cmp(field, "str")) {
             if (subfield && *subfield) {
-              int addition = atoi(subfield);
+              int addition = tb_parse_int_or_zero(subfield);
               int max = (IS_NPC(c) || GET_LEVEL(c) >= LVL_GRGOD) ? 25 : 18;
               c->real_abils.str += addition;
               if (c->real_abils.str > max) c->real_abils.str = max;
               if (c->real_abils.str < 3) c->real_abils.str = 3;
               affect_total(c);
             }
-            snprintf(str, slen, "%d", GET_STR(c));
+            tb_snprintf(str, slen, "%d", GET_STR(c));
           }
           else if (!str_cmp(field, "stradd")) {
             if (GET_STR(c) >= 18) {
               if (subfield && *subfield) {
-                int addition = atoi(subfield);
+                int addition = tb_parse_int_or_zero(subfield);
                 c->real_abils.str_add += addition;
                 if (c->real_abils.str_add > 100) c->real_abils.str_add = 100;
                 if (c->real_abils.str_add < 0) c->real_abils.str_add = 0;
                 affect_total(c);
               }
-              snprintf(str, slen, "%d", GET_ADD(c));
+              tb_snprintf(str, slen, "%d", GET_ADD(c));
             }
           }
           break;
         case 't':
           if (!str_cmp(field, "thirst")) {
             if (subfield && *subfield) {
-              int addition = atoi(subfield);
+              int addition = tb_parse_int_or_zero(subfield);
               GET_COND(c, THIRST) = MAX(-1, MIN(addition, 24));
             }
-            snprintf(str, slen, "%d", GET_COND(c, THIRST));
+            tb_snprintf(str, slen, "%d", GET_COND(c, THIRST));
           }
           else if (!str_cmp(field, "title")) {
             if (!IS_NPC(c) && subfield && *subfield && valid_dg_target(c, DG_ALLOW_GODS)) {
               if (GET_TITLE(c)) free(GET_TITLE(c));
                 GET_TITLE(c) = strdup(subfield);
             }
-            snprintf(str, slen, "%s", IS_NPC(c) ? "" : GET_TITLE(c));
+            tb_snprintf(str, slen, "%s", IS_NPC(c) ? "" : GET_TITLE(c));
           }
           break;
 	case 'v':
           if (!str_cmp(field, "varexists")) {
             struct trig_var_data *remote_vd;
-            strcpy(str, "0");
+            strlcpy(str, "0", slen);
             if (SCRIPT(c)) {
               for (remote_vd = SCRIPT(c)->global_vars; remote_vd; remote_vd = remote_vd->next) {
                 if (!str_cmp(remote_vd->name, subfield)) break;
               }
-              if (remote_vd) strcpy(str, "1");
+              if (remote_vd) strlcpy(str, "1", slen);
             }
           }
           else if (!str_cmp(field, "vnum")) {
@@ -1111,43 +1111,43 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
               * something like if %actor.vnum(500)%. It should return false for PC's instead 
               * -- Fizban 02/18
               */ 
-              snprintf(str, slen, "%d", IS_NPC(c) ? (int)(GET_MOB_VNUM(c) == atoi(subfield)) : 0 );
+              tb_snprintf(str, slen, "%d", IS_NPC(c) ? (int)(GET_MOB_VNUM(c) == tb_parse_int_or_zero(subfield)) : 0 );
             } else {
               if (IS_NPC(c))
-                snprintf(str, slen, "%d", GET_MOB_VNUM(c));
+                tb_snprintf(str, slen, "%d", GET_MOB_VNUM(c));
               else
               /*
                * for compatibility with unsigned indexes
                * - this is deprecated - use %actor.is_pc% to check
                * instead of %actor.vnum% == -1  --Welcor 09/03
                */
-                strcpy(str, "-1");
+                strlcpy(str, "-1", slen);
             }
           }
           break;
         case 'w':
           if (!str_cmp(field, "weight"))
-            snprintf(str, slen, "%d", GET_WEIGHT(c));
+            tb_snprintf(str, slen, "%d", GET_WEIGHT(c));
           else if (!str_cmp(field, "wis")) {
             if (subfield && *subfield) {
-              int addition = atoi(subfield);
+              int addition = tb_parse_int_or_zero(subfield);
               int max = (IS_NPC(c) || GET_LEVEL(c) >= LVL_GRGOD) ? 25 : 18;
               c->real_abils.wis += addition;
               if (c->real_abils.wis > max) c->real_abils.wis = max;
               if (c->real_abils.wis < 3) c->real_abils.wis = 3;
               affect_total(c);
             }
-            snprintf(str, slen, "%d", GET_WIS(c));
+            tb_snprintf(str, slen, "%d", GET_WIS(c));
           }
           
           else if (!str_cmp(field, "wait")) 
           {
             if (subfield && *subfield)
             {
-              int addition = atoi(subfield);
+              int addition = tb_parse_int_or_zero(subfield);
               WAIT_STATE(c, addition * ( PULSE_VIOLENCE / 2) ); // by default violence is 2 seconds
             }
-            snprintf(str, slen, "%d", GET_WAIT_STATE(c));
+            tb_snprintf(str, slen, "%d", GET_WAIT_STATE(c));
           }
 
           break;
@@ -1159,7 +1159,7 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
             if (!str_cmp(vd->name, field))
               break;
           if (vd)
-            snprintf(str, slen, "%s", vd->value);
+            tb_snprintf(str, slen, "%s", vd->value);
           else {
             *str = '\0';
             script_log("Trigger: %s, VNum %d. unknown char field: '%s'",
@@ -1181,60 +1181,60 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
           if (!str_cmp(field, "affects")) {
             if (subfield && *subfield) {
               if (check_flags_by_name_ar(GET_OBJ_AFFECT(o), NUM_AFF_FLAGS, subfield, affected_bits) == TRUE)
-                snprintf(str, slen, "1");
+                tb_snprintf(str, slen, "1");
               else
-                snprintf(str, slen, "0");
+                tb_snprintf(str, slen, "0");
             } else
-              snprintf(str, slen, "0");
+              tb_snprintf(str, slen, "0");
           }
           break;
 	case 'c':
           if (!str_cmp(field, "cost")) {
             if (subfield && *subfield) {
-              int addition = atoi(subfield);
+              int addition = tb_parse_int_or_zero(subfield);
               GET_OBJ_COST(o) = MAX(1, addition + GET_OBJ_COST(o));
             }
-            snprintf(str, slen, "%d", GET_OBJ_COST(o));
+            tb_snprintf(str, slen, "%d", GET_OBJ_COST(o));
           }
 
           else if (!str_cmp(field, "cost_per_day")) {
             if (subfield && *subfield) {
-              int addition = atoi(subfield);
+              int addition = tb_parse_int_or_zero(subfield);
               GET_OBJ_RENT(o) = MAX(1, addition + GET_OBJ_RENT(o));
             }
-            snprintf(str, slen, "%d", GET_OBJ_RENT(o));
+            tb_snprintf(str, slen, "%d", GET_OBJ_RENT(o));
           }
 
           else if (!str_cmp(field, "carried_by")) {
             if (o->carried_by)
-              snprintf(str, slen,"%c%ld",UID_CHAR, char_script_id(o->carried_by));
+              tb_snprintf(str, slen,"%c%ld",UID_CHAR, char_script_id(o->carried_by));
             else
               *str = '\0';
           }
 
           else if (!str_cmp(field, "contents")) {
             if (o->contains)
-              snprintf(str, slen, "%c%ld", UID_CHAR, obj_script_id(o->contains));
+              tb_snprintf(str, slen, "%c%ld", UID_CHAR, obj_script_id(o->contains));
             else
               *str = '\0';
           }
           /* thanks to Jamie Nelson (Mordecai of 4 Dimensions MUD) */
           else if (!str_cmp(field, "count")) {
             if (GET_OBJ_TYPE(o) == ITEM_CONTAINER)
-              snprintf(str, slen, "%d", item_in_list(subfield, o->contains));
+              tb_snprintf(str, slen, "%d", item_in_list(subfield, o->contains));
             else
-            	strcpy(str, "0");
+            	strlcpy(str, "0", slen);
           }
           break;
         case 'e':
           if (!str_cmp(field, "extra")) {
             if (subfield && *subfield) {
               if (check_flags_by_name_ar(GET_OBJ_EXTRA(o), NUM_ITEM_FLAGS, subfield, extra_bits) > 0)
-                snprintf(str, slen, "1");
+                tb_snprintf(str, slen, "1");
               else
-                snprintf(str, slen, "0");
+                tb_snprintf(str, slen, "0");
             } else {
-              sprintbitarray(GET_OBJ_EXTRA(o), extra_bits, EF_ARRAY_MAX, str);
+              sprintbitarray(GET_OBJ_EXTRA(o), extra_bits, EF_ARRAY_MAX, str, sizeof(str));
             }
           }
           break;
@@ -1242,40 +1242,40 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
           /* thanks to Jamie Nelson (Mordecai of 4 Dimensions MUD) */
           if (!str_cmp(field, "has_in")) {
             if (GET_OBJ_TYPE(o) == ITEM_CONTAINER)
-              snprintf(str, slen, "%s", (item_in_list(subfield, o->contains) ? "1" : "0"));
+              tb_snprintf(str, slen, "%s", (item_in_list(subfield, o->contains) ? "1" : "0"));
             else
-              strcpy(str, "0");
+              strlcpy(str, "0", slen);
           }
           else if (!str_cmp(field, "hasattached")) {
             if (!(subfield && *subfield))
               *str = '\0';
             else {
-              i = atoi(subfield);
-              snprintf(str, slen, "%d", trig_is_attached(SCRIPT(o), i));
+              i = tb_parse_int_or_zero(subfield);
+              tb_snprintf(str, slen, "%d", trig_is_attached(SCRIPT(o), i));
             }
           }
           break;
         case 'i':
           if (!str_cmp(field, "id"))
-            snprintf(str, slen, "%ld", obj_script_id(o));
+            tb_snprintf(str, slen, "%ld", obj_script_id(o));
 
           else if (!str_cmp(field, "is_inroom")) {
             if (IN_ROOM(o) != NOWHERE)
-              snprintf(str, slen,"%c%ld",UID_CHAR, room_script_id(world + IN_ROOM(o)));
+              tb_snprintf(str, slen,"%c%ld",UID_CHAR, room_script_id(world + IN_ROOM(o)));
             else
               *str = '\0';
           }
           else if (!str_cmp(field, "is_pc")) {
-            strcpy(str, "-1");
+            strlcpy(str, "-1", slen);
           }
 	  break;
         case 'n':
           if (!str_cmp(field, "name"))
-            snprintf(str, slen, "%s",  o->name);
+            tb_snprintf(str, slen, "%s",  o->name);
 
           else if (!str_cmp(field, "next_in_list")) {
             if (o->next_content)
-              snprintf(str, slen,"%c%ld",UID_CHAR, obj_script_id(o->next_content));
+              tb_snprintf(str, slen,"%c%ld",UID_CHAR, obj_script_id(o->next_content));
             else
               *str = '\0';
           }
@@ -1284,72 +1284,72 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
           if (!str_cmp(field, "oset")) {
             if (subfield && *subfield) {
               if (handle_oset(o, subfield))
-                strcpy(str, "1");
+                strlcpy(str, "1", slen);
               else
-                strcpy(str, "0");
+                strlcpy(str, "0", slen);
             }
           }
           break;
         case 'r':
           if (!str_cmp(field, "room")) {
             if (obj_room(o) != NOWHERE)
-              snprintf(str, slen,"%c%ld",UID_CHAR, room_script_id(world + obj_room(o)));
+              tb_snprintf(str, slen,"%c%ld",UID_CHAR, room_script_id(world + obj_room(o)));
             else
               *str = '\0';
           }
           break;
         case 's':
           if (!str_cmp(field, "shortdesc"))
-            snprintf(str, slen, "%s",  o->short_description);
+            tb_snprintf(str, slen, "%s",  o->short_description);
           break;
         case 't':
           if (!str_cmp(field, "type"))
             sprinttype(GET_OBJ_TYPE(o), item_types, str, slen);
 
           else if (!str_cmp(field, "timer"))
-            snprintf(str, slen, "%d", GET_OBJ_TIMER(o));
+            tb_snprintf(str, slen, "%d", GET_OBJ_TIMER(o));
           break;
         case 'v':
           if (!str_cmp(field, "vnum"))
             if (subfield && *subfield) {
-              snprintf(str, slen, "%d", (int)(GET_OBJ_VNUM(o) == atoi(subfield)));
+              tb_snprintf(str, slen, "%d", (int)(GET_OBJ_VNUM(o) == tb_parse_int_or_zero(subfield)));
             } else {
-              snprintf(str, slen, "%d", GET_OBJ_VNUM(o));
+              tb_snprintf(str, slen, "%d", GET_OBJ_VNUM(o));
             }
           else if (!str_cmp(field, "val0"))
-            snprintf(str, slen, "%d", GET_OBJ_VAL(o, 0));
+            tb_snprintf(str, slen, "%d", GET_OBJ_VAL(o, 0));
 
           else if (!str_cmp(field, "val1"))
-            snprintf(str, slen, "%d", GET_OBJ_VAL(o, 1));
+            tb_snprintf(str, slen, "%d", GET_OBJ_VAL(o, 1));
 
           else if (!str_cmp(field, "val2"))
-            snprintf(str, slen, "%d", GET_OBJ_VAL(o, 2));
+            tb_snprintf(str, slen, "%d", GET_OBJ_VAL(o, 2));
 
           else if (!str_cmp(field, "val3"))
-            snprintf(str, slen, "%d", GET_OBJ_VAL(o, 3));
+            tb_snprintf(str, slen, "%d", GET_OBJ_VAL(o, 3));
           break;
         case 'w':
           if (!str_cmp(field, "wearflag")) {
 	    if (subfield && *subfield) {
 	      if (can_wear_on_pos(o, find_eq_pos_script(subfield)))
-	        snprintf(str, slen, "1");
+	        tb_snprintf(str, slen, "1");
 	      else
-	         snprintf(str, slen, "0");
+	         tb_snprintf(str, slen, "0");
 	    } else
-              snprintf(str, slen, "0");
+              tb_snprintf(str, slen, "0");
 	  }
 
 	  else if (!str_cmp(field, "weight")){
             if (subfield && *subfield) {
-              int addition = atoi(subfield);
+              int addition = tb_parse_int_or_zero(subfield);
               GET_OBJ_WEIGHT(o) = MAX(1, addition + GET_OBJ_WEIGHT(o));
             }
-            snprintf(str, slen, "%d", GET_OBJ_WEIGHT(o));
+            tb_snprintf(str, slen, "%d", GET_OBJ_WEIGHT(o));
           }
 
           else if (!str_cmp(field, "worn_by")) {
             if (o->worn_by)
-              snprintf(str, slen,"%c%ld",UID_CHAR, char_script_id(o->worn_by));
+              tb_snprintf(str, slen,"%c%ld",UID_CHAR, char_script_id(o->worn_by));
             else
               *str = '\0';
           }
@@ -1363,7 +1363,7 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
             if (!str_cmp(vd->name, field))
               break;
           if (vd)
-            snprintf(str, slen, "%s", vd->value);
+            tb_snprintf(str, slen, "%s", vd->value);
           else {
             *str = '\0';
             script_log("Trigger: %s, VNum %d, type: %d. unknown object field: '%s'",
@@ -1390,30 +1390,30 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
             if (!str_cmp(vd->name, field))
               break;
           if (vd)
-            snprintf(str, slen, "%s", vd->value);
+            tb_snprintf(str, slen, "%s", vd->value);
           else
             *str = '\0';
         }
       }
 
       else if (!str_cmp(field, "name"))
-        snprintf(str, slen, "%s",  r->name);
+        tb_snprintf(str, slen, "%s",  r->name);
 
       else if (!str_cmp(field, "sector"))
         sprinttype(r->sector_type, sector_types, str, slen);
 
       else if (!str_cmp(field, "vnum")) {
         if (subfield && *subfield) {
-          snprintf(str, slen, "%d", (int)(r->number == atoi(subfield)));
+          tb_snprintf(str, slen, "%d", (int)(r->number == tb_parse_int_or_zero(subfield)));
         } else {
-          snprintf(str, slen,"%d",r->number);
+          tb_snprintf(str, slen,"%d",r->number);
         }
       } else if (!str_cmp(field, "contents")) {
         if (subfield && *subfield) {
           for (obj = r->contents; obj; obj = obj->next_content) {
-            if (GET_OBJ_VNUM(obj) == atoi(subfield)) {
+            if (GET_OBJ_VNUM(obj) == tb_parse_int_or_zero(subfield)) {
               /* arg given, found */
-              snprintf(str, slen, "%c%ld", UID_CHAR, obj_script_id(obj));
+              tb_snprintf(str, slen, "%c%ld", UID_CHAR, obj_script_id(obj));
               return;
             }
           }
@@ -1421,7 +1421,7 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
             *str = '\0'; /* arg given, not found */
         } else { /* no arg given */
           if (r->contents) {
-            snprintf(str, slen, "%c%ld", UID_CHAR, obj_script_id(r->contents));
+            tb_snprintf(str, slen, "%c%ld", UID_CHAR, obj_script_id(r->contents));
           } else {
             *str = '\0';
           }
@@ -1430,14 +1430,14 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
 
       else if (!str_cmp(field, "people")) {
         if (r->people)
-          snprintf(str, slen, "%c%ld", UID_CHAR, char_script_id(r->people));
+          tb_snprintf(str, slen, "%c%ld", UID_CHAR, char_script_id(r->people));
         else
           *str = '\0';
       }
       else if (!str_cmp(field, "id")) {
         room_rnum rnum = real_room(r->number);
         if (rnum != NOWHERE)
-          snprintf(str, slen, "%ld", room_script_id(world + rnum));
+          tb_snprintf(str, slen, "%ld", room_script_id(world + rnum));
         else
           *str = '\0';
       }
@@ -1450,7 +1450,7 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
         };
 
         if (!IS_SET_AR(r->room_flags, ROOM_INDOORS))
-          snprintf(str, slen, "%s", sky_look[weather_info.sky]);
+          tb_snprintf(str, slen, "%s", sky_look[weather_info.sky]);
         else
           *str = '\0';
       }
@@ -1458,36 +1458,36 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
         if (!(subfield && *subfield))
           *str = '\0';
         else {
-          i = atoi(subfield);
-          snprintf(str, slen, "%d", trig_is_attached(SCRIPT(r), i));
+          i = tb_parse_int_or_zero(subfield);
+          tb_snprintf(str, slen, "%d", trig_is_attached(SCRIPT(r), i));
         }
       }
       else if (!str_cmp(field, "zonenumber"))
-        snprintf(str, slen, "%d",  zone_table[r->zone].number);
+        tb_snprintf(str, slen, "%d",  zone_table[r->zone].number);
       else if (!str_cmp(field, "zonename"))
-        snprintf(str, slen, "%s",  zone_table[r->zone].name);
+        tb_snprintf(str, slen, "%s",  zone_table[r->zone].name);
       else if (!str_cmp(field, "roomflag")) {
         if (subfield && *subfield) {
           room_rnum thisroom = real_room(r->number);
           if (check_flags_by_name_ar(ROOM_FLAGS(thisroom), NUM_ROOM_FLAGS, subfield, room_bits) == TRUE)
-            snprintf(str, slen, "1");
+            tb_snprintf(str, slen, "1");
           else
-            snprintf(str, slen, "0");
+            tb_snprintf(str, slen, "0");
         } else
-          snprintf(str, slen, "0");
+          tb_snprintf(str, slen, "0");
       }
       else if (!str_cmp(field, "north")) {
         if (R_EXIT(r, NORTH)) {
           if (subfield && *subfield) {
             if (!str_cmp(subfield, "vnum"))
-              snprintf(str, slen, "%d", GET_ROOM_VNUM(R_EXIT(r, NORTH)->to_room));
+              tb_snprintf(str, slen, "%d", GET_ROOM_VNUM(R_EXIT(r, NORTH)->to_room));
             else if (!str_cmp(subfield, "key"))
-              snprintf(str, slen, "%d", R_EXIT(r, NORTH)->key);
+              tb_snprintf(str, slen, "%d", R_EXIT(r, NORTH)->key);
             else if (!str_cmp(subfield, "bits"))
               sprintbit(R_EXIT(r, NORTH)->exit_info ,exit_bits, str, slen);
             else if (!str_cmp(subfield, "room")) {
               if (R_EXIT(r, NORTH)->to_room != NOWHERE)
-                snprintf(str, slen, "%c%ld", UID_CHAR, room_script_id(world + R_EXIT(r, NORTH)->to_room));
+                tb_snprintf(str, slen, "%c%ld", UID_CHAR, room_script_id(world + R_EXIT(r, NORTH)->to_room));
               else
                 *str = '\0';
             }
@@ -1500,14 +1500,14 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
         if (R_EXIT(r, EAST)) {
           if (subfield && *subfield) {
             if (!str_cmp(subfield, "vnum"))
-              snprintf(str, slen, "%d", GET_ROOM_VNUM(R_EXIT(r, EAST)->to_room));
+              tb_snprintf(str, slen, "%d", GET_ROOM_VNUM(R_EXIT(r, EAST)->to_room));
             else if (!str_cmp(subfield, "key"))
-              snprintf(str, slen, "%d", R_EXIT(r, EAST)->key);
+              tb_snprintf(str, slen, "%d", R_EXIT(r, EAST)->key);
             else if (!str_cmp(subfield, "bits"))
               sprintbit(R_EXIT(r, EAST)->exit_info ,exit_bits, str, slen);
             else if (!str_cmp(subfield, "room")) {
               if (R_EXIT(r, EAST)->to_room != NOWHERE)
-                snprintf(str, slen, "%c%ld", UID_CHAR, room_script_id(world + R_EXIT(r, EAST)->to_room));
+                tb_snprintf(str, slen, "%c%ld", UID_CHAR, room_script_id(world + R_EXIT(r, EAST)->to_room));
               else
                 *str = '\0';
             }
@@ -1520,14 +1520,14 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
         if (R_EXIT(r, SOUTH)) {
           if (subfield && *subfield) {
             if (!str_cmp(subfield, "vnum"))
-              snprintf(str, slen, "%d", GET_ROOM_VNUM(R_EXIT(r, SOUTH)->to_room));
+              tb_snprintf(str, slen, "%d", GET_ROOM_VNUM(R_EXIT(r, SOUTH)->to_room));
             else if (!str_cmp(subfield, "key"))
-              snprintf(str, slen, "%d", R_EXIT(r, SOUTH)->key);
+              tb_snprintf(str, slen, "%d", R_EXIT(r, SOUTH)->key);
             else if (!str_cmp(subfield, "bits"))
               sprintbit(R_EXIT(r, SOUTH)->exit_info ,exit_bits, str, slen);
             else if (!str_cmp(subfield, "room")) {
               if (R_EXIT(r, SOUTH)->to_room != NOWHERE)
-                snprintf(str, slen, "%c%ld", UID_CHAR, room_script_id(world + R_EXIT(r, SOUTH)->to_room));
+                tb_snprintf(str, slen, "%c%ld", UID_CHAR, room_script_id(world + R_EXIT(r, SOUTH)->to_room));
               else
                 *str = '\0';
             }
@@ -1540,14 +1540,14 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
         if (R_EXIT(r, WEST)) {
           if (subfield && *subfield) {
             if (!str_cmp(subfield, "vnum"))
-              snprintf(str, slen, "%d", GET_ROOM_VNUM(R_EXIT(r, WEST)->to_room));
+              tb_snprintf(str, slen, "%d", GET_ROOM_VNUM(R_EXIT(r, WEST)->to_room));
             else if (!str_cmp(subfield, "key"))
-              snprintf(str, slen, "%d", R_EXIT(r, WEST)->key);
+              tb_snprintf(str, slen, "%d", R_EXIT(r, WEST)->key);
             else if (!str_cmp(subfield, "bits"))
               sprintbit(R_EXIT(r, WEST)->exit_info ,exit_bits, str, slen);
             else if (!str_cmp(subfield, "room")) {
               if (R_EXIT(r, WEST)->to_room != NOWHERE)
-                snprintf(str, slen, "%c%ld", UID_CHAR, room_script_id(world + R_EXIT(r, WEST)->to_room));
+                tb_snprintf(str, slen, "%c%ld", UID_CHAR, room_script_id(world + R_EXIT(r, WEST)->to_room));
               else
                 *str = '\0';
             }
@@ -1560,14 +1560,14 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
         if (R_EXIT(r, UP)) {
           if (subfield && *subfield) {
             if (!str_cmp(subfield, "vnum"))
-              snprintf(str, slen, "%d", GET_ROOM_VNUM(R_EXIT(r, UP)->to_room));
+              tb_snprintf(str, slen, "%d", GET_ROOM_VNUM(R_EXIT(r, UP)->to_room));
             else if (!str_cmp(subfield, "key"))
-              snprintf(str, slen, "%d", R_EXIT(r, UP)->key);
+              tb_snprintf(str, slen, "%d", R_EXIT(r, UP)->key);
             else if (!str_cmp(subfield, "bits"))
               sprintbit(R_EXIT(r, UP)->exit_info ,exit_bits, str, slen);
             else if (!str_cmp(subfield, "room")) {
               if (R_EXIT(r, UP)->to_room != NOWHERE)
-                snprintf(str, slen, "%c%ld", UID_CHAR, room_script_id(world + R_EXIT(r, UP)->to_room));
+                tb_snprintf(str, slen, "%c%ld", UID_CHAR, room_script_id(world + R_EXIT(r, UP)->to_room));
               else
                 *str = '\0';
             }
@@ -1580,14 +1580,14 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
         if (R_EXIT(r, DOWN)) {
           if (subfield && *subfield) {
             if (!str_cmp(subfield, "vnum"))
-              snprintf(str, slen, "%d", GET_ROOM_VNUM(R_EXIT(r, DOWN)->to_room));
+              tb_snprintf(str, slen, "%d", GET_ROOM_VNUM(R_EXIT(r, DOWN)->to_room));
             else if (!str_cmp(subfield, "key"))
-              snprintf(str, slen, "%d", R_EXIT(r, DOWN)->key);
+              tb_snprintf(str, slen, "%d", R_EXIT(r, DOWN)->key);
             else if (!str_cmp(subfield, "bits"))
               sprintbit(R_EXIT(r, DOWN)->exit_info ,exit_bits, str, slen);
             else if (!str_cmp(subfield, "room")) {
               if (R_EXIT(r, DOWN)->to_room != NOWHERE)
-                snprintf(str, slen, "%c%ld", UID_CHAR, room_script_id(world + R_EXIT(r, DOWN)->to_room));
+                tb_snprintf(str, slen, "%c%ld", UID_CHAR, room_script_id(world + R_EXIT(r, DOWN)->to_room));
               else
                 *str = '\0';
             }
@@ -1602,7 +1602,7 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
             if (!str_cmp(vd->name, field))
               break;
           if (vd)
-            snprintf(str, slen, "%s", vd->value);
+            tb_snprintf(str, slen, "%s", vd->value);
           else {
             *str = '\0';
             script_log("Trigger: %s, VNum %d, type: %d. unknown room field: '%s'",
@@ -1639,13 +1639,14 @@ void var_subst(void *go, struct script_data *sc, trig_data *trig,
 
   /* skip out if no %'s */
   if (!strchr(line, '%')) {
-    strcpy(buf, line);
+    strlcpy(buf, line, MAX_INPUT_LENGTH);
     return;
   }
   /*lets just empty these to start with*/
   *repl_str = *tmp = *tmp2 = '\0';
 
-  p = strcpy(tmp, line);
+  strlcpy(tmp, line, sizeof(tmp));
+  p = tmp;
   subfield_p = subfield;
 
   left = MAX_INPUT_LENGTH - 1;
@@ -1684,9 +1685,9 @@ void var_subst(void *go, struct script_data *sc, trig_data *trig,
             *subfield_p = '\0';
             find_replacement(go, sc, trig, type, var, field, subfield, repl_str, sizeof(repl_str));
             if (*repl_str) {
-              snprintf(tmp2, sizeof(tmp2), "eval tmpvr %s", repl_str); //temp var
+              tb_snprintf(tmp2, sizeof(tmp2), "eval tmpvr %s", repl_str); //temp var
               process_eval(go, sc, trig, type, tmp2);
-              strcpy(var, "tmpvr");
+              strlcpy(var, "tmpvr", sizeof(tmp) - (size_t)(var - tmp));
               field = p;
               dots = 0;
               continue;
@@ -1712,15 +1713,19 @@ void var_subst(void *go, struct script_data *sc, trig_data *trig,
 
       if (*subfield) {
         var_subst(go, sc, trig, type, subfield, tmp2);
-        strcpy(subfield, tmp2);
+        strlcpy(subfield, tmp2, sizeof(subfield));
       }
 
       find_replacement(go, sc, trig, type, var, field, subfield, repl_str, sizeof(repl_str));
 
-      strncat(buf, repl_str, left);
-      len = strlen(repl_str);
-      buf += len;
-      left -= len;
+      {
+        size_t copied = strlcpy(buf, repl_str, (size_t)left + 1);
+        if (copied > (size_t)left)
+          copied = (size_t)left;
+        len = (int)copied;
+        buf += len;
+        left -= len;
+      }
     } /* else if *p .. */
   } /* while *p .. */
   *buf = '\0';

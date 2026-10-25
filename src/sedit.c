@@ -72,7 +72,7 @@ ACMD(do_oasis_sedit)
     save = TRUE;
 
     if (is_number(buf2))
-      number = atoi(buf2);
+      number = tb_parse_int_or_zero(buf2);
     else if (GET_OLC_ZONE(ch) > 0) {
       zone_rnum zlok;
 
@@ -90,7 +90,7 @@ ACMD(do_oasis_sedit)
 
   /* If a numeric argument was given, get it. */
   if (number == NOWHERE)
-    number = atoi(buf1);
+    number = tb_parse_int_or_zero(buf1);
 
   if (number < IDXTYPE_MIN || number > IDXTYPE_MAX) {
     send_to_char(ch, "That shop VNUM can't exist.\r\n");
@@ -681,7 +681,7 @@ void sedit_parse(struct descriptor_data *d, char *arg)
 
     /* Numerical responses. */
   case SEDIT_KEEPER:
-    if ((i = atoi(arg)) != -1)
+    if ((i = tb_parse_int_or_zero(arg)) != -1)
       if ((i = real_mobile(i)) == NOBODY) {
 	write_to_output(d, "That mobile does not exist, try again : ");
 	return;
@@ -694,16 +694,16 @@ void sedit_parse(struct descriptor_data *d, char *arg)
     mob_index[i].func = shop_keeper;
     break;
   case SEDIT_OPEN1:
-    S_OPEN1(OLC_SHOP(d)) = LIMIT(atoi(arg), 0, 28);
+    S_OPEN1(OLC_SHOP(d)) = LIMIT(tb_parse_int_or_zero(arg), 0, 28);
     break;
   case SEDIT_OPEN2:
-    S_OPEN2(OLC_SHOP(d)) = LIMIT(atoi(arg), 0, 28);
+    S_OPEN2(OLC_SHOP(d)) = LIMIT(tb_parse_int_or_zero(arg), 0, 28);
     break;
   case SEDIT_CLOSE1:
-    S_CLOSE1(OLC_SHOP(d)) = LIMIT(atoi(arg), 0, 28);
+    S_CLOSE1(OLC_SHOP(d)) = LIMIT(tb_parse_int_or_zero(arg), 0, 28);
     break;
   case SEDIT_CLOSE2:
-    S_CLOSE2(OLC_SHOP(d)) = LIMIT(atoi(arg), 0, 28);
+    S_CLOSE2(OLC_SHOP(d)) = LIMIT(tb_parse_int_or_zero(arg), 0, 28);
     break;
   case SEDIT_BUY_PROFIT:
     sscanf(arg, "%f", &S_BUYPROFIT(OLC_SHOP(d)));
@@ -712,16 +712,16 @@ void sedit_parse(struct descriptor_data *d, char *arg)
     sscanf(arg, "%f", &S_SELLPROFIT(OLC_SHOP(d)));
     break;
   case SEDIT_TYPE_MENU:
-    OLC_VAL(d) = LIMIT(atoi(arg), 0, NUM_ITEM_TYPES - 1);
+    OLC_VAL(d) = LIMIT(tb_parse_int_or_zero(arg), 0, NUM_ITEM_TYPES - 1);
     write_to_output(d, "Enter namelist (return for none) :-\r\n] ");
     OLC_MODE(d) = SEDIT_NAMELIST;
     return;
   case SEDIT_DELETE_TYPE:
-    remove_shop_from_type_list(&(S_NAMELISTS(OLC_SHOP(d))), atoi(arg));
+    remove_shop_from_type_list(&(S_NAMELISTS(OLC_SHOP(d))), tb_parse_int_or_zero(arg));
     sedit_namelist_menu(d);
     return;
   case SEDIT_NEW_PRODUCT:
-    if ((i = atoi(arg)) != -1)
+    if ((i = tb_parse_int_or_zero(arg)) != -1)
       if ((i = real_object(i)) == NOTHING) {
 	write_to_output(d, "That object does not exist, try again : ");
 	return;
@@ -731,39 +731,39 @@ void sedit_parse(struct descriptor_data *d, char *arg)
     sedit_products_menu(d);
     return;
   case SEDIT_DELETE_PRODUCT:
-    remove_shop_from_int_list(&(S_PRODUCTS(OLC_SHOP(d))), atoi(arg));
+    remove_shop_from_int_list(&(S_PRODUCTS(OLC_SHOP(d))), tb_parse_int_or_zero(arg));
     sedit_products_menu(d);
     return;
   case SEDIT_NEW_ROOM:
-    if ((i = atoi(arg)) != -1)
+    if ((i = tb_parse_int_or_zero(arg)) != -1)
       if ((i = real_room(i)) == NOWHERE) {
 	write_to_output(d, "That room does not exist, try again : ");
 	return;
       }
     if (i >= 0)
-      add_shop_to_int_list(&(S_ROOMS(OLC_SHOP(d))), atoi(arg));
+      add_shop_to_int_list(&(S_ROOMS(OLC_SHOP(d))), tb_parse_int_or_zero(arg));
     sedit_rooms_menu(d);
     return;
   case SEDIT_DELETE_ROOM:
-    remove_shop_from_int_list(&(S_ROOMS(OLC_SHOP(d))), atoi(arg));
+    remove_shop_from_int_list(&(S_ROOMS(OLC_SHOP(d))), tb_parse_int_or_zero(arg));
     sedit_rooms_menu(d);
     return;
   case SEDIT_SHOP_FLAGS:
-    if ((i = LIMIT(atoi(arg), 0, NUM_SHOP_FLAGS)) > 0) {
+    if ((i = LIMIT(tb_parse_int_or_zero(arg), 0, NUM_SHOP_FLAGS)) > 0) {
       TOGGLE_BIT(S_BITVECTOR(OLC_SHOP(d)), 1 << (i - 1));
       sedit_shop_flags_menu(d);
       return;
     }
     break;
   case SEDIT_NOTRADE:
-    if ((i = LIMIT(atoi(arg), 0, NUM_TRADERS)) > 0) {
+    if ((i = LIMIT(tb_parse_int_or_zero(arg), 0, NUM_TRADERS)) > 0) {
       TOGGLE_BIT(S_NOTRADE(OLC_SHOP(d)), 1 << (i - 1));
       sedit_no_trade_menu(d);
       return;
     }
     break;
   case SEDIT_COPY:
-    if ((i = real_shop(atoi(arg))) != NOWHERE) {
+    if ((i = real_shop(tb_parse_int_or_zero(arg))) != NOWHERE) {
       sedit_setup_existing(d, i);
     } else
       write_to_output(d, "That shop does not exist.\r\n");

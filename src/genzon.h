@@ -9,8 +9,8 @@
 * is attributed to:
 * Copyright 1996 by Harvey Gilpin, 1997-2001 by George Greer.                                                    
 */
-#ifndef _GENZON_H_
-#define _GENZON_H_
+#ifndef TBAMUD_GENZON_H_INCLUDED
+#define TBAMUD_GENZON_H_INCLUDED
 
 zone_rnum create_new_zone(zone_vnum vzone_num, room_vnum bottom, room_vnum top, const char **error);
 void remove_room_zone_commands(zone_rnum zone, room_rnum room_num);
@@ -22,4 +22,4 @@ void delete_zone_command(struct zone_data *zone, int pos);
 zone_rnum real_zone_by_thing(room_vnum vznum);
 void create_world_index(int znum, const char *type);
 
-#endif /* _GENZON_H_ */
+#endif /* TBAMUD_GENZON_H_INCLUDED */

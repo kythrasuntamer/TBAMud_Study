@@ -200,7 +200,7 @@ ACMD(do_order)
     if (vict) {
       char buf[MAX_STRING_LENGTH];
 
-      snprintf(buf, sizeof(buf), "$N orders you to '%s'", message);
+      tb_snprintf(buf, sizeof(buf), "$N orders you to '%s'", message);
       act(buf, FALSE, vict, 0, ch, TO_CHAR);
       act("$n gives $N an order.", FALSE, ch, 0, vict, TO_ROOM);
 
@@ -213,7 +213,7 @@ ACMD(do_order)
     } else {			/* This is order "followers" */
       char buf[MAX_STRING_LENGTH];
 
-      snprintf(buf, sizeof(buf), "$n issues the order '%s'.", message);
+      tb_snprintf(buf, sizeof(buf), "$n issues the order '%s'.", message);
       act(buf, FALSE, ch, 0, 0, TO_ROOM);
 
       for (k = ch->followers; k; k = k->next) {

@@ -10,8 +10,8 @@
 * CircleMUD is based on DikuMUD, Copyright (C) 1990, 1991.               
 *
 */
-#ifndef _BOARDS_H_
-#define _BOARDS_H_
+#ifndef TBAMUD_BOARDS_H_INCLUDED
+#define TBAMUD_BOARDS_H_INCLUDED
 
 #define NUM_OF_BOARDS		7	/* change if needed! */
 #define MAX_BOARD_MESSAGES 	60      /* arbitrary -- change if needed */
@@ -63,4 +63,4 @@ void board_clear_all(void);
 
 extern struct board_info_type board_info[NUM_OF_BOARDS];
 
-#endif /* _BOARDS_H_ */
+#endif /* TBAMUD_BOARDS_H_INCLUDED */

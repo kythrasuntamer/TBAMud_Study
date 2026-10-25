@@ -25,7 +25,7 @@ static void postmaster_send_mail(struct char_data *ch, struct char_data *mailman
 static void postmaster_check_mail(struct char_data *ch, struct char_data *mailman, int cmd, char *arg);
 static void postmaster_receive_mail(struct char_data *ch, struct char_data *mailman, int cmd, char *arg);
 static int mail_recip_ok(const char *name);
-static void write_mail_record(FILE *mail_file, struct mail_t *record);
+static int write_mail_record(FILE *mail_file, struct mail_t *record);
 static void free_mail_record(struct mail_t *record);
 static struct mail_t *read_mail_record(FILE *mail_file);
 
@@ -57,10 +57,36 @@ static struct mail_t *read_mail_record(FILE *mail_file)
   if (!get_line(mail_file, line))
   	return NULL;
 
-  if (sscanf(line, "### %ld %ld %ld", &recipient, &sender, (long *)&sent_time) != 3) {
-  	log("Mail system - fatal error - malformed mail header");
-  	log("Line was: %s", line);
-  	return NULL;
+  {
+    char recipient_text[32], sender_text[32], time_text[32];
+    char *end;
+    long parsed_time;
+
+    if (sscanf(line, "### %31s %31s %31s", recipient_text, sender_text, time_text) != 3) {
+      log("Mail system - fatal error - malformed mail header");
+      log("Line was: %s", line);
+      return NULL;
+    }
+
+    errno = 0;
+    recipient = strtol(recipient_text, &end, 10);
+    if (errno == ERANGE || end == recipient_text || *end != '\0') {
+      log("SYSERR: mail record has invalid recipient id '%s' in header '%s'", recipient_text, line);
+      return NULL;
+    }
+    errno = 0;
+    sender = strtol(sender_text, &end, 10);
+    if (errno == ERANGE || end == sender_text || *end != '\0') {
+      log("SYSERR: mail record has invalid sender id '%s' in header '%s'", sender_text, line);
+      return NULL;
+    }
+    errno = 0;
+    parsed_time = strtol(time_text, &end, 10);
+    if (errno == ERANGE || end == time_text || *end != '\0') {
+      log("SYSERR: mail record has invalid timestamp '%s' in header '%s'", time_text, line);
+      return NULL;
+    }
+    sent_time = (time_t)parsed_time;
   }
 
   CREATE(record, struct mail_t, 1);
@@ -73,14 +99,23 @@ static struct mail_t *read_mail_record(FILE *mail_file)
   return record;
 }
 
-static void write_mail_record(FILE *mail_file, struct mail_t *record)
+static int write_mail_record(FILE *mail_file, struct mail_t *record)
 {
-	fprintf(mail_file, "### %ld %ld %ld\n"
-	                   "%s~\n",
-                     record->recipient,
-                     record->sender,
-                     (long)record->sent_time,
-                     record->body );
+  if (mail_file == NULL || record == NULL || record->body == NULL) {
+    log("SYSERR: write_mail_record called with invalid argument (stream=%p record=%p body=%p)",
+        (void *)mail_file, (void *)record, record ? (void *)record->body : NULL);
+    return FALSE;
+  }
+
+  if (fprintf(mail_file, "### %ld %ld %ld\n%s~\n",
+              record->recipient, record->sender, (long)record->sent_time,
+              record->body) < 0) {
+    int saved_errno = errno;
+    log("SYSERR: mail write failed for sender %ld recipient %ld: %s (errno=%d)",
+        record->sender, record->recipient, strerror(saved_errno), saved_errno);
+    return FALSE;
+  }
+  return TRUE;
 }
 
 /* int scan_file(none)
@@ -95,9 +130,16 @@ int scan_file(void)
   struct mail_t *record;
 
   if (!(mail_file = fopen(MAIL_FILE, "r"))) {
-    log("   Mail file non-existant... creating new file.");
-    touch(MAIL_FILE);
-    return TRUE;
+    int saved_errno = errno;
+    if (saved_errno == ENOENT) {
+      log("   Mail file does not exist; creating %s.", MAIL_FILE);
+      if (touch(MAIL_FILE) != 0)
+        return FALSE;
+      return TRUE;
+    }
+    log("SYSERR: Cannot open mail file %s for scan: %s (errno=%d)",
+        MAIL_FILE, strerror(saved_errno), saved_errno);
+    return FALSE;
   }
 
   record = read_mail_record(mail_file);
@@ -108,7 +150,7 @@ int scan_file(void)
     count++;
   }
 
-  fclose(mail_file);
+  tb_fclose(mail_file);
  	log("   Mail file read -- %d messages.", count);
  	return TRUE;
 }
@@ -124,7 +166,7 @@ int has_mail(long recipient)
   struct mail_t *record;
 
   if (!(mail_file = fopen(MAIL_FILE, "r"))) {
-    perror("read_delete: Mail file not accessible.");
+    TB_REPORT_ERRNO("fopen", MAIL_FILE);
     return FALSE;
   }
 
@@ -133,13 +175,13 @@ int has_mail(long recipient)
   while (record) {
   	if (record->recipient == recipient) {
   		free_mail_record(record);
-  		fclose(mail_file);
+  		tb_fclose(mail_file);
   		return TRUE;
     }
     free_mail_record(record);
     record = read_mail_record(mail_file);
   }
-  fclose(mail_file);
+  tb_fclose(mail_file);
   return FALSE;
 }
 
@@ -157,7 +199,8 @@ void store_mail(long to, long from, char *message_pointer)
   struct mail_t *record;
 
   if (!(mail_file = fopen(MAIL_FILE, "a"))) {
-    perror("store_mail: Mail file not accessible.");
+    TB_REPORT_ERRNO("fopen", MAIL_FILE);
+    log("SYSERR: store_mail failed before writing message from %ld to %ld", from, to);
     return;
   }
   CREATE(record, struct mail_t, 1);
@@ -167,9 +210,14 @@ void store_mail(long to, long from, char *message_pointer)
   record->sent_time = time(0);
   record->body = message_pointer;
 
-  write_mail_record(mail_file, record);
+  if (!write_mail_record(mail_file, record)) {
+    log("SYSERR: store_mail failed while persisting message from %ld to %ld", from, to);
+  } else if (!tb_fflush_checked(mail_file, MAIL_FILE)) {
+    log("SYSERR: store_mail write for message from %ld to %ld could not be flushed", from, to);
+  }
   free(record); /* don't free the body */
-  fclose(mail_file);
+  if (!tb_fclose_checked(mail_file, MAIL_FILE))
+    log("SYSERR: store_mail close failed after message from %ld to %ld", from, to);
 }
 
 /* char *read_delete(long #1)
@@ -182,16 +230,19 @@ char *read_delete(long recipient)
 {
   FILE *mail_file, *new_file;
   struct mail_t *record, *record_to_keep = NULL;
-  char buf[MAX_STRING_LENGTH];
+  char buf[MAX_STRING_LENGTH], backup_file[MAX_STRING_LENGTH];
+  int name_result;
 
   if (!(mail_file = fopen(MAIL_FILE, "r"))) {
-    perror("read_delete: Mail file not accessible.");
+    TB_REPORT_ERRNO("fopen", MAIL_FILE);
+    log("SYSERR: read_delete could not open mail store for recipient %ld", recipient);
     return strdup("Mail system malfunction - please report this");
   }
 
   if (!(new_file = fopen(MAIL_FILE_TMP, "w"))) {
-    perror("read_delete: new Mail file not accessible.");
-    fclose(mail_file);
+    TB_REPORT_ERRNO("fopen", MAIL_FILE_TMP);
+    log("SYSERR: read_delete could not create rewrite file for recipient %ld", recipient);
+    tb_fclose(mail_file);
     return strdup("Mail system malfunction - please report this");
   }
 
@@ -203,22 +254,33 @@ char *read_delete(long recipient)
   		record = read_mail_record(mail_file);
   		continue; /* don't write and free this one just yet */
     }
-    write_mail_record(new_file, record);
+    if (!write_mail_record(new_file, record)) {
+      log("SYSERR: read_delete aborted mail rewrite for recipient %ld while preserving message from %ld to %ld",
+          recipient, record->sender, record->recipient);
+      free_mail_record(record);
+      if (record_to_keep)
+        free_mail_record(record_to_keep);
+      tb_fclose(mail_file);
+      tb_fclose(new_file);
+      if (remove(MAIL_FILE_TMP) != 0 && errno != ENOENT)
+        TB_REPORT_ERRNO("remove", MAIL_FILE_TMP);
+      return strdup("Mail system malfunction - please report this");
+    }
     free_mail_record(record);
     record = read_mail_record(mail_file);
   }
 
   if (!record_to_keep)
-  	sprintf(buf, "Mail system error - please report");
+  	tb_snprintf(buf, sizeof(buf), "Mail system error - please report");
   else {
     char timestr[25], *from, *to;
 
-    strftime(timestr, sizeof(timestr), "%c", localtime(&(record_to_keep->sent_time)));
+    tb_strftime(timestr, sizeof(timestr), "%c", localtime(&(record_to_keep->sent_time)));
 
     from = get_name_by_id(record_to_keep->sender);
     to = get_name_by_id(record_to_keep->recipient);
 
- 		snprintf(buf, sizeof(buf),
+ 		tb_snprintf(buf, sizeof(buf),
              " * * * * tbaMUD Mail System * * * *\r\n"
              "Date: %s\r\n"
              "To  : %s\r\n"
@@ -233,11 +295,60 @@ char *read_delete(long recipient)
 
     free_mail_record(record_to_keep);
   }
-  fclose(mail_file);
-  fclose(new_file);
+  if (!tb_fclose_checked(mail_file, MAIL_FILE)) {
+    log("SYSERR: read_delete detected a close failure on source mail store for recipient %ld", recipient);
+    (void)tb_fclose_checked(new_file, MAIL_FILE_TMP);
+    if (remove(MAIL_FILE_TMP) != 0 && errno != ENOENT)
+      TB_REPORT_ERRNO("remove", MAIL_FILE_TMP);
+    return NULL;
+  }
 
-  remove(MAIL_FILE);
-  rename(MAIL_FILE_TMP, MAIL_FILE);
+  {
+    int flush_ok = tb_fflush_checked(new_file, MAIL_FILE_TMP);
+    int close_ok = tb_fclose_checked(new_file, MAIL_FILE_TMP);
+    if (!flush_ok || !close_ok) {
+      log("SYSERR: read_delete aborted replacement because temporary mail store was not durably written for recipient %ld",
+          recipient);
+      if (remove(MAIL_FILE_TMP) != 0 && errno != ENOENT)
+        TB_REPORT_ERRNO("remove", MAIL_FILE_TMP);
+      return NULL;
+    }
+  }
+
+  name_result = snprintf(backup_file, sizeof(backup_file), "%s.bak", MAIL_FILE);
+  if (name_result < 0 || (size_t)name_result >= sizeof(backup_file)) {
+    log("SYSERR: mail backup filename is too long; refusing unsafe replacement");
+    return NULL;
+  }
+
+  /* Prefer atomic replacement; fall back to backup+rollback where required. */
+  if (rename(MAIL_FILE_TMP, MAIL_FILE) != 0) {
+    int replace_errno = errno;
+
+    if (remove(backup_file) != 0 && errno != ENOENT)
+      TB_REPORT_ERRNO("remove", backup_file);
+
+    if (rename(MAIL_FILE, backup_file) != 0) {
+      errno = replace_errno;
+      TB_REPORT_ERRNO("rename", MAIL_FILE);
+      log("SYSERR: mail rewrite for recipient %ld left live store intact and temp file at %s",
+          recipient, MAIL_FILE_TMP);
+      return NULL;
+    }
+
+    if (rename(MAIL_FILE_TMP, MAIL_FILE) != 0) {
+      int commit_errno = errno;
+      log("SYSERR: mail replacement failed for recipient %ld; attempting rollback", recipient);
+      if (rename(backup_file, MAIL_FILE) != 0)
+        TB_REPORT_ERRNO("rename", MAIL_FILE);
+      errno = commit_errno;
+      TB_REPORT_ERRNO("rename", MAIL_FILE_TMP);
+      return NULL;
+    }
+
+    if (remove(backup_file) != 0 && errno != ENOENT)
+      TB_REPORT_ERRNO("remove", backup_file);
+  }
 
   return strdup(buf);
 }
@@ -276,7 +387,7 @@ static void postmaster_send_mail(struct char_data *ch, struct char_data *mailman
   char buf[MAX_INPUT_LENGTH], **mailwrite;
 
   if (GET_LEVEL(ch) < MIN_MAIL_LEVEL) {
-    snprintf(buf, sizeof(buf), "$n tells you, 'Sorry, you have to be level %d to send mail!'", MIN_MAIL_LEVEL);
+    tb_snprintf(buf, sizeof(buf), "$n tells you, 'Sorry, you have to be level %d to send mail!'", MIN_MAIL_LEVEL);
     act(buf, FALSE, mailman, 0, ch, TO_VICT);
     return;
   }
@@ -288,7 +399,7 @@ static void postmaster_send_mail(struct char_data *ch, struct char_data *mailman
     return;
   }
   if (GET_GOLD(ch) < STAMP_PRICE && GET_LEVEL(ch) < LVL_IMMORT) {
-    snprintf(buf, sizeof(buf), "$n tells you, 'A stamp costs %d coin%s.'\r\n"
+    tb_snprintf(buf, sizeof(buf), "$n tells you, 'A stamp costs %d coin%s.'\r\n"
 	    "$n tells you, '...which I see you can't afford.'", STAMP_PRICE,
             STAMP_PRICE == 1 ? "" : "s");
     act(buf, FALSE, mailman, 0, ch, TO_VICT);
@@ -302,7 +413,7 @@ static void postmaster_send_mail(struct char_data *ch, struct char_data *mailman
   act("$n starts to write some mail.", TRUE, ch, 0, 0, TO_ROOM);
 
   if (GET_LEVEL(ch) < LVL_IMMORT) {
-    snprintf(buf, sizeof(buf), "$n tells you, 'I'll take %d coins for the stamp.'", STAMP_PRICE);
+    tb_snprintf(buf, sizeof(buf), "$n tells you, 'I'll take %d coins for the stamp.'", STAMP_PRICE);
     act(buf, FALSE, mailman, 0, ch, TO_VICT);
     decrease_gold(ch, STAMP_PRICE);
   }
@@ -333,7 +444,7 @@ static void postmaster_receive_mail(struct char_data *ch, struct char_data *mail
   int y;
 
   if (!has_mail(GET_IDNUM(ch))) {
-    snprintf(buf, sizeof(buf), "$n tells you, 'Sorry, you don't have any mail waiting.'");
+    tb_snprintf(buf, sizeof(buf), "$n tells you, 'Sorry, you don't have any mail waiting.'");
     act(buf, FALSE, mailman, 0, ch, TO_VICT);
     return;
   }

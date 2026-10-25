@@ -9,8 +9,8 @@
 * Copyright (C) 1993, 94 by the Trustees of the Johns Hopkins University 
 * CircleMUD is based on DikuMUD, Copyright (C) 1990, 1991.               
 */
-#ifndef _SYSDEP_H_
-#define _SYSDEP_H_
+#ifndef TBAMUD_SYSDEP_H_INCLUDED
+#define TBAMUD_SYSDEP_H_INCLUDED
 
 /* Configurables: tbaMUD uses the crypt(3) function to encrypt player passwords
  * in the players file so that they are never stored in plaintext form. However,
@@ -157,6 +157,84 @@ extern void abort(), exit();
 #ifdef HAVE_ERRNO_H
 #include <errno.h>
 #endif
+
+/*
+ * Checked replacements for legacy atoi()/atol() call sites.
+ * They preserve the historical "no conversion => 0" behavior while detecting
+ * range errors instead of invoking undefined or implementation-dependent
+ * overflow behavior.
+ */
+static inline long tb_parse_long_or_zero(const char *text)
+{
+  char *end = NULL;
+  long value;
+
+  if (text == NULL)
+    return 0;
+
+  errno = 0;
+  value = strtol(text, &end, 10);
+  if (end == text || errno == ERANGE)
+    return 0;
+
+  return value;
+}
+
+static inline int tb_parse_int_or_zero(const char *text)
+{
+  long value = tb_parse_long_or_zero(text);
+
+  if (value < INT_MIN || value > INT_MAX)
+    return 0;
+
+  return (int)value;
+}
+
+static inline int tb_ascii_space(unsigned char ch)
+{
+  return ch == ' ' || ch == '\t' || ch == '\n' ||
+         ch == '\r' || ch == '\f' || ch == '\v';
+}
+
+/*
+ * Strict numeric parsers for input where malformed text must not silently
+ * become zero.  They require full consumption (aside from ASCII whitespace)
+ * and report success explicitly.
+ */
+static inline int tb_parse_long_checked(const char *text, long *out)
+{
+  char *end = NULL;
+  long value;
+
+  if (text == NULL || out == NULL)
+    return 0;
+
+  errno = 0;
+  value = strtol(text, &end, 10);
+  if (end == text || errno == ERANGE)
+    return 0;
+
+  while (*end != '\0' && tb_ascii_space((unsigned char)*end))
+    end++;
+
+  if (*end != '\0')
+    return 0;
+
+  *out = value;
+  return 1;
+}
+
+static inline int tb_parse_int_checked(const char *text, int *out)
+{
+  long value;
+
+  if (out == NULL || !tb_parse_long_checked(text, &value) ||
+      value < INT_MIN || value > INT_MAX)
+    return 0;
+
+  *out = (int)value;
+  return 1;
+}
 
 #ifdef HAVE_NET_ERRNO_H
 #include <net/errno.h>
@@ -357,6 +435,349 @@ struct in_addr {
 #if !defined(HAVE_SNPRINTF) || !defined(HAVE_VSNPRINTF)
 # include "bsd-snprintf.h"
 #endif
+
+/*
+ * Checked replacements for standard-library calls whose return values must not
+ * be silently discarded (CERT ERR33-C).
+ *
+ * Error-locality rule: report failures at the caller, not merely inside this
+ * header.  The public wrappers are macros that inject the source file, line,
+ * and function into implementation helpers.
+ */
+static inline void tb_report_error_at(const char *operation, const char *context,
+                                      int errnum, const char *source_file,
+                                      int source_line, const char *source_func)
+{
+  int caller_errno = errno;
+  const char *op = operation ? operation : "operation";
+  const char *ctx = context ? context : "(no context)";
+  const char *file = source_file ? source_file : "(unknown file)";
+  const char *func = source_func ? source_func : "(unknown function)";
+
+  if (errnum != 0)
+    fprintf(stderr,
+            "SYSERR: operation=%s context=%s error=\"%s\" errno=%d source=%s:%d function=%s\n",
+            op, ctx, strerror(errnum), errnum, file, source_line, func);
+  else
+    fprintf(stderr,
+            "SYSERR: operation=%s context=%s source=%s:%d function=%s\n",
+            op, ctx, file, source_line, func);
+
+  /*
+   * Error reports are diagnostic boundaries: push them to the underlying log
+   * immediately and never let logging itself destroy the caller's errno.
+   */
+  (void)fflush(stderr);
+  errno = caller_errno;
+}
+
+#define TB_REPORT_ERRNO(operation, context) do { \
+  int tb_saved_errno_ = errno; \
+  tb_report_error_at((operation), (context), tb_saved_errno_, \
+                     __FILE__, __LINE__, __func__); \
+} while (0)
+
+#define TB_REPORT_ERROR(operation, context) \
+  tb_report_error_at((operation), (context), 0, __FILE__, __LINE__, __func__)
+
+static inline void tb_snprintf_at(char *dst, size_t dst_size,
+                                  const char *source_file, int source_line,
+                                  const char *source_func,
+                                  const char *format, ...)
+{
+  va_list args;
+  int result;
+
+  if (dst == NULL || dst_size == 0 || format == NULL) {
+    tb_report_error_at("snprintf", "invalid argument", 0,
+                       source_file, source_line, source_func);
+    return;
+  }
+
+  va_start(args, format);
+  result = vsnprintf(dst, dst_size, format, args);
+  va_end(args);
+
+  if (result < 0) {
+    int saved_errno = errno;
+    dst[0] = '\0';
+    tb_report_error_at("vsnprintf", "formatting output", saved_errno,
+                       source_file, source_line, source_func);
+  }
+}
+
+#define tb_snprintf(dst, dst_size, ...) \
+  tb_snprintf_at((dst), (dst_size), __FILE__, __LINE__, __func__, __VA_ARGS__)
+
+static inline void tb_fprintf_at(FILE *stream,
+                                 const char *source_file, int source_line,
+                                 const char *source_func,
+                                 const char *format, ...)
+{
+  va_list args;
+  int result;
+
+  if (stream == NULL || format == NULL) {
+    tb_report_error_at("fprintf", "invalid stream or format", 0,
+                       source_file, source_line, source_func);
+    return;
+  }
+
+  va_start(args, format);
+  result = vfprintf(stream, format, args);
+  va_end(args);
+
+  if (result < 0) {
+    int saved_errno = errno;
+    tb_report_error_at("vfprintf", "stdio stream", saved_errno,
+                       source_file, source_line, source_func);
+  }
+}
+
+#define tb_fprintf(stream, ...) \
+  tb_fprintf_at((stream), __FILE__, __LINE__, __func__, __VA_ARGS__)
+
+static inline void tb_fputs_at(const char *text, FILE *stream,
+                               const char *source_file, int source_line,
+                               const char *source_func)
+{
+  if (text == NULL || stream == NULL) {
+    tb_report_error_at("fputs", "invalid text or stream", 0,
+                       source_file, source_line, source_func);
+    return;
+  }
+  if (fputs(text, stream) == EOF) {
+    int saved_errno = errno;
+    tb_report_error_at("fputs", "stdio stream", saved_errno,
+                       source_file, source_line, source_func);
+  }
+}
+
+#define tb_fputs(text, stream) \
+  tb_fputs_at((text), (stream), __FILE__, __LINE__, __func__)
+
+static inline void tb_fputc_at(int ch, FILE *stream,
+                               const char *source_file, int source_line,
+                               const char *source_func)
+{
+  if (stream == NULL) {
+    tb_report_error_at("fputc", "NULL stream", 0,
+                       source_file, source_line, source_func);
+    return;
+  }
+  if (fputc(ch, stream) == EOF) {
+    int saved_errno = errno;
+    tb_report_error_at("fputc", "stdio stream", saved_errno,
+                       source_file, source_line, source_func);
+  }
+}
+
+#define tb_fputc(ch, stream) \
+  tb_fputc_at((ch), (stream), __FILE__, __LINE__, __func__)
+
+static inline void tb_fwrite_at(const void *ptr, size_t size, size_t count,
+                                FILE *stream, const char *source_file,
+                                int source_line, const char *source_func)
+{
+  if (stream == NULL || (ptr == NULL && size != 0 && count != 0)) {
+    tb_report_error_at("fwrite", "invalid buffer or stream", 0,
+                       source_file, source_line, source_func);
+    return;
+  }
+  if (count != 0 && fwrite(ptr, size, count, stream) != count) {
+    int saved_errno = errno;
+    tb_report_error_at("fwrite", "stdio stream", saved_errno,
+                       source_file, source_line, source_func);
+  }
+}
+
+#define tb_fwrite(ptr, size, count, stream) \
+  tb_fwrite_at((ptr), (size), (count), (stream), __FILE__, __LINE__, __func__)
+
+static inline void tb_fflush_at(FILE *stream, const char *source_file,
+                                int source_line, const char *source_func)
+{
+  if (fflush(stream) == EOF) {
+    int saved_errno = errno;
+    tb_report_error_at("fflush", stream ? "stdio stream" : "all output streams",
+                       saved_errno, source_file, source_line, source_func);
+  }
+}
+
+#define tb_fflush(stream) \
+  tb_fflush_at((stream), __FILE__, __LINE__, __func__)
+
+static inline void tb_fclose_at(FILE *stream, const char *source_file,
+                                int source_line, const char *source_func)
+{
+  if (stream == NULL) {
+    tb_report_error_at("fclose", "NULL stream", 0,
+                       source_file, source_line, source_func);
+    return;
+  }
+  if (fclose(stream) == EOF) {
+    int saved_errno = errno;
+    tb_report_error_at("fclose", "stdio stream", saved_errno,
+                       source_file, source_line, source_func);
+  }
+}
+
+#define tb_fclose(stream) \
+  tb_fclose_at((stream), __FILE__, __LINE__, __func__)
+
+/*
+ * Status-returning variants for transactional code.  These both report the
+ * failure at the call site and let the caller contain/rollback the operation.
+ */
+static inline int tb_fflush_checked_at(FILE *stream, const char *context,
+                                       const char *source_file, int source_line,
+                                       const char *source_func)
+{
+  if (fflush(stream) == EOF) {
+    int saved_errno = errno;
+    tb_report_error_at("fflush", context ? context : "stdio stream",
+                       saved_errno, source_file, source_line, source_func);
+    return 0;
+  }
+  return 1;
+}
+
+#define tb_fflush_checked(stream, context) \
+  tb_fflush_checked_at((stream), (context), __FILE__, __LINE__, __func__)
+
+static inline int tb_fclose_checked_at(FILE *stream, const char *context,
+                                       const char *source_file, int source_line,
+                                       const char *source_func)
+{
+  if (stream == NULL) {
+    tb_report_error_at("fclose", context ? context : "NULL stream", 0,
+                       source_file, source_line, source_func);
+    return 0;
+  }
+  if (fclose(stream) == EOF) {
+    int saved_errno = errno;
+    tb_report_error_at("fclose", context ? context : "stdio stream",
+                       saved_errno, source_file, source_line, source_func);
+    return 0;
+  }
+  return 1;
+}
+
+#define tb_fclose_checked(stream, context) \
+  tb_fclose_checked_at((stream), (context), __FILE__, __LINE__, __func__)
+
+/*
+ * Replace a live file with a fully-written temporary file.  On platforms
+ * where rename() cannot replace an existing destination, fall back to a
+ * backup/rollback sequence.  A failed commit never intentionally discards
+ * the last known-good destination.
+ */
+static inline int tb_replace_file_checked_at(const char *temp_path,
+                                             const char *dest_path,
+                                             const char *source_file,
+                                             int source_line,
+                                             const char *source_func)
+{
+  char *backup_path;
+  size_t backup_len;
+  int first_errno;
+
+  if (temp_path == NULL || dest_path == NULL) {
+    tb_report_error_at("rename", "invalid replacement path", 0,
+                       source_file, source_line, source_func);
+    return 0;
+  }
+
+  if (rename(temp_path, dest_path) == 0)
+    return 1;
+
+  first_errno = errno;
+  backup_len = strlen(dest_path) + sizeof(".bak");
+  backup_path = (char *)malloc(backup_len);
+  if (backup_path == NULL) {
+    tb_report_error_at("malloc", "replacement backup path", errno,
+                       source_file, source_line, source_func);
+    errno = first_errno;
+    tb_report_error_at("rename", dest_path, first_errno,
+                       source_file, source_line, source_func);
+    return 0;
+  }
+
+  if (snprintf(backup_path, backup_len, "%s.bak", dest_path) < 0) {
+    free(backup_path);
+    tb_report_error_at("snprintf", "replacement backup path", 0,
+                       source_file, source_line, source_func);
+    return 0;
+  }
+
+  if (remove(backup_path) != 0 && errno != ENOENT) {
+    int saved_errno = errno;
+    tb_report_error_at("remove", backup_path, saved_errno,
+                       source_file, source_line, source_func);
+    free(backup_path);
+    return 0;
+  }
+
+  if (rename(dest_path, backup_path) != 0) {
+    int saved_errno = errno;
+    errno = first_errno;
+    tb_report_error_at("rename", dest_path, first_errno,
+                       source_file, source_line, source_func);
+    errno = saved_errno;
+    free(backup_path);
+    return 0;
+  }
+
+  if (rename(temp_path, dest_path) != 0) {
+    int commit_errno = errno;
+
+    if (rename(backup_path, dest_path) != 0) {
+      int rollback_errno = errno;
+      tb_report_error_at("rename", "rollback destination restore",
+                         rollback_errno, source_file, source_line, source_func);
+    }
+
+    tb_report_error_at("rename", temp_path, commit_errno,
+                       source_file, source_line, source_func);
+    free(backup_path);
+    errno = commit_errno;
+    return 0;
+  }
+
+  if (remove(backup_path) != 0 && errno != ENOENT) {
+    int saved_errno = errno;
+    tb_report_error_at("remove", backup_path, saved_errno,
+                       source_file, source_line, source_func);
+  }
+
+  free(backup_path);
+  return 1;
+}
+
+#define tb_replace_file_checked(temp_path, dest_path) \
+  tb_replace_file_checked_at((temp_path), (dest_path), __FILE__, __LINE__, __func__)
+
+static inline void tb_strftime_at(char *dst, size_t dst_size,
+                                  const char *source_file, int source_line,
+                                  const char *source_func,
+                                  const char *format,
+                                  const struct tm *timeptr)
+{
+  if (dst == NULL || dst_size == 0 || format == NULL || timeptr == NULL) {
+    tb_report_error_at("strftime", "invalid argument", 0,
+                       source_file, source_line, source_func);
+    return;
+  }
+  if (strftime(dst, dst_size, format, timeptr) == 0) {
+    dst[0] = '\0';
+    tb_report_error_at("strftime", "buffer too small or conversion failed", 0,
+                       source_file, source_line, source_func);
+  }
+}
+
+#define tb_strftime(dst, dst_size, format, timeptr) \
+  tb_strftime_at((dst), (dst_size), __FILE__, __LINE__, __func__, \
+                 (format), (timeptr))
 
 /* Function prototypes. */
 /* Header files of many OS's do not contain function prototypes for the
@@ -584,5 +1005,5 @@ struct in_addr {
 
 #endif /* NO_LIBRARY_PROTOTYPES */
 
-#endif /* _SYSDEP_H_ */
+#endif /* TBAMUD_SYSDEP_H_INCLUDED */
 

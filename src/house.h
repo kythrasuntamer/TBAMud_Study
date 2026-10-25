@@ -9,8 +9,8 @@
 * Copyright (C) 1993, 94 by the Trustees of the Johns Hopkins University 
 * CircleMUD is based on DikuMUD, Copyright (C) 1990, 1991.               
 */
-#ifndef _HOUSE_H_
-#define _HOUSE_H_
+#ifndef TBAMUD_HOUSE_H_INCLUDED
+#define TBAMUD_HOUSE_H_INCLUDED
 
 #define MAX_HOUSES	100
 #define MAX_GUESTS	10
@@ -54,4 +54,4 @@ ACMD(do_hcontrol);
 ACMD(do_house);
 
 
-#endif /* _HOUSE_H_ */
+#endif /* TBAMUD_HOUSE_H_INCLUDED */

@@ -27,10 +27,29 @@
 /* local functions */
 static void trig_data_init(trig_data *this_data);
 
+static int parse_int_token(const char *text, int *out)
+{
+  char *end;
+  long value;
+
+  if (text == NULL || out == NULL)
+    return 0;
+
+  errno = 0;
+  value = strtol(text, &end, 10);
+  if (text == end || errno == ERANGE || *end != '\0' ||
+      value < INT_MIN || value > INT_MAX)
+    return 0;
+
+  *out = (int)value;
+  return 1;
+}
+
 void parse_trigger(FILE *trig_f, int nr)
 {
-    int t[2], k, attach_type;
+    int k, attach_type, narg = 0;
     char line[256], *cmds, *s, flags[256], errors[MAX_INPUT_LENGTH];
+    char attach_text[32], narg_text[32];
     struct cmdlist_element *cle;
     struct index_data *t_index;
     struct trig_data *trig;
@@ -43,16 +62,21 @@ void parse_trigger(FILE *trig_f, int nr)
     t_index->func = NULL;
     t_index->proto = trig;
 
-    snprintf(errors, sizeof(errors), "trig vnum %d", nr);
+    tb_snprintf(errors, sizeof(errors), "trig vnum %d", nr);
 
     trig->nr = top_of_trigt;
     trig->name = fread_string(trig_f, errors);
 
     get_line(trig_f, line);
-    k = sscanf(line, "%d %s %d", &attach_type, flags, t);
+    k = sscanf(line, "%31s %255s %31s", attach_text, flags, narg_text);
+    if (k < 2 || !parse_int_token(attach_text, &attach_type) ||
+        (k == 3 && !parse_int_token(narg_text, &narg))) {
+      log("SYSERR: Malformed trigger header for vnum %d: %s", nr, line);
+      exit(1);
+    }
     trig->attach_type = (byte)attach_type;
     trig->trigger_type = (long)asciiflag_conv(flags);
-    trig->narg = (k == 3) ? t[0] : 0;
+    trig->narg = (k == 3) ? narg : 0;
 
     trig->arglist = fread_string(trig_f, errors);
 
@@ -132,16 +156,16 @@ void trig_data_copy(trig_data *this_data, const trig_data *trg)
 void dg_read_trigger(FILE *fp, void *proto, int type)
 {
   char line[READ_SIZE];
-  char junk[8];
+  char junk[8], vnum_text[32];
   int vnum, rnum, count;
   char_data *mob;
   room_data *room;
   struct trig_proto_list *trg_proto, *new_trg;
 
   get_line(fp, line);
-  count = sscanf(line,"%7s %d",junk,&vnum);
+  count = sscanf(line, "%7s %31s", junk, vnum_text);
 
-  if (count != 2) {
+  if (count != 2 || !parse_int_token(vnum_text, &vnum)) {
     mudlog(BRF, LVL_BUILDER, TRUE,
            "SYSERR: Error assigning trigger! - Line was\n  %s", line);
     return;
@@ -216,13 +240,13 @@ void dg_read_trigger(FILE *fp, void *proto, int type)
 
 void dg_obj_trigger(char *line, struct obj_data *obj)
 {
-  char junk[8];
+  char junk[8], vnum_text[32];
   int vnum, rnum, count;
   struct trig_proto_list *trg_proto, *new_trg;
 
-  count = sscanf(line,"%s %d",junk,&vnum);
+  count = sscanf(line, "%7s %31s", junk, vnum_text);
 
-  if (count != 2) {
+  if (count != 2 || !parse_int_token(vnum_text, &vnum)) {
     mudlog(BRF, LVL_BUILDER, TRUE,
            "SYSERR: dg_obj_trigger() : Error assigning trigger! - Line was:\n  %s", line);
     return;

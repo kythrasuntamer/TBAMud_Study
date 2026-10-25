@@ -7,7 +7,7 @@
 *  Based on the Circle 3.0 syntax checker program                         *
 ************************************************************************ */
 
-#define log(msg) fprintf(stderr, "%s\n", msg)
+#define log(msg) tb_fprintf(stderr, "%s\n", (msg))
 
 #include "conf.h"
 #include "sysdep.h"
@@ -30,7 +30,7 @@
 
 #define CREATE(result, type, number)  do {\
 	if (!((result) = (type *) calloc ((number), sizeof(type))))\
-		{ perror("malloc failure"); abort(); } } while(0)
+		{ TB_REPORT_ERRNO("malloc", "wld2html allocation"); abort(); } } while(0)
 
 /* Exit info: used in room_data.dir_option.exit_info */
 #define EX_ISDOOR		(1 << 0)	/* Exit is a door          */
@@ -56,7 +56,53 @@ char buf1[MAX_STRING_LENGTH];
 char buf2[MAX_STRING_LENGTH];
 char arg[MAX_STRING_LENGTH];
 
-int get_line(FILE * fl, char *buf);
+int get_line(FILE * fl, char *buf, size_t buflen);
+
+static int parse_int_token(char **cursor, int *out)
+{
+  char *p, *end;
+  long value;
+
+  if (cursor == NULL || *cursor == NULL || out == NULL)
+    return 0;
+
+  p = *cursor;
+  while (isspace((unsigned char)*p))
+    p++;
+
+  errno = 0;
+  value = strtol(p, &end, 10);
+  if (p == end || errno == ERANGE || value < INT_MIN || value > INT_MAX)
+    return 0;
+
+  *out = (int)value;
+  *cursor = end;
+  return 1;
+}
+
+static int parse_word_token(char **cursor, char *out, size_t out_size)
+{
+  char *p;
+  size_t len = 0;
+
+  if (cursor == NULL || *cursor == NULL || out == NULL || out_size == 0)
+    return 0;
+
+  p = *cursor;
+  while (isspace((unsigned char)*p))
+    p++;
+
+  while (p[len] != '\0' && !isspace((unsigned char)p[len]))
+    len++;
+
+  if (len == 0 || len >= out_size)
+    return 0;
+
+  memcpy(out, p, len);
+  out[len] = '\0';
+  *cursor = p + len;
+  return 1;
+}
 int real_room(int virtual, int reference);
 
 /* room-related structures *********************************************** */
@@ -164,7 +210,7 @@ char *dir_names[] =
 int main(int argc, char **argv)
 {
   if (argc < 2) {
-    fprintf(stderr, "Usage: %s <world-file-name(s)>\n", argv[0]);
+    tb_fprintf(stderr, "Usage: %s <world-file-name(s)>\n", argv[0]);
     exit(1);
   }
 
@@ -202,30 +248,30 @@ void write_output(void)
 
   for (i=0;i<rec_count;i++) {
     //print the record number, but no linefeed.
-    fprintf(stderr, "Record: %d ",i);
+    tb_fprintf(stderr, "Record: %d ",i);
     if (world[i].name == NULL) {
       //linefeed the prior record since we're skipping this one.
       log("");
       //the name is blank, which means, most likely, the record is bad as well.
       continue;
     }
-    sprintf(buf, "Writing %d.html", world[i].number);
+    tb_snprintf(buf, sizeof(buf), "Writing %d.html", world[i].number);
     log(buf);
     //for some reason, if you use %d with sprintf it rolls over like its 16bit,
     //but only if you use the buffer with fopen.
     //using %ld and casting to long solves this in case someone really wants
     //to use negative room numbers.
-    sprintf(buf, "%ld.html",(long)world[i].number);
+    tb_snprintf(buf, sizeof(buf), "%ld.html",(long)world[i].number);
     if (!(fl = fopen(buf, "w"))) {
-      perror("opening output file");
+      TB_REPORT_ERRNO("fopen", buf);
       exit(1);
     }
-    fprintf(fl, "<title> %s </title>\n", world[i].name);
-    fprintf(fl, "<h1> %s </h1>\n", world[i].name);
-    fprintf(fl, "<pre>\n");
-    fputs(world[i].description, fl);
-    fprintf(fl, "</pre>\n");
-    fprintf(fl, "<P> Exits: <P> \n");
+    tb_fprintf(fl, "<title> %s </title>\n", world[i].name);
+    tb_fprintf(fl, "<h1> %s </h1>\n", world[i].name);
+    tb_fprintf(fl, "<pre>\n");
+    tb_fputs(world[i].description, fl);
+    tb_fprintf(fl, "</pre>\n");
+    tb_fprintf(fl, "<P> Exits: <P> \n");
 
     found = 0;
     for (door = 0; door < NUM_OF_DIRS; door++)
@@ -237,17 +283,17 @@ void write_output(void)
 	//and the binary search that didn't work well.
 	struct room_data* to_room = findRoom(world[i].dir_option[door]->to_room);
         if (to_room)
-          fprintf(fl, "<a href = \"%d.html\"> %s to %s</a> <p>\n",
+          tb_fprintf(fl, "<a href = \"%d.html\"> %s to %s</a> <p>\n",
                   to_room->number,
                   dir_names[door],
                   to_room->name);
         else
-          fprintf(fl, "%s to missing room %d <p>\n",
+          tb_fprintf(fl, "%s to missing room %d <p>\n",
                   dir_names[door], world[i].dir_option[door]->to_room);
       }
     if (!found)
-      fprintf(fl, "None!");
-    fclose(fl);
+      tb_fprintf(fl, "None!");
+    tb_fclose(fl);
   }
 }  
 
@@ -273,16 +319,16 @@ void index_boot(int cnt, char **names)
   //throw first entry away as that is the executable.
   for (int i=1;i<cnt;i++) {
     if (!(db_file = fopen(names[i], "r"))) {
-      perror("error opening world file");
+      TB_REPORT_ERRNO("fopen", names[i]);
       exit(1);
     }
     //have to loop through files twice.
     //once to get total record count
     //second time to load them
     rec_count += count_hash_records(db_file);
-    fclose(db_file);
+    tb_fclose(db_file);
   }
-  snprintf(buf, sizeof(buf), "Total records: %d\n", rec_count);
+  tb_snprintf(buf, sizeof(buf), "Total records: %d\n", rec_count);
   log(buf);
 
   if (rec_count <= 0) {
@@ -296,11 +342,11 @@ void index_boot(int cnt, char **names)
   //now loop through files and load them
   for (int i=1;i<cnt;i++) {
     if (!(db_file = fopen(names[i], "r"))) {
-      perror("error opening world file");
+      TB_REPORT_ERRNO("fopen", names[i]);
       exit(1);
     }
     discrete_load(db_file);
-    fclose(db_file);
+    tb_fclose(db_file);
   }
 }
 
@@ -311,8 +357,8 @@ void discrete_load(FILE * fl)
   char line[256];
 
   for (;;) {
-    if (!get_line(fl, line)) {
-      fprintf(stderr, "Format error after room #%d\n", nr);
+    if (!get_line(fl, line, sizeof(line))) {
+      tb_fprintf(stderr, "Format error after room #%d\n", nr);
       exit(1);
     }
     if (*line == 'T') //Toss triggers. THey currently break this util.
@@ -323,17 +369,20 @@ void discrete_load(FILE * fl)
 
     if (*line == '#') {
       last = nr;
-      if (sscanf(line, "#%d", &nr) != 1) {
-	fprintf(stderr, "Format error after room #%d\n", last);
-	exit(1);
+      {
+        char *cursor = line + 1;
+        if (!parse_int_token(&cursor, &nr)) {
+          tb_fprintf(stderr, "Format error after room #%d\n", last);
+          exit(1);
+        }
       }
       if (nr >= 99999)
 	return;
       else
 	parse_room(fl, nr);
     } else {
-      fprintf(stderr, "Format error in world file near room #%d\n", nr);
-      fprintf(stderr, "Offending line: '%s'\n", line);
+      tb_fprintf(stderr, "Format error in world file near room #%d\n", nr);
+      tb_fprintf(stderr, "Offending line: '%s'\n", line);
       exit(1);
     }
   }
@@ -356,7 +405,7 @@ long asciiflag_conv(char *flag)
   }
 
   if (is_number)
-    flags = atol(flag);
+    flags = tb_parse_long_or_zero(flag);
 
   return (flags);
 }
@@ -369,16 +418,25 @@ void parse_room(FILE * fl, int virtual_nr)
   char line[256], flags[128];
   struct extra_descr_data *new_descr;
 
-  sprintf(buf2, "room #%d", virtual_nr);
+  tb_snprintf(buf2, sizeof(buf2), "room #%d", virtual_nr);
 
   world[room_nr].zone = zone;
   world[room_nr].number = virtual_nr;
   world[room_nr].name = fread_string(fl, buf2);
   world[room_nr].description = fread_string(fl, buf2);
 
-  if (!get_line(fl, line) || sscanf(line, " %d %s %d ", t, flags, t + 2) != 3) {
-    fprintf(stderr, "Format error in room #%d\n", virtual_nr);
+  if (!get_line(fl, line, sizeof(line))) {
+    tb_fprintf(stderr, "Format error in room #%d\n", virtual_nr);
     exit(1);
+  }
+  {
+    char *cursor = line;
+    if (!parse_int_token(&cursor, &t[0]) ||
+        !parse_word_token(&cursor, flags, sizeof(flags)) ||
+        !parse_int_token(&cursor, &t[2])) {
+      tb_fprintf(stderr, "Format error in room #%d\n", virtual_nr);
+      exit(1);
+    }
   }
   /* t[0] is the zone number; ignored with the zone-file system */
   world[room_nr].room_flags = asciiflag_conv(flags);
@@ -391,16 +449,16 @@ void parse_room(FILE * fl, int virtual_nr)
 
   world[room_nr].ex_description = NULL;
 
-  sprintf(buf, "Format error in room #%d (expecting D/E/S)", virtual_nr);
+  tb_snprintf(buf, sizeof(buf), "Format error in room #%d (expecting D/E/S)", virtual_nr);
 
   for (;;) {
-    if (!get_line(fl, line)) {
-      fprintf(stderr, "%s\n", buf);
+    if (!get_line(fl, line, sizeof(line))) {
+      tb_fprintf(stderr, "%s\n", buf);
       exit(1);
     }
     switch (*line) {
     case 'D':
-      setup_dir(fl, room_nr, atoi(line + 1));
+      setup_dir(fl, room_nr, tb_parse_int_or_zero(line + 1));
       break;
     case 'E':
       CREATE(new_descr, struct extra_descr_data, 1);
@@ -414,7 +472,7 @@ void parse_room(FILE * fl, int virtual_nr)
       return;
       break;
     default:
-      fprintf(stderr, "%s\n", buf);
+      tb_fprintf(stderr, "%s\n", buf);
       exit(1);
       break;
     }
@@ -429,19 +487,24 @@ void setup_dir(FILE * fl, int room, int dir)
   int t[5];
   char line[256];
 
-  sprintf(buf2, "room #%d, direction D%d", world[room].number, dir);
+  tb_snprintf(buf2, sizeof(buf2), "room #%d, direction D%d", world[room].number, dir);
 
   CREATE(world[room].dir_option[dir], struct room_direction_data, 1);
   world[room].dir_option[dir]->general_description = fread_string(fl, buf2);
   world[room].dir_option[dir]->keyword = fread_string(fl, buf2);
 
-  if (!get_line(fl, line)) {
-    fprintf(stderr, "Format error, %s\n", buf2);
+  if (!get_line(fl, line, sizeof(line))) {
+    tb_fprintf(stderr, "Format error, %s\n", buf2);
     exit(1);
   }
-  if (sscanf(line, " %d %d %d ", t, t + 1, t + 2) != 3) {
-    fprintf(stderr, "Format error, %s\n", buf2);
-    exit(1);
+  {
+    char *cursor = line;
+    if (!parse_int_token(&cursor, &t[0]) ||
+        !parse_int_token(&cursor, &t[1]) ||
+        !parse_int_token(&cursor, &t[2])) {
+      tb_fprintf(stderr, "Format error, %s\n", buf2);
+      exit(1);
+    }
   }
   if (t[0] == 1)
     world[room].dir_option[dir]->exit_info = EX_ISDOOR;
@@ -470,7 +533,7 @@ char *fread_string(FILE * fl, char *error)
 
   do {
     if (!fgets(tmp, 512, fl)) {
-      fprintf(stderr, "SYSERR: fread_string: format error at or near %s\n",
+      tb_fprintf(stderr, "SYSERR: fread_string: format error at or near %s\n",
 	      error);
       exit(1);
     }
@@ -492,7 +555,7 @@ char *fread_string(FILE * fl, char *error)
       log(error);
       exit(1);
     } else {
-      strcat(buf + length, tmp);
+      strlcat(buf, tmp, sizeof(buf));
       length += templength;
     }
   } while (!done);
@@ -500,7 +563,7 @@ char *fread_string(FILE * fl, char *error)
   /* allocate space for the new string and copy it */
   if (strlen(buf) > 0) {
     CREATE(rslt, char, length + 1);
-    strcpy(rslt, buf);
+    strlcpy(rslt, buf, MAX_STRING_LENGTH);
   } else
     rslt = NULL;
 
@@ -513,7 +576,7 @@ char *fread_string(FILE * fl, char *error)
  * The newline character is removed from the input.  Lines which begin
  * with '*' are considered to be comments.
  */
-int get_line(FILE * fl, char *buf)
+int get_line(FILE * fl, char *buf, size_t buflen)
 {
   char temp[256];
 
@@ -527,7 +590,7 @@ int get_line(FILE * fl, char *buf)
   if (feof(fl))
     return (0);
   else {
-    strcpy(buf, temp);
+    strlcpy(buf, temp, buflen);
     return (1);
   }
 }

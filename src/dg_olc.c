@@ -47,7 +47,7 @@ ACMD(do_oasis_trigedit)
     return;
   }
 
-  number = atoi(argument);
+  number = tb_parse_int_or_zero(argument);
 
   if (number < IDXTYPE_MIN || number > IDXTYPE_MAX) {
     send_to_char(ch, "That trigger VNUM can't exist.\r\n");
@@ -127,7 +127,7 @@ void script_save_to_disk(FILE *fp, void *item, int type)
 
   while (t)
   {
-    fprintf(fp,"T %d\n", t->vnum);
+    tb_fprintf(fp,"T %d\n", t->vnum);
     t = t->next;
   }
 }
@@ -179,8 +179,8 @@ void trigedit_setup_existing(struct descriptor_data *d, int rtrg_num)
 
   for (c = trig->cmdlist; c; c = c->next) {
     if (c->cmd)
-      strcat(OLC_STORAGE(d), c->cmd);
-    strcat(OLC_STORAGE(d), "\r\n");
+      strlcat(OLC_STORAGE(d), c->cmd, len);
+    strlcat(OLC_STORAGE(d), "\r\n", len);
   }
   /* Now trig->cmdlist is something to pass to the text editor it will be 
    * converted back to a real cmdlist_element list later. */
@@ -498,7 +498,7 @@ static void script_syntax_highlighting(struct descriptor_data *d, char *string)
             for (cmd = 0; complete_cmd_info && *complete_cmd_info[cmd].command != '\n'; cmd++) {
                 if (complete_cmd_info[cmd].command_pointer == do_action) {
                     char replace_social[MAX_INPUT_LENGTH];
-                    snprintf(replace_social, MAX_INPUT_LENGTH, "\tc%s\tn", complete_cmd_info[cmd].command);
+                    tb_snprintf(replace_social, MAX_INPUT_LENGTH, "\tc%s\tn", complete_cmd_info[cmd].command);
                     line = str_replace(line, complete_cmd_info[cmd].command, replace_social);
                 }
             }
@@ -606,7 +606,7 @@ void trigedit_parse(struct descriptor_data *d, char *arg)
       break;
 
     case TRIGEDIT_INTENDED:
-      i = atoi(arg);
+      i = tb_parse_int_or_zero(arg);
       if (i >= MOB_TRIGGER && i <= WLD_TRIGGER) {
         OLC_TRIG(d)->attach_type = i;
         OLC_VAL(d)++;
@@ -617,7 +617,7 @@ void trigedit_parse(struct descriptor_data *d, char *arg)
       break;
 
     case TRIGEDIT_NARG:
-      OLC_TRIG(d)->narg = LIMIT(atoi(arg), 0, 100);
+      OLC_TRIG(d)->narg = LIMIT(tb_parse_int_or_zero(arg), 0, 100);
       OLC_VAL(d)++;
       break;
 
@@ -628,7 +628,7 @@ void trigedit_parse(struct descriptor_data *d, char *arg)
       break;
 
     case TRIGEDIT_TYPES:
-      if ((i = atoi(arg)) == 0)
+      if ((i = tb_parse_int_or_zero(arg)) == 0)
         break;
       else if (!((i < 0) || (i > NUM_TRIG_TYPE_FLAGS)))
         TOGGLE_BIT((GET_TRIG_TYPE(OLC_TRIG(d))), 1 << (i - 1));
@@ -637,7 +637,7 @@ void trigedit_parse(struct descriptor_data *d, char *arg)
       return;
 
     case TRIGEDIT_COPY:
-      if ((i = real_trigger(atoi(arg))) != NOWHERE) {
+      if ((i = real_trigger(tb_parse_int_or_zero(arg))) != NOWHERE) {
         trigedit_setup_existing(d, i);
       } else
         write_to_output(d, "That trigger does not exist.\r\n");
@@ -860,9 +860,9 @@ void trigedit_save(struct descriptor_data *d)
   }
 
 #ifdef CIRCLE_MAC
-  snprintf(fname, sizeof(fname), "%s:%i.new", TRG_PREFIX, zone);
+  tb_snprintf(fname, sizeof(fname), "%s:%i.new", TRG_PREFIX, zone);
 #else
-  snprintf(fname, sizeof(fname), "%s/%i.new", TRG_PREFIX, zone);
+  tb_snprintf(fname, sizeof(fname), "%s/%i.new", TRG_PREFIX, zone);
 #endif
 
   if (!(trig_file = fopen(fname, "w"))) {
@@ -878,11 +878,11 @@ void trigedit_save(struct descriptor_data *d)
       if (fprintf(trig_file, "#%d\n", i) < 0) {
         mudlog(BRF, MAX(LVL_GOD, GET_INVIS_LEV(d->character)), TRUE,
                "SYSERR: OLC: Can't write trig file!");
-        fclose(trig_file);
+        tb_fclose(trig_file);
         return;
       }
       sprintascii(bitBuf, GET_TRIG_TYPE(trig));
-      fprintf(trig_file,      "%s%c\n"
+      tb_fprintf(trig_file,      "%s%c\n"
                               "%d %s %d\n"
                               "%s%c\n",
            (GET_TRIG_NAME(trig)) ? (GET_TRIG_NAME(trig)) : "unknown trigger", STRING_TERMINATOR,
@@ -897,29 +897,37 @@ void trigedit_save(struct descriptor_data *d)
 
         for (cmd = trig->cmdlist; cmd; cmd = cmd->next) {
           if (cmd->cmd) {
-            fprintf(trig_file, "%s\n", cmd->cmd);
+            tb_fprintf(trig_file, "%s\n", cmd->cmd);
             wrote = TRUE;
           }
         }
 
         if (!wrote)
-          fprintf(trig_file, "* Empty script");
-        fprintf(trig_file, "%c\n", STRING_TERMINATOR);
+          tb_fprintf(trig_file, "* Empty script");
+        tb_fprintf(trig_file, "%c\n", STRING_TERMINATOR);
       }
     }
   }
 
-  fprintf(trig_file, "$%c\n", STRING_TERMINATOR);
-  fclose(trig_file);
+  tb_fprintf(trig_file, "$%c\n", STRING_TERMINATOR);
+  {
+    int flush_ok = tb_fflush_checked(trig_file, fname);
+    int close_ok = tb_fclose_checked(trig_file, fname);
+    if (!flush_ok || !close_ok) {
+      if (remove(fname) != 0 && errno != ENOENT)
+        TB_REPORT_ERRNO("remove", fname);
+      return;
+    }
+  }
 
 #ifdef CIRCLE_MAC
-  snprintf(buf, sizeof(buf), "%s:%d.trg", TRG_PREFIX, zone);
+  tb_snprintf(buf, sizeof(buf), "%s:%d.trg", TRG_PREFIX, zone);
 #else
-  snprintf(buf, sizeof(buf), "%s/%d.trg", TRG_PREFIX, zone);
+  tb_snprintf(buf, sizeof(buf), "%s/%d.trg", TRG_PREFIX, zone);
 #endif
 
-  remove(buf);
-  rename(fname, buf);
+  if (!tb_replace_file_checked(fname, buf))
+    return;
 
   write_to_output(d, "Trigger saved to disk.\r\n");
   trigedit_create_index(zone, "trg");
@@ -934,24 +942,26 @@ static void trigedit_create_index(int znum, char *type)
 
   prefix = TRG_PREFIX;
 
-  snprintf(old_name, sizeof(old_name), "%s/index", prefix);
-  snprintf(new_name, sizeof(new_name), "%s/newindex", prefix);
+  tb_snprintf(old_name, sizeof(old_name), "%s/index", prefix);
+  tb_snprintf(new_name, sizeof(new_name), "%s/newindex", prefix);
 
   if (!(oldfile = fopen(old_name, "r"))) {
+    TB_REPORT_ERRNO("fopen", old_name);
     mudlog(BRF, LVL_IMPL, TRUE, "SYSERR: DG_OLC: Failed to open %s", old_name);
     return;
   } else if (!(newfile = fopen(new_name, "w"))) {
+    TB_REPORT_ERRNO("fopen", new_name);
     mudlog(BRF, LVL_IMPL, TRUE, "SYSERR: DG_OLC: Failed to open %s", new_name);
-    fclose(oldfile);
+    tb_fclose(oldfile);
     return;
   }
 
   /* Index contents must be in order: search through the old file for the right
    * place, insert the new file, then copy the rest over. */
-  snprintf(buf1, sizeof(buf1), "%d.%s", znum, type);
+  tb_snprintf(buf1, sizeof(buf1), "%d.%s", znum, type);
   while (get_line(oldfile, buf)) {
     if (*buf == '$') {
-      fprintf(newfile, "%s\n$\n", (!found ? buf1 : ""));
+      tb_fprintf(newfile, "%s\n$\n", (!found ? buf1 : ""));
       break;
     } else if (!found) {
       sscanf(buf, "%d", &num);
@@ -959,18 +969,22 @@ static void trigedit_create_index(int znum, char *type)
         found = TRUE;
       else if (num > znum) {
         found = TRUE;
-        fprintf(newfile, "%s\n", buf1);
+        tb_fprintf(newfile, "%s\n", buf1);
       }
     }
-    fprintf(newfile, "%s\n", buf);
+    tb_fprintf(newfile, "%s\n", buf);
   }
 
-  fclose(newfile);
-  fclose(oldfile);
+  tb_fclose(newfile);
+  tb_fclose(oldfile);
 
   /* Out with the old, in with the new. */
-  remove(old_name);
-  rename(new_name, old_name);
+  if (remove(old_name) != 0 && errno != ENOENT)
+    TB_REPORT_ERRNO("remove", old_name);
+  if (rename(new_name, old_name) != 0) {
+    TB_REPORT_ERRNO("rename", old_name);
+    return;
+  }
 }
 
 void dg_olc_script_copy(struct descriptor_data *d)
@@ -1111,7 +1125,7 @@ int dg_script_edit_parse(struct descriptor_data *d, char *arg)
       break;
 
     case SCRIPT_DEL_TRIGGER:
-      pos = atoi(arg);
+      pos = tb_parse_int_or_zero(arg);
       if (pos<=0) break;
 
       if (pos==1 && OLC_SCRIPT(d)) {
@@ -1237,7 +1251,7 @@ int format_script(struct descriptor_data *d)
       return FALSE;
     }
     len = len + nlen + llen;
-    strcat(nsc, line);  /* strcat OK, size checked above */
+    strlcat(nsc, line, sizeof(nsc));  /* strcat OK, size checked above */
 
     if (indent_next) {
       indent++;

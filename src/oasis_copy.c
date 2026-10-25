@@ -82,7 +82,7 @@ ACMD(do_oasis_copy)
   /* We can't copy non-existing data. */
   /* Note: the source data can be in any zone. It's not restricted */
   /* to the builder's designated OLC zone. */
-  src_vnum = atoi(buf1);
+  src_vnum = tb_parse_int_or_zero(buf1);
   src_rnum = (*oasis_copy_info[i].binary_search)(src_vnum);
   if (src_rnum == NOWHERE) {
     send_to_char(ch, "The source %s (#%d) does not exist.\r\n", oasis_copy_info[i].text, src_vnum);
@@ -90,7 +90,7 @@ ACMD(do_oasis_copy)
   }
 
   /* Don't copy if the target already exists. */
-  dst_vnum = atoi(buf2);
+  dst_vnum = tb_parse_int_or_zero(buf2);
   dst_rnum = (*oasis_copy_info[i].binary_search)(dst_vnum);
   if (dst_rnum != NOWHERE) {
     send_to_char(ch, "The target %s (#%d) already exists.\r\n", oasis_copy_info[i].text, dst_vnum);
@@ -169,7 +169,7 @@ ACMD(do_dig)
     return;
   }
 
-  rawvnum = atoi(sroom);
+  rawvnum = tb_parse_int_or_zero(sroom);
   if (rawvnum == -1)
     rvnum = NOWHERE;
   else
@@ -338,7 +338,7 @@ int buildwalk(struct char_data *ch, int dir)
 
       OLC_ROOM(d)->name = strdup("New BuildWalk Room");
 
-      sprintf(buf, "This unfinished room was created by %s.\r\n", GET_NAME(ch));
+      tb_snprintf(buf, sizeof(buf), "This unfinished room was created by %s.\r\n", GET_NAME(ch));
       OLC_ROOM(d)->description = strdup(buf);
       OLC_ROOM(d)->zone = OLC_ZNUM(d);
       OLC_ROOM(d)->number = NOWHERE;

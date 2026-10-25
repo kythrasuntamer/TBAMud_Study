@@ -10,8 +10,8 @@
 * Copyright 2012 by Joseph Arnusch.                                                    
 */
 
-#ifndef _MUD_EVENT_H_
-#define _MUD_EVENT_H_
+#ifndef TBAMUD_MUD_EVENT_H_INCLUDED
+#define TBAMUD_MUD_EVENT_H_INCLUDED
 
 #include "dg_event.h"
 
@@ -58,4 +58,4 @@ EVENTFUNC(event_countdown);
 EVENTFUNC(get_protocols);
 EVENTFUNC(event_whirlwind);
 
-#endif /* _MUD_EVENT_H_ */
+#endif /* TBAMUD_MUD_EVENT_H_INCLUDED */

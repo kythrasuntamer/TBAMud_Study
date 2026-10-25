@@ -9,8 +9,8 @@
 * is attributed to:
 * Copyright 1996 by Harvey Gilpin, 1997-2001 by George Greer.                                                    
 */
-#ifndef _GENOLC_H_
-#define _GENOLC_H_
+#ifndef TBAMUD_GENOLC_H_INCLUDED
+#define TBAMUD_GENOLC_H_INCLUDED
 
 #define STRING_TERMINATOR       '~'
 #define CONFIG_GENOLC_MOBPROG	0
@@ -46,8 +46,8 @@ extern struct save_list_data *save_list;
 #define SL_CFG	5
 #define SL_QST  6
 #define SL_MAX  6	
-#define SL_ACT SL_MAX + 1 /* must be above MAX */ 
-#define SL_HLP SL_MAX + 2
+#define SL_ACT (SL_MAX + 1) /* must be above MAX */ 
+#define SL_HLP (SL_MAX + 2)
 
 #define ZCMD(zon, cmds)	zone_table[(zon)].cmd[(cmds)]
 
@@ -57,4 +57,4 @@ room_vnum genolc_zone_bottom(zone_rnum rznum);
 room_vnum genolc_zonep_bottom(struct zone_data *zone);
 extern void free_save_list(void);
 
-#endif /* _GENOLC_H_ */
+#endif /* TBAMUD_GENOLC_H_INCLUDED */
