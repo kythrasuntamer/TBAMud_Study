@@ -9,8 +9,8 @@
 * Copyright (C) 1993, 94 by the Trustees of the Johns Hopkins University
 * CircleMUD is based on DikuMUD, Copyright (C) 1990, 1991.
 */
-#ifndef _STRUCTS_H_
-#define _STRUCTS_H_
+#ifndef TBAMUD_STRUCTS_H_INCLUDED
+#define TBAMUD_STRUCTS_H_INCLUDED
 
 #include "protocol.h" /* Kavir Plugin*/
 #include "lists.h"
@@ -1406,4 +1406,4 @@ struct config_data
 #include "zmalloc.h"
 #endif
 
-#endif /* _STRUCTS_H_ */
+#endif /* TBAMUD_STRUCTS_H_INCLUDED */
