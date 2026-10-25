@@ -115,9 +115,16 @@ int scan_file(void)
   struct mail_t *record;
 
   if (!(mail_file = fopen(MAIL_FILE, "r"))) {
-    log("   Mail file non-existant... creating new file.");
-    touch(MAIL_FILE);
-    return TRUE;
+    int saved_errno = errno;
+    if (saved_errno == ENOENT) {
+      log("   Mail file does not exist; creating %s.", MAIL_FILE);
+      if (touch(MAIL_FILE) != 0)
+        return FALSE;
+      return TRUE;
+    }
+    log("SYSERR: Cannot open mail file %s for scan: %s (errno=%d)",
+        MAIL_FILE, strerror(saved_errno), saved_errno);
+    return FALSE;
   }
 
   record = read_mail_record(mail_file);
@@ -144,7 +151,7 @@ int has_mail(long recipient)
   struct mail_t *record;
 
   if (!(mail_file = fopen(MAIL_FILE, "r"))) {
-    perror("read_delete: Mail file not accessible.");
+    TB_REPORT_ERRNO("fopen", MAIL_FILE);
     return FALSE;
   }
 
@@ -177,7 +184,8 @@ void store_mail(long to, long from, char *message_pointer)
   struct mail_t *record;
 
   if (!(mail_file = fopen(MAIL_FILE, "a"))) {
-    perror("store_mail: Mail file not accessible.");
+    TB_REPORT_ERRNO("fopen", MAIL_FILE);
+    log("SYSERR: store_mail failed before writing message from %ld to %ld", from, to);
     return;
   }
   CREATE(record, struct mail_t, 1);
@@ -210,7 +218,8 @@ char *read_delete(long recipient)
   }
 
   if (!(new_file = fopen(MAIL_FILE_TMP, "w"))) {
-    perror("read_delete: new Mail file not accessible.");
+    TB_REPORT_ERRNO("fopen", MAIL_FILE_TMP);
+    log("SYSERR: read_delete could not create rewrite file for recipient %ld", recipient);
     tb_fclose(mail_file);
     return strdup("Mail system malfunction - please report this");
   }
@@ -257,11 +266,15 @@ char *read_delete(long recipient)
   tb_fclose(new_file);
 
   if (remove(MAIL_FILE) != 0 && errno != ENOENT) {
-    log("SYSERR: Unable to remove old mail file: %s", strerror(errno));
+    int saved_errno = errno;
+    log("SYSERR: remove(%s) failed during mail rewrite for recipient %ld: %s (errno=%d)",
+        MAIL_FILE, recipient, strerror(saved_errno), saved_errno);
     return NULL;
   }
   if (rename(MAIL_FILE_TMP, MAIL_FILE) != 0) {
-    log("SYSERR: Unable to install new mail file: %s", strerror(errno));
+    int saved_errno = errno;
+    log("SYSERR: rename(%s -> %s) failed during mail rewrite for recipient %ld: %s (errno=%d)",
+        MAIL_FILE_TMP, MAIL_FILE, recipient, strerror(saved_errno), saved_errno);
     return NULL;
   }
 
