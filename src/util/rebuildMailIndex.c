@@ -85,7 +85,7 @@ char *parsefilename(char *filename) {
   static char copy[1024];
   char *extension;
 
-  strcpy(copy, filename);
+  strlcpy(copy, filename, sizeof(copy));
   extension = strchr(copy, '.');
   if (extension == NULL) {
     return NULL;
@@ -138,7 +138,7 @@ long parse_send_time(FILE *plr_file) {
 char *parse_subject(FILE *plr_file) {
 	static char subj[1000];
 	char *txt = findLine(plr_file, "Subj:");
-	sprintf(subj, "%s", (txt == NULL) ? "(null)" : txt);
+	snprintf(subj, sizeof(subj), "%s", (txt == NULL) ? "(null)" : txt);
 	return (subj);
 }
 
@@ -205,7 +205,7 @@ void walkdir(FILE *index_file, char *dir) {
   while ((dp = readdir(dfd)) != NULL)
   {
     struct stat stbuf ;
-    sprintf( filename_qfd , "%s/%s",dir,dp->d_name) ;
+    snprintf(filename_qfd, sizeof(filename_qfd), "%s/%s",dir,dp->d_name);
 
     if( stat(filename_qfd,&stbuf ) == -1 ) {
       fprintf(stdout, "Unable to stat file: %s\n",filename_qfd) ;
