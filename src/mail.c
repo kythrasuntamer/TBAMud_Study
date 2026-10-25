@@ -230,7 +230,8 @@ char *read_delete(long recipient)
 {
   FILE *mail_file, *new_file;
   struct mail_t *record, *record_to_keep = NULL;
-  char buf[MAX_STRING_LENGTH];
+  char buf[MAX_STRING_LENGTH], backup_file[MAX_STRING_LENGTH];
+  int name_result;
 
   if (!(mail_file = fopen(MAIL_FILE, "r"))) {
     TB_REPORT_ERRNO("fopen", MAIL_FILE);
@@ -302,26 +303,51 @@ char *read_delete(long recipient)
     return NULL;
   }
 
-  if (!tb_fflush_checked(new_file, MAIL_FILE_TMP) ||
-      !tb_fclose_checked(new_file, MAIL_FILE_TMP)) {
-    log("SYSERR: read_delete aborted replacement because temporary mail store was not durably written for recipient %ld",
-        recipient);
-    if (remove(MAIL_FILE_TMP) != 0 && errno != ENOENT)
-      TB_REPORT_ERRNO("remove", MAIL_FILE_TMP);
+  {
+    int flush_ok = tb_fflush_checked(new_file, MAIL_FILE_TMP);
+    int close_ok = tb_fclose_checked(new_file, MAIL_FILE_TMP);
+    if (!flush_ok || !close_ok) {
+      log("SYSERR: read_delete aborted replacement because temporary mail store was not durably written for recipient %ld",
+          recipient);
+      if (remove(MAIL_FILE_TMP) != 0 && errno != ENOENT)
+        TB_REPORT_ERRNO("remove", MAIL_FILE_TMP);
+      return NULL;
+    }
+  }
+
+  name_result = snprintf(backup_file, sizeof(backup_file), "%s.bak", MAIL_FILE);
+  if (name_result < 0 || (size_t)name_result >= sizeof(backup_file)) {
+    log("SYSERR: mail backup filename is too long; refusing unsafe replacement");
     return NULL;
   }
 
-  if (remove(MAIL_FILE) != 0 && errno != ENOENT) {
-    int saved_errno = errno;
-    log("SYSERR: remove(%s) failed during mail rewrite for recipient %ld: %s (errno=%d)",
-        MAIL_FILE, recipient, strerror(saved_errno), saved_errno);
-    return NULL;
-  }
+  /* Prefer atomic replacement; fall back to backup+rollback where required. */
   if (rename(MAIL_FILE_TMP, MAIL_FILE) != 0) {
-    int saved_errno = errno;
-    log("SYSERR: rename(%s -> %s) failed during mail rewrite for recipient %ld: %s (errno=%d)",
-        MAIL_FILE_TMP, MAIL_FILE, recipient, strerror(saved_errno), saved_errno);
-    return NULL;
+    int replace_errno = errno;
+
+    if (remove(backup_file) != 0 && errno != ENOENT)
+      TB_REPORT_ERRNO("remove", backup_file);
+
+    if (rename(MAIL_FILE, backup_file) != 0) {
+      errno = replace_errno;
+      TB_REPORT_ERRNO("rename", MAIL_FILE);
+      log("SYSERR: mail rewrite for recipient %ld left live store intact and temp file at %s",
+          recipient, MAIL_FILE_TMP);
+      return NULL;
+    }
+
+    if (rename(MAIL_FILE_TMP, MAIL_FILE) != 0) {
+      int commit_errno = errno;
+      log("SYSERR: mail replacement failed for recipient %ld; attempting rollback", recipient);
+      if (rename(backup_file, MAIL_FILE) != 0)
+        TB_REPORT_ERRNO("rename", MAIL_FILE);
+      errno = commit_errno;
+      TB_REPORT_ERRNO("rename", MAIL_FILE_TMP);
+      return NULL;
+    }
+
+    if (remove(backup_file) != 0 && errno != ENOENT)
+      TB_REPORT_ERRNO("remove", backup_file);
   }
 
   return strdup(buf);
