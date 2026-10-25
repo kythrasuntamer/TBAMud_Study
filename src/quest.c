@@ -270,7 +270,7 @@ void add_completed_quest(struct char_data *ch, qst_vnum vnum)
 
   CREATE(temp, qst_vnum, count + 1);
   for (i = 0; i < count; i++)
-    temp[i] = ch->player_specials->saved.completed_quests[i];
+    temp[i] = ch->player_specials->saved.completed_quests[i]; /* NOLINT(clang-analyzer-security.ArrayBound): source count is tracked with the list. */
 
   temp[count] = vnum;
 
