@@ -9,12 +9,12 @@
       "src/class.c",
       "src/structs.h"
     ],
-    "verification": "class names and upstream integer ids confirmed; actual spells, feats, dependencies and rights not yet migrated"
+    "verification": "class names and upstream integer ids confirmed; actual spells, feats, dependencies and rights not yet migrated; four original classes now also have proposed skill trees (design only)"
   },
   "existing": [
     {
       "id": 0,
-      "name": "Magic-User",
+      "name": "Wizard",
       "upstream": "Wizard"
     },
     {
@@ -439,6 +439,258 @@
           "unlock": "boss",
           "implementation": "NOT_IMPLEMENTED",
           "source": "original design inspired by common RPG archetypes; not claimed extracted from upstream"
+        }
+      ]
+    },
+    {
+      "class": "Wizard",
+      "skills": [
+        {
+          "key": "arcane_sense",
+          "level": 1,
+          "requires": [],
+          "unlock": "trainer",
+          "implementation": "NOT_IMPLEMENTED",
+          "source": "original proposed ability; requires game-code implementation and balance tests"
+        },
+        {
+          "key": "warding",
+          "level": 5,
+          "requires": [
+            "arcane_sense"
+          ],
+          "unlock": "trainer",
+          "implementation": "NOT_IMPLEMENTED",
+          "source": "original proposed ability; requires game-code implementation and balance tests"
+        },
+        {
+          "key": "mana_control",
+          "level": 10,
+          "requires": [
+            "warding"
+          ],
+          "unlock": "trainer",
+          "implementation": "NOT_IMPLEMENTED",
+          "source": "original proposed ability; requires game-code implementation and balance tests"
+        },
+        {
+          "key": "elemental_mastery",
+          "level": 20,
+          "requires": [
+            "mana_control"
+          ],
+          "unlock": "trainer",
+          "implementation": "NOT_IMPLEMENTED",
+          "source": "original proposed ability; requires game-code implementation and balance tests"
+        },
+        {
+          "key": "spell_weaving",
+          "level": 35,
+          "requires": [
+            "elemental_mastery"
+          ],
+          "unlock": "trainer",
+          "implementation": "NOT_IMPLEMENTED",
+          "source": "original proposed ability; requires game-code implementation and balance tests"
+        },
+        {
+          "key": "archmage_focus",
+          "level": 48,
+          "requires": [
+            "spell_weaving"
+          ],
+          "unlock": "trainer",
+          "implementation": "NOT_IMPLEMENTED",
+          "source": "original proposed ability; requires game-code implementation and balance tests"
+        }
+      ]
+    },
+    {
+      "class": "Cleric",
+      "skills": [
+        {
+          "key": "sacred_lore",
+          "level": 1,
+          "requires": [],
+          "unlock": "trainer",
+          "implementation": "NOT_IMPLEMENTED",
+          "source": "original proposed ability; requires game-code implementation and balance tests"
+        },
+        {
+          "key": "restorative_prayer",
+          "level": 5,
+          "requires": [
+            "sacred_lore"
+          ],
+          "unlock": "trainer",
+          "implementation": "NOT_IMPLEMENTED",
+          "source": "original proposed ability; requires game-code implementation and balance tests"
+        },
+        {
+          "key": "purification",
+          "level": 12,
+          "requires": [
+            "restorative_prayer"
+          ],
+          "unlock": "trainer",
+          "implementation": "NOT_IMPLEMENTED",
+          "source": "original proposed ability; requires game-code implementation and balance tests"
+        },
+        {
+          "key": "protective_liturgy",
+          "level": 22,
+          "requires": [
+            "purification"
+          ],
+          "unlock": "trainer",
+          "implementation": "NOT_IMPLEMENTED",
+          "source": "original proposed ability; requires game-code implementation and balance tests"
+        },
+        {
+          "key": "divine_intercession",
+          "level": 36,
+          "requires": [
+            "protective_liturgy"
+          ],
+          "unlock": "trainer",
+          "implementation": "NOT_IMPLEMENTED",
+          "source": "original proposed ability; requires game-code implementation and balance tests"
+        },
+        {
+          "key": "miracle_focus",
+          "level": 48,
+          "requires": [
+            "divine_intercession"
+          ],
+          "unlock": "trainer",
+          "implementation": "NOT_IMPLEMENTED",
+          "source": "original proposed ability; requires game-code implementation and balance tests"
+        }
+      ]
+    },
+    {
+      "class": "Thief",
+      "skills": [
+        {
+          "key": "sleight_of_hand",
+          "level": 1,
+          "requires": [],
+          "unlock": "trainer",
+          "implementation": "NOT_IMPLEMENTED",
+          "source": "original proposed ability; requires game-code implementation and balance tests"
+        },
+        {
+          "key": "shadow_step",
+          "level": 6,
+          "requires": [
+            "sleight_of_hand"
+          ],
+          "unlock": "trainer",
+          "implementation": "NOT_IMPLEMENTED",
+          "source": "original proposed ability; requires game-code implementation and balance tests"
+        },
+        {
+          "key": "trapcraft",
+          "level": 12,
+          "requires": [
+            "shadow_step"
+          ],
+          "unlock": "trainer",
+          "implementation": "NOT_IMPLEMENTED",
+          "source": "original proposed ability; requires game-code implementation and balance tests"
+        },
+        {
+          "key": "precision_strike",
+          "level": 20,
+          "requires": [
+            "trapcraft"
+          ],
+          "unlock": "trainer",
+          "implementation": "NOT_IMPLEMENTED",
+          "source": "original proposed ability; requires game-code implementation and balance tests"
+        },
+        {
+          "key": "evasion",
+          "level": 33,
+          "requires": [
+            "precision_strike"
+          ],
+          "unlock": "trainer",
+          "implementation": "NOT_IMPLEMENTED",
+          "source": "original proposed ability; requires game-code implementation and balance tests"
+        },
+        {
+          "key": "master_infiltrator",
+          "level": 47,
+          "requires": [
+            "evasion"
+          ],
+          "unlock": "trainer",
+          "implementation": "NOT_IMPLEMENTED",
+          "source": "original proposed ability; requires game-code implementation and balance tests"
+        }
+      ]
+    },
+    {
+      "class": "Warrior",
+      "skills": [
+        {
+          "key": "weapon_drill",
+          "level": 1,
+          "requires": [],
+          "unlock": "trainer",
+          "implementation": "NOT_IMPLEMENTED",
+          "source": "original proposed ability; requires game-code implementation and balance tests"
+        },
+        {
+          "key": "shield_discipline",
+          "level": 6,
+          "requires": [
+            "weapon_drill"
+          ],
+          "unlock": "trainer",
+          "implementation": "NOT_IMPLEMENTED",
+          "source": "original proposed ability; requires game-code implementation and balance tests"
+        },
+        {
+          "key": "battle_readiness",
+          "level": 12,
+          "requires": [
+            "shield_discipline"
+          ],
+          "unlock": "trainer",
+          "implementation": "NOT_IMPLEMENTED",
+          "source": "original proposed ability; requires game-code implementation and balance tests"
+        },
+        {
+          "key": "counterstrike",
+          "level": 21,
+          "requires": [
+            "battle_readiness"
+          ],
+          "unlock": "trainer",
+          "implementation": "NOT_IMPLEMENTED",
+          "source": "original proposed ability; requires game-code implementation and balance tests"
+        },
+        {
+          "key": "iron_resolve",
+          "level": 34,
+          "requires": [
+            "counterstrike"
+          ],
+          "unlock": "trainer",
+          "implementation": "NOT_IMPLEMENTED",
+          "source": "original proposed ability; requires game-code implementation and balance tests"
+        },
+        {
+          "key": "warlord_tactics",
+          "level": 47,
+          "requires": [
+            "iron_resolve"
+          ],
+          "unlock": "trainer",
+          "implementation": "NOT_IMPLEMENTED",
+          "source": "original proposed ability; requires game-code implementation and balance tests"
         }
       ]
     }
