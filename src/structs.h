@@ -860,7 +860,7 @@ struct pclean_criteria_data
 /** General info used by PC's and NPC's. */
 struct char_player_data
 {
-  char passwd[MAX_PWD_LENGTH+1]; /**< PC's password */
+  char passwd[128]; /**< PC's password */
   char *name;                    /**< PC / NPC name */
   char *short_descr;             /**< NPC 'actions' */
   char *long_descr;              /**< PC / NPC look description */
