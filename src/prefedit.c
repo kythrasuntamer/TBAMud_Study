@@ -103,10 +103,10 @@ static void prefedit_disp_main_menu(struct descriptor_data *d)
   /* Set up the required variables and strings */
   vict = PREFEDIT_GET_CHAR;
 
-  sprintf(prompt_string, "%s%s%s", PREFEDIT_FLAGGED(PRF_DISPHP) ? "H" : "",   PREFEDIT_FLAGGED(PRF_DISPMANA) ? "M" : "",
+  tb_snprintf(prompt_string, sizeof(prompt_string), "%s%s%s", PREFEDIT_FLAGGED(PRF_DISPHP) ? "H" : "",   PREFEDIT_FLAGGED(PRF_DISPMANA) ? "M" : "",
                                    PREFEDIT_FLAGGED(PRF_DISPMOVE) ? "V" : "" );
 
-  sprintf(color_string, "%s", multi_types[(PREFEDIT_FLAGGED(PRF_COLOR_1) ? 1 : 0) + (PREFEDIT_FLAGGED(PRF_COLOR_2) ? 2 : 0)]);
+  tb_snprintf(color_string, sizeof(color_string), "%s", multi_types[(PREFEDIT_FLAGGED(PRF_COLOR_1) ? 1 : 0) + (PREFEDIT_FLAGGED(PRF_COLOR_2) ? 2 : 0)]);
 
   send_to_char(d->character, "\r\n%sPreferences for %s%s\r\n",
                               CCYEL(d->character, C_NRM),
@@ -140,7 +140,7 @@ static void prefedit_disp_main_menu(struct descriptor_data *d)
   /* Imm Prefs */
   if (GET_LEVEL(PREFEDIT_GET_CHAR) >= LVL_IMMORT)
   {
-    sprintf(syslog_string, "%s", multi_types[((PREFEDIT_FLAGGED(PRF_LOG1) ? 1 : 0)+ (PREFEDIT_FLAGGED(PRF_LOG2) ? 2 : 0))] );
+    tb_snprintf(syslog_string, sizeof(syslog_string), "%s", multi_types[((PREFEDIT_FLAGGED(PRF_LOG1) ? 1 : 0)+ (PREFEDIT_FLAGGED(PRF_LOG2) ? 2 : 0))] );
 
     send_to_char(d->character, "\r\n"
                                "%sImmortal Preferences\r\n"
@@ -305,7 +305,7 @@ static void prefedit_disp_prompt_menu(struct descriptor_data *d)
   if (PREFEDIT_FLAGGED(PRF_DISPAUTO))
     tb_snprintf(prompt_string, sizeof(prompt_string), "<Auto>");
   else
-    sprintf(prompt_string, "%s%s%s", PREFEDIT_FLAGGED(PRF_DISPHP) ? "H" : "",   PREFEDIT_FLAGGED(PRF_DISPMANA) ? "M" : "",
+    tb_snprintf(prompt_string, sizeof(prompt_string), "%s%s%s", PREFEDIT_FLAGGED(PRF_DISPHP) ? "H" : "",   PREFEDIT_FLAGGED(PRF_DISPMANA) ? "M" : "",
                                      PREFEDIT_FLAGGED(PRF_DISPMOVE) ? "V" : "");
 
   send_to_char(d->character, "%sPrompt Settings\r\n"
