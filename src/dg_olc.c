@@ -918,8 +918,12 @@ void trigedit_save(struct descriptor_data *d)
   tb_snprintf(buf, sizeof(buf), "%s/%d.trg", TRG_PREFIX, zone);
 #endif
 
-  remove(buf);
-  rename(fname, buf);
+  if (remove(buf) != 0 && errno != ENOENT)
+    TB_REPORT_ERRNO("remove", buf);
+  if (rename(fname, buf) != 0) {
+    TB_REPORT_ERRNO("rename", buf);
+    return;
+  }
 
   write_to_output(d, "Trigger saved to disk.\r\n");
   trigedit_create_index(zone, "trg");
@@ -938,9 +942,11 @@ static void trigedit_create_index(int znum, char *type)
   tb_snprintf(new_name, sizeof(new_name), "%s/newindex", prefix);
 
   if (!(oldfile = fopen(old_name, "r"))) {
+    TB_REPORT_ERRNO("fopen", old_name);
     mudlog(BRF, LVL_IMPL, TRUE, "SYSERR: DG_OLC: Failed to open %s", old_name);
     return;
   } else if (!(newfile = fopen(new_name, "w"))) {
+    TB_REPORT_ERRNO("fopen", new_name);
     mudlog(BRF, LVL_IMPL, TRUE, "SYSERR: DG_OLC: Failed to open %s", new_name);
     tb_fclose(oldfile);
     return;
@@ -969,8 +975,12 @@ static void trigedit_create_index(int znum, char *type)
   tb_fclose(oldfile);
 
   /* Out with the old, in with the new. */
-  remove(old_name);
-  rename(new_name, old_name);
+  if (remove(old_name) != 0 && errno != ENOENT)
+    TB_REPORT_ERRNO("remove", old_name);
+  if (rename(new_name, old_name) != 0) {
+    TB_REPORT_ERRNO("rename", old_name);
+    return;
+  }
 }
 
 void dg_olc_script_copy(struct descriptor_data *d)
