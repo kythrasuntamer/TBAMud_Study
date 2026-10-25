@@ -9,8 +9,8 @@
 * Copyright (C) 1993, 94 by the Trustees of the Johns Hopkins University 
 * CircleMUD is based on DikuMUD, Copyright (C) 1990, 1991.               
 */
-#ifndef _HANDLER_H_
-#define _HANDLER_H_
+#ifndef TBAMUD_HANDLER_H_INCLUDED
+#define TBAMUD_HANDLER_H_INCLUDED
 
 /* handling the affected-structures */
 void	affect_total(struct char_data *ch);
@@ -130,4 +130,4 @@ struct last_entry {
 void add_llog_entry(struct char_data *ch, int type);
 struct last_entry *find_llog_entry(int punique, long idnum);
 
-#endif /* _HANDLER_H_ */
+#endif /* TBAMUD_HANDLER_H_INCLUDED */
