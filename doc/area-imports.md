@@ -71,3 +71,33 @@ Next implementation milestones:
 3. Allocate isolated destination VNUM ranges, rewrite every cross-reference,
    and reject unresolved external links and unsupported script calls.
 4. Run isolated tbaMUD boot, navigation, shop and reset tests.
+
+## Experimental SMAUG FUSS room converter
+
+`tools/convert_smaug_rooms.py` parses `#ROOM` / `#EXIT` blocks from FUSS
+`.are` files and converts basic geometry into a **room-only** tbaMUD
+`.wld` file. It can relocate room VNUMs by an explicit offset, and it
+rejects unresolved exits, keyed doors, resets, unsupported room/exit fields,
+invalid VNUMs and duplicate directions rather than silently losing critical
+gameplay. Other original areas may not be supported.
+
+Example using a *locally obtained and rights-cleared* file:
+```sh
+python3 tools/convert_smaug_rooms.py /tmp/chapel.are \
+  --offset 500000 --output /tmp/chapel-converted.wld --allow-partial
+```
+
+The resulting `.wld` file is **not** a complete, installable zone:
+it lacks converted mobiles, objects, shops, area resets and scripts, plus
+a validated `.zon` file and index. Do not copy it directly to
+`lib/world`. The source sample `chapel.are` contains resets and keyed
+exits, so the converter will currently **reject** it, by design.
+No third-party areas have been committed to this repository.
+
+## SillyMUD converter status
+
+Stock SillyMUD combines data into `tinyworld.*` rather than the tbaMUD
+per-zone layout. Its zone headers and reset semantics are different. A
+dedicated conversion implementation and tests are still needed. **Do not**
+pass SillyMUD files to the SMAUG converter; do not claim Ethereal II areas
+are present in the stock SillyMUD distribution.
