@@ -425,10 +425,18 @@ int save_shops(zone_rnum zone_num)
     }
   }
   tb_fprintf(shop_file, "$~\n");
-  tb_fclose(shop_file);
+  {
+    int flush_ok = tb_fflush_checked(shop_file, fname);
+    int close_ok = tb_fclose_checked(shop_file, fname);
+    if (!flush_ok || !close_ok) {
+      if (remove(fname) != 0 && errno != ENOENT)
+        TB_REPORT_ERRNO("remove", fname);
+      return FALSE;
+    }
+  }
   tb_snprintf(oldname, sizeof(oldname), "%s/%d.shp", SHP_PREFIX, zone_table[zone_num].number);
-  remove(oldname);
-  rename(fname, oldname);
+  if (!tb_replace_file_checked(fname, oldname))
+    return FALSE;
 
   if (num_shops > 0)
     create_world_index(zone_table[zone_num].number, "shp");
