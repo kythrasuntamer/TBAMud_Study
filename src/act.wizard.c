@@ -1406,19 +1406,19 @@ ACMD(do_vstat)
     extract_obj(obj);
     break;
   case 'r':
-    sprintf(buf2, "room %d", tb_parse_int_or_zero(buf2));
+    snprintf(buf2, sizeof(buf2), "room %d", tb_parse_int_or_zero(buf2));
     do_stat(ch, buf2, 0, 0);
     break;
   case 'z':
-    sprintf(buf2, "zone %d", tb_parse_int_or_zero(buf2));
+    snprintf(buf2, sizeof(buf2), "zone %d", tb_parse_int_or_zero(buf2));
     do_stat(ch, buf2, 0, 0);
     break;
   case 't':
-    sprintf(buf2, "%d", tb_parse_int_or_zero(buf2));
+    snprintf(buf2, sizeof(buf2), "%d", tb_parse_int_or_zero(buf2));
     do_tstat(ch, buf2, 0, 0);
     break;
   case 's':
-    sprintf(buf2, "shops %d", tb_parse_int_or_zero(buf2));
+    snprintf(buf2, sizeof(buf2), "shops %d", tb_parse_int_or_zero(buf2));
     do_show(ch, buf2, 0, 0);
     break;
   default:
@@ -2566,7 +2566,7 @@ ACMD(do_show)
     return;
   }
 
-  strcpy(arg, two_arguments(argument, field, value));	/* strcpy: OK (argument <= MAX_INPUT_LENGTH == arg) */
+  strlcpy(arg, two_arguments(argument, field, value), sizeof(arg));	/* strcpy: OK (argument <= MAX_INPUT_LENGTH == arg) */
 
   for (l = 0; *(fields[l].cmd) != '\n'; l++)
     if (!strncmp(field, fields[l].cmd, strlen(field)))
@@ -3738,7 +3738,7 @@ ACMD (do_zcheck)
           send_to_char(ch, "%s", buf);
         }
         /* reset buffers and found flag */
-        strcpy(buf, "");
+        strlcpy(buf, "", sizeof(buf));
         found = 0;
         len = 0;
       }   /* mob is in zone */
@@ -3870,7 +3870,7 @@ ACMD (do_zcheck)
         send_to_char(ch, "[%5d] %-30s: \r\n", GET_OBJ_VNUM(obj), obj->short_description);
         send_to_char(ch, "%s", buf);
       }
-      strcpy(buf, "");
+      strlcpy(buf, "", sizeof(buf));
       len = 0;
       found = 0;
     }   /*object is in zone*/
@@ -3936,7 +3936,7 @@ ACMD (do_zcheck)
         send_to_char(ch, "[%5d] %-30s: \r\n",
                        world[i].number, world[i].name ? world[i].name : "An unnamed room");
         send_to_char(ch, "%s", buf);
-        strcpy(buf, "");
+        strlcpy(buf, "", sizeof(buf));
         len = 0;
         found = 0;
       }
@@ -4516,7 +4516,7 @@ ACMD(do_changelog)
     return;
   }
 
-  sprintf(buf, "%s.bak", CHANGE_LOG_FILE);
+  snprintf(buf, sizeof(buf), "%s.bak", CHANGE_LOG_FILE);
   if (rename(CHANGE_LOG_FILE, buf)) {
     mudlog(BRF, LVL_IMPL, TRUE,
            "SYSERR: Error making backup changelog file (%s)", buf);
@@ -4548,7 +4548,7 @@ ACMD(do_changelog)
   rawtime = time(0);
   strftime(timestr, sizeof(timestr), "%b %d %Y", localtime(&rawtime));
 
-  sprintf(buf, "[%s] - %s", timestr, GET_NAME(ch));
+  snprintf(buf, sizeof(buf), "[%s] - %s", timestr, GET_NAME(ch));
 
   fprintf(new, "%s\n", buf);
   fprintf(new, "  %s\n", argument);
@@ -4575,7 +4575,7 @@ ACMD(do_plist)
   int low = 0, high = LVL_IMPL, low_day = 0, high_day = 10000, low_hr = 0, high_hr = 24;
 
   skip_spaces(&argument);
-  strcpy(buf, argument);        /* strcpy: OK (sizeof: argument == buf) */
+  strlcpy(buf, argument, sizeof(buf));        /* strcpy: OK (sizeof: argument == buf) */
   name_search[0] = '\0';
 
   while (*buf) {
@@ -4585,7 +4585,7 @@ ACMD(do_plist)
     if (isdigit(*arg)) {
       if (sscanf(arg, "%d-%d", &low, &high) == 1)
         high = low;
-      strcpy(buf, buf1);        /* strcpy: OK (sizeof: buf1 == buf) */
+      strlcpy(buf, buf1, sizeof(buf));        /* strcpy: OK (sizeof: buf1 == buf) */
     } else if (*arg == '-') {
       mode = *(arg + 1);        /* just in case; we destroy arg in the switch */
       switch (mode) {
@@ -4597,11 +4597,11 @@ ACMD(do_plist)
         half_chop(buf1, name_search, buf);
         break;
       case 'i':
-        strcpy(buf, buf1);
+        strlcpy(buf, buf1, sizeof(buf));
         low = LVL_IMMORT;
         break;
       case 'm':
-        strcpy(buf, buf1);
+        strlcpy(buf, buf1, sizeof(buf));
         high = LVL_IMMORT - 1;
         break;
       case 'd':
@@ -4718,7 +4718,7 @@ bool change_player_name(struct char_data *ch, struct char_data *vict, char *new_
   }
 
   /* Set up a few variables that will be needed */
-  sprintf(old_name, "%s", GET_NAME(vict));
+  snprintf(old_name, sizeof(old_name), "%s", GET_NAME(vict));
   if (!get_filename(old_pfile, sizeof(old_pfile), PLR_FILE, old_name))
   {
     send_to_char(ch, "Unable to ascertain player's old pfile name.\r\n");
@@ -4739,7 +4739,7 @@ bool change_player_name(struct char_data *ch, struct char_data *vict, char *new_
   GET_PC_NAME(vict) = strdup(CAP(new_name));    // Change the name in the victims char struct
 
   /* Rename the player's pfile */
-  sprintf(buf, "mv %s %s", old_pfile, new_pfile);
+  snprintf(buf, sizeof(buf), "mv %s %s", old_pfile, new_pfile);
 
   /* Save the changed player index - the pfile is saved by perform_set */
   save_player_index();
