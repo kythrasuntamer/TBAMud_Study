@@ -43,7 +43,7 @@ void parse_trigger(FILE *trig_f, int nr)
     t_index->func = NULL;
     t_index->proto = trig;
 
-    snprintf(errors, sizeof(errors), "trig vnum %d", nr);
+    tb_snprintf(errors, sizeof(errors), "trig vnum %d", nr);
 
     trig->nr = top_of_trigt;
     trig->name = fread_string(trig_f, errors);
