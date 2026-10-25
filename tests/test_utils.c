@@ -199,6 +199,39 @@ void test_levenshtein_both_empty(void)
     TEST_ASSERT_EQUAL_INT(0, levenshtein_distance("", ""));
 }
 
+void test_levenshtein_null_input_is_rejected(void)
+{
+    TEST_ASSERT_EQUAL_INT(INT_MAX, levenshtein_distance(NULL, "hello"));
+}
+
+/* =========================================================
+ * file helpers
+ * ========================================================= */
+
+void test_file_sizeof_counts_exact_bytes(void)
+{
+    FILE *fp = tmpfile();
+
+    TEST_ASSERT_NOT_NULL(fp);
+    TEST_ASSERT_EQUAL_INT(3, fputs("abc", fp));
+    fflush(fp);
+
+    TEST_ASSERT_EQUAL_size_t(3, file_sizeof(fp));
+    fclose(fp);
+}
+
+void test_file_numlines_counts_newlines_only(void)
+{
+    FILE *fp = tmpfile();
+
+    TEST_ASSERT_NOT_NULL(fp);
+    fputs("one\ntwo\nthree", fp);
+    fflush(fp);
+
+    TEST_ASSERT_EQUAL_INT(2, file_numlines(fp));
+    fclose(fp);
+}
+
 /* =========================================================
  * count_color_chars
  * ========================================================= */
@@ -438,6 +471,11 @@ int main(void)
     RUN_TEST(test_levenshtein_single_deletion);
     RUN_TEST(test_levenshtein_single_substitution);
     RUN_TEST(test_levenshtein_both_empty);
+    RUN_TEST(test_levenshtein_null_input_is_rejected);
+
+    /* file helpers */
+    RUN_TEST(test_file_sizeof_counts_exact_bytes);
+    RUN_TEST(test_file_numlines_counts_newlines_only);
 
     /* count_color_chars */
     RUN_TEST(test_count_color_chars_no_codes);
