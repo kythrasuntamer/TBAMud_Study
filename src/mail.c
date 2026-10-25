@@ -210,10 +210,14 @@ void store_mail(long to, long from, char *message_pointer)
   record->sent_time = time(0);
   record->body = message_pointer;
 
-  if (!write_mail_record(mail_file, record))
+  if (!write_mail_record(mail_file, record)) {
     log("SYSERR: store_mail failed while persisting message from %ld to %ld", from, to);
+  } else if (!tb_fflush_checked(mail_file, MAIL_FILE)) {
+    log("SYSERR: store_mail write for message from %ld to %ld could not be flushed", from, to);
+  }
   free(record); /* don't free the body */
-  tb_fclose(mail_file);
+  if (!tb_fclose_checked(mail_file, MAIL_FILE))
+    log("SYSERR: store_mail close failed after message from %ld to %ld", from, to);
 }
 
 /* char *read_delete(long #1)
@@ -290,8 +294,22 @@ char *read_delete(long recipient)
 
     free_mail_record(record_to_keep);
   }
-  tb_fclose(mail_file);
-  tb_fclose(new_file);
+  if (!tb_fclose_checked(mail_file, MAIL_FILE)) {
+    log("SYSERR: read_delete detected a close failure on source mail store for recipient %ld", recipient);
+    (void)tb_fclose_checked(new_file, MAIL_FILE_TMP);
+    if (remove(MAIL_FILE_TMP) != 0 && errno != ENOENT)
+      TB_REPORT_ERRNO("remove", MAIL_FILE_TMP);
+    return NULL;
+  }
+
+  if (!tb_fflush_checked(new_file, MAIL_FILE_TMP) ||
+      !tb_fclose_checked(new_file, MAIL_FILE_TMP)) {
+    log("SYSERR: read_delete aborted replacement because temporary mail store was not durably written for recipient %ld",
+        recipient);
+    if (remove(MAIL_FILE_TMP) != 0 && errno != ENOENT)
+      TB_REPORT_ERRNO("remove", MAIL_FILE_TMP);
+    return NULL;
+  }
 
   if (remove(MAIL_FILE) != 0 && errno != ENOENT) {
     int saved_errno = errno;
