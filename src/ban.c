@@ -28,7 +28,7 @@ static char *invalid_list[MAX_INVALID_NAMES];
 
 /* local utility functions */
 static void write_ban_list(void);
-static void _write_one_node(FILE *fp, struct ban_list_element *node);
+static void write_one_node(FILE *fp, struct ban_list_element *node);
 
 static const char *ban_types[] = {
   "no",
@@ -94,10 +94,10 @@ int isbanned(char *hostname)
   return (i);
 }
 
-static void _write_one_node(FILE *fp, struct ban_list_element *node)
+static void write_one_node(FILE *fp, struct ban_list_element *node)
 {
   if (node) {
-    _write_one_node(fp, node->next);
+    write_one_node(fp, node->next);
     fprintf(fp, "%s %s %ld %s\n", ban_types[node->type],
 	    node->site, (long) node->date, node->name);
   }
@@ -111,7 +111,7 @@ static void write_ban_list(void)
     perror("SYSERR: Unable to open '" BAN_FILE "' for writing");
     return;
   }
-  _write_one_node(fl, ban_list);/* recursively write from end to start */
+  write_one_node(fl, ban_list);/* recursively write from end to start */
   fclose(fl);
   return;
 }
