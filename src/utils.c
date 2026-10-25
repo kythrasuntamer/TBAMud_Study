@@ -1311,6 +1311,8 @@ static char *strfrmt_append(char *dst, const char *end, const char *src)
 char *strfrmt(char *str, int w, int h, int justify, int hpad, int vpad)
 {
   static char ret[MAX_STRING_LENGTH];
+
+  (void)justify;
   char line[MAX_INPUT_LENGTH];
   char *sp = str;
   char *lp = line;
