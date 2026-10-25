@@ -409,9 +409,15 @@ void copyover_recover()
 
   /* read boot_time - first line in file */
   i = fscanf(fp, "%ld\n", (long *)&boot_time);
-  
-  if (i != 1) 
-    log("SYSERR: Error reading boot time.");
+
+  if (i != 1) {
+    if (ferror(fp))
+      log("SYSERR: Error reading boot time from %s: %s", COPYOVER_FILE, strerror(errno));
+    else
+      log("SYSERR: Invalid or truncated boot time in %s.", COPYOVER_FILE);
+    fclose(fp);
+    exit(1);
+  }
 
   for (;;) {
     fOld = TRUE;
