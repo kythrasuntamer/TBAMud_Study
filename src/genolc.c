@@ -282,7 +282,7 @@ static void fix_filename(const char *str, char *outbuf, size_t maxlen)
 { 
   const char *in = str;
   char *out = outbuf;
-  int count = 0;
+  size_t count = 0;
 
   while (*in) {
     switch(*in) {
