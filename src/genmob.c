@@ -317,10 +317,18 @@ int save_mobiles(zone_rnum rznum)
   }
   tb_fputs("$\n", mobfd);
   written = ftell(mobfd);
-  tb_fclose(mobfd);
+  {
+    int flush_ok = tb_fflush_checked(mobfd, mobfname);
+    int close_ok = tb_fclose_checked(mobfd, mobfname);
+    if (!flush_ok || !close_ok) {
+      if (remove(mobfname) != 0 && errno != ENOENT)
+        TB_REPORT_ERRNO("remove", mobfname);
+      return FALSE;
+    }
+  }
   tb_snprintf(usedfname, sizeof(usedfname), "%s%d.mob", MOB_PREFIX, vznum);
-  remove(usedfname);
-  rename(mobfname, usedfname);
+  if (!tb_replace_file_checked(mobfname, usedfname))
+    return FALSE;
 
   if (in_save_list(vznum, SL_MOB))
     remove_from_save_list(vznum, SL_MOB);
