@@ -38,6 +38,44 @@
 #include "ibt.h"
 #include "mud_event.h"
 
+/* libsodium's encoded Argon2id string includes algorithm parameters and salt.
+ * Require libsodium for new hashes; never fall back to plaintext. */
+#include <sodium.h>
+
+static int tb_password_is_argon2id(const char *hash)
+{
+  return hash != NULL && strncmp(hash, "$argon2id$", 10) == 0;
+}
+
+static int tb_password_verify(const char *password, const char *hash)
+{
+  const char *legacy;
+
+  if (password == NULL || hash == NULL || !*hash)
+    return 0;
+  if (tb_password_is_argon2id(hash))
+    return crypto_pwhash_str_verify(hash, password, strlen(password)) == 0;
+#if defined(CIRCLE_CRYPT) && !defined(NOCRYPT)
+  /* Reject invalid crypt results; do not allow a plaintext fallback. */
+  legacy = crypt(password, hash);
+  return legacy != NULL && strcmp(legacy, hash) == 0;
+#else
+  (void)legacy;
+  return 0;
+#endif
+}
+
+static int tb_password_hash(char *output, size_t capacity, const char *password)
+{
+  if (output == NULL || password == NULL ||
+      capacity < crypto_pwhash_STRBYTES)
+    return 0;
+  return crypto_pwhash_str_alg(output, password, strlen(password),
+                              crypto_pwhash_OPSLIMIT_INTERACTIVE,
+                              crypto_pwhash_MEMLIMIT_INTERACTIVE,
+                              crypto_pwhash_ALG_ARGON2ID13) == 0;
+}
+
 /* local (file scope) functions */
 static int perform_dupe_check(struct descriptor_data *d);
 static struct alias_data *find_alias(struct alias_data *alias_list, char *str);
@@ -1523,7 +1561,7 @@ void nanny(struct descriptor_data *d, char *arg)
     if (!*arg)
       STATE(d) = CON_CLOSE;
     else {
-      if (strncmp(CRYPT(arg, GET_PASSWD(d->character)), GET_PASSWD(d->character), MAX_PWD_LENGTH)) {
+      if (!tb_password_verify(arg, GET_PASSWD(d->character))) {
 	mudlog(BRF, LVL_GOD, TRUE, "Bad PW: %s [%s]", GET_NAME(d->character), d->host);
 	GET_BAD_PWS(d->character)++;
 	save_char(d->character);
@@ -1535,6 +1573,21 @@ void nanny(struct descriptor_data *d, char *arg)
 	  echo_off(d);
 	}
 	return;
+      }
+
+      /* Upgrade only after proving ownership of the legacy credential.
+       * A save failure must not prevent the old credential from remaining
+       * usable: player save atomicity is a separate prerequisite. */
+      if (!tb_password_is_argon2id(GET_PASSWD(d->character))) {
+        char upgraded[crypto_pwhash_STRBYTES];
+        if (tb_password_hash(upgraded, sizeof(upgraded), arg)) {
+          strlcpy(GET_PASSWD(d->character), upgraded,
+                  sizeof(d->character->player.passwd));
+          sodium_memzero(upgraded, sizeof(upgraded));
+          save_char(d->character);
+        } else {
+          TB_REPORT_ERROR("argon2id", "legacy password upgrade failed");
+        }
       }
 
       /* Password was correct. */
@@ -1594,8 +1647,13 @@ void nanny(struct descriptor_data *d, char *arg)
       write_to_output(d, "\r\nIllegal password.\r\nPassword: ");
       return;
     }
-    strncpy(GET_PASSWD(d->character), CRYPT(arg, GET_PC_NAME(d->character)), MAX_PWD_LENGTH);	/* strncpy: OK (G_P:MAX_PWD_LENGTH+1) */
-    *(GET_PASSWD(d->character) + MAX_PWD_LENGTH) = '\0';
+    if (!tb_password_hash(GET_PASSWD(d->character),
+                          sizeof(d->character->player.passwd), arg)) {
+      TB_REPORT_ERROR("argon2id", "password hashing failed");
+      write_to_output(d, "\r\nPassword setup unavailable; try again later.\r\n");
+      STATE(d) = CON_CLOSE;
+      return;
+    }
 
     write_to_output(d, "\r\nPlease retype password: ");
     if (STATE(d) == CON_NEWPASSWD)
@@ -1606,8 +1664,7 @@ void nanny(struct descriptor_data *d, char *arg)
 
   case CON_CNFPASSWD:
   case CON_CHPWD_VRFY:
-    if (strncmp(CRYPT(arg, GET_PASSWD(d->character)), GET_PASSWD(d->character),
-		MAX_PWD_LENGTH)) {
+    if (!tb_password_verify(arg, GET_PASSWD(d->character))) {
       write_to_output(d, "\r\nPasswords don't match... start over.\r\nPassword: ");
       if (STATE(d) == CON_CNFPASSWD)
 	STATE(d) = CON_NEWPASSWD;
@@ -1772,7 +1829,7 @@ void nanny(struct descriptor_data *d, char *arg)
   }
 
   case CON_CHPWD_GETOLD:
-    if (strncmp(CRYPT(arg, GET_PASSWD(d->character)), GET_PASSWD(d->character), MAX_PWD_LENGTH)) {
+    if (!tb_password_verify(arg, GET_PASSWD(d->character))) {
       echo_on(d);
       write_to_output(d, "\r\nIncorrect password.\r\n%s", CONFIG_MENU);
       STATE(d) = CON_MENU;
@@ -1784,7 +1841,7 @@ void nanny(struct descriptor_data *d, char *arg)
 
   case CON_DELCNF1:
     echo_on(d);
-    if (strncmp(CRYPT(arg, GET_PASSWD(d->character)), GET_PASSWD(d->character), MAX_PWD_LENGTH)) {
+    if (!tb_password_verify(arg, GET_PASSWD(d->character))) {
       write_to_output(d, "\r\nIncorrect password.\r\n%s", CONFIG_MENU);
       STATE(d) = CON_MENU;
     } else {
