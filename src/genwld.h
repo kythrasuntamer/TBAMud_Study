@@ -9,8 +9,8 @@
 * is attributed to:
 * By Levork. Copyright 1996 by Harvey Gilpin, 1997-2001 by George Greer.                                                    
 */
-#ifndef _GENWLD_H_
-#define _GENWLD_H_
+#ifndef TBAMUD_GENWLD_H_INCLUDED
+#define TBAMUD_GENWLD_H_INCLUDED
 
 room_rnum add_room(struct room_data *);
 int delete_room(room_rnum);
@@ -20,4 +20,4 @@ room_rnum duplicate_room(room_vnum to, room_rnum from);
 int copy_room_strings(struct room_data *dest, struct room_data *source);
 int free_room_strings(struct room_data *);
 
-#endif /* _GENWLD_H_ */
+#endif /* TBAMUD_GENWLD_H_INCLUDED */
