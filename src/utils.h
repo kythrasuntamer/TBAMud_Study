@@ -15,8 +15,8 @@
 * functions, move functions, char_from_furniture) out of utils and declare /
 * define elsewhere.
 */
-#ifndef _UTILS_H_ /* Begin header file protection */
-#define _UTILS_H_
+#ifndef TBAMUD_UTILS_H_INCLUDED /* Begin header file protection */
+#define TBAMUD_UTILS_H_INCLUDED
 
 /** Definition of the action command, for the do_ series of in game functions.
  * This macro is placed here (for now) because it's too general of a macro
@@ -1101,4 +1101,4 @@ do                                                              \
 /** What is the minimum level character to put on the wizlist? */
 #define CONFIG_MIN_WIZLIST_LEV  config_info.autowiz.min_wizlist_lev
 
-#endif /* _UTILS_H_ */
+#endif /* TBAMUD_UTILS_H_INCLUDED */
