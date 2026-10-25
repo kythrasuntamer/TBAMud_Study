@@ -145,7 +145,7 @@ void load_messages(void)
       messages->god_msg.room_msg = fread_action(fl, i);
     }
   }
-  fclose(fl);
+  tb_fclose(fl);
   log("Loaded %d Combat Messages...", i);
 }
 
@@ -165,7 +165,7 @@ static void show_messages(struct char_data *ch)
         len += snprintf(buf + len, sizeof(buf) - len, "%-2d) [%-3d] %d, %-18s\r\n", half, fight_messages[half].a_type, fight_messages[half].number_of_attacks, fight_messages[half].a_type < TOP_SPELL_DEFINE ? spell_info[fight_messages[half].a_type].name : "Unknown");
     }
     
-  snprintf(buf + len, sizeof(buf) - len, "Total Messages: %d\r\n", count);  
+  tb_snprintf(buf + len, sizeof(buf) - len, "Total Messages: %d\r\n", count);  
   page_string(ch->desc, buf, TRUE);
 }
 
@@ -182,18 +182,18 @@ void save_messages_to_disk(void)
     exit(1);
   }
  
-  fprintf(fp, "* TBAMUD 3.64 Combat Message File\n");
+  tb_fprintf(fp, "* TBAMUD 3.64 Combat Message File\n");
  
   for (i = 0; i < MAX_MESSAGES; i++) {
     if (fight_messages[i].msg == NULL)
       continue;
     if (fight_messages[i].a_type > 0 && fight_messages[i].a_type < TOP_SPELL_DEFINE)
-      fprintf(fp, "* %s %d\n", PRINT_MSG(spell_info[fight_messages[i].a_type].name), fight_messages[i].a_type);
+      tb_fprintf(fp, "* %s %d\n", PRINT_MSG(spell_info[fight_messages[i].a_type].name), fight_messages[i].a_type);
     else
-      fprintf(fp, "* %d\n", fight_messages[i].a_type);
+      tb_fprintf(fp, "* %d\n", fight_messages[i].a_type);
              
     for (msg = fight_messages[i].msg; msg; msg = msg->next){
-      fprintf(fp, "M\n"
+      tb_fprintf(fp, "M\n"
                   "%d\n"
                   "%s\n"
                   "%s\n" 
@@ -224,7 +224,7 @@ void save_messages_to_disk(void)
     }
   }  
   
-  fclose(fp);
+  tb_fclose(fp);
 }
 
 static void msgedit_setup(struct descriptor_data *d)
