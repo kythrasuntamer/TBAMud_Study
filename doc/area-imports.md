@@ -248,3 +248,11 @@ The Crimson-2-MUD repository has about 214 area object files in `dev/lib/areas`,
 
 Evidence: https://www.mudconnect.com/cgi-bin/search.cgi?mode=mud_listing&mud=Crimson+MUD+2
 Repository: https://github.com/c2admins/Crimson-2-MUD
+
+## Explicit Crimson 2 source exception (owner-approved)
+
+Crimson 2 is **the sole exception** to the normal ban on PvP-source MUDs. Its areas, mobiles, objects and resets may be considered for *PvE-only* conversion. This exception does not apply to other PvP games.
+
+Conversion must eliminate PvP-only commands, scripts, rewards, flags, arena/dueling mechanics and player-targeting combat behavior; preserve normal NPC combat and PvE loot. It must reject any unsupported or ambiguous PvP feature rather than copying it over. Extracted content must also undergo independent copyright/attribution review, VNUM remapping and reference validation, equipment/stat scaling for mortal levels 1-50, and isolated Fil-C/tbaMUD load and gameplay tests before any world activation. Merely stripping labels does not prove PvP elimination.
+
+The source repository has separate `.wld`, `.mob`, `.obj`, `.zon` files in `dev/lib/areas` and nonstandard records; these **must not** be copied into live `lib/world` unconverted. The original source exception does not automatically clear third-party content licensing.
