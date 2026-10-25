@@ -202,11 +202,18 @@ static void aedit_save_internally(struct descriptor_data *d) {
 
 static void aedit_save_to_disk(struct descriptor_data *d) {
    FILE *fp;
-   int i;
-   char buf[MAX_STRING_LENGTH];
-   if (!(fp = fopen(SOCMESS_FILE_NEW, "w+")))  {
-     TB_REPORT_ERRNO("fopen", SOCMESS_FILE_NEW);
-     exit(1);
+   int i, name_result;
+   char buf[MAX_STRING_LENGTH], temp_file[MAX_STRING_LENGTH];
+
+   name_result = snprintf(temp_file, sizeof(temp_file), "%s.tmp", SOCMESS_FILE_NEW);
+   if (name_result < 0 || (size_t)name_result >= sizeof(temp_file)) {
+     log("SYSERR: socials temporary filename is too long for %s", SOCMESS_FILE_NEW);
+     return;
+   }
+
+   if (!(fp = fopen(temp_file, "w+")))  {
+     TB_REPORT_ERRNO("fopen", temp_file);
+     return;
    }
 
    for (i = 0; i <= top_of_socialt; i++)  {
@@ -245,7 +252,19 @@ static void aedit_save_to_disk(struct descriptor_data *d) {
    }
 
    tb_fprintf(fp, "$\n");
-   tb_fclose(fp);
+   {
+     int flush_ok = tb_fflush_checked(fp, temp_file);
+     int close_ok = tb_fclose_checked(fp, temp_file);
+     if (!flush_ok || !close_ok) {
+       if (remove(temp_file) != 0 && errno != ENOENT)
+         TB_REPORT_ERRNO("remove", temp_file);
+       return;
+     }
+   }
+
+   if (!tb_replace_file_checked(temp_file, SOCMESS_FILE_NEW))
+     return;
+
    remove_from_save_list(AEDIT_PERMISSION, SL_ACT);
 }
 
