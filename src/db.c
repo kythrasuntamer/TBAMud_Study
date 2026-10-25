@@ -1782,7 +1782,7 @@ void parse_mobile(FILE *mob_f, int nr)
    * The only reason we have every mob in the game share this copy of the
    * structure is to save newbie coders from themselves. -gg */
   mob_proto[i].player_specials = &dummy_mob;
-  sprintf(buf2, "mob vnum %d", nr);	/* sprintf: OK (for 'buf2 >= 19') */
+  snprintf(buf2, sizeof(buf2), "mob vnum %d", nr);	/* sprintf: OK (for 'buf2 >= 19') */
 
   /* String data */
   mob_proto[i].player.name = fread_string(mob_f, buf2);
@@ -1928,7 +1928,7 @@ char *parse_object(FILE *obj_f, int nr)
   clear_object(obj_proto + i);
   obj_proto[i].item_number = i;
 
-  sprintf(buf2, "object #%d", nr);	/* sprintf: OK (for 'buf2 >= 19') */
+  snprintf(buf2, sizeof(buf2), "object #%d", nr);	/* sprintf: OK (for 'buf2 >= 19') */
 
   /* string data */
   if ((obj_proto[i].name = fread_string(obj_f, buf2)) == NULL) {
@@ -2322,7 +2322,7 @@ void load_help(FILE * fl, char *name)
 
   get_one_line(fl, key);
   while (*key != '$') {
-    strcat(key, "\r\n"); /* strcat: OK (READ_SIZE - "\n"  "\r\n" == READ_SIZE  1) */
+    strlcat(key, "\r\n", sizeof(key)); /* strcat: OK (READ_SIZE - "\n"  "\r\n" == READ_SIZE  1) */
     entrylen = strlcpy(entry, key, sizeof(entry));
 
     /* Read in the corresponding help entry. */
@@ -3456,7 +3456,7 @@ static int file_to_string(const char *name, char *buf)
       break;
     if ((len = strlen(tmp)) > 0)
       tmp[len - 1] = '\0'; /* take off the trailing \n */
-    strcat(tmp, "\r\n");	/* strcat: OK (tmp:READ_SIZE+3) */
+    strlcat(tmp, "\r\n", sizeof(tmp));	/* strcat: OK (tmp:READ_SIZE+3) */
 
     if (strlen(buf) + strlen(tmp) + 1 > MAX_STRING_LENGTH) {
       log("SYSERR: %s: string too big (%d max)", name, MAX_STRING_LENGTH);
@@ -3464,7 +3464,7 @@ static int file_to_string(const char *name, char *buf)
       fclose(fl);
       return (-1);
     }
-    strcat(buf, tmp);	/* strcat: OK (size checked above) */
+    strlcat(buf, tmp, sizeof(buf));	/* strcat: OK (size checked above) */
   }
 
   fclose(fl);
