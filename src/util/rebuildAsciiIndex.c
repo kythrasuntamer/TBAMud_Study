@@ -15,6 +15,30 @@
 
 #define READ_SIZE 256
 
+static void util_report_errno_at(const char *operation, const char *context,
+                                 int errnum, const char *source_file,
+                                 int source_line, const char *source_func)
+{
+  int caller_errno = errno;
+  fprintf(stderr,
+          "SYSERR: operation=%s context=%s error=\"%s\" errno=%d source=%s:%d function=%s\n",
+          operation ? operation : "operation",
+          context ? context : "(no context)",
+          strerror(errnum), errnum,
+          source_file ? source_file : "(unknown)",
+          source_line,
+          source_func ? source_func : "(unknown)");
+  (void)fflush(stderr);
+  errno = caller_errno;
+}
+
+#define UTIL_REPORT_ERRNO(operation, context) do { \
+  int util_saved_errno_ = errno; \
+  util_report_errno_at((operation), (context), util_saved_errno_, \
+                       __FILE__, __LINE__, __func__); \
+} while (0)
+
+
 static long parse_long_or_zero(const char *text)
 {
   char *end = NULL;
@@ -47,13 +71,13 @@ int main(int argc, char** argv)
 	  return 0;
  	}
  	if (!(index_file = fopen(argv[1], "w"))) {
-    TB_REPORT_ERRNO("fopen", argv[1]);
+    UTIL_REPORT_ERRNO("fopen", argv[1]);
     return 1;
   }
 	walkdir(index_file, ".");
 
-  if (fprintf(index_file, "~\n") < 0) TB_REPORT_ERRNO("fprintf", argv[1]);
-  if (fclose(index_file) != 0) TB_REPORT_ERRNO("fclose", argv[1]);
+  if (fprintf(index_file, "~\n") < 0) UTIL_REPORT_ERRNO("fprintf", argv[1]);
+  if (fclose(index_file) != 0) UTIL_REPORT_ERRNO("fclose", argv[1]);
  	return 0;
 }
 
@@ -126,7 +150,7 @@ void walkdir(FILE *index_file, char *dir) {
 	  struct stat stbuf ;
 	  snprintf(filename_qfd, sizeof(filename_qfd), "%s/%s",dir,dp->d_name);
 	  if( stat(filename_qfd,&stbuf ) == -1 ) {
-   		if (fprintf(stdout, "Unable to stat file: %s\n", filename_qfd) < 0) perror("stdout");
+   		if (fprintf(stdout, "Unable to stat file: %s\n", filename_qfd) < 0) UTIL_REPORT_ERRNO("fprintf", "stdout");
    		continue ;
   	}
 
@@ -141,7 +165,7 @@ void walkdir(FILE *index_file, char *dir) {
 			if (name != NULL) {
   			FILE *plr_file = fopen(filename_qfd, "r");
         if (!plr_file) {
-          TB_REPORT_ERRNO("fopen", filename_qfd);
+          UTIL_REPORT_ERRNO("fopen", filename_qfd);
           continue;
         }
  				long id = parseid(plr_file);
@@ -154,12 +178,12 @@ void walkdir(FILE *index_file, char *dir) {
 
  				fprintf(index_file, "%ld %s %d %d 0 %ld\n", id, name, level, adminlevel, last);
 
-        if (fclose(plr_file) != 0) TB_REPORT_ERRNO("fclose", filename_qfd);
+        if (fclose(plr_file) != 0) UTIL_REPORT_ERRNO("fclose", filename_qfd);
   		}
   	}
  	}
   if (closedir(dfd) != 0)
-    TB_REPORT_ERRNO("closedir", LIB_PLRFILES);
+    UTIL_REPORT_ERRNO("closedir", dir);
 }
 
 int get_line(FILE *fl, char *buf)
