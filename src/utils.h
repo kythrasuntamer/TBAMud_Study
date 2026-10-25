@@ -214,7 +214,7 @@ void char_from_furniture(struct char_data *ch);
 
 /** If string begins a vowel (upper or lower case), return "an"; else return
  * "a". */
-#define AN(string) (strchr("aeiouAEIOU", *string) ? "an" : "a")
+#define AN(string) (strchr("aeiouAEIOU", *(string)) ? "an" : "a")
 
 /** A calloc based memory allocation macro.
  * @param result Pointer to created memory.
@@ -248,9 +248,9 @@ void char_from_furniture(struct char_data *ch);
  * */
 #define REMOVE_FROM_LIST(item, head, next)	\
    if ((item) == (head))		\
-      head = (item)->next;		\
+      (head) = (item)->next;		\
    else {				\
-      temp = head;			\
+      temp = (head);			\
       while (temp && (temp->next != (item))) \
 	 temp = temp->next;		\
       if (temp)				\
@@ -310,8 +310,8 @@ do                                                              \
   {                                                             \
         log( "SYSERR: Freeing null pointer %s:%d", __FILE__, __LINE__ ); \
   }                                                             \
-  else free(point);                                             \
-  point = NULL;                                                 \
+  else free((point));                                             \
+  (point) = NULL;                                                 \
 } while(0)
 
 /* String Utils */
@@ -482,8 +482,8 @@ do                                                              \
 /** Gets the level of a player even if the player is switched.
  * @todo Make this the definition of GET_LEVEL. */
 #define GET_REAL_LEVEL(ch) \
-   (ch->desc && ch->desc->original ? GET_LEVEL(ch->desc->original) : \
-    GET_LEVEL(ch))
+   ((ch)->desc && (ch)->desc->original ? GET_LEVEL((ch)->desc->original) : \
+    GET_LEVEL((ch)))
 
 /** Class of ch. */
 #define GET_CLASS(ch)   ((ch)->player.chclass)
@@ -794,8 +794,8 @@ do                                                              \
 
 /** Is anyone carrying this object and if so, are they visible? */
 #define CAN_SEE_OBJ_CARRIER(sub, obj) \
-  ((!obj->carried_by || CAN_SEE(sub, obj->carried_by)) &&	\
-   (!obj->worn_by || CAN_SEE(sub, obj->worn_by)))
+  ((!((obj)->carried_by) || CAN_SEE((sub), (obj)->carried_by)) &&	\
+   (!((obj)->worn_by) || CAN_SEE((sub), (obj)->worn_by)))
 
 /** Can sub character see the obj, using mortal only checks? */
 #define MORT_CAN_SEE_OBJ(sub, obj) \
@@ -869,9 +869,9 @@ do                                                              \
 #define OUTSIDE(ch) (!ROOM_FLAGGED(IN_ROOM(ch), ROOM_INDOORS))
 
 /* Group related defines */
-#define GROUP(ch)            (ch->group)
-#define GROUP_LEADER(group)  (group->leader)
-#define GROUP_FLAGS(group)   (group->group_flags)
+#define GROUP(ch)            ((ch)->group)
+#define GROUP_LEADER(group)  ((group)->leader)
+#define GROUP_FLAGS(group)   ((group)->group_flags)
 
 /* Happy-hour defines */
 #define IS_HAPPYQP   (happy_data.qp_rate > 0)
