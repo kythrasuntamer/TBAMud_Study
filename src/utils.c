@@ -1127,7 +1127,8 @@ int file_head(FILE *file, char *buf, size_t bufsize, int lines_to_read)
   }
 
   clearerr(file);
-  fseek(file, 0L, SEEK_SET);
+  if (fseek(file, 0L, SEEK_SET) != 0)
+    TB_REPORT_ERRNO("fseek", "restore file position in line reader");
   return lines_read;
 }
 
@@ -1214,7 +1215,8 @@ int file_tail(FILE *file, char *buf, size_t bufsize, int lines_to_read)
   }
 
   clearerr(file);
-  fseek(file, 0L, SEEK_SET);
+  if (fseek(file, 0L, SEEK_SET) != 0)
+    TB_REPORT_ERRNO("fseek", "restore file position in line reader");
   return lines_read;
 }
 
@@ -1241,7 +1243,8 @@ size_t file_sizeof(FILE *file)
     numbytes++;
 
   clearerr(file);
-  fseek(file, 0L, SEEK_SET);
+  if (fseek(file, 0L, SEEK_SET) != 0)
+    TB_REPORT_ERRNO("fseek", "restore file position after size scan");
   return numbytes;
 }
 
@@ -1269,7 +1272,8 @@ int file_numlines(FILE *file)
       numlines++;
 
   clearerr(file);
-  fseek(file, 0L, SEEK_SET);
+  if (fseek(file, 0L, SEEK_SET) != 0)
+    TB_REPORT_ERRNO("fseek", "restore file position after line count");
   return numlines;
 }
 
