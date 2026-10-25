@@ -101,3 +101,42 @@ per-zone layout. Its zone headers and reset semantics are different. A
 dedicated conversion implementation and tests are still needed. **Do not**
 pass SillyMUD files to the SMAUG converter; do not claim Ethereal II areas
 are present in the stock SillyMUD distribution.
+
+## Expanded source-format roadmap (October 2026)
+
+Prioritize by **file format**, not just engine name. Many derivatives share
+formats but add incompatible commands, flags, scripts and fields.
+
+| Tier | Source formats and known variants | Import strategy |
+| --- | --- | --- |
+| 1 | tbaMUD, CircleMUD, classic DikuMUD | Read indexed files; remap all VNUMs and references; boot-test |
+| 1 | Merc, ROM, QuickMUD, Envy, RoT, 1stMUD and ROM-derived forks | Parse tilde-delimited .are; check extensions and mechanics |
+| 1 | SMAUG, SMAUG FUSS, AFKMud, SWR/Star Wars Reality, SMAUG-derived forks | Multiple parser versions; translate resets, objects, mobiles, scripts |
+| 2 | ACK!MUD, GodWars Deluxe, Devil's Silence | Dedicated .are readers and semantic mappings |
+| 2 | SillyMUD (including heavily customized derivatives) | Parse monolithic tinyworld data; separately validate semantics |
+| 2 | Medievia | Parse monolithic data and per-zone room files |
+| 2 | CoffeeMUD | Parse .cmare XML exports, map abilities and objects |
+| 3 | Dawn of Time, DikuMUD3/Valhalla, AwakeMUD, LuminariMUD, OpenRPI | Source-specific adapters after reviewing real area data |
+| 4 | LPMud/FluffOS/LDMud/MudOS, Evennia, NakedMud | Extract data and reimplement behavior; not directly compatible |
+| 4 | MOO/MUSH/MUX/MUCK, AberMUD and unrelated engines | Schema-specific reconstruction; scripts cannot simply be copied |
+
+The available area_reader library currently advertises readers and writers
+for ROM, Merc, GodWars Deluxe, Devil's Silence, ACK!MUD, SMAUG, SWR/FUSS,
+CircleMUD, tbaMUD, Medievia and CoffeeMud. This is promising **parsing
+support**, not proof of correct translation *to tbaMUD*.
+Source: https://github.com/ctoth/area_reader
+
+Possible source catalogs:
+- https://www.circlemud.org/pub/CircleMUD/contrib/areas/
+- https://www.grimwheel.com/codebases/
+- https://godwars.net/~mudbytes/codebases.html
+- https://github.com/okeuday/sillymud
+- https://github.com/nickgammon/smaugfuss
+
+The target goal is a **typed intermediate area representation** with
+rooms, mobiles, objects, reset commands, scripts, shops, quests and all
+cross-references; a separate adapter per original format; strict validation;
+and one versioned tbaMUD writer. Do not infer licensing from source
+availability. Unsupported mechanics must produce a conversion report and
+prevent activation, not silently disappear. No third-party content is
+implicitly authorized for redistribution.
