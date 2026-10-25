@@ -158,6 +158,38 @@ extern void abort(), exit();
 #include <errno.h>
 #endif
 
+/*
+ * Checked replacements for legacy atoi()/atol() call sites.
+ * They preserve the historical "no conversion => 0" behavior while detecting
+ * range errors instead of invoking undefined or implementation-dependent
+ * overflow behavior.
+ */
+static inline long tb_parse_long_or_zero(const char *text)
+{
+  char *end = NULL;
+  long value;
+
+  if (text == NULL)
+    return 0;
+
+  errno = 0;
+  value = strtol(text, &end, 10);
+  if (end == text || errno == ERANGE)
+    return 0;
+
+  return value;
+}
+
+static inline int tb_parse_int_or_zero(const char *text)
+{
+  long value = tb_parse_long_or_zero(text);
+
+  if (value < INT_MIN || value > INT_MAX)
+    return 0;
+
+  return (int)value;
+}
+
 #ifdef HAVE_NET_ERRNO_H
 #include <net/errno.h>
 #endif
