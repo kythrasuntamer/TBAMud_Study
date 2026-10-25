@@ -1,4 +1,11 @@
 cmake_minimum_required(VERSION 3.12)
+
+# CMake 4.4+ preserves backslashes passed through macro calls.  Opt in when
+# available while retaining compatibility with older supported CMake versions.
+if(POLICY CMP0219)
+    cmake_policy(SET CMP0219 NEW)
+endif()
+
 project(TbaMUD C)
 
 include(CTest)
