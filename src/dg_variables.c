@@ -1187,6 +1187,7 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
             } else
               snprintf(str, slen, "0");
           }
+          break;
 	case 'c':
           if (!str_cmp(field, "cost")) {
             if (subfield && *subfield) {
