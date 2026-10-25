@@ -304,6 +304,33 @@ static void fix_filename(const char *str, char *outbuf, size_t maxlen)
   *out = '\0';
 }
 
+#ifndef CIRCLE_WINDOWS
+static int run_program_argv(char *const argv[])
+{
+  pid_t pid;
+  int status;
+
+  pid = fork();
+  if (pid < 0)
+    return -1;
+
+  if (pid == 0) {
+    execvp(argv[0], argv);
+    _exit(127);
+  }
+
+  while (waitpid(pid, &status, 0) < 0) {
+    if (errno != EINTR)
+      return -1;
+  }
+
+  if (!WIFEXITED(status))
+    return -1;
+
+  return WEXITSTATUS(status);
+}
+#endif
+
 /* Export command by Kyle */ 
 ACMD(do_export_zone) 
 { 
@@ -313,8 +340,11 @@ ACMD(do_export_zone)
 #else /* all other configurations */
   zone_rnum zrnum; 
   zone_vnum zvnum; 
-  char sysbuf[MAX_INPUT_LENGTH]; 
   char zone_name[READ_SIZE], fixed_file_name[READ_SIZE];
+  char archive[READ_SIZE * 2], old_archive[READ_SIZE * 2];
+  char info_path[READ_SIZE * 2], wld_path[READ_SIZE * 2], zon_path[READ_SIZE * 2];
+  char mob_path[READ_SIZE * 2], obj_path[READ_SIZE * 2], trg_path[READ_SIZE * 2];
+  char shp_path[READ_SIZE * 2];
   int success, errorcode = 0;
 
   /* system command locations are relative to where the binary IS, not where it
@@ -340,10 +370,10 @@ ACMD(do_export_zone)
 
   /* If we fail, it might just be because the directory didn't exist.  Can't 
    * hurt to try again. Do it silently though ( no logs ). */ 
-  if (!export_info_file(zrnum)) { 
-    sprintf(sysbuf, "mkdir %s", path);
-    errorcode = system(sysbuf);
-  } 
+  if (!export_info_file(zrnum)) {
+    if (mkdir(path, 0755) != 0 && errno != EEXIST)
+      errorcode = -1;
+  }
   if (errorcode) {
     send_to_char(ch, "Failed to create export directory.\r\n");
     return;
@@ -375,26 +405,37 @@ ACMD(do_export_zone)
   /* Make sure the name of the zone doesn't make the filename illegal. */ 
   fix_filename(zone_name, fixed_file_name, sizeof(fixed_file_name));
 
-  /* Remove the old copy. */ 
-  snprintf(sysbuf, sizeof(sysbuf), "rm %s%s.tar.gz", path, fixed_file_name);
-  errorcode = system(sysbuf);
-  if (errorcode) {
-    send_to_char(ch, "Failed to delete previous zip file. This is usually benign.\r\n");
+  if (snprintf(archive, sizeof(archive), "%s%s.tar", path, fixed_file_name) >= (int)sizeof(archive) ||
+      snprintf(old_archive, sizeof(old_archive), "%s%s.tar.gz", path, fixed_file_name) >= (int)sizeof(old_archive) ||
+      snprintf(info_path, sizeof(info_path), "%sqq.info", path) >= (int)sizeof(info_path) ||
+      snprintf(wld_path, sizeof(wld_path), "%sqq.wld", path) >= (int)sizeof(wld_path) ||
+      snprintf(zon_path, sizeof(zon_path), "%sqq.zon", path) >= (int)sizeof(zon_path) ||
+      snprintf(mob_path, sizeof(mob_path), "%sqq.mob", path) >= (int)sizeof(mob_path) ||
+      snprintf(obj_path, sizeof(obj_path), "%sqq.obj", path) >= (int)sizeof(obj_path) ||
+      snprintf(trg_path, sizeof(trg_path), "%sqq.trg", path) >= (int)sizeof(trg_path) ||
+      snprintf(shp_path, sizeof(shp_path), "%sqq.shp", path) >= (int)sizeof(shp_path)) {
+    send_to_char(ch, "Export path is too long.\r\n");
+    return;
   }
 
+  if (remove(old_archive) != 0 && errno != ENOENT)
+    send_to_char(ch, "Failed to delete previous zip file. This is usually benign.\r\n");
 
-  /* Tar the new copy. */ 
-  snprintf(sysbuf, sizeof(sysbuf), "tar -cf %s%s.tar %sqq.info %sqq.wld %sqq.zon %sqq.mob %sqq.obj %sqq.trg %sqq.shp", path, fixed_file_name, path, path, path, path, path, path, path);
-  errorcode = system(sysbuf);
-  if (errorcode) {
+  {
+    char *tar_argv[] = { "tar", "-cf", archive, info_path, wld_path, zon_path,
+                         mob_path, obj_path, trg_path, shp_path, NULL };
+    errorcode = run_program_argv(tar_argv);
+  }
+  if (errorcode != 0) {
     send_to_char(ch, "Failed to tar files.\r\n");
     return;
   }
 
-  /* Gzip it. */ 
-  snprintf(sysbuf, sizeof(sysbuf), "gzip %s%s.tar", path, fixed_file_name);
-  errorcode = system(sysbuf);
-  if (errorcode) {
+  {
+    char *gzip_argv[] = { "gzip", archive, NULL };
+    errorcode = run_program_argv(gzip_argv);
+  }
+  if (errorcode != 0) {
     send_to_char(ch, "Failed to gzip tar file.\r\n");
     return;
   }
