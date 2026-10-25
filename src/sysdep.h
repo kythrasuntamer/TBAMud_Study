@@ -670,10 +670,11 @@ static inline int tb_fclose_checked_at(FILE *stream, const char *context,
  * Test-only failure injection. Production builds compile this to a constant
  * false and expose no runtime switch that can sabotage I/O.
  */
-#ifdef TB_TEST_FAILURE_INJECTION
-#define TB_FAIL_REPLACE_INITIAL 0x01u
-#define TB_FAIL_REPLACE_COMMIT  0x02u
+#define TB_FAIL_REPLACE_INITIAL  0x01u
+#define TB_FAIL_REPLACE_COMMIT   0x02u
 #define TB_FAIL_REPLACE_ROLLBACK 0x04u
+
+#ifdef TB_TEST_FAILURE_INJECTION
 static unsigned int tb_test_failpoints_ = 0;
 
 static inline void tb_test_set_failpoints(unsigned int mask)
