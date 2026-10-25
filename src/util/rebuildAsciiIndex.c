@@ -39,7 +39,7 @@ int main(int argc, char** argv)
 
 char *parsename(char *filename) {
 	static char copy[1024];
-	strcpy(copy, filename);
+	strlcpy(copy, filename, sizeof(copy));
 	char *extension = strchr(copy, '.');
 	if (extension == NULL) {
 		return NULL;
@@ -104,7 +104,7 @@ void walkdir(FILE *index_file, char *dir) {
  	while ((dp = readdir(dfd)) != NULL)
  	{
 	  struct stat stbuf ;
-	  sprintf( filename_qfd , "%s/%s",dir,dp->d_name) ;
+	  snprintf(filename_qfd, sizeof(filename_qfd), "%s/%s",dir,dp->d_name);
 	  if( stat(filename_qfd,&stbuf ) == -1 ) {
    		fprintf(stdout, "Unable to stat file: %s\n",filename_qfd) ;
    		continue ;
