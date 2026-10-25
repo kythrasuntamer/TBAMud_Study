@@ -442,6 +442,7 @@ void board_save_board(int board_type)
   FILE *fl;
   int i;
   char *tmp1, *tmp2 = NULL;
+  char tmpname[MAX_STRING_LENGTH];
 
   if (!num_of_msgs[board_type]) {
     if (remove(FILENAME(board_type)) != 0 && errno != ENOENT) {
@@ -451,9 +452,18 @@ void board_save_board(int board_type)
     }
     return;
   }
-  if (!(fl = fopen(FILENAME(board_type), "wb"))) {
-    TB_REPORT_ERRNO("fopen", FILENAME(board_type));
-    log("SYSERR: board %d could not open %s for writing", board_type, FILENAME(board_type));
+
+  if (snprintf(tmpname, sizeof(tmpname), "%s.tmp", FILENAME(board_type)) < 0 ||
+      strlen(tmpname) >= sizeof(tmpname) - 1) {
+    log("SYSERR: board %d temporary filename is too long for %s",
+        board_type, FILENAME(board_type));
+    return;
+  }
+
+  if (!(fl = fopen(tmpname, "wb"))) {
+    TB_REPORT_ERRNO("fopen", tmpname);
+    log("SYSERR: board %d could not open temporary file %s for writing",
+        board_type, tmpname);
     return;
   }
   if (!board_write_exact(&(num_of_msgs[board_type]), sizeof(int), 1, fl,
@@ -484,13 +494,28 @@ void board_save_board(int board_type)
       goto write_fail;
   }
 
-  tb_fclose(fl);
+  if (!tb_fflush_checked(fl, tmpname) || !tb_fclose_checked(fl, tmpname)) {
+    log("SYSERR: board %d save could not be committed because temporary file %s did not flush/close cleanly",
+        board_type, tmpname);
+    if (remove(tmpname) != 0 && errno != ENOENT)
+      TB_REPORT_ERRNO("remove", tmpname);
+    return;
+  }
+
+  if (rename(tmpname, FILENAME(board_type)) != 0) {
+    TB_REPORT_ERRNO("rename", FILENAME(board_type));
+    log("SYSERR: board %d save left original file intact; temporary file is %s",
+        board_type, tmpname);
+    return;
+  }
   return;
 
 write_fail:
   log("SYSERR: Aborting save of board %d (%s) at the first failed write",
       board_type, FILENAME(board_type));
-  tb_fclose(fl);
+  (void)tb_fclose_checked(fl, tmpname);
+  if (remove(tmpname) != 0 && errno != ENOENT)
+    TB_REPORT_ERRNO("remove", tmpname);
 }
 
 void board_load_board(int board_type)
