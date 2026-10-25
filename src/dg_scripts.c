@@ -2708,6 +2708,8 @@ int script_driver(void *go_adress, trig_data *trig, int type, int mode)
       if (!temp) {
         script_log("Trigger VNum %d has 'while' without 'done'.",
                    GET_TRIG_VNUM(trig));
+        depth--;
+        dg_script_execution_leave();
         return ret_val;
       }
       if (process_if(p + 6, go, sc, trig, type)) {
@@ -2835,6 +2837,7 @@ int script_driver(void *go_adress, trig_data *trig, int type, int mode)
           depth--;
           if (type == OBJ_TRIGGER)
             *(obj_data **)go_adress = NULL;
+          dg_script_execution_leave();
           return ret_val;
         }
       }
