@@ -1326,7 +1326,7 @@ void cedit_parse(struct descriptor_data *d, char *arg)
           "That is an invalid choice!\r\n"
           "Enter the minimum level a player must be to shout, gossip, etc : ");
       } else {
-        OLC_CONFIG(d)->play.level_can_shout = atoi(arg);
+        OLC_CONFIG(d)->play.level_can_shout = tb_parse_int_or_zero(arg);
         cedit_disp_game_play_options(d);
       }
       break;
@@ -1337,7 +1337,7 @@ void cedit_parse(struct descriptor_data *d, char *arg)
           "That is an invalid choice!\r\n"
           "Enter the amount it costs (in move points) to holler : ");
       } else {
-        OLC_CONFIG(d)->play.holler_move_cost = atoi(arg);
+        OLC_CONFIG(d)->play.holler_move_cost = tb_parse_int_or_zero(arg);
         cedit_disp_game_play_options(d);
       }
       break;
@@ -1348,21 +1348,21 @@ void cedit_parse(struct descriptor_data *d, char *arg)
           "That is an invalid choice!\r\n"
           "Enter the maximum number of people allowed in a tunnel : ");
       } else {
-        OLC_CONFIG(d)->play.tunnel_size = atoi(arg);
+        OLC_CONFIG(d)->play.tunnel_size = tb_parse_int_or_zero(arg);
         cedit_disp_game_play_options(d);
       }
       break;
 
     case CEDIT_MAX_EXP_GAIN:
       if (*arg)
-        OLC_CONFIG(d)->play.max_exp_gain = atoi(arg);
+        OLC_CONFIG(d)->play.max_exp_gain = tb_parse_int_or_zero(arg);
 
       cedit_disp_game_play_options(d);
       break;
 
     case CEDIT_MAX_EXP_LOSS:
       if (*arg)
-        OLC_CONFIG(d)->play.max_exp_loss = atoi(arg);
+        OLC_CONFIG(d)->play.max_exp_loss = tb_parse_int_or_zero(arg);
 
       cedit_disp_game_play_options(d);
       break;
@@ -1373,7 +1373,7 @@ void cedit_parse(struct descriptor_data *d, char *arg)
           "That is an invalid choice!\r\n"
           "Enter the number of tics before NPC corpses decompose : ");
       } else {
-        OLC_CONFIG(d)->play.max_npc_corpse_time = atoi(arg);
+        OLC_CONFIG(d)->play.max_npc_corpse_time = tb_parse_int_or_zero(arg);
         cedit_disp_game_play_options(d);
       }
       break;
@@ -1384,7 +1384,7 @@ void cedit_parse(struct descriptor_data *d, char *arg)
           "That is an invalid choice!\r\n"
           "Enter the number of tics before PC corpses decompose : ");
         } else {
-          OLC_CONFIG(d)->play.max_pc_corpse_time = atoi(arg);
+          OLC_CONFIG(d)->play.max_pc_corpse_time = tb_parse_int_or_zero(arg);
           cedit_disp_game_play_options(d);
         }
         break;
@@ -1395,7 +1395,7 @@ void cedit_parse(struct descriptor_data *d, char *arg)
           "That is an invalid choice!\r\n"
           "Enter the number of tics before PC's are sent to the void (idle) : ");
       } else {
-        OLC_CONFIG(d)->play.idle_void = atoi(arg);
+        OLC_CONFIG(d)->play.idle_void = tb_parse_int_or_zero(arg);
         cedit_disp_game_play_options(d);
       }
       break;
@@ -1406,7 +1406,7 @@ void cedit_parse(struct descriptor_data *d, char *arg)
           "That is an invalid choice!\r\n"
           "Enter the number of tics before PC's are automatically rented and forced to quit : ");
       } else {
-        OLC_CONFIG(d)->play.idle_rent_time = atoi(arg);
+        OLC_CONFIG(d)->play.idle_rent_time = tb_parse_int_or_zero(arg);
         cedit_disp_game_play_options(d);
       }
       break;
@@ -1417,7 +1417,7 @@ void cedit_parse(struct descriptor_data *d, char *arg)
           "That is an invalid choice!\r\n"
           "Enter the level a player must be to become immune to IDLE : ");
       } else {
-        OLC_CONFIG(d)->play.idle_max_level = atoi(arg);
+        OLC_CONFIG(d)->play.idle_max_level = tb_parse_int_or_zero(arg);
         cedit_disp_game_play_options(d);
       }
       break;
@@ -1476,7 +1476,7 @@ void cedit_parse(struct descriptor_data *d, char *arg)
           "That is an invalid choice!\r\n"
           "Enter the maximum objects a player can save : ");
         } else {
-          OLC_CONFIG(d)->csd.max_obj_save = atoi(arg);
+          OLC_CONFIG(d)->csd.max_obj_save = tb_parse_int_or_zero(arg);
           cedit_disp_crash_save_options(d);
         }
         break;
@@ -1487,7 +1487,7 @@ void cedit_parse(struct descriptor_data *d, char *arg)
           "That is an invalid choice!\r\n"
           "Enter the minimum amount it costs to rent : ");
       } else {
-        OLC_CONFIG(d)->csd.min_rent_cost = atoi(arg);
+        OLC_CONFIG(d)->csd.min_rent_cost = tb_parse_int_or_zero(arg);
         cedit_disp_crash_save_options(d);
       }
       break;
@@ -1498,7 +1498,7 @@ void cedit_parse(struct descriptor_data *d, char *arg)
           "That is an invalid choice!\r\n"
           "Enter the interval for player's being autosaved : ");
       } else {
-        OLC_CONFIG(d)->csd.autosave_time = atoi(arg);
+        OLC_CONFIG(d)->csd.autosave_time = tb_parse_int_or_zero(arg);
         cedit_disp_crash_save_options(d);
       }
       break;
@@ -1509,7 +1509,7 @@ void cedit_parse(struct descriptor_data *d, char *arg)
           "That is an invalid choice!\r\n"
           "Enter the lifetime of crash and idlesave files (days) : ");
       } else {
-        OLC_CONFIG(d)->csd.crash_file_timeout = atoi(arg);
+        OLC_CONFIG(d)->csd.crash_file_timeout = tb_parse_int_or_zero(arg);
         cedit_disp_crash_save_options(d);
       }
       break;
@@ -1520,7 +1520,7 @@ void cedit_parse(struct descriptor_data *d, char *arg)
           "That is an invalid choice!\r\n"
           "Enter the lifetime of rent files (days) : ");
       } else {
-        OLC_CONFIG(d)->csd.rent_file_timeout = atoi(arg);
+        OLC_CONFIG(d)->csd.rent_file_timeout = tb_parse_int_or_zero(arg);
         cedit_disp_crash_save_options(d);
       }
       break;
@@ -1530,12 +1530,12 @@ void cedit_parse(struct descriptor_data *d, char *arg)
         write_to_output(d,
           "That is an invalid choice!\r\n"
           "Enter the room's vnum where mortals should load into : ");
-      } else if (real_room(atoi(arg)) == NOWHERE) {
+      } else if (real_room(tb_parse_int_or_zero(arg)) == NOWHERE) {
         write_to_output(d,
           "That room doesn't exist!\r\n"
           "Enter the room's vnum where mortals should load into : ");
       } else {
-        OLC_CONFIG(d)->room_nums.mortal_start_room = atoi(arg);
+        OLC_CONFIG(d)->room_nums.mortal_start_room = tb_parse_int_or_zero(arg);
         cedit_disp_room_numbers(d);
       }
       break;
@@ -1545,12 +1545,12 @@ void cedit_parse(struct descriptor_data *d, char *arg)
         write_to_output(d,
           "That is an invalid choice!\r\n"
           "Enter the room's vnum where immortals should load into : ");
-      } else if (real_room(atoi(arg)) == NOWHERE) {
+      } else if (real_room(tb_parse_int_or_zero(arg)) == NOWHERE) {
         write_to_output(d,
           "That room doesn't exist!\r\n"
           "Enter the room's vnum where immortals should load into : ");
       } else {
-        OLC_CONFIG(d)->room_nums.immort_start_room = atoi(arg);
+        OLC_CONFIG(d)->room_nums.immort_start_room = tb_parse_int_or_zero(arg);
         cedit_disp_room_numbers(d);
       }
       break;
@@ -1560,12 +1560,12 @@ void cedit_parse(struct descriptor_data *d, char *arg)
         write_to_output(d,
           "That is an invalid choice!\r\n"
           "Enter the room's vnum where frozen people should load into : ");
-      } else if (real_room(atoi(arg)) == NOWHERE) {
+      } else if (real_room(tb_parse_int_or_zero(arg)) == NOWHERE) {
         write_to_output(d,
           "That room doesn't exist!\r\n"
           "Enter the room's vnum where frozen people should load into : ");
       } else {
-        OLC_CONFIG(d)->room_nums.frozen_start_room = atoi(arg);
+        OLC_CONFIG(d)->room_nums.frozen_start_room = tb_parse_int_or_zero(arg);
         cedit_disp_room_numbers(d);
       }
       break;
@@ -1575,12 +1575,12 @@ void cedit_parse(struct descriptor_data *d, char *arg)
         write_to_output(d,
           "That is an invalid choice!\r\n"
           "Enter the vnum for donation room #1 : ");
-      } else if (real_room(atoi(arg)) == NOWHERE) {
+      } else if (real_room(tb_parse_int_or_zero(arg)) == NOWHERE) {
         write_to_output(d,
           "That room doesn't exist!\r\n"
           "Enter the vnum for donation room #1 : ");
       } else {
-        OLC_CONFIG(d)->room_nums.donation_room_1 = atoi(arg);
+        OLC_CONFIG(d)->room_nums.donation_room_1 = tb_parse_int_or_zero(arg);
         cedit_disp_room_numbers(d);
       }
       break;
@@ -1590,12 +1590,12 @@ void cedit_parse(struct descriptor_data *d, char *arg)
         write_to_output(d,
           "That is an invalid choice!\r\n"
           "Enter the vnum for donation room #2 : ");
-      } else if (real_room(atoi(arg)) == NOWHERE) {
+      } else if (real_room(tb_parse_int_or_zero(arg)) == NOWHERE) {
         write_to_output(d,
           "That room doesn't exist!\r\n"
           "Enter the vnum for donation room #2 : ");
       } else {
-        OLC_CONFIG(d)->room_nums.donation_room_2 = atoi(arg);
+        OLC_CONFIG(d)->room_nums.donation_room_2 = tb_parse_int_or_zero(arg);
         cedit_disp_room_numbers(d);
       }
       break;
@@ -1605,18 +1605,18 @@ void cedit_parse(struct descriptor_data *d, char *arg)
         write_to_output(d,
           "That is an invalid choice!\r\n"
           "Enter the vnum for donation room #3 : ");
-      } else if (real_room(atoi(arg)) == NOWHERE) {
+      } else if (real_room(tb_parse_int_or_zero(arg)) == NOWHERE) {
         write_to_output(d,
           "That room doesn't exist!\r\n"
           "Enter the vnum for donation room #3 : ");
       } else {
-        OLC_CONFIG(d)->room_nums.donation_room_3 = atoi(arg);
+        OLC_CONFIG(d)->room_nums.donation_room_3 = tb_parse_int_or_zero(arg);
         cedit_disp_room_numbers(d);
       }
       break;
 
     case CEDIT_DFLT_PORT:
-      OLC_CONFIG(d)->operation.DFLT_PORT = atoi(arg);
+      OLC_CONFIG(d)->operation.DFLT_PORT = tb_parse_int_or_zero(arg);
       cedit_disp_operation_options(d);
       break;
 
@@ -1654,32 +1654,32 @@ void cedit_parse(struct descriptor_data *d, char *arg)
       break;
 
     case CEDIT_MAX_PLAYING:
-      OLC_CONFIG(d)->operation.max_playing = atoi(arg);
+      OLC_CONFIG(d)->operation.max_playing = tb_parse_int_or_zero(arg);
       cedit_disp_operation_options(d);
       break;
 
     case CEDIT_MAX_FILESIZE:
-      OLC_CONFIG(d)->operation.max_filesize = atoi(arg);
+      OLC_CONFIG(d)->operation.max_filesize = tb_parse_int_or_zero(arg);
       cedit_disp_operation_options(d);
       break;
 
     case CEDIT_MAX_BAD_PWS:
-      OLC_CONFIG(d)->operation.max_bad_pws = atoi(arg);
+      OLC_CONFIG(d)->operation.max_bad_pws = tb_parse_int_or_zero(arg);
       cedit_disp_operation_options(d);
       break;
 
     case CEDIT_DEBUG_MODE:
-      OLC_CONFIG(d)->operation.debug_mode = LIMIT(atoi(arg), 0, 3);
+      OLC_CONFIG(d)->operation.debug_mode = LIMIT(tb_parse_int_or_zero(arg), 0, 3);
       cedit_disp_operation_options(d);
       break;
 
     case CEDIT_MIN_WIZLIST_LEV:
-      if (atoi(arg) > LVL_IMPL) {
+      if (tb_parse_int_or_zero(arg) > LVL_IMPL) {
         write_to_output(d,
           "The minimum wizlist level can't be greater than %d.\r\n"
           "Enter the minimum level for players to appear on the wizlist : ", LVL_IMPL);
       } else {
-        OLC_CONFIG(d)->autowiz.min_wizlist_lev = atoi(arg);
+        OLC_CONFIG(d)->autowiz.min_wizlist_lev = tb_parse_int_or_zero(arg);
         cedit_disp_autowiz_options(d);
       }
       break;
@@ -1690,8 +1690,8 @@ void cedit_parse(struct descriptor_data *d, char *arg)
           "That is an invalid choice!\r\n"
           "Select 1, 2 or 3 (0 to cancel) :");
       } else {
-        if ((atoi(arg) >= 1) && (atoi(arg) <= 3))
-          OLC_CONFIG(d)->play.map_option = (atoi(arg) - 1);
+        if ((tb_parse_int_or_zero(arg) >= 1) && (tb_parse_int_or_zero(arg) <= 3))
+          OLC_CONFIG(d)->play.map_option = (tb_parse_int_or_zero(arg) - 1);
         cedit_disp_game_play_options(d);
       }
       break;
@@ -1702,7 +1702,7 @@ void cedit_parse(struct descriptor_data *d, char *arg)
         OLC_CONFIG(d)->play.map_size = 6;
         cedit_disp_game_play_options(d);
       } else {
-        OLC_CONFIG(d)->play.map_size = MIN(MAX((atoi(arg)), 1), 12);
+        OLC_CONFIG(d)->play.map_size = MIN(MAX((tb_parse_int_or_zero(arg)), 1), 12);
         cedit_disp_game_play_options(d);
       }
       break;
@@ -1713,31 +1713,31 @@ void cedit_parse(struct descriptor_data *d, char *arg)
         OLC_CONFIG(d)->play.minimap_size = 2;
         cedit_disp_game_play_options(d);
       } else {
-        OLC_CONFIG(d)->play.minimap_size = MIN(MAX((atoi(arg)), 1), 12);
+        OLC_CONFIG(d)->play.minimap_size = MIN(MAX((tb_parse_int_or_zero(arg)), 1), 12);
         cedit_disp_game_play_options(d);
       }
       break;
 
     case CEDIT_PK_SETTING:
-      if (!*arg || (atoi(arg) < 0) || (atoi(arg) > 3) ) {
+      if (!*arg || (tb_parse_int_or_zero(arg) < 0) || (tb_parse_int_or_zero(arg) > 3) ) {
         write_to_output(d,
           "That is an invalid choice!\r\n"
           "Select 1, 2 or 3 (0 to cancel) :");
       } else {
-        if ((atoi(arg) >= 1) && (atoi(arg) <= 3))
-          OLC_CONFIG(d)->play.pk_setting = (atoi(arg) - 1);
+        if ((tb_parse_int_or_zero(arg) >= 1) && (tb_parse_int_or_zero(arg) <= 3))
+          OLC_CONFIG(d)->play.pk_setting = (tb_parse_int_or_zero(arg) - 1);
         cedit_disp_game_play_options(d);
       }
       break;
 
     case CEDIT_PT_SETTING:
-      if (!*arg || (atoi(arg) < 0) || (atoi(arg) > 3) ) {
+      if (!*arg || (tb_parse_int_or_zero(arg) < 0) || (tb_parse_int_or_zero(arg) > 3) ) {
         write_to_output(d,
           "That is an invalid choice!\r\n"
           "Select 1, 2 or 3 (0 to cancel) :");
       } else {
-        if ((atoi(arg) >= 1) && (atoi(arg) <= 3))
-          OLC_CONFIG(d)->play.pt_setting = (atoi(arg) - 1);
+        if ((tb_parse_int_or_zero(arg) >= 1) && (tb_parse_int_or_zero(arg) <= 3))
+          OLC_CONFIG(d)->play.pt_setting = (tb_parse_int_or_zero(arg) - 1);
         cedit_disp_game_play_options(d);
       }
       break;
