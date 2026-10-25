@@ -20,6 +20,16 @@ class ClassConversionSafety(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertRegex(s, rf"#define\s+CLASS_{name}\s+{id_}\b")
 
+    def test_monk_id_is_reserved_but_not_prematurely_playable(self):
+        structs = read("src/structs.h")
+        classes = read("src/class.c")
+        self.assertRegex(structs, r"#define\s+CLASS_MONK\s+4\b")
+        # Prevent raising NUM_CLASSES or permitting the selector until gameplay
+        # systems, saving throws, level curves and trainers are implemented.
+        self.assertRegex(structs, r"#define\s+NUM_CLASSES\s+4\b")
+        parse_class_body = classes.split("int parse_class(char arg)", 1)[1].split("bitvector_t find_class_bitvector", 1)[0]
+        self.assertNotIn("CLASS_MONK", parse_class_body)
+
     def test_mortal_and_immortal_levels_remain_50_and_60(self):
         s = read("src/structs.h")
         self.assertRegex(s, r"#define\s+LVL_IMMORT\s+51\b")
