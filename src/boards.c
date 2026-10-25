@@ -68,7 +68,7 @@ static void init_boards(void);
 static void board_reset_board(int board_type);
 static void board_clear_board(int board_type);
 
-static int board_write_exact(FILE *fl, const void *ptr, size_t size, size_t count,
+static int board_write_exact(const void *ptr, size_t size, size_t count, FILE *fl,
                              int board_type, int message_index, const char *field)
 {
   size_t written;
