@@ -266,7 +266,7 @@ char *fread_action(FILE *fl, int nr)
       * marker before it is able to read in the expected string.  This can be
       * caused by a truncated socials file. */
     } else {
-      log("SYSERR: fread_action: read error near action #%d: %s", nr, strerror(errno));
+      TB_REPORT_ERRNO("fgets", "social action text");
     }
     exit(1);
   }
@@ -298,7 +298,7 @@ static void boot_social_messages(void)
   if (CONFIG_NEW_SOCIALS == TRUE) {
     /* open social file */
     if (!(fl = fopen(SOCMESS_FILE_NEW, "r"))) {
-      log("SYSERR: can't open socials file '%s': %s", SOCMESS_FILE_NEW, strerror(errno));
+      TB_REPORT_ERRNO("fopen", SOCMESS_FILE_NEW);
       /* SYSERR_DESC: This error, from boot_social_messages(), occurs when the
        * server fails to open the file containing the social messages.  The
        * error at the end will indicate the reason why. */
@@ -310,14 +310,14 @@ static void boot_social_messages(void)
       if (*next_soc == '~') top_of_socialt++;
 
     if(ferror(fl)) {
-      log("SYSERR: error encountered reading socials file %s: %s", SOCMESS_FILE_NEW, strerror(errno));
+      TB_REPORT_ERRNO("fgets", SOCMESS_FILE_NEW);
       exit(1);
     }
   } else { /* old style */
 
     /* open social file */
     if (!(fl = fopen(SOCMESS_FILE, "r"))) {
-      log("SYSERR: can't open socials file '%s': %s", SOCMESS_FILE, strerror(errno));
+      TB_REPORT_ERRNO("fopen", SOCMESS_FILE);
       /* SYSERR_DESC: This error, from boot_social_messages(), occurs when the
        * server fails to open the file containing the social messages.  The
        * error at the end will indicate the reason why. */
@@ -328,14 +328,14 @@ static void boot_social_messages(void)
       if (*next_soc == '\n' || *next_soc == '\r') top_of_socialt++; /* all socials are followed by a blank line */
 
     if(ferror(fl)) {
-      log("SYSERR: error encountered reading socials file %s: %s", SOCMESS_FILE_NEW, strerror(errno));
+      TB_REPORT_ERRNO("fgets", SOCMESS_FILE);
       exit(1);
     }
   }
 
   log("Social table contains %d socials.", top_of_socialt);
   if (fseek(fl, 0L, SEEK_SET) != 0) {
-    log("SYSERR: unable to rewind socials file %s: %s", SOCMESS_FILE_NEW, strerror(errno));
+    TB_REPORT_ERRNO("fseek", CONFIG_NEW_SOCIALS == TRUE ? SOCMESS_FILE_NEW : SOCMESS_FILE);
     exit(1);
   }
 
@@ -347,7 +347,7 @@ static void boot_social_messages(void)
       if(feof(fl))
         log("SYSERR: unexpected end of file encountered in socials file %s", SOCMESS_FILE_NEW);
       else if(ferror(fl))
-        log("SYSERR: error reading socials file %s: %s", SOCMESS_FILE_NEW, strerror(errno));
+        TB_REPORT_ERRNO("fscanf", CONFIG_NEW_SOCIALS == TRUE ? SOCMESS_FILE_NEW : SOCMESS_FILE);
       else
         log("SYSERR: format error in social file near line %d", line_number);
       exit(1);
@@ -1105,7 +1105,7 @@ void index_boot(int mode)
 
   tb_snprintf(buf2, sizeof(buf2), "%s%s", prefix, index_filename);
   if (!(db_index = fopen(buf2, "r"))) {
-    log("SYSERR: opening index file '%s': %s", buf2, strerror(errno));
+    TB_REPORT_ERRNO("fopen", buf2);
     exit(1);
   }
 
@@ -1117,8 +1117,7 @@ void index_boot(int mode)
             "Ensure that the last line of the file starts with the character '$'.",
             prefix, index_filename);
       else if (ferror(db_index))
-        log("SYSERR: boot error -- unexpected end of file encountered in index file ./%s%s: %s",
-            prefix, index_filename, strerror(errno));
+        TB_REPORT_ERRNO("fscanf", buf2);
       else
         log("SYSERR: boot error -- error parsing index file %s%s on line %d",
             prefix, index_filename, line_number);
@@ -1130,8 +1129,7 @@ void index_boot(int mode)
 
     tb_snprintf(buf2, sizeof(buf2), "%s%s", prefix, buf1);
     if (!(db_file = fopen(buf2, "r"))) {
-      log("SYSERR: File '%s' listed in '%s/%s': %s", buf2, prefix,
-          index_filename, strerror(errno));
+      TB_REPORT_ERRNO("fopen", buf2);
     } else {
       if (mode == DB_BOOT_ZON)
         rec_count++;
@@ -1197,7 +1195,7 @@ void index_boot(int mode)
   }
 
   if (fseek(db_index, 0L, SEEK_SET) != 0) {
-    log("SYSERR: unable to rewind index file ./%s%s: %s", prefix, index_filename, strerror(errno));
+    TB_REPORT_ERRNO("fseek", buf2);
     exit(1);
   }
 
@@ -1207,8 +1205,7 @@ void index_boot(int mode)
         log("SYSERR: boot error -- unexpected end of file encountered in index file ./%s%s",
             prefix, index_filename);
       else if (ferror(db_index))
-        log("SYSERR: boot error -- unexpected end of file encountered in index file ./%s%s: %s",
-            prefix, index_filename, strerror(errno));
+        TB_REPORT_ERRNO("fscanf", buf2);
       else
         log("SYSERR: boot error -- error parsing index file ./%s%s on line %d",
             prefix, index_filename, line_number);
@@ -1220,7 +1217,7 @@ void index_boot(int mode)
 
     tb_snprintf(buf2, sizeof(buf2), "%s%s", prefix, buf1);
     if (!(db_file = fopen(buf2, "r"))) {
-      log("SYSERR: %s: %s", buf2, strerror(errno));
+      TB_REPORT_ERRNO("fopen", buf2);
       exit(1);
     }
     switch (mode) {
@@ -2295,7 +2292,7 @@ static void load_zones(FILE *fl, char *zonename)
   }
 
   if (fseek(fl, 0L, SEEK_SET) != 0) {
-    log("SYSERR: unable to rewind zone file %s: %s", zname, strerror(errno));
+    TB_REPORT_ERRNO("fseek", zname);
     exit(1);
   }
 
@@ -3588,7 +3585,7 @@ static int file_to_string(const char *name, char *buf)
   *buf = '\0';
 
   if (!(fl = fopen(name, "r"))) {
-    log("SYSERR: reading %s: %s", name, strerror(errno));
+    TB_REPORT_ERRNO("fopen", name);
     return (-1);
   }
 
@@ -4120,8 +4117,8 @@ void load_config( void )
 
   tb_snprintf(buf, sizeof(buf), "%s/%s", CONFIG_DFLT_DIR, CONFIG_CONFFILE);
   if ( !(fl = fopen(CONFIG_CONFFILE, "r")) && !(fl = fopen(buf, "r")) ) {
-    tb_snprintf(buf, sizeof(buf), "No %s file, using defaults", CONFIG_CONFFILE);
-    perror(buf);
+    TB_REPORT_ERRNO("fopen", buf);
+    log("SYSERR: No %s file found; using defaults.", CONFIG_CONFFILE);
     return;
   }
 
