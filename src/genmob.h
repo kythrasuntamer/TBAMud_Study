@@ -9,8 +9,8 @@
 * is attributed to:
 * Copyright 1996 by Harvey Gilpin, 1997-2001 by George Greer.                                                    
 */
-#ifndef _GENMOB_H_
-#define _GENMOB_H_
+#ifndef TBAMUD_GENMOB_H_INCLUDED
+#define TBAMUD_GENMOB_H_INCLUDED
 
 int delete_mobile(mob_rnum);
 int copy_mobile(struct char_data *to, struct char_data *from);
@@ -39,4 +39,4 @@ int write_mobile_mobprog(mob_vnum mvnum, struct char_data *mob, FILE *fd);
 #define GET_DDESC(mob)	((mob)->player.description)
 #define GET_ATTACK(mob)	((mob)->mob_specials.attack_type)
 
-#endif /* _GENMOB_H_ */
+#endif /* TBAMUD_GENMOB_H_INCLUDED */
