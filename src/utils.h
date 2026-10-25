@@ -76,6 +76,61 @@ void tb_parse_context_error_at(FILE *stream, const char *source_file,
 
 #define TB_PARSE_CONTEXT_ERROR(stream, ...) \
   tb_parse_context_error_at((stream), __FILE__, __LINE__, __func__, __VA_ARGS__)
+
+
+/* Stable error identifiers for machine-searchable diagnostics. */
+#define TB_ERRID_PARSER_MALFORMED      "TB-PARSER-0001"
+#define TB_ERRID_PARSER_RANGE          "TB-PARSER-0002"
+#define TB_ERRID_PARSER_EOF            "TB-PARSER-0003"
+#define TB_ERRID_PERSIST_WRITE         "TB-PERSIST-0001"
+#define TB_ERRID_PERSIST_COMMIT        "TB-PERSIST-0002"
+#define TB_ERRID_PERSIST_ROLLBACK      "TB-PERSIST-0003"
+#define TB_ERRID_NETWORK_IO            "TB-NET-0001"
+#define TB_ERRID_INVARIANT             "TB-INVARIANT-0001"
+#define TB_ERRID_SCRIPT_ARITH          "TB-SCRIPT-0001"
+#define TB_ERRID_SCRIPT_PARSE          "TB-SCRIPT-0002"
+#define TB_ERRID_BOOT_FATAL            "TB-BOOT-0001"
+
+/* Correlation IDs tie all diagnostics from one logical operation together. */
+unsigned long tb_correlation_begin(const char *kind, const char *detail);
+void tb_correlation_end(unsigned long id);
+unsigned long tb_correlation_current(void);
+
+/* Fixed-size rolling breadcrumbs: no allocation, safe to use on error paths. */
+void tb_breadcrumb(const char *kind, const char *detail);
+void tb_breadcrumbf(const char *kind, const char *format, ...)
+                    __attribute__ ((format (printf, 2, 3)));
+size_t tb_breadcrumb_snapshot(char *dst, size_t dst_size);
+
+/* Bounded string builder.  All append operations preserve NUL termination. */
+struct tb_buf {
+  char *data;
+  size_t capacity;
+  size_t length;
+  int truncated;
+};
+
+void tb_buf_init(struct tb_buf *buf, char *storage, size_t capacity);
+int tb_buf_append(struct tb_buf *buf, const char *text);
+int tb_buf_appendn(struct tb_buf *buf, const char *text, size_t length);
+int tb_buf_appendf(struct tb_buf *buf, const char *format, ...)
+                   __attribute__ ((format (printf, 2, 3)));
+size_t tb_buf_remaining(const struct tb_buf *buf);
+int tb_buf_truncated(const struct tb_buf *buf);
+
+/* Checked allocation arithmetic used by CREATE/RECREATE and direct callers. */
+int tb_size_mul_checked(size_t count, size_t element_size, size_t *out);
+void *tb_calloc_array_at(size_t count, size_t element_size,
+                         const char *source_file, int source_line,
+                         const char *source_func);
+void *tb_realloc_array_at(void *ptr, size_t count, size_t element_size,
+                          const char *source_file, int source_line,
+                          const char *source_func);
+
+#define TB_CALLOC_ARRAY(count, element_size) \
+  tb_calloc_array_at((count), (element_size), __FILE__, __LINE__, __func__)
+#define TB_REALLOC_ARRAY(ptr, count, element_size) \
+  tb_realloc_array_at((ptr), (count), (element_size), __FILE__, __LINE__, __func__)
 int touch(const char *path);
 void mudlog(int type, int level, int file, const char *str, ...) __attribute__ ((format (printf, 4, 5)));
 int	rand_number(int from, int to);
@@ -268,16 +323,10 @@ static inline int circle_upper(int c)
  * @param number How many of type to make. */
 #define CREATE(result, type, number) do { \
   size_t create_count = (size_t)(number); \
-  if (create_count == 0 || create_count > ((size_t)-1) / sizeof(type)) { \
-    log("SYSERR: Invalid allocation size requested at %s:%d.", __FILE__, __LINE__); \
+  (result) = (type *)tb_calloc_array_at(create_count, sizeof(type), \
+                                        __FILE__, __LINE__, __func__); \
+  if (!(result)) \
     abort(); \
-  } \
-  (result) = (type *)calloc(create_count, sizeof(type)); \
-  if (!(result)) { \
-    int create_errno = errno; \
-    tb_report_error_at("calloc", "CREATE allocation", create_errno, __FILE__, __LINE__, __func__); \
-    abort(); \
-  } \
 } while (0)
 
 /** A realloc based memory reallocation macro. Reminder: realloc can reduce
@@ -287,17 +336,10 @@ static inline int circle_upper(int c)
  * @param number How many of type to make. */
 #define RECREATE(result, type, number) do { \
   size_t recreate_count = (size_t)(number); \
-  void *recreate_new_ptr; \
-  if (recreate_count == 0 || recreate_count > ((size_t)-1) / sizeof(type)) { \
-    log("SYSERR: Invalid reallocation size requested at %s:%d.", __FILE__, __LINE__); \
+  void *recreate_new_ptr = tb_realloc_array_at((result), recreate_count, sizeof(type), \
+                                                __FILE__, __LINE__, __func__); \
+  if (!recreate_new_ptr) \
     abort(); \
-  } \
-  recreate_new_ptr = realloc((result), sizeof(type) * recreate_count); \
-  if (!recreate_new_ptr) { \
-    int recreate_errno = errno; \
-    tb_report_error_at("realloc", "RECREATE allocation", recreate_errno, __FILE__, __LINE__, __func__); \
-    abort(); \
-  } \
   (result) = (type *)recreate_new_ptr; \
 } while (0)
 
