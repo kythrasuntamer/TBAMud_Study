@@ -390,15 +390,22 @@ int save_rooms(zone_rnum rzone)
     }
   }
 
-  /* Write the final line and close it. */
+  /* Write the final line and commit only a fully flushed temporary file. */
   tb_fprintf(sf, "$~\n");
-  tb_fclose(sf);
+  {
+    int flush_ok = tb_fflush_checked(sf, filename);
+    int close_ok = tb_fclose_checked(sf, filename);
+    if (!flush_ok || !close_ok) {
+      if (remove(filename) != 0 && errno != ENOENT)
+        TB_REPORT_ERRNO("remove", filename);
+      return FALSE;
+    }
+  }
 
   /* Old file we're replacing. */
   tb_snprintf(buf, sizeof(buf), "%s/%d.wld", WLD_PREFIX, zone_table[rzone].number);
-
-  remove(buf);
-  rename(filename, buf);
+  if (!tb_replace_file_checked(filename, buf))
+    return FALSE;
 
   if (in_save_list(zone_table[rzone].number, SL_WLD))
     remove_from_save_list(zone_table[rzone].number, SL_WLD);
