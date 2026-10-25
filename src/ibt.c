@@ -135,7 +135,7 @@ static IBT_DATA *read_ibt( char *filename, FILE *fp )
       letter = getc( fp );
       if( feof(fp) )
       {
-         fclose( fp );
+         tb_fclose( fp );
          return NULL;
       }
    }
@@ -316,24 +316,24 @@ void save_ibt_file(int mode)
      for (ibtData = first_ibt;ibtData;ibtData=ibtData->next)
      {
        if (ibtData->text && *(ibtData->text))
-         fprintf(fp,"Text      %s~\n",ibtData->text);
+         tb_fprintf(fp,"Text      %s~\n",ibtData->text);
        if (ibtData->body && *(ibtData->body))
-         fprintf(fp,"Body      %s~\n",ibtData->body);
+         tb_fprintf(fp,"Body      %s~\n",ibtData->body);
        if (ibtData->name && *(ibtData->name))
-         fprintf(fp,"Name      %s~\n",ibtData->name);
+         tb_fprintf(fp,"Name      %s~\n",ibtData->name);
        if (ibtData->notes && *(ibtData->notes))
-         fprintf(fp,"Notes     %s~\n",ibtData->notes);
+         tb_fprintf(fp,"Notes     %s~\n",ibtData->notes);
        if (ibtData->id_num != NOBODY)
-         fprintf(fp,"IdNum     %ld\n",ibtData->id_num);
+         tb_fprintf(fp,"IdNum     %ld\n",ibtData->id_num);
        if (ibtData->dated != 0)
-         fprintf(fp,"Dated     %ld\n",ibtData->dated);
-       fprintf(fp,"Level     %d\n",ibtData->level);
-       fprintf(fp,"Room      %d\n",ibtData->room);
-       fprintf(fp,"Flags     %d %d %d %d\n",ibtData->flags[0],ibtData->flags[1],
+         tb_fprintf(fp,"Dated     %ld\n",ibtData->dated);
+       tb_fprintf(fp,"Level     %d\n",ibtData->level);
+       tb_fprintf(fp,"Room      %d\n",ibtData->room);
+       tb_fprintf(fp,"Flags     %d %d %d %d\n",ibtData->flags[0],ibtData->flags[1],
                                             ibtData->flags[2],ibtData->flags[3]);
-       fprintf(fp,"End\n");
+       tb_fprintf(fp,"End\n");
      }
-     fclose(fp);
+     tb_fclose(fp);
      return;
    }
 }
@@ -499,7 +499,7 @@ ACMD(do_ibt)
       } else {
         send_to_char(ch, "%s%s by %s%s\r\n",QCYN, ibt_types[subcmd], QYEL, ibtData->name);
         if (ibtData->dated != 0) {
-          strftime(timestr, sizeof(timestr), "%c", localtime(&(ibtData->dated)));
+          tb_strftime(timestr, sizeof(timestr), "%c", localtime(&(ibtData->dated)));
         } else {
           strcpy(timestr, "Unknown");
         }
@@ -653,7 +653,7 @@ ACMD(do_ibt)
       if (nlen < 0 || len + nlen >= sizeof(buf))
         buf[len] = '\0';
     } else {
-      snprintf(buf + len, sizeof(buf) - len, "No %ss have been reported!\r\n", CMD_NAME);
+      tb_snprintf(buf + len, sizeof(buf) - len, "No %ss have been reported!\r\n", CMD_NAME);
     }
 
     page_string(ch->desc, buf, TRUE);
@@ -681,7 +681,7 @@ ACMD(do_ibt)
     send_to_char(ch, "Write your %s.\r\n", CMD_NAME);
     send_editor_help(ch->desc);
 
-    snprintf(buf, sizeof(buf), "$n starts to give %s %s.", TANA(CMD_NAME), CMD_NAME);
+    tb_snprintf(buf, sizeof(buf), "$n starts to give %s %s.", TANA(CMD_NAME), CMD_NAME);
     act(buf, TRUE, ch, 0, 0, TO_ROOM);
 
     string_write(ch->desc, &(ibtData->body),MAX_IBT_LENGTH, 0, NULL);
