@@ -154,7 +154,7 @@ void string_add(struct descriptor_data *d, char *str)
         action = STRINGADD_SAVE;
     } else {
       CREATE(*d->str, char, strlen(str) + 3);
-      strlcpy(*d->str, str, strlen(str) + 3);	/* strcpy: OK (size checked) */
+      memcpy(*d->str, str, strlen(str) + 1);	/* strcpy: OK (size checked) */
     }
   } else {
     if (strlen(str) + strlen(*d->str) + 3 > d->max_str) { /* \r\n\0 */
