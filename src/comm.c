@@ -1418,6 +1418,15 @@ static struct in_addr *get_bind_addr()
   /* Clear the structure */
   memset((char *) &bind_addr, 0, sizeof(bind_addr));
 
+  /* An opt-in TLS proxy deployment must never expose its plaintext
+   * backend on a public interface, even if the config specifies one. */
+  if (getenv("TBAMUD_TLS_BACKEND_ONLY") != NULL &&
+      strcmp(getenv("TBAMUD_TLS_BACKEND_ONLY"), "1") == 0) {
+    bind_addr.s_addr = htonl(INADDR_LOOPBACK);
+    log("TLS backend-only mode: binding plaintext listener to 127.0.0.1.");
+    return (&bind_addr);
+  }
+
   /* If DLFT_IP is unspecified, use INADDR_ANY */
   if (CONFIG_DFLT_IP == NULL) {
     bind_addr.s_addr = htonl(INADDR_ANY);
