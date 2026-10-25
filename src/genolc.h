@@ -9,8 +9,8 @@
 * is attributed to:
 * Copyright 1996 by Harvey Gilpin, 1997-2001 by George Greer.                                                    
 */
-#ifndef _GENOLC_H_
-#define _GENOLC_H_
+#ifndef TBAMUD_GENOLC_H_INCLUDED
+#define TBAMUD_GENOLC_H_INCLUDED
 
 #define STRING_TERMINATOR       '~'
 #define CONFIG_GENOLC_MOBPROG	0
@@ -57,4 +57,4 @@ room_vnum genolc_zone_bottom(zone_rnum rznum);
 room_vnum genolc_zonep_bottom(struct zone_data *zone);
 extern void free_save_list(void);
 
-#endif /* _GENOLC_H_ */
+#endif /* TBAMUD_GENOLC_H_INCLUDED */
