@@ -893,8 +893,9 @@ static inline void tb_fprintf_at(FILE *stream,
   int result;
 
   if (stream == NULL || format == NULL) {
-    tb_report_error_at("fprintf", "invalid stream or format", 0,
-                       source_file, source_line, source_func);
+    tb_report_domain_error_at(TB_SEV_ERROR, TB_ERR_PERSISTENCE,
+                              "fprintf", "invalid stream or format", 0,
+                              source_file, source_line, source_func);
     return;
   }
 
@@ -904,8 +905,9 @@ static inline void tb_fprintf_at(FILE *stream,
 
   if (result < 0) {
     int saved_errno = errno;
-    tb_report_error_at("vfprintf", "stdio stream", saved_errno,
-                       source_file, source_line, source_func);
+    tb_report_domain_error_at(TB_SEV_ERROR, TB_ERR_PERSISTENCE,
+                              "vfprintf", "stdio stream", saved_errno,
+                              source_file, source_line, source_func);
   }
 }
 
@@ -917,14 +919,16 @@ static inline void tb_fputs_at(const char *text, FILE *stream,
                                const char *source_func)
 {
   if (text == NULL || stream == NULL) {
-    tb_report_error_at("fputs", "invalid text or stream", 0,
-                       source_file, source_line, source_func);
+    tb_report_domain_error_at(TB_SEV_ERROR, TB_ERR_PERSISTENCE,
+                              "fputs", "invalid text or stream", 0,
+                              source_file, source_line, source_func);
     return;
   }
   if (fputs(text, stream) == EOF) {
     int saved_errno = errno;
-    tb_report_error_at("fputs", "stdio stream", saved_errno,
-                       source_file, source_line, source_func);
+    tb_report_domain_error_at(TB_SEV_ERROR, TB_ERR_PERSISTENCE,
+                              "fputs", "stdio stream", saved_errno,
+                              source_file, source_line, source_func);
   }
 }
 
@@ -936,14 +940,16 @@ static inline void tb_fputc_at(int ch, FILE *stream,
                                const char *source_func)
 {
   if (stream == NULL) {
-    tb_report_error_at("fputc", "NULL stream", 0,
-                       source_file, source_line, source_func);
+    tb_report_domain_error_at(TB_SEV_ERROR, TB_ERR_PERSISTENCE,
+                              "fputc", "NULL stream", 0,
+                              source_file, source_line, source_func);
     return;
   }
   if (fputc(ch, stream) == EOF) {
     int saved_errno = errno;
-    tb_report_error_at("fputc", "stdio stream", saved_errno,
-                       source_file, source_line, source_func);
+    tb_report_domain_error_at(TB_SEV_ERROR, TB_ERR_PERSISTENCE,
+                              "fputc", "stdio stream", saved_errno,
+                              source_file, source_line, source_func);
   }
 }
 
@@ -955,14 +961,16 @@ static inline void tb_fwrite_at(const void *ptr, size_t size, size_t count,
                                 int source_line, const char *source_func)
 {
   if (stream == NULL || (ptr == NULL && size != 0 && count != 0)) {
-    tb_report_error_at("fwrite", "invalid buffer or stream", 0,
-                       source_file, source_line, source_func);
+    tb_report_domain_error_at(TB_SEV_ERROR, TB_ERR_PERSISTENCE,
+                              "fwrite", "invalid buffer or stream", 0,
+                              source_file, source_line, source_func);
     return;
   }
   if (count != 0 && fwrite(ptr, size, count, stream) != count) {
     int saved_errno = errno;
-    tb_report_error_at("fwrite", "stdio stream", saved_errno,
-                       source_file, source_line, source_func);
+    tb_report_domain_error_at(TB_SEV_ERROR, TB_ERR_PERSISTENCE,
+                              "fwrite", "stdio stream", saved_errno,
+                              source_file, source_line, source_func);
   }
 }
 
@@ -974,8 +982,9 @@ static inline void tb_fflush_at(FILE *stream, const char *source_file,
 {
   if (fflush(stream) == EOF) {
     int saved_errno = errno;
-    tb_report_error_at("fflush", stream ? "stdio stream" : "all output streams",
-                       saved_errno, source_file, source_line, source_func);
+    tb_report_domain_error_at(TB_SEV_ERROR, TB_ERR_PERSISTENCE,
+                              "fflush", stream ? "stdio stream" : "all output streams",
+                              saved_errno, source_file, source_line, source_func);
   }
 }
 
@@ -986,14 +995,16 @@ static inline void tb_fclose_at(FILE *stream, const char *source_file,
                                 int source_line, const char *source_func)
 {
   if (stream == NULL) {
-    tb_report_error_at("fclose", "NULL stream", 0,
-                       source_file, source_line, source_func);
+    tb_report_domain_error_at(TB_SEV_ERROR, TB_ERR_PERSISTENCE,
+                              "fclose", "NULL stream", 0,
+                              source_file, source_line, source_func);
     return;
   }
   if (fclose(stream) == EOF) {
     int saved_errno = errno;
-    tb_report_error_at("fclose", "stdio stream", saved_errno,
-                       source_file, source_line, source_func);
+    tb_report_domain_error_at(TB_SEV_ERROR, TB_ERR_PERSISTENCE,
+                              "fclose", "stdio stream", saved_errno,
+                              source_file, source_line, source_func);
   }
 }
 
@@ -1010,8 +1021,9 @@ static inline int tb_fflush_checked_at(FILE *stream, const char *context,
 {
   if (fflush(stream) == EOF) {
     int saved_errno = errno;
-    tb_report_error_at("fflush", context ? context : "stdio stream",
-                       saved_errno, source_file, source_line, source_func);
+    tb_report_domain_error_at(TB_SEV_ERROR, TB_ERR_PERSISTENCE,
+                              "fflush", context ? context : "stdio stream",
+                              saved_errno, source_file, source_line, source_func);
     return 0;
   }
   return 1;
@@ -1025,14 +1037,16 @@ static inline int tb_fclose_checked_at(FILE *stream, const char *context,
                                        const char *source_func)
 {
   if (stream == NULL) {
-    tb_report_error_at("fclose", context ? context : "NULL stream", 0,
-                       source_file, source_line, source_func);
+    tb_report_domain_error_at(TB_SEV_ERROR, TB_ERR_PERSISTENCE,
+                              "fclose", context ? context : "NULL stream", 0,
+                              source_file, source_line, source_func);
     return 0;
   }
   if (fclose(stream) == EOF) {
     int saved_errno = errno;
-    tb_report_error_at("fclose", context ? context : "stdio stream",
-                       saved_errno, source_file, source_line, source_func);
+    tb_report_domain_error_at(TB_SEV_ERROR, TB_ERR_PERSISTENCE,
+                              "fclose", context ? context : "stdio stream",
+                              saved_errno, source_file, source_line, source_func);
     return 0;
   }
   return 1;
