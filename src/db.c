@@ -231,7 +231,10 @@ static void boot_social_messages(void)
   }
 
   log("Social table contains %d socials.", top_of_socialt);
-  rewind(fl);
+  if (fseek(fl, 0L, SEEK_SET) != 0) {
+    log("SYSERR: unable to rewind socials file %s: %s", SOCMESS_FILE_NEW, strerror(errno));
+    exit(1);
+  }
 
   CREATE(soc_mess_list, struct social_messg, top_of_socialt + 1);
 
@@ -1080,7 +1083,10 @@ void index_boot(int mode)
     break;
   }
 
-  rewind(db_index);
+  if (fseek(db_index, 0L, SEEK_SET) != 0) {
+    log("SYSERR: unable to rewind index file ./%s%s: %s", prefix, index_filename, strerror(errno));
+    exit(1);
+  }
 
   for (line_number = 1;; ++line_number) {
     if (fscanf(db_index, "%s\n", buf1) != 1) {
@@ -2135,7 +2141,10 @@ static void load_zones(FILE *fl, char *zonename)
       break;
   }
 
-  rewind(fl);
+  if (fseek(fl, 0L, SEEK_SET) != 0) {
+    log("SYSERR: unable to rewind zone file %s: %s", zname, strerror(errno));
+    exit(1);
+  }
 
   if (num_of_cmds == 0) {
     log("SYSERR: %s is empty!", zname);
