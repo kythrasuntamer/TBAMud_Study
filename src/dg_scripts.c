@@ -1382,7 +1382,9 @@ static int script_int_value(const char *arg)
   errno = 0;
   value = strtol(arg, NULL, 10);
 
-  if (errno == ERANGE || value > INT_MAX)
+  if (errno == ERANGE)
+    return (*arg == '-') ? INT_MIN : INT_MAX;
+  if (value > INT_MAX)
     return INT_MAX;
   if (value < INT_MIN)
     return INT_MIN;
