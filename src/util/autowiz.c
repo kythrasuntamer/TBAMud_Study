@@ -118,7 +118,7 @@ void add_name(byte level, char *name)
       return;
 
   tmp = (struct name_rec *) malloc(sizeof(struct name_rec));
-  strcpy(tmp->name, name);
+  strlcpy(tmp->name, name, sizeof(tmp->name));
   tmp->next = 0;
 
   curr_level = levels;
@@ -226,12 +226,12 @@ int main(int argc, char **argv)
 	   argv[0]);
     exit(0);
   }
-  wizlevel = atoi(argv[1]);
-  immlevel = atoi(argv[3]);
+  wizlevel = tb_parse_int_or_zero(argv[1]);
+  immlevel = tb_parse_int_or_zero(argv[3]);
 
 #ifdef CIRCLE_UNIX	/* Perhaps #ifndef CIRCLE_WINDOWS but ... */
   if (argc == 6)
-    pid = atoi(argv[5]);
+    pid = tb_parse_int_or_zero(argv[5]);
 #endif
 
   initialize();
@@ -305,7 +305,7 @@ bitvector_t asciiflag_conv(char *flag)
   }
 
   if (is_number)
-    flags = atol(flag);
+    flags = tb_parse_long_or_zero(flag);
 
   return (flags);
 }
