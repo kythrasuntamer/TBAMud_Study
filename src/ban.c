@@ -50,7 +50,7 @@ void load_banned(void)
 
   if (!(fl = fopen(BAN_FILE, "r"))) {
     if (errno != ENOENT) {
-      log("SYSERR: Unable to open banfile '%s': %s", BAN_FILE, strerror(errno));
+      { int saved_errno = errno; log("SYSERR: fopen banfile %s for read failed: %s (errno=%d)", BAN_FILE, strerror(saved_errno), saved_errno); }
     } else
       log("   Ban file '%s' doesn't exist.", BAN_FILE);
     return;
@@ -108,7 +108,7 @@ static void write_ban_list(void)
   FILE *fl;
 
   if (!(fl = fopen(BAN_FILE, "w"))) {
-    perror("SYSERR: Unable to open '" BAN_FILE "' for writing");
+    TB_REPORT_ERRNO("fopen", BAN_FILE);
     return;
   }
   write_one_node(fl, ban_list);/* recursively write from end to start */
@@ -291,7 +291,7 @@ void read_invalid_list(void)
   char temp[256];
 
   if (!(fp = fopen(XNAME_FILE, "r"))) {
-    perror("SYSERR: Unable to open '" XNAME_FILE "' for reading");
+    TB_REPORT_ERRNO("fopen", XNAME_FILE);
     return;
   }
 
