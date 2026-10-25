@@ -16,7 +16,7 @@
 #define FLAG(n) (1 << (n))
 
 #ifndef FALSE
-typedef enum _boolean_type {
+typedef enum boolean_type {
   FALSE=0, TRUE
 } bool;
 #endif
