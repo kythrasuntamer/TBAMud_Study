@@ -986,3 +986,52 @@ ACMD(do_happyhour)
                      (3600 / SECS_PER_MUD_HOUR) );
   }
 }
+/* Mortal endgame purchases. Values are intentionally bounded and saved
+ * through the normal ASCII player-file lifecycle. */
+ACMD(do_endgame)
+{
+  char choice[MAX_INPUT_LENGTH];
+  int *rank, cost, amount, *maximum;
+
+  if (IS_NPC(ch) || GET_LEVEL(ch) != LVL_IMMORT - 1) {
+    send_to_char(ch, "Endgame advancement is available to level-50 mortals.\r\n");
+    return;
+  }
+  one_argument(argument, choice);
+  if (!*choice) {
+    send_to_char(ch,
+      "Endgame advancement: %d AP, %d/100000 XP toward next AP.\r\n"
+      "HP upgrades: %d/100. Mana upgrades: %d/100.\r\n"
+      "Use ENDGAME HP or ENDGAME MANA. Each upgrade costs 2 AP and grants +10 maximum points.\r\n",
+      GET_ENDGAME_AP(ch), GET_ENDGAME_XP(ch),
+      GET_ENDGAME_HP_RANK(ch), GET_ENDGAME_MP_RANK(ch));
+    return;
+  }
+  if (!str_cmp(choice, "hp")) {
+    rank = &ch->player_specials->saved.endgame_hp_rank;
+    maximum = &ch->points.max_hit;
+  } else if (!str_cmp(choice, "mana") || !str_cmp(choice, "mp")) {
+    rank = &ch->player_specials->saved.endgame_mana_rank;
+    maximum = &ch->points.max_mana;
+  } else {
+    send_to_char(ch, "Choose ENDGAME HP or ENDGAME MANA.\r\n");
+    return;
+  }
+  cost = 2;
+  amount = 10;
+  if (*rank < 0 || *rank >= 100 || *maximum > 1000000 - amount) {
+    send_to_char(ch, "You have reached the upgrade limit.\r\n");
+    return;
+  }
+  if (GET_ENDGAME_AP(ch) < cost) {
+    send_to_char(ch, "You need %d advancement points.\r\n", cost);
+    return;
+  }
+  GET_ENDGAME_AP(ch) -= cost;
+  ++*rank;
+  *maximum += amount;
+  save_char(ch);
+  send_to_char(ch, "Advancement complete! Your maximum increased by %d.\r\n", amount);
+}
+
+
