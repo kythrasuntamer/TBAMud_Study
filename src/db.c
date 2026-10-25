@@ -791,12 +791,19 @@ void boot_db(void)
 {
   int j;
 
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wpedantic"
+#endif
   for (j = 0 ; j < top_of_objt; j++) {
     if (obj_proto[j].script == (struct script_data *)&shop_keeper) {
       log("Item %d (%s) had shopkeeper trouble.", obj_index[j].vnum, obj_proto[j].short_description);
       obj_proto[j].script = NULL;
     }
   }
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
 }
 #endif
 
@@ -2120,7 +2127,7 @@ static void load_zones(FILE *fl, char *zonename)
 
   line_num += get_line(fl, buf);
 
-  if (sscanf(buf, "#%hd", &Z.number) != 1) {
+  if (sscanf(buf, "#%hu", &Z.number) != 1) {
     log("SYSERR: Format error in %s, line %d", zname, line_num);
     exit(1);
   }
@@ -2143,15 +2150,15 @@ static void load_zones(FILE *fl, char *zonename)
 
   line_num += get_line(fl, buf);
   /* Look for 10 items first (new tbaMUD), if not found, try 4 (old tbaMUD) */
-  if  (sscanf(buf, " %hd %hd %d %d %s %s %s %s %d %d", &Z.bot, &Z.top, &Z.lifespan,
+  if  (sscanf(buf, " %hu %hu %d %d %s %s %s %s %d %d", &Z.bot, &Z.top, &Z.lifespan,
       &Z.reset_mode, zbuf1, zbuf2, zbuf3, zbuf4, &Z.min_level, &Z.max_level) != 10)
   {
-    if (sscanf(buf, " %hd %hd %d %d ", &Z.bot, &Z.top, &Z.lifespan, &Z.reset_mode) != 4) {
+    if (sscanf(buf, " %hu %hu %d %d ", &Z.bot, &Z.top, &Z.lifespan, &Z.reset_mode) != 4) {
       /* This may be due to the fact that the zone has no builder.  So, we just
        * attempt to fix this by copying the previous 2 last reads into this
        * variable and the last one. */
       log("SYSERR: Format error in numeric constant line of %s, attempting to fix.", zname);
-      if (sscanf(Z.name, " %hd %hd %d %d ", &Z.bot, &Z.top, &Z.lifespan, &Z.reset_mode) != 4) {
+      if (sscanf(Z.name, " %hu %hu %d %d ", &Z.bot, &Z.top, &Z.lifespan, &Z.reset_mode) != 4) {
         log("SYSERR: Could not fix previous error, aborting game.");
         exit(1);
       } else {
