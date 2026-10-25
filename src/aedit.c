@@ -206,13 +206,13 @@ static void aedit_save_to_disk(struct descriptor_data *d) {
    char buf[MAX_STRING_LENGTH];
    if (!(fp = fopen(SOCMESS_FILE_NEW, "w+")))  {
      char error[MAX_STRING_LENGTH];
-     snprintf(error, sizeof(error), "Can't open socials file '%s'", SOCMESS_FILE);
+     tb_snprintf(error, sizeof(error), "Can't open socials file '%s'", SOCMESS_FILE);
      perror(error);
      exit(1);
    }
 
    for (i = 0; i <= top_of_socialt; i++)  {
-      fprintf(fp, "~%s %s %d %d %d %d\n",
+      tb_fprintf(fp, "~%s %s %d %d %d %d\n",
               soc_mess_list[i].command,
               soc_mess_list[i].sort_as,
               soc_mess_list[i].hide,
@@ -225,29 +225,29 @@ static void aedit_save_to_disk(struct descriptor_data *d) {
               ((soc_mess_list[i].others_no_arg)?soc_mess_list[i].others_no_arg:"#"),
               ((soc_mess_list[i].char_found)?soc_mess_list[i].char_found:"#"),
               ((soc_mess_list[i].others_found)?soc_mess_list[i].others_found:"#"));
-      fprintf(fp, "%s", convert_from_tabs(buf));
+      tb_fprintf(fp, "%s", convert_from_tabs(buf));
       
       sprintf(buf, "%s\n%s\n%s\n%s\n",
               ((soc_mess_list[i].vict_found)?soc_mess_list[i].vict_found:"#"),
               ((soc_mess_list[i].not_found)?soc_mess_list[i].not_found:"#"),
               ((soc_mess_list[i].char_auto)?soc_mess_list[i].char_auto:"#"),
               ((soc_mess_list[i].others_auto)?soc_mess_list[i].others_auto:"#"));
-      fprintf(fp, "%s", convert_from_tabs(buf));
+      tb_fprintf(fp, "%s", convert_from_tabs(buf));
       
       sprintf(buf, "%s\n%s\n%s\n",
               ((soc_mess_list[i].char_body_found)?soc_mess_list[i].char_body_found:"#"),
               ((soc_mess_list[i].others_body_found)?soc_mess_list[i].others_body_found:"#"),
               ((soc_mess_list[i].vict_body_found)?soc_mess_list[i].vict_body_found:"#"));
-      fprintf(fp, "%s", convert_from_tabs(buf));
+      tb_fprintf(fp, "%s", convert_from_tabs(buf));
       
       sprintf(buf, "%s\n%s\n\n",
               ((soc_mess_list[i].char_obj_found)?soc_mess_list[i].char_obj_found:"#"),
               ((soc_mess_list[i].others_obj_found)?soc_mess_list[i].others_obj_found:"#"));
-      fprintf(fp, "%s", convert_from_tabs(buf));
+      tb_fprintf(fp, "%s", convert_from_tabs(buf));
    }
 
-   fprintf(fp, "$\n");
-   fclose(fp);
+   tb_fprintf(fp, "$\n");
+   tb_fclose(fp);
    remove_from_save_list(AEDIT_PERMISSION, SL_ACT);
 }
 
