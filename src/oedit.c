@@ -1400,7 +1400,9 @@ void oedit_parse(struct descriptor_data *d, char *arg)
 	  OLC_DESC(d) = OLC_DESC(d)->next;
 	}
       }
-      /* fall through: redisplay the extra-description menu. */
+      oedit_disp_extradesc_menu(d);
+      return;
+
     default:
       oedit_disp_extradesc_menu(d);
       return;
