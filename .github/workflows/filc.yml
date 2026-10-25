@@ -44,13 +44,14 @@ jobs:
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y autoconf automake libtool pkg-config
-          git clone --depth 1 --branch 1.0.20 https://github.com/jedisct1/libsodium.git "${RUNNER_TEMP}/libsodium-src"
+          git clone --depth 1 --branch 1.0.22 https://github.com/jedisct1/libsodium.git "${RUNNER_TEMP}/libsodium-src"
           cd "${RUNNER_TEMP}/libsodium-src"
           ./autogen.sh
           CC=/opt/fil/bin/filcc ./configure \
             --prefix="${RUNNER_TEMP}/filc-sodium" \
             --disable-shared --enable-static --disable-asm
           make -j2
+          make check -j2
           make install
           test -f "${RUNNER_TEMP}/filc-sodium/lib/libsodium.a"
 
