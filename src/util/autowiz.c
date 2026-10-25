@@ -85,7 +85,11 @@ void read_file(void)
   while (get_line(fl, line))
     if (*line != '~')
       recs++;
-  rewind(fl);
+  if (fseek(fl, 0L, SEEK_SET) != 0) {
+    fprintf(stderr, "Unable to rewind player index: %s\n", strerror(errno));
+    fclose(fl);
+    exit(1);
+  }
 
   for (i = 0; i < recs; i++) {
     get_line(fl, line);
