@@ -166,12 +166,12 @@ void convert(char *filename)
   struct affected_type_plrtoascii *aff;
 
   if (!(fl = fopen(filename, "r+"))) {
-    perror("error opening playerfile");
+    TB_REPORT_ERRNO("fopen", filename);
     exit(1);
   }
   tb_snprintf(index_name, sizeof(index_name), "%s%s", LIB_PLRFILES, INDEX_FILE);
   if (!(index_file = fopen(index_name, "w"))) {
-    perror("error opening index file");
+    TB_REPORT_ERRNO("fopen", index_name);
     exit(1);
   }
   for (;;) {
@@ -181,7 +181,7 @@ void convert(char *filename)
         tb_fclose(index_file);
         return;
       }
-      perror("error reading playerfile");
+      TB_REPORT_ERRNO("fread", filename);
       tb_fclose(fl);
       tb_fclose(index_file);
       exit(1);
