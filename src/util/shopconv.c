@@ -243,8 +243,7 @@ int main(int argc, char *argv[])
       continue;
     }
     if (rename(fn, part) != 0) {
-      tb_fprintf(stderr, "shopconv: failed to rename %s to %s: %s\n",
-              fn, part, strerror(errno));
+      TB_REPORT_ERRNO("rename", fn);
       exit(1);
     }
     sfp = fopen(part, "r");
@@ -252,8 +251,7 @@ int main(int argc, char *argv[])
       int saved_errno = errno;
       tb_fprintf(stderr, "shopconv: %s could not be opened: %s\n", part, strerror(saved_errno));
       if (rename(part, fn) != 0)
-        tb_fprintf(stderr, "shopconv: failed to restore %s from temporary file: %s\n",
-                fn, strerror(errno));
+        TB_REPORT_ERRNO("rename", part);
     } else {
       if ((nsfp = fopen(fn, "w")) == NULL) {
         int saved_errno = errno;
@@ -261,8 +259,7 @@ int main(int argc, char *argv[])
                    fn, strerror(saved_errno), saved_errno);
         tb_fclose(sfp);
         if (rename(part, fn) != 0)
-          tb_fprintf(stderr, "shopconv: failed to restore %s from temporary file: %s\n",
-                  fn, strerror(errno));
+          TB_REPORT_ERRNO("rename", part);
 	      continue;
       }
       printf("%s:\n", fn);
@@ -271,8 +268,7 @@ int main(int argc, char *argv[])
       tb_fclose(sfp);
       if (result) {
 	      if (rename(part, fn) != 0) {
-	        tb_fprintf(stderr, "shopconv: failed to restore %s from temporary file: %s\n",
-	                fn, strerror(errno));
+	        TB_REPORT_ERRNO("rename", part);
 	        exit(1);
 	      }
       } else {
@@ -281,8 +277,7 @@ int main(int argc, char *argv[])
 	        exit(1);
 	      }
 	      if (rename(part, backup) != 0) {
-	        tb_fprintf(stderr, "shopconv: failed to archive temporary file for %s: %s\n",
-	                fn, strerror(errno));
+	        TB_REPORT_ERRNO("rename", part);
 	        exit(1);
 	      }
 	      printf("Done!\n");
