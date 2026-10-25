@@ -159,21 +159,28 @@ void trigedit_setup_existing(struct descriptor_data *d, int rtrg_num)
 {
   struct trig_data *trig;
   struct cmdlist_element *c;
+  size_t len;
+
   /* Allocate a scratch trigger structure. */
   CREATE(trig, struct trig_data, 1);
 
   trig_data_copy(trig, trig_index[rtrg_num]->proto);
 
-  /* convert cmdlist to a char string */
-  c = trig->cmdlist;
-  CREATE(OLC_STORAGE(d), char, MAX_CMD_LENGTH);
-  strcpy(OLC_STORAGE(d), "");
+  /* Size the edit buffer from the existing script instead of assuming that
+   * every trigger loaded from disk fits MAX_CMD_LENGTH. */
+  len = 1;
+  for (c = trig->cmdlist; c; c = c->next)
+    len += (c->cmd ? strlen(c->cmd) : 0) + 2;
+  if (len < MAX_CMD_LENGTH)
+    len = MAX_CMD_LENGTH;
 
-  while (c)
-  {
-    strcat(OLC_STORAGE(d), c->cmd);
+  CREATE(OLC_STORAGE(d), char, len);
+  *OLC_STORAGE(d) = '\0';
+
+  for (c = trig->cmdlist; c; c = c->next) {
+    if (c->cmd)
+      strcat(OLC_STORAGE(d), c->cmd);
     strcat(OLC_STORAGE(d), "\r\n");
-    c = c->next;
   }
   /* Now trig->cmdlist is something to pass to the text editor it will be 
    * converted back to a real cmdlist_element list later. */
@@ -621,6 +628,7 @@ void trigedit_parse(struct descriptor_data *d, char *arg)
 void trigedit_save(struct descriptor_data *d)
 {
   int i;
+  size_t need;
   trig_rnum rnum;
   int found = 0;
   char *s;
@@ -802,6 +810,27 @@ void trigedit_save(struct descriptor_data *d)
   zone = zone_table[OLC_ZNUM(d)].number;
   top = zone_table[OLC_ZNUM(d)].top;
 
+  /* Refuse to write a trigger zone that the loader would reject on the next
+   * boot.  fread_string() adds CR/LF per input chunk, so count the same way. */
+  for (i = zone_table[OLC_ZNUM(d)].bot; i <= top; i++) {
+    if ((rnum = real_trigger(i)) != NOTHING) {
+      need = 0;
+      for (cmd = trig_index[rnum]->proto->cmdlist; cmd; cmd = cmd->next) {
+        if (cmd->cmd) {
+          size_t cmdlen = strlen(cmd->cmd);
+          need += cmdlen + 2 * ((cmdlen + FREAD_CHUNK - 1) / (FREAD_CHUNK - 1));
+        }
+      }
+      if (need >= MAX_STRING_LENGTH) {
+        mudlog(BRF, MAX(LVL_GOD, GET_INVIS_LEV(d->character)), TRUE,
+               "SYSERR: OLC: Trigger %d's script reads back as %lu bytes, "
+               "over the %d the loader accepts; zone %d not written.",
+               i, (unsigned long) need, MAX_STRING_LENGTH - 1, zone);
+        return;
+      }
+    }
+  }
+
 #ifdef CIRCLE_MAC
   snprintf(fname, sizeof(fname), "%s:%i.new", TRG_PREFIX, zone);
 #else
@@ -833,18 +862,22 @@ void trigedit_save(struct descriptor_data *d)
            *bitBuf ? bitBuf : "0", GET_TRIG_NARG(trig),
            GET_TRIG_ARG(trig) ? GET_TRIG_ARG(trig) : "", STRING_TERMINATOR);
 
-      /* Build the text for the script */
-      strcpy(buf,""); /* strcpy OK for MAX_CMD_LENGTH > 0*/
-      for (cmd = trig->cmdlist; cmd; cmd = cmd->next) {
-        strcat(buf, cmd->cmd);
-        strcat(buf, "\n");
+      /* Write each command directly.  The old code assembled the complete
+       * script in a fixed MAX_CMD_LENGTH stack buffer using unbounded strcat. */
+      {
+        int wrote = FALSE;
+
+        for (cmd = trig->cmdlist; cmd; cmd = cmd->next) {
+          if (cmd->cmd) {
+            fprintf(trig_file, "%s\n", cmd->cmd);
+            wrote = TRUE;
+          }
+        }
+
+        if (!wrote)
+          fprintf(trig_file, "* Empty script");
+        fprintf(trig_file, "%c\n", STRING_TERMINATOR);
       }
-
-      if (!buf[0])
-        strcpy(buf, "* Empty script");
-
-      fprintf(trig_file, "%s%c\n", buf, STRING_TERMINATOR);
-      *buf = '\0';
     }
   }
 
