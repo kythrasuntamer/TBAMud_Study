@@ -2796,7 +2796,8 @@ ACMD(do_show)
     for (r = 0; r < 6; r++)
       for (g = 0; g < 6; g++)
         for (b = 0; b < 6; b++) {
-          sprintf(colour, "F%d%d%d", r, g, b);
+          snprintf(colour, sizeof(colour), "F%u%u%u",
+                   (unsigned) r, (unsigned) g, (unsigned) b);
           nlen = snprintf(buf + len, sizeof(buf) - len,  "%s%s%s", ColourRGB(ch->desc, colour), colour, ++k % 6 == 0 ? "\tn\r\n" : "    ");
           if (len + nlen >= sizeof(buf))
             break;
