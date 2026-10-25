@@ -192,10 +192,16 @@ int main(int argc, char *argv[])
       fclose(sfp);
       if (result) {
 	      sprintf(part, "mv %s.tmp %s", fn, fn);
-	      i = system(part);
+	      if (system(part) != 0) {
+	        fprintf(stderr, "shopconv: failed to restore %s from temporary file\n", fn);
+	        exit(1);
+	      }
       } else {
 	      sprintf(part, "mv %s.tmp %s.bak", fn, fn);
-	      i = system(part);
+	      if (system(part) != 0) {
+	        fprintf(stderr, "shopconv: failed to archive temporary file for %s\n", fn);
+	        exit(1);
+	      }
 	      printf("Done!\n");
       }
     }
