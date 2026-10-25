@@ -236,6 +236,49 @@ static inline int tb_parse_int_checked(const char *text, int *out)
   return 1;
 }
 
+static inline int tb_parse_int_prefix_checked(const char *text, int *out,
+                                              const char **end_out)
+{
+  char *end = NULL;
+  long value;
+
+  if (text == NULL || out == NULL)
+    return 0;
+
+  errno = 0;
+  value = strtol(text, &end, 10);
+  if (end == text || errno == ERANGE || value < INT_MIN || value > INT_MAX)
+    return 0;
+
+  *out = (int)value;
+  if (end_out != NULL)
+    *end_out = end;
+  return 1;
+}
+
+static inline int tb_parse_float_checked(const char *text, float *out)
+{
+  char *end = NULL;
+  float value;
+
+  if (text == NULL || out == NULL)
+    return 0;
+
+  errno = 0;
+  value = strtof(text, &end);
+  if (end == text || errno == ERANGE)
+    return 0;
+
+  while (*end != '\0' && tb_ascii_space((unsigned char)*end))
+    end++;
+
+  if (*end != '\0')
+    return 0;
+
+  *out = value;
+  return 1;
+}
+
 #ifdef HAVE_NET_ERRNO_H
 #include <net/errno.h>
 #endif
@@ -444,31 +487,94 @@ struct in_addr {
  * header.  The public wrappers are macros that inject the source file, line,
  * and function into implementation helpers.
  */
-static inline void tb_report_error_at(const char *operation, const char *context,
-                                      int errnum, const char *source_file,
-                                      int source_line, const char *source_func)
+typedef enum {
+  TB_SEV_WARN = 0,
+  TB_SEV_ERROR,
+  TB_SEV_FATAL
+} tb_error_severity;
+
+typedef enum {
+  TB_ERR_GENERAL = 0,
+  TB_ERR_PERSISTENCE,
+  TB_ERR_PARSER,
+  TB_ERR_NETWORK,
+  TB_ERR_SCRIPT,
+  TB_ERR_INVARIANT,
+  TB_ERR_BOOT
+} tb_error_category;
+
+static inline const char *tb_error_severity_name(tb_error_severity severity)
+{
+  switch (severity) {
+  case TB_SEV_WARN:  return "WARN";
+  case TB_SEV_FATAL: return "FATAL";
+  case TB_SEV_ERROR:
+  default:           return "ERROR";
+  }
+}
+
+static inline const char *tb_error_category_name(tb_error_category category)
+{
+  switch (category) {
+  case TB_ERR_PERSISTENCE: return "PERSISTENCE";
+  case TB_ERR_PARSER:      return "PARSER";
+  case TB_ERR_NETWORK:     return "NETWORK";
+  case TB_ERR_SCRIPT:      return "SCRIPT";
+  case TB_ERR_INVARIANT:   return "INVARIANT";
+  case TB_ERR_BOOT:        return "BOOT";
+  case TB_ERR_GENERAL:
+  default:                 return "GENERAL";
+  }
+}
+
+static inline void tb_report_domain_error_at(tb_error_severity severity,
+                                             tb_error_category category,
+                                             const char *operation,
+                                             const char *context,
+                                             int errnum,
+                                             const char *source_file,
+                                             int source_line,
+                                             const char *source_func)
 {
   int caller_errno = errno;
+  FILE *err_stream = stderr;
   const char *op = operation ? operation : "operation";
   const char *ctx = context ? context : "(no context)";
   const char *file = source_file ? source_file : "(unknown file)";
   const char *func = source_func ? source_func : "(unknown function)";
 
-  if (errnum != 0)
-    fprintf(stderr,
-            "SYSERR: operation=%s context=%s error=\"%s\" errno=%d source=%s:%d function=%s\n",
-            op, ctx, strerror(errnum), errnum, file, source_line, func);
-  else
-    fprintf(stderr,
-            "SYSERR: operation=%s context=%s source=%s:%d function=%s\n",
-            op, ctx, file, source_line, func);
+  if (err_stream != NULL) {
+    if (errnum != 0) {
+      (void)fprintf(err_stream,
+                    "%s/%s: operation=%s context=%s error=\"%s\" errno=%d source=%s:%d function=%s\n",
+                    tb_error_severity_name(severity),
+                    tb_error_category_name(category),
+                    op, ctx, strerror(errnum), errnum,
+                    file, source_line, func);
+    } else {
+      (void)fprintf(err_stream,
+                    "%s/%s: operation=%s context=%s source=%s:%d function=%s\n",
+                    tb_error_severity_name(severity),
+                    tb_error_category_name(category),
+                    op, ctx, file, source_line, func);
+    }
 
-  /*
-   * Error reports are diagnostic boundaries: push them to the underlying log
-   * immediately and never let logging itself destroy the caller's errno.
-   */
-  (void)fflush(stderr);
+    /*
+     * Error reports are diagnostic boundaries: push them to the underlying log
+     * immediately and never let logging itself destroy the caller's errno.
+     */
+    (void)fflush(err_stream);
+  }
   errno = caller_errno;
+}
+
+static inline void tb_report_error_at(const char *operation, const char *context,
+                                      int errnum, const char *source_file,
+                                      int source_line, const char *source_func)
+{
+  tb_report_domain_error_at(TB_SEV_ERROR, TB_ERR_GENERAL,
+                            operation, context, errnum,
+                            source_file, source_line, source_func);
 }
 
 #define TB_REPORT_ERRNO(operation, context) do { \
@@ -479,6 +585,21 @@ static inline void tb_report_error_at(const char *operation, const char *context
 
 #define TB_REPORT_ERROR(operation, context) \
   tb_report_error_at((operation), (context), 0, __FILE__, __LINE__, __func__)
+
+#define TB_REPORT_DOMAIN_ERRNO(severity, category, operation, context) do { \
+  int tb_saved_errno_ = errno; \
+  tb_report_domain_error_at((severity), (category), (operation), (context), \
+                            tb_saved_errno_, __FILE__, __LINE__, __func__); \
+} while (0)
+
+#define TB_REPORT_DOMAIN_ERROR(severity, category, operation, context) \
+  tb_report_domain_error_at((severity), (category), (operation), (context), 0, \
+                            __FILE__, __LINE__, __func__)
+
+#define TB_INVARIANT(expr, context) \
+  ((expr) ? 1 : \
+   (tb_report_domain_error_at(TB_SEV_ERROR, TB_ERR_INVARIANT, "invariant", \
+                              (context), 0, __FILE__, __LINE__, __func__), 0))
 
 static inline void tb_snprintf_at(char *dst, size_t dst_size,
                                   const char *source_file, int source_line,
@@ -665,6 +786,70 @@ static inline int tb_fclose_checked_at(FILE *stream, const char *context,
 
 #define tb_fclose_checked(stream, context) \
   tb_fclose_checked_at((stream), (context), __FILE__, __LINE__, __func__)
+
+static inline int tb_fprintf_checked_at(FILE *stream, const char *context,
+                                        const char *source_file, int source_line,
+                                        const char *source_func,
+                                        const char *format, ...)
+{
+  va_list args;
+  int result;
+
+  if (stream == NULL || format == NULL) {
+    tb_report_domain_error_at(TB_SEV_ERROR, TB_ERR_PERSISTENCE,
+                              "fprintf",
+                              context ? context : "invalid stream or format",
+                              0, source_file, source_line, source_func);
+    return 0;
+  }
+
+  va_start(args, format);
+  result = vfprintf(stream, format, args);
+  va_end(args);
+  if (result < 0) {
+    int saved_errno = errno;
+    tb_report_domain_error_at(TB_SEV_ERROR, TB_ERR_PERSISTENCE,
+                              "vfprintf",
+                              context ? context : "stdio stream",
+                              saved_errno, source_file, source_line, source_func);
+    return 0;
+  }
+  return 1;
+}
+
+#define tb_fprintf_checked(stream, context, ...) \
+  tb_fprintf_checked_at((stream), (context), __FILE__, __LINE__, __func__, __VA_ARGS__)
+
+static inline int tb_fwrite_checked_at(const void *ptr, size_t size, size_t count,
+                                       FILE *stream, const char *context,
+                                       const char *source_file, int source_line,
+                                       const char *source_func)
+{
+  size_t written;
+
+  if (stream == NULL || (ptr == NULL && size != 0 && count != 0)) {
+    tb_report_domain_error_at(TB_SEV_ERROR, TB_ERR_PERSISTENCE,
+                              "fwrite",
+                              context ? context : "invalid buffer or stream",
+                              0, source_file, source_line, source_func);
+    return 0;
+  }
+
+  written = fwrite(ptr, size, count, stream);
+  if (written != count) {
+    int saved_errno = errno;
+    tb_report_domain_error_at(TB_SEV_ERROR, TB_ERR_PERSISTENCE,
+                              "fwrite",
+                              context ? context : "stdio stream",
+                              saved_errno, source_file, source_line, source_func);
+    return 0;
+  }
+  return 1;
+}
+
+#define tb_fwrite_checked(ptr, size, count, stream, context) \
+  tb_fwrite_checked_at((ptr), (size), (count), (stream), (context), \
+                       __FILE__, __LINE__, __func__)
 
 /*
  * Test-only failure injection. Production builds compile this to a constant
