@@ -27,34 +27,28 @@ char *fread_string(FILE * fl, const char *error)
   do {
     if (!fgets(tmp, sizeof(tmp), fl)) {
       printf("fread_string: format error at or near %s\n", error);
-      exit(1);
+      return NULL;
     }
-    if (strlen(tmp) + strlen(buf) > MAX_STRING_LENGTH) {
-      printf("SYSERR: fread_string: string too large (shopconv.c)");
-      exit(1);
-    } else
-      strcat(buf, tmp);
+    if (strlen(tmp) + strlen(buf) >= sizeof(buf)) {
+      printf("SYSERR: fread_string: string too large (shopconv.c)\n");
+      return NULL;
+    }
+    strlcat(buf, tmp, sizeof(buf));
 
-    for (point = buf + strlen(buf) - 2; point >= buf && isspace(*point);
-	 point--);
-    if ((flag = (*point == '~'))) {
-      if (*(buf + strlen(buf) - 3) == '\n')
-	*(buf + strlen(buf) - 2) = '\0';
-      else
-	*(buf + strlen(buf) - 2) = '\0';
-    }
+    /* Walk backward from the end without ever forming a pointer before buf. */
+    point = buf + strlen(buf);
+    while (point > buf && isspace((unsigned char)*(point - 1)))
+      point--;
+
+    flag = point > buf && *(point - 1) == '~';
+    if (flag)
+      *(point - 1) = '\0';
   } while (!flag);
 
-  /* do the allocate boogie  */
-
-  if (strlen(buf) > 0) {
-    CREATE(rslt, char, strlen(buf) + 1);
-    strcpy(rslt, buf);
-  } else
-    rslt = NULL;
-  return (rslt);
+  CREATE(rslt, char, strlen(buf) + 1);
+  strlcpy(rslt, buf, strlen(buf) + 1);
+  return rslt;
 }
-
 
 void do_list(FILE * shop_f, FILE * newshop_f, int max)
 {
@@ -172,7 +166,10 @@ int main(int argc, char *argv[])
     exit(1);
   }
   for (index = 1; index < argc; index++) {
-    sprintf(fn, "%s", argv[index]);
+    if (snprintf(fn, sizeof(fn), "%s", argv[index]) >= (int)sizeof(fn)) {
+      fprintf(stderr, "shopconv: filename too long: %s\n", argv[index]);
+      continue;
+    }
     sprintf(part, "mv %s %s.tmp", fn, fn);
     if (system(part) != 0) {
       fprintf(stderr, "shopconv: failed to rename %s to a temporary file\n", fn);
@@ -181,8 +178,11 @@ int main(int argc, char *argv[])
     sprintf(part, "%s.tmp", fn);
     sfp = fopen(part, "r");
     if (sfp == NULL) {
-      strcat(fn, " could not be opened");
-      perror(fn);
+      int saved_errno = errno;
+      fprintf(stderr, "shopconv: %s could not be opened: %s\n", part, strerror(saved_errno));
+      if (snprintf(part, sizeof(part), "mv %s.tmp %s", fn, fn) >= (int)sizeof(part) ||
+          system(part) != 0)
+        fprintf(stderr, "shopconv: failed to restore %s from temporary file\n", fn);
     } else {
       if ((nsfp = fopen(fn, "w")) == NULL) {
 	      printf("Error writing to %s.\n", fn);

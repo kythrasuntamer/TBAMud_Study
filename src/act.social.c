@@ -138,8 +138,12 @@ void create_command_list(void)
   j = 0;
   k = 0;
   while ((*cmd_info[i].command != '\n') || (j <= top_of_socialt))  {
-    if ((i < RESERVE_CMDS) || (j > top_of_socialt) ||
-	(str_cmp(cmd_info[i].sort_as, soc_mess_list[j].sort_as) < 1))
+    /* Never consume the cmd_info sentinel while socials remain.  Doing so
+     * advances i past the end of cmd_info and the next loop test reads OOB. */
+    if (j > top_of_socialt ||
+        (*cmd_info[i].command != '\n' &&
+         ((i < RESERVE_CMDS) ||
+          (str_cmp(cmd_info[i].sort_as, soc_mess_list[j].sort_as) < 1))))
       complete_cmd_info[k++] = cmd_info[i++];
     else {
       soc_mess_list[j].act_nr		= k;
