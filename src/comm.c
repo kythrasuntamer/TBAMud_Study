@@ -1234,12 +1234,33 @@ static char *make_prompt(struct descriptor_data *d)
 }
 
 /* NOTE: 'txt' must be at most MAX_INPUT_LENGTH big. */
+/* Bound pending commands per descriptor to prevent input floods from
+ * growing an unbounded linked list while the game loop is busy. */
+#define TB_MAX_PENDING_COMMANDS 64
+
 void write_to_q(const char *txt, struct txt_q *queue, int aliased)
 {
   struct txt_block *newt;
+  struct txt_block *scan;
+  size_t pending = 0;
+
+  if (queue == NULL || txt == NULL)
+    return;
+
+  for (scan = queue->head; scan != NULL; scan = scan->next) {
+    if (++pending >= TB_MAX_PENDING_COMMANDS)
+      return; /* Drop excess commands; do not amplify the flood in logs. */
+  }
 
   CREATE(newt, struct txt_block, 1);
   newt->text = strdup(txt);
+  if (newt->text == NULL) {
+    int saved_errno = errno;
+    free(newt);
+    errno = saved_errno;
+    TB_REPORT_ERRNO("strdup", "input command queue");
+    return;
+  }
   newt->aliased = aliased;
 
   /* queue empty? */
@@ -1267,6 +1288,8 @@ static int get_from_q(struct txt_q *queue, char *dest, int *aliased)
 
   tmp = queue->head;
   queue->head = queue->head->next;
+  if (queue->head == NULL)
+    queue->tail = NULL;
   free(tmp->text);
   free(tmp);
 
