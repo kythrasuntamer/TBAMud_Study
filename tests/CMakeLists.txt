@@ -109,3 +109,12 @@ add_mud_test(test_class
     ${MUD_SRCDIR}/random.c
     ${CMAKE_CURRENT_SOURCE_DIR}/test_class.c
 )
+
+
+# ---------------------------------------------------------------------------
+# test_error_handling — strict parsing and transactional failure containment
+# ---------------------------------------------------------------------------
+add_mud_test(test_error_handling
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_error_handling.c
+)
+target_compile_definitions(test_error_handling PRIVATE TB_TEST_FAILURE_INJECTION=1)
