@@ -569,8 +569,10 @@ void Crash_crashsave(struct char_data *ch)
   if (!(fp = fopen(buf, "w")))
     return;
 
-  if (!objsave_write_rentcode(fp, RENT_CRASH, 0, ch))
-  	return;
+  if (!objsave_write_rentcode(fp, RENT_CRASH, 0, ch)) {
+    fclose(fp);
+    return;
+  }
 
   for (j = 0; j < NUM_WEARS; j++)
     if (GET_EQ(ch, j)) {
@@ -643,8 +645,10 @@ void Crash_idlesave(struct char_data *ch)
     }
   }
 
-  if (!objsave_write_rentcode(fp, RENT_TIMEDOUT, cost, ch))
-  	return;
+  if (!objsave_write_rentcode(fp, RENT_TIMEDOUT, cost, ch)) {
+    fclose(fp);
+    return;
+  }
 
   for (j = 0; j < NUM_WEARS; j++) {
     if (GET_EQ(ch, j)) {
@@ -684,8 +688,10 @@ void Crash_rentsave(struct char_data *ch, int cost)
   Crash_extract_norent_eq(ch);
   Crash_extract_norents(ch->carrying);
 
-  if (!objsave_write_rentcode(fp, RENT_RENTED, cost, ch))
-  	return;
+  if (!objsave_write_rentcode(fp, RENT_RENTED, cost, ch)) {
+    fclose(fp);
+    return;
+  }
 
   for (j = 0; j < NUM_WEARS; j++)
     if (GET_EQ(ch, j)) {
@@ -745,8 +751,10 @@ static void Crash_cryosave(struct char_data *ch, int cost)
 
   GET_GOLD(ch) = MAX(0, GET_GOLD(ch) - cost);
 
-  if (!objsave_write_rentcode(fp, RENT_CRYO, 0, ch))
-  	return;
+  if (!objsave_write_rentcode(fp, RENT_CRYO, 0, ch)) {
+    fclose(fp);
+    return;
+  }
 
   for (j = 0; j < NUM_WEARS; j++)
     if (GET_EQ(ch, j)) {
