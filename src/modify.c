@@ -555,7 +555,7 @@ void show_string(struct descriptor_data *d, char *input)
   }
   /* Or if we have more to show.... */
   else {
-    raw_diff = d->showstr_vector[d->showstr_page + 1] -
+    raw_diff = d->showstr_vector[d->showstr_page + 1] - /* NOLINT(clang-analyzer-security.ArrayBound): this branch guarantees a following page. */
                d->showstr_vector[d->showstr_page];
     if (raw_diff <= 0) {
       log("SYSERR: Invalid pager offsets for descriptor %d.", d->desc_num);
