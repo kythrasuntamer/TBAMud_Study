@@ -156,6 +156,11 @@ void do_string(FILE * shop_f, FILE * newshop_f, char *msg)
   char *ptr;
 
   ptr = fread_string(shop_f, msg);
+  if (ptr == NULL) {
+    tb_fprintf(stderr, "shopconv: failed reading string field near %s\n",
+               msg ? msg : "(unknown field)");
+    exit(1);
+  }
   tb_fprintf(newshop_f, "%s~\n", ptr);
   free(ptr);
 }
@@ -170,6 +175,10 @@ static int boot_the_shops_conv(FILE * shop_f, FILE * newshop_f, char *filename)
   tb_fprintf(newshop_f, "CircleMUD %s Shop File~\n", VERSION3_TAG);
   for (;;) {
     buf = fread_string(shop_f, buf2);
+    if (buf == NULL) {
+      tb_fprintf(stderr, "shopconv: failed reading %s\n", buf2);
+      return 1;
+    }
     if (*buf == '#') {		/* New shop */
       if (*buf != '#' || !parse_int_text(buf + 1, &temp)) {
         tb_fprintf(stderr, "shopconv: malformed shop header: %s\n", buf);
@@ -247,7 +256,9 @@ int main(int argc, char *argv[])
                 fn, strerror(errno));
     } else {
       if ((nsfp = fopen(fn, "w")) == NULL) {
-	      printf("Error writing to %s.\n", fn);
+        int saved_errno = errno;
+        tb_fprintf(stderr, "shopconv: fopen for output failed [%s]: %s (errno=%d)\n",
+                   fn, strerror(saved_errno), saved_errno);
         tb_fclose(sfp);
         if (rename(part, fn) != 0)
           tb_fprintf(stderr, "shopconv: failed to restore %s from temporary file: %s\n",
