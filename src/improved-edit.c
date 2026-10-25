@@ -391,7 +391,7 @@ void parse_edit_action(int command, char *string, struct descriptor_data *d)
       write_to_output(d, "You must specify a line number before which to insert text.\r\n");
       return;
     }
-    line_low = atoi(buf);
+    line_low = tb_parse_int_or_zero(buf);
     strncat(buf2, "\r\n", sizeof(buf2) - strlen(buf2) - 1);
 
     i = 1;
@@ -439,7 +439,7 @@ void parse_edit_action(int command, char *string, struct descriptor_data *d)
       write_to_output(d, "You must specify a line number at which to change text.\r\n");
       return;
     }
-    line_low = atoi(buf);
+    line_low = tb_parse_int_or_zero(buf);
     strncat(buf2, "\r\n", sizeof(buf2) - strlen(buf2) - 1);
 
     i = 1;
