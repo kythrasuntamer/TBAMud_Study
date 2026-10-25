@@ -324,7 +324,7 @@ static void boot_social_messages(void)
   }
 
   /* close file & set top */
-  fclose(fl);
+  tb_fclose(fl);
   assert(curr_soc <= top_of_socialt);
   top_of_socialt = curr_soc;
 }
@@ -840,7 +840,7 @@ static void reset_time(void)
         log("SYSERR: reset_time: unexpected end of file encountered reading %s: %s.", TIME_FILE, strerror(errno));
       }
     }
-    fclose(bgtime);
+    tb_fclose(bgtime);
   }
 
   if (beginning_of_time == 0)
@@ -888,8 +888,8 @@ void save_mud_time(struct time_info_data *when)
   if ((bgtime = fopen(TIME_FILE, "w")) == NULL)
     log("SYSERR: Can't write to '%s' time file.", TIME_FILE);
   else {
-    fprintf(bgtime, "%ld\n", (long)mud_time_to_secs(when));
-    fclose(bgtime);
+    tb_fprintf(bgtime, "%ld\n", (long)mud_time_to_secs(when));
+    tb_fclose(bgtime);
   }
 }
 
@@ -990,7 +990,7 @@ void index_boot(int mode)
   else
     index_filename = INDEX_FILE;
 
-  snprintf(buf2, sizeof(buf2), "%s%s", prefix, index_filename);
+  tb_snprintf(buf2, sizeof(buf2), "%s%s", prefix, index_filename);
   if (!(db_index = fopen(buf2, "r"))) {
     log("SYSERR: opening index file '%s': %s", buf2, strerror(errno));
     exit(1);
@@ -1015,7 +1015,7 @@ void index_boot(int mode)
     if (*buf1 == '$')
       break;
 
-    snprintf(buf2, sizeof(buf2), "%s%s", prefix, buf1);
+    tb_snprintf(buf2, sizeof(buf2), "%s%s", prefix, buf1);
     if (!(db_file = fopen(buf2, "r"))) {
       log("SYSERR: File '%s' listed in '%s/%s': %s", buf2, prefix,
           index_filename, strerror(errno));
@@ -1026,19 +1026,19 @@ void index_boot(int mode)
         rec_count += count_alias_records(db_file);
       else
         rec_count += count_hash_records(db_file);
-      fclose(db_file);
+      tb_fclose(db_file);
     }
   }
 
   /* Exit if 0 records, unless this is shops */
   if (!rec_count) {
     if (mode == DB_BOOT_SHP || mode == DB_BOOT_QST) {
-      fclose(db_index);
+      tb_fclose(db_index);
       return;
     }
     log("SYSERR: boot error - 0 records counted in %s/%s.", prefix,
 	index_filename);
-    fclose(db_index);
+    tb_fclose(db_index);
     exit(1);
   }
 
@@ -1105,7 +1105,7 @@ void index_boot(int mode)
     if (*buf1 == '$')
       break;
 
-    snprintf(buf2, sizeof(buf2), "%s%s", prefix, buf1);
+    tb_snprintf(buf2, sizeof(buf2), "%s%s", prefix, buf1);
     if (!(db_file = fopen(buf2, "r"))) {
       log("SYSERR: %s: %s", buf2, strerror(errno));
       exit(1);
@@ -1129,9 +1129,9 @@ void index_boot(int mode)
       break;
     }
 
-    fclose(db_file);
+    tb_fclose(db_file);
   }
-  fclose(db_index);
+  tb_fclose(db_index);
 
   /* Sort the help index. */
   if (mode == DB_BOOT_HLP) {
@@ -1294,7 +1294,7 @@ void parse_room(FILE *fl, int virtual_nr)
   char letter;
 
   /* This really had better fit or there are other problems. */
-  snprintf(buf2, sizeof(buf2), "room #%d", virtual_nr);
+  tb_snprintf(buf2, sizeof(buf2), "room #%d", virtual_nr);
 
   if (virtual_nr < zone_table[zone].bot) {
     log("SYSERR: Room #%d is below zone %d (bot=%d, top=%d).", virtual_nr, zone_table[zone].number, zone_table[zone].bot, zone_table[zone].top);
@@ -1375,7 +1375,7 @@ void parse_room(FILE *fl, int virtual_nr)
 
   world[room_nr].ex_description = NULL;
 
-  snprintf(buf, sizeof(buf), "SYSERR: Format error in room #%d (expecting D/E/S)", virtual_nr);
+  tb_snprintf(buf, sizeof(buf), "SYSERR: Format error in room #%d (expecting D/E/S)", virtual_nr);
 
   for (;;) {
     if (!get_line(fl, line)) {
@@ -1419,7 +1419,7 @@ void setup_dir(FILE *fl, int room, int dir)
   int t[5];
   char line[READ_SIZE], buf2[128];
 
-  snprintf(buf2, sizeof(buf2), "room #%d, direction D%d", GET_ROOM_VNUM(room)+1, dir);
+  tb_snprintf(buf2, sizeof(buf2), "room #%d, direction D%d", GET_ROOM_VNUM(room)+1, dir);
 
   if (!CONFIG_DIAGONAL_DIRS && IS_DIAGONAL(dir)) {
     log("Warning: Diagonal direction disabled: %s", buf2);
@@ -1548,7 +1548,7 @@ static void renum_zone_table(void)
       }
       if (a == NOWHERE || b == NOWHERE || c == NOWHERE) {
 	if (!mini_mud) {
-	  snprintf(buf, sizeof(buf), "Invalid vnum %d, cmd disabled",
+	  tb_snprintf(buf, sizeof(buf), "Invalid vnum %d, cmd disabled",
 			 a == NOWHERE ? olda : b == NOWHERE ? oldb : oldc);
 	  log_zone_error(zone, cmd_no, buf);
 	}
@@ -1782,7 +1782,7 @@ void parse_mobile(FILE *mob_f, int nr)
    * The only reason we have every mob in the game share this copy of the
    * structure is to save newbie coders from themselves. -gg */
   mob_proto[i].player_specials = &dummy_mob;
-  snprintf(buf2, sizeof(buf2), "mob vnum %d", nr);	/* sprintf: OK (for 'buf2 >= 19') */
+  tb_snprintf(buf2, sizeof(buf2), "mob vnum %d", nr);	/* sprintf: OK (for 'buf2 >= 19') */
 
   /* String data */
   mob_proto[i].player.name = fread_string(mob_f, buf2);
@@ -1928,7 +1928,7 @@ char *parse_object(FILE *obj_f, int nr)
   clear_object(obj_proto + i);
   obj_proto[i].item_number = i;
 
-  snprintf(buf2, sizeof(buf2), "object #%d", nr);	/* sprintf: OK (for 'buf2 >= 19') */
+  tb_snprintf(buf2, sizeof(buf2), "object #%d", nr);	/* sprintf: OK (for 'buf2 >= 19') */
 
   /* string data */
   if ((obj_proto[i].name = fread_string(obj_f, buf2)) == NULL) {
@@ -2158,7 +2158,7 @@ static void load_zones(FILE *fl, char *zonename)
     log("SYSERR: Format error in %s, line %d", zname, line_num);
     exit(1);
   }
-  snprintf(buf2, sizeof(buf2), "beginning of zone #%d", Z.number);
+  tb_snprintf(buf2, sizeof(buf2), "beginning of zone #%d", Z.number);
 
   line_num += get_line(fl, buf);
   if ((ptr = strchr(buf, '~')) != NULL) /* take off the '~' if it's there */
@@ -2708,7 +2708,7 @@ void reset_zone(zone_rnum zone)
     case 'G':			/* obj_to_char */
       if (!mob) {
 	char error[MAX_INPUT_LENGTH];
-	snprintf(error, sizeof(error), "attempt to give obj #%d to non-existant mob, command disabled", obj_index[ZCMD.arg1].vnum);
+	tb_snprintf(error, sizeof(error), "attempt to give obj #%d to non-existant mob, command disabled", obj_index[ZCMD.arg1].vnum);
 	ZONE_ERROR(error);
 	ZCMD.command = '*';
 	break;
@@ -2727,7 +2727,7 @@ void reset_zone(zone_rnum zone)
     case 'E':			/* object to equipment list */
       if (!mob) {
 	char error[MAX_INPUT_LENGTH];
-	snprintf(error, sizeof(error), "trying to equip non-existant mob with obj #%d, command disabled", obj_index[ZCMD.arg1].vnum);
+	tb_snprintf(error, sizeof(error), "trying to equip non-existant mob with obj #%d, command disabled", obj_index[ZCMD.arg1].vnum);
 	ZONE_ERROR(error);
 	ZCMD.command = '*';
 	break;
@@ -2735,7 +2735,7 @@ void reset_zone(zone_rnum zone)
       if (obj_index[ZCMD.arg1].number < ZCMD.arg2) {
 	if (ZCMD.arg3 < 0 || ZCMD.arg3 >= NUM_WEARS) {
           char error[MAX_INPUT_LENGTH];
-	  snprintf(error, sizeof(error), "invalid equipment pos number (mob %s, obj %d, pos %d)", GET_NAME(mob), obj_index[ZCMD.arg2].vnum, ZCMD.arg3);
+	  tb_snprintf(error, sizeof(error), "invalid equipment pos number (mob %s, obj %d, pos %d)", GET_NAME(mob), obj_index[ZCMD.arg2].vnum, ZCMD.arg3);
 	  ZONE_ERROR(error);
 	} else {
 	  obj = read_object(ZCMD.arg1, REAL);
@@ -2767,7 +2767,7 @@ void reset_zone(zone_rnum zone)
       if (ZCMD.arg2 < 0 || ZCMD.arg2 >= DIR_COUNT ||
 	  (world[ZCMD.arg1].dir_option[ZCMD.arg2] == NULL)) {
         char error[MAX_INPUT_LENGTH];
-        snprintf(error, sizeof(error), "door does not exist in room %d - dir %d, command disabled",  world[ZCMD.arg1].number, ZCMD.arg2);
+        tb_snprintf(error, sizeof(error), "door does not exist in room %d - dir %d, command disabled",  world[ZCMD.arg1].number, ZCMD.arg2);
 	ZONE_ERROR(error);
 	ZCMD.command = '*';
       } else
@@ -3461,13 +3461,13 @@ static int file_to_string(const char *name, char *buf)
     if (strlen(buf) + strlen(tmp) + 1 > MAX_STRING_LENGTH) {
       log("SYSERR: %s: string too big (%d max)", name, MAX_STRING_LENGTH);
       *buf = '\0';
-      fclose(fl);
+      tb_fclose(fl);
       return (-1);
     }
     strlcat(buf, tmp, sizeof(buf));	/* strcat: OK (size checked above) */
   }
 
-  fclose(fl);
+  tb_fclose(fl);
 
   return (0);
 }
@@ -3743,7 +3743,7 @@ static int check_object(struct obj_data *obj)
     log("SYSERR: Object #%d (%s) has negative cost/day (%d).",
 	GET_OBJ_VNUM(obj), obj->short_description, GET_OBJ_RENT(obj));
 
-  snprintf(objname, sizeof(objname), "Object #%d (%s)", GET_OBJ_VNUM(obj), obj->short_description);
+  tb_snprintf(objname, sizeof(objname), "Object #%d (%s)", GET_OBJ_VNUM(obj), obj->short_description);
   for(y = 0; y < TW_ARRAY_MAX; y++) {
     error |= check_bitvector_names(GET_OBJ_WEAR(obj)[y], wear_bits_count, objname, "object wear");
     error |= check_bitvector_names(GET_OBJ_EXTRA(obj)[y], extra_bits_count, objname, "object extra");
@@ -3965,9 +3965,9 @@ void load_config( void )
 
   load_default_config();
 
-  snprintf(buf, sizeof(buf), "%s/%s", CONFIG_DFLT_DIR, CONFIG_CONFFILE);
+  tb_snprintf(buf, sizeof(buf), "%s/%s", CONFIG_DFLT_DIR, CONFIG_CONFFILE);
   if ( !(fl = fopen(CONFIG_CONFFILE, "r")) && !(fl = fopen(buf, "r")) ) {
-    snprintf(buf, sizeof(buf), "No %s file, using defaults", CONFIG_CONFFILE);
+    tb_snprintf(buf, sizeof(buf), "No %s file, using defaults", CONFIG_CONFFILE);
     perror(buf);
     return;
   }
@@ -4052,7 +4052,7 @@ void load_config( void )
           char tmp[READ_SIZE];
           if (CONFIG_HUH)
             free(CONFIG_HUH);
-          snprintf(tmp, sizeof(tmp), "%s\r\n", line);
+          tb_snprintf(tmp, sizeof(tmp), "%s\r\n", line);
           CONFIG_HUH = strdup(tmp);
         }
         break;
@@ -4129,13 +4129,13 @@ void load_config( void )
           char tmp[READ_SIZE];
           if (CONFIG_NOPERSON)
             free(CONFIG_NOPERSON);
-          snprintf(tmp, sizeof(tmp), "%s\r\n", line);
+          tb_snprintf(tmp, sizeof(tmp), "%s\r\n", line);
           CONFIG_NOPERSON = strdup(tmp);
         } else if (!str_cmp(tag, "noeffect")) {
           char tmp[READ_SIZE];
           if (CONFIG_NOEFFECT)
             free(CONFIG_NOEFFECT);
-          snprintf(tmp, sizeof(tmp), "%s\r\n", line);
+          tb_snprintf(tmp, sizeof(tmp), "%s\r\n", line);
           CONFIG_NOEFFECT = strdup(tmp);
         }
         break;
@@ -4145,7 +4145,7 @@ void load_config( void )
           char tmp[READ_SIZE];
           if (CONFIG_OK)
             free(CONFIG_OK);
-          snprintf(tmp, sizeof(tmp), "%s\r\n", line);
+          tb_snprintf(tmp, sizeof(tmp), "%s\r\n", line);
           CONFIG_OK = strdup(tmp);
         }
         break;
@@ -4208,5 +4208,5 @@ void load_config( void )
     }
   }
 
-  fclose(fl);
+  tb_fclose(fl);
 }
