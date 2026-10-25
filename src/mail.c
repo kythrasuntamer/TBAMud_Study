@@ -75,7 +75,7 @@ static struct mail_t *read_mail_record(FILE *mail_file)
 
 static void write_mail_record(FILE *mail_file, struct mail_t *record)
 {
-	fprintf(mail_file, "### %ld %ld %ld\n"
+	tb_fprintf(mail_file, "### %ld %ld %ld\n"
 	                   "%s~\n",
                      record->recipient,
                      record->sender,
@@ -108,7 +108,7 @@ int scan_file(void)
     count++;
   }
 
-  fclose(mail_file);
+  tb_fclose(mail_file);
  	log("   Mail file read -- %d messages.", count);
  	return TRUE;
 }
@@ -133,13 +133,13 @@ int has_mail(long recipient)
   while (record) {
   	if (record->recipient == recipient) {
   		free_mail_record(record);
-  		fclose(mail_file);
+  		tb_fclose(mail_file);
   		return TRUE;
     }
     free_mail_record(record);
     record = read_mail_record(mail_file);
   }
-  fclose(mail_file);
+  tb_fclose(mail_file);
   return FALSE;
 }
 
@@ -169,7 +169,7 @@ void store_mail(long to, long from, char *message_pointer)
 
   write_mail_record(mail_file, record);
   free(record); /* don't free the body */
-  fclose(mail_file);
+  tb_fclose(mail_file);
 }
 
 /* char *read_delete(long #1)
@@ -191,7 +191,7 @@ char *read_delete(long recipient)
 
   if (!(new_file = fopen(MAIL_FILE_TMP, "w"))) {
     perror("read_delete: new Mail file not accessible.");
-    fclose(mail_file);
+    tb_fclose(mail_file);
     return strdup("Mail system malfunction - please report this");
   }
 
@@ -209,16 +209,16 @@ char *read_delete(long recipient)
   }
 
   if (!record_to_keep)
-  	snprintf(buf, sizeof(buf), "Mail system error - please report");
+  	tb_snprintf(buf, sizeof(buf), "Mail system error - please report");
   else {
     char timestr[25], *from, *to;
 
-    strftime(timestr, sizeof(timestr), "%c", localtime(&(record_to_keep->sent_time)));
+    tb_strftime(timestr, sizeof(timestr), "%c", localtime(&(record_to_keep->sent_time)));
 
     from = get_name_by_id(record_to_keep->sender);
     to = get_name_by_id(record_to_keep->recipient);
 
- 		snprintf(buf, sizeof(buf),
+ 		tb_snprintf(buf, sizeof(buf),
              " * * * * tbaMUD Mail System * * * *\r\n"
              "Date: %s\r\n"
              "To  : %s\r\n"
@@ -233,8 +233,8 @@ char *read_delete(long recipient)
 
     free_mail_record(record_to_keep);
   }
-  fclose(mail_file);
-  fclose(new_file);
+  tb_fclose(mail_file);
+  tb_fclose(new_file);
 
   remove(MAIL_FILE);
   rename(MAIL_FILE_TMP, MAIL_FILE);
@@ -276,7 +276,7 @@ static void postmaster_send_mail(struct char_data *ch, struct char_data *mailman
   char buf[MAX_INPUT_LENGTH], **mailwrite;
 
   if (GET_LEVEL(ch) < MIN_MAIL_LEVEL) {
-    snprintf(buf, sizeof(buf), "$n tells you, 'Sorry, you have to be level %d to send mail!'", MIN_MAIL_LEVEL);
+    tb_snprintf(buf, sizeof(buf), "$n tells you, 'Sorry, you have to be level %d to send mail!'", MIN_MAIL_LEVEL);
     act(buf, FALSE, mailman, 0, ch, TO_VICT);
     return;
   }
@@ -288,7 +288,7 @@ static void postmaster_send_mail(struct char_data *ch, struct char_data *mailman
     return;
   }
   if (GET_GOLD(ch) < STAMP_PRICE && GET_LEVEL(ch) < LVL_IMMORT) {
-    snprintf(buf, sizeof(buf), "$n tells you, 'A stamp costs %d coin%s.'\r\n"
+    tb_snprintf(buf, sizeof(buf), "$n tells you, 'A stamp costs %d coin%s.'\r\n"
 	    "$n tells you, '...which I see you can't afford.'", STAMP_PRICE,
             STAMP_PRICE == 1 ? "" : "s");
     act(buf, FALSE, mailman, 0, ch, TO_VICT);
@@ -302,7 +302,7 @@ static void postmaster_send_mail(struct char_data *ch, struct char_data *mailman
   act("$n starts to write some mail.", TRUE, ch, 0, 0, TO_ROOM);
 
   if (GET_LEVEL(ch) < LVL_IMMORT) {
-    snprintf(buf, sizeof(buf), "$n tells you, 'I'll take %d coins for the stamp.'", STAMP_PRICE);
+    tb_snprintf(buf, sizeof(buf), "$n tells you, 'I'll take %d coins for the stamp.'", STAMP_PRICE);
     act(buf, FALSE, mailman, 0, ch, TO_VICT);
     decrease_gold(ch, STAMP_PRICE);
   }
@@ -333,7 +333,7 @@ static void postmaster_receive_mail(struct char_data *ch, struct char_data *mail
   int y;
 
   if (!has_mail(GET_IDNUM(ch))) {
-    snprintf(buf, sizeof(buf), "$n tells you, 'Sorry, you don't have any mail waiting.'");
+    tb_snprintf(buf, sizeof(buf), "$n tells you, 'Sorry, you don't have any mail waiting.'");
     act(buf, FALSE, mailman, 0, ch, TO_VICT);
     return;
   }
