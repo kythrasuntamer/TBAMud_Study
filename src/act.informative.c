@@ -756,10 +756,10 @@ ACMD(do_look)
     /* did the char type 'look <direction>?' */
     else if ((look_type = search_block(arg, dirs, FALSE)) >= 0)
       look_in_direction(ch, look_type);
-    else if (is_abbrev(arg, "at"))
+    else if (is_abbrev(arg, "at")) {
       strlcpy(tempsave, arg2, sizeof(tempsave));
       look_at_target(ch, tempsave);
-    else if (is_abbrev(arg, "around")) {
+    } else if (is_abbrev(arg, "around")) {
       struct extra_descr_data *i;
 
       for (i = world[IN_ROOM(ch)].ex_description; i; i = i->next) {
@@ -771,9 +771,10 @@ ACMD(do_look)
       }
       if (!found)
          send_to_char(ch, "You couldn't find anything noticeable.\r\n");
-    } else
+    } else {
       strlcpy(tempsave, arg, sizeof(tempsave));
-    look_at_target(ch, tempsave);
+      look_at_target(ch, tempsave);
+    }
   }
 }
 
