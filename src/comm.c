@@ -1133,7 +1133,7 @@ static char *make_prompt(struct descriptor_data *d)
       "[ Return to continue, (q)uit, (r)efresh, (b)ack, or page number (%d/%d) ]",
       d->showstr_page, d->showstr_count);
   else if (d->str)
-    strcpy(prompt, "] ");	/* strcpy: OK (for 'MAX_PROMPT_LENGTH >= 3') */
+    strlcpy(prompt, "] ", sizeof(prompt));	/* strcpy: OK (for 'MAX_PROMPT_LENGTH >= 3') */
   else if (STATE(d) == CON_PLAYING && !IS_NPC(d->character)) {
     int count;
     size_t len = 0;
@@ -1301,7 +1301,7 @@ size_t vwrite_to_output(struct descriptor_data *t, const char *format, va_list a
 
   wantsize = size = vsnprintf(txt, sizeof(txt), format, args);
 
-  strcpy(txt, ProtocolOutput( t, txt, (int*)&wantsize )); /* <--- Add this line */
+  strlcpy(txt, ProtocolOutput( t, txt, (int*)&wantsize ), sizeof(txt)); /* <--- Add this line */
   size = wantsize;                    /* <--- Add this line */
   if ( t->pProtocol->WriteOOB > 0 )   /* <--- Add this line */
     --t->pProtocol->WriteOOB;         /* <--- Add this line */
@@ -1567,7 +1567,7 @@ static int process_output(struct descriptor_data *t)
   int result;
 
   /* we may need this \r\n for later -- see below */
-  strcpy(i, "\r\n");	/* strcpy: OK (for 'MAX_SOCK_BUF >= 3') */
+  strlcpy(i, "\r\n", sizeof(i));	/* strcpy: OK (for 'MAX_SOCK_BUF >= 3') */
 
   /* now, append the 'real' output */
   strcpy(osb, t->output);	/* strcpy: OK (t->output:LARGE_BUFSIZE < osb:MAX_SOCK_BUF-2) */
@@ -1582,7 +1582,7 @@ static int process_output(struct descriptor_data *t)
       strcat(osb, "\r\n");	/* strcpy: OK (osb:MAX_SOCK_BUF-2 reserves space) */
 
   if (!t->pProtocol->WriteOOB) /* add a prompt */
-    strcat(i, make_prompt(t));	/* strcpy: OK (i:MAX_SOCK_BUF reserves space) */
+    strlcat(i, make_prompt(t), sizeof(i));	/* strcpy: OK (i:MAX_SOCK_BUF reserves space) */
 
   /* now, send the output.  If this is an 'interruption', use the prepended
    * CRLF, otherwise send the straight output sans CRLF. */
@@ -1935,7 +1935,7 @@ static int process_input(struct descriptor_data *t)
     failed_subst = 0;
 
     if (*tmp == '!' && !(*(tmp + 1)))	/* Redo last command. */
-      strcpy(tmp, t->last_input);	/* strcpy: OK (by mutual MAX_INPUT_LENGTH) */
+      strlcpy(tmp, t->last_input, sizeof(tmp));	/* strcpy: OK (by mutual MAX_INPUT_LENGTH) */
     else if (*tmp == '!' && *(tmp + 1)) {
       char *commandln = (tmp + 1);
       int starting_pos = t->history_pos,
@@ -1944,7 +1944,7 @@ static int process_input(struct descriptor_data *t)
       skip_spaces(&commandln);
       for (; cnt != starting_pos; cnt--) {
 	if (t->history[cnt] && is_abbrev(commandln, t->history[cnt])) {
-	  strcpy(tmp, t->history[cnt]);	/* strcpy: OK (by mutual MAX_INPUT_LENGTH) */
+	  strlcpy(tmp, t->history[cnt], sizeof(tmp));	/* strcpy: OK (by mutual MAX_INPUT_LENGTH) */
 	  strcpy(t->last_input, tmp);	/* strcpy: OK (by mutual MAX_INPUT_LENGTH) */
           write_to_output(t, "%s\r\n", tmp);
 	  break;
@@ -2340,7 +2340,7 @@ void game_info(const char *format, ...)
   char messg[MAX_STRING_LENGTH];
   if (format == NULL)
     return;
-  sprintf(messg, "\tcInfo: \ty");
+  snprintf(messg, sizeof(messg), "\tcInfo: \ty");
   for (i = descriptor_list; i; i = i->next) {
     if (STATE(i) != CON_PLAYING)
       continue;
@@ -2661,7 +2661,7 @@ char *act(const char *str, int hide_invisible, struct char_data *ch,
           !PLR_FLAGGED(i->character, PLR_WRITING) &&
           !ROOM_FLAGGED(IN_ROOM(i->character), ROOM_SOUNDPROOF)) {
 
-        sprintf(buf, "%s%s%s", CCYEL(i->character, C_NRM), str, CCNRM(i->character, C_NRM));
+        snprintf(buf, sizeof(buf), "%s%s%s", CCYEL(i->character, C_NRM), str, CCNRM(i->character, C_NRM));
         perform_act(buf, ch, obj, vict_obj, i->character);
       }
     }
