@@ -85,6 +85,8 @@ void zmalloc_init(void)
     memlist[i] = NULL;
 
   zfd = fopen("zmalloc.log","w+");
+  if (zfd == NULL)
+    TB_REPORT_ERRNO("fopen", "zmalloc.log");
 }
 
 
