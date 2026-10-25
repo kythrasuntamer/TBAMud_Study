@@ -57,7 +57,7 @@ ACMD(do_oasis_redit)
     save = TRUE;
 
     if (is_number(buf2))
-      number = atoi(buf2);
+      number = tb_parse_int_or_zero(buf2);
     else if (GET_OLC_ZONE(ch) != NOWHERE) {
       zone_rnum zlok;
 
@@ -75,7 +75,7 @@ ACMD(do_oasis_redit)
 
   /* If a numeric argument was given (like a room number), get it. */
   if (number == NOWHERE)
-    number = atoi(buf1);
+    number = tb_parse_int_or_zero(buf1);
 
   if (number < IDXTYPE_MIN || number > IDXTYPE_MAX) {
     send_to_char(ch, "That room VNUM can't exist.\r\n");
@@ -704,7 +704,7 @@ void redit_parse(struct descriptor_data *d, char *arg)
     break;
 
   case REDIT_FLAGS:
-    number = atoi(arg);
+    number = tb_parse_int_or_zero(arg);
     if (number < 0 || number > NUM_ROOM_FLAGS) {
       write_to_output(d, "That is not a valid choice!\r\n");
       redit_disp_flag_menu(d);
@@ -718,7 +718,7 @@ void redit_parse(struct descriptor_data *d, char *arg)
     return;
 
   case REDIT_SECTOR:
-    number = atoi(arg) - 1;
+    number = tb_parse_int_or_zero(arg) - 1;
     if (number < 0 || number >= NUM_ROOM_SECTORS) {
       write_to_output(d, "Invalid choice!");
       redit_disp_sector_menu(d);
@@ -776,7 +776,7 @@ void redit_parse(struct descriptor_data *d, char *arg)
     break;
 
   case REDIT_EXIT_NUMBER:
-    if ((number = atoi(arg)) != -1)
+    if ((number = tb_parse_int_or_zero(arg)) != -1)
       if ((number = real_room(number)) == NOWHERE) {
 	write_to_output(d, "That room does not exist, try again : ");
 	return;
@@ -799,7 +799,7 @@ void redit_parse(struct descriptor_data *d, char *arg)
     return;
 
   case REDIT_EXIT_KEY:
-    number = atoi(arg);
+    number = tb_parse_int_or_zero(arg);
     if (number < 0)
       OLC_EXIT(d)->key = NOTHING;
     else
@@ -808,7 +808,7 @@ void redit_parse(struct descriptor_data *d, char *arg)
     return;
 
   case REDIT_EXIT_DOORFLAGS:
-    number = atoi(arg);
+    number = tb_parse_int_or_zero(arg);
     if (number < 0 || number > 4) {
       write_to_output(d, "That's not a valid choice!\r\n");
       redit_disp_exit_flag_menu(d);
@@ -834,7 +834,7 @@ void redit_parse(struct descriptor_data *d, char *arg)
     return;
 
   case REDIT_EXTRADESC_MENU:
-    switch ((number = atoi(arg))) {
+    switch ((number = tb_parse_int_or_zero(arg))) {
     case 0:
       /* If something got left out, delete the extra description when backing 
          out to the menu. */
@@ -886,7 +886,7 @@ void redit_parse(struct descriptor_data *d, char *arg)
     break;
 
   case REDIT_COPY:
-    if ((number = real_room(atoi(arg))) != NOWHERE) {
+    if ((number = real_room(tb_parse_int_or_zero(arg))) != NOWHERE) {
       redit_setup_existing(d, number);
     } else
       write_to_output(d, "That room does not exist.\r\n");
