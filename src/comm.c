@@ -1309,7 +1309,7 @@ size_t vwrite_to_output(struct descriptor_data *t, const char *format, va_list a
   /* If exceeding the size of the buffer, truncate it for the overflow message */
   if (size < 0 || wantsize >= sizeof(txt)) {
     size = sizeof(txt) - 1;
-    strcpy(txt + size - strlen(text_overflow), text_overflow);	/* strcpy: OK */
+    strlcpy(txt + size - strlen(text_overflow), text_overflow, sizeof(txt) - (size_t)(size - strlen(text_overflow)));	/* strcpy: OK */
   }
 
   /* If the text is too big to fit into even a large buffer, truncate
@@ -1324,7 +1324,7 @@ size_t vwrite_to_output(struct descriptor_data *t, const char *format, va_list a
   /* If we have enough space, just write to buffer and that's it! If the
    * text just barely fits, then it's switched to a large buffer instead. */
   if (t->bufspace > size) {
-    strcpy(t->output + t->bufptr, txt);	/* strcpy: OK (size checked above) */
+    strlcpy(t->output + t->bufptr, txt, (size_t)t->bufspace);	/* strcpy: OK (size checked above) */
     t->bufspace -= size;
     t->bufptr += size;
     return (t->bufspace);
@@ -1342,9 +1342,9 @@ size_t vwrite_to_output(struct descriptor_data *t, const char *format, va_list a
     buf_largecount++;
   }
 
-  strcpy(t->large_outbuf->text, t->output);	/* strcpy: OK (size checked previously) */
+  strlcpy(t->large_outbuf->text, t->output, LARGE_BUFSIZE);	/* strcpy: OK (size checked previously) */
   t->output = t->large_outbuf->text;	/* make big buffer primary */
-  strcat(t->output, txt);	/* strcat: OK (size checked) */
+  strlcat(t->output, txt, LARGE_BUFSIZE);	/* strcat: OK (size checked) */
 
   /* set the pointer for the next write */
   t->bufptr = strlen(t->output);
@@ -1570,16 +1570,16 @@ static int process_output(struct descriptor_data *t)
   strlcpy(i, "\r\n", sizeof(i));	/* strcpy: OK (for 'MAX_SOCK_BUF >= 3') */
 
   /* now, append the 'real' output */
-  strcpy(osb, t->output);	/* strcpy: OK (t->output:LARGE_BUFSIZE < osb:MAX_SOCK_BUF-2) */
+  strlcpy(osb, t->output, sizeof(i) - 2);	/* strcpy: OK (t->output:LARGE_BUFSIZE < osb:MAX_SOCK_BUF-2) */
 
   /* if we're in the overflow state, notify the user */
   if (t->bufspace == 0)
-    strcat(osb, "**OVERFLOW**\r\n");	/* strcpy: OK (osb:MAX_SOCK_BUF-2 reserves space) */
+    strlcat(osb, "**OVERFLOW**\r\n", sizeof(i) - 2);	/* strcpy: OK (osb:MAX_SOCK_BUF-2 reserves space) */
 
   /* add the extra CRLF if the person isn't in compact mode */
   if (STATE(t) == CON_PLAYING && t->character && !IS_NPC(t->character) && !PRF_FLAGGED(t->character, PRF_COMPACT))
     if ( !t->pProtocol->WriteOOB ) 
-      strcat(osb, "\r\n");	/* strcpy: OK (osb:MAX_SOCK_BUF-2 reserves space) */
+      strlcat(osb, "\r\n", sizeof(i) - 2);	/* strcpy: OK (osb:MAX_SOCK_BUF-2 reserves space) */
 
   if (!t->pProtocol->WriteOOB) /* add a prompt */
     strlcat(i, make_prompt(t), sizeof(i));	/* strcpy: OK (i:MAX_SOCK_BUF reserves space) */
@@ -1625,7 +1625,7 @@ static int process_output(struct descriptor_data *t)
     if ((unsigned int)result < strlen(osb)) {
       size_t savetextlen = strlen(osb + result);
 
-      strcat(t->output, osb + result);
+      strlcat(t->output, osb + result, SMALL_BUFSIZE);
       t->bufptr   -= savetextlen;
       t->bufspace += savetextlen;
     }
@@ -1954,9 +1954,9 @@ static int process_input(struct descriptor_data *t)
       }
     } else if (*tmp == '^') {
       if (!(failed_subst = perform_subst(t, t->last_input, tmp)))
-	strcpy(t->last_input, tmp);	/* strcpy: OK (by mutual MAX_INPUT_LENGTH) */
+	strlcpy(t->last_input, tmp, sizeof(t->last_input));	/* strcpy: OK (by mutual MAX_INPUT_LENGTH) */
     } else {
-      strcpy(t->last_input, tmp);	/* strcpy: OK (by mutual MAX_INPUT_LENGTH) */
+      strlcpy(t->last_input, tmp, sizeof(t->last_input));	/* strcpy: OK (by mutual MAX_INPUT_LENGTH) */
       if (t->history[t->history_pos])
 	free(t->history[t->history_pos]);	/* Clear the old line. */
       t->history[t->history_pos] = strdup(tmp);	/* Save the new. */
@@ -2038,7 +2038,7 @@ static int perform_subst(struct descriptor_data *t, char *orig, char *subst)
 
   /* terminate the string in case of an overflow from strncat */
   newsub[MAX_INPUT_LENGTH - 1] = '\0';
-  strcpy(subst, newsub);	/* strcpy: OK (by mutual MAX_INPUT_LENGTH) */
+  strlcpy(subst, newsub, MAX_INPUT_LENGTH);	/* strcpy: OK (by mutual MAX_INPUT_LENGTH) */
 
   return (0);
 }
