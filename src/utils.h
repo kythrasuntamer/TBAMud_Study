@@ -56,6 +56,26 @@ void tb_error_log_at(const char *severity, const char *subsystem,
 
 #define TB_ERROR_MSG(subsystem, operation, resource, ...) \
   TB_ERROR_LOG("ERROR", (subsystem), (operation), (resource), 0, __VA_ARGS__)
+
+/*
+ * Persistent-parser context.  A context follows a FILE * while a loader is
+ * consuming it so diagnostics can identify the physical line, logical record,
+ * and field being parsed.  Context storage is fixed-size and allocation-free
+ * so it remains usable on error paths.
+ */
+void tb_parse_context_begin(FILE *stream, const char *resource, const char *parser);
+void tb_parse_context_end(FILE *stream);
+void tb_parse_context_record(FILE *stream, const char *record_type, long record_id);
+void tb_parse_context_field(FILE *stream, const char *field);
+void tb_parse_context_note_line(FILE *stream);
+unsigned long tb_parse_context_line(FILE *stream);
+void tb_parse_context_error_at(FILE *stream, const char *source_file,
+                               int source_line, const char *source_func,
+                               const char *detail_fmt, ...)
+                               __attribute__ ((format (printf, 5, 6)));
+
+#define TB_PARSE_CONTEXT_ERROR(stream, ...) \
+  tb_parse_context_error_at((stream), __FILE__, __LINE__, __func__, __VA_ARGS__)
 int touch(const char *path);
 void mudlog(int type, int level, int file, const char *str, ...) __attribute__ ((format (printf, 4, 5)));
 int	rand_number(int from, int to);
