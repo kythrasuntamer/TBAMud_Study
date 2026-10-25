@@ -669,7 +669,7 @@ SPECIAL(bank)
       send_to_char(ch, "You currently have no money deposited.\r\n");
     return (TRUE);
   } else if (CMD_IS("deposit")) {
-    if ((amount = atoi(argument)) <= 0) {
+    if ((amount = tb_parse_int_or_zero(argument)) <= 0) {
       send_to_char(ch, "How much do you want to deposit?\r\n");
       return (TRUE);
     }
@@ -683,7 +683,7 @@ SPECIAL(bank)
     act("$n makes a bank transaction.", TRUE, ch, 0, FALSE, TO_ROOM);
     return (TRUE);
   } else if (CMD_IS("withdraw")) {
-    if ((amount = atoi(argument)) <= 0) {
+    if ((amount = tb_parse_int_or_zero(argument)) <= 0) {
       send_to_char(ch, "How much do you want to withdraw?\r\n");
       return (TRUE);
     }
