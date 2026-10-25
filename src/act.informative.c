@@ -745,7 +745,8 @@ ACMD(do_look)
       if (!*arg)
     send_to_char(ch, "Read what?\r\n");
       else
-    look_at_target(ch, strcpy(tempsave, arg));
+    strlcpy(tempsave, arg, sizeof(tempsave));
+    look_at_target(ch, tempsave);
       return;
     }
     if (!*arg)            /* "look" alone, without an argument at all */
@@ -756,7 +757,8 @@ ACMD(do_look)
     else if ((look_type = search_block(arg, dirs, FALSE)) >= 0)
       look_in_direction(ch, look_type);
     else if (is_abbrev(arg, "at"))
-      look_at_target(ch, strcpy(tempsave, arg2));
+      strlcpy(tempsave, arg2, sizeof(tempsave));
+      look_at_target(ch, tempsave);
     else if (is_abbrev(arg, "around")) {
       struct extra_descr_data *i;
 
@@ -788,7 +790,8 @@ ACMD(do_examine)
   }
 
   /* look_at_target() eats the number. */
-  look_at_target(ch, strcpy(tempsave, arg));    /* strcpy: OK */
+  strlcpy(tempsave, arg, sizeof(tempsave));
+  look_at_target(ch, tempsave);
 
   generic_find(arg, FIND_OBJ_INV | FIND_OBJ_ROOM | FIND_CHAR_ROOM |
               FIND_OBJ_EQUIP, ch, &tmp_char, &tmp_object);
@@ -1533,13 +1536,13 @@ ACMD(do_users)
         continue;
 
       if (d->original)
-    sprintf(classname, "[%2d %s]", GET_LEVEL(d->original),
+    tb_snprintf(classname, sizeof(classname), "[%2d %s]", GET_LEVEL(d->original),
         CLASS_ABBR(d->original));
       else
-    sprintf(classname, "[%2d %s]", GET_LEVEL(d->character),
+    tb_snprintf(classname, sizeof(classname), "[%2d %s]", GET_LEVEL(d->character),
         CLASS_ABBR(d->character));
     } else
-      strcpy(classname, "   -   ");
+      strlcpy(classname, "   -   ", sizeof(classname));
 
     tb_strftime(timestr, sizeof(timestr), "%H:%M:%S", localtime(&(d->login_time)));
 
@@ -1549,24 +1552,24 @@ ACMD(do_users)
       strlcpy(state, connected_types[STATE(d)], sizeof(state));
 
     if (d->character && STATE(d) == CON_PLAYING)
-      sprintf(idletime, "%5d", d->character->char_specials.timer *
+      tb_snprintf(idletime, sizeof(idletime), "%5d", d->character->char_specials.timer *
           SECS_PER_MUD_HOUR / SECS_PER_REAL_MIN);
     else
-      strcpy(idletime, "     ");
+      strlcpy(idletime, "     ", sizeof(idletime));
 
-    sprintf(line, "%3d %-7s %-12s %-14s %-3s %-8s ", d->desc_num, classname,
+    tb_snprintf(line, sizeof(line), "%3d %-7s %-12s %-14s %-3s %-8s ", d->desc_num, classname,
     d->original && d->original->player.name ? d->original->player.name :
     d->character && d->character->player.name ? d->character->player.name :
     "UNDEFINED",
     state, idletime, timestr);
 
     if (*d->host)
-      sprintf(line + strlen(line), "[%s]\r\n", d->host);
+      tb_snprintf(line + strlen(line), sizeof(line) - strlen(line), "[%s]\r\n", d->host);
     else
       strlcat(line, "[Hostname unknown]\r\n", sizeof(line));
 
     if (STATE(d) != CON_PLAYING) {
-      sprintf(line2, "%s%s%s", CCGRN(ch, C_SPR), line, CCNRM(ch, C_SPR));
+      tb_snprintf(line2, sizeof(line2), "%s%s%s", CCGRN(ch, C_SPR), line, CCNRM(ch, C_SPR));
       strlcpy(line, line2, sizeof(line));
     }
     if (STATE(d) != CON_PLAYING || (STATE(d) == CON_PLAYING && tch && CAN_SEE(ch, tch))) {
