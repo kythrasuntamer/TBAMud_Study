@@ -233,7 +233,7 @@ void walkdir(FILE *index_file, char *dir) {
 
   if ((dfd = opendir(dir)) == NULL)
   {
-    fprintf(stderr, "Can't open %s\n", dir);
+    TB_REPORT_DOMAIN_ERRNO(TB_SEV_ERROR, TB_ERR_PERSISTENCE, "opendir", dir);
     return;
   }
   while ((dp = readdir(dfd)) != NULL)
