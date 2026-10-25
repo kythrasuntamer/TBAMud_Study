@@ -1426,9 +1426,9 @@ static void eval_op(char *op, char *lhs, char *rhs, char *result, void *go,
   /* find the op, and figure out the value */
   if (!strcmp("||", op)) {
     if ((!*lhs || (*lhs == '0')) && (!*rhs || (*rhs == '0')))
-      strcpy(result, "0");
+      strlcpy(result, "0", sizeof(result));
     else
-      strcpy(result, "1");
+      strlcpy(result, "1", sizeof(result));
   }
 
   else if (!strcmp("&&", op)) {
@@ -1440,64 +1440,64 @@ static void eval_op(char *op, char *lhs, char *rhs, char *result, void *go,
 
   else if (!strcmp("==", op)) {
     if (is_num(lhs) && is_num(rhs))
-      sprintf(result, "%d", script_int_value(lhs) == script_int_value(rhs));
+      snprintf(result, sizeof(result), "%d", script_int_value(lhs) == script_int_value(rhs));
     else
-      sprintf(result, "%d", !str_cmp(lhs, rhs));
+      snprintf(result, sizeof(result), "%d", !str_cmp(lhs, rhs));
   }
 
   else if (!strcmp("!=", op)) {
     if (is_num(lhs) && is_num(rhs))
-      sprintf(result, "%d", script_int_value(lhs) != script_int_value(rhs));
+      snprintf(result, sizeof(result), "%d", script_int_value(lhs) != script_int_value(rhs));
     else
-      sprintf(result, "%d", str_cmp(lhs, rhs));
+      snprintf(result, sizeof(result), "%d", str_cmp(lhs, rhs));
   }
 
   else if (!strcmp("<=", op)) {
     if (is_num(lhs) && is_num(rhs))
-      sprintf(result, "%d", script_int_value(lhs) <= script_int_value(rhs));
+      snprintf(result, sizeof(result), "%d", script_int_value(lhs) <= script_int_value(rhs));
     else
-      sprintf(result, "%d", str_cmp(lhs, rhs) <= 0);
+      snprintf(result, sizeof(result), "%d", str_cmp(lhs, rhs) <= 0);
   }
 
   else if (!strcmp(">=", op)) {
     if (is_num(lhs) && is_num(rhs))
-      sprintf(result, "%d", script_int_value(lhs) >= script_int_value(rhs));
+      snprintf(result, sizeof(result), "%d", script_int_value(lhs) >= script_int_value(rhs));
     else
-      sprintf(result, "%d", str_cmp(lhs, rhs) >= 0);
+      snprintf(result, sizeof(result), "%d", str_cmp(lhs, rhs) >= 0);
   }
 
   else if (!strcmp("<", op)) {
     if (is_num(lhs) && is_num(rhs))
-      sprintf(result, "%d", script_int_value(lhs) < script_int_value(rhs));
+      snprintf(result, sizeof(result), "%d", script_int_value(lhs) < script_int_value(rhs));
     else
-      sprintf(result, "%d", str_cmp(lhs, rhs) < 0);
+      snprintf(result, sizeof(result), "%d", str_cmp(lhs, rhs) < 0);
   }
 
   else if (!strcmp(">", op)) {
     if (is_num(lhs) && is_num(rhs))
-      sprintf(result, "%d", script_int_value(lhs) > script_int_value(rhs));
+      snprintf(result, sizeof(result), "%d", script_int_value(lhs) > script_int_value(rhs));
     else
-      sprintf(result, "%d", str_cmp(lhs, rhs) > 0);
+      snprintf(result, sizeof(result), "%d", str_cmp(lhs, rhs) > 0);
   }
 
   else if (!strcmp("/=", op))
-    sprintf(result, "%c", str_str(lhs, rhs) ? '1' : '0');
+    snprintf(result, sizeof(result), "%c", str_str(lhs, rhs) ? '1' : '0');
 
   else if (!strcmp("*", op)) {
     lhs_num = script_int_value(lhs);
     rhs_num = script_int_value(rhs);
     arithmetic = (long long)lhs_num * (long long)rhs_num;
-    sprintf(result, "%d", clamp_script_int(arithmetic));
+    snprintf(result, sizeof(result), "%d", clamp_script_int(arithmetic));
   }
 
   else if (!strcmp("/", op)) {
     lhs_num = script_int_value(lhs);
     rhs_num = script_int_value(rhs);
     if (rhs_num == 0)
-      strcpy(result, "0");
+      strlcpy(result, "0", sizeof(result));
     else {
       arithmetic = (long long)lhs_num / (long long)rhs_num;
-      sprintf(result, "%d", clamp_script_int(arithmetic));
+      snprintf(result, sizeof(result), "%d", clamp_script_int(arithmetic));
     }
   }
 
@@ -1505,21 +1505,21 @@ static void eval_op(char *op, char *lhs, char *rhs, char *result, void *go,
     lhs_num = script_int_value(lhs);
     rhs_num = script_int_value(rhs);
     arithmetic = (long long)lhs_num + (long long)rhs_num;
-    sprintf(result, "%d", clamp_script_int(arithmetic));
+    snprintf(result, sizeof(result), "%d", clamp_script_int(arithmetic));
   }
 
   else if (!strcmp("-", op)) {
     lhs_num = script_int_value(lhs);
     rhs_num = script_int_value(rhs);
     arithmetic = (long long)lhs_num - (long long)rhs_num;
-    sprintf(result, "%d", clamp_script_int(arithmetic));
+    snprintf(result, sizeof(result), "%d", clamp_script_int(arithmetic));
   }
 
   else if (!strcmp("!", op)) {
     if (is_num(rhs))
-      sprintf(result, "%d", !script_int_value(rhs));
+      snprintf(result, sizeof(result), "%d", !script_int_value(rhs));
     else
-      sprintf(result, "%d", !*rhs);
+      snprintf(result, sizeof(result), "%d", !*rhs);
   }
 }
 
@@ -1570,7 +1570,7 @@ static void eval_expr(char *line, char *result, void *go, struct script_data *sc
   if (eval_lhs_op_rhs(line, result, go, sc, trig, type));
 
   else if (*line == '(') {
-    strcpy(expr, line);
+    strlcpy(expr, line, sizeof(expr));
     p = matching_paren(expr);
     *p = '\0';
     eval_expr(expr + 1, result, go, sc, trig, type);
@@ -1605,7 +1605,7 @@ static int eval_lhs_op_rhs(char *expr, char *result, void *go, struct script_dat
     { NULL }
   };
 
-  p = strcpy(line, expr);
+  p = strlcpy(line, expr, sizeof(line));
 
   /* Initialize tokens, an array of pointers to locations in line where the 
    * ops could possibly occur. */
@@ -2507,7 +2507,7 @@ static void extract_value(struct script_data *sc, trig_data *trig, char *cmd)
 
   buf3 = any_one_arg(cmd, buf);
   half_chop(buf3, buf2, buf);
-  strcpy(to, buf2);
+  strlcpy(to, buf2, sizeof(to));
 
   num = tb_parse_int_or_zero(buf);
   if (num < 1) {
