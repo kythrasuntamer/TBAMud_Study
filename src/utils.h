@@ -232,8 +232,12 @@ void char_from_furniture(struct char_data *ch);
  * @param type The type of memory (int, struct char_data, etc.).
  * @param number How many of type to make. */
 #define RECREATE(result, type, number) do {\
-  if (!((result) = (type *) realloc ((result), sizeof(type) * (number))))\
-		{ perror("SYSERR: realloc failure"); abort(); } } while(0)
+  size_t recreate_count = (size_t)(number);\
+  void *recreate_new_ptr = realloc((result), sizeof(type) * recreate_count);\
+  if (!recreate_new_ptr && recreate_count != 0)\
+    { perror("SYSERR: realloc failure"); abort(); }\
+  (result) = (type *)recreate_new_ptr;\
+} while(0)
 
 /** Remove an item from a linked list and reset the links.
  * If item is at the list head, change the head, else traverse the
