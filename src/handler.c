@@ -605,7 +605,7 @@ int get_number(char **name)
   if ((ppos = strchr(*name, '.')) != NULL) {
     *ppos++ = '\0';
     strlcpy(number, *name, sizeof(number));
-    strcpy(*name, ppos);	/* strcpy: OK (always smaller) */
+    memmove(*name, ppos, strlen(ppos) + 1);	/* strcpy: OK (always smaller) */
 
     for (i = 0; *(number + i); i++)
       if (!isdigit(*(number + i)))
@@ -1337,7 +1337,7 @@ struct obj_data *create_money(int amount)
       tb_snprintf(buf, sizeof(buf), "You guess there are, maybe, %d coins.",
 	      1000 * ((amount / 1000) + rand_number(0, (amount / 1000))));
     else
-      strcpy(buf, "There are a LOT of coins.");	/* strcpy: OK (is < 200) */
+      strlcpy(buf, "There are a LOT of coins.", sizeof(buf));	/* strcpy: OK (is < 200) */
     new_descr->description = strdup(buf);
   }
 
