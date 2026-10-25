@@ -43,15 +43,21 @@ if (CMAKE_COMPILER_IS_GNUCC)
     endif()
 endif()
 
-# clang-tidy if available
-find_program(CLANG_TIDY_EXE NAMES clang-tidy)
+# clang-tidy static analysis
+option(STATIC_ANALYSIS "Enable clang-tidy static analysis" ON)
 
-if(CLANG_TIDY_EXE AND STATIC_ANALYSIS)
-    message(STATUS "clang-tidy enabled: ${CLANG_TIDY_EXE}")
-    set(CMAKE_C_CLANG_TIDY "${CLANG_TIDY_EXE}")
-    set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+if(STATIC_ANALYSIS)
+    find_program(CLANG_TIDY_EXE NAMES clang-tidy)
+
+    if(CLANG_TIDY_EXE)
+        message(STATUS "clang-tidy enabled: ${CLANG_TIDY_EXE}")
+        set(CMAKE_C_CLANG_TIDY "${CLANG_TIDY_EXE}")
+        set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+    else()
+        message(WARNING "STATIC_ANALYSIS is ON, but clang-tidy was not found. Static analysis disabled.")
+    endif()
 else()
-    message(WARNING "clang-tidy not found. Static analysis disabled.")
+    message(STATUS "Static analysis disabled by STATIC_ANALYSIS=OFF.")
 endif()
 
 # ========== Header checks ==========
