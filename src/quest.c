@@ -541,50 +541,50 @@ static void quest_join(struct char_data *ch, struct char_data *qm, char argument
   char buf[MAX_INPUT_LENGTH];
 
   if (!*argument)
-    snprintf(buf, sizeof(buf),
+    tb_snprintf(buf, sizeof(buf),
              "%s What quest did you wish to join?", GET_NAME(ch));
   else if (GET_QUEST(ch) != NOTHING)
-    snprintf(buf, sizeof(buf),
+    tb_snprintf(buf, sizeof(buf),
              "%s But you are already part of a quest!", GET_NAME(ch));
   else if((vnum = find_quest_by_qmnum(ch, GET_MOB_VNUM(qm), tb_parse_int_or_zero(argument))) == NOTHING)
-    snprintf(buf, sizeof(buf),
+    tb_snprintf(buf, sizeof(buf),
              "%s I don't know of such a quest!", GET_NAME(ch));
   else if ((rnum = real_quest(vnum)) == NOTHING)
-    snprintf(buf, sizeof(buf),
+    tb_snprintf(buf, sizeof(buf),
              "%s I don't know of such a quest!", GET_NAME(ch));
   else if (GET_LEVEL(ch) < QST_MINLEVEL(rnum))
-    snprintf(buf, sizeof(buf),
+    tb_snprintf(buf, sizeof(buf),
              "%s You are not experienced enough for that quest!", GET_NAME(ch));
   else if (GET_LEVEL(ch) > QST_MAXLEVEL(rnum))
-    snprintf(buf, sizeof(buf),
+    tb_snprintf(buf, sizeof(buf),
              "%s You are too experienced for that quest!", GET_NAME(ch));
   else if (is_complete(ch, vnum))
-    snprintf(buf, sizeof(buf),
+    tb_snprintf(buf, sizeof(buf),
              "%s You have already completed that quest!", GET_NAME(ch));
   else if ((QST_PREV(rnum) != NOTHING) && !is_complete(ch, QST_PREV(rnum)))
-    snprintf(buf, sizeof(buf),
+    tb_snprintf(buf, sizeof(buf),
              "%s That quest is not available to you yet!", GET_NAME(ch));
   else if ((QST_PREREQ(rnum) != NOTHING) &&
            (real_object(QST_PREREQ(rnum)) != NOTHING) &&
            (get_obj_in_list_num(real_object(QST_PREREQ(rnum)),
        ch->carrying) == NULL))
-    snprintf(buf, sizeof(buf),
+    tb_snprintf(buf, sizeof(buf),
              "%s You need to have %s first!", GET_NAME(ch),
       obj_proto[real_object(QST_PREREQ(rnum))].short_description);
   else {
     act("You join the quest.",    TRUE, ch, NULL, NULL, TO_CHAR);
     act("$n has joined a quest.", TRUE, ch, NULL, NULL, TO_ROOM);
-    snprintf(buf, sizeof(buf),
+    tb_snprintf(buf, sizeof(buf),
              "%s Listen carefully to the instructions.", GET_NAME(ch));
     do_tell(qm, buf, cmd_tell, 0);
     set_quest(ch, rnum);
     send_to_char(ch, "%s", QST_INFO(rnum));
     if (QST_TIME(rnum) != -1)
-      snprintf(buf, sizeof(buf),
+      tb_snprintf(buf, sizeof(buf),
         "%s You have a time limit of %d turn%s to complete the quest.",
         GET_NAME(ch), QST_TIME(rnum), QST_TIME(rnum) == 1 ? "" : "s");
     else
-      snprintf(buf, sizeof(buf),
+      tb_snprintf(buf, sizeof(buf),
         "%s You can take however long you want to complete the quest.",
  GET_NAME(ch));
   }
@@ -702,14 +702,14 @@ static void quest_stat(struct char_data *ch, char *argument)
     switch (QST_TYPE(rnum)) {
       case AQ_OBJ_FIND:
       case AQ_OBJ_RETURN:
-        snprintf(targetname, sizeof(targetname), "%s",
+        tb_snprintf(targetname, sizeof(targetname), "%s",
                  real_object(QST_TARGET(rnum)) == NOTHING ?
                  "An unknown object" :
     obj_proto[real_object(QST_TARGET(rnum))].short_description);
  break;
       case AQ_ROOM_FIND:
       case AQ_ROOM_CLEAR:
-        snprintf(targetname, sizeof(targetname), "%s",
+        tb_snprintf(targetname, sizeof(targetname), "%s",
           real_room(QST_TARGET(rnum)) == NOWHERE ?
                  "An unknown room" :
     world[real_room(QST_TARGET(rnum))].name);
@@ -717,13 +717,13 @@ static void quest_stat(struct char_data *ch, char *argument)
       case AQ_MOB_FIND:
       case AQ_MOB_KILL:
       case AQ_MOB_SAVE:
- snprintf(targetname, sizeof(targetname), "%s",
+ tb_snprintf(targetname, sizeof(targetname), "%s",
                  real_mobile(QST_TARGET(rnum)) == NOBODY ?
     "An unknown mobile" :
     GET_NAME(&mob_proto[real_mobile(QST_TARGET(rnum))]));
  break;
       default:
- snprintf(targetname, sizeof(targetname), "Unknown");
+ tb_snprintf(targetname, sizeof(targetname), "Unknown");
  break;
     }
     qmrnum = real_mobile(QST_MASTER(rnum));
