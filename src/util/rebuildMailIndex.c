@@ -91,18 +91,18 @@ int main(int argc, char** argv)
     return 0;
   }
   if (!(index_file = fopen(argv[1], "w"))) {
-    perror("error opening index file");
+    TB_REPORT_ERRNO("fopen", argv[1]);
     return 1;
   }
 
-  if (fprintf(index_file, "# tbaMUD mail index\n") < 0) perror("write index");
-  if (fprintf(index_file, "# Format: <ID> <flags> <sender ID/vnum> <recipient ID> <time> <subject>\n") < 0) perror("write index");
-  if (fprintf(index_file, "# For 'No Subject', use (null)\n") < 0) perror("write index");
+  if (fprintf(index_file, "# tbaMUD mail index\n") < 0) TB_REPORT_ERRNO("fprintf", argv[1]);
+  if (fprintf(index_file, "# Format: <ID> <flags> <sender ID/vnum> <recipient ID> <time> <subject>\n") < 0) TB_REPORT_ERRNO("fprintf", argv[1]);
+  if (fprintf(index_file, "# For 'No Subject', use (null)\n") < 0) TB_REPORT_ERRNO("fprintf", argv[1]);
 
   walkdir(index_file, ".");
 
-  if (fprintf(index_file, "~\n") < 0) perror("write index");
-  if (fclose(index_file) != 0) perror("close index");
+  if (fprintf(index_file, "~\n") < 0) TB_REPORT_ERRNO("fprintf", argv[1]);
+  if (fclose(index_file) != 0) TB_REPORT_ERRNO("fclose", argv[1]);
   return 0;
 }
 
@@ -233,12 +233,12 @@ void walkdir(FILE *index_file, char *dir) {
     struct stat stbuf ;
     if (snprintf(filename_qfd, sizeof(filename_qfd), "%s/%s", dir, dp->d_name) >= (int)sizeof(filename_qfd)) {
     if (fprintf(stderr, "Path too long: %s/%s\n", dir, dp->d_name) < 0)
-      perror("stderr");
+      TB_REPORT_ERRNO("fprintf", "stderr");
     continue;
   }
 
     if( stat(filename_qfd,&stbuf ) == -1 ) {
-      if (fprintf(stdout, "Unable to stat file: %s\n", filename_qfd) < 0) perror("stdout");
+      if (fprintf(stdout, "Unable to stat file: %s\n", filename_qfd) < 0) TB_REPORT_ERRNO("fprintf", "stdout");
       continue ;
     }
 
@@ -254,7 +254,7 @@ void walkdir(FILE *index_file, char *dir) {
         /* Grab the data from the mail file and throw it in the index */
         mail_file = fopen(filename_qfd, "r");
         if (!mail_file) {
-          perror(filename_qfd);
+          TB_REPORT_ERRNO("fopen", filename_qfd);
           continue;
         }
 
@@ -267,9 +267,9 @@ void walkdir(FILE *index_file, char *dir) {
 
         sprintascii(bits, flags);
 
-        if (fprintf(index_file, "%ld %s %ld %ld %ld %s\n", id, *bits ? bits : "0", sender, recipient, sent_time, subject) < 0) perror("write index");
+        if (fprintf(index_file, "%ld %s %ld %ld %ld %s\n", id, *bits ? bits : "0", sender, recipient, sent_time, subject) < 0) TB_REPORT_ERRNO("fprintf", argv[1]);
 
-        if (fclose(mail_file) != 0) perror("close mail file");
+        if (fclose(mail_file) != 0) TB_REPORT_ERRNO("fclose", filename_qfd);
       }
     }
   }
