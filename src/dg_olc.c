@@ -179,8 +179,8 @@ void trigedit_setup_existing(struct descriptor_data *d, int rtrg_num)
 
   for (c = trig->cmdlist; c; c = c->next) {
     if (c->cmd)
-      strcat(OLC_STORAGE(d), c->cmd);
-    strcat(OLC_STORAGE(d), "\r\n");
+      strlcat(OLC_STORAGE(d), c->cmd, len);
+    strlcat(OLC_STORAGE(d), "\r\n", len);
   }
   /* Now trig->cmdlist is something to pass to the text editor it will be 
    * converted back to a real cmdlist_element list later. */
