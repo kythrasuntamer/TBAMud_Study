@@ -205,9 +205,7 @@ static void aedit_save_to_disk(struct descriptor_data *d) {
    int i;
    char buf[MAX_STRING_LENGTH];
    if (!(fp = fopen(SOCMESS_FILE_NEW, "w+")))  {
-     char error[MAX_STRING_LENGTH];
-     tb_snprintf(error, sizeof(error), "Can't open socials file '%s'", SOCMESS_FILE);
-     perror(error);
+     TB_REPORT_ERRNO("fopen", SOCMESS_FILE_NEW);
      exit(1);
    }
 
