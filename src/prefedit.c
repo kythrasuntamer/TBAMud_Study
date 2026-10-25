@@ -303,7 +303,7 @@ static void prefedit_disp_prompt_menu(struct descriptor_data *d)
   char prompt_string[7];
 
   if (PREFEDIT_FLAGGED(PRF_DISPAUTO))
-    snprintf(prompt_string, sizeof(prompt_string), "<Auto>");
+    tb_snprintf(prompt_string, sizeof(prompt_string), "<Auto>");
   else
     sprintf(prompt_string, "%s%s%s", PREFEDIT_FLAGGED(PRF_DISPHP) ? "H" : "",   PREFEDIT_FLAGGED(PRF_DISPMANA) ? "M" : "",
                                      PREFEDIT_FLAGGED(PRF_DISPMOVE) ? "V" : "");
@@ -978,7 +978,7 @@ ACMD(do_oasis_prefedit)
         if (ch == vict)
           send_to_char(ch, "Your preferences are currently being edited by %s.\r\n", PERS(d->character, ch));
         else
-          snprintf(buf, sizeof(buf), "$S$u preferences are currently being edited by %s.", PERS(d->character, ch));
+          tb_snprintf(buf, sizeof(buf), "$S$u preferences are currently being edited by %s.", PERS(d->character, ch));
         act(buf, FALSE, ch, 0, vict, TO_CHAR);
         return;
       }
