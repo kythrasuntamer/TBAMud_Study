@@ -268,14 +268,14 @@ int Crash_delete_file(char *name)
 
   if (!(fl = fopen(filename, "r"))) {
     if (errno != ENOENT)  /* if it fails but NOT because of no file */
-      log("SYSERR: deleting crash file %s (1): %s", filename, strerror(errno));
+      TB_REPORT_ERRNO("fopen", filename);
     return FALSE;
   }
   tb_fclose(fl);
 
   /* if it fails, NOT because of no file */
   if (remove(filename) < 0 && errno != ENOENT)
-    log("SYSERR: deleting crash file %s (2): %s", filename, strerror(errno));
+    TB_REPORT_ERRNO("remove", filename);
 
   return TRUE;
 }
@@ -293,7 +293,7 @@ int Crash_delete_crashfile(struct char_data *ch)
 
   if (!(fl = fopen(filename, "r"))) {
     if (errno != ENOENT)  /* if it fails, NOT because of no file */
-      log("SYSERR: checking for crash file %s (3): %s", filename, strerror(errno));
+      TB_REPORT_ERRNO("fopen", filename);
     return FALSE;
   }
   numread = get_line(fl,line);
@@ -323,7 +323,7 @@ int Crash_clean_file(char *name)
   /* Open so that permission problems will be flagged now, at boot time. */
   if (!(fl = fopen(filename, "r"))) {
     if (errno != ENOENT)  /* if it fails, NOT because of no file */
-      log("SYSERR: OPENING OBJECT FILE %s (4): %s", filename, strerror(errno));
+      TB_REPORT_ERRNO("fopen", filename);
     return FALSE;
   }
 
