@@ -12,7 +12,7 @@
 #include "conf.h"
 #include "sysdep.h"
 
-#define NOWHERE    -1		/* nil reference for room-database         */
+#define NOWHERE    (-1)		/* nil reference for room-database         */
 
 /* The cardinal directions: used as index to room_data.dir_option[] */
 #define NORTH          0
