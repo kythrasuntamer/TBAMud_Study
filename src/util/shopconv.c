@@ -101,7 +101,13 @@ char *fread_string(FILE * fl, const char *error)
 
   {
     size_t result_size = strlen(buf) + 1;
-    CREATE(rslt, char, result_size);
+    /* Standalone converter: do not call the MUD-only allocation helper. */
+    rslt = (char *)calloc(result_size, sizeof(*rslt));
+    if (rslt == NULL) {
+      TB_REPORT_DOMAIN_ERRNO(TB_SEV_ERROR, TB_ERR_GENERAL,
+                             "calloc", "shopconv string");
+      return NULL;
+    }
     memcpy(rslt, buf, result_size);
   }
   return rslt;
