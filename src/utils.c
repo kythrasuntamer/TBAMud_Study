@@ -130,7 +130,8 @@ char *strdup(const char *source)
   char *new_z;
 
   CREATE(new_z, char, strlen(source) + 1);
-  return (strcpy(new_z, source)); /* strcpy: OK */
+  strlcpy(new_z, source, strlen(source) + 1);
+  return new_z; /* strcpy: OK */
 }
 #endif
 
@@ -409,13 +410,13 @@ void sprintbitarray(int bitvector[], const char *names[], int maxar, char *resul
         {
           if (*names[(teller*32)+nr] != '\0')
           {
-            strcat(result, names[(teller*32)+nr]);
-            strcat(result, " ");
+            strlcat(result, names[(teller*32)+nr], reslen);
+            strlcat(result, " ", reslen);
           }
         }
         else
         {
-          strcat(result, "UNDEFINED ");
+          strlcat(result, "UNDEFINED ", reslen);
         }
       }
       if (*names[(teller*32)+nr] == '\n')
@@ -424,7 +425,7 @@ void sprintbitarray(int bitvector[], const char *names[], int maxar, char *resul
   }
 
   if (!*result)
-    strcpy(result, "NOBITS ");
+    strlcpy(result, "NOBITS ", reslen);
 }
 
 /** Calculate the REAL time passed between two time invervals.
@@ -1493,7 +1494,7 @@ char *strpaste(char *str1, char *str2, char *joiner)
     /* Add the joiner */
     if((rp - ret) + jlen >= MAX_STRING_LENGTH)
       break;
-    strcpy(rp, joiner);
+    strlcpy(rp, joiner, strlen(joiner) + 1);
     rp += jlen;
 
      /* Copy line from str2 */
