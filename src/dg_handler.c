@@ -282,8 +282,12 @@ void delete_variables(const char *charname)
   if (!get_filename(filename, sizeof(filename), SCRIPT_VARS_FILE, charname))
     return;
 
-  if (remove(filename) < 0 && errno != ENOENT)
-    log("SYSERR: deleting variable file %s: %s", filename, strerror(errno));
+  if (remove(filename) < 0 && errno != ENOENT) {
+    int saved_errno = errno;
+    log("SYSERR: remove script-variable file %s for character %s failed: %s (errno=%d)",
+        filename, charname ? charname : "(unknown)",
+        strerror(saved_errno), saved_errno);
+  }
 }
 
 void update_wait_events(struct room_data *to, struct room_data *from)
