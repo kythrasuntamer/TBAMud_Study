@@ -1195,16 +1195,12 @@ void ibtedit_string_cleanup(struct descriptor_data *d, int terminator)
 }
 
 /*-------------------------------------------------------------------*/
-void free_ibt_lists()
+void free_ibt_lists(void)
 {
-  IBT_DATA *first_ibt, *last_ibt;
   int mode;
 
-  for( mode=0; mode <=2; mode++){
-    first_ibt = get_first_ibt(mode);
-    last_ibt = get_last_ibt(mode);
+  for (mode = 0; mode <= 2; mode++)
     free_ibt_list(mode);
-  }
 }
 
 void clean_ibt_list(int mode)

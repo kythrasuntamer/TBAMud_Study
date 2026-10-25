@@ -877,30 +877,41 @@ int room_is_dark(room_rnum room)
  * @param s2 The string to be compared to. */
 int levenshtein_distance(const char *s1, const char *s2)
 {
-  int **d, i, j;
-  int s1_len = strlen(s1), s2_len = strlen(s2);
+  int **d, result;
+  size_t i, j, s1_len, s2_len;
+
+  if (!s1 || !s2)
+    return INT_MAX;
+
+  s1_len = strlen(s1);
+  s2_len = strlen(s2);
+
+  /* The public result type is int, so lengths beyond INT_MAX cannot be
+   * represented correctly and would also overflow the matrix cell values. */
+  if (s1_len > INT_MAX || s2_len > INT_MAX)
+    return INT_MAX;
 
   CREATE(d, int *, s1_len + 1);
 
   for (i = 0; i <= s1_len; i++) {
     CREATE(d[i], int, s2_len + 1);
-    d[i][0] = i;
+    d[i][0] = (int)i;
   }
 
   for (j = 0; j <= s2_len; j++)
-    d[0][j] = j;
+    d[0][j] = (int)j;
   for (i = 1; i <= s1_len; i++)
     for (j = 1; j <= s2_len; j++)
       d[i][j] = MIN(d[i - 1][j] + 1, MIN(d[i][j - 1] + 1,
       d[i - 1][j - 1] + ((s1[i - 1] == s2[j - 1]) ? 0 : 1)));
 
-  i = d[s1_len][s2_len];
+  result = d[s1_len][s2_len];
 
-  for (j = 0; j <= s1_len; j++)
-    free(d[j]);
+  for (i = 0; i <= s1_len; i++)
+    free(d[i]);
   free(d);
 
-  return i;
+  return result;
 }
 
 /** Removes a character from a piece of furniture. Unlike some of the other

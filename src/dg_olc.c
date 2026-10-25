@@ -298,7 +298,7 @@ static char *str_replace(char *string, const char *substr, const char *replaceme
         return NULL;
 
     /* This helper takes ownership of string. */
-    if (substr == NULL || replacement == NULL)
+    if (substr == NULL || *substr == '\0' || replacement == NULL)
         return string;
     
     newstr = strdup (string);
@@ -440,11 +440,20 @@ static void script_syntax_highlighting(struct descriptor_data *d, char *string)
     
     size_t i;
 
+    if (!d || !string)
+        return;
+
     // Parse script text line by line
     newlist = strdup(string);
+    if (!newlist)
+        return;
+
     for (curtok = strtok(newlist, "\r\n"); curtok; curtok = strtok(NULL, "\r\n")) {
         char *line = strdup(curtok);
         bool comment = FALSE;
+
+        if (!line)
+            continue;
         
         // Find if is a comment
         for (i=0;i <= strlen(line);i++) {
@@ -479,7 +488,7 @@ static void script_syntax_highlighting(struct descriptor_data *d, char *string)
         
             // Socials replacement (experimental)
             int cmd;
-            for (cmd = 0; *complete_cmd_info[cmd].command != '\n'; cmd++) {
+            for (cmd = 0; complete_cmd_info && *complete_cmd_info[cmd].command != '\n'; cmd++) {
                 if (complete_cmd_info[cmd].command_pointer == do_action) {
                     char replace_social[MAX_INPUT_LENGTH];
                     snprintf(replace_social, MAX_INPUT_LENGTH, "\tc%s\tn", complete_cmd_info[cmd].command);
