@@ -140,3 +140,31 @@ and one versioned tbaMUD writer. Do not infer licensing from source
 availability. Unsupported mechanics must produce a conversion report and
 prevent activation, not silently disappear. No third-party content is
 implicitly authorized for redistribution.
+
+## Required source eligibility: exclude PvP MUDs
+
+The project owner requests **no areas sourced from PvP MUDs**. Apply this
+filter to the **original game/source distribution**, not to the current
+engine name. A ROM, SMAUG, Merc or CircleMUD derivative can be PvE or PvP.
+
+Before conversion, create a provenance record documenting:
+
+- Original game / distribution, upstream URL and exact source snapshot.
+- Evidence that player-versus-player combat is absent or disabled in that
+  source game's normal gameplay (source policy/docs/code, not just a label).
+- Licensing evidence covering redistribution of each imported area, including
+  author-specific restrictions.
+- Known source-file checksums, supported format, collision and conversion
+  diagnostics.
+- Whether the content is stock/sample world data rather than a live game's
+  proprietary areas.
+
+**Reject** PvP-focused games, games with optional or unrestricted PvP,
+unknown PvP status, ambiguous permissions, missing provenance or unknown
+authorship. An area being non-combat or PvE-themed does not excuse a PvP
+source under this rule. A codebase being usable for PvP does not automatically
+disqualify demonstrably non-PvP stock areas: evaluate the actual source.
+
+Never automatically download and publish all archives: this is an eligibility
+and permissions review, not a blanket license. Keep rejected and unresolved
+sources out of the converted world and public repository.
