@@ -1,0 +1,69 @@
+name: Fil-C CI
+
+on:
+  push:
+    branches:
+      - cert-compliance-hardening
+  pull_request:
+    branches:
+      - master
+
+permissions:
+  contents: read
+
+env:
+  FILC_VERSION: "0.687"
+
+jobs:
+  filc:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Fil-C
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="optfil-${FILC_VERSION}-linux-x86_64.tar.xz"
+          url="https://github.com/pizlonator/fil-c/releases/download/v${FILC_VERSION}/${archive}"
+          wget -q --show-progress "${url}"
+          tar -xf "${archive}"
+          cd "optfil-${FILC_VERSION}-linux-x86_64"
+          printf 'YES\n' | sudo ./setup.sh
+          /opt/fil/bin/filcc --version
+
+      - name: Configure with Fil-C
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake -S . -B build-filc \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_C_COMPILER=/opt/fil/bin/filcc \
+            -DSTATIC_ANALYSIS=OFF \
+            2>&1 | tee filc-configure.log
+
+      - name: Build with Fil-C
+        shell: bash
+        run: |
+          set -o pipefail
+          cmake --build build-filc --parallel 2>&1 | tee filc-build.log
+
+      - name: Test Fil-C build
+        if: ${{ success() }}
+        shell: bash
+        run: |
+          set -o pipefail
+          ctest --test-dir build-filc --output-on-failure 2>&1 | tee filc-test.log
+
+      - name: Upload Fil-C logs
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: filc-logs
+          path: |
+            filc-configure.log
+            filc-build.log
+            filc-test.log
+          if-no-files-found: ignore
