@@ -96,8 +96,10 @@ int isname(const char *str, const char *namelist)
   for(curtok = strtok(newlist, WHITESPACE); curtok; curtok = strtok(NULL, WHITESPACE))
     if(curtok && is_abbrev(str, curtok)) {
       /* Don't allow abbreviated numbers. - Sryth */
-      if (isdigit(*str) && (atoi(str) != atoi(curtok)))
+      if (isdigit(*str) && (atoi(str) != atoi(curtok))) {
+        free(newlist);
         return 0;
+      }
       free(newlist);
       return 1;
     }
@@ -443,6 +445,10 @@ void obj_from_char(struct obj_data *object)
 
   if (object == NULL) {
     log("SYSERR: NULL object passed to obj_from_char.");
+    return;
+  }
+  if (object->carried_by == NULL) {
+    log("SYSERR: Object %p passed to obj_from_char() is not carried by anyone.", (void *)object);
     return;
   }
   REMOVE_FROM_LIST(object, object->carried_by->carrying, next_content);
@@ -1089,6 +1095,9 @@ struct char_data *get_char_room_vis(struct char_data *ch, char *name, int *numbe
   struct char_data *i;
   int num;
 
+  if (!ch || !name)
+    return NULL;
+
   if (!number) {
     number = &num;
     num = get_number(&name);
@@ -1115,6 +1124,9 @@ struct char_data *get_char_world_vis(struct char_data *ch, char *name, int *numb
 {
   struct char_data *i;
   int num;
+
+  if (!ch || !name)
+    return NULL;
 
   if (!number) {
     number = &num;
@@ -1157,6 +1169,9 @@ struct obj_data *get_obj_in_list_vis(struct char_data *ch, char *name, int *numb
   struct obj_data *i;
   int num;
 
+  if (!ch || !name)
+    return NULL;
+
   if (!number) {
     number = &num;
     num = get_number(&name);
@@ -1179,6 +1194,9 @@ struct obj_data *get_obj_vis(struct char_data *ch, char *name, int *number)
 {
   struct obj_data *i;
   int num;
+
+  if (!ch || !name)
+    return NULL;
 
   if (!number) {
     number = &num;
@@ -1356,6 +1374,9 @@ int generic_find(char *arg, bitvector_t bitvector, struct char_data *ch,
   int i, found, number;
   char name_val[MAX_INPUT_LENGTH];
   char *name = name_val;
+
+  if (!arg || !ch || !tar_ch || !tar_obj)
+    return 0;
 
   *tar_ch = NULL;
   *tar_obj = NULL;
