@@ -15,8 +15,8 @@
 * shared module.               
 *
 */
-#ifndef _BAN_H_
-#define _BAN_H_
+#ifndef TBAMUD_BAN_H_INCLUDED
+#define TBAMUD_BAN_H_INCLUDED
 
 /* don't change these */
 #define BAN_NOT   0
@@ -47,4 +47,4 @@ ACMD(do_unban);
 extern struct ban_list_element *ban_list;
 extern int num_invalid;
 
-#endif /* _BAN_H_*/
+#endif /* TBAMUD_BAN_H_INCLUDED*/
