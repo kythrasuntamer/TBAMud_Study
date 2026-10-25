@@ -1210,7 +1210,7 @@ void boot_the_shops(FILE *shop_f, char *filename, int rec_count)
       top_shop++;
       if (!top_shop)
 	CREATE(shop_index, struct shop_data, rec_count);
-      SHOP_NUM(top_shop) = temp;
+      SHOP_NUM(top_shop) = temp; /* NOLINT(clang-analyzer-security.ArrayBound): rec_count bounds top_shop above. */
       temp = read_list(shop_f, list, new_format, MAX_PROD, LIST_PRODUCE);
       CREATE(shop_index[top_shop].producing, obj_vnum, temp);
       for (count = 0; count < temp; count++)
