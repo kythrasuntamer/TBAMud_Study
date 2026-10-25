@@ -1,0 +1,56 @@
+name: Native Sanitizers
+
+on:
+  push:
+    branches: [ "master" ]
+  pull_request:
+    branches: [ "master" ]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  asan-ubsan:
+    runs-on: ubuntu-latest
+
+    env:
+      ASAN_OPTIONS: detect_leaks=1:halt_on_error=1:strict_string_checks=1:check_initialization_order=1
+      UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Configure with Clang sanitizers
+      run: >
+        cmake -S . -B build-sanitize
+        -DCMAKE_BUILD_TYPE=Debug
+        -DCMAKE_C_COMPILER=clang
+        -DSTATIC_ANALYSIS=OFF
+        -DENABLE_SANITIZERS=ON
+
+    - name: Build
+      shell: bash
+      run: |
+        set -o pipefail
+        cmake --build build-sanitize --parallel 2 2>&1 | tee sanitizer-build.log
+
+    - name: Test under ASan + UBSan + LeakSanitizer
+      shell: bash
+      run: |
+        set -o pipefail
+        ctest --test-dir build-sanitize --output-on-failure 2>&1 | tee sanitizer-test.log
+
+    - name: Upload sanitizer logs
+      uses: actions/upload-artifact@v4
+      if: ${{ always() }}
+      with:
+        name: sanitizer-logs
+        path: |
+          sanitizer-build.log
+          sanitizer-test.log
+        if-no-files-found: ignore
