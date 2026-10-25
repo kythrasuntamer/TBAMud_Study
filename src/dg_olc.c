@@ -127,7 +127,7 @@ void script_save_to_disk(FILE *fp, void *item, int type)
 
   while (t)
   {
-    fprintf(fp,"T %d\n", t->vnum);
+    tb_fprintf(fp,"T %d\n", t->vnum);
     t = t->next;
   }
 }
@@ -498,7 +498,7 @@ static void script_syntax_highlighting(struct descriptor_data *d, char *string)
             for (cmd = 0; complete_cmd_info && *complete_cmd_info[cmd].command != '\n'; cmd++) {
                 if (complete_cmd_info[cmd].command_pointer == do_action) {
                     char replace_social[MAX_INPUT_LENGTH];
-                    snprintf(replace_social, MAX_INPUT_LENGTH, "\tc%s\tn", complete_cmd_info[cmd].command);
+                    tb_snprintf(replace_social, MAX_INPUT_LENGTH, "\tc%s\tn", complete_cmd_info[cmd].command);
                     line = str_replace(line, complete_cmd_info[cmd].command, replace_social);
                 }
             }
@@ -860,9 +860,9 @@ void trigedit_save(struct descriptor_data *d)
   }
 
 #ifdef CIRCLE_MAC
-  snprintf(fname, sizeof(fname), "%s:%i.new", TRG_PREFIX, zone);
+  tb_snprintf(fname, sizeof(fname), "%s:%i.new", TRG_PREFIX, zone);
 #else
-  snprintf(fname, sizeof(fname), "%s/%i.new", TRG_PREFIX, zone);
+  tb_snprintf(fname, sizeof(fname), "%s/%i.new", TRG_PREFIX, zone);
 #endif
 
   if (!(trig_file = fopen(fname, "w"))) {
@@ -878,11 +878,11 @@ void trigedit_save(struct descriptor_data *d)
       if (fprintf(trig_file, "#%d\n", i) < 0) {
         mudlog(BRF, MAX(LVL_GOD, GET_INVIS_LEV(d->character)), TRUE,
                "SYSERR: OLC: Can't write trig file!");
-        fclose(trig_file);
+        tb_fclose(trig_file);
         return;
       }
       sprintascii(bitBuf, GET_TRIG_TYPE(trig));
-      fprintf(trig_file,      "%s%c\n"
+      tb_fprintf(trig_file,      "%s%c\n"
                               "%d %s %d\n"
                               "%s%c\n",
            (GET_TRIG_NAME(trig)) ? (GET_TRIG_NAME(trig)) : "unknown trigger", STRING_TERMINATOR,
@@ -897,25 +897,25 @@ void trigedit_save(struct descriptor_data *d)
 
         for (cmd = trig->cmdlist; cmd; cmd = cmd->next) {
           if (cmd->cmd) {
-            fprintf(trig_file, "%s\n", cmd->cmd);
+            tb_fprintf(trig_file, "%s\n", cmd->cmd);
             wrote = TRUE;
           }
         }
 
         if (!wrote)
-          fprintf(trig_file, "* Empty script");
-        fprintf(trig_file, "%c\n", STRING_TERMINATOR);
+          tb_fprintf(trig_file, "* Empty script");
+        tb_fprintf(trig_file, "%c\n", STRING_TERMINATOR);
       }
     }
   }
 
-  fprintf(trig_file, "$%c\n", STRING_TERMINATOR);
-  fclose(trig_file);
+  tb_fprintf(trig_file, "$%c\n", STRING_TERMINATOR);
+  tb_fclose(trig_file);
 
 #ifdef CIRCLE_MAC
-  snprintf(buf, sizeof(buf), "%s:%d.trg", TRG_PREFIX, zone);
+  tb_snprintf(buf, sizeof(buf), "%s:%d.trg", TRG_PREFIX, zone);
 #else
-  snprintf(buf, sizeof(buf), "%s/%d.trg", TRG_PREFIX, zone);
+  tb_snprintf(buf, sizeof(buf), "%s/%d.trg", TRG_PREFIX, zone);
 #endif
 
   remove(buf);
@@ -934,24 +934,24 @@ static void trigedit_create_index(int znum, char *type)
 
   prefix = TRG_PREFIX;
 
-  snprintf(old_name, sizeof(old_name), "%s/index", prefix);
-  snprintf(new_name, sizeof(new_name), "%s/newindex", prefix);
+  tb_snprintf(old_name, sizeof(old_name), "%s/index", prefix);
+  tb_snprintf(new_name, sizeof(new_name), "%s/newindex", prefix);
 
   if (!(oldfile = fopen(old_name, "r"))) {
     mudlog(BRF, LVL_IMPL, TRUE, "SYSERR: DG_OLC: Failed to open %s", old_name);
     return;
   } else if (!(newfile = fopen(new_name, "w"))) {
     mudlog(BRF, LVL_IMPL, TRUE, "SYSERR: DG_OLC: Failed to open %s", new_name);
-    fclose(oldfile);
+    tb_fclose(oldfile);
     return;
   }
 
   /* Index contents must be in order: search through the old file for the right
    * place, insert the new file, then copy the rest over. */
-  snprintf(buf1, sizeof(buf1), "%d.%s", znum, type);
+  tb_snprintf(buf1, sizeof(buf1), "%d.%s", znum, type);
   while (get_line(oldfile, buf)) {
     if (*buf == '$') {
-      fprintf(newfile, "%s\n$\n", (!found ? buf1 : ""));
+      tb_fprintf(newfile, "%s\n$\n", (!found ? buf1 : ""));
       break;
     } else if (!found) {
       sscanf(buf, "%d", &num);
@@ -959,14 +959,14 @@ static void trigedit_create_index(int znum, char *type)
         found = TRUE;
       else if (num > znum) {
         found = TRUE;
-        fprintf(newfile, "%s\n", buf1);
+        tb_fprintf(newfile, "%s\n", buf1);
       }
     }
-    fprintf(newfile, "%s\n", buf);
+    tb_fprintf(newfile, "%s\n", buf);
   }
 
-  fclose(newfile);
-  fclose(oldfile);
+  tb_fclose(newfile);
+  tb_fclose(oldfile);
 
   /* Out with the old, in with the new. */
   remove(old_name);
