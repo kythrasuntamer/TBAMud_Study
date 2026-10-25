@@ -368,14 +368,20 @@ ACMD(do_export_zone)
     return; 
   } 
 
-  if (!tb_parse_int_checked(argument, &parsed_zone) ||
-      parsed_zone < 0 || parsed_zone > UINT16_MAX) {
+  if (!tb_parse_int_checked(argument, &parsed_zone) || parsed_zone < 0) {
     send_to_char(ch, "Zone vnum must be a valid non-negative integer.\r\n");
     log("SYSERR: rejected malformed export zone argument '%s' from %s",
         argument, GET_NAME(ch));
     return;
   }
+
   zvnum = (zone_vnum)parsed_zone;
+  if ((int)zvnum != parsed_zone) {
+    send_to_char(ch, "Zone vnum is outside the range supported by this build.\r\n");
+    log("SYSERR: rejected out-of-range export zone argument '%s' from %s",
+        argument, GET_NAME(ch));
+    return;
+  }
   zrnum = real_zone(zvnum); 
 
   if (zrnum == NOWHERE) { 
