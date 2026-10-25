@@ -165,11 +165,11 @@ static IBT_DATA *read_ibt( char *filename, FILE *fp )
             if (!str_cmp(word, "End"))
             {
               if ( id_num ) {
-                ibtData->id_num = atol(id_num);
+                ibtData->id_num = tb_parse_long_or_zero(id_num);
                 STRFREE( id_num );
               }  
               if ( dated ) {
-                ibtData->dated = atol(dated);
+                ibtData->dated = tb_parse_long_or_zero(dated);
                 STRFREE( dated );
               }  
               if ( !ibtData->name )
@@ -488,7 +488,7 @@ ACMD(do_ibt)
       send_to_char(ch, "Show which %s?\r\n", CMD_NAME);
       return;
     }
-    ano = atoi(arg2);
+    ano = tb_parse_int_or_zero(arg2);
 
     if ((ibtData = get_ibt_by_num(subcmd, ano)) == NULL) {
       send_to_char(ch, "That %s doesn't exist.\r\n", CMD_NAME);
@@ -716,7 +716,7 @@ ACMD(do_ibt)
       send_to_char(ch, "Resolve which %s?\r\n", CMD_NAME);
       return;
     }
-    ano = atoi(arg2);
+    ano = tb_parse_int_or_zero(arg2);
 
     if ((ibtData = get_ibt_by_num(subcmd, ano)) == NULL) {
       send_to_char(ch, "%s not found\r\n", ibt_types[subcmd]);
@@ -743,7 +743,7 @@ ACMD(do_ibt)
       send_to_char(ch, "Remove which %s?\r\n", CMD_NAME);
       return;
     }
-    ano = atoi(arg2);
+    ano = tb_parse_int_or_zero(arg2);
 
     if ((ibtData = get_ibt_by_num(subcmd, ano)) == NULL) {
       send_to_char(ch, "%s not found\r\n", ibt_types[subcmd]);
@@ -812,7 +812,7 @@ ACMD(do_oasis_ibtedit)
 
   /* If a numeric argument was given (like a room number), get it. */
   if (number == NOTHING)
-    number = atoi(buf1);
+    number = tb_parse_int_or_zero(buf1);
 
   /* Validate that the IBT number exists */
   if (get_ibt_by_num(subcmd, number) == NULL) {
@@ -1108,7 +1108,7 @@ void ibtedit_parse(struct descriptor_data *d, char *arg)
       break;
 
     case IBTEDIT_ROOM:
-      i = atoi(arg);
+      i = tb_parse_int_or_zero(arg);
       if (i == 0) { /* Cancel option */
         ibtedit_disp_main_menu(d);
         return;
@@ -1129,7 +1129,7 @@ void ibtedit_parse(struct descriptor_data *d, char *arg)
       break;
 
     case IBTEDIT_FLAGS:
-      if ((i = atoi(arg)) <= 0)
+      if ((i = tb_parse_int_or_zero(arg)) <= 0)
         break;
       else if (i <= NUM_IBT_FLAGS)
         TOGGLE_BIT_AR(IBT_FLAGS(OLC_IBT(d)), (i - 1));
