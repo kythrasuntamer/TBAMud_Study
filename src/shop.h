@@ -9,8 +9,8 @@
 * Copyright (C) 1993, 94 by the Trustees of the Johns Hopkins University 
 * CircleMUD is based on DikuMUD, Copyright (C) 1990, 1991.               
 */
-#ifndef _SHOP_H_
-#define _SHOP_H_
+#ifndef TBAMUD_SHOP_H_INCLUDED
+#define TBAMUD_SHOP_H_INCLUDED
 
 /* Public function prototypes */
 SPECIAL(shop_keeper);
@@ -155,4 +155,4 @@ struct stack_data {
 extern const char *trade_letters[];
 extern const char *shop_bits[];
 
-#endif /* _SHOP_H_ */
+#endif /* TBAMUD_SHOP_H_INCLUDED */
