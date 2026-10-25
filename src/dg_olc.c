@@ -1237,7 +1237,7 @@ int format_script(struct descriptor_data *d)
       return FALSE;
     }
     len = len + nlen + llen;
-    strcat(nsc, line);  /* strcat OK, size checked above */
+    strlcat(nsc, line, sizeof(nsc));  /* strcat OK, size checked above */
 
     if (indent_next) {
       indent++;
