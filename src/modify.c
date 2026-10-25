@@ -339,7 +339,7 @@ ACMD(do_skillset)
     return;
   }
   skip_spaces(&argument);
-  pc = GET_CLASS(vict);
+  pc = (int)GET_CLASS(vict);
   pl = GET_LEVEL(vict);
 
   /* If there is no chars in argument */
