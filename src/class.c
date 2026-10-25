@@ -1178,6 +1178,10 @@ byte saving_throws(int class_num, int type, int level)
 /* THAC0 for classes and levels.  (To Hit Armor Class 0) */
 int thaco(int class_num, int level)
 {
+  /* Legacy THAC0 tables end at 34. Preserve their terminal values
+   * across expanded mortal and immortal levels. */
+  if (level > 34 && level <= LVL_IMPL)
+    level = 34;
   switch (class_num) {
   case CLASS_MAGIC_USER:
     switch (level) {
@@ -1666,6 +1670,23 @@ int level_exp(int chclass, int level)
      return EXP_MAX - ((LVL_IMPL - level) * 1000);
    }
 
+  /* Retain the original level 1-30 experience table. For levels
+   * 31-50 add a consistent 110,000 XP per level, leaving a separate
+   * immortal threshold at 51 and avoiding the old 7M-8M compression. */
+  if (level > 30 && level <= LVL_IMMORT) {
+    int start;
+    switch (chclass) {
+      case CLASS_MAGIC_USER:
+      case CLASS_WARRIOR: start = 7400000; break;
+      case CLASS_CLERIC: start = 6400000; break;
+      case CLASS_THIEF: start = 6650000; break;
+      default:
+        log("SYSERR: Invalid class in extended level_exp");
+        return 0;
+    }
+    return start + (level - 30) * 110000;
+  }
+
   /* Exp required for normal mortals is below */
   switch (chclass) {
 
@@ -1836,6 +1857,8 @@ const char *title_male(int chclass, int level)
     return "the Man";
   if (level == LVL_IMPL)
     return "the Implementor";
+  if (level >= 31 && level < LVL_IMMORT)
+    return "the Veteran Adventurer";
 
   switch (chclass) {
 
@@ -1976,6 +1999,8 @@ const char *title_female(int chclass, int level)
     return "the Woman";
   if (level == LVL_IMPL)
     return "the Implementress";
+  if (level >= 31 && level < LVL_IMMORT)
+    return "the Veteran Adventurer";
 
   switch (chclass) {
 
