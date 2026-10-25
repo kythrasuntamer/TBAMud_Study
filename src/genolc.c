@@ -406,14 +406,14 @@ ACMD(do_export_zone)
   fix_filename(zone_name, fixed_file_name, sizeof(fixed_file_name));
 
   if (snprintf(archive, sizeof(archive), "%s%s.tar", path, fixed_file_name) >= (int)sizeof(archive) ||
-      tb_snprintf(old_archive, sizeof(old_archive), "%s%s.tar.gz", path, fixed_file_name) >= (int)sizeof(old_archive) ||
-      tb_snprintf(info_path, sizeof(info_path), "%sqq.info", path) >= (int)sizeof(info_path) ||
-      tb_snprintf(wld_path, sizeof(wld_path), "%sqq.wld", path) >= (int)sizeof(wld_path) ||
-      tb_snprintf(zon_path, sizeof(zon_path), "%sqq.zon", path) >= (int)sizeof(zon_path) ||
-      tb_snprintf(mob_path, sizeof(mob_path), "%sqq.mob", path) >= (int)sizeof(mob_path) ||
-      tb_snprintf(obj_path, sizeof(obj_path), "%sqq.obj", path) >= (int)sizeof(obj_path) ||
-      tb_snprintf(trg_path, sizeof(trg_path), "%sqq.trg", path) >= (int)sizeof(trg_path) ||
-      tb_snprintf(shp_path, sizeof(shp_path), "%sqq.shp", path) >= (int)sizeof(shp_path)) {
+      snprintf(old_archive, sizeof(old_archive), "%s%s.tar.gz", path, fixed_file_name) >= (int)sizeof(old_archive) ||
+      snprintf(info_path, sizeof(info_path), "%sqq.info", path) >= (int)sizeof(info_path) ||
+      snprintf(wld_path, sizeof(wld_path), "%sqq.wld", path) >= (int)sizeof(wld_path) ||
+      snprintf(zon_path, sizeof(zon_path), "%sqq.zon", path) >= (int)sizeof(zon_path) ||
+      snprintf(mob_path, sizeof(mob_path), "%sqq.mob", path) >= (int)sizeof(mob_path) ||
+      snprintf(obj_path, sizeof(obj_path), "%sqq.obj", path) >= (int)sizeof(obj_path) ||
+      snprintf(trg_path, sizeof(trg_path), "%sqq.trg", path) >= (int)sizeof(trg_path) ||
+      snprintf(shp_path, sizeof(shp_path), "%sqq.shp", path) >= (int)sizeof(shp_path)) {
     send_to_char(ch, "Export path is too long.\r\n");
     return;
   }
