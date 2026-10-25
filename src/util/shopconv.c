@@ -158,7 +158,7 @@ static int boot_the_shops_conv(FILE * shop_f, FILE * newshop_f, char *filename)
 int main(int argc, char *argv[])
 {
   FILE *sfp, *nsfp;
-  char fn[120], part[256];
+  char fn[120], part[256], backup[256];
   int result, index;
 
   if (argc < 2) {
@@ -170,26 +170,29 @@ int main(int argc, char *argv[])
       fprintf(stderr, "shopconv: filename too long: %s\n", argv[index]);
       continue;
     }
-    sprintf(part, "mv %s %s.tmp", fn, fn);
-    if (system(part) != 0) {
-      fprintf(stderr, "shopconv: failed to rename %s to a temporary file\n", fn);
+    if (snprintf(part, sizeof(part), "%s.tmp", fn) >= (int)sizeof(part)) {
+      fprintf(stderr, "shopconv: temporary filename too long: %s\n", fn);
+      continue;
+    }
+    if (rename(fn, part) != 0) {
+      fprintf(stderr, "shopconv: failed to rename %s to %s: %s\n",
+              fn, part, strerror(errno));
       exit(1);
     }
-    sprintf(part, "%s.tmp", fn);
     sfp = fopen(part, "r");
     if (sfp == NULL) {
       int saved_errno = errno;
       fprintf(stderr, "shopconv: %s could not be opened: %s\n", part, strerror(saved_errno));
-      if (snprintf(part, sizeof(part), "mv %s.tmp %s", fn, fn) >= (int)sizeof(part) ||
-          system(part) != 0)
-        fprintf(stderr, "shopconv: failed to restore %s from temporary file\n", fn);
+      if (rename(part, fn) != 0)
+        fprintf(stderr, "shopconv: failed to restore %s from temporary file: %s\n",
+                fn, strerror(errno));
     } else {
       if ((nsfp = fopen(fn, "w")) == NULL) {
 	      printf("Error writing to %s.\n", fn);
         fclose(sfp);
-        sprintf(part, "mv %s.tmp %s", fn, fn);
-        if (system(part) != 0)
-          fprintf(stderr, "shopconv: failed to restore %s from temporary file\n", fn);
+        if (rename(part, fn) != 0)
+          fprintf(stderr, "shopconv: failed to restore %s from temporary file: %s\n",
+                  fn, strerror(errno));
 	      continue;
       }
       printf("%s:\n", fn);
