@@ -256,7 +256,7 @@ extern const char * RGBone;
 extern const char * RGBtwo;
 extern const char * RGBthree; 
  
-ssize_t ProtocolInput( descriptor_t *apDescriptor, char *apData, int aSize, char *apOut );
+ssize_t ProtocolInput( descriptor_t *apDescriptor, char *apData, int aSize, char *apOut, size_t aOutSize );
 
 /* Function: ProtocolOutput
  *
