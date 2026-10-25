@@ -33,7 +33,7 @@
 
 #define DEFAULT_MAP_SIZE CONFIG_MAP_SIZE
 
-#define MAX_MAP_SIZE (CANVAS_WIDTH - 1)/4
+#define MAX_MAP_SIZE ((CANVAS_WIDTH - 1) / 4)
 #define MAX_MAP      CANVAS_WIDTH
 
 #define MAX_MAP_DIR 10
@@ -43,17 +43,17 @@
 #define SECT_STRANGE (SECT_EMPTY + 1)
 #define SECT_HERE  (SECT_STRANGE + 1)
 
-#define DOOR_NS   -1
-#define DOOR_EW   -2
-#define DOOR_UP   -3
-#define DOOR_DOWN -4
-#define DOOR_DIAGNE      -5
-#define DOOR_DIAGNW      -6
-#define VDOOR_NS         -7
-#define VDOOR_EW         -8
-#define VDOOR_DIAGNE     -9
-#define VDOOR_DIAGNW     -10
-#define DOOR_UP_AND_NE   -11
+#define DOOR_NS (-1)
+#define DOOR_EW (-2)
+#define DOOR_UP (-3)
+#define DOOR_DOWN (-4)
+#define DOOR_DIAGNE (-5)
+#define DOOR_DIAGNW (-6)
+#define VDOOR_NS (-7)
+#define VDOOR_EW (-8)
+#define VDOOR_DIAGNE (-9)
+#define VDOOR_DIAGNW (-10)
+#define DOOR_UP_AND_NE (-11)
 #define DOOR_DOWN_AND_SE -12
 #define DOOR_NONE        -13
 #define NUM_DOOR_TYPES 13
