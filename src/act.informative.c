@@ -772,7 +772,8 @@ ACMD(do_look)
       if (!found)
          send_to_char(ch, "You couldn't find anything noticeable.\r\n");
     } else
-      look_at_target(ch, strcpy(tempsave, arg));
+      strlcpy(tempsave, arg, sizeof(tempsave));
+    look_at_target(ch, tempsave);
   }
 }
 
