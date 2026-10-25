@@ -47,13 +47,13 @@ int main(int argc, char** argv)
 	  return 0;
  	}
  	if (!(index_file = fopen(argv[1], "w"))) {
-    perror("error opening index file");
+    TB_REPORT_ERRNO("fopen", argv[1]);
     return 1;
   }
 	walkdir(index_file, ".");
 
-  if (fprintf(index_file, "~\n") < 0) perror("write index");
-  if (fclose(index_file) != 0) perror("close index");
+  if (fprintf(index_file, "~\n") < 0) TB_REPORT_ERRNO("fprintf", argv[1]);
+  if (fclose(index_file) != 0) TB_REPORT_ERRNO("fclose", argv[1]);
  	return 0;
 }
 
@@ -141,7 +141,7 @@ void walkdir(FILE *index_file, char *dir) {
 			if (name != NULL) {
   			FILE *plr_file = fopen(filename_qfd, "r");
         if (!plr_file) {
-          perror(filename_qfd);
+          TB_REPORT_ERRNO("fopen", filename_qfd);
           continue;
         }
  				long id = parseid(plr_file);
@@ -154,12 +154,12 @@ void walkdir(FILE *index_file, char *dir) {
 
  				fprintf(index_file, "%ld %s %d %d 0 %ld\n", id, name, level, adminlevel, last);
 
-        if (fclose(plr_file) != 0) perror("close player file");
+        if (fclose(plr_file) != 0) TB_REPORT_ERRNO("fclose", filename_qfd);
   		}
   	}
  	}
   if (closedir(dfd) != 0)
-    perror("closedir");
+    TB_REPORT_ERRNO("closedir", LIB_PLRFILES);
 }
 
 int get_line(FILE *fl, char *buf)
