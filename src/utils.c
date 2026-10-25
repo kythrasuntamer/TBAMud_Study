@@ -283,11 +283,11 @@ void mudlog(int type, int level, int file, const char *str, ...)
   if (level < 0)
     return;
 
-  strcpy(buf, "[ ");	/* strcpy: OK */
+  strlcpy(buf, "[ ", sizeof(buf));	/* strcpy: OK */
   va_start(args, str);
   vsnprintf(buf + 2, sizeof(buf) - 6, str, args);
   va_end(args);
-  strcat(buf, " ]\r\n");	/* strcat: OK */
+  strlcat(buf, " ]\r\n", sizeof(buf));	/* strcat: OK */
 
   for (i = descriptor_list; i; i = i->next) {
     if (STATE(i) != CON_PLAYING || IS_NPC(i->character)) /* switch */
@@ -659,7 +659,7 @@ int get_line(FILE *fl, char *buf)
   while (sl > 0 && (temp[sl - 1] == '\n' || temp[sl - 1] == '\r'))
     temp[--sl] = '\0';
 
-  strcpy(buf, temp); /* strcpy: OK, if buf >= READ_SIZE (256) */
+  strlcpy(buf, temp, sizeof(buf)); /* strcpy: OK, if buf >= READ_SIZE (256) */
   return (lines);
 }
 
@@ -1542,7 +1542,7 @@ char * convert_from_tabs(char * string)
 {
   static char buf[MAX_STRING_LENGTH * 8];
   
-  strcpy(buf, string);
+  strlcpy(buf, string, sizeof(buf));
   parse_tab(buf);
   return(buf);
 }
