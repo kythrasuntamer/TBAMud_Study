@@ -308,7 +308,7 @@ static void perform_obj_aff_list(struct char_data * ch, char *arg)
       if (obj_proto[num].affected[i].modifier) {
         if (obj_proto[num].affected[i].location == apply){
           ov = obj_index[num].vnum;
-          v1 = obj_proto[num].affected[i].modifier;
+          v1 = (int)obj_proto[num].affected[i].modifier;
 
           if ((r_num = real_object(ov)) != NOTHING)
             add_to_obj_list(lst, MAX_OBJ_LIST, ov, v1);
