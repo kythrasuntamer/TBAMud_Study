@@ -224,7 +224,7 @@ static OCMD(do_ozoneecho)
 	obj_log(obj, "ozoneecho called for nonexistant zone");
 
     else {
-	sprintf(buf, "%s\r\n", msg);
+	snprintf(buf, sizeof(buf), "%s\r\n", msg);
 	send_to_zone(buf, zone);
     }
 }
@@ -491,7 +491,7 @@ static OCMD(do_dgoload)
 
       if (SCRIPT(obj)) { /* It _should_ have, but it might be detached. */
         char buf[MAX_INPUT_LENGTH];
-        sprintf(buf, "%c%ld", UID_CHAR, char_script_id(mob));
+        snprintf(buf, sizeof(buf), "%c%ld", UID_CHAR, char_script_id(mob));
         add_var(&(SCRIPT(obj)->global_vars), "lastloaded", buf, 0);
       }
 
@@ -506,7 +506,7 @@ static OCMD(do_dgoload)
 
       if (SCRIPT(obj)) { /* It _should_ have, but it might be detached. */
         char buf[MAX_INPUT_LENGTH];
-        sprintf(buf, "%c%ld", UID_CHAR, obj_script_id(object));
+        snprintf(buf, sizeof(buf), "%c%ld", UID_CHAR, obj_script_id(object));
         add_var(&(SCRIPT(obj)->global_vars), "lastloaded", buf, 0);
       }
 
