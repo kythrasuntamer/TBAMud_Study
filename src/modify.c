@@ -373,7 +373,7 @@ ACMD(do_skillset)
     send_to_char(ch, "Learned value expected.\r\n");
     return;
   }
-  value = atoi(buf);
+  value = tb_parse_int_or_zero(buf);
   if (value < 0) {
     send_to_char(ch, "Minimum value for learned is 0.\r\n");
     return;
@@ -534,7 +534,7 @@ void show_string(struct descriptor_data *d, char *input)
 
   /* Type the number of the page and you are there! */
   else if (isdigit(*buf))
-    d->showstr_page = MAX(0, MIN(atoi(buf) - 1, d->showstr_count - 1));
+    d->showstr_page = MAX(0, MIN(tb_parse_int_or_zero(buf) - 1, d->showstr_count - 1));
 
   else if (*buf) {
     send_to_char(d->character, "Valid commands while paging are RETURN, Q, R, B, or a numeric value.\r\n");
