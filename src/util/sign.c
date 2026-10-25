@@ -124,7 +124,7 @@ int main(int argc, char *argv[])
   char *txt;
   int desc, remaining, bytes_written, len, s, port, child;
 
-  if (argc != 3 || (port = atoi(argv[1])) < 1024) {
+  if (argc != 3 || (port = tb_parse_int_or_zero(argv[1])) < 1024) {
     tb_fprintf(stderr, "usage: %s <portnum> <\"-\" | filename>\n", argv[0]);
     exit(1);
   }
