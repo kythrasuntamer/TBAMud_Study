@@ -209,7 +209,7 @@ char *read_delete(long recipient)
   }
 
   if (!record_to_keep)
-  	sprintf(buf, "Mail system error - please report");
+  	snprintf(buf, sizeof(buf), "Mail system error - please report");
   else {
     char timestr[25], *from, *to;
 
