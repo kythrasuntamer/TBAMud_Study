@@ -12,8 +12,8 @@
 * $Date: 2004/10/11 12:07:00$
 * $Revision: 1.0.14 $
 */
-#ifndef _DG_SCRIPTS_H_
-#define _DG_SCRIPTS_H_
+#ifndef TBAMUD_DG_SCRIPTS_H_INCLUDED
+#define TBAMUD_DG_SCRIPTS_H_INCLUDED
 
 #include "utils.h" /* To make sure ACMD is defined */
 
@@ -456,4 +456,4 @@ extern int has_obj_by_uid_in_lookup_table(long uid);
 
 #define room_script_id(room)  ((long)(room)->number + ROOM_ID_BASE)
 
-#endif /* _DG_SCRIPTS_H_ */
+#endif /* TBAMUD_DG_SCRIPTS_H_INCLUDED */
