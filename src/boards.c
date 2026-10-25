@@ -419,7 +419,8 @@ void board_save_board(int board_type)
     return;
   }
   if (!(fl = fopen(FILENAME(board_type), "wb"))) {
-    perror("SYSERR: Error writing board");
+    TB_REPORT_ERRNO("fopen", FILENAME(board_type));
+    log("SYSERR: board %d could not open %s for writing", board_type, FILENAME(board_type));
     return;
   }
   tb_fwrite(&(num_of_msgs[board_type]), sizeof(int), 1, fl);
@@ -454,11 +455,19 @@ void board_load_board(int board_type)
   char *tmp1, *tmp2;
 
   if (!(fl = fopen(FILENAME(board_type), "rb"))) {
-    if (errno != ENOENT)
-      perror("SYSERR: Error reading board");
+    int saved_errno = errno;
+    if (saved_errno != ENOENT)
+      log("SYSERR: board %d could not open %s for reading: %s (errno=%d)",
+          board_type, FILENAME(board_type), strerror(saved_errno), saved_errno);
     return;
   }
   if (fread(&(num_of_msgs[board_type]), sizeof(int), 1, fl) != 1) {
+    if (ferror(fl)) {
+      int saved_errno = errno;
+      log("SYSERR: board %d failed reading message-count header from %s: %s (errno=%d)",
+          board_type, FILENAME(board_type), strerror(saved_errno), saved_errno);
+    } else
+      log("SYSERR: board %d file %s ended before message-count header", board_type, FILENAME(board_type));
     tb_fclose(fl);
     return;
   }
@@ -471,17 +480,18 @@ void board_load_board(int board_type)
   for (i = 0; i < num_of_msgs[board_type]; i++) {
     if (fread(&(msg_index[board_type][i]), sizeof(struct board_msginfo), 1, fl) != 1) {
       if (feof(fl))
-        log("SYSERR: Unexpected EOF encountered in board file %d! Resetting.", board_type);
+        log("SYSERR: Unexpected EOF in board %d file %s while loading message %d; resetting.", board_type, FILENAME(board_type), i);
       else if (ferror(fl))
-        log("SYSERR: Error reading board file %d: %s. Resetting.", board_type, strerror(errno));
+        { int saved_errno = errno; log("SYSERR: I/O error reading board %d file %s at message %d: %s (errno=%d); resetting.", board_type, FILENAME(board_type), i, strerror(saved_errno), saved_errno); }
       else
-        log("SYSERR: Error reading board file %d. Resetting.", board_type);
+        log("SYSERR: Short read in board %d file %s at message %d; resetting.", board_type, FILENAME(board_type), i);
       tb_fclose(fl);
       board_reset_board(board_type);
       return;
     }
     if ((len1 = msg_index[board_type][i].heading_len) <= 0) {
-      log("SYSERR: Board file %d corrupt!  Resetting.", board_type);
+      log("SYSERR: Board %d file %s has invalid heading length %d at message %d; resetting.",
+          board_type, FILENAME(board_type), len1, i);
       tb_fclose(fl);
       board_reset_board(board_type);
       return;
@@ -491,11 +501,11 @@ void board_load_board(int board_type)
 
     if (fread(tmp1, sizeof(char), (size_t)len1, fl) != (size_t)len1) {
       if (feof(fl))
-        log("SYSERR: Unexpected EOF encountered in board file %d! Resetting.", board_type);
+        log("SYSERR: Unexpected EOF in board %d file %s while loading message %d; resetting.", board_type, FILENAME(board_type), i);
       else if (ferror(fl))
-        log("SYSERR: Error reading board file %d: %s. Resetting.", board_type, strerror(errno));
+        { int saved_errno = errno; log("SYSERR: I/O error reading board %d file %s at message %d: %s (errno=%d); resetting.", board_type, FILENAME(board_type), i, strerror(saved_errno), saved_errno); }
       else
-        log("SYSERR: Error reading board file %d. Resetting.", board_type);
+        log("SYSERR: Short read in board %d file %s at message %d; resetting.", board_type, FILENAME(board_type), i);
       free(tmp1);
       tb_fclose(fl);
       board_reset_board(board_type);
@@ -514,11 +524,11 @@ void board_load_board(int board_type)
       CREATE(tmp2, char, len2);
       if (fread(tmp2, sizeof(char), (size_t)len2, fl) != (size_t)len2) {
         if (feof(fl))
-          log("SYSERR: Unexpected EOF encountered in board file %d! Resetting.", board_type);
+          log("SYSERR: Unexpected EOF in board %d file %s while loading message %d; resetting.", board_type, FILENAME(board_type), i);
         else if (ferror(fl))
-          log("SYSERR: Error reading board file %d: %s. Resetting.", board_type, strerror(errno));
+          { int saved_errno = errno; log("SYSERR: I/O error reading board %d file %s at message %d: %s (errno=%d); resetting.", board_type, FILENAME(board_type), i, strerror(saved_errno), saved_errno); }
         else
-          log("SYSERR: Error reading board file %d. Resetting.", board_type);
+          log("SYSERR: Short read in board %d file %s at message %d; resetting.", board_type, FILENAME(board_type), i);
         free(tmp2);
         tb_fclose(fl);
         board_reset_board(board_type);
