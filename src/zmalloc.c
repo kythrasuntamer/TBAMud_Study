@@ -41,7 +41,7 @@ static void zlogf(const char *format, ...)
     return;
 
   va_start(args, format);
-  if (vzlogf( format, args) < 0)
+  if (vfprintf(zfd, format, args) < 0)
     perror("zmalloc log");
   va_end(args);
 }
