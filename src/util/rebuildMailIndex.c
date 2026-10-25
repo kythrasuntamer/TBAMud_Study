@@ -4,6 +4,9 @@
 *  All Rights Reserved                                                    *
 ************************************************************************* */
 
+#include "conf.h"
+#include "sysdep.h"
+
 #include <stdio.h>
 #include <dirent.h>
 #include <sys/stat.h>
@@ -16,28 +19,8 @@
 
 #define READ_SIZE 256
 
-static void util_report_errno_at(const char *operation, const char *context,
-                                 int errnum, const char *source_file,
-                                 int source_line, const char *source_func)
-{
-  int caller_errno = errno;
-  fprintf(stderr,
-          "SYSERR: operation=%s context=%s error=\"%s\" errno=%d source=%s:%d function=%s\n",
-          operation ? operation : "operation",
-          context ? context : "(no context)",
-          strerror(errnum), errnum,
-          source_file ? source_file : "(unknown)",
-          source_line,
-          source_func ? source_func : "(unknown)");
-  (void)fflush(stderr);
-  errno = caller_errno;
-}
-
-#define UTIL_REPORT_ERRNO(operation, context) do { \
-  int util_saved_errno_ = errno; \
-  util_report_errno_at((operation), (context), util_saved_errno_, \
-                       __FILE__, __LINE__, __func__); \
-} while (0)
+#define UTIL_REPORT_ERRNO(operation, context) \
+  TB_REPORT_ERRNO((operation), (context))
 
 
 static long parse_long_or_zero(const char *text)
@@ -257,8 +240,8 @@ void walkdir(FILE *index_file, char *dir) {
   {
     struct stat stbuf ;
     if (snprintf(filename_qfd, sizeof(filename_qfd), "%s/%s", dir, dp->d_name) >= (int)sizeof(filename_qfd)) {
-    if (fprintf(stderr, "Path too long: %s/%s\n", dir, dp->d_name) < 0)
-      UTIL_REPORT_ERRNO("fprintf", "stderr");
+    TB_REPORT_DOMAIN_ERROR(TB_SEV_ERROR, TB_ERR_PERSISTENCE,
+                           "path-build", "mail index path exceeds buffer");
     continue;
   }
 
