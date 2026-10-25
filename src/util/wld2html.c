@@ -30,7 +30,7 @@
 
 #define CREATE(result, type, number)  do {\
 	if (!((result) = (type *) calloc ((number), sizeof(type))))\
-		{ perror("malloc failure"); abort(); } } while(0)
+		{ TB_REPORT_ERRNO("malloc", "wld2html allocation"); abort(); } } while(0)
 
 /* Exit info: used in room_data.dir_option.exit_info */
 #define EX_ISDOOR		(1 << 0)	/* Exit is a door          */
@@ -263,7 +263,7 @@ void write_output(void)
     //to use negative room numbers.
     tb_snprintf(buf, sizeof(buf), "%ld.html",(long)world[i].number);
     if (!(fl = fopen(buf, "w"))) {
-      perror("opening output file");
+      TB_REPORT_ERRNO("fopen", buf);
       exit(1);
     }
     tb_fprintf(fl, "<title> %s </title>\n", world[i].name);
@@ -319,7 +319,7 @@ void index_boot(int cnt, char **names)
   //throw first entry away as that is the executable.
   for (int i=1;i<cnt;i++) {
     if (!(db_file = fopen(names[i], "r"))) {
-      perror("error opening world file");
+      TB_REPORT_ERRNO("fopen", names[i]);
       exit(1);
     }
     //have to loop through files twice.
@@ -342,7 +342,7 @@ void index_boot(int cnt, char **names)
   //now loop through files and load them
   for (int i=1;i<cnt;i++) {
     if (!(db_file = fopen(names[i], "r"))) {
-      perror("error opening world file");
+      TB_REPORT_ERRNO("fopen", names[i]);
       exit(1);
     }
     discrete_load(db_file);
