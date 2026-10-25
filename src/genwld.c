@@ -285,7 +285,7 @@ int save_rooms(zone_rnum rzone)
 
   tb_snprintf(filename, sizeof(filename), "%s/%d.new", WLD_PREFIX, zone_table[rzone].number);
   if (!(sf = fopen(filename, "w"))) {
-    perror("SYSERR: save_rooms");
+    TB_REPORT_ERRNO("fopen", filename);
     return FALSE;
   }
 
