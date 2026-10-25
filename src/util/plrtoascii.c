@@ -169,7 +169,7 @@ void convert(char *filename)
     perror("error opening playerfile");
     exit(1);
   }
-  sprintf(index_name, "%s%s", LIB_PLRFILES, INDEX_FILE);
+  snprintf(index_name, sizeof(index_name), "%s%s", LIB_PLRFILES, INDEX_FILE);
   if (!(index_file = fopen(index_name, "w"))) {
     perror("error opening index file");
     exit(1);
@@ -368,7 +368,7 @@ int plr_filename(char *orig_name, char *filename)
     return (0);
   }
 
-  strcpy(name, orig_name);
+  strlcpy(name, orig_name, sizeof(name));
   for (ptr = name; *ptr; ptr++)
     *ptr = LOWER(*ptr);
 
