@@ -249,10 +249,25 @@ void basic_mud_vlog(const char *format, va_list args)
   if (fputs(line, target) == EOF || fflush(target) == EOF) {
     int log_errno = errno;
     if (target != stderr) {
-      (void)fprintf(stderr,
-                    "LOGGER-FAIL seq=%lu target=logfile errno=%d (%s); original follows:\n%s",
-                    seq, log_errno, strerror(log_errno), line);
-      (void)fflush(stderr);
+      char fallback[4608];
+      int fallback_len = snprintf(
+          fallback, sizeof(fallback),
+          "TBERR severity=FATAL category=BOOT operation=\"logger-write\" "
+          "context=\"primary logfile write/flush failed\" "
+          "errno=%d errno_name=%s error=\"%s\" seq=%lu original=\"%s\"\n",
+          log_errno, tb_errno_name(log_errno), strerror(log_errno), seq, line);
+
+      if (fallback_len < 0) {
+        static const char emergency[] =
+          "TBERR severity=FATAL category=BOOT operation=\"logger-write\" "
+          "context=\"logger fallback formatting failed\"\n";
+        (void)tb_diag_emit(emergency, sizeof(emergency) - 1);
+      } else {
+        size_t emit_len = (size_t)fallback_len;
+        if (emit_len >= sizeof(fallback))
+          emit_len = sizeof(fallback) - 1;
+        (void)tb_diag_emit(fallback, emit_len);
+      }
     }
   }
 
