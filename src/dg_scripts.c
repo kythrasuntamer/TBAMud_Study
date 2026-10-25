@@ -192,7 +192,7 @@ obj_data *get_object_in_equip(char_data * ch, char *name)
         if (GET_OBJ_VNUM(obj) == ovnum)
           return (obj);
   } else {
-    snprintf(tmpname, sizeof(tmpname), "%s", name);
+    tb_snprintf(tmpname, sizeof(tmpname), "%s", name);
     if (!(number = get_number(&tmp)))
       return NULL;
 
@@ -794,7 +794,7 @@ static void do_stat_trigger(struct char_data *ch, trig_data *trig)
         len += snprintf(sb + len, sizeof(sb)-len, "%s\r\n", cmd_list->cmd);
 
       if (len>MAX_STRING_LENGTH-80) {
-        snprintf(sb + len, sizeof(sb)-len, "*** Overflow - script too long! ***\r\n");
+        tb_snprintf(sb + len, sizeof(sb)-len, "*** Overflow - script too long! ***\r\n");
         break;
       }
       
@@ -811,11 +811,11 @@ void find_uid_name(char *uid, char *name, size_t nlen)
   obj_data *obj;
 
   if ((ch = get_char(uid)))
-    snprintf(name, nlen, "%s", ch->player.name);
+    tb_snprintf(name, nlen, "%s", ch->player.name);
   else if ((obj = get_obj(uid)))
-    snprintf(name, nlen, "%s", obj->name);
+    tb_snprintf(name, nlen, "%s", obj->name);
   else
-    snprintf(name, nlen, "uid = %s, (not found)", uid + 1);
+    tb_snprintf(name, nlen, "uid = %s, (not found)", uid + 1);
 }
 
 /* general function to display stats on script sc */
@@ -831,7 +831,7 @@ static void script_stat (char_data *ch, struct script_data *sc)
   send_to_char(ch, "Global context: %ld\r\n", sc->context);
 
   for (tv = sc->global_vars; tv; tv = tv->next) {
-    snprintf(namebuf, sizeof(namebuf), "%s:%ld", tv->name, tv->context);
+    tb_snprintf(namebuf, sizeof(namebuf), "%s:%ld", tv->name, tv->context);
     if (*(tv->value) == UID_CHAR) {
       find_uid_name(tv->value, name, sizeof(name));
       send_to_char(ch, "    %15s:  %s\r\n", tv->context?namebuf:tv->name, name);
@@ -1440,54 +1440,54 @@ static void eval_op(char *op, char *lhs, char *rhs, char *result, void *go,
 
   else if (!strcmp("==", op)) {
     if (is_num(lhs) && is_num(rhs))
-      snprintf(result, sizeof(result), "%d", script_int_value(lhs) == script_int_value(rhs));
+      tb_snprintf(result, sizeof(result), "%d", script_int_value(lhs) == script_int_value(rhs));
     else
-      snprintf(result, sizeof(result), "%d", !str_cmp(lhs, rhs));
+      tb_snprintf(result, sizeof(result), "%d", !str_cmp(lhs, rhs));
   }
 
   else if (!strcmp("!=", op)) {
     if (is_num(lhs) && is_num(rhs))
-      snprintf(result, sizeof(result), "%d", script_int_value(lhs) != script_int_value(rhs));
+      tb_snprintf(result, sizeof(result), "%d", script_int_value(lhs) != script_int_value(rhs));
     else
-      snprintf(result, sizeof(result), "%d", str_cmp(lhs, rhs));
+      tb_snprintf(result, sizeof(result), "%d", str_cmp(lhs, rhs));
   }
 
   else if (!strcmp("<=", op)) {
     if (is_num(lhs) && is_num(rhs))
-      snprintf(result, sizeof(result), "%d", script_int_value(lhs) <= script_int_value(rhs));
+      tb_snprintf(result, sizeof(result), "%d", script_int_value(lhs) <= script_int_value(rhs));
     else
-      snprintf(result, sizeof(result), "%d", str_cmp(lhs, rhs) <= 0);
+      tb_snprintf(result, sizeof(result), "%d", str_cmp(lhs, rhs) <= 0);
   }
 
   else if (!strcmp(">=", op)) {
     if (is_num(lhs) && is_num(rhs))
-      snprintf(result, sizeof(result), "%d", script_int_value(lhs) >= script_int_value(rhs));
+      tb_snprintf(result, sizeof(result), "%d", script_int_value(lhs) >= script_int_value(rhs));
     else
-      snprintf(result, sizeof(result), "%d", str_cmp(lhs, rhs) >= 0);
+      tb_snprintf(result, sizeof(result), "%d", str_cmp(lhs, rhs) >= 0);
   }
 
   else if (!strcmp("<", op)) {
     if (is_num(lhs) && is_num(rhs))
-      snprintf(result, sizeof(result), "%d", script_int_value(lhs) < script_int_value(rhs));
+      tb_snprintf(result, sizeof(result), "%d", script_int_value(lhs) < script_int_value(rhs));
     else
-      snprintf(result, sizeof(result), "%d", str_cmp(lhs, rhs) < 0);
+      tb_snprintf(result, sizeof(result), "%d", str_cmp(lhs, rhs) < 0);
   }
 
   else if (!strcmp(">", op)) {
     if (is_num(lhs) && is_num(rhs))
-      snprintf(result, sizeof(result), "%d", script_int_value(lhs) > script_int_value(rhs));
+      tb_snprintf(result, sizeof(result), "%d", script_int_value(lhs) > script_int_value(rhs));
     else
-      snprintf(result, sizeof(result), "%d", str_cmp(lhs, rhs) > 0);
+      tb_snprintf(result, sizeof(result), "%d", str_cmp(lhs, rhs) > 0);
   }
 
   else if (!strcmp("/=", op))
-    snprintf(result, sizeof(result), "%c", str_str(lhs, rhs) ? '1' : '0');
+    tb_snprintf(result, sizeof(result), "%c", str_str(lhs, rhs) ? '1' : '0');
 
   else if (!strcmp("*", op)) {
     lhs_num = script_int_value(lhs);
     rhs_num = script_int_value(rhs);
     arithmetic = (long long)lhs_num * (long long)rhs_num;
-    snprintf(result, sizeof(result), "%d", clamp_script_int(arithmetic));
+    tb_snprintf(result, sizeof(result), "%d", clamp_script_int(arithmetic));
   }
 
   else if (!strcmp("/", op)) {
@@ -1497,7 +1497,7 @@ static void eval_op(char *op, char *lhs, char *rhs, char *result, void *go,
       strlcpy(result, "0", sizeof(result));
     else {
       arithmetic = (long long)lhs_num / (long long)rhs_num;
-      snprintf(result, sizeof(result), "%d", clamp_script_int(arithmetic));
+      tb_snprintf(result, sizeof(result), "%d", clamp_script_int(arithmetic));
     }
   }
 
@@ -1505,21 +1505,21 @@ static void eval_op(char *op, char *lhs, char *rhs, char *result, void *go,
     lhs_num = script_int_value(lhs);
     rhs_num = script_int_value(rhs);
     arithmetic = (long long)lhs_num + (long long)rhs_num;
-    snprintf(result, sizeof(result), "%d", clamp_script_int(arithmetic));
+    tb_snprintf(result, sizeof(result), "%d", clamp_script_int(arithmetic));
   }
 
   else if (!strcmp("-", op)) {
     lhs_num = script_int_value(lhs);
     rhs_num = script_int_value(rhs);
     arithmetic = (long long)lhs_num - (long long)rhs_num;
-    snprintf(result, sizeof(result), "%d", clamp_script_int(arithmetic));
+    tb_snprintf(result, sizeof(result), "%d", clamp_script_int(arithmetic));
   }
 
   else if (!strcmp("!", op)) {
     if (is_num(rhs))
-      snprintf(result, sizeof(result), "%d", !script_int_value(rhs));
+      tb_snprintf(result, sizeof(result), "%d", !script_int_value(rhs));
     else
-      snprintf(result, sizeof(result), "%d", !*rhs);
+      tb_snprintf(result, sizeof(result), "%d", !*rhs);
   }
 }
 
@@ -2098,7 +2098,7 @@ static void makeuid_var(void *go, struct script_data *sc, trig_data *trig,
     char result[MAX_INPUT_LENGTH];
 
     eval_expr(arg, result, go, sc, trig, type);
-    snprintf(uid, sizeof(uid), "%c%s", UID_CHAR, result);
+    tb_snprintf(uid, sizeof(uid), "%c%s", UID_CHAR, result);
   } else { /* a lot more work without it */
     if (!*name) {
       script_log("Trigger: %s, VNum %d. makeuid needs name: '%s'",
@@ -2120,7 +2120,7 @@ static void makeuid_var(void *go, struct script_data *sc, trig_data *trig,
           break;
       }
       if (c)
-        snprintf(uid, sizeof(uid), "%c%ld", UID_CHAR, char_script_id(c));
+        tb_snprintf(uid, sizeof(uid), "%c%ld", UID_CHAR, char_script_id(c));
     } else if (is_abbrev(arg, "obj")) {
       struct obj_data *o = NULL;
       switch (type) {
@@ -2138,7 +2138,7 @@ static void makeuid_var(void *go, struct script_data *sc, trig_data *trig,
           break;
       }
       if (o)
-        snprintf(uid, sizeof(uid), "%c%ld", UID_CHAR, obj_script_id(o));
+        tb_snprintf(uid, sizeof(uid), "%c%ld", UID_CHAR, obj_script_id(o));
     } else if (is_abbrev(arg, "room")) {
       room_rnum r = NOWHERE;
       switch (type) {
@@ -2153,7 +2153,7 @@ static void makeuid_var(void *go, struct script_data *sc, trig_data *trig,
           break;
       }
       if (r != NOWHERE)
-        snprintf(uid, sizeof(uid), "%c%ld", UID_CHAR, room_script_id(world + r));
+        tb_snprintf(uid, sizeof(uid), "%c%ld", UID_CHAR, room_script_id(world + r));
     } else {
       script_log("Trigger: %s, VNum %d. makeuid syntax error: '%s'",
             GET_TRIG_NAME(trig), GET_TRIG_VNUM(trig), cmd);
@@ -2988,7 +2988,7 @@ void read_saved_vars(struct char_data *ch)
   } while( !feof(file) );
 
   /* close the file and return */
-  fclose(file);
+  tb_fclose(file);
 }
 
 /* save a characters variables out to disk */
@@ -3023,11 +3023,11 @@ void save_char_vars(struct char_data *ch)
    * future. */
   while (vars) {
     if (*vars->name != '-') /* don't save if it begins with - */
-      fprintf(file, "%s %ld %s\n", vars->name, vars->context, vars->value);
+      tb_fprintf(file, "%s %ld %s\n", vars->name, vars->context, vars->value);
     vars = vars->next;
   }
 
-  fclose(file);
+  tb_fclose(file);
 }
 
 /* load in a character's saved variables from an ASCII pfile*/
@@ -3087,11 +3087,11 @@ void save_char_vars_ascii(FILE *file, struct char_data *ch)
       count++;
 
   if (count != 0) {
-	  fprintf(file, "Vars: %d\n", count);
+	  tb_fprintf(file, "Vars: %d\n", count);
 
   for (vars = ch->script->global_vars;vars;vars = vars->next)
     if (*vars->name != '-') /* don't save if it begins with - */
-      fprintf(file, "%s %ld %s\n", vars->name, vars->context, vars->value);
+      tb_fprintf(file, "%s %ld %s\n", vars->name, vars->context, vars->value);
   }
 }
 
