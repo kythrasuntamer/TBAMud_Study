@@ -360,7 +360,7 @@ ACMD(do_export_zone)
     return; 
   } 
 
-  zvnum = atoi(argument); 
+  zvnum = tb_parse_int_or_zero(argument); 
   zrnum = real_zone(zvnum); 
 
   if (zrnum == NOWHERE) { 
