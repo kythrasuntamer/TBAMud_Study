@@ -45,8 +45,11 @@ char *fread_string(FILE * fl, const char *error)
       *(point - 1) = '\0';
   } while (!flag);
 
-  CREATE(rslt, char, strlen(buf) + 1);
-  strlcpy(rslt, buf, strlen(buf) + 1);
+  {
+    size_t result_size = strlen(buf) + 1;
+    CREATE(rslt, char, result_size);
+    memcpy(rslt, buf, result_size);
+  }
   return rslt;
 }
 
