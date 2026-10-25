@@ -459,13 +459,17 @@ SPECIAL(king_welmar)
     break;
 
   case 'o':
-    do_gen_door(ch, strlcpy(actbuf, "door"), 0, SCMD_UNLOCK, sizeof(actbuf));	/* strcpy: OK */
-    do_gen_door(ch, strlcpy(actbuf, "door"), 0, SCMD_OPEN, sizeof(actbuf));	/* strcpy: OK */
+    strlcpy(actbuf, "door", sizeof(actbuf));
+    do_gen_door(ch, actbuf, 0, SCMD_UNLOCK);	/* strcpy: OK */
+    strlcpy(actbuf, "door", sizeof(actbuf));
+    do_gen_door(ch, actbuf, 0, SCMD_OPEN);	/* strcpy: OK */
     break;
 
   case 'c':
-    do_gen_door(ch, strlcpy(actbuf, "door"), 0, SCMD_CLOSE, sizeof(actbuf));	/* strcpy: OK */
-    do_gen_door(ch, strlcpy(actbuf, "door"), 0, SCMD_LOCK, sizeof(actbuf));	/* strcpy: OK */
+    strlcpy(actbuf, "door", sizeof(actbuf));
+    do_gen_door(ch, actbuf, 0, SCMD_CLOSE);	/* strcpy: OK */
+    strlcpy(actbuf, "door", sizeof(actbuf));
+    do_gen_door(ch, actbuf, 0, SCMD_LOCK);	/* strcpy: OK */
     break;
 
   case '.':
@@ -590,7 +594,8 @@ static int castle_twin_proc(struct char_data *ch, int cmd, char *arg, int ctlnum
     char actbuf[MAX_INPUT_LENGTH];
 
     if (!ch->master)
-      do_follow(ch, strlcpy(actbuf, "King Welmar"), 0, 0, sizeof(actbuf));	/* strcpy: OK */
+      strlcpy(actbuf, "King Welmar", sizeof(actbuf));
+      do_follow(ch, actbuf, 0, 0);	/* strcpy: OK */
     if (FIGHTING(king))
       do_npc_rescue(ch, king);
   }
