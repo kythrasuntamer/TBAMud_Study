@@ -7,8 +7,8 @@
 * 
 * This set of code was not originally part of the circlemud distribution.                                                                                       
 */
-#ifndef _IMPROVED_EDIT_H_
-#define _IMPROVED_EDIT_H_
+#ifndef TBAMUD_IMPROVED_EDIT_H_INCLUDED
+#define TBAMUD_IMPROVED_EDIT_H_INCLUDED
 
 /* This is here to allow different code for the basic and improved editor. If 
  * you do not wish to use the improved editor, put #if 0 below, otherwise you 
@@ -43,4 +43,4 @@ void send_editor_help(struct descriptor_data *d);
 /* Settings for formatter. */
 #define FORMAT_INDENT	(1 << 0)
 
-#endif /* _IMPROVED_EDIT_H_ */
+#endif /* TBAMUD_IMPROVED_EDIT_H_INCLUDED */
