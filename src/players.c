@@ -79,7 +79,7 @@ void build_player_index(void)
     sscanf(line, "%ld %s %d %s %ld", &player_table[i].id, arg2,
       &player_table[i].level, bits, (long *)&player_table[i].last);
     CREATE(player_table[i].name, char, strlen(arg2) + 1);
-    strcpy(player_table[i].name, arg2);
+    strlcpy(player_table[i].name, arg2, strlen(arg2) + 1);
     player_table[i].flags = asciiflag_conv(bits);
     top_idnum = MAX(top_idnum, player_table[i].id);
   }
@@ -409,7 +409,7 @@ int load_char(const char *name, struct char_data *ch)
 
       case 'P':
        if (!strcmp(tag, "Page"))  GET_PAGE_LENGTH(ch) = tb_parse_int_or_zero(line);
-	else if (!strcmp(tag, "Pass"))	strcpy(GET_PASSWD(ch), line);
+	else if (!strcmp(tag, "Pass"))\tstrlcpy(GET_PASSWD(ch), line, MAX_PWD_LENGTH + 1);
 	else if (!strcmp(tag, "Plyd"))	ch->player.time.played	= tb_parse_int_or_zero(line);
 	else if (!strcmp(tag, "PfIn"))	POOFIN(ch)		= strdup(line);
 	else if (!strcmp(tag, "PfOt"))	POOFOUT(ch)		= strdup(line);
