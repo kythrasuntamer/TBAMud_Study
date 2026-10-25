@@ -317,11 +317,18 @@ void cedit_save_to_disk( void )
 int save_config( IDXTYPE nowhere )
 {
   FILE *fl;
-  char buf[MAX_STRING_LENGTH];
+  char buf[MAX_STRING_LENGTH], temp_file[MAX_STRING_LENGTH];
+  int name_result;
 
-  if (!(fl = fopen(CONFIG_CONFFILE, "w"))) {
-    TB_REPORT_ERRNO("fopen", CONFIG_CONFFILE);
-    return (FALSE);
+  name_result = snprintf(temp_file, sizeof(temp_file), "%s.tmp", CONFIG_CONFFILE);
+  if (name_result < 0 || (size_t)name_result >= sizeof(temp_file)) {
+    log("SYSERR: config temporary filename is too long for %s", CONFIG_CONFFILE);
+    return FALSE;
+  }
+
+  if (!(fl = fopen(temp_file, "w"))) {
+    TB_REPORT_ERRNO("fopen", temp_file);
+    return FALSE;
   }
 
   tb_fprintf(fl,
@@ -569,12 +576,23 @@ int save_config( IDXTYPE nowhere )
               "debug_mode = %d\n\n",
               CONFIG_DEBUG_MODE);
 
-  tb_fclose(fl);
+  {
+    int flush_ok = tb_fflush_checked(fl, temp_file);
+    int close_ok = tb_fclose_checked(fl, temp_file);
+    if (!flush_ok || !close_ok) {
+      if (remove(temp_file) != 0 && errno != ENOENT)
+        TB_REPORT_ERRNO("remove", temp_file);
+      return FALSE;
+    }
+  }
+
+  if (!tb_replace_file_checked(temp_file, CONFIG_CONFFILE))
+    return FALSE;
 
   if (in_save_list(NOWHERE, SL_CFG))
     remove_from_save_list(NOWHERE, SL_CFG);
 
-  return (TRUE);
+  return TRUE;
 }
 
 /* Menu functions - The main menu. */
