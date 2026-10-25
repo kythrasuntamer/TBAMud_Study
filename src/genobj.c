@@ -298,12 +298,20 @@ int save_objects(zone_rnum zone_num)
     }
   }
 
-  /* Write the final line, close the file. */
+  /* Write the final line and commit only a fully flushed temporary file. */
   tb_fprintf(fp, "$~\n");
-  tb_fclose(fp);
+  {
+    int flush_ok = tb_fflush_checked(fp, filename);
+    int close_ok = tb_fclose_checked(fp, filename);
+    if (!flush_ok || !close_ok) {
+      if (remove(filename) != 0 && errno != ENOENT)
+        TB_REPORT_ERRNO("remove", filename);
+      return FALSE;
+    }
+  }
   tb_snprintf(buf, sizeof(buf), "%s/%d.obj", OBJ_PREFIX, zone_table[zone_num].number);
-  remove(buf);
-  rename(filename, buf);
+  if (!tb_replace_file_checked(filename, buf))
+    return FALSE;
 
   if (in_save_list(zone_table[zone_num].number, SL_OBJ))
     remove_from_save_list(zone_table[zone_num].number, SL_OBJ);
