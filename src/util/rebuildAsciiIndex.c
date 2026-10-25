@@ -9,11 +9,31 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <string.h>
+#include <stdlib.h>
+#include <errno.h>
+#include <limits.h>
 
 #define READ_SIZE 256
 
-int atoi(const char *str);
-long atol(const char *str);
+static long parse_long_or_zero(const char *text)
+{
+  char *end = NULL;
+  long value;
+
+  if (text == NULL)
+    return 0;
+  errno = 0;
+  value = strtol(text, &end, 10);
+  if (end == text || errno == ERANGE)
+    return 0;
+  return value;
+}
+
+static int parse_int_or_zero(const char *text)
+{
+  long value = parse_long_or_zero(text);
+  return (value < INT_MIN || value > INT_MAX) ? 0 : (int)value;
+}
 
 
 void walkdir(FILE* index_file, char *dir);
@@ -32,8 +52,8 @@ int main(int argc, char** argv)
   }
 	walkdir(index_file, ".");
 
-  fprintf(index_file, "~\n");
-  fclose(index_file);
+  if (fprintf(index_file, "~\n") < 0) perror("write index");
+  if (fclose(index_file) != 0) perror("close index");
  	return 0;
 }
 
@@ -66,18 +86,18 @@ char *findLine(FILE *plr_file, char *tag) {
 
 long parseid(FILE *plr_file) {
   char *value = findLine(plr_file, "Id  :");
-  return value ? atol(value) : 0;
+  return value ? parse_long_or_zero(value) : 0;
 }
 
 int parselevel(FILE *plr_file) {
   char *value = findLine(plr_file, "Levl:");
-  return value ? atoi(value) : 0;
+  return value ? parse_int_or_zero(value) : 0;
 }
 
 int parseadminlevel(FILE *plr_file, int level) {
 	char *fromFile = findLine(plr_file, "Admn:");
 	if (fromFile != NULL)
-		return atoi(fromFile);
+		return parse_int_or_zero(fromFile);
 
 	if (level >= 30)
 		return level-30;
@@ -87,7 +107,7 @@ int parseadminlevel(FILE *plr_file, int level) {
 
 long parselast(FILE *plr_file) {
   char *value = findLine(plr_file, "Last:");
-  return value ? atol(value) : 0;
+  return value ? parse_long_or_zero(value) : 0;
 }
 
 
@@ -106,7 +126,7 @@ void walkdir(FILE *index_file, char *dir) {
 	  struct stat stbuf ;
 	  snprintf(filename_qfd, sizeof(filename_qfd), "%s/%s",dir,dp->d_name);
 	  if( stat(filename_qfd,&stbuf ) == -1 ) {
-   		fprintf(stdout, "Unable to stat file: %s\n",filename_qfd) ;
+   		if (fprintf(stdout, "Unable to stat file: %s\n", filename_qfd) < 0) perror("stdout");
    		continue ;
   	}
 
@@ -134,10 +154,12 @@ void walkdir(FILE *index_file, char *dir) {
 
  				fprintf(index_file, "%ld %s %d %d 0 %ld\n", id, name, level, adminlevel, last);
 
-        fclose(plr_file);
+        if (fclose(plr_file) != 0) perror("close player file");
   		}
   	}
  	}
+  if (closedir(dfd) != 0)
+    perror("closedir");
 }
 
 int get_line(FILE *fl, char *buf)
@@ -157,6 +179,6 @@ int get_line(FILE *fl, char *buf)
   while (sl > 0 && (temp[sl - 1] == '\n' || temp[sl - 1] == '\r'))
     temp[--sl] = '\0';
 
-  strcpy(buf, temp); /* strcpy: OK, if buf >= READ_SIZE (256) */
+  memcpy(buf, temp, strlen(temp) + 1);
   return (lines);
 }
