@@ -206,14 +206,14 @@ int save_quests(zone_rnum zone_num)
     qst_rnum rnum;
     if ((rnum = real_quest(i)) != NOTHING) {
       /* Copy the text strings and strip off trailing newlines. */
-      strncpy(quest_desc, QST_DESC(rnum) ? QST_DESC(rnum) : "undefined",
-              sizeof(quest_desc)-1 );
-      strncpy(quest_info, QST_INFO(rnum) ? QST_INFO(rnum) : "undefined",
-              sizeof(quest_info)-1 );
-      strncpy(quest_done, QST_DONE(rnum) ? QST_DONE(rnum) : "undefined",
-              sizeof(quest_done)-1 );
-      strncpy(quest_quit, QST_QUIT(rnum) ? QST_QUIT(rnum) : "undefined",
-              sizeof(quest_quit)-1 );
+      strlcpy(quest_desc, QST_DESC(rnum) ? QST_DESC(rnum) : "undefined",
+              sizeof(quest_desc));
+      strlcpy(quest_info, QST_INFO(rnum) ? QST_INFO(rnum) : "undefined",
+              sizeof(quest_info));
+      strlcpy(quest_done, QST_DONE(rnum) ? QST_DONE(rnum) : "undefined",
+              sizeof(quest_done));
+      strlcpy(quest_quit, QST_QUIT(rnum) ? QST_QUIT(rnum) : "undefined",
+              sizeof(quest_quit));
       strip_cr(quest_desc);
       strip_cr(quest_info);
       strip_cr(quest_done);
