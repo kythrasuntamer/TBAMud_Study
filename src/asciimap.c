@@ -323,13 +323,15 @@ static void MapArea(room_rnum room, struct char_data *ch, int x, int y, int min,
       switch (door) {
       case NORTH:
         prospect_xpos = ns_size;
-        /* fall through: NORTH also needs the north/south Y position. */
+        prospect_ypos = world[prospect_room].dir_option[rev_dir[door]] ? y_exit_pos : ew_size/2;
+        break;
       case SOUTH:
         prospect_ypos = world[prospect_room].dir_option[rev_dir[door]] ? y_exit_pos : ew_size/2;
-      break;
+        break;
       case WEST:
         prospect_ypos = ew_size;
-        /* fall through: WEST also needs the east/west X position. */
+        prospect_xpos = world[prospect_room].dir_option[rev_dir[door]] ? x_exit_pos : ns_size/2;
+        break;
       case EAST:
         prospect_xpos = world[prospect_room].dir_option[rev_dir[door]] ? x_exit_pos : ns_size/2;
         break;
