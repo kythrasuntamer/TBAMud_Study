@@ -100,7 +100,8 @@ char *parsefilename(char *filename) {
 /* Search file for a specific tag line, return text after tag, or NULL if not found */
 char *findLine(FILE *plr_file, char *tag) {
 	static char line[5000];
-	rewind(plr_file);
+	if (fseek(plr_file, 0L, SEEK_SET) != 0)
+		return NULL;
 
 	while (get_line(plr_file, line)) {
 		if(!strncmp(tag, line, strlen(tag))) {
