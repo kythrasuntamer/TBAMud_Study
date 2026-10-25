@@ -11,8 +11,8 @@
 * CircleMUD is based on DikuMUD, Copyright (C) 1990, 1991.
 * 
 */
-#ifndef _SPEC_PROCS_H_
-#define _SPEC_PROCS_H_
+#ifndef TBAMUD_SPEC_PROCS_H_INCLUDED
+#define TBAMUD_SPEC_PROCS_H_INCLUDED
 
 /*****************************************************************************
  * Begin Functions and defines for castle.c 
@@ -51,4 +51,4 @@ SPECIAL(cityguard);
 SPECIAL(pet_shops);
 SPECIAL(bank);
 
-#endif /* _SPEC_PROCS_H_ */
+#endif /* TBAMUD_SPEC_PROCS_H_INCLUDED */
