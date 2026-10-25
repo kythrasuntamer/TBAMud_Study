@@ -202,25 +202,107 @@ int strn_cmp(const char *arg1, const char *arg2, int n)
  * @param args The comma delimited, variable substitutions to make in str. */
 void basic_mud_vlog(const char *format, va_list args)
 {
-  time_t ct = time(0);
-  char timestr[21];
-  int i;
-  
-  if (logfile == NULL) {
-    puts("SYSERR: Using log() before stream was initialized!");
-    return;
-  }
+  static unsigned long log_sequence = 0;
+  time_t ct;
+  struct tm *tm_info;
+  char timestr[32];
+  char message[MAX_STRING_LENGTH];
+  char line[MAX_STRING_LENGTH + 96];
+  FILE *target;
+  int incoming_errno = errno;
+  int message_len, line_len;
+  unsigned long seq = ++log_sequence;
 
   if (format == NULL)
     format = "SYSERR: log() received a NULL format.";
 
-  for (i=0;i<21;i++) timestr[i]=0;
-  tb_strftime(timestr, sizeof(timestr), "%b %d %H:%M:%S %Y", localtime(&ct));
+  message_len = vsnprintf(message, sizeof(message), format, args);
+  if (message_len < 0) {
+    strlcpy(message, "SYSERR: log formatting failed.", sizeof(message));
+  } else if ((size_t)message_len >= sizeof(message)) {
+    static const char trunc[] = "...[TRUNCATED]";
+    size_t tlen = sizeof(trunc) - 1;
+    if (sizeof(message) > tlen + 1)
+      memcpy(message + sizeof(message) - tlen - 1, trunc, tlen + 1);
+  }
 
-  tb_fprintf(logfile, "%-20.20s :: ", timestr);
-  vfprintf(logfile, format, args);
-  tb_fputc('\n', logfile);
-  tb_fflush(logfile);
+  ct = time(NULL);
+  tm_info = localtime(&ct);
+  if (tm_info == NULL ||
+      strftime(timestr, sizeof(timestr), "%Y-%m-%dT%H:%M:%S%z", tm_info) == 0)
+    strlcpy(timestr, "time-unavailable", sizeof(timestr));
+
+  line_len = snprintf(line, sizeof(line), "%s seq=%lu :: %s\n",
+                      timestr, seq, message);
+  if (line_len < 0) {
+    strlcpy(line,
+            "time-unavailable seq=? :: SYSERR: log line formatting failed.\n",
+            sizeof(line));
+  } else if ((size_t)line_len >= sizeof(line)) {
+    static const char trunc[] = "...[TRUNCATED]\n";
+    size_t tlen = sizeof(trunc) - 1;
+    if (sizeof(line) > tlen + 1)
+      memcpy(line + sizeof(line) - tlen - 1, trunc, tlen + 1);
+  }
+
+  target = logfile ? logfile : stderr;
+  if (fputs(line, target) == EOF || fflush(target) == EOF) {
+    int log_errno = errno;
+    if (target != stderr) {
+      (void)fprintf(stderr,
+                    "LOGGER-FAIL seq=%lu target=logfile errno=%d (%s); original follows:\n%s",
+                    seq, log_errno, strerror(log_errno), line);
+      (void)fflush(stderr);
+    }
+  }
+
+  errno = incoming_errno;
+}
+
+void tb_error_log_at(const char *severity, const char *subsystem,
+                     const char *operation, const char *resource, int errnum,
+                     const char *source_file, int source_line,
+                     const char *source_func, const char *detail_fmt, ...)
+{
+  char detail[MAX_STRING_LENGTH / 2];
+  va_list args;
+  int incoming_errno = errno;
+
+  if (detail_fmt != NULL) {
+    int n;
+
+    va_start(args, detail_fmt);
+    n = vsnprintf(detail, sizeof(detail), detail_fmt, args);
+    va_end(args);
+
+    if (n < 0)
+      strlcpy(detail, "detail-formatting-failed", sizeof(detail));
+    else if ((size_t)n >= sizeof(detail))
+      strlcpy(detail + sizeof(detail) - sizeof("...[TRUNCATED]"),
+              "...[TRUNCATED]", sizeof("...[TRUNCATED]"));
+  } else {
+    strlcpy(detail, "(no detail)", sizeof(detail));
+  }
+
+  if (errnum != 0)
+    basic_mud_log("%s subsystem=%s op=%s resource=%s errno=%d error=\"%s\" at=%s:%d function=%s detail=\"%s\"",
+                  severity ? severity : "ERROR",
+                  subsystem ? subsystem : "unknown",
+                  operation ? operation : "unknown",
+                  resource ? resource : "(none)",
+                  errnum, strerror(errnum),
+                  source_file ? source_file : "(unknown)", source_line,
+                  source_func ? source_func : "(unknown)", detail);
+  else
+    basic_mud_log("%s subsystem=%s op=%s resource=%s at=%s:%d function=%s detail=\"%s\"",
+                  severity ? severity : "ERROR",
+                  subsystem ? subsystem : "unknown",
+                  operation ? operation : "unknown",
+                  resource ? resource : "(none)",
+                  source_file ? source_file : "(unknown)", source_line,
+                  source_func ? source_func : "(unknown)", detail);
+
+  errno = incoming_errno;
 }
 
 /** Log messages directly to syslog on disk, no display to in game immortals.

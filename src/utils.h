@@ -38,6 +38,24 @@
  * are made available with the function definition. */
 void basic_mud_log(const char *format, ...) __attribute__ ((format (printf, 1, 2)));
 void basic_mud_vlog(const char *format, va_list args);
+void tb_error_log_at(const char *severity, const char *subsystem,
+                     const char *operation, const char *resource, int errnum,
+                     const char *source_file, int source_line,
+                     const char *source_func, const char *detail_fmt, ...)
+                     __attribute__ ((format (printf, 9, 10)));
+
+#define TB_ERROR_LOG(severity, subsystem, operation, resource, errnum, ...) \
+  tb_error_log_at((severity), (subsystem), (operation), (resource), (errnum), \
+                  __FILE__, __LINE__, __func__, __VA_ARGS__)
+
+#define TB_ERROR_ERRNO(subsystem, operation, resource, ...) do { \
+  int tb_error_saved_errno_ = errno; \
+  TB_ERROR_LOG("ERROR", (subsystem), (operation), (resource), \
+               tb_error_saved_errno_, __VA_ARGS__); \
+} while (0)
+
+#define TB_ERROR_MSG(subsystem, operation, resource, ...) \
+  TB_ERROR_LOG("ERROR", (subsystem), (operation), (resource), 0, __VA_ARGS__)
 int touch(const char *path);
 void mudlog(int type, int level, int file, const char *str, ...) __attribute__ ((format (printf, 4, 5)));
 int	rand_number(int from, int to);

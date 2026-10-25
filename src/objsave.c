@@ -58,11 +58,37 @@ int objsave_save_obj_record(struct obj_data *obj, FILE *fp, int locate)
   char buf1[MAX_STRING_LENGTH +1];
   struct obj_data *temp = NULL;
 
+#define OBJSAVE_PRINT(...) do { \
+  if (fprintf(fp, __VA_ARGS__) < 0) { \
+    int objsave_errno_ = errno; \
+    TB_ERROR_LOG("ERROR", "objsave", "fprintf", "rent-object-record", \
+                 objsave_errno_, "object_vnum=%d locate=%d", \
+                 GET_OBJ_VNUM(obj), locate); \
+    if (temp != NULL) \
+      extract_obj(temp); \
+    return 0; \
+  } \
+} while (0)
+
+  if (obj == NULL || fp == NULL) {
+    TB_ERROR_MSG("objsave", "write-record", "rent-object-record",
+                 "invalid argument obj=%p fp=%p", (void *)obj, (void *)fp);
+    return 0;
+  }
+
   if (GET_OBJ_VNUM(obj) != NOTHING)
-    temp=read_object(GET_OBJ_VNUM(obj), VIRTUAL);
+    temp = read_object(GET_OBJ_VNUM(obj), VIRTUAL);
   else {
     temp = create_obj();
-    temp->item_number = NOWHERE;
+    if (temp != NULL)
+      temp->item_number = NOWHERE;
+  }
+
+  if (temp == NULL) {
+    TB_ERROR_MSG("objsave", "load-prototype", "rent-object-record",
+                 "unable to obtain comparison object for vnum=%d",
+                 GET_OBJ_VNUM(obj));
+    return 0;
   }
 
   if (obj->action_description) {
@@ -72,14 +98,14 @@ int objsave_save_obj_record(struct obj_data *obj, FILE *fp, int locate)
   } else
     *buf1 = 0;
 
-  tb_fprintf(fp, "#%d\n", GET_OBJ_VNUM(obj));
+  OBJSAVE_PRINT( "#%d\n", GET_OBJ_VNUM(obj));
   if (locate)
-    tb_fprintf(fp, "Loc : %d\n", locate);
+    OBJSAVE_PRINT( "Loc : %d\n", locate);
   if (GET_OBJ_VAL(obj, 0) != GET_OBJ_VAL(temp, 0) ||
       GET_OBJ_VAL(obj, 1) != GET_OBJ_VAL(temp, 1) ||
       GET_OBJ_VAL(obj, 2) != GET_OBJ_VAL(temp, 2) ||
       GET_OBJ_VAL(obj, 3) != GET_OBJ_VAL(temp, 3))
-    tb_fprintf(fp,
+    OBJSAVE_PRINT(
              "Vals: %d %d %d %d\n",
              GET_OBJ_VAL(obj, 0),
              GET_OBJ_VAL(obj, 1),
@@ -87,43 +113,43 @@ int objsave_save_obj_record(struct obj_data *obj, FILE *fp, int locate)
              GET_OBJ_VAL(obj, 3)
              );
   if (GET_OBJ_EXTRA(obj) != GET_OBJ_EXTRA(temp))
-    tb_fprintf(fp, "Flag: %d %d %d %d\n", GET_OBJ_EXTRA(obj)[0], GET_OBJ_EXTRA(obj)[1], GET_OBJ_EXTRA(obj)[2], GET_OBJ_EXTRA(obj)[3]);
+    OBJSAVE_PRINT( "Flag: %d %d %d %d\n", GET_OBJ_EXTRA(obj)[0], GET_OBJ_EXTRA(obj)[1], GET_OBJ_EXTRA(obj)[2], GET_OBJ_EXTRA(obj)[3]);
 
 #define TEST_OBJS(obj1, obj2, field) ((!((obj1)->field) || !((obj2)->field) || \
                                       strcmp((obj1)->field, (obj2)->field)))
 #define TEST_OBJN(field) (obj->obj_flags.field != temp->obj_flags.field)
 
   if (TEST_OBJS(obj, temp, name))
-    tb_fprintf(fp, "Name: %s\n", obj->name ? obj->name : "Undefined");
+    OBJSAVE_PRINT( "Name: %s\n", obj->name ? obj->name : "Undefined");
   if (TEST_OBJS(obj, temp, short_description))
-    tb_fprintf(fp, "Shrt: %s\n", obj->short_description ? obj->short_description : "Undefined");
+    OBJSAVE_PRINT( "Shrt: %s\n", obj->short_description ? obj->short_description : "Undefined");
 
   /* These two could be a pain on the read... we'll see... */
   if (TEST_OBJS(obj, temp, description))
-    tb_fprintf(fp, "Desc: %s\n", obj->description ? obj->description : "Undefined");
+    OBJSAVE_PRINT( "Desc: %s\n", obj->description ? obj->description : "Undefined");
 
   /* Only even try to process this if an action desc exists */
   if (obj->action_description || temp->action_description)
     if (TEST_OBJS(obj, temp, action_description))
-      tb_fprintf(fp, "ADes:\n%s~\n", buf1);
+      OBJSAVE_PRINT( "ADes:\n%s~\n", buf1);
 
   if (TEST_OBJN(type_flag))
-    tb_fprintf(fp, "Type: %d\n", GET_OBJ_TYPE(obj));
+    OBJSAVE_PRINT( "Type: %d\n", GET_OBJ_TYPE(obj));
   if (TEST_OBJN(weight))
-    tb_fprintf(fp, "Wght: %d\n", GET_OBJ_WEIGHT(obj));
+    OBJSAVE_PRINT( "Wght: %d\n", GET_OBJ_WEIGHT(obj));
   if (TEST_OBJN(cost))
-    tb_fprintf(fp, "Cost: %d\n", GET_OBJ_COST(obj));
+    OBJSAVE_PRINT( "Cost: %d\n", GET_OBJ_COST(obj));
   if (TEST_OBJN(cost_per_day))
-    tb_fprintf(fp, "Rent: %d\n", GET_OBJ_RENT(obj));
+    OBJSAVE_PRINT( "Rent: %d\n", GET_OBJ_RENT(obj));
   if (TEST_OBJN(bitvector))
-    tb_fprintf(fp, "Perm: %d %d %d %d\n", GET_OBJ_AFFECT(obj)[0], GET_OBJ_AFFECT(obj)[1], GET_OBJ_AFFECT(obj)[2], GET_OBJ_AFFECT(obj)[3]);
+    OBJSAVE_PRINT( "Perm: %d %d %d %d\n", GET_OBJ_AFFECT(obj)[0], GET_OBJ_AFFECT(obj)[1], GET_OBJ_AFFECT(obj)[2], GET_OBJ_AFFECT(obj)[3]);
   if (TEST_OBJN(wear_flags))
-    tb_fprintf(fp, "Wear: %d %d %d %d\n", GET_OBJ_WEAR(obj)[0], GET_OBJ_WEAR(obj)[1], GET_OBJ_WEAR(obj)[2], GET_OBJ_WEAR(obj)[3]);
+    OBJSAVE_PRINT( "Wear: %d %d %d %d\n", GET_OBJ_WEAR(obj)[0], GET_OBJ_WEAR(obj)[1], GET_OBJ_WEAR(obj)[2], GET_OBJ_WEAR(obj)[3]);
 
   /* Do we have affects? */
   for (counter2 = 0; counter2 < MAX_OBJ_AFFECT; counter2++)
     if (obj->affected[counter2].modifier != temp->affected[counter2].modifier)
-      tb_fprintf(fp, "Aff : %d %d %d\n",
+      OBJSAVE_PRINT( "Aff : %d %d %d\n",
                counter2,
                obj->affected[counter2].location,
                obj->affected[counter2].modifier
@@ -143,7 +169,7 @@ int objsave_save_obj_record(struct obj_data *obj, FILE *fp, int locate)
         }
         strlcpy(buf1, ex_desc->description, sizeof(buf1));
         strip_cr(buf1);
-        tb_fprintf(fp, "EDes:\n"
+        OBJSAVE_PRINT( "EDes:\n"
                  "%s~\n"
                  "%s~\n",
                  ex_desc->keyword,
@@ -153,10 +179,11 @@ int objsave_save_obj_record(struct obj_data *obj, FILE *fp, int locate)
     }
   }
 
-  tb_fprintf(fp, "\n");
+  OBJSAVE_PRINT( "\n");
 
   extract_obj(temp);
 
+#undef OBJSAVE_PRINT
   return 1;
 }
 
@@ -299,9 +326,16 @@ int Crash_delete_crashfile(struct char_data *ch)
   numread = get_line(fl,line);
   tb_fclose(fl);
 
-  if (numread == FALSE)
+  if (numread == FALSE) {
+    TB_ERROR_MSG("objsave", "read-header", filename,
+                 "player=%s empty or unreadable crash header", GET_NAME(ch));
     return FALSE;
-  sscanf(line,"%d ",&rentcode);
+  }
+  if (sscanf(line, "%d", &rentcode) != 1) {
+    TB_ERROR_MSG("objsave", "parse-header", filename,
+                 "player=%s malformed crash header=\"%s\"", GET_NAME(ch), line);
+    return FALSE;
+  }
 
   if (rentcode == RENT_CRASH)
     Crash_delete_file(GET_NAME(ch));
@@ -332,8 +366,12 @@ int Crash_clean_file(char *name)
   if (numread == FALSE)
     return FALSE;
 
-  sscanf(line, "%d %d %d %d %d %d",&rentcode,&timed,&netcost,
-         &gold,&account,&nitems);
+  if (sscanf(line, "%d %d %d %d %d %d", &rentcode, &timed, &netcost,
+             &gold, &account, &nitems) != 6) {
+    TB_ERROR_MSG("objsave", "parse-header", filename,
+                 "player=%s malformed clean-file header=\"%s\"", name, line);
+    return FALSE;
+  }
 
   if ((rentcode == RENT_CRASH) ||
       (rentcode == RENT_FORCED) ||
@@ -1217,10 +1255,19 @@ static int Crash_load_objs(struct char_data *ch) {
     return 1;
   }
  
-  if (!get_line(fl, line))
-    mudlog(NRM, MAX(LVL_IMMORT, GET_INVIS_LEV(ch)), TRUE, "Failed to read player's rent code: %s.", GET_NAME(ch));
-  else
-    sscanf(line,"%d %d %d %d %d %d",&rentcode, &timed, &netcost,&gold,&account,&nitems);
+  if (!get_line(fl, line)) {
+    TB_ERROR_MSG("objsave", "read-header", filename,
+                 "player=%s rent header missing", GET_NAME(ch));
+    tb_fclose(fl);
+    return 1;
+  }
+  if (sscanf(line, "%d %d %d %d %d %d", &rentcode, &timed, &netcost,
+             &gold, &account, &nitems) != 6) {
+    TB_ERROR_MSG("objsave", "parse-header", filename,
+                 "player=%s malformed rent header=\"%s\"", GET_NAME(ch), line);
+    tb_fclose(fl);
+    return 1;
+  }
 
   if (rentcode == RENT_RENTED || rentcode == RENT_TIMEDOUT) {
     tb_snprintf(str, sizeof(str), "%d", SECS_PER_REAL_DAY);
