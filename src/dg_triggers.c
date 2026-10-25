@@ -29,7 +29,7 @@
 /* General functions used by several triggers. */
 
 /* Copy first phrase into first_arg, returns rest of string. */
-char *one_phrase(char *arg, char *first_arg)
+static char *one_phrase(char *arg, char *first_arg, size_t first_arg_size)
 {
     skip_spaces(&arg);
 
@@ -43,7 +43,7 @@ char *one_phrase(char *arg, char *first_arg)
         p = matching_quote(arg);
         c = *p;
         *p = '\0';
-        strcpy(first_arg, arg + 1);
+        strlcpy(first_arg, arg + 1, first_arg_size);
         if (c == '\0')
             return p;
         else
@@ -99,7 +99,7 @@ int word_check(char *str, char *wordlist)
 
     strlcpy(words, wordlist, sizeof(words));
 
-    for (s = one_phrase(words, phrase); *phrase; s = one_phrase(s, phrase))
+    for (s = one_phrase(words, phrase, sizeof(phrase)); *phrase; s = one_phrase(s, phrase, sizeof(phrase)))
         if (is_substring(phrase, str))
             return 1;
 
