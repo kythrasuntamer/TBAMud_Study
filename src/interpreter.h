@@ -9,8 +9,8 @@
 * Copyright (C) 1993, 94 by the Trustees of the Johns Hopkins University
 * CircleMUD is based on DikuMUD, Copyright (C) 1990, 1991.
 */
-#ifndef _INTERPRETER_H_
-#define _INTERPRETER_H_
+#ifndef TBAMUD_INTERPRETER_H_INCLUDED
+#define TBAMUD_INTERPRETER_H_INCLUDED
 
 
 /* List of external function prototypes.
@@ -125,4 +125,4 @@ extern int *cmd_sort_info;
 extern struct command_info *complete_cmd_info;
 extern const struct command_info cmd_info[];
 
-#endif /* _INTERPRETER_H_ */
+#endif /* TBAMUD_INTERPRETER_H_INCLUDED */
