@@ -67,3 +67,15 @@ jobs:
             filc-build.log
             filc-test.log
           if-no-files-found: ignore
+
+      - name: Upload source snapshot
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: cert-source-snapshot
+          path: |
+            src
+            tests
+            CMakeLists.txt
+            .clang-tidy
+          if-no-files-found: error
