@@ -910,7 +910,15 @@ void trigedit_save(struct descriptor_data *d)
   }
 
   tb_fprintf(trig_file, "$%c\n", STRING_TERMINATOR);
-  tb_fclose(trig_file);
+  {
+    int flush_ok = tb_fflush_checked(trig_file, fname);
+    int close_ok = tb_fclose_checked(trig_file, fname);
+    if (!flush_ok || !close_ok) {
+      if (remove(fname) != 0 && errno != ENOENT)
+        TB_REPORT_ERRNO("remove", fname);
+      return;
+    }
+  }
 
 #ifdef CIRCLE_MAC
   tb_snprintf(buf, sizeof(buf), "%s:%d.trg", TRG_PREFIX, zone);
@@ -918,12 +926,8 @@ void trigedit_save(struct descriptor_data *d)
   tb_snprintf(buf, sizeof(buf), "%s/%d.trg", TRG_PREFIX, zone);
 #endif
 
-  if (remove(buf) != 0 && errno != ENOENT)
-    TB_REPORT_ERRNO("remove", buf);
-  if (rename(fname, buf) != 0) {
-    TB_REPORT_ERRNO("rename", buf);
+  if (!tb_replace_file_checked(fname, buf))
     return;
-  }
 
   write_to_output(d, "Trigger saved to disk.\r\n");
   trigedit_create_index(zone, "trg");
