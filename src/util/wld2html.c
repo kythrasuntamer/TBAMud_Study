@@ -164,7 +164,7 @@ char *dir_names[] =
 int main(int argc, char **argv)
 {
   if (argc < 2) {
-    fprintf(stderr, "Usage: %s <world-file-name(s)>\n", argv[0]);
+    tb_fprintf(stderr, "Usage: %s <world-file-name(s)>\n", argv[0]);
     exit(1);
   }
 
@@ -202,30 +202,30 @@ void write_output(void)
 
   for (i=0;i<rec_count;i++) {
     //print the record number, but no linefeed.
-    fprintf(stderr, "Record: %d ",i);
+    tb_fprintf(stderr, "Record: %d ",i);
     if (world[i].name == NULL) {
       //linefeed the prior record since we're skipping this one.
       log("");
       //the name is blank, which means, most likely, the record is bad as well.
       continue;
     }
-    snprintf(buf, sizeof(buf), "Writing %d.html", world[i].number);
+    tb_snprintf(buf, sizeof(buf), "Writing %d.html", world[i].number);
     log(buf);
     //for some reason, if you use %d with sprintf it rolls over like its 16bit,
     //but only if you use the buffer with fopen.
     //using %ld and casting to long solves this in case someone really wants
     //to use negative room numbers.
-    snprintf(buf, sizeof(buf), "%ld.html",(long)world[i].number);
+    tb_snprintf(buf, sizeof(buf), "%ld.html",(long)world[i].number);
     if (!(fl = fopen(buf, "w"))) {
       perror("opening output file");
       exit(1);
     }
-    fprintf(fl, "<title> %s </title>\n", world[i].name);
-    fprintf(fl, "<h1> %s </h1>\n", world[i].name);
-    fprintf(fl, "<pre>\n");
-    fputs(world[i].description, fl);
-    fprintf(fl, "</pre>\n");
-    fprintf(fl, "<P> Exits: <P> \n");
+    tb_fprintf(fl, "<title> %s </title>\n", world[i].name);
+    tb_fprintf(fl, "<h1> %s </h1>\n", world[i].name);
+    tb_fprintf(fl, "<pre>\n");
+    tb_fputs(world[i].description, fl);
+    tb_fprintf(fl, "</pre>\n");
+    tb_fprintf(fl, "<P> Exits: <P> \n");
 
     found = 0;
     for (door = 0; door < NUM_OF_DIRS; door++)
@@ -237,17 +237,17 @@ void write_output(void)
 	//and the binary search that didn't work well.
 	struct room_data* to_room = findRoom(world[i].dir_option[door]->to_room);
         if (to_room)
-          fprintf(fl, "<a href = \"%d.html\"> %s to %s</a> <p>\n",
+          tb_fprintf(fl, "<a href = \"%d.html\"> %s to %s</a> <p>\n",
                   to_room->number,
                   dir_names[door],
                   to_room->name);
         else
-          fprintf(fl, "%s to missing room %d <p>\n",
+          tb_fprintf(fl, "%s to missing room %d <p>\n",
                   dir_names[door], world[i].dir_option[door]->to_room);
       }
     if (!found)
-      fprintf(fl, "None!");
-    fclose(fl);
+      tb_fprintf(fl, "None!");
+    tb_fclose(fl);
   }
 }  
 
@@ -280,9 +280,9 @@ void index_boot(int cnt, char **names)
     //once to get total record count
     //second time to load them
     rec_count += count_hash_records(db_file);
-    fclose(db_file);
+    tb_fclose(db_file);
   }
-  snprintf(buf, sizeof(buf), "Total records: %d\n", rec_count);
+  tb_snprintf(buf, sizeof(buf), "Total records: %d\n", rec_count);
   log(buf);
 
   if (rec_count <= 0) {
@@ -300,7 +300,7 @@ void index_boot(int cnt, char **names)
       exit(1);
     }
     discrete_load(db_file);
-    fclose(db_file);
+    tb_fclose(db_file);
   }
 }
 
@@ -312,7 +312,7 @@ void discrete_load(FILE * fl)
 
   for (;;) {
     if (!get_line(fl, line)) {
-      fprintf(stderr, "Format error after room #%d\n", nr);
+      tb_fprintf(stderr, "Format error after room #%d\n", nr);
       exit(1);
     }
     if (*line == 'T') //Toss triggers. THey currently break this util.
@@ -324,7 +324,7 @@ void discrete_load(FILE * fl)
     if (*line == '#') {
       last = nr;
       if (sscanf(line, "#%d", &nr) != 1) {
-	fprintf(stderr, "Format error after room #%d\n", last);
+	tb_fprintf(stderr, "Format error after room #%d\n", last);
 	exit(1);
       }
       if (nr >= 99999)
@@ -332,8 +332,8 @@ void discrete_load(FILE * fl)
       else
 	parse_room(fl, nr);
     } else {
-      fprintf(stderr, "Format error in world file near room #%d\n", nr);
-      fprintf(stderr, "Offending line: '%s'\n", line);
+      tb_fprintf(stderr, "Format error in world file near room #%d\n", nr);
+      tb_fprintf(stderr, "Offending line: '%s'\n", line);
       exit(1);
     }
   }
@@ -369,7 +369,7 @@ void parse_room(FILE * fl, int virtual_nr)
   char line[256], flags[128];
   struct extra_descr_data *new_descr;
 
-  snprintf(buf2, sizeof(buf2), "room #%d", virtual_nr);
+  tb_snprintf(buf2, sizeof(buf2), "room #%d", virtual_nr);
 
   world[room_nr].zone = zone;
   world[room_nr].number = virtual_nr;
@@ -377,7 +377,7 @@ void parse_room(FILE * fl, int virtual_nr)
   world[room_nr].description = fread_string(fl, buf2);
 
   if (!get_line(fl, line) || sscanf(line, " %d %s %d ", t, flags, t + 2) != 3) {
-    fprintf(stderr, "Format error in room #%d\n", virtual_nr);
+    tb_fprintf(stderr, "Format error in room #%d\n", virtual_nr);
     exit(1);
   }
   /* t[0] is the zone number; ignored with the zone-file system */
@@ -391,11 +391,11 @@ void parse_room(FILE * fl, int virtual_nr)
 
   world[room_nr].ex_description = NULL;
 
-  snprintf(buf, sizeof(buf), "Format error in room #%d (expecting D/E/S)", virtual_nr);
+  tb_snprintf(buf, sizeof(buf), "Format error in room #%d (expecting D/E/S)", virtual_nr);
 
   for (;;) {
     if (!get_line(fl, line)) {
-      fprintf(stderr, "%s\n", buf);
+      tb_fprintf(stderr, "%s\n", buf);
       exit(1);
     }
     switch (*line) {
@@ -414,7 +414,7 @@ void parse_room(FILE * fl, int virtual_nr)
       return;
       break;
     default:
-      fprintf(stderr, "%s\n", buf);
+      tb_fprintf(stderr, "%s\n", buf);
       exit(1);
       break;
     }
@@ -429,18 +429,18 @@ void setup_dir(FILE * fl, int room, int dir)
   int t[5];
   char line[256];
 
-  snprintf(buf2, sizeof(buf2), "room #%d, direction D%d", world[room].number, dir);
+  tb_snprintf(buf2, sizeof(buf2), "room #%d, direction D%d", world[room].number, dir);
 
   CREATE(world[room].dir_option[dir], struct room_direction_data, 1);
   world[room].dir_option[dir]->general_description = fread_string(fl, buf2);
   world[room].dir_option[dir]->keyword = fread_string(fl, buf2);
 
   if (!get_line(fl, line)) {
-    fprintf(stderr, "Format error, %s\n", buf2);
+    tb_fprintf(stderr, "Format error, %s\n", buf2);
     exit(1);
   }
   if (sscanf(line, " %d %d %d ", t, t + 1, t + 2) != 3) {
-    fprintf(stderr, "Format error, %s\n", buf2);
+    tb_fprintf(stderr, "Format error, %s\n", buf2);
     exit(1);
   }
   if (t[0] == 1)
@@ -470,7 +470,7 @@ char *fread_string(FILE * fl, char *error)
 
   do {
     if (!fgets(tmp, 512, fl)) {
-      fprintf(stderr, "SYSERR: fread_string: format error at or near %s\n",
+      tb_fprintf(stderr, "SYSERR: fread_string: format error at or near %s\n",
 	      error);
       exit(1);
     }
