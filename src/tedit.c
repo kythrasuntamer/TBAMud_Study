@@ -35,9 +35,9 @@ void tedit_string_cleanup(struct descriptor_data *d, int terminator)
     else {
       if (*d->str) {
         strip_cr(*d->str);
-        fputs(*d->str, fl);
+        tb_fputs(*d->str, fl);
       }
-      fclose(fl);
+      tb_fclose(fl);
       mudlog(CMP, MAX(LVL_GOD, GET_INVIS_LEV(d->character)), TRUE, "OLC: %s saves '%s'.", GET_NAME(d->character), storage);
       write_to_output(d, "Saved.\r\n");
       if (!strcmp(storage, NEWS_FILE))
