@@ -25,6 +25,9 @@ jobs:
     - name: Checkout
       uses: actions/checkout@v4
 
+    - name: Install libsodium development headers
+      run: sudo apt-get update && sudo apt-get install -y libsodium-dev
+
     - name: Configure with Clang sanitizers
       run: >
         cmake -S . -B build-sanitize
