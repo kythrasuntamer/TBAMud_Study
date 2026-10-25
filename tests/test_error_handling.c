@@ -37,6 +37,17 @@ static void assert_file_text(const char *path, const char *expected)
   TEST_ASSERT_EQUAL_STRING(expected, buf);
 }
 
+static void assert_file_missing(const char *path)
+{
+  FILE *fp = fopen(path, "rb");
+
+  if (fp != NULL) {
+    (void)fclose(fp);
+    TEST_FAIL_MESSAGE("file unexpectedly exists");
+  }
+  TEST_ASSERT_EQUAL_INT(ENOENT, errno);
+}
+
 void setUp(void)
 {
   cleanup_files();
@@ -77,7 +88,7 @@ void test_replace_file_commits_new_contents(void)
 
   TEST_ASSERT_TRUE(tb_replace_file_checked(temp_path, dest_path));
   assert_file_text(dest_path, "new");
-  TEST_ASSERT_NULL(fopen(temp_path, "rb"));
+  assert_file_missing(temp_path);
 }
 
 void test_replace_file_rolls_back_after_commit_failure(void)
@@ -90,7 +101,7 @@ void test_replace_file_rolls_back_after_commit_failure(void)
 
   assert_file_text(dest_path, "old");
   assert_file_text(temp_path, "new");
-  TEST_ASSERT_NULL(fopen(backup_path, "rb"));
+  assert_file_missing(backup_path);
 }
 
 void test_replace_file_reports_rollback_failure_without_destroying_backup(void)
@@ -105,4 +116,22 @@ void test_replace_file_reports_rollback_failure_without_destroying_backup(void)
 
   assert_file_text(backup_path, "old");
   assert_file_text(temp_path, "new");
+}
+
+/* =========================================================
+ * main
+ * ========================================================= */
+
+int main(void)
+{
+  UNITY_BEGIN();
+
+  RUN_TEST(test_checked_int_parser_accepts_complete_number);
+  RUN_TEST(test_checked_int_parser_rejects_trailing_garbage);
+  RUN_TEST(test_checked_int_parser_rejects_overflow);
+  RUN_TEST(test_replace_file_commits_new_contents);
+  RUN_TEST(test_replace_file_rolls_back_after_commit_failure);
+  RUN_TEST(test_replace_file_reports_rollback_failure_without_destroying_backup);
+
+  return UNITY_END();
 }
