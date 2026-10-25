@@ -231,6 +231,15 @@ if (HAVE_NETINET_IN_H)
     check_struct_has_member("struct in_addr" s_addr netinet/in.h HAVE_STRUCT_IN_ADDR)
 endif()
 
+# ========== Argon2id player password hashing ==========
+find_path(SODIUM_INCLUDE_DIR sodium.h)
+find_library(SODIUM_LIBRARY NAMES sodium)
+if(NOT SODIUM_INCLUDE_DIR OR NOT SODIUM_LIBRARY)
+    message(FATAL_ERROR "libsodium development library is required for Argon2id password hashing")
+endif()
+include_directories(${SODIUM_INCLUDE_DIR})
+list(APPEND EXTRA_LIBS ${SODIUM_LIBRARY})
+
 # ========== crypt()/libcrypt ==========
 
 find_library(CRYPT_LIBRARY crypt)
