@@ -394,7 +394,7 @@ size_t sprinttype(int type, const char *names[], char *result, size_t reslen)
  * Will be set to "NOBITS" if no bits are set in bitarray (ie all bits in the
  * bitarray are equal to 0).
  */
-void sprintbitarray(int bitvector[], const char *names[], int maxar, char *result)
+void sprintbitarray(int bitvector[], const char *names[], int maxar, char *result, size_t reslen)
 {
   int nr, teller, found = FALSE;
 
