@@ -166,7 +166,10 @@ int main(int argc, char *argv[])
     exit(1);
   }
   for (index = 1; index < argc; index++) {
-    sprintf(fn, "%s", argv[index]);
+    if (snprintf(fn, sizeof(fn), "%s", argv[index]) >= (int)sizeof(fn)) {
+      fprintf(stderr, "shopconv: filename too long: %s\n", argv[index]);
+      continue;
+    }
     sprintf(part, "mv %s %s.tmp", fn, fn);
     if (system(part) != 0) {
       fprintf(stderr, "shopconv: failed to rename %s to a temporary file\n", fn);
@@ -175,8 +178,11 @@ int main(int argc, char *argv[])
     sprintf(part, "%s.tmp", fn);
     sfp = fopen(part, "r");
     if (sfp == NULL) {
-      strcat(fn, " could not be opened");
-      perror(fn);
+      int saved_errno = errno;
+      fprintf(stderr, "shopconv: %s could not be opened: %s\n", part, strerror(saved_errno));
+      if (snprintf(part, sizeof(part), "mv %s.tmp %s", fn, fn) >= (int)sizeof(part) ||
+          system(part) != 0)
+        fprintf(stderr, "shopconv: failed to restore %s from temporary file\n", fn);
     } else {
       if ((nsfp = fopen(fn, "w")) == NULL) {
 	      printf("Error writing to %s.\n", fn);
