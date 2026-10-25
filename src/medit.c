@@ -67,7 +67,7 @@ ACMD(do_oasis_medit)
     save = TRUE;
 
     if (is_number(buf2))
-      number = atoi(buf2);
+      number = tb_parse_int_or_zero(buf2);
     else if (GET_OLC_ZONE(ch) > 0) {
       zone_rnum zlok;
 
@@ -85,7 +85,7 @@ ACMD(do_oasis_medit)
 
   /* If a numeric argument was given (like a room number), get it. */
   if (number == NOBODY)
-    number = atoi(buf1);
+    number = tb_parse_int_or_zero(buf1);
 
   if (number < IDXTYPE_MIN || number > IDXTYPE_MAX) {
     send_to_char(ch, "That mobile VNUM can't exist.\r\n");
@@ -531,7 +531,7 @@ void medit_parse(struct descriptor_data *d, char *arg)
   char *oldtext = NULL;
 
   if (OLC_MODE(d) > MEDIT_NUMERICAL_RESPONSE) {
-    i = atoi(arg);
+    i = tb_parse_int_or_zero(arg);
     if (!*arg || (!isdigit(arg[0]) && ((*arg == '-') && !isdigit(arg[1])))) {
       write_to_output(d, "Try again : ");
       return;
@@ -883,7 +883,7 @@ void medit_parse(struct descriptor_data *d, char *arg)
     break;
 
   case MEDIT_NPC_FLAGS:
-    if ((i = atoi(arg)) <= 0)
+    if ((i = tb_parse_int_or_zero(arg)) <= 0)
       break;
     else if ( (j = medit_get_mob_flag_by_number(i)) == -1) {
        write_to_output(d, "Invalid choice!\r\n");
@@ -896,7 +896,7 @@ void medit_parse(struct descriptor_data *d, char *arg)
     return;
 
   case MEDIT_AFF_FLAGS:
-    if ((i = atoi(arg)) <= 0)
+    if ((i = tb_parse_int_or_zero(arg)) <= 0)
       break;
     else if (i < NUM_AFF_FLAGS)
       TOGGLE_BIT_AR(AFF_FLAGS(OLC_MOB(d)), i);
@@ -1065,7 +1065,7 @@ void medit_parse(struct descriptor_data *d, char *arg)
     return;
 
   case MEDIT_COPY:
-    if ((i = real_mobile(atoi(arg))) != NOWHERE) {
+    if ((i = real_mobile(tb_parse_int_or_zero(arg))) != NOWHERE) {
       medit_setup_existing(d, i);
     } else
       write_to_output(d, "That mob does not exist.\r\n");
