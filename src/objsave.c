@@ -89,8 +89,8 @@ int objsave_save_obj_record(struct obj_data *obj, FILE *fp, int locate)
   if (GET_OBJ_EXTRA(obj) != GET_OBJ_EXTRA(temp))
     fprintf(fp, "Flag: %d %d %d %d\n", GET_OBJ_EXTRA(obj)[0], GET_OBJ_EXTRA(obj)[1], GET_OBJ_EXTRA(obj)[2], GET_OBJ_EXTRA(obj)[3]);
 
-#define TEST_OBJS(obj1, obj2, field) ((!obj1->field || !obj2->field || \
-                                      strcmp(obj1->field, obj2->field)))
+#define TEST_OBJS(obj1, obj2, field) ((!((obj1)->field) || !((obj2)->field) || \
+                                      strcmp((obj1)->field, (obj2)->field)))
 #define TEST_OBJN(field) (obj->obj_flags.field != temp->obj_flags.field)
 
   if (TEST_OBJS(obj, temp, name))
