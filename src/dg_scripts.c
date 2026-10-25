@@ -1377,11 +1377,10 @@ static int is_num(char *arg)
 
 static int script_int_value(const char *arg)
 {
-  char *end;
   long value;
 
   errno = 0;
-  value = strtol(arg, &end, 10);
+  value = strtol(arg, NULL, 10);
 
   if (errno == ERANGE || value > INT_MAX)
     return INT_MAX;
