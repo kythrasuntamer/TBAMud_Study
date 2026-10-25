@@ -1598,8 +1598,9 @@ static void PerformHandshake( descriptor_t *apDescriptor, char aCmd, char aProto
       case (char)TELOPT_MSSP:
          if ( aCmd == (char)DO )
             SendMSSP( apDescriptor );
-         else if ( aCmd == (char)DONT )
-            ; /* Do nothing. */
+         else if ( aCmd == (char)DONT ) {
+            /* Do nothing. */
+         }
          break;
 
       case (char)TELOPT_MCCP:
