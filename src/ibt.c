@@ -267,6 +267,7 @@ void load_ibt_file(int mode)
    free_ibt_list(mode);
 
    if( ( fp = fopen( filename, "r" ) ) == NULL ) {
+     TB_REPORT_ERRNO("fopen", filename);
       log("No File: %s", filename);
       return;
    }
@@ -305,7 +306,8 @@ void save_ibt_file(int mode)
                      return;
    }
 
-   if (( fp = fopen(filename,"w")) == NULL)
+   if (( fp = fopen(filename,"w")) == NULL) {
+     TB_REPORT_ERRNO("fopen", filename);
    {
      log("SYSERR: Unable to open IBT file for writing in save_ibt_file");
      log("        IBT File: %s", filename);
