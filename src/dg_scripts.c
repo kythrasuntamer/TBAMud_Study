@@ -1323,8 +1323,18 @@ void script_vlog(const char *format, va_list args)
   char output[MAX_STRING_LENGTH];
   struct descriptor_data *i;
 
-  /* parse the args, making the error message */ 
-  vsnprintf(output, sizeof(output) - 2, format, args); 
+  /* Parse the args without letting a logging failure hide the script error. */
+  {
+    int result = vsnprintf(output, sizeof(output), format, args);
+
+    if (result < 0) {
+      TB_REPORT_ERRNO("vsnprintf", "script_vlog");
+      strlcpy(output, "(script error message formatting failed)", sizeof(output));
+    } else if ((size_t)result >= sizeof(output)) {
+      basic_mud_log("SCRIPT ERROR LOGGER: message truncated (required=%d, capacity=%zu)",
+                    result + 1, sizeof(output));
+    }
+  }
 
   /* Save to the syslog file */ 
   basic_mud_log("SCRIPT ERROR: %s", output); 
