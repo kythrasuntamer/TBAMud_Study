@@ -25,7 +25,7 @@ static void postmaster_send_mail(struct char_data *ch, struct char_data *mailman
 static void postmaster_check_mail(struct char_data *ch, struct char_data *mailman, int cmd, char *arg);
 static void postmaster_receive_mail(struct char_data *ch, struct char_data *mailman, int cmd, char *arg);
 static int mail_recip_ok(const char *name);
-static void write_mail_record(FILE *mail_file, struct mail_t *record);
+static int write_mail_record(FILE *mail_file, struct mail_t *record);
 static void free_mail_record(struct mail_t *record);
 static struct mail_t *read_mail_record(FILE *mail_file);
 
@@ -70,16 +70,22 @@ static struct mail_t *read_mail_record(FILE *mail_file)
 
     errno = 0;
     recipient = strtol(recipient_text, &end, 10);
-    if (errno == ERANGE || end == recipient_text || *end != '\0')
+    if (errno == ERANGE || end == recipient_text || *end != '\0') {
+      log("SYSERR: mail record has invalid recipient id '%s' in header '%s'", recipient_text, line);
       return NULL;
+    }
     errno = 0;
     sender = strtol(sender_text, &end, 10);
-    if (errno == ERANGE || end == sender_text || *end != '\0')
+    if (errno == ERANGE || end == sender_text || *end != '\0') {
+      log("SYSERR: mail record has invalid sender id '%s' in header '%s'", sender_text, line);
       return NULL;
+    }
     errno = 0;
     parsed_time = strtol(time_text, &end, 10);
-    if (errno == ERANGE || end == time_text || *end != '\0')
+    if (errno == ERANGE || end == time_text || *end != '\0') {
+      log("SYSERR: mail record has invalid timestamp '%s' in header '%s'", time_text, line);
       return NULL;
+    }
     sent_time = (time_t)parsed_time;
   }
 
@@ -93,14 +99,23 @@ static struct mail_t *read_mail_record(FILE *mail_file)
   return record;
 }
 
-static void write_mail_record(FILE *mail_file, struct mail_t *record)
+static int write_mail_record(FILE *mail_file, struct mail_t *record)
 {
-	tb_fprintf(mail_file, "### %ld %ld %ld\n"
-	                   "%s~\n",
-                     record->recipient,
-                     record->sender,
-                     (long)record->sent_time,
-                     record->body );
+  if (mail_file == NULL || record == NULL || record->body == NULL) {
+    log("SYSERR: write_mail_record called with invalid argument (stream=%p record=%p body=%p)",
+        (void *)mail_file, (void *)record, record ? (void *)record->body : NULL);
+    return FALSE;
+  }
+
+  if (fprintf(mail_file, "### %ld %ld %ld\n%s~\n",
+              record->recipient, record->sender, (long)record->sent_time,
+              record->body) < 0) {
+    int saved_errno = errno;
+    log("SYSERR: mail write failed for sender %ld recipient %ld: %s (errno=%d)",
+        record->sender, record->recipient, strerror(saved_errno), saved_errno);
+    return FALSE;
+  }
+  return TRUE;
 }
 
 /* int scan_file(none)
@@ -195,7 +210,8 @@ void store_mail(long to, long from, char *message_pointer)
   record->sent_time = time(0);
   record->body = message_pointer;
 
-  write_mail_record(mail_file, record);
+  if (!write_mail_record(mail_file, record))
+    log("SYSERR: store_mail failed while persisting message from %ld to %ld", from, to);
   free(record); /* don't free the body */
   tb_fclose(mail_file);
 }
@@ -232,7 +248,18 @@ char *read_delete(long recipient)
   		record = read_mail_record(mail_file);
   		continue; /* don't write and free this one just yet */
     }
-    write_mail_record(new_file, record);
+    if (!write_mail_record(new_file, record)) {
+      log("SYSERR: read_delete aborted mail rewrite for recipient %ld while preserving message from %ld to %ld",
+          recipient, record->sender, record->recipient);
+      free_mail_record(record);
+      if (record_to_keep)
+        free_mail_record(record_to_keep);
+      tb_fclose(mail_file);
+      tb_fclose(new_file);
+      if (remove(MAIL_FILE_TMP) != 0 && errno != ENOENT)
+        TB_REPORT_ERRNO("remove", MAIL_FILE_TMP);
+      return strdup("Mail system malfunction - please report this");
+    }
     free_mail_record(record);
     record = read_mail_record(mail_file);
   }
