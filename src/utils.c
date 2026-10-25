@@ -1545,11 +1545,16 @@ char * convert_from_tabs(char * string)
 char *right_trim_whitespace(const char *string)
 {
   char *r = strdup(string);
-  if (r != NULL)
-  {
-    char *fr = r + strlen(string) - 1;
-    while( (isspace(*fr) || !isprint(*fr) || *fr == 0) && fr >= r) --fr;
-    *++fr = 0;
+
+  if (r != NULL) {
+    size_t len = strlen(r);
+
+    while (len > 0 &&
+           (isspace((unsigned char) r[len - 1]) ||
+            !isprint((unsigned char) r[len - 1])))
+      len--;
+
+    r[len] = '\0';
   }
 
   return r;
