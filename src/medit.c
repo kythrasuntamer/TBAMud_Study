@@ -469,7 +469,7 @@ static void medit_disp_stats_menu(struct descriptor_data *d)
   clear_screen(d);
 
   /* Color codes have to be used here, for count_color_codes to work */
-  sprintf(buf, "(range \ty%d\tn to \ty%d\tn)", GET_HIT(mob) + GET_MOVE(mob), (GET_HIT(mob) * GET_MANA(mob)) + GET_MOVE(mob));
+  tb_snprintf(buf, sizeof(buf), "(range \ty%d\tn to \ty%d\tn)", GET_HIT(mob) + GET_MOVE(mob), (GET_HIT(mob) * GET_MANA(mob)) + GET_MOVE(mob));
 
   /* Top section - standard stats */
   write_to_output(d,
@@ -866,7 +866,7 @@ void medit_parse(struct descriptor_data *d, char *arg)
       free(GET_LDESC(OLC_MOB(d)));
     if (arg && *arg) {
       char buf[MAX_INPUT_LENGTH];
-      snprintf(buf, sizeof(buf), "%s\r\n", arg);
+  tb_snprintf(buf, sizeof(buf), "%s\r\n", arg);
       GET_LDESC(OLC_MOB(d)) = strdup(buf);
     } else
       GET_LDESC(OLC_MOB(d)) = strdup("undefined");
