@@ -4571,6 +4571,33 @@ ACMD(do_changelog)
 #define PLIST_FORMAT \
   "Usage: plist [minlev[-maxlev]] [-n name] [-d days] [-h hours] [-i] [-m]"
 
+/* Strictly parse N or N-M without scanf's partial-conversion ambiguity. */
+static int parse_plist_range(const char *input, int *low, int *high)
+{
+  char *end;
+  long first, second;
+
+  if (!input || !*input || !isdigit((unsigned char)*input))
+    return 0;
+  first = strtol(input, &end, 10);
+  if (first < 0 || first > 1000000 || end == input)
+    return 0;
+  second = first;
+  if (*end == '-') {
+    const char *start = ++end;
+    if (!isdigit((unsigned char)*start))
+      return 0;
+    second = strtol(start, &end, 10);
+    if (end == start || second < first || second > 1000000)
+      return 0;
+  }
+  if (*end != '\0')
+    return 0;
+  *low = (int)first;
+  *high = (int)second;
+  return 1;
+}
+
 ACMD(do_plist)
 {
   int i, len = 0, count = 0;
@@ -4587,15 +4614,20 @@ ACMD(do_plist)
 
     half_chop(buf, arg, buf1);
     if (isdigit(*arg)) {
-      if (sscanf(arg, "%d-%d", &low, &high) == 1)
-        high = low;
+      if (!parse_plist_range(arg, &low, &high)) {
+        send_to_char(ch, "Invalid level range.\\r\\n");
+        return;
+      }
       strlcpy(buf, buf1, sizeof(buf));        /* strcpy: OK (sizeof: buf1 == buf) */
     } else if (*arg == '-') {
       mode = *(arg + 1);        /* just in case; we destroy arg in the switch */
       switch (mode) {
       case 'l':
         half_chop(buf1, arg, buf);
-        sscanf(arg, "%d-%d", &low, &high);
+        if (!parse_plist_range(arg, &low, &high)) {
+          send_to_char(ch, "Invalid level range.\\r\\n");
+          return;
+        }
         break;
       case 'n':
         half_chop(buf1, name_search, buf);
@@ -4610,13 +4642,17 @@ ACMD(do_plist)
         break;
       case 'd':
         half_chop(buf1, arg, buf);
-        if (sscanf(arg, "%d-%d", &low_day, &high_day) == 1)
-          high_day = low_day;
+        if (!parse_plist_range(arg, &low_day, &high_day)) {
+          send_to_char(ch, "Invalid day range.\\r\\n");
+          return;
+        }
         break;
       case 'h':
         half_chop(buf1, arg, buf);
-        if (sscanf(arg, "%d-%d", &low_hr, &high_hr) == 1)
-          high_hr = low_hr;
+        if (!parse_plist_range(arg, &low_hr, &high_hr)) {
+          send_to_char(ch, "Invalid hour range.\\r\\n");
+          return;
+        }
         break;
       default:
         send_to_char(ch, "%s\r\n", PLIST_FORMAT);
