@@ -144,7 +144,7 @@ ACMD(do_ban)
       if (ban_node->date) {
         strftime(timestr, sizeof(timestr), "%a %b %d %Y", localtime(&(ban_node->date)));
       } else
-	strcpy(timestr, "Unknown");	/* strcpy: OK (strlen("Unknown") < 16) */
+	strlcpy(timestr, "Unknown", sizeof(timestr));	/* strcpy: OK (strlen("Unknown") < 16) */
 
       send_to_char(ch, BAN_LIST_FORMAT, ban_node->site, ban_types[ban_node->type], timestr, ban_node->name);
     }
