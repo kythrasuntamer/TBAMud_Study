@@ -390,6 +390,88 @@ struct in_addr {
 # include "bsd-snprintf.h"
 #endif
 
+/*
+ * Checked wrappers for standard-library calls whose return values must not be
+ * silently discarded (CERT ERR33-C).  These preserve the legacy call sites'
+ * control flow while making failures observable.
+ */
+static inline void tb_snprintf(char *dst, size_t dst_size, const char *format, ...)
+{
+  va_list args;
+  int result;
+
+  if (dst == NULL || dst_size == 0 || format == NULL)
+    return;
+
+  va_start(args, format);
+  result = vsnprintf(dst, dst_size, format, args);
+  va_end(args);
+
+  if (result < 0)
+    dst[0] = '\0';
+}
+
+static inline void tb_fprintf(FILE *stream, const char *format, ...)
+{
+  va_list args;
+  int result;
+
+  if (stream == NULL || format == NULL)
+    return;
+
+  va_start(args, format);
+  result = vfprintf(stream, format, args);
+  va_end(args);
+
+  if (result < 0)
+    perror("fprintf");
+}
+
+static inline void tb_fputs(const char *text, FILE *stream)
+{
+  if (text == NULL || stream == NULL)
+    return;
+  if (fputs(text, stream) == EOF)
+    perror("fputs");
+}
+
+static inline void tb_fputc(int ch, FILE *stream)
+{
+  if (stream == NULL)
+    return;
+  if (fputc(ch, stream) == EOF)
+    perror("fputc");
+}
+
+static inline void tb_fwrite(const void *ptr, size_t size, size_t count, FILE *stream)
+{
+  if (stream == NULL || (ptr == NULL && size != 0 && count != 0))
+    return;
+  if (count != 0 && fwrite(ptr, size, count, stream) != count)
+    perror("fwrite");
+}
+
+static inline void tb_fflush(FILE *stream)
+{
+  if (fflush(stream) == EOF)
+    perror("fflush");
+}
+
+static inline void tb_fclose(FILE *stream)
+{
+  if (stream != NULL && fclose(stream) == EOF)
+    perror("fclose");
+}
+
+static inline void tb_strftime(char *dst, size_t dst_size, const char *format,
+                               const struct tm *timeptr)
+{
+  if (dst == NULL || dst_size == 0 || format == NULL || timeptr == NULL)
+    return;
+  if (strftime(dst, dst_size, format, timeptr) == 0)
+    dst[0] = '\0';
+}
+
 /* Function prototypes. */
 /* Header files of many OS's do not contain function prototypes for the
  * standard C library functions.  This produces annoying warning messages 
