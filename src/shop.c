@@ -336,7 +336,7 @@ static int transaction_amt(char *arg)
    * that if we only have one argument, like 'buy 5', buy #5. By Andrey Fidrya */
   buywhat = one_argument(arg, buf);
   if (*buywhat && *buf && is_number(buf)) {
-    strcpy(arg, arg + strlen(buf) + 1);	/* strcpy: OK (always smaller) */
+    memmove(arg, arg + strlen(buf) + 1, strlen(arg + strlen(buf) + 1) + 1);	/* strcpy: OK (always smaller) */
     return (tb_parse_int_or_zero(buf));
   }
   return (1);
@@ -844,9 +844,9 @@ static char *list_object(struct obj_data *obj, int cnt, int aindex, int shop_nr,
 	quantity[16];	/* "Unlimited" or "%d" */
 
   if (shop_producing(obj, shop_nr))
-    strcpy(quantity, "Unlimited");	/* strcpy: OK (for 'quantity >= 10') */
+    strlcpy(quantity, "Unlimited", sizeof(quantity));	/* strcpy: OK (for 'quantity >= 10') */
   else
-    sprintf(quantity, "%d", cnt);	/* sprintf: OK (for 'quantity >= 11', 32-bit int) */
+    tb_snprintf(quantity, sizeof(quantity), "%d", cnt);	/* sprintf: OK (for 'quantity >= 11', 32-bit int) */
 
   switch (GET_OBJ_TYPE(obj)) {
   case ITEM_DRINKCON:
@@ -1347,7 +1347,7 @@ static void list_all_shops(struct char_data *ch)
        */
       if (len + headerlen + 1 >= sizeof(buf))
         break;
-      strcpy(buf + len, list_all_shops_header);	/* strcpy: OK (length checked above) */
+      strlcpy(buf + len, list_all_shops_header, sizeof(buf) - len);	/* strcpy: OK (length checked above) */
       len += headerlen;
     }
 
