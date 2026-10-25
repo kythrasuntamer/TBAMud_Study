@@ -229,7 +229,8 @@ char *read_delete(long recipient)
   char buf[MAX_STRING_LENGTH];
 
   if (!(mail_file = fopen(MAIL_FILE, "r"))) {
-    perror("read_delete: Mail file not accessible.");
+    TB_REPORT_ERRNO("fopen", MAIL_FILE);
+    log("SYSERR: read_delete could not open mail store for recipient %ld", recipient);
     return strdup("Mail system malfunction - please report this");
   }
 
