@@ -41,3 +41,33 @@ The staging helper intentionally does **not** automate dangerous VNUM remaps,
 execute source scripts, or modify the installed world. It rejects direct file
 collisions but **does not prove** that non-overlapping filenames have
 non-overlapping VNUMs.
+
+## SillyMUD and Ethereal II recovery track
+
+Stock SillyMUD 1.1b files are preserved in:
+https://github.com/okeuday/sillymud/tree/master/silly/lib
+
+This tree contains `tinyworld.mob`, `tinyworld.obj`, `tinyworld.shp`,
+`tinyworld.wld`, and `tinyworld.zon`, plus a `world` directory.
+Unlike tbaMUD's numbered per-zone files, the stock SillyMUD files include
+combined world tables; zone records have a different numeric header layout
+(e.g. `#2 / LIMBO~ / 49 1 512`) and need an explicit SillyMUD parser,
+schema mapping, and record-based VNUM collision analysis. **Do not simply
+rename these files to tbaMUD filenames** or treat them as interchangeable.
+
+SillyMUD's original source repository identifies the DikuMUD license; audit
+original area creator rights and distribution conditions before shipping
+converted area content in a public repository. Source availability does not
+establish permission to republish individual zones.
+
+Ethereal II reportedly derives from a heavily customized SillyMUD. Stock
+SillyMUD world files are **not** an authenticated Ethereal II backup; keep
+Ethereal II recovery separate and require original files and permission.
+
+Next implementation milestones:
+1. Inventory records and directives in the SillyMUD monolithic files.
+2. Convert rooms/exits, mobiles, objects, shops and zone resets with
+   explicit flags/special-procedure translation or a hard failure.
+3. Allocate isolated destination VNUM ranges, rewrite every cross-reference,
+   and reject unresolved external links and unsupported script calls.
+4. Run isolated tbaMUD boot, navigation, shop and reset tests.
