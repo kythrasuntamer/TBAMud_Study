@@ -399,6 +399,10 @@ int load_char(const char *name, struct char_data *ch)
 	if (!strcmp(tag, "Affs")) 	load_affects(fl, ch);
         else if (!strcmp(tag, "Alin"))	GET_ALIGNMENT(ch)	= parse_pfile_int_or_zero(line, filename, tag);
 	else if (!strcmp(tag, "Alis"))	read_aliases_ascii(fl, ch, parse_pfile_int_or_zero(line, filename, tag));
+             else if (!strcmp(tag, "EgAP")) GET_ENDGAME_AP(ch) = MAX(0, parse_pfile_int_or_zero(line, filename, tag));
+             else if (!strcmp(tag, "EgXP")) GET_ENDGAME_XP(ch) = MAX(0, parse_pfile_int_or_zero(line, filename, tag));
+             else if (!strcmp(tag, "EgHP")) GET_ENDGAME_HP_RANK(ch) = MAX(0, parse_pfile_int_or_zero(line, filename, tag));
+             else if (!strcmp(tag, "EgMP")) GET_ENDGAME_MP_RANK(ch) = MAX(0, parse_pfile_int_or_zero(line, filename, tag));
 	break;
 
       case 'B':
@@ -715,6 +719,10 @@ void save_char(struct char_data * ch)
   if (GET_GOLD(ch)	   != PFDEF_GOLD)	fprintf(fl, "Gold: %d\n", GET_GOLD(ch));
   if (GET_BANK_GOLD(ch)	   != PFDEF_BANK)	fprintf(fl, "Bank: %d\n", GET_BANK_GOLD(ch));
   if (GET_EXP(ch)	   != PFDEF_EXP)	fprintf(fl, "Exp : %d\n", GET_EXP(ch));
+  if (GET_ENDGAME_AP(ch)) fprintf(fl, "EgAP: %d\n", GET_ENDGAME_AP(ch));
+  if (GET_ENDGAME_XP(ch)) fprintf(fl, "EgXP: %d\n", GET_ENDGAME_XP(ch));
+  if (GET_ENDGAME_HP_RANK(ch)) fprintf(fl, "EgHP: %d\n", GET_ENDGAME_HP_RANK(ch));
+  if (GET_ENDGAME_MP_RANK(ch)) fprintf(fl, "EgMP: %d\n", GET_ENDGAME_MP_RANK(ch));
   if (GET_HITROLL(ch)	   != PFDEF_HITROLL)	fprintf(fl, "Hrol: %d\n", GET_HITROLL(ch));
   if (GET_DAMROLL(ch)	   != PFDEF_DAMROLL)	fprintf(fl, "Drol: %d\n", GET_DAMROLL(ch));
   if (GET_OLC_ZONE(ch)     != PFDEF_OLC)        fprintf(fl, "Olc : %d\n", GET_OLC_ZONE(ch));
