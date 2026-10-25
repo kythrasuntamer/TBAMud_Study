@@ -320,7 +320,7 @@ int save_config( IDXTYPE nowhere )
   char buf[MAX_STRING_LENGTH];
 
   if (!(fl = fopen(CONFIG_CONFFILE, "w"))) {
-    perror("SYSERR: save_config");
+    TB_REPORT_ERRNO("fopen", CONFIG_CONFFILE);
     return (FALSE);
   }
 
