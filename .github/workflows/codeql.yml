@@ -84,6 +84,10 @@ jobs:
     # to build your code.
     # ℹ️ Command-line programs to run using the OS shell.
     # 📚 See https://docs.github.com/en/actions/using-workflows/workflow-syntax-for-github-actions#jobsjob_idstepsrun
+    - name: Install C build dependencies
+      if: matrix.language == 'c-cpp'
+      run: sudo apt-get update && sudo apt-get install -y libsodium-dev
+
     - name: Run manual build steps
       if: matrix.build-mode == 'manual'
       shell: bash
