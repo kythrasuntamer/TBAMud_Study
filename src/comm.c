@@ -430,7 +430,8 @@ void copyover_recover()
 
   for (;;) {
     fOld = TRUE;
-    if (fscanf(fp, "%d %ld %s %s %s\n", &desc, &pref, name, host, guiopt) != 5) {
+    /* Field widths reserve a byte for the terminating NUL in each array. */
+    if (fscanf(fp, "%d %ld %511s %1023s %1023s\n", &desc, &pref, name, host, guiopt) != 5) {
       if (feof(fp)) {
         log("SYSERR: unexpected EOF in copyover file %s.", COPYOVER_FILE);
         break;
