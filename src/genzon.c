@@ -89,74 +89,74 @@ zone_rnum create_new_zone(zone_vnum vzone_num, room_vnum bottom, room_vnum top, 
      }
 
   /* Create the zone file. */
-  snprintf(buf, sizeof(buf), "%s/%d.zon", ZON_PREFIX, vzone_num);
+  tb_snprintf(buf, sizeof(buf), "%s/%d.zon", ZON_PREFIX, vzone_num);
   if (!(fp = fopen(buf, "w"))) {
     mudlog(BRF, LVL_IMPL, TRUE, "SYSERR: OLC: Can't write new zone file.");
     *error = "Could not write zone file.\r\n";
     return NOWHERE;
   }
-  fprintf(fp, "#%d\nNone~\nNew Zone~\n%d %d 30 2\nS\n$\n", vzone_num, bottom, top);
-  fclose(fp);
+  tb_fprintf(fp, "#%d\nNone~\nNew Zone~\n%d %d 30 2\nS\n$\n", vzone_num, bottom, top);
+  tb_fclose(fp);
 
   /* Create the room file. */
-  snprintf(buf, sizeof(buf), "%s/%d.wld", WLD_PREFIX, vzone_num);
+  tb_snprintf(buf, sizeof(buf), "%s/%d.wld", WLD_PREFIX, vzone_num);
   if (!(fp = fopen(buf, "w"))) {
     mudlog(BRF, LVL_IMPL, TRUE, "SYSERR: OLC: Can't write new world file.");
     *error = "Could not write world file.\r\n";
     return NOWHERE;
   }
-  fprintf(fp, "#%d\nThe Beginning~\nNot much here.\n~\n%d 0 0\nS\n$\n", bottom, vzone_num);
-  fclose(fp);
+  tb_fprintf(fp, "#%d\nThe Beginning~\nNot much here.\n~\n%d 0 0\nS\n$\n", bottom, vzone_num);
+  tb_fclose(fp);
 
   /* Create the mobile file. */
-  snprintf(buf, sizeof(buf), "%s/%d.mob", MOB_PREFIX, vzone_num);
+  tb_snprintf(buf, sizeof(buf), "%s/%d.mob", MOB_PREFIX, vzone_num);
   if (!(fp = fopen(buf, "w"))) {
     mudlog(BRF, LVL_IMPL, TRUE, "SYSERR: OLC: Can't write new mob file.");
     *error = "Could not write mobile file.\r\n";
     return NOWHERE;
   }
-  fprintf(fp, "$\n");
-  fclose(fp);
+  tb_fprintf(fp, "$\n");
+  tb_fclose(fp);
 
   /* Create the object file. */
-  snprintf(buf, sizeof(buf), "%s/%d.obj", OBJ_PREFIX, vzone_num);
+  tb_snprintf(buf, sizeof(buf), "%s/%d.obj", OBJ_PREFIX, vzone_num);
   if (!(fp = fopen(buf, "w"))) {
     mudlog(BRF, LVL_IMPL, TRUE, "SYSERR: OLC: Can't write new obj file.");
     *error = "Could not write object file.\r\n";
     return NOWHERE;
   }
-  fprintf(fp, "$\n");
-  fclose(fp);
+  tb_fprintf(fp, "$\n");
+  tb_fclose(fp);
 
   /* Create the shop file. */
-  snprintf(buf, sizeof(buf), "%s/%d.shp", SHP_PREFIX, vzone_num);
+  tb_snprintf(buf, sizeof(buf), "%s/%d.shp", SHP_PREFIX, vzone_num);
   if (!(fp = fopen(buf, "w"))) {
     mudlog(BRF, LVL_IMPL, TRUE, "SYSERR: OLC: Can't write new shop file.");
     *error = "Could not write shop file.\r\n";
     return NOWHERE;
   }
-  fprintf(fp, "$~\n");
-  fclose(fp);
+  tb_fprintf(fp, "$~\n");
+  tb_fclose(fp);
 
   /* Create the quests file */
-  snprintf(buf, sizeof(buf), "%s/%d.qst", QST_PREFIX, vzone_num);
+  tb_snprintf(buf, sizeof(buf), "%s/%d.qst", QST_PREFIX, vzone_num);
   if (!(fp = fopen(buf, "w"))) {
     mudlog(BRF, LVL_IMPL, TRUE, "SYSERR: OLC: Can't write new quest file");
     *error = "Could not write quest file.\r\n";
     return NOWHERE;
   }
-  fprintf(fp, "$~\n");
-  fclose(fp);
+  tb_fprintf(fp, "$~\n");
+  tb_fclose(fp);
 
   /* Create the trigger file. */
-  snprintf(buf, sizeof(buf), "%s/%d.trg", TRG_PREFIX, vzone_num);
+  tb_snprintf(buf, sizeof(buf), "%s/%d.trg", TRG_PREFIX, vzone_num);
   if (!(fp = fopen(buf, "w"))) {
     mudlog(BRF, LVL_IMPL, TRUE, "SYSERR: OLC: Can't write new trigger file");
     *error = "Could not write trigger file.\r\n";
     return NOWHERE;
   }
-  fprintf(fp, "$~\n");
-  fclose(fp);
+  tb_fprintf(fp, "$~\n");
+  tb_fclose(fp);
 
   /* Update index files. */
   create_world_index(vzone_num, "qst");
@@ -250,44 +250,44 @@ void create_world_index(int znum, const char *type)
     return;
   }
 
-  snprintf(old_name, sizeof(old_name), "%s/index", prefix);
-  snprintf(new_name, sizeof(new_name), "%s/newindex", prefix);
+  tb_snprintf(old_name, sizeof(old_name), "%s/index", prefix);
+  tb_snprintf(new_name, sizeof(new_name), "%s/newindex", prefix);
 
   if (!(oldfile = fopen(old_name, "r"))) {
     mudlog(BRF, LVL_IMPL, TRUE, "SYSERR: OLC: Failed to open %s.", old_name);
     return;
   } else if (!(newfile = fopen(new_name, "w"))) {
     mudlog(BRF, LVL_IMPL, TRUE, "SYSERR: OLC: Failed to open %s.", new_name);
-    fclose(oldfile);
+    tb_fclose(oldfile);
     return;
   }
 
   /* Index contents must be in order: search through the old file for the right
    * place, insert the new file, then copy the rest over. */
-  snprintf(buf1, sizeof(buf1), "%d.%s", znum, type);
+  tb_snprintf(buf1, sizeof(buf1), "%d.%s", znum, type);
   while (get_line(oldfile, buf)) {
     if (*buf == '$') {
       /* The following used to add a blank line, thanks to Brian Taylor for the fix. */
-      fprintf(newfile, "%s", (!found ? strncat(buf1, "\n$\n", sizeof(buf1) - strlen(buf1) - 1) : "$\n"));
+      tb_fprintf(newfile, "%s", (!found ? strncat(buf1, "\n$\n", sizeof(buf1) - strlen(buf1) - 1) : "$\n"));
       break;
     } else if (!found) {
       sscanf(buf, "%d", &num);
       if (num > znum) {
 	found = TRUE;
-	fprintf(newfile, "%s\n", buf1);
+	tb_fprintf(newfile, "%s\n", buf1);
       } else if (num == znum) {
         /* index file already had an entry for this zone. */
-        fclose(oldfile);
-        fclose(newfile);
+        tb_fclose(oldfile);
+        tb_fclose(newfile);
         remove(new_name);
         return;
       }
     }
-    fprintf(newfile, "%s\n", buf);
+    tb_fprintf(newfile, "%s\n", buf);
   }
 
-  fclose(newfile);
-  fclose(oldfile);
+  tb_fclose(newfile);
+  tb_fclose(oldfile);
   /* Out with the old, in with the new. */
   remove(old_name);
   rename(new_name, old_name);
@@ -342,7 +342,7 @@ int save_zone(zone_rnum zone_num)
     return FALSE;
   }
 
-  snprintf(fname, sizeof(fname), "%s/%d.new", ZON_PREFIX, zone_table[zone_num].number);
+  tb_snprintf(fname, sizeof(fname), "%s/%d.new", ZON_PREFIX, zone_table[zone_num].number);
   if (!(zfile = fopen(fname, "w"))) {
     mudlog(BRF, LVL_BUILDER, TRUE, "SYSERR: OLC: save_zones:  Can't write zone %d.", zone_table[zone_num].number);
     return FALSE;
@@ -355,7 +355,7 @@ int save_zone(zone_rnum zone_num)
   if (flag_tot == 0 && zone_table[zone_num].min_level == -1 && zone_table[zone_num].max_level == -1)
   {
     /* Print zone header to file. */
-    fprintf(zfile, "#%d\n"
+    tb_fprintf(zfile, "#%d\n"
                    "%s~\n"
                    "%s~\n"
                    "%d %d %d %d\n",
@@ -376,7 +376,7 @@ int save_zone(zone_rnum zone_num)
     sprintascii(zbuf4, zone_table[zone_num].zone_flags[3]);
 
     /* Print zone header to file. */
-    fprintf(zfile, "#%d\n"
+    tb_fprintf(zfile, "#%d\n"
                    "%s~\n"
                    "%s~\n"
                    "%d %d %d %d %s %s %s %s %d %d\n",       /* New tbaMUD data line */
@@ -473,16 +473,16 @@ int save_zone(zone_rnum zone_num)
       continue;
     }
     if (ZCMD(zone_num, subcmd).command != 'V')
-      fprintf(zfile, "%c %d %d %d %d \t(%s)\n",
+      tb_fprintf(zfile, "%c %d %d %d %d \t(%s)\n",
 		ZCMD(zone_num, subcmd).command, ZCMD(zone_num, subcmd).if_flag, arg1, arg2, arg3, comment);
     else
-      fprintf(zfile, "%c %d %d %d %d %s %s\n",
+      tb_fprintf(zfile, "%c %d %d %d %d %s %s\n",
               ZCMD(zone_num, subcmd).command, ZCMD(zone_num, subcmd).if_flag, arg1, arg2, arg3,
               ZCMD(zone_num, subcmd).sarg1, ZCMD(zone_num, subcmd).sarg2);
   }
-  fputs("S\n$\n", zfile);
-  fclose(zfile);
-  snprintf(oldname, sizeof(oldname), "%s/%d.zon", ZON_PREFIX, zone_table[zone_num].number);
+  tb_fputs("S\n$\n", zfile);
+  tb_fclose(zfile);
+  tb_snprintf(oldname, sizeof(oldname), "%s/%d.zon", ZON_PREFIX, zone_table[zone_num].number);
   remove(oldname);
   rename(fname, oldname);
 
