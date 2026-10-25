@@ -67,7 +67,7 @@ int objsave_save_obj_record(struct obj_data *obj, FILE *fp, int locate)
 
   if (obj->action_description) {
 
-    strcpy(buf1, obj->action_description);
+    strlcpy(buf1, obj->action_description, sizeof(buf1));
     strip_cr(buf1);
   } else
     *buf1 = 0;
@@ -141,7 +141,7 @@ int objsave_save_obj_record(struct obj_data *obj, FILE *fp, int locate)
         if (!*ex_desc->keyword || !*ex_desc->description) {
           continue;
         }
-        strcpy(buf1, ex_desc->description);
+        strlcpy(buf1, ex_desc->description, sizeof(buf1));
         strip_cr(buf1);
         fprintf(fp, "EDes:\n"
                  "%s~\n"
@@ -801,7 +801,7 @@ static int Crash_report_unrentables(struct char_data *ch, struct char_data *rece
   if (obj) {
     if (Crash_is_unrentable(obj)) {
       has_norents = 1;
-      sprintf(buf, "$n tells you, 'You cannot store %s.'", OBJS(obj, ch));
+      snprintf(buf, sizeof(buf), "$n tells you, 'You cannot store %s.'", OBJS(obj, ch));
       act(buf, FALSE, recep, 0, ch, TO_VICT);
     }
     has_norents += Crash_report_unrentables(ch, recep, obj->contains);
@@ -1223,7 +1223,7 @@ static int Crash_load_objs(struct char_data *ch) {
     sscanf(line,"%d %d %d %d %d %d",&rentcode, &timed, &netcost,&gold,&account,&nitems);
 
   if (rentcode == RENT_RENTED || rentcode == RENT_TIMEDOUT) {
-    sprintf(str, "%d", SECS_PER_REAL_DAY);
+    snprintf(str, sizeof(str), "%d", SECS_PER_REAL_DAY);
     num_of_days = (int)((float) (time(0) - timed) / tb_parse_int_or_zero(str));
     cost = (unsigned int) (netcost * num_of_days);
     if (cost > (unsigned int)GET_GOLD(ch) + (unsigned int)GET_BANK_GOLD(ch)) {
