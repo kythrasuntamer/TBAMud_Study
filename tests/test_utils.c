@@ -213,7 +213,7 @@ void test_file_sizeof_counts_exact_bytes(void)
     FILE *fp = tmpfile();
 
     TEST_ASSERT_NOT_NULL(fp);
-    TEST_ASSERT_EQUAL_INT(3, fputs("abc", fp));
+    TEST_ASSERT_TRUE(fputs("abc", fp) >= 0);
     fflush(fp);
 
     TEST_ASSERT_EQUAL_size_t(3, file_sizeof(fp));
