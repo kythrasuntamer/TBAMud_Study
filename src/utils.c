@@ -1560,46 +1560,48 @@ char *strfrmt(char *str, int w, int h, int justify, int hpad, int vpad)
 */
 char *strpaste(char *str1, char *str2, char *joiner)
 {
-  static char ret[MAX_STRING_LENGTH+1];
-  char *sp1 = str1;
-  char *sp2 = str2;
+  static char ret[MAX_STRING_LENGTH + 1];
+  const char *sp1 = str1 ? str1 : "";
+  const char *sp2 = str2 ? str2 : "";
+  const char *safe_joiner = joiner ? joiner : "";
   char *rp = ret;
-  int jlen = strlen(joiner);
+  char *rend = ret + MAX_STRING_LENGTH;
+  size_t jlen = strlen(safe_joiner);
 
-  while((rp - ret) < MAX_STRING_LENGTH && (*sp1 || *sp2)) {
-     /* Copy line from str1 */
-    while((rp - ret) < MAX_STRING_LENGTH && *sp1 && !ISNEWL(*sp1))
+  while (rp < rend && (*sp1 || *sp2)) {
+    /* Copy line from str1. */
+    while (rp < rend && *sp1 && !ISNEWL(*sp1))
       *rp++ = *sp1++;
-    /* Eat the newline */
-    if(*sp1) {
-      if(sp1[1] && sp1[1]!=sp1[0] && ISNEWL(sp1[1]))
+
+    /* Eat one CR/LF pair or a single newline. */
+    if (*sp1) {
+      if (sp1[1] && sp1[1] != sp1[0] && ISNEWL(sp1[1]))
         sp1++;
       sp1++;
     }
 
-    /* Add the joiner */
-    if((rp - ret) + jlen >= MAX_STRING_LENGTH)
+    if (jlen > (size_t)(rend - rp))
       break;
-    memcpy(rp, joiner, (size_t)jlen);
+    memcpy(rp, safe_joiner, jlen);
     rp += jlen;
 
-     /* Copy line from str2 */
-    while((rp - ret) < MAX_STRING_LENGTH && *sp2 && !ISNEWL(*sp2))
+    /* Copy line from str2. */
+    while (rp < rend && *sp2 && !ISNEWL(*sp2))
       *rp++ = *sp2++;
-    /* Eat the newline */
-    if(*sp2) {
-      if(sp2[1] && sp2[1]!=sp2[0] && ISNEWL(sp2[1]))
+
+    if (*sp2) {
+      if (sp2[1] && sp2[1] != sp2[0] && ISNEWL(sp2[1]))
         sp2++;
       sp2++;
     }
 
-    /* Add the newline */
-    if((rp - ret) + 2 >= MAX_STRING_LENGTH)
+    /* Reserve two bytes for CRLF; the array has one extra byte for NUL. */
+    if ((size_t)(rend - rp) < 2)
       break;
     *rp++ = '\r';
     *rp++ = '\n';
   }
-  /* Close off the string */
+
   *rp = '\0';
   return ret;
 }
