@@ -583,9 +583,14 @@ void trigedit_parse(struct descriptor_data *d, char *arg)
       break;
 
     case TRIGEDIT_INTENDED:
-      if ((atoi(arg)>=MOB_TRIGGER) || (atoi(arg)<=WLD_TRIGGER))
-        OLC_TRIG(d)->attach_type = atoi(arg);
-      OLC_VAL(d)++;
+      i = atoi(arg);
+      if (i >= MOB_TRIGGER && i <= WLD_TRIGGER) {
+        OLC_TRIG(d)->attach_type = i;
+        OLC_VAL(d)++;
+      } else {
+        write_to_output(d, "Please enter 0 for Mobiles, 1 for Objects, or 2 for Rooms: ");
+        return;
+      }
       break;
 
     case TRIGEDIT_NARG:

@@ -39,8 +39,10 @@ void mobile_activity(void)
     if (!IS_MOB(ch))
       continue;
 
-    /* Examine call for special procedure */
-    if (MOB_FLAGGED(ch, MOB_SPEC) && !no_specials) {
+    /* Examine call for special procedure.  A mob already marked for
+     * extraction is still on character_list until the end of the pulse. */
+    if (MOB_FLAGGED(ch, MOB_SPEC) && !no_specials &&
+        !MOB_FLAGGED(ch, MOB_NOTDEADYET)) {
       if (mob_index[GET_MOB_RNUM(ch)].func == NULL) {
 	log("SYSERR: %s (#%d): Attempting to call non-existing mob function.",
 		GET_NAME(ch), GET_MOB_VNUM(ch));
@@ -132,6 +134,8 @@ void mobile_activity(void)
           found = TRUE;
           act("'Hey!  You're the fiend that attacked me!!!', exclaims $n.", FALSE, ch, 0, 0, TO_ROOM);
           hit(ch, vict, TYPE_UNDEFINED);
+          /* hit() can free the current memory node via forget(). */
+          break;
         }
       }
     }

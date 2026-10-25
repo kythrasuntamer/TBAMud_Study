@@ -593,12 +593,15 @@ SPECIAL(cityguard)
 #define PET_PRICE(pet) (GET_LEVEL(pet) * 300)
 SPECIAL(pet_shops)
 {
-  char buf[MAX_STRING_LENGTH], pet_name[256];
+  char buf[MAX_STRING_LENGTH], pet_name[MAX_INPUT_LENGTH];
   room_rnum pet_room;
   struct char_data *pet;
 
   /* Gross. */
   pet_room = IN_ROOM(ch) + 1;
+
+  if (pet_room > top_of_world)
+    return (FALSE);
 
   if (CMD_IS("list")) {
     send_to_char(ch, "Available pets are:\r\n");
