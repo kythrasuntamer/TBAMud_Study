@@ -183,3 +183,25 @@ apply this criterion to the originating game, not individual rooms.
 
 This is an import eligibility policy only; no third-party area files are
 included or activated by this change.
+
+## Joining imported zones to the existing world
+
+After a **complete, rights-cleared, collision-free, boot-tested area** is
+available, connect its entry room to a reviewed room in the existing game.
+`tools/bridge_areas.py` creates a pair of reciprocal, ordinary room exits,
+without modifying the original world files:
+
+```sh
+python3 tools/bridge_areas.py \
+  --existing-wld lib/world/wld/0.wld --existing-room 99 \
+  --imported-wld /tmp/approved-world/wld/5000.wld --imported-room 500000 \
+  --direction north --staging /tmp/bridge-review
+```
+
+The example is **illustrative**, not a verified free direction or an actual
+imported area. Select the actual rooms and verify that neither exit direction
+is occupied. Compare staged copies with the originals and make a reviewed
+commit to install them with the associated imported zone and updated indexes.
+Global VNUM/reference validation and an isolated server boot are **mandatory**.
+The bridge generator does not automatically install converted content, does
+not map all VNUM domains, and does not grant copyright permissions.
