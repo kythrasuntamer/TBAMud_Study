@@ -184,8 +184,25 @@ void test_level_exp_invalid_level_returns_zero(void)
 
 void test_level_exp_immortal_level(void)
 {
-    /* LVL_IMMORT for mage → 8000000 */
-    TEST_ASSERT_EQUAL_INT(8000000, level_exp(CLASS_MAGIC_USER, LVL_IMMORT));
+    /* Extended mortal curve reaches the immortal threshold at level 51. */
+    TEST_ASSERT_EQUAL_INT(9710000, level_exp(CLASS_MAGIC_USER, LVL_IMMORT));
+}
+
+void test_level_exp_extended_progression_is_monotonic(void)
+{
+    int classes[] = { CLASS_MAGIC_USER, CLASS_CLERIC, CLASS_THIEF, CLASS_WARRIOR };
+    size_t i;
+    for (i = 0; i < sizeof(classes) / sizeof(classes[0]); ++i) {
+        int level;
+        for (level = 31; level <= LVL_IMPL; ++level)
+            TEST_ASSERT_TRUE(level_exp(classes[i], level) > level_exp(classes[i], level - 1));
+    }
+}
+
+void test_level_exp_mortal_boundary(void)
+{
+    TEST_ASSERT_EQUAL_INT(9600000, level_exp(CLASS_MAGIC_USER, LVL_IMMORT - 1));
+    TEST_ASSERT_EQUAL_INT(9710000, level_exp(CLASS_MAGIC_USER, LVL_IMMORT));
 }
 
 /* =========================================================
@@ -232,6 +249,8 @@ int main(void)
     RUN_TEST(test_level_exp_warrior_level_1);
     RUN_TEST(test_level_exp_invalid_level_returns_zero);
     RUN_TEST(test_level_exp_immortal_level);
+    RUN_TEST(test_level_exp_extended_progression_is_monotonic);
+    RUN_TEST(test_level_exp_mortal_boundary);
 
     return UNITY_END();
 }
