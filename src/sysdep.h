@@ -9,8 +9,8 @@
 * Copyright (C) 1993, 94 by the Trustees of the Johns Hopkins University 
 * CircleMUD is based on DikuMUD, Copyright (C) 1990, 1991.               
 */
-#ifndef _SYSDEP_H_
-#define _SYSDEP_H_
+#ifndef TBAMUD_SYSDEP_H_INCLUDED
+#define TBAMUD_SYSDEP_H_INCLUDED
 
 /* Configurables: tbaMUD uses the crypt(3) function to encrypt player passwords
  * in the players file so that they are never stored in plaintext form. However,
@@ -584,5 +584,5 @@ struct in_addr {
 
 #endif /* NO_LIBRARY_PROTOTYPES */
 
-#endif /* _SYSDEP_H_ */
+#endif /* TBAMUD_SYSDEP_H_INCLUDED */
 
