@@ -37,6 +37,10 @@ def validate(manifest):
             if not isinstance(key,str) or not key or key in byskill:
                 issues.append(f"duplicate or invalid skill key {key!r} for {name}")
             byskill[key]=skill
+            if skill.get("unlock") not in ("trainer", "quest", "challenge", "boss"):
+                issues.append(f"missing or invalid unlock route for {name}/{key}")
+            if skill.get("implementation") not in ("NOT_IMPLEMENTED", "IMPLEMENTED"):
+                issues.append(f"missing ability implementation status for {name}/{key}")
             level=skill.get("level")
             if not isinstance(level,int) or not 1<=level<=50:
                 issues.append(f"invalid skill level {level!r} for {name}/{key}")
@@ -59,6 +63,8 @@ def validate(manifest):
                     walk(req,stack|{key})
         for key in byskill:
             walk(key,set())
+    if manifest.get("status")=="PLAYABLE" and any(skill.get("implementation")!="IMPLEMENTED" for tree in trees for skill in tree.get("skills",[])):
+        issues.append("playable manifest contains unimplemented skills")
     if manifest.get("status")=="PLAYABLE" and set(names)-set(byname):
         issues.append("playable manifest is missing complete class skill trees")
     return issues
