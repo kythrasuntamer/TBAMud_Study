@@ -205,10 +205,14 @@ void cleanup_olc(struct descriptor_data *d, byte cleanup_type)
     else if (STATE(d) == CON_HEDIT)
       mudlog(CMP, MAX(LVL_IMMORT, GET_INVIS_LEV(d->character)),
        TRUE, "OLC: %s stops editing help files.", GET_NAME(d->character));
+    else if (OLC_ZNUM(d) >= 0 && OLC_ZNUM(d) <= top_of_zone_table)
+      mudlog(CMP, MAX(LVL_IMMORT, GET_INVIS_LEV(d->character)),
+        TRUE, "OLC: %s stops editing zone %d allowed zone %d",
+        GET_NAME(d->character), zone_table[OLC_ZNUM(d)].number, GET_OLC_ZONE(d->character));
     else
       mudlog(CMP, MAX(LVL_IMMORT, GET_INVIS_LEV(d->character)),
-        TRUE, "OLC: %s stops editing zone %d allowed zone %d", 
-        GET_NAME(d->character), zone_table[OLC_ZNUM(d)].number, GET_OLC_ZONE(d->character));
+        TRUE, "OLC: %s stops editing an object instance or unzoned data (zone index %d)",
+        GET_NAME(d->character), OLC_ZNUM(d));
 
     STATE(d) = CON_PLAYING;
   }
