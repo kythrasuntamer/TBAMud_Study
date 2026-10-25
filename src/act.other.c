@@ -886,8 +886,8 @@ static void show_happyhour(struct char_data *ch)
       else
         secs_left = 0;
 
-      sprintf(happyqp,   "%s+%d%%%s to Questpoints per quest\r\n", CCYEL(ch, C_NRM), HAPPY_QP,   CCNRM(ch, C_NRM));
-      sprintf(happygold, "%s+%d%%%s to Gold gained per kill\r\n",  CCYEL(ch, C_NRM), HAPPY_GOLD, CCNRM(ch, C_NRM));
+      tb_snprintf(happyqp, sizeof(happyqp),   "%s+%d%%%s to Questpoints per quest\r\n", CCYEL(ch, C_NRM), HAPPY_QP,   CCNRM(ch, C_NRM));
+      tb_snprintf(happygold, sizeof(happygold), "%s+%d%%%s to Gold gained per kill\r\n",  CCYEL(ch, C_NRM), HAPPY_GOLD, CCNRM(ch, C_NRM));
       tb_snprintf(happyexp, sizeof(happyexp), "%s+%d%%%s to Experience per kill\r\n",   CCYEL(ch, C_NRM), HAPPY_EXP,  CCNRM(ch, C_NRM));
 
       send_to_char(ch, "tbaMUD Happy Hour!\r\n"
