@@ -2063,9 +2063,6 @@ char *parse_object(FILE *obj_f, int nr)
   j = 0;
 
   for (;;) {
-  j = 0;
-
-  for (;;) {
     if (!get_line(obj_f, line)) {
       log("SYSERR: Format error in %s", buf2);
       exit(1);
