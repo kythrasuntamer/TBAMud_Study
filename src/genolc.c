@@ -311,21 +311,28 @@ static int run_program_argv(char *const argv[])
   int status;
 
   pid = fork();
-  if (pid < 0)
+  if (pid < 0) {
+    TB_REPORT_ERRNO("fork", argv && argv[0] ? argv[0] : "zone export helper");
     return -1;
+  }
 
   if (pid == 0) {
     execvp(argv[0], argv);
+    TB_REPORT_ERRNO("execvp", argv && argv[0] ? argv[0] : "zone export helper");
     _exit(127);
   }
 
   while (waitpid(pid, &status, 0) < 0) {
-    if (errno != EINTR)
+    if (errno != EINTR) {
+      TB_REPORT_ERRNO("waitpid", argv && argv[0] ? argv[0] : "zone export helper");
       return -1;
+    }
   }
 
-  if (!WIFEXITED(status))
+  if (!WIFEXITED(status)) {
+    TB_REPORT_ERROR("waitpid", "child terminated abnormally");
     return -1;
+  }
 
   return WEXITSTATUS(status);
 }
@@ -375,24 +382,47 @@ ACMD(do_export_zone)
       errorcode = -1;
   }
   if (errorcode) {
-    send_to_char(ch, "Failed to create export directory.\r\n");
+    TB_REPORT_ERRNO("mkdir", path);
+    send_to_char(ch, "Failed to create export directory; see server log for the originating error.\r\n");
     return;
   }
 
-  if (!(success = export_info_file(zrnum))) 
-    send_to_char(ch, "Info file not saved!\r\n"); 
-  if (!(success = export_save_shops(zrnum))) 
-    send_to_char(ch, "Shops not saved!\r\n"); 
-  if (!(success = export_save_mobiles(zrnum))) 
-    send_to_char(ch, "Mobiles not saved!\r\n"); 
-  if (!(success = export_save_objects(zrnum))) 
-    send_to_char(ch, "Objects not saved!\r\n"); 
-  if (!(success = export_save_zone(zrnum))) 
-    send_to_char(ch, "Zone info not saved!\r\n"); 
-  if (!(success = export_save_rooms(zrnum))) 
-    send_to_char(ch, "Rooms not saved!\r\n"); 
-  if (!(success = export_save_triggers(zrnum))) 
-    send_to_char(ch, "Triggers not saved!\r\n"); 
+  success = TRUE;
+  if (!export_info_file(zrnum)) {
+    log("SYSERR: zone export failed in export_info_file for zone %d", zvnum);
+    send_to_char(ch, "Info file not saved!\r\n");
+    success = FALSE;
+  }
+  if (!export_save_shops(zrnum)) {
+    log("SYSERR: zone export failed in export_save_shops for zone %d", zvnum);
+    send_to_char(ch, "Shops not saved!\r\n");
+    success = FALSE;
+  }
+  if (!export_save_mobiles(zrnum)) {
+    log("SYSERR: zone export failed in export_save_mobiles for zone %d", zvnum);
+    send_to_char(ch, "Mobiles not saved!\r\n");
+    success = FALSE;
+  }
+  if (!export_save_objects(zrnum)) {
+    log("SYSERR: zone export failed in export_save_objects for zone %d", zvnum);
+    send_to_char(ch, "Objects not saved!\r\n");
+    success = FALSE;
+  }
+  if (!export_save_zone(zrnum)) {
+    log("SYSERR: zone export failed in export_save_zone for zone %d", zvnum);
+    send_to_char(ch, "Zone info not saved!\r\n");
+    success = FALSE;
+  }
+  if (!export_save_rooms(zrnum)) {
+    log("SYSERR: zone export failed in export_save_rooms for zone %d", zvnum);
+    send_to_char(ch, "Rooms not saved!\r\n");
+    success = FALSE;
+  }
+  if (!export_save_triggers(zrnum)) {
+    log("SYSERR: zone export failed in export_save_triggers for zone %d", zvnum);
+    send_to_char(ch, "Triggers not saved!\r\n");
+    success = FALSE;
+  }
 
   /* If anything went wrong, don't try to tar the files. */ 
   if (success) { 
@@ -418,8 +448,10 @@ ACMD(do_export_zone)
     return;
   }
 
-  if (remove(old_archive) != 0 && errno != ENOENT)
-    send_to_char(ch, "Failed to delete previous zip file. This is usually benign.\r\n");
+  if (remove(old_archive) != 0 && errno != ENOENT) {
+    TB_REPORT_ERRNO("remove", old_archive);
+    send_to_char(ch, "Failed to delete previous zip file; see server log for details.\r\n");
+  }
 
   {
     char *tar_argv[] = { "tar", "-cf", archive, info_path, wld_path, zon_path,
@@ -427,7 +459,8 @@ ACMD(do_export_zone)
     errorcode = run_program_argv(tar_argv);
   }
   if (errorcode != 0) {
-    send_to_char(ch, "Failed to tar files.\r\n");
+    log("SYSERR: zone export tar failed for zone %d with exit status %d", zvnum, errorcode);
+    send_to_char(ch, "Failed to tar files; see server log for the exact failure site/status.\r\n");
     return;
   }
 
@@ -436,7 +469,8 @@ ACMD(do_export_zone)
     errorcode = run_program_argv(gzip_argv);
   }
   if (errorcode != 0) {
-    send_to_char(ch, "Failed to gzip tar file.\r\n");
+    log("SYSERR: zone export gzip failed for zone %d with exit status %d", zvnum, errorcode);
+    send_to_char(ch, "Failed to gzip tar file; see server log for the exact failure site/status.\r\n");
     return;
   }
 
@@ -450,10 +484,12 @@ static int export_info_file(zone_rnum zrnum)
   FILE *info_file;
 
   if (!(info_file = fopen("world/export/qq.info", "w"))) {
-    mudlog(BRF, LVL_GOD, TRUE, "SYSERR: export_info_file : Cannot open file!");
+    TB_REPORT_ERRNO("fopen", "world/export/qq.info");
+    mudlog(BRF, LVL_GOD, TRUE, "SYSERR: export_info_file: cannot open world/export/qq.info");
     return FALSE;
   } else if (fprintf(info_file, "tbaMUD Area file.\n") < 0) {
-    mudlog(BRF, LVL_GOD, TRUE, "SYSERR: export_info_file: Cannot write to file!");
+    TB_REPORT_ERRNO("fprintf", "world/export/qq.info");
+    mudlog(BRF, LVL_GOD, TRUE, "SYSERR: export_info_file: cannot write world/export/qq.info");
     tb_fclose(info_file);
     return FALSE;
   }
