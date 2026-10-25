@@ -42,7 +42,7 @@ static void zlogf(const char *format, ...)
 
   va_start(args, format);
   if (vfprintf(zfd, format, args) < 0)
-    perror("zmalloc log");
+    TB_REPORT_ERRNO("vfprintf", "zmalloc.log");
   va_end(args);
 }
 
@@ -352,8 +352,10 @@ void zmalloc_check()
   }
 
   if (zfd) {
-    if (fflush(zfd) == EOF) perror("zmalloc fflush");
-    if (fclose(zfd) == EOF) perror("zmalloc fclose");
+    if (fflush(zfd) == EOF)
+      TB_REPORT_ERRNO("fflush", "zmalloc.log");
+    if (fclose(zfd) == EOF)
+      TB_REPORT_ERRNO("fclose", "zmalloc.log");
   }
 }
 
