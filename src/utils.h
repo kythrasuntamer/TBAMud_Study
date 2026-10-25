@@ -711,6 +711,10 @@ do                                                              \
 #define GET_SCREEN_WIDTH(ch)    CHECK_PLAYER_SPECIAL((ch), ((ch)->player_specials->saved.screen_width))
 /* Autoquests data */
 /** Return the number of questpoints ch has. */
+#define GET_ENDGAME_AP(ch)      CHECK_PLAYER_SPECIAL((ch), ((ch)->player_specials->saved.endgame_ap))
+#define GET_ENDGAME_XP(ch)      CHECK_PLAYER_SPECIAL((ch), ((ch)->player_specials->saved.endgame_xp))
+#define GET_ENDGAME_HP_RANK(ch) CHECK_PLAYER_SPECIAL((ch), ((ch)->player_specials->saved.endgame_hp_rank))
+#define GET_ENDGAME_MP_RANK(ch) CHECK_PLAYER_SPECIAL((ch), ((ch)->player_specials->saved.endgame_mana_rank))
 #define GET_QUESTPOINTS(ch)     CHECK_PLAYER_SPECIAL((ch), ((ch)->player_specials->saved.questpoints))
 /** Return the current quest that a player has assigned */
 #define GET_QUEST(ch)           CHECK_PLAYER_SPECIAL((ch), ((ch)->player_specials->saved.current_quest))
