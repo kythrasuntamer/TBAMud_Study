@@ -246,6 +246,8 @@ find_library(SODIUM_LIBRARY NAMES sodium libsodium
 if(NOT SODIUM_INCLUDE_DIR OR NOT SODIUM_LIBRARY)
     message(FATAL_ERROR "libsodium development library is required for Argon2id password hashing")
 endif()
+message(STATUS "Argon2id libsodium include: ${SODIUM_INCLUDE_DIR}")
+message(STATUS "Argon2id libsodium library: ${SODIUM_LIBRARY}")
 include_directories(${SODIUM_INCLUDE_DIR})
 list(APPEND EXTRA_LIBS ${SODIUM_LIBRARY})
 
