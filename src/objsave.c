@@ -342,16 +342,16 @@ int Crash_clean_file(char *name)
       Crash_delete_file(name);
       switch (rentcode) {
       case RENT_CRASH:
-        strcpy(filetype, "crash");
+        strlcpy(filetype, "crash", sizeof(filetype));
         break;
       case RENT_FORCED:
-        strcpy(filetype, "forced rent");
+        strlcpy(filetype, "forced rent", sizeof(filetype));
         break;
       case RENT_TIMEDOUT:
-        strcpy(filetype, "idlesave");
+        strlcpy(filetype, "idlesave", sizeof(filetype));
         break;
       default:
-        strcpy(filetype, "UNKNOWN!");
+        strlcpy(filetype, "UNKNOWN!", sizeof(filetype));
         break;
       }
       log("    Deleting %s's %s file.", name, filetype);
@@ -820,7 +820,7 @@ static void Crash_report_rent(struct char_data *ch, struct char_data *recep, str
       (*nitems)++;
       *cost += MAX(0, (GET_OBJ_RENT(obj) * factor));
       if (display) {
-        sprintf(buf, "$n tells you, '%5d coins for %s..'",
+        tb_snprintf(buf, sizeof(buf), "$n tells you, '%5d coins for %s..'",
                 (GET_OBJ_RENT(obj) * factor), OBJS(obj, ch));
         act(buf, FALSE, recep, 0, ch, TO_VICT);
       }
@@ -857,16 +857,16 @@ static int Crash_offer_rent(struct char_data *ch, struct char_data *recep,
     return FALSE;
   }
   if (numitems > CONFIG_MAX_OBJ_SAVE) {
-    sprintf(buf, "$n tells you, 'Sorry, but I cannot store more than %d items.'",
+    tb_snprintf(buf, sizeof(buf), "$n tells you, 'Sorry, but I cannot store more than %d items.'",
         CONFIG_MAX_OBJ_SAVE);
     act(buf, FALSE, recep, 0, ch, TO_VICT);
     return FALSE;
   }
   if (display) {
-    sprintf(buf, "$n tells you, 'Plus, my %d coin fee..'",
+    tb_snprintf(buf, sizeof(buf), "$n tells you, 'Plus, my %d coin fee..'",
         CONFIG_MIN_RENT_COST * factor);
     act(buf, FALSE, recep, 0, ch, TO_VICT);
-    sprintf(buf, "$n tells you, 'For a total of %ld coins%s.'",
+    tb_snprintf(buf, sizeof(buf), "$n tells you, 'For a total of %ld coins%s.'",
             totalcost, (factor == RENT_FACTOR ? " per day" : ""));
     act(buf, FALSE, recep, 0, ch, TO_VICT);
     if (totalcost > GET_GOLD(ch) + GET_BANK_GOLD(ch)) {
