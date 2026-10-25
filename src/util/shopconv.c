@@ -111,13 +111,13 @@ static int boot_the_shops_conv(FILE * shop_f, FILE * newshop_f, char *filename)
   char *buf, buf2[150];
   int temp, count;
 
-  sprintf(buf2, "beginning of shop file %s", filename);
+  snprintf(buf2, sizeof(buf2), "beginning of shop file %s", filename);
   fprintf(newshop_f, "CircleMUD %s Shop File~\n", VERSION3_TAG);
   for (;;) {
     buf = fread_string(shop_f, buf2);
     if (*buf == '#') {		/* New shop */
       sscanf(buf, "#%d\n", &temp);
-      sprintf(buf2, "shop #%d in shop file %s", temp, filename);
+      snprintf(buf2, sizeof(buf2), "shop #%d in shop file %s", temp, filename);
       fprintf(newshop_f, "#%d~\n", temp);
       free(buf);		/* Plug memory leak! */
       printf("   #%d\n", temp);
@@ -200,15 +200,19 @@ int main(int argc, char *argv[])
       fclose(nsfp);
       fclose(sfp);
       if (result) {
-	      sprintf(part, "mv %s.tmp %s", fn, fn);
-	      if (system(part) != 0) {
-	        fprintf(stderr, "shopconv: failed to restore %s from temporary file\n", fn);
+	      if (rename(part, fn) != 0) {
+	        fprintf(stderr, "shopconv: failed to restore %s from temporary file: %s\n",
+	                fn, strerror(errno));
 	        exit(1);
 	      }
       } else {
-	      sprintf(part, "mv %s.tmp %s.bak", fn, fn);
-	      if (system(part) != 0) {
-	        fprintf(stderr, "shopconv: failed to archive temporary file for %s\n", fn);
+	      if (snprintf(backup, sizeof(backup), "%s.bak", fn) >= (int)sizeof(backup)) {
+	        fprintf(stderr, "shopconv: backup filename too long: %s\n", fn);
+	        exit(1);
+	      }
+	      if (rename(part, backup) != 0) {
+	        fprintf(stderr, "shopconv: failed to archive temporary file for %s: %s\n",
+	                fn, strerror(errno));
 	        exit(1);
 	      }
 	      printf("Done!\n");
