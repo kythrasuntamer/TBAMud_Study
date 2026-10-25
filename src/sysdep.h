@@ -190,6 +190,52 @@ static inline int tb_parse_int_or_zero(const char *text)
   return (int)value;
 }
 
+static inline int tb_ascii_space(unsigned char ch)
+{
+  return ch == ' ' || ch == '\t' || ch == '\n' ||
+         ch == '\r' || ch == '\f' || ch == '\v';
+}
+
+/*
+ * Strict numeric parsers for input where malformed text must not silently
+ * become zero.  They require full consumption (aside from ASCII whitespace)
+ * and report success explicitly.
+ */
+static inline int tb_parse_long_checked(const char *text, long *out)
+{
+  char *end = NULL;
+  long value;
+
+  if (text == NULL || out == NULL)
+    return 0;
+
+  errno = 0;
+  value = strtol(text, &end, 10);
+  if (end == text || errno == ERANGE)
+    return 0;
+
+  while (*end != '\0' && tb_ascii_space((unsigned char)*end))
+    end++;
+
+  if (*end != '\0')
+    return 0;
+
+  *out = value;
+  return 1;
+}
+
+static inline int tb_parse_int_checked(const char *text, int *out)
+{
+  long value;
+
+  if (out == NULL || !tb_parse_long_checked(text, &value) ||
+      value < INT_MIN || value > INT_MAX)
+    return 0;
+
+  *out = (int)value;
+  return 1;
+}
+
 #ifdef HAVE_NET_ERRNO_H
 #include <net/errno.h>
 #endif
