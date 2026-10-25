@@ -1248,7 +1248,7 @@ static int get_from_q(struct txt_q *queue, char *dest, int *aliased)
   if (!queue->head)
     return (0);
 
-  strcpy(dest, queue->head->text);	/* strcpy: OK (mutual MAX_INPUT_LENGTH) */
+  strlcpy(dest, queue->head->text, MAX_INPUT_LENGTH);	/* strcpy: OK (mutual MAX_INPUT_LENGTH) */
   *aliased = queue->head->aliased;
 
   tmp = queue->head;
