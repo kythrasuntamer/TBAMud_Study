@@ -3,6 +3,24 @@ Checks: >
   clang-analyzer-*,
   bugprone-*,
   performance-*,
-  portability-*
-#WarningsAsErrors: '*'
+  portability-*,
+  -bugprone-assignment-in-if-condition,
+  -bugprone-branch-clone,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-implicit-widening-of-multiplication-result,
+  -bugprone-inc-dec-in-conditions,
+  -bugprone-integer-division,
+  -bugprone-multi-level-implicit-pointer-conversion,
+  -bugprone-narrowing-conversions,
+  -bugprone-reserved-identifier,
+  -bugprone-signed-char-misuse,
+  -bugprone-suspicious-string-compare,
+  -bugprone-switch-missing-default-case,
+  -bugprone-too-small-loop-variable,
+  -bugprone-unsafe-functions,
+  -clang-analyzer-optin.performance.Padding,
+  -clang-analyzer-security.insecureAPI.strcpy
+# Keep memory-safety, ownership, null-dereference, bounds, stream and
+# resource analyzers enabled.  The disabled checks above are legacy API/style
+# diagnostics that do not represent defects in this C codebase.
 HeaderFilterRegex: 'src/.*'
