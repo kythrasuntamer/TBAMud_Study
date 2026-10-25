@@ -87,7 +87,7 @@ char *str_udupnl(const char *txt)
 
   CREATE(str, char, n);
   strlcpy(str, ptr, n);
-  strcat(str, "\r\n");
+  strlcat(str, "\r\n", n);
 
   return str;
 }
