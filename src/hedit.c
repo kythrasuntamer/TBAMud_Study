@@ -160,7 +160,7 @@ static void hedit_save_to_disk(struct descriptor_data *d)
   char buf1[MAX_STRING_LENGTH], index_name[READ_SIZE];
   int i;
 
-  snprintf(index_name, sizeof(index_name), "%s%s", HLP_PREFIX, HELP_FILE);
+  tb_snprintf(index_name, sizeof(index_name), "%s%s", HLP_PREFIX, HELP_FILE);
   if (!(fp = fopen(index_name, "w"))) {
     log("SYSERR: Could not write help index file");
     return;
@@ -173,11 +173,11 @@ static void hedit_save_to_disk(struct descriptor_data *d)
     strip_cr(buf1);
 
     /* Forget making a buffer, lets just write the thing now. */
-    fprintf(fp, "%s#%d\n", convert_from_tabs(buf1), help_table[i].min_level);
+    tb_fprintf(fp, "%s#%d\n", convert_from_tabs(buf1), help_table[i].min_level);
   }
   /* Write final line and close. */
-  fprintf(fp, "$~\n");
-  fclose(fp);
+  tb_fprintf(fp, "$~\n");
+  tb_fclose(fp);
 
   remove_from_save_list(HEDIT_PERMISSION, SL_HLP);
 
@@ -216,7 +216,7 @@ void hedit_parse(struct descriptor_data *d, char *arg)
     switch (*arg) {
     case 'y':
     case 'Y':
-      snprintf(buf, sizeof(buf), "OLC: %s edits help for %s.", GET_NAME(d->character),
+      tb_snprintf(buf, sizeof(buf), "OLC: %s edits help for %s.", GET_NAME(d->character),
                OLC_HELP(d)->keywords);
       mudlog(TRUE, MAX(LVL_BUILDER, GET_INVIS_LEV(d->character)), CMP, "%s", buf);
       write_to_output(d, "Help saved to disk.\r\n");
@@ -385,7 +385,7 @@ ACMD(do_helpcheck)
     }
   }
   if (count % 3 && len < sizeof(buf))
-    snprintf(buf + len, sizeof(buf) - len, "\r\n");
+    tb_snprintf(buf + len, sizeof(buf) - len, "\r\n");
 
   if (ch->desc) {
 	if (len == 0)
@@ -533,7 +533,7 @@ ACMD(do_hindex)
       buf[len] = '\0';
   }
   if (!count2)
-    snprintf(buf2 + len2, (size_t)(limit - len2), "  None.\r\n");
+    tb_snprintf(buf2 + len2, (size_t)(limit - len2), "  None.\r\n");
 
   /* Join the two listings.  Copy what fits and cut back to the last
    * complete line rather than dropping the second listing whole: it is
@@ -570,7 +570,7 @@ ACMD(do_hindex)
    * above took only part of the second listing.  Without the line saying
    * so, a short listing under a large total reads as a display fault
    * rather than as a listing that would not fit. */
-  snprintf(buf + len, sizeof(buf) - len,
+  tb_snprintf(buf + len, sizeof(buf) - len,
            "%s\t1Applicable Index Entries: \t3%d\r\n"
            "\t1Total Index Entries: \t3%d\tn\r\n",
            (cut || cut2) ? "\t1The listing was too long to show in full.\tn\r\n" : "",
