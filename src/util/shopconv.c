@@ -153,6 +153,8 @@ static int boot_the_shops_conv(FILE * shop_f, FILE * newshop_f, char *filename)
 	printf("%s: New format detected, conversion aborted!\n", filename);
 	free(buf);		/* Plug memory leak! */
 	return (1);
+      } else {
+        free(buf);
       }
     }
   }
@@ -184,6 +186,10 @@ int main(int argc, char *argv[])
     } else {
       if ((nsfp = fopen(fn, "w")) == NULL) {
 	      printf("Error writing to %s.\n", fn);
+        fclose(sfp);
+        sprintf(part, "mv %s.tmp %s", fn, fn);
+        if (system(part) != 0)
+          fprintf(stderr, "shopconv: failed to restore %s from temporary file\n", fn);
 	      continue;
       }
       printf("%s:\n", fn);

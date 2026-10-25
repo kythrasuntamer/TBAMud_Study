@@ -351,6 +351,8 @@ static char *times_message(struct obj_data *obj, char *name, int num)
   if (obj)
     len = strlcpy(buf, obj->short_description, sizeof(buf));
   else {
+    if (!name)
+      name = "item";
     if ((ptr = strchr(name, '.')) == NULL)
       ptr = name;
     else
@@ -1093,9 +1095,10 @@ static int read_type_list(FILE *shop_f, struct shop_buy_data *list,
       if (feof(shop_f))
         log("SYSERR: unexpected end of file reading shop file type list.");
       else if (ferror(shop_f))
-        log("SYSERR: error reading reading shop file type list: %s", strerror(errno));
+        log("SYSERR: error reading shop file type list: %s", strerror(errno));
       else
-        log("SYSERR: error reading reading shop file type list.");
+        log("SYSERR: error reading shop file type list.");
+      exit(1);
     }
     if ((ptr = strchr(buf, ';')) != NULL)
       *ptr = '\0';
@@ -1114,19 +1117,28 @@ static int read_type_list(FILE *shop_f, struct shop_buy_data *list,
 
     ptr = buf;
     if (num == -1) {
-      sscanf(buf, "%d", &num);
-      while (!isdigit(*ptr))
-	ptr++;
-      while (isdigit(*ptr))
-	ptr++;
+      char *endptr;
+      long parsed = strtol(buf, &endptr, 10);
+
+      if (endptr == buf) {
+        num = -1;
+        ptr = END_OF(buf);
+      } else {
+        num = (int)parsed;
+        ptr = endptr;
+      }
     }
-    while (isspace(*ptr))
+    while (*ptr && isspace((unsigned char)*ptr))
       ptr++;
-    while (isspace(*(END_OF(ptr) - 1)))
-      *(END_OF(ptr) - 1) = '\0';
-    error += add_to_shop_list(list, LIST_TRADE, &len, &num);
-    if (*ptr)
-      BUY_WORD(list[len - 1]) = strdup(ptr);
+    while (*ptr && isspace((unsigned char)ptr[strlen(ptr) - 1]))
+      ptr[strlen(ptr) - 1] = '\0';
+
+    {
+      int old_len = len;
+      error += add_to_shop_list(list, LIST_TRADE, &len, &num);
+      if (*ptr && len > old_len)
+        BUY_WORD(list[len - 1]) = strdup(ptr);
+    }
   } while (num >= 0);
   return (end_read_list(list, len, error));
 }
@@ -1180,10 +1192,21 @@ void boot_the_shops(FILE *shop_f, char *filename, int rec_count)
 
   while (!done) {
     buf = fread_string(shop_f, buf2);
+    if (!buf) {
+      log("SYSERR: Unable to read shop record from %s.", filename);
+      exit(1);
+    }
+
     if (*buf == '#') {		/* New shop */
       sscanf(buf, "#%d\n", &temp);
       snprintf(buf2, sizeof(buf2), "shop #%d in shop file %s", temp, filename);
       free(buf);		/* Plug memory leak! */
+
+      if (top_shop + 1 >= rec_count) {
+        log("SYSERR: More shops in %s than the %d records counted at boot.", filename, rec_count);
+        exit(1);
+      }
+
       top_shop++;
       if (!top_shop)
 	CREATE(shop_index, struct shop_data, rec_count);

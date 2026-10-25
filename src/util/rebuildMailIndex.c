@@ -111,22 +111,26 @@ char *findLine(FILE *plr_file, char *tag) {
 }
 /* Search file for mail ID and convert to long */
 long parse_mailid(FILE *plr_file) {
-	return atol(findLine(plr_file, "MlID:"));
+  char *value = findLine(plr_file, "MlID:");
+  return value ? atol(value) : 0;
 }
 
 /* Search file for sender ID and convert to long */
 long parse_sender(FILE *plr_file) {
-	return atol(findLine(plr_file, "Send:"));
+  char *value = findLine(plr_file, "Send:");
+  return value ? atol(value) : 0;
 }
 
 /* Search file for recipient ID and convert to long */
 long parse_recipient(FILE *plr_file) {
-	return atoi(findLine(plr_file, "Reci:"));
+  char *value = findLine(plr_file, "Reci:");
+  return value ? atol(value) : 0;
 }
 
 /* Search file for date/time mail was sent and convert to long */
 long parse_send_time(FILE *plr_file) {
-	return atoi(findLine(plr_file, "Sent:"));
+  char *value = findLine(plr_file, "Sent:");
+  return value ? atol(value) : 0;
 }
 
 /* Search file for mail subject and return as string */
@@ -218,6 +222,10 @@ void walkdir(FILE *index_file, char *dir) {
       if (name != NULL) {
         /* Grab the data from the mail file and throw it in the index */
         mail_file = fopen(filename_qfd, "r");
+        if (!mail_file) {
+          perror(filename_qfd);
+          continue;
+        }
 
         id        = parse_mailid(mail_file);
         sender    = parse_sender(mail_file);

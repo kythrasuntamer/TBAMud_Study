@@ -99,6 +99,9 @@ char *get_text(char *fname)
     }
   }
 
+  if (fl != stdin)
+    fclose(fl);
+
   return (t);
 }
 

@@ -64,11 +64,13 @@ char *findLine(FILE *plr_file, char *tag) {
 }
 
 long parseid(FILE *plr_file) {
-	return atol(findLine(plr_file, "Id  :"));
+  char *value = findLine(plr_file, "Id  :");
+  return value ? atol(value) : 0;
 }
 
 int parselevel(FILE *plr_file) {
-	return atoi(findLine(plr_file, "Levl:"));
+  char *value = findLine(plr_file, "Levl:");
+  return value ? atoi(value) : 0;
 }
 
 int parseadminlevel(FILE *plr_file, int level) {
@@ -83,7 +85,8 @@ int parseadminlevel(FILE *plr_file, int level) {
 }
 
 long parselast(FILE *plr_file) {
-	return atol(findLine(plr_file, "Last:"));
+  char *value = findLine(plr_file, "Last:");
+  return value ? atol(value) : 0;
 }
 
 
@@ -116,6 +119,10 @@ void walkdir(FILE *index_file, char *dir) {
 
 			if (name != NULL) {
   			FILE *plr_file = fopen(filename_qfd, "r");
+        if (!plr_file) {
+          perror(filename_qfd);
+          continue;
+        }
  				long id = parseid(plr_file);
 
   			int level = parselevel(plr_file);

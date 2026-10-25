@@ -288,26 +288,30 @@ static void trigedit_disp_types(struct descriptor_data *d)
  *****************************************************************************************/
 
 // Change a string for another without memory bugs
-static char *str_replace(const char *string, const char *substr, const char *replacement) {
+static char *str_replace(char *string, const char *substr, const char *replacement) {
     char *tok = NULL;
     char *newstr = NULL;
     char *oldstr = NULL;
     char *head = NULL;
     
-    // if either substr or replacement is NULL, duplicate string a let caller handle it
-    if (substr == NULL || replacement == NULL) {
-        return strdup (string);
-    }
+    if (string == NULL)
+        return NULL;
+
+    /* This helper takes ownership of string. */
+    if (substr == NULL || replacement == NULL)
+        return string;
     
     newstr = strdup (string);
+    if (newstr == NULL)
+        return string;
     head = newstr;
     while ((tok = strstr(head, substr))) {
         oldstr = newstr;
         newstr = malloc(strlen(oldstr) - strlen(substr) + strlen (replacement) + 1);
         // Failed to alloc mem, free old string and return NULL
         if (newstr == NULL) {
-            free (oldstr);
-            return NULL;
+            free(oldstr);
+            return string;
         }
         memcpy (newstr, oldstr, tok - oldstr);
         memcpy (newstr + (tok - oldstr), replacement, strlen (replacement));
@@ -319,6 +323,7 @@ static char *str_replace(const char *string, const char *substr, const char *rep
         free (oldstr);
     }
     
+    free(string);
     return newstr;
 }
 
@@ -485,8 +490,10 @@ static void script_syntax_highlighting(struct descriptor_data *d, char *string)
 
         strncat(buffer, line, sizeof(buffer) - strlen(buffer) - 1);
         strncat(buffer, "\tn\r\n", sizeof(buffer) - strlen(buffer) - 1);
+        free(line);
     }
-    
+
+    free(newlist);
     page_string(d, buffer, TRUE);
 }
 /****************************************************************************************/
@@ -919,6 +926,7 @@ static void trigedit_create_index(int znum, char *type)
     return;
   } else if (!(newfile = fopen(new_name, "w"))) {
     mudlog(BRF, LVL_IMPL, TRUE, "SYSERR: DG_OLC: Failed to open %s", new_name);
+    fclose(oldfile);
     return;
   }
 

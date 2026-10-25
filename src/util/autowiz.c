@@ -147,6 +147,9 @@ void sort_names(void)
 void write_wizlist(FILE * out, int minlev, int maxlev)
 {
   char buf[100];
+
+  if (!out)
+    return;
   struct level_rec *curr_level;
   struct name_rec *curr_name;
   int i, j;
@@ -232,10 +235,18 @@ int main(int argc, char **argv)
   sort_names();
 
   fl = fopen(argv[2], "w");
+  if (!fl) {
+    perror(argv[2]);
+    return 1;
+  }
   write_wizlist(fl, wizlevel, LVL_IMPL);
   fclose(fl);
 
   fl = fopen(argv[4], "w");
+  if (!fl) {
+    perror(argv[4]);
+    return 1;
+  }
   write_wizlist(fl, immlevel, wizlevel - 1);
   fclose(fl);
 

@@ -236,10 +236,14 @@ void write_output(void)
 	//This fixes a lot of issues introduced with the whole 'renumbering rooms' call
 	//and the binary search that didn't work well.
 	struct room_data* to_room = findRoom(world[i].dir_option[door]->to_room);
-        fprintf(fl, "<a href = \"%d.html\"> %s to %s</a> <p>\n",
-                to_room->number,
-                dir_names[door],
-                to_room->name);
+        if (to_room)
+          fprintf(fl, "<a href = \"%d.html\"> %s to %s</a> <p>\n",
+                  to_room->number,
+                  dir_names[door],
+                  to_room->name);
+        else
+          fprintf(fl, "%s to missing room %d <p>\n",
+                  dir_names[door], world[i].dir_option[door]->to_room);
       }
     if (!found)
       fprintf(fl, "None!");
@@ -290,6 +294,7 @@ void index_boot(int cnt, char **names)
       exit(1);
     }
     discrete_load(db_file);
+    fclose(db_file);
   }
 }
 

@@ -255,35 +255,68 @@ void clear_quest(struct char_data *ch)
 void add_completed_quest(struct char_data *ch, qst_vnum vnum)
 {
   qst_vnum *temp;
-  int i;
+  int count, i;
 
-  CREATE(temp, qst_vnum, GET_NUM_QUESTS(ch) +1);
-  for (i=0; i < GET_NUM_QUESTS(ch); i++)
+  if (!ch || !ch->player_specials)
+    return;
+
+  count = GET_NUM_QUESTS(ch);
+  if (count < 0)
+    count = 0;
+  if (count > 0 && !ch->player_specials->saved.completed_quests) {
+    log("SYSERR: Character has %d completed quests but no quest list.", count);
+    count = 0;
+  }
+
+  CREATE(temp, qst_vnum, count + 1);
+  for (i = 0; i < count; i++)
     temp[i] = ch->player_specials->saved.completed_quests[i];
 
-  temp[GET_NUM_QUESTS(ch)] = vnum;
-  GET_NUM_QUESTS(ch)++;
+  temp[count] = vnum;
 
-  if (ch->player_specials->saved.completed_quests)
-    free(ch->player_specials->saved.completed_quests);
+  free(ch->player_specials->saved.completed_quests);
   ch->player_specials->saved.completed_quests = temp;
+  GET_NUM_QUESTS(ch) = count + 1;
 }
 
 void remove_completed_quest(struct char_data *ch, qst_vnum vnum)
 {
-  qst_vnum *temp;
-  int i, j = 0;
+  qst_vnum *old, *temp;
+  int count, found = -1, i, j;
 
-  CREATE(temp, qst_vnum, GET_NUM_QUESTS(ch));
-  for (i = 0; i < GET_NUM_QUESTS(ch); i++)
-    if (ch->player_specials->saved.completed_quests[i] != vnum)
-      temp[j++] = ch->player_specials->saved.completed_quests[i];
+  if (!ch || !ch->player_specials)
+    return;
 
-  GET_NUM_QUESTS(ch)--;
+  count = GET_NUM_QUESTS(ch);
+  old = ch->player_specials->saved.completed_quests;
+  if (count <= 0 || !old)
+    return;
 
-  if (ch->player_specials->saved.completed_quests)
-    free(ch->player_specials->saved.completed_quests);
+  for (i = 0; i < count; i++) {
+    if (old[i] == vnum) {
+      found = i;
+      break;
+    }
+  }
+
+  if (found < 0)
+    return;
+
+  if (count == 1) {
+    free(old);
+    ch->player_specials->saved.completed_quests = NULL;
+    GET_NUM_QUESTS(ch) = 0;
+    return;
+  }
+
+  CREATE(temp, qst_vnum, count - 1);
+  for (i = 0, j = 0; i < count; i++)
+    if (i != found)
+      temp[j++] = old[i];
+
+  free(old);
   ch->player_specials->saved.completed_quests = temp;
+  GET_NUM_QUESTS(ch) = j;
 }
 
 void generic_complete_quest(struct char_data *ch)

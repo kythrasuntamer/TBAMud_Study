@@ -658,10 +658,17 @@ int replace_str(char **string, char *pattern, char *replacement, int rep_all, un
 {
   char *replace_buffer = NULL;
   char *flow, *jetsam, temp;
-  size_t len;
+  size_t len, current_len, pattern_len, replacement_len;
   int i;
 
-  if ((strlen(*string) - strlen(pattern)) + strlen(replacement) > max_size)
+  if (!string || !*string || !pattern || !*pattern || !replacement || max_size < 2)
+    return 0;
+
+  current_len = strlen(*string);
+  pattern_len = strlen(pattern);
+  replacement_len = strlen(replacement);
+  if (replacement_len > pattern_len &&
+      current_len > max_size - MIN(max_size, replacement_len - pattern_len))
     return -1;
 
   CREATE(replace_buffer, char, max_size);
@@ -698,9 +705,10 @@ int replace_str(char **string, char *pattern, char *replacement, int rep_all, un
     }
   }
 
-  if (i <= 0)
-    return 0;
-  else {
+  if (i <= 0) {
+    free(replace_buffer);
+    return i;
+  } else {
     RECREATE(*string, char, strlen(replace_buffer) + 3);
     strcpy(*string, replace_buffer);
   }

@@ -533,11 +533,16 @@ static void remove_cmd_from_list(struct reset_com **list, int pos)
   int count, i, l;
   struct reset_com *newlist;
 
+  if (!list || !*list)
+    return;
+
   /* Count number of commands (not including terminator). */
   count = count_commands(*list);
+  if (count <= 0 || pos < 0 || pos >= count)
+    return;
 
-  /* Value is 'count' because we didn't include the terminator above but since
-   * we're deleting one thing anyway we want one less. */
+  /* One command is removed, so count slots are enough for the remaining
+   * commands plus the terminating S command. */
   CREATE(newlist, struct reset_com, count);
 
   /* Even tighter loop to copy old list and skip unwanted command. */

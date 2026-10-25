@@ -683,31 +683,31 @@ static int ascii_convert_house(struct char_data *ch, obj_vnum vnum)
     return (0);
   }
 
-  while (!feof(in)) {
+  for (;;) {
     struct obj_file_elem object;
-    if (fread(&object, sizeof(struct obj_file_elem), 1, in) != 1)
-      return (0);
-    if (ferror(in)) {
-      perror("SYSERR: Reading house file in House_load");
-      send_to_char(ch, "...read error in house rent file.\r\n");
+    size_t nread = fread(&object, sizeof(struct obj_file_elem), 1, in);
+
+    if (nread != 1) {
+      if (ferror(in)) {
+        perror("SYSERR: Reading house file in House_load");
+        send_to_char(ch, "...read error in house rent file.\r\n");
+        free(outfile);
+        fclose(in);
+        fclose(out);
+        return 0;
+      }
+      break;
+    }
+
+    tmp = Obj_from_store(object, &i);
+    if (!tmp || !objsave_save_obj_record(tmp, out, i)) {
+      send_to_char(ch, "...write error in house rent file.\r\n");
       free(outfile);
       fclose(in);
       fclose(out);
-      return (0);
+      return 0;
     }
-    if (!feof(in))
-    {
-    	tmp = Obj_from_store(object, &i);
-      if (!objsave_save_obj_record(tmp, out, i))
-      {
-	      send_to_char(ch, "...write error in house rent file.\r\n");
-	      free(outfile);
-	      fclose(in);
-	      fclose(out);
-	      return (0);
-      }
-      j++;
-    }
+    j++;
   }
 
 	fprintf(out, "$~\n");

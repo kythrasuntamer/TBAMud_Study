@@ -456,10 +456,13 @@ void board_load_board(int board_type)
       perror("SYSERR: Error reading board");
     return;
   }
-  if (fread(&(num_of_msgs[board_type]), sizeof(int), 1, fl) != 1)
+  if (fread(&(num_of_msgs[board_type]), sizeof(int), 1, fl) != 1) {
+    fclose(fl);
     return;
+  }
   if (num_of_msgs[board_type] < 1 || num_of_msgs[board_type] > MAX_BOARD_MESSAGES) {
     log("SYSERR: Board file %d corrupt.  Resetting.", board_type);
+    fclose(fl);
     board_reset_board(board_type);
     return;
   }
@@ -471,10 +474,13 @@ void board_load_board(int board_type)
         log("SYSERR: Error reading board file %d: %s. Resetting.", board_type, strerror(errno));
       else
         log("SYSERR: Error reading board file %d. Resetting.", board_type);
+      fclose(fl);
       board_reset_board(board_type);
+      return;
     }
     if ((len1 = msg_index[board_type][i].heading_len) <= 0) {
       log("SYSERR: Board file %d corrupt!  Resetting.", board_type);
+      fclose(fl);
       board_reset_board(board_type);
       return;
     }
@@ -488,13 +494,17 @@ void board_load_board(int board_type)
         log("SYSERR: Error reading board file %d: %s. Resetting.", board_type, strerror(errno));
       else
         log("SYSERR: Error reading board file %d. Resetting.", board_type);
+      free(tmp1);
+      fclose(fl);
       board_reset_board(board_type);
+      return;
     }
 
     MSG_HEADING(board_type, i) = tmp1;
 
     if ((MSG_SLOTNUM(board_type, i) = find_slot()) == -1) {
       log("SYSERR: Out of slots booting board %d!  Resetting...", board_type);
+      fclose(fl);
       board_reset_board(board_type);
       return;
     }
@@ -507,7 +517,10 @@ void board_load_board(int board_type)
           log("SYSERR: Error reading board file %d: %s. Resetting.", board_type, strerror(errno));
         else
           log("SYSERR: Error reading board file %d. Resetting.", board_type);
+        free(tmp2);
+        fclose(fl);
         board_reset_board(board_type);
+        return;
       }
 
       msg_storage[MSG_SLOTNUM(board_type, i)] = tmp2;

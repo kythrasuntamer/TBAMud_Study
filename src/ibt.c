@@ -52,7 +52,7 @@ static const char *ibt_types[]={
 
 /* Internal (static) functions */
 static IBT_DATA *new_ibt(void);
-static void free_ibt_list(IBT_DATA *first_ibt, IBT_DATA *last_ibt);
+static void free_ibt_list(int mode);
 static IBT_DATA *read_ibt(char *filename, FILE *fp);
 static IBT_DATA *get_first_ibt(int mode);
 static IBT_DATA *get_last_ibt(int mode);
@@ -87,33 +87,41 @@ static IBT_DATA *new_ibt(void)
    return ibtData;
 }
 
-static void free_ibt_list(IBT_DATA *first_ibt, IBT_DATA *last_ibt)
+static void free_ibt_list(int mode)
 {
-  IBT_DATA **top_ptr, **bot_ptr, *this_ibt;
+  IBT_DATA **first_ptr = NULL, **last_ptr = NULL;
+  IBT_DATA *this_ibt;
 
-  if ((first_ibt == NULL) || (last_ibt == NULL)) return;
+  switch (mode) {
+    case SCMD_BUG:
+      first_ptr = &first_bug;
+      last_ptr = &last_bug;
+      break;
+    case SCMD_IDEA:
+      first_ptr = &first_idea;
+      last_ptr = &last_idea;
+      break;
+    case SCMD_TYPO:
+      first_ptr = &first_typo;
+      last_ptr = &last_typo;
+      break;
+    default:
+      log("SYSERR: Invalid mode (%d) in free_ibt_list", mode);
+      return;
+  }
 
-  top_ptr = &(first_ibt);
-  bot_ptr = &(last_ibt);
+  while ((this_ibt = *first_ptr) != NULL) {
+    *first_ptr = this_ibt->next;
 
-  while (first_ibt) {
-    this_ibt = first_ibt;
-
-    /* Disconnect from the list */
-    UNLINK(this_ibt, first_ibt, last_ibt, next, prev);
-
-    /* Free the strings first */
     if (this_ibt->body)  STRFREE(this_ibt->body);
     if (this_ibt->name)  STRFREE(this_ibt->name);
     if (this_ibt->text)  STRFREE(this_ibt->text);
     if (this_ibt->notes) STRFREE(this_ibt->notes);
 
-    /* And free the struct */
     DISPOSE(this_ibt);
   }
 
-  *(top_ptr) = NULL;
-  *(bot_ptr) = NULL;
+  *last_ptr = NULL;
 }
 static IBT_DATA *read_ibt( char *filename, FILE *fp )
 {
@@ -243,31 +251,21 @@ void load_ibt_file(int mode)
 {
    char filename[MAX_INPUT_LENGTH];
    FILE *fp;
-   IBT_DATA *ibtData, *first_ibt, *last_ibt;
+   IBT_DATA *ibtData;
 
    switch(mode) {
      case SCMD_BUG : sprintf( filename, "%s",BUGS_FILE );
-                     first_ibt = first_bug;
-                     last_ibt  = last_bug;
                      break;
      case SCMD_IDEA: sprintf( filename, "%s",IDEAS_FILE );
-                     first_ibt = first_idea;
-                     last_ibt  = last_idea;
                      break;
      case SCMD_TYPO: sprintf( filename, "%s",TYPOS_FILE );
-                     first_ibt = first_typo;
-                     last_ibt  = last_typo;
                      break;
      default       : log("SYSERR: Invalid mode (%d) in load_ibt_file", mode);
                      return;
    }
 
-   /* Remove and free the old list */
-   if ((first_ibt) && (last_ibt)) {
-     free_ibt_list(first_ibt, last_ibt);
-     first_ibt = NULL;
-     last_ibt = NULL;
-   }
+   /* Remove and free the old list. */
+   free_ibt_list(mode);
 
    if( ( fp = fopen( filename, "r" ) ) == NULL ) {
       log("No File: %s", filename);
@@ -1205,7 +1203,7 @@ void free_ibt_lists()
   for( mode=0; mode <=2; mode++){
     first_ibt = get_first_ibt(mode);
     last_ibt = get_last_ibt(mode);
-    free_ibt_list(first_ibt, last_ibt);
+    free_ibt_list(mode);
   }
 }
 
