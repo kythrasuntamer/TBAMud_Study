@@ -2012,8 +2012,13 @@ void clean_llog_entries(void) {
       return;
     }
   }
-  if (ferror(ofp))
+  if (ferror(ofp)) {
     log("clean_llog_entries: read error.");
+    fclose(ofp);
+    fclose(nfp);
+    remove("etc/nlast");
+    return;
+  }
 
   fclose(ofp);
   fclose(nfp);
