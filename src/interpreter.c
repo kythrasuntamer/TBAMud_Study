@@ -42,7 +42,7 @@
 static int perform_dupe_check(struct descriptor_data *d);
 static struct alias_data *find_alias(struct alias_data *alias_list, char *str);
 static int perform_complex_alias(struct txt_q *input_q, char *orig, struct alias_data *a);
-static int _parse_name(char *arg, char *name);
+static int parse_name_internal(char *arg, char *name);
 static bool perform_new_char_dupe_check(struct descriptor_data *d);
 /* sort_commands utility */
 static int sort_commands_helper(const void *a, const void *b);
@@ -1049,7 +1049,7 @@ int special(struct char_data *ch, int cmd, char *arg)
 
 /* Stuff for controlling the non-playing sockets (get name, pwd etc).
  * This function needs to die. */
-static int _parse_name(char *arg, char *name)
+static int parse_name_internal(char *arg, char *name)
 {
   int i;
 
@@ -1412,7 +1412,7 @@ void nanny(struct descriptor_data *d, char *arg)
     else {
       char buf[MAX_INPUT_LENGTH], tmp_name[MAX_INPUT_LENGTH];
 
-      if ((_parse_name(arg, tmp_name)) || strlen(tmp_name) < 2 ||
+      if ((parse_name_internal(arg, tmp_name)) || strlen(tmp_name) < 2 ||
        strlen(tmp_name) > MAX_NAME_LENGTH || !valid_name(tmp_name) ||
        fill_word(strcpy(buf, tmp_name)) || reserved_word(buf)) {	/* strcpy: OK (mutual MAX_INPUT_LENGTH) */
           write_to_output(d, "Invalid name, please try another.\r\nName: ");
