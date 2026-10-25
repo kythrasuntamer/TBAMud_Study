@@ -183,8 +183,8 @@ void do_dg_affect(void *go, struct script_data *sc, trig_data *trig,
     return;
   }
 
-  value = atoi(value_p);
-  duration = atoi(duration_p);
+  value = tb_parse_int_or_zero(value_p);
+  duration = tb_parse_int_or_zero(duration_p);
   if (duration <= 0) {
     script_log("Trigger: %s, VNum %d. dg_affect: need positive duration!",
       GET_TRIG_NAME(trig), GET_TRIG_VNUM(trig));
