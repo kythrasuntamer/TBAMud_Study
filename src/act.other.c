@@ -546,7 +546,7 @@ ACMD(do_split)
     len = snprintf(buf, sizeof(buf), "%s splits %d coins; you receive %d.\r\n",
 		GET_NAME(ch), amount, share);
     if (rest && len < sizeof(buf)) {
-      snprintf(buf + len, sizeof(buf) - len,
+      tb_snprintf(buf + len, sizeof(buf) - len,
 		"%d coin%s %s not splitable, so %s keeps the money.\r\n", rest,
 		(rest == 1) ? "" : "s", (rest == 1) ? "was" : "were", GET_NAME(ch));
     }
@@ -888,7 +888,7 @@ static void show_happyhour(struct char_data *ch)
 
       sprintf(happyqp,   "%s+%d%%%s to Questpoints per quest\r\n", CCYEL(ch, C_NRM), HAPPY_QP,   CCNRM(ch, C_NRM));
       sprintf(happygold, "%s+%d%%%s to Gold gained per kill\r\n",  CCYEL(ch, C_NRM), HAPPY_GOLD, CCNRM(ch, C_NRM));
-      snprintf(happyexp, sizeof(happyexp), "%s+%d%%%s to Experience per kill\r\n",   CCYEL(ch, C_NRM), HAPPY_EXP,  CCNRM(ch, C_NRM));
+      tb_snprintf(happyexp, sizeof(happyexp), "%s+%d%%%s to Experience per kill\r\n",   CCYEL(ch, C_NRM), HAPPY_EXP,  CCNRM(ch, C_NRM));
 
       send_to_char(ch, "tbaMUD Happy Hour!\r\n"
                        "------------------\r\n"
