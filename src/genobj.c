@@ -526,7 +526,7 @@ bool oset_apply(struct obj_data *obj, char * argument)
   
   skip_spaces(&argument);
   
-  if ((value = atoi(argument)) == 0)
+  if ((value = tb_parse_int_or_zero(argument)) == 0)
     return FALSE;
   
   while (*apply_types[i] != '\n') {
