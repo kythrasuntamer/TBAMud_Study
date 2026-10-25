@@ -34,7 +34,7 @@ class ProgressionContractTests(unittest.TestCase):
         self.assertIn("GET_ENDGAME_XP(ch)", body)
         self.assertIn("/ 100000", body)
         self.assertIn("% 100000", body)
-        self.assertRegex(body, r"GET_ENDGAME_AP\(ch\).*?\n.*?return;", "AP path must exit before normal level-up")
+        self.assertIn("    return;\n  }\n  if (gain > 0)", body, "AP path must exit before normal level-up")
         self.assertIn("GET_LEVEL(ch) < LVL_IMMORT - 1", body)
 
     def test_endgame_upgrade_cost_and_cap(self):
