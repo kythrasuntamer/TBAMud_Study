@@ -60,6 +60,33 @@ void tearDown(void)
   cleanup_files();
 }
 
+void test_error_reporter_preserves_errno(void)
+{
+  errno = EACCES;
+  tb_report_domain_error_at(TB_SEV_ERROR, TB_ERR_PERSISTENCE,
+                            "unit-test", "preserve errno",
+                            ENOSPC, __FILE__, __LINE__, __func__);
+  TEST_ASSERT_EQUAL_INT(EACCES, errno);
+}
+
+void test_error_reporter_escapes_record_breaking_context(void)
+{
+  char escaped[128];
+
+  TEST_ASSERT_GREATER_THAN_UINT32(
+      0, (uint32_t)tb_diag_escape(escaped, sizeof(escaped),
+                                  "line1\nline2\t\"quoted\"\\tail"));
+  TEST_ASSERT_EQUAL_STRING("line1\\nline2\\t\\\"quoted\\\"\\\\tail", escaped);
+}
+
+void test_error_reporter_exposes_symbolic_errno(void)
+{
+#ifdef ENOENT
+  TEST_ASSERT_EQUAL_STRING("ENOENT", tb_errno_name(ENOENT));
+#endif
+  TEST_ASSERT_EQUAL_STRING("NONE", tb_errno_name(0));
+}
+
 void test_checked_int_parser_accepts_complete_number(void)
 {
   int value = 0;
@@ -126,6 +153,9 @@ int main(void)
 {
   UNITY_BEGIN();
 
+  RUN_TEST(test_error_reporter_preserves_errno);
+  RUN_TEST(test_error_reporter_escapes_record_breaking_context);
+  RUN_TEST(test_error_reporter_exposes_symbolic_errno);
   RUN_TEST(test_checked_int_parser_accepts_complete_number);
   RUN_TEST(test_checked_int_parser_rejects_trailing_garbage);
   RUN_TEST(test_checked_int_parser_rejects_overflow);
