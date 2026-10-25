@@ -196,7 +196,7 @@ void convert(char *filename)
 	(long)player.last_logon);
 
     if (!(outfile = fopen(outname, "w"))) {
-      printf("error opening output file");
+      TB_REPORT_ERRNO("fopen", outname);
       exit(1);
     }
 
@@ -364,7 +364,7 @@ int plr_filename(char *orig_name, char *filename)
   char name[64], *ptr;
 
   if (orig_name == NULL || *orig_name == '\0' || filename == NULL) {
-    perror("error getting player file name");
+    TB_REPORT_ERROR("plr_filename", "invalid player name or output buffer");
     return (0);
   }
 
