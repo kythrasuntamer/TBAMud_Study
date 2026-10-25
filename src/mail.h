@@ -10,8 +10,8 @@
 * CircleMUD is based on DikuMUD, Copyright (C) 1990, 1991.
 * By Jeremy Elson.
 */
-#ifndef _MAIL_H_
-#define _MAIL_H_
+#ifndef TBAMUD_MAIL_H_INCLUDED
+#define TBAMUD_MAIL_H_INCLUDED
 
 /* You can modify the following constants to fit your own MUD.  */
 
@@ -105,4 +105,4 @@ struct mail_index_type_d {
 
 typedef struct mail_index_type_d mail_index_type;
 
-#endif /* _MAIL_H_ */
+#endif /* TBAMUD_MAIL_H_INCLUDED */
