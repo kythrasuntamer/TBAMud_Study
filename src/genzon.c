@@ -481,10 +481,18 @@ int save_zone(zone_rnum zone_num)
               ZCMD(zone_num, subcmd).sarg1, ZCMD(zone_num, subcmd).sarg2);
   }
   tb_fputs("S\n$\n", zfile);
-  tb_fclose(zfile);
+  {
+    int flush_ok = tb_fflush_checked(zfile, fname);
+    int close_ok = tb_fclose_checked(zfile, fname);
+    if (!flush_ok || !close_ok) {
+      if (remove(fname) != 0 && errno != ENOENT)
+        TB_REPORT_ERRNO("remove", fname);
+      return FALSE;
+    }
+  }
   tb_snprintf(oldname, sizeof(oldname), "%s/%d.zon", ZON_PREFIX, zone_table[zone_num].number);
-  remove(oldname);
-  rename(fname, oldname);
+  if (!tb_replace_file_checked(fname, oldname))
+    return FALSE;
 
   if (in_save_list(zone_table[zone_num].number, SL_ZON))
     remove_from_save_list(zone_table[zone_num].number, SL_ZON);
