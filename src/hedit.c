@@ -431,14 +431,14 @@ ACMD(do_hindex)
     len = 0;
     buf[0] = '\0';
   } else if (len >= limit) {
-    len = limit;
+    len = limit - 1;
     buf[len] = '\0';
   }
   if (len2 < 0) {
     len2 = 0;
     buf2[0] = '\0';
   } else if (len2 >= limit) {
-    len2 = limit;
+    len2 = limit - 1;
     buf2[len2] = '\0';
   }
   /* snprintf() returns the length it wanted to write, so adding it blind
