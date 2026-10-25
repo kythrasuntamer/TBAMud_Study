@@ -26,9 +26,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install libsodium development headers
-        run: sudo apt-get update && sudo apt-get install -y libsodium-dev
-
       - name: Install Fil-C
         shell: bash
         run: |
@@ -41,6 +38,22 @@ jobs:
           printf 'YES\n' | sudo ./setup.sh
           /opt/fil/bin/filcc --version
 
+      - name: Build Fil-C compatible libsodium
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y autoconf automake libtool pkg-config
+          git clone --depth 1 --branch 1.0.20 https://github.com/jedisct1/libsodium.git "${RUNNER_TEMP}/libsodium-src"
+          cd "${RUNNER_TEMP}/libsodium-src"
+          ./autogen.sh
+          CC=/opt/fil/bin/filcc ./configure \
+            --prefix="${RUNNER_TEMP}/filc-sodium" \
+            --disable-shared --enable-static --disable-asm
+          make -j2
+          make install
+          test -f "${RUNNER_TEMP}/filc-sodium/lib/libsodium.a"
+
       - name: Configure with Fil-C
         shell: bash
         run: |
@@ -49,6 +62,8 @@ jobs:
             -DCMAKE_BUILD_TYPE=Debug \
             -DCMAKE_C_COMPILER=/opt/fil/bin/filcc \
             -DSTATIC_ANALYSIS=OFF \
+            -DSODIUM_INCLUDE_DIR="${RUNNER_TEMP}/filc-sodium/include" \
+            -DSODIUM_LIBRARY="${RUNNER_TEMP}/filc-sodium/lib/libsodium.a" \
             2>&1 | tee filc-configure.log
 
       - name: Build with Fil-C
