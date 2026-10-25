@@ -923,36 +923,35 @@ size_t sprinttype(int type, const char *names[], char *result, size_t reslen)
  */
 void sprintbitarray(int bitvector[], const char *names[], int maxar, char *result, size_t reslen)
 {
+  struct tb_buf out;
   int nr, teller, found = FALSE;
 
-  *result = '\0';
+  if (result == NULL || reslen == 0)
+    return;
 
-  for(teller = 0; teller < maxar && !found; teller++)
-  {
-    for (nr = 0; nr < 32 && !found; nr++)
-    {
-      if (IS_SET_AR(bitvector, (teller*32)+nr))
-      {
-        if (*names[(teller*32)+nr] != '\n')
-        {
-          if (*names[(teller*32)+nr] != '\0')
-          {
-            strcat(result, names[(teller*32)+nr]);
-            strcat(result, " ");
-          }
-        }
-        else
-        {
-          strcat(result, "UNDEFINED ");
+  tb_buf_init(&out, result, reslen);
+
+  for (teller = 0; teller < maxar && !found; teller++) {
+    for (nr = 0; nr < 32 && !found; nr++) {
+      int bit = (teller * 32) + nr;
+      const char *name = names[bit];
+
+      if (IS_SET_AR(bitvector, bit)) {
+        if (*name == '\n')
+          (void)tb_buf_append(&out, "UNDEFINED ");
+        else if (*name != '\0') {
+          (void)tb_buf_append(&out, name);
+          (void)tb_buf_append(&out, " ");
         }
       }
-      if (*names[(teller*32)+nr] == '\n')
+
+      if (*name == '\n')
         found = TRUE;
     }
   }
 
-  if (!*result)
-    strcpy(result, "NOBITS ");
+  if (out.length == 0)
+    (void)tb_buf_append(&out, "NOBITS ");
 }
 
 /** Calculate the REAL time passed between two time invervals.
@@ -2010,30 +2009,28 @@ char *strpaste(char *str1, char *str2, char *joiner)
   const char *sp1 = str1 ? str1 : "";
   const char *sp2 = str2 ? str2 : "";
   const char *safe_joiner = joiner ? joiner : "";
-  char *rp = ret;
-  char *rend = ret + MAX_STRING_LENGTH;
+  size_t used = 0;
   size_t jlen = strlen(safe_joiner);
 
-  while (rp < rend && (*sp1 || *sp2)) {
-    /* Copy line from str1. */
-    while (rp < rend && *sp1 && !ISNEWL(*sp1))
-      *rp++ = *sp1++;
+  while (used < MAX_STRING_LENGTH && (*sp1 || *sp2)) {
+    while (used < MAX_STRING_LENGTH && *sp1 && !ISNEWL(*sp1))
+      ret[used++] = *sp1++;
 
-    /* Eat one CR/LF pair or a single newline. */
     if (*sp1) {
       if (sp1[1] && sp1[1] != sp1[0] && ISNEWL(sp1[1]))
         sp1++;
       sp1++;
     }
 
-    if (jlen > (size_t)(rend - rp))
+    if (jlen > MAX_STRING_LENGTH - used)
       break;
-    memcpy(rp, safe_joiner, jlen);
-    rp += jlen;
+    if (jlen != 0) {
+      memcpy(ret + used, safe_joiner, jlen);
+      used += jlen;
+    }
 
-    /* Copy line from str2. */
-    while (rp < rend && *sp2 && !ISNEWL(*sp2))
-      *rp++ = *sp2++;
+    while (used < MAX_STRING_LENGTH && *sp2 && !ISNEWL(*sp2))
+      ret[used++] = *sp2++;
 
     if (*sp2) {
       if (sp2[1] && sp2[1] != sp2[0] && ISNEWL(sp2[1]))
@@ -2041,14 +2038,13 @@ char *strpaste(char *str1, char *str2, char *joiner)
       sp2++;
     }
 
-    /* Reserve two bytes for CRLF; the array has one extra byte for NUL. */
-    if ((size_t)(rend - rp) < 2)
+    if (MAX_STRING_LENGTH - used < 2)
       break;
-    *rp++ = '\r';
-    *rp++ = '\n';
+    ret[used++] = '\r';
+    ret[used++] = '\n';
   }
 
-  *rp = '\0';
+  ret[used] = '\0';
   return ret;
 }
 
