@@ -162,6 +162,7 @@ static void hedit_save_to_disk(struct descriptor_data *d)
 
   tb_snprintf(index_name, sizeof(index_name), "%s%s", HLP_PREFIX, HELP_FILE);
   if (!(fp = fopen(index_name, "w"))) {
+    TB_REPORT_ERRNO("fopen", index_name);
     log("SYSERR: Could not write help index file");
     return;
   }
