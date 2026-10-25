@@ -527,6 +527,42 @@ static inline const char *tb_error_category_name(tb_error_category category)
   }
 }
 
+static inline tb_error_category tb_error_category_for_operation(const char *operation)
+{
+  if (operation == NULL)
+    return TB_ERR_GENERAL;
+
+  if (!strcmp(operation, "fopen") || !strcmp(operation, "fclose") ||
+      !strcmp(operation, "fflush") || !strcmp(operation, "fwrite") ||
+      !strcmp(operation, "fread") || !strcmp(operation, "fprintf") ||
+      !strcmp(operation, "vfprintf") || !strcmp(operation, "fputs") ||
+      !strcmp(operation, "fputc") || !strcmp(operation, "rename") ||
+      !strcmp(operation, "remove") || !strcmp(operation, "unlink") ||
+      !strcmp(operation, "mkdir") || !strcmp(operation, "stat") ||
+      !strcmp(operation, "fsync"))
+    return TB_ERR_PERSISTENCE;
+
+  if (!strcmp(operation, "socket") || !strcmp(operation, "bind") ||
+      !strcmp(operation, "listen") || !strcmp(operation, "accept") ||
+      !strcmp(operation, "connect") || !strcmp(operation, "select") ||
+      !strcmp(operation, "recv") || !strcmp(operation, "send") ||
+      !strcmp(operation, "read socket") || !strcmp(operation, "write socket") ||
+      !strcmp(operation, "setsockopt") || !strcmp(operation, "gethostbyaddr") ||
+      !strcmp(operation, "getaddrinfo"))
+    return TB_ERR_NETWORK;
+
+  if (!strcmp(operation, "parse") || !strcmp(operation, "strtol") ||
+      !strcmp(operation, "strtoul") || !strcmp(operation, "strtof") ||
+      !strcmp(operation, "sscanf") || !strcmp(operation, "fscanf"))
+    return TB_ERR_PARSER;
+
+  if (!strcmp(operation, "script") || !strcmp(operation, "trigger") ||
+      !strcmp(operation, "exec") || !strcmp(operation, "execve"))
+    return TB_ERR_SCRIPT;
+
+  return TB_ERR_GENERAL;
+}
+
 /*
  * Best-effort symbolic errno names.  Keep this allocation-free and side-effect
  * free: the error reporter must remain usable when memory, stdio, or another
@@ -826,7 +862,8 @@ static inline void tb_report_error_at(const char *operation, const char *context
                                       int errnum, const char *source_file,
                                       int source_line, const char *source_func)
 {
-  tb_report_domain_error_at(TB_SEV_ERROR, TB_ERR_GENERAL,
+  tb_report_domain_error_at(TB_SEV_ERROR,
+                            tb_error_category_for_operation(operation),
                             operation, context, errnum,
                             source_file, source_line, source_func);
 }
@@ -839,6 +876,20 @@ static inline void tb_report_error_at(const char *operation, const char *context
 
 #define TB_REPORT_ERROR(operation, context) \
   tb_report_error_at((operation), (context), 0, __FILE__, __LINE__, __func__)
+
+#define TB_REPORT_WARN(category, operation, context) \
+  tb_report_domain_error_at(TB_SEV_WARN, (category), (operation), (context), 0, \
+                            __FILE__, __LINE__, __func__)
+
+#define TB_REPORT_FATAL(category, operation, context) \
+  tb_report_domain_error_at(TB_SEV_FATAL, (category), (operation), (context), 0, \
+                            __FILE__, __LINE__, __func__)
+
+#define TB_REPORT_FATAL_ERRNO(category, operation, context) do { \
+  int tb_saved_errno_ = errno; \
+  tb_report_domain_error_at(TB_SEV_FATAL, (category), (operation), (context), \
+                            tb_saved_errno_, __FILE__, __LINE__, __func__); \
+} while (0)
 
 #define TB_REPORT_DOMAIN_ERRNO(severity, category, operation, context) do { \
   int tb_saved_errno_ = errno; \
