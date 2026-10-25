@@ -609,7 +609,7 @@ static socket_t init_socket(ush_int local_port)
    * number anyway, so the point is (hopefully) moot. */
 
   if ((s = socket(PF_INET, SOCK_STREAM, 0)) < 0) {
-    perror("SYSERR: Error creating socket");
+    TB_REPORT_ERRNO("socket", "mother descriptor");
     exit(1);
   }
 #endif				/* CIRCLE_WINDOWS */
@@ -617,7 +617,7 @@ static socket_t init_socket(ush_int local_port)
 #if defined(SO_REUSEADDR) && !defined(CIRCLE_MACINTOSH)
   opt = 1;
   if (setsockopt(s, SOL_SOCKET, SO_REUSEADDR, (char *) &opt, sizeof(opt)) < 0){
-    perror("SYSERR: setsockopt REUSEADDR");
+    TB_REPORT_ERRNO("setsockopt", "SO_REUSEADDR on mother descriptor");
     exit(1);
   }
 #endif
@@ -633,7 +633,7 @@ static socket_t init_socket(ush_int local_port)
     ld.l_onoff = 0;
     ld.l_linger = 0;
     if (setsockopt(s, SOL_SOCKET, SO_LINGER, (char *) &ld, sizeof(ld)) < 0)
-      perror("SYSERR: setsockopt SO_LINGER");	/* Not fatal I suppose. */
+      TB_REPORT_ERRNO("setsockopt", "SO_LINGER on mother descriptor"); /* non-fatal */
   }
 #endif
 
@@ -645,12 +645,16 @@ static socket_t init_socket(ush_int local_port)
   sa.sin_addr = *(get_bind_addr());
 
   if (bind(s, (struct sockaddr *) &sa, sizeof(sa)) < 0) {
-    perror("SYSERR: bind");
+    TB_REPORT_ERRNO("bind", "mother descriptor");
     CLOSE_SOCKET(s);
     exit(1);
   }
   nonblock(s);
-  listen(s, 5);
+  if (listen(s, 5) < 0) {
+    TB_REPORT_ERRNO("listen", "mother descriptor backlog=5");
+    CLOSE_SOCKET(s);
+    exit(1);
+  }
   return (s);
 }
 
@@ -672,7 +676,7 @@ static int get_max_players(void)
     /* find the limit of file descs */
     method = "rlimit";
     if (getrlimit(RLIMIT_NOFILE, &limit) < 0) {
-      perror("SYSERR: calling getrlimit");
+      TB_REPORT_ERRNO("getrlimit", "RLIMIT_NOFILE");
       exit(1);
     }
 
@@ -685,7 +689,7 @@ static int get_max_players(void)
       limit.rlim_cur = OPEN_MAX;
 #endif
       if (setrlimit(RLIMIT_NOFILE, &limit) < 0) {
-        perror("SYSERR: calling setrlimit");
+        TB_REPORT_ERRNO("setrlimit", "RLIMIT_NOFILE");
         exit(1);
       }
     }
@@ -774,7 +778,7 @@ void game_loop(socket_t local_mother_desc)
 	if (errno == EINTR)
 	  log("Waking up to process signal.");
 	else
-	  perror("SYSERR: Select coma");
+	  TB_REPORT_ERRNO("select", "idle mother descriptor wait");
       } else
 	log("New connection.  Waking up.");
       gettimeofday(&last_time, (struct timezone *) 0);
@@ -832,7 +836,7 @@ void game_loop(socket_t local_mother_desc)
 
     /* Poll (without blocking) for new input, output, and exceptions */
     if (select(maxdesc + 1, &input_set, &output_set, &exc_set, &null_time) < 0) {
-      perror("SYSERR: Select poll");
+      TB_REPORT_ERRNO("select", "main descriptor poll");
       return;
     }
     /* If there are new connections waiting, accept them. */
@@ -1442,7 +1446,7 @@ static int set_sendbuf(socket_t s)
   int opt = MAX_SOCK_BUF;
 
   if (setsockopt(s, SOL_SOCKET, SO_SNDBUF, (char *) &opt, sizeof(opt)) < 0) {
-    perror("SYSERR: setsockopt SNDBUF");
+    TB_REPORT_ERRNO("setsockopt", "SO_SNDBUF");
     return (-1);
   }
 #endif
@@ -1486,7 +1490,11 @@ static int new_descriptor(socket_t s)
   /* accept the new connection */
   i = sizeof(peer);
   if ((desc = accept(s, (struct sockaddr *) &peer, &i)) == INVALID_SOCKET) {
-    perror("SYSERR: accept");
+#ifndef CIRCLE_WINDOWS
+    TB_REPORT_ERRNO("accept", "mother descriptor");
+#else
+    log("SYSERR: accept failed on mother descriptor: Winsock error #%d", WSAGetLastError());
+#endif
     return (-1);
   }
   /* keep it from blocking */
@@ -1517,7 +1525,8 @@ static int new_descriptor(socket_t s)
 
     /* resolution failed */
     if (!CONFIG_NS_IS_SLOW)
-      perror("SYSERR: gethostbyaddr");
+      log("SYSERR: gethostbyaddr failed for %s (h_errno=%d)",
+          inet_ntoa(peer.sin_addr), h_errno);
 
     /* find the numeric site address */
     strncpy(newd->host, (char *)inet_ntoa(peer.sin_addr), HOST_LENGTH);	/* strncpy: OK (n->host:HOST_LENGTH+1) */
@@ -1741,8 +1750,17 @@ int write_to_descriptor(socket_t desc, const char *txt)
     bytes_written = perform_socket_write(desc, txt, total);
 
     if (bytes_written < 0) {
-      /* Fatal error.  Disconnect the player. */
-      perror("SYSERR: Write to socket");
+      /* Fatal error.  Disconnect the player, preserving the originating descriptor. */
+#ifndef CIRCLE_WINDOWS
+      {
+        int saved_errno = errno;
+        log("SYSERR: socket write failed on descriptor %ld: %s (errno=%d)",
+            (long)desc, strerror(saved_errno), saved_errno);
+      }
+#else
+      log("SYSERR: socket write failed on descriptor %ld: Winsock error #%d",
+          (long)desc, WSAGetLastError());
+#endif
       return (-1);
     } else if (bytes_written == 0) {
       /* Temporary failure -- socket buffer full. */
@@ -1816,7 +1834,16 @@ static ssize_t perform_socket_read(socket_t desc, char *read_point, size_t space
 
   /* We don't know what happened, cut them off. This qualifies for
    * a SYSERR because we have no idea what happened at this point.*/
-  perror("SYSERR: perform_socket_read: about to lose connection");
+#ifndef CIRCLE_WINDOWS
+  {
+    int saved_errno = errno;
+    log("SYSERR: socket read failed on descriptor %ld: %s (errno=%d); disconnecting",
+        (long)desc, strerror(saved_errno), saved_errno);
+  }
+#else
+  log("SYSERR: socket read failed on descriptor %ld: Winsock error #%d; disconnecting",
+      (long)desc, WSAGetLastError());
+#endif
   return (-1);
 }
 
@@ -2216,9 +2243,13 @@ static void nonblock(socket_t s)
   int flags;
 
   flags = fcntl(s, F_GETFL, 0);
+  if (flags < 0) {
+    TB_REPORT_ERRNO("fcntl", "F_GETFL for nonblocking socket");
+    exit(1);
+  }
   flags |= O_NONBLOCK;
   if (fcntl(s, F_SETFL, flags) < 0) {
-    perror("SYSERR: Fatal error executing nonblock (comm.c)");
+    TB_REPORT_ERRNO("fcntl", "F_SETFL O_NONBLOCK");
     exit(1);
   }
 }
@@ -2764,7 +2795,7 @@ static void circle_sleep(struct timeval *timeout)
 {
   if (select(0, (fd_set *) 0, (fd_set *) 0, (fd_set *) 0, timeout) < 0) {
     if (errno != EINTR) {
-      perror("SYSERR: Select sleep");
+      TB_REPORT_ERRNO("select", "game-loop sleep");
       exit(1);
     }
   }
