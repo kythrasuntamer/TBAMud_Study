@@ -158,12 +158,14 @@ static void House_delete_file(room_vnum vnum)
     return;
   if (!(fl = fopen(filename, "rb"))) {
     if (errno != ENOENT)
-      log("SYSERR: Error deleting house file #%d. (1): %s", vnum, strerror(errno));
+      { int saved_errno = errno; log("SYSERR: house %d open-for-delete failed for %s: %s (errno=%d)", vnum, filename, strerror(saved_errno), saved_errno); }
     return;
   }
   tb_fclose(fl);
-  if (remove(filename) < 0)
-    log("SYSERR: Error deleting house file #%d. (2): %s", vnum, strerror(errno));
+  if (remove(filename) < 0) {
+    int saved_errno = errno;
+    log("SYSERR: house %d remove failed for %s: %s (errno=%d)", vnum, filename, strerror(saved_errno), saved_errno);
+  }
 }
 
 /* List all objects in a house file */
