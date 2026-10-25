@@ -1215,7 +1215,7 @@ ACMD(do_who)
   };
 
   skip_spaces(&argument);
-  strcpy(buf, argument);   /* strcpy: OK (sizeof: argument == buf) */
+  strlcpy(buf, argument, sizeof(buf));   /* strcpy: OK (sizeof: argument == buf) */
   name_search[0] = '\0';
 
   while (*buf) {
@@ -1224,32 +1224,32 @@ ACMD(do_who)
     half_chop(buf, arg, buf1);
     if (isdigit(*arg)) {
       sscanf(arg, "%d-%d", &low, &high);
-      strcpy(buf, buf1);   /* strcpy: OK (sizeof: buf1 == buf) */
+      strlcpy(buf, buf1, sizeof(buf));   /* strcpy: OK (sizeof: buf1 == buf) */
     } else if (*arg == '-') {
       mode = *(arg + 1);       /* just in case; we destroy arg in the switch */
       switch (mode) {
       case 'k':
         outlaws = 1;
-        strcpy(buf, buf1);   /* strcpy: OK (sizeof: buf1 == buf) */
+        strlcpy(buf, buf1, sizeof(buf));   /* strcpy: OK (sizeof: buf1 == buf) */
         break;
       case 'z':
         localwho = 1;
-        strcpy(buf, buf1);   /* strcpy: OK (sizeof: buf1 == buf) */
+        strlcpy(buf, buf1, sizeof(buf));   /* strcpy: OK (sizeof: buf1 == buf) */
         break;
       case 's':
         short_list = 1;
-        strcpy(buf, buf1);   /* strcpy: OK (sizeof: buf1 == buf) */
+        strlcpy(buf, buf1, sizeof(buf));   /* strcpy: OK (sizeof: buf1 == buf) */
         break;
       case 'q':
         questwho = 1;
-        strcpy(buf, buf1);   /* strcpy: OK (sizeof: buf1 == buf) */
+        strlcpy(buf, buf1, sizeof(buf));   /* strcpy: OK (sizeof: buf1 == buf) */
         break;
       case 'n':
         half_chop(buf1, name_search, buf);
         break;
       case 'r':
         who_room = 1;
-        strcpy(buf, buf1);   /* strcpy: OK (sizeof: buf1 == buf) */
+        strlcpy(buf, buf1, sizeof(buf));   /* strcpy: OK (sizeof: buf1 == buf) */
         break;
       case 'c':
         half_chop(buf1, arg, buf);
@@ -1257,11 +1257,11 @@ ACMD(do_who)
         break;
       case 'l':
         showleader = 1;
-        strcpy(buf, buf1);   /* strcpy: OK (sizeof: buf1 == buf) */
+        strlcpy(buf, buf1, sizeof(buf));   /* strcpy: OK (sizeof: buf1 == buf) */
         break;
       case 'g':
         showgroup = 1;
-        strcpy(buf, buf1);   /* strcpy: OK (sizeof: buf1 == buf) */
+        strlcpy(buf, buf1, sizeof(buf));   /* strcpy: OK (sizeof: buf1 == buf) */
         break;
       default:
         send_to_char(ch, "%s", WHO_FORMAT);
@@ -1449,7 +1449,7 @@ ACMD(do_users)
 
   host_search[0] = name_search[0] = '\0';
 
-  strcpy(buf, argument);    /* strcpy: OK (sizeof: argument == buf) */
+  strlcpy(buf, argument, sizeof(buf));    /* strcpy: OK (sizeof: argument == buf) */
   while (*buf) {
     char buf1[MAX_INPUT_LENGTH];
 
@@ -1461,15 +1461,15 @@ ACMD(do_users)
       case 'k':
     outlaws = 1;
     playing = 1;
-    strcpy(buf, buf1);    /* strcpy: OK (sizeof: buf1 == buf) */
+    strlcpy(buf, buf1, sizeof(buf));    /* strcpy: OK (sizeof: buf1 == buf) */
     break;
       case 'p':
     playing = 1;
-    strcpy(buf, buf1);    /* strcpy: OK (sizeof: buf1 == buf) */
+    strlcpy(buf, buf1, sizeof(buf));    /* strcpy: OK (sizeof: buf1 == buf) */
     break;
       case 'd':
     deadweight = 1;
-    strcpy(buf, buf1);    /* strcpy: OK (sizeof: buf1 == buf) */
+    strlcpy(buf, buf1, sizeof(buf));    /* strcpy: OK (sizeof: buf1 == buf) */
     break;
       case 'l':
     playing = 1;
@@ -1544,9 +1544,9 @@ ACMD(do_users)
     strftime(timestr, sizeof(timestr), "%H:%M:%S", localtime(&(d->login_time)));
 
     if (STATE(d) == CON_PLAYING && d->original)
-      strcpy(state, "Switched");
+      strlcpy(state, "Switched", sizeof(state));
     else
-      strcpy(state, connected_types[STATE(d)]);
+      strlcpy(state, connected_types[STATE(d)], sizeof(state));
 
     if (d->character && STATE(d) == CON_PLAYING)
       sprintf(idletime, "%5d", d->character->char_specials.timer *
@@ -1563,11 +1563,11 @@ ACMD(do_users)
     if (*d->host)
       sprintf(line + strlen(line), "[%s]\r\n", d->host);
     else
-      strcat(line, "[Hostname unknown]\r\n");
+      strlcat(line, "[Hostname unknown]\r\n", sizeof(line));
 
     if (STATE(d) != CON_PLAYING) {
       sprintf(line2, "%s%s%s", CCGRN(ch, C_SPR), line, CCNRM(ch, C_SPR));
-      strcpy(line, line2);
+      strlcpy(line, line2, sizeof(line));
     }
     if (STATE(d) != CON_PLAYING || (STATE(d) == CON_PLAYING && tch && CAN_SEE(ch, tch))) {
       send_to_char(ch, "%s", line);
@@ -2088,7 +2088,7 @@ ACMD(do_toggle)
 
   if (!*arg) {
     if (!GET_WIMP_LEV(ch))
-      strcpy(buf2, "OFF");        /* strcpy: OK */
+      strlcpy(buf2, "OFF", sizeof(buf2));        /* strcpy: OK */
     else
       snprintf(buf2, sizeof(buf2), "%-3.3d", GET_WIMP_LEV(ch));  /* thanks to Ironfist for the fix for the buffer overrun here */
       
@@ -2474,7 +2474,7 @@ void add_history(struct char_data *ch, char *str, int type)
   ct = time(0);
   strftime(time_str, sizeof(time_str), "%H:%M ", localtime(&ct));
 
-  sprintf(buf, "%s%s", time_str, str);
+  snprintf(buf, sizeof(buf), "%s%s", time_str, str);
 
   if (!tmp) {
     CREATE(GET_HISTORY(ch, type), struct txt_block, 1);
@@ -2590,25 +2590,25 @@ ACMD(do_whois)
     free_char (victim);
 }
 
-static bool get_zone_levels(zone_rnum znum, char *buf)
+static bool get_zone_levels(zone_rnum znum, char *buf, size_t buflen)
 {
   /* Create a string for the level restrictions for this zone. */
   if ((zone_table[znum].min_level == -1) && (zone_table[znum].max_level == -1)) {
-    sprintf(buf, "<Not Set!>");
+    snprintf(buf, buflen, "<Not Set!>");
     return FALSE;
   }
 
   if (zone_table[znum].min_level == -1) {
-    sprintf(buf, "Up to level %d", zone_table[znum].max_level);
+    snprintf(buf, buflen, "Up to level %d", zone_table[znum].max_level);
     return TRUE;
   }
 
   if (zone_table[znum].max_level == -1) {
-    sprintf(buf, "Above level %d", zone_table[znum].min_level);
+    snprintf(buf, buflen, "Above level %d", zone_table[znum].min_level);
     return TRUE;
   }
 
-  sprintf(buf, "Levels %d to %d", zone_table[znum].min_level, zone_table[znum].max_level);
+  snprintf(buf, buflen, "Levels %d to %d", zone_table[znum].min_level, zone_table[znum].max_level);
   return TRUE;
 }
 
@@ -2685,7 +2685,7 @@ ACMD(do_areas)
 
     if (show_zone) {
       if (overlap) overlap_shown = TRUE;
-      lev_set = get_zone_levels(i, lev_str);
+      lev_set = get_zone_levels(i, lev_str, sizeof(lev_str));
       tmp_len = snprintf(buf+len, sizeof(buf)-len, "\tn(%3d) %s%-*s\tn %s%s\tn\r\n", ++zcount, overlap ? QRED : QCYN,
                  count_color_chars(zone_table[i].name)+30, zone_table[i].name,
                  lev_set ? "\tc" : "\tn", lev_set ? lev_str : "All Levels");
