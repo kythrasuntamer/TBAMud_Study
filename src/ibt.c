@@ -72,39 +72,35 @@ static IBT_DATA *get_ibt_by_num(int mode, int target_num)
 }
 
 /* Search the IBT list, and return true if ibt is found there */
+static bool ibt_in_list(int mode, IBT_DATA *ibt)
+{
+  IBT_DATA *target_ibt, *first_ibt;
+
+  if ((first_ibt = get_first_ibt(mode)) == NULL) return FALSE;
+
+  for (target_ibt=first_ibt;target_ibt;target_ibt=target_ibt->next) {
+    if (target_ibt == ibt) {
+      return TRUE;
+    }
+  }
+  return FALSE;
+}
+
 /* Free up an IBT struct, removing it from the list if necessary */
 /* returns TRUE on success                                       */
 static bool free_ibt(int mode, IBT_DATA *ibtData)
 {
   if (ibtData == NULL) return FALSE;
 
-  /* If this IBT is in the selected list, unlink it before freeing it.
-   * Walk the list directly so ownership remains obvious to static analysis. */
-  {
-    IBT_DATA *cur = NULL;
-
-    switch (mode) {
-      case SCMD_BUG:
-        for (cur = first_bug; cur && cur != ibtData; cur = cur->next)
-          ;
-        if (cur)
-          UNLINK(ibtData, first_bug, last_bug, next, prev);
-        break;
-      case SCMD_IDEA:
-        for (cur = first_idea; cur && cur != ibtData; cur = cur->next)
-          ;
-        if (cur)
-          UNLINK(ibtData, first_idea, last_idea, next, prev);
-        break;
-      case SCMD_TYPO:
-        for (cur = first_typo; cur && cur != ibtData; cur = cur->next)
-          ;
-        if (cur)
-          UNLINK(ibtData, first_typo, last_typo, next, prev);
-        break;
-      default:
-        log("SYSERR: Invalid mode (%d) in free_ibt", mode);
-        return FALSE;
+  /* If this IBT is in the IBT list, take it out */
+  if (ibt_in_list(mode, ibtData)) {
+	switch(mode) {
+      case SCMD_BUG : UNLINK(ibtData,first_bug,last_bug,next,prev);
+                      break;
+      case SCMD_IDEA: UNLINK(ibtData,first_idea,last_idea,next,prev);
+                      break;
+      case SCMD_TYPO: UNLINK(ibtData,first_typo,last_typo,next,prev);
+                      break;
     }
   }
 
