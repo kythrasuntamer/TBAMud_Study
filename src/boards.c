@@ -442,7 +442,8 @@ void board_save_board(int board_type)
   FILE *fl;
   int i;
   char *tmp1, *tmp2 = NULL;
-  char tmpname[MAX_STRING_LENGTH];
+  char tmpname[MAX_STRING_LENGTH], bakname[MAX_STRING_LENGTH];
+  int name_result;
 
   if (!num_of_msgs[board_type]) {
     if (remove(FILENAME(board_type)) != 0 && errno != ENOENT) {
@@ -453,9 +454,15 @@ void board_save_board(int board_type)
     return;
   }
 
-  if (snprintf(tmpname, sizeof(tmpname), "%s.tmp", FILENAME(board_type)) < 0 ||
-      strlen(tmpname) >= sizeof(tmpname) - 1) {
+  name_result = snprintf(tmpname, sizeof(tmpname), "%s.tmp", FILENAME(board_type));
+  if (name_result < 0 || (size_t)name_result >= sizeof(tmpname)) {
     log("SYSERR: board %d temporary filename is too long for %s",
+        board_type, FILENAME(board_type));
+    return;
+  }
+  name_result = snprintf(bakname, sizeof(bakname), "%s.bak", FILENAME(board_type));
+  if (name_result < 0 || (size_t)name_result >= sizeof(bakname)) {
+    log("SYSERR: board %d backup filename is too long for %s",
         board_type, FILENAME(board_type));
     return;
   }
@@ -494,19 +501,46 @@ void board_save_board(int board_type)
       goto write_fail;
   }
 
-  if (!tb_fflush_checked(fl, tmpname) || !tb_fclose_checked(fl, tmpname)) {
-    log("SYSERR: board %d save could not be committed because temporary file %s did not flush/close cleanly",
-        board_type, tmpname);
-    if (remove(tmpname) != 0 && errno != ENOENT)
-      TB_REPORT_ERRNO("remove", tmpname);
-    return;
+  {
+    int flush_ok = tb_fflush_checked(fl, tmpname);
+    int close_ok = tb_fclose_checked(fl, tmpname);
+    if (!flush_ok || !close_ok) {
+      log("SYSERR: board %d save could not be committed because temporary file %s did not flush/close cleanly",
+          board_type, tmpname);
+      if (remove(tmpname) != 0 && errno != ENOENT)
+        TB_REPORT_ERRNO("remove", tmpname);
+      return;
+    }
   }
 
+  /* POSIX rename replaces atomically; some platforms require a backup dance. */
   if (rename(tmpname, FILENAME(board_type)) != 0) {
-    TB_REPORT_ERRNO("rename", FILENAME(board_type));
-    log("SYSERR: board %d save left original file intact; temporary file is %s",
-        board_type, tmpname);
-    return;
+    int replace_errno = errno;
+
+    if (remove(bakname) != 0 && errno != ENOENT)
+      TB_REPORT_ERRNO("remove", bakname);
+
+    if (rename(FILENAME(board_type), bakname) != 0) {
+      errno = replace_errno;
+      TB_REPORT_ERRNO("rename", FILENAME(board_type));
+      log("SYSERR: board %d save left original file intact; temporary file is %s",
+          board_type, tmpname);
+      return;
+    }
+
+    if (rename(tmpname, FILENAME(board_type)) != 0) {
+      int commit_errno = errno;
+      log("SYSERR: board %d replacement failed; attempting rollback from %s",
+          board_type, bakname);
+      if (rename(bakname, FILENAME(board_type)) != 0)
+        TB_REPORT_ERRNO("rename", FILENAME(board_type));
+      errno = commit_errno;
+      TB_REPORT_ERRNO("rename", tmpname);
+      return;
+    }
+
+    if (remove(bakname) != 0 && errno != ENOENT)
+      TB_REPORT_ERRNO("remove", bakname);
   }
   return;
 
