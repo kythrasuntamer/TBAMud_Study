@@ -818,7 +818,7 @@ void trigedit_save(struct descriptor_data *d)
       for (cmd = trig_index[rnum]->proto->cmdlist; cmd; cmd = cmd->next) {
         if (cmd->cmd) {
           size_t cmdlen = strlen(cmd->cmd);
-          need += cmdlen + 2 * ((cmdlen + FREAD_CHUNK - 1) / (FREAD_CHUNK - 1));
+          need += cmdlen + 2 * ((cmdlen + 511) / 511);
         }
       }
       if (need >= MAX_STRING_LENGTH) {
