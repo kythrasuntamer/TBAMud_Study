@@ -96,7 +96,7 @@ int isname(const char *str, const char *namelist)
   for(curtok = strtok(newlist, WHITESPACE); curtok; curtok = strtok(NULL, WHITESPACE))
     if(curtok && is_abbrev(str, curtok)) {
       /* Don't allow abbreviated numbers. - Sryth */
-      if (isdigit(*str) && (atoi(str) != atoi(curtok))) {
+      if (isdigit(*str) && (tb_parse_int_or_zero(str) != tb_parse_int_or_zero(curtok))) {
         free(newlist);
         return 0;
       }
@@ -611,7 +611,7 @@ int get_number(char **name)
       if (!isdigit(*(number + i)))
 	return (0);
 
-    return (atoi(number));
+    return (tb_parse_int_or_zero(number));
   }
   return (1);
 }
