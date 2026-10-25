@@ -1360,8 +1360,11 @@ static int is_num(char *arg)
    if (*arg == '\0')
       return FALSE;
 
-   if (*arg == '+' || *arg == '-')
+   if (*arg == '+' || *arg == '-') {
       arg++;
+      if (*arg == '\0')
+         return FALSE;
+   }
 
    for (; *arg != '\0'; arg++)
    {
@@ -1372,12 +1375,38 @@ static int is_num(char *arg)
    return TRUE;
 }
 
+static int script_int_value(const char *arg)
+{
+  char *end;
+  long value;
+
+  errno = 0;
+  value = strtol(arg, &end, 10);
+
+  if (errno == ERANGE || value > INT_MAX)
+    return INT_MAX;
+  if (value < INT_MIN)
+    return INT_MIN;
+
+  return (int)value;
+}
+
+static int clamp_script_int(long long value)
+{
+  if (value > INT_MAX)
+    return INT_MAX;
+  if (value < INT_MIN)
+    return INT_MIN;
+  return (int)value;
+}
+
 /* evaluates 'lhs op rhs', and copies to result */
 static void eval_op(char *op, char *lhs, char *rhs, char *result, void *go,
              struct script_data *sc, trig_data *trig)
 {
   unsigned char *p;
-  int n;
+  int lhs_num, rhs_num;
+  long long arithmetic;
 
   /* strip off extra spaces at begin and end */
   while (*lhs && isspace(*lhs))
@@ -1410,42 +1439,42 @@ static void eval_op(char *op, char *lhs, char *rhs, char *result, void *go,
 
   else if (!strcmp("==", op)) {
     if (is_num(lhs) && is_num(rhs))
-      sprintf(result, "%d", atoi(lhs) == atoi(rhs));
+      sprintf(result, "%d", script_int_value(lhs) == script_int_value(rhs));
     else
       sprintf(result, "%d", !str_cmp(lhs, rhs));
   }
 
   else if (!strcmp("!=", op)) {
     if (is_num(lhs) && is_num(rhs))
-      sprintf(result, "%d", atoi(lhs) != atoi(rhs));
+      sprintf(result, "%d", script_int_value(lhs) != script_int_value(rhs));
     else
       sprintf(result, "%d", str_cmp(lhs, rhs));
   }
 
   else if (!strcmp("<=", op)) {
     if (is_num(lhs) && is_num(rhs))
-      sprintf(result, "%d", atoi(lhs) <= atoi(rhs));
+      sprintf(result, "%d", script_int_value(lhs) <= script_int_value(rhs));
     else
       sprintf(result, "%d", str_cmp(lhs, rhs) <= 0);
   }
 
   else if (!strcmp(">=", op)) {
     if (is_num(lhs) && is_num(rhs))
-      sprintf(result, "%d", atoi(lhs) >= atoi(rhs));
+      sprintf(result, "%d", script_int_value(lhs) >= script_int_value(rhs));
     else
       sprintf(result, "%d", str_cmp(lhs, rhs) >= 0);
   }
 
   else if (!strcmp("<", op)) {
     if (is_num(lhs) && is_num(rhs))
-      sprintf(result, "%d", atoi(lhs) < atoi(rhs));
+      sprintf(result, "%d", script_int_value(lhs) < script_int_value(rhs));
     else
       sprintf(result, "%d", str_cmp(lhs, rhs) < 0);
   }
 
   else if (!strcmp(">", op)) {
     if (is_num(lhs) && is_num(rhs))
-      sprintf(result, "%d", atoi(lhs) > atoi(rhs));
+      sprintf(result, "%d", script_int_value(lhs) > script_int_value(rhs));
     else
       sprintf(result, "%d", str_cmp(lhs, rhs) > 0);
   }
@@ -1453,21 +1482,41 @@ static void eval_op(char *op, char *lhs, char *rhs, char *result, void *go,
   else if (!strcmp("/=", op))
     sprintf(result, "%c", str_str(lhs, rhs) ? '1' : '0');
 
-  else if (!strcmp("*", op))
-    sprintf(result, "%d", atoi(lhs) * atoi(rhs));
+  else if (!strcmp("*", op)) {
+    lhs_num = script_int_value(lhs);
+    rhs_num = script_int_value(rhs);
+    arithmetic = (long long)lhs_num * (long long)rhs_num;
+    sprintf(result, "%d", clamp_script_int(arithmetic));
+  }
 
-  else if (!strcmp("/", op))
-    sprintf(result, "%d", (n = atoi(rhs)) ? (atoi(lhs) / n) : 0);
+  else if (!strcmp("/", op)) {
+    lhs_num = script_int_value(lhs);
+    rhs_num = script_int_value(rhs);
+    if (rhs_num == 0)
+      strcpy(result, "0");
+    else {
+      arithmetic = (long long)lhs_num / (long long)rhs_num;
+      sprintf(result, "%d", clamp_script_int(arithmetic));
+    }
+  }
 
-  else if (!strcmp("+", op))
-    sprintf(result, "%d", atoi(lhs) + atoi(rhs));
+  else if (!strcmp("+", op)) {
+    lhs_num = script_int_value(lhs);
+    rhs_num = script_int_value(rhs);
+    arithmetic = (long long)lhs_num + (long long)rhs_num;
+    sprintf(result, "%d", clamp_script_int(arithmetic));
+  }
 
-  else if (!strcmp("-", op))
-    sprintf(result, "%d", atoi(lhs) - atoi(rhs));
+  else if (!strcmp("-", op)) {
+    lhs_num = script_int_value(lhs);
+    rhs_num = script_int_value(rhs);
+    arithmetic = (long long)lhs_num - (long long)rhs_num;
+    sprintf(result, "%d", clamp_script_int(arithmetic));
+  }
 
   else if (!strcmp("!", op)) {
     if (is_num(rhs))
-      sprintf(result, "%d", !atoi(rhs));
+      sprintf(result, "%d", !script_int_value(rhs));
     else
       sprintf(result, "%d", !*rhs);
   }
@@ -1477,12 +1526,14 @@ static void eval_op(char *op, char *lhs, char *rhs, char *result, void *go,
  * non-null char in p.*/
 char *matching_quote(char *p)
 {
+  char *start = p;
+
   for (p++; *p && (*p != '"'); p++) {
-    if (*p == '\\')
+    if (*p == '\\' && p[1] != '\0')
       p++;
   }
 
-  if (!*p)
+  if (!*p && p > start)
     p--;
 
   return p;
@@ -1535,28 +1586,22 @@ static int eval_lhs_op_rhs(char *expr, char *result, void *go, struct script_dat
 {
   char *p, *tokens[MAX_INPUT_LENGTH];
   char line[MAX_INPUT_LENGTH], lhr[MAX_INPUT_LENGTH], rhr[MAX_INPUT_LENGTH];
-  int i, j;
+  int i, j, k;
+  char *match, *q;
+  const char *match_op;
 
   /*
-   * valid operands, in order of priority
-   * each must also be defined in eval_op()
+   * Binary operators grouped from lowest to highest precedence.
+   * Operators within a group are evaluated left-to-right by splitting on
+   * the rightmost top-level operator.
    */
-  static char *ops[] = {
-    "||",
-    "&&",
-    "==",
-    "!=",
-    "<=",
-    ">=",
-    "<",
-    ">",
-    "/=",
-    "-",
-    "+",
-    "/",
-    "*",
-    "!",
-    "\n"
+  static const char *ops[][8] = {
+    { "||", NULL },
+    { "&&", NULL },
+    { "==", "!=", "<=", ">=", "/=", "<", ">", NULL },
+    { "+", "-", NULL },
+    { "*", "/", NULL },
+    { NULL }
   };
 
   p = strcpy(line, expr);
@@ -1576,18 +1621,58 @@ static int eval_lhs_op_rhs(char *expr, char *result, void *go, struct script_dat
   }
   tokens[j] = NULL;
 
-  for (i = 0; *ops[i] != '\n'; i++)
-    for (j = 0; tokens[j]; j++)
-      if (!strn_cmp(ops[i], tokens[j], strlen(ops[i]))) {
-        *tokens[j] = '\0';
-        p = tokens[j] + strlen(ops[i]);
+  for (i = 0; ops[i][0] != NULL; i++) {
+    match = NULL;
+    match_op = NULL;
 
-        eval_expr(line, lhr, go, sc, trig, type);
-        eval_expr(p, rhr, go, sc, trig, type);
-        eval_op(ops[i], lhr, rhr, result, go, sc, trig);
+    for (j = 0; tokens[j]; j++) {
+      for (k = 0; ops[i][k] != NULL; k++) {
+        if (!strn_cmp(ops[i][k], tokens[j], strlen(ops[i][k]))) {
+          /*
+           * A leading + or -, or one following another operator, is a unary
+           * sign rather than the binary operator for this precedence level.
+           */
+          if (ops[i][k][1] == '\0' &&
+              (ops[i][k][0] == '+' || ops[i][k][0] == '-')) {
+            q = tokens[j];
+            while (q > line && isspace((unsigned char)q[-1]))
+              q--;
+            if (q == line || strchr("!<>=+-*/&|(", q[-1]) != NULL)
+              break;
+          }
 
-        return 1;
+          match = tokens[j];
+          match_op = ops[i][k];
+          break;
+        }
       }
+    }
+
+    if (match != NULL) {
+      *match = '\0';
+      p = match + strlen(match_op);
+
+      eval_expr(line, lhr, go, sc, trig, type);
+      eval_expr(p, rhr, go, sc, trig, type);
+      eval_op((char *)match_op, lhr, rhr, result, go, sc, trig);
+
+      return 1;
+    }
+  }
+
+  /* Unary logical NOT is right-associative. */
+  for (j = 0; tokens[j]; j++) {
+    if (tokens[j][0] == '!' && tokens[j][1] != '=') {
+      *tokens[j] = '\0';
+      p = tokens[j] + 1;
+
+      eval_expr(line, lhr, go, sc, trig, type);
+      eval_expr(p, rhr, go, sc, trig, type);
+      eval_op("!", lhr, rhr, result, go, sc, trig);
+
+      return 1;
+    }
+  }
 
   return 0;
 }
