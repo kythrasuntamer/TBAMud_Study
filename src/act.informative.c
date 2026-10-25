@@ -608,7 +608,17 @@ static void look_in_obj(struct char_data *ch, char *arg)
         else
         {
           char buf2[MAX_STRING_LENGTH];
-          amt = (GET_OBJ_VAL(obj, 1) * 3) / GET_OBJ_VAL(obj, 0);
+
+          if (GET_OBJ_VAL(obj, 0) <= 0 || GET_OBJ_VAL(obj, 1) <= 0)
+            amt = 0;
+          else
+            amt = (GET_OBJ_VAL(obj, 1) * 3LL) / GET_OBJ_VAL(obj, 0);
+
+          if (amt < 0)
+            amt = 0;
+          else if (amt > 3)
+            amt = 3;
+
           sprinttype(GET_OBJ_VAL(obj, 2), color_liquid, buf2, sizeof(buf2));
           send_to_char(ch, "It's %sfull of a %s liquid.\r\n", fullness[amt], buf2);
         }
