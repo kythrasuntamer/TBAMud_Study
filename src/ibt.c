@@ -501,7 +501,7 @@ ACMD(do_ibt)
         if (ibtData->dated != 0) {
           tb_strftime(timestr, sizeof(timestr), "%c", localtime(&(ibtData->dated)));
         } else {
-          strcpy(timestr, "Unknown");
+          strlcpy(timestr, "Unknown", sizeof(timestr));
         }
         send_to_char(ch, "%sSubmitted: %s%s\r\n", QCYN, QYEL, timestr);
         if (GET_LEVEL(ch) >= LVL_IMMORT) {
@@ -547,9 +547,9 @@ ACMD(do_ibt)
 
         /* Set up the 'important' flag */
         if (IBT_FLAGGED(ibtData, IBT_IMPORTANT))
-          sprintf(imp, "%s!%s", QBFRED, QNRM);
+          tb_snprintf(imp, sizeof(imp), "%s!%s", QBFRED, QNRM);
         else
-          sprintf(imp, "%c", ' ');
+          tb_snprintf(imp, sizeof(imp), "%c", ' ');
 
         if (IBT_FLAGGED(ibtData, IBT_RESOLVED)) {
           if (GET_LEVEL(ch) < LVL_IMMORT) {
