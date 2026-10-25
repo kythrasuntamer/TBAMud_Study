@@ -77,7 +77,7 @@ void do_float(FILE * shop_f, FILE * newshop_f)
     fprintf(stderr, "shopconv: malformed floating-point field\n");
     exit(1);
   }
-  sprintf(str, "%f", f);
+  snprintf(str, sizeof(str), "%f", f);
   while ((str[strlen(str) - 1] == '0') && (str[strlen(str) - 2] != '.'))
     str[strlen(str) - 1] = 0;
   fprintf(newshop_f, "%s \n", str);
