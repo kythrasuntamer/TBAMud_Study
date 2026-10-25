@@ -271,7 +271,13 @@ void create_world_index(int znum, const char *type)
       tb_fprintf(newfile, "%s", (!found ? strncat(buf1, "\n$\n", sizeof(buf1) - strlen(buf1) - 1) : "$\n"));
       break;
     } else if (!found) {
-      sscanf(buf, "%d", &num);
+      if (sscanf(buf, "%d", &num) != 1) {
+        TB_REPORT_ERROR("world-index-parse", old_name);
+        tb_fclose(oldfile);
+        tb_fclose(newfile);
+        remove(new_name);
+        return;
+      }
       if (num > znum) {
 	found = TRUE;
 	tb_fprintf(newfile, "%s\n", buf1);
@@ -286,11 +292,30 @@ void create_world_index(int znum, const char *type)
     tb_fprintf(newfile, "%s\n", buf);
   }
 
-  tb_fclose(newfile);
-  tb_fclose(oldfile);
-  /* Out with the old, in with the new. */
-  remove(old_name);
-  rename(new_name, old_name);
+  /* Verify both streams before replacing the last good index. */
+  if (ferror(oldfile) || ferror(newfile)) {
+    TB_REPORT_ERROR("world-index-io", old_name);
+    tb_fclose(newfile);
+    tb_fclose(oldfile);
+    remove(new_name);
+    return;
+  }
+
+  if (fclose(newfile) == EOF) {
+    TB_REPORT_ERRNO("world-index-close", new_name);
+    tb_fclose(oldfile);
+    remove(new_name);
+    return;
+  }
+  if (fclose(oldfile) == EOF) {
+    TB_REPORT_ERRNO("world-index-close", old_name);
+    remove(new_name);
+    return;
+  }
+
+  /* Never unlink the destination before a successful replacement. */
+  if (!tb_replace_file_checked(new_name, old_name))
+    TB_REPORT_ERROR("world-index-commit", old_name);
 }
 
 void remove_room_zone_commands(zone_rnum zone, room_rnum room_num)
