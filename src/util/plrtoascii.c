@@ -169,7 +169,7 @@ void convert(char *filename)
     perror("error opening playerfile");
     exit(1);
   }
-  snprintf(index_name, sizeof(index_name), "%s%s", LIB_PLRFILES, INDEX_FILE);
+  tb_snprintf(index_name, sizeof(index_name), "%s%s", LIB_PLRFILES, INDEX_FILE);
   if (!(index_file = fopen(index_name, "w"))) {
     perror("error opening index file");
     exit(1);
@@ -177,13 +177,13 @@ void convert(char *filename)
   for (;;) {
     if (fread(&player, sizeof(struct char_file_u_plrtoascii), 1, fl) != 1) {
       if (feof(fl)) {
-        fclose(fl);
-        fclose(index_file);
+        tb_fclose(fl);
+        tb_fclose(index_file);
         return;
       }
       perror("error reading playerfile");
-      fclose(fl);
-      fclose(index_file);
+      tb_fclose(fl);
+      tb_fclose(index_file);
       exit(1);
     }
 
@@ -191,7 +191,7 @@ void convert(char *filename)
       exit(1);
     printf("writing: %s\n", outname);
 
-    fprintf(index_file, "%ld %s %d 0 %ld\n", 
+    tb_fprintf(index_file, "%ld %s %d 0 %ld\n", 
 	player.char_specials_saved.idnum, bits, player.level,
 	(long)player.last_logon);
 
@@ -201,129 +201,129 @@ void convert(char *filename)
     }
 
 /* char_file_u */
-    fprintf(outfile, "Name: %s\n", player.name);
-    fprintf(outfile, "Pass: %s\n", player.pwd);
-    fprintf(outfile, "Titl: %s\n", player.title);
+    tb_fprintf(outfile, "Name: %s\n", player.name);
+    tb_fprintf(outfile, "Pass: %s\n", player.pwd);
+    tb_fprintf(outfile, "Titl: %s\n", player.title);
     if (*player.description)
-      fprintf(outfile, "Desc:\n%s~\n", player.description);
+      tb_fprintf(outfile, "Desc:\n%s~\n", player.description);
     if (player.sex != PFDEF_SEX)
-      fprintf(outfile, "Sex : %d\n", (int)player.sex); 
+      tb_fprintf(outfile, "Sex : %d\n", (int)player.sex); 
     if (player.chclass != PFDEF_CLASS)
-      fprintf(outfile, "Clas: %d\n", (int)player.chclass); 
+      tb_fprintf(outfile, "Clas: %d\n", (int)player.chclass); 
     if (player.level != PFDEF_LEVEL)
-      fprintf(outfile, "Levl: %d\n", (int)player.level); 
-    fprintf(outfile, "Brth: %d\n", (int)player.birth);
-    fprintf(outfile, "Plyd: %d\n", (int)player.played);
-    fprintf(outfile, "Last: %d\n", (int)player.last_logon);
-    fprintf(outfile, "Host: %s\n", player.host);
+      tb_fprintf(outfile, "Levl: %d\n", (int)player.level); 
+    tb_fprintf(outfile, "Brth: %d\n", (int)player.birth);
+    tb_fprintf(outfile, "Plyd: %d\n", (int)player.played);
+    tb_fprintf(outfile, "Last: %d\n", (int)player.last_logon);
+    tb_fprintf(outfile, "Host: %s\n", player.host);
     if (player.height != PFDEF_HEIGHT)
-      fprintf(outfile, "Hite: %d\n", (int)player.height);
+      tb_fprintf(outfile, "Hite: %d\n", (int)player.height);
     if (player.weight != PFDEF_WEIGHT)
-      fprintf(outfile, "Wate: %d\n", (int)player.weight);
+      tb_fprintf(outfile, "Wate: %d\n", (int)player.weight);
 
 /* char_special_data_saved */
     csds = &(player.char_specials_saved);
     if (csds->alignment != PFDEF_ALIGNMENT)
-      fprintf(outfile, "Alin: %d\n", csds->alignment);
-    fprintf(outfile, "Id  : %d\n", (int)csds->idnum);
+      tb_fprintf(outfile, "Alin: %d\n", csds->alignment);
+    tb_fprintf(outfile, "Id  : %d\n", (int)csds->idnum);
     if (csds->act != PFDEF_PLRFLAGS)
-      fprintf(outfile, "Act : %d\n", (int)csds->act);
+      tb_fprintf(outfile, "Act : %d\n", (int)csds->act);
     if (csds->affected_by != PFDEF_AFFFLAGS) {
       sprintascii(bits, csds->affected_by);
-      fprintf(outfile, "Aff : %s\n", bits);
+      tb_fprintf(outfile, "Aff : %s\n", bits);
     }
     if (csds->apply_saving_throw[0] != PFDEF_SAVETHROW)
-      fprintf(outfile, "Thr1: %d\n", csds->apply_saving_throw[0]);
+      tb_fprintf(outfile, "Thr1: %d\n", csds->apply_saving_throw[0]);
     if (csds->apply_saving_throw[1] != PFDEF_SAVETHROW)
-      fprintf(outfile, "Thr2: %d\n", csds->apply_saving_throw[1]);
+      tb_fprintf(outfile, "Thr2: %d\n", csds->apply_saving_throw[1]);
     if (csds->apply_saving_throw[2] != PFDEF_SAVETHROW)
-      fprintf(outfile, "Thr3: %d\n", csds->apply_saving_throw[2]);
+      tb_fprintf(outfile, "Thr3: %d\n", csds->apply_saving_throw[2]);
     if (csds->apply_saving_throw[3] != PFDEF_SAVETHROW)
-      fprintf(outfile, "Thr4: %d\n", csds->apply_saving_throw[3]);
+      tb_fprintf(outfile, "Thr4: %d\n", csds->apply_saving_throw[3]);
     if (csds->apply_saving_throw[4] != PFDEF_SAVETHROW)
-      fprintf(outfile, "Thr5: %d\n", csds->apply_saving_throw[4]);
+      tb_fprintf(outfile, "Thr5: %d\n", csds->apply_saving_throw[4]);
 
 /* player_special_data_saved */
     psds = &(player.player_specials_saved);
     if (player.level < LVL_IMMORT) {
-      fprintf(outfile, "Skil:\n");
+      tb_fprintf(outfile, "Skil:\n");
       for (i = 1; i <= MAX_SKILLS; i++) {
 	if (psds->skills[i])
-	  fprintf(outfile, "%d %d\n", i, (int)psds->skills[i]);
+	  tb_fprintf(outfile, "%d %d\n", i, (int)psds->skills[i]);
       }
-      fprintf(outfile, "0 0\n");
+      tb_fprintf(outfile, "0 0\n");
     }
     if (psds->wimp_level != PFDEF_WIMPLEV)
-      fprintf(outfile, "Wimp: %d\n", psds->wimp_level);
+      tb_fprintf(outfile, "Wimp: %d\n", psds->wimp_level);
     if (psds->freeze_level != PFDEF_FREEZELEV)
-      fprintf(outfile, "Frez: %d\n", (int)psds->freeze_level);
+      tb_fprintf(outfile, "Frez: %d\n", (int)psds->freeze_level);
     if (psds->invis_level != PFDEF_INVISLEV)
-      fprintf(outfile, "Invs: %d\n", (int)psds->invis_level);
+      tb_fprintf(outfile, "Invs: %d\n", (int)psds->invis_level);
     if (psds->load_room != PFDEF_LOADROOM)
-      fprintf(outfile, "Room: %d\n", (int)psds->load_room);
+      tb_fprintf(outfile, "Room: %d\n", (int)psds->load_room);
     if (psds->pref != PFDEF_PREFFLAGS) {
       sprintascii(bits, psds->pref);
-      fprintf(outfile, "Pref: %s\n", bits);
+      tb_fprintf(outfile, "Pref: %s\n", bits);
     }
     if (psds->conditions[HUNGER] && player.level < LVL_IMMORT &&
 	psds->conditions[HUNGER] != PFDEF_HUNGER)
-      fprintf(outfile, "Hung: %d\n", (int)psds->conditions[0]);
+      tb_fprintf(outfile, "Hung: %d\n", (int)psds->conditions[0]);
     if (psds->conditions[THIRST] && player.level < LVL_IMMORT &&
 	psds->conditions[THIRST] != PFDEF_THIRST)
-      fprintf(outfile, "Thir: %d\n", (int)psds->conditions[1]);
+      tb_fprintf(outfile, "Thir: %d\n", (int)psds->conditions[1]);
     if (psds->conditions[2] && player.level < LVL_IMMORT &&
 	psds->conditions[DRUNK] != PFDEF_DRUNK)
-      fprintf(outfile, "Drnk: %d\n", (int)psds->conditions[2]);
+      tb_fprintf(outfile, "Drnk: %d\n", (int)psds->conditions[2]);
     if (psds->spells_to_learn != PFDEF_PRACTICES)
-      fprintf(outfile, "Lern: %d\n", (int)psds->spells_to_learn);
+      tb_fprintf(outfile, "Lern: %d\n", (int)psds->spells_to_learn);
 
 /* char_ability_data */
     cad = &(player.abilities);
     if (cad->str != PFDEF_STR || cad->str_add != PFDEF_STRADD)
-      fprintf(outfile, "Str : %d/%d\n", cad->str, cad->str_add);
+      tb_fprintf(outfile, "Str : %d/%d\n", cad->str, cad->str_add);
     if (cad->intel != PFDEF_INT)
-      fprintf(outfile, "Int : %d\n", cad->intel);
+      tb_fprintf(outfile, "Int : %d\n", cad->intel);
     if (cad->wis != PFDEF_WIS)
-      fprintf(outfile, "Wis : %d\n", cad->wis);
+      tb_fprintf(outfile, "Wis : %d\n", cad->wis);
     if (cad->dex != PFDEF_DEX)
-      fprintf(outfile, "Dex : %d\n", cad->dex);
+      tb_fprintf(outfile, "Dex : %d\n", cad->dex);
     if (cad->con != PFDEF_CON)
-      fprintf(outfile, "Con : %d\n", cad->con);
+      tb_fprintf(outfile, "Con : %d\n", cad->con);
     if (cad->cha != PFDEF_CHA)
-      fprintf(outfile, "Cha : %d\n", cad->cha);
+      tb_fprintf(outfile, "Cha : %d\n", cad->cha);
 
 /* char_point_data */
     cpd = &(player.points);
     if (cpd->hit != PFDEF_HIT || cpd->max_hit != PFDEF_MAXHIT)
-      fprintf(outfile, "Hit : %d/%d\n", cpd->hit, cpd->max_hit);
+      tb_fprintf(outfile, "Hit : %d/%d\n", cpd->hit, cpd->max_hit);
     if (cpd->mana != PFDEF_MANA || cpd->max_mana != PFDEF_MAXMANA)
-      fprintf(outfile, "Mana: %d/%d\n", cpd->mana, cpd->max_mana);
+      tb_fprintf(outfile, "Mana: %d/%d\n", cpd->mana, cpd->max_mana);
     if (cpd->move != PFDEF_MOVE || cpd->max_move != PFDEF_MAXMOVE)
-      fprintf(outfile, "Move: %d/%d\n", cpd->move, cpd->max_move);
+      tb_fprintf(outfile, "Move: %d/%d\n", cpd->move, cpd->max_move);
     if (cpd->armor != PFDEF_AC)
-      fprintf(outfile, "Ac  : %d\n", cpd->armor);
+      tb_fprintf(outfile, "Ac  : %d\n", cpd->armor);
     if (cpd->gold != PFDEF_GOLD)
-      fprintf(outfile, "Gold: %d\n", cpd->gold);
+      tb_fprintf(outfile, "Gold: %d\n", cpd->gold);
     if (cpd->bank_gold != PFDEF_BANK)
-      fprintf(outfile, "Bank: %d\n", cpd->bank_gold);
+      tb_fprintf(outfile, "Bank: %d\n", cpd->bank_gold);
     if (cpd->exp != PFDEF_EXP)
-      fprintf(outfile, "Exp : %d\n", cpd->exp);
+      tb_fprintf(outfile, "Exp : %d\n", cpd->exp);
     if (cpd->hitroll != PFDEF_HITROLL)
-      fprintf(outfile, "Hrol: %d\n", cpd->hitroll);
+      tb_fprintf(outfile, "Hrol: %d\n", cpd->hitroll);
     if (cpd->damroll != PFDEF_DAMROLL)
-      fprintf(outfile, "Drol: %d\n", cpd->damroll);
+      tb_fprintf(outfile, "Drol: %d\n", cpd->damroll);
 
 /* affected_type */
-    fprintf(outfile, "Affs:\n");
+    tb_fprintf(outfile, "Affs:\n");
     for (i = 0; i < MAX_AFFECT; i++) {
       aff = &(player.affected[i]);
       if (aff->type)
-	fprintf(outfile, "%d %d %d %d %d\n", aff->type, aff->duration,
+	tb_fprintf(outfile, "%d %d %d %d %d\n", aff->type, aff->duration,
 	  aff->modifier, aff->location, (int)aff->bitvector);
     }
-    fprintf(outfile, "0 0 0 0 0\n");
+    tb_fprintf(outfile, "0 0 0 0 0\n");
 
-    fclose(outfile);
+    tb_fclose(outfile);
   }
 }
 
