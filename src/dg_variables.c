@@ -1639,13 +1639,13 @@ void var_subst(void *go, struct script_data *sc, trig_data *trig,
 
   /* skip out if no %'s */
   if (!strchr(line, '%')) {
-    strcpy(buf, line);
+    strlcpy(buf, line, sizeof(buf));
     return;
   }
   /*lets just empty these to start with*/
   *repl_str = *tmp = *tmp2 = '\0';
 
-  p = strcpy(tmp, line);
+  p = strlcpy(tmp, line, sizeof(tmp));
   subfield_p = subfield;
 
   left = MAX_INPUT_LENGTH - 1;
