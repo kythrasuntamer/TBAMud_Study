@@ -1253,6 +1253,13 @@ void write_to_q(const char *txt, struct txt_q *queue, int aliased)
 
   CREATE(newt, struct txt_block, 1);
   newt->text = strdup(txt);
+  if (newt->text == NULL) {
+    int saved_errno = errno;
+    free(newt);
+    errno = saved_errno;
+    TB_REPORT_ERRNO("strdup", "input command queue");
+    return;
+  }
   newt->aliased = aliased;
 
   /* queue empty? */
@@ -1280,6 +1287,8 @@ static int get_from_q(struct txt_q *queue, char *dest, int *aliased)
 
   tmp = queue->head;
   queue->head = queue->head->next;
+  if (queue->head == NULL)
+    queue->tail = NULL;
   free(tmp->text);
   free(tmp);
 
