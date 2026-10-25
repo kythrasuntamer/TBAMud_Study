@@ -283,7 +283,7 @@ int save_rooms(zone_rnum rzone)
   log("GenOLC: save_rooms: Saving rooms in zone #%d (%d-%d).",
 	zone_table[rzone].number, genolc_zone_bottom(rzone), zone_table[rzone].top);
 
-  snprintf(filename, sizeof(filename), "%s/%d.new", WLD_PREFIX, zone_table[rzone].number);
+  tb_snprintf(filename, sizeof(filename), "%s/%d.new", WLD_PREFIX, zone_table[rzone].number);
   if (!(sf = fopen(filename, "w"))) {
     perror("SYSERR: save_rooms");
     return FALSE;
@@ -317,7 +317,7 @@ int save_rooms(zone_rnum rzone)
         mudlog(BRF, LVL_BUILDER, TRUE,
                "SYSERR: Could not format room #%d for saving; zone %d not saved.",
                room->number, zone_table[rzone].number);
-        fclose(sf);
+        tb_fclose(sf);
         remove(filename);
         return FALSE;
       }
@@ -327,12 +327,12 @@ int save_rooms(zone_rnum rzone)
                "SYSERR: Could not save room #%d due to size (%d >= maximum of %d); "
                "zone %d not saved.",
                room->number, n, MAX_STRING_LENGTH, zone_table[rzone].number);
-        fclose(sf);
+        tb_fclose(sf);
         remove(filename);
         return FALSE;
       }
 
-  fprintf(sf, "%s", convert_from_tabs(buf2));
+  tb_fprintf(sf, "%s", convert_from_tabs(buf2));
  
       /* Now you write out the exits for the room. */
       for (j = 0; j < DIR_COUNT; j++) {
@@ -363,7 +363,7 @@ int save_rooms(zone_rnum rzone)
 	    *buf1 = '\0';
 
 	  /* Now write the exit to the file. */
-	  fprintf(sf,	"D%d\n"
+	  tb_fprintf(sf,	"D%d\n"
 			"%s~\n"
 			"%s~\n"
 			"%d %d %d\n", j, buf, buf1, dflag,
@@ -380,22 +380,22 @@ int save_rooms(zone_rnum rzone)
 	  strncpy(buf, xdesc->description, sizeof(buf) - 1);
 	  buf[sizeof(buf) - 1] = '\0';
 	  strip_cr(buf);
-	  fprintf(sf,	"E\n"
+	  tb_fprintf(sf,	"E\n"
 			"%s~\n"
 			"%s~\n", xdesc->keyword, buf);
 	}
       }
-      fprintf(sf, "S\n");
+      tb_fprintf(sf, "S\n");
       script_save_to_disk(sf, room, WLD_TRIGGER);
     }
   }
 
   /* Write the final line and close it. */
-  fprintf(sf, "$~\n");
-  fclose(sf);
+  tb_fprintf(sf, "$~\n");
+  tb_fclose(sf);
 
   /* Old file we're replacing. */
-  snprintf(buf, sizeof(buf), "%s/%d.wld", WLD_PREFIX, zone_table[rzone].number);
+  tb_snprintf(buf, sizeof(buf), "%s/%d.wld", WLD_PREFIX, zone_table[rzone].number);
 
   remove(buf);
   rename(filename, buf);
