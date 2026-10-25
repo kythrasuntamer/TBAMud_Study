@@ -248,7 +248,7 @@ int touch(const char *path)
   FILE *fl;
 
   if (!(fl = fopen(path, "a"))) {
-    log("SYSERR: %s: %s", path, strerror(errno));
+    TB_REPORT_ERRNO("fopen", path);
     return (-1);
   } else {
     tb_fclose(fl);
