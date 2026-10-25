@@ -104,7 +104,7 @@ obj_rnum adjust_objects(obj_rnum refpt)
       switch (ZCMD(zone, cmd_no).command) {
       case 'P':
         ZCMD(zone, cmd_no).arg3 += (ZCMD(zone, cmd_no).arg3 >= refpt);
-         /* No break here - drop into next case. */
+         /* fall through */
       case 'O':
       case 'G':
       case 'E':
@@ -474,7 +474,7 @@ int delete_object(obj_rnum rnum)
           delete_zone_command(&zone_table[zone], cmd_no);
         } else
           ZCMD(zone, cmd_no).arg3 -= (ZCMD(zone, cmd_no).arg3 > rnum);
-        /* No break here - drop into next case. */
+        /* fall through */
       case 'O':
       case 'G':
       case 'E':
