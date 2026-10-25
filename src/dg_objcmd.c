@@ -673,9 +673,12 @@ static OCMD(do_odoor)
         case 1:  /* description */
             if (newexit->general_description)
                 free(newexit->general_description);
-            CREATE(newexit->general_description, char, strlen(value) + 3);
-            strcpy(newexit->general_description, value);
-            strcat(newexit->general_description, "\r\n"); /* strcat : OK */
+            {
+                size_t desc_size = strlen(value) + 3;
+                CREATE(newexit->general_description, char, desc_size);
+                strlcpy(newexit->general_description, value, desc_size);
+                strlcat(newexit->general_description, "\r\n", desc_size);
+            } /* strcat : OK */
             break;
         case 2:  /* flags       */
             newexit->exit_info = (sh_int)asciiflag_conv(value);
@@ -686,8 +689,11 @@ static OCMD(do_odoor)
         case 4:  /* name        */
             if (newexit->keyword)
                 free(newexit->keyword);
-            CREATE(newexit->keyword, char, strlen(value) + 1);
-            strcpy(newexit->keyword, value);
+            {
+                size_t keyword_size = strlen(value) + 1;
+                CREATE(newexit->keyword, char, keyword_size);
+                strlcpy(newexit->keyword, value, keyword_size);
+            }
             break;
         case 5:  /* room        */
             if ((to_room = real_room(tb_parse_int_or_zero(value))) != NOWHERE)
