@@ -1858,7 +1858,7 @@ static int process_input(struct descriptor_data *t)
     /* Since we have recieved atleast 1 byte of data from the socket, lets run it through
      * ProtocolInput() and rip out anything that is Out Of Band */ 
     if ( bytes_read > 0 )
-      bytes_read = ProtocolInput( t, read_buf, bytes_read, t->inbuf );
+      bytes_read = ProtocolInput(t, read_buf, bytes_read, t->inbuf, sizeof(t->inbuf));
 
     if (bytes_read < 0)	/* Error, disconnect them. */
       return (-1);
