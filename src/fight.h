@@ -10,8 +10,8 @@
 * CircleMUD is based on DikuMUD, Copyright (C) 1990, 1991.
 *
 */
-#ifndef _FIGHT_H_
-#define _FIGHT_H_
+#ifndef TBAMUD_FIGHT_H_INCLUDED
+#define TBAMUD_FIGHT_H_INCLUDED
 
 /* Structures and defines */
 /* Attacktypes with grammar */
@@ -41,4 +41,4 @@ bool pk_allowed(struct char_data *ch, struct char_data *victim);
 extern struct attack_hit_type attack_hit_text[];
 extern struct char_data *combat_list;
 
-#endif /* _FIGHT_H_*/
+#endif /* TBAMUD_FIGHT_H_INCLUDED*/
