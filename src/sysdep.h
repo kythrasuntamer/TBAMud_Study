@@ -667,6 +667,33 @@ static inline int tb_fclose_checked_at(FILE *stream, const char *context,
   tb_fclose_checked_at((stream), (context), __FILE__, __LINE__, __func__)
 
 /*
+ * Test-only failure injection. Production builds compile this to a constant
+ * false and expose no runtime switch that can sabotage I/O.
+ */
+#ifdef TB_TEST_FAILURE_INJECTION
+#define TB_FAIL_REPLACE_INITIAL 0x01u
+#define TB_FAIL_REPLACE_COMMIT  0x02u
+#define TB_FAIL_REPLACE_ROLLBACK 0x04u
+static unsigned int tb_test_failpoints_ = 0;
+
+static inline void tb_test_set_failpoints(unsigned int mask)
+{
+  tb_test_failpoints_ = mask;
+}
+
+static inline int tb_test_failpoint_active(unsigned int mask)
+{
+  return (tb_test_failpoints_ & mask) != 0;
+}
+#else
+static inline int tb_test_failpoint_active(unsigned int mask)
+{
+  (void)mask;
+  return 0;
+}
+#endif
+
+/*
  * Replace a live file with a fully-written temporary file.  On platforms
  * where rename() cannot replace an existing destination, fall back to a
  * backup/rollback sequence.  A failed commit never intentionally discards
@@ -688,8 +715,12 @@ static inline int tb_replace_file_checked_at(const char *temp_path,
     return 0;
   }
 
-  if (rename(temp_path, dest_path) == 0)
-    return 1;
+  if (!tb_test_failpoint_active(TB_FAIL_REPLACE_INITIAL)) {
+    if (rename(temp_path, dest_path) == 0)
+      return 1;
+  } else {
+    errno = EACCES;
+  }
 
   first_errno = errno;
   backup_len = strlen(dest_path) + sizeof(".bak");
@@ -728,20 +759,39 @@ static inline int tb_replace_file_checked_at(const char *temp_path,
     return 0;
   }
 
-  if (rename(temp_path, dest_path) != 0) {
-    int commit_errno = errno;
+  {
+    int commit_failed = 0;
 
-    if (rename(backup_path, dest_path) != 0) {
-      int rollback_errno = errno;
-      tb_report_error_at("rename", "rollback destination restore",
-                         rollback_errno, source_file, source_line, source_func);
+    if (tb_test_failpoint_active(TB_FAIL_REPLACE_COMMIT)) {
+      errno = EIO;
+      commit_failed = 1;
+    } else if (rename(temp_path, dest_path) != 0) {
+      commit_failed = 1;
     }
 
-    tb_report_error_at("rename", temp_path, commit_errno,
-                       source_file, source_line, source_func);
-    free(backup_path);
-    errno = commit_errno;
-    return 0;
+    if (commit_failed) {
+      int commit_errno = errno;
+      int rollback_failed = 0;
+
+      if (tb_test_failpoint_active(TB_FAIL_REPLACE_ROLLBACK)) {
+        errno = EIO;
+        rollback_failed = 1;
+      } else if (rename(backup_path, dest_path) != 0) {
+        rollback_failed = 1;
+      }
+
+      if (rollback_failed) {
+        int rollback_errno = errno;
+        tb_report_error_at("rename", "rollback destination restore",
+                           rollback_errno, source_file, source_line, source_func);
+      }
+
+      tb_report_error_at("rename", temp_path, commit_errno,
+                         source_file, source_line, source_func);
+      free(backup_path);
+      errno = commit_errno;
+      return 0;
+    }
   }
 
   if (remove(backup_path) != 0 && errno != ENOENT) {
