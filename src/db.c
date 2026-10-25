@@ -1226,7 +1226,7 @@ bitvector_t asciiflag_conv(char *flag)
   }
 
   if (is_num)
-    flags = atol(flag);
+    flags = tb_parse_long_or_zero(flag);
 
   return (flags);
 }
@@ -1254,7 +1254,7 @@ static bitvector_t asciiflag_conv_aff(char *flag)
   }
 
   if (is_num)
-    flags = atol(flag);
+    flags = tb_parse_long_or_zero(flag);
 
   return (flags);
 }
@@ -1325,7 +1325,7 @@ void parse_room(FILE *fl, int virtual_nr)
     world[room_nr].room_flags[3] = 0;
 
     /* In the old-style files, the 3rd item was the sector-type */
-    world[room_nr].sector_type = atoi(flags2);
+    world[room_nr].sector_type = tb_parse_int_or_zero(flags2);
 
    sprintf(flags, "room #%d", virtual_nr);	/* sprintf: OK (until 399-bit integers) */
 
@@ -1378,7 +1378,7 @@ void parse_room(FILE *fl, int virtual_nr)
     }
     switch (*line) {
     case 'D':
-      setup_dir(fl, room_nr, atoi(line + 1));
+      setup_dir(fl, room_nr, tb_parse_int_or_zero(line + 1));
       break;
     case 'E':
       CREATE(new_descr, struct extra_descr_data, 1);
@@ -1650,7 +1650,7 @@ static void interpret_espec(const char *keyword, const char *value, int i, int n
   /* If there isn't a colon, there is no value.  While Boolean options are
    * possible, we don't actually have any.  Feel free to make some. */
   if (value)
-    num_arg = atoi(value);
+    num_arg = tb_parse_int_or_zero(value);
 
   CASE("BareHandAttack") {
     RANGE(0, NUM_ATTACK_TYPES - 1);
@@ -1813,7 +1813,7 @@ void parse_mobile(FILE *mob_f, int nr)
     AFF_FLAGS(mob_proto + i)[2] = 0;
     AFF_FLAGS(mob_proto + i)[3] = 0;
 
-    GET_ALIGNMENT(mob_proto + i) = atoi(f3);
+    GET_ALIGNMENT(mob_proto + i) = tb_parse_int_or_zero(f3);
 
     /* Make some basic checks. */
     REMOVE_BIT_AR(AFF_FLAGS(mob_proto + i), AFF_CHARM);
@@ -3159,7 +3159,7 @@ int fread_flags(FILE *fp, int *fg, int fg_size)
   /* We now have a line of text with all the flags on it - let's convert it */
   for (i=0,tmp_txt=line;tmp_txt && *tmp_txt && i<fg_size;i++) {
     tmp_txt = one_argument(tmp_txt,val_txt);  /* Grab a number  */
-    fg[i]   = atoi(val_txt);                  /* Convert to int */
+    fg[i]   = tb_parse_int_or_zero(val_txt);                  /* Convert to int */
   }
 
   return (i);
@@ -3966,7 +3966,7 @@ void load_config( void )
   /* Load the game configuration file. */
   while (get_line(fl, line)) {
     split_argument(line, tag);
-    num = atoi(line);
+    num = tb_parse_int_or_zero(line);
 
     switch (LOWER(*tag)) {
       case 'a':
