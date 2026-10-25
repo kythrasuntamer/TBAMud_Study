@@ -17,7 +17,7 @@ def validate(manifest):
     if len(ids)!=len(set(ids)) or len(names)!=len(set(names)):
         issues.append("duplicate class id or class name")
     if [(x.get("id"),x.get("name")) for x in existing]!=[
-        (0,"Magic-User"),(1,"Cleric"),(2,"Thief"),(3,"Warrior")]:
+        (0,"Wizard"),(1,"Cleric"),(2,"Thief"),(3,"Warrior")]:
         issues.append("existing player class IDs changed")
     if any(not isinstance(v,int) or v<0 or v>=32 for v in ids):
         issues.append("class id out of supported 0-31 bitvector range")
