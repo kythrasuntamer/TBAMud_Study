@@ -2669,6 +2669,7 @@ int script_driver(void *go_adress, trig_data *trig, int type, int mode)
   }
 
   depth++;
+  dg_script_execution_enter();
 
   if (mode == TRIG_NEW) {
     GET_TRIG_DEPTH(trig) = 1;
@@ -2707,6 +2708,8 @@ int script_driver(void *go_adress, trig_data *trig, int type, int mode)
       if (!temp) {
         script_log("Trigger VNum %d has 'while' without 'done'.",
                    GET_TRIG_VNUM(trig));
+        depth--;
+        dg_script_execution_leave();
         return ret_val;
       }
       if (process_if(p + 6, go, sc, trig, type)) {
@@ -2739,6 +2742,7 @@ int script_driver(void *go_adress, trig_data *trig, int type, int mode)
           cl->loops = 0;
           process_wait(go, trig, type, "wait 1", cl);
            depth--;
+          dg_script_execution_leave();
           return ret_val;
         }
           if (GET_TRIG_LOOPS(trig) >= 100) {
@@ -2806,6 +2810,7 @@ int script_driver(void *go_adress, trig_data *trig, int type, int mode)
       else if (!strn_cmp(cmd, "wait ", 5)) {
         process_wait(go, trig, type, cmd, cl);
         depth--;
+        dg_script_execution_leave();
         return ret_val;
       }
 
@@ -2832,6 +2837,7 @@ int script_driver(void *go_adress, trig_data *trig, int type, int mode)
           depth--;
           if (type == OBJ_TRIGGER)
             *(obj_data **)go_adress = NULL;
+          dg_script_execution_leave();
           return ret_val;
         }
       }
@@ -2849,6 +2855,7 @@ int script_driver(void *go_adress, trig_data *trig, int type, int mode)
   GET_TRIG_DEPTH(trig) = 0;
 
   depth--;
+  dg_script_execution_leave();
   return ret_val;
 }
 

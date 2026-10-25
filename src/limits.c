@@ -291,7 +291,8 @@ void gain_exp(struct char_data *ch, int gain)
 
     gain = MIN(CONFIG_MAX_EXP_GAIN, gain);	/* put a cap on the max gain per kill */
     GET_EXP(ch) += gain;
-    while (GET_LEVEL(ch) < LVL_IMMORT - CONFIG_NO_MORT_TO_IMMORT &&
+    while (GET_LEVEL(ch) < LVL_IMMORT - 1 &&
+           GET_LEVEL(ch) < LVL_IMMORT - CONFIG_NO_MORT_TO_IMMORT &&
 	GET_EXP(ch) >= level_exp(GET_CLASS(ch), GET_LEVEL(ch) + 1)) {
       GET_LEVEL(ch) += 1;
       num_levels++;
