@@ -184,25 +184,32 @@ void test_level_exp_invalid_level_returns_zero(void)
 
 void test_level_exp_immortal_level(void)
 {
-    /* Extended mortal curve reaches the immortal threshold at level 51. */
+    /* Level 51 follows the extended XP curve, not the old level-31 cap. */
     TEST_ASSERT_EQUAL_INT(9710000, level_exp(CLASS_MAGIC_USER, LVL_IMMORT));
 }
 
-void test_level_exp_extended_progression_is_monotonic(void)
+void test_level_exp_extended_boundaries(void)
 {
-    int classes[] = { CLASS_MAGIC_USER, CLASS_CLERIC, CLASS_THIEF, CLASS_WARRIOR };
-    size_t i;
-    for (i = 0; i < sizeof(classes) / sizeof(classes[0]); ++i) {
-        int level;
-        for (level = 31; level <= LVL_IMPL; ++level)
-            TEST_ASSERT_TRUE(level_exp(classes[i], level) > level_exp(classes[i], level - 1));
-    }
-}
+    /* Preserve level-30 thresholds and add 110,000 XP per level through 51. */
+    TEST_ASSERT_EQUAL_INT(7400000, level_exp(CLASS_MAGIC_USER, 30));
+    TEST_ASSERT_EQUAL_INT(7510000, level_exp(CLASS_MAGIC_USER, 31));
+    TEST_ASSERT_EQUAL_INT(9600000, level_exp(CLASS_MAGIC_USER, 50));
+    TEST_ASSERT_EQUAL_INT(9710000, level_exp(CLASS_MAGIC_USER, 51));
 
-void test_level_exp_mortal_boundary(void)
-{
-    TEST_ASSERT_EQUAL_INT(9600000, level_exp(CLASS_MAGIC_USER, LVL_IMMORT - 1));
-    TEST_ASSERT_EQUAL_INT(9710000, level_exp(CLASS_MAGIC_USER, LVL_IMMORT));
+    TEST_ASSERT_EQUAL_INT(6400000, level_exp(CLASS_CLERIC, 30));
+    TEST_ASSERT_EQUAL_INT(6510000, level_exp(CLASS_CLERIC, 31));
+    TEST_ASSERT_EQUAL_INT(8600000, level_exp(CLASS_CLERIC, 50));
+    TEST_ASSERT_EQUAL_INT(8710000, level_exp(CLASS_CLERIC, 51));
+
+    TEST_ASSERT_EQUAL_INT(6650000, level_exp(CLASS_THIEF, 30));
+    TEST_ASSERT_EQUAL_INT(6760000, level_exp(CLASS_THIEF, 31));
+    TEST_ASSERT_EQUAL_INT(8850000, level_exp(CLASS_THIEF, 50));
+    TEST_ASSERT_EQUAL_INT(8960000, level_exp(CLASS_THIEF, 51));
+
+    TEST_ASSERT_EQUAL_INT(7400000, level_exp(CLASS_WARRIOR, 30));
+    TEST_ASSERT_EQUAL_INT(7510000, level_exp(CLASS_WARRIOR, 31));
+    TEST_ASSERT_EQUAL_INT(9600000, level_exp(CLASS_WARRIOR, 50));
+    TEST_ASSERT_EQUAL_INT(9710000, level_exp(CLASS_WARRIOR, 51));
 }
 
 /* =========================================================
@@ -249,6 +256,7 @@ int main(void)
     RUN_TEST(test_level_exp_warrior_level_1);
     RUN_TEST(test_level_exp_invalid_level_returns_zero);
     RUN_TEST(test_level_exp_immortal_level);
+    RUN_TEST(test_level_exp_extended_boundaries);
     RUN_TEST(test_level_exp_extended_progression_is_monotonic);
     RUN_TEST(test_level_exp_mortal_boundary);
 
