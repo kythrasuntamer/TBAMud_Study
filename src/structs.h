@@ -150,6 +150,8 @@
 #define CLASS_CLERIC      1    /**< PC Class Cleric */
 #define CLASS_THIEF       2    /**< PC Class Thief */
 #define CLASS_WARRIOR     3    /**< PC Class Warrior */
+/* Reserved for the next class conversion. Not selectable until all systems support it. */
+#define CLASS_MONK        4    /**< Reserved PC class ID: Monk */
 /** Total number of available PC Classes */
 #define NUM_CLASSES	  4
 
