@@ -36,22 +36,22 @@ int main(void)
       *(strchr(line, '\n')) = '\0';
       if (outfile) {
 /*	fputs("$\n", outfile);*/
-	fclose(outfile);
+	tb_fclose(outfile);
       }
       if (!(outfile = fopen((line + 1), "a"))) {
 	perror("Error opening output file");
 	exit(0);
       }
-      fputs(line + 1, index);
-      fputs("\n", index);
+      tb_fputs(line + 1, index);
+      tb_fputs("\n", index);
     } else if (outfile)
-      fputs(line, outfile);
+      tb_fputs(line, outfile);
   }
 
-  fputs("$\r\n", index);
-  fclose(index);
+  tb_fputs("$\r\n", index);
+  tb_fclose(index);
   if (outfile)
-    fclose(outfile);
+    tb_fclose(outfile);
 
   return (0);
 }
