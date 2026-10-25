@@ -546,7 +546,7 @@ static void quest_join(struct char_data *ch, struct char_data *qm, char argument
   else if (GET_QUEST(ch) != NOTHING)
     snprintf(buf, sizeof(buf),
              "%s But you are already part of a quest!", GET_NAME(ch));
-  else if((vnum = find_quest_by_qmnum(ch, GET_MOB_VNUM(qm), atoi(argument))) == NOTHING)
+  else if((vnum = find_quest_by_qmnum(ch, GET_MOB_VNUM(qm), tb_parse_int_or_zero(argument))) == NOTHING)
     snprintf(buf, sizeof(buf),
              "%s I don't know of such a quest!", GET_NAME(ch));
   else if ((rnum = real_quest(vnum)) == NOTHING)
@@ -597,7 +597,7 @@ void quest_list(struct char_data *ch, struct char_data *qm, char argument[MAX_IN
   qst_vnum vnum;
   qst_rnum rnum;
 
-  if ((vnum = find_quest_by_qmnum(ch, GET_MOB_VNUM(qm), atoi(argument))) == NOTHING)
+  if ((vnum = find_quest_by_qmnum(ch, GET_MOB_VNUM(qm), tb_parse_int_or_zero(argument))) == NOTHING)
     send_to_char(ch, "That is not a valid quest!\r\n");
   else if ((rnum = real_quest(vnum)) == NOTHING)
     send_to_char(ch, "That is not a valid quest!\r\n");
@@ -695,7 +695,7 @@ static void quest_stat(struct char_data *ch, char *argument)
 
   if (!*argument)
     send_to_char(ch, "%s\r\n", quest_imm_usage);
-  else if ((rnum = real_quest(atoi(argument))) == NOTHING )
+  else if ((rnum = real_quest(tb_parse_int_or_zero(argument))) == NOTHING )
     send_to_char(ch, "That quest does not exist.\r\n");
   else {
     sprintbit(QST_FLAGS(rnum), aq_flags, buf, sizeof(buf));
