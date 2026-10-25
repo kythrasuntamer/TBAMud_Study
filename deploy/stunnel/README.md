@@ -82,10 +82,49 @@ If stunnel is linked against **OpenSSL 3.5 or newer**, its default TLS 1.3
 key-exchange groups can offer the hybrid **X25519MLKEM768** exchange when
 clients also support it. This combines classical X25519 and the ML-KEM
 post-quantum mechanism, rather than layering unrelated bulk ciphers.
-Check the negotiated group in an actual TLS handshake; do not claim
-post-quantum protection without verifying negotiation and library support.
+Verify the group in an actual TLS handshake and test that classical-only
+clients fail. Run `stunnel -version` and check which OpenSSL library the
+stunnel binary actually loads; `openssl version` alone is not sufficient.
 
 There is no standardized 512-bit Serpent or 512-bit AES TLS 1.3 cipher suite.
 Serpent itself has a 128-bit block size and supports at most 256-bit keys.
 A stack of different 256-bit ciphers does **not** add their advertised key
 lengths or guarantee more security. Prefer modern, audited AEAD algorithms.
+
+
+## Required post-quantum handshake checks
+
+Before exposing the port, confirm your stunnel binary uses OpenSSL 3.5+
+and your client OpenSSL also supports the hybrid group:
+
+```sh
+stunnel -version
+openssl version
+openssl list -tls1_3 -tls-groups | grep X25519MLKEM768
+```
+
+Connect with a hybrid-capable test client, using the real DNS name and
+certificate chain:
+
+```sh
+openssl s_client -connect YOUR_PUBLIC_HOST:5001 -servername YOUR_PUBLIC_HOST \
+  -verify_hostname YOUR_PUBLIC_HOST -verify_return_error \
+  -tls1_3 -groups X25519MLKEM768 -brief </dev/null
+```
+
+Confirm TLSv1.3, a trusted certificate, an allowed AEAD cipher suite,
+and negotiated group X25519MLKEM768 in the output.
+
+**Negative test:** a classical-only client **must not** succeed:
+
+```sh
+openssl s_client -connect YOUR_PUBLIC_HOST:5001 -servername YOUR_PUBLIC_HOST \
+  -tls1_3 -groups X25519 -brief </dev/null
+```
+
+If this successfully completes a TLS handshake, the hybrid-only policy
+is not enforced and the service should not be published as PQ-only.
+
+Keep in mind that this protects key establishment; certificates and
+their signatures can remain classical. It is not an end-to-end
+post-quantum authentication guarantee.
