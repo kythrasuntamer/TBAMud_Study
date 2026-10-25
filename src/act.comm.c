@@ -50,7 +50,7 @@ ACMD(do_say)
     if (CONFIG_SPECIAL_IN_COMM && legal_communication(argument))
       parse_at(argument);
 
-    snprintf(buf, sizeof(buf), "$n\tn says, '%s'", argument);
+    tb_snprintf(buf, sizeof(buf), "$n\tn says, '%s'", argument);
     msg = act(buf, FALSE, ch, 0, 0, TO_ROOM | DG_NO_TRIG);
 
     for (vict = world[IN_ROOM(ch)].people; vict; vict = vict->next_in_room)
@@ -60,7 +60,7 @@ ACMD(do_say)
     if (!IS_NPC(ch) && PRF_FLAGGED(ch, PRF_NOREPEAT))
       send_to_char(ch, "%s", CONFIG_OK);
     else {
-      snprintf(buf, sizeof(buf), "You say, '%s'", argument);
+      tb_snprintf(buf, sizeof(buf), "You say, '%s'", argument);
       msg = act(buf, FALSE, ch, 0, 0, TO_CHAR | DG_NO_TRIG);
       add_history(ch, msg, HIST_SAY);
     }
@@ -99,14 +99,14 @@ static void perform_tell(struct char_data *ch, struct char_data *vict, char *arg
 {
   char buf[MAX_STRING_LENGTH], *msg;
 
-  snprintf(buf, sizeof(buf), "%s$n tells you, '%s'%s", CCRED(vict, C_NRM), arg, CCNRM(vict, C_NRM));
+  tb_snprintf(buf, sizeof(buf), "%s$n tells you, '%s'%s", CCRED(vict, C_NRM), arg, CCNRM(vict, C_NRM));
   msg = act(buf, FALSE, ch, 0, vict, TO_VICT | TO_SLEEP);
   add_history(vict, msg, HIST_TELL);
 
   if (!IS_NPC(ch) && PRF_FLAGGED(ch, PRF_NOREPEAT))
     send_to_char(ch, "%s", CONFIG_OK);
   else {
-    snprintf(buf, sizeof(buf), "%sYou tell $N, '%s'%s", CCRED(ch, C_NRM), arg, CCNRM(ch, C_NRM));
+    tb_snprintf(buf, sizeof(buf), "%sYou tell $N, '%s'%s", CCRED(ch, C_NRM), arg, CCNRM(ch, C_NRM));
     msg = act(buf, FALSE, ch, 0, vict, TO_CHAR | TO_SLEEP);     
     add_history(ch, msg, HIST_TELL);
   }
@@ -234,7 +234,7 @@ ACMD(do_spec_comm)
     if (CONFIG_SPECIAL_IN_COMM && legal_communication(argument))
       parse_at(buf2);
 
-    snprintf(buf1, sizeof(buf1), "$n %s you, '%s'", action_plur, buf2);
+    tb_snprintf(buf1, sizeof(buf1), "$n %s you, '%s'", action_plur, buf2);
     act(buf1, FALSE, ch, 0, vict, TO_VICT);
 
     if ((!IS_NPC(ch)) && (PRF_FLAGGED(ch, PRF_NOREPEAT))) 
@@ -339,7 +339,7 @@ ACMD(do_page)
   else {
     char buf[MAX_STRING_LENGTH];
 
-    snprintf(buf, sizeof(buf), "\007\007*$n* %s", buf2);
+    tb_snprintf(buf, sizeof(buf), "\007\007*$n* %s", buf2);
     if (!str_cmp(arg, "all")) {
       if (GET_LEVEL(ch) > LVL_GOD) {
 	for (d = descriptor_list; d; d = d->next)
@@ -477,14 +477,14 @@ ACMD(do_gen_comm)
 		if (CONFIG_SPECIAL_IN_COMM && legal_communication(argument))
       parse_at(argument);
       
-    snprintf(buf1, sizeof(buf1), "%sYou %s, '%s%s'%s", COLOR_LEV(ch) >= C_CMP ? color_on : "",
+    tb_snprintf(buf1, sizeof(buf1), "%sYou %s, '%s%s'%s", COLOR_LEV(ch) >= C_CMP ? color_on : "",
         com_msgs[subcmd][1], argument, COLOR_LEV(ch) >= C_CMP ? color_on : "", CCNRM(ch, C_CMP));
     
     msg = act(buf1, FALSE, ch, 0, 0, TO_CHAR | TO_SLEEP);
     add_history(ch, msg, hist_type[subcmd]);
   }
   if (!emoting)
-    snprintf(buf1, sizeof(buf1), "$n %ss, '%s'", com_msgs[subcmd][1], argument);
+    tb_snprintf(buf1, sizeof(buf1), "$n %ss, '%s'", com_msgs[subcmd][1], argument);
 
   /* Now send all the strings out. */
   for (i = descriptor_list; i; i = i->next) {
@@ -500,7 +500,7 @@ ACMD(do_gen_comm)
          !AWAKE(i->character)))
       continue;
 
-    snprintf(buf2, sizeof(buf2), "%s%s%s", (COLOR_LEV(i->character) >= C_NRM) ? color_on : "", buf1, KNRM); 
+    tb_snprintf(buf2, sizeof(buf2), "%s%s%s", (COLOR_LEV(i->character) >= C_NRM) ? color_on : "", buf1, KNRM); 
     msg = act(buf2, FALSE, ch, 0, i->character, TO_VICT | TO_SLEEP);
     add_history(i->character, msg, hist_type[subcmd]);
   }
@@ -526,13 +526,13 @@ ACMD(do_qcomm)
     if (!IS_NPC(ch) && PRF_FLAGGED(ch, PRF_NOREPEAT))
       send_to_char(ch, "%s", CONFIG_OK);
     else if (subcmd == SCMD_QSAY) {
-      snprintf(buf, sizeof(buf), "You quest-say, '%s'", argument);
+      tb_snprintf(buf, sizeof(buf), "You quest-say, '%s'", argument);
       act(buf, FALSE, ch, 0, argument, TO_CHAR);
     } else
       act(argument, FALSE, ch, 0, argument, TO_CHAR);
 
     if (subcmd == SCMD_QSAY)
-      snprintf(buf, sizeof(buf), "$n quest-says, '%s'", argument);
+      tb_snprintf(buf, sizeof(buf), "$n quest-says, '%s'", argument);
     else {
       strlcpy(buf, argument, sizeof(buf));
       mudlog(CMP, MAX(LVL_BUILDER, GET_INVIS_LEV(ch)), TRUE, "(GC) %s qechoed: %s", GET_NAME(ch), argument);
