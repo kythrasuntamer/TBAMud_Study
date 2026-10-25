@@ -121,7 +121,7 @@ static int find_first_step(room_rnum src, room_rnum target)
   /* now, do the classic BFS. */
   while (queue_head) {
     if (queue_head->room == target) {
-      curr_dir = queue_head->dir;
+      curr_dir = (int)queue_head->dir;
       bfs_clear_queue();
       return (curr_dir);
     } else {
