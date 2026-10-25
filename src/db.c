@@ -151,6 +151,74 @@ static void free_extra_descriptions(struct extra_descr_data *edesc);
 static bitvector_t asciiflag_conv_aff(char *flag);
 static int hsort(const void *a, const void *b);
 
+static int parse_int_fields(const char *text, int *values, size_t max_fields)
+{
+  const char *p = text;
+  char *end;
+  size_t count = 0;
+  long value;
+
+  if (text == NULL || values == NULL)
+    return -1;
+
+  while (count < max_fields) {
+    while (isspace((unsigned char)*p))
+      p++;
+    if (*p == '\0')
+      break;
+
+    errno = 0;
+    value = strtol(p, &end, 10);
+    if (p == end || errno == ERANGE || value < INT_MIN || value > INT_MAX)
+      return -1;
+
+    values[count++] = (int)value;
+    p = end;
+  }
+
+  while (isspace((unsigned char)*p))
+    p++;
+  if (*p != '\0')
+    return -1;
+
+  return (int)count;
+}
+
+static int parse_int_text_strict(const char *text, int *value)
+{
+  int parsed[1];
+  int count = parse_int_fields(text, parsed, 1);
+
+  if (count != 1)
+    return 0;
+  *value = parsed[0];
+  return 1;
+}
+
+static int parse_long_text_strict(const char *text, long *value)
+{
+  const char *p = text;
+  char *end;
+  long parsed;
+
+  if (text == NULL || value == NULL)
+    return 0;
+
+  while (isspace((unsigned char)*p))
+    p++;
+  errno = 0;
+  parsed = strtol(p, &end, 10);
+  if (p == end || errno == ERANGE)
+    return 0;
+  while (isspace((unsigned char)*end))
+    end++;
+  if (*end != '\0')
+    return 0;
+
+  *value = parsed;
+  return 1;
+}
+
 /* routines for booting the system */
 char *fread_action(FILE *fl, int nr)
 {
@@ -191,6 +259,7 @@ static void boot_social_messages(void)
   FILE *fl;
   int line_number, nr = 0, hide, min_char_pos, min_pos, min_lvl, curr_soc = -1;
   char next_soc[MAX_STRING_LENGTH], sorted[MAX_INPUT_LENGTH];
+  char hide_text[32], min_char_text[32], min_pos_text[32], min_lvl_text[32];
 
   if (CONFIG_NEW_SOCIALS == TRUE) {
     /* open social file */
@@ -251,8 +320,12 @@ static void boot_social_messages(void)
     }
     if (*next_soc == '$') break;
     if (CONFIG_NEW_SOCIALS == TRUE) {
-      if (fscanf(fl, " %s %d %d %d %d \n",
-  		sorted, &hide, &min_char_pos, &min_pos, &min_lvl) != 5) {
+      if (fscanf(fl, " %255s %31s %31s %31s %31s \n",
+                 sorted, hide_text, min_char_text, min_pos_text, min_lvl_text) != 5 ||
+          !parse_int_text_strict(hide_text, &hide) ||
+          !parse_int_text_strict(min_char_text, &min_char_pos) ||
+          !parse_int_text_strict(min_pos_text, &min_pos) ||
+          !parse_int_text_strict(min_lvl_text, &min_lvl)) {
       log("SYSERR: format error in social file near social '%s'", next_soc);
       /* SYSERR_DESC: From boot_social_messages(), this error is output when
        * the server is expecting to find the remainder of the first line of the
@@ -270,7 +343,9 @@ static void boot_social_messages(void)
       soc_mess_list[curr_soc].min_victim_position = min_pos;
       soc_mess_list[curr_soc].min_level_char = min_lvl;
     } else {  /* old style */
-      if (fscanf(fl, " %d %d \n", &hide, &min_pos) != 2) {
+      if (fscanf(fl, " %31s %31s \n", hide_text, min_pos_text) != 2 ||
+          !parse_int_text_strict(hide_text, &hide) ||
+          !parse_int_text_strict(min_pos_text, &min_pos)) {
         log("SYSERR: format error in social file near social '%s'", next_soc);
       /* SYSERR_DESC: From boot_social_messages(), this error is output when the
        * server is expecting to find the remainder of the first line of the
@@ -829,16 +904,20 @@ static void reset_time(void)
 {
   time_t beginning_of_time = 0;
   FILE *bgtime;
+  char time_text[64];
+  long parsed_time;
 
   if ((bgtime = fopen(TIME_FILE, "r")) == NULL)
     log("No time file '%s' starting from the beginning.", TIME_FILE);
   else {
-    if(fscanf(bgtime, "%ld\n", (long *)&beginning_of_time) == EOF) {
-      if(feof(bgtime)) {
+    if (fscanf(bgtime, "%63s", time_text) != 1 ||
+        !parse_long_text_strict(time_text, &parsed_time)) {
+      if (feof(bgtime))
         log("SYSERR: reset_time: unexpected end of file encountered reading %s.", TIME_FILE);
-      } else if(ferror(bgtime)) {
-        log("SYSERR: reset_time: unexpected end of file encountered reading %s: %s.", TIME_FILE, strerror(errno));
-      }
+      else
+        log("SYSERR: reset_time: invalid time value in %s.", TIME_FILE);
+    } else {
+      beginning_of_time = (time_t)parsed_time;
     }
     tb_fclose(bgtime);
   }
@@ -1167,7 +1246,7 @@ void discrete_load(FILE *fl, int mode, char *filename)
 
     if (*line == '#') {
       last = nr;
-      if (sscanf(line, "#%d", &nr) != 1) {
+      if (!parse_int_text_strict(line + 1, &nr)) {
 	log("SYSERR: Format error after %s #%d", modes[mode], last);
 	exit(1);
       }
@@ -1399,11 +1478,17 @@ void parse_room(FILE *fl, int virtual_nr)
     case 'S':			/* end of room */
       /* DG triggers -- script is defined after the end of the room */
       letter = fread_letter(fl);
-      ungetc(letter, fl);
+      if (ungetc(letter, fl) == EOF) {
+        log("SYSERR: parse_room: unable to push back trigger marker");
+        exit(1);
+      }
       while (letter=='T') {
         dg_read_trigger(fl, &world[room_nr], WLD_TRIGGER);
         letter = fread_letter(fl);
-        ungetc(letter, fl);
+        if (ungetc(letter, fl) == EOF) {
+          log("SYSERR: parse_room: unable to push back trigger marker");
+          exit(1);
+        }
       }
       top_of_world = room_nr++;
       return;
@@ -1435,7 +1520,7 @@ void setup_dir(FILE *fl, int room, int dir)
     log("SYSERR: Format error, %s", buf2);
     exit(1);
   }
-  if (sscanf(line, " %d %d %d ", t, t + 1, t + 2) != 3) {
+  if (parse_int_fields(line, t, 3) != 3) {
     log("SYSERR: Format error, %s", buf2);
     exit(1);
   }
@@ -1605,7 +1690,7 @@ static void parse_simple_mob(FILE *mob_f, int i, int nr)
       exit(1);
     }
 
-  if (sscanf(line, " %d %d ", t, t + 1) != 2) {
+  if (parse_int_fields(line, t, 2) != 2) {
     log("SYSERR: Format error in mob #%d, second line after S flag\n"
 	"...expecting line of form '# #'", nr);
     exit(1);
@@ -1620,7 +1705,7 @@ static void parse_simple_mob(FILE *mob_f, int i, int nr)
     exit(1);
   }
 
-  if (sscanf(line, " %d %d %d ", t, t + 1, t + 2) != 3) {
+  if (parse_int_fields(line, t, 3) != 3) {
     log("SYSERR: Format error in last line of mob #%d\n"
 	"...expecting line of form '# # #'", nr);
     exit(1);
@@ -1893,11 +1978,17 @@ void parse_mobile(FILE *mob_f, int nr)
 
   /* DG triggers -- script info follows mob S/E section */
   letter = fread_letter(mob_f);
-  ungetc(letter, mob_f);
+  if (ungetc(letter, mob_f) == EOF) {
+    log("SYSERR: parse_mobile: unable to push back trigger marker");
+    exit(1);
+  }
   while (letter=='T') {
     dg_read_trigger(mob_f, &mob_proto[i], MOB_TRIGGER);
     letter = fread_letter(mob_f);
-    ungetc(letter, mob_f);
+    if (ungetc(letter, mob_f) == EOF) {
+      log("SYSERR: parse_mobile: unable to push back trigger marker");
+      exit(1);
+    }
   }
 
   mob_proto[i].aff_abils = mob_proto[i].real_abils;
@@ -2012,7 +2103,7 @@ char *parse_object(FILE *obj_f, int nr)
     log("SYSERR: Expecting second numeric line of %s, but file ended!", buf2);
     exit(1);
   }
-  if ((retval = sscanf(line, "%d %d %d %d", t, t + 1, t + 2, t + 3)) != 4) {
+  if ((retval = parse_int_fields(line, t, 4)) != 4) {
     log("SYSERR: Format error in second numeric line (expecting 4 args, got %d), %s", retval, buf2);
     exit(1);
   }
@@ -2025,7 +2116,7 @@ char *parse_object(FILE *obj_f, int nr)
     log("SYSERR: Expecting third numeric line of %s, but file ended!", buf2);
     exit(1);
   }
-  if ((retval = sscanf(line, "%d %d %d %d %d", t, t + 1, t + 2, t + 3, t + 4)) != 5) {
+  if ((retval = parse_int_fields(line, t, 5)) != 5) {
     if (retval == 3) {
       t[3] = 0;
       t[4] = 0;
@@ -2086,7 +2177,7 @@ char *parse_object(FILE *obj_f, int nr)
 	exit(1);
       }
 
-      if ((retval = sscanf(line, " %d %d ", t, t + 1)) != 2) {
+      if ((retval = parse_int_fields(line, t, 2)) != 2) {
 	log("SYSERR: Format error in 'A' field, %s\n"
 	    "...expecting 2 numeric arguments, got %d\n"
 	    "...offending line: '%s'", buf2, retval, line);
