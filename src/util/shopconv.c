@@ -27,34 +27,28 @@ char *fread_string(FILE * fl, const char *error)
   do {
     if (!fgets(tmp, sizeof(tmp), fl)) {
       printf("fread_string: format error at or near %s\n", error);
-      exit(1);
+      return NULL;
     }
-    if (strlen(tmp) + strlen(buf) > MAX_STRING_LENGTH) {
-      printf("SYSERR: fread_string: string too large (shopconv.c)");
-      exit(1);
-    } else
-      strcat(buf, tmp);
+    if (strlen(tmp) + strlen(buf) >= sizeof(buf)) {
+      printf("SYSERR: fread_string: string too large (shopconv.c)\n");
+      return NULL;
+    }
+    strlcat(buf, tmp, sizeof(buf));
 
-    for (point = buf + strlen(buf) - 2; point >= buf && isspace(*point);
-	 point--);
-    if ((flag = (*point == '~'))) {
-      if (*(buf + strlen(buf) - 3) == '\n')
-	*(buf + strlen(buf) - 2) = '\0';
-      else
-	*(buf + strlen(buf) - 2) = '\0';
-    }
+    /* Walk backward from the end without ever forming a pointer before buf. */
+    point = buf + strlen(buf);
+    while (point > buf && isspace((unsigned char)*(point - 1)))
+      point--;
+
+    flag = point > buf && *(point - 1) == '~';
+    if (flag)
+      *(point - 1) = '\0';
   } while (!flag);
 
-  /* do the allocate boogie  */
-
-  if (strlen(buf) > 0) {
-    CREATE(rslt, char, strlen(buf) + 1);
-    strcpy(rslt, buf);
-  } else
-    rslt = NULL;
-  return (rslt);
+  CREATE(rslt, char, strlen(buf) + 1);
+  strlcpy(rslt, buf, strlen(buf) + 1);
+  return rslt;
 }
-
 
 void do_list(FILE * shop_f, FILE * newshop_f, int max)
 {
