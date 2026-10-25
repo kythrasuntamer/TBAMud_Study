@@ -4615,7 +4615,7 @@ ACMD(do_plist)
     half_chop(buf, arg, buf1);
     if (isdigit(*arg)) {
       if (!parse_plist_range(arg, &low, &high)) {
-        send_to_char(ch, "Invalid level range.\\r\\n");
+        send_to_char(ch, "Invalid level range.\r\n");
         return;
       }
       strlcpy(buf, buf1, sizeof(buf));        /* strcpy: OK (sizeof: buf1 == buf) */
@@ -4625,7 +4625,7 @@ ACMD(do_plist)
       case 'l':
         half_chop(buf1, arg, buf);
         if (!parse_plist_range(arg, &low, &high)) {
-          send_to_char(ch, "Invalid level range.\\r\\n");
+          send_to_char(ch, "Invalid level range.\r\n");
           return;
         }
         break;
@@ -4643,14 +4643,14 @@ ACMD(do_plist)
       case 'd':
         half_chop(buf1, arg, buf);
         if (!parse_plist_range(arg, &low_day, &high_day)) {
-          send_to_char(ch, "Invalid day range.\\r\\n");
+          send_to_char(ch, "Invalid day range.\r\n");
           return;
         }
         break;
       case 'h':
         half_chop(buf1, arg, buf);
         if (!parse_plist_range(arg, &low_hr, &high_hr)) {
-          send_to_char(ch, "Invalid hour range.\\r\\n");
+          send_to_char(ch, "Invalid hour range.\r\n");
           return;
         }
         break;
