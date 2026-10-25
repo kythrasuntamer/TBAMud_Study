@@ -311,7 +311,6 @@ int save_mobiles(zone_rnum rznum)
     check_mobile_strings(&mob_proto[rmob]);
     if (!write_mobile_record(i, &mob_proto[rmob], mobfd)) {
       fclose(mobfd);
-      if (!CONFIG_DEBUG_MODE)
         remove(mobfname);
       return FALSE;
     }
