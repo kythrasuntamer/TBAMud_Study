@@ -196,7 +196,7 @@ int save_objects(zone_rnum zone_num)
     return FALSE;
   }
 
-  snprintf(filename, sizeof(filename), "%s/%d.new", OBJ_PREFIX, zone_table[zone_num].number);
+  tb_snprintf(filename, sizeof(filename), "%s/%d.new", OBJ_PREFIX, zone_table[zone_num].number);
   if (!(fp = fopen(filename, "w+"))) {
     mudlog(BRF, LVL_IMMORT, TRUE, "SYSERR: OLC: Cannot open objects file %s!", filename);
     return FALSE;
@@ -227,7 +227,7 @@ int save_objects(zone_rnum zone_num)
         mudlog(BRF, LVL_BUILDER, TRUE,
                "SYSERR: Could not format object #%d for saving; zone %d not saved.",
                GET_OBJ_VNUM(obj), zone_table[zone_num].number);
-        fclose(fp);
+        tb_fclose(fp);
         remove(filename);
         return FALSE;
       }
@@ -237,12 +237,12 @@ int save_objects(zone_rnum zone_num)
                "SYSERR: Could not save object #%d due to size (%d >= maximum of %d); "
                "zone %d not saved.",
                GET_OBJ_VNUM(obj), n, MAX_STRING_LENGTH, zone_table[zone_num].number);
-        fclose(fp);
+        tb_fclose(fp);
         remove(filename);
         return FALSE;
       }
       
-      fprintf(fp, "%s", convert_from_tabs(buf2));
+      tb_fprintf(fp, "%s", convert_from_tabs(buf2));
 
       sprintascii(ebuf1, GET_OBJ_EXTRA(obj)[0]);
       sprintascii(ebuf2, GET_OBJ_EXTRA(obj)[1]);
@@ -257,7 +257,7 @@ int save_objects(zone_rnum zone_num)
       sprintascii(pbuf3, GET_OBJ_AFFECT(obj)[2]);
       sprintascii(pbuf4, GET_OBJ_AFFECT(obj)[3]);
 
-      fprintf(fp, "%d %s %s %s %s %s %s %s %s %s %s %s %s\n"
+      tb_fprintf(fp, "%d %s %s %s %s %s %s %s %s %s %s %s %s\n"
           "%d %d %d %d\n"
           "%d %d %d %d %d\n",
 
@@ -284,7 +284,7 @@ int save_objects(zone_rnum zone_num)
 	  }
 	  strlcpy(buf, ex_desc->description, sizeof(buf));
 	  strip_cr(buf);
-	  fprintf(fp, "E\n"
+	  tb_fprintf(fp, "E\n"
 		  "%s~\n"
 		  "%s~\n", ex_desc->keyword, buf);
 	}
@@ -292,16 +292,16 @@ int save_objects(zone_rnum zone_num)
       /* Do we have affects? */
       for (counter2 = 0; counter2 < MAX_OBJ_AFFECT; counter2++)
 	if (obj->affected[counter2].modifier)
-	  fprintf(fp, "A\n"
+	  tb_fprintf(fp, "A\n"
 		  "%d %d\n", obj->affected[counter2].location,
 		  obj->affected[counter2].modifier);
     }
   }
 
   /* Write the final line, close the file. */
-  fprintf(fp, "$~\n");
-  fclose(fp);
-  snprintf(buf, sizeof(buf), "%s/%d.obj", OBJ_PREFIX, zone_table[zone_num].number);
+  tb_fprintf(fp, "$~\n");
+  tb_fclose(fp);
+  tb_snprintf(buf, sizeof(buf), "%s/%d.obj", OBJ_PREFIX, zone_table[zone_num].number);
   remove(buf);
   rename(filename, buf);
 
