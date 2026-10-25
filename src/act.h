@@ -246,6 +246,7 @@ ACMD(do_happyhour);
 ACMD(do_hide);
 ACMD(do_not_here);
 ACMD(do_practice);
+ACMD(do_endgame);
 ACMD(do_report);
 ACMD(do_save);
 ACMD(do_sneak);
