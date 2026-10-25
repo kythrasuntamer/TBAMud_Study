@@ -63,7 +63,7 @@ static int mag_manacost(struct char_data *ch, int spellnum) {
 
 static char *obfuscate_spell(const char *unobfuscated) {
   static char obfuscated[200];
-  int maxlen = 200;
+  size_t maxlen = sizeof(obfuscated) - 1;
 
   int j, ofs = 0;
 
