@@ -14,6 +14,8 @@ name: "CodeQL Advanced"
 on:
   push:
     branches: [ "master" ]
+  pull_request:
+    branches: [ "master" ]
   schedule:
     - cron: '42 10 * * 4'
 
@@ -86,9 +88,9 @@ jobs:
       if: matrix.build-mode == 'manual'
       shell: bash
       run: |
-        ./configure
-        cd src && touch .accepted && make
-        exit
+        set -euo pipefail
+        cmake -S . -B build-codeql -DCMAKE_BUILD_TYPE=Debug -DSTATIC_ANALYSIS=OFF
+        cmake --build build-codeql --parallel 2
 
     - name: Perform CodeQL Analysis
       uses: github/codeql-action/analyze@v4

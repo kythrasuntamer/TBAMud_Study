@@ -85,6 +85,56 @@ static bool perform_new_char_dupe_check(struct descriptor_data *d);
 /* sort_commands utility */
 static int sort_commands_helper(const void *a, const void *b);
 
+/* Shared across login descriptors: switching IP addresses cannot reset the
+ * failed-password budget for a character. Bounded memory, no allocations.
+ * Limits can also affect legitimate users during an attack on their account. */
+#define TB_LOGIN_RATE_SLOTS 512
+#define TB_LOGIN_WINDOW 60
+#define TB_LOGIN_MAX_FAILURES 8
+
+struct tb_login_rate_entry {
+  char account[MAX_NAME_LENGTH + 1];
+  time_t window_start;
+  time_t last_seen;
+  unsigned int failures;
+};
+
+static struct tb_login_rate_entry tb_login_rates[TB_LOGIN_RATE_SLOTS];
+
+static struct tb_login_rate_entry *tb_login_rate_entry_for(const char *name,
+                                                           time_t now)
+{
+  size_t i, slot = 0;
+  struct tb_login_rate_entry *entry;
+
+  if (name == NULL || *name == '\0')
+    return NULL;
+
+  for (i = 0; i < TB_LOGIN_RATE_SLOTS; ++i) {
+    if (strcmp(tb_login_rates[i].account, name) == 0) {
+      slot = i;
+      break;
+    }
+    if (tb_login_rates[i].account[0] == '\0') {
+      slot = i;
+      break;
+    }
+    if (tb_login_rates[i].last_seen < tb_login_rates[slot].last_seen)
+      slot = i;
+  }
+
+  entry = &tb_login_rates[slot];
+  if (strcmp(entry->account, name) != 0 ||
+      now < entry->window_start ||
+      now - entry->window_start >= TB_LOGIN_WINDOW) {
+    strlcpy(entry->account, name, sizeof(entry->account));
+    entry->window_start = now;
+    entry->failures = 0;
+  }
+  entry->last_seen = now;
+  return entry;
+}
+
 /* globals defined here, used here and elsewhere */
 int *cmd_sort_info = NULL;
 
@@ -1561,7 +1611,18 @@ void nanny(struct descriptor_data *d, char *arg)
     if (!*arg)
       STATE(d) = CON_CLOSE;
     else {
+      struct tb_login_rate_entry *rate =
+        tb_login_rate_entry_for(GET_PC_NAME(d->character), time(NULL));
+
+      if (rate != NULL && rate->failures >= TB_LOGIN_MAX_FAILURES) {
+        write_to_output(d, "Too many login attempts. Try again later.\r\n");
+        STATE(d) = CON_CLOSE;
+        return;
+      }
+
       if (!tb_password_verify(arg, GET_PASSWD(d->character))) {
+        if (rate != NULL && rate->failures < TB_LOGIN_MAX_FAILURES)
+          ++rate->failures;
 	mudlog(BRF, LVL_GOD, TRUE, "Bad PW: %s [%s]", GET_NAME(d->character), d->host);
 	GET_BAD_PWS(d->character)++;
 	save_char(d->character);
@@ -1589,6 +1650,10 @@ void nanny(struct descriptor_data *d, char *arg)
           TB_REPORT_ERROR("argon2id", "legacy password upgrade failed");
         }
       }
+
+      /* A successful verification clears only this account's failure count. */
+      if (rate != NULL)
+        rate->failures = 0;
 
       /* Password was correct. */
       load_result = GET_BAD_PWS(d->character);

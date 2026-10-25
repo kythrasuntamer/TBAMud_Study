@@ -691,16 +691,24 @@ static inline size_t tb_diag_escape(char *dst, size_t dst_size, const char *src)
   while (*p != '\0' && used + 1 < dst_size) {
     unsigned char ch = *p++;
 
-    if ((ch == '\\' || ch == '"') && used + 2 < dst_size) {
+    if (ch == '\\' || ch == '"') {
+      if (used + 2 >= dst_size)
+        break;
       dst[used++] = '\\';
       dst[used++] = (char)ch;
-    } else if (ch == '\n' && used + 2 < dst_size) {
+    } else if (ch == '\n') {
+      if (used + 2 >= dst_size)
+        break;
       dst[used++] = '\\';
       dst[used++] = 'n';
-    } else if (ch == '\r' && used + 2 < dst_size) {
+    } else if (ch == '\r') {
+      if (used + 2 >= dst_size)
+        break;
       dst[used++] = '\\';
       dst[used++] = 'r';
-    } else if (ch == '\t' && used + 2 < dst_size) {
+    } else if (ch == '\t') {
+      if (used + 2 >= dst_size)
+        break;
       dst[used++] = '\\';
       dst[used++] = 't';
     } else if (ch < 0x20 || ch == 0x7f) {

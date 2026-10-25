@@ -79,6 +79,19 @@ void test_error_reporter_escapes_record_breaking_context(void)
   TEST_ASSERT_EQUAL_STRING("line1\\nline2\\t\\\"quoted\\\"\\\\tail", escaped);
 }
 
+void test_error_reporter_never_emits_partial_escape(void)
+{
+  char tiny[2];
+  char exact[3];
+
+  TEST_ASSERT_EQUAL_UINT32(0, (uint32_t)tb_diag_escape(tiny, sizeof(tiny), "\""));
+  TEST_ASSERT_EQUAL_STRING("", tiny);
+  TEST_ASSERT_EQUAL_UINT32(2, (uint32_t)tb_diag_escape(exact, sizeof(exact), "\""));
+  TEST_ASSERT_EQUAL_STRING("\\\"", exact);
+  TEST_ASSERT_EQUAL_UINT32(0, (uint32_t)tb_diag_escape(tiny, sizeof(tiny), "\n"));
+  TEST_ASSERT_EQUAL_STRING("", tiny);
+}
+
 void test_error_reporter_exposes_symbolic_errno(void)
 {
 #ifdef ENOENT
@@ -156,6 +169,7 @@ int main(void)
   RUN_TEST(test_error_reporter_preserves_errno);
   RUN_TEST(test_error_reporter_escapes_record_breaking_context);
   RUN_TEST(test_error_reporter_exposes_symbolic_errno);
+  RUN_TEST(test_error_reporter_never_emits_partial_escape);
   RUN_TEST(test_checked_int_parser_accepts_complete_number);
   RUN_TEST(test_checked_int_parser_rejects_trailing_garbage);
   RUN_TEST(test_checked_int_parser_rejects_overflow);

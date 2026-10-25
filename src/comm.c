@@ -430,7 +430,8 @@ void copyover_recover()
 
   for (;;) {
     fOld = TRUE;
-    if (fscanf(fp, "%d %ld %s %s %s\n", &desc, &pref, name, host, guiopt) != 5) {
+    /* Field widths reserve a byte for the terminating NUL in each array. */
+    if (fscanf(fp, "%d %ld %511s %1023s %1023s\n", &desc, &pref, name, host, guiopt) != 5) {
       if (feof(fp)) {
         log("SYSERR: unexpected EOF in copyover file %s.", COPYOVER_FILE);
         break;
@@ -1233,12 +1234,33 @@ static char *make_prompt(struct descriptor_data *d)
 }
 
 /* NOTE: 'txt' must be at most MAX_INPUT_LENGTH big. */
+/* Bound pending commands per descriptor to prevent input floods from
+ * growing an unbounded linked list while the game loop is busy. */
+#define TB_MAX_PENDING_COMMANDS 64
+
 void write_to_q(const char *txt, struct txt_q *queue, int aliased)
 {
   struct txt_block *newt;
+  struct txt_block *scan;
+  size_t pending = 0;
+
+  if (queue == NULL || txt == NULL)
+    return;
+
+  for (scan = queue->head; scan != NULL; scan = scan->next) {
+    if (++pending >= TB_MAX_PENDING_COMMANDS)
+      return; /* Drop excess commands; do not amplify the flood in logs. */
+  }
 
   CREATE(newt, struct txt_block, 1);
   newt->text = strdup(txt);
+  if (newt->text == NULL) {
+    int saved_errno = errno;
+    free(newt);
+    errno = saved_errno;
+    TB_REPORT_ERRNO("strdup", "input command queue");
+    return;
+  }
   newt->aliased = aliased;
 
   /* queue empty? */
@@ -1266,6 +1288,8 @@ static int get_from_q(struct txt_q *queue, char *dest, int *aliased)
 
   tmp = queue->head;
   queue->head = queue->head->next;
+  if (queue->head == NULL)
+    queue->tail = NULL;
   free(tmp->text);
   free(tmp);
 
@@ -1486,6 +1510,57 @@ static void init_descriptor (struct descriptor_data *newd, int desc)
   
 }
 
+/* Fixed-size IPv4 connection admission table. Avoids allocating memory for
+ * unauthenticated connection attempts. Counts are reset after each window;
+ * denied attempts do not extend the window indefinitely. */
+#define TB_RATE_SLOTS 256
+#define TB_RATE_WINDOW_SECONDS 60
+#define TB_RATE_MAX_ATTEMPTS 12
+
+struct tb_rate_entry {
+  unsigned long addr;
+  time_t window_start;
+  time_t last_seen;
+  unsigned int attempts;
+};
+
+static struct tb_rate_entry tb_rate_entries[TB_RATE_SLOTS];
+
+static int tb_admit_connection(unsigned long addr, time_t now)
+{
+  size_t i, slot = 0;
+  int found = 0;
+
+  for (i = 0; i < TB_RATE_SLOTS; ++i) {
+    if (tb_rate_entries[i].attempts != 0 &&
+        tb_rate_entries[i].addr == addr) {
+      slot = i;
+      found = 1;
+      break;
+    }
+    if (tb_rate_entries[i].attempts == 0) {
+      slot = i;
+      found = 2;
+      break;
+    }
+    if (tb_rate_entries[i].last_seen < tb_rate_entries[slot].last_seen)
+      slot = i;
+  }
+
+  if (found != 1 ||
+      now < tb_rate_entries[slot].window_start ||
+      now - tb_rate_entries[slot].window_start >= TB_RATE_WINDOW_SECONDS) {
+    tb_rate_entries[slot].addr = addr;
+    tb_rate_entries[slot].window_start = now;
+    tb_rate_entries[slot].attempts = 0;
+  }
+  tb_rate_entries[slot].last_seen = now;
+  if (tb_rate_entries[slot].attempts >= TB_RATE_MAX_ATTEMPTS)
+    return 0;
+  ++tb_rate_entries[slot].attempts;
+  return 1;
+}
+
 static int new_descriptor(socket_t s)
 {
   socket_t desc;
@@ -1505,6 +1580,12 @@ static int new_descriptor(socket_t s)
     log("SYSERR: accept failed on mother descriptor: Winsock error #%d", WSAGetLastError());
 #endif
     return (-1);
+  }
+  /* Drop bursts before hostname lookup, allocation, or protocol negotiation.
+   * Deliberately do not log individual denials to avoid disk-log amplification. */
+  if (!tb_admit_connection((unsigned long)peer.sin_addr.s_addr, time(NULL))) {
+    CLOSE_SOCKET(desc);
+    return (0);
   }
   /* keep it from blocking */
   nonblock(desc);
