@@ -402,17 +402,27 @@ static inline void tb_report_error_at(const char *operation, const char *context
                                       int errnum, const char *source_file,
                                       int source_line, const char *source_func)
 {
+  int caller_errno = errno;
   const char *op = operation ? operation : "operation";
   const char *ctx = context ? context : "(no context)";
   const char *file = source_file ? source_file : "(unknown file)";
   const char *func = source_func ? source_func : "(unknown function)";
 
   if (errnum != 0)
-    fprintf(stderr, "SYSERR: %s failed [%s]: %s (errno=%d) at %s:%d in %s()\n",
+    fprintf(stderr,
+            "SYSERR: operation=%s context=%s error=\"%s\" errno=%d source=%s:%d function=%s\n",
             op, ctx, strerror(errnum), errnum, file, source_line, func);
   else
-    fprintf(stderr, "SYSERR: %s failed [%s] at %s:%d in %s()\n",
+    fprintf(stderr,
+            "SYSERR: operation=%s context=%s source=%s:%d function=%s\n",
             op, ctx, file, source_line, func);
+
+  /*
+   * Error reports are diagnostic boundaries: push them to the underlying log
+   * immediately and never let logging itself destroy the caller's errno.
+   */
+  (void)fflush(stderr);
+  errno = caller_errno;
 }
 
 #define TB_REPORT_ERRNO(operation, context) do { \
