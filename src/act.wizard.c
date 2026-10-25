@@ -131,7 +131,7 @@ ACMD(do_echo)
     char buf[MAX_INPUT_LENGTH + 4];
 
     if (subcmd == SCMD_EMOTE)
-      snprintf(buf, sizeof(buf), "$n %s", argument);
+      tb_snprintf(buf, sizeof(buf), "$n %s", argument);
     else {
       strlcpy(buf, argument, sizeof(buf));
       mudlog(CMP, MAX(LVL_BUILDER, GET_INVIS_LEV(ch)), TRUE, "(GC) %s echoed: %s", GET_NAME(ch), buf);
@@ -280,13 +280,13 @@ ACMD(do_goto)
     return;
   }
 
-  snprintf(buf, sizeof(buf), "$n %s", POOFOUT(ch) ? POOFOUT(ch) : "disappears in a puff of smoke.");
+  tb_snprintf(buf, sizeof(buf), "$n %s", POOFOUT(ch) ? POOFOUT(ch) : "disappears in a puff of smoke.");
   act(buf, TRUE, ch, 0, 0, TO_ROOM);
 
   char_from_room(ch);
   char_to_room(ch, location);
 
-  snprintf(buf, sizeof(buf), "$n %s", POOFIN(ch) ? POOFIN(ch) : "appears with an ear-splitting bang.");
+  tb_snprintf(buf, sizeof(buf), "$n %s", POOFIN(ch) ? POOFIN(ch) : "appears with an ear-splitting bang.");
   act(buf, TRUE, ch, 0, 0, TO_ROOM);
 
   look_at_room(ch, 0);
@@ -595,9 +595,9 @@ static void do_stat_room(struct char_data *ch, struct room_data *rm)
       continue;
 
     if (rm->dir_option[i]->to_room == NOWHERE)
-      snprintf(buf1, sizeof(buf1), " %sNONE%s", CCCYN(ch, C_NRM), CCNRM(ch, C_NRM));
+      tb_snprintf(buf1, sizeof(buf1), " %sNONE%s", CCCYN(ch, C_NRM), CCNRM(ch, C_NRM));
     else
-      snprintf(buf1, sizeof(buf1), "%s%5d%s", CCCYN(ch, C_NRM), GET_ROOM_VNUM(rm->dir_option[i]->to_room), CCNRM(ch, C_NRM));
+      tb_snprintf(buf1, sizeof(buf1), "%s%5d%s", CCCYN(ch, C_NRM), GET_ROOM_VNUM(rm->dir_option[i]->to_room), CCNRM(ch, C_NRM));
 
     sprintbit(rm->dir_option[i]->exit_info, exit_bits, buf2, sizeof(buf2));
 
@@ -796,8 +796,8 @@ static void do_stat_character(struct char_data *ch, struct char_data *k)
   if (!IS_NPC(k)) {
     char buf1[64], buf2[64];
 
-    strftime(buf1, sizeof(buf1), "%a %b %d %Y", localtime(&(k->player.time.birth)));
-    strftime(buf2, sizeof(buf2), "%a %b %d %Y", localtime(&(k->player.time.logon)));
+    tb_strftime(buf1, sizeof(buf1), "%a %b %d %Y", localtime(&(k->player.time.birth)));
+    tb_strftime(buf2, sizeof(buf2), "%a %b %d %Y", localtime(&(k->player.time.logon)));
 
     send_to_char(ch, "Created: [%s], Last Logon: [%s]\r\n", buf1, buf2);
 
@@ -1406,19 +1406,19 @@ ACMD(do_vstat)
     extract_obj(obj);
     break;
   case 'r':
-    snprintf(buf2, sizeof(buf2), "room %d", tb_parse_int_or_zero(buf2));
+    tb_snprintf(buf2, sizeof(buf2), "room %d", tb_parse_int_or_zero(buf2));
     do_stat(ch, buf2, 0, 0);
     break;
   case 'z':
-    snprintf(buf2, sizeof(buf2), "zone %d", tb_parse_int_or_zero(buf2));
+    tb_snprintf(buf2, sizeof(buf2), "zone %d", tb_parse_int_or_zero(buf2));
     do_stat(ch, buf2, 0, 0);
     break;
   case 't':
-    snprintf(buf2, sizeof(buf2), "%d", tb_parse_int_or_zero(buf2));
+    tb_snprintf(buf2, sizeof(buf2), "%d", tb_parse_int_or_zero(buf2));
     do_tstat(ch, buf2, 0, 0);
     break;
   case 's':
-    snprintf(buf2, sizeof(buf2), "shops %d", tb_parse_int_or_zero(buf2));
+    tb_snprintf(buf2, sizeof(buf2), "shops %d", tb_parse_int_or_zero(buf2));
     do_show(ch, buf2, 0, 0);
     break;
   default:
@@ -1806,7 +1806,7 @@ ACMD(do_date)
   else
     mytime = boot_time;
 
-  strftime(timestr, sizeof(timestr), "%c", localtime(&mytime));
+  tb_strftime(timestr, sizeof(timestr), "%c", localtime(&mytime));
 
   if (subcmd == SCMD_DATE)
     send_to_char(ch, "Current machine time: %s\r\n", timestr);
@@ -1866,7 +1866,7 @@ struct last_entry *find_llog_entry(int punique, long idnum) {
   for(tmp=recs; tmp > 0; tmp--) {
     fseek(fp,-1*((long)sizeof(struct last_entry)),SEEK_CUR);
     if (fread(&mlast,sizeof(struct last_entry),1,fp) != 1) {
-      fclose(fp);
+      tb_fclose(fp);
       return NULL;
     }
         /*another one to keep that stepback */
@@ -1876,13 +1876,13 @@ struct last_entry *find_llog_entry(int punique, long idnum) {
       /* then we've found a match */
       CREATE(llast,struct last_entry,1);
       memcpy(llast,&mlast,sizeof(struct last_entry));
-      fclose(fp);
+      tb_fclose(fp);
       return llast;
     }
     /*not the one we seek. next */
   }
   /*not found, no problem, quit */
-  fclose(fp);
+  tb_fclose(fp);
   return NULL;
 }
 
@@ -1908,7 +1908,7 @@ static void mod_llog_entry(struct last_entry *llast,int type) {
     fseek(fp,-1*((long)sizeof(struct last_entry)),SEEK_CUR);
     if(fread(&mlast,sizeof(struct last_entry),1,fp) != 1) {
       log("mod_llog_entry: read error or unexpected end of file.");
-      fclose(fp);
+      tb_fclose(fp);
       return;
     }
     /* Another one to keep that stepback. */
@@ -1925,13 +1925,13 @@ static void mod_llog_entry(struct last_entry *llast,int type) {
       }
       mlast.close_time=time(0);
       /*write it, and we're done!*/
-      fwrite(&mlast,sizeof(struct last_entry),1,fp);
-      fclose(fp);
+      tb_fwrite(&mlast,sizeof(struct last_entry),1,fp);
+      tb_fclose(fp);
       return;
     }
     /* Not the one we seek, next. */
   }
-  fclose(fp);
+  tb_fclose(fp);
 
   /* Not found, no problem, quit. */
   return;
@@ -1968,8 +1968,8 @@ void add_llog_entry(struct char_data *ch, int type) {
       free(llast);
       return;
     }
-    fwrite(llast,sizeof(struct last_entry),1,fp);
-    fclose(fp);
+    tb_fwrite(llast,sizeof(struct last_entry),1,fp);
+    tb_fclose(fp);
   } else {
     /* We've found a login - update it */
     mod_llog_entry(llast,type);
@@ -1989,18 +1989,18 @@ void clean_llog_entries(void) {
   recs=ftell(ofp)/sizeof(struct last_entry);
   if (fseek(ofp, 0L, SEEK_SET) != 0) {
     log("SYSERR: Unable to rewind %s: %s", LAST_FILE, strerror(errno));
-    fclose(ofp);
+    tb_fclose(ofp);
     return;
   }
 
   if (recs < MAX_LAST_ENTRIES) {
-    fclose(ofp);
+    tb_fclose(ofp);
     return;
   }
 
   if (!(nfp=fopen("etc/nlast", "w"))) {
     log("Error trying to open new last file.");
-    fclose(ofp);
+    tb_fclose(ofp);
     return;
   }
 
@@ -2011,21 +2011,21 @@ void clean_llog_entries(void) {
   while (fread(&mlast, sizeof(struct last_entry), 1, ofp) == 1) {
     if (fwrite(&mlast, sizeof(struct last_entry), 1, nfp) != 1) {
       log("clean_llog_entries: write error.");
-      fclose(ofp);
-      fclose(nfp);
+      tb_fclose(ofp);
+      tb_fclose(nfp);
       return;
     }
   }
   if (ferror(ofp)) {
     log("clean_llog_entries: read error.");
-    fclose(ofp);
-    fclose(nfp);
+    tb_fclose(ofp);
+    tb_fclose(nfp);
     remove("etc/nlast");
     return;
   }
 
-  fclose(ofp);
-  fclose(nfp);
+  tb_fclose(ofp);
+  tb_fclose(nfp);
 
   remove(LAST_FILE);
   rename("etc/nlast", LAST_FILE);
@@ -2046,7 +2046,7 @@ static void list_llog_entries(struct char_data *ch)
   send_to_char(ch, "Last log\r\n");
 
   while(fread(&llast, sizeof(struct last_entry), 1, fp) == 1) {
-    strftime(timestr, sizeof(timestr), "%a %b %d %Y %H:%M:%S", localtime(&llast.time));
+    tb_strftime(timestr, sizeof(timestr), "%a %b %d %Y %H:%M:%S", localtime(&llast.time));
     send_to_char(ch, "%10s    %d    %s    %s\r\n", llast.username, llast.punique,
         last_type_name(llast.close_type), timestr);
   }
@@ -2055,7 +2055,7 @@ static void list_llog_entries(struct char_data *ch)
     log("llist_log_entries: error reading %s.", LAST_FILE);
     send_to_char(ch, "Error reading last_log file.");
   }
-  fclose(fp);
+  tb_fclose(fp);
 }
 
 static struct char_data *is_in_game(long idnum) {
@@ -2114,7 +2114,7 @@ ACMD(do_last)
       return;
     }
 
-    strftime(timestr, sizeof(timestr), "%a %b %d %H:%M:%S %Y", localtime(&(vict->player.time.logon)));
+    tb_strftime(timestr, sizeof(timestr), "%a %b %d %H:%M:%S %Y", localtime(&(vict->player.time.logon)));
 
     send_to_char(ch, "[%5ld] [%2d %s] %-12s : %-18s : %-24s\r\n",
     GET_IDNUM(vict), (int) GET_LEVEL(vict),
@@ -2140,20 +2140,20 @@ ACMD(do_last)
     fseek(fp,-1* ((long)sizeof(struct last_entry)),SEEK_CUR);
     if(fread(&mlast,sizeof(struct last_entry),1,fp) != 1) {
       send_to_char(ch, "Error reading log file.");
-      fclose(fp);
+      tb_fclose(fp);
       return;
     }
     fseek(fp,-1*((long)sizeof(struct last_entry)),SEEK_CUR);
     if(!*name ||(*name && !str_cmp(name, mlast.username))) {
-      strftime(timestr, sizeof(timestr), "%a %b %d %Y %H:%M", localtime(&mlast.time));
+      tb_strftime(timestr, sizeof(timestr), "%a %b %d %Y %H:%M", localtime(&mlast.time));
       send_to_char(ch, "%10.10s %20.20s %20.21s - ",
         mlast.username, mlast.hostname, timestr);
       if((temp=is_in_game(mlast.idnum)) && mlast.punique == GET_PREF(temp)) {
         send_to_char(ch, "Still Playing  ");
       } else {
         delta = mlast.close_time - mlast.time;
-	strftime(to, sizeof(to), "%H:%M", localtime(&mlast.close_time));
-	strftime(deltastr, sizeof(deltastr), "%H:%M", gmtime(&delta));
+	tb_strftime(to, sizeof(to), "%H:%M", localtime(&mlast.close_time));
+	tb_strftime(deltastr, sizeof(deltastr), "%H:%M", gmtime(&delta));
 
         send_to_char(ch, "%5.5s (%5.5s) %s", to, deltastr,
           last_type_name(mlast.close_type));
@@ -2164,7 +2164,7 @@ ACMD(do_last)
     }
     recs--;
   }
-  fclose(fp);
+  tb_fclose(fp);
 }
 
 ACMD(do_force)
@@ -2175,7 +2175,7 @@ ACMD(do_force)
 
   half_chop(argument, arg, to_force);
 
-  snprintf(buf1, sizeof(buf1), "$n has forced you to '%s'.", to_force);
+  tb_snprintf(buf1, sizeof(buf1), "$n has forced you to '%s'.", to_force);
 
   if (!*arg || !*to_force)
     send_to_char(ch, "Whom do you wish to force do what?\r\n");
@@ -2283,11 +2283,11 @@ ACMD(do_wiznet)
     return;
   }
   if (level > LVL_IMMORT) {
-    snprintf(buf1, sizeof(buf1), "\tc%s: <%d> %s%s\tn\r\n", GET_NAME(ch), level, emote ? "<--- " : "", argument);
-    snprintf(buf2, sizeof(buf2), "\tcSomeone: <%d> %s%s\tn\r\n", level, emote ? "<--- " : "", argument);
+    tb_snprintf(buf1, sizeof(buf1), "\tc%s: <%d> %s%s\tn\r\n", GET_NAME(ch), level, emote ? "<--- " : "", argument);
+    tb_snprintf(buf2, sizeof(buf2), "\tcSomeone: <%d> %s%s\tn\r\n", level, emote ? "<--- " : "", argument);
 } else {
-    snprintf(buf1, sizeof(buf1), "\tc%s: %s%s\tn\r\n", GET_NAME(ch), emote ? "<--- " : "", argument);
-    snprintf(buf2, sizeof(buf2), "\tcSomeone: %s%s\tn\r\n", emote ? "<--- " : "", argument);
+    tb_snprintf(buf1, sizeof(buf1), "\tc%s: %s%s\tn\r\n", GET_NAME(ch), emote ? "<--- " : "", argument);
+    tb_snprintf(buf2, sizeof(buf2), "\tcSomeone: %s%s\tn\r\n", emote ? "<--- " : "", argument);
   }
 
   for (d = descriptor_list; d; d = d->next) {
@@ -2653,8 +2653,8 @@ ACMD(do_show)
       return;
     }
 
-    strftime(buf1, sizeof(buf1), "%a %b %d %H:%M:%S %Y", localtime(&(vict->player.time.birth)));
-    strftime(buf2, sizeof(buf2), "%a %b %d %H:%H:%S %Y", localtime(&(vict->player.time.logon)));
+    tb_strftime(buf1, sizeof(buf1), "%a %b %d %H:%M:%S %Y", localtime(&(vict->player.time.birth)));
+    tb_strftime(buf2, sizeof(buf2), "%a %b %d %H:%H:%S %Y", localtime(&(vict->player.time.logon)));
 
     send_to_char(ch, "Player: %-12s (%s) [%2d %s]\r\n", GET_NAME(vict),
       genders[(int) GET_SEX(vict)], GET_LEVEL(vict), class_abbrevs[(int)
@@ -2837,7 +2837,7 @@ ACMD(do_show)
     for (r = 0; r < 6; r++)
       for (g = 0; g < 6; g++)
         for (b = 0; b < 6; b++) {
-          snprintf(colour, sizeof(colour), "F%u%u%u",
+          tb_snprintf(colour, sizeof(colour), "F%u%u%u",
                    (unsigned) r, (unsigned) g, (unsigned) b);
           nlen = snprintf(buf + len, sizeof(buf) - len,  "%s%s%s", ColourRGB(ch->desc, colour), colour, ++k % 6 == 0 ? "\tn\r\n" : "    ");
           if (len + nlen >= sizeof(buf))
@@ -3725,7 +3725,7 @@ ACMD (do_zcheck)
                             "- Neither SENTINEL nor STAY_ZONE bits set.\r\n");
 
         if (MOB_FLAGGED(mob, MOB_SPEC) && (found = 1))
-          snprintf(buf + len, sizeof(buf) - len,
+          tb_snprintf(buf + len, sizeof(buf) - len,
                             "- SPEC flag needs to be removed.\r\n");
 
         /* Additional mob checks.*/
@@ -3863,7 +3863,7 @@ ACMD (do_zcheck)
          ext2 = ext;
 
      if (ext2 && (found = 1))
-       snprintf(buf + len, sizeof(buf) - len,
+       tb_snprintf(buf + len, sizeof(buf) - len,
                        "- has unformatted extra description\r\n");
      /* Additional object checks. */
      if (found) {
@@ -4223,7 +4223,7 @@ ACMD(do_copyover)
    sprintf (buf, "\n\r *** COPYOVER by %s - please remain seated!\n\r", GET_NAME(ch));
 
    /* write boot_time as first line in file */
-   fprintf(fp, "%ld\n", (long)boot_time);
+   tb_fprintf(fp, "%ld\n", (long)boot_time);
 
    /* For each playing descriptor, save its state */
    for (d = descriptor_list; d ; d = d_next) {
@@ -4241,7 +4241,7 @@ ACMD(do_copyover)
      write_to_descriptor (d->descriptor, "\n\rSorry, we are rebooting. Come back in a few minutes.\n\r");
      close_socket (d); /* throw'em out */
    } else {
-      fprintf (fp, "%d %ld %s %s %s\n", d->descriptor, GET_PREF(och), GET_NAME(och), d->host, CopyoverGet(d));
+      tb_fprintf(fp, "%d %ld %s %s %s\n", d->descriptor, GET_PREF(och), GET_NAME(och), d->host, CopyoverGet(d));
       /* save och */
       GET_LOADROOM(och) = GET_ROOM_VNUM(IN_ROOM(och));
       Crash_rentsave(och,0);
@@ -4250,8 +4250,8 @@ ACMD(do_copyover)
     }
   }
 
-  fprintf (fp, "-1\n");
-  fclose (fp);
+  tb_fprintf(fp, "-1\n");
+  tb_fclose(fp);
 
   /* exec - descriptors are inherited */
   sprintf (buf, "%d", port);
@@ -4454,7 +4454,7 @@ ACMD(do_file)
    req_file_size = file_sizeof(req_file);
    req_file_lines = file_numlines(req_file);
 
-   snprintf( buf, sizeof(buf),
+   tb_snprintf( buf, sizeof(buf),
        "\tgFile:\tn %s\tg; Min. Level to read:\tn %d\tg; File Location:\tn %s\tg\r\n"
        "File size (bytes):\tn %ld\tg; Total num lines:\tn %d\r\n",
        fields[l].cmd, fields[l].level, fields[l].file, (long) req_file_size,
@@ -4463,13 +4463,13 @@ ACMD(do_file)
    /* Should the file be 'headed' or 'tailed'? */
    if ( (fields[l].read_backwards == TRUE) && (req_lines < req_file_lines) )
    {
-     snprintf( buf + strlen(buf), sizeof(buf) - strlen(buf),
+     tb_snprintf( buf + strlen(buf), sizeof(buf) - strlen(buf),
                "\tgReading from the tail of the file.\tn\r\n\r\n" );
      lines_read = file_tail( req_file, buf, sizeof(buf), req_lines );
    }
    else
    {
-     snprintf( buf + strlen(buf), sizeof(buf) - strlen(buf),
+     tb_snprintf( buf + strlen(buf), sizeof(buf) - strlen(buf),
               "\tgReading from the head of the file.\tn\r\n\r\n" );
      lines_read = file_head( req_file, buf, sizeof(buf), req_lines );
    }
@@ -4479,25 +4479,25 @@ ACMD(do_file)
    if ( lines_read == req_file_lines )
    {
      /* We're reading the entire file */
-     snprintf( buf + strlen(buf), sizeof(buf) - strlen(buf),
+     tb_snprintf( buf + strlen(buf), sizeof(buf) - strlen(buf),
          "\r\n\tgEntire file returned (\tn%d \tglines).\tn\r\n",
          lines_read );
    }
    else if ( lines_read == max_lines_to_read )
    {
-     snprintf( buf + strlen(buf), sizeof(buf) - strlen(buf),
+     tb_snprintf( buf + strlen(buf), sizeof(buf) - strlen(buf),
          "\r\n\tgMaximum number of \tn%d \tglines returned.\tn\r\n",
          lines_read );
    }
    else
    {
-     snprintf( buf + strlen(buf), sizeof(buf) - strlen(buf),
+     tb_snprintf( buf + strlen(buf), sizeof(buf) - strlen(buf),
          "\r\n%d \tglines returned.\tn\r\n",
          lines_read );
    }
 
    /* Clean up before return */
-   fclose(req_file);
+   tb_fclose(req_file);
 
    page_string(ch->desc, buf, 1);
 }
@@ -4516,7 +4516,7 @@ ACMD(do_changelog)
     return;
   }
 
-  snprintf(buf, sizeof(buf), "%s.bak", CHANGE_LOG_FILE);
+  tb_snprintf(buf, sizeof(buf), "%s.bak", CHANGE_LOG_FILE);
   if (rename(CHANGE_LOG_FILE, buf)) {
     mudlog(BRF, LVL_IMPL, TRUE,
            "SYSERR: Error making backup changelog file (%s)", buf);
@@ -4532,13 +4532,13 @@ ACMD(do_changelog)
   if (!(new = fopen(CHANGE_LOG_FILE, "w"))) {
     mudlog(BRF, LVL_IMPL, TRUE,
            "SYSERR: Error opening new changelog file (%s)", CHANGE_LOG_FILE);
-    fclose(fl);
+    tb_fclose(fl);
     return;
   }
 
   while (get_line(fl, line)) {
     if (*line != '[')
-      fprintf(new, "%s\n", line);
+      tb_fprintf(new, "%s\n", line);
     else {
       strcpy(last_buf, line);
       break;
@@ -4546,21 +4546,21 @@ ACMD(do_changelog)
   }
 
   rawtime = time(0);
-  strftime(timestr, sizeof(timestr), "%b %d %Y", localtime(&rawtime));
+  tb_strftime(timestr, sizeof(timestr), "%b %d %Y", localtime(&rawtime));
 
-  snprintf(buf, sizeof(buf), "[%s] - %s", timestr, GET_NAME(ch));
+  tb_snprintf(buf, sizeof(buf), "[%s] - %s", timestr, GET_NAME(ch));
 
-  fprintf(new, "%s\n", buf);
-  fprintf(new, "  %s\n", argument);
+  tb_fprintf(new, "%s\n", buf);
+  tb_fprintf(new, "  %s\n", argument);
 
   if (strcmp(buf, last_buf))
-    fprintf(new, "%s\n", line);
+    tb_fprintf(new, "%s\n", line);
 
   while (get_line(fl, line))
-    fprintf(new, "%s\n", line);
+    tb_fprintf(new, "%s\n", line);
 
-  fclose(fl);
-  fclose(new);
+  tb_fclose(fl);
+  tb_fclose(new);
   send_to_char(ch, "Change added.\r\n");
 }
 
@@ -4643,14 +4643,14 @@ ACMD(do_plist)
     if (time_away.hours > high_hr || time_away.hours < low_hr)
       continue;
 
-    strftime(timestr, sizeof(timestr), "%c", localtime(&player_table[i].last));
+    tb_strftime(timestr, sizeof(timestr), "%c", localtime(&player_table[i].last));
 
     len += snprintf(buf + len, sizeof(buf) - len, "[%3ld] (%2d) %c%-15s %s\r\n",
                     player_table[i].id, player_table[i].level,
                     UPPER(*player_table[i].name), player_table[i].name + 1, timestr);
     count++;
   }
-  snprintf(buf + len, sizeof(buf) - len, "%s-------------------------------------%s\r\n"
+  tb_snprintf(buf + len, sizeof(buf) - len, "%s-------------------------------------%s\r\n"
            "%d players listed.\r\n", CCCYN(ch, C_NRM), CCNRM(ch, C_NRM), count);
   page_string(ch->desc, buf, TRUE);
 }
@@ -4718,7 +4718,7 @@ bool change_player_name(struct char_data *ch, struct char_data *vict, char *new_
   }
 
   /* Set up a few variables that will be needed */
-  snprintf(old_name, sizeof(old_name), "%s", GET_NAME(vict));
+  tb_snprintf(old_name, sizeof(old_name), "%s", GET_NAME(vict));
   if (!get_filename(old_pfile, sizeof(old_pfile), PLR_FILE, old_name))
   {
     send_to_char(ch, "Unable to ascertain player's old pfile name.\r\n");
@@ -4739,7 +4739,7 @@ bool change_player_name(struct char_data *ch, struct char_data *vict, char *new_
   GET_PC_NAME(vict) = strdup(CAP(new_name));    // Change the name in the victims char struct
 
   /* Rename the player's pfile */
-  snprintf(buf, sizeof(buf), "mv %s %s", old_pfile, new_pfile);
+  tb_snprintf(buf, sizeof(buf), "mv %s %s", old_pfile, new_pfile);
 
   /* Save the changed player index - the pfile is saved by perform_set */
   save_player_index();
@@ -5066,7 +5066,7 @@ ACMD(do_recent)
     loc = FALSE;
     hits++;
     ct = this->time;
-    strftime(timestr, sizeof(timestr), "%a %b %d %H:%M:%S %Y", localtime(&ct));
+    tb_strftime(timestr, sizeof(timestr), "%a %b %d %H:%M:%S %Y", localtime(&ct));
 
     if (*(this->host)) {
       if (!strcmp(this->host, "localhost")) loc = TRUE;
@@ -5105,7 +5105,7 @@ ACMD(do_recent)
   }
 
   ct = time(0);  /* Grab the current time */
-  strftime(timestr, sizeof(timestr), "%c", localtime(&ct));
+  tb_strftime(timestr, sizeof(timestr), "%c", localtime(&ct));
   send_to_char(ch, "Current Server Time: %s\r\nShowing %d players since last copyover/reboot\r\n", timestr, hits);
 }
 
