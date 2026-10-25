@@ -292,7 +292,8 @@ void walkdir(FILE *index_file, char *dir) {
 
         sprintascii(bits, flags);
 
-        if (fprintf(index_file, "%ld %s %ld %ld %ld %s\n", id, *bits ? bits : "0", sender, recipient, sent_time, subject) < 0) UTIL_REPORT_ERRNO("fprintf", argv[1]);
+        if (fprintf(index_file, "%ld %s %ld %ld %ld %s\n", id, *bits ? bits : "0", sender, recipient, sent_time, subject) < 0)
+          UTIL_REPORT_ERRNO("fprintf", "mail index output");
 
         if (fclose(mail_file) != 0) UTIL_REPORT_ERRNO("fclose", filename_qfd);
       }
