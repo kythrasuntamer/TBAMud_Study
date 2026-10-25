@@ -1029,10 +1029,13 @@ void index_boot(int mode)
 
   /* Exit if 0 records, unless this is shops */
   if (!rec_count) {
-    if (mode == DB_BOOT_SHP || mode == DB_BOOT_QST)
+    if (mode == DB_BOOT_SHP || mode == DB_BOOT_QST) {
+      fclose(db_index);
       return;
+    }
     log("SYSERR: boot error - 0 records counted in %s/%s.", prefix,
 	index_filename);
+    fclose(db_index);
     exit(1);
   }
 
@@ -3266,8 +3269,8 @@ void free_char(struct char_data *ch)
   }
   if (!IS_NPC(ch) || (IS_NPC(ch) && GET_MOB_RNUM(ch) == NOBODY)) {
     /* if this is a player, or a non-prototyped non-player, free all */
-    if (GET_NAME(ch))
-      free(GET_NAME(ch));
+    if (ch->player.name)
+      free(ch->player.name);
     if (ch->player.title)
       free(ch->player.title);
     if (ch->player.short_descr)
@@ -3276,12 +3279,14 @@ void free_char(struct char_data *ch)
       free(ch->player.long_descr);
     if (ch->player.description)
       free(ch->player.description);
-    for (i = 0; i < NUM_HIST; i++)
-      if (GET_HISTORY(ch, i))
-        free_history(ch, i);
+    if (ch->player_specials != NULL && ch->player_specials != &dummy_mob) {
+      for (i = 0; i < NUM_HIST; i++)
+        if (GET_HISTORY(ch, i))
+          free_history(ch, i);
 
-    if (ch->player_specials)
       free(ch->player_specials);
+      ch->player_specials = NULL;
+    }
 
     /* free script proto list */
     free_proto_script(ch, MOB_TRIGGER);
@@ -3385,7 +3390,8 @@ static int file_to_string_alloc(const char *name, char **buf)
     return (-1);
 
   for (in_use = descriptor_list; in_use; in_use = in_use->next) {
-    if (!in_use->showstr_count || *in_use->showstr_vector != *buf)
+    if (!in_use->showstr_count || !in_use->showstr_vector ||
+        *in_use->showstr_vector != *buf)
       continue;
 
     /* Let's be nice and leave them at the page they were on. */
