@@ -75,3 +75,17 @@ silently downgrading authentication to plaintext. Reverse-proxy connections
 will appear to the backend as 127.0.0.1: check and adapt IP-based rate
 limiting carefully before public production deployment. This config does
 not restore the original client IP to the game.
+
+## Stronger-than-classical key exchange
+
+If stunnel is linked against **OpenSSL 3.5 or newer**, its default TLS 1.3
+key-exchange groups can offer the hybrid **X25519MLKEM768** exchange when
+clients also support it. This combines classical X25519 and the ML-KEM
+post-quantum mechanism, rather than layering unrelated bulk ciphers.
+Check the negotiated group in an actual TLS handshake; do not claim
+post-quantum protection without verifying negotiation and library support.
+
+There is no standardized 512-bit Serpent or 512-bit AES TLS 1.3 cipher suite.
+Serpent itself has a 128-bit block size and supports at most 256-bit keys.
+A stack of different 256-bit ciphers does **not** add their advertised key
+lengths or guarantee more security. Prefer modern, audited AEAD algorithms.
