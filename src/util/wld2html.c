@@ -209,13 +209,13 @@ void write_output(void)
       //the name is blank, which means, most likely, the record is bad as well.
       continue;
     }
-    sprintf(buf, "Writing %d.html", world[i].number);
+    snprintf(buf, sizeof(buf), "Writing %d.html", world[i].number);
     log(buf);
     //for some reason, if you use %d with sprintf it rolls over like its 16bit,
     //but only if you use the buffer with fopen.
     //using %ld and casting to long solves this in case someone really wants
     //to use negative room numbers.
-    sprintf(buf, "%ld.html",(long)world[i].number);
+    snprintf(buf, sizeof(buf), "%ld.html",(long)world[i].number);
     if (!(fl = fopen(buf, "w"))) {
       perror("opening output file");
       exit(1);
@@ -369,7 +369,7 @@ void parse_room(FILE * fl, int virtual_nr)
   char line[256], flags[128];
   struct extra_descr_data *new_descr;
 
-  sprintf(buf2, "room #%d", virtual_nr);
+  snprintf(buf2, sizeof(buf2), "room #%d", virtual_nr);
 
   world[room_nr].zone = zone;
   world[room_nr].number = virtual_nr;
@@ -391,7 +391,7 @@ void parse_room(FILE * fl, int virtual_nr)
 
   world[room_nr].ex_description = NULL;
 
-  sprintf(buf, "Format error in room #%d (expecting D/E/S)", virtual_nr);
+  snprintf(buf, sizeof(buf), "Format error in room #%d (expecting D/E/S)", virtual_nr);
 
   for (;;) {
     if (!get_line(fl, line)) {
@@ -429,7 +429,7 @@ void setup_dir(FILE * fl, int room, int dir)
   int t[5];
   char line[256];
 
-  sprintf(buf2, "room #%d, direction D%d", world[room].number, dir);
+  snprintf(buf2, sizeof(buf2), "room #%d, direction D%d", world[room].number, dir);
 
   CREATE(world[room].dir_option[dir], struct room_direction_data, 1);
   world[room].dir_option[dir]->general_description = fread_string(fl, buf2);
@@ -527,7 +527,7 @@ int get_line(FILE * fl, char *buf)
   if (feof(fl))
     return (0);
   else {
-    strcpy(buf, temp);
+    strlcpy(buf, temp, sizeof(buf));
     return (1);
   }
 }
