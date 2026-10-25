@@ -1567,7 +1567,7 @@ ACMD(do_users)
       sprintf(line2, "%s%s%s", CCGRN(ch, C_SPR), line, CCNRM(ch, C_SPR));
       strcpy(line, line2);
     }
-    if (STATE(d) != CON_PLAYING || (STATE(d) == CON_PLAYING && CAN_SEE(ch, d->character))) {
+    if (STATE(d) != CON_PLAYING || (STATE(d) == CON_PLAYING && tch && CAN_SEE(ch, tch))) {
       send_to_char(ch, "%s", line);
       num_can_see++;
     }
