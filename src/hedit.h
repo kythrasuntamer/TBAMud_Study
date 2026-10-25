@@ -10,8 +10,8 @@
 * CircleMUD is based on DikuMUD, Copyright (C) 1990, 1991.                             
 *
 */
-#ifndef _HEDIT_H_
-#define _HEDIT_H_
+#ifndef TBAMUD_HEDIT_H_INCLUDED
+#define TBAMUD_HEDIT_H_INCLUDED
 
 #include "utils.h" /* for ACMD definition */
 
@@ -28,4 +28,4 @@ ACMD(do_helpcheck);
 ACMD(do_hindex);
 
 
-#endif /* _HEDIT_H_*/
+#endif /* TBAMUD_HEDIT_H_INCLUDED*/
