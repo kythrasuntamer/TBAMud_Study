@@ -900,7 +900,7 @@ const char *CopyoverGet( descriptor_t *apDescriptor )
 
    if ( pProtocol != NULL )
    {
-      snprintf(Buffer, sizeof(Buffer), "%d/%d", pProtocol->ScreenWidth, pProtocol->ScreenHeight);
+      tb_snprintf(Buffer, sizeof(Buffer), "%d/%d", pProtocol->ScreenWidth, pProtocol->ScreenHeight);
 
       /* Skip to the end */
       while ( *pBuffer != '\0' )
@@ -1379,7 +1379,7 @@ const char *MXPCreateTag( descriptor_t *apDescriptor, const char *apTag )
       strlen(apTag) < 1000 )
    {
       static char MXPBuffer [1024];
-      snprintf(MXPBuffer, sizeof(MXPBuffer), "\033[1z%s\033[7z", apTag);
+      tb_snprintf(MXPBuffer, sizeof(MXPBuffer), "\033[1z%s\033[7z", apTag);
       return MXPBuffer;
    }
    else /* Leave the tag as-is, don't try to MXPify it */
@@ -1396,7 +1396,7 @@ void MXPSendTag( descriptor_t *apDescriptor, const char *apTag )
       strlen(apTag) < 1000 )
    {
       char MXPBuffer [1024];
-      snprintf(MXPBuffer, sizeof(MXPBuffer), "\033[1z%s\033[7z\r\n", apTag);
+      tb_snprintf(MXPBuffer, sizeof(MXPBuffer), "\033[1z%s\033[7z\r\n", apTag);
       Write(apDescriptor, MXPBuffer);
    }
 }
@@ -2262,14 +2262,14 @@ static void SendATCP( descriptor_t *apDescriptor, const char *apVariable, const 
 static const char *GetMSSP_Players()
 {
    static char Buffer[32];
-   snprintf(Buffer, sizeof(Buffer), "%d", s_Players);
+   tb_snprintf(Buffer, sizeof(Buffer), "%d", s_Players);
    return Buffer;
 }
 
 static const char *GetMSSP_Uptime()
 {
    static char Buffer[32];
-   snprintf(Buffer, sizeof(Buffer), "%d", (int)s_Uptime);
+   tb_snprintf(Buffer, sizeof(Buffer), "%d", (int)s_Uptime);
    return Buffer;
 }
 
@@ -2400,7 +2400,7 @@ static void SendMSSP( descriptor_t *apDescriptor )
    };
 
    /* Begin the subnegotiation sequence */
-   snprintf(MSSPBuffer, sizeof(MSSPBuffer), "%c%c%c", IAC, SB, TELOPT_MSSP);
+   tb_snprintf(MSSPBuffer, sizeof(MSSPBuffer), "%c%c%c", IAC, SB, TELOPT_MSSP);
 
    for ( i = 0; MSSPTable[i].pName != NULL; ++i )
    {
@@ -2421,7 +2421,7 @@ static void SendMSSP( descriptor_t *apDescriptor )
    }
 
    /* End the subnegotiation sequence */
-   snprintf(MSSPPair, sizeof(MSSPPair), "%c%c", IAC, SE);
+   tb_snprintf(MSSPPair, sizeof(MSSPPair), "%c%c", IAC, SE);
    strlcat(MSSPBuffer, MSSPPair, sizeof(MSSPBuffer));
 
    /* Send the sequence */
