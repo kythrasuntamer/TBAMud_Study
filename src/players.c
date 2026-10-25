@@ -310,7 +310,7 @@ int load_char(const char *name, struct char_data *ch)
 
       switch (*tag) {
       case 'A':
-        if (!strcmp(tag, "Ac  "))	GET_AC(ch)		= atoi(line);
+        if (!strcmp(tag, "Ac  "))	GET_AC(ch)		= tb_parse_int_or_zero(line);
 	else if (!strcmp(tag, "Act ")) {
          if (sscanf(line, "%s %s %s %s", f1, f2, f3, f4) == 4) {
           PLR_FLAGS(ch)[0] = asciiflag_conv(f1);
@@ -329,65 +329,65 @@ int load_char(const char *name, struct char_data *ch)
           AFF_FLAGS(ch)[0] = asciiflag_conv(line);
 	}
 	if (!strcmp(tag, "Affs")) 	load_affects(fl, ch);
-        else if (!strcmp(tag, "Alin"))	GET_ALIGNMENT(ch)	= atoi(line);
-	else if (!strcmp(tag, "Alis"))	read_aliases_ascii(fl, ch, atoi(line));
+        else if (!strcmp(tag, "Alin"))	GET_ALIGNMENT(ch)	= tb_parse_int_or_zero(line);
+	else if (!strcmp(tag, "Alis"))	read_aliases_ascii(fl, ch, tb_parse_int_or_zero(line));
 	break;
 
       case 'B':
-	     if (!strcmp(tag, "Badp"))	GET_BAD_PWS(ch)		= atoi(line);
-	else if (!strcmp(tag, "Bank"))	GET_BANK_GOLD(ch)	= atoi(line);
-	else if (!strcmp(tag, "Brth"))	ch->player.time.birth	= atol(line);
+	     if (!strcmp(tag, "Badp"))	GET_BAD_PWS(ch)		= tb_parse_int_or_zero(line);
+	else if (!strcmp(tag, "Bank"))	GET_BANK_GOLD(ch)	= tb_parse_int_or_zero(line);
+	else if (!strcmp(tag, "Brth"))	ch->player.time.birth	= tb_parse_long_or_zero(line);
 	break;
 
       case 'C':
-	     if (!strcmp(tag, "Cha "))	ch->real_abils.cha	= atoi(line);
-	else if (!strcmp(tag, "Clas"))	GET_CLASS(ch)		= atoi(line);
-	else if (!strcmp(tag, "Con "))	ch->real_abils.con	= atoi(line);
+	     if (!strcmp(tag, "Cha "))	ch->real_abils.cha	= tb_parse_int_or_zero(line);
+	else if (!strcmp(tag, "Clas"))	GET_CLASS(ch)		= tb_parse_int_or_zero(line);
+	else if (!strcmp(tag, "Con "))	ch->real_abils.con	= tb_parse_int_or_zero(line);
 	break;
 
       case 'D':
 	     if (!strcmp(tag, "Desc"))	ch->player.description	= fread_string(fl, buf2);
-	else if (!strcmp(tag, "Dex "))	ch->real_abils.dex	= atoi(line);
-	else if (!strcmp(tag, "Drnk"))	GET_COND(ch, DRUNK)	= atoi(line);
-	else if (!strcmp(tag, "Drol"))	GET_DAMROLL(ch)		= atoi(line);
+	else if (!strcmp(tag, "Dex "))	ch->real_abils.dex	= tb_parse_int_or_zero(line);
+	else if (!strcmp(tag, "Drnk"))	GET_COND(ch, DRUNK)	= tb_parse_int_or_zero(line);
+	else if (!strcmp(tag, "Drol"))	GET_DAMROLL(ch)		= tb_parse_int_or_zero(line);
 	break;
 
       case 'E':
-	     if (!strcmp(tag, "Exp "))	GET_EXP(ch)		= atoi(line);
+	     if (!strcmp(tag, "Exp "))	GET_EXP(ch)		= tb_parse_int_or_zero(line);
 	break;
 
       case 'F':
-	     if (!strcmp(tag, "Frez"))	GET_FREEZE_LEV(ch)	= atoi(line);
+	     if (!strcmp(tag, "Frez"))	GET_FREEZE_LEV(ch)	= tb_parse_int_or_zero(line);
 	break;
 
       case 'G':
-	     if (!strcmp(tag, "Gold"))	GET_GOLD(ch)		= atoi(line);
+	     if (!strcmp(tag, "Gold"))	GET_GOLD(ch)		= tb_parse_int_or_zero(line);
 	break;
 
       case 'H':
 	     if (!strcmp(tag, "Hit "))	load_HMVS(ch, line, LOAD_HIT);
-	else if (!strcmp(tag, "Hite"))	GET_HEIGHT(ch)		= atoi(line);
+	else if (!strcmp(tag, "Hite"))	GET_HEIGHT(ch)		= tb_parse_int_or_zero(line);
         else if (!strcmp(tag, "Host")) {
           if (GET_HOST(ch))
             free(GET_HOST(ch));
           GET_HOST(ch) = strdup(line);
         }
-        else if (!strcmp(tag, "Hrol"))	GET_HITROLL(ch)		= atoi(line);
-	else if (!strcmp(tag, "Hung"))	GET_COND(ch, HUNGER)	= atoi(line);
+        else if (!strcmp(tag, "Hrol"))	GET_HITROLL(ch)		= tb_parse_int_or_zero(line);
+	else if (!strcmp(tag, "Hung"))	GET_COND(ch, HUNGER)	= tb_parse_int_or_zero(line);
 	break;
 
       case 'I':
-	     if (!strcmp(tag, "Id  "))	GET_IDNUM(ch)		= atol(line);
-	else if (!strcmp(tag, "Int "))	ch->real_abils.intel	= atoi(line);
-	else if (!strcmp(tag, "Invs"))	GET_INVIS_LEV(ch)	= atoi(line);
+	     if (!strcmp(tag, "Id  "))	GET_IDNUM(ch)		= tb_parse_long_or_zero(line);
+	else if (!strcmp(tag, "Int "))	ch->real_abils.intel	= tb_parse_int_or_zero(line);
+	else if (!strcmp(tag, "Invs"))	GET_INVIS_LEV(ch)	= tb_parse_int_or_zero(line);
 	break;
 
       case 'L':
-	     if (!strcmp(tag, "Last"))	ch->player.time.logon	= atol(line);
-  else if (!strcmp(tag, "Lern"))	GET_PRACTICES(ch)	= atoi(line);
-	else if (!strcmp(tag, "Levl"))	GET_LEVEL(ch)		= atoi(line);
-        else if (!strcmp(tag, "Lmot"))   GET_LAST_MOTD(ch)   = atoi(line);
-        else if (!strcmp(tag, "Lnew"))   GET_LAST_NEWS(ch)   = atoi(line);
+	     if (!strcmp(tag, "Last"))	ch->player.time.logon	= tb_parse_long_or_zero(line);
+  else if (!strcmp(tag, "Lern"))	GET_PRACTICES(ch)	= tb_parse_int_or_zero(line);
+	else if (!strcmp(tag, "Levl"))	GET_LEVEL(ch)		= tb_parse_int_or_zero(line);
+        else if (!strcmp(tag, "Lmot"))   GET_LAST_MOTD(ch)   = tb_parse_int_or_zero(line);
+        else if (!strcmp(tag, "Lnew"))   GET_LAST_NEWS(ch)   = tb_parse_int_or_zero(line);
 	break;
 
       case 'M':
@@ -400,13 +400,13 @@ int load_char(const char *name, struct char_data *ch)
 	break;
 
       case 'O':
-       if (!strcmp(tag, "Olc "))  GET_OLC_ZONE(ch) = atoi(line);
+       if (!strcmp(tag, "Olc "))  GET_OLC_ZONE(ch) = tb_parse_int_or_zero(line);
   break;
 
       case 'P':
-       if (!strcmp(tag, "Page"))  GET_PAGE_LENGTH(ch) = atoi(line);
+       if (!strcmp(tag, "Page"))  GET_PAGE_LENGTH(ch) = tb_parse_int_or_zero(line);
 	else if (!strcmp(tag, "Pass"))	strcpy(GET_PASSWD(ch), line);
-	else if (!strcmp(tag, "Plyd"))	ch->player.time.played	= atoi(line);
+	else if (!strcmp(tag, "Plyd"))	ch->player.time.played	= tb_parse_int_or_zero(line);
 	else if (!strcmp(tag, "PfIn"))	POOFIN(ch)		= strdup(line);
 	else if (!strcmp(tag, "PfOt"))	POOFOUT(ch)		= strdup(line);
         else if (!strcmp(tag, "Pref")) {
@@ -421,34 +421,34 @@ int load_char(const char *name, struct char_data *ch)
         break;
 
       case 'Q':
-	     if (!strcmp(tag, "Qstp"))  GET_QUESTPOINTS(ch)     = atoi(line);
-       else if (!strcmp(tag, "Qpnt")) GET_QUESTPOINTS(ch) = atoi(line); /* Backward compatibility */
-       else if (!strcmp(tag, "Qcur")) GET_QUEST(ch) = atoi(line);
-       else if (!strcmp(tag, "Qcnt")) GET_QUEST_COUNTER(ch) = atoi(line);
+	     if (!strcmp(tag, "Qstp"))  GET_QUESTPOINTS(ch)     = tb_parse_int_or_zero(line);
+       else if (!strcmp(tag, "Qpnt")) GET_QUESTPOINTS(ch) = tb_parse_int_or_zero(line); /* Backward compatibility */
+       else if (!strcmp(tag, "Qcur")) GET_QUEST(ch) = tb_parse_int_or_zero(line);
+       else if (!strcmp(tag, "Qcnt")) GET_QUEST_COUNTER(ch) = tb_parse_int_or_zero(line);
        else if (!strcmp(tag, "Qest")) load_quests(fl, ch);
         break;
 
       case 'R':
-	     if (!strcmp(tag, "Room"))	GET_LOADROOM(ch)	= atoi(line);
+	     if (!strcmp(tag, "Room"))	GET_LOADROOM(ch)	= tb_parse_int_or_zero(line);
 	break;
 
       case 'S':
-	     if (!strcmp(tag, "Sex "))	GET_SEX(ch)		= atoi(line);
-  else if (!strcmp(tag, "ScrW"))  GET_SCREEN_WIDTH(ch) = atoi(line);
+	     if (!strcmp(tag, "Sex "))	GET_SEX(ch)		= tb_parse_int_or_zero(line);
+  else if (!strcmp(tag, "ScrW"))  GET_SCREEN_WIDTH(ch) = tb_parse_int_or_zero(line);
 	else if (!strcmp(tag, "Skil"))	load_skills(fl, ch);
 	else if (!strcmp(tag, "Str "))	load_HMVS(ch, line, LOAD_STRENGTH);
 	break;
 
       case 'T':
-	     if (!strcmp(tag, "Thir"))	GET_COND(ch, THIRST)	= atoi(line);
-	else if (!strcmp(tag, "Thr1"))	GET_SAVE(ch, 0)		= atoi(line);
-	else if (!strcmp(tag, "Thr2"))	GET_SAVE(ch, 1)		= atoi(line);
-	else if (!strcmp(tag, "Thr3"))	GET_SAVE(ch, 2)		= atoi(line);
-	else if (!strcmp(tag, "Thr4"))	GET_SAVE(ch, 3)		= atoi(line);
-	else if (!strcmp(tag, "Thr5"))	GET_SAVE(ch, 4)		= atoi(line);
+	     if (!strcmp(tag, "Thir"))	GET_COND(ch, THIRST)	= tb_parse_int_or_zero(line);
+	else if (!strcmp(tag, "Thr1"))	GET_SAVE(ch, 0)		= tb_parse_int_or_zero(line);
+	else if (!strcmp(tag, "Thr2"))	GET_SAVE(ch, 1)		= tb_parse_int_or_zero(line);
+	else if (!strcmp(tag, "Thr3"))	GET_SAVE(ch, 2)		= tb_parse_int_or_zero(line);
+	else if (!strcmp(tag, "Thr4"))	GET_SAVE(ch, 3)		= tb_parse_int_or_zero(line);
+	else if (!strcmp(tag, "Thr5"))	GET_SAVE(ch, 4)		= tb_parse_int_or_zero(line);
 	else if (!strcmp(tag, "Titl"))	GET_TITLE(ch)		= strdup(line);
         else if (!strcmp(tag, "Trig") && CONFIG_SCRIPT_PLAYERS) {
-          if ((t_rnum = real_trigger(atoi(line))) != NOTHING) {
+          if ((t_rnum = real_trigger(tb_parse_int_or_zero(line))) != NOTHING) {
             t = read_trigger(t_rnum);
           if (!SCRIPT(ch))
             CREATE(SCRIPT(ch), struct script_data, 1);
@@ -458,13 +458,13 @@ int load_char(const char *name, struct char_data *ch)
 	break;
 
       case 'V':
-	     if (!strcmp(tag, "Vars"))	read_saved_vars_ascii(fl, ch, atoi(line));
+	     if (!strcmp(tag, "Vars"))	read_saved_vars_ascii(fl, ch, tb_parse_int_or_zero(line));
       break;
 
       case 'W':
-	     if (!strcmp(tag, "Wate"))	GET_WEIGHT(ch)		= atoi(line);
-	else if (!strcmp(tag, "Wimp"))	GET_WIMP_LEV(ch)	= atoi(line);
-	else if (!strcmp(tag, "Wis "))	ch->real_abils.wis	= atoi(line);
+	     if (!strcmp(tag, "Wate"))	GET_WEIGHT(ch)		= tb_parse_int_or_zero(line);
+	else if (!strcmp(tag, "Wimp"))	GET_WIMP_LEV(ch)	= tb_parse_int_or_zero(line);
+	else if (!strcmp(tag, "Wis "))	ch->real_abils.wis	= tb_parse_int_or_zero(line);
 	break;
 
       default:
@@ -967,7 +967,7 @@ static void read_aliases_ascii(FILE *file, struct char_data *ch, int count)
       CREATE(temp, struct alias_data, 1);
       temp->alias       = strdup(abuf[0] == ' ' ? abuf+1 : abuf);
       temp->replacement = strdup(rbuf[1] == ' ' ? rbuf+1 : rbuf);
-      temp->type        = atoi(tbuf);
+      temp->type        = tb_parse_int_or_zero(tbuf);
       temp->next        = GET_ALIASES(ch);
       GET_ALIASES(ch)   = temp;
     }
