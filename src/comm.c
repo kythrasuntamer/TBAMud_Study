@@ -415,7 +415,7 @@ void copyover_recover()
       log("SYSERR: Error reading boot time from %s: %s", COPYOVER_FILE, strerror(errno));
     else
       log("SYSERR: Invalid or truncated boot time in %s.", COPYOVER_FILE);
-    fclose(fp);
+    tb_fclose(fp);
     exit(1);
   }
 
@@ -431,7 +431,7 @@ void copyover_recover()
         log("SYSERR: error reading copyover file %s: %s", COPYOVER_FILE, strerror(errno));
       else
         log("SYSERR: could not scan line in copyover file %s.", COPYOVER_FILE);
-      fclose(fp);
+      tb_fclose(fp);
       exit(1);
     }
 
@@ -501,7 +501,7 @@ void copyover_recover()
       }
     }
   }
-  fclose (fp);
+  tb_fclose(fp);
 }
 
 /* Init sockets, run game, and cleanup sockets */
@@ -1129,7 +1129,7 @@ static char *make_prompt(struct descriptor_data *d)
   /* Note, prompt is truncated at MAX_PROMPT_LENGTH chars (structs.h) */
 
   if (d->showstr_count)
-    snprintf(prompt, sizeof(prompt),
+    tb_snprintf(prompt, sizeof(prompt),
       "[ Return to continue, (q)uit, (r)efresh, (b)ack, or page number (%d/%d) ]",
       d->showstr_page, d->showstr_count);
   else if (d->str)
@@ -1212,7 +1212,7 @@ static char *make_prompt(struct descriptor_data *d)
     if (len < sizeof(prompt))
       strncat(prompt, "> ", sizeof(prompt) - len - 1);	/* strncat: OK */
   } else if (STATE(d) == CON_PLAYING && IS_NPC(d->character))
-    snprintf(prompt, sizeof(prompt), "%s> ", GET_NAME(d->character));
+    tb_snprintf(prompt, sizeof(prompt), "%s> ", GET_NAME(d->character));
   else
     *prompt = '\0';
 
@@ -1926,7 +1926,7 @@ static int process_input(struct descriptor_data *t)
     if ((space_left <= 0) && (ptr < nl_pos)) {
       char buffer[MAX_INPUT_LENGTH + 64];
 
-      snprintf(buffer, sizeof(buffer), "Line too long.  Truncated to:\r\n%s\r\n", tmp);
+      tb_snprintf(buffer, sizeof(buffer), "Line too long.  Truncated to:\r\n%s\r\n", tmp);
       if (write_to_descriptor(t->descriptor, buffer) < 0)
 	return (-1);
     }
@@ -2340,7 +2340,7 @@ void game_info(const char *format, ...)
   char messg[MAX_STRING_LENGTH];
   if (format == NULL)
     return;
-  snprintf(messg, sizeof(messg), "\tcInfo: \ty");
+  tb_snprintf(messg, sizeof(messg), "\tcInfo: \ty");
   for (i = descriptor_list; i; i = i->next) {
     if (STATE(i) != CON_PLAYING)
       continue;
@@ -2661,7 +2661,7 @@ char *act(const char *str, int hide_invisible, struct char_data *ch,
           !PLR_FLAGGED(i->character, PLR_WRITING) &&
           !ROOM_FLAGGED(IN_ROOM(i->character), ROOM_SOUNDPROOF)) {
 
-        snprintf(buf, sizeof(buf), "%s%s%s", CCYEL(i->character, C_NRM), str, CCNRM(i->character, C_NRM));
+        tb_snprintf(buf, sizeof(buf), "%s%s%s", CCYEL(i->character, C_NRM), str, CCNRM(i->character, C_NRM));
         perform_act(buf, ch, obj, vict_obj, i->character);
       }
     }
