@@ -82,7 +82,7 @@ char *get_text(char *fname)
   if (!strcmp(fname, "-")) {
     fl = stdin;
     if (isatty(STDIN_FILENO))
-      fprintf(stderr, "Enter sign text; terminate with Ctrl-D.\n");
+      tb_fprintf(stderr, "Enter sign text; terminate with Ctrl-D.\n");
   } else {
     if (!(fl = fopen(fname, "r"))) {
       perror(fname);
@@ -98,13 +98,13 @@ char *get_text(char *fname)
       strlcat(t, tmp, MAX_FILESIZE);
       strlcat(t, "\r", MAX_FILESIZE);
     } else {
-      fprintf(stderr, "String too long.  Truncated.\n");
+      tb_fprintf(stderr, "String too long.  Truncated.\n");
       break;
     }
   }
 
   if (fl != stdin)
-    fclose(fl);
+    tb_fclose(fl);
 
   return (t);
 }
@@ -125,14 +125,14 @@ int main(int argc, char *argv[])
   int desc, remaining, bytes_written, len, s, port, child;
 
   if (argc != 3 || (port = atoi(argv[1])) < 1024) {
-    fprintf(stderr, "usage: %s <portnum> <\"-\" | filename>\n", argv[0]);
+    tb_fprintf(stderr, "usage: %s <portnum> <\"-\" | filename>\n", argv[0]);
     exit(1);
   }
   s = init_socket(port);
   len = strlen(txt = get_text(argv[2]));
 
   if ((child = fork()) > 0) {
-    fprintf(stderr, "Sign started on port %d (pid %d).\n", port, child);
+    tb_fprintf(stderr, "Sign started on port %d (pid %d).\n", port, child);
     exit(0);
   }
   signal(SIGCHLD, reap);
