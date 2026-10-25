@@ -1853,6 +1853,8 @@ const char *title_male(int chclass, int level)
     return "the Man";
   if (level == LVL_IMPL)
     return "the Implementor";
+  if (level >= 31 && level < LVL_IMMORT)
+    return "the Veteran Adventurer";
 
   switch (chclass) {
 
@@ -1993,6 +1995,8 @@ const char *title_female(int chclass, int level)
     return "the Woman";
   if (level == LVL_IMPL)
     return "the Implementress";
+  if (level >= 31 && level < LVL_IMMORT)
+    return "the Veteran Adventurer";
 
   switch (chclass) {
 
