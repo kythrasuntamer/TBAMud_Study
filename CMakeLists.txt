@@ -27,11 +27,17 @@ if (CMAKE_COMPILER_IS_GNUCC)
 
     check_c_compiler_flag(-Wall SUPPORTS_WALL)
     check_c_compiler_flag(-Wno-char-subscripts SUPPORTS_WNO_CHAR_SUBSCRIPTS)
+    check_c_compiler_flag(-Wno-unused-parameter SUPPORTS_WNO_UNUSED_PARAMETER)
 
     if (SUPPORTS_WALL)
         set(MYFLAGS "-Wall")
         if (SUPPORTS_WNO_CHAR_SUBSCRIPTS)
             set(MYFLAGS "${MYFLAGS} -Wno-char-subscripts")
+        endif()
+        # tbaMUD command/special/spell callback signatures intentionally carry
+        # parameters that many implementations do not use.
+        if (SUPPORTS_WNO_UNUSED_PARAMETER)
+            set(MYFLAGS "${MYFLAGS} -Wno-unused-parameter")
         endif()
         set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${MYFLAGS}")
     endif()
