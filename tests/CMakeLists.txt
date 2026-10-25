@@ -99,6 +99,7 @@ add_mud_test(test_interpreter
 if(CRYPT_LIBRARY)
     target_link_libraries(test_interpreter PRIVATE ${CRYPT_LIBRARY})
 endif()
+target_link_libraries(test_interpreter PRIVATE ${SODIUM_LIBRARY})
 
 # ---------------------------------------------------------------------------
 # test_class — covers src/class.c
