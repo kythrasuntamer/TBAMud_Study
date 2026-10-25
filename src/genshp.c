@@ -279,7 +279,7 @@ void modify_shop_string(char **str, char *new_s)
 
   /* Check the '%s' is present, if not, add it. */
   if (*new_s != '%') {
-    snprintf(buf, sizeof(buf), "%%s %s", new_s);
+    tb_snprintf(buf, sizeof(buf), "%%s %s", new_s);
     pointer = buf;
   } else
     pointer = new_s;
@@ -357,57 +357,57 @@ int save_shops(zone_rnum zone_num)
     return FALSE;
   }
 
-  snprintf(fname, sizeof(fname), "%s/%d.new", SHP_PREFIX, zone_table[zone_num].number);
+  tb_snprintf(fname, sizeof(fname), "%s/%d.new", SHP_PREFIX, zone_table[zone_num].number);
   if (!(shop_file = fopen(fname, "w"))) {
     mudlog(BRF, LVL_GOD, TRUE, "SYSERR: OLC: Cannot open shop file!");
     return FALSE;
   } else if (fprintf(shop_file, "CircleMUD v3.0 Shop File~\n") < 0) {
     mudlog(BRF, LVL_GOD, TRUE, "SYSERR: OLC: Cannot write to shop file!");
-    fclose(shop_file);
+    tb_fclose(shop_file);
     return FALSE;
   }
   /* Search database for shops in this zone. */
   for (i = genolc_zone_bottom(zone_num); i <= zone_table[zone_num].top; i++) {
     if ((rshop = real_shop(i)) != NOWHERE) {
-      fprintf(shop_file, "#%d~\n", i);
+      tb_fprintf(shop_file, "#%d~\n", i);
       shop = shop_index + rshop;
 
       /* Save the products. */
       for (j = 0; S_PRODUCT(shop, j) != NOTHING; j++)
-	fprintf(shop_file, "%d\n", obj_index[S_PRODUCT(shop, j)].vnum);
-      fprintf(shop_file, "-1\n");
+	tb_fprintf(shop_file, "%d\n", obj_index[S_PRODUCT(shop, j)].vnum);
+      tb_fprintf(shop_file, "-1\n");
 
       /* Save the rates. */
-      fprintf(shop_file, "%1.2f\n"
+      tb_fprintf(shop_file, "%1.2f\n"
                          "%1.2f\n",
                          S_BUYPROFIT(shop),
                          S_SELLPROFIT(shop));
 
       /* Save the buy types and namelists. */
       for (j = 0;S_BUYTYPE(shop, j) != NOTHING; j++)
-        fprintf(shop_file, "%d%s\n",
+        tb_fprintf(shop_file, "%d%s\n",
                 S_BUYTYPE(shop, j),
 		S_BUYWORD(shop, j) ? S_BUYWORD(shop, j) : "");
-      fprintf(shop_file, "-1\n");
+      tb_fprintf(shop_file, "-1\n");
 
       /* Save messages one at a time.  The old code assembled all seven
        * strings into one MAX_STRING_LENGTH stack buffer with sprintf(),
        * even though the file format has no such combined bound. */
-      fprintf(shop_file, "%s~\n",
+      tb_fprintf(shop_file, "%s~\n",
               convert_from_tabs(S_NOITEM1(shop) ? S_NOITEM1(shop) : "%s Ke?!"));
-      fprintf(shop_file, "%s~\n",
+      tb_fprintf(shop_file, "%s~\n",
               convert_from_tabs(S_NOITEM2(shop) ? S_NOITEM2(shop) : "%s Ke?!"));
-      fprintf(shop_file, "%s~\n",
+      tb_fprintf(shop_file, "%s~\n",
               convert_from_tabs(S_NOBUY(shop) ? S_NOBUY(shop) : "%s Ke?!"));
-      fprintf(shop_file, "%s~\n",
+      tb_fprintf(shop_file, "%s~\n",
               convert_from_tabs(S_NOCASH1(shop) ? S_NOCASH1(shop) : "%s Ke?!"));
-      fprintf(shop_file, "%s~\n",
+      tb_fprintf(shop_file, "%s~\n",
               convert_from_tabs(S_NOCASH2(shop) ? S_NOCASH2(shop) : "%s Ke?!"));
-      fprintf(shop_file, "%s~\n",
+      tb_fprintf(shop_file, "%s~\n",
               convert_from_tabs(S_BUY(shop) ? S_BUY(shop) : "%s Ke?! %d?"));
-      fprintf(shop_file, "%s~\n",
+      tb_fprintf(shop_file, "%s~\n",
               convert_from_tabs(S_SELL(shop) ? S_SELL(shop) : "%s Ke?! %d?"));
-      fprintf(shop_file, "%d\n%ld\n%d\n%d\n",
+      tb_fprintf(shop_file, "%d\n%ld\n%d\n%d\n",
               S_BROKE_TEMPER(shop),
               S_BITVECTOR(shop),
               S_KEEPER(shop) == NOBODY ? -1 : mob_index[S_KEEPER(shop)].vnum,
@@ -415,18 +415,18 @@ int save_shops(zone_rnum zone_num)
 
       /* Save the rooms. */
       for (j = 0;S_ROOM(shop, j) != NOWHERE; j++)
-        fprintf(shop_file, "%d\n", S_ROOM(shop, j));
-      fprintf(shop_file, "-1\n");
+        tb_fprintf(shop_file, "%d\n", S_ROOM(shop, j));
+      tb_fprintf(shop_file, "-1\n");
 
       /* Save open/closing times. */
-      fprintf(shop_file, "%d\n%d\n%d\n%d\n", S_OPEN1(shop), S_CLOSE1(shop),
+      tb_fprintf(shop_file, "%d\n%d\n%d\n%d\n", S_OPEN1(shop), S_CLOSE1(shop),
           S_OPEN2(shop), S_CLOSE2(shop));
       num_shops++;
     }
   }
-  fprintf(shop_file, "$~\n");
-  fclose(shop_file);
-  snprintf(oldname, sizeof(oldname), "%s/%d.shp", SHP_PREFIX, zone_table[zone_num].number);
+  tb_fprintf(shop_file, "$~\n");
+  tb_fclose(shop_file);
+  tb_snprintf(oldname, sizeof(oldname), "%s/%d.shp", SHP_PREFIX, zone_table[zone_num].number);
   remove(oldname);
   rename(fname, oldname);
 
