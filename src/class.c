@@ -1666,6 +1666,23 @@ int level_exp(int chclass, int level)
      return EXP_MAX - ((LVL_IMPL - level) * 1000);
    }
 
+  /* Extend levels 31-50 by interpolating the existing level-30 to
+   * former immortality experience gap. Preserve original levels 1-30. */
+  if (level > 30 && level <= LVL_IMMORT) {
+    int start, target;
+    switch (chclass) {
+      case CLASS_MAGIC_USER:
+      case CLASS_WARRIOR: start = 7400000; target = 8000000; break;
+      case CLASS_CLERIC: start = 6400000; target = 7000000; break;
+      case CLASS_THIEF: start = 6650000; target = 7000000; break;
+      default:
+        log("SYSERR: Invalid class in extended level_exp");
+        return 0;
+    }
+    return start + (int)(((long long)(target - start) *
+                          (level - 30)) / (LVL_IMMORT - 30));
+  }
+
   /* Exp required for normal mortals is below */
   switch (chclass) {
 
