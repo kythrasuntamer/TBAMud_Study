@@ -1987,7 +1987,11 @@ void clean_llog_entries(void) {
 
   fseek(ofp,0L,SEEK_END);
   recs=ftell(ofp)/sizeof(struct last_entry);
-  rewind(ofp);
+  if (fseek(ofp, 0L, SEEK_SET) != 0) {
+    log("SYSERR: Unable to rewind %s: %s", LAST_FILE, strerror(errno));
+    fclose(ofp);
+    return;
+  }
 
   if (recs < MAX_LAST_ENTRIES) {
     fclose(ofp);
