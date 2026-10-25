@@ -9,8 +9,8 @@
 * Copyright (C) 1993, 94 by the Trustees of the Johns Hopkins University
 * CircleMUD is based on DikuMUD, Copyright (C) 1990, 1991.
 */
-#ifndef _SPELLS_H_
-#define _SPELLS_H_
+#ifndef TBAMUD_SPELLS_H_INCLUDED
+#define TBAMUD_SPELLS_H_INCLUDED
 
 #define DEFAULT_STAFF_LVL	12
 #define DEFAULT_WAND_LVL	12
@@ -289,4 +289,4 @@ extern struct spell_info_type spell_info[];
 extern char cast_arg2[];
 extern const char *unused_spellname;
 
-#endif /* _SPELLS_H_ */
+#endif /* TBAMUD_SPELLS_H_INCLUDED */
