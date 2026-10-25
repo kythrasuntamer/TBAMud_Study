@@ -70,6 +70,378 @@
       "upstream_id": 10
     }
   ],
-  "skill_trees": [],
-  "status": "INVENTORY_ONLY_NOT_PLAYABLE"
+  "skill_trees": [
+    {
+      "class": "Monk",
+      "skills": [
+        {
+          "key": "discipline",
+          "level": 1,
+          "requires": [],
+          "unlock": "trainer",
+          "implementation": "NOT_IMPLEMENTED",
+          "source": "original design inspired by common RPG archetypes; not claimed extracted from upstream"
+        },
+        {
+          "key": "unarmed_stance",
+          "level": 5,
+          "requires": [
+            "discipline"
+          ],
+          "unlock": "trainer",
+          "implementation": "NOT_IMPLEMENTED",
+          "source": "original design inspired by common RPG archetypes; not claimed extracted from upstream"
+        },
+        {
+          "key": "rapid_strikes",
+          "level": 12,
+          "requires": [
+            "unarmed_stance"
+          ],
+          "unlock": "trainer",
+          "implementation": "NOT_IMPLEMENTED",
+          "source": "original design inspired by common RPG archetypes; not claimed extracted from upstream"
+        },
+        {
+          "key": "inner_resolve",
+          "level": 22,
+          "requires": [
+            "rapid_strikes"
+          ],
+          "unlock": "quest",
+          "implementation": "NOT_IMPLEMENTED",
+          "source": "original design inspired by common RPG archetypes; not claimed extracted from upstream"
+        },
+        {
+          "key": "mastery_of_body",
+          "level": 38,
+          "requires": [
+            "inner_resolve"
+          ],
+          "unlock": "challenge",
+          "implementation": "NOT_IMPLEMENTED",
+          "source": "original design inspired by common RPG archetypes; not claimed extracted from upstream"
+        }
+      ]
+    },
+    {
+      "class": "Druid",
+      "skills": [
+        {
+          "key": "nature_lore",
+          "level": 1,
+          "requires": [],
+          "unlock": "trainer",
+          "implementation": "NOT_IMPLEMENTED",
+          "source": "original design inspired by common RPG archetypes; not claimed extracted from upstream"
+        },
+        {
+          "key": "herbalism",
+          "level": 6,
+          "requires": [
+            "nature_lore"
+          ],
+          "unlock": "trainer",
+          "implementation": "NOT_IMPLEMENTED",
+          "source": "original design inspired by common RPG archetypes; not claimed extracted from upstream"
+        },
+        {
+          "key": "nature_affinity",
+          "level": 14,
+          "requires": [
+            "herbalism"
+          ],
+          "unlock": "quest",
+          "implementation": "NOT_IMPLEMENTED",
+          "source": "original design inspired by common RPG archetypes; not claimed extracted from upstream"
+        },
+        {
+          "key": "beast_shape",
+          "level": 26,
+          "requires": [
+            "nature_affinity"
+          ],
+          "unlock": "challenge",
+          "implementation": "NOT_IMPLEMENTED",
+          "source": "original design inspired by common RPG archetypes; not claimed extracted from upstream"
+        },
+        {
+          "key": "primal_guardian",
+          "level": 42,
+          "requires": [
+            "beast_shape"
+          ],
+          "unlock": "boss",
+          "implementation": "NOT_IMPLEMENTED",
+          "source": "original design inspired by common RPG archetypes; not claimed extracted from upstream"
+        }
+      ]
+    },
+    {
+      "class": "Berserker",
+      "skills": [
+        {
+          "key": "battle_fury",
+          "level": 1,
+          "requires": [],
+          "unlock": "trainer",
+          "implementation": "NOT_IMPLEMENTED",
+          "source": "original design inspired by common RPG archetypes; not claimed extracted from upstream"
+        },
+        {
+          "key": "endurance",
+          "level": 7,
+          "requires": [
+            "battle_fury"
+          ],
+          "unlock": "trainer",
+          "implementation": "NOT_IMPLEMENTED",
+          "source": "original design inspired by common RPG archetypes; not claimed extracted from upstream"
+        },
+        {
+          "key": "cleaving_strike",
+          "level": 17,
+          "requires": [
+            "endurance"
+          ],
+          "unlock": "quest",
+          "implementation": "NOT_IMPLEMENTED",
+          "source": "original design inspired by common RPG archetypes; not claimed extracted from upstream"
+        },
+        {
+          "key": "unyielding",
+          "level": 30,
+          "requires": [
+            "cleaving_strike"
+          ],
+          "unlock": "challenge",
+          "implementation": "NOT_IMPLEMENTED",
+          "source": "original design inspired by common RPG archetypes; not claimed extracted from upstream"
+        },
+        {
+          "key": "war_frenzy",
+          "level": 45,
+          "requires": [
+            "unyielding"
+          ],
+          "unlock": "boss",
+          "implementation": "NOT_IMPLEMENTED",
+          "source": "original design inspired by common RPG archetypes; not claimed extracted from upstream"
+        }
+      ]
+    },
+    {
+      "class": "Sorcerer",
+      "skills": [
+        {
+          "key": "arcane_bolt",
+          "level": 1,
+          "requires": [],
+          "unlock": "trainer",
+          "implementation": "NOT_IMPLEMENTED",
+          "source": "original design inspired by common RPG archetypes; not claimed extracted from upstream"
+        },
+        {
+          "key": "spell_focus",
+          "level": 6,
+          "requires": [
+            "arcane_bolt"
+          ],
+          "unlock": "trainer",
+          "implementation": "NOT_IMPLEMENTED",
+          "source": "original design inspired by common RPG archetypes; not claimed extracted from upstream"
+        },
+        {
+          "key": "elemental_channel",
+          "level": 16,
+          "requires": [
+            "spell_focus"
+          ],
+          "unlock": "quest",
+          "implementation": "NOT_IMPLEMENTED",
+          "source": "original design inspired by common RPG archetypes; not claimed extracted from upstream"
+        },
+        {
+          "key": "overchannel",
+          "level": 29,
+          "requires": [
+            "elemental_channel"
+          ],
+          "unlock": "challenge",
+          "implementation": "NOT_IMPLEMENTED",
+          "source": "original design inspired by common RPG archetypes; not claimed extracted from upstream"
+        },
+        {
+          "key": "arcane_mastery",
+          "level": 44,
+          "requires": [
+            "overchannel"
+          ],
+          "unlock": "boss",
+          "implementation": "NOT_IMPLEMENTED",
+          "source": "original design inspired by common RPG archetypes; not claimed extracted from upstream"
+        }
+      ]
+    },
+    {
+      "class": "Paladin",
+      "skills": [
+        {
+          "key": "oath",
+          "level": 1,
+          "requires": [],
+          "unlock": "trainer",
+          "implementation": "NOT_IMPLEMENTED",
+          "source": "original design inspired by common RPG archetypes; not claimed extracted from upstream"
+        },
+        {
+          "key": "protective_aura",
+          "level": 7,
+          "requires": [
+            "oath"
+          ],
+          "unlock": "trainer",
+          "implementation": "NOT_IMPLEMENTED",
+          "source": "original design inspired by common RPG archetypes; not claimed extracted from upstream"
+        },
+        {
+          "key": "holy_smite",
+          "level": 18,
+          "requires": [
+            "protective_aura"
+          ],
+          "unlock": "quest",
+          "implementation": "NOT_IMPLEMENTED",
+          "source": "original design inspired by common RPG archetypes; not claimed extracted from upstream"
+        },
+        {
+          "key": "guardian_vow",
+          "level": 31,
+          "requires": [
+            "holy_smite"
+          ],
+          "unlock": "challenge",
+          "implementation": "NOT_IMPLEMENTED",
+          "source": "original design inspired by common RPG archetypes; not claimed extracted from upstream"
+        },
+        {
+          "key": "champions_blessing",
+          "level": 45,
+          "requires": [
+            "guardian_vow"
+          ],
+          "unlock": "boss",
+          "implementation": "NOT_IMPLEMENTED",
+          "source": "original design inspired by common RPG archetypes; not claimed extracted from upstream"
+        }
+      ]
+    },
+    {
+      "class": "Ranger",
+      "skills": [
+        {
+          "key": "tracking",
+          "level": 1,
+          "requires": [],
+          "unlock": "trainer",
+          "implementation": "NOT_IMPLEMENTED",
+          "source": "original design inspired by common RPG archetypes; not claimed extracted from upstream"
+        },
+        {
+          "key": "archery",
+          "level": 6,
+          "requires": [
+            "tracking"
+          ],
+          "unlock": "trainer",
+          "implementation": "NOT_IMPLEMENTED",
+          "source": "original design inspired by common RPG archetypes; not claimed extracted from upstream"
+        },
+        {
+          "key": "wilderness_survival",
+          "level": 15,
+          "requires": [
+            "archery"
+          ],
+          "unlock": "quest",
+          "implementation": "NOT_IMPLEMENTED",
+          "source": "original design inspired by common RPG archetypes; not claimed extracted from upstream"
+        },
+        {
+          "key": "animal_bond",
+          "level": 28,
+          "requires": [
+            "wilderness_survival"
+          ],
+          "unlock": "challenge",
+          "implementation": "NOT_IMPLEMENTED",
+          "source": "original design inspired by common RPG archetypes; not claimed extracted from upstream"
+        },
+        {
+          "key": "master_marksman",
+          "level": 43,
+          "requires": [
+            "animal_bond"
+          ],
+          "unlock": "boss",
+          "implementation": "NOT_IMPLEMENTED",
+          "source": "original design inspired by common RPG archetypes; not claimed extracted from upstream"
+        }
+      ]
+    },
+    {
+      "class": "Bard",
+      "skills": [
+        {
+          "key": "songcraft",
+          "level": 1,
+          "requires": [],
+          "unlock": "trainer",
+          "implementation": "NOT_IMPLEMENTED",
+          "source": "original design inspired by common RPG archetypes; not claimed extracted from upstream"
+        },
+        {
+          "key": "inspiring_song",
+          "level": 7,
+          "requires": [
+            "songcraft"
+          ],
+          "unlock": "trainer",
+          "implementation": "NOT_IMPLEMENTED",
+          "source": "original design inspired by common RPG archetypes; not claimed extracted from upstream"
+        },
+        {
+          "key": "dissonance",
+          "level": 17,
+          "requires": [
+            "inspiring_song"
+          ],
+          "unlock": "quest",
+          "implementation": "NOT_IMPLEMENTED",
+          "source": "original design inspired by common RPG archetypes; not claimed extracted from upstream"
+        },
+        {
+          "key": "battle_anthem",
+          "level": 30,
+          "requires": [
+            "dissonance"
+          ],
+          "unlock": "challenge",
+          "implementation": "NOT_IMPLEMENTED",
+          "source": "original design inspired by common RPG archetypes; not claimed extracted from upstream"
+        },
+        {
+          "key": "legendary_performance",
+          "level": 46,
+          "requires": [
+            "battle_anthem"
+          ],
+          "unlock": "boss",
+          "implementation": "NOT_IMPLEMENTED",
+          "source": "original design inspired by common RPG archetypes; not claimed extracted from upstream"
+        }
+      ]
+    }
+  ],
+  "status": "DESIGN_ONLY_NOT_PLAYABLE"
 }
