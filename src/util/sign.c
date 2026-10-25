@@ -33,13 +33,13 @@ int init_socket(int port)
    */
 
   if ((s = socket(PF_INET, SOCK_STREAM, 0)) < 0) {
-    perror("Create socket");
+    TB_REPORT_ERRNO("socket", "sign listener");
     exit(1);
   }
 #if defined(SO_REUSEADDR)
   opt = 1;
   if (setsockopt(s, SOL_SOCKET, SO_REUSEADDR, (char *) &opt, sizeof(opt)) < 0) {
-    perror("setsockopt REUSEADDR");
+    TB_REPORT_ERRNO("setsockopt", "SO_REUSEADDR sign listener");
     exit(1);
   }
 #endif
@@ -51,7 +51,7 @@ int init_socket(int port)
     ld.l_onoff = 0;
     ld.l_linger = 0;
     if (setsockopt(s, SOL_SOCKET, SO_LINGER, (char *) &ld, sizeof(ld)) < 0) {
-      perror("setsockopt LINGER");
+      TB_REPORT_ERRNO("setsockopt", "SO_LINGER sign listener");
       exit(1);
     }
   }
@@ -62,12 +62,12 @@ int init_socket(int port)
   sa.sin_addr.s_addr = htonl(INADDR_ANY);
 
   if (bind(s, (struct sockaddr *) &sa, sizeof(sa)) < 0) {
-    perror("bind");
+    TB_REPORT_ERRNO("bind", "sign listener");
     close(s);
     exit(1);
   }
   if (listen(s, 5) < 0) {
-    perror("listen");
+    TB_REPORT_ERRNO("listen", "sign listener backlog=5");
     (void)close(s);
     exit(1);
   }
@@ -90,7 +90,7 @@ char *get_text(char *fname)
       tb_fprintf(stderr, "Enter sign text; terminate with Ctrl-D.\n");
   } else {
     if (!(fl = fopen(fname, "r"))) {
-      perror(fname);
+      TB_REPORT_ERRNO("fopen", fname);
       exit(1);
     }
     close_stream = 1;
@@ -143,7 +143,7 @@ int main(int argc, char *argv[])
 
   child = fork();
   if (child < 0) {
-    perror("fork");
+    TB_REPORT_ERRNO("fork", "sign daemon");
     return 1;
   }
   if (child > 0) {
@@ -154,7 +154,7 @@ int main(int argc, char *argv[])
   memset(&sa, 0, sizeof(sa));
   sa.sa_handler = reap;
   if (sigemptyset(&sa.sa_mask) != 0 || sigaction(SIGCHLD, &sa, NULL) != 0) {
-    perror("sigaction");
+    TB_REPORT_ERRNO("sigaction", "SIGCHLD");
     return 1;
   }
 
@@ -162,13 +162,13 @@ int main(int argc, char *argv[])
     if ((desc = accept(s, (struct sockaddr *)NULL, NULL)) < 0) {
       if (errno == EINTR)
         continue;
-      perror("accept");
+      TB_REPORT_ERRNO("accept", "sign listener");
       continue;
     }
 
     child = fork();
     if (child < 0) {
-      perror("fork");
+      TB_REPORT_ERRNO("fork", "sign client handler");
       (void)close(desc);
       continue;
     }
@@ -181,6 +181,7 @@ int main(int argc, char *argv[])
         if (bytes_written < 0) {
           if (errno == EINTR)
             continue;
+          TB_REPORT_ERRNO("write", "sign client socket");
           (void)close(desc);
           _exit(1);
         }
@@ -193,6 +194,6 @@ int main(int argc, char *argv[])
       _exit(0);
     }
     if (close(desc) != 0)
-      perror("close");
+      TB_REPORT_ERRNO("close", "sign client socket");
   }
 }
