@@ -91,7 +91,11 @@ static int purge_room(room_rnum room)
 
 ACMD(do_wizhelp) 
 { 
-  extern int *cmd_sort_info; 
+  extern int *cmd_sort_info;
+
+  (void)argument;
+  (void)cmd;
+  (void)subcmd; 
   int no = 1, i, cmd_num; 
   int level;
 
