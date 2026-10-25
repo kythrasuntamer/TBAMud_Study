@@ -55,6 +55,324 @@ static IBT_DATA *new_ibt(void);
 static void free_ibt_list(int mode);
 static IBT_DATA *read_ibt(char *filename, FILE *fp);
 static IBT_DATA *get_first_ibt(int mode);
+static IBT_DATA *get_last_ibt(int mode);
+static bool is_ibt_logger(IBT_DATA *ibtData, struct char_data *ch);
+/* Internal (static) OLC functions */
+static void ibtedit_setup(struct descriptor_data *d);
+static void ibtedit_save(struct descriptor_data *d);
+static void ibtedit_disp_main_menu(struct descriptor_data *d);
+static void ibtedit_disp_flags(struct descriptor_data *d);
+
+static IBT_DATA *new_ibt(void)
+{
+   int i;
+   IBT_DATA *ibtData;
+
+   CREATE( ibtData, IBT_DATA, 1);
+
+   ibtData->next       = NULL;
+   ibtData->prev       = NULL;
+   ibtData->name       = NULL;
+   ibtData->text       = NULL;
+   ibtData->body       = NULL;
+   ibtData->notes      = NULL;
+   ibtData->level      = 0;
+   ibtData->id_num     = NOBODY;
+   ibtData->room       = NOWHERE;
+   ibtData->dated      = 0;
+
+   for (i=0; i<IBT_ARRAY_MAX; i++)
+     ibtData->flags[i]   = 0;
+
+   return ibtData;
+}
+
+static void free_ibt_list(int mode)
+{
+  IBT_DATA **first_ptr = NULL, **last_ptr = NULL;
+  IBT_DATA *this_ibt;
+
+  switch (mode) {
+    case SCMD_BUG:
+      first_ptr = &first_bug;
+      last_ptr = &last_bug;
+      break;
+    case SCMD_IDEA:
+      first_ptr = &first_idea;
+      last_ptr = &last_idea;
+      break;
+    case SCMD_TYPO:
+      first_ptr = &first_typo;
+      last_ptr = &last_typo;
+      break;
+    default:
+      log("SYSERR: Invalid mode (%d) in free_ibt_list", mode);
+      return;
+  }
+
+  while ((this_ibt = *first_ptr) != NULL) {
+    *first_ptr = this_ibt->next;
+
+    if (this_ibt->body)  STRFREE(this_ibt->body);
+    if (this_ibt->name)  STRFREE(this_ibt->name);
+    if (this_ibt->text)  STRFREE(this_ibt->text);
+    if (this_ibt->notes) STRFREE(this_ibt->notes);
+
+    DISPOSE(this_ibt);
+  }
+
+  *last_ptr = NULL;
+}
+static IBT_DATA *read_ibt( char *filename, FILE *fp )
+{
+   IBT_DATA *ibtData;
+   char *word, *id_num=NULL, *dated=NULL;
+   char buf[MAX_STRING_LENGTH];
+   bool fMatch;
+   char letter;
+
+   do
+   {
+      letter = getc( fp );
+      if( feof(fp) )
+      {
+         fclose( fp );
+         return NULL;
+      }
+   }
+   while( isspace(letter) );
+   ungetc( letter, fp );
+
+   ibtData = new_ibt();
+   ibtData->name       = STRALLOC("");
+   ibtData->text       = STRALLOC("");
+   ibtData->body       = STRALLOC("");
+
+   for ( ; ; )
+   {
+        word   = feof( fp ) ? "End" : fread_word( fp );
+        fMatch = FALSE;
+
+        switch ( UPPER(word[0]) )
+        {
+          case 'B':
+            if (!str_cmp(word, "Body"))  STRFREE(ibtData->body);
+            KEY("Body",     ibtData->body,   fread_clean_string( fp, buf ));
+            break;
+          case 'D':
+            TXT_KEY("Dated", dated, fread_line(fp));          
+            break;
+          case 'E':
+            if (!str_cmp(word, "End"))
+            {
+              if ( id_num ) {
+                ibtData->id_num = atol(id_num);
+                STRFREE( id_num );
+              }  
+              if ( dated ) {
+                ibtData->dated = atol(dated);
+                STRFREE( dated );
+              }  
+              if ( !ibtData->name )
+                ibtData->name = STRALLOC("");
+              if ( !ibtData->text )
+                ibtData->text = STRALLOC("");
+              if ( !ibtData->body )
+                ibtData->body = STRALLOC("");
+              if ( !ibtData->notes )
+                ibtData->notes = STRALLOC("");
+              return ibtData;
+            }
+            break;
+
+          case 'F':
+            if (!str_cmp(word, "Flags")) {
+              fMatch = TRUE;
+              fread_flags(fp, ibtData->flags, 4);
+            }
+            break;
+
+          case 'I':
+            TXT_KEY("IdNum", id_num, fread_line(fp));
+            break;
+
+          case 'L':
+            KEY("Level",    ibtData->level,   fread_number(fp));
+            break;
+
+          case 'N':
+            if (!str_cmp(word, "Name") && ibtData->name)   STRFREE(ibtData->name);
+            if (!str_cmp(word, "Notes") && ibtData->notes)  STRFREE(ibtData->notes);
+            TXT_KEY("Name",     ibtData->name,    fread_line( fp ));
+            KEY("Notes",        ibtData->notes,   fread_clean_string( fp, buf ));
+            break;
+
+          case 'R':
+            KEY("Room",     ibtData->room,    fread_number(fp));
+            break;
+
+          case 'T':
+            if (!str_cmp(word, "Text"))  STRFREE(ibtData->text);
+            TXT_KEY("Text",     ibtData->text,    fread_line( fp ));
+            break;
+
+          case '*':  /* Handle comments */
+            fread_to_eol(fp);
+            fMatch = TRUE;
+            break;
+
+          default:
+            log("SYSERR: Invalid keyword (%s) in IBT file", word);
+            break;
+        }
+        if ( !fMatch )
+        {
+          fread_to_eol(fp);
+          log( "read_ibt (%s): no match: %s - aborting line!", filename, word );
+        }
+   }
+   log ("read_ibt: Aborted! Returning NULL");
+   if ( ibtData->name)
+         STRFREE( ibtData->name);
+   if ( ibtData->text)
+         STRFREE( ibtData->text);
+   if ( ibtData->body)
+         STRFREE( ibtData->body);
+   if ( id_num )
+		 STRFREE( id_num );
+   if ( dated )
+		 STRFREE( dated );
+		 
+   DISPOSE( ibtData);
+   return NULL;
+}
+
+void load_ibt_file(int mode)
+{
+   char filename[MAX_INPUT_LENGTH];
+   FILE *fp;
+   IBT_DATA *ibtData;
+
+   switch(mode) {
+     case SCMD_BUG : sprintf( filename, "%s",BUGS_FILE );
+                     break;
+     case SCMD_IDEA: sprintf( filename, "%s",IDEAS_FILE );
+                     break;
+     case SCMD_TYPO: sprintf( filename, "%s",TYPOS_FILE );
+                     break;
+     default       : log("SYSERR: Invalid mode (%d) in load_ibt_file", mode);
+                     return;
+   }
+
+   /* Remove and free the old list. */
+   free_ibt_list(mode);
+
+   if( ( fp = fopen( filename, "r" ) ) == NULL ) {
+      log("No File: %s", filename);
+      return;
+   }
+
+   while( ( ibtData = read_ibt( filename, fp ) ) != NULL ) {
+     switch(mode) {
+       case SCMD_BUG : LINK( ibtData, first_bug, last_bug, next, prev );
+                       break;
+       case SCMD_IDEA: LINK( ibtData, first_idea, last_idea, next, prev );
+                       break;
+       case SCMD_TYPO: LINK( ibtData, first_typo, last_typo, next, prev );
+                       break;
+     }
+   }
+
+   return;
+}
+
+void save_ibt_file(int mode)
+{
+   IBT_DATA *ibtData, *first_ibt;
+   FILE *fp;
+   char filename[256];
+
+   switch(mode) {
+     case SCMD_BUG : sprintf( filename, "%s",BUGS_FILE );
+                     first_ibt = first_bug;
+                     break;
+     case SCMD_IDEA: sprintf( filename, "%s",IDEAS_FILE );
+                     first_ibt = first_idea;
+                     break;
+     case SCMD_TYPO: sprintf( filename, "%s",TYPOS_FILE );
+                     first_ibt = first_typo;
+                     break;
+     default       : log("SYSERR: Invalid mode (%d) in save_ibt_file", mode);
+                     return;
+   }
+
+   if (( fp = fopen(filename,"w")) == NULL)
+   {
+     log("SYSERR: Unable to open IBT file for writing in save_ibt_file");
+     log("        IBT File: %s", filename);
+     return;
+   }
+   else
+   {
+     for (ibtData = first_ibt;ibtData;ibtData=ibtData->next)
+     {
+       if (ibtData->text && *(ibtData->text))
+         fprintf(fp,"Text      %s~\n",ibtData->text);
+       if (ibtData->body && *(ibtData->body))
+         fprintf(fp,"Body      %s~\n",ibtData->body);
+       if (ibtData->name && *(ibtData->name))
+         fprintf(fp,"Name      %s~\n",ibtData->name);
+       if (ibtData->notes && *(ibtData->notes))
+         fprintf(fp,"Notes     %s~\n",ibtData->notes);
+       if (ibtData->id_num != NOBODY)
+         fprintf(fp,"IdNum     %ld\n",ibtData->id_num);
+       if (ibtData->dated != 0)
+         fprintf(fp,"Dated     %ld\n",ibtData->dated);
+       fprintf(fp,"Level     %d\n",ibtData->level);
+       fprintf(fp,"Room      %d\n",ibtData->room);
+       fprintf(fp,"Flags     %d %d %d %d\n",ibtData->flags[0],ibtData->flags[1],
+                                            ibtData->flags[2],ibtData->flags[3]);
+       fprintf(fp,"End\n");
+     }
+     fclose(fp);
+     return;
+   }
+}
+
+static IBT_DATA *get_first_ibt(int mode)
+{
+  IBT_DATA *first_ibt = NULL;
+
+  switch(mode) {
+    case SCMD_BUG : first_ibt = first_bug;
+                    break;
+    case SCMD_IDEA: first_ibt = first_idea;
+                    break;
+    case SCMD_TYPO: first_ibt = first_typo;
+                    break;
+    default       : log("SYSERR: Invalid mode (%d) in get_first_ibt", mode);
+                    break;
+  }
+  return (first_ibt); /* NOLINT(clang-analyzer-unix.Malloc): list heads are updated by UNLINK before nodes are freed. */
+}
+
+static IBT_DATA *get_last_ibt(int mode)
+{
+  IBT_DATA *last_ibt = NULL;
+
+  switch(mode) {
+    case SCMD_BUG : last_ibt = last_bug;
+                    break;
+    case SCMD_IDEA: last_ibt = last_idea;
+                    break;
+    case SCMD_TYPO: last_ibt = last_typo;
+                    break;
+    default       : log("SYSERR: Invalid mode (%d) in get_last_ibt", mode);
+                    break;
+  }
+  return (last_ibt);
+}
+
 static IBT_DATA *get_ibt_by_num(int mode, int target_num)
 {
   int no=0;
