@@ -272,13 +272,17 @@ SPECIAL(mayor)
     break;
 
   case 'O':
-    do_gen_door(ch, strlcpy(actbuf, "gate"), 0, SCMD_UNLOCK, sizeof(actbuf));	/* strcpy: OK */
-    do_gen_door(ch, strlcpy(actbuf, "gate"), 0, SCMD_OPEN, sizeof(actbuf));	/* strcpy: OK */
+    strlcpy(actbuf, "gate", sizeof(actbuf));
+    do_gen_door(ch, actbuf, 0, SCMD_UNLOCK);	/* strcpy: OK */
+    strlcpy(actbuf, "gate", sizeof(actbuf));
+    do_gen_door(ch, actbuf, 0, SCMD_OPEN);	/* strcpy: OK */
     break;
 
   case 'C':
-    do_gen_door(ch, strlcpy(actbuf, "gate"), 0, SCMD_CLOSE, sizeof(actbuf));	/* strcpy: OK */
-    do_gen_door(ch, strlcpy(actbuf, "gate"), 0, SCMD_LOCK, sizeof(actbuf));	/* strcpy: OK */
+    strlcpy(actbuf, "gate", sizeof(actbuf));
+    do_gen_door(ch, actbuf, 0, SCMD_CLOSE);	/* strcpy: OK */
+    strlcpy(actbuf, "gate", sizeof(actbuf));
+    do_gen_door(ch, actbuf, 0, SCMD_LOCK);	/* strcpy: OK */
     break;
 
   case '.':
@@ -469,16 +473,20 @@ SPECIAL(puff)
 
   switch (rand_number(0, 60)) {
     case 0:
-      do_say(ch, strlcpy(actbuf, "My god!  It's full of stars!"), 0, 0, sizeof(actbuf));	/* strcpy: OK */
+      strlcpy(actbuf, "My god!  It's full of stars!", sizeof(actbuf));
+      do_say(ch, actbuf, 0, 0);	/* strcpy: OK */
       return (TRUE);
     case 1:
-      do_say(ch, strlcpy(actbuf, "How'd all those fish get up here?"), 0, 0, sizeof(actbuf));	/* strcpy: OK */
+      strlcpy(actbuf, "How'd all those fish get up here?", sizeof(actbuf));
+      do_say(ch, actbuf, 0, 0);	/* strcpy: OK */
       return (TRUE);
     case 2:
-      do_say(ch, strlcpy(actbuf, "I'm a very female dragon."), 0, 0, sizeof(actbuf));	/* strcpy: OK */
+      strlcpy(actbuf, "I'm a very female dragon.", sizeof(actbuf));
+      do_say(ch, actbuf, 0, 0);	/* strcpy: OK */
       return (TRUE);
     case 3:
-      do_say(ch, strlcpy(actbuf, "I've got a peaceful, easy feeling."), 0, 0, sizeof(actbuf));	/* strcpy: OK */
+      strlcpy(actbuf, "I've got a peaceful, easy feeling.", sizeof(actbuf));
+      do_say(ch, actbuf, 0, 0);	/* strcpy: OK */
       return (TRUE);
     default:
       return (FALSE);
