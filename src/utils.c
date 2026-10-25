@@ -410,13 +410,13 @@ void sprintbitarray(int bitvector[], const char *names[], int maxar, char *resul
         {
           if (*names[(teller*32)+nr] != '\0')
           {
-            strlcat(result, names[(teller*32)+nr], reslen);
-            strlcat(result, " ", reslen);
+            strcat(result, names[(teller*32)+nr]);
+            strcat(result, " ");
           }
         }
         else
         {
-          strlcat(result, "UNDEFINED ", reslen);
+          strcat(result, "UNDEFINED ");
         }
       }
       if (*names[(teller*32)+nr] == '\n')
@@ -425,7 +425,7 @@ void sprintbitarray(int bitvector[], const char *names[], int maxar, char *resul
   }
 
   if (!*result)
-    strlcpy(result, "NOBITS ", reslen);
+    strcpy(result, "NOBITS ");
 }
 
 /** Calculate the REAL time passed between two time invervals.
