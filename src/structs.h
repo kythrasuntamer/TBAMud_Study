@@ -868,7 +868,7 @@ struct char_player_data
   char *title;                   /**< PC / NPC title */
   byte sex;                      /**< PC / NPC sex */
   byte chclass;                  /**< PC / NPC class */
-  byte level;                    /**< PC / NPC level */
+  unsigned char level;           /**< PC / NPC level (nonnegative) */
   struct time_data time;         /**< PC AGE in days */
   ubyte weight;                  /**< PC / NPC weight */
   ubyte height;                  /**< PC / NPC height */
@@ -943,9 +943,9 @@ struct char_special_data
 /** Data only needed by PCs, and needs to be saved to disk. */
 struct player_special_data_saved
 {
-  byte skills[MAX_SKILLS+1]; /**< Character skills. */
+  unsigned char skills[MAX_SKILLS+1]; /**< Character skills (0-100). */
   int wimp_level;         /**< Below this # of hit points, flee! */
-  byte freeze_level;      /**< Level of god who froze char, if any */
+  unsigned char freeze_level; /**< Level of god who froze char, if any */
   sh_int invis_level;     /**< level of invisibility */
   room_vnum load_room;    /**< Which room to load PC into */
   int pref[PR_ARRAY_MAX]; /**< preference flags */
