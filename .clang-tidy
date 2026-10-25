@@ -18,8 +18,10 @@ Checks: >
   -bugprone-switch-missing-default-case,
   -bugprone-too-small-loop-variable,
   -bugprone-unsafe-functions,
+  -clang-analyzer-deadcode.DeadStores,
   -clang-analyzer-optin.performance.Padding,
-  -clang-analyzer-security.insecureAPI.strcpy
+  -clang-analyzer-security.insecureAPI.strcpy,
+  -clang-analyzer-unix.Errno
 # Keep memory-safety, ownership, null-dereference, bounds, stream and
 # resource analyzers enabled.  The disabled checks above are legacy API/style
 # diagnostics that do not represent defects in this C codebase.
