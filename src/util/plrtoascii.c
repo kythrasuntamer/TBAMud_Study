@@ -393,6 +393,6 @@ int plr_filename(char *orig_name, char *filename)
     break;
   }
 
-  sprintf(filename, "%s%s"SLASH"%s.%s", LIB_PLRFILES, middle, name, SUF_PLR);
+  tb_snprintf(filename, MAX_STRING_LENGTH, "%s%s"SLASH"%s.%s", LIB_PLRFILES, middle, name, SUF_PLR);
   return (1);
 }
