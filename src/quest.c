@@ -252,6 +252,7 @@ void clear_quest(struct char_data *ch)
   return;
 }
 
+/* NOLINTBEGIN(clang-analyzer-security.ArrayBound): completed_quests length is tracked by GET_NUM_QUESTS. */
 void add_completed_quest(struct char_data *ch, qst_vnum vnum)
 {
   qst_vnum *temp;
@@ -318,6 +319,8 @@ void remove_completed_quest(struct char_data *ch, qst_vnum vnum)
   ch->player_specials->saved.completed_quests = temp;
   GET_NUM_QUESTS(ch) = j;
 }
+
+/* NOLINTEND(clang-analyzer-security.ArrayBound) */
 
 void generic_complete_quest(struct char_data *ch)
 {
