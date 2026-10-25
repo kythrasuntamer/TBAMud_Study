@@ -212,21 +212,27 @@ void run_autowiz(void)
 
     launcher = fork();
     if (launcher < 0) {
-      mudlog(BRF, LVL_IMMORT, TRUE, "Warning: unable to fork autowiz launcher: %s",
-             strerror(errno));
+      { int saved_errno = errno;
+        mudlog(BRF, LVL_IMMORT, TRUE,
+               "SYSERR: autowiz launcher fork failed: %s (errno=%d) at %s:%d in %s()",
+               strerror(saved_errno), saved_errno, __FILE__, __LINE__, __func__);
+      }
       return;
     }
 
     if (launcher == 0) {
       pid_t worker = fork();
-      if (worker < 0)
+      if (worker < 0) {
+        TB_REPORT_ERRNO("fork", "autowiz worker");
         _exit(127);
+      }
       if (worker > 0)
         _exit(0);
 
       (void)setsid();
       execlp("nice", "nice", "../bin/autowiz", min_wiz, WIZLIST_FILE,
              imm_level, IMMLIST_FILE, parent_pid, (char *)NULL);
+      TB_REPORT_ERRNO("execlp", "../bin/autowiz");
       _exit(127);
     }
 
@@ -234,8 +240,17 @@ void run_autowiz(void)
       status = 0;
     } while (waitpid(launcher, &status, 0) < 0 && errno == EINTR);
 
+    if (errno != EINTR && status == 0) {
+      /* If waitpid itself failed, report the syscall site rather than a vague launcher failure. */
+      int saved_errno = errno;
+      if (saved_errno != 0)
+        mudlog(BRF, LVL_IMMORT, TRUE,
+               "SYSERR: waitpid for autowiz launcher failed: %s (errno=%d)",
+               strerror(saved_errno), saved_errno);
+    }
     if (!WIFEXITED(status) || WEXITSTATUS(status) != 0)
-      mudlog(BRF, LVL_IMMORT, TRUE, "Warning: autowiz launcher failed.");
+      mudlog(BRF, LVL_IMMORT, TRUE,
+             "SYSERR: autowiz launcher exited abnormally (status=%d)", status);
   }
 #elif defined(CIRCLE_WINDOWS)
   if (CONFIG_USE_AUTOWIZ) {
