@@ -236,18 +236,22 @@ void run_autowiz(void)
       _exit(127);
     }
 
-    do {
-      status = 0;
-    } while (waitpid(launcher, &status, 0) < 0 && errno == EINTR);
+    {
+      pid_t waited;
+      do {
+        status = 0;
+        waited = waitpid(launcher, &status, 0);
+      } while (waited < 0 && errno == EINTR);
 
-    if (errno != EINTR && status == 0) {
-      /* If waitpid itself failed, report the syscall site rather than a vague launcher failure. */
-      int saved_errno = errno;
-      if (saved_errno != 0)
+      if (waited < 0) {
+        int saved_errno = errno;
         mudlog(BRF, LVL_IMMORT, TRUE,
                "SYSERR: waitpid for autowiz launcher failed: %s (errno=%d)",
                strerror(saved_errno), saved_errno);
+        return;
+      }
     }
+
     if (!WIFEXITED(status) || WEXITSTATUS(status) != 0)
       mudlog(BRF, LVL_IMMORT, TRUE,
              "SYSERR: autowiz launcher exited abnormally (status=%d)", status);
