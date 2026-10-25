@@ -4220,7 +4220,7 @@ ACMD(do_copyover)
       return;
     }
 
-   sprintf (buf, "\n\r *** COPYOVER by %s - please remain seated!\n\r", GET_NAME(ch));
+   tb_snprintf(buf, sizeof(buf), "\n\r *** COPYOVER by %s - please remain seated!\n\r", GET_NAME(ch));
 
    /* write boot_time as first line in file */
    tb_fprintf(fp, "%ld\n", (long)boot_time);
@@ -4254,8 +4254,8 @@ ACMD(do_copyover)
   tb_fclose(fp);
 
   /* exec - descriptors are inherited */
-  sprintf (buf, "%d", port);
-  sprintf (buf2, "-C%d", mother_desc);
+  tb_snprintf(buf, sizeof(buf), "%d", port);
+  tb_snprintf(buf2, sizeof(buf2), "-C%d", mother_desc);
 
   /* Ugh, seems it is expected we are 1 step above lib - this may be dangerous! */
   if(chdir ("..") != 0) {
@@ -4540,7 +4540,7 @@ ACMD(do_changelog)
     if (*line != '[')
       tb_fprintf(new, "%s\n", line);
     else {
-      strcpy(last_buf, line);
+      strlcpy(last_buf, line, sizeof(last_buf));
       break;
     }
   }
@@ -4978,8 +4978,8 @@ static void clear_recent(struct recent_player *this)
 {
   this->vnum = 0;
   this->time = 0;
-  strcpy(this->name, "");
-  strcpy(this->host, "");
+  this->name[0] = '\0';
+  this->host[0] = '\0';
   this->next = NULL;
 }
 
@@ -5017,8 +5017,8 @@ bool AddRecentPlayer(char *chname, char *chhost, bool newplr, bool cpyplr)
   this->time = ct;
   this->new_player = newplr;
   this->copyover_player = cpyplr;
-  strcpy(this->host, chhost);
-  strcpy(this->name, chname);
+  strlcpy(this->host, chhost ? chhost : "", sizeof(this->host));
+  strlcpy(this->name, chname, sizeof(this->name));
   max_vnum = get_max_recent();
   this->vnum = max_vnum;   /* Possibly should be +1 ? */
 
