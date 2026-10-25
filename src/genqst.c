@@ -199,7 +199,7 @@ int save_quests(zone_rnum zone_num)
   tb_snprintf(filename, sizeof(filename), "%s/%d.new",
  QST_PREFIX, zone_table[zone_num].number);
   if (!(sf = fopen(filename, "w"))) {
-    perror("SYSERR: save_quests");
+    TB_REPORT_ERRNO("fopen", filename);
     return FALSE;
   }
   for (i = genolc_zone_bottom(zone_num); i <= zone_table[zone_num].top; i++) {
