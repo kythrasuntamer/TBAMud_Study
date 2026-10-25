@@ -658,7 +658,8 @@ int replace_str(char **string, char *pattern, char *replacement, int rep_all, un
 {
   char *replace_buffer = NULL;
   char *flow, *jetsam, temp;
-  int len, i;
+  size_t len;
+  int i;
 
   if ((strlen(*string) - strlen(pattern)) + strlen(replacement) > max_size)
     return -1;
