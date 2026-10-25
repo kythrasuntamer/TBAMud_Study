@@ -79,7 +79,7 @@ void build_player_index(void)
     sscanf(line, "%ld %s %d %s %ld", &player_table[i].id, arg2,
       &player_table[i].level, bits, (long *)&player_table[i].last);
     CREATE(player_table[i].name, char, strlen(arg2) + 1);
-    strlcpy(player_table[i].name, arg2, strlen(arg2) + 1);
+    memcpy(player_table[i].name, arg2, strlen(arg2) + 1);
     player_table[i].flags = asciiflag_conv(bits);
     top_idnum = MAX(top_idnum, player_table[i].id);
   }
