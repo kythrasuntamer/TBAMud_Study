@@ -389,21 +389,21 @@ static bool zedit_get_levels(struct descriptor_data *d, char *buf)
 {
   /* Create a string for the recommended levels for this zone. */
   if ((OLC_ZONE(d)->min_level == -1) && (OLC_ZONE(d)->max_level == -1)) {
-    sprintf(buf, "<Not Set!>");
+    tb_snprintf(buf, MAX_INPUT_LENGTH, "<Not Set!>");
     return FALSE;
   }
 
   if (OLC_ZONE(d)->min_level == -1) {
-    sprintf(buf, "Up to level %d", OLC_ZONE(d)->max_level);
+    tb_snprintf(buf, MAX_INPUT_LENGTH, "Up to level %d", OLC_ZONE(d)->max_level);
     return TRUE;
   }
 
   if (OLC_ZONE(d)->max_level == -1) {
-    sprintf(buf, "Above level %d", OLC_ZONE(d)->min_level);
+    tb_snprintf(buf, MAX_INPUT_LENGTH, "Above level %d", OLC_ZONE(d)->min_level);
     return TRUE;
   }
 
-  sprintf(buf, "Levels %d to %d", OLC_ZONE(d)->min_level, OLC_ZONE(d)->max_level);
+  tb_snprintf(buf, MAX_INPUT_LENGTH, "Levels %d to %d", OLC_ZONE(d)->min_level, OLC_ZONE(d)->max_level);
   return TRUE;
 }
 
