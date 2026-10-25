@@ -1839,11 +1839,18 @@ static const char *last_array[11] = {
   "Playing"
 };
 
+static const char *last_type_name(int type)
+{
+  if (type < 0 || (size_t)type >= (sizeof(last_array) / sizeof(last_array[0])))
+    return "Unknown";
+  return last_array[type];
+}
+
 struct last_entry *find_llog_entry(int punique, long idnum) {
   FILE *fp;
   struct last_entry mlast;
   struct last_entry *llast;
-  int size, recs, tmp;
+  long size, recs, tmp;
 
   if(!(fp=fopen(LAST_FILE,"r"))) {
     log("Error opening last_file for reading, will create.");
@@ -1856,10 +1863,12 @@ struct last_entry *find_llog_entry(int punique, long idnum) {
   recs = size/sizeof(struct last_entry);
   /* we'll search last to first, since it's faster than any thing else we can
    * do (like searching for the last shutdown/etc..) */
-  for(tmp=recs-1; tmp > 0; tmp--) {
+  for(tmp=recs; tmp > 0; tmp--) {
     fseek(fp,-1*((long)sizeof(struct last_entry)),SEEK_CUR);
-    if (fread(&mlast,sizeof(struct last_entry),1,fp) != 1)
+    if (fread(&mlast,sizeof(struct last_entry),1,fp) != 1) {
+      fclose(fp);
       return NULL;
+    }
         /*another one to keep that stepback */
     fseek(fp,-1*((long)sizeof(struct last_entry)),SEEK_CUR);
 
@@ -1881,7 +1890,7 @@ struct last_entry *find_llog_entry(int punique, long idnum) {
 static void mod_llog_entry(struct last_entry *llast,int type) {
   FILE *fp;
   struct last_entry mlast;
-  int size, recs, tmp;
+  long size, recs, tmp;
 
   if(!(fp=fopen(LAST_FILE,"r+"))) {
     log("Error opening last_file for reading and writing.");
@@ -1899,6 +1908,7 @@ static void mod_llog_entry(struct last_entry *llast,int type) {
     fseek(fp,-1*((long)sizeof(struct last_entry)),SEEK_CUR);
     if(fread(&mlast,sizeof(struct last_entry),1,fp) != 1) {
       log("mod_llog_entry: read error or unexpected end of file.");
+      fclose(fp);
       return;
     }
     /* Another one to keep that stepback. */
@@ -1970,7 +1980,7 @@ void add_llog_entry(struct char_data *ch, int type) {
 void clean_llog_entries(void) {
   FILE *ofp, *nfp;
   struct last_entry mlast;
-  int recs;
+  long recs;
 
   if(!(ofp=fopen(LAST_FILE,"r")))
     return; /* no file, no gripe */
@@ -1994,13 +2004,17 @@ void clean_llog_entries(void) {
   fseek(ofp,(recs-MAX_LAST_ENTRIES)* (sizeof(struct last_entry)),SEEK_CUR);
 
   /* copy the rest */
-  while (!feof(ofp)) {
-    if(fread(&mlast,sizeof(struct last_entry),1,ofp) != 1 ) {
-      log("clean_llog_entries: read error or unexpected end of file.");
+  while (fread(&mlast, sizeof(struct last_entry), 1, ofp) == 1) {
+    if (fwrite(&mlast, sizeof(struct last_entry), 1, nfp) != 1) {
+      log("clean_llog_entries: write error.");
+      fclose(ofp);
+      fclose(nfp);
       return;
     }
-    fwrite(&mlast,sizeof(struct last_entry),1,nfp);
   }
+  if (ferror(ofp))
+    log("clean_llog_entries: read error.");
+
   fclose(ofp);
   fclose(nfp);
 
@@ -2018,20 +2032,21 @@ static void list_llog_entries(struct char_data *ch)
   if(!(fp=fopen(LAST_FILE,"r"))) {
     log("llist_log_entries: could not open last log file %s.", LAST_FILE);
     send_to_char(ch, "Error! - no last log");
+    return;
   }
   send_to_char(ch, "Last log\r\n");
 
   while(fread(&llast, sizeof(struct last_entry), 1, fp) == 1) {
     strftime(timestr, sizeof(timestr), "%a %b %d %Y %H:%M:%S", localtime(&llast.time));
     send_to_char(ch, "%10s    %d    %s    %s\r\n", llast.username, llast.punique,
-        last_array[llast.close_type], timestr);
-      break;
+        last_type_name(llast.close_type), timestr);
   }
 
   if(ferror(fp)) {
     log("llist_log_entries: error reading %s.", LAST_FILE);
     send_to_char(ch, "Error reading last_log file.");
   }
+  fclose(fp);
 }
 
 static struct char_data *is_in_game(long idnum) {
@@ -2052,7 +2067,8 @@ ACMD(do_last)
   time_t delta;
   struct char_data *vict = NULL;
   struct char_data *temp;
-  int recs, num = 0;
+  long recs;
+  int num = 0;
   FILE *fp;
   struct last_entry mlast;
 
@@ -2115,6 +2131,7 @@ ACMD(do_last)
     fseek(fp,-1* ((long)sizeof(struct last_entry)),SEEK_CUR);
     if(fread(&mlast,sizeof(struct last_entry),1,fp) != 1) {
       send_to_char(ch, "Error reading log file.");
+      fclose(fp);
       return;
     }
     fseek(fp,-1*((long)sizeof(struct last_entry)),SEEK_CUR);
@@ -2130,7 +2147,7 @@ ACMD(do_last)
 	strftime(deltastr, sizeof(deltastr), "%H:%M", gmtime(&delta));
 
         send_to_char(ch, "%5.5s (%5.5s) %s", to, deltastr,
-          last_array[mlast.close_type]);
+          last_type_name(mlast.close_type));
       }
 
       send_to_char(ch, "\r\n");
@@ -2574,17 +2591,26 @@ ACMD(do_show)
         builder = 1;
       for (len = zrn = 0; zrn <= top_of_zone_table; zrn++) {
         if (*value) {
-          buf2 = strtok(strdup(zone_table[zrn].builders), " ");
+          char *builders_copy = strdup(zone_table[zrn].builders ? zone_table[zrn].builders : "");
+
+          if (!builders_copy)
+            continue;
+
+          buf2 = strtok(builders_copy, " ");
           while (buf2) {
             if (!str_cmp(buf2, value)) {
               if (builder == 1)
                 builder++;
               break;
-          }
+            }
             buf2 = strtok(NULL, " ");
           }
-          if (!buf2)
-	    continue;
+
+          if (!buf2) {
+            free(builders_copy);
+            continue;
+          }
+          free(builders_copy);
 	}
 	nlen = print_zone_to_buf(buf + len, sizeof(buf) - len, zrn, 0);
         if (len + nlen >= sizeof(buf))
@@ -4497,6 +4523,7 @@ ACMD(do_changelog)
   if (!(new = fopen(CHANGE_LOG_FILE, "w"))) {
     mudlog(BRF, LVL_IMPL, TRUE,
            "SYSERR: Error opening new changelog file (%s)", CHANGE_LOG_FILE);
+    fclose(fl);
     return;
   }
 
