@@ -71,12 +71,20 @@ int parse_class(char arg)
  * the limit of your bitvector_t, typically 0-31. */
 bitvector_t find_class_bitvector(const char *arg)
 {
-  size_t rpos, ret = 0;
+  size_t rpos;
+  bitvector_t ret = 0;
 
-  for (rpos = 0; rpos < strlen(arg); rpos++)
-    ret |= (1 << parse_class(arg[rpos]));
+  if (!arg)
+    return 0;
 
-  return (ret);
+  for (rpos = 0; arg[rpos] != '\0'; rpos++) {
+    int class_num = parse_class(arg[rpos]);
+
+    if (class_num >= 0 && (size_t)class_num < sizeof(bitvector_t) * CHAR_BIT)
+      ret |= (bitvector_t)1 << class_num;
+  }
+
+  return ret;
 }
 
 /* These are definitions which control the guildmasters for each class.

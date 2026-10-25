@@ -547,9 +547,19 @@ int skill_message(int dam, struct char_data *ch, struct char_data *vict,
    * opposed to the current cyclic location system. */
   for (i = 0; i < MAX_MESSAGES; i++) {
     if (fight_messages[i].a_type == attacktype) {
+      if (fight_messages[i].number_of_attacks <= 0 || !fight_messages[i].msg) {
+        log("SYSERR: Missing fight message data for attack type %d.", attacktype);
+        return 0;
+      }
+
       nr = dice(1, fight_messages[i].number_of_attacks);
       for (j = 1, msg = fight_messages[i].msg; (j < nr) && msg; j++)
         msg = msg->next;
+
+      if (!msg) {
+        log("SYSERR: Fight message chain too short for attack type %d.", attacktype);
+        return 0;
+      }
 
       if (!IS_NPC(vict) && (GET_LEVEL(vict) >= LVL_IMPL)) {
         act(msg->god_msg.attacker_msg, FALSE, ch, weap, vict, TO_CHAR);

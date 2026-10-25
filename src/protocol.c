@@ -368,6 +368,11 @@ ssize_t ProtocolInput( descriptor_t *apDescriptor, char *apData, int aSize, char
 
    protocol_t *pProtocol = apDescriptor ? apDescriptor->pProtocol : NULL;
 
+   if (!apDescriptor || !pProtocol || !apData || !apOut || aSize <= 0) {
+      ReportBug("ProtocolInput: invalid input arguments.\n");
+      return -1;
+   }
+
    for ( Index = 0; Index < aSize; ++Index )
    {
       /* If we'd overflow the buffer, we just ignore the input */
@@ -378,7 +383,7 @@ ssize_t ProtocolInput( descriptor_t *apDescriptor, char *apData, int aSize, char
       }
 
       /* IAC IAC is treated as a single value of 255 */
-      if ( apData[Index] == (char)IAC && apData[Index+1] == (char)IAC )
+      if ( Index + 1 < aSize && apData[Index] == (char)IAC && apData[Index+1] == (char)IAC )
       {
          if ( pProtocol->bIACMode )
             IacBuf[IacIndex++] = (char)IAC;
@@ -389,7 +394,7 @@ ssize_t ProtocolInput( descriptor_t *apDescriptor, char *apData, int aSize, char
       else if ( pProtocol->bIACMode )
       {
          /* End subnegotiation. */
-         if ( apData[Index] == (char)IAC && apData[Index+1] == (char)SE )
+         if ( Index + 1 < aSize && apData[Index] == (char)IAC && apData[Index+1] == (char)SE )
          {
             Index++;
             pProtocol->bIACMode = false;
@@ -401,8 +406,8 @@ ssize_t ProtocolInput( descriptor_t *apDescriptor, char *apData, int aSize, char
          else
            IacBuf[IacIndex++] = apData[Index];
       }
-      else if ( apData[Index] == (char)27 && apData[Index+1] == '[' && 
-         isdigit(apData[Index+2]) && apData[Index+3] == 'z' )
+      else if ( Index + 3 < aSize && apData[Index] == (char)27 && apData[Index+1] == '[' && 
+         isdigit((unsigned char)apData[Index+2]) && apData[Index+3] == 'z' )
       {
          char MXPBuffer [1024];
          char *pMXPTag = NULL;
@@ -486,6 +491,9 @@ ssize_t ProtocolInput( descriptor_t *apDescriptor, char *apData, int aSize, char
       {
          if ( apData[Index] == (char)IAC )
          {
+            if (Index + 1 >= aSize)
+               break;
+
             switch ( apData[Index+1] )
             {
                case (char)SB: /* Begin subnegotiation. */
@@ -496,7 +504,11 @@ ssize_t ProtocolInput( descriptor_t *apDescriptor, char *apData, int aSize, char
                case (char)DO: /* Handshake. */
                case (char)DONT:
                case (char)WILL:
-               case (char)WONT: 
+               case (char)WONT:
+                  if (Index + 2 >= aSize) {
+                     Index = aSize;
+                     break;
+                  }
                   PerformHandshake( apDescriptor, apData[Index+1], apData[Index+2] );
                   Index += 2;
                   break;
@@ -1027,6 +1039,9 @@ void MSDPUpdate( descriptor_t *apDescriptor )
 
    protocol_t *pProtocol = apDescriptor ? apDescriptor->pProtocol : NULL;
 
+   if (!pProtocol)
+      return;
+
    for ( i = eMSDP_NONE+1; i < eMSDP_MAX; ++i )
    {
       if ( pProtocol->pVariables[i]->bReport )
@@ -1046,6 +1061,9 @@ void MSDPFlush( descriptor_t *apDescriptor, variable_t aMSDP )
    {
       protocol_t *pProtocol = apDescriptor ? apDescriptor->pProtocol : NULL;
 
+      if (!pProtocol)
+         return;
+
       if ( pProtocol->pVariables[aMSDP]->bReport )
       {
          if ( pProtocol->pVariables[aMSDP]->bDirty )
@@ -1064,6 +1082,9 @@ void MSDPSend( descriptor_t *apDescriptor, variable_t aMSDP )
    if ( aMSDP > eMSDP_NONE && aMSDP < eMSDP_MAX )
    {
       protocol_t *pProtocol = apDescriptor ? apDescriptor->pProtocol : NULL;
+
+      if (!pProtocol)
+         return;
 
       if ( VariableNameTable[aMSDP].bString )
       {
@@ -1127,6 +1148,9 @@ void MSDPSendPair( descriptor_t *apDescriptor, const char *apVariable, const cha
    {
       protocol_t *pProtocol = apDescriptor ? apDescriptor->pProtocol : NULL;
 
+      if (!pProtocol)
+         return;
+
       /* Should really be replaced with a dynamic buffer */
       int RequiredBuffer = strlen(apVariable) + strlen(apValue) + 12;
 
@@ -1173,6 +1197,9 @@ void MSDPSendList( descriptor_t *apDescriptor, const char *apVariable, const cha
    if ( apVariable != NULL && apValue != NULL )
    {
       protocol_t *pProtocol = apDescriptor ? apDescriptor->pProtocol : NULL;
+
+      if (!pProtocol)
+         return;
 
       /* Should really be replaced with a dynamic buffer */
       int RequiredBuffer = strlen(apVariable) + strlen(apValue) + 12;

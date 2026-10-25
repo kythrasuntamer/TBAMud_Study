@@ -43,6 +43,11 @@ void do_dg_cast(void *go, struct script_data *sc, trig_data *trig, int type, cha
   int spellnum, target = 0;
   char buf2[MAX_STRING_LENGTH], orig_cmd[MAX_INPUT_LENGTH];
 
+  if (!go || !trig || !cmd) {
+    script_log("dg_do_cast: invalid NULL argument.");
+    return;
+  }
+
   /* need to get the caster or the room of the temporary caster */
   switch (type) {
     case MOB_TRIGGER:
@@ -123,6 +128,11 @@ void do_dg_cast(void *go, struct script_data *sc, trig_data *trig, int type, cha
   }
 
   if (!caster) {
+    if (!caster_room) {
+      script_log("dg_do_cast: no room available for temporary caster.");
+      return;
+    }
+
     caster = read_mobile(DG_CASTER_PROXY, VIRTUAL);
     if (!caster) {
       script_log("dg_cast: Cannot load the caster mob!");

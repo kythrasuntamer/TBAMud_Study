@@ -1079,6 +1079,12 @@ ACMD(do_pour)
       return;
     }
   }
+
+  if (!from_obj) {
+    log("SYSERR: do_pour called with invalid subcommand %d.", subcmd);
+    return;
+  }
+
   if (EMPTY_DRINK_CONTAINER(from_obj)) {
     act("The $p is empty.", FALSE, ch, from_obj, 0, TO_CHAR);
     return;

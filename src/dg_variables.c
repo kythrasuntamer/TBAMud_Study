@@ -1163,12 +1163,12 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
           else {
             *str = '\0';
             script_log("Trigger: %s, VNum %d. unknown char field: '%s'",
-                       GET_TRIG_NAME(trig), GET_TRIG_VNUM(trig), field);
+                       (trig && GET_TRIG_NAME(trig) ? GET_TRIG_NAME(trig) : "(no trigger)"), (trig ? GET_TRIG_VNUM(trig) : -1), field);
           }
         } else {
           *str = '\0';
           script_log("Trigger: %s, VNum %d. unknown char field: '%s'",
-                     GET_TRIG_NAME(trig), GET_TRIG_VNUM(trig), field);
+                     (trig && GET_TRIG_NAME(trig) ? GET_TRIG_NAME(trig) : "(no trigger)"), (trig ? GET_TRIG_VNUM(trig) : -1), field);
         }
       }
     } /* if (c) ...*/
@@ -1367,12 +1367,12 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
           else {
             *str = '\0';
             script_log("Trigger: %s, VNum %d, type: %d. unknown object field: '%s'",
-                       GET_TRIG_NAME(trig), GET_TRIG_VNUM(trig), type, field);
+                       (trig && GET_TRIG_NAME(trig) ? GET_TRIG_NAME(trig) : "(no trigger)"), (trig ? GET_TRIG_VNUM(trig) : -1), type, field);
           }
         } else {
           *str = '\0';
           script_log("Trigger: %s, VNum %d, type: %d. unknown object field: '%s'",
-                     GET_TRIG_NAME(trig), GET_TRIG_VNUM(trig), type, field);
+                     (trig && GET_TRIG_NAME(trig) ? GET_TRIG_NAME(trig) : "(no trigger)"), (trig ? GET_TRIG_VNUM(trig) : -1), type, field);
         }
       }
     } /* if (o) ... */
@@ -1384,7 +1384,7 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
         if (!SCRIPT(r)) {
           *str = '\0';
           script_log("Trigger: %s, Vnum %d, type %d. Trying to access Global var list of void. Apparently this has not been set up!",
-                     GET_TRIG_NAME(trig), GET_TRIG_VNUM(trig), type);
+                     (trig && GET_TRIG_NAME(trig) ? GET_TRIG_NAME(trig) : "(no trigger)"), (trig ? GET_TRIG_VNUM(trig) : -1), type);
         } else {
           for (vd = (SCRIPT(r))->global_vars; vd; vd = vd->next)
             if (!str_cmp(vd->name, field))
@@ -1606,12 +1606,12 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
           else {
             *str = '\0';
             script_log("Trigger: %s, VNum %d, type: %d. unknown room field: '%s'",
-                         GET_TRIG_NAME(trig), GET_TRIG_VNUM(trig), type, field);
+                         (trig && GET_TRIG_NAME(trig) ? GET_TRIG_NAME(trig) : "(no trigger)"), (trig ? GET_TRIG_VNUM(trig) : -1), type, field);
           }
         } else {
           *str = '\0';
           script_log("Trigger: %s, VNum %d, type: %d. unknown room field: '%s'",
-                     GET_TRIG_NAME(trig), GET_TRIG_VNUM(trig), type, field);
+                     (trig && GET_TRIG_NAME(trig) ? GET_TRIG_NAME(trig) : "(no trigger)"), (trig ? GET_TRIG_VNUM(trig) : -1), type, field);
         }
       }
     } /* if (r).. */

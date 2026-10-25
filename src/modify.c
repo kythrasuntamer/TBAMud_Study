@@ -258,6 +258,8 @@ static void playing_string_cleanup(struct descriptor_data *d, int action)
     
     free(*d->str);
     free(d->str);
+    d->str = NULL;
+    return;
   }
 
 /* We have no way of knowing which slot the post was sent to so we can only
@@ -498,9 +500,16 @@ void page_string(struct descriptor_data *d, char *str, int keep_internal)
 void show_string(struct descriptor_data *d, char *input)
 {
   char buffer[MAX_STRING_LENGTH], buf[MAX_INPUT_LENGTH];
+  ptrdiff_t raw_diff;
   int diff;
 
-  any_one_arg(input, buf);
+  if (!d || !d->showstr_vector || d->showstr_count <= 0)
+    return;
+
+  if (d->showstr_page < 0 || d->showstr_page >= d->showstr_count)
+    d->showstr_page = 0;
+
+  any_one_arg(input ? input : "", buf);
 
   /* Q is for quit. :) */
   if (LOWER(*buf) == 'q') {
@@ -544,22 +553,33 @@ void show_string(struct descriptor_data *d, char *input)
   }
   /* Or if we have more to show.... */
   else {
-    diff = d->showstr_vector[d->showstr_page + 1] - d->showstr_vector[d->showstr_page];
-    if (diff > MAX_STRING_LENGTH - 3) /* 3=\r\n\0 */
-      diff = MAX_STRING_LENGTH - 3;
-    strncpy(buffer, d->showstr_vector[d->showstr_page], diff);	/* strncpy: OK (size truncated above) */
-    /* Fix for prompt overwriting last line in compact mode by Peter Ajamian */
-    if (buffer[diff - 2] == '\r' && buffer[diff - 1]=='\n')
+    raw_diff = d->showstr_vector[d->showstr_page + 1] -
+               d->showstr_vector[d->showstr_page];
+    if (raw_diff <= 0) {
+      log("SYSERR: Invalid pager offsets for descriptor %d.", d->desc_num);
+      free(d->showstr_vector);
+      d->showstr_vector = NULL;
+      d->showstr_count = 0;
+      if (d->showstr_head) {
+        free(d->showstr_head);
+        d->showstr_head = NULL;
+      }
+      return;
+    }
+
+    diff = raw_diff > MAX_STRING_LENGTH - 3 ? MAX_STRING_LENGTH - 3 : (int)raw_diff;
+    memcpy(buffer, d->showstr_vector[d->showstr_page], (size_t)diff);
+    buffer[diff] = '\0';
+
+    if (diff >= 2 && buffer[diff - 2] == '\r' && buffer[diff - 1] == '\n')
       buffer[diff] = '\0';
-    else if (buffer[diff - 2] == '\n' && buffer[diff - 1] == '\r')
-      /* This is backwards.  Fix it. */
-      strcpy(buffer + diff - 2, "\r\n");	/* strcpy: OK (size checked) */
-    else if (buffer[diff - 1] == '\r' || buffer[diff - 1] == '\n')
-      /* Just one of \r\n.  Overwrite it. */
-      strcpy(buffer + diff - 1, "\r\n");	/* strcpy: OK (size checked) */
+    else if (diff >= 2 && buffer[diff - 2] == '\n' && buffer[diff - 1] == '\r')
+      strcpy(buffer + diff - 2, "\r\n");
+    else if (diff >= 1 && (buffer[diff - 1] == '\r' || buffer[diff - 1] == '\n'))
+      strcpy(buffer + diff - 1, "\r\n");
     else
-      /* Tack \r\n onto the end to fix bug with prompt overwriting last line. */
-      strcpy(buffer + diff, "\r\n");	/* strcpy: OK (size checked) */
+      strcpy(buffer + diff, "\r\n");
+
     send_to_char(d->character, "%s", buffer);
     d->showstr_page++;
   }

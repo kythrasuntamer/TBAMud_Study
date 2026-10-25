@@ -2596,19 +2596,38 @@ int script_driver(void *go_adress, trig_data *trig, int type, int mode)
   void obj_command_interpreter(obj_data *obj, char *argument);
   void wld_command_interpreter(struct room_data *room, char *argument);
 
+  if (!go_adress || !trig) {
+    script_log("script_driver called with invalid NULL argument.");
+    return SCRIPT_ERROR_CODE;
+  }
+
   switch (type) {
     case MOB_TRIGGER:
       go = *(char_data **)go_adress;
+      if (!go)
+        return SCRIPT_ERROR_CODE;
       sc = SCRIPT((char_data *) go);
       break;
     case OBJ_TRIGGER:
       go = *(obj_data **)go_adress;
+      if (!go)
+        return SCRIPT_ERROR_CODE;
       sc = SCRIPT((obj_data *) go);
       break;
     case WLD_TRIGGER:
       go = *(room_data **)go_adress;
+      if (!go)
+        return SCRIPT_ERROR_CODE;
       sc = SCRIPT((room_data *) go);
       break;
+    default:
+      script_log("script_driver called with invalid trigger type %d.", type);
+      return SCRIPT_ERROR_CODE;
+  }
+
+  if (!sc) {
+    script_log("Trigger %d has no owning script.", GET_TRIG_VNUM(trig));
+    return SCRIPT_ERROR_CODE;
   }
 
   if (depth > MAX_SCRIPT_DEPTH) {
@@ -3107,9 +3126,10 @@ static inline struct lookup_table_t *get_bucket_head(long uid)
 
 static inline struct lookup_table_t *find_element_by_uid_in_lookup_table(long uid)
 {
-  struct lookup_table_t *lt = get_bucket_head(uid);
+  struct lookup_table_t *lt = get_bucket_head(uid)->next;
 
-  for (;lt && lt->uid != uid ; lt = lt->next) ;
+  for (; lt && lt->uid != uid; lt = lt->next)
+    ;
   return lt;
 }
 

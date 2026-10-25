@@ -117,6 +117,11 @@ void extract_script(void *thing, int type)
   obj_data *obj;
   room_data *room;
 
+  if (!thing) {
+    log("SYSERR: NULL thing passed to extract_script().");
+    return;
+  }
+
   switch (type) {
     case MOB_TRIGGER:
       mob = (struct char_data *)thing;
@@ -133,7 +138,13 @@ void extract_script(void *thing, int type)
       sc = SCRIPT(room);
       SCRIPT(room) = NULL;
       break;
+    default:
+      log("SYSERR: Invalid script type %d passed to extract_script().", type);
+      return;
   }
+
+  if (!sc)
+    return;
 
 #if 1 /* debugging */
   {

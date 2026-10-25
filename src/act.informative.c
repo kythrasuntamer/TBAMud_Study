@@ -1506,6 +1506,8 @@ ACMD(do_users)
   one_argument(argument, arg);
 
   for (d = descriptor_list; d; d = d->next) {
+    tch = NULL;
+
     if (STATE(d) != CON_PLAYING && playing)
       continue;
     if (STATE(d) == CON_PLAYING && deadweight)
