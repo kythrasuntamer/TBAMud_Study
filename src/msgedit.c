@@ -169,7 +169,7 @@ static void show_messages(struct char_data *ch)
   page_string(ch->desc, buf, TRUE);
 }
 
-#define PRINT_MSG(msg) (msg == NULL ? "#" : msg)
+#define PRINT_MSG(msg) (((msg) == NULL) ? "#" : (msg))
 
 void save_messages_to_disk(void)
 {
