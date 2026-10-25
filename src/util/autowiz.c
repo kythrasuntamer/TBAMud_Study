@@ -75,7 +75,7 @@ void read_file(void)
   char name[MAX_NAME_LENGTH];
   long id = 0;
 
-  sprintf(index_name, "%s%s", LIB_PLRFILES, INDEX_FILE);
+  snprintf(index_name, sizeof(index_name), "%s%s", LIB_PLRFILES, INDEX_FILE);
   if (!(fl = fopen(index_name, "r"))) {
     perror("Error opening playerfile");
     exit(1);
@@ -139,7 +139,7 @@ void sort_names(void)
     for (a = curr_level->names; a && a->next; a = a->next) {
       for (b = a->next; b; b = b->next) {
 	if (strcmp(a->name, b->name) > 0) {
-	  strcpy(temp, a->name);
+	  strlcpy(temp, a->name, sizeof(temp));
 	  strcpy(a->name, b->name);
 	  strcpy(b->name, temp);
 	}
@@ -177,10 +177,10 @@ void write_wizlist(FILE * out, int minlev, int maxlev)
       fputc('~', out);
     fprintf(out, "\n");
 
-    strcpy(buf, "");
+    strlcpy(buf, "", sizeof(buf));
     curr_name = curr_level->names;
     while (curr_name) {
-      strcat(buf, curr_name->name);
+      strlcat(buf, curr_name->name, sizeof(buf));
       if (strlen(buf) > LINE_LEN) {
 	if (curr_level->params->level <= COL_LEVEL)
 	  fprintf(out, IMM_LMARG);
@@ -190,14 +190,14 @@ void write_wizlist(FILE * out, int minlev, int maxlev)
 	    fputc(' ', out);
 	}
 	fprintf(out, "%s\n", buf);
-	strcpy(buf, "");
+	strlcpy(buf, "", sizeof(buf));
       } else {
 	if (curr_level->params->level <= COL_LEVEL) {
 	  for (j = 1; j <= (IMM_NSIZE - (int)strlen(curr_name->name)); j++)
-	    strcat(buf, " ");
+	    strlcat(buf, " ", sizeof(buf));
 	}
 	if (curr_level->params->level > COL_LEVEL)
-	  strcat(buf, "   ");
+	  strlcat(buf, "   ", sizeof(buf));
       }
       curr_name = curr_name->next;
     }
@@ -284,7 +284,7 @@ int get_line(FILE * fl, char *buf)
   } while (*temp == '*' || *temp == '\n');
 
   temp[strlen(temp) - 1] = '\0';
-  strcpy(buf, temp);
+  strlcpy(buf, temp, sizeof(buf));
   return (lines);
 }
 
