@@ -7,8 +7,8 @@
 * Morgaelin - quest.h                     *
 * Copyright (C) 1997 MS                                                  *
 *********************************************************************** */
-#ifndef _QUEST_H_
-#define _QUEST_H_
+#ifndef TBAMUD_QUEST_H_INCLUDED
+#define TBAMUD_QUEST_H_INCLUDED
 
 /* Aquest related defines ********************************************* */
 #define AQ_UNDEFINED       -1   /* (R) Quest unavailable                */
@@ -144,4 +144,4 @@ int save_quests(zone_rnum zone_num);
 extern const char *aq_flags[];       /* names for quest flags (quest.c) */
 extern const char *quest_types[];    /* named for quest types (quest.c) */
 
-#endif /* _QUEST_H_ */
+#endif /* TBAMUD_QUEST_H_INCLUDED */
