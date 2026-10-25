@@ -289,7 +289,7 @@ void parse_edit_action(int command, char *string, struct descriptor_data *d)
     }
     *buf = '\0';
     if (line_high < 999999 || line_low > 1)
-      snprintf(buf, sizeof(buf), "Current buffer range [%d - %d]:\r\n", line_low, line_high);
+      tb_snprintf(buf, sizeof(buf), "Current buffer range [%d - %d]:\r\n", line_low, line_high);
     i = 1;
     total_len = 0;
     s = *d->str;
@@ -317,7 +317,7 @@ void parse_edit_action(int command, char *string, struct descriptor_data *d)
     } else
       strncat(buf, t, sizeof(buf) - strlen(buf) - 1);
     /* This is kind of annoying...but some people like it. */
-    snprintf(buf + strlen(buf), sizeof(buf) - strlen(buf), "\r\n%d line%sshown.\r\n", total_len, (total_len != 1) ? "s " : " ");
+    tb_snprintf(buf + strlen(buf), sizeof(buf) - strlen(buf), "\r\n%d line%sshown.\r\n", total_len, (total_len != 1) ? "s " : " ");
     page_string(d, buf, TRUE);
     break;
   case PARSE_LIST_NUM:
@@ -368,7 +368,7 @@ void parse_edit_action(int command, char *string, struct descriptor_data *d)
         temp = *s;
         *s = '\0';
         char buf3[13];
-        snprintf(buf3, sizeof(buf3), "%4d: ", (i - 1));
+        tb_snprintf(buf3, sizeof(buf3), "%4d: ", (i - 1));
         strncat(buf, buf3, sizeof(buf) - strlen(buf) - 1);
         strncat(buf, t, sizeof(buf) - strlen(buf) - 1);
         *s = temp;
@@ -631,7 +631,7 @@ int format_text(char **ptr_string, int mode, struct descriptor_data *d, unsigned
         color_chars = count_color_chars(start);
       } else if (*flow == '\"' || *flow == '\'') {
         char buf[MAX_STRING_LENGTH - 1];
-        snprintf(buf, sizeof(buf), "%c  ", *flow);
+        tb_snprintf(buf, sizeof(buf), "%c  ", *flow);
         strncat(formatted, buf, sizeof(formatted) - strlen(formatted) - 1);
         flow++;
         line_chars++;
