@@ -308,7 +308,7 @@ ACMD(do_msgedit)
     return;  
   }
   
-  if ((num = atoi(argument)) < 0) {
+  if ((num = tb_parse_int_or_zero(argument)) < 0) {
     send_to_char(ch, "You must select a message # between 0 and %d.\r\n", MAX_MESSAGES);
     return;
   }
@@ -556,7 +556,7 @@ void msgedit_parse(struct descriptor_data *d, char *arg)
       msgedit_main_menu(d);
     return;
     case MSGEDIT_TYPE:
-      OLC_MSG_LIST(d)->a_type = LIMIT(atoi(arg), 0, 500);
+      OLC_MSG_LIST(d)->a_type = LIMIT(tb_parse_int_or_zero(arg), 0, 500);
     break;
     case MSGEDIT_DEATH_CHAR:
       if (!genolc_checkstring(d, arg))
