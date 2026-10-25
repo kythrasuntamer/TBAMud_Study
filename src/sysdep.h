@@ -666,6 +666,97 @@ static inline int tb_fclose_checked_at(FILE *stream, const char *context,
 #define tb_fclose_checked(stream, context) \
   tb_fclose_checked_at((stream), (context), __FILE__, __LINE__, __func__)
 
+/*
+ * Replace a live file with a fully-written temporary file.  On platforms
+ * where rename() cannot replace an existing destination, fall back to a
+ * backup/rollback sequence.  A failed commit never intentionally discards
+ * the last known-good destination.
+ */
+static inline int tb_replace_file_checked_at(const char *temp_path,
+                                             const char *dest_path,
+                                             const char *source_file,
+                                             int source_line,
+                                             const char *source_func)
+{
+  char *backup_path;
+  size_t backup_len;
+  int first_errno;
+
+  if (temp_path == NULL || dest_path == NULL) {
+    tb_report_error_at("rename", "invalid replacement path", 0,
+                       source_file, source_line, source_func);
+    return 0;
+  }
+
+  if (rename(temp_path, dest_path) == 0)
+    return 1;
+
+  first_errno = errno;
+  backup_len = strlen(dest_path) + sizeof(".bak");
+  backup_path = (char *)malloc(backup_len);
+  if (backup_path == NULL) {
+    tb_report_error_at("malloc", "replacement backup path", errno,
+                       source_file, source_line, source_func);
+    errno = first_errno;
+    tb_report_error_at("rename", dest_path, first_errno,
+                       source_file, source_line, source_func);
+    return 0;
+  }
+
+  if (snprintf(backup_path, backup_len, "%s.bak", dest_path) < 0) {
+    free(backup_path);
+    tb_report_error_at("snprintf", "replacement backup path", 0,
+                       source_file, source_line, source_func);
+    return 0;
+  }
+
+  if (remove(backup_path) != 0 && errno != ENOENT) {
+    int saved_errno = errno;
+    tb_report_error_at("remove", backup_path, saved_errno,
+                       source_file, source_line, source_func);
+    free(backup_path);
+    return 0;
+  }
+
+  if (rename(dest_path, backup_path) != 0) {
+    int saved_errno = errno;
+    errno = first_errno;
+    tb_report_error_at("rename", dest_path, first_errno,
+                       source_file, source_line, source_func);
+    errno = saved_errno;
+    free(backup_path);
+    return 0;
+  }
+
+  if (rename(temp_path, dest_path) != 0) {
+    int commit_errno = errno;
+
+    if (rename(backup_path, dest_path) != 0) {
+      int rollback_errno = errno;
+      tb_report_error_at("rename", "rollback destination restore",
+                         rollback_errno, source_file, source_line, source_func);
+    }
+
+    tb_report_error_at("rename", temp_path, commit_errno,
+                       source_file, source_line, source_func);
+    free(backup_path);
+    errno = commit_errno;
+    return 0;
+  }
+
+  if (remove(backup_path) != 0 && errno != ENOENT) {
+    int saved_errno = errno;
+    tb_report_error_at("remove", backup_path, saved_errno,
+                       source_file, source_line, source_func);
+  }
+
+  free(backup_path);
+  return 1;
+}
+
+#define tb_replace_file_checked(temp_path, dest_path) \
+  tb_replace_file_checked_at((temp_path), (dest_path), __FILE__, __LINE__, __func__)
+
 static inline void tb_strftime_at(char *dst, size_t dst_size,
                                   const char *source_file, int source_line,
                                   const char *source_func,
