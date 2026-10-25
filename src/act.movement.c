@@ -276,7 +276,7 @@ int do_simple_move(struct char_data *ch, int dir, int need_specials_check)
   /* Generate the leave message and display to others in the was_in room. */
   if (!AFF_FLAGGED(ch, AFF_SNEAK))
   {
-    snprintf(leave_message, sizeof(leave_message), "$n leaves %s.", dirs[dir]);
+    tb_snprintf(leave_message, sizeof(leave_message), "$n leaves %s.", dirs[dir]);
     act(leave_message, TRUE, ch, 0, 0, TO_ROOM);
   }
 
@@ -575,7 +575,7 @@ static void do_doorcmd(struct char_data *ch, struct obj_data *obj, int door, int
 
   /* Notify the room. */
   if (len < sizeof(buf))
-    snprintf(buf + len, sizeof(buf) - len, "%s%s.",
+      tb_snprintf(buf + len, sizeof(buf) - len, "%s%s.",
       obj ? "" : "the ", obj ? "$p" : EXIT(ch, door)->keyword ? "$F" : "door");
   if (!obj || IN_ROOM(obj) != NOWHERE)
     act(buf, FALSE, ch, obj, obj ? 0 : EXIT(ch, door)->keyword, TO_ROOM);
