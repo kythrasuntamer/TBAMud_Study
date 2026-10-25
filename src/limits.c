@@ -291,6 +291,19 @@ void gain_exp(struct char_data *ch, int gain)
 
     gain = MIN(CONFIG_MAX_EXP_GAIN, gain);	/* put a cap on the max gain per kill */
     GET_EXP(ch) += gain;
+    if (GET_LEVEL(ch) == LVL_IMMORT - 1) {
+      /* Earn one AP for each 100,000 XP gained at the mortal cap.
+       * Keep normal XP accounting unchanged for score and persistence. */
+      int progress = MIN(99999, MAX(0, GET_ENDGAME_XP(ch)));
+      int points = (progress + gain) / 100000;
+      GET_ENDGAME_XP(ch) = (progress + gain) % 100000;
+      if (points > 0) {
+        GET_ENDGAME_AP(ch) = MIN(1000000, GET_ENDGAME_AP(ch) + points);
+        send_to_char(ch, "You gained %d Endgame Advancement Point%s!\r\n",
+            points, points == 1 ? "" : "s");
+        save_char(ch);
+      }
+    }
     while (GET_LEVEL(ch) < LVL_IMMORT - 1 &&
            GET_LEVEL(ch) < LVL_IMMORT - CONFIG_NO_MORT_TO_IMMORT &&
 	GET_EXP(ch) >= level_exp(GET_CLASS(ch), GET_LEVEL(ch) + 1)) {
