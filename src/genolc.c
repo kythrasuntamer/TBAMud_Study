@@ -559,6 +559,7 @@ static int export_save_shops(zone_rnum zrnum)
   struct shop_data *shop;
 
   if (!(shop_file = fopen("world/export/qq.shp", "w"))) {
+    TB_REPORT_ERRNO("fopen", "world/export/qq.shp");
     mudlog(BRF, LVL_GOD, TRUE, "SYSERR: export_save_shops : Cannot open shop file!");
     return FALSE;
   } else if (fprintf(shop_file, "CircleMUD v3.0 Shop File~\n") < 0) {
@@ -649,6 +650,7 @@ static int export_save_mobiles(zone_rnum rznum)
   mob_rnum rmob;
 
   if (!(mob_file = fopen("world/export/qq.mob", "w"))) {
+    TB_REPORT_ERRNO("fopen", "world/export/qq.mob");
     mudlog(BRF, LVL_GOD, TRUE, "SYSERR: export_save_mobiles : Cannot open file!");
     return FALSE;
   }
@@ -720,6 +722,7 @@ static int export_save_zone(zone_rnum zrnum)
   FILE *zone_file;
 
   if (!(zone_file = fopen("world/export/qq.zon", "w"))) {
+    TB_REPORT_ERRNO("fopen", "world/export/qq.zon");
     mudlog(BRF, LVL_GOD, TRUE, "SYSERR: export_save_zone : Cannot open file!");
     return FALSE;
   }
@@ -855,6 +858,7 @@ static int export_save_objects(zone_rnum zrnum)
   struct extra_descr_data *ex_desc;
 
   if (!(obj_file = fopen("world/export/qq.obj", "w"))) {
+    TB_REPORT_ERRNO("fopen", "world/export/qq.obj");
     mudlog(BRF, LVL_GOD, TRUE, "SYSERR: export_save_objects : Cannot open file!");
     return FALSE;
   }
@@ -961,6 +965,7 @@ static int export_save_rooms(zone_rnum zrnum)
   char buf1[MAX_STRING_LENGTH];
 
   if (!(room_file = fopen("world/export/qq.wld", "w"))) {
+    TB_REPORT_ERRNO("fopen", "world/export/qq.wld");
     mudlog(BRF, LVL_GOD, TRUE, "SYSERR: export_save_rooms : Cannot open file!");
     return FALSE;
   }
@@ -1100,6 +1105,7 @@ static int export_save_triggers(zone_rnum zrnum)
   char bitBuf[MAX_INPUT_LENGTH];
 
   if (!(trig_file = fopen("world/export/qq.trg", "w"))) {
+    TB_REPORT_ERRNO("fopen", "world/export/qq.trg");
     mudlog(BRF, LVL_GOD, TRUE, "SYSERR: export_save_triggers : Cannot open file!");
     return FALSE;
   }
