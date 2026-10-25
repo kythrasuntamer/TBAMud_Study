@@ -160,13 +160,13 @@ void write_wizlist(FILE * out, int minlev, int maxlev)
     if (curr_level->params->level < minlev ||
 	curr_level->params->level > maxlev)
       continue;
-    i = 39 - (strlen(curr_level->params->level_name) >> 1);
+    i = 39 - ((int)strlen(curr_level->params->level_name) >> 1);
     for (j = 1; j <= i; j++)
       fputc(' ', out);
     fprintf(out, "%s\n", curr_level->params->level_name);
     for (j = 1; j <= i; j++)
       fputc(' ', out);
-    for (j = 1; j <= strlen(curr_level->params->level_name); j++)
+    for (j = 1; j <= (int)strlen(curr_level->params->level_name); j++)
       fputc('~', out);
     fprintf(out, "\n");
 
@@ -186,7 +186,7 @@ void write_wizlist(FILE * out, int minlev, int maxlev)
 	strcpy(buf, "");
       } else {
 	if (curr_level->params->level <= COL_LEVEL) {
-	  for (j = 1; j <= (IMM_NSIZE - strlen(curr_name->name)); j++)
+	  for (j = 1; j <= (IMM_NSIZE - (int)strlen(curr_name->name)); j++)
 	    strcat(buf, " ");
 	}
 	if (curr_level->params->level > COL_LEVEL)
@@ -259,12 +259,11 @@ char *CAP(char *txt)
  * file. */
 int get_line(FILE * fl, char *buf)
 {
-  char temp[256], *buf2;
+  char temp[256];
   int lines = 0;
 
   do {
-    buf2 = fgets(temp, 256, fl);
-    if (feof(fl))
+    if (fgets(temp, sizeof(temp), fl) == NULL)
       return (0);
     lines++;
   } while (*temp == '*' || *temp == '\n');
