@@ -21,6 +21,12 @@
 /* Define as the return type of signal handlers (int or void).  */
 #define RETSIGTYPE @RETSIGTYPE@
 
+/* Build provenance for diagnostics and crash reports. */
+#define TB_BUILD_SHA "@TB_BUILD_SHA@"
+#define TB_BUILD_COMPILER "@TB_BUILD_COMPILER@"
+#define TB_BUILD_TYPE "@TB_BUILD_TYPE@"
+#define TB_BUILD_SANITIZERS "@TB_BUILD_SANITIZERS@"
+
 /* Define to `unsigned' if <sys/types.h> doesn't define.  */
 #cmakedefine size_t @size_t@
 
