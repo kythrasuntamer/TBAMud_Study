@@ -1494,7 +1494,7 @@ char *strpaste(char *str1, char *str2, char *joiner)
     /* Add the joiner */
     if((rp - ret) + jlen >= MAX_STRING_LENGTH)
       break;
-    strlcpy(rp, joiner, strlen(joiner) + 1);
+    memcpy(rp, joiner, (size_t)jlen);
     rp += jlen;
 
      /* Copy line from str2 */
