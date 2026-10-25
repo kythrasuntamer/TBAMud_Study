@@ -1189,7 +1189,9 @@ int get_line(FILE *fl, char *buf)
   while (sl > 0 && (temp[sl - 1] == '\n' || temp[sl - 1] == '\r'))
     temp[--sl] = '\0';
 
-  strlcpy(buf, temp, sizeof(buf)); /* strcpy: OK, if buf >= READ_SIZE (256) */
+  /* buf is a pointer here: sizeof(buf) is only pointer size, not capacity.
+   * The API requires callers to supply at least READ_SIZE bytes. */
+  strlcpy(buf, temp, READ_SIZE);
   return (lines);
 }
 
