@@ -57,10 +57,30 @@ static struct mail_t *read_mail_record(FILE *mail_file)
   if (!get_line(mail_file, line))
   	return NULL;
 
-  if (sscanf(line, "### %ld %ld %ld", &recipient, &sender, (long *)&sent_time) != 3) {
-  	log("Mail system - fatal error - malformed mail header");
-  	log("Line was: %s", line);
-  	return NULL;
+  {
+    char recipient_text[32], sender_text[32], time_text[32];
+    char *end;
+    long parsed_time;
+
+    if (sscanf(line, "### %31s %31s %31s", recipient_text, sender_text, time_text) != 3) {
+      log("Mail system - fatal error - malformed mail header");
+      log("Line was: %s", line);
+      return NULL;
+    }
+
+    errno = 0;
+    recipient = strtol(recipient_text, &end, 10);
+    if (errno == ERANGE || end == recipient_text || *end != '\0')
+      return NULL;
+    errno = 0;
+    sender = strtol(sender_text, &end, 10);
+    if (errno == ERANGE || end == sender_text || *end != '\0')
+      return NULL;
+    errno = 0;
+    parsed_time = strtol(time_text, &end, 10);
+    if (errno == ERANGE || end == time_text || *end != '\0')
+      return NULL;
+    sent_time = (time_t)parsed_time;
   }
 
   CREATE(record, struct mail_t, 1);
@@ -236,8 +256,14 @@ char *read_delete(long recipient)
   tb_fclose(mail_file);
   tb_fclose(new_file);
 
-  remove(MAIL_FILE);
-  rename(MAIL_FILE_TMP, MAIL_FILE);
+  if (remove(MAIL_FILE) != 0 && errno != ENOENT) {
+    log("SYSERR: Unable to remove old mail file: %s", strerror(errno));
+    return NULL;
+  }
+  if (rename(MAIL_FILE_TMP, MAIL_FILE) != 0) {
+    log("SYSERR: Unable to install new mail file: %s", strerror(errno));
+    return NULL;
+  }
 
   return strdup(buf);
 }

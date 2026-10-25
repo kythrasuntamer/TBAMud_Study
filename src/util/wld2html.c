@@ -7,7 +7,7 @@
 *  Based on the Circle 3.0 syntax checker program                         *
 ************************************************************************ */
 
-#define log(msg) fprintf(stderr, "%s\n", msg)
+#define log(msg) tb_fprintf(stderr, "%s\n", (msg))
 
 #include "conf.h"
 #include "sysdep.h"
@@ -56,7 +56,53 @@ char buf1[MAX_STRING_LENGTH];
 char buf2[MAX_STRING_LENGTH];
 char arg[MAX_STRING_LENGTH];
 
-int get_line(FILE * fl, char *buf);
+int get_line(FILE * fl, char *buf, size_t buflen);
+
+static int parse_int_token(char **cursor, int *out)
+{
+  char *p, *end;
+  long value;
+
+  if (cursor == NULL || *cursor == NULL || out == NULL)
+    return 0;
+
+  p = *cursor;
+  while (isspace((unsigned char)*p))
+    p++;
+
+  errno = 0;
+  value = strtol(p, &end, 10);
+  if (p == end || errno == ERANGE || value < INT_MIN || value > INT_MAX)
+    return 0;
+
+  *out = (int)value;
+  *cursor = end;
+  return 1;
+}
+
+static int parse_word_token(char **cursor, char *out, size_t out_size)
+{
+  char *p;
+  size_t len = 0;
+
+  if (cursor == NULL || *cursor == NULL || out == NULL || out_size == 0)
+    return 0;
+
+  p = *cursor;
+  while (isspace((unsigned char)*p))
+    p++;
+
+  while (p[len] != '\0' && !isspace((unsigned char)p[len]))
+    len++;
+
+  if (len == 0 || len >= out_size)
+    return 0;
+
+  memcpy(out, p, len);
+  out[len] = '\0';
+  *cursor = p + len;
+  return 1;
+}
 int real_room(int virtual, int reference);
 
 /* room-related structures *********************************************** */
@@ -311,7 +357,7 @@ void discrete_load(FILE * fl)
   char line[256];
 
   for (;;) {
-    if (!get_line(fl, line)) {
+    if (!get_line(fl, line, sizeof(line))) {
       tb_fprintf(stderr, "Format error after room #%d\n", nr);
       exit(1);
     }
@@ -323,9 +369,12 @@ void discrete_load(FILE * fl)
 
     if (*line == '#') {
       last = nr;
-      if (sscanf(line, "#%d", &nr) != 1) {
-	tb_fprintf(stderr, "Format error after room #%d\n", last);
-	exit(1);
+      {
+        char *cursor = line + 1;
+        if (!parse_int_token(&cursor, &nr)) {
+          tb_fprintf(stderr, "Format error after room #%d\n", last);
+          exit(1);
+        }
       }
       if (nr >= 99999)
 	return;
@@ -376,9 +425,18 @@ void parse_room(FILE * fl, int virtual_nr)
   world[room_nr].name = fread_string(fl, buf2);
   world[room_nr].description = fread_string(fl, buf2);
 
-  if (!get_line(fl, line) || sscanf(line, " %d %s %d ", t, flags, t + 2) != 3) {
+  if (!get_line(fl, line, sizeof(line))) {
     tb_fprintf(stderr, "Format error in room #%d\n", virtual_nr);
     exit(1);
+  }
+  {
+    char *cursor = line;
+    if (!parse_int_token(&cursor, &t[0]) ||
+        !parse_word_token(&cursor, flags, sizeof(flags)) ||
+        !parse_int_token(&cursor, &t[2])) {
+      tb_fprintf(stderr, "Format error in room #%d\n", virtual_nr);
+      exit(1);
+    }
   }
   /* t[0] is the zone number; ignored with the zone-file system */
   world[room_nr].room_flags = asciiflag_conv(flags);
@@ -394,7 +452,7 @@ void parse_room(FILE * fl, int virtual_nr)
   tb_snprintf(buf, sizeof(buf), "Format error in room #%d (expecting D/E/S)", virtual_nr);
 
   for (;;) {
-    if (!get_line(fl, line)) {
+    if (!get_line(fl, line, sizeof(line))) {
       tb_fprintf(stderr, "%s\n", buf);
       exit(1);
     }
@@ -435,13 +493,18 @@ void setup_dir(FILE * fl, int room, int dir)
   world[room].dir_option[dir]->general_description = fread_string(fl, buf2);
   world[room].dir_option[dir]->keyword = fread_string(fl, buf2);
 
-  if (!get_line(fl, line)) {
+  if (!get_line(fl, line, sizeof(line))) {
     tb_fprintf(stderr, "Format error, %s\n", buf2);
     exit(1);
   }
-  if (sscanf(line, " %d %d %d ", t, t + 1, t + 2) != 3) {
-    tb_fprintf(stderr, "Format error, %s\n", buf2);
-    exit(1);
+  {
+    char *cursor = line;
+    if (!parse_int_token(&cursor, &t[0]) ||
+        !parse_int_token(&cursor, &t[1]) ||
+        !parse_int_token(&cursor, &t[2])) {
+      tb_fprintf(stderr, "Format error, %s\n", buf2);
+      exit(1);
+    }
   }
   if (t[0] == 1)
     world[room].dir_option[dir]->exit_info = EX_ISDOOR;
@@ -513,7 +576,7 @@ char *fread_string(FILE * fl, char *error)
  * The newline character is removed from the input.  Lines which begin
  * with '*' are considered to be comments.
  */
-int get_line(FILE * fl, char *buf)
+int get_line(FILE * fl, char *buf, size_t buflen)
 {
   char temp[256];
 
@@ -527,7 +590,7 @@ int get_line(FILE * fl, char *buf)
   if (feof(fl))
     return (0);
   else {
-    strlcpy(buf, temp, sizeof(buf));
+    strlcpy(buf, temp, buflen);
     return (1);
   }
 }
