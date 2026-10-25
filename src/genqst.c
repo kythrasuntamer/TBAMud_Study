@@ -196,7 +196,7 @@ int save_quests(zone_rnum zone_num)
         zone_table[zone_num].number,
  genolc_zone_bottom(zone_num), zone_table[zone_num].top);
 
-  snprintf(filename, sizeof(filename), "%s/%d.new",
+  tb_snprintf(filename, sizeof(filename), "%s/%d.new",
  QST_PREFIX, zone_table[zone_num].number);
   if (!(sf = fopen(filename, "w"))) {
     perror("SYSERR: save_quests");
@@ -251,7 +251,7 @@ int save_quests(zone_rnum zone_num)
       );
       
       if(n < MAX_STRING_LENGTH) {
-        fprintf(sf, "%s", convert_from_tabs(buf));
+        tb_fprintf(sf, "%s", convert_from_tabs(buf));
         num_quests++;
       } else {
         mudlog(BRF,LVL_BUILDER,TRUE, 
@@ -261,11 +261,11 @@ int save_quests(zone_rnum zone_num)
     }
   }
   /* Write the final line and close it.  */
-  fprintf(sf, "$~\n");
-  fclose(sf);
+  tb_fprintf(sf, "$~\n");
+  tb_fclose(sf);
 
   /* Old file we're replacing. */
-  snprintf(oldname, sizeof(oldname), "%s/%d.qst",
+  tb_snprintf(oldname, sizeof(oldname), "%s/%d.qst",
            QST_PREFIX, zone_table[zone_num].number);
   remove(oldname);
   rename(filename, oldname);
