@@ -529,7 +529,10 @@ int format_text(char **ptr_string, int mode, struct descriptor_data *d, unsigned
       return 0;
     }
     strncat(formatted, strcat(start, "\n"), sizeof(formatted) - strlen(formatted) - 1);
-    flow = strstr(flow, "\n");
+    if ((flow = strstr(flow, "\n")) == NULL) {
+      write_to_output(d, "There aren't that many lines!\r\n");
+      return 0;
+    }
     strncpy(str, ++flow, sizeof(str) - 1);
   }
 
