@@ -168,3 +168,18 @@ disqualify demonstrably non-PvP stock areas: evaluate the actual source.
 Never automatically download and publish all archives: this is an eligibility
 and permissions review, not a blanket license. Keep rejected and unresolved
 sources out of the converted world and public repository.
+
+## Additional eligibility: combat-oriented PvE only
+
+The source game must offer **substantive player-versus-environment combat**
+against NPCs or monsters. Reject social-only, peaceful exploration, building-
+only, roleplay-only and other noncombat MUDs even if they have no PvP.
+
+The eligible intersection is **PvE combat present AND PvP absent**.
+A game's combat rules, available opponents and PvP restrictions must be
+verified from source documentation or code. Unknowns are held for review.
+Do not confuse an area's own peaceful theme with the source game's rules;
+apply this criterion to the originating game, not individual rooms.
+
+This is an import eligibility policy only; no third-party area files are
+included or activated by this change.
