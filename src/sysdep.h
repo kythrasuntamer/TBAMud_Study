@@ -579,6 +579,47 @@ static inline void tb_fclose_at(FILE *stream, const char *source_file,
 #define tb_fclose(stream) \
   tb_fclose_at((stream), __FILE__, __LINE__, __func__)
 
+/*
+ * Status-returning variants for transactional code.  These both report the
+ * failure at the call site and let the caller contain/rollback the operation.
+ */
+static inline int tb_fflush_checked_at(FILE *stream, const char *context,
+                                       const char *source_file, int source_line,
+                                       const char *source_func)
+{
+  if (fflush(stream) == EOF) {
+    int saved_errno = errno;
+    tb_report_error_at("fflush", context ? context : "stdio stream",
+                       saved_errno, source_file, source_line, source_func);
+    return 0;
+  }
+  return 1;
+}
+
+#define tb_fflush_checked(stream, context) \
+  tb_fflush_checked_at((stream), (context), __FILE__, __LINE__, __func__)
+
+static inline int tb_fclose_checked_at(FILE *stream, const char *context,
+                                       const char *source_file, int source_line,
+                                       const char *source_func)
+{
+  if (stream == NULL) {
+    tb_report_error_at("fclose", context ? context : "NULL stream", 0,
+                       source_file, source_line, source_func);
+    return 0;
+  }
+  if (fclose(stream) == EOF) {
+    int saved_errno = errno;
+    tb_report_error_at("fclose", context ? context : "stdio stream",
+                       saved_errno, source_file, source_line, source_func);
+    return 0;
+  }
+  return 1;
+}
+
+#define tb_fclose_checked(stream, context) \
+  tb_fclose_checked_at((stream), (context), __FILE__, __LINE__, __func__)
+
 static inline void tb_strftime_at(char *dst, size_t dst_size,
                                   const char *source_file, int source_line,
                                   const char *source_func,
