@@ -413,7 +413,9 @@ void board_save_board(int board_type)
   char *tmp1, *tmp2 = NULL;
 
   if (!num_of_msgs[board_type]) {
-    remove(FILENAME(board_type));
+    if (remove(FILENAME(board_type)) != 0 && errno != ENOENT)
+      log("SYSERR: Unable to remove empty board file %s: %s",
+          FILENAME(board_type), strerror(errno));
     return;
   }
   if (!(fl = fopen(FILENAME(board_type), "wb"))) {
@@ -563,5 +565,7 @@ void board_clear_board(int board_type)
 static void board_reset_board(int board_type)
 {
   board_clear_board(board_type);
-  remove(FILENAME(board_type));
+  if (remove(FILENAME(board_type)) != 0 && errno != ENOENT)
+    log("SYSERR: Unable to remove board file %s: %s",
+        FILENAME(board_type), strerror(errno));
 }
