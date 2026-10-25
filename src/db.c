@@ -2060,7 +2060,6 @@ char *parse_object(FILE *obj_f, int nr)
 
   strlcat(buf2, ", after numeric constants\n"
           "...expecting 'E', 'A', '
-  j = 0;
 
   for (;;) {
     if (!get_line(obj_f, line)) {
