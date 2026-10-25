@@ -527,6 +527,208 @@ static inline const char *tb_error_category_name(tb_error_category category)
   }
 }
 
+/*
+ * Best-effort symbolic errno names.  Keep this allocation-free and side-effect
+ * free: the error reporter must remain usable when memory, stdio, or another
+ * subsystem is already damaged.
+ */
+static inline const char *tb_errno_name(int errnum)
+{
+  switch (errnum) {
+#ifdef E2BIG
+  case E2BIG: return "E2BIG";
+#endif
+#ifdef EACCES
+  case EACCES: return "EACCES";
+#endif
+#ifdef EADDRINUSE
+  case EADDRINUSE: return "EADDRINUSE";
+#endif
+#ifdef EADDRNOTAVAIL
+  case EADDRNOTAVAIL: return "EADDRNOTAVAIL";
+#endif
+#ifdef EAGAIN
+  case EAGAIN: return "EAGAIN";
+#endif
+#ifdef EBADF
+  case EBADF: return "EBADF";
+#endif
+#ifdef EBUSY
+  case EBUSY: return "EBUSY";
+#endif
+#ifdef ECONNABORTED
+  case ECONNABORTED: return "ECONNABORTED";
+#endif
+#ifdef ECONNREFUSED
+  case ECONNREFUSED: return "ECONNREFUSED";
+#endif
+#ifdef ECONNRESET
+  case ECONNRESET: return "ECONNRESET";
+#endif
+#ifdef EEXIST
+  case EEXIST: return "EEXIST";
+#endif
+#ifdef EFAULT
+  case EFAULT: return "EFAULT";
+#endif
+#ifdef EFBIG
+  case EFBIG: return "EFBIG";
+#endif
+#ifdef EINTR
+  case EINTR: return "EINTR";
+#endif
+#ifdef EINVAL
+  case EINVAL: return "EINVAL";
+#endif
+#ifdef EIO
+  case EIO: return "EIO";
+#endif
+#ifdef EISDIR
+  case EISDIR: return "EISDIR";
+#endif
+#ifdef EMFILE
+  case EMFILE: return "EMFILE";
+#endif
+#ifdef ENFILE
+  case ENFILE: return "ENFILE";
+#endif
+#ifdef ENAMETOOLONG
+  case ENAMETOOLONG: return "ENAMETOOLONG";
+#endif
+#ifdef ENETDOWN
+  case ENETDOWN: return "ENETDOWN";
+#endif
+#ifdef ENETUNREACH
+  case ENETUNREACH: return "ENETUNREACH";
+#endif
+#ifdef ENOENT
+  case ENOENT: return "ENOENT";
+#endif
+#ifdef ENOMEM
+  case ENOMEM: return "ENOMEM";
+#endif
+#ifdef ENOSPC
+  case ENOSPC: return "ENOSPC";
+#endif
+#ifdef ENOTDIR
+  case ENOTDIR: return "ENOTDIR";
+#endif
+#ifdef ENOTEMPTY
+  case ENOTEMPTY: return "ENOTEMPTY";
+#endif
+#ifdef ENOTSOCK
+  case ENOTSOCK: return "ENOTSOCK";
+#endif
+#ifdef ENOTSUP
+  case ENOTSUP: return "ENOTSUP";
+#endif
+#ifdef EPERM
+  case EPERM: return "EPERM";
+#endif
+#ifdef EPIPE
+  case EPIPE: return "EPIPE";
+#endif
+#ifdef EROFS
+  case EROFS: return "EROFS";
+#endif
+#ifdef ETIMEDOUT
+  case ETIMEDOUT: return "ETIMEDOUT";
+#endif
+  case 0: return "NONE";
+  default: return "UNKNOWN";
+  }
+}
+
+/*
+ * Escape record-breaking/control characters so each diagnostic is exactly one
+ * physical line.  That makes logs grep-friendly and prevents untrusted context
+ * strings from forging additional log records.
+ */
+static inline size_t tb_diag_escape(char *dst, size_t dst_size, const char *src)
+{
+  size_t used = 0;
+  const unsigned char *p = (const unsigned char *)(src ? src : "(null)");
+
+  if (dst == NULL || dst_size == 0)
+    return 0;
+
+  while (*p != '\0' && used + 1 < dst_size) {
+    unsigned char ch = *p++;
+
+    if ((ch == '\\' || ch == '"') && used + 2 < dst_size) {
+      dst[used++] = '\\';
+      dst[used++] = (char)ch;
+    } else if (ch == '\n' && used + 2 < dst_size) {
+      dst[used++] = '\\';
+      dst[used++] = 'n';
+    } else if (ch == '\r' && used + 2 < dst_size) {
+      dst[used++] = '\\';
+      dst[used++] = 'r';
+    } else if (ch == '\t' && used + 2 < dst_size) {
+      dst[used++] = '\\';
+      dst[used++] = 't';
+    } else if (ch < 0x20 || ch == 0x7f) {
+      if (used + 1 >= dst_size)
+        break;
+      dst[used++] = '?';
+    } else {
+      dst[used++] = (char)ch;
+    }
+  }
+
+  dst[used] = '\0';
+  return used;
+}
+
+/*
+ * Emit diagnostics through the lowest-risk path available.  POSIX builds use
+ * write(2), retrying EINTR and handling partial writes.  This deliberately
+ * avoids dependence on the state of the stdio stderr object.  Other platforms
+ * fall back to stdio, with return values checked locally.
+ */
+static inline int tb_diag_emit(const char *record, size_t length)
+{
+  int saved_errno = errno;
+  int ok = 1;
+
+  if (record == NULL) {
+    errno = saved_errno;
+    return 0;
+  }
+
+#if defined(HAVE_UNISTD_H) || defined(POSIX)
+  {
+    size_t offset = 0;
+
+    while (offset < length) {
+      ssize_t written = write(STDERR_FILENO, record + offset, length - offset);
+
+      if (written > 0) {
+        offset += (size_t)written;
+        continue;
+      }
+      if (written < 0 && errno == EINTR)
+        continue;
+
+      ok = 0;
+      break;
+    }
+  }
+#else
+  {
+    FILE *err_stream = stderr;
+
+    if (err_stream == NULL ||
+        fwrite(record, 1, length, err_stream) != length ||
+        fflush(err_stream) == EOF)
+      ok = 0;
+  }
+#endif
+
+  errno = saved_errno;
+  return ok;
+}
+
 static inline void tb_report_domain_error_at(tb_error_severity severity,
                                              tb_error_category category,
                                              const char *operation,
@@ -537,34 +739,86 @@ static inline void tb_report_domain_error_at(tb_error_severity severity,
                                              const char *source_func)
 {
   int caller_errno = errno;
-  FILE *err_stream = stderr;
-  const char *op = operation ? operation : "operation";
-  const char *ctx = context ? context : "(no context)";
-  const char *file = source_file ? source_file : "(unknown file)";
-  const char *func = source_func ? source_func : "(unknown function)";
+  char record[4096];
+  char escaped_op[256];
+  char escaped_ctx[1024];
+  char escaped_file[512];
+  char escaped_func[256];
+  char escaped_error[512];
+  char timestamp[32] = "unknown";
+  const char *error_text = "none";
+  const char *errno_name = tb_errno_name(errnum);
+  long process_id = -1;
+  time_t now;
+  struct tm *utc_tm;
+  int result;
 
-  if (err_stream != NULL) {
-    if (errnum != 0) {
-      (void)fprintf(err_stream,
-                    "%s/%s: operation=%s context=%s error=\"%s\" errno=%d source=%s:%d function=%s\n",
-                    tb_error_severity_name(severity),
-                    tb_error_category_name(category),
-                    op, ctx, strerror(errnum), errnum,
-                    file, source_line, func);
+  (void)tb_diag_escape(escaped_op, sizeof(escaped_op),
+                       operation ? operation : "operation");
+  (void)tb_diag_escape(escaped_ctx, sizeof(escaped_ctx),
+                       context ? context : "(no context)");
+  (void)tb_diag_escape(escaped_file, sizeof(escaped_file),
+                       source_file ? source_file : "(unknown file)");
+  (void)tb_diag_escape(escaped_func, sizeof(escaped_func),
+                       source_func ? source_func : "(unknown function)");
+
+  if (errnum != 0) {
+    const char *candidate = strerror(errnum);
+    error_text = candidate ? candidate : "(strerror unavailable)";
+  }
+  (void)tb_diag_escape(escaped_error, sizeof(escaped_error), error_text);
+
+  now = time(NULL);
+  if (now != (time_t)-1) {
+    utc_tm = gmtime(&now);
+    if (utc_tm != NULL) {
+      size_t stamp_len = strftime(timestamp, sizeof(timestamp),
+                                  "%Y-%m-%dT%H:%M:%SZ", utc_tm);
+      if (stamp_len == 0)
+        (void)snprintf(timestamp, sizeof(timestamp), "%ld", (long)now);
     } else {
-      (void)fprintf(err_stream,
-                    "%s/%s: operation=%s context=%s source=%s:%d function=%s\n",
+      (void)snprintf(timestamp, sizeof(timestamp), "%ld", (long)now);
+    }
+  }
+
+#if defined(HAVE_UNISTD_H) || defined(POSIX)
+  process_id = (long)getpid();
+#endif
+
+  result = snprintf(record, sizeof(record),
+                    "TBERR timestamp=%s pid=%ld severity=%s category=%s "
+                    "operation=\"%s\" context=\"%s\" errno=%d errno_name=%s "
+                    "error=\"%s\" source=\"%s:%d\" function=\"%s\"\n",
+                    timestamp, process_id,
                     tb_error_severity_name(severity),
                     tb_error_category_name(category),
-                    op, ctx, file, source_line, func);
+                    escaped_op, escaped_ctx, errnum, errno_name,
+                    escaped_error, escaped_file, source_line, escaped_func);
+
+  if (result < 0) {
+    static const char fallback[] =
+      "TBERR severity=ERROR category=GENERAL operation=\"diagnostic-format\" "
+      "context=\"failed to format diagnostic record\"\n";
+    (void)tb_diag_emit(fallback, sizeof(fallback) - 1);
+  } else {
+    size_t length = (size_t)result;
+
+    if (length >= sizeof(record)) {
+      static const char suffix[] = " [diagnostic-truncated]\n";
+      size_t suffix_len = sizeof(suffix) - 1;
+
+      length = sizeof(record) - 1;
+      if (length > suffix_len) {
+        length -= suffix_len;
+        memcpy(record + length, suffix, suffix_len);
+        length += suffix_len;
+      }
     }
 
-    /*
-     * Error reports are diagnostic boundaries: push them to the underlying log
-     * immediately and never let logging itself destroy the caller's errno.
-     */
-    (void)fflush(err_stream);
+    (void)tb_diag_emit(record, length);
   }
+
+  /* The caller's error state is part of the diagnostic contract. */
   errno = caller_errno;
 }
 
