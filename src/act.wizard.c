@@ -183,7 +183,7 @@ room_rnum find_target_room(struct char_data *ch, char *rawroomstr)
   }
 
   if (isdigit(*roomstr) && !strchr(roomstr, '.')) {
-    if ((location = real_room((room_vnum)atoi(roomstr))) == NOWHERE) {
+    if ((location = real_room((room_vnum)tb_parse_int_or_zero(roomstr))) == NOWHERE) {
       send_to_char(ch, "No room exists with that number.\r\n");
       return (NOWHERE);
     }
@@ -1003,7 +1003,7 @@ ACMD(do_stat)
     if (!*buf2)
       room = &world[IN_ROOM(ch)];
     else {
-      room_rnum rnum = real_room(atoi(buf2));
+      room_rnum rnum = real_room(tb_parse_int_or_zero(buf2));
       if (rnum == NOWHERE) {
         send_to_char(ch, "That is not a valid room.\r\n");
         return;
@@ -1065,7 +1065,7 @@ ACMD(do_stat)
       print_zone(ch, zone_table[world[IN_ROOM(ch)].zone].number);
       return;
     } else {
-      print_zone(ch, atoi(buf2));
+      print_zone(ch, tb_parse_int_or_zero(buf2));
       return;
     }
   } else {
@@ -1309,8 +1309,8 @@ ACMD(do_load)
     return;
   }
 
-  if (atoi(buf3) > 0  && atoi(buf3) <= 100) {
-    n = atoi(buf3);
+  if (tb_parse_int_or_zero(buf3) > 0  && tb_parse_int_or_zero(buf3) <= 100) {
+    n = tb_parse_int_or_zero(buf3);
   } else {
     n = 1;
   }
@@ -1324,7 +1324,7 @@ ACMD(do_load)
 	  return;
 	}
 
-    if ((r_num = real_mobile(atoi(buf2))) == NOBODY) {
+    if ((r_num = real_mobile(tb_parse_int_or_zero(buf2))) == NOBODY) {
       send_to_char(ch, "There is no monster with that number.\r\n");
       return;
     }
@@ -1346,7 +1346,7 @@ ACMD(do_load)
 	  return;
 	}
 
-    if ((r_num = real_object(atoi(buf2))) == NOTHING) {
+    if ((r_num = real_object(tb_parse_int_or_zero(buf2))) == NOTHING) {
       send_to_char(ch, "There is no object with that number.\r\n");
       return;
     }
@@ -1387,7 +1387,7 @@ ACMD(do_vstat)
 
   switch (LOWER(*buf)) {
   case 'm':
-    if ((r_num = real_mobile(atoi(buf2))) == NOBODY) {
+    if ((r_num = real_mobile(tb_parse_int_or_zero(buf2))) == NOBODY) {
       send_to_char(ch, "There is no monster with that number.\r\n");
       return;
     }
@@ -1397,7 +1397,7 @@ ACMD(do_vstat)
     extract_char(mob);
     break;
   case 'o':
-    if ((r_num = real_object(atoi(buf2))) == NOTHING) {
+    if ((r_num = real_object(tb_parse_int_or_zero(buf2))) == NOTHING) {
       send_to_char(ch, "There is no object with that number.\r\n");
       return;
     }
@@ -1406,19 +1406,19 @@ ACMD(do_vstat)
     extract_obj(obj);
     break;
   case 'r':
-    sprintf(buf2, "room %d", atoi(buf2));
+    sprintf(buf2, "room %d", tb_parse_int_or_zero(buf2));
     do_stat(ch, buf2, 0, 0);
     break;
   case 'z':
-    sprintf(buf2, "zone %d", atoi(buf2));
+    sprintf(buf2, "zone %d", tb_parse_int_or_zero(buf2));
     do_stat(ch, buf2, 0, 0);
     break;
   case 't':
-    sprintf(buf2, "%d", atoi(buf2));
+    sprintf(buf2, "%d", tb_parse_int_or_zero(buf2));
     do_tstat(ch, buf2, 0, 0);
     break;
   case 's':
-    sprintf(buf2, "shops %d", atoi(buf2));
+    sprintf(buf2, "shops %d", tb_parse_int_or_zero(buf2));
     do_show(ch, buf2, 0, 0);
     break;
   default:
@@ -1506,7 +1506,7 @@ ACMD(do_advance)
     send_to_char(ch, "NO!  Not on NPC's.\r\n");
     return;
   }
-  if (!*level || (newlevel = atoi(level)) <= 0) {
+  if (!*level || (newlevel = tb_parse_int_or_zero(level)) <= 0) {
     send_to_char(ch, "That's not a level!\r\n");
     return;
   }
@@ -1681,7 +1681,7 @@ ACMD(do_invis)
     else
       perform_immort_invis(ch, GET_LEVEL(ch));
   } else {
-    level = atoi(arg);
+    level = tb_parse_int_or_zero(arg);
     if (level > GET_LEVEL(ch))
       send_to_char(ch, "You can't go invisible above your own level.\r\n");
     else if (level < 1)
@@ -1721,7 +1721,7 @@ ACMD(do_dc)
   int num_to_dc;
 
   one_argument(argument, arg);
-  if (!(num_to_dc = atoi(arg))) {
+  if (!(num_to_dc = tb_parse_int_or_zero(arg))) {
     send_to_char(ch, "Usage: DC <user number> (type USERS for a list)\r\n");
     return;
   }
@@ -1772,7 +1772,7 @@ ACMD(do_wizlock)
 
   one_argument(argument, arg);
   if (*arg) {
-    value = atoi(arg);
+    value = tb_parse_int_or_zero(arg);
     if (value < 0 || value > GET_LEVEL(ch)) {
       send_to_char(ch, "Invalid wizlock value.\r\n");
       return;
@@ -2087,7 +2087,7 @@ ACMD(do_last)
         return;
       }
       if (isdigit(*arg)) {
-        num = atoi(arg);
+        num = tb_parse_int_or_zero(arg);
         if (num < 0)
           num = 0;
       } else {
@@ -2238,7 +2238,7 @@ ACMD(do_wiznet)
     one_argument(argument + 1, buf1);
     if (is_number(buf1)) {
       half_chop(argument+1, buf1, argument);
-      level = MAX(atoi(buf1), LVL_IMMORT);
+      level = MAX(tb_parse_int_or_zero(buf1), LVL_IMMORT);
       if (level > GET_LEVEL(ch)) {
 	send_to_char(ch, "You can't wizline above your own level.\r\n");
 	return;
@@ -2327,7 +2327,7 @@ ACMD(do_zreset)
   } else if (*arg == '.' || !*arg)
     i = world[IN_ROOM(ch)].zone;
   else {
-    j = atoi(arg);
+    j = tb_parse_int_or_zero(arg);
     for (i = 0; i <= top_of_zone_table; i++)
       if (zone_table[i].number == j)
 	break;
@@ -2583,7 +2583,7 @@ ACMD(do_show)
     if (self)
       print_zone_to_buf(buf, sizeof(buf), world[IN_ROOM(ch)].zone, 1);
     else if (*value && is_number(value)) {
-      for (zvn = atoi(value), zrn = 0; zrn <= top_of_zone_table && zone_table[zrn].number != zvn; zrn++);
+      for (zvn = tb_parse_int_or_zero(value), zrn = 0; zrn <= top_of_zone_table && zone_table[zrn].number != zvn; zrn++);
       if (zrn <= top_of_zone_table)
 	print_zone_to_buf(buf, sizeof(buf), zrn, 1);
       else {
@@ -2972,7 +2972,7 @@ static int perform_set(struct char_data *ch, struct char_data *vict, int mode, c
       return (0);
     }
   } else if (set_fields[mode].type == NUMBER) {
-    value = atoi(val_arg);
+    value = tb_parse_int_or_zero(val_arg);
   }
   switch (mode) {
     case 0: /* ac */
@@ -3049,7 +3049,7 @@ static int perform_set(struct char_data *ch, struct char_data *vict, int mode, c
         GET_COND(vict, DRUNK) = -1;
         send_to_char(ch, "%s's drunkenness is now off.\r\n", GET_NAME(vict));
       } else if (is_number(val_arg)) {
-        value = atoi(val_arg);
+        value = tb_parse_int_or_zero(val_arg);
         RANGE(0, 24);
         GET_COND(vict, DRUNK) = value;
         send_to_char(ch, "%s's drunkenness set to %d.\r\n", GET_NAME(vict), value);
@@ -3088,7 +3088,7 @@ static int perform_set(struct char_data *ch, struct char_data *vict, int mode, c
         GET_COND(vict, HUNGER) = -1;
         send_to_char(ch, "%s's hunger is now off.\r\n", GET_NAME(vict));
       } else if (is_number(val_arg)) {
-        value = atoi(val_arg);
+        value = tb_parse_int_or_zero(val_arg);
         RANGE(0, 24);
         GET_COND(vict, HUNGER) = value;
         send_to_char(ch, "%s's hunger set to %d.\r\n", GET_NAME(vict), value);
@@ -3130,7 +3130,7 @@ static int perform_set(struct char_data *ch, struct char_data *vict, int mode, c
       if (!str_cmp(val_arg, "off")) {
         REMOVE_BIT_AR(PLR_FLAGS(vict), PLR_LOADROOM);
       } else if (is_number(val_arg)) {
-        rvnum = atoi(val_arg);
+        rvnum = tb_parse_int_or_zero(val_arg);
         if (real_room(rvnum) != NOWHERE) {
           SET_BIT_AR(PLR_FLAGS(vict), PLR_LOADROOM);
           GET_LOADROOM(vict) = rvnum;
@@ -3204,7 +3204,7 @@ static int perform_set(struct char_data *ch, struct char_data *vict, int mode, c
         send_to_char(ch, "Value must be a zone number, 'aedit', 'hedit', 'off' or 'all'.\r\n");
         return (0);
       } else
-        GET_OLC_ZONE(vict) = atoi(val_arg);
+        GET_OLC_ZONE(vict) = tb_parse_int_or_zero(val_arg);
       break;
     case 38: /* password */
       if (GET_LEVEL(vict) >= LVL_GRGOD) {
@@ -3297,7 +3297,7 @@ static int perform_set(struct char_data *ch, struct char_data *vict, int mode, c
         GET_COND(vict, THIRST) = -1;
         send_to_char(ch, "%s's thirst is now off.\r\n", GET_NAME(vict));
       } else if (is_number(val_arg)) {
-        value = atoi(val_arg);
+        value = tb_parse_int_or_zero(val_arg);
         RANGE(0, 24);
         GET_COND(vict, THIRST) = value;
         send_to_char(ch, "%s's thirst set to %d.\r\n", GET_NAME(vict), value);
@@ -3328,7 +3328,7 @@ static int perform_set(struct char_data *ch, struct char_data *vict, int mode, c
       GET_QUESTPOINTS(vict) = RANGE(0, 100000000);
       break;
     case 57: /* questhistory */
-      qvnum = atoi(val_arg);
+      qvnum = tb_parse_int_or_zero(val_arg);
       if (real_quest(qvnum) == NOTHING) {
         send_to_char(ch, "That quest doesn't exist.\r\n");
         return FALSE;
@@ -3498,7 +3498,7 @@ ACMD(do_links)
     zrnum = world[IN_ROOM(ch)].zone;
     zvnum = zone_table[zrnum].number;
   } else {
-    zvnum = atoi(arg);
+    zvnum = tb_parse_int_or_zero(arg);
     zrnum = real_zone(zvnum);
   }
 
@@ -3630,7 +3630,7 @@ ACMD (do_zcheck)
   if (!is_number(buf) || !strcmp(buf, "."))
     zrnum = world[IN_ROOM(ch)].zone;
   else
-    zrnum = real_zone(atoi(buf));
+    zrnum = real_zone(tb_parse_int_or_zero(buf));
 
   if (zrnum == NOWHERE) {
     send_to_char(ch, "Check what zone ?\r\n");
@@ -4187,17 +4187,17 @@ ACMD(do_checkloadstatus)
   }
 
   if (LOWER(*buf1) == 'm') {
-    mob_checkload(ch, atoi(buf2));
+    mob_checkload(ch, tb_parse_int_or_zero(buf2));
     return;
   }
 
   if (LOWER(*buf1) == 'o') {
-    obj_checkload(ch, atoi(buf2));
+    obj_checkload(ch, tb_parse_int_or_zero(buf2));
     return;
   }
 
   if (LOWER(*buf1) == 't') {
-    trg_checkload(ch, atoi(buf2));
+    trg_checkload(ch, tb_parse_int_or_zero(buf2));
     return;
   }
 }
@@ -4296,7 +4296,7 @@ ACMD(do_zpurge)
     zone = world[IN_ROOM(ch)].zone;
   }
   else if (is_number(arg)) {
-    zone = real_zone(atoi(arg));
+    zone = real_zone(tb_parse_int_or_zero(arg));
     if (zone == NOWHERE || zone > top_of_zone_table) {
       send_to_char(ch, "That zone doesn't exist!\r\n");
       return;
@@ -4432,7 +4432,7 @@ ACMD(do_file)
    }
    else
    {
-     req_lines = atoi(value);
+     req_lines = tb_parse_int_or_zero(value);
      /* Limit the maximum number of lines */
      req_lines = MIN( req_lines, max_lines_to_read );
    }
@@ -4827,7 +4827,7 @@ ACMD(do_zlock)
     }
     return;
   }
-  else if ((znvnum = atoi(arg)) == 0) {
+  else if ((znvnum = tb_parse_int_or_zero(arg)) == 0) {
     send_to_char(ch, "Usage: %szlock <zone number>%s\r\n", QYEL, QNRM);
     return;
   }
@@ -4921,7 +4921,7 @@ ACMD(do_zunlock)
     }
     return;
   }
-  else if ((znvnum = atoi(arg)) == 0) {
+  else if ((znvnum = tb_parse_int_or_zero(arg)) == 0) {
     send_to_char(ch, "Usage: %szunlock <zone number>%s\r\n", QYEL, QNRM);
     return;
   }
@@ -5047,7 +5047,7 @@ ACMD(do_recent)
   if (!*arg) {
     limit = 0;
   } else {
-    limit = atoi(arg);
+    limit = tb_parse_int_or_zero(arg);
   }
 
   if (GET_LEVEL(ch) >= LVL_GRGOD) {  /* If High-Level Imm, then show Host IP */
