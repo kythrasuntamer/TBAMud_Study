@@ -676,7 +676,7 @@ static const char *mag_summon_msgs[] = {
   "$N appears from a cloud of thick blue smoke!",
   "$N appears from a cloud of thick green smoke!",
   "$N appears from a cloud of thick red smoke!",
-  "$N disappears in a thick black cloud!"
+  "$N disappears in a thick black cloud!",
   "As $n makes a strange magical gesture, you feel a strong breeze.",
   "As $n makes a strange magical gesture, you feel a searing heat.",
   "As $n makes a strange magical gesture, you feel a sudden chill.",
