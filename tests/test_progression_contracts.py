@@ -56,8 +56,18 @@ class ProgressionContractTests(unittest.TestCase):
 
     def test_endgame_save_fields_present(self):
         player = source("players.c")
-        for field in ("endgame_ap", "endgame_xp", "endgame_hp_rank", "endgame_mana_rank"):
-            self.assertIn(field, player)
+        # Save files use stable four-character tags, not internal C field names.
+        # Require both deserialization and serialization for every AP field.
+        for tag, accessor in (
+            ("EgAP", "GET_ENDGAME_AP"),
+            ("EgXP", "GET_ENDGAME_XP"),
+            ("EgHP", "GET_ENDGAME_HP_RANK"),
+            ("EgMP", "GET_ENDGAME_MP_RANK"),
+        ):
+            with self.subTest(tag=tag):
+                self.assertIn(f'!strcmp(tag, "{tag}")', player)
+                self.assertIn(f'"{tag}: %d', player)
+                self.assertGreaterEqual(player.count(accessor + "(ch)"), 2)
 
 if __name__ == "__main__":
     unittest.main()
