@@ -61,7 +61,11 @@ void build_player_index(void)
   while (get_line(plr_index, line))
     if (*line != '~')
       rec_count++;
-  rewind(plr_index);
+  if (fseek(plr_index, 0L, SEEK_SET) != 0) {
+    log("SYSERR: unable to rewind player index: %s", strerror(errno));
+    fclose(plr_index);
+    return;
+  }
 
   if (rec_count == 0) {
     player_table = NULL;
