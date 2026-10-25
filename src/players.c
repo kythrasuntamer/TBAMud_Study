@@ -113,7 +113,7 @@ void build_player_index(void)
     if (*line != '~')
       rec_count++;
   if (fseek(plr_index, 0L, SEEK_SET) != 0) {
-    log("SYSERR: unable to rewind player index: %s", strerror(errno));
+    TB_REPORT_ERRNO("fseek", index_name);
     tb_fclose(plr_index);
     return;
   }
