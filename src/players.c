@@ -844,8 +844,13 @@ void remove_player(int pfilepos)
 
   /* Unlink all player-owned files */
   for (i = 0; i < MAX_FILES; i++) {
-    if (get_filename(filename, sizeof(filename), i, player_table[pfilepos].name))
-      unlink(filename);
+    if (get_filename(filename, sizeof(filename), i, player_table[pfilepos].name)) {
+      if (unlink(filename) != 0 && errno != ENOENT) {
+        int saved_errno = errno;
+        log("SYSERR: player cleanup unlink failed for %s file %s: %s (errno=%d)",
+            player_table[pfilepos].name, filename, strerror(saved_errno), saved_errno);
+      }
+    }
   }
 
   tb_strftime(timestr, sizeof(timestr), "%c", localtime(&(player_table[pfilepos].last)));
