@@ -239,3 +239,12 @@ Do not activate until ALL are true:
 
 The present branch adds some tools for steps 3-4 and 7, but **does not**
 complete all of these gates or bundle any third-party world data.
+
+## Crimson 2: excluded (documented PvP)
+
+The Crimson-2-MUD repository has about 214 area object files in `dev/lib/areas`, plus world, mob and zone files. Its object record format has nonstandard fields and affects; direct copying is unsafe.
+
+**Rejected under the project's PvE-only, no-PvP policy.** Crimson MUD II supports optional player killing and player looting. Do not publish, convert for installation, or activate its areas or objects unless the owner explicitly changes source eligibility policy.
+
+Evidence: https://www.mudconnect.com/cgi-bin/search.cgi?mode=mud_listing&mud=Crimson+MUD+2
+Repository: https://github.com/c2admins/Crimson-2-MUD
