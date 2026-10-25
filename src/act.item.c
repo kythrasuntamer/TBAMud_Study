@@ -100,7 +100,7 @@ ACMD(do_put)
   one_argument(two_arguments(argument, arg1, arg2), arg3);	/* three_arguments */
 
   if (*arg3 && is_number(arg1)) {
-    howmany = atoi(arg1);
+    howmany = tb_parse_int_or_zero(arg1);
     theobj = arg2;
     thecont = arg3;
   } else {
@@ -343,11 +343,11 @@ ACMD(do_get)
   else if (!*arg2)
     get_from_room(ch, arg1, 1);
   else if (is_number(arg1) && !*arg3)
-    get_from_room(ch, arg2, atoi(arg1));
+    get_from_room(ch, arg2, tb_parse_int_or_zero(arg1));
   else {
     int amount = 1;
     if (is_number(arg1)) {
-      amount = atoi(arg1);
+      amount = tb_parse_int_or_zero(arg1);
       strcpy(arg1, arg2); /* strcpy: OK (sizeof: arg1 == arg2) */
       strcpy(arg2, arg3); /* strcpy: OK (sizeof: arg2 == arg3) */
     }
@@ -553,7 +553,7 @@ ACMD(do_drop)
     send_to_char(ch, "What do you want to %s?\r\n", sname);
     return;
   } else if (is_number(arg)) {
-    multi = atoi(arg);
+    multi = tb_parse_int_or_zero(arg);
     one_argument(argument, arg);
     if (!str_cmp("coins", arg) || !str_cmp("coin", arg))
       perform_drop_gold(ch, multi, mode, RDR);
@@ -704,7 +704,7 @@ ACMD(do_give)
   if (!*arg)
     send_to_char(ch, "Give what to who?\r\n");
   else if (is_number(arg)) {
-    amount = atoi(arg);
+    amount = tb_parse_int_or_zero(arg);
     argument = one_argument(argument, arg);
     if (!str_cmp("coins", arg) || !str_cmp("coin", arg)) {
       one_argument(argument, arg);
