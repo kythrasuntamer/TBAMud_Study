@@ -110,9 +110,16 @@ char *CAP(char *txt)
  * function, in case your system does not have strlcpy. */
 size_t strlcpy(char *dest, const char *source, size_t totalsize)
 {
-  strncpy(dest, source, totalsize - 1);	/* strncpy: OK (we must assume 'totalsize' is correct) */
-  dest[totalsize - 1] = '\0';
-  return strlen(source);
+  size_t srclen = strlen(source);
+
+  if (totalsize != 0) {
+    size_t copylen = srclen >= totalsize ? totalsize - 1 : srclen;
+
+    memcpy(dest, source, copylen);
+    dest[copylen] = '\0';
+  }
+
+  return srclen;
 }
 #endif
 
@@ -133,10 +140,14 @@ char *strdup(const char *source)
  * @param txt The writable string to prune. */
 void prune_crlf(char *txt)
 {
-  int i = strlen(txt) - 1;
+  size_t len;
 
-  while (txt[i] == '\n' || txt[i] == '\r')
-    txt[i--] = '\0';
+  if (txt == NULL || *txt == '\0')
+    return;
+
+  len = strlen(txt);
+  while (len > 0 && (txt[len - 1] == '\n' || txt[len - 1] == '\r'))
+    txt[--len] = '\0';
 }
 
 #ifndef str_cmp
