@@ -199,10 +199,10 @@ int board_write_message(int board_type, struct char_data *ch, char *arg, struct 
     return (1);
   }
   ct = time(0);
-  strftime(tmstr, sizeof(tmstr), "%a %b %d %Y", localtime(&ct));
+  tb_strftime(tmstr, sizeof(tmstr), "%a %b %d %Y", localtime(&ct));
 
-  snprintf(buf2, sizeof(buf2), "(%s)", GET_NAME(ch));
-  snprintf(buf, sizeof(buf), "%s %-12s :: %s", tmstr, buf2, arg);
+  tb_snprintf(buf2, sizeof(buf2), "(%s)", GET_NAME(ch));
+  tb_snprintf(buf, sizeof(buf), "%s %-12s :: %s", tmstr, buf2, arg);
   NEW_MSG_INDEX(board_type).heading = strdup(buf);
   NEW_MSG_INDEX(board_type).level = GET_LEVEL(ch);
 
@@ -324,7 +324,7 @@ int board_display_msg(int board_type, struct char_data *ch, char *arg, struct ob
     send_to_char(ch, "That message seems to be empty.\r\n");
     return (1);
   }
-  snprintf(buffer, sizeof(buffer), "Message %d : %s\r\n\r\n%s\r\n", msg,
+  tb_snprintf(buffer, sizeof(buffer), "Message %d : %s\r\n\r\n%s\r\n", msg,
 	  MSG_HEADING(board_type, ind),
 	  msg_storage[MSG_SLOTNUM(board_type, ind)]);
 
@@ -363,7 +363,7 @@ int board_remove_msg(int board_type, struct char_data *ch, char *arg, struct obj
     send_to_char(ch, "That message appears to be screwed up.\r\n");
     return (1);
   }
-  snprintf(buf, sizeof(buf), "(%s)", GET_NAME(ch));
+  tb_snprintf(buf, sizeof(buf), "(%s)", GET_NAME(ch));
   if (GET_LEVEL(ch) < REMOVE_LVL(board_type) &&
       !(strstr(MSG_HEADING(board_type, ind), buf))) {
     send_to_char(ch, "You are not holy enough to remove other people's messages.\r\n");
@@ -399,7 +399,7 @@ int board_remove_msg(int board_type, struct char_data *ch, char *arg, struct obj
   num_of_msgs[board_type]--;
 
   send_to_char(ch, "Message removed.\r\n");
-  snprintf(buf, sizeof(buf), "$n just removed message %d.", msg);
+  tb_snprintf(buf, sizeof(buf), "$n just removed message %d.", msg);
   act(buf, FALSE, ch, 0, 0, TO_ROOM);
   board_save_board(board_type);
 
@@ -420,7 +420,7 @@ void board_save_board(int board_type)
     perror("SYSERR: Error writing board");
     return;
   }
-  fwrite(&(num_of_msgs[board_type]), sizeof(int), 1, fl);
+  tb_fwrite(&(num_of_msgs[board_type]), sizeof(int), 1, fl);
 
   for (i = 0; i < num_of_msgs[board_type]; i++) {
     if ((tmp1 = MSG_HEADING(board_type, i)) != NULL)
@@ -435,14 +435,14 @@ void board_save_board(int board_type)
     else
       msg_index[board_type][i].message_len = strlen(tmp2) + 1;
 
-    fwrite(&(msg_index[board_type][i]), sizeof(struct board_msginfo), 1, fl);
+    tb_fwrite(&(msg_index[board_type][i]), sizeof(struct board_msginfo), 1, fl);
     if (tmp1)
-      fwrite(tmp1, sizeof(char), msg_index[board_type][i].heading_len, fl);
+      tb_fwrite(tmp1, sizeof(char), msg_index[board_type][i].heading_len, fl);
     if (tmp2)
-      fwrite(tmp2, sizeof(char), msg_index[board_type][i].message_len, fl);
+      tb_fwrite(tmp2, sizeof(char), msg_index[board_type][i].message_len, fl);
   }
 
-  fclose(fl);
+  tb_fclose(fl);
 }
 
 void board_load_board(int board_type)
@@ -457,12 +457,12 @@ void board_load_board(int board_type)
     return;
   }
   if (fread(&(num_of_msgs[board_type]), sizeof(int), 1, fl) != 1) {
-    fclose(fl);
+    tb_fclose(fl);
     return;
   }
   if (num_of_msgs[board_type] < 1 || num_of_msgs[board_type] > MAX_BOARD_MESSAGES) {
     log("SYSERR: Board file %d corrupt.  Resetting.", board_type);
-    fclose(fl);
+    tb_fclose(fl);
     board_reset_board(board_type);
     return;
   }
@@ -474,13 +474,13 @@ void board_load_board(int board_type)
         log("SYSERR: Error reading board file %d: %s. Resetting.", board_type, strerror(errno));
       else
         log("SYSERR: Error reading board file %d. Resetting.", board_type);
-      fclose(fl);
+      tb_fclose(fl);
       board_reset_board(board_type);
       return;
     }
     if ((len1 = msg_index[board_type][i].heading_len) <= 0) {
       log("SYSERR: Board file %d corrupt!  Resetting.", board_type);
-      fclose(fl);
+      tb_fclose(fl);
       board_reset_board(board_type);
       return;
     }
@@ -495,7 +495,7 @@ void board_load_board(int board_type)
       else
         log("SYSERR: Error reading board file %d. Resetting.", board_type);
       free(tmp1);
-      fclose(fl);
+      tb_fclose(fl);
       board_reset_board(board_type);
       return;
     }
@@ -504,7 +504,7 @@ void board_load_board(int board_type)
 
     if ((MSG_SLOTNUM(board_type, i) = find_slot()) == -1) {
       log("SYSERR: Out of slots booting board %d!  Resetting...", board_type);
-      fclose(fl);
+      tb_fclose(fl);
       board_reset_board(board_type);
       return;
     }
@@ -518,7 +518,7 @@ void board_load_board(int board_type)
         else
           log("SYSERR: Error reading board file %d. Resetting.", board_type);
         free(tmp2);
-        fclose(fl);
+        tb_fclose(fl);
         board_reset_board(board_type);
         return;
       }
@@ -528,7 +528,7 @@ void board_load_board(int board_type)
       msg_storage[MSG_SLOTNUM(board_type, i)] = NULL;
   }
 
-  fclose(fl);
+  tb_fclose(fl);
 }
 
 /* When shutting down, clear all boards. */
