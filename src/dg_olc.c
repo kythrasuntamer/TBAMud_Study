@@ -47,7 +47,7 @@ ACMD(do_oasis_trigedit)
     return;
   }
 
-  number = atoi(argument);
+  number = tb_parse_int_or_zero(argument);
 
   if (number < IDXTYPE_MIN || number > IDXTYPE_MAX) {
     send_to_char(ch, "That trigger VNUM can't exist.\r\n");
@@ -606,7 +606,7 @@ void trigedit_parse(struct descriptor_data *d, char *arg)
       break;
 
     case TRIGEDIT_INTENDED:
-      i = atoi(arg);
+      i = tb_parse_int_or_zero(arg);
       if (i >= MOB_TRIGGER && i <= WLD_TRIGGER) {
         OLC_TRIG(d)->attach_type = i;
         OLC_VAL(d)++;
@@ -617,7 +617,7 @@ void trigedit_parse(struct descriptor_data *d, char *arg)
       break;
 
     case TRIGEDIT_NARG:
-      OLC_TRIG(d)->narg = LIMIT(atoi(arg), 0, 100);
+      OLC_TRIG(d)->narg = LIMIT(tb_parse_int_or_zero(arg), 0, 100);
       OLC_VAL(d)++;
       break;
 
@@ -628,7 +628,7 @@ void trigedit_parse(struct descriptor_data *d, char *arg)
       break;
 
     case TRIGEDIT_TYPES:
-      if ((i = atoi(arg)) == 0)
+      if ((i = tb_parse_int_or_zero(arg)) == 0)
         break;
       else if (!((i < 0) || (i > NUM_TRIG_TYPE_FLAGS)))
         TOGGLE_BIT((GET_TRIG_TYPE(OLC_TRIG(d))), 1 << (i - 1));
@@ -637,7 +637,7 @@ void trigedit_parse(struct descriptor_data *d, char *arg)
       return;
 
     case TRIGEDIT_COPY:
-      if ((i = real_trigger(atoi(arg))) != NOWHERE) {
+      if ((i = real_trigger(tb_parse_int_or_zero(arg))) != NOWHERE) {
         trigedit_setup_existing(d, i);
       } else
         write_to_output(d, "That trigger does not exist.\r\n");
@@ -1111,7 +1111,7 @@ int dg_script_edit_parse(struct descriptor_data *d, char *arg)
       break;
 
     case SCRIPT_DEL_TRIGGER:
-      pos = atoi(arg);
+      pos = tb_parse_int_or_zero(arg);
       if (pos<=0) break;
 
       if (pos==1 && OLC_SCRIPT(d)) {
