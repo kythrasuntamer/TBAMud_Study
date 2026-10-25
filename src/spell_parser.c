@@ -111,8 +111,8 @@ static void say_spell(struct char_data *ch, int spellnum, struct char_data *tch,
   else
     format = "$n utters the words, '%s'.";
 
-  snprintf(act_buf_original, sizeof(act_buf_original), format, spell);
-  snprintf(act_buf_obfuscated, sizeof(act_buf_obfuscated), format, obfuscated);
+  tb_snprintf(act_buf_original, sizeof(act_buf_original), format, spell);
+  tb_snprintf(act_buf_obfuscated, sizeof(act_buf_obfuscated), format, obfuscated);
 
   for (i = world[IN_ROOM(ch)].people; i; i = i->next_in_room) {
     if (i == ch || i == tch || !i->desc || !AWAKE(i))
@@ -124,7 +124,7 @@ static void say_spell(struct char_data *ch, int spellnum, struct char_data *tch,
   }
 
   if (tch != NULL && tch != ch && IN_ROOM(tch) == IN_ROOM(ch)) {
-    snprintf(act_buf_original, sizeof(act_buf_original), "$n stares at you and utters the words, '%s'.",
+    tb_snprintf(act_buf_original, sizeof(act_buf_original), "$n stares at you and utters the words, '%s'.",
     GET_CLASS(ch) == GET_CLASS(tch) ? spell : obfuscated);
     act(act_buf_original, FALSE, ch, NULL, tch, TO_VICT);
   }
