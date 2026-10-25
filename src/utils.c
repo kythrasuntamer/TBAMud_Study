@@ -894,7 +894,7 @@ int levenshtein_distance(const char *s1, const char *s2)
   CREATE(d, int *, s1_len + 1);
 
   for (i = 0; i <= s1_len; i++) {
-    CREATE(d[i], int, s2_len + 1);
+    CREATE(d[i], int, s2_len + 1); /* NOLINT(clang-analyzer-security.ArrayBound): d has s1_len + 1 rows. */
     d[i][0] = (int)i;
   }
 
