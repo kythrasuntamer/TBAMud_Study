@@ -55,7 +55,6 @@ static IBT_DATA *new_ibt(void);
 static void free_ibt_list(int mode);
 static IBT_DATA *read_ibt(char *filename, FILE *fp);
 static IBT_DATA *get_first_ibt(int mode);
-static IBT_DATA *get_last_ibt(int mode);
 static bool is_ibt_logger(IBT_DATA *ibtData, struct char_data *ch);
 /* Internal (static) OLC functions */
 static void ibtedit_setup(struct descriptor_data *d);
@@ -354,23 +353,6 @@ static IBT_DATA *get_first_ibt(int mode)
                     break;
   }
   return (first_ibt); /* NOLINT(clang-analyzer-unix.Malloc): list heads are updated by UNLINK before nodes are freed. */
-}
-
-static IBT_DATA *get_last_ibt(int mode)
-{
-  IBT_DATA *last_ibt = NULL;
-
-  switch(mode) {
-    case SCMD_BUG : last_ibt = last_bug;
-                    break;
-    case SCMD_IDEA: last_ibt = last_idea;
-                    break;
-    case SCMD_TYPO: last_ibt = last_typo;
-                    break;
-    default       : log("SYSERR: Invalid mode (%d) in get_last_ibt", mode);
-                    break;
-  }
-  return (last_ibt);
 }
 
 static IBT_DATA *get_ibt_by_num(int mode, int target_num)
