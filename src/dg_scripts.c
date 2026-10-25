@@ -148,7 +148,7 @@ obj_data *get_obj_in_list(char *name, obj_data *list)
     long id;
 
     if (*name == UID_CHAR){
-      id = atoi(name + 1);
+      id = tb_parse_int_or_zero(name + 1);
 
       for (i = list; i; i = i->next_content)
         if (id == i->script_id)
@@ -179,14 +179,14 @@ obj_data *get_object_in_equip(char_data * ch, char *name)
   long id;
 
   if (*name == UID_CHAR) {
-    id = atoi(name + 1);
+    id = tb_parse_int_or_zero(name + 1);
 
     for (j = 0; j < NUM_WEARS; j++)
       if ((obj = GET_EQ(ch, j)))
         if (id == obj->script_id)
           return (obj);
   } else if (is_number(name)) {
-    obj_vnum ovnum = atoi(name);
+    obj_vnum ovnum = tb_parse_int_or_zero(name);
     for (j = 0; j < NUM_WEARS; j++)
       if ((obj = GET_EQ(ch, j)))
         if (GET_OBJ_VNUM(obj) == ovnum)
@@ -243,7 +243,7 @@ int find_eq_pos_script(char *arg)
     {"none", -1}
   };
 
-  if (is_number(arg) && (i = atoi(arg)) >= 0 && i < NUM_WEARS)
+  if (is_number(arg) && (i = tb_parse_int_or_zero(arg)) >= 0 && i < NUM_WEARS)
     return i;
 
   for (i = 0;eq_pos[i].where != -1;i++) {
@@ -339,7 +339,7 @@ char_data *get_char(char *name)
   char_data *i;
 
   if (*name == UID_CHAR) {
-    i = find_char(atoi(name + 1));
+    i = find_char(tb_parse_int_or_zero(name + 1));
 
     if (i && valid_dg_target(i, DG_ALLOW_GODS))
       return i;
@@ -367,7 +367,7 @@ char_data *get_char_near_obj(obj_data *obj, char *name)
   char_data *ch;
 
   if (*name == UID_CHAR) {
-    ch = find_char(atoi(name + 1));
+    ch = find_char(tb_parse_int_or_zero(name + 1));
 
     if (ch && valid_dg_target(ch, DG_ALLOW_GODS))
       return ch;
@@ -398,7 +398,7 @@ char_data *get_char_in_room(room_data *room, char *name)
 
 
   if (*name == UID_CHAR) {
-    ch = find_char(atoi(name + 1));
+    ch = find_char(tb_parse_int_or_zero(name + 1));
 
     if (ch && valid_dg_target(ch, DG_ALLOW_GODS))
       return ch;
@@ -436,7 +436,7 @@ obj_data *get_obj_near_obj(obj_data *obj, char *name)
   /* or outside ? */
   if (obj->in_obj) {
     if (*name == UID_CHAR) {
-       id = atoi(name + 1);
+       id = tb_parse_int_or_zero(name + 1);
 
       if (id == obj->in_obj->script_id)
         return obj->in_obj;
@@ -469,7 +469,7 @@ obj_data *get_obj(char *name)
   obj_data *obj;
 
   if (*name == UID_CHAR)
-    return find_obj(atoi(name + 1));
+    return find_obj(tb_parse_int_or_zero(name + 1));
   else {
     for (obj = object_list; obj; obj = obj->next)
       if (isname(name, obj->name))
@@ -485,8 +485,8 @@ room_data *get_room(char *name)
   room_rnum nr;
 
   if (*name == UID_CHAR)
-    return find_room(atoi(name + 1));
-  else if ((nr = real_room(atoi(name))) == NOWHERE)
+    return find_room(tb_parse_int_or_zero(name + 1));
+  else if ((nr = real_room(tb_parse_int_or_zero(name))) == NOWHERE)
     return NULL;
   else
     return &world[nr];
@@ -499,7 +499,7 @@ char_data *get_char_by_obj(obj_data *obj, char *name)
   char_data *ch;
 
   if (*name == UID_CHAR) {
-    ch = find_char(atoi(name + 1));
+    ch = find_char(tb_parse_int_or_zero(name + 1));
 
     if (ch && valid_dg_target(ch, DG_ALLOW_GODS))
       return ch;
@@ -530,7 +530,7 @@ char_data *get_char_by_room(room_data *room, char *name)
   char_data *ch;
 
   if (*name == UID_CHAR) {
-    ch = find_char(atoi(name + 1));
+    ch = find_char(tb_parse_int_or_zero(name + 1));
 
     if (ch && valid_dg_target(ch, DG_ALLOW_GODS))
       return ch;
@@ -557,7 +557,7 @@ obj_data *get_obj_by_obj(obj_data *obj, char *name)
   int rm;
 
   if (*name == UID_CHAR)
-    return find_obj(atoi(name + 1));
+    return find_obj(tb_parse_int_or_zero(name + 1));
 
   if (!str_cmp(name, "self") || !str_cmp(name, "me"))
     return obj;
@@ -589,7 +589,7 @@ obj_data *get_obj_in_room(room_data *room, char *name)
   long id;
 
   if (*name == UID_CHAR) {
-      id = atoi(name + 1);
+      id = tb_parse_int_or_zero(name + 1);
       for (obj = room->contents; obj; obj = obj->next_content)
           if (id == obj->script_id)
               return obj;
@@ -608,7 +608,7 @@ obj_data *get_obj_by_room(room_data *room, char *name)
   obj_data *obj;
 
   if (*name == UID_CHAR)
-    return find_obj(atoi(name+1));
+    return find_obj(tb_parse_int_or_zero(name+1));
 
   for (obj = room->contents; obj; obj = obj->next_content)
     if (isname(name, obj->name))
@@ -955,9 +955,9 @@ ACMD(do_attach)
     return;
   }
 
-  num_arg = atoi(targ_name);
-  tn = atoi(trig_name);
-  loc = (*loc_name) ? atoi(loc_name) : -1;
+  num_arg = tb_parse_int_or_zero(targ_name);
+  tn = tb_parse_int_or_zero(trig_name);
+  loc = (*loc_name) ? tb_parse_int_or_zero(loc_name) : -1;
 
   if (is_abbrev(arg, "mobile") || is_abbrev(arg, "mtr")) {
     victim = get_char_vis(ch, targ_name, NULL, FIND_CHAR_WORLD);
@@ -1097,11 +1097,11 @@ static int remove_trigger(struct script_data *sc, char *name)
     string = TRUE;
     if (cname) {
       *cname = '\0';
-      num = atoi(name);
+      num = tb_parse_int_or_zero(name);
       name = ++cname;
     }
   } else
-    num = atoi(name);
+    num = tb_parse_int_or_zero(name);
 
   for (n = 0, j = NULL, i = TRIGGERS(sc); i; j = i, i = i->next) {
     if (string) {
@@ -1153,7 +1153,7 @@ ACMD(do_detach)
 
   argument = two_arguments(argument, arg1, arg2);
   one_argument(argument, arg3);
-  tn = atoi(arg3);
+  tn = tb_parse_int_or_zero(arg3);
   rn = real_trigger(tn);
   trig = read_trigger(rn);
 
@@ -1164,7 +1164,7 @@ ACMD(do_detach)
   }
 
   /* vnum of mob/obj, if given */
-  num_arg = atoi(arg2);
+  num_arg = tb_parse_int_or_zero(arg2);
 
   if (!str_cmp(arg1, "room") || !str_cmp(arg1, "wtr")) {
     if (!*arg3 || (strchr(arg2, '.')))
@@ -1905,7 +1905,7 @@ static void process_attach(void *go, struct script_data *sc, trig_data *trig,
     return;
   }
 
-  if (!id_p || !*id_p || atoi(id_p)==0) {
+  if (!id_p || !*id_p || tb_parse_int_or_zero(id_p)==0) {
     script_log("Trigger: %s, VNum %d. attach invalid id arg: '%s'",
             GET_TRIG_NAME(trig), GET_TRIG_VNUM(trig), cmd);
     return;
@@ -1913,7 +1913,7 @@ static void process_attach(void *go, struct script_data *sc, trig_data *trig,
 
   /* parse and locate the id specified */
   eval_expr(id_p, result, go, sc, trig, type);
-  if (!(id = atoi(result))) {
+  if (!(id = tb_parse_int_or_zero(result))) {
     script_log("Trigger: %s, VNum %d. attach invalid id arg: '%s'",
             GET_TRIG_NAME(trig), GET_TRIG_VNUM(trig), cmd);
     return;
@@ -1932,7 +1932,7 @@ static void process_attach(void *go, struct script_data *sc, trig_data *trig,
   }
 
   /* locate and load the trigger specified */
-  trignum = real_trigger(atoi(trignum_s));
+  trignum = real_trigger(tb_parse_int_or_zero(trignum_s));
   if (trignum == NOTHING || !(newtrig=read_trigger(trignum))) {
     script_log("Trigger: %s, VNum %d. attach invalid trigger: '%s'",
             GET_TRIG_NAME(trig), GET_TRIG_VNUM(trig), trignum_s);
@@ -1986,7 +1986,7 @@ static void process_detach(void *go, struct script_data *sc, trig_data *trig,
     return;
   }
 
-  if (!id_p || !*id_p || atoi(id_p)==0) {
+  if (!id_p || !*id_p || tb_parse_int_or_zero(id_p)==0) {
     script_log("Trigger: %s, VNum %d. detach invalid id arg: '%s'",
             GET_TRIG_NAME(trig), GET_TRIG_VNUM(trig), cmd);
     return;
@@ -1994,7 +1994,7 @@ static void process_detach(void *go, struct script_data *sc, trig_data *trig,
 
   /* parse and locate the id specified */
   eval_expr(id_p, result, go, sc, trig, type);
-  if (!(id = atoi(result))) {
+  if (!(id = tb_parse_int_or_zero(result))) {
     script_log("Trigger: %s, VNum %d. detach invalid id arg: '%s'",
             GET_TRIG_NAME(trig), GET_TRIG_VNUM(trig), cmd);
     return;
@@ -2094,7 +2094,7 @@ static void makeuid_var(void *go, struct script_data *sc, trig_data *trig,
     return;
   }
 
-  if (atoi(arg)!=0) { /* easy, if you pass an id number */
+  if (tb_parse_int_or_zero(arg)!=0) { /* easy, if you pass an id number */
     char result[MAX_INPUT_LENGTH];
 
     eval_expr(arg, result, go, sc, trig, type);
@@ -2180,7 +2180,7 @@ static int process_return(trig_data *trig, char *cmd)
     return 1;
   }
 
-  return atoi(arg2);
+  return tb_parse_int_or_zero(arg2);
 }
 
 /* Removes a variable from the global vars of sc, or the local vars of trig if 
@@ -2247,7 +2247,7 @@ static void process_remote(struct script_data *sc, trig_data *trig, char *cmd)
     return;
   }
   /* find the target script from the uid number */
-  uid = atoi(buf2);
+  uid = tb_parse_int_or_zero(buf2);
   if (uid<=0) {
     script_log("Trigger: %s, VNum %d. remote: illegal uid '%s'",
             GET_TRIG_NAME(trig), GET_TRIG_VNUM(trig), buf2);
@@ -2302,7 +2302,7 @@ ACMD(do_vdelete)
   }
 
   /* find the target script from the uid number */
-  uid = atoi(buf2);
+  uid = tb_parse_int_or_zero(buf2);
   if (uid<=0) {
     send_to_char(ch, "vdelete: illegal id specified.\r\n");
     return;
@@ -2410,7 +2410,7 @@ static void process_rdelete(struct script_data *sc, trig_data *trig, char *cmd)
   }
 
   /* find the target script from the uid number */
-  uid = atoi(buf2);
+  uid = tb_parse_int_or_zero(buf2);
   if (uid<=0) {
     script_log("Trigger: %s, VNum %d. rdelete: illegal uid '%s'",
             GET_TRIG_NAME(trig), GET_TRIG_VNUM(trig), buf2);
@@ -2495,7 +2495,7 @@ static void process_context(struct script_data *sc, trig_data *trig, char *cmd)
     return;
   }
 
-  sc->context = atol(var);
+  sc->context = tb_parse_long_or_zero(var);
 }
 
 static void extract_value(struct script_data *sc, trig_data *trig, char *cmd)
@@ -2509,7 +2509,7 @@ static void extract_value(struct script_data *sc, trig_data *trig, char *cmd)
   half_chop(buf3, buf2, buf);
   strcpy(to, buf2);
 
-  num = atoi(buf);
+  num = tb_parse_int_or_zero(buf);
   if (num < 1) {
     script_log("extract number < 1!");
     return;
@@ -2546,7 +2546,7 @@ static void dg_letter_value(struct script_data *sc, trig_data *trig, char *cmd)
   half_chop(cmd, varname, cmd);
   half_chop(cmd, num_s, string);
 
-  num = atoi(num_s);
+  num = tb_parse_int_or_zero(num_s);
 
   script_log("The use of dg_letter is deprecated");
   script_log("- Use 'set <new variable> %%<text/var>.charat(index)%%' instead.");
@@ -2873,7 +2873,7 @@ ACMD(do_tstat)
 
   half_chop(argument, str, argument);
   if (*str) {
-    rnum = real_trigger(atoi(str));
+    rnum = real_trigger(tb_parse_int_or_zero(str));
     if (rnum == NOTHING) {
       send_to_char(ch, "That vnum does not exist.\r\n");
       return;
@@ -2981,7 +2981,7 @@ void read_saved_vars(struct char_data *ch)
       temp = any_one_arg(temp, context_str);
       skip_spaces(&temp); /* temp now points to the rest of the line */
 
-      context = atol(context_str);
+      context = tb_parse_long_or_zero(context_str);
       add_var(&(SCRIPT(ch)->global_vars), varname, temp, context);
       free(p); /* plug memory hole */
     }
@@ -3058,7 +3058,7 @@ void read_saved_vars_ascii(FILE *file, struct char_data *ch, int count)
       temp = any_one_arg(temp, context_str);
       skip_spaces(&temp); /* temp now points to the rest of the line */
 
-      context = atol(context_str);
+      context = tb_parse_long_or_zero(context_str);
       add_var(&(SCRIPT(ch)->global_vars), varname, temp, context);
       free(p); /* plug memory hole */
     }
