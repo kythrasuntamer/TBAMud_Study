@@ -75,7 +75,7 @@ void read_file(void)
   char name[MAX_NAME_LENGTH];
   long id = 0;
 
-  snprintf(index_name, sizeof(index_name), "%s%s", LIB_PLRFILES, INDEX_FILE);
+  tb_snprintf(index_name, sizeof(index_name), "%s%s", LIB_PLRFILES, INDEX_FILE);
   if (!(fl = fopen(index_name, "r"))) {
     perror("Error opening playerfile");
     exit(1);
@@ -86,8 +86,8 @@ void read_file(void)
     if (*line != '~')
       recs++;
   if (fseek(fl, 0L, SEEK_SET) != 0) {
-    fprintf(stderr, "Unable to rewind player index: %s\n", strerror(errno));
-    fclose(fl);
+    tb_fprintf(stderr, "Unable to rewind player index: %s\n", strerror(errno));
+    tb_fclose(fl);
     exit(1);
   }
 
@@ -101,7 +101,7 @@ void read_file(void)
 	!(IS_SET(flags, PINDEX_DELETED)))
 	add_name(level, name);
   }
-  fclose(fl);
+  tb_fclose(fl);
 }
 
 void add_name(byte level, char *name)
@@ -158,7 +158,7 @@ void write_wizlist(FILE * out, int minlev, int maxlev)
   struct name_rec *curr_name;
   int i, j;
 
-  fprintf(out,
+  tb_fprintf(out,
 "*******************************************************************************\n"
 "*          The following people have reached immortality on tbaMUD.           *\n"
 "*******************************************************************************\n\n");
@@ -169,13 +169,13 @@ void write_wizlist(FILE * out, int minlev, int maxlev)
       continue;
     i = 39 - ((int)strlen(curr_level->params->level_name) >> 1);
     for (j = 1; j <= i; j++)
-      fputc(' ', out);
-    fprintf(out, "%s\n", curr_level->params->level_name);
+      tb_fputc(' ', out);
+    tb_fprintf(out, "%s\n", curr_level->params->level_name);
     for (j = 1; j <= i; j++)
-      fputc(' ', out);
+      tb_fputc(' ', out);
     for (j = 1; j <= (int)strlen(curr_level->params->level_name); j++)
-      fputc('~', out);
-    fprintf(out, "\n");
+      tb_fputc('~', out);
+    tb_fprintf(out, "\n");
 
     strlcpy(buf, "", sizeof(buf));
     curr_name = curr_level->names;
@@ -183,13 +183,13 @@ void write_wizlist(FILE * out, int minlev, int maxlev)
       strlcat(buf, curr_name->name, sizeof(buf));
       if (strlen(buf) > LINE_LEN) {
 	if (curr_level->params->level <= COL_LEVEL)
-	  fprintf(out, IMM_LMARG);
+	  tb_fprintf(out, IMM_LMARG);
 	else {
 	  i = 40 - (strlen(buf) >> 1);
 	  for (j = 1; j <= i; j++)
-	    fputc(' ', out);
+	    tb_fputc(' ', out);
 	}
-	fprintf(out, "%s\n", buf);
+	tb_fprintf(out, "%s\n", buf);
 	strlcpy(buf, "", sizeof(buf));
       } else {
 	if (curr_level->params->level <= COL_LEVEL) {
@@ -204,15 +204,15 @@ void write_wizlist(FILE * out, int minlev, int maxlev)
 
     if (*buf) {
       if (curr_level->params->level <= COL_LEVEL)
-	fprintf(out, "%s%s\n", IMM_LMARG, buf);
+	tb_fprintf(out, "%s%s\n", IMM_LMARG, buf);
       else {
 	i = 40 - (strlen(buf) >> 1);
 	for (j = 1; j <= i; j++)
-	  fputc(' ', out);
-	fprintf(out, "%s\n", buf);
+	  tb_fputc(' ', out);
+	tb_fprintf(out, "%s\n", buf);
       }
     }
-    fprintf(out, "\n");
+    tb_fprintf(out, "\n");
   }
 }
 
@@ -244,7 +244,7 @@ int main(int argc, char **argv)
     return 1;
   }
   write_wizlist(fl, wizlevel, LVL_IMPL);
-  fclose(fl);
+  tb_fclose(fl);
 
   fl = fopen(argv[4], "w");
   if (!fl) {
@@ -252,7 +252,7 @@ int main(int argc, char **argv)
     return 1;
   }
   write_wizlist(fl, immlevel, wizlevel - 1);
-  fclose(fl);
+  tb_fclose(fl);
 
 #ifdef CIRCLE_UNIX	/* ... I don't have the platforms to test. */
   if (pid)
