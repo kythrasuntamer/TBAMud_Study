@@ -34,7 +34,7 @@ static void mob_log(char_data *mob, const char *format, ...)
   va_list args;
   char output[MAX_STRING_LENGTH];
 
-  snprintf(output, sizeof(output), "Mob (%s, VNum %d):: %s",
+  tb_snprintf(output, sizeof(output), "Mob (%s, VNum %d):: %s",
                    GET_SHORT(mob), GET_MOB_VNUM(mob), format);
 
   va_start(args, format);
@@ -324,7 +324,7 @@ ACMD(do_mzoneecho)
         mob_log(ch, "mzoneecho called for nonexistant zone");
 
     else {
-        snprintf(buf, sizeof(buf), "%s\r\n", msg);
+        tb_snprintf(buf, sizeof(buf), "%s\r\n", msg);
         send_to_zone(buf, zone);
     }
 }
@@ -379,7 +379,7 @@ ACMD(do_mload)
       char_to_room(mob, rnum);
       if (SCRIPT(ch)) { /* It _should_ have, but it might be detached. */
         char buf[MAX_INPUT_LENGTH];
-        snprintf(buf, sizeof(buf), "%c%ld", UID_CHAR, char_script_id(mob));
+        tb_snprintf(buf, sizeof(buf), "%c%ld", UID_CHAR, char_script_id(mob));
         add_var(&(SCRIPT(ch)->global_vars), "lastloaded", buf, 0);
       }
       load_mtrigger(mob);
@@ -392,7 +392,7 @@ ACMD(do_mload)
       }
       if (SCRIPT(ch)) { /* It _should_ have, but it might be detached. */
         char buf[MAX_INPUT_LENGTH];
-        snprintf(buf, sizeof(buf), "%c%ld", UID_CHAR, obj_script_id(object));
+        tb_snprintf(buf, sizeof(buf), "%c%ld", UID_CHAR, obj_script_id(object));
         add_var(&(SCRIPT(ch)->global_vars), "lastloaded", buf, 0);
       }
       /* special handling to make objects able to load on a person/in a container/worn etc. */
