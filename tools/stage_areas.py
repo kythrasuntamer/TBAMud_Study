@@ -10,7 +10,7 @@ import re
 import sys
 
 FAMILIES = ("zon", "wld", "mob", "obj", "shp", "trg", "qst")
-FILE_RE = re.compile(r"^([0-9]{1,8})\\.(zon|wld|mob|obj|shp|trg|qst)$")
+FILE_RE = re.compile(r"^([0-9]{1,8})\.(zon|wld|mob|obj|shp|trg|qst)$")
 MAX_FILE = 8 * 1024 * 1024
 
 def indexed(root, family):
@@ -53,7 +53,7 @@ def audit(source, dest):
                 data = p.read_bytes()
             except OSError as exc:
                 raise ValueError(f"Cannot read {p}: {exc}") from exc
-            if b"\\x00" in data:
+            if b"\x00" in data:
                 raise ValueError(f"NUL byte in {p}")
             # Zone numbers and record VNUMs are separate collision domains.
             # Refuse instead of attempting dangerous automatic remapping.
@@ -92,7 +92,7 @@ def main():
                 if selected:
                     folder = args.staging / family
                     (folder / "index").write_text(
-                        "".join(f"{n}.{family}\\n" for n in selected) + "$\\n")
+                        "".join(f"{n}.{family}\n" for n in selected) + "$\n")
             print(f"Staged files in {args.staging}")
         else:
             print("Dry run only; pass --write to stage")
