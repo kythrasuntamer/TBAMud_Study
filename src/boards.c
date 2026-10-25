@@ -290,7 +290,7 @@ int board_display_msg(int board_type, struct char_data *ch, char *arg, struct ob
     return (board_show_board(board_type, ch, arg, board));
   if (!is_number(number))	/* read 2.mail, look 2.sword */
     return (0);
-  if (!(msg = atoi(number)))
+  if (!(msg = tb_parse_int_or_zero(number)))
     return (0);
 
   if (GET_LEVEL(ch) < READ_LVL(board_type)) {
@@ -343,7 +343,7 @@ int board_remove_msg(int board_type, struct char_data *ch, char *arg, struct obj
 
   if (!*number || !is_number(number))
     return (0);
-  if (!(msg = atoi(number)))
+  if (!(msg = tb_parse_int_or_zero(number)))
     return (0);
 
   if (!num_of_msgs[board_type]) {
