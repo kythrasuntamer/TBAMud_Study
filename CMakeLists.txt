@@ -13,6 +13,25 @@ enable_testing()
 
 set(CMAKE_C_STANDARD 99)
 
+# ========== Build provenance ==========
+execute_process(
+    COMMAND git rev-parse --short=12 HEAD
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    OUTPUT_VARIABLE TB_BUILD_SHA
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
+)
+if(NOT TB_BUILD_SHA)
+    set(TB_BUILD_SHA "unknown")
+endif()
+set(TB_BUILD_COMPILER "${CMAKE_C_COMPILER_ID} ${CMAKE_C_COMPILER_VERSION}")
+if(CMAKE_BUILD_TYPE)
+    set(TB_BUILD_TYPE "${CMAKE_BUILD_TYPE}")
+else()
+    set(TB_BUILD_TYPE "unspecified")
+endif()
+set(TB_BUILD_SANITIZERS "off")
+
 # Include checker modules
 include(CheckFunctionExists)
 include(CheckIncludeFile)
@@ -432,6 +451,7 @@ option(ENABLE_SANITIZERS "Enable AddressSanitizer and UndefinedBehaviorSanitizer
 if(ENABLE_SANITIZERS)
     if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
         message(STATUS "Native sanitizers enabled: address, undefined")
+        set(TB_BUILD_SANITIZERS "address,undefined")
         # Add these after configure-time feature probes so sanitizer runtimes
         # do not perturb CMake's compile-and-run capability detection.
         add_compile_options(
