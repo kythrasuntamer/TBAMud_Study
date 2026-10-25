@@ -10,8 +10,37 @@
 #include <sys/types.h>
 #include <ctype.h>
 #include <string.h>
+#include <stdlib.h>
+#include <errno.h>
+#include <limits.h>
 
 #define READ_SIZE 256
+
+static long parse_long_or_zero(const char *text)
+{
+  char *end = NULL;
+  long value;
+
+  if (text == NULL)
+    return 0;
+
+  errno = 0;
+  value = strtol(text, &end, 10);
+  if (end == text || errno == ERANGE)
+    return 0;
+
+  return value;
+}
+
+static int parse_int_or_zero(const char *text)
+{
+  long value = parse_long_or_zero(text);
+
+  if (value < INT_MIN || value > INT_MAX)
+    return 0;
+
+  return (int)value;
+}
 
 #define FLAG(n) (1 << (n))
 
@@ -30,9 +59,6 @@ typedef enum boolean_type {
 /* 32-bit flag defines (from utils.h) */
 #define IS_SET(flag,bit)  ((flag) & (bit))
 #define SET_BIT(var,bit)  ((var) |= (bit))
-
-int atoi(const char *str);
-long atol(const char *str);
 
 /* Mail index flags - taken from mail.h */
 #define MINDEX_DELETED   FLAG(0)  /* Mail has been marked for deletion     */
@@ -69,14 +95,14 @@ int main(int argc, char** argv)
     return 1;
   }
 
-  fprintf(index_file, "# tbaMUD mail index\n");
-  fprintf(index_file, "# Format: <ID> <flags> <sender ID/vnum> <recipient ID> <time> <subject>\n");
-  fprintf(index_file, "# For 'No Subject', use (null)\n");
+  if (fprintf(index_file, "# tbaMUD mail index\n") < 0) perror("write index");
+  if (fprintf(index_file, "# Format: <ID> <flags> <sender ID/vnum> <recipient ID> <time> <subject>\n") < 0) perror("write index");
+  if (fprintf(index_file, "# For 'No Subject', use (null)\n") < 0) perror("write index");
 
   walkdir(index_file, ".");
 
-  fprintf(index_file, "~\n");
-  fclose(index_file);
+  if (fprintf(index_file, "~\n") < 0) perror("write index");
+  if (fclose(index_file) != 0) perror("close index");
   return 0;
 }
 
@@ -113,25 +139,25 @@ char *findLine(FILE *plr_file, char *tag) {
 /* Search file for mail ID and convert to long */
 long parse_mailid(FILE *plr_file) {
   char *value = findLine(plr_file, "MlID:");
-  return value ? atol(value) : 0;
+  return value ? parse_long_or_zero(value) : 0;
 }
 
 /* Search file for sender ID and convert to long */
 long parse_sender(FILE *plr_file) {
   char *value = findLine(plr_file, "Send:");
-  return value ? atol(value) : 0;
+  return value ? parse_long_or_zero(value) : 0;
 }
 
 /* Search file for recipient ID and convert to long */
 long parse_recipient(FILE *plr_file) {
   char *value = findLine(plr_file, "Reci:");
-  return value ? atol(value) : 0;
+  return value ? parse_long_or_zero(value) : 0;
 }
 
 /* Search file for date/time mail was sent and convert to long */
 long parse_send_time(FILE *plr_file) {
   char *value = findLine(plr_file, "Sent:");
-  return value ? atol(value) : 0;
+  return value ? parse_long_or_zero(value) : 0;
 }
 
 /* Search file for mail subject and return as string */
@@ -165,7 +191,7 @@ int parse_mail_flags(FILE *plr_file) {
     }
   }
   if ((txt = findLine(plr_file, "Gold:")) != NULL) {
-    if (atol(txt) > 0) SET_BIT(ret, MINDEX_HAS_GOLD);
+    if (parse_long_or_zero(txt) > 0) SET_BIT(ret, MINDEX_HAS_GOLD);
   }
   if ((txt = findLine(plr_file, "Objs:")) != NULL) {
     SET_BIT(ret, MINDEX_HAS_OBJ);
@@ -176,7 +202,7 @@ int parse_mail_flags(FILE *plr_file) {
 int parseadminlevel(FILE *plr_file, int level) {
 	char *fromFile = findLine(plr_file, "Admn:");
 	if (fromFile != NULL)
-		return atoi(fromFile);
+		return parse_int_or_zero(fromFile);
 
 	if (level >= 30)
 		return level-30;
@@ -185,7 +211,7 @@ int parseadminlevel(FILE *plr_file, int level) {
 }
 
 long parselast(FILE *plr_file) {
-	return atol(findLine(plr_file, "Last:"));
+	return parse_long_or_zero(findLine(plr_file, "Last:"));
 }
 
 
@@ -205,10 +231,14 @@ void walkdir(FILE *index_file, char *dir) {
   while ((dp = readdir(dfd)) != NULL)
   {
     struct stat stbuf ;
-    snprintf(filename_qfd, sizeof(filename_qfd), "%s/%s",dir,dp->d_name);
+    if (snprintf(filename_qfd, sizeof(filename_qfd), "%s/%s", dir, dp->d_name) >= (int)sizeof(filename_qfd)) {
+    if (fprintf(stderr, "Path too long: %s/%s\n", dir, dp->d_name) < 0)
+      perror("stderr");
+    continue;
+  }
 
     if( stat(filename_qfd,&stbuf ) == -1 ) {
-      fprintf(stdout, "Unable to stat file: %s\n",filename_qfd) ;
+      if (fprintf(stdout, "Unable to stat file: %s\n", filename_qfd) < 0) perror("stdout");
       continue ;
     }
 
@@ -237,9 +267,9 @@ void walkdir(FILE *index_file, char *dir) {
 
         sprintascii(bits, flags);
 
-        fprintf(index_file, "%ld %s %ld %ld %ld %s\n", id, *bits ? bits : "0", sender, recipient, sent_time, subject);
+        if (fprintf(index_file, "%ld %s %ld %ld %ld %s\n", id, *bits ? bits : "0", sender, recipient, sent_time, subject) < 0) perror("write index");
 
-        fclose(mail_file);
+        if (fclose(mail_file) != 0) perror("close mail file");
       }
     }
   }
@@ -262,7 +292,7 @@ int get_line(FILE *fl, char *buf)
   while (sl > 0 && (temp[sl - 1] == '\n' || temp[sl - 1] == '\r'))
     temp[--sl] = '\0';
 
-  strcpy(buf, temp); /* strcpy: OK, if buf >= READ_SIZE (256) */
+  memcpy(buf, temp, strlen(temp) + 1);
   return (lines);
 }
 
@@ -284,7 +314,7 @@ long asciiflag_conv(char *flag)
   }
 
   if (is_num)
-    flags = atol(flag);
+    flags = parse_long_or_zero(flag);
 
   return (flags);
 }
