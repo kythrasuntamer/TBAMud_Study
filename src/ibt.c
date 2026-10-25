@@ -253,11 +253,11 @@ void load_ibt_file(int mode)
    IBT_DATA *ibtData;
 
    switch(mode) {
-     case SCMD_BUG : sprintf( filename, "%s",BUGS_FILE );
+     case SCMD_BUG : snprintf(filename, sizeof(filename), "%s",BUGS_FILE);
                      break;
-     case SCMD_IDEA: sprintf( filename, "%s",IDEAS_FILE );
+     case SCMD_IDEA: snprintf(filename, sizeof(filename), "%s",IDEAS_FILE);
                      break;
-     case SCMD_TYPO: sprintf( filename, "%s",TYPOS_FILE );
+     case SCMD_TYPO: snprintf(filename, sizeof(filename), "%s",TYPOS_FILE);
                      break;
      default       : log("SYSERR: Invalid mode (%d) in load_ibt_file", mode);
                      return;
@@ -292,13 +292,13 @@ void save_ibt_file(int mode)
    char filename[256];
 
    switch(mode) {
-     case SCMD_BUG : sprintf( filename, "%s",BUGS_FILE );
+     case SCMD_BUG : snprintf(filename, sizeof(filename), "%s",BUGS_FILE);
                      first_ibt = first_bug;
                      break;
-     case SCMD_IDEA: sprintf( filename, "%s",IDEAS_FILE );
+     case SCMD_IDEA: snprintf(filename, sizeof(filename), "%s",IDEAS_FILE);
                      first_ibt = first_idea;
                      break;
-     case SCMD_TYPO: sprintf( filename, "%s",TYPOS_FILE );
+     case SCMD_TYPO: snprintf(filename, sizeof(filename), "%s",TYPOS_FILE);
                      first_ibt = first_typo;
                      break;
      default       : log("SYSERR: Invalid mode (%d) in save_ibt_file", mode);
@@ -681,7 +681,7 @@ ACMD(do_ibt)
     send_to_char(ch, "Write your %s.\r\n", CMD_NAME);
     send_editor_help(ch->desc);
 
-    sprintf(buf, "$n starts to give %s %s.", TANA(CMD_NAME), CMD_NAME);
+    snprintf(buf, sizeof(buf), "$n starts to give %s %s.", TANA(CMD_NAME), CMD_NAME);
     act(buf, TRUE, ch, 0, 0, TO_ROOM);
 
     string_write(ch->desc, &(ibtData->body),MAX_IBT_LENGTH, 0, NULL);
