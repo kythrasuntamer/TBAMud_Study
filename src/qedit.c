@@ -75,7 +75,7 @@ ACMD(do_oasis_qedit)
     save = TRUE;
 
     if (is_number(buf2))
-      number = atoi(buf2);
+      number = tb_parse_int_or_zero(buf2);
     else if (GET_OLC_ZONE(ch) > 0) {
       zone_rnum zlok;
 
@@ -95,7 +95,7 @@ ACMD(do_oasis_qedit)
   /** If a numeric argument was given, get it.                               **/
   /****************************************************************************/
   if (number == NOWHERE)
-    number = atoi(buf1);
+    number = tb_parse_int_or_zero(buf1);
 
   if (number < IDXTYPE_MIN || number > IDXTYPE_MAX) {
     send_to_char(ch, "That quest VNUM can't exist.\r\n");
@@ -377,7 +377,7 @@ static void qedit_disp_flag_menu(struct descriptor_data *d)
 
 void qedit_parse(struct descriptor_data *d, char *arg)
 {
-  int number = atoi(arg);
+  int number = tb_parse_int_or_zero(arg);
   char *oldtext = NULL;
 
   switch (OLC_MODE(d)) {
@@ -638,7 +638,7 @@ void qedit_parse(struct descriptor_data *d, char *arg)
       OLC_QUEST(d)->value[1] = LIMIT(number, 0, 999999);
       break;
     case QEDIT_PREREQ:
-      if ((number = atoi(arg)) != -1)
+      if ((number = tb_parse_int_or_zero(arg)) != -1)
         if (real_object(number) == NOTHING) {
           write_to_output(d, "That object does not exist, try again : ");
           return;
@@ -675,7 +675,7 @@ void qedit_parse(struct descriptor_data *d, char *arg)
       OLC_QUEST(d)->value[4] = LIMIT(number, -1, 100);
       break;
     case QEDIT_RETURNMOB:
-      if ((number = atoi(arg)) != -1)
+      if ((number = tb_parse_int_or_zero(arg)) != -1)
         if (real_mobile(number) == NOBODY) {
           write_to_output(d, "That mobile does not exist, try again : ");
           return;
@@ -686,22 +686,22 @@ void qedit_parse(struct descriptor_data *d, char *arg)
       OLC_QUEST(d)->target = number;
       break;
     case QEDIT_NEXTQUEST:
-      if ((number = atoi(arg)) != -1) {
+      if ((number = tb_parse_int_or_zero(arg)) != -1) {
         if (real_quest(number) == NOTHING) {
           write_to_output(d, "That is not a valid quest, try again (-1 for none) : ");
           return;
         }
       }
-      OLC_QUEST(d)->next_quest = (number == -1 ? NOTHING : atoi(arg));
+      OLC_QUEST(d)->next_quest = (number == -1 ? NOTHING : tb_parse_int_or_zero(arg));
       break;
     case QEDIT_PREVQUEST:
-      if ((number = atoi(arg)) != -1) {
+      if ((number = tb_parse_int_or_zero(arg)) != -1) {
         if (real_quest(number) == NOTHING) {
           write_to_output(d, "That is not a valid quest, try again (-1 for none) : ");
           return;
         }
       }
-      OLC_QUEST(d)->prev_quest = (number == -1 ? NOTHING : atoi(arg));
+      OLC_QUEST(d)->prev_quest = (number == -1 ? NOTHING : tb_parse_int_or_zero(arg));
       break;
     case QEDIT_GOLD:
       OLC_QUEST(d)->gold_reward = LIMIT(number, 0, 99999);
@@ -710,7 +710,7 @@ void qedit_parse(struct descriptor_data *d, char *arg)
       OLC_QUEST(d)->exp_reward = LIMIT(number, 0, 99999);
       break;
     case QEDIT_OBJ:
-      if ((number = atoi(arg)) != -1)
+      if ((number = tb_parse_int_or_zero(arg)) != -1)
         if (real_object(number) == NOTHING) {
           write_to_output(d, "That object does not exist, try again : ");
           return;
