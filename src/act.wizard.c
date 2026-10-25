@@ -542,7 +542,7 @@ static void do_stat_room(struct char_data *ch, struct room_data *rm)
 	  zone_table[rm->zone].number, CCGRN(ch, C_NRM), rm->number,
 	  CCNRM(ch, C_NRM), real_room(rm->number), room_script_id(rm), buf2);
 
-  sprintbitarray(rm->room_flags, room_bits, RF_ARRAY_MAX, buf2);
+  sprintbitarray(rm->room_flags, room_bits, RF_ARRAY_MAX, buf2, sizeof(buf2));
   send_to_char(ch, "SpecProc: %s, Flags: %s\r\n", rm->func == NULL ? "None" : get_spec_func_name(rm->func), buf2);
 
   send_to_char(ch, "Description:\r\n%s", rm->description ? rm->description : "  None.\r\n");
@@ -648,13 +648,13 @@ static void do_stat_object(struct char_data *ch, struct obj_data *j)
     send_to_char(ch, "%s\r\n", CCNRM(ch, C_NRM));
   }
 
-  sprintbitarray(GET_OBJ_WEAR(j), wear_bits, TW_ARRAY_MAX, buf);
+  sprintbitarray(GET_OBJ_WEAR(j), wear_bits, TW_ARRAY_MAX, buf, sizeof(buf));
   send_to_char(ch, "Can be worn on: %s\r\n", buf);
 
-  sprintbitarray(GET_OBJ_AFFECT(j), affected_bits, AF_ARRAY_MAX, buf);
+  sprintbitarray(GET_OBJ_AFFECT(j), affected_bits, AF_ARRAY_MAX, buf, sizeof(buf));
   send_to_char(ch, "Set char bits : %s\r\n", buf);
 
-  sprintbitarray(GET_OBJ_EXTRA(j), extra_bits, EF_ARRAY_MAX, buf);
+  sprintbitarray(GET_OBJ_EXTRA(j), extra_bits, EF_ARRAY_MAX, buf, sizeof(buf));
   send_to_char(ch, "Extra flags   : %s\r\n", buf);
 
   send_to_char(ch, "Weight: %d, Value: %d, Cost/day: %d, Timer: %d, Min level: %d\r\n",
@@ -861,15 +861,15 @@ static void do_stat_character(struct char_data *ch, struct char_data *k)
   if (IS_NPC(k)) {
     sprinttype(k->mob_specials.default_pos, position_types, buf, sizeof(buf));
     send_to_char(ch, ", Default position: %s\r\n", buf);
-    sprintbitarray(MOB_FLAGS(k), action_bits, PM_ARRAY_MAX, buf);
+    sprintbitarray(MOB_FLAGS(k), action_bits, PM_ARRAY_MAX, buf, sizeof(buf));
     send_to_char(ch, "NPC flags: %s%s%s\r\n", CCCYN(ch, C_NRM), buf, CCNRM(ch, C_NRM));
   } else {
     send_to_char(ch, ", Idle Timer (in tics) [%d]\r\n", k->char_specials.timer);
 
-    sprintbitarray(PLR_FLAGS(k), player_bits, PM_ARRAY_MAX, buf);
+    sprintbitarray(PLR_FLAGS(k), player_bits, PM_ARRAY_MAX, buf, sizeof(buf));
     send_to_char(ch, "PLR: %s%s%s\r\n", CCCYN(ch, C_NRM), buf, CCNRM(ch, C_NRM));
 
-    sprintbitarray(PRF_FLAGS(k), preference_bits, PR_ARRAY_MAX, buf);
+    sprintbitarray(PRF_FLAGS(k), preference_bits, PR_ARRAY_MAX, buf, sizeof(buf));
     send_to_char(ch, "PRF: %s%s%s\r\n", CCGRN(ch, C_NRM), buf, CCNRM(ch, C_NRM));
 
     send_to_char(ch, "Quest Points: [%9d] Quests Completed: [%5d]\r\n",
@@ -912,7 +912,7 @@ static void do_stat_character(struct char_data *ch, struct char_data *k)
   }
 
   /* Showing the bitvector */
-  sprintbitarray(AFF_FLAGS(k), affected_bits, AF_ARRAY_MAX, buf);
+  sprintbitarray(AFF_FLAGS(k), affected_bits, AF_ARRAY_MAX, buf, sizeof(buf));
   send_to_char(ch, "AFF: %s%s%s\r\n", CCYEL(ch, C_NRM), buf, CCNRM(ch, C_NRM));
 
   /* Routine to show what spells a char is affected by */
@@ -2463,7 +2463,7 @@ static size_t print_zone_to_buf(char *bufptr, size_t left, zone_rnum zone, int l
     int i, j, k, l, m, n, o;
     char buf[MAX_STRING_LENGTH];
 
-    sprintbitarray(zone_table[zone].zone_flags, zone_bits, ZN_ARRAY_MAX, buf);
+    sprintbitarray(zone_table[zone].zone_flags, zone_bits, ZN_ARRAY_MAX, buf, sizeof(buf));
 
     tmp = snprintf(bufptr, left,
 	"%3d %-30.30s%s By: %-10.10s%s Age: %3d; Reset: %3d (%s); Range: %5d-%5d\r\n",
