@@ -157,13 +157,19 @@ static void hedit_save_internally(struct descriptor_data *d)
 static void hedit_save_to_disk(struct descriptor_data *d)
 {
   FILE *fp;
-  char buf1[MAX_STRING_LENGTH], index_name[READ_SIZE];
-  int i;
+  char buf1[MAX_STRING_LENGTH], index_name[READ_SIZE], temp_name[READ_SIZE];
+  int i, name_result;
 
   tb_snprintf(index_name, sizeof(index_name), "%s%s", HLP_PREFIX, HELP_FILE);
-  if (!(fp = fopen(index_name, "w"))) {
-    TB_REPORT_ERRNO("fopen", index_name);
-    log("SYSERR: Could not write help index file");
+  name_result = snprintf(temp_name, sizeof(temp_name), "%s.tmp", index_name);
+  if (name_result < 0 || (size_t)name_result >= sizeof(temp_name)) {
+    log("SYSERR: help temporary filename is too long for %s", index_name);
+    return;
+  }
+
+  if (!(fp = fopen(temp_name, "w"))) {
+    TB_REPORT_ERRNO("fopen", temp_name);
+    log("SYSERR: Could not write temporary help index file");
     return;
   }
 
@@ -176,14 +182,25 @@ static void hedit_save_to_disk(struct descriptor_data *d)
     /* Forget making a buffer, lets just write the thing now. */
     tb_fprintf(fp, "%s#%d\n", convert_from_tabs(buf1), help_table[i].min_level);
   }
-  /* Write final line and close. */
+  /* Write final line and commit only a verified temporary file. */
   tb_fprintf(fp, "$~\n");
-  tb_fclose(fp);
+  {
+    int flush_ok = tb_fflush_checked(fp, temp_name);
+    int close_ok = tb_fclose_checked(fp, temp_name);
+    if (!flush_ok || !close_ok) {
+      if (remove(temp_name) != 0 && errno != ENOENT)
+        TB_REPORT_ERRNO("remove", temp_name);
+      return;
+    }
+  }
+
+  if (!tb_replace_file_checked(temp_name, index_name))
+    return;
 
   remove_from_save_list(HEDIT_PERMISSION, SL_HLP);
 
-  /* Reboot the help files. */
-  free_help_table();     
+  /* Reboot the help files only after the replacement committed. */
+  free_help_table();
   index_boot(DB_BOOT_HLP);
 }
 
