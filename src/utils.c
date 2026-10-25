@@ -1071,62 +1071,60 @@ int get_flag_by_name(const char *flag_list[], char *flag_name)
  * @param[in] lines_to_read The number of lines to be read from the front of
  * the file.
  */
-int file_head( FILE *file, char *buf, size_t bufsize, int lines_to_read )
+int file_head(FILE *file, char *buf, size_t bufsize, int lines_to_read)
 {
-  /* Local variables */
-  int lines_read = 0;   /* The number of lines read so far. */
-  char line[READ_SIZE]; /* Retrieval buffer for file. */
-  size_t buflen;        /* Amount of previous existing data in buffer. */
-  int readstatus = 1;   /* Are we at the end of the file? */
-  int n = 0;            /* Return value from snprintf. */
-  const char *overflow = "\r\n**OVERFLOW**\r\n"; /* Appended if overflow. */
+  int lines_read = 0;
+  char line[READ_SIZE];
+  size_t buflen, remaining;
+  int readstatus = 1;
+  int n;
+  bool overflowed = FALSE;
+  const char *overflow = "\r\n**OVERFLOW**\r\n";
 
-  /* Quick check for bad arguments. */
-  if (lines_to_read <= 0)
-  {
-    return lines_to_read;
-  }
+  if (!file || !buf || bufsize == 0 || lines_to_read <= 0)
+    return lines_to_read <= 0 ? lines_to_read : 0;
 
-  /* Initialize local variables not already initialized. */
-  buflen  = strlen(buf);
-
-  /* Read from the front of the file. */
-  rewind(file);
-
-  while ( (lines_read < lines_to_read) &&
-      (readstatus > 0) && (buflen < bufsize) )
-  {
-    /* Don't use get_line to set lines_read because get_line will return
-     * the number of comments skipped during reading. */
-    readstatus = get_line( file, line );
-
-    if (readstatus > 0)
-    {
-      n = snprintf( buf + buflen, bufsize - buflen, "%s\r\n", line);
-      buflen += n;
-      lines_read++;
-    }
-  }
-
-  /* Check to see if we had a potential buffer overflow. */
+  buflen = strlen(buf);
   if (buflen >= bufsize)
-  {
-    /* We should never see this case, but... */
-    if ( (strlen(overflow) + 1) >= bufsize )
-    {
-      core_dump();
-      snprintf( buf, bufsize, "%s", overflow);
+    return 0;
+
+  clearerr(file);
+  if (fseek(file, 0L, SEEK_SET) != 0)
+    return 0;
+
+  while (lines_read < lines_to_read && readstatus > 0 && buflen < bufsize - 1) {
+    readstatus = get_line(file, line);
+    if (readstatus <= 0)
+      break;
+
+    remaining = bufsize - buflen;
+    n = snprintf(buf + buflen, remaining, "%s\r\n", line);
+    if (n < 0)
+      break;
+    if ((size_t)n >= remaining) {
+      overflowed = TRUE;
+      buflen = bufsize - 1;
+      break;
     }
-    else
-    {
-      /* Append the overflow statement to the buffer. */
-      snprintf( buf + buflen - strlen(overflow) - 1, strlen(overflow) + 1, "%s", overflow);
+
+    buflen += (size_t)n;
+    lines_read++;
+  }
+
+  if (overflowed) {
+    size_t olen = strlen(overflow);
+
+    if (olen + 1 >= bufsize) {
+      core_dump();
+      snprintf(buf, bufsize, "%s", overflow);
+    } else {
+      size_t start = (buflen > olen) ? buflen - olen : 0;
+      snprintf(buf + start, bufsize - start, "%s", overflow);
     }
   }
 
-  rewind(file);
-
-  /* Return the number of lines. */
+  clearerr(file);
+  fseek(file, 0L, SEEK_SET);
   return lines_read;
 }
 
@@ -1148,78 +1146,73 @@ int file_head( FILE *file, char *buf, size_t bufsize, int lines_to_read )
  * @param[in] lines_to_read The number of lines to be read from the back of
  * the file.
  */
-int file_tail( FILE *file, char *buf, size_t bufsize, int lines_to_read )
+int file_tail(FILE *file, char *buf, size_t bufsize, int lines_to_read)
 {
-  /* Local variables */
-  int lines_read = 0;   /* The number of lines read so far. */
-  int total_lines = 0;  /* The total number of lines in the file. */
-  char c;               /* Used to fast forward the file. */
-  char line[READ_SIZE]; /* Retrieval buffer for file. */
-  size_t buflen;        /* Amount of previous existing data in buffer. */
-  int readstatus = 1;   /* Are we at the end of the file? */
-  int n = 0;            /* Return value from snprintf. */
-  const char *overflow = "\r\n**OVERFLOW**\r\n"; /* Appended if overflow. */
+  int lines_read = 0;
+  int total_lines;
+  int c;
+  char line[READ_SIZE];
+  size_t buflen, remaining;
+  int readstatus = 1;
+  int n;
+  bool overflowed = FALSE;
+  const char *overflow = "\r\n**OVERFLOW**\r\n";
 
-  /* Quick check for bad arguments. */
-  if (lines_to_read <= 0)
-  {
-    return lines_to_read;
-  }
+  if (!file || !buf || bufsize == 0 || lines_to_read <= 0)
+    return lines_to_read <= 0 ? lines_to_read : 0;
 
-  /* Initialize local variables not already initialized. */
-  buflen  = strlen(buf);
-  total_lines = file_numlines(file); /* Side effect: file is rewound. */
+  buflen = strlen(buf);
+  if (buflen >= bufsize)
+    return 0;
 
-  /* Fast forward to the location we should start reading from */
-  while (((lines_to_read + lines_read) < total_lines))
-  {
+  total_lines = file_numlines(file);
+
+  while ((lines_to_read + lines_read) < total_lines) {
     do {
       c = fgetc(file);
-    } while(c != '\n');
+    } while (c != '\n' && c != EOF);
 
+    if (c == EOF)
+      break;
     lines_read++;
   }
 
-  /* We reuse the lines_read counter. */
   lines_read = 0;
 
-  /** From here on, we perform just like file_head */
-  while ( (lines_read < lines_to_read) &&
-      (readstatus > 0) && (buflen < bufsize) )
-  {
-    /* Don't use get_line to set lines_read because get_line will return
-     * the number of comments skipped during reading. */
-    readstatus = get_line( file, line );
+  while (lines_read < lines_to_read && readstatus > 0 && buflen < bufsize - 1) {
+    readstatus = get_line(file, line);
+    if (readstatus <= 0)
+      break;
 
-    if (readstatus > 0)
-    {
-      n = snprintf( buf + buflen, bufsize - buflen, "%s\r\n", line);
-      buflen += n;
-      lines_read++;
+    remaining = bufsize - buflen;
+    n = snprintf(buf + buflen, remaining, "%s\r\n", line);
+    if (n < 0)
+      break;
+    if ((size_t)n >= remaining) {
+      overflowed = TRUE;
+      buflen = bufsize - 1;
+      break;
     }
+
+    buflen += (size_t)n;
+    lines_read++;
   }
 
-  /* Check to see if we had a potential buffer overflow. */
-  if (buflen >= bufsize)
-  {
-    /* We should never see this case, but... */
-    if ( (strlen(overflow) + 1) >= bufsize )
-    {
+  if (overflowed) {
+    size_t olen = strlen(overflow);
+
+    if (olen + 1 >= bufsize) {
       core_dump();
-      snprintf( buf, bufsize, "%s", overflow);
-    }
-    else
-    {
-      /* Append the overflow statement to the buffer. */
-      snprintf( buf + buflen - strlen(overflow) - 1, strlen(overflow) + 1, "%s", overflow);
+      snprintf(buf, bufsize, "%s", overflow);
+    } else {
+      size_t start = (buflen > olen) ? buflen - olen : 0;
+      snprintf(buf + start, bufsize - start, "%s", overflow);
     }
   }
 
-  rewind(file);
-
-  /* Return the number of lines read. */
+  clearerr(file);
+  fseek(file, 0L, SEEK_SET);
   return lines_read;
-
 }
 
 /** Returns the byte size of a file. We assume size_t to be a large enough type
@@ -1229,25 +1222,23 @@ int file_tail( FILE *file, char *buf, size_t bufsize, int lines_to_read )
  * @post file will be rewound.
  * @param file The file to determine the size of.
  */
-size_t file_sizeof( FILE *file )
+size_t file_sizeof(FILE *file)
 {
   size_t numbytes = 0;
+  int c;
 
-  rewind(file);
+  if (!file)
+    return 0;
 
-  /* It would be so much easier to do a byte count if an fseek SEEK_END and
-   * ftell pair of calls was portable for text files, but all information
-   * I've found says that getting a file size from ftell for text files is
-   * not portable. Oh well, this method should be extremely fast for the
-   * relatively small filesizes in the mud, and portable, too. */
-  while (!feof(file))
-  {
-    fgetc(file);
+  clearerr(file);
+  if (fseek(file, 0L, SEEK_SET) != 0)
+    return 0;
+
+  while ((c = fgetc(file)) != EOF)
     numbytes++;
-  }
 
-  rewind(file);
-
+  clearerr(file);
+  fseek(file, 0L, SEEK_SET);
   return numbytes;
 }
 
@@ -1258,24 +1249,24 @@ size_t file_sizeof( FILE *file )
  * @post file will be rewound.
  * @param file The file to determine the size of.
  */
-int file_numlines( FILE *file )
+int file_numlines(FILE *file)
 {
   int numlines = 0;
-  char c;
+  int c;
 
-  rewind(file);
+  if (!file)
+    return 0;
 
-  while (!feof(file))
-  {
-    c = fgetc(file);
-    if (c == '\n')
-    {
+  clearerr(file);
+  if (fseek(file, 0L, SEEK_SET) != 0)
+    return 0;
+
+  while ((c = fgetc(file)) != EOF)
+    if (c == '\n' && numlines < INT_MAX)
       numlines++;
-    }
-  }
 
-  rewind(file);
-
+  clearerr(file);
+  fseek(file, 0L, SEEK_SET);
   return numlines;
 }
 
