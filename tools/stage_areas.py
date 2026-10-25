@@ -7,12 +7,10 @@ another reviewed converter first. Never assume format conversion is lossless.
 import argparse
 import pathlib
 import re
-import shutil
 import sys
 
 FAMILIES = ("zon", "wld", "mob", "obj", "shp", "trg", "qst")
 FILE_RE = re.compile(r"^([0-9]{1,8})\\.(zon|wld|mob|obj|shp|trg|qst)$")
-HEADER_RE = re.compile(r"^#([0-9]+)(?:\\s|$)", re.MULTILINE)
 MAX_FILE = 8 * 1024 * 1024
 
 def indexed(root, family):
