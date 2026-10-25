@@ -205,3 +205,37 @@ commit to install them with the associated imported zone and updated indexes.
 Global VNUM/reference validation and an isolated server boot are **mandatory**.
 The bridge generator does not automatically install converted content, does
 not map all VNUM domains, and does not grant copyright permissions.
+
+## Whole-world VNUM preflight
+
+Run the global definition audit before preparing a bridge or adding any
+candidate world files:
+
+```sh
+python3 tools/audit_world_vnums.py lib/world /tmp/approved-world
+python3 -m unittest discover -s tests -p 'test_area_*.py'
+```
+
+The audit searches every numbered file in each VNUM family rather than
+relying on filename equality. It fails on cross-file VNUM collisions.
+This is a **definition** collision check: it does not yet validate every
+reset reference, nested container reference, special-procedure mapping, or
+all possible engine-specific metadata. Never treat a passing audit as proof
+that an area will boot or behave correctly.
+
+### Activation remains gated
+
+Do not activate until ALL are true:
+1. PvE combat present; no PvP, verified source provenance.
+2. Rights to redistribute every included area and attribution preserved.
+3. Complete semantics for rooms, mobiles, objects, exits, resets and shops,
+   with unsupported operations rejected rather than dropped.
+4. Global definition and reference collision audit and consistent VNUM
+   remapping.
+5. Valid zone ranges/indexes and isolated test instance successfully boots.
+6. Navigation, mobile spawn, combat, object pickup and zone resets tested.
+7. A reviewed bridge connects an unoccupied existing exit to the imported
+   area and back, with both directions tested in-game.
+
+The present branch adds some tools for steps 3-4 and 7, but **does not**
+complete all of these gates or bundle any third-party world data.
