@@ -68,6 +68,37 @@ static void init_boards(void);
 static void board_reset_board(int board_type);
 static void board_clear_board(int board_type);
 
+static int board_write_exact(FILE *fl, const void *ptr, size_t size, size_t count,
+                             int board_type, int message_index, const char *field)
+{
+  size_t written;
+
+  if (fl == NULL || (ptr == NULL && size != 0 && count != 0)) {
+    log("SYSERR: board %d save has invalid write arguments at message %d field %s",
+        board_type, message_index, field ? field : "(unknown)");
+    return FALSE;
+  }
+
+  written = fwrite(ptr, size, count, fl);
+  if (written != count) {
+    if (ferror(fl)) {
+      int saved_errno = errno;
+      log("SYSERR: board %d write failed for %s message %d field %s: wrote %lu/%lu elements: %s (errno=%d)",
+          board_type, FILENAME(board_type), message_index,
+          field ? field : "(unknown)", (unsigned long)written,
+          (unsigned long)count, strerror(saved_errno), saved_errno);
+    } else {
+      log("SYSERR: board %d short write for %s message %d field %s: wrote %lu/%lu elements",
+          board_type, FILENAME(board_type), message_index,
+          field ? field : "(unknown)", (unsigned long)written,
+          (unsigned long)count);
+    }
+    return FALSE;
+  }
+
+  return TRUE;
+}
+
 static int find_slot(void)
 {
   int i;
@@ -423,7 +454,9 @@ void board_save_board(int board_type)
     log("SYSERR: board %d could not open %s for writing", board_type, FILENAME(board_type));
     return;
   }
-  tb_fwrite(&(num_of_msgs[board_type]), sizeof(int), 1, fl);
+  if (!board_write_exact(&(num_of_msgs[board_type]), sizeof(int), 1, fl,
+                         board_type, -1, "message-count header"))
+    goto write_fail;
 
   for (i = 0; i < num_of_msgs[board_type]; i++) {
     if ((tmp1 = MSG_HEADING(board_type, i)) != NULL)
@@ -438,13 +471,23 @@ void board_save_board(int board_type)
     else
       msg_index[board_type][i].message_len = strlen(tmp2) + 1;
 
-    tb_fwrite(&(msg_index[board_type][i]), sizeof(struct board_msginfo), 1, fl);
-    if (tmp1)
-      tb_fwrite(tmp1, sizeof(char), msg_index[board_type][i].heading_len, fl);
-    if (tmp2)
-      tb_fwrite(tmp2, sizeof(char), msg_index[board_type][i].message_len, fl);
+    if (!board_write_exact(&(msg_index[board_type][i]), sizeof(struct board_msginfo), 1,
+                           fl, board_type, i, "message metadata"))
+      goto write_fail;
+    if (tmp1 && !board_write_exact(tmp1, sizeof(char), msg_index[board_type][i].heading_len,
+                                   fl, board_type, i, "heading"))
+      goto write_fail;
+    if (tmp2 && !board_write_exact(tmp2, sizeof(char), msg_index[board_type][i].message_len,
+                                   fl, board_type, i, "body"))
+      goto write_fail;
   }
 
+  tb_fclose(fl);
+  return;
+
+write_fail:
+  log("SYSERR: Aborting save of board %d (%s) at the first failed write",
+      board_type, FILENAME(board_type));
   tb_fclose(fl);
 }
 
