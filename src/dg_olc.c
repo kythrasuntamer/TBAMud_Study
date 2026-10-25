@@ -318,8 +318,8 @@ static char *str_replace(char *string, const char *substr, const char *replaceme
             size_t replacement_len = strlen(replacement);
             size_t suffix_len = strlen(tok + strlen(substr));
 
-            memcpy(newstr, oldstr, prefix_len);
-            memcpy(newstr + prefix_len, replacement, replacement_len);
+            memcpy(newstr, oldstr, prefix_len); /* NOLINT(bugprone-not-null-terminated-result): later writes append and terminate the string. */
+            memcpy(newstr + prefix_len, replacement, replacement_len); /* NOLINT(bugprone-not-null-terminated-result): later writes append and terminate the string. */
             memcpy(newstr + prefix_len + replacement_len,
                    tok + strlen(substr), suffix_len);
             newstr[prefix_len + replacement_len + suffix_len] = '\0';
