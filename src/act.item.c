@@ -444,7 +444,7 @@ static void perform_drop_gold(struct char_data *ch, int amount, byte mode, room_
   }
 }
 
-#define VANISH(mode) ((mode == SCMD_DONATE || mode == SCMD_JUNK) ? \
+#define VANISH(mode) ((((mode) == SCMD_DONATE) || ((mode) == SCMD_JUNK)) ? \
 		      "  It vanishes in a puff of smoke!" : "")
 static int perform_drop(struct char_data *ch, struct obj_data *obj,
 		     byte mode, const char *sname, room_rnum RDR)
