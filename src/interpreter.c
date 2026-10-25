@@ -51,7 +51,7 @@ static int tb_password_verify(const char *password, const char *hash)
 {
   const char *legacy;
 
-  if (password == NULL || hash == NULL || !*hash)
+  if (password == NULL || hash == NULL || !*hash || sodium_init() < 0)
     return 0;
   if (tb_password_is_argon2id(hash))
     return crypto_pwhash_str_verify(hash, password, strlen(password)) == 0;
@@ -68,7 +68,7 @@ static int tb_password_verify(const char *password, const char *hash)
 static int tb_password_hash(char *output, size_t capacity, const char *password)
 {
   if (output == NULL || password == NULL ||
-      capacity < crypto_pwhash_STRBYTES)
+      capacity < crypto_pwhash_STRBYTES || sodium_init() < 0)
     return 0;
   return crypto_pwhash_str_alg(output, password, strlen(password),
                               crypto_pwhash_OPSLIMIT_INTERACTIVE,
