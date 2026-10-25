@@ -78,7 +78,7 @@ void load_messages(void)
   char chk[128];
 
   if (!(fl = fopen(MESS_FILE, "r"))) {
-    log("SYSERR: Error reading combat message file %s: %s", MESS_FILE, strerror(errno));
+    { int saved_errno = errno; log("SYSERR: combat-message read failed for %s: %s (errno=%d)", MESS_FILE, strerror(saved_errno), saved_errno); }
     exit(1);
   }
 
@@ -94,7 +94,7 @@ void load_messages(void)
         if (feof(fl))
           break;
         else if(ferror(fl))
-          log("SYSERR: Error reading combat message file %s: %s", MESS_FILE, strerror(errno));
+          { int saved_errno = errno; log("SYSERR: combat-message read failed for %s: %s (errno=%d)", MESS_FILE, strerror(saved_errno), saved_errno); }
         else
           log("SYSERR: Error reading combat message file %s", MESS_FILE);
         exit(1);
@@ -112,7 +112,7 @@ void load_messages(void)
           break;
         }
         else if(ferror(fl))
-          log("SYSERR: Error reading combat message file %s: %s", MESS_FILE, strerror(errno));
+          { int saved_errno = errno; log("SYSERR: combat-message read failed for %s: %s (errno=%d)", MESS_FILE, strerror(saved_errno), saved_errno); }
         else
           log("SYSERR: Error reading combat message file %s", MESS_FILE);
         exit(1);
@@ -178,7 +178,7 @@ void save_messages_to_disk(void)
   struct message_type *msg;
 
   if (!(fp = fopen(MESS_FILE, "w"))) {
-    log("SYSERR: Error writing combat message file %s: %s", MESS_FILE, strerror(errno));
+    { int saved_errno = errno; log("SYSERR: combat-message fopen for write failed for %s: %s (errno=%d)", MESS_FILE, strerror(saved_errno), saved_errno); }
     exit(1);
   }
  
