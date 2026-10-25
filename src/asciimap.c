@@ -465,7 +465,7 @@ static void perform_map( struct char_data *ch, char *argument, bool worldmap )
   two_arguments( argument, arg1 , arg2 );
   if(*arg1)
   {
-    size = atoi(arg1);
+    size = tb_parse_int_or_zero(arg1);
   }
   if (*arg2)
   {
