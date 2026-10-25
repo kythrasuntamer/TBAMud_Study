@@ -231,6 +231,26 @@ if (HAVE_NETINET_IN_H)
     check_struct_has_member("struct in_addr" s_addr netinet/in.h HAVE_STRUCT_IN_ADDR)
 endif()
 
+# ========== Argon2id player password hashing ==========
+# Fil-C's custom compiler can change CMake's implicit system search paths.
+# Ask pkg-config for the distro installation before probing manually.
+find_package(PkgConfig QUIET)
+if(PkgConfig_FOUND)
+    pkg_check_modules(SODIUM_PC QUIET libsodium)
+endif()
+find_path(SODIUM_INCLUDE_DIR sodium.h HINTS ${SODIUM_PC_INCLUDE_DIRS}
+          PATHS /usr/include /usr/local/include)
+find_library(SODIUM_LIBRARY NAMES sodium libsodium
+             HINTS ${SODIUM_PC_LIBRARY_DIRS}
+             PATHS /usr/lib/x86_64-linux-gnu /usr/lib64 /usr/lib /usr/local/lib)
+if(NOT SODIUM_INCLUDE_DIR OR NOT SODIUM_LIBRARY)
+    message(FATAL_ERROR "libsodium development library is required for Argon2id password hashing")
+endif()
+message(STATUS "Argon2id libsodium include: ${SODIUM_INCLUDE_DIR}")
+message(STATUS "Argon2id libsodium library: ${SODIUM_LIBRARY}")
+include_directories(${SODIUM_INCLUDE_DIR})
+list(APPEND EXTRA_LIBS ${SODIUM_LIBRARY})
+
 # ========== crypt()/libcrypt ==========
 
 find_library(CRYPT_LIBRARY crypt)
