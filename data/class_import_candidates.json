@@ -1,0 +1,75 @@
+{
+  "schema": 1,
+  "max_mortal_level": 50,
+  "immortal_start": 51,
+  "source": {
+    "repo": "moshehbenavraham/LuminariMUD",
+    "url": "https://github.com/moshehbenavraham/LuminariMUD",
+    "files": [
+      "src/class.c",
+      "src/structs.h"
+    ],
+    "verification": "class names and upstream integer ids confirmed; actual spells, feats, dependencies and rights not yet migrated"
+  },
+  "existing": [
+    {
+      "id": 0,
+      "name": "Magic-User",
+      "upstream": "Wizard"
+    },
+    {
+      "id": 1,
+      "name": "Cleric",
+      "upstream": "Cleric"
+    },
+    {
+      "id": 2,
+      "name": "Thief",
+      "upstream": "Rogue"
+    },
+    {
+      "id": 3,
+      "name": "Warrior",
+      "upstream": "Warrior"
+    }
+  ],
+  "candidates": [
+    {
+      "id": 4,
+      "name": "Monk",
+      "upstream_id": 4
+    },
+    {
+      "id": 5,
+      "name": "Druid",
+      "upstream_id": 5
+    },
+    {
+      "id": 6,
+      "name": "Berserker",
+      "upstream_id": 6
+    },
+    {
+      "id": 7,
+      "name": "Sorcerer",
+      "upstream_id": 7
+    },
+    {
+      "id": 8,
+      "name": "Paladin",
+      "upstream_id": 8
+    },
+    {
+      "id": 9,
+      "name": "Ranger",
+      "upstream_id": 9
+    },
+    {
+      "id": 10,
+      "name": "Bard",
+      "upstream_id": 10
+    }
+  ],
+  "skill_trees": [],
+  "status": "INVENTORY_ONLY_NOT_PLAYABLE"
+}
