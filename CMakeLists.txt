@@ -105,6 +105,7 @@ function(check_run_return_value CODE EXPECTED_RESULT VAR_NAME)
     file(WRITE "${_file}" "${CODE}")
     try_run(_run_result _compile_result
             ${CMAKE_BINARY_DIR} ${_file}
+            LINK_LIBRARIES ${CMAKE_REQUIRED_LIBRARIES}
     )
     if (_compile_result AND _run_result EQUAL ${EXPECTED_RESULT})
         set(${VAR_NAME} TRUE PARENT_SCOPE)
