@@ -1,34 +1,34 @@
 Files for tbaMUD.
 
-## Unit Tests
+## Build and test
 
-tbaMUD ships with a C unit-test suite located in the `tests/` directory.
-The suite uses the [Unity](https://github.com/ThrowTheSwitch/Unity) test
-framework (vendored under `tests/vendor/unity/`).
+From the repository root, with a C compiler and CMake installed:
 
-### Quick start
-
-```
-./configure
-cd tests && make test
+```sh
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+cmake --build build --parallel
+ctest --test-dir build --output-on-failure
 ```
 
-`make test` builds each test binary, runs it, and writes JUnit XML results to
-`tests/test-results/`.  A summary is printed to the terminal:
+The C tests live under `tests/` and use the vendored Unity framework. The
+C/C++ CI workflow additionally runs clang-tidy; separate CI workflows build
+with Fil-C and Clang sanitizers. See [doc/testing.md](doc/testing.md).
 
-```
-[PASS] test_utils
-[PASS] test_random
-[PASS] test_interpreter
-[PASS] test_class
-```
+## Security and reliability
 
-### CI
+Untrusted player and network text must always be passed as *data*, never as a
+printf-style format string. For example, use `write_to_output(d, "%s", text)`
+when `text` was already constructed. Check truncation, allocation, parsing,
+and persistence results at the call site; emitting a diagnostic alone does not
+make a failed operation safe to continue. See `tools/check_error_locality.sh`
+for the existing error-reporting checks.
 
-The GitHub Actions workflow (`.github/workflows/build.yml`) runs `make test`
-on every push and pull request against `master` and publishes a formatted
-report via the `dorny/test-reporter` action.
+## Denial-of-service defense roadmap
 
-See [doc/testing.md](doc/testing.md) for full details on adding new tests and
-understanding the test infrastructure.
-
+Application limits: bound input and output queues, incomplete negotiation data,
+login attempts, script execution work, and per-tick processing. Test each
+limit and its release on disconnect; limits should be fair to legitimate
+players behind shared IP addresses. Network-level and volumetric attack
+mitigation also require infrastructure outside the MUD process (for example,
+provider filtering/proxying and connection controls); application code alone
+cannot prevent uplink saturation.
