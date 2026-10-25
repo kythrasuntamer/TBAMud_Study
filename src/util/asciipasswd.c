@@ -20,8 +20,7 @@ char *CAP(char *txt) {
 
 int main(int argc, char **argv) {
   if (argc != 3) {
-    if (fprintf(stderr, "Usage: %s name password\n", argv[0]) < 0)
-      return 1;
+    tb_fprintf(stderr, "Usage: %s name password\n", argv[0]);
     return 1;
   }
 
