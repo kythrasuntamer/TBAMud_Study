@@ -2113,7 +2113,7 @@ static void ExecuteMSDPPair( descriptor_t *apDescriptor, const char *apVariable,
                               if ( isprint((unsigned char)*apValue) )
                                  pBuffer[j++] = *apValue;
                            }
-                           pBuffer[j++] = '\0';
+                           pBuffer[j] = '\0';
 
                            if ( j >= VariableNameTable[i].Min )
                            {
