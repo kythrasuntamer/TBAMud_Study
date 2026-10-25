@@ -1,7 +1,7 @@
 # Cross-codebase class and skill-tree conversion
 
-The 50/60 level-cap branch is the baseline. **No additional classes are yet
-playable.** Never replace the class IDs 0-3 used by saved characters.
+The 50/60 level-cap branch is the baseline. Class 0 is presented as Wizard; its persisted numeric ID and internal CLASS_MAGIC_USER constant remain unchanged. The legacy M selector remains valid, with Z offered for Wizard alongside W for Warrior. **No additional classes are yet
+playable.** The four original classes now have proposed six-step skill trees in the manifest, but these are NOT implemented abilities. Never replace the class IDs 0-3 used by saved characters.
 
 Verified class roster in
 https://github.com/moshehbenavraham/LuminariMUD (`src/class.c`,
