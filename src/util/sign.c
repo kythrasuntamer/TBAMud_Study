@@ -66,7 +66,11 @@ int init_socket(int port)
     close(s);
     exit(1);
   }
-  listen(s, 5);
+  if (listen(s, 5) < 0) {
+    perror("listen");
+    (void)close(s);
+    exit(1);
+  }
   return (s);
 }
 
@@ -76,6 +80,7 @@ char *get_text(char *fname)
   static char t[MAX_FILESIZE];
   char tmp[LINEBUF_SIZE + 2];
   FILE *fl = NULL;
+  int close_stream = 0;
 
   *t = '\0';
 
@@ -88,6 +93,7 @@ char *get_text(char *fname)
       perror(fname);
       exit(1);
     }
+    close_stream = 1;
   }
 
   while (fgets(tmp, LINEBUF_SIZE, fl)) {
@@ -103,7 +109,7 @@ char *get_text(char *fname)
     }
   }
 
-  if (fl != stdin)
+  if (close_stream)
     tb_fclose(fl);
 
   return (t);
@@ -113,16 +119,20 @@ char *get_text(char *fname)
 /* clean up our zombie kids to avoid defunct processes */
 RETSIGTYPE reap(int sig)
 {
-  while (waitpid(-1, NULL, WNOHANG) > 0);
+  (void)sig;
 
-  signal(SIGCHLD, reap);
+  while (waitpid(-1, NULL, WNOHANG) > 0)
+    ;
 }
 
 
 int main(int argc, char *argv[])
 {
   char *txt;
-  int desc, remaining, bytes_written, len, s, port, child;
+  int desc, remaining, len, s, port;
+  pid_t child;
+  ssize_t bytes_written;
+  struct sigaction sa;
 
   if (argc != 3 || (port = tb_parse_int_or_zero(argv[1])) < 1024) {
     tb_fprintf(stderr, "usage: %s <portnum> <\"-\" | filename>\n", argv[0]);
@@ -131,28 +141,58 @@ int main(int argc, char *argv[])
   s = init_socket(port);
   len = strlen(txt = get_text(argv[2]));
 
-  if ((child = fork()) > 0) {
-    tb_fprintf(stderr, "Sign started on port %d (pid %d).\n", port, child);
-    exit(0);
+  child = fork();
+  if (child < 0) {
+    perror("fork");
+    return 1;
   }
-  signal(SIGCHLD, reap);
+  if (child > 0) {
+    tb_fprintf(stderr, "Sign started on port %d (pid %d).\n", port, (int)child);
+    return 0;
+  }
+
+  memset(&sa, 0, sizeof(sa));
+  sa.sa_handler = reap;
+  if (sigemptyset(&sa.sa_mask) != 0 || sigaction(SIGCHLD, &sa, NULL) != 0) {
+    perror("sigaction");
+    return 1;
+  }
 
   for (;;) {
-    if ((desc = accept(s, (struct sockaddr *) NULL, 0)) < 0)
+    if ((desc = accept(s, (struct sockaddr *)NULL, NULL)) < 0) {
+      if (errno == EINTR)
+        continue;
+      perror("accept");
       continue;
-
-    if (fork() == 0) {
-      remaining = len;
-      do {
-	if ((bytes_written = write(desc, txt, remaining)) < 0)
-	  exit(0);
-	else {
-	  txt += bytes_written;
-	  remaining -= bytes_written;
-	}
-      } while (remaining > 0);
-      exit(0);
     }
-    close(desc);
+
+    child = fork();
+    if (child < 0) {
+      perror("fork");
+      (void)close(desc);
+      continue;
+    }
+    if (child == 0) {
+      char *out = txt;
+
+      remaining = len;
+      while (remaining > 0) {
+        bytes_written = write(desc, out, (size_t)remaining);
+        if (bytes_written < 0) {
+          if (errno == EINTR)
+            continue;
+          (void)close(desc);
+          _exit(1);
+        }
+        if (bytes_written == 0)
+          break;
+        out += bytes_written;
+        remaining -= (int)bytes_written;
+      }
+      (void)close(desc);
+      _exit(0);
+    }
+    if (close(desc) != 0)
+      perror("close");
   }
 }
