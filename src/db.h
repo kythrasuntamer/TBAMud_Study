@@ -10,8 +10,8 @@
 * CircleMUD is based on DikuMUD, Copyright (C) 1990, 1991.
 *
 */
-#ifndef _DB_H_
-#define _DB_H_
+#ifndef TBAMUD_DB_H_INCLUDED
+#define TBAMUD_DB_H_INCLUDED
 
 
 /* arbitrary constants used by index_boot() (must be unique) */
@@ -408,4 +408,4 @@ extern long top_idnum;
 
 extern time_t newsmod;
 extern time_t motdmod;
-#endif /* _DB_H_ */
+#endif /* TBAMUD_DB_H_INCLUDED */
