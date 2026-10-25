@@ -10,8 +10,8 @@
 * CircleMUD is based on DikuMUD, Copyright (C) 1990, 1991.
 *
 */
-#ifndef _COMM_H_
-#define _COMM_H_
+#ifndef TBAMUD_COMM_H_INCLUDED
+#define TBAMUD_COMM_H_INCLUDED
 
 #define NUM_RESERVED_DESCS	8
 #define COPYOVER_FILE "copyover.dat"
@@ -74,4 +74,4 @@ extern ush_int port;
 extern socket_t mother_desc;
 extern int next_tick;
 
-#endif /* _COMM_H_ */
+#endif /* TBAMUD_COMM_H_INCLUDED */
