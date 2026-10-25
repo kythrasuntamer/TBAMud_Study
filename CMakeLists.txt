@@ -90,19 +90,21 @@ if (HAVE_STDLIB_H AND HAVE_STDARG_H AND HAVE_STRING_H AND HAVE_FLOAT_H)
     set(STDC_HEADERS 1)
 endif()
 
-# macros
-macro(check_run_return_value CODE EXPECTED_RESULT VAR_NAME)
+# Helper for compile-and-run feature checks.
+# A function avoids macro argument re-parsing (CMP0219) and preserves
+# backslashes in embedded C source exactly as supplied by the caller.
+function(check_run_return_value CODE EXPECTED_RESULT VAR_NAME)
     set(_file "${CMAKE_BINARY_DIR}/check_run_${VAR_NAME}.c")
     file(WRITE "${_file}" "${CODE}")
     try_run(_run_result _compile_result
             ${CMAKE_BINARY_DIR} ${_file}
     )
-    if (_compile_result EQUAL 0 AND _run_result EQUAL ${EXPECTED_RESULT})
-        set(${VAR_NAME} TRUE)
+    if (_compile_result AND _run_result EQUAL ${EXPECTED_RESULT})
+        set(${VAR_NAME} TRUE PARENT_SCOPE)
     else()
-        set(${VAR_NAME} FALSE)
+        set(${VAR_NAME} FALSE PARENT_SCOPE)
     endif()
-endmacro()
+endfunction()
 
 # ========== Function checks ==========
 foreach(FUNC gettimeofday select snprintf strcasecmp strdup strerror
@@ -213,10 +215,16 @@ if (CRYPT_LIBRARY)
     check_include_file("crypt.h" HAVE_CRYPT_H)
     check_function_exists(crypt CIRCLE_CRYPT)
 
-    check_run_return_value("
+    if(HAVE_CRYPT_H)
+        set(_crypt_include "#include <crypt.h>")
+    else()
+        set(_crypt_include "")
+    endif()
+
+    set(_crypt_test_source "
 #include <string.h>
 #include <unistd.h>
-${HAVE_CRYPT_H} ? \"#include <crypt.h>\" : \"\"
+${_crypt_include}
 
 int main(void)
 {
@@ -230,7 +238,10 @@ int main(void)
     exit(0);
   exit(1);
 }
-    " 0 HAVE_UNSAFE_CRYPT)
+    ")
+    check_run_return_value("${_crypt_test_source}" 0 HAVE_UNSAFE_CRYPT)
+    unset(_crypt_test_source)
+    unset(_crypt_include)
 
     set(CMAKE_REQUIRED_LIBRARIES ${_saved_lib_list})
 endif()
