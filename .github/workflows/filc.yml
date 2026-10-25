@@ -26,6 +26,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Install libsodium development headers
+        run: sudo apt-get update && sudo apt-get install -y libsodium-dev
+
       - name: Install Fil-C
         shell: bash
         run: |
