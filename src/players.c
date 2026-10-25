@@ -51,7 +51,7 @@ void build_player_index(void)
   char index_name[40], line[256], bits[64];
   char arg2[80];
 
-  snprintf(index_name, sizeof(index_name), "%s%s", LIB_PLRFILES, INDEX_FILE);
+  tb_snprintf(index_name, sizeof(index_name), "%s%s", LIB_PLRFILES, INDEX_FILE);
   if (!(plr_index = fopen(index_name, "r"))) {
     top_of_p_table = -1;
     log("No player index file!  First new char will be IMP!");
@@ -63,7 +63,7 @@ void build_player_index(void)
       rec_count++;
   if (fseek(plr_index, 0L, SEEK_SET) != 0) {
     log("SYSERR: unable to rewind player index: %s", strerror(errno));
-    fclose(plr_index);
+    tb_fclose(plr_index);
     return;
   }
 
@@ -84,7 +84,7 @@ void build_player_index(void)
     top_idnum = MAX(top_idnum, player_table[i].id);
   }
 
-  fclose(plr_index);
+  tb_fclose(plr_index);
   top_of_p_file = top_of_p_table = i - 1;
 }
 
@@ -159,7 +159,7 @@ void save_player_index(void)
   char index_name[50], bits[64];
   FILE *index_file;
 
-  snprintf(index_name, sizeof(index_name), "%s%s", LIB_PLRFILES, INDEX_FILE);
+  tb_snprintf(index_name, sizeof(index_name), "%s%s", LIB_PLRFILES, INDEX_FILE);
   if (!(index_file = fopen(index_name, "w"))) {
     log("SYSERR: Could not write player index file");
     return;
@@ -168,13 +168,13 @@ void save_player_index(void)
   for (i = 0; i <= top_of_p_table; i++)
     if (*player_table[i].name) {
       sprintascii(bits, player_table[i].flags);
-      fprintf(index_file, "%ld %s %d %s %ld\n", player_table[i].id,
+      tb_fprintf(index_file, "%ld %s %d %s %ld\n", player_table[i].id,
 	player_table[i].name, player_table[i].level, *bits ? bits : "0",
         (long)player_table[i].last);
     }
-  fprintf(index_file, "~\n");
+  tb_fprintf(index_file, "~\n");
 
-  fclose(index_file);
+  tb_fclose(index_file);
 }
 
 void free_player_index(void)
@@ -472,7 +472,7 @@ int load_char(const char *name, struct char_data *ch)
 	break;
 
       default:
-	snprintf(buf, sizeof(buf), "SYSERR: Unknown tag %s in pfile %s", tag, name);
+	tb_snprintf(buf, sizeof(buf), "SYSERR: Unknown tag %s in pfile %s", tag, name);
       }
     }
   }
@@ -487,7 +487,7 @@ int load_char(const char *name, struct char_data *ch)
     GET_COND(ch, THIRST) = -1;
     GET_COND(ch, DRUNK) = -1;
   }
-  fclose(fl);
+  tb_fclose(fl);
   return(id);
 }
 
@@ -573,7 +573,7 @@ void save_char(struct char_data * ch)
   if (ch->player.description && *ch->player.description) {
     strlcpy(buf, ch->player.description, sizeof(buf));
     strip_cr(buf);
-    fprintf(fl, "Desc:\n%s~\n", buf);
+    tb_fprintf(fl, "Desc:\n%s~\n", buf);
   }
   if (POOFIN(ch))				fprintf(fl, "PfIn: %s\n", POOFIN(ch));
   if (POOFOUT(ch))				fprintf(fl, "PfOt: %s\n", POOFOUT(ch));
@@ -581,15 +581,15 @@ void save_char(struct char_data * ch)
   if (GET_CLASS(ch)	   != PFDEF_CLASS)	fprintf(fl, "Clas: %d\n", GET_CLASS(ch));
   if (GET_LEVEL(ch)	   != PFDEF_LEVEL)	fprintf(fl, "Levl: %d\n", GET_LEVEL(ch));
 
-  fprintf(fl, "Id  : %ld\n", GET_IDNUM(ch));
-  fprintf(fl, "Brth: %ld\n", (long)ch->player.time.birth);
-  fprintf(fl, "Plyd: %d\n",  ch->player.time.played);
-  fprintf(fl, "Last: %ld\n", (long)ch->player.time.logon);
+  tb_fprintf(fl, "Id  : %ld\n", GET_IDNUM(ch));
+  tb_fprintf(fl, "Brth: %ld\n", (long)ch->player.time.birth);
+  tb_fprintf(fl, "Plyd: %d\n",  ch->player.time.played);
+  tb_fprintf(fl, "Last: %ld\n", (long)ch->player.time.logon);
 
   if (GET_LAST_MOTD(ch) != PFDEF_LASTMOTD)
-    fprintf(fl, "Lmot: %d\n", (int)GET_LAST_MOTD(ch));
+    tb_fprintf(fl, "Lmot: %d\n", (int)GET_LAST_MOTD(ch));
   if (GET_LAST_NEWS(ch) != PFDEF_LASTNEWS)
-    fprintf(fl, "Lnew: %d\n", (int)GET_LAST_NEWS(ch));
+    tb_fprintf(fl, "Lnew: %d\n", (int)GET_LAST_NEWS(ch));
 
   if (GET_HOST(ch))				fprintf(fl, "Host: %s\n", GET_HOST(ch));
   if (GET_HEIGHT(ch)	   != PFDEF_HEIGHT)	fprintf(fl, "Hite: %d\n", GET_HEIGHT(ch));
@@ -601,19 +601,19 @@ void save_char(struct char_data * ch)
   sprintascii(bits2, PLR_FLAGS(ch)[1]);
   sprintascii(bits3, PLR_FLAGS(ch)[2]);
   sprintascii(bits4, PLR_FLAGS(ch)[3]);
-  fprintf(fl, "Act : %s %s %s %s\n", bits, bits2, bits3, bits4);
+  tb_fprintf(fl, "Act : %s %s %s %s\n", bits, bits2, bits3, bits4);
 
   sprintascii(bits,  AFF_FLAGS(ch)[0]);
   sprintascii(bits2, AFF_FLAGS(ch)[1]);
   sprintascii(bits3, AFF_FLAGS(ch)[2]);
   sprintascii(bits4, AFF_FLAGS(ch)[3]);
-  fprintf(fl, "Aff : %s %s %s %s\n", bits, bits2, bits3, bits4);
+  tb_fprintf(fl, "Aff : %s %s %s %s\n", bits, bits2, bits3, bits4);
 
   sprintascii(bits,  PRF_FLAGS(ch)[0]);
   sprintascii(bits2, PRF_FLAGS(ch)[1]);
   sprintascii(bits3, PRF_FLAGS(ch)[2]);
   sprintascii(bits4, PRF_FLAGS(ch)[3]);
-  fprintf(fl, "Pref: %s %s %s %s\n", bits, bits2, bits3, bits4);
+  tb_fprintf(fl, "Pref: %s %s %s %s\n", bits, bits2, bits3, bits4);
 
  if (GET_SAVE(ch, 0)	   != PFDEF_SAVETHROW)	fprintf(fl, "Thr1: %d\n", GET_SAVE(ch, 0));
   if (GET_SAVE(ch, 1)	   != PFDEF_SAVETHROW)	fprintf(fl, "Thr2: %d\n", GET_SAVE(ch, 1));
@@ -658,44 +658,44 @@ void save_char(struct char_data * ch)
   if (GET_QUESTPOINTS(ch)  != PFDEF_QUESTPOINTS) fprintf(fl, "Qstp: %d\n", GET_QUESTPOINTS(ch));
   if (GET_QUEST_COUNTER(ch)!= PFDEF_QUESTCOUNT)  fprintf(fl, "Qcnt: %d\n", GET_QUEST_COUNTER(ch));
   if (GET_NUM_QUESTS(ch)   != PFDEF_COMPQUESTS) {
-    fprintf(fl, "Qest:\n");
+    tb_fprintf(fl, "Qest:\n");
     for (i = 0; i < GET_NUM_QUESTS(ch); i++)
-      fprintf(fl, "%d\n", ch->player_specials->saved.completed_quests[i]);
-    fprintf(fl, "%d\n", NOTHING);
+      tb_fprintf(fl, "%d\n", ch->player_specials->saved.completed_quests[i]);
+    tb_fprintf(fl, "%d\n", NOTHING);
   }
   if (GET_QUEST(ch)        != PFDEF_CURRQUEST)  fprintf(fl, "Qcur: %d\n", GET_QUEST(ch));
 
  if (SCRIPT(ch)) {
    for (t = TRIGGERS(SCRIPT(ch)); t; t = t->next)
-   fprintf(fl, "Trig: %d\n",GET_TRIG_VNUM(t));
+   tb_fprintf(fl, "Trig: %d\n",GET_TRIG_VNUM(t));
 }
 
   /* Save skills */
   if (GET_LEVEL(ch) < LVL_IMMORT) {
-    fprintf(fl, "Skil:\n");
+    tb_fprintf(fl, "Skil:\n");
     for (i = 1; i <= MAX_SKILLS; i++) {
      if (GET_SKILL(ch, i))
-	fprintf(fl, "%d %d\n", i, GET_SKILL(ch, i));
+	tb_fprintf(fl, "%d %d\n", i, GET_SKILL(ch, i));
     }
-    fprintf(fl, "0 0\n");
+    tb_fprintf(fl, "0 0\n");
   }
 
   /* Save affects */
   if (tmp_aff[0].spell > 0) {
-    fprintf(fl, "Affs:\n");
+    tb_fprintf(fl, "Affs:\n");
     for (i = 0; i < MAX_AFFECT; i++) {
       aff = &tmp_aff[i];
       if (aff->spell)
-		fprintf(fl, "%d %d %d %d %d %d %d %d\n", aff->spell, aff->duration,
+		tb_fprintf(fl, "%d %d %d %d %d %d %d %d\n", aff->spell, aff->duration,
           aff->modifier, aff->location, aff->bitvector[0], aff->bitvector[1], aff->bitvector[2], aff->bitvector[3]);
     }
-    fprintf(fl, "0 0 0 0 0 0 0 0\n");
+    tb_fprintf(fl, "0 0 0 0 0 0 0 0\n");
   }
 
   write_aliases_ascii(fl, ch);
   save_char_vars_ascii(fl, ch);
 
-  fclose(fl);
+  tb_fclose(fl);
 
   /* More char_to_store code to add spell and eq affections back in. */
   for (i = 0; i < MAX_AFFECT; i++) {
@@ -783,7 +783,7 @@ void remove_player(int pfilepos)
       unlink(filename);
   }
 
-  strftime(timestr, sizeof(timestr), "%c", localtime(&(player_table[pfilepos].last)));
+  tb_strftime(timestr, sizeof(timestr), "%c", localtime(&(player_table[pfilepos].last)));
   log("PCLEAN: %s Lev: %d Last: %s",
 	player_table[pfilepos].name, player_table[pfilepos].level,
 	timestr);
@@ -928,10 +928,10 @@ static void write_aliases_ascii(FILE *file, struct char_data *ch)
   for (temp = GET_ALIASES(ch); temp; temp = temp->next)
     count++;
 
-  fprintf(file, "Alis: %d\n", count);
+  tb_fprintf(file, "Alis: %d\n", count);
 
   for (temp = GET_ALIASES(ch); temp; temp = temp->next)
-    fprintf(file, " %s\n"   /* Alias: prepend a space in order to avoid issues with aliases beginning
+    tb_fprintf(file, " %s\n"   /* Alias: prepend a space in order to avoid issues with aliases beginning
                              * with * (get_line treats lines beginning with * as comments and ignores them */
                   "%s\n"    /* Replacement: always prepended with a space in memory anyway */
                   "%d\n",   /* Type */
