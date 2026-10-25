@@ -211,7 +211,8 @@ int parseadminlevel(FILE *plr_file, int level) {
 }
 
 long parselast(FILE *plr_file) {
-	return parse_long_or_zero(findLine(plr_file, "Last:"));
+  char *value = findLine(plr_file, "Last:");
+  return value ? parse_long_or_zero(value) : 0;
 }
 
 
