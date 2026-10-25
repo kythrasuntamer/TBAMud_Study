@@ -348,8 +348,8 @@ ACMD(do_get)
     int amount = 1;
     if (is_number(arg1)) {
       amount = tb_parse_int_or_zero(arg1);
-      strcpy(arg1, arg2); /* strcpy: OK (sizeof: arg1 == arg2) */
-      strcpy(arg2, arg3); /* strcpy: OK (sizeof: arg2 == arg3) */
+      strlcpy(arg1, arg2, sizeof(arg1)); /* strcpy: OK (sizeof: arg1 == arg2) */
+      strlcpy(arg2, arg3, sizeof(arg2)); /* strcpy: OK (sizeof: arg2 == arg3) */
     }
     cont_dotmode = find_all_dots(arg2);
     if (cont_dotmode == FIND_INDIV) {
