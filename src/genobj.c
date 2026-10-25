@@ -543,7 +543,7 @@ bool oset_apply(struct obj_data *obj, char * argument)
   for (i = 0; i < MAX_OBJ_AFFECT; i++) {
     if (obj->affected[i].location == apply) {
       location = i;
-      mod = obj->affected[i].modifier;
+      mod = (int)obj->affected[i].modifier;
       break;
     } else if (obj->affected[i].location == APPLY_NONE && empty == -1) {
       empty = i;
