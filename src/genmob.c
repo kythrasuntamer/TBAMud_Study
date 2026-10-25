@@ -384,18 +384,14 @@ int write_mobile_record(mob_vnum mvnum, struct char_data *mob, FILE *fd)
         ddesc, STRING_TERMINATOR);
 
   if (n < 0 || n >= MAX_STRING_LENGTH) {
-    zone_rnum zrnum = real_zone_by_thing(mvnum);
-    int zvnum = zrnum == NOWHERE ? -1 : (int) zone_table[zrnum].number;
-
     if (n < 0)
       mudlog(BRF, LVL_BUILDER, TRUE,
-             "SYSERR: Could not format mobile #%d for saving; zone %d not saved.",
-             mvnum, zvnum);
+             "SYSERR: Could not format mobile #%d for saving.",
+             mvnum);
     else
       mudlog(BRF, LVL_BUILDER, TRUE,
-             "SYSERR: Could not save mobile #%d due to size (%d >= maximum of %d); "
-             "zone %d not saved.",
-             mvnum, n, MAX_STRING_LENGTH, zvnum);
+             "SYSERR: Could not save mobile #%d due to size (%d >= maximum of %d).",
+             mvnum, n, MAX_STRING_LENGTH);
     return FALSE;
   }
 
