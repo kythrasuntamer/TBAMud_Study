@@ -2060,6 +2060,2156 @@ char *parse_object(FILE *obj_f, int nr)
 
   strlcat(buf2, ", after numeric constants\n"
           "...expecting 'E', 'A', '
+    if (!get_line(obj_f, line)) {
+      log("SYSERR: Format error in %s", buf2);
+      exit(1);
+    }
+    switch (*line) {
+    case 'E':
+      CREATE(new_descr, struct extra_descr_data, 1);
+      new_descr->keyword = fread_string(obj_f, buf2);
+      new_descr->description = fread_string(obj_f, buf2);
+      new_descr->next = obj_proto[i].ex_description;
+      obj_proto[i].ex_description = new_descr;
+      break;
+    case 'A':
+      if (j >= MAX_OBJ_AFFECT) {
+	log("SYSERR: Too many A fields (%d max), %s", MAX_OBJ_AFFECT, buf2);
+	exit(1);
+      }
+      if (!get_line(obj_f, line)) {
+	log("SYSERR: Format error in 'A' field, %s\n"
+	    "...expecting 2 numeric constants but file ended!", buf2);
+	exit(1);
+      }
+
+      if ((retval = sscanf(line, " %d %d ", t, t + 1)) != 2) {
+	log("SYSERR: Format error in 'A' field, %s\n"
+	    "...expecting 2 numeric arguments, got %d\n"
+	    "...offending line: '%s'", buf2, retval, line);
+	exit(1);
+      }
+      obj_proto[i].affected[j].location = t[0];
+      obj_proto[i].affected[j].modifier = t[1];
+      j++;
+      break;
+    case 'T':  /* DG triggers */
+      dg_obj_trigger(line, &obj_proto[i]);
+      break;
+    case '$':
+    case '#':
+      top_of_objt = i;
+      check_object(obj_proto + i);
+      i++;
+      return (line);
+    default:
+      log("SYSERR: Format error in (%c): %s", *line, buf2);
+      exit(1);
+    }
+  }
+}
+
+#define Z	zone_table[zone]
+/* load the zone table and command tables */
+static void load_zones(FILE *fl, char *zonename)
+{
+  static zone_rnum zone = 0;
+  int i, cmd_no, num_of_cmds = 0, line_num = 0, tmp, error;
+  char *ptr, buf[READ_SIZE], zname[READ_SIZE], buf2[MAX_STRING_LENGTH];
+  int zone_fix = FALSE;
+  char t1[80], t2[80];
+  char zbuf1[MAX_STRING_LENGTH], zbuf2[MAX_STRING_LENGTH];
+  char zbuf3[MAX_STRING_LENGTH], zbuf4[MAX_STRING_LENGTH];
+
+  strlcpy(zname, zonename, sizeof(zname));
+
+  /* Skip first 3 lines lest we mistake the zone name for a command. */
+  for (tmp = 0; tmp < 3; tmp++)
+    get_line(fl, buf);
+
+  /* Count every non-comment line the parser below can consume.  The
+   * allocation must never be smaller than the parser's command count. */
+  while (get_line(fl, buf)) {
+    ptr = buf;
+    skip_spaces(&ptr);
+    if (*ptr == '*')
+      continue;
+    num_of_cmds++;
+    if (*ptr == 'S' || *ptr == '$')
+      break;
+  }
+
+  if (fseek(fl, 0L, SEEK_SET) != 0) {
+    log("SYSERR: unable to rewind zone file %s: %s", zname, strerror(errno));
+    exit(1);
+  }
+
+  if (num_of_cmds == 0) {
+    log("SYSERR: %s is empty!", zname);
+    exit(1);
+  } else
+    CREATE(Z.cmd, struct reset_com, num_of_cmds);
+
+  line_num += get_line(fl, buf);
+
+  if (sscanf(buf, "#%hu", &Z.number) != 1) {
+    log("SYSERR: Format error in %s, line %d", zname, line_num);
+    exit(1);
+  }
+  tb_snprintf(buf2, sizeof(buf2), "beginning of zone #%d", Z.number);
+
+  line_num += get_line(fl, buf);
+  if ((ptr = strchr(buf, '~')) != NULL) /* take off the '~' if it's there */
+    *ptr = '\0';
+  Z.builders = strdup(buf);
+
+  line_num += get_line(fl, buf);
+  if ((ptr = strchr(buf, '~')) != NULL)	/* take off the '~' if it's there */
+    *ptr = '\0';
+  Z.name = strdup(buf);
+  parse_at(Z.name);
+
+  /* Clear all the zone flags */
+  for (i=0; i<ZN_ARRAY_MAX; i++)
+    Z.zone_flags[i] = 0;
+
+  line_num += get_line(fl, buf);
+  /* Look for 10 items first (new tbaMUD), if not found, try 4 (old tbaMUD) */
+  if  (sscanf(buf, " %hu %hu %d %d %s %s %s %s %d %d", &Z.bot, &Z.top, &Z.lifespan,
+      &Z.reset_mode, zbuf1, zbuf2, zbuf3, zbuf4, &Z.min_level, &Z.max_level) != 10)
+  {
+    if (sscanf(buf, " %hu %hu %d %d ", &Z.bot, &Z.top, &Z.lifespan, &Z.reset_mode) != 4) {
+      /* This may be due to the fact that the zone has no builder.  So, we just
+       * attempt to fix this by copying the previous 2 last reads into this
+       * variable and the last one. */
+      log("SYSERR: Format error in numeric constant line of %s, attempting to fix.", zname);
+      if (sscanf(Z.name, " %hu %hu %d %d ", &Z.bot, &Z.top, &Z.lifespan, &Z.reset_mode) != 4) {
+        log("SYSERR: Could not fix previous error, aborting game.");
+        exit(1);
+      } else {
+        free(Z.name);
+        Z.name = strdup(Z.builders);
+        free(Z.builders);
+        Z.builders = strdup("None.");
+        zone_fix = TRUE;
+      }
+    }
+    /* We only found 4 values, so set 'defaults' for the ones not found */
+    Z.min_level = -1;
+    Z.max_level = -1;
+  }
+  else
+  {
+    /* We found 10 values, so deal with the strings */
+    Z.zone_flags[0] = asciiflag_conv(zbuf1);
+    Z.zone_flags[1] = asciiflag_conv(zbuf2);
+    Z.zone_flags[2] = asciiflag_conv(zbuf3);
+    Z.zone_flags[3] = asciiflag_conv(zbuf4);
+  }
+  if (Z.bot > Z.top) {
+    log("SYSERR: Zone %d bottom (%d) > top (%d).", Z.number, Z.bot, Z.top);
+    exit(1);
+  }
+
+  cmd_no = 0;
+
+  for (;;) {
+    /* skip reading one line if we fixed above (line is correct already) */
+    if (zone_fix != TRUE) {
+      if ((tmp = get_line(fl, buf)) == 0) {
+        log("SYSERR: Format error in %s - premature end of file", zname);
+        exit(1);
+      }
+    } else
+      zone_fix = FALSE;
+
+    line_num += tmp;
+    ptr = buf;
+    skip_spaces(&ptr);
+
+    if (cmd_no >= num_of_cmds) {
+      log("SYSERR: More commands in %s than the %d counted.", zname, num_of_cmds);
+      exit(1);
+    }
+
+    if ((ZCMD.command = *ptr) == '*')
+      continue;
+
+    ptr++;
+
+    if (ZCMD.command == 'S' || ZCMD.command == '$') {
+      ZCMD.command = 'S';
+      break;
+    }
+    error = 0;
+    if (strchr("MOGEPDTV", ZCMD.command) == NULL) {	/* a 3-arg command */
+      if (sscanf(ptr, " %d %d %d ", &tmp, &ZCMD.arg1, &ZCMD.arg2) != 3)
+	error = 1;
+    } else if (ZCMD.command=='V') { /* a string-arg command */
+      if (sscanf(ptr, " %d %d %d %d %79s %79[^\f\n\r\t\v]", &tmp, &ZCMD.arg1, &ZCMD.arg2,
+		 &ZCMD.arg3, t1, t2) != 6)
+	error = 1;
+      else {
+        ZCMD.sarg1 = strdup(t1);
+        ZCMD.sarg2 = strdup(t2);
+      }
+    } else {
+      if (sscanf(ptr, " %d %d %d %d ", &tmp, &ZCMD.arg1, &ZCMD.arg2,
+		 &ZCMD.arg3) != 4)
+	error = 1;
+    }
+
+    ZCMD.if_flag = tmp;
+
+    if (error) {
+      log("SYSERR: Format error in %s, line %d: '%s'", zname, line_num, buf);
+      exit(1);
+    }
+    ZCMD.line = line_num;
+    cmd_no++;
+  }
+
+  top_of_zone_table = zone++;
+}
+#undef Z
+
+static void get_one_line(FILE *fl, char *buf)
+{
+  if (fgets(buf, READ_SIZE, fl) == NULL) {
+    log("SYSERR: error reading help file: not terminated with $?");
+    exit(1);
+  }
+
+  buf[strlen(buf) - 1] = '\0'; /* take off the trailing \n */
+}
+
+void free_help(struct help_index_element *hentry)
+{
+  if (hentry->keywords)
+    free(hentry->keywords);
+  if (hentry->entry && !hentry->duplicate)
+    free(hentry->entry);
+
+  free(hentry);
+}
+
+void free_help_table(void)
+{
+  if (help_table) {
+    int hp;
+    for (hp = 0; hp < top_of_helpt; hp++) {
+      if (help_table[hp].keywords)
+        free(help_table[hp].keywords);
+      if (help_table[hp].entry && !help_table[hp].duplicate)
+        free(help_table[hp].entry);
+    }
+    free(help_table);
+    help_table = NULL;
+  }
+  top_of_helpt = 0;
+}
+
+void load_help(FILE * fl, char *name)
+{
+  char key[READ_SIZE + 1], next_key[READ_SIZE + 1], entry[32384];
+  size_t entrylen;
+  char line[READ_SIZE + 1], hname[READ_SIZE + 1], *scan;
+  struct help_index_element el;
+
+  strlcpy(hname, name, sizeof(hname));
+
+  get_one_line(fl, key);
+  while (*key != '$') {
+    strlcat(key, "\r\n", sizeof(key)); /* strcat: OK (READ_SIZE - "\n"  "\r\n" == READ_SIZE  1) */
+    entrylen = strlcpy(entry, key, sizeof(entry));
+
+    /* Read in the corresponding help entry. */
+    get_one_line(fl, line);
+    while (*line != '#' && entrylen < sizeof(entry) - 1) {
+      entrylen += strlcpy(entry + entrylen, line, sizeof(entry) - entrylen);
+
+      if (entrylen + 2 < sizeof(entry) - 1) {
+        strlcpy(entry + entrylen, "\r\n", sizeof(entry) - entrylen); /* strcpy: OK (size checked above) */
+        entrylen += 2;
+      }
+      get_one_line(fl, line);
+    }
+
+    if (entrylen >= sizeof(entry) - 1) {
+      int keysize;
+      const char *truncmsg = "\r\n*TRUNCATED*\r\n";
+
+      strlcpy(entry + sizeof(entry) - strlen(truncmsg) - 1, truncmsg, strlen(truncmsg) + 1); /* strcpy: OK (assuming sane 'entry' size) */
+
+      keysize = strlen(key) - 2;
+      log("SYSERR: Help entry exceeded buffer space: %.*s", keysize, key);
+
+      /* If we ran out of buffer space, eat the rest of the entry. */
+      while (*line != '#')
+      get_one_line(fl, line);
+    }
+
+    if (*line == '#') {
+      if (sscanf(line, "#%d", &el.min_level) != 1) {
+        log("SYSERR: Help entry does not have a min level. %s", key);
+        el.min_level = 0;
+      }
+    }
+
+    el.duplicate = 0;
+    el.entry = strdup(entry);
+    parse_at(el.entry);
+    scan = one_word(key, next_key);
+
+    while (*next_key) {
+      el.keywords = strdup(next_key);
+      help_table[top_of_helpt++] = el;
+      el.duplicate++;
+      scan = one_word(scan, next_key);
+    }
+  get_one_line(fl, key);
+  }
+}
+
+static int hsort(const void *a, const void *b)
+{
+  const struct help_index_element *a1, *b1;
+
+  a1 = (const struct help_index_element *) a;
+  b1 = (const struct help_index_element *) b;
+
+  return (str_cmp(a1->keywords, b1->keywords));
+}
+
+int vnum_mobile(char *searchname, struct char_data *ch)
+{
+  int nr, found = 0;
+
+  for (nr = 0; nr <= top_of_mobt; nr++)
+    if (isname(searchname, mob_proto[nr].player.name))
+      send_to_char(ch, "%3d. [%5d] %-40s %s\r\n",
+                   ++found, mob_index[nr].vnum, mob_proto[nr].player.short_descr,
+                   mob_proto[nr].proto_script ? "[TRIG]" : "" );
+
+  return (found);
+}
+
+int vnum_object(char *searchname, struct char_data *ch)
+{
+  int nr, found = 0;
+
+  for (nr = 0; nr <= top_of_objt; nr++)
+    if (isname(searchname, obj_proto[nr].name))
+      send_to_char(ch, "%3d. [%5d] %-40s %s\r\n",
+                   ++found, obj_index[nr].vnum, obj_proto[nr].short_description,
+                   obj_proto[nr].proto_script ? "[TRIG]" : "" );
+
+  return (found);
+}
+
+int vnum_room(char *searchname, struct char_data *ch)
+{
+ int nr, found = 0;
+
+ for (nr = 0; nr <= top_of_world; nr++)
+   if (isname(searchname, world[nr].name))
+   send_to_char(ch, "%3d. [%5d] %-40s %s\r\n",
+   ++found, world[nr].number, world[nr].name,
+  world[nr].proto_script ? "[TRIG]" : "" );
+  return (found);
+}
+
+int vnum_trig(char *searchname, struct char_data *ch)
+{
+ int nr, found = 0;
+  for (nr = 0; nr < top_of_trigt; nr++)
+    if (isname(searchname, trig_index[nr]->proto->name))
+    send_to_char(ch, "%3d. [%5d] %-40s\r\n",
+    ++found, trig_index[nr]->vnum, trig_index[nr]->proto->name);
+  return (found);
+}
+
+/* create a character, and add it to the char list */
+struct char_data *create_char(void)
+{
+  struct char_data *ch;
+
+  CREATE(ch, struct char_data, 1);
+  clear_char(ch);
+  
+  new_mobile_data(ch);
+  
+  ch->next = character_list;
+  character_list = ch;
+
+  ch->script_id = 0;	// set later by char_script_id
+
+  return (ch);
+}
+
+void new_mobile_data(struct char_data *ch)
+{
+  ch->events   = NULL;
+  ch->group    = NULL;
+}
+
+
+/* create a new mobile from a prototype */
+struct char_data *read_mobile(mob_vnum nr, int type) /* and mob_rnum */
+{
+  mob_rnum i;
+  struct char_data *mob;
+
+  if (type == VIRTUAL) {
+    if ((i = real_mobile(nr)) == NOBODY) {
+      log("WARNING: Mobile vnum %d does not exist in database.", nr);
+      return (NULL);
+    }
+  } else
+    i = nr;
+
+  CREATE(mob, struct char_data, 1);
+  clear_char(mob);
+ 
+  *mob = mob_proto[i];
+  mob->next = character_list;
+  character_list = mob;
+  
+  new_mobile_data(mob);  
+  
+  if (!mob->points.max_hit) {
+    mob->points.max_hit = dice(mob->points.hit, mob->points.mana) +
+      mob->points.move;
+  } else
+    mob->points.max_hit = rand_number(mob->points.hit, mob->points.mana);
+
+  mob->points.hit = mob->points.max_hit;
+  mob->points.mana = mob->points.max_mana;
+  mob->points.move = mob->points.max_move;
+
+  mob->player.time.birth = time(0);
+  mob->player.time.played = 0;
+  mob->player.time.logon = time(0);
+
+  mob_index[i].number++;
+
+  mob->script_id = 0;	// this is set later by char_script_id
+
+  copy_proto_script(&mob_proto[i], mob, MOB_TRIGGER);
+  assign_triggers(mob, MOB_TRIGGER);
+
+  return (mob);
+}
+
+/* create an object, and add it to the object list */
+struct obj_data *create_obj(void)
+{
+  struct obj_data *obj;
+
+  CREATE(obj, struct obj_data, 1);
+  clear_object(obj);
+  obj->next = object_list;
+  object_list = obj;
+  
+  obj->events = NULL;
+
+  obj->script_id = 0;	// this is set later by obj_script_id
+
+  return (obj);
+}
+
+/* create a new object from a prototype */
+struct obj_data *read_object(obj_vnum nr, int type) /* and obj_rnum */
+{
+  struct obj_data *obj;
+  obj_rnum i = type == VIRTUAL ? real_object(nr) : nr;
+
+  if (i == NOTHING || i > top_of_objt) {
+    log("Object (%c) %d does not exist in database.", type == VIRTUAL ? 'V' : 'R', nr);
+    return (NULL);
+  }
+
+  CREATE(obj, struct obj_data, 1);
+  clear_object(obj);
+  *obj = obj_proto[i];
+  obj->next = object_list;
+  object_list = obj;
+  
+  obj->events = NULL;
+
+  obj_index[i].number++;
+
+  obj->script_id = 0;	// this is set later by obj_script_id
+
+  copy_proto_script(&obj_proto[i], obj, OBJ_TRIGGER);
+  assign_triggers(obj, OBJ_TRIGGER);
+
+  return (obj);
+}
+
+#define ZO_DEAD  999
+/* update zone ages, queue for reset if necessary, and dequeue when possible */
+void zone_update(void)
+{
+  int i;
+  struct reset_q_element *update_u, *temp;
+  static int timer = 0;
+
+  /* jelson 10/22/92 */
+  if (((++timer * PULSE_ZONE) / PASSES_PER_SEC) >= 60) {
+    /* one minute has passed NOT accurate unless PULSE_ZONE is a multiple of
+     * PASSES_PER_SEC or a factor of 60 */
+
+    timer = 0;
+
+    /* since one minute has passed, increment zone ages */
+    for (i = 0; i <= top_of_zone_table; i++) {
+      if (zone_table[i].age < zone_table[i].lifespan &&
+	  zone_table[i].reset_mode)
+	(zone_table[i].age)++;
+
+      if (zone_table[i].age >= zone_table[i].lifespan &&
+	  zone_table[i].age < ZO_DEAD && zone_table[i].reset_mode) {
+	/* enqueue zone */
+
+	CREATE(update_u, struct reset_q_element, 1);
+
+	update_u->zone_to_reset = i;
+	update_u->next = 0;
+
+	if (!reset_q.head)
+	  reset_q.head = reset_q.tail = update_u;
+	else {
+	  reset_q.tail->next = update_u;
+	  reset_q.tail = update_u;
+	}
+
+	zone_table[i].age = ZO_DEAD;
+      }
+    }
+  }	/* end - one minute has passed */
+
+  /* Dequeue zones (if possible) and reset. This code is executed every 10
+   * seconds (i.e. PULSE_ZONE). */
+  for (update_u = reset_q.head; update_u; update_u = update_u->next)
+    if (zone_table[update_u->zone_to_reset].reset_mode == 2 ||
+	is_empty(update_u->zone_to_reset)) {
+      reset_zone(update_u->zone_to_reset);
+      mudlog(CMP, LVL_IMPL+1, FALSE, "Auto zone reset: %s (Zone %d)",
+          zone_table[update_u->zone_to_reset].name, zone_table[update_u->zone_to_reset].number);
+      struct descriptor_data *pt;
+      for (pt = descriptor_list; pt; pt = pt->next)
+        if (IS_PLAYING(pt) && pt->character && PRF_FLAGGED(pt->character, PRF_ZONERESETS))
+          send_to_char(pt->character, "%s[Auto zone reset: %s (Zone %d)]%s", 
+            CCGRN(pt->character, C_NRM), zone_table[update_u->zone_to_reset].name, 
+            zone_table[update_u->zone_to_reset].number, CCNRM(pt->character, C_NRM));
+      /* dequeue */
+      if (update_u == reset_q.head)
+	reset_q.head = reset_q.head->next;
+      else {
+	for (temp = reset_q.head; temp->next != update_u;
+	     temp = temp->next);
+
+	if (!update_u->next)
+	  reset_q.tail = temp;
+
+	temp->next = update_u->next;
+      }
+
+      free(update_u);
+      break;
+    }
+}
+
+static void log_zone_error(zone_rnum zone, int cmd_no, const char *message)
+{
+  mudlog(NRM, LVL_GOD, TRUE, "SYSERR: zone file: %s", message);
+  mudlog(NRM, LVL_GOD, TRUE, "SYSERR: ...offending cmd: '%c' cmd in zone #%d, line %d",
+	ZCMD.command, zone_table[zone].number, ZCMD.line);
+}
+
+#define ZONE_ERROR(message) \
+	{ log_zone_error(zone, cmd_no, message); last_cmd = 0; }
+
+/* execute the reset command table of a given zone */
+void reset_zone(zone_rnum zone)
+{
+  int cmd_no, last_cmd = 0;
+  struct char_data *mob = NULL;
+  struct obj_data *obj, *obj_to;
+  room_vnum rvnum;
+  room_rnum rrnum;
+  struct char_data *tmob=NULL; /* for trigger assignment */
+  struct obj_data *tobj=NULL;  /* for trigger assignment */
+
+  for (cmd_no = 0; ZCMD.command != 'S'; cmd_no++) {
+
+    if (ZCMD.if_flag && !last_cmd)
+      continue;
+
+    /* This is the list of actual zone commands. If any new zone commands are
+     * added to the game, be certain to update the list of commands in load_zone
+     * () so that the counting will still be correct. - ae. */
+    switch (ZCMD.command) {
+    case '*':			/* ignore command */
+      last_cmd = 0;
+      break;
+
+    case 'M':			/* read a mobile */
+      if (mob_index[ZCMD.arg1].number < ZCMD.arg2) {
+	mob = read_mobile(ZCMD.arg1, REAL);
+	char_to_room(mob, ZCMD.arg3);
+        load_mtrigger(mob);
+        tmob = mob;
+	last_cmd = 1;
+      } else
+	last_cmd = 0;
+      tobj = NULL;
+      break;
+
+    case 'O':			/* read an object */
+      if (obj_index[ZCMD.arg1].number < ZCMD.arg2) {
+	if (ZCMD.arg3 != NOWHERE) {
+	  obj = read_object(ZCMD.arg1, REAL);
+	  obj_to_room(obj, ZCMD.arg3);
+	  last_cmd = 1;
+          load_otrigger(obj);
+          tobj = obj;
+	} else {
+	  obj = read_object(ZCMD.arg1, REAL);
+	  IN_ROOM(obj) = NOWHERE;
+	  last_cmd = 1;
+          tobj = obj;
+	}
+      } else
+	last_cmd = 0;
+      tmob = NULL;
+      break;
+
+    case 'P':			/* object to object */
+      if (obj_index[ZCMD.arg1].number < ZCMD.arg2) {
+	obj = read_object(ZCMD.arg1, REAL);
+	if (!(obj_to = get_obj_num(ZCMD.arg3))) {
+	  ZONE_ERROR("target obj not found, command disabled");
+	  ZCMD.command = '*';
+	  break;
+	}
+	obj_to_obj(obj, obj_to);
+	last_cmd = 1;
+        load_otrigger(obj);
+        tobj = obj;
+      } else
+	last_cmd = 0;
+      tmob = NULL;
+      break;
+
+    case 'G':			/* obj_to_char */
+      if (!mob) {
+	char error[MAX_INPUT_LENGTH];
+	tb_snprintf(error, sizeof(error), "attempt to give obj #%d to non-existant mob, command disabled", obj_index[ZCMD.arg1].vnum);
+	ZONE_ERROR(error);
+	ZCMD.command = '*';
+	break;
+      }
+      if (obj_index[ZCMD.arg1].number < ZCMD.arg2) {
+	obj = read_object(ZCMD.arg1, REAL);
+	obj_to_char(obj, mob);
+	last_cmd = 1;
+        load_otrigger(obj);
+        tobj = obj;
+      } else
+	last_cmd = 0;
+      tmob = NULL;
+      break;
+
+    case 'E':			/* object to equipment list */
+      if (!mob) {
+	char error[MAX_INPUT_LENGTH];
+	tb_snprintf(error, sizeof(error), "trying to equip non-existant mob with obj #%d, command disabled", obj_index[ZCMD.arg1].vnum);
+	ZONE_ERROR(error);
+	ZCMD.command = '*';
+	break;
+      }
+      if (obj_index[ZCMD.arg1].number < ZCMD.arg2) {
+	if (ZCMD.arg3 < 0 || ZCMD.arg3 >= NUM_WEARS) {
+          char error[MAX_INPUT_LENGTH];
+	  tb_snprintf(error, sizeof(error), "invalid equipment pos number (mob %s, obj %d, pos %d)", GET_NAME(mob), obj_index[ZCMD.arg2].vnum, ZCMD.arg3);
+	  ZONE_ERROR(error);
+	} else {
+	  obj = read_object(ZCMD.arg1, REAL);
+          IN_ROOM(obj) = IN_ROOM(mob);
+          load_otrigger(obj);
+          if (wear_otrigger(obj, mob, ZCMD.arg3)) {
+            IN_ROOM(obj) = NOWHERE;
+            equip_char(mob, obj, ZCMD.arg3);
+          } else
+            obj_to_char(obj, mob);
+          tobj = obj;
+	  last_cmd = 1;
+	}
+      } else
+	last_cmd = 0;
+      tmob = NULL;
+      break;
+
+    case 'R': /* rem obj from room */
+      if ((obj = get_obj_in_list_num(ZCMD.arg2, world[ZCMD.arg1].contents)) != NULL)
+        extract_obj(obj);
+      last_cmd = 1;
+      tmob = NULL;
+      tobj = NULL;
+      break;
+
+
+    case 'D':			/* set state of door */
+      if (ZCMD.arg2 < 0 || ZCMD.arg2 >= DIR_COUNT ||
+	  (world[ZCMD.arg1].dir_option[ZCMD.arg2] == NULL)) {
+        char error[MAX_INPUT_LENGTH];
+        tb_snprintf(error, sizeof(error), "door does not exist in room %d - dir %d, command disabled",  world[ZCMD.arg1].number, ZCMD.arg2);
+	ZONE_ERROR(error);
+	ZCMD.command = '*';
+      } else
+	switch (ZCMD.arg3) {
+	case 0:
+	  REMOVE_BIT(world[ZCMD.arg1].dir_option[ZCMD.arg2]->exit_info,
+		     EX_LOCKED);
+	  REMOVE_BIT(world[ZCMD.arg1].dir_option[ZCMD.arg2]->exit_info,
+		     EX_CLOSED);
+	  break;
+	case 1:
+	  SET_BIT(world[ZCMD.arg1].dir_option[ZCMD.arg2]->exit_info,
+		  EX_CLOSED);
+	  REMOVE_BIT(world[ZCMD.arg1].dir_option[ZCMD.arg2]->exit_info,
+		     EX_LOCKED);
+	  break;
+	case 2:
+	  SET_BIT(world[ZCMD.arg1].dir_option[ZCMD.arg2]->exit_info,
+		  EX_LOCKED);
+	  SET_BIT(world[ZCMD.arg1].dir_option[ZCMD.arg2]->exit_info,
+		  EX_CLOSED);
+	  break;
+	}
+      last_cmd = 1;
+      tmob = NULL;
+      tobj = NULL;
+      break;
+
+    case 'T': /* trigger command */
+      if (ZCMD.arg1==MOB_TRIGGER && tmob) {
+        if (!SCRIPT(tmob))
+          CREATE(SCRIPT(tmob), struct script_data, 1);
+        add_trigger(SCRIPT(tmob), read_trigger(ZCMD.arg2), -1);
+        last_cmd = 1;
+      } else if (ZCMD.arg1==OBJ_TRIGGER && tobj) {
+        if (!SCRIPT(tobj))
+          CREATE(SCRIPT(tobj), struct script_data, 1);
+        add_trigger(SCRIPT(tobj), read_trigger(ZCMD.arg2), -1);
+        last_cmd = 1;
+      } else if (ZCMD.arg1==WLD_TRIGGER) {
+        if (ZCMD.arg3 == NOWHERE || ZCMD.arg3 > top_of_world) {
+          ZONE_ERROR("Invalid room number in trigger assignment");
+        } else {
+          if (!world[ZCMD.arg3].script)
+            CREATE(world[ZCMD.arg3].script, struct script_data, 1);
+          add_trigger(world[ZCMD.arg3].script, read_trigger(ZCMD.arg2), -1);
+          last_cmd = 1;
+        }
+      }
+
+      break;
+
+    case 'V':
+      if (ZCMD.arg1==MOB_TRIGGER && tmob) {
+        if (!SCRIPT(tmob)) {
+          ZONE_ERROR("Attempt to give variable to scriptless mobile");
+        } else
+          add_var(&(SCRIPT(tmob)->global_vars), ZCMD.sarg1, ZCMD.sarg2,
+                  ZCMD.arg3);
+        last_cmd = 1;
+      } else if (ZCMD.arg1==OBJ_TRIGGER && tobj) {
+        if (!SCRIPT(tobj)) {
+          ZONE_ERROR("Attempt to give variable to scriptless object");
+        } else
+          add_var(&(SCRIPT(tobj)->global_vars), ZCMD.sarg1, ZCMD.sarg2,
+                  ZCMD.arg3);
+        last_cmd = 1;
+      } else if (ZCMD.arg1==WLD_TRIGGER) {
+        if (ZCMD.arg3 == NOWHERE || ZCMD.arg3>top_of_world) {
+          ZONE_ERROR("Invalid room number in variable assignment");
+        } else {
+          if (!(world[ZCMD.arg3].script)) {
+            ZONE_ERROR("Attempt to give variable to scriptless object");
+          } else
+            add_var(&(world[ZCMD.arg3].script->global_vars),
+                    ZCMD.sarg1, ZCMD.sarg2, ZCMD.arg2);
+          last_cmd = 1;
+        }
+      }
+      break;
+
+    default:
+      ZONE_ERROR("unknown cmd in reset table; cmd disabled");
+      ZCMD.command = '*';
+      break;
+    }
+  }
+
+  zone_table[zone].age = 0;
+
+  /* handle reset_wtrigger's */
+  rvnum = zone_table[zone].bot;
+  while (rvnum <= zone_table[zone].top) {
+    rrnum = real_room(rvnum);
+    if (rrnum != NOWHERE) reset_wtrigger(&world[rrnum]);
+    rvnum++;
+  }
+}
+
+/* for use in reset_zone; return TRUE if zone 'nr' is free of PC's  */
+int is_empty(zone_rnum zone_nr)
+{
+  struct descriptor_data *i;
+
+  for (i = descriptor_list; i; i = i->next) {
+    if (STATE(i) != CON_PLAYING)
+      continue;
+    if (IN_ROOM(i->character) == NOWHERE)
+      continue;
+    if (world[IN_ROOM(i->character)].zone != zone_nr)
+      continue;
+    /* If an immortal has nohassle off, he counts as present. Added for testing
+     * zone reset triggers -Welcor */
+    if ((!IS_NPC(i->character)) && (GET_LEVEL(i->character) >= LVL_IMMORT) && (PRF_FLAGGED(i->character, PRF_NOHASSLE)))
+      continue;
+
+    return (0);
+  }
+
+  return (1);
+}
+
+/* Functions of a general utility nature. */
+/* read and allocate space for a '~'-terminated string from a given file */
+char *fread_string(FILE *fl, const char *error)
+{
+  char buf[MAX_STRING_LENGTH], tmp[513];
+  char *point;
+  int done = 0, length = 0, templength;
+
+  *buf = '\0';
+
+  do {
+    if (!fgets(tmp, 512, fl)) {
+      log("SYSERR: fread_string: format error at or near %s", error);
+      exit(1);
+    }
+    /* If there is a '~', end the string; else put an "\r\n" over the '\n'. */
+    /* now only removes trailing ~'s -- Welcor */
+    point = strchr(tmp, '\0');
+    for (point-- ; (*point=='\r' || *point=='\n') && point > tmp; point--);
+    if (*point=='~') {
+      *point='\0';
+      done = 1;
+    } else {
+      if (*point == '\n' || *point == '\r')
+        *point = '\r';
+      else
+        *(++point) = '\r';
+
+      *(++point) = '\n';
+      *(++point) = '\0';
+    }
+
+    templength = point - tmp;
+
+    if (length + templength >= MAX_STRING_LENGTH) {
+      log("SYSERR: fread_string: string too large (db.c)");
+      log("%s", error);
+      exit(1);
+    } else {
+      strlcat(buf, tmp, sizeof(buf));	/* strcat: OK (size checked above) */
+      length += templength;
+    }
+  } while (!done);
+  
+  parse_at(buf);
+  /* allocate space for the new string and copy it */
+  return (strlen(buf) ? strdup(buf) : NULL);
+}
+
+/* fread_clean_string is the same as fread_string, but skips preceding spaces */
+char *fread_clean_string(FILE *fl, const char *error)
+{
+  char buf[MAX_STRING_LENGTH], tmp[513];
+  char *point, c;
+  int done = 0, length = 0, templength;
+
+  *buf = '\0';
+
+  do
+  {
+    if( feof( fl ) )
+    {
+      log( "%s", "fread_clean_string: EOF encountered on read." );
+      return 0;
+    }
+    c = getc( fl );
+  }
+  while( isspace( c ) );
+  ungetc( c, fl );
+
+  do {
+    if (!fgets(tmp, 512, fl)) {
+      log("SYSERR: fread_clean_string: format error at or near %s", error);
+      exit(1);
+    }
+    /* If there is a '~', end the string; else put an "\r\n" over the '\n'. */
+    /* now only removes trailing ~'s -- Welcor */
+    point = strchr(tmp, '\0');
+    for (point-- ; (*point=='\r' || *point=='\n'); point--);
+    if (*point=='~') {
+      *point='\0';
+      done = 1;
+    } else {
+      *(++point) = '\r';
+      *(++point) = '\n';
+      *(++point) = '\0';
+    }
+
+    templength = point - tmp;
+
+    if (length + templength >= MAX_STRING_LENGTH) {
+      log("SYSERR: fread_clean_string: string too large (db.c)");
+      log("%s", error);
+      exit(1);
+    } else {
+      strlcat(buf, tmp, sizeof(buf));	/* strcat: OK (size checked above) */
+      length += templength;
+    }
+  } while (!done);
+  
+  parse_at(buf);
+  /* allocate space for the new string and copy it */
+  return (strlen(buf) ? strdup(buf) : NULL);
+}
+
+/* Read a numerical value from a given file */
+int fread_number(FILE *fp)
+{
+  int number;
+  bool sign;
+  char c;
+
+  do
+  {
+    if( feof( fp ) )
+    {
+      log( "%s", "fread_number: EOF encountered on read." );
+      return 0;
+    }
+    c = getc( fp );
+  }
+  while( isspace( c ) );
+
+  number = 0;
+
+  sign = FALSE;
+  if( c == '+' )
+    c = getc( fp );
+  else if( c == '-' ) {
+    sign = TRUE;
+    c = getc( fp );
+  }
+
+  if(!isdigit(c)) {
+    log( "fread_number: bad format. (%c)", c );
+    return 0;
+  }
+
+  while(isdigit(c)) {
+    if(feof(fp)) {
+      log( "%s", "fread_number: EOF encountered on read." );
+      return number;
+    }
+    number = number * 10 + c - '0';
+    c = getc( fp );
+  }
+
+  if( sign )
+    number = 0 - number;
+
+  if( c == '|' )
+    number += fread_number( fp );
+  else if( c != ' ' )
+    ungetc( c, fp );
+
+  return number;
+}
+
+/* Read to end of line from a given file into a static buffer */
+char *fread_line(FILE *fp)
+{
+  static char line[MAX_STRING_LENGTH];
+  char *pline;
+  char c;
+  int ln;
+
+  pline = line;
+  line[0] = '\0';
+  ln = 0;
+
+  /* Skip blanks.     */
+  /* Read first char. */
+  do {
+    if(feof(fp)) {
+      log("fread_line: EOF encountered on read.");
+      *pline = '\0';
+      return (line);
+    }
+    c = getc( fp );
+  }
+  while(isspace(c));
+
+  /* Un-Read first char */
+  ungetc( c, fp );
+
+  do {
+    if(feof(fp)) {
+      log("fread_line: EOF encountered on read.");
+      *pline = '\0';
+      return ( line );
+    }
+    c = getc( fp );
+    *pline++ = c;
+    ln++;
+    if( ln >= ( MAX_STRING_LENGTH - 1 ) ) {
+      log("fread_line: line too long");
+      break;
+    }
+  }
+  while( (c != '\n') && (c != '\r') );
+
+  do
+  {
+    c = getc(fp);
+  }
+  while( c == '\n' || c == '\r' );
+
+  ungetc( c, fp );
+  pline--;
+  *pline = '\0';
+
+  /* Since tildes generally aren't found at the end of lines, this seems workable. Will enable reading old configs. */
+  if( line[strlen(line) - 1] == '~' )
+    line[strlen(line) - 1] = '\0';
+
+  return (line);
+}
+
+/* Read to end of line from a given file and convert to flag values, then return number of ints */
+int fread_flags(FILE *fp, int *fg, int fg_size)
+{
+  char line[MAX_STRING_LENGTH];
+  char *pline, *tmp_txt, val_txt[MAX_INPUT_LENGTH];
+  char c;
+  int ln,i;
+
+  pline = line;
+  line[0] = '\0';
+  ln = 0;
+
+  /* Skip blanks.     */
+  /* Read first char. */
+  do {
+    if(feof(fp)) {
+      log("fread_flags: EOF encountered on read.");
+      *pline = '\0';
+      return (0);
+    }
+    c = getc( fp );
+  }
+  while(isspace(c));
+
+  /* Un-Read first char */
+  ungetc( c, fp );
+
+  do {
+    if(feof(fp)) {
+      log("fread_flags: EOF encountered on read.");
+      *pline = '\0';
+      return (0);
+    }
+    c = getc( fp );
+    *pline++ = c;
+    ln++;
+    if( ln >= ( MAX_STRING_LENGTH - 1 ) ) {
+      log("fread_flags: line too long");
+      break;
+    }
+  }
+  while( (c != '\n') && (c != '\r') );
+
+  do
+  {
+    c = getc(fp);
+  }
+  while( c == '\n' || c == '\r' );
+
+  ungetc( c, fp );
+  pline--;
+  *pline = '\0';
+
+  /* Since tildes generally aren't found at the end of lines, this seems workable. Will enable reading old configs. */
+  if( line[strlen(line) - 1] == '~' )
+    line[strlen(line) - 1] = '\0';
+
+  /* We now have a line of text with all the flags on it - let's convert it */
+  for (i=0,tmp_txt=line;tmp_txt && *tmp_txt && i<fg_size;i++) {
+    tmp_txt = one_argument(tmp_txt,val_txt);  /* Grab a number  */
+    fg[i]   = tb_parse_int_or_zero(val_txt);                  /* Convert to int */
+  }
+
+  return (i);
+}
+
+/* Read one word from a given file (into static buffer). */
+char *fread_word(FILE *fp)
+{
+   static char word[MAX_STRING_LENGTH];
+   char *pword;
+   char cEnd;
+
+   do
+   {
+      if( feof( fp ) )
+      {
+         log( "fread_word: EOF encountered on read.");
+         word[0] = '\0';
+         return word;
+      }
+      cEnd = getc( fp );
+   }
+   while( isspace( cEnd ) );
+
+   if( cEnd == '\'' || cEnd == '"' )
+   {
+      pword = word;
+   }
+   else
+   {
+      word[0] = cEnd;
+      pword = word + 1;
+      cEnd = ' ';
+   }
+
+   for( ; pword < word + MAX_STRING_LENGTH; pword++ )
+   {
+      if( feof( fp ) )
+      {
+         log( "fread_word: EOF encountered on read.");
+         *pword = '\0';
+         return word;
+      }
+      *pword = getc( fp );
+      if( cEnd == ' ' ? isspace( *pword ) : *pword == cEnd )
+      {
+         if( cEnd == ' ' )
+            ungetc( *pword, fp );
+         *pword = '\0';
+         return word;
+      }
+   }
+   log( "fread_word: word too long");
+   return NULL;
+}
+
+/* Read to end of line in a given file (for comments) */
+void fread_to_eol(FILE *fp)
+{
+  char c;
+
+  do {
+    if(feof(fp)) {
+      log( "%s", "fread_to_eol: EOF encountered on read." );
+      return;
+    }
+    c = getc( fp );
+  }
+  while( c != '\n' && c != '\r' );
+
+  do {
+    c = getc( fp );
+  }
+  while( c == '\n' || c == '\r' );
+
+  ungetc( c, fp );
+}
+
+/* Called to free all allocated follow_type structs */
+static void free_followers(struct follow_type *k)
+{
+   if (!k)
+    return;
+
+  if (k->next)
+    free_followers(k->next);
+
+  k->follower = NULL;
+  free(k);
+}
+
+/* release memory allocated for a char struct */
+void free_char(struct char_data *ch)
+{
+  int i;
+  struct alias_data *a;
+
+  if (ch->player_specials != NULL && ch->player_specials != &dummy_mob) {
+    while ((a = GET_ALIASES(ch)) != NULL) {
+      GET_ALIASES(ch) = (GET_ALIASES(ch))->next;
+      free_alias(a);
+    }
+    if (ch->player_specials->poofin)
+      free(ch->player_specials->poofin);
+    if (ch->player_specials->poofout)
+      free(ch->player_specials->poofout);
+    if (ch->player_specials->saved.completed_quests)
+      free(ch->player_specials->saved.completed_quests);
+    if (GET_HOST(ch))
+      free(GET_HOST(ch));
+    if (IS_NPC(ch))
+      log("SYSERR: Mob %s (#%d) had player_specials allocated!", GET_NAME(ch), GET_MOB_VNUM(ch));
+  }
+  if (!IS_NPC(ch) || (IS_NPC(ch) && GET_MOB_RNUM(ch) == NOBODY)) {
+    /* if this is a player, or a non-prototyped non-player, free all */
+    if (ch->player.name)
+      free(ch->player.name);
+    if (ch->player.title)
+      free(ch->player.title);
+    if (ch->player.short_descr)
+      free(ch->player.short_descr);
+    if (ch->player.long_descr)
+      free(ch->player.long_descr);
+    if (ch->player.description)
+      free(ch->player.description);
+    if (ch->player_specials != NULL && ch->player_specials != &dummy_mob) {
+      for (i = 0; i < NUM_HIST; i++)
+        if (GET_HISTORY(ch, i))
+          free_history(ch, i);
+
+      free(ch->player_specials);
+      ch->player_specials = NULL;
+    }
+
+    /* free script proto list */
+    free_proto_script(ch, MOB_TRIGGER);
+
+  } else if ((i = GET_MOB_RNUM(ch)) != NOBODY) {
+    /* otherwise, free strings only if the string is not pointing at proto */
+    if (ch->player.name && ch->player.name != mob_proto[i].player.name)
+      free(ch->player.name);
+    if (ch->player.title && ch->player.title != mob_proto[i].player.title)
+      free(ch->player.title);
+    if (ch->player.short_descr && ch->player.short_descr != mob_proto[i].player.short_descr)
+      free(ch->player.short_descr);
+    if (ch->player.long_descr && ch->player.long_descr != mob_proto[i].player.long_descr)
+      free(ch->player.long_descr);
+    if (ch->player.description && ch->player.description != mob_proto[i].player.description)
+      free(ch->player.description);
+    /* free script proto list if it's not the prototype */
+    if (ch->proto_script && ch->proto_script != mob_proto[i].proto_script)
+      free_proto_script(ch, MOB_TRIGGER);
+  }
+  while (ch->affected)
+    affect_remove(ch, ch->affected);
+
+  /* free any assigned scripts */
+  if (SCRIPT(ch))
+    extract_script(ch, MOB_TRIGGER);
+
+    /* Mud Events */
+  if (ch->events != NULL) {
+	  if (ch->events->iSize > 0) {
+		struct event * pEvent;
+
+		while ((pEvent = simple_list(ch->events)) != NULL)
+		  event_cancel(pEvent);
+	  }
+	  free_list(ch->events);
+    ch->events = NULL;
+  }
+
+  /* new version of free_followers take the followers pointer as arg */
+  free_followers(ch->followers);
+
+  if (ch->desc)
+    ch->desc->character = NULL;
+
+  /* find_char helper, when free_char is called with a blank character struct,
+   * ID is set to 0, and has not yet been added to the lookup table. */
+  if (ch->script_id != 0) {
+    remove_from_lookup_table(ch->script_id);
+  }
+
+  free(ch);
+}
+
+/* release memory allocated for an obj struct */
+void free_obj(struct obj_data *obj)
+{
+  if (GET_OBJ_RNUM(obj) == NOWHERE) {
+    free_object_strings(obj);
+    /* free script proto list */
+    free_proto_script(obj, OBJ_TRIGGER);
+  } else {
+    free_object_strings_proto(obj);
+    if (obj->proto_script != obj_proto[GET_OBJ_RNUM(obj)].proto_script)
+      free_proto_script(obj, OBJ_TRIGGER);
+  }
+
+  /* free any assigned scripts */
+  if (SCRIPT(obj))
+    extract_script(obj, OBJ_TRIGGER);
+
+  /* find_obj helper (0 is not-yet-added to the table) */
+  if (obj->script_id != 0) {
+    remove_from_lookup_table(obj->script_id);
+  }
+
+  free(obj);
+}
+
+/* Steps: 1: Read contents of a text file. 2: Make sure no one is using the
+ * pointer in paging. 3: Allocate space. 4: Point 'buf' to it.
+ * We don't want to free() the string that someone may be viewing in the pager.
+ * page_string() keeps the internal strdup()'d copy on ->showstr_head and it
+ * won't care if we delete the original.  Otherwise, strings are kept on
+ * ->showstr_vector but we'll only match if the pointer is to the string we're
+ * interested in and not a copy. If someone is reading a global copy we're
+ * trying to replace, give everybody using it a different copy so as to avoid
+ * special cases. */
+static int file_to_string_alloc(const char *name, char **buf)
+{
+  int temppage;
+  char temp[MAX_STRING_LENGTH];
+  struct descriptor_data *in_use;
+
+  for (in_use = descriptor_list; in_use; in_use = in_use->next)
+    if (in_use->showstr_vector && *in_use->showstr_vector == *buf)
+      return (-1);
+
+  /* Lets not free() what used to be there unless we succeeded. */
+  if (file_to_string(name, temp) < 0)
+    return (-1);
+
+  for (in_use = descriptor_list; in_use; in_use = in_use->next) {
+    if (!in_use->showstr_count || !in_use->showstr_vector ||
+        *in_use->showstr_vector != *buf)
+      continue;
+
+    /* Let's be nice and leave them at the page they were on. */
+    temppage = in_use->showstr_page;
+    paginate_string((in_use->showstr_head = strdup(*in_use->showstr_vector)), in_use);
+    in_use->showstr_page = temppage;
+  }
+
+  if (*buf)
+    free(*buf);
+  
+  parse_at(temp);   
+    
+  *buf = strdup(temp);
+  return (0);
+}
+
+/* read contents of a text file, and place in buf */
+static int file_to_string(const char *name, char *buf)
+{
+  FILE *fl;
+  char tmp[READ_SIZE + 3];
+  int len;
+  struct stat statbuf;
+
+  *buf = '\0';
+
+  if (!(fl = fopen(name, "r"))) {
+    log("SYSERR: reading %s: %s", name, strerror(errno));
+    return (-1);
+  }
+
+   /* Grab the date/time the file was last edited */
+   if (!strcmp(name, NEWS_FILE))
+   {
+     fstat(fileno(fl), &statbuf);
+     newsmod = statbuf.st_mtime;
+   }
+   if (!strcmp(name, MOTD_FILE))
+   {
+     fstat(fileno(fl), &statbuf);
+     motdmod = statbuf.st_mtime;
+   }
+
+  for (;;) {
+    if (!fgets(tmp, READ_SIZE, fl))	/* EOF check */
+      break;
+    if ((len = strlen(tmp)) > 0)
+      tmp[len - 1] = '\0'; /* take off the trailing \n */
+    strlcat(tmp, "\r\n", sizeof(tmp));	/* strcat: OK (tmp:READ_SIZE+3) */
+
+    if (strlen(buf) + strlen(tmp) + 1 > MAX_STRING_LENGTH) {
+      log("SYSERR: %s: string too big (%d max)", name, MAX_STRING_LENGTH);
+      *buf = '\0';
+      tb_fclose(fl);
+      return (-1);
+    }
+    strlcat(buf, tmp, sizeof(buf));	/* strcat: OK (size checked above) */
+  }
+
+  tb_fclose(fl);
+
+  return (0);
+}
+
+/* clear some of the the working variables of a char */
+void reset_char(struct char_data *ch)
+{
+  int i;
+
+  for (i = 0; i < NUM_WEARS; i++)
+    GET_EQ(ch, i) = NULL;
+
+  ch->followers = NULL;
+  ch->master = NULL;
+  IN_ROOM(ch) = NOWHERE;
+  ch->carrying = NULL;
+  ch->next = NULL;
+  ch->next_fighting = NULL;
+  ch->next_in_room = NULL;
+  FIGHTING(ch) = NULL;
+  char_from_furniture(ch);
+  ch->char_specials.position = POS_STANDING;
+  ch->mob_specials.default_pos = POS_STANDING;
+  ch->char_specials.carry_weight = 0;
+  ch->char_specials.carry_items = 0;
+
+  if (GET_HIT(ch) <= 0)
+    GET_HIT(ch) = 1;
+  if (GET_MOVE(ch) <= 0)
+    GET_MOVE(ch) = 1;
+  if (GET_MANA(ch) <= 0)
+    GET_MANA(ch) = 1;
+
+  GET_LAST_TELL(ch) = NOBODY;
+}
+
+/* clear ALL the working variables of a char; do NOT free any space alloc'ed */
+void clear_char(struct char_data *ch)
+{
+  memset((char *) ch, 0, sizeof(struct char_data));
+
+  IN_ROOM(ch) = NOWHERE;
+  GET_PFILEPOS(ch) = -1;
+  GET_MOB_RNUM(ch) = NOBODY;
+  GET_WAS_IN(ch) = NOWHERE;
+  GET_POS(ch) = POS_STANDING;
+  ch->mob_specials.default_pos = POS_STANDING;
+  ch->events = NULL;
+  
+  GET_AC(ch) = 100;		/* Basic Armor */
+  if (ch->points.max_mana < 100)
+    ch->points.max_mana = 100;
+}
+
+void clear_object(struct obj_data *obj)
+{
+  memset((char *) obj, 0, sizeof(struct obj_data));
+
+  obj->item_number = NOTHING;
+  IN_ROOM(obj) = NOWHERE;
+  obj->worn_on = NOWHERE;
+}
+
+/* Called during character creation after picking character class (and then
+ * never again for that character). */
+void init_char(struct char_data *ch)
+{
+  int i;
+
+  /* create a player_special structure */
+  if (ch->player_specials == NULL)
+    CREATE(ch->player_specials, struct player_special_data, 1);
+
+  /* If this is our first player make him IMPL. */
+  if (top_of_p_table == 0) {
+    GET_LEVEL(ch) = LVL_IMPL;
+    GET_EXP(ch) = 7000000;
+
+    /* The implementor never goes through do_start(). */
+    GET_MAX_HIT(ch) = 500;
+    GET_MAX_MANA(ch) = 100;
+    GET_MAX_MOVE(ch) = 82;
+    GET_HIT(ch) = GET_MAX_HIT(ch);
+    GET_MANA(ch) = GET_MAX_MANA(ch);
+    GET_MOVE(ch) = GET_MAX_MOVE(ch);
+  }
+
+  set_title(ch, NULL);
+  ch->player.short_descr = NULL;
+  ch->player.long_descr = NULL;
+  ch->player.description = NULL;
+
+  GET_NUM_QUESTS(ch) = 0;
+  ch->player_specials->saved.completed_quests = NULL;
+  GET_QUEST(ch) = NOTHING;
+
+  ch->player.time.birth = time(0);
+  ch->player.time.logon = time(0);
+  ch->player.time.played = 0;
+
+  GET_AC(ch) = 100;
+
+  /* Bias the height and weight of the character depending on what gender
+   * they have chosen. While it is possible to have a tall, heavy female it's
+   * not as likely as a male. Height is in centimeters. Weight is in pounds.
+   * The only place they're ever printed (in stock code) is SPELL_IDENTIFY. */
+  if (GET_SEX(ch) == SEX_MALE) {
+    GET_WEIGHT(ch) = rand_number(120, 180);
+    GET_HEIGHT(ch) = rand_number(160, 200); /* 5'4" - 6'8" */
+  } else {
+    GET_WEIGHT(ch) = rand_number(100, 160);
+    GET_HEIGHT(ch) = rand_number(150, 180); /* 5'0" - 6'0" */
+  }
+
+  if ((i = get_ptable_by_name(GET_NAME(ch))) != -1)
+    player_table[i].id = GET_IDNUM(ch) = ++top_idnum;
+  else
+    log("SYSERR: init_char: Character '%s' not found in player table.", GET_NAME(ch));
+
+  for (i = 1; i <= MAX_SKILLS; i++) {
+    if (GET_LEVEL(ch) < LVL_IMPL)
+      SET_SKILL(ch, i, 0);
+    else
+      SET_SKILL(ch, i, 100);
+  }
+
+  for (i = 0; i < AF_ARRAY_MAX; i++)
+    AFF_FLAGS(ch)[i] = 0;
+
+  for (i = 0; i < 5; i++)
+    GET_SAVE(ch, i) = 0;
+
+  ch->real_abils.intel = 25;
+  ch->real_abils.wis = 25;
+  ch->real_abils.dex = 25;
+  ch->real_abils.str = 25;
+  ch->real_abils.str_add = 100;
+  ch->real_abils.con = 25;
+  ch->real_abils.cha = 25;
+
+  for (i = 0; i < 3; i++)
+    GET_COND(ch, i) = (GET_LEVEL(ch) == LVL_IMPL ? -1 : 24);
+
+  GET_LOADROOM(ch) = NOWHERE;
+  GET_SCREEN_WIDTH(ch) = PAGE_WIDTH;
+  
+  /* Set Beginning Toggles Here */
+  SET_BIT_AR(PRF_FLAGS(ch), PRF_AUTOEXIT);
+  if (ch->desc)
+    if (ch->desc->pProtocol->pVariables[eMSDP_ANSI_COLORS] || 
+      ch->desc->pProtocol->pVariables[eMSDP_XTERM_256_COLORS]) {
+      SET_BIT_AR(PRF_FLAGS(ch), PRF_COLOR_1);
+      SET_BIT_AR(PRF_FLAGS(ch), PRF_COLOR_2);
+    } 
+  SET_BIT_AR(PRF_FLAGS(ch), PRF_DISPHP);  
+  SET_BIT_AR(PRF_FLAGS(ch), PRF_DISPMANA);
+  SET_BIT_AR(PRF_FLAGS(ch), PRF_DISPMOVE);
+}
+
+/* returns the real number of the room with given virtual number */
+room_rnum real_room(room_vnum vnum)
+{
+  room_rnum bot, top, mid;
+
+  bot = 0;
+  top = top_of_world;
+
+  if (world[bot].number > vnum || world[top].number < vnum)
+    return (NOWHERE);
+
+  /* perform binary search on world-table */
+  while (bot<= top) {
+    mid = (bot + top) / 2;
+
+    if ((world + mid)->number == vnum)
+      return (mid);
+    if ((world + mid)->number > vnum)
+      top = mid - 1;
+    else
+      bot = mid + 1;
+  }
+  return (NOWHERE);
+}
+
+/* returns the real number of the monster with given virtual number */
+mob_rnum real_mobile(mob_vnum vnum)
+{
+  mob_rnum bot, top, mid;
+
+  bot = 0;
+  top = top_of_mobt;
+
+  /* quickly reject out-of-range vnums */
+  if (mob_index[bot].vnum > vnum || mob_index[top].vnum < vnum)
+    return (NOBODY);
+
+  /* perform binary search on mob-table */
+  while (bot <= top) {
+    mid = (bot + top) / 2;
+
+    if ((mob_index + mid)->vnum == vnum)
+      return (mid);
+    if ((mob_index + mid)->vnum > vnum)
+      top = mid - 1;
+    else
+      bot = mid + 1;
+  }
+  return (NOBODY);
+}
+
+/* returns the real number of the object with given virtual number */
+obj_rnum real_object(obj_vnum vnum)
+{
+  obj_rnum bot, top, mid;
+
+  bot = 0;
+  top = top_of_objt;
+
+  /* quickly reject out-of-range vnums */
+  if (obj_index[bot].vnum > vnum || obj_index[top].vnum < vnum)
+    return (NOTHING);
+
+  /* perform binary search on obj-table */
+  while (bot <= top) {
+    mid = (bot + top) / 2;
+
+    if ((obj_index + mid)->vnum == vnum)
+      return (mid);
+    if ((obj_index + mid)->vnum > vnum)
+      top = mid - 1;
+    else
+      bot = mid + 1;
+  }
+  return (NOTHING);
+}
+
+/* returns the real number of the zone with given virtual number */
+zone_rnum real_zone(zone_vnum vnum)
+{
+  zone_rnum bot, top, mid;
+
+  bot = 0;
+  top = top_of_zone_table;
+
+  if (zone_table[bot].number > vnum || zone_table[top].number < vnum)
+    return (NOWHERE);
+
+  /* perform binary search on zone-table */
+  while (bot <= top) {
+    mid = (bot + top) / 2;
+
+    if ((zone_table + mid)->number == vnum)
+      return (mid);
+    if ((zone_table + mid)->number > vnum)
+      top = mid - 1;
+    else
+      bot = mid + 1;
+  }
+  return (NOWHERE);
+}
+
+/* Extend later to include more checks and add checks for unknown bitvectors. */
+static int check_object(struct obj_data *obj)
+{
+  char objname[MAX_INPUT_LENGTH + 32];
+  int error = FALSE, y;
+
+  if (GET_OBJ_WEIGHT(obj) < 0 && (error = TRUE))
+    log("SYSERR: Object #%d (%s) has negative weight (%d).",
+	GET_OBJ_VNUM(obj), obj->short_description, GET_OBJ_WEIGHT(obj));
+
+  if (GET_OBJ_RENT(obj) < 0 && (error = TRUE))
+    log("SYSERR: Object #%d (%s) has negative cost/day (%d).",
+	GET_OBJ_VNUM(obj), obj->short_description, GET_OBJ_RENT(obj));
+
+  tb_snprintf(objname, sizeof(objname), "Object #%d (%s)", GET_OBJ_VNUM(obj), obj->short_description);
+  for(y = 0; y < TW_ARRAY_MAX; y++) {
+    error |= check_bitvector_names(GET_OBJ_WEAR(obj)[y], wear_bits_count, objname, "object wear");
+    error |= check_bitvector_names(GET_OBJ_EXTRA(obj)[y], extra_bits_count, objname, "object extra");
+    error |= check_bitvector_names(GET_OBJ_AFFECT(obj)[y], affected_bits_count, objname, "object affect");
+  }
+
+  switch (GET_OBJ_TYPE(obj)) {
+  case ITEM_DRINKCON:
+  {
+    char onealias[MAX_INPUT_LENGTH], *space = strrchr(obj->name, ' ');
+
+    strlcpy(onealias, space ? space + 1 : obj->name, sizeof(onealias));
+    if (search_block(onealias, drinknames, TRUE) < 0 && (error = TRUE))
+      log("SYSERR: Object #%d (%s) doesn't have drink type as last keyword. (%s)",
+		GET_OBJ_VNUM(obj), obj->short_description, obj->name);
+  }
+  /* Fall through. */
+  case ITEM_FOUNTAIN:
+    if ((GET_OBJ_VAL(obj,0) > 0) && (GET_OBJ_VAL(obj, 1) > GET_OBJ_VAL(obj, 0)
+        && (error = TRUE)))
+      log("SYSERR: Object #%d (%s) contains (%d) more than maximum (%d).",
+		GET_OBJ_VNUM(obj), obj->short_description,
+		GET_OBJ_VAL(obj, 1), GET_OBJ_VAL(obj, 0));
+    break;
+  case ITEM_SCROLL:
+  case ITEM_POTION:
+    error |= check_object_level(obj, 0);
+    error |= check_object_spell_number(obj, 1);
+    error |= check_object_spell_number(obj, 2);
+    error |= check_object_spell_number(obj, 3);
+    break;
+  case ITEM_WAND:
+  case ITEM_STAFF:
+    error |= check_object_level(obj, 0);
+    error |= check_object_spell_number(obj, 3);
+    if (GET_OBJ_VAL(obj, 2) > GET_OBJ_VAL(obj, 1) && (error = TRUE))
+      log("SYSERR: Object #%d (%s) has more charges (%d) than maximum (%d).",
+		GET_OBJ_VNUM(obj), obj->short_description,
+		GET_OBJ_VAL(obj, 2), GET_OBJ_VAL(obj, 1));
+    break;
+  case ITEM_NOTE:
+    if (obj->ex_description) {
+      char onealias[MAX_INPUT_LENGTH],*next_name;
+      next_name = any_one_arg(obj->name, onealias);
+      do {
+  	if (find_exdesc(onealias, obj->ex_description) && (error = TRUE)) {
+	log("SYSERR: Object #%d (%s) is type NOTE and has extra description with same name. (%s)",
+	  GET_OBJ_VNUM(obj), obj->short_description, obj->name);
+        }
+  	next_name = any_one_arg(next_name, onealias);
+      } while (*onealias);
+    }
+  break;
+  case ITEM_FURNITURE:
+    if (GET_OBJ_VAL(obj, 1) > GET_OBJ_VAL(obj, 0) && (error = TRUE))
+      log("SYSERR: Object #%d (%s) contains (%d) more than maximum (%d).",
+          GET_OBJ_VNUM(obj), obj->short_description, GET_OBJ_VAL(obj, 1),
+	  GET_OBJ_VAL(obj, 0));
+    break;
+  }
+
+  return (error);
+}
+
+static int check_object_spell_number(struct obj_data *obj, int val)
+{
+  int error = FALSE;
+  const char *spellname;
+
+  if (GET_OBJ_VAL(obj, val) == -1 || GET_OBJ_VAL(obj, val) == 0) /* no spell */
+    return (error);
+
+  /* Check for negative spells, spells beyond the top define, and any spell
+   * which is actually a skill. */
+  if (GET_OBJ_VAL(obj, val) < 0)
+    error = TRUE;
+  if (GET_OBJ_VAL(obj, val) > TOP_SPELL_DEFINE)
+    error = TRUE;
+  if (GET_OBJ_VAL(obj, val) > MAX_SPELLS && GET_OBJ_VAL(obj, val) <= MAX_SKILLS)
+    error = TRUE;
+  if (error)
+    log("SYSERR: Object #%d (%s) has out of range spell #%d.",
+	GET_OBJ_VNUM(obj), obj->short_description, GET_OBJ_VAL(obj, val));
+
+  if (scheck)		/* Spell names don't exist in syntax check mode. */
+    return (error);
+
+  /* Now check for unnamed spells. */
+  spellname = skill_name(GET_OBJ_VAL(obj, val));
+
+  if ((spellname == unused_spellname || !str_cmp("UNDEFINED", spellname)) && (error = TRUE))
+    log("SYSERR: Object #%d (%s) uses '%s' spell #%d.",
+		GET_OBJ_VNUM(obj), obj->short_description, spellname,
+		GET_OBJ_VAL(obj, val));
+
+  return (error);
+}
+
+static int check_object_level(struct obj_data *obj, int val)
+{
+  int error = FALSE;
+
+  if ((GET_OBJ_VAL(obj, val) < 0 || GET_OBJ_VAL(obj, val) > LVL_IMPL) && (error = TRUE))
+    log("SYSERR: Object #%d (%s) has out of range level #%d.",
+	GET_OBJ_VNUM(obj), obj->short_description, GET_OBJ_VAL(obj, val));
+
+  return (error);
+}
+
+static int check_bitvector_names(bitvector_t bits, size_t namecount, const char *whatami, const char *whatbits)
+{
+  unsigned int flagnum;
+  bool error = FALSE;
+
+  /* See if any bits are set above the ones we know about. */
+  if (bits <= (~(bitvector_t)0 >> (sizeof(bitvector_t) * 8 - namecount)))
+    return (FALSE);
+
+  for (flagnum = namecount; flagnum < sizeof(bitvector_t) * 8; flagnum++)
+    if (((bitvector_t)1 << flagnum) & bits) {
+      log("SYSERR: %s has unknown %s flag, bit %d (0 through %d known).", whatami, whatbits, flagnum, (int)namecount - 1);
+      error = TRUE;
+    }
+
+  return (error);
+}
+
+static void load_default_config( void )
+{
+  /* This function is called only once, at boot-time. We assume config_info is
+   * empty. -Welcor */
+  /* Game play options. */
+  CONFIG_PK_SETTING 	          = pk_setting;
+  CONFIG_PT_SETTING             = pt_setting;
+  CONFIG_LEVEL_CAN_SHOUT 	    = level_can_shout;
+  CONFIG_HOLLER_MOVE_COST 	    = holler_move_cost;
+  CONFIG_TUNNEL_SIZE 	        = tunnel_size;
+  CONFIG_MAX_EXP_GAIN	        = max_exp_gain;
+  CONFIG_MAX_EXP_LOSS 	        = max_exp_loss;
+  CONFIG_MAX_NPC_CORPSE_TIME    = max_npc_corpse_time;
+  CONFIG_MAX_PC_CORPSE_TIME	    = max_pc_corpse_time;
+  CONFIG_IDLE_VOID		        = idle_void;
+  CONFIG_IDLE_RENT_TIME	        = idle_rent_time;
+  CONFIG_IDLE_MAX_LEVEL	        = idle_max_level;
+  CONFIG_DTS_ARE_DUMPS	        = dts_are_dumps;
+  CONFIG_LOAD_INVENTORY         = load_into_inventory;
+  CONFIG_OK			= strdup(OK);
+  CONFIG_HUH			= strdup(HUH);
+  CONFIG_NOPERSON	        = strdup(NOPERSON);
+  CONFIG_NOEFFECT	        = strdup(NOEFFECT);
+  CONFIG_TRACK_T_DOORS          = track_through_doors;
+  CONFIG_NO_MORT_TO_IMMORT	    = no_mort_to_immort;
+  CONFIG_DISP_CLOSED_DOORS      = display_closed_doors;
+  CONFIG_PROTOCOL_NEGOTIATION   = protocol_negotiation;
+  CONFIG_SPECIAL_IN_COMM        = special_in_comm;
+  CONFIG_DIAGONAL_DIRS          = diagonal_dirs;
+  CONFIG_MAP                    = map_option;
+  CONFIG_MAP_SIZE               = default_map_size;
+  CONFIG_MINIMAP_SIZE           = default_minimap_size;
+  CONFIG_SCRIPT_PLAYERS         = script_players;
+  CONFIG_DEBUG_MODE             = debug_mode;
+
+  /* Rent / crashsave options. */
+  CONFIG_FREE_RENT              = free_rent;
+  CONFIG_MAX_OBJ_SAVE           = max_obj_save;
+  CONFIG_MIN_RENT_COST	        = min_rent_cost;
+  CONFIG_AUTO_SAVE		        = auto_save;
+  CONFIG_AUTOSAVE_TIME	        = autosave_time;
+  CONFIG_CRASH_TIMEOUT          = crash_file_timeout;
+  CONFIG_RENT_TIMEOUT	        = rent_file_timeout;
+
+  /* Room numbers. */
+  CONFIG_MORTAL_START           = mortal_start_room;
+  CONFIG_IMMORTAL_START         = immort_start_room;
+  CONFIG_FROZEN_START           = frozen_start_room;
+  CONFIG_DON_ROOM_1             = donation_room_1;
+  CONFIG_DON_ROOM_2             = donation_room_2;
+  CONFIG_DON_ROOM_3             = donation_room_3;
+
+  /* Game operation options. */
+  CONFIG_DFLT_PORT              = DFLT_PORT;
+
+  if (DFLT_IP)
+    CONFIG_DFLT_IP              = strdup(DFLT_IP);
+  else
+    CONFIG_DFLT_IP              = NULL;
+
+  CONFIG_DFLT_DIR               = strdup(DFLT_DIR);
+
+  if (LOGNAME)
+    CONFIG_LOGNAME              = strdup(LOGNAME);
+  else
+    CONFIG_LOGNAME              = NULL;
+
+  CONFIG_MAX_PLAYING            = max_playing;
+  CONFIG_MAX_FILESIZE           = max_filesize;
+  CONFIG_MAX_BAD_PWS            = max_bad_pws;
+  CONFIG_SITEOK_ALL             = siteok_everyone;
+  CONFIG_NS_IS_SLOW             = nameserver_is_slow;
+  CONFIG_NEW_SOCIALS            = use_new_socials;
+  CONFIG_OLC_SAVE               = auto_save_olc;
+  CONFIG_MENU                   = strdup(MENU);
+  CONFIG_WELC_MESSG             = strdup(WELC_MESSG);
+  CONFIG_START_MESSG            = strdup(START_MESSG);
+  CONFIG_MEDIT_ADVANCED         = medit_advanced_stats;
+  CONFIG_IBT_AUTOSAVE           = ibt_autosave;
+  /* Autowiz options. */
+  CONFIG_USE_AUTOWIZ            = use_autowiz;
+  CONFIG_MIN_WIZLIST_LEV        = min_wizlist_lev;
+}
+
+void load_config( void )
+{
+  FILE *fl;
+  char line[READ_SIZE - 2]; // to make sure there's room for readding \r\n
+  char tag[MAX_INPUT_LENGTH];
+  int  num;
+  char buf[MAX_INPUT_LENGTH];
+
+  load_default_config();
+
+  tb_snprintf(buf, sizeof(buf), "%s/%s", CONFIG_DFLT_DIR, CONFIG_CONFFILE);
+  if ( !(fl = fopen(CONFIG_CONFFILE, "r")) && !(fl = fopen(buf, "r")) ) {
+    tb_snprintf(buf, sizeof(buf), "No %s file, using defaults", CONFIG_CONFFILE);
+    perror(buf);
+    return;
+  }
+
+  /* Load the game configuration file. */
+  while (get_line(fl, line)) {
+    split_argument(line, tag);
+    num = tb_parse_int_or_zero(line);
+
+    switch (LOWER(*tag)) {
+      case 'a':
+        if (!str_cmp(tag, "auto_save"))
+          CONFIG_AUTO_SAVE = num;
+        else if (!str_cmp(tag, "autosave_time"))
+          CONFIG_AUTOSAVE_TIME = num;
+        else if (!str_cmp(tag, "auto_save_olc"))
+          CONFIG_OLC_SAVE = num;
+        break;
+
+      case 'c':
+        if (!str_cmp(tag, "crash_file_timeout"))
+          CONFIG_CRASH_TIMEOUT = num;
+        break;
+
+      case 'd':
+        if (!str_cmp(tag, "debug_mode"))
+          CONFIG_DEBUG_MODE = num;
+        else if (!str_cmp(tag, "display_closed_doors"))
+          CONFIG_DISP_CLOSED_DOORS = num;
+        else if (!str_cmp(tag, "diagonal_dirs"))
+          CONFIG_DIAGONAL_DIRS = num;
+        else if (!str_cmp(tag, "dts_are_dumps"))
+          CONFIG_DTS_ARE_DUMPS = num;
+        else if (!str_cmp(tag, "donation_room_1"))
+          if (num == -1)
+            CONFIG_DON_ROOM_1 = NOWHERE;
+          else
+            CONFIG_DON_ROOM_1 = num;
+        else if (!str_cmp(tag, "donation_room_2"))
+          if (num == -1)
+            CONFIG_DON_ROOM_2 = NOWHERE;
+          else
+            CONFIG_DON_ROOM_2 = num;
+        else if (!str_cmp(tag, "donation_room_3"))
+          if (num == -1)
+            CONFIG_DON_ROOM_3 = NOWHERE;
+          else
+            CONFIG_DON_ROOM_3 = num;
+        else if (!str_cmp(tag, "dflt_dir")) {
+          if (CONFIG_DFLT_DIR)
+            free(CONFIG_DFLT_DIR);
+          if (*line)
+            CONFIG_DFLT_DIR = strdup(line);
+          else
+            CONFIG_DFLT_DIR = strdup(DFLT_DIR);
+        } else if (!str_cmp(tag, "dflt_ip")) {
+          if (CONFIG_DFLT_IP)
+            free(CONFIG_DFLT_IP);
+          if (*line)
+            CONFIG_DFLT_IP = strdup(line);
+          else
+            CONFIG_DFLT_IP = NULL;
+        } else if (!str_cmp(tag, "dflt_port"))
+          CONFIG_DFLT_PORT = num;
+        else if (!str_cmp(tag, "default_map_size"))
+          CONFIG_MAP_SIZE = num;
+        else if (!str_cmp(tag, "default_minimap_size"))
+          CONFIG_MINIMAP_SIZE = num;
+        break;
+
+      case 'f':
+        if (!str_cmp(tag, "free_rent"))
+          CONFIG_FREE_RENT = num;
+        else if (!str_cmp(tag, "frozen_start_room"))
+          CONFIG_FROZEN_START = num;
+        break;
+
+      case 'h':
+        if (!str_cmp(tag, "holler_move_cost"))
+          CONFIG_HOLLER_MOVE_COST = num;
+        else if (!str_cmp(tag, "huh")) {
+          char tmp[READ_SIZE];
+          if (CONFIG_HUH)
+            free(CONFIG_HUH);
+          tb_snprintf(tmp, sizeof(tmp), "%s\r\n", line);
+          CONFIG_HUH = strdup(tmp);
+        }
+        break;
+
+      case 'i':
+        if (!str_cmp(tag, "idle_void"))
+          CONFIG_IDLE_VOID = num;
+        else if (!str_cmp(tag, "idle_rent_time"))
+          CONFIG_IDLE_RENT_TIME = num;
+        else if (!str_cmp(tag, "idle_max_level"))
+          CONFIG_IDLE_MAX_LEVEL = num;
+        else if (!str_cmp(tag, "immort_start_room"))
+          CONFIG_IMMORTAL_START = num;
+        else if (!str_cmp(tag, "ibt_autosave"))
+		  CONFIG_IBT_AUTOSAVE = num;
+        break;
+
+      case 'l':
+        if (!str_cmp(tag, "level_can_shout"))
+          CONFIG_LEVEL_CAN_SHOUT = num;
+        else if (!str_cmp(tag, "load_into_inventory"))
+          CONFIG_LOAD_INVENTORY = num;
+        else if (!str_cmp(tag, "logname")) {
+          if (CONFIG_LOGNAME)
+            free(CONFIG_LOGNAME);
+          if (*line)
+            CONFIG_LOGNAME = strdup(line);
+          else
+            CONFIG_LOGNAME = NULL;
+        }
+        break;
+
+      case 'm':
+        if (!str_cmp(tag, "max_bad_pws"))
+          CONFIG_MAX_BAD_PWS = num;
+        else if (!str_cmp(tag, "max_exp_gain"))
+          CONFIG_MAX_EXP_GAIN = num;
+        else if (!str_cmp(tag, "max_exp_loss"))
+          CONFIG_MAX_EXP_LOSS = num;
+        else if (!str_cmp(tag, "max_filesize"))
+          CONFIG_MAX_FILESIZE = num;
+        else if (!str_cmp(tag, "max_npc_corpse_time"))
+          CONFIG_MAX_NPC_CORPSE_TIME = num;
+        else if (!str_cmp(tag, "max_obj_save"))
+          CONFIG_MAX_OBJ_SAVE = num;
+        else if (!str_cmp(tag, "max_pc_corpse_time"))
+          CONFIG_MAX_PC_CORPSE_TIME = num;
+        else if (!str_cmp(tag, "max_playing"))
+          CONFIG_MAX_PLAYING = num;
+        else if (!str_cmp(tag, "menu")) {
+          if (CONFIG_MENU)
+            free(CONFIG_MENU);
+          strncpy(buf, "Reading menu in load_config()", sizeof(buf));
+          CONFIG_MENU = fread_string(fl, buf);
+          parse_at(CONFIG_MENU);
+        } else if (!str_cmp(tag, "min_rent_cost"))
+          CONFIG_MIN_RENT_COST = num;
+        else if (!str_cmp(tag, "min_wizlist_lev"))
+          CONFIG_MIN_WIZLIST_LEV = num;
+        else if (!str_cmp(tag, "mortal_start_room"))
+          CONFIG_MORTAL_START = num;
+        else if (!str_cmp(tag, "map_option"))
+          CONFIG_MAP = num;
+        else if (!str_cmp(tag, "medit_advanced_stats"))
+          CONFIG_MEDIT_ADVANCED = num;
+        break;
+
+      case 'n':
+        if (!str_cmp(tag, "nameserver_is_slow"))
+          CONFIG_NS_IS_SLOW = num;
+        else if (!str_cmp(tag, "no_mort_to_immort"))
+          CONFIG_NO_MORT_TO_IMMORT = num;
+        else if (!str_cmp(tag, "noperson")) {
+          char tmp[READ_SIZE];
+          if (CONFIG_NOPERSON)
+            free(CONFIG_NOPERSON);
+          tb_snprintf(tmp, sizeof(tmp), "%s\r\n", line);
+          CONFIG_NOPERSON = strdup(tmp);
+        } else if (!str_cmp(tag, "noeffect")) {
+          char tmp[READ_SIZE];
+          if (CONFIG_NOEFFECT)
+            free(CONFIG_NOEFFECT);
+          tb_snprintf(tmp, sizeof(tmp), "%s\r\n", line);
+          CONFIG_NOEFFECT = strdup(tmp);
+        }
+        break;
+
+      case 'o':
+        if (!str_cmp(tag, "ok")) {
+          char tmp[READ_SIZE];
+          if (CONFIG_OK)
+            free(CONFIG_OK);
+          tb_snprintf(tmp, sizeof(tmp), "%s\r\n", line);
+          CONFIG_OK = strdup(tmp);
+        }
+        break;
+
+      case 'p':
+        if (!str_cmp(tag, "pk_setting"))
+          CONFIG_PK_SETTING = num;
+        else if (!str_cmp(tag, "protocol_negotiation"))
+          CONFIG_PROTOCOL_NEGOTIATION = num;
+        else if (!str_cmp(tag, "pt_setting"))
+          CONFIG_PT_SETTING = num;
+        break;
+
+      case 'r':
+        if (!str_cmp(tag, "rent_file_timeout"))
+          CONFIG_RENT_TIMEOUT = num;
+        break;
+
+      case 's':
+        if (!str_cmp(tag, "siteok_everyone"))
+          CONFIG_SITEOK_ALL = num;
+        else if (!str_cmp(tag, "script_players"))
+          CONFIG_SCRIPT_PLAYERS = num;
+        else if (!str_cmp(tag, "special_in_comm"))
+          CONFIG_SPECIAL_IN_COMM = num;
+        else if (!str_cmp(tag, "start_messg")) {
+          strncpy(buf, "Reading start message in load_config()", sizeof(buf));
+          if (CONFIG_START_MESSG)
+            free(CONFIG_START_MESSG);
+          CONFIG_START_MESSG = fread_string(fl, buf);
+          parse_at(CONFIG_START_MESSG);
+        }
+        break;
+
+      case 't':
+        if (!str_cmp(tag, "tunnel_size"))
+          CONFIG_TUNNEL_SIZE = num;
+        else if (!str_cmp(tag, "track_through_doors"))
+          CONFIG_TRACK_T_DOORS = num;
+        break;
+
+      case 'u':
+        if (!str_cmp(tag, "use_autowiz"))
+          CONFIG_USE_AUTOWIZ = num;
+        else if (!str_cmp(tag, "use_new_socials"))
+          CONFIG_NEW_SOCIALS = num;
+        break;
+
+      case 'w':
+        if (!str_cmp(tag, "welc_messg")) {
+          strncpy(buf, "Reading welcome message in load_config()", sizeof(buf));
+          if (CONFIG_WELC_MESSG)
+            free(CONFIG_WELC_MESSG);
+          CONFIG_WELC_MESSG = fread_string(fl, buf);
+        }
+        break;
+
+      default:
+        break;
+    }
+  }
+
+  tb_fclose(fl);
+}
+, or next object number", sizeof(buf2));
+
   for (;;) {
     if (!get_line(obj_f, line)) {
       log("SYSERR: Format error in %s", buf2);
