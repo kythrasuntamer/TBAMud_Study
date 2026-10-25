@@ -346,7 +346,8 @@ ACMD(do_export_zone)
     send_to_char(ch, "Sorry, that is not available in the windows port.\r\n");
 #else /* all other configurations */
   zone_rnum zrnum; 
-  zone_vnum zvnum; 
+  zone_vnum zvnum;
+  int parsed_zone; 
   char zone_name[READ_SIZE], fixed_file_name[READ_SIZE];
   char archive[READ_SIZE * 2], old_archive[READ_SIZE * 2];
   char info_path[READ_SIZE * 2], wld_path[READ_SIZE * 2], zon_path[READ_SIZE * 2];
@@ -367,7 +368,14 @@ ACMD(do_export_zone)
     return; 
   } 
 
-  zvnum = tb_parse_int_or_zero(argument); 
+  if (!tb_parse_int_checked(argument, &parsed_zone) ||
+      parsed_zone < 0 || parsed_zone > UINT16_MAX) {
+    send_to_char(ch, "Zone vnum must be a valid non-negative integer.\r\n");
+    log("SYSERR: rejected malformed export zone argument '%s' from %s",
+        argument, GET_NAME(ch));
+    return;
+  }
+  zvnum = (zone_vnum)parsed_zone;
   zrnum = real_zone(zvnum); 
 
   if (zrnum == NOWHERE) { 
