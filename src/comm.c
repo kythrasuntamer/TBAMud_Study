@@ -412,7 +412,7 @@ void copyover_recover()
 
   if (i != 1) {
     if (ferror(fp))
-      log("SYSERR: Error reading boot time from %s: %s", COPYOVER_FILE, strerror(errno));
+      TB_REPORT_ERRNO("fscanf", COPYOVER_FILE);
     else
       log("SYSERR: Invalid or truncated boot time in %s.", COPYOVER_FILE);
     tb_fclose(fp);
@@ -428,7 +428,7 @@ void copyover_recover()
       }
 
       if (ferror(fp))
-        log("SYSERR: error reading copyover file %s: %s", COPYOVER_FILE, strerror(errno));
+        TB_REPORT_ERRNO("fscanf", COPYOVER_FILE);
       else
         log("SYSERR: could not scan line in copyover file %s.", COPYOVER_FILE);
       tb_fclose(fp);
