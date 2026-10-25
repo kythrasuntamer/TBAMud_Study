@@ -236,7 +236,8 @@ static inline int circle_upper(int c)
   } \
   (result) = (type *)calloc(create_count, sizeof(type)); \
   if (!(result)) { \
-    perror("SYSERR: calloc failure"); \
+    int create_errno = errno; \
+    tb_report_error_at("calloc", "CREATE allocation", create_errno, __FILE__, __LINE__, __func__); \
     abort(); \
   } \
 } while (0)
@@ -255,7 +256,8 @@ static inline int circle_upper(int c)
   } \
   recreate_new_ptr = realloc((result), sizeof(type) * recreate_count); \
   if (!recreate_new_ptr) { \
-    perror("SYSERR: realloc failure"); \
+    int recreate_errno = errno; \
+    tb_report_error_at("realloc", "RECREATE allocation", recreate_errno, __FILE__, __LINE__, __func__); \
     abort(); \
   } \
   (result) = (type *)recreate_new_ptr; \
