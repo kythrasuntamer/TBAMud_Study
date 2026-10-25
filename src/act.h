@@ -15,8 +15,8 @@
 * (non-ACMD focused) shared module.
 *
 */
-#ifndef _ACT_H_
-#define _ACT_H_
+#ifndef TBAMUD_ACT_H_INCLUDED
+#define TBAMUD_ACT_H_INCLUDED
 
 #include "utils.h" /* for the ACMD macro */
 
@@ -353,4 +353,4 @@ ACMD(do_zpurge);
 ACMD(do_zreset);
 ACMD(do_zunlock);
 
-#endif /* _ACT_H_ */
+#endif /* TBAMUD_ACT_H_INCLUDED */
