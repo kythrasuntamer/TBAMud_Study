@@ -1,15 +1,16 @@
 name: Fil-C CI
 
 on:
-  push:
-    branches:
-      - cert-compliance-hardening
   pull_request:
     branches:
       - master
 
 permissions:
   contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   FILC_VERSION: "0.687"
