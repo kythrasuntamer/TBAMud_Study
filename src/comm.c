@@ -1524,9 +1524,15 @@ static int new_descriptor(socket_t s)
 		             sizeof(peer.sin_addr), AF_INET))) {
 
     /* resolution failed */
-    if (!CONFIG_NS_IS_SLOW)
+    if (!CONFIG_NS_IS_SLOW) {
+#ifdef CIRCLE_WINDOWS
+      log("SYSERR: gethostbyaddr failed for %s (Winsock error #%d)",
+          inet_ntoa(peer.sin_addr), WSAGetLastError());
+#else
       log("SYSERR: gethostbyaddr failed for %s (h_errno=%d)",
           inet_ntoa(peer.sin_addr), h_errno);
+#endif
+    }
 
     /* find the numeric site address */
     strncpy(newd->host, (char *)inet_ntoa(peer.sin_addr), HOST_LENGTH);	/* strncpy: OK (n->host:HOST_LENGTH+1) */
