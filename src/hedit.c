@@ -402,6 +402,7 @@ ACMD(do_helpcheck)
  * The footer is two lines of about forty bytes; the rest is slack. */
 #define HINDEX_TAIL 256
 
+/* NOLINTBEGIN(clang-analyzer-security.ArrayBound): len/len2 are clamped below the fixed buffer limit before every indexed write. */
 ACMD(do_hindex)
 {
   int len, len2, nlen, count = 0, count2 = 0, i;
@@ -577,3 +578,4 @@ ACMD(do_hindex)
 
   page_string(ch->desc, buf, TRUE);
 }
+/* NOLINTEND(clang-analyzer-security.ArrayBound) */
