@@ -7,8 +7,8 @@
 *
 * This set of code was not originally part of the circlemud distribution.
 */
-#ifndef _PFDEFAULTS_H_
-#define _PFDEFAULTS_H_
+#ifndef TBAMUD_PFDEFAULTS_H_INCLUDED
+#define TBAMUD_PFDEFAULTS_H_INCLUDED
 
 /* WARNING:  Do not change the values below if you have existing ascii player 
  * files you don't want to screw up. */
@@ -62,4 +62,4 @@
 #define PFDEF_LASTMOTD          0 
 #define PFDEF_LASTNEWS          0 
 
-#endif /* _PFDEFAULTS_H_ */
+#endif /* TBAMUD_PFDEFAULTS_H_INCLUDED */
