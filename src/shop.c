@@ -337,7 +337,7 @@ static int transaction_amt(char *arg)
   buywhat = one_argument(arg, buf);
   if (*buywhat && *buf && is_number(buf)) {
     strcpy(arg, arg + strlen(buf) + 1);	/* strcpy: OK (always smaller) */
-    return (atoi(buf));
+    return (tb_parse_int_or_zero(buf));
   }
   return (1);
 }
@@ -395,9 +395,9 @@ static struct obj_data *get_hash_obj_vis(struct char_data *ch, char *name, struc
   int qindex;
 
   if (is_number(name))
-    qindex = atoi(name);
+    qindex = tb_parse_int_or_zero(name);
   else if (is_number(name + 1))
-    qindex = atoi(name + 1);
+    qindex = tb_parse_int_or_zero(name + 1);
   else
     return (NULL);
 
@@ -1532,7 +1532,7 @@ void show_shops(struct char_data *ch, char *arg)
 	return;
       }
     } else if (is_number(arg))
-      shop_nr = real_shop(atoi(arg));
+      shop_nr = real_shop(tb_parse_int_or_zero(arg));
     else
       shop_nr = -1;
 
