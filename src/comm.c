@@ -333,7 +333,7 @@ int main(int argc, char **argv)
   log("%s", tbamud_version);
 
   if (chdir(dir) < 0) {
-    perror("SYSERR: Fatal error changing to data directory");
+    TB_REPORT_ERRNO("chdir", "data directory");
     exit(1);
   }
   log("Using %s as data directory.", dir);
@@ -399,7 +399,7 @@ void copyover_recover()
   fp = fopen (COPYOVER_FILE, "r");
   /* there are some descriptors open which will hang forever then ? */
   if (!fp) {
-    perror ("copyover_recover:fopen");
+    TB_REPORT_ERRNO("fopen", COPYOVER_FILE);
     log ("Copyover file not found. Exitting.\n\r");
     exit (1);
   }
@@ -720,7 +720,7 @@ static int get_max_players(void)
     if (errno == 0)
       max_descs = CONFIG_MAX_PLAYING + NUM_RESERVED_DESCS;
     else {
-      perror("SYSERR: Error calling sysconf");
+      TB_REPORT_ERRNO("sysconf", "_SC_OPEN_MAX");
       exit(1);
     }
   }
@@ -2233,7 +2233,7 @@ void nonblock(socket_t s)
   int val = 1;
 
   if (ioctl(s, FIONBIO, &val) < 0) {
-    perror("SYSERR: Fatal error executing nonblock (comm.c)");
+    TB_REPORT_ERRNO("ioctl", "FIONBIO nonblocking socket");
     exit(1);
   }
 }
@@ -2785,7 +2785,10 @@ static int open_logfile(const char *filename, FILE *stderr_fp)
     return (TRUE);
   }
 
-  printf("SYSERR: Error opening file '%s': %s\n", filename, strerror(errno));
+  { int saved_errno = errno;
+    printf("SYSERR: operation=fopen context=%s error=\"%s\" errno=%d source=%s:%d function=%s\n",
+           filename, strerror(saved_errno), saved_errno, __FILE__, __LINE__, __func__);
+  }
   return (FALSE);
 }
 
