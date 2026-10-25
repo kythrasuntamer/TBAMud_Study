@@ -257,7 +257,7 @@ int main(int argc, char **argv)
       break;
     case 'C': /* -C<socket number> - recover from copyover, this is the control socket */
        fCopyOver = TRUE;
-       mother_desc = atoi(argv[pos]+2);
+       mother_desc = tb_parse_int_or_zero(argv[pos]+2);
       break;
     case 'd':
       if (*(argv[pos] + 2))
@@ -318,7 +318,7 @@ int main(int argc, char **argv)
     if (!isdigit(*argv[pos])) {
       printf("Usage: %s [-c] [-m] [-q] [-r] [-s] [-d pathname] [port #]\n", argv[0]);
       exit(1);
-    } else if ((port = atoi(argv[pos])) <= 1024) {
+    } else if ((port = tb_parse_int_or_zero(argv[pos])) <= 1024) {
       printf("SYSERR: Illegal port number %d.\n", port);
       exit(1);
     }
