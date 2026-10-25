@@ -22,8 +22,13 @@ check_pattern "perror()" '(^|[^A-Za-z0-9_])perror[[:space:]]*\('
 # errno is volatile. Capture it immediately before any other call.
 check_pattern "strerror(errno)" 'strerror[[:space:]]*\([[:space:]]*errno[[:space:]]*\)'
 
+# Direct stdio-to-stderr error reporting bypasses severity/category/source fields.
+check_pattern "fprintf(stderr,...)" 'fprintf[[:space:]]*\([[:space:]]*stderr[[:space:]]*,'
+check_pattern "fputs(...,stderr)" 'fputs[[:space:]]*\([^;]*,[[:space:]]*stderr[[:space:]]*\)'
+check_pattern "printf SYSERR" 'printf[[:space:]]*\([[:space:]]*"SYSERR'
+
 if [ "$failed" -ne 0 ]; then
-  echo "Use TB_REPORT_ERRNO/TB_REPORT_ERROR or save errno immediately and log rich context."
+  echo "Use TB_REPORT_DOMAIN_ERRNO/TB_REPORT_DOMAIN_ERROR (or the compatibility TB_REPORT_* wrappers) so failures retain severity, category, source location, and the original error code."
   exit 1
 fi
 
