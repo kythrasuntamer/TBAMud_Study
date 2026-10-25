@@ -11,7 +11,7 @@
 #define TBAMUD_QUEST_H_INCLUDED
 
 /* Aquest related defines ********************************************* */
-#define AQ_UNDEFINED       -1   /* (R) Quest unavailable                */
+#define AQ_UNDEFINED       (-1)   /* (R) Quest unavailable                */
 #define AQ_OBJ_FIND         0   /* Player must retreive object          */
 #define AQ_ROOM_FIND        1   /* Player must reach room               */
 #define AQ_MOB_FIND         2   /* Player must find mob                 */
