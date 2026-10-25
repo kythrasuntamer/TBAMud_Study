@@ -426,6 +426,27 @@ configure_file(
 
 
 
+# ========== Native runtime sanitizers ==========
+option(ENABLE_SANITIZERS "Enable AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
+
+if(ENABLE_SANITIZERS)
+    if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+        message(STATUS "Native sanitizers enabled: address, undefined")
+        # Add these after configure-time feature probes so sanitizer runtimes
+        # do not perturb CMake's compile-and-run capability detection.
+        add_compile_options(
+            -fsanitize=address,undefined
+            -fno-omit-frame-pointer
+            -fno-sanitize-recover=all
+        )
+        set(CMAKE_EXE_LINKER_FLAGS
+            "${CMAKE_EXE_LINKER_FLAGS} -fsanitize=address,undefined")
+    else()
+        message(FATAL_ERROR
+            "ENABLE_SANITIZERS requires GCC, Clang, or AppleClang.")
+    endif()
+endif()
+
 # ========== Source-filer ==========
 file(GLOB SRC_FILES src/*.c)
 
