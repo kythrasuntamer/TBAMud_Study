@@ -1178,6 +1178,10 @@ byte saving_throws(int class_num, int type, int level)
 /* THAC0 for classes and levels.  (To Hit Armor Class 0) */
 int thaco(int class_num, int level)
 {
+  /* Legacy THAC0 tables end at 34. Preserve their terminal values
+   * across expanded mortal and immortal levels. */
+  if (level > 34 && level <= LVL_IMPL)
+    level = 34;
   switch (class_num) {
   case CLASS_MAGIC_USER:
     switch (level) {
