@@ -1988,7 +1988,7 @@ void clean_llog_entries(void) {
   fseek(ofp,0L,SEEK_END);
   recs=ftell(ofp)/sizeof(struct last_entry);
   if (fseek(ofp, 0L, SEEK_SET) != 0) {
-    log("SYSERR: Unable to rewind %s: %s", LAST_FILE, strerror(errno));
+    TB_REPORT_ERRNO("fseek", LAST_FILE);
     tb_fclose(ofp);
     return;
   }
@@ -4259,8 +4259,12 @@ ACMD(do_copyover)
 
   /* Ugh, seems it is expected we are 1 step above lib - this may be dangerous! */
   if(chdir ("..") != 0) {
-    log("Error changing working directory: %s", strerror(errno));
-    send_to_char(ch, "Error changing working directory: %s.", strerror(errno));
+    {
+      int saved_errno = errno;
+      tb_report_error_at("chdir", "..", saved_errno, __FILE__, __LINE__, __func__);
+      send_to_char(ch, "Error changing working directory: %s (errno=%d).",
+                   strerror(saved_errno), saved_errno);
+    }
     exit(1);
   }
 
@@ -4268,7 +4272,7 @@ ACMD(do_copyover)
   execl (EXE_FILE, "circle", buf2, buf, (char *) NULL);
 
   /* Failed - successful exec will not return */
-  perror ("do_copyover: execl");
+  TB_REPORT_ERRNO("execl", EXE_FILE);
   send_to_char (ch, "Copyover FAILED!\n\r");
 
   exit (1); /* too much trouble to try to recover! */
