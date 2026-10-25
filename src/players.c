@@ -42,6 +42,57 @@ static void load_HMVS(struct char_data *ch, const char *line, int mode);
 static void write_aliases_ascii(FILE *file, struct char_data *ch);
 static void read_aliases_ascii(FILE *file, struct char_data *ch, int count);
 
+static int parse_pfile_int_or_zero(const char *value, const char *filename, const char *tag)
+{
+  char *end = NULL;
+  long parsed;
+
+  if (value == NULL) {
+    log("SYSERR: pfile %s tag %.4s has NULL integer value; using 0",
+        filename ? filename : "(unknown)", tag ? tag : "????");
+    return 0;
+  }
+
+  errno = 0;
+  parsed = strtol(value, &end, 10);
+  while (end && isspace((unsigned char)*end))
+    end++;
+
+  if (end == value || errno == ERANGE || parsed < INT_MIN || parsed > INT_MAX ||
+      (end && *end != '\0')) {
+    log("SYSERR: pfile %s tag %.4s has malformed integer value '%s'; using 0",
+        filename ? filename : "(unknown)", tag ? tag : "????", value);
+    return 0;
+  }
+
+  return (int)parsed;
+}
+
+static long parse_pfile_long_or_zero(const char *value, const char *filename, const char *tag)
+{
+  char *end = NULL;
+  long parsed;
+
+  if (value == NULL) {
+    log("SYSERR: pfile %s tag %.4s has NULL long value; using 0",
+        filename ? filename : "(unknown)", tag ? tag : "????");
+    return 0;
+  }
+
+  errno = 0;
+  parsed = strtol(value, &end, 10);
+  while (end && isspace((unsigned char)*end))
+    end++;
+
+  if (end == value || errno == ERANGE || (end && *end != '\0')) {
+    log("SYSERR: pfile %s tag %.4s has malformed long value '%s'; using 0",
+        filename ? filename : "(unknown)", tag ? tag : "????", value);
+    return 0;
+  }
+
+  return parsed;
+}
+
 /* New version to build player index for ASCII Player Files. Generate index
  * table for the player file. */
 void build_player_index(void)
@@ -75,9 +126,19 @@ void build_player_index(void)
 
   CREATE(player_table, struct player_index_element, rec_count);
   for (i = 0; i < rec_count; i++) {
-    get_line(plr_index, line);
-    sscanf(line, "%ld %s %d %s %ld", &player_table[i].id, arg2,
+    int fields;
+
+    if (!get_line(plr_index, line)) {
+      log("SYSERR: player index %s ended early at record %d of %d", index_name, i + 1, rec_count);
+      break;
+    }
+    fields = sscanf(line, "%ld %79s %d %63s %ld", &player_table[i].id, arg2,
       &player_table[i].level, bits, (long *)&player_table[i].last);
+    if (fields != 5) {
+      log("SYSERR: malformed player index record %d in %s (expected 5 fields, got %d): '%s'",
+          i + 1, index_name, fields, line);
+      break;
+    }
     CREATE(player_table[i].name, char, strlen(arg2) + 1);
     memcpy(player_table[i].name, arg2, strlen(arg2) + 1);
     player_table[i].flags = asciiflag_conv(bits);
@@ -245,7 +306,10 @@ int load_char(const char *name, struct char_data *ch)
     if (!get_filename(filename, sizeof(filename), PLR_FILE, player_table[id].name))
       return (-1);
     if (!(fl = fopen(filename, "r"))) {
-      mudlog(NRM, LVL_GOD, TRUE, "SYSERR: Couldn't open player file %s", filename);
+      int saved_errno = errno;
+      mudlog(NRM, LVL_GOD, TRUE,
+             "SYSERR: Couldn't open player file %s: %s (errno=%d)",
+             filename, strerror(saved_errno), saved_errno);
       return (-1);
     }
 
@@ -314,7 +378,7 @@ int load_char(const char *name, struct char_data *ch)
 
       switch (*tag) {
       case 'A':
-        if (!strcmp(tag, "Ac  "))	GET_AC(ch)		= tb_parse_int_or_zero(line);
+        if (!strcmp(tag, "Ac  "))	GET_AC(ch)		= parse_pfile_int_or_zero(line, filename, tag);
 	else if (!strcmp(tag, "Act ")) {
          if (sscanf(line, "%s %s %s %s", f1, f2, f3, f4) == 4) {
           PLR_FLAGS(ch)[0] = asciiflag_conv(f1);
@@ -333,65 +397,65 @@ int load_char(const char *name, struct char_data *ch)
           AFF_FLAGS(ch)[0] = asciiflag_conv(line);
 	}
 	if (!strcmp(tag, "Affs")) 	load_affects(fl, ch);
-        else if (!strcmp(tag, "Alin"))	GET_ALIGNMENT(ch)	= tb_parse_int_or_zero(line);
-	else if (!strcmp(tag, "Alis"))	read_aliases_ascii(fl, ch, tb_parse_int_or_zero(line));
+        else if (!strcmp(tag, "Alin"))	GET_ALIGNMENT(ch)	= parse_pfile_int_or_zero(line, filename, tag);
+	else if (!strcmp(tag, "Alis"))	read_aliases_ascii(fl, ch, parse_pfile_int_or_zero(line, filename, tag));
 	break;
 
       case 'B':
-	     if (!strcmp(tag, "Badp"))	GET_BAD_PWS(ch)		= tb_parse_int_or_zero(line);
-	else if (!strcmp(tag, "Bank"))	GET_BANK_GOLD(ch)	= tb_parse_int_or_zero(line);
-	else if (!strcmp(tag, "Brth"))	ch->player.time.birth	= tb_parse_long_or_zero(line);
+	     if (!strcmp(tag, "Badp"))	GET_BAD_PWS(ch)		= parse_pfile_int_or_zero(line, filename, tag);
+	else if (!strcmp(tag, "Bank"))	GET_BANK_GOLD(ch)	= parse_pfile_int_or_zero(line, filename, tag);
+	else if (!strcmp(tag, "Brth"))	ch->player.time.birth	= parse_pfile_long_or_zero(line, filename, tag);
 	break;
 
       case 'C':
-	     if (!strcmp(tag, "Cha "))	ch->real_abils.cha	= tb_parse_int_or_zero(line);
-	else if (!strcmp(tag, "Clas"))	GET_CLASS(ch)		= tb_parse_int_or_zero(line);
-	else if (!strcmp(tag, "Con "))	ch->real_abils.con	= tb_parse_int_or_zero(line);
+	     if (!strcmp(tag, "Cha "))	ch->real_abils.cha	= parse_pfile_int_or_zero(line, filename, tag);
+	else if (!strcmp(tag, "Clas"))	GET_CLASS(ch)		= parse_pfile_int_or_zero(line, filename, tag);
+	else if (!strcmp(tag, "Con "))	ch->real_abils.con	= parse_pfile_int_or_zero(line, filename, tag);
 	break;
 
       case 'D':
 	     if (!strcmp(tag, "Desc"))	ch->player.description	= fread_string(fl, buf2);
-	else if (!strcmp(tag, "Dex "))	ch->real_abils.dex	= tb_parse_int_or_zero(line);
-	else if (!strcmp(tag, "Drnk"))	GET_COND(ch, DRUNK)	= tb_parse_int_or_zero(line);
-	else if (!strcmp(tag, "Drol"))	GET_DAMROLL(ch)		= tb_parse_int_or_zero(line);
+	else if (!strcmp(tag, "Dex "))	ch->real_abils.dex	= parse_pfile_int_or_zero(line, filename, tag);
+	else if (!strcmp(tag, "Drnk"))	GET_COND(ch, DRUNK)	= parse_pfile_int_or_zero(line, filename, tag);
+	else if (!strcmp(tag, "Drol"))	GET_DAMROLL(ch)		= parse_pfile_int_or_zero(line, filename, tag);
 	break;
 
       case 'E':
-	     if (!strcmp(tag, "Exp "))	GET_EXP(ch)		= tb_parse_int_or_zero(line);
+	     if (!strcmp(tag, "Exp "))	GET_EXP(ch)		= parse_pfile_int_or_zero(line, filename, tag);
 	break;
 
       case 'F':
-	     if (!strcmp(tag, "Frez"))	GET_FREEZE_LEV(ch)	= tb_parse_int_or_zero(line);
+	     if (!strcmp(tag, "Frez"))	GET_FREEZE_LEV(ch)	= parse_pfile_int_or_zero(line, filename, tag);
 	break;
 
       case 'G':
-	     if (!strcmp(tag, "Gold"))	GET_GOLD(ch)		= tb_parse_int_or_zero(line);
+	     if (!strcmp(tag, "Gold"))	GET_GOLD(ch)		= parse_pfile_int_or_zero(line, filename, tag);
 	break;
 
       case 'H':
 	     if (!strcmp(tag, "Hit "))	load_HMVS(ch, line, LOAD_HIT);
-	else if (!strcmp(tag, "Hite"))	GET_HEIGHT(ch)		= tb_parse_int_or_zero(line);
+	else if (!strcmp(tag, "Hite"))	GET_HEIGHT(ch)		= parse_pfile_int_or_zero(line, filename, tag);
         else if (!strcmp(tag, "Host")) {
           if (GET_HOST(ch))
             free(GET_HOST(ch));
           GET_HOST(ch) = strdup(line);
         }
-        else if (!strcmp(tag, "Hrol"))	GET_HITROLL(ch)		= tb_parse_int_or_zero(line);
-	else if (!strcmp(tag, "Hung"))	GET_COND(ch, HUNGER)	= tb_parse_int_or_zero(line);
+        else if (!strcmp(tag, "Hrol"))	GET_HITROLL(ch)		= parse_pfile_int_or_zero(line, filename, tag);
+	else if (!strcmp(tag, "Hung"))	GET_COND(ch, HUNGER)	= parse_pfile_int_or_zero(line, filename, tag);
 	break;
 
       case 'I':
-	     if (!strcmp(tag, "Id  "))	GET_IDNUM(ch)		= tb_parse_long_or_zero(line);
-	else if (!strcmp(tag, "Int "))	ch->real_abils.intel	= tb_parse_int_or_zero(line);
-	else if (!strcmp(tag, "Invs"))	GET_INVIS_LEV(ch)	= tb_parse_int_or_zero(line);
+	     if (!strcmp(tag, "Id  "))	GET_IDNUM(ch)		= parse_pfile_long_or_zero(line, filename, tag);
+	else if (!strcmp(tag, "Int "))	ch->real_abils.intel	= parse_pfile_int_or_zero(line, filename, tag);
+	else if (!strcmp(tag, "Invs"))	GET_INVIS_LEV(ch)	= parse_pfile_int_or_zero(line, filename, tag);
 	break;
 
       case 'L':
-	     if (!strcmp(tag, "Last"))	ch->player.time.logon	= tb_parse_long_or_zero(line);
-  else if (!strcmp(tag, "Lern"))	GET_PRACTICES(ch)	= tb_parse_int_or_zero(line);
-	else if (!strcmp(tag, "Levl"))	GET_LEVEL(ch)		= tb_parse_int_or_zero(line);
-        else if (!strcmp(tag, "Lmot"))   GET_LAST_MOTD(ch)   = tb_parse_int_or_zero(line);
-        else if (!strcmp(tag, "Lnew"))   GET_LAST_NEWS(ch)   = tb_parse_int_or_zero(line);
+	     if (!strcmp(tag, "Last"))	ch->player.time.logon	= parse_pfile_long_or_zero(line, filename, tag);
+  else if (!strcmp(tag, "Lern"))	GET_PRACTICES(ch)	= parse_pfile_int_or_zero(line, filename, tag);
+	else if (!strcmp(tag, "Levl"))	GET_LEVEL(ch)		= parse_pfile_int_or_zero(line, filename, tag);
+        else if (!strcmp(tag, "Lmot"))   GET_LAST_MOTD(ch)   = parse_pfile_int_or_zero(line, filename, tag);
+        else if (!strcmp(tag, "Lnew"))   GET_LAST_NEWS(ch)   = parse_pfile_int_or_zero(line, filename, tag);
 	break;
 
       case 'M':
@@ -404,13 +468,13 @@ int load_char(const char *name, struct char_data *ch)
 	break;
 
       case 'O':
-       if (!strcmp(tag, "Olc "))  GET_OLC_ZONE(ch) = tb_parse_int_or_zero(line);
+       if (!strcmp(tag, "Olc "))  GET_OLC_ZONE(ch) = parse_pfile_int_or_zero(line, filename, tag);
   break;
 
       case 'P':
-       if (!strcmp(tag, "Page"))  GET_PAGE_LENGTH(ch) = tb_parse_int_or_zero(line);
+       if (!strcmp(tag, "Page"))  GET_PAGE_LENGTH(ch) = parse_pfile_int_or_zero(line, filename, tag);
 	else if (!strcmp(tag, "Pass"))	strlcpy(GET_PASSWD(ch), line, MAX_PWD_LENGTH + 1);
-	else if (!strcmp(tag, "Plyd"))	ch->player.time.played	= tb_parse_int_or_zero(line);
+	else if (!strcmp(tag, "Plyd"))	ch->player.time.played	= parse_pfile_int_or_zero(line, filename, tag);
 	else if (!strcmp(tag, "PfIn"))	POOFIN(ch)		= strdup(line);
 	else if (!strcmp(tag, "PfOt"))	POOFOUT(ch)		= strdup(line);
         else if (!strcmp(tag, "Pref")) {
@@ -425,34 +489,34 @@ int load_char(const char *name, struct char_data *ch)
         break;
 
       case 'Q':
-	     if (!strcmp(tag, "Qstp"))  GET_QUESTPOINTS(ch)     = tb_parse_int_or_zero(line);
-       else if (!strcmp(tag, "Qpnt")) GET_QUESTPOINTS(ch) = tb_parse_int_or_zero(line); /* Backward compatibility */
-       else if (!strcmp(tag, "Qcur")) GET_QUEST(ch) = tb_parse_int_or_zero(line);
-       else if (!strcmp(tag, "Qcnt")) GET_QUEST_COUNTER(ch) = tb_parse_int_or_zero(line);
+	     if (!strcmp(tag, "Qstp"))  GET_QUESTPOINTS(ch)     = parse_pfile_int_or_zero(line, filename, tag);
+       else if (!strcmp(tag, "Qpnt")) GET_QUESTPOINTS(ch) = parse_pfile_int_or_zero(line, filename, tag); /* Backward compatibility */
+       else if (!strcmp(tag, "Qcur")) GET_QUEST(ch) = parse_pfile_int_or_zero(line, filename, tag);
+       else if (!strcmp(tag, "Qcnt")) GET_QUEST_COUNTER(ch) = parse_pfile_int_or_zero(line, filename, tag);
        else if (!strcmp(tag, "Qest")) load_quests(fl, ch);
         break;
 
       case 'R':
-	     if (!strcmp(tag, "Room"))	GET_LOADROOM(ch)	= tb_parse_int_or_zero(line);
+	     if (!strcmp(tag, "Room"))	GET_LOADROOM(ch)	= parse_pfile_int_or_zero(line, filename, tag);
 	break;
 
       case 'S':
-	     if (!strcmp(tag, "Sex "))	GET_SEX(ch)		= tb_parse_int_or_zero(line);
-  else if (!strcmp(tag, "ScrW"))  GET_SCREEN_WIDTH(ch) = tb_parse_int_or_zero(line);
+	     if (!strcmp(tag, "Sex "))	GET_SEX(ch)		= parse_pfile_int_or_zero(line, filename, tag);
+  else if (!strcmp(tag, "ScrW"))  GET_SCREEN_WIDTH(ch) = parse_pfile_int_or_zero(line, filename, tag);
 	else if (!strcmp(tag, "Skil"))	load_skills(fl, ch);
 	else if (!strcmp(tag, "Str "))	load_HMVS(ch, line, LOAD_STRENGTH);
 	break;
 
       case 'T':
-	     if (!strcmp(tag, "Thir"))	GET_COND(ch, THIRST)	= tb_parse_int_or_zero(line);
-	else if (!strcmp(tag, "Thr1"))	GET_SAVE(ch, 0)		= tb_parse_int_or_zero(line);
-	else if (!strcmp(tag, "Thr2"))	GET_SAVE(ch, 1)		= tb_parse_int_or_zero(line);
-	else if (!strcmp(tag, "Thr3"))	GET_SAVE(ch, 2)		= tb_parse_int_or_zero(line);
-	else if (!strcmp(tag, "Thr4"))	GET_SAVE(ch, 3)		= tb_parse_int_or_zero(line);
-	else if (!strcmp(tag, "Thr5"))	GET_SAVE(ch, 4)		= tb_parse_int_or_zero(line);
+	     if (!strcmp(tag, "Thir"))	GET_COND(ch, THIRST)	= parse_pfile_int_or_zero(line, filename, tag);
+	else if (!strcmp(tag, "Thr1"))	GET_SAVE(ch, 0)		= parse_pfile_int_or_zero(line, filename, tag);
+	else if (!strcmp(tag, "Thr2"))	GET_SAVE(ch, 1)		= parse_pfile_int_or_zero(line, filename, tag);
+	else if (!strcmp(tag, "Thr3"))	GET_SAVE(ch, 2)		= parse_pfile_int_or_zero(line, filename, tag);
+	else if (!strcmp(tag, "Thr4"))	GET_SAVE(ch, 3)		= parse_pfile_int_or_zero(line, filename, tag);
+	else if (!strcmp(tag, "Thr5"))	GET_SAVE(ch, 4)		= parse_pfile_int_or_zero(line, filename, tag);
 	else if (!strcmp(tag, "Titl"))	GET_TITLE(ch)		= strdup(line);
         else if (!strcmp(tag, "Trig") && CONFIG_SCRIPT_PLAYERS) {
-          if ((t_rnum = real_trigger(tb_parse_int_or_zero(line))) != NOTHING) {
+          if ((t_rnum = real_trigger(parse_pfile_int_or_zero(line, filename, tag))) != NOTHING) {
             t = read_trigger(t_rnum);
           if (!SCRIPT(ch))
             CREATE(SCRIPT(ch), struct script_data, 1);
@@ -462,17 +526,18 @@ int load_char(const char *name, struct char_data *ch)
 	break;
 
       case 'V':
-	     if (!strcmp(tag, "Vars"))	read_saved_vars_ascii(fl, ch, tb_parse_int_or_zero(line));
+	     if (!strcmp(tag, "Vars"))	read_saved_vars_ascii(fl, ch, parse_pfile_int_or_zero(line, filename, tag));
       break;
 
       case 'W':
-	     if (!strcmp(tag, "Wate"))	GET_WEIGHT(ch)		= tb_parse_int_or_zero(line);
-	else if (!strcmp(tag, "Wimp"))	GET_WIMP_LEV(ch)	= tb_parse_int_or_zero(line);
-	else if (!strcmp(tag, "Wis "))	ch->real_abils.wis	= tb_parse_int_or_zero(line);
+	     if (!strcmp(tag, "Wate"))	GET_WEIGHT(ch)		= parse_pfile_int_or_zero(line, filename, tag);
+	else if (!strcmp(tag, "Wimp"))	GET_WIMP_LEV(ch)	= parse_pfile_int_or_zero(line, filename, tag);
+	else if (!strcmp(tag, "Wis "))	ch->real_abils.wis	= parse_pfile_int_or_zero(line, filename, tag);
 	break;
 
       default:
-	tb_snprintf(buf, sizeof(buf), "SYSERR: Unknown tag %s in pfile %s", tag, name);
+        log("SYSERR: Unknown tag '%.4s' in pfile %s with value '%s'", tag, filename, line);
+        break;
       }
     }
   }
