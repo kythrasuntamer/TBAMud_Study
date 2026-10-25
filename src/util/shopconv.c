@@ -82,7 +82,9 @@ char *fread_string(FILE * fl, const char *error)
       return NULL;
     }
     if (strlen(tmp) + strlen(buf) >= sizeof(buf)) {
-      printf("SYSERR: fread_string: string too large (shopconv.c)\n");
+      TB_REPORT_DOMAIN_ERROR(TB_SEV_ERROR, TB_ERR_PARSER,
+                             "fread_string",
+                             "shop string exceeds MAX_STRING_LENGTH");
       return NULL;
     }
     strlcat(buf, tmp, sizeof(buf));
