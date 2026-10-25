@@ -875,6 +875,7 @@ int room_is_dark(room_rnum room)
  * recommend doing an internet or wikipedia search.
  * @param s1 The input string.
  * @param s2 The string to be compared to. */
+/* NOLINTBEGIN(clang-analyzer-security.ArrayBound): matrix dimensions are derived directly from strlen() + 1. */
 int levenshtein_distance(const char *s1, const char *s2)
 {
   int **d, result;
@@ -913,6 +914,7 @@ int levenshtein_distance(const char *s1, const char *s2)
 
   return result;
 }
+/* NOLINTEND(clang-analyzer-security.ArrayBound) */
 
 /** Removes a character from a piece of furniture. Unlike some of the other
  * _from_ functions, this does not place the character into NOWHERE.
