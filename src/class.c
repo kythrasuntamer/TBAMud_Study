@@ -26,7 +26,7 @@
 
 /* Names first */
 const char *class_abbrevs[] = {
-  "Mu",
+  "Wi",
   "Cl",
   "Th",
   "Wa",
@@ -34,7 +34,7 @@ const char *class_abbrevs[] = {
 };
 
 const char *pc_class_types[] = {
-  "Magic User",
+  "Wizard",
   "Cleric",
   "Thief",
   "Warrior",
@@ -48,7 +48,7 @@ const char *class_menu =
 "  [\t(C\t)]leric\r\n"
 "  [\t(T\t)]hief\r\n"
 "  [\t(W\t)]arrior\r\n"
-"  [\t(M\t)]agic-user\r\n";
+"  [\t(Z\t)] Wizard\r\n";
 
 /* The code to interpret a class letter -- used in interpreter.c when a new
  * character is selecting a class and by 'set class' in act.wizard.c. */
@@ -57,7 +57,8 @@ int parse_class(char arg)
   arg = LOWER(arg);
 
   switch (arg) {
-  case 'm': return CLASS_MAGIC_USER;
+  case 'm': /* Legacy class-selection alias. */
+  case 'z': return CLASS_MAGIC_USER;
   case 'c': return CLASS_CLERIC;
   case 'w': return CLASS_WARRIOR;
   case 't': return CLASS_THIEF;
