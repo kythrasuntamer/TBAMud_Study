@@ -313,10 +313,17 @@ static char *str_replace(char *string, const char *substr, const char *replaceme
             free(oldstr);
             return string;
         }
-        memcpy (newstr, oldstr, tok - oldstr);
-        memcpy (newstr + (tok - oldstr), replacement, strlen (replacement));
-        memcpy (newstr + (tok - oldstr) + strlen(replacement), tok + strlen (substr), strlen (oldstr) - strlen (substr) - (tok - oldstr));
-        memset (newstr + strlen (oldstr) - strlen(substr) + strlen (replacement) , 0, 1 );
+        {
+            size_t prefix_len = (size_t)(tok - oldstr);
+            size_t replacement_len = strlen(replacement);
+            size_t suffix_len = strlen(tok + strlen(substr));
+
+            memcpy(newstr, oldstr, prefix_len);
+            memcpy(newstr + prefix_len, replacement, replacement_len);
+            memcpy(newstr + prefix_len + replacement_len,
+                   tok + strlen(substr), suffix_len);
+            newstr[prefix_len + replacement_len + suffix_len] = '\0';
+        }
 
         // move back head right after the last replacement
         head = newstr + (tok - oldstr) + strlen( replacement);
