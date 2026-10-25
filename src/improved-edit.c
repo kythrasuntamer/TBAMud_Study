@@ -425,7 +425,7 @@ void parse_edit_action(int command, char *string, struct descriptor_data *d)
         strncat(buf, s, sizeof(buf) - strlen(buf) - 1);
       RECREATE(*d->str, char, strlen(buf) + 3);
 
-      strcpy(*d->str, buf);
+      strlcpy(*d->str, buf, strlen(buf) + 3);
       write_to_output(d, "Line inserted.\r\n");
     } else {
       write_to_output(d, "Line number must be higher than 0.\r\n");
@@ -487,7 +487,7 @@ void parse_edit_action(int command, char *string, struct descriptor_data *d)
       }
       /* Change the size of the REAL buffer to fit the new text. */
       RECREATE(*d->str, char, strlen(buf) + 3);
-      strcpy(*d->str, buf);
+      strlcpy(*d->str, buf, strlen(buf) + 3);
       write_to_output(d, "Line changed.\r\n");
     } else {
       write_to_output(d, "Line number must be higher than 0.\r\n");
@@ -528,7 +528,8 @@ int format_text(char **ptr_string, int mode, struct descriptor_data *d, unsigned
       write_to_output(d, "There aren't that many lines!\r\n");
       return 0;
     }
-    strncat(formatted, strcat(start, "\n"), sizeof(formatted) - strlen(formatted) - 1);
+    strlcat(formatted, start, sizeof(formatted));
+    strlcat(formatted, "\n", sizeof(formatted));
     if ((flow = strstr(flow, "\n")) == NULL) {
       write_to_output(d, "There aren't that many lines!\r\n");
       return 0;
@@ -710,7 +711,7 @@ int replace_str(char **string, char *pattern, char *replacement, int rep_all, un
     return i;
   } else {
     RECREATE(*string, char, strlen(replace_buffer) + 3);
-    strcpy(*string, replace_buffer);
+    strlcpy(*string, replace_buffer, strlen(replace_buffer) + 3);
   }
   free(replace_buffer);
   return i;
