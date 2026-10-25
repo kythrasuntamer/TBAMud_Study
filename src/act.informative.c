@@ -30,7 +30,7 @@
 #include "quest.h"
 
 /* prototypes of local functions */
-/* do_diagnose utility functions *
+/* do_diagnose utility functions */
 static void diag_char_to_char(struct char_data *i, struct char_data *ch);
 /* do_look and do_examine utility functions */
 static void do_auto_exits(struct char_data *ch);
