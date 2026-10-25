@@ -193,6 +193,417 @@ int strn_cmp(const char *arg1, const char *arg2, int n)
 }
 #endif
 
+/* ------------------------------------------------------------------------- */
+/* Diagnostic context, provenance, allocation and bounded-string primitives.  */
+/* ------------------------------------------------------------------------- */
+
+#define TB_BREADCRUMB_COUNT 16
+#define TB_BREADCRUMB_TEXT 160
+#define TB_PARSE_CONTEXT_COUNT 16
+
+struct tb_breadcrumb_entry {
+  unsigned long sequence;
+  unsigned long correlation;
+  char kind[32];
+  char detail[TB_BREADCRUMB_TEXT];
+};
+
+struct tb_parse_context_slot {
+  FILE *stream;
+  unsigned long line;
+  long record_id;
+  char resource[PATH_MAX];
+  char parser[48];
+  char record_type[32];
+  char field[64];
+};
+
+static struct tb_breadcrumb_entry tb_breadcrumb_ring[TB_BREADCRUMB_COUNT];
+static size_t tb_breadcrumb_next = 0;
+static unsigned long tb_breadcrumb_sequence = 0;
+static unsigned long tb_correlation_sequence = 0;
+static unsigned long tb_current_correlation = 0;
+static unsigned long tb_diagnostic_sequence = 0;
+static struct tb_parse_context_slot tb_parse_contexts[TB_PARSE_CONTEXT_COUNT];
+
+static const char *tb_error_id_for(const char *subsystem, const char *operation,
+                                   int errnum)
+{
+  (void)errnum;
+
+  if (subsystem != NULL) {
+    if (!str_cmp(subsystem, "PARSER"))
+      return TB_ERRID_PARSER_MALFORMED;
+    if (!str_cmp(subsystem, "PERSISTENCE"))
+      return (!str_cmp(operation ? operation : "", "rollback"))
+               ? TB_ERRID_PERSIST_ROLLBACK : TB_ERRID_PERSIST_WRITE;
+    if (!str_cmp(subsystem, "NETWORK"))
+      return TB_ERRID_NETWORK_IO;
+    if (!str_cmp(subsystem, "INVARIANT"))
+      return TB_ERRID_INVARIANT;
+    if (!str_cmp(subsystem, "SCRIPT"))
+      return TB_ERRID_SCRIPT_PARSE;
+    if (!str_cmp(subsystem, "BOOT"))
+      return TB_ERRID_BOOT_FATAL;
+  }
+
+  return "TB-GENERAL-0001";
+}
+
+unsigned long tb_correlation_begin(const char *kind, const char *detail)
+{
+  unsigned long id = ++tb_correlation_sequence;
+
+  if (id == 0)
+    id = ++tb_correlation_sequence;
+
+  tb_current_correlation = id;
+  tb_breadcrumb(kind ? kind : "correlation",
+                detail ? detail : "operation-begin");
+  return id;
+}
+
+void tb_correlation_end(unsigned long id)
+{
+  if (id != 0 && tb_current_correlation == id) {
+    tb_breadcrumb("correlation", "operation-end");
+    tb_current_correlation = 0;
+  }
+}
+
+unsigned long tb_correlation_current(void)
+{
+  return tb_current_correlation;
+}
+
+void tb_breadcrumb(const char *kind, const char *detail)
+{
+  struct tb_breadcrumb_entry *entry =
+      &tb_breadcrumb_ring[tb_breadcrumb_next % TB_BREADCRUMB_COUNT];
+
+  entry->sequence = ++tb_breadcrumb_sequence;
+  entry->correlation = tb_current_correlation;
+  strlcpy(entry->kind, kind ? kind : "event", sizeof(entry->kind));
+  strlcpy(entry->detail, detail ? detail : "(none)", sizeof(entry->detail));
+  tb_breadcrumb_next = (tb_breadcrumb_next + 1) % TB_BREADCRUMB_COUNT;
+}
+
+void tb_breadcrumbf(const char *kind, const char *format, ...)
+{
+  char detail[TB_BREADCRUMB_TEXT];
+  va_list args;
+  int n;
+
+  if (format == NULL) {
+    tb_breadcrumb(kind, "(null format)");
+    return;
+  }
+
+  va_start(args, format);
+  n = vsnprintf(detail, sizeof(detail), format, args);
+  va_end(args);
+
+  if (n < 0)
+    strlcpy(detail, "(formatting failed)", sizeof(detail));
+  else if ((size_t)n >= sizeof(detail))
+    strlcpy(detail + sizeof(detail) - sizeof("...[TRUNCATED]"),
+            "...[TRUNCATED]", sizeof("...[TRUNCATED]"));
+
+  tb_breadcrumb(kind, detail);
+}
+
+size_t tb_breadcrumb_snapshot(char *dst, size_t dst_size)
+{
+  struct tb_buf out;
+  size_t count = 0;
+  size_t i;
+  size_t start;
+
+  if (dst == NULL || dst_size == 0)
+    return 0;
+
+  tb_buf_init(&out, dst, dst_size);
+  start = tb_breadcrumb_next;
+
+  for (i = 0; i < TB_BREADCRUMB_COUNT; i++) {
+    size_t idx = (start + i) % TB_BREADCRUMB_COUNT;
+    const struct tb_breadcrumb_entry *entry = &tb_breadcrumb_ring[idx];
+
+    if (entry->sequence == 0)
+      continue;
+
+    if (count++ != 0)
+      (void)tb_buf_append(&out, " | ");
+
+    (void)tb_buf_appendf(&out, "#%lu/corr=%lu/%s:%s",
+                         entry->sequence, entry->correlation,
+                         entry->kind, entry->detail);
+  }
+
+  return out.length;
+}
+
+void tb_buf_init(struct tb_buf *buf, char *storage, size_t capacity)
+{
+  if (buf == NULL)
+    return;
+
+  buf->data = storage;
+  buf->capacity = capacity;
+  buf->length = 0;
+  buf->truncated = 0;
+
+  if (storage != NULL && capacity > 0)
+    storage[0] = '\0';
+}
+
+size_t tb_buf_remaining(const struct tb_buf *buf)
+{
+  if (buf == NULL || buf->data == NULL || buf->capacity == 0 ||
+      buf->length >= buf->capacity)
+    return 0;
+  return buf->capacity - buf->length - 1;
+}
+
+int tb_buf_appendn(struct tb_buf *buf, const char *text, size_t length)
+{
+  size_t available;
+  size_t copy_len;
+
+  if (buf == NULL || buf->data == NULL || buf->capacity == 0 || text == NULL)
+    return FALSE;
+
+  available = tb_buf_remaining(buf);
+  copy_len = length <= available ? length : available;
+
+  if (copy_len != 0)
+    memcpy(buf->data + buf->length, text, copy_len);
+  buf->length += copy_len;
+  buf->data[buf->length] = '\0';
+
+  if (copy_len != length) {
+    buf->truncated = TRUE;
+    return FALSE;
+  }
+  return TRUE;
+}
+
+int tb_buf_append(struct tb_buf *buf, const char *text)
+{
+  return text != NULL ? tb_buf_appendn(buf, text, strlen(text)) : FALSE;
+}
+
+int tb_buf_appendf(struct tb_buf *buf, const char *format, ...)
+{
+  va_list args;
+  int n;
+  size_t available;
+
+  if (buf == NULL || buf->data == NULL || buf->capacity == 0 || format == NULL)
+    return FALSE;
+
+  available = tb_buf_remaining(buf);
+  va_start(args, format);
+  n = vsnprintf(buf->data + buf->length, available + 1, format, args);
+  va_end(args);
+
+  if (n < 0) {
+    buf->truncated = TRUE;
+    return FALSE;
+  }
+
+  if ((size_t)n > available) {
+    buf->length += available;
+    buf->truncated = TRUE;
+    return FALSE;
+  }
+
+  buf->length += (size_t)n;
+  return TRUE;
+}
+
+int tb_buf_truncated(const struct tb_buf *buf)
+{
+  return buf != NULL ? buf->truncated : TRUE;
+}
+
+int tb_size_mul_checked(size_t count, size_t element_size, size_t *out)
+{
+  if (out == NULL || count == 0 || element_size == 0 ||
+      count > SIZE_MAX / element_size)
+    return FALSE;
+
+  *out = count * element_size;
+  return TRUE;
+}
+
+void *tb_calloc_array_at(size_t count, size_t element_size,
+                         const char *source_file, int source_line,
+                         const char *source_func)
+{
+  size_t bytes;
+  void *result;
+
+  if (!tb_size_mul_checked(count, element_size, &bytes)) {
+    tb_report_domain_error_at(TB_SEV_FATAL, TB_ERR_INVARIANT,
+                              "allocation-size", "calloc array overflow/zero",
+                              0, source_file, source_line, source_func);
+    return NULL;
+  }
+
+  (void)bytes;
+  result = calloc(count, element_size);
+  if (result == NULL) {
+    int saved_errno = errno;
+    tb_report_domain_error_at(TB_SEV_FATAL, TB_ERR_GENERAL,
+                              "calloc", "array allocation", saved_errno,
+                              source_file, source_line, source_func);
+  }
+  return result;
+}
+
+void *tb_realloc_array_at(void *ptr, size_t count, size_t element_size,
+                          const char *source_file, int source_line,
+                          const char *source_func)
+{
+  size_t bytes;
+  void *result;
+
+  if (!tb_size_mul_checked(count, element_size, &bytes)) {
+    tb_report_domain_error_at(TB_SEV_FATAL, TB_ERR_INVARIANT,
+                              "allocation-size", "realloc array overflow/zero",
+                              0, source_file, source_line, source_func);
+    return NULL;
+  }
+
+  result = realloc(ptr, bytes);
+  if (result == NULL) {
+    int saved_errno = errno;
+    tb_report_domain_error_at(TB_SEV_FATAL, TB_ERR_GENERAL,
+                              "realloc", "array allocation", saved_errno,
+                              source_file, source_line, source_func);
+  }
+  return result;
+}
+
+static struct tb_parse_context_slot *tb_parse_context_find(FILE *stream, int create)
+{
+  struct tb_parse_context_slot *free_slot = NULL;
+  size_t i;
+
+  if (stream == NULL)
+    return NULL;
+
+  for (i = 0; i < TB_PARSE_CONTEXT_COUNT; i++) {
+    if (tb_parse_contexts[i].stream == stream)
+      return &tb_parse_contexts[i];
+    if (free_slot == NULL && tb_parse_contexts[i].stream == NULL)
+      free_slot = &tb_parse_contexts[i];
+  }
+
+  if (create && free_slot != NULL) {
+    memset(free_slot, 0, sizeof(*free_slot));
+    free_slot->stream = stream;
+    free_slot->record_id = -1;
+    return free_slot;
+  }
+
+  return NULL;
+}
+
+void tb_parse_context_begin(FILE *stream, const char *resource, const char *parser)
+{
+  struct tb_parse_context_slot *ctx = tb_parse_context_find(stream, TRUE);
+
+  if (ctx == NULL)
+    return;
+
+  ctx->line = 0;
+  ctx->record_id = -1;
+  strlcpy(ctx->resource, resource ? resource : "(unknown)",
+          sizeof(ctx->resource));
+  strlcpy(ctx->parser, parser ? parser : "(unknown)", sizeof(ctx->parser));
+  ctx->record_type[0] = '\0';
+  ctx->field[0] = '\0';
+}
+
+void tb_parse_context_end(FILE *stream)
+{
+  struct tb_parse_context_slot *ctx = tb_parse_context_find(stream, FALSE);
+
+  if (ctx != NULL)
+    memset(ctx, 0, sizeof(*ctx));
+}
+
+void tb_parse_context_record(FILE *stream, const char *record_type, long record_id)
+{
+  struct tb_parse_context_slot *ctx = tb_parse_context_find(stream, FALSE);
+
+  if (ctx == NULL)
+    return;
+  ctx->record_id = record_id;
+  strlcpy(ctx->record_type, record_type ? record_type : "record",
+          sizeof(ctx->record_type));
+  ctx->field[0] = '\0';
+}
+
+void tb_parse_context_field(FILE *stream, const char *field)
+{
+  struct tb_parse_context_slot *ctx = tb_parse_context_find(stream, FALSE);
+
+  if (ctx != NULL)
+    strlcpy(ctx->field, field ? field : "(unknown)", sizeof(ctx->field));
+}
+
+void tb_parse_context_note_line(FILE *stream)
+{
+  struct tb_parse_context_slot *ctx = tb_parse_context_find(stream, FALSE);
+  if (ctx != NULL)
+    ctx->line++;
+}
+
+unsigned long tb_parse_context_line(FILE *stream)
+{
+  struct tb_parse_context_slot *ctx = tb_parse_context_find(stream, FALSE);
+  return ctx != NULL ? ctx->line : 0;
+}
+
+void tb_parse_context_error_at(FILE *stream, const char *source_file,
+                               int source_line, const char *source_func,
+                               const char *detail_fmt, ...)
+{
+  struct tb_parse_context_slot *ctx = tb_parse_context_find(stream, FALSE);
+  char detail[512];
+  char resource[PATH_MAX + 160];
+  va_list args;
+  int n;
+
+  if (detail_fmt != NULL) {
+    va_start(args, detail_fmt);
+    n = vsnprintf(detail, sizeof(detail), detail_fmt, args);
+    va_end(args);
+    if (n < 0)
+      strlcpy(detail, "parser detail formatting failed", sizeof(detail));
+  } else {
+    strlcpy(detail, "parser error", sizeof(detail));
+  }
+
+  if (ctx != NULL) {
+    (void)snprintf(resource, sizeof(resource),
+                   "%s line=%lu parser=%s record=%s:%ld field=%s",
+                   ctx->resource, ctx->line, ctx->parser,
+                   ctx->record_type[0] ? ctx->record_type : "(none)",
+                   ctx->record_id,
+                   ctx->field[0] ? ctx->field : "(none)");
+  } else {
+    strlcpy(resource, "(parser context unavailable)", sizeof(resource));
+  }
+
+  tb_error_log_at("ERROR", "PARSER", "parse", resource, 0,
+                  source_file, source_line, source_func,
+                  "%s id=%s", detail, TB_ERRID_PARSER_MALFORMED);
+}
+
 /** New variable argument log() function; logs messages to disk.
  * Works the same as the old for previously written code but is very nice
  * if new code wishes to implment printf style log messages without the need
@@ -299,23 +710,42 @@ void tb_error_log_at(const char *severity, const char *subsystem,
     strlcpy(detail, "(no detail)", sizeof(detail));
   }
 
-  if (errnum != 0)
-    basic_mud_log("%s subsystem=%s op=%s resource=%s errno=%d error=\"%s\" at=%s:%d function=%s detail=\"%s\"",
-                  severity ? severity : "ERROR",
-                  subsystem ? subsystem : "unknown",
-                  operation ? operation : "unknown",
-                  resource ? resource : "(none)",
-                  errnum, strerror(errnum),
-                  source_file ? source_file : "(unknown)", source_line,
-                  source_func ? source_func : "(unknown)", detail);
-  else
-    basic_mud_log("%s subsystem=%s op=%s resource=%s at=%s:%d function=%s detail=\"%s\"",
-                  severity ? severity : "ERROR",
-                  subsystem ? subsystem : "unknown",
-                  operation ? operation : "unknown",
-                  resource ? resource : "(none)",
-                  source_file ? source_file : "(unknown)", source_line,
-                  source_func ? source_func : "(unknown)", detail);
+  {
+    char breadcrumbs[1024];
+    const char *error_id = tb_error_id_for(subsystem, operation, errnum);
+    unsigned long diag_seq = ++tb_diagnostic_sequence;
+    unsigned long correlation = tb_correlation_current();
+
+    (void)tb_breadcrumb_snapshot(breadcrumbs, sizeof(breadcrumbs));
+
+    if (errnum != 0)
+      basic_mud_log("%s id=%s diag_seq=%lu correlation=%lu subsystem=%s op=%s "
+                    "resource=%s errno=%d errno_name=%s error=\"%s\" "
+                    "at=%s:%d function=%s build_sha=%s compiler=\"%s\" "
+                    "build_type=%s sanitizers=%s detail=\"%s\" breadcrumbs=\"%s\"",
+                    severity ? severity : "ERROR", error_id, diag_seq, correlation,
+                    subsystem ? subsystem : "unknown",
+                    operation ? operation : "unknown",
+                    resource ? resource : "(none)",
+                    errnum, tb_errno_name(errnum), strerror(errnum),
+                    source_file ? source_file : "(unknown)", source_line,
+                    source_func ? source_func : "(unknown)",
+                    TB_BUILD_SHA, TB_BUILD_COMPILER, TB_BUILD_TYPE,
+                    TB_BUILD_SANITIZERS, detail, breadcrumbs);
+    else
+      basic_mud_log("%s id=%s diag_seq=%lu correlation=%lu subsystem=%s op=%s "
+                    "resource=%s at=%s:%d function=%s build_sha=%s "
+                    "compiler=\"%s\" build_type=%s sanitizers=%s "
+                    "detail=\"%s\" breadcrumbs=\"%s\"",
+                    severity ? severity : "ERROR", error_id, diag_seq, correlation,
+                    subsystem ? subsystem : "unknown",
+                    operation ? operation : "unknown",
+                    resource ? resource : "(none)",
+                    source_file ? source_file : "(unknown)", source_line,
+                    source_func ? source_func : "(unknown)",
+                    TB_BUILD_SHA, TB_BUILD_COMPILER, TB_BUILD_TYPE,
+                    TB_BUILD_SANITIZERS, detail, breadcrumbs);
+  }
 
   errno = incoming_errno;
 }
@@ -750,6 +1180,7 @@ int get_line(FILE *fl, char *buf)
     if (!fgets(temp, READ_SIZE, fl))
       return (0);
     lines++;
+    tb_parse_context_note_line(fl);
   } while (*temp == '*' || *temp == '\n' || *temp == '\r');
 
   /* Last line of file doesn't always have a \n, but it should. */
