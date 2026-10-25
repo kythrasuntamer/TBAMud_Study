@@ -12,6 +12,7 @@
  *  Makefile: MYFLAGS = -Wall -DMEMORY_DEBUG */
 
 #include "conf.h"
+#include "sysdep.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
