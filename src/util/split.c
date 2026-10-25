@@ -28,7 +28,7 @@ int main(void)
   FILE *index = 0, *outfile = 0;
 
   if (!(index = fopen(INDEX_NAME, "w"))) {
-    perror("error opening index for write");
+    TB_REPORT_ERRNO("fopen", INDEX_NAME);
     exit(1);
   }
   while (fgets(line, BSZ, stdin)) {
@@ -39,7 +39,7 @@ int main(void)
 	tb_fclose(outfile);
       }
       if (!(outfile = fopen((line + 1), "a"))) {
-	perror("Error opening output file");
+	TB_REPORT_ERRNO("fopen", line + 1);
 	exit(0);
       }
       tb_fputs(line + 1, index);
