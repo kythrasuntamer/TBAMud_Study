@@ -2296,7 +2296,7 @@ ACMD(do_toggle)
       }
     }
     if (isdigit(*arg2)) {
-      if ((wimp_lev = atoi(arg2)) != 0) {
+      if ((wimp_lev = tb_parse_int_or_zero(arg2)) != 0) {
         if (wimp_lev < 0)
           send_to_char(ch, "Heh, heh, heh.. we are jolly funny today, eh?\r\n");
         else if (wimp_lev > GET_MAX_HIT(ch))
@@ -2318,7 +2318,7 @@ ACMD(do_toggle)
     if (!*arg2)
       send_to_char(ch, "Your current page length is set to %d lines.", GET_PAGE_LENGTH(ch));
     else if (is_number(arg2)) {
-      GET_PAGE_LENGTH(ch) = MIN(MAX(atoi(arg2), 5), 255);
+      GET_PAGE_LENGTH(ch) = MIN(MAX(tb_parse_int_or_zero(arg2), 5), 255);
       send_to_char(ch, "Okay, your page length is now set to %d lines.", GET_PAGE_LENGTH(ch));
     } else
       send_to_char(ch, "Please specify a number of lines (5 - 255).");
@@ -2327,7 +2327,7 @@ ACMD(do_toggle)
     if (!*arg2)
       send_to_char(ch, "Your current screen width is set to %d characters.", GET_SCREEN_WIDTH(ch));
     else if (is_number(arg2)) {
-      GET_SCREEN_WIDTH(ch) = MIN(MAX(atoi(arg2), 40), 200);
+      GET_SCREEN_WIDTH(ch) = MIN(MAX(tb_parse_int_or_zero(arg2), 40), 200);
       send_to_char(ch, "Okay, your screen width is now set to %d characters.", GET_SCREEN_WIDTH(ch));
     } else
       send_to_char(ch, "Please specify a number of characters (40 - 200).");
@@ -2628,17 +2628,17 @@ ACMD(do_areas)
       if (second == arg)
         lolev = 0;
       else
-        lolev = atoi(arg);
+        lolev = tb_parse_int_or_zero(arg);
 
       /* Check for 2nd value */
       if (*(second+1) == '\0' || !isdigit(*(second+1)) )
         hilev = 100;
       else
-        hilev = atoi(second+1);
+        hilev = tb_parse_int_or_zero(second+1);
 
     } else {
       /* No range - single number */
-      lolev = atoi(arg);
+      lolev = tb_parse_int_or_zero(arg);
       hilev = -1;  /* No high level - indicates single level */
     }
   }
