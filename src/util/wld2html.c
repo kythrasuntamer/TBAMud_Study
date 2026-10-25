@@ -282,8 +282,14 @@ void index_boot(int cnt, char **names)
     rec_count += count_hash_records(db_file);
     fclose(db_file);
   }
-  sprintf(buf,"Total records: %d\n",rec_count);
+  snprintf(buf, sizeof(buf), "Total records: %d\n", rec_count);
   log(buf);
+
+  if (rec_count <= 0) {
+    world = NULL;
+    return;
+  }
+
   //now that we know how many records in total
   //we can create the memory structure
   CREATE(world, struct room_data, rec_count);
