@@ -2345,7 +2345,7 @@ void load_help(FILE * fl, char *name)
       int keysize;
       const char *truncmsg = "\r\n*TRUNCATED*\r\n";
 
-      strlcpy(entry + sizeof(entry) - strlen(truncmsg) - 1, truncmsg, strlen(truncmsg) + 1); /* strcpy: OK (assuming sane 'entry' size) */
+      memcpy(entry + sizeof(entry) - strlen(truncmsg) - 1, truncmsg, strlen(truncmsg) + 1); /* strcpy: OK (assuming sane 'entry' size) */
 
       keysize = strlen(key) - 2;
       log("SYSERR: Help entry exceeded buffer space: %.*s", keysize, key);
