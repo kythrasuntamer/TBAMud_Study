@@ -724,7 +724,7 @@ static int objsave_write_rentcode(FILE *fl, int rentcode, int cost_per_day, stru
           0)
        < 1)
     {
-       perror("Syserr: Writing rent code");
+       TB_REPORT_ERRNO("fprintf", "rent code");
        return FALSE;
     }
   return TRUE;
@@ -1208,7 +1208,7 @@ static int Crash_load_objs(struct char_data *ch) {
   if (!(fl = fopen(filename, "r"))) {
     if (errno != ENOENT) { /* if it fails, NOT because of no file */
       tb_snprintf(buf, MAX_STRING_LENGTH, "SYSERR: READING OBJECT FILE %s (5)", filename);
-      perror(buf);
+      TB_REPORT_ERRNO("fopen", buf);
       send_to_char(ch, "\r\n********************* NOTICE *********************\r\n"
                        "There was a problem loading your objects from disk.\r\n"
                        "Contact a God for assistance.\r\n");
