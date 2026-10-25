@@ -1386,9 +1386,11 @@ static void eval_op(char *op, char *lhs, char *rhs, char *result, void *go,
     rhs++;
 
   for (p = (unsigned char *) lhs; *p; p++);
-  for (--p; isspace(*p) && ((char *)p > lhs); *p-- = '\0');
+  while (p > (unsigned char *) lhs && isspace((unsigned char) p[-1]))
+    *--p = '\0';
   for (p = (unsigned char *) rhs; *p; p++);
-  for (--p; isspace(*p) && ((char *)p > rhs); *p-- = '\0');
+  while (p > (unsigned char *) rhs && isspace((unsigned char) p[-1]))
+    *--p = '\0';
 
 
   /* find the op, and figure out the value */
