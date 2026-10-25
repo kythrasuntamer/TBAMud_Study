@@ -14,8 +14,8 @@
 * $Date: 2004/10/11 12:07:00$                                            
 * $Revision: 1.0.14 $                                                    
 */
-#ifndef _DG_EVENT_H_
-#define _DG_EVENT_H_
+#ifndef TBAMUD_DG_EVENT_H_INCLUDED
+#define TBAMUD_DG_EVENT_H_INCLUDED
 
 /** How often will heartbeat() call the 'wait' event function?
  * @deprecated Currently not used. */
@@ -80,4 +80,4 @@ long queue_elmt_key(struct q_element *qe);
 void queue_free(struct dg_queue *q);
 int  event_is_queued(struct event *event);
 
-#endif /* _DG_EVENT_H_ */
+#endif /* TBAMUD_DG_EVENT_H_INCLUDED */
