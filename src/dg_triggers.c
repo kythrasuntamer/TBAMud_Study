@@ -29,7 +29,7 @@
 /* General functions used by several triggers. */
 
 /* Copy first phrase into first_arg, returns rest of string. */
-static char *one_phrase(char *arg, char *first_arg, size_t first_arg_size)
+char *one_phrase(char *arg, char *first_arg, size_t first_arg_size)
 {
     skip_spaces(&arg);
 
