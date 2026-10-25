@@ -3015,9 +3015,9 @@ void save_char_vars(struct char_data *ch)
 
   file = fopen(fn,"wt");
   if (!file) {
-    mudlog( NRM, LVL_GOD, TRUE,
-            "SYSERR: Could not open player variable file %s for writing.:%s",
-            fn, strerror(errno));
+    TB_REPORT_ERRNO("fopen", fn);
+    mudlog(NRM, LVL_GOD, TRUE,
+           "SYSERR: Could not open player variable file %s for writing.", fn);
     return;
   }
   /* Note that currently, context will always be zero. This may change in the 
