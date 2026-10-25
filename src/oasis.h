@@ -28,8 +28,8 @@
    to adjust these numbers if you ever add more. Note: Most of the NUM_ and
    MAX_ limits have been moved to more appropriate locations. */
 
-#define TOGGLE_VAR(var)	if (var == YES) { var = NO; } else { var = YES; }
-#define CHECK_VAR(var)  ((var == YES) ? "Yes" : "No")
+#define TOGGLE_VAR(var) do { if ((var) == YES) { (var) = NO; } else { (var) = YES; } } while (0)
+#define CHECK_VAR(var)  (((var) == YES) ? "Yes" : "No")
 
 #define MAX_PEOPLE 10 /* Max # of people you want to sit in furniture. */
 
