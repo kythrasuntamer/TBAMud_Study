@@ -101,7 +101,7 @@ static room_rnum find_obj_target_room(obj_data *obj, char *rawroomstr)
 
     if (isdigit(*roomstr) && !strchr(roomstr, '.'))
     {
-        tmp = atoi(roomstr);
+        tmp = tb_parse_int_or_zero(roomstr);
         if ((location = real_room(tmp)) == NOWHERE)
             return NOWHERE;
     }
@@ -220,7 +220,7 @@ static OCMD(do_ozoneecho)
     if (!*room_number || !*msg)
 	obj_log(obj, "ozoneecho called with too few args");
 
-    else if ((zone = real_zone_by_thing(atoi(room_number))) == NOWHERE)
+    else if ((zone = real_zone_by_thing(tb_parse_int_or_zero(room_number))) == NOWHERE)
 	obj_log(obj, "ozoneecho called for nonexistant zone");
 
     else {
@@ -275,7 +275,7 @@ static OCMD(do_orecho)
     if (!*msg || !*start || !*finish || !is_number(start) || !is_number(finish))
       obj_log(obj, "orecho: too few args");
     else
-      send_to_range(atoi(start), atoi(finish), "%s\r\n", msg);
+      send_to_range(tb_parse_int_or_zero(start), tb_parse_int_or_zero(finish), "%s\r\n", msg);
 
 }
 
@@ -291,7 +291,7 @@ static OCMD(do_otimer)
   else if (!isdigit(*arg))
     obj_log(obj, "otimer: bad argument");
   else
-    GET_OBJ_TIMER(obj) = atoi(arg);
+    GET_OBJ_TIMER(obj) = tb_parse_int_or_zero(arg);
 }
 
 /* Transform into a different object. Note: this shouldn't be used with 
@@ -310,7 +310,7 @@ static OCMD(do_otransform)
   else if (!isdigit(*arg))
     obj_log(obj, "otransform: bad argument");
   else {
-    o = read_object(atoi(arg), VIRTUAL);
+    o = read_object(tb_parse_int_or_zero(arg), VIRTUAL);
     if (o==NULL) {
       obj_log(obj, "otransform: bad object vnum");
       return;
@@ -459,7 +459,7 @@ static OCMD(do_dgoload)
 
     target = two_arguments(argument, arg1, arg2);
 
-    if (!*arg1 || !*arg2 || !is_number(arg2) || ((number = atoi(arg2)) < 0))
+    if (!*arg1 || !*arg2 || !is_number(arg2) || ((number = tb_parse_int_or_zero(arg2)) < 0))
     {
         obj_log(obj, "oload: bad syntax");
         return;
@@ -477,7 +477,7 @@ static OCMD(do_dgoload)
       if (!target || !*target) {
         rnum = room;
       } else {
-        if (!isdigit(*target) || (rnum = real_room(atoi(target))) == NOWHERE) {
+        if (!isdigit(*target) || (rnum = real_room(tb_parse_int_or_zero(target))) == NOWHERE) {
           obj_log(obj, "oload: room target vnum doesn't exist "
                        "(loading mob vnum %d to room %s)", number, target);
           return;
@@ -559,7 +559,7 @@ static OCMD(do_odamage) {
       return;
   }
 
-  dam = atoi(amount);
+  dam = tb_parse_int_or_zero(amount);
   ch = get_char_by_obj(obj, name);
 
   if (!ch) {
@@ -681,7 +681,7 @@ static OCMD(do_odoor)
             newexit->exit_info = (sh_int)asciiflag_conv(value);
             break;
         case 3:  /* key         */
-            newexit->key = atoi(value);
+            newexit->key = tb_parse_int_or_zero(value);
             break;
         case 4:  /* name        */
             if (newexit->keyword)
@@ -690,7 +690,7 @@ static OCMD(do_odoor)
             strcpy(newexit->keyword, value);
             break;
         case 5:  /* room        */
-            if ((to_room = real_room(atoi(value))) != NOWHERE)
+            if ((to_room = real_room(tb_parse_int_or_zero(value))) != NOWHERE)
                 newexit->to_room = to_room;
             else {
                 newexit->to_room = NOWHERE;
@@ -713,8 +713,8 @@ static OCMD(do_osetval)
     return;
   }
 
-  position = atoi(arg1);
-  new_value = atoi(arg2);
+  position = tb_parse_int_or_zero(arg1);
+  new_value = tb_parse_int_or_zero(arg2);
 
   if (position>=0 && position<NUM_OBJ_VAL_POSITIONS) {
     worn_by = obj->worn_by;
@@ -755,7 +755,7 @@ static OCMD(do_oat)
     return;
   }
 
-  if (isdigit(*arg)) loc = real_room(atoi(arg));
+  if (isdigit(*arg)) loc = real_room(tb_parse_int_or_zero(arg));
   else if ((ch = get_char_by_obj(obj, arg))) loc = IN_ROOM(ch); 
 
   if (loc == NOWHERE) {
