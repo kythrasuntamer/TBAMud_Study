@@ -742,11 +742,12 @@ ACMD(do_look)
     half_chop(argument, arg, arg2);
 
     if (subcmd == SCMD_READ) {
-      if (!*arg)
-    send_to_char(ch, "Read what?\r\n");
-      else
-    strlcpy(tempsave, arg, sizeof(tempsave));
-    look_at_target(ch, tempsave);
+      if (!*arg) {
+        send_to_char(ch, "Read what?\r\n");
+      } else {
+        strlcpy(tempsave, arg, sizeof(tempsave));
+        look_at_target(ch, tempsave);
+      }
       return;
     }
     if (!*arg)            /* "look" alone, without an argument at all */
