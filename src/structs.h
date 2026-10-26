@@ -160,8 +160,8 @@
 #define CLASS_BARD       10    /**< PC Class Bard */
 #define CLASS_NECROMANCER 11   /**< Reserved: Necromancer */
 /** Total number of available PC Classes */
-/* Only classes 0-4 are currently fully integrated into gameplay. */
-#define NUM_CLASSES	  5
+/* Class IDs 0-11; preserve historical IDs for saved characters. */
+#define NUM_CLASSES	  12
 
 /* NPC classes (currently unused - feel free to implement!) */
 #define CLASS_OTHER       0    /**< NPC Class Other (or undefined) */
