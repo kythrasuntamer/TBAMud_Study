@@ -171,7 +171,8 @@ long parse_send_time(FILE *plr_file) {
 char *parse_subject(FILE *plr_file) {
 	static char subj[1000];
 	char *txt = findLine(plr_file, "Subj:");
-	snprintf(subj, sizeof(subj), "%s", (txt == NULL) ? "(null)" : txt);
+	if (snprintf(subj, sizeof(subj), "%s", (txt == NULL) ? "(null)" : txt) >= (int)sizeof(subj))
+    UTIL_REPORT_ERRNO("snprintf", "mail subject truncated");
 	return (subj);
 }
 
