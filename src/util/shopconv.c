@@ -29,7 +29,7 @@ static int parse_int_text(const char *text, int *out)
   if (text == end || errno == ERANGE || value < INT_MIN || value > INT_MAX)
     return 0;
 
-  while (isspace((unsigned char)*end))
+  while (strchr(" \t\r\n\f\v", (unsigned char)*end) && *end)
     end++;
   if (*end != '\0')
     return 0;
