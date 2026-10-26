@@ -80,6 +80,7 @@ void assign_mobiles(void)
   ASSIGNMOB(3021, guild);
   ASSIGNMOB(3022, guild);
   ASSIGNMOB(3023, guild);
+  ASSIGNMOB(3014, guild); /* Monk mentor: teaches implemented Monk skills. */
   ASSIGNMOB(5400, guild);
   ASSIGNMOB(5401, guild);
   ASSIGNMOB(5402, guild);
