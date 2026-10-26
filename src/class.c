@@ -49,6 +49,7 @@ const char *class_abbrevs[] = {
   "Th",
   "Wa",
   "Mo",
+  "Dr", "Be", "So", "Pa", "Ra", "Ba", "Ne",
   "\n"
 };
 
@@ -58,6 +59,8 @@ const char *pc_class_types[] = {
   "Thief",
   "Warrior",
   "Monk",
+  "Druid", "Berserker", "Sorcerer", "Paladin",
+  "Ranger", "Bard", "Necromancer",
   "\n"
 };
 
@@ -69,7 +72,11 @@ const char *class_menu =
 "  [\t(T\t)]hief\r\n"
 "  [\t(W\t)]arrior\r\n"
 "  [\t(Z\t)] Wizard\r\n"
-"  [\t(O\t)] Monk\r\n";
+"  [\t(O\t)] Monk\r\n"
+"  [\t(D\t)] Druid      [\t(B\t)] Berserker\r\n"
+"  [\t(S\t)] Sorcerer   [\t(P\t)] Paladin\r\n"
+"  [\t(R\t)] Ranger     [\t(A\t)] Bard\r\n"
+"  [\t(N\t)] Necromancer\r\n";
 
 /* The code to interpret a class letter -- used in interpreter.c when a new
  * character is selecting a class and by 'set class' in act.wizard.c. */
@@ -84,6 +91,13 @@ int parse_class(char arg)
   case 'w': return CLASS_WARRIOR;
   case 't': return CLASS_THIEF;
   case 'o': return CLASS_MONK;
+  case 'd': return CLASS_DRUID;
+  case 'b': return CLASS_BERSERKER;
+  case 's': return CLASS_SORCERER;
+  case 'p': return CLASS_PALADIN;
+  case 'r': return CLASS_RANGER;
+  case 'a': return CLASS_BARD;
+  case 'n': return CLASS_NECROMANCER;
   default:  return CLASS_UNDEFINED;
   }
 }
