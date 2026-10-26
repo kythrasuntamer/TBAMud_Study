@@ -11,6 +11,11 @@ UTILS = (ROOT / "src" / "utils.c").read_text(encoding="utf-8")
 
 
 class FormattingAndBoundsContracts(unittest.TestCase):
+    def test_area_level_formatter_keeps_full_zone_index(self):
+        source = (ROOT / "src" / "act.informative.c").read_text(encoding="utf-8")
+        self.assertIn("static bool get_zone_levels(int znum,", source)
+        self.assertIn("lev_set = get_zone_levels(i, lev_str, sizeof(lev_str));", source)
+
     def test_information_level_ranges_checked(self):
         source = (ROOT / "src" / "act.informative.c").read_text(encoding="utf-8")
         self.assertIn("static int parse_info_level_range(", source)
