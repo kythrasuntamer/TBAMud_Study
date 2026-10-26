@@ -93,6 +93,37 @@ static long parse_pfile_long_or_zero(const char *value, const char *filename, co
   return parsed;
 }
 
+/* Read a whitespace-delimited signed number with overflow detection. */
+static int parse_index_long(const char **cursor, long *value)
+{
+  char *end;
+  long parsed;
+  while (isspace((unsigned char)**cursor))
+    ++*cursor;
+  errno = 0;
+  parsed = strtol(*cursor, &end, 10);
+  if (end == *cursor || errno == ERANGE || (*end && !isspace((unsigned char)*end)))
+    return FALSE;
+  *value = parsed;
+  *cursor = end;
+  return TRUE;
+}
+
+static int parse_index_word(const char **cursor, char *dest, size_t capacity)
+{
+  size_t len = 0;
+  while (isspace((unsigned char)**cursor))
+    ++*cursor;
+  while ((*cursor)[len] && !isspace((unsigned char)(*cursor)[len]))
+    ++len;
+  if (!len || len >= capacity)
+    return FALSE;
+  memcpy(dest, *cursor, len);
+  dest[len] = '\0';
+  *cursor += len;
+  return TRUE;
+}
+
 /* New version to build player index for ASCII Player Files. Generate index
  * table for the player file. */
 void build_player_index(void)
@@ -132,11 +163,28 @@ void build_player_index(void)
       log("SYSERR: player index %s ended early at record %d of %d", index_name, i + 1, rec_count);
       break;
     }
-    fields = sscanf(line, "%ld %79s %d %63s %ld", &player_table[i].id, arg2,
-      &player_table[i].level, bits, (long *)&player_table[i].last);
+    {
+      const char *cursor = line;
+      long level, last;
+      fields = 0;
+      if (parse_index_long(&cursor, &player_table[i].id) &&
+          parse_index_word(&cursor, arg2, sizeof(arg2)) &&
+          parse_index_long(&cursor, &level) &&
+          level >= INT_MIN && level <= INT_MAX &&
+          parse_index_word(&cursor, bits, sizeof(bits)) &&
+          parse_index_long(&cursor, &last)) {
+        while (isspace((unsigned char)*cursor))
+          cursor++;
+        if (*cursor == '\0') {
+          player_table[i].level = (int)level;
+          player_table[i].last = (time_t)last;
+          fields = 5;
+        }
+      }
+    }
     if (fields != 5) {
-      log("SYSERR: malformed player index record %d in %s (expected 5 fields, got %d): '%s'",
-          i + 1, index_name, fields, line);
+      log("SYSERR: malformed player index record %d in %s: '%s'",
+          i + 1, index_name, line);
       break;
     }
     CREATE(player_table[i].name, char, strlen(arg2) + 1);
