@@ -11,6 +11,18 @@ UTILS = (ROOT / "src" / "utils.c").read_text(encoding="utf-8")
 
 
 class FormattingAndBoundsContracts(unittest.TestCase):
+    def test_script_wait_numeric_fields_are_checked(self):
+        src = (ROOT / "src" / "dg_scripts.c").read_text(encoding="utf-8")
+        self.assertIn("static int script_wait_number(", src)
+        self.assertIn("strtol(text, &end, 10)", src)
+        self.assertIn("errno == ERANGE", src)
+        self.assertIn('script_wait_number(arg + 6, &hr, &rest)', src)
+        self.assertIn('script_wait_number(rest + 1, &min, &rest)', src)
+        self.assertIn('script_wait_number(arg, &when, &rest)', src)
+        self.assertIn("when > LONG_MAX / PASSES_PER_SEC", src)
+        self.assertNotIn('sscanf(arg, "until %ld', src)
+        self.assertNotIn('sscanf(arg, "%ld %c"', src)
+
     def test_dg_trigger_index_and_position_parsing_is_checked(self):
         src = (ROOT / "src" / "dg_olc.c").read_text(encoding="utf-8")
         self.assertIn("static int trigedit_index_number(", src)
