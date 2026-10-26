@@ -188,6 +188,10 @@ void stop_fighting(struct char_data *ch)
   update_pos(ch);
 }
 
+/* Create a container object holding a defeated character's remains.
+ * Corpse ownership and contents affect item recovery, world object lifetime,
+ * and equipment-loss rules; keep object transfers and extraction consistent.
+ */
 static void make_corpse(struct char_data *ch)
 {
   char buf2[MAX_NAME_LENGTH + 64];
@@ -618,7 +622,11 @@ int skill_message(int dam, struct char_data *ch, struct char_data *vict,
   return (0);
 }
 
-/* This function returns the following codes:
+/* Central damage path may initiate character death or extraction. Callers
+ * must not assume a victim remains alive after a fatal return, and must
+ * account for fight triggers modifying combat state.
+ *
+ * This function returns the following codes:
  *	< 0	Victim died.
  *	= 0	No damage.
  *	> 0	How much damage done. */
