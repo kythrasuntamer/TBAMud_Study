@@ -11,6 +11,18 @@ UTILS = (ROOT / "src" / "utils.c").read_text(encoding="utf-8")
 
 
 class FormattingAndBoundsContracts(unittest.TestCase):
+    def test_db_line_flag_word_and_eol_pushback(self):
+        db = (ROOT / "src" / "db.c").read_text(encoding="utf-8")
+        sections = [
+            db[db.index("char *fread_line(FILE *fp)"):db.index("int fread_flags(FILE *fp")],
+            db[db.index("int fread_flags(FILE *fp"):db.index("char *fread_word(FILE *fp")],
+            db[db.index("char *fread_word(FILE *fp"):db.index("void fread_to_eol(FILE *fp")],
+            db[db.index("void fread_to_eol(FILE *fp"):db.index("/* Called to free all allocated follow_type structs */")],
+        ]
+        self.assertEqual([part.count("ungetc(") for part in sections], [2, 2, 1, 1])
+        self.assertTrue(all("== EOF" in part for part in sections))
+        self.assertTrue(all("ungetc(" in part and "== EOF" in part for part in sections))
+
     def test_db_readers_check_lookahead_pushback(self):
         db = (ROOT / "src" / "db.c").read_text(encoding="utf-8")
         clean = db[db.index("char *fread_clean_string(FILE *fl,"):db.index("int fread_number(FILE *fp)")]
