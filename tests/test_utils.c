@@ -14,6 +14,19 @@
  * "SYSERR: Using log() before stream was initialized!" warning. */
 extern FILE *logfile;
 
+/* Regression: get_line must copy the entire zone header, not pointer width. */
+void test_get_line_preserves_zone_header(void)
+{
+    FILE *fp = tmpfile();
+    char buf[READ_SIZE];
+    TEST_ASSERT_NOT_NULL(fp);
+    TEST_ASSERT_TRUE(fputs("0 99 30 2 d 0 0 0 -1 -1\n", fp) >= 0);
+    rewind(fp);
+    TEST_ASSERT_EQUAL_INT(1, get_line(fp, buf));
+    TEST_ASSERT_EQUAL_STRING("0 99 30 2 d 0 0 0 -1 -1", buf);
+    fclose(fp);
+}
+
 void setUp(void)    { logfile = stderr; }
 void tearDown(void) { logfile = NULL; }
 
@@ -436,6 +449,7 @@ int main(void)
     UNITY_BEGIN();
 
     /* prune_crlf */
+    RUN_TEST(test_get_line_preserves_zone_header);
     RUN_TEST(test_prune_crlf_strips_crlf);
     RUN_TEST(test_prune_crlf_strips_lf_only);
     RUN_TEST(test_prune_crlf_no_op_on_clean);
