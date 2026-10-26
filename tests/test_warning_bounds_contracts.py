@@ -11,6 +11,15 @@ UTILS = (ROOT / "src" / "utils.c").read_text(encoding="utf-8")
 
 
 class FormattingAndBoundsContracts(unittest.TestCase):
+    def test_ibt_lookahead_checks_eof_and_ungetc(self):
+        ibt = (ROOT / "src" / "ibt.c").read_text(encoding="utf-8")
+        start = ibt.index("static IBT_DATA *read_ibt(")
+        body = ibt[start:ibt.index("ibtData = new_ibt();", start)]
+        self.assertIn("int letter;", body)
+        self.assertIn("letter == EOF", body)
+        self.assertIn("isspace((unsigned char)letter)", body)
+        self.assertIn("ungetc(letter, fp) == EOF", body)
+
     def test_mudlog_checks_format_failure(self):
         start = UTILS.index("void mudlog(")
         end = UTILS.index("\n}", start)
