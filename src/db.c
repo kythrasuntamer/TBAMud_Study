@@ -40,6 +40,21 @@
 #include "screen.h"
 #include <sys/stat.h>
 
+/*
+ * World database ownership and reference model
+ * --------------------------------------------
+ * This module exposes the global tables used by room, mobile, object,
+ * trigger, zone, and shop loaders. Many other subsystems retain numeric
+ * references into these tables, so edits to indexing, loading, or cleanup
+ * can affect scripts, exits, zone resets, OLC, and live characters.
+ *
+ * Preserve the real-number/virtual-number distinction: array positions
+ * and world VNUMs are not interchangeable. When changing table layout,
+ * audit every consumer and verify the world boots and resets correctly.
+ *
+ * These comments describe the current ownership boundary only; they do
+ * not imply that all individual entries are always initialized.
+ */
 /*  declarations of most of the 'global' variables */
 struct config_data config_info; /* Game configuration list.	 */
 
@@ -59,6 +74,12 @@ obj_rnum top_of_objt = 0;	/* top of object index table	 */
 struct zone_data *zone_table; /* zone table      */
 zone_rnum top_of_zone_table = 0;/* top element of zone tab   */
 
+/*
+ * Global player index metadata, retained here for compatibility with the
+ * player loading/saving module. Do not change indexing or identifiers
+ * independently of src/players.c: player lookup and persistence depend on
+ * these fields agreeing with the on-disk player index.
+ */
 /* begin previously located in players.c */
 struct player_index_element *player_table = NULL; /* index to plr file   */
 int top_of_p_table = 0;   /* ref to top of table     */
@@ -119,6 +140,11 @@ time_t motdmod; /* Time motd file was last modified. */
 struct time_info_data time_info;  /* the infomation about the time    */
 struct weather_data weather_info;	/* the infomation about the weather */
 struct player_special_data dummy_mob;	/* dummy spec area for mobs	*/
+/*
+ * Pending zone-reset work. Reset processing may reference currently loaded
+ * zones, mobiles, objects, and rooms; world-data validation must therefore
+ * cover both initial boot and subsequent reset execution.
+ */
 struct reset_q_type reset_q;	    /* queue of zones to be reset	 */
 
 struct happyhour happy_data = {0,0,0,0};
