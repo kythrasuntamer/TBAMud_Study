@@ -318,7 +318,8 @@ int save_rooms(zone_rnum rzone)
                "SYSERR: Could not format room #%d for saving; zone %d not saved.",
                room->number, zone_table[rzone].number);
         tb_fclose(sf);
-        remove(filename);
+        if (remove(filename) != 0 && errno != ENOENT)
+          TB_REPORT_ERRNO("remove", filename);
         return FALSE;
       }
 
@@ -328,7 +329,8 @@ int save_rooms(zone_rnum rzone)
                "zone %d not saved.",
                room->number, n, MAX_STRING_LENGTH, zone_table[rzone].number);
         tb_fclose(sf);
-        remove(filename);
+        if (remove(filename) != 0 && errno != ENOENT)
+          TB_REPORT_ERRNO("remove", filename);
         return FALSE;
       }
 
