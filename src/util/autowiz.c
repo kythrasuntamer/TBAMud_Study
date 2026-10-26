@@ -70,10 +70,9 @@ void read_file(void)
   bitvector_t asciiflag_conv(char *flag);
 
   FILE *fl;
-  int recs, i, last = 0, level = 0, flags = 0;
+  int recs, i, level = 0, flags = 0;
   char index_name[40], line[256], bits[64];
   char name[MAX_NAME_LENGTH];
-  long id = 0;
 
   tb_snprintf(index_name, sizeof(index_name), "%s%s", LIB_PLRFILES, INDEX_FILE);
   if (!(fl = fopen(index_name, "r"))) {
@@ -103,7 +102,7 @@ void read_file(void)
         continue;
       tb_snprintf(name, sizeof(name), "%s", name_text);
       errno = 0;
-      id = strtol(id_text, &end, 10);
+      parsed = strtol(id_text, &end, 10);
       if (end == id_text || *end || errno == ERANGE)
         continue;
       errno = 0;
@@ -115,7 +114,7 @@ void read_file(void)
       parsed = strtol(last_text, &end, 10);
       if (end == last_text || *end || errno == ERANGE || parsed < INT_MIN || parsed > INT_MAX)
         continue;
-      last = (int)parsed;
+      /* Timestamp validated; wizard listing does not use it. */
     }
     CAP(name);
     flags = asciiflag_conv(bits);
