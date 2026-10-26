@@ -118,8 +118,9 @@ static long parse_pfile_long_or_zero(const char *value, const char *filename, co
 /*
  * Consume one whitespace-delimited signed long from *cursor.
  * On success, update *value and advance the cursor, returning TRUE.
- * On failure, leave both output parameters unchanged and return FALSE.
- * The caller must provide valid, non-NULL pointers.
+ * On failure, return FALSE without changing *value; leading whitespace may
+ * already have been consumed from *cursor. Callers requiring rollback must
+ * save the original cursor themselves. Valid, non-NULL pointers are required.
  */
 static int parse_index_long(const char **cursor, long *value)
 {
