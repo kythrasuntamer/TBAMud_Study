@@ -42,6 +42,10 @@ static void load_HMVS(struct char_data *ch, const char *line, int mode);
 static void write_aliases_ascii(FILE *file, struct char_data *ch);
 static void read_aliases_ascii(FILE *file, struct char_data *ch, int count);
 
+/* Read a signed player-file integer, logging malformed text and returning
+ * zero for invalid input.  Callers cannot distinguish that fallback from a
+ * legitimate zero; use an explicit result for fail-closed parsing.
+ */
 static int parse_pfile_int_or_zero(const char *value, const char *filename, const char *tag)
 {
   char *end = NULL;
@@ -68,6 +72,10 @@ static int parse_pfile_int_or_zero(const char *value, const char *filename, cons
   return ((int)parsed);
 }
 
+/* Read a signed long using the same logged-zero compatibility fallback.
+ * Reject range errors and trailing non-whitespace without changing saved
+ * player-file tag conventions.
+ */
 static long parse_pfile_long_or_zero(const char *value, const char *filename, const char *tag)
 {
   char *end = NULL;
@@ -93,7 +101,10 @@ static long parse_pfile_long_or_zero(const char *value, const char *filename, co
   return (parsed);
 }
 
-/* Read a whitespace-delimited signed number with overflow detection. */
+/* Read one signed index number and advance *cursor on success.
+ * Leading whitespace may already be skipped on failure; *value remains
+ * unchanged.  The caller must supply valid pointers.
+ */
 static int parse_index_long(const char **cursor, long *value)
 {
   char *end;
@@ -111,6 +122,9 @@ static int parse_index_long(const char **cursor, long *value)
   return (TRUE);
 }
 
+/* Copy one index token without truncation and advance *cursor on success.
+ * Reject empty tokens and tokens that do not fit the destination.
+ */
 static int parse_index_word(const char **cursor, char *dest, size_t capacity)
 {
   size_t len = 0;
