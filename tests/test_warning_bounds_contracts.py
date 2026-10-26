@@ -11,6 +11,15 @@ UTILS = (ROOT / "src" / "utils.c").read_text(encoding="utf-8")
 
 
 class FormattingAndBoundsContracts(unittest.TestCase):
+    def test_objsave_rent_headers_are_checked(self):
+        src = (ROOT / "src" / "objsave.c").read_text(encoding="utf-8")
+        self.assertIn("static int objsave_parse_int_fields(", src)
+        self.assertIn("static int objsave_parse_rent_header(", src)
+        self.assertIn("errno == ERANGE", src)
+        self.assertEqual(src.count("objsave_parse_rent_header(line,"), 3)
+        self.assertNotIn('sscanf(line, "%d %d %d %d %d %d"', src)
+        self.assertIn("if (!objsave_parse_int_fields(line, &rentcode, 1))", src)
+
     def test_db_zone_and_help_numeric_parsers(self):
         db = (ROOT / "src" / "db.c").read_text(encoding="utf-8")
         zone = db[db.index("static void load_zones(FILE *fl, char *zonename)\n{"):]
