@@ -573,7 +573,7 @@ SPECIAL(cityguard)
 
     if (GET_CHA(tch) < min_cha) {
       spittle = tch;
-      min_cha = GET_CHA(tch);
+      min_cha = (unsigned char)GET_CHA(tch);
     }
   }
 
