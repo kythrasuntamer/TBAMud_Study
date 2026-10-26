@@ -427,7 +427,8 @@ void copyover_recover()
     }
     errno = 0;
     parsed = strtol(timestamp, &end, 10);
-    while (isspace((unsigned char)*end))
+    while (*end == ' ' || *end == '\t' || *end == '\n' ||
+           *end == '\r' || *end == '\f' || *end == '\v')
       end++;
     i = (end != timestamp && *end == '\0' && errno != ERANGE) ? 1 : 0;
     if (i == 1)
