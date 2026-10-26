@@ -11,6 +11,17 @@ UTILS = (ROOT / "src" / "utils.c").read_text(encoding="utf-8")
 
 
 class FormattingAndBoundsContracts(unittest.TestCase):
+    def test_objsave_object_records_check_numeric_and_flag_fields(self):
+        src = (ROOT / "src" / "objsave.c").read_text(encoding="utf-8")
+        records = src[src.index("obj_save_data *objsave_parse_objects(FILE *fl)"):src.index("static int Crash_load_objs(struct char_data *ch) {")]
+        self.assertIn("objsave_parse_int_fields(line + 1, &nr, 1)", records)
+        self.assertIn("objsave_parse_int_fields(line, t, 3)", records)
+        self.assertIn("objsave_parse_int_fields(line, t, 4)", records)
+        self.assertIn("t[0] >= 0 && t[0] < MAX_OBJ_AFFECT", records)
+        self.assertEqual(records.count('sscanf(line, "%127s %127s %127s %127s"'), 3)
+        self.assertEqual(records.count('if (sscanf(line, "%127s'), 3)
+        self.assertNotIn('sscanf(line, "%s %s %s %s"', records)
+
     def test_objsave_rent_headers_are_checked(self):
         src = (ROOT / "src" / "objsave.c").read_text(encoding="utf-8")
         self.assertIn("static int objsave_parse_int_fields(", src)
