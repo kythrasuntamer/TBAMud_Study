@@ -29,7 +29,11 @@ static const char *fault;
 static char reported[256];
 static int input_write_error;
 static int record_failure(const char *operation, int err) {
-  if (!strcmp(fault, operation) ||\n      (!strcmp(fault, "rename+unlink") &&\n       (!strcmp(operation, "rename") || !strcmp(operation, "unlink")))) {\n    errno = err; return 1;\n  }
+  if (!strcmp(fault, operation) ||
+      (!strcmp(fault, "rename+unlink") &&
+       (!strcmp(operation, "rename") || !strcmp(operation, "unlink")))) {
+    errno = err; return 1;
+  }
   return 0;
 }
 static int injected_ferror(FILE *f) {
