@@ -253,11 +253,11 @@ void load_ibt_file(int mode)
    IBT_DATA *ibtData;
 
    switch(mode) {
-     case SCMD_BUG : snprintf(filename, sizeof(filename), "%s",BUGS_FILE);
+     case SCMD_BUG : tb_snprintf(filename, sizeof(filename), "%s",BUGS_FILE);
                      break;
-     case SCMD_IDEA: snprintf(filename, sizeof(filename), "%s",IDEAS_FILE);
+     case SCMD_IDEA: tb_snprintf(filename, sizeof(filename), "%s",IDEAS_FILE);
                      break;
-     case SCMD_TYPO: snprintf(filename, sizeof(filename), "%s",TYPOS_FILE);
+     case SCMD_TYPO: tb_snprintf(filename, sizeof(filename), "%s",TYPOS_FILE);
                      break;
      default       : log("SYSERR: Invalid mode (%d) in load_ibt_file", mode);
                      return;
@@ -293,13 +293,13 @@ void save_ibt_file(int mode)
    char filename[256];
 
    switch(mode) {
-     case SCMD_BUG : snprintf(filename, sizeof(filename), "%s",BUGS_FILE);
+     case SCMD_BUG : tb_snprintf(filename, sizeof(filename), "%s",BUGS_FILE);
                      first_ibt = first_bug;
                      break;
-     case SCMD_IDEA: snprintf(filename, sizeof(filename), "%s",IDEAS_FILE);
+     case SCMD_IDEA: tb_snprintf(filename, sizeof(filename), "%s",IDEAS_FILE);
                      first_ibt = first_idea;
                      break;
-     case SCMD_TYPO: snprintf(filename, sizeof(filename), "%s",TYPOS_FILE);
+     case SCMD_TYPO: tb_snprintf(filename, sizeof(filename), "%s",TYPOS_FILE);
                      first_ibt = first_typo;
                      break;
      default       : log("SYSERR: Invalid mode (%d) in save_ibt_file", mode);
