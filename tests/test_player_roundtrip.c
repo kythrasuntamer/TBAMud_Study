@@ -18,7 +18,8 @@ static struct player_special_data before_specials, after_specials;
 void setUp(void)
 {
   TEST_ASSERT_NOT_NULL(getcwd(original_cwd, sizeof(original_cwd)));
-  strcpy(sandbox, "/tmp/tbamud-player-roundtrip-XXXXXX");
+  TEST_ASSERT_TRUE(snprintf(sandbox, sizeof(sandbox),
+      "/tmp/tbamud-player-roundtrip-XXXXXX") > 0);
   TEST_ASSERT_NOT_NULL(mkdtemp(sandbox));
   TEST_ASSERT_EQUAL_INT(0, chdir(sandbox));
   TEST_ASSERT_EQUAL_INT(0, mkdir("lib", 0700));
@@ -31,6 +32,8 @@ void setUp(void)
   before.player_specials = &before_specials;
   after.player_specials = &after_specials;
   before.player.name = "Roundtrip";
+  top_of_p_table = -1;
+  TEST_ASSERT_EQUAL_INT(0, create_entry("Roundtrip"));
   before.pfilepos = 0;
   before.player.time.logon = 1;
   before.char_specials.saved.idnum = 19301;
