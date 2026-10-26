@@ -1119,7 +1119,7 @@ obj_save_data *objsave_parse_objects(FILE *fl)
     /* if it's a new record, wrap up the old one, and make space for a new one */
     if (*line == '#') {
       /* check for false alarm. */
-      if (sscanf(line, "#%d", &nr) == 1) {
+      if (objsave_parse_int_fields(line + 1, &nr, 1)) {
         /* If we attempt to load an object with a legal VNUM 0-65534, that
          * does not exist, skip it. If the object has a VNUM of NOTHING or
          * 65535, then we assume it doesn't exist on purpose. (Custom Item,
@@ -1174,8 +1174,12 @@ obj_save_data *objsave_parse_objects(FILE *fl)
         tb_snprintf(error, sizeof(error)-1, "rent(Ades):%s", temp->name);
         temp->action_description = fread_string(fl, error);
       } else if (!strcmp(tag, "Aff ")) {
-        sscanf(line, "%d %d %d", &t[0], &t[1], &t[2]);
-        if (t[0] < MAX_OBJ_AFFECT) {
+        if (!objsave_parse_int_fields(line, t, 3)) {
+          TB_ERROR_MSG("objsave", "parse-affect", "rent-object-record",
+                       "malformed saved object affect");
+          break;
+        }
+        if (t[0] >= 0 && t[0] < MAX_OBJ_AFFECT) {
           temp->affected[t[0]].location = t[1];
           temp->affected[t[0]].modifier = t[2];
         }
@@ -1210,7 +1214,11 @@ obj_save_data *objsave_parse_objects(FILE *fl)
       break;
     case 'F':
       if (!strcmp(tag, "Flag")) {
-        sscanf(line, "%s %s %s %s", f1, f2, f3, f4);
+        if (sscanf(line, "%127s %127s %127s %127s", f1, f2, f3, f4) != 4) {
+          TB_ERROR_MSG("objsave", "parse-flags", "rent-object-record",
+                       "malformed saved object extra flags");
+          break;
+        }
         GET_OBJ_EXTRA(temp)[0] = asciiflag_conv(f1);
         GET_OBJ_EXTRA(temp)[1] = asciiflag_conv(f2);
         GET_OBJ_EXTRA(temp)[2] = asciiflag_conv(f3);
@@ -1227,7 +1235,11 @@ obj_save_data *objsave_parse_objects(FILE *fl)
       break;
     case 'P':
       if (!strcmp(tag, "Perm")) {
-        sscanf(line, "%s %s %s %s", f1, f2, f3, f4);
+        if (sscanf(line, "%127s %127s %127s %127s", f1, f2, f3, f4) != 4) {
+          TB_ERROR_MSG("objsave", "parse-flags", "rent-object-record",
+                       "malformed saved object permanent flags");
+          break;
+        }
         GET_OBJ_AFFECT(temp)[0] = asciiflag_conv(f1);
         GET_OBJ_AFFECT(temp)[1] = asciiflag_conv(f2);
         GET_OBJ_AFFECT(temp)[2] = asciiflag_conv(f3);
@@ -1248,7 +1260,11 @@ obj_save_data *objsave_parse_objects(FILE *fl)
       break;
     case 'W':
       if (!strcmp(tag, "Wear")) {
-        sscanf(line, "%s %s %s %s", f1, f2, f3, f4);
+        if (sscanf(line, "%127s %127s %127s %127s", f1, f2, f3, f4) != 4) {
+          TB_ERROR_MSG("objsave", "parse-flags", "rent-object-record",
+                       "malformed saved object wear flags");
+          break;
+        }
         GET_OBJ_WEAR(temp)[0] = asciiflag_conv(f1);
         GET_OBJ_WEAR(temp)[1] = asciiflag_conv(f2);
         GET_OBJ_WEAR(temp)[2] = asciiflag_conv(f3);
@@ -1259,7 +1275,11 @@ obj_save_data *objsave_parse_objects(FILE *fl)
       break;
     case 'V':
       if (!strcmp(tag, "Vals")) {
-        sscanf(line, "%d %d %d %d", &t[0], &t[1], &t[2], &t[3]);
+        if (!objsave_parse_int_fields(line, t, 4)) {
+          TB_ERROR_MSG("objsave", "parse-values", "rent-object-record",
+                       "malformed saved object values");
+          break;
+        }
         for (i = 0; i < NUM_OBJ_VAL_POSITIONS; i++)
           GET_OBJ_VAL(temp, i) = t[i];
       }
