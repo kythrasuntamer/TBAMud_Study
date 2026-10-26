@@ -20,6 +20,12 @@ treating any feature as production-ready.
   `src/dg_scripts.c`.
 - Documented active-combat list traversal, attack guards, and combat pulse
   expectations in `src/fight.c`.
+- Annotated bounded input processing, output buffering, and socket-read return
+  conventions in `src/comm.c`.
+- Added player-file loading, staged saving, and compatibility notes to
+  `src/players.c`.
+- Documented Oasis OLC cleanup ownership and editor lifecycle concerns in
+  `src/oasis.c`.
 - Introduced this public changelog and expanded the README with the project's
   scope, contribution workflow, and verification policy.
 
