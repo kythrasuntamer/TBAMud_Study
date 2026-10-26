@@ -30,6 +30,7 @@ const char *class_abbrevs[] = {
   "Cl",
   "Th",
   "Wa",
+  "Mo",
   "\n"
 };
 
@@ -38,6 +39,7 @@ const char *pc_class_types[] = {
   "Cleric",
   "Thief",
   "Warrior",
+  "Monk",
   "\n"
 };
 
@@ -48,7 +50,8 @@ const char *class_menu =
 "  [\t(C\t)]leric\r\n"
 "  [\t(T\t)]hief\r\n"
 "  [\t(W\t)]arrior\r\n"
-"  [\t(Z\t)] Wizard\r\n";
+"  [\t(Z\t)] Wizard\r\n"
+"  [\t(O\t)] Monk\r\n";
 
 /* The code to interpret a class letter -- used in interpreter.c when a new
  * character is selecting a class and by 'set class' in act.wizard.c. */
@@ -62,6 +65,7 @@ int parse_class(char arg)
   case 'c': return CLASS_CLERIC;
   case 'w': return CLASS_WARRIOR;
   case 't': return CLASS_THIEF;
+  case 'o': return CLASS_MONK;
   default:  return CLASS_UNDEFINED;
   }
 }
@@ -115,11 +119,11 @@ bitvector_t find_class_bitvector(const char *arg)
 /* #define PRAC_TYPE		3  should it say 'spell' or 'skill'?	*/
 
 int prac_params[4][NUM_CLASSES] = {
-  /* MAG	CLE	THE	WAR */
-  { 95,		95,	85,	80	},	/* learned level */
-  { 100,	100,	12,	12	},	/* max per practice */
-  { 25,		25,	0,	0	},	/* min per practice */
-  { SPELL,	SPELL,	SKILL,	SKILL	},	/* prac name */
+  /* MAG CLE THE WAR MONK */
+  { 95, 95, 85, 80, 85 }, /* learned level */
+  { 100, 100, 12, 12, 12 }, /* max per practice */
+  { 25, 25, 0, 0, 0 }, /* min per practice */
+  { SPELL, SPELL, SKILL, SKILL, SKILL }, /* prac name */
 };
 
 /* The appropriate rooms for each guildmaster/guildguard; controls which types
@@ -149,6 +153,7 @@ struct guild_info_type guild_info[] = {
  * not forget to change extern declaration in magic.c if you add to this. */
 byte saving_throws(int class_num, int type, int level)
 {
+  if (class_num == CLASS_MONK) class_num = CLASS_WARRIOR;
   switch (class_num) {
   case CLASS_MAGIC_USER:
     switch (type) {
@@ -1179,6 +1184,7 @@ byte saving_throws(int class_num, int type, int level)
 /* THAC0 for classes and levels.  (To Hit Armor Class 0) */
 int thaco(int class_num, int level)
 {
+  if (class_num == CLASS_MONK) class_num = CLASS_WARRIOR;
   /* Legacy THAC0 tables end at 34. Preserve their terminal values
    * across expanded mortal and immortal levels. */
   if (level > 34 && level <= LVL_IMPL)
@@ -1412,6 +1418,14 @@ void roll_real_abils(struct char_data *ch)
     ch->real_abils.wis = table[4];
     ch->real_abils.cha = table[5];
     break;
+  case CLASS_MONK:
+    ch->real_abils.dex = table[0];
+    ch->real_abils.wis = table[1];
+    ch->real_abils.con = table[2];
+    ch->real_abils.str = table[3];
+    ch->real_abils.intel = table[4];
+    ch->real_abils.cha = table[5];
+    break;
   case CLASS_WARRIOR:
     ch->real_abils.str = table[0];
     ch->real_abils.dex = table[1];
@@ -1457,6 +1471,9 @@ void do_start(struct char_data *ch)
     break;
 
   case CLASS_WARRIOR:
+    break;
+  case CLASS_MONK:
+    SET_SKILL(ch, SKILL_KICK, 10);
     break;
   }
 
@@ -1504,6 +1521,11 @@ void advance_level(struct char_data *ch)
     add_move = rand_number(1, 3);
     break;
 
+  case CLASS_MONK:
+    add_hp += rand_number(7, 12);
+    add_mana = 0;
+    add_move = rand_number(2, 4);
+    break;
   case CLASS_WARRIOR:
     add_hp += rand_number(10, 15);
     add_mana = 0;
@@ -1644,6 +1666,12 @@ void init_spell_levels(void)
   spell_level(SKILL_HIDE, CLASS_THIEF, 5);
   spell_level(SKILL_TRACK, CLASS_THIEF, 6);
 
+  /* Monk uses existing, functional combat skills. */
+  spell_level(SKILL_KICK, CLASS_MONK, 1);
+  spell_level(SKILL_RESCUE, CLASS_MONK, 5);
+  spell_level(SKILL_BANDAGE, CLASS_MONK, 8);
+  spell_level(SKILL_TRACK, CLASS_MONK, 12);
+
   /* WARRIORS */
   spell_level(SKILL_KICK, CLASS_WARRIOR, 1);
   spell_level(SKILL_RESCUE, CLASS_WARRIOR, 3);
@@ -1660,6 +1688,7 @@ void init_spell_levels(void)
 /* Function to return the exp required for each class/level */
 int level_exp(int chclass, int level)
 {
+  if (chclass == CLASS_MONK) chclass = CLASS_WARRIOR;
   if (level > LVL_IMPL || level < 0) {
     log("SYSERR: Requesting exp for invalid level %d!", level);
     return 0;
@@ -1854,6 +1883,8 @@ int level_exp(int chclass, int level)
 /* Default titles of male characters. */
 const char *title_male(int chclass, int level)
 {
+  if (chclass == CLASS_MONK)
+    return level >= LVL_IMMORT ? "the Immortal Monk" : "the Monk";
   if (level <= 0 || level > LVL_IMPL)
     return "the Man";
   if (level == LVL_IMPL)
@@ -1996,6 +2027,8 @@ const char *title_male(int chclass, int level)
 /* Default titles of female characters. */
 const char *title_female(int chclass, int level)
 {
+  if (chclass == CLASS_MONK)
+    return level >= LVL_IMMORT ? "the Immortal Monk" : "the Monk";
   if (level <= 0 || level > LVL_IMPL)
     return "the Woman";
   if (level == LVL_IMPL)
