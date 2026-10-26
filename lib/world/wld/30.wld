@@ -887,7 +887,7 @@ D1
 A secluded chamber of necromantic studies lies east.
 ~
 ~
-0 -1 3058
+0 -1 3067
 S
 #3039
 The Paladin's Chapel~
@@ -1356,17 +1356,6 @@ You see the East Gate.
 ~
 0 -1 3041
 S
-#3058
-The Necromancer's Study~
-   A quiet, scholarly chamber lined with anatomical texts and warding diagrams. Apprentice necromancers examine mortality, preservation, and the ethics of spirit magic.
-~
-30 0 0 0 0 0
-D3
-The Sorcerer's observatory lies west.
-~
-~
-0 -1 3038
-S
 #3059
 Behind The Temple Altar~
    You are on a dirt path leading away from the Temple Altar which is south
@@ -1586,5 +1575,16 @@ There is a large rusty gate just to the west.
 ~
 ~
 0 -1 3600
+S
+#3067
+The Necromancer's Study~
+   A quiet, scholarly chamber lined with anatomical texts and warding diagrams. Apprentice necromancers examine mortality, preservation, and the ethics of spirit magic.
+~
+30 0 0 0 0 0
+D3
+The Sorcerer's observatory lies west.
+~
+~
+0 -1 3038
 S
 $~
