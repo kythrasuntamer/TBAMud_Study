@@ -371,6 +371,12 @@ char *get_name_by_id(long id)
 /* Stuff related to the save/load player system. */
 /* New load_char reads ASCII Player Files. Load a char, TRUE if loaded, FALSE
  * if not. */
+/* Load an ASCII player record through the player index. Resolve the saved
+ * filename first, then initialize in-memory defaults before parsing tags.
+ * Keep old tags readable when extending progression: existing player files
+ * may predate any newly added field. Returns a negative value when lookup
+ * or opening fails, and the player-table position after a successful load.
+ */
 int load_char(const char *name, struct char_data *ch)
 {
   int id, i;
@@ -643,6 +649,12 @@ int load_char(const char *name, struct char_data *ch)
 
 /* Write the vital data of a player to the player file. */
 /* This is the ASCII Player Files save routine. */
+/* Serialize an eligible player to the ASCII player-file format. The write
+ * path uses a staged temporary file before its final replacement; failure
+ * handling must not turn a partial stage into the authoritative save.
+ * Preserve the existing field names and endgame values for old characters.
+ * This API returns void, so callers cannot infer durability from its return.
+ */
 void save_char(struct char_data * ch)
 {
   FILE *fl;
