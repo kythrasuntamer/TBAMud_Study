@@ -14,6 +14,7 @@
 #include "utils.h"
 #include "comm.h"
 #include "spells.h"
+#include "arcane_specialization.h"
 #include "handler.h"
 #include "db.h"
 #include "interpreter.h"
@@ -286,11 +287,8 @@ int mag_damage(int level, struct char_data *ch, struct char_data *victim,
   } /* switch(spellnum) */
 
 
-  /* Innate Sorcerer empowerment affects direct, personally cast damage
-   * spells only; wands, scrolls and other item magic remain unchanged. */
-  if (!IS_NPC(ch) && GET_CLASS(ch) == CLASS_SORCERER &&
-      GET_LEVEL(ch) >= 20 && casttype == CAST_SPELL && dam > 0)
-    dam += dam / 4;
+  dam = arcane_adjust_damage(GET_CLASS(ch), GET_LEVEL(ch),
+                             dam, casttype, IS_NPC(ch));
 
   /* divide damage by two if victim makes his saving throw */
   if (mag_savingthrow(victim, savetype, 0))
