@@ -22,9 +22,8 @@ void setUp(void)
       "/tmp/tbamud-player-roundtrip-XXXXXX") > 0);
   TEST_ASSERT_NOT_NULL(mkdtemp(sandbox));
   TEST_ASSERT_EQUAL_INT(0, chdir(sandbox));
-  TEST_ASSERT_EQUAL_INT(0, mkdir("lib", 0700));
-  TEST_ASSERT_EQUAL_INT(0, mkdir("lib/plrfiles", 0700));
-  TEST_ASSERT_EQUAL_INT(0, mkdir("lib/plrfiles/P-T", 0700));
+  TEST_ASSERT_EQUAL_INT(0, mkdir("plrfiles", 0700));
+  TEST_ASSERT_EQUAL_INT(0, mkdir("plrfiles/P-T", 0700));
   memset(&before, 0, sizeof(before));
   memset(&after, 0, sizeof(after));
   memset(&before_specials, 0, sizeof(before_specials));
@@ -34,6 +33,7 @@ void setUp(void)
   before.player.name = "Roundtrip";
   top_of_p_table = -1;
   TEST_ASSERT_EQUAL_INT(0, create_entry("Roundtrip"));
+  TEST_ASSERT_NOT_NULL(player_table);
   before.pfilepos = 0;
   before.player.time.logon = 1;
   before.char_specials.saved.idnum = 19301;
@@ -42,15 +42,20 @@ void tearDown(void)
 {
   char path[256];
   TEST_ASSERT_EQUAL_INT(0, chdir(original_cwd));
-  snprintf(path, sizeof(path), "%s/lib/plrfiles/P-T/roundtrip.plr", sandbox);
+  TEST_ASSERT_TRUE(snprintf(path, sizeof(path), "%s/plrfiles/P-T/roundtrip.plr",
+      sandbox) > 0);
+  TEST_ASSERT_EQUAL_INT(0, unlink(path));
+  TEST_ASSERT_TRUE(snprintf(path, sizeof(path), "%s/plrfiles/index",
+      sandbox) > 0);
   (void)unlink(path);
-  snprintf(path, sizeof(path), "%s/lib/plrfiles/P-T", sandbox);
-  (void)rmdir(path);
-  snprintf(path, sizeof(path), "%s/lib/plrfiles", sandbox);
-  (void)rmdir(path);
-  snprintf(path, sizeof(path), "%s/lib", sandbox);
-  (void)rmdir(path);
-  (void)rmdir(sandbox);
+  TEST_ASSERT_TRUE(snprintf(path, sizeof(path), "%s/plrfiles/P-T",
+      sandbox) > 0);
+  TEST_ASSERT_EQUAL_INT(0, rmdir(path));
+  TEST_ASSERT_TRUE(snprintf(path, sizeof(path), "%s/plrfiles",
+      sandbox) > 0);
+  TEST_ASSERT_EQUAL_INT(0, rmdir(path));
+  TEST_ASSERT_EQUAL_INT(0, rmdir(sandbox));
+  free_player_index();
 }
 void test_character_class_and_endgame_roundtrip(void)
 {
