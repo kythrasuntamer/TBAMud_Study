@@ -153,7 +153,7 @@
 /* Reserved for the next class conversion. Not selectable until all systems support it. */
 #define CLASS_MONK        4    /**< Reserved PC class ID: Monk */
 /** Total number of available PC Classes */
-#define NUM_CLASSES	  4
+#define NUM_CLASSES	  5
 
 /* NPC classes (currently unused - feel free to implement!) */
 #define CLASS_OTHER       0    /**< NPC Class Other (or undefined) */
