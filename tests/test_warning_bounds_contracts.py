@@ -11,6 +11,23 @@ UTILS = (ROOT / "src" / "utils.c").read_text(encoding="utf-8")
 
 
 class FormattingAndBoundsContracts(unittest.TestCase):
+    def test_final_warning_cleanup_paths(self):
+        root = ROOT / "src"
+        for filename in ("comm.c", "ban.c", "util/autowiz.c"):
+            src = (root / filename).read_text(encoding="utf-8")
+            self.assertIn("strtol(", src)
+        comm = (root / "comm.c").read_text(encoding="utf-8")
+        self.assertNotIn('fscanf(fp, "%ld\\n", (long *)&boot_time)', comm)
+        self.assertNotIn('fscanf(fp, "%d %ld %511s', comm)
+        self.assertNotIn('fscanf(fl, " %s %s %d %s', (root / "ban.c").read_text(encoding="utf-8"))
+        self.assertNotIn('sscanf(line, "%ld %s %d %s %d"', (root / "util/autowiz.c").read_text(encoding="utf-8"))
+        for filename in ("util/rebuildAsciiIndex.c", "util/rebuildMailIndex.c"):
+            src = (root / filename).read_text(encoding="utf-8")
+            self.assertIn("if (", src)
+            self.assertIn("UTIL_REPORT_ERRNO", src)
+        self.assertIn("(unsigned char)GET_LEVEL(ch)", (root / "magic.c").read_text(encoding="utf-8"))
+        self.assertIn("(unsigned char)GET_CHA(tch)", (root / "spec_procs.c").read_text(encoding="utf-8"))
+
     def test_combat_messages_and_shops_validate_numeric_ids(self):
         msg = (ROOT / "src" / "msgedit.c").read_text(encoding="utf-8")
         shop = (ROOT / "src" / "shop.c").read_text(encoding="utf-8")
