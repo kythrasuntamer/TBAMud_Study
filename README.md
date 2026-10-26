@@ -24,6 +24,9 @@ current stable public engine contract.
 - **Maintainability:** explain ownership, invariants, error behavior, and
   compatibility constraints alongside the code.
 
+For planned **public engine** work, read [ROADMAP.md](ROADMAP.md). The roadmap
+intentionally excludes private game design and unreleased content.
+
 **Implementation status matters:** Some capabilities are already present on
 the default branch; other improvements remain in draft PRs or prototype
 branches. See [CHANGELOG.md](CHANGELOG.md) for a public, status-aware overview.
