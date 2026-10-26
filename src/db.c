@@ -2497,7 +2497,7 @@ static void load_zones(FILE *fl, char *zonename)
         }
       } else if (ZCMD.command == 'V') {
         if (!parse_reset_numbers(ptr, args, 4, &rest) ||
-            sscanf(rest, " %79s %79[^\\f\\n\\r\\t\\v]", t1, t2) != 2)
+            sscanf(rest, " %79s %79[^\f\n\r\t\v]", t1, t2) != 2)
           error = 1;
         else {
           tmp = args[0];
