@@ -60,7 +60,7 @@ class ProgressionContractTests(unittest.TestCase):
         self.assertIn("static int parse_index_word(", player)
         self.assertIn("level >= INT_MIN && level <= INT_MAX", player)
         self.assertIn("player_table[i].last = (time_t)last", player)
-        affects = player[player.index("static void load_affects(FILE *fl, struct char_data *ch)\\n{".replace("\\\\n", "\\n")):]
+        affects = player[player.index("/* Both historical five-column and current eight-column affects remain supported."): ]
         self.assertIn("parsed = strtol(cursor, &end, 10)", affects)
         self.assertIn("count != 5 && count != 8", affects)
         self.assertIn("SET_BIT_AR(af.bitvector, values[4])", affects)
