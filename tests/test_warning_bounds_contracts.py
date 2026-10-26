@@ -11,6 +11,16 @@ UTILS = (ROOT / "src" / "utils.c").read_text(encoding="utf-8")
 
 
 class FormattingAndBoundsContracts(unittest.TestCase):
+    def test_information_level_ranges_checked(self):
+        source = (ROOT / "src" / "act.informative.c").read_text(encoding="utf-8")
+        self.assertIn("static int parse_info_level_range(", source)
+        self.assertIn("errno == ERANGE", source)
+        self.assertIn("first > INT_MAX", source)
+        self.assertIn("second > INT_MAX", source)
+        self.assertNotIn('sscanf(arg, "%d-%d"', source)
+        self.assertEqual(source.count("if (!parse_info_level_range(arg, &low, &high))"), 2)
+        self.assertIn("ret = parse_info_level_range(arg, &min_lev, &max_lev);", source)
+
     def test_last_login_cleanup_never_deletes_original_before_replace(self):
         wizard = (ROOT / "src" / "act.wizard.c").read_text(encoding="utf-8")
         begin = wizard.index("void clean_llog_entries(void) {")
