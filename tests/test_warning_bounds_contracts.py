@@ -11,6 +11,18 @@ UTILS = (ROOT / "src" / "utils.c").read_text(encoding="utf-8")
 
 
 class FormattingAndBoundsContracts(unittest.TestCase):
+    def test_zone_index_updates_preserve_live_index_on_failure(self):
+        src = (ROOT / "src" / "genzon.c").read_text(encoding="utf-8")
+        section = src[src.index("void create_world_index(int znum"):src.index("void remove_room_zone_commands(")]
+        self.assertIn("static int parse_zone_index_number(", src)
+        self.assertIn("errno == ERANGE", src)
+        self.assertIn("value > INT_MAX", src)
+        self.assertIn("if (!parse_zone_index_number(buf, &num))", section)
+        self.assertEqual(section.count("cleanup_new_zone_index(new_name);"), 5)
+        self.assertNotIn("remove(new_name);", section)
+        self.assertIn('TB_REPORT_ERRNO("remove", path)', src)
+        self.assertIn("tb_replace_file_checked(new_name, old_name)", section)
+
     def test_objsave_object_records_check_numeric_and_flag_fields(self):
         src = (ROOT / "src" / "objsave.c").read_text(encoding="utf-8")
         records = src[src.index("obj_save_data *objsave_parse_objects(FILE *fl)"):src.index("static int Crash_load_objs(struct char_data *ch) {")]
