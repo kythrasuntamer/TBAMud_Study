@@ -151,11 +151,11 @@ bitvector_t find_class_bitvector(const char *arg)
 /* #define PRAC_TYPE		3  should it say 'spell' or 'skill'?	*/
 
 int prac_params[4][NUM_CLASSES] = {
-  /* MAG CLE THE WAR MONK */
-  { 95, 95, 85, 80, 85 }, /* learned level */
-  { 100, 100, 12, 12, 12 }, /* max per practice */
-  { 25, 25, 0, 0, 0 }, /* min per practice */
-  { SPELL, SPELL, SKILL, SKILL, SKILL }, /* prac name */
+  /* WIZ CLE THI WAR MON DRU BER SOR PAL RAN BAR NEC */
+  { 95, 95, 85, 80, 85, 95, 80, 95, 85, 85, 85, 95 },
+  { 100, 100, 12, 12, 12, 100, 12, 100, 12, 12, 12, 100 },
+  { 25, 25, 0, 0, 0, 25, 0, 25, 0, 0, 0, 25 },
+  { SPELL, SPELL, SKILL, SKILL, SKILL, SPELL, SKILL, SPELL, SKILL, SKILL, SKILL, SPELL }
 };
 
 /* The appropriate rooms for each guildmaster/guildguard; controls which types
@@ -1721,6 +1721,49 @@ void init_spell_levels(void)
   spell_level(SKILL_SNEAK, CLASS_MONK, 25);
   spell_level(SKILL_HIDE, CLASS_MONK, 30);
   spell_level(SKILL_WHIRLWIND, CLASS_MONK, 35);
+
+  /* New classes train only abilities already implemented by this engine. */
+  spell_level(SPELL_CURE_LIGHT, CLASS_DRUID, 1);
+  spell_level(SPELL_CREATE_WATER, CLASS_DRUID, 2);
+  spell_level(SPELL_DETECT_POISON, CLASS_DRUID, 3);
+  spell_level(SPELL_BLESS, CLASS_DRUID, 5);
+  spell_level(SPELL_CURE_CRITIC, CLASS_DRUID, 9);
+  spell_level(SPELL_CALL_LIGHTNING, CLASS_DRUID, 15);
+  spell_level(SPELL_HEAL, CLASS_DRUID, 20);
+  spell_level(SPELL_CONTROL_WEATHER, CLASS_DRUID, 25);
+  spell_level(SKILL_KICK, CLASS_BERSERKER, 1);
+  spell_level(SKILL_BASH, CLASS_BERSERKER, 4);
+  spell_level(SKILL_RESCUE, CLASS_BERSERKER, 7);
+  spell_level(SKILL_WHIRLWIND, CLASS_BERSERKER, 16);
+  spell_level(SPELL_MAGIC_MISSILE, CLASS_SORCERER, 1);
+  spell_level(SPELL_ARMOR, CLASS_SORCERER, 4);
+  spell_level(SPELL_LIGHTNING_BOLT, CLASS_SORCERER, 9);
+  spell_level(SPELL_FIREBALL, CLASS_SORCERER, 15);
+  spell_level(SPELL_FLY, CLASS_SORCERER, 22);
+  spell_level(SPELL_ENCHANT_WEAPON, CLASS_SORCERER, 26);
+  spell_level(SKILL_KICK, CLASS_PALADIN, 1);
+  spell_level(SKILL_RESCUE, CLASS_PALADIN, 3);
+  spell_level(SKILL_BANDAGE, CLASS_PALADIN, 7);
+  spell_level(SPELL_BLESS, CLASS_PALADIN, 8);
+  spell_level(SPELL_CURE_LIGHT, CLASS_PALADIN, 12);
+  spell_level(SPELL_SANCTUARY, CLASS_PALADIN, 25);
+  spell_level(SKILL_TRACK, CLASS_RANGER, 1);
+  spell_level(SKILL_SNEAK, CLASS_RANGER, 4);
+  spell_level(SKILL_HIDE, CLASS_RANGER, 5);
+  spell_level(SKILL_KICK, CLASS_RANGER, 10);
+  spell_level(SKILL_BANDAGE, CLASS_RANGER, 12);
+  spell_level(SKILL_TRACK, CLASS_BARD, 1);
+  spell_level(SKILL_SNEAK, CLASS_BARD, 3);
+  spell_level(SKILL_HIDE, CLASS_BARD, 5);
+  spell_level(SKILL_BANDAGE, CLASS_BARD, 8);
+  spell_level(SPELL_CHARM, CLASS_BARD, 16);
+  spell_level(SPELL_MAGIC_MISSILE, CLASS_NECROMANCER, 1);
+  spell_level(SPELL_DETECT_MAGIC, CLASS_NECROMANCER, 2);
+  spell_level(SPELL_SLEEP, CLASS_NECROMANCER, 8);
+  spell_level(SPELL_ENERGY_DRAIN, CLASS_NECROMANCER, 13);
+  spell_level(SPELL_CURSE, CLASS_NECROMANCER, 14);
+  spell_level(SPELL_POISON, CLASS_NECROMANCER, 14);
+  spell_level(SPELL_CHARM, CLASS_NECROMANCER, 16);
 
   /* WARRIORS */
   spell_level(SKILL_KICK, CLASS_WARRIOR, 1);
