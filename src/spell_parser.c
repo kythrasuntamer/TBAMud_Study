@@ -56,9 +56,23 @@ static struct syllable syls[] = { { " ", " " }, { "ar", "abra" },
         "y", "l" }, { "z", "k" }, { "", "" } };
 
 static int mag_manacost(struct char_data *ch, int spellnum) {
-  return MAX(SINFO.mana_max - (SINFO.mana_change *
+  int mana = MAX(SINFO.mana_max - (SINFO.mana_change *
       (GET_LEVEL(ch) - SINFO.min_level[(int) GET_CLASS(ch)])),
-  SINFO.mana_min);
+      SINFO.mana_min);
+
+  /* A Wizard's well-practiced spells become cheaper. */
+  if (!IS_NPC(ch) && GET_CLASS(ch) == CLASS_MAGIC_USER &&
+      GET_LEVEL(ch) >= 20 &&
+      GET_LEVEL(ch) - SINFO.min_level[CLASS_MAGIC_USER] >= 10)
+    mana = MAX(1, (mana * 4 + 4) / 5);
+
+  /* Sorcerer damage spells consume extra mana to fuel innate power.
+   * This matches the empowerment applied in mag_damage for direct spells. */
+  if (!IS_NPC(ch) && GET_CLASS(ch) == CLASS_SORCERER &&
+      GET_LEVEL(ch) >= 20 && IS_SET(SINFO.routines, MAG_DAMAGE))
+    mana = (mana * 3 + 1) / 2;
+
+  return mana;
 }
 
 static char *obfuscate_spell(const char *unobfuscated) {
@@ -219,7 +233,7 @@ int call_magic(struct char_data *caster, struct char_data *cvict,
   }
 
   if (IS_SET(SINFO.routines, MAG_DAMAGE))
-    if (mag_damage(level, caster, cvict, spellnum, savetype) == -1)
+    if (mag_damage(level, caster, cvict, spellnum, savetype, casttype) == -1)
       return (-1); /* Successful and target died, don't cast again. */
 
   if (IS_SET(SINFO.routines, MAG_AFFECTS))
