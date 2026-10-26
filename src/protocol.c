@@ -2573,10 +2573,12 @@ static char *AllocString( const char *apString )
 
    if ( apString != NULL )
    {
-      int Size = strlen(apString);
-      pResult = (char *) malloc(Size+1);
+      size_t Size = strlen(apString);
+      if (Size == (size_t)-1)
+         return NULL;
+      pResult = (char *) malloc(Size + 1);
       if ( pResult != NULL )
-         strcpy( pResult, apString );
+         memcpy(pResult, apString, Size + 1);
    }
 
    return pResult;
