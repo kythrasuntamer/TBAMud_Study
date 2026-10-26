@@ -815,8 +815,10 @@ void mudlog(int type, int level, int file, const char *str, ...)
 
   strlcpy(buf, "[ ", sizeof(buf));	/* strcpy: OK */
   va_start(args, str);
-  vsnprintf(buf + 2, sizeof(buf) - 6, str, args);
+  int formatted_length = vsnprintf(buf + 2, sizeof(buf) - 6, str, args);
   va_end(args);
+  if (formatted_length < 0)
+    strlcpy(buf + 2, "(log formatting failed)", sizeof(buf) - 2);
   strlcat(buf, " ]\r\n", sizeof(buf));	/* strcat: OK */
 
   for (i = descriptor_list; i; i = i->next) {
@@ -2042,7 +2044,7 @@ char *strpaste(char *str1, char *str2, char *joiner)
       sp2++;
     }
 
-    if (MAX_STRING_LENGTH - used < 2)
+    if (used > MAX_STRING_LENGTH - 2)
       break;
     ret[used++] = '\r';
     ret[used++] = '\n';
