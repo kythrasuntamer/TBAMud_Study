@@ -20,7 +20,8 @@ static int parse_int_text(const char *text, int *out)
   if (text == NULL || out == NULL)
     return 0;
 
-  while (isspace((unsigned char)*text))
+  while (*text == ' ' || *text == '\t' || *text == '\n' ||
+         *text == '\r' || *text == '\f' || *text == '\v')
     text++;
 
   errno = 0;
