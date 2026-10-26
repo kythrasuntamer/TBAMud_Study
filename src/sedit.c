@@ -18,6 +18,7 @@
 #include "genzon.h"
 #include "oasis.h"
 #include "constants.h"
+#include <float.h>
 #include "shop.h"
 
 /* local functions */
@@ -45,7 +46,7 @@ static int parse_shop_profit(const char *text, float *result)
     text++;
   errno = 0;
   parsed = strtof(text, &end);
-  if (text == end || errno == ERANGE || !isfinite(parsed))
+  if (text == end || errno == ERANGE || parsed != parsed || parsed > FLT_MAX || parsed < -FLT_MAX)
     return 0;
   while (isspace((unsigned char)*end))
     end++;
