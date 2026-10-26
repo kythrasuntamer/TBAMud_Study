@@ -565,6 +565,9 @@ int load_char(const char *name, struct char_data *ch)
 void save_char(struct char_data * ch)
 {
   FILE *fl;
+  char temporary_filename[sizeof(filename) + 16];
+  int temp_fd;
+  int save_failed = FALSE;
   char filename[40], buf[MAX_STRING_LENGTH], bits[127], bits2[127], bits3[127], bits4[127];
   int i, j, id, save_index = FALSE;
   struct affected_type *aff, tmp_aff[MAX_AFFECT];
@@ -594,8 +597,20 @@ void save_char(struct char_data * ch)
 
   if (!get_filename(filename, sizeof(filename), PLR_FILE, GET_NAME(ch)))
     return;
-  if (!(fl = fopen(filename, "w"))) {
-    mudlog(NRM, LVL_GOD, TRUE, "SYSERR: Couldn't open player file %s for write", filename);
+  /* Stage saves beside the original; never truncate a valid player file. */
+  if (snprintf(temporary_filename, sizeof(temporary_filename),
+               "%s.tmpXXXXXX", filename) < 0)
+    return;
+  temp_fd = mkstemp(temporary_filename);
+  if (temp_fd < 0) {
+    TB_ERROR_ERRNO("PLAYER", "mkstemp", filename, "Unable to stage player save");
+    return;
+  }
+  fl = fdopen(temp_fd, "w");
+  if (fl == NULL) {
+    TB_ERROR_ERRNO("PLAYER", "fdopen", temporary_filename, "Unable to open staged save");
+    close(temp_fd);
+    unlink(temporary_filename);
     return;
   }
 
@@ -636,19 +651,19 @@ void save_char(struct char_data * ch)
   ch->aff_abils = ch->real_abils;
   /* end char_to_store code */
 
-  if (GET_NAME(ch))				fprintf(fl, "Name: %s\n", GET_NAME(ch));
-  if (GET_PASSWD(ch))				fprintf(fl, "Pass: %s\n", GET_PASSWD(ch));
-  if (GET_TITLE(ch))				fprintf(fl, "Titl: %s\n", GET_TITLE(ch));
+  if (GET_NAME(ch))				tb_fprintf(fl, "Name: %s\n", GET_NAME(ch));
+  if (GET_PASSWD(ch))				tb_fprintf(fl, "Pass: %s\n", GET_PASSWD(ch));
+  if (GET_TITLE(ch))				tb_fprintf(fl, "Titl: %s\n", GET_TITLE(ch));
   if (ch->player.description && *ch->player.description) {
     strlcpy(buf, ch->player.description, sizeof(buf));
     strip_cr(buf);
     tb_fprintf(fl, "Desc:\n%s~\n", buf);
   }
-  if (POOFIN(ch))				fprintf(fl, "PfIn: %s\n", POOFIN(ch));
-  if (POOFOUT(ch))				fprintf(fl, "PfOt: %s\n", POOFOUT(ch));
-  if (GET_SEX(ch)	     != PFDEF_SEX)	fprintf(fl, "Sex : %d\n", GET_SEX(ch));
-  if (GET_CLASS(ch)	   != PFDEF_CLASS)	fprintf(fl, "Clas: %d\n", GET_CLASS(ch));
-  if (GET_LEVEL(ch)	   != PFDEF_LEVEL)	fprintf(fl, "Levl: %d\n", GET_LEVEL(ch));
+  if (POOFIN(ch))				tb_fprintf(fl, "PfIn: %s\n", POOFIN(ch));
+  if (POOFOUT(ch))				tb_fprintf(fl, "PfOt: %s\n", POOFOUT(ch));
+  if (GET_SEX(ch)	     != PFDEF_SEX)	tb_fprintf(fl, "Sex : %d\n", GET_SEX(ch));
+  if (GET_CLASS(ch)	   != PFDEF_CLASS)	tb_fprintf(fl, "Clas: %d\n", GET_CLASS(ch));
+  if (GET_LEVEL(ch)	   != PFDEF_LEVEL)	tb_fprintf(fl, "Levl: %d\n", GET_LEVEL(ch));
 
   tb_fprintf(fl, "Id  : %ld\n", GET_IDNUM(ch));
   tb_fprintf(fl, "Brth: %ld\n", (long)ch->player.time.birth);
@@ -660,10 +675,10 @@ void save_char(struct char_data * ch)
   if (GET_LAST_NEWS(ch) != PFDEF_LASTNEWS)
     tb_fprintf(fl, "Lnew: %d\n", (int)GET_LAST_NEWS(ch));
 
-  if (GET_HOST(ch))				fprintf(fl, "Host: %s\n", GET_HOST(ch));
-  if (GET_HEIGHT(ch)	   != PFDEF_HEIGHT)	fprintf(fl, "Hite: %d\n", GET_HEIGHT(ch));
-  if (GET_WEIGHT(ch)	   != PFDEF_WEIGHT)	fprintf(fl, "Wate: %d\n", GET_WEIGHT(ch));
-  if (GET_ALIGNMENT(ch)  != PFDEF_ALIGNMENT)	fprintf(fl, "Alin: %d\n", GET_ALIGNMENT(ch));
+  if (GET_HOST(ch))				tb_fprintf(fl, "Host: %s\n", GET_HOST(ch));
+  if (GET_HEIGHT(ch)	   != PFDEF_HEIGHT)	tb_fprintf(fl, "Hite: %d\n", GET_HEIGHT(ch));
+  if (GET_WEIGHT(ch)	   != PFDEF_WEIGHT)	tb_fprintf(fl, "Wate: %d\n", GET_WEIGHT(ch));
+  if (GET_ALIGNMENT(ch)  != PFDEF_ALIGNMENT)	tb_fprintf(fl, "Alin: %d\n", GET_ALIGNMENT(ch));
 
 
   sprintascii(bits,  PLR_FLAGS(ch)[0]);
@@ -684,59 +699,59 @@ void save_char(struct char_data * ch)
   sprintascii(bits4, PRF_FLAGS(ch)[3]);
   tb_fprintf(fl, "Pref: %s %s %s %s\n", bits, bits2, bits3, bits4);
 
- if (GET_SAVE(ch, 0)	   != PFDEF_SAVETHROW)	fprintf(fl, "Thr1: %d\n", GET_SAVE(ch, 0));
-  if (GET_SAVE(ch, 1)	   != PFDEF_SAVETHROW)	fprintf(fl, "Thr2: %d\n", GET_SAVE(ch, 1));
-  if (GET_SAVE(ch, 2)	   != PFDEF_SAVETHROW)	fprintf(fl, "Thr3: %d\n", GET_SAVE(ch, 2));
-  if (GET_SAVE(ch, 3)	   != PFDEF_SAVETHROW)	fprintf(fl, "Thr4: %d\n", GET_SAVE(ch, 3));
-  if (GET_SAVE(ch, 4)	   != PFDEF_SAVETHROW)	fprintf(fl, "Thr5: %d\n", GET_SAVE(ch, 4));
+ if (GET_SAVE(ch, 0)	   != PFDEF_SAVETHROW)	tb_fprintf(fl, "Thr1: %d\n", GET_SAVE(ch, 0));
+  if (GET_SAVE(ch, 1)	   != PFDEF_SAVETHROW)	tb_fprintf(fl, "Thr2: %d\n", GET_SAVE(ch, 1));
+  if (GET_SAVE(ch, 2)	   != PFDEF_SAVETHROW)	tb_fprintf(fl, "Thr3: %d\n", GET_SAVE(ch, 2));
+  if (GET_SAVE(ch, 3)	   != PFDEF_SAVETHROW)	tb_fprintf(fl, "Thr4: %d\n", GET_SAVE(ch, 3));
+  if (GET_SAVE(ch, 4)	   != PFDEF_SAVETHROW)	tb_fprintf(fl, "Thr5: %d\n", GET_SAVE(ch, 4));
 
-  if (GET_WIMP_LEV(ch)	   != PFDEF_WIMPLEV)	fprintf(fl, "Wimp: %d\n", GET_WIMP_LEV(ch));
-  if (GET_FREEZE_LEV(ch)   != PFDEF_FREEZELEV)	fprintf(fl, "Frez: %d\n", GET_FREEZE_LEV(ch));
-  if (GET_INVIS_LEV(ch)	   != PFDEF_INVISLEV)	fprintf(fl, "Invs: %d\n", GET_INVIS_LEV(ch));
-  if (GET_LOADROOM(ch)	   != PFDEF_LOADROOM)	fprintf(fl, "Room: %d\n", GET_LOADROOM(ch));
+  if (GET_WIMP_LEV(ch)	   != PFDEF_WIMPLEV)	tb_fprintf(fl, "Wimp: %d\n", GET_WIMP_LEV(ch));
+  if (GET_FREEZE_LEV(ch)   != PFDEF_FREEZELEV)	tb_fprintf(fl, "Frez: %d\n", GET_FREEZE_LEV(ch));
+  if (GET_INVIS_LEV(ch)	   != PFDEF_INVISLEV)	tb_fprintf(fl, "Invs: %d\n", GET_INVIS_LEV(ch));
+  if (GET_LOADROOM(ch)	   != PFDEF_LOADROOM)	tb_fprintf(fl, "Room: %d\n", GET_LOADROOM(ch));
 
-  if (GET_BAD_PWS(ch)	   != PFDEF_BADPWS)	fprintf(fl, "Badp: %d\n", GET_BAD_PWS(ch));
-  if (GET_PRACTICES(ch)	   != PFDEF_PRACTICES)	fprintf(fl, "Lern: %d\n", GET_PRACTICES(ch));
+  if (GET_BAD_PWS(ch)	   != PFDEF_BADPWS)	tb_fprintf(fl, "Badp: %d\n", GET_BAD_PWS(ch));
+  if (GET_PRACTICES(ch)	   != PFDEF_PRACTICES)	tb_fprintf(fl, "Lern: %d\n", GET_PRACTICES(ch));
 
-  if (GET_COND(ch, HUNGER)   != PFDEF_HUNGER && GET_LEVEL(ch) < LVL_IMMORT) fprintf(fl, "Hung: %d\n", GET_COND(ch, HUNGER));
-  if (GET_COND(ch, THIRST) != PFDEF_THIRST && GET_LEVEL(ch) < LVL_IMMORT) fprintf(fl, "Thir: %d\n", GET_COND(ch, THIRST));
-  if (GET_COND(ch, DRUNK)  != PFDEF_DRUNK  && GET_LEVEL(ch) < LVL_IMMORT) fprintf(fl, "Drnk: %d\n", GET_COND(ch, DRUNK));
+  if (GET_COND(ch, HUNGER)   != PFDEF_HUNGER && GET_LEVEL(ch) < LVL_IMMORT) tb_fprintf(fl, "Hung: %d\n", GET_COND(ch, HUNGER));
+  if (GET_COND(ch, THIRST) != PFDEF_THIRST && GET_LEVEL(ch) < LVL_IMMORT) tb_fprintf(fl, "Thir: %d\n", GET_COND(ch, THIRST));
+  if (GET_COND(ch, DRUNK)  != PFDEF_DRUNK  && GET_LEVEL(ch) < LVL_IMMORT) tb_fprintf(fl, "Drnk: %d\n", GET_COND(ch, DRUNK));
 
-  if (GET_HIT(ch)	   != PFDEF_HIT  || GET_MAX_HIT(ch)  != PFDEF_MAXHIT)  fprintf(fl, "Hit : %d/%d\n", GET_HIT(ch),  GET_MAX_HIT(ch));
-  if (GET_MANA(ch)	   != PFDEF_MANA || GET_MAX_MANA(ch) != PFDEF_MAXMANA) fprintf(fl, "Mana: %d/%d\n", GET_MANA(ch), GET_MAX_MANA(ch));
-  if (GET_MOVE(ch)	   != PFDEF_MOVE || GET_MAX_MOVE(ch) != PFDEF_MAXMOVE) fprintf(fl, "Move: %d/%d\n", GET_MOVE(ch), GET_MAX_MOVE(ch));
+  if (GET_HIT(ch)	   != PFDEF_HIT  || GET_MAX_HIT(ch)  != PFDEF_MAXHIT)  tb_fprintf(fl, "Hit : %d/%d\n", GET_HIT(ch),  GET_MAX_HIT(ch));
+  if (GET_MANA(ch)	   != PFDEF_MANA || GET_MAX_MANA(ch) != PFDEF_MAXMANA) tb_fprintf(fl, "Mana: %d/%d\n", GET_MANA(ch), GET_MAX_MANA(ch));
+  if (GET_MOVE(ch)	   != PFDEF_MOVE || GET_MAX_MOVE(ch) != PFDEF_MAXMOVE) tb_fprintf(fl, "Move: %d/%d\n", GET_MOVE(ch), GET_MAX_MOVE(ch));
 
-  if (GET_STR(ch)	   != PFDEF_STR  || GET_ADD(ch)      != PFDEF_STRADD)  fprintf(fl, "Str : %d/%d\n", GET_STR(ch),  GET_ADD(ch));
+  if (GET_STR(ch)	   != PFDEF_STR  || GET_ADD(ch)      != PFDEF_STRADD)  tb_fprintf(fl, "Str : %d/%d\n", GET_STR(ch),  GET_ADD(ch));
 
 
-  if (GET_INT(ch)	   != PFDEF_INT)	fprintf(fl, "Int : %d\n", GET_INT(ch));
-  if (GET_WIS(ch)	   != PFDEF_WIS)	fprintf(fl, "Wis : %d\n", GET_WIS(ch));
-  if (GET_DEX(ch)	   != PFDEF_DEX)	fprintf(fl, "Dex : %d\n", GET_DEX(ch));
-  if (GET_CON(ch)	   != PFDEF_CON)	fprintf(fl, "Con : %d\n", GET_CON(ch));
-  if (GET_CHA(ch)	   != PFDEF_CHA)	fprintf(fl, "Cha : %d\n", GET_CHA(ch));
+  if (GET_INT(ch)	   != PFDEF_INT)	tb_fprintf(fl, "Int : %d\n", GET_INT(ch));
+  if (GET_WIS(ch)	   != PFDEF_WIS)	tb_fprintf(fl, "Wis : %d\n", GET_WIS(ch));
+  if (GET_DEX(ch)	   != PFDEF_DEX)	tb_fprintf(fl, "Dex : %d\n", GET_DEX(ch));
+  if (GET_CON(ch)	   != PFDEF_CON)	tb_fprintf(fl, "Con : %d\n", GET_CON(ch));
+  if (GET_CHA(ch)	   != PFDEF_CHA)	tb_fprintf(fl, "Cha : %d\n", GET_CHA(ch));
 
-  if (GET_AC(ch)	   != PFDEF_AC)		fprintf(fl, "Ac  : %d\n", GET_AC(ch));
-  if (GET_GOLD(ch)	   != PFDEF_GOLD)	fprintf(fl, "Gold: %d\n", GET_GOLD(ch));
-  if (GET_BANK_GOLD(ch)	   != PFDEF_BANK)	fprintf(fl, "Bank: %d\n", GET_BANK_GOLD(ch));
-  if (GET_EXP(ch)	   != PFDEF_EXP)	fprintf(fl, "Exp : %d\n", GET_EXP(ch));
-  if (GET_ENDGAME_AP(ch)) fprintf(fl, "EgAP: %d\n", GET_ENDGAME_AP(ch));
-  if (GET_ENDGAME_XP(ch)) fprintf(fl, "EgXP: %d\n", GET_ENDGAME_XP(ch));
-  if (GET_ENDGAME_HP_RANK(ch)) fprintf(fl, "EgHP: %d\n", GET_ENDGAME_HP_RANK(ch));
-  if (GET_ENDGAME_MP_RANK(ch)) fprintf(fl, "EgMP: %d\n", GET_ENDGAME_MP_RANK(ch));
-  if (GET_HITROLL(ch)	   != PFDEF_HITROLL)	fprintf(fl, "Hrol: %d\n", GET_HITROLL(ch));
-  if (GET_DAMROLL(ch)	   != PFDEF_DAMROLL)	fprintf(fl, "Drol: %d\n", GET_DAMROLL(ch));
-  if (GET_OLC_ZONE(ch)     != PFDEF_OLC)        fprintf(fl, "Olc : %d\n", GET_OLC_ZONE(ch));
-  if (GET_PAGE_LENGTH(ch)  != PFDEF_PAGELENGTH) fprintf(fl, "Page: %d\n", GET_PAGE_LENGTH(ch));
-  if (GET_SCREEN_WIDTH(ch) != PFDEF_SCREENWIDTH) fprintf(fl, "ScrW: %d\n", GET_SCREEN_WIDTH(ch));
-  if (GET_QUESTPOINTS(ch)  != PFDEF_QUESTPOINTS) fprintf(fl, "Qstp: %d\n", GET_QUESTPOINTS(ch));
-  if (GET_QUEST_COUNTER(ch)!= PFDEF_QUESTCOUNT)  fprintf(fl, "Qcnt: %d\n", GET_QUEST_COUNTER(ch));
+  if (GET_AC(ch)	   != PFDEF_AC)		tb_fprintf(fl, "Ac  : %d\n", GET_AC(ch));
+  if (GET_GOLD(ch)	   != PFDEF_GOLD)	tb_fprintf(fl, "Gold: %d\n", GET_GOLD(ch));
+  if (GET_BANK_GOLD(ch)	   != PFDEF_BANK)	tb_fprintf(fl, "Bank: %d\n", GET_BANK_GOLD(ch));
+  if (GET_EXP(ch)	   != PFDEF_EXP)	tb_fprintf(fl, "Exp : %d\n", GET_EXP(ch));
+  if (GET_ENDGAME_AP(ch)) tb_fprintf(fl, "EgAP: %d\n", GET_ENDGAME_AP(ch));
+  if (GET_ENDGAME_XP(ch)) tb_fprintf(fl, "EgXP: %d\n", GET_ENDGAME_XP(ch));
+  if (GET_ENDGAME_HP_RANK(ch)) tb_fprintf(fl, "EgHP: %d\n", GET_ENDGAME_HP_RANK(ch));
+  if (GET_ENDGAME_MP_RANK(ch)) tb_fprintf(fl, "EgMP: %d\n", GET_ENDGAME_MP_RANK(ch));
+  if (GET_HITROLL(ch)	   != PFDEF_HITROLL)	tb_fprintf(fl, "Hrol: %d\n", GET_HITROLL(ch));
+  if (GET_DAMROLL(ch)	   != PFDEF_DAMROLL)	tb_fprintf(fl, "Drol: %d\n", GET_DAMROLL(ch));
+  if (GET_OLC_ZONE(ch)     != PFDEF_OLC)        tb_fprintf(fl, "Olc : %d\n", GET_OLC_ZONE(ch));
+  if (GET_PAGE_LENGTH(ch)  != PFDEF_PAGELENGTH) tb_fprintf(fl, "Page: %d\n", GET_PAGE_LENGTH(ch));
+  if (GET_SCREEN_WIDTH(ch) != PFDEF_SCREENWIDTH) tb_fprintf(fl, "ScrW: %d\n", GET_SCREEN_WIDTH(ch));
+  if (GET_QUESTPOINTS(ch)  != PFDEF_QUESTPOINTS) tb_fprintf(fl, "Qstp: %d\n", GET_QUESTPOINTS(ch));
+  if (GET_QUEST_COUNTER(ch)!= PFDEF_QUESTCOUNT)  tb_fprintf(fl, "Qcnt: %d\n", GET_QUEST_COUNTER(ch));
   if (GET_NUM_QUESTS(ch)   != PFDEF_COMPQUESTS) {
     tb_fprintf(fl, "Qest:\n");
     for (i = 0; i < GET_NUM_QUESTS(ch); i++)
       tb_fprintf(fl, "%d\n", ch->player_specials->saved.completed_quests[i]);
     tb_fprintf(fl, "%d\n", NOTHING);
   }
-  if (GET_QUEST(ch)        != PFDEF_CURRQUEST)  fprintf(fl, "Qcur: %d\n", GET_QUEST(ch));
+  if (GET_QUEST(ch)        != PFDEF_CURRQUEST)  tb_fprintf(fl, "Qcur: %d\n", GET_QUEST(ch));
 
  if (SCRIPT(ch)) {
    for (t = TRIGGERS(SCRIPT(ch)); t; t = t->next)
@@ -768,7 +783,17 @@ void save_char(struct char_data * ch)
   write_aliases_ascii(fl, ch);
   save_char_vars_ascii(fl, ch);
 
-  tb_fclose(fl);
+  if (ferror(fl) || fflush(fl) != 0)
+    save_failed = TRUE;
+  if (fclose(fl) != 0)
+    save_failed = TRUE;
+  if (!save_failed && rename(temporary_filename, filename) != 0)
+    save_failed = TRUE;
+  if (save_failed) {
+    TB_ERROR_ERRNO("PLAYER", "save", filename,
+                   "Player save failed; original file left untouched");
+    unlink(temporary_filename);
+  }
 
   /* More char_to_store code to add spell and eq affections back in. */
   for (i = 0; i < MAX_AFFECT; i++) {
@@ -788,6 +813,9 @@ void save_char(struct char_data * ch)
 #endif
   }
   /* end char_to_store code */
+
+  if (save_failed)
+    return;
 
   if ((id = get_ptable_by_name(GET_NAME(ch))) < 0)
     return;
