@@ -417,7 +417,22 @@ void copyover_recover()
   unlink (COPYOVER_FILE);
 
   /* read boot_time - first line in file */
-  i = fscanf(fp, "%ld\n", (long *)&boot_time);
+  {
+    char timestamp[128], *end;
+    long parsed;
+    if (!fgets(timestamp, sizeof(timestamp), fp)) {
+      log("SYSERR: Missing copyover timestamp in %s.", COPYOVER_FILE);
+      tb_fclose(fp);
+      exit(1);
+    }
+    errno = 0;
+    parsed = strtol(timestamp, &end, 10);
+    while (isspace((unsigned char)*end))
+      end++;
+    i = (end != timestamp && *end == '\0' && errno != ERANGE) ? 1 : 0;
+    if (i == 1)
+      boot_time = (time_t)parsed;
+  }
 
   if (i != 1) {
     if (ferror(fp))
@@ -431,7 +446,31 @@ void copyover_recover()
   for (;;) {
     fOld = TRUE;
     /* Field widths reserve a byte for the terminating NUL in each array. */
-    if (fscanf(fp, "%d %ld %511s %1023s %1023s\n", &desc, &pref, name, host, guiopt) != 5) {
+    {
+      char desc_text[64], pref_text[64], *end;
+      long parsed;
+      int valid = 1;
+      if (fscanf(fp, "%63s %63s %511s %1023s %1023s",
+                 desc_text, pref_text, name, host, guiopt) != 5)
+        valid = 0;
+      if (valid) {
+        errno = 0;
+        parsed = strtol(desc_text, &end, 10);
+        if (end == desc_text || *end || errno == ERANGE ||
+            parsed < INT_MIN || parsed > INT_MAX)
+          valid = 0;
+        else
+          desc = (int)parsed;
+      }
+      if (valid) {
+        errno = 0;
+        parsed = strtol(pref_text, &end, 10);
+        if (end == pref_text || *end || errno == ERANGE)
+          valid = 0;
+        else
+          pref = parsed;
+      }
+      if (!valid) {
       if (feof(fp)) {
         log("SYSERR: unexpected EOF in copyover file %s.", COPYOVER_FILE);
         break;
@@ -443,6 +482,7 @@ void copyover_recover()
         log("SYSERR: could not scan line in copyover file %s.", COPYOVER_FILE);
       tb_fclose(fp);
       exit(1);
+      }
     }
 
     if (desc == -1)
