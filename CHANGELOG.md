@@ -10,6 +10,10 @@ treating any feature as production-ready.
 ## Unreleased — documentation branch (2026-10-26)
 
 ### Documentation
+- Documented room, mobile, and object-instance Oasis editing contracts in
+  `src/redit.c`, `src/medit.c`, and `src/oedit.c`.
+- Clarified zone-index staging cleanup and index number validation in
+  `src/genzon.c`.
 - Added `doc/circlemud-style-review.md`, comparing the classic CircleMUD
   structure with current modernization concerns and establishing the original
   C idiom (including careful macro use) as the preferred style.
