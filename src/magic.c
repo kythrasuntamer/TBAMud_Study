@@ -42,7 +42,7 @@ int mag_savingthrow(struct char_data *ch, int type, int modifier)
   if (!IS_NPC(ch))
     class_sav = (int)GET_CLASS(ch);
 
-  save = saving_throws(class_sav, type, GET_LEVEL(ch));
+  save = saving_throws(class_sav, type, (unsigned char)GET_LEVEL(ch));
   save += GET_SAVE(ch, type);
   save += modifier;
 
