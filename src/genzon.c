@@ -17,14 +17,20 @@
 /* local functions */
 static void remove_cmd_from_list(struct reset_com **list, int pos);
 
-/* Only the temporary index is removed on failure; preserve the live index. */
+/* Remove a failed staging index without disturbing the authoritative
+ * zone index.  Ignore a missing stage file; report other cleanup errors
+ * at the failing filesystem operation.
+ */
 static void cleanup_new_zone_index(const char *path)
 {
   if (remove(path) != 0 && errno != ENOENT)
     TB_REPORT_ERRNO("remove", path);
 }
 
-/* Index entries start with a decimal zone number followed by a file suffix. */
+/* Parse a zone index number using strtol with overflow and suffix checks.
+ * Returns failure without modifying *number when the input is invalid.
+ * The caller must still validate the number against known zone boundaries.
+ */
 static int parse_zone_index_number(const char *text, int *number)
 {
   char *end;
