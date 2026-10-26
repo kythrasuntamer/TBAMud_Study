@@ -50,7 +50,7 @@ static int parse_pfile_int_or_zero(const char *value, const char *filename, cons
   if (value == NULL) {
     log("SYSERR: pfile %s tag %.4s has NULL integer value; using 0",
         filename ? filename : "(unknown)", tag ? tag : "????");
-    return 0;
+    return (0);
   }
 
   errno = 0;
@@ -62,10 +62,10 @@ static int parse_pfile_int_or_zero(const char *value, const char *filename, cons
       (end && *end != '\0')) {
     log("SYSERR: pfile %s tag %.4s has malformed integer value '%s'; using 0",
         filename ? filename : "(unknown)", tag ? tag : "????", value);
-    return 0;
+    return (0);
   }
 
-  return (int)parsed;
+  return ((int)parsed);
 }
 
 static long parse_pfile_long_or_zero(const char *value, const char *filename, const char *tag)
@@ -76,7 +76,7 @@ static long parse_pfile_long_or_zero(const char *value, const char *filename, co
   if (value == NULL) {
     log("SYSERR: pfile %s tag %.4s has NULL long value; using 0",
         filename ? filename : "(unknown)", tag ? tag : "????");
-    return 0;
+    return (0);
   }
 
   errno = 0;
@@ -87,10 +87,10 @@ static long parse_pfile_long_or_zero(const char *value, const char *filename, co
   if (end == value || errno == ERANGE || (end && *end != '\0')) {
     log("SYSERR: pfile %s tag %.4s has malformed long value '%s'; using 0",
         filename ? filename : "(unknown)", tag ? tag : "????", value);
-    return 0;
+    return (0);
   }
 
-  return parsed;
+  return (parsed);
 }
 
 /* Read a whitespace-delimited signed number with overflow detection. */
@@ -99,29 +99,29 @@ static int parse_index_long(const char **cursor, long *value)
   char *end;
   long parsed;
   while (isspace((unsigned char)**cursor))
-    ++*cursor;
+    (*cursor)++;
   errno = 0;
   parsed = strtol(*cursor, &end, 10);
   if (end == *cursor || errno == ERANGE || (*end && !isspace((unsigned char)*end)))
-    return FALSE;
+    return (FALSE);
   *value = parsed;
   *cursor = end;
-  return TRUE;
+  return (TRUE);
 }
 
 static int parse_index_word(const char **cursor, char *dest, size_t capacity)
 {
   size_t len = 0;
   while (isspace((unsigned char)**cursor))
-    ++*cursor;
+    (*cursor)++;
   while ((*cursor)[len] && !isspace((unsigned char)(*cursor)[len]))
     ++len;
   if (!len || len >= capacity)
-    return FALSE;
+    return (FALSE);
   memcpy(dest, *cursor, len);
   dest[len] = '\0';
   *cursor += len;
-  return TRUE;
+  return (TRUE);
 }
 
 /* New version to build player index for ASCII Player Files. Generate index
