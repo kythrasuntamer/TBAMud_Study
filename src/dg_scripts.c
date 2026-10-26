@@ -1829,18 +1829,15 @@ static void process_wait(void *go, trig_data *trig, int type, char *cmd,
       rest++;
     if (*rest == ':') {
       if (!script_wait_number(rest + 1, &min, &rest) ||
-          hr > (LONG_MAX - min) / 60 || hr < (LONG_MIN - min) / 60) {
+          hr > LONG_MAX / 60 || hr < LONG_MIN / 60 ||
+          (min > 0 && hr * 60 > LONG_MAX - min) ||
+          (min < 0 && hr * 60 < LONG_MIN - min)) {
         script_log("Trigger: %s, VNum %d. invalid wait until time: '%s'",
                 GET_TRIG_NAME(trig), GET_TRIG_VNUM(trig), cl->cmd);
         return;
       }
       min += hr * 60;
     } else {
-      if (hr > (LONG_MAX - 59) / 60 || hr < (LONG_MIN + 59) / 60) {
-        script_log("Trigger: %s, VNum %d. invalid wait until time: '%s'",
-                GET_TRIG_NAME(trig), GET_TRIG_VNUM(trig), cl->cmd);
-        return;
-      }
       min = (hr % 100) + ((hr / 100) * 60);
     }
     while (isspace((unsigned char)*rest))
