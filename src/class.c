@@ -1427,6 +1427,8 @@ void roll_real_abils(struct char_data *ch)
 
   switch (GET_CLASS(ch)) {
   case CLASS_MAGIC_USER:
+  case CLASS_SORCERER:
+  case CLASS_NECROMANCER:
     ch->real_abils.intel = table[0];
     ch->real_abils.wis = table[1];
     ch->real_abils.dex = table[2];
@@ -1435,6 +1437,7 @@ void roll_real_abils(struct char_data *ch)
     ch->real_abils.cha = table[5];
     break;
   case CLASS_CLERIC:
+  case CLASS_DRUID:
     ch->real_abils.wis = table[0];
     ch->real_abils.intel = table[1];
     ch->real_abils.str = table[2];
@@ -1443,6 +1446,8 @@ void roll_real_abils(struct char_data *ch)
     ch->real_abils.cha = table[5];
     break;
   case CLASS_THIEF:
+  case CLASS_RANGER:
+  case CLASS_BARD:
     ch->real_abils.dex = table[0];
     ch->real_abils.str = table[1];
     ch->real_abils.con = table[2];
@@ -1451,6 +1456,7 @@ void roll_real_abils(struct char_data *ch)
     ch->real_abils.cha = table[5];
     break;
   case CLASS_MONK:
+  case CLASS_PALADIN:
     ch->real_abils.dex = table[0];
     ch->real_abils.wis = table[1];
     ch->real_abils.con = table[2];
@@ -1459,6 +1465,7 @@ void roll_real_abils(struct char_data *ch)
     ch->real_abils.cha = table[5];
     break;
   case CLASS_WARRIOR:
+  case CLASS_BERSERKER:
     ch->real_abils.str = table[0];
     ch->real_abils.dex = table[1];
     ch->real_abils.con = table[2];
@@ -1534,6 +1541,8 @@ void advance_level(struct char_data *ch)
   switch (GET_CLASS(ch)) {
 
   case CLASS_MAGIC_USER:
+  case CLASS_SORCERER:
+  case CLASS_NECROMANCER:
     add_hp += rand_number(3, 8);
     add_mana = rand_number(GET_LEVEL(ch), (int)(1.5 * GET_LEVEL(ch)));
     add_mana = MIN(add_mana, 10);
@@ -1541,6 +1550,7 @@ void advance_level(struct char_data *ch)
     break;
 
   case CLASS_CLERIC:
+  case CLASS_DRUID:
     add_hp += rand_number(5, 10);
     add_mana = rand_number(GET_LEVEL(ch), (int)(1.5 * GET_LEVEL(ch)));
     add_mana = MIN(add_mana, 10);
@@ -1548,17 +1558,21 @@ void advance_level(struct char_data *ch)
     break;
 
   case CLASS_THIEF:
+  case CLASS_RANGER:
+  case CLASS_BARD:
     add_hp += rand_number(7, 13);
     add_mana = 0;
     add_move = rand_number(1, 3);
     break;
 
   case CLASS_MONK:
+  case CLASS_PALADIN:
     add_hp += rand_number(7, 12);
     add_mana = 0;
     add_move = rand_number(2, 4);
     break;
   case CLASS_WARRIOR:
+  case CLASS_BERSERKER:
     add_hp += rand_number(10, 15);
     add_mana = 0;
     add_move = rand_number(1, 3);
@@ -1571,7 +1585,9 @@ void advance_level(struct char_data *ch)
   if (GET_LEVEL(ch) > 1)
     ch->points.max_mana += add_mana;
 
-  if (IS_MAGIC_USER(ch) || IS_CLERIC(ch))
+  if (IS_MAGIC_USER(ch) || IS_CLERIC(ch) ||
+      GET_CLASS(ch) == CLASS_DRUID || GET_CLASS(ch) == CLASS_SORCERER ||
+      GET_CLASS(ch) == CLASS_NECROMANCER)
     GET_PRACTICES(ch) += MAX(2, wis_app[GET_WIS(ch)].bonus);
   else
     GET_PRACTICES(ch) += MIN(2, MAX(1, wis_app[GET_WIS(ch)].bonus));
