@@ -42,11 +42,19 @@
  * Require libsodium for new hashes; never fall back to plaintext. */
 #include <sodium.h>
 
+/* Recognize the stored Argon2id string prefix.  This is format selection,
+ * not password verification or validation of the encoded hash.
+ */
 static int tb_password_is_argon2id(const char *hash)
 {
   return (hash != NULL && strncmp(hash, "$argon2id$", 10) == 0);
 }
 
+/* Verify a password against the saved hash.
+ * New hashes use libsodium; existing crypt hashes are accepted only when
+ * that compatibility path is enabled.  Invalid inputs and initialization
+ * failures reject login; never fall back to comparing plaintext.
+ */
 static int tb_password_verify(const char *password, const char *hash)
 {
   const char *legacy;
@@ -65,6 +73,10 @@ static int tb_password_verify(const char *password, const char *hash)
 #endif
 }
 
+/* Write a new Argon2id hash into caller-owned storage.
+ * The buffer needs crypto_pwhash_STRBYTES bytes.  A false result means the
+ * output must not be saved as a valid password hash.
+ */
 static int tb_password_hash(char *output, size_t capacity, const char *password)
 {
   if (output == NULL || password == NULL ||
