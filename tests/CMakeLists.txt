@@ -112,6 +112,14 @@ add_mud_test(test_class
 )
 
 
+# Player saves round-trip in a temporary directory, never live lib/plrfiles.
+add_mud_test(test_player_roundtrip
+    ${MUD_SRCDIR}/players.c
+    ${MUD_SRCDIR}/utils.c
+    ${MUD_SRCDIR}/random.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_player_roundtrip.c
+)
+
 # Native tests execute the exact arcane calculations used by live magic.
 add_mud_test(test_arcane_specialization
     ${CMAKE_CURRENT_SOURCE_DIR}/test_arcane_specialization.c
