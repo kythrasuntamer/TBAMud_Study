@@ -42,6 +42,14 @@ class MidgaardGuildTests(unittest.TestCase):
         self.assertIn("#define CLASS_NECROMANCER 11", structs)
         self.assertRegex(structs, r"#define NUM_CLASSES\s+5\b")
 
+    def test_all_mentor_spawn_rooms_exist(self):
+        world = (ROOT / "lib/world/wld/30.wld").read_text()
+        zone = (ROOT / "lib/world/zon/30.zon").read_text()
+        rooms = {int(x) for x in re.findall(r"(?m)^#(\d+)$", world)}
+        for mentor, room in MENTORS + ((3029, 3067),):
+            self.assertIn(room, rooms)
+            self.assertIn(f"M 0 {mentor} 1 {room} ", zone)
+
     def test_midgaard_connection(self):
         world = (ROOT / "lib/world/wld/30.wld").read_text()
         self.assertIn("0 -1 3057", world)
