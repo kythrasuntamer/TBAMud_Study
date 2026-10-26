@@ -724,6 +724,31 @@ static inline size_t tb_diag_escape(char *dst, size_t dst_size, const char *src)
   return used;
 }
 
+/* Return whether an escaped diagnostic field was cut short, while preserving
+ * the exact escaped prefix and never emitting a partial escape sequence. */
+static inline int tb_diag_escape_checked(char *dst, size_t dst_size,
+                                         const char *src)
+{
+  const unsigned char *p = (const unsigned char *)(src ? src : "(null)");
+  size_t used = tb_diag_escape(dst, dst_size, src);
+  size_t consumed = 0;
+  size_t written = 0;
+
+  if (dst == NULL || dst_size == 0)
+    return 1;
+
+  while (p[consumed] != '\0') {
+    unsigned char ch = p[consumed];
+    size_t width = (ch == '\\' || ch == '"' || ch == '\n' ||
+                    ch == '\r' || ch == '\t') ? 2 : 1;
+    if (written + width > used)
+      return 1;
+    written += width;
+    ++consumed;
+  }
+  return 0;
+}
+
 /*
  * Emit diagnostics through the lowest-risk path available.  POSIX builds use
  * write(2), retrying EINTR and handling partial writes.  This deliberately
@@ -797,20 +822,22 @@ static inline void tb_report_domain_error_at(tb_error_severity severity,
   struct tm *utc_tm;
   int result;
 
-  (void)tb_diag_escape(escaped_op, sizeof(escaped_op),
+  int truncated_op = tb_diag_escape_checked(escaped_op, sizeof(escaped_op),
                        operation ? operation : "operation");
-  (void)tb_diag_escape(escaped_ctx, sizeof(escaped_ctx),
+  int truncated_ctx = tb_diag_escape_checked(escaped_ctx, sizeof(escaped_ctx),
                        context ? context : "(no context)");
-  (void)tb_diag_escape(escaped_file, sizeof(escaped_file),
+  int truncated_file = tb_diag_escape_checked(escaped_file, sizeof(escaped_file),
                        source_file ? source_file : "(unknown file)");
-  (void)tb_diag_escape(escaped_func, sizeof(escaped_func),
+  int truncated_func = tb_diag_escape_checked(escaped_func, sizeof(escaped_func),
                        source_func ? source_func : "(unknown function)");
+  int truncated_error;
+
 
   if (errnum != 0) {
     const char *candidate = strerror(errnum);
     error_text = candidate ? candidate : "(strerror unavailable)";
   }
-  (void)tb_diag_escape(escaped_error, sizeof(escaped_error), error_text);
+  truncated_error = tb_diag_escape_checked(escaped_error, sizeof(escaped_error), error_text);
 
   now = time(NULL);
   if (now != (time_t)-1) {
@@ -832,12 +859,17 @@ static inline void tb_report_domain_error_at(tb_error_severity severity,
   result = snprintf(record, sizeof(record),
                     "TBERR timestamp=%s pid=%ld severity=%s category=%s "
                     "operation=\"%s\" context=\"%s\" errno=%d errno_name=%s "
-                    "error=\"%s\" source=\"%s:%d\" function=\"%s\"\n",
+                    "error=\"%s\" source=\"%s:%d\" function=\"%s\" "\n                    "truncated_fields=%s%s%s%s%s\n",
                     timestamp, process_id,
                     tb_error_severity_name(severity),
                     tb_error_category_name(category),
                     escaped_op, escaped_ctx, errnum, errno_name,
-                    escaped_error, escaped_file, source_line, escaped_func);
+                    escaped_error, escaped_file, source_line, escaped_func,
+                    truncated_op ? "operation," : "",
+                    truncated_ctx ? "context," : "",
+                    truncated_file ? "source," : "",
+                    truncated_func ? "function," : "",
+                    truncated_error ? "error," : "");
 
   if (result < 0) {
     static const char fallback[] =
