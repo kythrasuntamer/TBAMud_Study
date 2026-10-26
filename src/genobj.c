@@ -228,7 +228,8 @@ int save_objects(zone_rnum zone_num)
                "SYSERR: Could not format object #%d for saving; zone %d not saved.",
                GET_OBJ_VNUM(obj), zone_table[zone_num].number);
         tb_fclose(fp);
-        remove(filename);
+        if (remove(filename) != 0 && errno != ENOENT)
+          TB_REPORT_ERRNO("remove", filename);
         return FALSE;
       }
 
@@ -238,7 +239,8 @@ int save_objects(zone_rnum zone_num)
                "zone %d not saved.",
                GET_OBJ_VNUM(obj), n, MAX_STRING_LENGTH, zone_table[zone_num].number);
         tb_fclose(fp);
-        remove(filename);
+        if (remove(filename) != 0 && errno != ENOENT)
+          TB_REPORT_ERRNO("remove", filename);
         return FALSE;
       }
       
