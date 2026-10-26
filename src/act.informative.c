@@ -8,6 +8,10 @@
 *  CircleMUD is based on DikuMUD, Copyright (C) 1990, 1991.               *
 **************************************************************************/
 
+#include <errno.h>
+#include <limits.h>
+#include <stdlib.h>
+#include <ctype.h>
 #include "conf.h"
 #include "sysdep.h"
 #include "structs.h"
@@ -1259,7 +1263,10 @@ ACMD(do_who)
 
     half_chop(buf, arg, buf1);
     if (isdigit(*arg)) {
-      parse_info_level_range(arg, &low, &high);
+      if (!parse_info_level_range(arg, &low, &high)) {
+        send_to_char(ch, "Invalid level range.\r\n");
+        return;
+      }
       strlcpy(buf, buf1, sizeof(buf));   /* strcpy: OK (sizeof: buf1 == buf) */
     } else if (*arg == '-') {
       mode = *(arg + 1);       /* just in case; we destroy arg in the switch */
@@ -1510,7 +1517,10 @@ ACMD(do_users)
       case 'l':
     playing = 1;
     half_chop(buf1, arg, buf);
-    parse_info_level_range(arg, &low, &high);
+    if (!parse_info_level_range(arg, &low, &high)) {
+      send_to_char(ch, "Invalid level range.\r\n");
+      return;
+    }
     break;
       case 'n':
     playing = 1;
