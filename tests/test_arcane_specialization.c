@@ -38,7 +38,7 @@ void test_other_classes_have_no_adjustment(void)
 void test_damage_applies_only_to_direct_sorcerer_spells(void)
 {
   TEST_ASSERT_EQUAL_INT(125, arcane_adjust_damage(CLASS_SORCERER, 20, 100, CAST_SPELL, 0));
-  TEST_ASSERT_EQUAL_INT(101, arcane_adjust_damage(CLASS_SORCERER, 20, 5, CAST_SPELL, 0) + 95);
+  TEST_ASSERT_EQUAL_INT(6, arcane_adjust_damage(CLASS_SORCERER, 20, 5, CAST_SPELL, 0));
   TEST_ASSERT_EQUAL_INT(100, arcane_adjust_damage(CLASS_SORCERER, 19, 100, CAST_SPELL, 0));
   TEST_ASSERT_EQUAL_INT(100, arcane_adjust_damage(CLASS_SORCERER, 50, 100, CAST_WAND, 0));
   TEST_ASSERT_EQUAL_INT(100, arcane_adjust_damage(CLASS_SORCERER, 50, 100, CAST_SCROLL, 0));
