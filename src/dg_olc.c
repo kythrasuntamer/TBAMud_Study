@@ -30,6 +30,61 @@ static void trigedit_create_index(int znum, char *type);
 static void trigedit_setup_new(struct descriptor_data *d);
 
 
+/* Parse the decimal prefix of an index filename without overflowing int. */
+static int trigedit_index_number(const char *text, int *number)
+{
+  char *end;
+  long value;
+  if (!text || !number)
+    return FALSE;
+  while (isspace((unsigned char)*text))
+    text++;
+  errno = 0;
+  value = strtol(text, &end, 10);
+  if (end == text || errno == ERANGE || value < 0 || value > INT_MAX ||
+      (*end != '.' && !isspace((unsigned char)*end) && *end != '\0'))
+    return FALSE;
+  *number = (int)value;
+  return TRUE;
+}
+
+/* A trigger may be entered as "vnum" or "position, vnum". */
+static int trigedit_position_and_vnum(const char *text, int *position, int *vnum)
+{
+  char *end;
+  long first, second;
+  if (!text || !position || !vnum)
+    return 0;
+  while (isspace((unsigned char)*text))
+    text++;
+  errno = 0;
+  first = strtol(text, &end, 10);
+  if (end == text || errno == ERANGE || first < INT_MIN || first > INT_MAX)
+    return 0;
+  text = end;
+  while (isspace((unsigned char)*text))
+    text++;
+  if (*text == '\0') {
+    *position = (int)first;
+    return 1;
+  }
+  if (*text++ != ',')
+    return 0;
+  while (isspace((unsigned char)*text))
+    text++;
+  errno = 0;
+  second = strtol(text, &end, 10);
+  if (end == text || errno == ERANGE || second < INT_MIN || second > INT_MAX)
+    return 0;
+  while (isspace((unsigned char)*end))
+    end++;
+  if (*end)
+    return 0;
+  *position = (int)first;
+  *vnum = (int)second;
+  return 2;
+}
+
 /* Trigedit */
 ACMD(do_oasis_trigedit)
 {
@@ -964,7 +1019,14 @@ static void trigedit_create_index(int znum, char *type)
       tb_fprintf(newfile, "%s\n$\n", (!found ? buf1 : ""));
       break;
     } else if (!found) {
-      sscanf(buf, "%d", &num);
+      if (!trigedit_index_number(buf, &num)) {
+        TB_REPORT_ERROR("trigger-index-parse", old_name);
+        tb_fclose(newfile);
+        tb_fclose(oldfile);
+        if (remove(new_name) != 0 && errno != ENOENT)
+          TB_REPORT_ERRNO("remove", new_name);
+        return;
+      }
       if (num == znum)
         found = TRUE;
       else if (num > znum) {
@@ -975,16 +1037,26 @@ static void trigedit_create_index(int znum, char *type)
     tb_fprintf(newfile, "%s\n", buf);
   }
 
-  tb_fclose(newfile);
-  tb_fclose(oldfile);
-
-  /* Out with the old, in with the new. */
-  if (remove(old_name) != 0 && errno != ENOENT)
-    TB_REPORT_ERRNO("remove", old_name);
-  if (rename(new_name, old_name) != 0) {
-    TB_REPORT_ERRNO("rename", old_name);
+  /* Preserve the previous index if the new one could not be written. */
+  if (ferror(oldfile) || ferror(newfile)) {
+    TB_REPORT_ERROR("trigger-index-io", old_name);
+    tb_fclose(newfile);
+    tb_fclose(oldfile);
+    if (remove(new_name) != 0 && errno != ENOENT)
+      TB_REPORT_ERRNO("remove", new_name);
     return;
   }
+  {
+    int close_new_ok = tb_fclose_checked(newfile, new_name);
+    int close_old_ok = tb_fclose_checked(oldfile, old_name);
+    if (!close_new_ok || !close_old_ok) {
+      if (remove(new_name) != 0 && errno != ENOENT)
+        TB_REPORT_ERRNO("remove", new_name);
+      return;
+    }
+  }
+  if (!tb_replace_file_checked(new_name, old_name))
+    TB_REPORT_ERROR("trigger-index-commit", old_name);
 }
 
 void dg_olc_script_copy(struct descriptor_data *d)
@@ -1090,7 +1162,11 @@ int dg_script_edit_parse(struct descriptor_data *d, char *arg)
 
     case SCRIPT_NEW_TRIGGER:
       vnum = -1;
-      count = sscanf(arg,"%d, %d",&pos,&vnum);
+      count = trigedit_position_and_vnum(arg, &pos, &vnum);
+      if (count == 0) {
+        write_to_output(d, "Invalid position or trigger VNUM. Enter position, vnum: ");
+        return 1;
+      }
       if (count==1) {
         vnum = pos;
         pos = 999;
