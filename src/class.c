@@ -1666,6 +1666,20 @@ void init_spell_levels(void)
   spell_level(SKILL_HIDE, CLASS_THIEF, 5);
   spell_level(SKILL_TRACK, CLASS_THIEF, 6);
 
+  /* Additional training using existing, functional abilities. */
+  spell_level(SKILL_TRACK, CLASS_MAGIC_USER, 34);
+  spell_level(SKILL_BANDAGE, CLASS_MAGIC_USER, 40);
+  spell_level(SKILL_RESCUE, CLASS_MAGIC_USER, 46);
+
+  spell_level(SKILL_TRACK, CLASS_CLERIC, 30);
+  spell_level(SKILL_BANDAGE, CLASS_CLERIC, 34);
+  spell_level(SKILL_RESCUE, CLASS_CLERIC, 40);
+
+  spell_level(SKILL_KICK, CLASS_THIEF, 18);
+  spell_level(SKILL_BANDAGE, CLASS_THIEF, 26);
+  spell_level(SKILL_RESCUE, CLASS_THIEF, 34);
+  spell_level(SKILL_BASH, CLASS_THIEF, 42);
+
   /* Monk uses existing, functional combat skills. */
   spell_level(SKILL_KICK, CLASS_MONK, 1);
   spell_level(SKILL_RESCUE, CLASS_MONK, 5);
@@ -1679,6 +1693,8 @@ void init_spell_levels(void)
   spell_level(SKILL_TRACK, CLASS_WARRIOR, 9);
   spell_level(SKILL_BASH, CLASS_WARRIOR, 12);
   spell_level(SKILL_WHIRLWIND, CLASS_WARRIOR, 16);
+  spell_level(SKILL_SNEAK, CLASS_WARRIOR, 30);
+  spell_level(SKILL_HIDE, CLASS_WARRIOR, 38);
 }
 
 /* This is the exp given to implementors -- it must always be greater than the
