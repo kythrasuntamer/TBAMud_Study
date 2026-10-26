@@ -54,6 +54,25 @@ class ProgressionContractTests(unittest.TestCase):
         self.assertIn("case 'm':", classes)
         self.assertIn("case 'z': return CLASS_MAGIC_USER;", classes)
 
+    def test_player_saves_stage_before_replacing_original(self):
+        player = source("players.c")
+        save = player[player.index("void save_char("):player.index("/* Separate a 4-character id tag")]
+        self.assertIn("mkstemp(temporary_filename)", save)
+        self.assertIn('fdopen(temp_fd, "w")', save)
+        self.assertIn("ferror(fl) || fflush(fl) != 0", save)
+        self.assertIn("fclose(fl) != 0", save)
+        self.assertIn("rename(temporary_filename, filename)", save)
+        self.assertIn("if (save_failed)\\n    return;".replace("\\\\n", "\\n"), save)
+        self.assertNotIn('fopen(filename, "w")', save)
+
+    def test_player_save_tags_unchanged_by_checked_writes(self):
+        player = source("players.c")
+        save = player[player.index("void save_char("):player.index("/* Separate a 4-character id tag")]
+        for tag in ("Clas", "Levl", "Exp ", "EgAP", "EgXP", "EgHP", "EgMP"):
+            with self.subTest(tag=tag):
+                self.assertIn(f'"{tag}: %d', save)
+        self.assertNotRegex(save, r"(?<!tb_)fprintf\\(fl,")
+
     def test_endgame_save_fields_present(self):
         player = source("players.c")
         # Save files use stable four-character tags, not internal C field names.
