@@ -1856,21 +1856,32 @@ struct last_entry *find_llog_entry(int punique, long idnum) {
     log("Error opening last_file for reading, will create.");
     return NULL;
   }
-  fseek(fp,0L,SEEK_END);
-  size=ftell(fp);
+  if (fseek(fp, 0L, SEEK_END) != 0 || (size = ftell(fp)) < 0) {
+    TB_REPORT_ERRNO("seek last-login file", LAST_FILE);
+    tb_fclose(fp);
+    return NULL;
+  }
 
   /* recs = number of records in the last file */
   recs = size/sizeof(struct last_entry);
   /* we'll search last to first, since it's faster than any thing else we can
    * do (like searching for the last shutdown/etc..) */
   for(tmp=recs; tmp > 0; tmp--) {
-    fseek(fp,-1*((long)sizeof(struct last_entry)),SEEK_CUR);
+    if (fseek(fp, -(long)sizeof(struct last_entry), SEEK_CUR) != 0) {
+      TB_REPORT_ERRNO("seek last-login record", LAST_FILE);
+      tb_fclose(fp);
+      return NULL;
+    }
     if (fread(&mlast,sizeof(struct last_entry),1,fp) != 1) {
       tb_fclose(fp);
       return NULL;
     }
         /*another one to keep that stepback */
-    fseek(fp,-1*((long)sizeof(struct last_entry)),SEEK_CUR);
+    if (fseek(fp, -(long)sizeof(struct last_entry), SEEK_CUR) != 0) {
+      TB_REPORT_ERRNO("seek last-login record", LAST_FILE);
+      tb_fclose(fp);
+      return NULL;
+    }
 
     if(mlast.idnum == idnum && mlast.punique == punique) {
       /* then we've found a match */
@@ -1896,8 +1907,11 @@ static void mod_llog_entry(struct last_entry *llast,int type) {
     log("Error opening last_file for reading and writing.");
     return;
   }
-  fseek(fp,0L,SEEK_END);
-  size=ftell(fp);
+  if (fseek(fp, 0L, SEEK_END) != 0 || (size = ftell(fp)) < 0) {
+    TB_REPORT_ERRNO("seek last-login file", LAST_FILE);
+    tb_fclose(fp);
+    return;
+  }
 
   /* recs = number of records in the last file */
   recs = size/sizeof(struct last_entry);
@@ -1905,14 +1919,22 @@ static void mod_llog_entry(struct last_entry *llast,int type) {
   /* We'll search last to first, since it's faster than any thing else we can
    * do (like searching for the last shutdown/etc..) */
   for(tmp=recs; tmp > 0; tmp--) {
-    fseek(fp,-1*((long)sizeof(struct last_entry)),SEEK_CUR);
+    if (fseek(fp, -(long)sizeof(struct last_entry), SEEK_CUR) != 0) {
+      TB_REPORT_ERRNO("seek last-login record", LAST_FILE);
+      tb_fclose(fp);
+      return;
+    }
     if(fread(&mlast,sizeof(struct last_entry),1,fp) != 1) {
       log("mod_llog_entry: read error or unexpected end of file.");
       tb_fclose(fp);
       return;
     }
     /* Another one to keep that stepback. */
-    fseek(fp,-1*((long)sizeof(struct last_entry)),SEEK_CUR);
+    if (fseek(fp, -(long)sizeof(struct last_entry), SEEK_CUR) != 0) {
+      TB_REPORT_ERRNO("seek last-login record", LAST_FILE);
+      tb_fclose(fp);
+      return;
+    }
 
     if(mlast.idnum == llast->idnum && mlast.punique == llast->punique) {
       /* Then we've found a match, lets assume quit is inviolate, mainly
