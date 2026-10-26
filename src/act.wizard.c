@@ -2170,18 +2170,33 @@ ACMD(do_last)
     send_to_char(ch, "No entries found.\r\n");
     return;
   }
-  fseek(fp,0L,SEEK_END);
-  recs=ftell(fp)/sizeof(struct last_entry);
+  if (fseek(fp, 0L, SEEK_END) != 0 || (recs = ftell(fp)) < 0) {
+    TB_REPORT_ERRNO("seek", LAST_FILE);
+    send_to_char(ch, "Error reading log file.\r\n");
+    tb_fclose(fp);
+    return;
+  }
+  recs /= (long)sizeof(struct last_entry);
 
   send_to_char(ch, "Last log\r\n");
   while(num > 0 && recs > 0) {
-    fseek(fp,-1* ((long)sizeof(struct last_entry)),SEEK_CUR);
+    if (fseek(fp, -(long)sizeof(struct last_entry), SEEK_CUR) != 0) {
+      TB_REPORT_ERRNO("seek", LAST_FILE);
+      send_to_char(ch, "Error reading log file.\r\n");
+      tb_fclose(fp);
+      return;
+    }
     if(fread(&mlast,sizeof(struct last_entry),1,fp) != 1) {
       send_to_char(ch, "Error reading log file.");
       tb_fclose(fp);
       return;
     }
-    fseek(fp,-1*((long)sizeof(struct last_entry)),SEEK_CUR);
+    if (fseek(fp, -(long)sizeof(struct last_entry), SEEK_CUR) != 0) {
+      TB_REPORT_ERRNO("seek", LAST_FILE);
+      send_to_char(ch, "Error reading log file.\r\n");
+      tb_fclose(fp);
+      return;
+    }
     if(!*name ||(*name && !str_cmp(name, mlast.username))) {
       tb_strftime(timestr, sizeof(timestr), "%a %b %d %Y %H:%M", localtime(&mlast.time));
       send_to_char(ch, "%10.10s %20.20s %20.21s - ",
