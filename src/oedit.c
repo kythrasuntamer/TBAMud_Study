@@ -43,6 +43,11 @@ static void iedit_replace_string(struct obj_data *obj, char **field, char *new_s
 static void iedit_save_internally(struct descriptor_data *d);
 static int iedit_is_forbidden_main_menu_choice(char *arg);
 
+/* Edit an existing object instance rather than the global prototype.
+ * Check the actor's descriptor and resolve the target before touching
+ * instance-owned strings or values.  Keep instance edits distinct from
+ * prototype changes made through oedit.
+ */
 ACMD(do_oasis_iedit)
 {
   struct descriptor_data *d;
