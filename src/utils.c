@@ -576,7 +576,7 @@ void tb_parse_context_error_at(FILE *stream, const char *source_file,
 {
   struct tb_parse_context_slot *ctx = tb_parse_context_find(stream, FALSE);
   char detail[512];
-  char resource[PATH_MAX + 160];
+  char resource[PATH_MAX + 256];
   va_list args;
   int n;
 
