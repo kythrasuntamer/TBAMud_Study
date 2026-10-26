@@ -128,19 +128,24 @@ static IBT_DATA *read_ibt( char *filename, FILE *fp )
    char *word, *id_num=NULL, *dated=NULL;
    char buf[MAX_STRING_LENGTH];
    bool fMatch;
-   char letter;
+   int letter;
 
    do
    {
-      letter = getc( fp );
-      if( feof(fp) )
+      letter = getc(fp);
+      if (letter == EOF)
       {
-         tb_fclose( fp );
+         tb_fclose(fp);
          return NULL;
       }
    }
-   while( isspace(letter) );
-   ungetc( letter, fp );
+   while (isspace((unsigned char)letter));
+   if (ungetc(letter, fp) == EOF)
+   {
+      log("SYSERR: IBT reader could not restore lookahead in %s", filename);
+      tb_fclose(fp);
+      return NULL;
+   }
 
    ibtData = new_ibt();
    ibtData->name       = STRALLOC("");
