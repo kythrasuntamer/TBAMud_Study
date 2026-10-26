@@ -831,17 +831,31 @@ void save_char(struct char_data * ch)
   write_aliases_ascii(fl, ch);
   save_char_vars_ascii(fl, ch);
 
-  if (ferror(fl) || fflush(fl) != 0)
+  /* Report failures at their origin. Cleanup must not masquerade as the
+   * original error or replace an existing valid player file. */
+  if (ferror(fl)) {
+    TB_ERROR_MSG("PLAYER", "write", temporary_filename,
+                 "Staged player save stream reports a write error");
     save_failed = TRUE;
-  if (fclose(fl) != 0)
-    save_failed = TRUE;
-  if (!save_failed && rename(temporary_filename, filename) != 0)
-    save_failed = TRUE;
-  if (save_failed) {
-    TB_ERROR_ERRNO("PLAYER", "save", filename,
-                   "Player save failed; original file left untouched");
-    unlink(temporary_filename);
   }
+  if (fflush(fl) != 0) {
+    TB_ERROR_ERRNO("PLAYER", "fflush", temporary_filename,
+                   "Could not flush staged player save");
+    save_failed = TRUE;
+  }
+  if (fclose(fl) != 0) {
+    TB_ERROR_ERRNO("PLAYER", "fclose", temporary_filename,
+                   "Could not close staged player save");
+    save_failed = TRUE;
+  }
+  if (!save_failed && rename(temporary_filename, filename) != 0) {
+    TB_ERROR_ERRNO("PLAYER", "rename", filename,
+                   "Could not commit staged player save");
+    save_failed = TRUE;
+  }
+  if (save_failed && unlink(temporary_filename) != 0)
+    TB_ERROR_ERRNO("PLAYER", "unlink", temporary_filename,
+                   "Could not clean up failed staged player save");
 
   /* More char_to_store code to add spell and eq affections back in. */
   for (i = 0; i < MAX_AFFECT; i++) {
