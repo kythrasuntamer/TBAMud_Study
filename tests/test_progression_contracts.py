@@ -54,6 +54,17 @@ class ProgressionContractTests(unittest.TestCase):
         self.assertIn("case 'm':", classes)
         self.assertIn("case 'z': return CLASS_MAGIC_USER;", classes)
 
+    def test_player_index_and_affects_use_checked_parsers(self):
+        player = source("players.c")
+        self.assertIn("static int parse_index_long(", player)
+        self.assertIn("static int parse_index_word(", player)
+        self.assertIn("level >= INT_MIN && level <= INT_MAX", player)
+        self.assertIn("player_table[i].last = (time_t)last", player)
+        affects = player[player.index("static void load_affects(FILE *fl, struct char_data *ch)\\n{".replace("\\\\n", "\\n")):]
+        self.assertIn("parsed = strtol(cursor, &end, 10)", affects)
+        self.assertIn("count != 5 && count != 8", affects)
+        self.assertIn("SET_BIT_AR(af.bitvector, values[4])", affects)
+
     def test_saved_skills_and_quests_validate_numeric_records(self):
         player = source("players.c")
         self.assertIn("static int parse_saved_ints(", player)
