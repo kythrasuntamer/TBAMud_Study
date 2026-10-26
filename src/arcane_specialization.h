@@ -12,7 +12,7 @@ static inline int arcane_adjust_mana(int class_id, int level,
 
   if (class_id == CLASS_MAGIC_USER && level >= 20 &&
       level - minimum_level >= 10)
-    return MAX(1, (base_mana * 4 + 4) / 5);
+    return base_mana <= 1 ? 1 : (base_mana * 4 + 4) / 5;
 
   if (class_id == CLASS_SORCERER && level >= 20 && damaging_spell)
     return (base_mana * 3 + 1) / 2;
