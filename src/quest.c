@@ -204,6 +204,25 @@ void parse_quest(FILE *quest_f, int nr)
   aquest_table[i].done = fread_string(quest_f, buf2);
   aquest_table[i].quit = fread_string(quest_f, buf2);
   if (!get_line(quest_f, line) ||
+      !quest_parse_record(line, t, 6, f1, sizeof(f1))) {
+    log("Format error in quest header numeric line, %s\n", line);
+    exit(1);
+  }
+  aquest_table[i].type = t[0];
+  aquest_table[i].qm = (real_mobile(t[1]) == NOBODY) ? NOBODY : t[1];
+  aquest_table[i].flags = asciiflag_conv(f1);
+  aquest_table[i].target = (t[2] == -1) ? NOTHING : t[2];
+  aquest_table[i].prev_quest = (t[3] == -1) ? NOTHING : t[3];
+  aquest_table[i].next_quest = (t[4] == -1) ? NOTHING : t[4];
+  aquest_table[i].prereq = (t[5] == -1) ? NOTHING : t[5];
+  if (!get_line(quest_f, line) ||
+      !quest_parse_record(line, t, 7, NULL, 0)) {
+    log("Format error in quest values numeric line, %s\n", line);
+    exit(1);
+  }
+  for (j = 0; j < 7; j++)
+    aquest_table[i].value[j] = t[j];
+  if (!get_line(quest_f, line) ||
       !quest_parse_record(line, t, 3, NULL, 0)) {
     log("Format error in quest rewards numeric line, %s\n", line);
     exit(1);
