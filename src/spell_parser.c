@@ -14,6 +14,7 @@
 #include "utils.h"
 #include "interpreter.h"
 #include "spells.h"
+#include "arcane_specialization.h"
 #include "handler.h"
 #include "comm.h"
 #include "db.h"
@@ -60,17 +61,9 @@ static int mag_manacost(struct char_data *ch, int spellnum) {
       (GET_LEVEL(ch) - SINFO.min_level[(int) GET_CLASS(ch)])),
       SINFO.mana_min);
 
-  /* A Wizard's well-practiced spells become cheaper. */
-  if (!IS_NPC(ch) && GET_CLASS(ch) == CLASS_MAGIC_USER &&
-      GET_LEVEL(ch) >= 20 &&
-      GET_LEVEL(ch) - SINFO.min_level[CLASS_MAGIC_USER] >= 10)
-    mana = MAX(1, (mana * 4 + 4) / 5);
-
-  /* Sorcerer damage spells consume extra mana to fuel innate power.
-   * This matches the empowerment applied in mag_damage for direct spells. */
-  if (!IS_NPC(ch) && GET_CLASS(ch) == CLASS_SORCERER &&
-      GET_LEVEL(ch) >= 20 && IS_SET(SINFO.routines, MAG_DAMAGE))
-    mana = (mana * 3 + 1) / 2;
+  mana = arcane_adjust_mana(GET_CLASS(ch), GET_LEVEL(ch),
+      SINFO.min_level[(int) GET_CLASS(ch)], mana,
+      IS_SET(SINFO.routines, MAG_DAMAGE), IS_NPC(ch));
 
   return mana;
 }
