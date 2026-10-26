@@ -11,6 +11,18 @@ UTILS = (ROOT / "src" / "utils.c").read_text(encoding="utf-8")
 
 
 class FormattingAndBoundsContracts(unittest.TestCase):
+    def test_last_login_cleanup_never_deletes_original_before_replace(self):
+        wizard = (ROOT / "src" / "act.wizard.c").read_text(encoding="utf-8")
+        begin = wizard.index("void clean_llog_entries(void) {")
+        end = wizard.index("/* debugging stuff", begin)
+        routine = wizard[begin:end]
+        self.assertIn("copied != MAX_LAST_ENTRIES", routine)
+        self.assertIn("fflush(nfp) != 0", routine)
+        self.assertIn("fclose(nfp) != 0", routine)
+        self.assertIn("rename(temp_name, LAST_FILE) != 0", routine)
+        self.assertNotIn("remove(LAST_FILE)", routine)
+        self.assertIn("if (failed)", routine)
+
     def test_last_login_record_seeks_checked(self):
         wizard = (ROOT / "src" / "act.wizard.c").read_text(encoding="utf-8")
         start = wizard.index("struct last_entry *find_llog_entry(")
