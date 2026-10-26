@@ -981,39 +981,59 @@ void clean_pfiles(void)
    * entries of the players that were just deleted. */
 }
 
-/* load_affects function now handles both 32-bit and
-   128-bit affect bitvectors for backward compatibility */
+/* Both historical five-column and current eight-column affects remain supported. */
 static void load_affects(FILE *fl, struct char_data *ch)
 {
-  int num = 0, num2 = 0, num3 = 0, num4 = 0, num5 = 0, num6 = 0, num7 = 0, num8 = 0, i, n_vars;
   char line[MAX_INPUT_LENGTH + 1];
+  int values[8];
+  int count, index;
+  const char *cursor;
+  char *end;
+  long parsed;
   struct affected_type af;
 
-  i = 0;
-  do {
-    new_affect(&af);
-    get_line(fl, line);
-    n_vars = sscanf(line, "%d %d %d %d %d %d %d %d", &num, &num2, &num3, &num4, &num5, &num6, &num7, &num8);
-    if (num > 0) {
-      af.spell = num;
-      af.duration = num2;
-      af.modifier = num3;
-      af.location = num4;
-      if (n_vars == 8) {              /* New 128-bit version */
-          af.bitvector[0] =  num5;
-          af.bitvector[1] =  num6;
-          af.bitvector[2] =  num7;
-          af.bitvector[3] =  num8;
-      } else if (n_vars == 5) {       /* Old 32-bit conversion version */
-        if (num5 > 0 && num5 < NUM_AFF_FLAGS)  /* Ignore invalid values */
-          SET_BIT_AR(af.bitvector, num5);
-      } else {
-        log("SYSERR: Invalid affects in pfile (%s), expecting 5 or 8 values", GET_NAME(ch));
-      }
-      affect_to_char(ch, &af);
-      i++;
+  while (get_line(fl, line)) {
+    cursor = line;
+    count = 0;
+    while (count < 8) {
+      while (isspace((unsigned char)*cursor))
+        cursor++;
+      if (*cursor == '\0')
+        break;
+      errno = 0;
+      parsed = strtol(cursor, &end, 10);
+      if (end == cursor || errno == ERANGE || parsed < INT_MIN ||
+          parsed > INT_MAX || (*end && !isspace((unsigned char)*end)))
+        break;
+      values[count++] = (int)parsed;
+      cursor = end;
     }
-  } while (num != 0);
+    while (isspace((unsigned char)*cursor))
+      cursor++;
+    if (*cursor != '\0' || count == 0) {
+      log("SYSERR: Malformed affects in pfile (%s)", GET_NAME(ch));
+      break;
+    }
+    if (values[0] == 0)
+      break;
+    if (count != 5 && count != 8) {
+      log("SYSERR: Invalid affects in pfile (%s), expecting 5 or 8 values", GET_NAME(ch));
+      break;
+    }
+    new_affect(&af);
+    af.spell = values[0];
+    af.duration = values[1];
+    af.modifier = values[2];
+    af.location = values[3];
+    if (count == 8) {
+      for (index = 0; index < 4; index++)
+        af.bitvector[index] = values[index + 4];
+    } else if (values[4] > 0 && values[4] < NUM_AFF_FLAGS) {
+      SET_BIT_AR(af.bitvector, values[4]);
+    }
+    if (af.spell > 0)
+      affect_to_char(ch, &af);
+  }
 }
 
 /* Parse one or two bounded integers without scanf's overflow ambiguity. */
