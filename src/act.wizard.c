@@ -4648,7 +4648,10 @@ static int parse_plist_range(const char *arg, int *low, int *high)
   return 2;
 }
 
-#define PLIST_FORMAT \ACMD(do_plist)
+#define PLIST_FORMAT \
+  "Usage: plist [minlev[-maxlev]] [-n name] [-d days] [-h hours] [-i] [-m]"
+
+ACMD(do_plist)
 {
   int i, len = 0, count = 0;
   char mode, buf[MAX_STRING_LENGTH * 20], name_search[MAX_NAME_LENGTH], timestr[MAX_STRING_LENGTH];
@@ -4716,11 +4719,6 @@ static int parse_plist_range(const char *arg, int *low, int *high)
         return;
       }
     } else {
-      send_to_char(ch, "%s\r\n", PLIST_FORMAT);
-      return;
-    }
-  }
-lse {
       send_to_char(ch, "%s\r\n", PLIST_FORMAT);
       return;
     }
