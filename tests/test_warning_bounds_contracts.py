@@ -29,7 +29,7 @@ class FormattingAndBoundsContracts(unittest.TestCase):
             src = (root / filename).read_text(encoding="utf-8")
             self.assertIn("if (", src)
             self.assertIn("UTIL_REPORT_ERRNO", src)
-        self.assertIn("(unsigned char)GET_LEVEL(ch)", (root / "magic.c").read_text(encoding="utf-8"))
+        self.assertIn("(unsigned char)saving_throws(", (root / "magic.c").read_text(encoding="utf-8"))
         self.assertIn("(unsigned char)GET_CHA(tch)", (root / "spec_procs.c").read_text(encoding="utf-8"))
 
     def test_combat_messages_and_shops_validate_numeric_ids(self):
