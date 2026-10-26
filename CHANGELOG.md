@@ -10,6 +10,8 @@ treating any feature as production-ready.
 ## Unreleased — documentation branch (2026-10-26)
 
 ### Documentation
+- Published `ROADMAP.md` covering only intended public engine modernization,
+  and linked it from `README.md`; private game plans are excluded.
 - Extended the style review with an initial upstream tbaMUD comparison and a
   process for safely restoring classic CircleMUD idioms in modified code.
 - Documented room, mobile, and object-instance Oasis editing contracts in
