@@ -968,30 +968,68 @@ static void load_affects(FILE *fl, struct char_data *ch)
   } while (num != 0);
 }
 
+/* Parse one or two bounded integers without scanf's overflow ambiguity. */
+static int parse_saved_ints(const char *line, int *first, int *second)
+{
+  char *end;
+  long value;
+  int count = 0;
+  int *dest[2] = { first, second };
+  const char *cursor = line;
+
+  if (line == NULL || first == NULL)
+    return 0;
+  while (count < (second != NULL ? 2 : 1)) {
+    while (isspace((unsigned char)*cursor))
+      cursor++;
+    if (*cursor == '\0')
+      break;
+    errno = 0;
+    value = strtol(cursor, &end, 10);
+    if (end == cursor || errno == ERANGE || value < INT_MIN || value > INT_MAX)
+      return 0;
+    *dest[count++] = (int)value;
+    cursor = end;
+  }
+  while (isspace((unsigned char)*cursor))
+    cursor++;
+  return *cursor == '\0' ? count : 0;
+}
+
 static void load_skills(FILE *fl, struct char_data *ch)
 {
-  int num = 0, num2 = 0;
+  int num, num2;
   char line[MAX_INPUT_LENGTH + 1];
 
-  do {
-    get_line(fl, line);
-    sscanf(line, "%d %d", &num, &num2);
-      if (num != 0)
-	GET_SKILL(ch, num) = num2;
-  } while (num != 0);
+  while (get_line(fl, line)) {
+    if (parse_saved_ints(line, &num, &num2) != 2) {
+      log("SYSERR: Invalid skill record in pfile (%s)", GET_NAME(ch));
+      break;
+    }
+    if (num == 0)
+      break;
+    if (num < 1 || num > MAX_SKILLS) {
+      log("SYSERR: Out-of-range skill in pfile (%s): %d", GET_NAME(ch), num);
+      break;
+    }
+    GET_SKILL(ch, num) = num2;
+  }
 }
 
 void load_quests(FILE *fl, struct char_data *ch)
 {
-  int num = NOTHING;
+  int num;
   char line[MAX_INPUT_LENGTH + 1];
 
-  do {
-    get_line(fl, line);
-    sscanf(line, "%d", &num);
-    if (num != NOTHING)
-      add_completed_quest(ch, num);
-  } while (num != NOTHING);
+  while (get_line(fl, line)) {
+    if (parse_saved_ints(line, &num, NULL) != 1) {
+      log("SYSERR: Invalid quest record in pfile (%s)", GET_NAME(ch));
+      break;
+    }
+    if (num == NOTHING)
+      break;
+    add_completed_quest(ch, num);
+  }
 }
 
 static void load_HMVS(struct char_data *ch, const char *line, int mode)
