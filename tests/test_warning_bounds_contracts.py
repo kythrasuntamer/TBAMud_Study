@@ -11,6 +11,22 @@ UTILS = (ROOT / "src" / "utils.c").read_text(encoding="utf-8")
 
 
 class FormattingAndBoundsContracts(unittest.TestCase):
+    def test_db_zone_and_help_numeric_parsers(self):
+        db = (ROOT / "src" / "db.c").read_text(encoding="utf-8")
+        zone = db[db.index("static void load_zones(FILE *fl, char *zonename)\n{"):]
+        zone = zone[:zone.index("top_of_zone_table = zone++;")]
+        self.assertIn("static int parse_zone_header(", db)
+        self.assertIn("static int parse_reset_numbers(", db)
+        self.assertIn("static int parse_hash_int(", db)
+        self.assertIn("errno == ERANGE", db)
+        self.assertIn("USHRT_MAX", db)
+        self.assertNotIn("sscanf(buf, \"#%hu\"", zone)
+        self.assertNotIn("sscanf(ptr, \" %d", zone)
+        self.assertIn("parse_zone_header(Z.name,", zone)
+        self.assertIn("parse_reset_numbers(ptr, args, 3,", zone)
+        self.assertIn("parse_reset_numbers(ptr, args, 4,", zone)
+        self.assertIn("if (!parse_hash_int(line, &el.min_level))", db)
+
     def test_db_line_flag_word_and_eol_pushback(self):
         db = (ROOT / "src" / "db.c").read_text(encoding="utf-8")
         sections = [
