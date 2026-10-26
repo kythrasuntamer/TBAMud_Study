@@ -93,7 +93,30 @@ void read_file(void)
 
   for (i = 0; i < recs; i++) {
     get_line(fl, line);
-    sscanf(line, "%ld %s %d %s %d", &id, name, &level, bits, &last);
+    {
+      char id_text[64], level_text[64], last_text[64], name_text[128], extra[2], *end;
+      long parsed;
+      if (sscanf(line, "%63s %127s %63s %63s %63s %1s",
+                 id_text, name_text, level_text, bits, last_text, extra) != 5)
+        continue;
+      if (strlen(name_text) >= sizeof(name))
+        continue;
+      tb_snprintf(name, sizeof(name), "%s", name_text);
+      errno = 0;
+      id = strtol(id_text, &end, 10);
+      if (end == id_text || *end || errno == ERANGE)
+        continue;
+      errno = 0;
+      parsed = strtol(level_text, &end, 10);
+      if (end == level_text || *end || errno == ERANGE || parsed < INT_MIN || parsed > INT_MAX)
+        continue;
+      level = (int)parsed;
+      errno = 0;
+      parsed = strtol(last_text, &end, 10);
+      if (end == last_text || *end || errno == ERANGE || parsed < INT_MIN || parsed > INT_MAX)
+        continue;
+      last = (int)parsed;
+    }
     CAP(name);
     flags = asciiflag_conv(bits);
     if (level >= MIN_LEVEL &&
