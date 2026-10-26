@@ -234,7 +234,7 @@ ASPELL(spell_detect_poison);
 int find_skill_num(char *name);
 
 int mag_damage(int level, struct char_data *ch, struct char_data *victim,
-  int spellnum, int savetype);
+  int spellnum, int savetype, int casttype);
 
 void mag_affects(int level, struct char_data *ch, struct char_data *victim,
   int spellnum, int savetype);
