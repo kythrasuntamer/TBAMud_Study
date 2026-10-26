@@ -294,13 +294,13 @@ static int parse_long_text_strict(const char *text, long *value)
   if (text == NULL || value == NULL)
     return 0;
 
-  while ((*p == ' ' || (*p >= '\\t' && *p <= '\\r')))
+  while ((*p == ' ' || (*p >= '\t' && *p <= '\r')))
     p++;
   errno = 0;
   parsed = strtol(p, &end, 10);
   if (p == end || errno == ERANGE)
     return 0;
-  while ((*end == ' ' || (*end >= '\\t' && *end <= '\\r')))
+  while ((*end == ' ' || (*end >= '\t' && *end <= '\r')))
     end++;
   if (*end != '\0')
     return 0;
