@@ -4672,13 +4672,20 @@ static int parse_plist_range(const char *arg, int *low, int *high)
     } else if (*arg == '-') {
       mode = *(arg + 1);        /* just in case; we destroy arg in the switch */
       switch (mode) {
-      case 'l':
+      case 'l': {
+        int prior_high = high;
+        int parsed = 0;
         half_chop(buf1, arg, buf);
-        if (!parse_plist_range(arg, &low, &high)) {
+        parsed = parse_plist_range(arg, &low, &high);
+        if (!parsed) {
           send_to_char(ch, "Invalid level range.\r\n");
           return;
         }
+        /* Historically, -l 10 changed only the lower limit. */
+        if (parsed == 1)
+          high = prior_high;
         break;
+      }
       case 'n':
         half_chop(buf1, name_search, buf);
         break;
