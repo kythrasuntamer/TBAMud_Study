@@ -15,6 +15,46 @@
 #include "modify.h"
 
 
+/* Return 0 for no range, 1 for one line, 2 for a range, -1 on
+ * invalid/overflowing input. Whitespace around the dash is permitted. */
+static int parse_editor_line_range(const char *text, int *low, int *high)
+{
+  const char *p = text;
+  char *end;
+  long first, last;
+  if (!p || !low || !high)
+    return -1;
+  while (isspace((unsigned char)*p))
+    p++;
+  if (!*p)
+    return 0;
+  errno = 0;
+  first = strtol(p, &end, 10);
+  if (p == end || errno == ERANGE || first < INT_MIN || first > INT_MAX)
+    return -1;
+  p = end;
+  while (isspace((unsigned char)*p))
+    p++;
+  *low = (int)first;
+  if (!*p)
+    return 1;
+  if (*p != '-')
+    return -1;
+  p++;
+  while (isspace((unsigned char)*p))
+    p++;
+  errno = 0;
+  last = strtol(p, &end, 10);
+  if (p == end || errno == ERANGE || last < INT_MIN || last > INT_MAX)
+    return -1;
+  while (isspace((unsigned char)*end))
+    end++;
+  if (*end)
+    return -1;
+  *high = (int)last;
+  return 2;
+}
+
 void send_editor_help(struct descriptor_data *d)
 {
   if (using_improved_editor)
@@ -103,6 +143,7 @@ void parse_edit_action(int command, char *string, struct descriptor_data *d)
   char *s, *t, temp, *c;
   char buf[MAX_STRING_LENGTH];
   char buf2[MAX_STRING_LENGTH - 1];
+  int range_result;
 
   switch (command) {
   case PARSE_HELP:
@@ -157,9 +198,9 @@ void parse_edit_action(int command, char *string, struct descriptor_data *d)
         flags += FORMAT_INDENT;
       }
     }
-    switch (sscanf((indent ? string + 1 : string), " %d - %d ", &line_low, &line_high))
+    range_result = parse_editor_line_range((indent ? string + 1 : string), &line_low, &line_high);
+    switch (range_result)
     {
-    case -1:
     case 0:
       line_low = 1;
       line_high = 999999;
@@ -167,6 +208,9 @@ void parse_edit_action(int command, char *string, struct descriptor_data *d)
     case 1:
       line_high = line_low;
       break;
+    case -1:
+      write_to_output(d, "Invalid line range.\\r\\n");
+      return;
     case 2:
       if (line_high < line_low) {
         write_to_output(d, "That range is invalid.\\r\\n");
@@ -211,7 +255,11 @@ void parse_edit_action(int command, char *string, struct descriptor_data *d)
       write_to_output(d, "Not enough space left in buffer.\r\n");
     break;
   case PARSE_DELETE:
-    switch (sscanf(string, " %d - %d ", &line_low, &line_high)) {
+    range_result = parse_editor_line_range(string, &line_low, &line_high);
+    switch (range_result) {
+    case -1:
+      write_to_output(d, "Invalid line range.\\r\\n");
+      return;
     case 0:
       write_to_output(d, "You must specify a line number or range to delete.\r\n");
       return;
@@ -267,7 +315,10 @@ void parse_edit_action(int command, char *string, struct descriptor_data *d)
      * are ok for what we do here. */
     *buf = '\0';
     if (*string)
-      switch (sscanf(string, " %d - %d ", &line_low, &line_high)) {
+      switch (parse_editor_line_range(string, &line_low, &line_high)) {
+      case -1:
+        write_to_output(d, "Invalid line range.\\r\\n");
+        return;
       case 0:
         line_low = 1;
         line_high = 999999;
@@ -325,7 +376,10 @@ void parse_edit_action(int command, char *string, struct descriptor_data *d)
      * are probably ok for what we do here. */
     *buf = '\0';
     if (*string)
-      switch (sscanf(string, " %d - %d ", &line_low, &line_high)) {
+      switch (parse_editor_line_range(string, &line_low, &line_high)) {
+      case -1:
+        write_to_output(d, "Invalid line range.\\r\\n");
+        return;
       case 0:
         line_low = 1;
         line_high = 999999;
