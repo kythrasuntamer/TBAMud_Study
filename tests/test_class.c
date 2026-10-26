@@ -11,6 +11,7 @@
 #include "structs.h"
 #include "utils.h"
 #include "class.h"
+#include "spells.h" /* SAVING_PARA and other saving throw identifiers */
 
 extern FILE *logfile;
 
