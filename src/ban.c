@@ -55,7 +55,20 @@ void load_banned(void)
       log("   Ban file '%s' doesn't exist.", BAN_FILE);
     return;
   }
-  while (fscanf(fl, " %s %s %d %s ", ban_type, site_name, &date, name) == 4) {
+  {
+    char line[512], date_text[64], site_token[256], name_token[64], extra[2], *end;
+    long parsed;
+    while (fgets(line, sizeof(line), fl)) {
+      if (sscanf(line, " %99s %255s %63s %63s %1s",
+                 ban_type, site_token, date_text, name_token, extra) != 4)
+        continue;
+      errno = 0;
+      parsed = strtol(date_text, &end, 10);
+      if (end == date_text || *end || errno == ERANGE || parsed < INT_MIN || parsed > INT_MAX)
+        continue;
+      date = (int)parsed;
+      tb_snprintf(site_name, sizeof(site_name), "%s", site_token);
+      tb_snprintf(name, sizeof(name), "%s", name_token);
     CREATE(next_node, struct ban_list_element, 1);
     strncpy(next_node->site, site_name, BANNED_SITE_LENGTH);	/* strncpy: OK (n_n->site:BANNED_SITE_LENGTH+1) */
     next_node->site[BANNED_SITE_LENGTH] = '\0';
@@ -71,6 +84,7 @@ void load_banned(void)
     ban_list = next_node;
   }
 
+  }
   tb_fclose(fl);
 }
 
