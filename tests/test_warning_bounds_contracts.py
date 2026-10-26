@@ -11,6 +11,17 @@ UTILS = (ROOT / "src" / "utils.c").read_text(encoding="utf-8")
 
 
 class FormattingAndBoundsContracts(unittest.TestCase):
+    def test_shop_profit_input_is_checked_before_mutating_state(self):
+        src = (ROOT / "src" / "sedit.c").read_text(encoding="utf-8")
+        self.assertIn("static int parse_shop_profit(", src)
+        self.assertIn("strtof(text, &end)", src)
+        self.assertIn("errno == ERANGE", src)
+        self.assertIn("!isfinite(parsed)", src)
+        self.assertIn("if (*end != '\\0')", src)
+        self.assertIn("if (!parse_shop_profit(arg, &S_BUYPROFIT(OLC_SHOP(d))))", src)
+        self.assertIn("if (!parse_shop_profit(arg, &S_SELLPROFIT(OLC_SHOP(d))))", src)
+        self.assertNotIn('sscanf(arg, "%f"', src)
+
     def test_improved_editor_ranges_use_checked_conversion(self):
         src = (ROOT / "src" / "improved-edit.c").read_text(encoding="utf-8")
         self.assertIn("static int parse_editor_line_range(", src)
