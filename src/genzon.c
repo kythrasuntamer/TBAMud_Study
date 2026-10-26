@@ -17,6 +17,31 @@
 /* local functions */
 static void remove_cmd_from_list(struct reset_com **list, int pos);
 
+/* Only the temporary index is removed on failure; preserve the live index. */
+static void cleanup_new_zone_index(const char *path)
+{
+  if (remove(path) != 0 && errno != ENOENT)
+    TB_REPORT_ERRNO("remove", path);
+}
+
+/* Index entries start with a decimal zone number followed by a file suffix. */
+static int parse_zone_index_number(const char *text, int *number)
+{
+  char *end;
+  long value;
+  if (!text || !number)
+    return 0;
+  while (isspace((unsigned char)*text))
+    text++;
+  errno = 0;
+  value = strtol(text, &end, 10);
+  if (text == end || errno == ERANGE || value < 0 || value > INT_MAX ||
+      (*end != '.' && !isspace((unsigned char)*end) && *end != '\0'))
+    return 0;
+  *number = (int)value;
+  return 1;
+}
+
 /* real zone of room/mobile/object/shop given */
 zone_rnum real_zone_by_thing(room_vnum vznum)
 {
@@ -271,11 +296,11 @@ void create_world_index(int znum, const char *type)
       tb_fprintf(newfile, "%s", (!found ? strncat(buf1, "\n$\n", sizeof(buf1) - strlen(buf1) - 1) : "$\n"));
       break;
     } else if (!found) {
-      if (sscanf(buf, "%d", &num) != 1) {
+      if (!parse_zone_index_number(buf, &num)) {
         TB_REPORT_ERROR("world-index-parse", old_name);
         tb_fclose(oldfile);
         tb_fclose(newfile);
-        remove(new_name);
+        cleanup_new_zone_index(new_name);
         return;
       }
       if (num > znum) {
@@ -285,7 +310,7 @@ void create_world_index(int znum, const char *type)
         /* index file already had an entry for this zone. */
         tb_fclose(oldfile);
         tb_fclose(newfile);
-        remove(new_name);
+        cleanup_new_zone_index(new_name);
         return;
       }
     }
@@ -297,19 +322,19 @@ void create_world_index(int znum, const char *type)
     TB_REPORT_ERROR("world-index-io", old_name);
     tb_fclose(newfile);
     tb_fclose(oldfile);
-    remove(new_name);
+    cleanup_new_zone_index(new_name);
     return;
   }
 
   if (fclose(newfile) == EOF) {
     TB_REPORT_ERRNO("world-index-close", new_name);
     tb_fclose(oldfile);
-    remove(new_name);
+    cleanup_new_zone_index(new_name);
     return;
   }
   if (fclose(oldfile) == EOF) {
     TB_REPORT_ERRNO("world-index-close", old_name);
-    remove(new_name);
+    cleanup_new_zone_index(new_name);
     return;
   }
 
