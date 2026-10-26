@@ -643,12 +643,21 @@ void save_char(struct char_data * ch)
     }
   }
 
-  if (!get_filename(filename, sizeof(filename), PLR_FILE, GET_NAME(ch)))
+  if (!get_filename(filename, sizeof(filename), PLR_FILE, GET_NAME(ch))) {
+    TB_REPORT_DOMAIN_ERROR(TB_SEV_ERROR, TB_ERR_PERSISTENCE,
+                           "get_filename", "player save path");
     return;
+  }
   /* Stage saves beside the original; never truncate a valid player file. */
-  if (snprintf(temporary_filename, sizeof(temporary_filename),
-               "%s.tmpXXXXXX", filename) < 0)
-    return;
+  {
+    int path_len = snprintf(temporary_filename, sizeof(temporary_filename),
+                            "%s.tmpXXXXXX", filename);
+    if (path_len < 0 || (size_t)path_len >= sizeof(temporary_filename)) {
+      TB_REPORT_DOMAIN_ERROR(TB_SEV_ERROR, TB_ERR_PERSISTENCE,
+                             "snprintf", "staged player save path");
+      return;
+    }
+  }
   temp_fd = mkstemp(temporary_filename);
   if (temp_fd < 0) {
     TB_ERROR_ERRNO("PLAYER", "mkstemp", filename, "Unable to stage player save");
