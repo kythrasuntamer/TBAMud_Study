@@ -11,6 +11,17 @@ UTILS = (ROOT / "src" / "utils.c").read_text(encoding="utf-8")
 
 
 class FormattingAndBoundsContracts(unittest.TestCase):
+    def test_combat_messages_and_shops_validate_numeric_ids(self):
+        msg = (ROOT / "src" / "msgedit.c").read_text(encoding="utf-8")
+        shop = (ROOT / "src" / "shop.c").read_text(encoding="utf-8")
+        for src in (msg, shop):
+            self.assertIn("strtol(p, &end, 10)", src)
+            self.assertIn("errno == ERANGE", src)
+            self.assertIn("parsed > INT_MAX", src)
+            self.assertIn("if (*end != '\\0')", src)
+        self.assertNotIn('sscanf(chk, " %d', msg)
+        self.assertNotIn('sscanf(buf, "#%d', shop)
+
     def test_quest_numeric_records_use_checked_conversion(self):
         src = (ROOT / "src" / "quest.c").read_text(encoding="utf-8")
         self.assertIn("static int quest_parse_int(", src)
