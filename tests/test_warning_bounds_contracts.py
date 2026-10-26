@@ -11,6 +11,17 @@ UTILS = (ROOT / "src" / "utils.c").read_text(encoding="utf-8")
 
 
 class FormattingAndBoundsContracts(unittest.TestCase):
+    def test_wizard_plist_ranges_and_last_seeks_checked(self):
+        wizard = (ROOT / "src" / "act.wizard.c").read_text(encoding="utf-8")
+        plist = wizard[wizard.index("ACMD(do_plist)"): ]
+        self.assertIn("static int parse_plist_range(", wizard)
+        self.assertIn("errno == ERANGE", wizard)
+        self.assertNotIn('sscanf(arg, "%d-%d"', plist)
+        self.assertEqual(plist.count("parse_plist_range(arg,"), 4)
+        last = wizard[wizard.index("ACMD(do_last)"):wizard.index("ACMD(do_plist)")]
+        self.assertIn("(recs = ftell(fp)) < 0", last)
+        self.assertEqual(last.count('TB_REPORT_ERRNO("seek", LAST_FILE)'), 3)
+
     def test_area_level_flag_uses_native_bool(self):
         source = (ROOT / "src" / "act.informative.c").read_text(encoding="utf-8")
         self.assertIn("bool show_zone = FALSE, overlap = FALSE, overlap_shown = FALSE, lev_set;", source)
