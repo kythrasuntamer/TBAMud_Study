@@ -3213,7 +3213,7 @@ char *fread_line(FILE *fp)
 {
   static char line[MAX_STRING_LENGTH];
   char *pline;
-  char c;
+  int c;
   int ln;
 
   pline = line;
@@ -3228,12 +3228,19 @@ char *fread_line(FILE *fp)
       *pline = '\0';
       return (line);
     }
-    c = getc( fp );
+    c = getc(fp);
+    if (c == EOF) {
+      log("SYSERR: fread_line: unexpected EOF");
+      return line;
+    }
   }
-  while(isspace(c));
+  while (isspace((unsigned char)c));
 
   /* Un-Read first char */
-  ungetc( c, fp );
+  if (ungetc(c, fp) == EOF) {
+    log("SYSERR: fread_line: failed to restore lookahead");
+    return line;
+  }
 
   do {
     if(feof(fp)) {
@@ -3257,7 +3264,10 @@ char *fread_line(FILE *fp)
   }
   while( c == '\n' || c == '\r' );
 
-  ungetc( c, fp );
+  if (c != EOF && ungetc(c, fp) == EOF) {
+    log("SYSERR: fread_line: failed to restore lookahead");
+    return line;
+  }
   pline--;
   *pline = '\0';
 
@@ -3273,7 +3283,7 @@ int fread_flags(FILE *fp, int *fg, int fg_size)
 {
   char line[MAX_STRING_LENGTH];
   char *pline, *tmp_txt, val_txt[MAX_INPUT_LENGTH];
-  char c;
+  int c;
   int ln,i;
 
   pline = line;
@@ -3288,12 +3298,19 @@ int fread_flags(FILE *fp, int *fg, int fg_size)
       *pline = '\0';
       return (0);
     }
-    c = getc( fp );
+    c = getc(fp);
+    if (c == EOF) {
+      log("SYSERR: fread_flags: unexpected EOF");
+      return 0;
+    }
   }
-  while(isspace(c));
+  while (isspace((unsigned char)c));
 
   /* Un-Read first char */
-  ungetc( c, fp );
+  if (ungetc(c, fp) == EOF) {
+    log("SYSERR: fread_flags: failed to restore lookahead");
+    return 0;
+  }
 
   do {
     if(feof(fp)) {
@@ -3317,7 +3334,10 @@ int fread_flags(FILE *fp, int *fg, int fg_size)
   }
   while( c == '\n' || c == '\r' );
 
-  ungetc( c, fp );
+  if (c != EOF && ungetc(c, fp) == EOF) {
+    log("SYSERR: fread_flags: failed to restore lookahead");
+    return 0;
+  }
   pline--;
   *pline = '\0';
 
@@ -3339,7 +3359,7 @@ char *fread_word(FILE *fp)
 {
    static char word[MAX_STRING_LENGTH];
    char *pword;
-   char cEnd;
+   int cEnd;
 
    do
    {
@@ -3372,11 +3392,18 @@ char *fread_word(FILE *fp)
          *pword = '\0';
          return word;
       }
-      *pword = getc( fp );
-      if( cEnd == ' ' ? isspace( *pword ) : *pword == cEnd )
+      int next = getc(fp);
+      if (next == EOF) {
+         *pword = '\0';
+         return word;
+      }
+      *pword = (char)next;
+      if (cEnd == ' ' ? isspace((unsigned char)next) : next == cEnd)
       {
-         if( cEnd == ' ' )
-            ungetc( *pword, fp );
+         if (cEnd == ' ' && ungetc(next, fp) == EOF) {
+            log("SYSERR: fread_word: failed to restore lookahead");
+            return NULL;
+         }
          *pword = '\0';
          return word;
       }
@@ -3388,7 +3415,7 @@ char *fread_word(FILE *fp)
 /* Read to end of line in a given file (for comments) */
 void fread_to_eol(FILE *fp)
 {
-  char c;
+  int c;
 
   do {
     if(feof(fp)) {
@@ -3404,7 +3431,8 @@ void fread_to_eol(FILE *fp)
   }
   while( c == '\n' || c == '\r' );
 
-  ungetc( c, fp );
+  if (c != EOF && ungetc(c, fp) == EOF)
+    log("SYSERR: fread_to_eol: failed to restore lookahead");
 }
 
 /* Called to free all allocated follow_type structs */
