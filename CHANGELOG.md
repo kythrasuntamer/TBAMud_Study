@@ -10,6 +10,9 @@ treating any feature as production-ready.
 ## Unreleased — documentation branch (2026-10-26)
 
 ### Documentation
+- Added `doc/circlemud-style-review.md`, comparing the classic CircleMUD
+  structure with current modernization concerns and establishing the original
+  C idiom (including careful macro use) as the preferred style.
 - Added maintainability comments in `src/players.c` describing ASCII player-file
   parsing fallbacks, field interpretation, and index-parser behavior.
 - Added lifecycle and buffer-ownership notes in `src/comm.c`.
