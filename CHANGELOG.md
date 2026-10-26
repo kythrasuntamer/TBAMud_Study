@@ -14,6 +14,12 @@ treating any feature as production-ready.
   parsing fallbacks, field interpretation, and index-parser behavior.
 - Added lifecycle and buffer-ownership notes in `src/comm.c`.
 - Added world database, player-index, and zone-reset reference notes in `src/db.c`.
+- Documented Argon2id and legacy password verification behavior, hashing
+  failure handling, and login/Oasis state dispatch in `src/interpreter.c`.
+- Added DG script execution and trigger-lifetime maintenance notes to
+  `src/dg_scripts.c`.
+- Documented active-combat list traversal, attack guards, and combat pulse
+  expectations in `src/fight.c`.
 - Introduced this public changelog and expanded the README with the project's
   scope, contribution workflow, and verification policy.
 
