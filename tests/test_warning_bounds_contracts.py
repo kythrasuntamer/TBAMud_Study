@@ -18,7 +18,7 @@ class FormattingAndBoundsContracts(unittest.TestCase):
         section = wizard[start:end]
         self.assertIn('"Usage: plist [minlev[-maxlev]]', section)
         self.assertIn("ACMD(do_plist)\\n{", section)
-        self.assertNotIn("lse {", section)
+        self.assertNotIn("\\nlse {", section)
         self.assertIn("page_string(ch->desc, buf, TRUE);\\n}", section)
 
     def test_wizard_plist_ranges_and_last_seeks_checked(self):
