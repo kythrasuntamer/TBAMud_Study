@@ -28,7 +28,7 @@ static const char *fault;
 static char reported[256];
 static int input_write_error;
 static int record_failure(const char *operation, int err) {
-  if (!strcmp(fault, operation)) { errno = err; return 1; }
+  if (!strcmp(fault, operation) ||\n      (!strcmp(fault, "rename+unlink") &&\n       (!strcmp(operation, "rename") || !strcmp(operation, "unlink")))) {\n    errno = err; return 1;\n  }
   return 0;
 }
 static int injected_ferror(FILE *f) {
@@ -105,7 +105,7 @@ int main(int argc, char **argv) {
     return (!committed || !read_equal("saved.plr", "REPLACEMENT")) ? 6 : 0;
   if (committed || !reported_failure || !read_equal("saved.plr", "ORIGINAL"))
     return 7;
-  if (strcmp(fault, "unlink") == 0) return 8; /* no prior error triggers unlink */
+  if (!strcmp(fault, "rename+unlink"))\n    return read_equal("stage.tmp", "REPLACEMENT") ? 0 : 8;
   if (strcmp(reported, fault) != 0) return 9;
   return 0;
 }
@@ -134,7 +134,7 @@ class ProductionSaveCommitFaultTests(unittest.TestCase):
             cls.workspace.cleanup()
 
     def test_production_commit_block(self):
-        for fault in ("none", "write", "fflush", "fclose", "rename"):
+        for fault in ("none", "write", "fflush", "fclose", "rename", "rename+unlink"):
             with self.subTest(fault=fault):
                 with tempfile.TemporaryDirectory(prefix="case-", dir=self.root) as work:
                     result = subprocess.run([str(self.exe), fault], cwd=work,
