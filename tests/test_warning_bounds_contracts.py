@@ -16,7 +16,7 @@ class FormattingAndBoundsContracts(unittest.TestCase):
         self.assertIn("static int parse_shop_profit(", src)
         self.assertIn("strtof(text, &end)", src)
         self.assertIn("errno == ERANGE", src)
-        self.assertIn("!isfinite(parsed)", src)
+        self.assertIn("parsed != parsed || parsed > FLT_MAX || parsed < -FLT_MAX", src)
         self.assertIn("if (*end != '\\0')", src)
         self.assertIn("if (!parse_shop_profit(arg, &S_BUYPROFIT(OLC_SHOP(d))))", src)
         self.assertIn("if (!parse_shop_profit(arg, &S_SELLPROFIT(OLC_SHOP(d))))", src)
