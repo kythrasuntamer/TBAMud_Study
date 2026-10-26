@@ -11,6 +11,17 @@ UTILS = (ROOT / "src" / "utils.c").read_text(encoding="utf-8")
 
 
 class FormattingAndBoundsContracts(unittest.TestCase):
+    def test_dg_trigger_index_and_position_parsing_is_checked(self):
+        src = (ROOT / "src" / "dg_olc.c").read_text(encoding="utf-8")
+        self.assertIn("static int trigedit_index_number(", src)
+        self.assertIn("static int trigedit_position_and_vnum(", src)
+        self.assertIn("errno == ERANGE", src)
+        self.assertIn("if (!trigedit_index_number(buf, &num))", src)
+        self.assertIn("count = trigedit_position_and_vnum(arg, &pos, &vnum)", src)
+        self.assertIn("tb_replace_file_checked(new_name, old_name)", src)
+        self.assertNotIn('sscanf(buf, "%d", &num)', src)
+        self.assertNotIn('sscanf(arg,"%d, %d",&pos,&vnum)', src)
+
     def test_iedit_instance_field_menu_choices_persist(self):
         src = (ROOT / "src" / "oedit.c").read_text(encoding="utf-8")
         menu_start = src.index("static int iedit_is_forbidden_main_menu_choice(char *arg)\n{")
