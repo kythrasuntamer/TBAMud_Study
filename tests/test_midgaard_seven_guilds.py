@@ -28,6 +28,19 @@ class MidgaardGuildTests(unittest.TestCase):
         self.assertIn("ASSIGNMOB(3014, guild);", assign)
         self.assertIn("ASSIGNMOB(3023, guild);", assign)
 
+    def test_necromancer_study_connected_but_not_selectable(self):
+        world = (ROOT / "lib/world/wld/30.wld").read_text()
+        mobs = (ROOT / "lib/world/mob/30.mob").read_text()
+        zone = (ROOT / "lib/world/zon/30.zon").read_text()
+        structs = (ROOT / "src/structs.h").read_text()
+        self.assertIn("#3058\\nThe Necromancer's Study~", world)
+        self.assertIn("0 -1 3058", world)
+        self.assertIn("0 -1 3038", world)
+        self.assertIn("#3029\\nnecromancer mentor scholar~", mobs)
+        self.assertIn("M 0 3029 1 3058", zone)
+        self.assertIn("#define CLASS_NECROMANCER 11", structs)
+        self.assertRegex(structs, r"#define NUM_CLASSES\\s+5\\b")
+
     def test_midgaard_connection(self):
         world = (ROOT / "lib/world/wld/30.wld").read_text()
         self.assertIn("0 -1 3057", world)
