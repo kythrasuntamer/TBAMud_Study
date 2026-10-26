@@ -18,6 +18,27 @@ Elson's original work whenever feasible. Prefer the following ordering:
    cannot meet the project's requirements.
 5. Preserve the local style within a file rather than reformat unrelated
    code during functional changes.
+6. Retain and use the familiar CircleMUD accessor and flag macros where they
+   make gameplay logic shorter and more recognizable (for example GET_*,
+   IS_NPC, and relevant flag helpers). Introduce a new macro only if it has
+   a clear, recurring purpose and does not hide important control flow or
+   failure handling. Prefer existing naming conventions over novel syntax.
+
+### Macro safety rules
+
+- Each macro parameter should be evaluated once wherever practical. Avoid
+  arguments with side effects in legacy macros that expand arguments more
+  than once; prefer a static inline function when reliable single evaluation
+  and type checking are necessary.
+- Fully parenthesize expressions and parameters in expression-like macros.
+- Preserve signedness and integer width; never use shifts or casts that can
+  invoke undefined behavior. Use checked helpers for bounds and arithmetic.
+- Avoid macros that silently allocate, free, log, return, or change control
+  flow unless that behavior is already a clear and documented codebase
+  convention. Keep failures local and attributable.
+- Preserve established macro contracts and expand regression tests before
+  changing widely used accessors or character/stat macros.
+
 
 Security, memory safety, error locality, persistence integrity and existing
 behavior are mandatory. Style consistency does not justify unsafe interfaces.
