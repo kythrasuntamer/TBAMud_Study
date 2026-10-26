@@ -29,6 +29,34 @@
 #include "asciimap.h"
 #include "quest.h"
 
+/* Nonnegative level argument or low-high range with checked conversion. */
+static int parse_info_level_range(const char *input, int *low, int *high)
+{
+  char *end;
+  long first, second;
+
+  if (!input || !isdigit((unsigned char)*input))
+    return 0;
+  errno = 0;
+  first = strtol(input, &end, 10);
+  if (errno == ERANGE || first > INT_MAX)
+    return 0;
+  if (*end == '\0') {
+    *low = (int)first;
+    return 1;
+  }
+  if (*end != '-' || !isdigit((unsigned char)end[1]))
+    return 0;
+  input = end + 1;
+  errno = 0;
+  second = strtol(input, &end, 10);
+  if (errno == ERANGE || second > INT_MAX || *end != '\0')
+    return 0;
+  *low = (int)first;
+  *high = (int)second;
+  return 2;
+}
+
 /* prototypes of local functions */
 /* do_diagnose utility functions */
 static void diag_char_to_char(struct char_data *i, struct char_data *ch);
@@ -1231,7 +1259,7 @@ ACMD(do_who)
 
     half_chop(buf, arg, buf1);
     if (isdigit(*arg)) {
-      sscanf(arg, "%d-%d", &low, &high);
+      parse_info_level_range(arg, &low, &high);
       strlcpy(buf, buf1, sizeof(buf));   /* strcpy: OK (sizeof: buf1 == buf) */
     } else if (*arg == '-') {
       mode = *(arg + 1);       /* just in case; we destroy arg in the switch */
@@ -1482,7 +1510,7 @@ ACMD(do_users)
       case 'l':
     playing = 1;
     half_chop(buf1, arg, buf);
-    sscanf(arg, "%d-%d", &low, &high);
+    parse_info_level_range(arg, &low, &high);
     break;
       case 'n':
     playing = 1;
@@ -1852,7 +1880,7 @@ ACMD(do_levels)
 
   if (*arg) {
     if (isdigit(*arg)) {
-      ret = sscanf(arg, "%d-%d", &min_lev, &max_lev);
+      ret = parse_info_level_range(arg, &min_lev, &max_lev);
       if (ret == 0) {
         /* No valid args found */
         min_lev = 1;
