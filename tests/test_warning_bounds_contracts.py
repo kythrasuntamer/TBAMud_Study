@@ -11,6 +11,17 @@ UTILS = (ROOT / "src" / "utils.c").read_text(encoding="utf-8")
 
 
 class FormattingAndBoundsContracts(unittest.TestCase):
+    def test_quest_numeric_records_use_checked_conversion(self):
+        src = (ROOT / "src" / "quest.c").read_text(encoding="utf-8")
+        self.assertIn("static int quest_parse_int(", src)
+        self.assertIn("static int quest_parse_record(", src)
+        self.assertIn("strtol(p, &end, 10)", src)
+        self.assertIn("value < INT_MIN || value > INT_MAX", src)
+        self.assertIn("quest_parse_record(line, t, 6, f1, sizeof(f1))", src)
+        self.assertIn("quest_parse_record(line, t, 7, NULL, 0)", src)
+        self.assertIn("quest_parse_record(line, t, 3, NULL, 0)", src)
+        self.assertNotIn("(retval = sscanf(line,", src)
+
     def test_zone_saves_check_failed_tempfile_cleanup(self):
         for filename, temp in (("genmob.c", "mobfname"),
                                ("genobj.c", "filename"),
