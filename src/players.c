@@ -968,26 +968,51 @@ void load_quests(FILE *fl, struct char_data *ch)
 
 static void load_HMVS(struct char_data *ch, const char *line, int mode)
 {
-  int num = 0, num2 = 0;
+  char *end = NULL;
+  long first, second;
+  int num, num2;
 
-  sscanf(line, "%d/%d", &num, &num2);
+  /* Reject malformed or overflowing saved values instead of silently
+   * replacing existing statistics with zero. Legacy 'number/number'
+   * fields, including signed strength modifiers, remain supported. */
+  if (line == NULL)
+    return;
+  errno = 0;
+  first = strtol(line, &end, 10);
+  if (end == line || errno == ERANGE || first < INT_MIN || first > INT_MAX ||
+      *end != '/') {
+    log("SYSERR: Invalid first player-stat value; leaving existing value unchanged");
+    return;
+  }
+  line = end + 1;
+  errno = 0;
+  second = strtol(line, &end, 10);
+  if (end == line || errno == ERANGE || second < INT_MIN || second > INT_MAX) {
+    log("SYSERR: Invalid second player-stat value; leaving existing value unchanged");
+    return;
+  }
+  while (isspace((unsigned char)*end))
+    end++;
+  if (*end != '\0') {
+    log("SYSERR: Trailing junk in player-stat value; leaving existing value unchanged");
+    return;
+  }
+  num = (int)first;
+  num2 = (int)second;
 
   switch (mode) {
   case LOAD_HIT:
     GET_HIT(ch) = num;
     GET_MAX_HIT(ch) = num2;
     break;
-
   case LOAD_MANA:
     GET_MANA(ch) = num;
     GET_MAX_MANA(ch) = num2;
     break;
-
   case LOAD_MOVE:
     GET_MOVE(ch) = num;
     GET_MAX_MOVE(ch) = num2;
     break;
-
   case LOAD_STRENGTH:
     ch->real_abils.str = num;
     ch->real_abils.str_add = num2;
