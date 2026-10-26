@@ -227,6 +227,7 @@ static unsigned long tb_correlation_sequence = 0;
 static unsigned long tb_current_correlation = 0;
 static unsigned long tb_diagnostic_sequence = 0;
 static struct tb_parse_context_slot tb_parse_contexts[TB_PARSE_CONTEXT_COUNT];
+static unsigned long tb_parse_context_overflows = 0;
 
 static const char *tb_error_id_for(const char *subsystem, const char *operation,
                                    int errnum)
@@ -340,6 +341,13 @@ size_t tb_breadcrumb_snapshot(char *dst, size_t dst_size)
     (void)tb_buf_appendf(&out, "#%lu/corr=%lu/%s:%s",
                          entry->sequence, entry->correlation,
                          entry->kind, entry->detail);
+  }
+
+  if (out.truncated) {
+    static const char marker[] = "...[BREADCRUMBS-TRUNCATED]";
+    size_t marker_len = sizeof(marker) - 1;
+    if (dst_size > marker_len)
+      memcpy(dst + dst_size - marker_len - 1, marker, marker_len + 1);
   }
 
   return out.length;
@@ -510,6 +518,18 @@ static struct tb_parse_context_slot *tb_parse_context_find(FILE *stream, int cre
     return free_slot;
   }
 
+  if (create && free_slot == NULL) {
+    int saved_errno = errno;
+    tb_parse_context_overflows++;
+    /* Allocation-free reporting: the loss of diagnostic context is itself an error. */
+    TB_ERROR_LOG("ERROR", "INVARIANT", "parse-context-exhausted",
+                 "(parser context pool)", 0,
+                 "capacity=%d failures=%lu stream=%p",
+                 TB_PARSE_CONTEXT_COUNT, tb_parse_context_overflows,
+                 (void *)stream);
+    errno = saved_errno;
+  }
+
   return NULL;
 }
 
@@ -586,6 +606,11 @@ void tb_parse_context_error_at(FILE *stream, const char *source_file,
     va_end(args);
     if (n < 0)
       strlcpy(detail, "parser detail formatting failed", sizeof(detail));
+    else if ((size_t)n >= sizeof(detail)) {
+      static const char marker[] = "...[DETAIL-TRUNCATED]";
+      memcpy(detail + sizeof(detail) - sizeof(marker),
+             marker, sizeof(marker));
+    }
   } else {
     strlcpy(detail, "parser error", sizeof(detail));
   }
