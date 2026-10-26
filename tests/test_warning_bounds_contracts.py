@@ -11,6 +11,22 @@ UTILS = (ROOT / "src" / "utils.c").read_text(encoding="utf-8")
 
 
 class FormattingAndBoundsContracts(unittest.TestCase):
+    def test_iedit_instance_field_menu_choices_persist(self):
+        src = (ROOT / "src" / "oedit.c").read_text(encoding="utf-8")
+        menu_start = src.index("static int iedit_is_forbidden_main_menu_choice(char *arg)\n{")
+        menu = src[menu_start:src.index("static void oedit_setup_new(", menu_start)]
+        for choice in ("5", "6", "7", "8", "9", "a", "b", "d", "m", "p"):
+            self.assertNotIn("case '" + choice + "':", menu)
+        for choice in ("s", "w", "x"):
+            self.assertIn("case '" + choice + "':", menu)
+        save_start = src.index("static void iedit_save_internally(struct descriptor_data *d)\n{")
+        save = src[save_start:src.index("static int iedit_is_forbidden_main_menu_choice(char *arg)\n{", save_start)]
+        for field in ("TYPE", "WEIGHT", "COST", "RENT", "TIMER", "LEVEL"):
+            self.assertIn("GET_OBJ_" + field + "(target) = GET_OBJ_" + field + "(edited)", save)
+        for field in ("EXTRA", "WEAR", "AFFECT"):
+            self.assertIn("GET_OBJ_" + field + "(target)[i] = GET_OBJ_" + field + "(edited)[i]", save)
+        self.assertIn("target->affected[i] = edited->affected[i]", save)
+
     def test_shop_profit_input_is_checked_before_mutating_state(self):
         src = (ROOT / "src" / "sedit.c").read_text(encoding="utf-8")
         self.assertIn("static int parse_shop_profit(", src)
