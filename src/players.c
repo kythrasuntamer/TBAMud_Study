@@ -565,10 +565,10 @@ int load_char(const char *name, struct char_data *ch)
 void save_char(struct char_data * ch)
 {
   FILE *fl;
+  char filename[40], buf[MAX_STRING_LENGTH], bits[127], bits2[127], bits3[127], bits4[127];
   char temporary_filename[sizeof(filename) + 16];
   int temp_fd;
   int save_failed = FALSE;
-  char filename[40], buf[MAX_STRING_LENGTH], bits[127], bits2[127], bits3[127], bits4[127];
   int i, j, id, save_index = FALSE;
   struct affected_type *aff, tmp_aff[MAX_AFFECT];
   struct obj_data *char_eq[NUM_WEARS];
