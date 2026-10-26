@@ -193,7 +193,7 @@ static int mag_materials(struct char_data *ch, IDXTYPE item0,
  * of damage, adds in any modifiers, determines what the saves are, tests for
  * save and calls damage(). -1 = dead, otherwise the amount of damage done. */
 int mag_damage(int level, struct char_data *ch, struct char_data *victim,
-		     int spellnum, int savetype)
+		     int spellnum, int savetype, int casttype)
 {
   int dam = 0;
 
@@ -285,6 +285,12 @@ int mag_damage(int level, struct char_data *ch, struct char_data *victim,
 
   } /* switch(spellnum) */
 
+
+  /* Innate Sorcerer empowerment affects direct, personally cast damage
+   * spells only; wands, scrolls and other item magic remain unchanged. */
+  if (!IS_NPC(ch) && GET_CLASS(ch) == CLASS_SORCERER &&
+      GET_LEVEL(ch) >= 20 && casttype == CAST_SPELL && dam > 0)
+    dam += dam / 4;
 
   /* divide damage by two if victim makes his saving throw */
   if (mag_savingthrow(victim, savetype, 0))
@@ -659,7 +665,7 @@ void mag_areas(int level, struct char_data *ch, int spellnum, int savetype)
 	if ((spellnum == SPELL_EARTHQUAKE) && AFF_FLAGGED(tch, AFF_FLYING))
 	  continue;
     /* Doesn't matter if they die here so we don't check. -gg 6/24/98 */
-    mag_damage(level, ch, tch, spellnum, 1);
+    mag_damage(level, ch, tch, spellnum, 1, CAST_UNDEFINED);
   }
 }
 
