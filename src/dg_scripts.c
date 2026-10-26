@@ -32,6 +32,13 @@
 
 #define PULSES_PER_MUD_HOUR     (SECS_PER_MUD_HOUR*PASSES_PER_SEC)
 
+/* DG script execution processes world-authored trigger text in the context
+ * of a mobile, object, or room. Evaluation, conditional branching, and wait
+ * handling share script/trigger state; changes to parser bounds or trigger
+ * lifetimes must be checked against nested scripts, deferred execution, and
+ * entity deletion. Do not assume world-authored text is memory-safe merely
+ * because it comes from an area file.
+ */
 /* Local functions not used elsewhere */
 static obj_data *find_obj(long n);
 static room_data *find_room(long n);
