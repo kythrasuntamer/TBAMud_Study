@@ -229,6 +229,17 @@ void test_level_exp_mortal_boundary(void)
     TEST_ASSERT_EQUAL_INT(9710000, level_exp(CLASS_MAGIC_USER, LVL_IMMORT));
 }
 
+void test_monk_class_selection_and_combat_curves(void)
+{
+    TEST_ASSERT_EQUAL_INT(CLASS_MONK, parse_class('o'));
+    TEST_ASSERT_EQUAL_INT(CLASS_MONK, parse_class('O'));
+    TEST_ASSERT_EQUAL_INT(thaco(CLASS_WARRIOR, 1), thaco(CLASS_MONK, 1));
+    TEST_ASSERT_EQUAL_INT(thaco(CLASS_WARRIOR, 30), thaco(CLASS_MONK, 30));
+    TEST_ASSERT_EQUAL_INT(level_exp(CLASS_WARRIOR, 25), level_exp(CLASS_MONK, 25));
+    TEST_ASSERT_EQUAL_INT(level_exp(CLASS_WARRIOR, 50), level_exp(CLASS_MONK, 50));
+    TEST_ASSERT_EQUAL_INT(saving_throws(CLASS_WARRIOR, SAVING_PARA, 10), saving_throws(CLASS_MONK, SAVING_PARA, 10));
+}
+
 /* =========================================================
  * main
  * ========================================================= */
@@ -236,6 +247,8 @@ void test_level_exp_mortal_boundary(void)
 int main(void)
 {
     UNITY_BEGIN();
+
+    RUN_TEST(test_monk_class_selection_and_combat_curves);
 
     /* parse_class */
     RUN_TEST(test_parse_class_magic_user_lowercase);
