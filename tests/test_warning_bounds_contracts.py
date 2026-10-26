@@ -11,6 +11,15 @@ UTILS = (ROOT / "src" / "utils.c").read_text(encoding="utf-8")
 
 
 class FormattingAndBoundsContracts(unittest.TestCase):
+    def test_last_login_record_seeks_checked(self):
+        wizard = (ROOT / "src" / "act.wizard.c").read_text(encoding="utf-8")
+        start = wizard.index("struct last_entry *find_llog_entry(")
+        end = wizard.index("void clean_llog_entries(", start)
+        section = wizard[start:end]
+        self.assertEqual(section.count('TB_REPORT_ERRNO("seek last-login file"'), 2)
+        self.assertEqual(section.count('TB_REPORT_ERRNO("seek last-login record"'), 4)
+        self.assertIn("(size = ftell(fp)) < 0", section)
+
     def test_ibt_lookahead_checks_eof_and_ungetc(self):
         ibt = (ROOT / "src" / "ibt.c").read_text(encoding="utf-8")
         start = ibt.index("static IBT_DATA *read_ibt(")
