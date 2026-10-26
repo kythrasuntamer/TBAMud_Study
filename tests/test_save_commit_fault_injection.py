@@ -23,6 +23,7 @@ C_DRIVER = r"""
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
+#define TRUE 1
 
 static const char *fault;
 static char reported[256];
