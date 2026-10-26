@@ -834,8 +834,8 @@ void save_char(struct char_data * ch)
   /* Capture each I/O failure at the operation that produced it.
    * fclose, rename, or cleanup must not overwrite the original errno. */
   if (ferror(fl)) {
-    TB_ERROR_ERRNO("PLAYER", "write", temporary_filename,
-                   "Staged player file has a pending write error");
+    TB_REPORT_DOMAIN_ERROR(TB_SEV_ERROR, TB_ERR_PERSISTENCE,
+                           "write", temporary_filename);
     save_failed = TRUE;
   }
   if (fflush(fl) != 0) {
