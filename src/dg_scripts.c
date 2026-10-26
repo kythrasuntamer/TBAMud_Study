@@ -1784,6 +1784,22 @@ static struct cmdlist_element *find_else_end(trig_data *trig,
   return c;
 }
 
+/* Read one bounded long, retaining a pointer to the remaining suffix. */
+static int script_wait_number(const char *text, long *number, const char **rest)
+{
+  char *end;
+  if (!text || !number || !rest)
+    return FALSE;
+  while (isspace((unsigned char)*text))
+    text++;
+  errno = 0;
+  *number = strtol(text, &end, 10);
+  if (end == text || errno == ERANGE)
+    return FALSE;
+  *rest = end;
+  return TRUE;
+}
+
 /* processes any 'wait' commands in a trigger */
 static void process_wait(void *go, trig_data *trig, int type, char *cmd,
                   struct cmdlist_element *cl)
@@ -1803,14 +1819,31 @@ static void process_wait(void *go, trig_data *trig, int type, char *cmd,
   }
 
   if (!strn_cmp(arg, "until ", 6)) {
-
-    /* valid forms of time are 14:30 and 1430 */
-    if (sscanf(arg, "until %ld:%ld", &hr, &min) == 2)
-      min += (hr * 60);
-    else if (sscanf(arg, "until %ld", &hr) == 1)
-      min = (hr % 100) + ((hr / 100) * 60);
-    else {
+    const char *rest;
+    if (!script_wait_number(arg + 6, &hr, &rest)) {
       script_log("Trigger: %s, VNum %d. wait until w/o a time: '%s'",
+              GET_TRIG_NAME(trig), GET_TRIG_VNUM(trig), cl->cmd);
+      return;
+    }
+    while (isspace((unsigned char)*rest))
+      rest++;
+    if (*rest == ':') {
+      if (!script_wait_number(rest + 1, &min, &rest) ||
+          hr > LONG_MAX / 60 || hr < LONG_MIN / 60 ||
+          (min > 0 && hr * 60 > LONG_MAX - min) ||
+          (min < 0 && hr * 60 < LONG_MIN - min)) {
+        script_log("Trigger: %s, VNum %d. invalid wait until time: '%s'",
+                GET_TRIG_NAME(trig), GET_TRIG_VNUM(trig), cl->cmd);
+        return;
+      }
+      min += hr * 60;
+    } else {
+      min = (hr % 100) + ((hr / 100) * 60);
+    }
+    while (isspace((unsigned char)*rest))
+      rest++;
+    if (*rest) {
+      script_log("Trigger: %s, VNum %d. invalid wait until suffix: '%s'",
               GET_TRIG_NAME(trig), GET_TRIG_VNUM(trig), cl->cmd);
       return;
     }
@@ -1829,19 +1862,32 @@ static void process_wait(void *go, trig_data *trig, int type, char *cmd,
   }
 
   else {
-    int fields = sscanf(arg, "%ld %c", &when, &c);
-
-    if (fields < 1) {
+    const char *rest;
+    int fields;
+    if (!script_wait_number(arg, &when, &rest)) {
       script_log("Trigger: %s, VNum %d. wait w/o a number: '%s'",
               GET_TRIG_NAME(trig), GET_TRIG_VNUM(trig), cl->cmd);
       return;
     }
-
+    while (isspace((unsigned char)*rest))
+      rest++;
+    fields = *rest ? 2 : 1;
+    c = *rest;
+    if (fields == 2 && rest[1] != '\0') {
+      script_log("Trigger: %s, VNum %d. invalid wait suffix: '%s'",
+              GET_TRIG_NAME(trig), GET_TRIG_VNUM(trig), cl->cmd);
+      return;
+    }
     if (fields == 2) {
-      if (c == 't')
+      if (c == 't') {
+        if (when > LONG_MAX / PULSES_PER_MUD_HOUR || when < LONG_MIN / PULSES_PER_MUD_HOUR)
+          return;
         when *= PULSES_PER_MUD_HOUR;
-      else if (c == 's')
+      } else if (c == 's') {
+        if (when > LONG_MAX / PASSES_PER_SEC || when < LONG_MIN / PASSES_PER_SEC)
+          return;
         when *= PASSES_PER_SEC;
+      }
     }
   }
 
@@ -2669,6 +2715,7 @@ int script_driver(void *go_adress, trig_data *trig, int type, int mode)
   }
 
   depth++;
+  dg_script_execution_enter();
 
   if (mode == TRIG_NEW) {
     GET_TRIG_DEPTH(trig) = 1;
@@ -2707,6 +2754,8 @@ int script_driver(void *go_adress, trig_data *trig, int type, int mode)
       if (!temp) {
         script_log("Trigger VNum %d has 'while' without 'done'.",
                    GET_TRIG_VNUM(trig));
+        depth--;
+        dg_script_execution_leave();
         return ret_val;
       }
       if (process_if(p + 6, go, sc, trig, type)) {
@@ -2739,6 +2788,7 @@ int script_driver(void *go_adress, trig_data *trig, int type, int mode)
           cl->loops = 0;
           process_wait(go, trig, type, "wait 1", cl);
            depth--;
+          dg_script_execution_leave();
           return ret_val;
         }
           if (GET_TRIG_LOOPS(trig) >= 100) {
@@ -2806,6 +2856,7 @@ int script_driver(void *go_adress, trig_data *trig, int type, int mode)
       else if (!strn_cmp(cmd, "wait ", 5)) {
         process_wait(go, trig, type, cmd, cl);
         depth--;
+        dg_script_execution_leave();
         return ret_val;
       }
 
@@ -2832,6 +2883,7 @@ int script_driver(void *go_adress, trig_data *trig, int type, int mode)
           depth--;
           if (type == OBJ_TRIGGER)
             *(obj_data **)go_adress = NULL;
+          dg_script_execution_leave();
           return ret_val;
         }
       }
@@ -2849,6 +2901,7 @@ int script_driver(void *go_adress, trig_data *trig, int type, int mode)
   GET_TRIG_DEPTH(trig) = 0;
 
   depth--;
+  dg_script_execution_leave();
   return ret_val;
 }
 

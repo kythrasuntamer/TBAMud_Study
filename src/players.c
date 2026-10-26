@@ -93,6 +93,37 @@ static long parse_pfile_long_or_zero(const char *value, const char *filename, co
   return parsed;
 }
 
+/* Read a whitespace-delimited signed number with overflow detection. */
+static int parse_index_long(const char **cursor, long *value)
+{
+  char *end;
+  long parsed;
+  while (isspace((unsigned char)**cursor))
+    ++*cursor;
+  errno = 0;
+  parsed = strtol(*cursor, &end, 10);
+  if (end == *cursor || errno == ERANGE || (*end && !isspace((unsigned char)*end)))
+    return FALSE;
+  *value = parsed;
+  *cursor = end;
+  return TRUE;
+}
+
+static int parse_index_word(const char **cursor, char *dest, size_t capacity)
+{
+  size_t len = 0;
+  while (isspace((unsigned char)**cursor))
+    ++*cursor;
+  while ((*cursor)[len] && !isspace((unsigned char)(*cursor)[len]))
+    ++len;
+  if (!len || len >= capacity)
+    return FALSE;
+  memcpy(dest, *cursor, len);
+  dest[len] = '\0';
+  *cursor += len;
+  return TRUE;
+}
+
 /* New version to build player index for ASCII Player Files. Generate index
  * table for the player file. */
 void build_player_index(void)
@@ -132,11 +163,28 @@ void build_player_index(void)
       log("SYSERR: player index %s ended early at record %d of %d", index_name, i + 1, rec_count);
       break;
     }
-    fields = sscanf(line, "%ld %79s %d %63s %ld", &player_table[i].id, arg2,
-      &player_table[i].level, bits, (long *)&player_table[i].last);
+    {
+      const char *cursor = line;
+      long level, last;
+      fields = 0;
+      if (parse_index_long(&cursor, &player_table[i].id) &&
+          parse_index_word(&cursor, arg2, sizeof(arg2)) &&
+          parse_index_long(&cursor, &level) &&
+          level >= INT_MIN && level <= INT_MAX &&
+          parse_index_word(&cursor, bits, sizeof(bits)) &&
+          parse_index_long(&cursor, &last)) {
+        while (isspace((unsigned char)*cursor))
+          cursor++;
+        if (*cursor == '\0') {
+          player_table[i].level = (int)level;
+          player_table[i].last = (time_t)last;
+          fields = 5;
+        }
+      }
+    }
     if (fields != 5) {
-      log("SYSERR: malformed player index record %d in %s (expected 5 fields, got %d): '%s'",
-          i + 1, index_name, fields, line);
+      log("SYSERR: malformed player index record %d in %s: '%s'",
+          i + 1, index_name, line);
       break;
     }
     CREATE(player_table[i].name, char, strlen(arg2) + 1);
@@ -295,7 +343,7 @@ int load_char(const char *name, struct char_data *ch)
   int id, i;
   FILE *fl;
   char filename[40];
-  char buf[128], buf2[128], line[MAX_INPUT_LENGTH + 1], tag[6];
+  char buf2[128], line[MAX_INPUT_LENGTH + 1], tag[6];
   char f1[128], f2[128], f3[128], f4[128];
   trig_data *t = NULL;
   trig_rnum t_rnum = NOTHING;
@@ -422,6 +470,10 @@ int load_char(const char *name, struct char_data *ch)
 
       case 'E':
 	     if (!strcmp(tag, "Exp "))	GET_EXP(ch)		= parse_pfile_int_or_zero(line, filename, tag);
+             else if (!strcmp(tag, "EgAP")) GET_ENDGAME_AP(ch) = MAX(0, parse_pfile_int_or_zero(line, filename, tag));
+             else if (!strcmp(tag, "EgXP")) GET_ENDGAME_XP(ch) = MAX(0, parse_pfile_int_or_zero(line, filename, tag));
+             else if (!strcmp(tag, "EgHP")) GET_ENDGAME_HP_RANK(ch) = MAX(0, parse_pfile_int_or_zero(line, filename, tag));
+             else if (!strcmp(tag, "EgMP")) GET_ENDGAME_MP_RANK(ch) = MAX(0, parse_pfile_int_or_zero(line, filename, tag));
 	break;
 
       case 'F':
@@ -562,6 +614,9 @@ void save_char(struct char_data * ch)
 {
   FILE *fl;
   char filename[40], buf[MAX_STRING_LENGTH], bits[127], bits2[127], bits3[127], bits4[127];
+  char temporary_filename[sizeof(filename) + 16];
+  int temp_fd;
+  int save_failed = FALSE;
   int i, j, id, save_index = FALSE;
   struct affected_type *aff, tmp_aff[MAX_AFFECT];
   struct obj_data *char_eq[NUM_WEARS];
@@ -590,8 +645,20 @@ void save_char(struct char_data * ch)
 
   if (!get_filename(filename, sizeof(filename), PLR_FILE, GET_NAME(ch)))
     return;
-  if (!(fl = fopen(filename, "w"))) {
-    mudlog(NRM, LVL_GOD, TRUE, "SYSERR: Couldn't open player file %s for write", filename);
+  /* Stage saves beside the original; never truncate a valid player file. */
+  if (snprintf(temporary_filename, sizeof(temporary_filename),
+               "%s.tmpXXXXXX", filename) < 0)
+    return;
+  temp_fd = mkstemp(temporary_filename);
+  if (temp_fd < 0) {
+    TB_ERROR_ERRNO("PLAYER", "mkstemp", filename, "Unable to stage player save");
+    return;
+  }
+  fl = fdopen(temp_fd, "w");
+  if (fl == NULL) {
+    TB_ERROR_ERRNO("PLAYER", "fdopen", temporary_filename, "Unable to open staged save");
+    close(temp_fd);
+    unlink(temporary_filename);
     return;
   }
 
@@ -632,19 +699,19 @@ void save_char(struct char_data * ch)
   ch->aff_abils = ch->real_abils;
   /* end char_to_store code */
 
-  if (GET_NAME(ch))				fprintf(fl, "Name: %s\n", GET_NAME(ch));
-  if (GET_PASSWD(ch))				fprintf(fl, "Pass: %s\n", GET_PASSWD(ch));
-  if (GET_TITLE(ch))				fprintf(fl, "Titl: %s\n", GET_TITLE(ch));
+  if (GET_NAME(ch))				tb_fprintf(fl, "Name: %s\n", GET_NAME(ch));
+  if (GET_PASSWD(ch))				tb_fprintf(fl, "Pass: %s\n", GET_PASSWD(ch));
+  if (GET_TITLE(ch))				tb_fprintf(fl, "Titl: %s\n", GET_TITLE(ch));
   if (ch->player.description && *ch->player.description) {
     strlcpy(buf, ch->player.description, sizeof(buf));
     strip_cr(buf);
     tb_fprintf(fl, "Desc:\n%s~\n", buf);
   }
-  if (POOFIN(ch))				fprintf(fl, "PfIn: %s\n", POOFIN(ch));
-  if (POOFOUT(ch))				fprintf(fl, "PfOt: %s\n", POOFOUT(ch));
-  if (GET_SEX(ch)	     != PFDEF_SEX)	fprintf(fl, "Sex : %d\n", GET_SEX(ch));
-  if (GET_CLASS(ch)	   != PFDEF_CLASS)	fprintf(fl, "Clas: %d\n", GET_CLASS(ch));
-  if (GET_LEVEL(ch)	   != PFDEF_LEVEL)	fprintf(fl, "Levl: %d\n", GET_LEVEL(ch));
+  if (POOFIN(ch))				tb_fprintf(fl, "PfIn: %s\n", POOFIN(ch));
+  if (POOFOUT(ch))				tb_fprintf(fl, "PfOt: %s\n", POOFOUT(ch));
+  if (GET_SEX(ch)	     != PFDEF_SEX)	tb_fprintf(fl, "Sex : %d\n", GET_SEX(ch));
+  if (GET_CLASS(ch)	   != PFDEF_CLASS)	tb_fprintf(fl, "Clas: %d\n", GET_CLASS(ch));
+  if (GET_LEVEL(ch)	   != PFDEF_LEVEL)	tb_fprintf(fl, "Levl: %d\n", GET_LEVEL(ch));
 
   tb_fprintf(fl, "Id  : %ld\n", GET_IDNUM(ch));
   tb_fprintf(fl, "Brth: %ld\n", (long)ch->player.time.birth);
@@ -656,10 +723,10 @@ void save_char(struct char_data * ch)
   if (GET_LAST_NEWS(ch) != PFDEF_LASTNEWS)
     tb_fprintf(fl, "Lnew: %d\n", (int)GET_LAST_NEWS(ch));
 
-  if (GET_HOST(ch))				fprintf(fl, "Host: %s\n", GET_HOST(ch));
-  if (GET_HEIGHT(ch)	   != PFDEF_HEIGHT)	fprintf(fl, "Hite: %d\n", GET_HEIGHT(ch));
-  if (GET_WEIGHT(ch)	   != PFDEF_WEIGHT)	fprintf(fl, "Wate: %d\n", GET_WEIGHT(ch));
-  if (GET_ALIGNMENT(ch)  != PFDEF_ALIGNMENT)	fprintf(fl, "Alin: %d\n", GET_ALIGNMENT(ch));
+  if (GET_HOST(ch))				tb_fprintf(fl, "Host: %s\n", GET_HOST(ch));
+  if (GET_HEIGHT(ch)	   != PFDEF_HEIGHT)	tb_fprintf(fl, "Hite: %d\n", GET_HEIGHT(ch));
+  if (GET_WEIGHT(ch)	   != PFDEF_WEIGHT)	tb_fprintf(fl, "Wate: %d\n", GET_WEIGHT(ch));
+  if (GET_ALIGNMENT(ch)  != PFDEF_ALIGNMENT)	tb_fprintf(fl, "Alin: %d\n", GET_ALIGNMENT(ch));
 
 
   sprintascii(bits,  PLR_FLAGS(ch)[0]);
@@ -680,55 +747,59 @@ void save_char(struct char_data * ch)
   sprintascii(bits4, PRF_FLAGS(ch)[3]);
   tb_fprintf(fl, "Pref: %s %s %s %s\n", bits, bits2, bits3, bits4);
 
- if (GET_SAVE(ch, 0)	   != PFDEF_SAVETHROW)	fprintf(fl, "Thr1: %d\n", GET_SAVE(ch, 0));
-  if (GET_SAVE(ch, 1)	   != PFDEF_SAVETHROW)	fprintf(fl, "Thr2: %d\n", GET_SAVE(ch, 1));
-  if (GET_SAVE(ch, 2)	   != PFDEF_SAVETHROW)	fprintf(fl, "Thr3: %d\n", GET_SAVE(ch, 2));
-  if (GET_SAVE(ch, 3)	   != PFDEF_SAVETHROW)	fprintf(fl, "Thr4: %d\n", GET_SAVE(ch, 3));
-  if (GET_SAVE(ch, 4)	   != PFDEF_SAVETHROW)	fprintf(fl, "Thr5: %d\n", GET_SAVE(ch, 4));
+ if (GET_SAVE(ch, 0)	   != PFDEF_SAVETHROW)	tb_fprintf(fl, "Thr1: %d\n", GET_SAVE(ch, 0));
+  if (GET_SAVE(ch, 1)	   != PFDEF_SAVETHROW)	tb_fprintf(fl, "Thr2: %d\n", GET_SAVE(ch, 1));
+  if (GET_SAVE(ch, 2)	   != PFDEF_SAVETHROW)	tb_fprintf(fl, "Thr3: %d\n", GET_SAVE(ch, 2));
+  if (GET_SAVE(ch, 3)	   != PFDEF_SAVETHROW)	tb_fprintf(fl, "Thr4: %d\n", GET_SAVE(ch, 3));
+  if (GET_SAVE(ch, 4)	   != PFDEF_SAVETHROW)	tb_fprintf(fl, "Thr5: %d\n", GET_SAVE(ch, 4));
 
-  if (GET_WIMP_LEV(ch)	   != PFDEF_WIMPLEV)	fprintf(fl, "Wimp: %d\n", GET_WIMP_LEV(ch));
-  if (GET_FREEZE_LEV(ch)   != PFDEF_FREEZELEV)	fprintf(fl, "Frez: %d\n", GET_FREEZE_LEV(ch));
-  if (GET_INVIS_LEV(ch)	   != PFDEF_INVISLEV)	fprintf(fl, "Invs: %d\n", GET_INVIS_LEV(ch));
-  if (GET_LOADROOM(ch)	   != PFDEF_LOADROOM)	fprintf(fl, "Room: %d\n", GET_LOADROOM(ch));
+  if (GET_WIMP_LEV(ch)	   != PFDEF_WIMPLEV)	tb_fprintf(fl, "Wimp: %d\n", GET_WIMP_LEV(ch));
+  if (GET_FREEZE_LEV(ch)   != PFDEF_FREEZELEV)	tb_fprintf(fl, "Frez: %d\n", GET_FREEZE_LEV(ch));
+  if (GET_INVIS_LEV(ch)	   != PFDEF_INVISLEV)	tb_fprintf(fl, "Invs: %d\n", GET_INVIS_LEV(ch));
+  if (GET_LOADROOM(ch)	   != PFDEF_LOADROOM)	tb_fprintf(fl, "Room: %d\n", GET_LOADROOM(ch));
 
-  if (GET_BAD_PWS(ch)	   != PFDEF_BADPWS)	fprintf(fl, "Badp: %d\n", GET_BAD_PWS(ch));
-  if (GET_PRACTICES(ch)	   != PFDEF_PRACTICES)	fprintf(fl, "Lern: %d\n", GET_PRACTICES(ch));
+  if (GET_BAD_PWS(ch)	   != PFDEF_BADPWS)	tb_fprintf(fl, "Badp: %d\n", GET_BAD_PWS(ch));
+  if (GET_PRACTICES(ch)	   != PFDEF_PRACTICES)	tb_fprintf(fl, "Lern: %d\n", GET_PRACTICES(ch));
 
-  if (GET_COND(ch, HUNGER)   != PFDEF_HUNGER && GET_LEVEL(ch) < LVL_IMMORT) fprintf(fl, "Hung: %d\n", GET_COND(ch, HUNGER));
-  if (GET_COND(ch, THIRST) != PFDEF_THIRST && GET_LEVEL(ch) < LVL_IMMORT) fprintf(fl, "Thir: %d\n", GET_COND(ch, THIRST));
-  if (GET_COND(ch, DRUNK)  != PFDEF_DRUNK  && GET_LEVEL(ch) < LVL_IMMORT) fprintf(fl, "Drnk: %d\n", GET_COND(ch, DRUNK));
+  if (GET_COND(ch, HUNGER)   != PFDEF_HUNGER && GET_LEVEL(ch) < LVL_IMMORT) tb_fprintf(fl, "Hung: %d\n", GET_COND(ch, HUNGER));
+  if (GET_COND(ch, THIRST) != PFDEF_THIRST && GET_LEVEL(ch) < LVL_IMMORT) tb_fprintf(fl, "Thir: %d\n", GET_COND(ch, THIRST));
+  if (GET_COND(ch, DRUNK)  != PFDEF_DRUNK  && GET_LEVEL(ch) < LVL_IMMORT) tb_fprintf(fl, "Drnk: %d\n", GET_COND(ch, DRUNK));
 
-  if (GET_HIT(ch)	   != PFDEF_HIT  || GET_MAX_HIT(ch)  != PFDEF_MAXHIT)  fprintf(fl, "Hit : %d/%d\n", GET_HIT(ch),  GET_MAX_HIT(ch));
-  if (GET_MANA(ch)	   != PFDEF_MANA || GET_MAX_MANA(ch) != PFDEF_MAXMANA) fprintf(fl, "Mana: %d/%d\n", GET_MANA(ch), GET_MAX_MANA(ch));
-  if (GET_MOVE(ch)	   != PFDEF_MOVE || GET_MAX_MOVE(ch) != PFDEF_MAXMOVE) fprintf(fl, "Move: %d/%d\n", GET_MOVE(ch), GET_MAX_MOVE(ch));
+  if (GET_HIT(ch)	   != PFDEF_HIT  || GET_MAX_HIT(ch)  != PFDEF_MAXHIT)  tb_fprintf(fl, "Hit : %d/%d\n", GET_HIT(ch),  GET_MAX_HIT(ch));
+  if (GET_MANA(ch)	   != PFDEF_MANA || GET_MAX_MANA(ch) != PFDEF_MAXMANA) tb_fprintf(fl, "Mana: %d/%d\n", GET_MANA(ch), GET_MAX_MANA(ch));
+  if (GET_MOVE(ch)	   != PFDEF_MOVE || GET_MAX_MOVE(ch) != PFDEF_MAXMOVE) tb_fprintf(fl, "Move: %d/%d\n", GET_MOVE(ch), GET_MAX_MOVE(ch));
 
-  if (GET_STR(ch)	   != PFDEF_STR  || GET_ADD(ch)      != PFDEF_STRADD)  fprintf(fl, "Str : %d/%d\n", GET_STR(ch),  GET_ADD(ch));
+  if (GET_STR(ch)	   != PFDEF_STR  || GET_ADD(ch)      != PFDEF_STRADD)  tb_fprintf(fl, "Str : %d/%d\n", GET_STR(ch),  GET_ADD(ch));
 
 
-  if (GET_INT(ch)	   != PFDEF_INT)	fprintf(fl, "Int : %d\n", GET_INT(ch));
-  if (GET_WIS(ch)	   != PFDEF_WIS)	fprintf(fl, "Wis : %d\n", GET_WIS(ch));
-  if (GET_DEX(ch)	   != PFDEF_DEX)	fprintf(fl, "Dex : %d\n", GET_DEX(ch));
-  if (GET_CON(ch)	   != PFDEF_CON)	fprintf(fl, "Con : %d\n", GET_CON(ch));
-  if (GET_CHA(ch)	   != PFDEF_CHA)	fprintf(fl, "Cha : %d\n", GET_CHA(ch));
+  if (GET_INT(ch)	   != PFDEF_INT)	tb_fprintf(fl, "Int : %d\n", GET_INT(ch));
+  if (GET_WIS(ch)	   != PFDEF_WIS)	tb_fprintf(fl, "Wis : %d\n", GET_WIS(ch));
+  if (GET_DEX(ch)	   != PFDEF_DEX)	tb_fprintf(fl, "Dex : %d\n", GET_DEX(ch));
+  if (GET_CON(ch)	   != PFDEF_CON)	tb_fprintf(fl, "Con : %d\n", GET_CON(ch));
+  if (GET_CHA(ch)	   != PFDEF_CHA)	tb_fprintf(fl, "Cha : %d\n", GET_CHA(ch));
 
-  if (GET_AC(ch)	   != PFDEF_AC)		fprintf(fl, "Ac  : %d\n", GET_AC(ch));
-  if (GET_GOLD(ch)	   != PFDEF_GOLD)	fprintf(fl, "Gold: %d\n", GET_GOLD(ch));
-  if (GET_BANK_GOLD(ch)	   != PFDEF_BANK)	fprintf(fl, "Bank: %d\n", GET_BANK_GOLD(ch));
-  if (GET_EXP(ch)	   != PFDEF_EXP)	fprintf(fl, "Exp : %d\n", GET_EXP(ch));
-  if (GET_HITROLL(ch)	   != PFDEF_HITROLL)	fprintf(fl, "Hrol: %d\n", GET_HITROLL(ch));
-  if (GET_DAMROLL(ch)	   != PFDEF_DAMROLL)	fprintf(fl, "Drol: %d\n", GET_DAMROLL(ch));
-  if (GET_OLC_ZONE(ch)     != PFDEF_OLC)        fprintf(fl, "Olc : %d\n", GET_OLC_ZONE(ch));
-  if (GET_PAGE_LENGTH(ch)  != PFDEF_PAGELENGTH) fprintf(fl, "Page: %d\n", GET_PAGE_LENGTH(ch));
-  if (GET_SCREEN_WIDTH(ch) != PFDEF_SCREENWIDTH) fprintf(fl, "ScrW: %d\n", GET_SCREEN_WIDTH(ch));
-  if (GET_QUESTPOINTS(ch)  != PFDEF_QUESTPOINTS) fprintf(fl, "Qstp: %d\n", GET_QUESTPOINTS(ch));
-  if (GET_QUEST_COUNTER(ch)!= PFDEF_QUESTCOUNT)  fprintf(fl, "Qcnt: %d\n", GET_QUEST_COUNTER(ch));
+  if (GET_AC(ch)	   != PFDEF_AC)		tb_fprintf(fl, "Ac  : %d\n", GET_AC(ch));
+  if (GET_GOLD(ch)	   != PFDEF_GOLD)	tb_fprintf(fl, "Gold: %d\n", GET_GOLD(ch));
+  if (GET_BANK_GOLD(ch)	   != PFDEF_BANK)	tb_fprintf(fl, "Bank: %d\n", GET_BANK_GOLD(ch));
+  if (GET_EXP(ch)	   != PFDEF_EXP)	tb_fprintf(fl, "Exp : %d\n", GET_EXP(ch));
+  if (GET_ENDGAME_AP(ch)) tb_fprintf(fl, "EgAP: %d\n", GET_ENDGAME_AP(ch));
+  if (GET_ENDGAME_XP(ch)) tb_fprintf(fl, "EgXP: %d\n", GET_ENDGAME_XP(ch));
+  if (GET_ENDGAME_HP_RANK(ch)) tb_fprintf(fl, "EgHP: %d\n", GET_ENDGAME_HP_RANK(ch));
+  if (GET_ENDGAME_MP_RANK(ch)) tb_fprintf(fl, "EgMP: %d\n", GET_ENDGAME_MP_RANK(ch));
+  if (GET_HITROLL(ch)	   != PFDEF_HITROLL)	tb_fprintf(fl, "Hrol: %d\n", GET_HITROLL(ch));
+  if (GET_DAMROLL(ch)	   != PFDEF_DAMROLL)	tb_fprintf(fl, "Drol: %d\n", GET_DAMROLL(ch));
+  if (GET_OLC_ZONE(ch)     != PFDEF_OLC)        tb_fprintf(fl, "Olc : %d\n", GET_OLC_ZONE(ch));
+  if (GET_PAGE_LENGTH(ch)  != PFDEF_PAGELENGTH) tb_fprintf(fl, "Page: %d\n", GET_PAGE_LENGTH(ch));
+  if (GET_SCREEN_WIDTH(ch) != PFDEF_SCREENWIDTH) tb_fprintf(fl, "ScrW: %d\n", GET_SCREEN_WIDTH(ch));
+  if (GET_QUESTPOINTS(ch)  != PFDEF_QUESTPOINTS) tb_fprintf(fl, "Qstp: %d\n", GET_QUESTPOINTS(ch));
+  if (GET_QUEST_COUNTER(ch)!= PFDEF_QUESTCOUNT)  tb_fprintf(fl, "Qcnt: %d\n", GET_QUEST_COUNTER(ch));
   if (GET_NUM_QUESTS(ch)   != PFDEF_COMPQUESTS) {
     tb_fprintf(fl, "Qest:\n");
     for (i = 0; i < GET_NUM_QUESTS(ch); i++)
       tb_fprintf(fl, "%d\n", ch->player_specials->saved.completed_quests[i]);
     tb_fprintf(fl, "%d\n", NOTHING);
   }
-  if (GET_QUEST(ch)        != PFDEF_CURRQUEST)  fprintf(fl, "Qcur: %d\n", GET_QUEST(ch));
+  if (GET_QUEST(ch)        != PFDEF_CURRQUEST)  tb_fprintf(fl, "Qcur: %d\n", GET_QUEST(ch));
 
  if (SCRIPT(ch)) {
    for (t = TRIGGERS(SCRIPT(ch)); t; t = t->next)
@@ -760,7 +831,17 @@ void save_char(struct char_data * ch)
   write_aliases_ascii(fl, ch);
   save_char_vars_ascii(fl, ch);
 
-  tb_fclose(fl);
+  if (ferror(fl) || fflush(fl) != 0)
+    save_failed = TRUE;
+  if (fclose(fl) != 0)
+    save_failed = TRUE;
+  if (!save_failed && rename(temporary_filename, filename) != 0)
+    save_failed = TRUE;
+  if (save_failed) {
+    TB_ERROR_ERRNO("PLAYER", "save", filename,
+                   "Player save failed; original file left untouched");
+    unlink(temporary_filename);
+  }
 
   /* More char_to_store code to add spell and eq affections back in. */
   for (i = 0; i < MAX_AFFECT; i++) {
@@ -780,6 +861,9 @@ void save_char(struct char_data * ch)
 #endif
   }
   /* end char_to_store code */
+
+  if (save_failed)
+    return;
 
   if ((id = get_ptable_by_name(GET_NAME(ch))) < 0)
     return;
@@ -897,89 +981,172 @@ void clean_pfiles(void)
    * entries of the players that were just deleted. */
 }
 
-/* load_affects function now handles both 32-bit and
-   128-bit affect bitvectors for backward compatibility */
+/* Both historical five-column and current eight-column affects remain supported. */
 static void load_affects(FILE *fl, struct char_data *ch)
 {
-  int num = 0, num2 = 0, num3 = 0, num4 = 0, num5 = 0, num6 = 0, num7 = 0, num8 = 0, i, n_vars;
   char line[MAX_INPUT_LENGTH + 1];
+  int values[8];
+  int count, index;
+  const char *cursor;
+  char *end;
+  long parsed;
   struct affected_type af;
 
-  i = 0;
-  do {
-    new_affect(&af);
-    get_line(fl, line);
-    n_vars = sscanf(line, "%d %d %d %d %d %d %d %d", &num, &num2, &num3, &num4, &num5, &num6, &num7, &num8);
-    if (num > 0) {
-      af.spell = num;
-      af.duration = num2;
-      af.modifier = num3;
-      af.location = num4;
-      if (n_vars == 8) {              /* New 128-bit version */
-          af.bitvector[0] =  num5;
-          af.bitvector[1] =  num6;
-          af.bitvector[2] =  num7;
-          af.bitvector[3] =  num8;
-      } else if (n_vars == 5) {       /* Old 32-bit conversion version */
-        if (num5 > 0 && num5 < NUM_AFF_FLAGS)  /* Ignore invalid values */
-          SET_BIT_AR(af.bitvector, num5);
-      } else {
-        log("SYSERR: Invalid affects in pfile (%s), expecting 5 or 8 values", GET_NAME(ch));
-      }
-      affect_to_char(ch, &af);
-      i++;
+  while (get_line(fl, line)) {
+    cursor = line;
+    count = 0;
+    while (count < 8) {
+      while (isspace((unsigned char)*cursor))
+        cursor++;
+      if (*cursor == '\0')
+        break;
+      errno = 0;
+      parsed = strtol(cursor, &end, 10);
+      if (end == cursor || errno == ERANGE || parsed < INT_MIN ||
+          parsed > INT_MAX || (*end && !isspace((unsigned char)*end)))
+        break;
+      values[count++] = (int)parsed;
+      cursor = end;
     }
-  } while (num != 0);
+    while (isspace((unsigned char)*cursor))
+      cursor++;
+    if (*cursor != '\0' || count == 0) {
+      log("SYSERR: Malformed affects in pfile (%s)", GET_NAME(ch));
+      break;
+    }
+    if (values[0] == 0)
+      break;
+    if (count != 5 && count != 8) {
+      log("SYSERR: Invalid affects in pfile (%s), expecting 5 or 8 values", GET_NAME(ch));
+      break;
+    }
+    new_affect(&af);
+    af.spell = values[0];
+    af.duration = values[1];
+    af.modifier = values[2];
+    af.location = values[3];
+    if (count == 8) {
+      for (index = 0; index < 4; index++)
+        af.bitvector[index] = values[index + 4];
+    } else if (values[4] > 0 && values[4] < NUM_AFF_FLAGS) {
+      SET_BIT_AR(af.bitvector, values[4]);
+    }
+    if (af.spell > 0)
+      affect_to_char(ch, &af);
+  }
+}
+
+/* Parse one or two bounded integers without scanf's overflow ambiguity. */
+static int parse_saved_ints(const char *line, int *first, int *second)
+{
+  char *end;
+  long value;
+  int count = 0;
+  int *dest[2] = { first, second };
+  const char *cursor = line;
+
+  if (line == NULL || first == NULL)
+    return 0;
+  while (count < (second != NULL ? 2 : 1)) {
+    while (isspace((unsigned char)*cursor))
+      cursor++;
+    if (*cursor == '\0')
+      break;
+    errno = 0;
+    value = strtol(cursor, &end, 10);
+    if (end == cursor || errno == ERANGE || value < INT_MIN || value > INT_MAX)
+      return 0;
+    *dest[count++] = (int)value;
+    cursor = end;
+  }
+  while (isspace((unsigned char)*cursor))
+    cursor++;
+  return *cursor == '\0' ? count : 0;
 }
 
 static void load_skills(FILE *fl, struct char_data *ch)
 {
-  int num = 0, num2 = 0;
+  int num, num2;
   char line[MAX_INPUT_LENGTH + 1];
 
-  do {
-    get_line(fl, line);
-    sscanf(line, "%d %d", &num, &num2);
-      if (num != 0)
-	GET_SKILL(ch, num) = num2;
-  } while (num != 0);
+  while (get_line(fl, line)) {
+    if (parse_saved_ints(line, &num, &num2) != 2) {
+      log("SYSERR: Invalid skill record in pfile (%s)", GET_NAME(ch));
+      break;
+    }
+    if (num == 0)
+      break;
+    if (num < 1 || num > MAX_SKILLS) {
+      log("SYSERR: Out-of-range skill in pfile (%s): %d", GET_NAME(ch), num);
+      break;
+    }
+    GET_SKILL(ch, num) = num2;
+  }
 }
 
 void load_quests(FILE *fl, struct char_data *ch)
 {
-  int num = NOTHING;
+  int num;
   char line[MAX_INPUT_LENGTH + 1];
 
-  do {
-    get_line(fl, line);
-    sscanf(line, "%d", &num);
-    if (num != NOTHING)
-      add_completed_quest(ch, num);
-  } while (num != NOTHING);
+  while (get_line(fl, line)) {
+    if (parse_saved_ints(line, &num, NULL) != 1) {
+      log("SYSERR: Invalid quest record in pfile (%s)", GET_NAME(ch));
+      break;
+    }
+    if (num == NOTHING)
+      break;
+    add_completed_quest(ch, num);
+  }
 }
 
 static void load_HMVS(struct char_data *ch, const char *line, int mode)
 {
-  int num = 0, num2 = 0;
+  char *end = NULL;
+  long first, second;
+  int num, num2;
 
-  sscanf(line, "%d/%d", &num, &num2);
+  /* Reject malformed or overflowing saved values instead of silently
+   * replacing existing statistics with zero. Legacy 'number/number'
+   * fields, including signed strength modifiers, remain supported. */
+  if (line == NULL)
+    return;
+  errno = 0;
+  first = strtol(line, &end, 10);
+  if (end == line || errno == ERANGE || first < INT_MIN || first > INT_MAX ||
+      *end != '/') {
+    log("SYSERR: Invalid first player-stat value; leaving existing value unchanged");
+    return;
+  }
+  line = end + 1;
+  errno = 0;
+  second = strtol(line, &end, 10);
+  if (end == line || errno == ERANGE || second < INT_MIN || second > INT_MAX) {
+    log("SYSERR: Invalid second player-stat value; leaving existing value unchanged");
+    return;
+  }
+  while (isspace((unsigned char)*end))
+    end++;
+  if (*end != '\0') {
+    log("SYSERR: Trailing junk in player-stat value; leaving existing value unchanged");
+    return;
+  }
+  num = (int)first;
+  num2 = (int)second;
 
   switch (mode) {
   case LOAD_HIT:
     GET_HIT(ch) = num;
     GET_MAX_HIT(ch) = num2;
     break;
-
   case LOAD_MANA:
     GET_MANA(ch) = num;
     GET_MAX_MANA(ch) = num2;
     break;
-
   case LOAD_MOVE:
     GET_MOVE(ch) = num;
     GET_MAX_MOVE(ch) = num2;
     break;
-
   case LOAD_STRENGTH:
     ch->real_abils.str = num;
     ch->real_abils.str_add = num2;

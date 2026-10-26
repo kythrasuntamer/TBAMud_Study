@@ -50,6 +50,48 @@ static int Crash_load_objs(struct char_data *ch);
 static int handle_obj(struct obj_data *obj, struct char_data *ch, int locate, struct obj_data **cont_rows);
 static int objsave_write_rentcode(FILE *fl, int rentcode, int cost_per_day, struct char_data *ch);
 
+/* Read numeric rent headers without silent overflow or partial conversion.
+ * Existing one-field and six-field disk layouts remain unchanged. */
+static int objsave_parse_int_fields(const char *text, int *fields, size_t count)
+{
+  const char *p = text;
+  char *end;
+  size_t i;
+  long value;
+
+  if (!p || !fields)
+    return 0;
+  for (i = 0; i < count; i++) {
+    while (isspace((unsigned char)*p))
+      p++;
+    errno = 0;
+    value = strtol(p, &end, 10);
+    if (p == end || errno == ERANGE || value < INT_MIN || value > INT_MAX)
+      return 0;
+    fields[i] = (int)value;
+    p = end;
+  }
+  while (isspace((unsigned char)*p))
+    p++;
+  return *p == '\0';
+}
+
+static int objsave_parse_rent_header(const char *text, int *rentcode,
+                                    int *timed, int *netcost, int *gold,
+                                    int *account, int *nitems)
+{
+  int fields[6];
+  if (!objsave_parse_int_fields(text, fields, 6))
+    return 0;
+  *rentcode = fields[0];
+  *timed = fields[1];
+  *netcost = fields[2];
+  *gold = fields[3];
+  *account = fields[4];
+  *nitems = fields[5];
+  return 1;
+}
+
 /* Writes one object record to FILE.  Old name: Obj_to_store() */
 int objsave_save_obj_record(struct obj_data *obj, FILE *fp, int locate)
 {
@@ -331,7 +373,7 @@ int Crash_delete_crashfile(struct char_data *ch)
                  "player=%s empty or unreadable crash header", GET_NAME(ch));
     return FALSE;
   }
-  if (sscanf(line, "%d", &rentcode) != 1) {
+  if (!objsave_parse_int_fields(line, &rentcode, 1)) {
     TB_ERROR_MSG("objsave", "parse-header", filename,
                  "player=%s malformed crash header=\"%s\"", GET_NAME(ch), line);
     return FALSE;
@@ -366,8 +408,8 @@ int Crash_clean_file(char *name)
   if (numread == FALSE)
     return FALSE;
 
-  if (sscanf(line, "%d %d %d %d %d %d", &rentcode, &timed, &netcost,
-             &gold, &account, &nitems) != 6) {
+  if (!objsave_parse_rent_header(line, &rentcode, &timed, &netcost,
+                                 &gold, &account, &nitems)) {
     TB_ERROR_MSG("objsave", "parse-header", filename,
                  "player=%s malformed clean-file header=\"%s\"", name, line);
     return FALSE;
@@ -439,8 +481,14 @@ void Crash_listrent(struct char_data *ch, char *name)
     return;
   }
 
-  sscanf(line,"%d %d %d %d %d %d",
-        &rentcode,&timed,&netcost,&gold,&account,&nitems);
+  if (!objsave_parse_rent_header(line, &rentcode, &timed, &netcost,
+                                 &gold, &account, &nitems)) {
+    TB_ERROR_MSG("objsave", "parse-header", filename,
+                 "player=%s malformed rent listing header", name);
+    send_to_char(ch, "Error reading rent information.\r\n");
+    tb_fclose(fl);
+    return;
+  }
 
   switch (rentcode) {
   case RENT_RENTED:
@@ -1071,7 +1119,7 @@ obj_save_data *objsave_parse_objects(FILE *fl)
     /* if it's a new record, wrap up the old one, and make space for a new one */
     if (*line == '#') {
       /* check for false alarm. */
-      if (sscanf(line, "#%d", &nr) == 1) {
+      if (objsave_parse_int_fields(line + 1, &nr, 1)) {
         /* If we attempt to load an object with a legal VNUM 0-65534, that
          * does not exist, skip it. If the object has a VNUM of NOTHING or
          * 65535, then we assume it doesn't exist on purpose. (Custom Item,
@@ -1126,8 +1174,12 @@ obj_save_data *objsave_parse_objects(FILE *fl)
         tb_snprintf(error, sizeof(error)-1, "rent(Ades):%s", temp->name);
         temp->action_description = fread_string(fl, error);
       } else if (!strcmp(tag, "Aff ")) {
-        sscanf(line, "%d %d %d", &t[0], &t[1], &t[2]);
-        if (t[0] < MAX_OBJ_AFFECT) {
+        if (!objsave_parse_int_fields(line, t, 3)) {
+          TB_ERROR_MSG("objsave", "parse-affect", "rent-object-record",
+                       "malformed saved object affect");
+          break;
+        }
+        if (t[0] >= 0 && t[0] < MAX_OBJ_AFFECT) {
           temp->affected[t[0]].location = t[1];
           temp->affected[t[0]].modifier = t[2];
         }
@@ -1162,7 +1214,11 @@ obj_save_data *objsave_parse_objects(FILE *fl)
       break;
     case 'F':
       if (!strcmp(tag, "Flag")) {
-        sscanf(line, "%s %s %s %s", f1, f2, f3, f4);
+        if (sscanf(line, "%127s %127s %127s %127s", f1, f2, f3, f4) != 4) {
+          TB_ERROR_MSG("objsave", "parse-flags", "rent-object-record",
+                       "malformed saved object extra flags");
+          break;
+        }
         GET_OBJ_EXTRA(temp)[0] = asciiflag_conv(f1);
         GET_OBJ_EXTRA(temp)[1] = asciiflag_conv(f2);
         GET_OBJ_EXTRA(temp)[2] = asciiflag_conv(f3);
@@ -1179,7 +1235,11 @@ obj_save_data *objsave_parse_objects(FILE *fl)
       break;
     case 'P':
       if (!strcmp(tag, "Perm")) {
-        sscanf(line, "%s %s %s %s", f1, f2, f3, f4);
+        if (sscanf(line, "%127s %127s %127s %127s", f1, f2, f3, f4) != 4) {
+          TB_ERROR_MSG("objsave", "parse-flags", "rent-object-record",
+                       "malformed saved object permanent flags");
+          break;
+        }
         GET_OBJ_AFFECT(temp)[0] = asciiflag_conv(f1);
         GET_OBJ_AFFECT(temp)[1] = asciiflag_conv(f2);
         GET_OBJ_AFFECT(temp)[2] = asciiflag_conv(f3);
@@ -1200,7 +1260,11 @@ obj_save_data *objsave_parse_objects(FILE *fl)
       break;
     case 'W':
       if (!strcmp(tag, "Wear")) {
-        sscanf(line, "%s %s %s %s", f1, f2, f3, f4);
+        if (sscanf(line, "%127s %127s %127s %127s", f1, f2, f3, f4) != 4) {
+          TB_ERROR_MSG("objsave", "parse-flags", "rent-object-record",
+                       "malformed saved object wear flags");
+          break;
+        }
         GET_OBJ_WEAR(temp)[0] = asciiflag_conv(f1);
         GET_OBJ_WEAR(temp)[1] = asciiflag_conv(f2);
         GET_OBJ_WEAR(temp)[2] = asciiflag_conv(f3);
@@ -1211,7 +1275,11 @@ obj_save_data *objsave_parse_objects(FILE *fl)
       break;
     case 'V':
       if (!strcmp(tag, "Vals")) {
-        sscanf(line, "%d %d %d %d", &t[0], &t[1], &t[2], &t[3]);
+        if (!objsave_parse_int_fields(line, t, 4)) {
+          TB_ERROR_MSG("objsave", "parse-values", "rent-object-record",
+                       "malformed saved object values");
+          break;
+        }
         for (i = 0; i < NUM_OBJ_VAL_POSITIONS; i++)
           GET_OBJ_VAL(temp, i) = t[i];
       }
@@ -1261,8 +1329,8 @@ static int Crash_load_objs(struct char_data *ch) {
     tb_fclose(fl);
     return 1;
   }
-  if (sscanf(line, "%d %d %d %d %d %d", &rentcode, &timed, &netcost,
-             &gold, &account, &nitems) != 6) {
+  if (!objsave_parse_rent_header(line, &rentcode, &timed, &netcost,
+                                 &gold, &account, &nitems)) {
     TB_ERROR_MSG("objsave", "parse-header", filename,
                  "player=%s malformed rent header=\"%s\"", GET_NAME(ch), line);
     tb_fclose(fl);

@@ -150,8 +150,10 @@
 #define CLASS_CLERIC      1    /**< PC Class Cleric */
 #define CLASS_THIEF       2    /**< PC Class Thief */
 #define CLASS_WARRIOR     3    /**< PC Class Warrior */
+/* First implemented additional player class; original IDs 0-3 remain unchanged. */
+#define CLASS_MONK        4    /**< PC Class Monk */
 /** Total number of available PC Classes */
-#define NUM_CLASSES	  4
+#define NUM_CLASSES	  5
 
 /* NPC classes (currently unused - feel free to implement!) */
 #define CLASS_OTHER       0    /**< NPC Class Other (or undefined) */
@@ -957,6 +959,10 @@ struct player_special_data_saved
   int spells_to_learn;    /**< Remaining number of practice sessions */
   int olc_zone;           /**< Current olc permissions */
   int questpoints;        /**< Number of quest points earned */
+  int endgame_ap;         /**< Unspent endgame advancement points. */
+  int endgame_xp;         /**< Progress toward next advancement point. */
+  int endgame_hp_rank;    /**< Purchased permanent hit point upgrades. */
+  int endgame_mana_rank;  /**< Purchased permanent mana upgrades. */
   qst_vnum *completed_quests;   /**< Quests completed              */
   int    num_completed_quests;  /**< Number completed              */
   int    current_quest;         /**< vnum of current quest         */

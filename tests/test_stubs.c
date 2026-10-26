@@ -342,6 +342,15 @@ STUB_ACMD(do_drop)
 STUB_ACMD(do_eat)
 STUB_ACMD(do_echo)
 STUB_ACMD(do_enter)
+/* The endgame handler is not part of the interpreter unit-test link.
+ * Provide a strong test-only definition for Fil-C's command table. */
+ACMD(do_endgame)
+{
+  (void)ch;
+  (void)argument;
+  (void)cmd;
+  (void)subcmd;
+}
 STUB_ACMD(do_equipment)
 STUB_ACMD(do_examine)
 STUB_ACMD(do_exits)

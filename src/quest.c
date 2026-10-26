@@ -126,11 +126,55 @@ int count_quests(qst_vnum low, qst_vnum high)
   return j;
 }
 
+/* Quest records contain whitespace-separated signed integers. */
+static int quest_parse_int(const char **cursor, int *out)
+{
+  char *end;
+  long value;
+  const char *p = *cursor;
+  while (isspace((unsigned char)*p))
+    p++;
+  errno = 0;
+  value = strtol(p, &end, 10);
+  if (p == end || errno == ERANGE || value < INT_MIN || value > INT_MAX ||
+      (*end && !isspace((unsigned char)*end)))
+    return FALSE;
+  *out = (int)value;
+  *cursor = end;
+  return TRUE;
+}
+
+static int quest_parse_record(const char *line, int *fields, size_t count,
+                              char *flags, size_t flag_size)
+{
+  size_t i;
+  const char *p = line;
+  for (i = 0; i < count; i++) {
+    if (flags && i == 2) {
+      size_t n = 0;
+      while (isspace((unsigned char)*p))
+        p++;
+      while (p[n] && !isspace((unsigned char)p[n]))
+        n++;
+      if (!n || n >= flag_size)
+        return FALSE;
+      memcpy(flags, p, n);
+      flags[n] = '\0';
+      p += n;
+    }
+    if (!quest_parse_int(&p, &fields[i]))
+      return FALSE;
+  }
+  while (isspace((unsigned char)*p))
+    p++;
+  return *p == '\0';
+}
+
 void parse_quest(FILE *quest_f, int nr)
 {
   static char line[256];
   static int i = 0, j;
-  int retval = 0, t[7];
+  int t[7];
   char f1[128], buf2[MAX_STRING_LENGTH];
   aquest_table[i].vnum = nr;
   aquest_table[i].qm = NOBODY;
@@ -160,34 +204,27 @@ void parse_quest(FILE *quest_f, int nr)
   aquest_table[i].done = fread_string(quest_f, buf2);
   aquest_table[i].quit = fread_string(quest_f, buf2);
   if (!get_line(quest_f, line) ||
-      (retval = sscanf(line, " %d %d %s %d %d %d %d",
-             t, t+1, f1, t+2, t+3, t + 4, t + 5)) != 7) {
-    log("Format error in numeric line (expected 7, got %d), %s\n",
-        retval, line);
+      !quest_parse_record(line, t, 6, f1, sizeof(f1))) {
+    log("Format error in quest header numeric line, %s\n", line);
     exit(1);
   }
-  aquest_table[i].type       = t[0];
-  aquest_table[i].qm         = (real_mobile(t[1]) == NOBODY) ? NOBODY : t[1];
-  aquest_table[i].flags      = asciiflag_conv(f1);
-  aquest_table[i].target     = (t[2] == -1) ? NOTHING : t[2];
+  aquest_table[i].type = t[0];
+  aquest_table[i].qm = (real_mobile(t[1]) == NOBODY) ? NOBODY : t[1];
+  aquest_table[i].flags = asciiflag_conv(f1);
+  aquest_table[i].target = (t[2] == -1) ? NOTHING : t[2];
   aquest_table[i].prev_quest = (t[3] == -1) ? NOTHING : t[3];
   aquest_table[i].next_quest = (t[4] == -1) ? NOTHING : t[4];
-  aquest_table[i].prereq     = (t[5] == -1) ? NOTHING : t[5];
+  aquest_table[i].prereq = (t[5] == -1) ? NOTHING : t[5];
   if (!get_line(quest_f, line) ||
-      (retval = sscanf(line, " %d %d %d %d %d %d %d",
-          t, t+1, t+2, t+3, t+4, t + 5, t + 6)) != 7) {
-    log("Format error in numeric line (expected 7, got %d), %s\n",
-        retval, line);
+      !quest_parse_record(line, t, 7, NULL, 0)) {
+    log("Format error in quest values numeric line, %s\n", line);
     exit(1);
   }
   for (j = 0; j < 7; j++)
     aquest_table[i].value[j] = t[j];
-
   if (!get_line(quest_f, line) ||
-      (retval = sscanf(line, " %d %d %d",
-             t, t+1, t+2)) != 3) {
-    log("Format error in numeric (rewards) line (expected 3, got %d), %s\n",
-        retval, line);
+      !quest_parse_record(line, t, 3, NULL, 0)) {
+    log("Format error in quest rewards numeric line, %s\n", line);
     exit(1);
   }
 

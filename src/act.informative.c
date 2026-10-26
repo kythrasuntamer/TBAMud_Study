@@ -8,6 +8,10 @@
 *  CircleMUD is based on DikuMUD, Copyright (C) 1990, 1991.               *
 **************************************************************************/
 
+#include <errno.h>
+#include <limits.h>
+#include <stdlib.h>
+#include <ctype.h>
 #include "conf.h"
 #include "sysdep.h"
 #include "structs.h"
@@ -28,6 +32,34 @@
 #include "modify.h"
 #include "asciimap.h"
 #include "quest.h"
+
+/* Nonnegative level argument or low-high range with checked conversion. */
+static int parse_info_level_range(const char *input, int *low, int *high)
+{
+  char *end;
+  long first, second;
+
+  if (!input || !isdigit((unsigned char)*input))
+    return 0;
+  errno = 0;
+  first = strtol(input, &end, 10);
+  if (errno == ERANGE || first > INT_MAX)
+    return 0;
+  if (*end == '\0') {
+    *low = (int)first;
+    return 1;
+  }
+  if (*end != '-' || !isdigit((unsigned char)end[1]))
+    return 0;
+  input = end + 1;
+  errno = 0;
+  second = strtol(input, &end, 10);
+  if (errno == ERANGE || second > INT_MAX || *end != '\0')
+    return 0;
+  *low = (int)first;
+  *high = (int)second;
+  return 2;
+}
 
 /* prototypes of local functions */
 /* do_diagnose utility functions */
@@ -843,9 +875,11 @@ ACMD(do_score)
   send_to_char(ch, "You have %d exp, %d gold coins, and %d questpoints.\r\n",
       GET_EXP(ch), GET_GOLD(ch), GET_QUESTPOINTS(ch));
 
-  if (GET_LEVEL(ch) < LVL_IMMORT)
+  if (GET_LEVEL(ch) == LVL_IMMORT - 1)
+    send_to_char(ch, "You have reached the maximum mortal level.\r\n");
+  else if (GET_LEVEL(ch) < LVL_IMMORT - 1)
     send_to_char(ch, "You need %d exp to reach your next level.\r\n",
-    level_exp(GET_CLASS(ch), GET_LEVEL(ch) + 1) - GET_EXP(ch));
+        level_exp(GET_CLASS(ch), GET_LEVEL(ch) + 1) - GET_EXP(ch));
 
   send_to_char(ch, "You have earned %d quest points.\r\n", GET_QUESTPOINTS(ch));
   send_to_char(ch, "You have completed %d quest%s, ",
@@ -1229,7 +1263,10 @@ ACMD(do_who)
 
     half_chop(buf, arg, buf1);
     if (isdigit(*arg)) {
-      sscanf(arg, "%d-%d", &low, &high);
+      if (!parse_info_level_range(arg, &low, &high)) {
+        send_to_char(ch, "Invalid level range.\r\n");
+        return;
+      }
       strlcpy(buf, buf1, sizeof(buf));   /* strcpy: OK (sizeof: buf1 == buf) */
     } else if (*arg == '-') {
       mode = *(arg + 1);       /* just in case; we destroy arg in the switch */
@@ -1480,7 +1517,10 @@ ACMD(do_users)
       case 'l':
     playing = 1;
     half_chop(buf1, arg, buf);
-    sscanf(arg, "%d-%d", &low, &high);
+    if (!parse_info_level_range(arg, &low, &high)) {
+      send_to_char(ch, "Invalid level range.\r\n");
+      return;
+    }
     break;
       case 'n':
     playing = 1;
@@ -1850,7 +1890,7 @@ ACMD(do_levels)
 
   if (*arg) {
     if (isdigit(*arg)) {
-      ret = sscanf(arg, "%d-%d", &min_lev, &max_lev);
+      ret = parse_info_level_range(arg, &min_lev, &max_lev);
       if (ret == 0) {
         /* No valid args found */
         min_lev = 1;
@@ -2596,7 +2636,7 @@ ACMD(do_whois)
     free_char (victim);
 }
 
-static bool get_zone_levels(zone_rnum znum, char *buf, size_t buflen)
+static bool get_zone_levels(int znum, char *buf, size_t buflen)
 {
   /* Create a string for the level restrictions for this zone. */
   if ((zone_table[znum].min_level == -1) && (zone_table[znum].max_level == -1)) {
@@ -2620,9 +2660,9 @@ static bool get_zone_levels(zone_rnum znum, char *buf, size_t buflen)
 
 ACMD(do_areas)
 {
-  int i, hilev=-1, lolev=-1, zcount=0, lev_set, len=0, tmp_len=0;
+  int i, hilev=-1, lolev=-1, zcount=0, len=0, tmp_len=0;
   char arg[MAX_INPUT_LENGTH], *second, lev_str[MAX_INPUT_LENGTH], buf[MAX_STRING_LENGTH];
-  bool show_zone = FALSE, overlap = FALSE, overlap_shown = FALSE;
+  bool show_zone = FALSE, overlap = FALSE, overlap_shown = FALSE, lev_set;
 
   one_argument(argument, arg);
 

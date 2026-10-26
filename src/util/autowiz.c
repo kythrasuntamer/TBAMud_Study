@@ -70,10 +70,9 @@ void read_file(void)
   bitvector_t asciiflag_conv(char *flag);
 
   FILE *fl;
-  int recs, i, last = 0, level = 0, flags = 0;
+  int recs, i, level = 0, flags = 0;
   char index_name[40], line[256], bits[64];
   char name[MAX_NAME_LENGTH];
-  long id = 0;
 
   tb_snprintf(index_name, sizeof(index_name), "%s%s", LIB_PLRFILES, INDEX_FILE);
   if (!(fl = fopen(index_name, "r"))) {
@@ -93,7 +92,30 @@ void read_file(void)
 
   for (i = 0; i < recs; i++) {
     get_line(fl, line);
-    sscanf(line, "%ld %s %d %s %d", &id, name, &level, bits, &last);
+    {
+      char id_text[64], level_text[64], last_text[64], name_text[128], extra[2], *end;
+      long parsed;
+      if (sscanf(line, "%63s %127s %63s %63s %63s %1s",
+                 id_text, name_text, level_text, bits, last_text, extra) != 5)
+        continue;
+      if (strlen(name_text) >= sizeof(name))
+        continue;
+      tb_snprintf(name, sizeof(name), "%s", name_text);
+      errno = 0;
+      parsed = strtol(id_text, &end, 10);
+      if (end == id_text || *end || errno == ERANGE)
+        continue;
+      errno = 0;
+      parsed = strtol(level_text, &end, 10);
+      if (end == level_text || *end || errno == ERANGE || parsed < INT_MIN || parsed > INT_MAX)
+        continue;
+      level = (int)parsed;
+      errno = 0;
+      parsed = strtol(last_text, &end, 10);
+      if (end == last_text || *end || errno == ERANGE || parsed < INT_MIN || parsed > INT_MAX)
+        continue;
+      /* Timestamp validated; wizard listing does not use it. */
+    }
     CAP(name);
     flags = asciiflag_conv(bits);
     if (level >= MIN_LEVEL &&

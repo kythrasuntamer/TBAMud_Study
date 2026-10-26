@@ -309,6 +309,8 @@ int trig_is_attached(struct script_data *sc, int trig_num);
 /* To maintain strict-aliasing we'll have to do this trick with a union */
 /* Thanks to Chris Gilbert for reminding me that there are other options. */
 int script_driver(void *go_adress, trig_data *trig, int type, int mode);
+void dg_script_execution_enter(void);
+void dg_script_execution_leave(void);
 trig_rnum real_trigger(trig_vnum vnum);
 void process_eval(void *go, struct script_data *sc, trig_data *trig,
                  int type, char *cmd);
@@ -446,7 +448,7 @@ void wld_command_interpreter(room_data *room, char *argument);
 * and obj_script_id().
 */
 #define ADD_UID_VAR(buf, trig, id, name, context) do { \
-		         sprintf(buf, "%c%ld", UID_CHAR, id); \
+		         tb_snprintf(buf, sizeof(buf), "%c%ld", UID_CHAR, id); \
                          add_var(&GET_TRIG_VARS(trig), name, buf, context); } while (0)
 
 // id helpers

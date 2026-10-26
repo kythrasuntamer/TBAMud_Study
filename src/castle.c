@@ -593,9 +593,10 @@ static int castle_twin_proc(struct char_data *ch, int cmd, char *arg, int ctlnum
   if ((king = find_npc_by_name(ch, "King Welmar", 11)) != NULL) {
     char actbuf[MAX_INPUT_LENGTH];
 
-    if (!ch->master)
+    if (!ch->master) {
       strlcpy(actbuf, "King Welmar", sizeof(actbuf));
-      do_follow(ch, actbuf, 0, 0);	/* strcpy: OK */
+      do_follow(ch, actbuf, 0, 0);
+    }	/* strcpy: OK */
     if (FIGHTING(king))
       do_npc_rescue(ch, king);
   }

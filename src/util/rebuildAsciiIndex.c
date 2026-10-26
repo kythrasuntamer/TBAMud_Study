@@ -131,7 +131,10 @@ void walkdir(FILE *index_file, char *dir) {
  	while ((dp = readdir(dfd)) != NULL)
  	{
 	  struct stat stbuf ;
-	  snprintf(filename_qfd, sizeof(filename_qfd), "%s/%s",dir,dp->d_name);
+	  if (snprintf(filename_qfd, sizeof(filename_qfd), "%s/%s",dir,dp->d_name) >= (int)sizeof(filename_qfd)) {
+    UTIL_REPORT_ERRNO("snprintf", "player index path too long");
+    continue;
+  }
 	  if( stat(filename_qfd,&stbuf ) == -1 ) {
    		if (fprintf(stdout, "Unable to stat file: %s\n", filename_qfd) < 0) UTIL_REPORT_ERRNO("fprintf", "stdout");
    		continue ;
@@ -159,7 +162,8 @@ void walkdir(FILE *index_file, char *dir) {
  					level = 30;
  				long last = parselast(plr_file);
 
- 				fprintf(index_file, "%ld %s %d %d 0 %ld\n", id, name, level, adminlevel, last);
+ 				if (fprintf(index_file, "%ld %s %d %d 0 %ld\n", id, name, level, adminlevel, last) < 0)
+            UTIL_REPORT_ERRNO("fprintf", "player index");
 
         if (fclose(plr_file) != 0) UTIL_REPORT_ERRNO("fclose", filename_qfd);
   		}

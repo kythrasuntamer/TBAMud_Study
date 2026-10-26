@@ -311,7 +311,8 @@ int save_mobiles(zone_rnum rznum)
     check_mobile_strings(&mob_proto[rmob]);
     if (!write_mobile_record(i, &mob_proto[rmob], mobfd)) {
       tb_fclose(mobfd);
-        remove(mobfname);
+        if (remove(mobfname) != 0 && errno != ENOENT)
+          TB_REPORT_ERRNO("remove", mobfname);
       return FALSE;
     }
   }

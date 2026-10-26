@@ -195,6 +195,96 @@ static int parse_int_text_strict(const char *text, int *value)
   return 1;
 }
 
+/* Parse a zone's four mandatory numeric fields, optionally followed by flags
+ * and minimum/maximum levels. Keep legacy four-field zone headers valid. */
+static int parse_reset_numbers(const char *text, int *values, int count,
+                               const char **remainder)
+{
+  const char *p = text;
+  char *end;
+  long number;
+  int i;
+
+  if (p == NULL || values == NULL || count < 1)
+    return 0;
+  for (i = 0; i < count; i++) {
+    while (isspace((unsigned char)*p))
+      p++;
+    errno = 0;
+    number = strtol(p, &end, 10);
+    if (p == end || errno == ERANGE || number < INT_MIN || number > INT_MAX)
+      return 0;
+    values[i] = (int)number;
+    p = end;
+  }
+  if (remainder != NULL)
+    *remainder = p;
+  return 1;
+}
+
+static int parse_zone_header(const char *text, struct zone_data *zone,
+                             char *f1, char *f2, char *f3, char *f4)
+{
+  const char *p = text;
+  char *end;
+  long values[4], levels[2];
+  char *flags[4] = { f1, f2, f3, f4 };
+  int i;
+
+  if (p == NULL)
+    return 0;
+  for (i = 0; i < 4; i++) {
+    while (isspace((unsigned char)*p))
+      p++;
+    errno = 0;
+    values[i] = strtol(p, &end, 10);
+    if (p == end || errno == ERANGE || values[i] < (i < 2 ? 0 : INT_MIN) ||
+        values[i] > (i < 2 ? USHRT_MAX : INT_MAX))
+      return 0;
+    p = end;
+  }
+  zone->bot = (unsigned short)values[0];
+  zone->top = (unsigned short)values[1];
+  zone->lifespan = (int)values[2];
+  zone->reset_mode = (int)values[3];
+
+  while (isspace((unsigned char)*p))
+    p++;
+  if (*p == '\0')
+    return 4;
+
+  for (i = 0; i < 4; i++) {
+    size_t len = 0;
+    while (isspace((unsigned char)*p))
+      p++;
+    while (*p && !isspace((unsigned char)*p)) {
+      if (len >= 79)
+        return 4;
+      flags[i][len++] = *p++;
+    }
+    if (len == 0)
+      return 4;
+    flags[i][len] = '\0';
+  }
+  for (i = 0; i < 2; i++) {
+    while (isspace((unsigned char)*p))
+      p++;
+    errno = 0;
+    levels[i] = strtol(p, &end, 10);
+    if (p == end || errno == ERANGE || levels[i] < INT_MIN || levels[i] > INT_MAX)
+      return 4;
+    p = end;
+  }
+  zone->min_level = (int)levels[0];
+  zone->max_level = (int)levels[1];
+  return 10;
+}
+
+static int parse_hash_int(const char *text, int *value)
+{
+  return text != NULL && *text == '#' && parse_int_text_strict(text + 1, value);
+}
+
 static int parse_long_text_strict(const char *text, long *value)
 {
   const char *p = text;
@@ -204,13 +294,13 @@ static int parse_long_text_strict(const char *text, long *value)
   if (text == NULL || value == NULL)
     return 0;
 
-  while (isspace((unsigned char)*p))
+  while ((*p == ' ' || (*p >= '\t' && *p <= '\r')))
     p++;
   errno = 0;
   parsed = strtol(p, &end, 10);
   if (p == end || errno == ERANGE)
     return 0;
-  while (isspace((unsigned char)*end))
+  while ((*end == ' ' || (*end >= '\t' && *end <= '\r')))
     end++;
   if (*end != '\0')
     return 0;
@@ -2304,9 +2394,13 @@ static void load_zones(FILE *fl, char *zonename)
 
   line_num += get_line(fl, buf);
 
-  if (sscanf(buf, "#%hu", &Z.number) != 1) {
+  {
+    int zone_number;
+    if (!parse_hash_int(buf, &zone_number) || zone_number < 0 || zone_number > USHRT_MAX) {
     log("SYSERR: Format error in %s, line %d", zname, line_num);
     exit(1);
+    }
+    Z.number = (unsigned short)zone_number;
   }
   tb_snprintf(buf2, sizeof(buf2), "beginning of zone #%d", Z.number);
 
@@ -2327,15 +2421,11 @@ static void load_zones(FILE *fl, char *zonename)
 
   line_num += get_line(fl, buf);
   /* Look for 10 items first (new tbaMUD), if not found, try 4 (old tbaMUD) */
-  if  (sscanf(buf, " %hu %hu %d %d %s %s %s %s %d %d", &Z.bot, &Z.top, &Z.lifespan,
-      &Z.reset_mode, zbuf1, zbuf2, zbuf3, zbuf4, &Z.min_level, &Z.max_level) != 10)
+  if (parse_zone_header(buf, &Z, zbuf1, zbuf2, zbuf3, zbuf4) != 10)
   {
-    if (sscanf(buf, " %hu %hu %d %d ", &Z.bot, &Z.top, &Z.lifespan, &Z.reset_mode) != 4) {
-      /* This may be due to the fact that the zone has no builder.  So, we just
-       * attempt to fix this by copying the previous 2 last reads into this
-       * variable and the last one. */
+    if (parse_zone_header(buf, &Z, zbuf1, zbuf2, zbuf3, zbuf4) != 4) {
       log("SYSERR: Format error in numeric constant line of %s, attempting to fix.", zname);
-      if (sscanf(Z.name, " %hu %hu %d %d ", &Z.bot, &Z.top, &Z.lifespan, &Z.reset_mode) != 4) {
+      if (parse_zone_header(Z.name, &Z, zbuf1, zbuf2, zbuf3, zbuf4) != 4) {
         log("SYSERR: Could not fix previous error, aborting game.");
         exit(1);
       } else {
@@ -2394,21 +2484,39 @@ static void load_zones(FILE *fl, char *zonename)
       break;
     }
     error = 0;
-    if (strchr("MOGEPDTV", ZCMD.command) == NULL) {	/* a 3-arg command */
-      if (sscanf(ptr, " %d %d %d ", &tmp, &ZCMD.arg1, &ZCMD.arg2) != 3)
-	error = 1;
-    } else if (ZCMD.command=='V') { /* a string-arg command */
-      if (sscanf(ptr, " %d %d %d %d %79s %79[^\f\n\r\t\v]", &tmp, &ZCMD.arg1, &ZCMD.arg2,
-		 &ZCMD.arg3, t1, t2) != 6)
-	error = 1;
-      else {
-        ZCMD.sarg1 = strdup(t1);
-        ZCMD.sarg2 = strdup(t2);
+    {
+      int args[4];
+      const char *rest = NULL;
+      if (strchr("MOGEPDTV", ZCMD.command) == NULL) {
+        if (!parse_reset_numbers(ptr, args, 3, NULL))
+          error = 1;
+        else {
+          tmp = args[0];
+          ZCMD.arg1 = args[1];
+          ZCMD.arg2 = args[2];
+        }
+      } else if (ZCMD.command == 'V') {
+        if (!parse_reset_numbers(ptr, args, 4, &rest) ||
+            sscanf(rest, " %79s %79[^\f\n\r\t\v]", t1, t2) != 2)
+          error = 1;
+        else {
+          tmp = args[0];
+          ZCMD.arg1 = args[1];
+          ZCMD.arg2 = args[2];
+          ZCMD.arg3 = args[3];
+          ZCMD.sarg1 = strdup(t1);
+          ZCMD.sarg2 = strdup(t2);
+        }
+      } else {
+        if (!parse_reset_numbers(ptr, args, 4, NULL))
+          error = 1;
+        else {
+          tmp = args[0];
+          ZCMD.arg1 = args[1];
+          ZCMD.arg2 = args[2];
+          ZCMD.arg3 = args[3];
+        }
       }
-    } else {
-      if (sscanf(ptr, " %d %d %d %d ", &tmp, &ZCMD.arg1, &ZCMD.arg2,
-		 &ZCMD.arg3) != 4)
-	error = 1;
     }
 
     ZCMD.if_flag = tmp;
@@ -2502,7 +2610,7 @@ void load_help(FILE * fl, char *name)
     }
 
     if (*line == '#') {
-      if (sscanf(line, "#%d", &el.min_level) != 1) {
+      if (!parse_hash_int(line, &el.min_level)) {
         log("SYSERR: Help entry does not have a min level. %s", key);
         el.min_level = 0;
       }
@@ -3093,22 +3201,30 @@ char *fread_string(FILE *fl, const char *error)
 char *fread_clean_string(FILE *fl, const char *error)
 {
   char buf[MAX_STRING_LENGTH], tmp[513];
-  char *point, c;
+  char *point;
+  int c;
   int done = 0, length = 0, templength;
 
   *buf = '\0';
 
   do
   {
-    if( feof( fl ) )
+    if (feof(fl))
     {
       log( "%s", "fread_clean_string: EOF encountered on read." );
       return 0;
     }
-    c = getc( fl );
+    c = getc(fl);
+    if (c == EOF) {
+      log("SYSERR: fread_clean_string: unexpected EOF near %s", error);
+      return NULL;
+    }
   }
-  while( isspace( c ) );
-  ungetc( c, fl );
+  while (isspace((unsigned char)c));
+  if (ungetc(c, fl) == EOF) {
+    log("SYSERR: fread_clean_string: cannot restore lookahead near %s", error);
+    return NULL;
+  }
 
   do {
     if (!fgets(tmp, 512, fl)) {
@@ -3150,7 +3266,7 @@ int fread_number(FILE *fp)
 {
   int number;
   bool sign;
-  char c;
+  int c;
 
   do
   {
@@ -3192,8 +3308,10 @@ int fread_number(FILE *fp)
 
   if( c == '|' )
     number += fread_number( fp );
-  else if( c != ' ' )
-    ungetc( c, fp );
+  else if (c != ' ' && c != EOF && ungetc(c, fp) == EOF) {
+    log("SYSERR: fread_number: cannot restore lookahead");
+    return 0;
+  }
 
   return number;
 }
@@ -3203,7 +3321,7 @@ char *fread_line(FILE *fp)
 {
   static char line[MAX_STRING_LENGTH];
   char *pline;
-  char c;
+  int c;
   int ln;
 
   pline = line;
@@ -3218,12 +3336,19 @@ char *fread_line(FILE *fp)
       *pline = '\0';
       return (line);
     }
-    c = getc( fp );
+    c = getc(fp);
+    if (c == EOF) {
+      log("SYSERR: fread_line: unexpected EOF");
+      return line;
+    }
   }
-  while(isspace(c));
+  while (isspace((unsigned char)c));
 
   /* Un-Read first char */
-  ungetc( c, fp );
+  if (ungetc(c, fp) == EOF) {
+    log("SYSERR: fread_line: failed to restore lookahead");
+    return line;
+  }
 
   do {
     if(feof(fp)) {
@@ -3247,7 +3372,10 @@ char *fread_line(FILE *fp)
   }
   while( c == '\n' || c == '\r' );
 
-  ungetc( c, fp );
+  if (c != EOF && ungetc(c, fp) == EOF) {
+    log("SYSERR: fread_line: failed to restore lookahead");
+    return line;
+  }
   pline--;
   *pline = '\0';
 
@@ -3263,7 +3391,7 @@ int fread_flags(FILE *fp, int *fg, int fg_size)
 {
   char line[MAX_STRING_LENGTH];
   char *pline, *tmp_txt, val_txt[MAX_INPUT_LENGTH];
-  char c;
+  int c;
   int ln,i;
 
   pline = line;
@@ -3278,12 +3406,19 @@ int fread_flags(FILE *fp, int *fg, int fg_size)
       *pline = '\0';
       return (0);
     }
-    c = getc( fp );
+    c = getc(fp);
+    if (c == EOF) {
+      log("SYSERR: fread_flags: unexpected EOF");
+      return 0;
+    }
   }
-  while(isspace(c));
+  while (isspace((unsigned char)c));
 
   /* Un-Read first char */
-  ungetc( c, fp );
+  if (ungetc(c, fp) == EOF) {
+    log("SYSERR: fread_flags: failed to restore lookahead");
+    return 0;
+  }
 
   do {
     if(feof(fp)) {
@@ -3307,7 +3442,10 @@ int fread_flags(FILE *fp, int *fg, int fg_size)
   }
   while( c == '\n' || c == '\r' );
 
-  ungetc( c, fp );
+  if (c != EOF && ungetc(c, fp) == EOF) {
+    log("SYSERR: fread_flags: failed to restore lookahead");
+    return 0;
+  }
   pline--;
   *pline = '\0';
 
@@ -3329,7 +3467,7 @@ char *fread_word(FILE *fp)
 {
    static char word[MAX_STRING_LENGTH];
    char *pword;
-   char cEnd;
+   int cEnd;
 
    do
    {
@@ -3362,11 +3500,18 @@ char *fread_word(FILE *fp)
          *pword = '\0';
          return word;
       }
-      *pword = getc( fp );
-      if( cEnd == ' ' ? isspace( *pword ) : *pword == cEnd )
+      int next = getc(fp);
+      if (next == EOF) {
+         *pword = '\0';
+         return word;
+      }
+      *pword = (char)next;
+      if (cEnd == ' ' ? isspace((unsigned char)next) : next == cEnd)
       {
-         if( cEnd == ' ' )
-            ungetc( *pword, fp );
+         if (cEnd == ' ' && ungetc(next, fp) == EOF) {
+            log("SYSERR: fread_word: failed to restore lookahead");
+            return NULL;
+         }
          *pword = '\0';
          return word;
       }
@@ -3378,7 +3523,7 @@ char *fread_word(FILE *fp)
 /* Read to end of line in a given file (for comments) */
 void fread_to_eol(FILE *fp)
 {
-  char c;
+  int c;
 
   do {
     if(feof(fp)) {
@@ -3394,7 +3539,8 @@ void fread_to_eol(FILE *fp)
   }
   while( c == '\n' || c == '\r' );
 
-  ungetc( c, fp );
+  if (c != EOF && ungetc(c, fp) == EOF)
+    log("SYSERR: fread_to_eol: failed to restore lookahead");
 }
 
 /* Called to free all allocated follow_type structs */

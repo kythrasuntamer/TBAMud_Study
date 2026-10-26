@@ -1296,14 +1296,18 @@ void MSDPSetTable( descriptor_t *apDescriptor, variable_t aMSDP, const char *apV
       }
       else if ( VariableNameTable[aMSDP].bString )
       {
-         const char MsdpTableStart[] = { (char)MSDP_TABLE_OPEN, '\0' };
-         const char MsdpTableStop[]  = { (char)MSDP_TABLE_CLOSE, '\0' };
+         size_t value_length = strlen(apValue);
+         char *pTable;
 
-         char *pTable = (char *) malloc(strlen(apValue) + 3); /* 3: START, STOP, NUL */
-
-         strcpy(pTable, MsdpTableStart);
-         strcat(pTable, apValue);
-         strcat(pTable, MsdpTableStop);
+         if (value_length > (size_t)-1 - 3)
+            return;
+         pTable = (char *)malloc(value_length + 3);
+         if (pTable == NULL)
+            return;
+         pTable[0] = (char)MSDP_TABLE_OPEN;
+         memcpy(pTable + 1, apValue, value_length);
+         pTable[value_length + 1] = (char)MSDP_TABLE_CLOSE;
+         pTable[value_length + 2] = '\0';
 
          if ( strcmp(pProtocol->pVariables[aMSDP]->pValueString, pTable) )
          {
@@ -1332,14 +1336,18 @@ void MSDPSetArray( descriptor_t *apDescriptor, variable_t aMSDP, const char *apV
       }
       else if ( VariableNameTable[aMSDP].bString )
       {
-         const char MsdpArrayStart[] = { (char)MSDP_ARRAY_OPEN, '\0' };
-         const char MsdpArrayStop[]  = { (char)MSDP_ARRAY_CLOSE, '\0' };
+         size_t value_length = strlen(apValue);
+         char *pArray;
 
-         char *pArray = (char *) malloc(strlen(apValue) + 3); /* 3: START, STOP, NUL */
-
-         strcpy(pArray, MsdpArrayStart);
-         strcat(pArray, apValue);
-         strcat(pArray, MsdpArrayStop);
+         if (value_length > (size_t)-1 - 3)
+            return;
+         pArray = (char *)malloc(value_length + 3);
+         if (pArray == NULL)
+            return;
+         pArray[0] = (char)MSDP_ARRAY_OPEN;
+         memcpy(pArray + 1, apValue, value_length);
+         pArray[value_length + 1] = (char)MSDP_ARRAY_CLOSE;
+         pArray[value_length + 2] = '\0';
 
          if ( strcmp(pProtocol->pVariables[aMSDP]->pValueString, pArray) )
          {
@@ -1424,8 +1432,9 @@ void SoundSend( descriptor_t *apDescriptor, const char *apTrigger )
          {
             /* Use an old MSP-style trigger */
             char *pBuffer = alloca(MaxTriggerLength+10);
-            snprintf(pBuffer, MaxTriggerLength + 10, "\t!SOUND(%s)", apTrigger);
-            Write(apDescriptor, pBuffer);
+            int sound_length = snprintf(pBuffer, MaxTriggerLength + 10, "\t!SOUND(%s)", apTrigger);
+            if (sound_length >= 0 && sound_length < MaxTriggerLength + 10)
+               Write(apDescriptor, pBuffer);
          }
       }
    }
@@ -2565,10 +2574,12 @@ static char *AllocString( const char *apString )
 
    if ( apString != NULL )
    {
-      int Size = strlen(apString);
-      pResult = (char *) malloc(Size+1);
+      size_t Size = strlen(apString);
+      if (Size == (size_t)-1)
+         return NULL;
+      pResult = (char *) malloc(Size + 1);
       if ( pResult != NULL )
-         strcpy( pResult, apString );
+         memcpy(pResult, apString, Size + 1);
    }
 
    return pResult;

@@ -439,7 +439,7 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
           tb_snprintf(str, slen, "%d", HAPPY_EXP);
         else if (!str_cmp(field, "gold") && IS_HAPPYHOUR)
           tb_snprintf(str, slen, "%d", HAPPY_GOLD);
-        else snprintf(str, slen, "%d", HAPPY_TIME);
+        else tb_snprintf(str, slen, "%d", HAPPY_TIME);
         return;
       }
       else if (!str_cmp(var, "time")) {

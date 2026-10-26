@@ -205,6 +205,25 @@ static void iedit_save_internally(struct descriptor_data *d)
   iedit_replace_string(target, &target->description, edited->description, IEDIT_STRING_LONG);
   iedit_replace_string(target, &target->action_description, edited->action_description, IEDIT_STRING_ACTION);
   iedit_replace_ex_descriptions(target, edited);
+
+  /* Instance-only changes: never write to obj_proto or mutate the prototype. */
+  GET_OBJ_TYPE(target) = GET_OBJ_TYPE(edited);
+  GET_OBJ_WEIGHT(target) = GET_OBJ_WEIGHT(edited);
+  GET_OBJ_COST(target) = GET_OBJ_COST(edited);
+  GET_OBJ_RENT(target) = GET_OBJ_RENT(edited);
+  GET_OBJ_TIMER(target) = GET_OBJ_TIMER(edited);
+  GET_OBJ_LEVEL(target) = GET_OBJ_LEVEL(edited);
+  {
+    int i;
+    for (i = 0; i < EF_ARRAY_MAX; i++)
+      GET_OBJ_EXTRA(target)[i] = GET_OBJ_EXTRA(edited)[i];
+    for (i = 0; i < TW_ARRAY_MAX; i++)
+      GET_OBJ_WEAR(target)[i] = GET_OBJ_WEAR(edited)[i];
+    for (i = 0; i < AF_ARRAY_MAX; i++)
+      GET_OBJ_AFFECT(target)[i] = GET_OBJ_AFFECT(edited)[i];
+    for (i = 0; i < MAX_OBJ_AFFECT; i++)
+      target->affected[i] = edited->affected[i];
+  }
   iedit_replace_values(target, edited);
 
   /* If the object, or its top-level container, belongs to a player, make sure
@@ -224,19 +243,9 @@ static void iedit_save_internally(struct descriptor_data *d)
 static int iedit_is_forbidden_main_menu_choice(char *arg)
 {
   switch (*arg) {
-  case '5': /* Type */
-  case '6': /* Extra flags */
-  case '7': /* Wear flags */
-  case '8': /* Weight */
-  case '9': /* Cost */
-  case 'a': case 'A': /* Cost per day */
-  case 'b': case 'B': /* Timer */
-  case 'd': case 'D': /* Applies */
-  case 'm': case 'M': /* Min level */
-  case 'p': case 'P': /* Permanent affects */
-  case 's': case 'S': /* Script */
-  case 'w': case 'W': /* Copy object */
-  case 'x': case 'X': /* Delete object */
+  case 's': case 'S': /* Scripts need separate instance ownership handling. */
+  case 'w': case 'W': /* Copying prototypes cannot be applied to live objects. */
+  case 'x': case 'X': /* Deletion needs an explicit live-object lifecycle path. */
     return TRUE;
   default:
     return FALSE;
@@ -1476,7 +1485,7 @@ void iedit_parse(struct descriptor_data *d, char *arg)
     if (iedit_is_forbidden_main_menu_choice(arg)) {
       write_to_output(d,
         "That field is disabled in iedit.\r\n"
-        "iedit can change keywords, descriptions, extra descriptions, and values.\r\n"
+        "Scripts, copying, and deleting live objects are not yet supported here.\r\n"
         "Prototype/state fields must still be edited with oedit.\r\n");
       oedit_disp_menu(d);
       return;

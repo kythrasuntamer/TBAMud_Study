@@ -285,13 +285,29 @@ void gain_exp(struct char_data *ch, int gain)
     GET_EXP(ch) += gain;
     return;
   }
+  if (gain > 0 && GET_LEVEL(ch) == LVL_IMMORT - 1) {
+    /* Mortal endgame: earn AP instead of entering immortal ranks. */
+    gain = MIN(CONFIG_MAX_EXP_GAIN, gain);
+    if (gain > 0) {
+      int progress = MIN(99999, GET_ENDGAME_XP(ch));
+      int points = (progress + gain) / 100000;
+      GET_ENDGAME_XP(ch) = (progress + gain) % 100000;
+      GET_ENDGAME_AP(ch) = MIN(1000000, GET_ENDGAME_AP(ch) + points);
+      if (points > 0) {
+        send_to_char(ch, "You gained %d endgame Advancement Point%s!\r\n", points, points == 1 ? "" : "s");
+        save_char(ch);
+      }
+    }
+    return;
+  }
   if (gain > 0) {
     if ((IS_HAPPYHOUR) && (IS_HAPPYEXP))
       gain += (int)((float)gain * ((float)HAPPY_EXP / (float)(100)));
 
     gain = MIN(CONFIG_MAX_EXP_GAIN, gain);	/* put a cap on the max gain per kill */
     GET_EXP(ch) += gain;
-    while (GET_LEVEL(ch) < LVL_IMMORT - CONFIG_NO_MORT_TO_IMMORT &&
+    while (GET_LEVEL(ch) < LVL_IMMORT - 1 &&
+           GET_LEVEL(ch) < LVL_IMMORT - CONFIG_NO_MORT_TO_IMMORT &&
 	GET_EXP(ch) >= level_exp(GET_CLASS(ch), GET_LEVEL(ch) + 1)) {
       GET_LEVEL(ch) += 1;
       num_levels++;

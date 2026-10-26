@@ -8,6 +8,10 @@
 *  CircleMUD is based on DikuMUD, Copyright (C) 1990, 1991.               *
 **************************************************************************/
 
+#include <limits.h>
+#include <errno.h>
+#include <stdlib.h>
+#include <ctype.h>
 #include "conf.h"
 #include "sysdep.h"
 #include "structs.h"
@@ -1856,21 +1860,32 @@ struct last_entry *find_llog_entry(int punique, long idnum) {
     log("Error opening last_file for reading, will create.");
     return NULL;
   }
-  fseek(fp,0L,SEEK_END);
-  size=ftell(fp);
+  if (fseek(fp, 0L, SEEK_END) != 0 || (size = ftell(fp)) < 0) {
+    TB_REPORT_ERRNO("seek last-login file", LAST_FILE);
+    tb_fclose(fp);
+    return NULL;
+  }
 
   /* recs = number of records in the last file */
   recs = size/sizeof(struct last_entry);
   /* we'll search last to first, since it's faster than any thing else we can
    * do (like searching for the last shutdown/etc..) */
   for(tmp=recs; tmp > 0; tmp--) {
-    fseek(fp,-1*((long)sizeof(struct last_entry)),SEEK_CUR);
+    if (fseek(fp, -(long)sizeof(struct last_entry), SEEK_CUR) != 0) {
+      TB_REPORT_ERRNO("seek last-login record", LAST_FILE);
+      tb_fclose(fp);
+      return NULL;
+    }
     if (fread(&mlast,sizeof(struct last_entry),1,fp) != 1) {
       tb_fclose(fp);
       return NULL;
     }
         /*another one to keep that stepback */
-    fseek(fp,-1*((long)sizeof(struct last_entry)),SEEK_CUR);
+    if (fseek(fp, -(long)sizeof(struct last_entry), SEEK_CUR) != 0) {
+      TB_REPORT_ERRNO("seek last-login record", LAST_FILE);
+      tb_fclose(fp);
+      return NULL;
+    }
 
     if(mlast.idnum == idnum && mlast.punique == punique) {
       /* then we've found a match */
@@ -1896,8 +1911,11 @@ static void mod_llog_entry(struct last_entry *llast,int type) {
     log("Error opening last_file for reading and writing.");
     return;
   }
-  fseek(fp,0L,SEEK_END);
-  size=ftell(fp);
+  if (fseek(fp, 0L, SEEK_END) != 0 || (size = ftell(fp)) < 0) {
+    TB_REPORT_ERRNO("seek last-login file", LAST_FILE);
+    tb_fclose(fp);
+    return;
+  }
 
   /* recs = number of records in the last file */
   recs = size/sizeof(struct last_entry);
@@ -1905,14 +1923,22 @@ static void mod_llog_entry(struct last_entry *llast,int type) {
   /* We'll search last to first, since it's faster than any thing else we can
    * do (like searching for the last shutdown/etc..) */
   for(tmp=recs; tmp > 0; tmp--) {
-    fseek(fp,-1*((long)sizeof(struct last_entry)),SEEK_CUR);
+    if (fseek(fp, -(long)sizeof(struct last_entry), SEEK_CUR) != 0) {
+      TB_REPORT_ERRNO("seek last-login record", LAST_FILE);
+      tb_fclose(fp);
+      return;
+    }
     if(fread(&mlast,sizeof(struct last_entry),1,fp) != 1) {
       log("mod_llog_entry: read error or unexpected end of file.");
       tb_fclose(fp);
       return;
     }
     /* Another one to keep that stepback. */
-    fseek(fp,-1*((long)sizeof(struct last_entry)),SEEK_CUR);
+    if (fseek(fp, -(long)sizeof(struct last_entry), SEEK_CUR) != 0) {
+      TB_REPORT_ERRNO("seek last-login record", LAST_FILE);
+      tb_fclose(fp);
+      return;
+    }
 
     if(mlast.idnum == llast->idnum && mlast.punique == llast->punique) {
       /* Then we've found a match, lets assume quit is inviolate, mainly
@@ -1980,55 +2006,67 @@ void add_llog_entry(struct char_data *ch, int type) {
 void clean_llog_entries(void) {
   FILE *ofp, *nfp;
   struct last_entry mlast;
-  long recs;
+  long size, recs, copied = 0;
+  int failed = FALSE;
+  const char *temp_name = "etc/nlast";
 
-  if(!(ofp=fopen(LAST_FILE,"r")))
+  if (!(ofp = fopen(LAST_FILE, "rb")))
     return; /* no file, no gripe */
 
-  fseek(ofp,0L,SEEK_END);
-  recs=ftell(ofp)/sizeof(struct last_entry);
-  if (fseek(ofp, 0L, SEEK_SET) != 0) {
-    TB_REPORT_ERRNO("fseek", LAST_FILE);
+  if (fseek(ofp, 0L, SEEK_END) != 0 || (size = ftell(ofp)) < 0 ||
+      fseek(ofp, 0L, SEEK_SET) != 0) {
+    TB_REPORT_ERRNO("seek", LAST_FILE);
     tb_fclose(ofp);
     return;
   }
-
+  recs = size / (long)sizeof(struct last_entry);
   if (recs < MAX_LAST_ENTRIES) {
     tb_fclose(ofp);
     return;
   }
 
-  if (!(nfp=fopen("etc/nlast", "w"))) {
-    log("Error trying to open new last file.");
+  if (!(nfp = fopen(temp_name, "wb"))) {
+    TB_REPORT_ERRNO("open", temp_name);
     tb_fclose(ofp);
     return;
   }
 
-  /* skip first entries */
-  fseek(ofp,(recs-MAX_LAST_ENTRIES)* (sizeof(struct last_entry)),SEEK_CUR);
+  if (fseek(ofp, (recs - MAX_LAST_ENTRIES) *
+                 (long)sizeof(struct last_entry), SEEK_SET) != 0) {
+    TB_REPORT_ERRNO("seek", LAST_FILE);
+    failed = TRUE;
+  }
 
-  /* copy the rest */
-  while (fread(&mlast, sizeof(struct last_entry), 1, ofp) == 1) {
-    if (fwrite(&mlast, sizeof(struct last_entry), 1, nfp) != 1) {
-      log("clean_llog_entries: write error.");
-      tb_fclose(ofp);
-      tb_fclose(nfp);
-      return;
+  while (!failed && fread(&mlast, sizeof(mlast), 1, ofp) == 1) {
+    if (fwrite(&mlast, sizeof(mlast), 1, nfp) != 1) {
+      TB_REPORT_ERRNO("write", temp_name);
+      failed = TRUE;
+    } else {
+      copied++;
     }
   }
+  if (copied != MAX_LAST_ENTRIES)
+    failed = TRUE;
   if (ferror(ofp)) {
-    log("clean_llog_entries: read error.");
-    tb_fclose(ofp);
-    tb_fclose(nfp);
-    remove("etc/nlast");
-    return;
+    TB_REPORT_ERRNO("read", LAST_FILE);
+    failed = TRUE;
   }
+  if (fclose(ofp) != 0)
+    failed = TRUE;
+  if (fflush(nfp) != 0)
+    failed = TRUE;
+  if (fclose(nfp) != 0)
+    failed = TRUE;
 
-  tb_fclose(ofp);
-  tb_fclose(nfp);
-
-  remove(LAST_FILE);
-  rename("etc/nlast", LAST_FILE);
+  if (!failed && rename(temp_name, LAST_FILE) != 0) {
+    TB_REPORT_ERRNO("rename", LAST_FILE);
+    failed = TRUE;
+  }
+  if (failed) {
+    log("SYSERR: last-login cleanup failed; original history preserved");
+    if (remove(temp_name) != 0 && errno != ENOENT)
+      TB_REPORT_ERRNO("remove", temp_name);
+  }
 }
 
 /* debugging stuff, if you wanna see the whole file */
@@ -2132,18 +2170,33 @@ ACMD(do_last)
     send_to_char(ch, "No entries found.\r\n");
     return;
   }
-  fseek(fp,0L,SEEK_END);
-  recs=ftell(fp)/sizeof(struct last_entry);
+  if (fseek(fp, 0L, SEEK_END) != 0 || (recs = ftell(fp)) < 0) {
+    TB_REPORT_ERRNO("seek", LAST_FILE);
+    send_to_char(ch, "Error reading log file.\r\n");
+    tb_fclose(fp);
+    return;
+  }
+  recs /= (long)sizeof(struct last_entry);
 
   send_to_char(ch, "Last log\r\n");
   while(num > 0 && recs > 0) {
-    fseek(fp,-1* ((long)sizeof(struct last_entry)),SEEK_CUR);
+    if (fseek(fp, -(long)sizeof(struct last_entry), SEEK_CUR) != 0) {
+      TB_REPORT_ERRNO("seek", LAST_FILE);
+      send_to_char(ch, "Error reading log file.\r\n");
+      tb_fclose(fp);
+      return;
+    }
     if(fread(&mlast,sizeof(struct last_entry),1,fp) != 1) {
       send_to_char(ch, "Error reading log file.");
       tb_fclose(fp);
       return;
     }
-    fseek(fp,-1*((long)sizeof(struct last_entry)),SEEK_CUR);
+    if (fseek(fp, -(long)sizeof(struct last_entry), SEEK_CUR) != 0) {
+      TB_REPORT_ERRNO("seek", LAST_FILE);
+      send_to_char(ch, "Error reading log file.\r\n");
+      tb_fclose(fp);
+      return;
+    }
     if(!*name ||(*name && !str_cmp(name, mlast.username))) {
       tb_strftime(timestr, sizeof(timestr), "%a %b %d %Y %H:%M", localtime(&mlast.time));
       send_to_char(ch, "%10.10s %20.20s %20.21s - ",
@@ -4568,6 +4621,33 @@ ACMD(do_changelog)
   send_to_char(ch, "Change added.\r\n");
 }
 
+/* Parse a nonnegative number or a nonnegative low-high range. */
+static int parse_plist_range(const char *arg, int *low, int *high)
+{
+  char *end;
+  long first, last;
+  if (!arg || !isdigit((unsigned char)*arg))
+    return 0;
+  errno = 0;
+  first = strtol(arg, &end, 10);
+  if (errno == ERANGE || first > INT_MAX)
+    return 0;
+  if (*end == '\0') {
+    *low = *high = (int)first;
+    return 1;
+  }
+  if (*end != '-' || !isdigit((unsigned char)end[1]))
+    return 0;
+  arg = end + 1;
+  errno = 0;
+  last = strtol(arg, &end, 10);
+  if (errno == ERANGE || last > INT_MAX || *end != '\0')
+    return 0;
+  *low = (int)first;
+  *high = (int)last;
+  return 2;
+}
+
 #define PLIST_FORMAT \
   "Usage: plist [minlev[-maxlev]] [-n name] [-d days] [-h hours] [-i] [-m]"
 
@@ -4587,16 +4667,28 @@ ACMD(do_plist)
 
     half_chop(buf, arg, buf1);
     if (isdigit(*arg)) {
-      if (sscanf(arg, "%d-%d", &low, &high) == 1)
-        high = low;
+      if (!parse_plist_range(arg, &low, &high)) {
+        send_to_char(ch, "Invalid level range.\r\n");
+        return;
+      }
       strlcpy(buf, buf1, sizeof(buf));        /* strcpy: OK (sizeof: buf1 == buf) */
     } else if (*arg == '-') {
       mode = *(arg + 1);        /* just in case; we destroy arg in the switch */
       switch (mode) {
-      case 'l':
+      case 'l': {
+        int prior_high = high;
+        int parsed = 0;
         half_chop(buf1, arg, buf);
-        sscanf(arg, "%d-%d", &low, &high);
+        parsed = parse_plist_range(arg, &low, &high);
+        if (!parsed) {
+          send_to_char(ch, "Invalid level range.\r\n");
+          return;
+        }
+        /* Historically, -l 10 changed only the lower limit. */
+        if (parsed == 1)
+          high = prior_high;
         break;
+      }
       case 'n':
         half_chop(buf1, name_search, buf);
         break;
@@ -4610,13 +4702,17 @@ ACMD(do_plist)
         break;
       case 'd':
         half_chop(buf1, arg, buf);
-        if (sscanf(arg, "%d-%d", &low_day, &high_day) == 1)
-          high_day = low_day;
+        if (!parse_plist_range(arg, &low_day, &high_day)) {
+          send_to_char(ch, "Invalid day range.\r\n");
+          return;
+        }
         break;
       case 'h':
         half_chop(buf1, arg, buf);
-        if (sscanf(arg, "%d-%d", &low_hr, &high_hr) == 1)
-          high_hr = low_hr;
+        if (!parse_plist_range(arg, &low_hr, &high_hr)) {
+          send_to_char(ch, "Invalid hour range.\r\n");
+          return;
+        }
         break;
       default:
         send_to_char(ch, "%s\r\n", PLIST_FORMAT);

@@ -24,6 +24,45 @@
 #include "dg_event.h"
 #include "constants.h"
 
+/* Trigger callbacks can detach their own trigger (or entire script).
+ * Delay destruction until the outermost script_driver frame exits. */
+static unsigned int dg_execution_depth;
+struct dg_retired_trigger {
+  struct trig_data *trig;
+  struct dg_retired_trigger *next;
+};
+struct dg_retired_script {
+  struct script_data *script;
+  struct dg_retired_script *next;
+};
+static struct dg_retired_trigger *dg_retired_triggers;
+static struct dg_retired_script *dg_retired_scripts;
+
+void dg_script_execution_enter(void)
+{
+  dg_execution_depth++;
+}
+
+void dg_script_execution_leave(void)
+{
+  struct dg_retired_trigger *t;
+  struct dg_retired_script *s;
+  assert(dg_execution_depth != 0);
+  if (--dg_execution_depth != 0)
+    return;
+  while ((t = dg_retired_triggers) != NULL) {
+    dg_retired_triggers = t->next;
+    free_trigger(t->trig);
+    free(t);
+  }
+  while ((s = dg_retired_scripts) != NULL) {
+    dg_retired_scripts = s->next;
+    free_varlist(s->script->global_vars);
+    free(s->script);
+    free(s);
+  }
+}
+
 /* frees memory associated with var */
 void free_var_el(struct trig_var_data *var)
 {
@@ -105,7 +144,15 @@ void extract_trigger(struct trig_data *trig)
   /* walk the trigger list and remove this one */
   REMOVE_FROM_LIST(trig, trigger_list, next_in_world);
 
-  free_trigger(trig);
+  if (dg_execution_depth) {
+    struct dg_retired_trigger *node;
+    CREATE(node, struct dg_retired_trigger, 1);
+    node->trig = trig;
+    node->next = dg_retired_triggers;
+    dg_retired_triggers = node;
+  } else {
+    free_trigger(trig);
+  }
 }
 
 /* remove all triggers from a mob/obj/room */
@@ -170,9 +217,16 @@ void extract_script(void *thing, int type)
   TRIGGERS(sc) = NULL;
 
   /* Thanks to James Long for tracking down this memory leak */
-  free_varlist(sc->global_vars);
-
-  free(sc);
+  if (dg_execution_depth) {
+    struct dg_retired_script *node;
+    CREATE(node, struct dg_retired_script, 1);
+    node->script = sc;
+    node->next = dg_retired_scripts;
+    dg_retired_scripts = node;
+  } else {
+    free_varlist(sc->global_vars);
+    free(sc);
+  }
 }
 
 /* erase the script memory of a mob */
