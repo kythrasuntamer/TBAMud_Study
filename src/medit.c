@@ -175,6 +175,10 @@ static void medit_save_to_disk(zone_vnum foo)
   save_mobiles(real_zone(foo));
 }
 
+/* Allocate a scratch mobile, initialize its baseline fields, then attach
+ * default descriptions.  Editor teardown must release this temporary
+ * character without extracting an unrelated live mobile.
+ */
 static void medit_setup_new(struct descriptor_data *d)
 {
   struct char_data *mob;
@@ -525,6 +529,10 @@ static void medit_disp_stats_menu(struct descriptor_data *d)
   OLC_MODE(d) = MEDIT_STATS_MENU;
 }
 
+/* Mobile editor input dispatcher.  Numeric and string editing modes have
+ * different parsing paths; field-specific range checks must occur before
+ * an edited value is published to a mobile prototype.
+ */
 void medit_parse(struct descriptor_data *d, char *arg)
 {
   int i = -1, j;
