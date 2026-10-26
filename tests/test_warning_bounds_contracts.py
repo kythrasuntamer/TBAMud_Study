@@ -11,6 +11,10 @@ UTILS = (ROOT / "src" / "utils.c").read_text(encoding="utf-8")
 
 
 class FormattingAndBoundsContracts(unittest.TestCase):
+    def test_recent_warning_fixes(self):
+        magic = (ROOT / 'src' / 'magic.c').read_text()
+        self.assertIn('(unsigned char)saving_throws(', magic)
+
     def test_final_warning_cleanup_paths(self):
         root = ROOT / "src"
         for filename in ("comm.c", "ban.c", "util/autowiz.c"):
