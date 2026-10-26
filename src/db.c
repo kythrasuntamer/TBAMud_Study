@@ -195,6 +195,71 @@ static int parse_int_text_strict(const char *text, int *value)
   return 1;
 }
 
+/* Parse a zone's four mandatory numeric fields, optionally followed by flags
+ * and minimum/maximum levels. Keep legacy four-field zone headers valid. */
+static int parse_zone_header(const char *text, struct zone_data *zone,
+                             char *f1, char *f2, char *f3, char *f4)
+{
+  const char *p = text;
+  char *end;
+  long values[4], levels[2];
+  char *flags[4] = { f1, f2, f3, f4 };
+  int i;
+
+  if (p == NULL)
+    return 0;
+  for (i = 0; i < 4; i++) {
+    while (isspace((unsigned char)*p))
+      p++;
+    errno = 0;
+    values[i] = strtol(p, &end, 10);
+    if (p == end || errno == ERANGE || values[i] < (i < 2 ? 0 : INT_MIN) ||
+        values[i] > (i < 2 ? USHRT_MAX : INT_MAX))
+      return 0;
+    p = end;
+  }
+  zone->bot = (unsigned short)values[0];
+  zone->top = (unsigned short)values[1];
+  zone->lifespan = (int)values[2];
+  zone->reset_mode = (int)values[3];
+
+  while (isspace((unsigned char)*p))
+    p++;
+  if (*p == '\0')
+    return 4;
+
+  for (i = 0; i < 4; i++) {
+    size_t len = 0;
+    while (isspace((unsigned char)*p))
+      p++;
+    while (*p && !isspace((unsigned char)*p)) {
+      if (len >= 79)
+        return 4;
+      flags[i][len++] = *p++;
+    }
+    if (len == 0)
+      return 4;
+    flags[i][len] = '\0';
+  }
+  for (i = 0; i < 2; i++) {
+    while (isspace((unsigned char)*p))
+      p++;
+    errno = 0;
+    levels[i] = strtol(p, &end, 10);
+    if (p == end || errno == ERANGE || levels[i] < INT_MIN || levels[i] > INT_MAX)
+      return 4;
+    p = end;
+  }
+  zone->min_level = (int)levels[0];
+  zone->max_level = (int)levels[1];
+  return 10;
+}
+
+static int parse_hash_int(const char *text, int *value)
+{
+  return text != NULL && *text == '#' && parse_int_text_strict(text + 1, value);
+}
+
 static int parse_long_text_strict(const char *text, long *value)
 {
   const char *p = text;
@@ -2304,9 +2369,13 @@ static void load_zones(FILE *fl, char *zonename)
 
   line_num += get_line(fl, buf);
 
-  if (sscanf(buf, "#%hu", &Z.number) != 1) {
+  {
+    int zone_number;
+    if (!parse_hash_int(buf, &zone_number) || zone_number < 0 || zone_number > USHRT_MAX) {
     log("SYSERR: Format error in %s, line %d", zname, line_num);
     exit(1);
+    }
+    Z.number = (unsigned short)zone_number;
   }
   tb_snprintf(buf2, sizeof(buf2), "beginning of zone #%d", Z.number);
 
@@ -2327,15 +2396,11 @@ static void load_zones(FILE *fl, char *zonename)
 
   line_num += get_line(fl, buf);
   /* Look for 10 items first (new tbaMUD), if not found, try 4 (old tbaMUD) */
-  if  (sscanf(buf, " %hu %hu %d %d %s %s %s %s %d %d", &Z.bot, &Z.top, &Z.lifespan,
-      &Z.reset_mode, zbuf1, zbuf2, zbuf3, zbuf4, &Z.min_level, &Z.max_level) != 10)
+  if (parse_zone_header(buf, &Z, zbuf1, zbuf2, zbuf3, zbuf4) != 10)
   {
-    if (sscanf(buf, " %hu %hu %d %d ", &Z.bot, &Z.top, &Z.lifespan, &Z.reset_mode) != 4) {
-      /* This may be due to the fact that the zone has no builder.  So, we just
-       * attempt to fix this by copying the previous 2 last reads into this
-       * variable and the last one. */
+    if (parse_zone_header(buf, &Z, zbuf1, zbuf2, zbuf3, zbuf4) != 4) {
       log("SYSERR: Format error in numeric constant line of %s, attempting to fix.", zname);
-      if (sscanf(Z.name, " %hu %hu %d %d ", &Z.bot, &Z.top, &Z.lifespan, &Z.reset_mode) != 4) {
+      if (parse_zone_header(Z.name, &Z, zbuf1, zbuf2, zbuf3, zbuf4) != 4) {
         log("SYSERR: Could not fix previous error, aborting game.");
         exit(1);
       } else {
@@ -2502,7 +2567,7 @@ void load_help(FILE * fl, char *name)
     }
 
     if (*line == '#') {
-      if (sscanf(line, "#%d", &el.min_level) != 1) {
+      if (!parse_hash_int(line, &el.min_level)) {
         log("SYSERR: Help entry does not have a min level. %s", key);
         el.min_level = 0;
       }
