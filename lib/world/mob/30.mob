@@ -190,6 +190,78 @@ SavingPetri: 2
 SavingBreath: 2
 SavingSpell: 2
 E
+#3014
+monk trainer mentor~
+the monk instructor~
+A monk instructor is demonstrating a careful, measured stance.
+~
+   The instructor encourages patience, movement, and control.
+~
+59419 0 0 0 0 0 0 0 1000 E
+34 9 -10 6d6+340 5d5+5
+340 115600
+8 8 1
+E
+#3015
+druid mentor~
+the druid mentor~
+A druid mentor tends a row of carefully cultivated herbs.
+~
+   The mentor teaches respect for the living world.
+~
+59419 0 0 0 0 0 0 0 1000 E
+34 9 -10 6d6+340 5d5+5
+340 115600
+8 8 1
+E
+#3016
+berserker mentor~
+the berserker mentor~
+A veteran berserker tends the training weapons.
+~
+   The mentor teaches combat readiness and restraint.
+~
+59419 0 0 0 0 0 0 0 1000 E
+34 9 -10 6d6+340 5d5+5
+340 115600
+8 8 1
+E
+#3017
+sorcerer mentor~
+the sorcerer mentor~
+A sorcerer studies a sphere of shimmering light.
+~
+   The mentor studies the disciplined use of arcane forces.
+~
+59419 0 0 0 0 0 0 0 1000 E
+34 9 -10 6d6+340 5d5+5
+340 115600
+8 8 1
+E
+#3018
+paladin mentor~
+the paladin mentor~
+A paladin instructor polishes a weathered shield.
+~
+   The mentor speaks of courage and duty.
+~
+59419 0 0 0 0 0 0 0 1000 E
+34 9 -10 6d6+340 5d5+5
+340 115600
+8 8 1
+E
+#3019
+ranger mentor~
+the ranger mentor~
+A ranger studies tracks in a patch of soft earth.
+~
+   The mentor knows the wilderness and its hidden paths.
+~
+59419 0 0 0 0 0 0 0 1000 E
+34 9 -10 6d6+340 5d5+5
+340 115600
+8 8 1
+E
 #3020
 master mage guildmasters~
 the mages' guildmaster~
@@ -307,6 +379,18 @@ skill combined with his experience in warfare makes him a deadly opponent.
 8 8 1
 E
 T 3003
+#3028
+bard mentor~
+the bard mentor~
+A bard rehearses an old song while tuning a lute.
+~
+   The mentor shares stories and the craft of performance.
+~
+59419 0 0 0 0 0 0 0 1000 E
+34 9 -10 6d6+340 5d5+5
+340 115600
+8 8 1
+E
 #3040
 bartender~
 the bartender~
