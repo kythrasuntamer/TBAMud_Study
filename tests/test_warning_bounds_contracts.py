@@ -11,6 +11,16 @@ UTILS = (ROOT / "src" / "utils.c").read_text(encoding="utf-8")
 
 
 class FormattingAndBoundsContracts(unittest.TestCase):
+    def test_db_readers_check_lookahead_pushback(self):
+        db = (ROOT / "src" / "db.c").read_text(encoding="utf-8")
+        clean = db[db.index("char *fread_clean_string(FILE *fl,"):db.index("int fread_number(FILE *fp)")]
+        number = db[db.index("int fread_number(FILE *fp)"):db.index("char *fread_line(FILE *fp)")]
+        self.assertIn("if (ungetc(c, fl) == EOF)", clean)
+        self.assertIn("if (c == EOF)", clean)
+        self.assertIn("isspace((unsigned char)c)", clean)
+        self.assertIn("c != EOF && ungetc(c, fp) == EOF", number)
+        self.assertIn("int c;", number)
+
     def test_plist_macro_and_function_boundaries(self):
         wizard = (ROOT / "src" / "act.wizard.c").read_text(encoding="utf-8")
         start = wizard.index("#define PLIST_FORMAT")
