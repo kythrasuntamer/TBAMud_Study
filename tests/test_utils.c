@@ -21,10 +21,10 @@ void test_get_line_preserves_zone_header(void)
     char buf[READ_SIZE];
     TEST_ASSERT_NOT_NULL(fp);
     TEST_ASSERT_TRUE(fputs("0 99 30 2 d 0 0 0 -1 -1\n", fp) >= 0);
-    rewind(fp);
+    TEST_ASSERT_EQUAL_INT(0, fseek(fp, 0, SEEK_SET));
     TEST_ASSERT_EQUAL_INT(1, get_line(fp, buf));
     TEST_ASSERT_EQUAL_STRING("0 99 30 2 d 0 0 0 -1 -1", buf);
-    fclose(fp);
+    TEST_ASSERT_EQUAL_INT(0, fclose(fp));
 }
 
 void setUp(void)    { logfile = stderr; }
