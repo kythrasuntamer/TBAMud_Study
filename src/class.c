@@ -1883,8 +1883,8 @@ int level_exp(int chclass, int level)
 /* Default titles of male characters. */
 const char *title_male(int chclass, int level)
 {
-  if (chclass == CLASS_MONK)
-    return level >= LVL_IMMORT ? "the Immortal Monk" : "the Monk";
+  if (chclass == CLASS_MONK && level < LVL_IMMORT && level > 0)
+    return "the Monk";
   if (level <= 0 || level > LVL_IMPL)
     return "the Man";
   if (level == LVL_IMPL)
@@ -2027,8 +2027,8 @@ const char *title_male(int chclass, int level)
 /* Default titles of female characters. */
 const char *title_female(int chclass, int level)
 {
-  if (chclass == CLASS_MONK)
-    return level >= LVL_IMMORT ? "the Immortal Monk" : "the Monk";
+  if (chclass == CLASS_MONK && level < LVL_IMMORT && level > 0)
+    return "the Monk";
   if (level <= 0 || level > LVL_IMPL)
     return "the Woman";
   if (level == LVL_IMPL)
