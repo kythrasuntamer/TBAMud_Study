@@ -62,7 +62,7 @@ class ProgressionContractTests(unittest.TestCase):
         self.assertIn("ferror(fl) || fflush(fl) != 0", save)
         self.assertIn("fclose(fl) != 0", save)
         self.assertIn("rename(temporary_filename, filename)", save)
-        self.assertIn("if (save_failed)\\n    return;".replace("\\\\n", "\\n"), save)
+        self.assertIn("if (save_failed)\n    return;", save)
         self.assertNotIn('fopen(filename, "w")', save)
 
     def test_player_save_tags_unchanged_by_checked_writes(self):
@@ -71,7 +71,7 @@ class ProgressionContractTests(unittest.TestCase):
         for tag in ("Clas", "Levl", "Exp ", "EgAP", "EgXP", "EgHP", "EgMP"):
             with self.subTest(tag=tag):
                 self.assertIn(f'"{tag}: %d', save)
-        self.assertNotRegex(save, r"(?<!tb_)fprintf\\(fl,")
+        self.assertNotIn(" fprintf(fl,", save)
 
     def test_endgame_save_fields_present(self):
         player = source("players.c")
