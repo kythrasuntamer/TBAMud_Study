@@ -64,6 +64,10 @@ static int export_mobile_record(mob_vnum mvnum, struct char_data *mob, FILE *fd)
 static void export_script_save_to_disk(FILE *fp, void *item, int type);
 static int export_info_file(zone_rnum zrnum);
 
+/* Normalize mutable text for the legacy OLC world-file representation.
+ * TRUE signals normalization, not general validity or edit authorization.
+ * Callers must still enforce field-specific constraints and permissions.
+ */
 int genolc_checkstring(struct descriptor_data *d, char *arg)
 {
   smash_tilde(arg);
@@ -131,6 +135,10 @@ void strip_cr(char *buffer)
   buffer[wpos] = '\0';
 }
 
+/* Allocate a separate extra-description list and duplicate each string.
+ * Ownership of the new nodes passes to the destination's caller, which must
+ * free the complete list when it is no longer needed.
+ */
 void copy_ex_descriptions(struct extra_descr_data **to, struct extra_descr_data *from)
 {
   struct extra_descr_data *wpos;
