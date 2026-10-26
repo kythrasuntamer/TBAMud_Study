@@ -78,6 +78,27 @@ cannot be forced into a 1990s source layout without losing necessary behavior.
 | OLC | Oasis editor ownership and save paths increase complexity beyond base CircleMUD | Validate editor cancel/commit cleanup, authorization and disk failure handling |
 | Documentation | Many interfaces still lack ownership/error-contract descriptions | Incrementally annotate the real contracts without changing code |
 
+
+## Upstream tbaMUD comparison (initial sample)
+
+Also compare against [upstream tbaMUD](https://github.com/tbamud/tbamud)
+when evaluating changes made by this fork. Examined file headers and opening
+sections of `src/comm.c`, `src/interpreter.c`, `src/fight.c`, and
+`src/players.c` in the current upstream and fork. These retain the same
+established subsystem layout and source-header conventions; this sample is
+**not** a full-file semantic diff or a verified original fork-point comparison.
+
+Before any broad stylistic rewrite, identify the exact inherited base commit
+and use file-by-file diffs to isolate local work. Classify each changed block:
+behavioral safety fix, feature extension, compatibility change, diagnostic,
+test integration, or formatting-only. Preserve behavioral changes and their
+provenance; adjust formatting only when safe and useful. Do not modify existing
+macros merely to resemble classic code: verify argument evaluation, types,
+side effects, and error reporting first.
+
+Style changes should be narrow and separately reviewable. In particular,
+avoid giant whitespace-only diffs that hide security or persistence changes.
+
 ## Documentation safeguards
 
 Every comment must be verified against the implementation. In particular,
