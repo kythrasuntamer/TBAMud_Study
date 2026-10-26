@@ -20,6 +20,8 @@ class FormattingAndBoundsContracts(unittest.TestCase):
         self.assertIn("quest_parse_record(line, t, 6, f1, sizeof(f1))", src)
         self.assertIn("quest_parse_record(line, t, 7, NULL, 0)", src)
         self.assertIn("quest_parse_record(line, t, 3, NULL, 0)", src)
+        self.assertIn("aquest_table[i].value[j] = t[j]", src)
+        self.assertIn("aquest_table[i].flags = asciiflag_conv(f1)", src)
         self.assertNotIn("(retval = sscanf(line,", src)
 
     def test_zone_saves_check_failed_tempfile_cleanup(self):
