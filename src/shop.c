@@ -1201,7 +1201,28 @@ void boot_the_shops(FILE *shop_f, char *filename, int rec_count)
     }
 
     if (*buf == '#') {		/* New shop */
-      sscanf(buf, "#%d\n", &temp);
+      {
+        char *end;
+        long parsed;
+        const char *p = buf + 1;
+        while (isspace((unsigned char)*p))
+          p++;
+        errno = 0;
+        parsed = strtol(p, &end, 10);
+        if (p == end || errno == ERANGE || parsed < 0 || parsed > INT_MAX) {
+          log("SYSERR: Invalid shop number in shop file %s", filename);
+          free(buf);
+          exit(1);
+        }
+        while (isspace((unsigned char)*end))
+          end++;
+        if (*end != '\0') {
+          log("SYSERR: Invalid shop number in shop file %s", filename);
+          free(buf);
+          exit(1);
+        }
+        temp = (int)parsed;
+      }
       tb_snprintf(buf2, sizeof(buf2), "shop #%d in shop file %s", temp, filename);
       free(buf);		/* Plug memory leak! */
 
