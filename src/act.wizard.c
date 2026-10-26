@@ -8,6 +8,10 @@
 *  CircleMUD is based on DikuMUD, Copyright (C) 1990, 1991.               *
 **************************************************************************/
 
+#include <limits.h>
+#include <errno.h>
+#include <stdlib.h>
+#include <ctype.h>
 #include "conf.h"
 #include "sysdep.h"
 #include "structs.h"
@@ -4602,10 +4606,34 @@ ACMD(do_changelog)
   send_to_char(ch, "Change added.\r\n");
 }
 
-#define PLIST_FORMAT \
-  "Usage: plist [minlev[-maxlev]] [-n name] [-d days] [-h hours] [-i] [-m]"
+/* Parse a nonnegative number or a nonnegative low-high range. */
+static int parse_plist_range(const char *arg, int *low, int *high)
+{
+  char *end;
+  long first, last;
+  if (!arg || !isdigit((unsigned char)*arg))
+    return 0;
+  errno = 0;
+  first = strtol(arg, &end, 10);
+  if (errno == ERANGE || first > INT_MAX)
+    return 0;
+  if (*end == '\0') {
+    *low = *high = (int)first;
+    return 1;
+  }
+  if (*end != '-' || !isdigit((unsigned char)end[1]))
+    return 0;
+  arg = end + 1;
+  errno = 0;
+  last = strtol(arg, &end, 10);
+  if (errno == ERANGE || last > INT_MAX || *end != '\0')
+    return 0;
+  *low = (int)first;
+  *high = (int)last;
+  return 2;
+}
 
-ACMD(do_plist)
+#define PLIST_FORMAT \ACMD(do_plist)
 {
   int i, len = 0, count = 0;
   char mode, buf[MAX_STRING_LENGTH * 20], name_search[MAX_NAME_LENGTH], timestr[MAX_STRING_LENGTH];
@@ -4621,15 +4649,20 @@ ACMD(do_plist)
 
     half_chop(buf, arg, buf1);
     if (isdigit(*arg)) {
-      if (sscanf(arg, "%d-%d", &low, &high) == 1)
-        high = low;
+      if (!parse_plist_range(arg, &low, &high)) {
+        send_to_char(ch, "Invalid level range.\r\n");
+        return;
+      }
       strlcpy(buf, buf1, sizeof(buf));        /* strcpy: OK (sizeof: buf1 == buf) */
     } else if (*arg == '-') {
       mode = *(arg + 1);        /* just in case; we destroy arg in the switch */
       switch (mode) {
       case 'l':
         half_chop(buf1, arg, buf);
-        sscanf(arg, "%d-%d", &low, &high);
+        if (!parse_plist_range(arg, &low, &high)) {
+          send_to_char(ch, "Invalid level range.\r\n");
+          return;
+        }
         break;
       case 'n':
         half_chop(buf1, name_search, buf);
@@ -4644,19 +4677,28 @@ ACMD(do_plist)
         break;
       case 'd':
         half_chop(buf1, arg, buf);
-        if (sscanf(arg, "%d-%d", &low_day, &high_day) == 1)
-          high_day = low_day;
+        if (!parse_plist_range(arg, &low_day, &high_day)) {
+          send_to_char(ch, "Invalid day range.\r\n");
+          return;
+        }
         break;
       case 'h':
         half_chop(buf1, arg, buf);
-        if (sscanf(arg, "%d-%d", &low_hr, &high_hr) == 1)
-          high_hr = low_hr;
+        if (!parse_plist_range(arg, &low_hr, &high_hr)) {
+          send_to_char(ch, "Invalid hour range.\r\n");
+          return;
+        }
         break;
       default:
         send_to_char(ch, "%s\r\n", PLIST_FORMAT);
         return;
       }
     } else {
+      send_to_char(ch, "%s\r\n", PLIST_FORMAT);
+      return;
+    }
+  }
+lse {
       send_to_char(ch, "%s\r\n", PLIST_FORMAT);
       return;
     }
