@@ -11,6 +11,8 @@ class OriginalClassSkillTests(unittest.TestCase):
         for name, number in (("MAGIC_USER", 0), ("CLERIC", 1),
                              ("THIEF", 2), ("WARRIOR", 3), ("MONK", 4)):
             self.assertRegex(structs, rf"(?m)^#define CLASS_{name}\s+{number}\b")
+        for skill, level in (("BASH", 20), ("SNEAK", 25), ("HIDE", 30), ("WHIRLWIND", 35)):
+            self.assertIn(f"spell_level(SKILL_{skill}, CLASS_MONK, {level});", cls)
         for skill, klass, level in (
             ("TRACK", "MAGIC_USER", 34), ("BANDAGE", "MAGIC_USER", 40),
             ("RESCUE", "MAGIC_USER", 46), ("TRACK", "CLERIC", 30),
