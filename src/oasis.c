@@ -55,6 +55,13 @@ void get_char_colors(struct char_data *ch)
 
 /* This procedure frees up the strings and/or the structures attatched to a
  * descriptor, sets all flags back to how they should be. */
+/* Release the descriptor's active OLC edit state. cleanup_type determines
+ * whether nested resources or only outer structures are relinquished;
+ * these modes must match the ownership transferred by each editor.
+ * In particular, room scripts and object strings require their dedicated
+ * cleanup routines. Review each editor's commit/cancel paths together with
+ * changes to this function to avoid use-after-free or leaks.
+ */
 void cleanup_olc(struct descriptor_data *d, byte cleanup_type)
 {
   /* Clean up WHAT? */
