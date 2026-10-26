@@ -10,6 +10,8 @@ treating any feature as production-ready.
 ## Unreleased — documentation branch (2026-10-26)
 
 ### Documentation
+- Extended the style review with an initial upstream tbaMUD comparison and a
+  process for safely restoring classic CircleMUD idioms in modified code.
 - Documented room, mobile, and object-instance Oasis editing contracts in
   `src/redit.c`, `src/medit.c`, and `src/oedit.c`.
 - Clarified zone-index staging cleanup and index number validation in
