@@ -171,5 +171,12 @@ M 0 3095 1 3064 	(the cryogenicist)
 E 1 3022 100 16 	(a long sword)
 R 0 3005 3035 -1 	(the large fountain)
 O 0 3035 1 3005 	(the large fountain)
+M 0 3014 1 3035 	(the Monk guild mentor)
+M 0 3015 1 3036 	(the Druid guild mentor)
+M 0 3016 1 3037 	(the Berserker guild mentor)
+M 0 3017 1 3038 	(the Sorcerer guild mentor)
+M 0 3018 1 3039 	(the Paladin guild mentor)
+M 0 3019 1 3055 	(the Ranger guild mentor)
+M 0 3028 1 3056 	(the Bard guild mentor)
 S
 $
