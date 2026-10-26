@@ -1418,7 +1418,10 @@ static int clamp_script_int(long long value)
   return (int)value;
 }
 
-/* evaluates 'lhs op rhs', and copies to result */
+/* Evaluate a DG-script binary operation into the result buffer. The code
+ * trims lhs/rhs in place, so inputs must be mutable. Preserve established
+ * script expression semantics when refactoring area triggers.
+ */
 static void eval_op(char *op, char *lhs, char *rhs, char *result, void *go,
              struct script_data *sc, trig_data *trig)
 {
@@ -1575,7 +1578,10 @@ static char *matching_paren(char *p)
   return --p;
 }
 
-/* evaluates line, and returns answer in result */
+/* Evaluate expressions recursively or substitute script variables. Nested
+ * delimiters and result-buffer boundaries deserve special attention because
+ * area-authored trigger expressions should be treated as untrusted data.
+ */
 static void eval_expr(char *line, char *result, void *go, struct script_data *sc,
                trig_data *trig, int type)
 {
@@ -1696,7 +1702,10 @@ static int eval_lhs_op_rhs(char *expr, char *result, void *go, struct script_dat
   return 0;
 }
 
-/* returns 1 if cond is true, else 0 */
+/* Script IF truth convention: empty results and values starting with '0'
+ * are false; other results are true. This is a compatibility contract for
+ * existing area scripts, not conventional C boolean conversion.
+ */
 static int process_if(char *cond, void *go, struct script_data *sc,
                trig_data *trig, int type)
 {
