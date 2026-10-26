@@ -28,7 +28,7 @@ class MidgaardGuildTests(unittest.TestCase):
         self.assertIn("ASSIGNMOB(3014, guild);", assign)
         self.assertIn("ASSIGNMOB(3023, guild);", assign)
 
-    def test_necromancer_study_connected_but_not_selectable(self):
+    def test_necromancer_study_connected_and_class_registered(self):
         world = (ROOT / "lib/world/wld/30.wld").read_text()
         mobs = (ROOT / "lib/world/mob/30.mob").read_text()
         zone = (ROOT / "lib/world/zon/30.zon").read_text()
@@ -40,7 +40,7 @@ class MidgaardGuildTests(unittest.TestCase):
         self.assertIn("#3029\nnecromancer mentor scholar~", mobs)
         self.assertIn("M 0 3029 1 3067", zone)
         self.assertIn("#define CLASS_NECROMANCER 11", structs)
-        self.assertRegex(structs, r"#define NUM_CLASSES\s+5\b")
+        self.assertRegex(structs, r"#define NUM_CLASSES\s+12\b")
 
     def test_all_mentor_spawn_rooms_exist(self):
         world = (ROOT / "lib/world/wld/30.wld").read_text()
