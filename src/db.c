@@ -3093,22 +3093,30 @@ char *fread_string(FILE *fl, const char *error)
 char *fread_clean_string(FILE *fl, const char *error)
 {
   char buf[MAX_STRING_LENGTH], tmp[513];
-  char *point, c;
+  char *point;
+  int c;
   int done = 0, length = 0, templength;
 
   *buf = '\0';
 
   do
   {
-    if( feof( fl ) )
+    if (feof(fl))
     {
       log( "%s", "fread_clean_string: EOF encountered on read." );
       return 0;
     }
-    c = getc( fl );
+    c = getc(fl);
+    if (c == EOF) {
+      log("SYSERR: fread_clean_string: unexpected EOF near %s", error);
+      return NULL;
+    }
   }
-  while( isspace( c ) );
-  ungetc( c, fl );
+  while (isspace((unsigned char)c));
+  if (ungetc(c, fl) == EOF) {
+    log("SYSERR: fread_clean_string: cannot restore lookahead near %s", error);
+    return NULL;
+  }
 
   do {
     if (!fgets(tmp, 512, fl)) {
@@ -3150,7 +3158,7 @@ int fread_number(FILE *fp)
 {
   int number;
   bool sign;
-  char c;
+  int c;
 
   do
   {
@@ -3192,8 +3200,10 @@ int fread_number(FILE *fp)
 
   if( c == '|' )
     number += fread_number( fp );
-  else if( c != ' ' )
-    ungetc( c, fp );
+  else if (c != ' ' && c != EOF && ungetc(c, fp) == EOF) {
+    log("SYSERR: fread_number: cannot restore lookahead");
+    return 0;
+  }
 
   return number;
 }
