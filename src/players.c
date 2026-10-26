@@ -23,6 +23,15 @@
 #include "dg_scripts.h" /* To enable saving of player variables to disk */
 #include "quest.h"
 
+/*
+ * Player-file maintenance notes:
+ *
+ * ASCII player files are persistent, external input. They may be malformed,
+ * truncated, or written by an older server version. Keep legacy save tags
+ * and the meaning of existing progression fields stable when editing readers
+ * or writers. LOAD_* selectors identify load_HMVS fields; they are not file
+ * format versions.
+ */
 #define LOAD_HIT	0
 #define LOAD_MANA	1
 #define LOAD_MOVE	2
@@ -42,6 +51,14 @@ static void load_HMVS(struct char_data *ch, const char *line, int mode);
 static void write_aliases_ascii(FILE *file, struct char_data *ch);
 static void read_aliases_ascii(FILE *file, struct char_data *ch, int count);
 
+/*
+ * Parse a signed integer from an ASCII player-file field.
+ *
+ * Invalid or out-of-range values are logged with file/tag context and
+ * replaced with zero. This is an intentional compatibility fallback:
+ * callers cannot use the return value to distinguish invalid text from a
+ * legitimate zero. Do not use this helper for fail-closed decisions.
+ */
 static int parse_pfile_int_or_zero(const char *value, const char *filename, const char *tag)
 {
   char *end = NULL;
@@ -68,6 +85,11 @@ static int parse_pfile_int_or_zero(const char *value, const char *filename, cons
   return (int)parsed;
 }
 
+/*
+ * Parse a signed long field, using the same logged-zero fallback as the
+ * integer parser. strtol overflow and non-whitespace suffixes are rejected.
+ * The return type does not carry an independent success/failure status.
+ */
 static long parse_pfile_long_or_zero(const char *value, const char *filename, const char *tag)
 {
   char *end = NULL;
@@ -93,7 +115,12 @@ static long parse_pfile_long_or_zero(const char *value, const char *filename, co
   return parsed;
 }
 
-/* Read a whitespace-delimited signed number with overflow detection. */
+/*
+ * Consume one whitespace-delimited signed long from *cursor.
+ * On success, update *value and advance the cursor, returning TRUE.
+ * On failure, leave both output parameters unchanged and return FALSE.
+ * The caller must provide valid, non-NULL pointers.
+ */
 static int parse_index_long(const char **cursor, long *value)
 {
   char *end;
@@ -109,6 +136,11 @@ static int parse_index_long(const char **cursor, long *value)
   return TRUE;
 }
 
+/*
+ * Copy a single whitespace-delimited index token into the supplied buffer.
+ * Reject empty and oversized tokens rather than truncating them.
+ * A successful parse NUL-terminates dest and advances *cursor.
+ */
 static int parse_index_word(const char **cursor, char *dest, size_t capacity)
 {
   size_t len = 0;
