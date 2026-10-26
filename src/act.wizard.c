@@ -2002,7 +2002,7 @@ void add_llog_entry(struct char_data *ch, int type) {
 void clean_llog_entries(void) {
   FILE *ofp, *nfp;
   struct last_entry mlast;
-  long size, recs;
+  long size, recs, copied = 0;
   int failed = FALSE;
   const char *temp_name = "etc/nlast";
 
@@ -2037,8 +2037,12 @@ void clean_llog_entries(void) {
     if (fwrite(&mlast, sizeof(mlast), 1, nfp) != 1) {
       TB_REPORT_ERRNO("write", temp_name);
       failed = TRUE;
+    } else {
+      copied++;
     }
   }
+  if (copied != MAX_LAST_ENTRIES)
+    failed = TRUE;
   if (ferror(ofp)) {
     TB_REPORT_ERRNO("read", LAST_FILE);
     failed = TRUE;
