@@ -11,6 +11,15 @@ UTILS = (ROOT / "src" / "utils.c").read_text(encoding="utf-8")
 
 
 class FormattingAndBoundsContracts(unittest.TestCase):
+    def test_zone_saves_check_failed_tempfile_cleanup(self):
+        for filename, temp in (("genmob.c", "mobfname"),
+                               ("genobj.c", "filename"),
+                               ("genwld.c", "filename")):
+            src = (ROOT / "src" / filename).read_text(encoding="utf-8")
+            self.assertNotIn("        remove(" + temp + ");", src)
+            self.assertIn("if (remove(" + temp + ") != 0 && errno != ENOENT)", src)
+            self.assertIn('TB_REPORT_ERRNO("remove", ' + temp + ')', src)
+
     def test_script_wait_numeric_fields_are_checked(self):
         src = (ROOT / "src" / "dg_scripts.c").read_text(encoding="utf-8")
         self.assertIn("static int script_wait_number(", src)
