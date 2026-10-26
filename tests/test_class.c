@@ -241,6 +241,29 @@ void test_monk_class_selection_and_combat_curves(void)
     TEST_ASSERT_EQUAL_INT(saving_throws(CLASS_WARRIOR, SAVING_PARA, 10), saving_throws(CLASS_MONK, SAVING_PARA, 10));
 }
 
+/* Validate all class progression paths against the established archetypes.
+ * These tests execute actual game functions rather than inspect source text. */
+void test_every_class_has_stable_progression(void)
+{
+    const int archetype[NUM_CLASSES] = {
+        CLASS_MAGIC_USER, CLASS_CLERIC, CLASS_THIEF, CLASS_WARRIOR,
+        CLASS_WARRIOR, CLASS_CLERIC, CLASS_WARRIOR, CLASS_MAGIC_USER,
+        CLASS_WARRIOR, CLASS_THIEF, CLASS_THIEF, CLASS_MAGIC_USER
+    };
+    int klass, level, save;
+    for (klass = 0; klass < NUM_CLASSES; ++klass) {
+        for (level = 1; level <= 50; ++level) {
+            TEST_ASSERT_EQUAL_INT(level_exp(archetype[klass], level),
+                                  level_exp(klass, level));
+            TEST_ASSERT_EQUAL_INT(thaco(archetype[klass], level),
+                                  thaco(klass, level));
+            for (save = SAVING_PARA; save <= SAVING_SPELL; ++save)
+                TEST_ASSERT_EQUAL_INT(saving_throws(archetype[klass], save, level),
+                                      saving_throws(klass, save, level));
+        }
+    }
+}
+
 /* =========================================================
  * main
  * ========================================================= */
@@ -250,6 +273,7 @@ int main(void)
     UNITY_BEGIN();
 
     RUN_TEST(test_monk_class_selection_and_combat_curves);
+    RUN_TEST(test_every_class_has_stable_progression);
 
     /* parse_class */
     RUN_TEST(test_parse_class_magic_user_lowercase);
