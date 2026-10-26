@@ -54,6 +54,19 @@ jobs:
         ctest --test-dir build --output-on-failure \
           --output-junit "$GITHUB_WORKSPACE/tests/test-results/ctest.xml"
 
+    - name: Python regression and isolated save failure injection
+      shell: bash
+      run: |
+        set -o pipefail
+        python3 -m unittest discover -s tests -p 'test_*.py' -v 2>&1 | tee python-regression.log
+
+    - name: Upload Python regression log
+      uses: actions/upload-artifact@v4
+      if: ${{ always() && hashFiles('python-regression.log') != '' }}
+      with:
+        name: python-regression-log
+        path: python-regression.log
+
     - name: Publish test results
       uses: dorny/test-reporter@v2
       if: ${{ always() && hashFiles('tests/test-results/*.xml') != '' }}
