@@ -33,6 +33,28 @@ static void sedit_types_menu(struct descriptor_data *d);
 static void sedit_disp_menu(struct descriptor_data *d);
 
 
+/* Reject invalid or overflowing shop profit input without modifying the
+ * existing multiplier. Preserve valid floating point values, including zero. */
+static int parse_shop_profit(const char *text, float *result)
+{
+  char *end;
+  float parsed;
+  if (!text || !result)
+    return 0;
+  while (isspace((unsigned char)*text))
+    text++;
+  errno = 0;
+  parsed = strtof(text, &end);
+  if (text == end || errno == ERANGE || !isfinite(parsed))
+    return 0;
+  while (isspace((unsigned char)*end))
+    end++;
+  if (*end != '\0')
+    return 0;
+  *result = parsed;
+  return 1;
+}
+
 void sedit_save_internally(struct descriptor_data *d)
 {
   OLC_SHOP(d)->vnum = OLC_NUM(d);
@@ -706,10 +728,16 @@ void sedit_parse(struct descriptor_data *d, char *arg)
     S_CLOSE2(OLC_SHOP(d)) = LIMIT(tb_parse_int_or_zero(arg), 0, 28);
     break;
   case SEDIT_BUY_PROFIT:
-    sscanf(arg, "%f", &S_BUYPROFIT(OLC_SHOP(d)));
+    if (!parse_shop_profit(arg, &S_BUYPROFIT(OLC_SHOP(d)))) {
+      write_to_output(d, "Invalid buying profit multiplier, try again: ");
+      return;
+    }
     break;
   case SEDIT_SELL_PROFIT:
-    sscanf(arg, "%f", &S_SELLPROFIT(OLC_SHOP(d)));
+    if (!parse_shop_profit(arg, &S_SELLPROFIT(OLC_SHOP(d)))) {
+      write_to_output(d, "Invalid selling profit multiplier, try again: ");
+      return;
+    }
     break;
   case SEDIT_TYPE_MENU:
     OLC_VAL(d) = LIMIT(tb_parse_int_or_zero(arg), 0, NUM_ITEM_TYPES - 1);
