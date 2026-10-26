@@ -11,6 +11,11 @@ UTILS = (ROOT / "src" / "utils.c").read_text(encoding="utf-8")
 
 
 class FormattingAndBoundsContracts(unittest.TestCase):
+    def test_area_level_flag_uses_native_bool(self):
+        source = (ROOT / "src" / "act.informative.c").read_text(encoding="utf-8")
+        self.assertIn("bool show_zone = FALSE, overlap = FALSE, overlap_shown = FALSE, lev_set;", source)
+        self.assertNotIn("zcount=0, lev_set,", source)
+
     def test_area_level_formatter_keeps_full_zone_index(self):
         source = (ROOT / "src" / "act.informative.c").read_text(encoding="utf-8")
         self.assertIn("static bool get_zone_levels(int znum,", source)
