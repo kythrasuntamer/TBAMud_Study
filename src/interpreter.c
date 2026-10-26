@@ -42,11 +42,20 @@
  * Require libsodium for new hashes; never fall back to plaintext. */
 #include <sodium.h>
 
+/* Identify the encoded Argon2id format before invoking libsodium verification.
+ * This is only a format dispatch check, not proof that a hash is valid.
+ */
 static int tb_password_is_argon2id(const char *hash)
 {
   return hash != NULL && strncmp(hash, "$argon2id$", 10) == 0;
 }
 
+/* Verify an entered password against a stored encoded hash.
+ * New Argon2id hashes use libsodium; legacy crypt hashes are accepted only
+ * when that compatibility path is compiled in. Missing inputs and crypto
+ * initialization failures reject authentication. Never compare plaintext
+ * against stored data as a fallback.
+ */
 static int tb_password_verify(const char *password, const char *hash)
 {
   const char *legacy;
@@ -65,6 +74,11 @@ static int tb_password_verify(const char *password, const char *hash)
 #endif
 }
 
+/* Create a new Argon2id encoded password hash in caller-owned storage.
+ * The buffer must hold at least crypto_pwhash_STRBYTES; the function returns
+ * false if initialization, arguments, capacity, or hashing fails. Callers
+ * must not persist the output after failure.
+ */
 static int tb_password_hash(char *output, size_t capacity, const char *password)
 {
   if (output == NULL || password == NULL ||
@@ -1443,6 +1457,11 @@ EVENTFUNC(get_protocols)
   return 0;
 }
 
+/* Login/connection state dispatcher. Oasis editor states are dispatched
+ * before normal login handling; a descriptor in an editing state must not
+ * interpret the same input as a login command. Preserve these state routes
+ * when modifying authentication or OLC authorization.
+ */
 /* deal with newcomers and other non-playing sockets */
 void nanny(struct descriptor_data *d, char *arg)
 {
