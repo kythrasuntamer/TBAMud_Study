@@ -21,6 +21,11 @@ class SaveFailurePathContracts(unittest.TestCase):
         self.assertLess(SAVE.index('fdopen(temp_fd, "w")'),
                         SAVE.index('rename(temporary_filename, filename)'))
 
+    def test_staged_path_truncation_is_rejected_before_creation(self):
+        self.assertIn("path_len < 0 || (size_t)path_len >= sizeof(temporary_filename)", SAVE)
+        self.assertIn('TB_ERROR_MSG("PLAYER", "snprintf"', SAVE)
+        self.assertLess(SAVE.index("path_len < 0"), SAVE.index("mkstemp(temporary_filename)"))
+
     def test_each_io_failure_has_own_diagnostic(self):
         for operation in ("fflush", "fclose", "rename", "unlink"):
             with self.subTest(operation=operation):
