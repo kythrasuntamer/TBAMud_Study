@@ -2002,55 +2002,63 @@ void add_llog_entry(struct char_data *ch, int type) {
 void clean_llog_entries(void) {
   FILE *ofp, *nfp;
   struct last_entry mlast;
-  long recs;
+  long size, recs;
+  int failed = FALSE;
+  const char *temp_name = "etc/nlast";
 
-  if(!(ofp=fopen(LAST_FILE,"r")))
+  if (!(ofp = fopen(LAST_FILE, "rb")))
     return; /* no file, no gripe */
 
-  fseek(ofp,0L,SEEK_END);
-  recs=ftell(ofp)/sizeof(struct last_entry);
-  if (fseek(ofp, 0L, SEEK_SET) != 0) {
-    TB_REPORT_ERRNO("fseek", LAST_FILE);
+  if (fseek(ofp, 0L, SEEK_END) != 0 || (size = ftell(ofp)) < 0 ||
+      fseek(ofp, 0L, SEEK_SET) != 0) {
+    TB_REPORT_ERRNO("seek", LAST_FILE);
     tb_fclose(ofp);
     return;
   }
-
+  recs = size / (long)sizeof(struct last_entry);
   if (recs < MAX_LAST_ENTRIES) {
     tb_fclose(ofp);
     return;
   }
 
-  if (!(nfp=fopen("etc/nlast", "w"))) {
-    log("Error trying to open new last file.");
+  if (!(nfp = fopen(temp_name, "wb"))) {
+    TB_REPORT_ERRNO("open", temp_name);
     tb_fclose(ofp);
     return;
   }
 
-  /* skip first entries */
-  fseek(ofp,(recs-MAX_LAST_ENTRIES)* (sizeof(struct last_entry)),SEEK_CUR);
+  if (fseek(ofp, (recs - MAX_LAST_ENTRIES) *
+                 (long)sizeof(struct last_entry), SEEK_SET) != 0) {
+    TB_REPORT_ERRNO("seek", LAST_FILE);
+    failed = TRUE;
+  }
 
-  /* copy the rest */
-  while (fread(&mlast, sizeof(struct last_entry), 1, ofp) == 1) {
-    if (fwrite(&mlast, sizeof(struct last_entry), 1, nfp) != 1) {
-      log("clean_llog_entries: write error.");
-      tb_fclose(ofp);
-      tb_fclose(nfp);
-      return;
+  while (!failed && fread(&mlast, sizeof(mlast), 1, ofp) == 1) {
+    if (fwrite(&mlast, sizeof(mlast), 1, nfp) != 1) {
+      TB_REPORT_ERRNO("write", temp_name);
+      failed = TRUE;
     }
   }
   if (ferror(ofp)) {
-    log("clean_llog_entries: read error.");
-    tb_fclose(ofp);
-    tb_fclose(nfp);
-    remove("etc/nlast");
-    return;
+    TB_REPORT_ERRNO("read", LAST_FILE);
+    failed = TRUE;
   }
+  if (fclose(ofp) != 0)
+    failed = TRUE;
+  if (fflush(nfp) != 0)
+    failed = TRUE;
+  if (fclose(nfp) != 0)
+    failed = TRUE;
 
-  tb_fclose(ofp);
-  tb_fclose(nfp);
-
-  remove(LAST_FILE);
-  rename("etc/nlast", LAST_FILE);
+  if (!failed && rename(temp_name, LAST_FILE) != 0) {
+    TB_REPORT_ERRNO("rename", LAST_FILE);
+    failed = TRUE;
+  }
+  if (failed) {
+    log("SYSERR: last-login cleanup failed; original history preserved");
+    if (remove(temp_name) != 0 && errno != ENOENT)
+      TB_REPORT_ERRNO("remove", temp_name);
+  }
 }
 
 /* debugging stuff, if you wanna see the whole file */
