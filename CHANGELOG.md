@@ -29,6 +29,13 @@ treating any feature as production-ready.
 - Introduced this public changelog and expanded the README with the project's
   scope, contribution workflow, and verification policy.
 
+- Explained DG expression mutation, evaluation and historical conditional truth
+  semantics in `src/dg_scripts.c`.
+- Clarified corpse creation and the death/extraction risk in the central
+  damage path of `src/fight.c`.
+- Documented editor text normalization and allocated extra-description list
+  ownership in `src/genolc.c`.
+
 These are documentation-only edits; no intended gameplay, persistence format, or
 network behavior changes.
 
