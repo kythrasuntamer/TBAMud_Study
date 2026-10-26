@@ -2636,7 +2636,7 @@ ACMD(do_whois)
     free_char (victim);
 }
 
-static bool get_zone_levels(zone_rnum znum, char *buf, size_t buflen)
+static bool get_zone_levels(int znum, char *buf, size_t buflen)
 {
   /* Create a string for the level restrictions for this zone. */
   if ((zone_table[znum].min_level == -1) && (zone_table[znum].max_level == -1)) {
