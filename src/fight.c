@@ -28,6 +28,10 @@
 
 
 /* locally defined global variables, used externally */
+/* The active-combat list is traversed while combat actions can change
+ * participants' fighting state. Keep traversal and removal rules consistent
+ * with next_combat_list to avoid visiting removed combatants.
+ */
 /* head of l-list of fighting chars */
 struct char_data *combat_list = NULL;
 /* Weapon attack texts */
@@ -839,6 +843,11 @@ static int compute_thaco(struct char_data *ch, struct char_data *victim)
   return calc_thaco;
 }
 
+/* Resolve a conventional attack using weapon type, THAC0, armor, damage,
+ * and relevant fight triggers. Triggers may change room membership, so the
+ * routine rechecks co-location before resolving the attack. Future combat
+ * mechanics must retain those guards and established damage side effects.
+ */
 void hit(struct char_data *ch, struct char_data *victim, int type)
 {
   struct obj_data *wielded = GET_EQ(ch, WEAR_WIELD);
@@ -939,6 +948,11 @@ void hit(struct char_data *ch, struct char_data *victim, int type)
   hitprcnt_mtrigger(victim);
 }
 
+/* Process one scheduled combat pulse. The next-list pointer is captured
+ * before handling a character because attacks, movement, and triggers may
+ * stop combat or change the active list during iteration. NPC wait state
+ * and actor position are checked before advancing normal attacks.
+ */
 /* control the fights going on.  Called every 2 seconds from comm.c. */
 void perform_violence(void)
 {
