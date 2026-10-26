@@ -54,6 +54,15 @@ class ProgressionContractTests(unittest.TestCase):
         self.assertIn("case 'm':", classes)
         self.assertIn("case 'z': return CLASS_MAGIC_USER;", classes)
 
+    def test_saved_skills_and_quests_validate_numeric_records(self):
+        player = source("players.c")
+        self.assertIn("static int parse_saved_ints(", player)
+        self.assertIn("value = strtol(cursor, &end, 10)", player)
+        self.assertIn("value < INT_MIN || value > INT_MAX", player)
+        self.assertIn("num < 1 || num > MAX_SKILLS", player)
+        self.assertIn("parse_saved_ints(line, &num, &num2) != 2", player)
+        self.assertIn("parse_saved_ints(line, &num, NULL) != 1", player)
+
     def test_player_saves_stage_before_replacing_original(self):
         player = source("players.c")
         save = player[player.index("void save_char("):player.index("/* Separate a 4-character id tag")]
