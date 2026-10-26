@@ -11,6 +11,16 @@ UTILS = (ROOT / "src" / "utils.c").read_text(encoding="utf-8")
 
 
 class FormattingAndBoundsContracts(unittest.TestCase):
+    def test_improved_editor_ranges_use_checked_conversion(self):
+        src = (ROOT / "src" / "improved-edit.c").read_text(encoding="utf-8")
+        self.assertIn("static int parse_editor_line_range(", src)
+        self.assertIn("errno == ERANGE", src)
+        self.assertIn("first < INT_MIN || first > INT_MAX", src)
+        self.assertIn("last < INT_MIN || last > INT_MAX", src)
+        self.assertEqual(src.count("parse_editor_line_range("), 5)
+        self.assertNotIn('sscanf(string, " %d - %d "', src)
+        self.assertIn("case -1:", src)
+
     def test_zone_index_updates_preserve_live_index_on_failure(self):
         src = (ROOT / "src" / "genzon.c").read_text(encoding="utf-8")
         section = src[src.index("void create_world_index(int znum"):src.index("void remove_room_zone_commands(")]
