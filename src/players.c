@@ -55,11 +55,11 @@ static int parse_pfile_int_or_zero(const char *value, const char *filename, cons
 
   errno = 0;
   parsed = strtol(value, &end, 10);
-  while (end && isspace((unsigned char)*end))
+  while (isspace((unsigned char)*end))
     end++;
 
   if (end == value || errno == ERANGE || parsed < INT_MIN || parsed > INT_MAX ||
-      (end && *end != '\0')) {
+      *end != '\0') {
     log("SYSERR: pfile %s tag %.4s has malformed integer value '%s'; using 0",
         filename ? filename : "(unknown)", tag ? tag : "????", value);
     return (0);
@@ -81,10 +81,10 @@ static long parse_pfile_long_or_zero(const char *value, const char *filename, co
 
   errno = 0;
   parsed = strtol(value, &end, 10);
-  while (end && isspace((unsigned char)*end))
+  while (isspace((unsigned char)*end))
     end++;
 
-  if (end == value || errno == ERANGE || (end && *end != '\0')) {
+  if (end == value || errno == ERANGE || *end != '\0') {
     log("SYSERR: pfile %s tag %.4s has malformed long value '%s'; using 0",
         filename ? filename : "(unknown)", tag ? tag : "????", value);
     return (0);
@@ -100,10 +100,12 @@ static int parse_index_long(const char **cursor, long *value)
   long parsed;
   while (isspace((unsigned char)**cursor))
     (*cursor)++;
+
   errno = 0;
   parsed = strtol(*cursor, &end, 10);
   if (end == *cursor || errno == ERANGE || (*end && !isspace((unsigned char)*end)))
     return (FALSE);
+
   *value = parsed;
   *cursor = end;
   return (TRUE);
@@ -114,10 +116,12 @@ static int parse_index_word(const char **cursor, char *dest, size_t capacity)
   size_t len = 0;
   while (isspace((unsigned char)**cursor))
     (*cursor)++;
+
   while ((*cursor)[len] && !isspace((unsigned char)(*cursor)[len]))
     ++len;
   if (!len || len >= capacity)
     return (FALSE);
+
   memcpy(dest, *cursor, len);
   dest[len] = '\0';
   *cursor += len;
