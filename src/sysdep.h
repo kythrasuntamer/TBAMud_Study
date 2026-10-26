@@ -859,7 +859,8 @@ static inline void tb_report_domain_error_at(tb_error_severity severity,
   result = snprintf(record, sizeof(record),
                     "TBERR timestamp=%s pid=%ld severity=%s category=%s "
                     "operation=\"%s\" context=\"%s\" errno=%d errno_name=%s "
-                    "error=\"%s\" source=\"%s:%d\" function=\"%s\" "\n                    "truncated_fields=%s%s%s%s%s\n",
+                    "error=\"%s\" source=\"%s:%d\" function=\"%s\" "
+                    "truncated_fields=%s%s%s%s%s\n",
                     timestamp, process_id,
                     tb_error_severity_name(severity),
                     tb_error_category_name(category),
