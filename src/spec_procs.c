@@ -454,7 +454,10 @@ SPECIAL(guild_guard)
       continue; 
 
     /* Allow the people of the guild through. */ 
-    if (!IS_NPC(ch) && GET_CLASS(ch) == guild_info[i].pc_class) 
+    /* Monks share the Warrior training hall until a dedicated guild exists.
+     * Keep all original four class/guard restrictions unchanged. */
+    if (!IS_NPC(ch) && (GET_CLASS(ch) == guild_info[i].pc_class ||
+        (GET_CLASS(ch) == CLASS_MONK && guild_info[i].pc_class == CLASS_WARRIOR))) 
       continue; 
 
     send_to_char(ch, "%s", buf); 
