@@ -90,6 +90,18 @@
 extern time_t motdmod;
 extern time_t newsmod;
 
+/*
+ * Server-lifecycle globals visible to other modules.
+ *
+ * descriptor_list owns the active connection chain. circle_shutdown and
+ * circle_reboot communicate the requested termination mode to the main
+ * game loop; neither flag by itself guarantees a clean disconnect or
+ * durable player save. Connection cleanup and persistence must still run
+ * through their respective code paths.
+ *
+ * Keep changes to these shared flags synchronized with shutdown, signal,
+ * and copyover behavior. They are process state, not per-player state.
+ */
 /* locally defined globals, used externally */
 struct descriptor_data *descriptor_list = NULL;   /* master desc list */
 int buf_largecount = 0;   /* # of large buffers which exist */
@@ -106,6 +118,15 @@ socket_t mother_desc;
 int next_tick = SECS_PER_MUD_HOUR;  /* Tick countdown */
 
 
+/*
+ * File-local network and lifecycle state.
+ *
+ * These fields are shared across game-loop iterations. In particular,
+ * bufpool manages reusable output buffers; do not treat a pooled buffer as
+ * owned by a descriptor after it has been released to the pool.
+ * Signal-associated flags should be handled in normal control flow rather
+ * than expanding signal handlers into complex game operations.
+ */
 /* static local global variable declarations (current file scope only) */
 static struct txt_block *bufpool = 0;  /* pool of large output buffers */
 static int max_players = 0;   /* max descriptors available */
