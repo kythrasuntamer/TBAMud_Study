@@ -118,7 +118,26 @@ void load_messages(void)
         exit(1);
       }
 
-      sscanf(chk, " %d\n", &type);
+      {
+        char *end;
+        long parsed;
+        const char *p = chk;
+        while (isspace((unsigned char)*p))
+          p++;
+        errno = 0;
+        parsed = strtol(p, &end, 10);
+        if (p == end || errno == ERANGE || parsed < 0 || parsed > INT_MAX) {
+          log("SYSERR: Invalid combat message type in %s", MESS_FILE);
+          exit(1);
+        }
+        while (isspace((unsigned char)*end))
+          end++;
+        if (*end != '\0') {
+          log("SYSERR: Invalid combat message type in %s", MESS_FILE);
+          exit(1);
+        }
+        type = (int)parsed;
+      }
       for (i = 0; (i < MAX_MESSAGES) && (fight_messages[i].a_type != type) &&
          (fight_messages[i].a_type); i++);
       if (i >= MAX_MESSAGES) {
