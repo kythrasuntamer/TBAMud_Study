@@ -24,6 +24,24 @@
 #include "act.h"
 #include "class.h"
 
+/* New classes reuse validated legacy combat/XP/save curves until their
+ * independently balanced tables are implemented. Stored class IDs remain
+ * distinct; only calculations use the corresponding established archetype. */
+static int class_progression_archetype(int class_num)
+{
+  switch (class_num) {
+    case CLASS_MONK:
+    case CLASS_BERSERKER:
+    case CLASS_PALADIN: return CLASS_WARRIOR;
+    case CLASS_DRUID: return CLASS_CLERIC;
+    case CLASS_SORCERER:
+    case CLASS_NECROMANCER: return CLASS_MAGIC_USER;
+    case CLASS_RANGER:
+    case CLASS_BARD: return CLASS_THIEF;
+    default: return class_num;
+  }
+}
+
 /* Names first */
 const char *class_abbrevs[] = {
   "Wi",
@@ -153,7 +171,7 @@ struct guild_info_type guild_info[] = {
  * not forget to change extern declaration in magic.c if you add to this. */
 byte saving_throws(int class_num, int type, int level)
 {
-  if (class_num == CLASS_MONK) class_num = CLASS_WARRIOR;
+  class_num = class_progression_archetype(class_num);
   switch (class_num) {
   case CLASS_MAGIC_USER:
     switch (type) {
@@ -1184,7 +1202,7 @@ byte saving_throws(int class_num, int type, int level)
 /* THAC0 for classes and levels.  (To Hit Armor Class 0) */
 int thaco(int class_num, int level)
 {
-  if (class_num == CLASS_MONK) class_num = CLASS_WARRIOR;
+  class_num = class_progression_archetype(class_num);
   /* Legacy THAC0 tables end at 34. Preserve their terminal values
    * across expanded mortal and immortal levels. */
   if (level > 34 && level <= LVL_IMPL)
@@ -1708,7 +1726,7 @@ void init_spell_levels(void)
 /* Function to return the exp required for each class/level */
 int level_exp(int chclass, int level)
 {
-  if (chclass == CLASS_MONK) chclass = CLASS_WARRIOR;
+  chclass = class_progression_archetype(chclass);
   if (level > LVL_IMPL || level < 0) {
     log("SYSERR: Requesting exp for invalid level %d!", level);
     return 0;
