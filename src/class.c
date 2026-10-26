@@ -1514,6 +1514,24 @@ void do_start(struct char_data *ch)
   case CLASS_MONK:
     SET_SKILL(ch, SKILL_KICK, 10);
     break;
+  case CLASS_DRUID:
+    break;
+  case CLASS_BERSERKER:
+    SET_SKILL(ch, SKILL_KICK, 10);
+    break;
+  case CLASS_SORCERER:
+    break;
+  case CLASS_PALADIN:
+    SET_SKILL(ch, SKILL_RESCUE, 10);
+    break;
+  case CLASS_RANGER:
+    SET_SKILL(ch, SKILL_TRACK, 10);
+    break;
+  case CLASS_BARD:
+    SET_SKILL(ch, SKILL_TRACK, 10);
+    break;
+  case CLASS_NECROMANCER:
+    break;
   }
 
   advance_level(ch);
@@ -1996,6 +2014,9 @@ const char *title_male(int chclass, int level)
 {
   if (chclass == CLASS_MONK && level < LVL_IMMORT && level > 0)
     return "the Monk";
+  if (chclass >= CLASS_DRUID && chclass <= CLASS_NECROMANCER &&
+      level > 0 && level < LVL_IMMORT)
+    return pc_class_types[chclass];
   if (level <= 0 || level > LVL_IMPL)
     return "the Man";
   if (level == LVL_IMPL)
@@ -2140,6 +2161,9 @@ const char *title_female(int chclass, int level)
 {
   if (chclass == CLASS_MONK && level < LVL_IMMORT && level > 0)
     return "the Monk";
+  if (chclass >= CLASS_DRUID && chclass <= CLASS_NECROMANCER &&
+      level > 0 && level < LVL_IMMORT)
+    return pc_class_types[chclass];
   if (level <= 0 || level > LVL_IMPL)
     return "the Woman";
   if (level == LVL_IMPL)
