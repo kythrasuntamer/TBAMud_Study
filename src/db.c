@@ -197,6 +197,31 @@ static int parse_int_text_strict(const char *text, int *value)
 
 /* Parse a zone's four mandatory numeric fields, optionally followed by flags
  * and minimum/maximum levels. Keep legacy four-field zone headers valid. */
+static int parse_reset_numbers(const char *text, int *values, int count,
+                               const char **remainder)
+{
+  const char *p = text;
+  char *end;
+  long number;
+  int i;
+
+  if (p == NULL || values == NULL || count < 1)
+    return 0;
+  for (i = 0; i < count; i++) {
+    while (isspace((unsigned char)*p))
+      p++;
+    errno = 0;
+    number = strtol(p, &end, 10);
+    if (p == end || errno == ERANGE || number < INT_MIN || number > INT_MAX)
+      return 0;
+    values[i] = (int)number;
+    p = end;
+  }
+  if (remainder != NULL)
+    *remainder = p;
+  return 1;
+}
+
 static int parse_zone_header(const char *text, struct zone_data *zone,
                              char *f1, char *f2, char *f3, char *f4)
 {
@@ -2459,21 +2484,39 @@ static void load_zones(FILE *fl, char *zonename)
       break;
     }
     error = 0;
-    if (strchr("MOGEPDTV", ZCMD.command) == NULL) {	/* a 3-arg command */
-      if (sscanf(ptr, " %d %d %d ", &tmp, &ZCMD.arg1, &ZCMD.arg2) != 3)
-	error = 1;
-    } else if (ZCMD.command=='V') { /* a string-arg command */
-      if (sscanf(ptr, " %d %d %d %d %79s %79[^\f\n\r\t\v]", &tmp, &ZCMD.arg1, &ZCMD.arg2,
-		 &ZCMD.arg3, t1, t2) != 6)
-	error = 1;
-      else {
-        ZCMD.sarg1 = strdup(t1);
-        ZCMD.sarg2 = strdup(t2);
+    {
+      int args[4];
+      const char *rest = NULL;
+      if (strchr("MOGEPDTV", ZCMD.command) == NULL) {
+        if (!parse_reset_numbers(ptr, args, 3, NULL))
+          error = 1;
+        else {
+          tmp = args[0];
+          ZCMD.arg1 = args[1];
+          ZCMD.arg2 = args[2];
+        }
+      } else if (ZCMD.command == 'V') {
+        if (!parse_reset_numbers(ptr, args, 4, &rest) ||
+            sscanf(rest, " %79s %79[^\\f\\n\\r\\t\\v]", t1, t2) != 2)
+          error = 1;
+        else {
+          tmp = args[0];
+          ZCMD.arg1 = args[1];
+          ZCMD.arg2 = args[2];
+          ZCMD.arg3 = args[3];
+          ZCMD.sarg1 = strdup(t1);
+          ZCMD.sarg2 = strdup(t2);
+        }
+      } else {
+        if (!parse_reset_numbers(ptr, args, 4, NULL))
+          error = 1;
+        else {
+          tmp = args[0];
+          ZCMD.arg1 = args[1];
+          ZCMD.arg2 = args[2];
+          ZCMD.arg3 = args[3];
+        }
       }
-    } else {
-      if (sscanf(ptr, " %d %d %d %d ", &tmp, &ZCMD.arg1, &ZCMD.arg2,
-		 &ZCMD.arg3) != 4)
-	error = 1;
     }
 
     ZCMD.if_flag = tmp;
