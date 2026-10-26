@@ -544,7 +544,8 @@ static void init_game(ush_int local_port)
 #endif
 
   /* If we made it this far, we will be able to restart without problem. */
-  remove(KILLSCRIPT_FILE);
+  if (remove(KILLSCRIPT_FILE) != 0 && errno != ENOENT)
+    TB_REPORT_ERRNO("remove", KILLSCRIPT_FILE);
 
   if (fCopyOver) /* reload players */
   copyover_recover();
