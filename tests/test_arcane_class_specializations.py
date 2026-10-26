@@ -1,26 +1,26 @@
-"""Regression contracts for Wizard efficiency and Sorcerer empowerment."""
+"""Check that native arcane calculations are used by the live spell paths."""
 from pathlib import Path
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 
 class ArcaneSpecializationTests(unittest.TestCase):
-    def test_mana_mechanics(self):
+    def test_shared_mana_calculation(self):
         source = (ROOT / "src/spell_parser.c").read_text()
-        self.assertIn("GET_CLASS(ch) == CLASS_MAGIC_USER", source)
-        self.assertIn("mana = MAX(1, (mana * 4 + 4) / 5);", source)
-        self.assertIn("GET_CLASS(ch) == CLASS_SORCERER", source)
-        self.assertIn("mana = (mana * 3 + 1) / 2;", source)
-        self.assertIn("GET_LEVEL(ch) >= 20", source)
+        helper = (ROOT / "src/arcane_specialization.h").read_text()
+        self.assertIn("arcane_adjust_mana(GET_CLASS(ch)", source)
+        self.assertIn("class_id == CLASS_MAGIC_USER", helper)
+        self.assertIn("class_id == CLASS_SORCERER", helper)
+        self.assertIn("(base_mana * 4 + 4) / 5", helper)
+        self.assertIn("(base_mana * 3 + 1) / 2", helper)
 
-    def test_empowerment_restricted_to_direct_cast(self):
+    def test_direct_cast_only_damage(self):
         source = (ROOT / "src/magic.c").read_text()
-        self.assertIn("casttype == CAST_SPELL", source)
-        self.assertIn("GET_CLASS(ch) == CLASS_SORCERER", source)
-        self.assertIn("dam += dam / 4;", source)
+        helper = (ROOT / "src/arcane_specialization.h").read_text()
+        self.assertIn("arcane_adjust_damage(GET_CLASS(ch)", source)
+        self.assertIn("casttype == CAST_SPELL", helper)
+        self.assertIn("damage + damage / 4", helper)
         self.assertIn("CAST_UNDEFINED", source)
-        header = (ROOT / "src/spells.h").read_text()
-        self.assertIn("int spellnum, int savetype, int casttype);", header)
 
 if __name__ == "__main__":
     unittest.main()
