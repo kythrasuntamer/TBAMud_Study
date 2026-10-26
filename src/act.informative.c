@@ -2660,9 +2660,9 @@ static bool get_zone_levels(int znum, char *buf, size_t buflen)
 
 ACMD(do_areas)
 {
-  int i, hilev=-1, lolev=-1, zcount=0, lev_set, len=0, tmp_len=0;
+  int i, hilev=-1, lolev=-1, zcount=0, len=0, tmp_len=0;
   char arg[MAX_INPUT_LENGTH], *second, lev_str[MAX_INPUT_LENGTH], buf[MAX_STRING_LENGTH];
-  bool show_zone = FALSE, overlap = FALSE, overlap_shown = FALSE;
+  bool show_zone = FALSE, overlap = FALSE, overlap_shown = FALSE, lev_set;
 
   one_argument(argument, arg);
 
