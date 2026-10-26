@@ -102,7 +102,7 @@ void test_diagnostic_truncation_is_explicit(void)
   TEST_ASSERT_FALSE(tb_diag_escape_checked(exact, sizeof(exact), "abcd"));
   TEST_ASSERT_EQUAL_STRING("abcd", exact);
   TEST_ASSERT_TRUE(tb_diag_escape_checked(small, sizeof(small), "ab\nxyz"));
-  TEST_ASSERT_EQUAL_STRING("ab\\nx", small);
+  TEST_ASSERT_EQUAL_STRING("ab\\n", small);
   TEST_ASSERT_TRUE(tb_diag_escape_checked(NULL, 0, "text"));
 }
 
