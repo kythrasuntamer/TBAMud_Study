@@ -50,6 +50,48 @@ static int Crash_load_objs(struct char_data *ch);
 static int handle_obj(struct obj_data *obj, struct char_data *ch, int locate, struct obj_data **cont_rows);
 static int objsave_write_rentcode(FILE *fl, int rentcode, int cost_per_day, struct char_data *ch);
 
+/* Read numeric rent headers without silent overflow or partial conversion.
+ * Existing one-field and six-field disk layouts remain unchanged. */
+static int objsave_parse_int_fields(const char *text, int *fields, size_t count)
+{
+  const char *p = text;
+  char *end;
+  size_t i;
+  long value;
+
+  if (!p || !fields)
+    return 0;
+  for (i = 0; i < count; i++) {
+    while (isspace((unsigned char)*p))
+      p++;
+    errno = 0;
+    value = strtol(p, &end, 10);
+    if (p == end || errno == ERANGE || value < INT_MIN || value > INT_MAX)
+      return 0;
+    fields[i] = (int)value;
+    p = end;
+  }
+  while (isspace((unsigned char)*p))
+    p++;
+  return *p == '\0';
+}
+
+static int objsave_parse_rent_header(const char *text, int *rentcode,
+                                    int *timed, int *netcost, int *gold,
+                                    int *account, int *nitems)
+{
+  int fields[6];
+  if (!objsave_parse_int_fields(text, fields, 6))
+    return 0;
+  *rentcode = fields[0];
+  *timed = fields[1];
+  *netcost = fields[2];
+  *gold = fields[3];
+  *account = fields[4];
+  *nitems = fields[5];
+  return 1;
+}
+
 /* Writes one object record to FILE.  Old name: Obj_to_store() */
 int objsave_save_obj_record(struct obj_data *obj, FILE *fp, int locate)
 {
@@ -331,7 +373,7 @@ int Crash_delete_crashfile(struct char_data *ch)
                  "player=%s empty or unreadable crash header", GET_NAME(ch));
     return FALSE;
   }
-  if (sscanf(line, "%d", &rentcode) != 1) {
+  if (!objsave_parse_int_fields(line, &rentcode, 1)) {
     TB_ERROR_MSG("objsave", "parse-header", filename,
                  "player=%s malformed crash header=\"%s\"", GET_NAME(ch), line);
     return FALSE;
@@ -366,8 +408,8 @@ int Crash_clean_file(char *name)
   if (numread == FALSE)
     return FALSE;
 
-  if (sscanf(line, "%d %d %d %d %d %d", &rentcode, &timed, &netcost,
-             &gold, &account, &nitems) != 6) {
+  if (!objsave_parse_rent_header(line, &rentcode, &timed, &netcost,
+                                 &gold, &account, &nitems)) {
     TB_ERROR_MSG("objsave", "parse-header", filename,
                  "player=%s malformed clean-file header=\"%s\"", name, line);
     return FALSE;
@@ -439,8 +481,14 @@ void Crash_listrent(struct char_data *ch, char *name)
     return;
   }
 
-  sscanf(line,"%d %d %d %d %d %d",
-        &rentcode,&timed,&netcost,&gold,&account,&nitems);
+  if (!objsave_parse_rent_header(line, &rentcode, &timed, &netcost,
+                                 &gold, &account, &nitems)) {
+    TB_ERROR_MSG("objsave", "parse-header", filename,
+                 "player=%s malformed rent listing header", name);
+    send_to_char(ch, "Error reading rent information.\r\n");
+    tb_fclose(fl);
+    return;
+  }
 
   switch (rentcode) {
   case RENT_RENTED:
@@ -1261,8 +1309,8 @@ static int Crash_load_objs(struct char_data *ch) {
     tb_fclose(fl);
     return 1;
   }
-  if (sscanf(line, "%d %d %d %d %d %d", &rentcode, &timed, &netcost,
-             &gold, &account, &nitems) != 6) {
+  if (!objsave_parse_rent_header(line, &rentcode, &timed, &netcost,
+                                 &gold, &account, &nitems)) {
     TB_ERROR_MSG("objsave", "parse-header", filename,
                  "player=%s malformed rent header=\"%s\"", GET_NAME(ch), line);
     tb_fclose(fl);
