@@ -881,15 +881,15 @@ static inline void tb_report_domain_error_at(tb_error_severity severity,
     size_t length = (size_t)result;
 
     if (length >= sizeof(record)) {
-      static const char suffix[] = " [diagnostic-truncated]\n";
-      size_t suffix_len = sizeof(suffix) - 1;
-
-      length = sizeof(record) - 1;
-      if (length > suffix_len) {
-        length -= suffix_len;
-        memcpy(record + length, suffix, suffix_len);
-        length += suffix_len;
-      }
+      /* Never output a half-formatted record: the original truncation
+       * destroyed its closing quotes, obscuring the true failure site. */
+      static const char fallback[] =
+        "TBERR severity=ERROR category=GENERAL operation=\"diagnostic-overflow\" "
+        "context=\"record exceeded bounded diagnostic buffer\" "
+        "truncated_fields=record\\n";
+      (void)tb_diag_emit(fallback, sizeof(fallback) - 1);
+      errno = caller_errno;
+      return;
     }
 
     (void)tb_diag_emit(record, length);
