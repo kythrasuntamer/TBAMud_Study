@@ -17,7 +17,7 @@ class MonkGuildAccessTests(unittest.TestCase):
 
     def test_dg_script_guard_allows_only_warrior_and_monk(self):
         scripts = (ROOT / "lib/world/trg/30.trg").read_text()
-        guard = scripts.split("#3003\\n", 1)[1].split("#3004\\n", 1)[0]
+        guard = scripts.split("#3003\n", 1)[1].split("#3004\n", 1)[0]
         self.assertIn("if %direction% == east", guard)
         self.assertIn("if %actor.class% != Warrior && %actor.class% != Monk", guard)
         self.assertIn("return 0", guard)
