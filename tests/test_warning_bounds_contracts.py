@@ -11,6 +11,16 @@ UTILS = (ROOT / "src" / "utils.c").read_text(encoding="utf-8")
 
 
 class FormattingAndBoundsContracts(unittest.TestCase):
+    def test_plist_macro_and_function_boundaries(self):
+        wizard = (ROOT / "src" / "act.wizard.c").read_text(encoding="utf-8")
+        start = wizard.index("#define PLIST_FORMAT")
+        end = wizard.index("ACMD(do_wizupdate)", start)
+        section = wizard[start:end]
+        self.assertIn('"Usage: plist [minlev[-maxlev]]', section)
+        self.assertIn("ACMD(do_plist)\\n{", section)
+        self.assertNotIn("lse {", section)
+        self.assertIn("page_string(ch->desc, buf, TRUE);\\n}", section)
+
     def test_wizard_plist_ranges_and_last_seeks_checked(self):
         wizard = (ROOT / "src" / "act.wizard.c").read_text(encoding="utf-8")
         plist = wizard[wizard.index("ACMD(do_plist)"): ]
