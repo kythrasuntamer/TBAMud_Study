@@ -44,7 +44,7 @@
 
 static int tb_password_is_argon2id(const char *hash)
 {
-  return hash != NULL && strncmp(hash, "$argon2id$", 10) == 0;
+  return (hash != NULL && strncmp(hash, "$argon2id$", 10) == 0);
 }
 
 static int tb_password_verify(const char *password, const char *hash)
@@ -52,16 +52,16 @@ static int tb_password_verify(const char *password, const char *hash)
   const char *legacy;
 
   if (password == NULL || hash == NULL || !*hash || sodium_init() < 0)
-    return 0;
+    return (0);
   if (tb_password_is_argon2id(hash))
-    return crypto_pwhash_str_verify(hash, password, strlen(password)) == 0;
+    return (crypto_pwhash_str_verify(hash, password, strlen(password)) == 0);
 #if defined(CIRCLE_CRYPT) && !defined(NOCRYPT)
   /* Reject invalid crypt results; do not allow a plaintext fallback. */
   legacy = crypt(password, hash);
-  return legacy != NULL && strcmp(legacy, hash) == 0;
+  return (legacy != NULL && strcmp(legacy, hash) == 0);
 #else
   (void)legacy;
-  return 0;
+  return (0);
 #endif
 }
 
@@ -69,11 +69,11 @@ static int tb_password_hash(char *output, size_t capacity, const char *password)
 {
   if (output == NULL || password == NULL ||
       capacity < crypto_pwhash_STRBYTES || sodium_init() < 0)
-    return 0;
-  return crypto_pwhash_str_alg(output, password, strlen(password),
-                              crypto_pwhash_OPSLIMIT_INTERACTIVE,
-                              crypto_pwhash_MEMLIMIT_INTERACTIVE,
-                              crypto_pwhash_ALG_ARGON2ID13) == 0;
+    return (0);
+  return (crypto_pwhash_str_alg(output, password, strlen(password),
+                               crypto_pwhash_OPSLIMIT_INTERACTIVE,
+                               crypto_pwhash_MEMLIMIT_INTERACTIVE,
+                               crypto_pwhash_ALG_ARGON2ID13) == 0);
 }
 
 /* local (file scope) functions */
