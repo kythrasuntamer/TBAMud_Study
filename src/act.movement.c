@@ -170,12 +170,29 @@ int do_simple_move(struct char_data *ch, int dir, int need_specials_check)
   if (need_specials_check && special(ch, dir + 1, spec_proc_args))
     return 0;
 
+  /* Specials can run arbitrary game logic: validate indices again before
+   * dereferencing the current room or using the destination zone. */
+  if (IN_ROOM(ch) != was_in || !world || !zone_table ||
+      !VALID_ROOM_RNUM(was_in) || !VALID_ROOM_RNUM(going_to) ||
+      world[going_to].zone != destination_zone ||
+      destination_zone == NOWHERE || destination_zone > top_of_zone_table)
+    return 0;
+
   /* Leave Trigger Checks: Does a leave trigger block exit from the room? */
   if (!leave_mtrigger(ch, dir) || IN_ROOM(ch) != was_in) /* prevent teleport crashes */
     return 0;
-  if (!leave_wtrigger(&world[IN_ROOM(ch)], ch, dir) || IN_ROOM(ch) != was_in) /* prevent teleport crashes */
+  if (!world || !VALID_ROOM_RNUM(IN_ROOM(ch)) ||
+      !leave_wtrigger(&world[IN_ROOM(ch)], ch, dir) || IN_ROOM(ch) != was_in) /* prevent teleport crashes */
     return 0;
-  if (!leave_otrigger(&world[IN_ROOM(ch)], ch, dir) || IN_ROOM(ch) != was_in) /* prevent teleport crashes */
+  if (!world || !VALID_ROOM_RNUM(IN_ROOM(ch)) ||
+      !leave_otrigger(&world[IN_ROOM(ch)], ch, dir) || IN_ROOM(ch) != was_in) /* prevent teleport crashes */
+    return 0;
+
+  /* A leave trigger may have mutated world/zone state. Fail closed rather
+   * than use an old zone index in subsequent restriction checks. */
+  if (!world || !zone_table || !VALID_ROOM_RNUM(going_to) ||
+      world[going_to].zone != destination_zone ||
+      destination_zone == NOWHERE || destination_zone > top_of_zone_table)
     return 0;
 
   /* Charm effect: Does it override the movement? */
