@@ -16,6 +16,19 @@
 
 enum attack { QUIET, FORGET_REMAINING, RELOCATE_OWNER, PURGE_OWNER,
               PURGE_ACTOR, REENTER, RECREATE_MEMORY, PURGE_NEXT_TRIGGER };
+/* Standalone DG test executable: the full game's direction tables are
+ * deliberately not linked. These definitions match constants.h's types
+ * and support both valid and invalid direction test paths.
+ */
+const char *dirs[DIR_COUNT] = {
+  "north", "east", "south", "west", "up", "down",
+  "northwest", "northeast", "southeast", "southwest"
+};
+int rev_dir[DIR_COUNT] = {
+  SOUTH, WEST, NORTH, EAST, DOWN, UP,
+  SOUTHEAST, SOUTHWEST, NORTHWEST, NORTHEAST
+};
+
 static enum attack attack;
 static char_data *owner, *visitor;
 static struct script_data *script;
