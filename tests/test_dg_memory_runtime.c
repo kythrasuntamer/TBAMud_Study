@@ -15,11 +15,11 @@
 #include <string.h>
 
 enum attack { QUIET, FORGET_REMAINING, RELOCATE_OWNER, PURGE_OWNER,
-              PURGE_ACTOR, REENTER, RECREATE_MEMORY };
+              PURGE_ACTOR, REENTER, RECREATE_MEMORY, PURGE_NEXT_TRIGGER };
 static enum attack attack;
 static char_data *owner, *visitor;
 static struct script_data *script;
-static struct trig_data *trigger;
+static struct trig_data *trigger, *next_trigger;
 static int callbacks, commands, nested_calls;
 static int active_owner, active_visitor;
 static int reenter_greeting;
@@ -95,6 +95,13 @@ static void mutate(void)
     free(visitor);
     visitor = NULL;
     break;
+  case PURGE_NEXT_TRIGGER:
+    if (next_trigger) {
+      trigger->next = NULL;
+      free(next_trigger);
+      next_trigger = NULL;
+    }
+    break;
   case RECREATE_MEMORY:
     /* A malicious trigger keeps re-remembering the same actor. */
     if (owner && visitor) {
@@ -151,6 +158,7 @@ void setUp(void)
   world[0].people = owner;
   owner->next_in_room = visitor;
   script->trig_list = trigger;
+  next_trigger = NULL;
   trigger->trigger_type = MTRIG_MEMORY;
   trigger->narg = 100;
   owner->script = script;
@@ -165,6 +173,7 @@ void tearDown(void)
     free(owner);
   }
   if (visitor) free(visitor);
+  free(next_trigger);
   free(trigger);
   free(script);
   free(world);
@@ -370,6 +379,60 @@ static void greet_script_recreate_bounded(void)
   TEST_ASSERT_NOT_NULL(owner->memory);
 }
 
+/* Ordinary greeting dispatch must survive callbacks that invalidate the
+ * room occupant or the next trigger, without losing the return contract.
+ */
+static void setup_ordinary_greet(void)
+{
+  SET_BIT_AR(MOB_FLAGS(owner), MOB_ISNPC);
+  SET_BIT_AR(MOB_FLAGS(visitor), MOB_ISNPC);
+  script->types = MTRIG_GREET;
+  trigger->trigger_type = MTRIG_GREET;
+}
+static void ordinary_greet_baseline(void)
+{
+  setup_ordinary_greet();
+  TEST_ASSERT_EQUAL_INT(1, greet_mtrigger(visitor, -1));
+  TEST_ASSERT_EQUAL_INT(1, callbacks);
+}
+static void ordinary_greet_owner_purge(void)
+{
+  setup_ordinary_greet();
+  attack = PURGE_OWNER;
+  TEST_ASSERT_EQUAL_INT(1, greet_mtrigger(visitor, -1));
+  TEST_ASSERT_EQUAL_INT(1, callbacks);
+  TEST_ASSERT_NULL(owner);
+}
+static void ordinary_greet_actor_purge(void)
+{
+  setup_ordinary_greet();
+  attack = PURGE_ACTOR;
+  TEST_ASSERT_EQUAL_INT(1, greet_mtrigger(visitor, -1));
+  TEST_ASSERT_EQUAL_INT(1, callbacks);
+  TEST_ASSERT_NULL(visitor);
+}
+static void ordinary_greet_owner_teleport(void)
+{
+  setup_ordinary_greet();
+  attack = RELOCATE_OWNER;
+  TEST_ASSERT_EQUAL_INT(1, greet_mtrigger(visitor, -1));
+  TEST_ASSERT_EQUAL_INT(1, callbacks);
+  TEST_ASSERT_EQUAL_INT(1, owner->in_room);
+}
+static void ordinary_greet_extracted_next_trigger(void)
+{
+  setup_ordinary_greet();
+  next_trigger = calloc(1, sizeof(*next_trigger));
+  TEST_ASSERT_NOT_NULL(next_trigger);
+  next_trigger->trigger_type = MTRIG_GREET;
+  next_trigger->narg = 100;
+  trigger->next = next_trigger;
+  attack = PURGE_NEXT_TRIGGER;
+  TEST_ASSERT_EQUAL_INT(1, greet_mtrigger(visitor, -1));
+  TEST_ASSERT_EQUAL_INT(1, callbacks);
+  TEST_ASSERT_NULL(next_trigger);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -393,5 +456,10 @@ int main(void)
   RUN_TEST(greet_script_reentrant);
   RUN_TEST(entry_script_recreate_bounded);
   RUN_TEST(greet_script_recreate_bounded);
+  RUN_TEST(ordinary_greet_baseline);
+  RUN_TEST(ordinary_greet_owner_purge);
+  RUN_TEST(ordinary_greet_actor_purge);
+  RUN_TEST(ordinary_greet_owner_teleport);
+  RUN_TEST(ordinary_greet_extracted_next_trigger);
   return UNITY_END();
 }
