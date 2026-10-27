@@ -16,7 +16,8 @@
 
 enum attack { QUIET, FORGET_REMAINING, RELOCATE_OWNER, PURGE_OWNER,
               PURGE_ACTOR, REENTER, RECREATE_MEMORY, PURGE_NEXT_TRIGGER, PURGE_TIMER_OBJECT, PURGE_TIMER_OBJECT_FALSE,
-              PURGE_NEXT_TRIGGER_FALSE };
+              PURGE_NEXT_TRIGGER_FALSE, PURGE_CURRENT_TRIGGER_FALSE,
+              PURGE_LOAD_OBJECT_ERROR };
 /* Standalone DG test executable: the full game's direction tables are
  * deliberately not linked. These definitions match constants.h's types
  * and support both valid and invalid direction test paths.
@@ -156,6 +157,15 @@ static void mutate(void)
       next_trigger = NULL;
     }
     break;
+  case PURGE_CURRENT_TRIGGER_FALSE:
+    /* Models a script which detaches the trigger that is running it. */
+    if (trigger) {
+      script->trig_list = trigger->next;
+      free(trigger->arglist);
+      free(trigger);
+      trigger = NULL;
+    }
+    break;
   case RECREATE_MEMORY:
     /* A malicious trigger keeps re-remembering the same actor. */
     if (owner && visitor) {
@@ -178,11 +188,20 @@ static void mutate(void)
 }
 int script_driver(void *go, trig_data *t, int type, int mode)
 {
-  (void)go; (void)t; (void)type; (void)mode;
+  (void)t; (void)type; (void)mode;
   callbacks++;
+  if (attack == PURGE_LOAD_OBJECT_ERROR) {
+    /* The production driver clears the caller's pointer on self-purge. */
+    attack = PURGE_TIMER_OBJECT;
+    mutate();
+    attack = PURGE_LOAD_OBJECT_ERROR;
+    *(obj_data **)go = NULL;
+    return SCRIPT_ERROR_CODE;
+  }
   mutate();
   return attack != PURGE_TIMER_OBJECT_FALSE &&
-         attack != PURGE_NEXT_TRIGGER_FALSE;
+         attack != PURGE_NEXT_TRIGGER_FALSE &&
+         attack != PURGE_CURRENT_TRIGGER_FALSE;
 }
 void command_interpreter(char_data *ch, char *command)
 {
@@ -234,7 +253,7 @@ void tearDown(void)
   if (visitor) free(visitor);
   if (next_trigger) free(next_trigger->arglist);
   free(next_trigger);
-  free(trigger->arglist);
+  if (trigger) free(trigger->arglist);
   free(trigger);
   free(script);
   free(world);
@@ -705,6 +724,72 @@ static void leave_actor_extracted_mid_dispatch(void)
   TEST_ASSERT_NULL(owner);
 }
 
+/* Mobile command triggers: a false-returning script may detach the trigger
+ * which ran it. The handler must not follow that trigger's next link. */
+static void setup_command_mob(void)
+{
+  SET_BIT_AR(MOB_FLAGS(owner), MOB_ISNPC);
+  script->types = MTRIG_COMMAND;
+  trigger->trigger_type = MTRIG_COMMAND;
+  trigger->arglist = strdup("*");
+  TEST_ASSERT_NOT_NULL(trigger->arglist);
+}
+static void command_mob_baseline(void)
+{
+  setup_command_mob();
+  char cmd[] = "look", arg[] = "";
+  TEST_ASSERT_EQUAL_INT(1, command_mtrigger(visitor, cmd, arg));
+  TEST_ASSERT_EQUAL_INT(1, callbacks);
+}
+static void command_mob_detached_current_trigger(void)
+{
+  setup_command_mob();
+  next_trigger = calloc(1, sizeof(*next_trigger));
+  TEST_ASSERT_NOT_NULL(next_trigger);
+  next_trigger->trigger_type = MTRIG_COMMAND;
+  next_trigger->arglist = strdup("*");
+  TEST_ASSERT_NOT_NULL(next_trigger->arglist);
+  trigger->next = next_trigger;
+  char cmd[] = "look", arg[] = "";
+  attack = PURGE_CURRENT_TRIGGER_FALSE;
+  TEST_ASSERT_EQUAL_INT(0, command_mtrigger(visitor, cmd, arg));
+  /* The surviving trigger still receives the command, as before. */
+  TEST_ASSERT_EQUAL_INT(2, callbacks);
+  TEST_ASSERT_NULL(trigger);
+}
+/* Load triggers: a script may "return" SCRIPT_ERROR_CODE and purge itself,
+ * leaving the handler's object pointer NULL. */
+struct obj_data *obj_proto;
+static int proto_script_frees;
+static void *proto_script_freed;
+void free_proto_script(void *thing, int type)
+{
+  (void)type;
+  proto_script_frees++;
+  proto_script_freed = thing;
+}
+static void load_object_purged_on_error(void)
+{
+  struct obj_data prototype[1];
+  memset(prototype, 0, sizeof(prototype));
+  obj_proto = prototype;
+  setup_timer_object();
+  script->types = OTRIG_LOAD;
+  trigger->trigger_type = OTRIG_LOAD;
+  trigger->narg = 100;
+  timer_object->item_number = 0;
+  proto_script_frees = 0;
+  proto_script_freed = NULL;
+  attack = PURGE_LOAD_OBJECT_ERROR;
+  load_otrigger(timer_object);
+  TEST_ASSERT_EQUAL_INT(1, callbacks);
+  TEST_ASSERT_NULL(timer_object);
+  /* Recursion-error semantics are preserved for the original prototype. */
+  TEST_ASSERT_EQUAL_INT(1, proto_script_frees);
+  TEST_ASSERT_EQUAL_PTR(&prototype[0], proto_script_freed);
+  obj_proto = NULL;
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -749,5 +834,8 @@ int main(void)
   RUN_TEST(command_object_extracted_on_false);
   RUN_TEST(command_object_removed_next_trigger);
   RUN_TEST(leave_actor_extracted_mid_dispatch);
+  RUN_TEST(command_mob_baseline);
+  RUN_TEST(command_mob_detached_current_trigger);
+  RUN_TEST(load_object_purged_on_error);
   return UNITY_END();
 }
