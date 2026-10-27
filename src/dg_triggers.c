@@ -143,6 +143,39 @@ void bribe_mtrigger(char_data *ch, char_data *actor, int amount)
   }
 }
 
+/* Snapshot script IDs rather than holding occupant-list links across callbacks.
+ * Callback-driven teleports or extraction may invalidate next_in_room.
+ * Each saved ID is re-resolved before it is dereferenced.
+ */
+struct dg_memory_target {
+  long uid;
+  struct dg_memory_target *next;
+};
+
+static struct dg_memory_target *dg_memory_targets(room_rnum room)
+{
+  struct dg_memory_target *head = NULL, **tail = &head;
+  char_data *person;
+  for (person = world[room].people; person; person = person->next_in_room) {
+    struct dg_memory_target *node;
+    CREATE(node, struct dg_memory_target, 1);
+    node->uid = char_script_id(person);
+    node->next = NULL;
+    *tail = node;
+    tail = &node->next;
+  }
+  return head;
+}
+
+static void dg_free_memory_targets(struct dg_memory_target *head)
+{
+  while (head) {
+    struct dg_memory_target *next = head->next;
+    free(head);
+    head = next;
+  }
+}
+
 void greet_memory_mtrigger(char_data *actor)
 {
   trig_data *t;
@@ -150,6 +183,8 @@ void greet_memory_mtrigger(char_data *actor)
   struct script_memory *mem;
   char buf[MAX_INPUT_LENGTH];
   int command_performed = 0;
+  struct dg_memory_target *targets, *target;
+  long actor_uid;
 
   if (!actor || !world || (long long)IN_ROOM(actor) < 0 ||
       !VALID_ROOM_RNUM(IN_ROOM(actor)) ||
@@ -157,8 +192,15 @@ void greet_memory_mtrigger(char_data *actor)
     return;
 
   const room_rnum origin_room = IN_ROOM(actor);
+  actor_uid = char_script_id(actor);
+  targets = dg_memory_targets(origin_room);
 
-  for (ch = world[IN_ROOM(actor)].people; ch; ch = ch->next_in_room) {
+  for (target = targets; target; target = target->next) {
+    if (find_char(actor_uid) != actor || IN_ROOM(actor) != origin_room)
+      break;
+    ch = find_char(target->uid);
+    if (!ch || IN_ROOM(ch) != origin_room)
+      continue;
     if (!SCRIPT_MEM(ch) || !AWAKE(ch) || FIGHTING(ch) || (ch == actor) ||
         AFF_FLAGGED(ch, AFF_CHARM))
       continue;
@@ -177,9 +219,9 @@ void greet_memory_mtrigger(char_data *actor)
         /* The callback can remove or relocate the owner. The command node
          * may also have been freed, so do not inspect it afterward. */
         if (find_char(owner_uid) != ch)
-          return;
+          goto cleanup;
         if (IN_ROOM(ch) != origin_room)
-          return;
+          goto cleanup;
         command_performed = 1;
         break;
       }
@@ -199,11 +241,11 @@ void greet_memory_mtrigger(char_data *actor)
              * stale room-occupant or script-memory pointer afterward. */
             if (find_char(owner_uid) != ch) {
               free(mem);
-              return;
+              goto cleanup;
             }
             if (IN_ROOM(ch) != origin_room) {
               free(mem);
-              return;
+              goto cleanup;
             }
             break;
           }
@@ -212,6 +254,8 @@ void greet_memory_mtrigger(char_data *actor)
       free(mem);
     }
   }
+cleanup:
+  dg_free_memory_targets(targets);
 }
 
 int greet_mtrigger(char_data *actor, int dir)
@@ -256,12 +300,24 @@ void entry_memory_mtrigger(char_data *ch)
   char_data *actor;
   struct script_memory *mem;
   char buf[MAX_INPUT_LENGTH];
+  struct dg_memory_target *targets, *target;
+  room_rnum origin_room;
+  long owner_uid;
 
-  if (!SCRIPT_MEM(ch) || AFF_FLAGGED(ch, AFF_CHARM))
+  if (!ch || !world || (long long)IN_ROOM(ch) < 0 ||
+      !VALID_ROOM_RNUM(IN_ROOM(ch)) || !SCRIPT_MEM(ch) ||
+      AFF_FLAGGED(ch, AFF_CHARM))
     return;
 
-  for (actor = world[IN_ROOM(ch)].people; actor && SCRIPT_MEM(ch);
-       actor = actor->next_in_room) {
+  origin_room = IN_ROOM(ch);
+  owner_uid = char_script_id(ch);
+  targets = dg_memory_targets(origin_room);
+  for (target = targets; target && SCRIPT_MEM(ch); target = target->next) {
+    if (find_char(owner_uid) != ch || IN_ROOM(ch) != origin_room)
+      break;
+    actor = find_char(target->uid);
+    if (!actor || IN_ROOM(actor) != origin_room)
+      continue;
     if (actor!=ch && SCRIPT_MEM(ch)) {
       /* Search the live list again after each callback. A saved next pointer
        * may have been freed or replaced by the callback. */
@@ -275,7 +331,6 @@ void entry_memory_mtrigger(char_data *ch)
         mem = *link;
         *link = mem->next;
         mem->next = NULL;
-        long owner_uid = char_script_id(ch);
         if (mem->cmd)
           command_interpreter(ch, mem->cmd);
         else {
@@ -292,14 +347,16 @@ void entry_memory_mtrigger(char_data *ch)
           free(mem->cmd);
         free(mem);
         /* The callback may have purged the trigger owner. */
-        if (find_char(owner_uid) != ch)
-          return;
+        if (find_char(owner_uid) != ch || IN_ROOM(ch) != origin_room)
+          goto cleanup;
         /* Retain old multi-memory behavior, but never traverse a cached
          * link after dispatch. Further character-lifetime checks are needed. */
       }
 
     }
   }
+cleanup:
+  dg_free_memory_targets(targets);
 }
 
 int entry_mtrigger(char_data *ch)
