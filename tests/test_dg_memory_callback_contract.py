@@ -18,4 +18,6 @@ assert "command_interpreter(ch, mem->cmd);" in greet
 assert greet.index("if (mem->cmd)") < greet.index("*link = mem->next;")
 entry = source[source.index("void entry_memory_mtrigger("):source.index("int entry_mtrigger(")]
 assert "return;" not in entry[entry.index("while (SCRIPT_MEM(ch))"):]
+assert "find_char(owner_uid) != ch" in greet
+assert "find_char(owner_uid) != ch" in entry
 print("DG script-memory source contracts verified")
