@@ -176,6 +176,16 @@ static void dg_free_memory_targets(struct dg_memory_target *head)
   }
 }
 
+/* A script UID can remain registered until deferred character extraction.
+ * Check the pending-extraction flag as well as identity and room. */
+static int dg_memory_character_live(char_data *ch, long uid, room_rnum room)
+{
+  return ch && find_char(uid) == ch &&
+         !((IS_NPC(ch) && MOB_FLAGGED(ch, MOB_NOTDEADYET)) ||
+           (!IS_NPC(ch) && PLR_FLAGGED(ch, PLR_NOTDEADYET))) &&
+         IN_ROOM(ch) == room;
+}
+
 void greet_memory_mtrigger(char_data *actor)
 {
   trig_data *t;
@@ -196,17 +206,17 @@ void greet_memory_mtrigger(char_data *actor)
   targets = dg_memory_targets(origin_room);
 
   for (target = targets; target; target = target->next) {
-    if (find_char(actor_uid) != actor || IN_ROOM(actor) != origin_room)
+    if (!dg_memory_character_live(actor, actor_uid, origin_room))
       break;
     ch = find_char(target->uid);
-    if (!ch || IN_ROOM(ch) != origin_room)
+    if (!dg_memory_character_live(ch, target->uid, origin_room))
       continue;
     if (!SCRIPT_MEM(ch) || !AWAKE(ch) || FIGHTING(ch) || (ch == actor) ||
         AFF_FLAGGED(ch, AFF_CHARM))
       continue;
     /* Only access live list nodes; callbacks may edit this memory chain. */
-    while (find_char(actor_uid) == actor && IN_ROOM(actor) == origin_room &&
-           find_char(target->uid) == ch && IN_ROOM(ch) == origin_room &&
+    while (dg_memory_character_live(actor, actor_uid, origin_room) &&
+           dg_memory_character_live(ch, target->uid, origin_room) &&
            SCRIPT_MEM(ch)) {
       struct script_memory **link = &SCRIPT_MEM(ch);
       long actor_id = char_script_id(actor);
@@ -226,9 +236,9 @@ void greet_memory_mtrigger(char_data *actor)
         free(command_copy); /* command memory itself stays linked */
         /* The callback can remove or relocate the owner. The command node
          * may also have been freed, so do not inspect it afterward. */
-        if (find_char(owner_uid) != ch)
+        if (!dg_memory_character_live(ch, owner_uid, origin_room))
           goto cleanup;
-        if (IN_ROOM(ch) != origin_room)
+        if (!dg_memory_character_live(ch, owner_uid, origin_room))
           goto cleanup;
         command_performed = 1;
         break;
@@ -247,11 +257,11 @@ void greet_memory_mtrigger(char_data *actor)
             script_driver(&ch, t, MOB_TRIGGER, TRIG_NEW);
             /* The callback can purge or replace the owner. Do not use a
              * stale room-occupant or script-memory pointer afterward. */
-            if (find_char(owner_uid) != ch) {
+            if (!dg_memory_character_live(ch, owner_uid, origin_room)) {
               free(mem);
               goto cleanup;
             }
-            if (IN_ROOM(ch) != origin_room) {
+            if (!dg_memory_character_live(ch, owner_uid, origin_room)) {
               free(mem);
               goto cleanup;
             }
@@ -321,18 +331,18 @@ void entry_memory_mtrigger(char_data *ch)
   owner_uid = char_script_id(ch);
   targets = dg_memory_targets(origin_room);
   for (target = targets; target; target = target->next) {
-    if (find_char(owner_uid) != ch || IN_ROOM(ch) != origin_room)
+    if (!dg_memory_character_live(ch, owner_uid, origin_room))
       break;
     if (!SCRIPT_MEM(ch))
       break;
     actor = find_char(target->uid);
-    if (!actor || IN_ROOM(actor) != origin_room)
+    if (!dg_memory_character_live(actor, target->uid, origin_room))
       continue;
     if (actor!=ch && SCRIPT_MEM(ch)) {
       /* Search the live list again after each callback. A saved next pointer
        * may have been freed or replaced by the callback. */
-      while (find_char(owner_uid) == ch && IN_ROOM(ch) == origin_room &&
-             find_char(target->uid) == actor && IN_ROOM(actor) == origin_room &&
+      while (dg_memory_character_live(ch, owner_uid, origin_room) &&
+             dg_memory_character_live(actor, target->uid, origin_room) &&
              SCRIPT_MEM(ch)) {
         struct script_memory **link = &SCRIPT_MEM(ch);
         long actor_id = char_script_id(actor);
@@ -359,7 +369,7 @@ void entry_memory_mtrigger(char_data *ch)
           free(mem->cmd);
         free(mem);
         /* The callback may have purged the trigger owner. */
-        if (find_char(owner_uid) != ch || IN_ROOM(ch) != origin_room)
+        if (!dg_memory_character_live(ch, owner_uid, origin_room))
           goto cleanup;
         /* Retain old multi-memory behavior, but never traverse a cached
          * link after dispatch. Further character-lifetime checks are needed. */
