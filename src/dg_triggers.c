@@ -205,7 +205,9 @@ void greet_memory_mtrigger(char_data *actor)
         AFF_FLAGGED(ch, AFF_CHARM))
       continue;
     /* Only access live list nodes; callbacks may edit this memory chain. */
-    while (SCRIPT_MEM(ch)) {
+    while (find_char(actor_uid) == actor && IN_ROOM(actor) == origin_room &&
+           find_char(target->uid) == ch && IN_ROOM(ch) == origin_room &&
+           SCRIPT_MEM(ch)) {
       struct script_memory **link = &SCRIPT_MEM(ch);
       long actor_id = char_script_id(actor);
       while (*link && (*link)->id != actor_id)
@@ -312,8 +314,10 @@ void entry_memory_mtrigger(char_data *ch)
   origin_room = IN_ROOM(ch);
   owner_uid = char_script_id(ch);
   targets = dg_memory_targets(origin_room);
-  for (target = targets; target && SCRIPT_MEM(ch); target = target->next) {
+  for (target = targets; target; target = target->next) {
     if (find_char(owner_uid) != ch || IN_ROOM(ch) != origin_room)
+      break;
+    if (!SCRIPT_MEM(ch))
       break;
     actor = find_char(target->uid);
     if (!actor || IN_ROOM(actor) != origin_room)
@@ -321,7 +325,9 @@ void entry_memory_mtrigger(char_data *ch)
     if (actor!=ch && SCRIPT_MEM(ch)) {
       /* Search the live list again after each callback. A saved next pointer
        * may have been freed or replaced by the callback. */
-      while (SCRIPT_MEM(ch)) {
+      while (find_char(owner_uid) == ch && IN_ROOM(ch) == origin_room &&
+             find_char(target->uid) == actor && IN_ROOM(actor) == origin_room &&
+             SCRIPT_MEM(ch)) {
         struct script_memory **link = &SCRIPT_MEM(ch);
         long actor_id = char_script_id(actor);
         while (*link && (*link)->id != actor_id)
