@@ -284,7 +284,21 @@ cleanup:
  * current live trigger list before dereferencing it. Pointer comparison
  * does not dereference a trigger which has since been extracted.
  */
+static unsigned long long dg_next_trigger_instance_id = 1;
+
+static unsigned long long dg_trigger_instance_id(trig_data *trigger)
+{
+  if (!trigger->instance_id) {
+    /* Never recycle an assigned identity, even if malloc reuses an address. */
+    if (!dg_next_trigger_instance_id)
+      abort();
+    trigger->instance_id = dg_next_trigger_instance_id++;
+  }
+  return trigger->instance_id;
+}
+
 struct dg_greet_trigger_target {
+  unsigned long long instance_id;
   trig_data *identity;
   struct dg_greet_trigger_target *next;
 };
@@ -296,6 +310,7 @@ static struct dg_greet_trigger_target *dg_greet_trigger_targets(trig_data *first
     struct dg_greet_trigger_target *node;
     CREATE(node, struct dg_greet_trigger_target, 1);
     node->identity = t;
+    node->instance_id = dg_trigger_instance_id(t);
     node->next = NULL;
     *tail = node;
     tail = &node->next;
@@ -312,12 +327,13 @@ static void dg_free_greet_trigger_targets(struct dg_greet_trigger_target *head)
   }
 }
 
-static trig_data *dg_find_live_greet_trigger(char_data *ch, trig_data *identity)
+static trig_data *dg_find_live_greet_trigger(char_data *ch, trig_data *identity,
+                                              unsigned long long instance_id)
 {
   if (!SCRIPT(ch))
     return NULL;
   for (trig_data *t = TRIGGERS(SCRIPT(ch)); t; t = t->next)
-    if (t == identity)
+    if (t == identity && dg_trigger_instance_id(t) == instance_id)
       return t;
   return NULL;
 }
@@ -360,7 +376,7 @@ int greet_mtrigger(char_data *actor, int dir)
       if (!dg_memory_character_live(actor, actor_uid, origin_room) ||
           !dg_memory_character_live(ch, target->uid, origin_room))
         break;
-      trig_data *t = dg_find_live_greet_trigger(ch, entry->identity);
+      trig_data *t = dg_find_live_greet_trigger(ch, entry->identity, entry->instance_id);
       if (!t)
         continue;
       if (((IS_SET(GET_TRIG_TYPE(t), MTRIG_GREET) && CAN_SEE(ch, actor)) ||
@@ -883,7 +899,8 @@ void timer_otrigger(struct obj_data *obj)
     if (!SCRIPT(obj))
       break;
     for (current = TRIGGERS(SCRIPT(obj)); current; current = current->next) {
-      if (current == entry->identity) {
+      if (current == entry->identity &&
+          dg_trigger_instance_id(current) == entry->instance_id) {
         t = current;
         break;
       }
@@ -1266,7 +1283,8 @@ int leave_otrigger(room_data *room, char_data *actor, int dir)
         break;
       t = NULL;
       for (current = TRIGGERS(SCRIPT(obj)); current; current = current->next) {
-        if (current == target->identity) {
+        if (current == target->identity &&
+            dg_trigger_instance_id(current) == target->instance_id) {
           t = current;
           break;
         }
