@@ -461,3 +461,54 @@ free, which protects only that lvalue and does not eliminate aliases.
 It already records file/line on null, but not the calling function.
 Any replacement must preserve local diagnostics and not claim to
 detect arbitrary invalid frees.
+
+## Eighth pass: error reporting and logging (audit now, improvements after)
+
+The current priority order is: **finish macro/security audit and repairs
+with regression verification; then perform a dedicated logging and
+robust error-reporting improvement phase**. Diagnostics defects that
+impede fixing an active security issue may be addressed earlier, but
+avoid mixing broad logging refactors into unrelated fixes.
+
+### Verified source observations
+
+- `src/utils.h` already exposes `TB_ERROR_LOG`,
+  `TB_ERROR_ERRNO` and `TB_ERROR_MSG`, passing
+  `__FILE__`, `__LINE__` and `__func__`. Preserve that call-site
+  locality and `errno` capture.
+- `src/utils.c` includes structured diagnostic IDs, sequence and
+  correlation fields; these are capabilities to reuse, not reinvent.
+- `src/dg_triggers.c` currently logs several malformed trigger
+  configurations using `mudlog(..., "SYSERR: ...")` but no
+  `TB_ERROR_*` calls were observed in this source during inspection.
+  Compare missing-trigger and callback-error diagnostics with the
+  structured reporter. Any conversion must keep builder-visible
+  diagnostics and log destinations.
+- `load_mtrigger()` and `load_otrigger()` treat
+  `SCRIPT_ERROR_CODE` specially by disabling a prototype's script;
+  these handlers have no local structured diagnostic at that branch.
+  Check whether `script_driver()` already reports the recursion
+  failure before adding logs, to avoid duplicate floodable entries.
+- The global `#define log basic_mud_log` still risks collisions with
+  standard math interfaces. Renaming must be a separate, tested
+  compatibility migration.
+
+### Dedicated diagnostics phase acceptance criteria
+
+1. Every security-relevant failure exposes subsystem, operation,
+   severity, stable error ID and source location; include object UID,
+   character UID, trigger VNUM, and room where safely available.
+2. Preserve causal `errno` values and add correlatable context for
+   nested callbacks, without dereferencing entities after extraction.
+3. Avoid noisy log floods: bound or aggregate repeating invalid input
+   reports, without suppressing important security events.
+4. Do not put secrets, passwords, account tokens or player-controlled
+   unescaped line breaks into logs.
+5. Test error paths and failure-injection cases, log escaping,
+   formatting, sequence/correlation behavior, and source locality.
+6. Maintain existing server, staff/builder, and disk log behavior;
+   compare both functional output and performance before merging.
+
+This is an audit and sequencing record, not a claim that the above
+criteria are presently satisfied. The still-outstanding DG timer
+local tests and callback repairs remain higher-priority prerequisites.
