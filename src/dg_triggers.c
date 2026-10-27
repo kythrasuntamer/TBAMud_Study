@@ -612,12 +612,15 @@ void act_mtrigger(const char_data *ch, char *str, char_data *actor,
         if (target)
           ADD_UID_VAR(buf, t, obj_script_id(target), "target", 0);
         if (str) {
-          /* we're guaranteed to have a string ending with \r\n\0 */
-          char *nstr = strdup(str), *fstr = nstr, *p = strchr(nstr, '\r');
-          skip_spaces(&nstr);
-          *p = '\0';
-          add_var(&GET_TRIG_VARS(t), "arg", nstr, 0);
-          free(fstr);
+          /* act() supplies a string ending with \r\n\0; do not rely on it. */
+          char *nstr = strdup(str), *fstr = nstr, *p;
+          if (nstr) {
+            if ((p = strchr(nstr, '\r')) != NULL)
+              *p = '\0';
+            skip_spaces(&nstr);
+            add_var(&GET_TRIG_VARS(t), "arg", nstr, 0);
+            free(fstr);
+          }
         }
         script_driver(&ch, t, MOB_TRIGGER, TRIG_NEW);
         break;
