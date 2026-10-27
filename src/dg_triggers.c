@@ -217,7 +217,13 @@ void greet_memory_mtrigger(char_data *actor)
       mem = *link;
       if (mem->cmd) {
         long owner_uid = char_script_id(ch);
-        command_interpreter(ch, mem->cmd); /* command memory stays linked */
+        /* The command interpreter may delete the memory node supplying
+         * this string. Own a private copy for the whole invocation. */
+        char *command_copy = strdup(mem->cmd);
+        if (!command_copy)
+          goto cleanup;
+        command_interpreter(ch, command_copy);
+        free(command_copy); /* command memory itself stays linked */
         /* The callback can remove or relocate the owner. The command node
          * may also have been freed, so do not inspect it afterward. */
         if (find_char(owner_uid) != ch)
