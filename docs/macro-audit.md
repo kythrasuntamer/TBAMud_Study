@@ -584,3 +584,42 @@ preconditions reviewed before mechanical replacement.
 
 This pass adds audit evidence only. It does not assert exploit
 reachability from an untrusted network client or runtime test success.
+
+## Tenth pass: UID lookup-table security properties
+
+Inspected `src/dg_scripts.c` lookup-table implementation directly:
+
+- `has_obj_by_uid_in_lookup_table(uid)` calls the generic
+  `find_element_by_uid_in_lookup_table(uid)`. The registry entries
+  hold `long uid` plus an untyped `void *c`; **the existence predicate
+  does not check that the entry represents an object**. This means a
+  registry hit proves only that some entry with that numeric ID exists,
+  not necessarily that the original object remains live. Object and
+  character UID allocation domains, uniqueness, and extraction order
+  must be audited before treating this as a complete post-callback
+  lifetime guarantee.
+- `add_to_lookup_table(uid, c)` **replaces the pointer associated with
+  an existing UID**, after logging. This explicitly permits a registry
+  mapping to change under a constant numeric UID. A post-callback
+  check for existence alone does not prove the same allocation was
+  retained. Review whether production code can legitimately or
+  maliciously rebind IDs.
+- `remove_from_lookup_table(uid)` traverses the bucket to unlink a
+  previously located entry. Under single-threaded, internally
+  consistent list operation, its search should find the predecessor;
+  it nevertheless has no corruption guard if invariants break.
+- The lookup table is an untyped process-global mapping, not a
+  generation-checked handle registry. A stronger object-liveness
+  contract would verify registered entity category, stable identity,
+  and (where appropriate) the original allocation identity, without
+  dereferencing a freed pointer.
+
+**Security implication:** our prior notes describing object UID
+existence checks as stronger than `!obj` remain true, but the UID
+predicate **must not be overstated as conclusive proof of object
+identity**. This affects `timer_otrigger`, `receive_mtrigger`,
+`drop_wtrigger`, and planned repairs to `give_otrigger`.
+
+Prioritize tests for ID collision/rebinding and object extraction
+before relaxing the draft PR's verification gate. No network-facing
+exploit has been established by this static analysis.
