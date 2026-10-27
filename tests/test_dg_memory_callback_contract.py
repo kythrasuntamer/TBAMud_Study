@@ -20,7 +20,7 @@ assert "command_interpreter(ch, command_copy);" in greet
 assert "free(command_copy);" in greet
 assert greet.index("if (mem->cmd)") < greet.index("*link = mem->next;")
 entry = source[source.index("void entry_memory_mtrigger("):source.index("int entry_mtrigger(")]
-assert "if (find_char(owner_uid) != ch)\n          return;" in entry
+assert "if (find_char(owner_uid) != ch || IN_ROOM(ch) != origin_room)\n          goto cleanup;" in entry
 assert "free(mem);\n        /* The callback" in entry
 assert greet.count("find_char(owner_uid) != ch") >= 2
 assert "IN_ROOM(ch) != origin_room" in greet
