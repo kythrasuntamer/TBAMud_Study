@@ -118,6 +118,8 @@ static void mutate(void)
   case PURGE_TIMER_OBJECT:
     if (timer_object) {
       active_timer_object = 0;
+      if (world && world[0].contents == timer_object)
+        world[0].contents = timer_object->next_content;
       free(timer_object);
       timer_object = NULL;
     }
@@ -570,6 +572,50 @@ static void object_consume_extraction_denied(void)
   TEST_ASSERT_EQUAL_INT(1, callbacks);
 }
 
+static void leave_object_two_triggers(void)
+{
+  setup_timer_object();
+  world[0].contents = timer_object;
+  script->types = OTRIG_LEAVE;
+  trigger->trigger_type = OTRIG_LEAVE;
+  trigger->narg = 100;
+  next_trigger = calloc(1, sizeof(*next_trigger));
+  TEST_ASSERT_NOT_NULL(next_trigger);
+  next_trigger->trigger_type = OTRIG_LEAVE;
+  next_trigger->narg = 100;
+  trigger->next = next_trigger;
+  TEST_ASSERT_EQUAL_INT(1, leave_otrigger(&world[0], owner, -1));
+  TEST_ASSERT_EQUAL_INT(2, callbacks);
+}
+static void leave_object_extracted_owner(void)
+{
+  setup_timer_object();
+  world[0].contents = timer_object;
+  script->types = OTRIG_LEAVE;
+  trigger->trigger_type = OTRIG_LEAVE;
+  trigger->narg = 100;
+  attack = PURGE_TIMER_OBJECT;
+  TEST_ASSERT_EQUAL_INT(1, leave_otrigger(&world[0], owner, -1));
+  TEST_ASSERT_EQUAL_INT(1, callbacks);
+  TEST_ASSERT_NULL(timer_object);
+}
+static void leave_object_extracted_next_trigger(void)
+{
+  setup_timer_object();
+  world[0].contents = timer_object;
+  script->types = OTRIG_LEAVE;
+  trigger->trigger_type = OTRIG_LEAVE;
+  trigger->narg = 100;
+  next_trigger = calloc(1, sizeof(*next_trigger));
+  TEST_ASSERT_NOT_NULL(next_trigger);
+  next_trigger->trigger_type = OTRIG_LEAVE;
+  next_trigger->narg = 100;
+  trigger->next = next_trigger;
+  attack = PURGE_NEXT_TRIGGER;
+  TEST_ASSERT_EQUAL_INT(1, leave_otrigger(&world[0], owner, -1));
+  TEST_ASSERT_EQUAL_INT(1, callbacks);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -607,5 +653,8 @@ int main(void)
   RUN_TEST(object_wear_extraction_denied);
   RUN_TEST(object_remove_extraction_denied);
   RUN_TEST(object_consume_extraction_denied);
+  RUN_TEST(leave_object_two_triggers);
+  RUN_TEST(leave_object_extracted_owner);
+  RUN_TEST(leave_object_extracted_next_trigger);
   return UNITY_END();
 }
