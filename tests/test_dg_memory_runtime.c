@@ -16,7 +16,7 @@
 
 enum attack { QUIET, FORGET_REMAINING, RELOCATE_OWNER, PURGE_OWNER,
               PURGE_ACTOR, REENTER, RECREATE_MEMORY, PURGE_NEXT_TRIGGER, PURGE_TIMER_OBJECT, PURGE_TIMER_OBJECT_FALSE,
-              PURGE_NEXT_TRIGGER_FALSE };
+              PURGE_NEXT_TRIGGER_FALSE, REPLACE_NEXT_TRIGGER_ID };
 /* Standalone DG test executable: the full game's direction tables are
  * deliberately not linked. These definitions match constants.h's types
  * and support both valid and invalid direction test paths.
@@ -146,6 +146,9 @@ static void mutate(void)
       free(timer_object);
       timer_object = NULL;
     }
+    break;
+  case REPLACE_NEXT_TRIGGER_ID:
+    if (next_trigger) next_trigger->instance_id += 1000;
     break;
   case PURGE_NEXT_TRIGGER_FALSE:
   case PURGE_NEXT_TRIGGER:
@@ -705,6 +708,22 @@ static void leave_actor_extracted_mid_dispatch(void)
   TEST_ASSERT_NULL(owner);
 }
 
+static void command_replaced_trigger_identity(void)
+{
+  setup_command_object();
+  next_trigger = calloc(1, sizeof(*next_trigger));
+  TEST_ASSERT_NOT_NULL(next_trigger);
+  next_trigger->trigger_type = OTRIG_COMMAND;
+  next_trigger->narg = OCMD_ROOM;
+  next_trigger->arglist = strdup("*");
+  TEST_ASSERT_NOT_NULL(next_trigger->arglist);
+  trigger->next = next_trigger;
+  char cmd[] = "look", arg[] = "";
+  attack = REPLACE_NEXT_TRIGGER_ID;
+  TEST_ASSERT_EQUAL_INT(0, command_otrigger(owner, cmd, arg));
+  TEST_ASSERT_EQUAL_INT(1, callbacks);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -749,5 +768,6 @@ int main(void)
   RUN_TEST(command_object_extracted_on_false);
   RUN_TEST(command_object_removed_next_trigger);
   RUN_TEST(leave_actor_extracted_mid_dispatch);
+  RUN_TEST(command_replaced_trigger_identity);
   return UNITY_END();
 }
