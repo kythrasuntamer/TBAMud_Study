@@ -15,7 +15,7 @@
 #include <string.h>
 
 enum attack { QUIET, FORGET_REMAINING, RELOCATE_OWNER, PURGE_OWNER,
-              PURGE_ACTOR, REENTER };
+              PURGE_ACTOR, REENTER, RECREATE_MEMORY };
 static enum attack attack;
 static char_data *owner, *visitor;
 static struct script_data *script;
@@ -94,6 +94,16 @@ static void mutate(void)
     active_visitor = 0;
     free(visitor);
     visitor = NULL;
+    break;
+  case RECREATE_MEMORY:
+    /* A malicious trigger keeps re-remembering the same actor. */
+    if (owner && visitor) {
+      struct script_memory *fresh = calloc(1, sizeof(*fresh));
+      TEST_ASSERT_NOT_NULL(fresh);
+      fresh->id = visitor->script_id;
+      fresh->next = owner->memory;
+      owner->memory = fresh;
+    }
     break;
   case REENTER:
     if (!nested_calls++) {
@@ -340,6 +350,26 @@ static void greet_script_reentrant(void)
   TEST_ASSERT_NULL(owner->memory);
 }
 
+/* A callback continually recreating memory must not keep this
+ * dispatch running forever; the newly remembered item waits until next time.
+ */
+static void entry_script_recreate_bounded(void)
+{
+  owner->memory = remember(1, 0);
+  attack = RECREATE_MEMORY;
+  entry_memory_mtrigger(owner);
+  TEST_ASSERT_EQUAL_INT(1, callbacks);
+  TEST_ASSERT_NOT_NULL(owner->memory);
+}
+static void greet_script_recreate_bounded(void)
+{
+  prepare_greet_script(1);
+  attack = RECREATE_MEMORY;
+  greet_memory_mtrigger(visitor);
+  TEST_ASSERT_EQUAL_INT(1, callbacks);
+  TEST_ASSERT_NOT_NULL(owner->memory);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -361,5 +391,7 @@ int main(void)
   RUN_TEST(greet_script_owner_purge);
   RUN_TEST(greet_script_actor_purge);
   RUN_TEST(greet_script_reentrant);
+  RUN_TEST(entry_script_recreate_bounded);
+  RUN_TEST(greet_script_recreate_bounded);
   return UNITY_END();
 }
