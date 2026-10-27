@@ -238,8 +238,6 @@ void greet_memory_mtrigger(char_data *actor)
          * may also have been freed, so do not inspect it afterward. */
         if (!dg_memory_character_live(ch, owner_uid, origin_room))
           goto cleanup;
-        if (!dg_memory_character_live(ch, owner_uid, origin_room))
-          goto cleanup;
         command_performed = 1;
         break;
       }
@@ -257,10 +255,6 @@ void greet_memory_mtrigger(char_data *actor)
             script_driver(&ch, t, MOB_TRIGGER, TRIG_NEW);
             /* The callback can purge or replace the owner. Do not use a
              * stale room-occupant or script-memory pointer afterward. */
-            if (!dg_memory_character_live(ch, owner_uid, origin_room)) {
-              free(mem);
-              goto cleanup;
-            }
             if (!dg_memory_character_live(ch, owner_uid, origin_room)) {
               free(mem);
               goto cleanup;
