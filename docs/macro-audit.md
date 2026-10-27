@@ -512,3 +512,38 @@ avoid mixing broad logging refactors into unrelated fixes.
 This is an audit and sequencing record, not a claim that the above
 criteria are presently satisfied. The still-outstanding DG timer
 local tests and callback repairs remain higher-priority prerequisites.
+
+## Eighth pass: callback lifetime and list invariants
+
+Checked the live branch state after additional audit commits landed.
+
+1. **`give_otrigger` has a concrete invalid-lifetime guard.** After
+   `script_driver(&obj,...)` it tests `!obj || obj->carried_by != actor`.
+   Extracting an object does not zero this local C pointer, so the
+   right-hand dereference can use freed storage. Remediation requires
+   capturing `obj_script_id(obj)` *before* dispatch, checking the UID
+   lookup *before* any subsequent object access, and verifying actor
+   lifetime as required by caller contracts. Add an extraction test.
+2. **`receive_mtrigger` and `drop_wtrigger` already use the object UID
+   registry** before dereferencing `obj->carried_by` in a short-circuit
+   expression. Those specific checks are materially stronger than
+   `give_otrigger`'s `!obj` guard. Review whether the registry is
+   consistently removed on extraction and whether their `actor`
+   pointers can be freed; do not flatten these cases into a single
+   identical finding.
+3. **`LINK`/ `UNLINK` do not validate ownership or membership.** They
+   assume a well-formed intrusive doubly linked list and valid `first`
+   and `last` pointers. `UNLINK` updates neighboring nodes without
+   clearing the removed node's `next`/`prev`, so accidental repeated
+   unlink or cross-list unlink can corrupt lists. These are conditional
+   risks requiring caller audits, not proof of player-reachable bugs.
+4. **The timer fix uses captured trigger addresses** to recognize live
+   triggers. This avoids dereferencing a detached pointer but cannot
+   distinguish a replacement trigger allocated at precisely the same
+   address (ABA). Use identity/generation-aware tracking before claiming
+   complete resistance to adversarial trigger replacement.
+
+Next code-fix target: `give_otrigger` with a focused ASan test for
+object extraction, then review all other `!obj` post-callback guards.
+Keep the user's existing gameplay, persistence and progression tests
+unchanged.
