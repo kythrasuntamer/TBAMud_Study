@@ -15,7 +15,8 @@
 #include <string.h>
 
 enum attack { QUIET, FORGET_REMAINING, RELOCATE_OWNER, PURGE_OWNER,
-              PURGE_ACTOR, REENTER, RECREATE_MEMORY, PURGE_NEXT_TRIGGER, PURGE_TIMER_OBJECT };
+              PURGE_ACTOR, REENTER, RECREATE_MEMORY, PURGE_NEXT_TRIGGER, PURGE_TIMER_OBJECT, PURGE_TIMER_OBJECT_FALSE,
+              PURGE_NEXT_TRIGGER_FALSE };
 /* Standalone DG test executable: the full game's direction tables are
  * deliberately not linked. These definitions match constants.h's types
  * and support both valid and invalid direction test paths.
@@ -120,6 +121,7 @@ static void mutate(void)
     free(visitor);
     visitor = NULL;
     break;
+  case PURGE_TIMER_OBJECT_FALSE:
   case PURGE_TIMER_OBJECT:
     if (timer_object) {
       active_timer_object = 0;
@@ -129,9 +131,11 @@ static void mutate(void)
       timer_object = NULL;
     }
     break;
+  case PURGE_NEXT_TRIGGER_FALSE:
   case PURGE_NEXT_TRIGGER:
     if (next_trigger) {
       trigger->next = NULL;
+      free(next_trigger->arglist);
       free(next_trigger);
       next_trigger = NULL;
     }
@@ -161,7 +165,8 @@ int script_driver(void *go, trig_data *t, int type, int mode)
   (void)go; (void)t; (void)type; (void)mode;
   callbacks++;
   mutate();
-  return 1;
+  return attack != PURGE_TIMER_OBJECT_FALSE &&
+         attack != PURGE_NEXT_TRIGGER_FALSE;
 }
 void command_interpreter(char_data *ch, char *command)
 {
@@ -211,7 +216,9 @@ void tearDown(void)
     free(owner);
   }
   if (visitor) free(visitor);
+  if (next_trigger) free(next_trigger->arglist);
   free(next_trigger);
+  free(trigger->arglist);
   free(trigger);
   free(script);
   free(world);
@@ -621,6 +628,49 @@ static void leave_object_extracted_next_trigger(void)
   TEST_ASSERT_EQUAL_INT(1, callbacks);
 }
 
+static void setup_command_object(void)
+{
+  setup_timer_object();
+  SET_BIT_AR(MOB_FLAGS(owner), MOB_ISNPC);
+  script->types = OTRIG_COMMAND;
+  trigger->trigger_type = OTRIG_COMMAND;
+  trigger->narg = OCMD_ROOM;
+  trigger->arglist = strdup("*");
+  TEST_ASSERT_NOT_NULL(trigger->arglist);
+  world[0].contents = timer_object;
+}
+static void command_object_baseline(void)
+{
+  setup_command_object();
+  char cmd[] = "look", arg[] = "";
+  TEST_ASSERT_EQUAL_INT(1, command_otrigger(owner, cmd, arg));
+  TEST_ASSERT_EQUAL_INT(1, callbacks);
+}
+static void command_object_extracted_on_false(void)
+{
+  setup_command_object();
+  char cmd[] = "look", arg[] = "";
+  attack = PURGE_TIMER_OBJECT_FALSE;
+  TEST_ASSERT_EQUAL_INT(0, command_otrigger(owner, cmd, arg));
+  TEST_ASSERT_EQUAL_INT(1, callbacks);
+  TEST_ASSERT_NULL(timer_object);
+}
+static void command_object_removed_next_trigger(void)
+{
+  setup_command_object();
+  next_trigger = calloc(1, sizeof(*next_trigger));
+  TEST_ASSERT_NOT_NULL(next_trigger);
+  next_trigger->trigger_type = OTRIG_COMMAND;
+  next_trigger->narg = OCMD_ROOM;
+  next_trigger->arglist = strdup("*");
+  TEST_ASSERT_NOT_NULL(next_trigger->arglist);
+  trigger->next = next_trigger;
+  char cmd[] = "look", arg[] = "";
+  attack = PURGE_NEXT_TRIGGER_FALSE;
+  TEST_ASSERT_EQUAL_INT(0, command_otrigger(owner, cmd, arg));
+  TEST_ASSERT_EQUAL_INT(1, callbacks);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -661,5 +711,8 @@ int main(void)
   RUN_TEST(leave_object_two_triggers);
   RUN_TEST(leave_object_extracted_owner);
   RUN_TEST(leave_object_extracted_next_trigger);
+  RUN_TEST(command_object_baseline);
+  RUN_TEST(command_object_extracted_on_false);
+  RUN_TEST(command_object_removed_next_trigger);
   return UNITY_END();
 }
