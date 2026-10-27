@@ -158,41 +158,36 @@ void greet_memory_mtrigger(char_data *actor)
     if (!SCRIPT_MEM(ch) || !AWAKE(ch) || FIGHTING(ch) || (ch == actor) ||
         AFF_FLAGGED(ch, AFF_CHARM))
       continue;
-    /* find memory line with command only */
-    for (mem = SCRIPT_MEM(ch); mem && SCRIPT_MEM(ch); mem = next_mem) {
-      next_mem = mem->next;
-      if (char_script_id(actor)!=mem->id) continue;
+    /* Only access live list nodes; callbacks may edit this memory chain. */
+    while (SCRIPT_MEM(ch)) {
+      struct script_memory **link = &SCRIPT_MEM(ch);
+      long actor_id = char_script_id(actor);
+      while (*link && (*link)->id != actor_id)
+        link = &(*link)->next;
+      if (!*link)
+        break;
+      mem = *link;
       if (mem->cmd) {
-        command_interpreter(ch, mem->cmd); /* no script */
+        command_interpreter(ch, mem->cmd); /* command memory stays linked */
         command_performed = 1;
         break;
       }
-      /* if a command was not performed execute the memory script */
-      if (mem && !command_performed) {
+      /* Detach before executing the memory script: no post-callback search
+       * for a node that may have been removed by another script. */
+      *link = mem->next;
+      mem->next = NULL;
+      if (!command_performed && SCRIPT(ch)) {
         for (t = TRIGGERS(SCRIPT(ch)); t; t = t->next) {
           if (IS_SET(GET_TRIG_TYPE(t), MTRIG_MEMORY) &&
-              CAN_SEE(ch, actor) &&
-              !GET_TRIG_DEPTH(t) &&
+              CAN_SEE(ch, actor) && !GET_TRIG_DEPTH(t) &&
               rand_number(1, 100) <= GET_TRIG_NARG(t)) {
-              ADD_UID_VAR(buf, t, char_script_id(actor), "actor", 0);
-              script_driver(&ch, t, MOB_TRIGGER, TRIG_NEW);
-              break;
+            ADD_UID_VAR(buf, t, actor_id, "actor", 0);
+            script_driver(&ch, t, MOB_TRIGGER, TRIG_NEW);
+            break;
           }
         }
       }
-      /* delete the memory */
-      if (mem) {
-        if (SCRIPT_MEM(ch)==mem) {
-          SCRIPT_MEM(ch) = mem->next;
-        } else {
-          struct script_memory *prev;
-          prev = SCRIPT_MEM(ch);
-          while (prev->next != mem) prev = prev->next;
-          prev->next = mem->next;
-        }
-        if (mem->cmd) free(mem->cmd);
-        free(mem);
-      }
+      free(mem);
     }
   }
 }
