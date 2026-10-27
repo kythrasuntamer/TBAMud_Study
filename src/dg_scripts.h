@@ -149,6 +149,7 @@ struct trig_var_data {
 
 /** structure for triggers */
 struct trig_data {
+    unsigned long long instance_id; /**< unique trigger allocation identity */
     IDXTYPE nr;                         /**< trigger's rnum                  */
     byte attach_type;                   /**< mob/obj/wld intentions          */
     byte data_type;                     /**< type of game_data for trig      */
