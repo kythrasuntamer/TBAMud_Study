@@ -900,16 +900,18 @@ int get_otrigger(obj_data *obj, char_data *actor)
   trig_data *t;
   char buf[MAX_INPUT_LENGTH];
   int ret_val;
+  long object_id;
   if (!SCRIPT_CHECK(obj, OTRIG_GET))
     return 1;
 
   for (t = TRIGGERS(SCRIPT(obj)); t; t = t->next) {
     if (TRIGGER_CHECK(t, OTRIG_GET) && (rand_number(1, 100) <= GET_TRIG_NARG(t))) {
       ADD_UID_VAR(buf, t, char_script_id(actor), "actor", 0);
+      object_id = obj_script_id(obj);
       ret_val = script_driver(&obj, t, OBJ_TRIGGER, TRIG_NEW);
       /* Don't allow a get to take place, if the actor is killed (the mud
        * would choke on obj_to_char) or the object is purged. */
-      if (DEAD(actor) || !obj)
+      if (DEAD(actor) || !has_obj_by_uid_in_lookup_table(object_id))
         return 0;
       else
         return ret_val;
@@ -986,6 +988,7 @@ int wear_otrigger(obj_data *obj, char_data *actor, int where)
   trig_data *t;
   char buf[MAX_INPUT_LENGTH];
   int ret_val;
+  long object_id;
 
   if (!SCRIPT_CHECK(obj, OTRIG_WEAR))
     return 1;
@@ -993,9 +996,10 @@ int wear_otrigger(obj_data *obj, char_data *actor, int where)
   for (t = TRIGGERS(SCRIPT(obj)); t; t = t->next) {
     if (TRIGGER_CHECK(t, OTRIG_WEAR)) {
       ADD_UID_VAR(buf, t, char_script_id(actor), "actor", 0);
+      object_id = obj_script_id(obj);
       ret_val = script_driver(&obj, t, OBJ_TRIGGER, TRIG_NEW);
       /* Don't allow a wear to take place, if the object is purged. */
-      if (!obj)
+      if (!has_obj_by_uid_in_lookup_table(object_id))
         return 0;
       else
         return ret_val;
@@ -1010,6 +1014,7 @@ int remove_otrigger(obj_data *obj, char_data *actor)
   trig_data *t;
   char buf[MAX_INPUT_LENGTH];
   int ret_val;
+  long object_id;
 
   if (!SCRIPT_CHECK(obj, OTRIG_REMOVE))
     return 1;
@@ -1020,9 +1025,10 @@ int remove_otrigger(obj_data *obj, char_data *actor)
   for (t = TRIGGERS(SCRIPT(obj)); t; t = t->next) {
     if (TRIGGER_CHECK(t, OTRIG_REMOVE)) {
       ADD_UID_VAR(buf, t, char_script_id(actor), "actor", 0);
+      object_id = obj_script_id(obj);
       ret_val = script_driver(&obj, t, OBJ_TRIGGER, TRIG_NEW);
       /* Don't allow a remove to take place, if the object is purged. */
-      if (!obj)
+      if (!has_obj_by_uid_in_lookup_table(object_id))
         return 0;
       else
         return ret_val;
@@ -1037,6 +1043,7 @@ int drop_otrigger(obj_data *obj, char_data *actor)
   trig_data *t;
   char buf[MAX_INPUT_LENGTH];
   int ret_val;
+  long object_id;
 
   if (!SCRIPT_CHECK(obj, OTRIG_DROP))
     return 1;
@@ -1044,9 +1051,10 @@ int drop_otrigger(obj_data *obj, char_data *actor)
   for (t = TRIGGERS(SCRIPT(obj)); t; t = t->next) {
     if (TRIGGER_CHECK(t, OTRIG_DROP) && (rand_number(1, 100) <= GET_TRIG_NARG(t))) {
       ADD_UID_VAR(buf, t, char_script_id(actor), "actor", 0);
+      object_id = obj_script_id(obj);
       ret_val = script_driver(&obj, t, OBJ_TRIGGER, TRIG_NEW);
       /* Don't allow a drop to take place, if the object is purged. */
-      if (!obj)
+      if (!has_obj_by_uid_in_lookup_table(object_id))
         return 0;
       else
         return ret_val;
@@ -1061,6 +1069,7 @@ int give_otrigger(obj_data *obj, char_data *actor, char_data *victim)
   trig_data *t;
   char buf[MAX_INPUT_LENGTH];
   int ret_val;
+  long object_id;
 
   if (!SCRIPT_CHECK(obj, OTRIG_GIVE))
     return 1;
@@ -1069,10 +1078,11 @@ int give_otrigger(obj_data *obj, char_data *actor, char_data *victim)
     if (TRIGGER_CHECK(t, OTRIG_GIVE) && (rand_number(1, 100) <= GET_TRIG_NARG(t))) {
       ADD_UID_VAR(buf, t, char_script_id(actor), "actor", 0);
       ADD_UID_VAR(buf, t, char_script_id(victim), "victim", 0);
+      object_id = obj_script_id(obj);
       ret_val = script_driver(&obj, t, OBJ_TRIGGER, TRIG_NEW);
       /* Don't allow a give to take place, if the object is purged or the
        * object is not carried by the giver. */
-      if (!obj || obj->carried_by != actor)
+      if (!has_obj_by_uid_in_lookup_table(object_id) || obj->carried_by != actor)
         return 0;
       else
         return ret_val;
@@ -1169,6 +1179,7 @@ int consume_otrigger(obj_data *obj, char_data *actor, int cmd)
   trig_data *t;
   char buf[MAX_INPUT_LENGTH];
   int ret_val;
+  long object_id;
 
   if (!SCRIPT_CHECK(obj, OTRIG_CONSUME))
     return 1;
@@ -1187,9 +1198,10 @@ int consume_otrigger(obj_data *obj, char_data *actor, int cmd)
           add_var(&GET_TRIG_VARS(t), "command", "quaff", 0);
           break;
       }
+      object_id = obj_script_id(obj);
       ret_val = script_driver(&obj, t, OBJ_TRIGGER, TRIG_NEW);
       /* Don't allow a wear to take place, if the object is purged. */
-      if (!obj)
+      if (!has_obj_by_uid_in_lookup_table(object_id))
         return 0;
       else
         return ret_val;
