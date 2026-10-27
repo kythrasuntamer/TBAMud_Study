@@ -865,18 +865,34 @@ void random_otrigger(obj_data *obj)
 
 void timer_otrigger(struct obj_data *obj)
 {
-  trig_data *t;
+  long obj_uid;
+  struct dg_greet_trigger_target *targets, *entry;
 
-  if (!SCRIPT_CHECK(obj, OTRIG_TIMER))
+  if (!obj || !SCRIPT_CHECK(obj, OTRIG_TIMER))
     return;
 
-  for (t = TRIGGERS(SCRIPT(obj)); t; t = t->next) {
-    if (TRIGGER_CHECK(t, OTRIG_TIMER)) {
-      script_driver(&obj, t, OBJ_TRIGGER, TRIG_NEW);
+  /* The object lookup table is the authoritative lifetime check. Never
+   * follow an object or trigger pointer saved across a script callback. */
+  obj_uid = obj_script_id(obj);
+  targets = dg_greet_trigger_targets(TRIGGERS(SCRIPT(obj)));
+
+  for (entry = targets; entry; entry = entry->next) {
+    trig_data *t = NULL, *current;
+    if (!has_obj_by_uid_in_lookup_table(obj_uid))
+      break;
+    if (!SCRIPT(obj))
+      break;
+    for (current = TRIGGERS(SCRIPT(obj)); current; current = current->next) {
+      if (current == entry->identity) {
+        t = current;
+        break;
+      }
     }
+    if (t && TRIGGER_CHECK(t, OTRIG_TIMER))
+      script_driver(&obj, t, OBJ_TRIGGER, TRIG_NEW);
   }
 
-  return;
+  dg_free_greet_trigger_targets(targets);
 }
 
 int get_otrigger(obj_data *obj, char_data *actor)
