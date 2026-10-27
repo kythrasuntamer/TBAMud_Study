@@ -75,3 +75,65 @@ or extract the owner, actor, trigger, or object. Save/restore behavior and
 post-callback validity must be tested before changing control flow. Treat
 the merged DG memory-trigger PR as the baseline, not as proof that all DG
 callback paths are safe.
+
+## Second-pass concrete macro hazards (source inspected)
+
+### Bit-array indexing and shift preconditions — high priority
+
+`utils.h` defines `Q_FIELD(x)` by integer division by 32 and
+`Q_BIT(x)` as `1U << (x % 32)`. Then `IS_SET_AR`, `SET_BIT_AR`,
+`REMOVE_BIT_AR`, and `TOGGLE_BIT_AR` index their caller-supplied arrays
+with `Q_FIELD(bit)`. These macros **do not check** whether `bit` is
+non-negative or within the actual storage allocation. For negative
+indices, the shift count can also be invalid (undefined behavior).
+For large indices, out-of-bounds array access is possible.
+
+This is a potential input-validation vulnerability **only if an untrusted
+or incorrectly computed index reaches a call site**. The inspected
+definitions alone do not establish reachability. Audit call sites,
+especially DG variable parsing, OLC/editor commands, and network input,
+before changing these foundational macros. Preserve serialized flag values
+and storage layouts.
+
+`TOGGLE_BIT_AR(var, bit)` expands `var` and `bit` more than once.
+Expressions with side effects therefore must never be passed to it.
+A replacement should use a single-evaluation, checked API where practical,
+with appropriate array length and explicit error reporting.
+
+### Logging and math header collision — confirmed
+
+`utils.h` globally defines `log` as `basic_mud_log`. Because
+`<math.h>` declares a `log` function, later system-header includes can
+break preprocessing (observed under clang-tidy in the earlier callback
+test). Separate namespaced `TB_LOG` APIs and incremental call-site
+conversion should be evaluated; no legacy alias was removed here.
+
+### Checked memory allocation — preserve
+
+`CREATE` and `RECREATE` in `utils.h` already cache their count argument
+and call checked allocation helpers with `__FILE__`, `__LINE__`, and
+`__func__`. The fatal failure behavior is currently `abort()` and
+must **not** be changed incidentally during macro relocation. Any
+modernization of allocation behavior requires separate design and tests.
+
+### DG trigger-variable formatting — review
+
+`ADD_UID_VAR` in `dg_scripts.h` uses `tb_snprintf(buf, sizeof(buf), ...)`.
+This relies on `buf` being an **actual array** at the call site.
+Passing a `char *` would make `sizeof(buf)` pointer-sized and truncate
+the output. The same macro uses `trig` and `id` only once; this is not
+a general-purpose string builder. Consider an explicit buffer-length
+helper after validating all call sites. Avoid changing UID format or
+trigger variable semantics.
+
+### Visibility predicates — expensive and state-dependent
+
+`CAN_SEE` expands through `IMM_CAN_SEE`, `MORT_CAN_SEE`, `LIGHT_OK`,
+and flag tests; it evaluates some arguments more than once and can
+access rooms/player specials. Callers must verify character lifetime
+and location after DG callbacks before evaluating it. A macro relocation
+alone will not solve lifetime safety.
+
+These are audit findings, **not yet security fixes**. No code-path
+exploitability claim is made, and no production source is changed in
+this draft.
