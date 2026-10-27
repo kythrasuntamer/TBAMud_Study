@@ -1871,9 +1871,29 @@ static void process_wait(void *go, trig_data *trig, int type, char *cmd,
     }
     while (isspace((unsigned char)*rest))
       rest++;
-    fields = *rest ? 2 : 1;
-    c = *rest;
-    if (fields == 2 && rest[1] != '\0') {
+    /* Only trailing whitespace is ignored. A second token is invalid. */
+    const char *suffix_end = rest;
+    char suffix[16];
+    size_t suffix_len;
+    while (*suffix_end && !isspace((unsigned char)*suffix_end))
+      suffix_end++;
+    suffix_len = (size_t)(suffix_end - rest);
+    while (isspace((unsigned char)*suffix_end))
+      suffix_end++;
+    if (*suffix_end || suffix_len >= sizeof(suffix)) {
+      script_log("Trigger: %s, VNum %d. invalid wait suffix: '%s'",
+              GET_TRIG_NAME(trig), GET_TRIG_VNUM(trig), cl->cmd);
+      return;
+    }
+    memcpy(suffix, rest, suffix_len);
+    suffix[suffix_len] = '\0';
+    fields = suffix_len ? 2 : 1;
+    c = suffix[0];
+    /* Preserve single-letter s/t and legacy seconds spellings. */
+    if (fields == 2 &&
+        !(strcmp(suffix, "s") == 0 || strcmp(suffix, "sec") == 0 ||
+          strcmp(suffix, "secs") == 0 || strcmp(suffix, "second") == 0 ||
+          strcmp(suffix, "seconds") == 0 || strcmp(suffix, "t") == 0)) {
       script_log("Trigger: %s, VNum %d. invalid wait suffix: '%s'",
               GET_TRIG_NAME(trig), GET_TRIG_VNUM(trig), cl->cmd);
       return;
