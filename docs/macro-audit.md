@@ -193,3 +193,35 @@ remotely exploitable bugs.
 3. Prefer named, checked helpers for *untrusted* bit-index operations
    rather than blindly inserting bounds checks into serialized
    bit-flag macros everywhere.
+
+## Fourth-pass DG callback audit — object and command paths
+
+Source reviewed: `src/dg_triggers.c` on PR #47, after ordinary greeting hardening.
+
+| Function | Observed post-callback pattern | Assessment |
+| --- | --- | --- |
+| `leave_otrigger` | Caches `obj_next = obj->next_content`, then runs a script and resumes both trigger and object iteration | High-priority candidate: extracted next object or trigger could invalidate cached pointers |
+| `timer_otrigger` | Dispatches `script_driver(&obj,...)` then continues `t = t->next` | High-priority candidate: owner/trigger extraction during callback |
+| `cmd_otrig` | On a script return of zero, continues `t = t->next` | High-priority candidate; actual return contract must be preserved |
+| `command_otrigger` | Iterates `actor->carrying` and room `contents` with `obj = obj->next_content` around `cmd_otrig` | High-priority candidate even if inner `cmd_otrig` returns safely |
+| `load_otrigger` | After callback, if `SCRIPT_ERROR_CODE`, reads `GET_OBJ_RNUM(obj)` | Potential stale-object read if the script extracts its own object |
+| `speech_mtrigger` and `command_mtrigger` | Cache room-occupant `next_in_room` before script dispatch | Candidate: next occupant extracted by callback; inspect actor and trigger liveness |
+
+**Important distinction:** `leave_mtrigger` for mobile NPCs returns directly
+from `script_driver`, so the same *post-callback* iterator hazard is not
+present in that specific handler. `leave_otrigger` is different: it keeps
+iterating after callbacks.
+
+No exploitability is claimed yet. Each candidate needs an isolated,
+sanitizer-backed extraction test that exercises the production handler.
+For object cases, use stable object UIDs or an equivalent live-object
+lookup: never dereference a pointer merely to test whether it was freed.
+Snapshotting `next_content` alone is insufficient because a callback can
+remove the next object. Avoid treating pointer equality as proof of identity
+when allocator address reuse is possible. Preserve multi-trigger ordering,
+return-value aggregation, and existing player-save/character progression.
+
+Next engineering patch should prioritize `leave_otrigger` and
+`timer_otrigger`, followed by command and load paths. Keep the test
+harness and macro inventory on the draft PR until all relevant regressions
+and sanitizers pass.
