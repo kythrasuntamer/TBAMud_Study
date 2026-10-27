@@ -1873,7 +1873,12 @@ static void process_wait(void *go, trig_data *trig, int type, char *cmd,
       rest++;
     fields = *rest ? 2 : 1;
     c = *rest;
-    if (fields == 2 && rest[1] != '\0') {
+    /* Legacy world scripts commonly spell seconds as "sec". Preserve
+     * single-letter s/t forms and reject unknown or ambiguous suffixes. */
+    if (fields == 2 &&
+        !(strcmp(rest, "s") == 0 || strcmp(rest, "sec") == 0 ||
+          strcmp(rest, "secs") == 0 || strcmp(rest, "second") == 0 ||
+          strcmp(rest, "seconds") == 0 || strcmp(rest, "t") == 0)) {
       script_log("Trigger: %s, VNum %d. invalid wait suffix: '%s'",
               GET_TRIG_NAME(trig), GET_TRIG_VNUM(trig), cl->cmd);
       return;
