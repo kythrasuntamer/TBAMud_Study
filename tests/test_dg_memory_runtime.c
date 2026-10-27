@@ -671,6 +671,24 @@ static void command_object_removed_next_trigger(void)
   TEST_ASSERT_EQUAL_INT(1, callbacks);
 }
 
+static void leave_actor_extracted_mid_dispatch(void)
+{
+  setup_timer_object();
+  world[0].contents = timer_object;
+  script->types = OTRIG_LEAVE;
+  trigger->trigger_type = OTRIG_LEAVE;
+  trigger->narg = 100;
+  next_trigger = calloc(1, sizeof(*next_trigger));
+  TEST_ASSERT_NOT_NULL(next_trigger);
+  next_trigger->trigger_type = OTRIG_LEAVE;
+  next_trigger->narg = 100;
+  trigger->next = next_trigger;
+  attack = PURGE_OWNER;
+  TEST_ASSERT_EQUAL_INT(1, leave_otrigger(&world[0], owner, -1));
+  TEST_ASSERT_EQUAL_INT(1, callbacks);
+  TEST_ASSERT_NULL(owner);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -714,5 +732,6 @@ int main(void)
   RUN_TEST(command_object_baseline);
   RUN_TEST(command_object_extracted_on_false);
   RUN_TEST(command_object_removed_next_trigger);
+  RUN_TEST(leave_actor_extracted_mid_dispatch);
   return UNITY_END();
 }
