@@ -205,7 +205,10 @@ int greet_mtrigger(char_data *actor, int dir)
   int intermediate, final=TRUE;
   struct trig_data *next_trig;
 
-  if (!valid_dg_target(actor, DG_ALLOW_GODS))
+  /* Target eligibility does not establish a valid world-room index. */
+  if (!actor || !world || (long long)IN_ROOM(actor) < 0 ||
+      !VALID_ROOM_RNUM(IN_ROOM(actor)) ||
+      !valid_dg_target(actor, DG_ALLOW_GODS))
     return TRUE;
 
   for (ch = world[IN_ROOM(actor)].people; ch; ch = ch->next_in_room) {
@@ -240,7 +243,10 @@ void entry_memory_mtrigger(char_data *ch)
   struct script_memory *mem;
   char buf[MAX_INPUT_LENGTH];
 
-  if (!SCRIPT_MEM(ch) || AFF_FLAGGED(ch, AFF_CHARM))
+  /* A script may have moved the character out of the world. */
+  if (!ch || !world || (long long)IN_ROOM(ch) < 0 ||
+      !VALID_ROOM_RNUM(IN_ROOM(ch)) ||
+      !SCRIPT_MEM(ch) || AFF_FLAGGED(ch, AFF_CHARM))
     return;
 
   for (actor = world[IN_ROOM(ch)].people; actor && SCRIPT_MEM(ch);
