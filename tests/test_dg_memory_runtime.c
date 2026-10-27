@@ -217,6 +217,18 @@ static void command_forget_callback(void)
 /* Greeting uses visitor as the arriving actor and owner as the remembered NPC.
  * The command path is exercised without depending on room lighting.
  */
+/* Greet visibility diagnostics depend on these game-wide services.
+ * The fixture supplies deterministic light and a no-op diagnostic sink.
+ */
+void basic_mud_log(const char *format, ...)
+{
+  (void)format;
+}
+int room_is_dark(room_rnum room)
+{
+  (void)room;
+  return 0;
+}
 int valid_dg_target(char_data *ch, int flags)
 {
   (void)flags;
