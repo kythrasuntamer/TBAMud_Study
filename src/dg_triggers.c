@@ -214,8 +214,17 @@ void greet_memory_mtrigger(char_data *actor)
     if (!SCRIPT_MEM(ch) || !AWAKE(ch) || FIGHTING(ch) || (ch == actor) ||
         AFF_FLAGGED(ch, AFF_CHARM))
       continue;
+    /* Limit this dispatch to the matching memories present on entry.
+     * A callback may remember the actor again indefinitely; newly created
+     * memories belong to a subsequent dispatch, not this loop.
+     */
+    size_t remaining = 0;
+    for (mem = SCRIPT_MEM(ch); mem; mem = mem->next)
+      if (mem->id == actor_uid)
+        ++remaining;
     /* Only access live list nodes; callbacks may edit this memory chain. */
-    while (dg_memory_character_live(actor, actor_uid, origin_room) &&
+    while (remaining > 0 &&
+           dg_memory_character_live(actor, actor_uid, origin_room) &&
            dg_memory_character_live(ch, target->uid, origin_room) &&
            SCRIPT_MEM(ch)) {
       struct script_memory **link = &SCRIPT_MEM(ch);
@@ -225,6 +234,7 @@ void greet_memory_mtrigger(char_data *actor)
       if (!*link)
         break;
       mem = *link;
+      --remaining;
       if (mem->cmd) {
         long owner_uid = char_script_id(ch);
         /* The command interpreter may delete the memory node supplying
@@ -333,9 +343,17 @@ void entry_memory_mtrigger(char_data *ch)
     if (!dg_memory_character_live(actor, target->uid, origin_room))
       continue;
     if (actor!=ch && SCRIPT_MEM(ch)) {
+      /* Bound callbacks by the matching memories present initially.
+       * Re-created memories remain queued for a later dispatch.
+       */
+      size_t remaining = 0;
+      for (mem = SCRIPT_MEM(ch); mem; mem = mem->next)
+        if (mem->id == target->uid)
+          ++remaining;
       /* Search the live list again after each callback. A saved next pointer
        * may have been freed or replaced by the callback. */
-      while (dg_memory_character_live(ch, owner_uid, origin_room) &&
+      while (remaining > 0 &&
+             dg_memory_character_live(ch, owner_uid, origin_room) &&
              dg_memory_character_live(actor, target->uid, origin_room) &&
              SCRIPT_MEM(ch)) {
         struct script_memory **link = &SCRIPT_MEM(ch);
@@ -345,6 +363,7 @@ void entry_memory_mtrigger(char_data *ch)
         if (!*link)
           break;
         mem = *link;
+        --remaining;
         *link = mem->next;
         mem->next = NULL;
         if (mem->cmd)
