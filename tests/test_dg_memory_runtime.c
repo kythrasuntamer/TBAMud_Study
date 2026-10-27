@@ -213,6 +213,56 @@ static void command_forget_callback(void)
   TEST_ASSERT_EQUAL_INT(1, commands);
   TEST_ASSERT_NULL(owner->memory);
 }
+
+/* Greeting uses visitor as the arriving actor and owner as the remembered NPC.
+ * The command path is exercised without depending on room lighting.
+ */
+int valid_dg_target(char_data *ch, int flags)
+{
+  (void)flags;
+  return ch != NULL;
+}
+static void greet_command_baseline(void)
+{
+  owner->memory = remember(1, 1);
+  greet_memory_mtrigger(visitor);
+  TEST_ASSERT_EQUAL_INT(1, commands);
+  /* Unlike entry triggers, greet commands retain their memory node. */
+  TEST_ASSERT_NOT_NULL(owner->memory);
+}
+static void greet_command_forget(void)
+{
+  owner->memory = remember(2, 1);
+  attack = FORGET_REMAINING;
+  greet_memory_mtrigger(visitor);
+  TEST_ASSERT_EQUAL_INT(1, commands);
+  TEST_ASSERT_NULL(owner->memory);
+}
+static void greet_command_teleport(void)
+{
+  owner->memory = remember(1, 1);
+  attack = RELOCATE_OWNER;
+  greet_memory_mtrigger(visitor);
+  TEST_ASSERT_EQUAL_INT(1, commands);
+  TEST_ASSERT_EQUAL_INT(1, owner->in_room);
+}
+static void greet_command_owner_purge(void)
+{
+  owner->memory = remember(1, 1);
+  attack = PURGE_OWNER;
+  greet_memory_mtrigger(visitor);
+  TEST_ASSERT_EQUAL_INT(1, commands);
+  TEST_ASSERT_NULL(owner);
+}
+static void greet_command_actor_purge(void)
+{
+  owner->memory = remember(1, 1);
+  attack = PURGE_ACTOR;
+  greet_memory_mtrigger(visitor);
+  TEST_ASSERT_EQUAL_INT(1, commands);
+  TEST_ASSERT_NULL(visitor);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -223,5 +273,10 @@ int main(void)
   RUN_TEST(purge_actor_callback);
   RUN_TEST(nested_callback);
   RUN_TEST(command_forget_callback);
+  RUN_TEST(greet_command_baseline);
+  RUN_TEST(greet_command_forget);
+  RUN_TEST(greet_command_teleport);
+  RUN_TEST(greet_command_owner_purge);
+  RUN_TEST(greet_command_actor_purge);
   return UNITY_END();
 }
