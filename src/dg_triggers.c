@@ -349,7 +349,9 @@ void entry_memory_mtrigger(char_data *ch)
         mem->next = NULL;
         if (mem->cmd)
           command_interpreter(ch, mem->cmd);
-        else {
+        else if (SCRIPT(ch)) {
+          /* The remembered NPC may have no script attached; do not
+           * dereference SCRIPT(ch) just because SCRIPT_MEM(ch) exists. */
           for (t = TRIGGERS(SCRIPT(ch)); t; t = t->next) {
             if (TRIGGER_CHECK(t, MTRIG_MEMORY) &&
                 rand_number(1, 100) <= GET_TRIG_NARG(t)) {
