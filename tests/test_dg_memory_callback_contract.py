@@ -26,6 +26,6 @@ assert "if (!dg_memory_character_live(ch, owner_uid, origin_room))" in entry
 assert "dg_memory_character_live(actor, target->uid, origin_room)" in entry
 assert "dg_memory_character_live(actor, actor_uid, origin_room)" in greet
 assert "dg_memory_character_live(ch, target->uid, origin_room)" in greet
-assert "free(mem);\\n        /* The callback" in entry
+assert "free(mem);\n        /* The callback" in entry
 assert greet.index("command_interpreter(ch, command_copy);") < greet.index("free(command_copy);")
 print("DG script-memory source contracts verified")
