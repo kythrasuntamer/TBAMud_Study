@@ -337,11 +337,29 @@ static void zedit_save_internally(struct descriptor_data *d)
 
   /* Finally, if zone headers have been changed, copy over */
   if (OLC_ZONE(d)->number) {
+    /* A zone may have no builders string. Allocate both replacements
+     * before changing the live zone to avoid partial header updates. */
+    char *new_name;
+    char *new_builders = NULL;
+
+    if (!OLC_ZONE(d)->name) {
+      write_to_output(d, "Zone header not saved: missing zone name.\r\n");
+      return;
+    }
+    new_name = strdup(OLC_ZONE(d)->name);
+    if (OLC_ZONE(d)->builders)
+      new_builders = strdup(OLC_ZONE(d)->builders);
+    if (!new_name || (OLC_ZONE(d)->builders && !new_builders)) {
+      free(new_name);
+      free(new_builders);
+      write_to_output(d, "Zone header not saved: insufficient memory.\r\n");
+      return;
+    }
+
     free(zone_table[OLC_ZNUM(d)].name);
     free(zone_table[OLC_ZNUM(d)].builders);
-
-    zone_table[OLC_ZNUM(d)].name = strdup(OLC_ZONE(d)->name);
-    zone_table[OLC_ZNUM(d)].builders = strdup(OLC_ZONE(d)->builders);
+    zone_table[OLC_ZNUM(d)].name = new_name;
+    zone_table[OLC_ZNUM(d)].builders = new_builders;
     zone_table[OLC_ZNUM(d)].bot = OLC_ZONE(d)->bot;
     zone_table[OLC_ZNUM(d)].top = OLC_ZONE(d)->top;
     zone_table[OLC_ZNUM(d)].reset_mode = OLC_ZONE(d)->reset_mode;
