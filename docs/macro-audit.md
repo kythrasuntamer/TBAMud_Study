@@ -419,3 +419,45 @@ sanitizer tests, and CI.
 The three newly authored timer-object runtime tests are not yet
 confirmed by a local GCC ASan/UBSan run. Do not merge the draft
 branch solely on a passing earlier native-sanitizer workflow.
+
+## Standing error-locality standard and next-phase gate
+
+All macro and security fixes must preserve or strengthen error locality:
+report the origin of a failure (`__FILE__`, `__LINE__`, `__func__`),
+operation, invariant, and safe stable entity/trigger identifiers; retain
+errno or a typed cause where relevant; avoid overwriting the original
+failure while propagating errors; and make diagnostics bounded and
+safe even when objects have been freed.
+
+Use explicit checked return statuses for operations that can fail,
+rather than silent no-ops. Preserve `TB_ERROR_LOG`, correlation IDs,
+and breadcrumbs. Avoid logging with pointers that have become stale
+after DG callbacks. Record recoverable input errors without crashing
+the network service; use prominent diagnostics and fail-closed
+behavior for critical violated internal invariants.
+
+**Sequence:** finish the security and macro audits and verify their
+repairs first. If an error-locality gap remains anywhere in the
+public engine, a dedicated, repository-wide error-locality hardening
+initiative is the *next* priority before feature expansion. Build
+tests proving that errors identify their origin and cause, including
+nested DG callbacks, malformed input, failed allocation and persistence
+rollback paths.
+
+### Additional linked-list macro observations
+
+`LINK` and `UNLINK` perform unchecked writes through caller-supplied
+nodes and expect head/tail/neighbor invariants. Neither detects duplicate
+linking or removal of a node not owned by the list. `UNLINK` also leaves
+the removed node's `next`/`prev` members unchanged, despite changing
+its neighbors: later accidental reuse may operate on stale links.
+These are source-level contract hazards, not demonstrated exploits.
+Audit ownership at callers before adding checked helpers; never change
+the old macros in bulk without compatibility and regression coverage.
+
+`DISPOSE(point)` logs null-pointer frees but silently accepts calls
+where `point` is an invalid non-null pointer; it assigns NULL after
+free, which protects only that lvalue and does not eliminate aliases.
+It already records file/line on null, but not the calling function.
+Any replacement must preserve local diagnostics and not claim to
+detect arbitrary invalid frees.
