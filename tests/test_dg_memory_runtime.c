@@ -185,7 +185,8 @@ int script_driver(void *go, trig_data *t, int type, int mode)
   callbacks++;
   mutate();
   return attack != PURGE_TIMER_OBJECT_FALSE &&
-         attack != PURGE_NEXT_TRIGGER_FALSE;
+         attack != PURGE_NEXT_TRIGGER_FALSE &&
+         attack != REPLACE_NEXT_TRIGGER_ID;
 }
 void command_interpreter(char_data *ch, char *command)
 {
