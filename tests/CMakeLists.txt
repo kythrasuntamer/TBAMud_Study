@@ -120,8 +120,26 @@ add_mud_test(test_error_handling
 )
 target_compile_definitions(test_error_handling PRIVATE TB_TEST_FAILURE_INJECTION=1)
 
+# Exercise the actual DG memory-trigger functions under native sanitizers.
+# Discard unrelated dg_triggers.c sections so no game-server linker
+# dependencies are needed for this focused fixture.
+add_mud_test(test_dg_memory_runtime
+    ${MUD_SRCDIR}/dg_triggers.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_dg_memory_runtime.c
+)
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_compile_options(test_dg_memory_runtime PRIVATE -ffunction-sections -fdata-sections)
+    target_link_options(test_dg_memory_runtime PRIVATE -Wl,--gc-sections)
+    set_source_files_properties(${MUD_SRCDIR}/dg_triggers.c
+        PROPERTIES COMPILE_OPTIONS "-ffunction-sections;-fdata-sections")
+endif()
+
 find_package(Python3 COMPONENTS Interpreter QUIET)
 if(Python3_Interpreter_FOUND)
+    add_test(NAME test_dg_memory_callback_contract
+        COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/test_dg_memory_callback_contract.py
+                ${MUD_SRCDIR}/dg_triggers.c)
 
     add_test(NAME test_crash_save_header_contract
         COMMAND ${Python3_EXECUTABLE}
