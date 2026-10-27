@@ -30,6 +30,22 @@ int rev_dir[NUM_OF_DIRS] = {
   SOUTHEAST, SOUTHWEST, NORTHWEST, NORTHEAST
 };
 
+/* Standalone fixture dependencies for command-trigger diagnostics.
+ * Invalid trigger-argument paths must never dereference a missing index.
+ * Production engine supplies these definitions in its normal link. */
+struct index_data **trig_index;
+void mudlog(int type, int level, int file, const char *str, ...)
+{
+  (void)type; (void)level; (void)file; (void)str;
+}
+void skip_spaces(char **string)
+{
+  if (!string || !*string)
+    return;
+  while (**string == ' ' || **string == '\\t')
+    ++*string;
+}
+
 static enum attack attack;
 static char_data *owner, *visitor;
 static struct script_data *script;
