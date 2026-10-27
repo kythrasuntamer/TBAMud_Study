@@ -24,6 +24,8 @@ assert "static int dg_memory_character_live(" in source
 assert "MOB_NOTDEADYET" in source and "PLR_NOTDEADYET" in source
 assert "if (!dg_memory_character_live(ch, owner_uid, origin_room))" in entry
 assert "dg_memory_character_live(actor, target->uid, origin_room)" in entry
+assert "else if (SCRIPT(ch)):" not in entry
+assert "else if (SCRIPT(ch)) {" in entry
 assert "dg_memory_character_live(actor, actor_uid, origin_room)" in greet
 assert "dg_memory_character_live(ch, target->uid, origin_room)" in greet
 assert "free(mem);\n        /* The callback" in entry
