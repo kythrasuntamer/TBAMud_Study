@@ -20,11 +20,11 @@ enum attack { QUIET, FORGET_REMAINING, RELOCATE_OWNER, PURGE_OWNER,
  * deliberately not linked. These definitions match constants.h's types
  * and support both valid and invalid direction test paths.
  */
-const char *dirs[DIR_COUNT] = {
+const char *dirs[NUM_OF_DIRS] = {
   "north", "east", "south", "west", "up", "down",
   "northwest", "northeast", "southeast", "southwest"
 };
-int rev_dir[DIR_COUNT] = {
+int rev_dir[NUM_OF_DIRS] = {
   SOUTH, WEST, NORTH, EAST, DOWN, UP,
   SOUTHEAST, SOUTHWEST, NORTHWEST, NORTHEAST
 };
