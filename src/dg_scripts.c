@@ -3263,15 +3263,15 @@ void add_to_lookup_table(long uid, void *c)
   struct lookup_table_t *lt = get_bucket_head(uid);
 
   if (lt && lt->uid == uid) {
-   log("add_to_lookup updating existing value for uid=%ld (%p -> %p)", uid, lt->c, c);
-   lt->c = c;
+   if (lt->c != c)
+     log("SYSERR: DG UID %ld rebinding rejected (%p != %p)", uid, lt->c, c);
    return;
   }
 
   for (;lt && lt->next; lt = lt->next)
     if (lt->next->uid == uid) {
-      log("add_to_lookup updating existing value for uid=%ld (%p -> %p)", uid, lt->next->c, c);
-      lt->next->c = c;
+      if (lt->next->c != c)
+        log("SYSERR: DG UID %ld rebinding rejected (%p != %p)", uid, lt->next->c, c);
       return;
     }
 
