@@ -117,6 +117,12 @@ trig_data *read_trigger(int nr)
 
 static void trig_data_init(trig_data *this_data)
 {
+    /* Never reused while the server runs; 0 is left for unserialized data. */
+    static unsigned long next_serial = 0;
+
+    if (++next_serial == 0)
+      ++next_serial;
+    this_data->serial = next_serial;
     this_data->nr = NOTHING;
     this_data->data_type = 0;
     this_data->name = NULL;

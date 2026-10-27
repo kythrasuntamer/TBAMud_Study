@@ -163,6 +163,8 @@ struct trig_data {
     struct event *wait_event;           /**< event to pause the trigger  */
     ubyte purged;                       /**< trigger is set to be purged     */
     struct trig_var_data *var_list;	    /**< list of local vars for trigger  */
+    unsigned long serial;               /**< unique per instance; detects
+                                             reuse of a freed trigger's address */
 
     struct trig_data *next;
     struct trig_data *next_in_world;    /**< next in the global trigger list */
