@@ -15,13 +15,15 @@ for first, last in (("void greet_memory_mtrigger(", "int greet_mtrigger("),
     assert "while (prev->next != mem)" not in body
     assert "free(mem);" in body
 greet = source[source.index("void greet_memory_mtrigger("):source.index("int greet_mtrigger(")]
-assert "command_interpreter(ch, mem->cmd);" in greet
+assert "char *command_copy = strdup(mem->cmd);" in greet
+assert "command_interpreter(ch, command_copy);" in greet
+assert "free(command_copy);" in greet
 assert greet.index("if (mem->cmd)") < greet.index("*link = mem->next;")
 entry = source[source.index("void entry_memory_mtrigger("):source.index("int entry_mtrigger(")]
 assert "if (find_char(owner_uid) != ch)\n          return;" in entry
 assert "free(mem);\n        /* The callback" in entry
 assert greet.count("find_char(owner_uid) != ch") >= 2
 assert "IN_ROOM(ch) != origin_room" in greet
-assert greet.index("command_interpreter(ch, mem->cmd);") < greet.index("if (find_char(owner_uid) != ch)")
+assert greet.index("command_interpreter(ch, command_copy);") < greet.index("free(command_copy);") < greet.index("if (find_char(owner_uid) != ch)")
 assert "find_char(owner_uid) != ch" in entry
 print("DG script-memory source contracts verified")
