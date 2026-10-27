@@ -373,10 +373,16 @@ int Crash_delete_crashfile(struct char_data *ch)
                  "player=%s empty or unreadable crash header", GET_NAME(ch));
     return FALSE;
   }
-  if (!objsave_parse_int_fields(line, &rentcode, 1)) {
-    TB_ERROR_MSG("objsave", "parse-header", filename,
-                 "player=%s malformed crash header=\"%s\"", GET_NAME(ch), line);
-    return FALSE;
+  /* Crash files use the same six-field header as rented object files.
+   * Parse the complete record rather than rejecting its remaining fields. */
+  {
+    int timed, netcost, gold, account, nitems;
+    if (!objsave_parse_rent_header(line, &rentcode, &timed, &netcost,
+                                  &gold, &account, &nitems)) {
+      TB_ERROR_MSG("objsave", "parse-header", filename,
+                   "player=%s malformed crash header=\"%s\"", GET_NAME(ch), line);
+      return FALSE;
+    }
   }
 
   if (rentcode == RENT_CRASH)
