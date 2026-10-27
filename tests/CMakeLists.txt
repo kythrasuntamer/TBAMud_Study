@@ -119,3 +119,13 @@ add_mud_test(test_error_handling
     ${CMAKE_CURRENT_SOURCE_DIR}/test_error_handling.c
 )
 target_compile_definitions(test_error_handling PRIVATE TB_TEST_FAILURE_INJECTION=1)
+
+# Source-contract check: malformed movement destinations must be rejected
+# before zone_table[] is accessed.
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME test_movement_zone_guard_contract
+        COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/test_movement_zone_guard_contract.py
+        ${MUD_SRCDIR}/act.movement.c)
+endif()
