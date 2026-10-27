@@ -42,7 +42,7 @@ void skip_spaces(char **string)
 {
   if (!string || !*string)
     return;
-  while (**string == ' ' || **string == '\\t')
+  while (**string == ' ' || **string == '\t')
     ++*string;
 }
 
