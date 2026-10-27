@@ -17,7 +17,7 @@
 enum attack { QUIET, FORGET_REMAINING, RELOCATE_OWNER, PURGE_OWNER,
               PURGE_ACTOR, REENTER, RECREATE_MEMORY, PURGE_NEXT_TRIGGER, PURGE_TIMER_OBJECT, PURGE_TIMER_OBJECT_FALSE,
               PURGE_NEXT_TRIGGER_FALSE, PURGE_CURRENT_TRIGGER_FALSE,
-              PURGE_LOAD_OBJECT_ERROR };
+              PURGE_LOAD_OBJECT_ERROR, REUSE_NEXT_TRIGGER_ADDRESS };
 /* Standalone DG test executable: the full game's direction tables are
  * deliberately not linked. These definitions match constants.h's types
  * and support both valid and invalid direction test paths.
@@ -165,6 +165,12 @@ static void mutate(void)
       free(trigger);
       trigger = NULL;
     }
+    break;
+  case REUSE_NEXT_TRIGGER_ADDRESS:
+    /* The next trigger is freed and a different trigger instance is
+     * allocated at the same address: same pointer, new serial. */
+    if (next_trigger && next_trigger->serial != 99)
+      next_trigger->serial = 99;
     break;
   case RECREATE_MEMORY:
     /* A malicious trigger keeps re-remembering the same actor. */
@@ -533,6 +539,20 @@ static void timer_object_two_triggers(void)
   timer_otrigger(timer_object);
   TEST_ASSERT_EQUAL_INT(2, callbacks);
 }
+static void timer_object_reused_trigger_address(void)
+{
+  setup_timer_object();
+  next_trigger = calloc(1, sizeof(*next_trigger));
+  TEST_ASSERT_NOT_NULL(next_trigger);
+  next_trigger->trigger_type = OTRIG_TIMER;
+  trigger->serial = 1;
+  next_trigger->serial = 2;
+  trigger->next = next_trigger;
+  attack = REUSE_NEXT_TRIGGER_ADDRESS;
+  timer_otrigger(timer_object);
+  /* The replacement is not part of the original dispatch set. */
+  TEST_ASSERT_EQUAL_INT(1, callbacks);
+}
 static void timer_object_extracted_next_trigger(void)
 {
   setup_timer_object();
@@ -872,6 +892,7 @@ int main(void)
   RUN_TEST(ordinary_greet_extracted_next_trigger);
   RUN_TEST(timer_object_two_triggers);
   RUN_TEST(timer_object_extracted_next_trigger);
+  RUN_TEST(timer_object_reused_trigger_address);
   RUN_TEST(timer_object_extracted_owner);
   RUN_TEST(object_action_extraction_denied);
   RUN_TEST(object_drop_extraction_denied);
