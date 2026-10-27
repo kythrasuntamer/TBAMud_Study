@@ -182,7 +182,14 @@ void greet_memory_mtrigger(char_data *actor)
               CAN_SEE(ch, actor) && !GET_TRIG_DEPTH(t) &&
               rand_number(1, 100) <= GET_TRIG_NARG(t)) {
             ADD_UID_VAR(buf, t, actor_id, "actor", 0);
+            long owner_uid = char_script_id(ch);
             script_driver(&ch, t, MOB_TRIGGER, TRIG_NEW);
+            /* The callback can purge or replace the owner. Do not use a
+             * stale room-occupant or script-memory pointer afterward. */
+            if (find_char(owner_uid) != ch) {
+              free(mem);
+              return;
+            }
             break;
           }
         }
@@ -253,6 +260,7 @@ void entry_memory_mtrigger(char_data *ch)
         mem = *link;
         *link = mem->next;
         mem->next = NULL;
+        long owner_uid = char_script_id(ch);
         if (mem->cmd)
           command_interpreter(ch, mem->cmd);
         else {
@@ -268,6 +276,9 @@ void entry_memory_mtrigger(char_data *ch)
         if (mem->cmd)
           free(mem->cmd);
         free(mem);
+        /* The callback may have purged the trigger owner. */
+        if (find_char(owner_uid) != ch)
+          return;
         /* Retain old multi-memory behavior, but never traverse a cached
          * link after dispatch. Further character-lifetime checks are needed. */
       }
