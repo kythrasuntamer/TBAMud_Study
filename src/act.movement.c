@@ -137,6 +137,7 @@ int do_simple_move(struct char_data *ch, int dir, int need_specials_check)
   room_rnum was_in = IN_ROOM(ch);
   /* ... and the room the character will move into. */
   room_rnum going_to = EXIT(ch, dir)->to_room;
+  zone_rnum destination_zone;
   /* How many movement points are required to travel from was_in to going_to.
    * We redefine this later when we need it. */
   int need_movement = 0;
@@ -145,6 +146,18 @@ int do_simple_move(struct char_data *ch, int dir, int need_specials_check)
   /*---------------------------------------------------------------------*/
   /* End Local variable definitions */
 
+
+  /* Reject corrupt exit destinations before room or zone array access.
+   * Never bypass zone restrictions when a destination has no valid zone. */
+  if (!world || !zone_table || !VALID_ROOM_RNUM(was_in) ||
+      !VALID_ROOM_RNUM(going_to))
+    return 0;
+
+  destination_zone = world[going_to].zone;
+  if (destination_zone == NOWHERE ||
+      (long long)destination_zone < 0 ||
+      destination_zone > top_of_zone_table)
+    return 0;
 
   /* Begin checks that can prevent a character from leaving the was_in room. */
   /* Future checks should be implemented within this section and return 0.   */
@@ -214,16 +227,16 @@ int do_simple_move(struct char_data *ch, int dir, int need_specials_check)
   }
 
   /* Check zone level recommendations */
-  if ((ZONE_MINLVL(GET_ROOM_ZONE(going_to)) != -1) && ZONE_MINLVL(GET_ROOM_ZONE(going_to)) > GET_LEVEL(ch)) {
+  if ((ZONE_MINLVL(destination_zone) != -1) && ZONE_MINLVL(destination_zone) > GET_LEVEL(ch)) {
     send_to_char(ch, "This zone is above your recommended level.\r\n");
   }
 
   /* Check zone flag restrictions */
-  if (ZONE_FLAGGED(GET_ROOM_ZONE(going_to), ZONE_CLOSED)) {
+  if (ZONE_FLAGGED(destination_zone, ZONE_CLOSED)) {
     send_to_char(ch, "A mysterious barrier forces you back! That area is off-limits.\r\n");
     return (0);
   }
-  if (ZONE_FLAGGED(GET_ROOM_ZONE(going_to), ZONE_NOIMMORT) && (GET_LEVEL(ch) >= LVL_IMMORT) && (GET_LEVEL(ch) < LVL_GRGOD)) {
+  if (ZONE_FLAGGED(destination_zone, ZONE_NOIMMORT) && (GET_LEVEL(ch) >= LVL_IMMORT) && (GET_LEVEL(ch) < LVL_GRGOD)) {
     send_to_char(ch, "A mysterious barrier forces you back! That area is off-limits.\r\n");
     return (0);
   }
