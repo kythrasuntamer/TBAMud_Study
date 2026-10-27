@@ -480,45 +480,73 @@ int entry_mtrigger(char_data *ch)
 
 int command_mtrigger(char_data *actor, char *cmd, char *argument)
 {
-  char_data *ch, *ch_next;
+  char_data *ch;
   trig_data *t;
   char buf[MAX_INPUT_LENGTH];
+  struct dg_memory_target *targets, *target;
+  room_rnum origin_room;
+  long actor_uid;
+  int handled = 0;
 
   /* prevent people we like from becoming trapped :P */
   if (!valid_dg_target(actor, 0))
     return 0;
+  if (!world || (long long)IN_ROOM(actor) < 0 ||
+      !VALID_ROOM_RNUM(IN_ROOM(actor)))
+    return 0;
 
-  for (ch = world[IN_ROOM(actor)].people; ch; ch = ch_next) {
-    ch_next = ch->next_in_room;
+  origin_room = IN_ROOM(actor);
+  actor_uid = char_script_id(actor);
+  targets = dg_memory_targets(origin_room);
 
-    if (SCRIPT_CHECK(ch, MTRIG_COMMAND) && !AFF_FLAGGED(ch, AFF_CHARM) &&
-       ((actor!=ch) || CONFIG_SCRIPT_PLAYERS)) {
-      for (t = TRIGGERS(SCRIPT(ch)); t; t = t->next) {
-        if (!TRIGGER_CHECK(t, MTRIG_COMMAND))
-          continue;
+  for (target = targets; target && !handled; target = target->next) {
+    if (!dg_memory_character_live(actor, actor_uid, origin_room))
+      break;
+    ch = find_char(target->uid);
+    if (!dg_memory_character_live(ch, target->uid, origin_room))
+      continue;
+    if (!SCRIPT_CHECK(ch, MTRIG_COMMAND) || AFF_FLAGGED(ch, AFF_CHARM) ||
+        (actor == ch && !CONFIG_SCRIPT_PLAYERS))
+      continue;
 
-        if (!GET_TRIG_ARG(t) || !*GET_TRIG_ARG(t)) {
-          mudlog(NRM, LVL_BUILDER, TRUE, "SYSERR: Command Trigger #%d has no text argument!",
-            GET_TRIG_VNUM(t));
-          continue;
-        }
+    /* A callback returning false may detach any trigger, including the one
+     * which just ran; detached triggers are freed once the outermost script
+     * returns. Reacquire each trigger from the live list, never via t->next. */
+    struct dg_greet_trigger_target *triggers =
+      dg_greet_trigger_targets(TRIGGERS(SCRIPT(ch)));
+    for (struct dg_greet_trigger_target *entry = triggers; entry;
+         entry = entry->next) {
+      if (!dg_memory_character_live(actor, actor_uid, origin_room) ||
+          !dg_memory_character_live(ch, target->uid, origin_room))
+        break;
+      t = dg_find_live_greet_trigger(ch, entry->identity);
+      if (!t || !TRIGGER_CHECK(t, MTRIG_COMMAND))
+        continue;
 
-        if (*GET_TRIG_ARG(t)=='*' ||
-            !strn_cmp(GET_TRIG_ARG(t), cmd, strlen(GET_TRIG_ARG(t)))) {
-          ADD_UID_VAR(buf, t, char_script_id(actor), "actor", 0);
-          skip_spaces(&argument);
-          add_var(&GET_TRIG_VARS(t), "arg", argument, 0);
-          skip_spaces(&cmd);
-          add_var(&GET_TRIG_VARS(t), "cmd", cmd, 0);
+      if (!GET_TRIG_ARG(t) || !*GET_TRIG_ARG(t)) {
+        mudlog(NRM, LVL_BUILDER, TRUE, "SYSERR: Command Trigger #%d has no text argument!",
+          GET_TRIG_VNUM(t));
+        continue;
+      }
 
-          if (script_driver(&ch, t, MOB_TRIGGER, TRIG_NEW))
-            return 1;
+      if (*GET_TRIG_ARG(t)=='*' ||
+          !strn_cmp(GET_TRIG_ARG(t), cmd, strlen(GET_TRIG_ARG(t)))) {
+        ADD_UID_VAR(buf, t, actor_uid, "actor", 0);
+        skip_spaces(&argument);
+        add_var(&GET_TRIG_VARS(t), "arg", argument, 0);
+        skip_spaces(&cmd);
+        add_var(&GET_TRIG_VARS(t), "cmd", cmd, 0);
+
+        if (script_driver(&ch, t, MOB_TRIGGER, TRIG_NEW)) {
+          handled = 1;
+          break;
         }
       }
     }
+    dg_free_greet_trigger_targets(triggers);
   }
-
-  return 0;
+  dg_free_memory_targets(targets);
+  return handled;
 }
 
 void speech_mtrigger(char_data *actor, char *str)
