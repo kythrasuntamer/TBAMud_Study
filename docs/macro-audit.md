@@ -653,3 +653,38 @@ removal after rebind, stale-owner timer callback and freed-address
 reuse. The exact reachability from player-controlled scripts
 remains unproven; this finding concerns weak invariants observed
 in source, not a demonstrated exploit.
+
+## Twelfth pass: remaining DG mobile handlers and act/sub_write buffers
+
+Fixed in source; GCC ASan/UBSan `ctest` passes (9/9) and `circle` builds.
+
+- **`command_mtrigger` — confirmed heap use-after-free.** Detached
+  triggers are retired and then freed by `dg_script_execution_leave()` once
+  the outermost script returns. A command trigger that detaches itself and
+  returns false made the loop read `t->next` from freed memory; ASan
+  reproduced this against the unpatched handler
+  (`command_mob_detached_current_trigger`). The handler now follows the
+  `greet_mtrigger` pattern: UID-snapshot the room occupants, snapshot trigger
+  identities, and reacquire each trigger from the live list. Trigger order
+  and first-true-wins return are unchanged. If the actor leaves the room or is
+  pending extraction, dispatch now stops, as `command_otrigger` already does.
+- **`load_otrigger` / `load_mtrigger`.** `script_driver()` NULLs the
+  object pointer on self-purge, and a script can `return` the
+  `SCRIPT_ERROR_CODE` value itself, so `GET_OBJ_RNUM(obj)` could dereference
+  NULL. Both handlers now capture the prototype rnum before dispatch. The
+  mobile change is defensive only: characters are extracted at the end of the pulse.
+- **`act_mtrigger`** no longer dereferences a failed `strdup()` or a
+  missing `\r`.
+- **`perform_act` (comm.c)** wrote `$`-substitutions into its
+  `MAX_STRING_LENGTH` buffer without a bound, and a format ending in `$`
+  stepped past the terminator. Output is now truncated (with a SYSERR that
+  contains no player text), and a trailing `$` stops cleanly.
+- **`sub_write` / `any_one_name` (dg_comm.c)**: a trailing backslash
+  read past the string terminator; `tokens[]` could be written one past its
+  end; `any_one_name` copied without a bound. All are now bounded, and a
+  NULL/NOWHERE `ch` is rejected.
+
+Not yet covered by executable tests: `perform_act` and `sub_write` (their
+translation units need the full server link), and `load_mtrigger`.
+Outstanding from earlier passes: trigger-pointer ABA, and
+`add_to_lookup_table()` silent rebinding.
