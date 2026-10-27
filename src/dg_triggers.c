@@ -1141,36 +1141,92 @@ int cast_otrigger(char_data *actor, obj_data *obj, int spellnum)
   return 1;
 }
 
+/* A leave callback can remove any room object, including the next one.
+ * Snapshot IDs before invoking scripts; reacquire occupants from the live room
+ * list before each dispatch instead of preserving next_content pointers. */
+struct dg_leave_object_target {
+  long uid;
+  struct dg_leave_object_target *next;
+};
+
 int leave_otrigger(room_data *room, char_data *actor, int dir)
 {
-  trig_data *t;
+  struct dg_leave_object_target *targets = NULL, **tail = &targets, *entry;
+  obj_data *obj;
   char buf[MAX_INPUT_LENGTH];
-  int temp, final = 1;
-  obj_data *obj, *obj_next;
+  int final = 1;
 
-  if (!valid_dg_target(actor, DG_ALLOW_GODS))
+  if (!room || !valid_dg_target(actor, DG_ALLOW_GODS))
     return 1;
 
-  for (obj = room->contents; obj; obj = obj_next) {
-    obj_next = obj->next_content;
+  for (obj = room->contents; obj; obj = obj->next_content) {
+    struct dg_leave_object_target *node;
     if (!SCRIPT_CHECK(obj, OTRIG_LEAVE))
       continue;
-
-    for (t = TRIGGERS(SCRIPT(obj)); t; t = t->next) {
-      if (TRIGGER_CHECK(t, OTRIG_LEAVE) &&
-          (rand_number(1, 100) <= GET_TRIG_NARG(t))) {
-        if (dir>=0 && dir < DIR_COUNT)
-          add_var(&GET_TRIG_VARS(t), "direction", dirs[dir], 0);
-        else
-          add_var(&GET_TRIG_VARS(t), "direction", "none", 0);
-        ADD_UID_VAR(buf, t, char_script_id(actor), "actor", 0);
-        temp = script_driver(&obj, t, OBJ_TRIGGER, TRIG_NEW);
-        if (temp == 0)
-          final = 0;
-      }
-    }
+    CREATE(node, struct dg_leave_object_target, 1);
+    node->uid = obj_script_id(obj);
+    *tail = node;
+    tail = &node->next;
   }
 
+  for (entry = targets; entry; entry = entry->next) {
+    struct dg_greet_trigger_target *triggers, *target;
+    trig_data *t;
+    obj = NULL;
+
+    if (!has_obj_by_uid_in_lookup_table(entry->uid))
+      continue;
+    for (obj_data *candidate = room->contents; candidate;
+         candidate = candidate->next_content) {
+      if (candidate->script_id == entry->uid) {
+        obj = candidate;
+        break;
+      }
+    }
+    if (!obj || !SCRIPT_CHECK(obj, OTRIG_LEAVE))
+      continue;
+
+    triggers = dg_greet_trigger_targets(TRIGGERS(SCRIPT(obj)));
+    for (target = triggers; target; target = target->next) {
+      trig_data *current;
+      if (!has_obj_by_uid_in_lookup_table(entry->uid))
+        break;
+      obj = NULL;
+      for (obj_data *candidate = room->contents; candidate;
+           candidate = candidate->next_content) {
+        if (candidate->script_id == entry->uid) {
+          obj = candidate;
+          break;
+        }
+      }
+      if (!obj || !SCRIPT_CHECK(obj, OTRIG_LEAVE))
+        break;
+      t = NULL;
+      for (current = TRIGGERS(SCRIPT(obj)); current; current = current->next) {
+        if (current == target->identity) {
+          t = current;
+          break;
+        }
+      }
+      if (!t || !TRIGGER_CHECK(t, OTRIG_LEAVE) ||
+          rand_number(1, 100) > GET_TRIG_NARG(t))
+        continue;
+      if (dir >= 0 && dir < DIR_COUNT)
+        add_var(&GET_TRIG_VARS(t), "direction", dirs[dir], 0);
+      else
+        add_var(&GET_TRIG_VARS(t), "direction", "none", 0);
+      ADD_UID_VAR(buf, t, char_script_id(actor), "actor", 0);
+      if (!script_driver(&obj, t, OBJ_TRIGGER, TRIG_NEW))
+        final = 0;
+    }
+    dg_free_greet_trigger_targets(triggers);
+  }
+
+  while (targets) {
+    entry = targets;
+    targets = targets->next;
+    free(entry);
+  }
   return final;
 }
 
