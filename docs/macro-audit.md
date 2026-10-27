@@ -320,3 +320,47 @@ continue across callbacks using potentially invalidated list links.
 Priority is sanitizer-backed tests for deletion/replacement of the
 current and next node, actor extraction, reentrant dispatch, and
 preservation of the original return-value contracts.
+
+## Sixth pass: DG callback continuation and integrity (27 October 2026)
+
+Further source inspection establishes the following independent risks:
+
+- **`command_otrigger()`** traverses both equipped inventory and
+  room-contained objects, using `obj = obj->next_content` after
+  `cmd_otrig()`. That helper may invoke `script_driver()` and return
+  false, allowing iteration to continue even if the current object,
+  next object, actor, or the room contents have changed. Hardening only
+  `cmd_otrig()` would not repair the caller's object iteration.
+- **`load_mtrigger()`** calls `script_driver()`, then on
+  `SCRIPT_ERROR_CODE` reads `GET_MOB_RNUM(ch)`. A script which
+  extracts `ch` before returning the recursion sentinel may leave
+  this dereference unsafe. Like `load_otrigger()`, it needs an identity
+  validation strategy before post-callback dereference, plus explicit
+  regression coverage for recursion error behavior.
+- **`give_otrigger()`** evaluates `obj->carried_by` after callback,
+  guarded only by `!obj`. A pointer freed by the callback stays
+  non-NULL locally: this is insufficient as a lifetime check.
+  The same form appears in the object give/drop family. Before fixing,
+  inventory whether extraction is immediate or deferred in each
+  script-driver path and whether object UID registry removal occurs
+  before deallocation.
+- **`REMOVE_FROM_LIST`** in `utils.h` dereferences `(item)->next`
+  and relies on an outer `temp` symbol; callers must guarantee item
+  lifetime, list membership and type. It does not return whether
+  removal succeeded, making error-locality and invariant checking
+  harder. Changing it requires caller-by-caller review.
+
+### Repair ordering
+
+1. Verify outstanding timer-trigger patch under local sanitizers, then
+   separately test trigger pointer reuse/ABA.
+2. Secure `command_otrigger()` *and* `cmd_otrig()` together, preserving
+   object scan order and command interception behavior.
+3. Secure `leave_otrigger()` room traversal with stable object IDs
+   and bounded snapshot semantics, retaining cumulative cancellation.
+4. Cover load-trigger recursion errors for both mob and object
+   extraction. Refactor object give/drop/wear/remove callback checks
+   only with verified object lifecycle contracts.
+
+No exploitability, complete coverage, or successful local test result is
+claimed for these additional cases.
