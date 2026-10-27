@@ -724,10 +724,13 @@ void load_mtrigger(char_data *ch)
 {
   trig_data *t;
   int result = 0;
+  mob_rnum rnum;
 
   if (!SCRIPT_CHECK(ch, MTRIG_LOAD))
     return;
 
+  /* The script may extract its owner; capture the prototype beforehand. */
+  rnum = GET_MOB_RNUM(ch);
   for (t = TRIGGERS(SCRIPT(ch)); t; t = t->next) {
     if (TRIGGER_CHECK(t, MTRIG_LOAD) &&
         (rand_number(1, 100) <= GET_TRIG_NARG(t))) {
@@ -738,8 +741,8 @@ void load_mtrigger(char_data *ch)
   if (result == SCRIPT_ERROR_CODE) {
     /* we have recursed beyond reasonable depth */
     /* make sure this mob is the last one in the load chain */
-    if (GET_MOB_RNUM(ch) != NOBODY) {
-      free_proto_script(&mob_proto[GET_MOB_RNUM(ch)], MOB_TRIGGER);
+    if (rnum != NOBODY) {
+      free_proto_script(&mob_proto[rnum], MOB_TRIGGER);
     }
   }
 }
@@ -1181,10 +1184,14 @@ void load_otrigger(obj_data *obj)
 {
   trig_data *t;
   int result = 0;
+  obj_rnum rnum;
 
   if (!SCRIPT_CHECK(obj, OTRIG_LOAD))
     return;
 
+  /* script_driver() sets obj to NULL if the script purges it, and a script
+   * may "return" SCRIPT_ERROR_CODE itself. Capture the prototype beforehand. */
+  rnum = GET_OBJ_RNUM(obj);
   for (t = TRIGGERS(SCRIPT(obj)); t; t = t->next) {
     if (TRIGGER_CHECK(t, OTRIG_LOAD) &&
         (rand_number(1, 100) <= GET_TRIG_NARG(t))) {
@@ -1195,8 +1202,8 @@ void load_otrigger(obj_data *obj)
   if (result == SCRIPT_ERROR_CODE) {
     /* we have recursed beyond reasonable depth */
     /* make sure this mob is the last one in the load chain */
-    if (GET_OBJ_RNUM(obj) != NOTHING) {
-      free_proto_script(&obj_proto[GET_OBJ_RNUM(obj)], OBJ_TRIGGER);
+    if (rnum != NOTHING) {
+      free_proto_script(&obj_proto[rnum], OBJ_TRIGGER);
     }
   }
 }
