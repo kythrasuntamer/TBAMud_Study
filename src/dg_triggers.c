@@ -246,37 +246,37 @@ void entry_memory_mtrigger(char_data *ch)
   for (actor = world[IN_ROOM(ch)].people; actor && SCRIPT_MEM(ch);
        actor = actor->next_in_room) {
     if (actor!=ch && SCRIPT_MEM(ch)) {
-      for (mem = SCRIPT_MEM(ch); mem && SCRIPT_MEM(ch); ) {
-        struct script_memory *next_mem = mem->next;
-        if (char_script_id(actor)==mem->id) {
-          /* Remove our own node before dispatch: callbacks can mutate or
-           * replace the remaining script-memory chain. */
-          struct script_memory **link = &SCRIPT_MEM(ch);
-          while (*link && *link != mem)
-            link = &(*link)->next;
-          if (!*link)
-            return;
-          *link = mem->next;
-          if (mem->cmd) command_interpreter(ch, mem->cmd);
-          else {
-            for (t = TRIGGERS(SCRIPT(ch)); t; t = t->next) {
-              if (TRIGGER_CHECK(t, MTRIG_MEMORY) && (rand_number(1, 100) <=
-                  GET_TRIG_NARG(t))){
-                ADD_UID_VAR(buf, t, char_script_id(actor), "actor", 0);
-                script_driver(&ch, t, MOB_TRIGGER, TRIG_NEW);
-                break;
-              }
+      /* Search the live list again after each callback. A saved next pointer
+       * may have been freed or replaced by the callback. */
+      while (SCRIPT_MEM(ch)) {
+        struct script_memory **link = &SCRIPT_MEM(ch);
+        long actor_id = char_script_id(actor);
+        while (*link && (*link)->id != actor_id)
+          link = &(*link)->next;
+        if (!*link)
+          break;
+        mem = *link;
+        *link = mem->next;
+        mem->next = NULL;
+        if (mem->cmd)
+          command_interpreter(ch, mem->cmd);
+        else {
+          for (t = TRIGGERS(SCRIPT(ch)); t; t = t->next) {
+            if (TRIGGER_CHECK(t, MTRIG_MEMORY) &&
+                rand_number(1, 100) <= GET_TRIG_NARG(t)) {
+              ADD_UID_VAR(buf, t, actor_id, "actor", 0);
+              script_driver(&ch, t, MOB_TRIGGER, TRIG_NEW);
+              break;
             }
           }
-          /* The detached node remains ours until callback completion. */
-          if (mem->cmd) free(mem->cmd);
-          free(mem);
-          /* Callbacks may have removed/replaced subsequent memory nodes,
-           * or moved the actor. Avoid following a stale next_mem pointer. */
-          return;
         }
-        mem = next_mem;
-      } /* for (mem =..... */
+        if (mem->cmd)
+          free(mem->cmd);
+        free(mem);
+        /* Retain old multi-memory behavior, but never traverse a cached
+         * link after dispatch. Further character-lifetime checks are needed. */
+      }
+
     }
   }
 }
