@@ -21,4 +21,10 @@ assert body.index("!VALID_ROOM_RNUM(going_to)") < body.index("destination_zone =
 assert body.index("destination_zone > top_of_zone_table") < body.index("ZONE_MINLVL(destination_zone)")
 assert "ZONE_MINLVL(GET_ROOM_ZONE(going_to))" not in body
 assert "ZONE_FLAGGED(GET_ROOM_ZONE(going_to)" not in body
+# Callbacks can change world and actor state after the first validation.
+assert body.count("!VALID_ROOM_RNUM(going_to)") >= 3
+assert "world[going_to].zone != destination_zone" in body
+assert body.count("destination_zone > top_of_zone_table") >= 3
+assert "!VALID_ROOM_RNUM(IN_ROOM(ch))" in body
+assert body.index("world[going_to].zone != destination_zone") < body.index("leave_mtrigger(ch, dir)")
 print("Movement room and zone indexing guards verified")
