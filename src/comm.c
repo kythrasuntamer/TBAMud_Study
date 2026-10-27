@@ -2655,7 +2655,10 @@ void perform_act(const char *orig, struct char_data *ch, struct obj_data *obj,
 {
   const char *i = NULL;
   char lbuf[MAX_STRING_LENGTH], *buf, *j;
-  bool uppercasenext = FALSE;
+  /* Last position the terminating NUL may occupy; it is later overwritten
+   * by "\r\n\0", which needs two more bytes. */
+  char *const lbuf_end = lbuf + sizeof(lbuf) - 3;
+  bool uppercasenext = FALSE, truncated = FALSE;
   struct char_data *dg_victim = (to == vict_obj) ? vict_obj : NULL;
   struct obj_data *dg_target = NULL;
   char *dg_arg = NULL;
@@ -2663,7 +2666,12 @@ void perform_act(const char *orig, struct char_data *ch, struct obj_data *obj,
   buf = lbuf;
 
   for (;;) {
-    if (*orig == '$') {
+    if (buf >= lbuf_end) {
+      /* Substitutions such as $T carry script- and player-supplied text. */
+      *(buf++) = '\0';
+      truncated = TRUE;
+      break;
+    } else if (*orig == '$') {
       switch (*(++orig)) {
       case 'n':
 	i = PERS(ch, to);
@@ -2745,7 +2753,7 @@ void perform_act(const char *orig, struct char_data *ch, struct obj_data *obj,
 	i = "";
 	break;
       }
-      while ((*buf = *(i++)))
+      while (buf < lbuf_end && (*buf = *(i++)))
         {
         if (uppercasenext && !isspace((int) *buf))
           {
@@ -2754,7 +2762,9 @@ void perform_act(const char *orig, struct char_data *ch, struct obj_data *obj,
           }
 	buf++;
         }
-      orig++;
+      /* A trailing '$' leaves orig on the terminator: do not step past it. */
+      if (*orig)
+        orig++;
     } else if (!(*(buf++) = *(orig++))) {
       break;
     } else if (uppercasenext && !isspace((int) *(buf-1))) {
@@ -2766,6 +2776,10 @@ void perform_act(const char *orig, struct char_data *ch, struct obj_data *obj,
   *(--buf) = '\r';
   *(++buf) = '\n';
   *(++buf) = '\0';
+
+  if (truncated)
+    log("SYSERR: perform_act() output truncated to %d bytes.",
+        (int) sizeof(lbuf));
 
   if (to->desc)
     write_to_output(to->desc, "%s", CAP(lbuf));
