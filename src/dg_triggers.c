@@ -551,35 +551,53 @@ int command_mtrigger(char_data *actor, char *cmd, char *argument)
 
 void speech_mtrigger(char_data *actor, char *str)
 {
-  char_data *ch, *ch_next;
+  char_data *ch;
   trig_data *t;
   char buf[MAX_INPUT_LENGTH];
+  struct dg_memory_target *targets, *target;
+  room_rnum origin_room;
+  long actor_uid;
 
-  for (ch = world[IN_ROOM(actor)].people; ch; ch = ch_next)
-  {
-    ch_next = ch->next_in_room;
+  if (!actor || !str || !world || (long long)IN_ROOM(actor) < 0 ||
+      !VALID_ROOM_RNUM(IN_ROOM(actor)))
+    return;
 
-    if (SCRIPT_CHECK(ch, MTRIG_SPEECH) && AWAKE(ch) &&
-        !AFF_FLAGGED(ch, AFF_CHARM) && ((actor!=ch) || CONFIG_SCRIPT_PLAYERS))
-      for (t = TRIGGERS(SCRIPT(ch)); t; t = t->next) {
-        if (!TRIGGER_CHECK(t, MTRIG_SPEECH))
-          continue;
+  /* A callback may teleport or purge the next occupant, so never follow a
+   * cached next_in_room link; reacquire each listener by UID instead. */
+  origin_room = IN_ROOM(actor);
+  actor_uid = char_script_id(actor);
+  targets = dg_memory_targets(origin_room);
 
-        if (!GET_TRIG_ARG(t) || !*GET_TRIG_ARG(t)) {
-          mudlog(NRM, LVL_BUILDER, TRUE, "SYSERR: Speech Trigger #%d has no text argument!",
-            GET_TRIG_VNUM(t));
-          continue;
-        }
+  for (target = targets; target; target = target->next) {
+    if (!dg_memory_character_live(actor, actor_uid, origin_room))
+      break;
+    ch = find_char(target->uid);
+    if (!dg_memory_character_live(ch, target->uid, origin_room))
+      continue;
+    if (!SCRIPT_CHECK(ch, MTRIG_SPEECH) || !AWAKE(ch) ||
+        AFF_FLAGGED(ch, AFF_CHARM) || (actor == ch && !CONFIG_SCRIPT_PLAYERS))
+      continue;
 
-        if (((GET_TRIG_NARG(t) && word_check(str, GET_TRIG_ARG(t))) ||
-             (!GET_TRIG_NARG(t) && is_substring(GET_TRIG_ARG(t), str)))) {
-          ADD_UID_VAR(buf, t, char_script_id(actor), "actor", 0);
-          add_var(&GET_TRIG_VARS(t), "speech", str, 0);
-          script_driver(&ch, t, MOB_TRIGGER, TRIG_NEW);
-          break;
-        }
+    for (t = TRIGGERS(SCRIPT(ch)); t; t = t->next) {
+      if (!TRIGGER_CHECK(t, MTRIG_SPEECH))
+        continue;
+
+      if (!GET_TRIG_ARG(t) || !*GET_TRIG_ARG(t)) {
+        mudlog(NRM, LVL_BUILDER, TRUE, "SYSERR: Speech Trigger #%d has no text argument!",
+          GET_TRIG_VNUM(t));
+        continue;
       }
+
+      if (((GET_TRIG_NARG(t) && word_check(str, GET_TRIG_ARG(t))) ||
+           (!GET_TRIG_NARG(t) && is_substring(GET_TRIG_ARG(t), str)))) {
+        ADD_UID_VAR(buf, t, actor_uid, "actor", 0);
+        add_var(&GET_TRIG_VARS(t), "speech", str, 0);
+        script_driver(&ch, t, MOB_TRIGGER, TRIG_NEW);
+        break; /* t is not used after dispatch */
+      }
+    }
   }
+  dg_free_memory_targets(targets);
 }
 
 void act_mtrigger(const char_data *ch, char *str, char_data *actor,
