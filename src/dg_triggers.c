@@ -147,12 +147,16 @@ void greet_memory_mtrigger(char_data *actor)
 {
   trig_data *t;
   char_data *ch;
-  struct script_memory *mem, *next_mem;
+  struct script_memory *mem;
   char buf[MAX_INPUT_LENGTH];
   int command_performed = 0;
 
-  if (!valid_dg_target(actor, DG_ALLOW_GODS))
+  if (!actor || !world || (long long)IN_ROOM(actor) < 0 ||
+      !VALID_ROOM_RNUM(IN_ROOM(actor)) ||
+      !valid_dg_target(actor, DG_ALLOW_GODS))
     return;
+
+  const room_rnum origin_room = IN_ROOM(actor);
 
   for (ch = world[IN_ROOM(actor)].people; ch; ch = ch->next_in_room) {
     if (!SCRIPT_MEM(ch) || !AWAKE(ch) || FIGHTING(ch) || (ch == actor) ||
@@ -168,7 +172,14 @@ void greet_memory_mtrigger(char_data *actor)
         break;
       mem = *link;
       if (mem->cmd) {
+        long owner_uid = char_script_id(ch);
         command_interpreter(ch, mem->cmd); /* command memory stays linked */
+        /* The callback can remove or relocate the owner. The command node
+         * may also have been freed, so do not inspect it afterward. */
+        if (find_char(owner_uid) != ch)
+          return;
+        if (IN_ROOM(ch) != origin_room)
+          return;
         command_performed = 1;
         break;
       }
@@ -187,6 +198,10 @@ void greet_memory_mtrigger(char_data *actor)
             /* The callback can purge or replace the owner. Do not use a
              * stale room-occupant or script-memory pointer afterward. */
             if (find_char(owner_uid) != ch) {
+              free(mem);
+              return;
+            }
+            if (IN_ROOM(ch) != origin_room) {
               free(mem);
               return;
             }
