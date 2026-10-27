@@ -623,3 +623,33 @@ identity**. This affects `timer_otrigger`, `receive_mtrigger`,
 Prioritize tests for ID collision/rebinding and object extraction
 before relaxing the draft PR's verification gate. No network-facing
 exploit has been established by this static analysis.
+
+## Eleventh pass: DG UID namespace and registry rebinding
+
+Verified `src/dg_scripts.h` documents disjoint ID domains:
+players below `MOB_ID_BASE` (10,000,000), mobiles up to
+`ROOM_ID_BASE` (20,000,000), rooms up to `OBJ_ID_BASE`
+(30,000,000), and objects from `OBJ_ID_BASE` upward.
+
+`char_script_id()` assigns `max_mob_id++` and emits a diagnostic
+once it reaches `ROOM_ID_BASE`, but the inspected code does **not**
+stop allocating IDs there. `obj_script_id()` similarly assigns
+`max_obj_id++` without an enforced upper bound. In practice
+these reserved ranges are a convention, not a complete type check.
+Audit counter initialization, overflow and persistence assumptions
+before asserting namespace isolation.
+
+`add_to_lookup_table()` explicitly replaces an existing UID's
+pointer and only logs the event. A stale-UID or duplicate-registration
+bug could thus silently switch identity, undermining boolean
+`has_obj_by_uid_in_lookup_table()` lifetime checks. The registry
+should expose a checked insertion contract which rejects
+unexpected rebinding, preserving any intentional registration
+paths, plus a typed lookup/matching-identity API.
+
+Security-oriented regression candidates: duplicate registration,
+cross-category UID, exhausted mobile range, object ID overflow,
+removal after rebind, stale-owner timer callback and freed-address
+reuse. The exact reachability from player-controlled scripts
+remains unproven; this finding concerns weak invariants observed
+in source, not a demonstrated exploit.
