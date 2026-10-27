@@ -2,6 +2,7 @@
  * Linked against dg_triggers.c (not a copied implementation).
  * All characters, scripts and memory chains are disposable test fixtures.
  */
+#include "unity.h"
 #include "conf.h"
 #include "sysdep.h"
 #include "structs.h"
@@ -9,7 +10,6 @@
 #include "db.h"
 #include "dg_scripts.h"
 #include "interpreter.h"
-#include "unity.h"
 #include <stdlib.h>
 #include <string.h>
 
