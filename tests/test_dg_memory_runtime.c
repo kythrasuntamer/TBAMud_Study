@@ -10,6 +10,7 @@
 #include "db.h"
 #include "dg_scripts.h"
 #include "interpreter.h"
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -21,6 +22,20 @@ static struct script_data *script;
 static struct trig_data *trigger;
 static int callbacks, commands, nested_calls;
 static int active_owner, active_visitor;
+
+/* CREATE() in the production callback uses the checked allocation API.
+ * Provide its test-local implementation; allocator behavior is tested elsewhere.
+ */
+void *tb_calloc_array_at(size_t count, size_t element_size,
+                         const char *file, int line, const char *func)
+{
+  (void)file; (void)line; (void)func;
+  if (element_size == 0 || count == 0 || count > SIZE_MAX / element_size)
+    abort();
+  void *allocation = calloc(count, element_size);
+  if (!allocation) abort();
+  return allocation;
+}
 
 long char_script_id(char_data *ch) { return ch->script_id; }
 char_data *find_char(long id)
@@ -70,6 +85,7 @@ static void mutate(void)
     break;
   case PURGE_OWNER:
     active_owner = 0;
+    clear_memory(&owner->memory);
     free(owner);
     owner = NULL;
     break;
