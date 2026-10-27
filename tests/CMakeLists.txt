@@ -119,3 +119,12 @@ add_mud_test(test_error_handling
     ${CMAKE_CURRENT_SOURCE_DIR}/test_error_handling.c
 )
 target_compile_definitions(test_error_handling PRIVATE TB_TEST_FAILURE_INJECTION=1)
+
+# Guard room-list entry points before dereferencing world[IN_ROOM()].
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME test_dg_trigger_room_guard_contract
+        COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/test_dg_trigger_room_guard_contract.py
+        ${MUD_SRCDIR}/dg_triggers.c)
+endif()
