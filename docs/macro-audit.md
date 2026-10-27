@@ -547,3 +547,40 @@ Next code-fix target: `give_otrigger` with a focused ASan test for
 object extraction, then review all other `!obj` post-callback guards.
 Keep the user's existing gameplay, persistence and progression tests
 unchanged.
+
+## Ninth pass: post-callback object guards (source verified)
+
+Reviewed the current `src/dg_triggers.c` definitions. The handlers
+`get_otrigger`, `wear_otrigger`, `remove_otrigger`,
+`drop_otrigger`, `give_otrigger`, and `consume_otrigger`
+all execute object scripts and subsequently rely on a local
+`!obj` check. This check tests only the value of a local pointer,
+not whether the pointed-to allocation remains live. In particular,
+`give_otrigger` also reads `obj->carried_by` afterward, making
+post-callback lifetime validation necessary before that dereference.
+
+`get_otrigger` additionally checks `DEAD(actor)`, but that cannot
+by itself establish object liveness. Nor can `!obj` establish
+that the actor remains alive across callbacks. The existing
+`receive_mtrigger` and `drop_wtrigger` UID guards are useful
+models, but each caller needs its own ownership and action
+preconditions reviewed before mechanical replacement.
+
+### Security/compatibility acceptance checks
+
+- For every object handler, record the original object UID before
+  callback invocation and validate the registered identity afterward
+  *before* dereferencing an object.
+- Test callbacks which destroy or move the object and which extract
+  the actor/victim, as applicable. Verify denial/allow return values
+  and that no game action proceeds on a freed entity.
+- Before changing `get_otrigger` or `consume_otrigger`,
+  review caller assumptions and preserve existing semantics for
+  successful, unsuccessful, or skipped trigger dispatch.
+- Verify UID table removal on object extraction and address reuse;
+  do not treat a non-NULL pointer as an identity check.
+- Keep the timer callback's pointer-reuse/ABA question open until
+  tested; no complete resolution is claimed.
+
+This pass adds audit evidence only. It does not assert exploit
+reachability from an untrusted network client or runtime test success.
