@@ -249,7 +249,14 @@ void entry_memory_mtrigger(char_data *ch)
       for (mem = SCRIPT_MEM(ch); mem && SCRIPT_MEM(ch); ) {
         struct script_memory *next_mem = mem->next;
         if (char_script_id(actor)==mem->id) {
-          struct script_memory *prev;
+          /* Remove our own node before dispatch: callbacks can mutate or
+           * replace the remaining script-memory chain. */
+          struct script_memory **link = &SCRIPT_MEM(ch);
+          while (*link && *link != mem)
+            link = &(*link)->next;
+          if (!*link)
+            return;
+          *link = mem->next;
           if (mem->cmd) command_interpreter(ch, mem->cmd);
           else {
             for (t = TRIGGERS(SCRIPT(ch)); t; t = t->next) {
@@ -261,16 +268,12 @@ void entry_memory_mtrigger(char_data *ch)
               }
             }
           }
-          /* delete the memory */
-          if (SCRIPT_MEM(ch)==mem) {
-            SCRIPT_MEM(ch) = mem->next;
-          } else {
-            prev = SCRIPT_MEM(ch);
-            while (prev->next != mem) prev = prev->next;
-            prev->next = mem->next;
-          }
+          /* The detached node remains ours until callback completion. */
           if (mem->cmd) free(mem->cmd);
           free(mem);
+          /* Callbacks may have removed/replaced subsequent memory nodes,
+           * or moved the actor. Avoid following a stale next_mem pointer. */
+          return;
         }
         mem = next_mem;
       } /* for (mem =..... */
