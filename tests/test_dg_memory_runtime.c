@@ -59,6 +59,11 @@ int has_obj_by_uid_in_lookup_table(long uid)
 {
   return active_timer_object && timer_object && timer_object->script_id == uid;
 }
+int obj_uid_matches(long uid, const obj_data *obj)
+{
+  return uid >= OBJ_ID_BASE && active_timer_object &&
+         timer_object == obj && timer_object->script_id == uid;
+}
 char_data *find_char(long id)
 {
   if (active_owner && owner && owner->script_id == id) return owner;
@@ -470,7 +475,7 @@ static void setup_timer_object(void)
 {
   timer_object = calloc(1, sizeof(*timer_object));
   TEST_ASSERT_NOT_NULL(timer_object);
-  timer_object->script_id = 4001;
+  timer_object->script_id = OBJ_ID_BASE + 4001;
   timer_object->script = script;
   active_timer_object = 1;
   script->types = OTRIG_TIMER;
