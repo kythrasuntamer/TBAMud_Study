@@ -280,39 +280,105 @@ cleanup:
   dg_free_memory_targets(targets);
 }
 
+/* A pointer captured before a DG callback must be checked against the
+ * current live trigger list before dereferencing it. Pointer comparison
+ * does not dereference a trigger which has since been extracted.
+ */
+struct dg_greet_trigger_target {
+  trig_data *identity;
+  struct dg_greet_trigger_target *next;
+};
+
+static struct dg_greet_trigger_target *dg_greet_trigger_targets(trig_data *first)
+{
+  struct dg_greet_trigger_target *head = NULL, **tail = &head;
+  for (trig_data *t = first; t; t = t->next) {
+    struct dg_greet_trigger_target *node;
+    CREATE(node, struct dg_greet_trigger_target, 1);
+    node->identity = t;
+    node->next = NULL;
+    *tail = node;
+    tail = &node->next;
+  }
+  return head;
+}
+
+static void dg_free_greet_trigger_targets(struct dg_greet_trigger_target *head)
+{
+  while (head) {
+    struct dg_greet_trigger_target *next = head->next;
+    free(head);
+    head = next;
+  }
+}
+
+static trig_data *dg_find_live_greet_trigger(char_data *ch, trig_data *identity)
+{
+  if (!SCRIPT(ch))
+    return NULL;
+  for (trig_data *t = TRIGGERS(SCRIPT(ch)); t; t = t->next)
+    if (t == identity)
+      return t;
+  return NULL;
+}
+
 int greet_mtrigger(char_data *actor, int dir)
 {
-  trig_data *t;
   char_data *ch;
   char buf[MAX_INPUT_LENGTH];
-  int intermediate, final=TRUE;
-  struct trig_data *next_trig;
+  int intermediate, final = TRUE;
+  struct dg_memory_target *targets, *target;
+  room_rnum origin_room;
+  long actor_uid;
 
-  if (!valid_dg_target(actor, DG_ALLOW_GODS))
+  if (!actor || !world || (long long)IN_ROOM(actor) < 0 ||
+      !VALID_ROOM_RNUM(IN_ROOM(actor)) ||
+      !valid_dg_target(actor, DG_ALLOW_GODS))
     return TRUE;
 
-  for (ch = world[IN_ROOM(actor)].people; ch; ch = ch->next_in_room) {
+  origin_room = IN_ROOM(actor);
+  actor_uid = char_script_id(actor);
+  targets = dg_memory_targets(origin_room);
+
+  for (target = targets; target; target = target->next) {
+    if (!dg_memory_character_live(actor, actor_uid, origin_room))
+      break;
+    ch = find_char(target->uid);
+    if (!dg_memory_character_live(ch, target->uid, origin_room))
+      continue;
     if (!SCRIPT_CHECK(ch, MTRIG_GREET | MTRIG_GREET_ALL) ||
-        !AWAKE(ch) || FIGHTING(ch) || (ch == actor) ||
+        !AWAKE(ch) || FIGHTING(ch) || ch == actor ||
         AFF_FLAGGED(ch, AFF_CHARM))
       continue;
 
-    for (t = TRIGGERS(SCRIPT(ch)); t; t = next_trig) {
-		next_trig = t->next;
-		if (((IS_SET(GET_TRIG_TYPE(t), MTRIG_GREET) && CAN_SEE(ch, actor)) ||
+    /* Only dispatch triggers present at entry to this owner's visit.
+     * A callback may detach any trigger, including the next one. */
+    struct dg_greet_trigger_target *triggers =
+      dg_greet_trigger_targets(TRIGGERS(SCRIPT(ch)));
+    for (struct dg_greet_trigger_target *entry = triggers; entry;
+         entry = entry->next) {
+      if (!dg_memory_character_live(actor, actor_uid, origin_room) ||
+          !dg_memory_character_live(ch, target->uid, origin_room))
+        break;
+      trig_data *t = dg_find_live_greet_trigger(ch, entry->identity);
+      if (!t)
+        continue;
+      if (((IS_SET(GET_TRIG_TYPE(t), MTRIG_GREET) && CAN_SEE(ch, actor)) ||
            IS_SET(GET_TRIG_TYPE(t), MTRIG_GREET_ALL)) &&
-          !GET_TRIG_DEPTH(t) && (rand_number(1, 100) <= GET_TRIG_NARG(t))) {
-        if (dir>=0 && dir < DIR_COUNT)
+          !GET_TRIG_DEPTH(t) && rand_number(1, 100) <= GET_TRIG_NARG(t)) {
+        if (dir >= 0 && dir < DIR_COUNT)
           add_var(&GET_TRIG_VARS(t), "direction", dirs[rev_dir[dir]], 0);
         else
           add_var(&GET_TRIG_VARS(t), "direction", "none", 0);
-        ADD_UID_VAR(buf, t, char_script_id(actor), "actor", 0);
+        ADD_UID_VAR(buf, t, actor_uid, "actor", 0);
         intermediate = script_driver(&ch, t, MOB_TRIGGER, TRIG_NEW);
-        if (!intermediate) final = FALSE;
-        continue;
+        if (!intermediate)
+          final = FALSE;
       }
     }
+    dg_free_greet_trigger_targets(triggers);
   }
+  dg_free_memory_targets(targets);
   return final;
 }
 
