@@ -922,65 +922,122 @@ int get_otrigger(obj_data *obj, char_data *actor)
 }
 
 /* checks for command trigger on specific object. assumes obj has cmd trig */
+/* Object command triggers may extract their owners, triggers, or actors.
+ * Snapshot only identities; reacquire targets from live owned lists. */
+struct dg_cmd_object_target {
+  long uid;
+  obj_data *identity;
+  int type;
+  struct dg_cmd_object_target *next;
+};
+
+static void dg_cmd_append(struct dg_cmd_object_target ***tail,
+                          obj_data *obj, int type)
+{
+  struct dg_cmd_object_target *node;
+  CREATE(node, struct dg_cmd_object_target, 1);
+  node->uid = obj_script_id(obj);
+  node->identity = obj;
+  node->type = type;
+  **tail = node;
+  *tail = &node->next;
+}
+
 int cmd_otrig(obj_data *obj, char_data *actor, char *cmd,
               char *argument, int type)
 {
-  trig_data *t;
+  struct dg_greet_trigger_target *targets, *entry;
+  trig_data *t, *current;
   char buf[MAX_INPUT_LENGTH];
+  long uid, actor_uid;
+  int handled = 0;
 
-  if (obj && SCRIPT_CHECK(obj, OTRIG_COMMAND))
-    for (t = TRIGGERS(SCRIPT(obj)); t; t = t->next) {
-      if (!TRIGGER_CHECK(t, OTRIG_COMMAND))
-        continue;
-
-      if (IS_SET(GET_TRIG_NARG(t), type) &&
-          (!GET_TRIG_ARG(t) || !*GET_TRIG_ARG(t))) {
-        mudlog(NRM, LVL_BUILDER, TRUE, "SYSERR: O-Command Trigger #%d has no text argument!",
-          GET_TRIG_VNUM(t));
-        continue;
-      }
-
-      if (IS_SET(GET_TRIG_NARG(t), type) &&
-          (*GET_TRIG_ARG(t)=='*' ||
-          !strn_cmp(GET_TRIG_ARG(t), cmd, strlen(GET_TRIG_ARG(t))))) {
-
-        ADD_UID_VAR(buf, t, char_script_id(actor), "actor", 0);
-        skip_spaces(&argument);
-        add_var(&GET_TRIG_VARS(t), "arg", argument, 0);
-        skip_spaces(&cmd);
-        add_var(&GET_TRIG_VARS(t), "cmd", cmd, 0);
-
-        if (script_driver(&obj, t, OBJ_TRIGGER, TRIG_NEW))
-          return 1;
+  if (!obj || !SCRIPT_CHECK(obj, OTRIG_COMMAND))
+    return 0;
+  uid = obj_script_id(obj);
+  actor_uid = char_script_id(actor);
+  targets = dg_greet_trigger_targets(TRIGGERS(SCRIPT(obj)));
+  for (entry = targets; entry; entry = entry->next) {
+    if (!obj_uid_matches(uid, obj) || find_char(actor_uid) != actor ||
+        !SCRIPT(obj))
+      break;
+    t = NULL;
+    for (current = TRIGGERS(SCRIPT(obj)); current; current = current->next)
+      if (current == entry->identity) { t = current; break; }
+    if (!t || !TRIGGER_CHECK(t, OTRIG_COMMAND) ||
+        !IS_SET(GET_TRIG_NARG(t), type))
+      continue;
+    if (!GET_TRIG_ARG(t) || !*GET_TRIG_ARG(t)) {
+      mudlog(NRM, LVL_BUILDER, TRUE, "SYSERR: O-Command Trigger #%d has no text argument!",
+             GET_TRIG_VNUM(t));
+      continue;
+    }
+    if (*GET_TRIG_ARG(t) == '*' ||
+        !strn_cmp(GET_TRIG_ARG(t), cmd, strlen(GET_TRIG_ARG(t)))) {
+      ADD_UID_VAR(buf, t, actor_uid, "actor", 0);
+      skip_spaces(&argument);
+      add_var(&GET_TRIG_VARS(t), "arg", argument, 0);
+      skip_spaces(&cmd);
+      add_var(&GET_TRIG_VARS(t), "cmd", cmd, 0);
+      if (script_driver(&obj, t, OBJ_TRIGGER, TRIG_NEW)) {
+        handled = 1;
+        break;
       }
     }
-
-  return 0;
+  }
+  dg_free_greet_trigger_targets(targets);
+  return handled;
 }
 
 int command_otrigger(char_data *actor, char *cmd, char *argument)
 {
+  struct dg_cmd_object_target *targets = NULL, **tail = &targets, *entry;
   obj_data *obj;
-  int i;
+  room_rnum origin;
+  long actor_uid;
+  int i, handled = 0;
 
-  /* prevent people we like from becoming trapped :P */
   if (!valid_dg_target(actor, 0))
     return 0;
-
-  for (i = 0; i < NUM_WEARS; i++)
-    if (GET_EQ(actor, i))
-      if (cmd_otrig(GET_EQ(actor, i), actor, cmd, argument, OCMD_EQUIP))
-        return 1;
-
+  actor_uid = char_script_id(actor);
+  origin = IN_ROOM(actor);
+  for (i = 0; i < NUM_WEARS; ++i)
+    if ((obj = GET_EQ(actor, i)) != NULL)
+      dg_cmd_append(&tail, obj, OCMD_EQUIP);
   for (obj = actor->carrying; obj; obj = obj->next_content)
-    if (cmd_otrig(obj, actor, cmd, argument, OCMD_INVEN))
-      return 1;
+    dg_cmd_append(&tail, obj, OCMD_INVEN);
+  for (obj = world[origin].contents; obj; obj = obj->next_content)
+    dg_cmd_append(&tail, obj, OCMD_ROOM);
 
-  for (obj = world[IN_ROOM(actor)].contents; obj; obj = obj->next_content)
-    if (cmd_otrig(obj, actor, cmd, argument, OCMD_ROOM))
-      return 1;
-
-  return 0;
+  for (entry = targets; entry; entry = entry->next) {
+    int present = 0;
+    if (find_char(actor_uid) != actor)
+      break;
+    if (IN_ROOM(actor) != origin)
+      break;
+    if (!obj_uid_matches(entry->uid, entry->identity))
+      continue;
+    if (entry->type == OCMD_EQUIP) {
+      for (i = 0; i < NUM_WEARS; ++i)
+        if (GET_EQ(actor, i) == entry->identity) { present = 1; break; }
+    } else {
+      obj_data *head = (entry->type == OCMD_INVEN) ?
+                       actor->carrying : world[origin].contents;
+      for (obj = head; obj; obj = obj->next_content)
+        if (obj == entry->identity) { present = 1; break; }
+    }
+    if (present && cmd_otrig(entry->identity, actor, cmd,
+                            argument, entry->type)) {
+      handled = 1;
+      break;
+    }
+  }
+  while (targets) {
+    entry = targets;
+    targets = targets->next;
+    free(entry);
+  }
+  return handled;
 }
 
 int wear_otrigger(obj_data *obj, char_data *actor, int where)
