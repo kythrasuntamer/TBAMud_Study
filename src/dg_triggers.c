@@ -1212,10 +1212,12 @@ int leave_otrigger(room_data *room, char_data *actor, int dir)
   obj_data *obj;
   char buf[MAX_INPUT_LENGTH];
   int final = 1;
+  long actor_uid;
 
   if (!room || !valid_dg_target(actor, DG_ALLOW_GODS))
     return 1;
 
+  actor_uid = char_script_id(actor);
   for (obj = room->contents; obj; obj = obj->next_content) {
     struct dg_leave_object_target *node;
     if (!SCRIPT_CHECK(obj, OTRIG_LEAVE))
@@ -1227,6 +1229,8 @@ int leave_otrigger(room_data *room, char_data *actor, int dir)
   }
 
   for (entry = targets; entry; entry = entry->next) {
+    if (find_char(actor_uid) != actor)
+      break;
     struct dg_greet_trigger_target *triggers, *target;
     trig_data *t;
     obj = NULL;
@@ -1245,6 +1249,8 @@ int leave_otrigger(room_data *room, char_data *actor, int dir)
 
     triggers = dg_greet_trigger_targets(TRIGGERS(SCRIPT(obj)));
     for (target = triggers; target; target = target->next) {
+      if (find_char(actor_uid) != actor)
+        break;
       trig_data *current;
       if (!obj_uid_matches(entry->uid, obj))
         break;
@@ -1272,7 +1278,7 @@ int leave_otrigger(room_data *room, char_data *actor, int dir)
         add_var(&GET_TRIG_VARS(t), "direction", dirs[dir], 0);
       else
         add_var(&GET_TRIG_VARS(t), "direction", "none", 0);
-      ADD_UID_VAR(buf, t, char_script_id(actor), "actor", 0);
+      ADD_UID_VAR(buf, t, actor_uid, "actor", 0);
       if (!script_driver(&obj, t, OBJ_TRIGGER, TRIG_NEW))
         final = 0;
     }
