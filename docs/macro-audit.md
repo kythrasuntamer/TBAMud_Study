@@ -137,3 +137,59 @@ alone will not solve lifetime safety.
 These are audit findings, **not yet security fixes**. No code-path
 exploitability claim is made, and no production source is changed in
 this draft.
+
+## Third-pass call-site tracing (27 October 2026)
+
+### Confirmed *unprotected traversal pattern* in ordinary greeting triggers
+
+`src/dg_triggers.c:greet_mtrigger()` (near lines 286–318 on audited
+`master`) still traverses room occupants with `ch = ch->next_in_room`
+and script triggers with a cached `next_trig = t->next`. It invokes
+`script_driver(&ch, t, MOB_TRIGGER, TRIG_NEW)` inside both traversals,
+then continues without re-resolving `ch`, the actor, or the cached
+trigger node. A callback that extracts/moves the NPC, actor, or triggers
+can invalidate the pointers. This is the *same class* of dangerous
+iterator/lifetime pattern addressed for memory triggers in PR #43,
+but it is a **separate function not fixed by that PR**.
+
+The source pattern is confirmed. Actual exploitable extraction paths
+through this callback still require adversarial runtime testing. Treat
+as high-priority security follow-up; do not automatically copy the
+memory-trigger patch because ordinary greeting triggers have different
+return-value and dispatch semantics. Preserve trigger order and
+`final = FALSE` behavior.
+
+`leave_mtrigger()` (near line 715) also iterates `next_in_room`
+and invokes script callbacks. Audit it with the same lifetime matrix.
+More DG handlers contain `ADD_UID_VAR` and callback dispatch; each
+requires separate verification.
+
+### Reachability refinement: bit-array lookup
+
+`src/dg_scripts.c:check_flags_by_name_ar()` matches a string against
+`namelist[0..numflags)`, assigns only a matched nonnegative loop
+index to `item`, and returns early if no match. This **specific**
+call site does *not* appear to permit a negative index from an
+unrecognized string. However, safety still depends on callers
+supplying consistent `numflags`, actual `namelist` capacity, and
+bit-array storage size (at least enough for `numflags` bits).
+
+`src/utils.c:sprintbitarray()` computes nonnegative `bit` as
+`teller * 32 + nr` under loop bounds, but also reads
+`names[bit]`; its safety depends on valid `maxar` and on the
+names/bitvector allocations being large enough. Multiplication could
+overflow a signed int for extreme invalid `maxar` values. These
+are preconditions to validate at the callers, not demonstrated
+remotely exploitable bugs.
+
+### Audit actions before production fixes
+
+1. Add sanitizer-backed tests to ordinary greet and leave trigger
+   paths for actor/owner removal, room relocation, trigger extraction,
+   and nested callbacks.
+2. Inventory caller contracts for `check_flags_by_name_ar` and
+   `sprintbitarray`, including lengths of both bit arrays and
+   name tables; add negative and excessive-length cases.
+3. Prefer named, checked helpers for *untrusted* bit-index operations
+   rather than blindly inserting bounds checks into serialized
+   bit-flag macros everywhere.
