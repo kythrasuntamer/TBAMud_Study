@@ -3246,6 +3246,18 @@ int has_obj_by_uid_in_lookup_table(long uid)
   return lt != NULL;
 }
 
+/* Validate both the object UID namespace and the original allocation's
+ * registered address without dereferencing a potentially freed object. */
+int obj_uid_matches(long uid, const obj_data *obj)
+{
+  struct lookup_table_t *entry;
+  if (!obj || uid < OBJ_ID_BASE)
+    return FALSE;
+  entry = find_element_by_uid_in_lookup_table(uid);
+  return entry && entry->c == (const void *)obj;
+}
+
+
 void add_to_lookup_table(long uid, void *c)
 {
   struct lookup_table_t *lt = get_bucket_head(uid);
