@@ -662,7 +662,7 @@ int receive_mtrigger(char_data *ch, char_data *actor, obj_data *obj)
       ADD_UID_VAR(buf, t, object_id, "object", 0);
       ret_val = script_driver(&ch, t, MOB_TRIGGER, TRIG_NEW);
       // check for purged item before dereferencing.
-      if (DEAD(actor) || DEAD(ch) || !has_obj_by_uid_in_lookup_table(object_id) || obj->carried_by != actor)
+      if (DEAD(actor) || DEAD(ch) || !obj_uid_matches(object_id, obj) || obj->carried_by != actor)
         return 0;
       else
         return ret_val;
@@ -878,7 +878,7 @@ void timer_otrigger(struct obj_data *obj)
 
   for (entry = targets; entry; entry = entry->next) {
     trig_data *t = NULL, *current;
-    if (!has_obj_by_uid_in_lookup_table(obj_uid))
+    if (!obj_uid_matches(obj_uid, obj))
       break;
     if (!SCRIPT(obj))
       break;
@@ -911,7 +911,7 @@ int get_otrigger(obj_data *obj, char_data *actor)
       ret_val = script_driver(&obj, t, OBJ_TRIGGER, TRIG_NEW);
       /* Don't allow a get to take place, if the actor is killed (the mud
        * would choke on obj_to_char) or the object is purged. */
-      if (DEAD(actor) || !has_obj_by_uid_in_lookup_table(object_id))
+      if (DEAD(actor) || !obj_uid_matches(object_id, obj))
         return 0;
       else
         return ret_val;
@@ -999,7 +999,7 @@ int wear_otrigger(obj_data *obj, char_data *actor, int where)
       object_id = obj_script_id(obj);
       ret_val = script_driver(&obj, t, OBJ_TRIGGER, TRIG_NEW);
       /* Don't allow a wear to take place, if the object is purged. */
-      if (!has_obj_by_uid_in_lookup_table(object_id))
+      if (!obj_uid_matches(object_id, obj))
         return 0;
       else
         return ret_val;
@@ -1028,7 +1028,7 @@ int remove_otrigger(obj_data *obj, char_data *actor)
       object_id = obj_script_id(obj);
       ret_val = script_driver(&obj, t, OBJ_TRIGGER, TRIG_NEW);
       /* Don't allow a remove to take place, if the object is purged. */
-      if (!has_obj_by_uid_in_lookup_table(object_id))
+      if (!obj_uid_matches(object_id, obj))
         return 0;
       else
         return ret_val;
@@ -1054,7 +1054,7 @@ int drop_otrigger(obj_data *obj, char_data *actor)
       object_id = obj_script_id(obj);
       ret_val = script_driver(&obj, t, OBJ_TRIGGER, TRIG_NEW);
       /* Don't allow a drop to take place, if the object is purged. */
-      if (!has_obj_by_uid_in_lookup_table(object_id))
+      if (!obj_uid_matches(object_id, obj))
         return 0;
       else
         return ret_val;
@@ -1082,7 +1082,7 @@ int give_otrigger(obj_data *obj, char_data *actor, char_data *victim)
       ret_val = script_driver(&obj, t, OBJ_TRIGGER, TRIG_NEW);
       /* Don't allow a give to take place, if the object is purged or the
        * object is not carried by the giver. */
-      if (!has_obj_by_uid_in_lookup_table(object_id) || obj->carried_by != actor)
+      if (!obj_uid_matches(object_id, obj) || obj->carried_by != actor)
         return 0;
       else
         return ret_val;
@@ -1174,7 +1174,7 @@ int leave_otrigger(room_data *room, char_data *actor, int dir)
     trig_data *t;
     obj = NULL;
 
-    if (!has_obj_by_uid_in_lookup_table(entry->uid))
+    if (entry->uid < OBJ_ID_BASE)
       continue;
     for (obj_data *candidate = room->contents; candidate;
          candidate = candidate->next_content) {
@@ -1189,7 +1189,7 @@ int leave_otrigger(room_data *room, char_data *actor, int dir)
     triggers = dg_greet_trigger_targets(TRIGGERS(SCRIPT(obj)));
     for (target = triggers; target; target = target->next) {
       trig_data *current;
-      if (!has_obj_by_uid_in_lookup_table(entry->uid))
+      if (!obj_uid_matches(entry->uid, obj))
         break;
       obj = NULL;
       for (obj_data *candidate = room->contents; candidate;
@@ -1257,7 +1257,7 @@ int consume_otrigger(obj_data *obj, char_data *actor, int cmd)
       object_id = obj_script_id(obj);
       ret_val = script_driver(&obj, t, OBJ_TRIGGER, TRIG_NEW);
       /* Don't allow a wear to take place, if the object is purged. */
-      if (!has_obj_by_uid_in_lookup_table(object_id))
+      if (!obj_uid_matches(object_id, obj))
         return 0;
       else
         return ret_val;
@@ -1431,7 +1431,7 @@ int drop_wtrigger(obj_data *obj, char_data *actor)
       ADD_UID_VAR(buf, t, object_id, "object", 0);
       ret_val = script_driver(&room, t, WLD_TRIGGER, TRIG_NEW);
       // check for purged object before dereferencing.
-      if (!has_obj_by_uid_in_lookup_table(object_id) || obj->carried_by != actor)
+      if (!obj_uid_matches(object_id, obj) || obj->carried_by != actor)
         return 0;
       else
         return ret_val;
