@@ -225,3 +225,36 @@ Next engineering patch should prioritize `leave_otrigger` and
 `timer_otrigger`, followed by command and load paths. Keep the test
 harness and macro inventory on the draft PR until all relevant regressions
 and sanitizers pass.
+
+## Fourth-pass DG callback lifetime inventory (source review)
+
+Inspected `src/dg_triggers.c` on the PR #47 branch following ordinary
+`greet_mtrigger` hardening. The following are source-backed risk patterns,
+not runtime-confirmed vulnerabilities:
+
+| Handler | Callback behavior | Preliminary lifetime assessment |
+| --- | --- | --- |
+| `leave_mtrigger` / `door_mtrigger` | Return `script_driver` result directly | No post-callback iterator dereference within these functions. Validate callers' actor/object assumptions separately. |
+| `timer_otrigger` | `script_driver(&obj,...)` followed by `t = t->next` | **High:** callback can invalidate current trigger and owner; test extracted trigger and object under ASan. |
+| `leave_otrigger` | Saves `obj_next = obj->next_content` and keeps traversing; also continues `t = t->next` | **High:** saved next object/trigger pointers can become stale after extraction. Preserve cumulative `final = 0` cancellation behavior. |
+| `cmd_otrig` | Continues trigger loop when callback returns false | **High:** current trigger/object may be extracted before next iteration. |
+| `command_mtrigger` | Saves `ch_next`, continues if callback returns false | **High:** cached next occupant and trigger links can become stale. |
+| `load_otrigger` | After callback, checks `GET_OBJ_RNUM(obj)` on recursive script error | **High:** object may be extracted; requires live UID check before dereference and preserving recursive-error handling. |
+| `receive_mtrigger` | Checks `DEAD(actor)` and `DEAD(ch)` after callback | **Review:** check semantics against deferred vs immediate extraction before assuming pointers are safe. |
+| `get_otrigger`, `wear_otrigger`, `remove_otrigger`, `drop_otrigger`, `give_otrigger` | Test `!obj` after callback | **Review:** local pointer does not automatically become NULL when object is freed. Existing checks are insufficient as a general object-lifetime proof. |
+| `leave_wtrigger` / `door_wtrigger` | Direct callback return | No iterator use afterward within the handler. Caller validity still needs review. |
+
+### Test-first repair plan
+
+Add focused executable ASan/UBSan cases for `timer_otrigger`,
+`leave_otrigger`, `cmd_otrig`, and `command_mtrigger` that extract the
+*current* and *next* target and modify trigger chains. Also verify
+`load_otrigger` after extraction on recursive-error return.
+
+Do not apply pointer-based snapshots as proof of identity across allocator
+reuse: a freed allocation may be reused at the same address. Prefer stable
+object/trigger IDs with validation against live registries when available;
+otherwise define a bounded, non-dereferencing snapshot strategy supported
+by tests. Preserve script order, multi-trigger semantics, return values,
+and persistent game data. Avoid changing these handlers in bulk before
+individual regressions pass.
