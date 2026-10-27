@@ -364,3 +364,58 @@ Further source inspection establishes the following independent risks:
 
 No exploitability, complete coverage, or successful local test result is
 claimed for these additional cases.
+
+## Seventh pass: combined macro/security audit and status
+
+### Command-trigger traversal: nested invalidation confirmed in source
+
+`command_otrigger()` has three distinct scan regions: equipped objects,
+carried objects, and room objects. Each calls `cmd_otrig()`, which can
+execute a DG callback and return false. When that happens, the outer
+loops continue using actor inventory pointers, `obj->next_content`,
+or `world[IN_ROOM(actor)].contents`. The callback can change all of
+these. Merely fixing `cmd_otrig()`'s trigger iteration does not protect
+the outer object/actor traversal.
+
+A correct repair must revalidate the actor's stable identity, location
+and inventory ownership between callbacks, and use stable object IDs
+to avoid stale pointers. It must preserve the existing scan order:
+equipment first, inventory second, room contents third. Account for
+callbacks which create or delete objects during dispatch and prevent
+unbounded repeated processing.
+
+### Load trigger errors: both object and mobile cases
+
+`load_mtrigger()` and `load_otrigger()` directly dereference
+`ch`/`obj` following a callback *only when* it returned
+`SCRIPT_ERROR_CODE`. This narrows the dangerous path but does not
+remove it. Snapshot the original prototype index while its owner is
+live and validate before any post-callback dereference; separately
+consider whether disabling prototype scripts after extraction remains
+required by existing recursion-error semantics.
+
+### Macro repair safety notes
+
+`REMOVE_FROM_LIST`, `LINK`, and `UNLINK` are structural macros
+whose expansion depends on caller-provided field names and local
+variables. Treat replacements as interface changes, not whitespace
+cleanup. For these linked-list macros, expand argument side effects
+and confirm head/tail invariants in unit tests before refactoring.
+Review use within callback-exposed paths especially carefully.
+
+### Measured vs estimated audit coverage
+
+The read-only macro inventory has scanned 143 C/header files and
+counted 2,648 definitions; this is inventory coverage, not verification
+of each macro's safety. Approximately 25% **overall** completion is
+a planning estimate only. No fixed list of review units or known
+vulnerability denominator has been established, so no exact security
+audit percentage is defensible. Track milestones individually:
+inventory, caller review, runtime exploitability, remediation,
+sanitizer tests, and CI.
+
+### Outstanding validation
+
+The three newly authored timer-object runtime tests are not yet
+confirmed by a local GCC ASan/UBSan run. Do not merge the draft
+branch solely on a passing earlier native-sanitizer workflow.
