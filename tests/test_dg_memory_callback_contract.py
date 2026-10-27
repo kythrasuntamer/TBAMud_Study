@@ -7,7 +7,8 @@ source = Path(sys.argv[1]).read_text(encoding="utf-8")
 for first, last in (("void greet_memory_mtrigger(", "int greet_mtrigger("),
                     ("void entry_memory_mtrigger(", "int entry_mtrigger(")):
     body = source[source.index(first):source.index(last, source.index(first))]
-    assert "while (SCRIPT_MEM(ch))" in body
+    assert "SCRIPT_MEM(ch)) {" in body
+    assert "find_char(target->uid)" in body
     assert "*link = mem->next;" in body
     assert body.index("*link = mem->next;") < body.index("script_driver(&ch,")
     assert "next_mem" not in body
