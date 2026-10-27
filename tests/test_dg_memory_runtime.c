@@ -22,6 +22,7 @@ static struct script_data *script;
 static struct trig_data *trigger;
 static int callbacks, commands, nested_calls;
 static int active_owner, active_visitor;
+static int reenter_greeting;
 
 /* CREATE() in the production callback uses the checked allocation API.
  * Provide its test-local implementation; allocator behavior is tested elsewhere.
@@ -95,7 +96,10 @@ static void mutate(void)
     visitor = NULL;
     break;
   case REENTER:
-    if (!nested_calls++) entry_memory_mtrigger(owner);
+    if (!nested_calls++) {
+      if (reenter_greeting) greet_memory_mtrigger(visitor);
+      else entry_memory_mtrigger(owner);
+    }
     break;
   default:
     break;
@@ -142,7 +146,7 @@ void setUp(void)
   owner->script = script;
   active_owner = active_visitor = 1;
   attack = QUIET;
-  callbacks = commands = nested_calls = 0;
+  callbacks = commands = nested_calls = reenter_greeting = 0;
 }
 void tearDown(void)
 {
@@ -275,6 +279,67 @@ static void greet_command_actor_purge(void)
   TEST_ASSERT_NULL(visitor);
 }
 
+/* The script-driven greet path uses CAN_SEE, so use two visible NPCs
+ * instead of relying on the dummy player-specials state in this fixture.
+ */
+static void prepare_greet_script(int count)
+{
+  SET_BIT_AR(MOB_FLAGS(owner), MOB_ISNPC);
+  SET_BIT_AR(MOB_FLAGS(visitor), MOB_ISNPC);
+  owner->memory = remember(count, 0);
+  reenter_greeting = 1;
+}
+static void greet_script_baseline(void)
+{
+  prepare_greet_script(1);
+  greet_memory_mtrigger(visitor);
+  TEST_ASSERT_EQUAL_INT(1, callbacks);
+  TEST_ASSERT_EQUAL_INT(0, commands);
+  TEST_ASSERT_NULL(owner->memory);
+}
+static void greet_script_forget(void)
+{
+  prepare_greet_script(2);
+  attack = FORGET_REMAINING;
+  greet_memory_mtrigger(visitor);
+  TEST_ASSERT_EQUAL_INT(1, callbacks);
+  TEST_ASSERT_NULL(owner->memory);
+}
+static void greet_script_teleport(void)
+{
+  prepare_greet_script(2);
+  attack = RELOCATE_OWNER;
+  greet_memory_mtrigger(visitor);
+  TEST_ASSERT_EQUAL_INT(1, callbacks);
+  TEST_ASSERT_EQUAL_INT(1, owner->in_room);
+  TEST_ASSERT_NOT_NULL(owner->memory);
+}
+static void greet_script_owner_purge(void)
+{
+  prepare_greet_script(2);
+  attack = PURGE_OWNER;
+  greet_memory_mtrigger(visitor);
+  TEST_ASSERT_EQUAL_INT(1, callbacks);
+  TEST_ASSERT_NULL(owner);
+}
+static void greet_script_actor_purge(void)
+{
+  prepare_greet_script(2);
+  attack = PURGE_ACTOR;
+  greet_memory_mtrigger(visitor);
+  TEST_ASSERT_EQUAL_INT(1, callbacks);
+  TEST_ASSERT_NULL(visitor);
+  TEST_ASSERT_NOT_NULL(owner->memory);
+}
+static void greet_script_reentrant(void)
+{
+  prepare_greet_script(2);
+  attack = REENTER;
+  greet_memory_mtrigger(visitor);
+  TEST_ASSERT_EQUAL_INT(2, callbacks);
+  TEST_ASSERT_NULL(owner->memory);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -290,5 +355,11 @@ int main(void)
   RUN_TEST(greet_command_teleport);
   RUN_TEST(greet_command_owner_purge);
   RUN_TEST(greet_command_actor_purge);
+  RUN_TEST(greet_script_baseline);
+  RUN_TEST(greet_script_forget);
+  RUN_TEST(greet_script_teleport);
+  RUN_TEST(greet_script_owner_purge);
+  RUN_TEST(greet_script_actor_purge);
+  RUN_TEST(greet_script_reentrant);
   return UNITY_END();
 }
