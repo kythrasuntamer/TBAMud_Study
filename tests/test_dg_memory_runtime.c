@@ -15,7 +15,7 @@
 #include <string.h>
 
 enum attack { QUIET, FORGET_REMAINING, RELOCATE_OWNER, PURGE_OWNER,
-              PURGE_ACTOR, REENTER, RECREATE_MEMORY, PURGE_NEXT_TRIGGER };
+              PURGE_ACTOR, REENTER, RECREATE_MEMORY, PURGE_NEXT_TRIGGER, PURGE_TIMER_OBJECT };
 /* Standalone DG test executable: the full game's direction tables are
  * deliberately not linked. These definitions match constants.h's types
  * and support both valid and invalid direction test paths.
@@ -35,6 +35,8 @@ static struct script_data *script;
 static struct trig_data *trigger, *next_trigger;
 static int callbacks, commands, nested_calls;
 static int active_owner, active_visitor;
+static obj_data *timer_object;
+static int active_timer_object;
 static int reenter_greeting;
 
 /* CREATE() in the production callback uses the checked allocation API.
@@ -52,6 +54,11 @@ void *tb_calloc_array_at(size_t count, size_t element_size,
 }
 
 long char_script_id(char_data *ch) { return ch->script_id; }
+long obj_script_id(obj_data *obj) { return obj->script_id; }
+int has_obj_by_uid_in_lookup_table(long uid)
+{
+  return active_timer_object && timer_object && timer_object->script_id == uid;
+}
 char_data *find_char(long id)
 {
   if (active_owner && owner && owner->script_id == id) return owner;
@@ -107,6 +114,13 @@ static void mutate(void)
     active_visitor = 0;
     free(visitor);
     visitor = NULL;
+    break;
+  case PURGE_TIMER_OBJECT:
+    if (timer_object) {
+      active_timer_object = 0;
+      free(timer_object);
+      timer_object = NULL;
+    }
     break;
   case PURGE_NEXT_TRIGGER:
     if (next_trigger) {
@@ -176,11 +190,15 @@ void setUp(void)
   trigger->narg = 100;
   owner->script = script;
   active_owner = active_visitor = 1;
+  timer_object = NULL;
+  active_timer_object = 0;
   attack = QUIET;
   callbacks = commands = nested_calls = reenter_greeting = 0;
 }
 void tearDown(void)
 {
+  free(timer_object);
+  timer_object = NULL;
   if (owner) {
     clear_memory(&owner->memory);
     free(owner);
@@ -446,6 +464,50 @@ static void ordinary_greet_extracted_next_trigger(void)
   TEST_ASSERT_NULL(next_trigger);
 }
 
+static void setup_timer_object(void)
+{
+  timer_object = calloc(1, sizeof(*timer_object));
+  TEST_ASSERT_NOT_NULL(timer_object);
+  timer_object->script_id = 4001;
+  timer_object->script = script;
+  active_timer_object = 1;
+  script->types = OTRIG_TIMER;
+  trigger->trigger_type = OTRIG_TIMER;
+}
+static void timer_object_two_triggers(void)
+{
+  setup_timer_object();
+  next_trigger = calloc(1, sizeof(*next_trigger));
+  TEST_ASSERT_NOT_NULL(next_trigger);
+  next_trigger->trigger_type = OTRIG_TIMER;
+  trigger->next = next_trigger;
+  timer_otrigger(timer_object);
+  TEST_ASSERT_EQUAL_INT(2, callbacks);
+}
+static void timer_object_extracted_next_trigger(void)
+{
+  setup_timer_object();
+  next_trigger = calloc(1, sizeof(*next_trigger));
+  TEST_ASSERT_NOT_NULL(next_trigger);
+  next_trigger->trigger_type = OTRIG_TIMER;
+  trigger->next = next_trigger;
+  attack = PURGE_NEXT_TRIGGER;
+  timer_otrigger(timer_object);
+  TEST_ASSERT_EQUAL_INT(1, callbacks);
+}
+static void timer_object_extracted_owner(void)
+{
+  setup_timer_object();
+  next_trigger = calloc(1, sizeof(*next_trigger));
+  TEST_ASSERT_NOT_NULL(next_trigger);
+  next_trigger->trigger_type = OTRIG_TIMER;
+  trigger->next = next_trigger;
+  attack = PURGE_TIMER_OBJECT;
+  timer_otrigger(timer_object);
+  TEST_ASSERT_EQUAL_INT(1, callbacks);
+  TEST_ASSERT_NULL(timer_object);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -474,5 +536,8 @@ int main(void)
   RUN_TEST(ordinary_greet_actor_purge);
   RUN_TEST(ordinary_greet_owner_teleport);
   RUN_TEST(ordinary_greet_extracted_next_trigger);
+  RUN_TEST(timer_object_two_triggers);
+  RUN_TEST(timer_object_extracted_next_trigger);
+  RUN_TEST(timer_object_extracted_owner);
   return UNITY_END();
 }
