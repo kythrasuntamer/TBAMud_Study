@@ -508,6 +508,68 @@ static void timer_object_extracted_owner(void)
   TEST_ASSERT_NULL(timer_object);
 }
 
+/* Each action callback must reject an extracted object rather than trusting
+ * a non-NULL local pointer following script_driver(). */
+static void object_action_extraction_denied(void)
+{
+  setup_timer_object();
+  timer_object->carried_by = owner;
+  script->types = OTRIG_GIVE;
+  trigger->trigger_type = OTRIG_GIVE;
+  trigger->narg = 100;
+  attack = PURGE_TIMER_OBJECT;
+  TEST_ASSERT_EQUAL_INT(0, give_otrigger(timer_object, owner, visitor));
+  TEST_ASSERT_EQUAL_INT(1, callbacks);
+  TEST_ASSERT_NULL(timer_object);
+}
+static void object_drop_extraction_denied(void)
+{
+  setup_timer_object();
+  script->types = OTRIG_DROP;
+  trigger->trigger_type = OTRIG_DROP;
+  trigger->narg = 100;
+  attack = PURGE_TIMER_OBJECT;
+  TEST_ASSERT_EQUAL_INT(0, drop_otrigger(timer_object, owner));
+  TEST_ASSERT_EQUAL_INT(1, callbacks);
+}
+static void object_get_extraction_denied(void)
+{
+  setup_timer_object();
+  script->types = OTRIG_GET;
+  trigger->trigger_type = OTRIG_GET;
+  trigger->narg = 100;
+  attack = PURGE_TIMER_OBJECT;
+  TEST_ASSERT_EQUAL_INT(0, get_otrigger(timer_object, owner));
+  TEST_ASSERT_EQUAL_INT(1, callbacks);
+}
+static void object_wear_extraction_denied(void)
+{
+  setup_timer_object();
+  script->types = OTRIG_WEAR;
+  trigger->trigger_type = OTRIG_WEAR;
+  attack = PURGE_TIMER_OBJECT;
+  TEST_ASSERT_EQUAL_INT(0, wear_otrigger(timer_object, owner, 0));
+  TEST_ASSERT_EQUAL_INT(1, callbacks);
+}
+static void object_remove_extraction_denied(void)
+{
+  setup_timer_object();
+  script->types = OTRIG_REMOVE;
+  trigger->trigger_type = OTRIG_REMOVE;
+  attack = PURGE_TIMER_OBJECT;
+  TEST_ASSERT_EQUAL_INT(0, remove_otrigger(timer_object, owner));
+  TEST_ASSERT_EQUAL_INT(1, callbacks);
+}
+static void object_consume_extraction_denied(void)
+{
+  setup_timer_object();
+  script->types = OTRIG_CONSUME;
+  trigger->trigger_type = OTRIG_CONSUME;
+  attack = PURGE_TIMER_OBJECT;
+  TEST_ASSERT_EQUAL_INT(0, consume_otrigger(timer_object, owner, OCMD_EAT));
+  TEST_ASSERT_EQUAL_INT(1, callbacks);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -539,5 +601,11 @@ int main(void)
   RUN_TEST(timer_object_two_triggers);
   RUN_TEST(timer_object_extracted_next_trigger);
   RUN_TEST(timer_object_extracted_owner);
+  RUN_TEST(object_action_extraction_denied);
+  RUN_TEST(object_drop_extraction_denied);
+  RUN_TEST(object_get_extraction_denied);
+  RUN_TEST(object_wear_extraction_denied);
+  RUN_TEST(object_remove_extraction_denied);
+  RUN_TEST(object_consume_extraction_denied);
   return UNITY_END();
 }
