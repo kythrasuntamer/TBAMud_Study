@@ -3646,7 +3646,7 @@ void free_char(struct char_data *ch)
   /* find_char helper, when free_char is called with a blank character struct,
    * ID is set to 0, and has not yet been added to the lookup table. */
   if (ch->script_id != 0) {
-    remove_from_lookup_table(ch->script_id);
+    remove_from_lookup_table(ch->script_id, ch);
   }
 
   free(ch);
@@ -3671,7 +3671,7 @@ void free_obj(struct obj_data *obj)
 
   /* find_obj helper (0 is not-yet-added to the table) */
   if (obj->script_id != 0) {
-    remove_from_lookup_table(obj->script_id);
+    remove_from_lookup_table(obj->script_id, obj);
   }
 
   free(obj);

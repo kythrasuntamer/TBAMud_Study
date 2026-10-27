@@ -320,7 +320,7 @@ void read_saved_vars(struct char_data *ch);
 void save_char_vars(struct char_data *ch);
 void init_lookup_table(void);
 void add_to_lookup_table(long uid, void *c);
-void remove_from_lookup_table(long uid);
+void remove_from_lookup_table(long uid, const void *c);
 
 /* from dg_db_scripts.c */
 void parse_trigger(FILE *trig_f, int nr);

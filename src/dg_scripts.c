@@ -3241,9 +3241,8 @@ static struct obj_data *find_obj_by_uid_in_lookup_table(long uid)
 
 int has_obj_by_uid_in_lookup_table(long uid)
 {
-  struct lookup_table_t *lt = find_element_by_uid_in_lookup_table(uid);
-
-  return lt != NULL;
+  /* Only object-range UIDs name objects; see note in dg_scripts.h. */
+  return uid >= OBJ_ID_BASE && find_element_by_uid_in_lookup_table(uid) != NULL;
 }
 
 /* Validate both the object UID namespace and the original allocation's
@@ -3280,7 +3279,10 @@ void add_to_lookup_table(long uid, void *c)
   lt->next->c = c;
 }
 
-void remove_from_lookup_table(long uid)
+/* Remove uid only while it still maps to c. A UID may be rebound (player
+ * login re-registers the idnum) while an older holder awaits extraction;
+ * freeing that holder must not drop the live entity's mapping. */
+void remove_from_lookup_table(long uid, const void *c)
 {
   int bucket = (int) (uid & (BUCKET_COUNT - 1));
   struct lookup_table_t *lt = &lookup_table[bucket], *flt = NULL;
@@ -3291,6 +3293,12 @@ void remove_from_lookup_table(long uid)
     return;
 
   flt = find_element_by_uid_in_lookup_table(uid);
+
+  if (flt && flt->c != c) {
+    log("SYSERR: remove_from_lookup: UID %ld is bound to another entity; "
+        "keeping the current mapping.", uid);
+    return;
+  }
 
   if (flt) {
     for (lt = &lookup_table[bucket];lt->next != flt;lt = lt->next)
@@ -3342,12 +3350,25 @@ int trig_is_attached(struct script_data *sc, int trig_num)
 long char_script_id(char_data *ch)
 {
   if (ch->script_id == 0) {
+    /* Stay inside the mobile range: an ID past ROOM_ID_BASE is unreachable
+     * by find_char() and eventually collides with object IDs. After wrapping,
+     * skip IDs still held by live mobiles. */
+    long attempts;
+    for (attempts = 0; attempts < ROOM_ID_BASE - MOB_ID_BASE; attempts++) {
+      if (max_mob_id < MOB_ID_BASE || max_mob_id >= ROOM_ID_BASE) {
+        mudlog(CMP, LVL_BUILDER, TRUE, "SYSERR: Script IDs for mobiles wrapped; reusing IDs of extracted mobiles");
+        max_mob_id = MOB_ID_BASE;
+      }
+      if (!find_element_by_uid_in_lookup_table(max_mob_id))
+        break;
+      max_mob_id++;
+    }
+    if (attempts == ROOM_ID_BASE - MOB_ID_BASE) {
+      mudlog(CMP, LVL_BUILDER, TRUE, "SYSERR: No free mobile script IDs remain");
+      abort();
+    }
     ch->script_id = max_mob_id++;
     add_to_lookup_table(ch->script_id, (void *)ch);
-    
-    if (max_mob_id >= ROOM_ID_BASE) {
-      mudlog(CMP, LVL_BUILDER, TRUE, "SYSERR: Script IDs for mobiles have exceeded the limit -- reboot to fix this");
-    }
   }
   return ch->script_id;
 }
@@ -3364,6 +3385,16 @@ long char_script_id(char_data *ch)
 long obj_script_id(obj_data *obj)
 {
   if (obj->script_id == 0) {
+    /* Never wrap into the character/room ranges (long may be 32 bits), and
+     * never take an ID that is still registered. */
+    while (max_obj_id < OBJ_ID_BASE || max_obj_id == LONG_MAX ||
+           find_element_by_uid_in_lookup_table(max_obj_id)) {
+      if (max_obj_id < OBJ_ID_BASE || max_obj_id == LONG_MAX) {
+        mudlog(CMP, LVL_BUILDER, TRUE, "SYSERR: Script IDs for objects wrapped; reusing IDs of extracted objects");
+        max_obj_id = OBJ_ID_BASE;
+      } else
+        max_obj_id++;
+    }
     obj->script_id = max_obj_id++;
     add_to_lookup_table(obj->script_id, (void *)obj);
     
