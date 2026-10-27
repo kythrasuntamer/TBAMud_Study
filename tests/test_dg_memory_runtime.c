@@ -757,6 +757,58 @@ static void command_mob_detached_current_trigger(void)
   TEST_ASSERT_EQUAL_INT(2, callbacks);
   TEST_ASSERT_NULL(trigger);
 }
+/* Speech matching links is_substring()/word_check(); these fixtures follow
+ * the dg_scripts.c contracts (case-insensitive search, quoted phrases). */
+char *str_str(char *cs, char *ct)
+{
+  if (!cs || !ct || !*ct)
+    return NULL;
+  for (; *cs; cs++) {
+    size_t i = 0;
+    while (ct[i] && cs[i] && LOWER(cs[i]) == LOWER(ct[i]))
+      i++;
+    if (!ct[i])
+      return cs;
+  }
+  return NULL;
+}
+char *matching_quote(char *p)
+{
+  char *start = p;
+  for (p++; *p && *p != '"'; p++)
+    if (*p == '\\' && p[1] != '\0')
+      p++;
+  if (!*p && p > start)
+    p--;
+  return p;
+}
+/* Speech triggers reacquire listeners by UID rather than next_in_room. */
+static void setup_speech_mob(void)
+{
+  SET_BIT_AR(MOB_FLAGS(owner), MOB_ISNPC);
+  script->types = MTRIG_SPEECH;
+  trigger->trigger_type = MTRIG_SPEECH;
+  trigger->narg = 0;
+  trigger->arglist = strdup("hello");
+  TEST_ASSERT_NOT_NULL(trigger->arglist);
+}
+static void speech_mob_baseline(void)
+{
+  setup_speech_mob();
+  char said[] = "hello there";
+  speech_mtrigger(visitor, said);
+  TEST_ASSERT_EQUAL_INT(1, callbacks);
+}
+static void speech_mob_listener_purged(void)
+{
+  setup_speech_mob();
+  char said[] = "hello there";
+  attack = PURGE_OWNER;
+  speech_mtrigger(visitor, said);
+  TEST_ASSERT_EQUAL_INT(1, callbacks);
+  TEST_ASSERT_NULL(owner);
+}
+
 /* Load triggers: a script may "return" SCRIPT_ERROR_CODE and purge itself,
  * leaving the handler's object pointer NULL. */
 struct obj_data *obj_proto;
@@ -836,6 +888,8 @@ int main(void)
   RUN_TEST(leave_actor_extracted_mid_dispatch);
   RUN_TEST(command_mob_baseline);
   RUN_TEST(command_mob_detached_current_trigger);
+  RUN_TEST(speech_mob_baseline);
+  RUN_TEST(speech_mob_listener_purged);
   RUN_TEST(load_object_purged_on_error);
   return UNITY_END();
 }
