@@ -258,3 +258,65 @@ otherwise define a bounded, non-dereferencing snapshot strategy supported
 by tests. Preserve script order, multi-trigger semantics, return values,
 and persistent game data. Avoid changing these handlers in bulk before
 individual regressions pass.
+
+## Fifth pass: macro and security audit
+
+### Linked-list macro: REMOVE_FROM_LIST
+
+`src/utils.h` defines `REMOVE_FROM_LIST(item, head, next)` using
+an implicitly required caller variable `temp`. It does not report
+whether the requested item was found; if absent, it silently performs
+no removal. The macro evaluates `item` more than once and assumes
+the supplied `item` and linked-list nodes remain live. In a
+callback-driven DG path, it must not be applied to cached pointers
+whose lifetime may have ended.
+
+Risk: ambiguous error reporting and a potentially unsafe removal
+operation when callers have inconsistent list ownership. Follow-up:
+inventory actual callers and their ownership conditions before changing
+the macro signature. A future typed helper should return explicit
+success/failure, preserve pointer identity, and avoid repeated
+evaluation.
+
+### CHECK_PLAYER_SPECIAL is intentionally conditional
+
+The two `CHECK_PLAYER_SPECIAL` definitions in `utils.h` are
+mutually exclusive `#if 1` / `#else` alternatives, **not** a
+double-active macro collision. The enabled version logs when player
+specials are accessed on the shared `dummy_mob` storage. Removing
+that check for a tidier macro layout would weaken diagnostics and
+could conceal cross-NPC state corruption. Retain it and its
+call-site file/line context until an equivalent checked accessor
+has tests.
+
+### Tool-local CREATE should not be blindly centralized
+
+`src/util/wld2html.c` provides a standalone `CREATE` macro
+distinct from the production checked allocator in `src/utils.h`.
+The tool also embeds its own direction/exit constants. These
+definitions may intentionally avoid game-engine header dependencies.
+Unifying them without inspecting standalone builds could break the
+utility or change allocation failure behavior. Compare their
+preconditions and tests first.
+
+### Security review: DG timer repair pending verification
+
+The current branch includes a `timer_otrigger()` change
+(`903e69a`) and three adversarial tests (`d3526d6`), but the
+local ASan/UBSan result for those commits has **not** been supplied.
+Do not mark them validated or merge the draft PR.
+
+The timer fix uses the object UID lookup as a liveness test and
+compares captured trigger pointers against currently attached
+triggers. Follow-up must assess ABA/address-reuse risk: a newly
+allocated trigger at the same address as a freed trigger could pass
+pointer comparison. A stable trigger identity or generation check
+may be required to guarantee the original dispatch set.
+
+### Additional callback priorities
+
+`leave_otrigger`, `command_mtrigger`, and `cmd_otrig` still
+continue across callbacks using potentially invalidated list links.
+Priority is sanitizer-backed tests for deletion/replacement of the
+current and next node, actor extraction, reentrant dispatch, and
+preservation of the original return-value contracts.
