@@ -40,26 +40,50 @@
 ** F(z)  = a(z%q)- rz/q+ m((z/q) - a(z/m))
 ** 	 = a(z%q)- rz/q+ m(z/q) - az */
 
+/* Generator state.  Invariant: 1 <= seed <= m - 1 once circle_srandom() has
+ * run.  Outside that range the recurrence breaks: 0 (or any multiple of m)
+ * maps to m, which is a fixed point, so every later roll is identical. */
 static unsigned long seed;
 
+/**
+ * Seed the generator.  Any value is accepted and reduced modulo m
+ * (2^31 - 1) into the generator's domain -- comm.c seeds with time(0),
+ * which passes m in 2038.  A seed that reduces to 0 (0 itself, m, 2m, ...)
+ * would freeze the generator; it is reported ("rng-seed") and replaced by 1.
+ */
 void circle_srandom(unsigned long initial_seed)
 {
-    seed = initial_seed;
+    unsigned long reduced = initial_seed % m;
+
+    if (reduced == 0) {
+      TB_WARN_MSG("rng", "rng-seed", "circle_srandom",
+                  "seed %lu is a multiple of 2^31-1, a fixed point of the "
+                  "generator; using 1", initial_seed);
+      reduced = 1;
+    }
+    seed = reduced;
 }
 
+/**
+ * Next value of the Park-Miller minimal standard generator, in
+ * [1, 2^31 - 2].  Not cryptographic and not thread-safe (one global
+ * state).  Schrage's method keeps every intermediate within 32 bits for a
+ * seed in [1, m - 1]; the arithmetic is done in long long so no step
+ * depends on int width or on an implementation-defined conversion.
+ */
 unsigned long circle_random(void)
 {
-   int lo, hi, test;
+    long long lo, hi, test;
 
-    hi   = seed/q;
-    lo   = seed%q;
+    hi   = (long long)(seed / q);
+    lo   = (long long)(seed % q);
 
-    test = a*lo - r*hi;
+    test = (long long)a * lo - (long long)r * hi;
 
     if (test > 0)
-	seed = test;
+	seed = (unsigned long)test;
     else
-	seed = test+ m;
+	seed = (unsigned long)(test + (long long)m);
 
     return (seed);
 }

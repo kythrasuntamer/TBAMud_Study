@@ -81,6 +81,10 @@ add_mud_test(test_random
     ${MUD_SRCDIR}/utils.c
     ${CMAKE_CURRENT_SOURCE_DIR}/test_random.c
 )
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    # Capture random.c's TB_WARN_MSG records (see test_random.c).
+    target_link_options(test_random PRIVATE -Wl,--wrap=tb_error_log_at)
+endif()
 
 # ---------------------------------------------------------------------------
 # test_interpreter — covers string helpers in src/interpreter.c

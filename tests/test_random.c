@@ -13,7 +13,25 @@
 
 extern FILE *logfile;
 
-void setUp(void)    { logfile = stderr; }
+/* random.c's diagnostics, captured via -Wl,--wrap=tb_error_log_at. */
+static int captured_errors;
+static char captured_operation[64];
+
+void __wrap_tb_error_log_at(const char *severity, const char *subsystem,
+                            const char *operation, const char *resource,
+                            int errnum, const char *source_file,
+                            int source_line, const char *source_func,
+                            const char *detail_fmt, ...)
+{
+  (void)severity; (void)subsystem; (void)resource; (void)errnum;
+  (void)source_file; (void)source_line; (void)source_func; (void)detail_fmt;
+  captured_errors++;
+  if (snprintf(captured_operation, sizeof(captured_operation), "%s",
+               operation ? operation : "") < 0)
+    captured_operation[0] = '\0';
+}
+
+void setUp(void)    { logfile = stderr; captured_errors = 0; captured_operation[0] = '\0'; }
 void tearDown(void) { logfile = NULL; }
 
 /* =========================================================
@@ -131,9 +149,41 @@ void test_dice_one_die_one_side(void)
  * main
  * ========================================================= */
 
+/* I2-20: seeds 0, m and 2m made seed == m, a fixed point: every call
+ * returned 2147483647. */
+void test_circle_srandom_degenerate_seeds_are_reported(void)
+{
+    static const unsigned long bad[] = { 0UL, 2147483647UL, 4294967294UL };
+    size_t i;
+
+    for (i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
+      unsigned long x, y;
+
+      captured_errors = 0;
+      circle_srandom(bad[i]);
+      TEST_ASSERT_EQUAL_INT(1, captured_errors);
+      TEST_ASSERT_EQUAL_STRING("rng-seed", captured_operation);
+      x = circle_random();
+      y = circle_random();
+      TEST_ASSERT_TRUE(x != y);
+      TEST_ASSERT_EQUAL_UINT32(16807UL, x);	/* reseeded with 1 */
+    }
+}
+
+/* A seed above m is reduced into the domain, silently: it is not lost. */
+void test_circle_srandom_reduces_large_seed(void)
+{
+    circle_srandom(2147483648UL);		/* m + 1 */
+    TEST_ASSERT_EQUAL_INT(0, captured_errors);
+    TEST_ASSERT_EQUAL_UINT32(16807UL, circle_random());
+}
+
 int main(void)
 {
     UNITY_BEGIN();
+
+    RUN_TEST(test_circle_srandom_degenerate_seeds_are_reported);
+    RUN_TEST(test_circle_srandom_reduces_large_seed);
 
     /* circle_srandom / circle_random */
     RUN_TEST(test_circle_random_deterministic_first);
