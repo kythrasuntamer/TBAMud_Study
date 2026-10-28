@@ -1338,6 +1338,31 @@ static void script_stops_once_its_mob_is_extracted(void)
   TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "line 2"));
 }
 
+/* DGDOC-5: a damage trigger's result is the damage dealt, and a script that
+ * ends without 'return' made script_driver() return 1, so a damage trigger
+ * that merely reacted to hits cut every hit on its mob to 1 point. */
+static void damage_trigger_without_return_keeps_the_damage(void)
+{
+  const char *react[] = { "set seen %damage%", NULL };
+  const char *halve[] = { "eval half %damage% / 2", "return %half%", NULL };
+  const char *plain[] = { "set x 1", NULL };
+  char_data *attacker = make_mob("attacker");
+  char_data *reacting = make_mob("reacting"), *halving = make_mob("halving");
+  char_data *other = make_mob("other");
+  trig_data *t;
+
+  attach_to_script(&SCRIPT(reacting), make_trigger(MOB_TRIGGER, MTRIG_DAMAGE, 100, react));
+  attach_to_script(&SCRIPT(halving), make_trigger(MOB_TRIGGER, MTRIG_DAMAGE, 100, halve));
+  TEST_ASSERT_EQUAL_INT(37, damage_mtrigger(attacker, reacting, 37, 0));
+  TEST_ASSERT_EQUAL_INT(20, damage_mtrigger(attacker, halving, 40, 0));
+
+  /* The default applies to that one run only. */
+  t = make_trigger(MOB_TRIGGER, MTRIG_SPEECH, 0, plain);
+  attach_to_script(&SCRIPT(other), t);
+  TEST_ASSERT_EQUAL_INT(1, script_driver(&other, t, MOB_TRIGGER, TRIG_NEW));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -1392,5 +1417,6 @@ int main(void)
   RUN_TEST(vdelete_checks_the_builders_authority);
   RUN_TEST(wait_of_an_extracted_mob_does_not_resume);
   RUN_TEST(script_stops_once_its_mob_is_extracted);
+  RUN_TEST(damage_trigger_without_return_keeps_the_damage);
   return UNITY_END();
 }

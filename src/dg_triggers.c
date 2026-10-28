@@ -998,7 +998,16 @@ int damage_mtrigger(char_data *actor, char_data *victim, int dam, int attacktype
       tb_snprintf(buf, sizeof(buf), "%d", dam);
       add_var(&GET_TRIG_VARS(t), "damage", buf, 0);
       add_var(&GET_TRIG_VARS(t), "attacktype", skill_name(attacktype), 0);
-      return script_driver(&victim, t, MOB_TRIGGER, TRIG_NEW);
+      /* The result is the damage dealt ('return -1' cancels the hit). A
+       * script that does not 'return' keeps the damage: script_driver()'s
+       * usual default of 1 cut every hit on the mob to 1 point. A run that
+       * script_driver() refused (SCRIPT_ERROR_CODE, already reported) does
+       * not change the damage either. */
+      {
+        int ret = script_driver_default(&victim, t, MOB_TRIGGER, TRIG_NEW, dam);
+
+        return ret == SCRIPT_ERROR_CODE ? dam : ret;
+      }
     }
   }
 

@@ -325,6 +325,10 @@ int trig_is_attached(struct script_data *sc, int trig_num);
 /* To maintain strict-aliasing we'll have to do this trick with a union */
 /* Thanks to Chris Gilbert for reminding me that there are other options. */
 int script_driver(void *go_adress, trig_data *trig, int type, int mode);
+/* script_driver() whose run returns default_return instead of 1 when the
+ * script ends without 'return' (a damage trigger keeps the damage). */
+int script_driver_default(void *go_adress, trig_data *trig, int type,
+                          int mode, int default_return);
 void dg_script_execution_enter(void);
 void dg_script_execution_leave(void);
 trig_rnum real_trigger(trig_vnum vnum);

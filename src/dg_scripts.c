@@ -3093,6 +3093,19 @@ static void dg_letter_value(struct script_data *sc, trig_data *trig, char *cmd)
   add_var(&GET_TRIG_VARS(trig), varname, junk, sc->context);
 }
 
+/* What the next script_driver() run returns when its script ends without
+ * 'return'. Only script_driver_default() sets it, and the run consumes it
+ * as it starts, so runs nested in it and every later call return 1, which
+ * most trigger handlers read as "carry on". */
+static int dg_next_default_return = 1;
+
+int script_driver_default(void *go_adress, trig_data *trig, int type,
+                          int mode, int default_return)
+{
+  dg_next_default_return = default_return;
+  return script_driver(go_adress, trig, type, mode);
+}
+
 /* This is the core driver for scripts.
  * Arguments:
  * void *go_adress
@@ -3144,7 +3157,7 @@ static int dg_frame_owner_gone(void *go, int type, long owner_uid,
 int script_driver(void *go_adress, trig_data *trig, int type, int mode)
 {
   static int depth = 0;
-  int ret_val = 1;
+  int ret_val = dg_next_default_return;   /* 1 unless script_driver_default() */
   long owner_uid = 0;
   int owner_was_dying = FALSE;
   struct cmdlist_element *cl;
@@ -3155,6 +3168,8 @@ int script_driver(void *go_adress, trig_data *trig, int type, int mode)
 
   void obj_command_interpreter(obj_data *obj, char *argument);
   void wld_command_interpreter(struct room_data *room, char *argument);
+
+  dg_next_default_return = 1;   /* consumed: nested and later runs get 1 */
 
   if (!go_adress || !trig) {
     script_log("script_driver called with invalid NULL argument.");
