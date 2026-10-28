@@ -1985,6 +1985,30 @@ static void delete_room_reports_if_flag_command_after_cancelled_one(void)
                               "room vnum 20; it will never run"));
 }
 
+/* reset_zone() skips an if_flag command after one that did not run, so a
+ * chain of them after a cancelled command never runs: each is reported. */
+static void delete_room_reports_chained_if_flag_commands(void)
+{
+  static const int args[][3] = {
+    { 0, 1, 1 },              /* 0 'O' obj 0 into rnum 1 (deleted)        */
+    { 2, 0, 1 },              /* 1 'D' rnum 2 door 0, if_flag 1           */
+    { 2, 1, 1 },              /* 2 'D' rnum 2 door 1, if_flag 1           */
+  };
+  make_zones(1); make_rooms(3); make_objs(1);
+  set_zone_cmds(0, "ODD", args);
+  zone_table[0].cmd[1].if_flag = 1;
+  zone_table[0].cmd[2].if_flag = 1;
+  tb_error_capture_reset();
+
+  TEST_ASSERT_TRUE(delete_room(1));
+
+  TEST_ASSERT_EQUAL_INT('D', zone_table[0].cmd[1].command);
+  TEST_ASSERT_EQUAL_INT('D', zone_table[0].cmd[2].command);
+  TEST_ASSERT_EQUAL_INT(2, tb_captured_errors);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail_log, "command 1 'D' runs only"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail_log, "command 2 'D' runs only"));
+}
+
 /* ------------------------------------------------------------------------ */
 /* O4: add_quest() never wraps a shop_keeper that already chains to         */
 /* questmaster(); the two procs called each other until the stack ran out. */
@@ -2326,6 +2350,7 @@ int main(void)
   RUN_TEST(delete_room_renumbers_mob_and_obj_trigger_rooms);
   RUN_TEST(delete_room_cancels_mob_trigger_of_its_room);
   RUN_TEST(delete_room_reports_if_flag_command_after_cancelled_one);
+  RUN_TEST(delete_room_reports_chained_if_flag_commands);
   RUN_TEST(add_quest_wraps_a_plain_keeper_once);
   RUN_TEST(add_quest_does_not_rewrap_a_shop_running_questmaster);
   RUN_TEST(delete_room_sends_was_in_to_start_room);

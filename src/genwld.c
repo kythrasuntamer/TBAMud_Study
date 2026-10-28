@@ -102,11 +102,13 @@ static int obj_rnum_in(const obj_rnum *set, int n, obj_rnum r)
  * valid, add_room() shifts it), so they are renumbered the same way.
  * Commands that act on what an earlier command loaded are chained the way
  * reset_zone() runs them: 'G'/'E' give to the mobile the last 'M' loaded
- * (until the next 'M'); 'P' puts into the latest loaded copy of its
- * container; 'T'/'V' on a mob or object target the last mobile or object
- * loaded.  When that earlier command is cancelled here, the dependent one
- * would act on an earlier mobile or object at the next reset (or fail at
- * every reset), so it is cancelled too, and each one is reported. */
+ * (until the next 'M'); 'T'/'V' on a mob or object target the last mobile
+ * or object loaded.  'P' is an approximation: reset_zone() puts into the
+ * newest copy of its container anywhere in the world (get_obj_num()), which
+ * this pass cannot see, so it assumes the latest copy this zone loaded.
+ * When that earlier command is cancelled here, the dependent one would act
+ * on an earlier mobile or object at the next reset (or fail at every reset),
+ * so it is cancelled too, and each one is reported. */
 static void cancel_room_reset_commands(zone_rnum zone, room_rnum rnum,
                                        room_vnum deleted_vnum)
 {
@@ -168,7 +170,7 @@ static void cancel_room_reset_commands(zone_rnum zone, room_rnum rnum,
                   "before it, cancelled with deleted room vnum %d; it will "
                   "never run", zone_table[zone].number, c->line, j, cmd,
                   deleted_vnum);
-    prev_gone = gone;
+    prev_gone = gone || (c->if_flag && prev_gone);  /* a chain never runs */
 
     /* What the following commands act on, as reset_zone() tracks it. */
     switch (cmd) {
@@ -188,9 +190,9 @@ static void cancel_room_reset_commands(zone_rnum zone, room_rnum rnum,
         else
           TB_WARN_MSG("olc", "room-delete-orphan", "zone",
                       "zone %d line %d: more than %d cancelled containers; "
-                      "a later 'P' into obj rnum %d is not checked",
+                      "a later 'P' into obj vnum %d is not checked",
                       zone_table[zone].number, c->line,
-                      DELETE_ROOM_MAX_GONE_CONTAINERS, (int)c->arg1);
+                      DELETE_ROOM_MAX_GONE_CONTAINERS, obj_index[c->arg1].vnum);
       } else if (!gone) {     /* a live copy: later 'P's put into it */
         int k;
         for (k = 0; k < ngone; k++)
