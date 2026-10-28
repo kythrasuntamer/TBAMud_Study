@@ -918,13 +918,45 @@ void redit_parse(struct descriptor_data *d, char *arg)
   case REDIT_COPY:
     if ((number = real_room(tb_parse_int_or_zero(arg))) != NOWHERE) {
       redit_setup_existing(d, number);
+      /* The struct copy kept the source's vnum, but this session still
+       * edits OLC_NUM(d). NOWHERE marks a room that does not exist yet. */
+      OLC_ROOM(d)->number = real_room(OLC_NUM(d)) != NOWHERE ? OLC_NUM(d) : NOWHERE;
     } else
       write_to_output(d, "That room does not exist.\r\n");
     break;
   
   case REDIT_DELETE:
     if (*arg == 'y' || *arg == 'Y') {
-      room_rnum doomed = real_room(OLC_ROOM(d)->number);
+      /* Delete the room this session edits (OLC_NUM), never the scratch
+       * copy's number: after 'W' that names the copy source, possibly in a
+       * zone the builder cannot edit. */
+      room_rnum doomed = real_room(OLC_NUM(d));
+      struct char_data *builder = d->character;
+
+      if (doomed == NOWHERE) {
+        TB_WARN_MSG("olc", "delete-target-missing", "room",
+                    "builder " DIAG_CHAR_FMT " room vnum %d does not exist to delete",
+                    DIAG_CHAR(builder), OLC_NUM(d));
+        write_to_output(d, "Room %d has never been saved; there is nothing to delete.\r\n", OLC_NUM(d));
+        cleanup_olc(d, CLEANUP_ALL);
+        return;
+      }
+      if (!can_edit_zone(builder, real_zone_by_thing(OLC_NUM(d)))) {
+        TB_WARN_MSG("olc", "delete-permission", "room",
+                    "builder " DIAG_CHAR_FMT " room vnum %d delete refused: zone not editable",
+                    DIAG_CHAR(builder), OLC_NUM(d));
+        write_to_output(d, "You do not have permission to delete room %d.\r\n", OLC_NUM(d));
+        cleanup_olc(d, CLEANUP_ALL);
+        return;
+      }
+      if (OLC_ROOM(d)->number != OLC_NUM(d)) {
+        TB_ERROR_MSG("olc", "delete-target-mismatch", "room",
+                     "builder " DIAG_CHAR_FMT " editing room vnum %d (rnum %d) but scratch vnum is %d; delete refused",
+                     DIAG_CHAR(builder), OLC_NUM(d), doomed, OLC_ROOM(d)->number);
+        write_to_output(d, "Internal error: this editor lost track of room %d; nothing was deleted.\r\n", OLC_NUM(d));
+        cleanup_olc(d, CLEANUP_ALL);
+        return;
+      }
 
       if (delete_room(doomed)) {
         /* Other builders' scratch copies hold room rnums that just moved. */

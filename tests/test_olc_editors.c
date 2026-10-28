@@ -300,9 +300,24 @@ void delete_zone_command(struct zone_data *zone, int pos)
   zone->cmd = newlist;
 }
 
-int copy_object(struct obj_data *to, struct obj_data *from) { *to = *from; return TRUE; }
+static char *dup_or_null(const char *s) { return s ? strdup(s) : NULL; }
+int copy_object(struct obj_data *to, struct obj_data *from)
+{
+  *to = *from;
+  to->name = dup_or_null(from->name);
+  to->description = dup_or_null(from->description);
+  to->short_description = dup_or_null(from->short_description);
+  to->action_description = dup_or_null(from->action_description);
+  to->ex_description = NULL;
+  return TRUE;
+}
 obj_rnum add_object(struct obj_data *newobj, obj_vnum ovnum) { (void)newobj; return real_object(ovnum); }
-int delete_object(obj_rnum rnum) { (void)rnum; return NOTHING; }
+
+static int deleted_rnum = -1, delete_calls;
+int delete_object(obj_rnum rnum) { delete_calls++; deleted_rnum = rnum; return rnum; }
+
+static int zone_editable = TRUE;
+int can_edit_zone(struct char_data *ch, zone_rnum rnum) { (void)ch; (void)rnum; return zone_editable; }
 
 /* ------------------------------------------------------------------ */
 /* Fixtures                                                            */
@@ -346,6 +361,9 @@ void setUp(void)
   live_uid = 0;
   live_uid_obj = NULL;
   add_room_calls = 0;
+  deleted_rnum = -1;
+  delete_calls = 0;
+  zone_editable = TRUE;
   add_room_result = NOWHERE;
   world = NULL;
   top_of_world = 0;
@@ -667,6 +685,75 @@ static void test_room_insert_leaves_nowhere_exits_alone(void)
   free(redit_d.olc);
 }
 
+/* ------------------------------------------------------------------ */
+/* F1-04: delete acts on the edited vnum, never the 'W' copy source.   */
+/* ------------------------------------------------------------------ */
+static void oedit_copy_from(struct descriptor_data *d, const char *vnum)
+{
+  struct obj_data *before = OLC_OBJ(d);
+  oedit_parse(d, "w");
+  oedit_parse(d, (char *)vnum);
+  if (OLC_OBJ(d) != before)
+    free_scratch_obj(before);   /* the 'W' re-setup leak is F1-10 */
+}
+
+static void test_oedit_delete_after_copy_deletes_edited_object_not_source(void)
+{
+  struct descriptor_data *d = &builder_desc;
+
+  make_objects(3);
+  OLC_NUM(d) = 3001;
+  oedit_setup_existing(d, 1);
+  STATE(d) = CON_OEDIT;
+  OLC_MODE(d) = OEDIT_MAIN_MENU;
+
+  oedit_copy_from(d, "3000");
+  TEST_ASSERT_EQUAL_INT(1, GET_OBJ_RNUM(OLC_OBJ(d)));
+
+  oedit_parse(d, "x");
+  oedit_parse(d, "y");
+
+  TEST_ASSERT_EQUAL_INT(1, delete_calls);
+  TEST_ASSERT_EQUAL_INT(1, deleted_rnum);
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+}
+
+static void test_oedit_delete_refused_without_zone_permission(void)
+{
+  struct descriptor_data *d = &builder_desc;
+
+  make_objects(3);
+  OLC_NUM(d) = 3001;
+  oedit_setup_existing(d, 1);
+  STATE(d) = CON_OEDIT;
+  OLC_MODE(d) = OEDIT_DELETE;
+  zone_editable = FALSE;
+
+  oedit_parse(d, "y");
+
+  TEST_ASSERT_EQUAL_INT(0, delete_calls);
+  TEST_ASSERT_EQUAL_STRING("delete-permission", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "obj vnum 3001"));
+}
+
+static void test_oedit_delete_refused_when_scratch_rnum_disagrees(void)
+{
+  struct descriptor_data *d = &builder_desc;
+
+  make_objects(3);
+  OLC_NUM(d) = 3001;
+  oedit_setup_existing(d, 1);
+  GET_OBJ_RNUM(OLC_OBJ(d)) = 2;   /* a renumber this session missed */
+  STATE(d) = CON_OEDIT;
+  OLC_MODE(d) = OEDIT_DELETE;
+
+  oedit_parse(d, "y");
+
+  TEST_ASSERT_EQUAL_INT(0, delete_calls);
+  TEST_ASSERT_EQUAL_STRING("ERROR", tb_captured_severity);
+  TEST_ASSERT_EQUAL_STRING("delete-target-mismatch", tb_captured_operation);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -678,5 +765,8 @@ int main(void)
   RUN_TEST(test_zedit_menu_reports_stale_object_rnum_instead_of_reading_past_table);
   RUN_TEST(test_object_delete_renumbers_other_builders_sessions);
   RUN_TEST(test_room_insert_leaves_nowhere_exits_alone);
+  RUN_TEST(test_oedit_delete_after_copy_deletes_edited_object_not_source);
+  RUN_TEST(test_oedit_delete_refused_without_zone_permission);
+  RUN_TEST(test_oedit_delete_refused_when_scratch_rnum_disagrees);
   return UNITY_END();
 }

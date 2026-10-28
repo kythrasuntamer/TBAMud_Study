@@ -1428,13 +1428,45 @@ void oedit_parse(struct descriptor_data *d, char *arg)
   case OEDIT_COPY:
     if ((number = real_object(tb_parse_int_or_zero(arg))) != NOTHING) {
       oedit_setup_existing(d, number);
+      /* copy_object() kept the source's rnum, but this session still edits
+       * OLC_NUM(d): delete and save must never act on the copy source. */
+      GET_OBJ_RNUM(OLC_OBJ(d)) = real_object(OLC_NUM(d));
     } else
       write_to_output(d, "That object does not exist.\r\n");
     break;
 
   case OEDIT_DELETE:
     if (*arg == 'y' || *arg == 'Y') {
-      obj_rnum doomed = GET_OBJ_RNUM(OLC_OBJ(d));
+      /* Delete the prototype this session edits (OLC_NUM), never whatever
+       * rnum the scratch copy holds: after 'W' or a missed renumber that
+       * names another object, possibly in a zone the builder cannot edit. */
+      obj_rnum doomed = real_object(OLC_NUM(d));
+      struct char_data *builder = d->character;
+
+      if (doomed == NOTHING) {
+        TB_WARN_MSG("olc", "delete-target-missing", "object",
+                    "builder " DIAG_CHAR_FMT " obj vnum %d has no prototype to delete",
+                    DIAG_CHAR(builder), OLC_NUM(d));
+        write_to_output(d, "Object %d has never been saved; there is nothing to delete.\r\n", OLC_NUM(d));
+        cleanup_olc(d, CLEANUP_ALL);
+        return;
+      }
+      if (!can_edit_zone(builder, real_zone_by_thing(OLC_NUM(d)))) {
+        TB_WARN_MSG("olc", "delete-permission", "object",
+                    "builder " DIAG_CHAR_FMT " obj vnum %d delete refused: zone not editable",
+                    DIAG_CHAR(builder), OLC_NUM(d));
+        write_to_output(d, "You do not have permission to delete object %d.\r\n", OLC_NUM(d));
+        cleanup_olc(d, CLEANUP_ALL);
+        return;
+      }
+      if (GET_OBJ_RNUM(OLC_OBJ(d)) != doomed) {
+        TB_ERROR_MSG("olc", "delete-target-mismatch", "object",
+                     "builder " DIAG_CHAR_FMT " editing obj vnum %d (rnum %d) but scratch rnum is %d; delete refused",
+                     DIAG_CHAR(builder), OLC_NUM(d), doomed, GET_OBJ_RNUM(OLC_OBJ(d)));
+        write_to_output(d, "Internal error: this editor lost track of object %d; nothing was deleted.\r\n", OLC_NUM(d));
+        cleanup_olc(d, CLEANUP_ALL);
+        return;
+      }
 
       if (delete_object(doomed) != NOTHING) {
         /* Other builders' scratch copies hold object rnums that just moved. */

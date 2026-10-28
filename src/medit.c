@@ -1068,13 +1068,46 @@ void medit_parse(struct descriptor_data *d, char *arg)
   case MEDIT_COPY:
     if ((i = real_mobile(tb_parse_int_or_zero(arg))) != NOWHERE) {
       medit_setup_existing(d, i);
+      /* copy_mobile() kept the source's rnum (nr), but this session still
+       * edits OLC_NUM(d): delete, save and free_mobile() rely on nr naming
+       * that prototype or NOBODY. */
+      GET_MOB_RNUM(OLC_MOB(d)) = real_mobile(OLC_NUM(d));
     } else
       write_to_output(d, "That mob does not exist.\r\n");
     break;
 
   case MEDIT_DELETE:
     if (*arg == 'y' || *arg == 'Y') {
-      mob_rnum doomed = GET_MOB_RNUM(OLC_MOB(d));
+      /* Delete the prototype this session edits (OLC_NUM), never whatever
+       * rnum the scratch copy holds: after 'W' or a missed renumber that
+       * names another mobile, possibly in a zone the builder cannot edit. */
+      mob_rnum doomed = real_mobile(OLC_NUM(d));
+      struct char_data *builder = d->character;
+
+      if (doomed == NOBODY) {
+        TB_WARN_MSG("olc", "delete-target-missing", "mobile",
+                    "builder " DIAG_CHAR_FMT " mob vnum %d has no prototype to delete",
+                    DIAG_CHAR(builder), OLC_NUM(d));
+        write_to_output(d, "Mobile %d has never been saved; there is nothing to delete.\r\n", OLC_NUM(d));
+        cleanup_olc(d, CLEANUP_ALL);
+        return;
+      }
+      if (!can_edit_zone(builder, real_zone_by_thing(OLC_NUM(d)))) {
+        TB_WARN_MSG("olc", "delete-permission", "mobile",
+                    "builder " DIAG_CHAR_FMT " mob vnum %d delete refused: zone not editable",
+                    DIAG_CHAR(builder), OLC_NUM(d));
+        write_to_output(d, "You do not have permission to delete mobile %d.\r\n", OLC_NUM(d));
+        cleanup_olc(d, CLEANUP_ALL);
+        return;
+      }
+      if (GET_MOB_RNUM(OLC_MOB(d)) != doomed) {
+        TB_ERROR_MSG("olc", "delete-target-mismatch", "mobile",
+                     "builder " DIAG_CHAR_FMT " editing mob vnum %d (rnum %d) but scratch rnum is %d; delete refused",
+                     DIAG_CHAR(builder), OLC_NUM(d), doomed, GET_MOB_RNUM(OLC_MOB(d)));
+        write_to_output(d, "Internal error: this editor lost track of mobile %d; nothing was deleted.\r\n", OLC_NUM(d));
+        cleanup_olc(d, CLEANUP_ALL);
+        return;
+      }
 
       if (delete_mobile(doomed) != NOBODY) {
         /* Other builders' scratch copies hold mobile rnums that just moved. */
