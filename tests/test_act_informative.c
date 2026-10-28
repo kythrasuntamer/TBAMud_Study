@@ -855,7 +855,7 @@ static void help_miss_logs_escaped_topic(void)
 
   logfile = NULL;
   descriptor_list = NULL;
-  rewind(log_fp);
+  TEST_ASSERT_EQUAL_INT(0, fseek(log_fp, 0L, SEEK_SET));
   got = fread(logged, 1, sizeof(logged) - 1, log_fp);
   logged[got] = '\0';
   TEST_ASSERT_EQUAL_INT(0, fclose(log_fp));
