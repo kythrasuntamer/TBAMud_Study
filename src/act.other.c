@@ -8,6 +8,23 @@
 *  CircleMUD is based on DikuMUD, Copyright (C) 1990, 1991.               *
 **************************************************************************/
 
+/**
+ * @file act.other.c
+ * Miscellaneous player commands: quit, save, sneak/hide/steal, practice,
+ * visible, title, group and split, report, use/quaff/recite, wimpy,
+ * display, toggles (do_gen_tog), endgame advancement and similar.
+ *
+ * Input and trust: arguments come from the player (or DG/force) and are
+ * parsed with bounded helpers. Saved values used here (gold, endgame
+ * ranks) come from the player file and are range-checked where they feed
+ * arithmetic or tables; gold arithmetic is widened before it can overflow
+ * int and never passes MAX_GOLD silently.
+ *
+ * Lifetime: DG callbacks (give_otrigger, receive_mtrigger and the like)
+ * may move or purge the actors and objects passed to them; code after a
+ * callback relies only on what that callback re-validates.
+ */
+
 #include <limits.h>
 
 #include "conf.h"
@@ -145,6 +162,19 @@ ACMD(do_hide)
   SET_BIT_AR(AFF_FLAGS(ch), AFF_HIDE);
 }
 
+/**
+ * Steal an object or coins from another character.
+ *
+ * Trigger contract for an object theft: give_otrigger(obj, vict, ch) and
+ * receive_mtrigger(ch, vict, obj) run scripts that may purge or move
+ * things. Each returns 0 unless, after its script, obj still matches its
+ * UID and obj->carried_by is still the giver (vict), and receive_mtrigger
+ * also checks that neither character is dead. They do not re-check that
+ * ch and vict share a room or that ch is not pending extraction. Because
+ * worn equipment has worn_by set and carried_by NULL, stealing a worn
+ * item whose object or victim has a GIVE/RECEIVE trigger always fails
+ * ("Impossible!").
+ */
 ACMD(do_steal)
 {
   struct char_data *vict;
@@ -266,8 +296,12 @@ ACMD(do_steal)
       act("$n tries to steal gold from $N.", TRUE, ch, 0, vict, TO_NOTVICT);
     } else {
       /* Steal some gold coins */
-      gold = (GET_GOLD(vict) * rand_number(1, 10)) / 100;
-      gold = MIN(1782, gold);
+      /* GET_GOLD can reach MAX_GOLD (2.14e9): multiply in long long so a
+       * rich victim does not overflow int (undefined behaviour, and a
+       * negative result that read as "no gold"). */
+      long long take = ((long long) GET_GOLD(vict) * rand_number(1, 10)) / 100;
+
+      gold = (int) (take < 1782 ? take : 1782);
       if (gold > 0) {
 		increase_gold(ch, gold);
 		decrease_gold(vict, gold);
@@ -506,12 +540,21 @@ ACMD(do_report)
 	  GET_MOVE(ch), GET_MAX_MOVE(ch));
 }
 
+/**
+ * Split coins evenly among group members in the same room.
+ *
+ * Gold policy: the splitter is debited only after every recipient is
+ * known to stay at or below MAX_GOLD with its share; otherwise the split
+ * is refused and reported (split-gold-cap), because increase_gold()
+ * clamps at MAX_GOLD and would destroy the excess. The remainder of an
+ * uneven split stays with the splitter.
+ */
 ACMD(do_split)
 {
   char buf[MAX_INPUT_LENGTH];
   int amount, num = 0, share, rest;
   size_t len;
-  struct char_data *k;
+  struct char_data *k, *blocked;
   
   if (IS_NPC(ch))
     return;
@@ -539,6 +582,27 @@ ACMD(do_split)
       rest = amount % num;
     } else {
       send_to_char(ch, "With whom do you wish to share your gold?\r\n");
+      return;
+    }
+
+    /* Gold is conserved only if every share fits: increase_gold() clamps
+     * at MAX_GOLD and silently drops the excess, after the splitter has
+     * already been debited. Check every recipient first (walking the whole
+     * list, since simple_list() keeps iterator state) and refuse the split
+     * if any share would pass the cap. */
+    blocked = NULL;
+    while ((k = (struct char_data *) simple_list(GROUP(ch)->members)) != NULL)
+      if (k != ch && IN_ROOM(ch) == IN_ROOM(k) && !IS_NPC(k) && !blocked &&
+          (long long) GET_GOLD(k) + share > MAX_GOLD)
+        blocked = k;
+    if (blocked) {
+      TB_WARN_MSG("gold", "split-gold-cap", "points.gold",
+                  DIAG_CHAR_FMT " split of %d refused: recipient " DIAG_CHAR_FMT
+                  " holds %d and a share of %d would pass MAX_GOLD %d",
+                  DIAG_CHAR(ch), amount, DIAG_CHAR(blocked), GET_GOLD(blocked),
+                  share, MAX_GOLD);
+      send_to_char(ch, "%s cannot carry that much more gold; nothing was split.\r\n",
+                   GET_NAME(blocked));
       return;
     }
 
@@ -597,9 +661,10 @@ ACMD(do_use)
       send_to_char(ch, "You don't seem to be holding %s %s.\r\n", AN(arg), arg);
       return;
     default:
-      log("SYSERR: Unknown subcmd %d passed to do_use.", subcmd);
-      /* SYSERR_DESC: This is the same as the unhandled case in do_gen_ps(),
-       * but in the function which handles 'quaff', 'recite', and 'use'. */
+      /* subcmd comes from cmd_info[] (interpreter.c), not from the player. */
+      TB_ERROR_MSG("act", "bad-subcmd", "cmd_info",
+                   DIAG_CHAR_FMT " do_use cmd %d subcmd %d has no case",
+                   DIAG_CHAR(ch), cmd, subcmd);
       return;
     }
   }
@@ -864,7 +929,10 @@ ACMD(do_gen_tog)
     result = PRF_TOG_CHK(ch, PRF_ZONERESETS);
     break;
   default:
-    log("SYSERR: Unknown subcmd %d in do_gen_toggle.", subcmd);
+    /* subcmd comes from cmd_info[] (interpreter.c), not from the player. */
+    TB_ERROR_MSG("act", "bad-subcmd", "cmd_info",
+                 DIAG_CHAR_FMT " do_gen_toggle cmd %d subcmd %d has no case",
+                 DIAG_CHAR(ch), cmd, subcmd);
     return;
   }
 
@@ -1023,7 +1091,17 @@ ACMD(do_endgame)
   }
   cost = 2;
   amount = 10;
-  if (*rank < 0 || *rank >= 100 || *maximum > SHRT_MAX - amount) {
+  /* A rank is 0..100 and changes only here; the saved value comes from the
+   * player file. Outside that range is corrupt (or hand-edited) data, not
+   * the normal upgrade limit, so it is reported and nothing is bought. */
+  if (*rank < 0 || *rank > 100) {
+    TB_ERROR_MSG("endgame", "rank-corrupt", "pfile",
+                 DIAG_CHAR_FMT " endgame %s rank %d outside 0..100",
+                 DIAG_CHAR(ch), choice, *rank);
+    send_to_char(ch, "Your advancement record is damaged; please tell an immortal.\r\n");
+    return;
+  }
+  if (*rank >= 100 || *maximum > SHRT_MAX - amount) {
     send_to_char(ch, "You have reached the upgrade limit.\r\n");
     return;
   }

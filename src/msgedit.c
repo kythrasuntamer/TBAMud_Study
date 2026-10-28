@@ -19,6 +19,17 @@
 #include "interpreter.h"
 #include "modify.h"
 
+/** @file msgedit.c
+ * Combat messages: boot loader, writer and the GOD-level editor.
+ *
+ * fight_messages[] has MAX_MESSAGES slots, each a list of message_type
+ * alternatives for one attack type (a_type).  The editor works on a deep
+ * copy (OLC_MSG_LIST, OLC_NUM = slot) and only copy_message_list() on
+ * save replaces the slot's list, freeing the old message_type nodes: fight
+ * code must not cache message_type pointers across an msgedit save.  Each
+ * editor's "save prompt came from Q" state is its own OLC_MODE
+ * (MSGEDIT_CONFIRM_SAVE_QUIT). */
+
 /* Statics */
 static void free_messages_type(struct msg_type *msg);
 static void msgedit_main_menu(struct descriptor_data * d);
@@ -70,6 +81,14 @@ void free_messages(void)
     }
 }
 
+/** Boot-time loader for MESS_FILE (exits on a missing or malformed file).
+ * Format: blank lines and lines starting with '*' are skipped; each record
+ * is an 'M' line, a line holding the attack type (a non-negative int),
+ * then 12 message lines read by fread_action(), where a line starting
+ * with '#' means "no message" (NULL).  Lines are read through a 128-byte
+ * fgets buffer.  A record joins the first slot whose a_type matches or is
+ * still 0, so type 0 is indistinguishable from an empty slot.  The closing
+ * log line reports the index of the last slot used, not a count. */
 void load_messages(void)
 {
   FILE *fl;
@@ -190,17 +209,28 @@ static void show_messages(struct char_data *ch)
 
 #define PRINT_MSG(msg) (((msg) == NULL) ? "#" : (msg))
 
-void save_messages_to_disk(void)
+/* Write every combat message to MESS_FILE.  Called from the in-game
+ * editor, so a failure must never exit(): it used to call exit(1), dropping
+ * every player without a crash-save.  The file is written to MESS_FILE.tmp,
+ * flushed and closed with checks, and renamed over the original, so a
+ * failed save leaves the old file intact.  Returns FALSE on any failure
+ * (errno describes it); the sysdep helpers have already logged which call
+ * failed, and the caller reports it with the editor's identity. */
+int save_messages_to_disk(void)
 {
   FILE *fp;
-  int i;
+  int i, name_result, stream_ok, flush_ok, close_ok;
   struct message_type *msg;
+  char temp_name[MAX_STRING_LENGTH];
 
-  if (!(fp = fopen(MESS_FILE, "w"))) {
-    { int saved_errno = errno; log("SYSERR: combat-message fopen for write failed for %s: %s (errno=%d)", MESS_FILE, strerror(saved_errno), saved_errno); }
-    exit(1);
+  name_result = snprintf(temp_name, sizeof(temp_name), "%s.tmp", MESS_FILE);
+  if (name_result < 0 || (size_t)name_result >= sizeof(temp_name)) {
+    errno = ENAMETOOLONG;
+    return FALSE;
   }
- 
+  if (!(fp = fopen(temp_name, "w")))
+    return FALSE;
+
   tb_fprintf(fp, "* TBAMUD 3.64 Combat Message File\n");
  
   for (i = 0; i < MAX_MESSAGES; i++) {
@@ -241,9 +271,26 @@ void save_messages_to_disk(void)
                   PRINT_MSG(msg->god_msg.victim_msg),
                   PRINT_MSG(msg->god_msg.room_msg));
     }
-  }  
-  
-  tb_fclose(fp);
+  }
+
+  /* ferror() stays set after any failed write.  tb_fprintf() reported
+   * each one, but a later flush that succeeds would hide it and commit a
+   * file with a hole in it, which load_messages() rejects at the next
+   * boot by exiting. */
+  stream_ok = !ferror(fp);
+  flush_ok = tb_fflush_checked(fp, temp_name);
+  close_ok = tb_fclose_checked(fp, temp_name);
+  if (!stream_ok)
+    TB_ERROR_MSG("olc", "save-stream-error", temp_name,
+                 TB_ERRID_PERSIST_WRITE " combat messages: a write failed; previous file kept");
+  if (!stream_ok || !flush_ok || !close_ok) {
+    int saved_errno = flush_ok && close_ok ? EIO : errno;
+    if (remove(temp_name) != 0 && errno != ENOENT)
+      TB_REPORT_ERRNO("remove", temp_name);
+    errno = saved_errno;
+    return FALSE;
+  }
+  return tb_replace_file_checked(temp_name, MESS_FILE);
 }
 
 static void msgedit_setup(struct descriptor_data *d)
@@ -255,6 +302,12 @@ static void msgedit_setup(struct descriptor_data *d)
   OLC_MSG(d) = OLC_MSG_LIST(d)->msg;
 }
 
+/** Replace to's messages with deep copies of from's.  to's old nodes and
+ * strings are freed first.  The copy is built by prepending, so the order
+ * of the alternatives is reversed on every copy (setup and save); fight
+ * code picks one at random, so the order carries no meaning.  An empty
+ * from yields one blank message while number_of_attacks stays as copied
+ * (0). */
 static void copy_message_list(struct message_list *to, struct message_list *from) 
 {
   struct message_type * msg, * tmp_msg, * orig;
@@ -321,7 +374,16 @@ ACMD(do_msgedit)
 {
   int num;
   struct descriptor_data *d;
-  
+
+  /* Both the listing (page_string) and the editor need ch->desc; a forced
+   * immortal or a mob has none. */
+  if (IS_NPC(ch) || !ch->desc || STATE(ch->desc) != CON_PLAYING) {
+    TB_WARN_MSG("olc", "olc-no-descriptor", "msgedit",
+                DIAG_CHAR_FMT " has_desc %d state %d", DIAG_CHAR(ch),
+                ch->desc != NULL, ch->desc ? STATE(ch->desc) : -1);
+    return;
+  }
+
   if (!*argument) {
     show_messages(ch);
     return;  
@@ -349,9 +411,15 @@ ACMD(do_msgedit)
   d = ch->desc;
 
   /* Give the descriptor an OLC structure. */
+  /* Entry requires CON_PLAYING, where no editor is open, so a leftover
+   * d->olc is an invariant break.  free() alone leaked its substructures
+   * (help, action, quest, prefs, message list, storage); release them all
+   * and report the stale mode. */
   if (d->olc) {
-    mudlog(BRF, LVL_IMMORT, TRUE, "SYSERR: do_msg_edit: Player already had olc structure.");
-    free(d->olc);
+    TB_ERROR_MSG("olc", "olc-reentry", "msgedit",
+                 DIAG_CHAR_FMT " stale mode %d state %d",
+                 DIAG_CHAR(ch), OLC_MODE(d), STATE(d));
+    cleanup_olc(d, CLEANUP_ALL);
   }
 
   /* Create the OLC structure. */
@@ -427,7 +495,10 @@ static void msgedit_main_menu(struct descriptor_data * d)
 void msgedit_parse(struct descriptor_data *d, char *arg)
 {
   struct message_type * temp;
-  static bool quit = FALSE;
+  /* Whether this answer ends the session is per descriptor: it is the
+   * mode itself (CONFIRM_SAVE_QUIT after 'Q').  It used to be a function
+   * static, so one GOD's 'Q' made another GOD's 'S' exit and vice versa. */
+  bool quit;
   
   switch (OLC_MODE(d)) {
     case MSGEDIT_MAIN_MENU:
@@ -546,8 +617,7 @@ void msgedit_parse(struct descriptor_data *d, char *arg)
         case 'Q':
         case 'q':
           if (OLC_VAL(d)) {
-            OLC_MODE(d) = MSGEDIT_CONFIRM_SAVE;
-            quit = TRUE;
+            OLC_MODE(d) = MSGEDIT_CONFIRM_SAVE_QUIT;
             write_to_output(d, "Do you wish to save? Y/N : ");
             return;
           }
@@ -557,16 +627,24 @@ void msgedit_parse(struct descriptor_data *d, char *arg)
       }
     break;
     case MSGEDIT_CONFIRM_SAVE:
+    case MSGEDIT_CONFIRM_SAVE_QUIT:
+      quit = (OLC_MODE(d) == MSGEDIT_CONFIRM_SAVE_QUIT);
       if (*arg && (*arg == 'Y' || *arg == 'y')) {
         copy_message_list(&fight_messages[OLC_NUM(d)], OLC_MSG_LIST(d));
-        save_messages_to_disk();
-        OLC_VAL(d) = 0;
-        write_to_output(d, "Messages saved.\r\n");
+        if (save_messages_to_disk()) {
+          OLC_VAL(d) = 0;
+          write_to_output(d, "Messages saved.\r\n");
+        } else {
+          TB_ERROR_ERRNO("olc", "msgedit-save", MESS_FILE,
+                         "slot %d editor " DIAG_CHAR_FMT,
+                         (int)OLC_NUM(d), DIAG_CHAR(d->character));
+          write_to_output(d, "Messages changed in memory, but writing %s FAILED; "
+                             "the file is unchanged.\r\n", MESS_FILE);
+        }
       } else
         write_to_output(d, "Save aborted.\r\n");
   
       if (quit) {
-        quit = FALSE;
         write_to_output(d, "Exiting message editor.\r\n");
         cleanup_olc(d, CLEANUP_ALL);     
         return;     

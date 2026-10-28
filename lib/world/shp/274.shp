@@ -9,8 +9,8 @@ CircleMUD v3.0 Shop File~
 -1
 1.00
 1.00
-9Armor
-5Weapons
+9 ; Armor
+5 ; Weapons
 -1
 %s Sorry, I don't stock that item.~
 %s You don't seem to have that.~
@@ -45,9 +45,9 @@ CircleMUD v3.0 Shop File~
 -1
 1.00
 1.00
-5Weapon
-9Armor
-11Worn
+5 ; Weapon
+9 ; Armor
+11 ; Worn
 -1
 %s Sorry, I don't stock that item.~
 %s You don't seem to have that.~
@@ -75,8 +75,8 @@ CircleMUD v3.0 Shop File~
 -1
 1.25
 1.00
-19Food
-17Liquid Containers
+19 ; Food
+17 ; Liquid Containers
 -1
 %s Sorry, I don't stock that item.~
 %s You don't seem to have that.~
@@ -110,11 +110,11 @@ CircleMUD v3.0 Shop File~
 -1
 1.00
 1.00
-15Container
-1light
-17Liquid Container
-19Food
-22Boatr
+15 ; Container
+1 ; light
+17 ; Liquid Container
+19 ; Food
+22 ; Boatr
 -1
 %s Sorry, I don't stock that item.~
 %s You don't seem to have that.~
@@ -140,7 +140,7 @@ CircleMUD v3.0 Shop File~
 -1
 1.00
 1.00
-19Food
+19 ; Food
 -1
 %s Sorry, I don't stock that item.~
 %s You don't seem to have that.~
@@ -163,11 +163,11 @@ CircleMUD v3.0 Shop File~
 -1
 1.00
 1.00
-2Scroll
-10Potion
-3Wand
-8Treasure
-4Staff
+2 ; Scroll
+10 ; Potion
+3 ; Wand
+8 ; Treasure
+4 ; Staff
 -1
 %s Sorry, I don't stock that item.~
 %s You don't seem to have that.~
@@ -196,11 +196,11 @@ CircleMUD v3.0 Shop File~
 -1
 1.00
 1.00
-2Scroll
-4staff
-10potion
-3wand
-21pen
+2 ; Scroll
+4 ; staff
+10 ; potion
+3 ; wand
+21 ; pen
 -1
 %s Sorry, I don't stock that item.~
 %s You don't seem to have that.~
@@ -239,35 +239,6 @@ CircleMUD v3.0 Shop File~
 0
 0
 27430
-0
-27458
-27459
-27472
--1
-0
-28
-0
-28
-#27408~
-3001
-3002
-3003
-3004
-3000
--1
-2.25
-1.00
--1
-%s Sorry, I don't stock that item.~
-%s You don't seem to have that.~
-%s I don't trade in such items.~
-%s I can't afford that!~
-%s You are too poor!~
-%s That'll be %d coins, thanks.~
-%s I'll give you %d coins for that.~
-0
-0
--1
 0
 27458
 27459

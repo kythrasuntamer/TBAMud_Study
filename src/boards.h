@@ -17,10 +17,20 @@
 #define MAX_BOARD_MESSAGES 	60      /* arbitrary -- change if needed */
 #define MAX_MESSAGE_LENGTH	4096	/* arbitrary -- change if needed */
 
+/** Longest headline kept on a post, in bytes, excluding the terminator.
+ * Longer player headlines are cut to this length and reported. */
+#define BOARD_HEADLINE_MAX	80
+
 #define INDEX_SIZE	   ((NUM_OF_BOARDS*MAX_BOARD_MESSAGES) + 5)
 
 #define BOARD_MAGIC	1048575	/* arbitrary number - see modify.c */
 
+/** One message's index entry.  It is also, byte for byte, the per-message
+ * record of a board file (board_save_board / board_load_board), so the file
+ * format depends on pointer size and the compiler's padding.  On disk the
+ * heading pointer and slot_num are meaningless: the writer stores NULL and
+ * -1 and the loader ignores them.  Only heading_len, message_len and level
+ * are read back, and the lengths are bounds-checked first. */
 struct board_msginfo {
    int	slot_num;     /* pos of message in "master index" */
    char	*heading;     /* pointer to message's heading */
@@ -45,12 +55,18 @@ struct board_info_type {
 #define FILENAME(i) (board_info[i].filename)
 #define BOARD_RNUM(i) (board_info[i].rnum)
 
+/** TRUE if bt indexes board_info (and the per-board arrays). */
+#define BOARD_TYPE_OK(bt)  ((bt) >= 0 && (bt) < NUM_OF_BOARDS)
+/** TRUE if s indexes the shared message slot pool (msg_storage). */
+#define MSG_SLOT_OK(s)     ((s) >= 0 && (s) < INDEX_SIZE)
+
 #define NEW_MSG_INDEX(i) (msg_index[i][num_of_msgs[i]])
 #define MSG_HEADING(i, j) (msg_index[i][j].heading)
 #define MSG_SLOTNUM(i, j) (msg_index[i][j].slot_num)
 #define MSG_LEVEL(i, j) (msg_index[i][j].level)
 
 SPECIAL(gen_board);
+int init_boards(void);
 int board_display_msg(int board_type, struct char_data *ch, char *arg, struct obj_data *board);
 int board_show_board(int board_type, struct char_data *ch, char *arg, struct obj_data *board);
 int board_remove_msg(int board_type, struct char_data *ch, char *arg, struct obj_data *board);

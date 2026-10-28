@@ -308,7 +308,7 @@ void gain_exp(struct char_data *ch, int gain)
     GET_EXP(ch) += gain;
     while (GET_LEVEL(ch) < LVL_IMMORT - 1 &&
            GET_LEVEL(ch) < LVL_IMMORT - CONFIG_NO_MORT_TO_IMMORT &&
-	GET_EXP(ch) >= level_exp(GET_CLASS(ch), GET_LEVEL(ch) + 1)) {
+	GET_EXP(ch) >= char_level_exp(ch, GET_LEVEL(ch) + 1)) {
       GET_LEVEL(ch) += 1;
       num_levels++;
       advance_level(ch);
@@ -350,7 +350,7 @@ void gain_exp_regardless(struct char_data *ch, int gain)
 
   if (!IS_NPC(ch)) {
     while (GET_LEVEL(ch) < LVL_IMPL &&
-	GET_EXP(ch) >= level_exp(GET_CLASS(ch), GET_LEVEL(ch) + 1)) {
+	GET_EXP(ch) >= char_level_exp(ch, GET_LEVEL(ch) + 1)) {
       GET_LEVEL(ch) += 1;
       num_levels++;
       advance_level(ch);
@@ -405,10 +405,34 @@ void gain_condition(struct char_data *ch, int condition, int value)
 
 }
 
+/* Rooms idle players are moved to, by VNUM. They used to be the hard-coded
+ * rnums 1 and 3, which name different rooms once redit adds or deletes a
+ * room below them. Stock world: vnum 1 is Limbo, vnum 3 is in zone 0. */
+#define IDLE_VOID_ROOM_VNUM  1
+#define IDLE_RENT_ROOM_VNUM  3
+
+/* rnum of idle room vnum, or NOWHERE (reported with op) if it is missing. */
+static room_rnum idle_room(struct char_data *ch, room_vnum vnum, const char *op)
+{
+  room_rnum rnum = real_room(vnum);
+
+  if (VALID_ROOM_RNUM(rnum))
+    return rnum;
+  TB_ERROR_MSG("limits", op, "world",
+               DIAG_CHAR_FMT " idle target room vnum %d does not exist",
+               DIAG_CHAR(ch), (int) vnum);
+  return NOWHERE;
+}
+
 static void check_idling(struct char_data *ch)
 {
+  room_rnum target;
+
   if (ch->char_specials.timer > CONFIG_IDLE_VOID) {
-    if (GET_WAS_IN(ch) == NOWHERE && IN_ROOM(ch) != NOWHERE) {
+    /* A missing void room leaves the player where they are (reported each
+     * tick) until the rent timeout below applies. */
+    if (GET_WAS_IN(ch) == NOWHERE && IN_ROOM(ch) != NOWHERE &&
+        (target = idle_room(ch, IDLE_VOID_ROOM_VNUM, "idle-void-room")) != NOWHERE) {
       GET_WAS_IN(ch) = IN_ROOM(ch);
       if (FIGHTING(ch)) {
 	stop_fighting(FIGHTING(ch));
@@ -419,11 +443,16 @@ static void check_idling(struct char_data *ch)
       save_char(ch);
       Crash_crashsave(ch);
       char_from_room(ch);
-      char_to_room(ch, 1);
+      char_to_room(ch, target);
     } else if (ch->char_specials.timer > CONFIG_IDLE_RENT_TIME) {
-      if (IN_ROOM(ch) != NOWHERE)
-	char_from_room(ch);
-      char_to_room(ch, 3);
+      /* extract_char_final() requires a room: without the rent room, stay
+       * put, or fall back to rnum 0 (always loaded) if in no room at all. */
+      if ((target = idle_room(ch, IDLE_RENT_ROOM_VNUM, "idle-rent-room")) != NOWHERE) {
+        if (IN_ROOM(ch) != NOWHERE)
+          char_from_room(ch);
+        char_to_room(ch, target);
+      } else if (IN_ROOM(ch) == NOWHERE)
+        char_to_room(ch, 0);
       if (ch->desc) {
 	STATE(ch->desc) = CON_DISCONNECT;
 	/*
@@ -444,11 +473,77 @@ static void check_idling(struct char_data *ch)
   }
 }
 
-/* Update PCs, NPCs, and objects */
+/* An object whose timer expired this tick, captured before any callback.
+ * obj is compared by address only (obj_uid_matches) and dereferenced only
+ * after the UID still maps to it. */
+struct timed_obj_target {
+  struct obj_data *obj;
+  long uid;
+};
+
+/* Corpse j (UID uid) has rotted: tell whoever can see it, spill its
+ * contents where the corpse is, and extract it. act() can run act triggers
+ * that purge the corpse, so it is re-validated after each act(). */
+static void decay_corpse(struct obj_data *j, long uid)
+{
+  struct obj_data *jj, *next_thing2;
+
+  if (j->carried_by)
+    act("$p decays in your hands.", FALSE, j->carried_by, j, 0, TO_CHAR);
+  else if ((IN_ROOM(j) != NOWHERE) && (world[IN_ROOM(j)].people)) {
+    act("A quivering horde of maggots consumes $p.",
+        TRUE, world[IN_ROOM(j)].people, j, 0, TO_ROOM);
+    if (obj_uid_matches(uid, j) && IN_ROOM(j) != NOWHERE &&
+        world[IN_ROOM(j)].people)
+      act("A quivering horde of maggots consumes $p.",
+          TRUE, world[IN_ROOM(j)].people, j, 0, TO_CHAR);
+  }
+  if (!obj_uid_matches(uid, j)) {
+    TB_WARN_MSG("limits", "timer-target-purged", "object_list",
+                "decaying corpse uid %ld was purged by a script during its decay message",
+                uid);
+    return;
+  }
+  /* Moving contents runs no scripts, so next_content stays valid here. */
+  for (jj = j->contains; jj; jj = next_thing2) {
+    next_thing2 = jj->next_content;	/* Next in inventory */
+    obj_from_obj(jj);
+
+    if (j->in_obj)
+      obj_to_obj(jj, j->in_obj);
+    else if (j->carried_by)
+      obj_to_room(jj, IN_ROOM(j->carried_by));
+    else if (IN_ROOM(j) != NOWHERE)
+      obj_to_room(jj, IN_ROOM(j));
+    else {
+      /* Invariant: a corpse on object_list is in a room, an object or an
+       * inventory. One that is nowhere has nowhere to spill to; extracting
+       * the content keeps it from staying on object_list unreachable. */
+      TB_ERROR_MSG("limits", "corpse-orphan", "object_list",
+                   "corpse vnum %d uid %ld has no location; content vnum %d extracted",
+                   (int) GET_OBJ_VNUM(j), uid, (int) GET_OBJ_VNUM(jj));
+      extract_obj(jj);
+    }
+  }
+  extract_obj(j);
+}
+
+/* Update PCs, NPCs, and objects. Called once per mud hour (heartbeat).
+ * Characters: regeneration, conditions, poison/bleeding damage (which can
+ * kill: damage() == -1 skips the rest for that character), and idling.
+ * Character extraction is deferred to the end of the pulse, so next_char
+ * stays valid. Objects: see the two-pass comment below; a decaying corpse
+ * spills its contents into whatever holds it (container, then carrier's
+ * room, then its own room), and contents of a corpse that is nowhere are
+ * extracted and reported. */
 void point_update(void)
 {
   struct char_data *i, *next_char;
-  struct obj_data *j, *next_thing, *jj, *next_thing2;
+  struct obj_data *j;
+  /* Reused across ticks; holds no pointer beyond the tick that filled it. */
+  static struct timed_obj_target *timed = NULL;
+  static size_t timed_cap = 0;
+  size_t ntimed, k;
 
   /* characters */
   for (i = character_list; i; i = next_char) {
@@ -482,49 +577,46 @@ void point_update(void)
     }
   }
 
-  /* objects */
-  for (j = object_list; j; j = next_thing) {
-    next_thing = j->next;	/* Next in object list */
-
-    /* If this is a corpse */
+  /* objects. This is the only place object timers count down: once per
+   * tick for every object, carried and worn ones included
+   * (update_char_objects() above only burns lights). Pass 1 runs no
+   * callbacks: it counts every timer down and snapshots the objects that
+   * expired as (address, UID) pairs. Pass 2 then
+   * decays corpses and fires timer triggers. Both can run scripts (act
+   * triggers, the timer trigger itself) that purge ANY object, and
+   * extract_obj() frees immediately, so no saved list pointer (j->next) is
+   * followed across a callback: each target is re-validated by UID first. */
+  ntimed = 0;
+  for (j = object_list; j; j = j->next) {
     if (IS_CORPSE(j)) {
-      /* timer count down */
       if (GET_OBJ_TIMER(j) > 0)
 	GET_OBJ_TIMER(j)--;
-
-      if (!GET_OBJ_TIMER(j)) {
-
-	if (j->carried_by)
-	  act("$p decays in your hands.", FALSE, j->carried_by, j, 0, TO_CHAR);
-	else if ((IN_ROOM(j) != NOWHERE) && (world[IN_ROOM(j)].people)) {
-	  act("A quivering horde of maggots consumes $p.",
-	      TRUE, world[IN_ROOM(j)].people, j, 0, TO_ROOM);
-	  act("A quivering horde of maggots consumes $p.",
-	      TRUE, world[IN_ROOM(j)].people, j, 0, TO_CHAR);
-	}
-	for (jj = j->contains; jj; jj = next_thing2) {
-	  next_thing2 = jj->next_content;	/* Next in inventory */
-	  obj_from_obj(jj);
-
-	  if (j->in_obj)
-	    obj_to_obj(jj, j->in_obj);
-	  else if (j->carried_by)
-	    obj_to_room(jj, IN_ROOM(j->carried_by));
-	  else if (IN_ROOM(j) != NOWHERE)
-	    obj_to_room(jj, IN_ROOM(j));
-	  else
-	    core_dump();
-	}
-	extract_obj(j);
-      }
+      if (GET_OBJ_TIMER(j))
+        continue;
+    } else if (GET_OBJ_TIMER(j) <= 0 || --GET_OBJ_TIMER(j) > 0)
+      continue;
+    /* note to .rej hand-patchers: timer triggers fire last in point_update() */
+    if (ntimed == timed_cap) {
+      timed_cap = timed_cap ? timed_cap * 2 : 64;
+      RECREATE(timed, struct timed_obj_target, timed_cap);
     }
-    /* If the timer is set, count it down and at 0, try the trigger
-     * note to .rej hand-patchers: make this last in your point-update() */
-    else if (GET_OBJ_TIMER(j)>0) {
-      GET_OBJ_TIMER(j)--;
-      if (!GET_OBJ_TIMER(j))
-        timer_otrigger(j);
+    timed[ntimed].obj = j;
+    timed[ntimed].uid = obj_script_id(j);
+    ntimed++;
+  }
+
+  for (k = 0; k < ntimed; k++) {
+    j = timed[k].obj;
+    if (!obj_uid_matches(timed[k].uid, j)) {
+      TB_WARN_MSG("limits", "timer-target-purged", "object_list",
+                  "expired object uid %ld was purged by an earlier script this tick",
+                  timed[k].uid);
+      continue;
     }
+    if (IS_CORPSE(j))
+      decay_corpse(j, timed[k].uid);
+    else
+      timer_otrigger(j);
   }
 
   /* Take 1 from the happy-hour tick counter, and end happy-hour if zero */
@@ -539,22 +631,34 @@ void point_update(void)
   }
 }
 
+/* Coins: purse (GET_GOLD) and bank (GET_BANK_GOLD) both live in [0, cap].
+ *
+ * The caps (MAX_GOLD, MAX_BANK) sit only ~7.5M below INT_MAX, so the sum is
+ * computed in long long: an int sum would be signed overflow before any
+ * comparison could catch it. A change that would leave the range is applied
+ * up to the boundary and the coins that could not be applied are reported
+ * (op "gold-clamp" / "bank-clamp"): a clamp destroys or invents money, so it
+ * is never silent. Callers that move coins between purse and bank (the bank
+ * spec proc) must refuse a transfer that would clamp BEFORE debiting the
+ * other side. */
+static int add_coins_clamped(struct char_data *ch, int *field, long long amt,
+                             int cap, const char *op, const char *resource)
+{
+  long long want = (long long) *field + amt;
+  long long got = want < 0 ? 0 : (want > cap ? cap : want);
+
+  if (got != want)
+    TB_WARN_MSG("economy", op, resource,
+                DIAG_CHAR_FMT " curr %d amt %lld range [0,%d]: %lld coins not applied",
+                DIAG_CHAR(ch), *field, amt, cap, want - got);
+  *field = (int) got;
+  return *field;
+}
+
 /* Note: amt may be negative */
 int increase_gold(struct char_data *ch, int amt)
 {
-  int curr_gold;
-
-  curr_gold = GET_GOLD(ch);
-
-  if (amt < 0) {
-    GET_GOLD(ch) = MAX(0, curr_gold+amt);
-    /* Validate to prevent overflow */
-    if (GET_GOLD(ch) > curr_gold) GET_GOLD(ch) = 0;
-  } else {
-    GET_GOLD(ch) = MIN(MAX_GOLD, curr_gold+amt);
-    /* Validate to prevent overflow */
-    if (GET_GOLD(ch) < curr_gold) GET_GOLD(ch) = MAX_GOLD;
-  }
+  add_coins_clamped(ch, &GET_GOLD(ch), amt, MAX_GOLD, "gold-clamp", "points.gold");
   if (GET_GOLD(ch) == MAX_GOLD)
     send_to_char(ch, "%sYou have reached the maximum gold!\r\n%sYou must spend it or bank it before you can gain any more.\r\n", QBRED, QNRM);
 
@@ -563,29 +667,18 @@ int increase_gold(struct char_data *ch, int amt)
 
 int decrease_gold(struct char_data *ch, int deduction)
 {
-  int amt;
-  amt = (deduction * -1);
-  increase_gold(ch, amt);
+  /* Negated in long long: -INT_MIN does not fit in an int. */
+  add_coins_clamped(ch, &GET_GOLD(ch), -(long long) deduction, MAX_GOLD,
+                    "gold-clamp", "points.gold");
   return (GET_GOLD(ch));
 }
 
 int increase_bank(struct char_data *ch, int amt)
 {
-  int curr_bank;
-
   if (IS_NPC(ch)) return 0;
 
-  curr_bank = GET_BANK_GOLD(ch);
-
-  if (amt < 0) {
-    GET_BANK_GOLD(ch) = MAX(0, curr_bank+amt);
-    /* Validate to prevent overflow */
-    if (GET_BANK_GOLD(ch) > curr_bank) GET_BANK_GOLD(ch) = 0;
-  } else {
-    GET_BANK_GOLD(ch) = MIN(MAX_BANK, curr_bank+amt);
-    /* Validate to prevent overflow */
-    if (GET_BANK_GOLD(ch) < curr_bank) GET_BANK_GOLD(ch) = MAX_BANK;
-  }
+  add_coins_clamped(ch, &GET_BANK_GOLD(ch), amt, MAX_BANK, "bank-clamp",
+                    "player_specials.bank_gold");
   if (GET_BANK_GOLD(ch) == MAX_BANK)
     send_to_char(ch, "%sYou have reached the maximum bank balance!\r\n%sYou cannot put more into your account unless you withdraw some first.\r\n", QBRED, QNRM);
   return (GET_BANK_GOLD(ch));
@@ -593,8 +686,9 @@ int increase_bank(struct char_data *ch, int amt)
 
 int decrease_bank(struct char_data *ch, int deduction)
 {
-  int amt;
-  amt = (deduction * -1);
-  increase_bank(ch, amt);
+  if (IS_NPC(ch)) return 0;
+
+  add_coins_clamped(ch, &GET_BANK_GOLD(ch), -(long long) deduction, MAX_BANK,
+                    "bank-clamp", "player_specials.bank_gold");
   return (GET_BANK_GOLD(ch));
 }

@@ -24,3 +24,10 @@ Checks: >
 # analyzers enabled so CERT-relevant defects are not hidden by legacy
 # suppressions.
 HeaderFilterRegex: 'src/.*'
+# sizeof() of a pointer is almost always a bug here: a mechanical
+# strcat -> strlcat(buf, src, sizeof(buf)) conversion on a char * parameter
+# bounded the copy at 8 bytes and cut every text file to 7 characters.
+# Report it, and fail the build on it.
+CheckOptions:
+  bugprone-sizeof-expression.WarnOnSizeOfPointer: true
+WarningsAsErrors: 'bugprone-sizeof-expression'
