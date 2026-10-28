@@ -101,9 +101,47 @@ static void test_buyword_simple_matches(void)
   free(expr);
 }
 
+/* H2-21: malformed buywords are reported with the shop and buy type and
+ * refuse the sale, instead of a context-free log and a partial result. */
+static void test_buyword_unbalanced_paren_reported(void)
+{
+  char *expr = strdup("sword)");
+
+  TEST_ASSERT_NOT_NULL(expr);
+  TEST_ASSERT_FALSE(evaluate_expression(&item, expr, 0, 0));
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("buyword-parse", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "shop #3010"));
+  free(expr);
+}
+
+static void test_buyword_missing_operand_reported(void)
+{
+  char *expr = strdup("sword |");
+
+  TEST_ASSERT_NOT_NULL(expr);
+  TEST_ASSERT_FALSE(evaluate_expression(&item, expr, 0, 0));
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("buyword-parse", tb_captured_operation);
+  free(expr);
+}
+
+static void test_buyword_extra_operands_reported(void)
+{
+  char *expr = strdup("sword axe");
+
+  TEST_ASSERT_NOT_NULL(expr);
+  TEST_ASSERT_FALSE(evaluate_expression(&item, expr, 0, 0));
+  TEST_ASSERT_EQUAL_STRING("buyword-parse", tb_captured_operation);
+  free(expr);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(test_buyword_unbalanced_paren_reported);
+  RUN_TEST(test_buyword_missing_operand_reported);
+  RUN_TEST(test_buyword_extra_operands_reported);
   RUN_TEST(test_buyword_deep_parens_rejected);
   RUN_TEST(test_buyword_many_operands_rejected);
   RUN_TEST(test_buyword_simple_matches);

@@ -59,7 +59,9 @@ struct shop_expr_ctx {
 static void push(struct stack_data *stack, int pushval,
     struct shop_expr_ctx *ctx); /**< @todo Move to utils.c */
 static int top(struct stack_data *stack); /**< @todo Move to utils.c */
-static int pop(struct stack_data *stack); /**< @todo Move to utils.c */
+static int pop(struct stack_data *stack,
+    struct shop_expr_ctx *ctx); /**< @todo Move to utils.c */
+static void buyword_parse_error(struct shop_expr_ctx *ctx, const char *what);
 static char *list_object(struct obj_data *obj, int cnt, int oindex, int shop_nr, struct char_data *keeper, struct char_data *seller);
 static void sort_keeper_objs(struct char_data *keeper, int shop_nr);
 static char *read_shop_message(int mnum, room_vnum shr, FILE *shop_f, const char *why);
@@ -217,14 +219,26 @@ static int top(struct stack_data *stack)
     return (-1);
 }
 
-static int pop(struct stack_data *stack)
+/* Report a malformed buyword (builder text) once per evaluation, naming
+ * the shop, buy type and item, and mark the evaluation failed so the caller
+ * refuses the sale instead of using a partial result. */
+static void buyword_parse_error(struct shop_expr_ctx *ctx, const char *what)
+{
+  if (!ctx->failed)
+    TB_ERROR_MSG("shop", "buyword-parse", "expression",
+                 "shop #%d buy type %d: %s (obj vnum %d)",
+                 (int) SHOP_NUM(ctx->shop_nr),
+                 SHOP_BUYTYPE(ctx->shop_nr, ctx->type_idx), what,
+                 (int) GET_OBJ_VNUM(ctx->obj));
+  ctx->failed = TRUE;
+}
+
+static int pop(struct stack_data *stack, struct shop_expr_ctx *ctx)
 {
   if (S_LEN(stack) > 0)
     return (S_DATA(stack, --S_LEN(stack)));
-  else {
-    log("SYSERR: Illegal expression %d in shop keyword list.", S_LEN(stack));
-    return (0);
-  }
+  buyword_parse_error(ctx, "operator missing an operand");
+  return (0);
 }
 
 static void evaluate_operation(struct stack_data *ops, struct stack_data *vals,
@@ -232,11 +246,11 @@ static void evaluate_operation(struct stack_data *ops, struct stack_data *vals,
 {
   int oper;
 
-  if ((oper = pop(ops)) == OPER_NOT)
-    push(vals, !pop(vals), ctx);
+  if ((oper = pop(ops, ctx)) == OPER_NOT)
+    push(vals, !pop(vals, ctx), ctx);
   else {
-    int val1 = pop(vals),
-	val2 = pop(vals);
+    int val1 = pop(vals, ctx),
+	val2 = pop(vals, ctx);
 
     /* Compiler would previously short-circuit these. */
     if (oper == OPER_AND)
@@ -292,12 +306,12 @@ static int evaluate_expression(struct obj_data *obj, char *expr, int shop_nr,
 	  push(&vals, isname(name, obj->name), &ctx);
       } else {
 	if (temp != OPER_OPEN_PAREN)
-	  while (top(&ops) > temp)
+	  while (!ctx.failed && top(&ops) > temp)
 	    evaluate_operation(&ops, &vals, &ctx);
 
 	if (temp == OPER_CLOSE_PAREN) {
-	  if ((temp = pop(&ops)) != OPER_OPEN_PAREN) {
-	    log("SYSERR: Illegal parenthesis in shop keyword expression.");
+	  if (S_LEN(&ops) == 0 || (temp = pop(&ops, &ctx)) != OPER_OPEN_PAREN) {
+	    buyword_parse_error(&ctx, "unbalanced closing parenthesis");
 	    return (FALSE);
 	  }
 	} else
@@ -310,9 +324,11 @@ static int evaluate_expression(struct obj_data *obj, char *expr, int shop_nr,
     evaluate_operation(&ops, &vals, &ctx);
   if (ctx.failed)
     return (FALSE);
-  temp = pop(&vals);
+  temp = pop(&vals, &ctx);
+  if (ctx.failed)
+    return (FALSE);
   if (top(&vals) != -1) {
-    log("SYSERR: Extra operands left on shop keyword expression stack.");
+    buyword_parse_error(&ctx, "extra operands left on the stack");
     return (FALSE);
   }
   return (temp);
