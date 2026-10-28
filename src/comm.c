@@ -2649,10 +2649,35 @@ void send_to_range(room_vnum start, room_vnum finish, const char *messg, ...)
 static const char *ACTNULL = "<NULL>";
 #define CHECK_NULL(pointer, expression) \
   if ((pointer) == NULL) i = ACTNULL; else i = (expression);
+/* Bounded, escaped copy of an act() format for diagnostics. The format is
+ * usually a string literal, so it identifies the act() call site; it may also
+ * embed player text (emote), so control characters, quotes and backslashes
+ * are replaced to keep each log record one parseable line. */
+static const char *act_format_excerpt(char *dst, size_t dst_size,
+                                      const char *format)
+{
+  size_t n = 0;
+
+  for (; format && *format && n + 4 < dst_size; format++) {
+    unsigned char c = (unsigned char) *format;
+    dst[n++] = (c < 0x20 || c == 0x7f || c == '"' || c == '\\') ? '?' : (char) c;
+  }
+  if (format && *format && n + 3 < dst_size)
+    dst[n++] = '.', dst[n++] = '.', dst[n++] = '.';
+  dst[n] = '\0';
+  return dst;
+}
+
+#define ACT_DIAG_RECIPIENT(to) \
+  (IS_NPC(to) ? "mob vnum" : "player idnum"), \
+  (IS_NPC(to) ? (long) GET_MOB_VNUM(to) : (long) GET_IDNUM(to))
+
 /* higher-level communication: the act() function */
 void perform_act(const char *orig, struct char_data *ch, struct obj_data *obj,
     void *vict_obj, struct char_data *to)
 {
+  const char *const format = orig;
+  char excerpt[96];
   const char *i = NULL;
   char lbuf[MAX_STRING_LENGTH], *buf, *j;
   /* Last position the terminating NUL may occupy; it is later overwritten
@@ -2747,9 +2772,19 @@ void perform_act(const char *orig, struct char_data *ch, struct obj_data *obj,
       case '$':
 	i = "$";
 	break;
+      case '\0':
+	TB_ERROR_MSG("act", "format-parse", "perform_act",
+	             "format ends with a bare '$' (recipient %s %ld) format=\"%s\"",
+	             ACT_DIAG_RECIPIENT(to),
+	             act_format_excerpt(excerpt, sizeof(excerpt), format));
+	i = "";
+	break;
       default:
-	log("SYSERR: Illegal $-code to act(): %c", *orig);
-	log("SYSERR: %s", orig);
+	TB_ERROR_MSG("act", "format-parse", "perform_act",
+	             "illegal $-code 0x%02x at offset %ld (recipient %s %ld) format=\"%s\"",
+	             (unsigned char) *orig, (long) (orig - format),
+	             ACT_DIAG_RECIPIENT(to),
+	             act_format_excerpt(excerpt, sizeof(excerpt), format));
 	i = "";
 	break;
       }
@@ -2778,8 +2813,11 @@ void perform_act(const char *orig, struct char_data *ch, struct obj_data *obj,
   *(++buf) = '\0';
 
   if (truncated)
-    log("SYSERR: perform_act() output truncated to %d bytes.",
-        (int) sizeof(lbuf));
+    TB_ERROR_MSG("act", "format-output", "perform_act",
+                 "expanded output exceeded %d bytes and was truncated "
+                 "(recipient %s %ld) format=\"%s\"", (int) sizeof(lbuf),
+                 ACT_DIAG_RECIPIENT(to),
+                 act_format_excerpt(excerpt, sizeof(excerpt), format));
 
   if (to->desc)
     write_to_output(to->desc, "%s", CAP(lbuf));
@@ -2789,7 +2827,10 @@ void perform_act(const char *orig, struct char_data *ch, struct obj_data *obj,
 
   if (last_act_message)
     free(last_act_message);
-  last_act_message = strdup(lbuf);
+  if ((last_act_message = strdup(lbuf)) == NULL)
+    TB_ERROR_ERRNO("act", "allocate", "last_act_message",
+                   "cannot copy %zu-byte act() result; act() will return NULL",
+                   strlen(lbuf) + 1);
 }
 
 char *act(const char *str, int hide_invisible, struct char_data *ch,
