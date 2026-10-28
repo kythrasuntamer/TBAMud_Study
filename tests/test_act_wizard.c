@@ -992,6 +992,47 @@ static void test_show_player_last_logon_has_minutes(void)
   TEST_ASSERT_NOT_NULL(strstr(sent, "Last: Thu Jan 01 01:02:03 1970"));
 }
 
+/* G1-14: vnums went through tb_parse_int_or_zero() and an implicit
+ * conversion to IDXTYPE, so 68536 became room 3000, 65537 mob 1, and an
+ * overflow 0: a different, valid entity, with no error. */
+static void test_out_of_range_vnums_are_rejected(void)
+{
+  RUN_CMD(do_goto, &imm, "68536");
+  TEST_ASSERT_EQUAL_STRING("vnum-parse", captured_operation);
+  TEST_ASSERT_EQUAL_INT(0, char_to_room_calls);
+  TEST_ASSERT_NOT_NULL(strstr(sent, "not a valid room number"));
+
+  reset_counters();
+  RUN_CMD(do_stat, &imm, "room 99999999999");
+  TEST_ASSERT_EQUAL_STRING("vnum-parse", captured_operation);
+  TEST_ASSERT_NULL(strstr(sent, "Room name:"));
+
+  reset_counters();
+  RUN_CMD(do_load, &imm, "mob 65537");
+  TEST_ASSERT_EQUAL_STRING("vnum-parse", captured_operation);
+
+  reset_counters();
+  RUN_CMD(do_vstat, &imm, "r 65535");   /* NOWHERE itself */
+  TEST_ASSERT_EQUAL_STRING("vnum-parse", captured_operation);
+
+  reset_counters();
+  make_player();
+  RUN_CMD(do_set, &imm, "player bobby loadroom 68536");
+  TEST_ASSERT_EQUAL_STRING("vnum-parse", captured_operation);
+  TEST_ASSERT_FALSE(PLR_FLAGGED(&target, PLR_LOADROOM));
+
+  reset_counters();
+  RUN_CMD(do_set, &imm, "player bobby loadroom 3014");
+  TEST_ASSERT_EQUAL_INT(0, captured_errors);
+  TEST_ASSERT_EQUAL_INT(3014, GET_LOADROOM(&target));
+  in_game_char = NULL;
+
+  reset_counters();
+  RUN_CMD(do_goto, &imm, "3014");
+  TEST_ASSERT_EQUAL_INT(0, captured_errors);
+  TEST_ASSERT_EQUAL_INT(1, IN_ROOM(&imm));
+}
+
 int main(void)
 {
   /* basic_mud_log()/mudlog() are the real utils.c ones; keep them quiet. */
@@ -1021,6 +1062,7 @@ int main(void)
   RUN_TEST(test_last_file_torn_tail_is_reported_and_repaired);
   RUN_TEST(test_stat_out_of_range_time_prints_placeholder);
   RUN_TEST(test_show_player_last_logon_has_minutes);
+  RUN_TEST(test_out_of_range_vnums_are_rejected);
   {
     int failures = UNITY_END();
     if (logfile)

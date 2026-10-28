@@ -93,6 +93,32 @@ static const char *table_name_at(const char *const *table, int count, long idx,
   table_name_at((table), (count), (long) (idx), #table, (op), \
                 __VA_ARGS__, __FILE__, __LINE__, __func__)
 
+/** Parse a vnum typed by an immortal (or passed by a forced/DG command).
+ * Vnums are IDXTYPE (ush_int); IDXTYPE_MAX itself is NOWHERE/NOTHING/
+ * NOBODY. tb_parse_int_or_zero() followed by the implicit conversion to
+ * IDXTYPE turned 65537 into vnum 1 and an overflow into 0, i.e. silently
+ * into another, valid entity.
+ * @param what  "room", "mob", "object", "zone": names the entity in the
+ *              reply and in the vnum-parse warning (resource).
+ * @return TRUE and *out, or FALSE after telling ch and reporting
+ *         vnum-parse with the caller (the raw text is not logged). */
+static bool parse_vnum_arg(struct char_data *ch, const char *text,
+                           const char *what, IDXTYPE *out)
+{
+  long v;
+
+  if (!tb_parse_long_checked(text, &v) || v < IDXTYPE_MIN || v >= IDXTYPE_MAX) {
+    TB_WARN_MSG("act", "vnum-parse", what,
+                "caller " DIAG_CHAR_FMT ": %zu-char argument is not a vnum in %d..%d",
+                DIAG_CHAR(ch), strlen(text), IDXTYPE_MIN, IDXTYPE_MAX - 1);
+    send_to_char(ch, "That is not a valid %s number (%d-%d).\r\n", what,
+                 IDXTYPE_MIN, IDXTYPE_MAX - 1);
+    return FALSE;
+  }
+  *out = (IDXTYPE) v;
+  return TRUE;
+}
+
 /* local utility functions with file scope */
 static int perform_set(struct char_data *ch, struct char_data *vict, int mode, char *val_arg);
 static void perform_immort_invis(struct char_data *ch, int level);
@@ -242,7 +268,11 @@ room_rnum find_target_room(struct char_data *ch, char *rawroomstr)
   }
 
   if (isdigit(*roomstr) && !strchr(roomstr, '.')) {
-    if ((location = real_room((room_vnum)tb_parse_int_or_zero(roomstr))) == NOWHERE) {
+    room_vnum rvnum;
+
+    if (!parse_vnum_arg(ch, roomstr, "room", &rvnum))
+      return (NOWHERE);
+    if ((location = real_room(rvnum)) == NOWHERE) {
       send_to_char(ch, "No room exists with that number.\r\n");
       return (NOWHERE);
     }
@@ -1097,7 +1127,12 @@ ACMD(do_stat)
     if (!*buf2)
       room = &world[IN_ROOM(ch)];
     else {
-      room_rnum rnum = real_room(tb_parse_int_or_zero(buf2));
+      room_vnum rvnum;
+      room_rnum rnum;
+
+      if (!parse_vnum_arg(ch, buf2, "room", &rvnum))
+        return;
+      rnum = real_room(rvnum);
       if (rnum == NOWHERE) {
         send_to_char(ch, "That is not a valid room.\r\n");
         return;
@@ -1435,6 +1470,7 @@ ACMD(do_load)
 {
   char buf[MAX_INPUT_LENGTH], buf2[MAX_INPUT_LENGTH], buf3[MAX_INPUT_LENGTH];
   int i=0, n=1;
+  IDXTYPE vnum;
 
   one_argument(two_arguments(argument, buf, buf2), buf3);
 
@@ -1462,7 +1498,9 @@ ACMD(do_load)
 	  return;
 	}
 
-    if ((r_num = real_mobile(tb_parse_int_or_zero(buf2))) == NOBODY) {
+    if (!parse_vnum_arg(ch, buf2, "mob", &vnum))
+      return;
+    if ((r_num = real_mobile(vnum)) == NOBODY) {
       send_to_char(ch, "There is no monster with that number.\r\n");
       return;
     }
@@ -1484,7 +1522,9 @@ ACMD(do_load)
 	  return;
 	}
 
-    if ((r_num = real_object(tb_parse_int_or_zero(buf2))) == NOTHING) {
+    if (!parse_vnum_arg(ch, buf2, "object", &vnum))
+      return;
+    if ((r_num = real_object(vnum)) == NOTHING) {
       send_to_char(ch, "There is no object with that number.\r\n");
       return;
     }
@@ -1509,6 +1549,7 @@ ACMD(do_vstat)
   struct char_data *mob;
   struct obj_data *obj;
   int r_num;
+  IDXTYPE vnum;
 
   ACMD(do_tstat);
 
@@ -1525,7 +1566,9 @@ ACMD(do_vstat)
 
   switch (LOWER(*buf)) {
   case 'm':
-    if ((r_num = real_mobile(tb_parse_int_or_zero(buf2))) == NOBODY) {
+    if (!parse_vnum_arg(ch, buf2, "mob", &vnum))
+      return;
+    if ((r_num = real_mobile(vnum)) == NOBODY) {
       send_to_char(ch, "There is no monster with that number.\r\n");
       return;
     }
@@ -1535,7 +1578,9 @@ ACMD(do_vstat)
     extract_char(mob);
     break;
   case 'o':
-    if ((r_num = real_object(tb_parse_int_or_zero(buf2))) == NOTHING) {
+    if (!parse_vnum_arg(ch, buf2, "object", &vnum))
+      return;
+    if ((r_num = real_object(vnum)) == NOTHING) {
       send_to_char(ch, "There is no object with that number.\r\n");
       return;
     }
@@ -1544,7 +1589,9 @@ ACMD(do_vstat)
     extract_obj(obj);
     break;
   case 'r':
-    tb_snprintf(buf2, sizeof(buf2), "room %d", tb_parse_int_or_zero(buf2));
+    if (!parse_vnum_arg(ch, buf2, "room", &vnum))
+      return;
+    tb_snprintf(buf2, sizeof(buf2), "room %d", vnum);
     do_stat(ch, buf2, 0, 0);
     break;
   case 'z':
@@ -3365,7 +3412,8 @@ static int perform_set(struct char_data *ch, struct char_data *vict, int mode, c
       if (!str_cmp(val_arg, "off")) {
         REMOVE_BIT_AR(PLR_FLAGS(vict), PLR_LOADROOM);
       } else if (is_number(val_arg)) {
-        rvnum = tb_parse_int_or_zero(val_arg);
+        if (!parse_vnum_arg(ch, val_arg, "room", &rvnum))
+          return (0);
         if (real_room(rvnum) != NOWHERE) {
           SET_BIT_AR(PLR_FLAGS(vict), PLR_LOADROOM);
           GET_LOADROOM(vict) = rvnum;
@@ -3485,7 +3533,9 @@ static int perform_set(struct char_data *ch, struct char_data *vict, int mode, c
       SET_OR_REMOVE(PRF_FLAGS(vict), PRF_QUEST);
       break;
     case 43: /* room */
-      if ((rnum = real_room(value)) == NOWHERE) {
+      if (!parse_vnum_arg(ch, val_arg, "room", &rvnum))
+        return (0);
+      if ((rnum = real_room(rvnum)) == NOWHERE) {
         send_to_char(ch, "No room exists with that number.\r\n");
         return (0);
       }
@@ -3753,7 +3803,8 @@ ACMD(do_links)
     zrnum = world[IN_ROOM(ch)].zone;
     zvnum = zone_table[zrnum].number;
   } else {
-    zvnum = tb_parse_int_or_zero(arg);
+    if (!parse_vnum_arg(ch, arg, "zone", &zvnum))
+      return;
     zrnum = real_zone(zvnum);
   }
 
@@ -3913,8 +3964,13 @@ ACMD (do_zcheck)
 
   if (!is_number(arg) || !strcmp(arg, "."))
     zrnum = world[IN_ROOM(ch)].zone;
-  else
-    zrnum = real_zone(tb_parse_int_or_zero(arg));
+  else {
+    zone_vnum zvnum;
+
+    if (!parse_vnum_arg(ch, arg, "zone", &zvnum))
+      return;
+    zrnum = real_zone(zvnum);
+  }
 
   if (zrnum == NOWHERE) {
     send_to_char(ch, "Check what zone ?\r\n");
@@ -4486,6 +4542,7 @@ static void trg_checkload(struct char_data *ch, trig_vnum tvnum)
 ACMD(do_checkloadstatus)
 {
   char buf1[MAX_INPUT_LENGTH], buf2[MAX_INPUT_LENGTH];
+  IDXTYPE vnum;
 
   two_arguments(argument, buf1, buf2);
 
@@ -4495,17 +4552,20 @@ ACMD(do_checkloadstatus)
   }
 
   if (LOWER(*buf1) == 'm') {
-    mob_checkload(ch, tb_parse_int_or_zero(buf2));
+    if (parse_vnum_arg(ch, buf2, "mob", &vnum))
+      mob_checkload(ch, vnum);
     return;
   }
 
   if (LOWER(*buf1) == 'o') {
-    obj_checkload(ch, tb_parse_int_or_zero(buf2));
+    if (parse_vnum_arg(ch, buf2, "object", &vnum))
+      obj_checkload(ch, vnum);
     return;
   }
 
   if (LOWER(*buf1) == 't') {
-    trg_checkload(ch, tb_parse_int_or_zero(buf2));
+    if (parse_vnum_arg(ch, buf2, "trigger", &vnum))
+      trg_checkload(ch, vnum);
     return;
   }
 }
@@ -4641,7 +4701,11 @@ ACMD(do_zpurge)
     zone = world[IN_ROOM(ch)].zone;
   }
   else if (is_number(arg)) {
-    zone = real_zone(tb_parse_int_or_zero(arg));
+    zone_vnum zvnum;
+
+    if (!parse_vnum_arg(ch, arg, "zone", &zvnum))
+      return;
+    zone = real_zone(zvnum);
     if (zone == NOWHERE || zone > top_of_zone_table) {
       send_to_char(ch, "That zone doesn't exist!\r\n");
       return;
