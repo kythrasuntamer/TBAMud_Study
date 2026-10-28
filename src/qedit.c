@@ -25,6 +25,20 @@
 #include "modify.h"
 #include "quest.h"
 
+/** @file qedit.c
+ * Quest editor.  In this editor OLC_NUM is the quest vnum being edited and
+ * OLC_ZNUM the rnum of the zone that holds it; a quest opened with a new
+ * vnum is not in aquest_table (real_quest() == NOTHING) until it is saved.
+ *
+ * Ownership.  OLC_QUEST and all five of its strings always belong to the
+ * editor: qedit_setup_existing() copies a row in with copy_quest(), and
+ * add_quest() (genqst.c) copies the edit back into aquest_table with
+ * str_udup, so every exit, including a successful save, uses CLEANUP_ALL.
+ *
+ * Input.  Names, texts and numbers are builder free text; numbers go
+ * through QEDIT_PARSE_INT with an explicit range, and quest types from the
+ * quest file are shown through qedit_type_name(), never indexed raw. */
+
 /*-------------------------------------------------------------------*/
 /*. Function prototypes . */
 
@@ -72,6 +86,9 @@ static const char *qedit_type_name(const struct aq_data *quest)
   return "Undefined";
 }
 
+/* Stores the edit in aquest_table.  add_quest() copies every
+ * string and never takes OLC_QUEST, so the caller still owns it and uses
+ * CLEANUP_ALL; add_quest cannot fail (it returns the new rnum). */
 static void qedit_save_internally(struct descriptor_data *d)
 {
   add_quest(OLC_QUEST(d));
