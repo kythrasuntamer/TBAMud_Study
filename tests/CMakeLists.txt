@@ -263,6 +263,21 @@ if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
         PROPERTIES COMPILE_OPTIONS "-ffunction-sections;-fdata-sections;-Dmain=tb_comm_main_unused")
 endif()
 
+# Production descriptor output path (vwrite_to_output/process_output).
+# test_comm_output.c #includes comm.c to reach its file-static functions, and
+# wraps write() so a test can script short writes (a full socket buffer).
+add_executable(test_comm_output
+    $<TARGET_OBJECTS:unity_vendor>
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_comm_output.c
+)
+target_include_directories(test_comm_output PRIVATE ${TEST_INCLUDES})
+target_compile_options(test_comm_output PRIVATE ${TEST_CFLAGS})
+add_test(NAME test_comm_output COMMAND test_comm_output)
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_compile_options(test_comm_output PRIVATE -ffunction-sections -fdata-sections)
+    target_link_options(test_comm_output PRIVATE -Wl,--gc-sections -Wl,--wrap=write)
+endif()
+
 # Production DG sub_write() message builder (dg_comm.c).
 add_mud_test(test_dg_sub_write
     ${MUD_SRCDIR}/dg_comm.c

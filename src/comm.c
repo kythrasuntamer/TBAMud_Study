@@ -1358,6 +1358,64 @@ static void flush_input_queue(struct descriptor_data *d)
   d->input.tail = NULL;
 }
 
+/* Output buffer state machine (vwrite_to_output() fills it, process_output()
+ * drains it). Exactly one buffer is live:
+ *   small: large_outbuf == NULL, output == small_outbuf;
+ *   large: output == large_outbuf->text (taken from bufpool or allocated).
+ * In both states 0 <= bufptr, 0 <= bufspace, bufptr + bufspace equals the
+ * live buffer's capacity - 1, and output[bufptr] is the terminating NUL.
+ * bufspace == 0 is the overflow state: further output is discarded until
+ * process_output() empties the buffer. Both macros evaluate d several times. */
+#define OUTBUF_CAPACITY(d) ((d)->large_outbuf ? LARGE_BUFSIZE : SMALL_BUFSIZE)
+#define OUTBUF_INVARIANT_OK(d) \
+  ((d)->bufptr >= 0 && (d)->bufspace >= 0 && \
+   (d)->output == ((d)->large_outbuf ? (d)->large_outbuf->text \
+                                     : (d)->small_outbuf) && \
+   (d)->bufptr + (d)->bufspace == OUTBUF_CAPACITY(d) - 1)
+
+/* Return d's large output buffer (if any) to the pool and leave d in the
+ * empty small-buffer state. */
+static void outbuf_reset_small(struct descriptor_data *d)
+{
+  if (d->large_outbuf) {
+    d->large_outbuf->next = bufpool;
+    bufpool = d->large_outbuf;
+    d->large_outbuf = NULL;
+  }
+  d->output = d->small_outbuf;
+  *d->output = '\0';
+  d->bufptr = 0;
+  d->bufspace = SMALL_BUFSIZE - 1;
+}
+
+/* Verify the output buffer invariant above at a state-machine boundary.
+ * 'full' also checks that the text length equals bufptr (an O(n) scan, so
+ * it is used once per flush, not on every write). A violation means earlier
+ * bookkeeping wrote outside the live buffer or will do so next; it is
+ * reported with the descriptor identity and the buffer is reset, discarding
+ * the pending output, rather than trusting a corrupt offset. */
+static bool outbuf_check(struct descriptor_data *d, const char *where, bool full)
+{
+  long len = -1;
+
+  if (OUTBUF_INVARIANT_OK(d)) {
+    if (full)
+      len = (long) strlen(d->output);
+    else if (d->output[d->bufptr] == '\0')
+      len = d->bufptr; /* terminator in place; length not rescanned */
+    if (len == d->bufptr)
+      return TRUE;
+  }
+
+  TB_ERROR_MSG("network", "outbuf-invariant", where,
+               DIAG_DESC_FMT " bufptr=%d bufspace=%d large=%d text-len=%ld:"
+               " output buffer bookkeeping is inconsistent; pending output"
+               " discarded", DIAG_DESC(d), d->bufptr, d->bufspace,
+               d->large_outbuf != NULL, len);
+  outbuf_reset_small(d);
+  return FALSE;
+}
+
 /* Release a closing connection's queues. The large output buffer goes back
  * to the shared pool, so this descriptor must never write output again:
  * only close_socket() may call this. The pointer is cleared so a stray later
@@ -1396,6 +1454,10 @@ size_t vwrite_to_output(struct descriptor_data *t, const char *format, va_list a
   static char txt[MAX_STRING_LENGTH];
   size_t wantsize;
   int size;
+
+  /* The offsets below index t->output directly; never write through a
+   * broken bufptr (it would land in neighbouring descriptor fields). */
+  outbuf_check(t, "vwrite_to_output", FALSE);
 
   /* if we're in the overflow state already, ignore this new output */
   if (t->bufspace == 0)
@@ -1759,8 +1821,12 @@ static int process_output(struct descriptor_data *t)
   if (t->has_prompt && !t->pProtocol->WriteOOB) {
     t->has_prompt = FALSE;
     result = write_to_descriptor(t->descriptor, i);
+    /* 'result' must count bytes of osb. If only part of the prepended CRLF
+     * went out, none of osb did. */
     if (result >= 2)
       result -= 2;
+    else if (result > 0)
+      result = 0;
   } else
     result = write_to_descriptor(t->descriptor, osb);
 
@@ -1778,26 +1844,25 @@ static int process_output(struct descriptor_data *t)
   if (result >= t->bufptr) {
     /* If we were using a large buffer, put the large buffer on the buffer pool
      * and switch back to the small one. */
-    if (t->large_outbuf) {
-      t->large_outbuf->next = bufpool;
-      bufpool = t->large_outbuf;
-      t->large_outbuf = NULL;
-      t->output = t->small_outbuf;
-    }
-    /* reset total bufspace back to that of a small buffer */
-    t->bufspace = SMALL_BUFSIZE - 1;
-    t->bufptr = 0;
-    *(t->output) = '\0';
+    outbuf_reset_small(t);
 
-    /* If the overflow message or prompt were partially written, try to save
-     * them. There will be enough space for them if this is true.  'result'
-     * is effectively unsigned here anyway. */
-    if ((unsigned int)result < strlen(osb)) {
+    /* If the overflow message or prompt were partially written (the kernel
+     * took all of t->output but not the whole of osb), carry the unsent
+     * tail over as the start of the new small buffer. The tail is at most
+     * GARBAGE_SPACE + MAX_PROMPT_LENGTH bytes, so it always fits; the
+     * offsets are recomputed from the copied text rather than adjusted, so
+     * bufptr can never go negative (it once did, and the next write
+     * landed in d->last_input). */
+    if ((size_t)result < strlen(osb)) {
       size_t savetextlen = strlen(osb + result);
 
-      strlcat(t->output, osb + result, SMALL_BUFSIZE);
-      t->bufptr   -= savetextlen;
-      t->bufspace += savetextlen;
+      if (strlcpy(t->output, osb + result, SMALL_BUFSIZE) >= SMALL_BUFSIZE)
+        TB_ERROR_MSG("network", "output-tail-truncate", "process_output",
+                     DIAG_DESC_FMT " unsent tail of %lu bytes exceeds the"
+                     " %d-byte small buffer; tail cut", DIAG_DESC(t),
+                     (unsigned long) savetextlen, SMALL_BUFSIZE);
+      t->bufptr = (int) strlen(t->output);
+      t->bufspace = SMALL_BUFSIZE - 1 - t->bufptr;
     }
 
   } else {
@@ -1808,6 +1873,7 @@ static int process_output(struct descriptor_data *t)
     t->bufspace += result;
   }
 
+  outbuf_check(t, "process_output", TRUE);
   return (result);
 }
 
