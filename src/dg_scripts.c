@@ -32,6 +32,9 @@
 
 #define PULSES_PER_MUD_HOUR     (SECS_PER_MUD_HOUR*PASSES_PER_SEC)
 
+/* 'wait until' accepts 0:00 through 24:00 (stock scripts use "24:00"). */
+#define DG_WAIT_MAX_MINUTES     (24 * 60)
+
 /* Local functions not used elsewhere */
 static obj_data *find_obj(long n);
 static room_data *find_room(long n);
@@ -1889,6 +1892,19 @@ static struct cmdlist_element *find_else_end(trig_data *trig,
   return c;
 }
 
+/* UID of a script owner for diagnostics; never allocates an ID. */
+static long dg_owner_uid(void *go, int type)
+{
+  if (!go)
+    return 0;
+  switch (type) {
+    case MOB_TRIGGER: return ((char_data *) go)->script_id;
+    case OBJ_TRIGGER: return ((obj_data *) go)->script_id;
+    case WLD_TRIGGER: return room_script_id((room_data *) go);
+    default:          return 0;
+  }
+}
+
 /* Read one bounded long, retaining a pointer to the remaining suffix. */
 static int script_wait_number(const char *text, long *number, const char **rest)
 {
@@ -1954,6 +1970,19 @@ static int process_wait(void *go, trig_data *trig, int type, char *cmd,
       return FALSE;
     }
 
+    /* The time is script text: keep it within one day before scaling it to
+     * pulses, so the multiplication below cannot overflow. */
+    if (min < 0 || min > DG_WAIT_MAX_MINUTES) {
+      TB_ERROR_MSG("dg", "wait-range", "process_wait",
+                   "trig vnum %d owner type %d uid %ld: wait until %ld "
+                   "minutes after midnight is outside [0,%d]; wait rejected",
+                   DIAG_TRIG_VNUM(trig), type, dg_owner_uid(go, type), min,
+                   DG_WAIT_MAX_MINUTES);
+      script_log("Trigger: %s, VNum %d. wait until time out of range: '%s'",
+              GET_TRIG_NAME(trig), GET_TRIG_VNUM(trig), cl->cmd);
+      return FALSE;
+    }
+
     /* calculate the pulse of the day of "until" time */
     ntime = (min * SECS_PER_MUD_HOUR * PASSES_PER_SEC) / 60;
 
@@ -2004,6 +2033,16 @@ static int process_wait(void *go, trig_data *trig, int type, char *cmd,
               GET_TRIG_NAME(trig), GET_TRIG_VNUM(trig), cl->cmd);
       return FALSE;
     }
+    /* A wait shorter than one pulse has always run on the next pulse
+     * (event_create() clamps it); keep that, but say so. */
+    if (when < 1) {
+      TB_WARN_MSG("dg", "wait-range", "process_wait",
+                  "trig vnum %d owner type %d uid %ld: wait %ld is below 1; "
+                  "waiting 1 pulse", DIAG_TRIG_VNUM(trig), type,
+                  dg_owner_uid(go, type), when);
+      when = 1;
+      fields = 1;
+    }
     if (fields == 2) {
       long unit = (c == 't') ? PULSES_PER_MUD_HOUR : PASSES_PER_SEC;
 
@@ -2019,6 +2058,10 @@ static int process_wait(void *go, trig_data *trig, int type, char *cmd,
 
   /* A wait longer than a mud year is a script error, not a schedule. */
   if (when > DG_MAX_WAIT_PULSES) {
+    TB_WARN_MSG("dg", "wait-range", "process_wait",
+                "trig vnum %d owner type %d uid %ld: wait %ld exceeds one mud "
+                "year (%ld pulses); capped", DIAG_TRIG_VNUM(trig), type,
+                dg_owner_uid(go, type), when, (long) DG_MAX_WAIT_PULSES);
     script_log("Trigger: %s, VNum %d. wait longer than one mud year "
                "shortened to one year: '%s'",
                GET_TRIG_NAME(trig), GET_TRIG_VNUM(trig), cl->cmd);

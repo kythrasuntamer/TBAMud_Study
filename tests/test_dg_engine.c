@@ -254,9 +254,75 @@ static void car_of_overlong_word_is_truncated_and_reported(void)
   TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "car"));
 }
 
+/* Run a one-trigger mob script from the top. */
+static trig_data *run_mob_script(char_data *mob, const char **lines)
+{
+  trig_data *t = make_trigger(MOB_TRIGGER, MTRIG_SPEECH, 0, lines);
+
+  attach_to_script(&SCRIPT(mob), t);
+  script_driver(&mob, t, MOB_TRIGGER, TRIG_NEW);
+  return t;
+}
+
+/* D1-02: an unbounded wait made event_create() form a negative queue key
+ * (head[-4] in queue_enq) and 'wait until' overflowed a multiplication. */
+static void wait_beyond_one_mud_year_is_rejected(void)
+{
+  const char *lines[] = { "wait 9223372036854775807", "nop after", NULL };
+  trig_data *t;
+
+  pulse = 12345;
+  t = run_mob_script(make_mob("mob"), lines);
+  TEST_ASSERT_NULL(GET_TRIG_WAIT(t));
+  TEST_ASSERT_EQUAL_STRING("wait-range", tb_captured_operation);
+  TEST_ASSERT_EQUAL_STRING("ERROR", tb_captured_severity);
+}
+
+static void scaled_wait_overflow_is_reported(void)
+{
+  const char *lines[] = { "wait 99999999999999999 t", NULL };
+  trig_data *t = run_mob_script(make_mob("mob"), lines);
+
+  TEST_ASSERT_NULL(GET_TRIG_WAIT(t));
+  TEST_ASSERT_EQUAL_STRING("wait-range", tb_captured_operation);
+}
+
+static void wait_until_out_of_day_is_rejected(void)
+{
+  const char *lines[] = { "wait until 99999999999999999", NULL };
+  trig_data *t = run_mob_script(make_mob("mob"), lines);
+
+  TEST_ASSERT_NULL(GET_TRIG_WAIT(t));
+  TEST_ASSERT_EQUAL_STRING("wait-range", tb_captured_operation);
+}
+
+static void wait_until_midnight_is_accepted(void)
+{
+  const char *lines[] = { "wait until 24:00", NULL };
+  trig_data *t = run_mob_script(make_mob("mob"), lines);
+
+  TEST_ASSERT_NOT_NULL(GET_TRIG_WAIT(t));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+}
+
+static void nonpositive_wait_waits_one_pulse_with_warning(void)
+{
+  const char *lines[] = { "wait -5", NULL };
+  trig_data *t = run_mob_script(make_mob("mob"), lines);
+
+  TEST_ASSERT_NOT_NULL(GET_TRIG_WAIT(t));
+  TEST_ASSERT_EQUAL_STRING("WARNING", tb_captured_severity);
+  TEST_ASSERT_EQUAL_STRING("wait-range", tb_captured_operation);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
   RUN_TEST(car_of_overlong_word_is_truncated_and_reported);
+  RUN_TEST(wait_beyond_one_mud_year_is_rejected);
+  RUN_TEST(scaled_wait_overflow_is_reported);
+  RUN_TEST(wait_until_out_of_day_is_rejected);
+  RUN_TEST(wait_until_midnight_is_accepted);
+  RUN_TEST(nonpositive_wait_waits_one_pulse_with_warning);
   return UNITY_END();
 }
