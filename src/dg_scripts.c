@@ -3190,6 +3190,25 @@ int script_driver(void *go_adress, trig_data *trig, int type, int mode)
     return SCRIPT_ERROR_CODE;
   }
 
+  /* extract_char() only flags a character (MOB_/PLR_NOTDEADYET); its script
+   * and pending waits live on until extract_pending_chars() at the end of
+   * the pulse. A wait expiring, or a random trigger firing, in the pulse a
+   * mob died or a scripted player quit would run commands for a character
+   * that has left the game. End the run instead, as for a lost owner. */
+  if (type == MOB_TRIGGER && DEAD((char_data *) go)) {
+    char_data *mob = (char_data *) go;
+
+    TB_WARN_MSG("dg", "owner-extracted", "script_driver",
+                "trig vnum %d: owner " DIAG_CHAR_FMT " uid %ld is pending "
+                "extraction; %s", DIAG_TRIG_VNUM(trig), DIAG_CHAR(mob),
+                mob->script_id, mode == TRIG_RESTART ?
+                "suspended run ended" : "trigger not run");
+    free_varlist(GET_TRIG_VARS(trig));
+    GET_TRIG_VARS(trig) = NULL;
+    GET_TRIG_DEPTH(trig) = 0;
+    return SCRIPT_ERROR_CODE;
+  }
+
   if (depth > MAX_SCRIPT_DEPTH) {
     TB_ERROR_MSG("dg", "script-recursion", "script_driver",
                  "trigger %d exceeded MAX_SCRIPT_DEPTH=%d (type=%d); its script "
@@ -3462,6 +3481,21 @@ int script_driver(void *go_adress, trig_data *trig, int type, int mode)
           *(obj_data **)go_adress = NULL;
         dg_script_execution_leave();
         return ret_val;
+      }
+
+      /* A command or a nested trigger killed or purged the mob or player
+       * owner other than by 'mpurge self': it is pending extraction (see
+       * the entry check), still allocated and holding its script, so end
+       * through the normal cleanup below. */
+      if (type == MOB_TRIGGER && DEAD((char_data *) go)) {
+        char_data *mob = (char_data *) go;
+
+        TB_WARN_MSG("dg", "owner-extracted", "script_driver",
+                    "trig vnum %d line %d: owner " DIAG_CHAR_FMT " uid %ld "
+                    "was extracted by its own command or a nested trigger; "
+                    "remaining lines skipped", DIAG_TRIG_VNUM(trig),
+                    dg_line_number(trig, cl), DIAG_CHAR(mob), mob->script_id);
+        break;
       }
     }
   }

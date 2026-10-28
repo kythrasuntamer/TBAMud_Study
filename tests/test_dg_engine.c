@@ -1303,6 +1303,41 @@ static void vdelete_checks_the_builders_authority(void)
   TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
 }
 
+/* DGDOC-4: extract_char() only flags a character, and its waits fire until
+ * extract_pending_chars() ends the pulse, so a wait expiring in the pulse
+ * its mob died resumed the script for the dead mob. */
+static void wait_of_an_extracted_mob_does_not_resume(void)
+{
+  const char *lines[] = { "set after 1", "wait 1", "global after", NULL };
+  char_data *mob = make_mob("mob");
+  trig_data *t = run_mob_script(mob, lines);
+
+  TEST_ASSERT_NOT_NULL(GET_TRIG_WAIT(t));
+  extract_char(mob);               /* killed or purged this pulse */
+  run_wait_out(t);
+  TEST_ASSERT_NULL(SCRIPT(mob)->global_vars);
+  TEST_ASSERT_EQUAL_INT(0, GET_TRIG_DEPTH(t));
+  TEST_ASSERT_NULL(GET_TRIG_VARS(t));
+  TEST_ASSERT_EQUAL_STRING("owner-extracted", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "suspended run ended"));
+}
+
+/* DGDOC-4: only 'mpurge self' stopped a mob's script; a mob killed by its
+ * own command (die() -> extract_char()) went on running its remaining
+ * lines. */
+static void script_stops_once_its_mob_is_extracted(void)
+{
+  const char *lines[] = { "set after 1", "mdamage %self% 1000", "global after", NULL };
+  char_data *owner = make_mob("zzowner");
+  trig_data *t = run_mob_script(owner, lines);
+
+  TEST_ASSERT_TRUE(MOB_FLAGGED(owner, MOB_NOTDEADYET));
+  TEST_ASSERT_NULL(SCRIPT(owner)->global_vars);
+  TEST_ASSERT_EQUAL_INT(0, GET_TRIG_DEPTH(t));
+  TEST_ASSERT_EQUAL_STRING("owner-extracted", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "line 2"));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -1355,5 +1390,7 @@ int main(void)
   RUN_TEST(level_setter_never_changes_an_immortal);
   RUN_TEST(attach_checks_the_target_zone);
   RUN_TEST(vdelete_checks_the_builders_authority);
+  RUN_TEST(wait_of_an_extracted_mob_does_not_resume);
+  RUN_TEST(script_stops_once_its_mob_is_extracted);
   return UNITY_END();
 }
