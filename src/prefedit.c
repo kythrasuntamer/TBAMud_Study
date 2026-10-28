@@ -82,16 +82,19 @@ static void prefedit_setup(struct descriptor_data *d, struct char_data *vict)
 }
 
 /* Called as a character is freed.  An implementor editing that character's
- * preferences held a pointer to it that outlived the character, and saving
- * then wrote through freed memory.  Such edits are abandoned; a player's own
- * prefedit goes away with their connection. */
+ * preferences used to hold a pointer to it that outlived the character, and
+ * saving then wrote through freed memory.  The editor now names its target
+ * by idnum and re-resolves it on every use (prefedit_target()), but an edit
+ * of a character that has left can no longer be saved, so it is abandoned
+ * here with a message; a player's own prefedit goes away with their
+ * connection. */
 void prefedit_forget_char(struct char_data *ch)
 {
   struct descriptor_data *d;
 
   for (d = descriptor_list; d; d = d->next)
     if (STATE(d) == CON_PREFEDIT && d->olc && OLC_PREFS(d) &&
-        OLC_PREFS(d)->ch == ch && d->character != ch) {
+        OLC_PREFS(d)->idnum == GET_IDNUM(ch) && d->character != ch) {
       write_to_output(d, "%s has left the game; preference edit "
                          "abandoned.\r\n", GET_NAME(ch));
       cleanup_olc(d, CLEANUP_ALL);

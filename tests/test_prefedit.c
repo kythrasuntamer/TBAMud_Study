@@ -31,6 +31,8 @@ void setUp(void)
   memset(&victim, 0, sizeof(victim));
   imp.player.name = "Imp";
   victim.player.name = "Victim";
+  GET_IDNUM(&imp) = 101;
+  GET_IDNUM(&victim) = 202;
   memset(&imp_desc, 0, sizeof(imp_desc));
   memset(&own_desc, 0, sizeof(own_desc));
   imp_desc.olc = &imp_olc;
@@ -40,8 +42,8 @@ void setUp(void)
   imp_desc.character = &imp;
   own_desc.character = &victim;
   STATE(&imp_desc) = STATE(&own_desc) = CON_PREFEDIT;
-  imp_prefs.ch = &victim;               /* the implementor edits Victim */
-  own_prefs.ch = &victim;               /* and Victim edits themself */
+  imp_prefs.idnum = GET_IDNUM(&victim);  /* the implementor edits Victim */
+  own_prefs.idnum = GET_IDNUM(&victim);  /* and Victim edits themself */
   imp_desc.next = &own_desc;
   descriptor_list = &imp_desc;
   cleanups = 0;
