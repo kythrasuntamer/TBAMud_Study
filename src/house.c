@@ -8,6 +8,25 @@
 *  CircleMUD is based on DikuMUD, Copyright (C) 1990, 1991.               *
 **************************************************************************/
 
+/**
+ * @file house.c
+ * Player houses: the house control table (lib/etc/hcontrol), each house's
+ * object file (lib/house/<vnum>.house), and the hcontrol/house commands.
+ *
+ * Who controls the input: hcontrol is a raw binary array of struct
+ * house_control_rec (see house.h) and every field in it is untrusted on
+ * read; House_boot() validates each record before it is loaded. House
+ * object files use the rent object-record format and go through
+ * objsave_parse_objects_from(). Guest names come from immortals and house
+ * owners and are resolved through the player index.
+ *
+ * Lifetime: house_control[] is a fixed static table of num_of_houses
+ * records, owned here. Both hcontrol and the object files are written
+ * through staged files and committed only after a complete write.
+ * Objects are restored flat into the house room: container nesting is not
+ * kept across a reload (House_save() writes every record with Loc 0).
+ */
+
 #include "conf.h"
 #include "sysdep.h"
 #include "structs.h"

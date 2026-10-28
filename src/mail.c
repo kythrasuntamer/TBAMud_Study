@@ -9,6 +9,26 @@
 *  By Jeremy Elson. Rewritten by Welcor.                                  *
 **************************************************************************/
 
+/**
+ * @file mail.c
+ * Player mail ("mudmail") stored in MAIL_FILE (lib/etc/plrmail) and the
+ * postmaster special procedure.
+ *
+ * File format: a sequence of records, each a header line
+ * "### <recipient idnum> <sender idnum> <send time>" followed by the
+ * message body terminated by a '~' line (see read_mail_record()).
+ *
+ * Who controls the input: the file is written only by this server, but
+ * message bodies are player-authored text and the file can be truncated or
+ * damaged on disk. A damaged record never ends the read silently: scan,
+ * lookup and delete all stop, report (parse-header / parse-body) and
+ * disable mail (no_mail) rather than rewrite the file without the later
+ * messages.
+ *
+ * Lifetime: store_mail() appends; read_delete() rewrites the whole file
+ * through MAIL_FILE_TMP and replaces MAIL_FILE only after a complete write.
+ */
+
 #include "conf.h"
 #include "sysdep.h"
 #include "structs.h"
@@ -228,14 +248,15 @@ int has_mail(long recipient)
   return FALSE;
 }
 
-/* void store_mail(long #1, long #2, char * #3)
- * #1 - id number of the person to mail to.
- * #2 - id number of the person the mail is from.
- * #3 - The actual message to send.
- *
- * call store_mail to store mail.  (hard, huh? :-) )  Pass 3 arguments:
- * who the mail is to (long), who it's from (long), and a pointer to the
- * actual message text (char *). */
+/** Append one message to MAIL_FILE.
+ * @param to Recipient idnum.
+ * @param from Sender idnum.
+ * @param message_pointer The message text. Borrowed: store_mail() copies it
+ * to disk and does not free or keep it; the caller (the string editor's
+ * mail completion in modify.c) still owns it.
+ * Returns nothing, so the sender is not told about a failure: an open,
+ * write, flush or close error is reported (mail "store", with both idnums)
+ * and the message is lost. */
 void store_mail(long to, long from, char *message_pointer)
 {
   FILE *mail_file;
@@ -433,6 +454,10 @@ SPECIAL(postmaster)
     return (0);
 }
 
+/* Start a mail message: check level, stamp price and recipient, charge the
+ * stamp, then hand the player to the string editor. The char ** buffer
+ * allocated here (mailwrite) belongs to the editor from then on; its mail
+ * completion in modify.c calls store_mail() and frees it. */
 static void postmaster_send_mail(struct char_data *ch, struct char_data *mailman,
 			  int cmd, char *arg)
 {
