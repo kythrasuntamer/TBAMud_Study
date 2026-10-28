@@ -2061,6 +2061,21 @@ char *strfrmt(char *str, int w, int h, int justify, int hpad, int vpad)
   if (w > (int)sizeof(line) - 5)
     w = (int)sizeof(line) - 5;
 
+  /* ret is shared by every caller: start empty, so an input that writes
+   * nothing (empty text, vpad FALSE) cannot return the previous caller's
+   * formatted text. */
+  ret[0] = '\0';
+
+  /* A room description loaded as "~" is stored as NULL (fread_string), and
+   * str_and_map() passes it straight here. Format it as empty text. */
+  if (str == NULL) {
+    static char empty_text[] = "";
+
+    TB_WARN_MSG("utils", "strfrmt-null", "strfrmt",
+                "NULL text to format w=%d h=%d", w, h);
+    sp = str = empty_text;
+  }
+
   memset(line, '\0', MAX_INPUT_LENGTH);
   /* Nomalize spaces and newlines */
   /* Split into lines, including convert \\ into \r\n */

@@ -477,6 +477,32 @@ void test_count_color_chars_complete_codes_are_silent(void)
   TEST_ASSERT_EQUAL_INT(0, count_records());
 }
 
+/* =====================================================================
+ * I1-07: strfrmt with NULL text, and no stale output from its static buffer.
+ * ===================================================================== */
+
+void test_strfrmt_null_text_reports_and_returns_empty(void)
+{
+  char *out = strfrmt(NULL, 60, 5, 0, 1, 1);
+
+  TEST_ASSERT_NOT_NULL(out);
+  TEST_ASSERT_NULL(strstr(out, "Room"));
+  TEST_ASSERT_EQUAL_INT(1, count_op("strfrmt-null"));
+}
+
+void test_strfrmt_empty_text_does_not_return_previous_output(void)
+{
+  char first[] = "A previous player's room description.";
+  char empty[] = "   ";
+  char *out;
+
+  out = strfrmt(first, 60, 1, FALSE, FALSE, FALSE);
+  TEST_ASSERT_NOT_NULL(strstr(out, "previous"));
+  out = strfrmt(empty, 60, 1, FALSE, FALSE, FALSE);
+  TEST_ASSERT_NULL(strstr(out, "previous"));
+  TEST_ASSERT_EQUAL_INT(0, count_records());
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -496,5 +522,7 @@ int main(void)
   RUN_TEST(test_count_non_protocol_complete_escapes_are_silent);
   RUN_TEST(test_count_color_chars_trailing_tab);
   RUN_TEST(test_count_color_chars_complete_codes_are_silent);
+  RUN_TEST(test_strfrmt_null_text_reports_and_returns_empty);
+  RUN_TEST(test_strfrmt_empty_text_does_not_return_previous_output);
   return UNITY_END();
 }
