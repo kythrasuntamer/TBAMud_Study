@@ -37,6 +37,19 @@ enum trigedit_save_result {
 };
 static int trigedit_save_checked(struct descriptor_data *d);
 
+/* strdup() that, like CREATE(), never yields NULL: running out of memory is
+ * fatal and is logged at the call site first.  src must not be NULL.  Used
+ * where a NULL string would be stored into a trigger or editor and
+ * dereferenced later (E2-14). */
+#define TRIGEDIT_STRDUP(dst, src) do { \
+    const char *trigedit_sd_src_ = (src); \
+    if (((dst) = strdup(trigedit_sd_src_)) == NULL) { \
+      TB_FATAL_MSG("dg", "trigedit-alloc", "strdup", "%lu bytes", \
+                   (unsigned long)strlen(trigedit_sd_src_) + 1); \
+      abort(); \
+    } \
+  } while (0)
+
 
 /* Parse the decimal prefix of an index filename without overflowing int. */
 static int trigedit_index_number(const char *text, int *number)
@@ -205,7 +218,7 @@ static void trigedit_setup_new(struct descriptor_data *d)
   trig->nr = NOWHERE;
 
   /* Set up some defaults. */
-  trig->name = strdup("new trigger");
+  TRIGEDIT_STRDUP(trig->name, "new trigger");
   trig->trigger_type = MTRIG_GREET;
 
   /* cmdlist will be a large char string until the trigger is saved */
@@ -682,7 +695,7 @@ void trigedit_parse(struct descriptor_data *d, char *arg)
          if (OLC_STORAGE(d)) {
            clear_screen(d);
            script_syntax_highlighting(d, OLC_STORAGE(d));
-           d->backstr = strdup(OLC_STORAGE(d));
+           TRIGEDIT_STRDUP(d->backstr, OLC_STORAGE(d));
          }
          d->str = &OLC_STORAGE(d);
          d->max_str = MAX_CMD_LENGTH;
@@ -739,7 +752,7 @@ void trigedit_parse(struct descriptor_data *d, char *arg)
       smash_tilde(arg);
       if (OLC_TRIG(d)->name)
         free(OLC_TRIG(d)->name);
-      OLC_TRIG(d)->name = strdup((arg && *arg) ? arg : "undefined");
+      TRIGEDIT_STRDUP(OLC_TRIG(d)->name, (arg && *arg) ? arg : "undefined");
       OLC_VAL(d)++;
       break;
 
@@ -771,7 +784,9 @@ void trigedit_parse(struct descriptor_data *d, char *arg)
       /* The old arglist is ours (strdup'd by trig_data_copy() or by an
        * earlier edit here). */
       free(OLC_TRIG(d)->arglist);
-      OLC_TRIG(d)->arglist = (*arg?strdup(arg):NULL);
+      OLC_TRIG(d)->arglist = NULL;
+      if (*arg)
+        TRIGEDIT_STRDUP(OLC_TRIG(d)->arglist, arg);
       OLC_VAL(d)++;
       break;
 
@@ -981,18 +996,18 @@ static int trigedit_save_checked(struct descriptor_data *d)
     if (s) {
       char *t = strtok(s, "\n\r"); /* strtok returns NULL if s is "\r\n" */
       if (t)
-        trig->cmdlist->cmd = strdup(t);
+        TRIGEDIT_STRDUP(trig->cmdlist->cmd, t);
       else
-        trig->cmdlist->cmd = strdup("* No script");
+        TRIGEDIT_STRDUP(trig->cmdlist->cmd, "* No script");
 
       cmd = trig->cmdlist;
       while ((s = strtok(NULL, "\n\r"))) {
         CREATE(cmd->next, struct cmdlist_element, 1);
         cmd = cmd->next;
-        cmd->cmd = strdup(s);
+        TRIGEDIT_STRDUP(cmd->cmd, s);
       }
     } else
-      trig->cmdlist->cmd = strdup("* No Script");
+      TRIGEDIT_STRDUP(trig->cmdlist->cmd, "* No Script");
 
     /* make the prorotype look like what we have.  The scratch trigger may
      * carry another prototype's rnum (it was filled from "W) Copy Trigger" or
@@ -1022,9 +1037,9 @@ static int trigedit_save_checked(struct descriptor_data *d)
         }
 
         if (proto->arglist)
-          live_trig->arglist = strdup(proto->arglist);
+          TRIGEDIT_STRDUP(live_trig->arglist, proto->arglist);
         if (proto->name)
-          live_trig->name = strdup(proto->name);
+          TRIGEDIT_STRDUP(live_trig->name, proto->name);
 
         /* anything could have happened so we don't want to keep these */
         if (GET_TRIG_WAIT(live_trig)) {
@@ -1059,16 +1074,16 @@ static int trigedit_save_checked(struct descriptor_data *d)
     if (s) {
       /* strtok returns NULL if s is "\r\n" */
       char *t = strtok(s, "\n\r");
-      trig->cmdlist->cmd = strdup(t ? t : "* No script");
+      TRIGEDIT_STRDUP(trig->cmdlist->cmd, t ? t : "* No script");
       cmd = trig->cmdlist;
 
       while ((s = strtok(NULL, "\n\r"))) {
         CREATE(cmd->next, struct cmdlist_element, 1);
         cmd = cmd->next;
-        cmd->cmd = strdup(s);
+        TRIGEDIT_STRDUP(cmd->cmd, s);
       }
     } else
-      trig->cmdlist->cmd = strdup("* No Script");
+      TRIGEDIT_STRDUP(trig->cmdlist->cmd, "* No Script");
 
     for (i = 0; i < top_of_trigt; i++) {
       if (!found) {
@@ -1600,6 +1615,14 @@ int format_script(struct descriptor_data *d)
   }
 
   sc = strdup(*d->str); // Work on a copy
+  if (!sc) {
+    /* strtok(NULL) would continue some earlier tokenisation. */
+    TB_ERROR_ERRNO("dg", "trigedit-alloc", "strdup",
+                   "trigger vnum %d: %lu-byte script not formatted",
+                   d->olc ? OLC_NUM(d) : -1, (unsigned long)strlen(*d->str));
+    write_to_output(d, "Out of memory, formatting aborted\r\n");
+    return FALSE;
+  }
   t = strtok(sc, "\n\r");
   *nsc = '\0';
 
@@ -1701,9 +1724,19 @@ int format_script(struct descriptor_data *d)
   if (stack_top >= 0)
     write_to_output(d, "Unmatched block statements ignored.\r\n");
 
-  free(*d->str);
-  *d->str = strdup(nsc);
   free(sc);
+  /* Copy before freeing, so a failure leaves the editor's text in place
+   * instead of a NULL *d->str. */
+  sc = strdup(nsc);
+  if (!sc) {
+    TB_ERROR_ERRNO("dg", "trigedit-alloc", "strdup",
+                   "trigger vnum %d: %lu-byte formatted script dropped",
+                   d->olc ? OLC_NUM(d) : -1, (unsigned long)len);
+    write_to_output(d, "Out of memory, formatting aborted\r\n");
+    return FALSE;
+  }
+  free(*d->str);
+  *d->str = sc;
 
   return TRUE;
 }
