@@ -1150,6 +1150,22 @@ static void test_idnum1_level_restore_is_logged(void)
   TEST_ASSERT_EQUAL_INT(0, captured_errors);
 }
 
+/* G1-27: for 'zpurge *' zone stayed 0, so a builder below LVL_GOD who
+ * could edit zone 0 passed can_edit_zone(ch, 0) and purged the world. */
+static void test_zpurge_all_below_god_is_refused(void)
+{
+  static struct char_data mob;
+  memset(&mob, 0, sizeof(mob));
+  SET_BIT_AR(MOB_FLAGS(&mob), MOB_ISNPC);
+  rooms[1].people = &mob;   /* purge_room would reach extract_char */
+  GET_LEVEL(&imm) = LVL_BUILDER;
+  RUN_CMD(do_zpurge, &imm, "*");
+  rooms[1].people = NULL;
+  TEST_ASSERT_EQUAL_STRING("zpurge-denied", captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(sent, "Only gods can purge the whole world."));
+  TEST_ASSERT_NULL(strstr(sent, "Purged world."));
+}
+
 int main(void)
 {
   /* basic_mud_log()/mudlog() are the real utils.c ones; keep them quiet. */
@@ -1184,6 +1200,7 @@ int main(void)
   RUN_TEST(test_at_returns_by_vnum_after_rooms_shift);
   RUN_TEST(test_show_errors_overflow_is_marked_and_reported);
   RUN_TEST(test_idnum1_level_restore_is_logged);
+  RUN_TEST(test_zpurge_all_below_god_is_refused);
   {
     int failures = UNITY_END();
     if (logfile)

@@ -4766,6 +4766,17 @@ ACMD(do_zpurge)
     send_to_char(ch, "That isn't a valid zone number!\r\n");
     return;
   }
+  /* zone stays 0 for '*', so the can_edit_zone() test below would let a
+   * builder who owns zone 0 purge the whole world. */
+  if (purge_all && GET_LEVEL(ch) < LVL_GOD) {
+    TB_WARN_MSG("act", "zpurge-denied", "world",
+                "caller " DIAG_CHAR_FMT " level %d below %d tried 'zpurge *'",
+                DIAG_CHAR(ch), GET_LEVEL(ch), LVL_GOD);
+    mudlog(BRF, MAX(LVL_GOD, GET_INVIS_LEV(ch)), TRUE,
+           "(GC) %s was refused 'zpurge *' (level %d)", GET_NAME(ch), GET_LEVEL(ch));
+    send_to_char(ch, "Only gods can purge the whole world.\r\n");
+    return;
+  }
   if (GET_LEVEL(ch) < LVL_GOD && !can_edit_zone(ch, zone)) {
     send_to_char(ch, "You can only purge your own zone!\r\n");
     return;
