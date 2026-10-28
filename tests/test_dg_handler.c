@@ -37,7 +37,7 @@ void tb_error_log_at(const char *severity, const char *subsystem,
   (void)source_file; (void)source_line; (void)source_func; (void)detail_fmt;
   if (fatal_op_to_exit && !strcmp(operation, fatal_op_to_exit))
     _exit(EXIT_EXPECTED_OP);
-  snprintf(last_op, sizeof(last_op), "%s", operation);
+  (void)snprintf(last_op, sizeof(last_op), "%s", operation);
   n_captured++;
 }
 

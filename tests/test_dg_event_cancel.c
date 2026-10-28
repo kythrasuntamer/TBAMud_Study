@@ -32,8 +32,10 @@ void tb_error_log_at(const char *severity, const char *subsystem,
   (void)subsystem; (void)resource; (void)errnum;
   (void)source_file; (void)source_line; (void)source_func; (void)detail_fmt;
   if (n_captured < MAX_CAPTURED) {
-    snprintf(captured_ops[n_captured], sizeof(captured_ops[0]), "%s", operation);
-    snprintf(captured_sev[n_captured], sizeof(captured_sev[0]), "%s", severity);
+    (void)snprintf(captured_ops[n_captured], sizeof(captured_ops[0]), "%s",
+                   operation);
+    (void)snprintf(captured_sev[n_captured], sizeof(captured_sev[0]), "%s",
+                   severity);
     n_captured++;
   }
 }
