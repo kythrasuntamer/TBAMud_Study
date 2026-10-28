@@ -742,14 +742,20 @@ static void remove_cmd_from_list(struct reset_com **list, int pos)
 int new_command(struct zone_data *zone, int pos)
 {
   int subcmd = 0;
-  struct reset_com new_com;
+  /* Every field is copied into the list, including if_flag, line and the
+   * 'V' string pointers, so the blank command must be fully zeroed. */
+  struct reset_com new_com = { 0 };
 
   /* Error check to ensure users hasn't given too large an index. */
   while (zone->cmd[subcmd].command != 'S')
     subcmd++;
 
-  if (pos < 0 || pos > subcmd)
+  if (pos < 0 || pos > subcmd) {
+    TB_WARN_MSG("olc", "zone-cmd-index", "zone",
+                "zone %d insert pos %d out of range 0..%d",
+                zone->number, pos, subcmd);
     return 0;
+  }
 
   /* Ok, let's add a new (blank) command. */
   new_com.command = 'N';

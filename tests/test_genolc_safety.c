@@ -1217,6 +1217,29 @@ static void dg_read_trigger_keeps_missing_room_vnum(void)
 }
 
 /* ------------------------------------------------------------------------ */
+/* C2-19: a new blank zone command is fully initialised.                    */
+/* ------------------------------------------------------------------------ */
+static void new_command_is_zeroed(void)
+{
+  make_zones(1);
+  TEST_ASSERT_EQUAL_INT(1, new_command(&zone_table[0], 0));
+  TEST_ASSERT_EQUAL_CHAR('N', zone_table[0].cmd[0].command);
+  TEST_ASSERT_FALSE(zone_table[0].cmd[0].if_flag);
+  TEST_ASSERT_EQUAL_INT(0, zone_table[0].cmd[0].arg1);
+  TEST_ASSERT_EQUAL_INT(0, zone_table[0].cmd[0].line);
+  TEST_ASSERT_NULL(zone_table[0].cmd[0].sarg1);
+  TEST_ASSERT_NULL(zone_table[0].cmd[0].sarg2);
+  TEST_ASSERT_EQUAL_CHAR('S', zone_table[0].cmd[1].command);
+}
+
+static void new_command_reports_bad_position(void)
+{
+  make_zones(1);
+  TEST_ASSERT_EQUAL_INT(0, new_command(&zone_table[0], 2));
+  TEST_ASSERT_EQUAL_STRING("zone-cmd-index", tb_captured_operation);
+}
+
+/* ------------------------------------------------------------------------ */
 /* Temporary world directory for the writers.                               */
 /* ------------------------------------------------------------------------ */
 static char test_root[] = "/tmp/tb-genolc-XXXXXX";
@@ -1311,6 +1334,8 @@ int main(void)
   RUN_TEST(oset_apply_sets_valid_modifier);
   RUN_TEST(dg_obj_trigger_keeps_missing_vnum);
   RUN_TEST(dg_read_trigger_keeps_missing_room_vnum);
+  RUN_TEST(new_command_is_zeroed);
+  RUN_TEST(new_command_reports_bad_position);
   failures = UNITY_END();
   leave_test_root();
   return failures;
