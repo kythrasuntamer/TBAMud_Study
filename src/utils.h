@@ -588,14 +588,13 @@ do                                                              \
 /** References the routine element for a spell. Currently unused. */
 #define SPELL_ROUTINES(spl)	(spell_info[spl].routines)
 
-/* IS_MOB() acts as a VALID_MOB_RNUM()-like function.*/
+/* IS_MOB() is IS_NPC() plus a VALID_MOB_RNUM() check of the prototype rnum. */
 /** 1 if the character has the NPC bit set, 0 if the character does not.
  * Used to prevents NPCs and mobs from doing things they shouldn't, even
  * when mobs are possessed or charmed by a player. */
 #define IS_NPC(ch)	(IS_SET_AR(MOB_FLAGS(ch), MOB_ISNPC))
 /** 1 if the character is a real NPC, 0 if the character is not. */
-#define IS_MOB(ch)	(IS_NPC(ch) && GET_MOB_RNUM(ch) <= top_of_mobt && \
-				GET_MOB_RNUM(ch) != NOBODY)
+#define IS_MOB(ch)	(IS_NPC(ch) && VALID_MOB_RNUM(GET_MOB_RNUM(ch)))
 
 /** 1 if ch is flagged an NPC and flag is set in the act bitarray, 0 if not. */
 #define MOB_FLAGGED(ch, flag) (IS_NPC(ch) && IS_SET_AR(MOB_FLAGS(ch), (flag)))
@@ -652,6 +651,9 @@ do                                                              \
 
 /** 1 if this is a valid room number, 0 if not. */
 #define VALID_ROOM_RNUM(rnum)	((rnum) != NOWHERE && (rnum) <= top_of_world)
+/** 1 if rnum indexes mob_proto[]/mob_index[], 0 if not. rnum is evaluated
+ * twice: pass a plain variable or side-effect-free expression. */
+#define VALID_MOB_RNUM(rnum)	((rnum) != NOBODY && (rnum) <= top_of_mobt)
 /** The room number if this is a valid room, NOWHERE if it is not */
 #define GET_ROOM_VNUM(rnum) \
 	((room_vnum)(VALID_ROOM_RNUM(rnum) ? world[(rnum)].number : NOWHERE))
