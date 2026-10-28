@@ -12,6 +12,30 @@
 *  $Revision: 1.0.14 $                                                    *
 **************************************************************************/
 
+/**
+ * @file dg_triggers.c
+ * The trigger entry points the game calls when something happens: one
+ * function per trigger type and owner kind (greet_mtrigger, get_otrigger,
+ * enter_wtrigger, ...). Each finds the matching triggers on the owner and
+ * runs them through script_driver().
+ *
+ * Return contract of the int-returning entry points: nonzero lets the game
+ * action proceed, 0 means a trigger blocked it (the script returned 0) or
+ * the owner or actor did not survive the trigger. Callers must treat 0 as
+ * "do not continue with this action".
+ *
+ * Lifetime rules: a script can extract its owner, the actor, or anyone
+ * else, and can move characters between rooms. After a script_driver()
+ * call a trigger function never trusts a pointer it held before: owners and
+ * actors are re-checked by UID (obj_uid_matches(), find_char()), and loops
+ * over several triggers or room occupants walk a snapshot taken before the
+ * first dispatch (dg_cmd.h, the greet and command snapshots below).
+ *
+ * Who controls the input: the matched text (speech, command arguments) is
+ * typed by players; trigger argument lists and numeric arguments come from
+ * builders. Both are treated as untrusted strings.
+ */
+
 #include "conf.h"
 #include "sysdep.h"
 #include "structs.h"
@@ -88,6 +112,15 @@ char *one_phrase(char *arg, char *first_arg, size_t first_arg_size)
     return arg;
 }
 
+/**
+ * Whether sub occurs in string as a whole word or phrase: case-insensitive
+ * (str_str()), and bounded on each side by the string's start or end,
+ * whitespace or punctuation. Only the first occurrence is examined, so
+ * "cat" is not found in "cats cat".
+ * @param sub The word or phrase to look for; non-NULL.
+ * @param string The text searched; non-NULL.
+ * @return 1 when found as a word, else 0.
+ */
 int is_substring(char *sub, char *string)
 {
     char *s;
