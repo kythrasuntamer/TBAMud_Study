@@ -1199,6 +1199,55 @@ static void test_redit_copy_saved_to_new_vnum_renumbers_other_sessions(void)
   free(zd.olc);
 }
 
+
+/* ------------------------------------------------------------------ */
+/* F1-15: aborting a command edit after deletes stays inside the list. */
+/* ------------------------------------------------------------------ */
+static void test_zedit_abort_after_deletes_stays_in_bounds(void)
+{
+  struct descriptor_data *d = &builder_desc;
+  struct reset_com cmds[5];
+  int i;
+
+  make_zone();
+  memset(cmds, 0, sizeof(cmds));
+  for (i = 0; i < 5; i++)
+    cmds[i].command = '*';
+  make_zedit_session(d, cmds, 5);
+  OLC_VAL(d) = 4;                  /* the last command edited */
+
+  for (i = 0; i < 4; i++) {
+    OLC_MODE(d) = ZEDIT_DELETE_ENTRY;
+    zedit_parse(d, "0");
+  }
+  OLC_MODE(d) = ZEDIT_CHANGE_ENTRY;
+  zedit_parse(d, "a");             /* ASan: cmd[4] of a 2-slot list before */
+
+  TEST_ASSERT_EQUAL_INT(0, OLC_VAL(d));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  free_zedit_session(d);
+}
+
+static void test_zedit_abort_with_stale_index_is_reported(void)
+{
+  struct descriptor_data *d = &builder_desc;
+  struct reset_com cmd;
+
+  make_zone();
+  memset(&cmd, 0, sizeof(cmd));
+  cmd.command = '*';
+  make_zedit_session(d, &cmd, 1);
+  OLC_VAL(d) = 7;
+  OLC_MODE(d) = ZEDIT_CHANGE_ENTRY;
+
+  zedit_parse(d, "A");
+
+  TEST_ASSERT_EQUAL_STRING("zedit-stale-index", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "room vnum 3001 command index 7 outside list of 1"));
+  TEST_ASSERT_EQUAL_INT(0, OLC_VAL(d));
+  free_zedit_session(d);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -1225,5 +1274,7 @@ int main(void)
   RUN_TEST(test_oedit_save_frees_previous_prototype_trigger_list);
   RUN_TEST(test_medit_save_repairs_and_reports_wrong_scratch_nr);
   RUN_TEST(test_redit_copy_saved_to_new_vnum_renumbers_other_sessions);
+  RUN_TEST(test_zedit_abort_after_deletes_stays_in_bounds);
+  RUN_TEST(test_zedit_abort_with_stale_index_is_reported);
   return UNITY_END();
 }

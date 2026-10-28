@@ -1185,6 +1185,10 @@ void zedit_parse(struct descriptor_data *d, char *arg)
     if (isdigit(*arg)) {
       delete_zone_command(OLC_ZONE(d), pos);
       OLC_ZONE(d)->age = 1;
+      /* The list shrank: OLC_VAL may now index past it (see
+       * ZEDIT_CHANGE_ENTRY 'A'). 0 is always in bounds (at worst the 'S'
+       * terminator). */
+      OLC_VAL(d) = 0;
     }
     zedit_disp_menu(d);
     break;
@@ -1194,7 +1198,18 @@ void zedit_parse(struct descriptor_data *d, char *arg)
     /* Parse the input for which line to edit, and goto next quiz. Abort edit,
        and return to main menu idea from Mark Garringer zizazat@hotmail.com */
     if (toupper(*arg) == 'A') {
-      if (OLC_CMD(d).command == 'N') {
+      /* OLC_VAL is the index of the last command started; it must still
+       * be inside the list (count_commands() entries plus the 'S'
+       * terminator), which ZEDIT_DELETE_ENTRY may have shrunk. */
+      int count = count_commands(OLC_ZONE(d)->cmd);
+
+      if (OLC_VAL(d) < 0 || OLC_VAL(d) > count) {
+        struct char_data *builder = d->character;
+        TB_WARN_MSG("olc", "zedit-stale-index", "zone",
+                    "builder " DIAG_CHAR_FMT " room vnum %d command index %d outside list of %d; abort ignored",
+                    DIAG_CHAR(builder), OLC_NUM(d), OLC_VAL(d), count);
+        OLC_VAL(d) = 0;
+      } else if (OLC_CMD(d).command == 'N') {
         OLC_CMD(d).command = '*';
       }
       zedit_disp_menu(d);
