@@ -234,6 +234,32 @@ void test_delete_last_line_then_insert_stays_in_bounds(void)
   free(del);
 }
 
+/* Ledger observation A2 (oos:improved-edit.c escaped \r\n): the range
+ * errors of /f, /d, /l and /n were written as "\\r\\n", so the player saw
+ * a literal backslash-r-backslash-n and no line break. */
+static void expect_range_message(const char *command, const char *expected)
+{
+  char line[32];    /* on the stack: a failed assertion must not leak it */
+
+  strlcpy(line, command, sizeof(line));
+  output[0] = '\0';
+  TEST_ASSERT_EQUAL_INT(STRINGADD_ACTION, improved_editor_execute(&d, line));
+  TEST_ASSERT_EQUAL_STRING_MESSAGE(expected, output, command);
+}
+
+void test_range_errors_end_with_a_real_line_break(void)
+{
+  text = strdup("one\r\ntwo\r\n");
+  TEST_ASSERT_NOT_NULL(text);
+
+  expect_range_message("/f5-2", "That range is invalid.\r\n");
+  expect_range_message("/fx", "Invalid line range.\r\n");
+  expect_range_message("/dx", "Invalid line range.\r\n");
+  expect_range_message("/lx", "Invalid line range.\r\n");
+  expect_range_message("/nx", "Invalid line range.\r\n");
+  TEST_ASSERT_EQUAL_STRING("one\r\ntwo\r\n", text);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -249,5 +275,6 @@ int main(void)
   RUN_TEST(test_replace_all_exact_fit_keeps_every_byte);
   RUN_TEST(test_replace_first_only_and_shrink);
   RUN_TEST(test_delete_last_line_then_insert_stays_in_bounds);
+  RUN_TEST(test_range_errors_end_with_a_real_line_break);
   return UNITY_END();
 }
