@@ -440,9 +440,47 @@ void test_rcopy_with_clean_template_logs_nothing(void)
   TEST_ASSERT_FALSE(log_has("op=room-copy"));
 }
 
+/* ---------------------------------------------------------------------
+ * F3-06: rcopy left the source vnum in the template, so the editor skipped
+ * its new-room renumber pass; and an int vnum above IDXTYPE_MAX was
+ * silently narrowed (68538 -> 3002).
+ * --------------------------------------------------------------------- */
+void test_rcopy_saves_template_as_new_room(void)
+{
+  run_cmd(do_oasis_copy, "3001 3050", CON_REDIT);
+
+  TEST_ASSERT_EQUAL_INT(1, save_calls);
+  TEST_ASSERT_EQUAL_INT(NOWHERE, save_seen_number);
+  TEST_ASSERT_NOT_EQUAL(NOWHERE, real_room(3050));
+}
+
+void test_rcopy_rejects_vnum_that_would_be_narrowed(void)
+{
+  run_cmd(do_oasis_copy, "3001 68538", CON_REDIT);
+
+  TEST_ASSERT_EQUAL_INT(0, save_calls);
+  TEST_ASSERT_EQUAL_INT(1, top_of_world);   /* nothing was added */
+  TEST_ASSERT_NOT_NULL(strstr(sent, "Vnums must be numbers"));
+  TEST_ASSERT_TRUE(log_has("op=arg-range"));
+  TEST_ASSERT_TRUE(log_has("resource=rcopy"));
+  TEST_ASSERT_NULL(builder_desc.olc);
+}
+
+void test_rcopy_rejects_nowhere_sentinel_and_negative_target(void)
+{
+  run_cmd(do_oasis_copy, "3001 65535", CON_REDIT);
+  TEST_ASSERT_EQUAL_INT(0, save_calls);
+  run_cmd(do_oasis_copy, "3001 -1", CON_REDIT);
+  TEST_ASSERT_EQUAL_INT(0, save_calls);
+  TEST_ASSERT_TRUE(log_has("op=arg-range"));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(test_rcopy_saves_template_as_new_room);
+  RUN_TEST(test_rcopy_rejects_vnum_that_would_be_narrowed);
+  RUN_TEST(test_rcopy_rejects_nowhere_sentinel_and_negative_target);
   RUN_TEST(test_rcopy_new_room_never_inherits_source_contents);
   RUN_TEST(test_rcopy_with_clean_template_logs_nothing);
   return UNITY_END();

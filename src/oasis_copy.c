@@ -82,7 +82,20 @@ ACMD(do_oasis_copy)
   /* We can't copy non-existing data. */
   /* Note: the source data can be in any zone. It's not restricted */
   /* to the builder's designated OLC zone. */
-  src_vnum = tb_parse_int_or_zero(buf1);
+  /* F3-06: both vnums are builder-typed ints but every lookup and OLC_NUM
+   * are IDXTYPE (ush_int).  Without a range check 68538 silently became
+   * 3002, and the "already being edited" check below compared the narrowed
+   * OLC_NUM against the unnarrowed int, so it could never match.  NOWHERE
+   * (IDXTYPE_MAX) is the "no vnum" sentinel and is not a valid target. */
+  if (!tb_parse_int_checked(buf1, &src_vnum) || !tb_parse_int_checked(buf2, &dst_vnum) ||
+      src_vnum < 0 || src_vnum >= IDXTYPE_MAX || dst_vnum < 0 || dst_vnum >= IDXTYPE_MAX) {
+    send_to_char(ch, "Vnums must be numbers from 0 to %d.\r\n", IDXTYPE_MAX - 1);
+    TB_WARN_MSG("olc", "arg-range", oasis_copy_info[i].command,
+                "vnum '%s' or '%s' outside [0,%d] from " DIAG_CHAR_FMT,
+                buf1, buf2, IDXTYPE_MAX - 1, DIAG_CHAR(ch));
+    return;
+  }
+
   src_rnum = (*oasis_copy_info[i].binary_search)(src_vnum);
   if (src_rnum == NOWHERE) {
     send_to_char(ch, "The source %s (#%d) does not exist.\r\n", oasis_copy_info[i].text, src_vnum);
@@ -90,7 +103,6 @@ ACMD(do_oasis_copy)
   }
 
   /* Don't copy if the target already exists. */
-  dst_vnum = tb_parse_int_or_zero(buf2);
   dst_rnum = (*oasis_copy_info[i].binary_search)(dst_vnum);
   if (dst_rnum != NOWHERE) {
     send_to_char(ch, "The target %s (#%d) already exists.\r\n", oasis_copy_info[i].text, dst_vnum);
@@ -159,6 +171,14 @@ ACMD(do_oasis_copy)
     OLC_ROOM(d)->people = NULL;
     OLC_ROOM(d)->events = NULL;
   }
+
+  /* F3-06: redit_save_internally treats the save as a new room (and
+   * renumbers the rnums held by other builders' open editors) only when the
+   * template's number is NOWHERE.  setup_existing leaves the source vnum
+   * there, so without this the renumber pass was skipped and other open
+   * editors' exits silently pointed one room off after the insert. */
+  if (subcmd == CON_REDIT && OLC_ROOM(d))
+    OLC_ROOM(d)->number = NOWHERE;
 
   (*oasis_copy_info[i].save_func)(d);
 
