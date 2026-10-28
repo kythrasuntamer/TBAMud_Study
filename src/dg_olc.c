@@ -7,6 +7,34 @@
 *  $Revision: 1.0.14 $                                                    *
 **************************************************************************/
 
+/**
+ * @file dg_olc.c
+ * The trigger editor (trigedit), the script-attachment submenu used by
+ * medit/oedit/redit, and the trigger zone-file writer.
+ *
+ * Who controls the input: builders.  Everything typed into the editor
+ * (names, arguments, numbers, the script text and its "/f" formatting) is
+ * builder input and is bounded or rejected here; builder typos are answered
+ * with a re-prompt, not a server log.  Trigger files and the trigger index
+ * are written by administrators and by this file.
+ *
+ * Ownership and lifetime:
+ * - OLC_TRIG(d) is a private scratch trigger.  Its name and arglist are its
+ *   own; its cmdlist is borrowed from the prototype it was copied from and is
+ *   never freed through the scratch (free_trigger() leaves cmdlist alone).
+ *   cleanup_olc() frees the scratch.
+ * - OLC_STORAGE(d) is the script text being edited (a heap buffer of at least
+ *   MAX_CMD_LENGTH bytes).  trigedit_save() compiles it into a new cmdlist.
+ * - A prototype (trig_index[rnum]->proto) owns its cmdlist.  Every live
+ *   instance made by read_trigger() shares that list, and its nr must equal
+ *   the prototype's rnum.  Saving an existing trigger frees the old list and
+ *   re-points every instance with that rnum.  Creating a trigger inserts a
+ *   prototype and shifts every rnum at or above the insertion point.  An
+ *   instance whose rnum is not shifted keeps a list that the next edit frees.
+ * - OLC_SCRIPT(d) (the attachment submenu) is a private copy of a mob, object
+ *   or room's proto_script; see dg_olc_script_copy().
+ */
+
 #include "conf.h"
 #include "sysdep.h"
 #include "structs.h"
@@ -231,6 +259,22 @@ static void trigedit_setup_new(struct descriptor_data *d)
   OLC_VAL(d) = 0;  /* Has changed flag. (It hasn't so far, we just made it.) */
 }
 
+/**
+ * Fill the editor's scratch trigger and script buffer from a prototype.
+ * Used by trigedit on an existing trigger, by "W) Copy Trigger", and by
+ * tcopy (oasis_copy.c).
+ * @pre d->olc is allocated and rtrg_num is a valid rnum (callers obtain it
+ * from real_trigger() and check it against NOTHING).
+ * @post Any previous OLC_TRIG/OLC_STORAGE is released and replaced.  The
+ * scratch borrows the prototype's cmdlist and carries its nr, which a caller
+ * filling the scratch for a different vnum must reset (see TRIGEDIT_COPY).
+ * OLC_VAL(d) is 0.  OLC_STORAGE is sized to the whole script, so it can be
+ * larger than MAX_CMD_LENGTH for a trigger loaded from disk; the text
+ * editor's max_str is still MAX_CMD_LENGTH, so such a script cannot be
+ * appended to or formatted (both refuse loudly) until it is shortened.
+ * @param d The editing descriptor.
+ * @param rtrg_num The rnum of the prototype to copy.
+ */
 void trigedit_setup_existing(struct descriptor_data *d, int rtrg_num)
 {
   struct trig_data *trig;
@@ -388,7 +432,13 @@ static void trigedit_disp_types(struct descriptor_data *d)
  suggests the licensor endorses you or your use.
  *****************************************************************************************/
 
-// Change a string for another without memory bugs
+/**
+ * Replace every occurrence of substr in string with replacement.
+ * Takes ownership of string: the result is either string itself (nothing to
+ * do, or an allocation failed, which is reported) or a new heap string, in
+ * which case string has been freed.  The caller frees the result.
+ * @return NULL only when string is NULL.
+ */
 static char *str_replace(char *string, const char *substr, const char *replacement) {
     char *tok = NULL;
     char *newstr = NULL;
@@ -546,6 +596,13 @@ static const char *command_color_replacement[COMMAND_TERMS][2] =
 };
 
 
+/**
+ * Page a colour-highlighted listing of a script to the builder.
+ * Display only: string is not modified.  The listing is capped at
+ * MAX_STRING_LENGTH bytes and says so when cut; blank lines are not shown.
+ * @param d The descriptor to page to.
+ * @param string The script text (CR/LF separated lines).
+ */
 static void script_syntax_highlighting(struct descriptor_data *d, char *string)
 {
     ACMD(do_action);
@@ -928,7 +985,29 @@ void trigedit_save(struct descriptor_data *d)
   (void)trigedit_save_checked(d);   /* every failure is reported inside */
 }
 
-/* save the zone's triggers to internal memory and to disk */
+/**
+ * Save the editor's trigger into memory, then write the zone's trigger file.
+ *
+ * Order and rollback: the zone size check runs first and changes nothing.
+ * After it passes, the prototype (and for a new vnum, trig_index) is
+ * rewritten in memory, live triggers are re-pointed, and only then is the
+ * file written.  A disk failure does not roll the memory change back; it
+ * returns TRIGEDIT_SAVED_MEMORY_ONLY and the builder is told.
+ *
+ * Structures that hold rnums and must follow an insertion: live triggers
+ * (trigger_list) and other editors' scratch triggers.  Prototypes' own nr
+ * fields are renumbered in the index loop.
+ *
+ * @pre d is in CON_TRIGEDIT (or tcopy) with OLC_TRIG, OLC_NUM and OLC_ZNUM
+ * set.
+ * @post OLC_STORAGE is consumed by strtok() once the in-memory save starts.
+ * OLC_TRIG->cmdlist then belongs to the prototype.  The caller must run
+ * cleanup_olc() afterwards, except after TRIGEDIT_NOT_SAVED, when the editor
+ * state is untouched and editing may continue.
+ * @param d The editing descriptor.
+ * @return One of enum trigedit_save_result.  Every failure has been reported
+ * to the builder and the server log.
+ */
 static int trigedit_save_checked(struct descriptor_data *d)
 {
   int i;
@@ -1269,6 +1348,11 @@ static int trigedit_save_checked(struct descriptor_data *d)
 
 /**
  * Make sure the trigger index lists "<znum>.<type>", rewriting it in order.
+ * The index (TRG_PREFIX "index") holds one "<zone>.trg" line per zone in
+ * ascending zone order and ends with a "$" line.  It is read with get_line(),
+ * which skips blank and '*' comment lines (so the rewrite drops comments) and
+ * reads at most READ_SIZE - 1 bytes per line.  The new index is written to
+ * "newindex" and swapped in only when complete.
  * @retval TRUE The index lists the zone (it was already there or was added).
  * @retval FALSE The index could not be read, parsed or replaced; the old
  * index is kept and the reason has been logged.
@@ -1371,6 +1455,16 @@ static int trigedit_create_index(int znum, char *type)
   return TRUE;
 }
 
+/**
+ * Give the editor a private copy of the edited thing's trigger list.
+ * Ownership: OLC_SCRIPT(d) belongs to the editor.  On save, medit/oedit/redit
+ * install it as the prototype's proto_script (freeing the old list); on quit
+ * without saving it is freed and the prototype is untouched.
+ * @pre OLC_ITEM_TYPE(d) is set and the matching OLC_MOB/OLC_OBJ/OLC_ROOM
+ * pointer is valid.  OLC_SCRIPT(d) is NULL or already owned elsewhere; it is
+ * overwritten, not freed.
+ * @param d The editing descriptor.
+ */
 void dg_olc_script_copy(struct descriptor_data *d)
 {
   struct trig_proto_list *origscript, *editscript;
@@ -1432,6 +1526,15 @@ void dg_script_menu(struct descriptor_data *d)
     grn, nrm, grn, nrm, grn, nrm);
 }
 
+/**
+ * Handle one line of builder input in the trigger-attachment submenu.
+ * New entries are accepted only when real_trigger() resolves their vnum;
+ * dg_script_menu() relies on every vnum in OLC_SCRIPT(d) resolving.
+ * @param d The editing descriptor (OLC_SCRIPT(d) as for dg_olc_script_copy()).
+ * @param arg The builder's input line.
+ * @retval 0 The builder quit the submenu; the caller returns to its own menu.
+ * @retval 1 The submenu handled the input and stays active.
+ */
 int dg_script_edit_parse(struct descriptor_data *d, char *arg)
 {
   struct trig_proto_list *trig, *currtrig;
@@ -1586,8 +1689,18 @@ static int format_script_can_push(struct descriptor_data *d, int line_num,
 
 /**
  * Re-indent the script being edited (the editor's "/f" command).
- * On success *d->str is replaced by a new heap copy; on failure it is left
- * untouched and the reason has been sent to the builder.
+ * Only improved-edit.c calls it, and only for a descriptor in CON_TRIGEDIT,
+ * so *d->str is OLC_STORAGE(d).
+ *
+ * Caps: blocks nest at most FORMAT_SCRIPT_MAX_DEPTH deep, and the result,
+ * terminator included, must fit MIN(d->max_str, MAX_CMD_LENGTH).  Lines have
+ * no length limit of their own.  Exceeding a cap aborts with a message to the
+ * builder and a structured warning.  Unbalanced blocks are formatted anyway,
+ * with a note.
+ * @param d The editing descriptor.
+ * @retval TRUE *d->str was freed and replaced by a new heap copy (ownership
+ * stays with the descriptor's editor).
+ * @retval FALSE *d->str is untouched; the reason has been sent to the builder.
  */
 int format_script(struct descriptor_data *d)
 {
