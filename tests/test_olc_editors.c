@@ -121,6 +121,7 @@ void cleanup_olc(struct descriptor_data *d, byte cleanup_type)
   cleanups++;
   if (!d->olc)
     return;
+  olc_free_script_copy(d);   /* as oasis.c does */
   free_scratch_obj(OLC_OBJ(d));
   if (OLC_ROOM(d)) {
     free_room_strings(OLC_ROOM(d));
@@ -193,8 +194,57 @@ void dg_olc_script_copy(struct descriptor_data *d) { OLC_SCRIPT(d) = NULL; }
 void dg_script_menu(struct descriptor_data *d) { (void)d; }
 int dg_script_edit_parse(struct descriptor_data *d, char *arg) { (void)d; (void)arg; return 1; }
 void assign_triggers(void *i, int type) { (void)i; (void)type; }
-void extract_script(void *thing, int type) { (void)thing; (void)type; }
-void free_proto_script(void *thing, int type) { (void)thing; (void)type; }
+
+/* Script stubs that keep dg_handler.c's ownership contract: extract_script()
+ * detaches SCRIPT(thing), free_proto_script() frees thing's proto list. The
+ * calls are recorded so tests can check which owner was released. */
+static int extract_script_calls, free_proto_calls;
+static void *last_extracted_thing;
+static struct trig_proto_list **proto_slot(void *thing, int type)
+{
+  switch (type) {
+  case MOB_TRIGGER: return &((struct char_data *)thing)->proto_script;
+  case OBJ_TRIGGER: return &((struct obj_data *)thing)->proto_script;
+  default:          return &((struct room_data *)thing)->proto_script;
+  }
+}
+void extract_script(void *thing, int type)
+{
+  extract_script_calls++;
+  last_extracted_thing = thing;
+  if (type == OBJ_TRIGGER)
+    SCRIPT((struct obj_data *)thing) = NULL;
+  else if (type == MOB_TRIGGER)
+    SCRIPT((struct char_data *)thing) = NULL;
+  else
+    SCRIPT((struct room_data *)thing) = NULL;
+}
+static void free_trig_list(struct trig_proto_list *tp)
+{
+  while (tp) {
+    struct trig_proto_list *next = tp->next;
+    free(tp);
+    tp = next;
+  }
+}
+void free_proto_script(void *thing, int type)
+{
+  struct trig_proto_list **slot = proto_slot(thing, type);
+  free_proto_calls++;
+  free_trig_list(*slot);
+  *slot = NULL;
+}
+static struct trig_proto_list *make_trig_list(int n)
+{
+  struct trig_proto_list *head = NULL, *tp;
+  while (n-- > 0) {
+    CREATE(tp, struct trig_proto_list, 1);
+    tp->vnum = 3100 + n;
+    tp->next = head;
+    head = tp;
+  }
+  return head;
+}
 void copy_proto_script(void *source, void *dest, int type) { (void)source; (void)dest; (void)type; }
 
 zone_rnum real_zone_by_thing(room_vnum vznum) { (void)vznum; return 0; }
@@ -371,6 +421,8 @@ void setUp(void)
   delete_calls = 0;
   zone_editable = TRUE;
   add_room_result = NOWHERE;
+  extract_script_calls = free_proto_calls = 0;
+  last_extracted_thing = NULL;
   world = NULL;
   top_of_world = 0;
   make_builder();
@@ -850,6 +902,60 @@ static void test_redit_insert_keeps_nowhere_exits_and_door_directions(void)
   free(rd.olc);
 }
 
+
+/* ------------------------------------------------------------------ */
+/* F1-09: the session's trigger list copy has exactly one owner.        */
+/* ------------------------------------------------------------------ */
+static void test_oedit_save_hands_script_copy_to_prototype(void)
+{
+  struct descriptor_data *d = &builder_desc;
+  struct trig_proto_list *list = make_trig_list(2);
+
+  make_objects(3);
+  OLC_NUM(d) = 3001;
+  oedit_setup_existing(d, 1);
+  STATE(d) = CON_OEDIT;
+  OLC_SCRIPT(d) = list;
+
+  oedit_save_internally(d);
+
+  /* The prototype owns the list; cleanup_olc() must not free it again. */
+  TEST_ASSERT_EQUAL_PTR(list, obj_proto[1].proto_script);
+  TEST_ASSERT_NULL(OLC_SCRIPT(d));
+  free_trig_list(obj_proto[1].proto_script);
+  obj_proto[1].proto_script = NULL;
+}
+
+static void test_oedit_quit_without_changes_frees_script_copy(void)
+{
+  struct descriptor_data *d = &builder_desc;
+
+  make_objects(3);
+  OLC_NUM(d) = 3001;
+  oedit_setup_existing(d, 1);
+  STATE(d) = CON_OEDIT;
+  OLC_MODE(d) = OEDIT_MAIN_MENU;
+  OLC_SCRIPT(d) = make_trig_list(2);
+  OLC_VAL(d) = 0;
+
+  /* LeakSanitizer and the valgrind run fail on the old leak. */
+  oedit_parse(d, "q");
+
+  TEST_ASSERT_NULL(d->olc);
+  TEST_ASSERT_NULL(obj_proto[1].proto_script);
+}
+
+static void test_olc_free_script_copy_clears_session_handle(void)
+{
+  struct descriptor_data *d = &builder_desc;
+
+  OLC_SCRIPT(d) = make_trig_list(3);
+  olc_free_script_copy(d);
+  TEST_ASSERT_NULL(OLC_SCRIPT(d));
+  olc_free_script_copy(d);   /* idempotent */
+  TEST_ASSERT_NULL(OLC_SCRIPT(d));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -866,5 +972,8 @@ int main(void)
   RUN_TEST(test_oedit_delete_refused_when_scratch_rnum_disagrees);
   RUN_TEST(test_oedit_insert_renumbers_other_oedit_session);
   RUN_TEST(test_redit_insert_keeps_nowhere_exits_and_door_directions);
+  RUN_TEST(test_oedit_save_hands_script_copy_to_prototype);
+  RUN_TEST(test_oedit_quit_without_changes_frees_script_copy);
+  RUN_TEST(test_olc_free_script_copy_clears_session_handle);
   return UNITY_END();
 }

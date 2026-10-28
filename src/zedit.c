@@ -17,6 +17,7 @@
 #include "genzon.h"
 #include "oasis.h"
 #include "dg_scripts.h"
+#include "dg_olc.h"
 #include "shop.h"
 #include "genshp.h"
 #include "olc_checks.h"
@@ -265,6 +266,25 @@ void olc_renumber_sessions(int kind, int refpt, int delta,
       break;
     }
   }
+}
+
+/* Free the session's private trigger list (OLC_SCRIPT), made by
+ * dg_olc_script_copy() in oedit/medit/redit setup. Ownership: the session
+ * owns it until a save hands it to the prototype, and every save path sets
+ * OLC_SCRIPT(d) to NULL right after that hand-off. Anything still here was
+ * never handed off (quit without changes, 'n' at the save prompt, 'W' over
+ * an existing copy, a failed save, a dropped link) and is freed. */
+void olc_free_script_copy(struct descriptor_data *d)
+{
+  struct trig_proto_list *tp, *next_tp;
+
+  if (!d || !d->olc)
+    return;
+  for (tp = OLC_SCRIPT(d); tp; tp = next_tp) {
+    next_tp = tp->next;
+    free(tp);
+  }
+  OLC_SCRIPT(d) = NULL;
 }
 
 ACMD(do_oasis_zedit)

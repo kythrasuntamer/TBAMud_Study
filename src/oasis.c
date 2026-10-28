@@ -20,6 +20,7 @@
 #include "genwld.h"
 #include "genobj.h"
 #include "oasis.h"
+#include "olc_checks.h"
 #include "screen.h"
 #include "dg_olc.h"
 #include "act.h"
@@ -188,8 +189,10 @@ void cleanup_olc(struct descriptor_data *d, byte cleanup_type)
      OLC_PREFS(d) = NULL;
    }
 
-   /* OLC_SCRIPT is always set as trig_proto of OLC_OBJ/MOB/ROOM. Therefore it
-    * should not be free'd here. */
+   /* OLC_SCRIPT is the session's private trigger list (dg_olc_script_copy).
+    * A save hands it to the prototype and sets OLC_SCRIPT to NULL; any list
+    * still here was never handed off (quit, 'n', failed save, lost link). */
+   olc_free_script_copy(d);
 
   /* Restore descriptor playing status. */
   if (d->character) {

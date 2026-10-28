@@ -472,8 +472,10 @@ void oedit_save_internally(struct descriptor_data *d)
   if (obj_proto[robj_num].proto_script &&
       obj_proto[robj_num].proto_script != OLC_SCRIPT(d))
     free_proto_script(&obj_proto[robj_num], OBJ_TRIGGER);
-  /* this will handle new instances of the object: */
+  /* this will handle new instances of the object. The prototype now owns
+   * the list; clear the session's handle so cleanup_olc() does not free it. */
   obj_proto[robj_num].proto_script = OLC_SCRIPT(d);
+  OLC_SCRIPT(d) = NULL;
 
   /* this takes care of the objects currently in-game */
   for (obj = object_list; obj; obj = obj->next) {
@@ -928,9 +930,7 @@ void oedit_parse(struct descriptor_data *d, char *arg)
       return;
     case 'n':
     case 'N':
-      /* If not saving, we must free the script_proto list. */
-      OLC_OBJ(d)->proto_script = OLC_SCRIPT(d);
-      free_proto_script(OLC_OBJ(d), OBJ_TRIGGER);
+      /* Not saving: cleanup_olc() frees the unsaved OLC_SCRIPT copy. */
       cleanup_olc(d, CLEANUP_ALL);
       return;
     case 'a': /* abort quit */

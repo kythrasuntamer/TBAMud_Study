@@ -264,7 +264,10 @@ void medit_save_internally(struct descriptor_data *d)
       mob_proto[new_rnum].proto_script != OLC_SCRIPT(d))
     free_proto_script(&mob_proto[new_rnum], MOB_TRIGGER);
 
+  /* The prototype now owns the list; clear the session's handle so
+   * cleanup_olc() does not free it. */
   mob_proto[new_rnum].proto_script = OLC_SCRIPT(d);
+  OLC_SCRIPT(d) = NULL;
 
   /* this takes care of the mobs currently in-game */
   for (mob = character_list; mob; mob = mob->next) {
@@ -548,10 +551,7 @@ void medit_parse(struct descriptor_data *d, char *arg)
       return;
     case 'n':
     case 'N':
-      /* If not saving, we must free the script_proto list. We do so by
-       * assigning it to the edited mob and letting free_mobile in
-       * cleanup_olc handle it. */
-      OLC_MOB(d)->proto_script = OLC_SCRIPT(d);
+      /* Not saving: cleanup_olc() frees the unsaved OLC_SCRIPT copy. */
       cleanup_olc(d, CLEANUP_ALL);
       return;
     default:

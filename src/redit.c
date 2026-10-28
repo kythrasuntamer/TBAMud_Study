@@ -282,7 +282,10 @@ void redit_save_internally(struct descriptor_data *d)
       world[room_num].proto_script != OLC_SCRIPT(d))
     free_proto_script(&world[room_num], WLD_TRIGGER);
 
+  /* The room now owns the list; clear the session's handle so
+   * cleanup_olc() does not free it. */
   world[room_num].proto_script = OLC_SCRIPT(d);
+  OLC_SCRIPT(d) = NULL;
   assign_triggers(&world[room_num], WLD_TRIGGER);
   /* end trigger update */
 
@@ -544,10 +547,7 @@ void redit_parse(struct descriptor_data *d, char *arg)
       break;
     case 'n':
     case 'N':
-      /* If not saving, we must free the script_proto list. We do so by 
-       * assigning it to the edited room and letting free_room in 
-       * cleanup_olc handle it. */
-      OLC_ROOM(d)->proto_script = OLC_SCRIPT(d);
+      /* Not saving: cleanup_olc() frees the unsaved OLC_SCRIPT copy. */
       cleanup_olc(d, CLEANUP_ALL);
       break;
     default:

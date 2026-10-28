@@ -63,5 +63,8 @@ int olc_check_rnum_at(const char *file, int line, const char *func,
                       struct descriptor_data *d, int kind, long rnum);
 void olc_renumber_sessions(int kind, int refpt, int delta,
                            struct descriptor_data *skip);
+/** Free OLC_SCRIPT(d) unless a save already handed it to a prototype (save
+ * paths set it to NULL). Called by cleanup_olc() and before 'W' re-setup. */
+void olc_free_script_copy(struct descriptor_data *d);
 
 #endif /* TBAMUD_OLC_CHECKS_H_INCLUDED */
