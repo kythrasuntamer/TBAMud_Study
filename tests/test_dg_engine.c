@@ -19,6 +19,8 @@
 #include "interpreter.h"
 #include "dg_scripts.h"
 #include "dg_event.h"
+#include "oasis.h"
+#include "protocol.h"
 #include "tb_error_capture.h"
 
 #define TEST_TRIG_VNUM 9000
@@ -29,6 +31,10 @@ static struct zone_data test_zone;
 static index_data test_trig_index;
 static index_data *test_trig_table[1];
 static trig_data test_proto;
+/* One object prototype, vnum TEST_OBJ_VNUM in the test zone. */
+#define TEST_OBJ_VNUM 150
+static struct obj_data test_obj_proto;
+static index_data test_obj_index;
 
 /* Owners created by a test; tearDown releases whatever is still listed. */
 #define MAX_TEST_CHARS 8
@@ -129,9 +135,44 @@ static void release_char(char_data *ch)
       *pp = ch->next;
       break;
     }
+  if (ch->desc) {
+    ProtocolDestroy(ch->desc->pProtocol);
+    free(ch->desc);
+  }
+  if (ch->player_specials != &dummy_mob)
+    free(ch->player_specials);
   free(ch->player.name);
   free(ch->player.short_descr);
   free(ch);
+}
+
+/* An implementor with a descriptor (can_edit_zone() requires one) and
+ * builder access to every zone, for the immortal commands. */
+static char_data *make_imm(void)
+{
+  char_data *ch;
+  struct descriptor_data *d;
+
+  TEST_ASSERT_TRUE(num_test_chars < MAX_TEST_CHARS);
+  CREATE(ch, char_data, 1);
+  clear_char(ch);
+  CREATE(ch->player_specials, struct player_special_data, 1);
+  ch->player.name = strdup("Imm");
+  GET_LEVEL(ch) = LVL_IMPL;
+  GET_IDNUM(ch) = 4242;
+  GET_OLC_ZONE(ch) = ALL_PERMISSION;
+  CREATE(d, struct descriptor_data, 1);
+  d->output = d->small_outbuf;
+  d->bufspace = SMALL_BUFSIZE - 1;
+  d->connected = CON_PLAYING;
+  d->character = ch;
+  d->pProtocol = ProtocolCreate();
+  ch->desc = d;
+  ch->next = character_list;
+  character_list = ch;
+  char_to_room(ch, 0);
+  test_chars[num_test_chars++] = ch;
+  return ch;
 }
 
 static obj_data *make_obj(const char *name)
@@ -198,6 +239,17 @@ void setUp(void)
   trig_index = test_trig_table;
   top_of_trigt = 1;
 
+  clear_object(&test_obj_proto);
+  test_obj_proto.item_number = 0;
+  test_obj_proto.name = "proto";
+  test_obj_proto.short_description = "a prototype";
+  test_obj_proto.description = "A prototype lies here.";
+  memset(&test_obj_index, 0, sizeof(test_obj_index));
+  test_obj_index.vnum = TEST_OBJ_VNUM;
+  obj_proto = &test_obj_proto;
+  obj_index = &test_obj_index;
+  top_of_objt = 0;
+
   character_list = NULL;
   object_list = NULL;
   num_test_chars = 0;
@@ -224,6 +276,9 @@ void tearDown(void)
     free_cmdlist(test_cmdlists[i]);
   num_test_cmdlists = 0;
   test_proto.cmdlist = NULL;
+  obj_proto = NULL;
+  obj_index = NULL;
+  top_of_objt = 0;
   world = NULL;
   top_of_world = 0;
   trig_index = NULL;
@@ -576,6 +631,53 @@ static void wrapping_room_vnum_is_rejected(void)
   TEST_ASSERT_EQUAL_PTR(&world[0], get_room(name));
 }
 
+/* An object of the test prototype (vnum TEST_OBJ_VNUM, in the test zone). */
+static obj_data *make_proto_obj(const char *name)
+{
+  obj_data *o = make_obj(name);
+
+  o->item_number = 0;
+  test_obj_index.number++;
+  return o;
+}
+
+static void immortal_command(ACMD((*cmd)), char_data *ch, const char *text)
+{
+  char *arg = strdup(text);
+
+  TEST_ASSERT_NOT_NULL(arg);
+  cmd(ch, arg, 0, 0);
+  free(arg);
+}
+
+/* D1-10: "detach obj <name>" printed the usage message but went on to call
+ * remove_trigger(script, NULL), which ran strstr(NULL, "."). */
+static void detach_object_without_trigger_argument_is_refused(void)
+{
+  const char *quiet[] = { "nop", NULL };
+  char_data *imm = make_imm();
+  obj_data *o = make_proto_obj("zzuniq");
+
+  obj_to_room(o, 0);
+  attach_to_script(&SCRIPT(o), make_trigger(OBJ_TRIGGER, OTRIG_RANDOM, 0, quiet));
+  immortal_command(do_detach, imm, " obj zzuniq");
+  TEST_ASSERT_NOT_NULL(SCRIPT(o));
+  TEST_ASSERT_NOT_NULL(TRIGGERS(SCRIPT(o)));
+  TEST_ASSERT_NOT_NULL(strstr(imm->desc->output, "must specify a trigger"));
+}
+
+static void detach_mobile_without_trigger_argument_is_refused(void)
+{
+  const char *quiet[] = { "nop", NULL };
+  char_data *imm = make_imm(), *mob = make_mob("zzmob");
+
+  attach_to_script(&SCRIPT(mob), make_trigger(MOB_TRIGGER, MTRIG_SPEECH, 0, quiet));
+  immortal_command(do_detach, imm, " mob zzmob");
+  TEST_ASSERT_NOT_NULL(TRIGGERS(SCRIPT(mob)));
+  TEST_ASSERT_NOT_NULL(strstr(imm->desc->output, "must specify a trigger"));
+  TEST_ASSERT_NULL(strstr(imm->desc->output, "not found"));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -601,5 +703,7 @@ int main(void)
   RUN_TEST(well_formed_switch_still_selects_its_case);
   RUN_TEST(object_uid_never_aliases_a_room);
   RUN_TEST(wrapping_room_vnum_is_rejected);
+  RUN_TEST(detach_object_without_trigger_argument_is_refused);
+  RUN_TEST(detach_mobile_without_trigger_argument_is_refused);
   return UNITY_END();
 }

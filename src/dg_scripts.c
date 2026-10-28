@@ -1204,6 +1204,13 @@ static int remove_trigger(struct script_data *sc, char *name)
   if (!sc)
     return 0;
 
+  /* name is immortal or script text; every caller must supply one. */
+  if (!name) {
+    TB_ERROR_MSG("dg", "detach-arg", "remove_trigger",
+                 "called with a NULL trigger name; nothing removed");
+    return 0;
+  }
+
   if ((cname = strstr(name,".")) || (!isdigit(*name)) ) {
     string = TRUE;
     if (cname) {
@@ -1343,10 +1350,11 @@ ACMD(do_detach)
         }
       }
 
-      if (!*arg3)
+      if (!*arg3) {
         send_to_char(ch, "You must specify a trigger to remove.\r\n");
-      else
-        trigger = arg3;
+        return;
+      }
+      trigger = arg3;
     }
 
     else if (is_abbrev(arg1, "object") || !str_cmp(arg1, "otr")) {
@@ -1368,10 +1376,11 @@ ACMD(do_detach)
         }
       }
 
-      if (!*arg3)
+      if (!*arg3) {
         send_to_char(ch, "You must specify a trigger to remove.\r\n");
-      else
-        trigger = arg3;
+        return;
+      }
+      trigger = arg3;
     }
     else  {
       /* Thanks to Carlos Myers for fixing the line below */
