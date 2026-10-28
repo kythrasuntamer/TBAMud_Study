@@ -143,11 +143,65 @@ static void test_unknown_origin_abort_is_reported(void)
   free(text);
 }
 
+/* A note started on blank paper (no backstr): '/a' leaves the paper blank.
+ * Red before: the abandoned text stayed on the paper. */
+static void test_blank_note_abort_leaves_paper_blank(void)
+{
+  char *note = NULL;
+
+  string_write(&d, &note, MAX_NOTE_LENGTH, 0, NULL);
+  type_line("A half-written draft.");
+  type_line("/a");
+
+  TEST_ASSERT_NULL(note);
+  TEST_ASSERT_NULL(d.str);
+  TEST_ASSERT_EQUAL_INT(0, syserr_logs);
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+}
+
+/* The link drops mid-note (close_socket()/release_booted_editor()): the paper
+ * gets its old text back and the saved copy is not leaked (LeakSanitizer).
+ * Red before: close_socket() skipped backstr while PLR_WRITING, leaking it
+ * and leaving the half-written text on the paper. */
+static void test_link_drop_mid_note_restores_old_text(void)
+{
+  char *note = strdup("Meet at the fountain.\r\n");
+
+  string_write(&d, &note, MAX_NOTE_LENGTH, 0, strdup(note));
+  type_line("Scribbled over it.");
+
+  TEST_ASSERT_TRUE(string_abandon_in_game_edit(&d));
+  TEST_ASSERT_EQUAL_STRING("Meet at the fountain.\r\n", note);
+  TEST_ASSERT_NULL(d.str);
+  TEST_ASSERT_NULL(d.backstr);
+  free(note);
+}
+
+/* Mail has no backstr: the helper leaves it to close_socket()'s mail code. */
+static void test_link_drop_mid_mail_is_left_to_mail_cleanup(void)
+{
+  char **mailwrite;
+
+  CREATE(mailwrite, char *, 1);
+  SET_BIT_AR(PLR_FLAGS(&ch), PLR_MAILING);
+  string_write(&d, mailwrite, MAX_MAIL_SIZE, 1001, NULL);
+  type_line("Dear Brena,");
+
+  TEST_ASSERT_FALSE(string_abandon_in_game_edit(&d));
+  TEST_ASSERT_TRUE(d.str == mailwrite);
+  free(*mailwrite);
+  free(mailwrite);
+  d.str = NULL;
+}
+
 int main(void)
 {
   UNITY_BEGIN();
   RUN_TEST(test_note_abort_restores_previous_text);
   RUN_TEST(test_mail_abort_is_not_reported);
   RUN_TEST(test_unknown_origin_abort_is_reported);
+  RUN_TEST(test_blank_note_abort_leaves_paper_blank);
+  RUN_TEST(test_link_drop_mid_note_restores_old_text);
+  RUN_TEST(test_link_drop_mid_mail_is_left_to_mail_cleanup);
   return UNITY_END();
 }

@@ -266,6 +266,16 @@ void string_add(struct descriptor_data *d, char *str)
             free(*d->str);
             *d->str    = d->backstr;
             d->backstr = NULL;
+          } else if (d->character && (IS_NPC(d->character) ||
+                     (!PLR_FLAGGED(d->character, PLR_MAILING) &&
+                      !PLR_FLAGGED(d->character, PLR_BUG) &&
+                      !PLR_FLAGGED(d->character, PLR_IDEA) &&
+                      !PLR_FLAGGED(d->character, PLR_TYPO))) &&
+                     d->mail_to < BOARD_MAGIC) {
+            /* A note started on blank paper: the editor allocated *d->str,
+             * so aborting discards it and the paper stays blank. */
+            free(*d->str);
+            *d->str = NULL;
           }
           break;
         default:

@@ -481,7 +481,6 @@ if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
         PROPERTIES COMPILE_OPTIONS "-ffunction-sections;-fdata-sections")
 endif()
 
-# Production improved editor (improved-edit.c format_text and commands).
 # string_add()'s abort path (modify.c) driven through the real editor.
 add_mud_test(test_string_add
     ${MUD_SRCDIR}/modify.c
@@ -496,6 +495,7 @@ if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
         -Wl,--wrap=tb_error_log_at -Wl,--wrap=basic_mud_log)
 endif()
 
+# Production improved editor (improved-edit.c format_text and commands).
 add_mud_test(test_improved_edit
     ${MUD_SRCDIR}/improved-edit.c
     ${MUD_SRCDIR}/utils.c
