@@ -62,15 +62,36 @@ void initialize(void)
   }
 }
 
+/* Index records rejected while reading.  main() still writes the lists from
+ * the records that did parse, then exits 1 so the failure is not silent. */
+static int rejected_records = 0;
+
+/* Report one rejected index record (path, line, failing field, idnum text)
+ * and count it.  Arguments are evaluated once. */
+#define REJECT_RECORD(path, line_no, field, id_text) do { \
+  TB_REPORT_DOMAIN_ERRORF(TB_SEV_ERROR, TB_ERR_PARSER, "index-record-parse", \
+                          "index=%s line=%ld field=%s id=%.20s", (path), \
+                          (line_no), (field), (id_text)); \
+  rejected_records++; \
+} while (0)
+
+/*
+ * Read the player index written by save_player_index() (players.c): one
+ * "id name level flags last" record per line, ending with a "~" line.  The
+ * file is server-written but can be hand-edited or corrupted, so every record
+ * that does not parse is reported with its line number and skipped.
+ */
 void read_file(void)
 {
   void add_name(byte level, char *name);
   char *CAP(char *txt);
-  int get_line(FILE * fl, char *buf);
+  int read_index_line(FILE *fl, char *buf, size_t buf_size, const char *path,
+               long *line_no);
   bitvector_t asciiflag_conv(char *flag);
 
   FILE *fl;
-  int recs, i, level = 0, flags = 0;
+  int level = 0, flags = 0, got;
+  long line_no = 0;
   char index_name[40], line[256], bits[64];
   char name[MAX_NAME_LENGTH];
 
@@ -79,41 +100,48 @@ void read_file(void)
     TB_REPORT_ERRNO("fopen", index_name);
     exit(1);
   }
-  /* count the number of players in the index */
-  recs = 0;
-  while (get_line(fl, line))
-    if (*line != '~')
-      recs++;
-  if (fseek(fl, 0L, SEEK_SET) != 0) {
-    TB_REPORT_ERRNO("fseek", index_name);
-    tb_fclose(fl);
-    exit(1);
-  }
 
-  for (i = 0; i < recs; i++) {
-    get_line(fl, line);
+  while ((got = read_index_line(fl, line, sizeof(line), index_name, &line_no)) != 0) {
+    if (got < 0) {		/* already reported by read_index_line() */
+      rejected_records++;
+      continue;
+    }
+    if (*line == '~')		/* end-of-index marker */
+      continue;
     {
-      char id_text[64], level_text[64], last_text[64], name_text[128], extra[2], *end;
+      char id_text[64] = "", level_text[64], last_text[64], name_text[128], extra[2], *end;
       long parsed;
-      if (sscanf(line, "%63s %127s %63s %63s %63s %1s",
-                 id_text, name_text, level_text, bits, last_text, extra) != 5)
+      int fields = sscanf(line, "%63s %127s %63s %63s %63s %1s",
+                          id_text, name_text, level_text, bits, last_text, extra);
+      if (fields != 5) {
+        REJECT_RECORD(index_name, line_no,
+                      fields > 5 ? "trailing-text" : "field-count", id_text);
         continue;
-      if (strlen(name_text) >= sizeof(name))
+      }
+      if (strlen(name_text) >= sizeof(name)) {
+        REJECT_RECORD(index_name, line_no, "name-length", id_text);
         continue;
+      }
       tb_snprintf(name, sizeof(name), "%s", name_text);
       errno = 0;
       parsed = strtol(id_text, &end, 10);
-      if (end == id_text || *end || errno == ERANGE)
+      if (end == id_text || *end || errno == ERANGE) {
+        REJECT_RECORD(index_name, line_no, "idnum", id_text);
         continue;
+      }
       errno = 0;
       parsed = strtol(level_text, &end, 10);
-      if (end == level_text || *end || errno == ERANGE || parsed < INT_MIN || parsed > INT_MAX)
+      if (end == level_text || *end || errno == ERANGE || parsed < INT_MIN || parsed > INT_MAX) {
+        REJECT_RECORD(index_name, line_no, "level", id_text);
         continue;
+      }
       level = (int)parsed;
       errno = 0;
       parsed = strtol(last_text, &end, 10);
-      if (end == last_text || *end || errno == ERANGE || parsed < INT_MIN || parsed > INT_MAX)
+      if (end == last_text || *end || errno == ERANGE) {
+        REJECT_RECORD(index_name, line_no, "last", id_text);
         continue;
+      }
       /* Timestamp validated; wizard listing does not use it. */
     }
     CAP(name);
@@ -281,6 +309,14 @@ int main(int argc, char **argv)
     kill(pid, SIGUSR1);
 #endif
 
+  /* The lists above hold every record that parsed; a non-zero exit tells the
+   * operator that at least one index record was reported and left out. */
+  if (rejected_records > 0) {
+    TB_REPORT_DOMAIN_ERRORF(TB_SEV_ERROR, TB_ERR_PARSER, "index-incomplete",
+                            "rejected=%d wizlist=%s immlist=%s",
+                            rejected_records, argv[2], argv[4]);
+    return (1);
+  }
   return (0);
 }
 
@@ -290,24 +326,32 @@ char *CAP(char *txt)
   return (txt);
 }
 
-/* get_line reads the next non-blank line off of the input stream. The newline 
- * character is removed from the input.  Lines which begin with '*' are 
- * considered to be comments. Returns the number of lines advanced in the 
- * file. */
-int get_line(FILE * fl, char *buf)
+/* read_index_line reads the next non-blank line off of the input stream into buf.
+ * buf_size must be the caller's real array size: sizeof() of a pointer
+ * parameter here would be 8 and cut every record (the old bug).  The newline
+ * character is removed.  Lines which begin with '*' are considered to be
+ * comments.  *line_no is advanced by every physical line consumed so callers
+ * can name the line in diagnostics.  Returns 1 for a line, 0 at end of file,
+ * and -1 for a line that was reported here and must be skipped. */
+int read_index_line(FILE * fl, char *buf, size_t buf_size, const char *path,
+             long *line_no)
 {
   char temp[256];
-  int lines = 0;
 
   do {
     if (fgets(temp, sizeof(temp), fl) == NULL)
       return (0);
-    lines++;
+    (*line_no)++;
   } while (*temp == '*' || *temp == '\n');
 
   temp[strlen(temp) - 1] = '\0';
-  strlcpy(buf, temp, sizeof(buf));
-  return (lines);
+  if (strlcpy(buf, temp, buf_size) >= buf_size) {
+    TB_REPORT_DOMAIN_ERRORF(TB_SEV_ERROR, TB_ERR_PARSER, "index-line-truncated",
+                            "index=%s line=%ld length=%zu buffer=%zu", path,
+                            *line_no, strlen(temp), buf_size);
+    return (-1);
+  }
+  return (1);
 }
 
 bitvector_t asciiflag_conv(char *flag)

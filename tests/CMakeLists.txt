@@ -422,6 +422,13 @@ if(Python3_Interpreter_FOUND)
         COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/test_dg_wait_suffix_contract.py
                 ${MUD_SRCDIR}/dg_scripts.c)
+
+    # Standalone src/util tools, run as built (sanitized in sanitizer trees)
+    # on crafted input; asserts on their TBERR diagnostics.
+    add_test(NAME test_util_tools
+        COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/test_util_tools.py
+                autowiz=$<TARGET_FILE:autowiz>)
 endif()
 
 # Production utils.c guards (column_list, followers, get_line, colour

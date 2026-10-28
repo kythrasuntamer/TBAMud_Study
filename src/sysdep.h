@@ -909,6 +909,67 @@ static inline void tb_report_error_at(const char *operation, const char *context
   tb_report_domain_error_at((severity), (category), (operation), (context), 0, \
                             __FILE__, __LINE__, __func__)
 
+/*
+ * Formatted-context form of tb_report_domain_error_at(), for callers that must
+ * name several entities (path, line number, idnum, vnum) in one record.
+ * The context is formatted into a fixed 1024-byte buffer; when it does not
+ * fit, it ends in "[context-truncated]" so a reader knows text is missing.
+ * Not async-signal-safe (vsnprintf), like tb_report_domain_error_at().
+ */
+static inline void tb_report_domain_errorf_at(tb_error_severity severity,
+                                              tb_error_category category,
+                                              const char *operation,
+                                              int errnum,
+                                              const char *source_file,
+                                              int source_line,
+                                              const char *source_func,
+                                              const char *context_fmt, ...)
+  __attribute__ ((format (printf, 8, 9)));
+static inline void tb_report_domain_errorf_at(tb_error_severity severity,
+                                              tb_error_category category,
+                                              const char *operation,
+                                              int errnum,
+                                              const char *source_file,
+                                              int source_line,
+                                              const char *source_func,
+                                              const char *context_fmt, ...)
+{
+  static const char marker[] = " [context-truncated]";
+  int caller_errno = errno;
+  char context[1024];
+  va_list args;
+  int result;
+
+  if (context_fmt == NULL) {
+    context[0] = '\0';
+  } else {
+    va_start(args, context_fmt);
+    result = vsnprintf(context, sizeof(context), context_fmt, args);
+    va_end(args);
+    if (result < 0)
+      (void)snprintf(context, sizeof(context), "%s", "(context format failed)");
+    else if ((size_t)result >= sizeof(context))
+      memcpy(context + sizeof(context) - sizeof(marker), marker, sizeof(marker));
+  }
+
+  tb_report_domain_error_at(severity, category, operation, context, errnum,
+                            source_file, source_line, source_func);
+  errno = caller_errno;
+}
+
+/* TB_REPORT_DOMAIN_ERRORF(sev, cat, "op", "path=%s line=%ld", ...) */
+#define TB_REPORT_DOMAIN_ERRORF(severity, category, operation, ...) \
+  tb_report_domain_errorf_at((severity), (category), (operation), 0, \
+                             __FILE__, __LINE__, __func__, __VA_ARGS__)
+
+/* Same, capturing errno at the call site before any argument is evaluated. */
+#define TB_REPORT_DOMAIN_ERRNOF(severity, category, operation, ...) do { \
+  int tb_saved_errnof_ = errno; \
+  tb_report_domain_errorf_at((severity), (category), (operation), \
+                             tb_saved_errnof_, __FILE__, __LINE__, __func__, \
+                             __VA_ARGS__); \
+} while (0)
+
 #define TB_INVARIANT(expr, context) \
   ((expr) ? 1 : \
    (tb_report_domain_error_at(TB_SEV_ERROR, TB_ERR_INVARIANT, "invariant", \
