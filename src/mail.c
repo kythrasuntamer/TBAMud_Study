@@ -508,7 +508,12 @@ static void postmaster_receive_mail(struct char_data *ch, struct char_data *mail
       break;
     }
     obj = create_obj();
-    obj->item_number = 1; 
+    /* A mail note has no prototype. item_number is an rnum: the old
+     * hard-coded 1 made extract_obj() decrement obj_index[1].number and
+     * GET_OBJ_VNUM() report (and the rent file save) some unrelated
+     * object's vnum. NOTHING also makes the note unrentable, as in
+     * CircleMUD. */
+    obj->item_number = NOTHING;
     obj->name = strdup("mail paper letter");
     obj->short_description = strdup("a piece of mail");
     obj->description = strdup("Someone has left a piece of mail here.");

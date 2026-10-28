@@ -262,6 +262,9 @@ static void test_receive_delivers_and_removes(void)
   TEST_ASSERT_NULL(strstr(slurp(MAIL_FILE), "### 7"));
   TEST_ASSERT_NOT_NULL(player.carrying);
   TEST_ASSERT_NOT_NULL(strstr(player.carrying->action_description, "again"));
+  /* B2-25: a note has no prototype; it used to claim rnum 1. */
+  TEST_ASSERT_EQUAL_INT(NOTHING, GET_OBJ_RNUM(player.carrying));
+  TEST_ASSERT_EQUAL_INT(NOTHING, GET_OBJ_RNUM(player.carrying->next_content));
   free_inventory();
 }
 
