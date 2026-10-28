@@ -119,6 +119,8 @@ as such a file (see tests/e2e/repro_*.txt).  Lines::
     create NAME CLASS      new connection, new character (c t w z o); the
                            first one created is the implementor
     login NAME             new connection, log in an existing character
+    login NAME as ALIAS    a second, separate connection for NAME, addressed
+                           as ALIAS in later lines (the first one stays open)
     NAME: COMMAND          send COMMAND as NAME and wait for the prompt
     NAME!: TEXT            send TEXT as NAME without waiting (menus, editor)
     expect NAME REGEX      wait until NAME has received text matching REGEX
@@ -543,9 +545,10 @@ class Server:
 # --------------------------------------------------------------------------
 
 class Bot:
-    def __init__(self, ctx, name, cls="w", sex="m", imp=False):
+    def __init__(self, ctx, name, cls="w", sex="m", imp=False, login_name=None):
         self.ctx = ctx
-        self.name = name
+        self.name = name                 # label in logs and transcripts
+        self.login_name = login_name or name
         self.cls = cls
         self.sex = sex
         self.imp = imp
@@ -738,7 +741,7 @@ class Bot:
     def create(self):
         self.connect()
         self.wait_for(r"By what name do you wish to be known\?")
-        self.send(self.name)
+        self.send(self.login_name)
         self.wait_for(r"Did I get that right")
         self.send("y")
         self.wait_for(r"Give me a password")
@@ -761,7 +764,7 @@ class Bot:
         menu) and taking over a character that is still in the game."""
         self.connect()
         self.wait_for(r"By what name do you wish to be known\?")
-        self.send(self.name)
+        self.send(self.login_name)
         self.wait_for(r"Password:")
         self.send(PASSWORD)
         text = self.wait_for(r"PRESS RETURN|Reconnecting|You take over your own body|"
@@ -1290,7 +1293,8 @@ class Player(Bot):
                     "cast 'locate object' bread", "cast 'identify' bag", "cast 'fly'",
                     "cast 'infravision'", "cast 'enchant weapon' dagger", "cast 'sleep' fido",
                     "cast 'charm person' fido", "order followers sit", "order followers stand",
-                    "cast 'invisibility' %s" % ally, "cast 'magic missile'"]
+                    "cast 'invisibility' %s" % ally, "cast 'magic missile'", "cast 'clone'",
+                    "order followers follow self"]
         elif self.cls == "c":
             pool = ["cast 'cure light' %s" % ally, "cast 'armor' %s" % ally,
                     "cast 'bless' %s" % ally, "cast 'create food'", "cast 'detect invisibility'",
@@ -1522,6 +1526,19 @@ class Player(Bot):
             self.think(0.0, 0.2)
         self.ctx.count("quirk_bursts")
 
+    def act_ibt(self):
+        """The bug/idea/typo commands the MOTD asks players to use."""
+        kind = self.rng.choice(["bug", "idea", "typo"])
+        out = self.cmd("%s submit Soak %s from %s" % (kind, kind, self.name), editor=True)
+        if EDITOR_TAIL.search(out):
+            self.editor_session()
+            self.ctx.count("ibt_submissions")
+        for line in self.rng.sample(["%s list" % kind, "%s show 1" % kind, "%s show 99" % kind,
+                                     kind, "%s remove 1" % kind, "%s submit" % kind], 3):
+            out = self.cmd(line, editor=True)
+            if EDITOR_TAIL.search(out):
+                self.editor_session()
+
     def act_linkdrop(self):
         self.ctx.count("linkdrops")
         self.close(abrupt=True)
@@ -1555,7 +1572,7 @@ ACTIVITIES = [  # name, weight
     ("eatdrink", 3), ("group", 5), ("fight", 12), ("cast", 8), ("rest", 4), ("quest", 4),
     ("save", 2), ("bank", 2), ("toggles", 3), ("mail", 1.5), ("board", 1.5), ("pet", 1),
     ("practice", 1.5), ("rent", 1), ("quit_relogin", 1.5), ("linkdrop", 1.5), ("usurp", 0.7),
-    ("corpse_run", 1), ("quirks", 3),
+    ("corpse_run", 1), ("quirks", 3), ("ibt", 1),
 ]
 
 
@@ -1580,6 +1597,8 @@ def imp_serve(ctx, imp, deadline):
             if time.time() > next_restore:
                 imp.cmd("restore all")
                 imp.cmd(imp.rng.choice(["who", "where", "users", "where fido", "time"]))
+                if imp.rng.random() < 0.3:
+                    imp.cmd("zreset 30")      # what a zone reset does with players about
                 next_restore = time.time() + imp.rng.uniform(20, 45)
         except Disconnected:
             if not ctx.server.alive():
@@ -1958,8 +1977,12 @@ def replay(ctx, path):
                 imp = imp or bot
                 bot.create()
             elif words[0] == "login":
-                key = words[1].lower()
-                bots.setdefault(key, Bot(ctx, words[1]))
+                if len(words) == 4 and words[2] == "as":
+                    key = words[3].lower()
+                    bots[key] = Bot(ctx, words[3], login_name=words[1])
+                else:
+                    key = words[1].lower()
+                    bots.setdefault(key, Bot(ctx, words[1]))
                 bots[key].login()
             elif words[0] == "linkdrop":
                 bots[words[1].lower()].close(abrupt=True)
