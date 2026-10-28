@@ -305,6 +305,10 @@ if(Python3_Interpreter_FOUND)
         COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/test_dg_trigedit_contract.py
                 ${MUD_SRCDIR}/dg_olc.c)
+    add_test(NAME test_oasis_list_contract
+        COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/test_oasis_list_contract.py
+                ${MUD_SRCDIR}/oasis_list.c)
     add_test(NAME test_dg_objcmd_contract
         COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/test_dg_objcmd_contract.py

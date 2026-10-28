@@ -249,7 +249,7 @@ static void perform_obj_type_list(struct char_data * ch, char *arg)
 static void perform_obj_aff_list(struct char_data * ch, char *arg)
 {
   int num, i, apply, v1 = 0, found = 0;
-  size_t len = 0, tmp_len = 0;
+  size_t len = 0;
   struct obj_list_item lst[MAX_OBJ_LIST];
   obj_rnum r_num;
   obj_vnum ov;
@@ -286,17 +286,22 @@ static void perform_obj_aff_list(struct char_data * ch, char *arg)
     else if (apply == APPLY_LEVEL)
       len = snprintf(buf, sizeof(buf), "Highest AC Apply for Armor\r\n");
 
+    /* Each row describes obj_proto[r_num]; num is one past the table here.
+     * Stop before a row that does not fit instead of carrying len past the
+     * buffer. */
     for (i = 0; i < MAX_OBJ_LIST; i++){
       if ((r_num = real_object(lst[i].vobj)) != NOTHING) {
-        tmp_len = snprintf(buf+len, sizeof(buf)-len, "%s%3d%s) %s[%s%5d%s] %s%3d %s%-*s %s[%s]%s%s\r\n",
+        int n = snprintf(buf+len, sizeof(buf)-len, "%s%3d%s) %s[%s%5d%s] %s%3d %s%-*s %s[%s]%s%s\r\n",
                   QGRN, ++found, QNRM, QCYN, QYEL, lst[i].vobj, QCYN,
-                  QYEL, lst[i].val, QCYN, 42+count_color_chars(obj_proto[num].short_description),
+                  QYEL, lst[i].val, QCYN, 42+count_color_chars(obj_proto[r_num].short_description),
                   obj_proto[r_num].short_description,
-                  QYEL, item_types[obj_proto[num].obj_flags.type_flag], QNRM,
-                  obj_proto[num].proto_script ? " [TRIG]" : "");
-        len += tmp_len;
-        if (len > sizeof(buf))
+                  QYEL, item_types[obj_proto[r_num].obj_flags.type_flag], QNRM,
+                  obj_proto[r_num].proto_script ? " [TRIG]" : "");
+        if (n < 0 || (size_t)n >= sizeof(buf) - len) {
+          buf[len] = '\0';
           break;
+        }
+        len += (size_t)n;
       }
     }
     page_string(ch->desc, buf, TRUE);
@@ -319,13 +324,19 @@ static void perform_obj_aff_list(struct char_data * ch, char *arg)
   len = snprintf(buf, sizeof(buf), "Objects with highest %s affect\r\n", apply_types[(apply)]);
   for (i = 0; i < MAX_OBJ_LIST; i++) {
     if ((r_num = real_object(lst[i].vobj)) != NOTHING) {
-      tmp_len = snprintf(buf+len, sizeof(buf)-len, "%s%3d%s) %s[%s%8d%s] %s%3d %s%-*s %s[%s]%s%s\r\n",
+      /* As above: describe obj_proto[r_num], and stop at a row that would
+       * not fit. */
+      int n = snprintf(buf+len, sizeof(buf)-len, "%s%3d%s) %s[%s%8d%s] %s%3d %s%-*s %s[%s]%s%s\r\n",
                 QGRN, ++found, QNRM, QCYN, QYEL, lst[i].vobj, QCYN,
-                QYEL, lst[i].val, QCYN, 42+count_color_chars(obj_proto[num].short_description),
+                QYEL, lst[i].val, QCYN, 42+count_color_chars(obj_proto[r_num].short_description),
                 obj_proto[r_num].short_description,
                 QYEL, item_types[obj_proto[r_num].obj_flags.type_flag], QNRM,
                 obj_proto[r_num].proto_script ? " [TRIG]" : "");
-      len += tmp_len;
+      if (n < 0 || (size_t)n >= sizeof(buf) - len) {
+        buf[len] = '\0';
+        break;
+      }
+      len += (size_t)n;
     }
   }
   page_string(ch->desc, buf, TRUE);
