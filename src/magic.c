@@ -32,7 +32,11 @@ static void perform_mag_groups(int level, struct char_data *ch, struct char_data
 /* Negative apply_saving_throw[] values make saving throws better! So do
  * negative modifiers.  Though people may be used to the reverse of that.
  * It's due to the code modifying the target saving throw instead of the
- * random number of the character as in some other systems. */
+ * random number of the character as in some other systems.
+ * Precondition: 0 <= type < NUM_OF_SAVING_THROWS (it indexes the class
+ * tables and GET_SAVE). The (unsigned char) cast of saving_throws() is
+ * intentional: the tables hold 0..100 values in a byte-sized type, and
+ * the cast keeps that range rather than a sign-extended negative. */
 int mag_savingthrow(struct char_data *ch, int type, int modifier)
 {
   /* NPCs use warrior tables according to some book */
@@ -54,7 +58,12 @@ int mag_savingthrow(struct char_data *ch, int type, int modifier)
   return (FALSE);
 }
 
-/* affect_update: called from comm.c (causes spells to wear off) */
+/* affect_update: called from comm.c (causes spells to wear off) once per
+ * mud hour. Duration semantics: a positive duration counts down by one;
+ * -1 is permanent and never touched; 0, or any other negative value,
+ * expires now (the wear-off message is sent once for a run of affects of
+ * the same spell, on the last one). 'next' is read before affect_remove()
+ * frees af; affect_remove() runs no scripts. */
 void affect_update(void)
 {
   struct affected_type *af, *next;
@@ -572,7 +581,12 @@ static void perform_mag_groups(int level, struct char_data *ch,
  * contains the switch statement to send us to the right magic. Group spells
  * affect everyone grouped with the caster who is in the room, caster last. To
  * add new group spells, you shouldn't have to change anything in mag_groups.
- * Just add a new case to perform_mag_groups. */
+ * Just add a new case to perform_mag_groups.
+ * Re-entrancy: simple_list() keeps one static iterator for the whole
+ * server and is not re-entrant. A perform_mag_groups() callee (for example
+ * spell_recall, or anything reaching a DG trigger) must not call
+ * simple_list() on another list while this walk is in progress, or the
+ * walk silently restarts or stops on the wrong list. */
 void mag_groups(int level, struct char_data *ch, int spellnum, int savetype)
 {
   struct char_data *tch;
@@ -713,6 +727,12 @@ static const char *mag_summon_fail_msgs[] = {
 #define OBJ_CLONE            161  /**< vnum for clone material. */
 #define MOB_ZOMBIE           11   /**< vnum for the zombie mob. */
 
+/* Summons num creatures (mob vnum by spell) that follow ch, using the
+ * named message indexes into mag_summon_msgs[]. For SPELL_ANIMATE_DEAD,
+ * obj must be a corpse (IS_CORPSE): it is consumed, its contents going to
+ * the zombie. Each summoned mob's load trigger runs arbitrary script code
+ * and may purge the mob or the corpse; both are re-validated (mob by
+ * pending-extraction state, corpse by UID) before they are used again. */
 void mag_summons(int level, struct char_data *ch, struct obj_data *obj,
 		      int spellnum, int savetype)
 {
@@ -1001,6 +1021,11 @@ void mag_creations(int level, struct char_data *ch, int spellnum)
   load_otrigger(tobj);
 }
 
+/* Room-affecting spells (currently only darkness): sets the room flag and
+ * schedules its expiry. Lifetime: the expiry event identifies the room by
+ * vnum text in sVariables, never by a room_data pointer, because OLC room
+ * add/delete reallocates or shifts world[] while the event is pending;
+ * event_countdown() resolves the vnum when it fires. */
 void mag_rooms(int level, struct char_data *ch, int spellnum)
 {
   room_rnum rnum;
