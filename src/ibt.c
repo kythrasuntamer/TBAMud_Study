@@ -1032,14 +1032,13 @@ static void ibtedit_setup(struct descriptor_data *d)
     /* The working copy carries the record's identity, not just its
      * position; ibtedit_save() finds the record again by it. */
     OLC_IBT(d)->serial = ibtData->serial;
-    if ((ibtData->text) && *(ibtData->text)) {
-      OLC_IBT(d)->text  = STRALLOC(ibtData->text);
-    }
+    /* name and text are always present in the working copy: the menu
+     * prints them with %s, and a record loaded without a Name or Text line
+     * has them empty.  body and notes may stay NULL ("<Not Set!>"). */
+    OLC_IBT(d)->text  = STRALLOC(ibtData->text ? ibtData->text : "");
+    OLC_IBT(d)->name  = STRALLOC(ibtData->name ? ibtData->name : "");
     if ((ibtData->body) && *(ibtData->body)) {
       OLC_IBT(d)->body  = STRALLOC(ibtData->body);
-    }
-    if ((ibtData->name) && *(ibtData->name)) {
-      OLC_IBT(d)->name  = STRALLOC(ibtData->name);
     }
     if ((ibtData->notes) && *(ibtData->notes)) {
       OLC_IBT(d)->notes = STRALLOC(ibtData->notes);
@@ -1049,6 +1048,14 @@ static void ibtedit_setup(struct descriptor_data *d)
     for (i=0; i<IBT_ARRAY_MAX; i++) {
       OLC_IBT(d)->flags[i] = ibtData->flags[i];
     }
+  } else {
+    /* do_oasis_ibtedit() checked the number just before; keep the menu's
+     * %s arguments valid anyway and say what went wrong. */
+    TB_ERROR_MSG("ibt", "olc-setup", ibt_types[OLC_VAL(d)],
+                 TB_ERRID_INVARIANT " %s %d vanished before its ibtedit session started",
+                 ibt_types[OLC_VAL(d)], OLC_NUM(d));
+    OLC_IBT(d)->text = STRALLOC("");
+    OLC_IBT(d)->name = STRALLOC("");
   }
 }
 

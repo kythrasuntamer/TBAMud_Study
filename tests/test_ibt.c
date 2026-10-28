@@ -489,6 +489,21 @@ static void test_ibtedit_unexpected_mode_ends_session(void)
   TEST_ASSERT_EQUAL_STRING("olc-mode", tb_captured_operation);
 }
 
+/* C1-16: a record loaded without Name/Text lines reached the ibtedit menu
+ * with NULL name and text passed to %s. */
+static void test_ibtedit_menu_with_empty_name_and_text(void)
+{
+  write_bugs_file("Body      b\n~\nEnd\n");
+  load_ibt_file(SCMD_BUG);
+  TEST_ASSERT_EQUAL_INT(1, count_bugs());
+  do_oasis_ibtedit(&imm.ch, (char[]){"1"}, bug_cmd, SCMD_BUG);
+  TEST_ASSERT_NOT_NULL(imm.desc.olc);
+  TEST_ASSERT_NOT_NULL(OLC_IBT(&imm.desc)->name);
+  TEST_ASSERT_NOT_NULL(OLC_IBT(&imm.desc)->text);
+  TEST_ASSERT_NULL(strstr(sent, "(null)"));
+  olc_line(&imm, "q");
+}
+
 int main(void)
 {
   char dir[] = "/tmp/tb_test_ibt.XXXXXX";
@@ -515,5 +530,6 @@ int main(void)
   RUN_TEST(test_load_empty_notes_is_valid);
   RUN_TEST(test_failed_save_keeps_previous_file);
   RUN_TEST(test_ibtedit_unexpected_mode_ends_session);
+  RUN_TEST(test_ibtedit_menu_with_empty_name_and_text);
   return UNITY_END();
 }
