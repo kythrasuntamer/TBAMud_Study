@@ -62,11 +62,20 @@ void stop_fighting(struct char_data *ch) { (void)ch; }
 void char_from_furniture(struct char_data *ch) { (void)ch; }
 int consume_otrigger(obj_data *obj, char_data *actor, int cmd)
 { (void)obj; (void)actor; (void)cmd; return 1; }
-void event_cancel(struct event *event) { (void)event; }
+/* event_cancel() is a macro over event_cancel_at() (call-site capture). */
+void event_cancel_at(struct event *event, const char *file, int line,
+                     const char *func)
+{ (void)event; (void)file; (void)line; (void)func; }
 void extract_script(void *thing, int type) { (void)thing; (void)type; }
 void free_proto_script(void *thing, int type) { (void)thing; (void)type; }
-void free_list(struct list_data *pList) { (void)pList; }
-void *simple_list(struct list_data *pList) { (void)pList; return NULL; }
+/* free_list() and simple_list() are macros over the _at forms (call-site
+ * capture). */
+void free_list_at(struct list_data *pList, const char *src_file,
+                  int src_line, const char *src_func)
+{ (void)pList; (void)src_file; (void)src_line; (void)src_func; }
+void *simple_list_at(struct list_data *pList, const char *src_file,
+                     int src_line, const char *src_func)
+{ (void)pList; (void)src_file; (void)src_line; (void)src_func; return NULL; }
 void free_obj(struct obj_data *obj) { (void)obj; }
 
 /* ---------------------------------------------------------------------
