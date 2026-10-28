@@ -57,6 +57,14 @@ static struct char_data *next_combat_list = NULL;
 static void perform_group_gain(struct char_data *ch, int base, struct char_data *victim);
 static void dam_message(int dam, struct char_data *ch, struct char_data *victim, int w_type);
 static void make_corpse(struct char_data *ch);
+static struct obj_data *autoloot_corpse(struct char_data *ch, struct char_data *victim);
+
+/* The corpse make_corpse() created most recently, and its script UID.
+ * damage()'s autogold/autoloot/autosac act on this object. A lookup by the
+ * name "corpse" would find an older corpse first: obj_to_room() appends,
+ * and 'get' searches the inventory before the room. */
+static struct obj_data *last_corpse;
+static long last_corpse_uid;
 static void change_alignment(struct char_data *ch, struct char_data *victim);
 static void group_gain(struct char_data *ch, struct char_data *victim);
 static void solo_gain(struct char_data *ch, struct char_data *victim);
@@ -275,6 +283,27 @@ static void make_corpse(struct char_data *ch)
   }
 
   obj_to_room(corpse, IN_ROOM(ch));
+  last_corpse = corpse;
+  last_corpse_uid = obj_script_id(corpse);
+}
+
+/* The corpse damage() just produced, if it is still the same object and in
+ * ch's room; otherwise NULL. A corpse that vanished (a get trigger during
+ * autoloot can purge it) is reported as "autoloot-corpse-missing". A
+ * corpse ch cannot see is skipped silently, as 'get' would. */
+static struct obj_data *autoloot_corpse(struct char_data *ch,
+                                        struct char_data *victim)
+{
+  if (!last_corpse || !obj_uid_matches(last_corpse_uid, last_corpse) ||
+      IN_ROOM(last_corpse) != IN_ROOM(ch)) {
+    TB_WARN_MSG("fight", "autoloot-corpse-missing", "obj",
+                "corpse uid %ld of " DIAG_CHAR_FMT " gone before auto "
+                "loot/sac by " DIAG_CHAR_FMT, last_corpse_uid,
+                DIAG_CHAR(victim), DIAG_CHAR(ch));
+    last_corpse = NULL;
+    return NULL;
+  }
+  return CAN_SEE_OBJ(ch, last_corpse) ? last_corpse : NULL;
 }
 
 /* When ch kills victim */
@@ -662,7 +691,7 @@ int damage(struct char_data *ch, struct char_data *victim, int dam, int attackty
 {
   long local_gold = 0, happy_gold = 0;
   char local_buf[256];
-  struct char_data *tmp_char;
+  char loot_arg[16];   /* writable: get_from_container strips "all." */
   struct obj_data *corpse_obj;
 
   if (GET_POS(victim) <= POS_DEAD) {
@@ -838,23 +867,34 @@ int damage(struct char_data *ch, struct char_data *victim, int dam, int attackty
       tb_snprintf(local_buf, sizeof(local_buf), "%ld", (long)local_gold);
     }
 
+    last_corpse = NULL;
     die(victim, ch);
+    /* Each step re-acquires the corpse die() made: the get triggers that
+     * looting runs may purge or move it. */
     if (GROUP(ch) && (local_gold > 0) && PRF_FLAGGED(ch, PRF_AUTOSPLIT) ) {
-      generic_find("corpse", FIND_OBJ_ROOM, ch, &tmp_char, &corpse_obj);
-      if (corpse_obj) {
-        do_get(ch, "all.coin corpse", 0, 0);
+      if ((corpse_obj = autoloot_corpse(ch, victim)) != NULL) {
+        strlcpy(loot_arg, "all.coin", sizeof(loot_arg));
+        get_from_container(ch, corpse_obj, loot_arg, FIND_OBJ_ROOM, 1);
         do_split(ch, local_buf, 0, 0);
       }
       /* need to remove the gold from the corpse */
     } else if (!IS_NPC(ch) && (ch != victim) && PRF_FLAGGED(ch, PRF_AUTOGOLD)) {
-      do_get(ch, "all.coin corpse", 0, 0);
+      if ((corpse_obj = autoloot_corpse(ch, victim)) != NULL) {
+        strlcpy(loot_arg, "all.coin", sizeof(loot_arg));
+        get_from_container(ch, corpse_obj, loot_arg, FIND_OBJ_ROOM, 1);
+      }
     }
     if (!IS_NPC(ch) && (ch != victim) && PRF_FLAGGED(ch, PRF_AUTOLOOT)) {
-      do_get(ch, "all corpse", 0, 0);
+      if ((corpse_obj = autoloot_corpse(ch, victim)) != NULL) {
+        strlcpy(loot_arg, "all", sizeof(loot_arg));
+        get_from_container(ch, corpse_obj, loot_arg, FIND_OBJ_ROOM, 1);
+      }
     }
     if (IS_NPC(victim) && !IS_NPC(ch) && PRF_FLAGGED(ch, PRF_AUTOSAC)) {
-      do_sac(ch,"corpse",0,0);
+      if ((corpse_obj = autoloot_corpse(ch, victim)) != NULL)
+        sacrifice_obj(ch, corpse_obj);
     }
+    last_corpse = NULL;
     return (-1);
   }
   return (dam);

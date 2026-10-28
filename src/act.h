@@ -128,6 +128,14 @@ int find_eq_pos(struct char_data *ch, struct obj_data *obj, char *arg);
 void name_from_drinkcon(struct obj_data *obj);
 void name_to_drinkcon(struct obj_data *obj, int type);
 void weight_change_object(struct obj_data *obj, int weight);
+/** Gets howmany objects matching arg (writable: "all."/"N." prefixes are
+ * stripped in place) out of cont, which ch carries (mode FIND_OBJ_INV) or
+ * sees on the floor (FIND_OBJ_ROOM). Runs get triggers: callers must
+ * re-validate cont afterwards. */
+void get_from_container(struct char_data *ch, struct obj_data *cont, char *arg, int mode, int howmany);
+/** Sacrifices obj (in ch's room or inventory) as 'sac' does: rewards ch,
+ * spills obj's contents onto the floor and extracts obj. */
+void sacrifice_obj(struct char_data *ch, struct obj_data *obj);
 /* functions with subcommands */
 /* do_drop */
 ACMD(do_drop);

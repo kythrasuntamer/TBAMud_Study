@@ -220,9 +220,41 @@ static void test_hit_rejects_mob_attack_type_out_of_range(void)
   fx_free_char(mob);
 }
 
+/* H1-15: with an older corpse already lying in the room, autoloot and
+ * autosac must act on the corpse of the mob just killed. obj_to_room()
+ * appends, so a lookup of "corpse" found the old one first. */
+static void test_autoloot_takes_the_new_corpse(void)
+{
+  struct char_data *pc = fx_new_char("hero", FALSE, 0);
+  struct char_data *mob = fx_new_char("rat", TRUE, 0);
+  struct obj_data *old = fx_new_obj("corpse", ITEM_CONTAINER);
+  struct obj_data *treasure = fx_new_obj("treasure", ITEM_OTHER);
+  struct obj_data *bread = fx_new_obj("bread", ITEM_FOOD);
+
+  GET_OBJ_VAL(old, 3) = 1;
+  obj_to_room(old, 0);
+  obj_to_obj(treasure, old);
+  obj_to_char(bread, mob);
+  SET_BIT_AR(PRF_FLAGS(pc), PRF_AUTOLOOT);
+  SET_BIT_AR(PRF_FLAGS(pc), PRF_AUTOSAC);
+  GET_HIT(mob) = 5;   /* damage() caps a blow at 100 */
+
+  TEST_ASSERT_TRUE(damage(pc, mob, 100, TYPE_HIT) < 0);
+
+  TEST_ASSERT_EQUAL_PTR(pc, bread->carried_by);
+  TEST_ASSERT_EQUAL_PTR(old, treasure->in_obj);
+  /* The new corpse was sacrificed; the old one is the only object left. */
+  TEST_ASSERT_EQUAL_PTR(old, world[0].contents);
+  TEST_ASSERT_NULL(old->next_content);
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  fx_free_char(mob);
+  fx_free_char(pc);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(test_autoloot_takes_the_new_corpse);
   RUN_TEST(test_hit_rejects_weapon_attack_type_out_of_range);
   RUN_TEST(test_hit_rejects_mob_attack_type_out_of_range);
   RUN_TEST(test_hit_reads_weapon_after_fight_trigger);

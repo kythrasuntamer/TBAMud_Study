@@ -28,7 +28,7 @@
 /* do_get utility functions */
 static int can_take_obj(struct char_data *ch, struct obj_data *obj);
 static void get_check_money(struct char_data *ch, struct obj_data *obj);
-static void get_from_container(struct char_data *ch, struct obj_data *cont, char *arg, int mode, int amount);
+/* get_from_container() is shared with fight.c (autoloot); see act.h. */
 static void get_from_room(struct char_data *ch, char *arg, int amount);
 static int perform_get_from_container(struct char_data *ch, struct obj_data *obj, struct obj_data *cont, int mode);
 static int perform_get_from_room(struct char_data *ch, struct obj_data *obj);
@@ -1775,8 +1775,7 @@ ACMD(do_remove)
 ACMD(do_sac)
 {
   char arg[MAX_INPUT_LENGTH];
-  struct obj_data *j, *jj, *next_thing2;
-  room_rnum dest;
+  struct obj_data *j;
 
   one_argument(argument, arg);
 
@@ -1784,11 +1783,21 @@ ACMD(do_sac)
     send_to_char(ch, "Sacrifice what?\n\r");
     return;
   }
-    
+
   if (!(j = get_obj_in_list_vis(ch, arg, NULL, world[IN_ROOM(ch)].contents)) && (!(j = get_obj_in_list_vis(ch, arg, NULL, ch->carrying)))) {
     send_to_char(ch, "It doesn't seem to be here.\n\r");
     return;
   }
+
+  sacrifice_obj(ch, j);
+}
+
+/* The body of 'sac', shared with damage()'s autosac, which names the
+ * corpse it just made rather than the first object called "corpse". */
+void sacrifice_obj(struct char_data *ch, struct obj_data *j)
+{
+  struct obj_data *jj, *next_thing2;
+  room_rnum dest;
 
   if (!CAN_WEAR(j, ITEM_WEAR_TAKE)) {
     send_to_char(ch, "You can't sacrifice that!\n\r");
