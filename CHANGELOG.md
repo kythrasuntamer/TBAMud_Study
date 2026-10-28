@@ -53,9 +53,41 @@ afterwards, see the PR.)
   unless a field was cut): update external log parsers. Back up the player
   files before deploying: a binary from before #36 loads class 5-11
   characters as the default class.
-<!-- PLACEHOLDER-MERGED: add an entry for each PR merged after this one
-     (#40 password verify / persistence style, #18 area imports, and the
-     string_add fix if it merges), then delete this comment. -->
+- #40 login and player-file style: tb_password_verify() tells a match, a
+  mismatch and a password this build cannot check apart (a legacy crypt
+  hash on a build without crypt(), or libsodium failing to start). An
+  uncheckable password is reported as `password-verify` with the
+  character's name and idnum, at most 5 records per account and 20 overall
+  per minute, followed by one `password-verify-suppressed` record; it
+  counts against the account's login rate limit but never as a bad
+  password. Every prompt says the password cannot be checked: the new
+  character and change-password confirmations close the connection (an
+  unconfirmed new hash is held in memory and must not be saved), and the
+  old-password and delete-confirmation prompts return to the menu. On a
+  build without crypt(), a legacy hash is checked against a dummy Argon2id
+  hash so the response time does not reveal which accounts still hold
+  legacy hashes. players.c's checked parsers use the classic CircleMUD
+  `return (x);` style.
+- #18 area imports: tools to convert, validate and install areas from other
+  MUD code bases (validate_import_refs, audit_world_vnums, convert_crimson2,
+  and fetch_mud_assets, which requires a pinned commit and refuses an
+  entry with no sha256 unless `--allow-unhashed` is given). The installer
+  builds every file first and replaces them atomically; a failed replace
+  is reported with what was already installed and leaves no temporary
+  files. From Crimson 2: Moria34's new content is merged into the stock
+  Mines of Moria, zone 41, and rescaled to it (Melcrin, a level-16 caster
+  boss; the phantom, level 11; the Blade of the Moors Trolls, a level-15
+  3d5 weapon). Shatterstone is zone 58, with a level-20 guard, its template
+  mob dropped and its torch made a normal light, reached from the Dwarven
+  Kingdom (6542 down to 5830 up). Four stock door exits that named
+  nonexistent keys are fixed, and room 25650 gets the missing return side
+  of 25628's trap door. The Crimson 2 authors' redistribution rights are
+  not verified; the owner chose to include the areas.
+<!-- PLACEHOLDER-MERGED: add an entry for each PR merged after #18, in
+     merge order (#52 string_add aborts; the script_damage overkill fix;
+     the zone 103 Kamehameha cap; the delete_room orphan resets / zone 27
+     doll quest fix; the coordinator's fix/leftover-* branches), then
+     delete this comment. -->
 
 ## 2026-10-28: memory-safety and error-locality audit merged
 
@@ -77,7 +109,7 @@ afterwards, see the PR.)
   source macro inventory tool was merged directly (319caeb).
 
 ## Open proposals (not merged)
-<!-- PLACEHOLDER-OPEN: list the PRs still open when this branch merges, or
-     write "None." -->
+<!-- PLACEHOLDER-OPEN: list the PRs still open when this branch merges
+     (currently #52 is open; more may be opened), or write "None." -->
 See the [open pull requests](https://github.com/kythrasuntamer/TBAMud_Study/pulls)
 for their status.
