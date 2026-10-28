@@ -8,6 +8,23 @@
 * Copyright (C) 1997 MS                                                  *
 *********************************************************************** */
 
+/**
+ * @file quest.c
+ * Autoquests: loading (.qst files), the questmaster spec proc, the 'quest'
+ * command, and progress/completion checks driven from the game loop.
+ *
+ * Ownership: aquest_table (db.c) holds total_quests rows in vnum order; it
+ * is filled at boot by parse_quest() and edited in place by qedit
+ * (genqst.c add_quest/delete_quest), which may reallocate it, so never keep
+ * a row pointer or rnum across OLC. Players refer to quests by vnum only
+ * (GET_QUEST, completed_quests[]); resolve with real_quest() and check with
+ * VALID_QST_RNUM() each time, because quests can be deleted under them.
+ *
+ * Who controls input: quest records are builder data (world files, qedit),
+ * including prev/next links, which are not repaired on delete; quest
+ * numbers typed after 'quest list/join/status' come from players.
+ */
+
 #include "conf.h"
 #include "sysdep.h"
 
@@ -210,6 +227,30 @@ static int quest_parse_record(const char *line, int *fields, size_t count,
     exit(1); \
   } while (0)
 
+/**
+ * Read one quest record (the part after "#<nr>") from a .qst file into the
+ * next free row of aquest_table.
+ *
+ * Record grammar:
+ *   name~ / desc~ / info~ / done~ / quit~     (fread_string, '~'-terminated)
+ *   <type> <qm vnum> <flags> <target> <prev> <next> <prereq>
+ *   <points> <penalty> <minlvl> <maxlvl> <time> <return mob> <quantity>
+ *   <gold> <exp> <obj vnum>
+ *   S                                        (end of record)
+ * -1 in target/prev/next/prereq/obj means "none" (stored as NOTHING).
+ *
+ * Validation: every number must parse as an int; type must be in
+ * [0, NUM_AQ_TYPES) (boot stops otherwise). The QM vnum is checked against
+ * the mob prototypes, so mobs must be loaded first (boot_world order); an
+ * unknown QM is reported and stored as NOBODY. Chain links (prev/next) are
+ * cross-checked later, in assign_the_quests(), once every quest is loaded.
+ * Levels, quantity, time and rewards are taken as written.
+ *
+ * The row index is a function-static counter shared by every call:
+ * index_boot() sizes aquest_table for the whole set of files and calls this
+ * once per record, and total_quests follows the counter. Input is world-file
+ * (builder) data.
+ */
 void parse_quest(FILE *quest_f, int nr)
 {
   static char line[256];
@@ -479,6 +520,21 @@ void remove_completed_quest(struct char_data *ch, qst_vnum vnum)
 /* TRUE while generic_complete_quest() is paying out rewards. */
 static int completing_quest = FALSE;
 
+/**
+ * Count one goal of ch's active quest and, when the counter reaches zero,
+ * complete it: record it (unless repeatable), clear it, pay points, gold,
+ * exp and the reward object, then start the chained next quest if any.
+ *
+ * Re-entrancy: rewards call out of this file. gain_exp() can level the
+ * player and obj_to_char() runs autoquest_trigger_check(AQ_OBJ_FIND) again.
+ * The quest is cleared before any reward is paid, so a nested check finds no
+ * active quest; a static guard reports any other re-entry. When this returns,
+ * GET_QUEST(ch) may have changed (cleared, or the next quest in the chain),
+ * so callers that loop must re-check it.
+ *
+ * @pre ch is a player whose GET_QUEST() is the quest being counted; a quest
+ *      that no longer resolves is reported and cleared.
+ */
 void generic_complete_quest(struct char_data *ch)
 {
   qst_rnum rnum;
@@ -592,6 +648,24 @@ void generic_complete_quest(struct char_data *ch)
   save_char(ch);
 }
 
+/**
+ * Check whether an event advances ch's active quest of the given type.
+ *
+ * Callers and what each type needs:
+ *   AQ_OBJ_FIND   obj_to_char()           object non-NULL
+ *   AQ_ROOM_FIND  char_to_room()          IN_ROOM(ch) valid
+ *   AQ_MOB_FIND   char_to_room()          IN_ROOM(ch) valid
+ *   AQ_MOB_KILL   raw_kill()              vict non-NULL
+ *   AQ_MOB_SAVE   raw_kill()              IN_ROOM(ch) valid; vict may be NULL
+ *   AQ_OBJ_RETURN perform_give()          vict and object non-NULL
+ *   AQ_ROOM_CLEAR raw_kill()              IN_ROOM(ch) valid
+ * Every caller has just placed ch in a room or acted on vict/object, which
+ * is what makes those guarantees hold.
+ *
+ * AQ_OBJ_RETURN extracts the returned object on completion: the caller must
+ * not use object afterwards. Completion can change GET_QUEST(ch) (see
+ * generic_complete_quest()).
+ */
 void autoquest_trigger_check(struct char_data *ch, struct char_data *vict,
                 struct obj_data *object, int type)
 {
@@ -1032,6 +1106,13 @@ ACMD(do_quest)
   }
 }
 
+/**
+ * Spec proc of every mob that offers quests (installed by
+ * assign_the_quests() and add_quest()). The mob's original spec proc, if
+ * any, is kept on its quests and found with quest_qm_secondary(); it gets
+ * the first chance at every command. Handles 'quest list' and 'quest join';
+ * other quest subcommands fall through to do_quest().
+ */
 SPECIAL(questmaster)
 {
   qst_rnum rnum;
