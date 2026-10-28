@@ -22,4 +22,8 @@ for row in re.findall(r"real_object\(lst\[i\]\.vobj\)\) != NOTHING\) \{(.*?)\n  
     assert "(size_t)n >= sizeof(buf) - len" in row
     assert "len += tmp_len" not in row
 assert aff.count("real_object(lst[i].vobj)) != NOTHING) {") == 2
+# olist type <n> indexes item_types[] with the builder's number.
+typ = body_of("static void perform_obj_type_list(struct char_data * ch, char *arg)")
+check = typ.index("itemtype < 0 || itemtype >= NUM_ITEM_TYPES")
+assert check < typ.index("item_types[itemtype]")
 print("oasis list contract verified")

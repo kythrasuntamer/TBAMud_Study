@@ -140,6 +140,12 @@ static void perform_obj_type_list(struct char_data * ch, char *arg)
   char buf[MAX_STRING_LENGTH];
 
   itemtype = tb_parse_int_or_zero(arg);
+  /* item_types[] has NUM_ITEM_TYPES entries; the number came from the
+   * builder unchecked. */
+  if (itemtype < 0 || itemtype >= NUM_ITEM_TYPES) {
+    send_to_char(ch, "Item types are 0 to %d.\r\n", NUM_ITEM_TYPES - 1);
+    return;
+  }
 
   len = snprintf(buf, sizeof(buf), "Listing all objects of type %s[%s]%s\r\n",
        QYEL, item_types[itemtype], QNRM);
