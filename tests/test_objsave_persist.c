@@ -17,6 +17,7 @@
 #include "handler.h"
 #include "class.h"
 #include "genolc.h"
+#include "interpreter.h"
 #include <stdarg.h>
 #include <sys/stat.h>
 #include "tb_error_capture.h"
@@ -703,6 +704,81 @@ static void test_too_deep_nesting_is_reported(void)
   TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "player idnum 4242 obj vnum 101"));
 }
 
+/* --- receptionist fixtures: "offer" is command 1; every act() is kept. --- */
+SPECIAL(receptionist);
+static struct command_info offer_cmd_table[] = {
+  { "RESERVED", "", 0, NULL, 0, 0 },
+  { "offer", "offer", 0, NULL, 0, 0 },
+  { "\n", "zzzzzzz", 0, NULL, 0, 0 }
+};
+struct command_info *complete_cmd_info = offer_cmd_table;
+#define OFFER_CMD 1
+
+#define ACT_LOG_MAX 8
+static int acts;
+static char act_formats[ACT_LOG_MAX][256];
+static struct obj_data *act_objs[ACT_LOG_MAX];
+
+char *act_at(const char *src_file, int src_line, const char *src_func,
+             const char *str, int hide_invisible, struct char_data *ch,
+             struct obj_data *obj, void *vict_obj, int type)
+{
+  (void)src_file; (void)src_line; (void)src_func; (void)hide_invisible;
+  (void)ch; (void)vict_obj; (void)type;
+  if (acts < ACT_LOG_MAX) {
+    if (snprintf(act_formats[acts], sizeof(act_formats[acts]), "%s",
+                 str ? str : "") < 0)
+      act_formats[acts][0] = '\0';
+    act_objs[acts] = obj;
+  }
+  acts++;
+  return NULL;
+}
+int room_is_dark(room_rnum room) { (void)room; return FALSE; }
+int rand_number(int from, int to) { (void)to; return from; }
+int find_command(const char *command) { (void)command; return -1; }
+
+/* B2-32: the receptionist formatted each object's short description into
+ * an act() format, so a '$' in it (builder or iedit text) was read as an
+ * act() code: "a $N doll" printed the player's name. The object must reach
+ * act() as its obj argument ($p), never as format text. */
+static void test_offer_passes_objects_to_act_as_p(void)
+{
+  char arg[] = "";
+  struct descriptor_data desc;
+  struct char_data recep;
+  struct obj_data *doll = read_object(101, VIRTUAL);
+  int i;
+
+  memset(&desc, 0, sizeof(desc));
+  memset(&recep, 0, sizeof(recep));
+  player.desc = &desc;
+  GET_POS(&recep) = POS_STANDING;
+  doll->short_description = strdup("a $N doll");
+  TEST_ASSERT_NOT_NULL(doll->short_description);
+  obj_to_char(doll, &player);
+
+  /* Unrentable: Crash_report_unrentables(). */
+  SET_BIT_AR(GET_OBJ_EXTRA(doll), ITEM_NORENT);
+  acts = 0;
+  TEST_ASSERT_TRUE(receptionist(&player, &recep, OFFER_CMD, arg));
+  TEST_ASSERT_EQUAL_STRING("$n tells you, 'You cannot store $p.'", act_formats[0]);
+  TEST_ASSERT_EQUAL_PTR(doll, act_objs[0]);
+
+  /* Rentable: Crash_report_rent(). */
+  REMOVE_BIT_AR(GET_OBJ_EXTRA(doll), ITEM_NORENT);
+  GET_OBJ_RENT(doll) = 10;
+  CONFIG_MAX_OBJ_SAVE = 30;
+  acts = 0;
+  TEST_ASSERT_TRUE(receptionist(&player, &recep, OFFER_CMD, arg));
+  CONFIG_MAX_OBJ_SAVE = 0;
+  TEST_ASSERT_EQUAL_STRING("$n tells you, '   10 coins for $p..'", act_formats[0]);
+  TEST_ASSERT_EQUAL_PTR(doll, act_objs[0]);
+  for (i = 0; i < acts && i < ACT_LOG_MAX; i++)
+    TEST_ASSERT_NULL(strstr(act_formats[i], "doll"));
+  player.desc = NULL;
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -722,6 +798,7 @@ int main(void)
   RUN_TEST(test_extra_description_loads);
   RUN_TEST(test_save_skips_extra_description_with_null_keyword);
   RUN_TEST(test_too_deep_nesting_is_reported);
+  RUN_TEST(test_offer_passes_objects_to_act_as_p);
   (void)rmdir(scratch_dir);
   return UNITY_END();
 }

@@ -1039,14 +1039,15 @@ act(buf, FALSE, recep, 0, ch, TO_VICT);
 static int Crash_report_unrentables(struct char_data *ch, struct char_data *recep,
                              struct obj_data *obj)
 {
-  char buf[128];
   int has_norents = 0;
 
   if (obj) {
     if (Crash_is_unrentable(obj)) {
       has_norents = 1;
-      tb_snprintf(buf, sizeof(buf), "$n tells you, 'You cannot store %s.'", OBJS(obj, ch));
-      act(buf, FALSE, recep, 0, ch, TO_VICT);
+      /* The object is act()'s $p, never part of the format: a short
+       * description is builder- or iedit-controlled text, and a '$' in it
+       * was read as an act() code (B2-32). */
+      act("$n tells you, 'You cannot store $p.'", FALSE, recep, obj, ch, TO_VICT);
     }
     has_norents += Crash_report_unrentables(ch, recep, obj->contains);
     has_norents += Crash_report_unrentables(ch, recep, obj->next_content);
@@ -1064,9 +1065,10 @@ static void Crash_report_rent(struct char_data *ch, struct char_data *recep, str
       (*nitems)++;
       *cost += MAX(0, (GET_OBJ_RENT(obj) * factor));
       if (display) {
-        tb_snprintf(buf, sizeof(buf), "$n tells you, '%5d coins for %s..'",
-                (GET_OBJ_RENT(obj) * factor), OBJS(obj, ch));
-        act(buf, FALSE, recep, 0, ch, TO_VICT);
+        /* Only the number is formatted in; the object is $p (B2-32). */
+        tb_snprintf(buf, sizeof(buf), "$n tells you, '%5d coins for $p..'",
+                (GET_OBJ_RENT(obj) * factor));
+        act(buf, FALSE, recep, obj, ch, TO_VICT);
       }
     }
     Crash_report_rent(ch, recep, obj->contains, cost, nitems, display, factor);
