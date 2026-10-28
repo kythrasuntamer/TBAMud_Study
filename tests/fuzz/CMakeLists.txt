@@ -101,10 +101,6 @@ target_compile_options(fuzz_player PRIVATE -ftrivial-auto-var-init=pattern)
 #     Name tag, or an Act word that sets the NPC bit); stack over-read in
 #     fopen (dg_scripts.c:3491-3492). Reached at login. Fixed by 577cae0 on
 #     audit-deferred-dg.
-#   PLAYER-2 hcontrol-time: hcontrol show prints built_on/last_pay after
-#     tb_strftime()/localtime() failed on an out-of-range time_t from the
-#     binary hcontrol file and left the buffer unwritten; the %-15s then
-#     reads a non-terminated stack buffer (house.c:498-509).
 #   PLAYER-3 name-path-login: get_filename() built a path from a file-
 #     supplied player name (here a pfile Name tag read before login) without
 #     rejecting "..", so a name like "../x" escaped lib/ for every file the
@@ -112,21 +108,7 @@ target_compile_options(fuzz_player PRIVATE -ftrivial-auto-var-init=pattern)
 #     the traversal is fixed (the index half is regression-name-path-index
 #     below), but this input still crashes: read_saved_vars() then fopen()s
 #     the buffer get_filename() refused to write, i.e. PLAYER-1.
-#   PLAYER-4 fread-string-nul: fread_string_checked() does point-- then reads
-#     *point before the "point > tmp" guard, so a '~'-string line fgets()
-#     returns empty (its first byte is NUL) underflows tmp[] by one
-#     (players.c:273). Reached by Desc, ADes, EDes.
-#   PLAYER-5 controw-leak: Crash_load_objs() parks a rent object nested in a
-#     container whose record never arrives in cont_row[] and neither places
-#     nor frees it, so it stays on object_list (leak). objsave.c
-#     Crash_load_objs/handle_obj. Fixed on audit-deferred-player-load
-#     (e94c9bb: spill leftover rows to inventory).
-#   PLAYER-6 restrung-leak: objsave.c sets temp->name/short_description/
-#     description with a raw strdup(line) and no free, so a record repeating
-#     Name:/Shrt:/Desc: leaks the first copy (objsave.c:1404/1468/1490) --
-#     the players.c PFILE_SET_STRING fix was never applied here.
-foreach(_crash vars-noname hcontrol-time name-path-login
-               fread-string-nul controw-leak restrung-leak)
+foreach(_crash vars-noname name-path-login)
     add_test(NAME fuzz_player_known_${_crash}
              COMMAND fuzz_player ${CMAKE_CURRENT_SOURCE_DIR}/known-crashes/player/${_crash})
     set_tests_properties(fuzz_player_known_${_crash} PROPERTIES
@@ -141,7 +123,28 @@ endforeach()
 #     reached get_filename() through update_obj_file()/Crash_clean_file(),
 #     which built a path outside lib/. Fixed by 2f7889b: get_filename()
 #     rejects the name (persist/filename-name-invalid).
-foreach(_crash name-path-index)
+#   PLAYER-2 regression-hcontrol-time: hcontrol show prints built_on/last_pay after
+#     tb_strftime()/localtime() failed on an out-of-range time_t from the
+#     binary hcontrol file and left the buffer unwritten; the %-15s then
+#     reads a non-terminated stack buffer (house.c:498-509).
+#     Fixed by 84f2c75: Unknown is printed for a time localtime() rejects.
+#   PLAYER-4 regression-fread-string-nul: fread_string_checked() does point-- then reads
+#     *point before the "point > tmp" guard, so a '~'-string line fgets()
+#     returns empty (its first byte is NUL) underflows tmp[] by one
+#     (players.c:273). Reached by Desc, ADes, EDes. Fixed by d52f3e5: a
+#     string line that starts with NUL is dropped.
+#   PLAYER-5 regression-controw-leak: Crash_load_objs() parks a rent object nested in a
+#     container whose record never arrives in cont_row[] and neither places
+#     nor frees it, so it stays on object_list (leak). objsave.c
+#     Crash_load_objs/handle_obj. Fixed by e94c9bb (audit-deferred-player-
+#     load): leftover rows spill to inventory.
+#   PLAYER-6 regression-restrung-leak: objsave.c sets temp->name/short_description/
+#     description with a raw strdup(line) and no free, so a record repeating
+#     Name:/Shrt:/Desc: leaks the first copy (objsave.c:1404/1468/1490) --
+#     the players.c PFILE_SET_STRING fix was never applied here. Fixed by
+#     f8de88c: a repeated tag replaces the object's own copy.
+foreach(_crash name-path-index hcontrol-time fread-string-nul controw-leak
+               restrung-leak)
     add_test(NAME fuzz_player_regression_${_crash}
              COMMAND fuzz_player ${CMAKE_CURRENT_SOURCE_DIR}/corpus/player/regression-${_crash})
     set_tests_properties(fuzz_player_regression_${_crash} PROPERTIES
@@ -185,35 +188,12 @@ target_include_directories(fuzz_world PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 # into the whole game) would fail to link.
 target_link_options(fuzz_world PRIVATE -Wl,-z,start-stop-gc)
 
-# Known crashes: inputs fuzz_world found (minimised) in loaders this harness
-# does not own. Each is a DISABLED test, so ctest lists it as "Disabled"
-# until the bug is fixed; then delete DISABLED, move the file into
-# corpus/world/ as regression-<name> and replay it as a regression test.
-# A fuzzing campaign can step past an open one with FUZZ_WORLD_MASK=<name>
-# (see fuzz_world.c). All are boot-time crashes from hand-edited or legacy
-# world files; OLC never writes these records. (FUZZ-W1 and FUZZ-W5 are
-# fixed: see the regression inputs below.)
-#   FUZZ-W2 obj-convert-zone-nowhere: parse_object() converts a legacy (3-
-#     or 4-field) object line and, with bitsavetodisk on (the default),
-#     reads zone_table[real_zone_by_thing(vnum)].number. For a vnum in no
-#     zone that is zone_table[NOWHERE], 65535 * 72 bytes past the table:
-#     wild read, SEGV. db.c:2520. Not fixed on any branch.
-#   FUZZ-W3 room-convert-zone-nowhere: the same read in parse_room()
-#     (db.c:1756). Reachable because the zone walk attaches a room in a gap
-#     between two zones to the next zone without checking its bottom, so
-#     real_zone_by_thing() finds no zone. Fixed by 8fbdff0 (a room between
-#     zones is fatal) on audit-deferred-db-loaders.
-#   FUZZ-W4 mob-convert-zone-nowhere: the same read in parse_mobile()
-#     (db.c:2366) for a legacy 4-field mob flag line. Not fixed on any
-#     branch.
-foreach(_crash obj-convert-zone-nowhere room-convert-zone-nowhere
-               mob-convert-zone-nowhere)
-    add_test(NAME fuzz_world_known_${_crash}
-             COMMAND fuzz_world ${CMAKE_CURRENT_SOURCE_DIR}/known-crashes/world/${_crash})
-    set_tests_properties(fuzz_world_known_${_crash} PROPERTIES
-        LABELS "fuzz" DISABLED TRUE
-        ENVIRONMENT "ASAN_OPTIONS=${TBAMUD_ASAN_OPTIONS};UBSAN_OPTIONS=${TBAMUD_UBSAN_OPTIONS}")
-endforeach()
+# Known crashes: inputs fuzz_world finds (minimised) in loaders this harness
+# does not own become DISABLED tests here (ctest lists them as "Disabled")
+# until the bug is fixed; then the file moves into corpus/world/ as
+# regression-<name> and is replayed below. A fuzzing campaign can step past
+# an open one with FUZZ_WORLD_MASK=<name> (see fuzz_world.c). None is open:
+# FUZZ-W1 to FUZZ-W5 are fixed (see the regression inputs below).
 
 # Regression inputs: known crashes that are fixed, kept in corpus/world/ (so
 # fuzz_world_corpus replays them too) and also replayed one by one, so a
@@ -232,7 +212,24 @@ endforeach()
 #     find_exdesc() skips the entry and reports act/exdesc-keyword-missing.
 #     e2f4f26 on audit-deferred-db-loaders also stops the loaders storing
 #     the NULL.
-foreach(_crash trg-empty-script obj-note-exdesc-null-keyword)
+#   FUZZ-W2 regression-obj-convert-zone-nowhere: parse_object() converts a
+#     legacy (3- or 4-field) object line and, with bitsavetodisk on (the
+#     default), read zone_table[real_zone_by_thing(vnum)].number; for a vnum
+#     in no zone that is zone_table[NOWHERE], 65535 * 72 bytes past the
+#     table (wild read, SEGV). Fixed by bf8a1d9: a legacy object in no zone
+#     no longer indexes zone_table[NOWHERE].
+#   FUZZ-W3 regression-room-convert-zone-nowhere: the same read in
+#     parse_room(), reachable because the zone walk attached a room in a gap
+#     between two zones to the next zone without checking its bottom. Fixed
+#     by c1036fd: a room between two zones is fatal at boot, naming both
+#     zones. The harness turns that boot-time exit(1) into a clean return
+#     (fuzz_world.c's exit() redirect, with the parser's orphans swept and
+#     leak-checked), so a fatal rejection passes and only a crash fails.
+#   FUZZ-W4 regression-mob-convert-zone-nowhere: the same read in
+#     parse_mobile() for a legacy 4-field mob flag line. Fixed by 5e258d2.
+foreach(_crash trg-empty-script obj-note-exdesc-null-keyword
+               obj-convert-zone-nowhere room-convert-zone-nowhere
+               mob-convert-zone-nowhere)
     add_test(NAME fuzz_world_regression_${_crash}
              COMMAND fuzz_world ${CMAKE_CURRENT_SOURCE_DIR}/corpus/world/regression-${_crash})
     set_tests_properties(fuzz_world_regression_${_crash} PROPERTIES

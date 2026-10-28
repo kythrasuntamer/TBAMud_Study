@@ -1902,7 +1902,7 @@ static void setup_dir_reports_bad_exit_line_with_room_and_direction(void)
  * Legacy-record conversion: the converted record's zone must exist
  * ------------------------------------------------------------------- */
 
-/* FUZZ-W2 (tests/fuzz/known-crashes/world/obj-convert-zone-nowhere): a
+/* FUZZ-W2 (tests/fuzz/corpus/world/regression-obj-convert-zone-nowhere): a
  * legacy 3-field object line is converted to 128-bit flags, and with
  * bitsavetodisk on (the default) parse_object() read
  * zone_table[real_zone_by_thing(vnum)]: zone_table[NOWHERE] for a vnum in
