@@ -241,7 +241,17 @@ ASPELL(spell_locate_object)
     if (!isname_obj(name, i->name))
       continue;
 
-  send_to_char(ch, "%c%s", UPPER(*i->short_description), i->short_description + 1);
+    /* fread_string() returns NULL for an empty world-file string and
+     * parse_object does not reject it, so a short description may be NULL
+     * or "": never step past its first byte unchecked. */
+    if (!i->short_description || !*i->short_description) {
+      TB_WARN_MSG("magic", "obj-sdesc-empty", "locate",
+                  "obj vnum %d uid %ld has no short description",
+                  (int) GET_OBJ_VNUM(i), obj_script_id(i));
+      send_to_char(ch, "Something");
+    } else
+      send_to_char(ch, "%c%s", UPPER(*i->short_description),
+                   i->short_description + 1);
 
     if (i->carried_by)
       send_to_char(ch, " is being carried by %s.\r\n", PERS(i->carried_by, ch));
