@@ -219,15 +219,33 @@ Master Roshis Kamehameha Wave - 10329 ~
 1 c 7
 kame~
 if %cmd%==kamehameha && %arg%==wave && %actor.fighting%
-  %damage% %actor.fighting% 99999
-  %echoaround% %actor% @G%actor.name% clasps %actor.hisher% hands at his side
-and begins to yell "KaMeHaMeHa!!!!"@n
-  %send% %actor% @GYou clasps his hands at your side and begin to yell
-"KaMeHaMeHa!!!!"@n
-  %echoaround% %actor% @G%actor.name% then thrusts %actor.hisher% hands foward
-sending a blue ball of ki straight at %actor.hisher% enemy.@n
-  %send% %actor% @GYou then thrusts your hands foward sending a blue ball of
-ki straight at your enemy.@n
+  * A strong ki blast, not an instant kill: 2-4 times the user's level
+  * (the fireball band, 22-99, at levels 15-25), capped at 150 so it never
+  * fells a zone boss (300+ hit points) from full health. Once per mud hour
+  * (75 seconds), remembered on the headband itself. Each message stays on
+  * one line: DG runs every line as a command.
+  eval kame_now %time.year% * 10000
+  eval kame_now %kame_now% + %time.month% * 1000
+  eval kame_now %kame_now% + %time.day% * 24
+  eval kame_now %kame_now% + %time.hour%
+  if %kame_used% == %kame_now%
+    %send% %actor% @GYour ki is spent; you cannot gather another wave yet.@n
+    halt
+  end
+  set kame_used %kame_now%
+  global kame_used
+  eval kame_bonus %random.20% * %actor.level%
+  eval kame_bonus %kame_bonus% / 10
+  eval kame_dam %actor.level% * 2
+  eval kame_dam %kame_dam% + %kame_bonus%
+  if %kame_dam% > 150
+    set kame_dam 150
+  end
+  %echoaround% %actor% @G%actor.name% clasps %actor.hisher% hands at %actor.hisher% side and begins to yell "KaMeHaMeHa!!!!"@n
+  %send% %actor% @GYou clasp your hands at your side and begin to yell "KaMeHaMeHa!!!!"@n
+  %echoaround% %actor% @G%actor.name% then thrusts %actor.hisher% hands forward, sending a blue ball of ki straight at %actor.hisher% enemy.@n
+  %send% %actor% @GYou then thrust your hands forward, sending a blue ball of ki straight at your enemy.@n
+  %damage% %actor.fighting% %kame_dam%
 end
 ~
 #10331
