@@ -93,6 +93,7 @@ struct oasis_olc_data {
   struct room_data *room;        /* used for 'redit'         */
   struct obj_data *obj;          /* used for 'oedit'         */
   struct obj_data *iedit_obj;   /* live object instance used for 'iedit' */
+  long iedit_uid;                /* its UID: the address alone can be reused */
   struct zone_data *zone;        /* used for 'zedit'         */
   struct shop_data *shop;        /* used for 'sedit'         */
   struct config_data *config;    /* used for 'cedit'         */
@@ -125,6 +126,7 @@ extern const char *nrm, *grn, *cyn, *yel;
 #define OLC_ROOM(d)    (OLC(d)->room)     /**< Room structure.	*/
 #define OLC_OBJ(d)     (OLC(d)->obj)      /**< Object structure.	*/
 #define OLC_IEDIT_OBJ(d) (OLC(d)->iedit_obj) /**< Live object instance for iedit. */
+#define OLC_IEDIT_UID(d) (OLC(d)->iedit_uid) /**< UID of that instance.        */
 #define OLC_ZONE(d)    (OLC(d)->zone)     /**< Zone structure.	*/
 #define OLC_MOB(d)     (OLC(d)->mob)      /**< Mob structure.	*/
 #define OLC_SHOP(d)    (OLC(d)->shop)     /**< Shop structure.	*/
