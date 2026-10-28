@@ -146,7 +146,7 @@ ACMD(do_mkill)
 ACMD(do_mjunk)
 {
     char arg[MAX_INPUT_LENGTH];
-    int pos, junk_all = 0;
+    int pos, dots;
     obj_data *obj;
     obj_data *obj_next;
 
@@ -165,9 +165,12 @@ ACMD(do_mjunk)
         return;
     }
 
-    if (!str_cmp(arg, "all")) junk_all = 1;
+    /* find_all_dots() strips a leading "all.", leaving the bare name.  The
+     * test used to be inverted, sending plain names down the "all." path
+     * where arg[3] and arg + 4 read past a short name's terminator. */
+    dots = find_all_dots(arg);
 
-    if ((find_all_dots(arg) != FIND_INDIV) && !junk_all) {
+    if (dots == FIND_INDIV) {
       /* Thanks to Carlos Myers for fixing the line below */
       if ((pos = get_obj_pos_in_equip_vis(ch, arg, NULL, ch->equipment)) >= 0) {
          extract_obj(unequip_char(ch, pos));
@@ -176,14 +179,19 @@ ACMD(do_mjunk)
       if ((obj = get_obj_in_list_vis(ch, arg, NULL, ch->carrying)) != NULL )
         extract_obj(obj);
       return;
+    }
+
+    /* "all" junks everything; "all.<name>" junks what matches name. */
+    for (obj = ch->carrying; obj != NULL; obj = obj_next) {
+        obj_next = obj->next_content;
+        if (dots == FIND_ALL || isname(arg, obj->name))
+            extract_obj(obj);
+    }
+    if (dots == FIND_ALL) {
+      for (pos = 0; pos < NUM_WEARS; pos++)
+        if (GET_EQ(ch, pos))
+          extract_obj(unequip_char(ch, pos));
     } else {
-        for (obj = ch->carrying; obj != NULL; obj = obj_next) {
-            obj_next = obj->next_content;
-            if (arg[3] == '\0' || isname(arg+4, obj->name)) {
-                extract_obj(obj);
-            }
-        }
-      /* Thanks to Carlos Myers for fixing the line below */
       while ((pos = get_obj_pos_in_equip_vis(ch, arg, NULL, ch->equipment)) >= 0)
         extract_obj(unequip_char(ch, pos));
     }
