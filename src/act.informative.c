@@ -122,11 +122,15 @@ static void show_obj_to_char(struct obj_data *obj, struct char_data *ch, int mod
   struct char_data *temp;
 
   if (!obj || !ch) {
-    log("SYSERR: NULL pointer in show_obj_to_char(): obj=%p ch=%p", (void *)obj, (void *)ch);
-    /*  SYSERR_DESC: Somehow a NULL pointer was sent to show_obj_to_char() in
-     *  either the 'obj' or the 'ch' variable.  The error will indicate which
-     *  was NULL by listing both of the pointers passed to it.  This is often a
-     *  difficult one to trace, and may require stepping through a debugger. */
+    /* Callers are internal display paths; a NULL here is a caller bug. The
+     * source location in the diagnostic names this function; the mode and
+     * whichever entity is present identify the call. */
+    TB_ERROR_MSG("act", "show-obj-null", "obj",
+                 "show_obj_to_char mode %d with obj %s (vnum %d) and ch %s "
+                 "(%s %ld)", mode, obj ? "set" : "NULL",
+                 obj ? GET_OBJ_VNUM(obj) : NOTHING, ch ? "set" : "NULL",
+                 ch ? (IS_NPC(ch) ? "mob vnum" : "player idnum") : "none",
+                 ch ? (IS_NPC(ch) ? (long) GET_MOB_VNUM(ch) : (long) GET_IDNUM(ch)) : -1L);
     return;
   }
 
@@ -204,12 +208,11 @@ static void show_obj_to_char(struct obj_data *obj, struct char_data *ch, int mod
     break;
 
   default:
-    log("SYSERR: Bad display mode (%d) in show_obj_to_char().", mode);
-    /*  SYSERR_DESC:  show_obj_to_char() has some predefined 'mode's (argument
-     *  #3) to tell it what to display to the character when it is called.  If
-     *  the mode is not one of these, it will output this error, and indicate
-     *  what mode was passed to it.  To correct it, you will need to find the
-     *  call with the incorrect mode and change it to an acceptable mode. */
+    /* mode is one of the SHOW_OBJ_* constants chosen by the caller; any
+     * other value is a caller bug. */
+    TB_ERROR_MSG("act", "show-obj-mode", "obj",
+                 DIAG_CHAR_FMT " obj vnum %d: unknown display mode %d",
+                 DIAG_CHAR(ch), GET_OBJ_VNUM(obj), mode);
     return;
   }
   end:
@@ -1839,7 +1842,10 @@ ACMD(do_gen_ps)
     send_to_char(ch, "%s\r\n", GET_NAME(ch));
     break;
   default:
-    log("SYSERR: Unhandled case in do_gen_ps. (%d)", subcmd);
+    /* subcmd comes from cmd_info[] (interpreter.c), not from the player. */
+    TB_ERROR_MSG("act", "bad-subcmd", "cmd_info",
+                 DIAG_CHAR_FMT " do_gen_ps cmd %d subcmd %d has no case",
+                 DIAG_CHAR(ch), cmd, subcmd);
     /* SYSERR_DESC: General page string function for such things as 'credits',
      * 'news', 'wizlist', 'clear', 'version'.  This occurs when a call is made
      * to this routine that is not one of the predefined calls.  To correct it,
@@ -2635,11 +2641,20 @@ ACMD(do_commands)
       continue;
 
     if (--overflow < 0)
-      continue;
+      continue;     /* counted, and reported once after the loop */
 
     /* matching command: copy to commands list */
     commands[no++] = complete_cmd_info[i].command;
   }
+
+  /* commands[] holds every command a mortal can list; more than that means
+   * cmd_info[] (or the socials file) grew past it, and the excess entries
+   * would otherwise vanish from the list without a trace. */
+  if (overflow < 0)
+    TB_WARN_MSG("act", "commands-truncated", "commands",
+                DIAG_CHAR_FMT " %s list shows %d of %d entries (capacity %d)",
+                DIAG_CHAR(ch), socials ? "socials" : "commands", no,
+                no - overflow, (int) (sizeof(commands) / sizeof(commands[0])));
 
   /* display commands list in a nice columnized format */
   column_list(ch, 0, commands, no, FALSE);

@@ -194,8 +194,11 @@ static void perform_tell(struct char_data *ch, struct char_data *vict, char *arg
 
 static int is_tell_ok(struct char_data *ch, struct char_data *vict)
 {
-  if (!ch)
-    log("SYSERR: is_tell_ok called with no characters");
+  if (!ch)    /* caller bug: every caller passes the acting character */
+    TB_ERROR_MSG("act", "tell-null", "ch",
+                 "is_tell_ok called with NULL sender (vict %s %ld)",
+                 vict ? (IS_NPC(vict) ? "mob vnum" : "player idnum") : "none",
+                 vict ? (IS_NPC(vict) ? (long) GET_MOB_VNUM(vict) : (long) GET_IDNUM(vict)) : -1L);
   else if (!vict)
     send_to_char(ch, "%s", CONFIG_NOPERSON);
   else if (ch == vict)

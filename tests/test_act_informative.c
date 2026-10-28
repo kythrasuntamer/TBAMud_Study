@@ -38,6 +38,9 @@ zone_rnum top_of_zone_table = 0;
 FILE *logfile = NULL;
 struct weather_data weather_info;
 struct descriptor_data *descriptor_list = NULL;
+/* Text files paged by do_gen_ps (loaded by db.c at boot). */
+char *credits, *news, *motd, *imotd, *help, *info, *wizlist, *immlist,
+     *background, *handbook, *policies, *ihelp;
 
 
 /* --- Fixtures for functions outside act.informative.c ------------------- */
@@ -665,6 +668,20 @@ static void look_in_overfull_drinkcon_is_reported(void)
   free_player(ch);
 }
 
+/* --- G2-19: an unhandled subcommand names the command and player ----- */
+
+static void gen_ps_unknown_subcmd_is_reported(void)
+{
+  struct char_data *ch = make_player(31);
+
+  do_gen_ps(ch, (char *)"", 123, 999);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("bad-subcmd", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail,
+                              "player idnum 31 do_gen_ps cmd 123 subcmd 999"));
+  free_player(ch);
+}
+
 /* --- G2-14: add_history with act()'s NULL result ---------------------- */
 
 static void history_null_text_is_reported_not_stored(void)
@@ -715,6 +732,7 @@ int main(void)
   RUN_TEST(who_reports_class_out_of_range);
   RUN_TEST(where_marks_and_reports_full_listing);
   RUN_TEST(look_in_overfull_drinkcon_is_reported);
+  RUN_TEST(gen_ps_unknown_subcmd_is_reported);
   RUN_TEST(history_null_text_is_reported_not_stored);
   return UNITY_END();
 }
