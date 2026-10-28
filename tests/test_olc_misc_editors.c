@@ -23,6 +23,7 @@
 #include "prefedit.h"
 #include "protocol.h"
 #include "quest.h"
+#include "act.h"
 #include "modify.h"
 #include "improved-edit.h"
 #include <stdarg.h>
@@ -160,6 +161,14 @@ void cleanup_olc(struct descriptor_data *d, byte cleanup_type)
     free(OLC_HELP(d));
   }
   free(OLC_PREFS(d));
+  if (OLC_ACTION(d)) {
+    /* oasis.c calls only free_action() for CLEANUP_ALL, which frees the
+     * strings but not the struct (a production leak outside these
+     * editors); free the struct here so the fixture is leak-clean. */
+    if (cleanup_type == CLEANUP_ALL)
+      free_action(OLC_ACTION(d));
+    free(OLC_ACTION(d));
+  }
   if (OLC_QUEST(d)) {
     if (cleanup_type == CLEANUP_ALL)
       free_quest(OLC_QUEST(d));
@@ -328,6 +337,62 @@ static void quest_fixture_free(void)
 }
 
 /* ---------------------------------------------------------------------
+ * Socials fixture (act.social.c / interpreter.c collaborators)
+ * ------------------------------------------------------------------- */
+struct social_messg *soc_mess_list = NULL;
+int top_of_socialt = -1;
+static struct command_info fixture_cmds[] = {
+  { "RESERVED", "", 0, 0, 0, 0 },
+  { "look", "look", 0, 0, 0, 0 },
+  { "\n", "zzzzzzz", 0, 0, 0, 0 }
+};
+struct command_info *complete_cmd_info = fixture_cmds;
+int *cmd_sort_info = NULL;
+const char *position_types[] = {
+  "Dead", "Mortally wounded", "Incapacitated", "Stunned", "Sleeping",
+  "Resting", "Sitting", "Fighting", "Standing", "\n"
+};
+static int command_list_builds, command_sorts;
+void create_command_list(void) { command_list_builds++; }
+void sort_commands(void) { command_sorts++; }
+void free_action(struct social_messg *mess)
+{
+  free(mess->command); free(mess->sort_as);
+  free(mess->char_no_arg); free(mess->others_no_arg);
+  free(mess->char_found); free(mess->others_found); free(mess->vict_found);
+  free(mess->char_body_found); free(mess->others_body_found);
+  free(mess->vict_body_found); free(mess->not_found);
+  free(mess->char_auto); free(mess->others_auto);
+  free(mess->char_obj_found); free(mess->others_obj_found);
+  memset(mess, 0, sizeof(*mess));
+}
+char *delete_doubledollar(char *string) { return string; }
+
+static void social_fixture(void)
+{
+  top_of_socialt = 0;
+  soc_mess_list = calloc(1, sizeof(*soc_mess_list));
+  soc_mess_list[0].command = strdup("smile");
+  soc_mess_list[0].sort_as = strdup("smile");
+  soc_mess_list[0].min_char_position = POS_RESTING;
+  soc_mess_list[0].min_victim_position = POS_RESTING;
+  soc_mess_list[0].char_no_arg = strdup("You smile.");
+  config_info.operation.use_new_socials = 1;
+}
+
+static void social_fixture_free(void)
+{
+  int i;
+  for (i = 0; i <= top_of_socialt; i++)
+    free_action(&soc_mess_list[i]);
+  free(soc_mess_list);
+  soc_mess_list = NULL;
+  top_of_socialt = -1;
+  free(cmd_sort_info);
+  cmd_sort_info = NULL;
+}
+
+/* ---------------------------------------------------------------------
  * Builder fixture
  * ------------------------------------------------------------------- */
 static struct char_data builder;
@@ -414,6 +479,7 @@ static void type(const char *line)
   case CON_HEDIT: hedit_parse(&builder_desc, buf); break;
   case CON_PREFEDIT: prefedit_parse(&builder_desc, buf); break;
   case CON_QEDIT: qedit_parse(&builder_desc, buf); break;
+  case CON_AEDIT: aedit_parse(&builder_desc, buf); break;
   default: TEST_FAIL_MESSAGE("typed into a descriptor that is not editing");
   }
 }
@@ -428,6 +494,8 @@ void setUp(void)
   builder_fixture();
   help_fixture();
   quest_fixture();
+  social_fixture();
+  command_list_builds = command_sorts = 0;
 }
 
 void tearDown(void)
@@ -436,6 +504,7 @@ void tearDown(void)
     cleanup_olc(&builder_desc, CLEANUP_ALL);
   free_help_table();
   quest_fixture_free();
+  social_fixture_free();
   victim_destroy();
   descriptor_list = NULL;
   character_list = NULL;
@@ -660,9 +729,56 @@ static void test_qedit_delete_saved_quest(void)
   TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
 }
 
+/* ---------------------------------------------------------------------
+ * aedit
+ * ------------------------------------------------------------------- */
+
+/* F2-09: out-of-range positions and levels are re-prompted, loudly; the old
+ * '&&' tests accepted any int and the menu then indexed position_types[]
+ * with it. */
+static void test_aedit_rejects_out_of_range_position_and_level(void)
+{
+  char cmd[] = " smile";
+
+  do_oasis_aedit(&builder, cmd, 0, 0);
+  TEST_ASSERT_EQUAL_INT(CON_AEDIT, STATE(&builder_desc));
+  type("y");
+  type("2");
+  type("10");
+  TEST_ASSERT_EQUAL_INT(AEDIT_MIN_CHAR_POS, OLC_MODE(&builder_desc));
+  TEST_ASSERT_EQUAL_STRING("aedit-input-range", tb_captured_operation);
+  TEST_ASSERT_EQUAL_INT(POS_RESTING, OLC_ACTION(&builder_desc)->min_char_position);
+  type("junk");
+  TEST_ASSERT_EQUAL_INT(2, tb_captured_errors);
+  type("8");
+  TEST_ASSERT_EQUAL_INT(POS_STANDING, OLC_ACTION(&builder_desc)->min_char_position);
+  TEST_ASSERT_EQUAL_INT(AEDIT_MAIN_MENU, OLC_MODE(&builder_desc));
+
+  type("4");
+  type("-1");
+  TEST_ASSERT_EQUAL_INT(AEDIT_MIN_CHAR_LEVEL, OLC_MODE(&builder_desc));
+  TEST_ASSERT_EQUAL_INT(3, tb_captured_errors);
+  type("5");
+  TEST_ASSERT_EQUAL_INT(5, OLC_ACTION(&builder_desc)->min_level_char);
+}
+
+/* F2-09: a bad stored position (from the socials file) is shown as invalid
+ * by the level-0 astat, with a warning, not read out of bounds. */
+static void test_astat_bad_stored_position_is_reported(void)
+{
+  char cmd[] = " smile";
+
+  soc_mess_list[0].min_victim_position = 99;
+  do_astat(&builder, cmd, 0, 0);
+  TEST_ASSERT_EQUAL_STRING("social-position-range", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(out, "<invalid"));  /* %-8.8s */
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(test_aedit_rejects_out_of_range_position_and_level);
+  RUN_TEST(test_astat_bad_stored_position_is_reported);
   RUN_TEST(test_qedit_delete_unsaved_quest_is_refused_loudly);
   RUN_TEST(test_qedit_delete_saved_quest);
   RUN_TEST(test_qedit_new_quest_menu_names_undefined_type);

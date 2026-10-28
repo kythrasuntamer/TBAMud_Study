@@ -29,6 +29,20 @@ static void aedit_setup_new(struct descriptor_data *d);
 static void aedit_setup_existing(struct descriptor_data *d, int real_num);
 static void aedit_save_internally(struct descriptor_data *d);
 
+/* Name of a social's minimum position.  The value comes from the socials
+ * file (not range-checked by boot_social_messages) or from an older aedit
+ * that accepted any number, and do_astat shows it to mortals, so never use
+ * it as an index unchecked.  social is the soc_mess_list row, for the log. */
+static const char *aedit_position_name(int pos, int social)
+{
+  if (pos >= 0 && pos < NUM_POSITIONS)
+    return position_types[pos];
+  TB_WARN_MSG("olc", "social-position-range", "socials",
+              "social rnum %d position %d outside 0..%d",
+              social, pos, NUM_POSITIONS - 1);
+  return "<invalid>";
+}
+
 
 
 /* Utils and exported functions. */
@@ -300,9 +314,9 @@ static void aedit_disp_menu(struct descriptor_data * d) {
            grn, nrm,
            yel, action->sort_as, nrm,
            grn, nrm,
-           cyn, position_types[action->min_char_position],
+           cyn, aedit_position_name(action->min_char_position, (int)OLC_ZNUM(d)),
            grn, nrm,
-           cyn, position_types[action->min_victim_position],
+           cyn, aedit_position_name(action->min_victim_position, (int)OLC_ZNUM(d)),
            grn, nrm,
            cyn, action->min_level_char,
            grn, nrm,
@@ -595,9 +609,17 @@ void aedit_parse(struct descriptor_data * d, char *arg) {
         aedit_disp_menu(d);
         return;
       }
-      i = tb_parse_int_or_zero(arg);
-      if ((i < POS_DEAD) && (i > POS_STANDING))  {
-        aedit_disp_menu(d);
+      /* The builder's number is stored, saved to the socials file and later
+       * used to index position_types[] (here and in the level-0 astat).
+       * The old test joined the bounds with &&, which no int satisfies, so
+       * every value was accepted.  Re-prompt on anything out of range. */
+      if (!tb_parse_int_checked(arg, &i) || i < POS_DEAD || i > POS_STANDING) {
+        TB_WARN_MSG("olc", "aedit-input-range", "socials",
+                    "social rnum %d field %s input length %zu range %d..%d editor " DIAG_CHAR_FMT,
+                    (int)OLC_ZNUM(d),
+                    OLC_MODE(d) == AEDIT_MIN_CHAR_POS ? "min_char_position" : "min_victim_position",
+                    strlen(arg), POS_DEAD, POS_STANDING, DIAG_CHAR(d->character));
+        write_to_output(d, "Enter a position between %d and %d: ", POS_DEAD, POS_STANDING);
         return;
       }
       if (OLC_MODE(d) == AEDIT_MIN_CHAR_POS)
@@ -611,9 +633,12 @@ void aedit_parse(struct descriptor_data * d, char *arg) {
         aedit_disp_menu(d);
         return;
       }
-      i = tb_parse_int_or_zero(arg);
-      if ((i < 0) && (i > LVL_IMPL))  {
-        aedit_disp_menu(d);
+      /* Same && mistake as the positions: every level was accepted. */
+      if (!tb_parse_int_checked(arg, &i) || i < 0 || i > LVL_IMPL) {
+        TB_WARN_MSG("olc", "aedit-input-range", "socials",
+                    "social rnum %d field min_level_char input length %zu range 0..%d editor " DIAG_CHAR_FMT,
+                    (int)OLC_ZNUM(d), strlen(arg), LVL_IMPL, DIAG_CHAR(d->character));
+        write_to_output(d, "Enter a level between 0 and %d: ", LVL_IMPL);
         return;
       }
       OLC_ACTION(d)->min_level_char = i;
@@ -805,8 +830,8 @@ ACMD(do_astat)
 
     yel, soc_mess_list[i].command, nrm,
     yel, soc_mess_list[i].sort_as, nrm,
-    cyn, position_types[soc_mess_list[i].min_char_position], nrm,
-    cyn, position_types[soc_mess_list[i].min_victim_position], nrm,
+    cyn, aedit_position_name(soc_mess_list[i].min_char_position, i), nrm,
+    cyn, aedit_position_name(soc_mess_list[i].min_victim_position, i), nrm,
     cyn, soc_mess_list[i].min_level_char, nrm,
     cyn, (soc_mess_list[i].hide ? "HIDDEN" : "NOT HIDDEN"), nrm,
     cyn, soc_mess_list[i].char_no_arg ? soc_mess_list[i].char_no_arg : "", nrm,

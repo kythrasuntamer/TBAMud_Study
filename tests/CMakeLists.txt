@@ -559,6 +559,7 @@ set(OLC_MISC_EDITOR_SOURCES
     ${MUD_SRCDIR}/hedit.c
     ${MUD_SRCDIR}/prefedit.c
     ${MUD_SRCDIR}/qedit.c
+    ${MUD_SRCDIR}/aedit.c
 )
 add_mud_test(test_olc_misc_editors
     ${OLC_MISC_EDITOR_SOURCES}
