@@ -29,7 +29,6 @@
 
 #include "conf.h"
 #include "sysdep.h"
-#include <stddef.h>  /* offsetof, for oset_replace_string() */
 #include "structs.h"
 #include "utils.h"
 #include "db.h"
@@ -44,6 +43,17 @@
 #include "interpreter.h"
 #include "boards.h" /* for board_info */
 
+
+/** TRUE when obj->field is a private string the object must free itself:
+ * set, and either the object has no prototype (rnum NOTHING: corpses and
+ * money own everything) or the pointer differs from its prototype's.  A
+ * stale rnum (> top_of_objt) yields FALSE, so the string is leaked rather
+ * than freed twice; callers report that case.  obj is evaluated several
+ * times: pass a plain variable. */
+#define OBJ_OWNS_STR(obj, field) \
+  ((obj)->field && (GET_OBJ_RNUM(obj) == NOTHING || \
+   (GET_OBJ_RNUM(obj) <= top_of_objt && \
+    (obj)->field != obj_proto[GET_OBJ_RNUM(obj)].field)))
 
 /* local functions */
 static int update_all_objects(struct obj_data *obj);
@@ -446,13 +456,13 @@ void free_object_strings_proto(struct obj_data *obj)
     return;
   }
 
-  if (obj->name && obj->name != obj_proto[robj_num].name)
+  if (OBJ_OWNS_STR(obj, name))
     free(obj->name);
-  if (obj->description && obj->description != obj_proto[robj_num].description)
+  if (OBJ_OWNS_STR(obj, description))
     free(obj->description);
-  if (obj->short_description && obj->short_description != obj_proto[robj_num].short_description)
+  if (OBJ_OWNS_STR(obj, short_description))
     free(obj->short_description);
-  if (obj->action_description && obj->action_description != obj_proto[robj_num].action_description)
+  if (OBJ_OWNS_STR(obj, action_description))
     free(obj->action_description);
   if (obj->ex_description) {
     struct extra_descr_data *thised, *plist, *next_one; /* O(horrible) */
@@ -780,19 +790,17 @@ int delete_object(obj_rnum rnum)
  *
  * @param obj          Live object being changed.
  * @param field        Address of the field inside obj (name, description...).
- * @param proto_offset Offset of the same field in struct obj_data, used to
- *                     find the prototype's pointer.
+ * @param owned        OBJ_OWNS_STR() of that field: free the old string.
  * @param what         Field name for diagnostics.
  * @param value        New text (leading spaces already skipped).
  * @param max_len      Longest accepted value in bytes.
  * @return TRUE when the field was replaced, FALSE (reported) otherwise.
  */
 static bool oset_replace_string(struct obj_data *obj, char **field,
-                                size_t proto_offset, const char *what,
+                                bool owned, const char *what,
                                 const char *value, size_t max_len)
 {
   obj_rnum rnum = GET_OBJ_RNUM(obj);
-  bool owned;
   char *copy;
 
   if (strlen(value) > max_len) {
@@ -803,15 +811,11 @@ static bool oset_replace_string(struct obj_data *obj, char **field,
     return FALSE;
   }
 
-  if (rnum == NOTHING)
-    owned = TRUE;
-  else if (rnum > top_of_objt) {
+  /* OBJ_OWNS_STR() is FALSE for a stale rnum; say why the old text leaks. */
+  if (rnum != NOTHING && rnum > top_of_objt)
     TB_ERROR_MSG("olc", "obj-rnum-range", "object",
                  "obj uid %ld rnum %d outside 0..%d; old %s not freed",
                  obj->script_id, (int)rnum, (int)top_of_objt, what);
-    owned = FALSE;
-  } else
-    owned = *field != *(char **)((char *)&obj_proto[rnum] + proto_offset);
 
   if ((copy = strdup(value)) == NULL) {
     TB_ERROR_ERRNO("dg", "oset-alloc", "object",
@@ -820,7 +824,7 @@ static bool oset_replace_string(struct obj_data *obj, char **field,
     return FALSE;
   }
 
-  if (owned && *field)
+  if (owned)
     free(*field);
   *field = copy;
   return TRUE;
@@ -829,7 +833,7 @@ static bool oset_replace_string(struct obj_data *obj, char **field,
 bool oset_alias(struct obj_data *obj, char * argument)
 {
   skip_spaces(&argument);
-  return oset_replace_string(obj, &obj->name, offsetof(struct obj_data, name),
+  return oset_replace_string(obj, &obj->name, OBJ_OWNS_STR(obj, name),
                              "alias", argument, 64);
 }
 
@@ -930,7 +934,7 @@ bool oset_short_description(struct obj_data *obj, char * argument)
 {
   skip_spaces(&argument);
   return oset_replace_string(obj, &obj->short_description,
-                             offsetof(struct obj_data, short_description),
+                             OBJ_OWNS_STR(obj, short_description),
                              "short description", argument, 64);
 }
 
@@ -938,6 +942,6 @@ bool oset_long_description(struct obj_data *obj, char * argument)
 {
   skip_spaces(&argument);
   return oset_replace_string(obj, &obj->description,
-                             offsetof(struct obj_data, description),
+                             OBJ_OWNS_STR(obj, description),
                              "long description", argument, 128);
 }
