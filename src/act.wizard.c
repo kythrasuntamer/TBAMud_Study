@@ -1233,6 +1233,15 @@ ACMD(do_switch)
   char arg[MAX_INPUT_LENGTH];
   struct char_data *victim;
 
+  /* Invariant: switching moves the caller's descriptor into another body,
+   * so the caller must have one. A linkdead immortal can still reach this
+   * through "force" or a DG mforce. */
+  if (!ch->desc) {
+    TB_WARN_MSG("act", "command-no-desc", "switch",
+                DIAG_CHAR_FMT " has no descriptor", DIAG_CHAR(ch));
+    return;
+  }
+
   one_argument(argument, arg);
 
   if (ch->desc->original)
@@ -1279,6 +1288,17 @@ static void do_cheat(struct char_data *ch)
 
 void return_to_char(struct char_data * ch)
 {
+  /* Invariant: ch is a switched body, so ch->desc is the immortal's
+   * descriptor and ch->desc->original is the immortal. */
+  if (!ch || !ch->desc || !ch->desc->original) {
+    TB_ERROR_MSG("act", "return-to-char", "descriptor",
+                 "character %s is not a switched body (desc %s, original %s)",
+                 ch ? GET_NAME(ch) : "(null)",
+                 (ch && ch->desc) ? "set" : "none",
+                 (ch && ch->desc && ch->desc->original) ? "set" : "none");
+    return;
+  }
+
   /* If someone switched into your original body, disconnect them. - JE
   * Zmey: here we put someone switched in our body to disconnect state but
   * we must also NULL his pointer to our character, otherwise close_socket()
@@ -1300,6 +1320,15 @@ void return_to_char(struct char_data * ch)
 
 ACMD(do_return)
 {
+  /* Invariant: return needs the caller's descriptor. "return" is a level 0
+   * POS_DEAD command, so "force <linkdead player> return" or a DG mforce on
+   * a linkdead player reaches here with ch->desc == NULL. */
+  if (!ch->desc) {
+    TB_WARN_MSG("act", "command-no-desc", "return",
+                DIAG_CHAR_FMT " has no descriptor", DIAG_CHAR(ch));
+    return;
+  }
+
   if (!IS_NPC(ch) && !ch->desc->original) {
     int level, newlevel;
     level = GET_LEVEL(ch);

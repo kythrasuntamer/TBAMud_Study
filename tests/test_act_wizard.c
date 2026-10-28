@@ -403,6 +403,29 @@ static void test_stat_file_of_player_in_world_is_refused(void)
   TEST_ASSERT_EQUAL_STRING("stat-file-online", captured_operation);
 }
 
+/* G1-05: "force <linkdead player> return" (or a DG mforce) runs do_return
+ * with ch->desc == NULL; it dereferenced ch->desc->original. */
+static void test_return_and_switch_without_descriptor_are_reported(void)
+{
+  imm.desc = NULL;
+  RUN_CMD(do_return, &imm, "");
+  TEST_ASSERT_EQUAL_STRING("command-no-desc", captured_operation);
+  TEST_ASSERT_EQUAL_INT(0, save_char_calls);
+
+  reset_counters();
+  RUN_CMD(do_switch, &imm, "bobby");
+  TEST_ASSERT_EQUAL_STRING("command-no-desc", captured_operation);
+}
+
+/* G1-05: return_to_char() on a body that is not switched is reported, not
+ * dereferenced. */
+static void test_return_to_char_requires_switched_body(void)
+{
+  return_to_char(&imm);   /* imm_desc.original is NULL */
+  TEST_ASSERT_EQUAL_STRING("return-to-char", captured_operation);
+  TEST_ASSERT_EQUAL_PTR(&imm, imm_desc.character);
+}
+
 int main(void)
 {
   /* basic_mud_log()/mudlog() are the real utils.c ones; keep them quiet. */
@@ -412,6 +435,8 @@ int main(void)
   RUN_TEST(test_stat_file_frees_copy_without_extracting);
   RUN_TEST(test_stat_file_outranked_is_denied_before_side_effects);
   RUN_TEST(test_stat_file_of_player_in_world_is_refused);
+  RUN_TEST(test_return_and_switch_without_descriptor_are_reported);
+  RUN_TEST(test_return_to_char_requires_switched_body);
   {
     int failures = UNITY_END();
     if (logfile)
