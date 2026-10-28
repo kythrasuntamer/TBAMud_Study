@@ -1020,8 +1020,19 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
         case 'l':
           if (!str_cmp(field, "level")) {
             if (subfield && *subfield) {
-              int lev = tb_parse_int_or_zero(subfield);
-              GET_LEVEL(c) = MIN(MAX(lev, 0), LVL_IMMORT-1);
+              /* The level comes from builder script text and is set
+               * outright, clamped below LVL_IMMORT.  An immortal's level is
+               * a privilege only 'advance' grants or removes: clamping it
+               * demoted any immortal who set the trigger off. */
+              if (!IS_NPC(c) && GET_LEVEL(c) >= LVL_IMMORT)
+                TB_WARN_MSG("dg", "field-target", "find_replacement",
+                            "trig vnum %d: setting level on immortal player "
+                            "idnum %ld (level %d) refused",
+                            DIAG_TRIG_VNUM(trig), GET_IDNUM(c), GET_LEVEL(c));
+              else
+                GET_LEVEL(c) = (unsigned char)dg_clamp_char_field(trig, c,
+                    "level", tb_parse_int_or_zero(subfield), 0,
+                    LVL_IMMORT - 1);
             } else
               tb_snprintf(str, slen, "%d", GET_LEVEL(c));
           }

@@ -1205,6 +1205,33 @@ static void unplaced_mob_script_runs_no_command(void)
   TEST_ASSERT_NULL(GET_TRIG_VARS(t));
 }
 
+/* DGDOC-1: %x.level(N)% clamped every target below LVL_IMMORT, so any
+ * builder's script demoted an immortal who set it off; the clamp itself
+ * was silent. */
+static void level_setter_never_changes_an_immortal(void)
+{
+  char_data *imm = make_imm();
+  char_data *mob = make_mob("mob");
+  trig_data *t = idle_mob_trigger(mob);
+  char out[MAX_INPUT_LENGTH];
+
+  uid_var(t, "imm", char_script_id(imm));
+  subst(mob, t, "x %imm.level(1)%", out);
+  TEST_ASSERT_EQUAL_INT(LVL_IMPL, GET_LEVEL(imm));
+  TEST_ASSERT_EQUAL_STRING("field-target", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "idnum 4242"));
+
+  tb_error_capture_reset();
+  GET_LEVEL(mob) = 5;
+  uid_var(t, "m", char_script_id(mob));
+  subst(mob, t, "x %m.level(12)%", out);
+  TEST_ASSERT_EQUAL_INT(12, GET_LEVEL(mob));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  subst(mob, t, "x %m.level(500)%", out);
+  TEST_ASSERT_EQUAL_INT(LVL_IMMORT - 1, GET_LEVEL(mob));
+  TEST_ASSERT_EQUAL_STRING("field-clamp", tb_captured_operation);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -1254,5 +1281,6 @@ int main(void)
   RUN_TEST(room_wait_with_lost_room_is_reported);
   RUN_TEST(unplaced_owner_room_lookups_are_reported);
   RUN_TEST(unplaced_mob_script_runs_no_command);
+  RUN_TEST(level_setter_never_changes_an_immortal);
   return UNITY_END();
 }
