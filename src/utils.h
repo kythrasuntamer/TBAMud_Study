@@ -490,6 +490,12 @@ static inline const char *tb_nullstr(const char *s)
   (result) = (type *)recreate_new_ptr; \
 } while (0)
 
+/** Free p and set it to NULL, so a later free() or use sees NULL rather
+ * than a dangling pointer. p must be an lvalue without side effects: it is
+ * evaluated twice. The counterpart of CREATE for pointers that outlive the
+ * free (struct fields, globals). */
+#define FREE_NULL(p) do { free(p); (p) = NULL; } while (0)
+
 /** Remove an item from a linked list and reset the links.
  * If item is at the list head, change the head, else traverse the
  * list looking for the item before the one to be removed.
