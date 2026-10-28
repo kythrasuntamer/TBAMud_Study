@@ -817,6 +817,23 @@ class Bot:
             self.read_reply()
         return before + text
 
+    def hp(self):
+        """Hit points from the last prompt seen, or None."""
+        found = re.findall(r"(?:^|\n)(-?\d+)H [^\n]*> ", self.backlog[-4000:])
+        return int(found[-1]) if found else None
+
+    def quit_to_menu(self):
+        """Type quit; True once the main menu is up.  The server sends a game
+        prompt after "Goodbye" and the menu after that, so wait for it."""
+        out = self.cmd("quit")
+        if "Goodbye" in out and self.state != "menu":
+            try:
+                self.wait_for(r"Make your choice", self.ctx.T.cmd)
+            except Disconnected:
+                return False
+            self.state = "menu"
+        return self.state == "menu"
+
     def think(self, lo=0.05, hi=0.35):
         time.sleep(self.rng.uniform(lo, hi))
 
@@ -1062,7 +1079,7 @@ class Player(Bot):
                 "help", "help kill", "help group", "help quest", "hindex a", "scan",
                 "diagnose", "look up", "look north", "examine fountain", "who -l 1-50",
                 "whois %s" % self.other().name.lower(), "where %s" % self.other().name.lower(),
-                "consider fido", "affects", "spells", "gold",
+                "consider fido", "consider beggar", "gold",
                 "ping %s" % self.other().name.lower(), "look %s" % self.other().name.lower(),
                 "quest", "quest history", "quest progress"]
         for line in self.rng.sample(pool, self.rng.randint(3, 7)):
@@ -1389,16 +1406,38 @@ class Player(Bot):
             self.cmd("read mail")
             self.cmd(self.rng.choice(["junk mail", "drop mail", "put mail bag"]))
 
-    def editor_session(self):
-        """We are at the editor's ']' prompt: type a few lines and save."""
-        lines = ["Soak test message from %s." % self.name, "Second line of text.",
-                 "/l", "/n", "Third %s line." % ("long " * self.rng.randint(1, 30)),
-                 "/f", "/r 'Second' 'Changed'", "/d1", "/i1 Inserted first line", "/e2 Edited"]
-        for line in self.rng.sample(lines, self.rng.randint(2, len(lines))):
+    def editor_session(self, torture=False):
+        """At the editor's ']' prompt: type a few lines and save.  Default
+        order is lifecycle-correct (write, then format/list/replace, then
+        save) so mail/board/ibt sessions do not trip known editor bugs.  With
+        torture=True (the editor activity) the formatting/edit/delete/insert
+        commands are permuted, which is how the soak found the delete+insert
+        overflow; mask it with --skip editor while that bug is open."""
+        self.send("Soak test line one from %s." % self.name)
+        self.read_reply()
+        self.send("Second %sline." % ("long " * self.rng.randint(0, 20)))
+        self.read_reply()
+        edits = ["/l", "/f", "/c", "/r 'Second' 'Changed'", "/n"]
+        if torture:
+            edits += ["/d1", "/i1 Inserted first line", "/e2 Edited line two",
+                      "/d2", "/i2 another", "/l 1 2", "/d1"]
+            self.rng.shuffle(edits)
+        for line in self.rng.sample(edits, self.rng.randint(1, len(edits))):
             self.send(line)
             self.read_reply()
+            if self.state != "game" and not EDITOR_TAIL.search(self.backlog[-200:]):
+                return                    # editor already saved/aborted us out
         self.send(self.rng.choice(["/s", "/s", "/s", "/a"]))
         self.read_reply()
+
+    def act_editor(self):
+        """Exercise the string editor through a scratch idea, permuting the
+        line-editing commands (/d /i /e /l /f /c /r) to stress their buffer
+        handling."""
+        out = self.cmd("idea submit soak editor torture", editor=True)
+        if EDITOR_TAIL.search(out) or "Terminate" in out or "Write" in out:
+            self.editor_session(torture=True)
+            self.ctx.count("editor_sessions")
 
     def act_board(self):
         self.ensure_standing()
@@ -1441,10 +1480,8 @@ class Player(Bot):
         if not self.walk_to(R_RECEPTION, zones={30}):
             return
         self.cmd("offer")
-        out = self.cmd("rent")
-        if self.state != "menu":         # free rent: "Just quit, and your objects will be saved"
-            out = self.cmd("quit")
-        if self.state == "menu" or "Make your choice" in out:
+        self.cmd("rent")                 # free rent: "Just quit, and your objects will be saved"
+        if self.state == "menu" or self.quit_to_menu():
             self.ctx.count("rents")
             time.sleep(self.rng.uniform(0.5, 2.0))
             self.menu_extras()
@@ -1453,8 +1490,7 @@ class Player(Bot):
 
     def act_quit_relogin(self):
         self.ensure_standing()
-        out = self.cmd("quit")
-        if self.state != "menu" and "Make your choice" not in out:
+        if not self.quit_to_menu():
             return
         self.ctx.count("quits")
         self.menu_extras()
@@ -1572,7 +1608,7 @@ ACTIVITIES = [  # name, weight
     ("eatdrink", 3), ("group", 5), ("fight", 12), ("cast", 8), ("rest", 4), ("quest", 4),
     ("save", 2), ("bank", 2), ("toggles", 3), ("mail", 1.5), ("board", 1.5), ("pet", 1),
     ("practice", 1.5), ("rent", 1), ("quit_relogin", 1.5), ("linkdrop", 1.5), ("usurp", 0.7),
-    ("corpse_run", 1), ("quirks", 3), ("ibt", 1),
+    ("corpse_run", 1), ("quirks", 3), ("ibt", 1), ("editor", 2),
 ]
 
 
@@ -1841,8 +1877,7 @@ def scripted(ctx, imp, players):
     if e.walk_to(R_RECEPTION, rescue=rescue, zones={30}):
         e.cmd("offer")
         e.cmd("rent")
-        e.cmd("quit")
-        if e.state == "menu":
+        if e.quit_to_menu():
             ctx.count("rents")
             e.send("2")
             out = e.read_reply()
@@ -1852,8 +1887,7 @@ def scripted(ctx, imp, players):
         e.ensure_game()
         e.cmd("inventory")
     c.act_quit_relogin()
-    c.cmd("quit")
-    if c.state == "menu":
+    if c.quit_to_menu():
         c.send("0")
         c.close()
         c.login()
@@ -1885,9 +1919,14 @@ def scripted(ctx, imp, players):
     imp_spawn(imp, victim, 3060, 2)
     victim.drain()
     victim.cmd("kill cityguard")
-    deadline = time.time() + 60 * ctx.T.scale
-    while victim.state == "game" and time.time() < deadline:
-        victim.cmd(victim.rng.choice(["hit cityguard", "look", "quit"]))
+    for _round in range(60):
+        if victim.state != "game":
+            break
+        hp = victim.hp()
+        if hp is not None and hp <= -3:
+            victim.cmd("quit")        # below stunned: "You die before your time..."
+        else:
+            victim.cmd(victim.rng.choice(["hit cityguard", "look", "kill cityguard"]))
         time.sleep(1.0)
     victim.ensure_game()
     victim.act_corpse_run()
