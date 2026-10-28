@@ -2,6 +2,10 @@
 *  File: dg_misc.c                                         Part of tbaMUD *
 *  Usage: Contains general functions for script usage.                    *
 *                                                                         *
+*  dg_cast, dg_affect and script damage act on targets named by script   *
+*  text (often a UID); values and durations are script ints and are      *
+*  range-checked against the narrower fields they land in.               *
+*                                                                         *
 *  $Author: Mark A. Heilpern/egreen/Welcor $                              *
 *  $Date: 2004/10/11 12:07:00$                                            *
 *  $Revision: 1.0.14 $                                                    *
@@ -33,6 +37,13 @@
  * system is designed to have a character caster, and this cast routine may
  * overlook certain issues. LIMITATION: a target MUST exist for the spell unless
  * the spell is set to TAR_IGNORE. Also, group spells are not permitted. */
+/* Proxy caster: for object and room owners a DG_CASTER_PROXY mob is loaded
+ * and linked into the room's people list by hand (no char_to_room(), so no
+ * light count or entry triggers). Its short_descr is replaced by a strdup of
+ * the object's short description or "The gods" (freed with the mob, since
+ * the proxy is not a prototype-shared string after this). call_magic() may
+ * run nested triggers; extract_char() then defers the proxy's free. cmd is
+ * tokenised destructively with strtok(). */
 void do_dg_cast(void *go, struct script_data *sc, trig_data *trig, int type, char *cmd)
 {
   struct char_data *caster = NULL;

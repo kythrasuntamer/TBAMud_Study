@@ -2,6 +2,13 @@
 *  File: dg_variables.c                                    Part of tbaMUD *
 *  Usage: Contains the functions dealing with variable substitution.      *
 *                                                                         *
+*  Input: the line is builder script text; variable VALUES may be player  *
+*  text (%speech%, %arg%, %cmd%, titles), stored with '%' inert so a      *
+*  second substitution pass cannot expand it. Field "getters" are not     *
+*  pure: many take a subfield and change game state (gold, exp, stats,    *
+*  flags, title, level, oset), so expanding a variable has side effects.  *
+*  Every writer honours the str/slen contract of find_replacement().      *
+*                                                                         *
 *  $Author: Mark A. Heilpern/egreen/Welcor $                              *
 *  $Date: 2004/10/11 12:07:00 $                                           *
 *  $Revision: 1.0.14 $                                                    *
@@ -73,7 +80,11 @@ long dg_clamp_obj_field(trig_data *trig, obj_data *obj, const char *field,
 
 /* Thanks to James Long for his assistance in plugging the memory leak that
  * used to be here. - Welcor */
-/* Adds a variable with given name and value to trigger. */
+/* Adds a variable with given name and value to trigger.
+ * name and value are copied; the caller keeps ownership of both. An
+ * existing variable of that name is updated only when its context is 0 or
+ * equals id; otherwise a new entry is pushed. A name containing '.' cannot
+ * be referenced and is rejected with dg/var-name. */
 void add_var(struct trig_var_data **var_list, const char *name, const char *value, long id)
 {
   struct trig_var_data *vd;
@@ -364,7 +375,13 @@ int text_processed(trig_data *trig, char *field, char *subfield,
   return FALSE;
 }
 
-/* sets str to be the value of var.field */
+/* sets str to be the value of var.field.
+ * str holds slen bytes; every branch writes at most slen - 1 bytes plus the
+ * terminator (text_processed() included).
+ * trig may be NULL on the X.global() path; diagnostics use
+ * DIAG_TRIG_VNUM(). go must be the live owner of type `type`: a mob or an
+ * object in a valid room (dg_room_of_obj()) or a room. subfield is the
+ * already-substituted text inside (...), so it can carry player text. */
 void find_replacement(void *go, struct script_data *sc, trig_data *trig,
                 int type, char *var, char *field, char *subfield, char *str, size_t slen)
 {
@@ -1825,7 +1842,15 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
  * %actor.gold(%actor.gold%)% will double the actors gold every time its called.
  * - Jamie Nelson */
 
-/* substitutes any variables into line and returns it as buf */
+/* substitutes any variables into line and returns it as buf.
+ * buf must hold MAX_INPUT_LENGTH bytes (the parameter carries no size);
+ * output is cut at MAX_INPUT_LENGTH - 1. line is copied first and not
+ * modified. Syntax: %name%, %name.field%, %name.field(subfield)%, chains
+ * %a.b.c% (each link is bound to "tmpvr" as-is, not evaluated), and %% for
+ * a literal '%'. A reference with no closing '%' or an unclosed '(' is
+ * substituted up to the line end and reported (var-unterminated); a lone
+ * '%' ending the line is kept (subst-unterminated); an extra ')' is
+ * reported (subst-paren). Subfields are themselves substituted first. */
 void var_subst(void *go, struct script_data *sc, trig_data *trig,
                int type, char *line, char *buf)
 {
