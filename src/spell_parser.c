@@ -61,7 +61,9 @@ static struct syllable syls[] = { { " ", " " }, { "ar", "abra" },
         "y", "l" }, { "z", "k" }, { "", "" } };
 
 static int mag_manacost(struct char_data *ch, int spellnum) {
-  int cls = GET_CLASS(ch);
+  /* chclass is a signed byte; keep its sign so SPELL_MIN_LEVEL() sees and
+   * refuses a negative (corrupt) class instead of a wrapped 0..255 one. */
+  int cls = (int) GET_CLASS(ch);
 
   return MAX(SINFO.mana_max - (SINFO.mana_change *
       (GET_LEVEL(ch) - SPELL_MIN_LEVEL(spellnum, cls))),
