@@ -296,14 +296,14 @@ static void car_is_bounded_by_destination(void)
   add_var(&GET_TRIG_VARS(&trig), "long", word, 0);
   vd = GET_TRIG_VARS(&trig);
 
-  TEST_ASSERT_TRUE(text_processed("car", "", vd, str, 16));
+  TEST_ASSERT_TRUE(text_processed(&trig, "car", "", vd, str, 16));
   TEST_ASSERT_EQUAL_size_t(15, strlen(str));
   TEST_ASSERT_EQUAL_INT(1, captured_errors);
-  TEST_ASSERT_EQUAL_STRING("field-truncated", captured_operation);
+  TEST_ASSERT_EQUAL_STRING("field-truncate", captured_operation);
 
   /* A first word that fits is copied whole and silently. */
   add_var(&GET_TRIG_VARS(&trig), "long", "short rest", 0);
-  TEST_ASSERT_TRUE(text_processed("car", "", vd, str, 16));
+  TEST_ASSERT_TRUE(text_processed(&trig, "car", "", vd, str, 16));
   TEST_ASSERT_EQUAL_STRING("short", str);
   TEST_ASSERT_EQUAL_INT(1, captured_errors);
   free(str);

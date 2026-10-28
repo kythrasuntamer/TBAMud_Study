@@ -265,25 +265,28 @@ static trig_data *run_mob_script(char_data *mob, const char **lines)
 }
 
 /* D1-02: an unbounded wait made event_create() form a negative queue key
- * (head[-4] in queue_enq) and 'wait until' overflowed a multiplication. */
-static void wait_beyond_one_mud_year_is_rejected(void)
+ * (head[-4] in queue_enq) and 'wait until' overflowed a multiplication.
+ * Oversized waits now saturate and are capped at one mud year (the audit
+ * branch's policy, see huge_wait_is_capped_at_one_mud_year in
+ * test_dg_script_runtime.c), and the cap is reported as dg/wait-range. */
+static void wait_beyond_one_mud_year_is_capped_and_reported(void)
 {
   const char *lines[] = { "wait 9223372036854775807", "nop after", NULL };
   trig_data *t;
 
   pulse = 12345;
   t = run_mob_script(make_mob("mob"), lines);
-  TEST_ASSERT_NULL(GET_TRIG_WAIT(t));
+  TEST_ASSERT_NOT_NULL(GET_TRIG_WAIT(t));
   TEST_ASSERT_EQUAL_STRING("wait-range", tb_captured_operation);
-  TEST_ASSERT_EQUAL_STRING("ERROR", tb_captured_severity);
+  TEST_ASSERT_EQUAL_STRING("WARNING", tb_captured_severity);
 }
 
-static void scaled_wait_overflow_is_reported(void)
+static void scaled_wait_overflow_is_capped_and_reported(void)
 {
   const char *lines[] = { "wait 99999999999999999 t", NULL };
   trig_data *t = run_mob_script(make_mob("mob"), lines);
 
-  TEST_ASSERT_NULL(GET_TRIG_WAIT(t));
+  TEST_ASSERT_NOT_NULL(GET_TRIG_WAIT(t));
   TEST_ASSERT_EQUAL_STRING("wait-range", tb_captured_operation);
 }
 
@@ -319,8 +322,8 @@ int main(void)
 {
   UNITY_BEGIN();
   RUN_TEST(car_of_overlong_word_is_truncated_and_reported);
-  RUN_TEST(wait_beyond_one_mud_year_is_rejected);
-  RUN_TEST(scaled_wait_overflow_is_reported);
+  RUN_TEST(wait_beyond_one_mud_year_is_capped_and_reported);
+  RUN_TEST(scaled_wait_overflow_is_capped_and_reported);
   RUN_TEST(wait_until_out_of_day_is_rejected);
   RUN_TEST(wait_until_midnight_is_accepted);
   RUN_TEST(nonpositive_wait_waits_one_pulse_with_warning);
