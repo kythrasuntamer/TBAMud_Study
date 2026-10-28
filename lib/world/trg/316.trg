@@ -47,7 +47,7 @@ Mage Guildguard - 31606~
 * Check the direction the player must go to enter the guild.
 if %direction% == east
   * Stop them if they are not the appropriate class.
-  if %actor.class% != magic user
+  if %actor.class% != wizard
     return 0
     %send% %actor% The guard humiliates you, and blocks your way.
     %echoaround% %actor% The guard humiliates %actor.name%, and blocks %actor.hisher% way.

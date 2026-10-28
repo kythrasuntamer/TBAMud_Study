@@ -5,6 +5,24 @@
 *  Written by Jeremy Elson                                                *
 ************************************************************************* */
 
+/*
+ * sign <port> <filename | ->
+ *
+ * Serves a fixed text (e.g. "the MUD has moved to ...") on a TCP port while
+ * the MUD itself is down.  Who should run it: the operator, from a shell,
+ * on a port 1024..65535.  Behaviour to know before running it:
+ *  - it listens on ALL interfaces (INADDR_ANY) with no authentication: any
+ *    host that can reach the port gets the text;
+ *  - the text (at most MAX_FILESIZE bytes, longer input is cut with a
+ *    message on stderr) is read ONCE at start-up; later changes to the file
+ *    are not seen until sign is restarted;
+ *  - it detaches into the background (prints the daemon's pid) and forks
+ *    one short-lived child per connection, reaped by the SIGCHLD handler;
+ *    there is no connection limit.
+ * Errors (bad port, unreadable file, socket failures) are reported as TBERR
+ * records on stderr.
+ */
+
 #define MAX_FILESIZE	8192
 #define LINEBUF_SIZE	128
 
@@ -116,13 +134,19 @@ char *get_text(char *fname)
 }
 
 
-/* clean up our zombie kids to avoid defunct processes */
+/* clean up our zombie kids to avoid defunct processes.  The loop always
+ * ends with waitpid() failing (ECHILD), and this handler can run between a
+ * failing accept() and main()'s errno read, so errno is restored: otherwise
+ * an EMFILE from accept() would be reported as "No child processes". */
 RETSIGTYPE reap(int sig)
 {
+  int saved_errno = errno;
+
   (void)sig;
 
   while (waitpid(-1, NULL, WNOHANG) > 0)
     ;
+  errno = saved_errno;
 }
 
 
@@ -134,7 +158,16 @@ int main(int argc, char *argv[])
   ssize_t bytes_written;
   struct sigaction sa;
 
-  if (argc != 3 || (port = tb_parse_int_or_zero(argv[1])) < 1024) {
+  if (argc != 3) {
+    tb_fprintf(stderr, "usage: %s <portnum> <\"-\" | filename>\n", argv[0]);
+    exit(1);
+  }
+  /* The port goes through htons() (16 bits): 70000 used to be accepted,
+   * announced as 70000 and bound to 4464, and "4000x" bound 4000. */
+  if (!tb_parse_int_checked(argv[1], &port) || port < 1024 || port > 65535) {
+    TB_REPORT_DOMAIN_ERRORF(TB_SEV_ERROR, TB_ERR_PARSER, "port-parse",
+                            "port=%.32s: need a whole number in 1024..65535",
+                            argv[1]);
     tb_fprintf(stderr, "usage: %s <portnum> <\"-\" | filename>\n", argv[0]);
     exit(1);
   }

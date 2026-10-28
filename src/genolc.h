@@ -37,7 +37,7 @@ struct save_list_data {
 
 extern struct save_list_data *save_list;
 
-/* save_list_data.type */
+/* save_list_data.type; also the index into genolc.c's save_types[]. */
 #define SL_MOB	0
 #define SL_OBJ	1
 #define SL_SHP	2
@@ -49,8 +49,18 @@ extern struct save_list_data *save_list;
 #define SL_ACT (SL_MAX + 1) /* must be above MAX */ 
 #define SL_HLP (SL_MAX + 2)
 
+/* Zone reset command 'cmds' of zone rnum 'zon'.  No range check on either
+ * index: callers walk a list up to its 'S' terminator.  Deleting a command
+ * (delete_zone_command) shifts later ones down into the same index, so a
+ * walking loop must not advance past a deletion. */
 #define ZCMD(zon, cmds)	zone_table[(zon)].cmd[(cmds)]
 
+/* Clamp var to [low, high], silently.  MIN() and MAX() are the utils.c
+ * functions (utils.h drops any system macros), so each argument is
+ * evaluated once; still never pass an expression with side effects (or a
+ * parse call): a MIN/MAX macro would evaluate var up to four times.  For
+ * builder input use OLC_SET_CLAMPED (olc_checks.h), which evaluates once
+ * and reports the clamp. */
 #define LIMIT(var, low, high)	MIN(high, MAX(var, low))
 
 room_vnum genolc_zone_bottom(zone_rnum rznum);

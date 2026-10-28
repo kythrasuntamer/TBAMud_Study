@@ -101,6 +101,11 @@
 
 #if !defined(HAVE_SNPRINTF) || !defined(HAVE_VSNPRINTF)
 
+/* Disabled: see bsd-snprintf.h.  The implementation below returns the
+ * stored length instead of the C99 would-be length, so callers' truncation
+ * checks cannot work with it; it is kept only for reference. */
+#error "tbaMUD requires C99 snprintf() and vsnprintf(); the bsd-snprintf fallback does not report truncation and is disabled"
+
 static void
 dopr(char *buffer, size_t maxlen, const char *format, va_list args);
 
