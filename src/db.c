@@ -1897,6 +1897,23 @@ static void renum_zone_table(void)
     }
 }
 
+/** TRUE if the first word of a short description is "a", "an" or "the"
+ * (any case), the test parse_mobile() and parse_object() use to lower-case
+ * the article. fname() did this by copying the whole leading alphabetic run
+ * into a READ_SIZE static with no bound, and a short description comes from
+ * fread_string() (up to MAX_STRING_LENGTH; medit accepts 511-byte lines), so
+ * a 300-letter first word overflowed it. This only measures the run. */
+static int starts_with_article(const char *text)
+{
+  size_t n = 0;
+
+  while (isalpha((unsigned char)text[n]))
+    n++;
+  return (n == 1 && LOWER(text[0]) == 'a') ||
+         (n == 2 && !strn_cmp(text, "an", 2)) ||
+         (n == 3 && !strn_cmp(text, "the", 3));
+}
+
 static void parse_simple_mob(FILE *mob_f, int i, int nr)
 {
   int j, t[10];
@@ -2148,8 +2165,7 @@ void parse_mobile(FILE *mob_f, int nr)
   mob_proto[i].player.name = fread_string(mob_f, buf2);
   tmpptr = mob_proto[i].player.short_descr = fread_string(mob_f, buf2);
   if (tmpptr && *tmpptr)
-    if (!str_cmp(fname(tmpptr), "a") || !str_cmp(fname(tmpptr), "an") ||
-	!str_cmp(fname(tmpptr), "the"))
+    if (starts_with_article(tmpptr))
       *tmpptr = LOWER(*tmpptr);
   mob_proto[i].player.long_descr = fread_string(mob_f, buf2);
   mob_proto[i].player.description = fread_string(mob_f, buf2);
@@ -2309,8 +2325,7 @@ char *parse_object(FILE *obj_f, int nr)
   }
   tmpptr = obj_proto[i].short_description = fread_string(obj_f, buf2);
   if (tmpptr && *tmpptr)
-    if (!str_cmp(fname(tmpptr), "a") || !str_cmp(fname(tmpptr), "an") ||
-	!str_cmp(fname(tmpptr), "the"))
+    if (starts_with_article(tmpptr))
       *tmpptr = LOWER(*tmpptr);
 
   tmpptr = obj_proto[i].description = fread_string(obj_f, buf2);

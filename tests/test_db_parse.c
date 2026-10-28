@@ -171,8 +171,6 @@ size_t action_bits_count = 0;
 void parse_trigger(FILE *trig_f, int nr) { (void)trig_f; (void)nr; }
 void parse_quest(FILE *quest_f, int nr) { (void)quest_f; (void)nr; }
 void dg_obj_trigger(char *line, struct obj_data *obj) { (void)line; (void)obj; }
-char *fname(const char *namelist)
-{ static char holder[READ_SIZE]; strlcpy(holder, namelist, sizeof(holder)); return holder; }
 void skip_spaces(char **string)                /* interpreter.c */
 { while (**string && isspace((unsigned char)**string)) (*string)++; }
 void split_argument(char *argument, char *tag) /* oasis.c, verbatim logic */
@@ -1110,10 +1108,30 @@ static void load_zones_disables_command_with_vnum_past_idxtype(void)
   zone_load_fixture_free();
 }
 
+/* B1-18: parse_mobile()/parse_object() ran fname() on the short description,
+ * which copied the whole leading alphabetic run into a READ_SIZE static
+ * (ASan: global-buffer-overflow for a 300+ letter word). */
+static void starts_with_article_handles_long_first_word(void)
+{
+  char text[400];
+
+  memset(text, 'a', 399);
+  text[399] = '\0';
+  TEST_ASSERT_FALSE(starts_with_article(text));
+  TEST_ASSERT_TRUE(starts_with_article("A long sword"));
+  TEST_ASSERT_TRUE(starts_with_article("an apple"));
+  TEST_ASSERT_TRUE(starts_with_article("The Mayor"));
+  TEST_ASSERT_TRUE(starts_with_article("the"));
+  TEST_ASSERT_FALSE(starts_with_article("Anvil of doom"));
+  TEST_ASSERT_FALSE(starts_with_article("theft"));
+  TEST_ASSERT_FALSE(starts_with_article(""));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
   RUN_TEST(load_zones_rejects_top_nowhere);
+  RUN_TEST(starts_with_article_handles_long_first_word);
   RUN_TEST(load_zones_disables_command_with_vnum_past_idxtype);
   RUN_TEST(discrete_load_rejects_record_past_capacity);
   RUN_TEST(discrete_load_accepts_records_within_capacity);
