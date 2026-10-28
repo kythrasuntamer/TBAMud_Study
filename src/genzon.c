@@ -15,7 +15,7 @@
 #include "dg_scripts.h"
 
 /* local functions */
-static void remove_cmd_from_list(struct reset_com **list, int pos);
+static int remove_cmd_from_list(struct reset_com **list, int pos, zone_vnum znum);
 
 /* Only the temporary index is removed on failure; preserve the live index. */
 static void cleanup_new_zone_index(const char *path)
@@ -430,9 +430,10 @@ void remove_room_zone_commands(zone_rnum zone, room_rnum room_num)
     default:
       break;
     }
-    if (cmd_room == room_num)
-      remove_cmd_from_list(&zone_table[zone].cmd, subcmd);
-    else
+    /* A failed removal is already reported; step past it so the scan
+     * still terminates. */
+    if (cmd_room != room_num ||
+        !remove_cmd_from_list(&zone_table[zone].cmd, subcmd, zone_table[zone].number))
       subcmd++;
   }
 }
@@ -709,20 +710,46 @@ void add_cmd_to_list(struct reset_com **list, struct reset_com *newcmd, int pos)
   *list = newlist;
 }
 
-/* Remove a reset command from a list. Takes a pointer to the list so that it
- * may play with the memory locations. */
-static void remove_cmd_from_list(struct reset_com **list, int pos)
+/**
+ * Remove the reset command at pos from a zone command list.
+ *
+ * The list is reallocated to one slot fewer and every later command slides
+ * down, so a caller scanning by index must re-examine pos afterwards.
+ *
+ * Ownership: the sarg1/sarg2 strings of a removed 'V' command are NOT
+ * freed.  zedit_setup() copies the live list by struct value, so the zedit
+ * working copy shares those pointers, and zedit_save_internally() removes
+ * the room's live commands (here) before re-adding the working copy's;
+ * freeing them here would hand the re-added commands freed memory.  Until
+ * zedit deep-copies its working list, a 'V' dropped by delete_room() leaks
+ * its two strings (finding C2-27, reported as skipped).
+ *
+ * @param list Address of the zone's command list (zone_table[z].cmd).
+ * @param pos  Index to remove, 0..count-1; callers derive it from their own
+ *             scan or from builder input already range-checked.
+ * @param znum Zone vnum, for diagnostics only.
+ * @return TRUE when a command was removed; FALSE, reported, when the list
+ *         is missing or pos is out of range (the list is unchanged).
+ */
+static int remove_cmd_from_list(struct reset_com **list, int pos, zone_vnum znum)
 {
   int count, i, l;
   struct reset_com *newlist;
 
-  if (!list || !*list)
-    return;
+  if (!list || !*list) {
+    TB_ERROR_MSG("olc", "zone-cmd-remove", "zone",
+                 "zone %d: no command list; pos %d not removed", znum, pos);
+    return FALSE;
+  }
 
   /* Count number of commands (not including terminator). */
   count = count_commands(*list);
-  if (count <= 0 || pos < 0 || pos >= count)
-    return;
+  if (count <= 0 || pos < 0 || pos >= count) {
+    TB_ERROR_MSG("olc", "zone-cmd-remove", "zone",
+                 "zone %d: pos %d out of range 0..%d; not removed",
+                 znum, pos, count - 1);
+    return FALSE;
+  }
 
   /* One command is removed, so count slots are enough for the remaining
    * commands plus the terminating S command. */
@@ -738,6 +765,7 @@ static void remove_cmd_from_list(struct reset_com **list, int pos)
   newlist[count - 1].command = 'S';
   free(*list);
   *list = newlist;
+  return TRUE;
 }
 
 /* Error check user input and then add new (blank) command. */
@@ -784,7 +812,6 @@ int delete_zone_command(struct zone_data *zone, int pos)
   }
 
   /* Ok, let's zap it. */
-  remove_cmd_from_list(&zone->cmd, pos);
-  return TRUE;
+  return remove_cmd_from_list(&zone->cmd, pos, zone->number);
 }
 

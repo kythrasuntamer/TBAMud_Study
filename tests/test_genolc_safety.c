@@ -1167,6 +1167,26 @@ static void save_zone_reports_open_failure(void)
   TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "zone 0"));
 }
 
+/* C2-27: remove_room_zone_commands() drops every command of the room
+ * (including the follow-on G after its M), keeps the rest, and reports
+ * nothing when every removal succeeds. */
+static void remove_room_zone_commands_removes_room_commands(void)
+{
+  static const int args[][3] = {
+    { 0, 1, 0 },   /* M in room 0 */
+    { 0, 1, 0 },   /* G follows that M */
+    { 1, 1, 1 },   /* O in room 1 */
+    { 0, 1, 0 },   /* O in room 0 */
+  };
+  make_zones(1); make_rooms(2);
+  set_zone_cmds(0, "MGOO", args);
+  remove_room_zone_commands(0, 0);
+  TEST_ASSERT_EQUAL_INT(1, count_commands(zone_table[0].cmd));
+  TEST_ASSERT_EQUAL_CHAR('O', zone_table[0].cmd[0].command);
+  TEST_ASSERT_EQUAL_INT(1, zone_table[0].cmd[0].arg3);
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+}
+
 /* C2-18: disabled ('*') reset lines are reported when a save drops them. */
 static void save_zone_reports_disabled_command(void)
 {
@@ -1446,6 +1466,7 @@ int main(void)
   RUN_TEST(save_zone_rejects_var_without_strings);
   RUN_TEST(save_zone_writes_valid_commands);
   RUN_TEST(save_zone_reports_disabled_command);
+  RUN_TEST(remove_room_zone_commands_removes_room_commands);
   RUN_TEST(save_objects_reports_empty_exdesc);
   RUN_TEST(save_zone_reports_open_failure);
   RUN_TEST(create_world_index_rejects_unterminated_index);
