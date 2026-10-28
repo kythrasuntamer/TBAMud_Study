@@ -211,6 +211,25 @@ static void test_mjunk_all_forms(void)
   TEST_ASSERT_EQUAL_INT(0, dgw_saw("mjunk-nomatch"));
 }
 
+/* E1-12: 'mload obj <container> <its own name>' with no such container
+ * around matched the new object itself and left it in no location. */
+static void test_mload_container_into_its_own_name(void)
+{
+  struct char_data *m = dgw_mob(DGW_MOB_GUARD, 0);
+  struct obj_data *chest;
+
+  run(do_mload, m, "obj 205 zzchest");
+  chest = world[0].contents;
+  TEST_ASSERT_NOT_NULL_MESSAGE(chest, "loaded object was left in no location");
+  TEST_ASSERT_EQUAL_INT(DGW_OBJ_CHEST, GET_OBJ_VNUM(chest));
+  TEST_ASSERT_EQUAL_INT(1, dgw_saw("mload-place"));
+
+  run(do_mload, m, "obj 201 zzchest");      /* a real container is used */
+  TEST_ASSERT_NOT_NULL(chest->contains);
+  TEST_ASSERT_EQUAL_INT(DGW_OBJ_STONE, GET_OBJ_VNUM(chest->contains));
+  TEST_ASSERT_EQUAL_INT(1, dgw_saw("mload-place"));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -222,5 +241,6 @@ int main(void)
   RUN_TEST(test_mtransform_refuses_players);
   RUN_TEST(test_mjunk_plain_name_junks_one_matching_item);
   RUN_TEST(test_mjunk_all_forms);
+  RUN_TEST(test_mload_container_into_its_own_name);
   return UNITY_END();
 }

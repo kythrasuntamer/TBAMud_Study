@@ -478,6 +478,18 @@ ACMD(do_mload)
         return;
       }
       cnt = (*arg1 == UID_CHAR) ? get_obj(arg1) : get_obj_vis(ch, arg1, NULL);
+      /* get_obj_vis() falls back to scanning object_list, where the new,
+       * still unplaced object is at the head: loading a container "into"
+       * its own name found the object itself. obj_to_obj() refuses that,
+       * which left the object in no location at all. */
+      if (cnt == object) {
+        TB_WARN_MSG("dg", "mload-place", "do_mload",
+                    DIAG_CHAR_FMT " obj vnum %d uid %ld: container argument "
+                    "matched the object being loaded; placed in room vnum %d",
+                    DIAG_CHAR(ch), GET_OBJ_VNUM(object), obj_script_id(object),
+                    GET_ROOM_VNUM(IN_ROOM(ch)));
+        cnt = NULL;
+      }
       if (cnt && GET_OBJ_TYPE(cnt) == ITEM_CONTAINER) {
       	obj_to_obj(object, cnt);
         load_otrigger(object);
