@@ -1163,13 +1163,24 @@ ackeof:
   exit(1);	/* Some day we hope to handle these things better... */
 }
 
-/* function to count how many hash-mark delimited records exist in a file */
+/* Prototype slots index_boot() allocated for the current DB_BOOT_* mode,
+ * and how many '#' records discrete_load() has handed to a parser so far.
+ * count_hash_records() only estimates the record count (a '#' inside a long
+ * line or a string can make the two passes disagree), so discrete_load()
+ * checks every record against the real allocation. */
+static int boot_capacity, boot_records;
+
+/** Count the '#'-delimited records in a world file, to size the prototype
+ * arrays. Reads in READ_SIZE chunks, as get_line() does, so a '#' that
+ * get_line() would return at the start of a chunk is counted. The count may
+ * still be high (a '#' at the start of a string line), and is never trusted
+ * as exact: discrete_load() enforces the allocation. */
 int count_hash_records(FILE *fl)
 {
-  char buf[128];
+  char buf[READ_SIZE];
   int count = 0;
 
-  while (fgets(buf, 128, fl))
+  while (fgets(buf, sizeof(buf), fl))
     if (*buf == '#')
       count++;
 
@@ -1314,6 +1325,9 @@ void index_boot(int mode)
     exit(1);
   }
 
+  boot_capacity = rec_count;
+  boot_records = 0;
+
   for (line_number = 1;; ++line_number) {
     if (fscanf(db_index, "%s\n", buf1) != 1) {
       if (feof(db_index))
@@ -1398,8 +1412,18 @@ void discrete_load(FILE *fl, int mode, char *filename)
       }
       if (nr >= 99999)
 	return;
-      else
-	switch (mode) {
+      /* Each record fills the next prototype slot (parse_room(),
+       * parse_mobile(), parse_object()... keep their own cursor). The
+       * world files are the implementor's; a record the counting pass
+       * missed would be written past the array index_boot() allocated. */
+      if (boot_records >= boot_capacity) {
+	TB_FATAL_MSG("db", "proto-slot", filename,
+	             "%s #%d exceeds the %d records counted at boot",
+	             modes[mode], nr, boot_capacity);
+	exit(1);
+      }
+      boot_records++;
+      switch (mode) {
 	case DB_BOOT_WLD:
 	  parse_room(fl, nr);
 	  break;

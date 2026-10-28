@@ -165,6 +165,13 @@ char *any_one_arg(char *argument, char *first_arg)
 { *first_arg = '\0'; return argument; }
 char *find_exdesc(char *word, struct extra_descr_data *list)
 { (void)word; (void)list; return NULL; }
+/* discrete_load() reaches every record parser; the tests feed it rooms only. */
+size_t action_bits_count = 0;
+void parse_trigger(FILE *trig_f, int nr) { (void)trig_f; (void)nr; }
+void parse_quest(FILE *quest_f, int nr) { (void)quest_f; (void)nr; }
+void dg_obj_trigger(char *line, struct obj_data *obj) { (void)line; (void)obj; }
+char *fname(const char *namelist)
+{ static char holder[READ_SIZE]; strlcpy(holder, namelist, sizeof(holder)); return holder; }
 void skip_spaces(char **string)                /* interpreter.c */
 { while (**string && isspace((unsigned char)**string)) (*string)++; }
 void split_argument(char *argument, char *tag) /* oasis.c, verbatim logic */
@@ -961,10 +968,80 @@ static void boot_social_messages_loads_counted_socials(void)
   social_fixture_free(2);
 }
 
+/* ---------------------------------------------------------------------
+ * discrete_load(): records never exceed the counted allocation (B1-14)
+ * ------------------------------------------------------------------- */
+
+/* Run discrete_load() over text with the given slot capacity; 1 on exit(). */
+static int discrete_load_text(const char *text, int mode, int capacity)
+{
+  FILE *volatile fp = stream_of(text, strlen(text));
+  volatile int exited = 1;
+
+  boot_capacity = capacity;
+  boot_records = 0;
+  tb_test_exit_armed = 1;
+  if (setjmp(tb_test_exit_jmp) == 0) {
+    discrete_load(fp, mode, (char *)"test.wld");
+    tb_test_exit_armed = 0;
+    exited = 0;
+  }
+  fclose(fp);
+  return exited;
+}
+
+/* The counting pass and the parser can disagree about where records start
+ * (a '#' inside a long line); a record past the allocation was written to
+ * world[rec_count]. */
+static void discrete_load_rejects_record_past_capacity(void)
+{
+  static const char text[] =
+    "#200\nA~\nA.\n~\n0 0 0 0 0 0\nS\n"
+    "#201\nB~\nB.\n~\n0 0 0 0 0 0\nS\n$\n";
+
+  room_fixture_use();
+  TEST_ASSERT_EQUAL_INT(1, discrete_load_text(text, DB_BOOT_WLD, 1));
+  TEST_ASSERT_EQUAL_STRING("FATAL", tb_captured_severity);
+  TEST_ASSERT_EQUAL_STRING("proto-slot", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "world #201"));
+  room_fixture_free();
+}
+
+static void discrete_load_accepts_records_within_capacity(void)
+{
+  static const char text[] =
+    "#202\nA~\nA.\n~\n0 0 0 0 0 0\nS\n"
+    "#203\nB~\nB.\n~\n0 0 0 0 0 0\nS\n$\n";
+
+  room_fixture_use();
+  TEST_ASSERT_EQUAL_INT(0, discrete_load_text(text, DB_BOOT_WLD, 2));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  TEST_ASSERT_EQUAL_INT(2, boot_records);
+  room_fixture_free();
+}
+
+/* A line padded to exactly one READ_SIZE chunk and then "#99" on the same
+ * physical line: get_line() returns "#99" as a record, so the count must see
+ * it too. The old 127-byte chunking did not. */
+static void count_hash_records_counts_hash_at_get_line_chunk(void)
+{
+  char text[READ_SIZE + 16];
+  FILE *fp;
+
+  memset(text, 'x', READ_SIZE - 1);
+  memcpy(text + READ_SIZE - 1, "#99\n", 5);
+  fp = stream_of(text, strlen(text));
+  TEST_ASSERT_EQUAL_INT(1, count_hash_records(fp));
+  fclose(fp);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
   RUN_TEST(load_zones_rejects_top_nowhere);
+  RUN_TEST(discrete_load_rejects_record_past_capacity);
+  RUN_TEST(discrete_load_accepts_records_within_capacity);
+  RUN_TEST(count_hash_records_counts_hash_at_get_line_chunk);
   RUN_TEST(boot_social_messages_rejects_uncounted_socials);
   RUN_TEST(boot_social_messages_loads_counted_socials);
   RUN_TEST(parse_simple_mob_rejects_sex_out_of_range);
