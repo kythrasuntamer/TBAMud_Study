@@ -1188,6 +1188,23 @@ static void unplaced_owner_room_lookups_are_reported(void)
   TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "makeuid obj"));
 }
 
+/* E1-20: masound, mpurge and mload index world[IN_ROOM(ch)], and a mob's
+ * script dispatched them (and every other command) without checking that
+ * the mob stands in a room. */
+static void unplaced_mob_script_runs_no_command(void)
+{
+  const char *lines[] = { "set before 1", "masound hello", "set after 1", NULL };
+  char_data *mob = make_mob("mob");
+  trig_data *t;
+
+  char_from_room(mob);
+  t = run_mob_script(mob, lines);
+  TEST_ASSERT_EQUAL_STRING("mob-cmd-unplaced", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "line 2"));
+  TEST_ASSERT_EQUAL_INT(0, GET_TRIG_DEPTH(t));
+  TEST_ASSERT_NULL(GET_TRIG_VARS(t));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -1236,5 +1253,6 @@ int main(void)
   RUN_TEST(room_wait_survives_world_reallocation);
   RUN_TEST(room_wait_with_lost_room_is_reported);
   RUN_TEST(unplaced_owner_room_lookups_are_reported);
+  RUN_TEST(unplaced_mob_script_runs_no_command);
   return UNITY_END();
 }

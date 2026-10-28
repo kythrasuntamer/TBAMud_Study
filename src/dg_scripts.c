@@ -92,6 +92,7 @@ static struct cmdlist_element * find_case(struct trig_data *trig, struct cmdlist
           void *go, struct script_data *sc, int type, char *cond);
 static struct cmdlist_element *find_done(struct cmdlist_element *cl);
 static void report_unterminated_block(trig_data *trig, const char *keyword);
+static int dg_line_number(const trig_data *trig, const struct cmdlist_element *cl);
 static struct char_data *find_char_by_uid_in_lookup_table(long uid);
 static struct obj_data *find_obj_by_uid_in_lookup_table(long uid);
 static EVENTFUNC(trig_wait_event);
@@ -3376,6 +3377,21 @@ int script_driver(void *go_adress, trig_data *trig, int type, int mode)
         process_detach(go, sc, trig, type, cmd);
 
       else {
+        /* m-commands (masound, mpurge, mload...) and the other commands a
+         * mob's script runs index world[IN_ROOM(mob)]. A mob in
+         * character_list always stands in a room, so an unplaced owner is a
+         * broken invariant: refuse every command and end the trigger. */
+        if (type == MOB_TRIGGER &&
+            !VALID_ROOM_RNUM(IN_ROOM((char_data *) go))) {
+          char_data *mob = (char_data *) go;
+
+          TB_ERROR_MSG("dg", "mob-cmd-unplaced", "script_driver",
+                       "trig vnum %d line %d: " DIAG_CHAR_FMT " uid %ld is "
+                       "at rnum %ld (not a room); command refused, trigger "
+                       "ended", DIAG_TRIG_VNUM(trig), dg_line_number(trig, cl),
+                       DIAG_CHAR(mob), mob->script_id, (long) IN_ROOM(mob));
+          break;
+        }
         /* The command leaves the script engine here; player text in it
          * reads as typed again. */
         dg_restore_percent(cmd);
@@ -3470,6 +3486,19 @@ static void report_unterminated_block(trig_data *trig, const char *keyword)
                GET_TRIG_VNUM(trig), keyword);
   script_log("Trigger VNum %d has '%s' without 'done'.",
              GET_TRIG_VNUM(trig), keyword);
+}
+
+/* 1-based position of cl in trig's command list, for reports that name the
+ * script line; 0 when cl is not in the list. */
+static int dg_line_number(const trig_data *trig, const struct cmdlist_element *cl)
+{
+  const struct cmdlist_element *c;
+  int n = 1;
+
+  for (c = trig->cmdlist; c; c = c->next, n++)
+    if (c == cl)
+      return n;
+  return 0;
 }
 
 /* The last line of the trigger, at or after cl. */
