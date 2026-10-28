@@ -425,8 +425,14 @@ static OCMD(do_oteleport)
     else if (!str_cmp(arg1, "all"))
     {
         rm = obj_room(obj);
-        if (target == rm)
+        if (rm == NOWHERE) {
+            obj_log(obj, "oteleport all: the object is in no room");
+            return;
+        }
+        if (target == rm) {
             obj_log(obj, "oteleport target is itself");
+            return;
+        }
 
         for (ch = world[rm].people; ch; ch = next_ch)
         {

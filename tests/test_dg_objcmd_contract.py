@@ -19,4 +19,9 @@ assert oat.index("copy_uid = obj_script_id(object);") < oat.index("obj_command_i
 after = oat[oat.index("obj_command_interpreter("):]
 assert "obj_uid_matches(copy_uid, object)" in after
 assert "object->in_room" not in after, "the copy may be freed by now"
+# oteleport all reads the object's own room: never world[NOWHERE], and a
+# teleport onto itself stops instead of being logged and carried out.
+tele = body_of("do_oteleport")
+rm = tele[tele.index("rm = obj_room(obj);"):tele.index("for (ch = world[rm].people;")]
+assert "rm == NOWHERE" in rm and rm.count("return;") == 2
 print("object command contract verified")
