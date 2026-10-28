@@ -607,9 +607,68 @@ static void test_boot_check_reports_missing_donation_room(void)
   TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
 }
 
+/* H1-26: weight_change_object() skipped a worn object (create water on a
+ * held drink container, TAR_OBJ_EQUIP) with a bare SYSERR line, so the
+ * container's weight drifted from its contents. Equipment is not counted in
+ * IS_CARRYING_W, so only the object changes. */
+static void test_weight_change_on_worn_object(void)
+{
+  struct char_data *pc = fx_new_char("hero", FALSE, 0);
+  struct obj_data *flask = fx_new_obj("flask", ITEM_DRINKCON);
+  int carried;
+
+  SET_BIT_AR(GET_OBJ_WEAR(flask), ITEM_WEAR_HOLD);
+  equip_char(pc, flask, WEAR_HOLD);
+  TEST_ASSERT_EQUAL_PTR(flask, GET_EQ(pc, WEAR_HOLD));
+  carried = IS_CARRYING_W(pc);
+
+  weight_change_object(flask, 5);
+
+  TEST_ASSERT_EQUAL_INT(6, GET_OBJ_WEIGHT(flask));
+  TEST_ASSERT_EQUAL_INT(carried, IS_CARRYING_W(pc));
+  TEST_ASSERT_EQUAL_PTR(flask, GET_EQ(pc, WEAR_HOLD));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  fx_free_char(pc);
+}
+
+/* H1-26: an object that is nowhere breaks the callers' contract. It is
+ * still changed (no holder can drift) and reported with its vnum and UID;
+ * it used to be a SYSERR line naming nothing. */
+static void test_weight_change_on_unplaced_object_is_reported(void)
+{
+  struct obj_data *flask = fx_new_obj("flask", ITEM_DRINKCON);
+
+  weight_change_object(flask, -1);
+
+  TEST_ASSERT_EQUAL_INT(0, GET_OBJ_WEIGHT(flask));
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("weight-change", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, " uid "));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "changed by -1"));
+}
+
+/* H1-26: do_pour with a subcommand other than pour or fill logged a SYSERR
+ * line naming no character, and the player was told nothing. */
+static void test_pour_with_unknown_subcommand_is_reported(void)
+{
+  struct char_data *pc = fx_new_char("hero", FALSE, 0);
+
+  do_pour(pc, arg("flask"), 0, 42);
+
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("pour-subcmd", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "subcommand 42"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "player idnum"));
+  TEST_ASSERT_NOT_NULL(strstr(fx_last_send, "nothing was poured"));
+  fx_free_char(pc);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(test_weight_change_on_worn_object);
+  RUN_TEST(test_weight_change_on_unplaced_object_is_reported);
+  RUN_TEST(test_pour_with_unknown_subcommand_is_reported);
   RUN_TEST(test_boot_check_reports_missing_donation_room);
   RUN_TEST(test_drop_skips_object_moved_by_trigger);
   RUN_TEST(test_donate_with_only_room_three);

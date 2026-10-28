@@ -745,8 +745,15 @@ int damage(struct char_data *ch, struct char_data *victim, int dam, int attackty
     if (PLR_FLAGGED(victim, PLR_NOTDEADYET) || MOB_FLAGGED(victim, MOB_NOTDEADYET))
       return (-1);
 
-    log("SYSERR: Attempt to damage corpse '%s' in room #%d by '%s'.",
-        GET_NAME(victim), GET_ROOM_VNUM(IN_ROOM(victim)), GET_NAME(ch));
+    /* Dead but never killed: whatever set POS_DEAD did not call die().
+     * Name both characters, the room and the attack type (which tells the
+     * calling path apart), then finish the kill. */
+    TB_ERROR_MSG("fight", "damage-corpse", "damage",
+                 "victim " DIAG_CHAR_FMT " is dead (pos %d) but not killed;"
+                 " attacker " DIAG_CHAR_FMT " attack type %d in room %d;"
+                 " killing it now", DIAG_CHAR(victim), (int) GET_POS(victim),
+                 DIAG_CHAR(ch), attacktype,
+                 (int) GET_ROOM_VNUM(IN_ROOM(victim)));
     die(victim, ch);
     return (-1);			/* -je, 7/7/92 */
   }

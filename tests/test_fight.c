@@ -338,6 +338,27 @@ static void test_set_fighting_twice_is_reported_at_caller(void)
   fx_free_char(pc);
 }
 
+/* H1-26: damage() on a victim that is POS_DEAD but was never killed (no
+ * NOTDEADYET flag) logged a SYSERR line with names; it now names both
+ * characters, the attack type and the room, and still finishes the kill. */
+static void test_damage_on_unkilled_dead_victim_is_reported(void)
+{
+  struct char_data *pc = fx_new_char("hero", FALSE, 0);
+  struct char_data *mob = fx_new_char("rat", TRUE, 0);
+
+  GET_POS(mob) = POS_DEAD;
+
+  TEST_ASSERT_EQUAL_INT(-1, damage(pc, mob, 10, TYPE_HIT));
+
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("damage-corpse", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "victim mob vnum"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "attacker player idnum 4242"));
+  TEST_ASSERT_TRUE(MOB_FLAGGED(mob, MOB_NOTDEADYET));
+  fx_free_char(mob);
+  fx_free_char(pc);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -352,5 +373,6 @@ int main(void)
   RUN_TEST(test_hit_skips_victim_purged_by_trigger);
   RUN_TEST(test_corpse_collects_objects_given_by_remove_trigger);
   RUN_TEST(test_corpse_skips_slot_emptied_by_remove_trigger);
+  RUN_TEST(test_damage_on_unkilled_dead_victim_is_reported);
   return UNITY_END();
 }
