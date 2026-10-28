@@ -2090,6 +2090,52 @@ static void parse_object_converts_legacy_affect_field(void)
   top_of_zone_table = 0;
 }
 
+/* ---------------------------------------------------------------------
+ * load_config(): unknown keys and the old cedit key name
+ * ------------------------------------------------------------------- */
+
+/* load_config() ignored unknown keys without a word, which hid cedit
+ * writing "disp_closed_doors" while the loader read "display_closed_doors".
+ * Each unknown key is now reported with its line (comment lines and the
+ * lines of a multi-line value count), and loading goes on. */
+static void load_config_reports_unknown_keys(void)
+{
+  load_config_text("* comment\n"
+                   "max_playing = 77\n"
+                   "bogus_key = 5\n"
+                   "menu\nLine one\nLine two\n~\n"
+                   "zzz = 1\n"
+                   "tunnel_size = 3\n");
+  TEST_ASSERT_EQUAL_INT(77, CONFIG_MAX_PLAYING);
+  TEST_ASSERT_EQUAL_INT(3, CONFIG_TUNNEL_SIZE);
+  TEST_ASSERT_EQUAL_STRING("Line one\r\nLine two\r\n", CONFIG_MENU);
+  TEST_ASSERT_EQUAL_INT(2, tb_captured_errors);	/* bogus_key, zzz */
+  TEST_ASSERT_EQUAL_STRING("ERROR", tb_captured_severity);
+  TEST_ASSERT_EQUAL_STRING("config-unknown-key", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail,
+                              "line 8: unknown key 'zzz' ignored"));
+  config_fixture_free();
+}
+
+/* The old name keeps its setting (the last line wins, as for any key) and
+ * is reported once per load; the current name loads silently. */
+static void load_config_reads_old_closed_doors_key(void)
+{
+  load_config_text("disp_closed_doors = 1\ndisp_closed_doors = 0\n");
+  TEST_ASSERT_EQUAL_INT(0, CONFIG_DISP_CLOSED_DOORS);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("WARNING", tb_captured_severity);
+  TEST_ASSERT_EQUAL_STRING("config-key-alias", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "line 1: 'disp_closed_doors'"));
+  config_fixture_free();
+
+  tb_error_capture_reset();
+  load_config_text("display_closed_doors = 1\n");
+  TEST_ASSERT_EQUAL_INT(1, CONFIG_DISP_CLOSED_DOORS);
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  config_fixture_free();
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -2165,5 +2211,7 @@ int main(void)
   RUN_TEST(load_zones_skips_blank_and_nul_lines);
   RUN_TEST(trigger_lines_see_their_owner_vnum);
   RUN_TEST(parse_object_converts_legacy_affect_field);
+  RUN_TEST(load_config_reports_unknown_keys);
+  RUN_TEST(load_config_reads_old_closed_doors_key);
   return UNITY_END();
 }

@@ -5275,12 +5275,27 @@ static void load_default_config( void )
   CONFIG_MIN_WIZLIST_LEV        = min_wizlist_lev;
 }
 
+/* Lines fread_string() consumed for a multi-line config value: one per
+ * line break it kept, plus the line holding the closing '~'. */
+static int config_value_lines(const char *value)
+{
+  int n = 1;
+
+  for (; value && *value; value++)
+    if (*value == '\n')
+      n++;
+  return n;
+}
+
 /** Load the game configuration from CONFIG_CONFFILE (or the default
  * directory), over the built-in defaults from load_default_config().
  *
  * Each line is "tag = value" read with get_line() into a READ_SIZE buffer.
- * Numeric tags use tb_parse_int_or_zero(), so a non-numeric value becomes 0,
- * and unknown tags are ignored. "menu", "start_messg" and "welc_messg" read
+ * Numeric tags use tb_parse_int_or_zero(), so a non-numeric value becomes 0.
+ * An unknown tag is reported (config-unknown-key, naming its line) and
+ * ignored; "disp_closed_doors", the name cedit used to write, is read as
+ * "display_closed_doors" with one config-key-alias warning per load.
+ * "menu", "start_messg" and "welc_messg" read
  * a '~'-terminated string on the following lines; an empty menu or start
  * message falls back to the built-in default (welc_messg may stay NULL).
  * The file is written by cedit, so its contents are immortal-controlled. */
@@ -5292,7 +5307,7 @@ void load_config( void )
    * READ_SIZE + 2 buffers below. */
   char line[READ_SIZE];
   char tag[MAX_INPUT_LENGTH];
-  int  num;
+  int  num, line_num = 0, lines, known, warned_alias = FALSE;
   char buf[MAX_INPUT_LENGTH];
 
   load_default_config();
@@ -5305,9 +5320,11 @@ void load_config( void )
   }
 
   /* Load the game configuration file. */
-  while (get_line(fl, line)) {
+  while ((lines = get_line(fl, line)) > 0) {
+    line_num += lines;	/* get_line() also counts the comment lines it skips */
     split_argument(line, tag);
     num = tb_parse_int_or_zero(line);
+    known = TRUE;
 
     switch (LOWER(*tag)) {
       case 'a':
@@ -5317,11 +5334,15 @@ void load_config( void )
           CONFIG_AUTOSAVE_TIME = num;
         else if (!str_cmp(tag, "auto_save_olc"))
           CONFIG_OLC_SAVE = num;
+        else
+          known = FALSE;
         break;
 
       case 'c':
         if (!str_cmp(tag, "crash_file_timeout"))
           CONFIG_CRASH_TIMEOUT = num;
+        else
+          known = FALSE;
         break;
 
       case 'd':
@@ -5329,7 +5350,17 @@ void load_config( void )
           CONFIG_DEBUG_MODE = num;
         else if (!str_cmp(tag, "display_closed_doors"))
           CONFIG_DISP_CLOSED_DOORS = num;
-        else if (!str_cmp(tag, "diagonal_dirs"))
+        else if (!str_cmp(tag, "disp_closed_doors")) {
+          /* The name cedit used to write: keep the setting, and say once
+           * per load that the file uses the old name. */
+          if (!warned_alias) {
+            TB_WARN_MSG("db", "config-key-alias", CONFIG_CONFFILE,
+                        "%s line %d: 'disp_closed_doors' is read as "
+                        "'display_closed_doors'", CONFIG_CONFFILE, line_num);
+            warned_alias = TRUE;
+          }
+          CONFIG_DISP_CLOSED_DOORS = num;
+        } else if (!str_cmp(tag, "diagonal_dirs"))
           CONFIG_DIAGONAL_DIRS = num;
         else if (!str_cmp(tag, "dts_are_dumps"))
           CONFIG_DTS_ARE_DUMPS = num;
@@ -5368,6 +5399,8 @@ void load_config( void )
           CONFIG_MAP_SIZE = num;
         else if (!str_cmp(tag, "default_minimap_size"))
           CONFIG_MINIMAP_SIZE = num;
+        else
+          known = FALSE;
         break;
 
       case 'f':
@@ -5375,6 +5408,8 @@ void load_config( void )
           CONFIG_FREE_RENT = num;
         else if (!str_cmp(tag, "frozen_start_room"))
           CONFIG_FROZEN_START = num;
+        else
+          known = FALSE;
         break;
 
       case 'h':
@@ -5386,7 +5421,8 @@ void load_config( void )
             free(CONFIG_HUH);
           tb_snprintf(tmp, sizeof(tmp), "%s\r\n", line);
           CONFIG_HUH = strdup(tmp);
-        }
+        } else
+          known = FALSE;
         break;
 
       case 'i':
@@ -5400,6 +5436,8 @@ void load_config( void )
           CONFIG_IMMORTAL_START = num;
         else if (!str_cmp(tag, "ibt_autosave"))
 		  CONFIG_IBT_AUTOSAVE = num;
+        else
+          known = FALSE;
         break;
 
       case 'l':
@@ -5414,7 +5452,8 @@ void load_config( void )
             CONFIG_LOGNAME = strdup(line);
           else
             CONFIG_LOGNAME = NULL;
-        }
+        } else
+          known = FALSE;
         break;
 
       case 'm':
@@ -5441,6 +5480,7 @@ void load_config( void )
           /* fread_string() already ran parse_at(), and returns NULL for an
            * empty value, which every reader of CONFIG_MENU dereferences. */
           CONFIG_MENU = fread_string(fl, buf);
+          line_num += config_value_lines(CONFIG_MENU);
           if (!CONFIG_MENU) {
             TB_ERROR_MSG("db", "config-load", "menu",
                          "empty 'menu' value in %s; using built-in default",
@@ -5457,6 +5497,8 @@ void load_config( void )
           CONFIG_MAP = num;
         else if (!str_cmp(tag, "medit_advanced_stats"))
           CONFIG_MEDIT_ADVANCED = num;
+        else
+          known = FALSE;
         break;
 
       case 'n':
@@ -5476,7 +5518,8 @@ void load_config( void )
             free(CONFIG_NOEFFECT);
           tb_snprintf(tmp, sizeof(tmp), "%s\r\n", line);
           CONFIG_NOEFFECT = strdup(tmp);
-        }
+        } else
+          known = FALSE;
         break;
 
       case 'o':
@@ -5486,7 +5529,8 @@ void load_config( void )
             free(CONFIG_OK);
           tb_snprintf(tmp, sizeof(tmp), "%s\r\n", line);
           CONFIG_OK = strdup(tmp);
-        }
+        } else
+          known = FALSE;
         break;
 
       case 'p':
@@ -5496,11 +5540,15 @@ void load_config( void )
           CONFIG_PROTOCOL_NEGOTIATION = num;
         else if (!str_cmp(tag, "pt_setting"))
           CONFIG_PT_SETTING = num;
+        else
+          known = FALSE;
         break;
 
       case 'r':
         if (!str_cmp(tag, "rent_file_timeout"))
           CONFIG_RENT_TIMEOUT = num;
+        else
+          known = FALSE;
         break;
 
       case 's':
@@ -5516,13 +5564,15 @@ void load_config( void )
             free(CONFIG_START_MESSG);
           /* See "menu": no second parse_at(), and never a NULL message. */
           CONFIG_START_MESSG = fread_string(fl, buf);
+          line_num += config_value_lines(CONFIG_START_MESSG);
           if (!CONFIG_START_MESSG) {
             TB_ERROR_MSG("db", "config-load", "start_messg",
                          "empty 'start_messg' value in %s; using built-in default",
                          CONFIG_CONFFILE);
             CONFIG_START_MESSG = strdup(START_MESSG);
           }
-        }
+        } else
+          known = FALSE;
         break;
 
       case 't':
@@ -5530,6 +5580,8 @@ void load_config( void )
           CONFIG_TUNNEL_SIZE = num;
         else if (!str_cmp(tag, "track_through_doors"))
           CONFIG_TRACK_T_DOORS = num;
+        else
+          known = FALSE;
         break;
 
       case 'u':
@@ -5537,6 +5589,8 @@ void load_config( void )
           CONFIG_USE_AUTOWIZ = num;
         else if (!str_cmp(tag, "use_new_socials"))
           CONFIG_NEW_SOCIALS = num;
+        else
+          known = FALSE;
         break;
 
       case 'w':
@@ -5545,12 +5599,22 @@ void load_config( void )
           if (CONFIG_WELC_MESSG)
             free(CONFIG_WELC_MESSG);
           CONFIG_WELC_MESSG = fread_string(fl, buf);
-        }
+          line_num += config_value_lines(CONFIG_WELC_MESSG);
+        } else
+          known = FALSE;
         break;
 
       default:
+        known = FALSE;
         break;
     }
+    /* An unknown key is a setting that never loads: cedit wrote
+     * "disp_closed_doors" for years while this loader read only
+     * "display_closed_doors", and nothing said so. */
+    if (!known)
+      TB_ERROR_MSG("db", "config-unknown-key", CONFIG_CONFFILE,
+                   "%s line %d: unknown key '%.64s' ignored",
+                   CONFIG_CONFFILE, line_num, tag);
   }
 
   tb_fclose(fl);
