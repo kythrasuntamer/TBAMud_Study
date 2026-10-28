@@ -708,6 +708,7 @@ void mag_summons(int level, struct char_data *ch, struct obj_data *obj,
   struct char_data *mob = NULL;
   struct obj_data *tobj, *next_obj;
   int pfail = 0, msg = 0, fmsg = 0, num = 1, handle_corpse = FALSE, i;
+  long corpse_uid = 0;
   mob_vnum mob_num;
 
   if (ch == NULL)
@@ -739,6 +740,8 @@ void mag_summons(int level, struct char_data *ch, struct obj_data *obj,
       return;
     }
     handle_corpse = TRUE;
+    /* The zombie's load trigger below may purge the corpse. */
+    corpse_uid = obj_script_id(obj);
     msg = 11;
     fmsg = rand_number(2, 6);	/* Random fail message. */
     mob_num = MOB_ZOMBIE;
@@ -773,12 +776,30 @@ void mag_summons(int level, struct char_data *ch, struct obj_data *obj,
     }
     act(mag_summon_msgs[msg], FALSE, ch, 0, mob, TO_ROOM);
     load_mtrigger(mob);
+    /* A load script that purges its own mob leaves it pending extraction:
+     * it must not become a follower or group member. */
+    if (CHAR_PENDING_EXTRACTION(mob)) {
+      TB_WARN_MSG("magic", "summon-mob-purged", "char",
+                  "summoned mob vnum %d purged by its load trigger; not "
+                  "following " DIAG_CHAR_FMT, (int) mob_num, DIAG_CHAR(ch));
+      continue;
+    }
     add_follower(mob, ch);
-    
+
     if (GROUP(ch) && GROUP_LEADER(GROUP(ch)) == ch)
-      join_group(mob, GROUP(ch));    
+      join_group(mob, GROUP(ch));
   }
   if (handle_corpse) {
+    /* The load trigger ran arbitrary script code: the corpse may be gone
+     * (freed) and the zombie may be pending extraction. */
+    if (!obj_uid_matches(corpse_uid, obj)) {
+      TB_WARN_MSG("magic", "summon-corpse-gone", "obj",
+                  "corpse uid %ld purged by load trigger of mob vnum %d for "
+                  DIAG_CHAR_FMT, corpse_uid, (int) mob_num, DIAG_CHAR(ch));
+      return;
+    }
+    if (CHAR_PENDING_EXTRACTION(mob))
+      return;		/* reported above; the corpse keeps its contents */
     for (tobj = obj->contains; tobj; tobj = next_obj) {
       next_obj = tobj->next_content;
       obj_from_obj(tobj);
