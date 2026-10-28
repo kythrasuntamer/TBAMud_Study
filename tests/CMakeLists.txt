@@ -283,6 +283,18 @@ if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
         PROPERTIES COMPILE_OPTIONS "${TB_GENZON_TEST_FLAGS}")
 endif()
 
+# Production text editor command (tedit.c).
+add_mud_test(test_tedit
+    ${MUD_SRCDIR}/tedit.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_tedit.c
+)
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_compile_options(test_tedit PRIVATE -ffunction-sections -fdata-sections)
+    target_link_options(test_tedit PRIVATE -Wl,--gc-sections)
+    set_source_files_properties(${MUD_SRCDIR}/tedit.c
+        PROPERTIES COMPILE_OPTIONS "-ffunction-sections;-fdata-sections")
+endif()
+
 # Production act()/perform_act() formatter. comm.c owns main(); rename it and
 # discard sections the formatter does not reach. test_stubs.c is omitted
 # because it defines comm.c's globals; the test supplies its own fixtures.
