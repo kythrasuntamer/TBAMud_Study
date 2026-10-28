@@ -429,7 +429,17 @@ static bool cast_item_spells(struct char_data *ch, struct obj_data *obj,
  * scroll - [0]	level	[1] spell num	[2] spell num	[3] spell num
  * potion - [0] level	[1] spell num	[2] spell num	[3] spell num
  * Staves and wands will default to level 14 if the level is not specified; the
- * DikuMUD format did not specify staff and wand levels in the world files */
+ * DikuMUD format did not specify staff and wand levels in the world files
+ *
+ * Ownership: a scroll or potion is consumed (extract_obj, freed at once) by
+ * this function unless a cast trigger already purged it; a wand or staff
+ * may also be purged by a trigger. The caller must not use obj after this
+ * returns.
+ *
+ * Trust: the values are builder/script data (world file, oedit, DG
+ * osetval). Boot only logs bad spell numbers, so value 3 of a wand or staff
+ * is range-checked here before it indexes spell_info[], and scroll/potion
+ * spell values are checked by call_magic(). */
 void mag_objectmagic(struct char_data *ch, struct obj_data *obj, char *argument) {
   char arg[MAX_INPUT_LENGTH];
   int i, k, spl, vnum;
