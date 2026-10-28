@@ -817,6 +817,12 @@ static void spello(int spl, const char *name, int max_mana, int min_mana,
     const char *wearoff) {
   int i;
 
+  /* Each spell is registered once; a second spello() silently overwrote
+   * the first (SPELL_IDENTIFY once became free to cast from any position). */
+  if (spell_info[spl].name && spell_info[spl].name != unused_spellname)
+    TB_WARN_MSG("magic", "spello-duplicate", name,
+                "spell %d registered twice; the later entry wins", spl);
+
   for (i = 0; i < NUM_CLASSES; i++)
     spell_info[spl].min_level[i] = LVL_IMMORT;
   spell_info[spl].mana_max = max_mana;
@@ -1050,8 +1056,6 @@ void mag_assign_spells(void) {
   TAR_CHAR_ROOM | TAR_OBJ_INV | TAR_OBJ_ROOM, FALSE, MAG_MANUAL, NULL);
 
   /* NON-castable spells should appear below here. */
-  spello(SPELL_IDENTIFY, "identify", 0, 0, 0, 0,
-  TAR_CHAR_ROOM | TAR_OBJ_INV | TAR_OBJ_ROOM, FALSE, MAG_MANUAL, NULL);
 
   /* you might want to name this one something more fitting to your theme -Welcor*/
   spello(SPELL_DG_AFFECT, "Script-inflicted", 0, 0, 0, POS_SITTING,
