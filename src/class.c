@@ -155,6 +155,12 @@ struct guild_info_type guild_info[] = {
  * next record after a quiet spell says how many were suppressed. */
 #define CLASS_DIAG_BURST 10
 
+/* The character whose class and level are being looked up, while one of the
+ * char_* lookups below runs; class_table_error_at() names it (DIAG_CHAR) so
+ * a miss says whose data is outside the table. NULL for the plain lookups.
+ * The tables run no callbacks, so it is never seen by another lookup. */
+static const struct char_data *class_lookup_subject;
+
 static void class_table_error_at(const char *table, int class_num, int type,
                                  int level, const char *src_file, int src_line,
                                  const char *src_func)
@@ -162,6 +168,7 @@ static void class_table_error_at(const char *table, int class_num, int type,
   static time_t window_start;
   static int in_window, suppressed;
   time_t now = time(0);
+  char who[64] = "";
 
   if (now - window_start >= 60) {
     window_start = now;
@@ -172,10 +179,13 @@ static void class_table_error_at(const char *table, int class_num, int type,
     return;
   }
   in_window++;
+  if (class_lookup_subject)
+    tb_snprintf(who, sizeof(who), " for " DIAG_CHAR_FMT,
+                DIAG_CHAR(class_lookup_subject));
   tb_error_log_at("ERROR", "class", "class-table", table, 0,
                   src_file, src_line, src_func,
-                  TB_ERRID_INVARIANT " class %d type %d level %d is outside the %s table (%d earlier reports suppressed)",
-                  class_num, type, level, table, suppressed);
+                  TB_ERRID_INVARIANT " class %d type %d level %d is outside the %s table%s (%d earlier reports suppressed)",
+                  class_num, type, level, table, who, suppressed);
   suppressed = 0;
 }
 
@@ -1947,6 +1957,42 @@ int level_exp(int chclass, int level)
    * incomplete. */
   CLASS_TABLE_ERROR("level-exp", chclass, -1, level);
   return 123456;
+}
+
+/* Character-aware forms of thaco(), saving_throws() and level_exp(): the
+ * same tables and fallback values, but a miss is also reported with ch's
+ * identity, so the log says whose class or level (usually corrupt player
+ * file data) is outside the table. Use them wherever the caller has the
+ * character. char_saving_throw() takes the class explicitly because
+ * mag_savingthrow() uses the warrior table for every NPC. */
+int char_thaco(const struct char_data *ch)
+{
+  int value;
+
+  class_lookup_subject = ch;
+  value = thaco(GET_CLASS(ch), GET_LEVEL(ch));
+  class_lookup_subject = NULL;
+  return value;
+}
+
+byte char_saving_throw(const struct char_data *ch, int class_num, int type)
+{
+  byte value;
+
+  class_lookup_subject = ch;
+  value = saving_throws(class_num, type, GET_LEVEL(ch));
+  class_lookup_subject = NULL;
+  return value;
+}
+
+int char_level_exp(const struct char_data *ch, int level)
+{
+  int value;
+
+  class_lookup_subject = ch;
+  value = level_exp(GET_CLASS(ch), level);
+  class_lookup_subject = NULL;
+  return value;
 }
 
 /* Default titles of male characters. */
