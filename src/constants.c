@@ -17,9 +17,10 @@
 *    entry per value plus a final "\n" sentinel, i.e. NUM_x + 1 entries.
 *    sprinttype(), sprintbit() and get_flag_by_name() walk them until the
 *    sentinel, so a missing name shifts every later name by one and a
-*    lookup past the end reads the sentinel (or beyond).  connected_types
-*    and preference_bits are checked against their bounds at compile time
-*    at the bottom of this file; add such a check when you touch another.
+*    lookup past the end reads the sentinel (or beyond).  Every table that
+*    has a structs.h count is checked against it at compile time at the
+*    bottom of this file (CONST_TABLE_ASSERT); add a check with any new
+*    table.
 *  - Tables with no sentinel (wear_where, fullness, weekdays, month_name,
 *    rev_dir, movement_loss, drink_aff and the *_app attribute tables) are
 *    indexed directly: callers must pass an index already validated against
@@ -1009,3 +1010,47 @@ CONST_TABLE_ASSERT(CONST_TABLE_LEN(connected_types) == CON_GET_PROTOCOL + 2,
 /** preference_bits[] names every PRF_ flag (NUM_PRF_FLAGS of them). */
 CONST_TABLE_ASSERT(CONST_TABLE_LEN(preference_bits) == NUM_PRF_FLAGS + 1,
                    preference_bits_len);
+
+/* Tables without a "\n" sentinel have exactly one entry per value; every
+ * index into them must already be range-checked by the caller. */
+CONST_TABLE_ASSERT(CONST_TABLE_LEN(dirs) == NUM_OF_DIRS + 1, dirs_len);
+CONST_TABLE_ASSERT(CONST_TABLE_LEN(autoexits) == NUM_OF_DIRS + 1,
+                   autoexits_len);
+CONST_TABLE_ASSERT(CONST_TABLE_LEN(rev_dir) == NUM_OF_DIRS, rev_dir_len);
+CONST_TABLE_ASSERT(CONST_TABLE_LEN(room_bits) == NUM_ROOM_FLAGS + 1,
+                   room_bits_len);
+CONST_TABLE_ASSERT(CONST_TABLE_LEN(zone_bits) == NUM_ZONE_FLAGS + 1,
+                   zone_bits_len);
+CONST_TABLE_ASSERT(CONST_TABLE_LEN(sector_types) == NUM_ROOM_SECTORS + 1,
+                   sector_types_len);
+CONST_TABLE_ASSERT(CONST_TABLE_LEN(movement_loss) == NUM_ROOM_SECTORS,
+                   movement_loss_len);
+CONST_TABLE_ASSERT(CONST_TABLE_LEN(genders) == NUM_GENDERS + 1, genders_len);
+CONST_TABLE_ASSERT(CONST_TABLE_LEN(position_types) == NUM_POSITIONS + 1,
+                   position_types_len);
+/* NUM_MOB_FLAGS (19) leaves out the internal MOB_NOTDEADYET (19), so medit
+ * cannot offer it; the name table still names it ("DEAD"). */
+CONST_TABLE_ASSERT(CONST_TABLE_LEN(action_bits) == MOB_NOTDEADYET + 2,
+                   action_bits_len);
+CONST_TABLE_ASSERT(CONST_TABLE_LEN(affected_bits) == NUM_AFF_FLAGS + 1,
+                   affected_bits_len);
+CONST_TABLE_ASSERT(CONST_TABLE_LEN(wear_where) == NUM_WEARS, wear_where_len);
+CONST_TABLE_ASSERT(CONST_TABLE_LEN(equipment_types) == NUM_WEARS + 1,
+                   equipment_types_len);
+CONST_TABLE_ASSERT(CONST_TABLE_LEN(item_types) == NUM_ITEM_TYPES + 1,
+                   item_types_len);
+CONST_TABLE_ASSERT(CONST_TABLE_LEN(wear_bits) == NUM_ITEM_WEARS + 1,
+                   wear_bits_len);
+CONST_TABLE_ASSERT(CONST_TABLE_LEN(extra_bits) == NUM_ITEM_FLAGS + 1,
+                   extra_bits_len);
+CONST_TABLE_ASSERT(CONST_TABLE_LEN(apply_types) == NUM_APPLIES + 1,
+                   apply_types_len);
+CONST_TABLE_ASSERT(CONST_TABLE_LEN(drinks) == NUM_LIQ_TYPES + 1, drinks_len);
+CONST_TABLE_ASSERT(CONST_TABLE_LEN(drinknames) == NUM_LIQ_TYPES + 1,
+                   drinknames_len);
+CONST_TABLE_ASSERT(CONST_TABLE_LEN(color_liquid) == NUM_LIQ_TYPES + 1,
+                   color_liquid_len);
+CONST_TABLE_ASSERT(CONST_TABLE_LEN(drink_aff) == NUM_LIQ_TYPES,
+                   drink_aff_len);
+CONST_TABLE_ASSERT(CONST_TABLE_LEN(history_types) == NUM_HIST + 1,
+                   history_types_len);
