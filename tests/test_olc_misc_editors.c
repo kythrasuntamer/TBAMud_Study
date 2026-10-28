@@ -393,6 +393,13 @@ static void social_fixture_free(void)
 }
 
 /* ---------------------------------------------------------------------
+ * Text files (db.c globals not already in test_stubs.c)
+ * ------------------------------------------------------------------- */
+char *credits = NULL, *news = NULL, *help = NULL, *ihelp = NULL,
+     *info = NULL, *wizlist = NULL, *immlist = NULL, *handbook = NULL,
+     *policies = NULL;
+
+/* ---------------------------------------------------------------------
  * Builder fixture
  * ------------------------------------------------------------------- */
 static struct char_data builder;
@@ -774,9 +781,64 @@ static void test_astat_bad_stored_position_is_reported(void)
   TEST_ASSERT_NOT_NULL(strstr(out, "<invalid"));  /* %-8.8s */
 }
 
+/* ---------------------------------------------------------------------
+ * tedit
+ * ------------------------------------------------------------------- */
+
+/* F2-04: the editor works on a private copy.  '/c' must not free or NULL
+ * the live GREETINGS, and saving an empty buffer publishes "" (comm.c runs
+ * strlen(GREETINGS) on each connection) with a warning. */
+static void test_tedit_clear_then_save_keeps_greetings_non_null(void)
+{
+  char cmd[] = " greetings";
+
+  GREETINGS = strdup("Welcome!\r\n");
+  do_tedit(&builder, cmd, 0, 0);
+  TEST_ASSERT_EQUAL_INT(CON_TEDIT, STATE(&builder_desc));
+  TEST_ASSERT_TRUE(builder_desc.str != &GREETINGS);
+
+  /* improved-edit '/c': free the buffer being edited and NULL it. */
+  free(*builder_desc.str);
+  *builder_desc.str = NULL;
+  TEST_ASSERT_EQUAL_STRING("Welcome!\r\n", GREETINGS);
+
+  free(builder_desc.backstr);    /* string_add's STRINGADD_SAVE */
+  builder_desc.backstr = NULL;
+  tedit_string_cleanup(&builder_desc, STRINGADD_SAVE);
+  TEST_ASSERT_NOT_NULL(GREETINGS);
+  TEST_ASSERT_EQUAL_STRING("", GREETINGS);
+  TEST_ASSERT_EQUAL_STRING("tedit-empty", tb_captured_operation);
+  TEST_ASSERT_NULL(builder_desc.olc);
+  free(GREETINGS);
+  GREETINGS = NULL;
+}
+
+/* F2-04: an abort leaves the live text exactly as it was. */
+static void test_tedit_abort_leaves_live_text(void)
+{
+  char cmd[] = " motd";
+  char *before;
+
+  motd = strdup("Old motd\r\n");
+  before = motd;
+  do_tedit(&builder, cmd, 0, 0);
+  /* string_add's abort: restore backstr into the edited buffer. */
+  free(*builder_desc.str);
+  *builder_desc.str = builder_desc.backstr;
+  builder_desc.backstr = NULL;
+  tedit_string_cleanup(&builder_desc, STRINGADD_ABORT);
+  TEST_ASSERT_TRUE(motd == before);
+  TEST_ASSERT_EQUAL_STRING("Old motd\r\n", motd);
+  TEST_ASSERT_NULL(builder_desc.olc);
+  free(motd);
+  motd = NULL;
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(test_tedit_clear_then_save_keeps_greetings_non_null);
+  RUN_TEST(test_tedit_abort_leaves_live_text);
   RUN_TEST(test_aedit_rejects_out_of_range_position_and_level);
   RUN_TEST(test_astat_bad_stored_position_is_reported);
   RUN_TEST(test_qedit_delete_unsaved_quest_is_refused_loudly);

@@ -20,29 +20,84 @@
 extern time_t motdmod;
 extern time_t newsmod;
 
+/* The text files tedit can edit.  buffer is the live global that the rest
+ * of the server reads (GREETINGS on every new connection, motd at login,
+ * and so on); it must never be NULL and is only replaced, whole, on save. */
+static const struct tedit_file {
+  const char *cmd;
+  char level;
+  char **buffer;
+  int  size;
+  const char *filename;
+} tedit_files[] = {
+	/* edit the lvls to your own needs */
+	{ "credits",	LVL_IMPL,	&credits,	2400,	CREDITS_FILE},
+	{ "news",	LVL_GRGOD,	&news,		8192,	NEWS_FILE},
+	{ "motd",	LVL_GRGOD,	&motd,		2400,	MOTD_FILE},
+	{ "imotd",	LVL_IMPL,	&imotd,		2400,	IMOTD_FILE},
+        { "greetings",  LVL_IMPL,       &GREETINGS,     2400,   GREETINGS_FILE},
+        { "help",       LVL_GRGOD,      &help,          2400,   HELP_PAGE_FILE},
+	{ "ihelp",      LVL_GRGOD,	&ihelp, 	2400,	IHELP_PAGE_FILE},
+	{ "info",	LVL_GRGOD,	&info,		8192,	INFO_FILE},
+	{ "background",	LVL_IMPL,	&background,	8192,	BACKGROUND_FILE},
+	{ "handbook",   LVL_IMPL,	&handbook,	8192,   HANDBOOK_FILE},
+	{ "policies",	LVL_IMPL,	&policies,	8192,	POLICIES_FILE},
+        { "wizlist",    LVL_IMPL,       &wizlist,       2400,   WIZLIST_FILE},
+        { "immlist",    LVL_GRGOD,      &immlist,       2400,   IMMLIST_FILE},
+	{ "\n",		0,		NULL,		0,	NULL }
+};
+
+#define NUM_TEDIT_FILES ((int)(sizeof(tedit_files) / sizeof(tedit_files[0])) - 1)
+
+/* While editing, OLC_NUM is the tedit_files[] row and OLC_STORAGE is the
+ * builder's private copy of the text (d->str points at it).  The live
+ * global is left alone until a save publishes the copy, so '/c' or a
+ * disconnect can no longer leave GREETINGS NULL or freed under every other
+ * connection, and two editors of one file no longer share one buffer. */
 void tedit_string_cleanup(struct descriptor_data *d, int terminator)
 {
   FILE *fl;
-  char *storage = OLC_STORAGE(d);
+  int row = (int)OLC_NUM(d);
+  const struct tedit_file *file;
+  char *text;
 
-  if (!storage)
-    terminator = STRINGADD_ABORT;
+  if (row < 0 || row >= NUM_TEDIT_FILES) {
+    TB_ERROR_MSG("olc", "tedit-row-range", "tedit_files",
+                 "row %d outside 0..%d editor " DIAG_CHAR_FMT,
+                 row, NUM_TEDIT_FILES - 1, DIAG_CHAR(d->character));
+    write_to_output(d, "Edit aborted: the file being edited is unknown.\r\n");
+    cleanup_olc(d, CLEANUP_ALL);
+    STATE(d) = CON_PLAYING;
+    return;
+  }
+  file = &tedit_files[row];
 
   switch (terminator) {
   case STRINGADD_SAVE:
-    if (!(fl = fopen(storage, "w")))
-      mudlog(CMP, LVL_IMPL, TRUE, "SYSERR: Can't write file '%s'.", storage);
+    /* '/c' then '/s' leaves the copy NULL.  Publish "" rather than NULL:
+     * comm.c runs strlen(GREETINGS) on each new connection. */
+    text = OLC_STORAGE(d);
+    OLC_STORAGE(d) = NULL;
+    if (!text || !*text) {
+      TB_WARN_MSG("olc", "tedit-empty", file->filename,
+                  "saved empty text editor " DIAG_CHAR_FMT, DIAG_CHAR(d->character));
+      free(text);
+      text = strdup("");
+    }
+    strip_cr(text);
+    free(*file->buffer);
+    *file->buffer = text;
+
+    if (!(fl = fopen(file->filename, "w")))
+      mudlog(CMP, LVL_IMPL, TRUE, "SYSERR: Can't write file '%s'.", file->filename);
     else {
-      if (*d->str) {
-        strip_cr(*d->str);
-        tb_fputs(*d->str, fl);
-      }
+      tb_fputs(text, fl);
       tb_fclose(fl);
-      mudlog(CMP, MAX(LVL_GOD, GET_INVIS_LEV(d->character)), TRUE, "OLC: %s saves '%s'.", GET_NAME(d->character), storage);
+      mudlog(CMP, MAX(LVL_GOD, GET_INVIS_LEV(d->character)), TRUE, "OLC: %s saves '%s'.", GET_NAME(d->character), file->filename);
       write_to_output(d, "Saved.\r\n");
-      if (!strcmp(storage, NEWS_FILE))
+      if (!strcmp(file->filename, NEWS_FILE))
         newsmod = time(0);
-      if (!strcmp(storage, MOTD_FILE))
+      if (!strcmp(file->filename, MOTD_FILE))
         motdmod = time(0);
     }
     break;
@@ -65,30 +120,7 @@ ACMD(do_tedit)
   int l, i = 0;
   char field[MAX_INPUT_LENGTH];
   char *backstr = NULL;
-
-  struct {
-    char *cmd;
-    char level;
-    char **buffer;
-    int  size;
-    char *filename;
-  } fields[] = {
-	/* edit the lvls to your own needs */
-	{ "credits",	LVL_IMPL,	&credits,	2400,	CREDITS_FILE},
-	{ "news",	LVL_GRGOD,	&news,		8192,	NEWS_FILE},
-	{ "motd",	LVL_GRGOD,	&motd,		2400,	MOTD_FILE},
-	{ "imotd",	LVL_IMPL,	&imotd,		2400,	IMOTD_FILE},
-        { "greetings",  LVL_IMPL,       &GREETINGS,     2400,   GREETINGS_FILE},
-        { "help",       LVL_GRGOD,      &help,          2400,   HELP_PAGE_FILE},
-	{ "ihelp",      LVL_GRGOD,	&ihelp, 	2400,	IHELP_PAGE_FILE},
-	{ "info",	LVL_GRGOD,	&info,		8192,	INFO_FILE},
-	{ "background",	LVL_IMPL,	&background,	8192,	BACKGROUND_FILE},
-	{ "handbook",   LVL_IMPL,	&handbook,	8192,   HANDBOOK_FILE},
-	{ "policies",	LVL_IMPL,	&policies,	8192,	POLICIES_FILE},
-        { "wizlist",    LVL_IMPL,       &wizlist,       2400,   WIZLIST_FILE},
-        { "immlist",    LVL_GRGOD,      &immlist,       2400,   IMMLIST_FILE},
-	{ "\n",		0,		NULL,		0,	NULL }
-  };
+  const struct tedit_file *fields = tedit_files;
 
   if (ch->desc == NULL)
     return;
@@ -138,10 +170,12 @@ ACMD(do_tedit)
   if (*fields[l].buffer) {
     send_to_char(ch, "%s", *fields[l].buffer);
     backstr = strdup(*fields[l].buffer);
+    OLC_STORAGE(ch->desc) = strdup(*fields[l].buffer);
   }
 
-  OLC_STORAGE(ch->desc) = strdup(fields[l].filename);
-  string_write(ch->desc, (char **)fields[l].buffer, fields[l].size, 0, backstr);
+  /* Edit a private copy; tedit_string_cleanup publishes it on save. */
+  OLC_NUM(ch->desc) = l;
+  string_write(ch->desc, &OLC_STORAGE(ch->desc), fields[l].size, 0, backstr);
 
   act("$n begins editing a scroll.", TRUE, ch, 0, 0, TO_ROOM);
   SET_BIT_AR(PLR_FLAGS(ch), PLR_WRITING);
