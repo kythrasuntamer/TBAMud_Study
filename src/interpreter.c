@@ -1315,11 +1315,23 @@ static bool perform_new_char_dupe_check(struct descriptor_data *d)
     if (k == d)
       continue;
 
-   if (k->character == NULL)
+    /* Any client controls the other sockets: a peer still typing its name
+     * (CON_GET_NAME) or one that answered 'N' at CON_NAME_CNFRM legitimately
+     * has a character whose player.name is NULL. Only a NULL name past name
+     * confirmation (and outside the game) breaks the login invariant. */
+    if (k->character == NULL || IS_NPC(k->character))
       continue;
+    if (GET_PC_NAME(k->character) == NULL) {
+      if (STATE(k) > CON_NAME_CNFRM && STATE(k) != CON_PLAYING)
+        TB_WARN_MSG("interpreter", "new-char-dupe-check", "descriptor",
+                    "desc %d state %d has a character with a NULL name "
+                    "while checking new " DIAG_CHAR_FMT,
+                    k->desc_num, STATE(k), DIAG_CHAR(d->character));
+      continue;
+    }
 
-    /* Do the player names match? */
-    if (!strcmp(GET_NAME(k->character), GET_NAME(d->character))) {
+    /* Do the player names match? str_cmp, as valid_name() does. */
+    if (!str_cmp(GET_PC_NAME(k->character), GET_PC_NAME(d->character))) {
       /* Check the other character is still in creation? */
       if ((STATE(k) > CON_PLAYING) && (STATE(k) < CON_QCLASS)) {
         /* Boot the older one */
@@ -1349,7 +1361,9 @@ static bool perform_new_char_dupe_check(struct descriptor_data *d)
 
         mudlog(NRM, LVL_GOD, TRUE, "SYSERR: Multiple logins with 1st in-game and the 2nd in char creation.");
 
-        found = TRUE;
+        /* d->character is now NULL: stop before the next iteration reads its
+         * name. The caller sees STATE(d) == CON_CLOSE. */
+        return TRUE;
       }
     }
   }
@@ -1622,6 +1636,10 @@ void nanny(struct descriptor_data *d, char *arg)
 	return;
       }
       perform_new_char_dupe_check(d);
+      /* The dupe check closes this socket (and drops d->character) when the
+       * same name is already in game. */
+      if (STATE(d) == CON_CLOSE || d->character == NULL)
+        return;
       write_to_output(d, "New character.\r\nGive me a password for %s: ", GET_PC_NAME(d->character));
       echo_off(d);
       STATE(d) = CON_NEWPASSWD;

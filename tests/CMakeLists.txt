@@ -100,6 +100,11 @@ if(CRYPT_LIBRARY)
     target_link_libraries(test_interpreter PRIVATE ${CRYPT_LIBRARY})
 endif()
 target_link_libraries(test_interpreter PRIVATE ${SODIUM_LIBRARY})
+# Count the structured diagnostics interpreter.c emits (see the test's
+# __wrap_tb_error_log_at).
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_link_options(test_interpreter PRIVATE -Wl,--wrap=tb_error_log_at)
+endif()
 
 # ---------------------------------------------------------------------------
 # test_class — covers src/class.c
