@@ -16,6 +16,7 @@
 #include "sysdep.h"
 #include "structs.h"
 #include "utils.h"
+#include "comm.h"
 #include "db.h"
 #include "shop.h"
 #include "genolc.h"
@@ -1512,6 +1513,64 @@ static void remove_zone_command_frees_var_strings(void)
 }
 
 /* ------------------------------------------------------------------------ */
+/* G2-02: players on a deleted quest.                                       */
+/* ------------------------------------------------------------------------ */
+
+/* quest.c clear_quest(), which delete_quest() uses. */
+void clear_quest(struct char_data *ch)
+{
+  GET_QUEST(ch) = NOTHING;
+  GET_QUEST_TIME(ch) = -1;
+  GET_QUEST_COUNTER(ch) = 0;
+  REMOVE_BIT_AR(PRF_FLAGS(ch), PRF_QUEST);
+}
+
+static void make_quest_player(struct char_data *ch, struct player_special_data *sp,
+                              long idnum, qst_vnum quest)
+{
+  memset(ch, 0, sizeof(*ch));
+  memset(sp, 0, sizeof(*sp));
+  ch->player_specials = sp;
+  ch->char_specials.saved.idnum = idnum;
+  GET_QUEST(ch) = quest;
+  GET_QUEST_COUNTER(ch) = 3;
+}
+
+/* delete_quest() left every player on the deleted quest holding its vnum,
+ * which do_score then looked up as aquest_table[NOTHING].  Players in the
+ * game and at the menu are taken off it; other players keep their quests. */
+static void delete_quest_clears_players_on_it(void)
+{
+  struct char_data in_game, on_other, at_menu;
+  struct player_special_data sp1, sp2, sp3;
+  struct descriptor_data menu_desc;
+
+  make_zones(1);
+  make_quest(50, NOBODY);
+  make_quest_player(&in_game, &sp1, 101, 50);
+  make_quest_player(&on_other, &sp2, 102, 51);
+  make_quest_player(&at_menu, &sp3, 103, 50);
+  in_game.next = &on_other;
+  character_list = &in_game;
+  memset(&menu_desc, 0, sizeof(menu_desc));
+  menu_desc.connected = CON_MENU;
+  menu_desc.character = &at_menu;
+  descriptor_list = &menu_desc;
+
+  TEST_ASSERT_TRUE(delete_quest(0));
+
+  TEST_ASSERT_EQUAL_INT(NOTHING, GET_QUEST(&in_game));
+  TEST_ASSERT_EQUAL_INT(0, GET_QUEST_COUNTER(&in_game));
+  TEST_ASSERT_EQUAL_INT(51, GET_QUEST(&on_other));
+  TEST_ASSERT_EQUAL_INT(NOTHING, GET_QUEST(&at_menu));
+  TEST_ASSERT_EQUAL_INT(2, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("quest-delete-player", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "quest vnum 50 deleted while player idnum 103"));
+  character_list = NULL;
+  descriptor_list = NULL;
+}
+
+/* ------------------------------------------------------------------------ */
 /* Temporary world directory for the writers.                               */
 /* ------------------------------------------------------------------------ */
 static char test_root[] = "/tmp/tb-genolc-XXXXXX";
@@ -1620,6 +1679,7 @@ int main(void)
   RUN_TEST(add_object_refuses_vnum_outside_every_zone);
   RUN_TEST(remove_shop_list_entries_reports_bad_index);
   RUN_TEST(remove_zone_command_frees_var_strings);
+  RUN_TEST(delete_quest_clears_players_on_it);
   failures = UNITY_END();
   leave_test_root();
   return failures;
