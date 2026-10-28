@@ -73,6 +73,15 @@ ACMD(do_oasis_qedit)
   char buf1[MAX_INPUT_LENGTH];
   char buf2[MAX_INPUT_LENGTH];
 
+  /* A forced immortal, or a mob or switched body, may have no descriptor,
+   * and the editor lives on ch->desc. */
+  if (IS_NPC(ch) || !ch->desc || STATE(ch->desc) != CON_PLAYING) {
+    TB_WARN_MSG("olc", "olc-no-descriptor", "qedit",
+                DIAG_CHAR_FMT " has_desc %d state %d", DIAG_CHAR(ch),
+                ch->desc != NULL, ch->desc ? STATE(ch->desc) : -1);
+    return;
+  }
+
   /****************************************************************************/
   /** Parse any arguments.                                                   **/
   /****************************************************************************/

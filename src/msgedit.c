@@ -321,7 +321,16 @@ ACMD(do_msgedit)
 {
   int num;
   struct descriptor_data *d;
-  
+
+  /* Both the listing (page_string) and the editor need ch->desc; a forced
+   * immortal or a mob has none. */
+  if (IS_NPC(ch) || !ch->desc || STATE(ch->desc) != CON_PLAYING) {
+    TB_WARN_MSG("olc", "olc-no-descriptor", "msgedit",
+                DIAG_CHAR_FMT " has_desc %d state %d", DIAG_CHAR(ch),
+                ch->desc != NULL, ch->desc ? STATE(ch->desc) : -1);
+    return;
+  }
+
   if (!*argument) {
     show_messages(ch);
     return;  

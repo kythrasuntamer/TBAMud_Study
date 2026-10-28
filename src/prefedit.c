@@ -989,6 +989,15 @@ ACMD(do_oasis_prefedit)
   char buf1[MAX_STRING_LENGTH];
   char buf2[MAX_STRING_LENGTH];
 
+  /* prefedit is level 0, so a DG "mforce" can make a linkdead player
+   * (no descriptor) run it; everything below needs ch->desc. */
+  if (!ch->desc || STATE(ch->desc) != CON_PLAYING) {
+    TB_WARN_MSG("olc", "olc-no-descriptor", "prefedit",
+                DIAG_CHAR_FMT " has_desc %d state %d", DIAG_CHAR(ch),
+                ch->desc != NULL, ch->desc ? STATE(ch->desc) : -1);
+    return;
+  }
+
   /****************************************************************************/
   /** Parse any arguments.                                                   **/
   /****************************************************************************/

@@ -24,6 +24,8 @@
 #include "protocol.h"
 #include "quest.h"
 #include "act.h"
+#include "msgedit.h"
+#include "spells.h"
 #include "modify.h"
 #include "improved-edit.h"
 #include <stdarg.h>
@@ -417,6 +419,12 @@ static void social_fixture_free(void)
 char *credits = NULL, *news = NULL, *help = NULL, *ihelp = NULL,
      *info = NULL, *wizlist = NULL, *immlist = NULL, *handbook = NULL,
      *policies = NULL;
+
+/* ---------------------------------------------------------------------
+ * Combat messages (fight.c / spell_parser.c globals)
+ * ------------------------------------------------------------------- */
+struct message_list fight_messages[MAX_MESSAGES];
+struct spell_info_type spell_info[TOP_SPELL_DEFINE + 1];
 
 /* ---------------------------------------------------------------------
  * Builder fixture
@@ -968,9 +976,41 @@ static void test_tedit_abort_leaves_live_text(void)
   motd = NULL;
 }
 
+/* ---------------------------------------------------------------------
+ * Entry points without a descriptor
+ * ------------------------------------------------------------------- */
+
+/* F2-11: a linkdead player forced (e.g. by a DG mforce) to run an editor
+ * has no descriptor; each entry point refuses, loudly, before touching
+ * ch->desc. */
+static void test_editors_without_descriptor_refuse_loudly(void)
+{
+  char none[] = "", quest[] = " 3001", msg[] = " 1";
+
+  victim = victim_create("Bob", 77);
+  victim->player.level = LVL_IMPL;
+
+  do_oasis_prefedit(victim, none, 0, 0);
+  TEST_ASSERT_EQUAL_STRING("olc-no-descriptor", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "player idnum 77 has_desc 0"));
+
+  tb_error_capture_reset();
+  do_oasis_qedit(victim, quest, 0, 0);
+  TEST_ASSERT_EQUAL_STRING("olc-no-descriptor", tb_captured_operation);
+
+  tb_error_capture_reset();
+  do_msgedit(victim, msg, 0, 0);
+  TEST_ASSERT_EQUAL_STRING("olc-no-descriptor", tb_captured_operation);
+
+  tb_error_capture_reset();
+  do_msgedit(victim, none, 0, 0);
+  TEST_ASSERT_EQUAL_STRING("olc-no-descriptor", tb_captured_operation);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(test_editors_without_descriptor_refuse_loudly);
   RUN_TEST(test_tedit_clear_then_save_keeps_greetings_non_null);
   RUN_TEST(test_tedit_abort_leaves_live_text);
   RUN_TEST(test_tedit_failed_save_is_loud_and_changes_nothing);
