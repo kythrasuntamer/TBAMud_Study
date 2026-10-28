@@ -142,6 +142,29 @@ int add_to_save_list(zone_vnum zone, int type) { (void)zone; (void)type; return 
 zone_rnum real_zone_by_thing(room_vnum vznum) { (void)vznum; return 0; }
 void dg_read_trigger(FILE *fp, void *proto, int type)
 { (void)fp; (void)proto; (void)type; }
+/* check_object() fixtures (constants.c, spell_parser.c, interpreter.c,
+ * handler.c). Zero bit counts make check_bitvector_names() accept nothing
+ * set, and the test objects set no flags. */
+size_t affected_bits_count = 0;
+size_t extra_bits_count = 0;
+size_t wear_bits_count = 0;
+const char *drinknames[] = { "water", "\n" };
+int scheck = 0;
+const char *unused_spellname = "!UNUSED!";
+const char *skill_name(int num) { (void)num; return unused_spellname; }
+int search_block(char *arg, const char **list, int exact)
+{
+  int i;
+  (void)exact;
+  for (i = 0; *list[i] != '\n'; i++)
+    if (!strcmp(arg, list[i]))
+      return i;
+  return -1;
+}
+char *any_one_arg(char *argument, char *first_arg)
+{ *first_arg = '\0'; return argument; }
+char *find_exdesc(char *word, struct extra_descr_data *list)
+{ (void)word; (void)list; return NULL; }
 void skip_spaces(char **string)                /* interpreter.c */
 { while (**string && isspace((unsigned char)**string)) (*string)++; }
 void split_argument(char *argument, char *tag) /* oasis.c, verbatim logic */
@@ -788,10 +811,38 @@ static void load_config_restores_default_for_empty_start_messg(void)
   config_fixture_free();
 }
 
+/* ---------------------------------------------------------------------
+ * check_object(): values that later index tables
+ * ------------------------------------------------------------------- */
+
+/* B1-11: a fountain or drink container with liquid 99 passed check_object()
+ * and later indexed drinks[]/drink_aff[] out of range in do_drink. */
+static void check_object_repairs_liquid_out_of_range(void)
+{
+  struct obj_data obj;
+  static struct index_data idx[1];
+
+  memset(&obj, 0, sizeof(obj));
+  idx[0].vnum = 3133;
+  obj_index = idx;
+  obj.item_number = 0;
+  obj.name = (char *)"fountain";
+  obj.short_description = (char *)"a fountain";
+  GET_OBJ_TYPE(&obj) = ITEM_FOUNTAIN;
+  GET_OBJ_VAL(&obj, 2) = 99;
+  TEST_ASSERT_TRUE(check_object(&obj));
+  TEST_ASSERT_EQUAL_INT(LIQ_WATER, GET_OBJ_VAL(&obj, 2));
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("object-check", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "obj vnum 3133 liquid 99"));
+  obj_index = NULL;
+}
+
 int main(void)
 {
   UNITY_BEGIN();
   RUN_TEST(load_zones_rejects_top_nowhere);
+  RUN_TEST(check_object_repairs_liquid_out_of_range);
   RUN_TEST(load_config_reads_full_length_line);
   RUN_TEST(load_config_restores_default_for_empty_menu);
   RUN_TEST(load_config_restores_default_for_empty_start_messg);

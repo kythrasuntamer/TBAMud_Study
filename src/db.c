@@ -2389,7 +2389,11 @@ char *parse_object(FILE *obj_f, int nr)
     case '$':
     case '#':
       top_of_objt = i;
-      check_object(obj_proto + i);
+      /* check_object() reports each problem itself and repairs the ones
+       * that would index a table out of range; the rest (a missing drink
+       * keyword, an odd weight) are legal in stock worlds, so a TRUE
+       * result is not fatal. */
+      (void)check_object(obj_proto + i);
       i++;
       return (line);
     default:
@@ -4307,6 +4311,17 @@ static int check_object(struct obj_data *obj)
   }
   /* Fall through. */
   case ITEM_FOUNTAIN:
+    /* Value 2 is the liquid type and indexes drinks[], drink_aff[] and
+     * drinknames[] (do_drink, shops). oedit only offers valid liquids, so
+     * an out-of-range value comes from a hand-edited .obj file: report it
+     * and make the container hold water. */
+    if (GET_OBJ_VAL(obj, 2) < 0 || GET_OBJ_VAL(obj, 2) >= NUM_LIQ_TYPES) {
+      TB_ERROR_MSG("db", "object-check", "liquid",
+                   "obj vnum %d liquid %d out of range 0..%d; using LIQ_WATER",
+                   GET_OBJ_VNUM(obj), GET_OBJ_VAL(obj, 2), NUM_LIQ_TYPES - 1);
+      GET_OBJ_VAL(obj, 2) = LIQ_WATER;
+      error = TRUE;
+    }
     if ((GET_OBJ_VAL(obj,0) > 0) && (GET_OBJ_VAL(obj, 1) > GET_OBJ_VAL(obj, 0)
         && (error = TRUE)))
       log("SYSERR: Object #%d (%s) contains (%d) more than maximum (%d).",
