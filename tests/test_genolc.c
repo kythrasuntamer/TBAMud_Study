@@ -9,6 +9,7 @@
 #include "unity.h"
 #include "genolc.c"  /* NOLINT(bugprone-suspicious-include): tests its file-scope writers */
 #include <sys/stat.h>
+#include <dirent.h>
 
 /* utils.c is linked, so its tb_error_log_at() exists; the test build wraps
  * calls from the code under test to this capturing version. */
@@ -344,12 +345,47 @@ static void test_saver_requeueing_work_is_bounded(void)
   TEST_ASSERT_TRUE(in_save_list(0, SL_WLD));
 }
 
+/* The fixture directory main() creates.  remove_fixture_dir() deletes what
+ * the exporters left in world/export and world, then the directories; it
+ * runs at exit (atexit), so a run that fails an assertion or exits early
+ * cleans up too.  Only a crash (abort) still leaves the directory. */
+static char fixture_dir[] = "/tmp/tb_test_genolc.XXXXXX";
+
+static void remove_dir_entries(const char *path)
+{
+  DIR *dir = opendir(path);
+  struct dirent *entry;
+  char name[PATH_MAX];
+
+  if (!dir)
+    return;
+  while ((entry = readdir(dir)) != NULL) {
+    if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, ".."))
+      continue;
+    if (snprintf(name, sizeof(name), "%s/%s", path, entry->d_name) < (int)sizeof(name))
+      (void)remove(name);
+  }
+  (void)closedir(dir);
+}
+
+static void remove_fixture_dir(void)
+{
+  if (chdir(fixture_dir) == 0) {
+    remove_dir_entries("world/export");
+    (void)rmdir("world/export");
+    remove_dir_entries("world");
+    (void)rmdir("world");
+  }
+  if (chdir("/") != 0 || rmdir(fixture_dir) != 0)
+    (void)fprintf(stdout, "test_genolc: could not remove %s\n", fixture_dir);
+}
+
 int main(void)
 {
-  char dir[] = "/tmp/tb_test_genolc.XXXXXX";
+  char *dir = fixture_dir;
 
-  if (!mkdtemp(dir) || chdir(dir) != 0 || mkdir("world", 0700) != 0 ||
-      mkdir("world/export", 0700) != 0) {
+  if (!mkdtemp(dir) || atexit(remove_fixture_dir) != 0 || chdir(dir) != 0 ||
+      mkdir("world", 0700) != 0 || mkdir("world/export", 0700) != 0) {
     perror("test_genolc fixture directory");
     return 1;
   }
