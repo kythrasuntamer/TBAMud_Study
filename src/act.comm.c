@@ -87,6 +87,10 @@ static bool legal_communication(char * arg)
   while (*arg) {
     if (*arg == '@') {
       arg++;
+      /* A trailing '@' leaves arg on the terminator: stepping past it read
+       * beyond the player's text. */
+      if (!*arg)
+        break;
       if (*arg == '(' || *arg == ')' || *arg == '<' || *arg == '>')
         return FALSE; 
     }

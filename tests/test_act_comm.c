@@ -62,7 +62,9 @@ void skip_spaces(char **string)
   while (**string == ' ')
     (*string)++;
 }
-void parse_at(char *str) { (void)str; }
+/* Counts calls: legal_communication() decides whether parse_at() runs. */
+static int parse_at_calls;
+void parse_at(char *str) { (void)str; parse_at_calls++; }
 void speech_mtrigger(char_data *actor, char *str) { (void)actor; (void)str; }
 void speech_wtrigger(char_data *actor, char *str) { (void)actor; (void)str; }
 int room_is_dark(room_rnum room) { (void)room; return 0; }
@@ -109,6 +111,8 @@ void setUp(void)
   act_format[0] = '\0';
   act_vict_obj = NULL;
   act_calls = 0;
+  parse_at_calls = 0;
+  CONFIG_SPECIAL_IN_COMM = 0;
   tb_error_capture_reset();
 }
 void tearDown(void) {}
@@ -240,6 +244,25 @@ static void body_social_using_t_runs(void)
   free(arg);
 }
 
+/* --- G2-09: '@' as the last character of said text --------------------- */
+
+static void trailing_at_sign_stays_inside_the_text(void)
+{
+  /* Exact-size heap copy: ASan reported the read one past the NUL. */
+  char *text = strdup("hi@");
+
+  CONFIG_SPECIAL_IN_COMM = 1;
+  do_say(&speaker, text, 0, 0);
+  TEST_ASSERT_EQUAL_INT(1, parse_at_calls);   /* still legal */
+  TEST_ASSERT_EQUAL_STRING("You say, 'hi@'", act_format);
+  free(text);
+
+  text = strdup("bad @( code");
+  do_say(&speaker, text, 0, 0);
+  TEST_ASSERT_EQUAL_INT(1, parse_at_calls);   /* rejected: not parsed */
+  free(text);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -250,5 +273,6 @@ int main(void)
   RUN_TEST(escape_truncates_between_pairs_and_reports);
   RUN_TEST(body_social_using_obj_code_is_refused);
   RUN_TEST(body_social_using_t_runs);
+  RUN_TEST(trailing_at_sign_stays_inside_the_text);
   return UNITY_END();
 }
