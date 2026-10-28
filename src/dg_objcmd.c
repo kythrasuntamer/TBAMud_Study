@@ -856,11 +856,26 @@ static const struct obj_command_info obj_cmd_info[] = {
     { "\n", 0, 0 }        /* this must be last */
 };
 
-/* This is the command interpreter used by objects, called by script_driver. */
+/* This is the command interpreter used by objects, called by script_driver
+ * (and by do_oat for its temporary clone).
+ *
+ * Owner lifetime contract: script_driver() stops a script and NULLs its
+ * owner pointer only when dg_owner_purged is set after a command. 'opurge
+ * self' sets it directly, but an object's own command can free the object in
+ * other ways: purging the container it is in (extract_obj() frees contents
+ * recursively), purging the room it sits in inside a container, or forcing
+ * a character to junk the container holding it. Any of these left
+ * script_driver reading the freed owner on the next line. The owner's UID is
+ * therefore captured before every command and checked afterwards: on return
+ * dg_owner_purged is set exactly when the owner is gone, so the caller stops.
+ * Callers must not use obj after this returns with dg_owner_purged set. */
 void obj_command_interpreter(obj_data *obj, char *argument)
 {
     int cmd, length;
     char *line, arg[MAX_INPUT_LENGTH];
+    long owner_uid;
+    obj_vnum owner_vnum;
+    int owner_gone;
 
     skip_spaces(&argument);
 
@@ -877,9 +892,30 @@ void obj_command_interpreter(obj_data *obj, char *argument)
         if (!strncmp(obj_cmd_info[cmd].command, arg, length))
             break;
 
-    if (*obj_cmd_info[cmd].command == '\n')
+    if (*obj_cmd_info[cmd].command == '\n') {
       obj_log(obj, "Unknown object cmd: '%s'", argument);
-    else
-        ((*obj_cmd_info[cmd].command_pointer)
-         (obj, line, cmd, obj_cmd_info[cmd].subcmd));
+      return;
+    }
+
+    owner_uid = obj_script_id(obj);
+    owner_vnum = GET_OBJ_VNUM(obj);
+    dg_owner_purged = 0;
+
+    ((*obj_cmd_info[cmd].command_pointer)
+     (obj, line, cmd, obj_cmd_info[cmd].subcmd));
+
+    /* The flag must describe this owner only. A nested script run by the
+     * command (another entity's trigger) may have left it set for its own
+     * owner, which is not ours. */
+    owner_gone = !obj_uid_matches(owner_uid, obj);
+    if (owner_gone && !dg_owner_purged) {
+      /* Handled (the script stops), but it means the script destroyed its
+       * own owner indirectly; say which object and which command. */
+      TB_WARN_MSG("dg", "owner-extracted", "obj_command_interpreter",
+                  "obj vnum %d uid %ld was extracted by its own '%.*s' command "
+                  "(not 'opurge self'); its script stops here", owner_vnum,
+                  owner_uid, (int)strcspn(obj_cmd_info[cmd].command, " "),
+                  obj_cmd_info[cmd].command);
+    }
+    dg_owner_purged = owner_gone;
 }

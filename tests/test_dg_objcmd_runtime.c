@@ -93,6 +93,69 @@ static void test_oat_clone_failure_is_reported(void)
   obj_index[saved].number++;
 }
 
+/* Run a one-trigger script on obj; returns the owner pointer as
+ * script_driver() left it (NULL once it decided the owner is gone). */
+static obj_data *run_obj_script(obj_data *obj, const char *const lines[])
+{
+  trig_data *t;
+  SCRIPT(obj) = dgw_script_with(OBJ_TRIGGER, OTRIG_RANDOM, lines);
+  t = TRIGGERS(SCRIPT(obj));
+  dg_script_execution_enter();   /* as when called from a trigger handler */
+  script_driver(&obj, t, OBJ_TRIGGER, TRIG_NEW);
+  dg_script_execution_leave();
+  return obj;
+}
+
+/* E1-03: an object whose script purges the container holding it is freed
+ * with the container. script_driver() must stop instead of running the next
+ * line (or reading SCRIPT()) on the freed owner. */
+static void test_purging_own_container_stops_the_script(void)
+{
+  static const char *const lines[] = { "opurge zzbag", "oecho still here", NULL };
+  struct obj_data *bag = dgw_obj(DGW_OBJ_BAG, 0);
+  struct obj_data *stone = dgw_obj(DGW_OBJ_STONE, NOWHERE);
+  obj_to_obj(stone, bag);
+
+  TEST_ASSERT_NULL(run_obj_script(stone, lines));
+  TEST_ASSERT_EQUAL_INT(1, dgw_saw("owner-extracted"));
+  TEST_ASSERT_NULL(world[0].contents);
+}
+
+/* E1-03: 'opurge' with no argument purges the room's objects; the owner is
+ * inside a container on the floor, so it goes too. */
+static void test_purging_the_room_from_inside_a_container_stops_the_script(void)
+{
+  static const char *const lines[] = { "opurge", "oecho still here", NULL };
+  struct obj_data *bag = dgw_obj(DGW_OBJ_BAG, 0);
+  struct obj_data *stone = dgw_obj(DGW_OBJ_STONE, NOWHERE);
+  obj_to_obj(stone, bag);
+
+  TEST_ASSERT_NULL(run_obj_script(stone, lines));
+  TEST_ASSERT_EQUAL_INT(1, dgw_saw("owner-extracted"));
+}
+
+/* E1-03: 'opurge self' is the expected way to end; no warning for it. */
+static void test_opurge_self_is_not_reported(void)
+{
+  static const char *const lines[] = { "opurge self", "oecho still here", NULL };
+  struct obj_data *stone = dgw_obj(DGW_OBJ_STONE, 0);
+
+  TEST_ASSERT_NULL(run_obj_script(stone, lines));
+  TEST_ASSERT_EQUAL_INT(0, dgw_saw("owner-extracted"));
+}
+
+/* A script that purges something else keeps running with its owner. */
+static void test_purging_something_else_keeps_the_owner(void)
+{
+  static const char *const lines[] = { "opurge zzbag", "oecho still here", NULL };
+  struct obj_data *stone = dgw_obj(DGW_OBJ_STONE, 0);
+  (void)dgw_obj(DGW_OBJ_BAG, 0);
+
+  TEST_ASSERT_EQUAL_PTR(stone, run_obj_script(stone, lines));
+  TEST_ASSERT_EQUAL_INT(0, dgw_saw("owner-extracted"));
+  TEST_ASSERT_EQUAL_INT(0, dg_owner_purged);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -100,5 +163,9 @@ int main(void)
   RUN_TEST(test_oat_clone_purging_itself);
   RUN_TEST(test_oat_clone_moved_away_is_still_destroyed);
   RUN_TEST(test_oat_clone_failure_is_reported);
+  RUN_TEST(test_purging_own_container_stops_the_script);
+  RUN_TEST(test_purging_the_room_from_inside_a_container_stops_the_script);
+  RUN_TEST(test_opurge_self_is_not_reported);
+  RUN_TEST(test_purging_something_else_keeps_the_owner);
   return UNITY_END();
 }
