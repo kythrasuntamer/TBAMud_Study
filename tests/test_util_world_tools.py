@@ -201,6 +201,14 @@ class Wld2HtmlTests(ToolCase):
         self.assertEqual(rc, 0, err)
         self.assertIn(b'href = "100.html"', self.read("200.html"))
 
+    def test_duplicate_door_rejected(self):
+        # I3-09: the second D0 leaked the first (LSan: 24 bytes lost).
+        rc, err = self.wld("#100\nRoom~\nDesc~\n0 0 0\n"
+                           "D0\n~\n~\n0 0 100\nD0\n~\n~\n0 0 100\nS\n$~\n")
+        self.assertEqual(rc, 1, err)
+        self.assertDiag(err, "wld-duplicate-door")
+        self.assertIn("room #100", err)
+
     def test_door_index_in_range_accepted(self):
         rc, err = self.wld("#100\nRoom~\nDesc~\n0 0 0\nD9\n~\n~\n"
                            "0 0 100\nS\n$~\n")

@@ -705,6 +705,14 @@ void setup_dir(FILE * fl, int room, int dir)
     exit(1);
   }
 
+  /*
+   * A room may define each direction once.  A second "D<dir>" block used
+   * to CREATE over the first, leaking it and silently keeping whichever
+   * came last.
+   */
+  if (world[room].dir_option[dir] != NULL)
+    WLD_PARSE_ERROR("wld-duplicate-door", "exit D%d is defined twice", dir);
+
   tb_snprintf(buf2, sizeof(buf2), "exit D%d text", dir);
 
   CREATE(world[room].dir_option[dir], struct room_direction_data, 1);
