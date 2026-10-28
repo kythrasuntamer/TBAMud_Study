@@ -130,3 +130,39 @@ foreach(_crash vars-noname hcontrol-time name-path-index name-path-login
         LABELS "fuzz" DISABLED TRUE
         ENVIRONMENT "ASAN_OPTIONS=${TBAMUD_ASAN_OPTIONS};UBSAN_OPTIONS=${TBAMUD_UBSAN_OPTIONS}")
 endforeach()
+
+# World-file loaders (db.c, dg_db_scripts.c): rooms, mobiles, objects, zones
+# and triggers, and the fread_string()/get_line()/file_to_string() readers
+# under them. Builders and implementors write these files (OLC or by hand);
+# a malformed one must be rejected with a diagnostic, never crash. The
+# harness #includes dg_db_scripts.c and a copy of db.c whose record cursors
+# it can reset (fuzz_world_db.cmake); the rest is linked from src/, and
+# --gc-sections drops what the loaders never reach.
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/fuzz_world_db.c
+    COMMAND ${CMAKE_COMMAND} -DIN=${CMAKE_SOURCE_DIR}/src/db.c
+            -DOUT=${CMAKE_CURRENT_BINARY_DIR}/fuzz_world_db.c
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/fuzz_world_db.cmake
+    DEPENDS ${CMAKE_SOURCE_DIR}/src/db.c ${CMAKE_CURRENT_SOURCE_DIR}/fuzz_world_db.cmake
+    COMMENT "Generating fuzz_world_db.c (db.c with resettable record cursors)"
+    VERBATIM)
+set_source_files_properties(${CMAKE_CURRENT_BINARY_DIR}/fuzz_world_db.c
+    PROPERTIES GENERATED TRUE HEADER_FILE_ONLY TRUE)
+add_mud_fuzzer(fuzz_world world
+    ${CMAKE_CURRENT_SOURCE_DIR}/fuzz_world.c
+    ${CMAKE_CURRENT_BINARY_DIR}/fuzz_world_db.c
+    ${CMAKE_SOURCE_DIR}/src/utils.c
+    ${CMAKE_SOURCE_DIR}/src/config.c
+    ${CMAKE_SOURCE_DIR}/src/constants.c
+    ${CMAKE_SOURCE_DIR}/src/interpreter.c
+    ${CMAKE_SOURCE_DIR}/src/modify.c
+    ${CMAKE_SOURCE_DIR}/src/genzon.c
+    ${CMAKE_SOURCE_DIR}/src/genolc.c
+    ${CMAKE_SOURCE_DIR}/src/act.informative.c
+    ${CMAKE_SOURCE_DIR}/src/handler.c)
+target_include_directories(fuzz_world PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+# The sancov PC tables are __start_/__stop_ sections, which ld keeps as GC
+# roots by default; they reference every instrumented function, so nothing
+# would be collected and the unreached parts of the linked files (which call
+# into the whole game) would fail to link.
+target_link_options(fuzz_world PRIVATE -Wl,-z,start-stop-gc)
