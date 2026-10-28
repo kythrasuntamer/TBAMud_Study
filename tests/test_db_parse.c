@@ -1309,6 +1309,122 @@ static void fread_number_reports_bad_format(void)
   TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "expected a digit"));
 }
 
+/* ---------------------------------------------------------------------
+ * Empty ("~") world strings the game prints unchecked (G2-03)
+ * ------------------------------------------------------------------- */
+
+/* parse_object()/parse_mobile() keep their slot cursors in statics, like
+ * parse_room(): the tests share one prototype table of each kind. */
+#define PROTO_FIXTURES 4
+static struct obj_data obj_proto_fixture[PROTO_FIXTURES];
+static struct index_data obj_index_fixture[PROTO_FIXTURES];
+static struct char_data mob_proto_fixture[PROTO_FIXTURES];
+static struct index_data mob_index_fixture[PROTO_FIXTURES];
+
+static void proto_fixture_free(void)
+{
+  int k;
+
+  for (k = 0; k < PROTO_FIXTURES; k++) {
+    struct obj_data *obj = &obj_proto_fixture[k];
+    struct char_data *mob = &mob_proto_fixture[k];
+
+    free(obj->name);
+    free(obj->short_description);
+    free(obj->description);
+    free(obj->action_description);
+    free_extra_descriptions(obj->ex_description);
+    memset(obj, 0, sizeof(*obj));
+    free(mob->player.name);
+    free(mob->player.short_descr);
+    free(mob->player.long_descr);
+    free(mob->player.description);
+    memset(mob, 0, sizeof(*mob));
+  }
+  obj_proto = NULL;
+  obj_index = NULL;
+  mob_proto = NULL;
+  mob_index = NULL;
+}
+
+/* fread_string() returns NULL for "~"; parse_room() stored it as the room
+ * name and description and as an extra description keyword, which 'look'
+ * and find_exdesc() dereference. */
+static void parse_room_replaces_empty_strings(void)
+{
+  static const char text[] =
+    "~\n~\n0 0 0 0 0 0\nE\n~\nA brass plaque.\n~\nS\n$\n";
+  struct room_data *room;
+
+  room_fixture_use();
+  parse_room_text(text, 108);
+  room = &world[top_of_world];
+  TEST_ASSERT_EQUAL_STRING("undefined", room->name);
+  TEST_ASSERT_EQUAL_STRING("undefined", room->description);
+  TEST_ASSERT_NOT_NULL(room->ex_description);
+  TEST_ASSERT_EQUAL_STRING("undefined", room->ex_description->keyword);
+  TEST_ASSERT_EQUAL_STRING("A brass plaque.\r\n", room->ex_description->description);
+  TEST_ASSERT_EQUAL_INT(3, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("world-string-missing", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail,
+                              "room vnum 108: empty extra description keyword"));
+  room_fixture_free();
+}
+
+/* An object with an empty short and long description: list_obj_to_char()
+ * read *description and strcmp()ed short descriptions (UBSan: load of null
+ * pointer), and an empty extra description keyword reached find_exdesc(). */
+static void parse_object_replaces_empty_strings(void)
+{
+  static const char text[] =
+    "sword~\n~\n~\n~\n"
+    "12 0 0 0 0 0 0 0 0 0 0 0 0\n0 0 0 0\n1 2 3 4 5\n"
+    "E\n~\nThe blade is notched.\n~\n$\n";
+  struct obj_data *obj;
+  FILE *fp = stream_of(text, sizeof(text) - 1);
+
+  obj_proto = obj_proto_fixture;
+  obj_index = obj_index_fixture;
+  (void)parse_object(fp, 3020);
+  TEST_ASSERT_EQUAL_INT(0, fclose(fp));
+  obj = &obj_proto[top_of_objt];
+  TEST_ASSERT_EQUAL_STRING("sword", obj->name);
+  TEST_ASSERT_EQUAL_STRING("undefined", obj->short_description);
+  TEST_ASSERT_EQUAL_STRING("Undefined", obj->description);  /* CAP()ed */
+  TEST_ASSERT_NULL(obj->action_description);  /* optional: stays NULL */
+  TEST_ASSERT_NOT_NULL(obj->ex_description);
+  TEST_ASSERT_EQUAL_STRING("undefined", obj->ex_description->keyword);
+  TEST_ASSERT_EQUAL_INT(3, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("world-string-missing", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail,
+                              "obj vnum 3020: empty extra description keyword"));
+  proto_fixture_free();
+}
+
+/* A mob with an empty short description: list_one_char() ran
+ * UPPER(*short_descr) and act() prints it as the mob's name. */
+static void parse_mobile_replaces_empty_short_description(void)
+{
+  static const char text[] =
+    "guard~\n~\nA guard stands here.\n~\nHe looks tough.\n~\n"
+    "0 0 0 0 0 0 0 0 0 S\n1 20 10 1d1+1 1d1+0\n0 0\n8 8 1\n$\n";
+  struct char_data *mob;
+  FILE *fp = stream_of(text, sizeof(text) - 1);
+
+  mob_proto = mob_proto_fixture;
+  mob_index = mob_index_fixture;
+  parse_mobile(fp, 3010);
+  TEST_ASSERT_EQUAL_INT(0, fclose(fp));
+  mob = &mob_proto[top_of_mobt];
+  TEST_ASSERT_EQUAL_STRING("undefined", mob->player.short_descr);
+  TEST_ASSERT_EQUAL_STRING("guard", mob->player.name);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("world-string-missing", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail,
+                              "mob vnum 3010: empty short description"));
+  proto_fixture_free();
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -1362,5 +1478,8 @@ int main(void)
   RUN_TEST(reset_zone_put_without_container_creates_nothing);
   RUN_TEST(reset_zone_object_variable_uses_arg2_context);
   RUN_TEST(renum_zone_table_reports_missing_variable_room);
+  RUN_TEST(parse_room_replaces_empty_strings);
+  RUN_TEST(parse_object_replaces_empty_strings);
+  RUN_TEST(parse_mobile_replaces_empty_short_description);
   return UNITY_END();
 }

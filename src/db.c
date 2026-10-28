@@ -1681,6 +1681,30 @@ static int room_sector_or_inside(int vnum, int sector)
   return SECT_INSIDE;
 }
 
+/** Placeholder for a world string the file left empty; OLC's str_udup()
+ * stores the same text for an empty entry. */
+#define WORLD_STRING_UNDEFINED "undefined"
+
+/** Return str, or a new WORLD_STRING_UNDEFINED with a diagnostic when it is
+ * NULL. fread_string() returns NULL for an empty ("~") string, but room
+ * names and descriptions, mob and object short descriptions, object long
+ * descriptions and extra descriptions are printed and dereferenced without
+ * a NULL check ('look' crashed on an object with no long description). OLC
+ * never saves one empty, so a NULL comes from a hand-edited world file;
+ * record and vnum name it in the report. */
+static char *world_string(char *str, const char *record, int vnum,
+                          const char *field)
+{
+  if (str)
+    return str;
+  TB_ERROR_MSG("db", "world-string-missing", record,
+               "%s vnum %d: empty %s; using \"" WORLD_STRING_UNDEFINED "\"",
+               record, vnum, field);
+  CREATE(str, char, sizeof(WORLD_STRING_UNDEFINED));
+  strlcpy(str, WORLD_STRING_UNDEFINED, sizeof(WORLD_STRING_UNDEFINED));
+  return str;
+}
+
 /** Parse room #virtual_nr into the next world[] slot.
  *
  * Boot-only, one sequential pass: the room cursor and the zone cursor are
@@ -1712,8 +1736,10 @@ void parse_room(FILE *fl, int virtual_nr)
     }
   world[room_nr].zone = zone;
   world[room_nr].number = virtual_nr;
-  world[room_nr].name = fread_string(fl, buf2);
-  world[room_nr].description = fread_string(fl, buf2);
+  world[room_nr].name =
+    world_string(fread_string(fl, buf2), "room", virtual_nr, "name");
+  world[room_nr].description =
+    world_string(fread_string(fl, buf2), "room", virtual_nr, "description");
 
   if (!get_line(fl, line)) {
     log("SYSERR: Expecting roomflags/sector type of room #%d but file ended!",
@@ -1807,8 +1833,10 @@ void parse_room(FILE *fl, int virtual_nr)
     }
     case 'E':
       CREATE(new_descr, struct extra_descr_data, 1);
-      new_descr->keyword = fread_string(fl, buf2);
-      new_descr->description = fread_string(fl, buf2);
+      new_descr->keyword = world_string(fread_string(fl, buf2), "room",
+                                        virtual_nr, "extra description keyword");
+      new_descr->description = world_string(fread_string(fl, buf2), "room",
+                                            virtual_nr, "extra description");
       ensure_newline_terminated(new_descr);
 
       new_descr->next = world[room_nr].ex_description;
@@ -2304,7 +2332,9 @@ void parse_mobile(FILE *mob_f, int nr)
 
   /* String data */
   mob_proto[i].player.name = fread_string(mob_f, buf2);
-  tmpptr = mob_proto[i].player.short_descr = fread_string(mob_f, buf2);
+  /* The short description is the mob's name in act() and the room list. */
+  tmpptr = mob_proto[i].player.short_descr =
+    world_string(fread_string(mob_f, buf2), "mob", nr, "short description");
   if (tmpptr && *tmpptr)
     if (starts_with_article(tmpptr))
       *tmpptr = LOWER(*tmpptr);
@@ -2470,12 +2500,14 @@ char *parse_object(FILE *obj_f, int nr)
     log("SYSERR: Null obj name or format error at or near %s", buf2);
     exit(1);
   }
-  tmpptr = obj_proto[i].short_description = fread_string(obj_f, buf2);
+  tmpptr = obj_proto[i].short_description =
+    world_string(fread_string(obj_f, buf2), "obj", nr, "short description");
   if (tmpptr && *tmpptr)
     if (starts_with_article(tmpptr))
       *tmpptr = LOWER(*tmpptr);
 
-  tmpptr = obj_proto[i].description = fread_string(obj_f, buf2);
+  tmpptr = obj_proto[i].description =
+    world_string(fread_string(obj_f, buf2), "obj", nr, "long description");
   if (tmpptr && *tmpptr)
     CAP(tmpptr);
   obj_proto[i].action_description = fread_string(obj_f, buf2);
@@ -2607,8 +2639,10 @@ char *parse_object(FILE *obj_f, int nr)
     switch (*line) {
     case 'E':
       CREATE(new_descr, struct extra_descr_data, 1);
-      new_descr->keyword = fread_string(obj_f, buf2);
-      new_descr->description = fread_string(obj_f, buf2);
+      new_descr->keyword = world_string(fread_string(obj_f, buf2), "obj", nr,
+                                        "extra description keyword");
+      new_descr->description = world_string(fread_string(obj_f, buf2), "obj",
+                                            nr, "extra description");
       new_descr->next = obj_proto[i].ex_description;
       obj_proto[i].ex_description = new_descr;
       break;
