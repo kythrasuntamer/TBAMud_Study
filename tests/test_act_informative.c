@@ -13,6 +13,7 @@
 #include "act.h"
 #include "quest.h"
 #include "class.h"
+#include "handler.h"
 
 #include "tb_error_capture.h"
 
@@ -598,6 +599,72 @@ static void where_marks_and_reports_full_listing(void)
   free_player(ch);
 }
 
+/* --- G2-18: a drink container holding more than its capacity -------- */
+
+/* do_look's word parsing (interpreter.c and handler.c are not linked). */
+int is_abbrev(const char *arg1, const char *arg2)
+{
+  if (!*arg1)
+    return 0;
+  for (; *arg1 && *arg2; arg1++, arg2++)
+    if (LOWER(*arg1) != LOWER(*arg2))
+      return 0;
+  return !*arg1;
+}
+int search_block(char *arg, const char **list, int exact)
+{ (void)arg; (void)list; (void)exact; return -1; }   /* no direction words */
+int get_number(char **name) { (void)name; return 1; }
+char *fname(const char *namelist)
+{
+  static char holder[MAX_INPUT_LENGTH];
+
+  strlcpy(holder, namelist, sizeof(holder));
+  return holder;
+}
+
+static struct obj_data *found_obj;
+int generic_find(char *arg, bitvector_t bitvector, struct char_data *ch,
+                 struct char_data **tar_ch, struct obj_data **tar_obj)
+{
+  (void)arg; (void)bitvector; (void)ch;
+  *tar_ch = NULL;
+  *tar_obj = found_obj;
+  return found_obj ? FIND_OBJ_INV : 0;
+}
+
+static void look_in_overfull_drinkcon_is_reported(void)
+{
+  struct char_data *ch = make_player(7);
+  struct obj_data flask;
+
+  enter_test_room(ch);
+  memset(&flask, 0, sizeof(flask));
+  flask.item_number = NOTHING;
+  flask.name = (char *)"flask";
+  GET_OBJ_TYPE(&flask) = ITEM_DRINKCON;
+  GET_OBJ_VAL(&flask, 0) = 5;     /* capacity */
+  GET_OBJ_VAL(&flask, 1) = 9;     /* amount: corrupt */
+  found_obj = &flask;
+
+  do_look(ch, (char *)"in flask", 0, SCMD_LOOK);
+  TEST_ASSERT_NOT_NULL(strstr(sent, "somewhat murky"));
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("drinkcon-invariant", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "amount 9 outside 0..capacity 5"));
+
+  /* A consistent container is described without a report. */
+  sent[0] = '\0';
+  tb_error_capture_reset();
+  GET_OBJ_VAL(&flask, 1) = 5;
+  do_look(ch, (char *)"in flask", 0, SCMD_LOOK);
+  TEST_ASSERT_NOT_NULL(strstr(sent, "full of a"));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+
+  found_obj = NULL;
+  leave_test_room(ch);
+  free_player(ch);
+}
+
 /* --- G2-14: add_history with act()'s NULL result ---------------------- */
 
 static void history_null_text_is_reported_not_stored(void)
@@ -647,6 +714,7 @@ int main(void)
   RUN_TEST(areas_truncates_long_listing_and_reports);
   RUN_TEST(who_reports_class_out_of_range);
   RUN_TEST(where_marks_and_reports_full_listing);
+  RUN_TEST(look_in_overfull_drinkcon_is_reported);
   RUN_TEST(history_null_text_is_reported_not_stored);
   return UNITY_END();
 }

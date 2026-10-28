@@ -708,9 +708,19 @@ static void look_in_obj(struct char_data *ch, char *arg)
           sprinttype(GET_OBJ_VAL(obj, 2), color_liquid, buf2, sizeof(buf2));
           send_to_char(ch, "It's full of a %s liquid.\r\n", buf2);
         }
-        else if (GET_OBJ_VAL(obj,1)>GET_OBJ_VAL(obj,0))
-          send_to_char(ch, "Its contents seem somewhat murky.\r\n"); /* BUG */
-        else
+        else if (GET_OBJ_VAL(obj, 1) > GET_OBJ_VAL(obj, 0) ||
+                 GET_OBJ_VAL(obj, 1) < 0) {
+          /* A drink container holds 0..capacity (value 0) drinks (value 1).
+           * The values come from the world file or oedit, and are changed
+           * at run time only by drinking, pouring and filling. More than
+           * capacity, or a negative amount, is corrupt object data: say
+           * so to the player as before, and report it. */
+          TB_WARN_MSG("act", "drinkcon-invariant", "obj",
+                      "obj vnum %d amount %d outside 0..capacity %d (seen by "
+                      DIAG_CHAR_FMT ")", GET_OBJ_VNUM(obj), GET_OBJ_VAL(obj, 1),
+                      GET_OBJ_VAL(obj, 0), DIAG_CHAR(ch));
+          send_to_char(ch, "Its contents seem somewhat murky.\r\n");
+        } else
         {
           char buf2[MAX_STRING_LENGTH];
 
