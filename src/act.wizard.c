@@ -2881,7 +2881,7 @@ ACMD(do_show)
     }
 
     TIME_STR(buf1, "%a %b %d %H:%M:%S %Y", localtime(&(vict->player.time.birth)));
-    TIME_STR(buf2, "%a %b %d %H:%H:%S %Y", localtime(&(vict->player.time.logon)));
+    TIME_STR(buf2, "%a %b %d %H:%M:%S %Y", localtime(&(vict->player.time.logon)));
 
     send_to_char(ch, "Player: %-12s (%s) [%2d %s]\r\n", GET_NAME(vict),
       /* Sex and class come from the pfile 'Sex '/'Clas' tags, unchecked. */

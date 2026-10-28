@@ -94,6 +94,7 @@ static int char_to_room_calls, char_from_room_calls, free_char_calls;
 static int save_char_calls, extract_final_calls, run_autowiz_calls;
 static int load_char_result = -1;
 static int load_char_level = 1;
+static time_t load_char_logon;
 static long load_char_idnum = 77;
 static int load_char_sex = SEX_MALE, load_char_class = CLASS_WARRIOR;
 static struct char_data *in_game_char;   /* returned by player lookups */
@@ -141,6 +142,7 @@ int load_char(const char *name, struct char_data *ch)
   GET_IDNUM(ch) = load_char_idnum;
   GET_SEX(ch) = load_char_sex;
   GET_CLASS(ch) = load_char_class;
+  ch->player.time.logon = load_char_logon;
   return load_char_result;
 }
 room_rnum real_room(room_vnum vnum)
@@ -373,6 +375,7 @@ void setUp(void)
   load_char_idnum = 77;
   load_char_sex = SEX_MALE;
   load_char_class = CLASS_WARRIOR;
+  load_char_logon = 0;
   reset_counters();
 }
 void tearDown(void) {}
@@ -975,14 +978,27 @@ static void test_stat_out_of_range_time_prints_placeholder(void)
   target.player.time.birth = (time_t) LLONG_MAX;
   target.player.time.logon = 0;
   RUN_CMD(do_stat, &imm, "player bobby");
-  TEST_ASSERT_NOT_NULL(strstr(sent, "Created: [?], Last Logon: [" ));
+  TEST_ASSERT_NOT_NULL(strstr(sent, "Created: [?], Last Logon: ["));
   in_game_char = NULL;
+}
+
+/* G1-31: 'show player' formatted the last logon as %H:%H:%S, printing the
+ * hour twice and no minutes. */
+static void test_show_player_last_logon_has_minutes(void)
+{
+  load_char_result = 0;
+  load_char_logon = 3723;   /* 01:02:03 UTC */
+  RUN_CMD(do_show, &imm, "player bobby");
+  TEST_ASSERT_NOT_NULL(strstr(sent, "Last: Thu Jan 01 01:02:03 1970"));
 }
 
 int main(void)
 {
   /* basic_mud_log()/mudlog() are the real utils.c ones; keep them quiet. */
   logfile = fopen("/dev/null", "w");
+  /* Time displays are compared literally. */
+  setenv("TZ", "UTC0", 1);
+  tzset();
   UNITY_BEGIN();
   RUN_TEST(test_set_file_room_is_refused_and_reported);
   RUN_TEST(test_stat_file_frees_copy_without_extracting);
@@ -1004,6 +1020,7 @@ int main(void)
   RUN_TEST(test_rename_moves_player_files_and_checks_the_index);
   RUN_TEST(test_last_file_torn_tail_is_reported_and_repaired);
   RUN_TEST(test_stat_out_of_range_time_prints_placeholder);
+  RUN_TEST(test_show_player_last_logon_has_minutes);
   {
     int failures = UNITY_END();
     if (logfile)
