@@ -850,6 +850,11 @@ static void unplaced_actor_is_reported(void)
   char said[] = "hello";
   speech_mtrigger(visitor, said);
   TEST_ASSERT_EQUAL_INT(2, tb_captured_errors);
+  /* Object command triggers scan the actor's room too. */
+  char cmd[] = "push", arg[] = "button";
+  TEST_ASSERT_EQUAL_INT(0, command_otrigger(visitor, cmd, arg));
+  TEST_ASSERT_EQUAL_INT(3, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("trigger-dispatch", tb_captured_operation);
 }
 
 /* Load triggers: a script may "return" SCRIPT_ERROR_CODE and purge itself,
