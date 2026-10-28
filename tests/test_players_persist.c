@@ -29,6 +29,7 @@
 int top_of_p_table = -1;
 int top_of_p_file = -1;
 long top_idnum = 0;
+struct index_data **trig_index = NULL;
 
 static char scratch_dir[256];
 
@@ -69,7 +70,15 @@ bitvector_t asciiflag_conv(char *flag)
 void parse_at(char *str) { (void)str; }
 
 void affect_total(struct char_data *ch) { (void)ch; }
-void affect_to_char(struct char_data *ch, struct affected_type *af) { (void)ch; (void)af; }
+/* Like handler.c: the character gets its own copy, at the head of the list. */
+void affect_to_char(struct char_data *ch, struct affected_type *af)
+{
+  struct affected_type *copy = malloc(sizeof(*copy));
+  TEST_ASSERT_NOT_NULL(copy);
+  *copy = *af;
+  copy->next = ch->affected;
+  ch->affected = copy;
+}
 void new_affect(struct affected_type *af) { memset(af, 0, sizeof(*af)); }
 void add_completed_quest(struct char_data *ch, qst_vnum vnum) { (void)ch; (void)vnum; }
 trig_rnum real_trigger(trig_vnum vnum) { (void)vnum; return NOTHING; }
@@ -429,6 +438,65 @@ static void test_huge_alias_count_is_rejected(void)
   TEST_ASSERT_EQUAL_STRING("pfile-alias", tb_captured_operation);
 }
 
+/* --- save_char() fixtures: a heap affect list handled like handler.c. --- */
+void affect_remove(struct char_data *ch, struct affected_type *af)
+{
+  struct affected_type **p;
+  for (p = &ch->affected; *p; p = &(*p)->next)
+    if (*p == af) {
+      *p = af->next;
+      free(af);
+      return;
+    }
+}
+static void add_affect(struct char_data *ch, int spell)
+{
+  struct affected_type *af = calloc(1, sizeof(*af));
+  TEST_ASSERT_NOT_NULL(af);
+  af->spell = spell;
+  af->duration = 5;
+  af->next = ch->affected;
+  ch->affected = af;
+}
+static void free_affects(struct char_data *ch)
+{
+  while (ch->affected)
+    affect_remove(ch, ch->affected);
+}
+struct obj_data *unequip_char(struct char_data *ch, int pos) { (void)ch; (void)pos; return NULL; }
+void equip_char(struct char_data *ch, struct obj_data *obj, int pos) { (void)ch; (void)obj; (void)pos; }
+void strip_cr(char *buf) { (void)buf; }
+void save_char_vars_ascii(FILE *file, struct char_data *ch) { (void)file; (void)ch; }
+
+/* B2-19: affects past MAX_AFFECT were removed from the live character and
+ * never re-applied (silently, for exactly one extra). */
+static void test_save_keeps_affects_past_max(void)
+{
+  int i, n = 0;
+  struct affected_type *a;
+
+  player.player.name = strdup("Tester");
+  GET_IDNUM(&player) = 4242;
+  GET_PFILEPOS(&player) = 0;
+  for (i = 1; i <= MAX_AFFECT + 1; i++)
+    add_affect(&player, i);
+
+  save_char(&player);
+
+  for (a = player.affected; a; a = a->next)
+    n++;
+  TEST_ASSERT_EQUAL_INT(MAX_AFFECT + 1, n);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_op_log, "save-affects\n"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail_log, "has 33 affects"));
+  TEST_ASSERT_NULL(strstr(tb_captured_op_log, "index-save"));
+  free_affects(&player);
+  {
+    char path[512];
+    if (get_filename(path, sizeof(path), PLR_FILE, "Tester"))
+      (void)remove(path);
+  }
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -447,6 +515,7 @@ int main(void)
   RUN_TEST(test_wrong_flag_word_count_is_reported);
   RUN_TEST(test_truncated_alias_list_is_reported);
   RUN_TEST(test_huge_alias_count_is_rejected);
+  RUN_TEST(test_save_keeps_affects_past_max);
   (void)rmdir(scratch_dir);
   return UNITY_END();
 }

@@ -855,6 +855,8 @@ void save_char(struct char_data * ch)
   int save_failed = FALSE;
   int i, j, id, save_index = FALSE;
   struct affected_type *aff, tmp_aff[MAX_AFFECT];
+  struct affected_type *extra_aff = NULL;	/* affects past MAX_AFFECT */
+  int num_extra = 0;
   struct obj_data *char_eq[NUM_WEARS];
   trig_data *t;
 
@@ -923,14 +925,31 @@ void save_char(struct char_data * ch)
     }
   }
 
+  /* The file holds at most MAX_AFFECT affects. The rest cannot be saved,
+   * but they must not be lost from the live character either: keep copies
+   * and re-apply them with the saved ones below. (They used to be removed
+   * and dropped, silently when there was exactly one extra.) */
+  if (aff) {
+    struct affected_type *a;
+
+    for (a = aff; a; a = a->next)
+      num_extra++;
+    CREATE(extra_aff, struct affected_type, num_extra);
+    for (j = 0, a = aff; a; a = a->next, j++) {
+      extra_aff[j] = *a;
+      extra_aff[j].next = NULL;
+    }
+    TB_ERROR_MSG("player", "save-affects", filename,
+                 "player idnum %ld has %d affects; only %d saved, %d kept in "
+                 "memory only", GET_IDNUM(ch), MAX_AFFECT + num_extra,
+                 MAX_AFFECT, num_extra);
+  }
+
   /* Remove the affections so that the raw values are stored; otherwise the
    * effects are doubled when the char logs back in. */
 
   while (ch->affected)
     affect_remove(ch, ch->affected);
-
-  if ((i >= MAX_AFFECT) && aff && aff->next)
-    log("SYSERR: WARNING: OUT OF STORE ROOM FOR AFFECTED TYPES!!!");
 
   ch->aff_abils = ch->real_abils;
   /* end char_to_store code */
@@ -1084,6 +1103,9 @@ void save_char(struct char_data * ch)
     if (tmp_aff[i].spell)
       affect_to_char(ch, &tmp_aff[i]);
   }
+  for (i = 0; i < num_extra; i++)
+    affect_to_char(ch, &extra_aff[i]);
+  free(extra_aff);
 
   for (i = 0; i < NUM_WEARS; i++) {
     if (char_eq[i])
