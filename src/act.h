@@ -136,6 +136,9 @@ void get_from_container(struct char_data *ch, struct obj_data *cont, char *arg, 
 /** Sacrifices obj (in ch's room or inventory) as 'sac' does: rewards ch,
  * spills obj's contents onto the floor and extracts obj. */
 void sacrifice_obj(struct char_data *ch, struct obj_data *obj);
+/** Boot-time check (comm.c, once rooms are indexed): reports each configured
+ * donation room vnum that has no room, as donation-room-missing. */
+void check_donation_rooms(void);
 /* functions with subcommands */
 /* do_drop */
 ACMD(do_drop);

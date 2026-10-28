@@ -5,6 +5,7 @@
  * H1-16: on a world without the DG caster proxy mob, damage() used to
  * exempt every player from ROOM_PEACEFUL (fixed in damage() itself), and
  * nothing ever told the operator that mob vnum DG_CASTER_PROXY was gone.
+ * H1-27: configured donation rooms were never checked against the world.
  *
  * comm.c is #included so its file-static functions can be called directly;
  * main() is renamed and unreferenced sections are discarded at link time.
@@ -24,9 +25,14 @@ mob_rnum real_mobile(mob_vnum vnum)
   return (proxy_loaded && vnum == DG_CASTER_PROXY) ? 0 : NOBODY;
 }
 
+/* act.item.c's donation-room check (tested in test_act_item): count calls. */
+static int donation_checks;
+void check_donation_rooms(void) { donation_checks++; }
+
 void setUp(void)
 {
   proxy_loaded = TRUE;
+  donation_checks = 0;
   tb_error_capture_reset();
 }
 void tearDown(void) {}
@@ -36,6 +42,14 @@ static void complete_world_reports_nothing(void)
 {
   report_world_gaps();
   TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+}
+
+/* H1-27: the configured donation rooms are checked against the world once
+ * per boot. */
+static void donation_rooms_are_checked_at_boot(void)
+{
+  report_world_gaps();
+  TEST_ASSERT_EQUAL_INT(1, donation_checks);
 }
 
 /* H1-16: a missing caster proxy is named once, at boot. */
@@ -58,5 +72,6 @@ int main(void)
   UNITY_BEGIN();
   RUN_TEST(complete_world_reports_nothing);
   RUN_TEST(missing_caster_proxy_is_reported);
+  RUN_TEST(donation_rooms_are_checked_at_boot);
   return UNITY_END();
 }

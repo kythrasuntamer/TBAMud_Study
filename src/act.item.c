@@ -788,6 +788,18 @@ static int donation_rooms(room_rnum cand[4])
   return n;
 }
 
+/* Boot-time form of the check above, called once from comm.c's
+ * report_world_gaps() after the rooms are indexed (also in syntax-check
+ * mode). The donation vnums come from the config file and cedit, which do
+ * not require the room to exist; a missing one is reported here, at boot,
+ * not first by a player's failed 'donate'. */
+void check_donation_rooms(void)
+{
+  room_rnum cand[4];
+
+  (void) donation_rooms(cand);
+}
+
 ACMD(do_drop)
 {
   char arg[MAX_INPUT_LENGTH];

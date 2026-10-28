@@ -585,9 +585,32 @@ static void test_drop_skips_object_moved_by_trigger(void)
   fx_free_char(pc);
 }
 
+/* H1-27: the boot-time check reports each configured donation room that
+ * does not exist, and is quiet about unset and existing ones, before any
+ * player tries to donate. */
+static void test_boot_check_reports_missing_donation_room(void)
+{
+  CONFIG_DON_ROOM_1 = NOWHERE;     /* not configured: not an error */
+  CONFIG_DON_ROOM_2 = 3063;        /* no such room */
+  CONFIG_DON_ROOM_3 = 3001;        /* exists */
+
+  check_donation_rooms();
+
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("WARNING", tb_captured_severity);
+  TEST_ASSERT_EQUAL_STRING("donation-room-missing", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "donation room 2 is vnum 3063"));
+
+  CONFIG_DON_ROOM_2 = NOWHERE;
+  tb_error_capture_reset();
+  check_donation_rooms();
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(test_boot_check_reports_missing_donation_room);
   RUN_TEST(test_drop_skips_object_moved_by_trigger);
   RUN_TEST(test_donate_with_only_room_three);
   RUN_TEST(test_donate_reports_missing_room);

@@ -718,6 +718,11 @@ static void report_world_gaps(void)
     TB_WARN_MSG("dg", "caster-proxy-missing", "mob",
                 "vnum %d (DG_CASTER_PROXY) does not exist: room and object "
                 "scripts cannot cast spells", DG_CASTER_PROXY);
+
+  /* Donation rooms are config vnums (etc/config, cedit) that nothing
+   * checks against the world; each missing one is a donation-room-missing
+   * warning (act.item.c). */
+  check_donation_rooms();
 }
 
 /* Init sockets, run game, and cleanup sockets */
