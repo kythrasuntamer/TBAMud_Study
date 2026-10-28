@@ -543,6 +543,14 @@ add_subdirectory(src/util)
 add_subdirectory(tests)
 
 if (MEMORY_DEBUG)
+    # zfree() keeps every block until shutdown, which hides use-after-free,
+    # double free and leaks from ASan/LSan (and Valgrind). See zmalloc.c.
+    if (ENABLE_SANITIZERS)
+        message(FATAL_ERROR
+            "MEMORY_DEBUG and ENABLE_SANITIZERS are mutually exclusive: "
+            "zmalloc retains freed memory, so the sanitizers cannot see "
+            "use-after-free or leaks. Enable one or the other.")
+    endif()
     message(STATUS "MEMORY_DEBUG is activated, setting up zmalloc")
     target_compile_definitions(circle PRIVATE MEMORY_DEBUG)
 endif()

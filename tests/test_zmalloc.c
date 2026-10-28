@@ -125,6 +125,43 @@ void test_realloc_null_allocates(void)
   zfree(p, ZM_FILE, __LINE__);
 }
 
+/* ---- I2-16: freed blocks are retained, so check misuse explicitly ---- */
+
+static void case_realloc_after_free(void)
+{
+  unsigned char *p = zmalloc(16, ZM_FILE, __LINE__);
+  zfree(p, ZM_FILE, __LINE__);
+  (void)zrealloc(p, 32, ZM_FILE, __LINE__);
+}
+
+void test_realloc_after_free_is_fatal(void)
+{
+  assert_aborted_with(case_realloc_after_free, "zrealloc-after-free");
+}
+
+#if defined(__SANITIZE_ADDRESS__)
+static volatile unsigned char zm_sink;
+
+static void case_read_after_free(void)
+{
+  unsigned char *p = zmalloc(16, ZM_FILE, __LINE__);
+  zfree(p, ZM_FILE, __LINE__);
+  zm_sink = p[0];
+}
+
+/* Under ASan a freed (retained) block is poisoned, so a stale read is a
+ * reported use-after-poison instead of a silent success. */
+void test_read_after_free_is_seen_by_asan(void)
+{
+  char records[8192];
+  int status = run_child(case_read_after_free, records, sizeof(records));
+
+  TEST_ASSERT_FALSE_MESSAGE(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+                            records);
+  TEST_ASSERT_NOT_NULL_MESSAGE(strstr(records, "use-after-poison"), records);
+}
+#endif
+
 void test_double_free_is_fatal(void)
 {
   assert_aborted_with(case_double_free, "zfree-double");
@@ -177,6 +214,10 @@ int main(void)
   RUN_TEST(test_clean_alloc_free_reports_nothing);
   RUN_TEST(test_realloc_of_untracked_pointer_is_fatal);
   RUN_TEST(test_realloc_null_allocates);
+  RUN_TEST(test_realloc_after_free_is_fatal);
+#if defined(__SANITIZE_ADDRESS__)
+  RUN_TEST(test_read_after_free_is_seen_by_asan);
+#endif
 
   zmalloc_check();		/* releases every tracked block */
   return UNITY_END();

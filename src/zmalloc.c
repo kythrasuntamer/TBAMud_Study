@@ -19,6 +19,31 @@
 #include <ctype.h>
 #include <stdarg.h>
 
+/*
+ * zfree() never releases memory: every block stays reachable from memlist
+ * until zmalloc_check() at shutdown.  ASan, LSan and Valgrind therefore see
+ * no use-after-free, double free or leak in a MEMORY_DEBUG build, so the
+ * CMake build refuses MEMORY_DEBUG together with ENABLE_SANITIZERS.  When
+ * this file is nevertheless built with ASan (another build system, or the
+ * test_zmalloc unit test), freed blocks are poisoned so a later access is
+ * still reported.
+ */
+#if defined(__SANITIZE_ADDRESS__)
+# define ZM_HAVE_ASAN 1
+#elif defined(__has_feature)
+# if __has_feature(address_sanitizer)
+#  define ZM_HAVE_ASAN 1
+# endif
+#endif
+#ifdef ZM_HAVE_ASAN
+# include <sanitizer/asan_interface.h>
+# define ZM_POISON(addr, size)   ASAN_POISON_MEMORY_REGION((addr), (size_t)(size))
+# define ZM_UNPOISON(addr, size) ASAN_UNPOISON_MEMORY_REGION((addr), (size_t)(size))
+#else
+# define ZM_POISON(addr, size)   ((void)(addr), (void)(size))
+# define ZM_UNPOISON(addr, size) ((void)(addr), (void)(size))
+#endif
+
 #define NUM_ZBUCKETS 256
 #define GET_ZBUCKET(addr) (((long)(addr) >> 3) & 0xFF)
 
@@ -117,6 +142,9 @@ void zdump(meminfo *m)
 
   if (m->addr == NULL || m->size <= 0)
     return;
+  /* Dumping a freed (poisoned) block is diagnostic, not a program access. */
+  if (m->frees > 0)
+    ZM_UNPOISON(m->addr, m->size);
 
   hexp = hexline;
   ascp = ascline;
@@ -212,6 +240,14 @@ unsigned char *zrealloc(unsigned char *what, int len, char *file, int line)
   if (what) {
     for (prev_m = NULL, m = memlist[GET_ZBUCKET(what)]; m; prev_m = m, m = m->next) {
       if (m->addr == what) {
+        /* zfree() keeps the record (it never releases memory), so a
+         * realloc of a freed block would otherwise go ahead on memory the
+         * program already gave up: a use-after-free that neither ASan nor
+         * Valgrind can see under MEMORY_DEBUG. */
+        if (m->frees > 0)
+          ZM_FATAL("zrealloc-after-free", file, line,
+                   "addr=%p size=%d allocated=%s:%d freed %d time(s)",
+                   (void *)m->addr, m->size, m->file, m->line, m->frees);
 #ifndef NO_MEMORY_PADDING
 	ret = (unsigned char *) realloc(what - sizeof(beginPad), len + sizeof(beginPad) + sizeof(endPad));
 #else
@@ -296,7 +332,11 @@ void zfree(unsigned char *what, char *file, int line)
       pad_check(m);
 
       /* note that we freed the memory */
-      m->frees++;  
+      m->frees++;
+      /* The block stays allocated until zmalloc_check(); under ASan make
+       * any later access to it a reported use-after-poison. */
+      if (m->frees == 1)
+        ZM_POISON(m->addr, m->size);
 
       /* check to see if it was freed > once */
       if (m->frees > 1) {
@@ -368,6 +408,8 @@ void zmalloc_check()
         total_leak += m->size;
         num_leaks++;
       }
+      if (m->addr)
+        ZM_UNPOISON(m->addr, m->size);
 #ifndef NO_MEMORY_PADDING
       if (m->addr) free(m->addr - sizeof(beginPad));
 #else
