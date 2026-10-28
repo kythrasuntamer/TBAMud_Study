@@ -38,8 +38,8 @@ static const char *enter_lines[] = { enter_line, NULL };
 
 static void arm_enter_trigger(struct char_data *victim)
 {
-  snprintf(enter_line, sizeof(enter_line), "wteleport %c%ld 102", UID_CHAR,
-           char_script_id(victim));
+  TEST_ASSERT_TRUE(snprintf(enter_line, sizeof(enter_line), "wteleport %c%ld 102", UID_CHAR,
+           char_script_id(victim)) > 0);
   world[1].script = dgw_script_with(WLD_TRIGGER, WTRIG_ENTER, enter_lines);
 }
 
@@ -125,8 +125,8 @@ static void test_wload_and_wdamage_bad_numbers(void)
   TEST_ASSERT_NULL(m->next_in_room);
   TEST_ASSERT_EQUAL_INT(3, dgw_saw("parse-vnum"));
 
-  snprintf(line, sizeof(line), "wdamage %c%ld lots", UID_CHAR,
-           char_script_id(m));
+  TEST_ASSERT_TRUE(snprintf(line, sizeof(line), "wdamage %c%ld lots", UID_CHAR,
+           char_script_id(m)) > 0);
   wcmd(0, line);
   TEST_ASSERT_EQUAL_INT(1, dgw_saw("parse-number"));
 
@@ -192,14 +192,14 @@ static void test_wload_with_target_sets_lastloaded(void)
 
   world[0].script = dgw_script();
   wcmd(0, "wload obj 201");
-  snprintf(expect, sizeof(expect), "%c%ld", UID_CHAR,
-           obj_script_id(world[0].contents));
+  TEST_ASSERT_TRUE(snprintf(expect, sizeof(expect), "%c%ld", UID_CHAR,
+           obj_script_id(world[0].contents)) > 0);
   TEST_ASSERT_EQUAL_STRING(expect, global_var(0, "lastloaded"));
 
   wcmd(0, "wload obj 205 zzguard");
   TEST_ASSERT_NOT_NULL(m->carrying);
-  snprintf(expect, sizeof(expect), "%c%ld", UID_CHAR,
-           obj_script_id(m->carrying));
+  TEST_ASSERT_TRUE(snprintf(expect, sizeof(expect), "%c%ld", UID_CHAR,
+           obj_script_id(m->carrying)) > 0);
   TEST_ASSERT_EQUAL_STRING(expect, global_var(0, "lastloaded"));
 }
 

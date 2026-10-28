@@ -316,7 +316,7 @@ static void test_object_target_character_in_no_room(void)
   char cmd[64];
 
   char_from_room(m);
-  snprintf(cmd, sizeof(cmd), "omove %c%ld", UID_CHAR, char_script_id(m));
+  TEST_ASSERT_TRUE(snprintf(cmd, sizeof(cmd), "omove %c%ld", UID_CHAR, char_script_id(m)) > 0);
   ocmd(stone, cmd);
   TEST_ASSERT_EQUAL_INT(1, dgw_saw("target-room"));
   TEST_ASSERT_EQUAL_INT(0, IN_ROOM(stone));
