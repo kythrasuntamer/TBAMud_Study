@@ -346,6 +346,19 @@ static void test_obj_numeric_arguments_are_checked(void)
   TEST_ASSERT_EQUAL_INT(12, GET_OBJ_TIMER(stone));
 }
 
+/* E1-22: an o-command rejection is reported as cmd-rejected with the
+ * object's vnum; olog, the script's own message, is not. */
+static void test_obj_rejection_is_reported_and_olog_is_not(void)
+{
+  struct obj_data *o = dgw_obj(DGW_OBJ_STONE, 0);
+
+  ocmd(o, "olog just a note");
+  TEST_ASSERT_EQUAL_INT(0, dgw_saw("cmd-rejected"));
+  ocmd(o, "oload obj 99999");
+  TEST_ASSERT_EQUAL_INT(1, dgw_saw("cmd-rejected"));
+  TEST_ASSERT_NOT_NULL(strstr(dgw_detail("cmd-rejected"), "obj vnum 201"));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -367,5 +380,6 @@ int main(void)
   RUN_TEST(test_oteleport_all_to_own_room_is_refused);
   RUN_TEST(test_object_target_character_in_no_room);
   RUN_TEST(test_obj_numeric_arguments_are_checked);
+  RUN_TEST(test_obj_rejection_is_reported_and_olog_is_not);
   return UNITY_END();
 }

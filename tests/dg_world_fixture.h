@@ -36,7 +36,7 @@
 
 /* ---- diagnostic capture ------------------------------------------------ */
 
-#define DGW_MAX_DIAG 64
+#define DGW_MAX_DIAG 256
 static int dgw_diag_count;
 static char dgw_diag_op[DGW_MAX_DIAG][64];
 static char dgw_diag_sev[DGW_MAX_DIAG][16];

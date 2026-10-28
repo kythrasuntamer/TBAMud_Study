@@ -26,12 +26,44 @@
 
 
 /* Local file scope functions. */
-static void mob_log(char_data *mob, const char *format, ...)
-  __attribute__ ((format (printf, 2, 3)));
+static void mob_log_at(char_data *mob, const char *src_file, int src_line,
+                       const char *src_func, const char *format, ...)
+  __attribute__ ((format (printf, 5, 6)));
+/** Reports a rejected m-command; the diagnostic names the calling line. */
+#define mob_log(mob, ...) \
+  mob_log_at((mob), __FILE__, __LINE__, __func__, __VA_ARGS__)
+static void mob_log_line(char_data *mob, const char *message);
 
 
-/* attaches mob's name and vnum to msg and sends it to script_log */
-static void mob_log(char_data *mob, const char *format, ...)
+/**
+ * Sends one already-formatted line to the script log (syslog and builders),
+ * prefixed with the mob's name and vnum. Used directly only by mlog, whose
+ * text is the script author's own message and not a rejection.
+ * @param mob The script owner (a mob, or a player who owns triggers).
+ * @param message Finished text; logged as data, never as a format.
+ */
+static void mob_log_line(char_data *mob, const char *message)
+{
+  /* A player who owns triggers can reach here too: players have no short
+   * description, so name them by their name. */
+  script_log("Mob (%s, VNum %d):: %s",
+             IS_NPC(mob) ? (GET_SHORT(mob) ? GET_SHORT(mob) : "(no short desc)")
+                         : (GET_NAME(mob) ? GET_NAME(mob) : "(no name)"),
+             GET_MOB_VNUM(mob), message);
+}
+
+/**
+ * Reports an m-command that refused or could not finish what the script
+ * asked (bad target, bad argument, missing prototype). The line goes to the
+ * script log for builders and, as a structured "cmd-rejected" warning, to
+ * the error log with the owner's identity and UID; the script_driver
+ * breadcrumb supplies the trigger vnum.
+ * @param mob The script owner.
+ * @param src_file,src_line,src_func The refusing call site (from mob_log()).
+ * @param format printf format for the reason.
+ */
+static void mob_log_at(char_data *mob, const char *src_file, int src_line,
+                       const char *src_func, const char *format, ...)
 {
   va_list args;
   char message[MAX_STRING_LENGTH];
@@ -44,12 +76,12 @@ static void mob_log(char_data *mob, const char *format, ...)
     strlcpy(message, "(message formatting failed)", sizeof(message));
   va_end(args);
 
-  /* A player who owns triggers can reach here too: players have no short
-   * description, so name them by their name. */
-  script_log("Mob (%s, VNum %d):: %s",
-             IS_NPC(mob) ? (GET_SHORT(mob) ? GET_SHORT(mob) : "(no short desc)")
-                         : (GET_NAME(mob) ? GET_NAME(mob) : "(no name)"),
-             GET_MOB_VNUM(mob), message);
+  mob_log_line(mob, message);
+  /* script_id is read, not allocated: 0 means the mob was never given one. */
+  tb_error_log_at("WARNING", "dg", "cmd-rejected", "m-command", 0,
+                  src_file, src_line, src_func,
+                  DIAG_CHAR_FMT " uid %ld: %s", DIAG_CHAR(mob),
+                  mob->script_id, message);
 }
 
 /* Macro to determine if a mob is permitted to use these commands.
@@ -83,6 +115,23 @@ static int mob_cmd_privileged(char_data *ch, const char *cmd)
   return FALSE;
 }
 
+/* A charmed mob does not run m-commands: otherwise a player could 'order'
+ * a charmed scripted mob to mload, mpurge or mforce. The refusal used to be
+ * a silent return; it is reported so a builder can see why a script on a
+ * charmed mob does nothing. The charm comes from a player (a spell), so this
+ * is a warning, not an error.
+ *
+ * MOB_CMD_CHARMED(ch) is TRUE, after reporting, when ch is charmed. It is a
+ * macro, not a function, so the diagnostic's source line and function are
+ * the refusing ACMD itself. ch is evaluated several times: pass a variable. */
+#define MOB_CMD_CHARMED(ch) \
+  (AFF_FLAGGED((ch), AFF_CHARM) \
+   ? (TB_WARN_MSG("dg", "mob-cmd-charmed", "m-command", \
+                  DIAG_CHAR_FMT " uid %ld is charmed%s; m-command refused", \
+                  DIAG_CHAR(ch), (ch)->script_id, \
+                  (ch)->master ? " and has a master" : ""), TRUE) \
+   : FALSE)
+
 /* mob commands */
 /* prints the argument to all the rooms aroud the mobile */
 ACMD(do_masound)
@@ -96,7 +145,7 @@ ACMD(do_masound)
         return;
     }
 
-    if (AFF_FLAGGED(ch, AFF_CHARM))
+    if (MOB_CMD_CHARMED(ch))
         return;
 
     if (!*argument)
@@ -134,7 +183,7 @@ ACMD(do_mkill)
         return;
     }
 
-    if (AFF_FLAGGED(ch, AFF_CHARM))
+    if (MOB_CMD_CHARMED(ch))
         return;
 
     one_argument(argument, arg);
@@ -188,7 +237,7 @@ ACMD(do_mjunk)
         return;
     }
 
-    if (AFF_FLAGGED(ch, AFF_CHARM))
+    if (MOB_CMD_CHARMED(ch))
         return;
 
     one_argument(argument, arg);
@@ -257,7 +306,7 @@ ACMD(do_mechoaround)
         return;
     }
 
-    if (AFF_FLAGGED(ch, AFF_CHARM))
+    if (MOB_CMD_CHARMED(ch))
         return;
 
     p = one_argument(argument, arg);
@@ -293,7 +342,7 @@ ACMD(do_msend)
         return;
     }
 
-    if (AFF_FLAGGED(ch, AFF_CHARM))
+    if (MOB_CMD_CHARMED(ch))
         return;
 
     p = one_argument(argument, arg);
@@ -327,7 +376,7 @@ ACMD(do_mecho)
         return;
     }
 
-    if (AFF_FLAGGED(ch, AFF_CHARM))
+    if (MOB_CMD_CHARMED(ch))
         return;
 
     if (!*argument) {
@@ -350,7 +399,7 @@ ACMD(do_mlog)
         return;
     }
 
-    if (AFF_FLAGGED(ch, AFF_CHARM))
+    if (MOB_CMD_CHARMED(ch))
         return;
 
     if (!*argument)
@@ -359,7 +408,7 @@ ACMD(do_mlog)
     p = argument;
     skip_spaces(&p);
 
-    mob_log(ch, "%s", p); /* script text, may hold player input */
+    mob_log_line(ch, p); /* script text, may hold player input */
 
 }
 
@@ -407,7 +456,7 @@ ACMD(do_mload)
         return;
     }
 
-    if (AFF_FLAGGED(ch, AFF_CHARM))
+    if (MOB_CMD_CHARMED(ch))
         return;
 
     if (!mob_cmd_privileged(ch, "mload"))
@@ -528,7 +577,7 @@ ACMD(do_mpurge)
     return;
   }
 
-  if (AFF_FLAGGED(ch, AFF_CHARM))
+  if (MOB_CMD_CHARMED(ch))
     return;
 
   if (!mob_cmd_privileged(ch, "mpurge"))
@@ -593,7 +642,7 @@ ACMD(do_mgoto)
         return;
     }
 
-    if (AFF_FLAGGED(ch, AFF_CHARM))
+    if (MOB_CMD_CHARMED(ch))
         return;
 
     one_argument(argument, arg);
@@ -627,7 +676,7 @@ ACMD(do_mat)
         return;
     }
 
-    if (AFF_FLAGGED(ch, AFF_CHARM))
+    if (MOB_CMD_CHARMED(ch))
         return;
 
     argument = one_argument( argument, arg );
@@ -667,7 +716,7 @@ ACMD(do_mteleport)
     return;
   }
 
-  if (AFF_FLAGGED(ch, AFF_CHARM))
+  if (MOB_CMD_CHARMED(ch))
     return;
 
   two_arguments(argument, arg1, arg2);
@@ -720,7 +769,7 @@ ACMD(do_mdamage) {
     return;
   }
 
-  if (AFF_FLAGGED(ch, AFF_CHARM))
+  if (MOB_CMD_CHARMED(ch))
     return;
 
   two_arguments(argument, name, amount);
@@ -758,7 +807,7 @@ ACMD(do_mforce)
         return;
     }
 
-    if (AFF_FLAGGED(ch, AFF_CHARM))
+    if (MOB_CMD_CHARMED(ch))
         return;
 
     if (!mob_cmd_privileged(ch, "mforce"))
@@ -819,7 +868,7 @@ ACMD(do_mhunt)
         return;
     }
 
-    if (AFF_FLAGGED(ch, AFF_CHARM))
+    if (MOB_CMD_CHARMED(ch))
         return;
 
     if (!mob_cmd_privileged(ch, "mhunt"))
@@ -861,7 +910,7 @@ ACMD(do_mremember)
         return;
     }
 
-    if (AFF_FLAGGED(ch, AFF_CHARM))
+    if (MOB_CMD_CHARMED(ch))
         return;
 
     if (!mob_cmd_privileged(ch, "mremember"))
@@ -912,7 +961,7 @@ ACMD(do_mforget)
         return;
     }
 
-    if (AFF_FLAGGED(ch, AFF_CHARM))
+    if (MOB_CMD_CHARMED(ch))
         return;
 
     if (!mob_cmd_privileged(ch, "mforget"))
@@ -1012,7 +1061,7 @@ ACMD(do_mtransform)
     return;
   }
 
-  if (AFF_FLAGGED(ch, AFF_CHARM))
+  if (MOB_CMD_CHARMED(ch))
     return;
 
   if (ch->desc) {
@@ -1142,7 +1191,7 @@ ACMD(do_mdoor)
         return;
     }
 
-    if (AFF_FLAGGED(ch, AFF_CHARM))
+    if (MOB_CMD_CHARMED(ch))
         return;
 
     argument = two_arguments(argument, target, direction);
@@ -1194,7 +1243,7 @@ ACMD(do_mfollow)
     return;
   }
 
-  if (AFF_FLAGGED(ch, AFF_CHARM))
+  if (MOB_CMD_CHARMED(ch))
     return;
 
   one_argument(argument, buf);
@@ -1217,7 +1266,7 @@ ACMD(do_mfollow)
   if (ch->master == leader) /* already following */
     return;
 
-  if (AFF_FLAGGED(ch, AFF_CHARM) && (ch->master))  /* can't override charm */
+  if (ch->master && MOB_CMD_CHARMED(ch))  /* can't override charm */
     return;
 
 

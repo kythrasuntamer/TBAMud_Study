@@ -38,8 +38,12 @@ struct wld_command_info {
     int        subcmd;
 };
 
-void wld_log(room_data *room, const char *format, ...)
-  __attribute__ ((format (printf, 2, 3)));
+static void wld_log_at(room_data *room, const char *src_file, int src_line,
+                       const char *src_func, const char *format, ...)
+  __attribute__ ((format (printf, 5, 6)));
+/** Reports a rejected w-command; the diagnostic names the calling line. */
+#define wld_log(room, ...) \
+  wld_log_at((room), __FILE__, __LINE__, __func__, __VA_ARGS__)
 void act_to_room(char *str, room_data *room);
 WCMD(do_wasound);
 WCMD(do_wecho);
@@ -57,8 +61,18 @@ WCMD(do_wmove);
 WCMD(do_wlog);
 
 
-/* attaches room vnum to msg and sends it to script_log */
-void wld_log(room_data *room, const char *format, ...)
+/**
+ * Reports a w-command that refused or could not finish what the script
+ * asked. The line goes to the script log (syslog and builders) and, as a
+ * structured "cmd-rejected" warning, to the error log with the room vnum and
+ * UID; the script_driver breadcrumb supplies the trigger vnum. wlog, whose
+ * text is the script author's own message, calls script_log itself.
+ * @param room The script owner.
+ * @param src_file,src_line,src_func The refusing call site (from wld_log()).
+ * @param format printf format for the reason.
+ */
+static void wld_log_at(room_data *room, const char *src_file, int src_line,
+                       const char *src_func, const char *format, ...)
 {
   va_list args;
   char message[MAX_STRING_LENGTH];
@@ -72,6 +86,9 @@ void wld_log(room_data *room, const char *format, ...)
   va_end(args);
 
   script_log("Room %d :: %s", room->number, message);
+  tb_error_log_at("WARNING", "dg", "cmd-rejected", "w-command", 0,
+                  src_file, src_line, src_func, "room vnum %d uid %ld: %s",
+                  room->number, room_script_id(room), message);
 }
 
 /* sends str to room */
@@ -128,7 +145,9 @@ WCMD(do_wlog)
   if (!*argument)
     return;
 
-  wld_log(room, "%s", argument); /* script text, may hold player input */
+  /* Script text, may hold player input: logged as data, and not a
+   * rejection, so it bypasses wld_log's cmd-rejected warning. */
+  script_log("Room %d :: %s", room->number, argument);
 }
 
 WCMD(do_wsend)

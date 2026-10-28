@@ -203,10 +203,22 @@ static void test_wload_with_target_sets_lastloaded(void)
   TEST_ASSERT_EQUAL_STRING(expect, global_var(0, "lastloaded"));
 }
 
+/* E1-22: a w-command rejection is reported as cmd-rejected with the room
+ * vnum; wlog, the script's own message, is not. */
+static void test_wld_rejection_is_reported_and_wlog_is_not(void)
+{
+  wcmd(0, "wlog just a note");
+  TEST_ASSERT_EQUAL_INT(0, dgw_saw("cmd-rejected"));
+  wcmd(0, "wload obj 99999");
+  TEST_ASSERT_EQUAL_INT(1, dgw_saw("cmd-rejected"));
+  TEST_ASSERT_NOT_NULL(strstr(dgw_detail("cmd-rejected"), "room vnum 100"));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
   RUN_TEST(test_wload_with_target_sets_lastloaded);
+  RUN_TEST(test_wld_rejection_is_reported_and_wlog_is_not);
   RUN_TEST(test_wdoor_new_exit_leads_nowhere);
   RUN_TEST(test_wteleport_non_numeric_target_is_refused);
   RUN_TEST(test_wteleport_vnum_overflow_is_refused);

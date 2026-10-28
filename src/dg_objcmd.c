@@ -30,8 +30,13 @@
 #define OCMD(name)  \
    void (name)(obj_data *obj, char *argument, int cmd, int subcmd)
 
-static void obj_log(obj_data *obj, const char *format, ...)
-  __attribute__ ((format (printf, 2, 3)));
+static void obj_log_at(obj_data *obj, const char *src_file, int src_line,
+                       const char *src_func, const char *format, ...)
+  __attribute__ ((format (printf, 5, 6)));
+/** Reports a rejected o-command; the diagnostic names the calling line. */
+#define obj_log(obj, ...) \
+  obj_log_at((obj), __FILE__, __LINE__, __func__, __VA_ARGS__)
+static void obj_log_line(obj_data *obj, const char *message);
 static room_rnum find_obj_target_room(obj_data *obj, char *rawroomstr);
 static OCMD(do_oecho);
 static OCMD(do_oforce);
@@ -61,8 +66,31 @@ struct obj_command_info {
 #define SCMD_OSEND         0
 #define SCMD_OECHOAROUND   1
 
-/* attaches object name and vnum to msg and sends it to script_log */
-static void obj_log(obj_data *obj, const char *format, ...)
+/**
+ * Sends one already-formatted line to the script log (syslog and builders),
+ * prefixed with the object's short description and vnum. Used directly only
+ * by olog, whose text is the script author's own message.
+ * @param obj The script owner.
+ * @param message Finished text; logged as data, never as a format.
+ */
+static void obj_log_line(obj_data *obj, const char *message)
+{
+  script_log("Obj (%s, VNum %d):: %s",
+             obj->short_description ? obj->short_description : "(no short desc)",
+             GET_OBJ_VNUM(obj), message);
+}
+
+/**
+ * Reports an o-command that refused or could not finish what the script
+ * asked. The line goes to the script log and, as a structured
+ * "cmd-rejected" warning, to the error log with the object's vnum and UID;
+ * the script_driver breadcrumb supplies the trigger vnum.
+ * @param obj The script owner.
+ * @param src_file,src_line,src_func The refusing call site (from obj_log()).
+ * @param format printf format for the reason.
+ */
+static void obj_log_at(obj_data *obj, const char *src_file, int src_line,
+                       const char *src_func, const char *format, ...)
 {
   va_list args;
   char message[MAX_STRING_LENGTH];
@@ -75,7 +103,11 @@ static void obj_log(obj_data *obj, const char *format, ...)
     strlcpy(message, "(message formatting failed)", sizeof(message));
   va_end(args);
 
-  script_log("Obj (%s, VNum %d):: %s", obj->short_description, GET_OBJ_VNUM(obj), message);
+  obj_log_line(obj, message);
+  /* script_id is read, not allocated: 0 means none was ever assigned. */
+  tb_error_log_at("WARNING", "dg", "cmd-rejected", "o-command", 0,
+                  src_file, src_line, src_func, "obj vnum %d uid %ld: %s",
+                  GET_OBJ_VNUM(obj), obj->script_id, message);
 }
 
 /* returns the real room number that the object or object's carrier is in */
@@ -178,7 +210,7 @@ static OCMD(do_olog)
   skip_spaces(&argument);
 
   if (*argument)
-    obj_log(obj, "%s", argument); /* script text, may hold player input */
+    obj_log_line(obj, argument); /* script text, may hold player input */
 }
 
 static OCMD(do_oforce)

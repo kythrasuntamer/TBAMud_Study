@@ -25,6 +25,8 @@ ACMD(do_mremember);
 ACMD(do_mforget);
 ACMD(do_mtransform);
 ACMD(do_mjunk);
+ACMD(do_mlog);
+ACMD(do_mecho);
 
 void setUp(void) { dgw_setup(); }
 void tearDown(void) { dgw_teardown(); }
@@ -275,6 +277,41 @@ static void test_load_trigger_error_code_is_reported(void)
                               "obj vnum 201: load trigger 400"));
 }
 
+/* E1-22: an m-command rejection reaches the structured error log with the
+ * owner's identity, not only the script log. */
+static void test_mob_rejection_is_reported_as_cmd_rejected(void)
+{
+  struct char_data *m = dgw_mob(DGW_MOB_GUARD, 0);
+
+  run(do_mload, m, "obj 99999");
+  TEST_ASSERT_EQUAL_INT(0, count_carried(m));
+  TEST_ASSERT_EQUAL_INT(1, dgw_saw("cmd-rejected"));
+  TEST_ASSERT_NOT_NULL(strstr(dgw_detail("cmd-rejected"), "mob vnum 300"));
+}
+
+/* E1-22: mlog is the script author's own message, not a rejection. */
+static void test_mlog_is_not_a_rejection(void)
+{
+  struct char_data *m = dgw_mob(DGW_MOB_GUARD, 0);
+
+  run(do_mlog, m, "hello from the script");
+  TEST_ASSERT_EQUAL_INT(0, dgw_saw("cmd-rejected"));
+}
+
+/* E1-22: a charmed mob's m-commands are refused loudly, not silently. */
+static void test_charmed_mob_refusal_is_reported(void)
+{
+  struct char_data *m = dgw_mob(DGW_MOB_GUARD, 0);
+
+  SET_BIT_AR(AFF_FLAGS(m), AFF_CHARM);
+  run(do_mload, m, "obj 201");
+  run(do_mecho, m, "hi");
+  TEST_ASSERT_EQUAL_INT(0, count_carried(m));
+  TEST_ASSERT_EQUAL_INT(2, dgw_saw("mob-cmd-charmed"));
+  TEST_ASSERT_NOT_NULL(strstr(dgw_detail("mob-cmd-charmed"), "mob vnum 300"));
+  REMOVE_BIT_AR(AFF_FLAGS(m), AFF_CHARM);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -289,5 +326,8 @@ int main(void)
   RUN_TEST(test_mload_container_into_its_own_name);
   RUN_TEST(test_mob_numeric_arguments_are_checked);
   RUN_TEST(test_load_trigger_error_code_is_reported);
+  RUN_TEST(test_mob_rejection_is_reported_as_cmd_rejected);
+  RUN_TEST(test_mlog_is_not_a_rejection);
+  RUN_TEST(test_charmed_mob_refusal_is_reported);
   return UNITY_END();
 }
