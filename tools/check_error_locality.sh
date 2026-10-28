@@ -79,8 +79,8 @@ forbid "non-kebab-case TB_ERROR_*/TB_WARN_MSG/TB_FATAL_MSG operation" \
 
 # A literal "SYSERR" line carries no severity, category or source location.
 ratchet 'puts("SYSERR...")' 5 '(^|[^A-Za-z0-9_])puts[[:space:]]*\([[:space:]]*"SYSERR'
-ratchet 'log("SYSERR...")' 391 '(^|[^A-Za-z0-9_])log[[:space:]]*\([[:space:]]*"SYSERR'
-ratchet 'mudlog(..."SYSERR...")' 88 '(^|[^A-Za-z0-9_])mudlog[[:space:]]*\([^;]*"SYSERR'
+ratchet 'log("SYSERR...")' 236 '(^|[^A-Za-z0-9_])log[[:space:]]*\([[:space:]]*"SYSERR'
+ratchet 'mudlog(..."SYSERR...")' 51 '(^|[^A-Za-z0-9_])mudlog[[:space:]]*\([^;]*"SYSERR'
 
 # unlink/remove/rename as a bare statement discards the result: a file that
 # should be gone (or renamed into place) silently is not. A bare statement is
@@ -92,7 +92,7 @@ ratchet "unchecked unlink/remove/rename" 4 \
 
 # TB_REPORT_* operations name the failing call or step ("fopen",
 # "parse-options"); prose with spaces cannot be searched for reliably.
-ratchet "TB_REPORT_* operation containing spaces" 6 \
+ratchet "TB_REPORT_* operation containing spaces" 0 \
   'TB_REPORT_(ERRNO|ERROR)\([[:space:]]*"[^"]* [^"]*"|TB_REPORT_DOMAIN_(ERRNO|ERROR)\([^,]*,[^,]*,[[:space:]]*"[^"]* [^"]*"'
 
 if [ "$failed" -ne 0 ]; then
