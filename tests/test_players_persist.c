@@ -497,6 +497,25 @@ static void test_save_keeps_affects_past_max(void)
   }
 }
 
+/* B2-20: nanny's deleted-character path kept a stale GET_PFILEPOS, so the
+ * re-created character was never indexed and save_char() returned silently
+ * after writing a pfile nobody could log into. It must now report. */
+static void test_save_of_unindexed_player_is_reported(void)
+{
+  char path[512];
+
+  player.player.name = strdup("Nobody");
+  GET_IDNUM(&player) = 777;
+  GET_PFILEPOS(&player) = 0;
+
+  save_char(&player);
+
+  TEST_ASSERT_EQUAL_STRING("save-index-missing", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "player idnum 777"));
+  if (get_filename(path, sizeof(path), PLR_FILE, "Nobody"))
+    (void)remove(path);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -516,6 +535,7 @@ int main(void)
   RUN_TEST(test_truncated_alias_list_is_reported);
   RUN_TEST(test_huge_alias_count_is_rejected);
   RUN_TEST(test_save_keeps_affects_past_max);
+  RUN_TEST(test_save_of_unindexed_player_is_reported);
   (void)rmdir(scratch_dir);
   return UNITY_END();
 }

@@ -881,12 +881,20 @@ void save_char(struct char_data * ch)
     }
   }
 
-  if (!get_filename(filename, sizeof(filename), PLR_FILE, GET_NAME(ch)))
+  if (!get_filename(filename, sizeof(filename), PLR_FILE, GET_NAME(ch))) {
+    TB_ERROR_MSG("player", "save", "player-file",
+                 "player idnum %ld has no player file name; not saved",
+                 GET_IDNUM(ch));
     return;
+  }
   /* Stage saves beside the original; never truncate a valid player file. */
-  if (snprintf(temporary_filename, sizeof(temporary_filename),
-               "%s.tmpXXXXXX", filename) < 0)
+  if ((size_t)snprintf(temporary_filename, sizeof(temporary_filename),
+               "%s.tmpXXXXXX", filename) >= sizeof(temporary_filename)) {
+    TB_ERROR_MSG("player", "save", filename,
+                 "player idnum %ld staging path too long; not saved",
+                 GET_IDNUM(ch));
     return;
+  }
   temp_fd = mkstemp(temporary_filename);
   if (temp_fd < 0) {
     TB_ERROR_ERRNO("PLAYER", "mkstemp", filename, "Unable to stage player save");
@@ -1123,8 +1131,16 @@ void save_char(struct char_data * ch)
   if (save_failed)
     return;
 
-  if ((id = get_ptable_by_name(GET_NAME(ch))) < 0)
+  /* The pfile is saved, but a character missing from the index cannot be
+   * found by name at the next login (and its name could be re-created over
+   * it). This used to return silently; nanny's deleted-character path once
+   * kept a stale GET_PFILEPOS and so never indexed the new character. */
+  if ((id = get_ptable_by_name(GET_NAME(ch))) < 0) {
+    TB_ERROR_MSG("player", "save-index-missing", filename,
+                 "player idnum %ld saved but not in the player index (pfilepos %ld)",
+                 GET_IDNUM(ch), (long)GET_PFILEPOS(ch));
     return;
+  }
 
   /* update the player in the player index */
   if (player_table[id].level != GET_LEVEL(ch)) {

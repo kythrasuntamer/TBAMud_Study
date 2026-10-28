@@ -1646,7 +1646,10 @@ void nanny(struct descriptor_data *d, char *arg)
           d->character->desc = d;
           CREATE(d->character->player.name, char, strlen(tmp_name) + 1);
           strlcpy(d->character->player.name, CAP(tmp_name), strlen(tmp_name) + 1);	/* strcpy: OK (size checked above) */
-          GET_PFILEPOS(d->character) = player_i;
+          /* remove_player() dropped the old index entry (and shifted later
+           * ones down), so player_i is stale: -1 makes CON_QCLASS call
+           * create_entry() for the new character. */
+          GET_PFILEPOS(d->character) = -1;
           write_to_output(d, "Did I get that right, %s (\t(Y\t)/\t(N\t))? ", tmp_name);
           STATE(d) = CON_NAME_CNFRM;
         } else {
