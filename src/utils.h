@@ -778,8 +778,11 @@ do                                                              \
 /** Gets the level of a player even if the player is switched.
  * @todo Make this the definition of GET_LEVEL. */
 #define GET_REAL_LEVEL(ch) \
-   ((ch)->desc && (ch)->desc->original ? GET_LEVEL((ch)->desc->original) : \
-    GET_LEVEL((ch)))
+   (IS_SWITCHED(ch) ? GET_LEVEL((ch)->desc->original) : GET_LEVEL((ch)))
+/** TRUE if ch is a body that an immortal has switched into: its descriptor
+ * belongs to the switcher, whose own character is desc->original.
+ * Evaluates ch twice: pass a plain variable. */
+#define IS_SWITCHED(ch) ((ch)->desc && (ch)->desc->original)
 
 /** Class of ch. */
 #define GET_CLASS(ch)   ((ch)->player.chclass)
@@ -991,6 +994,12 @@ do                                                              \
 
 /** Defines whether d is playing or not. */
 #define IS_PLAYING(d)   (IS_IN_OLC(d) || STATE(d) == CON_PLAYING)
+
+/** The player behind descriptor d: the switcher's own character while it
+ * is switched into another body, else d->character (NULL until login
+ * completes). Evaluates d twice: pass a plain variable. Same text as the
+ * copy in act.informative.c, so the two coexist. */
+#define REAL_CHAR(d)  ((d)->original ? (d)->original : (d)->character)
 
 /** Defines if it is ok to send a message to ch. */
 #define SENDOK(ch)	(((ch)->desc || SCRIPT_CHECK((ch), MTRIG_ACT)) && \
