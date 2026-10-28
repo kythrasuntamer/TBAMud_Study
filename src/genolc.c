@@ -52,6 +52,18 @@ static struct {
 /* for Zone Export */
 static int zone_exits = 0;
 
+/* Copy a world string into an export buffer.  The copy always terminates
+ * (strncpy(buf, src, sizeof(buf) - 1) into an uninitialised buffer did not,
+ * for a source of sizeof(buf) - 1 bytes or more), and a cut is reported
+ * with the entity's vnum.  dst must be an array; the call site's location
+ * is recorded. */
+#define EXPORT_COPY(dst, src, what, vnum) do { \
+  if (strlcpy((dst), (src), sizeof(dst)) >= sizeof(dst)) \
+    TB_WARN_MSG("genolc", "export-truncate", (what), \
+                "vnum %d %s truncated to %lu bytes in the export", \
+                (int)(vnum), (what), (unsigned long)sizeof(dst) - 1); \
+} while (0)
+
 /* Local (file scope) functions */
 /* Zone export functions */
 static int export_save_shops(zone_rnum zrnum);
@@ -744,10 +756,10 @@ static int export_mobile_record(mob_vnum mvnum, struct char_data *mob, FILE *fd)
   char ldesc[MAX_STRING_LENGTH];
   char ddesc[MAX_STRING_LENGTH];
 
-  ldesc[MAX_STRING_LENGTH - 1] = '\0';
-  ddesc[MAX_STRING_LENGTH - 1] = '\0';
-  strip_cr(strncpy(ldesc, GET_LDESC(mob), MAX_STRING_LENGTH - 1));
-  strip_cr(strncpy(ddesc, GET_DDESC(mob), MAX_STRING_LENGTH - 1));
+  EXPORT_COPY(ldesc, GET_LDESC(mob), "mob long description", mvnum);
+  EXPORT_COPY(ddesc, GET_DDESC(mob), "mob description", mvnum);
+  strip_cr(ldesc);
+  strip_cr(ddesc);
 
   tb_fprintf(fd,	"#QQ%02d\n"
 		"%s%c\n"
@@ -936,7 +948,7 @@ static int export_save_objects(zone_rnum zrnum)
   for (ovnum = genolc_zone_bottom(zrnum); ovnum <= zone_table[zrnum].top; ovnum++) {
     if ((ornum = real_object(ovnum)) != NOTHING) {
       if ((obj = &obj_proto[ornum])->action_description) {
-	strncpy(buf, obj->action_description, sizeof(buf) - 1);
+	EXPORT_COPY(buf, obj->action_description, "obj action description", ovnum);
 	strip_cr(buf);
       } else
 	*buf = '\0';
@@ -1002,7 +1014,7 @@ static int export_save_objects(zone_rnum zrnum)
 	    mudlog(BRF, LVL_IMMORT, TRUE, "SYSERR: OLC: export_save_objects: Corrupt ex_desc!");
 	    continue;
 	  }
-	  strncpy(buf, ex_desc->description, sizeof(buf) - 1);
+	  EXPORT_COPY(buf, ex_desc->description, "obj extra description", ovnum);
 	  strip_cr(buf);
 	  tb_fprintf(obj_file, "E\n"
 		  "%s~\n"
@@ -1049,7 +1061,8 @@ static int export_save_rooms(zone_rnum zrnum)
       room = &world[rnum];
 
       /* Copy the description and strip off trailing newlines. */
-      strncpy(buf, room->description ? room->description : "Empty room.", sizeof(buf)-1 );
+      EXPORT_COPY(buf, room->description ? room->description : "Empty room.",
+                  "room description", room->number);
       strip_cr(buf);
 
       /* Save the numeric and string section of the file. */
@@ -1069,7 +1082,7 @@ static int export_save_rooms(zone_rnum zrnum)
 	if (R_EXIT(room, j)) {
 	  int dflag;
 	  if (R_EXIT(room, j)->general_description) {
-	    strncpy(buf, R_EXIT(room, j)->general_description, sizeof(buf)-1);
+	    EXPORT_COPY(buf, R_EXIT(room, j)->general_description, "room exit description", room->number);
 	    strip_cr(buf);
 	  } else
 	    *buf = '\0';
@@ -1084,7 +1097,7 @@ static int export_save_rooms(zone_rnum zrnum)
 	    dflag = 0;
 
 	  if (R_EXIT(room, j)->keyword)
-	    strncpy(buf1, R_EXIT(room, j)->keyword, sizeof(buf1)-1 );
+	    EXPORT_COPY(buf1, R_EXIT(room, j)->keyword, "room exit keyword", room->number);
 	  else
 	    *buf1 = '\0';
 
@@ -1123,8 +1136,16 @@ static int export_save_rooms(zone_rnum zrnum)
         struct extra_descr_data *xdesc;
 
 	for (xdesc = room->ex_description; xdesc; xdesc = xdesc->next) {
-	  strncpy(buf, xdesc->description, sizeof(buf) - 1);
-	  buf[sizeof(buf) - 1] = '\0';
+	  /* fread_string() returns NULL for an empty description; the object
+	   * path below already skips such entries. */
+	  if (!xdesc->keyword || !xdesc->description || !*xdesc->keyword || !*xdesc->description) {
+	    TB_WARN_MSG("genolc", "export-room", "qq.wld",
+	                "room %d extra description with %s %s not exported",
+	                room->number, xdesc->keyword ? "keyword" : "no keyword",
+	                xdesc->description ? "and empty description" : "and no description");
+	    continue;
+	  }
+	  EXPORT_COPY(buf, xdesc->description, "room extra description", room->number);
 	  strip_cr(buf);
 	  tb_fprintf(room_file,	"E\n"
 			"%s~\n"

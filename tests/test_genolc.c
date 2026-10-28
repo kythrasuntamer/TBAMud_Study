@@ -163,6 +163,57 @@ static void test_export_shop_without_keeper(void)
   top_shop = -1;
 }
 
+static struct room_data rooms[1];
+
+room_rnum real_room(room_vnum vnum)
+{
+  return (world && vnum == world[0].number) ? 0 : NOWHERE;
+}
+
+/* C1-25: a room extra description whose text is NULL (fread_string()
+ * returns NULL for an empty one) was passed to strncpy (UBSan null
+ * argument / SEGV before the fix). It is now skipped and reported, and a
+ * description longer than the export buffer is cut, terminated and
+ * reported. */
+static void test_export_room_extra_descriptions(void)
+{
+  struct extra_descr_data empty, big;
+  char *huge = malloc(MAX_STRING_LENGTH + 100);
+  char *out;
+
+  TEST_ASSERT_NOT_NULL(huge);
+  memset(huge, 'x', MAX_STRING_LENGTH + 99);
+  huge[MAX_STRING_LENGTH + 99] = '\0';
+
+  memset(rooms, 0, sizeof(rooms));
+  rooms[0].number = 3001;
+  rooms[0].zone = 1;
+  rooms[0].name = "A room";
+  rooms[0].description = "Plain.\r\n";
+  memset(&empty, 0, sizeof(empty));
+  empty.keyword = "sign";
+  empty.description = NULL;
+  memset(&big, 0, sizeof(big));
+  big.keyword = "wall";
+  big.description = huge;
+  empty.next = &big;
+  rooms[0].ex_description = &empty;
+  world = rooms;
+  top_of_world = 0;
+  zones[1].bot = 3000;
+  zones[1].top = 3099;
+
+  TEST_ASSERT_TRUE(export_save_rooms(1));
+  TEST_ASSERT_EQUAL_INT(2, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("export-truncate", tb_captured_operation);
+  out = slurp("world/export/qq.wld");
+  TEST_ASSERT_NOT_NULL(out);
+  TEST_ASSERT_NULL(strstr(out, "sign~"));
+  TEST_ASSERT_NOT_NULL(strstr(out, "wall~"));
+  world = NULL;
+  free(huge);
+}
+
 int main(void)
 {
   char dir[] = "/tmp/tb_test_genolc.XXXXXX";
@@ -176,6 +227,7 @@ int main(void)
 
   UNITY_BEGIN();
   RUN_TEST(test_export_shop_without_keeper);
+  RUN_TEST(test_export_room_extra_descriptions);
   RUN_TEST(test_failing_saver_does_not_hang_save_all);
   RUN_TEST(test_successful_saves_empty_the_list);
   RUN_TEST(test_unsavable_types_are_freed);
