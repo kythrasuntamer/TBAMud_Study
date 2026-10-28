@@ -596,7 +596,10 @@ void aedit_parse(struct descriptor_data * d, char *arg) {
         return;
       }
       i = tb_parse_int_or_zero(arg);
-      if ((i < POS_DEAD) && (i > POS_STANDING))  {
+      /* "&&" here could never be true, so any number was stored and later
+       * indexed position_types[] out of bounds. */
+      if ((i < POS_DEAD) || (i > POS_STANDING))  {
+        write_to_output(d, "Position must be %d to %d.\r\n", POS_DEAD, POS_STANDING);
         aedit_disp_menu(d);
         return;
       }
