@@ -913,8 +913,12 @@ char *act_at(const char *src_file, int src_line, const char *src_func,
   acts++;
   return NULL;
 }
-int room_is_dark(room_rnum room) { (void)room; return FALSE; }
-int rand_number(int from, int to) { (void)to; return from; }
+int room_is_dark_at(room_rnum room, const char *source_file, int source_line,
+                    const char *source_func)
+{ (void)room; (void)source_file; (void)source_line; (void)source_func; return FALSE; }
+int rand_number_at(int from, int to, const char *source_file, int source_line,
+                   const char *source_func)
+{ (void)to; (void)source_file; (void)source_line; (void)source_func; return from; }
 int find_command(const char *command) { (void)command; return -1; }
 
 /* B2-32: the receptionist formatted each object's short description into
