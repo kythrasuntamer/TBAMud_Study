@@ -201,6 +201,14 @@ static void plr_check_terminated(const char *filename, long record,
                             idnum, tag, field_size);
 }
 
+/* FIXED_STR_ARGS(field): the "%.*s" argument pair for a fixed-width char
+ * array from a binary record, which need not hold a NUL.  The printed text
+ * stops at the first NUL or at the end of the array, never past it.  field
+ * must be an array (sizeof of a pointer would bound it to 8 bytes) and is
+ * evaluated twice, so pass a plain struct member. */
+#define FIXED_STR_ARGS(field) \
+  (int)plr_field_len((field), sizeof(field)), (field)
+
 /* Converts every record of the binary playerfile.  Returns the number of
  * records that were reported and skipped (0 when all converted). */
 int convert(char *filename)
@@ -297,16 +305,10 @@ int convert(char *filename)
     plr_check_terminated(filename, record, player.char_specials_saved.idnum,
                          "Host", player.host, sizeof(player.host));
     tb_fprintf(outfile, "Name: %s\n", player.name);	/* validated above */
-    tb_fprintf(outfile, "Pass: %.*s\n",
-               (int)plr_field_len(player.pwd, sizeof(player.pwd)), player.pwd);
-    tb_fprintf(outfile, "Titl: %.*s\n",
-               (int)plr_field_len(player.title, sizeof(player.title)),
-               player.title);
+    tb_fprintf(outfile, "Pass: %.*s\n", FIXED_STR_ARGS(player.pwd));
+    tb_fprintf(outfile, "Titl: %.*s\n", FIXED_STR_ARGS(player.title));
     if (*player.description)
-      tb_fprintf(outfile, "Desc:\n%.*s~\n",
-                 (int)plr_field_len(player.description,
-                                    sizeof(player.description)),
-                 player.description);
+      tb_fprintf(outfile, "Desc:\n%.*s~\n", FIXED_STR_ARGS(player.description));
     if (player.sex != PFDEF_SEX)
       tb_fprintf(outfile, "Sex : %d\n", (int)player.sex); 
     if (player.chclass != PFDEF_CLASS)
@@ -316,9 +318,7 @@ int convert(char *filename)
     tb_fprintf(outfile, "Brth: %d\n", (int)player.birth);
     tb_fprintf(outfile, "Plyd: %d\n", (int)player.played);
     tb_fprintf(outfile, "Last: %d\n", (int)player.last_logon);
-    tb_fprintf(outfile, "Host: %.*s\n",
-               (int)plr_field_len(player.host, sizeof(player.host)),
-               player.host);
+    tb_fprintf(outfile, "Host: %.*s\n", FIXED_STR_ARGS(player.host));
     if (player.height != PFDEF_HEIGHT)
       tb_fprintf(outfile, "Hite: %d\n", (int)player.height);
     if (player.weight != PFDEF_WEIGHT)
