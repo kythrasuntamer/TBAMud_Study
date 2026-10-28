@@ -244,6 +244,25 @@ static void body_social_using_t_runs(void)
   free(arg);
 }
 
+/* --- G2-13: a social field read from a '#' line is NULL --------------- */
+
+static void social_without_char_no_arg_is_reported(void)
+{
+  char *arg = strdup("");
+
+  setup_lick_social("You lick $N's $t.");
+  lick.char_no_arg = NULL;           /* fread_action() stored a '#' line */
+  lick.others_no_arg = (char *)"$n licks the air.";
+  do_action(&speaker, arg, 300, 0);
+  TEST_ASSERT_EQUAL_INT(0, act_calls);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("social-field-missing", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "social 'lick' has no char_no_arg"));
+  soc_mess_list = NULL;
+  top_of_socialt = -1;
+  free(arg);
+}
+
 /* --- G2-09: '@' as the last character of said text --------------------- */
 
 static void trailing_at_sign_stays_inside_the_text(void)
@@ -273,6 +292,7 @@ int main(void)
   RUN_TEST(escape_truncates_between_pairs_and_reports);
   RUN_TEST(body_social_using_obj_code_is_refused);
   RUN_TEST(body_social_using_t_runs);
+  RUN_TEST(social_without_char_no_arg_is_reported);
   RUN_TEST(trailing_at_sign_stays_inside_the_text);
   return UNITY_END();
 }

@@ -25,6 +25,27 @@
 static int find_action(int cmd);
 static bool social_body_msg_ok(const struct social_messg *action,
                                const char *msg, const char *field);
+static void social_misconfigured(struct char_data *ch,
+                                 const struct social_messg *action,
+                                 const char *field);
+
+/* Any social message field may be NULL: fread_action() stores NULL for a
+ * '#' line and aedit can clear fields. Passing NULL to act() is the
+ * documented "no message" contract, but a NULL passed to send_to_char()'s
+ * %s or into tb_snprintf() is undefined (glibc prints "(null)"). Optional
+ * fields (not_found, char_auto) fall back to fixed defaults as do_action
+ * always did; a field the command cannot do without is reported here and
+ * the social is not run. */
+static void social_misconfigured(struct char_data *ch,
+                                 const struct social_messg *action,
+                                 const char *field)
+{
+  TB_WARN_MSG("social", "social-field-missing", "soc_mess_list",
+              "social '%s' has no %s message (used by " DIAG_CHAR_FMT ")",
+              action->command ? action->command : "(null)", field,
+              DIAG_CHAR(ch));
+  send_to_char(ch, "That social is misconfigured; please tell an immortal.\r\n");
+}
 
 /* In a body-part social ("lick bob ear") act()'s obj argument is the typed
  * body part, a char[MAX_INPUT_LENGTH] on the stack, so the message may
@@ -69,6 +90,10 @@ ACMD(do_action)
   action = &soc_mess_list[act_nr];
 
   if (!argument || !*argument) {
+    if (!action->char_no_arg) {
+      social_misconfigured(ch, action, "char_no_arg");
+      return;
+    }
     send_to_char(ch, "%s\r\n", action->char_no_arg);
     act(action->others_no_arg, action->hide, ch, 0, 0, TO_ROOM);
     return;
@@ -297,11 +322,13 @@ action = &soc_mess_list[act_nr];
     }
     tb_snprintf(buf, sizeof(buf), "Gemote: %s", action->others_no_arg);
   } else if (!(vict = get_char_vis(ch, arg, NULL, FIND_CHAR_WORLD))) {
-    send_to_char(ch, "%s\r\n", action->not_found);
+    /* Same default as do_action for this optional field. */
+    send_to_char(ch, "%s\r\n", action->not_found ? action->not_found :
+                 "I don't see anything by that name here.");
     return;
   } else if (vict == ch) {
     if(!action->others_auto || !*action->others_auto) {
-      send_to_char(ch, "%s\r\n", action->char_auto);
+      send_to_char(ch, "%s\r\n", action->char_auto ? action->char_auto : "Erm, no.");
       return;
     }
     tb_snprintf(buf, sizeof(buf), "Gemote: %s", action->others_auto);
@@ -309,6 +336,10 @@ action = &soc_mess_list[act_nr];
     if (GET_POS(vict) < action->min_victim_position) {
       act("$N is not in a proper position for that.",
            FALSE, ch, 0, vict, TO_CHAR | TO_SLEEP);
+      return;
+    }
+    if (!action->others_found) {
+      social_misconfigured(ch, action, "others_found");
       return;
     }
     tb_snprintf(buf, sizeof(buf), "Gemote: %s", action->others_found);
