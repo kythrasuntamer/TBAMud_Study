@@ -83,10 +83,11 @@ static void pager_page_on(char *out, size_t size)
     out[0] = '\0';
 }
 
-/* utils.c's contract (core-utils): a name outside [A-Za-z0-9_-] is not a
- * safe path component and is refused with 0 (the real one also reports
- * filename-name-invalid; this stand-in stays quiet so tests see only the
- * caller's report). */
+/* utils.c's get_filename() accepts only a legal player name (1 to
+ * MAX_NAME_LENGTH ASCII letters), reports anything else as
+ * persist/filename-unsafe, leaves filename "" and returns 0. This stand-in
+ * is looser (any [A-Za-z0-9_-] name) and quiet, so tests see only the
+ * caller's report; what matters here is that a path-like name is refused. */
 int get_filename(char *filename, size_t fbufsize, int mode, const char *orig_name)
 {
   const char *p;

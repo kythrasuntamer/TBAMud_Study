@@ -104,7 +104,7 @@ target_compile_options(fuzz_player PRIVATE -ftrivial-auto-var-init=pattern)
 #   PLAYER-3 regression-name-path-index: a player index record named "../"
 #     reached get_filename() through update_obj_file()/Crash_clean_file(),
 #     which built a path outside lib/. Fixed by 2f7889b: get_filename()
-#     rejects the name (persist/filename-name-invalid).
+#     rejects the name (persist/filename-unsafe).
 #   PLAYER-2 regression-hcontrol-time: hcontrol show prints built_on/last_pay after
 #     tb_strftime()/localtime() failed on an out-of-range time_t from the
 #     binary hcontrol file and left the buffer unwritten; the %-15s then

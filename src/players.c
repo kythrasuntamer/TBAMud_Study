@@ -1448,8 +1448,9 @@ void remove_player(int pfilepos)
   }
 
   /* 'last' comes from the player index file. localtime() returns NULL for a
-   * value it cannot represent (around 1e17), and tb_strftime() then leaves
-   * timestr unwritten, so the log line below used to print stack garbage. */
+   * value it cannot represent (around 1e17). tb_strftime() used to leave
+   * timestr unwritten then, so the log line below printed stack garbage; it
+   * now reports and leaves "", and this check names the player instead. */
   {
     const struct tm *last_tm = localtime(&(player_table[pfilepos].last));
 

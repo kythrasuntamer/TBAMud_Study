@@ -156,7 +156,6 @@ static void test_pet_shop_without_storage_room_reports(void)
   TEST_ASSERT_NULL(strstr(sent, "cityguard"));
   TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
   TEST_ASSERT_EQUAL_STRING("pet-room-missing", tb_captured_operation);
-  rooms[1].people = NULL;   /* static: must not keep the stack npc */
   world = NULL;
   mob_index = NULL;
 }
