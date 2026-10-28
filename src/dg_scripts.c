@@ -2947,7 +2947,7 @@ static void process_rdelete(struct script_data *sc, trig_data *trig, char *cmd)
   } else if ((obj = find_obj(uid))) {
     sc_remote = SCRIPT(obj);
   } else {
-    script_log("Trigger: %s, VNum %d. remote: uid '%ld' invalid",
+    script_log("Trigger: %s, VNum %d. rdelete: uid '%ld' invalid",
             GET_TRIG_NAME(trig), GET_TRIG_VNUM(trig), uid);
     return;
   }
