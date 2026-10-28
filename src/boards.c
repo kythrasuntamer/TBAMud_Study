@@ -523,9 +523,21 @@ void board_save_board(int board_type)
     else
       msg_index[board_type][i].message_len = strlen(tmp2) + 1;
 
-    if (!board_write_exact(&(msg_index[board_type][i]), sizeof(struct board_msginfo), 1,
-                           fl, board_type, i, "message metadata"))
-      goto write_fail;
+    /* The record keeps its historical layout (struct board_msginfo), but
+     * the in-memory heading pointer and slot are meaningless on disk: write
+     * them as NULL / -1 rather than leaking a heap address into the file. */
+    {
+      struct board_msginfo rec;
+
+      memset(&rec, 0, sizeof(rec));
+      rec.slot_num = -1;
+      rec.heading = NULL;
+      rec.level = MSG_LEVEL(board_type, i);
+      rec.heading_len = msg_index[board_type][i].heading_len;
+      rec.message_len = msg_index[board_type][i].message_len;
+      if (!board_write_exact(&rec, sizeof(rec), 1, fl, board_type, i, "message metadata"))
+        goto write_fail;
+    }
     if (tmp1 && !board_write_exact(tmp1, sizeof(char), msg_index[board_type][i].heading_len,
                                    fl, board_type, i, "heading"))
       goto write_fail;
@@ -585,99 +597,135 @@ write_fail:
     TB_REPORT_ERRNO("remove", tmpname);
 }
 
+/* Read exactly count elements for one field of a board file, reporting a
+ * short read, EOF or I/O error against the caller's location with the board
+ * vnum, message index and field.  Returns TRUE when the field was read. */
+static int board_read_exact_at(void *ptr, size_t size, size_t count, FILE *fl,
+                               int board_type, int message_index,
+                               const char *field, const char *src_file,
+                               int src_line, const char *src_func)
+{
+  size_t got = fread(ptr, size, count, fl);
+
+  if (got == count)
+    return TRUE;
+
+  if (ferror(fl))
+    tb_error_log_at("ERROR", "board", "board-load", FILENAME(board_type), errno,
+                    src_file, src_line, src_func,
+                    TB_ERRID_PARSER_EOF " board vnum %d message %d field %s: I/O error after %lu/%lu elements",
+                    BOARD_VNUM(board_type), message_index, field,
+                    (unsigned long)got, (unsigned long)count);
+  else
+    tb_error_log_at("ERROR", "board", "board-load", FILENAME(board_type), 0,
+                    src_file, src_line, src_func,
+                    TB_ERRID_PARSER_EOF " board vnum %d message %d field %s: file ends after %lu/%lu elements",
+                    BOARD_VNUM(board_type), message_index, field,
+                    (unsigned long)got, (unsigned long)count);
+  return FALSE;
+}
+
+/** Call-site-capturing form of board_read_exact_at(). */
+#define BOARD_READ_EXACT(ptr, size, count, fl, bt, i, field) \
+  board_read_exact_at((ptr), (size), (count), (fl), (bt), (i), (field), \
+                      __FILE__, __LINE__, __func__)
+
+/* Load one board file into the (already reset) index for board_type.
+ *
+ * The file is a message count followed by, per message, a raw
+ * struct board_msginfo, heading_len bytes of heading and message_len bytes
+ * of body.  The record's heading pointer and slot_num were written by some
+ * earlier process (and possibly another architecture): they are never used.
+ * Only the lengths and level are taken from disk, and the lengths are
+ * bounds-checked before anything is allocated.  num_of_msgs grows only as
+ * each message is fully loaded, so a failure part-way through leaves just
+ * complete, owned entries for board_reset_board() to free. */
 void board_load_board(int board_type)
 {
   FILE *fl;
-  int i, len1, len2;
+  int i, count, len1, len2, slot;
   char *tmp1, *tmp2;
+  struct board_msginfo rec;
 
   if (!(fl = fopen(FILENAME(board_type), "rb"))) {
-    int saved_errno = errno;
-    if (saved_errno != ENOENT)
-      log("SYSERR: board %d could not open %s for reading: %s (errno=%d)",
-          board_type, FILENAME(board_type), strerror(saved_errno), saved_errno);
+    if (errno != ENOENT)
+      TB_ERROR_ERRNO("board", "board-load", FILENAME(board_type),
+                     "board vnum %d could not open board file for reading",
+                     BOARD_VNUM(board_type));
     return;
   }
-  if (fread(&(num_of_msgs[board_type]), sizeof(int), 1, fl) != 1) {
-    if (ferror(fl)) {
-      int saved_errno = errno;
-      log("SYSERR: board %d failed reading message-count header from %s: %s (errno=%d)",
-          board_type, FILENAME(board_type), strerror(saved_errno), saved_errno);
-    } else
-      log("SYSERR: board %d file %s ended before message-count header", board_type, FILENAME(board_type));
+  num_of_msgs[board_type] = 0;
+  if (!BOARD_READ_EXACT(&count, sizeof(int), 1, fl, board_type, -1, "message-count header")) {
     tb_fclose(fl);
     return;
   }
-  if (num_of_msgs[board_type] < 1 || num_of_msgs[board_type] > MAX_BOARD_MESSAGES) {
-    log("SYSERR: Board file %d corrupt.  Resetting.", board_type);
+  if (count < 1 || count > MAX_BOARD_MESSAGES) {
+    TB_ERROR_MSG("board", "board-load", FILENAME(board_type),
+                 TB_ERRID_PARSER_RANGE " board vnum %d message count %d outside 1..%d; resetting",
+                 BOARD_VNUM(board_type), count, MAX_BOARD_MESSAGES);
     tb_fclose(fl);
     board_reset_board(board_type);
     return;
   }
-  for (i = 0; i < num_of_msgs[board_type]; i++) {
-    if (fread(&(msg_index[board_type][i]), sizeof(struct board_msginfo), 1, fl) != 1) {
-      if (feof(fl))
-        log("SYSERR: Unexpected EOF in board %d file %s while loading message %d; resetting.", board_type, FILENAME(board_type), i);
-      else if (ferror(fl))
-        { int saved_errno = errno; log("SYSERR: I/O error reading board %d file %s at message %d: %s (errno=%d); resetting.", board_type, FILENAME(board_type), i, strerror(saved_errno), saved_errno); }
-      else
-        log("SYSERR: Short read in board %d file %s at message %d; resetting.", board_type, FILENAME(board_type), i);
-      tb_fclose(fl);
-      board_reset_board(board_type);
-      return;
-    }
-    if ((len1 = msg_index[board_type][i].heading_len) <= 0) {
-      log("SYSERR: Board %d file %s has invalid heading length %d at message %d; resetting.",
-          board_type, FILENAME(board_type), len1, i);
-      tb_fclose(fl);
-      board_reset_board(board_type);
-      return;
+  for (i = 0; i < count; i++) {
+    if (!BOARD_READ_EXACT(&rec, sizeof(rec), 1, fl, board_type, i, "message metadata"))
+      goto load_fail;
+
+    /* A heading is built in a MAX_INPUT_LENGTH buffer (board_write_message)
+     * and a body is capped at MAX_MESSAGE_LENGTH by the editor, both counted
+     * with their terminator.  Anything else is a corrupt or foreign file. */
+    len1 = rec.heading_len;
+    len2 = rec.message_len;
+    if (len1 <= 0 || len1 > MAX_INPUT_LENGTH || len2 < 0 || len2 > MAX_MESSAGE_LENGTH) {
+      TB_ERROR_MSG("board", "board-load", FILENAME(board_type),
+                   TB_ERRID_PARSER_RANGE " board vnum %d message %d heading_len %d (1..%d) message_len %d (0..%d); resetting",
+                   BOARD_VNUM(board_type), i, len1, MAX_INPUT_LENGTH,
+                   len2, MAX_MESSAGE_LENGTH);
+      goto load_fail;
     }
 
     CREATE(tmp1, char, len1);
-
-    if (fread(tmp1, sizeof(char), (size_t)len1, fl) != (size_t)len1) {
-      if (feof(fl))
-        log("SYSERR: Unexpected EOF in board %d file %s while loading message %d; resetting.", board_type, FILENAME(board_type), i);
-      else if (ferror(fl))
-        { int saved_errno = errno; log("SYSERR: I/O error reading board %d file %s at message %d: %s (errno=%d); resetting.", board_type, FILENAME(board_type), i, strerror(saved_errno), saved_errno); }
-      else
-        log("SYSERR: Short read in board %d file %s at message %d; resetting.", board_type, FILENAME(board_type), i);
+    if (!BOARD_READ_EXACT(tmp1, sizeof(char), (size_t)len1, fl, board_type, i, "heading")) {
       free(tmp1);
-      tb_fclose(fl);
-      board_reset_board(board_type);
-      return;
+      goto load_fail;
     }
 
-    MSG_HEADING(board_type, i) = tmp1;
-
-    if ((MSG_SLOTNUM(board_type, i) = find_slot()) == -1) {
-      log("SYSERR: Out of slots booting board %d!  Resetting...", board_type);
-      tb_fclose(fl);
-      board_reset_board(board_type);
-      return;
+    if ((slot = find_slot()) == -1) {
+      TB_ERROR_MSG("board", "slot-exhausted", FILENAME(board_type),
+                   "board vnum %d message %d: all %d message slots in use while loading; resetting",
+                   BOARD_VNUM(board_type), i, INDEX_SIZE);
+      free(tmp1);
+      goto load_fail;
     }
-    if ((len2 = msg_index[board_type][i].message_len) > 0) {
+
+    tmp2 = NULL;
+    if (len2 > 0) {
       CREATE(tmp2, char, len2);
-      if (fread(tmp2, sizeof(char), (size_t)len2, fl) != (size_t)len2) {
-        if (feof(fl))
-          log("SYSERR: Unexpected EOF in board %d file %s while loading message %d; resetting.", board_type, FILENAME(board_type), i);
-        else if (ferror(fl))
-          { int saved_errno = errno; log("SYSERR: I/O error reading board %d file %s at message %d: %s (errno=%d); resetting.", board_type, FILENAME(board_type), i, strerror(saved_errno), saved_errno); }
-        else
-          log("SYSERR: Short read in board %d file %s at message %d; resetting.", board_type, FILENAME(board_type), i);
+      if (!BOARD_READ_EXACT(tmp2, sizeof(char), (size_t)len2, fl, board_type, i, "body")) {
         free(tmp2);
-        tb_fclose(fl);
-        board_reset_board(board_type);
-        return;
+        free(tmp1);
+        msg_storage_taken[slot] = 0;
+        goto load_fail;
       }
+    }
 
-      msg_storage[MSG_SLOTNUM(board_type, i)] = tmp2;
-    } else
-      msg_storage[MSG_SLOTNUM(board_type, i)] = NULL;
+    /* Commit the fully read message. */
+    memset(&msg_index[board_type][i], 0, sizeof(struct board_msginfo));
+    MSG_HEADING(board_type, i) = tmp1;
+    MSG_SLOTNUM(board_type, i) = slot;
+    MSG_LEVEL(board_type, i) = rec.level;
+    msg_index[board_type][i].heading_len = len1;
+    msg_index[board_type][i].message_len = len2;
+    msg_storage[slot] = tmp2;
+    num_of_msgs[board_type] = i + 1;
   }
 
   tb_fclose(fl);
+  return;
+
+load_fail:
+  tb_fclose(fl);
+  board_reset_board(board_type);
 }
 
 /* When shutting down, clear all boards. */

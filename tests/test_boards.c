@@ -268,6 +268,88 @@ static void test_remove_last_then_clear(void)
   TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
 }
 
+/* Write a one-message board file for board 0 with the given record. */
+static void write_board_file(const struct board_msginfo *rec,
+                             const char *heading, size_t heading_bytes)
+{
+  FILE *fl = fopen(FILENAME(0), "wb");
+  int count = 1;
+
+  TEST_ASSERT_NOT_NULL(fl);
+  TEST_ASSERT_EQUAL_size_t(1, fwrite(&count, sizeof(count), 1, fl));
+  TEST_ASSERT_EQUAL_size_t(1, fwrite(rec, sizeof(*rec), 1, fl));
+  if (heading_bytes)
+    TEST_ASSERT_EQUAL_size_t(heading_bytes, fwrite(heading, 1, heading_bytes, fl));
+  TEST_ASSERT_EQUAL_INT(0, fclose(fl));
+}
+
+/* C1-04: the loader used the heading pointer and slot number stored in the
+ * file. A bad heading length reset the board, which freed the on-disk
+ * pointer and indexed the slot pool with the on-disk slot (invalid free /
+ * out-of-bounds write before the fix). */
+static void test_load_ignores_on_disk_pointer_and_slot(void)
+{
+  struct board_msginfo rec;
+
+  memset(&rec, 0, sizeof(rec));
+  rec.slot_num = 12345;
+  rec.heading = (char *)(uintptr_t)0x4141414141410ULL;
+  rec.heading_len = 0;
+  write_board_file(&rec, NULL, 0);
+
+  board_load_board(0);
+  TEST_ASSERT_EQUAL_STRING("board-load", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "heading_len 0"));
+  board_clear_all();
+}
+
+/* C1-04: the same, with the failure on the heading read itself. */
+static void test_load_short_heading_read(void)
+{
+  struct board_msginfo rec;
+
+  memset(&rec, 0, sizeof(rec));
+  rec.slot_num = 12345;
+  rec.heading = (char *)(uintptr_t)0x4141414141410ULL;
+  rec.heading_len = 50;
+  write_board_file(&rec, "short", 5);
+
+  board_load_board(0);
+  TEST_ASSERT_EQUAL_STRING("board-load", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "field heading"));
+  board_clear_all();
+}
+
+/* C1-04: lengths beyond what the writer can produce are refused before any
+ * allocation (an INT_MAX heading made CREATE() abort the server). */
+static void test_load_rejects_oversized_lengths(void)
+{
+  struct board_msginfo rec;
+
+  memset(&rec, 0, sizeof(rec));
+  rec.heading_len = 0x7fffffff;
+  write_board_file(&rec, NULL, 0);
+  board_load_board(0);
+  TEST_ASSERT_EQUAL_STRING("board-load", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, TB_ERRID_PARSER_RANGE));
+}
+
+/* Saved boards load back with their headings and bodies. */
+static void test_save_load_round_trip(void)
+{
+  write_post("first", "body one");
+  write_post("second", "body two");
+  board_save_board(0);
+  board_clear_all();
+  tb_error_capture_reset();
+
+  board_load_board(0);
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  read_post(2);
+  TEST_ASSERT_NOT_NULL(strstr(paged, ":: second"));
+  TEST_ASSERT_NOT_NULL(strstr(paged, "body two"));
+}
+
 int main(void)
 {
   char dir[] = "/tmp/tb_test_boards.XXXXXX";
@@ -287,5 +369,9 @@ int main(void)
   RUN_TEST(test_long_headline_is_truncated_and_reported);
   RUN_TEST(test_remove_first_of_two_then_clear);
   RUN_TEST(test_remove_last_then_clear);
+  RUN_TEST(test_load_ignores_on_disk_pointer_and_slot);
+  RUN_TEST(test_load_short_heading_read);
+  RUN_TEST(test_load_rejects_oversized_lengths);
+  RUN_TEST(test_save_load_round_trip);
   return UNITY_END();
 }
