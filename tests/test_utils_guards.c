@@ -285,6 +285,63 @@ void test_die_follower_bounds_refollow_loop(void)
   free_player(a);
 }
 
+/* =====================================================================
+ * I1-11: an inconsistent follower list is reported, not dereferenced.
+ * ===================================================================== */
+
+void test_stop_follower_missing_node_reports_and_clears_master(void)
+{
+  struct char_data *a = make_player(31), *b = make_player(32);
+  struct char_data *c = make_player(33);
+
+  world_setup();
+  add_follower(c, b);             /* b's list holds c only */
+  a->master = b;                  /* corrupt: a claims b, b does not list a */
+  stop_follower(a);
+
+  TEST_ASSERT_NULL(a->master);
+  TEST_ASSERT_NOT_NULL(b->followers);
+  TEST_ASSERT_TRUE(b->followers->follower == c);
+  TEST_ASSERT_EQUAL_INT(1, count_op("follower-unlink"));
+  TEST_ASSERT_NOT_NULL(strstr(log_text(), "player idnum 31"));
+  TEST_ASSERT_NOT_NULL(strstr(log_text(), "player idnum 32"));
+  stop_follower(c);
+  world_teardown();
+  free_player(a);
+  free_player(b);
+  free_player(c);
+}
+
+void test_stop_follower_without_master_reports(void)
+{
+  struct char_data *a = make_player(41);
+
+  world_setup();
+  stop_follower(a);
+  TEST_ASSERT_EQUAL_INT(1, count_op("follower-no-master"));
+  world_teardown();
+  free_player(a);
+}
+
+void test_add_follower_twice_reports_and_keeps_one_node(void)
+{
+  struct char_data *a = make_player(51), *b = make_player(52);
+  struct char_data *c = make_player(53);
+
+  world_setup();
+  add_follower(a, b);
+  add_follower(a, c);
+
+  TEST_ASSERT_TRUE(a->master == b);
+  TEST_ASSERT_NULL(c->followers);
+  TEST_ASSERT_EQUAL_INT(1, count_op("follower-add"));
+  stop_follower(a);
+  world_teardown();
+  free_player(a);
+  free_player(b);
+  free_player(c);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -293,5 +350,8 @@ int main(void)
   RUN_TEST(test_stop_follower_survives_reentrant_unfollow);
   RUN_TEST(test_die_follower_survives_callback_unfollowing_next);
   RUN_TEST(test_die_follower_bounds_refollow_loop);
+  RUN_TEST(test_stop_follower_missing_node_reports_and_clears_master);
+  RUN_TEST(test_stop_follower_without_master_reports);
+  RUN_TEST(test_add_follower_twice_reports_and_keeps_one_node);
   return UNITY_END();
 }

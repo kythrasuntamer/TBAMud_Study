@@ -1055,7 +1055,8 @@ bool circle_follow(struct char_data *ch, struct char_data *victim)
  * to break any charm affect.
  * @todo Make the messages returned from the broken charm affect more
  * understandable.
- * @pre ch MUST be following someone, else core dump.
+ * @pre ch MUST be following someone; otherwise a follower-no-master error is
+ * logged and nothing changes.
  * @post The charm affect (AFF_CHARM) will be removed from the character and
  * the character will stop following the "master" they were following.
  *
@@ -1069,29 +1070,38 @@ bool circle_follow(struct char_data *ch, struct char_data *victim)
  * */
 void stop_follower(struct char_data *ch)
 {
-  struct follow_type *j, *k;
+  struct follow_type *prev, *k;
   struct char_data *master;
   bool charmed;
 
-  /* Makes sure this function is not called when it shouldn't be called. */
+  /* Callers check ch->master first; reaching here without one is a caller
+   * bug, reported with the character so the call path can be found. */
   if (ch->master == NULL) {
-    core_dump();
+    TB_ERROR_MSG("char", "follower-no-master", "stop_follower",
+                 DIAG_CHAR_FMT " is not following anyone", DIAG_CHAR(ch));
     return;
   }
 
   master = ch->master;
 
-  /* Unlink first, so a callback below sees a consistent follower list. */
-  if (master->followers->follower == ch) {	/* Head of follower-list? */
-    k = master->followers;
-    master->followers = k->next;
+  /* Unlink first, so a callback below sees a consistent follower list.
+   * Invariant: ch is on master->followers exactly when ch->master == master.
+   * If the list lost the node, report both characters and still clear
+   * ch->master, so ch does not keep pointing at a leader that no longer
+   * lists it. */
+  for (prev = NULL, k = master->followers; k && k->follower != ch;
+       prev = k, k = k->next)
+    ;
+  if (k == NULL) {
+    TB_ERROR_MSG("char", "follower-unlink", "stop_follower",
+                 "follower " DIAG_CHAR_FMT " not in master " DIAG_CHAR_FMT
+                 " follower list", DIAG_CHAR(ch), DIAG_CHAR(master));
+  } else {
+    if (prev == NULL)
+      master->followers = k->next;
+    else
+      prev->next = k->next;
     free(k);
-  } else {			/* locate follower who is not head of list */
-    for (k = master->followers; k->next->follower != ch; k = k->next);
-
-    j = k->next;
-    k->next = j->next;
-    free(j);
   }
 
   charmed = AFF_FLAGGED(ch, AFF_CHARM);
@@ -1203,15 +1213,28 @@ void die_follower(struct char_data *ch)
 /** Adds a new follower to a group.
  * @todo Maybe make circle_follow an inherent part of this function?
  * @pre Make sure to call circle_follow first. ch may also not already
- * be following anyone, otherwise core dump.
+ * be following anyone; otherwise a follower-add error is logged and nothing
+ * changes.
  * @param ch The character to follow.
  * @param leader The character to be followed. */
 void add_follower(struct char_data *ch, struct char_data *leader)
 {
   struct follow_type *k;
 
+  /* Callers must stop_follower() first: a second node would leave ch on two
+   * leaders' lists with ch->master naming only one of them. */
+  if (leader == NULL) {
+    TB_ERROR_MSG("char", "follower-add", "add_follower",
+                 DIAG_CHAR_FMT " asked to follow a NULL leader", DIAG_CHAR(ch));
+    return;
+  }
   if (ch->master) {
-    core_dump();
+    struct char_data *current = ch->master;
+
+    TB_ERROR_MSG("char", "follower-add", "add_follower",
+                 DIAG_CHAR_FMT " already follows " DIAG_CHAR_FMT
+                 "; not added to " DIAG_CHAR_FMT, DIAG_CHAR(ch),
+                 DIAG_CHAR(current), DIAG_CHAR(leader));
     return;
   }
 
