@@ -760,6 +760,9 @@ static void wait_resumes_in_the_last_room(void)
   world = rooms;
   top_of_world = 1;                       /* the last room is rooms[1] */
   SCRIPT(&rooms[1]) = &script;
+  /* The resumed wait finds its room by vnum and checks that the room still
+   * holds the trigger (trig_wait_event()), so attach it as a room's own. */
+  TRIGGERS(&script) = &trig;
   rooms[1].number = 4201;
   trig_index = indexes;
   top_of_trigt = 1;
