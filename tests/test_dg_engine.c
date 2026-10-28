@@ -971,6 +971,30 @@ static void trim_handles_empty_and_blank_values(void)
   TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
 }
 
+/* D1-27: remote to a target without a script and a detach that matched
+ * nothing returned silently. */
+static void lost_remote_and_detach_miss_are_reported(void)
+{
+  const char *quiet[] = { "nop", NULL };
+  char remote_line[64], detach_line[64];
+  const char *remote_lines[] = { "set flag 1", remote_line, NULL };
+  const char *detach_lines[] = { detach_line, NULL };
+  char_data *bare = make_mob("bare"), *scripted = make_mob("scripted");
+
+  attach_to_script(&SCRIPT(scripted), make_trigger(MOB_TRIGGER, MTRIG_SPEECH, 0, quiet));
+  snprintf(remote_line, sizeof(remote_line), "remote flag %ld", bare->script_id);
+  run_mob_script(make_mob("mob"), remote_lines);
+  TEST_ASSERT_EQUAL_STRING("remote-target", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "flag"));
+
+  tb_error_capture_reset();
+  snprintf(detach_line, sizeof(detach_line), "detach 4242 %ld",
+           scripted->script_id);
+  run_mob_script(make_mob("mob2"), detach_lines);
+  TEST_ASSERT_EQUAL_STRING("detach-miss", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(TRIGGERS(SCRIPT(scripted)));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -1011,5 +1035,6 @@ int main(void)
   RUN_TEST(wait_in_last_room_resumes);
   RUN_TEST(saturated_arithmetic_is_reported);
   RUN_TEST(trim_handles_empty_and_blank_values);
+  RUN_TEST(lost_remote_and_detach_miss_are_reported);
   return UNITY_END();
 }

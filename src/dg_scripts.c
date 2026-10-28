@@ -2261,6 +2261,17 @@ static void process_attach(void *go, struct script_data *sc, trig_data *trig,
   }
 }
 
+/* process_detach() found nothing to remove. */
+static void report_detach_miss(const trig_data *trig, long uid,
+                               const char *trignum_s, const char *why)
+{
+  TB_WARN_MSG("dg", "detach-miss", "process_detach",
+              "trig vnum %d: target uid %ld trigger '%s': %s",
+              DIAG_TRIG_VNUM(trig), uid, trignum_s, why);
+  script_log("Trigger: %s, VNum %d. detach: uid %ld trigger '%s': %s",
+             GET_TRIG_NAME(trig), GET_TRIG_VNUM(trig), uid, trignum_s, why);
+}
+
 /* script detaching a trigger from something */
 static void process_detach(void *go, struct script_data *sc, trig_data *trig,
     int type, char *cmd)
@@ -2308,6 +2319,9 @@ static void process_detach(void *go, struct script_data *sc, trig_data *trig,
   }
 
 
+  /* A detach that removes nothing used to return silently, hiding a wrong
+   * trigger number or target from the builder. "all" on a target with no
+   * script has nothing to do and stays quiet. trignum_s is script text. */
   if (c && SCRIPT(c)) {
     if (!strcmp(trignum_s, "all")) {
       extract_script(c, MOB_TRIGGER);
@@ -2317,7 +2331,8 @@ static void process_detach(void *go, struct script_data *sc, trig_data *trig,
       if (!TRIGGERS(SCRIPT(c))) {
         extract_script(c, MOB_TRIGGER);
       }
-    }
+    } else
+      report_detach_miss(trig, id, trignum_s, "trigger not attached");
     return;
   }
 
@@ -2330,7 +2345,8 @@ static void process_detach(void *go, struct script_data *sc, trig_data *trig,
       if (!TRIGGERS(SCRIPT(o))) {
         extract_script(o, OBJ_TRIGGER);
       }
-    }
+    } else
+      report_detach_miss(trig, id, trignum_s, "trigger not attached");
     return;
   }
 
@@ -2343,10 +2359,13 @@ static void process_detach(void *go, struct script_data *sc, trig_data *trig,
       if (!TRIGGERS(SCRIPT(r))) {
         extract_script(r, WLD_TRIGGER);
       }
-    }
+    } else
+      report_detach_miss(trig, id, trignum_s, "trigger not attached");
     return;
   }
 
+  if (strcmp(trignum_s, "all"))
+    report_detach_miss(trig, id, trignum_s, "target has no script");
 }
 
 struct room_data *dg_room_of_obj(struct obj_data *obj)
@@ -2573,7 +2592,17 @@ static void process_remote(struct script_data *sc, trig_data *trig, char *cmd)
     return;
   }
 
-  if (sc_remote==NULL) return; /* no script to assign */
+  /* A target without a script cannot hold globals: the write is lost, so
+   * say so. The variable name is script text, never player text. */
+  if (sc_remote==NULL) {
+    TB_WARN_MSG("dg", "remote-target", "process_remote",
+                "trig vnum %d: target uid %ld has no script; var '%s' not "
+                "stored", DIAG_TRIG_VNUM(trig), uid, vd->name);
+    script_log("Trigger: %s, VNum %d. remote: uid %ld has no script; var '%s' "
+               "not stored", GET_TRIG_NAME(trig), GET_TRIG_VNUM(trig), uid,
+               vd->name);
+    return;
+  }
 
   add_var(&(sc_remote->global_vars), vd->name, vd->value, context);
 }
@@ -2731,6 +2760,9 @@ static void process_rdelete(struct script_data *sc, trig_data *trig, char *cmd)
     return;
   }
 
+  /* rdelete is "make sure it is gone": a target with no script or no such
+   * global already satisfies it, and scripts routinely rdelete flags that
+   * may never have been set, so those cases stay quiet by design. */
   if (sc_remote==NULL) return; /* no script to delete a trigger from */
   if (sc_remote->global_vars==NULL) return; /* no script globals */
 
