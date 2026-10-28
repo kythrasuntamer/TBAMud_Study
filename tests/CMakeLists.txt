@@ -431,6 +431,24 @@ if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
         PROPERTIES COMPILE_OPTIONS "-ffunction-sections;-fdata-sections")
 endif()
 
+# Production bulletin boards (boards.c): headline bounds, message-index and
+# slot bookkeeping, and the board-file loader. interpreter.c supplies the
+# argument helpers; utils.c's tb_error_log_at() is wrapped for capture.
+add_mud_test(test_boards
+    ${MUD_SRCDIR}/boards.c
+    ${MUD_SRCDIR}/interpreter.c
+    ${MUD_SRCDIR}/utils.c
+    ${MUD_SRCDIR}/random.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_boards.c
+)
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_compile_options(test_boards PRIVATE -ffunction-sections -fdata-sections)
+    target_link_options(test_boards PRIVATE
+        -Wl,--gc-sections
+        -Wl,--wrap=tb_error_log_at)
+endif()
+target_link_libraries(test_boards PRIVATE ${CRYPT_LIBRARY} ${SODIUM_LIBRARY})
+
 find_package(Python3 COMPONENTS Interpreter QUIET)
 if(Python3_Interpreter_FOUND)
     add_test(NAME test_dg_memory_callback_contract

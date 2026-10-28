@@ -64,6 +64,7 @@
 #include "mud_event.h"
 #include "msgedit.h"
 #include "prefedit.h"
+#include "boards.h"
 #include "screen.h"
 #include <sys/stat.h>
 
@@ -1028,6 +1029,15 @@ void boot_db(void)
     assign_rooms();
     log("   Questmasters.");
     assign_the_quests();
+
+    /* gen_board is now live on the board objects; its message index must
+     * exist before the first player can touch one. */
+    log("Booting bulletin boards.");
+    if (init_boards() > 0) {
+      TB_FATAL_MSG("board", "board-init", "boot_db",
+                   TB_ERRID_BOOT_FATAL " board_info names object vnums that do not exist");
+      exit(1);
+    }
   }
 
   log("Assigning spell and skill levels.");

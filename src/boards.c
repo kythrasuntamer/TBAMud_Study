@@ -60,11 +60,12 @@ static char *msg_storage[INDEX_SIZE];
 static int msg_storage_taken[INDEX_SIZE];
 static int num_of_msgs[NUM_OF_BOARDS];
 static struct board_msginfo msg_index[NUM_OF_BOARDS][MAX_BOARD_MESSAGES];
+/* Set once init_boards() has reset the index and loaded the board files. */
+static int boards_initialized = FALSE;
 
 /* local static utility functions */
 static int find_slot(void);
-static int find_board(struct char_data *ch);
-static void init_boards(void);
+static int find_board(struct obj_data *board);
 static void board_reset_board(int board_type);
 static void board_clear_board(int board_type);
 
@@ -111,29 +112,35 @@ static int find_slot(void)
   return (-1);
 }
 
-/* search the room ch is standing in to find which board he's looking at */
-static int find_board(struct char_data *ch)
+/* Map the board object whose special procedure fired to its board_info
+ * entry.  Matching on the vnum of that very object (not on a cached rnum, and
+ * not on "the first board in the room") stays correct when OLC adds or
+ * deletes objects and renumbers obj_index, and when two boards share a room.
+ * Returns -1 when the object is not one of the configured boards. */
+static int find_board(struct obj_data *board)
 {
-  struct obj_data *obj;
+  obj_vnum vnum;
   int i;
 
-  for (obj = world[IN_ROOM(ch)].contents; obj; obj = obj->next_content)
-    for (i = 0; i < NUM_OF_BOARDS; i++)
-      if (BOARD_RNUM(i) == GET_OBJ_RNUM(obj))
-	return (i);
+  if (!board || (vnum = GET_OBJ_VNUM(board)) == NOTHING)
+    return (-1);
 
-  if (GET_LEVEL(ch) >= LVL_IMMORT)
-    for (obj = ch->carrying; obj; obj = obj->next_content)
-      for (i = 0; i < NUM_OF_BOARDS; i++)
-        if (BOARD_RNUM(i) == GET_OBJ_RNUM(obj))
-          return (i);
+  for (i = 0; i < NUM_OF_BOARDS; i++)
+    if (BOARD_VNUM(i) == vnum)
+      return (i);
 
   return (-1);
 }
 
-static void init_boards(void)
+/* Reset the message index and slot pool, then load every board file.
+ * Called once from boot_db() after the object prototypes are indexed.  Each
+ * board_info entry whose object vnum does not exist is reported here; the
+ * return value is how many are missing, and boot_db() treats any as fatal,
+ * at boot, where exiting loses nothing -- rather than on the first 'look
+ * board' hours into a running game, as the lazy initialisation did. */
+int init_boards(void)
 {
-  int i, j, fatal_error = 0;
+  int i, j, missing = 0;
 
   for (i = 0; i < INDEX_SIZE; i++) {
     msg_storage[i] = 0;
@@ -142,9 +149,10 @@ static void init_boards(void)
 
   for (i = 0; i < NUM_OF_BOARDS; i++) {
     if ((BOARD_RNUM(i) = real_object(BOARD_VNUM(i))) == NOTHING) {
-      log("SYSERR: Fatal board error: board vnum %d does not exist!",
-	      BOARD_VNUM(i));
-      fatal_error = 1;
+      TB_ERROR_MSG("board", "board-init", FILENAME(i),
+                   TB_ERRID_BOOT_FATAL " board index %d vnum %d has no object prototype",
+                   i, BOARD_VNUM(i));
+      missing++;
     }
     num_of_msgs[i] = 0;
     for (j = 0; j < MAX_BOARD_MESSAGES; j++) {
@@ -154,22 +162,26 @@ static void init_boards(void)
     board_load_board(i);
   }
 
-  if (fatal_error)
-    exit(1);
+  boards_initialized = TRUE;
+  return (missing);
 }
 
 SPECIAL(gen_board)
 {
   int board_type;
-  static int loaded = 0;
   struct obj_data *board = (struct obj_data *)me;
 
   /* These were originally globals for some unknown reason. */
   int ACMD_READ, ACMD_LOOK, ACMD_EXAMINE, ACMD_WRITE, ACMD_REMOVE;
-  
-  if (!loaded) {
-    init_boards();
-    loaded = 1;
+
+  /* boot_db() initialises the boards.  Reaching here without that (specials
+   * assigned but boards never booted) means msg_index still holds zeroed
+   * entries that all claim slot 0: refuse to touch them. */
+  if (!boards_initialized) {
+    TB_ERROR_MSG("board", "board-init", "gen_board",
+                 TB_ERRID_INVARIANT " board obj vnum %d used before init_boards() " DIAG_CHAR_FMT,
+                 GET_OBJ_VNUM(board), DIAG_CHAR(ch));
+    return (0);
   }
   if (!ch->desc)
     return (0);
@@ -184,7 +196,7 @@ SPECIAL(gen_board)
       cmd != ACMD_READ && cmd != ACMD_REMOVE)
     return (0);
 
-  if ((board_type = find_board(ch)) == -1) {
+  if ((board_type = find_board(board)) == -1) {
     log("SYSERR:  degenerate board!  (what the hell...)");
     return (0);
   }
