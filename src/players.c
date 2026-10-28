@@ -250,11 +250,38 @@ static int parse_index_word(const char **cursor, char *dest, size_t capacity)
   return TRUE;
 }
 
-/* New version to build player index for ASCII Player Files. Generate index
- * table for the player file. */
+/* Index lines that build_player_index() could not parse. They are kept
+ * verbatim and written back by save_player_index(), so a damaged record is
+ * never erased by the next index rewrite (any level, flag or logon change
+ * rewrites the index). An admin repairs them by hand; boot reports them
+ * again until then. */
+static char **index_kept_lines = NULL;
+static int index_kept_count = 0;
+
+static void keep_index_line(const char *line)
+{
+  RECREATE(index_kept_lines, char *, index_kept_count + 1);
+  index_kept_lines[index_kept_count] = strdup(line);
+  if (index_kept_lines[index_kept_count] == NULL) {
+    TB_ERROR_ERRNO("player", "index-parse", "player-index",
+                   "cannot keep malformed record; it will be lost on the next index save");
+    return;
+  }
+  index_kept_count++;
+}
+
+/** Build the in-memory player index from LIB_PLRFILES/INDEX_FILE.
+ * Each line is "<idnum> <name> <level> <ascii flags> <last logon>", and the
+ * file ends with a "~" line. A missing file means a fresh game: the table
+ * is empty and the first new character becomes implementor (init_char()).
+ * A malformed line is reported (index-parse, by line number; the line can
+ * hold a player name and is not echoed), skipped, and kept for
+ * save_player_index(); later records still load. If the file holds records
+ * but none of them parse, boot stops: an empty table would hand the next
+ * new character implementor level. */
 void build_player_index(void)
 {
-  int rec_count = 0, i;
+  int rec_count = 0, i, line_no = 0;
   FILE *plr_index;
   char index_name[40], line[256], bits[64];
   char arg2[80];
@@ -278,17 +305,23 @@ void build_player_index(void)
   if (rec_count == 0) {
     player_table = NULL;
     top_of_p_table = -1;
+    tb_fclose(plr_index);
     return;
   }
 
   CREATE(player_table, struct player_index_element, rec_count);
-  for (i = 0; i < rec_count; i++) {
+  i = 0;
+  while (line_no < rec_count) {
     int fields;
 
     if (!get_line(plr_index, line)) {
-      log("SYSERR: player index %s ended early at record %d of %d", index_name, i + 1, rec_count);
+      TB_ERROR_MSG("player", "index-parse", index_name,
+                   "index ended early at record %d of %d", line_no + 1, rec_count);
       break;
     }
+    if (*line == '~')
+      continue;
+    line_no++;
     {
       const char *cursor = line;
       long level, last;
@@ -309,19 +342,31 @@ void build_player_index(void)
       }
     }
     if (fields != 5) {
-      log("SYSERR: malformed player index record %d in %s: '%s'",
-          i + 1, index_name, line);
-      break;
+      TB_ERROR_MSG("player", "index-parse", index_name,
+                   "record %d of %d malformed; skipped and kept for the next "
+                   "index save", line_no, rec_count);
+      keep_index_line(line);
+      continue;
     }
     CREATE(player_table[i].name, char, strlen(arg2) + 1);
     memcpy(player_table[i].name, arg2, strlen(arg2) + 1);
     player_table[i].flags = asciiflag_conv(bits);
     top_idnum = MAX(top_idnum, player_table[i].id);
+    i++;
   }
 
   tb_fclose(plr_index);
   top_of_p_file = top_of_p_table = i - 1;
+
+  if (i == 0) {
+    TB_FATAL_MSG("player", "index-parse", index_name,
+                 "none of %d records parsed; refusing to boot with an empty "
+                 "index (the next new character would become implementor)",
+                 rec_count);
+    abort();
+  }
 }
+
 
 /* Create a new entry in the in-memory index table for the player file. If the
  * name already exists, by overwriting a deleted character, then we re-use the
@@ -407,6 +452,9 @@ void save_player_index(void)
 	player_table[i].name, player_table[i].level, *bits ? bits : "0",
         (long)player_table[i].last);
     }
+  /* Records boot could not parse are carried forward, not erased. */
+  for (i = 0; i < index_kept_count; i++)
+    tb_fprintf(index_file, "%s\n", index_kept_lines[i]);
   tb_fprintf(index_file, "~\n");
 
   tb_fclose(index_file);
@@ -415,6 +463,12 @@ void save_player_index(void)
 void free_player_index(void)
 {
   int tp;
+
+  for (tp = 0; tp < index_kept_count; tp++)
+    free(index_kept_lines[tp]);
+  free(index_kept_lines);
+  index_kept_lines = NULL;
+  index_kept_count = 0;
 
   if (!player_table)
     return;

@@ -21,6 +21,7 @@
 #include "interpreter.h"
 #include "pfdefaults.h"
 #include <stdarg.h>
+#include <sys/stat.h>
 #include "tb_error_capture.h"
 #include "tb_persist_support.h"
 
@@ -258,6 +259,77 @@ static void test_terminated_desc_loads(void)
   TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
 }
 
+int sprintascii(char *out, bitvector_t bits)
+{
+  return sprintf(out, "%lu", (unsigned long)bits);
+}
+
+/* The player index lives at the relative path LIB_PLRFILES INDEX_FILE, so
+ * the index tests run inside the scratch directory. */
+static char start_dir[1024];
+
+static void enter_scratch(void)
+{
+  char sub[300];
+  TEST_ASSERT_NOT_NULL(getcwd(start_dir, sizeof(start_dir)));
+  TEST_ASSERT_EQUAL_INT(0, chdir(scratch_dir));
+  TEST_ASSERT_TRUE(snprintf(sub, sizeof(sub), "%s/plrfiles", scratch_dir) > 0);
+  (void)mkdir(sub, 0700);
+  player_table = NULL;
+  top_of_p_table = -1;
+}
+
+static void leave_scratch(void)
+{
+  free_player_index();
+  (void)remove(LIB_PLRFILES INDEX_FILE);
+  (void)remove(LIB_PLRFILES);
+  TEST_ASSERT_EQUAL_INT(0, chdir(start_dir));
+}
+
+static void write_index(const char *body)
+{
+  FILE *fl = fopen(LIB_PLRFILES INDEX_FILE, "w");
+  TEST_ASSERT_NOT_NULL(fl);
+  TEST_ASSERT_TRUE(fputs(body, fl) >= 0);
+  TEST_ASSERT_EQUAL_INT(0, fclose(fl));
+}
+
+static char *read_index(void)
+{
+  static char buf[2048];
+  size_t n;
+  FILE *fl = fopen(LIB_PLRFILES INDEX_FILE, "r");
+  TEST_ASSERT_NOT_NULL(fl);
+  n = fread(buf, 1, sizeof(buf) - 1, fl);
+  buf[n] = '\0';
+  TEST_ASSERT_EQUAL_INT(0, fclose(fl));
+  return buf;
+}
+
+/* B2-10: a malformed first record used to stop the load (top_of_p_table
+ * -1, so the next new character became implementor) and every later
+ * player vanished from the next index save. */
+static void test_malformed_index_record_is_skipped_and_kept(void)
+{
+  enter_scratch();
+  write_index("not a record\n4242 tester 10 0 1000\n4243 other 5 0 1000\n~\n");
+
+  build_player_index();
+
+  TEST_ASSERT_EQUAL_INT(1, top_of_p_table);
+  TEST_ASSERT_EQUAL_STRING("tester", player_table[0].name);
+  TEST_ASSERT_EQUAL_STRING("other", player_table[1].name);
+  TEST_ASSERT_EQUAL_STRING("index-parse", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "record 1 of 3"));
+  TEST_ASSERT_NULL(strstr(tb_captured_detail, "not a record"));
+
+  save_player_index();
+  TEST_ASSERT_NOT_NULL(strstr(read_index(), "4243 other 5 0 1000\n"));
+  TEST_ASSERT_NOT_NULL(strstr(read_index(), "not a record\n~\n"));
+  leave_scratch();
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -269,6 +341,7 @@ int main(void)
   RUN_TEST(test_unterminated_desc_is_dropped_not_fatal);
   RUN_TEST(test_oversize_desc_is_skipped);
   RUN_TEST(test_terminated_desc_loads);
+  RUN_TEST(test_malformed_index_record_is_skipped_and_kept);
   (void)rmdir(scratch_dir);
   return UNITY_END();
 }

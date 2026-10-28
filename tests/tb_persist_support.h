@@ -24,6 +24,16 @@ void *tb_calloc_array_at(size_t count, size_t element_size,
   return calloc(count, element_size);
 }
 
+void *tb_realloc_array_at(void *ptr, size_t count, size_t element_size,
+                          const char *source_file, int source_line,
+                          const char *source_func)
+{
+  (void)source_file; (void)source_line; (void)source_func;
+  if (count == 0 || element_size == 0 || count > (size_t)-1 / element_size)
+    return NULL;
+  return realloc(ptr, count * element_size);
+}
+
 /* Copies of utils.c's bounded string builder (struct tb_buf). */
 void tb_buf_init(struct tb_buf *buf, char *storage, size_t capacity)
 {
