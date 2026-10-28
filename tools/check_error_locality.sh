@@ -79,7 +79,7 @@ forbid "non-kebab-case TB_ERROR_*/TB_WARN_MSG/TB_FATAL_MSG operation" \
 
 # A literal "SYSERR" line carries no severity, category or source location.
 ratchet 'puts("SYSERR...")' 5 '(^|[^A-Za-z0-9_])puts[[:space:]]*\([[:space:]]*"SYSERR'
-ratchet 'log("SYSERR...")' 223 '(^|[^A-Za-z0-9_])log[[:space:]]*\([[:space:]]*"SYSERR'
+ratchet 'log("SYSERR...")' 222 '(^|[^A-Za-z0-9_])log[[:space:]]*\([[:space:]]*"SYSERR'
 ratchet 'mudlog(..."SYSERR...")' 50 '(^|[^A-Za-z0-9_])mudlog[[:space:]]*\([^;]*"SYSERR'
 
 # unlink/remove/rename as a bare statement discards the result: a file that

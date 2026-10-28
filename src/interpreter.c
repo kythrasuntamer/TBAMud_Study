@@ -1320,8 +1320,9 @@ static int parse_name_internal(char *arg, char *name)
  * The dupe checks set k->character to NULL, and close_socket() releases
  * k's buffers only while k->character is set, so this does it as
  * close_socket() would: a mail being written (PLR_MAILING) owns *k->str and
- * k->str; otherwise k->backstr, k's copy of the old text, is freed unless
- * PLR_WRITING. Both pointers are cleared either way: at the menu's
+ * k->str; a note being written gets its old text back
+ * (string_abandon_in_game_edit()); otherwise k->backstr, k's copy of the
+ * old text, is freed unless PLR_WRITING. Both pointers are cleared either way: at the menu's
  * description editor (CON_PLR_DESC, or CON_CLOSE after an immortal's dc
  * there) k->str points into @p booted, and k stays in descriptor_list until
  * the close pass, so input k already queued is still processed this pulse
@@ -1337,7 +1338,8 @@ static void release_booted_editor(struct descriptor_data *k,
     if (*k->str)
       free(*k->str);
     free(k->str);
-  } else if (k->backstr && !PLR_FLAGGED(booted, PLR_WRITING))
+  } else if (!string_abandon_in_game_edit(k) &&   /* a note: old text back */
+             k->backstr && !PLR_FLAGGED(booted, PLR_WRITING))
     free(k->backstr);
   k->str = NULL;
   k->backstr = NULL;
