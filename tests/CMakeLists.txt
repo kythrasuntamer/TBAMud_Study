@@ -238,6 +238,10 @@ if(Python3_Interpreter_FOUND)
         COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/test_dg_trigedit_contract.py
                 ${MUD_SRCDIR}/dg_olc.c)
+    add_test(NAME test_dg_transform_contract
+        COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/test_dg_transform_contract.py
+                ${MUD_SRCDIR}/dg_objcmd.c ${MUD_SRCDIR}/dg_mobcmd.c)
     add_test(NAME test_door_trigger_contract
         COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/test_door_trigger_contract.py

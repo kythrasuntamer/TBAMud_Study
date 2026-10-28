@@ -340,6 +340,11 @@ static OCMD(do_otransform)
     tmpobj.script = obj->script;
     tmpobj.next_content = obj->next_content;
     tmpobj.next = obj->next;
+    /* Who sits on it and its pending events belong to this instance too:
+     * losing them left sitters and events pointing at an object that no
+     * longer knew about them. */
+    tmpobj.sitting_here = obj->sitting_here;
+    tmpobj.events = obj->events;
     memcpy(obj, &tmpobj, sizeof(*obj));
 
     if (wearer) {
