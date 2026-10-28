@@ -29,8 +29,8 @@ void game_info(const char *format, ...) { (void)format; }
 void core_dump_real(const char *who, int line) { (void)who; (void)line; }
 /* Reached only through the character pass, which these tests leave empty. */
 #define UNREACHED() TEST_FAIL_MESSAGE(__func__)
-void Crash_idlesave(struct char_data *ch) { (void)ch; UNREACHED(); }
-void Crash_rentsave(struct char_data *ch, int cost) { (void)ch; (void)cost; UNREACHED(); }
+int Crash_idlesave(struct char_data *ch) { (void)ch; UNREACHED(); return 0; }
+int Crash_rentsave(struct char_data *ch, int cost) { (void)ch; (void)cost; UNREACHED(); return 0; }
 struct time_info_data *age(struct char_data *ch) { (void)ch; UNREACHED(); return &time_info; }
 int damage(struct char_data *ch, struct char_data *victim, int dam, int attacktype)
 { (void)ch; (void)victim; (void)dam; (void)attacktype; UNREACHED(); return 0; }

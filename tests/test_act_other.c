@@ -64,6 +64,12 @@ int increase_gold(struct char_data *ch, int amount)
 int decrease_gold(struct char_data *ch, int amount)
 { GET_GOLD(ch) -= amount; return GET_GOLD(ch); }
 static char sent[MAX_STRING_LENGTH];
+/* CHECK_PLAYER_SPECIAL's reporter (utils.c, not linked here). */
+void tb_player_special_on_mob_at(const struct char_data *ch, const char *field,
+                                 const char *source_file, int source_line,
+                                 const char *source_func)
+{ (void)ch; (void)field; (void)source_file; (void)source_line; (void)source_func; }
+
 size_t send_to_char(struct char_data *ch, const char *messg, ...)
 {
   va_list args;

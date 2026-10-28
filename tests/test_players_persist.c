@@ -537,7 +537,7 @@ static void free_affects(struct char_data *ch)
     affect_remove(ch, ch->affected);
 }
 struct obj_data *unequip_char(struct char_data *ch, int pos) { (void)ch; (void)pos; return NULL; }
-void equip_char(struct char_data *ch, struct obj_data *obj, int pos) { (void)ch; (void)obj; (void)pos; }
+void equip_char_at(const char *src_file, int src_line, const char *src_func, struct char_data *ch, struct obj_data *obj, int pos) { (void)src_file; (void)src_line; (void)src_func;  (void)ch; (void)obj; (void)pos; }
 void strip_cr(char *buf) { (void)buf; }
 void save_char_vars_ascii(FILE *file, struct char_data *ch) { (void)file; (void)ch; }
 

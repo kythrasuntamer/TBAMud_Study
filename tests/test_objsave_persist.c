@@ -230,8 +230,8 @@ void obj_to_obj(struct obj_data *obj, struct obj_data *obj_to)
   obj->in_obj = obj_to;
 }
 
-void equip_char(struct char_data *ch, struct obj_data *obj, int pos)
-{
+void equip_char_at(const char *src_file, int src_line, const char *src_func, struct char_data *ch, struct obj_data *obj, int pos)
+{ (void)src_file; (void)src_line; (void)src_func; 
   TEST_ASSERT_NULL(GET_EQ(ch, pos));
   GET_EQ(ch, pos) = obj;
   obj->worn_by = ch;

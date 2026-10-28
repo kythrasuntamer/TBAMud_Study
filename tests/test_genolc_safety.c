@@ -181,6 +181,20 @@ char *one_argument(char *argument, char *first_arg)
   return argument;
 }
 SPECIAL(questmaster) { (void)ch; (void)me; (void)cmd; (void)argument; return 0; }
+/* delete_quest() (genqst.c) finds the questmaster's secondary spec proc
+ * through quest.c's quest_qm_secondary(), not linked here; same logic. */
+quest_spec_proc *quest_qm_secondary(mob_vnum qm)
+{
+  qst_rnum rnum;
+
+  if (qm == NOBODY)
+    return NULL;
+  for (rnum = 0; rnum < total_quests; rnum++)
+    if (QST_MASTER(rnum) == qm && QST_FUNC(rnum) &&
+        QST_FUNC(rnum) != questmaster)
+      return QST_FUNC(rnum);
+  return NULL;
+}
 
 void free_ex_descriptions(struct extra_descr_data *ex)
 {
@@ -230,8 +244,8 @@ void add_trigger(struct script_data *sc, trig_data *t, int loc) { (void)sc; (voi
 void event_cancel_at(struct event *event, const char *file, int line,
                      const char *func)
 { (void)event; (void)file; (void)line; (void)func; }
-void *simple_list(struct list_data *list) { (void)list; return NULL; }
-void free_list(struct list_data *list) { (void)list; }
+void *simple_list_at(struct list_data *list, const char *src_file, int src_line, const char *src_func) { (void)src_file; (void)src_line; (void)src_func;  (void)list; return NULL; }
+void free_list_at(struct list_data *list, const char *src_file, int src_line, const char *src_func) { (void)src_file; (void)src_line; (void)src_func;  (void)list; }
 
 /* Object movement: just enough of handler.c to observe where things go. */
 static void unlink_content(struct obj_data **head, struct obj_data *obj)
@@ -281,8 +295,8 @@ void extract_obj(struct obj_data *obj)
   objs_extracted++;
   free(obj);
 }
-void char_from_room(struct char_data *ch) { (void)ch; }
-void char_to_room(struct char_data *ch, room_rnum room) { (void)ch; (void)room; }
+void char_from_room_at(const char *src_file, int src_line, const char *src_func, struct char_data *ch) { (void)src_file; (void)src_line; (void)src_func;  (void)ch; }
+void char_to_room_at(const char *src_file, int src_line, const char *src_func, struct char_data *ch, room_rnum room) { (void)src_file; (void)src_line; (void)src_func;  (void)ch; (void)room; }
 size_t send_to_char(struct char_data *ch, const char *messg, ...) { (void)ch; (void)messg; return 0; }
 void send_to_room(room_rnum room, const char *messg, ...) { (void)room; (void)messg; }
 
@@ -622,7 +636,7 @@ static void delete_quest_reports_missing_questmaster(void)
   make_zones(1); make_mobs(10, 0);
   make_quest(50, 3005);
   TEST_ASSERT_TRUE(delete_quest(0));
-  TEST_ASSERT_EQUAL_STRING("quest-delete-qm", tb_captured_operation);
+  TEST_ASSERT_EQUAL_STRING("delete-quest-qm", tb_captured_operation);
 }
 
 static void delete_quest_restores_spec_on_questmaster_rnum(void)

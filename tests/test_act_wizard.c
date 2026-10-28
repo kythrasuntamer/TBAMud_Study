@@ -102,13 +102,13 @@ static long load_char_idnum = 77;
 static int load_char_sex = SEX_MALE, load_char_class = CLASS_WARRIOR;
 static struct char_data *in_game_char;   /* returned by player lookups */
 
-void char_to_room(struct char_data *ch, room_rnum room)
-{
+void char_to_room_at(const char *src_file, int src_line, const char *src_func, struct char_data *ch, room_rnum room)
+{ (void)src_file; (void)src_line; (void)src_func; 
   char_to_room_calls++;
   IN_ROOM(ch) = room;
 }
-void char_from_room(struct char_data *ch)
-{
+void char_from_room_at(const char *src_file, int src_line, const char *src_func, struct char_data *ch)
+{ (void)src_file; (void)src_line; (void)src_func; 
   char_from_room_calls++;
   IN_ROOM(ch) = NOWHERE;
 }

@@ -319,7 +319,8 @@ void test_count_color_chars_trailing_lone_tab_stays_in_bounds(void)
     /* F3-04: a lone trailing tab used to step i past the terminator and read
      * string[len + 1].  strdup() gives ASan an exact-size heap block, so the
      * old overread is a heap-buffer-overflow.  The tab counts as one
-     * overhead byte and the malformed escape is logged (op=color-escape). */
+     * overhead byte and the malformed escape is logged
+     * (op=protocol-escape-truncated). */
     char *s = strdup("a sword\t");
     FILE *cap = tmpfile();
     char line[4096];
@@ -332,7 +333,7 @@ void test_count_color_chars_trailing_lone_tab_stays_in_bounds(void)
     TEST_ASSERT_EQUAL_INT(0, fflush(cap));
     TEST_ASSERT_EQUAL_INT(0, fseek(cap, 0L, SEEK_SET));
     while (fgets(line, sizeof(line), cap))
-        if (strstr(line, "op=color-escape") && !strstr(line, "a sword"))
+        if (strstr(line, "op=protocol-escape-truncated") && !strstr(line, "a sword"))
             seen = 1;
     logfile = stderr;
     (void)fclose(cap);

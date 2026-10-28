@@ -30,8 +30,8 @@ struct char_data *read_mobile(mob_vnum nr, int type)
 }
 
 /* lists.c: reached only through join_group(), which needs a group. */
-void add_to_list(void *pContent, struct list_data *pList)
-{
+void add_to_list_at(void *pContent, struct list_data *pList, const char *src_file, int src_line, const char *src_func)
+{ (void)src_file; (void)src_line; (void)src_func; 
   (void)pContent; (void)pList;
   TEST_FAIL_MESSAGE("join_group reached without a group");
 }

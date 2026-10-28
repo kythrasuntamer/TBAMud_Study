@@ -25,6 +25,12 @@ struct index_data *mob_index = NULL;
 mob_rnum top_of_mobt = 0;
 struct time_info_data time_info;
 struct command_info *complete_cmd_info = NULL;
+/* CHECK_PLAYER_SPECIAL's reporter (utils.c, not linked here). */
+void tb_player_special_on_mob_at(const struct char_data *ch, const char *field,
+                                 const char *source_file, int source_line,
+                                 const char *source_func)
+{ (void)ch; (void)field; (void)source_file; (void)source_line; (void)source_func; }
+
 int MAX(int a, int b) { return a > b ? a : b; }
 struct social_messg *soc_mess_list = NULL;
 int top_of_socialt = -1;
@@ -67,7 +73,7 @@ static int parse_at_calls;
 void parse_at(char *str) { (void)str; parse_at_calls++; }
 void speech_mtrigger(char_data *actor, char *str) { (void)actor; (void)str; }
 void speech_wtrigger(char_data *actor, char *str) { (void)actor; (void)str; }
-int room_is_dark(room_rnum room) { (void)room; return 0; }
+int room_is_dark_at(room_rnum room, const char *src_file, int src_line, const char *src_func) { (void)src_file; (void)src_line; (void)src_func;  (void)room; return 0; }
 /* History recorder: how many entries, for whom, and whether any was NULL. */
 static int history_calls, history_null_calls;
 static struct char_data *history_last_ch;

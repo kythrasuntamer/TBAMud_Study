@@ -141,7 +141,7 @@ char *one_argument(char *argument, char *first_arg)
 }
 char *two_arguments(char *argument, char *first_arg, char *second_arg)
 { return one_argument(one_argument(argument, first_arg), second_arg); }
-int room_is_dark(room_rnum room) { (void)room; return 0; }
+int room_is_dark_at(room_rnum room, const char *src_file, int src_line, const char *src_func) { (void)src_file; (void)src_line; (void)src_func;  (void)room; return 0; }
 
 /* ---------------------------------------------------------------------
  * OLC / editor collaborators

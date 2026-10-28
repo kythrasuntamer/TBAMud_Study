@@ -131,8 +131,8 @@ void obj_from_obj(struct obj_data *obj)
   GET_OBJ_WEIGHT(obj->in_obj) -= GET_OBJ_WEIGHT(obj);
   obj->in_obj = NULL;
 }
-void equip_char(struct char_data *ch, struct obj_data *obj, int pos)
-{
+void equip_char_at(const char *src_file, int src_line, const char *src_func, struct char_data *ch, struct obj_data *obj, int pos)
+{ (void)src_file; (void)src_line; (void)src_func; 
   obj->worn_by = ch;
   obj->worn_on = pos;
   worn_modifier_total += obj_modifier_sum(obj);

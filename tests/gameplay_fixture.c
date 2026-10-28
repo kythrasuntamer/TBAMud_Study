@@ -200,12 +200,14 @@ zone_rnum real_zone_by_thing(room_vnum vznum) { (void)vznum; return NOWHERE; }
 void send_to_group(struct char_data *ch, struct group_data *group, const char *msg, ...)
 { (void)ch; (void)group; (void)msg; }
 int thaco(int class_num, int level) { (void)class_num; (void)level; return 20; }
-void *simple_list(struct list_data *pList) { (void)pList; return NULL; }
-void free_list(struct list_data *pList) { (void)pList; }
+void *simple_list_at(struct list_data *pList, const char *src_file, int src_line, const char *src_func) { (void)src_file; (void)src_line; (void)src_func;  (void)pList; return NULL; }
+void free_list_at(struct list_data *pList, const char *src_file, int src_line, const char *src_func) { (void)src_file; (void)src_line; (void)src_func;  (void)pList; }
 /* event_cancel() is a macro over event_cancel_at() (call-site capture). */
 void event_cancel_at(struct event *event, const char *file, int line,
                      const char *func)
 { (void)event; (void)file; (void)line; (void)func; }
+/* affect_join() names skills in its reports (spell_parser.c, not linked). */
+const char *skill_name(int num) { (void)num; return "test skill"; }
 trig_data *read_trigger(int nr) { (void)nr; return NULL; }
 void extract_trigger(struct trig_data *trig) { (void)trig; }
 int fx_last_event_id = -1;

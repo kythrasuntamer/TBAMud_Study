@@ -130,14 +130,14 @@ void add_var(struct trig_var_data **var_list, const char *name,
 }
 void reset_wtrigger(room_data *room) { (void)room; }
 void load_mtrigger(char_data *ch) { (void)ch; }
-void char_to_room(struct char_data *ch, room_rnum room)
-{ (void)ch; (void)room; }
+void char_to_room_at(const char *src_file, int src_line, const char *src_func, struct char_data *ch, room_rnum room)
+{ (void)src_file; (void)src_line; (void)src_func;  (void)ch; (void)room; }
 void obj_to_char(struct obj_data *object, struct char_data *ch)
 { (void)object; (void)ch; }
 void obj_to_obj(struct obj_data *obj, struct obj_data *obj_to)
 { (void)obj; (void)obj_to; }
-void equip_char(struct char_data *ch, struct obj_data *obj, int pos)
-{ (void)ch; (void)obj; (void)pos; }
+void equip_char_at(const char *src_file, int src_line, const char *src_func, struct char_data *ch, struct obj_data *obj, int pos)
+{ (void)src_file; (void)src_line; (void)src_func;  (void)ch; (void)obj; (void)pos; }
 void extract_obj(struct obj_data *obj) { (void)obj; }
 struct obj_data *get_obj_num(obj_rnum nr) { (void)nr; return NULL; }
 struct obj_data *get_obj_in_list_num(int num, struct obj_data *list)

@@ -115,13 +115,14 @@ void tearDown(void)
 
 /* H3-13: darkness in room vnum 101, then a room is inserted below it and
  * world[] moves. When the event fires it must find vnum 101 at its new rnum
- * (not read the freed block) and clear ROOM_DARK there. */
+ * (not read the freed block) and clear ROOM_DARK there. magic.c creates
+ * darkness as a world event carrying the room vnum (H1-10), so no room
+ * pointer can go stale; the test creates it the same way. */
 static void test_room_event_survives_world_realloc(void)
 {
   make_world(3);
   SET_BIT_AR(ROOM_FLAGS(1), ROOM_DARK);
-  NEW_EVENT(eSPL_DARKNESS, &world[1], NULL, 5);
-  TEST_ASSERT_NOT_NULL(world[1].events);
+  NEW_EVENT(eSPL_DARKNESS, NULL, "101", 5);
 
   add_room_at(0, 99);                 /* vnum 101 is now rnum 2 */
   run_pulses(10);
@@ -137,15 +138,14 @@ static void test_room_event_survives_world_realloc(void)
 static void test_room_event_for_deleted_room_reports(void)
 {
   make_world(3);
-  NEW_EVENT(eSPL_DARKNESS, &world[1], NULL, 5);
-  free_list(world[1].events);         /* the room's list went with it */
-  world[1].events = NULL;
+  NEW_EVENT(eSPL_DARKNESS, NULL, "101", 5);
   world[1].number = 555;              /* vnum 101 no longer exists */
   run_pulses(10);
 
   TEST_ASSERT_EQUAL_INT(0, room_messages);
   TEST_ASSERT_TRUE(tb_captured_errors >= 1);
-  TEST_ASSERT_EQUAL_STRING("room-gone", tb_captured_operation);
+  /* event_room_from_vnum() reports a vnum that names no room. */
+  TEST_ASSERT_EQUAL_STRING("room-event-stale", tb_captured_operation);
 }
 
 static int items[4];
@@ -266,7 +266,7 @@ static void test_list_misuse_names_caller(void)
   remove_from_list(&items[3], l);
   TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
   TEST_ASSERT_EQUAL_STRING("remove-missing", tb_captured_operation);
-  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "test_mud_event.c"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "test_mud_event_owners.c"));
   TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "test_list_misuse_names_caller"));
   free_list(l);
 }
