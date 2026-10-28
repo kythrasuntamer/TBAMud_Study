@@ -352,14 +352,14 @@ The infrastructure pass's proposals, and the commit that implemented each:
 
 | Proposal | Priority | Commit (subject) or status |
 | --- | --- | --- |
-| Stricter sanitizer checks, with the same runtime options locally and in CI | high | `build: sanitizer builds trap more UB and share runtime options with CI` |
-| ENABLE_HARDENING option and -Wformat=2 | medium | `build: ENABLE_HARDENING option and -Wformat=2` |
-| Valgrind memcheck in CTest, test labels, and a whole-world boot test | high | `test: Valgrind memcheck configuration and a whole-world boot test` |
-| CI jobs for Valgrind memcheck and a hardened release build | high | `ci: Valgrind memcheck and hardened-release jobs` |
-| zmalloc: ASan poisoning, alignment, a fixed calloc macro, and loud failures | high | `build: zmalloc poisons freed blocks and guard pads under ASan`<br>`test: test_zmalloc and zmalloc.h are clean under clang-tidy` |
-| Poison pooled output buffers in comm.c's bufpool | medium | `build: pooled output buffers are poisoned under ASan` |
-| More rules in check_error_locality.sh | medium | `ci: error-locality audit catches more raw reporting and ratchets legacy` |
-| libFuzzer harness for the telnet/protocol parser | medium | `test: libFuzzer target for the telnet/protocol layer` |
+| Stricter sanitizer checks, with the same runtime options locally and in CI | high | `build: sanitizer builds trap more UB and share runtime options with CI` (8e8e911) |
+| ENABLE_HARDENING option and -Wformat=2 | medium | `build: ENABLE_HARDENING option and -Wformat=2` (c61d127) |
+| Valgrind memcheck in CTest, test labels, and a whole-world boot test | high | `test: Valgrind memcheck configuration and a whole-world boot test` (d350cf1) |
+| CI jobs for Valgrind memcheck and a hardened release build | high | `ci: Valgrind memcheck and hardened-release jobs` (c230ab7) |
+| zmalloc: ASan poisoning, alignment, a fixed calloc macro, and loud failures | high | `build: zmalloc poisons freed blocks and guard pads under ASan` (997a9d2)<br>`test: test_zmalloc and zmalloc.h are clean under clang-tidy` (c619e6d) |
+| Poison pooled output buffers in comm.c's bufpool | medium | `build: pooled output buffers are poisoned under ASan` (6f3a4d7) |
+| More rules in check_error_locality.sh | medium | `ci: error-locality audit catches more raw reporting and ratchets legacy` (9943804) |
+| libFuzzer harness for the telnet/protocol parser | medium | `test: libFuzzer target for the telnet/protocol layer` (b0c386e) |
 | Fix BOOT-UAF, FUZZ-1 and FUZZ-2 in game code, then remove DISABLED | high | not implemented: game-logic files are outside this task's allowed edit set; done afterwards by the coordinator: `security: world teardown leaves no dangling world pointer (BOOT-UAF)`<br>`security: protocol output never reads past a trailing tab; MSSP callbacks typed` |
 | Fuzz the world and player file loaders | medium | not implemented: too large and risky for this pass; circle_boot_check covers the loaders against real data once BOOT-UAF is fixed |
 | Time-boxed fuzzing in CI and a MEMORY_DEBUG+ASan CI job | low | not implemented: blocked on the game-code fixes |
