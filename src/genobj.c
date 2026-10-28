@@ -408,11 +408,13 @@ int delete_object(obj_rnum rnum)
   zone_rnum zrnum;
   struct obj_data *obj, *tmp, *next_obj;
   int shop, j, zone, cmd_no;
+  obj_vnum vnum;
 
   if (rnum == NOTHING || rnum > top_of_objt)
     return NOTHING;
 
   obj = &obj_proto[rnum];
+  vnum = GET_OBJ_VNUM(obj);
 
   zrnum = real_zone_by_thing(GET_OBJ_VNUM(obj));
 
@@ -475,31 +477,46 @@ int delete_object(obj_rnum rnum)
     for (j = 0; SHOP_PRODUCT(shop, j) != NOTHING; j++)
       SHOP_PRODUCT(shop, j) -= (SHOP_PRODUCT(shop, j) > rnum);
 
-  /* Renumber zone table. */
+  /* Renumber zone table.  Deleting a command shifts the rest of the list
+   * (reallocated to exactly fit) down into cmd_no, so cmd_no only advances
+   * when nothing was deleted.  Advancing past a deletion skipped the next
+   * command -- and for 'P' fell through to test the shifted-in command as
+   * well -- and when the deleted command was last it stepped over the 'S'
+   * terminator and read past the end of the list. */
   for (zone = 0; zone <= top_of_zone_table; zone++) {
-    for (cmd_no = 0; ZCMD(zone, cmd_no).command != 'S'; cmd_no++) {
+    cmd_no = 0;
+    while (ZCMD(zone, cmd_no).command != 'S') {
+      int gone = FALSE;
+
       switch (ZCMD(zone, cmd_no).command) {
-      case 'P':
-        if (ZCMD(zone, cmd_no).arg3 == rnum) {
-          delete_zone_command(&zone_table[zone], cmd_no);
-        } else
+      case 'P':   /* arg1 is put into container arg3 */
+        gone = (ZCMD(zone, cmd_no).arg1 == rnum || ZCMD(zone, cmd_no).arg3 == rnum);
+        if (!gone) {
+          ZCMD(zone, cmd_no).arg1 -= (ZCMD(zone, cmd_no).arg1 > rnum);
           ZCMD(zone, cmd_no).arg3 -= (ZCMD(zone, cmd_no).arg3 > rnum);
-        /* fall through */
+        }
+        break;
       case 'O':
       case 'G':
       case 'E':
-        if (ZCMD(zone, cmd_no).arg1 == rnum) {
-          delete_zone_command(&zone_table[zone], cmd_no);
-        } else
+        gone = (ZCMD(zone, cmd_no).arg1 == rnum);
+        if (!gone)
           ZCMD(zone, cmd_no).arg1 -= (ZCMD(zone, cmd_no).arg1 > rnum);
-	break;
+        break;
       case 'R':
-        if (ZCMD(zone, cmd_no).arg2 == rnum) {
-          delete_zone_command(&zone_table[zone], cmd_no);
-        } else
+        gone = (ZCMD(zone, cmd_no).arg2 == rnum);
+        if (!gone)
           ZCMD(zone, cmd_no).arg2 -= (ZCMD(zone, cmd_no).arg2 > rnum);
-	break;
+        break;
       }
+      if (gone) {
+        TB_WARN_MSG("genolc", "zcmd-delete", "zone",
+                    "zone %d cmd %d ('%c') removed: it uses obj vnum %d, which was deleted",
+                    zone_table[zone].number, cmd_no, ZCMD(zone, cmd_no).command, vnum);
+        delete_zone_command(&zone_table[zone], cmd_no);
+        continue;
+      }
+      cmd_no++;
     }
   }
 

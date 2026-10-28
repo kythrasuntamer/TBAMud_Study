@@ -14,6 +14,8 @@
 #include "genolc.h"
 #include "genmob.h"
 #include "genzon.h"
+#include "genobj.h"
+#include "boards.h"
 #include "dg_scripts.h"
 #include "comm.h"
 
@@ -60,8 +62,18 @@ void free_proto_script(void *thing, int type) { (void)thing; (void)type; }
 struct obj_data *obj_proto = NULL;
 struct index_data **trig_index = NULL;
 trig_rnum real_trigger(trig_vnum vnum) { (void)vnum; return NOTHING; }
-int save_objects(zone_rnum z) { (void)z; return FALSE; }
 int save_shops(zone_rnum z) { (void)z; return FALSE; }
+
+/* delete_object() walks live objects (none here) and renumbers boards. */
+struct obj_data *object_list = NULL;
+struct board_info_type board_info[NUM_OF_BOARDS];
+void extract_obj(struct obj_data *obj) { (void)obj; }
+void obj_from_char(struct obj_data *object) { (void)object; }
+void obj_from_obj(struct obj_data *obj) { (void)obj; }
+void obj_to_char(struct obj_data *object, struct char_data *ch) { (void)object; (void)ch; }
+void obj_to_obj(struct obj_data *obj, struct obj_data *obj_to) { (void)obj; (void)obj_to; }
+void obj_to_room(struct obj_data *object, room_rnum room) { (void)object; (void)room; }
+obj_rnum real_object(obj_vnum vnum) { (void)vnum; return NOTHING; }
 int save_rooms(zone_rnum z) { (void)z; return FALSE; }
 int save_config(IDXTYPE z) { (void)z; return FALSE; }
 int save_quests(zone_rnum z) { (void)z; return FALSE; }
@@ -186,6 +198,66 @@ static void test_delete_consecutive_zone_commands(void)
   TEST_ASSERT_EQUAL_INT(2, tb_captured_errors);
 }
 
+/* ---- delete_object (genobj.c) ----------------------------------------- */
+
+static struct reset_com zcmd(char command, int arg1, int arg2, int arg3)
+{
+  struct reset_com c;
+  memset(&c, 0, sizeof(c));
+  c.command = command;
+  c.arg1 = arg1;
+  c.arg2 = arg2;
+  c.arg3 = arg3;
+  return c;
+}
+
+static void make_objs(int n)
+{
+  int i;
+
+  top_of_objt = n - 1;
+  CREATE(obj_proto, struct obj_data, n);
+  CREATE(obj_index, struct index_data, n);
+  for (i = 0; i < n; i++) {
+    obj_index[i].vnum = 100 + i;
+    obj_proto[i].item_number = i;
+  }
+}
+
+static void free_objs(void)
+{
+  free(obj_proto);
+  free(obj_index);
+  obj_proto = NULL;
+  obj_index = NULL;
+}
+
+/* C1-V03: the same delete-then-increment bug in delete_object(). A 'P'
+ * that was deleted also fell through and tested the command shifted into
+ * its slot, and deleting the last command read past the list (ASan
+ * heap-buffer-overflow before the fix). */
+static void test_delete_object_zone_commands(void)
+{
+  struct reset_com cmds[] = {
+    zcmd('O', 2, 1, 3001),     /* obj rnum 2: kept, renumbered to 1 */
+    zcmd('P', 0, 1, 2),        /* puts deleted obj 0 into obj 2: removed */
+    zcmd('E', 2, 1, 5),        /* kept, renumbered */
+    zcmd('O', 0, 1, 3001),     /* deleted obj, last before 'S': removed */
+  };
+
+  make_objs(3);
+  make_zone(cmds, 4);
+  delete_object(0);
+  TEST_ASSERT_EQUAL_CHAR('O', ZCMD(0, 0).command);
+  TEST_ASSERT_EQUAL_INT(1, ZCMD(0, 0).arg1);
+  TEST_ASSERT_EQUAL_CHAR('E', ZCMD(0, 1).command);
+  TEST_ASSERT_EQUAL_INT(1, ZCMD(0, 1).arg1);
+  TEST_ASSERT_EQUAL_CHAR('S', ZCMD(0, 2).command);
+  TEST_ASSERT_EQUAL_STRING("zcmd-delete", tb_captured_operation);
+  TEST_ASSERT_EQUAL_INT(2, tb_captured_errors);
+  free_objs();
+}
+
 int main(void)
 {
   logfile = stderr;
@@ -193,5 +265,6 @@ int main(void)
   UNITY_BEGIN();
   RUN_TEST(test_delete_last_zone_command_stays_in_bounds);
   RUN_TEST(test_delete_consecutive_zone_commands);
+  RUN_TEST(test_delete_object_zone_commands);
   return UNITY_END();
 }

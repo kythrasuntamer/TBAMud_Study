@@ -492,6 +492,7 @@ target_link_libraries(test_genolc PRIVATE ${CRYPT_LIBRARY} ${SODIUM_LIBRARY})
 add_mud_test(test_genmob
     ${MUD_SRCDIR}/genmob.c
     ${MUD_SRCDIR}/genzon.c
+    ${MUD_SRCDIR}/genobj.c
     ${MUD_SRCDIR}/genolc.c
     ${MUD_SRCDIR}/utils.c
     ${MUD_SRCDIR}/random.c
