@@ -1,0 +1,19 @@
+#5830
+guard spirit dwarven dwarf~
+the spirit of a dwarven guard~
+The spirit of a dwarven guard stands watch here, still bearing its death wounds.
+~
+This is the spirit of a dwarven guard, still showing the wounds that killed his body.
+~
+10 0 0 0 0 0 0 0 999 E
+20 14 -2 4d4+200 3d3+3
+200 40000
+8 8 1
+Str: 18
+Int: 18
+Wis: 16
+Dex: 16
+Con: 15
+Cha: 12
+E
+$~

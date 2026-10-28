@@ -175,6 +175,23 @@ if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
     target_link_options(test_interpreter PRIVATE -Wl,--wrap=tb_error_log_at)
 endif()
 
+# The same tests with interpreter.c built without crypt() (NOCRYPT) and
+# sodium_init() failing on demand: a password the build cannot check is
+# reported, not counted as a bad one. Linked with --wrap, so Fil-C skips it.
+add_mud_test(test_interpreter_nocrypt
+    ${MUD_SRCDIR}/interpreter.c
+    ${MUD_SRCDIR}/utils.c
+    ${MUD_SRCDIR}/random.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_interpreter.c
+)
+target_compile_definitions(test_interpreter_nocrypt PRIVATE NOCRYPT)
+target_link_libraries(test_interpreter_nocrypt PRIVATE ${SODIUM_LIBRARY})
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_link_options(test_interpreter_nocrypt PRIVATE
+        -Wl,--wrap=tb_error_log_at -Wl,--wrap=sodium_init
+        -Wl,--wrap=crypto_pwhash_str_verify)
+endif()
+
 # ---------------------------------------------------------------------------
 # test_class — covers src/class.c
 # ---------------------------------------------------------------------------
@@ -1601,6 +1618,16 @@ endif()
 # clean_pfiles() re-examines a slot after a removal; if a refused removal
 # were counted as done it would spin forever. Fail that regression sooner.
 set_tests_properties(test_players_persist PROPERTIES TIMEOUT 60)
+
+# Area-import tools (tools/*.py): reference, inventory, safety and regression
+# checks. They read only their own fixtures and the repository tree.
+if(Python3_Interpreter_FOUND)
+    foreach(area_test test_area_inventory test_area_safety test_import_refs
+                      test_area_import_regressions test_convert_crimson2)
+        add_test(NAME ${area_test}
+            COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_CURRENT_SOURCE_DIR}/${area_test}.py)
+    endforeach()
+endif()
 
 # tools/rebalance_world_50.py: stage-and-report level-50 mobile rebalance.
 if(Python3_Interpreter_FOUND)

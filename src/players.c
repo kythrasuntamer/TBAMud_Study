@@ -111,7 +111,9 @@ static void read_aliases_ascii(FILE *file, struct char_data *ch, int count,
  * (hand-edited, truncated or corrupted); a malformed or out-of-range value
  * becomes 0 and is reported as "pfile-int" with the player idnum (as known
  * so far: the Id tag is normally first) and the tag. The raw value is not
- * echoed: it is file content and may be arbitrary bytes. */
+ * echoed: it is file content and may be arbitrary bytes. Callers cannot
+ * tell the fallback from a real 0; use pfile_int_in_range() or
+ * pfile_int_clamped() where 0 is unsafe. */
 static int parse_pfile_int_or_zero(const char *value, const char *filename,
                                    const char *tag, long idnum)
 {
@@ -122,24 +124,24 @@ static int parse_pfile_int_or_zero(const char *value, const char *filename,
     TB_ERROR_MSG("player", "pfile-int", filename ? filename : "(unknown)",
                  "player idnum %ld tag %.4s has no integer value; using 0",
                  idnum, tag ? tag : "????");
-    return 0;
+    return (0);
   }
 
   errno = 0;
   parsed = strtol(value, &end, 10);
-  while (end && isspace((unsigned char)*end))
+  while (isspace((unsigned char)*end))
     end++;
 
   if (end == value || errno == ERANGE || parsed < INT_MIN || parsed > INT_MAX ||
-      (end && *end != '\0')) {
+      *end != '\0') {
     TB_ERROR_MSG("player", "pfile-int", filename ? filename : "(unknown)",
                  "player idnum %ld tag %.4s malformed or out-of-range integer "
                  "(%zu bytes); using 0", idnum, tag ? tag : "????",
                  strlen(value));
-    return 0;
+    return (0);
   }
 
-  return (int)parsed;
+  return ((int)parsed);
 }
 
 /* As parse_pfile_int_or_zero(), for long-valued tags (Id, Brth, Last). */
@@ -153,23 +155,23 @@ static long parse_pfile_long_or_zero(const char *value, const char *filename,
     TB_ERROR_MSG("player", "pfile-int", filename ? filename : "(unknown)",
                  "player idnum %ld tag %.4s has no long value; using 0",
                  idnum, tag ? tag : "????");
-    return 0;
+    return (0);
   }
 
   errno = 0;
   parsed = strtol(value, &end, 10);
-  while (end && isspace((unsigned char)*end))
+  while (isspace((unsigned char)*end))
     end++;
 
-  if (end == value || errno == ERANGE || (end && *end != '\0')) {
+  if (end == value || errno == ERANGE || *end != '\0') {
     TB_ERROR_MSG("player", "pfile-int", filename ? filename : "(unknown)",
                  "player idnum %ld tag %.4s malformed or out-of-range long "
                  "(%zu bytes); using 0", idnum, tag ? tag : "????",
                  strlen(value));
-    return 0;
+    return (0);
   }
 
-  return parsed;
+  return (parsed);
 }
 
 /* Parse a pfile integer that is later used as a table index or array
@@ -364,46 +366,45 @@ int fread_string_checked(FILE *fl, const char *resource, const char *field,
   return TRUE;
 }
 
-/*
- * Consume one whitespace-delimited signed long from *cursor.
- * On success, update *value and advance the cursor, returning TRUE.
- * On failure, return FALSE without changing *value; leading whitespace may
- * already have been consumed from *cursor. Callers requiring rollback must
- * save the original cursor themselves. Valid, non-NULL pointers are required.
+/* Read one signed index number and advance *cursor on success.
+ * Leading whitespace may already be skipped on failure; *value remains
+ * unchanged.  The caller must supply valid pointers.
  */
 static int parse_index_long(const char **cursor, long *value)
 {
   char *end;
   long parsed;
   while (isspace((unsigned char)**cursor))
-    ++*cursor;
+    (*cursor)++;
+
   errno = 0;
   parsed = strtol(*cursor, &end, 10);
   if (end == *cursor || errno == ERANGE || (*end && !isspace((unsigned char)*end)))
-    return FALSE;
+    return (FALSE);
+
   *value = parsed;
   *cursor = end;
-  return TRUE;
+  return (TRUE);
 }
 
-/*
- * Copy a single whitespace-delimited index token into the supplied buffer.
- * Reject empty and oversized tokens rather than truncating them.
- * A successful parse NUL-terminates dest and advances *cursor.
+/* Copy one index token without truncation and advance *cursor on success.
+ * Reject empty tokens and tokens that do not fit the destination.
  */
 static int parse_index_word(const char **cursor, char *dest, size_t capacity)
 {
   size_t len = 0;
   while (isspace((unsigned char)**cursor))
-    ++*cursor;
+    (*cursor)++;
+
   while ((*cursor)[len] && !isspace((unsigned char)(*cursor)[len]))
     ++len;
   if (!len || len >= capacity)
-    return FALSE;
+    return (FALSE);
+
   memcpy(dest, *cursor, len);
   dest[len] = '\0';
   *cursor += len;
-  return TRUE;
+  return (TRUE);
 }
 
 /* Index lines that build_player_index() could not parse. They are kept
