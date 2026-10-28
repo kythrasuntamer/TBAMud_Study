@@ -416,6 +416,31 @@ static void unbalanced_close_paren_is_reported(void)
   TEST_ASSERT_EQUAL_STRING("subst-paren", tb_captured_operation);
 }
 
+/* D1-29: a chained field (%a.b.c%) renamed the variable to "tmpvr" in place
+ * inside var_subst's copy, overwriting the next field when var.field was
+ * shorter than five bytes. */
+static void chained_field_after_short_name_is_kept(void)
+{
+  char_data *mob = make_mob("mob");
+  trig_data *t = idle_mob_trigger(mob);
+  char out[MAX_INPUT_LENGTH];
+
+  uid_var(t, "m", char_script_id(mob));
+  subst(mob, t, "x %m.id.strlen%", out);
+  TEST_ASSERT_EQUAL_STRING("x 8", out);
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+}
+
+static void failed_chain_link_is_reported(void)
+{
+  char_data *mob = make_mob("mob");
+  trig_data *t = idle_mob_trigger(mob);
+  char out[MAX_INPUT_LENGTH];
+
+  subst(mob, t, "x %nosuchvar.name.car%", out);
+  TEST_ASSERT_EQUAL_STRING("subst-chain", tb_captured_operation);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -431,5 +456,7 @@ int main(void)
   RUN_TEST(lone_percent_at_line_end_is_kept);
   RUN_TEST(each_variable_gets_its_own_subfield);
   RUN_TEST(unbalanced_close_paren_is_reported);
+  RUN_TEST(chained_field_after_short_name_is_kept);
+  RUN_TEST(failed_chain_link_is_reported);
   return UNITY_END();
 }

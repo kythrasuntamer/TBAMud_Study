@@ -1743,6 +1743,8 @@ void var_subst(void *go, struct script_data *sc, trig_data *trig,
   char *var = NULL, *field = NULL, *p = NULL;
   char tmp2[MAX_INPUT_LENGTH];
   char *subfield_p, subfield[MAX_INPUT_LENGTH];
+  /* Name of the temporary variable a field chain stores each link in. */
+  char tmpvr_name[] = "tmpvr";
   int left, len;
   int paren_count = 0;
   int dots = 0;
@@ -1828,7 +1830,10 @@ void var_subst(void *go, struct script_data *sc, trig_data *trig,
                * other field text. */
               add_var(&GET_TRIG_VARS(trig), "tmpvr", repl_str,
                       sc ? sc->context : 0);
-              strlcpy(var, "tmpvr", sizeof(tmp) - (size_t)(var - tmp));
+              /* Point at the temporary's name. Copying "tmpvr" over var in
+               * tmp overwrote the following field (and possibly the closing
+               * '%') whenever var.field was shorter than five bytes. */
+              var = tmpvr_name;
               field = p;
               dots = 0;
               /* The next field in the chain has its own subfield. */
@@ -1836,6 +1841,11 @@ void var_subst(void *go, struct script_data *sc, trig_data *trig,
               *subfield = '\0';
               continue;
             }
+            /* The link resolved to nothing: the rest of the chain is
+             * dropped and the variable resolves through its first field. */
+            TB_WARN_MSG("dg", "subst-chain", "var_subst",
+                        "trig vnum %d: %%-variable at column %zu: chained "
+                        "field lookup failed", DIAG_TRIG_VNUM(trig), open_off);
             dots = 0;
           } else if (*p=='(') {
             *p = '\0';
@@ -1859,7 +1869,8 @@ void var_subst(void *go, struct script_data *sc, trig_data *trig,
          * unclosed '('.  Substitute what was read, but never step past the
          * terminator. */
         int vnum = (trig && trig_index) ? GET_TRIG_VNUM(trig) : NOTHING;
-        int column = (int)(var - tmp);
+        /* var may point at tmpvr_name after a field chain. */
+        int column = (int)open_off;
 
         TB_ERROR_MSG("dg", "var-unterminated", "var_subst",
                      "trigger %d: variable reference at column %d %s",
