@@ -252,10 +252,20 @@ int text_processed(char *field, char *subfield, struct trig_var_data *vd,
       strlcpy(str, "0", slen);
     return TRUE;
   } else if (!str_cmp(field, "car")) {                 /* car       */
-    char *car = vd->value;
-    while (*car && !isspace(*car))
-      *str++ = *car++;
-    *str = '\0';
+    const char *car = vd->value;
+    size_t len = 0;
+
+    while (car[len] && !isspace((unsigned char)car[len]))
+      len++;
+    /* Values are unbounded; the destination is not. */
+    if (len >= slen) {
+      TB_ERROR_MSG("dg", "field-truncated", "car",
+                   "var %s: %zu-byte first word truncated to %zu bytes",
+                   vd->name, len, slen - 1);
+      len = slen - 1;
+    }
+    memcpy(str, car, len);
+    str[len] = '\0';
     return TRUE;
 
   } else if (!str_cmp(field, "cdr")) {                 /* cdr       */

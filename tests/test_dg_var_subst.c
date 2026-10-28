@@ -239,6 +239,33 @@ static void closed_reference_reports_nothing(void)
   TEST_ASSERT_EQUAL_INT(0, captured_errors);
 }
 
+/* car used to copy the whole first word regardless of the destination size;
+ * a heap destination lets ASan see the overflow. */
+static void car_is_bounded_by_destination(void)
+{
+  char word[64];
+  char *str = malloc(16);
+  struct trig_var_data *vd;
+
+  TEST_ASSERT_NOT_NULL(str);
+  memset(word, 'w', sizeof(word) - 1);
+  word[sizeof(word) - 1] = '\0';
+  add_var(&GET_TRIG_VARS(&trig), "long", word, 0);
+  vd = GET_TRIG_VARS(&trig);
+
+  TEST_ASSERT_TRUE(text_processed("car", "", vd, str, 16));
+  TEST_ASSERT_EQUAL_size_t(15, strlen(str));
+  TEST_ASSERT_EQUAL_INT(1, captured_errors);
+  TEST_ASSERT_EQUAL_STRING("field-truncated", captured_operation);
+
+  /* A first word that fits is copied whole and silently. */
+  add_var(&GET_TRIG_VARS(&trig), "long", "short rest", 0);
+  TEST_ASSERT_TRUE(text_processed("car", "", vd, str, 16));
+  TEST_ASSERT_EQUAL_STRING("short", str);
+  TEST_ASSERT_EQUAL_INT(1, captured_errors);
+  free(str);
+}
+
 static void restore_round_trips_neutralize(void)
 {
   char text[] = "50% off, 100%% sure";
@@ -260,5 +287,6 @@ int main(void)
   RUN_TEST(unterminated_reference_stops_at_line_end);
   RUN_TEST(unclosed_paren_stops_at_line_end);
   RUN_TEST(closed_reference_reports_nothing);
+  RUN_TEST(car_is_bounded_by_destination);
   return UNITY_END();
 }
