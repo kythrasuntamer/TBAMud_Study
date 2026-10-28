@@ -315,7 +315,7 @@ static OCMD(do_otransform)
   else if (!isdigit(*arg))
     obj_log(obj, "otransform: bad argument");
   else {
-    o = read_object(tb_parse_int_or_zero(arg), VIRTUAL);
+    o = read_object(dg_parse_vnum(arg), VIRTUAL);
     if (o==NULL) {
       obj_log(obj, "otransform: bad object vnum");
       return;
@@ -473,7 +473,7 @@ static OCMD(do_dgoload)
 
     target = two_arguments(argument, arg1, arg2);
 
-    if (!*arg1 || !*arg2 || !is_number(arg2) || ((number = tb_parse_int_or_zero(arg2)) < 0))
+    if (!*arg1 || !*arg2 || !is_number(arg2) || ((number = dg_parse_vnum(arg2)) == NOTHING))
     {
         obj_log(obj, "oload: bad syntax");
         return;
@@ -491,7 +491,7 @@ static OCMD(do_dgoload)
       if (!target || !*target) {
         rnum = room;
       } else {
-        if (!isdigit(*target) || (rnum = real_room(tb_parse_int_or_zero(target))) == NOWHERE) {
+        if (!isdigit(*target) || (rnum = real_room(dg_parse_vnum(target))) == NOWHERE) {
           obj_log(obj, "oload: room target vnum doesn't exist "
                        "(loading mob vnum %d to room %s)", number, target);
           return;
@@ -710,7 +710,7 @@ static OCMD(do_odoor)
             }
             break;
         case 5:  /* room        */
-            if ((to_room = real_room(tb_parse_int_or_zero(value))) != NOWHERE)
+            if ((to_room = real_room(dg_parse_vnum(value))) != NOWHERE)
                 newexit->to_room = to_room;
             else {
                 newexit->to_room = NOWHERE;
@@ -776,7 +776,7 @@ static OCMD(do_oat)
     return;
   }
 
-  if (isdigit(*arg)) loc = real_room(tb_parse_int_or_zero(arg));
+  if (isdigit(*arg)) loc = real_room(dg_parse_vnum(arg));
   else if ((ch = get_char_by_obj(obj, arg))) loc = IN_ROOM(ch); 
 
   if (loc == NOWHERE) {

@@ -367,7 +367,7 @@ ACMD(do_mload)
 
     target = two_arguments(argument, arg1, arg2);
 
-    if (!*arg1 || !*arg2 || !is_number(arg2) || ((number = tb_parse_int_or_zero(arg2)) < 0)) {
+    if (!*arg1 || !*arg2 || !is_number(arg2) || ((number = dg_parse_vnum(arg2)) == NOTHING)) {
         mob_log(ch, "mload: bad syntax");
         return;
     }
@@ -378,7 +378,7 @@ ACMD(do_mload)
       if (!target || !*target) {
         rnum = IN_ROOM(ch);
       } else {
-        if (!isdigit(*target) || (rnum = real_room(tb_parse_int_or_zero(target))) == NOWHERE) {
+        if (!isdigit(*target) || (rnum = real_room(dg_parse_vnum(target))) == NOWHERE) {
           mob_log(ch, "mload: room target vnum doesn't exist "
                       "(loading mob vnum %d to room %s)", number, target);
           return;
@@ -924,10 +924,10 @@ ACMD(do_mtransform)
     mob_log(ch, "mtransform: bad argument");
   else {
     if (isdigit(*arg))
-      m = read_mobile(tb_parse_int_or_zero(arg), VIRTUAL);
+      m = read_mobile(dg_parse_vnum(arg), VIRTUAL);
     else {
       keep_hp = 0;
-      m = read_mobile(tb_parse_int_or_zero(arg+1), VIRTUAL);
+      m = read_mobile(dg_parse_vnum(arg+1), VIRTUAL);
     }
     if (m==NULL) {
       mob_log(ch, "mtransform: bad mobile vnum");
@@ -1110,7 +1110,7 @@ ACMD(do_mdoor)
             }
             break;
         case 5:  /* room        */
-            if ((to_room = real_room(tb_parse_int_or_zero(value))) != NOWHERE)
+            if ((to_room = real_room(dg_parse_vnum(value))) != NOWHERE)
                 newexit->to_room = to_room;
             else {
                 newexit->to_room = NOWHERE;

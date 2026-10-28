@@ -693,7 +693,7 @@ void trigedit_parse(struct descriptor_data *d, char *arg)
       return;
 
     case TRIGEDIT_COPY:
-      if ((i = real_trigger(tb_parse_int_or_zero(arg))) != NOTHING) {
+      if ((i = real_trigger(dg_parse_vnum(arg))) != NOTHING) {
         /* Replace the edit buffer with the source's contents, but keep the
          * identity of the trigger being edited: a buffer naming the
          * source's rnum gave the saved prototype that rnum, and later

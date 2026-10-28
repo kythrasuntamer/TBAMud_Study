@@ -538,7 +538,7 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
           script_log("findmob.vnum(mvnum) - illegal syntax");
           strlcpy(str, "0", slen);
         } else {
-          room_rnum rrnum = real_room(tb_parse_int_or_zero(field));
+          room_rnum rrnum = real_room(dg_parse_vnum(field));
           mob_vnum mvnum = tb_parse_int_or_zero(subfield);
 
           if (rrnum == NOWHERE) {
@@ -559,7 +559,7 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
           script_log("findobj.vnum(ovnum) - illegal syntax");
           strlcpy(str, "0", slen);
         } else {
-          room_rnum rrnum = real_room(tb_parse_int_or_zero(field));
+          room_rnum rrnum = real_room(dg_parse_vnum(field));
 
           if (rrnum == NOWHERE) {
             script_log("findobj.vnum(ovnum): No room with vnum %d", tb_parse_int_or_zero(field));

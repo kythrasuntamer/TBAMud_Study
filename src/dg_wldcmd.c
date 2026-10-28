@@ -300,7 +300,7 @@ WCMD(do_wdoor)
             }
             break;
         case 5:  /* room        */
-            if ((to_room = real_room(tb_parse_int_or_zero(value))) != NOWHERE)
+            if ((to_room = real_room(dg_parse_vnum(value))) != NOWHERE)
                 newexit->to_room = to_room;
             else {
                 newexit->to_room = NOWHERE;
@@ -324,7 +324,7 @@ WCMD(do_wteleport)
         return;
     }
 
-    nr = tb_parse_int_or_zero(arg2);
+    nr = dg_parse_vnum(arg2);
     target = real_room(nr);
 
     if (target == NOWHERE)
@@ -468,7 +468,7 @@ WCMD(do_wload)
 
     target = two_arguments(argument, arg1, arg2);
 
-    if (!*arg1 || !*arg2 || !is_number(arg2) || ((number = tb_parse_int_or_zero(arg2)) < 0)) {
+    if (!*arg1 || !*arg2 || !is_number(arg2) || ((number = dg_parse_vnum(arg2)) == NOTHING)) {
         wld_log(room, "wload: bad syntax");
         return;
     }
@@ -479,7 +479,7 @@ WCMD(do_wload)
       if (!target || !*target) {
         rnum = real_room(room->number);
       } else {
-        if (!isdigit(*target) || (rnum = real_room(tb_parse_int_or_zero(target))) == NOWHERE) {
+        if (!isdigit(*target) || (rnum = real_room(dg_parse_vnum(target))) == NOWHERE) {
           wld_log(room, "wload: room target vnum doesn't exist (loading mob vnum %d to room %s)", number, target);
           return;
         }
@@ -587,7 +587,7 @@ WCMD(do_wat)
     return;
   }
 
-  if (isdigit(*arg)) loc = real_room(tb_parse_int_or_zero(arg));
+  if (isdigit(*arg)) loc = real_room(dg_parse_vnum(arg));
   else if ((ch = get_char_by_room(room, arg))) loc = IN_ROOM(ch);
   
   if (loc == NOWHERE) {
@@ -610,7 +610,7 @@ WCMD(do_wmove)
         return;
     }
 
-    nr = tb_parse_int_or_zero(arg2);
+    nr = dg_parse_vnum(arg2);
     target = real_room(nr);
 
     if (target == NOWHERE) {

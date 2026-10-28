@@ -310,6 +310,15 @@ static obj_data *find_obj(long n)
   return find_obj_by_uid_in_lookup_table(n);
 }
 
+IDXTYPE dg_parse_vnum(const char *text)
+{
+  long vnum = tb_parse_long_or_zero(text);
+
+  if (vnum < 0 || vnum >= IDXTYPE_MAX)
+    return NOTHING;
+  return (IDXTYPE)vnum;
+}
+
 /* Search for a room with UID n.
  * @param n the Unique ID to look for.
  * @retval room_data * Pointer to the room if it exists, or NULL if it cannot
@@ -488,7 +497,7 @@ room_data *get_room(char *name)
 
   if (*name == UID_CHAR)
     return find_room(PARSE_UID(name + 1));
-  else if ((nr = real_room(tb_parse_int_or_zero(name))) == NOWHERE)
+  else if ((nr = real_room(dg_parse_vnum(name))) == NOWHERE)
     return NULL;
   else
     return &world[nr];
@@ -1190,7 +1199,7 @@ static int remove_trigger(struct script_data *sc, char *name)
  * prototype's vnum and name when it is a vnum, else the argument itself. */
 static const char *detach_label(const char *arg, char *buf, size_t size)
 {
-  trig_rnum rn = real_trigger(tb_parse_int_or_zero(arg));
+  trig_rnum rn = real_trigger(dg_parse_vnum(arg));
 
   if (rn != NOTHING)
     tb_snprintf(buf, size, "%d (%s)", trig_index[rn]->vnum,
@@ -2090,7 +2099,7 @@ static void process_attach(void *go, struct script_data *sc, trig_data *trig,
   }
 
   /* locate and load the trigger specified */
-  trignum = real_trigger(tb_parse_int_or_zero(trignum_s));
+  trignum = real_trigger(dg_parse_vnum(trignum_s));
   if (trignum == NOTHING || !(newtrig=read_trigger(trignum))) {
     script_log("Trigger: %s, VNum %d. attach invalid trigger: '%s'",
             GET_TRIG_NAME(trig), GET_TRIG_VNUM(trig), trignum_s);
@@ -3098,7 +3107,7 @@ ACMD(do_tstat)
 
   half_chop(argument, str, argument);
   if (*str) {
-    rnum = real_trigger(tb_parse_int_or_zero(str));
+    rnum = real_trigger(dg_parse_vnum(str));
     if (rnum == NOTHING) {
       send_to_char(ch, "That vnum does not exist.\r\n");
       return;

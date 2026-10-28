@@ -1006,6 +1006,26 @@ static void random_trigger_may_purge_its_object(void)
   world = NULL;
 }
 
+/* Vnums are 16-bit: script text "70000" used to be truncated to 4464 and
+ * name that room.  Out-of-range vnums now name nothing. */
+static void out_of_range_vnums_name_nothing(void)
+{
+  static struct room_data rooms[1];
+  char far[] = "70000", near[] = "4464";
+
+  memset(rooms, 0, sizeof(rooms));
+  rooms[0].number = 4464;                  /* 70000 mod 65536 */
+  world = rooms;
+  top_of_world = 0;
+  TEST_ASSERT_NULL(get_room(far));
+  TEST_ASSERT_EQUAL_PTR(&rooms[0], get_room(near));
+  world = NULL;
+
+  TEST_ASSERT_EQUAL_INT(NOTHING, dg_parse_vnum("-1"));
+  TEST_ASSERT_EQUAL_INT(NOTHING, dg_parse_vnum("65535"));
+  TEST_ASSERT_EQUAL_INT(65534, dg_parse_vnum("65534"));
+}
+
 static void restore_round_trips_neutralize(void)
 {
   char text[] = "50% off, 100%% sure";
@@ -1050,5 +1070,6 @@ int main(void)
   RUN_TEST(invalid_wait_leaves_the_trigger_usable);
   RUN_TEST(uids_resolve_only_their_own_entities);
   RUN_TEST(random_trigger_may_purge_its_object);
+  RUN_TEST(out_of_range_vnums_name_nothing);
   return UNITY_END();
 }

@@ -421,6 +421,11 @@ void wld_command_interpreter(room_data *room, char *argument);
  * grow for the life of the server, so they are longs; an int parse turned
  * any UID above INT_MAX into 0. */
 #define PARSE_UID(text) tb_parse_long_or_zero(text)
+/* Parses a vnum from script text.  Vnums are 16-bit, so an int parse handed
+ * to read_object() or real_room() turned 70000 into 4464 and loaded or found
+ * the wrong thing.  Out-of-range text yields NOTHING, which every lookup
+ * rejects and every caller already reports. */
+IDXTYPE dg_parse_vnum(const char *text);
 
 /* A '%' that came from player-authored text (command arguments, speech, act
  * messages, titles).  Scripts may substitute a line twice -- eval, makeuid,
