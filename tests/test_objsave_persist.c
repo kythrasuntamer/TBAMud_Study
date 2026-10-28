@@ -576,6 +576,26 @@ static void test_rent_paid_from_hand_leaves_bank_alone(void)
   TEST_ASSERT_EQUAL_INT(35, GET_BANK_GOLD(&player));
 }
 
+/* B2-31: record diagnostics named neither the file's owner nor the record
+ * ("malformed saved object values"), so an admin could not find it. */
+static void test_record_diagnostics_name_owner_line_and_vnum(void)
+{
+  char body[256];
+
+  TEST_ASSERT_TRUE(snprintf(body, sizeof(body),
+                            "%d %ld 0 0 0 0\n#101\nVals: 1 2 x\nZzzz: 1\n\n$~\n",
+                            RENT_CRASH, (long)time(0)) > 0);
+  write_rent_file("Tester", body);
+
+  TEST_ASSERT_EQUAL_INT(1, Crash_load(&player));
+
+  TEST_ASSERT_EQUAL_STRING("parse-values\nrent-tag\n", tb_captured_op_log);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail_log,
+                              "player idnum 4242 object line 2 obj vnum 101: malformed"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail_log,
+                              "player idnum 4242 object line 3 obj vnum 101: unknown tag Zzzz"));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -590,6 +610,7 @@ int main(void)
   RUN_TEST(test_skipped_record_tags_do_not_touch_previous_object);
   RUN_TEST(test_future_rent_timestamp_charges_nothing);
   RUN_TEST(test_rent_paid_from_hand_leaves_bank_alone);
+  RUN_TEST(test_record_diagnostics_name_owner_line_and_vnum);
   (void)rmdir(scratch_dir);
   return UNITY_END();
 }

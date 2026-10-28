@@ -530,7 +530,11 @@ void Crash_listrent(struct char_data *ch, char *name)
     break;
   }
 
-	loaded = objsave_parse_objects(fl);
+	{
+	  char owner[MAX_NAME_LENGTH + 16];
+	  tb_snprintf(owner, sizeof(owner), "player %s", name);
+	  loaded = objsave_parse_objects_from(fl, filename, owner);
+	}
 
 	for (current = loaded; current != NULL; current=current->next) {
 	  total++;
@@ -1187,13 +1191,36 @@ void Crash_save_all(void)
 
 /* Parses the object records stored in fl, and returns the first object in a
  * linked list, which also handles location if worn. This list can then be
- * handled by house code, listrent code, autoeq code, etc. */
+ * handled by house code, listrent code, autoeq code, etc.
+ *
+ * Callers that know which file and owner they are reading should use
+ * objsave_parse_objects_from(), so that diagnostics name them. */
 obj_save_data *objsave_parse_objects(FILE *fl)
+{
+  return objsave_parse_objects_from(fl, "rent-object-record", "unknown owner");
+}
+
+/* Every record diagnostic carries the file (resource), the owner ("player
+ * idnum N" / "house vnum N"), the "object line" (lines read by this parser,
+ * counting from the line after any rent header the caller consumed, so it is
+ * the file line minus one for rent files and the file line for house files)
+ * and, once known, the record's object vnum. The file is untrusted: a corrupted or hand-edited
+ * rent or house file must point an admin at the exact record. */
+#define OBJSAVE_REC_FMT "%s object line %d obj vnum %d: "
+#define OBJSAVE_REC_ARGS(vnum) owner, lineno, (int) (vnum)
+
+obj_save_data *objsave_parse_objects_from(FILE *fl, const char *resource,
+                                          const char *owner)
 {
   obj_save_data *head, *current, *tempsave;
   char f1[128], f2[128], f3[128], f4[128], line[READ_SIZE];
-  int t[4],i, nr;
+  int t[4],i, nr, lineno = 0, got;
   struct obj_data *temp;
+
+  if (resource == NULL)
+    resource = "rent-object-record";
+  if (owner == NULL)
+    owner = "unknown owner";
 
   CREATE(current, obj_save_data, 1);
   head = current;
@@ -1205,7 +1232,9 @@ obj_save_data *objsave_parse_objects(FILE *fl)
     int num;
 
     /* if the file is done, wrap it all up */
-    if(get_line(fl, line) == FALSE || (*line == '$' && line[1] == '~')) {
+    got = get_line(fl, line);
+    lineno += got;	/* get_line() returns the lines it consumed */
+    if(got == FALSE || (*line == '$' && line[1] == '~')) {
       if (temp == NULL && current->obj == NULL) {
         /* Remove current from list. */
         tempsave = head;
@@ -1227,7 +1256,9 @@ obj_save_data *objsave_parse_objects(FILE *fl)
       /* Do nothing. */
   } else if (temp != NULL && current->obj != NULL) {
       if (temp != current->obj)
-        log("inconsistent object pointers in objsave_parse_objects: %p/%p", (void *)temp, (void *)current->obj);
+        TB_ERROR_MSG("objsave", "parse-state", resource,
+                     "%s object line %d: inconsistent object pointers %p/%p",
+                     owner, lineno, (void *)temp, (void *)current->obj);
     }
 
     break;
@@ -1248,8 +1279,9 @@ obj_save_data *objsave_parse_objects(FILE *fl)
       }
 
       if (!objsave_parse_int_fields(line + 1, &nr, 1)) {
-        TB_WARN_MSG("objsave", "rent-record", "rent-object-record",
-                    "malformed '#' record line; record skipped");
+        TB_WARN_MSG("objsave", "rent-record", resource,
+                    "%s object line %d: malformed '#' record line; record skipped",
+                    owner, lineno);
         continue;
       }
 
@@ -1261,8 +1293,9 @@ obj_save_data *objsave_parse_objects(FILE *fl)
         temp = create_obj();
         temp->item_number=NOTHING;
       } else if (nr < 0 || real_object(nr) == NOTHING) {
-        TB_WARN_MSG("objsave", "missing-proto", "rent-object-record",
-                    "rent record vnum %d has no prototype; record skipped", nr);
+        TB_WARN_MSG("objsave", "missing-proto", resource,
+                    "%s object line %d: rent record vnum %d has no prototype; "
+                    "record skipped", owner, lineno, nr);
       } else
         temp=read_object(nr,VIRTUAL);
       /* go read next line - nothing more to see here. */
@@ -1288,8 +1321,9 @@ obj_save_data *objsave_parse_objects(FILE *fl)
         temp->action_description = fread_string(fl, error);
       } else if (!strcmp(tag, "Aff ")) {
         if (!objsave_parse_int_fields(line, t, 3)) {
-          TB_ERROR_MSG("objsave", "parse-affect", "rent-object-record",
-                       "malformed saved object affect");
+          TB_ERROR_MSG("objsave", "parse-affect", resource,
+                       OBJSAVE_REC_FMT "malformed saved object affect",
+                       OBJSAVE_REC_ARGS(GET_OBJ_VNUM(temp)));
           break;
         }
         if (t[0] >= 0 && t[0] < MAX_OBJ_AFFECT) {
@@ -1328,8 +1362,9 @@ obj_save_data *objsave_parse_objects(FILE *fl)
     case 'F':
       if (!strcmp(tag, "Flag")) {
         if (sscanf(line, "%127s %127s %127s %127s", f1, f2, f3, f4) != 4) {
-          TB_ERROR_MSG("objsave", "parse-flags", "rent-object-record",
-                       "malformed saved object extra flags");
+          TB_ERROR_MSG("objsave", "parse-flags", resource,
+                       OBJSAVE_REC_FMT "malformed saved object extra flags",
+                       OBJSAVE_REC_ARGS(GET_OBJ_VNUM(temp)));
           break;
         }
         GET_OBJ_EXTRA(temp)[0] = asciiflag_conv(f1);
@@ -1345,9 +1380,9 @@ obj_save_data *objsave_parse_objects(FILE *fl)
          * past MAX_BAG_ROWS, which handle_obj flattens). A worn slot past
          * NUM_WEARS would index ch->equipment out of bounds. */
         if (num > NUM_WEARS) {
-          TB_ERROR_MSG("objsave", "rent-loc-range", "rent-object-record",
-                       "obj vnum %d Loc %d outside 1..%d; loading into inventory",
-                       GET_OBJ_VNUM(temp), num, NUM_WEARS);
+          TB_ERROR_MSG("objsave", "rent-loc-range", resource,
+                       OBJSAVE_REC_FMT "Loc %d outside 1..%d; loading into inventory",
+                       OBJSAVE_REC_ARGS(GET_OBJ_VNUM(temp)), num, NUM_WEARS);
           num = LOC_INVENTORY;
         }
         current->locate = num;
@@ -1360,8 +1395,9 @@ obj_save_data *objsave_parse_objects(FILE *fl)
     case 'P':
       if (!strcmp(tag, "Perm")) {
         if (sscanf(line, "%127s %127s %127s %127s", f1, f2, f3, f4) != 4) {
-          TB_ERROR_MSG("objsave", "parse-flags", "rent-object-record",
-                       "malformed saved object permanent flags");
+          TB_ERROR_MSG("objsave", "parse-flags", resource,
+                       OBJSAVE_REC_FMT "malformed saved object permanent flags",
+                       OBJSAVE_REC_ARGS(GET_OBJ_VNUM(temp)));
           break;
         }
         GET_OBJ_AFFECT(temp)[0] = asciiflag_conv(f1);
@@ -1385,8 +1421,9 @@ obj_save_data *objsave_parse_objects(FILE *fl)
     case 'W':
       if (!strcmp(tag, "Wear")) {
         if (sscanf(line, "%127s %127s %127s %127s", f1, f2, f3, f4) != 4) {
-          TB_ERROR_MSG("objsave", "parse-flags", "rent-object-record",
-                       "malformed saved object wear flags");
+          TB_ERROR_MSG("objsave", "parse-flags", resource,
+                       OBJSAVE_REC_FMT "malformed saved object wear flags",
+                       OBJSAVE_REC_ARGS(GET_OBJ_VNUM(temp)));
           break;
         }
         GET_OBJ_WEAR(temp)[0] = asciiflag_conv(f1);
@@ -1400,8 +1437,9 @@ obj_save_data *objsave_parse_objects(FILE *fl)
     case 'V':
       if (!strcmp(tag, "Vals")) {
         if (!objsave_parse_int_fields(line, t, 4)) {
-          TB_ERROR_MSG("objsave", "parse-values", "rent-object-record",
-                       "malformed saved object values");
+          TB_ERROR_MSG("objsave", "parse-values", resource,
+                       OBJSAVE_REC_FMT "malformed saved object values",
+                       OBJSAVE_REC_ARGS(GET_OBJ_VNUM(temp)));
           break;
         }
         for (i = 0; i < NUM_OBJ_VAL_POSITIONS; i++)
@@ -1409,12 +1447,16 @@ obj_save_data *objsave_parse_objects(FILE *fl)
       }
       break;
     default:
-      log("Unknown tag in rentfile: %s", tag);
+      TB_WARN_MSG("objsave", "rent-tag", resource,
+                  OBJSAVE_REC_FMT "unknown tag %.4s ignored",
+                  OBJSAVE_REC_ARGS(GET_OBJ_VNUM(temp)), tag);
     }
   }
 
   return head;
 }
+#undef OBJSAVE_REC_FMT
+#undef OBJSAVE_REC_ARGS
 
 static int Crash_load_objs(struct char_data *ch) {
   FILE *fl;
@@ -1523,7 +1565,11 @@ static int Crash_load_objs(struct char_data *ch) {
     break;
   }
 
-	loaded = objsave_parse_objects(fl);
+	{
+	  char owner[64];
+	  tb_snprintf(owner, sizeof(owner), "player idnum %ld", GET_IDNUM(ch));
+	  loaded = objsave_parse_objects_from(fl, filename, owner);
+	}
 	for (current = loaded; current != NULL; current=current->next)
 	  num_objs += handle_obj(current->obj, ch, current->locate, cont_row);
 

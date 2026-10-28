@@ -72,7 +72,11 @@ static int House_load(room_vnum vnum)
     return (0);
   }
 
-	loaded = objsave_parse_objects(fl);
+	{
+	  char owner[32];
+	  tb_snprintf(owner, sizeof(owner), "house vnum %d", vnum);
+	  loaded = objsave_parse_objects_from(fl, filename, owner);
+	}
 
 	for (current = loaded; current != NULL; current = current->next)
     obj_to_room(current->obj, rnum);
@@ -218,7 +222,11 @@ static void House_listrent(struct char_data *ch, room_vnum vnum)
   tb_buf_init(&out, buf, sizeof(buf) - sizeof(truncated));
 	tb_buf_appendf(&out, "filename: %s\r\n", filename);
 
-	loaded = objsave_parse_objects(fl);
+	{
+	  char owner[32];
+	  tb_snprintf(owner, sizeof(owner), "house vnum %d", vnum);
+	  loaded = objsave_parse_objects_from(fl, filename, owner);
+	}
 
 	for (current = loaded; current != NULL; current = current->next) {
 	  total++;

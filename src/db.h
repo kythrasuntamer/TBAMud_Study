@@ -299,6 +299,8 @@ int Crash_delete_file(char *name);
 void update_obj_file(void);
 int  Crash_rentsave(struct char_data *ch, int cost);
 obj_save_data *objsave_parse_objects(FILE *fl);
+obj_save_data *objsave_parse_objects_from(FILE *fl, const char *resource,
+                                          const char *owner);
 int objsave_save_obj_record(struct obj_data *obj, FILE *fl, int location);
 FILE *objsave_open_staged(const char *dest, char *temp, size_t temp_size);
 int objsave_commit_staged(FILE *fp, const char *temp, const char *dest);

@@ -61,7 +61,9 @@ long get_id_by_name(const char *name)
 }
 
 /* House object files are not under test: none exist in the scratch tree. */
-obj_save_data *objsave_parse_objects(FILE *fl) { (void)fl; return NULL; }
+obj_save_data *objsave_parse_objects_from(FILE *fl, const char *resource,
+                                          const char *owner)
+{ (void)fl; (void)resource; (void)owner; return NULL; }
 int objsave_save_obj_record(struct obj_data *obj, FILE *fl, int location)
 { (void)obj; (void)fl; (void)location; return 1; }
 
