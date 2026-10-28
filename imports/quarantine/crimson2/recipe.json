@@ -6,10 +6,62 @@
       "mode": "merge",
       "zone": 41,
       "map": {
-        "mob": {"4108": 4108, "4104": 4109},
-        "obj": {"4105": 4105}
+        "mob": {
+          "4108": 4108,
+          "4104": 4109
+        },
+        "obj": {
+          "4105": 4105
+        }
       },
-      "notes": "4108 Melcrin, sovereign of the trolls (new; keeps 4108). 4104 the phantom becomes 4109 because stock 4104 is the orc. 4105 Blade of the moors trolls (new; keeps 4105). Resets use zone 41's own rooms 4106, 4113 and 4115, as in Crimson's zone file."
+      "notes": "4108 Melcrin, sovereign of the trolls (new; keeps 4108). 4104 the phantom becomes 4109 because stock 4104 is the orc. 4105 Blade of the moors trolls (new; keeps 4105). Resets use zone 41's own rooms 4106, 4113 and 4115, as in Crimson's zone file. Melcrin, the phantom and the Blade are rescaled to the zone (owner decision 2026-10-28); see overrides.",
+      "overrides": {
+        "mob": {
+          "4108": {
+            "level": 16,
+            "thac0": 15,
+            "ac": -1,
+            "hp": "4d4+200",
+            "damage": "2d4+3",
+            "gold": 400,
+            "exp": 30000,
+            "act": 10,
+            "affects": 64,
+            "reason": "zone 41 boss (stock levels 6-13): was level 48, 35d10+24000 hp, 20d20+50 damage, AC -35, 1.5M exp, aggressive to all, sanctuary; now a level-16 sentinel caster modelled on stock level-16 mobs (3d3+160 hp, 2d2+2, thac0 15) plus a boss margin"
+          },
+          "4104": {
+            "level": 11,
+            "thac0": 17,
+            "ac": 3,
+            "hp": "2d2+110",
+            "damage": "1d4+1",
+            "gold": 0,
+            "exp": 12100,
+            "act": 204,
+            "reason": "was level 18 with ~300 hp, 4d5+15 damage, AC +26 and aggressive to all; now a level-11 wandering undead like stock level-11 mobs (2d2+110, thac0 17, AC 3), scavenger/stay-zone/wimpy kept, not aggressive"
+          }
+        },
+        "obj": {
+          "4105": {
+            "values": [
+              0,
+              3,
+              5,
+              3
+            ],
+            "applies": [
+              [
+                19,
+                2
+              ]
+            ],
+            "level": 15,
+            "cost": 1500,
+            "rent": 150,
+            "reason": "boss drop for a level-16 boss: was 11d5 slash +4 damroll, level 41, cost 40000; now 3d5 slash +2 damroll, level 15, in line with stock level 10-20 weapons (2d9..6d3, cost 300-1500)"
+          }
+        }
+      }
     },
     "Shatterstone": {
       "source": "Shatterstone",
@@ -24,13 +76,36 @@
           "5830": {
             "keywords": "torch rusty hoop",
             "wear": 16385,
-            "values": [0, 0, 24, 0],
+            "values": [
+              0,
+              0,
+              24,
+              0
+            ],
             "weight": 1,
             "cost": 10,
             "rent": 10,
             "level": 0,
             "applies": [],
             "reason": "unfinished-template torch carried +100 hitroll and +145 damroll and could not be picked up as 'torch'; now the stock torch (obj 3030): take+hold, 24 hours of light, cost 10"
+          }
+        },
+        "mob": {
+          "5830": {
+            "level": 20,
+            "thac0": 14,
+            "ac": -2,
+            "hp": "4d4+200",
+            "damage": "3d3+3",
+            "gold": 200,
+            "exp": 40000,
+            "act": 10,
+            "affects": 0,
+            "keywords": "guard spirit dwarven dwarf",
+            "short": "the spirit of a dwarven guard",
+            "long": "The spirit of a dwarven guard stands watch here, still bearing its death wounds.\n",
+            "description": "This is the spirit of a dwarven guard, still showing the wounds that killed his body.\n",
+            "reason": "unfinished template (keywords 'blank', level 48, 1d1+1 hp, 99d99-25 damage, AC -40, 2M exp, aggressive to all); now a non-aggressive level-20 sentinel like stock level-20 guards (4d4+200, 3d3+3, thac0 14), texts from the source description"
           }
         }
       },
@@ -41,7 +116,13 @@
           "to": 6542,
           "description": "A narrow crack in the cavern roof leads up into a sooty mineshaft."
         }
-      ]
+      ],
+      "exclude": {
+        "mob": [
+          5831
+        ]
+      },
+      "notes": "Mob 5831 'the Blank Mob' is an empty template with no content to be faithful to, so it is excluded; neither 5830 nor anything else has a reset (the source has none)."
     }
   }
 }

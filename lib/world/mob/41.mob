@@ -109,9 +109,9 @@ A huge troll is here, grinding boulders with his fists.
 within his power to further the cause of the moors trolls is his goal.
 Perhaps this is the reason he is so highly revered by his charges.
 ~
-1802 0 0 0 320 0 0 0 -1000 E
-48 4 -35 35d10+24000 20d20+50
-50000 1500000
+10 0 0 0 64 0 0 0 -1000 E
+16 15 -1 4d4+200 2d4+3
+400 30000
 8 8 1
 BareHandAttack: 8
 Str: 17
@@ -129,9 +129,9 @@ A shadowy phantom floats about, looking for a soul.
   The soul of a dead warrior, risen by the powers of evil, the phantom 
 now spends its days looking for souls of the living to feed off of.
 ~
-1996 0 0 0 2048 0 0 0 -200 E
-18 22 26 10d29+150 4d5+15
-0 5480
+204 0 0 0 2048 0 0 0 -200 E
+11 17 3 2d2+110 1d4+1
+0 12100
 8 8 1
 BareHandAttack: 0
 Str: 16

@@ -282,7 +282,9 @@ python3 tools/convert_crimson2.py --recipe imports/quarantine/crimson2/recipe.js
   --area Moria34 --out /tmp/c2 --install lib/world
 ```
 
-(`--install` refuses to overwrite a zone or to append a merge twice).
+(`--install` refuses to overwrite a zone or to append a merge twice; it
+checks every target first and then moves each file into place from a
+temporary sibling, so a refused install changes nothing).
 `tests/test_convert_crimson2.py` regenerates both from the recipe and requires
 zone 58 to match byte for byte and zone 41 to end with exactly the merged
 Moria34 additions, so neither can drift by hand edits.
@@ -300,6 +302,27 @@ new is merged, into zone 41's own rooms, as Crimson's zone file placed it:
 | mob 4109 the phantom | mob 4104 (stock 4104 is the orc) | rooms 4106 and 4113 (max 4) |
 | obj 4105 Blade of the moors trolls | obj 4105 | worn by Melcrin |
 
+**Rescaled to the zone** (owner decision, 2026-10-28). Zone 41's stock mobs
+are levels 6-13, so Crimson's numbers would have put a near-max-level caster
+in a low-level dungeon. The recipe overrides them (each override is printed
+when the tool runs), modelled on stock tbaMUD mobs of the target level:
+level-16 references such as 1.mob #169 and 120.mob #12028 (3d3+160, 2d2+2,
+THAC0 15, AC 0, 25600 exp), level-11 references such as 40.mob #4000 and
+4.mob #421 (2d2+110, THAC0 17, AC 3, 12100 exp). AC is in file units (the
+game multiplies by 10).
+
+| | Level | THAC0 | AC | HP | Damage | Gold | Exp | Flags |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Melcrin before | 48 | 4 | -35 | 35d10+24000 | 20d20+50 | 50000 | 1500000 | aggressive to all, sentinel; sanctuary |
+| Melcrin after | 16 | 15 | -1 | 4d4+200 | 2d4+3 | 400 | 30000 | sentinel; sense life |
+| phantom before | 18 | 22 | 26 | 10d29+150 | 4d5+15 | 0 | 5480 | aggressive to all, scavenger, stay-zone, wimpy |
+| phantom after | 11 | 17 | 3 | 2d2+110 | 1d4+1 | 0 | 12100 | scavenger, stay-zone, wimpy |
+
+The Blade of the moors trolls drops from a level-16 boss, so it is priced like
+stock level 10-20 weapons (2d9 to 6d3, cost 300-1500): 11d5 slash, +4
+damroll, level 41, cost 40000 / rent 3000 became 3d5 slash, +2 damroll,
+level 15, cost 1500 / rent 150 (weight 10 and its anti-good flag kept).
+
 Melcrin cast spells in Crimson, so it gets tbaMUD's `magic_user` spec proc
 (src/spec_assign.c). The Mage needs nothing: its counterpart, stock 4100,
 already casts through DG trigger 4100. Crimson's other zone 41 variants (the
@@ -310,7 +333,7 @@ the stock records; zone 41 keeps its own.
 
 | Zone | Vnums | Rooms / mobs / objs / resets |
 | --- | --- | --- |
-| 58 Shatterstone (Crimson 2, unfinished) | 5830-5841 | 12 / 2 / 1 / 0 |
+| 58 Shatterstone (Crimson 2, unfinished) | 5830-5841 | 12 / 1 / 1 / 0 |
 
 - **Linked** from the Dwarven Kingdom: room 6542 "At The Bottom Of The
   Mineshaft" `down` <-> 5830 "Overlooking the cavern" `up`, a plain two-way
@@ -320,6 +343,14 @@ the stock records; zone 41 keeps its own.
 - **No resets.** The upstream zone is an unfinished template ("Blank Zone",
   a "Blank Mob", no resets) and its rooms imply no particular loads, so none
   are invented: the rooms are explorable and empty.
+- **The guard is a real mob; the template mob is gone.** Mob 5830 was an
+  unedited template (keywords "blank", level 48, 1d1+1 hp, 99d99-25 damage,
+  AC -40, 2000000 exp, 100000 gold, aggressive to all). The recipe makes it a
+  non-aggressive level-20 sentinel like stock level-20 guards (269.mob #26909:
+  4d4+200, 3d3+3, THAC0 14, AC -2), with keywords "guard spirit dwarven dwarf"
+  and texts taken from the source description ("the spirit of a dwarven
+  guard"). Mob 5831 "the Blank Mob" had no content to be faithful to and is
+  excluded (`"exclude"` in the recipe). Neither had a reset.
 - **The torch is an ordinary light.** In the template it carried +100 hitroll
   and +145 damroll, and its keywords ("rusty hoop") did not include "torch".
   The recipe overrides it to match the stock torch (obj 3030): take+hold, 24

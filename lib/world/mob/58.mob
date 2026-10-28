@@ -1,37 +1,19 @@
 #5830
-blank~
-The guard~
-The Guard
+guard spirit dwarven dwarf~
+the spirit of a dwarven guard~
+The spirit of a dwarven guard stands watch here, still bearing its death wounds.
 ~
-This is the spirt of a dwaven guard still showing the wounds that killed his body.
+This is the spirit of a dwarven guard, still showing the wounds that killed his body.
 ~
-1800 0 0 0 0 0 0 0 999 E
-48 0 -40 1d1+1 99d99+-25
-100000 2000000
+10 0 0 0 0 0 0 0 999 E
+20 14 -2 4d4+200 3d3+3
+200 40000
 8 8 1
 Str: 25
 Int: 18
 Wis: 16
 Dex: 16
 Con: 15
-Cha: 12
-E
-#5831
-blank~
-the Blank Mob~
-The Blank Mob standing here, looking formless.
-~
-The Blank Mob is pretty formless, awaiting a creators molding.
-~
-8 0 0 0 0 0 0 0 0 E
-20 40 40 1d1+1 1d1+1
-1 0
-8 8 0
-Str: 17
-Int: 17
-Wis: 14
-Dex: 14
-Con: 12
 Cha: 12
 E
 $~
