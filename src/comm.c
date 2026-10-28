@@ -2711,23 +2711,20 @@ void close_socket(struct descriptor_data *d)
 
   free_list(d->events);
 
-  /*. Kill any OLC stuff .*/
-  switch (d->connected) {
-    case CON_OEDIT:
-    case CON_REDIT:
-    case CON_ZEDIT:
-    case CON_MEDIT:
-    case CON_SEDIT:
-    case CON_TEDIT:
-    case CON_TRIGEDIT:
-    case CON_AEDIT:
-    case CON_HEDIT:
-    case CON_QEDIT:
-    case CON_MSGEDIT:
-      cleanup_olc(d, CLEANUP_ALL);
-      break;
-    default:
-      break;
+  /* Kill any OLC stuff.  d is freed below, so any attached workspace must be
+   * released here whatever the state.  The old per-state list omitted
+   * CEDIT, PREFEDIT, IBTEDIT and IEDIT, leaking their workspaces on link
+   * loss (F3-11).  A workspace outside an OLC state is an invariant break:
+   * report it, and since non-playing characters were already handed to
+   * free_char() above, do not let cleanup_olc touch d->character. */
+  if (d->olc) {
+    if (!IS_IN_OLC(d)) {
+      TB_WARN_MSG("olc", "cleanup-on-close", "descriptor",
+                  "state %d with olc attached (olc_num %d); releasing "
+                  "without character", STATE(d), (int)OLC_NUM(d));
+      d->character = NULL;
+    }
+    cleanup_olc(d, CLEANUP_ALL);
   }
 
   free(d);
