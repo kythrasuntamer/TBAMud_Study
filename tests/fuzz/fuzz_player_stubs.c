@@ -155,6 +155,11 @@ void stop_fighting(struct char_data *ch) { (void) ch; UNEXPECTED(); }
  * character has none. */
 void free_history(struct char_data *ch, int type) { (void) ch; (void) type; UNEXPECTED(); }
 
+/* mobact.c: free_char() releases a mob's remember() list (96e8f5a). The
+ * loaders build players and objects only, and no mob ever remembers anyone
+ * here, so free_char() never finds a list to release. */
+void clearMemory(struct char_data *ch) { (void) ch; UNEXPECTED(); }
+
 /* prefedit.c: free_char() makes every preference editor still pointing at a
  * departing player let go of it, by walking descriptor_list. The harness
  * never puts a descriptor on that list (fuzz_player.c's player_desc is only
