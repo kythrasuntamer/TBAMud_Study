@@ -351,6 +351,7 @@ if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
         PROPERTIES COMPILE_OPTIONS "-ffunction-sections;-fdata-sections")
 endif()
 
+
 # Production world/text loaders (db.c). The test #includes db.c so its
 # file-scope parsers are reachable, and redirects exit() so fatal boot paths
 # can be asserted. utils.c is compiled into a private object library with
