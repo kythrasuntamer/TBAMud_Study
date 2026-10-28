@@ -166,3 +166,45 @@ target_include_directories(fuzz_world PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 # would be collected and the unreached parts of the linked files (which call
 # into the whole game) would fail to link.
 target_link_options(fuzz_world PRIVATE -Wl,-z,start-stop-gc)
+
+# Known crashes: inputs fuzz_world found (minimised) in loaders this harness
+# does not own. Each is a DISABLED test, so ctest lists it as "Disabled"
+# until the bug is fixed; then delete DISABLED, move the file into
+# corpus/world/ as regression-<name> and replay it as a regression test.
+# A fuzzing campaign can step past an open one with FUZZ_WORLD_MASK=<name>
+# (see fuzz_world.c). All are boot-time crashes from hand-edited or legacy
+# world files; OLC never writes these records.
+#   FUZZ-W1 trg-empty-script: parse_trigger() does strdup(strtok(s, "\n\r"))
+#     on the script fread_string() returned. For an empty '~' script s is
+#     NULL (SEGV in strtok_r, or strtok() resumes in the previous trigger's
+#     freed buffer); for a script of only line breaks strtok() returns NULL
+#     (strdup(NULL)). dg_db_scripts.c:86. trigedit writes "* Empty script".
+#     Fixed by eed9ae3 on audit-deferred-gen-olc.
+#   FUZZ-W2 obj-convert-zone-nowhere: parse_object() converts a legacy (3-
+#     or 4-field) object line and, with bitsavetodisk on (the default),
+#     reads zone_table[real_zone_by_thing(vnum)].number. For a vnum in no
+#     zone that is zone_table[NOWHERE], 65535 * 72 bytes past the table:
+#     wild read, SEGV. db.c:2509. Not fixed on any branch.
+#   FUZZ-W3 room-convert-zone-nowhere: the same read in parse_room()
+#     (db.c:1745). Reachable because the zone walk attaches a room in a gap
+#     between two zones to the next zone without checking its bottom, so
+#     real_zone_by_thing() finds no zone. Fixed by 8fbdff0 (a room between
+#     zones is fatal) on audit-deferred-db-loaders.
+#   FUZZ-W4 mob-convert-zone-nowhere: the same read in parse_mobile()
+#     (db.c:2355) for a legacy 4-field mob flag line. Not fixed on any
+#     branch.
+#   FUZZ-W5 obj-note-exdesc-null-keyword: an empty "~" extra-description
+#     keyword is stored as NULL, and check_object() (db.c:4727) passes a
+#     note's extra descriptions to find_exdesc(), which reads *keyword
+#     (act.informative.c:667): NULL dereference. Fixed by e2f4f26 on
+#     audit-deferred-db-loaders; c183774 on audit-deferred-commands also
+#     guards find_exdesc().
+foreach(_crash trg-empty-script obj-convert-zone-nowhere
+               room-convert-zone-nowhere mob-convert-zone-nowhere
+               obj-note-exdesc-null-keyword)
+    add_test(NAME fuzz_world_known_${_crash}
+             COMMAND fuzz_world ${CMAKE_CURRENT_SOURCE_DIR}/known-crashes/world/${_crash})
+    set_tests_properties(fuzz_world_known_${_crash} PROPERTIES
+        LABELS "fuzz" DISABLED TRUE
+        ENVIRONMENT "ASAN_OPTIONS=${TBAMUD_ASAN_OPTIONS};UBSAN_OPTIONS=${TBAMUD_UBSAN_OPTIONS}")
+endforeach()
