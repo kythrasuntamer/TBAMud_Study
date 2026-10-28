@@ -61,6 +61,14 @@
 #include "act.h"
 #include "modify.h"
 
+/* <ctype.h> on a plain char is undefined for bytes >= 0x80 (they are
+ * negative on most targets), and the bytes classified here come from the
+ * network (MXP replies) or from builder and player text. Always classify
+ * through these. Each evaluates its argument once. */
+#define ISDIGIT_C(c)  isdigit((unsigned char) (c))
+#define ISALPHA_C(c)  isalpha((unsigned char) (c))
+#define TOLOWER_C(c)  tolower((unsigned char) (c))
+
 /* Globals */
 const char * RGBone = "F022";
 const char * RGBtwo = "F055";
@@ -550,7 +558,7 @@ ssize_t ProtocolInput( descriptor_t *apDescriptor, char *apData, int aSize, char
            pProtocol->pSubneg[pProtocol->SubnegLen++] = apData[Index];
       }
       else if ( Index + 3 < aSize && apData[Index] == (char)27 && apData[Index+1] == '[' && 
-         isdigit((unsigned char)apData[Index+2]) && apData[Index+3] == 'z' )
+         ISDIGIT_C(apData[Index+2]) && apData[Index+3] == 'z' )
       {
          char MXPBuffer [1024];
          char *pMXPTag = NULL;
@@ -883,7 +891,7 @@ const char *ProtocolOutput( descriptor_t *apDescriptor, const char *apData, int 
                   PROTOCOL_WARN( apDescriptor, "malformed-code",
                      "'\\t[' at the end of the text (offset %d)", j );
                }
-               else if ( tolower((unsigned char)apData[j]) == 'u' )
+               else if ( TOLOWER_C(apData[j]) == 'u' )
                {
                   char *Buffer = UnicodeSub, Excerpt[sizeof(UnicodeSub)];
                   int Index = 0, Digits = 0;
@@ -897,7 +905,7 @@ const char *ProtocolOutput( descriptor_t *apDescriptor, const char *apData, int 
                    * Unicode range so it cannot overflow; UnicodeAdd()
                    * only encodes 1..0x10FFFF minus the surrogates, and 0
                    * would put a NUL in Result and cut the line short. */
-                  while ( isdigit((unsigned char)apData[++j]) )
+                  while ( ISDIGIT_C(apData[++j]) )
                   {
                      ++Digits;
                      if ( Number <= 0x10FFFF )
@@ -953,7 +961,7 @@ const char *ProtocolOutput( descriptor_t *apDescriptor, const char *apData, int 
                   /* Terminate if we've reached the end of the string */
                   bTerminate = !bDone;
                }
-               else if ( tolower(apData[j]) == 'f' || tolower(apData[j]) == 'b' )
+               else if ( TOLOWER_C(apData[j]) == 'f' || TOLOWER_C(apData[j]) == 'b' )
                {
                   char Buffer[8] = {'\0'}, Excerpt[8];
                   int Index = 0;
@@ -976,14 +984,14 @@ const char *ProtocolOutput( descriptor_t *apDescriptor, const char *apData, int 
                   {
                      PROTOCOL_WARN( apDescriptor, "malformed-code",
                         "RGB %sground colour \"%s\" not terminated with ']' (offset %d)",
-                        (tolower((unsigned char)Buffer[0]) == 'f') ? "fore" : "back",
+                        (TOLOWER_C(Buffer[0]) == 'f') ? "fore" : "back",
                         ProtocolExcerpt(&Buffer[1], Excerpt, sizeof(Excerpt)), j );
                   }
                   else if ( !IsValidColour(Buffer) )
                   {
                      PROTOCOL_WARN( apDescriptor, "malformed-code",
                         "RGB %sground colour \"%s\" invalid: each digit must be 0-5 (offset %d)",
-                        (tolower((unsigned char)Buffer[0]) == 'f') ? "fore" : "back",
+                        (TOLOWER_C(Buffer[0]) == 'f') ? "fore" : "back",
                         ProtocolExcerpt(&Buffer[1], Excerpt, sizeof(Excerpt)), j );
                   }
                   else /* Success */
@@ -991,7 +999,7 @@ const char *ProtocolOutput( descriptor_t *apDescriptor, const char *apData, int 
                      pCopyFrom = ColourRGB(apDescriptor, Buffer);
                   }
                }
-               else if ( tolower(apData[j]) == 'x' )
+               else if ( TOLOWER_C(apData[j]) == 'x' )
                {
                   char Buffer[8] = {'\0'}, Excerpt[8];
                   int Index = 0;
@@ -1222,7 +1230,7 @@ void CopyoverSet( descriptor_t *apDescriptor, const char *apData )
             default:
                if ( apData[i] == '/' )
                   bDoneWidth = true;
-               else if ( isdigit(apData[i]) )
+               else if ( ISDIGIT_C(apData[i]) )
                {
                   if ( bDoneWidth )
                   {
@@ -1688,7 +1696,7 @@ const char *ColourRGB( descriptor_t *apDescriptor, const char *apRGB )
    {
       if ( IsValidColour(apRGB) )
       {
-         bool_t bBackground = (tolower(apRGB[0]) == 'b');
+         bool_t bBackground = (TOLOWER_C(apRGB[0]) == 'b');
          int Red = apRGB[1] - '0';
          int Green = apRGB[2] - '0';
          int Blue = apRGB[3] - '0';
@@ -2700,7 +2708,7 @@ static char *GetMxpTag( const char *apTag, const char *apText )
          for ( ; pStartPos < pEndPos && Index < 60; ++pStartPos )
          {
             char Letter = *pStartPos;
-            if ( Letter == '.' || isdigit(Letter) || isalpha(Letter) )
+            if ( Letter == '.' || ISDIGIT_C(Letter) || ISALPHA_C(Letter) )
             {
                MXPBuffer[Index++] = Letter;
             }
@@ -2762,7 +2770,7 @@ static bool_t IsValidColour( const char *apArgument )
       return false;
 
    /* The first byte indicates foreground/background. */
-   if ( tolower(apArgument[0]) != 'f' && tolower(apArgument[0]) != 'b' )
+   if ( TOLOWER_C(apArgument[0]) != 'f' && TOLOWER_C(apArgument[0]) != 'b' )
       return false;
 
    /* The remaining three bytes must each be in the range '0' to '5'. */
@@ -2782,7 +2790,7 @@ static bool_t IsValidColour( const char *apArgument )
 
 static bool_t MatchString( const char *apFirst, const char *apSecond )
 {
-   while ( *apFirst && tolower(*apFirst) == tolower(*apSecond) ) {
+   while ( *apFirst && TOLOWER_C(*apFirst) == TOLOWER_C(*apSecond) ) {
       ++apFirst;
       ++apSecond;
    }
@@ -2791,7 +2799,7 @@ static bool_t MatchString( const char *apFirst, const char *apSecond )
 
 static bool_t PrefixString( const char *apPart, const char *apWhole )
 {
-   while ( *apPart && tolower(*apPart) == tolower(*apWhole) ) {
+   while ( *apPart && TOLOWER_C(*apPart) == TOLOWER_C(*apWhole) ) {
       ++apPart;
       ++apWhole;
    }
@@ -2800,7 +2808,7 @@ static bool_t PrefixString( const char *apPart, const char *apWhole )
 
 static bool_t IsNumber( const char *apString )
 {
-   while ( *apString && isdigit(*apString) )
+   while ( *apString && ISDIGIT_C(*apString) )
       ++apString;
    return ( !*apString );
 }
