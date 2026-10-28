@@ -44,6 +44,8 @@
 #define MAX_STRING_LENGTH	8192
 /* Longest physical input line (with its terminator) any reader accepts. */
 #define WLD_MAX_LINE		512
+/* Width of one room flag word ('a'..'z' = bits 0..25, 'A'..'F' = 26..31). */
+#define WLD_FLAG_BITS		32
 /* Old Diku "#99999" end-of-world marker. */
 #define WLD_SENTINEL_VNUM	99999
 
@@ -268,7 +270,7 @@ struct room_data {
   char *description;		/* Shown when entered                 */
   struct extra_descr_data *ex_description;	/* for examine/look       */
   struct room_direction_data *dir_option[NUM_OF_DIRS];	/* Directions */
-  int room_flags;		/* DEATH,DARK ... etc                 */
+  unsigned long room_flags;	/* DEATH,DARK ... (32 bits used)      */
 
   byte light;			/* Number of lightsources in room     */
 };
@@ -523,24 +525,53 @@ void discrete_load(FILE * fl)
   }
 }
 
-long asciiflag_conv(char *flag)
+/*
+ * Convert a room flag word from the .wld file: either a decimal bitvector
+ * or letters, where 'a'..'z' are bits 0..25 and 'A'..'Z' are bits 26..51.
+ * room_flags is a 32-bit word, so a letter past 'F' (bit 31) or a number
+ * above 0xFFFFFFFF cannot be stored.  The old code shifted a signed int by
+ * up to 51 places (undefined behaviour) and called islower() etc. on a
+ * plain char; such words are now reported (wld-flag-bit /
+ * wld-flag-value) and the tool exits 1.
+ */
+unsigned long asciiflag_conv(const char *flag)
 {
-  long flags = 0;
+  unsigned long flags = 0;
   int is_number = 1;
-  register char *p;
+  const char *p;
 
   for (p = flag; *p; p++) {
-    if (islower(*p))
-      flags |= 1 << (*p - 'a');
-    else if (isupper(*p))
-      flags |= 1 << (26 + (*p - 'A'));
+    unsigned char c = (unsigned char)*p;
+    int bit = -1;
 
-    if (!isdigit(*p))
+    if (c >= 'a' && c <= 'z')
+      bit = c - 'a';
+    else if (c >= 'A' && c <= 'Z')
+      bit = 26 + (c - 'A');
+
+    if (bit >= WLD_FLAG_BITS)
+      WLD_PARSE_ERROR("wld-flag-bit",
+                      "room flag '%c' is bit %d; room_flags holds bits 0..%d",
+                      c, bit, WLD_FLAG_BITS - 1);
+    if (bit >= 0)
+      flags |= 1UL << bit;
+
+    if (!isdigit(c))
       is_number = 0;
   }
 
-  if (is_number)
-    flags = tb_parse_long_or_zero(flag);
+  if (is_number) {
+    char *end;
+    unsigned long value;
+
+    errno = 0;
+    value = strtoul(flag, &end, 10);
+    if (end == flag || *end != '\0' || errno == ERANGE ||
+        value > 0xFFFFFFFFUL)
+      WLD_PARSE_ERROR("wld-flag-value",
+                      "numeric room flags '%.20s' do not fit in 32 bits", flag);
+    flags = value;
+  }
 
   return (flags);
 }

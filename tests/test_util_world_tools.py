@@ -144,6 +144,24 @@ class Wld2HtmlTests(ToolCase):
         self.assertIn("severity=WARN", err)
         self.assertFalse(self.exists("101.html"))
 
+    def test_flag_letter_past_bit_31_rejected(self):
+        # I3-08: 'Z' meant 1 << 51 on a signed int (UBSan: left shift of 1
+        # by 31 places for 'F' already overflowed int).
+        rc, err = self.wld("#100\nRoom~\nDesc~\n0 aZ 0\nS\n$~\n")
+        self.assertEqual(rc, 1, err)
+        self.assertDiag(err, "wld-flag-bit")
+        self.assertIn("room #100", err)
+
+    def test_flag_letters_up_to_bit_31_accepted(self):
+        # 'F' is bit 31: must not trip UBSan's signed-shift check.
+        rc, err = self.wld("#100\nRoom~\nDesc~\n0 aFz 0\nS\n$~\n")
+        self.assertEqual(rc, 0, err)
+
+    def test_numeric_flags_out_of_range_rejected(self):
+        rc, err = self.wld("#100\nRoom~\nDesc~\n0 99999999999 0\nS\n$~\n")
+        self.assertEqual(rc, 1, err)
+        self.assertDiag(err, "wld-flag-value")
+
     def test_final_line_without_newline_accepted(self):
         # I3-07: a valid file whose '$~' had no newline was rejected as a
         # format error blaming room #100.
