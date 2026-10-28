@@ -2460,10 +2460,8 @@ char *strfrmt(char *str, int w, int h, int justify, int hpad, int vpad)
           rp += pad;
         }
       }
-      if (rend - rp < 2)
-        cut = TRUE;
-      if (rp < rend) *rp++ = '\r';
-      if (rp < rend) *rp++ = '\n';
+      if (rp < rend) *rp++ = '\r'; else cut = TRUE;
+      if (rp < rend) *rp++ = '\n'; else cut = TRUE;
       lcount++;
     }
     *rp = '\0';
