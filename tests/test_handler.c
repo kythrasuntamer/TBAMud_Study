@@ -16,6 +16,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <pthread.h>
+#include "lists.h"
 #include "tb_error_capture.h"
 
 void basic_mud_log(const char *format, ...) { (void)format; }
@@ -279,6 +280,59 @@ static void test_long_inventory_is_updated_without_deep_recursion(void)
   hoard = NULL;
 }
 
+/* H2-26: free_group() on a group that still has members drained it with
+ * leave_group(), whose last call re-entered free_group(): the list and the
+ * group were freed twice. A non-empty group is now refused and reported,
+ * and the supported path (the last member leaves) frees it once. */
+void send_to_group(struct char_data *ch, struct group_data *group,
+                   const char *msg, ...)
+{ (void)ch; (void)group; (void)msg; }
+/* lists.c's error reporting and random_from_list(). */
+void mudlog(int type, int level, int file, const char *str, ...)
+{ (void)type; (void)level; (void)file; (void)str; }
+int rand_number_at(int from, int to, const char *source_file, int source_line,
+                   const char *source_func)
+{ (void)to; (void)source_file; (void)source_line; (void)source_func;
+  return from; }
+
+static void test_free_group_with_members_is_refused(void)
+{
+  struct char_data a, b;
+  struct group_data *group;
+
+  memset(&a, 0, sizeof(a));
+  memset(&b, 0, sizeof(b));
+  a.player_specials = b.player_specials = &dummy_mob;
+  GET_IDNUM(&a) = 31;
+  GET_IDNUM(&b) = 32;
+  /* Boot order (db.c): the first list created is global_lists, which every
+   * later list is added to. */
+  global_lists = create_list();
+  group_list = create_list();
+  group = create_group(&a);
+  join_group(&b, group);
+
+  free_group(group);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("free-nonempty", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "player idnum 31"));
+  TEST_ASSERT_EQUAL_PTR(group, a.group);
+  TEST_ASSERT_EQUAL_PTR(group, b.group);
+  TEST_ASSERT_EQUAL_INT(2, group->members->iSize);
+
+  leave_group(&b);
+  leave_group(&a);               /* last member: frees the group once */
+  TEST_ASSERT_NULL(a.group);
+  TEST_ASSERT_NULL(b.group);
+  TEST_ASSERT_EQUAL_INT(0, group_list->iSize);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  free_list(group_list);
+  group_list = NULL;
+  TEST_ASSERT_EQUAL_INT(0, global_lists->iSize);
+  free(global_lists);
+  global_lists = NULL;
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -291,5 +345,6 @@ int main(void)
   RUN_TEST(test_equip_char_occupied_slot_falls_back_to_inventory);
   RUN_TEST(test_char_to_room_invalid_room_names_caller);
   RUN_TEST(test_long_inventory_is_updated_without_deep_recursion);
+  RUN_TEST(test_free_group_with_members_is_refused);
   return UNITY_END();
 }

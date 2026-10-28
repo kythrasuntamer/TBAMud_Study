@@ -1683,16 +1683,25 @@ struct group_data * create_group(struct char_data * leader)
  * loop. */
 void free_group(struct group_data * group)
 {
-  struct char_data *tch;
-	struct iterator_data Iterator;
-	
+  /* Internal invariant, enforced: the old drain here called leave_group()
+   * for each member while iterating the list leave_group() edits, and the
+   * last leave_group() re-entered free_group(), so the list and the group
+   * were freed twice (H2-26; latent, no caller passes a non-empty group).
+   * Members of a non-empty group still point at it through ch->group, so
+   * report the misuse and keep the group intact instead. */
   if (group->members->iSize) {
-		for (tch = (struct char_data *) merge_iterator(&Iterator, group->members);
-		  tch; 
-		    tch = next_in_list(&Iterator))
-          leave_group(tch);
-          
-    remove_iterator(&Iterator);
+    struct char_data *leader = GROUP_LEADER(group);
+
+    if (leader)
+      TB_ERROR_MSG("group", "free-nonempty", "group",
+                   "group led by " DIAG_CHAR_FMT " still has %d member(s); "
+                   "not freed", DIAG_CHAR(leader),
+                   (int) group->members->iSize);
+    else
+      TB_ERROR_MSG("group", "free-nonempty", "group",
+                   "leaderless group still has %d member(s); not freed",
+                   (int) group->members->iSize);
+    return;
   }
   
   free_list(group->members);
