@@ -42,3 +42,14 @@ add_dg_world_test(test_dg_objcmd_runtime)
 add_dg_world_test(test_dg_mobcmd_runtime)
 add_dg_world_test(test_dg_wldcmd_runtime)
 add_dg_world_test(test_dg_triggers_runtime)
+
+# The shared properties of tests/CMakeLists.txt (test properties are
+# directory scoped, so its block does not see these tests).
+set(_tb_dg_world_tests test_dg_objcmd_runtime test_dg_mobcmd_runtime
+    test_dg_wldcmd_runtime test_dg_triggers_runtime)
+set_tests_properties(${_tb_dg_world_tests} PROPERTIES
+    LABELS "native;unit" TIMEOUT ${TB_TEST_TIMEOUT})
+if(ENABLE_SANITIZERS)
+    set_tests_properties(${_tb_dg_world_tests} PROPERTIES ENVIRONMENT
+        "${TB_TEST_SANITIZER_ENVIRONMENT}")
+endif()

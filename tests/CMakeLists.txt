@@ -59,6 +59,19 @@ if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
     )
 endif()
 
+# Every test's TIMEOUT and, in a sanitizer build, its ENVIRONMENT. The block
+# at the end of this file applies them to this directory's tests;
+# tests/dg_world applies them to its own, since test properties are
+# directory scoped.
+# A hung test (an infinite loop in a guard, a blocked read) must fail rather
+# than stall CI until the job timeout. 120 s is ~100x the slowest test under
+# Valgrind today.
+set(TB_TEST_TIMEOUT 120)
+# The project's ASAN/UBSAN option strings (see TBAMUD_ASAN_OPTIONS in the
+# top-level CMakeLists.txt), so a local ctest traps the same things CI does.
+set(TB_TEST_SANITIZER_ENVIRONMENT
+    "ASAN_OPTIONS=${TBAMUD_ASAN_OPTIONS};UBSAN_OPTIONS=${TBAMUD_UBSAN_OPTIONS};LSAN_OPTIONS=report_objects=1")
+
 # Helper macro: add_mud_test(name SRC1 [SRC2 …])
 # Creates an executable, registers it with CTest.
 macro(add_mud_test TEST_NAME)
@@ -1450,21 +1463,29 @@ if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
     target_link_options(test_tedit_msgedit PRIVATE -Wl,--wrap=fopen)
 endif()
 
-# ---------------------------------------------------------------------------
-# Properties shared by every test registered above
-# ---------------------------------------------------------------------------
-# A hung test (an infinite loop in a guard, a blocked read) must fail rather
-# than stall CI until the job timeout. 120 s is ~100x the slowest test under
-# Valgrind today.
-get_directory_property(_tb_all_tests TESTS)
-set_tests_properties(${_tb_all_tests} PROPERTIES TIMEOUT 120)
+# C tests registered with add_test() rather than add_mud_test() carry no
+# label of their own. "native" is what the CI Valgrind job selects
+# (ctest -T memcheck -L native), so an unlabelled C test was never run under
+# Valgrind. The syntax-only compile check runs the compiler, not tbaMUD code.
+set_tests_properties(
+    test_comm_output test_protocol test_db_parse test_ibt
+    test_act_informative test_act_comm test_act_other test_dg_engine
+    test_dg_olc test_comm_poll test_comm_boot test_cedit_config
+    test_close_socket
+    PROPERTIES LABELS "native;unit")
+set_tests_properties(circle_config_option_is_heap_copy PROPERTIES
+    LABELS "native;boot")
+set_tests_properties(test_players_extraneous_triggers_rejected PROPERTIES
+    LABELS "contract")
 
-# In a sanitizer build every test runs with the project's ASAN/UBSAN option
-# strings (see TBAMUD_ASAN_OPTIONS in the top-level CMakeLists.txt), so a local
-# ctest traps the same things CI does.
+# ---------------------------------------------------------------------------
+# Properties shared by every test registered above (keep this block last)
+# ---------------------------------------------------------------------------
+get_directory_property(_tb_all_tests TESTS)
+set_tests_properties(${_tb_all_tests} PROPERTIES TIMEOUT ${TB_TEST_TIMEOUT})
 if(ENABLE_SANITIZERS)
     set_tests_properties(${_tb_all_tests} PROPERTIES ENVIRONMENT
-        "ASAN_OPTIONS=${TBAMUD_ASAN_OPTIONS};UBSAN_OPTIONS=${TBAMUD_UBSAN_OPTIONS};LSAN_OPTIONS=report_objects=1")
+        "${TB_TEST_SANITIZER_ENVIRONMENT}")
 endif()
 
 # The end-to-end tests boot the whole server (and, in a sanitizer tree, an
@@ -1473,3 +1494,7 @@ if(Python3_Interpreter_FOUND)
     set_tests_properties(test_login_greeting test_help_search
         PROPERTIES TIMEOUT 400)
 endif()
+
+# clean_pfiles() re-examines a slot after a removal; if a refused removal
+# were counted as done it would spin forever. Fail that regression sooner.
+set_tests_properties(test_players_persist PROPERTIES TIMEOUT 60)
