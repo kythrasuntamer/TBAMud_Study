@@ -46,6 +46,13 @@
 # define NOFLAG   ((IDXTYPE)-1)    /**< nil reference for flags   */
 #endif
 
+/* TRUE if a parsed int/long can be stored in an IDXTYPE vnum field without
+ * wrapping and is not the NOWHERE/NOTHING sentinel (IDXTYPE_MAX with the
+ * default unsigned index type). Loaders, OLC and DG parse vnums as int or
+ * long and narrow them into IDXTYPE fields. Evaluates n twice: pass a plain
+ * variable. Same text as the copy in db.c. */
+#define VNUM_STORABLE(n)  ((long)(n) >= IDXTYPE_MIN && (long)(n) < IDXTYPE_MAX)
+
 /** Function macro for the mob, obj and room special functions */
 #define SPECIAL(name) \
    int (name)(struct char_data *ch, void *me, int cmd, char *argument)

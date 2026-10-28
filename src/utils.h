@@ -702,6 +702,27 @@ do                                                              \
 /** 1 if rnum indexes mob_proto[]/mob_index[], 0 if not. rnum is evaluated
  * twice: pass a plain variable or side-effect-free expression. */
 #define VALID_MOB_RNUM(rnum)	((rnum) != NOBODY && (rnum) <= top_of_mobt)
+/** TRUE when r names a loaded zone: usable as zone_table[r]. r is evaluated
+ * twice: pass a plain variable. Same text as genzon.h's and oasis.h's
+ * copies, so they coexist. */
+#if CIRCLE_UNSIGNED_INDEX
+#define VALID_ZONE_RNUM(r)	((r) != NOWHERE && (r) <= top_of_zone_table)
+#else
+#define VALID_ZONE_RNUM(r)	((r) >= 0 && (r) <= top_of_zone_table)
+#endif
+
+/* Range predicates for values that index a fixed table and come from world,
+ * player or script data: sector_type (movement_loss[], map glyphs),
+ * directions (dir_option[], dirs[]), positions (position_types[]), sexes
+ * (genders[]) and wear slots (GET_EQ, wear_where[]). The unsigned cast folds
+ * "x < 0" into the upper-bound test, so each evaluates its argument once;
+ * the argument must be an int-sized value (a long beyond UINT_MAX would
+ * wrap). Same text as the copies in db.c, so they coexist. */
+#define VALID_SECTOR(s)   ((unsigned int)(s) < NUM_ROOM_SECTORS)
+#define VALID_DIR(d)      ((unsigned int)(d) < NUM_OF_DIRS)
+#define VALID_POS(p)      ((unsigned int)(p) < NUM_POSITIONS)
+#define VALID_SEX(x)      ((unsigned int)(x) < NUM_GENDERS)
+#define VALID_WEAR_POS(w) ((unsigned int)(w) < NUM_WEARS)
 /** The room number if this is a valid room, NOWHERE if it is not */
 #define GET_ROOM_VNUM(rnum) \
 	((room_vnum)(VALID_ROOM_RNUM(rnum) ? world[(rnum)].number : NOWHERE))

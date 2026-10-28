@@ -247,7 +247,7 @@ static int map_sector(room_rnum room)
   static room_rnum last_reported = NOWHERE;
   int sector = SECT(room);
 
-  if (sector >= 0 && sector < NUM_ROOM_SECTORS)
+  if (VALID_SECTOR(sector))
     return sector;
   if (room != last_reported) {
     TB_WARN_MSG("map", "bad-sector", "world",
