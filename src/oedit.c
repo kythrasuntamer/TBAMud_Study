@@ -37,10 +37,9 @@
 
 /* Forward declarations needed because iedit is inserted before oedit's normal static prototypes. */
 static void oedit_disp_menu(struct descriptor_data *d);
-static int iedit_object_still_exists(struct obj_data *obj);
 static int iedit_is_prototype_string(struct obj_data *obj, char *str, int field_id);
 static void iedit_replace_string(struct obj_data *obj, char **field, char *new_string, int field_id);
-static void iedit_save_internally(struct descriptor_data *d);
+static int iedit_save_internally(struct descriptor_data *d);
 static int iedit_is_forbidden_main_menu_choice(char *arg);
 
 ACMD(do_oasis_iedit)
@@ -78,7 +77,11 @@ ACMD(do_oasis_iedit)
 
   CREATE(d->olc, struct oasis_olc_data, 1);
 
+  /* The live object can be extracted (and its memory reused) by any player,
+   * script or zone reset while the builder edits. Keep its UID: save
+   * re-validates the pointer against the UID table before touching it. */
   OLC_IEDIT_OBJ(d) = obj;
+  OLC_IEDIT_UID(d) = obj_script_id(obj);
   OLC_NUM(d) = GET_OBJ_VNUM(obj);
   OLC_ZNUM(d) = NOWHERE;
 
@@ -101,17 +104,6 @@ ACMD(do_oasis_iedit)
   mudlog(CMP, MAX(LVL_IMMORT, GET_INVIS_LEV(ch)), TRUE,
          "OLC: %s starts iediting %s",
          GET_NAME(ch), obj->short_description ? obj->short_description : "an object");
-}
-
-static int iedit_object_still_exists(struct obj_data *target)
-{
-  struct obj_data *obj;
-
-  for (obj = object_list; obj; obj = obj->next)
-    if (obj == target)
-      return TRUE;
-
-  return FALSE;
 }
 
 static int iedit_is_prototype_string(struct obj_data *obj, char *str, int field)
@@ -188,16 +180,29 @@ static void iedit_replace_values(struct obj_data *target, struct obj_data *edite
     GET_OBJ_VAL(target, i) = GET_OBJ_VAL(edited, i);
 }
 
-static void iedit_save_internally(struct descriptor_data *d)
+/* Copy the scratch edits back into the live object. Returns FALSE, after
+ * reporting, when the target is gone.
+ *
+ * Invariant: OLC_IEDIT_OBJ(d) may be followed only while OLC_IEDIT_UID(d)
+ * still maps to that address. extract_obj() unregisters the UID before the
+ * object is freed, and UIDs are not reused while registered, so
+ * obj_uid_matches() rejects both a freed target and a new object that malloc
+ * placed at the same address, without dereferencing the pointer. */
+static int iedit_save_internally(struct descriptor_data *d)
 {
   struct obj_data *target = OLC_IEDIT_OBJ(d);
   struct obj_data *edited = OLC_OBJ(d);
   struct obj_data *top_obj;
   struct char_data *owner = NULL;
+  struct char_data *builder = d->character;
 
-  if (!target || !edited || !iedit_object_still_exists(target)) {
-    write_to_output(d, "The object you were editing no longer exists.\r\n");
-    return;
+  if (!edited || !obj_uid_matches(OLC_IEDIT_UID(d), target)) {
+    TB_ERROR_MSG("olc", "iedit-target-gone", "object",
+                 "builder " DIAG_CHAR_FMT " obj uid %ld vnum %d extracted during iedit; edits discarded",
+                 DIAG_CHAR(builder), OLC_IEDIT_UID(d), OLC_NUM(d));
+    write_to_output(d, "The object you were editing no longer exists; nothing was saved.\r\n");
+    OLC_IEDIT_OBJ(d) = NULL;
+    return FALSE;
   }
 
   iedit_replace_string(target, &target->name, edited->name, IEDIT_STRING_NAME);
@@ -238,6 +243,8 @@ static void iedit_save_internally(struct descriptor_data *d)
 
   if (owner && !IS_NPC(owner))
     SET_BIT_AR(PLR_FLAGS(owner), PLR_CRASH);
+
+  return TRUE;
 }
 
 static int iedit_is_forbidden_main_menu_choice(char *arg)
@@ -270,13 +277,12 @@ static void oedit_disp_wear_menu(struct descriptor_data *d);
 static void oedit_disp_menu(struct descriptor_data *d);
 static void oedit_disp_perm_menu(struct descriptor_data *d);
 static void oedit_save_to_disk(int zone_num);
-static int iedit_object_still_exists(struct obj_data *obj);
 static int iedit_is_prototype_string(struct obj_data *obj, char *str, int field);
 static int iedit_is_prototype_ex_description(struct obj_data *obj);
 static void iedit_replace_string(struct obj_data *obj, char **field, char *new_string, int field_id);
 static void iedit_replace_ex_descriptions(struct obj_data *target, struct obj_data *edited);
 static void iedit_replace_values(struct obj_data *target, struct obj_data *edited);
-static void iedit_save_internally(struct descriptor_data *d);
+static int iedit_save_internally(struct descriptor_data *d);
 static int iedit_is_forbidden_main_menu_choice(char *arg);
 
 /* handy macro */
@@ -1458,13 +1464,16 @@ void iedit_parse(struct descriptor_data *d, char *arg)
     switch (*arg) {
     case 'y':
     case 'Y':
-      iedit_save_internally(d);
-      mudlog(CMP, MAX(LVL_BUILDER, GET_INVIS_LEV(d->character)), TRUE,
-             "OLC: %s iedits object instance %s",
-             GET_NAME(d->character),
-             (OLC_IEDIT_OBJ(d) && OLC_IEDIT_OBJ(d)->short_description) ?
-               OLC_IEDIT_OBJ(d)->short_description : "unknown");
-      write_to_output(d, "Object instance saved.\r\n");
+      if (iedit_save_internally(d)) {
+        /* Name the instance from the scratch copy: it holds the same text and,
+         * unlike the live object, is owned by this session. */
+        mudlog(CMP, MAX(LVL_BUILDER, GET_INVIS_LEV(d->character)), TRUE,
+               "OLC: %s iedits object instance %s (uid %ld)",
+               GET_NAME(d->character),
+               OLC_OBJ(d)->short_description ? OLC_OBJ(d)->short_description : "unknown",
+               OLC_IEDIT_UID(d));
+        write_to_output(d, "Object instance saved.\r\n");
+      }
       cleanup_olc(d, CLEANUP_ALL);
       return;
     case 'n':

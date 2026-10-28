@@ -633,3 +633,24 @@ target_compile_options(test_dg_olc PRIVATE ${TEST_CFLAGS})
 target_link_libraries(test_dg_olc PRIVATE ${EXTRA_LIBS})
 set_target_properties(test_dg_olc PROPERTIES C_CLANG_TIDY "")
 add_test(NAME test_dg_olc COMMAND test_dg_olc)
+
+# Production OasisOLC prototype editors (oedit/medit/redit/zedit/sedit).
+# The editors reach most of the server through menus; the test supplies small
+# fixtures for the tables and stubs for the generic OLC library, and discards
+# unreachable sections.
+add_mud_test(test_olc_editors
+    ${MUD_SRCDIR}/oedit.c
+    ${MUD_SRCDIR}/medit.c
+    ${MUD_SRCDIR}/redit.c
+    ${MUD_SRCDIR}/zedit.c
+    ${MUD_SRCDIR}/sedit.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_olc_editors.c
+)
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_compile_options(test_olc_editors PRIVATE -ffunction-sections -fdata-sections)
+    target_link_options(test_olc_editors PRIVATE -Wl,--gc-sections)
+    set_source_files_properties(
+        ${MUD_SRCDIR}/oedit.c ${MUD_SRCDIR}/medit.c ${MUD_SRCDIR}/redit.c
+        ${MUD_SRCDIR}/zedit.c ${MUD_SRCDIR}/sedit.c
+        PROPERTIES COMPILE_OPTIONS "-ffunction-sections;-fdata-sections")
+endif()

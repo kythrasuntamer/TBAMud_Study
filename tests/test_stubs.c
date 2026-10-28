@@ -577,12 +577,14 @@ STUB_ACMD(do_zunlock)
 struct descriptor_data;
 struct char_data;
 
+__attribute__((weak))
 void iedit_parse(struct descriptor_data *d, char *arg)
 {
   (void)d;
   (void)arg;
 }
 
+__attribute__((weak))
 void do_oasis_iedit(struct char_data *ch, char *argument, int cmd, int subcmd)
 {
   (void)ch;

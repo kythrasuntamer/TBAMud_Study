@@ -93,6 +93,7 @@ struct oasis_olc_data {
   struct room_data *room;        /* used for 'redit'         */
   struct obj_data *obj;          /* used for 'oedit'         */
   struct obj_data *iedit_obj;   /* live object instance used for 'iedit' */
+  long iedit_uid;               /* script UID of iedit_obj; the only proof it is still live */
   struct zone_data *zone;        /* used for 'zedit'         */
   struct shop_data *shop;        /* used for 'sedit'         */
   struct config_data *config;    /* used for 'cedit'         */
@@ -124,7 +125,8 @@ extern const char *nrm, *grn, *cyn, *yel;
 #define OLC_STORAGE(d) (OLC(d)->storage)  /**< char pointer.	*/
 #define OLC_ROOM(d)    (OLC(d)->room)     /**< Room structure.	*/
 #define OLC_OBJ(d)     (OLC(d)->obj)      /**< Object structure.	*/
-#define OLC_IEDIT_OBJ(d) (OLC(d)->iedit_obj) /**< Live object instance for iedit. */
+#define OLC_IEDIT_OBJ(d) (OLC(d)->iedit_obj) /**< Live object instance for iedit. Borrowed: never dereference without obj_uid_matches(OLC_IEDIT_UID(d), ...). */
+#define OLC_IEDIT_UID(d) (OLC(d)->iedit_uid) /**< UID captured when iedit started. */
 #define OLC_ZONE(d)    (OLC(d)->zone)     /**< Zone structure.	*/
 #define OLC_MOB(d)     (OLC(d)->mob)      /**< Mob structure.	*/
 #define OLC_SHOP(d)    (OLC(d)->shop)     /**< Shop structure.	*/
