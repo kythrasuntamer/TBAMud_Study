@@ -53,7 +53,6 @@ static int event_mud_id(const struct event *event)
   return (int)((const struct mud_event_data *)event->event_obj)->iId;
 }
 
-
 /** Initializes the main event queue event_q.
  * @post The main event queue, event_q, has been created and initialized.
  */
@@ -96,6 +95,7 @@ struct event *event_create(EVENTFUNC(*func), void *event_obj, long when)
 
   if (when < 1) /* make sure its in the future */
     when = 1;
+
 
   CREATE(new_event, struct event, 1);
   new_event->func = func;
@@ -244,6 +244,22 @@ int event_is_queued(struct event *event)
 /***************************************************************************
  * Begin generic (abstract) priority queue functions
  **************************************************************************/
+/** Bucket index for a queue key.
+ * Invariant: keys are non-negative (event_create() and event_process()
+ * reject overflowing keys).  A negative key would index head[]/tail[] out
+ * of bounds, a corruption Valgrind cannot see because the neighbouring
+ * memory is addressable, so stop the process instead. */
+static int event_bucket(long key)
+{
+  if (key < 0) {
+    TB_ERROR_LOG("FATAL", "dg", "event-bucket-negative", "queue", 0,
+                 "queue key %ld is negative; bucket index would be out of "
+                 "bounds", key);
+    abort();
+  }
+  return (int)(key % NUM_EVENT_QUEUES);
+}
+
 /** Create a new, empty, priority queue and return it.
  * @retval dg_queue * Pointer to the newly created queue structure. */
 struct dg_queue *queue_init(void)
@@ -274,7 +290,7 @@ struct q_element *queue_enq(struct dg_queue *q, void *data, long key)
   qe->data = data;
   qe->key = key;
 
-  bucket = key % NUM_EVENT_QUEUES;   /* which queue does this go in */
+  bucket = event_bucket(key);   /* which queue does this go in */
 
   if (!q->head[bucket]) { /* queue is empty */
     q->head[bucket] = qe;
@@ -320,7 +336,7 @@ void queue_deq(struct dg_queue *q, struct q_element *qe)
 
   assert(qe);
 
-  i = qe->key % NUM_EVENT_QUEUES;
+  i = event_bucket(qe->key);
 
   if (qe->prev == NULL)
     q->head[i] = qe->next;
