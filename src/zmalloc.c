@@ -18,6 +18,7 @@
 #include <string.h>
 #include <ctype.h>
 #include <stdarg.h>
+#include <stdint.h>	/* SIZE_MAX */
 
 /*
  * zfree() never releases memory: every block stays reachable from memlist
@@ -91,7 +92,7 @@ static void zlogf(const char *format, ...)
 
 typedef struct meminfo {
   struct meminfo *next;
-  int size; /* number of bytes malloced */
+  size_t size; /* number of bytes malloced */
   unsigned char *addr;  /* address of memory returned */
   int frees; /* number of times that 'free' was called on this memory */
   char *file; /* file where malloc was called */
@@ -109,8 +110,9 @@ static meminfo *memlist[NUM_ZBUCKETS];
 static int zmalloclogging = 2;
 
 /* functions: */
-unsigned char *zmalloc(int len, char *file, int line);
-unsigned char *zrealloc(unsigned char *what, int len, char *file, int line);
+unsigned char *zmalloc(size_t len, char *file, int line);
+unsigned char *zrealloc(unsigned char *what, size_t len, char *file, int line);
+unsigned char *zcalloc(size_t count, size_t size, char *file, int line);
 void zdump(meminfo *m);
 void zfree(unsigned char *what, char *file, int line);
 char *zstrdup(const char *src, char *file, int line);
@@ -140,7 +142,7 @@ void zdump(meminfo *m)
   unsigned char hexline[37], ascline[17], *hexp, *ascp, *inp;
   int len, c = 1;
 
-  if (m->addr == NULL || m->size <= 0)
+  if (m->addr == NULL || m->size == 0)
     return;
   /* Dumping a freed (poisoned) block is diagnostic, not a program access. */
   if (m->frees > 0)
@@ -149,7 +151,7 @@ void zdump(meminfo *m)
   hexp = hexline;
   ascp = ascline;
   inp = m->addr;
-  len = (m->size > MAX_ZDUMP_SIZE ? MAX_ZDUMP_SIZE : m->size);
+  len = (int)(m->size > MAX_ZDUMP_SIZE ? MAX_ZDUMP_SIZE : m->size);
 
   for ( ; len > 0; len--, inp++, c++) {
     *(hexp++) = hextab[(int) (*inp & 0xF0) >> 4];	/* high 4 bit */
@@ -168,10 +170,50 @@ void zdump(meminfo *m)
 }
 
 
-unsigned char *zmalloc(int len, char *file, int line)
+/* Bytes of guard padding around each block. */
+#ifndef NO_MEMORY_PADDING
+# define ZM_PAD_TOTAL (sizeof(beginPad) + sizeof(endPad))
+#else
+# define ZM_PAD_TOTAL ((size_t)0)
+#endif
+
+/* Sizes are size_t end to end.  They used to be int, so a request of
+ * 2 GiB or more became negative and `len + padding` wrapped to a few bytes
+ * (calloc(0xFFFFFFFC, 1) returned a 4-byte block).  A request that cannot
+ * be padded without overflowing is reported and refused (NULL), like any
+ * other allocation failure. */
+static int zm_size_ok(size_t len, const char *file, int line, const char *func)
+{
+  if (len > SIZE_MAX - ZM_PAD_TOTAL) {
+    tb_report_domain_errorf_at(TB_SEV_ERROR, TB_ERR_INVARIANT, "zmalloc-size",
+                               0, file, line, func, "request of %zu bytes "
+                               "plus %zu bytes of padding overflows size_t",
+                               len, ZM_PAD_TOTAL);
+    return 0;
+  }
+  return 1;
+}
+
+/* calloc(count, size) under MEMORY_DEBUG: the multiplication is checked
+ * here (the old macro expanded to zmalloc((n*x)) on int, unparenthesised). */
+unsigned char *zcalloc(size_t count, size_t size, char *file, int line)
+{
+  if (size != 0 && count > SIZE_MAX / size) {
+    tb_report_domain_errorf_at(TB_SEV_ERROR, TB_ERR_INVARIANT, "zmalloc-size",
+                               0, file, line, __func__, "calloc(%zu, %zu) "
+                               "overflows size_t", count, size);
+    return NULL;
+  }
+  return zmalloc(count * size, file, line);	/* zmalloc zero-fills */
+}
+
+unsigned char *zmalloc(size_t len, char *file, int line)
 {
   unsigned char *ret;
   meminfo *m;
+
+  if (!zm_size_ok(len, file, line, __func__))
+    return NULL;
 
 #ifndef NO_MEMORY_PADDING
   ret = (unsigned char *) calloc(1, len + sizeof(beginPad) + sizeof(endPad));
@@ -182,7 +224,7 @@ unsigned char *zmalloc(int len, char *file, int line)
   if (!ret) {
     /* Not misuse: the caller gets NULL and its own failure path runs. */
     tb_report_domain_errorf_at(TB_SEV_ERROR, TB_ERR_INVARIANT, "zmalloc-alloc",
-                               errno, file, line, __func__, "%d bytes", len);
+                               errno, file, line, __func__, "%zu bytes", len);
     zlogf("zmalloc: malloc FAILED\n");
     return NULL;
   }
@@ -194,13 +236,13 @@ unsigned char *zmalloc(int len, char *file, int line)
 #endif
 
   if (zmalloclogging > 2)
-    zlogf("zmalloc: 0x%p  %d bytes %s:%d\n", (void *)ret, len, file, line);
+    zlogf("zmalloc: 0x%p  %zu bytes %s:%d\n", (void *)ret, len, file, line);
 
   m = (meminfo *) calloc(1, sizeof(meminfo));
   if (!m) {
     tb_report_domain_errorf_at(TB_SEV_ERROR, TB_ERR_INVARIANT, "zmalloc-alloc",
                                errno, file, line, __func__,
-                               "bookkeeping record for %d bytes", len);
+                               "bookkeeping record for %zu bytes", len);
     zlogf("zmalloc: FAILED mem alloc for zmalloc struct... bailing!\n");
 #ifndef NO_MEMORY_PADDING
     free(ret - sizeof(beginPad));
@@ -216,7 +258,7 @@ unsigned char *zmalloc(int len, char *file, int line)
   if (!m->file) {
     tb_report_domain_errorf_at(TB_SEV_ERROR, TB_ERR_INVARIANT, "zmalloc-alloc",
                                errno, file, line, __func__,
-                               "bookkeeping record for %d bytes", len);
+                               "bookkeeping record for %zu bytes", len);
     zlogf("zmalloc: FAILED mem alloc for zmalloc struct... bailing!\n");
     free(m);
 #ifndef NO_MEMORY_PADDING
@@ -232,10 +274,13 @@ unsigned char *zmalloc(int len, char *file, int line)
   return (ret);
 }
 
-unsigned char *zrealloc(unsigned char *what, int len, char *file, int line)
+unsigned char *zrealloc(unsigned char *what, size_t len, char *file, int line)
 {
   unsigned char *ret;
   meminfo *m, *prev_m;
+
+  if (!zm_size_ok(len, file, line, __func__))
+    return NULL;
 
   if (what) {
     for (prev_m = NULL, m = memlist[GET_ZBUCKET(what)]; m; prev_m = m, m = m->next) {
@@ -246,7 +291,7 @@ unsigned char *zrealloc(unsigned char *what, int len, char *file, int line)
          * Valgrind can see under MEMORY_DEBUG. */
         if (m->frees > 0)
           ZM_FATAL("zrealloc-after-free", file, line,
-                   "addr=%p size=%d allocated=%s:%d freed %d time(s)",
+                   "addr=%p size=%zu allocated=%s:%d freed %d time(s)",
                    (void *)m->addr, m->size, m->file, m->line, m->frees);
 #ifndef NO_MEMORY_PADDING
 	ret = (unsigned char *) realloc(what - sizeof(beginPad), len + sizeof(beginPad) + sizeof(endPad));
@@ -254,8 +299,8 @@ unsigned char *zrealloc(unsigned char *what, int len, char *file, int line)
 	ret = (unsigned char *) realloc(what, len);
 #endif
 	if (!ret) {
-	  zlogf("zrealloc: FAILED for 0x%p %d bytes mallocd at %s:%d,\n"
-		      "          %d bytes reallocd at %s:%d.\n",
+	  zlogf("zrealloc: FAILED for 0x%p %zu bytes mallocd at %s:%d,\n"
+		      "          %zu bytes reallocd at %s:%d.\n",
 		    (void *)m->addr, m->size, m->file, m->line, len, file, line);
 	  if (zmalloclogging > 1) zdump(m);
 	  return NULL;
@@ -267,7 +312,7 @@ unsigned char *zrealloc(unsigned char *what, int len, char *file, int line)
 	memcpy(ret + len, endPad, sizeof(endPad));
 #endif
 	if (zmalloclogging > 2)
-	  zlogf("zrealloc: 0x%p %d bytes mallocd at %s:%d, %d bytes reallocd at %s:%d.\n",
+	  zlogf("zrealloc: 0x%p %zu bytes mallocd at %s:%d, %zu bytes reallocd at %s:%d.\n",
 		    (void *)m->addr, m->size, m->file, m->line, len, file, line);
 
 	m->addr = ret;
@@ -298,10 +343,10 @@ unsigned char *zrealloc(unsigned char *what, int len, char *file, int line)
      * zmalloc_check, or a wild pointer).  Returning a fresh zeroed block, as
      * this used to, silently dropped the caller's contents and leaked the
      * old block. */
-    zlogf("zrealloc: invalid pointer 0x%p, %d bytes to realloc at %s:%d.\n",
+    zlogf("zrealloc: invalid pointer 0x%p, %zu bytes to realloc at %s:%d.\n",
 	      (void *)what, len, file, line);
     ZM_FATAL("zrealloc-untracked", file, line,
-             "addr=%p was not allocated through zmalloc; %d bytes requested",
+             "addr=%p was not allocated through zmalloc; %zu bytes requested",
              (void *)what, len);
   }
 
@@ -325,7 +370,7 @@ void zfree(unsigned char *what, char *file, int line)
     if (m->addr == what) {
       /* got it.  Print it if verbose: */
       if (zmalloclogging > 2) {
-	zlogf("zfree: Freed 0x%p %d bytes mallocd at %s:%d, freed at %s:%d\n",
+	zlogf("zfree: Freed 0x%p %zu bytes mallocd at %s:%d, freed at %s:%d\n",
 		    (void *)m->addr, m->size, m->file, m->line, file, line);
       }
       /* check the padding: */
@@ -340,12 +385,12 @@ void zfree(unsigned char *what, char *file, int line)
 
       /* check to see if it was freed > once */
       if (m->frees > 1) {
-        zlogf("zfree: ERR: multiple frees! 0x%p %d bytes\n"
+        zlogf("zfree: ERR: multiple frees! 0x%p %zu bytes\n"
 		    "       mallocd at %s:%d, freed at %s:%d.\n",
                     (void *)m->addr, m->size, m->file, m->line, file, line);
 	if (zmalloclogging > 1) zdump(m);
         ZM_FATAL("zfree-double", file, line,
-                 "addr=%p size=%d allocated=%s:%d", (void *)m->addr, m->size,
+                 "addr=%p size=%zu allocated=%s:%d", (void *)m->addr, m->size,
                  m->file, m->line);
       }
       gotit++;
@@ -390,7 +435,8 @@ void zmalloc_check()
 {
   meminfo *m, *next_m;
   char *admonishemnt;
-  int total_leak = 0, num_leaks = 0, i;
+  size_t total_leak = 0;
+  int num_leaks = 0, i;
 
   zlogf( "\n------------ Checking leaks ------------\n\n");
 
@@ -398,7 +444,7 @@ void zmalloc_check()
     for (m = memlist[i]; m; m = next_m) {
       next_m = m->next;
       if (m->addr != 0 && m->frees <= 0) {
-        zlogf("zmalloc: UNfreed memory 0x%p %d bytes mallocd at %s:%d\n",
+        zlogf("zmalloc: UNfreed memory 0x%p %zu bytes mallocd at %s:%d\n",
 		(void *)m->addr, m->size, m->file, m->line);
         if (zmalloclogging > 1) zdump(m);
 
@@ -431,7 +477,7 @@ void zmalloc_check()
       admonishemnt = "the X consortium has a job for you...";
     else
       admonishemnt = "close, but not there yet.";
-    zlogf("zmalloc: %d leaks totalling %d bytes... %s\n",
+    zlogf("zmalloc: %d leaks totalling %zu bytes... %s\n",
 		num_leaks, total_leak, admonishemnt);
   }
   else {
@@ -457,14 +503,14 @@ void pad_check(meminfo *m)
     zlogf("pad_check: ERR: beginPad was modified! (mallocd@ %s:%d)\n", m->file, m->line);
     if (zmalloclogging > 1) zdump(m);
     ZM_FATAL("zmalloc-pad", m->file, m->line,
-             "beginPad overwritten (underrun): addr=%p size=%d",
+             "beginPad overwritten (underrun): addr=%p size=%zu",
              (void *)m->addr, m->size);
   }
   if (memcmp(m->addr + m->size, endPad, sizeof(endPad)) != 0) {
     zlogf("pad_check: ERR: endPad was modified! (mallocd@ %s:%d)\n", m->file, m->line);
     if (zmalloclogging > 1) zdump(m);
     ZM_FATAL("zmalloc-pad", m->file, m->line,
-             "endPad overwritten (overrun): addr=%p size=%d",
+             "endPad overwritten (overrun): addr=%p size=%zu",
              (void *)m->addr, m->size);
   }
 #endif

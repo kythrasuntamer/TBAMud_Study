@@ -15,8 +15,9 @@
 #include <signal.h>
 #include <sys/wait.h>
 
-unsigned char *zmalloc(int, char *, int);
-unsigned char *zrealloc(unsigned char *, int, char *, int);
+unsigned char *zmalloc(size_t, char *, int);
+unsigned char *zcalloc(size_t, size_t, char *, int);
+unsigned char *zrealloc(unsigned char *, size_t, char *, int);
 void zfree(unsigned char *, char *, int);
 void zmalloc_init(void);
 void zmalloc_check(void);
@@ -97,6 +98,42 @@ static void case_begin_pad_underrun(void)
 {
   unsigned char *p = zmalloc(16, ZM_FILE, __LINE__);
   p[-1] = 0x0f;			/* last byte of the begin guard pad */
+  zfree(p, ZM_FILE, __LINE__);
+}
+
+/* ---- I2-15: sizes are size_t; overflow is refused and reported ---- */
+
+static void case_oversized_requests(void)
+{
+  /* Each must return NULL (exit 0 means all did). */
+  if (zmalloc(SIZE_MAX - 1, ZM_FILE, __LINE__) != NULL)
+    _exit(1);
+  if (zcalloc(SIZE_MAX / 2, 4, ZM_FILE, __LINE__) != NULL)
+    _exit(2);
+  if (zrealloc(NULL, SIZE_MAX, ZM_FILE, __LINE__) != NULL)
+    _exit(3);
+  _exit(0);
+}
+
+void test_oversized_request_is_refused_and_reported(void)
+{
+  char records[8192];
+  int status = run_child(case_oversized_requests, records, sizeof(records));
+
+  TEST_ASSERT_TRUE_MESSAGE(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+                           records);
+  TEST_ASSERT_NOT_NULL_MESSAGE(strstr(records, "operation=\"zmalloc-size\""),
+                               records);
+}
+
+void test_calloc_zero_fills_count_times_size(void)
+{
+  unsigned char *p = zcalloc(3, 5, ZM_FILE, __LINE__);
+  int i;
+
+  TEST_ASSERT_NOT_NULL(p);
+  for (i = 0; i < 15; i++)
+    TEST_ASSERT_EQUAL_UINT8(0, p[i]);
   zfree(p, ZM_FILE, __LINE__);
 }
 
@@ -215,6 +252,8 @@ int main(void)
   RUN_TEST(test_realloc_of_untracked_pointer_is_fatal);
   RUN_TEST(test_realloc_null_allocates);
   RUN_TEST(test_realloc_after_free_is_fatal);
+  RUN_TEST(test_oversized_request_is_refused_and_reported);
+  RUN_TEST(test_calloc_zero_fills_count_times_size);
 #if defined(__SANITIZE_ADDRESS__)
   RUN_TEST(test_read_after_free_is_seen_by_asan);
 #endif
