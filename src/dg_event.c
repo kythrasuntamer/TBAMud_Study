@@ -33,6 +33,26 @@
 /** The mud specific queue of events. */
 static struct dg_queue *event_q;
 
+/* The event whose func event_process() is calling right now, or NULL.
+ * Invariant: a running event has q_el == NULL and is owned by
+ * event_process() until func returns.  A callback can reach event_cancel()
+ * on its own event through engine code it does not control (for example
+ * hit() -> die() -> extract_char() -> clear_char_event_list()), so
+ * event_cancel() must not free the running event: it records the request
+ * in dg_running_event_cancelled, and event_process() frees the event after
+ * func returns without re-enqueueing it. */
+static struct event *dg_running_event;
+static bool dg_running_event_cancelled;
+
+/** Entity ID for diagnostics: the mud_event_data iId of a mud event, or -1
+ * for a DG wait event or an event whose payload is already gone. */
+static int event_mud_id(const struct event *event)
+{
+  if (event == NULL || !event->isMudEvent || event->event_obj == NULL)
+    return -1;
+  return (int)((const struct mud_event_data *)event->event_obj)->iId;
+}
+
 
 /** Initializes the main event queue event_q.
  * @post The main event queue, event_q, has been created and initialized.
@@ -97,6 +117,29 @@ void event_cancel(struct event *event)
     return;
     }
 
+  if (!event->q_el && event == dg_running_event) {
+    /* Cancelling the event whose callback is on the stack: release the
+     * payload now (a mud event must leave its owner's list before the owner
+     * is freed) but leave the event struct to event_process(). */
+    if (dg_running_event_cancelled) {
+      TB_ERROR_MSG("dg", "event-cancel-running-twice", "event",
+                   "running event %p (mud=%d) cancelled again; ignored",
+                   (void *)event, (int)event->isMudEvent);
+      return;
+    }
+    TB_ERROR_LOG("WARN", "dg", "event-cancel-running", "event", 0,
+                 "event %p (mud=%d mud_id=%d obj=%p) cancelled from inside "
+                 "its own callback; payload freed now, event freed after the "
+                 "callback returns and not re-enqueued",
+                 (void *)event, (int)event->isMudEvent, event_mud_id(event),
+                 event->event_obj);
+    if (event->event_obj)
+      cleanup_event_obj(event);
+    event->event_obj = NULL;
+    dg_running_event_cancelled = TRUE;
+    return;
+  }
+
   if (!event->q_el) {
     log("SYSERR:  Attempted to cancel a non-NULL unqueued event, freeing anyway");
   } else
@@ -140,7 +183,17 @@ void event_process(void)
     the_event->q_el = NULL;
 
     /* call event func, reenqueue event if retval > 0 */
-    if ((new_time = (the_event->func)(the_event->event_obj)) > 0)
+    dg_running_event = the_event;
+    dg_running_event_cancelled = FALSE;
+    new_time = (the_event->func)(the_event->event_obj);
+    dg_running_event = NULL;
+
+    if (dg_running_event_cancelled) {
+      /* event_cancel() already released event_obj; only the struct is
+       * left, and it must not run again whatever func returned. */
+      dg_running_event_cancelled = FALSE;
+      free(the_event);
+    } else if (new_time > 0)
       the_event->q_el = queue_enq(event_q, the_event,
                                   event_key(new_time, "event_process"));
     else

@@ -188,6 +188,17 @@ if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
         PROPERTIES COMPILE_OPTIONS "-ffunction-sections;-fdata-sections")
 endif()
 
+# Production DG event queue: an event cancelled from its own callback is
+# freed once, after the callback returns, and never re-enqueued.
+add_mud_test(test_dg_event_cancel
+    ${MUD_SRCDIR}/dg_event.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_dg_event_cancel.c
+)
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_compile_options(test_dg_event_cancel PRIVATE -ffunction-sections -fdata-sections)
+    target_link_options(test_dg_event_cancel PRIVATE -Wl,--gc-sections)
+endif()
+
 # Production trigedit script formatter (dg_olc.c format_script).
 add_mud_test(test_dg_format_script
     ${MUD_SRCDIR}/dg_olc.c
