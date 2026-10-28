@@ -127,8 +127,12 @@ static enum tb_pw_result tb_password_verify_at(const char *password,
                                           crypto_pwhash_OPSLIMIT_INTERACTIVE,
                                           crypto_pwhash_MEMLIMIT_INTERACTIVE,
                                           crypto_pwhash_ALG_ARGON2ID13) == 0;
-    if (dummy_ready)
-      (void)crypto_pwhash_str_verify(dummy, password, strlen(password));
+    if (dummy_ready) {
+      /* The result is irrelevant (a constant secret); only the work counts. */
+      int dummy_result = crypto_pwhash_str_verify(dummy, password,
+                                                  strlen(password));
+      (void)dummy_result;
+    }
   }
   tb_pw_unverifiable_at("crypt", idnum, name,
                         "legacy (non-Argon2id) hash but this build has no crypt()",
