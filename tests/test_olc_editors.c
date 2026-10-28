@@ -437,12 +437,13 @@ int new_command(struct zone_data *zone, int pos)
   return 1;
 }
 
+/* Returns TRUE when the command was removed, like genzon.c's. */
 int delete_zone_command(struct zone_data *zone, int pos)
 {
   int count = count_commands(zone->cmd), i, l;
   struct reset_com *newlist;
   if (pos < 0 || pos >= count)
-    return 0;
+    return FALSE;
   newlist = calloc((size_t)count, sizeof(*newlist));
   TEST_ASSERT_NOT_NULL(newlist);
   for (i = 0, l = 0; i < count; i++)
@@ -451,7 +452,7 @@ int delete_zone_command(struct zone_data *zone, int pos)
   newlist[count - 1].command = 'S';
   free(zone->cmd);
   zone->cmd = newlist;
-  return 1;
+  return TRUE;
 }
 
 static char *dup_or_null(const char *s) { return s ? strdup(s) : NULL; }
