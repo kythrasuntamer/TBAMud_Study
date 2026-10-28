@@ -29,9 +29,21 @@
 
 /* General functions used by several triggers. */
 
-/* Copy first phrase into first_arg, returns rest of string. */
+/* Copy the first phrase of arg into first_arg and return the rest of arg.
+ * A phrase is one word, or text in double quotes (the closing quote is
+ * overwritten with a NUL in arg; an unterminated quote runs to the end).
+ * first_arg holds first_arg_size bytes (at least 1) and is always
+ * NUL-terminated; a longer phrase is truncated, reported, and still
+ * consumed from arg. (The unquoted branch used to ignore first_arg_size;
+ * only word_check()'s equal-size buffers kept it in bounds.) */
 char *one_phrase(char *arg, char *first_arg, size_t first_arg_size)
 {
+    if (first_arg_size == 0) {
+        TB_ERROR_MSG("dg", "phrase-buffer", "one_phrase",
+                     "called with a zero-size phrase buffer; nothing copied");
+        return arg;
+    }
+
     skip_spaces(&arg);
 
     if (!*arg)
@@ -98,8 +110,10 @@ int is_substring(char *sub, char *string)
 }
 
 /* Return 1 if str contains a word or phrase from wordlist. Phrases are in
- * double quotes ("). if wrdlist is NULL, then return 1, if str is NULL,
- * return 0. */
+ * double quotes ("). A wordlist starting with '*' matches everything. Both
+ * arguments must be non-NULL. Only the first MAX_INPUT_LENGTH - 1 bytes of
+ * the wordlist are searched; trig_word_check() reports a trigger whose
+ * argument list is longer. */
 int word_check(char *str, char *wordlist)
 {
     char words[MAX_INPUT_LENGTH], phrase[MAX_INPUT_LENGTH], *s;
@@ -113,6 +127,24 @@ int word_check(char *str, char *wordlist)
             return 1;
 
     return 0;
+}
+
+/* word_check() on a trigger's argument list, reporting (once per trigger
+ * prototype in a row, since speech triggers run on every line said) an
+ * argument list too long to be searched in full: its last words could
+ * never fire. */
+static int trig_word_check(char *str, trig_data *t)
+{
+  static trig_rnum last_reported = NOTHING;
+  size_t length = strlen(GET_TRIG_ARG(t));
+
+  if (length >= MAX_INPUT_LENGTH && GET_TRIG_RNUM(t) != last_reported) {
+    last_reported = GET_TRIG_RNUM(t);
+    TB_WARN_MSG("dg", "wordlist-truncated", "word_check",
+                "trigger %d: argument list of %zu bytes; only the first %d "
+                "are matched", GET_TRIG_VNUM(t), length, MAX_INPUT_LENGTH - 1);
+  }
+  return word_check(str, GET_TRIG_ARG(t));
 }
 
 /*Mob triggers. */
@@ -668,7 +700,7 @@ void speech_mtrigger(char_data *actor, char *str)
         continue;
       }
 
-      if (((GET_TRIG_NARG(t) && word_check(str, GET_TRIG_ARG(t))) ||
+      if (((GET_TRIG_NARG(t) && trig_word_check(str, t)) ||
            (!GET_TRIG_NARG(t) && is_substring(GET_TRIG_ARG(t), str)))) {
         ADD_UID_VAR(buf, t, actor_uid, "actor", 0);
         add_player_var(&GET_TRIG_VARS(t), "speech", str, 0);
@@ -699,7 +731,7 @@ void act_mtrigger(const char_data *ch, char *str, char_data *actor,
         continue;
       }
 
-      if (((GET_TRIG_NARG(t) && word_check(str, GET_TRIG_ARG(t))) ||
+      if (((GET_TRIG_NARG(t) && trig_word_check(str, t)) ||
            (!GET_TRIG_NARG(t) && is_substring(GET_TRIG_ARG(t), str)))) {
         if (actor)
           ADD_UID_VAR(buf, t, char_script_id(actor), "actor", 0);
@@ -1662,7 +1694,7 @@ void speech_wtrigger(char_data *actor, char *str)
     }
 
     if (*GET_TRIG_ARG(t)=='*' ||
-       (GET_TRIG_NARG(t) && word_check(str, GET_TRIG_ARG(t))) ||
+       (GET_TRIG_NARG(t) && trig_word_check(str, t)) ||
        (!GET_TRIG_NARG(t) && is_substring(GET_TRIG_ARG(t), str))) {
       ADD_UID_VAR(buf, t, char_script_id(actor), "actor", 0);
       add_player_var(&GET_TRIG_VARS(t), "speech", str, 0);
