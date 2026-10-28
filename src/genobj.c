@@ -555,8 +555,24 @@ int delete_object(obj_rnum rnum)
     tmp = object_list;
   }
 
-  /* Make sure all are removed. */
-  assert(obj_index[rnum].number == 0);
+  /* Every instance was extracted above, so the live count must be zero.
+   * This used to be an assert(), which NDEBUG builds compile out.  A
+   * non-zero count means an instance escaped object_list (or the count was
+   * corrupted); shifting the table now would leave that instance naming the
+   * next prototype, so refuse the delete and keep the prototype. */
+  if (obj_index[rnum].number != 0) {
+    TB_ERROR_MSG("olc", "obj-delete-instances", "object",
+                 "obj vnum %d still counts %d live instances after "
+                 "extraction; not deleted", deleted_vnum,
+                 obj_index[rnum].number);
+    return NOTHING;
+  }
+
+  /* The prototype owns its strings, extra descriptions and trigger list
+   * (no instance shares them any more), and the slot is overwritten by the
+   * shift below, so release them now or they leak. */
+  free_object_strings(obj);
+  free_proto_script(obj, OBJ_TRIGGER);
 
   /* Adjust rnums of all other objects.  obj_rnum is unsigned and NOTHING is
    * its maximum, so prototype-less objects (corpses, money) compare greater

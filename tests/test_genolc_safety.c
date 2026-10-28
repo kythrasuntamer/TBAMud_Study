@@ -479,6 +479,42 @@ static void delete_object_keeps_nothing_rnum(void)
   TEST_ASSERT_EQUAL_UINT(1, GET_OBJ_RNUM(other));
 }
 
+/* ------------------------------------------------------------------------ */
+/* C2-23: delete_object() frees the prototype and never relies on assert(). */
+/* ------------------------------------------------------------------------ */
+
+/* The deleted prototype's strings and trigger list are released (LSan and
+ * Valgrind flag a leak otherwise) and the remaining prototype slides down. */
+static void delete_object_frees_prototype(void)
+{
+  struct trig_proto_list *tp;
+  make_zones(1); make_objs(2);
+  give_proto_strings(0);
+  give_proto_strings(1);
+  CREATE(tp, struct trig_proto_list, 1);
+  tp->vnum = 5;
+  obj_proto[0].proto_script = tp;
+  TEST_ASSERT_EQUAL_INT(0, delete_object(0));
+  TEST_ASSERT_EQUAL_INT(0, top_of_objt);
+  TEST_ASSERT_EQUAL_INT(11, obj_index[0].vnum);
+  TEST_ASSERT_NULL(obj_proto[0].proto_script);
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+}
+
+/* A live count that survives extraction is reported and the table is left
+ * alone instead of shifting under an untracked instance. */
+static void delete_object_refuses_leftover_instances(void)
+{
+  make_zones(1); make_objs(2);
+  give_proto_strings(0);
+  obj_index[0].number = 1;          /* an instance not on object_list */
+  TEST_ASSERT_EQUAL_UINT(NOTHING, delete_object(0));
+  TEST_ASSERT_EQUAL_STRING("obj-delete-instances", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "vnum 10"));
+  TEST_ASSERT_EQUAL_INT(1, top_of_objt);
+  TEST_ASSERT_EQUAL_STRING("proto", obj_proto[0].name);
+}
+
 /* A stale rnum is reported rather than used to index obj_proto[]. */
 static void free_object_strings_proto_reports_bad_rnum(void)
 {
@@ -1292,6 +1328,8 @@ int main(void)
   RUN_TEST(delete_zone_command_reports_bad_position);
   RUN_TEST(delete_object_keeps_nothing_rnum);
   RUN_TEST(free_object_strings_proto_reports_bad_rnum);
+  RUN_TEST(delete_object_frees_prototype);
+  RUN_TEST(delete_object_refuses_leftover_instances);
   RUN_TEST(delete_quest_rejects_nothing);
   RUN_TEST(delete_quest_reports_missing_questmaster);
   RUN_TEST(delete_quest_restores_spec_on_questmaster_rnum);
