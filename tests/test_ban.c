@@ -166,6 +166,54 @@ void test_load_well_formed_file_is_silent(void)
   TEST_ASSERT_EQUAL_INT(0, captured_errors);
 }
 
+/* Finding A2-06: an over-long site was stored truncated without a word. */
+void test_do_ban_refuses_overlong_site(void)
+{
+  struct char_data imm;
+  struct player_special_data ps;
+  char arg[MAX_INPUT_LENGTH];
+  char site[BANNED_SITE_LENGTH + 6];
+
+  memset(&imm, 0, sizeof(imm));
+  memset(&ps, 0, sizeof(ps));
+  imm.player_specials = &ps;
+  imm.player.name = (char *)"Imm";
+  GET_IDNUM(&imm) = 5;
+  memset(site, 'b', sizeof(site) - 1);
+  site[sizeof(site) - 1] = '\0';
+  snprintf(arg, sizeof(arg), "all %s", site);
+
+  do_ban(&imm, arg, 0, 0);
+
+  TEST_ASSERT_NULL(ban_list);
+  TEST_ASSERT_NOT_NULL(strstr(sent, "too long"));
+  TEST_ASSERT_EQUAL_INT(1, captured_errors);
+  TEST_ASSERT_EQUAL_STRING("site-length", captured_ops[0]);
+}
+
+void test_do_ban_accepts_site_at_limit(void)
+{
+  struct char_data imm;
+  struct player_special_data ps;
+  char arg[MAX_INPUT_LENGTH];
+  char site[BANNED_SITE_LENGTH + 1];
+
+  memset(&imm, 0, sizeof(imm));
+  memset(&ps, 0, sizeof(ps));
+  imm.player_specials = &ps;
+  imm.player.name = (char *)"Imm";
+  memset(site, 'c', sizeof(site) - 1);
+  site[sizeof(site) - 1] = '\0';
+  snprintf(arg, sizeof(arg), "new %s", site);
+
+  do_ban(&imm, arg, 0, 0);
+
+  TEST_ASSERT_NOT_NULL(ban_list);
+  TEST_ASSERT_EQUAL_STRING(site, ban_list->site);
+  TEST_ASSERT_EQUAL_INT(BAN_NEW, ban_list->type);
+  TEST_ASSERT_EQUAL_INT(0, captured_errors);
+}
+
 int main(void)
 {
   int rc;
@@ -181,6 +229,8 @@ int main(void)
   RUN_TEST(test_load_reports_malformed_records);
   RUN_TEST(test_load_reports_site_truncation);
   RUN_TEST(test_load_well_formed_file_is_silent);
+  RUN_TEST(test_do_ban_refuses_overlong_site);
+  RUN_TEST(test_do_ban_accepts_site_at_limit);
   rc = UNITY_END();
 
   rmdir("etc");

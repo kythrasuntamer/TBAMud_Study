@@ -206,6 +206,18 @@ ACMD(do_ban)
     send_to_char(ch, "Flag must be ALL, SELECT, or NEW.\r\n");
     return;
   }
+  /* The immortal controls the site text. Storing a truncated copy would ban
+   * a different (shorter) pattern than the one typed and announced, and
+   * "unban <same site>" would then report it as not banned. Reject instead. */
+  if (strlen(site) > BANNED_SITE_LENGTH) {
+    send_to_char(ch, "Site name too long (max %d characters).\r\n",
+                 BANNED_SITE_LENGTH);
+    TB_WARN_MSG("ban", "site-length", "do_ban",
+                "site is %zu bytes, longer than %d; ban refused for "
+                DIAG_CHAR_FMT, strlen(site), BANNED_SITE_LENGTH,
+                DIAG_CHAR(ch));
+    return;
+  }
   for (ban_node = ban_list; ban_node; ban_node = ban_node->next) {
     if (!str_cmp(ban_node->site, site)) {
       send_to_char(ch, "That site has already been banned -- unban it to change the ban type.\r\n");
