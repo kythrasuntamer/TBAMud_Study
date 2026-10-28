@@ -311,7 +311,12 @@ int copy_object(struct obj_data *to, struct obj_data *from)
   to->ex_description = NULL;
   return TRUE;
 }
-obj_rnum add_object(struct obj_data *newobj, obj_vnum ovnum) { (void)newobj; return real_object(ovnum); }
+static int add_object_result = -1;   /* < 0: update in place */
+obj_rnum add_object(struct obj_data *newobj, obj_vnum ovnum)
+{
+  (void)newobj;
+  return add_object_result >= 0 ? (obj_rnum)add_object_result : real_object(ovnum);
+}
 
 static int deleted_rnum = -1, delete_calls;
 int delete_object(obj_rnum rnum) { delete_calls++; deleted_rnum = rnum; return rnum; }
@@ -362,6 +367,7 @@ void setUp(void)
   live_uid_obj = NULL;
   add_room_calls = 0;
   deleted_rnum = -1;
+  add_object_result = -1;
   delete_calls = 0;
   zone_editable = TRUE;
   add_room_result = NOWHERE;
@@ -754,6 +760,40 @@ static void test_oedit_delete_refused_when_scratch_rnum_disagrees(void)
   TEST_ASSERT_EQUAL_STRING("delete-target-mismatch", tb_captured_operation);
 }
 
+/* ------------------------------------------------------------------ */
+/* F1-05: an object insert renumbers other oedit sessions too.         */
+/* ------------------------------------------------------------------ */
+static void test_oedit_insert_renumbers_other_oedit_session(void)
+{
+  struct descriptor_data *d = &builder_desc, other;
+  struct char_data ob;
+  struct player_special_data sp;
+
+  make_objects(3);
+  memset(&other, 0, sizeof(other)); memset(&ob, 0, sizeof(ob)); memset(&sp, 0, sizeof(sp));
+  ob.player_specials = &sp; other.character = &ob;
+  CREATE(other.olc, struct oasis_olc_data, 1);
+  OLC_OBJ(&other) = scratch_obj("object 3001");
+  OLC_OBJ(&other)->item_number = 1;
+  OLC_NUM(&other) = 3001;
+  STATE(&other) = CON_OEDIT;
+  descriptor_list = &other;
+
+  /* This builder saves new object 2999, which insert_object places at 0. */
+  OLC_NUM(d) = 2999;
+  OLC_OBJ(d) = scratch_obj("new object");
+  STATE(d) = CON_OEDIT;
+  add_object_result = 0;
+
+  oedit_save_internally(d);
+
+  TEST_ASSERT_EQUAL_INT(2, GET_OBJ_RNUM(OLC_OBJ(&other)));
+
+  descriptor_list = NULL;
+  free_scratch_obj(OLC_OBJ(&other));
+  free(other.olc);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -768,5 +808,6 @@ int main(void)
   RUN_TEST(test_oedit_delete_after_copy_deletes_edited_object_not_source);
   RUN_TEST(test_oedit_delete_refused_without_zone_permission);
   RUN_TEST(test_oedit_delete_refused_when_scratch_rnum_disagrees);
+  RUN_TEST(test_oedit_insert_renumbers_other_oedit_session);
   return UNITY_END();
 }

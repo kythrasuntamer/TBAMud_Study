@@ -286,9 +286,6 @@ static void iedit_replace_values(struct obj_data *target, struct obj_data *edite
 static int iedit_save_internally(struct descriptor_data *d);
 static int iedit_is_forbidden_main_menu_choice(char *arg);
 
-/* handy macro */
-#define S_PRODUCT(s, i) ((s)->producing[(i)])
-
 
 /* Utility and exported functions */
 ACMD(do_oasis_oedit)
@@ -462,7 +459,6 @@ void oedit_save_internally(struct descriptor_data *d)
 {
   int i;
   obj_rnum robj_num;
-  struct descriptor_data *dsc;
   struct obj_data *obj;
 
   i = (real_object(OLC_NUM(d)) == NOTHING);
@@ -496,33 +492,11 @@ void oedit_save_internally(struct descriptor_data *d)
   if (!i)	/* If it's not a new object, don't renumber. */
     return;
 
-  /* Renumber produce in shops being edited. */
-  for (dsc = descriptor_list; dsc; dsc = dsc->next)
-    if (STATE(dsc) == CON_SEDIT)
-      for (i = 0; S_PRODUCT(OLC_SHOP(dsc), i) != NOTHING; i++)
-	if (S_PRODUCT(OLC_SHOP(dsc), i) >= robj_num)
-	  S_PRODUCT(OLC_SHOP(dsc), i)++;
-
-
-  /* Update other people in zedit too. From: C.Raehl 4/27/99 */
-  for (dsc = descriptor_list; dsc; dsc = dsc->next)
-    if (STATE(dsc) == CON_ZEDIT)
-      for (i = 0; OLC_ZONE(dsc)->cmd[i].command != 'S'; i++)
-        switch (OLC_ZONE(dsc)->cmd[i].command) {
-          case 'P':
-            OLC_ZONE(dsc)->cmd[i].arg3 += (OLC_ZONE(dsc)->cmd[i].arg3 >= robj_num);
-            /* Fall through. */
-          case 'E':
-          case 'G':
-          case 'O':
-            OLC_ZONE(dsc)->cmd[i].arg1 += (OLC_ZONE(dsc)->cmd[i].arg1 >= robj_num);
-            break;
-          case 'R':
-            OLC_ZONE(dsc)->cmd[i].arg2 += (OLC_ZONE(dsc)->cmd[i].arg2 >= robj_num);
-            break;
-          default:
-          break;
-        }
+  /* insert_object() shifted obj_proto up from robj_num. Move every other
+   * open session's object rnums with it: zedit commands, sedit products
+   * and the scratch identity of other oedit/iedit sessions (a stale one
+   * would make their delete or save act on a neighbouring object). */
+  olc_renumber_sessions(OLC_RNUM_OBJ, robj_num, +1, d);
 }
 
 static void oedit_save_to_disk(int zone_num)

@@ -250,7 +250,6 @@ void medit_save_internally(struct descriptor_data *d)
 {
   int i;
   mob_rnum new_rnum;
-  struct descriptor_data *dsc;
   struct char_data *mob;
 
   i = (real_mobile(OLC_NUM(d)) == NOBODY);
@@ -285,21 +284,10 @@ void medit_save_internally(struct descriptor_data *d)
   if (!i)	/* Only renumber on new mobiles. */
     return;
 
-  /* Update keepers in shops being edited and other mobs being edited. */
-  for (dsc = descriptor_list; dsc; dsc = dsc->next) {
-    if (STATE(dsc) == CON_SEDIT)
-      S_KEEPER(OLC_SHOP(dsc)) += (S_KEEPER(OLC_SHOP(dsc)) != NOTHING && S_KEEPER(OLC_SHOP(dsc)) >= new_rnum);
-    else if (STATE(dsc) == CON_MEDIT)
-      GET_MOB_RNUM(OLC_MOB(dsc)) += (GET_MOB_RNUM(OLC_MOB(dsc)) != NOTHING && GET_MOB_RNUM(OLC_MOB(dsc)) >= new_rnum);
-  }
-
-  /* Update other people in zedit too. From: C.Raehl 4/27/99 */
-  for (dsc = descriptor_list; dsc; dsc = dsc->next)
-    if (STATE(dsc) == CON_ZEDIT)
-      for (i = 0; OLC_ZONE(dsc)->cmd[i].command != 'S'; i++)
-        if (OLC_ZONE(dsc)->cmd[i].command == 'M')
-          if (OLC_ZONE(dsc)->cmd[i].arg1 >= new_rnum)
-            OLC_ZONE(dsc)->cmd[i].arg1++;
+  /* add_mobile() shifted mob_proto up from new_rnum. Move every other open
+   * session's mobile rnums with it: zedit 'M' commands, sedit keepers and
+   * other medit scratch identities. */
+  olc_renumber_sessions(OLC_RNUM_MOB, new_rnum, +1, d);
 }
 
 /* Menu functions
