@@ -313,6 +313,27 @@ static void reset_zone_disables_equip_with_bad_wear_pos(void)
   zone_fixture_teardown();
 }
 
+/* B1-25: 'P' created its object before looking for the container, so a
+ * missing container left a new object with no location in object_list.
+ * get_obj_num() is stubbed to find nothing. */
+static void reset_zone_put_without_container_creates_nothing(void)
+{
+  struct reset_com cmds[] = {
+    { 'P', FALSE, 0, 99, 0, 1, NULL, NULL },
+    { 'S', FALSE, 0, 0, 0, 2, NULL, NULL },
+  };
+
+  zone_fixture_setup(cmds);
+  reset_zone(0);
+  TEST_ASSERT_NULL(object_list);
+  TEST_ASSERT_EQUAL_INT(0, zone_obj_index[0].number);
+  TEST_ASSERT_EQUAL_CHAR('*', cmds[0].command);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("zone-reset", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "obj vnum 3022"));
+  zone_fixture_teardown();
+}
+
 /* ---------------------------------------------------------------------
  * Helpers: named temporary files and FILE streams with given contents.
  * ------------------------------------------------------------------- */
@@ -769,5 +790,6 @@ int main(void)
   RUN_TEST(reset_zone_keeps_object_when_trigger_does_not_purge);
   RUN_TEST(reset_zone_wtrigger_walk_ends_at_top_max);
   RUN_TEST(reset_zone_disables_equip_with_bad_wear_pos);
+  RUN_TEST(reset_zone_put_without_container_creates_nothing);
   return UNITY_END();
 }

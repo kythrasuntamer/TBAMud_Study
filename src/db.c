@@ -3066,12 +3066,22 @@ void reset_zone(zone_rnum zone)
 
     case 'P':			/* object to object */
       if (obj_index[ZCMD.arg1].number < ZCMD.arg2) {
-	obj = read_object(ZCMD.arg1, REAL);
+	/* Find the container before creating the object: an object created
+	 * first had no location on this path and stayed in object_list,
+	 * counted in obj_index[].number, for the rest of the boot. */
 	if (!(obj_to = get_obj_num(ZCMD.arg3))) {
-	  ZONE_ERROR("target obj not found, command disabled");
+	  TB_ERROR_MSG("db", "zone-reset", "put",
+	               "zone %d line %d: container obj vnum %d for obj vnum %d "
+	               "is not loaded; cmd disabled",
+	               zone_table[zone].number, ZCMD.line,
+	               ZCMD.arg3 >= 0 && ZCMD.arg3 <= top_of_objt ?
+	               obj_index[ZCMD.arg3].vnum : -1,
+	               obj_index[ZCMD.arg1].vnum);
 	  ZCMD.command = '*';
+	  last_cmd = 0;
 	  break;
 	}
+	obj = read_object(ZCMD.arg1, REAL);
 	obj_to_obj(obj, obj_to);
 	obj = zone_reset_load_otrigger(obj, zone, cmd_no);
 	last_cmd = obj != NULL;
