@@ -51,10 +51,25 @@ void init_events(void)
  * The bottom switch() is for any post-event actions, like telling the character they can
  * now access their skill again.
  */
+/* Current rnum of an EVENT_ROOM event's room, resolved from its vnum each
+ * time (world[] moves when redit adds or deletes rooms). NOWHERE, reported,
+ * if the room no longer exists. */
+static room_rnum mud_event_room(struct mud_event_data *pMudEvent)
+{
+  room_rnum rnum = real_room(pMudEvent->iRoomVnum);
+
+  if (VALID_ROOM_RNUM(rnum))
+    return rnum;
+  TB_WARN_MSG("event", "room-gone", "world",
+              "event %s room vnum %d no longer exists",
+              mud_event_index[pMudEvent->iId].event_name,
+              (int) pMudEvent->iRoomVnum);
+  return NOWHERE;
+}
+
 EVENTFUNC(event_countdown)
 {
   struct mud_event_data * pMudEvent;
-  struct room_data * room = NULL;
   room_rnum rnum = NOWHERE;
 
   pMudEvent = (struct mud_event_data * ) event_obj;
@@ -63,8 +78,8 @@ EVENTFUNC(event_countdown)
     case EVENT_CHAR:
       break;
     case EVENT_ROOM:
-      room = (struct room_data * ) pMudEvent->pStruct;
-      rnum = real_room(room->number);
+      if ((rnum = mud_event_room(pMudEvent)) == NOWHERE)
+        return 0;  /* reported; the room is gone, nothing to undo */
       break;
     default:
       break;
@@ -72,6 +87,12 @@ EVENTFUNC(event_countdown)
 
   switch (pMudEvent->iId) {
     case eSPL_DARKNESS:
+      if (!VALID_ROOM_RNUM(rnum)) {
+        TB_ERROR_MSG("event", "room-gone", "world",
+                     "event %s fired with no room (rnum %d)",
+                     mud_event_index[pMudEvent->iId].event_name, (int) rnum);
+        break;
+      }
       REMOVE_BIT_AR(ROOM_FLAGS(rnum), ROOM_DARK);
       send_to_room(rnum, "The dark shroud disappates.\r\n");
       break;
@@ -96,7 +117,8 @@ void attach_mud_event(struct mud_event_data *pMudEvent, long time)
   struct descriptor_data * d;
   struct char_data * ch;
   struct room_data * room;
-   
+  room_rnum rnum;
+
   pEvent = event_create(mud_event_index[pMudEvent->iId].func, pMudEvent, time);
   pEvent->isMudEvent = TRUE;
   pMudEvent->pEvent = pEvent;        
@@ -118,11 +140,15 @@ void attach_mud_event(struct mud_event_data *pMudEvent, long time)
       add_to_list(pEvent, ch->events);
     break;
     case EVENT_ROOM:
-      room = (struct room_data *) pMudEvent->pStruct;
-      
+      /* The event is already queued; if its room cannot be found it still
+       * fires (and frees) normally, it just has no room list to sit on. */
+      if ((rnum = mud_event_room(pMudEvent)) == NOWHERE)
+        break;
+      room = &world[rnum];
+
       if (room->events == NULL)
-        room->events = create_list();      
-      
+        room->events = create_list();
+
       add_to_list(pEvent, room->events);
     break;
   }
@@ -140,6 +166,14 @@ struct mud_event_data *new_mud_event(event_id iId, void *pStruct, char *sVariabl
   pMudEvent->pStruct     = pStruct;
   pMudEvent->sVariables  = varString;
   pMudEvent->pEvent      = NULL;
+  pMudEvent->iRoomVnum   = NOWHERE;
+
+  /* Rooms are kept by vnum, never by address: see iRoomVnum. */
+  if (mud_event_index[iId].iEvent_Type == EVENT_ROOM) {
+    if (pStruct)
+      pMudEvent->iRoomVnum = ((struct room_data *) pStruct)->number;
+    pMudEvent->pStruct = NULL;
+  }
 
   return (pMudEvent);
 }
@@ -149,6 +183,7 @@ void free_mud_event(struct mud_event_data *pMudEvent)
   struct descriptor_data * d;
   struct char_data * ch;
   struct room_data * room;
+  room_rnum rnum;
 
   switch (mud_event_index[pMudEvent->iId].iEvent_Type) {
     case EVENT_WORLD:
@@ -168,10 +203,13 @@ void free_mud_event(struct mud_event_data *pMudEvent)
       }
     break;
     case EVENT_ROOM:
-      room = (struct room_data *) pMudEvent->pStruct;
-      remove_from_list(pMudEvent->pEvent, room->events);
-      
-      if (room->events && (room->events->iSize == 0)) { 
+      if ((rnum = mud_event_room(pMudEvent)) == NOWHERE)
+        break;
+      room = &world[rnum];
+      if (room->events)
+        remove_from_list(pMudEvent->pEvent, room->events);
+
+      if (room->events && (room->events->iSize == 0)) {
         free_list(room->events);
         room->events = NULL;
       }      
