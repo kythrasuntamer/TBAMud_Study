@@ -589,6 +589,17 @@ void show_string(struct descriptor_data *d, char *input)
       return;
     }
 
+    /* A page is bounded by page length x screen width, both player-set, and
+     * colour codes are zero-width, so one page can exceed the local buffer.
+     * The bytes past the clamp are not shown (the next page starts at
+     * showstr_vector[page + 1]); say so. Sending the rest in pieces would
+     * not help: it already exceeds the descriptor's output buffer. */
+    if (raw_diff > MAX_STRING_LENGTH - 3)
+      TB_WARN_MSG("pager", "page-truncate", "show_string",
+                  "desc %d page %d/%d: %td bytes clamped to %d; "
+                  DIAG_CHAR_FMT, d->desc_num, d->showstr_page + 1,
+                  d->showstr_count, raw_diff, MAX_STRING_LENGTH - 3,
+                  DIAG_CHAR(d->character));
     diff = raw_diff > MAX_STRING_LENGTH - 3 ? MAX_STRING_LENGTH - 3 : (int)raw_diff;
     memcpy(buffer, d->showstr_vector[d->showstr_page], (size_t)diff);
     buffer[diff] = '\0';

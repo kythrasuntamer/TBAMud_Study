@@ -128,6 +128,51 @@ void test_trailing_escaped_tab_is_complete(void)
   TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
 }
 
+/* Finding A2-08: a page larger than show_string()'s buffer is clamped; the
+ * lost bytes must be reported. One page of colour codes (zero-width) plus a
+ * short second page. */
+void test_oversized_page_is_reported(void)
+{
+  size_t codes = MAX_STRING_LENGTH / 2 + 16, i;
+  size_t len = codes * 2 + 512;
+  char *text = malloc(len), *p = text;
+
+  TEST_ASSERT_NOT_NULL(text);
+  for (i = 0; i < codes; i++) {
+    *p++ = '\t';
+    *p++ = 'n';
+  }
+  for (i = 0; i < 25; i++) {   /* page length 22: forces a second page */
+    *p++ = 'x';
+    *p++ = '\n';
+  }
+  *p = '\0';
+
+  page_string(&d, text, TRUE);
+  free(text);
+
+  TEST_ASSERT_EQUAL_INT(2, d.showstr_count);
+  TEST_ASSERT_EQUAL_INT(1, sends);
+  TEST_ASSERT_EQUAL_size_t(MAX_STRING_LENGTH - 1, sent_len);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("page-truncate", tb_captured_operation);
+}
+
+void test_normal_page_is_silent(void)
+{
+  char text[64 * 3 + 1];
+  int i;
+
+  for (i = 0; i < 64; i++)
+    memcpy(text + i * 3, "x\r\n", 3);
+  text[64 * 3] = '\0';
+  page_string(&d, text, TRUE);
+
+  TEST_ASSERT_TRUE(d.showstr_count > 1);
+  TEST_ASSERT_EQUAL_INT(1, sends);
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -136,5 +181,7 @@ int main(void)
   RUN_TEST(test_unterminated_ansi_escape_with_parameters);
   RUN_TEST(test_well_formed_colour_codes_are_silent);
   RUN_TEST(test_trailing_escaped_tab_is_complete);
+  RUN_TEST(test_oversized_page_is_reported);
+  RUN_TEST(test_normal_page_is_silent);
   return UNITY_END();
 }
