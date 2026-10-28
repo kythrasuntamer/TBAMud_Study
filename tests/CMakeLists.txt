@@ -1105,3 +1105,18 @@ endif()
 if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
     target_link_options(test_genmob PRIVATE -Wl,--wrap=fopen)
 endif()
+
+# Production zone and editor access checks (oasis.c can_edit_zone and
+# can_use_editor): bounded zone_table index, editor sentinels kept out of
+# the real zone range (F3-20). Unreferenced oasis.c sections are discarded;
+# tb_error_capture.h in the test supplies tb_error_log_at.
+add_mud_test(test_oasis_access
+    ${MUD_SRCDIR}/oasis.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_oasis_access.c
+)
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_compile_options(test_oasis_access PRIVATE -ffunction-sections -fdata-sections)
+    target_link_options(test_oasis_access PRIVATE -Wl,--gc-sections)
+    set_source_files_properties(${MUD_SRCDIR}/oasis.c
+        PROPERTIES COMPILE_OPTIONS "-ffunction-sections;-fdata-sections")
+endif()
