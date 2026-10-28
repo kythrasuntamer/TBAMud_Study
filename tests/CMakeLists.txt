@@ -129,6 +129,17 @@ add_mud_test(test_error_handling
 )
 target_compile_definitions(test_error_handling PRIVATE TB_TEST_FAILURE_INJECTION=1)
 
+# ---------------------------------------------------------------------------
+# test_oasis_list — OLC listing commands (src/oasis_list.c)
+# ---------------------------------------------------------------------------
+add_mud_test(test_oasis_list
+    ${MUD_SRCDIR}/oasis_list.c
+    ${MUD_SRCDIR}/utils.c
+    ${MUD_SRCDIR}/random.c
+    ${MUD_SRCDIR}/constants.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_oasis_list.c
+)
+
 # Exercise the actual DG memory-trigger functions under native sanitizers.
 # Discard unrelated dg_triggers.c sections so no game-server linker
 # dependencies are needed for this focused fixture.

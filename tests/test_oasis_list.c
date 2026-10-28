@@ -1,0 +1,276 @@
+/**
+ * @file test_oasis_list.c
+ * Regression tests for the OLC listing commands in src/oasis_list.c.
+ *
+ * The listings are reached only through do_oasis_list(), so each test builds
+ * a tiny prototype table (obj_proto / obj_index / mob_proto / zone_table),
+ * runs the command as a builder, and inspects what was paged to the builder
+ * and what was written to the log.  Diagnostics are asserted on their stable
+ * op= token (e.g. "op=list-truncated"), not on free text.
+ *
+ * Every fixture is heap-allocated with the exact number of entries the real
+ * boot code would allocate (top_of_* + 1), so an off-by-one index into a
+ * prototype table is an ASan heap-buffer-overflow / Valgrind invalid read.
+ */
+
+#include "unity.h" /* before utils.h: Unity pulls in math.h, utils.h defines log */
+
+#include "conf.h"
+#include "sysdep.h"
+#include "structs.h"
+#include "utils.h"
+#include "comm.h"
+#include "interpreter.h"
+#include "handler.h"
+#include "db.h"
+#include "oasis.h"
+#include "shop.h"
+#include "dg_scripts.h"
+#include "quest.h"
+#include "spells.h"
+#include "constants.h"
+
+#include <stdarg.h>
+#include <stdio.h>
+#include <string.h>
+
+/* ---------------------------------------------------------------------
+ * Globals oasis_list.c needs that test_stubs.c does not provide.
+ * --------------------------------------------------------------------- */
+struct obj_data   *obj_proto         = NULL;
+struct char_data  *mob_proto         = NULL;
+struct zone_data  *zone_table        = NULL;
+zone_rnum          top_of_zone_table = 0;
+struct shop_data  *shop_index        = NULL;
+int                top_shop          = -1;
+struct index_data **trig_index       = NULL;
+int                top_of_trigt      = 0;
+
+/* ---------------------------------------------------------------------
+ * Output capture.
+ * --------------------------------------------------------------------- */
+static char paged[MAX_STRING_LENGTH + 1];
+static int  paged_calls;
+static char sent[8192];
+
+void page_string(struct descriptor_data *d, char *str, int keep_internal)
+{
+  (void)d; (void)keep_internal;
+  paged_calls++;
+  strlcpy(paged, str ? str : "", sizeof(paged));
+}
+
+size_t send_to_char(struct char_data *ch, const char *messg, ...)
+{
+  va_list args;
+  size_t used = strlen(sent);
+  (void)ch;
+  va_start(args, messg);
+  vsnprintf(sent + used, sizeof(sent) - used, messg, args);
+  va_end(args);
+  return strlen(sent) - used;
+}
+
+/* ---------------------------------------------------------------------
+ * Minimal real implementations of interpreter/db helpers.
+ * --------------------------------------------------------------------- */
+int is_abbrev(const char *arg1, const char *arg2)
+{
+  if (!*arg1)
+    return 0;
+  for (; *arg1 && *arg2; arg1++, arg2++)
+    if (LOWER(*arg1) != LOWER(*arg2))
+      return 0;
+  return !*arg1;
+}
+
+void skip_spaces(char **string)
+{
+  while (**string && isspace((unsigned char)**string))
+    (*string)++;
+}
+
+char *one_argument(char *argument, char *first_arg)
+{
+  skip_spaces(&argument);
+  while (*argument && !isspace((unsigned char)*argument))
+    *first_arg++ = *argument++;
+  *first_arg = '\0';
+  return argument;
+}
+
+char *two_arguments(char *argument, char *first_arg, char *second_arg)
+{
+  return one_argument(one_argument(argument, first_arg), second_arg);
+}
+
+int is_name(const char *str, const char *namelist)
+{
+  return namelist && strstr(namelist, str) != NULL;
+}
+
+obj_rnum real_object(obj_vnum vnum)
+{
+  obj_rnum i;
+  if (!obj_index)
+    return NOTHING;
+  for (i = 0; i <= top_of_objt; i++)
+    if (obj_index[i].vnum == vnum)
+      return i;
+  return NOTHING;
+}
+
+zone_rnum real_zone(zone_vnum vnum)
+{
+  zone_rnum i;
+  if (!zone_table)
+    return NOWHERE;
+  for (i = 0; i <= top_of_zone_table; i++)
+    if (zone_table[i].number == vnum)
+      return i;
+  return NOWHERE;
+}
+
+static int read_mobile_calls;
+struct char_data *read_mobile(mob_vnum nr, int type)
+{
+  (void)nr; (void)type;
+  read_mobile_calls++;
+  return NULL;
+}
+
+const char *skill_name(int num) { (void)num; return "skill"; }
+int count_quests(qst_vnum low, qst_vnum high) { (void)low; (void)high; return 0; }
+void list_quests(struct char_data *ch, zone_rnum zone, qst_vnum vmin, qst_vnum vmax)
+{ (void)ch; (void)zone; (void)vmin; (void)vmax; }
+
+/* ---------------------------------------------------------------------
+ * Fixtures.
+ * --------------------------------------------------------------------- */
+static struct char_data builder;
+static struct player_special_data builder_specials;
+static struct descriptor_data builder_desc;
+static FILE *capture_log;
+
+static void free_objects(void)
+{
+  obj_rnum i;
+  if (obj_proto) {
+    for (i = 0; i <= top_of_objt; i++)
+      free(obj_proto[i].short_description);
+  }
+  free(obj_proto);
+  free(obj_index);
+  obj_proto = NULL;
+  obj_index = NULL;
+  top_of_objt = 0;
+}
+
+/* Allocate exactly count prototypes (vnums 100..), as index_boot does. */
+static void make_objects(int count, const char *short_desc)
+{
+  int i;
+  free_objects();
+  CREATE(obj_proto, struct obj_data, count);
+  CREATE(obj_index, struct index_data, count);
+  top_of_objt = count - 1;
+  for (i = 0; i < count; i++) {
+    obj_index[i].vnum = 100 + i;
+    obj_proto[i].item_number = i;
+    obj_proto[i].short_description = strdup(short_desc);
+    obj_proto[i].obj_flags.type_flag = ITEM_TRASH;
+  }
+}
+
+static void run_list(int subcmd, const char *args)
+{
+  char argbuf[MAX_INPUT_LENGTH];
+  strlcpy(argbuf, args, sizeof(argbuf));
+  do_oasis_list(&builder, argbuf, 0, subcmd);
+}
+
+static int log_has(const char *needle)
+{
+  char line[MAX_STRING_LENGTH];
+  int found = 0;
+  fflush(capture_log);
+  rewind(capture_log);
+  while (fgets(line, sizeof(line), capture_log))
+    if (strstr(line, needle))
+      found = 1;
+  fseek(capture_log, 0, SEEK_END);
+  return found;
+}
+
+void setUp(void)
+{
+  memset(&builder, 0, sizeof(builder));
+  memset(&builder_specials, 0, sizeof(builder_specials));
+  memset(&builder_desc, 0, sizeof(builder_desc));
+  builder.player_specials = &builder_specials;
+  builder.player.name = (char *)"Builder";
+  builder.player.level = LVL_IMPL;
+  builder.in_room = NOWHERE;
+  builder.desc = &builder_desc;
+  builder_desc.character = &builder;
+
+  paged[0] = '\0';
+  sent[0] = '\0';
+  paged_calls = 0;
+  read_mobile_calls = 0;
+
+  capture_log = tmpfile();
+  logfile = capture_log;
+}
+
+void tearDown(void)
+{
+  free_objects();
+  logfile = NULL;
+  if (capture_log)
+    fclose(capture_log);
+  capture_log = NULL;
+}
+
+/* ---------------------------------------------------------------------
+ * F3-02: olist affect 7/8 and the generic affect rows read
+ * obj_proto[top_of_objt + 1] (the stale scan index) instead of the row's
+ * rnum.  The fixture table is exactly top_of_objt + 1 long, so the old code
+ * is a heap-buffer-overflow under ASan.
+ * --------------------------------------------------------------------- */
+void test_obj_aff_list_weapon_special_case_uses_row_rnum(void)
+{
+  make_objects(3, "a plain rock");
+  free(obj_proto[1].short_description);
+  obj_proto[1].short_description = strdup("a sharp sword");
+  obj_proto[1].obj_flags.type_flag = ITEM_WEAPON;
+  obj_proto[1].obj_flags.value[1] = 2;
+  obj_proto[1].obj_flags.value[2] = 4;
+
+  run_list(SCMD_OASIS_OLIST, "affect 7");
+
+  TEST_ASSERT_EQUAL_INT(1, paged_calls);
+  TEST_ASSERT_NOT_NULL(strstr(paged, "a sharp sword"));
+  TEST_ASSERT_NOT_NULL(strstr(paged, "[WEAPON]"));
+}
+
+void test_obj_aff_list_generic_affect_uses_row_rnum(void)
+{
+  make_objects(3, "a dagger");
+  obj_proto[2].affected[0].location = APPLY_STR;
+  obj_proto[2].affected[0].modifier = 2;
+
+  run_list(SCMD_OASIS_OLIST, "affect 1");
+
+  TEST_ASSERT_EQUAL_INT(1, paged_calls);
+  TEST_ASSERT_NOT_NULL(strstr(paged, "a dagger"));
+  TEST_ASSERT_FALSE(log_has("op=list-index"));
+}
+
+int main(void)
+{
+  UNITY_BEGIN();
+  RUN_TEST(test_obj_aff_list_weapon_special_case_uses_row_rnum);
+  RUN_TEST(test_obj_aff_list_generic_affect_uses_row_rnum);
+  return UNITY_END();
+}
