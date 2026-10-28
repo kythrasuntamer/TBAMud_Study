@@ -552,9 +552,27 @@ static void save_writes_zone_file(void)
   TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
 }
 
+/* E2-05: setting the argument again leaked the previous one (LeakSanitizer
+ * and Valgrind report it). */
+static void replacing_the_argument_frees_the_old_one(void)
+{
+  const int vnums[] = { 100 };
+
+  make_index(vnums, 1);
+  trig_index[0]->proto->arglist = strdup("old");
+  start_edit(100);
+  TEST_ASSERT_EQUAL_STRING("old", OLC_TRIG(bd)->arglist);
+  feed(TRIGEDIT_ARGUMENT, "one");
+  feed(TRIGEDIT_ARGUMENT, "two");
+  TEST_ASSERT_EQUAL_STRING("two", OLC_TRIG(bd)->arglist);
+  feed(TRIGEDIT_ARGUMENT, "");
+  TEST_ASSERT_NULL(OLC_TRIG(bd)->arglist);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(replacing_the_argument_frees_the_old_one);
   RUN_TEST(oversized_script_is_refused_before_memory_changes);
   RUN_TEST(unwritable_zone_file_is_reported);
   RUN_TEST(save_writes_zone_file);
