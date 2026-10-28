@@ -515,6 +515,55 @@ static void delete_object_refuses_leftover_instances(void)
   TEST_ASSERT_EQUAL_STRING("proto", obj_proto[0].name);
 }
 
+/* ------------------------------------------------------------------------ */
+/* C2-24: oset string setters free what the object owns.                    */
+/* ------------------------------------------------------------------------ */
+
+/* A corpse (rnum NOTHING) owns its strings: the old alias must be freed
+ * (LSan/Valgrind report the leak otherwise). */
+static void oset_alias_frees_prototype_less_string(void)
+{
+  struct obj_data *corpse;
+  char arg[] = "  corpse goblin";
+  make_objs(1);
+  corpse = make_instance(NOTHING);
+  corpse->name = strdup("corpse old");
+  TEST_ASSERT_TRUE(oset_alias(corpse, arg));
+  TEST_ASSERT_EQUAL_STRING("corpse goblin", corpse->name);
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+}
+
+/* An instance sharing the prototype's string keeps the prototype intact. */
+static void oset_short_description_keeps_prototype_string(void)
+{
+  struct obj_data *obj;
+  char arg[] = "a shiny thing";
+  make_objs(1);
+  give_proto_strings(0);
+  obj = make_instance(0);
+  TEST_ASSERT_TRUE(oset_short_description(obj, arg));
+  TEST_ASSERT_EQUAL_STRING("a shiny thing", obj->short_description);
+  TEST_ASSERT_EQUAL_STRING("a proto", obj_proto[0].short_description);
+  free(obj->short_description);
+  obj->short_description = obj_proto[0].short_description;
+}
+
+/* An over-long value is rejected loudly, not silently. */
+static void oset_long_description_reports_too_long(void)
+{
+  struct obj_data *obj;
+  char arg[200];
+  make_objs(1);
+  give_proto_strings(0);
+  obj = make_instance(0);
+  memset(arg, 'x', sizeof(arg) - 1);
+  arg[sizeof(arg) - 1] = '\0';
+  TEST_ASSERT_FALSE(oset_long_description(obj, arg));
+  TEST_ASSERT_EQUAL_STRING("oset-reject", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "vnum 10"));
+  TEST_ASSERT_NULL(obj->description);
+}
+
 /* A stale rnum is reported rather than used to index obj_proto[]. */
 static void free_object_strings_proto_reports_bad_rnum(void)
 {
@@ -1328,6 +1377,9 @@ int main(void)
   RUN_TEST(delete_zone_command_reports_bad_position);
   RUN_TEST(delete_object_keeps_nothing_rnum);
   RUN_TEST(free_object_strings_proto_reports_bad_rnum);
+  RUN_TEST(oset_alias_frees_prototype_less_string);
+  RUN_TEST(oset_short_description_keeps_prototype_string);
+  RUN_TEST(oset_long_description_reports_too_long);
   RUN_TEST(delete_object_frees_prototype);
   RUN_TEST(delete_object_refuses_leftover_instances);
   RUN_TEST(delete_quest_rejects_nothing);

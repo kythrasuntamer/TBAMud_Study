@@ -7,6 +7,7 @@
 
 #include "conf.h"
 #include "sysdep.h"
+#include <stddef.h>  /* offsetof, for oset_replace_string() */
 #include "structs.h"
 #include "utils.h"
 #include "db.h"
@@ -677,22 +678,73 @@ int delete_object(obj_rnum rnum)
 }
 
 /* oset handling, this location should be temporary */
-bool oset_alias(struct obj_data *obj, char * argument)
-{ 
-  static size_t max_len = 64;
-  int i = GET_OBJ_RNUM(obj);
-  
-  skip_spaces(&argument);
-  
-  if (strlen(argument) > max_len)
+
+/**
+ * Replace one restringable text field of a live object for oset.
+ *
+ * An instance shares its strings with its prototype until it is restrung;
+ * a prototype-less object (corpse, money; rnum NOTHING) owns all of its
+ * strings (free_obj() frees them unconditionally).  The old string is freed
+ * only when this instance owns it.  A stale rnum (> top_of_objt) means a
+ * renumbering bug: ownership cannot be decided, so the old string is leaked
+ * and reported rather than risking a double free of prototype text.
+ *
+ * The value comes from a DG script (%obj.alias(...)% etc.) or the immortal
+ * oset command, so an over-long value is rejected and reported.
+ *
+ * @param obj          Live object being changed.
+ * @param field        Address of the field inside obj (name, description...).
+ * @param proto_offset Offset of the same field in struct obj_data, used to
+ *                     find the prototype's pointer.
+ * @param what         Field name for diagnostics.
+ * @param value        New text (leading spaces already skipped).
+ * @param max_len      Longest accepted value in bytes.
+ * @return TRUE when the field was replaced, FALSE (reported) otherwise.
+ */
+static bool oset_replace_string(struct obj_data *obj, char **field,
+                                size_t proto_offset, const char *what,
+                                const char *value, size_t max_len)
+{
+  obj_rnum rnum = GET_OBJ_RNUM(obj);
+  bool owned;
+  char *copy;
+
+  if (strlen(value) > max_len) {
+    TB_WARN_MSG("dg", "oset-reject", "object",
+                "obj vnum %d uid %ld: %s is %zu bytes, maximum %zu",
+                GET_OBJ_VNUM(obj), obj->script_id, what, strlen(value),
+                max_len);
     return FALSE;
-  
-  if (i != NOWHERE && obj->name && obj->name != obj_proto[i].name)
-    free(obj->name);  
-		   	   
-  obj->name = strdup(argument);  
-  
+  }
+
+  if (rnum == NOTHING)
+    owned = TRUE;
+  else if (rnum > top_of_objt) {
+    TB_ERROR_MSG("olc", "obj-rnum-range", "object",
+                 "obj uid %ld rnum %d outside 0..%d; old %s not freed",
+                 obj->script_id, (int)rnum, (int)top_of_objt, what);
+    owned = FALSE;
+  } else
+    owned = *field != *(char **)((char *)&obj_proto[rnum] + proto_offset);
+
+  if ((copy = strdup(value)) == NULL) {
+    TB_ERROR_ERRNO("dg", "oset-alloc", "object",
+                   "obj vnum %d uid %ld: %s (%zu bytes) unchanged",
+                   GET_OBJ_VNUM(obj), obj->script_id, what, strlen(value));
+    return FALSE;
+  }
+
+  if (owned && *field)
+    free(*field);
+  *field = copy;
   return TRUE;
+}
+
+bool oset_alias(struct obj_data *obj, char * argument)
+{
+  skip_spaces(&argument);
+  return oset_replace_string(obj, &obj->name, offsetof(struct obj_data, name),
+                             "alias", argument, 64);
 }
 
 bool oset_apply(struct obj_data *obj, char * argument)
@@ -777,37 +829,17 @@ bool oset_apply(struct obj_data *obj, char * argument)
 }
 
 bool oset_short_description(struct obj_data *obj, char * argument)
-{ 
-  static size_t max_len = 64;
-  int i = GET_OBJ_RNUM(obj);
-  
+{
   skip_spaces(&argument);
-  
-  if (strlen(argument) > max_len)
-    return FALSE;
-  
-  if (i != NOWHERE && obj->short_description && obj->short_description != obj_proto[i].short_description)
-    free(obj->short_description);  
-		   	   
-  obj->short_description = strdup(argument);  
-  
-  return TRUE;
+  return oset_replace_string(obj, &obj->short_description,
+                             offsetof(struct obj_data, short_description),
+                             "short description", argument, 64);
 }
 
 bool oset_long_description(struct obj_data *obj, char * argument)
 {
-  static size_t max_len = 128;
-  int i = GET_OBJ_RNUM(obj);  
-  
   skip_spaces(&argument);
-  
-  if (strlen(argument) > max_len)
-    return FALSE;  
-  
-  if (i != NOWHERE && obj->description && obj->description != obj_proto[i].description)
-    free(obj->description);  
-		   	   
-  obj->description = strdup(argument);  
-  
-  return TRUE;
+  return oset_replace_string(obj, &obj->description,
+                             offsetof(struct obj_data, description),
+                             "long description", argument, 128);
 }
