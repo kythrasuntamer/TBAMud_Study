@@ -516,17 +516,45 @@ static const int flags_door[] =
 		(TOGGLE_BIT(GET_OBJ_VAL(obj, 1), CONT_LOCKED)) :\
 		(TOGGLE_BIT(EXITN(room, door)->exit_info, EX_LOCKED)))
 
+/* TRUE if a door trigger left the command able to proceed: the actor alive
+ * in the room it started in, and the door or container it named still
+ * there.  Scripts can move or kill the actor, remove the exit or purge the
+ * container, and the command used to act on whatever remained. */
+static int door_target_intact(struct char_data *ch, room_rnum in_room,
+                              struct obj_data *obj, long obj_uid, int door,
+                              int scmd)
+{
+  const char *lost = NULL;
+
+  if (DEAD(ch) || IN_ROOM(ch) != in_room)
+    lost = "actor left the room or died";
+  else if (obj && !obj_uid_matches(obj_uid, obj))
+    lost = "container was extracted";
+  else if (!obj && !EXIT(ch, door))
+    lost = "exit was removed";
+
+  if (lost)
+    TB_WARN_MSG("act", "door-trigger", "do_doorcmd",
+                DIAG_CHAR_FMT " %s %s: %s; command abandoned", DIAG_CHAR(ch),
+                cmd_door[scmd], obj ? "container" : dirs[door], lost);
+  return lost == NULL;
+}
+
 static void do_doorcmd(struct char_data *ch, struct obj_data *obj, int door, int scmd)
 {
   char buf[MAX_STRING_LENGTH];
   size_t len;
   room_rnum other_room = NOWHERE;
   struct room_direction_data *back = NULL;
+  room_rnum in_room = IN_ROOM(ch);
+  long obj_uid = obj ? obj_script_id(obj) : 0;
 
-  if (!door_mtrigger(ch, scmd, door))
+  if (!door_mtrigger(ch, scmd, door) ||
+      !door_target_intact(ch, in_room, obj, obj_uid, door, scmd))
     return;
 
-  if (!door_wtrigger(ch, scmd, door))
+  if (!door_wtrigger(ch, scmd, door) ||
+      !door_target_intact(ch, in_room, obj, obj_uid, door, scmd))
     return;
 
   len = snprintf(buf, sizeof(buf), "$n %ss ", cmd_door[scmd]);
