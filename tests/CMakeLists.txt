@@ -504,3 +504,20 @@ add_mud_test(test_utils_guards
     ${MUD_SRCDIR}/random.c
     ${CMAKE_CURRENT_SOURCE_DIR}/test_utils_guards.c
 )
+
+# ---------------------------------------------------------------------------
+# Properties shared by every test registered above
+# ---------------------------------------------------------------------------
+# A hung test (an infinite loop in a guard, a blocked read) must fail rather
+# than stall CI until the job timeout. 120 s is ~100x the slowest test under
+# Valgrind today.
+get_directory_property(_tb_all_tests TESTS)
+set_tests_properties(${_tb_all_tests} PROPERTIES TIMEOUT 120)
+
+# In a sanitizer build every test runs with the project's ASAN/UBSAN option
+# strings (see TBAMUD_ASAN_OPTIONS in the top-level CMakeLists.txt), so a local
+# ctest traps the same things CI does.
+if(ENABLE_SANITIZERS)
+    set_tests_properties(${_tb_all_tests} PROPERTIES ENVIRONMENT
+        "ASAN_OPTIONS=${TBAMUD_ASAN_OPTIONS};UBSAN_OPTIONS=${TBAMUD_UBSAN_OPTIONS};LSAN_OPTIONS=report_objects=1")
+endif()

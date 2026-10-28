@@ -506,24 +506,77 @@ configure_file(
 # ========== Native runtime sanitizers ==========
 option(ENABLE_SANITIZERS "Enable AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
 
+# UBSan checks beyond -fsanitize=undefined. Each one names undefined or
+# almost-certainly-wrong behaviour that the "undefined" group leaves out on at
+# least one compiler; all are probed, so an older compiler just skips one.
+#   float-cast-overflow  out-of-range float->int (GCC leaves it out of
+#                        "undefined"; Clang already includes it)
+#   float-divide-by-zero x/0.0 in power curves and percentages
+#   local-bounds         Clang: out-of-bounds index into a local array whose
+#                        size is known only in the function
+#   nullability          Clang: _Nonnull contract violations (no-op until
+#                        headers use the annotations)
+# Deliberately NOT here, because tbaMUD relies on them on purpose:
+#   unsigned-integer-overflow (hashes, RNG), implicit-conversion and
+#   "integer" (char/ubyte/sh_int narrowing throughout structs.h). Turn those
+#   on for an audit run with -DSANITIZER_STRICT_INTEGER=ON.
+option(SANITIZER_STRICT_INTEGER
+    "With ENABLE_SANITIZERS: also trap implicit integer conversions and unsigned wraparound (noisy; for audits)" OFF)
+
 if(ENABLE_SANITIZERS)
     if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
-        message(STATUS "Native sanitizers enabled: address, undefined")
-        set(TB_BUILD_SANITIZERS "address,undefined")
+        include(CheckCCompilerFlag)
+        set(TB_SANITIZE_CHECKS "address,undefined")
+        set(_tb_extra_ubsan float-cast-overflow float-divide-by-zero
+            local-bounds nullability)
+        if(SANITIZER_STRICT_INTEGER)
+            list(APPEND _tb_extra_ubsan integer implicit-conversion)
+        endif()
+        foreach(_check IN LISTS _tb_extra_ubsan)
+            string(MAKE_C_IDENTIFIER "TB_HAVE_FSANITIZE_${_check}" _var)
+            set(CMAKE_REQUIRED_FLAGS "-fsanitize=${_check}")
+            set(CMAKE_REQUIRED_LINK_OPTIONS "-fsanitize=${_check}")
+            check_c_compiler_flag("-fsanitize=${_check}" ${_var})
+            unset(CMAKE_REQUIRED_FLAGS)
+            unset(CMAKE_REQUIRED_LINK_OPTIONS)
+            if(${_var})
+                string(APPEND TB_SANITIZE_CHECKS ",${_check}")
+            endif()
+        endforeach()
+        message(STATUS "Native sanitizers enabled: ${TB_SANITIZE_CHECKS}")
+        set(TB_BUILD_SANITIZERS "${TB_SANITIZE_CHECKS}")
         # Add these after configure-time feature probes so sanitizer runtimes
         # do not perturb CMake's compile-and-run capability detection.
+        # -fno-sanitize-recover=all makes every UBSan report fatal, so a
+        # finding fails the test instead of scrolling past in the log.
         add_compile_options(
-            -fsanitize=address,undefined
+            -fsanitize=${TB_SANITIZE_CHECKS}
             -fno-omit-frame-pointer
+            -fno-optimize-sibling-calls
             -fno-sanitize-recover=all
         )
         set(CMAKE_EXE_LINKER_FLAGS
-            "${CMAKE_EXE_LINKER_FLAGS} -fsanitize=address,undefined")
+            "${CMAKE_EXE_LINKER_FLAGS} -fsanitize=${TB_SANITIZE_CHECKS}")
     else()
         message(FATAL_ERROR
             "ENABLE_SANITIZERS requires GCC, Clang, or AppleClang.")
     endif()
 endif()
+
+# Runtime options for every CTest test in a sanitizer build. They live here,
+# not only in CI, so a local `ctest` traps exactly what CI traps. Override per
+# tree with -DTBAMUD_ASAN_OPTIONS=... (later keys win inside one string).
+#   detect_stack_use_after_return  returned stack frames stay poisoned
+#   check_initialization_order / strict_init_order  global ctor ordering
+#   strict_string_checks           str*() args must be NUL-terminated
+#   detect_invalid_pointer_pairs   left 0: needs -fsanitize=pointer-compare
+#   abort_on_error=0, halt_on_error=1  exit non-zero on the first report
+set(TBAMUD_ASAN_OPTIONS
+    "detect_leaks=1:halt_on_error=1:abort_on_error=0:detect_stack_use_after_return=1:check_initialization_order=1:strict_init_order=1:strict_string_checks=1:detect_odr_violation=2:print_summary=1"
+    CACHE STRING "ASAN_OPTIONS applied to CTest tests in sanitizer builds")
+set(TBAMUD_UBSAN_OPTIONS
+    "halt_on_error=1:print_stacktrace=1:report_error_type=1:print_summary=1"
+    CACHE STRING "UBSAN_OPTIONS applied to CTest tests in sanitizer builds")
 
 # Re-run conf.h generation after optional build modes (notably sanitizers)
 # have finalized provenance values.
