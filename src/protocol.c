@@ -338,6 +338,9 @@ protocol_t *ProtocolCreate( void )
    CREATE(pProtocol, protocol_t, 1);
    pProtocol->WriteOOB = 0;
    pProtocol->bIACMode = false;
+   pProtocol->bSubnegIAC = false;
+   pProtocol->SubnegLen = 0;
+   CREATE(pProtocol->pSubneg, char, MAX_PROTOCOL_BUFFER + 1);
    pProtocol->bNegotiated = false;
    pProtocol->bBlockMXP = false;
    pProtocol->bTTYPE = false;
@@ -396,15 +399,32 @@ void ProtocolDestroy( protocol_t *apProtocol )
    if (apProtocol->pLastTTYPE) /* Isn't saved over copyover so may still be NULL */
      free(apProtocol->pLastTTYPE);
    free(apProtocol->pMXPVersion);
+   free(apProtocol->pSubneg);
    free(apProtocol);
+}
+
+/* A telnet subnegotiation (IAC SB ... IAC SE) can arrive split across any
+ * number of reads, so its bytes are collected in the descriptor's own
+ * buffer (pProtocol->pSubneg / SubnegLen), and an IAC that ends one read is
+ * remembered in bSubnegIAC. This used to be a static buffer whose index was
+ * reset on every call: the first half of a split subnegotiation was lost
+ * and a data byte was then taken as the option code. */
+static void FinishSubnegotiation( descriptor_t *apDescriptor )
+{
+   protocol_t *pProtocol = apDescriptor->pProtocol;
+
+   pProtocol->bIACMode = false;
+   pProtocol->pSubneg[pProtocol->SubnegLen] = '\0';
+   if ( pProtocol->SubnegLen >= 2 )
+      PerformSubnegotiation( apDescriptor, pProtocol->pSubneg[0],
+                             &pProtocol->pSubneg[1], pProtocol->SubnegLen - 1 );
+   pProtocol->SubnegLen = 0;
 }
 
 ssize_t ProtocolInput( descriptor_t *apDescriptor, char *apData, int aSize, char *apOut, size_t aOutSize )
 {
    static char CmdBuf[MAX_PROTOCOL_BUFFER+1];
-   static char IacBuf[MAX_PROTOCOL_BUFFER+1];
    ssize_t CmdIndex = 0;
-   ssize_t IacIndex = 0;
    ssize_t NulBytes = 0;
    size_t OutLength;
    ssize_t Index;
@@ -422,19 +442,47 @@ ssize_t ProtocolInput( descriptor_t *apDescriptor, char *apData, int aSize, char
    for ( Index = 0; Index < aSize; ++Index )
    {
       /* If we'd overflow the buffer, we just ignore the input */
-      if ( CmdIndex >= MAX_PROTOCOL_BUFFER || IacIndex >= MAX_PROTOCOL_BUFFER )
+      if ( CmdIndex >= MAX_PROTOCOL_BUFFER )
       {
          PROTOCOL_WARN(apDescriptor, "input-overflow",
                        "more than %d bytes of input in one read; read discarded",
                        MAX_PROTOCOL_BUFFER);
          return (-1);
       }
+      if ( pProtocol->SubnegLen >= MAX_PROTOCOL_BUFFER )
+      {
+         PROTOCOL_WARN(apDescriptor, "subneg-overflow",
+                       "telnet subnegotiation longer than %d bytes; connection"
+                       " closed", MAX_PROTOCOL_BUFFER);
+         return (-1);
+      }
+
+      /* The previous read ended with IAC inside a subnegotiation. */
+      if ( pProtocol->bSubnegIAC )
+      {
+         pProtocol->bSubnegIAC = false;
+         if ( apData[Index] == (char)SE )
+         {
+            FinishSubnegotiation( apDescriptor );
+            continue;
+         }
+         pProtocol->pSubneg[pProtocol->SubnegLen++] = (char)IAC;
+         if ( apData[Index] == (char)IAC ) /* split IAC IAC */
+            continue;
+         if ( pProtocol->SubnegLen >= MAX_PROTOCOL_BUFFER )
+         {
+            PROTOCOL_WARN(apDescriptor, "subneg-overflow",
+                          "telnet subnegotiation longer than %d bytes;"
+                          " connection closed", MAX_PROTOCOL_BUFFER);
+            return (-1);
+         }
+      }
 
       /* IAC IAC is treated as a single value of 255 */
       if ( Index + 1 < aSize && apData[Index] == (char)IAC && apData[Index+1] == (char)IAC )
       {
          if ( pProtocol->bIACMode )
-            IacBuf[IacIndex++] = (char)IAC;
+            pProtocol->pSubneg[pProtocol->SubnegLen++] = (char)IAC;
          else /* In-band command */
             CmdBuf[CmdIndex++] = (char)IAC;
          Index++;
@@ -445,14 +493,12 @@ ssize_t ProtocolInput( descriptor_t *apDescriptor, char *apData, int aSize, char
          if ( Index + 1 < aSize && apData[Index] == (char)IAC && apData[Index+1] == (char)SE )
          {
             Index++;
-            pProtocol->bIACMode = false;
-            IacBuf[IacIndex] = '\0';
-            if ( IacIndex >= 2 )
-               PerformSubnegotiation( apDescriptor, IacBuf[0], &IacBuf[1], IacIndex-1 );
-            IacIndex = 0;
+            FinishSubnegotiation( apDescriptor );
          }
+         else if ( Index + 1 == aSize && apData[Index] == (char)IAC )
+            pProtocol->bSubnegIAC = true; /* decided by the next read */
          else
-           IacBuf[IacIndex++] = apData[Index];
+           pProtocol->pSubneg[pProtocol->SubnegLen++] = apData[Index];
       }
       else if ( Index + 3 < aSize && apData[Index] == (char)27 && apData[Index+1] == '[' && 
          isdigit((unsigned char)apData[Index+2]) && apData[Index+3] == 'z' )
@@ -547,6 +593,8 @@ ssize_t ProtocolInput( descriptor_t *apDescriptor, char *apData, int aSize, char
                case (char)SB: /* Begin subnegotiation. */
                   Index++;
                   pProtocol->bIACMode = true;
+                  pProtocol->bSubnegIAC = false;
+                  pProtocol->SubnegLen = 0;
                   break;
 
                case (char)DO: /* Handshake. */
@@ -579,7 +627,7 @@ ssize_t ProtocolInput( descriptor_t *apDescriptor, char *apData, int aSize, char
    }
 
    /* Terminate the two buffers */
-   IacBuf[IacIndex] = '\0';
+   pProtocol->pSubneg[pProtocol->SubnegLen] = '\0';
    CmdBuf[CmdIndex] = '\0';
 
    /* NUL bytes from the network are dropped: apOut is a C string, and the
@@ -2003,7 +2051,10 @@ static void PerformSubnegotiation( descriptor_t *apDescriptor, char aCmd, char *
          break;
 
       case (char)TELOPT_NAWS:
-         if ( pProtocol->bNAWS )
+         if ( pProtocol->bNAWS && aSize < 4 )
+            PROTOCOL_WARN( apDescriptor, "malformed-subneg",
+                           "NAWS carries %d bytes, needs 4; ignored", aSize );
+         else if ( pProtocol->bNAWS )
          {
             /* Store the new width. */
             pProtocol->ScreenWidth = (unsigned char)apData[0];

@@ -158,6 +158,26 @@ static void alloc_string_never_returns_null(void)
   free(copy);
 }
 
+/* A subnegotiation split across reads lost its first half (static buffer,
+ * index reset per call), so NAWS from a slow link was silently ignored. */
+static void split_subnegotiation_is_reassembled(void)
+{
+  char part1[] = { (char)IAC, (char)SB, (char)TELOPT_NAWS, 0, 80 };
+  char part2[] = { 0, 24, (char)IAC };
+  char part3[] = { (char)SE, 'h', 'i', '\n' };
+  char out[64] = "";
+
+  desc.pProtocol->bNAWS = true;
+  TEST_ASSERT_EQUAL_INT(0, (int)ProtocolInput(&desc, part1, (int)sizeof(part1), out, sizeof(out)));
+  TEST_ASSERT_EQUAL_INT(0, (int)ProtocolInput(&desc, part2, (int)sizeof(part2), out, sizeof(out)));
+  TEST_ASSERT_EQUAL_INT(0, desc.pProtocol->ScreenWidth);
+  TEST_ASSERT_EQUAL_INT(3, (int)ProtocolInput(&desc, part3, (int)sizeof(part3), out, sizeof(out)));
+  TEST_ASSERT_EQUAL_INT(80, desc.pProtocol->ScreenWidth);
+  TEST_ASSERT_EQUAL_INT(24, desc.pProtocol->ScreenHeight);
+  TEST_ASSERT_EQUAL_STRING("hi\n", out);
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -168,5 +188,6 @@ int main(void)
   RUN_TEST(unfinished_escapes_stop_at_terminator);
   RUN_TEST(input_nul_bytes_are_dropped_and_counted);
   RUN_TEST(alloc_string_never_returns_null);
+  RUN_TEST(split_subnegotiation_is_reassembled);
   return UNITY_END();
 }
