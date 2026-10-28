@@ -567,6 +567,10 @@ void sort_commands(void)
     num_of_cmds++;
   num_of_cmds++;  /* \n */
 
+  /* Called at boot and again after every aedit save (the command list is
+   * rebuilt then), so release the previous order instead of leaking it. */
+  free(cmd_sort_info);
+  cmd_sort_info = NULL;
   CREATE(cmd_sort_info, int, num_of_cmds);
 
   for (a = 0; a < num_of_cmds; a++)

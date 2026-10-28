@@ -666,6 +666,36 @@ void test_new_char_dupe_check_in_game_twin_closes_without_null_deref(void)
 }
 
 /* =========================================================
+ * sort_commands
+ * ========================================================= */
+
+/* F2-17: sort_commands runs at boot and again after every aedit save; a
+ * second call must replace cmd_sort_info, not leak the first array
+ * (LeakSanitizer / Valgrind report the leak if it does). */
+static void test_sort_commands_twice_does_not_leak(void)
+{
+    struct command_info cmds[] = {
+        { "RESERVED", "", 0, 0, 0, 0 },
+        { "zap", "zap", 0, 0, 0, 0 },
+        { "apple", "apple", 0, 0, 0, 0 },
+        { "\n", "zzzzzzz", 0, 0, 0, 0 }
+    };
+    struct command_info *saved = complete_cmd_info;
+
+    complete_cmd_info = cmds;
+    sort_commands();
+    sort_commands();
+    TEST_ASSERT_NOT_NULL(cmd_sort_info);
+    TEST_ASSERT_EQUAL_INT(0, cmd_sort_info[0]);
+    TEST_ASSERT_EQUAL_INT(2, cmd_sort_info[1]);
+    TEST_ASSERT_EQUAL_INT(1, cmd_sort_info[2]);
+    TEST_ASSERT_EQUAL_INT(3, cmd_sort_info[3]);
+    free(cmd_sort_info);
+    cmd_sort_info = NULL;
+    complete_cmd_info = saved;
+}
+
+/* =========================================================
  * main
  * ========================================================= */
 
@@ -728,6 +758,8 @@ int main(void)
     RUN_TEST(test_new_char_dupe_check_reports_unnamed_peer_past_confirmation);
     RUN_TEST(test_new_char_dupe_check_ignores_name_case);
     RUN_TEST(test_new_char_dupe_check_in_game_twin_closes_without_null_deref);
+
+    RUN_TEST(test_sort_commands_twice_does_not_leak);
 
     return UNITY_END();
 }
