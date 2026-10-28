@@ -674,9 +674,34 @@ static void trigedit_rejects_overflowing_vnum(void)
   TEST_ASSERT_NOT_NULL(strstr(bd->output, "can't exist"));
 }
 
+/* E2-11: object and room type tables have one name fewer than the mob
+ * table; option 21 printed the "\n" sentinel and toggled an undefined bit. */
+static void type_menu_is_bounded_per_attach_type(void)
+{
+  const int vnums[] = { 100 };
+
+  make_index(vnums, 1);
+  start_edit(100);
+  feed(TRIGEDIT_INTENDED, "1");                 /* objects */
+  OLC_TRIG(bd)->trigger_type = 0;
+  clear_output();
+  feed(TRIGEDIT_TYPES, "21");
+  TEST_ASSERT_EQUAL_INT(0, OLC_TRIG(bd)->trigger_type);
+  TEST_ASSERT_NOT_NULL(strstr(bd->output, "Please enter 1-20"));
+
+  feed(TRIGEDIT_TYPES, "20");
+  TEST_ASSERT_EQUAL_INT(1L << 19, OLC_TRIG(bd)->trigger_type);
+
+  feed(TRIGEDIT_INTENDED, "0");                 /* mobiles: 21 types */
+  OLC_TRIG(bd)->trigger_type = 0;
+  feed(TRIGEDIT_TYPES, "21");
+  TEST_ASSERT_EQUAL_INT(1L << 20, OLC_TRIG(bd)->trigger_type);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(type_menu_is_bounded_per_attach_type);
   RUN_TEST(copy_prompt_rejects_non_numbers);
   RUN_TEST(numeric_argument_rejects_text_and_reports_clamp);
   RUN_TEST(trigedit_rejects_overflowing_vnum);

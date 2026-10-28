@@ -265,24 +265,50 @@ void trigedit_setup_existing(struct descriptor_data *d, int rtrg_num)
   OLC_VAL(d) = 0;  /* Has changed flag. (It hasn't so far, we just made it.) */
 }
 
+/**
+ * The trigger-type name table for an attach type, and its length.  The
+ * tables differ in length (trig_types has NUM_TRIG_TYPE_FLAGS names,
+ * otrig_types and wtrig_types one fewer), so a single bound let the type
+ * menu show the "\n" sentinel as option 21 for objects and rooms and toggle
+ * a bit those triggers do not define (E2-11).
+ * @param attach_type MOB_TRIGGER, OBJ_TRIGGER or WLD_TRIGGER (others: mob).
+ * @param[out] count Number of names before the "\n" sentinel, at most
+ * NUM_TRIG_TYPE_FLAGS.
+ * @return The name table, terminated by "\n".
+ */
+static const char **trigedit_type_names(int attach_type, int *count)
+{
+  const char **types;
+  int n;
+
+  switch (attach_type) {
+    case WLD_TRIGGER: types = wtrig_types; break;
+    case OBJ_TRIGGER: types = otrig_types; break;
+    default:          types = trig_types;  break;
+  }
+  for (n = 0; n < NUM_TRIG_TYPE_FLAGS && *types[n] != '\n'; n++)
+    ;
+  *count = n;
+  return types;
+}
+
 static void trigedit_disp_menu(struct descriptor_data *d)
 {
   struct trig_data *trig = OLC_TRIG(d);
   char *attach_type;
   char trgtypes[256];
+  int ntypes;
 
   get_char_colors(d->character);
 
-  if (trig->attach_type==OBJ_TRIGGER) {
+  if (trig->attach_type==OBJ_TRIGGER)
     attach_type = "Objects";
-    sprintbit(GET_TRIG_TYPE(trig), otrig_types, trgtypes, sizeof(trgtypes));
-  } else if (trig->attach_type==WLD_TRIGGER) {
+  else if (trig->attach_type==WLD_TRIGGER)
     attach_type = "Rooms";
-    sprintbit(GET_TRIG_TYPE(trig), wtrig_types, trgtypes, sizeof(trgtypes));
-  } else {
+  else
     attach_type = "Mobiles";
-    sprintbit(GET_TRIG_TYPE(trig), trig_types, trgtypes, sizeof(trgtypes));
-  }
+  sprintbit(GET_TRIG_TYPE(trig), trigedit_type_names(trig->attach_type, &ntypes),
+            trgtypes, sizeof(trgtypes));
 
   clear_screen(d);
 
@@ -312,28 +338,14 @@ static void trigedit_disp_menu(struct descriptor_data *d)
 
 static void trigedit_disp_types(struct descriptor_data *d)
 {
-  int i, columns = 0;
-  const char **types;
+  int i, columns = 0, ntypes;
+  const char **types = trigedit_type_names(OLC_TRIG(d)->attach_type, &ntypes);
   char bitbuf[MAX_STRING_LENGTH];
-
-  switch(OLC_TRIG(d)->attach_type)
-  {
-    case WLD_TRIGGER:
-      types = wtrig_types;
-      break;
-    case OBJ_TRIGGER:
-      types = otrig_types;
-      break;
-    case MOB_TRIGGER:
-    default:
-      types = trig_types;
-      break;
-  }
 
   get_char_colors(d->character);
   clear_screen(d);
 
-  for (i = 0; i < NUM_TRIG_TYPE_FLAGS; i++) {
+  for (i = 0; i < ntypes; i++) {
     write_to_output(d, "%s%2d%s) %-20.20s  %s", grn, i + 1, nrm, types[i],
               !(++columns % 2) ? "\r\n" : "");
   }
@@ -735,8 +747,17 @@ void trigedit_parse(struct descriptor_data *d, char *arg)
       }
       if (i == 0)
         break;
-      else if (!((i < 0) || (i > NUM_TRIG_TYPE_FLAGS)))
-        TOGGLE_BIT((GET_TRIG_TYPE(OLC_TRIG(d))), 1 << (i - 1));
+      {
+        int ntypes;
+
+        (void)trigedit_type_names(OLC_TRIG(d)->attach_type, &ntypes);
+        if (i < 0 || i > ntypes) {
+          trigedit_disp_types(d);
+          write_to_output(d, "Please enter 1-%d, or 0 to quit: ", ntypes);
+          return;
+        }
+        TOGGLE_BIT((GET_TRIG_TYPE(OLC_TRIG(d))), 1L << (i - 1));
+      }
       OLC_VAL(d)++;
       trigedit_disp_types(d);
       return;
