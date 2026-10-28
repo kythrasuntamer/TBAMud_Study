@@ -630,11 +630,13 @@ if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
         PROPERTIES COMPILE_OPTIONS "-ffunction-sections;-fdata-sections")
 endif()
 
-# Production communication commands (act.comm.c): act() format building,
-# '@' code checks and history. act() is replaced by a recorder in the test.
+# Production communication commands (act.comm.c) and socials (act.social.c):
+# act() format building, '@' code checks, history and social messages.
+# act() is replaced by a recorder in the test.
 add_executable(test_act_comm
     $<TARGET_OBJECTS:unity_vendor>
     ${MUD_SRCDIR}/act.comm.c
+    ${MUD_SRCDIR}/act.social.c
     ${CMAKE_CURRENT_SOURCE_DIR}/test_act_comm.c
 )
 target_include_directories(test_act_comm PRIVATE ${TEST_INCLUDES})
@@ -643,7 +645,7 @@ add_test(NAME test_act_comm COMMAND test_act_comm)
 if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
     target_compile_options(test_act_comm PRIVATE -ffunction-sections -fdata-sections)
     target_link_options(test_act_comm PRIVATE -Wl,--gc-sections)
-    set_source_files_properties(${MUD_SRCDIR}/act.comm.c
+    set_source_files_properties(${MUD_SRCDIR}/act.comm.c ${MUD_SRCDIR}/act.social.c
         PROPERTIES COMPILE_OPTIONS "-ffunction-sections;-fdata-sections")
 endif()
 

@@ -1,5 +1,5 @@
-/* Executable tests of the production communication commands (act.comm.c).
- * act.comm.c is linked with unreferenced sections discarded. act() is
+/* Executable tests of the production communication commands (act.comm.c)
+ * and socials (act.social.c). Both are linked with unreferenced sections discarded. act() is
  * replaced by a recorder, so the tests see exactly which format each
  * command hands to the formatter (perform_act has its own tests).
  */
@@ -26,6 +26,33 @@ mob_rnum top_of_mobt = 0;
 struct time_info_data time_info;
 struct command_info *complete_cmd_info = NULL;
 int MAX(int a, int b) { return a > b ? a : b; }
+struct social_messg *soc_mess_list = NULL;
+int top_of_socialt = -1;
+
+/* Argument splitters: the tests pass at most two short words. */
+static char *copy_word(char *argument, char *out)
+{
+  size_t n = 0;
+
+  while (*argument == ' ')
+    argument++;
+  while (*argument && *argument != ' ' && n + 1 < MAX_INPUT_LENGTH)
+    out[n++] = *argument++;
+  out[n] = '\0';
+  return argument;
+}
+char *one_argument(char *argument, char *first_arg)
+{ return copy_word(argument, first_arg); }
+char *two_arguments(char *argument, char *first_arg, char *second_arg)
+{ return copy_word(copy_word(argument, first_arg), second_arg); }
+
+/* The social's victim: found by any name. */
+static struct char_data *visible_victim;
+struct char_data *get_char_vis(struct char_data *ch, char *name, int *number, int where)
+{ (void)ch; (void)number; (void)where; return *name ? visible_victim : NULL; }
+struct obj_data *get_obj_in_list_vis(struct char_data *ch, char *name, int *number,
+                                     struct obj_data *list)
+{ (void)ch; (void)name; (void)number; (void)list; return NULL; }
 
 void basic_mud_log(const char *format, ...) { (void)format; }
 void mudlog(int type, int level, int file, const char *str, ...)
@@ -47,15 +74,17 @@ size_t send_to_char(struct char_data *ch, const char *messg, ...)
 /* act() recorder: the last format, its vict_obj and how many calls. */
 static char act_format[MAX_STRING_LENGTH];
 static const void *act_vict_obj;
+static const void *act_obj;
 static int act_calls;
 char *act_at(const char *src_file, int src_line, const char *src_func,
              const char *str, int hide_invisible, struct char_data *ch,
              struct obj_data *obj, void *vict_obj, int type)
 {
   (void)src_file; (void)src_line; (void)src_func;
-  (void)hide_invisible; (void)ch; (void)obj; (void)type;
+  (void)hide_invisible; (void)ch; (void)type;
   act_calls++;
   act_vict_obj = vict_obj;
+  act_obj = obj;
   if (snprintf(act_format, sizeof(act_format), "%s", str ? str : "") < 0)
     act_format[0] = '\0';
   return NULL;
@@ -158,6 +187,59 @@ static void escape_truncates_between_pairs_and_reports(void)
   free(text);
 }
 
+/* --- G2-08: body-part socials pass a string as act()'s obj ------------ */
+
+static struct social_messg lick;
+
+static void setup_lick_social(const char *char_body_found)
+{
+  static struct char_data victim;
+  static struct player_special_data victim_specials;
+
+  memset(&victim, 0, sizeof(victim));
+  memset(&victim_specials, 0, sizeof(victim_specials));
+  victim.player_specials = &victim_specials;
+  GET_POS(&victim) = POS_STANDING;
+  visible_victim = &victim;
+  memset(&lick, 0, sizeof(lick));
+  lick.command = (char *)"lick";
+  lick.act_nr = 300;
+  lick.char_found = (char *)"You lick $N.";
+  lick.char_body_found = (char *)char_body_found;
+  lick.others_body_found = (char *)"$n licks $N's $t.";
+  lick.vict_body_found = (char *)"$n licks your $t.";
+  soc_mess_list = &lick;
+  top_of_socialt = 0;
+}
+
+static void body_social_using_obj_code_is_refused(void)
+{
+  char *arg = strdup("bob ear");
+
+  setup_lick_social("You lick $N's $p.");
+  do_action(&speaker, arg, 300, 0);
+  TEST_ASSERT_EQUAL_INT(0, act_calls);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("act-code", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "social 'lick' field char_body_found uses $p"));
+  soc_mess_list = NULL;
+  top_of_socialt = -1;
+  free(arg);
+}
+
+static void body_social_using_t_runs(void)
+{
+  char *arg = strdup("bob ear");
+
+  setup_lick_social("You lick $N's $t (costs $$1).");
+  do_action(&speaker, arg, 300, 0);
+  TEST_ASSERT_EQUAL_INT(3, act_calls);
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  soc_mess_list = NULL;
+  top_of_socialt = -1;
+  free(arg);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -166,5 +248,7 @@ int main(void)
   RUN_TEST(socket_text_with_escaped_dollars_is_unchanged);
   RUN_TEST(tell_text_cannot_reach_the_victim_pointer);
   RUN_TEST(escape_truncates_between_pairs_and_reports);
+  RUN_TEST(body_social_using_obj_code_is_refused);
+  RUN_TEST(body_social_using_t_runs);
   return UNITY_END();
 }

@@ -23,6 +23,34 @@
 /* local defined functions for local use */
 /* do_action and do_gmote utility function */
 static int find_action(int cmd);
+static bool social_body_msg_ok(const struct social_messg *action,
+                               const char *msg, const char *field);
+
+/* In a body-part social ("lick bob ear") act()'s obj argument is the typed
+ * body part, a char[MAX_INPUT_LENGTH] on the stack, so the message may
+ * refer to it only as $t. $o/$p/$a would make perform_act() read that
+ * string as a struct obj_data (OBJN/OBJS/SANA, CAN_SEE_OBJ). The message
+ * text comes from builders (aedit or the socials file); the bytes of the
+ * body part come from the player. A message using those codes is reported
+ * and the social is refused rather than run. */
+static bool social_body_msg_ok(const struct social_messg *action,
+                               const char *msg, const char *field)
+{
+  const char *p;
+
+  for (p = msg; p && (p = strchr(p, '$')) != NULL; p += 2) {
+    if (p[1] == '\0')
+      break;
+    if (p[1] == 'o' || p[1] == 'p' || p[1] == 'a') {
+      TB_ERROR_MSG("social", "act-code", "soc_mess_list",
+                   "social '%s' field %s uses $%c with a body-part string "
+                   "target; only $t may name the body part",
+                   action->command ? action->command : "(null)", field, p[1]);
+      return FALSE;
+    }
+  }
+  return TRUE;
+}
 
 
 ACMD(do_action)
@@ -92,6 +120,13 @@ ACMD(do_action)
     act("$N is not in a proper position for that.", FALSE, ch, 0, vict, TO_CHAR | TO_SLEEP);
   else {
     if (*part) {
+      if (!social_body_msg_ok(action, action->char_body_found, "char_body_found") ||
+          !social_body_msg_ok(action, action->others_body_found, "others_body_found") ||
+          !social_body_msg_ok(action, action->vict_body_found, "vict_body_found")) {
+        send_to_char(ch, "That social is misconfigured; please tell an immortal.\r\n");
+        return;
+      }
+      /* part is passed as obj and must be read only through $t (above). */
       act(action->char_body_found, 0, ch, (struct obj_data *)part, vict, TO_CHAR | TO_SLEEP);
       act(action->others_body_found, action->hide, ch, (struct obj_data *)part, vict, TO_NOTVICT);
       act(action->vict_body_found, action->hide, ch, (struct obj_data *)part, vict, TO_VICT);
