@@ -369,9 +369,19 @@ static inline int circle_upper(int c)
 #define TB_ISALNUM(c) isalnum((unsigned char)(c))
 #define TB_ISPRINT(c) isprint((unsigned char)(c))
 
+/** TRUE if s is a non-empty string starting with a vowel (either case).
+ * strchr() also matches the terminator, so the bare
+ * strchr("aeiou...", *s) idiom called "" a vowel and crashed on NULL;
+ * this does neither. s is evaluated once. */
+static inline int tb_starts_with_vowel(const char *s)
+{
+  return s != NULL && *s != '\0' && strchr("aeiouAEIOU", *s) != NULL;
+}
+#define STARTS_WITH_VOWEL(s) tb_starts_with_vowel((s))
+
 /** If string begins a vowel (upper or lower case), return "an"; else return
  * "a". */
-#define AN(string) (strchr("aeiouAEIOU", *(string)) ? "an" : "a")
+#define AN(string) (STARTS_WITH_VOWEL(string) ? "an" : "a")
 
 /** A calloc based memory allocation macro.
  * Contract: number is converted to size_t once; a count of 0, or one whose
@@ -948,11 +958,11 @@ do                                                              \
 #define HMHR(ch) (GET_SEX(ch) ? (GET_SEX(ch)==SEX_MALE ? "him":"her") : "it")
 
 /** "An" or "A" for object (uppercased) */
-#define ANA(obj) (strchr("aeiouAEIOU", *(obj)->name) ? "An" : "A")
+#define ANA(obj) (STARTS_WITH_VOWEL((obj)->name) ? "An" : "A")
 /** "an" or "a" for object (lowercased) */
-#define SANA(obj) (strchr("aeiouAEIOU", *(obj)->name) ? "an" : "a")
+#define SANA(obj) (STARTS_WITH_VOWEL((obj)->name) ? "an" : "a")
 /** "an" or "a" for text (lowercased) */
-#define TANA(obj) (strchr("aeiouAEIOU", *(obj)) ? "an" : "a")
+#define TANA(obj) (STARTS_WITH_VOWEL(obj) ? "an" : "a")
 
 /* Various macros building up to CAN_SEE */
 

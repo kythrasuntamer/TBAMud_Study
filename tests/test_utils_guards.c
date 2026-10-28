@@ -629,6 +629,20 @@ void test_get_filename_accepts_player_name(void)
   TEST_ASSERT_EQUAL_INT(0, count_records());
 }
 
+/* =====================================================================
+ * STARTS_WITH_VOWEL / AN: empty and NULL strings take "a".
+ * ===================================================================== */
+
+void test_an_handles_empty_and_null(void)
+{
+  const char *none = NULL;
+
+  TEST_ASSERT_EQUAL_STRING("an", AN("apple"));
+  TEST_ASSERT_EQUAL_STRING("a", AN("pear"));
+  TEST_ASSERT_EQUAL_STRING("a", AN(""));
+  TEST_ASSERT_EQUAL_STRING("a", TANA(none));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -659,5 +673,6 @@ int main(void)
   RUN_TEST(test_get_filename_null_name_reports);
   RUN_TEST(test_get_filename_rejects_path_traversal);
   RUN_TEST(test_get_filename_accepts_player_name);
+  RUN_TEST(test_an_handles_empty_and_null);
   return UNITY_END();
 }
