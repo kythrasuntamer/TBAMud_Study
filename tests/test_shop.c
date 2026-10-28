@@ -394,6 +394,132 @@ static void test_read_shop_profit_rejects_non_finite(void)
   TEST_ASSERT_EQUAL_INT(0, fclose(f));
 }
 
+/* ---- shopping_buy(): the keeper is paid for every unit sold ---- */
+
+/* Fixtures for the purchase path (db.c, constants.c, handler.c, limits.c,
+ * utils.c). Carrying and gold follow the real bookkeeping closely enough
+ * for one keeper and one buyer in a lit room. */
+struct time_info_data time_info;
+const struct str_app_type str_app[31] = { [11] = { 0, 0, 1000, 100 } };
+int room_is_dark(room_rnum room) { (void)room; return FALSE; }
+int increase_gold(struct char_data *ch, int amt) { return GET_GOLD(ch) += amt; }
+int decrease_gold(struct char_data *ch, int amt) { return GET_GOLD(ch) -= amt; }
+struct obj_data *read_object(obj_vnum nr, int type) { (void)nr; (void)type; return NULL; }
+void extract_obj(struct obj_data *obj) { (void)obj; }
+char *fname(const char *namelist) { return (char *)namelist; }
+int get_number(char **name) { (void)name; return 1; }	/* no "2." prefix */
+struct obj_data *get_obj_in_list_num(int num, struct obj_data *list)
+{ (void)num; (void)list; return NULL; }
+int is_number(const char *str)
+{
+  if (!*str)
+    return FALSE;
+  for (; *str; str++)
+    if (!isdigit((unsigned char)*str))
+      return FALSE;
+  return TRUE;
+}
+char *one_argument(char *argument, char *first_arg)
+{
+  while (*argument == ' ')
+    argument++;
+  while (*argument && *argument != ' ')
+    *first_arg++ = *argument++;
+  *first_arg = '\0';
+  return argument;
+}
+void obj_from_char(struct obj_data *object)
+{
+  struct char_data *ch = object->carried_by;
+  struct obj_data **pp;
+
+  for (pp = &ch->carrying; *pp; pp = &(*pp)->next_content)
+    if (*pp == object) {
+      *pp = object->next_content;
+      break;
+    }
+  IS_CARRYING_N(ch)--;
+  IS_CARRYING_W(ch) -= GET_OBJ_WEIGHT(object);
+  object->carried_by = NULL;
+  object->next_content = NULL;
+}
+void obj_to_char(struct obj_data *object, struct char_data *ch)
+{
+  object->next_content = ch->carrying;
+  ch->carrying = object;
+  object->carried_by = ch;
+  IS_CARRYING_N(ch)++;
+  IS_CARRYING_W(ch) += GET_OBJ_WEIGHT(object);
+}
+
+static struct char_data shop_keeper_mob, shop_buyer;
+static struct player_special_data shop_buyer_specials;
+
+/* A keeper (mob) in an open shop holding item, the only unit, for 100
+ * coins; a level 1 player with 1000 coins wants it. */
+static void purchase_fixture(void)
+{
+  memset(&shop_keeper_mob, 0, sizeof(shop_keeper_mob));
+  memset(&shop_buyer, 0, sizeof(shop_buyer));
+  memset(&shop_buyer_specials, 0, sizeof(shop_buyer_specials));
+  SET_BIT_AR(MOB_FLAGS(&shop_keeper_mob), MOB_ISNPC);
+  shop_keeper_mob.player_specials = &dummy_mob;
+  shop_keeper_mob.player.short_descr = (char *)"the shopkeeper";
+  shop_keeper_mob.aff_abils.cha = 11;
+  shop_buyer.player.name = (char *)"Buyer";
+  shop_buyer.player_specials = &shop_buyer_specials;
+  shop_buyer.player.level = 1;
+  shop_buyer.aff_abils.cha = 11;
+  shop_buyer.aff_abils.str = 11;
+  shop_buyer.aff_abils.dex = 11;
+  GET_GOLD(&shop_buyer) = 1000;
+
+  shop.profit_buy = 1.0f;
+  shop.profit_sell = 1.0f;
+  shop.close1 = 28;
+  time_info.hours = 12;
+  shop.message_buy = (char *)"%s That'll be %d coins, thanks.";
+
+  item.short_description = (char *)"a long sword";
+  GET_OBJ_COST(&item) = 100;
+  GET_OBJ_WEIGHT(&item) = 1;
+  obj_to_char(&item, &shop_keeper_mob);
+  SHOP_SORT(0) = 1;
+}
+
+/* shopping_buy() paid the keeper only when "obj", by then the next unit on
+ * offer, was not NULL: buying the last unit of an item the shop does not
+ * produce took the buyer's 100 coins and paid nobody. */
+static void test_buying_last_unit_pays_keeper(void)
+{
+  char arg[] = "sword";
+
+  purchase_fixture();
+  shopping_buy(arg, &shop_buyer, &shop_keeper_mob, 0);
+  TEST_ASSERT_TRUE(shop_buyer.carrying == &item);
+  TEST_ASSERT_NULL(shop_keeper_mob.carrying);
+  TEST_ASSERT_EQUAL_INT(900, GET_GOLD(&shop_buyer));
+  TEST_ASSERT_EQUAL_INT(100, GET_GOLD(&shop_keeper_mob));
+  item.short_description = NULL;
+}
+
+/* A quest item is paid in quest points, which go to nobody: the keeper's
+ * gold stays as it was, last unit or not. */
+static void test_buying_quest_item_pays_no_gold(void)
+{
+  char arg[] = "sword";
+
+  purchase_fixture();
+  SET_BIT_AR(GET_OBJ_EXTRA(&item), ITEM_QUEST);
+  GET_QUESTPOINTS(&shop_buyer) = 150;
+  shopping_buy(arg, &shop_buyer, &shop_keeper_mob, 0);
+  TEST_ASSERT_TRUE(shop_buyer.carrying == &item);
+  TEST_ASSERT_EQUAL_INT(50, GET_QUESTPOINTS(&shop_buyer));
+  TEST_ASSERT_EQUAL_INT(1000, GET_GOLD(&shop_buyer));
+  TEST_ASSERT_EQUAL_INT(0, GET_GOLD(&shop_keeper_mob));
+  item.short_description = NULL;
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -414,5 +540,7 @@ int main(void)
   RUN_TEST(test_read_list_aborts_on_room_vnum_past_idxtype);
   RUN_TEST(test_read_shop_number_reports_each_failure);
   RUN_TEST(test_read_shop_profit_rejects_non_finite);
+  RUN_TEST(test_buying_last_unit_pays_keeper);
+  RUN_TEST(test_buying_quest_item_pays_no_gold);
   return UNITY_END();
 }

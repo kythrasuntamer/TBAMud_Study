@@ -615,7 +615,7 @@ static void shopping_buy(char *arg, struct char_data *ch, struct char_data *keep
   char tempstr[MAX_INPUT_LENGTH - 10], tempbuf[MAX_INPUT_LENGTH];
   char actbuf[MAX_INPUT_LENGTH - 10];
   struct obj_data *obj, *last_obj = NULL;
-  int goldamt = 0, buynum, bought = 0;
+  int goldamt = 0, buynum, bought = 0, quest_purchase;
 
   if (!is_ok(keeper, ch, shop_nr))
     return;
@@ -640,6 +640,9 @@ static void shopping_buy(char *arg, struct char_data *ch, struct char_data *keep
   }
   if (!(obj = get_purchase_obj(ch, arg, keeper, shop_nr, TRUE)))
     return;
+  /* Paid in quest points or in gold? Decided by the item asked for: the
+   * loops below leave obj at the next unit on offer, or NULL. */
+  quest_purchase = OBJ_FLAGGED(obj, ITEM_QUEST);
 
   if (OBJ_FLAGGED(obj, ITEM_QUEST)) {
     if (GET_OBJ_COST(obj) > GET_QUESTPOINTS(ch) && !IS_GOD(ch)) {
@@ -754,7 +757,10 @@ static void shopping_buy(char *arg, struct char_data *ch, struct char_data *keep
       tb_snprintf(buf, sizeof(buf), "%s Something screwy only gave you %d.", GET_NAME(ch), bought);
     do_tell(keeper, buf, cmd_tell, 0);
   }
-  if (!IS_GOD(ch) && obj && !OBJ_FLAGGED(obj, ITEM_QUEST)) {
+  /* The keeper is paid for every unit sold for gold. This used to test the
+   * next unit on offer ("obj && !quest"), so buying the last unit of a
+   * non-produced item took the buyer's gold and paid nobody. */
+  if (!IS_GOD(ch) && !quest_purchase) {
     increase_gold(keeper, goldamt);
     if (SHOP_USES_BANK(shop_nr))
       if (GET_GOLD(keeper) > MAX_OUTSIDE_BANK) {
@@ -772,7 +778,7 @@ static void shopping_buy(char *arg, struct char_data *ch, struct char_data *keep
   tb_snprintf(tempbuf, sizeof(tempbuf), "$n buys %s.", actbuf);
   act(tempbuf, FALSE, ch, obj, 0, TO_ROOM);
 
-  if (obj && OBJ_FLAGGED(obj, ITEM_QUEST)) {
+  if (quest_purchase) {
     tb_snprintf(tempbuf, sizeof(tempbuf), "%s That has cost you %d quest points.", GET_NAME(ch), goldamt);
     do_tell(keeper, tempbuf, cmd_tell, 0);
   } else
