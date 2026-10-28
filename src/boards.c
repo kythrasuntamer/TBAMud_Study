@@ -216,6 +216,8 @@ int board_write_message(int board_type, struct char_data *ch, char *arg, struct 
 {
   time_t ct;
   char buf[MAX_INPUT_LENGTH], buf2[MAX_NAME_LENGTH + 3], tmstr[100];
+  char headline[MAX_INPUT_LENGTH];
+  size_t arg_len;
 
   if (GET_LEVEL(ch) < WRITE_LVL(board_type)) {
     send_to_char(ch, "You are not holy enough to write on this board.\r\n");
@@ -230,12 +232,25 @@ int board_write_message(int board_type, struct char_data *ch, char *arg, struct 
     log("SYSERR: Board: failed to find empty slot on write.");
     return (1);
   }
-  /* skip blanks */
+  /* The headline is player text, and arg points into the caller's command
+   * line (game_loop's comm[MAX_INPUT_LENGTH], or a force/script buffer) at
+   * whatever offset the leading spaces leave it.  Work on a bounded local
+   * copy: storing the 80-column cut into arg itself wrote a NUL up to 80
+   * bytes past the end of the caller's buffer when the headline started
+   * late in the line. */
   skip_spaces(&arg);
-  delete_doubledollar(arg);
+  arg_len = strlcpy(headline, arg, sizeof(headline));
+  delete_doubledollar(headline);
 
   /* JE Truncate headline at 80 chars if it's longer than that. */
-  arg[80] = '\0';
+  if (arg_len >= sizeof(headline) || strlen(headline) > BOARD_HEADLINE_MAX) {
+    TB_WARN_MSG("board", "headline-truncate", FILENAME(board_type),
+                "board vnum %d " DIAG_CHAR_FMT " headline %lu bytes truncated to %d",
+                BOARD_VNUM(board_type), DIAG_CHAR(ch), (unsigned long)arg_len,
+                BOARD_HEADLINE_MAX);
+    headline[BOARD_HEADLINE_MAX] = '\0';
+  }
+  arg = headline;
 
   if (!*arg) {
     send_to_char(ch, "We must have a headline!\r\n");

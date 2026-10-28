@@ -17,6 +17,10 @@
 #define MAX_BOARD_MESSAGES 	60      /* arbitrary -- change if needed */
 #define MAX_MESSAGE_LENGTH	4096	/* arbitrary -- change if needed */
 
+/** Longest headline kept on a post, in bytes, excluding the terminator.
+ * Longer player headlines are cut to this length and reported. */
+#define BOARD_HEADLINE_MAX	80
+
 #define INDEX_SIZE	   ((NUM_OF_BOARDS*MAX_BOARD_MESSAGES) + 5)
 
 #define BOARD_MAGIC	1048575	/* arbitrary number - see modify.c */

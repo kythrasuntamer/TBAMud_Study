@@ -109,6 +109,8 @@ void setUp(void)
   world = &room;
   top_of_world = 0;
   paged[0] = '\0';
+  for (i = 0; i < NUM_OF_BOARDS; i++)
+    (void)remove(FILENAME(i));
   tb_error_capture_reset();
 }
 
@@ -125,6 +127,37 @@ static char *line(const char *text)
   static char buf[MAX_INPUT_LENGTH];
   strlcpy(buf, text, sizeof(buf));
   return buf;
+}
+
+/* Finish the post the writer started: what string_add() would leave. */
+static void finish_post(const char *body)
+{
+  TEST_ASSERT_NOT_NULL(writer_desc.str);
+  *writer_desc.str = strdup(body);
+  writer_desc.str = NULL;
+}
+
+/* Post on board 0 through the production writer, from a heap copy of the
+ * command tail so ASan sees any write past it. */
+static int write_post(const char *headline, const char *body)
+{
+  char *arg = strdup(headline);
+  int ret;
+
+  TEST_ASSERT_NOT_NULL(arg);
+  ret = board_write_message(0, &writer, arg, &board_obj);
+  free(arg);
+  if (writer_desc.str)
+    finish_post(body);
+  return ret;
+}
+
+static void read_post(int num)
+{
+  char arg[16];
+  snprintf(arg, sizeof(arg), "%d", num);
+  paged[0] = '\0';
+  board_display_msg(0, &writer, arg, &board_obj);
 }
 
 /* C1-07: before init_boards() the message index is all zeroes, every entry
@@ -158,6 +191,50 @@ static void test_gen_board_finds_board_by_object_vnum(void)
   TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
 }
 
+/* C1-02: a headline that starts late in the command line had its 80-column
+ * cut written past the end of the caller's buffer. The buffer here is
+ * exactly MAX_INPUT_LENGTH bytes on the heap, like game_loop's comm[]. */
+static void test_late_headline_does_not_write_past_caller_buffer(void)
+{
+  char *comm = malloc(MAX_INPUT_LENGTH);
+  size_t last = MAX_INPUT_LENGTH - 2;
+
+  TEST_ASSERT_NOT_NULL(comm);
+  memset(comm, ' ', MAX_INPUT_LENGTH);
+  memcpy(comm, "write", 5);
+  comm[last] = 'x';
+  comm[last + 1] = '\0';
+
+  TEST_ASSERT_EQUAL_INT(1, board_write_message(0, &writer, comm + 5, &board_obj));
+  if (writer_desc.str)
+    finish_post("body");
+  TEST_ASSERT_EQUAL_CHAR('x', comm[last]);
+  free(comm);
+
+  read_post(1);
+  TEST_ASSERT_NOT_NULL(strstr(paged, ":: x\r\n"));
+}
+
+/* C1-02: an over-long headline is cut to BOARD_HEADLINE_MAX and reported. */
+static void test_long_headline_is_truncated_and_reported(void)
+{
+  char headline[200], expect[BOARD_HEADLINE_MAX + 8];
+
+  memset(headline, 'h', sizeof(headline) - 1);
+  headline[sizeof(headline) - 1] = '\0';
+  write_post(headline, "body");
+
+  TEST_ASSERT_EQUAL_STRING("headline-truncate", tb_captured_operation);
+  TEST_ASSERT_EQUAL_STRING("WARNING", tb_captured_severity);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "player idnum 42"));
+
+  read_post(1);
+  memcpy(expect, ":: ", 3);
+  memset(expect + 3, 'h', BOARD_HEADLINE_MAX);
+  strcpy(expect + 3 + BOARD_HEADLINE_MAX, "\r\n");
+  TEST_ASSERT_NOT_NULL(strstr(paged, expect));
+}
+
 int main(void)
 {
   char dir[] = "/tmp/tb_test_boards.XXXXXX";
@@ -173,5 +250,7 @@ int main(void)
   RUN_TEST(test_gen_board_before_init_is_refused);
   RUN_TEST(test_init_reports_missing_board_object);
   RUN_TEST(test_gen_board_finds_board_by_object_vnum);
+  RUN_TEST(test_late_headline_does_not_write_past_caller_buffer);
+  RUN_TEST(test_long_headline_is_truncated_and_reported);
   return UNITY_END();
 }
