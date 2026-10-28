@@ -1254,6 +1254,21 @@ static int trigedit_save_checked(struct descriptor_data *d)
           GET_TRIG_RNUM(OLC_TRIG(dsc)) >= rnum)
         GET_TRIG_RNUM(OLC_TRIG(dsc))++;
 
+    /* Zone reset 'T' commands hold trigger rnums as well (renum_zone_table()
+     * converted their vnums at boot): shift them the way add_mobile() and
+     * add_object() shift the mob and object rnums of reset commands.  Left
+     * alone, a reset attached whatever trigger now sits at the old rnum and
+     * save_zone() wrote that trigger's vnum into the zone file. */
+    {
+      int zn, cmd_no;
+
+      for (zn = 0; zn <= top_of_zone_table; zn++)
+        for (cmd_no = 0; ZCMD(zn, cmd_no).command != 'S'; cmd_no++)
+          if (ZCMD(zn, cmd_no).command == 'T' &&
+              ZCMD(zn, cmd_no).arg2 != NOTHING && ZCMD(zn, cmd_no).arg2 >= rnum)
+            ZCMD(zn, cmd_no).arg2++;
+    }
+
     trigedit_check_live_rnums(d, rnum);
   }
 

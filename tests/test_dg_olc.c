@@ -32,6 +32,9 @@
 
 static room_data test_room;
 static struct zone_data test_zone;
+/* The zone's reset commands: just the 'S' terminator unless a test adds
+ * some (a loaded zone always has at least that). */
+static struct reset_com test_cmds[4];
 static char_data *builder;
 static struct descriptor_data *bd;
 static char test_dir[64];
@@ -205,6 +208,9 @@ void setUp(void)
   test_zone.bot = 100;
   test_zone.top = 199;
   test_zone.name = "test zone";
+  memset(test_cmds, 0, sizeof(test_cmds));
+  test_cmds[0].command = 'S';
+  test_zone.cmd = test_cmds;
   zone_table = &test_zone;
   top_of_zone_table = 0;
 
@@ -828,6 +834,31 @@ static void script_save_rejects_bad_arguments_loudly(void)
   TEST_ASSERT_EQUAL_INT(0, fclose(fp));
 }
 
+/* DGDOC-10: creating trigger 101 between 100 and 102 moved 102 from rnum 1
+ * to rnum 2, but zone reset 'T' commands kept rnum 1, so the reset attached
+ * 101 instead and save_zone() would have written vnum 101. */
+static void inserting_a_trigger_renumbers_zone_reset_commands(void)
+{
+  const int vnums[] = { 100, 102 };
+
+  make_index(vnums, 2);
+  test_cmds[0].command = 'T';
+  test_cmds[0].arg1 = MOB_TRIGGER;
+  test_cmds[0].arg2 = 1;           /* trigger 102 */
+  test_cmds[1].command = 'T';
+  test_cmds[1].arg1 = WLD_TRIGGER;
+  test_cmds[1].arg2 = 0;           /* trigger 100, below the insertion */
+  test_cmds[2].command = 'S';
+
+  start_edit(101);
+  set_script("say 101\r\n");
+  save_and_quit();
+
+  TEST_ASSERT_EQUAL_INT(3, top_of_trigt);
+  TEST_ASSERT_EQUAL_INT(102, trig_index[test_cmds[0].arg2]->vnum);
+  TEST_ASSERT_EQUAL_INT(100, trig_index[test_cmds[1].arg2]->vnum);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -856,5 +887,6 @@ int main(void)
   RUN_TEST(script_menu_lists_a_missing_trigger);
   RUN_TEST(scratch_trigger_never_borrows_a_cmdlist);
   RUN_TEST(script_save_rejects_bad_arguments_loudly);
+  RUN_TEST(inserting_a_trigger_renumbers_zone_reset_commands);
   return UNITY_END();
 }
