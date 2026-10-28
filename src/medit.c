@@ -246,7 +246,7 @@ static void init_mobile(struct char_data *mob)
 }
 
 /* Save new/edited mob to memory. */
-void medit_save_internally(struct descriptor_data *d)
+static int medit_save_checked(struct descriptor_data *d)
 {
   int i;
   mob_rnum new_rnum, existing;
@@ -276,8 +276,11 @@ void medit_save_internally(struct descriptor_data *d)
   }
 
   if ((new_rnum = add_mobile(OLC_MOB(d), OLC_NUM(d))) == NOBODY) {
-    log("medit_save_internally: add_mobile failed.");
-    return;
+    struct char_data *builder = d->character;
+    TB_ERROR_MSG("olc", "medit-save", "mobile",
+                 "builder " DIAG_CHAR_FMT " mob vnum %d: add_mobile returned NOBODY; edits not saved",
+                 DIAG_CHAR(builder), OLC_NUM(d));
+    return FALSE;
   }
 
   /* Update triggers and free the old proto list. */
@@ -307,12 +310,21 @@ void medit_save_internally(struct descriptor_data *d)
   /* end trigger update */
 
   if (!i)	/* Only renumber on new mobiles. */
-    return;
+    return TRUE;
 
   /* add_mobile() shifted mob_proto up from new_rnum. Move every other open
    * session's mobile rnums with it: zedit 'M' commands, sedit keepers and
    * other medit scratch identities. */
   olc_renumber_sessions(OLC_RNUM_MOB, new_rnum, +1, d);
+  return TRUE;
+}
+
+/* Save the scratch mobile into mob_proto[]; FALSE (reported) when nothing was saved.
+ * Entry point for oasis_copy.c's copy table, which has no failure path;
+ * the failure was already reported by medit_save_checked(). */
+void medit_save_internally(struct descriptor_data *d)
+{
+  (void)medit_save_checked(d);
 }
 
 /* Menu functions
@@ -563,7 +575,11 @@ void medit_parse(struct descriptor_data *d, char *arg)
     case 'y':
     case 'Y':
       /* Save the mob in memory and to disk. */
-      medit_save_internally(d);
+      if (!medit_save_checked(d)) {
+        write_to_output(d, "Internal error: mobile %d could not be saved; nothing was changed.\r\n", OLC_NUM(d));
+        cleanup_olc(d, CLEANUP_ALL);
+        return;
+      }
       mudlog(CMP, MAX(LVL_BUILDER, GET_INVIS_LEV(d->character)), TRUE, "OLC: %s edits mob %d", GET_NAME(d->character), OLC_NUM(d));
       if (CONFIG_OLC_SAVE) {
         medit_save_to_disk(zone_table[real_zone_by_thing(OLC_NUM(d))].number);

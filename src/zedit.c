@@ -42,7 +42,7 @@ static int start_change_command(struct descriptor_data *d, int pos);
 static void zedit_init_new_command(struct descriptor_data *d, int pos);
 static void zedit_setup(struct descriptor_data *d, int room_num);
 static void zedit_new_zone(struct char_data *ch, zone_vnum vzone_num, room_vnum bottom, room_vnum top);
-static void zedit_save_internally(struct descriptor_data *d);
+static int zedit_save_internally(struct descriptor_data *d);
 static void zedit_save_to_disk(int zone_num);
 static void zedit_disp_menu(struct descriptor_data *d);
 static void zedit_disp_comtype(struct descriptor_data *d);
@@ -571,7 +571,9 @@ static void zedit_new_zone(struct char_data *ch, zone_vnum vzone_num, room_vnum 
 
 /* Save all the information in the player's temporary buffer back into
  * the current zone table. */
-static void zedit_save_internally(struct descriptor_data *d)
+/* Splice the scratch room commands and header into zone_table; FALSE
+ * (reported) when nothing was saved. */
+static int zedit_save_internally(struct descriptor_data *d)
 {
   int	mobloaded = FALSE,
 	objloaded = FALSE,
@@ -579,8 +581,11 @@ static void zedit_save_internally(struct descriptor_data *d)
   room_rnum room_num = real_room(OLC_NUM(d));
 
   if (room_num == NOWHERE) {
-    log("SYSERR: zedit_save_internally: OLC_NUM(d) room %d not found.", OLC_NUM(d));
-    return;
+    struct char_data *builder = d->character;
+    TB_ERROR_MSG("olc", "zedit-save", "zone",
+                 "builder " DIAG_CHAR_FMT " room vnum %d zone rnum %d: room no longer exists; commands not saved",
+                 DIAG_CHAR(builder), OLC_NUM(d), (int)OLC_ZNUM(d));
+    return FALSE;
   }
 
   remove_room_zone_commands(OLC_ZNUM(d), room_num);
@@ -640,6 +645,7 @@ static void zedit_save_internally(struct descriptor_data *d)
       zone_table[OLC_ZNUM(d)].zone_flags[(i)] = OLC_ZONE(d)->zone_flags[(i)];
   }
   add_to_save_list(zone_table[OLC_ZNUM(d)].number, SL_ZON);
+  return TRUE;
 }
 
 static void zedit_save_to_disk(int zone)
@@ -1054,7 +1060,11 @@ void zedit_parse(struct descriptor_data *d, char *arg)
     case 'y':
     case 'Y':
       /* Save the zone in memory, hiding invisible people. */
-      zedit_save_internally(d);
+      if (!zedit_save_internally(d)) {
+        write_to_output(d, "Room %d no longer exists; the zone commands were not saved.\r\n", OLC_NUM(d));
+        cleanup_olc(d, CLEANUP_ALL);
+        break;
+      }
       if (CONFIG_OLC_SAVE) {
         write_to_output(d, "Saving zone info to disk.\r\n");
         zedit_save_to_disk(OLC_ZNUM(d));

@@ -181,6 +181,15 @@ void cleanup_olc(struct descriptor_data *d, byte cleanup_type)
   if (!d->olc)
     return;
   olc_free_script_copy(d);   /* as oasis.c does */
+  if (OLC_ZONE(d)) {
+    int i;
+    for (i = 0; OLC_ZONE(d)->cmd && OLC_ZONE(d)->cmd[i].command != 'S'; i++) {
+      free(OLC_ZONE(d)->cmd[i].sarg1);
+      free(OLC_ZONE(d)->cmd[i].sarg2);
+    }
+    free(OLC_ZONE(d)->cmd);
+    free(OLC_ZONE(d));
+  }
   free_scratch_obj(OLC_OBJ(d));
   if (OLC_ROOM(d)) {
     free_room_strings(OLC_ROOM(d));
@@ -1627,6 +1636,52 @@ static void test_sedit_keeper_from_foreign_zone_is_refused(void)
   free_keeper_mobs();
 }
 
+
+/* ------------------------------------------------------------------ */
+/* F1-22: a failed save is reported and never announced as saved.      */
+/* ------------------------------------------------------------------ */
+static void test_oedit_failed_save_is_reported_not_announced(void)
+{
+  struct descriptor_data *d = &builder_desc;
+
+  make_objects(3);
+  OLC_NUM(d) = 4999;              /* add_object() stub returns NOTHING */
+  OLC_OBJ(d) = scratch_obj("a new thing");
+  STATE(d) = CON_OEDIT;
+  OLC_MODE(d) = OEDIT_CONFIRM_SAVESTRING;
+
+  oedit_parse(d, "y");
+
+  TEST_ASSERT_EQUAL_STRING("oedit-save", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "player idnum 4242"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "obj vnum 4999"));
+  TEST_ASSERT_EQUAL_INT(0, mudlogs);
+  TEST_ASSERT_NULL(strstr(out_buf, "saved to"));
+  TEST_ASSERT_NULL(d->olc);
+}
+
+static void test_zedit_save_for_vanished_room_is_reported_not_announced(void)
+{
+  struct descriptor_data *d = &builder_desc;
+  struct reset_com cmd;
+
+  make_world(3);
+  make_zone();
+  memset(&cmd, 0, sizeof(cmd));
+  cmd.command = '*';
+  make_zedit_session(d, &cmd, 1);
+  OLC_NUM(d) = 4000;              /* deleted while this builder edited */
+  OLC_MODE(d) = ZEDIT_CONFIRM_SAVESTRING;
+
+  zedit_parse(d, "y");
+
+  TEST_ASSERT_EQUAL_STRING("zedit-save", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "room vnum 4000"));
+  TEST_ASSERT_EQUAL_INT(0, mudlogs);
+  TEST_ASSERT_NULL(strstr(out_buf, "Saving zone info"));
+  free_zedit_session(d);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -1666,5 +1721,7 @@ int main(void)
   RUN_TEST(test_iedit_affect_change_on_worn_object_is_reapplied);
   RUN_TEST(test_sedit_keeper_choice_leaves_spec_proc_until_save);
   RUN_TEST(test_sedit_keeper_from_foreign_zone_is_refused);
+  RUN_TEST(test_oedit_failed_save_is_reported_not_announced);
+  RUN_TEST(test_zedit_save_for_vanished_room_is_reported_not_announced);
   return UNITY_END();
 }

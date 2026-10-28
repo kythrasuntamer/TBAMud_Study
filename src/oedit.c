@@ -480,7 +480,7 @@ void oedit_setup_existing(struct descriptor_data *d, int real_num)
   OLC_OBJ(d)->proto_script = NULL;
 }
 
-void oedit_save_internally(struct descriptor_data *d)
+static int oedit_save_checked(struct descriptor_data *d)
 {
   int i;
   obj_rnum robj_num, existing;
@@ -511,8 +511,11 @@ void oedit_save_internally(struct descriptor_data *d)
     }
 
   if ((robj_num = add_object(OLC_OBJ(d), OLC_NUM(d))) == NOTHING) {
-    log("oedit_save_internally: add_object failed.");
-    return;
+    struct char_data *builder = d->character;
+    TB_ERROR_MSG("olc", "oedit-save", "object",
+                 "builder " DIAG_CHAR_FMT " obj vnum %d: add_object returned NOTHING; edits not saved",
+                 DIAG_CHAR(builder), OLC_NUM(d));
+    return FALSE;
   }
 
   /* Update triggers and free the old proto list. */
@@ -547,13 +550,22 @@ void oedit_save_internally(struct descriptor_data *d)
   /* end trigger update */
 
   if (!i)	/* If it's not a new object, don't renumber. */
-    return;
+    return TRUE;
 
   /* insert_object() shifted obj_proto up from robj_num. Move every other
    * open session's object rnums with it: zedit commands, sedit products
    * and the scratch identity of other oedit/iedit sessions (a stale one
    * would make their delete or save act on a neighbouring object). */
   olc_renumber_sessions(OLC_RNUM_OBJ, robj_num, +1, d);
+  return TRUE;
+}
+
+/* Save the scratch object into obj_proto[]; FALSE (reported) when nothing was saved.
+ * Entry point for oasis_copy.c's copy table, which has no failure path;
+ * the failure was already reported by oedit_save_checked(). */
+void oedit_save_internally(struct descriptor_data *d)
+{
+  (void)oedit_save_checked(d);
 }
 
 static void oedit_save_to_disk(int zone_num)
@@ -973,7 +985,11 @@ void oedit_parse(struct descriptor_data *d, char *arg)
     switch (*arg) {
     case 'y':
     case 'Y':
-      oedit_save_internally(d);
+      if (!oedit_save_checked(d)) {
+        write_to_output(d, "Internal error: object %d could not be saved; nothing was changed.\r\n", OLC_NUM(d));
+        cleanup_olc(d, CLEANUP_ALL);
+        return;
+      }
       mudlog(CMP, MAX(LVL_BUILDER, GET_INVIS_LEV(d->character)), TRUE,
               "OLC: %s edits obj %d", GET_NAME(d->character), OLC_NUM(d));
       if (CONFIG_OLC_SAVE) {

@@ -246,7 +246,7 @@ void redit_setup_existing(struct descriptor_data *d, int real_num)
   SCRIPT(room) = NULL;
 }
 
-void redit_save_internally(struct descriptor_data *d)
+static int redit_save_checked(struct descriptor_data *d)
 {
   int room_num, new_room = FALSE;
   room_rnum existing;
@@ -272,7 +272,7 @@ void redit_save_internally(struct descriptor_data *d)
                  OLC_ROOM(d)->contents ? "contents " : "",
                  OLC_ROOM(d)->people ? "people" : "");
     write_to_output(d, "Internal error: the room copy is linked to a live room; nothing was saved.\r\n");
-    return;
+    return FALSE;
   }
 
   OLC_ROOM(d)->number = OLC_NUM(d); 
@@ -285,9 +285,11 @@ void redit_save_internally(struct descriptor_data *d)
   old_proto = existing == NOWHERE ? NULL : world[existing].proto_script;
 
   if ((room_num = add_room(OLC_ROOM(d))) == NOWHERE) {
-    write_to_output(d, "Something went wrong...\r\n");
-    log("SYSERR: redit_save_internally: Something failed! (%d)", room_num);
-    return;
+    struct char_data *builder = d->character;
+    TB_ERROR_MSG("olc", "redit-save", "room",
+                 "builder " DIAG_CHAR_FMT " room vnum %d zone rnum %d: add_room returned NOWHERE; edits not saved",
+                 DIAG_CHAR(builder), OLC_NUM(d), (int)OLC_ZNUM(d));
+    return FALSE;
   }
 
   /* Update triggers and free the old proto list. */
@@ -305,7 +307,7 @@ void redit_save_internally(struct descriptor_data *d)
 
   /* Don't adjust numbers on a room update. */
   if (!new_room)
-    return;
+    return TRUE;
 
   /* add_room() shifted world[] up from room_num. Move other open sessions'
    * room rnums with it (idea contributed by C.Raehl 4/27/99). The shared
@@ -313,6 +315,15 @@ void redit_save_internally(struct descriptor_data *d)
    * + 1 would wrap to the Void) and moves only arg1 of 'D' commands: arg2
    * there is a direction, not a room. */
   olc_renumber_sessions(OLC_RNUM_ROOM, room_num, +1, d);
+  return TRUE;
+}
+
+/* Save the scratch room into world[]; FALSE (reported) when nothing was saved.
+ * Entry point for oasis_copy.c's copy table, which has no failure path;
+ * the failure was already reported by redit_save_checked(). */
+void redit_save_internally(struct descriptor_data *d)
+{
+  (void)redit_save_checked(d);
 }
 
 void redit_save_to_disk(zone_vnum zone_num)
@@ -549,7 +560,11 @@ void redit_parse(struct descriptor_data *d, char *arg)
     switch (*arg) {
     case 'y':
     case 'Y':
-      redit_save_internally(d);
+      if (!redit_save_checked(d)) {
+        write_to_output(d, "Room %d could not be saved; nothing was changed.\r\n", OLC_NUM(d));
+        cleanup_olc(d, CLEANUP_ALL);
+        break;
+      }
       mudlog(CMP, MAX(LVL_BUILDER, GET_INVIS_LEV(d->character)), TRUE, "OLC: %s edits room %d.", GET_NAME(d->character), OLC_NUM(d));
       if (CONFIG_OLC_SAVE) {
         redit_save_to_disk(real_zone_by_thing(OLC_NUM(d)));
