@@ -91,24 +91,31 @@ static int House_load(room_vnum vnum)
   return (1);
 }
 
-/* Save all objects for a house (recursive; initial call must be followed by a 
- * call to House_restore_weight)  Assumes file is open already. */
+/** Save all objects for a house (recursive). Assumes fp is open.
+ * Each object's weight is subtracted from its containers while saving, so
+ * the initial call MUST be followed by House_restore_weight() on the same
+ * tree, on failure too. Every object is visited even after a failed record
+ * so that pass stays exact. Records are written flat (Loc 0): container
+ * nesting is not kept across a house reload.
+ * @return 1 only when every record in the tree was written (failures below
+ * the head used to be ignored); objsave_save_obj_record() reports each. */
 int House_save(struct obj_data *obj, FILE *fp)
 {
   struct obj_data *tmp;
-  int result;
+  int ok = 1;
 
   if (obj) {
-    House_save(obj->contains, fp);
-    House_save(obj->next_content, fp);
-    result = objsave_save_obj_record(obj, fp, 0);
-    if (!result)
-      return (0);
+    if (!House_save(obj->contains, fp))
+      ok = 0;
+    if (!House_save(obj->next_content, fp))
+      ok = 0;
+    if (!objsave_save_obj_record(obj, fp, 0))
+      ok = 0;
 
     for (tmp = obj->in_obj; tmp; tmp = tmp->in_obj)
       GET_OBJ_WEIGHT(tmp) -= GET_OBJ_WEIGHT(obj);
   }
-  return (1);
+  return ok;
 }
 
 /* restore weight of containers after House_save has changed them for saving */
@@ -145,6 +152,7 @@ void House_crashsave(room_vnum vnum)
     return;
   }
   if (!House_save(world[rnum].contents, fp)) {
+    House_restore_weight(world[rnum].contents);
     objsave_abort_staged(fp, temp);
     TB_ERROR_MSG("house", "crashsave", buf,
                  "house vnum %d object write failed; live file kept", vnum);

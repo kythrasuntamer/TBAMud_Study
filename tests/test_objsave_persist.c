@@ -474,6 +474,30 @@ static void test_rentsave_success_extracts_everything(void)
   TEST_ASSERT_NOT_NULL(strstr(slurp_rent(), "#100\nLoc : 1\n"));
 }
 
+/* B2-14: a failed record inside a container (below the head object) was
+ * ignored, so the save "succeeded" without the contents and the live file
+ * was replaced by one that had lost them. Weights must also come back. */
+static void test_failed_content_record_fails_the_save(void)
+{
+  static const char old_file[] = "1 1000 0 0 0 0\n$~\n";
+  struct obj_data *bag = read_object(100, VIRTUAL);
+  struct obj_data *trinket = read_object(101, VIRTUAL);
+
+  write_rent_file("Tester", old_file);
+  GET_OBJ_WEIGHT(bag) = 10;
+  GET_OBJ_WEIGHT(trinket) = 3;
+  obj_to_obj(trinket, bag);
+  GET_OBJ_WEIGHT(bag) += GET_OBJ_WEIGHT(trinket);
+  equip_char(&player, bag, WEAR_HOLD);
+  fail_read_vnum = 101;
+
+  TEST_ASSERT_FALSE(Crash_crashsave(&player));
+
+  TEST_ASSERT_EQUAL_STRING(old_file, slurp_rent());
+  TEST_ASSERT_EQUAL_INT(13, GET_OBJ_WEIGHT(bag));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_op_log, "rent-write\n"));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -484,6 +508,7 @@ int main(void)
   RUN_TEST(test_crashsave_commits);
   RUN_TEST(test_rentsave_failure_extracts_nothing);
   RUN_TEST(test_rentsave_success_extracts_everything);
+  RUN_TEST(test_failed_content_record_fails_the_save);
   (void)rmdir(scratch_dir);
   return UNITY_END();
 }

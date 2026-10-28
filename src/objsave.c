@@ -569,24 +569,35 @@ int Crash_load(struct char_data *ch)
   return (Crash_load_objs(ch));
 }
 
+/** Write obj, its later siblings and all their contents to fp.
+ * Order: the sibling chain first, then the contents (Loc one level deeper,
+ * negative), then obj itself, so on reload contents precede their
+ * container, as handle_obj() expects. Each object's weight is subtracted
+ * from the containers holding it, so a reloaded container is not counted
+ * twice; the caller MUST run Crash_restore_weight() on the same tree
+ * afterwards, on failure too. Every object is visited even after a failed
+ * record, so the restore pass stays exact.
+ * @return TRUE only when every record in the tree was written (failures
+ * deeper in the tree used to be ignored and the file committed without
+ * them). objsave_save_obj_record() reports each failed record. */
 static int Crash_save(struct obj_data *obj, FILE *fp, int location)
 {
   struct obj_data *tmp;
-  int result;
+  int ok = TRUE;
 
   if (obj) {
-    Crash_save(obj->next_content, fp, location);
-    Crash_save(obj->contains, fp, MIN(0, location) - 1);
+    if (!Crash_save(obj->next_content, fp, location))
+      ok = FALSE;
+    if (!Crash_save(obj->contains, fp, MIN(0, location) - 1))
+      ok = FALSE;
 
-    result = objsave_save_obj_record(obj, fp, location);
+    if (!objsave_save_obj_record(obj, fp, location))
+      ok = FALSE;
 
     for (tmp = obj->in_obj; tmp; tmp = tmp->in_obj)
       GET_OBJ_WEIGHT(tmp) -= GET_OBJ_WEIGHT(obj);
-
-    if (!result)
-      return FALSE;
   }
-  return (TRUE);
+  return ok;
 }
 
 static void Crash_restore_weight(struct obj_data *obj)
