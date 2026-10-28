@@ -140,6 +140,20 @@ add_mud_test(test_oasis_list
     ${CMAKE_CURRENT_SOURCE_DIR}/test_oasis_list.c
 )
 
+# ---------------------------------------------------------------------------
+# test_oasis_copy — rcopy/dig/buildwalk (src/oasis_copy.c) and cleanup_olc
+# (src/oasis.c); editor back ends are faked in the test file.
+# ---------------------------------------------------------------------------
+add_mud_test(test_oasis_copy
+    ${MUD_SRCDIR}/oasis_copy.c
+    ${MUD_SRCDIR}/oasis.c
+    ${MUD_SRCDIR}/oasis_delete.c
+    ${MUD_SRCDIR}/utils.c
+    ${MUD_SRCDIR}/random.c
+    ${MUD_SRCDIR}/constants.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_oasis_copy.c
+)
+
 # Exercise the actual DG memory-trigger functions under native sanitizers.
 # Discard unrelated dg_triggers.c sections so no game-server linker
 # dependencies are needed for this focused fixture.

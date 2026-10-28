@@ -212,8 +212,7 @@ void redit_setup_existing(struct descriptor_data *d, int real_num)
   /* Fixes bug where copying a room from within that room creates */ 
   /* an infinite loop when you next act() in the new room (goto?) */ 
   /* and you are your next_in_room          -- anderyu (10-05-22) */ 
-  room->people = NULL; 
-  room->contents = NULL;
+  room->people = NULL;
   room->light = 0;
   SCRIPT(room) = NULL;
 

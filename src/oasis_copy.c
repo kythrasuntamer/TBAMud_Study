@@ -141,6 +141,25 @@ ACMD(do_oasis_copy)
   /* Perform the copy. */
   send_to_char(ch, "Copying %s: source: #%d, dest: #%d.\r\n", oasis_copy_info[i].text, src_vnum, dst_vnum);
   (*oasis_copy_info[i].setup_existing)(d, src_rnum);
+
+  /* F3-05: the scratch room is inserted into world[] as a brand-new room.
+   * Its object list, occupant list and event list belong to the source room;
+   * a copied head pointer would leave the new room sharing (and later
+   * dangling into) the source's lists.  redit_setup_existing clears them;
+   * re-check here because the insert path in add_room trusts the template. */
+  if (subcmd == CON_REDIT && OLC_ROOM(d) &&
+      (OLC_ROOM(d)->contents || OLC_ROOM(d)->people || OLC_ROOM(d)->events)) {
+    TB_ERROR_MSG("olc", "room-copy", "world",
+                 "template for new room vnum %d (copy of vnum %d) carries "
+                 "contents %p people %p events %p; clearing for " DIAG_CHAR_FMT,
+                 dst_vnum, src_vnum, (void *)OLC_ROOM(d)->contents,
+                 (void *)OLC_ROOM(d)->people, (void *)OLC_ROOM(d)->events,
+                 DIAG_CHAR(ch));
+    OLC_ROOM(d)->contents = NULL;
+    OLC_ROOM(d)->people = NULL;
+    OLC_ROOM(d)->events = NULL;
+  }
+
   (*oasis_copy_info[i].save_func)(d);
 
   /* Currently CLEANUP_ALL should be used for everything. */
