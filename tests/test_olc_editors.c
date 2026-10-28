@@ -2345,6 +2345,82 @@ static void free_zone_list(void)
   top_of_mobt = 0;
 }
 
+/* A zone header without a builders string saves as such.  Red before the
+ * fix: strdup(NULL) crashed the save.  zone_table owns the copies. */
+static void test_zedit_save_header_without_builders(void)
+{
+  struct descriptor_data *d = &builder_desc;
+  const struct reset_com block[] = { zc('M', 0, 1, 1, 1) };
+  char *scratch_name = strdup("Renamed zone");
+
+  make_world(3);
+  make_objects(3);
+  make_zone();
+  zone_fixture.name = strdup("Test zone");     /* the save frees it */
+  top_of_mobt = 1;
+  set_zone_list(block, 0);
+  make_zedit_session(d, block, 1);
+  OLC_ZONE(d)->number = 30;                    /* header changed */
+  OLC_ZONE(d)->name = scratch_name;
+  OLC_ZONE(d)->builders = NULL;
+  OLC_MODE(d) = ZEDIT_CONFIRM_SAVESTRING;
+
+  zedit_parse(d, "y");
+
+  TEST_ASSERT_NULL(d->olc);
+  TEST_ASSERT_EQUAL_STRING("Renamed zone", zone_fixture.name);
+  TEST_ASSERT_TRUE(zone_fixture.name != scratch_name);   /* its own copy */
+  TEST_ASSERT_NULL(zone_fixture.builders);
+  assert_zone_list(block, 1);
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  free(scratch_name);           /* the cleanup stub frees only the list */
+  free(zone_fixture.name);
+  zone_fixture.name = NULL;
+  free_zone_list();
+}
+
+/* A header with no name is refused before anything live changes, and the
+ * refusal names the builder, zone and room.  Red before the fix: the old
+ * code crashed in strdup(NULL); the first version of this branch returned
+ * only after the room's commands had already replaced the live ones. */
+static void test_zedit_save_header_without_name_changes_nothing(void)
+{
+  struct descriptor_data *d = &builder_desc;
+  const struct reset_com live[] = { zc('M', 0, 0, 1, 1) };
+  const struct reset_com edited[] = { zc('M', 0, 1, 1, 1) };
+  char *scratch_builders = strdup("Bob");
+
+  make_world(3);
+  make_objects(3);
+  make_zone();
+  zone_fixture.name = strdup("Test zone");
+  top_of_mobt = 1;
+  set_zone_list(live, 1);
+  make_zedit_session(d, edited, 1);
+  OLC_ZONE(d)->number = 30;
+  OLC_ZONE(d)->name = NULL;
+  OLC_ZONE(d)->builders = scratch_builders;
+  OLC_MODE(d) = ZEDIT_CONFIRM_SAVESTRING;
+
+  zedit_parse(d, "y");
+
+  TEST_ASSERT_NULL(d->olc);
+  assert_zone_list(live, 1);                       /* commands untouched */
+  TEST_ASSERT_EQUAL_STRING("Test zone", zone_fixture.name);
+  TEST_ASSERT_NULL(zone_fixture.builders);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("zedit-save", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "zone 30 room vnum 3001"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "zone header has no name"));
+  TEST_ASSERT_NOT_NULL(strstr(out_buf, "nothing was saved"));
+  TEST_ASSERT_NULL(strstr(out_buf, "Saving zone info"));
+  TEST_ASSERT_EQUAL_INT(0, mudlogs);
+  free(scratch_builders);
+  free(zone_fixture.name);
+  zone_fixture.name = NULL;
+  free_zone_list();
+}
+
 static void test_zedit_save_keeps_room_block_and_zone_order(void)
 {
   const struct reset_com zone[] = {
@@ -2719,6 +2795,8 @@ int main(void)
   RUN_TEST(test_medit_save_with_unchanged_triggers_keeps_live_scripts);
   RUN_TEST(test_medit_save_with_changed_triggers_rebuilds_live_scripts);
   RUN_TEST(test_zedit_save_keeps_room_block_and_zone_order);
+  RUN_TEST(test_zedit_save_header_without_builders);
+  RUN_TEST(test_zedit_save_header_without_name_changes_nothing);
   RUN_TEST(test_zedit_save_refuses_orphan_give_without_a_gap);
   RUN_TEST(test_zedit_save_appends_a_new_room_block);
   RUN_TEST(test_zedit_save_refuses_unset_mob_and_trigger_args);

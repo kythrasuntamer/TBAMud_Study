@@ -724,13 +724,40 @@ static int zedit_save_internally(struct descriptor_data *d)
   int subcmd, pos, mob_parent, i;
   room_rnum room_num = real_room(OLC_NUM(d));
   zone_rnum zone = OLC_ZNUM(d);
+  struct char_data *builder = d->character;
+  char *new_name = NULL, *new_builders = NULL;
 
   if (room_num == NOWHERE) {
-    struct char_data *builder = d->character;
     TB_ERROR_MSG("olc", "zedit-save", "zone",
                  "builder " DIAG_CHAR_FMT " room vnum %d zone rnum %d: room no longer exists; commands not saved",
                  DIAG_CHAR(builder), OLC_NUM(d), (int)OLC_ZNUM(d));
+    write_to_output(d, "Room %d no longer exists; the zone commands were not saved.\r\n", OLC_NUM(d));
     return FALSE;
+  }
+
+  /* Copy a changed zone header before touching the live zone, so a refused
+   * header leaves the commands and the header exactly as they were. A zone
+   * may have no builders string; the zone file writes it as "None.". */
+  if (OLC_ZONE(d)->number) {
+    if (!OLC_ZONE(d)->name) {
+      TB_ERROR_MSG("olc", "zedit-save", "zone",
+                   "builder " DIAG_CHAR_FMT " zone %d room vnum %d: zone header has no name; nothing saved",
+                   DIAG_CHAR(builder), zone_table[zone].number, OLC_NUM(d));
+      write_to_output(d, "The zone header has no name; nothing was saved.\r\n");
+      return FALSE;
+    }
+    new_name = strdup(OLC_ZONE(d)->name);
+    if (new_name && OLC_ZONE(d)->builders)
+      new_builders = strdup(OLC_ZONE(d)->builders);
+    if (!new_name || (OLC_ZONE(d)->builders && !new_builders)) {
+      TB_ERROR_ERRNO("olc", "zedit-save", "zone",
+                     "builder " DIAG_CHAR_FMT " zone %d room vnum %d: cannot copy the zone header; nothing saved",
+                     DIAG_CHAR(builder), zone_table[zone].number, OLC_NUM(d));
+      free(new_name);
+      free(new_builders);
+      write_to_output(d, "Out of memory copying the zone header; nothing was saved.\r\n");
+      return FALSE;
+    }
   }
 
   /* Every command before the block keeps its index through the removal. */
@@ -755,7 +782,6 @@ static int zedit_save_internally(struct descriptor_data *d)
     if (MYCMD.command == 'M')
       mob_parent = (why == NULL);   /* its 'G'/'E' follow it, or nothing */
     if (why) {
-      struct char_data *builder = d->character;
       char letter = isprint((unsigned char)MYCMD.command) ? MYCMD.command : '?';
 
       TB_ERROR_MSG("olc", "zedit-save", "zone",
@@ -787,25 +813,6 @@ static int zedit_save_internally(struct descriptor_data *d)
 
   /* Finally, if zone headers have been changed, copy over */
   if (OLC_ZONE(d)->number) {
-    /* A zone may have no builders string. Allocate both replacements
-     * before changing the live zone to avoid partial header updates. */
-    char *new_name;
-    char *new_builders = NULL;
-
-    if (!OLC_ZONE(d)->name) {
-      write_to_output(d, "Zone header not saved: missing zone name.\r\n");
-      return;
-    }
-    new_name = strdup(OLC_ZONE(d)->name);
-    if (OLC_ZONE(d)->builders)
-      new_builders = strdup(OLC_ZONE(d)->builders);
-    if (!new_name || (OLC_ZONE(d)->builders && !new_builders)) {
-      free(new_name);
-      free(new_builders);
-      write_to_output(d, "Zone header not saved: insufficient memory.\r\n");
-      return;
-    }
-
     free(zone_table[OLC_ZNUM(d)].name);
     free(zone_table[OLC_ZNUM(d)].builders);
     zone_table[OLC_ZNUM(d)].name = new_name;
@@ -1226,8 +1233,7 @@ void zedit_parse(struct descriptor_data *d, char *arg)
     case 'y':
     case 'Y':
       /* Save the zone in memory, hiding invisible people. */
-      if (!zedit_save_internally(d)) {
-        write_to_output(d, "Room %d no longer exists; the zone commands were not saved.\r\n", OLC_NUM(d));
+      if (!zedit_save_internally(d)) {   /* it told the builder why */
         cleanup_olc(d, CLEANUP_ALL);
         break;
       }
