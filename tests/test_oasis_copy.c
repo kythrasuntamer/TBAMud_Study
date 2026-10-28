@@ -56,7 +56,8 @@ size_t send_to_char(struct char_data *ch, const char *messg, ...)
   size_t used = strlen(sent);
   (void)ch;
   va_start(args, messg);
-  vsnprintf(sent + used, sizeof(sent) - used, messg, args);
+  if (vsnprintf(sent + used, sizeof(sent) - used, messg, args) < 0)
+    sent[used] = '\0';
   va_end(args);
   return strlen(sent) - used;
 }
@@ -67,7 +68,8 @@ size_t write_to_output(struct descriptor_data *d, const char *txt, ...)
   size_t used = strlen(sent);
   (void)d;
   va_start(args, txt);
-  vsnprintf(sent + used, sizeof(sent) - used, txt, args);
+  if (vsnprintf(sent + used, sizeof(sent) - used, txt, args) < 0)
+    sent[used] = '\0';
   va_end(args);
   return strlen(sent) - used;
 }
@@ -354,12 +356,12 @@ static int log_has(const char *needle)
 {
   char line[MAX_STRING_LENGTH];
   int found = 0;
-  fflush(capture_log);
-  rewind(capture_log);
+  TEST_ASSERT_EQUAL_INT(0, fflush(capture_log));
+  TEST_ASSERT_EQUAL_INT(0, fseek(capture_log, 0L, SEEK_SET));
   while (fgets(line, sizeof(line), capture_log))
     if (strstr(line, needle))
       found = 1;
-  fseek(capture_log, 0, SEEK_END);
+  TEST_ASSERT_EQUAL_INT(0, fseek(capture_log, 0L, SEEK_END));
   return found;
 }
 
@@ -409,7 +411,7 @@ void tearDown(void)
   descriptor_list = NULL;
   logfile = NULL;
   if (capture_log)
-    fclose(capture_log);
+    (void)fclose(capture_log);
   capture_log = NULL;
 }
 

@@ -329,13 +329,13 @@ void test_count_color_chars_trailing_lone_tab_stays_in_bounds(void)
     TEST_ASSERT_NOT_NULL(cap);
     logfile = cap;
     TEST_ASSERT_EQUAL_INT(1, count_color_chars(s));
-    fflush(cap);
-    rewind(cap);
+    TEST_ASSERT_EQUAL_INT(0, fflush(cap));
+    TEST_ASSERT_EQUAL_INT(0, fseek(cap, 0L, SEEK_SET));
     while (fgets(line, sizeof(line), cap))
         if (strstr(line, "op=color-escape") && !strstr(line, "a sword"))
             seen = 1;
     logfile = stderr;
-    fclose(cap);
+    (void)fclose(cap);
     free(s);
     TEST_ASSERT_TRUE(seen);
 }
