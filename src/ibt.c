@@ -254,6 +254,14 @@ static int read_ibt(const char *filename, FILE *fp, int recno, IBT_DATA **out)
               if ( dated ) {
                 ibtData->dated = tb_parse_long_or_zero(dated);
                 STRFREE( dated );
+                /* A submission time before 1970 means the file is corrupt;
+                 * 0 is shown as "Unknown". */
+                if (ibtData->dated < 0) {
+                  TB_WARN_MSG("ibt", "ibt-load", filename,
+                              TB_ERRID_PARSER_RANGE " record %d field Dated %ld is negative; shown as unknown",
+                              recno, ibtData->dated);
+                  ibtData->dated = 0;
+                }
               }
               if ( !ibtData->name )
                 ibtData->name = STRALLOC("");
@@ -668,7 +676,22 @@ ACMD(do_ibt)
       } else {
         send_to_char(ch, "%s%s by %s%s\r\n",QCYN, ibt_types[subcmd], QYEL, ibtData->name);
         if (ibtData->dated != 0) {
-          tb_strftime(timestr, sizeof(timestr), "%c", localtime(&(ibtData->dated)));
+          /* dated is a long (ibt.h) read from the IBT file.  localtime()
+           * takes a time_t, which is wider than long on LLP64 and 32-bit
+           * builds, and returns NULL for a time it cannot represent; then
+           * tb_strftime() left timestr unwritten and its stack bytes were
+           * sent to the player. */
+          time_t dated = (time_t)ibtData->dated;
+          const struct tm *when = localtime(&dated);
+
+          if (when)
+            tb_strftime(timestr, sizeof(timestr), "%c", when);
+          else {
+            TB_WARN_MSG("ibt", "ibt-date", ibt_types[subcmd],
+                        "%s %d (serial %ld) date %ld cannot be converted; shown as unknown",
+                        ibt_types[subcmd], ano, ibtData->serial, ibtData->dated);
+            strlcpy(timestr, "Unknown", sizeof(timestr));
+          }
         } else {
           strlcpy(timestr, "Unknown", sizeof(timestr));
         }

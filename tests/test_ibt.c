@@ -36,15 +36,20 @@ void __wrap_tb_error_log_at(const char *severity, const char *subsystem,
 /* ---- fakes for symbols outside the linked sources --------------------- */
 
 static char sent[MAX_STRING_LENGTH];
+/* Everything sent since the test cleared it; sent holds the last message. */
+static char sent_all[MAX_STRING_LENGTH * 2];
 
 size_t send_to_char(struct char_data *ch, const char *messg, ...)
 {
   va_list args;
+  size_t used = strlen(sent_all);
   (void)ch;
   va_start(args, messg);
   if (vsnprintf(sent, sizeof(sent), messg, args) < 0)
     sent[0] = '\0';
   va_end(args);
+  if (used < sizeof(sent_all) - 1)
+    strlcpy(sent_all + used, sent, sizeof(sent_all) - used);
   return strlen(sent);
 }
 size_t write_to_output(struct descriptor_data *d, const char *txt, ...)
@@ -173,6 +178,7 @@ void setUp(void)
   world = &room;
   top_of_world = 0;
   sent[0] = '\0';
+  sent_all[0] = '\0';
   tb_error_capture_reset();
 }
 
@@ -543,6 +549,35 @@ static void test_ibtedit_menu_shows_current_number(void)
   TEST_ASSERT_NULL(imm.desc.olc);
 }
 
+/* C1-17: 'Dated' comes from the IBT file.  A negative date (corruption) is
+ * reported and kept as 0, which is shown as "Unknown". */
+static void test_load_negative_date_is_reported(void)
+{
+  write_bugs_file("Text      title~\n"
+                  "Body      b\n~\n"
+                  "Name      Alice~\n"
+                  "Dated     -5\n"
+                  "End\n");
+  load_ibt_file(SCMD_BUG);
+  TEST_ASSERT_EQUAL_INT(1, count_bugs());
+  TEST_ASSERT_EQUAL_INT(0, first_bug->dated);
+  TEST_ASSERT_EQUAL_STRING("ibt-load", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "record 0 field Dated -5"));
+}
+
+/* C1-17: for a date localtime() cannot represent, tb_strftime() left the
+ * 'Submitted:' buffer unwritten and 'show' sent its stack bytes. */
+static void test_show_unconvertible_date_says_unknown(void)
+{
+  submit_bug(&pa, "dated", "body");
+  first_bug->dated = LONG_MAX;
+  sent_all[0] = '\0';
+  ibt_cmd(&imm, "show 1");
+  TEST_ASSERT_NOT_NULL(strstr(sent_all, "Submitted: Unknown"));
+  TEST_ASSERT_EQUAL_STRING("ibt-date", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "Bug 1"));
+}
+
 int main(void)
 {
   char dir[] = "/tmp/tb_test_ibt.XXXXXX";
@@ -571,5 +606,7 @@ int main(void)
   RUN_TEST(test_ibtedit_unexpected_mode_ends_session);
   RUN_TEST(test_ibtedit_menu_with_empty_name_and_text);
   RUN_TEST(test_ibtedit_menu_shows_current_number);
+  RUN_TEST(test_load_negative_date_is_reported);
+  RUN_TEST(test_show_unconvertible_date_says_unknown);
   return UNITY_END();
 }
