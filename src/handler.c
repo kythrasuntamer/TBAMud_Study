@@ -33,15 +33,40 @@ static int apply_ac(struct char_data *ch, int eq_pos);
 static void update_object(struct obj_data *obj, int use);
 static void affect_modify_ar(struct char_data * ch, byte loc, sbyte mod, int bitv[], bool add);
 
+/**
+ * Return the first keyword (leading run of letters) of a namelist.
+ *
+ * Namelists are builder text: exit keywords (redit, up to MAX_INPUT_LENGTH),
+ * object aliases and mob names from OLC or world files (up to
+ * MAX_STRING_LENGTH). A keyword longer than READ_SIZE - 1 letters is
+ * truncated and reported as "fname-truncate"; only its length is logged,
+ * never the builder text.
+ *
+ * @return A static buffer that the next call overwrites. Two fname() results
+ *         in one printf alias each other; copy the first if you need both.
+ */
 char *fname(const char *namelist)
 {
   static char holder[READ_SIZE];
   char *point;
+  const char *start = namelist;
 
-  for (point = holder; isalpha(*namelist); namelist++, point++)
+  for (point = holder;
+       isalpha((unsigned char) *namelist) && point < holder + sizeof(holder) - 1;
+       namelist++, point++)
     *point = *namelist;
 
   *point = '\0';
+
+  if (isalpha((unsigned char) *namelist)) {
+    size_t len = (size_t) (namelist - start);
+
+    while (isalpha((unsigned char) start[len]))
+      len++;
+    TB_WARN_MSG("handler", "fname-truncate", "namelist",
+                "first keyword is %zu letters, exceeds %zu; truncated",
+                len, sizeof(holder) - 1);
+  }
 
   return (holder);
 }
