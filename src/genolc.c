@@ -87,6 +87,10 @@ static int export_info_file(zone_rnum zrnum);
 static int export_count_zone_exits(zone_rnum zrnum);
 static int export_close(FILE *fl, const char *path, zone_rnum zrnum);
 
+/* Prepare one line of OLC text in place: smash_tilde() blanks a '~' at end
+ * of line (it would end the string in the world file) and parse_at() turns
+ * '@' colour codes into '\t'. Always returns TRUE; callers' failure branches
+ * are never taken. Field limits and permissions are the caller's job. */
 int genolc_checkstring(struct descriptor_data *d, char *arg)
 {
   smash_tilde(arg);

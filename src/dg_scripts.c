@@ -1642,7 +1642,10 @@ static int clamp_script_int(const trig_data *trig, const char *op,
   return (int)value;
 }
 
-/* evaluates 'lhs op rhs', and copies to result */
+/* Evaluate 'lhs op rhs' into result (MAX_INPUT_LENGTH bytes). lhs and rhs
+ * are modified in place (dg_restore_percent(), trailing blanks cut), so
+ * pass writable scratch copies. Every result is a number; int arithmetic
+ * saturates and reports dg/script-arith. */
 static void eval_op(char *op, char *lhs, char *rhs, char *result, void *go,
              struct script_data *sc, trig_data *trig)
 {
@@ -1935,7 +1938,9 @@ static int eval_lhs_op_rhs(char *expr, char *result, void *go, struct script_dat
   return 0;
 }
 
-/* returns 1 if cond is true, else 0 */
+/* Script truth: after leading blanks, an empty result or one starting with
+ * '0' is false ("0", "05", "0.5"); anything else is true. Area scripts
+ * rely on this, so it is not C truthiness. */
 static int process_if(char *cond, void *go, struct script_data *sc,
                trig_data *trig, int type)
 {

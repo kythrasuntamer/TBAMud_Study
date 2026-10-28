@@ -63,6 +63,8 @@
 #error "save_char() does not fire wear/remove triggers (B2-21): keep NO_EXTRANEOUS_TRIGGERS defined in dg_scripts.h"
 #endif
 
+/* LOAD_* select which load_HMVS() field a line fills; they are not
+ * file-format versions. */
 #define LOAD_HIT	0
 #define LOAD_MANA	1
 #define LOAD_MOVE	2

@@ -172,6 +172,9 @@ ACMD(do_oasis_redit)
     GET_NAME(ch), zone_table[OLC_ZNUM(d)].number, GET_OLC_ZONE(ch));
 }
 
+/* Scratch room for a new vnum: placeholder name/description, number
+ * NOWHERE, no script. cleanup_olc(d, CLEANUP_ALL) frees it on every exit;
+ * a save copies it into world[] first. */
 static void redit_setup_new(struct descriptor_data *d)
 {
   CREATE(OLC_ROOM(d), struct room_data, 1);
@@ -598,7 +601,11 @@ static void redit_disp_menu(struct descriptor_data *d)
   OLC_MODE(d) = REDIT_MAIN_MENU;
 }
 
-/* The main loop*/
+/* Room editor input, by OLC_MODE. Edits touch only the scratch OLC_ROOM;
+ * world[] changes only via redit_save_checked() at the save prompt (a
+ * refusal leaves the world unchanged) or the delete confirmation
+ * (permission-checked, reported). Every exit ends in
+ * cleanup_olc(d, CLEANUP_ALL). */
 void redit_parse(struct descriptor_data *d, char *arg)
 {
   int number;

@@ -2501,8 +2501,12 @@ int write_to_descriptor(socket_t desc, const char *txt)
   return (write_total);
 }
 
-/* Same information about perform_socket_write applies here. I like
- * standards, there are so many of them. -gg 6/30/98 */
+/* Same information about perform_socket_write applies here (-gg 6/30/98).
+ * Returns the byte count (> 0); 0 when the read would block or was
+ * interrupted (EINTR, EAGAIN, EWOULDBLOCK; EDEADLK on old Macs;
+ * WSAEWOULDBLOCK/WSAEINTR on Windows); -1 on peer EOF (logged as a
+ * warning), ECONNRESET, or any other error (logged). The caller reserves
+ * room for its own terminator. */
 static ssize_t perform_socket_read(socket_t desc, char *read_point, size_t space_left)
 {
   ssize_t ret;

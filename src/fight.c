@@ -28,7 +28,9 @@
 
 
 /* locally defined global variables, used externally */
-/* head of l-list of fighting chars */
+/* head of l-list of fighting chars. Add only through set_fighting() and
+ * remove only through stop_fighting(), which keeps perform_violence()'s
+ * next_combat_list iterator valid. */
 struct char_data *combat_list = NULL;
 /* Weapon attack texts */
 struct attack_hit_type attack_hit_text[] =
@@ -1000,6 +1002,10 @@ static int compute_thaco(struct char_data *ch, struct char_data *victim)
   return calc_thaco;
 }
 
+/* One attack. fight_mtrigger() runs first and may move, purge or rearm
+ * either side, so hit() then checks co-location (else stop_fighting),
+ * DEAD() on both (reported as fight/hit-after-trigger) and reads the
+ * wielded weapon only after the trigger. Keep those guards. */
 void hit(struct char_data *ch, struct char_data *victim, int type)
 {
   struct obj_data *wielded;
@@ -1143,7 +1149,10 @@ void hit(struct char_data *ch, struct char_data *victim, int type)
   hitprcnt_mtrigger(victim);
 }
 
-/* control the fights going on.  Called every 2 seconds from comm.c. */
+/* One combat round (every PULSE_VIOLENCE). next_combat_list is taken before
+ * ch acts; stop_fighting() advances it if the round removes that character.
+ * NPCs wait out GET_MOB_WAIT and stand up; anyone below POS_FIGHTING skips
+ * the attack. */
 void perform_violence(void)
 {
   struct char_data *ch, *tch;

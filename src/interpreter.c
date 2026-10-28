@@ -1781,7 +1781,9 @@ EVENTFUNC(get_protocols)
   return 0;
 }
 
-/* deal with newcomers and other non-playing sockets */
+/* Deal with newcomers and other non-playing sockets. OLC editor states are
+ * dispatched (olc_functions[]) before the login switch, so a descriptor in
+ * an editing state never has its input read as a login command. */
 void nanny(struct descriptor_data *d, char *arg)
 {
   int load_result;	/* Overloaded variable */

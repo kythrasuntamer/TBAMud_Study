@@ -192,6 +192,9 @@ static void medit_save_to_disk(zone_vnum foo)
   save_mobiles(real_zone(foo));
 }
 
+/* Scratch mobile for a new vnum: init_mobile() defaults, nr NOBODY,
+ * placeholder strings, no script. cleanup_olc() frees it with free_mobile()
+ * on every exit; a save copies it into mob_proto[] first. */
 static void medit_setup_new(struct descriptor_data *d)
 {
   struct char_data *mob;
@@ -588,6 +591,12 @@ static void medit_disp_stats_menu(struct descriptor_data *d)
   OLC_MODE(d) = MEDIT_STATS_MENU;
 }
 
+/* Mobile editor input, by OLC_MODE. Numeric modes refuse anything but a
+ * whole number (the delete y/n excepted); string modes go through
+ * genolc_checkstring(). Edits touch only the scratch OLC_MOB; mob_proto[]
+ * changes only at the save prompt (medit_save_checked()) or at the delete
+ * confirmation (the delete path, delete_mobile()). Every exit ends in
+ * cleanup_olc(d, CLEANUP_ALL). */
 void medit_parse(struct descriptor_data *d, char *arg)
 {
   int i = -1, j;

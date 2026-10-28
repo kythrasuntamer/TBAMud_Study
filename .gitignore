@@ -107,6 +107,9 @@ syslog
 log/*
 syslog*
 
+# Logs tee'd at the repository root by the README build commands.
+/*.log
+
 # Python bytecode (tests and tools run Python contracts)
 __pycache__/
 *.pyc

@@ -41,14 +41,19 @@
 /* local functions */
 static int remove_cmd_from_list(struct reset_com **list, int pos, zone_vnum znum);
 
-/* Only the temporary index is removed on failure; preserve the live index. */
+/* Remove a failed staging index without disturbing the authoritative
+ * zone index.  Ignore a missing stage file; report other cleanup errors
+ * at the failing filesystem operation.
+ */
 static void cleanup_new_zone_index(const char *path)
 {
   if (remove(path) != 0 && errno != ENOENT)
     TB_REPORT_ERRNO("remove", path);
 }
 
-/* Index entries start with a decimal zone number followed by a file suffix. */
+/* Parse the leading zone number of an index line ("30.zon"): decimal
+ * 0..INT_MAX, then '.', blank or end of line. Returns 0 and leaves *number
+ * unchanged on anything else, including NULL arguments. */
 static int parse_zone_index_number(const char *text, int *number)
 {
   char *end;

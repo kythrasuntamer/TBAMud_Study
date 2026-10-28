@@ -114,6 +114,9 @@ obj_rnum top_of_objt = 0;	/* top of object index table	 */
 struct zone_data *zone_table; /* zone table      */
 zone_rnum top_of_zone_table = 0;/* top element of zone tab   */
 
+/* Player index globals: defined here for history, owned and maintained by
+ * players.c (see its file header). remove_player_from_index() compacts the
+ * table, so a saved index can go stale. */
 /* begin previously located in players.c */
 struct player_index_element *player_table = NULL; /* index to plr file   */
 int top_of_p_table = 0;   /* ref to top of table     */

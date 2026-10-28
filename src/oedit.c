@@ -89,6 +89,11 @@ static void iedit_replace_string(struct obj_data *obj, char **field, char *new_s
 static int iedit_save_internally(struct descriptor_data *d);
 static int iedit_is_forbidden_main_menu_choice(char *arg);
 
+/* Start iedit on a live object the builder can reach (equipment, inventory,
+ * room). Needs can_edit_zone() on the prototype's zone, or LVL_GRGOD for an
+ * object with no prototype; a refusal is reported as olc/iedit-permission.
+ * The object can be extracted mid-edit, so its UID is kept and revalidated
+ * on save. Never touches obj_proto. */
 ACMD(do_oasis_iedit)
 {
   struct descriptor_data *d;
