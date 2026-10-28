@@ -876,6 +876,20 @@ static void attach_to_a_player_is_refused_before_loading(void)
   remove_from_lookup_table(pc.script_id, &pc);
 }
 
+/* find_case() handed eval_op() the case line itself, which it trimmed in
+ * place, so running a switch rewrote the prototype's script text. */
+static void switch_leaves_case_text_unchanged(void)
+{
+  static char case1[] = "case 1   ", case2[] = "case 2   ";
+  static const char *lines[] = { "switch 2", NULL, "first", NULL, "second", "done", NULL };
+
+  lines[1] = case1;
+  lines[3] = case2;
+  TEST_ASSERT_EQUAL_INT(1, run_object_lines(lines));
+  TEST_ASSERT_EQUAL_STRING("case 1   ", case1);
+  TEST_ASSERT_EQUAL_STRING("case 2   ", case2);
+}
+
 static void restore_round_trips_neutralize(void)
 {
   char text[] = "50% off, 100%% sure";
@@ -916,5 +930,6 @@ int main(void)
   RUN_TEST(obj_extra_field_lists_every_flag);
   RUN_TEST(detached_script_frees_its_variables);
   RUN_TEST(attach_to_a_player_is_refused_before_loading);
+  RUN_TEST(switch_leaves_case_text_unchanged);
   return UNITY_END();
 }

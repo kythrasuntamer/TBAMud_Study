@@ -3110,9 +3110,10 @@ static struct cmdlist_element *
 find_case(struct trig_data *trig, struct cmdlist_element *cl,
           void *go, struct script_data *sc, int type, char *cond)
 {
-  char result[MAX_INPUT_LENGTH];
+  char result[MAX_INPUT_LENGTH], value[MAX_INPUT_LENGTH];
+  char matched[MAX_INPUT_LENGTH];
   struct cmdlist_element *c;
-  char *p, *buf;
+  char *p;
 
   eval_expr(cond, result, go, sc, trig, type);
 
@@ -3124,13 +3125,12 @@ find_case(struct trig_data *trig, struct cmdlist_element *cl,
       if (!(c = find_done(c)))
         break;
     } else if (!strn_cmp("case ", p, 5)) {
-      buf = (char*)malloc(MAX_STRING_LENGTH);
-      eval_op("==", result, p + 5, buf, go, sc, trig);
-      if (*buf && *buf!='0') {
-        free(buf);
+      /* eval_op() trims its operands in place; the line is shared with the
+       * trigger prototype, so compare a copy. */
+      strlcpy(value, p + 5, sizeof(value));
+      eval_op("==", result, value, matched, go, sc, trig);
+      if (*matched && *matched != '0')
         return c;
-      }
-      free(buf);
     } else if (!strn_cmp("default", p, 7))
       return c;
     else if (!strn_cmp("done", p, 3))
