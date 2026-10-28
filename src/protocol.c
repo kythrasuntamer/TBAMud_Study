@@ -69,6 +69,11 @@
 #define ISALPHA_C(c)  isalpha((unsigned char) (c))
 #define TOLOWER_C(c)  tolower((unsigned char) (c))
 
+/* True when v names a real MSDP variable, i.e. a valid index into
+ * VariableNameTable[] and pProtocol->pVariables[]. eMSDP_NONE and
+ * eMSDP_MAX are sentinels with no storage behind them. */
+#define MSDP_VAR_VALID(v)  ((int) (v) > eMSDP_NONE && (int) (v) < eMSDP_MAX)
+
 /* Globals */
 const char * RGBone = "F022";
 const char * RGBtwo = "F055";
@@ -1301,7 +1306,7 @@ void MSDPUpdate( descriptor_t *apDescriptor )
 
 void MSDPFlush( descriptor_t *apDescriptor, variable_t aMSDP )
 {
-   if ( aMSDP > eMSDP_NONE && aMSDP < eMSDP_MAX )
+   if ( MSDP_VAR_VALID(aMSDP) )
    {
       protocol_t *pProtocol = apDescriptor ? apDescriptor->pProtocol : NULL;
 
@@ -1323,7 +1328,7 @@ void MSDPSend( descriptor_t *apDescriptor, variable_t aMSDP )
 {
    char MSDPBuffer[MAX_VARIABLE_LENGTH+1] = { '\0' };
 
-   if ( aMSDP > eMSDP_NONE && aMSDP < eMSDP_MAX )
+   if ( MSDP_VAR_VALID(aMSDP) )
    {
       protocol_t *pProtocol = apDescriptor ? apDescriptor->pProtocol : NULL;
 
@@ -1496,7 +1501,7 @@ void MSDPSetNumber( descriptor_t *apDescriptor, variable_t aMSDP, int aValue )
 {
    protocol_t *pProtocol = apDescriptor ? apDescriptor->pProtocol : NULL;
 
-   if ( pProtocol != NULL && aMSDP > eMSDP_NONE && aMSDP < eMSDP_MAX )
+   if ( pProtocol != NULL && MSDP_VAR_VALID(aMSDP) )
    {
       if ( !VariableNameTable[aMSDP].bString )
       {
