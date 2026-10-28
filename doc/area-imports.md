@@ -2,7 +2,9 @@
 
 Do **not** copy downloaded files directly into `lib/world`. Existing zone
 numbers, per-record VNUMs, reset commands, special functions and triggers may
-conflict, even when filenames differ. No area has been imported by this PR.
+conflict, even when filenames differ. Two Crimson 2 areas are installed
+(zones 47 and 58), converted by `tools/convert_crimson2.py`; see
+"Installed Crimson 2 areas" below. Nothing else is installed.
 
 ## Sources to review
 
@@ -84,15 +86,17 @@ gameplay. Other original areas may not be supported.
 Example using a *locally obtained and rights-cleared* file:
 ```sh
 python3 tools/convert_smaug_rooms.py /tmp/chapel.are \
-  --offset 500000 --output /tmp/chapel-converted.wld --allow-partial
+  --offset 60000 --output /tmp/chapel-converted.wld --allow-partial
 ```
+Destination vnums must stay within 1..65534 (IDXTYPE; 65535 is NOWHERE).
 
 The resulting `.wld` file is **not** a complete, installable zone:
 it lacks converted mobiles, objects, shops, area resets and scripts, plus
 a validated `.zon` file and index. Do not copy it directly to
 `lib/world`. The source sample `chapel.are` contains resets and keyed
 exits, so the converter will currently **reject** it, by design.
-No third-party areas have been committed to this repository.
+The only third-party areas in this repository are the two Crimson 2
+specimens (imports/quarantine/README.md) and their converted zones 47/58.
 
 ## SillyMUD converter status
 
@@ -181,8 +185,8 @@ verified from source documentation or code. Unknowns are held for review.
 Do not confuse an area's own peaceful theme with the source game's rules;
 apply this criterion to the originating game, not individual rooms.
 
-This is an import eligibility policy only; no third-party area files are
-included or activated by this change.
+This is an import eligibility policy. The only third-party areas installed
+are the owner-approved Crimson 2 conversions described below.
 
 ## Joining imported zones to the existing world
 
@@ -194,7 +198,7 @@ without modifying the original world files:
 ```sh
 python3 tools/bridge_areas.py \
   --existing-wld lib/world/wld/0.wld --existing-room 99 \
-  --imported-wld /tmp/approved-world/wld/5000.wld --imported-room 500000 \
+  --imported-wld /tmp/approved-world/wld/600.wld --imported-room 60000 \
   --direction north --staging /tmp/bridge-review
 ```
 
@@ -213,7 +217,10 @@ candidate world files:
 
 ```sh
 python3 tools/audit_world_vnums.py lib/world /tmp/approved-world
-python3 -m unittest discover -s tests -p 'test_area_*.py'
+python3 tools/validate_import_refs.py lib/world /tmp/approved-world
+for t in test_area_inventory test_area_safety test_import_refs \
+         test_area_import_regressions test_convert_crimson2; do
+  python3 -I tests/$t.py; done        # also registered with ctest
 ```
 
 The audit searches every numbered file in each VNUM family rather than
@@ -237,14 +244,18 @@ Do not activate until ALL are true:
 7. A reviewed bridge connects an unoccupied existing exit to the imported
    area and back, with both directions tested in-game.
 
-The present branch adds some tools for steps 3-4 and 7, but **does not**
-complete all of these gates or bundle any third-party world data.
+The tools cover steps 3-5 and 7. The two installed Crimson 2 zones passed
+steps 3-6 (see below); step 1 is the owner's Crimson 2 exception, step 2
+remains open (author redistribution rights unverified), and step 7 is not
+done: the zones are not linked to the stock world yet.
 
-## Crimson 2: excluded (documented PvP)
+## Crimson 2: PvP source (see the owner-approved exception below)
 
 The Crimson-2-MUD repository has about 214 area object files in `dev/lib/areas`, plus world, mob and zone files. Its object record format has nonstandard fields and affects; direct copying is unsafe.
 
-**Rejected under the project's PvE-only, no-PvP policy.** Crimson MUD II supports optional player killing and player looting. Do not publish, convert for installation, or activate its areas or objects unless the owner explicitly changes source eligibility policy.
+Crimson MUD II supports optional player killing and player looting, so under
+the PvE-only policy it would be excluded; the owner made it the single
+exception below, on condition that PvP features are stripped.
 
 Evidence: https://www.mudconnect.com/cgi-bin/search.cgi?mode=mud_listing&mud=Crimson+MUD+2
 Repository: https://github.com/c2admins/Crimson-2-MUD
@@ -256,3 +267,55 @@ Crimson 2 is **the sole exception** to the normal ban on PvP-source MUDs. Its ar
 Conversion must eliminate PvP-only commands, scripts, rewards, flags, arena/dueling mechanics and player-targeting combat behavior; preserve normal NPC combat and PvE loot. It must reject any unsupported or ambiguous PvP feature rather than copying it over. Extracted content must also undergo independent copyright/attribution review, VNUM remapping and reference validation, equipment/stat scaling for mortal levels 1-50, and isolated Fil-C/tbaMUD load and gameplay tests before any world activation. Merely stripping labels does not prove PvP elimination.
 
 The source repository has separate `.wld`, `.mob`, `.obj`, `.zon` files in `dev/lib/areas` and nonstandard records; these **must not** be copied into live `lib/world` unconverted. The original source exception does not automatically clear third-party content licensing.
+
+## Installed Crimson 2 areas (zones 47 and 58)
+
+Converted from the quarantined specimens by `tools/convert_crimson2.py`,
+which maps every field by its meaning in Crimson 2's own loader (src/db.c at
+c2admins/Crimson-2-MUD 2b7207b), reports every value it drops with
+`file:line vnum`, and refuses unresolved references. `tests/test_convert_crimson2.py`
+regenerates both zones and requires them to match the installed files byte
+for byte, so they cannot drift by hand edits.
+
+```sh
+python3 tools/convert_crimson2.py imports/quarantine/crimson2/Moria34 \
+  --zone 47 --offset 600 --out /tmp/c2 --drop-external \
+  --name "Mines of Moria, Levels 3-4 (Crimson 2)"
+python3 tools/convert_crimson2.py imports/quarantine/crimson2/Shatterstone \
+  --zone 58 --out /tmp/c2 --drop-external \
+  --name "Shatterstone (Crimson 2, unfinished)"
+```
+
+| Zone | Source | Vnums | Rooms / mobs / objs / resets |
+| --- | --- | --- | --- |
+| 47 | Moria34 | 4700-4799 (source 4100-4125, +600: they collided with stock zone 41) | 26 / 9 / 6 / 21 |
+| 58 | Shatterstone | 5800-5899 (source 5830-5841, unchanged) | 12 / 2 / 1 / 0 |
+
+What the conversion changed (the full list prints when the tool runs):
+- **PvP stripped:** room flag NOPKILL (room 4715) and any ARENA flag are
+  dropped; no Crimson code, commands or scripts are imported.
+- Crimson-only mechanics with no tbaMUD equivalent are dropped: act2/act3
+  words, creature classes (undead, giant), poisonous, regeneration, demon
+  flesh, magic resist, extra attacks and attack skills, teleport-block room
+  flags, room level limits, and weapon value 0.
+- Casters: the Mage (4700) and Melcrin (4708) listed Crimson spells; tbaMUD
+  gives them the `magic_user` spec proc (src/spec_assign.c) instead.
+- Numbering that differs is mapped: anti-thief/anti-cleric bits swap,
+  SPELL_IDENTIFY 53 -> 52, Crimson attack types -> tbaMUD's, object level
+  from Crimson's MINLVL flags, and keyword lists lose Crimson's "mob"/"obj"
+  prefix.
+- Exits into Crimson's own world (4099, 5100, 21400, 21420) are dropped.
+
+Open owner decisions:
+- **Not linked.** Neither zone has an entrance from the stock world; use
+  `tools/bridge_areas.py` once an entry room is chosen. Immortals can
+  `goto 4700` / `goto 5830`.
+- **Zone 47 duplicates stock content.** Moria34 is Crimson's edition of the
+  same DikuMUD Mines of Moria levels 3-4 that ship as zone 41 (25 of 26
+  rooms share vnum and name). New in it: Melcrin, the Blade of the Moors
+  Trolls and the phantom.
+- **Zone 58 is an unfinished upstream template** ("Blank Zone", a "Blank
+  Mob", no resets); its torch carries +100 hitroll and +145 damroll. It boots
+  but loads nothing until resets are written.
+- Author redistribution rights remain unverified (see the README).
+
