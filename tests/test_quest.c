@@ -404,9 +404,61 @@ static void test_questmaster_finds_secondary_on_any_quest(void)
   TEST_ASSERT_TRUE(quests[0].func == fake_shop);
 }
 
+/* genqst.c fixtures for delete_quest(). */
+zone_rnum real_zone_by_thing(room_vnum vznum) { (void)vznum; return NOWHERE; }
+void add_to_save_list(zone_vnum zone, int type) { (void)zone; (void)type; }
+void *tb_realloc_array_at(void *ptr, size_t count, size_t element_size,
+                          const char *source_file, int source_line,
+                          const char *source_func)
+{
+  (void)source_file; (void)source_line; (void)source_func;
+  return realloc(ptr, count * element_size);
+}
+
+/* H3-V01: deleting the last quest of questmaster mob vnum 500 restores the
+ * spec proc on mob_index[real_mobile(500)], not on mob_index[500]. */
+static void test_delete_last_quest_restores_qm_by_rnum(void)
+{
+  struct aq_data *table = calloc(1, sizeof(*table));
+
+  TEST_ASSERT_NOT_NULL(table);
+  table[0].vnum = 450;
+  table[0].qm = 500;
+  table[0].func = fake_shop;
+  aquest_table = table;
+  total_quests = 1;
+  mob_index_fixture[0].func = questmaster;
+
+  TEST_ASSERT_TRUE(delete_quest(0));
+
+  TEST_ASSERT_EQUAL_INT(0, total_quests);
+  TEST_ASSERT_TRUE(mob_index_fixture[0].func == fake_shop);
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  mob_index_fixture[0].func = NULL;
+}
+
+/* H3-V01: a QM vnum with no prototype is reported and nothing is written. */
+static void test_delete_last_quest_unknown_qm_reports(void)
+{
+  struct aq_data *table = calloc(1, sizeof(*table));
+
+  TEST_ASSERT_NOT_NULL(table);
+  table[0].vnum = 451;
+  table[0].qm = 3005;
+  aquest_table = table;
+  total_quests = 1;
+
+  TEST_ASSERT_TRUE(delete_quest(0));
+
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("delete-quest-qm", tb_captured_operation);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(test_delete_last_quest_restores_qm_by_rnum);
+  RUN_TEST(test_delete_last_quest_unknown_qm_reports);
   RUN_TEST(test_questmaster_finds_secondary_on_any_quest);
   /* parse_quest keeps its row index across calls: run it first, once. */
   RUN_TEST(test_parse_reports_unknown_qm_and_skipped_lines);

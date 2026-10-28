@@ -130,12 +130,16 @@ int delete_quest(qst_rnum rnum)
 {
   qst_rnum i;
   zone_rnum rznum;
-  mob_vnum qm = QST_MASTER(rnum);
+  mob_vnum qm;
+  mob_rnum qmr;
+  qst_vnum deleted_vnum;
   SPECIAL (*tempfunc);
   int  quests_remaining = 0;
 
   if (rnum >= total_quests)
     return FALSE;
+  qm = QST_MASTER(rnum);
+  deleted_vnum = QST_NUM(rnum);
   rznum = real_zone_by_thing(QST_NUM(rnum)); 
   log("GenOLC: delete_quest: Deleting quest #%d (%s).",
        QST_NUM(rnum), QST_NAME(rnum));
@@ -166,8 +170,15 @@ int delete_quest(qst_rnum rnum)
       if (QST_MASTER(i) == qm)
         quests_remaining++;
     }
-    if (quests_remaining == 0)
-      mob_index[qm].func = tempfunc; // point back to original spec proc
+    /* QST_MASTER is a mob VNUM: mob_index[] is indexed by rnum. */
+    if (quests_remaining == 0) {
+      if ((qmr = real_mobile(qm)) == NOBODY)
+        TB_ERROR_MSG("genqst", "delete-quest-qm", "mob_index",
+                     "quest vnum %d qm mob vnum %d has no rnum; spec proc not restored",
+                     (int) deleted_vnum, (int) qm);
+      else
+        mob_index[qmr].func = tempfunc; // point back to original spec proc
+    }
   }
   return TRUE;
 }
