@@ -170,8 +170,9 @@ void __wrap_cleanup_olc(struct descriptor_data *d, byte cleanup_type)
 }
 
 /* ---------------------------------------------------------------------
- * Fixtures: one zone (save_all() looks the config's zone up), a builder
- * at LVL_IMPL, and a scratch directory for the configuration file.
+ * Fixtures: one zone (save_all() looks the config's zone up), rooms for
+ * the tests that need them, a builder at LVL_IMPL, and a scratch
+ * directory for the configuration file.
  * ------------------------------------------------------------------- */
 static struct zone_data fixture_zone;
 static struct char_data builder;
@@ -186,6 +187,34 @@ static void world_fixture(void)
   fixture_zone.top = 3099;
   zone_table = &fixture_zone;
   top_of_zone_table = 0;
+}
+
+/* A room spec proc that the dts_are_dumps option does not control. */
+static SPECIAL(other_room_proc)
+{ (void)ch; (void)me; (void)cmd; (void)argument; return FALSE; }
+
+/* Three rooms; top_of_world is the last rnum, inclusive.  Rooms 0 and 2
+ * are dumps, room 1 has another spec proc.  Heap-allocated at the exact
+ * size so ASan reports any index past the end. */
+static void rooms_fixture(void)
+{
+  room_rnum i;
+
+  top_of_world = 2;
+  world = calloc((size_t)top_of_world + 1, sizeof(*world));
+  TEST_ASSERT_NOT_NULL(world);
+  for (i = 0; i <= top_of_world; i++)
+    world[i].number = (room_vnum)(3000 + i);
+  world[0].func = dump;
+  world[1].func = other_room_proc;
+  world[2].func = dump;
+}
+
+static void rooms_fixture_free(void)
+{
+  free(world);
+  world = NULL;
+  top_of_world = 0;
 }
 
 static void builder_fixture(void)
@@ -309,6 +338,7 @@ void tearDown(void)
 {
   if (builder_desc.olc)
     __wrap_cleanup_olc(&builder_desc, CLEANUP_ALL);
+  rooms_fixture_free();
   free_save_list();
   save_list = NULL;
   free_config_strings();
@@ -438,11 +468,67 @@ static void test_every_setting_survives_save_and_reboot(void)
   EVERY_STRING_SETTING(CHECK_STRING)
 }
 
+/* ---------------------------------------------------------------------
+ * The editor, driven through its entry points
+ * ------------------------------------------------------------------- */
+static void open_cedit(void)
+{
+  char cmd[] = "";
+
+  do_oasis_cedit(&builder, cmd, 0, 0);
+  TEST_ASSERT_EQUAL_INT(CON_CEDIT, STATE(&builder_desc));
+}
+
+static void type(const char *line)
+{
+  char buf[MAX_INPUT_LENGTH];
+
+  TEST_ASSERT_EQUAL_INT_MESSAGE(CON_CEDIT, STATE(&builder_desc),
+                                "typed into a descriptor that is not in cedit");
+  strlcpy(buf, line, sizeof(buf));
+  out[0] = '\0';
+  cedit_parse(&builder_desc, buf);
+}
+
+/* From the main menu: quit, and answer yes to keeping the changes. */
+static void quit_and_apply(void)
+{
+  type("q");
+  type("y");
+  TEST_ASSERT_NULL(builder_desc.olc);
+  TEST_ASSERT_EQUAL_INT(CON_PLAYING, STATE(&builder_desc));
+}
+
+/* Turning "Death Traps Junk Items" off makes cedit_save_internally() run
+ * reassign_rooms(), which must take the dump proc off every room, the
+ * last one included (its loop stopped at top_of_world - 1, audit F2-20),
+ * and leave other spec procs alone before assign_rooms() runs again. */
+static void test_turning_off_dt_dumps_clears_every_room_including_the_last(void)
+{
+  CONFIG_DTS_ARE_DUMPS = YES;
+  CONFIG_OLC_SAVE = NO;
+  rooms_fixture();
+  open_cedit();
+  type("g");          /* Game Play Options */
+  type("m");          /* toggle Death Traps Junk Items */
+  type("q");          /* back to the main menu */
+  quit_and_apply();
+
+  TEST_ASSERT_EQUAL_INT(NO, CONFIG_DTS_ARE_DUMPS);
+  TEST_ASSERT_EQUAL_INT(1, assign_rooms_calls);
+  TEST_ASSERT_NULL(world[0].func);
+  TEST_ASSERT_TRUE_MESSAGE(world[1].func == other_room_proc,
+                           "a non-dump spec proc was cleared");
+  TEST_ASSERT_NULL_MESSAGE(world[top_of_world].func,
+                           "the last room kept its dump proc");
+}
+
 int main(void)
 {
   UNITY_BEGIN();
   RUN_TEST(test_display_closed_doors_survives_save_and_reboot);
   RUN_TEST(test_min_rent_cost_survives_save_and_reboot);
   RUN_TEST(test_every_setting_survives_save_and_reboot);
+  RUN_TEST(test_turning_off_dt_dumps_clears_every_room_including_the_last);
   return UNITY_END();
 }
