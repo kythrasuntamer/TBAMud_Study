@@ -214,6 +214,38 @@ void test_do_ban_accepts_site_at_limit(void)
   TEST_ASSERT_EQUAL_INT(0, captured_errors);
 }
 
+/* valid_name() must refuse a name another connection is still creating.
+ * It tested for idnum -1, but clear_char() leaves 0 and init_char() gives
+ * the idnum only when creation finishes, so the check never fired and two
+ * connections could create the same character. */
+void test_valid_name_refuses_name_being_created(void)
+{
+  static struct descriptor_data other;
+  static struct char_data creating;
+  char name[] = "bob";
+
+  memset(&other, 0, sizeof(other));
+  memset(&creating, 0, sizeof(creating));
+  creating.player.name = (char *)"Bob";   /* named at CON_GET_NAME */
+  other.character = &creating;
+  other.desc_num = 5;
+  STATE(&other) = CON_QSEX;               /* mid-creation, idnum 0 */
+  descriptor_list = &other;
+
+  TEST_ASSERT_FALSE(valid_name(name));
+  TEST_ASSERT_EQUAL_INT(1, captured_errors);
+  TEST_ASSERT_EQUAL_STRING("name-in-creation", captured_ops[0]);
+
+  /* A created character has an idnum; one playing is not being created. */
+  GET_IDNUM(&creating) = 42;
+  TEST_ASSERT_TRUE(valid_name(name));
+  GET_IDNUM(&creating) = 0;
+  STATE(&other) = CON_PLAYING;
+  TEST_ASSERT_TRUE(valid_name(name));
+  TEST_ASSERT_EQUAL_INT(1, captured_errors);
+  descriptor_list = NULL;
+}
+
 int main(void)
 {
   int rc;
@@ -231,6 +263,7 @@ int main(void)
   RUN_TEST(test_load_well_formed_file_is_silent);
   RUN_TEST(test_do_ban_refuses_overlong_site);
   RUN_TEST(test_do_ban_accepts_site_at_limit);
+  RUN_TEST(test_valid_name_refuses_name_being_created);
   rc = UNITY_END();
 
   rmdir("etc");
