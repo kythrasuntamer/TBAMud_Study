@@ -1094,6 +1094,17 @@ void add_trigger(struct script_data *sc, trig_data *t, int loc)
   trigger_list = t;
 }
 
+/* Zone whose builders may attach or detach triggers on a character: a mob's
+ * prototype zone, or the zone of the room a player stands in. NOWHERE (no
+ * prototype, no room) makes can_edit_zone() refuse everyone. */
+static zone_rnum dg_char_edit_zone(const char_data *victim)
+{
+  if (IS_NPC(victim))
+    return real_zone_by_thing(GET_MOB_VNUM(victim));
+  return VALID_ROOM_RNUM(IN_ROOM(victim)) ? world[IN_ROOM(victim)].zone
+                                          : NOWHERE;
+}
+
 ACMD(do_attach)
 {
   char_data *victim;
@@ -1133,7 +1144,13 @@ ACMD(do_attach)
       send_to_char(ch, "Players can't have scripts.\r\n");
       return;
     }
-    if (!can_edit_zone(ch, world[IN_ROOM(ch)].zone)) {
+    /* The target's zone, as do_detach checks: the builder's own room let
+     * anyone standing in their zone attach to a mob anywhere. */
+    if (!can_edit_zone(ch, dg_char_edit_zone(victim))) {
+      TB_WARN_MSG("dg", "attach-denied", "do_attach",
+                  "builder " DIAG_CHAR_FMT ": trigger %d on " DIAG_CHAR_FMT
+                  " outside the builder's zones; refused", DIAG_CHAR(ch), tn,
+                  DIAG_CHAR(victim));
       send_to_char(ch, "You can only attach triggers in your own zone.\r\n");
       return;
     }
@@ -1175,7 +1192,11 @@ ACMD(do_attach)
       }
     }
 
-    if (!can_edit_zone(ch, world[IN_ROOM(ch)].zone)) {
+    if (!can_edit_zone(ch, real_zone_by_thing(GET_OBJ_VNUM(object)))) {
+      TB_WARN_MSG("dg", "attach-denied", "do_attach",
+                  "builder " DIAG_CHAR_FMT ": trigger %d on obj vnum %d uid "
+                  "%ld outside the builder's zones; refused", DIAG_CHAR(ch),
+                  tn, GET_OBJ_VNUM(object), object->script_id);
       send_to_char(ch, "You can only attach triggers in your own zone.\r\n");
       return;
     }
@@ -1452,9 +1473,15 @@ ACMD(do_detach)
 
     if (victim) {
 
-      if (!SCRIPT(victim)) 
-        send_to_char(ch, "That %s doesn't have any triggers.\r\n", IS_NPC(victim) ? "mob" : "player");  
-      else if (!can_edit_zone(ch, real_zone_by_thing(GET_MOB_VNUM(victim))) && IS_NPC(victim)) {
+      if (!SCRIPT(victim))
+        send_to_char(ch, "That %s doesn't have any triggers.\r\n", IS_NPC(victim) ? "mob" : "player");
+      /* A player used to skip the zone check, so any builder could strip
+       * another player's triggers; players now follow attach's rule. */
+      else if (!can_edit_zone(ch, dg_char_edit_zone(victim))) {
+        TB_WARN_MSG("dg", "detach-denied", "do_detach",
+                    "builder " DIAG_CHAR_FMT ": triggers of " DIAG_CHAR_FMT
+                    " outside the builder's zones; refused", DIAG_CHAR(ch),
+                    DIAG_CHAR(victim));
         send_to_char(ch, "You can only detach triggers in your own zone\r\n");
         return;
       }

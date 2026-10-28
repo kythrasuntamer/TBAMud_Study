@@ -1232,6 +1232,35 @@ static void level_setter_never_changes_an_immortal(void)
   TEST_ASSERT_EQUAL_STRING("field-clamp", tb_captured_operation);
 }
 
+/* DGDOC-2: do_attach checked the zone of the room the builder stood in, not
+ * the target's, so a builder in their own zone could attach a trigger to a
+ * mob or object anywhere (do_detach already checked the target). */
+static void attach_checks_the_target_zone(void)
+{
+  char_data *b = make_imm(), *mob = make_mob("zzmob");
+  obj_data *mine = make_proto_obj("zzmine"), *stray = make_obj("zzstray");
+
+  GET_LEVEL(b) = LVL_BUILDER;      /* zone 1's builder, standing in zone 1 */
+  GET_OLC_ZONE(b) = 1;
+  obj_to_room(mine, 0);
+  obj_to_room(stray, 0);           /* no prototype: belongs to no zone */
+
+  immortal_command(do_attach, b, " mob 9000 zzmob");
+  TEST_ASSERT_NULL(SCRIPT(mob));
+  TEST_ASSERT_EQUAL_STRING("attach-denied", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "player idnum 4242"));
+
+  tb_error_capture_reset();
+  immortal_command(do_attach, b, " obj 9000 zzstray");
+  TEST_ASSERT_NULL(SCRIPT(stray));
+  TEST_ASSERT_EQUAL_STRING("attach-denied", tb_captured_operation);
+
+  tb_error_capture_reset();
+  immortal_command(do_attach, b, " obj 9000 zzmine");
+  TEST_ASSERT_NOT_NULL(SCRIPT(mine));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -1282,5 +1311,6 @@ int main(void)
   RUN_TEST(unplaced_owner_room_lookups_are_reported);
   RUN_TEST(unplaced_mob_script_runs_no_command);
   RUN_TEST(level_setter_never_changes_an_immortal);
+  RUN_TEST(attach_checks_the_target_zone);
   return UNITY_END();
 }
