@@ -448,8 +448,10 @@ int save_config( IDXTYPE nowhere )
               "track_through_doors = %d\n\n", CONFIG_TRACK_T_DOORS);
   tb_fprintf(fl, "* Should players who reach enough exp be prevented from automatically levelling to immortal?\n"
               "no_mort_to_immort = %d\n\n", CONFIG_NO_MORT_TO_IMMORT);
+  /* load_config() (db.c) reads this key as "display_closed_doors"; the
+   * "disp_closed_doors" this used to write was ignored at boot. */
   tb_fprintf(fl, "* Should closed doors be shown on autoexit / exit?\n"
-              "disp_closed_doors = %d\n\n", CONFIG_DISP_CLOSED_DOORS);
+              "display_closed_doors = %d\n\n", CONFIG_DISP_CLOSED_DOORS);
   tb_fprintf(fl, "* Are diagonal directions enabled?\n"
               "diagonal_dirs = %d\n\n", CONFIG_DIAGONAL_DIRS);
   tb_fprintf(fl, "* Who can use the map functions? 0=off, 1=on, 2=imm_only\n"

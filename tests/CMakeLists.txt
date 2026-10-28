@@ -1162,3 +1162,32 @@ add_gameplay_test(test_act_offensive ${CMAKE_CURRENT_SOURCE_DIR}/test_act_offens
 if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
     target_link_options(test_act_offensive PRIVATE -Wl,--wrap=command_interpreter)
 endif()
+
+# ---------------------------------------------------------------------------
+# test_cedit_config — production configuration editor (cedit.c) with the
+# production config loader (db.c load_config), its defaults (config.c),
+# GenOLC's save list (genolc.c), utils.c helpers, oasis.c's split_argument
+# and modify.c's colour-code conversion, so a written config file is
+# reloaded by the real loader.
+# test_stubs.c is omitted: db.c and config.c define the globals it stubs.
+# cleanup_olc and tb_error_log_at are wrapped; the test supplies both.
+# ---------------------------------------------------------------------------
+add_executable(test_cedit_config
+    $<TARGET_OBJECTS:unity_vendor>
+    ${MUD_SRCDIR}/cedit.c
+    ${MUD_SRCDIR}/db.c
+    ${MUD_SRCDIR}/config.c
+    ${MUD_SRCDIR}/genolc.c
+    ${MUD_SRCDIR}/utils.c
+    ${MUD_SRCDIR}/oasis.c
+    ${MUD_SRCDIR}/modify.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_cedit_config.c
+)
+target_include_directories(test_cedit_config PRIVATE ${TEST_INCLUDES})
+target_compile_options(test_cedit_config PRIVATE ${TEST_CFLAGS})
+add_test(NAME test_cedit_config COMMAND test_cedit_config)
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_compile_options(test_cedit_config PRIVATE -ffunction-sections -fdata-sections)
+    target_link_options(test_cedit_config PRIVATE -Wl,--gc-sections
+        -Wl,--wrap=tb_error_log_at -Wl,--wrap=cleanup_olc)
+endif()
