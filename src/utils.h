@@ -1028,10 +1028,16 @@ do                                                              \
    (((IS_CARRYING_W(ch) + GET_OBJ_WEIGHT(obj)) <= CAN_CARRY_W(ch)) &&   \
     ((IS_CARRYING_N(ch) + 1) <= CAN_CARRY_N(ch)))
 
-/** Can ch pick up obj? */
+/** Can ch pick up obj? It must be takeable, within ch's carrying limits and
+ * visible to ch, and nobody may be sitting on it: do_get() refuses occupied
+ * furniture the same way. Moving occupied furniture out of its room unseats
+ * the sitters (obj_from_room() reports furniture-move-occupied), so a
+ * scavenger mob must not carry off a chair with players in it (H2-06).
+ * This is a selection rule, not an error, so it reports nothing.
+ * Evaluates ch and obj several times: pass plain variables. */
 #define CAN_GET_OBJ(ch, obj)   \
    (CAN_WEAR((obj), ITEM_WEAR_TAKE) && CAN_CARRY_OBJ((ch),(obj)) && \
-    CAN_SEE_OBJ((ch),(obj)))
+    CAN_SEE_OBJ((ch),(obj)) && !OBJ_SAT_IN_BY(obj))
 
 /** If vict can see ch, return ch name, else return "someone". */
 #define PERS(ch, vict)   (CAN_SEE(vict, ch) ? GET_NAME(ch) : (GET_LEVEL(ch) > LVL_IMMORT ? "an immortal" : "someone"))
