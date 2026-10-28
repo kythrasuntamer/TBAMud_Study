@@ -3293,19 +3293,29 @@ ACMD(do_show)
 
 /* The do_set function */
 
-#define PC   1
-#define NPC  2
-#define BOTH 3
+/* set_fields[].pcnpc: which kinds of character a field applies to. The
+ * SET_ prefix keeps these from colliding with other headers; all of the
+ * do_set macros are #undef'd after do_set. */
+#define SET_PC     1
+#define SET_NPC    2
+#define SET_BOTH   3
 
-#define MISC	0
-#define BINARY	1
-#define NUMBER	2
+/* set_fields[].type: how perform_set parses the value. */
+#define SET_MISC   0
+#define SET_BINARY 1
+#define SET_NUMBER 2
 
-#define SET_OR_REMOVE(flagset, flags) { \
-        if (on) SET_BIT_AR(flagset, flags); \
-        else if (off) REMOVE_BIT_AR(flagset, flags); }
+/* Set or clear flag in flagset per the on/off word perform_set parsed.
+ * A statement (do/while), so it is safe in if/else. */
+#define SET_OR_REMOVE(flagset, flag) do { \
+  if (on) SET_BIT_AR((flagset), (flag)); \
+  else if (off) REMOVE_BIT_AR((flagset), (flag)); \
+} while (0)
 
-#define RANGE(low, high) (value = MAX((low), MIN((high), (value))))
+/* Clamp v to low..high, store it back and yield it. v is evaluated several
+ * times: pass a plain variable (perform_set's value). The clamped value is
+ * what gets stored and echoed. */
+#define SET_RANGE(v, low, high) ((v) = MAX((low), MIN((high), (v))))
 
 /* The set options available */
 static struct set_struct {
@@ -3314,72 +3324,72 @@ static struct set_struct {
     const char pcnpc;
     const char type;
   } set_fields[] = {
-   { "ac",		LVL_BUILDER, 	BOTH, 	NUMBER },  /* 0  */
-   { "afk",             LVL_BUILDER,	PC,	BINARY },  /* 1  */
-   { "age",		LVL_GOD,	BOTH,	NUMBER },
-   { "align",		LVL_BUILDER, 	BOTH, 	NUMBER },
-   { "bank",		LVL_BUILDER, 	PC, 	NUMBER },
-   { "brief",		LVL_GOD, 	PC, 	BINARY },  /* 5  */
-   { "cha",		LVL_BUILDER, 	BOTH, 	NUMBER },
-   { "class",		LVL_BUILDER, 	BOTH, 	MISC },
-   { "color",		LVL_GOD, 	PC, 	BINARY },
-   { "con", 		LVL_BUILDER, 	BOTH, 	NUMBER },
-   { "damroll",		LVL_BUILDER, 	BOTH, 	NUMBER },  /* 10 */
-   { "deleted",		LVL_IMPL, 	PC, 	BINARY },
-   { "dex", 		LVL_BUILDER, 	BOTH, 	NUMBER },
-   { "drunk",		LVL_BUILDER, 	BOTH, 	MISC },
-   { "exp", 		LVL_GOD, 	BOTH, 	NUMBER },
-   { "frozen",		LVL_GRGOD, 	PC,	BINARY },  /* 15 */
-   { "gold",		LVL_BUILDER, 	BOTH, 	NUMBER },
-   { "height",		LVL_BUILDER,	BOTH,	NUMBER },
-   { "hitpoints",       LVL_BUILDER, 	BOTH, 	NUMBER },
-   { "hitroll",		LVL_BUILDER, 	BOTH, 	NUMBER },
-   { "hunger",		LVL_BUILDER, 	BOTH, 	MISC },    /* 20 */
-   { "int", 		LVL_BUILDER, 	BOTH, 	NUMBER },
-   { "invis",		LVL_GOD, 	PC, 	NUMBER },
-   { "invstart",        LVL_BUILDER,	PC, 	BINARY },
-   { "killer",		LVL_GOD, 	PC, 	BINARY },
-   { "level",		LVL_GRGOD, 	BOTH, 	NUMBER },  /* 25 */
-   { "loadroom",	LVL_BUILDER, 	PC, 	MISC },
-   { "mana",		LVL_BUILDER, 	BOTH, 	NUMBER },
-   { "maxhit",	        LVL_BUILDER, 	BOTH, 	NUMBER },
-   { "maxmana",       	LVL_BUILDER, 	BOTH, 	NUMBER },
-   { "maxmove",		LVL_BUILDER, 	BOTH, 	NUMBER },  /* 30 */
-   { "move",		LVL_BUILDER, 	BOTH, 	NUMBER },
-   { "name",	LVL_IMMORT, 	PC, 	MISC },
-   { "nodelete",	LVL_GOD, 	PC, 	BINARY },
-   { "nohassle",	LVL_GOD, 	PC, 	BINARY },
-   { "nosummon",	LVL_BUILDER,	PC,	BINARY },  /* 35 */
-   { "nowizlist", 	LVL_GRGOD, 	PC, 	BINARY },
-   { "olc",		LVL_GRGOD,	PC,	MISC },
-   { "password",	LVL_GRGOD,	PC,	MISC },
-   { "poofin",		LVL_IMMORT,	PC,	MISC },
-   { "poofout",         LVL_IMMORT,	PC,	MISC },   /* 40 */
-   { "practices", 	LVL_GOD, 	PC, 	NUMBER },
-   { "quest",		LVL_GOD, 	PC, 	BINARY },
-   { "room",		LVL_BUILDER, 	BOTH, 	NUMBER },
-   { "screenwidth", LVL_GOD,  PC,   NUMBER },
-   { "sex", 		LVL_GOD, 	BOTH, 	MISC },  /* 45 */
-   { "showvnums",  LVL_BUILDER,  PC, BINARY },
-   { "siteok",   LVL_GOD,  PC,   BINARY },
-   { "str",		LVL_BUILDER, 	BOTH, 	NUMBER },
-   { "stradd",		LVL_BUILDER, 	BOTH, 	NUMBER },
-   { "thief",		LVL_GOD, 	PC, 	BINARY }, /* 50 */
-   { "thirst",		LVL_BUILDER, 	BOTH, 	MISC },
-   { "title",		LVL_GOD, 	PC, 	MISC   },
-   { "variable",        LVL_GRGOD,	PC,	MISC },
-   { "weight",		LVL_BUILDER,	BOTH,	NUMBER },
-   { "wis", 		LVL_BUILDER, 	BOTH, 	NUMBER }, /* 55 */
-   { "questpoints",     LVL_GOD,        PC,     NUMBER },
-   { "questhistory",    LVL_GOD,        PC,   NUMBER },
-   { "\n", 0, BOTH, MISC }
+   { "ac",		LVL_BUILDER, 	SET_BOTH, 	SET_NUMBER },  /* 0  */
+   { "afk",             LVL_BUILDER,	SET_PC,	SET_BINARY },  /* 1  */
+   { "age",		LVL_GOD,	SET_BOTH,	SET_NUMBER },
+   { "align",		LVL_BUILDER, 	SET_BOTH, 	SET_NUMBER },
+   { "bank",		LVL_BUILDER, 	SET_PC, 	SET_NUMBER },
+   { "brief",		LVL_GOD, 	SET_PC, 	SET_BINARY },  /* 5  */
+   { "cha",		LVL_BUILDER, 	SET_BOTH, 	SET_NUMBER },
+   { "class",		LVL_BUILDER, 	SET_BOTH, 	SET_MISC },
+   { "color",		LVL_GOD, 	SET_PC, 	SET_BINARY },
+   { "con", 		LVL_BUILDER, 	SET_BOTH, 	SET_NUMBER },
+   { "damroll",		LVL_BUILDER, 	SET_BOTH, 	SET_NUMBER },  /* 10 */
+   { "deleted",		LVL_IMPL, 	SET_PC, 	SET_BINARY },
+   { "dex", 		LVL_BUILDER, 	SET_BOTH, 	SET_NUMBER },
+   { "drunk",		LVL_BUILDER, 	SET_BOTH, 	SET_MISC },
+   { "exp", 		LVL_GOD, 	SET_BOTH, 	SET_NUMBER },
+   { "frozen",		LVL_GRGOD, 	SET_PC,	SET_BINARY },  /* 15 */
+   { "gold",		LVL_BUILDER, 	SET_BOTH, 	SET_NUMBER },
+   { "height",		LVL_BUILDER,	SET_BOTH,	SET_NUMBER },
+   { "hitpoints",       LVL_BUILDER, 	SET_BOTH, 	SET_NUMBER },
+   { "hitroll",		LVL_BUILDER, 	SET_BOTH, 	SET_NUMBER },
+   { "hunger",		LVL_BUILDER, 	SET_BOTH, 	SET_MISC },    /* 20 */
+   { "int", 		LVL_BUILDER, 	SET_BOTH, 	SET_NUMBER },
+   { "invis",		LVL_GOD, 	SET_PC, 	SET_NUMBER },
+   { "invstart",        LVL_BUILDER,	SET_PC, 	SET_BINARY },
+   { "killer",		LVL_GOD, 	SET_PC, 	SET_BINARY },
+   { "level",		LVL_GRGOD, 	SET_BOTH, 	SET_NUMBER },  /* 25 */
+   { "loadroom",	LVL_BUILDER, 	SET_PC, 	SET_MISC },
+   { "mana",		LVL_BUILDER, 	SET_BOTH, 	SET_NUMBER },
+   { "maxhit",	        LVL_BUILDER, 	SET_BOTH, 	SET_NUMBER },
+   { "maxmana",       	LVL_BUILDER, 	SET_BOTH, 	SET_NUMBER },
+   { "maxmove",		LVL_BUILDER, 	SET_BOTH, 	SET_NUMBER },  /* 30 */
+   { "move",		LVL_BUILDER, 	SET_BOTH, 	SET_NUMBER },
+   { "name",	LVL_IMMORT, 	SET_PC, 	SET_MISC },
+   { "nodelete",	LVL_GOD, 	SET_PC, 	SET_BINARY },
+   { "nohassle",	LVL_GOD, 	SET_PC, 	SET_BINARY },
+   { "nosummon",	LVL_BUILDER,	SET_PC,	SET_BINARY },  /* 35 */
+   { "nowizlist", 	LVL_GRGOD, 	SET_PC, 	SET_BINARY },
+   { "olc",		LVL_GRGOD,	SET_PC,	SET_MISC },
+   { "password",	LVL_GRGOD,	SET_PC,	SET_MISC },
+   { "poofin",		LVL_IMMORT,	SET_PC,	SET_MISC },
+   { "poofout",         LVL_IMMORT,	SET_PC,	SET_MISC },   /* 40 */
+   { "practices", 	LVL_GOD, 	SET_PC, 	SET_NUMBER },
+   { "quest",		LVL_GOD, 	SET_PC, 	SET_BINARY },
+   { "room",		LVL_BUILDER, 	SET_BOTH, 	SET_NUMBER },
+   { "screenwidth", LVL_GOD,  SET_PC,   SET_NUMBER },
+   { "sex", 		LVL_GOD, 	SET_BOTH, 	SET_MISC },  /* 45 */
+   { "showvnums",  LVL_BUILDER,  SET_PC, SET_BINARY },
+   { "siteok",   LVL_GOD,  SET_PC,   SET_BINARY },
+   { "str",		LVL_BUILDER, 	SET_BOTH, 	SET_NUMBER },
+   { "stradd",		LVL_BUILDER, 	SET_BOTH, 	SET_NUMBER },
+   { "thief",		LVL_GOD, 	SET_PC, 	SET_BINARY }, /* 50 */
+   { "thirst",		LVL_BUILDER, 	SET_BOTH, 	SET_MISC },
+   { "title",		LVL_GOD, 	SET_PC, 	SET_MISC   },
+   { "variable",        LVL_GRGOD,	SET_PC,	SET_MISC },
+   { "weight",		LVL_BUILDER,	SET_BOTH,	SET_NUMBER },
+   { "wis", 		LVL_BUILDER, 	SET_BOTH, 	SET_NUMBER }, /* 55 */
+   { "questpoints",     LVL_GOD,        SET_PC,     SET_NUMBER },
+   { "questhistory",    LVL_GOD,        SET_PC,   SET_NUMBER },
+   { "\n", 0, SET_BOTH, SET_MISC }
   };
 
 /** Apply one 'set' field to vict.
  * @param mode    Index into set_fields[]; do_set has already checked the
  *                field's level and its PC/NPC applicability.
  * @param val_arg The value text from the immortal. NUMBER fields are
- *                parsed with tb_parse_int_or_zero() and clamped by RANGE(),
+ *                parsed with tb_parse_int_or_zero() and clamped by SET_RANGE(value, ),
  *                and the clamped value is what is stored.
  * @return 1 when vict was changed and do_set must save it, 0 when nothing
  *         changed (an error has been sent to ch).
@@ -3406,16 +3416,16 @@ static int perform_set(struct char_data *ch, struct char_data *vict, int mode, c
   }
 
   /* Make sure the PC/NPC is correct */
-  if (IS_NPC(vict) && !(set_fields[mode].pcnpc & NPC)) {
+  if (IS_NPC(vict) && !(set_fields[mode].pcnpc & SET_NPC)) {
     send_to_char(ch, "You can't do that to a beast!\r\n");
     return (0);
-  } else if (!IS_NPC(vict) && !(set_fields[mode].pcnpc & PC)) {
+  } else if (!IS_NPC(vict) && !(set_fields[mode].pcnpc & SET_PC)) {
     send_to_char(ch, "That can only be done to a beast!\r\n");
     return (0);
   }
 
   /* Find the value of the argument */
-  if (set_fields[mode].type == BINARY) {
+  if (set_fields[mode].type == SET_BINARY) {
     if (!strcmp(val_arg, "on") || !strcmp(val_arg, "yes"))
       on = 1;
     else if (!strcmp(val_arg, "off") || !strcmp(val_arg, "no"))
@@ -3424,12 +3434,12 @@ static int perform_set(struct char_data *ch, struct char_data *vict, int mode, c
       send_to_char(ch, "Value must be 'on' or 'off'.\r\n");
       return (0);
     }
-  } else if (set_fields[mode].type == NUMBER) {
+  } else if (set_fields[mode].type == SET_NUMBER) {
     value = tb_parse_int_or_zero(val_arg);
   }
   switch (mode) {
     case 0: /* ac */
-      vict->points.armor = RANGE(-100, 100);
+      vict->points.armor = SET_RANGE(value, -100, 100);
       affect_total(vict);
       break;
     case 1: /* afk */
@@ -3446,20 +3456,20 @@ static int perform_set(struct char_data *ch, struct char_data *vict, int mode, c
       vict->player.time.birth = time(0) - ((value - 17) * SECS_PER_MUD_YEAR);
       break;
     case 3: /* align */
-      GET_ALIGNMENT(vict) = RANGE(-1000, 1000);
+      GET_ALIGNMENT(vict) = SET_RANGE(value, -1000, 1000);
       affect_total(vict);
       break;
     case 4: /* bank */
-      GET_BANK_GOLD(vict) = RANGE(0, 100000000);
+      GET_BANK_GOLD(vict) = SET_RANGE(value, 0, 100000000);
       break;
     case 5: /* brief */
       SET_OR_REMOVE(PRF_FLAGS(vict), PRF_BRIEF);
       break;
     case 6:  /* cha */
       if (IS_NPC(vict) || GET_LEVEL(vict) >= LVL_GRGOD)
-        RANGE(3, 25);
+        SET_RANGE(value, 3, 25);
       else
-        RANGE(3, 18);
+        SET_RANGE(value, 3, 18);
       vict->real_abils.cha = value;
       affect_total(vict);
       break;
@@ -3476,14 +3486,14 @@ static int perform_set(struct char_data *ch, struct char_data *vict, int mode, c
       break;
     case 9: /* con */
       if (IS_NPC(vict) || GET_LEVEL(vict) >= LVL_GRGOD)
-        RANGE(3, 25);
+        SET_RANGE(value, 3, 25);
       else
-        RANGE(3, 18);
+        SET_RANGE(value, 3, 18);
       vict->real_abils.con = value;
       affect_total(vict);
       break;
     case 10:  /* damroll */
-      vict->points.damroll = RANGE(-20, 20);
+      vict->points.damroll = SET_RANGE(value, -20, 20);
       affect_total(vict);
       break;
     case 11: /* delete */
@@ -3491,9 +3501,9 @@ static int perform_set(struct char_data *ch, struct char_data *vict, int mode, c
       break;
     case 12: /* dex */
       if (IS_NPC(vict) || GET_LEVEL(vict) >= LVL_GRGOD)
-        RANGE(3, 25);
+        SET_RANGE(value, 3, 25);
       else
-        RANGE(3, 18);
+        SET_RANGE(value, 3, 18);
       vict->real_abils.dex = value;
       affect_total(vict);
       break;
@@ -3503,7 +3513,7 @@ static int perform_set(struct char_data *ch, struct char_data *vict, int mode, c
         send_to_char(ch, "%s's drunkenness is now off.\r\n", GET_NAME(vict));
       } else if (is_number(val_arg)) {
         value = tb_parse_int_or_zero(val_arg);
-        RANGE(0, 24);
+        SET_RANGE(value, 0, 24);
         GET_COND(vict, DRUNK) = value;
         send_to_char(ch, "%s's drunkenness set to %d.\r\n", GET_NAME(vict), value);
       } else {
@@ -3512,7 +3522,7 @@ static int perform_set(struct char_data *ch, struct char_data *vict, int mode, c
       }
       break;
     case 14: /* exp */
-      vict->points.exp = RANGE(0, 50000000);
+      vict->points.exp = SET_RANGE(value, 0, 50000000);
       break;
     case 15: /* frozen */
       if (ch == vict && on) {
@@ -3522,18 +3532,18 @@ static int perform_set(struct char_data *ch, struct char_data *vict, int mode, c
       SET_OR_REMOVE(PLR_FLAGS(vict), PLR_FROZEN);
       break;
     case 16: /* gold */
-      GET_GOLD(vict) = RANGE(0, 100000000);
+      GET_GOLD(vict) = SET_RANGE(value, 0, 100000000);
       break;
     case 17: /* height */
       GET_HEIGHT(vict) = value;
       affect_total(vict);
       break;
     case 18: /* hit */
-      vict->points.hit = RANGE(-9, vict->points.max_hit);
+      vict->points.hit = SET_RANGE(value, -9, vict->points.max_hit);
       affect_total(vict);
       break;
     case 19: /* hitroll */
-      vict->points.hitroll = RANGE(-20, 20);
+      vict->points.hitroll = SET_RANGE(value, -20, 20);
       affect_total(vict);
       break;
     case 20: /* hunger */
@@ -3542,7 +3552,7 @@ static int perform_set(struct char_data *ch, struct char_data *vict, int mode, c
         send_to_char(ch, "%s's hunger is now off.\r\n", GET_NAME(vict));
       } else if (is_number(val_arg)) {
         value = tb_parse_int_or_zero(val_arg);
-        RANGE(0, 24);
+        SET_RANGE(value, 0, 24);
         GET_COND(vict, HUNGER) = value;
         send_to_char(ch, "%s's hunger set to %d.\r\n", GET_NAME(vict), value);
       } else {
@@ -3552,9 +3562,9 @@ static int perform_set(struct char_data *ch, struct char_data *vict, int mode, c
        break;
    case 21: /* int */
       if (IS_NPC(vict) || GET_LEVEL(vict) >= LVL_GRGOD)
-        RANGE(3, 25);
+        SET_RANGE(value, 3, 25);
       else
-        RANGE(3, 18);
+        SET_RANGE(value, 3, 18);
       vict->real_abils.intel = value;
       affect_total(vict);
       break;
@@ -3563,7 +3573,7 @@ static int perform_set(struct char_data *ch, struct char_data *vict, int mode, c
         send_to_char(ch, "You aren't godly enough for that!\r\n");
         return (0);
       }
-      GET_INVIS_LEV(vict) = RANGE(0, GET_LEVEL(vict));
+      GET_INVIS_LEV(vict) = SET_RANGE(value, 0, GET_LEVEL(vict));
       break;
     case 23: /* invistart */
       SET_OR_REMOVE(PLR_FLAGS(vict), PLR_INVSTART);
@@ -3576,7 +3586,7 @@ static int perform_set(struct char_data *ch, struct char_data *vict, int mode, c
         send_to_char(ch, "You can't do that.\r\n");
         return (0);
       }
-      RANGE(1, LVL_IMPL);
+      SET_RANGE(value, 1, LVL_IMPL);
       vict->player.level = value;
       snoop_check(vict);   /* drop snoops the new level no longer allows */
       break;
@@ -3600,23 +3610,23 @@ static int perform_set(struct char_data *ch, struct char_data *vict, int mode, c
       }
       break;
     case 27: /* mana */
-      vict->points.mana = RANGE(0, vict->points.max_mana);
+      vict->points.mana = SET_RANGE(value, 0, vict->points.max_mana);
       affect_total(vict);
       break;
     case 28: /* maxhit */
-      vict->points.max_hit = RANGE(1, 5000);
+      vict->points.max_hit = SET_RANGE(value, 1, 5000);
       affect_total(vict);
       break;
     case 29: /* maxmana */
-      vict->points.max_mana = RANGE(1, 5000);
+      vict->points.max_mana = SET_RANGE(value, 1, 5000);
       affect_total(vict);
       break;
     case 30: /* maxmove */
-      vict->points.max_move = RANGE(1, 5000);
+      vict->points.max_move = SET_RANGE(value, 1, 5000);
       affect_total(vict);
       break;
     case 31: /* move */
-      vict->points.move = RANGE(0, vict->points.max_move);
+      vict->points.move = SET_RANGE(value, 0, vict->points.max_move);
       affect_total(vict);
       break;
     case 32: /* name */
@@ -3707,7 +3717,7 @@ static int perform_set(struct char_data *ch, struct char_data *vict, int mode, c
       }
       break;
     case 41: /* practices */
-      GET_PRACTICES(vict) = RANGE(0, 100);
+      GET_PRACTICES(vict) = SET_RANGE(value, 0, 100);
       break;
     case 42: /* quest */
       SET_OR_REMOVE(PRF_FLAGS(vict), PRF_QUEST);
@@ -3724,7 +3734,7 @@ static int perform_set(struct char_data *ch, struct char_data *vict, int mode, c
       char_to_room(vict, rnum);
       break;
     case 44: /* screenwidth */
-      GET_SCREEN_WIDTH(vict) = RANGE(40, 200);
+      GET_SCREEN_WIDTH(vict) = SET_RANGE(value, 40, 200);
       break;
     case 45: /* sex */
       if ((i = search_block(val_arg, genders, FALSE)) < 0) {
@@ -3741,15 +3751,15 @@ static int perform_set(struct char_data *ch, struct char_data *vict, int mode, c
       break;
     case 48: /* str */
       if (IS_NPC(vict) || GET_LEVEL(vict) >= LVL_GRGOD)
-        RANGE(3, 25);
+        SET_RANGE(value, 3, 25);
       else
-        RANGE(3, 18);
+        SET_RANGE(value, 3, 18);
       vict->real_abils.str = value;
       vict->real_abils.str_add = 0;
       affect_total(vict);
       break;
     case 49: /* stradd */
-      vict->real_abils.str_add = RANGE(0, 100);
+      vict->real_abils.str_add = SET_RANGE(value, 0, 100);
       if (value > 0)
         vict->real_abils.str = 18;
       affect_total(vict);
@@ -3763,7 +3773,7 @@ static int perform_set(struct char_data *ch, struct char_data *vict, int mode, c
         send_to_char(ch, "%s's thirst is now off.\r\n", GET_NAME(vict));
       } else if (is_number(val_arg)) {
         value = tb_parse_int_or_zero(val_arg);
-        RANGE(0, 24);
+        SET_RANGE(value, 0, 24);
         GET_COND(vict, THIRST) = value;
         send_to_char(ch, "%s's thirst set to %d.\r\n", GET_NAME(vict), value);
       } else {
@@ -3783,14 +3793,14 @@ static int perform_set(struct char_data *ch, struct char_data *vict, int mode, c
       break;
     case 55: /* wis */
       if (IS_NPC(vict) || GET_LEVEL(vict) >= LVL_GRGOD)
-        RANGE(3, 25);
+        SET_RANGE(value, 3, 25);
       else
-        RANGE(3, 18);
+        SET_RANGE(value, 3, 18);
       vict->real_abils.wis = value;
       affect_total(vict);
       break;
     case 56: /* questpoints */
-      GET_QUESTPOINTS(vict) = RANGE(0, 100000000);
+      GET_QUESTPOINTS(vict) = SET_RANGE(value, 0, 100000000);
       break;
     case 57: /* questhistory */
       qvnum = tb_parse_int_or_zero(val_arg);
@@ -3814,9 +3824,9 @@ static int perform_set(struct char_data *ch, struct char_data *vict, int mode, c
       return (0);
     }
   /* Show the new value of the variable */
-  if (set_fields[mode].type == BINARY) {
+  if (set_fields[mode].type == SET_BINARY) {
     send_to_char(ch, "%s %s for %s.\r\n", set_fields[mode].cmd, ONOFF(on), GET_NAME(vict));
-  } else if (set_fields[mode].type == NUMBER) {
+  } else if (set_fields[mode].type == SET_NUMBER) {
     send_to_char(ch, "%s's %s set to %d.\r\n", GET_NAME(vict), set_fields[mode].cmd, value);
   } else
     send_to_char(ch, "%s", CONFIG_OK);
@@ -3955,6 +3965,15 @@ ACMD(do_set)
     free_char(cbuf);
   }
 }
+
+#undef SET_PC
+#undef SET_NPC
+#undef SET_BOTH
+#undef SET_MISC
+#undef SET_BINARY
+#undef SET_NUMBER
+#undef SET_OR_REMOVE
+#undef SET_RANGE
 
 ACMD(do_saveall)
 {
