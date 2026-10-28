@@ -244,8 +244,8 @@ void parse_edit_action(int command, char *string, struct descriptor_data *d)
     /* in case line_low is negative or zero */
     line_low = MAX(1, line_low);
 
-    format_text(d->str, flags, d, d->max_str, line_low, line_high);
-    write_to_output(d, "Text formatted with%s indent.\r\n", (indent ? "" : "out"));
+    if (format_text(d->str, flags, d, d->max_str, line_low, line_high))
+      write_to_output(d, "Text formatted with%s indent.\r\n", (indent ? "" : "out"));
     break;
   case PARSE_REPLACE:
     while (isalpha(string[j]) && j < 2)
@@ -603,19 +603,32 @@ void parse_edit_action(int command, char *string, struct descriptor_data *d)
 int format_text(char **ptr_string, int mode, struct descriptor_data *d, unsigned int maxlen, int low, int high)
 {
   int line_chars, cap_next = TRUE, cap_next_next = FALSE, color_chars = 0, i, pass_line = 0;
-  char *flow, *start = NULL, temp;
+  char *flow, *start = NULL, temp, *work;
   char formatted[MAX_STRING_LENGTH] = "";
   char str[MAX_STRING_LENGTH];
 
   /* Fix memory overrun. */
   if (d->max_str > MAX_STRING_LENGTH) {
-    log("SYSERR: format_text: max_str is greater than buffer size.");
+    TB_ERROR_MSG("editor", "format-max", "edit-buffer",
+                 "desc %d max_str %zu exceeds the %d-byte work buffers; "
+                 "format refused", d->desc_num, d->max_str, MAX_STRING_LENGTH);
     return 0;
   }
 
   /* XXX: Want to make sure the string doesn't grow either... */
-  if ((flow = *ptr_string) == NULL)
+  if (*ptr_string == NULL)
     return 0;
+
+  /* The scan below writes into the text it walks (capitals, temporary
+   * terminators). Walk a copy, so a format that is refused leaves the
+   * player's buffer exactly as it was. */
+  if ((work = strdup(*ptr_string)) == NULL) {
+    TB_ERROR_ERRNO("editor", "format-copy", "edit-buffer",
+                   "desc %d: copying %zu bytes failed", d->desc_num,
+                   strlen(*ptr_string));
+    return 0;
+  }
+  flow = work;
 
   strncpy(str, flow, sizeof(str) - 1);
 
@@ -623,12 +636,14 @@ int format_text(char **ptr_string, int mode, struct descriptor_data *d, unsigned
     start = strtok(str, "\n");
     if (!start) {
       write_to_output(d, "There aren't that many lines!\r\n");
+      free(work);
       return 0;
     }
     strlcat(formatted, start, sizeof(formatted));
     strlcat(formatted, "\n", sizeof(formatted));
     if ((flow = strstr(flow, "\n")) == NULL) {
       write_to_output(d, "There aren't that many lines!\r\n");
+      free(work);
       return 0;
     }
     strncpy(str, ++flow, sizeof(str) - 1);
@@ -658,12 +673,12 @@ int format_text(char **ptr_string, int mode, struct descriptor_data *d, unsigned
          * by two. Text loaded by fread_string() can end in a lone '\t'
          * (parse_at() turns a trailing '@' into one); stepping over its
          * missing code byte would leave flow past the terminator, and the
-         * loops and writes below would touch bytes outside *ptr_string.
+         * loops and writes below would touch bytes outside the buffer.
          * The introducer displays nothing, so drop it and say so. */
         if (*flow == '\t' && !flow[1]) {
           TB_WARN_MSG("editor", "format-color", "edit-buffer",
                       "dangling tab colour code at offset %td dropped; "
-                      "desc %d", flow - *ptr_string, d->desc_num);
+                      "desc %d", flow - work, d->desc_num);
           write_to_output(d, "Dropped a colour code with nothing after it "
                              "at the end of the text.\r\n");
           *flow = '\0';
@@ -761,10 +776,17 @@ int format_text(char **ptr_string, int mode, struct descriptor_data *d, unsigned
   if (!*flow)
     strncat(formatted, "\r\n", sizeof(formatted) - strlen(formatted) - 1);
 
-  int len = MIN(maxlen, strlen(formatted) + 1);
-  RECREATE(*ptr_string, char, len);
-  strncpy(*ptr_string, formatted, len - 1);
-  (*ptr_string)[len - 1] = '\0';
+  /* Formatting adds sentence spacing and line breaks, so the result can be
+   * longer than the text. Cutting it to maxlen (or to the work buffer, which
+   * the appends above stop at) would silently lose the end of the text;
+   * leave the buffer as it was instead. */
+  free(work);
+  if (strlen(formatted) + 1 > maxlen || strlen(formatted) + 1 >= sizeof(formatted)) {
+    write_to_output(d, "Formatted text would be too long; text not changed.\r\n");
+    return 0;
+  }
+  RECREATE(*ptr_string, char, strlen(formatted) + 3); /* +3: room for "\r\n" */
+  memcpy(*ptr_string, formatted, strlen(formatted) + 1);
   return 1;
 }
 

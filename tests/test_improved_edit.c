@@ -109,6 +109,29 @@ void test_format_keeps_complete_colour_codes(void)
   TEST_ASSERT_EQUAL_INT(0, captured_errors);
 }
 
+/* Formatting adds sentence spacing; a result longer than max_str used to be
+ * cut to fit, losing the end of the text without a word. */
+void test_format_too_long_leaves_text_unchanged(void)
+{
+  d.max_str = 20;
+  text = strdup("one. two. three.\r\n");     /* 18 bytes; formatted is 20 */
+  TEST_ASSERT_NOT_NULL(text);
+
+  TEST_ASSERT_EQUAL_INT(0, format_text(&text, 0, &d, (unsigned int)d.max_str, 1, 999999));
+  TEST_ASSERT_EQUAL_STRING("one. two. three.\r\n", text);
+  TEST_ASSERT_NOT_NULL(strstr(output, "too long"));
+}
+
+void test_format_result_that_fits_is_applied(void)
+{
+  d.max_str = 21;
+  text = strdup("one. two. three.\r\n");
+  TEST_ASSERT_NOT_NULL(text);
+
+  TEST_ASSERT_EQUAL_INT(1, format_text(&text, 0, &d, (unsigned int)d.max_str, 1, 999999));
+  TEST_ASSERT_EQUAL_STRING("One.  Two.  Three.\r\n", text);
+}
+
 /* Finding A2-03: a bare "/" has no command letter; actions used to be copied
  * from str + 2, past the line's terminator. An exact-size heap copy makes
  * that read visible to ASan. */
@@ -171,6 +194,8 @@ int main(void)
   RUN_TEST(test_format_text_without_trailing_newline);
   RUN_TEST(test_format_sentence_end_without_trailing_newline);
   RUN_TEST(test_format_keeps_complete_colour_codes);
+  RUN_TEST(test_format_too_long_leaves_text_unchanged);
+  RUN_TEST(test_format_result_that_fits_is_applied);
   RUN_TEST(test_bare_slash_is_rejected_without_reading_past_it);
   RUN_TEST(test_save_command_still_parses);
   RUN_TEST(test_replace_all_overflow_leaves_buffer_unchanged);
