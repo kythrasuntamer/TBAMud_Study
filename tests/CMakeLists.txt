@@ -31,6 +31,14 @@ target_include_directories(unity_vendor PRIVATE
 
 set(MUD_SRCDIR ${CMAKE_SOURCE_DIR}/src)
 
+# libcrypt is optional: the server links it only when find_library() found
+# it (the Fil-C toolchain build does not), so the tests do the same. A
+# NOTFOUND value in target_link_libraries() fails the whole configure.
+set(TB_CRYPT_LIBS "")
+if(CRYPT_LIBRARY)
+    set(TB_CRYPT_LIBS ${CRYPT_LIBRARY})
+endif()
+
 # Include paths: mud source dir for conf.h / structs.h etc.,
 # CMake binary dir for the generated conf.h (cmake builds place it there),
 # and the Unity header dir.
@@ -201,7 +209,7 @@ if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
     target_link_options(test_dg_script_runtime PRIVATE -Wl,--gc-sections
         -Wl,--wrap=tb_error_log_at -Wl,--wrap=script_command_interpreter
         -Wl,--wrap=command_interpreter)
-    target_link_libraries(test_dg_script_runtime PRIVATE ${CRYPT_LIBRARY} ${SODIUM_LIBRARY})
+    target_link_libraries(test_dg_script_runtime PRIVATE ${TB_CRYPT_LIBS} ${SODIUM_LIBRARY})
     set_source_files_properties(${MUD_SRCDIR}/dg_variables.c
         PROPERTIES COMPILE_OPTIONS "-ffunction-sections;-fdata-sections")
 endif()
@@ -544,7 +552,7 @@ if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
         -Wl,--gc-sections
         -Wl,--wrap=tb_error_log_at)
 endif()
-target_link_libraries(test_boards PRIVATE ${CRYPT_LIBRARY} ${SODIUM_LIBRARY})
+target_link_libraries(test_boards PRIVATE ${TB_CRYPT_LIBS} ${SODIUM_LIBRARY})
 
 # Production Ideas/Bugs/Typos lists (ibt.c) and the db.c readers that load
 # them. db.c defines the world globals, so test_stubs.c is not linked, and
@@ -567,7 +575,7 @@ if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
         -Wl,--gc-sections
         -Wl,--wrap=tb_error_log_at)
 endif()
-target_link_libraries(test_ibt PRIVATE ${CRYPT_LIBRARY} ${SODIUM_LIBRARY})
+target_link_libraries(test_ibt PRIVATE ${TB_CRYPT_LIBS} ${SODIUM_LIBRARY})
 
 # Production GenOLC core (genolc.c, #included by the test for its file-scope
 # export writers): the save-list driver and zone export.
@@ -582,7 +590,7 @@ if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
         -Wl,--gc-sections
         -Wl,--wrap=tb_error_log_at)
 endif()
-target_link_libraries(test_genolc PRIVATE ${CRYPT_LIBRARY} ${SODIUM_LIBRARY})
+target_link_libraries(test_genolc PRIVATE ${TB_CRYPT_LIBS} ${SODIUM_LIBRARY})
 
 # Production GenOLC mobile deleter (genmob.c) and zone-command removal
 # (genzon.c): zone-command, live-mob and shopkeeper renumbering.
@@ -601,7 +609,7 @@ if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
         -Wl,--gc-sections
         -Wl,--wrap=tb_error_log_at)
 endif()
-target_link_libraries(test_genmob PRIVATE ${CRYPT_LIBRARY} ${SODIUM_LIBRARY})
+target_link_libraries(test_genmob PRIVATE ${TB_CRYPT_LIBS} ${SODIUM_LIBRARY})
 
 # Production generic OLC renumberers and writers plus the DG trigger loader.
 # The test supplies the engine services they reach (lookups, object moves,
@@ -755,7 +763,7 @@ macro(add_gameplay_test TEST_NAME TEST_SRC)
             -Wl,--wrap=core_dump_real
             -Wl,--wrap=basic_mud_log)
     endif()
-    target_link_libraries(${TEST_NAME} PRIVATE ${CRYPT_LIBRARY} ${SODIUM_LIBRARY})
+    target_link_libraries(${TEST_NAME} PRIVATE ${TB_CRYPT_LIBS} ${SODIUM_LIBRARY})
 endmacro()
 
 add_gameplay_test(test_act_movement ${CMAKE_CURRENT_SOURCE_DIR}/test_act_movement.c)
@@ -1143,7 +1151,7 @@ add_mud_test(test_act_wizard
     ${MUD_SRCDIR}/random.c
     ${CMAKE_CURRENT_SOURCE_DIR}/test_act_wizard.c
 )
-target_link_libraries(test_act_wizard PRIVATE ${CRYPT_LIBRARY} ${SODIUM_LIBRARY})
+target_link_libraries(test_act_wizard PRIVATE ${TB_CRYPT_LIBS} ${SODIUM_LIBRARY})
 if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
     target_compile_options(test_act_wizard PRIVATE -ffunction-sections -fdata-sections)
     target_link_options(test_act_wizard PRIVATE -Wl,--gc-sections
