@@ -942,8 +942,11 @@ static void mtransform_release_strings(char_data *ch, mob_rnum rnum)
     (rnum != NOBODY && rnum <= top_of_mobt) ? &mob_proto[rnum].player : NULL;
 
 #define MTRANSFORM_RELEASE(field) \
-  do { if (own->field && (!proto || own->field != proto->field)) \
-         free(own->field); own->field = NULL; } while (0)
+  do { \
+    if (own->field && (!proto || own->field != proto->field)) \
+      free(own->field); \
+    own->field = NULL; \
+  } while (0)
   MTRANSFORM_RELEASE(name);
   MTRANSFORM_RELEASE(title);
   MTRANSFORM_RELEASE(short_descr);
