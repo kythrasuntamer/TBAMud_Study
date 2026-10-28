@@ -594,8 +594,7 @@ static void purging_owner_container_stops_script(void)
   TEST_ASSERT_NULL(object_list);
   /* obj_command_interpreter() (dg_objcmd.c) names the command that
    * destroyed its own owner indirectly as owner-extracted. */
-  TEST_ASSERT_TRUE(tb_captured_has_op("owner-extracted") ||
-                   tb_captured_has_op("owner-purged"));
+  TEST_ASSERT_TRUE(tb_captured_has_op("owner-extracted"));
 }
 
 /* D1-07c: a nested trigger's self-purge used to end the outer object script

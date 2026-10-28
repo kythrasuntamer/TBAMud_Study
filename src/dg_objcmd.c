@@ -23,9 +23,11 @@
  * Lifetime rules:
  *  - The owner obj may be extracted by its own command (opurge self, purging
  *    its container or the room it is in, forcing its carrier to junk it).
- *    obj_command_interpreter() detects that by UID and sets dg_owner_purged,
- *    and script_driver() then stops the script. A command must not touch obj
- *    after anything that can extract it.
+ *    obj_command_interpreter() detects that by UID and reports any way but
+ *    'opurge self' as dg/owner-extracted; script_driver() checks its own
+ *    owner's UID after every command (dg_frame_owner_gone()) and stops the
+ *    script. A command must not touch obj after anything that can extract
+ *    it.
  *  - Commands that act on every occupant of a room walk a UID snapshot
  *    (dg_cmd.h), never next_in_room across a callback.
  *  - obj_room() can return NOWHERE (an object that is nowhere, or carried by
