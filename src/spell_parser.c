@@ -368,6 +368,43 @@ static bool item_spell_valid(struct char_data *ch, struct obj_data *obj,
   return FALSE;
 }
 
+/* Cast a scroll's or potion's spells (values 1-3, at level value 0) until
+ * one returns <= 0. Every call_magic() runs DG cast triggers, which can purge
+ * the item itself or the target object (both freed at once by extract_obj),
+ * so their identities are snapshotted as UIDs and re-checked before the item
+ * is read again or the target is passed on. Returns TRUE while the item still
+ * exists (the caller then consumes it), FALSE after reporting
+ * magic-item-purged when a trigger destroyed it. */
+static bool cast_item_spells(struct char_data *ch, struct obj_data *obj,
+    struct char_data *tch, struct obj_data *tobj, int casttype,
+    const char *kind) {
+  long uid = obj_script_id(obj);
+  long tuid = tobj ? obj_script_id(tobj) : 0;
+  int vnum = GET_OBJ_VNUM(obj), i;
+
+  for (i = 1; i <= 3; i++) {
+    if (call_magic(ch, tch, tobj, GET_OBJ_VAL(obj, i), GET_OBJ_VAL(obj, 0),
+        casttype) <= 0)
+      break;
+    if (!obj_uid_matches(uid, obj))
+      break;
+    if (tobj && !obj_uid_matches(tuid, tobj)) {
+      TB_WARN_MSG("magic", "magic-item-purged", kind,
+                  "target obj uid %ld purged during %s cast by "
+                  DIAG_CHAR_FMT "; remaining spells of obj vnum %d skipped",
+                  tuid, kind, DIAG_CHAR(ch), vnum);
+      break;
+    }
+  }
+  if (!obj_uid_matches(uid, obj)) {
+    TB_WARN_MSG("magic", "magic-item-purged", kind,
+                "obj vnum %d uid %ld purged during %s cast by " DIAG_CHAR_FMT,
+                vnum, uid, kind, DIAG_CHAR(ch));
+    return FALSE;
+  }
+  return TRUE;
+}
+
 /* mag_objectmagic: This is the entry-point for all magic items.  This should
  * only be called by the 'quaff', 'use', 'recite', etc. routines.
  * For reference, object values 0-3:
@@ -489,12 +526,9 @@ void mag_objectmagic(struct char_data *ch, struct obj_data *obj, char *argument)
       act("$n recites $p.", FALSE, ch, obj, NULL, TO_ROOM);
 
     WAIT_STATE(ch, PULSE_VIOLENCE);
-    for (i = 1; i <= 3; i++)
-      if (call_magic(ch, tch, tobj, GET_OBJ_VAL(obj, i), GET_OBJ_VAL(obj, 0),
-          CAST_SCROLL) <= 0)
-        break;
-
-    if (obj != NULL)
+    /* The scroll is consumed here, unless a cast trigger already purged it
+     * (extract_obj frees at once, so it must not be extracted twice). */
+    if (cast_item_spells(ch, obj, tch, tobj, CAST_SCROLL, "scroll"))
       extract_obj(obj);
     break;
   case ITEM_POTION:
@@ -510,12 +544,7 @@ void mag_objectmagic(struct char_data *ch, struct obj_data *obj, char *argument)
       act("$n quaffs $p.", TRUE, ch, obj, NULL, TO_ROOM);
 
     WAIT_STATE(ch, PULSE_VIOLENCE);
-    for (i = 1; i <= 3; i++)
-      if (call_magic(ch, ch, NULL, GET_OBJ_VAL(obj, i), GET_OBJ_VAL(obj, 0),
-          CAST_POTION) <= 0)
-        break;
-
-    if (obj != NULL)
+    if (cast_item_spells(ch, obj, ch, NULL, CAST_POTION, "potion"))
       extract_obj(obj);
     break;
   default:
