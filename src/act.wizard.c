@@ -90,20 +90,19 @@
   } \
 } while (0)
 
-/* Number of elements of a true array (never a pointer parameter). Compile
- * time only: the argument is not evaluated. */
-#ifndef TB_ARRAY_LEN
-#define TB_ARRAY_LEN(a)          (sizeof(a) / sizeof((a)[0]))
-#endif
+/* TB_ARRAY_LEN (number of elements of a true array) comes from utils.h. */
 
-/* tb_strftime() reports a NULL struct tm (localtime()/gmtime() of an
- * out-of-range time_t from a pfile or LAST_FILE) at the call site but
- * leaves dst unwritten, and every caller here prints dst. TIME_STR fills
- * dst with "?" first, so the caller prints that instead of stack garbage.
- * dst must be an array (sizeof); it is evaluated more than once. */
+/* A time for display. tb_strftime() reports a NULL struct tm (localtime()/
+ * gmtime() of an out-of-range time_t from a pfile or LAST_FILE) at the call
+ * site and leaves dst "" (sysdep.h contract, G1-19/B2-26); TIME_STR then
+ * shows "?" so the reader sees an unknown time rather than nothing. Every
+ * format used here is non-empty on success, so "" means the time could not
+ * be formatted. dst must be an array (sizeof); it is evaluated more than
+ * once. */
 #define TIME_STR(dst, fmt, tmptr) do { \
-  strlcpy((dst), "?", sizeof(dst)); \
   tb_strftime((dst), sizeof(dst), (fmt), (tmptr)); \
+  if ((dst)[0] == '\0') \
+    strlcpy((dst), "?", sizeof(dst)); \
 } while (0)
 
 /** Checked lookup in one of the "\n"-terminated name tables in constants.c.
