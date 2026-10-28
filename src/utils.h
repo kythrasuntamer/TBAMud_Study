@@ -1043,6 +1043,10 @@ do                                                              \
  * and neither validates it, so check before every table lookup.
  * Evaluates t twice: no side effects. Same text as act.item.c's copy. */
 #define VALID_LIQ_TYPE(t) ((t) >= 0 && (t) < NUM_LIQ_TYPES)
+/** The liquid type (value 2) of a drink container or fountain: an index
+ * into drinks[], drinknames[] and drink_aff[] once VALID_LIQ_TYPE() has
+ * accepted it. Same text as act.item.c's copy, so the two coexist. */
+#define DRINK_CON_TYPE(cont) (GET_OBJ_VAL((cont), 2))
 /** Weight of obj. */
 #define GET_OBJ_WEIGHT(obj)	((obj)->obj_flags.weight)
 /** Current timer of obj. */

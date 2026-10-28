@@ -39,11 +39,11 @@ ASPELL(spell_create_water)
      * range check, and both branches below hand it to name_from_drinkcon(),
      * which indexes drinknames[] with it. Refuse a container whose liquid
      * has no table entry, naming it and the caster (H1-07). */
-    if (!VALID_LIQ_TYPE(GET_OBJ_VAL(obj, 2))) {
+    if (!VALID_LIQ_TYPE(DRINK_CON_TYPE(obj))) {
       TB_ERROR_MSG("magic", "liquid-type-range", "obj",
                    DIAG_OBJ_FMT " liquid %d not in [0,%d) during create "
                    "water by " DIAG_CHAR_FMT, DIAG_OBJ(obj),
-                   GET_OBJ_VAL(obj, 2), NUM_LIQ_TYPES, DIAG_CHAR(ch));
+                   DRINK_CON_TYPE(obj), NUM_LIQ_TYPES, DIAG_CHAR(ch));
       act("You can't make out what is in $p.", FALSE, ch, obj, 0, TO_CHAR);
       return;
     }
