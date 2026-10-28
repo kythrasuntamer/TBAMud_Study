@@ -20,6 +20,7 @@
 #include "dg_scripts.h"
 #include "dg_event.h"
 #include "oasis.h"
+#include "spells.h"
 #include "protocol.h"
 #include "tb_error_capture.h"
 
@@ -867,6 +868,38 @@ static void field_setters_saturate_instead_of_wrapping(void)
   TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
 }
 
+/* D1-21: dg_affect narrowed its duration to sh_int and its value to sbyte, so
+ * a duration of 65536 stored -1 (permanent) and a value of 200 stored -56. */
+static void dg_affect_out_of_range_is_refused(void)
+{
+  char line[96];
+  const char *lines[] = { line, NULL };
+  char_data *target = make_mob("target");
+
+  snprintf(line, sizeof(line), "dg_affect %c%ld SANCT 1 65536", UID_CHAR,
+           target->script_id);
+  run_mob_script(make_mob("mob"), lines);
+  TEST_ASSERT_NULL(target->affected);
+  TEST_ASSERT_EQUAL_STRING("affect-range", tb_captured_operation);
+
+  tb_error_capture_reset();
+  snprintf(line, sizeof(line), "dg_affect %c%ld str 200 10", UID_CHAR,
+           target->script_id);
+  run_mob_script(make_mob("mob2"), lines);
+  TEST_ASSERT_NULL(target->affected);
+  TEST_ASSERT_EQUAL_STRING("affect-range", tb_captured_operation);
+
+  tb_error_capture_reset();
+  snprintf(line, sizeof(line), "dg_affect %c%ld str 2 10", UID_CHAR,
+           target->script_id);
+  run_mob_script(make_mob("mob3"), lines);
+  TEST_ASSERT_NOT_NULL(target->affected);
+  TEST_ASSERT_EQUAL_INT(2, target->affected->modifier);
+  TEST_ASSERT_EQUAL_INT(9, target->affected->duration);
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  affect_from_char(target, SPELL_DG_AFFECT);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -902,5 +935,6 @@ int main(void)
   RUN_TEST(legacy_saved_var_with_long_name_is_read_in_bounds);
   RUN_TEST(obj_extra_lists_every_flag);
   RUN_TEST(field_setters_saturate_instead_of_wrapping);
+  RUN_TEST(dg_affect_out_of_range_is_refused);
   return UNITY_END();
 }

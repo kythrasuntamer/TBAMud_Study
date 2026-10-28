@@ -234,6 +234,22 @@ void do_dg_affect(void *go, struct script_data *sc, trig_data *trig,
     return;
   }
 
+  /* value and duration are script ints, but the affect stores them as
+   * sbyte modifier and sh_int duration. Narrowing silently turned a
+   * duration of 65536 into -1 (permanent to affect_update()) and a
+   * modifier of 200 into -56. Out-of-range requests are refused. */
+  if (duration - 1 > SHRT_MAX || value < SCHAR_MIN || value > SCHAR_MAX) {
+    TB_ERROR_MSG("dg", "affect-range", "do_dg_affect",
+                 "trig vnum %d target " DIAG_CHAR_FMT " property %s value %d "
+                 "duration %d outside modifier [%d,%d] / duration [1,%d]",
+                 DIAG_TRIG_VNUM(trig), DIAG_CHAR(ch), property, value,
+                 duration, SCHAR_MIN, SCHAR_MAX, SHRT_MAX + 1);
+    script_log("Trigger: %s, VNum %d. dg_affect: value %d or duration %d out "
+               "of range; affect not applied",
+               GET_TRIG_NAME(trig), GET_TRIG_VNUM(trig), value, duration);
+    return;
+  }
+
   /* add the affect */
   new_affect(&af);
   af.spell = SPELL_DG_AFFECT;
