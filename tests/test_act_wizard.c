@@ -476,6 +476,14 @@ static void test_return_and_switch_without_descriptor_are_reported(void)
   reset_counters();
   RUN_CMD(do_switch, &imm, "bobby");
   TEST_ASSERT_EQUAL_STRING("command-no-desc", captured_operation);
+
+  /* wizhelp and snoop used to return silently. */
+  reset_counters();
+  RUN_CMD(do_wizhelp, &imm, "");
+  TEST_ASSERT_EQUAL_STRING("command-no-desc", captured_operation);
+  reset_counters();
+  RUN_CMD(do_snoop, &imm, "bobby");
+  TEST_ASSERT_EQUAL_STRING("command-no-desc", captured_operation);
 }
 
 /* G1-05: return_to_char() on a body that is not switched is reported, not

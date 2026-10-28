@@ -78,6 +78,18 @@
  * PRF_FLAGS are the shared dummy_mob's. ch is evaluated twice. */
 #define NOREPEAT(ch)             (!IS_NPC(ch) && PRF_FLAGGED((ch), PRF_NOREPEAT))
 
+/* First statement of a command that needs the caller's descriptor. Any
+ * command can arrive without one: 'force' and DG mforce reach linkdead
+ * players and NPCs. Reports command-no-desc with the caller and returns
+ * from the ACMD. ch is evaluated several times: pass the ACMD's ch. */
+#define ACMD_REQUIRE_DESC(ch, cmdname) do { \
+  if (!(ch)->desc) { \
+    TB_WARN_MSG("act", "command-no-desc", (cmdname), \
+                DIAG_CHAR_FMT " has no descriptor", DIAG_CHAR(ch)); \
+    return; \
+  } \
+} while (0)
+
 /* Number of elements of a true array (never a pointer parameter). Compile
  * time only: the argument is not evaluated. */
 #ifndef TB_ARRAY_LEN
@@ -221,8 +233,7 @@ ACMD(do_wizhelp)
   int no = 1, i, cmd_num; 
   int level;
 
-  if (!ch->desc)
-    return;
+  ACMD_REQUIRE_DESC(ch, "wizhelp");
 
   send_to_char(ch, "The following privileged commands are available:\r\n"); 
   
@@ -1391,8 +1402,7 @@ ACMD(do_snoop)
   char arg[MAX_INPUT_LENGTH];
   struct char_data *victim, *tch;
 
-  if (!ch->desc)
-    return;
+  ACMD_REQUIRE_DESC(ch, "snoop");
 
   one_argument(argument, arg);
 
@@ -1438,11 +1448,7 @@ ACMD(do_switch)
   /* Invariant: switching moves the caller's descriptor into another body,
    * so the caller must have one. A linkdead immortal can still reach this
    * through "force" or a DG mforce. */
-  if (!ch->desc) {
-    TB_WARN_MSG("act", "command-no-desc", "switch",
-                DIAG_CHAR_FMT " has no descriptor", DIAG_CHAR(ch));
-    return;
-  }
+  ACMD_REQUIRE_DESC(ch, "switch");
 
   one_argument(argument, arg);
 
@@ -1544,11 +1550,7 @@ ACMD(do_return)
   /* Invariant: return needs the caller's descriptor. "return" is a level 0
    * POS_DEAD command, so "force <linkdead player> return" or a DG mforce on
    * a linkdead player reaches here with ch->desc == NULL. */
-  if (!ch->desc) {
-    TB_WARN_MSG("act", "command-no-desc", "return",
-                DIAG_CHAR_FMT " has no descriptor", DIAG_CHAR(ch));
-    return;
-  }
+  ACMD_REQUIRE_DESC(ch, "return");
 
   if (!IS_NPC(ch) && !ch->desc->original) {
     int level, newlevel;
