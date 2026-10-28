@@ -1425,6 +1425,55 @@ static void parse_mobile_replaces_empty_short_description(void)
   proto_fixture_free();
 }
 
+/* ---------------------------------------------------------------------
+ * check_object(): weapon values hit() uses
+ * ------------------------------------------------------------------- */
+
+static struct index_data weapon_index_fixture[1];
+
+/* A weapon prototype with the given damage dice and attack type. */
+static void weapon_fixture(struct obj_data *obj, int ndice, int sdice, int type)
+{
+  memset(obj, 0, sizeof(*obj));
+  weapon_index_fixture[0].vnum = 3021;
+  obj_index = weapon_index_fixture;
+  obj->item_number = 0;
+  obj->name = (char *)"dagger";
+  obj->short_description = (char *)"a dagger";
+  GET_OBJ_TYPE(obj) = ITEM_WEAPON;
+  GET_OBJ_VAL(obj, 1) = ndice;
+  GET_OBJ_VAL(obj, 2) = sdice;
+  GET_OBJ_VAL(obj, 3) = type;
+}
+
+/* H1-08: weapon value 3 = 40 passed check_object() and later indexed
+ * attack_hit_text[] (NUM_ATTACK_TYPES entries) in dam_message() and
+ * 'stat'. It is now replaced by 0 (hit), loudly. */
+static void check_object_repairs_attack_type_out_of_range(void)
+{
+  struct obj_data obj;
+
+  weapon_fixture(&obj, 1, 4, 40);
+  TEST_ASSERT_TRUE(check_object(&obj));
+  TEST_ASSERT_EQUAL_INT(0, GET_OBJ_VAL(&obj, 3));
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("object-check", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "obj vnum 3021 attack type 40"));
+
+  tb_error_capture_reset();
+  weapon_fixture(&obj, 1, 4, -1);
+  TEST_ASSERT_TRUE(check_object(&obj));
+  TEST_ASSERT_EQUAL_INT(0, GET_OBJ_VAL(&obj, 3));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "attack type -1"));
+
+  tb_error_capture_reset();
+  weapon_fixture(&obj, 1, 4, NUM_ATTACK_TYPES - 1);
+  TEST_ASSERT_FALSE(check_object(&obj));
+  TEST_ASSERT_EQUAL_INT(NUM_ATTACK_TYPES - 1, GET_OBJ_VAL(&obj, 3));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  obj_index = NULL;
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -1481,5 +1530,6 @@ int main(void)
   RUN_TEST(parse_room_replaces_empty_strings);
   RUN_TEST(parse_object_replaces_empty_strings);
   RUN_TEST(parse_mobile_replaces_empty_short_description);
+  RUN_TEST(check_object_repairs_attack_type_out_of_range);
   return UNITY_END();
 }

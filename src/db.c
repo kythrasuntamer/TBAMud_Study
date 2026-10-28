@@ -83,6 +83,7 @@
 #define VALID_POS(p)      ((unsigned int)(p) < NUM_POSITIONS)
 #define VALID_SEX(x)      ((unsigned int)(x) < NUM_GENDERS)
 #define VALID_WEAR_POS(w) ((unsigned int)(w) < NUM_WEARS)
+#define VALID_ATTACK(a)   ((unsigned int)(a) < NUM_ATTACK_TYPES)
 
 /* TRUE if a parsed int/long can be stored in an IDXTYPE vnum field without
  * wrapping and is not the NOWHERE/NOTHING sentinel (IDXTYPE_MAX).
@@ -4788,6 +4789,19 @@ static int check_object(struct obj_data *obj)
       log("SYSERR: Object #%d (%s) contains (%d) more than maximum (%d).",
           GET_OBJ_VNUM(obj), obj->short_description, GET_OBJ_VAL(obj, 1),
 	  GET_OBJ_VAL(obj, 0));
+    break;
+  case ITEM_WEAPON:
+    /* Value 3 is the attack type: hit()/dam_message() and 'stat' index
+     * attack_hit_text[] with it. oedit only offers valid types, so an
+     * out-of-range one comes from a hand-edited .obj file: report it and
+     * make the weapon hit (type 0). */
+    if (!VALID_ATTACK(GET_OBJ_VAL(obj, 3))) {
+      TB_ERROR_MSG("db", "object-check", "attack type",
+                   "obj vnum %d attack type %d out of range 0..%d; using 0 (hit)",
+                   GET_OBJ_VNUM(obj), GET_OBJ_VAL(obj, 3), NUM_ATTACK_TYPES - 1);
+      GET_OBJ_VAL(obj, 3) = 0;
+      error = TRUE;
+    }
     break;
   }
 
