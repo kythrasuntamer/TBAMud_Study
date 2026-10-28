@@ -737,8 +737,9 @@ static void list_mobiles(struct char_data *ch, zone_rnum rnum, mob_vnum vmin, mo
   "Index VNum    Mobile Name                                  Level\r\n"
   "----- ------- -------------------------------------------- -----\r\n");
 
-  if (!top_of_mobt)
-    return;
+  /* F3-16: top_of_mobt is the highest index, so 0 means one record, not
+   * none (boot refuses an empty table).  The old `if (!top_of_mobt) return;`
+   * silently listed nothing in a world with exactly one mob. */
 
   for (i = 0; i <= top_of_mobt; i++) {
     if (mob_index[i].vnum >= bottom && mob_index[i].vnum <= top) {
@@ -783,8 +784,9 @@ static void list_objects(struct char_data *ch, zone_rnum rnum, obj_vnum vmin, ob
 	"Index VNum    Object Name                                  Object Type\r\n"
 	"----- ------- -------------------------------------------- ----------------\r\n");
 
-  if (!top_of_objt)
-    return;
+  /* F3-16: top_of_objt is the highest index, so 0 means one record, not
+   * none (boot refuses an empty table).  The old `if (!top_of_objt) return;`
+   * silently listed nothing in a world with exactly one object. */
 
   for (i = 0; i <= top_of_objt; i++) {
     if (obj_index[i].vnum >= bottom && obj_index[i].vnum <= top) {
@@ -881,8 +883,9 @@ static void list_zones(struct char_data *ch, zone_rnum rnum, zone_vnum vmin, zon
   "VNum  Zone Name                      Builder(s)\r\n"
   "----- ------------------------------ --------------------------------------\r\n");
 
-  if (!top_of_zone_table)
-    return;
+  /* F3-16: top_of_zone_table is the highest index, so 0 means one record, not
+   * none (boot refuses an empty table).  The old `if (!top_of_zone_table) return;`
+   * silently listed nothing in a world with exactly one zone. */
 
   for (i = 0; i <= top_of_zone_table; i++) {
     if (zone_table[i].number >= bottom && zone_table[i].number <= top) {

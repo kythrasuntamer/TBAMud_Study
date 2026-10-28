@@ -516,6 +516,50 @@ void test_short_room_list_is_not_reported_truncated(void)
   TEST_ASSERT_FALSE(log_has("op=list-truncated"));
 }
 
+/* ---------------------------------------------------------------------
+ * F3-16: mlist/olist/zlist treated top_of_* == 0 (one record) as an empty
+ * table and returned without any output.
+ * --------------------------------------------------------------------- */
+void test_single_mobile_world_is_listed(void)
+{
+  make_mobiles(1, "the only mob", 1);
+
+  run_list(SCMD_OASIS_MLIST, "200 210");
+
+  TEST_ASSERT_EQUAL_INT(1, paged_calls);
+  TEST_ASSERT_NOT_NULL(strstr(paged, "the only mob"));
+}
+
+void test_single_object_world_is_listed(void)
+{
+  make_objects(1, "the only object");
+
+  run_list(SCMD_OASIS_OLIST, "100 110");
+
+  TEST_ASSERT_EQUAL_INT(1, paged_calls);
+  TEST_ASSERT_NOT_NULL(strstr(paged, "the only object"));
+}
+
+void test_single_zone_world_is_listed(void)
+{
+  struct zone_data zone0;
+
+  memset(&zone0, 0, sizeof(zone0));
+  zone0.name = (char *)"The Only Zone";
+  zone0.builders = (char *)"Nobody";
+  zone_table = &zone0;
+  top_of_zone_table = 0;
+  /* A bare zlist reads the builder's room's zone first. */
+  make_rooms(1, "the only room");
+  builder.in_room = 0;
+
+  run_list(SCMD_OASIS_ZLIST, "");
+  zone_table = NULL;
+
+  TEST_ASSERT_EQUAL_INT(1, paged_calls);
+  TEST_ASSERT_NOT_NULL(strstr(paged, "The Only Zone"));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -532,5 +576,8 @@ int main(void)
   RUN_TEST(test_obj_range_list_reports_truncation);
   RUN_TEST(test_room_list_truncates_on_a_whole_row);
   RUN_TEST(test_short_room_list_is_not_reported_truncated);
+  RUN_TEST(test_single_mobile_world_is_listed);
+  RUN_TEST(test_single_object_world_is_listed);
+  RUN_TEST(test_single_zone_world_is_listed);
   return UNITY_END();
 }
