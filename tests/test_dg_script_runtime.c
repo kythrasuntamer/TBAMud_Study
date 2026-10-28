@@ -141,6 +141,29 @@ void __wrap_tb_error_log_at(const char *severity, const char *subsystem,
           sizeof(captured_operation));
 }
 
+/* Fil-C limitation (filcc defines __FILC__): every C function is linked
+ * under a mangled name -- a call to command_interpreter() references
+ * pizlonated_command_interpreter and the typed entry
+ * pizlonatedFI<signature>_command_interpreter -- so the link's
+ * --wrap=tb_error_log_at, --wrap=script_command_interpreter and
+ * --wrap=command_interpreter match no reference.  The real functions run
+ * and the __wrap_ replacements in this file are never called: nothing is
+ * captured, and a mob script's command reaches the real
+ * command_interpreter(), which indexes the command table this test never
+ * builds (a NULL complete_cmd_info).  A test calls REQUIRE_LINK_WRAPS()
+ * just before the first step that needs a wrap: under Fil-C only, the
+ * test is reported IGNORED there (everything before it has run and
+ * passed); with every other compiler it does nothing.  Undo the test's
+ * changes to shared state before calling it: the rest of the test does
+ * not run under Fil-C. */
+#ifdef __FILC__
+#define REQUIRE_LINK_WRAPS() \
+  TEST_IGNORE_MESSAGE("Fil-C: -Wl,--wrap cannot interpose a Fil-C-mangled " \
+                      "symbol; steps that need a link wrap skipped")
+#else
+#define REQUIRE_LINK_WRAPS() ((void)0)
+#endif
+
 static trig_data trig;
 
 /* Diagnostics name the running trigger, so every test has an index entry
@@ -268,6 +291,7 @@ static void unterminated_reference_stops_at_line_end(void)
   add_var(&GET_TRIG_VARS(&trig), "x", "X", 0);
   substitute_full_line("%x", out);
   TEST_ASSERT_EQUAL_CHAR('X', out[strlen(out) - 1]);
+  REQUIRE_LINK_WRAPS();
   TEST_ASSERT_EQUAL_INT(1, captured_errors);
   TEST_ASSERT_EQUAL_STRING("var-unterminated", captured_operation);
 }
@@ -277,6 +301,7 @@ static void unclosed_paren_stops_at_line_end(void)
   char out[MAX_INPUT_LENGTH];
 
   substitute_full_line("%x.y(z", out);
+  REQUIRE_LINK_WRAPS();
   TEST_ASSERT_EQUAL_INT(1, captured_errors);
   TEST_ASSERT_EQUAL_STRING("var-unterminated", captured_operation);
 }
@@ -288,6 +313,7 @@ static void closed_reference_reports_nothing(void)
   add_var(&GET_TRIG_VARS(&trig), "x", "X", 0);
   var_subst(NULL, NULL, &trig, MOB_TRIGGER, line, out);
   TEST_ASSERT_EQUAL_STRING("say X done", out);
+  REQUIRE_LINK_WRAPS();
   TEST_ASSERT_EQUAL_INT(0, captured_errors);
 }
 
@@ -297,6 +323,8 @@ static void car_is_bounded_by_destination(void)
 {
   char word[64];
   char *str = malloc(16);
+  char truncate_op[sizeof(captured_operation)];
+  int truncations;
   struct trig_var_data *vd;
 
   TEST_ASSERT_NOT_NULL(str);
@@ -307,15 +335,18 @@ static void car_is_bounded_by_destination(void)
 
   TEST_ASSERT_TRUE(text_processed(&trig, "car", "", vd, str, 16));
   TEST_ASSERT_EQUAL_size_t(15, strlen(str));
-  TEST_ASSERT_EQUAL_INT(1, captured_errors);
-  TEST_ASSERT_EQUAL_STRING("field-truncate", captured_operation);
+  truncations = captured_errors;
+  strlcpy(truncate_op, captured_operation, sizeof(truncate_op));
 
   /* A first word that fits is copied whole and silently. */
   add_var(&GET_TRIG_VARS(&trig), "long", "short rest", 0);
   TEST_ASSERT_TRUE(text_processed(&trig, "car", "", vd, str, 16));
   TEST_ASSERT_EQUAL_STRING("short", str);
-  TEST_ASSERT_EQUAL_INT(1, captured_errors);
   free(str);
+  REQUIRE_LINK_WRAPS();
+  TEST_ASSERT_EQUAL_INT(1, truncations);
+  TEST_ASSERT_EQUAL_STRING("field-truncate", truncate_op);
+  TEST_ASSERT_EQUAL_INT(1, captured_errors);   /* the fitting word: silent */
 }
 
 /* %mob.global(name)% passed a NULL field to find_replacement(), which
@@ -462,6 +493,7 @@ static void script_stops_when_its_mob_owner_is_extracted(void)
   static struct script_data script;
   char_data *owner = &mob;
 
+  REQUIRE_LINK_WRAPS();      /* the mob's commands must reach the wraps */
   memset(&mob, 0, sizeof(mob));
   memset(&script, 0, sizeof(script));
   init_lookup_table();
@@ -486,6 +518,8 @@ static void saved_vars_never_exceed_one_pfile_line(void)
   static char_data player, reloaded;
   static struct script_data script;
   char long_value[READ_SIZE + 32], line[READ_SIZE];
+  char save_op[sizeof(captured_operation)];
+  int save_errors;
   struct trig_var_data *vd;
   FILE *fp = tmpfile();
 
@@ -502,8 +536,8 @@ static void saved_vars_never_exceed_one_pfile_line(void)
   add_var(&script.global_vars, "stage", "2", 0);
 
   save_char_vars_ascii(fp, &player);
-  TEST_ASSERT_EQUAL_INT(2, captured_errors);
-  TEST_ASSERT_EQUAL_STRING("var-save", captured_operation);
+  save_errors = captured_errors;
+  strlcpy(save_op, captured_operation, sizeof(save_op));
 
   TEST_ASSERT_EQUAL_INT(0, fseek(fp, 0L, SEEK_SET));
   TEST_ASSERT_EQUAL_INT(1, get_line(fp, line));
@@ -520,6 +554,9 @@ static void saved_vars_never_exceed_one_pfile_line(void)
   free_varlist(script.global_vars);
   free_varlist(SCRIPT(&reloaded)->global_vars);
   free(SCRIPT(&reloaded));
+  REQUIRE_LINK_WRAPS();
+  TEST_ASSERT_EQUAL_INT(2, save_errors);           /* long and broken */
+  TEST_ASSERT_EQUAL_STRING("var-save", save_op);
 }
 
 /* A huge wait used to reach the event queue as a key that wrapped
@@ -617,6 +654,7 @@ static void break_without_done_ends_the_script(void)
   static const char *const lines[] = { "break", "while 1", "nop x", NULL };
 
   TEST_ASSERT_EQUAL_INT(0, run_object_lines(lines));
+  REQUIRE_LINK_WRAPS();
   TEST_ASSERT_EQUAL_STRING("block-unterminated", captured_operation);
 }
 
@@ -625,6 +663,7 @@ static void switch_with_unclosed_nested_while_ends_the_script(void)
   static const char *const lines[] = { "switch 1", "while 0", "nop x", NULL };
 
   TEST_ASSERT_EQUAL_INT(0, run_object_lines(lines));
+  REQUIRE_LINK_WRAPS();
   TEST_ASSERT_EQUAL_STRING("block-unterminated", captured_operation);
 }
 
@@ -634,6 +673,7 @@ static void switch_still_selects_its_case(void)
     "switch 2", "case 1", "first", "case 2", "second", "done", NULL };
 
   TEST_ASSERT_EQUAL_INT(1, run_object_lines(lines));
+  REQUIRE_LINK_WRAPS();
   TEST_ASSERT_EQUAL_INT(0, captured_errors);
 }
 
@@ -794,6 +834,7 @@ static void owner_in_no_room_is_not_indexed(void)
   static struct index_data index = { 0 };
   static struct index_data *indexes[1] = { &index };
   char line[MAX_INPUT_LENGTH], out[MAX_INPUT_LENGTH];
+  char uid_op[sizeof(captured_operation)];
 
   memset(&owner, 0, sizeof(owner));
   memset(&target, 0, sizeof(target));
@@ -817,19 +858,21 @@ static void owner_in_no_room_is_not_indexed(void)
   strlcpy(line, "[%m.global(quest)%]", sizeof(line));
   var_subst(&owner, NULL, &trig, MOB_TRIGGER, line, out);
   TEST_ASSERT_EQUAL_STRING("[stage3]", out);     /* the UID still resolves */
-  TEST_ASSERT_EQUAL_STRING("owner-unplaced", captured_operation);
+  strlcpy(uid_op, captured_operation, sizeof(uid_op));
 
   captured_errors = 0;
   strlcpy(line, "[%random.char%]", sizeof(line));
   var_subst(&owner, NULL, &trig, MOB_TRIGGER, line, out);
   TEST_ASSERT_EQUAL_STRING("[]", out);
-  TEST_ASSERT_EQUAL_INT(1, captured_errors);
-  TEST_ASSERT_EQUAL_STRING("owner-unplaced", captured_operation);
 
   remove_from_lookup_table(target.script_id, &target);
   free_varlist(target_script.global_vars);
   trig_index = NULL;
   top_of_trigt = 0;
+  REQUIRE_LINK_WRAPS();
+  TEST_ASSERT_EQUAL_STRING("owner-unplaced", uid_op);
+  TEST_ASSERT_EQUAL_INT(1, captured_errors);
+  TEST_ASSERT_EQUAL_STRING("owner-unplaced", captured_operation);
 }
 
 /* %obj.extra% passed sizeof(pointer) as the buffer size, so the flag list

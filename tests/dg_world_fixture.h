@@ -77,6 +77,27 @@ void __wrap_tb_error_log_at(const char *severity, const char *subsystem,
   (void)source_file;
 }
 
+/* Fil-C limitation (filcc defines __FILC__): every C function is linked
+ * under a mangled name -- a call to tb_error_log_at() references
+ * pizlonated_tb_error_log_at and the typed entry
+ * pizlonatedFI<signature>_tb_error_log_at -- so the link's
+ * --wrap=tb_error_log_at matches no reference.  The real logger runs,
+ * __wrap_tb_error_log_at() above is never called and dgw_saw() counts
+ * nothing.  A test calls DGW_REQUIRE_DIAG_CAPTURE() just before its first
+ * assertion on captured diagnostics: under Fil-C only, the test is
+ * reported IGNORED there (everything before it has run and passed); with
+ * every other compiler it does nothing and the assertions run.  Restore
+ * whatever the test changed in the world before calling it: the rest of
+ * the test does not run under Fil-C, and dgw_teardown() frees what it
+ * finds. */
+#ifdef __FILC__
+#define DGW_REQUIRE_DIAG_CAPTURE() \
+  TEST_IGNORE_MESSAGE("Fil-C: -Wl,--wrap=tb_error_log_at cannot interpose " \
+                      "a Fil-C-mangled symbol; diagnostic assertions skipped")
+#else
+#define DGW_REQUIRE_DIAG_CAPTURE() ((void)0)
+#endif
+
 /* Number of captured records whose operation is op. */
 static inline int dgw_saw(const char *op)
 {

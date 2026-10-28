@@ -88,9 +88,15 @@ static void test_oat_clone_failure_is_reported(void)
   obj_index[saved].number--;    /* pretend it never had a prototype */
   stone->item_number = NOTHING;
   ocmd(stone, "oat 101 oecho hello");
-  TEST_ASSERT_EQUAL_INT(1, dgw_saw("oat-clone"));
+  /* Give the stone its prototype back before asserting: a failed assertion
+   * ends the test, and teardown would then free a NOTHING-rnum stone as
+   * owning its strings -- the prototype's string literals (an invalid
+   * free; ASan: bad-free, Fil-C: "cannot free global object"). */
   stone->item_number = saved;
   obj_index[saved].number++;
+  TEST_ASSERT_EQUAL_INT(0, room_count_objs(1, DGW_OBJ_STONE)); /* no clone */
+  DGW_REQUIRE_DIAG_CAPTURE();
+  TEST_ASSERT_EQUAL_INT(1, dgw_saw("oat-clone"));
 }
 
 /* Run a one-trigger script on obj; returns the owner pointer as
@@ -117,8 +123,9 @@ static void test_purging_own_container_stops_the_script(void)
   obj_to_obj(stone, bag);
 
   TEST_ASSERT_NULL(run_obj_script(stone, lines));
-  TEST_ASSERT_EQUAL_INT(1, dgw_saw("owner-extracted"));
   TEST_ASSERT_NULL(world[0].contents);
+  DGW_REQUIRE_DIAG_CAPTURE();
+  TEST_ASSERT_EQUAL_INT(1, dgw_saw("owner-extracted"));
 }
 
 /* E1-03: 'opurge' with no argument purges the room's objects; the owner is
@@ -131,6 +138,7 @@ static void test_purging_the_room_from_inside_a_container_stops_the_script(void)
   obj_to_obj(stone, bag);
 
   TEST_ASSERT_NULL(run_obj_script(stone, lines));
+  DGW_REQUIRE_DIAG_CAPTURE();
   TEST_ASSERT_EQUAL_INT(1, dgw_saw("owner-extracted"));
 }
 
@@ -141,6 +149,7 @@ static void test_opurge_self_is_not_reported(void)
   struct obj_data *stone = dgw_obj(DGW_OBJ_STONE, 0);
 
   TEST_ASSERT_NULL(run_obj_script(stone, lines));
+  DGW_REQUIRE_DIAG_CAPTURE();
   TEST_ASSERT_EQUAL_INT(0, dgw_saw("owner-extracted"));
 }
 
@@ -152,6 +161,7 @@ static void test_purging_something_else_keeps_the_owner(void)
   (void)dgw_obj(DGW_OBJ_BAG, 0);
 
   TEST_ASSERT_EQUAL_PTR(stone, run_obj_script(stone, lines));
+  DGW_REQUIRE_DIAG_CAPTURE();
   TEST_ASSERT_EQUAL_INT(0, dgw_saw("owner-extracted"));
 }
 
@@ -161,6 +171,7 @@ static void test_osetval_rejects_out_of_range_index_values(void)
   struct obj_data *skin = dgw_obj(DGW_OBJ_SKIN, 0);
   struct obj_data *sword = dgw_obj(DGW_OBJ_SWORD, 0);
   struct obj_data *stone = dgw_obj(DGW_OBJ_STONE, 0);
+  int refused;
 
   ocmd(skin, "osetval 2 5000");
   TEST_ASSERT_EQUAL_INT(0, GET_OBJ_VAL(skin, 2));
@@ -168,7 +179,7 @@ static void test_osetval_rejects_out_of_range_index_values(void)
   TEST_ASSERT_EQUAL_INT(0, GET_OBJ_VAL(skin, 2));
   ocmd(sword, "osetval 3 200");
   TEST_ASSERT_EQUAL_INT(0, GET_OBJ_VAL(sword, 3));
-  TEST_ASSERT_EQUAL_INT(3, dgw_saw("osetval-range"));
+  refused = dgw_saw("osetval-range");
 
   ocmd(skin, "osetval 2 3");
   TEST_ASSERT_EQUAL_INT(3, GET_OBJ_VAL(skin, 2));
@@ -176,6 +187,8 @@ static void test_osetval_rejects_out_of_range_index_values(void)
   TEST_ASSERT_EQUAL_INT(14, GET_OBJ_VAL(sword, 3));
   ocmd(stone, "osetval 2 5000");   /* not an index for this type */
   TEST_ASSERT_EQUAL_INT(5000, GET_OBJ_VAL(stone, 2));
+  DGW_REQUIRE_DIAG_CAPTURE();
+  TEST_ASSERT_EQUAL_INT(3, refused);
   TEST_ASSERT_EQUAL_INT(3, dgw_saw("osetval-range"));
 }
 
@@ -217,9 +230,10 @@ static void test_otransform_to_non_furniture_unseats(void)
   ocmd(bench, "otransform 206");
   TEST_ASSERT_NULL(SITTING(m));
   TEST_ASSERT_NULL(OBJ_SAT_IN_BY(bench));
-  TEST_ASSERT_EQUAL_INT(1, dgw_saw("otransform"));
   extract_obj(bench);
   char_from_furniture(m);
+  DGW_REQUIRE_DIAG_CAPTURE();
+  TEST_ASSERT_EQUAL_INT(1, dgw_saw("otransform"));
 }
 
 /* E1-07: carried and container weights follow the new weight. */
@@ -268,16 +282,20 @@ static void test_omove_to_invalid_room_keeps_the_object(void)
 {
   struct char_data *m = dgw_mob(DGW_MOB_GUARD, 0);
   struct obj_data *stone = dgw_obj(DGW_OBJ_STONE, NOWHERE);
+  int refused;
   obj_to_char(stone, m);
 
   ocmd(stone, "omove 99999");
   TEST_ASSERT_EQUAL_PTR(m, stone->carried_by);
   TEST_ASSERT_EQUAL_PTR(stone, m->carrying);
-  TEST_ASSERT_EQUAL_INT(1, dgw_saw("omove-target"));
+  refused = dgw_saw("omove-target");
 
   ocmd(stone, "omove 102");
   TEST_ASSERT_NULL(stone->carried_by);
   TEST_ASSERT_EQUAL_INT(2, IN_ROOM(stone));
+  DGW_REQUIRE_DIAG_CAPTURE();
+  TEST_ASSERT_EQUAL_INT(1, refused);
+  TEST_ASSERT_EQUAL_INT(1, dgw_saw("omove-target"));
 }
 
 /* E1-09: 'oteleport all' from an object that is not in any room read
@@ -287,8 +305,9 @@ static void test_oteleport_all_from_unplaced_object(void)
   struct obj_data *stone = dgw_obj(DGW_OBJ_STONE, NOWHERE);
 
   ocmd(stone, "oteleport all 101");
-  TEST_ASSERT_EQUAL_INT(1, dgw_saw("oteleport-origin"));
   obj_to_room(stone, 0);   /* so teardown finds it placed */
+  DGW_REQUIRE_DIAG_CAPTURE();
+  TEST_ASSERT_EQUAL_INT(1, dgw_saw("oteleport-origin"));
 }
 
 /* E1-09: teleporting everyone into the room they are in is refused, not
@@ -318,32 +337,37 @@ static void test_object_target_character_in_no_room(void)
   char_from_room(m);
   tb_snprintf(cmd, sizeof(cmd), "omove %c%ld", UID_CHAR, char_script_id(m));
   ocmd(stone, cmd);
-  TEST_ASSERT_EQUAL_INT(1, dgw_saw("target-room"));
+  char_to_room(m, 1);      /* so teardown finds it placed */
   TEST_ASSERT_EQUAL_INT(0, IN_ROOM(stone));
-  char_to_room(m, 1);
+  DGW_REQUIRE_DIAG_CAPTURE();
+  TEST_ASSERT_EQUAL_INT(1, dgw_saw("target-room"));
 }
 
 /* E1-13: numeric object-command arguments are parsed strictly. */
 static void test_obj_numeric_arguments_are_checked(void)
 {
   struct obj_data *stone = dgw_obj(DGW_OBJ_STONE, 0);
+  int bad_numbers, bad_vnums;
 
   GET_OBJ_TIMER(stone) = 7;
   ocmd(stone, "otimer 99999999999");
   TEST_ASSERT_EQUAL_INT(7, GET_OBJ_TIMER(stone));
   ocmd(stone, "osetval 0 99999999999");
   TEST_ASSERT_EQUAL_INT(0, GET_OBJ_VAL(stone, 0));
-  TEST_ASSERT_EQUAL_INT(2, dgw_saw("parse-number"));
+  bad_numbers = dgw_saw("parse-number");
 
   ocmd(stone, "otransform 65737");     /* 65536 + 201 */
   TEST_ASSERT_EQUAL_INT(DGW_OBJ_STONE, GET_OBJ_VNUM(stone));
   ocmd(stone, "oload obj 65738");
   ocmd(stone, "omove 65637");
   TEST_ASSERT_EQUAL_INT(0, IN_ROOM(stone));
-  TEST_ASSERT_EQUAL_INT(3, dgw_saw("parse-vnum"));
+  bad_vnums = dgw_saw("parse-vnum");
 
   ocmd(stone, "otimer 12");
   TEST_ASSERT_EQUAL_INT(12, GET_OBJ_TIMER(stone));
+  DGW_REQUIRE_DIAG_CAPTURE();
+  TEST_ASSERT_EQUAL_INT(2, bad_numbers);
+  TEST_ASSERT_EQUAL_INT(3, bad_vnums);
 }
 
 /* E1-22: an o-command rejection is reported as cmd-rejected with the
@@ -353,6 +377,7 @@ static void test_obj_rejection_is_reported_and_olog_is_not(void)
   struct obj_data *o = dgw_obj(DGW_OBJ_STONE, 0);
 
   ocmd(o, "olog just a note");
+  DGW_REQUIRE_DIAG_CAPTURE();
   TEST_ASSERT_EQUAL_INT(0, dgw_saw("cmd-rejected"));
   ocmd(o, "oload obj 99999");
   TEST_ASSERT_EQUAL_INT(1, dgw_saw("cmd-rejected"));
@@ -368,6 +393,7 @@ static void test_unplaced_object_room_commands_are_reported(void)
   ocmd(o, "opurge");
   ocmd(o, "oecho hello");
   ocmd(o, "oload obj 201");
+  DGW_REQUIRE_DIAG_CAPTURE();
   TEST_ASSERT_EQUAL_INT(3, dgw_saw("cmd-rejected"));
 }
 
