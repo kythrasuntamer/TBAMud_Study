@@ -682,15 +682,26 @@ bool oset_alias(struct obj_data *obj, char * argument)
 bool oset_apply(struct obj_data *obj, char * argument)
 { 
   int i = 0, apply = -1, location = -1, mod = 0, empty = -1, value;
-  char arg[MAX_INPUT_LENGTH];
-  
+  char arg[MAX_INPUT_LENGTH], *end;
+  long parsed;
+
   argument = one_argument(argument, arg);
-  
+
   skip_spaces(&argument);
-  
-  if ((value = tb_parse_int_or_zero(argument)) == 0)
+
+  /* The amount comes from a DG script or the immortal oset command.  Parse
+   * it strictly: tb_parse_int_or_zero() cannot tell "0" from "abc". */
+  errno = 0;
+  parsed = strtol(argument, &end, 10);
+  if (end == argument || (*end && !isspace((unsigned char)*end)) ||
+      errno == ERANGE || parsed == 0 || parsed < INT_MIN || parsed > INT_MAX) {
+    TB_WARN_MSG("dg", "oset-reject", "object",
+                "obj vnum %d uid %ld: apply amount is not a non-zero integer "
+                "(%zu bytes)", GET_OBJ_VNUM(obj), obj->script_id, strlen(argument));
     return FALSE;
-  
+  }
+  value = (int)parsed;
+
   while (*apply_types[i] != '\n') {
     if (is_abbrev(apply_types[i], arg)) {
       apply = i;
@@ -698,10 +709,14 @@ bool oset_apply(struct obj_data *obj, char * argument)
     }
     i++;
   }
-  
-  if (apply == -1)
+
+  if (apply == -1) {
+    TB_WARN_MSG("dg", "oset-reject", "object",
+                "obj vnum %d uid %ld: unknown apply name (%zu bytes)",
+                GET_OBJ_VNUM(obj), obj->script_id, strlen(arg));
     return FALSE;
-    
+  }
+
   for (i = 0; i < MAX_OBJ_AFFECT; i++) {
     if (obj->affected[i].location == apply) {
       location = i;
@@ -717,10 +732,23 @@ bool oset_apply(struct obj_data *obj, char * argument)
     location = empty;  
   
   /* There is no slot already using our APPLY_XXX type, and no empty slots either */
-  if (location == -1)
+  if (location == -1) {
+    TB_WARN_MSG("dg", "oset-reject", "object",
+                "obj vnum %d uid %ld: apply %s: all %d affect slots in use",
+                GET_OBJ_VNUM(obj), obj->script_id, apply_types[apply], MAX_OBJ_AFFECT);
     return FALSE;
-  
-  obj->affected[location].modifier = mod + value;
+  }
+
+  /* modifier is an sbyte: a sum outside its range would wrap (+200 became
+   * -56).  value is bounded by INT_MAX and mod by sbyte, so compare in long. */
+  if ((long)mod + value < SCHAR_MIN || (long)mod + value > SCHAR_MAX) {
+    TB_WARN_MSG("dg", "oset-reject", "object",
+                "obj vnum %d uid %ld: apply %s %ld out of range %d..%d",
+                GET_OBJ_VNUM(obj), obj->script_id, apply_types[apply],
+                (long)mod + value, SCHAR_MIN, SCHAR_MAX);
+    return FALSE;
+  }
+  obj->affected[location].modifier = (sbyte)(mod + value);
   
   /* Our modifier is set at 0, so lets just clear the apply location so that it may
    * be reused at a later point */

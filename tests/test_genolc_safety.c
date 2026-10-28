@@ -1142,6 +1142,43 @@ static void room_changes_renumber_was_in_room(void)
 }
 
 /* ------------------------------------------------------------------------ */
+/* C2-22: oset apply parses strictly and never wraps the sbyte modifier.    */
+/* ------------------------------------------------------------------------ */
+static void oset_apply_rejects_out_of_range_modifier(void)
+{
+  struct obj_data o;
+  char a[] = "str 200";
+  make_objs(1);
+  memset(&o, 0, sizeof(o));
+  TEST_ASSERT_FALSE(oset_apply(&o, a));
+  TEST_ASSERT_EQUAL_INT(0, o.affected[0].modifier);
+  TEST_ASSERT_EQUAL_STRING("oset-reject", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "200 out of range"));
+}
+
+static void oset_apply_rejects_non_number(void)
+{
+  struct obj_data o;
+  char a[] = "str 5x";
+  make_objs(1);
+  memset(&o, 0, sizeof(o));
+  TEST_ASSERT_FALSE(oset_apply(&o, a));
+  TEST_ASSERT_EQUAL_STRING("oset-reject", tb_captured_operation);
+}
+
+static void oset_apply_sets_valid_modifier(void)
+{
+  struct obj_data o;
+  char a[] = "str -5";
+  make_objs(1);
+  memset(&o, 0, sizeof(o));
+  TEST_ASSERT_TRUE(oset_apply(&o, a));
+  TEST_ASSERT_EQUAL_INT(APPLY_STR, o.affected[0].location);
+  TEST_ASSERT_EQUAL_INT(-5, o.affected[0].modifier);
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+}
+
+/* ------------------------------------------------------------------------ */
 /* Temporary world directory for the writers.                               */
 /* ------------------------------------------------------------------------ */
 static char test_root[] = "/tmp/tb-genolc-XXXXXX";
@@ -1231,6 +1268,9 @@ int main(void)
   RUN_TEST(create_world_index_reports_unknown_type);
   RUN_TEST(add_room_renumbers_lower_zone_commands);
   RUN_TEST(room_changes_renumber_was_in_room);
+  RUN_TEST(oset_apply_rejects_out_of_range_modifier);
+  RUN_TEST(oset_apply_rejects_non_number);
+  RUN_TEST(oset_apply_sets_valid_modifier);
   failures = UNITY_END();
   leave_test_root();
   return failures;
