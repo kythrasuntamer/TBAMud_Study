@@ -182,6 +182,18 @@ class Wld2HtmlTests(ToolCase):
         self.assertNotIn(b"(null)", page)
         self.assertIn(b"North to missing room 0", page)
 
+    def test_builder_text_is_html_escaped(self):
+        # I3-14: room names and descriptions were written raw into HTML.
+        rc, err = self.wld('#100\n<b>A & "B"~\n<script>x</script>\n~\n'
+                           "0 0 0\nD0\n~\n~\n0 0 100\nS\n$~\n")
+        self.assertEqual(rc, 0, err)
+        page = self.read("100.html")
+        self.assertNotIn(b"<script>", page)
+        self.assertNotIn(b"<b>", page)
+        self.assertIn(b"<title> &lt;b&gt;A &amp; &quot;B&quot; </title>", page)
+        self.assertIn(b"&lt;script&gt;x&lt;/script&gt;", page)
+        self.assertIn(b"North to &lt;b&gt;A &amp; &quot;B&quot;</a>", page)
+
     def test_final_line_without_newline_accepted(self):
         # I3-07: a valid file whose '$~' had no newline was rejected as a
         # format error blaming room #100.

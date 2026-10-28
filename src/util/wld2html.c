@@ -308,6 +308,41 @@ struct room_data* findRoom(int nr)
   return NULL;
 }
 
+/*
+ * Write builder-supplied text (room names, descriptions) into a page,
+ * escaping the HTML metacharacters & < > ".  The .wld text is builder data
+ * and used to be copied raw, so a '<' in a description became markup in
+ * the published page.  On a write error it stops; write_output()'s
+ * ferror() check then reports wld-html-write once for the page.
+ */
+static void html_escape_fputs(FILE *fl, const char *text)
+{
+  const char *p;
+
+  if (text == NULL) {
+    WLD_REPORT(TB_SEV_ERROR, TB_ERR_INVARIANT, "wld-html-null-text",
+               "NULL text passed for HTML output");
+    return;
+  }
+
+  for (p = text; *p; p++) {
+    const char *entity = NULL;
+
+    switch (*p) {
+    case '&': entity = "&amp;"; break;
+    case '<': entity = "&lt;"; break;
+    case '>': entity = "&gt;"; break;
+    case '"': entity = "&quot;"; break;
+    default: break;
+    }
+    if (entity != NULL) {
+      if (fputs(entity, fl) == EOF)
+        return;
+    } else if (putc(*p, fl) == EOF)
+      return;
+  }
+}
+
 void write_output(void)
 {
   int i;
@@ -338,10 +373,13 @@ void write_output(void)
       TB_REPORT_ERRNO("fopen", buf);
       exit(1);
     }
-    tb_fprintf(fl, "<title> %s </title>\n", world[i].name);
-    tb_fprintf(fl, "<h1> %s </h1>\n", world[i].name);
+    tb_fprintf(fl, "<title> ");
+    html_escape_fputs(fl, world[i].name);
+    tb_fprintf(fl, " </title>\n<h1> ");
+    html_escape_fputs(fl, world[i].name);
+    tb_fprintf(fl, " </h1>\n");
     tb_fprintf(fl, "<pre>\n");
-    tb_fputs(world[i].description, fl);
+    html_escape_fputs(fl, world[i].description);
     tb_fprintf(fl, "</pre>\n");
     tb_fprintf(fl, "<P> Exits: <P> \n");
 
@@ -354,12 +392,13 @@ void write_output(void)
 	//This fixes a lot of issues introduced with the whole 'renumbering rooms' call
 	//and the binary search that didn't work well.
 	struct room_data* to_room = findRoom(world[i].dir_option[door]->to_room);
-        if (to_room)
-          tb_fprintf(fl, "<a href = \"%d.html\"> %s to %s</a> <p>\n",
+        if (to_room) {
+          tb_fprintf(fl, "<a href = \"%d.html\"> %s to ",
                   to_room->number,
-                  dir_names[door],
-                  to_room->name);
-        else
+                  dir_names[door]);
+          html_escape_fputs(fl, to_room->name);
+          tb_fprintf(fl, "</a> <p>\n");
+        } else
           tb_fprintf(fl, "%s to missing room %d <p>\n",
                   dir_names[door], world[i].dir_option[door]->to_room);
       }
