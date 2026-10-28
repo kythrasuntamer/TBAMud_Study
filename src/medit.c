@@ -435,7 +435,7 @@ static void medit_disp_menu(struct descriptor_data *d)
   "%s5%s) D-Desc:-\r\n%s%s\r\n",
 
 	  cyn, OLC_NUM(d), nrm,
-	  grn, nrm, yel, genders[(int)GET_SEX(mob)], nrm,
+	  grn, nrm, yel, OLC_TABLE_NAME(d, genders, NUM_GENDERS, (int)GET_SEX(mob)), nrm,
 	  grn, nrm, yel, GET_ALIAS(mob),
 	  grn, nrm, yel, GET_SDESC(mob),
 	  grn, nrm, yel, GET_LDESC(mob),
@@ -457,9 +457,10 @@ static void medit_disp_menu(struct descriptor_data *d)
 	  "%sQ%s) Quit\r\n"
 	  "Enter choice : ",
 
-	  grn, nrm, yel, position_types[(int)GET_POS(mob)],
-	  grn, nrm, yel, position_types[(int)GET_DEFAULT_POS(mob)],
-	  grn, nrm, yel, attack_hit_text[(int)GET_ATTACK(mob)].singular,
+	  grn, nrm, yel, OLC_TABLE_NAME(d, position_types, NUM_POSITIONS, (int)GET_POS(mob)),
+	  grn, nrm, yel, OLC_TABLE_NAME(d, position_types, NUM_POSITIONS, (int)GET_DEFAULT_POS(mob)),
+	  grn, nrm, yel, OLC_CHECK_INDEX(d, "attack_hit_text", (int)GET_ATTACK(mob), NUM_ATTACK_TYPES) ?
+	                 attack_hit_text[(int)GET_ATTACK(mob)].singular : "<invalid>",
 	  grn, nrm,
 	  grn, nrm, cyn, flags,
 	  grn, nrm, cyn, flag2,

@@ -96,6 +96,23 @@ int olc_check_rnum_at(const char *file, int line, const char *func,
   return FALSE;
 }
 
+int olc_check_index_at(const char *file, int line, const char *func,
+                       struct descriptor_data *d, const char *table,
+                       long idx, long count)
+{
+  struct char_data *builder = d ? d->character : NULL;
+
+  if (idx >= 0 && idx < count)
+    return TRUE;
+
+  tb_error_log_at("ERROR", "olc", "table-index", table, 0, file, line, func,
+                  "builder %s %ld editing vnum %d holds %s index %ld outside [0, %ld)",
+                  builder ? (IS_NPC(builder) ? "mob vnum" : "player idnum") : "none",
+                  builder ? (IS_NPC(builder) ? (long) GET_MOB_VNUM(builder) : (long) GET_IDNUM(builder)) : -1L,
+                  (d && d->olc) ? OLC_NUM(d) : -1, table, idx, count);
+  return FALSE;
+}
+
 /* Move one stored rnum for an insert (delta > 0) or delete (delta < 0) at
  * refpt. Returns TRUE when the value named the deleted entry; the caller
  * then cancels or clears whatever held it. Negative values and 'none' are
@@ -784,7 +801,7 @@ static void zedit_disp_menu(struct descriptor_data *d)
 	      MYCMD.if_flag ? " then " : "",
 	      obj_proto[MYCMD.arg1].short_description,
 	      cyn, obj_index[MYCMD.arg1].vnum, yel,
-	      equipment_types[MYCMD.arg3],
+	      OLC_TABLE_NAME(d, equipment_types, NUM_WEARS, MYCMD.arg3),
 	      MYCMD.arg2
 	      );
       break;
@@ -817,7 +834,7 @@ static void zedit_disp_menu(struct descriptor_data *d)
     case 'D':
       write_to_output(d, "%sSet door %s as %s.",
 	      MYCMD.if_flag ? " then " : "",
-	      dirs[MYCMD.arg2],
+	      OLC_TABLE_NAME(d, dirs, NUM_OF_DIRS, MYCMD.arg2),
 	      MYCMD.arg3 ? ((MYCMD.arg3 == 1) ? "closed" : "locked") : "open"
 	      );
       break;

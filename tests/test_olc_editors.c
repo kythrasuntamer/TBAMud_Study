@@ -1369,6 +1369,34 @@ static void test_zedit_deleting_global_frees_its_strings(void)
   free_zedit_session(d);
 }
 
+
+/* ------------------------------------------------------------------ */
+/* F1-16: menus never index a name table with a world-file value       */
+/* outside the table.                                                  */
+/* ------------------------------------------------------------------ */
+static void test_zedit_menu_reports_out_of_range_wear_and_door_values(void)
+{
+  struct descriptor_data *d = &builder_desc;
+  struct reset_com cmds[2];
+
+  make_objects(3);
+  make_zone();
+  memset(cmds, 0, sizeof(cmds));
+  cmds[0].command = 'E'; cmds[0].arg1 = 0; cmds[0].arg3 = 40;   /* 'E 1 3000 1 40' */
+  cmds[1].command = 'D'; cmds[1].arg1 = 0; cmds[1].arg2 = 42;   /* 'D 0 3001 42 1' */
+  make_zedit_session(d, cmds, 2);
+  OLC_MODE(d) = ZEDIT_MAIN_MENU;
+
+  zedit_parse(d, "?");             /* redisplay the menu */
+
+  TEST_ASSERT_EQUAL_INT(2, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("table-index", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "editing vnum 3001 holds dirs index 42 outside [0, 10)"));
+  TEST_ASSERT_NOT_NULL(strstr(out_buf, "Set door <invalid>"));
+  TEST_ASSERT_NOT_NULL(strstr(out_buf, "<invalid>, Max"));
+  free_zedit_session(d);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -1402,5 +1430,6 @@ int main(void)
   RUN_TEST(test_zedit_global_name_with_space_is_refused_and_reported);
   RUN_TEST(test_zedit_reediting_global_frees_previous_strings);
   RUN_TEST(test_zedit_deleting_global_frees_its_strings);
+  RUN_TEST(test_zedit_menu_reports_out_of_range_wear_and_door_values);
   return UNITY_END();
 }

@@ -338,7 +338,7 @@ static void sedit_namelist_menu(struct descriptor_data *d)
   write_to_output(d, "##              Type   Namelist\r\n\r\n");
   for (i = 0; S_BUYTYPE(shop, i) != NOTHING; i++) {
     write_to_output(d, "%2d - %s%15s%s - %s%s%s\r\n", i, cyn,
-		item_types[S_BUYTYPE(shop, i)], nrm, yel,
+		OLC_TABLE_NAME(d, item_types, NUM_ITEM_TYPES, S_BUYTYPE(shop, i)), nrm, yel,
 		S_BUYWORD(shop, i) ? S_BUYWORD(shop, i) : "<None>", nrm);
   }
   write_to_output(d, "\r\n"

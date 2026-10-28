@@ -64,6 +64,24 @@
 
 int olc_check_rnum_at(const char *file, int line, const char *func,
                       struct descriptor_data *d, int kind, long rnum);
+
+/** Report an index into a name table (genders, position_types, dirs,
+ * equipment_types, item_types, attack_hit_text...) that is outside
+ * [0, count) as a "table-index" error naming the call site, builder,
+ * edited vnum, table and value. Returns TRUE when idx is valid. The values
+ * come from world files, which the loaders do not range-check. */
+#define OLC_CHECK_INDEX(d, table, idx, count) \
+  olc_check_index_at(__FILE__, __LINE__, __func__, (d), (table), (long)(idx), (long)(count))
+
+/** table[idx] for a menu, or "<invalid>" after OLC_CHECK_INDEX reported
+ * it. idx is evaluated twice: pass a plain value. Elson-style accessor in
+ * the spirit of sprinttype(), but bounded by the table's real size. */
+#define OLC_TABLE_NAME(d, table, count, idx) \
+  (OLC_CHECK_INDEX((d), #table, (idx), (count)) ? (table)[(idx)] : "<invalid>")
+
+int olc_check_index_at(const char *file, int line, const char *func,
+                       struct descriptor_data *d, const char *table,
+                       long idx, long count);
 void olc_renumber_sessions(int kind, int refpt, int delta,
                            struct descriptor_data *skip);
 /** Free OLC_SCRIPT(d) unless a save already handed it to a prototype (save
