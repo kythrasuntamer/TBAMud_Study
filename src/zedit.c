@@ -1296,10 +1296,8 @@ void zedit_parse(struct descriptor_data *d, char *arg)
     /* Get the line number and delete the line. */
     pos = tb_parse_int_or_zero(arg);
     if (isdigit(*arg)) {
-      /* The scratch list owns its 'V' strings; delete_zone_command() only
-       * drops the struct. */
-      if (pos >= 0 && pos < count_commands(OLC_ZONE(d)->cmd))
-        ZEDIT_FREE_SARGS(OLC_ZONE(d)->cmd[pos]);
+      /* delete_zone_command() frees the removed command's 'V' strings: the
+       * scratch list owns deep copies (zedit_setup). */
       delete_zone_command(OLC_ZONE(d), pos);
       OLC_ZONE(d)->age = 1;
       /* The list shrank: OLC_VAL may now index past it (see
@@ -1348,6 +1346,11 @@ void zedit_parse(struct descriptor_data *d, char *arg)
     if (!OLC_CMD(d).command || (strchr("MOPEDGRTV", OLC_CMD(d).command) == NULL)) {
       write_to_output(d, "Invalid choice, try again : ");
     } else {
+      /* Only a 'V' command owns strings: save_zone(), reset_zone() and
+       * destroy_db() use or free them for 'V' alone.  A command retyped
+       * from 'V' drops them here rather than carry them unused. */
+      if (OLC_CMD(d).command != 'V')
+        ZEDIT_FREE_SARGS(OLC_CMD(d));
       if (OLC_VAL(d)) {	/* If there was a previous command. */
         if (OLC_CMD(d).command == 'T' || OLC_CMD(d).command == 'V') {
           OLC_CMD(d).if_flag = 1;

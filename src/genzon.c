@@ -21,9 +21,12 @@
  * arguments are rnums; they are converted back to vnums only when saving,
  * and a stale rnum aborts the save rather than being indexed.
  *
- * Ownership: struct reset_com is copied by value between lists, so the
- * sarg1/sarg2 strings of a 'V' command are shared between zedit's working
- * copy and zone_table (see remove_cmd_from_list()).
+ * Ownership: a command list owns the sarg1/sarg2 strings of its commands
+ * (only a 'V' command has them).  zone_table's come from load_zones() or a
+ * zedit save; zedit_setup() gives its working list deep copies, and a zedit
+ * save gives zone_table fresh copies of the working list's strings (the
+ * working list keeps its own until cleanup_olc()), so no two lists share a
+ * string.  Removing a command (remove_cmd_from_list()) frees its strings.
  */
 
 #include "conf.h"
@@ -481,21 +484,11 @@ void remove_room_zone_commands(zone_rnum zone, room_rnum room_num)
     default:
       break;
     }
-    if (cmd_room == room_num) {
-      /* zone_table owns its 'V' strings (zedit_setup gives sessions deep
-       * copies); remove_cmd_from_list() only drops the struct, so free them
-       * once it has. A failed removal is already reported and keeps the
-       * command (and its strings); step past it so the scan terminates. */
-      char *sarg1 = zone_table[zone].cmd[subcmd].sarg1;
-      char *sarg2 = zone_table[zone].cmd[subcmd].sarg2;
-
-      if (remove_cmd_from_list(&zone_table[zone].cmd, subcmd,
-                               zone_table[zone].number)) {
-        free(sarg1);
-        free(sarg2);
-      } else
-        subcmd++;
-    } else
+    /* A failed removal is already reported; step past it so the scan
+     * still terminates.  remove_cmd_from_list() frees a removed command's
+     * 'V' strings. */
+    if (cmd_room != room_num ||
+        !remove_cmd_from_list(&zone_table[zone].cmd, subcmd, zone_table[zone].number))
       subcmd++;
   }
 }
@@ -748,8 +741,10 @@ int count_commands(struct reset_com *list)
  * Insert a copy of *newcmd at index pos of a zone command list.
  *
  * The list is reallocated (every pointer into it is invalidated) and the
- * command is copied by value, so a 'V' command's sarg1/sarg2 become shared
- * with newcmd's owner.  pos is expected in 0..count; a larger pos is not
+ * command is copied by value, so the list takes over a 'V' command's
+ * sarg1/sarg2: the caller hands in fresh duplicates (zedit_setup(),
+ * zedit_save_internally()) and keeps its own strings, if any, for itself.
+ * pos is expected in 0..count; a larger pos is not
  * checked and the command is not inserted.
  *
  * @param list   Address of the list (zone_table[z].cmd or zedit's copy).
@@ -784,12 +779,12 @@ void add_cmd_to_list(struct reset_com **list, struct reset_com *newcmd, int pos)
  * The list is reallocated to one slot fewer and every later command slides
  * down, so a caller scanning by index must re-examine pos afterwards.
  *
- * Ownership: this only drops the struct; the sarg1/sarg2 strings of a 'V'
- * command belong to zone_table and are freed by the caller once the
- * removal succeeds (zedit_setup() gives editing sessions deep copies, so
- * nothing else points at them; findings C2-27, F1-20).
+ * Ownership: the list owns the removed command's sarg1/sarg2 ('V' only),
+ * so they are freed here.  This holds for zone_table and for a zedit
+ * working list alike: zedit_setup() gives the working list deep copies, so
+ * no other list shares them (findings C2-27, F1-20).
  *
- * @param list Address of the zone's command list (zone_table[z].cmd).
+ * @param list Address of the command list (zone_table[z].cmd or zedit's).
  * @param pos  Index to remove, 0..count-1; callers derive it from their own
  *             scan or from builder input already range-checked.
  * @param znum Zone vnum, for diagnostics only.
@@ -828,6 +823,9 @@ static int remove_cmd_from_list(struct reset_com **list, int pos, zone_vnum znum
   }
   /* Add the terminator, then insert the new list. */
   newlist[count - 1].command = 'S';
+  /* The removed command's strings go with it. */
+  free((*list)[pos].sarg1);
+  free((*list)[pos].sarg2);
   free(*list);
   *list = newlist;
   return TRUE;

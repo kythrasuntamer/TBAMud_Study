@@ -1485,6 +1485,33 @@ static void remove_shop_list_entries_reports_bad_index(void)
 }
 
 /* ------------------------------------------------------------------------ */
+/* C2-27: a command list owns its commands' 'V' strings.                    */
+/* ------------------------------------------------------------------------ */
+
+/* Removing a 'V' command, by position or with its room, frees its strings
+ * (LeakSanitizer and the valgrind run report the old leak of the first). */
+static void remove_zone_command_frees_var_strings(void)
+{
+  static const int args[][3] = { { 0, 0, 0 }, { 0, 0, 1 }, { 0, 0, 0 } };
+  int i;
+  make_zones(1); make_rooms(2);
+  set_zone_cmds(0, "VVV", args);
+  for (i = 0; i < 3; i++) {
+    zone_table[0].cmd[i].sarg1 = strdup("name");
+    zone_table[0].cmd[i].sarg2 = strdup("value");
+  }
+  TEST_ASSERT_TRUE(delete_zone_command(&zone_table[0], 0));
+  TEST_ASSERT_EQUAL_INT(2, count_commands(zone_table[0].cmd));
+  remove_room_zone_commands(0, 0);
+  TEST_ASSERT_EQUAL_INT(1, count_commands(zone_table[0].cmd));
+  TEST_ASSERT_EQUAL_INT(1, zone_table[0].cmd[0].arg3);
+  TEST_ASSERT_EQUAL_STRING("value", zone_table[0].cmd[0].sarg2);
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  free(zone_table[0].cmd[0].sarg1);
+  free(zone_table[0].cmd[0].sarg2);
+}
+
+/* ------------------------------------------------------------------------ */
 /* Temporary world directory for the writers.                               */
 /* ------------------------------------------------------------------------ */
 static char test_root[] = "/tmp/tb-genolc-XXXXXX";
@@ -1592,6 +1619,7 @@ int main(void)
   RUN_TEST(new_command_reports_bad_position);
   RUN_TEST(add_object_refuses_vnum_outside_every_zone);
   RUN_TEST(remove_shop_list_entries_reports_bad_index);
+  RUN_TEST(remove_zone_command_frees_var_strings);
   failures = UNITY_END();
   leave_test_root();
   return failures;

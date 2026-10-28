@@ -450,7 +450,8 @@ int new_command(struct zone_data *zone, int pos)
   return 1;
 }
 
-/* Returns TRUE when the command was removed, like genzon.c's. */
+/* Returns TRUE when the command was removed and, like genzon.c's, frees
+ * the removed command's 'V' strings: the list owns them. */
 int delete_zone_command(struct zone_data *zone, int pos)
 {
   int count = count_commands(zone->cmd), i, l;
@@ -463,6 +464,8 @@ int delete_zone_command(struct zone_data *zone, int pos)
     if (i != pos)
       newlist[l++] = zone->cmd[i];
   newlist[count - 1].command = 'S';
+  free(zone->cmd[pos].sarg1);
+  free(zone->cmd[pos].sarg2);
   free(zone->cmd);
   zone->cmd = newlist;
   return TRUE;
@@ -2081,6 +2084,27 @@ static void test_redit_copies_incomplete_world_exdesc_and_reports_it(void)
   world[1].ex_description = NULL;
 }
 
+
+/* ------------------------------------------------------------------ */
+/* C2-27: only a 'V' command owns strings; one retyped to another      */
+/* command drops them instead of carrying them unused (destroy_db and  */
+/* save_zone ignore a non-'V' command's strings).                      */
+/* ------------------------------------------------------------------ */
+static void test_zedit_retyping_a_global_drops_its_strings(void)
+{
+  struct descriptor_data *d = zedit_v_session();
+
+  OLC_MODE(d) = ZEDIT_COMMAND_TYPE;
+  zedit_parse(d, "x");             /* invalid: the strings stay */
+  TEST_ASSERT_EQUAL_STRING("oldname", OLC_ZONE(d)->cmd[0].sarg1);
+  zedit_parse(d, "m");
+
+  TEST_ASSERT_EQUAL_INT('M', OLC_ZONE(d)->cmd[0].command);
+  TEST_ASSERT_NULL(OLC_ZONE(d)->cmd[0].sarg1);
+  TEST_ASSERT_NULL(OLC_ZONE(d)->cmd[0].sarg2);
+  free_zedit_session(d);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -2136,5 +2160,6 @@ int main(void)
   RUN_TEST(test_zedit_unknown_mode_aborts_and_reports);
   RUN_TEST(test_oedit_save_outside_every_zone_keeps_live_scripts);
   RUN_TEST(test_redit_copies_incomplete_world_exdesc_and_reports_it);
+  RUN_TEST(test_zedit_retyping_a_global_drops_its_strings);
   return UNITY_END();
 }
