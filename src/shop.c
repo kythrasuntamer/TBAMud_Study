@@ -522,6 +522,20 @@ static struct obj_data *get_purchase_obj(struct char_data *ch, char *arg, struct
       return (NULL);
     }
     if (GET_OBJ_COST(obj) <= 0) {
+      /* A worthless item can't be sold; the keeper destroys it. Report it
+       * (a builder mistake) and keep the sorted-prefix count (SHOP_SORT)
+       * consistent with keeper->carrying. */
+      struct obj_data *o;
+      int pos = 0;
+
+      for (o = keeper->carrying; o && o != obj; o = o->next_content)
+        pos++;
+      if (o && pos < SHOP_SORT(shop_nr))
+        SHOP_SORT(shop_nr)--;
+      TB_WARN_MSG("shop", "zero-cost-item", "obj",
+                  "shop #%d keeper mob vnum %d destroyed obj vnum %d cost %d",
+                  (int) SHOP_NUM(shop_nr), (int) GET_MOB_VNUM(keeper),
+                  (int) GET_OBJ_VNUM(obj), GET_OBJ_COST(obj));
       extract_obj(obj);
       obj = NULL;
     }
