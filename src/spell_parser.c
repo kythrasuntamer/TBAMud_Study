@@ -56,8 +56,10 @@ static struct syllable syls[] = { { " ", " " }, { "ar", "abra" },
         "y", "l" }, { "z", "k" }, { "", "" } };
 
 static int mag_manacost(struct char_data *ch, int spellnum) {
+  int cls = GET_CLASS(ch);
+
   return MAX(SINFO.mana_max - (SINFO.mana_change *
-      (GET_LEVEL(ch) - SINFO.min_level[(int) GET_CLASS(ch)])),
+      (GET_LEVEL(ch) - SPELL_MIN_LEVEL(spellnum, cls))),
   SINFO.mana_min);
 }
 
@@ -634,6 +636,16 @@ ACMD(do_cast) {
   if (IS_NPC(ch))
     return;
 
+  /* GET_CLASS indexes spell_info[].min_level[]; it comes from the pfile,
+   * which does not range-check it. A bad class can never cast. */
+  if (!VALID_CLASS_NUM(GET_CLASS(ch))) {
+    TB_ERROR_MSG("magic", "player-class", "min_level",
+                 DIAG_CHAR_FMT " class %d not in [0,%d); cast refused",
+                 DIAG_CHAR(ch), (int) GET_CLASS(ch), NUM_CLASSES);
+    send_to_char(ch, "You do not know that spell!\r\n");
+    return;
+  }
+
   /* get: blank, spell name, target name */
   s = strtok(argument, "'");
 
@@ -658,7 +670,7 @@ ACMD(do_cast) {
     send_to_char(ch, "Cast what?!?\r\n");
     return;
   }
-  if (GET_LEVEL(ch) < SINFO.min_level[(int) GET_CLASS(ch)]) {
+  if (GET_LEVEL(ch) < SPELL_MIN_LEVEL(spellnum, (int) GET_CLASS(ch))) {
     send_to_char(ch, "You do not know that spell!\r\n");
     return;
   }

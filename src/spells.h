@@ -187,6 +187,9 @@ struct spell_info_type {
    int mana_max;	/* Max amount of mana used by a spell (lowest lev) */
    int mana_change;	/* Change in mana used by spell from lev to lev */
 
+   /* Indexed by class. The player's class comes from the pfile, which is
+    * not range-checked on load: index through SPELL_MIN_LEVEL() or check
+    * VALID_CLASS_NUM() first. */
    int min_level[NUM_CLASSES];
    int routines;
    byte violent;
@@ -194,6 +197,14 @@ struct spell_info_type {
    const char *name;	/* Input size not limited. Originates from string constants. */
    const char *wear_off_msg;	/* Input size not limited. Originates from string constants. */
 };
+
+/** TRUE when c may index spell_info[].min_level[]. c evaluated twice. */
+#define VALID_CLASS_NUM(c)	((c) >= 0 && (c) < NUM_CLASSES)
+/** Minimum level at which class c learns spell spl; an invalid class can
+ * never cast (LVL_IMPL + 1), the fail-closed answer. spl must already be a
+ * valid spell number. c evaluated twice: pass a plain variable. */
+#define SPELL_MIN_LEVEL(spl, c) \
+  (VALID_CLASS_NUM(c) ? spell_info[(spl)].min_level[(c)] : LVL_IMPL + 1)
 
 /* Possible Targets:
    bit 0 : IGNORE TARGET
