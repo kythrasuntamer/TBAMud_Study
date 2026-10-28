@@ -361,11 +361,20 @@ void load_ibt_file(int mode)
    tb_fclose(fp);
 }
 
-void save_ibt_file(int mode)
+/* Write the list for 'mode' to its file.  Returns TRUE when the new file is
+ * in place, FALSE (after reporting op "ibt-save") when it is not -- in
+ * which case the previous file is left untouched.
+ *
+ * The list is written to "<file>.new" and only renamed over the live file
+ * after every write, the flush and the close succeeded: writing the live
+ * file in place meant a full disk or a crash left it truncated, and the
+ * next boot then lost every record after the cut. */
+int save_ibt_file(int mode)
 {
    IBT_DATA *ibtData, *first_ibt;
    FILE *fp;
-   char filename[256];
+   char filename[256], tmpname[256 + 8];
+   int count = 0, write_ok, flush_ok, close_ok;
 
    switch(mode) {
      case SCMD_BUG : tb_snprintf(filename, sizeof(filename), "%s",BUGS_FILE);
@@ -377,39 +386,58 @@ void save_ibt_file(int mode)
      case SCMD_TYPO: tb_snprintf(filename, sizeof(filename), "%s",TYPOS_FILE);
                      first_ibt = first_typo;
                      break;
-     default       : log("SYSERR: Invalid mode (%d) in save_ibt_file", mode);
-                     return;
+     default       : TB_ERROR_MSG("ibt", "ibt-save", "save_ibt_file",
+                                  TB_ERRID_INVARIANT " invalid mode %d; nothing saved", mode);
+                     return FALSE;
+   }
+   tb_snprintf(tmpname, sizeof(tmpname), "%s.new", filename);
+
+   if ((fp = fopen(tmpname, "w")) == NULL) {
+     TB_ERROR_ERRNO("ibt", "ibt-save", tmpname,
+                    TB_ERRID_PERSIST_WRITE " %s list: could not open the temporary file; %s unchanged",
+                    ibt_types[mode], filename);
+     return FALSE;
+   }
+   for (ibtData = first_ibt;ibtData;ibtData=ibtData->next)
+   {
+     count++;
+     if (ibtData->text && *(ibtData->text))
+       tb_fprintf(fp,"Text      %s~\n",ibtData->text);
+     if (ibtData->body && *(ibtData->body))
+       tb_fprintf(fp,"Body      %s~\n",ibtData->body);
+     if (ibtData->name && *(ibtData->name))
+       tb_fprintf(fp,"Name      %s~\n",ibtData->name);
+     if (ibtData->notes && *(ibtData->notes))
+       tb_fprintf(fp,"Notes     %s~\n",ibtData->notes);
+     if (ibtData->id_num != NOBODY)
+       tb_fprintf(fp,"IdNum     %ld\n",ibtData->id_num);
+     if (ibtData->dated != 0)
+       tb_fprintf(fp,"Dated     %ld\n",ibtData->dated);
+     tb_fprintf(fp,"Level     %d\n",ibtData->level);
+     tb_fprintf(fp,"Room      %d\n",ibtData->room);
+     tb_fprintf(fp,"Flags     %d %d %d %d\n",ibtData->flags[0],ibtData->flags[1],
+                                          ibtData->flags[2],ibtData->flags[3]);
+     tb_fprintf(fp,"End\n");
    }
 
-   if ((fp = fopen(filename, "w")) == NULL) {
-     TB_REPORT_ERRNO("fopen", filename);
-     log("SYSERR: Unable to open IBT file for writing in save_ibt_file");
-     log("        IBT File: %s", filename);
-     return;
-   } else {
-     for (ibtData = first_ibt;ibtData;ibtData=ibtData->next)
-     {
-       if (ibtData->text && *(ibtData->text))
-         tb_fprintf(fp,"Text      %s~\n",ibtData->text);
-       if (ibtData->body && *(ibtData->body))
-         tb_fprintf(fp,"Body      %s~\n",ibtData->body);
-       if (ibtData->name && *(ibtData->name))
-         tb_fprintf(fp,"Name      %s~\n",ibtData->name);
-       if (ibtData->notes && *(ibtData->notes))
-         tb_fprintf(fp,"Notes     %s~\n",ibtData->notes);
-       if (ibtData->id_num != NOBODY)
-         tb_fprintf(fp,"IdNum     %ld\n",ibtData->id_num);
-       if (ibtData->dated != 0)
-         tb_fprintf(fp,"Dated     %ld\n",ibtData->dated);
-       tb_fprintf(fp,"Level     %d\n",ibtData->level);
-       tb_fprintf(fp,"Room      %d\n",ibtData->room);
-       tb_fprintf(fp,"Flags     %d %d %d %d\n",ibtData->flags[0],ibtData->flags[1],
-                                            ibtData->flags[2],ibtData->flags[3]);
-       tb_fprintf(fp,"End\n");
-     }
-     tb_fclose(fp);
-     return;
+   write_ok = !ferror(fp);
+   flush_ok = tb_fflush_checked(fp, tmpname);
+   close_ok = tb_fclose_checked(fp, tmpname);
+   if (!write_ok || !flush_ok || !close_ok) {
+     TB_ERROR_MSG("ibt", "ibt-save", tmpname,
+                  TB_ERRID_PERSIST_WRITE " %s list of %d records not fully written; %s unchanged",
+                  ibt_types[mode], count, filename);
+     if (remove(tmpname) != 0 && errno != ENOENT)
+       TB_REPORT_ERRNO("remove", tmpname);
+     return FALSE;
    }
+   if (!tb_replace_file_checked(tmpname, filename)) {
+     TB_ERROR_MSG("ibt", "ibt-save", filename,
+                  TB_ERRID_PERSIST_COMMIT " %s list of %d records written to %s but not committed",
+                  ibt_types[mode], count, tmpname);
+     return FALSE;
+   }
+   return TRUE;
 }
 
 static IBT_DATA *get_first_ibt(int mode)
@@ -836,9 +864,9 @@ ACMD(do_ibt)
       } else {
         send_to_char(ch,"%s %d resolved!\r\n", ibt_types[subcmd], ano);
         SET_BIT_AR(IBT_FLAGS(ibtData), IBT_RESOLVED);
-        if (CONFIG_IBT_AUTOSAVE) {
-		  save_ibt_file(subcmd);
-		}
+        if (CONFIG_IBT_AUTOSAVE && !save_ibt_file(subcmd))
+          send_to_char(ch, "%sWarning: the %s list could not be saved to disk.%s\r\n",
+                       QRED, ibt_types[subcmd], QNRM);
       }
     }
     return;
@@ -876,9 +904,9 @@ ACMD(do_ibt)
       }
       if (free_ibt(subcmd, ibtData)) {
         send_to_char(ch,"%s%s Number %d removed.%s\r\n", QCYN, ibt_types[subcmd], ano, QNRM);
-        if (CONFIG_IBT_AUTOSAVE) {
-		  save_ibt_file(subcmd);
-		}
+        if (CONFIG_IBT_AUTOSAVE && !save_ibt_file(subcmd))
+          send_to_char(ch, "%sWarning: the %s list could not be saved to disk.%s\r\n",
+                       QRED, ibt_types[subcmd], QNRM);
       } else {
         send_to_char(ch,"%sUnable to remove %s %d!%s\r\n", QRED, CMD_NAME, ano, QNRM);
       }
@@ -889,8 +917,11 @@ ACMD(do_ibt)
       send_to_char(ch, "%s what?\r\n", ibt_types[subcmd]);
       return;
     }
-    save_ibt_file(subcmd);
-    send_to_char(ch,"%s list saved.\r\n", ibt_types[subcmd]);
+    if (save_ibt_file(subcmd))
+      send_to_char(ch,"%s list saved.\r\n", ibt_types[subcmd]);
+    else
+      send_to_char(ch, "%sThe %s list could not be saved; see the syslog.%s\r\n",
+                   QRED, ibt_types[subcmd], QNRM);
   } else if (is_abbrev(arg,"edit")) {
     if (GET_LEVEL(ch) < LVL_GRGOD){
       send_to_char(ch, "%s what?\r\n", ibt_types[subcmd]);
@@ -1067,7 +1098,9 @@ static void ibtedit_save(struct descriptor_data *d)
     return;
   }
 
-  save_ibt_file(OLC_VAL(d));
+  if (!save_ibt_file(OLC_VAL(d)))
+    write_to_output(d, "Warning: the %s list could not be saved to disk.\r\n",
+                    ibt_types[OLC_VAL(d)]);
 }
 
 void free_olc_ibt(IBT_DATA *toFree) {

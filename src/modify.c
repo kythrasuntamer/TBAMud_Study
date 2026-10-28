@@ -341,8 +341,10 @@ static void playing_string_cleanup(struct descriptor_data *d, int action)
   }
   if (PLR_FLAGGED(d->character, PLR_IDEA)) {
     if (action == STRINGADD_SAVE && *d->str){
-      write_to_output(d, "Idea saved!\r\n");
-      save_ibt_file(SCMD_IDEA);
+      if (save_ibt_file(SCMD_IDEA))
+        write_to_output(d, "Idea saved!\r\n");
+      else
+        write_to_output(d, "Idea recorded, but could not be saved to disk.\r\n");
     } else {
       write_to_output(d, "Idea aborted!\r\n");
       clean_ibt_list(SCMD_IDEA, d);
@@ -350,8 +352,10 @@ static void playing_string_cleanup(struct descriptor_data *d, int action)
   }
   if (PLR_FLAGGED(d->character, PLR_BUG)) {
     if (action == STRINGADD_SAVE && *d->str){
-      write_to_output(d, "Bug saved!\r\n");
-      save_ibt_file(SCMD_BUG);
+      if (save_ibt_file(SCMD_BUG))
+        write_to_output(d, "Bug saved!\r\n");
+      else
+        write_to_output(d, "Bug recorded, but could not be saved to disk.\r\n");
     } else {
       write_to_output(d, "Bug aborted!\r\n");
       clean_ibt_list(SCMD_BUG, d);
@@ -359,8 +363,10 @@ static void playing_string_cleanup(struct descriptor_data *d, int action)
   }
   if (PLR_FLAGGED(d->character, PLR_TYPO)) {
     if (action == STRINGADD_SAVE && *d->str){
-      write_to_output(d, "Typo saved!\r\n");
-      save_ibt_file(SCMD_TYPO);
+      if (save_ibt_file(SCMD_TYPO))
+        write_to_output(d, "Typo saved!\r\n");
+      else
+        write_to_output(d, "Typo recorded, but could not be saved to disk.\r\n");
     } else {
       write_to_output(d, "Typo aborted!\r\n");
       clean_ibt_list(SCMD_TYPO, d);

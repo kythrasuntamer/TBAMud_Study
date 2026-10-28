@@ -437,6 +437,45 @@ static void test_load_empty_notes_is_valid(void)
   TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
 }
 
+static char *slurp(const char *path)
+{
+  static char buf[8192];
+  FILE *fl = fopen(path, "rb");
+  size_t n;
+
+  if (!fl)
+    return NULL;
+  n = fread(buf, 1, sizeof(buf) - 1, fl);
+  buf[n] = '\0';
+  fclose(fl);
+  return buf;
+}
+
+/* C1-15: save_ibt_file() truncated the live file in place and reported
+ * nothing. A save that cannot complete now leaves the previous file intact
+ * and returns FALSE with an "ibt-save" record. */
+static void test_failed_save_keeps_previous_file(void)
+{
+  char *before;
+
+  write_bugs_file(GOOD_RECORD("kept"));
+  load_ibt_file(SCMD_BUG);
+  submit_bug(&pa, "new", "new body");
+
+  TEST_ASSERT_EQUAL_INT(0, mkdir(BUGS_FILE ".new", 0700));  /* blocks the temp file */
+  TEST_ASSERT_FALSE(save_ibt_file(SCMD_BUG));
+  TEST_ASSERT_EQUAL_STRING("ibt-save", tb_captured_operation);
+  before = slurp(BUGS_FILE);
+  TEST_ASSERT_NOT_NULL(before);
+  TEST_ASSERT_EQUAL_STRING(GOOD_RECORD("kept"), before);
+  TEST_ASSERT_EQUAL_INT(0, rmdir(BUGS_FILE ".new"));
+
+  tb_error_capture_reset();
+  TEST_ASSERT_TRUE(save_ibt_file(SCMD_BUG));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  TEST_ASSERT_NOT_NULL(strstr(slurp(BUGS_FILE), "Text      new~"));
+}
+
 int main(void)
 {
   char dir[] = "/tmp/tb_test_ibt.XXXXXX";
@@ -461,5 +500,6 @@ int main(void)
   RUN_TEST(test_load_body_keyword_at_eof_names_record);
   RUN_TEST(test_load_overlong_keyword_drops_only_that_record);
   RUN_TEST(test_load_empty_notes_is_valid);
+  RUN_TEST(test_failed_save_keeps_previous_file);
   return UNITY_END();
 }
