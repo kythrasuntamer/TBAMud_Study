@@ -1206,19 +1206,8 @@ void test_dupe_check_takes_over_an_in_game_twin(void)
   free_heap_chars();
 }
 
-#ifdef NOCRYPT
-/* test_interpreter_nocrypt: interpreter.c built without crypt(), and linked
- * with --wrap=sodium_init so libsodium can fail to start on demand. */
-/* NOLINTNEXTLINE(cert-dcl37-c,cert-dcl51-cpp): --wrap requires this name. */
-int __real_sodium_init(void);
-static int fail_sodium_init;
-/* NOLINTNEXTLINE(cert-dcl37-c,cert-dcl51-cpp): --wrap requires this name. */
-int __wrap_sodium_init(void)
-{
-  return (fail_sodium_init ? -1 : __real_sodium_init());
-}
-
-/* Counts Argon2id verifications (--wrap=crypto_pwhash_str_verify). */
+/* Counts Argon2id verifications (--wrap=crypto_pwhash_str_verify, in both
+ * test_interpreter and test_interpreter_nocrypt). */
 static int pwhash_verifies;
 /* NOLINTNEXTLINE(cert-dcl37-c,cert-dcl51-cpp): --wrap requires this name. */
 int __real_crypto_pwhash_str_verify(const char *str, const char *passwd,
@@ -1231,6 +1220,115 @@ int __wrap_crypto_pwhash_str_verify(const char *str, const char *passwd,
 {
   pwhash_verifies++;
   return (__real_crypto_pwhash_str_verify(str, passwd, passwdlen));
+}
+
+/* =========================================================
+ * Login timing: every hash type costs one Argon2id verification
+ *
+ * An Argon2id account costs one Argon2id verification per password check.
+ * A legacy-hash check with crypt() used to cost only crypt() (far cheaper),
+ * so the response time revealed which accounts still hold a legacy hash.
+ * ========================================================= */
+
+/* d logs in as idnum 31 (no twins in the world) typing typed; the stored
+ * hash is legacy (a SHA-512 crypt hash of dupe_password) when legacy is
+ * set, else Argon2id.  Returns the Argon2id verifications nanny() did. */
+static int timed_login(struct descriptor_data *d, struct char_data **dch,
+                       int legacy, const char *typed)
+{
+  char arg[64];
+
+  dupe_world(3001);
+  character_list = NULL;
+  *dch = password_login(d);
+#if defined(CIRCLE_CRYPT) && !defined(NOCRYPT)
+  if (legacy) {
+    const char *hash = crypt(dupe_password, "$6$tbtimingsalt$");
+
+    TEST_ASSERT_NOT_NULL(hash);
+    TEST_ASSERT_EQUAL_STRING_LEN("$6$", hash, 3);
+    strlcpy(GET_PASSWD(*dch), hash, sizeof((*dch)->player.passwd));
+  }
+#else
+  (void)legacy;
+#endif
+  descriptor_list = d;
+  strlcpy(arg, typed, sizeof(arg));
+  pwhash_verifies = 0;
+  captured_errors = 0;
+  nanny(d, arg);
+  return pwhash_verifies;
+}
+
+static void timed_login_free(struct descriptor_data *d)
+{
+  free(GET_HOST(d->character));         /* set by a successful login */
+  GET_HOST(d->character) = NULL;
+  d->character->desc = NULL;
+  dupe_world_free();
+}
+
+/* The reference cost: an Argon2id account, right or wrong password. */
+void test_argon2id_login_costs_one_argon2id_verify(void)
+{
+  struct descriptor_data d;
+  struct char_data *dch;
+
+  TEST_ASSERT_EQUAL_INT(1, timed_login(&d, &dch, 0, "wrong horse"));
+  TEST_ASSERT_EQUAL_INT(1, d.bad_pws);
+  timed_login_free(&d);
+
+  TEST_ASSERT_EQUAL_INT(1, timed_login(&d, &dch, 0, dupe_password));
+  TEST_ASSERT_EQUAL_INT(0, d.bad_pws);
+  TEST_ASSERT_EQUAL_INT(CON_RMOTD, STATE(&d));
+  timed_login_free(&d);
+}
+
+#if defined(CIRCLE_CRYPT) && !defined(NOCRYPT)
+/* Red before: a legacy-hash wrong password cost 0 Argon2id verifications,
+ * answering faster than an Argon2id account.  Still a wrong password. */
+void test_legacy_crypt_mismatch_costs_one_argon2id_verify(void)
+{
+  struct descriptor_data d;
+  struct char_data *dch;
+
+  TEST_ASSERT_EQUAL_INT(1, timed_login(&d, &dch, 1, "wrong horse"));
+  TEST_ASSERT_EQUAL_INT(1, d.bad_pws);
+  TEST_ASSERT_EQUAL_INT(1, GET_BAD_PWS(dch));
+  TEST_ASSERT_EQUAL_INT(CONFIG_MAX_BAD_PWS <= 1 ? CON_CLOSE : CON_PASSWORD,
+                        STATE(&d));
+  TEST_ASSERT_EQUAL_STRING_LEN("$6$", GET_PASSWD(dch), 3);  /* not upgraded */
+  TEST_ASSERT_EQUAL_INT(0, captured_errors);
+  timed_login_free(&d);
+}
+
+/* Red before: a legacy-hash right password cost 0 Argon2id verifications.
+ * Still a match, and still upgraded to Argon2id (hashing, not verifying). */
+void test_legacy_crypt_match_costs_one_argon2id_verify_and_upgrades(void)
+{
+  struct descriptor_data d;
+  struct char_data *dch;
+
+  TEST_ASSERT_EQUAL_INT(1, timed_login(&d, &dch, 1, dupe_password));
+  TEST_ASSERT_EQUAL_INT(0, d.bad_pws);
+  TEST_ASSERT_EQUAL_INT(CON_RMOTD, STATE(&d));
+  TEST_ASSERT_EQUAL_PTR(dch, d.character);
+  TEST_ASSERT_EQUAL_STRING_LEN("$argon2id$", GET_PASSWD(dch), 10);
+  TEST_ASSERT_EQUAL_INT(0, captured_errors);
+  timed_login_free(&d);
+}
+#endif /* CIRCLE_CRYPT && !NOCRYPT */
+
+#ifdef NOCRYPT
+/* test_interpreter_nocrypt: interpreter.c built without crypt(), and linked
+ * with --wrap=sodium_init so libsodium can fail to start on demand. */
+/* NOLINTNEXTLINE(cert-dcl37-c,cert-dcl51-cpp): --wrap requires this name. */
+int __real_sodium_init(void);
+static int fail_sodium_init;
+/* NOLINTNEXTLINE(cert-dcl37-c,cert-dcl51-cpp): --wrap requires this name. */
+int __wrap_sodium_init(void)
+{
+  return (fail_sodium_init ? -1 : __real_sodium_init());
 }
 
 /* A login whose password cannot be checked closes with a message, is
@@ -1475,6 +1573,13 @@ int main(void)
     RUN_TEST(test_dupe_check_frees_a_twin_at_the_menu);
     RUN_TEST(test_dupe_check_detaches_the_menu_description_editor);
     RUN_TEST(test_dupe_check_takes_over_an_in_game_twin);
+
+    /* login timing: one Argon2id verification per hash type */
+    RUN_TEST(test_argon2id_login_costs_one_argon2id_verify);
+#if defined(CIRCLE_CRYPT) && !defined(NOCRYPT)
+    RUN_TEST(test_legacy_crypt_mismatch_costs_one_argon2id_verify);
+    RUN_TEST(test_legacy_crypt_match_costs_one_argon2id_verify_and_upgrades);
+#endif
 #ifdef NOCRYPT
     RUN_TEST(test_legacy_hash_without_crypt_is_reported_not_counted);
     RUN_TEST(test_sodium_init_failure_is_reported_not_counted);

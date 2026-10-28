@@ -81,6 +81,41 @@ static void tb_pw_unverifiable_at(const char *resource, long idnum,
   "\r\nYour password cannot be checked on this server right now.\r\n" \
   "Please contact an administrator.\r\n"
 
+/* Spend the same Argon2id work as verifying a real Argon2id hash: one
+ * crypto_pwhash_str_verify() against a dummy hash made once with the
+ * production parameters.  The result is irrelevant (a constant secret);
+ * only the work counts.  sodium_init() must already have succeeded.  If the
+ * dummy hash cannot be made the work is skipped (timing equalization is
+ * then off), and that is reported once.
+ */
+static void tb_password_dummy_verify(const char *password)
+{
+  static char dummy[crypto_pwhash_STRBYTES];
+  static int dummy_ready, dummy_reported;
+  static const char dummy_secret[] = "tbamud-legacy-timing-dummy";
+
+  if (!dummy_ready)
+    dummy_ready = crypto_pwhash_str_alg(dummy, dummy_secret,
+                                        sizeof(dummy_secret) - 1,
+                                        crypto_pwhash_OPSLIMIT_INTERACTIVE,
+                                        crypto_pwhash_MEMLIMIT_INTERACTIVE,
+                                        crypto_pwhash_ALG_ARGON2ID13) == 0;
+  if (!dummy_ready) {
+    if (!dummy_reported) {
+      dummy_reported = 1;
+      TB_ERROR_MSG("interpreter", "password-timing-dummy", "argon2id",
+                   "cannot make the dummy Argon2id hash; legacy-hash logins "
+                   "now answer faster than Argon2id ones");
+    }
+    return;
+  }
+  {
+    int dummy_result = crypto_pwhash_str_verify(dummy, password,
+                                                strlen(password));
+    (void)dummy_result;
+  }
+}
+
 /* Verify a password against the saved hash of player idnum / name.
  * New hashes use libsodium; existing crypt hashes are accepted only when
  * that compatibility path is enabled.  Never falls back to comparing
@@ -104,6 +139,10 @@ static enum tb_pw_result tb_password_verify_at(const char *password,
   if (tb_password_is_argon2id(hash))
     return (crypto_pwhash_str_verify(hash, password, strlen(password)) == 0
             ? TB_PW_MATCH : TB_PW_MISMATCH);
+  /* Every legacy-hash check, matched or not, with or without crypt(), also
+   * spends one Argon2id verification, so the response time does not reveal
+   * which accounts still hold a legacy hash. */
+  tb_password_dummy_verify(password);
 #if defined(CIRCLE_CRYPT) && !defined(NOCRYPT)
   {
     /* Reject invalid crypt results; do not allow a plaintext fallback. */
@@ -113,27 +152,6 @@ static enum tb_pw_result tb_password_verify_at(const char *password,
             ? TB_PW_MATCH : TB_PW_MISMATCH);
   }
 #else
-  {
-    /* Spend the same Argon2id work as a real mismatch, so the response time
-     * does not reveal which accounts still hold a legacy hash.  The dummy
-     * hash uses the production parameters and is computed once. */
-    static char dummy[crypto_pwhash_STRBYTES];
-    static int dummy_ready;
-    static const char dummy_secret[] = "tbamud-legacy-timing-dummy";
-
-    if (!dummy_ready)
-      dummy_ready = crypto_pwhash_str_alg(dummy, dummy_secret,
-                                          sizeof(dummy_secret) - 1,
-                                          crypto_pwhash_OPSLIMIT_INTERACTIVE,
-                                          crypto_pwhash_MEMLIMIT_INTERACTIVE,
-                                          crypto_pwhash_ALG_ARGON2ID13) == 0;
-    if (dummy_ready) {
-      /* The result is irrelevant (a constant secret); only the work counts. */
-      int dummy_result = crypto_pwhash_str_verify(dummy, password,
-                                                  strlen(password));
-      (void)dummy_result;
-    }
-  }
   tb_pw_unverifiable_at("crypt", idnum, name,
                         "legacy (non-Argon2id) hash but this build has no crypt()",
                         file, line, func);
