@@ -7,7 +7,7 @@
  * savers and world lookups are faked here.
  */
 #include "unity.h"
-#include "genolc.c"
+#include "genolc.c"  /* NOLINT(bugprone-suspicious-include): tests its file-scope writers */
 #include <sys/stat.h>
 
 /* utils.c is linked, so its tb_error_log_at() exists; the test build wraps
@@ -152,7 +152,7 @@ static char *slurp(const char *path)
     return NULL;
   n = fread(buf, 1, sizeof(buf) - 1, fl);
   buf[n] = '\0';
-  fclose(fl);
+  (void)fclose(fl);
   return buf;
 }
 

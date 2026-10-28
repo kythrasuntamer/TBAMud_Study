@@ -773,11 +773,11 @@ void board_load_board(int board_type)
       free(tmp1);
       goto load_fail;
     }
-    /* The writer stores strlen + 1 bytes.  Without the terminator, every
+    /* The writer stores strlen + 1 bytes, the terminator last.  Without it, every
      * later %s and strstr() on the heading reads past the allocation. */
-    if (tmp1[len1 - 1] != '\0') {
+    if (strnlen(tmp1, (size_t)len1) != (size_t)len1 - 1) {
       TB_ERROR_MSG("board", "board-load", FILENAME(board_type),
-                   TB_ERRID_PARSER_MALFORMED " board vnum %d message %d field heading not NUL-terminated (%d bytes); resetting",
+                   TB_ERRID_PARSER_MALFORMED " board vnum %d message %d field heading not a %d-byte NUL-terminated string; resetting",
                    BOARD_VNUM(board_type), i, len1);
       free(tmp1);
       goto load_fail;
@@ -800,9 +800,9 @@ void board_load_board(int board_type)
         msg_storage_taken[slot] = 0;
         goto load_fail;
       }
-      if (tmp2[len2 - 1] != '\0') {
+      if (strnlen(tmp2, (size_t)len2) != (size_t)len2 - 1) {
         TB_ERROR_MSG("board", "board-load", FILENAME(board_type),
-                     TB_ERRID_PARSER_MALFORMED " board vnum %d message %d field body not NUL-terminated (%d bytes); resetting",
+                     TB_ERRID_PARSER_MALFORMED " board vnum %d message %d field body not a %d-byte NUL-terminated string; resetting",
                      BOARD_VNUM(board_type), i, len2);
         free(tmp2);
         free(tmp1);

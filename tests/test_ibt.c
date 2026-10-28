@@ -249,7 +249,7 @@ static void test_abort_drops_own_text_and_orphans(void)
 static void submit_bug(struct player *p, const char *title, const char *body)
 {
   char args[MAX_INPUT_LENGTH];
-  snprintf(args, sizeof(args), "submit %s", title);
+  (void)snprintf(args, sizeof(args), "submit %s", title);
   ibt_cmd(p, args);
   type_line(p, body);
   p->desc.str = NULL;
@@ -447,7 +447,7 @@ static char *slurp(const char *path)
     return NULL;
   n = fread(buf, 1, sizeof(buf) - 1, fl);
   buf[n] = '\0';
-  fclose(fl);
+  (void)fclose(fl);
   return buf;
 }
 

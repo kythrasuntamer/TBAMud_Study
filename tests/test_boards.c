@@ -155,7 +155,7 @@ static int write_post(const char *headline, const char *body)
 static void read_post(int num)
 {
   char arg[16];
-  snprintf(arg, sizeof(arg), "%d", num);
+  (void)snprintf(arg, sizeof(arg), "%d", num);
   paged[0] = '\0';
   board_display_msg(0, &writer, arg, &board_obj);
 }
@@ -247,16 +247,16 @@ static void test_long_headline_is_truncated_and_reported(void)
   TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "player idnum 42"));
 
   read_post(1);
-  memcpy(expect, ":: ", 3);
+  strlcpy(expect, ":: ", sizeof(expect));
   memset(expect + 3, 'h', BOARD_HEADLINE_MAX);
-  strcpy(expect + 3 + BOARD_HEADLINE_MAX, "\r\n");
+  strlcpy(expect + 3 + BOARD_HEADLINE_MAX, "\r\n", sizeof(expect) - 3 - BOARD_HEADLINE_MAX);
   TEST_ASSERT_NOT_NULL(strstr(paged, expect));
 }
 
 static void remove_post(int num)
 {
   char arg[16];
-  snprintf(arg, sizeof(arg), "%d", num);
+  (void)snprintf(arg, sizeof(arg), "%d", num);
   TEST_ASSERT_EQUAL_INT(1, board_remove_msg(0, &writer, arg, &board_obj));
 }
 
@@ -311,7 +311,7 @@ static void test_load_ignores_on_disk_pointer_and_slot(void)
 
   memset(&rec, 0, sizeof(rec));
   rec.slot_num = 12345;
-  rec.heading = (char *)(uintptr_t)0x4141414141410ULL;
+  rec.heading = (char *)(uintptr_t)0x4141414141410ULL;  /* NOLINT(performance-no-int-to-ptr): a bogus on-disk pointer */
   rec.heading_len = 0;
   write_board_file(&rec, NULL, 0);
 
@@ -328,7 +328,7 @@ static void test_load_short_heading_read(void)
 
   memset(&rec, 0, sizeof(rec));
   rec.slot_num = 12345;
-  rec.heading = (char *)(uintptr_t)0x4141414141410ULL;
+  rec.heading = (char *)(uintptr_t)0x4141414141410ULL;  /* NOLINT(performance-no-int-to-ptr): a bogus on-disk pointer */
   rec.heading_len = 50;
   write_board_file(&rec, "short", 5);
 
@@ -363,7 +363,7 @@ static void test_load_rejects_unterminated_heading(void)
   write_board_file(&rec, "hello", 5);
   board_load_board(0);
   TEST_ASSERT_EQUAL_STRING("board-load", tb_captured_operation);
-  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "heading not NUL-terminated"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "field heading not a 5-byte NUL-terminated string"));
 
   {
     char arg[] = "1";
