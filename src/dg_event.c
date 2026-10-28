@@ -281,12 +281,34 @@ void event_process(void)
   }
 }
 
-/** Returns the time remaining before the event as how many pulses from now. 
- * @param event Check this event for its scheduled activation time.
- * @retval long Number of pulses before this event will fire. */
-long event_time(struct event *event)
+/** Returns the time remaining before the event as how many pulses from now.
+ * Called through the event_time() macro so diagnostics name the caller.
+ * @param event Check this event for its scheduled activation time.  Only a
+ * queued event has one: NULL or an event whose callback is running (q_el is
+ * NULL, see struct event) is reported as dg/event-time-unqueued, and any
+ * event after event_free_all() as dg/event-queue-uninit.
+ * @param file,line,func The caller's __FILE__, __LINE__ and __func__.
+ * @retval long Number of pulses before this event will fire, or -1. */
+long event_time_at(struct event *event, const char *file, int line,
+                   const char *func)
 {
   long when;
+
+  if (event_q == NULL) {
+    /* Every queued event was freed with the queue; do not read event. */
+    tb_error_log_at("ERROR", "dg", "event-queue-uninit", "event", 0,
+                    file, line, func,
+                    "time of event %p asked with no event queue",
+                    (void *)event);
+    return -1;
+  }
+  if (event == NULL || !EVENT_IS_QUEUED(event)) {
+    tb_error_log_at("ERROR", "dg", "event-time-unqueued", "event", 0,
+                    file, line, func,
+                    "event %p is %s; it has no scheduled time", (void *)event,
+                    event == NULL ? "NULL" : "running its callback");
+    return -1;
+  }
 
   when = queue_elmt_key(event->q_el);
 
@@ -312,10 +334,27 @@ void event_free_all(void)
 
 /** Boolean function to tell whether an event is queued or not. Does this by
  * checking if event->q_el points to anything but null.
+ * Called through the event_is_queued() macro so diagnostics name the caller.
+ * @param event The event; NULL is reported (dg/event-is-queued-null), as is
+ * any event after event_free_all() (dg/event-queue-uninit).
+ * @param file,line,func The caller's __FILE__, __LINE__ and __func__.
  * @retval int 1 if the event has been queued, 0 if the event has not.
  **/
-int event_is_queued(struct event *event)
+int event_is_queued_at(struct event *event, const char *file, int line,
+                       const char *func)
 {
+   if (event_q == NULL) {
+     tb_error_log_at("ERROR", "dg", "event-queue-uninit", "event", 0,
+                     file, line, func,
+                     "queued test of event %p with no event queue",
+                     (void *)event);
+     return 0;
+   }
+   if (event == NULL) {
+     tb_error_log_at("ERROR", "dg", "event-is-queued-null", "event", 0,
+                     file, line, func, "queued test of a NULL event");
+     return 0;
+   }
    if (EVENT_IS_QUEUED(event))
      return 1;
    else

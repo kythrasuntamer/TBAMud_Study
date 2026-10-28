@@ -103,7 +103,11 @@ void event_cancel_at(struct event *event, const char *file, int line,
 /** Cancel and free an event; diagnostics name the calling file/line/func. */
 #define event_cancel(ev) event_cancel_at((ev), __FILE__, __LINE__, __func__)
 void event_process(void);
-long event_time(struct event *event);
+long event_time_at(struct event *event, const char *file, int line,
+                   const char *func);
+/** Pulses until a queued event fires; -1 (reported) for a NULL event or one
+ * whose callback is running.  Diagnostics name the calling file/line/func. */
+#define event_time(ev) event_time_at((ev), __FILE__, __LINE__, __func__)
 void event_free_all(void);
 void cleanup_event_obj(struct event *event);
 
@@ -115,6 +119,10 @@ void *queue_head(struct dg_queue *q);
 long queue_key(struct dg_queue *q);
 long queue_elmt_key(struct q_element *qe);
 void queue_free(struct dg_queue *q);
-int  event_is_queued(struct event *event);
+int  event_is_queued_at(struct event *event, const char *file, int line,
+                        const char *func);
+/** 1 if ev is queued, 0 if its callback is running or ev is NULL (the NULL
+ * case is reported naming the caller). */
+#define event_is_queued(ev) event_is_queued_at((ev), __FILE__, __LINE__, __func__)
 
 #endif /* TBAMUD_DG_EVENT_H_INCLUDED */
