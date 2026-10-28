@@ -109,9 +109,23 @@ static void test_minimap_oversize_is_clamped_loudly(void)
   TEST_ASSERT_EQUAL_STRING("minimap-size-clamp", tb_captured_operation);
 }
 
+/* H3-12: a world-file sector of -20 (or 40) was stored in map[][] and used
+ * as door_info[13 + v] / map_info[v]. It must be drawn as unknown and
+ * reported. */
+static void test_bad_sector_drawn_as_unknown(void)
+{
+  CONFIG_MINIMAP_SIZE = 4;
+  rooms[CORRIDOR / 2 - 1].sector_type = -20;
+  rooms[CORRIDOR / 2 + 1].sector_type = 40;
+  look();
+  TEST_ASSERT_EQUAL_INT(2, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("bad-sector", tb_captured_operation);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(test_bad_sector_drawn_as_unknown);
   RUN_TEST(test_minimap_max_size_stays_in_grid);
   RUN_TEST(test_minimap_oversize_is_clamped_loudly);
   return UNITY_END();

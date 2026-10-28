@@ -229,6 +229,29 @@ bool can_see_map(struct char_data *ch) {
   return TRUE;
 }
 
+/* Map cell value for room's sector. Cells are read back as indexes: a value
+ * >= 0 indexes map_info[]/world_map_info[] (SECT_HERE + 1 entries) and a
+ * negative one door_info[NUM_DOOR_TYPES + v]. sector_type comes from the
+ * world file, whose loader does not fully range-check it, so anything
+ * outside 0..NUM_ROOM_SECTORS-1 is drawn as SECT_STRANGE and reported (once
+ * per room in a row, since every 'look' redraws it). */
+static int map_sector(room_rnum room)
+{
+  static room_rnum last_reported = NOWHERE;
+  int sector = SECT(room);
+
+  if (sector >= 0 && sector < NUM_ROOM_SECTORS)
+    return sector;
+  if (room != last_reported) {
+    TB_WARN_MSG("map", "bad-sector", "world",
+                "room vnum %d sector %d outside [0,%d); drawn as unknown",
+                VALID_ROOM_RNUM(room) ? (int) GET_ROOM_VNUM(room) : -1,
+                sector, NUM_ROOM_SECTORS);
+    last_reported = room;
+  }
+  return SECT_STRANGE;
+}
+
 /* MapArea function - create the actual map */
 static void MapArea(room_rnum room, struct char_data *ch, int x, int y, int min, int max, sh_int xpos, sh_int ypos, bool worldmap)
 {
@@ -255,7 +278,7 @@ static void MapArea(room_rnum room, struct char_data *ch, int x, int y, int min,
   if(room == IN_ROOM(ch))
     map[x][y] = SECT_HERE;
   else
-    map[x][y] = SECT(room);
+    map[x][y] = map_sector(room);
 
   if ( (x < min) || ( y < min) || ( x > max ) || ( y > max) ) return;
 
