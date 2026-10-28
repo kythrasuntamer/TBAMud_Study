@@ -15,6 +15,11 @@ static char tb_captured_severity[16];
 static char tb_captured_operation[64];
 static char tb_captured_detail[512];
 static int tb_captured_line;
+/* Every operation and detail since the last reset, one per line, for tests
+ * where a guard reports more than one record (the fields above hold only
+ * the last one). Truncated silently: this is test scaffolding. */
+static char tb_captured_op_log[1024];
+static char tb_captured_detail_log[4096];
 
 void tb_error_log_at(const char *severity, const char *subsystem,
                      const char *operation, const char *resource, int errnum,
@@ -37,6 +42,17 @@ void tb_error_log_at(const char *severity, const char *subsystem,
                 detail_fmt, args) < 0)
     tb_captured_detail[0] = '\0';
   va_end(args);
+  {
+    size_t used = strlen(tb_captured_op_log);
+    if (snprintf(tb_captured_op_log + used, sizeof(tb_captured_op_log) - used,
+                 "%s\n", tb_captured_operation) < 0)
+      tb_captured_op_log[used] = '\0';
+    used = strlen(tb_captured_detail_log);
+    if (snprintf(tb_captured_detail_log + used,
+                 sizeof(tb_captured_detail_log) - used, "%s\n",
+                 tb_captured_detail) < 0)
+      tb_captured_detail_log[used] = '\0';
+  }
 }
 
 static void tb_error_capture_reset(void)
@@ -45,6 +61,7 @@ static void tb_error_capture_reset(void)
   tb_captured_line = 0;
   tb_captured_severity[0] = tb_captured_operation[0] = '\0';
   tb_captured_detail[0] = '\0';
+  tb_captured_op_log[0] = tb_captured_detail_log[0] = '\0';
 }
 
 #endif

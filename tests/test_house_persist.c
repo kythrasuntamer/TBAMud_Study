@@ -156,17 +156,77 @@ static void test_boot_rejects_out_of_range_guest_count(void)
   write_hcontrol(&rec, 1);
   House_boot();
 
-  TEST_ASSERT_EQUAL_STRING("hcontrol-record", tb_captured_operation);
-  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "house vnum 100"));
-  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "num_of_guests 5000"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_op_log, "hcontrol-record\n"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail_log, "house vnum 100"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail_log, "num_of_guests 5000"));
   hcontrol_list_houses(&imm, (char *)"");
   TEST_ASSERT_NOT_NULL(strstr(sent, "No houses have been defined"));
+}
+
+/* B2-09: a record whose owner is missing from the player index (deleted, or
+ * the index itself was truncated) used to be dropped silently and hcontrol
+ * rewritten without it. It is now reported and the file left intact. */
+static void test_boot_skip_is_reported_and_file_kept(void)
+{
+  struct house_control_rec recs[2];
+  long before;
+
+  recs[0] = good_record();
+  recs[1] = good_record();
+  recs[1].vnum = 100;
+  recs[1].owner = 999;	/* not in the index */
+  recs[0].owner = 999;
+  write_hcontrol(recs, 2);
+  before = file_size(HCONTROL_FILE);
+
+  House_boot();
+
+  TEST_ASSERT_EQUAL_STRING("hcontrol-keep", tb_captured_operation);
+  TEST_ASSERT_EQUAL_INT(3, tb_captured_errors);	/* two boot-skip + keep */
+  TEST_ASSERT_EQUAL_INT(before, file_size(HCONTROL_FILE));
+}
+
+/* B2-09: a trailing partial record is reported instead of ignored. */
+static void test_boot_reports_partial_record(void)
+{
+  struct house_control_rec rec = good_record();
+  FILE *fl;
+
+  write_hcontrol(&rec, 1);
+  fl = fopen(HCONTROL_FILE, "ab");
+  TEST_ASSERT_NOT_NULL(fl);
+  TEST_ASSERT_EQUAL_size_t(5, fwrite("junk!", 1, 5, fl));
+  TEST_ASSERT_EQUAL_INT(0, fclose(fl));
+
+  House_boot();
+
+  TEST_ASSERT_EQUAL_STRING("hcontrol-keep", tb_captured_operation);
+  TEST_ASSERT_EQUAL_INT((long)sizeof(rec) + 5, file_size(HCONTROL_FILE));
+  hcontrol_list_houses(&imm, (char *)"");
+  TEST_ASSERT_NOT_NULL(strstr(sent, "Owner"));
+}
+
+/* A clean boot loads the house and rewrites nothing it did not read. */
+static void test_clean_boot_loads_house(void)
+{
+  struct house_control_rec rec = good_record();
+
+  write_hcontrol(&rec, 1);
+  House_boot();
+
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  TEST_ASSERT_EQUAL_INT((long)sizeof(rec), file_size(HCONTROL_FILE));
+  TEST_ASSERT_TRUE(ROOM_FLAGGED(0, ROOM_HOUSE));
+  TEST_ASSERT_TRUE(ROOM_FLAGGED(1, ROOM_ATRIUM));
 }
 
 int main(void)
 {
   UNITY_BEGIN();
   RUN_TEST(test_boot_rejects_out_of_range_guest_count);
+  RUN_TEST(test_boot_skip_is_reported_and_file_kept);
+  RUN_TEST(test_boot_reports_partial_record);
+  RUN_TEST(test_clean_boot_loads_house);
   {
     char sub[300];
     if (snprintf(sub, sizeof(sub), "%s/etc", scratch_dir) > 0)

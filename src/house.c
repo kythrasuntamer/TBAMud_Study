@@ -266,50 +266,101 @@ static void House_save_control(void)
   tb_fclose(fl);
 }
 
-/* Call from boot_db - will load control recs, load objs, set atrium bits. 
- * Should do sanity checks on vnums & remove invalid records. */
+/* Report one hcontrol record that House_boot() will not load. */
+#define HOUSE_BOOT_SKIP(rec, reason) \
+  TB_ERROR_MSG("house", "boot-skip", HCONTROL_FILE, \
+               "house vnum %d atrium %d owner idnum %ld: %s; record skipped", \
+               (rec).vnum, (rec).atrium, (rec).owner, (reason))
+
+/** Load the house control records, their object files and room flags.
+ * Called once from boot_db(). HCONTROL_FILE is a raw binary array of
+ * struct house_control_rec (see house.h), so each record is validated:
+ * owner, house and atrium rooms, uniqueness, exit, guest count and mode.
+ * A record that fails is reported (boot-skip / hcontrol-record) and not
+ * loaded. If any record was skipped, or the file could not be read
+ * completely, hcontrol is NOT rewritten: a transient problem (a truncated
+ * player index, a zone file that failed to load) must not delete houses
+ * permanently. The file is rewritten only after a clean boot, which
+ * normalises it to the records that were loaded. */
 void House_boot(void)
 {
   struct house_control_rec temp_house;
   room_rnum real_house, real_atrium;
   FILE *fl;
+  int record = 0, skipped = 0;
+  size_t got;
 
   memset((char *)house_control,0,sizeof(struct house_control_rec)*MAX_HOUSES);
+  num_of_houses = 0;
 
   if (!(fl = fopen(HCONTROL_FILE, "rb"))) {
     if (errno == ENOENT)
       log("   No houses to load. File '%s' does not exist.", HCONTROL_FILE);
-    else {
-      int saved_errno = errno;
-      log("SYSERR: Unable to open house control file %s: %s (errno=%d)",
-          HCONTROL_FILE, strerror(saved_errno), saved_errno);
-    }
+    else
+      TB_ERROR_ERRNO("house", "hcontrol-open", HCONTROL_FILE,
+                     "house control file unreadable; no houses loaded");
     return;
   }
-  while (!feof(fl) && num_of_houses < MAX_HOUSES) {
-    if (fread(&temp_house, sizeof(struct house_control_rec), 1, fl) != 1)
+  for (;;) {
+    got = fread(&temp_house, 1, sizeof(struct house_control_rec), fl);
+    if (got != sizeof(struct house_control_rec)) {
+      if (ferror(fl)) {
+        TB_ERROR_ERRNO("house", "hcontrol-read", HCONTROL_FILE,
+                       "read failed after %d records", record);
+        skipped++;
+      } else if (got != 0) {
+        TB_ERROR_MSG("house", "hcontrol-read", HCONTROL_FILE,
+                     "trailing partial record (%zu of %zu bytes) after %d records",
+                     got, sizeof(struct house_control_rec), record);
+        skipped++;
+      }
       break;
+    }
+    record++;
 
-    if (feof(fl))
+    if (num_of_houses >= MAX_HOUSES) {
+      TB_ERROR_MSG("house", "hcontrol-read", HCONTROL_FILE,
+                   "more than MAX_HOUSES (%d) records; record %d and later ignored",
+                   MAX_HOUSES, record);
+      skipped++;
       break;
+    }
 
-    if (get_name_by_id(temp_house.owner) == NULL)
-      continue;			/* owner no longer exists -- skip */
+    if (get_name_by_id(temp_house.owner) == NULL) {
+      HOUSE_BOOT_SKIP(temp_house, "owner not in player index");
+      skipped++;
+      continue;
+    }
 
-    if ((real_house = real_room(temp_house.vnum)) == NOWHERE)
-      continue;			/* this vnum doesn't exist -- skip */
+    if ((real_house = real_room(temp_house.vnum)) == NOWHERE) {
+      HOUSE_BOOT_SKIP(temp_house, "house room does not exist");
+      skipped++;
+      continue;
+    }
 
-    if (find_house(temp_house.vnum) != NOWHERE)
-      continue;			/* this vnum is already a house -- skip */
+    if (find_house(temp_house.vnum) != NOWHERE) {
+      HOUSE_BOOT_SKIP(temp_house, "duplicate house vnum");
+      skipped++;
+      continue;
+    }
 
-    if ((real_atrium = real_room(temp_house.atrium)) == NOWHERE)
-      continue;			/* house doesn't have an atrium -- skip */
+    if ((real_atrium = real_room(temp_house.atrium)) == NOWHERE) {
+      HOUSE_BOOT_SKIP(temp_house, "atrium room does not exist");
+      skipped++;
+      continue;
+    }
 
-    if (temp_house.exit_num < 0 || temp_house.exit_num >= DIR_COUNT)
-      continue;			/* invalid exit num -- skip */
+    if (temp_house.exit_num < 0 || temp_house.exit_num >= DIR_COUNT) {
+      HOUSE_BOOT_SKIP(temp_house, "exit direction out of range");
+      skipped++;
+      continue;
+    }
 
-    if (TOROOM(real_house, temp_house.exit_num) != real_atrium)
-      continue;			/* exit num mismatch -- skip */
+    if (TOROOM(real_house, temp_house.exit_num) != real_atrium) {
+      HOUSE_BOOT_SKIP(temp_house, "exit does not lead to the atrium");
+      skipped++;
+      continue;
+    }
 
     /* num_of_guests comes straight from the binary hcontrol file and bounds
      * every guests[] loop (House_can_enter, House_list_guests, do_house);
@@ -320,6 +371,7 @@ void House_boot(void)
                    "house vnum %d owner idnum %ld num_of_guests %d (max %d) "
                    "mode %d; record skipped", temp_house.vnum, temp_house.owner,
                    temp_house.num_of_guests, MAX_GUESTS, temp_house.mode);
+      skipped++;
       continue;
     }
 
@@ -332,8 +384,18 @@ void House_boot(void)
   }
 
   tb_fclose(fl);
+  if (skipped) {
+    TB_ERROR_MSG("house", "hcontrol-keep", HCONTROL_FILE,
+                 "%d of %d records not loaded; file left unchanged at boot "
+                 "(the next hcontrol or house change rewrites it without them)",
+                 skipped, record);
+    return;
+  }
   House_save_control();
 }
+
+#undef HOUSE_BOOT_SKIP
+
 
 /* "House Control" functions */
 static const char *HCONTROL_FORMAT =
