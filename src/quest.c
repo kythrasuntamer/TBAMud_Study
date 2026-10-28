@@ -18,7 +18,7 @@
  * (genqst.c add_quest/delete_quest), which may reallocate it, so never keep
  * a row pointer or rnum across OLC. Players refer to quests by vnum only
  * (GET_QUEST, completed_quests[]); resolve with real_quest() and check with
- * VALID_QST_RNUM() each time, because quests can be deleted under them.
+ * VALID_QUEST_RNUM() each time, because quests can be deleted under them.
  *
  * Who controls input: quest records are builder data (world files, qedit),
  * including prev/next links, which are not repaired on delete; quest
@@ -116,7 +116,7 @@ static const char *quest_link_text(qst_rnum from, qst_vnum link, int want_name)
   qst_rnum to = real_quest(link);
   const char *text;
 
-  if (VALID_QST_RNUM(to)) {
+  if (VALID_QUEST_RNUM(to)) {
     text = want_name ? QST_NAME(to) : QST_DESC(to);
     return text ? text : "";
   }

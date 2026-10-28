@@ -12,14 +12,6 @@
 #ifndef TBAMUD_GENZON_H_INCLUDED
 #define TBAMUD_GENZON_H_INCLUDED
 
-/** TRUE when r names a loaded zone: usable as zone_table[r].  Every writer
- * takes a zone rnum from its OLC caller and checks it with this before
- * indexing.  Same text as utils.h's definition (tb_rnum_valid: negative
- * values of any integer type fail), so the two coexist until the final
- * cleanup removes this copy.  r is evaluated once. */
-#define VALID_ZONE_RNUM(r) \
-	tb_rnum_valid((long) (r), (long) NOWHERE, (long) top_of_zone_table)
-
 zone_rnum create_new_zone(zone_vnum vzone_num, room_vnum bottom, room_vnum top, const char **error);
 void remove_room_zone_commands(zone_rnum zone, room_rnum room_num);
 int save_zone(zone_rnum zone_num);

@@ -69,12 +69,6 @@ static int qedit_parse_int_range_at(struct descriptor_data *d, const char *arg,
 #define QEDIT_VNUM_MIN  (-1L)
 #define QEDIT_VNUM_MAX  ((long)IDXTYPE_MAX - 1)
 
-/** TRUE when r indexes a live aquest_table row (0..total_quests-1).
- * real_quest() returns NOTHING for a vnum with no row, which must never
- * reach aquest_table[] or delete_quest().  r is evaluated more than once:
- * pass a plain variable. */
-#define VALID_QUEST_RNUM(r)  ((r) != NOTHING && (r) < total_quests)
-
 /** Quest flag bit for flag-menu choice n.  qedit_disp_flag_menu() numbers
  * aq_flags[] from 1 (column_list(..., TRUE)), and entry n-1 names bit n-1
  * (AQ_REPEATABLE is 1 << 0), so choice n toggles 1 << (n-1).  The choice

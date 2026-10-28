@@ -81,11 +81,6 @@ struct aq_data {
 #define QST_PREV(i)            (aquest_table[i].prev_quest)
 #define QST_NEXT(i)            (aquest_table[i].next_quest)
 
-/** TRUE if r indexes a live aquest_table row. real_quest() returns NOTHING
- * for a vnum that does not exist (prev/next links are not repaired when a
- * quest is deleted), so check before QST_*(r). Evaluates r twice. */
-#define VALID_QST_RNUM(r)      ((r) != NOTHING && (r) < total_quests)
-
 /** quest_types[] name of quest r's type, or "<invalid>" when the stored type
  * is outside 0..NUM_AQ_TYPES-1. parse_quest rejects such types at boot; this
  * keeps display code safe if a table row is corrupted later. Evaluates r

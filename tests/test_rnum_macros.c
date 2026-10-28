@@ -1,9 +1,9 @@
 /* Regression tests for the VALID_*_RNUM checks: utils.h's VALID_ROOM_RNUM,
  * VALID_MOB_RNUM, VALID_ZONE_RNUM and VALID_OBJ_RNUM, dg_scripts.h's
- * VALID_TRIG_RNUM, olc_checks.h's VALID_OBJ_RNUM_NUM and oasis.h's
- * VALID_OBJ_RNUM_IDX, which all follow tb_rnum_valid(). genzon.h's and
- * oasis.h's VALID_ZONE_RNUM copies are token-identical to utils.h's (a
- * difference would draw a "redefined" warning here).
+ * VALID_TRIG_RNUM, and utils.h's VALID_OBJ_RNUM_NUM and VALID_QUEST_RNUM,
+ * which all follow tb_rnum_valid(). Each has one definition; genzon.h,
+ * oasis.h and olc_checks.h are still included so a reintroduced copy would
+ * draw a "redefined" warning here.
  *
  * With the default unsigned index type the sentinels (NOWHERE, NOTHING,
  * NOBODY) are 65535, so a plain int or long holding -1 used to pass both
@@ -30,12 +30,14 @@
 #include "oasis.h"
 #include "dg_scripts.h"
 #include "olc_checks.h"
+#include "quest.h"
 
 /* Tables the checks read; test_stubs.c supplies world, top_of_world,
  * top_of_mobt and top_of_objt. */
 zone_rnum top_of_zone_table = 0;
 struct index_data **trig_index = NULL;
 int top_of_trigt = 0;
+qst_rnum total_quests = 0;
 
 void setUp(void)
 {
@@ -43,6 +45,7 @@ void setUp(void)
   top_of_mobt = 3;
   top_of_zone_table = 1;
   top_of_objt = 4;
+  total_quests = 4;                 /* a count: rnums 0..3 */
   trig_index = NULL;
   top_of_trigt = 0;
 }
@@ -123,13 +126,9 @@ void test_obj_rnum_checks_refuse_negative_and_sentinel(void)
   TEST_ASSERT_TRUE(VALID_OBJ_RNUM(&obj));
 
   ASSERT_REFUSES_NEGATIVES(VALID_OBJ_RNUM_NUM);
-  ASSERT_REFUSES_NEGATIVES(VALID_OBJ_RNUM_IDX);
   TEST_ASSERT_FALSE(VALID_OBJ_RNUM_NUM(typed_nothing));
-  TEST_ASSERT_FALSE(VALID_OBJ_RNUM_IDX(typed_nothing));
   TEST_ASSERT_FALSE(VALID_OBJ_RNUM_NUM(5));
-  TEST_ASSERT_FALSE(VALID_OBJ_RNUM_IDX(5));
   TEST_ASSERT_TRUE(VALID_OBJ_RNUM_NUM(typed_last));
-  TEST_ASSERT_TRUE(VALID_OBJ_RNUM_IDX(typed_last));
   TEST_ASSERT_TRUE(VALID_OBJ_RNUM_NUM(0));
 }
 
@@ -167,6 +166,22 @@ void test_trig_rnum_empty_table_accepts_nothing(void)
   TEST_ASSERT_FALSE(VALID_TRIG_RNUM(-1));
 }
 
+/* qedit and quest.c hold quest rnums in plain ints; real_quest() returns
+ * NOTHING, and an int holding -1 must not pass and index aquest_table[-1].
+ * total_quests is a count, so the top valid rnum is total_quests - 1. */
+void test_quest_rnum_refuses_negative_sentinel_and_count(void)
+{
+  qst_rnum typed_nothing = NOTHING;
+
+  ASSERT_REFUSES_NEGATIVES(VALID_QUEST_RNUM);
+  TEST_ASSERT_FALSE(VALID_QUEST_RNUM(typed_nothing));
+  TEST_ASSERT_FALSE(VALID_QUEST_RNUM(4));
+  TEST_ASSERT_TRUE(VALID_QUEST_RNUM(3));
+  TEST_ASSERT_TRUE(VALID_QUEST_RNUM(0));
+  total_quests = 0;
+  TEST_ASSERT_FALSE(VALID_QUEST_RNUM(0));
+}
+
 /* The range checks evaluate their argument once, so an argument with a
  * side effect is safe (clang-tidy's bugprone-macro-repeated-side-effects
  * has nothing to report on them). */
@@ -178,7 +193,7 @@ void test_range_checks_evaluate_argument_once(void)
   TEST_ASSERT_TRUE(VALID_MOB_RNUM(i++));
   TEST_ASSERT_TRUE(VALID_ZONE_RNUM(i++));
   TEST_ASSERT_TRUE(VALID_OBJ_RNUM_NUM(i++));
-  TEST_ASSERT_TRUE(VALID_OBJ_RNUM_IDX(i++));
+  TEST_ASSERT_TRUE(VALID_QUEST_RNUM(i++));
   TEST_ASSERT_EQUAL_INT(4, i);
 }
 
@@ -191,6 +206,7 @@ int main(void)
   RUN_TEST(test_obj_rnum_checks_refuse_negative_and_sentinel);
   RUN_TEST(test_trig_rnum_refuses_negative_without_indexing);
   RUN_TEST(test_trig_rnum_empty_table_accepts_nothing);
+  RUN_TEST(test_quest_rnum_refuses_negative_sentinel_and_count);
   RUN_TEST(test_range_checks_evaluate_argument_once);
   return UNITY_END();
 }

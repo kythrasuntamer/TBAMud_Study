@@ -22,17 +22,6 @@
 #ifndef TBAMUD_OLC_CHECKS_H_INCLUDED
 #define TBAMUD_OLC_CHECKS_H_INCLUDED
 
-/* Range checks for rnums held as plain numbers (zone command args, shop
- * lists, scratch identities). VALID_ROOM_RNUM and VALID_MOB_RNUM are in
- * utils.h and VALID_TRIG_RNUM in dg_scripts.h; VALID_OBJ_RNUM in utils.h
- * takes an object pointer, hence the _NUM suffix here. All of them follow
- * utils.h's tb_rnum_valid(): correct for int, long, signed and unsigned
- * index types alike, and NOWHERE, NOTHING, NOBODY and negative values (an
- * unset zone-command argument is -1) always fail them. VALID_OBJ_RNUM_NUM
- * evaluates r once. */
-#define VALID_OBJ_RNUM_NUM(r) \
-	tb_rnum_valid((long) (r), (long) NOTHING, (long) top_of_objt)
-
 /* The rnum tables an OLC scratch copy can refer to. */
 #define OLC_RNUM_OBJ   0
 #define OLC_RNUM_MOB   1
