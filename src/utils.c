@@ -230,7 +230,6 @@ int strn_cmp(const char *arg1, const char *arg2, int n)
 
 #define TB_BREADCRUMB_COUNT 16
 #define TB_BREADCRUMB_TEXT 160
-#define TB_PARSE_CONTEXT_COUNT 16
 
 struct tb_breadcrumb_entry {
   unsigned long sequence;
@@ -318,6 +317,31 @@ unsigned long tb_correlation_current(void)
   return tb_current_correlation;
 }
 
+/* Every buffer that is cut in place must hold the whole marker. */
+#define TB_PARSE_DETAIL_LEN 512
+TB_STATIC_ASSERT(TB_BREADCRUMB_TEXT > sizeof(TB_TRUNC_MARKER), breadcrumb_holds_trunc_marker);
+TB_STATIC_ASSERT(TB_PARSE_DETAIL_LEN > sizeof(TB_TRUNC_MARKER), parse_detail_holds_trunc_marker);
+TB_STATIC_ASSERT(MAX_STRING_LENGTH / 2 > sizeof(TB_TRUNC_MARKER), log_detail_holds_trunc_marker);
+
+void tb_mark_truncated(char *buf, size_t size)
+{
+  const size_t marker_len = sizeof(TB_TRUNC_MARKER) - 1;
+  const char *nul;
+  size_t len, pos;
+
+  if (buf == NULL || size == 0)
+    return;
+  nul = memchr(buf, '\0', size);
+  len = nul ? (size_t)(nul - buf) : size - 1;   /* the visible text */
+  if (size > marker_len) {
+    pos = MIN(len, size - 1 - marker_len);       /* end of the text, or the */
+    memcpy(buf + pos, TB_TRUNC_MARKER, marker_len + 1);   /* last that fits */
+  } else {
+    memcpy(buf, TB_TRUNC_MARKER, size - 1);      /* "..." still shows */
+    buf[size - 1] = '\0';
+  }
+}
+
 void tb_breadcrumb(const char *kind, const char *detail)
 {
   struct tb_breadcrumb_entry *entry =
@@ -348,8 +372,7 @@ void tb_breadcrumbf(const char *kind, const char *format, ...)
   if (n < 0)
     strlcpy(detail, "(formatting failed)", sizeof(detail));
   else if ((size_t)n >= sizeof(detail))
-    strlcpy(detail + sizeof(detail) - sizeof("...[TRUNCATED]"),
-            "...[TRUNCATED]", sizeof("...[TRUNCATED]"));
+    tb_mark_truncated(detail, sizeof(detail));
 
   tb_breadcrumb(kind, detail);
 }
@@ -383,10 +406,8 @@ size_t tb_breadcrumb_snapshot(char *dst, size_t dst_size)
   }
 
   if (out.truncated) {
-    static const char marker[] = "...[BREADCRUMBS-TRUNCATED]";
-    size_t marker_len = sizeof(marker) - 1;
-    if (dst_size > marker_len)
-      memcpy(dst + dst_size - marker_len - 1, marker, marker_len + 1);
+    tb_mark_truncated(dst, dst_size);
+    return strlen(dst);
   }
 
   return out.length;
@@ -567,27 +588,50 @@ static struct tb_parse_context_slot *tb_parse_context_find(FILE *stream, int cre
     return free_slot;
   }
 
-  if (create && free_slot == NULL) {
-    int saved_errno = errno;
-    tb_parse_context_overflows++;
-    /* Allocation-free reporting: the loss of diagnostic context is itself an error. */
-    TB_ERROR_LOG("ERROR", "INVARIANT", "parse-context-exhausted",
-                 "(parser context pool)", 0,
-                 "capacity=%d failures=%lu stream=%p",
-                 TB_PARSE_CONTEXT_COUNT, tb_parse_context_overflows,
-                 (void *)stream);
-    errno = saved_errno;
-  }
-
   return NULL;
 }
 
-void tb_parse_context_begin(FILE *stream, const char *resource, const char *parser)
-{
-  struct tb_parse_context_slot *ctx = tb_parse_context_find(stream, TRUE);
+/* Exhaustion records per minute; the next record after a quiet minute says
+ * how many were suppressed (cf. class_table_error_at in class.c). */
+#define PARSE_CTX_DIAG_BURST 5
 
-  if (ctx == NULL)
+void tb_parse_context_begin_at(FILE *stream, const char *resource,
+                               const char *parser, const char *src_file,
+                               int src_line, const char *src_func)
+{
+  struct tb_parse_context_slot *ctx;
+
+  if (stream == NULL)
+    return;   /* the caller already reported its failed fopen() */
+  ctx = tb_parse_context_find(stream, TRUE);
+  if (ctx == NULL) {
+    static time_t window_start;
+    static int in_window, suppressed;
+    time_t now = time(0);
+
+    tb_parse_context_overflows++;
+    if (now - window_start >= 60) {
+      window_start = now;
+      in_window = 0;
+    }
+    if (in_window >= PARSE_CTX_DIAG_BURST) {
+      suppressed++;
+      return;
+    }
+    in_window++;
+    /* Allocation-free; tb_error_log_at() keeps the caller's errno. */
+    tb_error_log_at("ERROR", "PARSER", "parse-context-exhausted",
+                    resource ? resource : "(unknown)", 0,
+                    src_file, src_line, src_func,
+                    TB_ERRID_INVARIANT " all %d parser-context slots in use; "
+                    "parser %s loses line and record context (failures %lu, "
+                    "%d earlier reports suppressed): a loader is missing "
+                    "tb_parse_context_end()",
+                    TB_PARSE_CONTEXT_COUNT, parser ? parser : "(unknown)",
+                    tb_parse_context_overflows, suppressed);
+    suppressed = 0;
     return;
+  }
 
   ctx->line = 0;
   ctx->record_id = -1;
@@ -644,7 +688,7 @@ void tb_parse_context_error_at(FILE *stream, const char *source_file,
                                const char *detail_fmt, ...)
 {
   struct tb_parse_context_slot *ctx = tb_parse_context_find(stream, FALSE);
-  char detail[512];
+  char detail[TB_PARSE_DETAIL_LEN];
   char resource[PATH_MAX + 256];
   va_list args;
   int n;
@@ -655,11 +699,8 @@ void tb_parse_context_error_at(FILE *stream, const char *source_file,
     va_end(args);
     if (n < 0)
       strlcpy(detail, "parser detail formatting failed", sizeof(detail));
-    else if ((size_t)n >= sizeof(detail)) {
-      static const char marker[] = "...[DETAIL-TRUNCATED]";
-      memcpy(detail + sizeof(detail) - sizeof(marker),
-             marker, sizeof(marker));
-    }
+    else if ((size_t)n >= sizeof(detail))
+      tb_mark_truncated(detail, sizeof(detail));
   } else {
     strlcpy(detail, "parser error", sizeof(detail));
   }
@@ -706,12 +747,8 @@ void basic_mud_vlog(const char *format, va_list args)
   message_len = vsnprintf(message, sizeof(message), format, args);
   if (message_len < 0) {
     strlcpy(message, "SYSERR: log formatting failed.", sizeof(message));
-  } else if ((size_t)message_len >= sizeof(message)) {
-    static const char trunc[] = "...[TRUNCATED]";
-    size_t tlen = sizeof(trunc) - 1;
-    if (sizeof(message) > tlen + 1)
-      memcpy(message + sizeof(message) - tlen - 1, trunc, tlen + 1);
-  }
+  } else if ((size_t)message_len >= sizeof(message))
+    tb_mark_truncated(message, sizeof(message));
 
   ct = time(NULL);
   tm_info = localtime(&ct);
@@ -726,7 +763,7 @@ void basic_mud_vlog(const char *format, va_list args)
             "time-unavailable seq=? :: SYSERR: log line formatting failed.\n",
             sizeof(line));
   } else if ((size_t)line_len >= sizeof(line)) {
-    static const char trunc[] = "...[TRUNCATED]\n";
+    static const char trunc[] = TB_TRUNC_MARKER "\n";   /* keep the line end */
     size_t tlen = sizeof(trunc) - 1;
     if (sizeof(line) > tlen + 1)
       memcpy(line + sizeof(line) - tlen - 1, trunc, tlen + 1);
@@ -780,8 +817,7 @@ void tb_error_log_at(const char *severity, const char *subsystem,
     if (n < 0)
       strlcpy(detail, "detail-formatting-failed", sizeof(detail));
     else if ((size_t)n >= sizeof(detail))
-      strlcpy(detail + sizeof(detail) - sizeof("...[TRUNCATED]"),
-              "...[TRUNCATED]", sizeof("...[TRUNCATED]"));
+      tb_mark_truncated(detail, sizeof(detail));
   } else {
     strlcpy(detail, "(no detail)", sizeof(detail));
   }
