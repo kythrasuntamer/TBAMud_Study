@@ -37,6 +37,7 @@
 #include "ibt.h"
 #include "mud_event.h"
 #include "msgedit.h"
+#include "prefedit.h"
 #include "screen.h"
 #include <sys/stat.h>
 
@@ -3560,6 +3561,10 @@ void free_char(struct char_data *ch)
 {
   int i;
   struct alias_data *a;
+
+  /* No editor may keep pointing at this character. */
+  if (!IS_NPC(ch))
+    prefedit_forget_char(ch);
 
   if (ch->player_specials != NULL && ch->player_specials != &dummy_mob) {
     while ((a = GET_ALIASES(ch)) != NULL) {
