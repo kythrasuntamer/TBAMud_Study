@@ -20,6 +20,8 @@
 #include "dg_event.h"
 #include "lists.h"
 #include "oasis.h"
+#include "prefedit.h"
+#include "ibt.h"
 #include "protocol.h"
 #include <fcntl.h>
 #include "tb_error_capture.h"
@@ -88,9 +90,11 @@ void free_list_at(struct list_data *pList, const char *file, int line,
                   const char *func)
 { (void)file; (void)line; (void)func; free(pList); }
 
-/* What oasis.c's cleanup_olc() does with a cedit workspace once the config
- * copy is released for every cleanup type (audit F3-07): free the copy, its
- * strings and the workspace.  Calls are counted so a missed state shows. */
+/* What oasis.c's cleanup_olc() frees for the workspaces built here, with
+ * the cedit config copy released for every cleanup type (audit F3-07): the
+ * config copy, prefedit's preferences, ibtedit's copy of the entry, iedit's
+ * copy of the object (never the live object, OLC_IEDIT_OBJ), each with its
+ * strings, then the workspace.  Calls are counted so a missed state shows. */
 static int cleanups;
 static int cleanup_all_seen;     /* the last call passed CLEANUP_ALL */
 void cleanup_olc(struct descriptor_data *d, byte cleanup_type)
@@ -104,15 +108,28 @@ void cleanup_olc(struct descriptor_data *d, byte cleanup_type)
     free(OLC_CONFIG(d)->operation.MENU);
     free(OLC_CONFIG(d));
   }
+  free(OLC_PREFS(d));
+  if (OLC_IBT(d)) {
+    free(OLC_IBT(d)->text);
+    free(OLC_IBT(d)->body);
+    free(OLC_IBT(d)->name);
+    free(OLC_IBT(d)->notes);
+    free(OLC_IBT(d));
+  }
+  if (OLC_OBJ(d)) {
+    free(OLC_OBJ(d)->name);
+    free(OLC_OBJ(d)->short_description);
+    free(OLC_OBJ(d));
+  }
   free(d->olc);
   d->olc = NULL;
 }
 
 /* A descriptor as close_socket() gets it when the link drops: on the
  * descriptor list, with an open socket, an empty event list, and in editor
- * state 'state' with a workspace holding a config copy, as do_oasis_cedit()
- * leaves it.  close_socket() frees the descriptor. */
-static void add_editing_descriptor(int state)
+ * state 'state' with an empty workspace the test fills in.  close_socket()
+ * frees the descriptor. */
+static struct descriptor_data *add_editing_descriptor(int state)
 {
   struct descriptor_data *d;
 
@@ -121,14 +138,20 @@ static void add_editing_descriptor(int state)
   TEST_ASSERT_TRUE(d->descriptor >= 0);
   CREATE(d->events, struct list_data, 1);
   CREATE(d->olc, struct oasis_olc_data, 1);
+  STATE(d) = state;
+  d->next = descriptor_list;
+  descriptor_list = d;
+  return d;
+}
+
+/* The config copy do_oasis_cedit() puts in the workspace. */
+static void give_config_copy(struct descriptor_data *d)
+{
   CREATE(OLC_CONFIG(d), struct config_data, 1);
   OLC_CONFIG(d)->play.OK = strdup("Okay.\r\n");
   OLC_CONFIG(d)->operation.MENU = strdup("Menu\r\n");
   TEST_ASSERT_NOT_NULL(OLC_CONFIG(d)->play.OK);
   TEST_ASSERT_NOT_NULL(OLC_CONFIG(d)->operation.MENU);
-  STATE(d) = state;
-  d->next = descriptor_list;
-  descriptor_list = d;
 }
 
 void setUp(void)
@@ -147,7 +170,7 @@ void tearDown(void) {}
  * pins for cedit. */
 static void test_link_loss_in_cedit_releases_the_workspace(void)
 {
-  add_editing_descriptor(CON_CEDIT);
+  give_config_copy(add_editing_descriptor(CON_CEDIT));
   close_socket(descriptor_list);
   TEST_ASSERT_EQUAL_INT(1, cleanups);
   TEST_ASSERT_TRUE(cleanup_all_seen);
@@ -157,10 +180,58 @@ static void test_link_loss_in_cedit_releases_the_workspace(void)
 /* A state that was already listed keeps working. */
 static void test_link_loss_in_redit_still_releases_the_workspace(void)
 {
-  add_editing_descriptor(CON_REDIT);
+  give_config_copy(add_editing_descriptor(CON_REDIT));
   close_socket(descriptor_list);
   TEST_ASSERT_EQUAL_INT(1, cleanups);
   TEST_ASSERT_TRUE(cleanup_all_seen);
+}
+
+/* CON_PREFEDIT, CON_IBTEDIT and CON_IEDIT were missing too.  Each of
+ * those editors leaves through cleanup_olc(d, CLEANUP_ALL) on a normal
+ * exit, so a dropped link must release its workspace the same way. */
+static void test_link_loss_in_prefedit_releases_the_workspace(void)
+{
+  struct descriptor_data *d = add_editing_descriptor(CON_PREFEDIT);
+
+  CREATE(OLC_PREFS(d), struct prefs_data, 1);
+  close_socket(d);
+  TEST_ASSERT_EQUAL_INT(1, cleanups);
+  TEST_ASSERT_TRUE(cleanup_all_seen);
+}
+
+static void test_link_loss_in_ibtedit_releases_the_workspace(void)
+{
+  struct descriptor_data *d = add_editing_descriptor(CON_IBTEDIT);
+
+  CREATE(OLC_IBT(d), IBT_DATA, 1);
+  OLC_IBT(d)->text = strdup("Typo in the temple");
+  OLC_IBT(d)->name = strdup("Builder");
+  TEST_ASSERT_NOT_NULL(OLC_IBT(d)->text);
+  TEST_ASSERT_NOT_NULL(OLC_IBT(d)->name);
+  close_socket(d);
+  TEST_ASSERT_EQUAL_INT(1, cleanups);
+  TEST_ASSERT_TRUE(cleanup_all_seen);
+}
+
+/* iedit edits a copy of a live object: the copy goes, the object stays. */
+static void test_link_loss_in_iedit_releases_the_copy_not_the_object(void)
+{
+  char live_name[] = "sword";
+  struct obj_data live;
+  struct descriptor_data *d = add_editing_descriptor(CON_IEDIT);
+
+  memset(&live, 0, sizeof(live));
+  live.name = live_name;
+  OLC_IEDIT_OBJ(d) = &live;
+  CREATE(OLC_OBJ(d), struct obj_data, 1);
+  OLC_OBJ(d)->name = strdup("sword");
+  OLC_OBJ(d)->short_description = strdup("a sword");
+  TEST_ASSERT_NOT_NULL(OLC_OBJ(d)->name);
+  TEST_ASSERT_NOT_NULL(OLC_OBJ(d)->short_description);
+  close_socket(d);
+  TEST_ASSERT_EQUAL_INT(1, cleanups);
+  TEST_ASSERT_TRUE(cleanup_all_seen);
+  TEST_ASSERT_EQUAL_STRING("sword", live.name);
 }
 
 int main(void)
@@ -168,5 +239,8 @@ int main(void)
   UNITY_BEGIN();
   RUN_TEST(test_link_loss_in_cedit_releases_the_workspace);
   RUN_TEST(test_link_loss_in_redit_still_releases_the_workspace);
+  RUN_TEST(test_link_loss_in_prefedit_releases_the_workspace);
+  RUN_TEST(test_link_loss_in_ibtedit_releases_the_workspace);
+  RUN_TEST(test_link_loss_in_iedit_releases_the_copy_not_the_object);
   return UNITY_END();
 }
