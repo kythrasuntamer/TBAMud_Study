@@ -484,10 +484,24 @@ int save_rooms(zone_rnum rzone)
 
 int copy_room(struct room_data *to, struct room_data *from)
 {
+  struct list_data *to_events = to->events;
+
+  /* `to` is a live room (add_room() update path) and `from` the OLC copy.
+   * Pending events point at `to`, so `to` keeps its own list: taking the
+   * copy's (always NULL from redit) would orphan them, and delete_room()
+   * could then never cancel them. */
+  if (from->events && from->events != to_events)
+    TB_WARN_MSG("olc", "room-copy-events", "room",
+                "room vnum %d: source copy carried its own events list; "
+                "the live room's list was kept", from->number);
+  /* The live room's trigger list is replaced by the copy's; free it unless
+   * the copy shares it. */
+  if (to->proto_script && to->proto_script != from->proto_script)
+    free_proto_script(to, WLD_TRIGGER);
   free_room_strings(to);
   *to = *from;
   copy_room_strings(to, from);
-  to->events = from->events;
+  to->events = to_events;
 
   /* Don't put people and objects in two locations. Should this be done here? */
   from->people = NULL;

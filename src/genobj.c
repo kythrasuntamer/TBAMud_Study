@@ -461,8 +461,22 @@ int copy_object_preserve(struct obj_data *to, struct obj_data *from)
 
 int copy_object_main(struct obj_data *to, struct obj_data *from, int free_object)
 {
+  struct script_data *to_script = to->script;
+  struct list_data *to_events = to->events;
+
+  /* copy_object() (free_object TRUE) replaces data `to` owns.  Its
+   * proto_script is then dropped unless `from` shares the same list, as
+   * when oedit re-saves a prototype whose trigger list it re-attaches.
+   * copy_object_preserve() is for slots whose old pointers belong to a
+   * neighbour after a table shift, so it frees nothing. */
+  if (free_object && to->proto_script && to->proto_script != from->proto_script)
+    free_proto_script(to, OBJ_TRIGGER);
   *to = *from;
   copy_object_strings(to, from);
+  /* A running script and pending events belong to one object; they are
+   * never copied, and `to` keeps its own. */
+  to->script = to_script;
+  to->events = to_events;
   return TRUE;
 }
 

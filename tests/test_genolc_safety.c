@@ -856,6 +856,64 @@ static void add_object_releases_live_instance_state(void)
 }
 
 /* ------------------------------------------------------------------------ */
+/* C2-11: copy_object()/copy_room() ownership of triggers and events.       */
+/* ------------------------------------------------------------------------ */
+
+/* The prototype's old trigger list is freed (LSan catches the old leak). */
+static void add_object_frees_replaced_proto_script(void)
+{
+  struct obj_data newobj;
+  make_zones(1); make_objs(1);
+  CREATE(obj_proto[0].proto_script, struct trig_proto_list, 1);
+  memset(&newobj, 0, sizeof(newobj));
+  newobj.name = "new";
+  add_object(&newobj, 10);
+  TEST_ASSERT_NULL(obj_proto[0].proto_script);
+}
+
+static void copy_object_keeps_destination_runtime_state(void)
+{
+  struct obj_data to, from;
+  struct script_data *own_script;
+  struct list_data *own_events = (struct list_data *)&to;   /* opaque */
+  memset(&to, 0, sizeof(to));
+  memset(&from, 0, sizeof(from));
+  CREATE(own_script, struct script_data, 1);
+  to.script = own_script;
+  to.events = own_events;
+  CREATE(from.script, struct script_data, 1);
+  from.name = "from";
+  copy_object(&to, &from);
+  TEST_ASSERT_TRUE(to.script == own_script);
+  TEST_ASSERT_TRUE(to.events == own_events);
+  TEST_ASSERT_EQUAL_STRING("from", to.name);
+  free(to.name);
+  free(own_script);
+  free(from.script);
+}
+
+/* Updating an existing room keeps its pending events and frees the trigger
+ * list the OLC copy replaces. */
+static void add_room_update_keeps_live_events(void)
+{
+  struct room_event_fixture f;
+  struct room_data nr;
+  make_zones(1); make_rooms(1);
+  attach_room_event(&f, 0);
+  CREATE(world[0].proto_script, struct trig_proto_list, 1);
+  memset(&nr, 0, sizeof(nr));
+  nr.number = 10;                      /* existing room */
+  nr.name = "renamed";
+  nr.description = "d";
+  TEST_ASSERT_EQUAL_UINT(0, add_room(&nr));
+  TEST_ASSERT_TRUE(world[0].events == &f.list);
+  TEST_ASSERT_NULL(world[0].proto_script);
+  TEST_ASSERT_EQUAL_STRING("renamed", world[0].name);
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  world[0].events = NULL;
+}
+
+/* ------------------------------------------------------------------------ */
 /* Temporary world directory for the writers.                               */
 /* ------------------------------------------------------------------------ */
 static char test_root[] = "/tmp/tb-genolc-XXXXXX";
@@ -929,6 +987,9 @@ int main(void)
   RUN_TEST(save_rooms_handles_null_exdesc_description);
   RUN_TEST(delete_room_renumbers_start_rooms);
   RUN_TEST(add_object_releases_live_instance_state);
+  RUN_TEST(add_object_frees_replaced_proto_script);
+  RUN_TEST(copy_object_keeps_destination_runtime_state);
+  RUN_TEST(add_room_update_keeps_live_events);
   failures = UNITY_END();
   leave_test_root();
   return failures;
