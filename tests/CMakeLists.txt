@@ -190,6 +190,20 @@ if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
 endif()
 
 
+# Player saves round-trip in a temporary directory, never live lib/plrfiles.
+add_mud_test(test_player_roundtrip
+    ${MUD_SRCDIR}/players.c
+    ${MUD_SRCDIR}/utils.c
+    ${MUD_SRCDIR}/random.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/player_roundtrip_stubs.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_player_roundtrip.c
+)
+
+# Native tests execute the exact arcane calculations used by live magic.
+add_mud_test(test_arcane_specialization
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_arcane_specialization.c
+)
+
 # ---------------------------------------------------------------------------
 # test_error_handling — strict parsing and transactional failure containment
 # ---------------------------------------------------------------------------
@@ -943,6 +957,8 @@ endif()
 # Production spec procs (spec_procs.c).
 add_mud_test(test_spec_procs
     ${MUD_SRCDIR}/spec_procs.c
+    ${MUD_SRCDIR}/class.c          # guild_info[], prac_params[] for guild_guard/practice
+    ${MUD_SRCDIR}/constants.c      # dirs[], autoexits[]
     ${CMAKE_CURRENT_SOURCE_DIR}/test_spec_procs.c
 )
 if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")

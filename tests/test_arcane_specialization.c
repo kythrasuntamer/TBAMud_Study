@@ -1,0 +1,65 @@
+/* Native regression tests execute the same pure calculations used by magic.c. */
+#include "unity.h"
+#include "conf.h"
+#include "sysdep.h"
+/* First after the standard preamble: the header must bring what it uses. */
+#include "arcane_specialization.h"
+#include "structs.h"
+#include "utils.h"
+#include "spells.h"
+
+void setUp(void) {}
+void tearDown(void) {}
+
+void test_wizard_mastery_boundaries(void)
+{
+  TEST_ASSERT_EQUAL_INT(100, arcane_adjust_mana(CLASS_MAGIC_USER, 19, 1, 100, 0, 0, 0));
+  TEST_ASSERT_EQUAL_INT(100, arcane_adjust_mana(CLASS_MAGIC_USER, 20, 15, 100, 0, 0, 0));
+  TEST_ASSERT_EQUAL_INT(80, arcane_adjust_mana(CLASS_MAGIC_USER, 20, 10, 100, 0, 0, 0));
+  TEST_ASSERT_EQUAL_INT(1, arcane_adjust_mana(CLASS_MAGIC_USER, 50, 1, 1, 0, 0, 0));
+  TEST_ASSERT_EQUAL_INT(100, arcane_adjust_mana(CLASS_MAGIC_USER, 50, 1, 100, 0, 1, 0));
+}
+/* A Wizard's discount never takes a cost below the spell's mana_min.  Red
+ * before: mana_min was applied first, then the discount (10 -> 8). */
+void test_wizard_discount_respects_spell_minimum(void)
+{
+  TEST_ASSERT_EQUAL_INT(10, arcane_adjust_mana(CLASS_MAGIC_USER, 40, 1, 10, 0, 0, 10));
+  TEST_ASSERT_EQUAL_INT(16, arcane_adjust_mana(CLASS_MAGIC_USER, 40, 1, 20, 0, 0, 10));
+}
+void test_sorcerer_mana_boundaries(void)
+{
+  TEST_ASSERT_EQUAL_INT(100, arcane_adjust_mana(CLASS_SORCERER, 19, 1, 100, 1, 0, 0));
+  TEST_ASSERT_EQUAL_INT(100, arcane_adjust_mana(CLASS_SORCERER, 20, 1, 100, 0, 0, 0));
+  TEST_ASSERT_EQUAL_INT(150, arcane_adjust_mana(CLASS_SORCERER, 20, 1, 100, 1, 0, 0));
+  TEST_ASSERT_EQUAL_INT(2, arcane_adjust_mana(CLASS_SORCERER, 20, 1, 1, 1, 0, 0));
+  TEST_ASSERT_EQUAL_INT(100, arcane_adjust_mana(CLASS_SORCERER, 20, 1, 100, 1, 1, 0));
+}
+void test_other_classes_have_no_adjustment(void)
+{
+  int klass;
+  for (klass = CLASS_CLERIC; klass < NUM_CLASSES; ++klass) {
+    if (klass == CLASS_SORCERER) continue;
+    TEST_ASSERT_EQUAL_INT(100, arcane_adjust_mana(klass, 50, 1, 100, 1, 0, 0));
+    TEST_ASSERT_EQUAL_INT(100, arcane_adjust_damage(klass, 50, 100, TRUE, 0));
+  }
+}
+void test_damage_applies_only_to_direct_sorcerer_spells(void)
+{
+  TEST_ASSERT_EQUAL_INT(125, arcane_adjust_damage(CLASS_SORCERER, 20, 100, TRUE, 0));
+  TEST_ASSERT_EQUAL_INT(6, arcane_adjust_damage(CLASS_SORCERER, 20, 5, TRUE, 0));
+  TEST_ASSERT_EQUAL_INT(100, arcane_adjust_damage(CLASS_SORCERER, 19, 100, TRUE, 0));
+  TEST_ASSERT_EQUAL_INT(100, arcane_adjust_damage(CLASS_SORCERER, 50, 100, FALSE, 0));
+  TEST_ASSERT_EQUAL_INT(100, arcane_adjust_damage(CLASS_SORCERER, 50, 100, FALSE, 0));
+  TEST_ASSERT_EQUAL_INT(100, arcane_adjust_damage(CLASS_SORCERER, 50, 100, TRUE, 1));
+  TEST_ASSERT_EQUAL_INT(0, arcane_adjust_damage(CLASS_SORCERER, 50, 0, TRUE, 0));
+}
+int main(void)
+{
+  UNITY_BEGIN();
+  RUN_TEST(test_wizard_mastery_boundaries);
+  RUN_TEST(test_wizard_discount_respects_spell_minimum);
+  RUN_TEST(test_sorcerer_mana_boundaries);
+  RUN_TEST(test_other_classes_have_no_adjustment);
+  RUN_TEST(test_damage_applies_only_to_direct_sorcerer_spells);
+  return UNITY_END();
+}

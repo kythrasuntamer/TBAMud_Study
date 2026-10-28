@@ -24,9 +24,8 @@ class ClassConversionSafety(unittest.TestCase):
         structs = read("src/structs.h")
         classes = read("src/class.c")
         self.assertRegex(structs, r"#define\s+CLASS_MONK\s+4\b")
-        # Prevent raising NUM_CLASSES or permitting the selector until gameplay
-        # systems, saving throws, level curves and trainers are implemented.
-        self.assertRegex(structs, r"#define\s+NUM_CLASSES\s+5\b")
+        # Preserve Monk ID 4 while allowing the additional class IDs 5-11.
+        self.assertRegex(structs, r"#define\s+NUM_CLASSES\s+12\b")
         parse_class_body = classes.split("int parse_class(char arg)", 1)[1].split("bitvector_t find_class_bitvector", 1)[0]
         self.assertIn("CLASS_MONK", parse_class_body)
         for symbol in ("spell_level(SKILL_KICK, CLASS_MONK, 1)", "case CLASS_MONK:", "chclass == CLASS_MONK"):

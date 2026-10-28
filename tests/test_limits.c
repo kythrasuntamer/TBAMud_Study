@@ -31,7 +31,11 @@ void core_dump_real(const char *who, int line) { (void)who; (void)line; }
 #define UNREACHED() TEST_FAIL_MESSAGE(__func__)
 int Crash_idlesave(struct char_data *ch) { (void)ch; UNREACHED(); return 0; }
 int Crash_rentsave(struct char_data *ch, int cost) { (void)ch; (void)cost; UNREACHED(); return 0; }
-struct time_info_data *age(struct char_data *ch) { (void)ch; UNREACHED(); return &time_info; }
+/* The regeneration tests call mana_gain()/hit_gain(), which ask age(). */
+static int age_allowed;
+static struct time_info_data adult_age = { 0, 0, 0, 30 };
+struct time_info_data *age(struct char_data *ch)
+{ (void)ch; if (!age_allowed) UNREACHED(); return &adult_age; }
 int damage(struct char_data *ch, struct char_data *victim, int dam, int attacktype)
 { (void)ch; (void)victim; (void)dam; (void)attacktype; UNREACHED(); return 0; }
 void stop_fighting(struct char_data *ch) { (void)ch; UNREACHED(); }
@@ -288,6 +292,44 @@ static void test_gain_exp_names_the_player(void)
   config_info.play.max_exp_gain = 0;
 }
 
+/* Regeneration follows the class archetype: Sorcerer/Necromancer regain
+ * mana like a Wizard and Druid like a Cleric (double), and give up half
+ * their hit point regeneration like them.  Red before: the new casters
+ * regenerated like warriors. */
+static int regen(int chclass, int (*fn)(struct char_data *))
+{
+  static struct char_data ch;
+  static struct player_special_data sp;
+
+  memset(&ch, 0, sizeof(ch));
+  memset(&sp, 0, sizeof(sp));
+  ch.player_specials = &sp;
+  GET_CLASS(&ch) = chclass;
+  GET_POS(&ch) = POS_STANDING;
+  GET_COND(&ch, HUNGER) = GET_COND(&ch, THIRST) = 10;
+  return fn(&ch);
+}
+
+static void test_regeneration_follows_class_archetype(void)
+{
+  int wizard_mana, warrior_mana, wizard_hit, warrior_hit;
+
+  age_allowed = 1;
+  wizard_mana = regen(CLASS_MAGIC_USER, mana_gain);
+  warrior_mana = regen(CLASS_WARRIOR, mana_gain);
+  wizard_hit = regen(CLASS_MAGIC_USER, hit_gain);
+  warrior_hit = regen(CLASS_WARRIOR, hit_gain);
+  TEST_ASSERT_EQUAL_INT(2 * warrior_mana, wizard_mana);
+  TEST_ASSERT_EQUAL_INT(wizard_mana, regen(CLASS_SORCERER, mana_gain));
+  TEST_ASSERT_EQUAL_INT(wizard_mana, regen(CLASS_NECROMANCER, mana_gain));
+  TEST_ASSERT_EQUAL_INT(regen(CLASS_CLERIC, mana_gain), regen(CLASS_DRUID, mana_gain));
+  TEST_ASSERT_EQUAL_INT(warrior_mana, regen(CLASS_PALADIN, mana_gain));
+  TEST_ASSERT_EQUAL_INT(wizard_hit, regen(CLASS_SORCERER, hit_gain));
+  TEST_ASSERT_EQUAL_INT(regen(CLASS_CLERIC, hit_gain), regen(CLASS_DRUID, hit_gain));
+  TEST_ASSERT_EQUAL_INT(warrior_hit, regen(CLASS_BERSERKER, hit_gain));
+  age_allowed = 0;
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -299,5 +341,6 @@ int main(void)
   RUN_TEST(test_timer_script_purging_next_object);
   RUN_TEST(test_unexpired_timers_count_down);
   RUN_TEST(test_gain_exp_names_the_player);
+  RUN_TEST(test_regeneration_follows_class_archetype);
   return UNITY_END();
 }
