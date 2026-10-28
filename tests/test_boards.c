@@ -181,6 +181,24 @@ static void test_init_reports_missing_board_object(void)
   TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "vnum 1228"));
 }
 
+/* C1-08: gen_board on an object board_info does not list names the object,
+ * the room and the character instead of "degenerate board!". */
+static void test_unknown_board_object_is_reported_with_ids(void)
+{
+  struct index_data extra[NUM_OF_BOARDS + 1];
+
+  memcpy(extra, objs, sizeof(objs));
+  extra[NUM_OF_BOARDS].vnum = 4242;
+  obj_index = extra;
+  top_of_objt = NUM_OF_BOARDS;
+  board_obj.item_number = NUM_OF_BOARDS;
+  TEST_ASSERT_EQUAL_INT(0, gen_board(&writer, &board_obj, find_command("look"), line("board")));
+  TEST_ASSERT_EQUAL_STRING("find-board", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "obj vnum 4242 in room 3001 player idnum 42"));
+  obj_index = objs;
+  top_of_objt = NUM_OF_BOARDS - 1;
+}
+
 /* C1-07: the board is identified by the object whose procedure fired. */
 static void test_gen_board_finds_board_by_object_vnum(void)
 {
@@ -406,6 +424,7 @@ int main(void)
   RUN_TEST(test_gen_board_before_init_is_refused);
   RUN_TEST(test_init_reports_missing_board_object);
   RUN_TEST(test_gen_board_finds_board_by_object_vnum);
+  RUN_TEST(test_unknown_board_object_is_reported_with_ids);
   RUN_TEST(test_late_headline_does_not_write_past_caller_buffer);
   RUN_TEST(test_long_headline_is_truncated_and_reported);
   RUN_TEST(test_remove_first_of_two_then_clear);
