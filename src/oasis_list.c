@@ -101,7 +101,6 @@ static void perform_mob_flag_list(struct char_data * ch, char *arg)
 {
   int num, mob_flag, found = 0;
   size_t len;
-  struct char_data *mob;
   char buf[MAX_STRING_LENGTH];
 
   mob_flag = tb_parse_int_or_zero(arg);
@@ -116,15 +115,17 @@ static void perform_mob_flag_list(struct char_data * ch, char *arg)
   for (num = 0; num <= top_of_mobt; num++) {
     if (IS_SET_AR((mob_proto[num].char_specials.saved.act), mob_flag)) {
 
-      if ((mob = read_mobile(num, REAL)) != NULL) {
-        char_to_room(mob, 0);
-        len += snprintf(buf + len, sizeof(buf) - len, "%s%3d. %s[%s%5d%s]%s Level %s%-3d%s %s%s\r\n", CCNRM(ch, C_NRM),++found,
-                      CCCYN(ch, C_NRM), CCYEL(ch, C_NRM), GET_MOB_VNUM(mob), CCCYN(ch, C_NRM), CCNRM(ch, C_NRM),
-                      CCYEL(ch, C_NRM), GET_LEVEL(mob), CCNRM(ch, C_NRM), GET_NAME(mob), CCNRM(ch, C_NRM));
-        extract_char(mob); /* Finished with the mob - remove it from the MUD */
-        if (len > sizeof(buf))
-		  break;
-      }
+      /* F3-17: read the prototype directly.  Instantiating each match with
+       * read_mobile() + char_to_room(mob, 0) + extract_char() copied the mob
+       * and its scripts into the live world, and extract_char only queues
+       * the removal, so every listed mob sat in room 0 until the next
+       * extract_pending_chars(). */
+      len += snprintf(buf + len, sizeof(buf) - len, "%s%3d. %s[%s%5d%s]%s Level %s%-3d%s %s%s\r\n", CCNRM(ch, C_NRM),++found,
+                    CCCYN(ch, C_NRM), CCYEL(ch, C_NRM), mob_index[num].vnum, CCCYN(ch, C_NRM), CCNRM(ch, C_NRM),
+                    CCYEL(ch, C_NRM), mob_proto[num].player.level, CCNRM(ch, C_NRM),
+                    mob_proto[num].player.short_descr, CCNRM(ch, C_NRM));
+      if (len > sizeof(buf))
+        break;
     }
   }
   if (!found)
@@ -138,7 +139,6 @@ static void perform_mob_level_list(struct char_data * ch, char *arg)
 {
   int num, mob_level, found = 0;
   size_t len;
-  struct char_data *mob;
   char buf[MAX_STRING_LENGTH];
 
   mob_level = tb_parse_int_or_zero(arg);
@@ -151,15 +151,12 @@ static void perform_mob_level_list(struct char_data * ch, char *arg)
   len = snprintf(buf, sizeof(buf), "Listing mobiles of level %s%d%s\r\n", QYEL, mob_level, QNRM);
   for (num = 0; num <= top_of_mobt; num++) {
     if ((mob_proto[num].player.level) == mob_level) {
-      if ((mob = read_mobile(num, REAL)) != NULL) {
-        char_to_room(mob, 0);
-        len += snprintf(buf + len, sizeof(buf) - len, "%s%3d. %s[%s%5d%s]%s %s%s\r\n", CCNRM(ch, C_NRM),++found,
-                      CCCYN(ch, C_NRM), CCYEL(ch, C_NRM), GET_MOB_VNUM(mob), CCCYN(ch, C_NRM), CCNRM(ch, C_NRM),
-                      GET_NAME(mob), CCNRM(ch, C_NRM));
-        extract_char(mob); /* Finished with the mob - remove it from the MUD */
-        if (len > sizeof(buf))
-		  break;
-      }
+      /* F3-17: prototype fields only; see perform_mob_flag_list. */
+      len += snprintf(buf + len, sizeof(buf) - len, "%s%3d. %s[%s%5d%s]%s %s%s\r\n", CCNRM(ch, C_NRM),++found,
+                    CCCYN(ch, C_NRM), CCYEL(ch, C_NRM), mob_index[num].vnum, CCCYN(ch, C_NRM), CCNRM(ch, C_NRM),
+                    mob_proto[num].player.short_descr, CCNRM(ch, C_NRM));
+      if (len > sizeof(buf))
+        break;
     }
   }
   if (!found)

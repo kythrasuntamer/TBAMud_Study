@@ -182,6 +182,32 @@ static void make_objects(int count, const char *short_desc)
   }
 }
 
+static void free_mobiles(void)
+{
+  free(mob_proto);
+  free(mob_index);
+  mob_proto = NULL;
+  mob_index = NULL;
+  top_of_mobt = 0;
+}
+
+/* Allocate exactly count mob prototypes (vnums 200..), as index_boot does.
+ * short_descr points at a string literal; nothing here frees it. */
+static void make_mobiles(int count, const char *short_descr, int level)
+{
+  int i;
+  free_mobiles();
+  CREATE(mob_proto, struct char_data, count);
+  CREATE(mob_index, struct index_data, count);
+  top_of_mobt = count - 1;
+  for (i = 0; i < count; i++) {
+    mob_index[i].vnum = 200 + i;
+    mob_proto[i].nr = i;
+    mob_proto[i].player.short_descr = (char *)short_descr;
+    mob_proto[i].player.level = level;
+  }
+}
+
 static void run_list(int subcmd, const char *args)
 {
   char argbuf[MAX_INPUT_LENGTH];
@@ -226,6 +252,7 @@ void setUp(void)
 void tearDown(void)
 {
   free_objects();
+  free_mobiles();
   logfile = NULL;
   if (capture_log)
     fclose(capture_log);
@@ -349,6 +376,40 @@ void test_obj_type_list_lists_types_the_switch_does_not_special_case(void)
   TEST_ASSERT_NULL(strstr(sent, "Not a valid item type"));
 }
 
+/* ---------------------------------------------------------------------
+ * F3-17: mlist level/flags instantiated every match with read_mobile() and
+ * parked it in room 0 until the deferred extraction ran.  The listing must
+ * come from the prototype table and never create a live mob.
+ * --------------------------------------------------------------------- */
+void test_mob_level_list_reads_prototypes_without_instantiating(void)
+{
+  make_mobiles(3, "the town guard", 12);
+  mob_proto[1].player.level = 3;
+
+  run_list(SCMD_OASIS_MLIST, "level 12");
+
+  TEST_ASSERT_EQUAL_INT(0, read_mobile_calls);
+  TEST_ASSERT_EQUAL_INT(1, paged_calls);
+  TEST_ASSERT_NOT_NULL(strstr(paged, "the town guard"));
+  TEST_ASSERT_NOT_NULL(strstr(paged, "200"));
+  TEST_ASSERT_NOT_NULL(strstr(paged, "202"));
+  TEST_ASSERT_NULL(strstr(paged, "201"));
+}
+
+void test_mob_flag_list_reads_prototypes_without_instantiating(void)
+{
+  make_mobiles(2, "a snarling wolf", 5);
+  SET_BIT_AR(mob_proto[1].char_specials.saved.act, MOB_AGGRESSIVE);
+
+  run_list(SCMD_OASIS_MLIST, "flags 5");
+
+  TEST_ASSERT_EQUAL_INT(0, read_mobile_calls);
+  TEST_ASSERT_EQUAL_INT(1, paged_calls);
+  TEST_ASSERT_NOT_NULL(strstr(paged, "a snarling wolf"));
+  TEST_ASSERT_NOT_NULL(strstr(paged, "201"));
+  TEST_ASSERT_NULL(strstr(paged, "200"));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -359,5 +420,7 @@ int main(void)
   RUN_TEST(test_obj_type_list_rejects_out_of_range_type_loudly);
   RUN_TEST(test_obj_type_list_rejects_negative_and_non_numeric_type);
   RUN_TEST(test_obj_type_list_lists_types_the_switch_does_not_special_case);
+  RUN_TEST(test_mob_level_list_reads_prototypes_without_instantiating);
+  RUN_TEST(test_mob_flag_list_reads_prototypes_without_instantiating);
   return UNITY_END();
 }
