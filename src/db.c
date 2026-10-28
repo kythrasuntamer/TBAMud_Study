@@ -8,6 +8,32 @@
 *  CircleMUD is based on DikuMUD, Copyright (C) 1990, 1991.               *
 **************************************************************************/
 
+/* Purpose: boot the world (index_boot() and the per-record parsers), run zone
+ * resets, create mobile/object instances from prototypes, load text files,
+ * help, socials and the game configuration, and free it all at shutdown
+ * (destroy_db()).
+ *
+ * Ownership and lifetime:
+ *  - world[], mob_proto[]/mob_index[], obj_proto[]/obj_index[], zone_table[],
+ *    help_table[] and soc_mess_list[] are allocated once at boot, sized by a
+ *    counting pass, and freed by destroy_db(). The per-record parsers keep
+ *    static cursors and may run only during that one sequential boot pass.
+ *  - Instances from read_mobile()/read_object() are linked into
+ *    character_list/object_list and share string pointers with their
+ *    prototype; free_char()/free_obj() compare against the prototype before
+ *    freeing a string.
+ *  - fread_line(), fread_word() and parse_object() return static buffers that
+ *    the next call overwrites.
+ *
+ * Who controls the input: everything under lib/ (world, zone, help, text,
+ * socials, config). OLC (redit/medit/oedit/zedit/hedit/cedit) writes
+ * in-range values, but implementors edit these files by hand, so every
+ * parser range-checks values that index a table and reports problems with
+ * TB_ERROR_MSG/TB_WARN_MSG/TB_FATAL_MSG naming the file, line and vnum.
+ * Boot-time format errors are fatal (exit(1)); runtime reloads that reuse
+ * the same parsers (index_boot(DB_BOOT_HLP) from "reload xhelp") inherit
+ * that, so a malformed help file ends the live server. */
+
 #include "conf.h"
 #include "sysdep.h"
 #include "structs.h"
@@ -724,7 +750,14 @@ static void free_extra_descriptions(struct extra_descr_data *edesc)
   }
 }
 
-/* Free the world, in a memory allocation sense. */
+/** Free the world, in a memory allocation sense.
+ *
+ * Call only at shutdown, after every descriptor has been closed: every
+ * follower is detached (stop_follower()) before any character is freed, so
+ * no follow list points at a freed character, and the freed tables
+ * (world, prototypes, indexes, zone_table, help_table, socials) are left as
+ * dangling globals rather than reset, so nothing may touch them afterwards.
+ * Zone command strings (sarg1/sarg2) are freed whatever the command letter. */
 void destroy_db(void)
 {
   ssize_t cnt, itr;
@@ -1495,6 +1528,12 @@ static char fread_letter(FILE *fp)
   return c;
 }
 
+/** Convert a flag word from a world file to bits: 'a'..'z' are bits 0..25
+ * and 'A'..'Z' bits 26..51; an all-digit word (optionally with a leading
+ * '-') is taken as a number, so "-1" sets every bit. asciiflag_conv_aff()
+ * is the same with every letter one bit higher. Most callers store the
+ * result in a 32-bit int slot; db.c passes it through flag_slot(), which
+ * reports bits that do not fit. */
 bitvector_t asciiflag_conv(char *flag)
 {
   bitvector_t flags = 0;
@@ -1607,7 +1646,13 @@ static int room_sector_or_inside(int vnum, int sector)
   return SECT_INSIDE;
 }
 
-/* load the rooms */
+/** Parse room #virtual_nr into the next world[] slot.
+ *
+ * Boot-only, one sequential pass: the room cursor and the zone cursor are
+ * statics that only move forward, so rooms must ascend through zones that
+ * were loaded first (a room below its zone's bottom is fatal). Capacity is
+ * checked by discrete_load(). Calling this after boot (from OLC) would write
+ * past the table. */
 void parse_room(FILE *fl, int virtual_nr)
 {
   static int room_nr = 0, zone = 0;
@@ -2203,6 +2248,9 @@ static void parse_enhanced_mob(FILE *mob_f, int i, int nr)
   exit(1);
 }
 
+/** Parse mobile #nr into the next mob_proto[]/mob_index[] slot. Boot-only,
+ * like parse_room(): the static cursor only moves forward and
+ * discrete_load() checks it against the counted capacity. */
 void parse_mobile(FILE *mob_f, int nr)
 {
   static int i = 0;
@@ -2359,7 +2407,13 @@ void parse_mobile(FILE *mob_f, int nr)
   top_of_mobt = i++;
 }
 
-/* read all objects from obj file; generate index and prototypes */
+/** Parse object #nr into the next obj_proto[]/obj_index[] slot.
+ *
+ * Boot-only: the slot cursor is a static that only moves forward, and
+ * discrete_load() has already checked it against index_boot()'s capacity.
+ * Objects have no end marker, so the line that ended this record ("#..."
+ * or "$") is returned in a static buffer; discrete_load() copies it at once
+ * because the next call overwrites it. */
 char *parse_object(FILE *obj_f, int nr)
 {
   static int i = 0;
@@ -2858,6 +2912,14 @@ void free_help_table(void)
   top_of_helpt = 0;
 }
 
+/** Load one help file into help_table[].
+ *
+ * An entry with several keywords is stored once per keyword; all copies
+ * share one strdup()ed entry text, and only the copy with duplicate == 0 owns
+ * it (free_help_table() frees only that one). help_table's capacity comes
+ * from count_alias_records(), which must split keywords exactly as
+ * one_word() does here. index_boot() sorts the table by keyword afterwards
+ * with hsort(). Input: help files written by hedit or by hand. */
 void load_help(FILE * fl, char *name)
 {
   char key[READ_SIZE + 1], next_key[READ_SIZE + 1], entry[32384];
@@ -3003,7 +3065,12 @@ void new_mobile_data(struct char_data *ch)
 }
 
 
-/* create a new mobile from a prototype */
+/** Create a mobile from prototype nr and link it into character_list.
+ *
+ * type VIRTUAL looks nr up with real_mobile() and returns NULL if it does
+ * not exist. type REAL trusts nr as an rnum and does not range-check it:
+ * callers (reset_zone() after renum_zone_table(), OLC) must pass a valid
+ * rnum. The new mobile shares its strings with the prototype. */
 struct char_data *read_mobile(mob_vnum nr, int type) /* and mob_rnum */
 {
   mob_rnum i;
@@ -3067,7 +3134,11 @@ struct obj_data *create_obj(void)
   return (obj);
 }
 
-/* create a new object from a prototype */
+/** Create an object from prototype nr and link it into object_list.
+ *
+ * Unlike read_mobile(), both VIRTUAL and REAL are range-checked: an unknown
+ * vnum or an rnum past top_of_objt is logged and returns NULL. The new
+ * object shares its strings with the prototype. */
 struct obj_data *read_object(obj_vnum nr, int type) /* and obj_rnum */
 {
   struct obj_data *obj;
@@ -3240,7 +3311,21 @@ static int zone_reset_wear_otrigger(struct obj_data **objp,
   return 0;
 }
 
-/* execute the reset command table of a given zone */
+/** Run zone's reset command table (see struct reset_com for the meaning of
+ * each command's arguments after renum_zone_table()).
+ *
+ * Pointer lifetime: mob is the last mobile an 'M' loaded and stays valid for
+ * the commands that follow, because a character extracted by its load
+ * trigger is only marked and freed later by extract_pending_chars(). An
+ * object purged by its load or wear trigger is freed at once, so obj and
+ * tobj are cleared through zone_reset_load_otrigger() and
+ * zone_reset_wear_otrigger() and the dependent commands are skipped. tmob
+ * and tobj name the target of following 'T'/'V' commands and are reset by
+ * every command that loads something else.
+ *
+ * A command whose target cannot exist (missing container, bad wear slot,
+ * missing door) is reported and disabled ('*'); a command that merely did
+ * not run this time (max existing reached) only clears last_cmd. */
 void reset_zone(zone_rnum zone)
 {
   int cmd_no, last_cmd = 0;
@@ -3530,7 +3615,21 @@ int is_empty(zone_rnum zone_nr)
 }
 
 /* Functions of a general utility nature. */
-/* read and allocate space for a '~'-terminated string from a given file */
+
+/** Read a '~'-terminated string from fl, converting each line ending to
+ * "\r\n".
+ *
+ * @param error Context for diagnostics (usually "room #3001" or similar).
+ * @return A malloc()ed string the caller frees, or NULL when the string is
+ * empty. parse_at() has already been applied; callers must not apply it
+ * again.
+ *
+ * Lines are read in FREAD_CHUNK - 1 byte windows; a longer physical line is
+ * rejoined, not split. A NUL byte at the start of a window is reported and
+ * that window dropped. The whole string is limited to MAX_STRING_LENGTH - 1;
+ * a longer one, EOF or a read error ends the process (exit(1)), so this is
+ * for boot-time and trusted files. Input: world, mob, object, trigger,
+ * config and other lib/ files. */
 char *fread_string(FILE *fl, const char *error)
 {
   char buf[MAX_STRING_LENGTH], tmp[FREAD_CHUNK + 3];
@@ -3600,7 +3699,13 @@ char *fread_string(FILE *fl, const char *error)
   return (strlen(buf) ? strdup(buf) : NULL);
 }
 
-/* fread_clean_string is the same as fread_string, but skips preceding spaces */
+/** Like fread_string(), but skips leading whitespace first.
+ *
+ * Failure modes differ from fread_string(): EOF while skipping the leading
+ * whitespace returns NULL (logged), while a format error or an over-long
+ * string after that still exits the process. The IBT loader (ibt.c) reads
+ * bug/idea/typo Body and Notes with it, so its input is player-authored text
+ * from the in-game editor. Returns a malloc()ed string or NULL for empty. */
 char *fread_clean_string(FILE *fl, const char *error)
 {
   char buf[MAX_STRING_LENGTH], tmp[FREAD_CHUNK + 3];
@@ -3767,7 +3872,9 @@ int fread_number(FILE *fp)
   return (int)number;
 }
 
-/* Read to end of line from a given file into a static buffer */
+/** Read to end of line from fp into a static buffer and return it.
+ * The buffer is overwritten by the next call (not reentrant); callers copy
+ * what they keep. */
 char *fread_line(FILE *fp)
 {
   static char line[MAX_STRING_LENGTH];
@@ -3913,7 +4020,9 @@ int fread_flags(FILE *fp, int *fg, int fg_size)
   return (i);
 }
 
-/* Read one word from a given file (into static buffer). */
+/** Read one whitespace- or quote-delimited word from fp into a static
+ * buffer. May return NULL at EOF; the buffer is overwritten by the next call
+ * (not reentrant). */
 char *fread_word(FILE *fp)
 {
    static char word[MAX_STRING_LENGTH];
@@ -4782,6 +4891,15 @@ static void load_default_config( void )
   CONFIG_MIN_WIZLIST_LEV        = min_wizlist_lev;
 }
 
+/** Load the game configuration from CONFIG_CONFFILE (or the default
+ * directory), over the built-in defaults from load_default_config().
+ *
+ * Each line is "tag = value" read with get_line() into a READ_SIZE buffer.
+ * Numeric tags use tb_parse_int_or_zero(), so a non-numeric value becomes 0,
+ * and unknown tags are ignored. "menu", "start_messg" and "welc_messg" read
+ * a '~'-terminated string on the following lines; an empty menu or start
+ * message falls back to the built-in default (welc_messg may stay NULL).
+ * The file is written by cedit, so its contents are immortal-controlled. */
 void load_config( void )
 {
   FILE *fl;
