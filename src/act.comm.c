@@ -8,6 +8,26 @@
 *  CircleMUD is based on DikuMUD, Copyright (C) 1990, 1991.               *
 **************************************************************************/
 
+/**
+ * @file act.comm.c
+ * Player communication: say, gsay, tell/reply, whisper/ask, write, page,
+ * the gen_comm channels (holler, shout, gossip, auction, grats), qcomm
+ * and the speech-related history.
+ *
+ * Input and trust: the spoken text comes from the player's socket (where
+ * process_input() has already doubled every '$'), or from DG scripts,
+ * 'force' and mob command lines (which skip that step). The text is never
+ * used as an act() or printf format: it is copied through
+ * ACT_ESCAPE_TEXT() and spliced into a fixed format, so a '$' in it
+ * prints literally. With CONFIG_SPECIAL_IN_COMM, '@' color codes are
+ * rewritten in place by parse_at() after legal_communication() accepts
+ * the text.
+ *
+ * Ownership: act() returns a comm.c-owned buffer (last_act_message) that
+ * the next act() overwrites, or NULL when it delivered nothing; callers
+ * copy it into history at once through add_history() and never keep it.
+ */
+
 #include "conf.h"
 #include "sysdep.h"
 #include "structs.h"
@@ -82,6 +102,18 @@ char *act_escape_text_at(const char *src_file, int src_line,
   return dst;
 }
 
+/**
+ * Decide whether player text may have its '@' color codes expanded.
+ *
+ * Rejects text containing '@(', '@)', '@<' or '@>'; everything else,
+ * including a trailing '@', is accepted. The scan never reads past the terminator.
+ * The caller then runs parse_at() (modify.c), which rewrites '@' to '\t'
+ * in place in its own buffer. do_tell checks the whole argument but
+ * rewrites only the message half (buf2), a suffix of what was checked.
+ *
+ * @param arg Player- or script-supplied text, NUL-terminated.
+ * @return TRUE if parse_at() may run on the text.
+ */
 static bool legal_communication(char * arg) 
 {
   while (*arg) {

@@ -8,6 +8,23 @@
 *  CircleMUD is based on DikuMUD, Copyright (C) 1990, 1991.               *
 **************************************************************************/
 
+/**
+ * @file act.other.c
+ * Miscellaneous player commands: quit, save, sneak/hide/steal, practice,
+ * visible, title, group and split, report, use/quaff/recite, wimpy,
+ * display, toggles (do_gen_tog), endgame advancement and similar.
+ *
+ * Input and trust: arguments come from the player (or DG/force) and are
+ * parsed with bounded helpers. Saved values used here (gold, endgame
+ * ranks) come from the player file and are range-checked where they feed
+ * arithmetic or tables; gold arithmetic is widened before it can overflow
+ * int and never passes MAX_GOLD silently.
+ *
+ * Lifetime: DG callbacks (give_otrigger, receive_mtrigger and the like)
+ * may move or purge the actors and objects passed to them; code after a
+ * callback relies only on what that callback re-validates.
+ */
+
 #include <limits.h>
 
 #include "conf.h"
@@ -145,6 +162,19 @@ ACMD(do_hide)
   SET_BIT_AR(AFF_FLAGS(ch), AFF_HIDE);
 }
 
+/**
+ * Steal an object or coins from another character.
+ *
+ * Trigger contract for an object theft: give_otrigger(obj, vict, ch) and
+ * receive_mtrigger(ch, vict, obj) run scripts that may purge or move
+ * things. Each returns 0 unless, after its script, obj still matches its
+ * UID and obj->carried_by is still the giver (vict), and receive_mtrigger
+ * also checks that neither character is dead. They do not re-check that
+ * ch and vict share a room or that ch is not pending extraction. Because
+ * worn equipment has worn_by set and carried_by NULL, stealing a worn
+ * item whose object or victim has a GIVE/RECEIVE trigger always fails
+ * ("Impossible!").
+ */
 ACMD(do_steal)
 {
   struct char_data *vict;
@@ -510,6 +540,15 @@ ACMD(do_report)
 	  GET_MOVE(ch), GET_MAX_MOVE(ch));
 }
 
+/**
+ * Split coins evenly among group members in the same room.
+ *
+ * Gold policy: the splitter is debited only after every recipient is
+ * known to stay at or below MAX_GOLD with its share; otherwise the split
+ * is refused and reported (split-gold-cap), because increase_gold()
+ * clamps at MAX_GOLD and would destroy the excess. The remainder of an
+ * uneven split stays with the splitter.
+ */
 ACMD(do_split)
 {
   char buf[MAX_INPUT_LENGTH];

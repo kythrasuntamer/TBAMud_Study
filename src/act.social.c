@@ -8,6 +8,25 @@
 *  CircleMUD is based on DikuMUD, Copyright (C) 1990, 1991.               *
 **************************************************************************/
 
+/**
+ * @file act.social.c
+ * Socials (do_action), global emotes (do_gmote) and the social command
+ * table (create_command_list(), find_action()).
+ *
+ * Data contract: soc_mess_list[0 .. top_of_socialt] (top_of_socialt is the
+ * inclusive last index, unlike top_of_helpt) is sorted by act_nr and
+ * loaded from the socials file or aedit; builders control every message.
+ * Any message field may be NULL ('#' in the file, or cleared in aedit).
+ * NULL passed to act() means "no message"; a field printed with
+ * send_to_char() or formatted with tb_snprintf() is checked first, falls
+ * back to do_action's default where one exists, and otherwise is
+ * reported as social-field-missing.
+ *
+ * In a body-part social the player's typed body part is passed as act()'s
+ * obj argument, so those messages may name it only with $t; $o/$p/$a would
+ * read the string as a struct obj_data and are refused (act-code).
+ */
+
 #include "conf.h"
 #include "sysdep.h"
 #include "structs.h"
