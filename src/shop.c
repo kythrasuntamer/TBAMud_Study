@@ -1221,16 +1221,23 @@ static void read_line(FILE *shop_f, const char *string, ...)
 {
   char buf[READ_SIZE];
   va_list args;
-  int parsed = 0;
+  int parsed = 0, got_line;
 
-  if (get_line(shop_f, buf)) {
+  /* get_line() leaves buf untouched at EOF; never log it uninitialised. */
+  buf[0] = '\0';
+  if ((got_line = get_line(shop_f, buf)) != 0) {
     va_start(args, string);
     parsed = vsscanf(buf, string, args);
     va_end(args);
   }
   if (parsed != 1) {
-    log("SYSERR: Error in shop #%d, near '%s' with '%s'", SHOP_NUM(top_shop), buf, string);
-    exit(1);
+    /* The shop file is half-read and shop_index is inconsistent; boot
+     * cannot continue. Log the line length, not its builder text. */
+    TB_FATAL_MSG("shop", "shop-file-parse", "shop file",
+                 "shop #%d: expected '%s', got %s (%zu bytes); aborting boot",
+                 (int) SHOP_NUM(top_shop), string,
+                 got_line ? "an unparsable line" : "end of file", strlen(buf));
+    abort();
   }
 }
 
