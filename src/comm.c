@@ -3289,22 +3289,50 @@ static void setup_log(const char *filename, int fd)
   exit(1);
 }
 
+/* Open 'filename' as the log. With stderr_fp, the file is placed on that
+ * stream's descriptor so stray stderr output lands in the log too.
+ *
+ * This used freopen(filename, "w", stderr_fp), but freopen closes the
+ * stream even when opening the new file fails (C11 7.21.5.4), and
+ * setup_log() then retried the next fallback name on the closed FILE *
+ * (undefined behaviour). The file is now opened first and moved onto the
+ * stream's descriptor with dup2() only once that has succeeded, so a failed
+ * attempt leaves stderr untouched and still usable for the report. */
 static int open_logfile(const char *filename, FILE *stderr_fp)
 {
-  if (stderr_fp)	/* freopen() the descriptor. */
-    logfile = freopen(filename, "w", stderr_fp);
-  else
-    logfile = fopen(filename, "w");
+  FILE *fp = fopen(filename, "w");
 
-  if (logfile) {
-    printf("Using log file '%s'%s.\n",
-		filename, stderr_fp ? " with redirection" : "");
-    return (TRUE);
+  if (fp == NULL) {
+    TB_REPORT_DOMAIN_ERRNO(TB_SEV_ERROR, TB_ERR_PERSISTENCE,
+                           "fopen", filename);
+    return (FALSE);
   }
 
-  TB_REPORT_DOMAIN_ERRNO(TB_SEV_ERROR, TB_ERR_PERSISTENCE,
-                         "fopen", filename);
-  return (FALSE);
+  if (stderr_fp) {
+#if defined(CIRCLE_WINDOWS)
+    fclose(fp);
+    if ((logfile = freopen(filename, "w", stderr_fp)) == NULL) {
+      TB_REPORT_DOMAIN_ERRNO(TB_SEV_ERROR, TB_ERR_PERSISTENCE,
+                             "freopen", filename);
+      return (FALSE);
+    }
+#else
+    fflush(stderr_fp);
+    if (dup2(fileno(fp), fileno(stderr_fp)) < 0) {
+      TB_REPORT_DOMAIN_ERRNO(TB_SEV_ERROR, TB_ERR_PERSISTENCE,
+                             "dup2", filename);
+      fclose(fp);
+      return (FALSE);
+    }
+    fclose(fp);
+    logfile = stderr_fp;
+#endif
+  } else
+    logfile = fp;
+
+  printf("Using log file '%s'%s.\n",
+         filename, stderr_fp ? " with redirection" : "");
+  return (TRUE);
 }
 
 /* This may not be pretty but it keeps game_loop() neater than if it was inline. */

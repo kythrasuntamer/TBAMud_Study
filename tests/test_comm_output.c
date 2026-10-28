@@ -362,6 +362,39 @@ static void send_to_range_includes_last_room(void)
   top_of_world = 0;
 }
 
+/* A failed log-file open used to leave the redirected stream closed (by
+ * freopen), and the next fallback name was then opened on that closed
+ * FILE *. Now the stream survives a failure and is redirected on success. */
+static void failed_log_open_keeps_stream(void)
+{
+  char path[] = "/tmp/tb_comm_logXXXXXX";
+  char line[64] = "";
+  FILE *stream, *check;
+  int fd = mkstemp(path);
+
+  TEST_ASSERT_TRUE(fd >= 0);
+  close(fd);
+  stream = fopen("/dev/null", "w");
+  TEST_ASSERT_NOT_NULL(stream);
+
+  TEST_ASSERT_FALSE(open_logfile("/nonexistent-dir/tb/syslog", stream));
+  TEST_ASSERT_TRUE(fprintf(stream, "still open\n") > 0);
+  TEST_ASSERT_EQUAL_INT(0, fflush(stream));
+
+  TEST_ASSERT_TRUE(open_logfile(path, stream));
+  TEST_ASSERT_EQUAL_PTR(stream, logfile);
+  fprintf(logfile, "logged\n");
+  fflush(logfile);
+  check = fopen(path, "r");
+  TEST_ASSERT_NOT_NULL(check);
+  TEST_ASSERT_NOT_NULL(fgets(line, sizeof(line), check));
+  TEST_ASSERT_EQUAL_STRING("logged\n", line);
+  fclose(check);
+  fclose(stream);
+  logfile = NULL;
+  remove(path);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -375,5 +408,6 @@ int main(void)
   RUN_TEST(long_input_line_is_reported);
   RUN_TEST(input_flood_is_reported);
   RUN_TEST(send_to_range_includes_last_room);
+  RUN_TEST(failed_log_open_keeps_stream);
   return UNITY_END();
 }
