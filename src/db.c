@@ -3334,12 +3334,17 @@ char *fread_clean_string(FILE *fl, const char *error)
     /* If there is a '~', end the string; else put an "\r\n" over the '\n'. */
     /* now only removes trailing ~'s -- Welcor */
     point = strchr(tmp, '\0');
-    for (point-- ; (*point=='\r' || *point=='\n'); point--);
+    /* Stop at tmp[0]: a body line that is only "\r\n" (a blank line typed in
+     * the IBT editor) used to walk below tmp while stack bytes were CR/LF. */
+    for (point-- ; (*point=='\r' || *point=='\n') && point > tmp; point--);
     if (*point=='~') {
       *point='\0';
       done = 1;
     } else {
-      *(++point) = '\r';
+      if (*point == '\n' || *point == '\r')
+        *point = '\r';	/* all-newline line: keep it as one empty line */
+      else
+        *(++point) = '\r';
       *(++point) = '\n';
       *(++point) = '\0';
     }

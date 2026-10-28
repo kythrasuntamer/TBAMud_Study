@@ -417,9 +417,44 @@ static void parse_room_reports_duplicate_exit(void)
   room_fixture_free();
 }
 
+/* ---------------------------------------------------------------------
+ * fread_string()/fread_clean_string(): '~'-terminated strings
+ * ------------------------------------------------------------------- */
+
+static char *read_tilde(char *(*reader)(FILE *, const char *),
+                        const char *text, size_t len)
+{
+  FILE *fp = stream_of(text, len);
+  char *s = reader(fp, "test-string");
+  fclose(fp);
+  return s;
+}
+
+/* B1-04: a body line that is only "\r\n" walked below tmp[] (ASan:
+ * stack-buffer-underflow) and the blank line came back as "\r\r\n". */
+static void fread_clean_string_keeps_blank_crlf_line(void)
+{
+  static const char text[] = "a\r\n\r\nb~\n";
+  char *s = read_tilde(fread_clean_string, text, sizeof(text) - 1);
+
+  TEST_ASSERT_EQUAL_STRING("a\r\n\r\nb", s);
+  free(s);
+}
+
+static void fread_string_keeps_blank_crlf_line(void)
+{
+  static const char text[] = "a\r\n\r\nb~\n";
+  char *s = read_tilde(fread_string, text, sizeof(text) - 1);
+
+  TEST_ASSERT_EQUAL_STRING("a\r\n\r\nb", s);
+  free(s);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(fread_clean_string_keeps_blank_crlf_line);
+  RUN_TEST(fread_string_keeps_blank_crlf_line);
   RUN_TEST(parse_room_rejects_out_of_range_direction);
   RUN_TEST(parse_room_rejects_negative_direction);
   RUN_TEST(parse_room_reports_duplicate_exit);
