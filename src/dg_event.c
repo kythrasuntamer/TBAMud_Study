@@ -12,7 +12,17 @@
 * was created by the following people:                                      
 * $Author: Mark A. Heilpern/egreen/Welcor $                              
 * $Date: 2004/10/11 12:07:00$                                            
-* $Revision: 1.0.14 $                                                    
+* $Revision: 1.0.14 $
+*
+* Lifetime: event_init() creates the single queue event_q at boot (before
+* the first event_create()); event_free_all() frees it and every queued
+* event at shutdown and sets event_q to NULL.  Each event is owned by the
+* queue while queued and by event_process() while its callback runs; see
+* EVENTFUNC in dg_event.h for who frees event_obj.
+*
+* Input: delays come from builder-written DG 'wait' commands and from
+* engine mud events.  Absolute keys (when + pulse) are range-checked here
+* because they index the bucket arrays.
 */
 
 
@@ -54,6 +64,7 @@ static int event_mud_id(const struct event *event)
 }
 
 /** Initializes the main event queue event_q.
+ * @pre Called once at boot, before the first event_create().
  * @post The main event queue, event_q, has been created and initialized.
  */
 void event_init(void)
@@ -70,8 +81,16 @@ void event_init(void)
  * @param event_obj An optional 'something' to be passed to func when this
  * event fires. It is func's job to cast event_obj. If event_obj is not needed,
  * pass in NULL.
- * @param when Number of pulses between firing(s) of this event.
- * @retval event * Returns a pointer to the newly created event.
+ * @param when Number of pulses between firing(s) of this event.  Valid
+ * range is 1 .. LONG_MAX - pulse; smaller values are clamped to 1 with a
+ * WARN (dg/event-when-clamped), larger ones are parked at key LONG_MAX
+ * (never fire) with dg/event-schedule-overflow.
+ * @pre event_init() has run and event_free_all() has not (otherwise
+ * FATAL dg/event-queue-uninit).
+ * @retval event * Returns a pointer to the newly created event, never NULL.
+ * isMudEvent is FALSE; attach_mud_event() sets it afterwards.  Events due
+ * on the same pulse run in reverse insertion order (queue_enq inserts
+ * before equal keys).
  **/
 /* Queue key for an event due delay pulses from now.  The key indexes the
  * queue buckets (key % NUM_EVENT_QUEUES), so it must never wrap negative;
@@ -121,8 +140,18 @@ struct event *event_create(EVENTFUNC(*func), void *event_obj, long when)
   return new_event;
 }
 
-/** Removes an event from event_q and frees the event. 
- * @param event Pointer to the event to be dequeued and removed. 
+/** Removes an event from event_q and frees the event and its event_obj.
+ * Called through the event_cancel() macro so diagnostics name the caller.
+ * @pre event is non-NULL and either queued or the event whose callback is
+ * running (dg/event-cancel-null / dg/event-cancel-unqueued otherwise).
+ * @post A queued event and its event_obj are freed.  A running event has
+ * its event_obj freed now and the struct freed by event_process() when the
+ * callback returns.  Either way the caller must clear every pointer it
+ * holds to the event (GET_TRIG_WAIT, mud event list entries).
+ * @param event Pointer to the event to be dequeued and removed.
+ * @param file Caller's __FILE__.
+ * @param line Caller's __LINE__.
+ * @param func Caller's __func__.
  */
 void event_cancel_at(struct event *event, const char *file, int line,
                      const char *func)
@@ -264,7 +293,13 @@ long event_time(struct event *event)
   return (when - pulse);
 }
 
-/** Frees all events from event_q. */
+/** Frees all events from event_q, their event_obj payloads, and the queue.
+ * Shutdown only (destroy_db).
+ * @pre Every owner (chars, objs, rooms, descriptors) has already cancelled
+ * its mud events, because free_mud_event() edits the owner's event list;
+ * no GET_TRIG_WAIT() pointer is used afterwards.
+ * @post event_q is NULL; later create/cancel/process calls report
+ * dg/event-queue-uninit.  Safe to call more than once. */
 void event_free_all(void)
 {
   if (event_q != NULL)
@@ -327,7 +362,9 @@ struct dg_queue *queue_init(void)
  * @param data The data to be associated with, and theoretically used, when
  * the element comes up in q. data is wrapped in a new q_element.
  * @param key Indicates where this event should be located in the queue, and
- * when the element should be activated.
+ * when the element should be activated.  Must be >= 0: it selects the
+ * bucket (FATAL dg/event-bucket-negative otherwise).  The new element goes
+ * before existing elements with an equal key.
  * @retval q_element Pointer to the created q_element that contains
  * the data. */
 struct q_element *queue_enq(struct dg_queue *q, void *data, long key)
@@ -449,7 +486,10 @@ long queue_elmt_key(struct q_element *qe)
 }
 
 /** Free q and all contents.
- * @pre Function requires definition of struct event.
+ * @pre Function requires definition of struct event.  Every element's
+ * data is a struct event (or NULL); its event_obj is released through
+ * cleanup_event_obj(), so the same owner preconditions as event_free_all()
+ * apply.  Callers must not use q afterwards.
  * @post All items associeated qith q, including non-abstract data, are freed.
  * @param q The priority queue to free.
  */
