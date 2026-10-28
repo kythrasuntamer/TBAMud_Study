@@ -47,6 +47,18 @@ void extract_char(struct char_data *ch)
     SET_BIT_AR(MOB_FLAGS(ch), MOB_NOTDEADYET);
 }
 
+/* genobj.c's delete_object() now queues the zone for saving, and
+ * add_to_save_list() (genolc.c) resolves the zone through db.c's
+ * real_zone(), which this test does not link. */
+zone_rnum real_zone(zone_vnum vnum)
+{
+  zone_rnum i;
+  for (i = 0; i <= top_of_zone_table; i++)
+    if (zone_table && zone_table[i].number == vnum)
+      return i;
+  return NOWHERE;
+}
+
 mob_rnum real_mobile(mob_vnum vnum)
 {
   mob_rnum i;
@@ -341,7 +353,7 @@ static void test_delete_object_zone_commands(void)
   TEST_ASSERT_EQUAL_CHAR('E', ZCMD(0, 1).command);
   TEST_ASSERT_EQUAL_INT(1, ZCMD(0, 1).arg1);
   TEST_ASSERT_EQUAL_CHAR('S', ZCMD(0, 2).command);
-  TEST_ASSERT_EQUAL_STRING("zcmd-delete", tb_captured_operation);
+  TEST_ASSERT_EQUAL_STRING("zone-cmd-drop", tb_captured_operation);
   TEST_ASSERT_EQUAL_INT(2, tb_captured_errors);
   free_objs();
 }
