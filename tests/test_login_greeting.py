@@ -10,6 +10,11 @@ parameter, so every text file (greetings, motd, news, ...) was loaded as its
 first 7 characters. The greeting lost its name prompt and every client sat
 at a blank screen until the 30-second idle timeout.
 
+The server must also stop cleanly: the test fails if it exits before the
+test stops it, exits non-zero after SIGTERM, or leaves an AddressSanitizer,
+LeakSanitizer or UndefinedBehaviorSanitizer report in its log, so a defect
+after the last check (or in shutdown) cannot pass unnoticed.
+
 Environment: TB_TEST_SHUTDOWN_GRACE is how many seconds to wait for the
 server to exit after SIGTERM (default 30). A server that is still running
 then is killed and the test fails, since its shutdown (and any leak report
@@ -29,6 +34,9 @@ import time
 
 BOOT_TIMEOUT = 300   # generous: the binary may be sanitizer-instrumented
 PROMPT_TIMEOUT = 20
+# A report from any sanitizer the server may be built with (ASan, LSan, UBSan).
+SANITIZER = re.compile(rb"ERROR: AddressSanitizer|ERROR: LeakSanitizer|"
+                       rb"UndefinedBehaviorSanitizer|runtime error:")
 
 
 def shutdown_grace():
@@ -44,16 +52,36 @@ def shutdown_grace():
 
 
 def stop_server(server, grace):
-    """SIGTERM, wait up to grace seconds, then kill. None, or why it failed."""
+    """Stop the server; return why its run was abnormal ([] if it was not).
+
+    Abnormal: it exited before the test stopped it, it was still running
+    grace seconds after SIGTERM (it is then killed), or it exited non-zero.
+    """
+    if server.poll() is not None:
+        return [f"server exited by itself (rc={server.returncode}) before the test stopped it"]
     server.terminate()
     try:
-        server.wait(timeout=grace)
-        return None
+        rc = server.wait(timeout=grace)
     except subprocess.TimeoutExpired:
         server.kill()
         server.wait()
-        return (f"FAIL: server still running {grace:g}s after SIGTERM; killed, so its "
-                f"shutdown and leak report were lost (raise TB_TEST_SHUTDOWN_GRACE)")
+        return [f"server still running {grace:g}s after SIGTERM; killed, so its "
+                f"shutdown and leak report were lost (raise TB_TEST_SHUTDOWN_GRACE)"]
+    return [] if rc == 0 else [f"server exited with rc={rc} after SIGTERM (expected 0)"]
+
+
+def server_problems(server, grace, log_path):
+    """stop_server()'s findings plus a sanitizer report in the server log.
+    Each is printed to stderr (a report with its context) and returned."""
+    problems = stop_server(server, grace)
+    log = open(log_path, "rb").read()
+    m = SANITIZER.search(log)
+    if m:
+        print(log[max(0, m.start() - 200):m.start() + 1500].decode("latin-1"), file=sys.stderr)
+        problems.append("sanitizer report in the server log")
+    for problem in problems:
+        print("FAIL: " + problem, file=sys.stderr)
+    return problems
 
 
 def free_port():
@@ -110,11 +138,9 @@ def main():
                      f"tail {received[-120:]!r}")
         print(f"PASS: name prompt received ({len(received)} bytes)")
     finally:
-        stopped = stop_server(server, grace)
-        if stopped:
-            print(stopped, file=sys.stderr)
+        problems = server_problems(server, grace, log_path)
         shutil.rmtree(work, ignore_errors=True)
-    if stopped:
+    if problems:
         sys.exit(1)
 
 
