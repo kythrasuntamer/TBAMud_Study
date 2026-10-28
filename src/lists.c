@@ -5,6 +5,31 @@
 *  By Vatiken. Copyright 2012 by Joseph Arnusch                           *
 **************************************************************************/
 
+/**
+ * @file lists.c
+ * Generic doubly linked lists of void * contents (struct list_data).
+ *
+ * Ownership: a list owns its item_data nodes, never its contents.
+ * remove_from_list() and free_list() free nodes only; the caller frees what
+ * the contents point to. Every list but global_lists itself is registered
+ * in global_lists (for debugging), so free lists with free_list(), never
+ * with free().
+ *
+ * Iteration:
+ * - merge_iterator()/next_in_list()/remove_iterator() use a caller-owned
+ *   struct iterator_data and may nest. The body must not remove the item
+ *   the iterator is on, and must call remove_iterator() even when it
+ *   breaks out early.
+ * - simple_list() is a single global, non-reentrant cursor: do not nest
+ *   it, and call clear_simple_list() after breaking out of it. Its body may
+ *   remove the current or next item, or free the list (the cursor follows).
+ *   Items appended during the loop after the cursor reached the end are not
+ *   visited.
+ *
+ * Diagnostics: the lists.h macros pass the caller's file/line/function to
+ * the *_at() functions, so misuse is reported against the calling code.
+ */
+
 #include "conf.h"
 #include "sysdep.h"
 #include "structs.h"
@@ -12,9 +37,45 @@
 #include "db.h"
 #include "dg_event.h"
 
+/* Diagnostics name the caller passed in by the lists.h wrapper macros. */
+#define LIST_CALLER_FMT " (caller %s:%d %s)"
+#define LIST_CALLER     (file), (line), (func)
+
+/* simple_list() cursor: one global, non-reentrant iterator. Iterator.pItem
+ * is the NEXT item simple_list() will hand out (prefetched), so the loop
+ * body may remove the item it was just given; unlink_item() advances the
+ * cursor if the body removes the next one, and free_list() drops the
+ * cursor if the body frees the list. Only this cursor gets that care:
+ * merge_iterator() iterators belong to their callers. */
 static struct iterator_data Iterator;
 static bool loop = FALSE;
 static struct list_data *pLastList = NULL;
+
+/* Unlink pItem from pList and free it (not its content). */
+static void unlink_item(struct list_data *pList, struct item_data *pItem)
+{
+  if (loop && pLastList == pList && Iterator.pItem == pItem)
+    Iterator.pItem = pItem->pNextItem;
+
+  if (pItem == pList->pFirstItem)
+    pList->pFirstItem = pItem->pNextItem;
+
+  if (pItem == pList->pLastItem)
+    pList->pLastItem = pItem->pPrevItem;
+
+  if (pItem->pPrevItem)
+    pItem->pPrevItem->pNextItem = pItem->pNextItem;
+
+  if (pItem->pNextItem)
+    pItem->pNextItem->pPrevItem = pItem->pPrevItem;
+
+  pList->iSize--;
+  if (pList->iSize == 0) {
+    pList->pFirstItem = NULL;
+    pList->pLastItem  = NULL;
+  }
+  free(pItem);
+}
 
 /* Global lists */
 struct list_data * global_lists = NULL;
@@ -54,30 +115,56 @@ static struct item_data * create_item(void)
   return (pNewItem);
 }
 
-void free_list(struct list_data * pList)
+/** Free pList and its nodes (not their contents), unregistering it from
+ * global_lists. A non-empty list is normal; NULL is reported. The caller's
+ * pointer to the list is dangling afterwards: set it to NULL. */
+void free_list_at(struct list_data * pList,
+                  const char *file, int line, const char *func)
 {
-  void * pContent;
-  
-  clear_simple_list();  
-    
-  if (pList->iSize)
-    while ((pContent = simple_list(pList)))
-      remove_from_list(pContent, pList);
-    
-  if (pList->iSize > 0)
-    mudlog(CMP, LVL_GOD, TRUE, "List being freed while not empty.");
-      
+  /* No caller owns a NULL list; report the call rather than crash. */
+  if (pList == NULL) {
+    TB_ERROR_MSG("lists", "free-null", "list_data",
+                 "free_list called with NULL" LIST_CALLER_FMT, LIST_CALLER);
+    return;
+  }
+
+  /* A simple_list() cursor on this list dies with it (e.g. an event cancel
+   * loop whose last cancel frees the owner's list). */
+  if (Iterator.pList == pList || (loop && pLastList == pList))
+    clear_simple_list();
+  /* Freeing a non-empty list is normal (the contents are not owned by the
+   * list): drain it from the head. This used to iterate with simple_list(),
+   * which remove_from_list() reset after the first item, leaking the rest. */
+  while (pList->pFirstItem)
+    unlink_item(pList, pList->pFirstItem);
+
+  /* Invariant: the item chain and the counters agree, and no caller still
+   * iterates the list. */
+  if (pList->iSize != 0 || pList->iIterators != 0)
+    TB_ERROR_MSG("lists", "free-nonempty", "list_data",
+                 "list %p freed with size %u and %u live iterators after draining"
+                 LIST_CALLER_FMT, (void *) pList, (unsigned) pList->iSize,
+                 (unsigned) pList->iIterators, LIST_CALLER);
+
   /* Global List for debugging */
   if (pList != global_lists)
-    remove_from_list(pList, global_lists);  
-  
+    remove_from_list_at(pList, global_lists, file, line, func);
+
   free(pList);
 }
 
-void add_to_list(void * pContent, struct list_data * pList)
+void add_to_list_at(void * pContent, struct list_data * pList,
+                    const char *file, int line, const char *func)
 {
   struct item_data * pNewItem;
   struct item_data * pLastItem;
+
+  if (pList == NULL) {
+    TB_ERROR_MSG("lists", "add-null", "list_data",
+                 "add_to_list content %p to NULL list; not added" LIST_CALLER_FMT,
+                 pContent, LIST_CALLER);
+    return;
+  }
 
   /* Allocate our memory */
   pNewItem = create_item();
@@ -103,51 +190,43 @@ void add_to_list(void * pContent, struct list_data * pList)
   pList->iSize++;
 }
 
-void remove_from_list(void * pContent, struct list_data * pList)
+void remove_from_list_at(void * pContent, struct list_data * pList,
+                         const char *file, int line, const char *func)
 {
   struct item_data *pRemovedItem;
 
   if ((pRemovedItem = find_in_list(pContent, pList)) == NULL) {
-    mudlog(CMP, LVL_GOD, TRUE, "WARNING: Attempting to remove contents that don't exist in list.");
+    TB_ERROR_MSG("lists", "remove-missing", "list_data",
+                 "content %p is not in list %p (size %u)" LIST_CALLER_FMT,
+                 pContent, (void *) pList, pList ? (unsigned) pList->iSize : 0U,
+                 LIST_CALLER);
     return;
   }
 
-  if (pRemovedItem == pList->pFirstItem)
-    pList->pFirstItem = pRemovedItem->pNextItem;  
-
-  if (pRemovedItem == pList->pLastItem)
-    pList->pLastItem = pRemovedItem->pPrevItem;  
- 
-  if (pRemovedItem->pPrevItem)
-    pRemovedItem->pPrevItem->pNextItem = pRemovedItem->pNextItem;
- 
-  if (pRemovedItem->pNextItem)
-    pRemovedItem->pNextItem->pPrevItem = pRemovedItem->pPrevItem;
-  
-  pList->iSize--;
-  if (pList->iSize == 0) {
-    pList->pFirstItem = NULL;
-    pList->pLastItem  = NULL;
-  }
-  free(pRemovedItem);
+  unlink_item(pList, pRemovedItem);
 }
 
 /** Merges an iterator with a list
  * @post Don't forget to remove the iterator with remove_iterator().
  * */
 
-void * merge_iterator(struct iterator_data * pIterator, struct list_data * pList)
+void * merge_iterator_at(struct iterator_data * pIterator, struct list_data * pList,
+                         const char *file, int line, const char *func)
 {
   void * pContent;
 
   if (pList == NULL) {
-    mudlog(NRM, LVL_GOD, TRUE, "WARNING: Attempting to merge iterator to NULL list.");
+    TB_WARN_MSG("lists", "iterate-null", "list_data",
+                "merge_iterator on a NULL list" LIST_CALLER_FMT, LIST_CALLER);
     pIterator->pList = NULL;
     pIterator->pItem = NULL;
     return NULL;
   }
   if (pList->pFirstItem == NULL) {
-    mudlog(NRM, LVL_GOD, TRUE, "WARNING: Attempting to merge iterator to empty list.");
+    /* Callers check iSize first; an empty list here means they did not. */
+    TB_WARN_MSG("lists", "iterate-empty", "list_data",
+                "merge_iterator on empty list %p" LIST_CALLER_FMT,
+                (void *) pList, LIST_CALLER);
     pIterator->pList = NULL;
     pIterator->pItem = NULL;
     return NULL;
@@ -162,10 +241,13 @@ void * merge_iterator(struct iterator_data * pIterator, struct list_data * pList
   return (pContent);
 }
 
-void remove_iterator(struct iterator_data * pIterator)
+void remove_iterator_at(struct iterator_data * pIterator,
+                        const char *file, int line, const char *func)
 {
   if (pIterator->pList == NULL) {
-    mudlog(NRM, LVL_GOD, TRUE, "WARNING: Attempting to remove iterator from NULL list.");
+    TB_WARN_MSG("lists", "iterator-release-null", "list_data",
+                "remove_iterator on an iterator with no list" LIST_CALLER_FMT,
+                LIST_CALLER);
     return;
   }
 
@@ -178,15 +260,22 @@ void remove_iterator(struct iterator_data * pIterator)
  * @return Returns the content of the list
  * */
 
-void * next_in_list(struct iterator_data * pIterator)
+void * next_in_list_at(struct iterator_data * pIterator,
+                       const char *file, int line, const char *func)
 {
   void * pContent;
   struct item_data * pTempItem;
 
   if (pIterator->pList == NULL) {
-    mudlog(NRM, LVL_GOD, TRUE, "WARNING: Attempting to get content from iterator with NULL list.");
+    TB_WARN_MSG("lists", "iterate-null", "list_data",
+                "next_in_list on an iterator with no list" LIST_CALLER_FMT,
+                LIST_CALLER);
     return NULL;
   }
+
+  /* Already past the end: stay there. */
+  if (pIterator->pItem == NULL)
+    return NULL;
 
   /* Cycle down the list */
   pTempItem = pIterator->pItem->pNextItem;
@@ -205,39 +294,37 @@ void * next_in_list(struct iterator_data * pIterator)
 
 struct item_data * find_in_list(void * pContent, struct list_data * pList)
 {
-  void * pFoundItem;
-  struct item_data *pItem = NULL;
-  bool found;
+  struct item_data *pItem;
 
-  pFoundItem = merge_iterator(&Iterator, pList);
-
-  for (found = FALSE; pFoundItem != NULL; pFoundItem = next_in_list(&Iterator)) {
-    if (pFoundItem == pContent) {
-      found = TRUE;
-      break;
-    }
-  }
-
-  if (found)
-    pItem = Iterator.pItem;
-
-  remove_iterator(&Iterator);
-
-  if (found)
-    return (pItem);
-  else
+  /* A plain walk: this used to borrow simple_list()'s global Iterator, so
+   * every remove_from_list() inside a simple_list() loop ended that loop. */
+  if (pList == NULL)
     return NULL;
+  for (pItem = pList->pFirstItem; pItem; pItem = pItem->pNextItem)
+    if (pItem->pContent == pContent)
+      return pItem;
+  return NULL;
 }
 
 void clear_simple_list(void)
 {
+  /* Release a cursor abandoned mid-list (a loop that broke out early). */
+  if (Iterator.pList)
+    remove_iterator(&Iterator);
+  Iterator.pList = NULL;
+  Iterator.pItem = NULL;
   loop = FALSE;
-  pLastList = NULL;  
+  pLastList = NULL;
 }
 
-void * simple_list(struct list_data * pList)
+/** Return the next content of pList, or NULL at the end (the cursor is
+ * then released). Calling it with a different list abandons the current
+ * loop (reported); simple_list(NULL) resets it. See the file comment for
+ * what the loop body may do. */
+void * simple_list_at(struct list_data * pList,
+                      const char *file, int line, const char *func)
 {
-  void * pContent;
+  struct item_data *pItem;
 
   /* Reset List */
   if (pList == NULL) {
@@ -246,23 +333,32 @@ void * simple_list(struct list_data * pList)
   }
 
   if (!loop || pLastList != pList) {
-    if (loop && pLastList != pList)
-      mudlog(CMP, LVL_GRGOD, TRUE, "SYSERR: simple_list() forced to reset itself.");
-  
-    pContent = merge_iterator(&Iterator, pList);
-    if (pContent != NULL) {
-      pLastList = pList;    
-      loop = TRUE;
-      return (pContent);
-    } else
-      return NULL;
-  }
-   
-  if ((pContent = next_in_list(&Iterator)) != NULL)
-    return (pContent);
+    /* Another list's loop was abandoned (or is nested around this one):
+     * that loop's cursor is lost. */
+    if (loop && pLastList != pList) {
+      TB_WARN_MSG("lists", "simple-list-reset", "list_data",
+                  "simple_list on list %p abandons the loop over list %p"
+                  LIST_CALLER_FMT, (void *) pList, (void *) pLastList,
+                  LIST_CALLER);
+      clear_simple_list();
+    }
 
-  remove_iterator(&Iterator);  
+    if (merge_iterator_at(&Iterator, pList, file, line, func) == NULL)
+      return NULL;
+    pLastList = pList;
+    loop = TRUE;
+  }
+
+  /* Hand out the prefetched item and prefetch its successor before the
+   * caller can remove it. */
+  if ((pItem = Iterator.pItem) != NULL) {
+    Iterator.pItem = pItem->pNextItem;
+    return (pItem->pContent);
+  }
+
+  remove_iterator(&Iterator);
   loop = FALSE;
+  pLastList = NULL;
   return NULL;
 }
 

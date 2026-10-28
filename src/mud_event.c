@@ -5,6 +5,20 @@
 *  By Vatiken. Copyright 2012 by Joseph Arnusch                           *
 **************************************************************************/
 
+/**
+ * @file mud_event.c
+ * Named, owner-attached events on top of the dg_event queue: each
+ * mud_event_data says what it is (iId, an index into mud_event_index[]) and
+ * whom it belongs to, and sits on that owner's events list so the owner can
+ * find (char_has_mud_event) and cancel its events.
+ *
+ * Lifetime: the event queue owns the struct event; the mud_event_data and
+ * its sVariables copy are freed by free_mud_event() when the event finishes
+ * or is cancelled. Owners must cancel their events before they are freed;
+ * rooms are referenced by vnum because world[] is reallocated by OLC.
+ * Input: events are created by game code only (spells, skills, protocols).
+ */
+
 #include "conf.h"
 #include "sysdep.h"
 #include "structs.h"
@@ -24,8 +38,43 @@ struct mud_event_list mud_event_index[] = {
   { "Null"         , NULL           , -1          },  /* eNULL */
   { "Protocol"     , get_protocols  , EVENT_DESC  },  /* ePROTOCOLS */
   { "Whirlwind"    , event_whirlwind, EVENT_CHAR  },  /* eWHIRLWIND */
-  { "Spell:Darkness",event_countdown, EVENT_ROOM  }   /* eSPL_DARKNESS */
+  /* A world event whose sVariables hold the room vnum (see mag_rooms):
+   * a room_data pointer would dangle when OLC reallocates world[]. */
+  { "Spell:Darkness",event_countdown, EVENT_WORLD }   /* eSPL_DARKNESS */
 };
+
+/* Resolves the room vnum a room-keyed event carries in sVariables.
+ * Returns NOWHERE, after reporting "room-event-stale", when the text is
+ * not a vnum or the room no longer exists (deleted in OLC). */
+static room_rnum event_room_from_vnum(const struct mud_event_data *pMudEvent)
+{
+  const char *text = pMudEvent->sVariables;
+  char *end = NULL;
+  long vnum;
+  room_rnum rnum;
+
+  if (!text || !*text) {
+    TB_ERROR_MSG("event", "room-event-stale", "room",
+                 "event %d (%s) carries no room vnum", (int) pMudEvent->iId,
+                 mud_event_index[pMudEvent->iId].event_name);
+    return NOWHERE;
+  }
+  errno = 0;
+  vnum = strtol(text, &end, 10);
+  if (errno || *end || vnum < 0 || vnum >= NOWHERE) {
+    TB_ERROR_MSG("event", "room-event-stale", "room",
+                 "event %d (%s) room vnum text of %zu bytes is not a vnum",
+                 (int) pMudEvent->iId,
+                 mud_event_index[pMudEvent->iId].event_name, strlen(text));
+    return NOWHERE;
+  }
+  if ((rnum = real_room((room_vnum) vnum)) == NOWHERE)
+    TB_WARN_MSG("event", "room-event-stale", "room",
+                "room vnum %ld gone before event %d (%s) expiry", vnum,
+                (int) pMudEvent->iId,
+                mud_event_index[pMudEvent->iId].event_name);
+  return rnum;
+}
 
 /* init_events() is the ideal function for starting global events. This
  * might be the case if you were to move the contents of heartbeat() into
@@ -51,10 +100,25 @@ void init_events(void)
  * The bottom switch() is for any post-event actions, like telling the character they can
  * now access their skill again.
  */
+/* Current rnum of an EVENT_ROOM event's room, resolved from its vnum each
+ * time (world[] moves when redit adds or deletes rooms). NOWHERE, reported,
+ * if the room no longer exists. */
+static room_rnum mud_event_room(struct mud_event_data *pMudEvent)
+{
+  room_rnum rnum = real_room(pMudEvent->iRoomVnum);
+
+  if (VALID_ROOM_RNUM(rnum))
+    return rnum;
+  TB_WARN_MSG("event", "room-gone", "world",
+              "event %s room vnum %d no longer exists",
+              mud_event_index[pMudEvent->iId].event_name,
+              (int) pMudEvent->iRoomVnum);
+  return NOWHERE;
+}
+
 EVENTFUNC(event_countdown)
 {
   struct mud_event_data * pMudEvent;
-  struct room_data * room = NULL;
   room_rnum rnum = NOWHERE;
 
   pMudEvent = (struct mud_event_data * ) event_obj;
@@ -63,8 +127,8 @@ EVENTFUNC(event_countdown)
     case EVENT_CHAR:
       break;
     case EVENT_ROOM:
-      room = (struct room_data * ) pMudEvent->pStruct;
-      rnum = real_room(room->number);
+      if ((rnum = mud_event_room(pMudEvent)) == NOWHERE)
+        return 0;  /* reported; the room is gone, nothing to undo */
       break;
     default:
       break;
@@ -72,6 +136,16 @@ EVENTFUNC(event_countdown)
 
   switch (pMudEvent->iId) {
     case eSPL_DARKNESS:
+      /* Keyed by vnum: the room may have been deleted or renumbered
+       * meanwhile (event_room_from_vnum() reports room-event-stale). */
+      if ((rnum = event_room_from_vnum(pMudEvent)) == NOWHERE)
+        break;
+      if (!VALID_ROOM_RNUM(rnum)) {
+        TB_ERROR_MSG("event", "room-gone", "world",
+                     "event %s fired with no room (rnum %d)",
+                     mud_event_index[pMudEvent->iId].event_name, (int) rnum);
+        break;
+      }
       REMOVE_BIT_AR(ROOM_FLAGS(rnum), ROOM_DARK);
       send_to_room(rnum, "The dark shroud disappates.\r\n");
       break;
@@ -90,13 +164,27 @@ EVENTFUNC(event_countdown)
  * included with rooms, objects, spells or any other structure type. Adding
  * events to these other systems should be just as easy as adding the current
  * library was, and should be available in a future release. - Vat */
+/**
+ * Queue pMudEvent to fire in `time` pulses and link it on its owner's
+ * events list (created on first use).
+ *
+ * Owner by type (mud_event_index[].iEvent_Type):
+ *   EVENT_WORLD  world_events
+ *   EVENT_DESC   pStruct = descriptor; its list is made in new_descriptor()
+ *   EVENT_CHAR   pStruct = character
+ *   EVENT_ROOM   iRoomVnum; pStruct is NULL (world[] moves under redit)
+ * pStruct must stay valid until the event fires or is cancelled: every
+ * owner cancels its events before it is freed (free_char, extract_obj,
+ * delete_room, destroy_db, close_socket).
+ */
 void attach_mud_event(struct mud_event_data *pMudEvent, long time)
 {
   struct event * pEvent;
   struct descriptor_data * d;
   struct char_data * ch;
   struct room_data * room;
-   
+  room_rnum rnum;
+
   pEvent = event_create(mud_event_index[pMudEvent->iId].func, pMudEvent, time);
   pEvent->isMudEvent = TRUE;
   pMudEvent->pEvent = pEvent;        
@@ -118,11 +206,15 @@ void attach_mud_event(struct mud_event_data *pMudEvent, long time)
       add_to_list(pEvent, ch->events);
     break;
     case EVENT_ROOM:
-      room = (struct room_data *) pMudEvent->pStruct;
-      
+      /* The event is already queued; if its room cannot be found it still
+       * fires (and frees) normally, it just has no room list to sit on. */
+      if ((rnum = mud_event_room(pMudEvent)) == NOWHERE)
+        break;
+      room = &world[rnum];
+
       if (room->events == NULL)
-        room->events = create_list();      
-      
+        room->events = create_list();
+
       add_to_list(pEvent, room->events);
     break;
   }
@@ -140,15 +232,31 @@ struct mud_event_data *new_mud_event(event_id iId, void *pStruct, char *sVariabl
   pMudEvent->pStruct     = pStruct;
   pMudEvent->sVariables  = varString;
   pMudEvent->pEvent      = NULL;
+  pMudEvent->iRoomVnum   = NOWHERE;
+
+  /* Rooms are kept by vnum, never by address: see iRoomVnum. */
+  if (mud_event_index[iId].iEvent_Type == EVENT_ROOM) {
+    if (pStruct)
+      pMudEvent->iRoomVnum = ((struct room_data *) pStruct)->number;
+    pMudEvent->pStruct = NULL;
+  }
 
   return (pMudEvent);
 }
 
+/**
+ * Unlink pMudEvent from its owner's events list and free it (called by
+ * dg_event.c when the event finishes or is cancelled; never call it
+ * directly on a queued event). The owner's list is left allocated, possibly
+ * empty: the owner frees it. The struct event itself is freed by the
+ * caller; its event_obj is set to NULL here.
+ */
 void free_mud_event(struct mud_event_data *pMudEvent)
 {
   struct descriptor_data * d;
   struct char_data * ch;
   struct room_data * room;
+  room_rnum rnum;
 
   switch (mud_event_index[pMudEvent->iId].iEvent_Type) {
     case EVENT_WORLD:
@@ -158,23 +266,21 @@ void free_mud_event(struct mud_event_data *pMudEvent)
       d = (struct descriptor_data *) pMudEvent->pStruct;
       remove_from_list(pMudEvent->pEvent, d->events);
     break;
+    /* The owner's events list is left in place, even when it becomes empty:
+     * the owner frees it on teardown (free_char, extract_obj, delete_room,
+     * destroy_db, close_socket), right after a cancel loop that calls this.
+     * Freeing it here used to hand those loops a NULL list for free_list(). */
     case EVENT_CHAR:
       ch = (struct char_data *) pMudEvent->pStruct;
-      remove_from_list(pMudEvent->pEvent, ch->events);
-      
-      if (ch->events->iSize == 0) {
-        free_list(ch->events);
-        ch->events = NULL;
-      }
+      if (ch->events)
+        remove_from_list(pMudEvent->pEvent, ch->events);
     break;
     case EVENT_ROOM:
-      room = (struct room_data *) pMudEvent->pStruct;
-      remove_from_list(pMudEvent->pEvent, room->events);
-      
-      if (room->events && (room->events->iSize == 0)) { 
-        free_list(room->events);
-        room->events = NULL;
-      }      
+      if ((rnum = mud_event_room(pMudEvent)) == NOWHERE)
+        break;
+      room = &world[rnum];
+      if (room->events)
+        remove_from_list(pMudEvent->pEvent, room->events);
     break;
   }
 
@@ -189,6 +295,7 @@ struct mud_event_data * char_has_mud_event(struct char_data * ch, event_id iId)
 {
   struct event * pEvent;
   struct mud_event_data * pMudEvent = NULL;
+  struct iterator_data it;
   bool found = FALSE;
 
   if (ch->events == NULL)
@@ -197,9 +304,10 @@ struct mud_event_data * char_has_mud_event(struct char_data * ch, event_id iId)
   if (ch->events->iSize == 0)
     return NULL;
 
-  clear_simple_list();  
-
-  while ((pEvent = (struct event *) simple_list(ch->events)) != NULL) {
+  /* A private iterator: breaking out of a simple_list() loop would leave
+   * the global cursor parked mid-list for the next caller. */
+  for (pEvent = (struct event *) merge_iterator(&it, ch->events); pEvent;
+       pEvent = (struct event *) next_in_list(&it)) {
     if (!pEvent->isMudEvent)
       continue;
      pMudEvent = (struct mud_event_data * ) pEvent->event_obj;
@@ -208,6 +316,7 @@ struct mud_event_data * char_has_mud_event(struct char_data * ch, event_id iId)
      break;
     }
   }
+  remove_iterator(&it);
 
   if (found)
     return (pMudEvent);
@@ -224,10 +333,17 @@ void clear_char_event_list(struct char_data * ch)
     
   if (ch->events->iSize == 0)
     return;
-    
-  clear_simple_list();  
 
-  while ((pEvent = (struct event *) simple_list(ch->events)) != NULL) {
+  /* event_cancel() -> free_mud_event() unlinks each event, so the list
+   * drains from the head without touching simple_list()'s global cursor. */
+  LIST_DRAIN(ch->events, pEvent) {
     event_cancel(pEvent);
-  } 
+    /* Compared by address only: pEvent has been freed. */
+    if (ch->events->pFirstItem && ch->events->pFirstItem->pContent == pEvent) {
+      TB_ERROR_MSG("event", "cancel-unlinked", "char_data.events",
+                   DIAG_CHAR_FMT " cancelled event was not removed from its list",
+                   DIAG_CHAR(ch));
+      remove_from_list(pEvent, ch->events);
+    }
+  }
 }

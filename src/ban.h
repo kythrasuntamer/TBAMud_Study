@@ -1,6 +1,11 @@
 /**
-* @file boards.h
-* Header file for the bulletin board system (boards.c).
+* @file ban.h
+* Site bans and the invalid-name list (ban.c).
+*
+* ban_list is loaded from BAN_FILE at boot (operator-edited) and changed by
+* the immortal commands ban/unban, which rewrite the file. Each node owns
+* its fixed-size site and name. BAN_* values are written to BAN_FILE by
+* name (ban_types[] in ban.c); keep their order.
 * 
 * Part of the core tbaMUD source code distribution, which is a derivative
 * of, and continuation of, CircleMUD.

@@ -40,7 +40,7 @@ SPECIAL(postmaster);
 int	scan_file(void);
 int	has_mail(long recipient);
 void	store_mail(long to, long from, char *message_pointer);
-char	*read_delete(long recipient);
+int	read_delete(long recipient, char **out);
 void    notify_if_playing(struct char_data *from, int recipient_id);
 
 struct mail_t {

@@ -1,0 +1,19 @@
+# Reproducer: a group that still exists at shutdown leaks a list node.
+#
+# Run:  tests/e2e/soak_gameplay.py --circle <ASan build>/bin/circle \
+#           --replay tests/e2e/repro_group_global_lists_leak.txt
+# Expect (unfixed code), after "shutdown die":
+#   ERROR: LeakSanitizer: Direct leak of 24 byte(s) in 1 object(s)
+#     #2 create_item lists.c:48   #3 add_to_list lists.c:83
+#     #4 create_list lists.c:37   #5 create_group handler.c:1451
+#     #6 do_group act.other.c:407
+# and "List being freed while not empty." in the syslog.
+#
+# Cause: the same free_list() bug as repro_whirlwind_free_list_leak.txt.
+# create_list() files every new list in global_lists; main() frees
+# global_lists at shutdown with free_list(), which stops after the first
+# node, so the node for a live group's member list (and any other live
+# list) is leaked with the header.
+create Soakimp w
+create Alric w
+Alric: group new

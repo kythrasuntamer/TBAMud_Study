@@ -18,8 +18,8 @@ int save_zone(zone_rnum zone_num);
 int count_commands(struct reset_com *list);
 void add_cmd_to_list(struct reset_com **list, struct reset_com *newcmd, int pos);
 int new_command(struct zone_data *zone, int pos);
-void delete_zone_command(struct zone_data *zone, int pos);
+int delete_zone_command(struct zone_data *zone, int pos);
 zone_rnum real_zone_by_thing(room_vnum vznum);
-void create_world_index(int znum, const char *type);
+int create_world_index(int znum, const char *type);
 
 #endif /* TBAMUD_GENZON_H_INCLUDED */

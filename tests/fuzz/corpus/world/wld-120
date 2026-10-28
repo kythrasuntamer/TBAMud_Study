@@ -1,0 +1,61 @@
+W#12000
+Rome Zone Description Room~
+   Builder   : Onivel of JediMUD
+Zone         : 120 Rome
+Began        : ?
+Player Level : 4-34
+Rooms        : 68
+Mobs         : 39
+Objects      : 37
+Shops        : 6
+Triggers     : 4
+Theme        : Ancient Rome
+Zone 120 is linked to the following zones:
+ 50 Great Eastern Desert           at 12068 (east ) --->  5028
+~
+120 0 0 0 0 0
+S
+#12001
+The Judging Booth~
+   You stand in the midst of a small room with windows on the east and south
+walls.  These windows provide a complete view of the competition fields.
+There are several scorecards, pencils and other items that are used by the
+judges sitting on a table.  The only exit is a trapdoor leading down.
+~
+120 8 0 0 0 0
+D5
+There is a rickety ladder leading down.
+~
+trapdoor~
+1 12033 12002
+E
+pencils pencil~
+   An ordinary #2 lead pencil.  Judging by the teeth marks on the shaft, the
+user should see a dentist very soon!
+~
+E
+scorecards~
+   The cards all have been filled in with the judges evaluations of today's
+combatants.  It seems that Sparticus is having a good day.
+~
+S
+#12002
+Caesar's Private Box~
+   This is the best view in the house!  You can see gladiators fighting or
+the chariot races with an unobstructed view.  The seats are upholstered in
+red velvet and are in top-notch condition.  There is a rickety ladder leading
+up and a marble staircase leading down.
+~
+120 12 0 0 0 0
+D4
+You see a rickety ladder with a trapdoor leading up.
+~
+trapdoor~
+1 12033 12001
+D5
+There is a marble staircase leading down.
+~
+~
+0 -1 12003
+S
+$

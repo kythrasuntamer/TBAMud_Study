@@ -198,6 +198,9 @@ typedef struct
 {
    int       WriteOOB;         /* Used internally to indicate OOB data */
    bool_t    bIACMode;         /* Current mode - deals with broken packets */
+   bool_t    bSubnegIAC;       /* Last read ended with IAC inside IAC SB */
+   int       SubnegLen;        /* Bytes collected in pSubneg */
+   char     *pSubneg;          /* Subnegotiation being received (owned) */
    bool_t    bNegotiated;      /* Indicates client successfully negotiated */
    bool_t    bBlockMXP;        /* Used internally based on MXP version */
    bool_t    bTTYPE;           /* The client supports TTYPE */

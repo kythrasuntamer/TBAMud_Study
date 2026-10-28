@@ -22,7 +22,7 @@ class MonkGuildAccessTests(unittest.TestCase):
         self.assertIn("if %actor.class% != Warrior && %actor.class% != Monk", guard)
         self.assertIn("return 0", guard)
         self.assertIn("The guard humiliates you", guard)
-        for original in ("Magic User", "Cleric", "Thief"):
+        for original in ("Wizard", "Cleric", "Thief"):
             self.assertIn("if %actor.class% != " + original, scripts)
 
     def test_warrior_guild_and_trainer_remain_assigned(self):
