@@ -256,6 +256,11 @@ void tearDown(void)
   top_of_trigt = 0;
 
   char_from_room(builder);
+  /* act() gives everyone in the room a script UID (char_script_id()), which
+   * registers the builder in the UID lookup table; extract_char() would
+   * remove it in the game, so release it here before freeing the builder. */
+  if (builder->script_id)
+    remove_from_lookup_table(builder->script_id, builder);
   character_list = NULL;
   descriptor_list = NULL;
   release_large_outbuf();
