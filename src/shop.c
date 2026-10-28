@@ -1091,6 +1091,15 @@ int ok_damage_shopkeeper(struct char_data *ch, struct char_data *victim)
 static int add_to_shop_list(struct shop_buy_data *list, int type, int *len, int *val)
 {
   if (*val != NOTHING && *val >= 0) { /* necessary after changing to unsigned v/rnums -- Welcor */
+    /* A buy type indexes item_types[] (list_detailed_shop) and is compared
+     * with GET_OBJ_TYPE. The shop file is the only source here (sedit
+     * clamps), so drop an out-of-range type and keep reading. */
+    if (type == LIST_TRADE && !VALID_ITEM_TYPE(*val)) {
+      TB_ERROR_MSG("shop", "buytype-range", "shop file",
+                   "shop #%d buy type %d not in [0,%d); dropped",
+                   (int) SHOP_NUM(top_shop), *val, NUM_ITEM_TYPES);
+      return (FALSE);
+    }
     if (*len < MAX_SHOP_OBJ) {
       if (type == LIST_PRODUCE)
 	*val = real_object(*val);
@@ -1658,8 +1667,13 @@ static void list_detailed_shop(struct char_data *ch, int shop_nr)
       column += 2;
     }
 
+    if (!VALID_ITEM_TYPE(SHOP_BUYTYPE(shop_nr, sindex)))
+      TB_ERROR_MSG("shop", "buytype-range", "shop",
+                   "shop #%d buy type %d not in [0,%d)", (int) SHOP_NUM(shop_nr),
+                   SHOP_BUYTYPE(shop_nr, sindex), NUM_ITEM_TYPES);
     linelen = snprintf(buf1, sizeof(buf1), "%s (#%d) [%s]",
-		item_types[SHOP_BUYTYPE(shop_nr, sindex)],
+		VALID_ITEM_TYPE(SHOP_BUYTYPE(shop_nr, sindex)) ?
+		  item_types[SHOP_BUYTYPE(shop_nr, sindex)] : "<invalid>",
 		SHOP_BUYTYPE(shop_nr, sindex),
 		SHOP_BUYWORD(shop_nr, sindex) ? SHOP_BUYWORD(shop_nr, sindex) : "all");
 

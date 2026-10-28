@@ -16,6 +16,35 @@ const char *extra_bits[] = { "GLOW", "HUM", "\n" };
 void basic_mud_log(const char *format, ...) { (void)format; }
 long obj_script_id(struct obj_data *obj) { return obj->script_id; }
 struct obj_data *obj_proto;
+const char *item_types[] = {
+  "UNDEFINED", "LIGHT", "SCROLL", "WAND", "STAFF", "WEAPON", "FURNITURE",
+  "FREE", "TREASURE", "ARMOR", "POTION", "WORN", "OTHER", "TRASH", "FREE2",
+  "CONTAINER", "NOTE", "LIQ CONTAINER", "KEY", "FOOD", "MONEY", "PEN",
+  "BOAT", "FOUNTAIN", "\n"
+};
+obj_rnum real_object(obj_vnum vnum) { (void)vnum; return NOTHING; }
+/* Line reader with utils.c get_line()'s contract: 0 at EOF, else the line
+ * (without its newline) in buf and the number of lines consumed. */
+int get_line(FILE *fl, char *buf)
+{
+  char temp[READ_SIZE];
+
+  if (!fgets(temp, sizeof(temp), fl))
+    return 0;
+  temp[strcspn(temp, "\r\n")] = '\0';
+  strcpy(buf, temp);
+  return 1;
+}
+int strn_cmp(const char *a, const char *b, size_t n)
+{
+  for (; n > 0; a++, b++, n--) {
+    if (LOWER(*a) != LOWER(*b))
+      return LOWER(*a) - LOWER(*b);
+    if (!*a)
+      return 0;
+  }
+  return 0;
+}
 const char *drinks[] = { "water", "beer", "\n" };
 char *CAP(char *txt) { *txt = UPPER(*txt); return txt; }
 int count_color_chars(char *string) { (void)string; return 0; }
@@ -161,9 +190,30 @@ static void test_list_object_bad_liquid_reported(void)
   item.short_description = NULL;
 }
 
+/* H2-08: a shop-file buy type outside item_types[] is dropped and reported
+ * at load; the valid entries around it are kept. */
+static void test_read_type_list_drops_out_of_range_type(void)
+{
+  static char data[] = "99 sword;\n5 axe;\n-1\n";
+  struct shop_buy_data list[MAX_TRADE + 1];
+  FILE *f = fmemopen(data, strlen(data), "r");
+  int len;
+
+  TEST_ASSERT_NOT_NULL(f);
+  len = read_type_list(f, list, TRUE, MAX_TRADE);
+  fclose(f);
+  TEST_ASSERT_EQUAL_INT(2, len); /* type 5 plus the NOTHING terminator */
+  TEST_ASSERT_EQUAL_INT(5, BUY_TYPE(list[0]));
+  TEST_ASSERT_EQUAL_INT(NOTHING, BUY_TYPE(list[1]));
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("buytype-range", tb_captured_operation);
+  free(BUY_WORD(list[0]));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(test_read_type_list_drops_out_of_range_type);
   RUN_TEST(test_list_object_bad_liquid_reported);
   RUN_TEST(test_buyword_unbalanced_paren_reported);
   RUN_TEST(test_buyword_missing_operand_reported);

@@ -100,6 +100,8 @@ struct stack_data {
 /** TRUE when v may index drinks[]. Liquid values come from world files,
  * OLC and DG osetval, none of which range-check them. v evaluated twice. */
 #define VALID_LIQ_TYPE(v)	((v) >= 0 && (v) < NUM_LIQ_TYPES)
+/** TRUE when t may index item_types[] (a shop buy type). t evaluated twice. */
+#define VALID_ITEM_TYPE(t)	((t) >= 0 && (t) < NUM_ITEM_TYPES)
 
 /* Which expression type we are now parsing */
 #define OPER_OPEN_PAREN		0
