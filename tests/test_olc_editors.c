@@ -277,7 +277,17 @@ void sprintbitarray(int bitvector[], const char *names[], int maxar, char *resul
 void string_write(struct descriptor_data *d, char **txt, size_t len, long mailto, void *data)
 { (void)d; (void)txt; (void)len; (void)mailto; free(data); }
 void copy_ex_descriptions(struct extra_descr_data **to, struct extra_descr_data *from) { (void)from; *to = NULL; }
-void free_ex_descriptions(struct extra_descr_data *head) { (void)head; }
+/* As genolc.c: the list owns its nodes and their strings. */
+void free_ex_descriptions(struct extra_descr_data *head)
+{
+  struct extra_descr_data *next;
+  for (; head; head = next) {
+    next = head->next;
+    free(head->keyword);
+    free(head->description);
+    free(head);
+  }
+}
 void dg_olc_script_copy(struct descriptor_data *d) { OLC_SCRIPT(d) = NULL; }
 void dg_script_menu(struct descriptor_data *d) { (void)d; }
 int dg_script_edit_parse(struct descriptor_data *d, char *arg) { (void)d; (void)arg; return 1; }
@@ -359,6 +369,7 @@ int free_room_strings(struct room_data *room)
   int i;
   free(room->name);
   free(room->description);
+  free_ex_descriptions(room->ex_description);
   for (i = 0; i < DIR_COUNT; i++)
     if (room->dir_option[i]) {
       free(room->dir_option[i]->general_description);
@@ -2037,6 +2048,39 @@ static void test_oedit_save_outside_every_zone_keeps_live_scripts(void)
   object_list = NULL;
 }
 
+
+/* ------------------------------------------------------------------ */
+/* C2-13: a room extra description read with an empty '~' body keeps   */
+/* a NULL description; redit_setup_existing() strdup()ed it (SEGV).    */
+/* ------------------------------------------------------------------ */
+static void test_redit_copies_incomplete_world_exdesc_and_reports_it(void)
+{
+  struct descriptor_data *d = &builder_desc;
+  struct extra_descr_data sign, plaque;
+
+  make_world(2);
+  memset(&sign, 0, sizeof(sign));
+  memset(&plaque, 0, sizeof(plaque));
+  sign.keyword = (char *)"sign";          /* "E\nsign~\n~\n": no body */
+  sign.next = &plaque;
+  plaque.keyword = (char *)"plaque";
+  plaque.description = (char *)"Bronze.\r\n";
+  world[1].ex_description = &sign;
+
+  redit_setup_existing(d, 1);
+
+  TEST_ASSERT_NOT_NULL(OLC_ROOM(d)->ex_description);
+  TEST_ASSERT_EQUAL_STRING("sign", OLC_ROOM(d)->ex_description->keyword);
+  TEST_ASSERT_NULL(OLC_ROOM(d)->ex_description->description);
+  TEST_ASSERT_NOT_NULL(OLC_ROOM(d)->ex_description->next);
+  TEST_ASSERT_EQUAL_STRING("Bronze.\r\n", OLC_ROOM(d)->ex_description->next->description);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("redit-exdesc-incomplete", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "room vnum 3001 extra desc 1 has no description"));
+  TEST_ASSERT_NOT_NULL(strstr(out_buf, "Extra description 1 of this room has no description"));
+  world[1].ex_description = NULL;
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -2091,5 +2135,6 @@ int main(void)
   RUN_TEST(test_sedit_unknown_mode_aborts_without_touching_freed_session);
   RUN_TEST(test_zedit_unknown_mode_aborts_and_reports);
   RUN_TEST(test_oedit_save_outside_every_zone_keeps_live_scripts);
+  RUN_TEST(test_redit_copies_incomplete_world_exdesc_and_reports_it);
   return UNITY_END();
 }
