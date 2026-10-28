@@ -54,6 +54,23 @@
 #define LOAD_MOVE	2
 #define LOAD_STRENGTH	3
 
+/** Replace a heap string field of the character being loaded with a copy
+ * of a pfile value (CircleMUD REPLACE_STR style). A tag repeated in the
+ * file used to leak the earlier copy; a failed strdup() left the field
+ * NULL silently. The old value is freed only once the copy exists.
+ * dst is evaluated more than once: pass a plain field lvalue such as
+ * GET_TITLE(ch). Only for fields load_char() owns (not shared strings). */
+#define PFILE_SET_STRING(dst, src, filename, tag, idnum) do { \
+  char *pfile_new_str_ = strdup(src); \
+  if (pfile_new_str_ == NULL) \
+    TB_ERROR_ERRNO("player", "pfile-string", (filename), \
+                   "player idnum %ld tag %.4s not stored", (long) (idnum), (tag)); \
+  else { \
+    free(dst); \
+    (dst) = pfile_new_str_; \
+  } \
+} while (0)
+
 #define PT_PNAME(i) (player_table[(i)].name)
 #define PT_IDNUM(i) (player_table[(i)].id)
 #define PT_LEVEL(i) (player_table[(i)].level)
@@ -788,11 +805,8 @@ int load_char(const char *name, struct char_data *ch)
       case 'H':
 	     if (!strcmp(tag, "Hit "))	load_HMVS(ch, line, LOAD_HIT, filename, tag);
 	else if (!strcmp(tag, "Hite"))	GET_HEIGHT(ch)		= parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
-        else if (!strcmp(tag, "Host")) {
-          if (GET_HOST(ch))
-            free(GET_HOST(ch));
-          GET_HOST(ch) = strdup(line);
-        }
+        else if (!strcmp(tag, "Host"))
+          PFILE_SET_STRING(GET_HOST(ch), line, filename, tag, GET_IDNUM(ch));
         else if (!strcmp(tag, "Hrol"))	GET_HITROLL(ch)		= parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
 	else if (!strcmp(tag, "Hung"))	GET_COND(ch, HUNGER)	= parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
 	else pfile_unknown_tag(filename, tag, GET_IDNUM(ch));
@@ -821,7 +835,7 @@ int load_char(const char *name, struct char_data *ch)
 	break;
 
       case 'N':
-	     if (!strcmp(tag, "Name"))	GET_PC_NAME(ch)	= strdup(line);
+	     if (!strcmp(tag, "Name"))	PFILE_SET_STRING(GET_PC_NAME(ch), line, filename, tag, GET_IDNUM(ch));
 	else pfile_unknown_tag(filename, tag, GET_IDNUM(ch));
 	break;
 
@@ -834,8 +848,8 @@ int load_char(const char *name, struct char_data *ch)
        if (!strcmp(tag, "Page"))  GET_PAGE_LENGTH(ch) = parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
 	else if (!strcmp(tag, "Pass"))	strlcpy(GET_PASSWD(ch), line, sizeof(ch->player.passwd));
 	else if (!strcmp(tag, "Plyd"))	ch->player.time.played	= parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
-	else if (!strcmp(tag, "PfIn"))	POOFIN(ch)		= strdup(line);
-	else if (!strcmp(tag, "PfOt"))	POOFOUT(ch)		= strdup(line);
+	else if (!strcmp(tag, "PfIn"))	PFILE_SET_STRING(POOFIN(ch), line, filename, tag, GET_IDNUM(ch));
+	else if (!strcmp(tag, "PfOt"))	PFILE_SET_STRING(POOFOUT(ch), line, filename, tag, GET_IDNUM(ch));
         else if (!strcmp(tag, "Pref")) {
           /* The legacy fallback used to convert f1, which was never
            * written on this path (uninitialised or a stale Act/Aff word). */
@@ -873,7 +887,7 @@ int load_char(const char *name, struct char_data *ch)
 	else if (!strcmp(tag, "Thr3"))	GET_SAVE(ch, 2)		= parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
 	else if (!strcmp(tag, "Thr4"))	GET_SAVE(ch, 3)		= parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
 	else if (!strcmp(tag, "Thr5"))	GET_SAVE(ch, 4)		= parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
-	else if (!strcmp(tag, "Titl"))	GET_TITLE(ch)		= strdup(line);
+	else if (!strcmp(tag, "Titl"))	PFILE_SET_STRING(GET_TITLE(ch), line, filename, tag, GET_IDNUM(ch));
         else if (!strcmp(tag, "Trig")) {
           if (CONFIG_SCRIPT_PLAYERS &&
               (t_rnum = real_trigger(parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch)))) != NOTHING) {

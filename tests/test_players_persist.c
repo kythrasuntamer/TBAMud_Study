@@ -446,6 +446,20 @@ static void test_bad_int_and_unknown_tags_are_reported(void)
   TEST_ASSERT_NULL(strstr(tb_captured_detail_log, "SECRET"));
 }
 
+/* PFILE_SET_STRING: a repeated string tag used to leak the earlier copy
+ * (LeakSanitizer / Valgrind report the first "Titl"). */
+static void test_repeated_string_tag_replaces_value(void)
+{
+  write_pfile("tester", "Id  : 4242\nTitl: the first\nTitl: the second\n"
+                        "PfIn: in1\nPfIn: in2\n");
+
+  TEST_ASSERT_EQUAL_INT(0, load_char("tester", &player));
+
+  TEST_ASSERT_EQUAL_STRING("the second", player.player.title);
+  TEST_ASSERT_EQUAL_STRING("in2", player_specials.poofin);
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+}
+
 /* B2-17: the legacy one-word "Pref" form converted f1, which was never
  * written on that path (uninitialised, or a stale Act/Aff word). */
 static void test_legacy_pref_uses_its_own_value(void)
@@ -593,6 +607,7 @@ int main(void)
   RUN_TEST(test_out_of_range_class_level_sex_skill);
   RUN_TEST(test_legacy_pref_uses_its_own_value);
   RUN_TEST(test_bad_int_and_unknown_tags_are_reported);
+  RUN_TEST(test_repeated_string_tag_replaces_value);
   RUN_TEST(test_wrong_flag_word_count_is_reported);
   RUN_TEST(test_truncated_alias_list_is_reported);
   RUN_TEST(test_huge_alias_count_is_rejected);
