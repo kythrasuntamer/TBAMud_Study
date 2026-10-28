@@ -55,8 +55,10 @@ extern struct save_list_data *save_list;
  * walking loop must not advance past a deletion. */
 #define ZCMD(zon, cmds)	zone_table[(zon)].cmd[(cmds)]
 
-/* Clamp var to [low, high].  Evaluates var up to four times (through MIN
- * and MAX): never pass an expression with side effects. */
+/* Clamp var to [low, high], silently. var is evaluated up to three times
+ * and low/high more than once: never pass an expression with side effects
+ * (or a parse call). For builder input use OLC_SET_CLAMPED (olc_checks.h),
+ * which evaluates once and reports the clamp. */
 #define LIMIT(var, low, high)	MIN(high, MAX(var, low))
 
 room_vnum genolc_zone_bottom(zone_rnum rznum);

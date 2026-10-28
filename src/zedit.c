@@ -1,9 +1,31 @@
-/**************************************************************************
-*  File: zedit.c                                           Part of tbaMUD *
-*  Usage: Oasis OLC - Zones and commands.                                 *
-*                                                                         *
-* Copyright 1996 Harvey Gilpin. 1997-2001 George Greer.                   *
-**************************************************************************/
+/**
+* @file zedit.c
+* Oasis OLC - Zones and commands: the zone header and per-room reset
+* command editor, plus the cross-session OLC checks declared in
+* olc_checks.h (olc_renumber_sessions, olc_check_rnum_at,
+* olc_check_index_at, olc_free_script_copy).
+*
+* A session copies the zone header and the reset commands that act in one
+* room (OLC_NUM) into OLC_ZONE; commands hold mob, object, room and
+* trigger rnums. Saving replaces that room's commands in zone_table.
+*
+* Shared contract of the OasisOLC prototype editors (oedit, medit, redit,
+* zedit, sedit; see olc_checks.h):
+* - Each session edits a private scratch copy in d->olc; nothing reaches the
+*   live tables until the builder answers 'y' at the save prompt, and the
+*   copy is released by cleanup_olc() on every exit path.
+* - Scratch copies refer to other prototypes by rnum. Those positions move
+*   when any builder inserts or deletes a prototype; olc_renumber_sessions()
+*   moves every open copy, and OLC_CHECK_RNUM() guards every table index.
+* - *_parse(d, arg): arg is the builder's line, a mutable pointer into the
+*   descriptor's input buffer (at least MAX_INPUT_LENGTH bytes, ASCII after
+*   process_input). It is builder-controlled: validate before storing, and
+*   report a refused or clamped value (OLC_SET_CLAMPED, TB_WARN_MSG).
+* - Diagnostics use op names in kebab-case with OLC_DIAG / DIAG_CHAR
+*   identity; "should never get here" paths use OLC_ABORT.
+*
+* Copyright 1996 Harvey Gilpin. 1997-2001 George Greer.
+*/
 
 #include "conf.h"
 #include "sysdep.h"
@@ -464,6 +486,14 @@ ACMD(do_oasis_zedit)
     GET_NAME(ch), zone_table[OLC_ZNUM(d)].number, GET_OLC_ZONE(ch));
 }
 
+/* Start editing the zone header and the reset commands of room_num.
+ *
+ * Commands are copied with add_cmd_to_list() (a struct copy), and their
+ * 'V' strings are then duplicated, so the scratch list owns its sarg1 /
+ * sarg2 until save hands them to zone_table. A command belongs to a room by
+ * arg3 ('M', 'O', 'T', 'V') or arg1 ('D', 'R'); 'G', 'E' and 'P' follow the
+ * last such command. In the scratch zone, number and age are reused as
+ * "header changed" and "commands changed" flags. */
 static void zedit_setup(struct descriptor_data *d, int room_num)
 {
   struct zone_data *zone;
@@ -569,7 +599,14 @@ static void zedit_new_zone(struct char_data *ch, zone_vnum vzone_num, room_vnum 
 /* Save all the information in the player's temporary buffer back into
  * the current zone table. */
 /* Splice the scratch room commands and header into zone_table; FALSE
- * (reported) when nothing was saved. */
+ * (reported as zedit-save) when nothing was saved.
+ *
+ * The room's old commands are removed and the scratch ones inserted at
+ * positions 0..n of the zone list, so the room's commands move to the top
+ * of the zone. 'G'/'E' without a preceding 'M' and 'P' without an 'O' are
+ * dropped with a message. The header is copied only when changed; two
+ * builders editing different rooms of one zone write the header last-
+ * writer-wins. */
 static int zedit_save_internally(struct descriptor_data *d)
 {
   int	mobloaded = FALSE,

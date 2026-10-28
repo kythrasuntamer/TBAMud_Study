@@ -119,6 +119,13 @@ extern const char *nrm, *grn, *cyn, *yel;
 #define OLC(d)         ((d)->olc)
 #define OLC_MODE(d)    (OLC(d)->mode)     /**< Parse input mode.	*/
 #define OLC_NUM(d)     (OLC(d)->number)   /**< Room/Obj VNUM.	*/
+/** Scratch variable, overloaded per editor; any use as an index must be
+ * range-checked again after the list it indexes changes:
+ * - oedit/medit/redit/sedit main menus: "something was modified" flag.
+ * - oedit apply menu: affected[] slot being edited.
+ * - redit exit menus: direction of OLC_EXIT (dir_option index).
+ * - zedit: index of the command OLC_CMD edits (reset to 0 on delete).
+ * - sedit type menu: the buy type being added. */
 #define OLC_VAL(d)     (OLC(d)->value)    /**< Scratch variable.	*/
 #define OLC_ZNUM(d)    (OLC(d)->zone_num) /**< Real zone number.	*/
 

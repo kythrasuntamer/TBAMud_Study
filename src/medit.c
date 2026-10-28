@@ -1,9 +1,28 @@
-/**************************************************************************
-*  File: medit.c                                           Part of tbaMUD *
-*  Usage: Oasis OLC - Mobiles.                                            *
-*                                                                         *
-* Copyright 1996 Harvey Gilpin. 1997-2001 George Greer.                   *
-**************************************************************************/
+/**
+* @file medit.c
+* Oasis OLC - Mobiles: the mobile prototype editor.
+*
+* medit edits a scratch copy of mob_proto[real_mobile(OLC_NUM)] and saves
+* it with add_mobile(). The scratch copy's nr must name the prototype being
+* edited (or NOBODY): free_mobile(), delete and save rely on it.
+*
+* Shared contract of the OasisOLC prototype editors (oedit, medit, redit,
+* zedit, sedit; see olc_checks.h):
+* - Each session edits a private scratch copy in d->olc; nothing reaches the
+*   live tables until the builder answers 'y' at the save prompt, and the
+*   copy is released by cleanup_olc() on every exit path.
+* - Scratch copies refer to other prototypes by rnum. Those positions move
+*   when any builder inserts or deletes a prototype; olc_renumber_sessions()
+*   moves every open copy, and OLC_CHECK_RNUM() guards every table index.
+* - *_parse(d, arg): arg is the builder's line, a mutable pointer into the
+*   descriptor's input buffer (at least MAX_INPUT_LENGTH bytes, ASCII after
+*   process_input). It is builder-controlled: validate before storing, and
+*   report a refused or clamped value (OLC_SET_CLAMPED, TB_WARN_MSG).
+* - Diagnostics use op names in kebab-case with OLC_DIAG / DIAG_CHAR
+*   identity; "should never get here" paths use OLC_ABORT.
+*
+* Copyright 1996 Harvey Gilpin. 1997-2001 George Greer.
+*/
 
 #include "conf.h"
 #include "sysdep.h"
@@ -197,6 +216,11 @@ static void medit_setup_new(struct descriptor_data *d)
   OLC_ITEM_TYPE(d) = MOB_TRIGGER;
 }
 
+/* Start editing a copy of mob_proto[rmob_num]. The copy keeps the source's
+ * nr (copy_mobile is a struct copy); callers that copy a different
+ * prototype into this session ('W') must reset nr to
+ * real_mobile(OLC_NUM(d)): free_mobile(), delete and save treat nr as the
+ * identity of the prototype being edited. */
 void medit_setup_existing(struct descriptor_data *d, int rmob_num)
 {
   struct char_data *mob;
@@ -243,6 +267,16 @@ static void init_mobile(struct char_data *mob)
 }
 
 /* Save new/edited mob to memory. */
+/* Save the scratch mobile as mob_proto[real_mobile(OLC_NUM)].
+ *
+ * Precondition: OLC_MOB(d)->nr is real_mobile(OLC_NUM) or NOBODY (repaired
+ * and reported as mob-proto-nr otherwise); its proto_script is NULL and
+ * OLC_SCRIPT(d) holds the edited trigger list. add_mobile() overwrites the
+ * prototype by struct copy and does not take ownership of proto_script:
+ * this function frees the previous list, gives the prototype OLC_SCRIPT
+ * (clearing the session's handle) and rebuilds live mobs' triggers.
+ * Postcondition on insert: other sessions' mobile rnums were moved.
+ * Returns FALSE, after reporting medit-save, when nothing was saved. */
 static int medit_save_checked(struct descriptor_data *d)
 {
   int i;

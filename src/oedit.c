@@ -1,9 +1,30 @@
-/**************************************************************************
-*  File: oedit.c                                           Part of tbaMUD *
-*  Usage: Oasis OLC - Objects.                                            *
-*                                                                         *
-* By Levork. Copyright 1996 Harvey Gilpin. 1997-2001 George Greer.        *
-**************************************************************************/
+/**
+* @file oedit.c
+* Oasis OLC - Objects: the object prototype editor (oedit) and the live
+* object instance editor (iedit).
+*
+* oedit edits a scratch copy of obj_proto[real_object(OLC_NUM)] and saves
+* it with add_object(), which also rewrites every live instance (see
+* oedit_save_checked). iedit edits one live object: OLC_IEDIT_OBJ is a
+* borrowed pointer validated by UID before use (see iedit_save_internally).
+*
+* Shared contract of the OasisOLC prototype editors (oedit, medit, redit,
+* zedit, sedit; see olc_checks.h):
+* - Each session edits a private scratch copy in d->olc; nothing reaches the
+*   live tables until the builder answers 'y' at the save prompt, and the
+*   copy is released by cleanup_olc() on every exit path.
+* - Scratch copies refer to other prototypes by rnum. Those positions move
+*   when any builder inserts or deletes a prototype; olc_renumber_sessions()
+*   moves every open copy, and OLC_CHECK_RNUM() guards every table index.
+* - *_parse(d, arg): arg is the builder's line, a mutable pointer into the
+*   descriptor's input buffer (at least MAX_INPUT_LENGTH bytes, ASCII after
+*   process_input). It is builder-controlled: validate before storing, and
+*   report a refused or clamped value (OLC_SET_CLAMPED, TB_WARN_MSG).
+* - Diagnostics use op names in kebab-case with OLC_DIAG / DIAG_CHAR
+*   identity; "should never get here" paths use OLC_ABORT.
+*
+* By Levork. Copyright 1996 Harvey Gilpin. 1997-2001 George Greer.
+*/
 
 #include "conf.h"
 #include "sysdep.h"
@@ -30,7 +51,32 @@
 /* local functions */
 
 
-/* iedit only copies string fields back into the live instance in this MVP. */
+/* iedit (live object instance editor) ---------------------------------------
+ *
+ * Lifetime: OLC_IEDIT_OBJ(d) is a borrowed pointer to a live object with no
+ * lifetime guarantee; any player, script or zone reset may extract it while
+ * the builder edits, and malloc may reuse the address. It is followed only
+ * after obj_uid_matches(OLC_IEDIT_UID(d), ptr) proves it is still the same
+ * object (iedit_save_internally).
+ *
+ * Scratch copy: OLC_OBJ(d) is copy_object() of the live object. Its
+ * carried_by, worn_by, in_obj, contains, next_content and script_id were
+ * copied from the live object and must never be followed or saved; its
+ * script and proto_script are cleared.
+ *
+ * Copied back on save: strings and extra descriptions (prototype-shared
+ * ones are never freed), type, weight, cost, rent, timer, level, extra /
+ * wear / AFF bits, affected[] and values. Type, weight, affects and AFF
+ * bits are accounted for by the handler while the object is worn, carried
+ * or contained, so save takes it out (unequip_char / obj_from_char /
+ * obj_from_obj) and puts it back around the writes. Scripts, copy ('W')
+ * and delete ('X') are not offered.
+ *
+ * Permission: the builder needs can_edit_zone() for the prototype's zone
+ * (LVL_GRGOD for an object without a prototype).
+ */
+
+/* String field ids for iedit_is_prototype_string(). */
 #define IEDIT_STRING_NAME   0
 #define IEDIT_STRING_LONG   1
 #define IEDIT_STRING_SHORT  2
@@ -494,6 +540,20 @@ void oedit_setup_existing(struct descriptor_data *d, int real_num)
   OLC_OBJ(d)->proto_script = NULL;
 }
 
+/* Save the scratch object as obj_proto[real_object(OLC_NUM)].
+ *
+ * Precondition: OLC_OBJ(d) is the session's scratch copy with proto_script
+ * NULL; OLC_SCRIPT(d) is its edited trigger list (or NULL).
+ * add_object() overwrites the prototype by struct copy and, for an existing
+ * prototype, struct-copies it over every live instance (update_all_objects
+ * keeps only location and list fields). So this function, not add_object,
+ * owns: tearing down each instance's script and proto list beforehand,
+ * freeing the prototype's previous trigger list, giving the prototype
+ * OLC_SCRIPT (and clearing the session's handle), and rebuilding every
+ * instance's triggers.
+ * Postcondition on insert: every other open session's object rnums were
+ * moved (olc_renumber_sessions). Delete renumbers in OEDIT_DELETE.
+ * Returns FALSE, after reporting oedit-save, when nothing was saved. */
 static int oedit_save_checked(struct descriptor_data *d)
 {
   int i;

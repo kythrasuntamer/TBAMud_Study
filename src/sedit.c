@@ -1,9 +1,28 @@
-/**************************************************************************
-*  File: sedit.c                                           Part of tbaMUD *
-*  Usage: Oasis OLC - Shops.                                              *
-*                                                                         *
-* Copyright 1996 Harvey Gilpin. 1997-2001 George Greer.                   *
-**************************************************************************/
+/**
+* @file sedit.c
+* Oasis OLC - Shops: the shop editor.
+*
+* sedit edits a deep copy of shop_index[real_shop(OLC_NUM)] (copy_shop) and
+* saves it with add_shop(). The keeper's spec proc is changed only at save
+* time (sedit_install_keeper).
+*
+* Shared contract of the OasisOLC prototype editors (oedit, medit, redit,
+* zedit, sedit; see olc_checks.h):
+* - Each session edits a private scratch copy in d->olc; nothing reaches the
+*   live tables until the builder answers 'y' at the save prompt, and the
+*   copy is released by cleanup_olc() on every exit path.
+* - Scratch copies refer to other prototypes by rnum. Those positions move
+*   when any builder inserts or deletes a prototype; olc_renumber_sessions()
+*   moves every open copy, and OLC_CHECK_RNUM() guards every table index.
+* - *_parse(d, arg): arg is the builder's line, a mutable pointer into the
+*   descriptor's input buffer (at least MAX_INPUT_LENGTH bytes, ASCII after
+*   process_input). It is builder-controlled: validate before storing, and
+*   report a refused or clamped value (OLC_SET_CLAMPED, TB_WARN_MSG).
+* - Diagnostics use op names in kebab-case with OLC_DIAG / DIAG_CHAR
+*   identity; "should never get here" paths use OLC_ABORT.
+*
+* Copyright 1996 Harvey Gilpin. 1997-2001 George Greer.
+*/
 
 #include "conf.h"
 #include "sysdep.h"
@@ -246,6 +265,16 @@ ACMD(do_oasis_sedit)
     GET_NAME(ch), zone_table[OLC_ZNUM(d)].number, GET_OLC_ZONE(ch));
 }
 
+/* Start a new shop with default messages and empty lists.
+ *
+ * List contents (all terminated by NOTHING / NOWHERE):
+ * - S_PRODUCTS holds object *rnums* (allocated as obj_vnum, but genobj and
+ *   olc_renumber_sessions renumber them as rnums).
+ * - S_ROOMS holds room *vnums* (allocated as room_rnum).
+ * The messages are templates expanded by shop.c's shop_format_message(),
+ * never used as printf formats: %s is the customer's name, %d the amount
+ * (S_BUY / S_SELL), %% a literal '%'; any other '%' sequence is printed
+ * literally and reported there. */
 static void sedit_setup_new(struct descriptor_data *d)
 {
   struct shop_data *shop;

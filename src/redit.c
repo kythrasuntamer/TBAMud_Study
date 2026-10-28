@@ -1,9 +1,29 @@
-/**************************************************************************
-*  File: redit.c                                           Part of tbaMUD *
-*  Usage: Oasis OLC - Rooms.                                              *
-*                                                                         *
-* By Levork. Copyright 1996 Harvey Gilpin. 1997-2001 George Greer.        *
-**************************************************************************/
+/**
+* @file redit.c
+* Oasis OLC - Rooms: the room editor.
+*
+* redit edits a scratch copy of world[real_room(OLC_NUM)] that owns no live
+* state (no people, contents, light, script or events) and saves it with
+* add_room(). Exits hold room rnums, which other builders' inserts and
+* deletes move.
+*
+* Shared contract of the OasisOLC prototype editors (oedit, medit, redit,
+* zedit, sedit; see olc_checks.h):
+* - Each session edits a private scratch copy in d->olc; nothing reaches the
+*   live tables until the builder answers 'y' at the save prompt, and the
+*   copy is released by cleanup_olc() on every exit path.
+* - Scratch copies refer to other prototypes by rnum. Those positions move
+*   when any builder inserts or deletes a prototype; olc_renumber_sessions()
+*   moves every open copy, and OLC_CHECK_RNUM() guards every table index.
+* - *_parse(d, arg): arg is the builder's line, a mutable pointer into the
+*   descriptor's input buffer (at least MAX_INPUT_LENGTH bytes, ASCII after
+*   process_input). It is builder-controlled: validate before storing, and
+*   report a refused or clamped value (OLC_SET_CLAMPED, TB_WARN_MSG).
+* - Diagnostics use op names in kebab-case with OLC_DIAG / DIAG_CHAR
+*   identity; "should never get here" paths use OLC_ABORT.
+*
+* By Levork. Copyright 1996 Harvey Gilpin. 1997-2001 George Greer.
+*/
 
 #include "conf.h"
 #include "sysdep.h"
@@ -165,6 +185,14 @@ static void redit_setup_new(struct descriptor_data *d)
   OLC_VAL(d) = 0;
 }
 
+/* Start editing a copy of world[real_num].
+ *
+ * The struct copy would alias the live room's runtime state: people,
+ * contents, light, script and events are cleared below; func is kept (a
+ * function pointer, not owned state). Strings, exits and extra
+ * descriptions are deep-copied; proto_script is replaced by the session's
+ * OLC_SCRIPT copy. The number and zone fields are not authoritative: save
+ * uses OLC_NUM / OLC_ZNUM, and 'W' resets number to the edited vnum. */
 void redit_setup_existing(struct descriptor_data *d, int real_num)
 {
   struct room_data *room;
@@ -244,6 +272,15 @@ void redit_setup_existing(struct descriptor_data *d, int real_num)
   SCRIPT(room) = NULL;
 }
 
+/* Save the scratch room as world[real_room(OLC_NUM)].
+ *
+ * Precondition: the scratch room owns no live lists (checked:
+ * redit-scratch-alias). add_room() copy_room()s it over an existing room
+ * (keeping that room's people and contents) or inserts it, shifting
+ * world[]; it does not take ownership of proto_script. This function frees
+ * the previous trigger list and gives the room OLC_SCRIPT (clearing the
+ * session's handle). Postcondition on insert: other sessions' room rnums
+ * were moved. Returns FALSE, after reporting, when nothing was saved. */
 static int redit_save_checked(struct descriptor_data *d)
 {
   int room_num, new_room = FALSE;
