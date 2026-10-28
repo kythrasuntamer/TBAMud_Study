@@ -260,6 +260,29 @@ if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
         PROPERTIES COMPILE_OPTIONS "-ffunction-sections;-fdata-sections")
 endif()
 
+# Production zone-command editing (genzon.c).
+add_mud_test(test_genzon
+    ${MUD_SRCDIR}/genzon.c
+    ${MUD_SRCDIR}/utils.c
+    ${MUD_SRCDIR}/random.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_genzon.c
+)
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_compile_options(test_genzon PRIVATE -ffunction-sections -fdata-sections)
+    target_link_options(test_genzon PRIVATE -Wl,--gc-sections)
+    # Fill uninitialised locals with a pattern so a field left unset shows
+    # up as garbage rather than as a lucky zero.
+    include(CheckCCompilerFlag)
+    check_c_compiler_flag(-ftrivial-auto-var-init=pattern TB_HAVE_AUTO_VAR_INIT)
+    if(TB_HAVE_AUTO_VAR_INIT)
+        set(TB_GENZON_TEST_FLAGS "-ffunction-sections;-fdata-sections;-ftrivial-auto-var-init=pattern")
+    else()
+        set(TB_GENZON_TEST_FLAGS "-ffunction-sections;-fdata-sections")
+    endif()
+    set_source_files_properties(${MUD_SRCDIR}/genzon.c
+        PROPERTIES COMPILE_OPTIONS "${TB_GENZON_TEST_FLAGS}")
+endif()
+
 # Production act()/perform_act() formatter. comm.c owns main(); rename it and
 # discard sections the formatter does not reach. test_stubs.c is omitted
 # because it defines comm.c's globals; the test supplies its own fixtures.
