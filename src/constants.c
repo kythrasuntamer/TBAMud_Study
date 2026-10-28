@@ -323,6 +323,7 @@ const char *connected_types[] = {
   "Preference edit",
   "IBT edit",
   "Message edit",
+  "Object inst edit",
   "Protocol Detection",
   "\n"
 };
@@ -969,3 +970,17 @@ const char *ibt_bits[] = {
 	/** Number of defined wear bit descriptions. */
 	wear_bits_count = sizeof(wear_bits) / sizeof(wear_bits[0]) - 1;
 
+
+/* --- Compile-time table/enum agreement. ---
+ * Each name table is indexed by a structs.h constant; when a constant is
+ * added without its name (CON_IEDIT once shifted every later connection
+ * state name by one), the build fails here instead of the game printing
+ * the wrong name or reading the "\n" sentinel as a name.  Tables ending in
+ * "\n" have one entry per value plus the sentinel. */
+#define CONST_TABLE_LEN(table) (sizeof(table) / sizeof((table)[0]))
+#define CONST_TABLE_ASSERT(cond, tag) \
+  typedef char const_table_assert_##tag[(cond) ? 1 : -1]
+
+/** connected_types[] covers CON_PLAYING .. CON_GET_PROTOCOL (the last). */
+CONST_TABLE_ASSERT(CONST_TABLE_LEN(connected_types) == CON_GET_PROTOCOL + 2,
+                   connected_types_len);
