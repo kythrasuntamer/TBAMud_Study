@@ -77,6 +77,17 @@
     (lval) = olc_v_; \
   } while (0)
 
+/** Replace an owned string field with a str_udup() copy of text (an empty
+ * text becomes "undefined"). The copy is made before the old value is
+ * freed, so text may point into the old value. field is evaluated three
+ * times: pass a plain lvalue. Elson-style counterpart of CREATE/RECREATE
+ * for the free-then-duplicate idiom of every OLC string prompt. */
+#define OLC_REPLACE_STRING(field, text) do { \
+    char *olc_new_ = str_udup(text); \
+    free(field); \
+    (field) = olc_new_; \
+  } while (0)
+
 /** sprintbitarray() with the element count taken from the array actually
  * passed, so a flag array can never be printed with another array's
  * *_ARRAY_MAX (oedit printed wear and affect bits with EF_ARRAY_MAX, medit

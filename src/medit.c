@@ -876,16 +876,12 @@ void medit_parse(struct descriptor_data *d, char *arg)
 
   case MEDIT_KEYWORD:
     smash_tilde(arg);
-    if (GET_ALIAS(OLC_MOB(d)))
-      free(GET_ALIAS(OLC_MOB(d)));
-    GET_ALIAS(OLC_MOB(d)) = str_udup(arg);
+    OLC_REPLACE_STRING(GET_ALIAS(OLC_MOB(d)), arg);
     break;
 
   case MEDIT_S_DESC:
     smash_tilde(arg);
-    if (GET_SDESC(OLC_MOB(d)))
-      free(GET_SDESC(OLC_MOB(d)));
-    GET_SDESC(OLC_MOB(d)) = str_udup(arg);
+    OLC_REPLACE_STRING(GET_SDESC(OLC_MOB(d)), arg);
     break;
 
   case MEDIT_L_DESC:

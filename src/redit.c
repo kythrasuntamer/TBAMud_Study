@@ -739,9 +739,7 @@ void redit_parse(struct descriptor_data *d, char *arg)
                       strlen(arg), MAX_ROOM_NAME - 1);
       break;
     }
-    if (OLC_ROOM(d)->name)
-      free(OLC_ROOM(d)->name);
-    OLC_ROOM(d)->name = str_udup(arg);
+    OLC_REPLACE_STRING(OLC_ROOM(d)->name, arg);
     break;
 
   case REDIT_DESC:
@@ -839,9 +837,7 @@ void redit_parse(struct descriptor_data *d, char *arg)
     break;
 
   case REDIT_EXIT_KEYWORD:
-    if (OLC_EXIT(d)->keyword)
-      free(OLC_EXIT(d)->keyword);
-    OLC_EXIT(d)->keyword = str_udup(arg);
+    OLC_REPLACE_STRING(OLC_EXIT(d)->keyword, arg);
     redit_disp_exit_menu(d);
     return;
 
@@ -873,9 +869,7 @@ void redit_parse(struct descriptor_data *d, char *arg)
 
   case REDIT_EXTRADESC_KEY:
     if (genolc_checkstring(d, arg)) {
-      if (OLC_DESC(d)->keyword)
-        free(OLC_DESC(d)->keyword);
-      OLC_DESC(d)->keyword = str_udup(arg);
+      OLC_REPLACE_STRING(OLC_DESC(d)->keyword, arg);
     }
     redit_disp_extradesc_menu(d);
     return;

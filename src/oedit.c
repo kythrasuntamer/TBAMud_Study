@@ -1155,25 +1155,19 @@ void oedit_parse(struct descriptor_data *d, char *arg)
   case OEDIT_KEYWORD:
     if (!genolc_checkstring(d, arg))
       break;
-    if (OLC_OBJ(d)->name)
-      free(OLC_OBJ(d)->name);
-    OLC_OBJ(d)->name = str_udup(arg);
+    OLC_REPLACE_STRING(OLC_OBJ(d)->name, arg);
     break;
 
   case OEDIT_SHORTDESC:
     if (!genolc_checkstring(d, arg))
       break;
-    if (OLC_OBJ(d)->short_description)
-      free(OLC_OBJ(d)->short_description);
-    OLC_OBJ(d)->short_description = str_udup(arg);
+    OLC_REPLACE_STRING(OLC_OBJ(d)->short_description, arg);
     break;
 
   case OEDIT_LONGDESC:
     if (!genolc_checkstring(d, arg))
       break;
-    if (OLC_OBJ(d)->description)
-      free(OLC_OBJ(d)->description);
-    OLC_OBJ(d)->description = str_udup(arg);
+    OLC_REPLACE_STRING(OLC_OBJ(d)->description, arg);
     break;
 
   case OEDIT_TYPE:
@@ -1435,9 +1429,7 @@ void oedit_parse(struct descriptor_data *d, char *arg)
 
   case OEDIT_EXTRADESC_KEY:
     if (genolc_checkstring(d, arg)) {
-      if (OLC_DESC(d)->keyword)
-        free(OLC_DESC(d)->keyword);
-      OLC_DESC(d)->keyword = str_udup(arg);
+      OLC_REPLACE_STRING(OLC_DESC(d)->keyword, arg);
     }
     oedit_disp_extradesc_menu(d);
     return;
