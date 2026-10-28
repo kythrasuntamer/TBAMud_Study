@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Guard trigedit's renumbering when a new trigger prototype is inserted.
+"""Guard trigedit's prototype bookkeeping.
+
+Renumbering when a new trigger prototype is inserted:
 
 Inserting at rnum shifts every prototype from rnum up by one. Live triggers
 at exactly rnum were left behind (> instead of >=), so they named the new
@@ -20,4 +22,15 @@ edit = body[body.index("for (dsc = descriptor_list;"):]
 assert "dsc != d" in edit, "the new trigger's own buffer already names rnum"
 assert "GET_TRIG_RNUM(OLC_TRIG(dsc)) != NOTHING" in edit
 assert "GET_TRIG_RNUM(OLC_TRIG(dsc)) >= rnum" in edit
-print("trigedit renumber contract verified")
+
+# Copying another trigger into the buffer must keep the edited trigger's
+# identity; the copied rnum used to end up in the saved prototype.
+copy = s[s.index("case TRIGEDIT_COPY:"):]
+copy = copy[:copy.index("break;")]
+assert "!= NOTHING" in copy
+assert "free_trigger(OLC_TRIG(d));" in copy, "the replaced buffer is released"
+assert "free(OLC_STORAGE(d));" in copy
+assert "GET_TRIG_RNUM(OLC_TRIG(d)) = real_trigger(OLC_NUM(d));" in copy
+existing = s[s.index("/* make the prorotype look like what we have */"):]
+assert existing.index("proto->nr = rnum;") < existing.index("go through the mud")
+print("trigedit contract verified")

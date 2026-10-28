@@ -692,8 +692,16 @@ void trigedit_parse(struct descriptor_data *d, char *arg)
       return;
 
     case TRIGEDIT_COPY:
-      if ((i = real_trigger(tb_parse_int_or_zero(arg))) != NOWHERE) {
+      if ((i = real_trigger(tb_parse_int_or_zero(arg))) != NOTHING) {
+        /* Replace the edit buffer with the source's contents, but keep the
+         * identity of the trigger being edited: a buffer naming the
+         * source's rnum gave the saved prototype that rnum, and later
+         * edits then missed (and freed the commands under) its instances. */
+        free_trigger(OLC_TRIG(d));
+        free(OLC_STORAGE(d));
+        OLC_STORAGE(d) = NULL;
         trigedit_setup_existing(d, i);
+        GET_TRIG_RNUM(OLC_TRIG(d)) = real_trigger(OLC_NUM(d));
       } else
         write_to_output(d, "That trigger does not exist.\r\n");
       break;
@@ -762,6 +770,7 @@ void trigedit_save(struct descriptor_data *d)
 
     /* make the prorotype look like what we have */
     trig_data_copy(proto, trig);
+    proto->nr = rnum;   /* the slot it lives in, whatever the buffer said */
 
     /* go through the mud and replace existing triggers         */
     live_trig = trigger_list;
