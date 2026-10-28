@@ -620,9 +620,61 @@ static void malformed_index_entry_is_reported(void)
   TEST_ASSERT_EQUAL_STRING("zero.trg\n$\n", read_file("world/trg/index"));
 }
 
+/* E2-10: non-numeric menu answers used to parse as 0.  "abc" at the copy
+ * prompt copied trigger #0 over the work in progress. */
+static void copy_prompt_rejects_non_numbers(void)
+{
+  const int vnums[] = { 0, 100 };
+
+  make_index(vnums, 2);
+  start_edit(100);
+  clear_output();
+  feed(TRIGEDIT_COPY, "abc");
+  TEST_ASSERT_NOT_NULL(strstr(bd->output, "not a trigger vnum"));
+  TEST_ASSERT_NOT_NULL(strstr(OLC_STORAGE(bd), "say 100"));
+  TEST_ASSERT_EQUAL_INT(0, OLC_VAL(bd));
+
+  feed(TRIGEDIT_COPY, "65636");       /* 100 after truncation to IDXTYPE */
+  TEST_ASSERT_EQUAL_INT(0, OLC_VAL(bd));
+}
+
+static void numeric_argument_rejects_text_and_reports_clamp(void)
+{
+  const int vnums[] = { 100 };
+
+  make_index(vnums, 1);
+  start_edit(100);
+  clear_output();
+  feed(TRIGEDIT_NARG, "lots");
+  TEST_ASSERT_EQUAL_INT(TRIGEDIT_NARG, OLC_MODE(bd));
+  TEST_ASSERT_EQUAL_INT(0, OLC_TRIG(bd)->narg);
+
+  feed(TRIGEDIT_NARG, "500");
+  TEST_ASSERT_EQUAL_INT(100, OLC_TRIG(bd)->narg);
+  TEST_ASSERT_NOT_NULL(strstr(bd->output, "limited to 100"));
+
+  feed(TRIGEDIT_INTENDED, "x");
+  TEST_ASSERT_EQUAL_INT(TRIGEDIT_INTENDED, OLC_MODE(bd));
+  feed(TRIGEDIT_INTENDED, "2");
+  TEST_ASSERT_EQUAL_INT(WLD_TRIGGER, OLC_TRIG(bd)->attach_type);
+}
+
+static void trigedit_rejects_overflowing_vnum(void)
+{
+  char arg[] = "4294967296";
+
+  clear_output();
+  do_oasis_trigedit(builder, arg, 0, 0);
+  TEST_ASSERT_NULL(bd->olc);
+  TEST_ASSERT_NOT_NULL(strstr(bd->output, "can't exist"));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(copy_prompt_rejects_non_numbers);
+  RUN_TEST(numeric_argument_rejects_text_and_reports_clamp);
+  RUN_TEST(trigedit_rejects_overflowing_vnum);
   RUN_TEST(save_inserts_zone_into_index_in_order);
   RUN_TEST(index_without_terminator_is_kept_and_reported);
   RUN_TEST(malformed_index_entry_is_reported);

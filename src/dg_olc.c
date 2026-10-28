@@ -110,9 +110,9 @@ ACMD(do_oasis_trigedit)
     return;
   }
 
-  number = tb_parse_int_or_zero(argument);
-
-  if (number < IDXTYPE_MIN || number > IDXTYPE_MAX) {
+  /* An overflowing number used to parse as 0 and open trigger #0. */
+  if (!tb_parse_int_prefix_checked(argument, &number, NULL) ||
+      number < IDXTYPE_MIN || number > IDXTYPE_MAX) {
     send_to_char(ch, "That trigger VNUM can't exist.\r\n");
     return;
   }
@@ -695,9 +695,10 @@ void trigedit_parse(struct descriptor_data *d, char *arg)
       OLC_VAL(d)++;
       break;
 
+    /* Menu answers are builder typing: a non-number re-prompts instead of
+     * silently meaning 0 (E2-10).  None of them is worth a server log. */
     case TRIGEDIT_INTENDED:
-      i = tb_parse_int_or_zero(arg);
-      if (i >= MOB_TRIGGER && i <= WLD_TRIGGER) {
+      if (tb_parse_int_checked(arg, &i) && i >= MOB_TRIGGER && i <= WLD_TRIGGER) {
         OLC_TRIG(d)->attach_type = i;
         OLC_VAL(d)++;
       } else {
@@ -707,7 +708,13 @@ void trigedit_parse(struct descriptor_data *d, char *arg)
       break;
 
     case TRIGEDIT_NARG:
-      OLC_TRIG(d)->narg = LIMIT(tb_parse_int_or_zero(arg), 0, 100);
+      if (!tb_parse_int_checked(arg, &i)) {
+        write_to_output(d, "Please enter a number (0-100): ");
+        return;
+      }
+      OLC_TRIG(d)->narg = LIMIT(i, 0, 100);
+      if (OLC_TRIG(d)->narg != i)
+        write_to_output(d, "Numeric argument limited to %d.\r\n", OLC_TRIG(d)->narg);
       OLC_VAL(d)++;
       break;
 
@@ -721,7 +728,12 @@ void trigedit_parse(struct descriptor_data *d, char *arg)
       break;
 
     case TRIGEDIT_TYPES:
-      if ((i = tb_parse_int_or_zero(arg)) == 0)
+      if (!tb_parse_int_checked(arg, &i)) {
+        trigedit_disp_types(d);
+        write_to_output(d, "Please enter a type number: ");
+        return;
+      }
+      if (i == 0)
         break;
       else if (!((i < 0) || (i > NUM_TRIG_TYPE_FLAGS)))
         TOGGLE_BIT((GET_TRIG_TYPE(OLC_TRIG(d))), 1 << (i - 1));
@@ -730,14 +742,11 @@ void trigedit_parse(struct descriptor_data *d, char *arg)
       return;
 
     case TRIGEDIT_COPY:
-      if ((i = real_trigger(dg_parse_vnum(arg))) != NOTHING) {
-        /* Replace the edit buffer with the source's contents, but keep the
-         * identity of the trigger being edited: a buffer naming the
-         * source's rnum gave the saved prototype that rnum, and later
-         * edits then missed (and freed the commands under) its instances. */
-        free_trigger(OLC_TRIG(d));
-        free(OLC_STORAGE(d));
-        OLC_STORAGE(d) = NULL;
+      /* "abc" used to mean trigger #0 and overwrite the work in progress
+       * with it; a vnum outside IDXTYPE would be truncated by real_trigger. */
+      if (!tb_parse_int_checked(arg, &i) || i < IDXTYPE_MIN || i > IDXTYPE_MAX)
+        write_to_output(d, "That is not a trigger vnum.\r\n");
+      else if ((i = real_trigger(i)) != NOWHERE) {
         trigedit_setup_existing(d, i);
         /* The scratch now holds the source's rnum, but it is still the work
          * in progress for OLC_NUM(d) (E2-03). */
