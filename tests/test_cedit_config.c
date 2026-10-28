@@ -3,9 +3,8 @@
  *
  * cedit.c is linked with the production loader (db.c load_config()), the
  * compiled-in defaults the loader starts from (config.c), GenOLC's save list
- * (genolc.c), the line, log and string helpers (utils.c), the tag splitter
- * the loader uses (oasis.c split_argument()) and the colour-code conversion
- * both sides apply (modify.c parse_at()/parse_tab()).  Their unrelated code
+ * (genolc.c), the line, log and string helpers (utils.c) and the tag
+ * splitter the loader uses (oasis.c split_argument()).  Their unrelated code
  * is discarded with --gc-sections (tests/CMakeLists.txt); everything else
  * they reach is supplied here.  test_stubs.c is not linked because db.c and
  * config.c define the globals it stubs.
@@ -41,7 +40,16 @@
 
 /* utils.c defines the real tb_error_log_at(); the linker sends every call
  * from the other objects to __wrap_tb_error_log_at, which the capture
- * header defines under that name. */
+ * header defines under that name.  The prototype carries the real one's
+ * format attribute, so the capture's vsnprintf() of detail_fmt is checked
+ * as a format parameter. */
+/* NOLINTNEXTLINE(cert-dcl37-c,cert-dcl51-cpp): --wrap requires this name. */
+void __wrap_tb_error_log_at(const char *severity, const char *subsystem,
+                            const char *operation, const char *resource,
+                            int errnum, const char *source_file,
+                            int source_line, const char *source_func,
+                            const char *detail_fmt, ...)
+                            __attribute__ ((format (printf, 9, 10)));
 #define tb_error_log_at __wrap_tb_error_log_at
 #include "tb_error_capture.h"
 #undef tb_error_log_at
@@ -116,8 +124,54 @@ char *one_argument(char *argument, char *first_arg)
   return argument;
 }
 
-/* improved-edit.c: the multi-line string editor's help text. */
+/* modify.c / improved-edit.c.  modify.c is not linked: with Clang's ASan
+ * its string_add() dispatch table keeps every editor's cleanup hook alive
+ * through --gc-sections.  The multi-line editor (MENU, WELC_MESSG,
+ * START_MESSG) is not under test, so string_write() only releases the
+ * old-text copy it is handed; the three string helpers below are
+ * modify.c's, because the writer and loader round trip depends on them. */
+void string_write(struct descriptor_data *d, char **writeto, size_t len,
+                  long mailto, void *data)
+{ (void)d; (void)writeto; (void)len; (void)mailto; free(data); }
 void send_editor_help(struct descriptor_data *d) { (void)d; }
+
+/* As modify.c: blank a tilde that ends a line; the loader cannot read it. */
+void smash_tilde(char *str)
+{
+  char *p = str;
+
+  for (; *p; p++)
+    if (*p == '~' && (*(p + 1) == '\r' || *(p + 1) == '\n' || *(p + 1) == '\0'))
+      *p = ' ';
+}
+
+/* As modify.c: '@' becomes the '\t' colour escape, "@@" stays '@'. */
+void parse_at(char *str)
+{
+  char *p = str;
+
+  for (; *p; p++)
+    if (*p == '@') {
+      if (*(p + 1) != '@')
+        *p = '\t';
+      else
+        p++;
+    }
+}
+
+/* As modify.c: the inverse of parse_at(), used when writing files. */
+void parse_tab(char *str)
+{
+  char *p = str;
+
+  for (; *p; p++)
+    if (*p == '\t') {
+      if (*(p + 1) != '\t')
+        *p = '@';
+      else
+        p++;
+    }
+}
 
 /* spec_assign.c / spec_procs.c: cedit re-runs assign_rooms() when the
  * dts_are_dumps option changes. */
@@ -140,6 +194,7 @@ int save_quests(zone_rnum rznum) { (void)rznum; UNREACHED(); return FALSE; }
  * copy is released for every cleanup type (audit F3-07): free the copy and
  * its strings, then the workspace, and return to CON_PLAYING. */
 static int cleanups;
+/* NOLINTNEXTLINE(cert-dcl37-c,cert-dcl51-cpp): --wrap requires this name. */
 void __wrap_cleanup_olc(struct descriptor_data *d, byte cleanup_type)
 {
   struct config_data *cfg;
