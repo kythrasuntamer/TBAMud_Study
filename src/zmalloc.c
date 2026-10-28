@@ -232,10 +232,20 @@ void zdump(meminfo *m)
 
 /* Bytes of guard padding around each block. */
 #ifndef NO_MEMORY_PADDING
+# define ZM_PAD_SIZE  sizeof(beginPad)
 # define ZM_PAD_TOTAL (sizeof(beginPad) + sizeof(endPad))
 #else
+# define ZM_PAD_SIZE  ((size_t)0)
 # define ZM_PAD_TOTAL ((size_t)0)
 #endif
+
+/* Convert between the pointer the caller holds (user) and the pointer the
+ * C library allocated (base, ZM_PAD_SIZE bytes earlier).  Freeing or
+ * reallocating the user pointer instead of the base one is an invalid free
+ * that glibc and ASan abort on, so every libc call goes through ZM_BASE().
+ * Each evaluates its argument once. */
+#define ZM_BASE(user_ptr) ((unsigned char *)(user_ptr) - ZM_PAD_SIZE)
+#define ZM_USER(base_ptr) ((unsigned char *)(base_ptr) + ZM_PAD_SIZE)
 
 /* Sizes are size_t end to end.  They used to be int, so a request of
  * 2 GiB or more became negative and `len + padding` wrapped to a few bytes
@@ -275,11 +285,7 @@ unsigned char *zmalloc(size_t len, char *file, int line)
   if (!zm_size_ok(len, file, line, __func__))
     return NULL;
 
-#ifndef NO_MEMORY_PADDING
-  ret = (unsigned char *) calloc(1, len + sizeof(beginPad) + sizeof(endPad));
-#else
-  ret = (unsigned char *) calloc(1, len);
-#endif
+  ret = (unsigned char *) calloc(1, len + ZM_PAD_TOTAL);
 
   if (!ret) {
     /* Not misuse: the caller gets NULL and its own failure path runs. */
@@ -291,7 +297,7 @@ unsigned char *zmalloc(size_t len, char *file, int line)
 #ifndef NO_MEMORY_PADDING
   /* insert begin and end padding to detect buffer under/overruns: */
   memcpy(ret, beginPad, sizeof(beginPad));
-  ret +=  sizeof(beginPad);  /* make ret skip begin pad */
+  ret = ZM_USER(ret);  /* make ret skip begin pad */
   ZM_CHECK_ALIGNED(ret, file, line);
   memcpy(ret + len, endPad, sizeof(endPad));
 #endif
@@ -305,11 +311,7 @@ unsigned char *zmalloc(size_t len, char *file, int line)
                                errno, file, line, __func__,
                                "bookkeeping record for %zu bytes", len);
     zlogf("zmalloc: FAILED mem alloc for zmalloc struct... bailing!\n");
-#ifndef NO_MEMORY_PADDING
-    free(ret - sizeof(beginPad));
-#else
-    free(ret);
-#endif
+    free(ZM_BASE(ret));
     return NULL;
   }
   m->addr = ret;
@@ -322,11 +324,7 @@ unsigned char *zmalloc(size_t len, char *file, int line)
                                "bookkeeping record for %zu bytes", len);
     zlogf("zmalloc: FAILED mem alloc for zmalloc struct... bailing!\n");
     free(m);
-#ifndef NO_MEMORY_PADDING
-    free(ret - sizeof(beginPad));
-#else
-    free(ret);
-#endif
+    free(ZM_BASE(ret));
     return NULL;
   }
   m->line = line;
@@ -354,11 +352,7 @@ unsigned char *zrealloc(unsigned char *what, size_t len, char *file, int line)
           ZM_FATAL("zrealloc-after-free", file, line,
                    "addr=%p size=%zu allocated=%s:%d freed %d time(s)",
                    (void *)m->addr, m->size, m->file, m->line, m->frees);
-#ifndef NO_MEMORY_PADDING
-	ret = (unsigned char *) realloc(what - sizeof(beginPad), len + sizeof(beginPad) + sizeof(endPad));
-#else
-	ret = (unsigned char *) realloc(what, len);
-#endif
+	ret = (unsigned char *) realloc(ZM_BASE(what), len + ZM_PAD_TOTAL);
 	if (!ret) {
 	  zlogf("zrealloc: FAILED for 0x%p %zu bytes mallocd at %s:%d,\n"
 		      "          %zu bytes reallocd at %s:%d.\n",
@@ -369,7 +363,7 @@ unsigned char *zrealloc(unsigned char *what, size_t len, char *file, int line)
 #ifndef NO_MEMORY_PADDING
 	/* insert begin and end padding to detect buffer under/overruns: */
 	memcpy(ret, beginPad, sizeof(beginPad));
-	ret +=  sizeof(beginPad);  /* make ret skip begin pad */
+	ret = ZM_USER(ret);  /* make ret skip begin pad */
 	ZM_CHECK_ALIGNED(ret, file, line);
 	memcpy(ret + len, endPad, sizeof(endPad));
 #endif
@@ -522,11 +516,7 @@ void zmalloc_check()
       }
       if (m->addr)
         ZM_UNPOISON(m->addr, m->size);
-#ifndef NO_MEMORY_PADDING
-      if (m->addr) free(m->addr - sizeof(beginPad));
-#else
-      if (m->addr) free(m->addr);
-#endif
+      if (m->addr) free(ZM_BASE(m->addr));
       if (m->file) free(m->file);
       free(m);
     }
@@ -565,7 +555,7 @@ void pad_check(meminfo *m)
   /* An overwritten guard pad means a buffer under- or overrun already
    * happened; the report names the allocation site (the overrun itself is
    * somewhere between allocation and this check). */
-  if (memcmp(m->addr - sizeof(beginPad), beginPad, sizeof(beginPad)) != 0) {
+  if (memcmp(ZM_BASE(m->addr), beginPad, sizeof(beginPad)) != 0) {
     zlogf("pad_check: ERR: beginPad was modified! (mallocd@ %s:%d)\n", m->file, m->line);
     if (zmalloclogging > 1) zdump(m);
     ZM_FATAL("zmalloc-pad", m->file, m->line,
