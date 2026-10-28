@@ -323,9 +323,11 @@ struct obj_data *fx_new_obj(const char *name, int type)
   char buf[128];
 
   obj->name = strdup(name);
-  snprintf(buf, sizeof(buf), "a %s", name);
+  if (snprintf(buf, sizeof(buf), "a %s", name) < 0)
+    abort();
   obj->short_description = strdup(buf);
-  snprintf(buf, sizeof(buf), "A %s is here.", name);
+  if (snprintf(buf, sizeof(buf), "A %s is here.", name) < 0)
+    abort();
   obj->description = strdup(buf);
   GET_OBJ_TYPE(obj) = type;
   SET_BIT_AR(GET_OBJ_WEAR(obj), ITEM_WEAR_TAKE);
