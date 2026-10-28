@@ -1121,10 +1121,14 @@ void hit(struct char_data *ch, struct char_data *victim, int type)
      * Position stunned  2.33 x normal
      * Position incap    2.66 x normal
      * Position mortally 3.00 x normal
-     * Note, this is a hack because it depends on the particular
-     * values of the POSITION_XXX constants. */
+     * i.e. one third more per position below fighting. It used to be
+     * computed as dam *= 1 + (POS_FIGHTING - pos) / 3 in integer
+     * arithmetic, which gave x1 sitting and resting and x2 sleeping,
+     * stunned and incapacitated: multiply before dividing (dam stays far
+     * below INT_MAX / 10, see DICE_BOUNDED). Note, this is a hack because
+     * it depends on the particular values of the POSITION_XXX constants. */
     if (GET_POS(victim) < POS_FIGHTING)
-      dam *= 1 + (POS_FIGHTING - GET_POS(victim)) / 3;
+      dam = dam * (3 + (POS_FIGHTING - GET_POS(victim))) / 3;
 
     /* at least 1 hp damage min per hit */
     dam = MAX(1, dam);

@@ -359,6 +359,44 @@ static void test_damage_on_unkilled_dead_victim_is_reported(void)
   fx_free_char(pc);
 }
 
+/* Damage hit() deals with a natural 20 and damroll 30 (bare hands add the
+ * maximum 2) to a sturdy mob in position pos. */
+static int hit_damage_against(int pos)
+{
+  struct char_data *pc = fx_new_char("hero", FALSE, 0);
+  struct char_data *mob = fx_new_char("guard", TRUE, 0);
+  int dealt;
+
+  GET_DAMROLL(pc) = 30;
+  GET_MAX_HIT(mob) = GET_HIT(mob) = 1000;
+  GET_POS(mob) = pos;
+  fx_rand_value = 20;
+
+  hit(pc, mob, TYPE_UNDEFINED);
+
+  dealt = 1000 - GET_HIT(mob);
+  if (FIGHTING(mob)) stop_fighting(mob);
+  if (FIGHTING(pc)) stop_fighting(pc);
+  fx_free_char(mob);
+  fx_free_char(pc);
+  return dealt;
+}
+
+/* G2: the bonus against a victim not ready to fight is documented as one
+ * third more per position below fighting (x1.33 sitting ... x3 mortally
+ * wounded), but integer division made it x1 for sitting and resting and
+ * x2 for sleeping, stunned and incapacitated. */
+static void test_position_damage_bonus_matches_its_table(void)
+{
+  TEST_ASSERT_EQUAL_INT(32, hit_damage_against(POS_STANDING));
+  TEST_ASSERT_EQUAL_INT(32 * 4 / 3, hit_damage_against(POS_SITTING));
+  TEST_ASSERT_EQUAL_INT(32 * 5 / 3, hit_damage_against(POS_RESTING));
+  TEST_ASSERT_EQUAL_INT(32 * 6 / 3, hit_damage_against(POS_SLEEPING));
+  TEST_ASSERT_EQUAL_INT(32 * 7 / 3, hit_damage_against(POS_STUNNED));
+  TEST_ASSERT_EQUAL_INT(32 * 8 / 3, hit_damage_against(POS_INCAP));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -374,5 +412,6 @@ int main(void)
   RUN_TEST(test_corpse_collects_objects_given_by_remove_trigger);
   RUN_TEST(test_corpse_skips_slot_emptied_by_remove_trigger);
   RUN_TEST(test_damage_on_unkilled_dead_victim_is_reported);
+  RUN_TEST(test_position_damage_bonus_matches_its_table);
   return UNITY_END();
 }
