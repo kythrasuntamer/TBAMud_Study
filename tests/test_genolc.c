@@ -163,11 +163,66 @@ static void test_export_shop_without_keeper(void)
   top_shop = -1;
 }
 
-static struct room_data rooms[1];
+static struct room_data rooms[2];
 
 room_rnum real_room(room_vnum vnum)
 {
-  return (world && vnum == world[0].number) ? 0 : NOWHERE;
+  room_rnum i;
+  for (i = 0; world && i <= top_of_world; i++)
+    if (world[i].number == vnum)
+      return i;
+  return NOWHERE;
+}
+mob_rnum real_mobile(mob_vnum vnum) { (void)vnum; return NOBODY; }
+/* Reached only for existing mobs, of which these tests have none. */
+struct char_data *mob_proto = NULL;
+void check_mobile_strings(struct char_data *mob) { (void)mob; }
+int write_mobile_espec(mob_vnum mvnum, struct char_data *mob, FILE *fd)
+{ (void)mvnum; (void)mob; (void)fd; return TRUE; }
+const char *dirs[] = { "north", "east", "south", "west", "up", "down",
+                       "northwest", "northeast", "southeast", "southwest", "\n" };
+
+/* C1-26: the info file is written before the rooms, but read a file-scope
+ * exit counter only export_save_rooms() filled, so a first export said the
+ * zone had no exits out. */
+static void test_export_info_counts_exits_itself(void)
+{
+  struct room_direction_data out;
+  char *info;
+
+  memset(rooms, 0, sizeof(rooms));
+  memset(&out, 0, sizeof(out));
+  rooms[0].number = 1;    rooms[0].zone = 0;
+  rooms[1].number = 3001; rooms[1].zone = 1;
+  out.to_room = 0;
+  rooms[1].dir_option[NORTH] = &out;
+  world = rooms;
+  top_of_world = 1;
+  zones[1].bot = 3000;
+  zones[1].top = 3099;
+  zones[1].name = "Zone";
+  zones[1].builders = "Builder";
+
+  TEST_ASSERT_TRUE(export_info_file(1));
+  info = slurp("world/export/qq.info");
+  TEST_ASSERT_NOT_NULL(info);
+  TEST_ASSERT_NOT_NULL(strstr(info, "Exits out of this zone have been ZZ'd"));
+  TEST_ASSERT_NOT_NULL(strstr(info, "Room QQ01 : Exit to the north"));
+  world = NULL;
+}
+
+/* C1-26: a writer whose data never reached the disk returned TRUE, so
+ * do_export_zone archived the truncated file and reported success. */
+static void test_export_write_failure_is_reported(void)
+{
+  zones[1].bot = 3000;
+  zones[1].top = 3099;
+  if (symlink("/dev/full", "world/export/qq.mob") != 0)
+    TEST_IGNORE_MESSAGE("cannot link world/export/qq.mob to /dev/full");
+
+  TEST_ASSERT_FALSE(export_save_mobiles(1));
+  TEST_ASSERT_EQUAL_STRING("export-write", tb_captured_operation);
+  TEST_ASSERT_EQUAL_INT(0, unlink("world/export/qq.mob"));
 }
 
 /* C1-25: a room extra description whose text is NULL (fread_string()
@@ -228,6 +283,8 @@ int main(void)
   UNITY_BEGIN();
   RUN_TEST(test_export_shop_without_keeper);
   RUN_TEST(test_export_room_extra_descriptions);
+  RUN_TEST(test_export_info_counts_exits_itself);
+  RUN_TEST(test_export_write_failure_is_reported);
   RUN_TEST(test_failing_saver_does_not_hang_save_all);
   RUN_TEST(test_successful_saves_empty_the_list);
   RUN_TEST(test_unsavable_types_are_freed);

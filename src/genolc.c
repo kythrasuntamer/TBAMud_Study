@@ -50,7 +50,6 @@ static struct {
   { -1, NULL, NULL },
 };
 /* for Zone Export */
-static int zone_exits = 0;
 
 /* Copy a world string into an export buffer.  The copy always terminates
  * (strncpy(buf, src, sizeof(buf) - 1) into an uninitialised buffer did not,
@@ -75,6 +74,8 @@ static int export_save_triggers(zone_rnum zrnum);
 static int export_mobile_record(mob_vnum mvnum, struct char_data *mob, FILE *fd);
 static void export_script_save_to_disk(FILE *fp, void *item, int type);
 static int export_info_file(zone_rnum zrnum);
+static int export_count_zone_exits(zone_rnum zrnum);
+static int export_close(FILE *fl, const char *path, zone_rnum zrnum);
 
 int genolc_checkstring(struct descriptor_data *d, char *arg)
 {
@@ -549,6 +550,43 @@ ACMD(do_export_zone)
 #endif /* platform specific part */
 }
 
+/* Finish an export file: TRUE only if every buffered write, the flush and
+ * the close succeeded.  The writers used to return TRUE after an unchecked
+ * close, so do_export_zone archived truncated files and reported success. */
+static int export_close(FILE *fl, const char *path, zone_rnum zrnum)
+{
+  int write_ok = !ferror(fl);
+  int flush_ok = tb_fflush_checked(fl, path);
+  int close_ok = tb_fclose_checked(fl, path);
+
+  if (write_ok && flush_ok && close_ok)
+    return TRUE;
+  TB_ERROR_MSG("genolc", "export-write", path,
+               TB_ERRID_PERSIST_WRITE " zone %d export file incomplete (write %s, flush %s, close %s)",
+               zone_table[zrnum].number, write_ok ? "ok" : "failed",
+               flush_ok ? "ok" : "failed", close_ok ? "ok" : "failed");
+  return FALSE;
+}
+
+/* Count the exits that leave the zone.  The info file is written first, so
+ * it cannot rely on export_save_rooms() having counted them (it used to
+ * read a file-scope counter left over from the previous export). */
+static int export_count_zone_exits(zone_rnum zrnum)
+{
+  int i, j, count = 0;
+  room_rnum rnum;
+
+  for (i = genolc_zone_bottom(zrnum); i <= zone_table[zrnum].top; i++) {
+    if ((rnum = real_room(i)) == NOWHERE)
+      continue;
+    for (j = 0; j < DIR_COUNT; j++)
+      if (R_EXIT(&world[rnum], j) && R_EXIT(&world[rnum], j)->to_room != NOWHERE &&
+          world[R_EXIT(&world[rnum], j)->to_room].zone != zrnum)
+        count++;
+  }
+  return count;
+}
+
 static int export_info_file(zone_rnum zrnum)
 {
   int i;
@@ -575,7 +613,7 @@ static int export_info_file(zone_rnum zrnum)
   tb_fprintf(info_file, "   have been changed to QQ. In other words, if you decide to have this zone as\n");
   tb_fprintf(info_file, "   zone 123, replace all occurences of QQ with 123 and rename the qq.zon file\n");
   tb_fprintf(info_file, "   to 123.zon (etc.). And of course add 123.zon to the respective index file.\n");
-  if (zone_exits) {
+  if (export_count_zone_exits(zrnum) > 0) {
     tb_fprintf(info_file, "2. Exits out of this zone have been ZZ'd. So all doors leading out have ZZ??\n");
     tb_fprintf(info_file, "   instead of the room vnum (?? are numbers 00 - 99).\n");
     tb_fprintf(info_file, "   In this zone, the exit rooms in question are:\n");
@@ -601,7 +639,6 @@ static int export_info_file(zone_rnum zrnum)
                            room->number%100, dirs[j]);
       }
     }
-    zone_exits = 0;
   } else {
     tb_fprintf(info_file, "2. This area doesn't have any exits _out_ of the zone.\n");
     tb_fprintf(info_file, "   More info on connections can be found in the zone description room (QQ00).\n");
@@ -619,8 +656,7 @@ static int export_info_file(zone_rnum zrnum)
   tb_fprintf(info_file, "Welcor - Coder of TBA\n");
   tb_fprintf(info_file, "\ntelnet://tbamud.com:9091/\n");
 
-  tb_fclose(info_file);
-  return TRUE;
+  return export_close(info_file, "world/export/qq.info", zrnum);
 }
 
 static int export_save_shops(zone_rnum zrnum)
@@ -720,9 +756,7 @@ static int export_save_shops(zone_rnum zrnum)
     }
   }
   tb_fprintf(shop_file, "$~\n");
-  tb_fclose(shop_file);
-
-  return TRUE;
+  return export_close(shop_file, "world/export/qq.shp", zrnum);
 }
 
 static int export_save_mobiles(zone_rnum rznum)
@@ -745,9 +779,7 @@ static int export_save_mobiles(zone_rnum rznum)
       log("SYSERR: export_save_mobiles: Error writing mobile #%d.", i);
   }
   tb_fputs("$\n", mob_file);
-  tb_fclose(mob_file);
-
-  return TRUE;
+  return export_close(mob_file, "world/export/qq.mob", rznum);
 }
 
 static int export_mobile_record(mob_vnum mvnum, struct char_data *mob, FILE *fd)
@@ -921,9 +953,7 @@ static int export_save_zone(zone_rnum zrnum)
     }
   }
   tb_fputs("S\n$\n", zone_file);
-  tb_fclose(zone_file);
-
-  return TRUE;
+  return export_close(zone_file, "world/export/qq.zon", zrnum);
 }
 
 static int export_save_objects(zone_rnum zrnum)
@@ -1033,9 +1063,7 @@ static int export_save_objects(zone_rnum zrnum)
 
   /* Write the final line, close the file. */
   tb_fprintf(obj_file, "$~\n");
-  tb_fclose(obj_file);
-
-  return TRUE;
+  return export_close(obj_file, "world/export/qq.obj", zrnum);
 }
 
 static int export_save_rooms(zone_rnum zrnum)
@@ -1127,7 +1155,6 @@ static int export_save_rooms(zone_rnum zrnum)
 			      R_EXIT(room, j)->key == NOTHING ? "" : "QQ",
 			      R_EXIT(room, j)->key == NOTHING ? -1 : R_EXIT(room, j)->key % 100 ,
 			      world[R_EXIT(room, j)->to_room].number%100);
-            zone_exits++;
           }
 	}
       }
@@ -1159,9 +1186,7 @@ static int export_save_rooms(zone_rnum zrnum)
 
   /* Write the final line and close it. */
   tb_fprintf(room_file, "$~\n");
-  tb_fclose(room_file);
-
-  return TRUE;
+  return export_close(room_file, "world/export/qq.wld", zrnum);
 }
 
 static void export_script_save_to_disk(FILE *fp, void *item, int type)
@@ -1231,6 +1256,5 @@ static int export_save_triggers(zone_rnum zrnum)
   }
 
   tb_fprintf(trig_file, "$%c\n", STRING_TERMINATOR);
-  tb_fclose(trig_file);
-  return TRUE;
+  return export_close(trig_file, "world/export/qq.trg", zrnum);
 }
