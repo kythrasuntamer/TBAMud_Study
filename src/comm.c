@@ -1785,8 +1785,14 @@ static int new_descriptor(socket_t s)
     return (-1);
   }
   /* Drop bursts before hostname lookup, allocation, or protocol negotiation.
-   * Deliberately do not log individual denials to avoid disk-log amplification. */
+   * Denials are reported through TB_WARN_EVERY: the first one at once, then
+   * a count per minute, so a connection storm is visible without letting
+   * it amplify into the disk log. Only the numeric address is logged. */
   if (!tb_admit_connection((unsigned long)peer.sin_addr.s_addr, time(NULL))) {
+    TB_WARN_EVERY(60, "network", "admit-deny", "new_descriptor",
+                  "fd %ld from %s: more than %d connection attempts in %d s;"
+                  " refused", (long) desc, inet_ntoa(peer.sin_addr),
+                  TB_RATE_MAX_ATTEMPTS, TB_RATE_WINDOW_SECONDS);
     CLOSE_SOCKET(desc);
     return (0);
   }
