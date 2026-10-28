@@ -205,6 +205,7 @@ static void check_idle_passwords(void);
 static void init_descriptor (struct descriptor_data *newd, int desc);
 static int mark_unpollable_descriptors(socket_t mother);
 static int poll_failure_recoverable(socket_t mother, int poll_errno, int maxdesc);
+static void report_world_gaps(void);
 
 static struct in_addr *get_bind_addr(void);
 static int parse_ip(const char *addr, struct in_addr *inaddr);
@@ -456,9 +457,10 @@ int main(int argc, char **argv)
   }
   log("Using %s as data directory.", dir);
 
-  if (scheck)
+  if (scheck) {
     boot_world();
-  else {
+    report_world_gaps();
+  } else {
     log("Running game on port %d.", port);
     init_game(port);
   }
@@ -701,6 +703,23 @@ void copyover_recover()
   tb_fclose(fp);
 }
 
+/* Contracts between the loaded world and code that relies on it, which
+ * boot_world() does not check itself. Each gap is reported once, at boot
+ * and in syntax-check mode, as a WARNING naming the missing vnum: the
+ * server runs, but the feature that needs it would otherwise fail later
+ * with nothing pointing back at the world files. Runs once the rooms and
+ * mobiles are indexed. */
+static void report_world_gaps(void)
+{
+  /* dg_cast (dg_misc.c) loads this mob to cast spells for room and object
+   * scripts, and damage() exempts only it from ROOM_PEACEFUL; without it
+   * every such cast fails with just a script log line. */
+  if (real_mobile(DG_CASTER_PROXY) == NOBODY)
+    TB_WARN_MSG("dg", "caster-proxy-missing", "mob",
+                "vnum %d (DG_CASTER_PROXY) does not exist: room and object "
+                "scripts cannot cast spells", DG_CASTER_PROXY);
+}
+
 /* Init sockets, run game, and cleanup sockets */
 static void init_game(ush_int local_port)
 {
@@ -724,6 +743,7 @@ static void init_game(ush_int local_port)
   init_lookup_table();
 
   boot_db();
+  report_world_gaps();
 
 #if defined(CIRCLE_UNIX) || defined(CIRCLE_MACINTOSH)
   log("Signal trapping.");

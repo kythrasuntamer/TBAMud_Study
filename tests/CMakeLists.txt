@@ -1113,3 +1113,19 @@ if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
     target_compile_options(test_comm_poll PRIVATE -ffunction-sections -fdata-sections)
     target_link_options(test_comm_poll PRIVATE -Wl,--gc-sections)
 endif()
+
+# H1-16 (and later boot checks): comm.c's report_world_gaps() names world
+# contracts boot_world() does not check, such as a missing DG caster proxy
+# mob. test_comm_boot.c #includes comm.c to reach the file-static helper;
+# test_stubs.c is omitted because it defines comm.c's globals.
+add_executable(test_comm_boot
+    $<TARGET_OBJECTS:unity_vendor>
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_comm_boot.c
+)
+target_include_directories(test_comm_boot PRIVATE ${TEST_INCLUDES})
+target_compile_options(test_comm_boot PRIVATE ${TEST_CFLAGS})
+add_test(NAME test_comm_boot COMMAND test_comm_boot)
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_compile_options(test_comm_boot PRIVATE -ffunction-sections -fdata-sections)
+    target_link_options(test_comm_boot PRIVATE -Wl,--gc-sections)
+endif()
