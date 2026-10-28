@@ -71,7 +71,7 @@
  * lookup in this file goes through one of these. The unsigned cast makes a
  * negative index fail the test. Each evaluates its argument once. */
 #define TABLE_INDEX_OK(i, n)     ((unsigned int) (i) < (unsigned int) (n))
-#define VALID_ATTACK_TYPE(t)     TABLE_INDEX_OK((t), NUM_ATTACK_TYPES)
+/* VALID_ATTACK_TYPE(t) comes from fight.h (the same range test). */
 
 /* TRUE when ch asked not to have its own communication echoed back. NPCs
  * (and switched immortals' bodies) have no preferences of their own: their

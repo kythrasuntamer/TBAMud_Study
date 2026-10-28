@@ -212,7 +212,7 @@ const char *ColourRGB(descriptor_t *d, const char *rgb) { (void)d; (void)rgb; re
 const char *CopyoverGet(descriptor_t *d) { (void)d; return ""; }
 void Crash_listrent(struct char_data *ch, char *name) { (void)ch; (void)name; UNREACHED(); }
 static struct char_data *rentsaved_char;
-void Crash_rentsave(struct char_data *ch, int cost) { (void)cost; rentsaved_char = ch; }
+int Crash_rentsave(struct char_data *ch, int cost) { (void)cost; rentsaved_char = ch; return 1; }
 int House_can_enter(struct char_data *ch, room_vnum house) { (void)ch; (void)house; return 1; }
 void House_save_all(void) { UNREACHED(); }
 void add_completed_quest(struct char_data *ch, qst_vnum vnum) { (void)ch; (void)vnum; UNREACHED(); }
