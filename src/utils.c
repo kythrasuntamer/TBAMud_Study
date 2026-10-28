@@ -1347,6 +1347,17 @@ int count_color_chars(char *string)
 	len = strlen(string);
   for (i = 0; i < len; i++) {
     while (string[i] == '\t') {
+      /* A tab escape is two bytes ("\tX").  A lone tab as the last byte has
+       * no code byte: stepping i by 2 would land past the terminator and
+       * the next test would read beyond the string.  The text comes from
+       * builders and world files, so report it (without echoing the text)
+       * and count only the tab. */
+      if (string[i + 1] == '\0') {
+        TB_ERROR_LOG("WARN", "text", "color-escape", "count_color_chars", 0,
+                     "trailing lone tab escape at offset %d of %d", i, len);
+        num++;
+        return num;
+      }
       if (string[i + 1] == '\t')
         num++;
       else
