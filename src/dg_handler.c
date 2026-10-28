@@ -12,6 +12,24 @@
 *  $Revision: 1.0.14 $                                                    *
 ***************************************************************************/
 
+/**
+ * @file dg_handler.c
+ * Allocation and release of DG script structures: trigger instances,
+ * per-entity scripts, prototype trigger lists and variable lists.
+ *
+ * Ownership: a live trig_data belongs to exactly one script_data (its
+ * TRIGGERS list) and is also linked on the global trigger_list; a
+ * script_data belongs to exactly one mob, obj or room (SCRIPT(thing)); a
+ * trig_proto_list belongs to exactly one prototype or instance.  The
+ * cmdlist of a trigger is shared with its trig_index prototype and is never
+ * freed here.  Freeing while a script is executing is deferred (see
+ * dg_script_execution_enter/leave).
+ *
+ * Input: everything here is driven by engine code and OLC; script content
+ * is builder-controlled but only reaches these functions as already-built
+ * structures.  delete_variables() takes a validated player name.
+ */
+
 #include "conf.h"
 #include "sysdep.h"
 #include "structs.h"
@@ -38,11 +56,22 @@ struct dg_retired_script {
 static struct dg_retired_trigger *dg_retired_triggers;
 static struct dg_retired_script *dg_retired_scripts;
 
+/** Mark the start of a script_driver() frame.
+ * Every enter must be matched by exactly one dg_script_execution_leave()
+ * on every return path of script_driver().  While any frame is active,
+ * extract_trigger() and extract_script() unlink immediately but defer the
+ * free to the outermost leave.  A retired trigger is already off
+ * trigger_list and its owner's TRIGGERS list, so code that runs after a
+ * callback must re-validate any trigger/script pointer it kept (address
+ * plus serial) before using it. */
 void dg_script_execution_enter(void)
 {
   dg_execution_depth++;
 }
 
+/** Mark the end of a script_driver() frame.  When the outermost frame
+ * leaves, retired triggers are freed first, then retired scripts (with
+ * their global variables). */
 void dg_script_execution_leave(void)
 {
   struct dg_retired_trigger *t;
@@ -125,8 +154,13 @@ int remove_var(struct trig_var_data **var_list, char *name)
   return 0;
 }
 
-/* Return memory used by a trigger. The command list is free'd when changed and
- * when shutting down. */
+/** Return memory used by a trigger. The command list is free'd when changed and
+ * when shutting down.
+ * Does not free cmdlist (shared with the trig_index prototype) and does not
+ * unlink trig from trigger_list or any script; callers that hold a live
+ * trigger use extract_trigger() instead.  Also used on prototypes and OLC
+ * copies (db.c destroy_db, oasis.c).  Cancels a pending wait event.
+ * @param trig The trigger to free; must not be used afterwards. */
 void free_trigger(struct trig_data *trig)
 {
     free(trig->name);
@@ -146,7 +180,13 @@ void free_trigger(struct trig_data *trig)
     free(trig);
 }
 
-/* remove a single trigger from a mob/obj/room */
+/** remove a single trigger from a mob/obj/room
+ * @pre trig is already unlinked from its owner's TRIGGERS(sc) list
+ * (remove_trigger() does this; extract_script() discards the whole list).
+ * @pre trig has not been extracted before.
+ * @post The pending wait is cancelled, the trig_index use count is
+ * decremented, trig is off trigger_list, and trig is freed now or, inside
+ * script execution, at the outermost dg_script_execution_leave(). */
 void extract_trigger(struct trig_data *trig)
 {
   struct trig_data *temp;
@@ -276,6 +316,13 @@ void extract_script_mem(struct script_memory *sc)
   }
 }
 
+/** Free the prototype trigger list of a mob, obj or room and set it NULL.
+ * @param thing The owner; must be non-NULL and of the struct type that
+ * matches type.
+ * @param type MOB_TRIGGER, OBJ_TRIGGER or WLD_TRIGGER; any other value
+ * frees nothing.
+ * Aborts with dg/proto-script-shared-owner if another live char, obj or
+ * room still points at the same list. */
 void free_proto_script(void *thing, int type)
 {
   struct trig_proto_list *proto = NULL, *fproto;
@@ -333,6 +380,13 @@ void free_proto_script(void *thing, int type)
   }
 }
 
+/** Deep-copy source's prototype trigger list (vnums only) to dest.
+ * dest->proto_script is overwritten without being freed, so the caller
+ * must call free_proto_script(dest) first unless dest is a fresh struct
+ * copy of source whose pointer is still shared (read_mobile/read_object).
+ * If source has no list, dest is left unchanged.
+ * @param source,dest Non-NULL structs of the type named by type.
+ * @param type MOB_TRIGGER, OBJ_TRIGGER or WLD_TRIGGER. */
 void copy_proto_script(void *source, void *dest, int type)
 {
   struct trig_proto_list *tp_src = NULL, *tp_dst = NULL;
@@ -373,6 +427,11 @@ void copy_proto_script(void *source, void *dest, int type)
   }
 }
 
+/** Delete the saved global script-variable file of a player.
+ * @param charname A validated player name (not script-controlled).
+ * If removal fails for any reason other than a missing file the failure is
+ * logged; the file then survives and a later character created with the
+ * same name inherits its variables. */
 void delete_variables(const char *charname)
 {
   char filename[PATH_MAX];
@@ -388,6 +447,12 @@ void delete_variables(const char *charname)
   }
 }
 
+/** Repoint pending wait events of one room's triggers from 'from' to 'to'
+ * after the room struct has been copied (genwld.c add/delete shifts).
+ * @pre Called before 'from' is overwritten; reads SCRIPT(from).
+ * Only covers the one room copied.  It does not fix wait events of rooms
+ * that stay at the same index when RECREATE(world) moves the whole array;
+ * their wait_event_data->go keeps the old address (finding D2-03). */
 void update_wait_events(struct room_data *to, struct room_data *from)
 {
   struct trig_data *trig;
