@@ -6,6 +6,22 @@
 * 2002 Kip Potter [Mythran].                                              *
 **************************************************************************/
 
+/**
+ * @file oasis_list.c
+ * Builder listing commands: mlist, olist, rlist, tlist, slist, qlist, zlist
+ * (do_oasis_list) and the zone summary print_zone.
+ *
+ * Every argument is typed by a builder (LVL_BUILDER commands).  Numbers
+ * that index a name table (item_types[], apply_types[], action_bits[]) or a
+ * prototype table must be range-checked before the lookup.  The range
+ * forms take vmin/vmax as IDXTYPE (unsigned), so a negative typed value
+ * wraps to a large vnum instead of being rejected.
+ *
+ * Output: each list renders into one MAX_STRING_LENGTH stack buffer through
+ * olc_list_rowf()/OLC_LIST_FINISH (below), which keep whole rows only and
+ * report truncation to the builder and the log (op=list-truncated).
+ */
+
 #include "conf.h"
 #include "sysdep.h"
 #include "structs.h"
@@ -593,6 +609,13 @@ ACMD(do_oasis_list)
   }
 }
 
+/** links <zone vnum | .>: list exits from a zone into other zones.
+ *
+ * Not registered in the command table (interpreter.c), so it is
+ * unreachable in a stock build ("links" runs do_links); see the
+ * @deprecated question on its declaration in oasis.h.  Kept so a MUD can
+ * re-register it; it reads only world[] and zone_table and holds no
+ * state. */
 ACMD(do_oasis_links)
 {
   zone_rnum zrnum;
