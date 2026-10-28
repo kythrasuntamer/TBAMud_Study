@@ -31,26 +31,33 @@ struct index_data *obj_index = NULL;
 obj_rnum top_of_objt = 0;
 struct index_data *mob_index = NULL;
 mob_rnum top_of_mobt = 0;
+struct zone_data *zone_table = NULL;
+zone_rnum top_of_zone_table = 0;
+FILE *logfile = NULL;
+struct weather_data weather_info;
 
-void basic_mud_log(const char *format, ...) { (void)format; }
 
 /* --- Fixtures for functions outside act.informative.c ------------------- */
-static struct time_info_data fixed_time;
-struct time_info_data *age(struct char_data *ch) { (void)ch; return &fixed_time; }
-struct time_info_data *real_time_passed(time_t t2, time_t t1)
-{ (void)t2; (void)t1; return &fixed_time; }
 int compute_armor_class(struct char_data *ch) { (void)ch; return 100; }
 int level_exp(int chclass, int level) { (void)chclass; return level * 1000; }
 bool affected_by_spell(struct char_data *ch, int spell) { (void)ch; (void)spell; return FALSE; }
-int room_is_dark(room_rnum room) { (void)room; return 0; }
 struct config_data config_info;
 struct index_data **trig_index = NULL;
 bool can_see_map(struct char_data *ch) { (void)ch; return FALSE; }
 void str_and_map(char *str, struct char_data *ch, room_vnum target_room)
 { (void)str; (void)ch; (void)target_room; }
-void sprintbitarray(int bitvector[], const char *names[], int maxar,
-                    char *result, size_t reslen)
-{ (void)bitvector; (void)names; (void)maxar; if (reslen) *result = '\0'; }
+/* Commands under test are called with at most one short word. */
+char *one_argument(char *argument, char *first_arg)
+{
+  size_t n = 0;
+
+  while (*argument == ' ')
+    argument++;
+  while (*argument && *argument != ' ' && n + 1 < MAX_INPUT_LENGTH)
+    first_arg[n++] = *argument++;
+  first_arg[n] = '\0';
+  return argument;
+}
 /* act() output is not under test; the formatter has its own tests. */
 char *act_at(const char *src_file, int src_line, const char *src_func,
              const char *str, int hide_invisible, struct char_data *ch,
@@ -420,6 +427,55 @@ static void look_reports_room_sector_out_of_range(void)
   free_player(ch);
 }
 
+/* --- G2-06: 'areas' with more zone text than its buffer ---------------- */
+
+static void areas_truncates_long_listing_and_reports(void)
+{
+  struct char_data *ch = make_player(7);
+  struct descriptor_data d;
+  int nzones = 400, i;
+  char name[251];
+
+  memset(&d, 0, sizeof(d));
+  ch->desc = &d;
+  d.character = ch;
+  memset(name, 'z', sizeof(name) - 1);
+  name[sizeof(name) - 1] = '\0';
+  zone_table = calloc((size_t)nzones, sizeof(*zone_table));
+  TEST_ASSERT_NOT_NULL(zone_table);
+  for (i = 0; i < nzones; i++) {
+    zone_table[i].name = strdup(name);
+    zone_table[i].min_level = -1;
+    zone_table[i].max_level = -1;
+    SET_BIT_AR(zone_table[i].zone_flags, ZONE_GRID);
+  }
+  top_of_zone_table = nzones - 1;
+
+  do_areas(ch, (char *)"", 0, 0);   /* stack-buffer-overflow before the fix */
+  TEST_ASSERT_NOT_NULL(strstr(sent, "***OVERFLOW***"));
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("areas-truncated", tb_captured_operation);
+  TEST_ASSERT_EQUAL_STRING("WARNING", tb_captured_severity);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "400 of 400 zones"));
+
+  /* A listing that fits is not marked or reported. */
+  sent[0] = '\0';
+  tb_error_capture_reset();
+  top_of_zone_table = 2;
+  do_areas(ch, (char *)"", 0, 0);
+  TEST_ASSERT_NOT_NULL(strstr(sent, "3 areas found."));
+  TEST_ASSERT_NULL(strstr(sent, "OVERFLOW"));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+
+  for (i = 0; i < nzones; i++)
+    free(zone_table[i].name);
+  free(zone_table);
+  zone_table = NULL;
+  top_of_zone_table = 0;
+  ch->desc = NULL;
+  free_player(ch);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -433,5 +489,6 @@ int main(void)
   RUN_TEST(look_skips_mob_without_short_description);
   RUN_TEST(look_reports_mob_position_out_of_range);
   RUN_TEST(look_reports_room_sector_out_of_range);
+  RUN_TEST(areas_truncates_long_listing_and_reports);
   return UNITY_END();
 }

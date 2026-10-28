@@ -602,8 +602,20 @@ endif()
 # Production informative commands (act.informative.c): help search, room and
 # object display, score, areas, where and history. Unreferenced sections are
 # discarded; the test supplies the fixtures the reached code needs.
+# utils.c supplies the real string builders and table printers; its
+# tb_error_log_at is renamed so tb_error_capture.h can capture diagnostics.
+add_library(act_informative_utils OBJECT ${MUD_SRCDIR}/utils.c)
+set_target_properties(act_informative_utils PROPERTIES C_CLANG_TIDY "")
+target_include_directories(act_informative_utils PRIVATE ${TEST_INCLUDES})
+target_compile_options(act_informative_utils PRIVATE ${TEST_CFLAGS})
+target_compile_definitions(act_informative_utils PRIVATE
+    tb_error_log_at=tb_error_log_at_utils_unused)
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_compile_options(act_informative_utils PRIVATE -ffunction-sections -fdata-sections)
+endif()
 add_executable(test_act_informative
     $<TARGET_OBJECTS:unity_vendor>
+    $<TARGET_OBJECTS:act_informative_utils>
     ${MUD_SRCDIR}/act.informative.c
     ${MUD_SRCDIR}/constants.c
     ${CMAKE_CURRENT_SOURCE_DIR}/test_act_informative.c

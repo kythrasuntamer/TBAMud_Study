@@ -2786,9 +2786,17 @@ static bool get_zone_levels(int znum, char *buf, size_t buflen)
 
 ACMD(do_areas)
 {
-  int i, hilev=-1, lolev=-1, zcount=0, len=0, tmp_len=0;
+  int i, hilev=-1, lolev=-1, zcount=0;
   char arg[MAX_INPUT_LENGTH], *second, lev_str[MAX_INPUT_LENGTH], buf[MAX_STRING_LENGTH];
+  /* The listing grows with the zone count and zone name lengths, which
+   * builders control (zedit). Any player can run 'areas', so it is built
+   * with the bounded tb_buf and truncation is reported, not overrun. */
+  const char *overflow_marker = "***OVERFLOW***\r\n";
+  struct tb_buf out;
   bool show_zone = FALSE, overlap = FALSE, overlap_shown = FALSE, lev_set;
+
+  /* Reserve the tail of buf for the overflow marker. */
+  tb_buf_init(&out, buf, sizeof(buf) - strlen(overflow_marker));
 
   one_argument(argument, arg);
 
@@ -2821,11 +2829,11 @@ ACMD(do_areas)
     hilev = i;
   }
   if (hilev != -1)
-    len = snprintf(buf, sizeof(buf), "Checking range: %s%d to %d%s\r\n", QYEL, lolev, hilev, QNRM);
+    tb_buf_appendf(&out, "Checking range: %s%d to %d%s\r\n", QYEL, lolev, hilev, QNRM);
   else if (lolev != -1)
-    len = snprintf(buf, sizeof(buf), "Checking level: %s%d%s\r\n", QYEL, lolev, QNRM);
+    tb_buf_appendf(&out, "Checking level: %s%d%s\r\n", QYEL, lolev, QNRM);
   else
-    len = snprintf(buf, sizeof(buf), "Checking all areas.\r\n");
+    tb_buf_append(&out, "Checking all areas.\r\n");
 
   for (i = 0; i <= top_of_zone_table; i++) {    /* Go through the whole zone table */
     show_zone = FALSE;
@@ -2858,17 +2866,24 @@ ACMD(do_areas)
     if (show_zone) {
       if (overlap) overlap_shown = TRUE;
       lev_set = get_zone_levels(i, lev_str, sizeof(lev_str));
-      tmp_len = snprintf(buf+len, sizeof(buf)-len, "\tn(%3d) %s%-*s\tn %s%s\tn\r\n", ++zcount, overlap ? QRED : QCYN,
+      tb_buf_appendf(&out, "\tn(%3d) %s%-*s\tn %s%s\tn\r\n", ++zcount, overlap ? QRED : QCYN,
                  count_color_chars(zone_table[i].name)+30, zone_table[i].name,
                  lev_set ? "\tc" : "\tn", lev_set ? lev_str : "All Levels");
-      len += tmp_len;
     }
   }
-  tmp_len = snprintf(buf+len, sizeof(buf)-len, "%s%d%s area%s found.\r\n", QYEL, zcount, QNRM, zcount == 1 ? "" : "s");
-  len += tmp_len;
+  tb_buf_appendf(&out, "%s%d%s area%s found.\r\n", QYEL, zcount, QNRM, zcount == 1 ? "" : "s");
 
   if (overlap_shown) {
-    tb_snprintf(buf+len, sizeof(buf)-len, "Areas shown in \trred\tn may have some creatures outside the specified range.\r\n");
+    tb_buf_append(&out, "Areas shown in \trred\tn may have some creatures outside the specified range.\r\n");
+  }
+
+  if (tb_buf_truncated(&out)) {
+    TB_WARN_MSG("act", "areas-truncated", "buf",
+                DIAG_CHAR_FMT " areas listing truncated at %zu bytes: %d of "
+                "%d zones matched", DIAG_CHAR(ch), out.capacity, zcount,
+                top_of_zone_table + 1);
+    /* out.length <= capacity - 1, so the reserved tail holds the marker. */
+    strlcpy(buf + out.length, overflow_marker, sizeof(buf) - out.length);
   }
 
   if (zcount == 0)
