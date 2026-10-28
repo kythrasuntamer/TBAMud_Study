@@ -238,11 +238,7 @@ int save_quests(zone_rnum zone_num)
   char buf[MAX_STRING_LENGTH];
   int i, num_quests = 0;
 
-#if CIRCLE_UNSIGNED_INDEX
-  if (zone_num == NOWHERE || zone_num > top_of_zone_table) {
-#else
-  if (zone_num < 0 || zone_num > top_of_zone_table) {
-#endif
+  if (!VALID_ZONE_RNUM(zone_num)) {
     log("SYSERR: GenOLC: save_quests: Invalid zone number %d passed! (0-%d)",
          zone_num, top_of_zone_table);
     return FALSE;

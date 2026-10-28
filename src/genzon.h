@@ -12,6 +12,15 @@
 #ifndef TBAMUD_GENZON_H_INCLUDED
 #define TBAMUD_GENZON_H_INCLUDED
 
+/** TRUE when r names a loaded zone: usable as zone_table[r].  Every writer
+ * takes a zone rnum from its OLC caller and checks it with this before
+ * indexing.  r is evaluated twice: pass a plain variable. */
+#if CIRCLE_UNSIGNED_INDEX
+#define VALID_ZONE_RNUM(r)	((r) != NOWHERE && (r) <= top_of_zone_table)
+#else
+#define VALID_ZONE_RNUM(r)	((r) >= 0 && (r) <= top_of_zone_table)
+#endif
+
 zone_rnum create_new_zone(zone_vnum vzone_num, room_vnum bottom, room_vnum top, const char **error);
 void remove_room_zone_commands(zone_rnum zone, room_rnum room_num);
 int save_zone(zone_rnum zone_num);
