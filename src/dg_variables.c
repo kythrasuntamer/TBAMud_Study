@@ -1772,6 +1772,19 @@ void var_subst(void *go, struct script_data *sc, trig_data *trig,
 
     *buf = '\0';
 
+    /* A lone '%' that ends the line opens no variable: keep it literally. */
+    if (*p == '%' && p[1] == '\0') {
+      TB_WARN_MSG("dg", "subst-unterminated", "var_subst",
+                  "trig vnum %d: '%%' at column %ld ends the line; copied "
+                  "literally", DIAG_TRIG_VNUM(trig), (long)(p - tmp));
+      if (left > 0) {
+        *(buf++) = '%';
+        *buf = '\0';
+        left--;
+      }
+      break;
+    }
+
     /* double % */
     if (*p && (*(++p) == '%') && (left > 0)) {
       *(buf++) = *(p++);

@@ -356,6 +356,38 @@ static void accepted_wait_keeps_trigger_suspended(void)
   TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
 }
 
+/* var_subst() on a heap copy of text, so ASan sees any over-read. */
+static void subst(char_data *mob, trig_data *t, const char *text, char *out)
+{
+  char *line = strdup(text);
+
+  TEST_ASSERT_NOT_NULL(line);
+  var_subst(mob, SCRIPT(mob), t, MOB_TRIGGER, line, out);
+  free(line);
+}
+
+static trig_data *idle_mob_trigger(char_data *mob)
+{
+  const char *lines[] = { "nop", NULL };
+  trig_data *t = make_trigger(MOB_TRIGGER, MTRIG_SPEECH, 0, lines);
+
+  attach_to_script(&SCRIPT(mob), t);
+  return t;
+}
+
+/* D1-04: a lone '%' ending the line opens no variable; it used to be
+ * dropped silently. */
+static void lone_percent_at_line_end_is_kept(void)
+{
+  char_data *mob = make_mob("mob");
+  trig_data *t = idle_mob_trigger(mob);
+  char out[MAX_INPUT_LENGTH];
+
+  subst(mob, t, "say 50%", out);
+  TEST_ASSERT_EQUAL_STRING("say 50%", out);
+  TEST_ASSERT_EQUAL_STRING("subst-unterminated", tb_captured_operation);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -368,5 +400,6 @@ int main(void)
   RUN_TEST(rejected_wait_ends_trigger_cleanly);
   RUN_TEST(overflowing_wait_is_capped_not_wedged);
   RUN_TEST(accepted_wait_keeps_trigger_suspended);
+  RUN_TEST(lone_percent_at_line_end_is_kept);
   return UNITY_END();
 }
