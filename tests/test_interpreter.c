@@ -1229,8 +1229,110 @@ static void assert_unverifiable_login(struct descriptor_data *d,
   TEST_ASSERT_EQUAL_INT(0, GET_BAD_PWS(dch));
   TEST_ASSERT_EQUAL_INT(1, captured_errors);
   TEST_ASSERT_EQUAL_STRING("password-verify", captured_operation);
-  TEST_ASSERT_NOT_NULL(strstr(captured_detail, "player idnum 31"));
+  TEST_ASSERT_NOT_NULL(strstr(captured_detail, "player idnum 31 name Twinnie"));
   TEST_ASSERT_NOT_NULL(strstr(captured_detail, why));
+}
+
+/* What the player was shown (write_to_output is weak in test_stubs.c). */
+static char shown[2048];
+size_t write_to_output(struct descriptor_data *d, const char *txt, ...)
+{
+  va_list args;
+  size_t used = strlen(shown);
+  int n;
+
+  (void)d;
+  va_start(args, txt);
+  n = vsnprintf(shown + used, sizeof(shown) - used, txt, args);
+  va_end(args);
+  return n < 0 ? 0 : (size_t)n;
+}
+
+/* A character called name at state, whose stored hash is a legacy DES
+ * hash this crypt()-less build cannot check. */
+static struct char_data *legacy_char_at(struct descriptor_data *d,
+                                        const char *name, int state)
+{
+  struct char_data *dch = heap_char(name);
+
+  strlcpy(GET_PASSWD(dch), "abJnggxhB/yWI", sizeof(dch->player.passwd));
+  GET_IDNUM(dch) = 0;                  /* as during character creation */
+  memset(d, 0, sizeof(*d));
+  d->character = dch;
+  dch->desc = d;
+  STATE(d) = state;
+  *shown = '\0';
+  return dch;
+}
+
+/* Each password prompt after login treats an unverifiable password as the
+ * server's problem: it says so, reports the name (idnum is 0 in creation)
+ * and either closes (an unconfirmed new hash is in memory) or returns to
+ * the menu.  Red before: "Passwords don't match" / "Incorrect password",
+ * and CON_CNFPASSWD looped forever. */
+static void check_unverifiable_prompt(const char *name, int state, int want)
+{
+  struct descriptor_data d;
+  struct char_data *dch = legacy_char_at(&d, name, state);
+  char arg[] = "whatever1";
+  char who[64];
+
+  captured_errors = 0;
+  nanny(&d, arg);
+  TEST_ASSERT_EQUAL_INT_MESSAGE(want, STATE(&d), name);
+  TEST_ASSERT_NOT_NULL_MESSAGE(strstr(shown, "cannot be checked"), name);
+  TEST_ASSERT_NULL_MESSAGE(strstr(shown, "don't match"), name);
+  TEST_ASSERT_NULL_MESSAGE(strstr(shown, "Incorrect password"), name);
+  TEST_ASSERT_EQUAL_INT_MESSAGE(1, captured_errors, name);
+  TEST_ASSERT_EQUAL_STRING("password-verify", captured_operation);
+  snprintf(who, sizeof(who), "player idnum 0 name %s", name);
+  TEST_ASSERT_NOT_NULL_MESSAGE(strstr(captured_detail, who), name);
+  dch->desc = NULL;
+  free_heap_chars();
+}
+
+void test_unverifiable_password_at_each_prompt(void)
+{
+  check_unverifiable_prompt("Cnfone", CON_CNFPASSWD, CON_CLOSE);
+  check_unverifiable_prompt("Vrfyone", CON_CHPWD_VRFY, CON_CLOSE);
+  check_unverifiable_prompt("Oldone", CON_CHPWD_GETOLD, CON_MENU);
+  check_unverifiable_prompt("Delone", CON_DELCNF1, CON_MENU);
+}
+
+/* A reconnect loop against one legacy-hash account: at most
+ * TB_PW_REPORT_BURST (5) records, then one "withheld" record; each attempt
+ * counts against the account's login rate limit (never as a bad password),
+ * so the loop is cut off with "Too many login attempts".  Red before: one
+ * ERROR record per attempt, forever. */
+void test_unverifiable_login_flood_is_rate_limited(void)
+{
+  struct descriptor_data d;
+  struct char_data *dch;
+  char arg[] = "whatever1";
+  int i, reports = 0, withheld = 0, cut_off = 0;
+
+  for (i = 0; i < 20 && !cut_off; i++) {
+    dch = legacy_char_at(&d, "Floodie", CON_PASSWORD);
+    captured_errors = 0;
+    *captured_operation = '\0';
+    nanny(&d, arg);
+    if (strstr(shown, "Too many login attempts"))
+      cut_off = 1;
+    else
+      TEST_ASSERT_NOT_NULL(strstr(shown, "cannot be checked"));
+    if (!strcmp(captured_operation, "password-verify"))
+      reports += captured_errors;
+    else if (!strcmp(captured_operation, "password-verify-suppressed"))
+      withheld += captured_errors;
+    TEST_ASSERT_EQUAL_INT(0, d.bad_pws);
+    TEST_ASSERT_EQUAL_INT(0, GET_BAD_PWS(dch));
+    dch->desc = NULL;
+    free_heap_chars();
+  }
+  TEST_ASSERT_EQUAL_INT(5, reports);
+  TEST_ASSERT_EQUAL_INT(1, withheld);
+  TEST_ASSERT_TRUE(cut_off);
+  TEST_ASSERT_TRUE(i <= 9);            /* TB_LOGIN_MAX_FAILURES (8) + 1 */
 }
 
 /* Red before: the legacy hash was silently a wrong password (3 strikes). */
@@ -1355,6 +1457,8 @@ int main(void)
 #ifdef NOCRYPT
     RUN_TEST(test_legacy_hash_without_crypt_is_reported_not_counted);
     RUN_TEST(test_sodium_init_failure_is_reported_not_counted);
+    RUN_TEST(test_unverifiable_password_at_each_prompt);
+    RUN_TEST(test_unverifiable_login_flood_is_rate_limited);
 #endif
 
     return UNITY_END();

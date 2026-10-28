@@ -69,21 +69,36 @@ static int tb_password_is_argon2id(const char *hash)
  * is reported and never counted as a wrong password. */
 enum tb_pw_result { TB_PW_MISMATCH = 0, TB_PW_MATCH = 1, TB_PW_UNVERIFIABLE = 2 };
 
-/* Verify a password against player idnum's saved hash.
+/* Reports an unverifiable password check, rate limited (defined below,
+ * after the login rate table it shares). */
+static void tb_pw_unverifiable_at(const char *resource, long idnum,
+                                  const char *name, const char *why,
+                                  const char *file, int line,
+                                  const char *func);
+
+/* What a player is told when the server cannot check a password. */
+#define TB_PW_CANNOT_CHECK \
+  "\r\nYour password cannot be checked on this server right now.\r\n" \
+  "Please contact an administrator.\r\n"
+
+/* Verify a password against the saved hash of player idnum / name.
  * New hashes use libsodium; existing crypt hashes are accepted only when
  * that compatibility path is enabled.  Never falls back to comparing
- * plaintext.  A hash this build cannot check is reported (password-verify)
- * with the idnum, and the caller must not treat it as a match.
+ * plaintext.  A hash this build cannot check is reported (password-verify,
+ * rate limited) with the idnum and name at the caller's location, and the
+ * caller must not treat it as a match.
  */
-static enum tb_pw_result tb_password_verify(const char *password,
-                                            const char *hash, long idnum)
+static enum tb_pw_result tb_password_verify_at(const char *password,
+                                               const char *hash, long idnum,
+                                               const char *name,
+                                               const char *file, int line,
+                                               const char *func)
 {
   if (password == NULL || hash == NULL || !*hash)
     return (TB_PW_MISMATCH);
   if (sodium_init() < 0) {
-    TB_ERROR_MSG("login", "password-verify", "libsodium",
-                 "player idnum %ld: sodium_init failed; password not checked",
-                 idnum);
+    tb_pw_unverifiable_at("libsodium", idnum, name, "sodium_init failed",
+                          file, line, func);
     return (TB_PW_UNVERIFIABLE);
   }
   if (tb_password_is_argon2id(hash))
@@ -98,12 +113,15 @@ static enum tb_pw_result tb_password_verify(const char *password,
             ? TB_PW_MATCH : TB_PW_MISMATCH);
   }
 #else
-  TB_ERROR_MSG("login", "password-verify", "crypt",
-               "player idnum %ld has a legacy (non-Argon2id) hash but this "
-               "build has no crypt(); password not checked", idnum);
+  tb_pw_unverifiable_at("crypt", idnum, name,
+                        "legacy (non-Argon2id) hash but this build has no crypt()",
+                        file, line, func);
   return (TB_PW_UNVERIFIABLE);
 #endif
 }
+#define tb_password_verify(password, hash, idnum, name) \
+  tb_password_verify_at((password), (hash), (idnum), (name), \
+                        __FILE__, __LINE__, __func__)
 
 /* Write a new Argon2id hash into caller-owned storage.
  * The buffer needs crypto_pwhash_STRBYTES bytes.  A false result means the
@@ -141,6 +159,8 @@ struct tb_login_rate_entry {
   time_t window_start;
   time_t last_seen;
   unsigned int failures;
+  unsigned int pw_reports;     /* password-verify reports this window */
+  unsigned int pw_suppressed;  /* reports withheld since the last one */
 };
 
 static struct tb_login_rate_entry tb_login_rates[TB_LOGIN_RATE_SLOTS];
@@ -168,15 +188,71 @@ static struct tb_login_rate_entry *tb_login_rate_entry_for(const char *name,
   }
 
   entry = &tb_login_rates[slot];
+  if (strcmp(entry->account, name) != 0) {
+    entry->pw_suppressed = 0;          /* a different account's slot */
+    entry->window_start = 0;
+  }
   if (strcmp(entry->account, name) != 0 ||
       now < entry->window_start ||
       now - entry->window_start >= TB_LOGIN_WINDOW) {
     strlcpy(entry->account, name, sizeof(entry->account));
     entry->window_start = now;
     entry->failures = 0;
+    entry->pw_reports = 0;
   }
   entry->last_seen = now;
   return entry;
+}
+
+/* password-verify reports allowed per TB_LOGIN_WINDOW: per account (a
+ * reconnect loop against one legacy-hash account) and from all accounts. */
+#define TB_PW_REPORT_BURST 5
+#define TB_PW_REPORT_GLOBAL 20
+
+static void tb_pw_unverifiable_at(const char *resource, long idnum,
+                                  const char *name, const char *why,
+                                  const char *file, int line,
+                                  const char *func)
+{
+  static time_t global_start;
+  static unsigned int global_reports, global_suppressed;
+  time_t now = time(NULL);
+  struct tb_login_rate_entry *rate = tb_login_rate_entry_for(name, now);
+  int over_account, over_global;
+  unsigned int earlier;
+
+  if (now < global_start || now - global_start >= TB_LOGIN_WINDOW) {
+    global_start = now;
+    global_reports = 0;
+  }
+  over_account = rate != NULL && rate->pw_reports >= TB_PW_REPORT_BURST;
+  over_global = global_reports >= TB_PW_REPORT_GLOBAL;
+  if (over_account || over_global) {
+    unsigned int *withheld = over_account ? &rate->pw_suppressed
+                                          : &global_suppressed;
+
+    if ((*withheld)++ == 0)
+      tb_error_log_at("WARNING", "login", "password-verify-suppressed",
+                      resource, 0, file, line, func,
+                      "player idnum %ld name %s: further password-verify "
+                      "reports %s are withheld for up to %d s",
+                      idnum, name ? name : "(none)",
+                      over_account ? "for this account" : "from all accounts",
+                      TB_LOGIN_WINDOW);
+    return;
+  }
+  earlier = global_suppressed + (rate != NULL ? rate->pw_suppressed : 0);
+  if (rate != NULL) {
+    rate->pw_reports++;
+    rate->pw_suppressed = 0;
+  }
+  global_reports++;
+  global_suppressed = 0;
+  tb_error_log_at("ERROR", "login", "password-verify", resource, 0,
+                  file, line, func,
+                  "player idnum %ld name %s: %s; password not checked "
+                  "(%u earlier report(s) withheld)",
+                  idnum, name ? name : "(none)", why, earlier);
 }
 
 /* globals defined here, used here and elsewhere */
@@ -1873,12 +1949,15 @@ void nanny(struct descriptor_data *d, char *arg)
       }
 
       pw = tb_password_verify(arg, GET_PASSWD(d->character),
-                              GET_IDNUM(d->character));
+                              GET_IDNUM(d->character),
+                              GET_PC_NAME(d->character));
       if (pw == TB_PW_UNVERIFIABLE) {
-        /* Already reported; not the player's mistake, so neither a bad
-         * password nor a rate-limit failure. */
-        write_to_output(d, "\r\nYour password cannot be checked on this server "
-                        "right now.\r\nPlease contact an administrator.\r\n");
+        /* Reported (rate limited). Not the player's mistake, so not a bad
+         * password; but it is an attempt, so a reconnect loop still meets
+         * the account's login rate limit. */
+        if (rate != NULL && rate->failures < TB_LOGIN_MAX_FAILURES)
+          ++rate->failures;
+        write_to_output(d, "%s", TB_PW_CANNOT_CHECK);
         STATE(d) = CON_CLOSE;
         return;
       }
@@ -1990,9 +2069,21 @@ void nanny(struct descriptor_data *d, char *arg)
     break;
 
   case CON_CNFPASSWD:
-  case CON_CHPWD_VRFY:
-    if (tb_password_verify(arg, GET_PASSWD(d->character),
-                           GET_IDNUM(d->character)) != TB_PW_MATCH) {
+  case CON_CHPWD_VRFY: {
+    enum tb_pw_result pw = tb_password_verify(arg, GET_PASSWD(d->character),
+                                              GET_IDNUM(d->character),
+                                              GET_PC_NAME(d->character));
+
+    if (pw == TB_PW_UNVERIFIABLE) {
+      /* The new hash is already in memory but unconfirmed: never return to
+       * a state that could save it.  Close instead (neither state is in
+       * the game, so the character is not saved). */
+      echo_on(d);
+      write_to_output(d, "%s", TB_PW_CANNOT_CHECK);
+      STATE(d) = CON_CLOSE;
+      return;
+    }
+    if (pw != TB_PW_MATCH) {
       write_to_output(d, "\r\nPasswords don't match... start over.\r\nPassword: ");
       if (STATE(d) == CON_CNFPASSWD)
 	STATE(d) = CON_NEWPASSWD;
@@ -2011,6 +2102,7 @@ void nanny(struct descriptor_data *d, char *arg)
       STATE(d) = CON_MENU;
     }
     break;
+  }
 
   case CON_QSEX:		/* query sex of new user         */
     switch (*arg) {
@@ -2160,23 +2252,32 @@ void nanny(struct descriptor_data *d, char *arg)
     break;
   }
 
-  case CON_CHPWD_GETOLD:
-    if (tb_password_verify(arg, GET_PASSWD(d->character),
-                           GET_IDNUM(d->character)) != TB_PW_MATCH) {
+  case CON_CHPWD_GETOLD: {
+    enum tb_pw_result pw = tb_password_verify(arg, GET_PASSWD(d->character),
+                                              GET_IDNUM(d->character),
+                                              GET_PC_NAME(d->character));
+
+    if (pw != TB_PW_MATCH) {
       echo_on(d);
-      write_to_output(d, "\r\nIncorrect password.\r\n%s", CONFIG_MENU);
+      write_to_output(d, "%s%s", pw == TB_PW_UNVERIFIABLE ? TB_PW_CANNOT_CHECK
+                      : "\r\nIncorrect password.\r\n", CONFIG_MENU);
       STATE(d) = CON_MENU;
     } else {
       write_to_output(d, "\r\nEnter a new password: ");
       STATE(d) = CON_CHPWD_GETNEW;
     }
     return;
+  }
 
-  case CON_DELCNF1:
+  case CON_DELCNF1: {
+    enum tb_pw_result pw;
+
     echo_on(d);
-    if (tb_password_verify(arg, GET_PASSWD(d->character),
-                           GET_IDNUM(d->character)) != TB_PW_MATCH) {
-      write_to_output(d, "\r\nIncorrect password.\r\n%s", CONFIG_MENU);
+    pw = tb_password_verify(arg, GET_PASSWD(d->character),
+                            GET_IDNUM(d->character), GET_PC_NAME(d->character));
+    if (pw != TB_PW_MATCH) {
+      write_to_output(d, "%s%s", pw == TB_PW_UNVERIFIABLE ? TB_PW_CANNOT_CHECK
+                      : "\r\nIncorrect password.\r\n", CONFIG_MENU);
       STATE(d) = CON_MENU;
     } else {
       write_to_output(d, "\r\nYOU ARE ABOUT TO DELETE THIS CHARACTER PERMANENTLY.\r\n"
@@ -2185,6 +2286,7 @@ void nanny(struct descriptor_data *d, char *arg)
       STATE(d) = CON_DELCNF2;
     }
     break;
+  }
 
   case CON_DELCNF2:
     if (!strcmp(arg, "yes") || !strcmp(arg, "YES")) {
