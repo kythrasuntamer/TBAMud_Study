@@ -25,6 +25,7 @@
 #include "modify.h"
 #include "spells.h"  /* for skill_name() */
 #include "screen.h"
+#include "dg_scripts.h" /* for obj_script_id() in diagnostics */
 
 /* Global variables definitions used externally */
 /* Constant list for printing out who we sell to */
@@ -905,7 +906,16 @@ static char *list_object(struct obj_data *obj, int cnt, int aindex, int shop_nr,
 
   switch (GET_OBJ_TYPE(obj)) {
   case ITEM_DRINKCON:
-    if (GET_OBJ_VAL(obj, 1))
+    /* Value 2 (liquid) indexes drinks[]. Boot does not range-check it and
+     * osetval writes any int, so an out-of-range value is reported and
+     * shown as "<bad liquid>" instead of reading past the table. */
+    if (GET_OBJ_VAL(obj, 1) && !VALID_LIQ_TYPE(GET_OBJ_VAL(obj, 2))) {
+      TB_ERROR_MSG("shop", "liquid-index", "drinks",
+                   "shop #%d obj vnum %d uid %ld liquid %d not in [0,%d)",
+                   (int) SHOP_NUM(shop_nr), (int) GET_OBJ_VNUM(obj),
+                   obj_script_id(obj), GET_OBJ_VAL(obj, 2), NUM_LIQ_TYPES);
+      tb_snprintf(itemname, sizeof(itemname), "%s of <bad liquid>", obj->short_description);
+    } else if (GET_OBJ_VAL(obj, 1))
       tb_snprintf(itemname, sizeof(itemname), "%s of %s", obj->short_description, drinks[GET_OBJ_VAL(obj, 2)]);
     else
       strlcpy(itemname, obj->short_description, sizeof(itemname));

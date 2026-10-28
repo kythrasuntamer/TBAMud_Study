@@ -97,6 +97,10 @@ struct stack_data {
 /** TRUE when another push would overflow the stack. */
 #define S_FULL(stack)		(S_LEN(stack) >= S_CAPACITY(stack))
 
+/** TRUE when v may index drinks[]. Liquid values come from world files,
+ * OLC and DG osetval, none of which range-check them. v evaluated twice. */
+#define VALID_LIQ_TYPE(v)	((v) >= 0 && (v) < NUM_LIQ_TYPES)
+
 /* Which expression type we are now parsing */
 #define OPER_OPEN_PAREN		0
 #define OPER_CLOSE_PAREN	1

@@ -15,6 +15,10 @@ int top_shop = -1;
 const char *extra_bits[] = { "GLOW", "HUM", "\n" };
 void basic_mud_log(const char *format, ...) { (void)format; }
 long obj_script_id(struct obj_data *obj) { return obj->script_id; }
+struct obj_data *obj_proto;
+const char *drinks[] = { "water", "beer", "\n" };
+char *CAP(char *txt) { *txt = UPPER(*txt); return txt; }
+int count_color_chars(char *string) { (void)string; return 0; }
 int str_cmp(const char *a, const char *b)
 {
   for (; LOWER(*a) == LOWER(*b); a++, b++)
@@ -136,9 +140,31 @@ static void test_buyword_extra_operands_reported(void)
   free(expr);
 }
 
+/* H2-07: a drink container whose liquid is outside drinks[] is listed as
+ * "<bad liquid>" and reported, not read past the table. */
+static void test_list_object_bad_liquid_reported(void)
+{
+  struct char_data keeper, buyer;
+  char *line;
+
+  memset(&keeper, 0, sizeof(keeper));
+  memset(&buyer, 0, sizeof(buyer));
+  item.short_description = strdup("a flask");
+  GET_OBJ_TYPE(&item) = ITEM_DRINKCON;
+  GET_OBJ_VAL(&item, 1) = 5;
+  GET_OBJ_VAL(&item, 2) = 40;
+  line = list_object(&item, 1, 1, 0, &keeper, &buyer);
+  TEST_ASSERT_NOT_NULL(strstr(line, "<bad liquid>"));
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("liquid-index", tb_captured_operation);
+  free(item.short_description);
+  item.short_description = NULL;
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(test_list_object_bad_liquid_reported);
   RUN_TEST(test_buyword_unbalanced_paren_reported);
   RUN_TEST(test_buyword_missing_operand_reported);
   RUN_TEST(test_buyword_extra_operands_reported);
