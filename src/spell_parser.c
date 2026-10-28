@@ -177,18 +177,73 @@ int find_skill_num(char *name) {
  * works -- all come through this function eventually. This is also the entry
  * point for non-spoken or unrestricted spells. Spellnum 0 is legal but silently
  * ignored here, to make callers simpler. */
+/* Re-validate call_magic's participants after a cast trigger ran. DG scripts
+ * (builder-controlled) can purge the target object, which extract_obj()
+ * frees immediately, so ovict is checked by UID without dereferencing it.
+ * Characters are only marked for extraction (freed at end of pulse), so a
+ * purged caster or cvict is still allocated but must not be acted on.
+ * Returns TRUE when the cast may continue; otherwise reports
+ * cast-target-purged and returns FALSE. */
+static bool cast_targets_intact(struct char_data *caster,
+    struct char_data *cvict, struct obj_data *ovict, long ouid, int spellnum,
+    const char *trigger) {
+  if (ovict && !obj_uid_matches(ouid, ovict)) {
+    TB_WARN_MSG("magic", "cast-target-purged", skill_name(spellnum),
+                "spell %d obj uid %ld purged by %s cast trigger; caster "
+                DIAG_CHAR_FMT, spellnum, ouid, trigger, DIAG_CHAR(caster));
+    return FALSE;
+  }
+  if (DEAD(caster)) {
+    TB_WARN_MSG("magic", "cast-target-purged", skill_name(spellnum),
+                "spell %d caster " DIAG_CHAR_FMT " purged by %s cast trigger",
+                spellnum, DIAG_CHAR(caster), trigger);
+    return FALSE;
+  }
+  if (cvict && DEAD(cvict)) {
+    TB_WARN_MSG("magic", "cast-target-purged", skill_name(spellnum),
+                "spell %d victim " DIAG_CHAR_FMT " purged by %s cast trigger; "
+                "caster " DIAG_CHAR_FMT, spellnum, DIAG_CHAR(cvict), trigger,
+                DIAG_CHAR(caster));
+    return FALSE;
+  }
+  return TRUE;
+}
+
+/**
+ * Cast spellnum from caster at cvict and/or ovict.
+ *
+ * The room, object and mob cast triggers run first and can purge or move
+ * caster, cvict and ovict. ovict is freed at once by extract_obj(); the
+ * function re-validates all three after each trigger and stops (returns 0)
+ * when one was purged. Callers that keep using any of these pointers after
+ * call_magic() returns must re-validate them the same way (obj by UID with
+ * obj_uid_matches(), characters with DEAD()).
+ *
+ * @return -1 the target died (do not cast again); 0 the cast was blocked,
+ *         invalid, or a participant was purged; 1 the spell was cast.
+ */
 int call_magic(struct char_data *caster, struct char_data *cvict,
     struct obj_data *ovict, int spellnum, int level, int casttype) {
   int savetype;
+  long ouid;
 
   if (spellnum < 1 || spellnum > TOP_SPELL_DEFINE)
     return (0);
 
+  /* Snapshot the object's identity before any script can free it. */
+  ouid = ovict ? obj_script_id(ovict) : 0;
+
   if (!cast_wtrigger(caster, cvict, ovict, spellnum))
+    return 0;
+  if (!cast_targets_intact(caster, cvict, ovict, ouid, spellnum, "room"))
     return 0;
   if (!cast_otrigger(caster, ovict, spellnum))
     return 0;
+  if (!cast_targets_intact(caster, cvict, ovict, ouid, spellnum, "object"))
+    return 0;
   if (!cast_mtrigger(caster, cvict, spellnum))
+    return 0;
+  if (!cast_targets_intact(caster, cvict, ovict, ouid, spellnum, "mob"))
     return 0;
 
   if (ROOM_FLAGGED(IN_ROOM(caster), ROOM_NOMAGIC)) {
