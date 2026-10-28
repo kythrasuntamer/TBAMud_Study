@@ -82,6 +82,118 @@ static void cancel_zone_command(struct reset_com *cmd)
   cmd->command = '*';
 }
 
+/* Containers a 'P' may no longer put into because the command that loaded
+ * them was cancelled; more than this many in one zone is reported. */
+#define DELETE_ROOM_MAX_GONE_CONTAINERS 64
+
+static int obj_rnum_in(const obj_rnum *set, int n, obj_rnum r)
+{
+  int k;
+  for (k = 0; k < n; k++)
+    if (set[k] == r)
+      return TRUE;
+  return FALSE;
+}
+
+/* delete_room()'s pass over one zone's reset commands.  A command that loads
+ * into the deleted room (rnum) is cancelled; one above it is renumbered.
+ * Commands that act on what an earlier command loaded are chained the way
+ * reset_zone() runs them: 'G'/'E' give to the mobile the last 'M' loaded
+ * (until the next 'M'); 'P' puts into the latest loaded copy of its
+ * container; 'T'/'V' on a mob or object target the last mobile or object
+ * loaded.  When that earlier command is cancelled here, the dependent one
+ * would act on an earlier mobile or object at the next reset (or fail at
+ * every reset), so it is cancelled too, and each one is reported. */
+static void cancel_room_reset_commands(zone_rnum zone, room_rnum rnum,
+                                       room_vnum deleted_vnum)
+{
+  int j, mob_gone = FALSE, tmob_gone = FALSE, tobj_gone = FALSE, ngone = 0;
+  obj_rnum gone_containers[DELETE_ROOM_MAX_GONE_CONTAINERS];
+
+  for (j = 0; zone_table[zone].cmd[j].command != 'S'; j++) {
+    struct reset_com *c = &zone_table[zone].cmd[j];
+    char cmd = c->command;          /* before this pass changes it */
+    int gone = FALSE;
+
+    switch (cmd) {
+    case 'M':
+    case 'O':
+    case 'T':
+    case 'V':
+      if (c->arg3 == rnum)
+        gone = TRUE;
+      else if (c->arg3 > rnum)
+        c->arg3 -= (c->arg3 != NOWHERE); /* with unsigned NOWHERE > any rnum */
+      break;
+    case 'D':
+    case 'R':
+      if (c->arg1 == rnum)
+        gone = TRUE;
+      else if (c->arg1 > rnum)
+        c->arg1 -= (c->arg1 != NOWHERE); /* with unsigned NOWHERE > any rnum */
+      break;
+    case 'G':
+    case 'P':
+    case 'E':
+    case '*':
+      break;
+    default:
+      mudlog(BRF, LVL_GOD, TRUE, "SYSERR: GenOLC: delete_room: Unknown zone entry found!");
+    }
+
+    if (!gone &&
+        (((cmd == 'G' || cmd == 'E') && mob_gone) ||
+         (cmd == 'P' && obj_rnum_in(gone_containers, ngone, c->arg3)) ||
+         ((cmd == 'T' || cmd == 'V') &&
+          ((c->arg1 == MOB_TRIGGER && tmob_gone) ||
+           (c->arg1 == OBJ_TRIGGER && tobj_gone))))) {
+      TB_WARN_MSG("olc", "room-delete-orphan", "zone",
+                  "zone %d line %d command %d '%c' acted on what a command "
+                  "cancelled with deleted room vnum %d loaded; cancelled",
+                  zone_table[zone].number, c->line, j, cmd, deleted_vnum);
+      gone = TRUE;
+    }
+    if (gone)
+      cancel_zone_command(c);	/* Frees a 'V' command's strings. */
+
+    /* What the following commands act on, as reset_zone() tracks it. */
+    switch (cmd) {
+    case 'M':
+      mob_gone = tmob_gone = gone;
+      tobj_gone = FALSE;
+      break;
+    case 'O':
+    case 'P':
+    case 'G':
+    case 'E':
+      tobj_gone = gone;
+      tmob_gone = FALSE;
+      if (gone && !obj_rnum_in(gone_containers, ngone, c->arg1)) {
+        if (ngone < DELETE_ROOM_MAX_GONE_CONTAINERS)
+          gone_containers[ngone++] = c->arg1;
+        else
+          TB_WARN_MSG("olc", "room-delete-orphan", "zone",
+                      "zone %d line %d: more than %d cancelled containers; "
+                      "a later 'P' into obj rnum %d is not checked",
+                      zone_table[zone].number, c->line,
+                      DELETE_ROOM_MAX_GONE_CONTAINERS, (int)c->arg1);
+      } else if (!gone) {     /* a live copy: later 'P's put into it */
+        int k;
+        for (k = 0; k < ngone; k++)
+          if (gone_containers[k] == c->arg1)
+            gone_containers[k] = gone_containers[--ngone];
+      }
+      break;
+    case 'R':
+    case 'D':
+      tmob_gone = tobj_gone = FALSE;
+      break;
+    default:      /* 'T', 'V' and '*' leave the targets as they were */
+      break;
+    }
+  }
+}
+
 /* Where a character whose GET_WAS_IN room was deleted is put back instead:
  * the start room it would log in to (interpreter.c: frozen, else immortal,
  * else mortal), found by its configured vnum in world[] as delete_room()
@@ -374,34 +486,10 @@ int delete_room(room_rnum rnum)
     }
   } while (i > 0);
 
-  /* Find what zone that room was in so we can update the loading table. */
+  /* Cancel the reset commands that load into this room, renumber the ones
+   * that load above it, and cancel what depended on a cancelled command. */
   for (i = 0; i <= top_of_zone_table; i++)
-    for (j = 0; ZCMD(i , j).command != 'S'; j++)
-      switch (ZCMD(i, j).command) {
-      case 'M':
-      case 'O':
-      case 'T':
-      case 'V':
-	if (ZCMD(i, j).arg3 == rnum)
-	  cancel_zone_command(&ZCMD(i, j));	/* Frees a 'V' command's strings. */
-	else if (ZCMD(i, j).arg3 > rnum)
-	  ZCMD(i, j).arg3 -= (ZCMD(i, j).arg3 != NOWHERE); /* with unsigned NOWHERE > any rnum */
-	break;
-      case 'D':
-      case 'R':
-	if (ZCMD(i, j).arg1 == rnum)
-	  cancel_zone_command(&ZCMD(i, j));
-	else if (ZCMD(i, j).arg1 > rnum)
-	  ZCMD(i, j).arg1 -= (ZCMD(i, j).arg1 != NOWHERE); /* with unsigned NOWHERE > any rnum */
-      case 'G':
-      case 'P':
-      case 'E':
-      case '*':
-        /* Known zone entries we don't care about. */
-        break;
-      default:
-        mudlog(BRF, LVL_GOD, TRUE, "SYSERR: GenOLC: delete_room: Unknown zone entry found!");
-      }
+    cancel_room_reset_commands(i, rnum, deleted_vnum);
 
   /* Remove this room from all shop lists. */
   for (i = 0; i <= top_shop; i++) {

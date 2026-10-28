@@ -1843,6 +1843,66 @@ static void delete_room_frees_cancelled_var_strings(void)
 }
 
 /* ------------------------------------------------------------------------ */
+/* delete_room() cancels the reset commands that depended on one it         */
+/* cancelled: an orphaned 'G'/'E' gave its object to whichever mobile the   */
+/* last 'M' loaded, and an orphaned 'P'/'T' acted on another object.        */
+/* ------------------------------------------------------------------------ */
+static void delete_room_cancels_orphaned_mob_dependents(void)
+{
+  static const int args[][3] = {
+    { 0, 1, 1 },              /* 0 'M' mob 0 into rnum 1 (deleted)      */
+    { MOB_TRIGGER, 0, 0 },    /* 1 'T' trigger on that mob              */
+    { 0, 1, -1 },             /* 2 'G' obj 0 to that mob                */
+    { 1, 1, 5 },              /* 3 'E' obj 1 worn by that mob           */
+    { 0, 1, 2 },              /* 4 'M' mob 0 into rnum 2 (kept)         */
+    { 0, 1, -1 },             /* 5 'G' obj 0 to the second mob          */
+  };
+  make_zones(1); make_rooms(3); make_objs(2); make_mobs(1, 500);
+  set_zone_cmds(0, "MTGEMG", args);
+  tb_error_capture_reset();
+
+  TEST_ASSERT_TRUE(delete_room(1));
+
+  TEST_ASSERT_EQUAL_INT('*', zone_table[0].cmd[0].command);
+  TEST_ASSERT_EQUAL_INT('*', zone_table[0].cmd[1].command);
+  TEST_ASSERT_EQUAL_INT('*', zone_table[0].cmd[2].command);
+  TEST_ASSERT_EQUAL_INT('*', zone_table[0].cmd[3].command);
+  TEST_ASSERT_EQUAL_INT('M', zone_table[0].cmd[4].command);
+  TEST_ASSERT_EQUAL_INT(1, zone_table[0].cmd[4].arg3);   /* renumbered */
+  TEST_ASSERT_EQUAL_INT('G', zone_table[0].cmd[5].command);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_op_log, "room-delete-orphan\n"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail_log,
+                              "zone 0 line 101 command 1 'T' acted on what a "
+                              "command cancelled with deleted room vnum 20"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail_log, "command 2 'G'"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail_log, "command 3 'E'"));
+}
+
+static void delete_room_cancels_orphaned_obj_dependents(void)
+{
+  static const int args[][3] = {
+    { 0, 1, 1 },              /* 0 'O' container obj 0 into rnum 1 (deleted) */
+    { 1, 1, 0 },              /* 1 'P' obj 1 into container obj 0            */
+    { OBJ_TRIGGER, 0, 0 },    /* 2 'T' trigger on the obj 'P' loaded         */
+    { 0, 1, 2 },              /* 3 'O' container obj 0 into rnum 2 (kept)    */
+    { 1, 1, 0 },              /* 4 'P' obj 1 into the kept container         */
+  };
+  make_zones(1); make_rooms(3); make_objs(2);
+  set_zone_cmds(0, "OPTOP", args);
+  tb_error_capture_reset();
+
+  TEST_ASSERT_TRUE(delete_room(1));
+
+  TEST_ASSERT_EQUAL_INT('*', zone_table[0].cmd[0].command);
+  TEST_ASSERT_EQUAL_INT('*', zone_table[0].cmd[1].command);
+  TEST_ASSERT_EQUAL_INT('*', zone_table[0].cmd[2].command);
+  TEST_ASSERT_EQUAL_INT('O', zone_table[0].cmd[3].command);
+  TEST_ASSERT_EQUAL_INT(1, zone_table[0].cmd[3].arg3);
+  TEST_ASSERT_EQUAL_INT('P', zone_table[0].cmd[4].command);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail_log, "command 1 'P'"));
+}
+
+/* ------------------------------------------------------------------------ */
 /* O4: add_quest() never wraps a shop_keeper that already chains to         */
 /* questmaster(); the two procs called each other until the stack ran out. */
 /* ------------------------------------------------------------------------ */
@@ -2178,6 +2238,8 @@ int main(void)
   RUN_TEST(add_room_refuses_out_of_range_zone);
   RUN_TEST(save_rooms_keeps_previous_file_after_stream_error);
   RUN_TEST(delete_room_frees_cancelled_var_strings);
+  RUN_TEST(delete_room_cancels_orphaned_mob_dependents);
+  RUN_TEST(delete_room_cancels_orphaned_obj_dependents);
   RUN_TEST(add_quest_wraps_a_plain_keeper_once);
   RUN_TEST(add_quest_does_not_rewrap_a_shop_running_questmaster);
   RUN_TEST(delete_room_sends_was_in_to_start_room);
