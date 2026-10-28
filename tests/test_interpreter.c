@@ -34,14 +34,20 @@ void __wrap_tb_error_log_at(const char *severity, const char *subsystem,
                             int errnum, const char *source_file,
                             int source_line, const char *source_func,
                             const char *detail_fmt, ...)
+                            __attribute__ ((format (printf, 9, 10)));
+/* NOLINTNEXTLINE(cert-dcl37-c,cert-dcl51-cpp): --wrap requires this name. */
+void __wrap_tb_error_log_at(const char *severity, const char *subsystem,
+                            const char *operation, const char *resource,
+                            int errnum, const char *source_file,
+                            int source_line, const char *source_func,
+                            const char *detail_fmt, ...)
 {
   va_list args;
 
   (void)severity; (void)subsystem; (void)resource; (void)errnum;
   (void)source_file; (void)source_line; (void)source_func;
   va_start(args, detail_fmt);
-  if (vsnprintf(captured_detail, sizeof(captured_detail),
-                detail_fmt ? detail_fmt : "", args) < 0)
+  if (vsnprintf(captured_detail, sizeof(captured_detail), detail_fmt, args) < 0)
     *captured_detail = '\0';
   va_end(args);
   captured_errors++;
@@ -1203,8 +1209,10 @@ void test_dupe_check_takes_over_an_in_game_twin(void)
 #ifdef NOCRYPT
 /* test_interpreter_nocrypt: interpreter.c built without crypt(), and linked
  * with --wrap=sodium_init so libsodium can fail to start on demand. */
+/* NOLINTNEXTLINE(cert-dcl37-c,cert-dcl51-cpp): --wrap requires this name. */
 int __real_sodium_init(void);
 static int fail_sodium_init;
+/* NOLINTNEXTLINE(cert-dcl37-c,cert-dcl51-cpp): --wrap requires this name. */
 int __wrap_sodium_init(void)
 {
   return (fail_sodium_init ? -1 : __real_sodium_init());
