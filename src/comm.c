@@ -2992,13 +2992,19 @@ static char *act_body(const char *str, int hide_invisible, struct char_data *ch,
 	 struct obj_data *obj, void *vict_obj, int type);
 
 /* Target of the act() macro in comm.h: record the caller for diagnostics,
- * deliver the message, then restore the enclosing act()'s call site. */
+ * deliver the message, then restore the enclosing act()'s state. An act
+ * trigger can send further act() messages (do_say from a script uses
+ * DG_NO_TRIG) while an outer TO_ROOM act() is still delivering; the nested
+ * call sets dg_act_check for itself, so it is restored here too. Otherwise
+ * the outer act's remaining recipients silently lost (or gained) their act
+ * triggers. */
 char *act_at(const char *src_file, int src_line, const char *src_func,
              const char *str, int hide_invisible, struct char_data *ch,
              struct obj_data *obj, void *vict_obj, int type)
 {
   const char *saved_file = act_site_file, *saved_func = act_site_func;
   int saved_line = act_site_line;
+  int saved_act_check = dg_act_check;
   char *result;
 
   act_site_file = src_file;
@@ -3008,6 +3014,7 @@ char *act_at(const char *src_file, int src_line, const char *src_func,
   act_site_file = saved_file;
   act_site_line = saved_line;
   act_site_func = saved_func;
+  dg_act_check = saved_act_check;
   return result;
 }
 

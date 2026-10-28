@@ -255,6 +255,47 @@ static void recipient_moved_by_trigger_is_skipped(void)
   top_of_world = 0;
 }
 
+/* A nested act(..., DG_NO_TRIG) from an act trigger (do_say in a script)
+ * cleared the file-global dg_act_check for the rest of the outer TO_ROOM
+ * delivery, so later recipients silently lost their act triggers. */
+static void mob_a_says_without_triggers(const char_data *ch)
+{
+  if (ch == &mob_a)
+    act("You say 'hi'", FALSE, &mob_a, NULL, NULL, TO_CHAR | DG_NO_TRIG);
+}
+static void nested_no_trig_act_keeps_outer_triggers(void)
+{
+  memset(rooms, 0, sizeof(rooms));
+  memset(uid_table, 0, sizeof(uid_table));
+  memset(act_trigger_calls, 0, sizeof(act_trigger_calls));
+  memset(act_trigger_seen, 0, sizeof(act_trigger_seen));
+  memset(&mob_script, 0, sizeof(mob_script));
+  mob_script.types = MTRIG_ACT;
+  rooms[0].number = 3001;
+  world = rooms;
+  top_of_world = 1;
+  memset(&actor, 0, sizeof(actor));
+  actor.player_specials = &dummy_mob;
+  actor.player.name = (char *)"Bob";
+  GET_POS(&actor) = POS_STANDING;
+  make_mob(&mob_a);
+  make_mob(&mob_b);
+  actor.in_room = mob_a.in_room = mob_b.in_room = 0;
+  rooms[0].people = &actor;
+  actor.next_in_room = &mob_a;
+  mob_a.next_in_room = &mob_b;
+  act_trigger_hook = mob_a_says_without_triggers;
+
+  act("$n waves.", FALSE, &actor, NULL, NULL, TO_ROOM);
+
+  act_trigger_hook = NULL;
+  TEST_ASSERT_EQUAL_INT(1, act_trigger_count(&mob_a));
+  TEST_ASSERT_EQUAL_INT(1, act_trigger_count(&mob_b));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  world = NULL;
+  top_of_world = 0;
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -265,5 +306,6 @@ int main(void)
   RUN_TEST(illegal_code_is_reported_escaped);
   RUN_TEST(oversized_literal_is_truncated);
   RUN_TEST(recipient_moved_by_trigger_is_skipped);
+  RUN_TEST(nested_no_trig_act_keeps_outer_triggers);
   return UNITY_END();
 }
