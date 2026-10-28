@@ -260,6 +260,21 @@ void medit_save_internally(struct descriptor_data *d)
    * trigger list is reachable only through this pointer. */
   old_proto = i ? NULL : mob_proto[existing].proto_script;
 
+  /* Invariant: the scratch copy's nr is the rnum of the prototype this
+   * session edits (OLC_NUM), or NOBODY for a new one. add_mobile()'s update
+   * branch struct-copies it into mob_proto[], and read_mobile() copies it
+   * into every new instance, so a wrong nr (left by 'W' or a missed
+   * renumber) would make that prototype's mobs report another vnum and
+   * drift both mob_index counters. OLC_NUM is the authority: repair it. */
+  if (GET_MOB_RNUM(OLC_MOB(d)) != existing) {
+    struct char_data *builder = d->character;
+    TB_ERROR_MSG("olc", "mob-proto-nr", "mobile",
+                 "builder " DIAG_CHAR_FMT " mob vnum %d scratch nr %d != rnum %d; repaired before save",
+                 DIAG_CHAR(builder), OLC_NUM(d),
+                 (int)GET_MOB_RNUM(OLC_MOB(d)), (int)existing);
+    GET_MOB_RNUM(OLC_MOB(d)) = existing;
+  }
+
   if ((new_rnum = add_mobile(OLC_MOB(d), OLC_NUM(d))) == NOBODY) {
     log("medit_save_internally: add_mobile failed.");
     return;

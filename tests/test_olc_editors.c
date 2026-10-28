@@ -307,7 +307,22 @@ room_rnum real_room(room_vnum vnum)
 int top_of_trigt = 0;
 struct index_data **trig_index = NULL;
 trig_rnum real_trigger(trig_vnum vnum) { (void)vnum; return NOTHING; }
-mob_rnum real_mobile(mob_vnum vnum) { (void)vnum; return NOBODY; }
+mob_rnum real_mobile(mob_vnum vnum)
+{
+  mob_rnum i;
+  for (i = 0; mob_index && i <= top_of_mobt; i++)
+    if (mob_index[i].vnum == vnum)
+      return i;
+  return NOBODY;
+}
+/* genmob's update branch: copy_mobile() is a struct copy that keeps nr. */
+mob_rnum add_mobile(struct char_data *mob, mob_vnum vnum)
+{
+  mob_rnum r = real_mobile(vnum);
+  if (r != NOBODY)
+    mob_proto[r] = *mob;
+  return r;
+}
 int add_to_save_list(zone_vnum zone, int type) { (void)zone; (void)type; return TRUE; }
 room_vnum genolc_zone_bottom(zone_rnum rznum) { (void)rznum; return 0; }
 room_vnum genolc_zonep_bottom(struct zone_data *zone) { (void)zone; return 0; }
@@ -1105,6 +1120,45 @@ static void test_oedit_save_frees_previous_prototype_trigger_list(void)
   obj_proto[1].proto_script = NULL;
 }
 
+
+/* ------------------------------------------------------------------ */
+/* F1-11: a saved mobile prototype always names its own rnum.          */
+/* ------------------------------------------------------------------ */
+static void test_medit_save_repairs_and_reports_wrong_scratch_nr(void)
+{
+  struct descriptor_data *d = &builder_desc;
+  struct char_data *scratch;
+  int i;
+
+  mob_index = calloc(3, sizeof(*mob_index));
+  mob_proto = calloc(3, sizeof(*mob_proto));
+  TEST_ASSERT_NOT_NULL(mob_index);
+  TEST_ASSERT_NOT_NULL(mob_proto);
+  for (i = 0; i < 3; i++) {
+    mob_index[i].vnum = 3000 + i;
+    mob_proto[i].nr = i;
+  }
+  top_of_mobt = 2;
+
+  CREATE(scratch, struct char_data, 1);
+  scratch->nr = 2;            /* the 'W' source, mob 3002 */
+  OLC_MOB(d) = scratch;
+  OLC_NUM(d) = 3001;
+  STATE(d) = CON_MEDIT;
+
+  medit_save_internally(d);
+
+  TEST_ASSERT_EQUAL_INT(1, mob_proto[1].nr);
+  TEST_ASSERT_EQUAL_STRING("mob-proto-nr", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "mob vnum 3001 scratch nr 2 != rnum 1"));
+
+  free(scratch);
+  OLC_MOB(d) = NULL;
+  free(mob_index); mob_index = NULL;
+  free(mob_proto); mob_proto = NULL;
+  top_of_mobt = 0;
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -1129,5 +1183,6 @@ int main(void)
   RUN_TEST(test_redit_copy_twice_releases_each_replaced_room);
   RUN_TEST(test_oedit_save_releases_live_instance_scripts_first);
   RUN_TEST(test_oedit_save_frees_previous_prototype_trigger_list);
+  RUN_TEST(test_medit_save_repairs_and_reports_wrong_scratch_nr);
   return UNITY_END();
 }
