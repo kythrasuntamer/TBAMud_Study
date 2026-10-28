@@ -24,6 +24,7 @@
 
 /* local functions */
 static int update_all_objects(struct obj_data *obj);
+static int release_instance_state(obj_rnum rnum);
 static void copy_object_strings(struct obj_data *to, struct obj_data *from);
 
 obj_rnum add_object(struct obj_data *newobj, obj_vnum ovnum)
@@ -33,10 +34,19 @@ obj_rnum add_object(struct obj_data *newobj, obj_vnum ovnum)
 
   /* Write object to internal tables. */
   if ((newobj->item_number = real_object(ovnum)) != NOTHING) {
-    copy_object(&obj_proto[newobj->item_number], newobj);
-    update_all_objects(&obj_proto[newobj->item_number]);
+    obj_rnum rnum = newobj->item_number;
+    /* Must run before copy_object() frees the old prototype strings: it
+     * tells instance-owned strings from shared ones by comparing them. */
+    int reset = release_instance_state(rnum);
+
+    copy_object(&obj_proto[rnum], newobj);
+    update_all_objects(&obj_proto[rnum]);
+    if (reset > 0)
+      TB_WARN_MSG("olc", "obj-proto-update", "object",
+                  "proto vnum %d: %d live instances lost restrung text or "
+                  "running scripts on prototype update", ovnum, reset);
     add_to_save_list(zone_table[rznum].number, SL_OBJ);
-    return newobj->item_number;
+    return rnum;
   }
 
   found = insert_object(newobj, ovnum);
@@ -45,10 +55,45 @@ obj_rnum add_object(struct obj_data *newobj, obj_vnum ovnum)
   return found;
 }
 
+/* Free what each live instance of prototype rnum owns privately and that
+ * update_all_objects() is about to overwrite: its running script (which
+ * also cancels its wait events), its private proto_script copy, and any
+ * restrung text (strings that are not the prototype's).  Returns how many
+ * instances lost a restring or a running script. */
+static int release_instance_state(obj_rnum rnum)
+{
+  struct obj_data *obj;
+  int lost = 0;
+
+  for (obj = object_list; obj; obj = obj->next) {
+    bool restrung;
+
+    if (obj->item_number != rnum)
+      continue;
+    restrung = (obj->name != obj_proto[rnum].name ||
+                obj->description != obj_proto[rnum].description ||
+                obj->short_description != obj_proto[rnum].short_description ||
+                obj->action_description != obj_proto[rnum].action_description ||
+                obj->ex_description != obj_proto[rnum].ex_description);
+    if (restrung || SCRIPT(obj))
+      lost++;
+    if (SCRIPT(obj))
+      extract_script(obj, OBJ_TRIGGER);
+    if (obj->proto_script && obj->proto_script != obj_proto[rnum].proto_script)
+      free_proto_script(obj, OBJ_TRIGGER);
+    if (restrung)
+      free_object_strings_proto(obj);
+  }
+  return lost;
+}
+
 /* Fix all existing objects to have these values. We need to run through each
  * and every object currently in the game to see which ones are pointing to
  * this prototype. If object is pointing to this prototype, then we need to
- * replace it with the new one. */
+ * replace it with the new one.  release_instance_state() must have run
+ * first: everything not restored below is replaced by the prototype's value.
+ * Location, list links, UID and events stay with the instance; triggers are
+ * left empty for the caller to re-attach (oedit_save_internally()). */
 static int update_all_objects(struct obj_data *refobj)
 {
   struct obj_data *obj, swap;
@@ -75,6 +120,12 @@ static int update_all_objects(struct obj_data *refobj)
     obj->next_content = swap.next_content;
     obj->next = swap.next;
     obj->sitting_here = swap.sitting_here;
+    /* Pending events point at this instance; losing the list would leave
+     * them unreachable by extract_obj() and firing after the free. */
+    obj->events = swap.events;
+    /* Never share the prototype's runtime script or trigger list. */
+    obj->script = NULL;
+    obj->proto_script = NULL;
   }
 
   return count;

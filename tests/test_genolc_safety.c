@@ -828,6 +828,34 @@ static void delete_room_renumbers_start_rooms(void)
 }
 
 /* ------------------------------------------------------------------------ */
+/* C2-10: re-saving a prototype frees what live instances owned.            */
+/* ------------------------------------------------------------------------ */
+static void add_object_releases_live_instance_state(void)
+{
+  struct obj_data *inst, newobj;
+  struct list_data *events = (struct list_data *)&newobj; /* opaque marker */
+  make_zones(1); make_objs(1);
+  give_proto_strings(0);
+  inst = make_instance(0);
+  inst->name = strdup("restrung live name");   /* instance-owned */
+  CREATE(inst->script, struct script_data, 1);
+  CREATE(inst->proto_script, struct trig_proto_list, 1);
+  inst->events = events;
+  memset(&newobj, 0, sizeof(newobj));
+  newobj.name = "new";
+  newobj.short_description = "a new thing";
+  TEST_ASSERT_EQUAL_UINT(0, add_object(&newobj, 10));
+  TEST_ASSERT_EQUAL_INT(1, scripts_extracted);
+  TEST_ASSERT_TRUE(inst->name == obj_proto[0].name);
+  TEST_ASSERT_EQUAL_STRING("new", inst->name);
+  TEST_ASSERT_NULL(inst->script);
+  TEST_ASSERT_NULL(inst->proto_script);
+  TEST_ASSERT_TRUE(inst->events == events);
+  TEST_ASSERT_EQUAL_STRING("obj-proto-update", tb_captured_operation);
+  inst->events = NULL;
+}
+
+/* ------------------------------------------------------------------------ */
 /* Temporary world directory for the writers.                               */
 /* ------------------------------------------------------------------------ */
 static char test_root[] = "/tmp/tb-genolc-XXXXXX";
@@ -900,6 +928,7 @@ int main(void)
   RUN_TEST(create_new_zone_keeps_existing_file);
   RUN_TEST(save_rooms_handles_null_exdesc_description);
   RUN_TEST(delete_room_renumbers_start_rooms);
+  RUN_TEST(add_object_releases_live_instance_state);
   failures = UNITY_END();
   leave_test_root();
   return failures;
