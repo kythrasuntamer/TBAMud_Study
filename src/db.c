@@ -2068,8 +2068,9 @@ void setup_dir(FILE *fl, int room, int dir)
     free(fread_string(fl, buf2));
     free(fread_string(fl, buf2));
     if (!get_line(fl, line) || parse_int_fields(line, t, 3) != 3) {
-      log("SYSERR: Format error, %s", buf2);
-      exit(1);
+      BOOT_FATAL("room-parse", "setup_dir",
+                 "room vnum %d direction D%d: missing or malformed "
+                 "door/key/room line", world[room].number, dir);
     }
     TB_WARN_MSG("db", "room-parse", "diagonal-exit",
                 "room vnum %d: D%d skipped (diagonal_dirs off)",
@@ -2093,13 +2094,17 @@ void setup_dir(FILE *fl, int room, int dir)
   world[room].dir_option[dir]->general_description = fread_string(fl, buf2);
   world[room].dir_option[dir]->keyword = fread_string(fl, buf2);
 
+  /* The exit's numeric line comes from the hand-edited .wld file; name the
+   * room by world[room].number (see above) and the direction. */
   if (!get_line(fl, line)) {
-    log("SYSERR: Format error, %s", buf2);
-    exit(1);
+    BOOT_FATAL("room-parse", "setup_dir",
+               "room vnum %d direction D%d: file ends before the "
+               "door/key/room line", world[room].number, dir);
   }
   if (parse_int_fields(line, t, 3) != 3) {
-    log("SYSERR: Format error, %s", buf2);
-    exit(1);
+    BOOT_FATAL("room-parse", "setup_dir",
+               "room vnum %d direction D%d: malformed door/key/room line",
+               world[room].number, dir);
   }
   if (t[0] == 1)
     world[room].dir_option[dir]->exit_info = EX_ISDOOR;

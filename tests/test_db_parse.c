@@ -1834,6 +1834,36 @@ static void room_zone_follows_ascending_rooms(void)
   top_of_zone_table = 0;
 }
 
+/* setup_dir()'s format errors named the room through a context string that
+ * used to read GET_ROOM_VNUM(room) + 1, which is NOWHERE + 1 during boot.
+ * They now stop the boot naming the room's own vnum and the direction. */
+static void setup_dir_reports_bad_exit_line_with_room_and_direction(void)
+{
+  static const char bad[] =
+    "Hall~\nA hall.\n~\n0 0 0 0 0 0\nD2\nA door.\n~\ndoor~\nnot numbers\nS\n$\n";
+  static const char cut[] =
+    "Hall~\nA hall.\n~\n0 0 0 0 0 0\nD3\nA door.\n~\ndoor~\n";
+  FILE *volatile fp = stream_of(bad, sizeof(bad) - 1);
+
+  room_fixture_use();
+  EXPECT_EXIT(parse_room(fp, 110));
+  TEST_ASSERT_EQUAL_INT(0, fclose(fp));
+  TEST_ASSERT_EQUAL_INT(1, tb_test_exit_code);
+  TEST_ASSERT_EQUAL_STRING("FATAL", tb_captured_severity);
+  TEST_ASSERT_EQUAL_STRING("room-parse", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail,
+                              "room vnum 110 direction D2: malformed"));
+  room_fixture_free();
+
+  fp = stream_of(cut, sizeof(cut) - 1);
+  room_fixture_use();
+  EXPECT_EXIT(parse_room(fp, 111));
+  TEST_ASSERT_EQUAL_INT(0, fclose(fp));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail,
+                              "room vnum 111 direction D3: file ends"));
+  room_fixture_free();
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -1903,5 +1933,6 @@ int main(void)
   RUN_TEST(parse_simple_mob_accepts_field_limits);
   RUN_TEST(room_zone_rejects_room_between_zones);
   RUN_TEST(room_zone_follows_ascending_rooms);
+  RUN_TEST(setup_dir_reports_bad_exit_line_with_room_and_direction);
   return UNITY_END();
 }
