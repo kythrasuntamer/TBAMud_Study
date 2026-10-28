@@ -47,6 +47,12 @@
 #define VALID_SOCIAL_RNUM(r) \
   ((long)(r) >= 0 && (long)(r) <= (long)top_of_socialt)
 
+/** Longest social command or sort name aedit accepts (builder input).  The
+ * longest built-in command has 11 characters.  Any length used to be
+ * accepted: one 60-character social widened every column of the socials
+ * listing (column_list) until it no longer fitted its buffer (I1-01). */
+#define AEDIT_NAME_MAX 30
+
 /* local utility functions */
 static int aedit_find_command(const char *txt);
 static void aedit_disp_menu(struct descriptor_data * d);
@@ -103,6 +109,17 @@ ACMD(do_oasis_aedit)
 
   if (!*arg) {
     send_to_char(ch, "Please specify a social to edit.\r\n");
+    return;
+  }
+
+  /* arg names the social to edit or, when none matches, becomes the new
+   * social's command and sort name (aedit_setup_new). */
+  if (strlen(arg) > AEDIT_NAME_MAX) {
+    TB_WARN_MSG("olc", "social-name-length", "socials",
+                "aedit argument length %zu over %d refused; editor " DIAG_CHAR_FMT,
+                strlen(arg), AEDIT_NAME_MAX, DIAG_CHAR(ch));
+    send_to_char(ch, "A social's name may be at most %d characters long.\r\n",
+                 AEDIT_NAME_MAX);
     return;
   }
 
@@ -671,6 +688,16 @@ void aedit_parse(struct descriptor_data * d, char *arg) {
                     OLC_MODE(d) == AEDIT_ACTION_NAME ? "command" : "sort_as",
                     strlen(arg), DIAG_CHAR(d->character));
         write_to_output(d, "It must be a single word, without spaces.\r\nEnter it again: ");
+        return;
+      }
+      if (strlen(arg) > AEDIT_NAME_MAX) {
+        TB_WARN_MSG("olc", "social-name-length", "socials",
+                    "social rnum %d field %s input length %zu over %d; editor " DIAG_CHAR_FMT,
+                    (int)OLC_ZNUM(d),
+                    OLC_MODE(d) == AEDIT_ACTION_NAME ? "command" : "sort_as",
+                    strlen(arg), AEDIT_NAME_MAX, DIAG_CHAR(d->character));
+        write_to_output(d, "It may be at most %d characters long.\r\nEnter it again: ",
+                        AEDIT_NAME_MAX);
         return;
       }
       if (OLC_MODE(d) == AEDIT_SORT_AS) {

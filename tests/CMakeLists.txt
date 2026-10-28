@@ -1076,3 +1076,21 @@ if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
     set_source_files_properties(${MUD_SRCDIR}/act.wizard.c
         PROPERTIES COMPILE_OPTIONS "-ffunction-sections;-fdata-sections")
 endif()
+
+# Production social editor (aedit.c): name-length refusals and the report of
+# messages a saved social cannot run without.  utils.c supplies str_cmp,
+# mudlog and convert_from_tabs; the test supplies the OLC, social and
+# command-table collaborators and discards the rest by section GC.
+add_mud_test(test_aedit
+    ${MUD_SRCDIR}/aedit.c
+    ${MUD_SRCDIR}/utils.c
+    ${MUD_SRCDIR}/random.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_aedit.c
+)
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_compile_options(test_aedit PRIVATE -ffunction-sections -fdata-sections)
+    target_link_options(test_aedit PRIVATE
+        -Wl,--gc-sections
+        -Wl,--wrap=tb_error_log_at)
+endif()
+target_link_libraries(test_aedit PRIVATE ${CRYPT_LIBRARY} ${SODIUM_LIBRARY})
