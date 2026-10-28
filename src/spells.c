@@ -85,6 +85,72 @@ static bool spell_target_placed(struct char_data *ch, struct char_data *victim,
   return FALSE;
 }
 
+/* A trigger refused victim's entry to to_room: send it back to was_in, as
+ * walking does -- unless a script has meanwhile purged it or moved it on,
+ * in which case where it is now is the script's decision. */
+static void spell_move_back(struct char_data *victim, room_rnum was_in,
+                            room_rnum to_room)
+{
+  if (DEAD(victim) || IN_ROOM(victim) != to_room)
+    return;
+  char_from_room(victim);
+  char_to_room(victim, was_in);
+}
+
+/* Move victim into to_room by magic (recall, teleport, summon) with the
+ * entry checks walking runs in act.movement.c's do_simple_move(): the
+ * entering mob's entry trigger and the room's enter trigger, then, once
+ * the arrival is shown, a death trap, the memory triggers and the greet
+ * triggers. An enter or greet trigger that refuses sends victim back
+ * where it came from, as for a walker; the triggers tell the room why.
+ * dir is -1: magic has no direction. Each spell keeps its own wording:
+ * arrive_msg goes to the destination room (hide_invis as for act()), and
+ * vict_msg, when set, from caster to the victim. Scripts run here can
+ * purge or move victim, so it is re-checked after each trigger.
+ * Returns TRUE if victim arrived and stayed. */
+static bool spell_move_char(struct char_data *victim, room_rnum to_room,
+                            const char *arrive_msg, int hide_invis,
+                            struct char_data *caster, const char *vict_msg)
+{
+  room_rnum was_in = IN_ROOM(victim);
+
+  char_from_room(victim);
+  char_to_room(victim, to_room);
+
+  if (!entry_mtrigger(victim) || !enter_wtrigger(&world[to_room], victim, -1)) {
+    spell_move_back(victim, was_in, to_room);
+    return FALSE;
+  }
+  if (DEAD(victim) || IN_ROOM(victim) != to_room)
+    return FALSE;
+
+  act(arrive_msg, hide_invis, victim, 0, 0, TO_ROOM);
+  if (vict_msg != NULL)
+    act(vict_msg, FALSE, caster, 0, victim, TO_VICT);
+  look_at_room(victim, 0);
+
+  if (ROOM_FLAGGED(to_room, ROOM_DEATH) && GET_LEVEL(victim) < LVL_IMMORT) {
+    mudlog(BRF, LVL_IMMORT, TRUE, "%s hit death trap #%d (%s)",
+           GET_NAME(victim), GET_ROOM_VNUM(to_room), world[to_room].name);
+    death_cry(victim);
+    extract_char(victim);
+    return FALSE;
+  }
+
+  entry_memory_mtrigger(victim);
+  if (!greet_mtrigger(victim, -1)) {
+    if (!DEAD(victim) && IN_ROOM(victim) == to_room) {
+      spell_move_back(victim, was_in, to_room);
+      look_at_room(victim, 0);
+    }
+    return FALSE;
+  }
+  if (DEAD(victim) || IN_ROOM(victim) != to_room)
+    return FALSE;
+  greet_memory_mtrigger(victim);
+  return TRUE;
+}
+
 ASPELL(spell_recall)
 {
   if (victim == NULL || IS_NPC(victim))
@@ -98,13 +164,8 @@ ASPELL(spell_recall)
   }
 
   act("$n disappears.", TRUE, victim, 0, 0, TO_ROOM);
-  char_from_room(victim);
-  char_to_room(victim, r_mortal_start_room);
-  act("$n appears in the middle of the room.", TRUE, victim, 0, 0, TO_ROOM);
-  look_at_room(victim, 0);
-  entry_memory_mtrigger(victim);
-  greet_mtrigger(victim, -1);
-  greet_memory_mtrigger(victim);
+  spell_move_char(victim, r_mortal_start_room,
+                  "$n appears in the middle of the room.", TRUE, NULL, NULL);
 }
 
 ASPELL(spell_teleport)
@@ -142,13 +203,8 @@ ASPELL(spell_teleport)
 
   act("$n slowly fades out of existence and is gone.",
       FALSE, victim, 0, 0, TO_ROOM);
-  char_from_room(victim);
-  char_to_room(victim, to_room);
-  act("$n slowly fades into existence.", FALSE, victim, 0, 0, TO_ROOM);
-  look_at_room(victim, 0);
-  entry_memory_mtrigger(victim);
-  greet_mtrigger(victim, -1);
-  greet_memory_mtrigger(victim);
+  spell_move_char(victim, to_room, "$n slowly fades into existence.", FALSE,
+                  NULL, NULL);
 }
 
 #define SUMMON_FAIL "You failed.\r\n"
@@ -199,16 +255,8 @@ ASPELL(spell_summon)
   }
 
   act("$n disappears suddenly.", TRUE, victim, 0, 0, TO_ROOM);
-
-  char_from_room(victim);
-  char_to_room(victim, IN_ROOM(ch));
-
-  act("$n arrives suddenly.", TRUE, victim, 0, 0, TO_ROOM);
-  act("$n has summoned you!", FALSE, ch, 0, victim, TO_VICT);
-  look_at_room(victim, 0);
-  entry_memory_mtrigger(victim);
-  greet_mtrigger(victim, -1);
-  greet_memory_mtrigger(victim);
+  spell_move_char(victim, IN_ROOM(ch), "$n arrives suddenly.", TRUE, ch,
+                  "$n has summoned you!");
 }
 
 /* Used by the locate object spell to check the alias list on objects */

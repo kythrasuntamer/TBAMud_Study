@@ -93,15 +93,26 @@ static void test_create_water_fills_valid_container(void)
 static int moves;
 void char_from_room_at(const char *src_file, int src_line,
                        const char *src_func, struct char_data *ch)
-{ (void)src_file; (void)src_line; (void)src_func; (void)ch; moves++; }
+{ (void)src_file; (void)src_line; (void)src_func; moves++;
+  IN_ROOM(ch) = NOWHERE; }
 void char_to_room_at(const char *src_file, int src_line, const char *src_func,
                      struct char_data *ch, room_rnum room)
-{ (void)src_file; (void)src_line; (void)src_func; (void)ch; (void)room; moves++; }
+{ (void)src_file; (void)src_line; (void)src_func; moves++;
+  IN_ROOM(ch) = room; }
 
 struct zone_data *zone_table = NULL;
+/* Entry triggers (dg_triggers.c); refuse_* make a script refuse entry. */
+static int refuse_enter, refuse_greet;
+static int enter_calls, greet_calls, greet_memory_calls;
+int entry_mtrigger(char_data *ch) { (void)ch; return 1; }
+int enter_wtrigger(room_data *room, char_data *actor, int dir)
+{ (void)room; (void)actor; (void)dir; enter_calls++; return !refuse_enter; }
 void entry_memory_mtrigger(char_data *ch) { (void)ch; }
-int greet_mtrigger(char_data *actor, int dir) { (void)actor; (void)dir; return 1; }
-void greet_memory_mtrigger(char_data *actor) { (void)actor; }
+int greet_mtrigger(char_data *actor, int dir)
+{ (void)actor; (void)dir; greet_calls++; return !refuse_greet; }
+void greet_memory_mtrigger(char_data *actor)
+{ (void)actor; greet_memory_calls++; }
+void death_cry(struct char_data *ch) { (void)ch; }
 int mag_savingthrow(struct char_data *ch, int type, int modifier)
 { (void)ch; (void)type; (void)modifier; return 0; }
 void mudlog(int type, int level, int file, const char *str, ...)
@@ -133,11 +144,86 @@ static void test_moving_spells_refuse_a_stranded_victim(void)
   TEST_ASSERT_EQUAL_INT(0, moves);
 }
 
+/* Coordinator item (c): recall, teleport and summon ignored a greet
+ * trigger's refusal and never ran the room's enter trigger. They now pass
+ * the entry checks walking passes (do_simple_move()): a refusal sends the
+ * victim back where it came from. */
+static struct room_data move_rooms[2];
+static struct zone_data move_zone;
+static struct char_data mover;
+static struct player_special_data mover_specials;
+
+static void move_world(room_rnum mover_room)
+{
+  memset(move_rooms, 0, sizeof(move_rooms));
+  memset(&move_zone, 0, sizeof(move_zone));
+  memset(&mover, 0, sizeof(mover));
+  memset(&mover_specials, 0, sizeof(mover_specials));
+  move_rooms[0].number = 3000;
+  move_rooms[1].number = 3001;
+  world = move_rooms;
+  top_of_world = 1;
+  zone_table = &move_zone;
+  r_mortal_start_room = 1;
+  mover.player_specials = &mover_specials;
+  GET_IDNUM(&mover) = 88;
+  SET_BIT_AR(PRF_FLAGS(&mover), PRF_SUMMONABLE);
+  IN_ROOM(&mover) = mover_room;
+  IN_ROOM(&caster) = 1;
+  caster.player_specials = &mover_specials;
+  refuse_enter = refuse_greet = 0;
+  enter_calls = greet_calls = greet_memory_calls = 0;
+}
+
+static void move_world_done(void)
+{
+  world = NULL;
+  zone_table = NULL;
+  IN_ROOM(&caster) = NOWHERE;
+  caster.player_specials = NULL;
+}
+
+static void test_recall_refused_by_enter_trigger_goes_back(void)
+{
+  move_world(0);
+  refuse_enter = 1;
+  spell_recall(30, &caster, &mover, NULL);
+  TEST_ASSERT_EQUAL_INT(1, enter_calls);
+  TEST_ASSERT_EQUAL_INT(0, IN_ROOM(&mover));     /* back where it was */
+  TEST_ASSERT_EQUAL_INT(0, greet_calls);
+  move_world_done();
+}
+
+static void test_summon_refused_by_greet_trigger_goes_back(void)
+{
+  move_world(0);
+  refuse_greet = 1;
+  spell_summon(30, &caster, &mover, NULL);
+  TEST_ASSERT_EQUAL_INT(1, greet_calls);
+  TEST_ASSERT_EQUAL_INT(0, IN_ROOM(&mover));
+  TEST_ASSERT_EQUAL_INT(0, greet_memory_calls);
+  move_world_done();
+}
+
+static void test_teleport_runs_entry_checks_and_arrives(void)
+{
+  move_world(1);                 /* rand_number() picks room 0 */
+  spell_teleport(30, &caster, &mover, NULL);
+  TEST_ASSERT_EQUAL_INT(0, IN_ROOM(&mover));
+  TEST_ASSERT_EQUAL_INT(1, enter_calls);
+  TEST_ASSERT_EQUAL_INT(1, greet_calls);
+  TEST_ASSERT_EQUAL_INT(1, greet_memory_calls);
+  move_world_done();
+}
+
 int main(void)
 {
   UNITY_BEGIN();
   RUN_TEST(test_create_water_refuses_bad_liquid);
   RUN_TEST(test_create_water_fills_valid_container);
   RUN_TEST(test_moving_spells_refuse_a_stranded_victim);
+  RUN_TEST(test_recall_refused_by_enter_trigger_goes_back);
+  RUN_TEST(test_summon_refused_by_greet_trigger_goes_back);
+  RUN_TEST(test_teleport_runs_entry_checks_and_arrives);
   return UNITY_END();
 }
