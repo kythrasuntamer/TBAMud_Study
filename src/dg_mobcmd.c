@@ -112,6 +112,18 @@ static void mob_log_at(char_data *mob, const char *src_file, int src_line,
                   mob->script_id, message);
 }
 
+/* Script target lookups. A script names a target either by UID ("%actor%"
+ * expands to UID_CHAR followed by the id, found anywhere in the world) or by
+ * name, which is looked up the way the mob ch would see it. arg is
+ * evaluated more than once: pass a plain char array. */
+#define DG_FIND_CHAR_ROOM(ch, arg) \
+  (*(arg) == UID_CHAR ? get_char(arg) : get_char_room_vis((ch), (arg), NULL))
+#define DG_FIND_CHAR_WORLD(ch, arg) \
+  (*(arg) == UID_CHAR ? get_char(arg) \
+                      : get_char_vis((ch), (arg), NULL, FIND_CHAR_WORLD))
+#define DG_FIND_OBJ_VIS(ch, arg) \
+  (*(arg) == UID_CHAR ? get_obj(arg) : get_obj_vis((ch), (arg), NULL))
+
 /* Macro to determine if a mob is permitted to use these commands.
  * Note: the second clause also admits a *player* who owns triggers (allowed
  * when CONFIG_SCRIPT_PLAYERS is on), and such a player can type every
@@ -221,14 +233,9 @@ ACMD(do_mkill)
         return;
     }
 
-    if (*arg == UID_CHAR) {
-      if (!(victim = get_char(arg))) {
-        mob_log(ch, "mkill: victim (%s) not found",arg);
-        return;
-      }
-    } else if (!(victim = get_char_room_vis(ch, arg, NULL))) {
-        mob_log(ch, "mkill: victim (%s) not found",arg);
-        return;
+    if (!(victim = DG_FIND_CHAR_ROOM(ch, arg))) {
+      mob_log(ch, "mkill: victim (%s) not found",arg);
+      return;
     }
 
     if (victim == ch) {
@@ -345,14 +352,9 @@ ACMD(do_mechoaround)
         return;
     }
 
-    if (*arg == UID_CHAR) {
-      if (!(victim = get_char(arg))) {
-        mob_log(ch, "mechoaround: victim (%s) does not exist",arg);
-        return;
-      }
-    } else if (!(victim = get_char_room_vis(ch, arg, NULL))) {
-        mob_log(ch, "mechoaround: victim (%s) does not exist",arg);
-        return;
+    if (!(victim = DG_FIND_CHAR_ROOM(ch, arg))) {
+      mob_log(ch, "mechoaround: victim (%s) does not exist",arg);
+      return;
     }
 
     sub_write(p, victim, TRUE, TO_ROOM);
@@ -381,14 +383,9 @@ ACMD(do_msend)
         return;
     }
 
-    if (*arg == UID_CHAR) {
-      if (!(victim = get_char(arg))) {
-        mob_log(ch, "msend: victim (%s) does not exist",arg);
-        return;
-      }
-    } else if (!(victim = get_char_room_vis(ch, arg, NULL))) {
-        mob_log(ch, "msend: victim (%s) does not exist",arg);
-        return;
+    if (!(victim = DG_FIND_CHAR_ROOM(ch, arg))) {
+      mob_log(ch, "msend: victim (%s) does not exist",arg);
+      return;
     }
 
     sub_write(p, victim, TRUE, TO_CHAR);
@@ -551,7 +548,7 @@ ACMD(do_mload)
         return;
       }
       two_arguments(target, arg1, arg2); /* recycling ... */
-      tch = (*arg1 == UID_CHAR) ? get_char(arg1) : get_char_room_vis(ch, arg1, NULL);
+      tch = DG_FIND_CHAR_ROOM(ch, arg1);
       if (tch) {
         if (*arg2 && (pos = find_eq_pos_script(arg2)) >= 0 &&
             !GET_EQ(tch, pos) && can_wear_on_pos(object, pos)) {
@@ -563,7 +560,7 @@ ACMD(do_mload)
         load_otrigger(object);
         return;
       }
-      cnt = (*arg1 == UID_CHAR) ? get_obj(arg1) : get_obj_vis(ch, arg1, NULL);
+      cnt = DG_FIND_OBJ_VIS(ch, arg1);
       /* get_obj_vis() falls back to scanning object_list, where the new,
        * still unplaced object is at the head: loading a container "into"
        * its own name found the object itself. obj_to_obj() refuses that,
@@ -632,15 +629,10 @@ ACMD(do_mpurge)
     return;
   }
 
-  if (*arg == UID_CHAR)
-    victim = get_char(arg);
-  else victim = get_char_room_vis(ch, arg, NULL);
+  victim = DG_FIND_CHAR_ROOM(ch, arg);
 
   if (victim == NULL) {
-    if (*arg == UID_CHAR)
-      obj = get_obj(arg);
-    else
-      obj = get_obj_vis(ch, arg, NULL);
+    obj = DG_FIND_OBJ_VIS(ch, arg);
 
     if (obj) {
       extract_obj(obj);
@@ -769,12 +761,7 @@ ACMD(do_mteleport)
 
     dg_teleport_all(IN_ROOM(ch), target);
   } else {
-    if (*arg1 == UID_CHAR) {
-      if (!(vict = get_char(arg1))) {
-        mob_log(ch, "mteleport: victim (%s) does not exist",arg1);
-        return;
-      }
-    } else if (!(vict = get_char_vis(ch, arg1, NULL, FIND_CHAR_WORLD))) {
+    if (!(vict = DG_FIND_CHAR_WORLD(ch, arg1))) {
       mob_log(ch, "mteleport: victim (%s) does not exist",arg1);
       return;
     }
@@ -812,12 +799,7 @@ ACMD(do_mdamage) {
       mob_log(ch, "mdamage: amount is not a number");
       return;
   }
-  if (*name == UID_CHAR) {
-    if (!(vict = get_char(name))) {
-      mob_log(ch, "mdamage: victim (%s) does not exist", name);
-      return;
-    }
-  } else if (!(vict = get_char_room_vis(ch, name, NULL))) {
+  if (!(vict = DG_FIND_CHAR_ROOM(ch, name))) {
     mob_log(ch, "mdamage: victim (%s) does not exist", name);
     return;
   }
@@ -865,14 +847,9 @@ ACMD(do_mforce)
     } else {
         char_data *victim;
 
-        if (*arg == UID_CHAR) {
-          if (!(victim = get_char(arg))) {
-            mob_log(ch, "mforce: victim (%s) does not exist",arg);
-            return;
-          }
-        } else if ((victim = get_char_room_vis(ch, arg, NULL)) == NULL) {
-            mob_log(ch, "mforce: no such victim");
-            return;
+        if (!(victim = DG_FIND_CHAR_ROOM(ch, arg))) {
+          mob_log(ch, "mforce: victim (%s) does not exist",arg);
+          return;
         }
 
         if (victim == ch) {
@@ -912,14 +889,9 @@ ACMD(do_mhunt)
 
     if (FIGHTING(ch)) return;
 
-    if (*arg == UID_CHAR) {
-      if (!(victim = get_char(arg))) {
-        mob_log(ch, "mhunt: victim (%s) does not exist", arg);
-        return;
-      }
-    } else if (!(victim = get_char_vis(ch, arg, NULL, FIND_CHAR_WORLD))) {
-        mob_log(ch, "mhunt: victim (%s) does not exist", arg);
-        return;
+    if (!(victim = DG_FIND_CHAR_WORLD(ch, arg))) {
+      mob_log(ch, "mhunt: victim (%s) does not exist", arg);
+      return;
     }
     HUNTING(ch) = victim;
 
@@ -951,14 +923,9 @@ ACMD(do_mremember)
         return;
     }
 
-    if (*arg == UID_CHAR) {
-      if (!(victim = get_char(arg))) {
-        mob_log(ch, "mremember: victim (%s) does not exist", arg);
-        return;
-      }
-    } else if (!(victim = get_char_vis(ch, arg, NULL, FIND_CHAR_WORLD))) {
-        mob_log(ch,"mremember: victim (%s) does not exist", arg);
-        return;
+    if (!(victim = DG_FIND_CHAR_WORLD(ch, arg))) {
+      mob_log(ch, "mremember: victim (%s) does not exist", arg);
+      return;
     }
 
     /* create a structure and add it to the list */
@@ -1002,14 +969,9 @@ ACMD(do_mforget)
         return;
     }
 
-    if (*arg == UID_CHAR) {
-      if (!(victim = get_char(arg))) {
-        mob_log(ch, "mforget: victim (%s) does not exist", arg);
-        return;
-      }
-    } else if (!(victim = get_char_vis(ch, arg, NULL, FIND_CHAR_WORLD))) {
-        mob_log(ch, "mforget: victim (%s) does not exist", arg);
-        return;
+    if (!(victim = DG_FIND_CHAR_WORLD(ch, arg))) {
+      mob_log(ch, "mforget: victim (%s) does not exist", arg);
+      return;
     }
 
     mem = SCRIPT_MEM(ch);
@@ -1281,14 +1243,9 @@ ACMD(do_mfollow)
     return;
   }
 
-  if (*buf == UID_CHAR) {
-    if (!(leader = get_char(buf))) {
-      mob_log(ch, "mfollow: victim (%s) does not exist", buf);
-      return;
-    }
-  } else if (!(leader = get_char_vis(ch, buf, NULL, FIND_CHAR_ROOM))) {
-      mob_log(ch,"mfollow: victim (%s) not found", buf);
-      return;
+  if (!(leader = DG_FIND_CHAR_ROOM(ch, buf))) {
+    mob_log(ch, "mfollow: victim (%s) does not exist", buf);
+    return;
   }
 
   if (ch->master == leader) /* already following */
