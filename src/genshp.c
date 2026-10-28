@@ -372,9 +372,22 @@ int save_shops(zone_rnum zone_num)
       tb_fprintf(shop_file, "#%d~\n", i);
       shop = shop_index + rshop;
 
-      /* Save the products. */
-      for (j = 0; S_PRODUCT(shop, j) != NOTHING; j++)
+      /* Save the products.  producing[] holds prototype rnums kept in step
+       * by the OLC renumberers; a stale one would read past obj_index[], so
+       * the whole zone save is abandoned rather than write a wrong vnum. */
+      for (j = 0; S_PRODUCT(shop, j) != NOTHING; j++) {
+        if (S_PRODUCT(shop, j) > top_of_objt) {
+          TB_ERROR_MSG("olc", "shop-save-product", fname,
+                       "shop vnum %d product %d rnum %d > top %d; zone %d not saved",
+                       S_NUM(shop), j, (int)S_PRODUCT(shop, j), (int)top_of_objt,
+                       zone_table[zone_num].number);
+          tb_fclose(shop_file);
+          if (remove(fname) != 0 && errno != ENOENT)
+            TB_REPORT_ERRNO("remove", fname);
+          return FALSE;
+        }
 	tb_fprintf(shop_file, "%d\n", obj_index[S_PRODUCT(shop, j)].vnum);
+      }
       tb_fprintf(shop_file, "-1\n");
 
       /* Save the rates. */

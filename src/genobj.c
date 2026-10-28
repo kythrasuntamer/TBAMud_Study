@@ -15,6 +15,7 @@
 #include "genolc.h"
 #include "genobj.h"
 #include "genzon.h"
+#include "genshp.h"
 #include "dg_olc.h"
 #include "handler.h"
 #include "interpreter.h"
@@ -417,17 +418,34 @@ int copy_object_main(struct obj_data *to, struct obj_data *from, int free_object
 int delete_object(obj_rnum rnum)
 {
   obj_rnum i;
-  zone_rnum zrnum;
+  zone_rnum zrnum, shop_zone;
   struct obj_data *obj, *tmp;
   int shop, j, zone, cmd_no;
   obj_vnum deleted_vnum;
 
-  if (rnum == NOTHING || rnum > top_of_objt)
+  /* oedit can confirm 'delete' on an object that was never saved, whose
+   * rnum is NOTHING. */
+  if (rnum == NOTHING || rnum > top_of_objt) {
+    TB_WARN_MSG("olc", "obj-delete-range", "object",
+                "rnum %d out of range 0..%d; nothing deleted",
+                (int)rnum, (int)top_of_objt);
     return NOTHING;
+  }
 
   obj = &obj_proto[rnum];
   /* Captured before the prototype table shifts down over this slot. */
   deleted_vnum = GET_OBJ_VNUM(obj);
+
+  /* A board's messages are bound to its object; boards.c has no way to
+   * detach one at run time, so refuse rather than leave the board pointing
+   * at whichever prototype slides into this rnum. */
+  for (j = 0; j < NUM_OF_BOARDS; j++)
+    if (BOARD_RNUM(j) == rnum) {
+      TB_ERROR_MSG("olc", "obj-delete-board", "object",
+                   "obj vnum %d is the object of board %d; not deleted",
+                   deleted_vnum, j);
+      return NOTHING;
+    }
 
   zrnum = real_zone_by_thing(GET_OBJ_VNUM(obj));
 
@@ -493,14 +511,29 @@ int delete_object(obj_rnum rnum)
   RECREATE(obj_index, struct index_data, top_of_objt + 1);
   RECREATE(obj_proto, struct obj_data, top_of_objt + 1);
 
-  /* Renumber notice boards. */
+  /* Renumber notice boards.  No board names rnum (checked above); a board
+   * whose object never loaded keeps NOTHING. */
   for (j = 0; j < NUM_OF_BOARDS; j++)
-    BOARD_RNUM(j) -= (BOARD_RNUM(j) > rnum);
+    if (BOARD_RNUM(j) != NOTHING && BOARD_RNUM(j) > rnum)
+      BOARD_RNUM(j)--;
 
-  /* Renumber shop produce. */
+  /* Renumber shop produce.  A product equal to rnum would otherwise name
+   * the next prototype, or top_of_objt + 1 when the last one was deleted, so
+   * it is removed from the shop (the list then slides down over j). */
   for (shop = 0; shop <= top_shop; shop++)
-    for (j = 0; SHOP_PRODUCT(shop, j) != NOTHING; j++)
-      SHOP_PRODUCT(shop, j) -= (SHOP_PRODUCT(shop, j) > rnum);
+    for (j = 0; SHOP_PRODUCT(shop, j) != NOTHING; ) {
+      if (SHOP_PRODUCT(shop, j) != rnum) {
+        SHOP_PRODUCT(shop, j) -= (SHOP_PRODUCT(shop, j) > rnum);
+        j++;
+        continue;
+      }
+      TB_WARN_MSG("olc", "shop-product-drop", "shop",
+                  "shop vnum %d lost product obj vnum %d (deleted)",
+                  SHOP_NUM(shop), deleted_vnum);
+      remove_shop_from_int_list(&shop_index[shop].producing, j);
+      if ((shop_zone = real_zone_by_thing(SHOP_NUM(shop))) != NOWHERE)
+        add_to_save_list(zone_table[shop_zone].number, SL_SHP);
+    }
 
   /* Renumber zone table.  A command that names the deleted prototype is
    * removed, which slides the next command into cmd_no and reallocates the

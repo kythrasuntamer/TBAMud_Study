@@ -133,6 +133,19 @@ int add_to_save_list(zone_vnum zone, int type) { (void)zone; (void)type; save_li
 int in_save_list(zone_vnum zone, int type) { (void)zone; (void)type; return FALSE; }
 int remove_from_save_list(zone_vnum zone, int type) { (void)zone; (void)type; return TRUE; }
 
+/* utils.c get_line(): next non-blank, non-comment line without its newline. */
+int get_line(FILE *fl, char *buf)
+{
+  char temp[READ_SIZE];
+  int lines = 0;
+  do {
+    if (!fgets(temp, sizeof(temp), fl)) return 0;
+    lines++;
+  } while (*temp == '*' || *temp == '\n' || *temp == '\r');
+  temp[strcspn(temp, "\r\n")] = '\0';
+  strcpy(buf, temp);
+  return lines;
+}
 void strip_cr(char *buffer) { (void)buffer; }
 char *convert_from_tabs(char *string) { return string; }
 int sprintascii(char *out, bitvector_t bits) { (void)bits; strcpy(out, "0"); return 1; }
@@ -640,6 +653,71 @@ static void delete_object_reports_orphaned_contents(void)
 }
 
 /* ------------------------------------------------------------------------ */
+/* C2-08: shop products and boards that name the deleted prototype.         */
+/* ------------------------------------------------------------------------ */
+static void make_shop(shop_vnum vnum, const obj_rnum *products, int nproducts)
+{
+  int i;
+  top_shop = 0;
+  CREATE(shop_index, struct shop_data, 1);
+  shop_index[0].vnum = vnum;
+  CREATE(shop_index[0].producing, obj_vnum, nproducts + 1);
+  for (i = 0; i < nproducts; i++)
+    shop_index[0].producing[i] = products[i];
+  shop_index[0].producing[nproducts] = NOTHING;
+  CREATE(shop_index[0].type, struct shop_buy_data, 1);
+  shop_index[0].type[0].type = NOTHING;
+  CREATE(shop_index[0].in_room, room_vnum, 1);
+  shop_index[0].in_room[0] = NOWHERE;
+  shop_index[0].keeper = NOBODY;
+}
+
+static int file_exists(const char *path)
+{
+  FILE *fp = fopen(path, "r");
+  if (!fp) return 0;
+  fclose(fp);
+  return 1;
+}
+
+static void delete_object_drops_matching_shop_product(void)
+{
+  static const obj_rnum products[] = { 0, 2 };
+  make_zones(1); make_objs(3);
+  make_shop(5, products, 2);
+  delete_object(2);                    /* the last prototype */
+  TEST_ASSERT_EQUAL_UINT(0, shop_index[0].producing[0]);
+  TEST_ASSERT_EQUAL_UINT(NOTHING, shop_index[0].producing[1]);
+  TEST_ASSERT_EQUAL_STRING("shop-product-drop", tb_captured_operation);
+}
+
+static void delete_object_refuses_board_object(void)
+{
+  make_zones(1); make_objs(2);
+  board_info[3].rnum = 1;
+  TEST_ASSERT_EQUAL_UINT(NOTHING, delete_object(1));
+  TEST_ASSERT_EQUAL_INT(1, (int)top_of_objt);
+  TEST_ASSERT_EQUAL_STRING("obj-delete-board", tb_captured_operation);
+}
+
+static void delete_object_reports_unsaved_rnum(void)
+{
+  make_objs(1);
+  TEST_ASSERT_EQUAL_UINT(NOTHING, delete_object(NOTHING));
+  TEST_ASSERT_EQUAL_STRING("obj-delete-range", tb_captured_operation);
+}
+
+static void save_shops_rejects_stale_product(void)
+{
+  static const obj_rnum products[] = { 2 };
+  make_zones(1); make_objs(2);
+  make_shop(5, products, 1);
+  TEST_ASSERT_FALSE(save_shops(0));
+  TEST_ASSERT_EQUAL_STRING("shop-save-product", tb_captured_operation);
+  TEST_ASSERT_FALSE(file_exists(SHP_PREFIX "0.new"));
+}
+
+/* ------------------------------------------------------------------------ */
 /* Temporary world directory for the writers.                               */
 /* ------------------------------------------------------------------------ */
 static char test_root[] = "/tmp/tb-genolc-XXXXXX";
@@ -701,6 +779,10 @@ int main(void)
   RUN_TEST(delete_object_moves_contents_to_carrier);
   RUN_TEST(delete_object_moves_contents_to_room_zero);
   RUN_TEST(delete_object_reports_orphaned_contents);
+  RUN_TEST(delete_object_drops_matching_shop_product);
+  RUN_TEST(delete_object_refuses_board_object);
+  RUN_TEST(delete_object_reports_unsaved_rnum);
+  RUN_TEST(save_shops_rejects_stale_product);
   failures = UNITY_END();
   leave_test_root();
   return failures;
