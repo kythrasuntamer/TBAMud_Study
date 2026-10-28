@@ -160,12 +160,10 @@ ACMD(do_oasis_trigedit)
 
   /* Check that it isn't already being edited. */
   for (d = descriptor_list; d; d = d->next) {
-    if (STATE(d) == CON_TRIGEDIT) {
-      if (d->olc && OLC_NUM(d) == number) {
-        send_to_char(ch, "That trigger is currently being edited by %s.\r\n",
-          GET_NAME(d->character));
-        return;
-      }
+    if (IS_TRIGEDITING(d) && OLC_NUM(d) == number) {
+      send_to_char(ch, "That trigger is currently being edited by %s.\r\n",
+        GET_NAME(d->character));
+      return;
     }
   }
   d = ch->desc;
@@ -1225,7 +1223,7 @@ static int trigedit_save_checked(struct descriptor_data *d)
     /* Update other trigs being edited.  The saving editor's own scratch was
      * already given its final rnum above. */
     for (dsc = descriptor_list; dsc; dsc = dsc->next)
-      if (dsc != d && STATE(dsc) == CON_TRIGEDIT && dsc->olc && OLC_TRIG(dsc) &&
+      if (dsc != d && IS_TRIGEDITING(dsc) &&
           GET_TRIG_RNUM(OLC_TRIG(dsc)) != NOTHING &&
           GET_TRIG_RNUM(OLC_TRIG(dsc)) >= rnum)
         GET_TRIG_RNUM(OLC_TRIG(dsc))++;

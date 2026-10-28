@@ -49,6 +49,11 @@
 #define OLC_SCRIPT(d)           (OLC(d)->script)	/* script editing   */
 #define OLC_ITEM_TYPE(d)	(OLC(d)->item_type)	/* mob/obj/room     */
 
+/** TRUE when descriptor d is in the trigger editor with its scratch trigger
+ * in place, so OLC_NUM(d) and OLC_TRIG(d) may be used.  d is evaluated
+ * several times: pass a plain variable. */
+#define IS_TRIGEDITING(d)  (STATE(d) == CON_TRIGEDIT && (d)->olc && OLC_TRIG(d))
+
 /* prototype exported functions from dg_olc.c */
 void script_save_to_disk(FILE *fp, void *item, int type);
 void dg_olc_script_copy(struct descriptor_data *d);
