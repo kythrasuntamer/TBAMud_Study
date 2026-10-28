@@ -1029,10 +1029,14 @@ static void out_of_range_vnums_name_nothing(void)
 /* Room-list fixtures for dg_teleport_all(). */
 static char_data *enter_mover, *enter_moved;
 static room_rnum enter_moved_to;
-void char_from_room(struct char_data *ch)
+/* handler.h's char_from_room()/char_to_room() are call-site-recording
+ * macros; these strong definitions override test_stubs.c's weak no-ops. */
+void char_from_room_at(const char *src_file, int src_line,
+                       const char *src_func, struct char_data *ch)
 {
   struct char_data **link;
 
+  (void)src_file; (void)src_line; (void)src_func;
   for (link = &world[IN_ROOM(ch)].people; *link; link = &(*link)->next_in_room)
     if (*link == ch) {
       *link = ch->next_in_room;
@@ -1041,8 +1045,10 @@ void char_from_room(struct char_data *ch)
   ch->next_in_room = NULL;
   IN_ROOM(ch) = NOWHERE;
 }
-void char_to_room(struct char_data *ch, room_rnum room)
+void char_to_room_at(const char *src_file, int src_line, const char *src_func,
+                     struct char_data *ch, room_rnum room)
 {
+  (void)src_file; (void)src_line; (void)src_func;
   ch->next_in_room = world[room].people;
   world[room].people = ch;
   IN_ROOM(ch) = room;
