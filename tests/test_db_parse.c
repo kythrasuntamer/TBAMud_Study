@@ -1023,8 +1023,17 @@ static void social_fixture_free(int slots)
 {
   int k;
   for (k = 0; k < slots; k++) {
-    free(soc_mess_list[k].command);
-    free(soc_mess_list[k].sort_as);
+    struct social_messg *soc = &soc_mess_list[k];
+
+    free(soc->command);
+    free(soc->sort_as);
+    free(soc->char_no_arg);       free(soc->others_no_arg);
+    free(soc->char_found);        free(soc->others_found);
+    free(soc->vict_found);        free(soc->not_found);
+    free(soc->char_auto);         free(soc->others_auto);
+    free(soc->char_body_found);   free(soc->others_body_found);
+    free(soc->vict_body_found);   free(soc->char_obj_found);
+    free(soc->others_obj_found);
   }
   free(soc_mess_list);
   soc_mess_list = NULL;
@@ -1036,6 +1045,8 @@ static void social_fixture_free(int slots)
 }
 
 #define SOCIAL_BODY "#\n#\n#\n#\n#\n#\n#\n#\n#\n#\n#\n#\n#\n"
+/* A complete social that takes no target: only char_no_arg is required. */
+#define SOCIAL_SOLO "You grin.\n#\n#\n#\n#\n#\n#\n#\n#\n#\n#\n#\n#\n"
 
 /* B1-13: the count sees only lines starting with '~', but fscanf(" %s ")
  * skips leading blanks, so " ~b" and " ~c" were parsed without being counted
@@ -1054,8 +1065,8 @@ static void boot_social_messages_rejects_uncounted_socials(void)
 
 static void boot_social_messages_loads_counted_socials(void)
 {
-  social_fixture_use("~a a 0 0 0 0\n" SOCIAL_BODY "\n"
-                     "~b b 0 0 0 0\n" SOCIAL_BODY "\n$\n");
+  social_fixture_use("~a a 0 0 0 0\n" SOCIAL_SOLO "\n"
+                     "~b b 0 0 0 0\n" SOCIAL_SOLO "\n$\n");
   boot_social_messages();
   TEST_ASSERT_EQUAL_INT(1, top_of_socialt);
   TEST_ASSERT_EQUAL_STRING("b", soc_mess_list[1].command);
@@ -1538,6 +1549,26 @@ static void load_zones_disables_bad_wear_position_and_direction(void)
   zone_load_fixture_free();
 }
 
+/* G2-13 (boot half): do_action needs char_no_arg, and do_gmote needs
+ * others_found once char_found is set; a '#' line left them NULL and the
+ * social failed only when a player used it. Boot now names each one. */
+static void boot_social_messages_reports_missing_required_messages(void)
+{
+  social_fixture_use("~a a 0 0 0 0\n" SOCIAL_BODY "\n"
+                     "~b b 0 0 0 0\n"
+                     "You smile.\n#\nYou smile at $N.\n"
+                     "#\n#\n#\n#\n#\n#\n#\n#\n#\n#\n\n"
+                     "~c c 0 0 0 0\n" SOCIAL_SOLO "\n$\n");
+  boot_social_messages();
+  TEST_ASSERT_EQUAL_INT(2, top_of_socialt);
+  TEST_ASSERT_EQUAL_INT(2, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("WARNING", tb_captured_severity);
+  TEST_ASSERT_EQUAL_STRING("social-field-missing", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail,
+                              "social 'b' has char_found but no others_found"));
+  social_fixture_free(3);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -1597,5 +1628,6 @@ int main(void)
   RUN_TEST(check_object_repairs_attack_type_out_of_range);
   RUN_TEST(check_object_clamps_weapon_dice);
   RUN_TEST(load_zones_disables_bad_wear_position_and_direction);
+  RUN_TEST(boot_social_messages_reports_missing_required_messages);
   return UNITY_END();
 }

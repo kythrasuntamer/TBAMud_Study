@@ -442,6 +442,30 @@ char *fread_action(FILE *fl, int nr)
   return (strdup(buf));
 }
 
+/** Report each social missing a message its command cannot do without. A
+ * '#' line in the socials file (implementor-edited) leaves a field NULL.
+ * do_action prints char_no_arg when the social is used alone, and do_gmote
+ * formats others_found once char_found says the social takes a target;
+ * both refuse such a social at run time (social-field-missing), so the
+ * same report at boot names the file to fix before a player finds it. */
+static void report_missing_social_messages(const char *socfile)
+{
+  int k;
+
+  for (k = 0; k <= top_of_socialt; k++) {
+    const struct social_messg *soc = &soc_mess_list[k];
+
+    if (!soc->char_no_arg)
+      TB_WARN_MSG("social", "social-field-missing", socfile,
+                  "social '%s' has no char_no_arg message; using it without "
+                  "a target will fail", soc->command);
+    if (soc->char_found && !soc->others_found)
+      TB_WARN_MSG("social", "social-field-missing", socfile,
+                  "social '%s' has char_found but no others_found message; "
+                  "gemote at a target will fail", soc->command);
+  }
+}
+
 static void boot_social_messages(void)
 {
   FILE *fl;
@@ -608,6 +632,7 @@ static void boot_social_messages(void)
   tb_fclose(fl);
   assert(curr_soc <= top_of_socialt);
   top_of_socialt = curr_soc;
+  report_missing_social_messages(socfile);
 }
 
 /* this is necessary for the autowiz system */
