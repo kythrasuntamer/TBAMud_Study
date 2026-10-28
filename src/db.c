@@ -2635,7 +2635,7 @@ void parse_mobile(FILE *mob_f, int nr)
     letter = *f4;
 
     if(bitsavetodisk) {
-      add_to_save_list(zone_table[real_zone_by_thing(nr)].number, 0);
+      save_converted_zone("mob", nr, 0);
       converting =TRUE;
     }
 

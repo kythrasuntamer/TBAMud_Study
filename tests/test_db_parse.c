@@ -1344,7 +1344,7 @@ static void fread_number_reports_bad_format(void)
 
 /* parse_object()/parse_mobile() keep their slot cursors in statics, like
  * parse_room(): the tests share one prototype table of each kind. */
-#define PROTO_FIXTURES 4
+#define PROTO_FIXTURES 8
 static struct obj_data obj_proto_fixture[PROTO_FIXTURES];
 static struct index_data obj_index_fixture[PROTO_FIXTURES];
 static struct char_data mob_proto_fixture[PROTO_FIXTURES];
@@ -1923,6 +1923,39 @@ static void parse_object_rejects_converted_record_in_no_zone(void)
   top_of_zone_table = 0;
 }
 
+/* FUZZ-W4 (mob-convert-zone-nowhere): the same zone_table[NOWHERE] read in
+ * parse_mobile() for a legacy 4-field flag line. */
+static void parse_mobile_rejects_converted_record_in_no_zone(void)
+{
+  static const char text[] =
+    "guard~\nthe guard~\nA guard stands here.\n~\nHe looks tough.\n~\n"
+    "0 0 0 S\n1 20 10 1d1+1 1d1+0\n0 0\n8 8 1\n$\n";
+  FILE *volatile fp = stream_of(text, sizeof(text) - 1);
+
+  gap_zone_fixture_use();
+  mob_proto = mob_proto_fixture;
+  mob_index = mob_index_fixture;
+  EXPECT_EXIT(parse_mobile(fp, 1500));
+  TEST_ASSERT_EQUAL_INT(0, fclose(fp));
+  TEST_ASSERT_EQUAL_STRING("FATAL", tb_captured_severity);
+  TEST_ASSERT_EQUAL_STRING("world-convert", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail,
+                              "mob vnum 1500 is in no zone"));
+  proto_fixture_free();
+
+  tb_error_capture_reset();
+  fp = stream_of(text, sizeof(text) - 1);
+  mob_proto = mob_proto_fixture;
+  mob_index = mob_index_fixture;
+  parse_mobile(fp, 1050);
+  TEST_ASSERT_EQUAL_INT(0, fclose(fp));
+  TEST_ASSERT_EQUAL_STRING("guard", mob_proto[top_of_mobt].player.name);
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  proto_fixture_free();
+  zone_table = NULL;
+  top_of_zone_table = 0;
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -1994,5 +2027,6 @@ int main(void)
   RUN_TEST(room_zone_follows_ascending_rooms);
   RUN_TEST(setup_dir_reports_bad_exit_line_with_room_and_direction);
   RUN_TEST(parse_object_rejects_converted_record_in_no_zone);
+  RUN_TEST(parse_mobile_rejects_converted_record_in_no_zone);
   return UNITY_END();
 }
