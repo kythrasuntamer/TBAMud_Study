@@ -641,9 +641,51 @@ void test_dig_creates_room_when_idle(void)
   TEST_ASSERT_FALSE(log_has("op=olc-busy"));
 }
 
+/* ---------------------------------------------------------------------
+ * F3-13: an unknown cleanup type logged a bare "Unknown type!" and leaked
+ * the room; internal one-shot users (dig/buildwalk/copy) broadcast
+ * "$n stops using OLC." for an editor they never opened.
+ * --------------------------------------------------------------------- */
+void test_cleanup_unknown_type_reports_and_still_frees(void)
+{
+  CREATE(builder_desc.olc, struct oasis_olc_data, 1);
+  CREATE(OLC_ROOM(&builder_desc), struct room_data, 1);  /* no strings */
+  OLC_NUM(&builder_desc) = 3001;
+  STATE(&builder_desc) = CON_REDIT;
+
+  cleanup_olc(&builder_desc, 99);
+
+  TEST_ASSERT_NULL(builder_desc.olc);         /* room struct freed: LSan */
+  TEST_ASSERT_TRUE(log_has("op=cleanup-type"));
+  TEST_ASSERT_TRUE(log_has("olc_num 3001"));
+}
+
+void test_internal_dig_does_not_announce_leaving_olc(void)
+{
+  run_cmd(do_dig, "north 3050", 0);
+
+  TEST_ASSERT_EQUAL_INT(1, save_calls);
+  TEST_ASSERT_EQUAL_INT(0, act_calls);
+}
+
+void test_real_editor_exit_still_announces_and_resets_state(void)
+{
+  attach_room_editor(3001);
+  SET_BIT_AR(PLR_FLAGS(&builder), PLR_WRITING);
+
+  cleanup_olc(&builder_desc, CLEANUP_ALL);
+
+  TEST_ASSERT_EQUAL_INT(1, act_calls);
+  TEST_ASSERT_EQUAL_INT(CON_PLAYING, STATE(&builder_desc));
+  TEST_ASSERT_FALSE(PLR_FLAGGED(&builder, PLR_WRITING));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(test_cleanup_unknown_type_reports_and_still_frees);
+  RUN_TEST(test_internal_dig_does_not_announce_leaving_olc);
+  RUN_TEST(test_real_editor_exit_still_announces_and_resets_state);
   RUN_TEST(test_dig_refuses_while_another_editor_is_open);
   RUN_TEST(test_buildwalk_refuses_while_another_editor_is_open);
   RUN_TEST(test_dig_creates_room_when_idle);

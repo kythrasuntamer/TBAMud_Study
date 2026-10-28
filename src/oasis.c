@@ -114,6 +114,20 @@ void cleanup_olc(struct descriptor_data *d, byte cleanup_type)
   if (d->olc == NULL)
     return;
 
+  /* F3-13: cleanup_type decides whether scratch entities' strings are still
+   * owned here (CLEANUP_ALL, CLEANUP_CONFIG) or were handed to the live
+   * table (CLEANUP_STRUCTS).  An unknown type is a caller bug: report it and
+   * free structs only, since freeing strings that may be shared with the
+   * world would be a use-after-free, while a missed string is only a leak. */
+  if (cleanup_type != CLEANUP_ALL && cleanup_type != CLEANUP_STRUCTS &&
+      cleanup_type != CLEANUP_CONFIG) {
+    TB_ERROR_MSG("olc", "cleanup-type", "oasis_olc_data",
+                 "type %d for " DIAG_CHAR_FMT " state %d olc_num %d; "
+                 "freeing structs only", cleanup_type, DIAG_CHAR(d->character),
+                 STATE(d), (int)OLC_NUM(d));
+    cleanup_type = CLEANUP_STRUCTS;
+  }
+
   /* Before the scratch entities: the script may be attached to one. */
   olc_release_script(d);
 
@@ -130,18 +144,11 @@ void cleanup_olc(struct descriptor_data *d, byte cleanup_type)
   /* Check for a room. free_room doesn't perform sanity checks, we must be
    * careful here. */
   if (OLC_ROOM(d)) {
-    switch (cleanup_type) {
-    case CLEANUP_ALL:
-      /* free(OLC_SCRIPT(d)) equivalent */
+    if (cleanup_type == CLEANUP_STRUCTS)
+      free(OLC_ROOM(d));
+    else {
       free_proto_script(OLC_ROOM(d), WLD_TRIGGER);
       free_room(OLC_ROOM(d));
-      break;
-    case CLEANUP_STRUCTS:
-      free(OLC_ROOM(d));
-      break;
-    default: /* The caller has screwed up. */
-      log("SYSERR: cleanup_olc: Unknown type!");
-      break;
     }
   }
 
@@ -184,45 +191,26 @@ void cleanup_olc(struct descriptor_data *d, byte cleanup_type)
 
   /* Check for a quest. */
   if (OLC_QUEST(d)) {
-    switch (cleanup_type) {
-      case CLEANUP_ALL:
-        free_quest(OLC_QUEST(d));
-        break;
-      case CLEANUP_STRUCTS:
-        free(OLC_QUEST(d));
-        break;
-      default:
-        break;
-    }
+    if (cleanup_type == CLEANUP_STRUCTS)
+      free(OLC_QUEST(d));
+    else
+      free_quest(OLC_QUEST(d));
   }
 
   /*. Check for aedit stuff -- M. Scott */
   if (OLC_ACTION(d))  {
-    switch(cleanup_type)  {
-      case CLEANUP_ALL:
- 	free_action(OLC_ACTION(d));
- 	break;
-      case CLEANUP_STRUCTS:
-        free(OLC_ACTION(d));
-        break;
-      default:
-        /* Caller has screwed up */
- 	break;
-    }
+    if (cleanup_type == CLEANUP_STRUCTS)
+      free(OLC_ACTION(d));
+    else
+      free_action(OLC_ACTION(d));
   }
 
   /* Used for cleanup of Hedit */
   if (OLC_HELP(d))  {
-    switch(cleanup_type)  {
-      case CLEANUP_ALL:
- 	free_help(OLC_HELP(d));
- 	break;
-      case CLEANUP_STRUCTS:
-        free(OLC_HELP(d));
-        break;
-      default:
- 	break;
-    }
+    if (cleanup_type == CLEANUP_STRUCTS)
+      free(OLC_HELP(d));
+    else
+      free_help(OLC_HELP(d));
   }
 
    if (OLC_IBT(d)) {
@@ -259,8 +247,11 @@ void cleanup_olc(struct descriptor_data *d, byte cleanup_type)
      OLC_PREFS(d) = NULL;
    }
 
-  /* Restore descriptor playing status. */
-  if (d->character) {
+  /* Restore descriptor playing status.  One-shot internal users (dig,
+   * buildwalk, the copy commands, editor entry error paths) borrow d->olc
+   * without ever leaving CON_PLAYING; they never announced "starts using
+   * OLC" or set PLR_WRITING, so do not announce a stop or touch the flag. */
+  if (d->character && STATE(d) != CON_PLAYING) {
     REMOVE_BIT_AR(PLR_FLAGS(d->character), PLR_WRITING);
     act("$n stops using OLC.", TRUE, d->character, NULL, NULL, TO_ROOM);
 
