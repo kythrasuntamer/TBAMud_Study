@@ -63,15 +63,22 @@ static void free_cmdlist(struct cmdlist_element *c)
   }
 }
 
-/* Give the prototype a new command list and instantiate a trigger from it.
- * The instance shares the prototype's command list, as in the server. */
+/* Command lists made by a test; tearDown frees them. Triggers share their
+ * list with the prototype, as in the server, so a list must outlive every
+ * trigger made from it. */
+#define MAX_TEST_CMDLISTS 16
+static struct cmdlist_element *test_cmdlists[MAX_TEST_CMDLISTS];
+static int num_test_cmdlists;
+
+/* Give the prototype a new command list and instantiate a trigger from it. */
 static trig_data *make_trigger(int attach_type, long trigger_type, int narg,
                                const char **lines)
 {
   trig_data *t;
 
-  free_cmdlist(test_proto.cmdlist);
+  TEST_ASSERT_TRUE(num_test_cmdlists < MAX_TEST_CMDLISTS);
   test_proto.cmdlist = make_cmdlist(lines);
+  test_cmdlists[num_test_cmdlists++] = test_proto.cmdlist;
   test_proto.attach_type = attach_type;
   test_proto.trigger_type = trigger_type;
   test_proto.narg = narg;
@@ -213,7 +220,9 @@ void tearDown(void)
     if (SCRIPT(&test_rooms[i]))
       extract_script(&test_rooms[i], WLD_TRIGGER);
   event_free_all();
-  free_cmdlist(test_proto.cmdlist);
+  for (i = 0; i < num_test_cmdlists; i++)
+    free_cmdlist(test_cmdlists[i]);
+  num_test_cmdlists = 0;
   test_proto.cmdlist = NULL;
   world = NULL;
   top_of_world = 0;
@@ -441,6 +450,64 @@ static void failed_chain_link_is_reported(void)
   TEST_ASSERT_EQUAL_STRING("subst-chain", tb_captured_operation);
 }
 
+static obj_data *make_scripted_obj(const char *name, long trig_type, int narg,
+                                   const char **lines)
+{
+  obj_data *o = make_obj(name);
+  trig_data *t = make_trigger(OBJ_TRIGGER, trig_type, narg, lines);
+
+  obj_to_room(o, 0);
+  attach_to_script(&SCRIPT(o), t);
+  return o;
+}
+
+/* D1-06: script_trigger_check() read obj->next after random_otrigger(obj),
+ * and stock random triggers purge their own object. */
+static void random_trigger_self_purge_keeps_scanning(void)
+{
+  const char *quiet[] = { "nop", NULL };
+  const char *purge[] = { "%purge% %self%", NULL };
+  obj_data *tail = make_scripted_obj("tail", OTRIG_RANDOM, 100, quiet);
+  long tail_uid = obj_script_id(tail);
+
+  make_scripted_obj("purger", OTRIG_RANDOM, 100, purge);
+  script_trigger_check();
+  TEST_ASSERT_EQUAL_PTR(tail, object_list);
+  TEST_ASSERT_NULL(tail->next);
+  TEST_ASSERT_TRUE(obj_uid_matches(tail_uid, tail));
+}
+
+/* The purger also purges the object after it. The dispatcher snapshots
+ * every candidate as (UID, address) and revalidates each before firing, so
+ * the purged one is skipped without being read; nothing is left. */
+static void random_trigger_purging_next_object_is_safe(void)
+{
+  const char *quiet[] = { "nop", NULL };
+  obj_data *tail = make_scripted_obj("tail", OTRIG_RANDOM, 100, quiet);
+  char first[64];
+  const char *purge[] = { first, "%purge% %self%", NULL };
+
+  snprintf(first, sizeof(first), "%%purge%% %c%ld", UID_CHAR,
+           obj_script_id(tail));
+  make_scripted_obj("purger", OTRIG_RANDOM, 100, purge);
+  script_trigger_check();
+  TEST_ASSERT_NULL(object_list);
+  TEST_ASSERT_FALSE(tb_captured_has_op("random-dispatch"));
+}
+
+static void time_trigger_self_purge_keeps_scanning(void)
+{
+  const char *quiet[] = { "nop", NULL };
+  const char *purge[] = { "%purge% %self%", NULL };
+  obj_data *tail = make_scripted_obj("tail", OTRIG_TIME, 5, quiet);
+
+  make_scripted_obj("purger", OTRIG_TIME, 5, purge);
+  time_info.hours = 5;
+  check_time_triggers();
+  TEST_ASSERT_EQUAL_PTR(tail, object_list);
+  TEST_ASSERT_NULL(tail->next);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -458,5 +525,8 @@ int main(void)
   RUN_TEST(unbalanced_close_paren_is_reported);
   RUN_TEST(chained_field_after_short_name_is_kept);
   RUN_TEST(failed_chain_link_is_reported);
+  RUN_TEST(random_trigger_self_purge_keeps_scanning);
+  RUN_TEST(random_trigger_purging_next_object_is_safe);
+  RUN_TEST(time_trigger_self_purge_keeps_scanning);
   return UNITY_END();
 }
