@@ -21,9 +21,10 @@
  *
  * Who controls the input: rent files are written by this server but are
  * plain text that can be truncated or hand-edited, so every header field,
- * Loc value, flag word and string is untrusted on read. Bad values are
- * reported (objsave operations with the owner, object line and obj vnum)
- * and the record or field is skipped; reading never exits the server.
+ * Loc value, flag word, object value and string is untrusted on read. Bad
+ * values are reported (objsave operations with the owner, object line and
+ * obj vnum) and the record or field is skipped, or repaired as db.c's
+ * check_object() repairs world objects; reading never exits the server.
  *
  * Ownership and lifetime: objects read from a file are created with
  * read_object()/create_obj() (so they are on object_list) and handed to the
@@ -47,6 +48,7 @@
 #include "config.h"
 #include "modify.h"
 #include "genolc.h" /* for strip_cr and sprintascii */
+#include "oasis.h" /* for MAX_WEAPON_NDICE/MAX_WEAPON_SDICE, the oedit limits */
 
 /* these factors should be unique integers */
 #define RENT_FACTOR    1
@@ -1250,7 +1252,9 @@ void Crash_save_all(void)
  * locate-1, 0 = inventory, negative = inside a container, -locate levels
  * deep (contents are written before their container). A Loc above
  * NUM_WEARS is reported and becomes inventory. A record whose prototype no
- * longer exists is skipped (missing-proto) together with its tags.
+ * longer exists is skipped (missing-proto) together with its tags. Each
+ * completed record's values get check_object()'s per-type range checks
+ * (objsave_check_values(): rent-object-check).
  *
  * Callers that know which file and owner they are reading should use
  * objsave_parse_objects_from(), so that diagnostics name them. */
@@ -1268,12 +1272,112 @@ obj_save_data *objsave_parse_objects(FILE *fl)
 #define OBJSAVE_REC_FMT "%s object line %d obj vnum %d: "
 #define OBJSAVE_REC_ARGS(vnum) owner, lineno, (int) (vnum)
 
+/* A spell number an object may carry: -1 or 0 is "none", otherwise
+ * 1..TOP_SPELL_DEFINE but not a skill (MAX_SPELLS+1..MAX_SKILLS), as in
+ * db.c's check_object_spell_number(). Evaluates s several times. */
+#define OBJSAVE_SPELL_OK(s) \
+  ((s) == -1 || (s) == 0 || ((s) > 0 && (s) <= TOP_SPELL_DEFINE && \
+                             ((s) <= MAX_SPELLS || (s) > MAX_SKILLS)))
+
+/** Range-check the values a rent or house record gave obj (its Type and
+ * Vals tags, or a unique object's whole record). The file is untrusted
+ * (hand-edited or damaged) and db.c's check_object() only ever sees world
+ * prototypes, so the same per-type checks run here. A value that indexes a
+ * table or drives a loop is repaired to check_object()'s default and
+ * reported as an error: liquid (drinks[], drink_aff[], drinknames[]) to
+ * LIQ_WATER, weapon attack type (attack_hit_text[]) to 0 (hit), weapon
+ * dice clamped to the oedit limit MAX_WEAPON_NDICE d MAX_WEAPON_SDICE.
+ * check_object()'s other per-type checks only report, and so do these
+ * (warnings; the value is kept, as on a world object): spell level, spell
+ * numbers, charges and contents above their maximum. Every report is
+ * rent-object-check with the owner, the record's line and the obj vnum. */
+static void objsave_check_values(struct obj_data *obj, const char *resource,
+                                 const char *owner, int lineno)
+{
+  int i, first_spell = 1;
+
+  switch (GET_OBJ_TYPE(obj)) {
+  case ITEM_DRINKCON:
+  case ITEM_FOUNTAIN:
+    if (GET_OBJ_VAL(obj, 2) < 0 || GET_OBJ_VAL(obj, 2) >= NUM_LIQ_TYPES) {
+      TB_ERROR_MSG("objsave", "rent-object-check", resource,
+                   OBJSAVE_REC_FMT "liquid %d out of range 0..%d; using LIQ_WATER",
+                   OBJSAVE_REC_ARGS(GET_OBJ_VNUM(obj)), GET_OBJ_VAL(obj, 2),
+                   NUM_LIQ_TYPES - 1);
+      GET_OBJ_VAL(obj, 2) = LIQ_WATER;
+    }
+    if (GET_OBJ_VAL(obj, 0) > 0 && GET_OBJ_VAL(obj, 1) > GET_OBJ_VAL(obj, 0))
+      TB_WARN_MSG("objsave", "rent-object-check", resource,
+                  OBJSAVE_REC_FMT "contains %d, more than its capacity %d",
+                  OBJSAVE_REC_ARGS(GET_OBJ_VNUM(obj)), GET_OBJ_VAL(obj, 1),
+                  GET_OBJ_VAL(obj, 0));
+    break;
+  case ITEM_WEAPON:
+    if (GET_OBJ_VAL(obj, 3) < 0 || GET_OBJ_VAL(obj, 3) >= NUM_ATTACK_TYPES) {
+      TB_ERROR_MSG("objsave", "rent-object-check", resource,
+                   OBJSAVE_REC_FMT "attack type %d out of range 0..%d; using 0 (hit)",
+                   OBJSAVE_REC_ARGS(GET_OBJ_VNUM(obj)), GET_OBJ_VAL(obj, 3),
+                   NUM_ATTACK_TYPES - 1);
+      GET_OBJ_VAL(obj, 3) = 0;
+    }
+    /* dice() loops value 1 times and sums into an int on every blow. */
+    if (GET_OBJ_VAL(obj, 1) < 0 || GET_OBJ_VAL(obj, 1) > MAX_WEAPON_NDICE ||
+        GET_OBJ_VAL(obj, 2) < 0 || GET_OBJ_VAL(obj, 2) > MAX_WEAPON_SDICE) {
+      int ndice = LIMIT(GET_OBJ_VAL(obj, 1), 0, MAX_WEAPON_NDICE);
+      int sdice = LIMIT(GET_OBJ_VAL(obj, 2), 0, MAX_WEAPON_SDICE);
+
+      TB_ERROR_MSG("objsave", "rent-object-check", resource,
+                   OBJSAVE_REC_FMT "damage dice %dd%d outside 0..%dd0..%d; using %dd%d",
+                   OBJSAVE_REC_ARGS(GET_OBJ_VNUM(obj)), GET_OBJ_VAL(obj, 1),
+                   GET_OBJ_VAL(obj, 2), MAX_WEAPON_NDICE, MAX_WEAPON_SDICE,
+                   ndice, sdice);
+      GET_OBJ_VAL(obj, 1) = ndice;
+      GET_OBJ_VAL(obj, 2) = sdice;
+    }
+    break;
+  case ITEM_WAND:
+  case ITEM_STAFF:
+    first_spell = 3;
+    if (GET_OBJ_VAL(obj, 2) > GET_OBJ_VAL(obj, 1))
+      TB_WARN_MSG("objsave", "rent-object-check", resource,
+                  OBJSAVE_REC_FMT "has %d charges, more than its maximum %d",
+                  OBJSAVE_REC_ARGS(GET_OBJ_VNUM(obj)), GET_OBJ_VAL(obj, 2),
+                  GET_OBJ_VAL(obj, 1));
+    /* The level and spell checks below apply to wands and staves too. */
+    /* Fall through. */
+  case ITEM_SCROLL:
+  case ITEM_POTION:
+    if (GET_OBJ_VAL(obj, 0) < 0 || GET_OBJ_VAL(obj, 0) > LVL_IMPL)
+      TB_WARN_MSG("objsave", "rent-object-check", resource,
+                  OBJSAVE_REC_FMT "spell level %d out of range 0..%d",
+                  OBJSAVE_REC_ARGS(GET_OBJ_VNUM(obj)), GET_OBJ_VAL(obj, 0), LVL_IMPL);
+    for (i = first_spell; i <= 3; i++)
+      if (!OBJSAVE_SPELL_OK(GET_OBJ_VAL(obj, i)))
+        TB_WARN_MSG("objsave", "rent-object-check", resource,
+                    OBJSAVE_REC_FMT "value %d spell %d out of range (1..%d, not a skill)",
+                    OBJSAVE_REC_ARGS(GET_OBJ_VNUM(obj)), i, GET_OBJ_VAL(obj, i),
+                    TOP_SPELL_DEFINE);
+    break;
+  case ITEM_FURNITURE:
+    if (GET_OBJ_VAL(obj, 1) > GET_OBJ_VAL(obj, 0))
+      TB_WARN_MSG("objsave", "rent-object-check", resource,
+                  OBJSAVE_REC_FMT "seats %d, more than its capacity %d",
+                  OBJSAVE_REC_ARGS(GET_OBJ_VNUM(obj)), GET_OBJ_VAL(obj, 1),
+                  GET_OBJ_VAL(obj, 0));
+    break;
+  default:
+    break;
+  }
+}
+#undef OBJSAVE_SPELL_OK
+
 obj_save_data *objsave_parse_objects_from(FILE *fl, const char *resource,
                                           const char *owner)
 {
   obj_save_data *head, *current, *tempsave;
   char f1[128], f2[128], f3[128], f4[128], line[READ_SIZE];
   int t[4],i, nr, lineno = 0, got;
+  int record_line = 0;	/* object line of the current record's '#' */
   struct obj_data *temp;
 
   if (resource == NULL)
@@ -1309,9 +1413,10 @@ obj_save_data *objsave_parse_objects_from(FILE *fl, const char *resource,
           free(current);
         }
       }
-    else if (temp != NULL && current->obj == NULL)
+    else if (temp != NULL && current->obj == NULL) {
+      objsave_check_values(temp, resource, owner, record_line);
       current->obj = temp;
-    else if (temp == NULL && current->obj != NULL) {
+    } else if (temp == NULL && current->obj != NULL) {
       /* Do nothing. */
   } else if (temp != NULL && current->obj != NULL) {
       if (temp != current->obj)
@@ -1329,6 +1434,8 @@ obj_save_data *objsave_parse_objects_from(FILE *fl, const char *resource,
      * are ignored instead of being applied to the previous object. */
     if (*line == '#') {
       if (temp) {
+        /* The record is complete: its Type and Vals are known. */
+        objsave_check_values(temp, resource, owner, record_line);
         current->obj = temp;
         CREATE(current->next, obj_save_data, 1);
         current=current->next;
@@ -1336,6 +1443,7 @@ obj_save_data *objsave_parse_objects_from(FILE *fl, const char *resource,
         current->locate = 0;
         temp = NULL;
       }
+      record_line = lineno;
 
       if (!objsave_parse_int_fields(line + 1, &nr, 1)) {
         TB_WARN_MSG("objsave", "rent-record", resource,

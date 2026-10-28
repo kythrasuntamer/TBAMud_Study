@@ -18,6 +18,8 @@
 #include "class.h"
 #include "genolc.h"
 #include "interpreter.h"
+#include "spells.h"
+#include "oasis.h"
 #include <stdarg.h>
 #include <sys/stat.h>
 #include "tb_error_capture.h"
@@ -779,6 +781,130 @@ static void test_offer_passes_objects_to_act_as_p(void)
   player.desc = NULL;
 }
 
+/* The carried object of the given type (each test loads one of each). */
+static struct obj_data *carried_of_type(int type)
+{
+  struct obj_data *obj;
+
+  for (obj = player.carrying; obj; obj = obj->next_content)
+    if (GET_OBJ_TYPE(obj) == type)
+      return obj;
+  TEST_FAIL_MESSAGE("no carried object of that type");
+  return NULL;
+}
+
+/* A rent record may set an object's Type and Vals, but only world
+ * prototypes went through db.c's check_object(). A hand-edited rent file
+ * could plant attack type 40 (attack_hit_text[] has 15 entries), a liquid
+ * outside drinks[], or 2000000000d6 dice that dice() loops over on every
+ * blow. They are repaired to check_object()'s defaults and reported. */
+static void test_rent_values_are_repaired_like_world_objects(void)
+{
+  char body[512];
+  struct obj_data *weapon, *drink, *fountain;
+
+  TEST_ASSERT_TRUE(snprintf(body, sizeof(body),
+                            "%d %ld 0 0 0 0\n"
+                            "#101\nType: %d\nVals: 0 2000000000 6 40\n"
+                            "#101\nType: %d\nVals: 10 5 99 0\n"
+                            "#101\nType: %d\nVals: 10 5 -1 0\n$~\n",
+                            RENT_CRASH, (long)time(0), ITEM_WEAPON,
+                            ITEM_DRINKCON, ITEM_FOUNTAIN) > 0);
+  write_rent_file("Tester", body);
+
+  TEST_ASSERT_EQUAL_INT(1, Crash_load(&player));
+
+  weapon = carried_of_type(ITEM_WEAPON);
+  drink = carried_of_type(ITEM_DRINKCON);
+  fountain = carried_of_type(ITEM_FOUNTAIN);
+  TEST_ASSERT_EQUAL_INT(0, GET_OBJ_VAL(weapon, 3));
+  TEST_ASSERT_EQUAL_INT(MAX_WEAPON_NDICE, GET_OBJ_VAL(weapon, 1));
+  TEST_ASSERT_EQUAL_INT(6, GET_OBJ_VAL(weapon, 2));
+  TEST_ASSERT_EQUAL_INT(LIQ_WATER, GET_OBJ_VAL(drink, 2));
+  TEST_ASSERT_EQUAL_INT(LIQ_WATER, GET_OBJ_VAL(fountain, 2));
+  TEST_ASSERT_EQUAL_STRING("rent-object-check\nrent-object-check\n"
+                           "rent-object-check\nrent-object-check\n",
+                           tb_captured_op_log);
+  TEST_ASSERT_EQUAL_STRING("ERROR", tb_captured_severity);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail_log,
+                              "player idnum 4242 object line 1 obj vnum 101: "
+                              "attack type 40 out of range 0..14; using 0 (hit)"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail_log,
+                              "object line 1 obj vnum 101: damage dice "
+                              "2000000000d6 outside 0..50d0..50; using 50d6"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail_log,
+                              "player idnum 4242 object line 4 obj vnum 101: "
+                              "liquid 99 out of range"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail_log,
+                              "object line 7 obj vnum 101: liquid -1 out of range"));
+}
+
+/* Values inside every range load untouched and unreported. */
+static void test_rent_values_in_range_are_kept(void)
+{
+  char body[512];
+  struct obj_data *weapon, *drink;
+
+  TEST_ASSERT_TRUE(snprintf(body, sizeof(body),
+                            "%d %ld 0 0 0 0\n"
+                            "#101\nType: %d\nVals: 0 50 50 %d\n"
+                            "#101\nType: %d\nVals: 10 5 %d 0\n$~\n",
+                            RENT_CRASH, (long)time(0), ITEM_WEAPON,
+                            NUM_ATTACK_TYPES - 1, ITEM_DRINKCON,
+                            NUM_LIQ_TYPES - 1) > 0);
+  write_rent_file("Tester", body);
+
+  TEST_ASSERT_EQUAL_INT(1, Crash_load(&player));
+
+  weapon = carried_of_type(ITEM_WEAPON);
+  drink = carried_of_type(ITEM_DRINKCON);
+  TEST_ASSERT_EQUAL_INT(NUM_ATTACK_TYPES - 1, GET_OBJ_VAL(weapon, 3));
+  TEST_ASSERT_EQUAL_INT(50, GET_OBJ_VAL(weapon, 1));
+  TEST_ASSERT_EQUAL_INT(50, GET_OBJ_VAL(weapon, 2));
+  TEST_ASSERT_EQUAL_INT(NUM_LIQ_TYPES - 1, GET_OBJ_VAL(drink, 2));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+}
+
+/* check_object() only reports a bad spell level, spell number, charge
+ * count or seat count on a world object; a rent object is reported the
+ * same way (warnings) and keeps its values. */
+static void test_rent_values_check_object_reports_are_kept(void)
+{
+  char body[512];
+  struct obj_data *scroll, *wand, *chair;
+
+  TEST_ASSERT_TRUE(snprintf(body, sizeof(body),
+                            "%d %ld 0 0 0 0\n"
+                            "#101\nType: %d\nVals: -5 99999 0 -1\n"
+                            "#101\nType: %d\nVals: 10 3 9 %d\n"
+                            "#101\nType: %d\nVals: 2 4 0 0\n$~\n",
+                            RENT_CRASH, (long)time(0), ITEM_SCROLL,
+                            ITEM_WAND, MAX_SPELLS + 1, ITEM_FURNITURE) > 0);
+  write_rent_file("Tester", body);
+
+  TEST_ASSERT_EQUAL_INT(1, Crash_load(&player));
+
+  scroll = carried_of_type(ITEM_SCROLL);
+  wand = carried_of_type(ITEM_WAND);
+  chair = carried_of_type(ITEM_FURNITURE);
+  TEST_ASSERT_EQUAL_INT(-5, GET_OBJ_VAL(scroll, 0));
+  TEST_ASSERT_EQUAL_INT(99999, GET_OBJ_VAL(scroll, 1));
+  TEST_ASSERT_EQUAL_INT(9, GET_OBJ_VAL(wand, 2));
+  TEST_ASSERT_EQUAL_INT(MAX_SPELLS + 1, GET_OBJ_VAL(wand, 3));
+  TEST_ASSERT_EQUAL_INT(4, GET_OBJ_VAL(chair, 1));
+  TEST_ASSERT_EQUAL_INT(5, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("WARNING", tb_captured_severity);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail_log,
+                              "object line 1 obj vnum 101: spell level -5 out of range"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail_log,
+                              "object line 1 obj vnum 101: value 1 spell 99999 out of range"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail_log,
+                              "object line 4 obj vnum 101: has 9 charges, more than its maximum 3"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail_log, "object line 4 obj vnum 101: value 3 spell"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail_log,
+                              "object line 7 obj vnum 101: seats 4, more than its capacity 2"));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -799,6 +925,9 @@ int main(void)
   RUN_TEST(test_save_skips_extra_description_with_null_keyword);
   RUN_TEST(test_too_deep_nesting_is_reported);
   RUN_TEST(test_offer_passes_objects_to_act_as_p);
+  RUN_TEST(test_rent_values_are_repaired_like_world_objects);
+  RUN_TEST(test_rent_values_in_range_are_kept);
+  RUN_TEST(test_rent_values_check_object_reports_are_kept);
   (void)rmdir(scratch_dir);
   return UNITY_END();
 }
