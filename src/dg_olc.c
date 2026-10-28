@@ -702,6 +702,8 @@ void trigedit_parse(struct descriptor_data *d, char *arg)
         free(OLC_STORAGE(d));
         OLC_STORAGE(d) = NULL;
         trigedit_setup_existing(d, i);
+        /* The scratch now holds the source's rnum, but it is still the work
+         * in progress for OLC_NUM(d) (E2-03). */
         GET_TRIG_RNUM(OLC_TRIG(d)) = real_trigger(OLC_NUM(d));
       } else
         write_to_output(d, "That trigger does not exist.\r\n");
@@ -806,8 +808,17 @@ void trigedit_save(struct descriptor_data *d)
     } else
       trig->cmdlist->cmd = strdup("* No Script");
 
-    /* make the prorotype look like what we have */
+    /* make the prorotype look like what we have.  The scratch trigger may
+     * carry another prototype's rnum (it was filled from "W) Copy Trigger" or
+     * tcopy), and trig_data_copy() copies nr; every instance read_trigger()
+     * makes from this prototype inherits it.  The prototype's nr must be its
+     * own slot (E2-03). */
+    GET_TRIG_RNUM(trig) = rnum;
     trig_data_copy(proto, trig);
+    if (GET_TRIG_RNUM(proto) != rnum)
+      TB_ERROR_MSG("dg", "trigedit-proto-nr", "trig_index",
+                   "trigger vnum %d rnum %d proto nr %d",
+                   OLC_NUM(d), (int)rnum, (int)GET_TRIG_RNUM(proto));
     proto->nr = rnum;   /* the slot it lives in, whatever the buffer said */
 
     /* go through the mud and replace existing triggers         */

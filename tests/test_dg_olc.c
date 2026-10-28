@@ -389,9 +389,32 @@ static void format_script_indents_nested_blocks(void)
   TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
 }
 
+/* E2-03: a scratch trigger filled from another prototype carries that
+ * prototype's rnum.  Saving it must not hand the rnum to this prototype, or
+ * every instance read_trigger() makes belongs to the other vnum. */
+static void saving_keeps_the_prototype_rnum(void)
+{
+  const int vnums[] = { 100, 102 };
+  trig_data *inst;
+
+  make_index(vnums, 2);
+  start_edit(100);
+  GET_TRIG_RNUM(OLC_TRIG(bd)) = 1;   /* as left by copying trigger 102 */
+  set_script("say copied\r\n");
+  save_and_quit();
+
+  TEST_ASSERT_EQUAL_INT(0, GET_TRIG_RNUM(trig_index[0]->proto));
+  inst = make_live(0);
+  TEST_ASSERT_EQUAL_INT(0, GET_TRIG_RNUM(inst));
+  TEST_ASSERT_EQUAL_INT(1, trig_index[0]->number);
+  TEST_ASSERT_EQUAL_INT(0, trig_index[1]->number);
+  TEST_ASSERT_FALSE(tb_captured_has_op("trigedit-proto-nr"));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(saving_keeps_the_prototype_rnum);
   RUN_TEST(format_script_refuses_nesting_past_its_stack);
   RUN_TEST(format_script_indents_nested_blocks);
   RUN_TEST(inserting_a_trigger_renumbers_displaced_live_instances);
