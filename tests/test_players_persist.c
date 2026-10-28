@@ -358,6 +358,26 @@ static void test_index_save_failure_keeps_live_index(void)
   leave_scratch();
 }
 
+/* B2-16: Clas/Levl/Sex index tables (class_abbrevs[], titles, exp) and
+ * skills[] is unsigned char; out-of-range file values were stored as-is. */
+static void test_out_of_range_class_level_sex_skill(void)
+{
+  write_pfile("tester", "Id  : 4242\nClas: 99\nLevl: 1000\nSex : -3\n"
+                        "Skil:\n5 300\n6 40\n0 0\n");
+
+  TEST_ASSERT_EQUAL_INT(0, load_char("tester", &player));
+
+  TEST_ASSERT_EQUAL_INT(PFDEF_CLASS, GET_CLASS(&player));
+  TEST_ASSERT_EQUAL_INT(PFDEF_LEVEL, GET_LEVEL(&player));
+  TEST_ASSERT_EQUAL_INT(PFDEF_SEX, GET_SEX(&player));
+  TEST_ASSERT_EQUAL_INT(0, GET_SKILL(&player, 5));
+  TEST_ASSERT_EQUAL_INT(40, GET_SKILL(&player, 6));
+  TEST_ASSERT_EQUAL_INT(4, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("pfile-range\npfile-range\npfile-range\npfile-range\n",
+                           tb_captured_op_log);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail_log, "tag Clas value 99"));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -371,6 +391,7 @@ int main(void)
   RUN_TEST(test_terminated_desc_loads);
   RUN_TEST(test_malformed_index_record_is_skipped_and_kept);
   RUN_TEST(test_index_save_failure_keeps_live_index);
+  RUN_TEST(test_out_of_range_class_level_sex_skill);
   (void)rmdir(scratch_dir);
   return UNITY_END();
 }

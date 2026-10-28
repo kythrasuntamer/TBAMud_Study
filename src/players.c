@@ -37,7 +37,7 @@
 
 /* local functions */
 static void load_affects(FILE *fl, struct char_data *ch);
-static void load_skills(FILE *fl, struct char_data *ch);
+static void load_skills(FILE *fl, struct char_data *ch, const char *filename);
 static void load_quests(FILE *fl, struct char_data *ch);
 static void load_HMVS(struct char_data *ch, const char *line, int mode);
 static void write_aliases_ascii(FILE *file, struct char_data *ch);
@@ -92,6 +92,25 @@ static long parse_pfile_long_or_zero(const char *value, const char *filename, co
   }
 
   return parsed;
+}
+
+/* Parse a pfile integer that is later used as a table index or array
+ * bound (class, level, sex). The file is untrusted: an out-of-range value
+ * would index class_abbrevs[], title and experience tables out of bounds,
+ * so it is replaced by the PFDEF default and reported (pfile-range). */
+static int pfile_int_in_range(const char *line, const char *filename,
+                              const char *tag, long idnum, int lo, int hi,
+                              int dflt)
+{
+  int value = parse_pfile_int_or_zero(line, filename, tag);
+
+  if (value < lo || value > hi) {
+    TB_ERROR_MSG("player", "pfile-range", filename,
+                 "player idnum %ld tag %.4s value %d outside %d..%d; using %d",
+                 idnum, tag, value, lo, hi, dflt);
+    return dflt;
+  }
+  return value;
 }
 
 /* Longest flag word accepted from an "Act :", "Aff :" or "Pref:" line.
@@ -658,7 +677,7 @@ int load_char(const char *name, struct char_data *ch)
 
       case 'C':
 	     if (!strcmp(tag, "Cha "))	ch->real_abils.cha	= parse_pfile_int_or_zero(line, filename, tag);
-	else if (!strcmp(tag, "Clas"))	GET_CLASS(ch)		= parse_pfile_int_or_zero(line, filename, tag);
+	else if (!strcmp(tag, "Clas"))	GET_CLASS(ch)		= pfile_int_in_range(line, filename, tag, GET_IDNUM(ch), 0, NUM_CLASSES - 1, PFDEF_CLASS);
 	else if (!strcmp(tag, "Con "))	ch->real_abils.con	= parse_pfile_int_or_zero(line, filename, tag);
 	break;
 
@@ -714,7 +733,7 @@ int load_char(const char *name, struct char_data *ch)
       case 'L':
 	     if (!strcmp(tag, "Last"))	ch->player.time.logon	= parse_pfile_long_or_zero(line, filename, tag);
   else if (!strcmp(tag, "Lern"))	GET_PRACTICES(ch)	= parse_pfile_int_or_zero(line, filename, tag);
-	else if (!strcmp(tag, "Levl"))	GET_LEVEL(ch)		= parse_pfile_int_or_zero(line, filename, tag);
+	else if (!strcmp(tag, "Levl"))	GET_LEVEL(ch)		= pfile_int_in_range(line, filename, tag, GET_IDNUM(ch), 0, LVL_IMPL, PFDEF_LEVEL);
         else if (!strcmp(tag, "Lmot"))   GET_LAST_MOTD(ch)   = parse_pfile_int_or_zero(line, filename, tag);
         else if (!strcmp(tag, "Lnew"))   GET_LAST_NEWS(ch)   = parse_pfile_int_or_zero(line, filename, tag);
 	break;
@@ -757,9 +776,9 @@ int load_char(const char *name, struct char_data *ch)
 	break;
 
       case 'S':
-	     if (!strcmp(tag, "Sex "))	GET_SEX(ch)		= parse_pfile_int_or_zero(line, filename, tag);
+	     if (!strcmp(tag, "Sex "))	GET_SEX(ch)		= pfile_int_in_range(line, filename, tag, GET_IDNUM(ch), 0, NUM_GENDERS - 1, PFDEF_SEX);
   else if (!strcmp(tag, "ScrW"))  GET_SCREEN_WIDTH(ch) = parse_pfile_int_or_zero(line, filename, tag);
-	else if (!strcmp(tag, "Skil"))	load_skills(fl, ch);
+	else if (!strcmp(tag, "Skil"))	load_skills(fl, ch, filename);
 	else if (!strcmp(tag, "Str "))	load_HMVS(ch, line, LOAD_STRENGTH);
 	break;
 
@@ -1287,7 +1306,7 @@ static int parse_saved_ints(const char *line, int *first, int *second)
   return *cursor == '\0' ? count : 0;
 }
 
-static void load_skills(FILE *fl, struct char_data *ch)
+static void load_skills(FILE *fl, struct char_data *ch, const char *filename)
 {
   int num, num2;
   char line[MAX_INPUT_LENGTH + 1];
@@ -1302,6 +1321,13 @@ static void load_skills(FILE *fl, struct char_data *ch)
     if (num < 1 || num > MAX_SKILLS) {
       log("SYSERR: Out-of-range skill in pfile (%s): %d", GET_NAME(ch), num);
       break;
+    }
+    /* skills[] is unsigned char: a larger value would be silently cut. */
+    if (num2 < 0 || num2 > UCHAR_MAX) {
+      TB_ERROR_MSG("player", "pfile-range", filename,
+                   "player idnum %ld skill %d value %d outside 0..%d; skill not loaded",
+                   GET_IDNUM(ch), num, num2, UCHAR_MAX);
+      continue;
     }
     GET_SKILL(ch, num) = num2;
   }
