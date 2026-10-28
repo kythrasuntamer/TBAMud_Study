@@ -4485,9 +4485,12 @@ ACMD(do_copyover)
   FILE *fp;
   struct descriptor_data *d, *d_next;
   char buf [100], buf2[100];
+  int write_ok = 1;   /* every write of the state file succeeded */
 
   fp = fopen (COPYOVER_FILE, "w");
     if (!fp) {
+      TB_ERROR_ERRNO("act", "copyover-open", COPYOVER_FILE,
+                     "caller " DIAG_CHAR_FMT "; copyover aborted", DIAG_CHAR(ch));
       send_to_char (ch, "Copyover file not writeable, aborted.\n\r");
       return;
     }
@@ -4495,7 +4498,7 @@ ACMD(do_copyover)
    tb_snprintf(buf, sizeof(buf), "\n\r *** COPYOVER by %s - please remain seated!\n\r", GET_NAME(ch));
 
    /* write boot_time as first line in file */
-   tb_fprintf(fp, "%ld\n", (long)boot_time);
+   write_ok &= tb_fprintf_checked(fp, COPYOVER_FILE, "%ld\n", (long)boot_time);
 
    /* For each playing descriptor, save its state */
    for (d = descriptor_list; d ; d = d_next) {
@@ -4513,7 +4516,9 @@ ACMD(do_copyover)
      write_to_descriptor (d->descriptor, "\n\rSorry, we are rebooting. Come back in a few minutes.\n\r");
      close_socket (d); /* throw'em out */
    } else {
-      tb_fprintf(fp, "%d %ld %s %s %s\n", d->descriptor, GET_PREF(och), GET_NAME(och), d->host, CopyoverGet(d));
+      write_ok &= tb_fprintf_checked(fp, COPYOVER_FILE, "%d %ld %s %s %s\n",
+                                     d->descriptor, GET_PREF(och), GET_NAME(och),
+                                     d->host, CopyoverGet(d));
       /* save och */
       GET_LOADROOM(och) = GET_ROOM_VNUM(IN_ROOM(och));
       Crash_rentsave(och,0);
@@ -4522,8 +4527,24 @@ ACMD(do_copyover)
     }
   }
 
-  tb_fprintf(fp, "-1\n");
-  tb_fclose(fp);
+  write_ok &= tb_fprintf_checked(fp, COPYOVER_FILE, "-1\n");
+  write_ok &= tb_fflush_checked(fp, COPYOVER_FILE);
+  write_ok &= tb_fclose_checked(fp, COPYOVER_FILE);
+
+  /* A short record list (e.g. ENOSPC) would make the new process drop or
+   * mis-bind the sockets past the truncation, so do not exec. Everyone has
+   * been saved above and stays connected to this process. */
+  if (!write_ok) {
+    TB_ERROR_MSG("act", "copyover-write", COPYOVER_FILE,
+                 "caller " DIAG_CHAR_FMT ": state file incomplete; copyover aborted before exec",
+                 DIAG_CHAR(ch));
+    if (remove(COPYOVER_FILE) != 0)
+      TB_ERROR_ERRNO("act", "copyover-remove", COPYOVER_FILE,
+                     "incomplete state file left behind");
+    send_to_all("Copyover aborted; carry on.\r\n");
+    send_to_char(ch, "Copyover ABORTED: could not write %s.\r\n", COPYOVER_FILE);
+    return;
+  }
 
   /* exec - descriptors are inherited */
   tb_snprintf(buf, sizeof(buf), "%d", port);

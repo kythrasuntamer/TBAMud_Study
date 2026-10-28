@@ -28,6 +28,8 @@
 #include "modify.h"
 #include "protocol.h"
 #include <stdarg.h>
+#include <unistd.h>
+#include <sys/stat.h>
 
 /* ---------------------------------------------------------------------
  * Structured diagnostics. utils.c owns tb_error_log_at(); the link wraps it
@@ -666,6 +668,48 @@ static void test_zcheck_checks_the_last_room(void)
   TEST_ASSERT_NOT_NULL(strstr(sent, "Room description is too short"));
 }
 
+/* Run do_copyover in a fresh directory whose copyover.dat is prepared by
+ * the caller ("full": a symlink to /dev/full, "dir": a directory). The
+ * abort paths return before chdir("..")/execl. */
+static void run_copyover_in(const char *kind)
+{
+  char tmpl[] = "/tmp/tb_copyover_XXXXXX";
+  char old_cwd[4096];
+  char *dir = mkdtemp(tmpl);
+
+  TEST_ASSERT_NOT_NULL(dir);
+  TEST_ASSERT_NOT_NULL(getcwd(old_cwd, sizeof(old_cwd)));
+  TEST_ASSERT_EQUAL_INT(0, chdir(dir));
+  if (!strcmp(kind, "full"))
+    TEST_ASSERT_EQUAL_INT(0, symlink("/dev/full", COPYOVER_FILE));
+  else
+    TEST_ASSERT_EQUAL_INT(0, mkdir(COPYOVER_FILE, 0700));
+  RUN_CMD(do_copyover, &imm, "");
+  /* The write-failure path removes its file; the directory stays. */
+  if (!strcmp(kind, "dir"))
+    TEST_ASSERT_EQUAL_INT(0, rmdir(COPYOVER_FILE));
+  else
+    TEST_ASSERT_NOT_EQUAL(0, access(COPYOVER_FILE, F_OK));
+  TEST_ASSERT_EQUAL_INT(0, chdir(old_cwd));
+  TEST_ASSERT_EQUAL_INT(0, rmdir(dir));
+}
+
+/* G1-29: a failed write of the copyover state file was ignored and the
+ * server exec'd with a truncated record list; fopen failure logged no
+ * errno or path. */
+static void test_copyover_aborts_before_exec_when_state_file_fails(void)
+{
+  run_copyover_in("full");
+  TEST_ASSERT_EQUAL_STRING("copyover-write", captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(captured_detail, "player idnum 1"));
+  TEST_ASSERT_NOT_NULL(strstr(sent, "Copyover ABORTED"));
+
+  reset_counters();
+  run_copyover_in("dir");
+  TEST_ASSERT_EQUAL_STRING("copyover-open", captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(sent, "not writeable"));
+}
+
 int main(void)
 {
   /* basic_mud_log()/mudlog() are the real utils.c ones; keep them quiet. */
@@ -685,6 +729,7 @@ int main(void)
   RUN_TEST(test_zcheck_bad_apply_location_is_reported);
   RUN_TEST(test_zcheck_null_room_description_is_reported);
   RUN_TEST(test_zcheck_checks_the_last_room);
+  RUN_TEST(test_copyover_aborts_before_exec_when_state_file_fails);
   {
     int failures = UNITY_END();
     if (logfile)
