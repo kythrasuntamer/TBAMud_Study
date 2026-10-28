@@ -1030,7 +1030,7 @@ behaviour, and glibc normally aborts the server.
 
 | | |
 | --- | --- |
-| Command | `aedit <social>`, `aedit save`; `LVL_GOD`, plus `can_edit_zone(ch, AEDIT_PERMISSION)` (OLC zone `all` or `aedit`, or `LVL_GRGOD`). Refused while `use_new_socials` is off. |
+| Command | `aedit <social>`, `aedit save`; `LVL_GOD`, plus `can_edit_zone(ch, AEDIT_PERMISSION)`, which hands the sentinel to `can_use_editor()` (OLC zone `all` or `aedit`, or `LVL_GRGOD`; see [can_edit_zone()](#can_edit_zone)). Refused while `use_new_socials` is off. |
 | State and scratch | `CON_AEDIT`; `OLC_ACTION` (a `struct social_messg`), `OLC_STORAGE` (the word typed), and `OLC_ZNUM` used as an **index into `soc_mess_list[]`**, or `top_of_socialt + 1` for a new social. |
 | Live data changed | `soc_mess_list[]` and `top_of_socialt` (an inclusive index); `complete_cmd_info[]` and `cmd_sort_info[]`, which every save rebuilds. |
 | Writer | `aedit.c:aedit_save_to_disk()` writes `lib/misc/socials.new` (`SOCMESS_FILE_NEW`) on every save. |
@@ -1102,7 +1102,7 @@ and `OLC_STORAGE`. Nothing is applied.
 
 | | |
 | --- | --- |
-| Command | `hedit <keyword>`, `hedit save`; `LVL_GOD`, plus `can_edit_zone(ch, HEDIT_PERMISSION)` (OLC zone `all` or `hedit`, or `LVL_GRGOD`). `helpcheck` (`LVL_GOD`) and `hindex` (everyone) only list. |
+| Command | `hedit <keyword>`, `hedit save`; `LVL_GOD`, plus `can_use_editor(ch, HEDIT_PERMISSION)` (OLC zone `all` or `hedit`, or `LVL_GRGOD`). `helpcheck` (`LVL_GOD`) and `hindex` (everyone) only list. |
 | State and scratch | `CON_HEDIT`; `OLC_HELP` (a `struct help_index_element`), `OLC_STORAGE` (the word typed), and `OLC_ZNUM` used as an **index into `help_table[]`**, or `NOWHERE` for a new entry. |
 | Live data changed | `help_table[]` and `top_of_helpt`, which is a **count**, not an inclusive index. A successful write frees the whole table and loads it again. |
 | Writer | `hedit.c:hedit_save_to_disk()` writes `lib/text/help/help.hlp` on every save. |
@@ -1163,10 +1163,13 @@ it drop the save-list entry, call `free_help_table()` and run
   only `help.hlp`.
 - The reload is the boot loader: a file that cannot be opened or parsed
   means `exit(1)`.
-- Every pointer into the old table dies. `do_help()` pages
+- Every pointer into the old table dies. `do_help()` used to page
   `help_table[mid].entry` with `page_string(..., 0)`, which keeps pointers
   into it between input lines, so a player paging a help text during a
-  save reads freed memory at the next page. `reload all` and `reload xhelp`
+  save read freed memory at the next page. On the integrated tree it pages
+  a copy (`page_string(..., TRUE)`, commit `34f87c2`), which the pager owns
+  and frees, and `look <keyword>` pages a room extra description the same
+  way. `reload all` and `reload xhelp`
   (`db.c:do_reboot()`) free and reload the table the same way, without
   checking for an open `hedit` session.
 - If the write fails nothing is reloaded. The change stays in memory, a
@@ -1846,23 +1849,30 @@ from `oasis.h`:
 `set <player> olc <zone | all | hedit | aedit | off>` (`LVL_GRGOD`,
 `act.wizard.c:perform_set()`) assigns it. The sentinels cannot collide with
 real zone vnums because `create_new_zone()` caps zone vnums at 655.
-`hedit` and `aedit` pass `HEDIT_PERMISSION` and `AEDIT_PERMISSION` to
-`can_edit_zone()` as pseudo zone rnums.
+`hedit` checks its sentinel with `oasis.c:can_use_editor(ch,
+HEDIT_PERMISSION)`; `aedit` still passes `AEDIT_PERMISSION` to
+`can_edit_zone()` as a pseudo zone rnum, which hands it to
+`can_use_editor()` (commit `6e68dcf`, F3-20). `can_use_editor()` denies a
+character with no descriptor or an NPC, allows OLC zone `all` or the
+editor's own sentinel, then `LVL_GRGOD` and above; any other `perm` is a
+caller bug, reported as `editor-permission` and denied.
 
 ### can_edit_zone()
 
 `oasis.c:can_edit_zone(ch, rnum)` decides, in this order:
 
 1. No descriptor, an NPC, or `rnum == NOWHERE`: **refuse**.
-2. The zone is flagged `ZONE_NOBUILD` (and `rnum` is not one of the
-   pseudo-zones): **refuse**, whatever the builder's level. `zunlock` must
-   clear the flag first.
-3. `GET_OLC_ZONE(ch) == ALL_PERMISSION`: **allow**.
-4. The builder holds the matching `HEDIT_PERMISSION` or `AEDIT_PERMISSION`
-   for that pseudo-zone: **allow**.
+2. `rnum` past `top_of_zone_table`: a `HEDIT_PERMISSION` or
+   `AEDIT_PERMISSION` sentinel is decided by `can_use_editor()` (above);
+   any other value is reported as `zone-index` and **refused** (commit
+   `6e68dcf`, F3-20). A sentinel that is a real zone rnum (a world with
+   that many zones) is treated as that zone, with all the checks below.
+3. The zone is flagged `ZONE_NOBUILD`: **refuse**, whatever the builder's
+   level. `zunlock` must clear the flag first.
+4. `GET_OLC_ZONE(ch) == ALL_PERMISSION`: **allow**.
 5. `GET_LEVEL(ch) >= LVL_GRGOD`: **allow**.
-6. The builder's name is in the zone's `builders` string (`is_name()`;
-   not checked for the pseudo-zones): **allow**, with no level check.
+6. The builder's name is in the zone's `builders` string (`is_name()`):
+   **allow**, with no level check.
 7. `GET_OLC_ZONE(ch) == NOWHERE`: **refuse**.
 8. `GET_LEVEL(ch) < LVL_BUILDER`: **refuse**.
 9. `real_zone(GET_OLC_ZONE(ch)) == rnum`: **allow**; otherwise **refuse**.
@@ -2093,7 +2103,8 @@ rule, the section that describes the code says so.
 31. Do not edit, free or reload a buffer that other code may still be
     reading. `page_string(..., 0)` keeps pointers into the text it pages
     between input lines, so `tedit` must not grow the live text globals in
-    place and `hedit` must not free the help table under a reader. Edit a
+    place and `hedit` must not free the help table under a reader
+    (`do_help()` now pages a copy, so only text-file pages remain exposed). Edit a
     private copy, publish it whole, and never publish NULL.
 32. On a successful save, `aedit` and `hedit` hand the scratch strings to the
     live table and must end with `CLEANUP_STRUCTS`. `cedit` and `msgedit`
@@ -2195,7 +2206,7 @@ for problems this branch already fixed (`56dff8a`/`736ee87`,
 | Commit | Change |
 | --- | --- |
 | `7d4dd2f` | `add_room()` renumbers the reset commands of every zone; both `add_room()` and `delete_room()` renumber `GET_WAS_IN()`. |
-| `90c3d54` | `copy_object()` and `copy_room()` keep the destination's running script and event list and free the trigger list they replace. |
+| `90c3d54` | `copy_object()` and `copy_room()` keep the destination's running script and event list and free the trigger list they replace. On the integrated tree the trigger-list half is dropped (`0076760`): the OLC editors already free the replaced list (F1-08), and both frees together freed it twice on every `redit`/`oedit` save of an entity with triggers. |
 | `cc089c0` | `delete_room()` shifts start rooms above the deleted rnum down. |
 | `ae7aed7` | `add_room()` clears `people`, `contents`, `events` and `script` of an inserted room and reports a caller that passed any. |
 | `22201d2` | `rebase_room_events()` points every room mud event back at its room after `world[]` moves. |

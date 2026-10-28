@@ -613,7 +613,7 @@ the file. The columns:
 | C2-08 | high | untrusted-index | `src/genobj.c:delete_object` | builder-olc | confirmed | fixed: `security: drop shop products of a deleted prototype; refuse board objects` |
 | C2-09 | high | untrusted-index | `src/genshp.c:save_shops` | builder-olc | confirmed | fixed: `security: save_shops validates the keeper rnum before indexing mob_index` |
 | C2-10 | medium (was high) | double-free-or-leak | `src/genobj.c:update_all_objects` | builder-olc | confirmed | fixed: `security: free live instances' private state before a prototype update` |
-| C2-11 | medium | double-free-or-leak | `src/genobj.c:copy_object_main` | builder-olc | confirmed | fixed: `security: copy_object/copy_room own triggers and keep the live events list` |
+| C2-11 | medium | double-free-or-leak | `src/genobj.c:copy_object_main` | builder-olc | confirmed | fixed: `security: copy_object/copy_room own triggers and keep the live events list`<br>its trigger-list free was dropped at integration (`fix: integrate fan-in m1 OLC saves free a replaced trigger list once`): with F1-08's editor free it freed the list twice; F1-08 alone now frees it |
 | C2-12 | high | buffer-bounds | `src/genzon.c:create_new_zone` | immortal | confirmed | fixed: `security: zedit new rejects the last zone's number and never truncates files` |
 | C2-13 | high | null-deref | `src/genwld.c:save_rooms` | save-or-world-file | confirmed | fixed in part: `security: save_rooms writes a NULL extra-description field as empty`<br>rest: follow-up `gen-olc` |
 | C2-14 | medium (was high) | null-deref | `src/dg_db_scripts.c:parse_trigger` | save-or-world-file | confirmed | fixed: `security: parse_trigger loads an empty command body as '* No script'` |
@@ -814,8 +814,8 @@ the file. The columns:
 | F3-16 | low | silent-failure | `src/oasis_list.c:list_mobiles` | builder-olc | confirmed | fixed: `security: mlist, olist and zlist list a one-record table` |
 | F3-17 | low | other | `src/oasis_list.c:perform_mob_flag_list` | builder-olc | confirmed | fixed: `security: mlist level/flags read prototypes instead of spawning mobs` |
 | F3-18 | low | integer | `src/oasis_copy.c:do_dig` | builder-olc | confirmed | fixed: `security: dig range-checks its target vnum` |
-| F3-19 | low | buffer-bounds | `src/oasis.c:split_argument` | save-or-world-file | plausible | deferred: follow-up `commands` (plausible, not attempted yet) |
-| F3-20 | low | other | `src/oasis.c:can_edit_zone` | internal-invariant | plausible | queued for a later round (not memory safety) |
+| F3-19 | low | buffer-bounds | `src/oasis.c:split_argument` | save-or-world-file | plausible | fixed: `security: split_argument bounds the config key by its buffer` |
+| F3-20 | low | other | `src/oasis.c:can_edit_zone` | internal-invariant | plausible | fixed: `security: can_edit_zone bounds its zone index and keeps editor sentinels out` |
 
 ### Area G: Player and immortal commands
 
@@ -871,7 +871,7 @@ the file. The columns:
 | G2-14 | low | silent-failure | `src/act.comm.c:do_say / perform_tell / do_gen_comm` | dg-script | confirmed | fixed: `security: history stores only what act() delivered to each listener` |
 | G2-15 | low | silent-failure | `src/act.informative.c:perform_immort_where` | immortal | confirmed | fixed: `diag: immortal 'where' shows and reports a truncated listing` |
 | G2-16 | low | null-deref | `src/act.informative.c:show_obj_to_char / print_object_location` | internal-invariant | plausible | deferred: follow-up `commands` (plausible, not attempted yet) |
-| G2-17 | low | untrusted-index | `src/act.informative.c:look_at_room` | internal-invariant | plausible | deferred: follow-up `commands` (plausible, not attempted yet) |
+| G2-17 | low | untrusted-index | `src/act.informative.c:look_at_room` | internal-invariant | plausible | fixed: `security: look_at_room reports an unplaced viewer at its caller` |
 | G2-18 | low | silent-failure | `src/act.informative.c:look_in_obj` | save-or-world-file | confirmed | fixed in part: `diag: report a drink container holding more than its capacity`<br>rest: queued for a later round |
 | G2-19 | low | error-locality | `src/act.informative.c:show_obj_to_char / do_gen_ps / do_use / do_gen_tog / is_tell_ok` | internal-invariant | confirmed | fixed: `diag: player command guards report call site and entity IDs` |
 | G2-20 | low | other | `src/act.informative.c:do_help` | player | plausible | queued for a later round (not memory safety) |

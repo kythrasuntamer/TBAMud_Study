@@ -653,16 +653,24 @@ commit on the named branch that has not been merged here.
 - `act.wizard.c:do_dc` sets `CON_CLOSE` for any descriptor not in
   `CON_PLAYING`, including the OLC states, whose character is in the world.
   `close_socket()` then frees that character while it is still linked into
-  its room and `character_list`, and skips `cleanup_olc()`. It should test
-  `IS_PLAYING(d)`. No branch fixes this.
+  its room and `character_list`, and skips `cleanup_olc()`. Fixed on the
+  integrated tree (commit `1caeebc`): every in-game state (`IS_PLAYING`)
+  takes the link-loss path, `CON_DISCONNECT`, after the editor is left as
+  its own exit would leave it (a text being written is abandoned as `/a`
+  does, then `cleanup_olc()` releases the workspace); only out-of-game
+  sockets get `CON_CLOSE`, and a refused target is reported as `dc-denied`.
 - `objsave.c:Crash_listrent` and `house.c:House_listrent` call
   `page_string(ch->desc, buf, 0)` on a local array. A listing longer than
   one page leaves `showstr_vector` pointing into a dead stack frame. The
   pager also keeps pointers into help entries (`do_help`) and room extra
   descriptions (`look`) that `hedit`, `reload xhelp` and `redit` can free.
+  Fixed on the integrated tree: the rent and house listings (`dbc30ab`)
+  and the help entry and extra description (`34f87c2`) are paged from a
+  copy the pager owns.
 - `comm.c:close_socket` runs `cleanup_olc()` only for some editor states;
   `CON_CEDIT`, `CON_PREFEDIT`, `CON_IBTEDIT` and `CON_IEDIT` leak their
-  workspace. Fixed on `worktree-wf_c613c2c5-f9f-39` (commit `30d15bb`).
+  workspace. Fixed on the integrated tree (F3-11): any attached workspace
+  is released whatever the state; `tests/test_close_socket.c` pins all four.
 - `ProtocolInput()` counts NUL bytes in its return value, but `strlcat()`
   stops at the first NUL, so `process_input()` advances past bytes it never
   received. Input after a NUL byte in the same read is lost or framed
