@@ -159,10 +159,19 @@ extern void abort(), exit();
 #endif
 
 /*
- * Checked replacements for legacy atoi()/atol() call sites.
- * They preserve the historical "no conversion => 0" behavior while detecting
- * range errors instead of invoking undefined or implementation-dependent
- * overflow behavior.
+ * Replacements for legacy atoi()/atol() call sites, with atoi()'s contract
+ * kept on purpose:
+ *   - text with no leading number ("", "abc") returns 0;
+ *   - a value outside long (or, for the int form, int) returns 0 -- strtol's
+ *     ERANGE is caught so there is no undefined overflow, but it is NOT
+ *     reported anywhere;
+ *   - trailing text is ignored ("12abc" returns 12).
+ * So the caller cannot tell "0", "garbage" and "overflow" apart, and nothing
+ * is logged.  Use them only for legacy fields where 0 is a safe, expected
+ * value for bad input.  New code, and any input whose rejection matters
+ * (file formats, command arguments that select or size something), should
+ * use tb_parse_long_checked() / tb_parse_int_checked() below and report the
+ * failure with its context.
  */
 static inline long tb_parse_long_or_zero(const char *text)
 {
@@ -778,6 +787,24 @@ static inline int tb_diag_emit(const char *record, size_t length)
   return ok;
 }
 
+/**
+ * Emit one structured "TBERR ..." record on stderr: severity, category,
+ * operation, context, errno (number, symbolic name, strerror text) and the
+ * source file/line/function of the call site, all escaped so a record is
+ * always one line.  The allocation-free, utils.c-free reporter for headers,
+ * standalone tools and early boot; elsewhere prefer TB_ERROR_* (utils.h),
+ * which add breadcrumbs and a correlation ID.
+ *
+ * Contract and limits:
+ *  - errno is preserved for the caller.
+ *  - Not async-signal-safe (strerror, gmtime, snprintf): never call it from
+ *    a signal handler.
+ *  - Each escaped field is bounded (context: 1023 bytes after escaping;
+ *    record: 4095); longer text is cut without a marker.  Callers that build
+ *    a context with several values should use TB_REPORT_DOMAIN_ERRORF,
+ *    which marks its own truncation.
+ *  - Uses about 6.5 KB of stack (the record and escape buffers).
+ */
 static inline void tb_report_domain_error_at(tb_error_severity severity,
                                              tb_error_category category,
                                              const char *operation,
@@ -1265,6 +1292,14 @@ static inline int tb_fwrite_checked_at(const void *ptr, size_t size, size_t coun
 /*
  * Test-only failure injection. Production builds compile this to a constant
  * false and expose no runtime switch that can sabotage I/O.
+ *
+ * Scope: tb_test_failpoints_ is a `static` variable in a header, so every
+ * translation unit compiled with TB_TEST_FAILURE_INJECTION gets its own
+ * copy.  tb_test_set_failpoints() therefore affects only the
+ * tb_replace_file_checked() calls compiled into the same .c file as the
+ * call to it (tests/test_error_handling.c calls both itself).  A test that
+ * needs to fail a replacement inside another .c file must set the failpoint
+ * from that file.
  */
 #define TB_FAIL_REPLACE_INITIAL  0x01u
 #define TB_FAIL_REPLACE_COMMIT   0x02u
