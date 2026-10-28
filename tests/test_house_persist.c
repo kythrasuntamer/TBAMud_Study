@@ -989,6 +989,37 @@ static void test_house_load_odd_locs_are_reported(void)
   TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail_log, "wear-slot Loc 3"));
 }
 
+/* Fuzzer PLAYER-2 (hcontrol-time): built_on and last_payment come from the
+ * binary hcontrol file and can be any time_t. localtime() returns NULL for
+ * one it cannot represent, and tb_strftime() then left the listing's
+ * buffers unwritten, so 'hcontrol show' printed (and over-read) stack
+ * bytes. They show as Unknown and are reported. */
+static void test_hcontrol_show_reports_unrepresentable_times(void)
+{
+  struct house_control_rec rec = good_record();
+  char row[160];
+
+  if (sizeof(time_t) < 8)
+    TEST_IGNORE_MESSAGE("needs a 64-bit time_t");
+  rec.built_on = (time_t)100000000000000000LL;
+  rec.last_payment = (time_t)100000000000000000LL;
+  write_hcontrol(&rec, 1);
+  House_boot();
+  tb_error_capture_reset();
+  dirty_stack();
+
+  hcontrol_list_houses(&imm, (char *)"");
+
+  TEST_ASSERT_TRUE(snprintf(row, sizeof(row), "%7d %7d  %-15s    %2d    %-12s %s\r\n",
+                            100, 101, "Unknown", 0, "Owner", "Unknown") > 0);
+  TEST_ASSERT_NOT_NULL(strstr(sent, row));
+  TEST_ASSERT_EQUAL_STRING("hcontrol-time\nhcontrol-time\n", tb_captured_op_log);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail_log,
+                              "house vnum 100 built_on 100000000000000000 is not a valid time"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail_log,
+                              "house vnum 100 last_payment 100000000000000000"));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -1012,6 +1043,7 @@ int main(void)
   RUN_TEST(test_house_load_flat_file_stays_flat);
   RUN_TEST(test_house_load_orphaned_contents_go_on_the_floor);
   RUN_TEST(test_house_load_odd_locs_are_reported);
+  RUN_TEST(test_hcontrol_show_reports_unrepresentable_times);
   {
     char sub[300];
     if (snprintf(sub, sizeof(sub), "%s/etc", scratch_dir) > 0)

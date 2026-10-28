@@ -711,11 +711,31 @@ static const char *HCONTROL_FORMAT =
 "       hcontrol pay <house vnum>\r\n"
 "       hcontrol show [house vnum | .]\r\n";
 
+/* Format a time read from hcontrol for 'hcontrol show'. The value is file
+ * data and can be any time_t; localtime() returns NULL for one it cannot
+ * represent, and tb_strftime() then left out unwritten, so the listing
+ * printed stack bytes (fuzzer PLAYER-2). Such a time shows as "Unknown"
+ * and is reported with the house vnum and the raw value. */
+static void House_format_time(char *out, size_t size, time_t when,
+                              room_vnum vnum, const char *field)
+{
+  const struct tm *tm = localtime(&when);
+
+  if (tm == NULL) {
+    TB_WARN_MSG("house", "hcontrol-time", HCONTROL_FILE,
+                "house vnum %d %s %lld is not a valid time; shown as Unknown",
+                vnum, field, (long long) when);
+    strlcpy(out, "Unknown", size);
+    return;
+  }
+  tb_strftime(out, size, "%a %b %d %Y", tm);
+}
+
 void hcontrol_list_houses(struct char_data *ch, char *arg)
 {
   int i;
   char *temp;
-  char built_on[128], last_pay[128], own_name[MAX_NAME_LENGTH + 1];
+  char built_on[128] = "", last_pay[128] = "", own_name[MAX_NAME_LENGTH + 1];
 
 	if (arg && *arg) {
 		room_vnum toshow;
@@ -746,14 +766,16 @@ void hcontrol_list_houses(struct char_data *ch, char *arg)
     if ((temp = get_name_by_id(house_control[i].owner)) == NULL)
       continue;
 
-    if (house_control[i].built_on) {
-      tb_strftime(built_on, sizeof(built_on), "%a %b %d %Y", localtime(&(house_control[i].built_on)));
-    } else
+    if (house_control[i].built_on)
+      House_format_time(built_on, sizeof(built_on), house_control[i].built_on,
+                        house_control[i].vnum, "built_on");
+    else
       strlcpy(built_on, "Unknown", sizeof(built_on)); /* strcpy: OK */
 
-    if (house_control[i].last_payment) {
-      tb_strftime(last_pay, sizeof(last_pay), "%a %b %d %Y", localtime(&(house_control[i].last_payment)));
-    } else
+    if (house_control[i].last_payment)
+      House_format_time(last_pay, sizeof(last_pay), house_control[i].last_payment,
+                        house_control[i].vnum, "last_payment");
+    else
       strlcpy(last_pay, "None", sizeof(last_pay));	/* strcpy: OK */
 
     /* Now we need a copy of the owner's name to capitalize. -gg 6/21/98 */
