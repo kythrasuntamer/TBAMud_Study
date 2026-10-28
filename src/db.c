@@ -2891,6 +2891,66 @@ static void log_zone_error(zone_rnum zone, int cmd_no, const char *message)
 #define ZONE_ERROR(message) \
 	{ log_zone_error(zone, cmd_no, message); last_cmd = 0; }
 
+/* Object triggers fired during a reset may purge the object they run on.
+ * Unlike characters (which wait for extract_pending_chars()), extract_obj()
+ * frees an object at once, and load_otrigger()/wear_otrigger() take the object
+ * by value, so the caller cannot see the purge through its own pointer.
+ *
+ * Invariant: after these helpers return, the object is either live or the
+ * caller's pointer is NULL. The UID is taken before dispatch, and
+ * obj_uid_matches() compares the registered address without dereferencing
+ * the (possibly freed) object. Who controls the input: builders, through the
+ * zone file and the object's trigger scripts. */
+static struct obj_data *zone_reset_load_otrigger(struct obj_data *obj,
+                                                 zone_rnum zone, int cmd_no)
+{
+  obj_vnum vnum = GET_OBJ_VNUM(obj);
+  long uid;
+
+  if (!SCRIPT_CHECK(obj, OTRIG_LOAD))
+    return obj;
+
+  uid = obj_script_id(obj);
+  load_otrigger(obj);
+  if (obj_uid_matches(uid, obj))
+    return obj;
+
+  TB_WARN_MSG("db", "zone-reset", "load_otrigger",
+              "zone %d cmd %d '%c' line %d: obj vnum %d (uid %ld) purged by "
+              "its load trigger; dependent commands skipped",
+              zone_table[zone].number, cmd_no, ZCMD.command, ZCMD.line,
+              vnum, uid);
+  return NULL;
+}
+
+/* As above, for the wear trigger of an 'E' command. Returns wear_otrigger()'s
+ * verdict, and sets *objp to NULL when the trigger purged the object. */
+static int zone_reset_wear_otrigger(struct obj_data **objp,
+                                    struct char_data *mob, int pos,
+                                    zone_rnum zone, int cmd_no)
+{
+  struct obj_data *obj = *objp;
+  obj_vnum vnum = GET_OBJ_VNUM(obj);
+  long uid;
+  int worn;
+
+  if (!SCRIPT_CHECK(obj, OTRIG_WEAR))
+    return wear_otrigger(obj, mob, pos);
+
+  uid = obj_script_id(obj);
+  worn = wear_otrigger(obj, mob, pos);
+  if (obj_uid_matches(uid, obj))
+    return worn;
+
+  TB_WARN_MSG("db", "zone-reset", "wear_otrigger",
+              "zone %d cmd %d '%c' line %d: obj vnum %d (uid %ld) purged by "
+              "its wear trigger on mob vnum %d; dependent commands skipped",
+              zone_table[zone].number, cmd_no, ZCMD.command, ZCMD.line,
+              vnum, uid, GET_MOB_VNUM(mob));
+  *objp = NULL;
+  return 0;
+}
+
 /* execute the reset command table of a given zone */
 void reset_zone(zone_rnum zone)
 {
@@ -2932,8 +2992,8 @@ void reset_zone(zone_rnum zone)
 	if (ZCMD.arg3 != NOWHERE) {
 	  obj = read_object(ZCMD.arg1, REAL);
 	  obj_to_room(obj, ZCMD.arg3);
-	  last_cmd = 1;
-          load_otrigger(obj);
+	  obj = zone_reset_load_otrigger(obj, zone, cmd_no);
+	  last_cmd = obj != NULL;
           tobj = obj;
 	} else {
 	  obj = read_object(ZCMD.arg1, REAL);
@@ -2955,8 +3015,8 @@ void reset_zone(zone_rnum zone)
 	  break;
 	}
 	obj_to_obj(obj, obj_to);
-	last_cmd = 1;
-        load_otrigger(obj);
+	obj = zone_reset_load_otrigger(obj, zone, cmd_no);
+	last_cmd = obj != NULL;
         tobj = obj;
       } else
 	last_cmd = 0;
@@ -2974,8 +3034,8 @@ void reset_zone(zone_rnum zone)
       if (obj_index[ZCMD.arg1].number < ZCMD.arg2) {
 	obj = read_object(ZCMD.arg1, REAL);
 	obj_to_char(obj, mob);
-	last_cmd = 1;
-        load_otrigger(obj);
+	obj = zone_reset_load_otrigger(obj, zone, cmd_no);
+	last_cmd = obj != NULL;
         tobj = obj;
       } else
 	last_cmd = 0;
@@ -2996,10 +3056,19 @@ void reset_zone(zone_rnum zone)
 	  tb_snprintf(error, sizeof(error), "invalid equipment pos number (mob %s, obj %d, pos %d)", GET_NAME(mob), obj_index[ZCMD.arg2].vnum, ZCMD.arg3);
 	  ZONE_ERROR(error);
 	} else {
+	  int worn = 0;
+
 	  obj = read_object(ZCMD.arg1, REAL);
           IN_ROOM(obj) = IN_ROOM(mob);
-          load_otrigger(obj);
-          if (wear_otrigger(obj, mob, ZCMD.arg3)) {
+          obj = zone_reset_load_otrigger(obj, zone, cmd_no);
+          if (obj != NULL)
+            worn = zone_reset_wear_otrigger(&obj, mob, ZCMD.arg3, zone, cmd_no);
+          if (obj == NULL) {
+            tobj = NULL;
+            last_cmd = 0;
+            break;
+          }
+          if (worn) {
             IN_ROOM(obj) = NOWHERE;
             equip_char(mob, obj, ZCMD.arg3);
           } else

@@ -351,6 +351,29 @@ if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
         PROPERTIES COMPILE_OPTIONS "-ffunction-sections;-fdata-sections")
 endif()
 
+# Production world/text loaders (db.c). The test #includes db.c so its
+# file-scope parsers are reachable, and redirects exit() so fatal boot paths
+# can be asserted. utils.c is compiled into a private object library with
+# tb_error_log_at renamed, so tb_error_capture.h receives every diagnostic.
+# test_stubs.c is omitted because it defines db.c's globals.
+add_library(db_parse_utils OBJECT ${MUD_SRCDIR}/utils.c)
+target_include_directories(db_parse_utils PRIVATE ${TEST_INCLUDES})
+target_compile_options(db_parse_utils PRIVATE ${TEST_CFLAGS})
+target_compile_definitions(db_parse_utils PRIVATE tb_error_log_at=tb_error_log_at_real)
+add_executable(test_db_parse
+    $<TARGET_OBJECTS:unity_vendor>
+    $<TARGET_OBJECTS:db_parse_utils>
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_db_parse.c
+)
+target_include_directories(test_db_parse PRIVATE ${TEST_INCLUDES})
+target_compile_options(test_db_parse PRIVATE ${TEST_CFLAGS})
+add_test(NAME test_db_parse COMMAND test_db_parse)
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_compile_options(db_parse_utils PRIVATE -ffunction-sections -fdata-sections)
+    target_compile_options(test_db_parse PRIVATE -ffunction-sections -fdata-sections)
+    target_link_options(test_db_parse PRIVATE -Wl,--gc-sections)
+endif()
+
 find_package(Python3 COMPONENTS Interpreter QUIET)
 if(Python3_Interpreter_FOUND)
     add_test(NAME test_dg_memory_callback_contract
