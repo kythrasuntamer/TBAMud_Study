@@ -833,7 +833,9 @@ void prefedit_Restore_Defaults(struct descriptor_data *d)
      SET_BIT_AR(PREFEDIT_GET_FLAGS, PRF_AUTOEXIT);
 
   /* PRF_NOHASSLE   - On for Imms */
-  if (!PREFEDIT_FLAGGED(PRF_NOHASSLE) && GET_LEVEL(PREFEDIT_GET_CHAR) > LVL_IMMORT)
+  /* An immortal who already had it used to have it switched off, and the
+   * lowest immortal level was not counted as one. */
+  if (GET_LEVEL(PREFEDIT_GET_CHAR) >= LVL_IMMORT)
      SET_BIT_AR(PREFEDIT_GET_FLAGS, PRF_NOHASSLE);
   else
      REMOVE_BIT_AR(PREFEDIT_GET_FLAGS, PRF_NOHASSLE);
@@ -851,7 +853,9 @@ void prefedit_Restore_Defaults(struct descriptor_data *d)
      REMOVE_BIT_AR(PREFEDIT_GET_FLAGS, PRF_NOREPEAT);
 
   /* PRF_HOLYLIGHT  - On for Imms */
-  if (!PREFEDIT_FLAGGED(PRF_HOLYLIGHT) && GET_LEVEL(PREFEDIT_GET_CHAR) > LVL_IMMORT)
+  /* An immortal who already had it used to have it switched off, and the
+   * lowest immortal level was not counted as one. */
+  if (GET_LEVEL(PREFEDIT_GET_CHAR) >= LVL_IMMORT)
      SET_BIT_AR(PREFEDIT_GET_FLAGS, PRF_HOLYLIGHT);
   else
      REMOVE_BIT_AR(PREFEDIT_GET_FLAGS, PRF_HOLYLIGHT);
@@ -887,7 +891,9 @@ void prefedit_Restore_Defaults(struct descriptor_data *d)
      REMOVE_BIT_AR(PREFEDIT_GET_FLAGS, PRF_NOGRATZ);
 
   /* PRF_SHOWVNUMS  - On for Imms */
-  if (!PREFEDIT_FLAGGED(PRF_SHOWVNUMS) && GET_LEVEL(PREFEDIT_GET_CHAR) > LVL_IMMORT)
+  /* An immortal who already had it used to have it switched off, and the
+   * lowest immortal level was not counted as one. */
+  if (GET_LEVEL(PREFEDIT_GET_CHAR) >= LVL_IMMORT)
      SET_BIT_AR(PREFEDIT_GET_FLAGS, PRF_SHOWVNUMS);
   else
      REMOVE_BIT_AR(PREFEDIT_GET_FLAGS, PRF_SHOWVNUMS);
@@ -925,20 +931,16 @@ void prefedit_Restore_Defaults(struct descriptor_data *d)
      REMOVE_BIT_AR(PREFEDIT_GET_FLAGS, PRF_AUTOASSIST);
 
   /* PRF_AUTOMAP    - On */
-  if (PREFEDIT_FLAGGED(PRF_AUTOMAP))
-     SET_BIT_AR(PREFEDIT_GET_FLAGS, PRF_AUTOMAP);
+  SET_BIT_AR(PREFEDIT_GET_FLAGS, PRF_AUTOMAP);   /* "if flagged, set" turned nothing on */
 
   /* PRF_AUTOKEY    - On */
-  if (PREFEDIT_FLAGGED(PRF_AUTOKEY))
-     SET_BIT_AR(PREFEDIT_GET_FLAGS, PRF_AUTOKEY);
+  SET_BIT_AR(PREFEDIT_GET_FLAGS, PRF_AUTOKEY);   /* "if flagged, set" turned nothing on */
 
   /* PRF_AUTODOOR   - On */
-  if (PREFEDIT_FLAGGED(PRF_AUTODOOR))
-     SET_BIT_AR(PREFEDIT_GET_FLAGS, PRF_AUTODOOR);
+  SET_BIT_AR(PREFEDIT_GET_FLAGS, PRF_AUTODOOR);   /* "if flagged, set" turned nothing on */
 
   /* PRF_VERBOSE    - On */
-  if (PREFEDIT_FLAGGED(PRF_VERBOSE))
-    SET_BIT_AR(PREFEDIT_GET_FLAGS, PRF_VERBOSE);
+  SET_BIT_AR(PREFEDIT_GET_FLAGS, PRF_VERBOSE);   /* "if flagged, set" turned nothing on */
 
   /* Other (non-toggle) options */
   PREFEDIT_GET_WIMP_LEV   = 0;   /* Wimpy off by default */

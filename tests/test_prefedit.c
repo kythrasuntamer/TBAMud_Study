@@ -141,6 +141,34 @@ static void prefedit_without_a_descriptor_does_nothing(void)
   TEST_ASSERT_EQUAL_INT(0, cleanups);
 }
 
+/* Restoring defaults: immortals keep (or gain) nohassle, holylight and
+ * show-vnums from the lowest immortal level up, and the "on" defaults are
+ * really turned on.  The old code switched the immortal toggles off for an
+ * immortal who had them and never turned automap and friends on. */
+static void restore_defaults_sets_what_it_documents(void)
+{
+  int i;
+
+  memset(&imp_prefs, 0, sizeof(imp_prefs));
+  imp_prefs.ch = &victim;
+  victim.player.level = LVL_IMMORT;
+  SET_BIT_AR(imp_prefs.pref_flags, PRF_HOLYLIGHT);   /* already on */
+
+  prefedit_Restore_Defaults(&imp_desc);
+
+  {
+    const int on[] = { PRF_NOHASSLE, PRF_HOLYLIGHT, PRF_SHOWVNUMS,
+                       PRF_AUTOMAP, PRF_AUTOKEY, PRF_AUTODOOR, PRF_VERBOSE };
+    for (i = 0; i < (int)(sizeof(on) / sizeof(*on)); i++)
+      TEST_ASSERT_TRUE_MESSAGE(IS_SET_AR(imp_prefs.pref_flags, on[i]), "flag off");
+  }
+
+  victim.player.level = LVL_IMMORT - 1;
+  prefedit_Restore_Defaults(&imp_desc);
+  TEST_ASSERT_FALSE(IS_SET_AR(imp_prefs.pref_flags, PRF_HOLYLIGHT));
+  victim.player.level = 0;
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -148,5 +176,6 @@ int main(void)
   RUN_TEST(other_characters_leave_editors_alone);
   RUN_TEST(own_prefs_being_edited_sends_one_message);
   RUN_TEST(prefedit_without_a_descriptor_does_nothing);
+  RUN_TEST(restore_defaults_sets_what_it_documents);
   return UNITY_END();
 }
