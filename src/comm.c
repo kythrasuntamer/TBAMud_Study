@@ -146,6 +146,7 @@ static int process_input(struct descriptor_data *t);
 static void timediff(struct timeval *diff, struct timeval *a, struct timeval *b);
 static void timeadd(struct timeval *sum, struct timeval *a, struct timeval *b);
 static void flush_queues(struct descriptor_data *d);
+static void flush_input_queue(struct descriptor_data *d);
 static void nonblock(socket_t s);
 static int perform_subst(struct descriptor_data *t, char *orig, char *subst);
 static void record_usage(void);
@@ -1344,19 +1345,35 @@ static int get_from_q(struct txt_q *queue, char *dest, int *aliased)
   return (1);
 }
 
-/* Empty the queues before closing connection */
-static void flush_queues(struct descriptor_data *d)
+/* Discard queued, not-yet-executed input lines (the "--" command). Output
+ * state is untouched: the descriptor keeps using its current buffer. */
+static void flush_input_queue(struct descriptor_data *d)
 {
-  if (d->large_outbuf) {
-    d->large_outbuf->next = bufpool;
-    bufpool = d->large_outbuf;
-  }
   while (d->input.head) {
     struct txt_block *tmp = d->input.head;
     d->input.head = d->input.head->next;
     free(tmp->text);
     free(tmp);
   }
+  d->input.tail = NULL;
+}
+
+/* Release a closing connection's queues. The large output buffer goes back
+ * to the shared pool, so this descriptor must never write output again:
+ * only close_socket() may call this. The pointer is cleared so a stray later
+ * use cannot write into a buffer another descriptor now owns. */
+static void flush_queues(struct descriptor_data *d)
+{
+  if (d->large_outbuf) {
+    d->large_outbuf->next = bufpool;
+    bufpool = d->large_outbuf;
+    d->large_outbuf = NULL;
+    d->output = d->small_outbuf;
+    *d->output = '\0';
+    d->bufptr = 0;
+    d->bufspace = SMALL_BUFSIZE - 1;
+  }
+  flush_input_queue(d);
 }
 
 /* Add a new string to a player's output queue. For outside use. */
@@ -2139,7 +2156,9 @@ static int process_input(struct descriptor_data *t)
    if ( (*tmp == '-') && (*(tmp+1) == '-') && !(*(tmp+2)) )
    {
      write_to_output(t, "All queued commands cancelled.\r\n");
-     flush_queues(t);  /* Flush the command queue */
+     /* Input only: flush_queues() would hand this descriptor's live output
+      * buffer back to the shared pool while it is still in use. */
+     flush_input_queue(t);
      failed_subst = 1;  /* Allow the read point to be moved, but don't add to queue */
    }
 
