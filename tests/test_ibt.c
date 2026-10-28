@@ -342,6 +342,32 @@ static void test_remove_frees_admin_notes(void)
   TEST_ASSERT_EQUAL_INT(0, count_bugs());
 }
 
+static void write_bugs_file(const char *content)
+{
+  FILE *fl = fopen(BUGS_FILE, "wb");
+
+  TEST_ASSERT_NOT_NULL(fl);
+  TEST_ASSERT_EQUAL_INT(1, fputs(content, fl) >= 0);
+  TEST_ASSERT_EQUAL_INT(0, fclose(fl));
+}
+
+/* C1-09: a blank line in a body is saved as a lone "\r\n"; reading it back,
+ * fread_clean_string() walked to tmp[-1] (ASan stack-buffer-underflow
+ * before the fix). */
+static void test_load_body_with_blank_line(void)
+{
+  write_bugs_file("Text      title~\n"
+                  "Body      line1\r\n\r\nline3\r\n~\n"
+                  "Name      Alice~\n"
+                  "Level     1\n"
+                  "Room      3001\n"
+                  "Flags     0 0 0 0\n"
+                  "End\n");
+  load_ibt_file(SCMD_BUG);
+  TEST_ASSERT_EQUAL_INT(1, count_bugs());
+  TEST_ASSERT_EQUAL_STRING("line1\r\n\r\nline3\r\n", first_bug->body);
+}
+
 int main(void)
 {
   char dir[] = "/tmp/tb_test_ibt.XXXXXX";
@@ -361,5 +387,6 @@ int main(void)
   RUN_TEST(test_ibtedit_save_follows_record_not_position);
   RUN_TEST(test_remove_refuses_record_open_in_ibtedit);
   RUN_TEST(test_remove_frees_admin_notes);
+  RUN_TEST(test_load_body_with_blank_line);
   return UNITY_END();
 }
