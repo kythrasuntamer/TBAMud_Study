@@ -81,7 +81,10 @@ void add_var(struct trig_var_data **var_list, const char *name, const char *valu
   char *copy;
 
   if (strchr(name, '.')) {
-    log("add_var() : Attempt to add illegal var: %s", name);
+    /* No trigger is in scope here; the call site and the script_driver
+     * breadcrumb identify the running trigger. */
+    TB_WARN_MSG("dg", "var-name", "add_var",
+                "variable name '%s' contains '.'; not set", name);
     return;
   }
 
@@ -537,7 +540,8 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
         struct script_data *thescript = SCRIPT(&world[0]);
         *str = '\0';
         if (!thescript) {
-          script_log("Attempt to find global var. Apparently the void has no script.");
+          script_log("Trigger VNum %d: global var lookup, but room 0 (the "
+                     "void) has no script.", DIAG_TRIG_VNUM(trig));
           return;
         }
         for (vd = thescript->global_vars; vd ; vd = vd->next)
@@ -587,14 +591,17 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
  * Addition inspired by Jamie Nelson */
       else if (!str_cmp(var, "findmob")) {
         if (!*field || !subfield || !*subfield) {
-          script_log("findmob.vnum(mvnum) - illegal syntax");
+          script_log("Trigger VNum %d: findmob.vnum(mvnum) - illegal syntax",
+                     DIAG_TRIG_VNUM(trig));
           strlcpy(str, "0", slen);
         } else {
           room_rnum rrnum = real_room(dg_parse_vnum(field));
           mob_vnum mvnum = tb_parse_int_or_zero(subfield);
 
           if (rrnum == NOWHERE) {
-            script_log("findmob.vnum(ovnum): No room with vnum %d", tb_parse_int_or_zero(field));
+            script_log("Trigger VNum %d: findmob.vnum(mvnum): no room with "
+                       "vnum %d", DIAG_TRIG_VNUM(trig),
+                       tb_parse_int_or_zero(field));
             strlcpy(str, "0", slen);
           } else {
             for (i = 0, ch = world[rrnum].people; ch; ch = ch->next_in_room)
@@ -608,13 +615,16 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
       /* Addition inspired by Jamie Nelson. */
       else if (!str_cmp(var, "findobj")) {
         if (!*field || !subfield || !*subfield) {
-          script_log("findobj.vnum(ovnum) - illegal syntax");
+          script_log("Trigger VNum %d: findobj.vnum(ovnum) - illegal syntax",
+                     DIAG_TRIG_VNUM(trig));
           strlcpy(str, "0", slen);
         } else {
           room_rnum rrnum = real_room(dg_parse_vnum(field));
 
           if (rrnum == NOWHERE) {
-            script_log("findobj.vnum(ovnum): No room with vnum %d", tb_parse_int_or_zero(field));
+            script_log("Trigger VNum %d: findobj.vnum(ovnum): no room with "
+                       "vnum %d", DIAG_TRIG_VNUM(trig),
+                       tb_parse_int_or_zero(field));
             strlcpy(str, "0", slen);
           } else {
             /* item_in_list looks within containers as well. */

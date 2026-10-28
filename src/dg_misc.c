@@ -59,12 +59,19 @@ void do_dg_cast(void *go, struct script_data *sc, trig_data *trig, int type, cha
     case OBJ_TRIGGER:
       caster_room = dg_room_of_obj((struct obj_data *)go);
       if (!caster_room) {
-        script_log("dg_do_cast: unknown room for object-caster!");
+        script_log("Trigger VNum %d: dg_cast: obj vnum %d uid %ld is in no "
+                   "room; no caster.", GET_TRIG_VNUM(trig),
+                   GET_OBJ_VNUM((struct obj_data *)go),
+                   obj_script_id((struct obj_data *)go));
         return;
       }
       break;
     default:
-      script_log("dg_do_cast: unknown trigger type!");
+      TB_ERROR_MSG("dg", "cast-type", "do_dg_cast",
+                   "trig vnum %d: unknown owner type %d", GET_TRIG_VNUM(trig),
+                   type);
+      script_log("Trigger VNum %d: dg_cast: unknown trigger type %d!",
+                 GET_TRIG_VNUM(trig), type);
       return;
   }
 
@@ -130,13 +137,20 @@ void do_dg_cast(void *go, struct script_data *sc, trig_data *trig, int type, cha
 
   if (!caster) {
     if (!caster_room) {
-      script_log("dg_do_cast: no room available for temporary caster.");
+      script_log("Trigger VNum %d: dg_cast: no room available for temporary "
+                 "caster.", GET_TRIG_VNUM(trig));
       return;
     }
 
     caster = read_mobile(DG_CASTER_PROXY, VIRTUAL);
     if (!caster) {
-      script_log("dg_cast: Cannot load the caster mob!");
+      /* The proxy caster is a world prototype; its absence is a broken
+       * world file, not a script error. */
+      TB_ERROR_MSG("dg", "cast-proxy", "do_dg_cast",
+                   "trig vnum %d: caster proxy mob vnum %d cannot be loaded",
+                   GET_TRIG_VNUM(trig), DG_CASTER_PROXY);
+      script_log("Trigger VNum %d: dg_cast: cannot load the caster mob %d!",
+                 GET_TRIG_VNUM(trig), DG_CASTER_PROXY);
       return;
     }
     /* set the caster's name to that of the object, or the gods.... */

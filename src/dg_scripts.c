@@ -3622,10 +3622,11 @@ static struct char_data *find_char_by_uid_in_lookup_table(long uid)
 {
   struct lookup_table_t *lt = find_element_by_uid_in_lookup_table(uid);
 
+  /* A miss is routine (a UID that left the game, a probe in the wrong
+   * namespace). The plain log() that was here named no caller or trigger;
+   * callers that treat a miss as an error report it with that context. */
   if (lt)
     return (struct char_data *)(lt->c);
-
-  log("find_char_by_uid_in_lookup_table : No entity with number %ld in lookup table", uid);
   return NULL;
 }
 
@@ -3633,10 +3634,9 @@ static struct obj_data *find_obj_by_uid_in_lookup_table(long uid)
 {
   struct lookup_table_t *lt = find_element_by_uid_in_lookup_table(uid);
 
+  /* See find_char_by_uid_in_lookup_table(): misses are reported by callers. */
   if (lt)
     return (struct obj_data *)(lt->c);
-
-  log("find_obj_by_uid_in_lookup_table : No entity with number %ld in lookup table", uid);
   return NULL;
 }
 

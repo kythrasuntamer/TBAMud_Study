@@ -995,6 +995,16 @@ static void lost_remote_and_detach_miss_are_reported(void)
   TEST_ASSERT_NOT_NULL(TRIGGERS(SCRIPT(scripted)));
 }
 
+/* D1-28: add_var()'s rejection of a dotted name was a plain log() line. */
+static void dotted_variable_name_is_reported(void)
+{
+  struct trig_var_data *vars = NULL;
+
+  add_var(&vars, "a.b", "x", 0);
+  TEST_ASSERT_NULL(vars);
+  TEST_ASSERT_EQUAL_STRING("var-name", tb_captured_operation);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -1036,5 +1046,6 @@ int main(void)
   RUN_TEST(saturated_arithmetic_is_reported);
   RUN_TEST(trim_handles_empty_and_blank_values);
   RUN_TEST(lost_remote_and_detach_miss_are_reported);
+  RUN_TEST(dotted_variable_name_is_reported);
   return UNITY_END();
 }
