@@ -498,6 +498,11 @@ int save_config( IDXTYPE nowhere )
   tb_fprintf(fl, "* Maximum number of items players are allowed to rent.\n"
    	      "max_obj_save = %d\n\n", CONFIG_MAX_OBJ_SAVE);
 
+  /* load_config() reads min_rent_cost; it used not to be written, so the
+   * surcharge reverted to config.c's default at every boot. */
+  tb_fprintf(fl, "* Receptionist's surcharge on top of item costs.\n"
+              "min_rent_cost = %d\n\n", CONFIG_MIN_RENT_COST);
+
   tb_fprintf(fl, "* Should the game automatically save people?\n"
               "auto_save = %d\n\n", CONFIG_AUTO_SAVE);
 

@@ -333,9 +333,116 @@ static void test_display_closed_doors_survives_save_and_reboot(void)
   TEST_ASSERT_EQUAL_INT(changed, CONFIG_DISP_CLOSED_DOORS);
 }
 
+/* min_rent_cost (Crashsave/Rent option C) was never written, so a changed
+ * surcharge reverted to config.c's default at every boot. */
+static void test_min_rent_cost_survives_save_and_reboot(void)
+{
+  int changed = min_rent_cost + 4321;
+
+  CONFIG_MIN_RENT_COST = changed;
+  save_and_reboot();
+  TEST_ASSERT_EQUAL_INT(changed, CONFIG_MIN_RENT_COST);
+}
+
+/* Every setting cedit edits, each with a value that is not its config.c
+ * default.  The same lists drive both setting and checking, so a field
+ * cannot be set without being checked. */
+#define EVERY_NUMERIC_SETTING(X) \
+  X(CONFIG_PK_SETTING, 2) \
+  X(CONFIG_PT_SETTING, 1) \
+  X(CONFIG_LEVEL_CAN_SHOUT, 7) \
+  X(CONFIG_HOLLER_MOVE_COST, 33) \
+  X(CONFIG_TUNNEL_SIZE, 5) \
+  X(CONFIG_MAX_EXP_GAIN, 123456) \
+  X(CONFIG_MAX_EXP_LOSS, 654321) \
+  X(CONFIG_MAX_NPC_CORPSE_TIME, 9) \
+  X(CONFIG_MAX_PC_CORPSE_TIME, 17) \
+  X(CONFIG_IDLE_VOID, 11) \
+  X(CONFIG_IDLE_RENT_TIME, 52) \
+  X(CONFIG_IDLE_MAX_LEVEL, LVL_IMMORT + 2) \
+  X(CONFIG_DTS_ARE_DUMPS, !dts_are_dumps) \
+  X(CONFIG_LOAD_INVENTORY, !load_into_inventory) \
+  X(CONFIG_TRACK_T_DOORS, !track_through_doors) \
+  X(CONFIG_NO_MORT_TO_IMMORT, !no_mort_to_immort) \
+  X(CONFIG_DISP_CLOSED_DOORS, !display_closed_doors) \
+  X(CONFIG_DIAGONAL_DIRS, !diagonal_dirs) \
+  X(CONFIG_MAP, map_option == 1 ? 0 : 1) \
+  X(CONFIG_MAP_SIZE, 9) \
+  X(CONFIG_MINIMAP_SIZE, 4) \
+  X(CONFIG_SCRIPT_PLAYERS, !script_players) \
+  X(CONFIG_FREE_RENT, !free_rent) \
+  X(CONFIG_MAX_OBJ_SAVE, 45) \
+  X(CONFIG_MIN_RENT_COST, 250) \
+  X(CONFIG_AUTO_SAVE, !auto_save) \
+  X(CONFIG_AUTOSAVE_TIME, 12) \
+  X(CONFIG_CRASH_TIMEOUT, 14) \
+  X(CONFIG_RENT_TIMEOUT, 40) \
+  X(CONFIG_MORTAL_START, 3005) \
+  X(CONFIG_IMMORTAL_START, 1210) \
+  X(CONFIG_FROZEN_START, 1203) \
+  X(CONFIG_DON_ROOM_1, 3070) \
+  X(CONFIG_DON_ROOM_2, 5520) \
+  X(CONFIG_DON_ROOM_3, NOWHERE) \
+  X(CONFIG_DFLT_PORT, 4242) \
+  X(CONFIG_MAX_PLAYING, 120) \
+  X(CONFIG_MAX_FILESIZE, 64000) \
+  X(CONFIG_MAX_BAD_PWS, 5) \
+  X(CONFIG_SITEOK_ALL, !siteok_everyone) \
+  X(CONFIG_NS_IS_SLOW, !nameserver_is_slow) \
+  X(CONFIG_NEW_SOCIALS, !use_new_socials) \
+  X(CONFIG_OLC_SAVE, !auto_save_olc) \
+  X(CONFIG_MEDIT_ADVANCED, !medit_advanced_stats) \
+  X(CONFIG_IBT_AUTOSAVE, !ibt_autosave) \
+  X(CONFIG_PROTOCOL_NEGOTIATION, !protocol_negotiation) \
+  X(CONFIG_SPECIAL_IN_COMM, !special_in_comm) \
+  X(CONFIG_DEBUG_MODE, 2) \
+  X(CONFIG_USE_AUTOWIZ, !use_autowiz) \
+  X(CONFIG_MIN_WIZLIST_LEV, LVL_GOD + 2)
+
+/* The one-line messages gain "\r\n" when loaded, and the multi-line ones
+ * keep the "\r\n" the writer turns into plain newlines. */
+#define EVERY_STRING_SETTING(X) \
+  X(CONFIG_OK, "Done that.\r\n") \
+  X(CONFIG_HUH, "Pardon?\r\n") \
+  X(CONFIG_NOPERSON, "Nobody by that name.\r\n") \
+  X(CONFIG_NOEFFECT, "Nothing happens at all.\r\n") \
+  X(CONFIG_DFLT_IP, "127.0.0.1") \
+  X(CONFIG_DFLT_DIR, "otherlib") \
+  X(CONFIG_LOGNAME, "log/othersyslog") \
+  X(CONFIG_MENU, "Menu line one\r\nMenu line two\r\n") \
+  X(CONFIG_WELC_MESSG, "Welcome, traveller.\r\n") \
+  X(CONFIG_START_MESSG, "Your journey begins.\r\n")
+
+#define SET_NUMERIC(field, value) \
+  TEST_ASSERT_NOT_EQUAL_INT_MESSAGE((value), (field), "already the default: " #field); \
+  (field) = (value);
+#define CHECK_NUMERIC(field, value) \
+  TEST_ASSERT_EQUAL_INT_MESSAGE((value), (field), #field);
+#define SET_STRING(field, value) \
+  TEST_ASSERT_TRUE_MESSAGE(!(field) || strcmp((field), (value)) != 0, \
+                           "already the default: " #field); \
+  free(field); \
+  (field) = strdup(value); \
+  TEST_ASSERT_NOT_NULL(field);
+#define CHECK_STRING(field, value) \
+  TEST_ASSERT_EQUAL_STRING_MESSAGE((value), (field), #field);
+
+/* The whole save_config() / load_config() contract: no setting cedit can
+ * change may be lost or altered by a save and a reboot. */
+static void test_every_setting_survives_save_and_reboot(void)
+{
+  EVERY_NUMERIC_SETTING(SET_NUMERIC)
+  EVERY_STRING_SETTING(SET_STRING)
+  save_and_reboot();
+  EVERY_NUMERIC_SETTING(CHECK_NUMERIC)
+  EVERY_STRING_SETTING(CHECK_STRING)
+}
+
 int main(void)
 {
   UNITY_BEGIN();
   RUN_TEST(test_display_closed_doors_survives_save_and_reboot);
+  RUN_TEST(test_min_rent_cost_survives_save_and_reboot);
+  RUN_TEST(test_every_setting_survives_save_and_reboot);
   return UNITY_END();
 }
