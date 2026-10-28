@@ -2384,6 +2384,57 @@ static void test_zedit_save_appends_a_new_room_block(void)
   free_zone_list();
 }
 
+/* ------------------------------------------------------------------ */
+/* Integration: an argument zedit has not filled in holds -1           */
+/* (zedit_init_new_command).  utils.h's VALID_MOB_RNUM takes -1 for a  */
+/* valid rnum and dg_scripts.h's VALID_TRIG_RNUM indexes trig_index[] */
+/* with it; the save and the menu refuse both without reading a table */
+/* (trig_index and mob_proto are NULL here: a read crashes).           */
+/* ------------------------------------------------------------------ */
+static void test_zedit_save_refuses_unset_mob_and_trigger_args(void)
+{
+  const struct reset_com zone[] = {
+    zc('O', 0, 0, 1, 0),        /* room 3000 */
+  };
+  const struct reset_com block[] = {
+    zc('M', 0, -1, 1, 1),       /* mobile never chosen */
+    zc('T', 0, WLD_TRIGGER, -1, 1),  /* trigger never chosen */
+  };
+
+  make_world(3);
+  make_objects(3);
+  make_zone();
+  set_zone_list(zone, 1);
+
+  save_room_3001_block(block, 2);
+
+  assert_zone_list(zone, 1);
+  TEST_ASSERT_EQUAL_INT(2, tb_captured_errors);
+  TEST_ASSERT_NOT_NULL(strstr(out_buf, "Command 0 (M) was not saved: its mobile does not exist"));
+  TEST_ASSERT_NOT_NULL(strstr(out_buf, "Command 1 (T) was not saved: its trigger does not exist"));
+  free_zone_list();
+}
+
+static void test_zedit_menu_reports_unset_mob_and_trigger_args(void)
+{
+  struct descriptor_data *d = &builder_desc;
+  const struct reset_com cmds[] = {
+    zc('M', 0, -1, 1, 1),
+    zc('T', 0, WLD_TRIGGER, -1, 1),
+  };
+
+  make_zone();
+  make_zedit_session(d, cmds, 2);
+  OLC_MODE(d) = ZEDIT_MAIN_MENU;
+
+  zedit_parse(d, "?");   /* any unknown choice redisplays the menu */
+
+  TEST_ASSERT_NOT_NULL(strstr(out_buf, "<stale mobile rnum -1>"));
+  TEST_ASSERT_NOT_NULL(strstr(out_buf, "<stale trigger rnum -1>"));
+  TEST_ASSERT_EQUAL_STRING("stale-rnum", tb_captured_operation);
+  free_zedit_session(d);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -2446,5 +2497,7 @@ int main(void)
   RUN_TEST(test_zedit_save_keeps_room_block_and_zone_order);
   RUN_TEST(test_zedit_save_refuses_orphan_give_without_a_gap);
   RUN_TEST(test_zedit_save_appends_a_new_room_block);
+  RUN_TEST(test_zedit_save_refuses_unset_mob_and_trigger_args);
+  RUN_TEST(test_zedit_menu_reports_unset_mob_and_trigger_args);
   return UNITY_END();
 }

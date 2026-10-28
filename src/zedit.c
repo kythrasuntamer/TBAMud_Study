@@ -97,11 +97,15 @@ int olc_check_rnum_at(const char *file, int line, const char *func,
   long top;
   int valid;
 
+  /* rnum may come from a plain int zone-command argument, where -1 means
+   * "not set yet".  VALID_MOB_RNUM and VALID_ROOM_RNUM (utils.h) test their
+   * sentinel only, and VALID_TRIG_RNUM indexes trig_index[] with the value,
+   * so a negative rnum is refused before any of them sees it. */
   switch (kind) {
   case OLC_RNUM_OBJ:  valid = VALID_OBJ_RNUM_NUM(rnum); top = (long)top_of_objt; break;
-  case OLC_RNUM_MOB:  valid = VALID_MOB_RNUM(rnum);     top = (long)top_of_mobt; break;
-  case OLC_RNUM_ROOM: valid = VALID_ROOM_RNUM(rnum);    top = (long)top_of_world; break;
-  case OLC_RNUM_TRIG: valid = VALID_TRIG_RNUM(rnum);    top = (long)top_of_trigt - 1; break;
+  case OLC_RNUM_MOB:  valid = rnum >= 0 && VALID_MOB_RNUM(rnum);  top = (long)top_of_mobt; break;
+  case OLC_RNUM_ROOM: valid = rnum >= 0 && VALID_ROOM_RNUM(rnum); top = (long)top_of_world; break;
+  case OLC_RNUM_TRIG: valid = rnum >= 0 && VALID_TRIG_RNUM(rnum); top = (long)top_of_trigt - 1; break;
   default:            valid = FALSE;                    top = -1; break;
   }
 
@@ -609,10 +613,15 @@ static void zedit_new_zone(struct char_data *ch, zone_vnum vzone_num, room_vnum 
   write_to_output(ch->desc, "Zone created successfully.\r\n");
 }
 
-/* Room numbers in reset commands are plain ints here: a negative or stale
- * one must fail the test (VALID_ROOM_RNUM compares against NOWHERE only).
- * r is evaluated twice: pass a plain value. */
+/* Rnums in reset commands are plain ints here, and -1 is an argument the
+ * builder has not set yet (zedit_init_new_command): a negative or stale one
+ * must fail these tests.  utils.h's VALID_ROOM_RNUM and VALID_MOB_RNUM
+ * compare against their NOWHERE/NOBODY sentinel only, and dg_scripts.h's
+ * VALID_TRIG_RNUM then indexes trig_index[] with the value.  Each evaluates
+ * r more than once: pass a plain value. */
 #define ZEDIT_VALID_ROOM(r) ((long)(r) >= 0 && (long)(r) <= (long)top_of_world)
+#define ZEDIT_VALID_MOB(r)  ((long)(r) >= 0 && (long)(r) <= (long)top_of_mobt)
+#define ZEDIT_VALID_TRIG(r) ((long)(r) >= 0 && VALID_TRIG_RNUM(r))
 
 /* Why scratch command c cannot be saved, or NULL when it can.  The rule is
  * db.c:reset_zone()'s and nothing stricter: a stricter save deletes valid
@@ -633,7 +642,7 @@ static const char *zedit_refusal(const struct reset_com *c, int mob_parent)
 {
   switch (c->command) {
   case 'M':
-    if (!VALID_MOB_RNUM(c->arg1))
+    if (!ZEDIT_VALID_MOB(c->arg1))
       return "its mobile does not exist";
     return ZEDIT_VALID_ROOM(c->arg3) ? NULL : "its room does not exist";
   case 'O':
@@ -661,7 +670,7 @@ static const char *zedit_refusal(const struct reset_com *c, int mob_parent)
       return "its room does not exist";
     return VALID_OBJ_RNUM_NUM(c->arg2) ? NULL : "its object does not exist";
   case 'T':
-    if (!VALID_TRIG_RNUM(c->arg2))
+    if (!ZEDIT_VALID_TRIG(c->arg2))
       return "its trigger does not exist";
     return ZEDIT_VALID_ROOM(c->arg3) ? NULL : "its room does not exist";
   case 'V':
