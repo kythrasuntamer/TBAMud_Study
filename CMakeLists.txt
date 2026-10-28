@@ -58,6 +58,20 @@ include(CheckStructHasMember)
 include(CheckSymbolExists)
 include(CheckCSourceCompiles)
 
+# ========== Fil-C toolchain ==========
+# Fil-C (filcc) reports itself as Clang, so it is told apart by the macro it
+# predefines. tests/CMakeLists.txt uses TBAMUD_FILC to set aside the tests
+# whose doubles cannot work under it (see tb_filc_skip_wrap_tests there).
+check_c_source_compiles("
+#ifndef __FILC__
+#error not Fil-C
+#endif
+int main(void) { return 0; }
+" TBAMUD_FILC)
+if(TBAMUD_FILC)
+    message(STATUS "Fil-C toolchain detected (__FILC__ is defined)")
+endif()
+
 # ========== Output paths ==========
 # Executables (circle and every test_*) go to <build>/bin by default, so each
 # build tree owns its binaries. Writing every tree to <source>/bin let an

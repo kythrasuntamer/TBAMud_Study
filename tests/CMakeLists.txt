@@ -86,6 +86,49 @@ macro(add_mud_test TEST_NAME)
     set_tests_properties(${TEST_NAME} PROPERTIES LABELS "native;unit")
 endmacro()
 
+# tb_filc_skip_wrap_tests(): in a Fil-C build (TBAMUD_FILC, detected in the
+# top-level CMakeLists.txt), disable every test of the calling directory whose
+# executable is linked with -Wl,--wrap=<symbol>, and leave that executable out
+# of the default build.
+# Fil-C renames each C function (foo becomes pizlonated_foo), so the linker
+# never sees a reference to <symbol>: --wrap intercepts nothing, the test's
+# __wrap_<symbol> double is dead code, and the real function runs instead.
+# Such a test cannot pass (its captured diagnostics stay empty, its scripted
+# fopen()/write() failures never happen, a wrapped command_interpreter() runs
+# on a fixture with no command table), so running it would only report the
+# toolchain gap as a failure. The disabled tests are listed by ctest as
+# "Not Run (Disabled)", carry the label filc-skip-wrap, and are named in a
+# configure message. Every other build is unchanged.
+# Call it after the directory's tests and their LABELS are set; test
+# properties are directory scoped, so each directory calls it for itself.
+function(tb_filc_skip_wrap_tests)
+    if(NOT TBAMUD_FILC)
+        return()
+    endif()
+    get_directory_property(_tests TESTS)
+    set(_skipped)
+    foreach(_test IN LISTS _tests)
+        if(NOT TARGET ${_test})
+            continue()
+        endif()
+        get_target_property(_link_options ${_test} LINK_OPTIONS)
+        if(_link_options MATCHES "--wrap=")
+            set_tests_properties(${_test} PROPERTIES DISABLED TRUE)
+            set_property(TEST ${_test} APPEND PROPERTY LABELS filc-skip-wrap)
+            set_target_properties(${_test} PROPERTIES EXCLUDE_FROM_ALL TRUE)
+            list(APPEND _skipped ${_test})
+        endif()
+    endforeach()
+    if(_skipped)
+        list(LENGTH _skipped _count)
+        list(JOIN _skipped " " _names)
+        message(STATUS "Fil-C: ${_count} test(s) in "
+            "${CMAKE_CURRENT_SOURCE_DIR} need -Wl,--wrap, which Fil-C's "
+            "symbol renaming defeats; disabled (label filc-skip-wrap): "
+            "${_names}")
+    endif()
+endfunction()
+
 # ---------------------------------------------------------------------------
 # test_utils  — covers src/utils.c
 # ---------------------------------------------------------------------------
@@ -1498,3 +1541,6 @@ endif()
 # clean_pfiles() re-examines a slot after a removal; if a refused removal
 # were counted as done it would spin forever. Fail that regression sooner.
 set_tests_properties(test_players_persist PROPERTIES TIMEOUT 60)
+
+# Fil-C only: set aside the tests whose -Wl,--wrap doubles it defeats.
+tb_filc_skip_wrap_tests()

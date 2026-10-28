@@ -53,3 +53,7 @@ if(ENABLE_SANITIZERS)
     set_tests_properties(${_tb_dg_world_tests} PROPERTIES ENVIRONMENT
         "${TB_TEST_SANITIZER_ENVIRONMENT}")
 endif()
+
+# Fil-C only: these tests wrap tb_error_log_at, which Fil-C defeats (see
+# tb_filc_skip_wrap_tests in tests/CMakeLists.txt).
+tb_filc_skip_wrap_tests()
