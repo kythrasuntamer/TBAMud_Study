@@ -1566,6 +1566,12 @@ void speech_wtrigger(char_data *actor, char *str)
 
   if (!dg_trigger_actor_placed(actor, "speech_wtrigger"))
     return;
+  if (!str) {
+    TB_ERROR_MSG("dg", "trigger-dispatch", "speech_wtrigger",
+                 "invariant violated: NULL speech from uid=%ld; no speech "
+                 "triggers dispatched", actor->script_id);
+    return;
+  }
   if (!SCRIPT_CHECK(&world[IN_ROOM(actor)], WTRIG_SPEECH))
     return;
 

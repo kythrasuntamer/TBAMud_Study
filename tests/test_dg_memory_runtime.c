@@ -838,6 +838,27 @@ static void speech_mob_listener_purged(void)
   TEST_ASSERT_NULL(owner);
 }
 
+/* NULL speech is a caller bug for room speech triggers too: the old code
+ * handed it to word_check()/is_substring(). */
+static void speech_room_null_text_is_reported(void)
+{
+  struct script_data *room_script = script;
+
+  script->types = WTRIG_SPEECH;
+  trigger->trigger_type = WTRIG_SPEECH;
+  trigger->narg = 0;
+  trigger->arglist = strdup("hello");
+  TEST_ASSERT_NOT_NULL(trigger->arglist);
+  world[IN_ROOM(visitor)].script = room_script;
+
+  speech_wtrigger(visitor, NULL);
+
+  world[IN_ROOM(visitor)].script = NULL;
+  TEST_ASSERT_EQUAL_INT(0, callbacks);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("trigger-dispatch", tb_captured_operation);
+}
+
 /* An actor outside any room is a caller bug: reported, nothing dispatched. */
 static void unplaced_actor_is_reported(void)
 {
@@ -939,6 +960,7 @@ int main(void)
   RUN_TEST(command_mob_detached_current_trigger);
   RUN_TEST(speech_mob_baseline);
   RUN_TEST(speech_mob_listener_purged);
+  RUN_TEST(speech_room_null_text_is_reported);
   RUN_TEST(unplaced_actor_is_reported);
   RUN_TEST(load_object_purged_on_error);
   return UNITY_END();
