@@ -330,11 +330,55 @@ static void test_hedit_save_with_stale_rnum_is_refused_loudly(void)
   TEST_ASSERT_NULL(builder_desc.olc);
 }
 
+/* F2-02: a search miss (NOWHERE) must offer "add" without indexing
+ * help_table[NOWHERE]. */
+static void test_hedit_new_topic_does_not_index_nowhere(void)
+{
+  char cmd[] = " gamma";
+
+  search_result = NOWHERE;
+  do_oasis_hedit(&builder, cmd, 0, 0);
+  TEST_ASSERT_EQUAL_INT(HEDIT_CONFIRM_ADD, OLC_MODE(&builder_desc));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  type("n");
+  TEST_ASSERT_NULL(builder_desc.olc);
+}
+
+/* F2-02: a duplicate keyword is redirected to its owning row. */
+static void test_hedit_duplicate_redirects_to_owner(void)
+{
+  char cmd[] = " alpha2";
+
+  search_result = 1;
+  do_oasis_hedit(&builder, cmd, 0, 0);
+  TEST_ASSERT_EQUAL_INT(HEDIT_CONFIRM_EDIT, OLC_MODE(&builder_desc));
+  TEST_ASSERT_EQUAL_INT(0, OLC_ZNUM(&builder_desc));
+}
+
+/* F2-02: an orphan duplicate is refused with a warning. */
+static void test_hedit_orphan_duplicate_is_refused_loudly(void)
+{
+  char cmd[] = " alpha2";
+  char *owner_entry = help_table[0].entry;
+
+  help_table[0].entry = strdup("other");      /* row 1 loses its owner */
+  search_result = 1;
+  do_oasis_hedit(&builder, cmd, 0, 0);
+  TEST_ASSERT_NULL(builder_desc.olc);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("hedit-duplicate-owner", tb_captured_operation);
+  free(help_table[0].entry);
+  help_table[0].entry = owner_entry;
+}
+
 int main(void)
 {
   UNITY_BEGIN();
   RUN_TEST(test_hedit_no_then_add_appends_instead_of_writing_past_table);
   RUN_TEST(test_hedit_no_offers_next_matching_row);
   RUN_TEST(test_hedit_save_with_stale_rnum_is_refused_loudly);
+  RUN_TEST(test_hedit_new_topic_does_not_index_nowhere);
+  RUN_TEST(test_hedit_duplicate_redirects_to_owner);
+  RUN_TEST(test_hedit_orphan_duplicate_is_refused_loudly);
   return UNITY_END();
 }

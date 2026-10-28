@@ -82,15 +82,39 @@ ACMD(do_oasis_hedit)
   OLC_NUM(d) = 0;
   OLC_STORAGE(d) = strdup(arg);
   
+  /* search_help() returns a row or NOWHERE on a miss.  Test the miss
+   * before touching help_table: OLC_ZNUM is unsigned, so NOWHERE indexed
+   * row 65535 of a table a few thousand rows long on every "hedit <new
+   * topic>". */
   OLC_ZNUM(d) = search_help(OLC_STORAGE(d), LVL_IMPL);
 
-  /* A topic that does not exist is NOWHERE: look nothing up for it. */
+  if (OLC_ZNUM(d) != NOWHERE && !VALID_HELP_RNUM(OLC_ZNUM(d))) {
+    TB_ERROR_MSG("olc", "hedit-rnum-range", "help_table",
+                 "search_help returned rnum %d top_of_helpt %d editor " DIAG_CHAR_FMT,
+                 (int)OLC_ZNUM(d), top_of_helpt, DIAG_CHAR(ch));
+    send_to_char(ch, "The help index is inconsistent; edit refused.\r\n");
+    cleanup_olc(d, CLEANUP_ALL);
+    return;
+  }
+
+  /* A duplicate row shares its owner's entry text and is not written by
+   * hedit_save_to_disk, so edit the owner instead.  A duplicate with no
+   * owner would be edited and then silently dropped on save: refuse it. */
   if (OLC_ZNUM(d) != NOWHERE && help_table[OLC_ZNUM(d)].duplicate) {
+    int dup = OLC_ZNUM(d);
+
     for (i = 0; i < top_of_helpt; i++)
-      if (help_table[i].duplicate == 0 && help_table[i].entry == help_table[OLC_ZNUM(d)].entry) {
-        OLC_ZNUM(d) = i;
+      if (help_table[i].duplicate == 0 && help_table[i].entry == help_table[dup].entry)
         break;
-      }
+    if (i >= top_of_helpt) {
+      TB_WARN_MSG("olc", "hedit-duplicate-owner", "help_table",
+                  "rnum %d has no owning entry; editor " DIAG_CHAR_FMT,
+                  dup, DIAG_CHAR(ch));
+      send_to_char(ch, "That help keyword shares an entry that no longer exists; edit refused.\r\n");
+      cleanup_olc(d, CLEANUP_ALL);
+      return;
+    }
+    OLC_ZNUM(d) = i;
   }
 
   if (OLC_ZNUM(d) == NOWHERE) {
