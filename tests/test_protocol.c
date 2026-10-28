@@ -114,6 +114,55 @@ static void oversized_output_is_cut_with_marker(void)
   TEST_ASSERT_EQUAL_STRING("\r\n**OVERFLOW**\r\n", out + len - 16);
   TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
   TEST_ASSERT_EQUAL_STRING("output-overflow", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "cut at a code boundary"));
+}
+
+/* Text of 'lead' bytes of 'a', then 'code', then 200 bytes of 'b': enough
+ * to overflow, with 'code' starting just before the overflow cut. */
+static char *text_around_cut(int lead, const char *code)
+{
+  size_t code_len = strlen(code);
+  char *text = malloc((size_t)lead + code_len + 201);
+
+  TEST_ASSERT_NOT_NULL(text);
+  memset(text, 'a', (size_t)lead);
+  memcpy(text + lead, code, code_len);
+  memset(text + lead + code_len, 'b', 200);
+  text[(size_t)lead + code_len + 200] = '\0';
+  return text;
+}
+
+/* Translate text, check that the kept part is exactly 'kept' bytes of 'a'
+ * followed by the marker (nothing of the code that straddled the cut), and
+ * free text. */
+static void expect_cut_before_code(char *text, int kept)
+{
+  int len;
+  const char *out = translate(text, &len);
+
+  free(text);
+  TEST_ASSERT_EQUAL_INT(kept + 16, len);
+  TEST_ASSERT_EQUAL_STRING("\r\n**OVERFLOW**\r\n", out + kept);
+  TEST_ASSERT_EQUAL_CHAR('a', out[kept - 1]);
+  TEST_ASSERT_NULL(strchr(out, '\033'));
+}
+
+/* The overflow cut was a fixed byte offset: a colour code, MXP tag or link
+ * straddling it left e.g. "\033[" before the marker, and a UTF-8 character
+ * could be split. The cut is now made before the unit that straddles it.
+ * (output-overflow is rate limited per minute, so its record is checked in
+ * oversized_output_is_cut_with_marker, which runs first.) */
+static void overflow_cut_keeps_codes_whole(void)
+{
+  const int cut = MAX_OUTPUT_BUFFER - 1 - 16; /* longest text kept */
+
+  desc.pProtocol->pVariables[eMSDP_ANSI_COLORS]->ValueInt = 1;
+  desc.pProtocol->pVariables[eMSDP_MXP]->ValueInt = 1;
+
+  expect_cut_before_code(text_around_cut(cut - 2, "\tr"), cut - 2);
+  expect_cut_before_code(text_around_cut(cut - 3, "\t<send>"), cut - 3);
+  expect_cut_before_code(text_around_cut(cut - 5, "\t(xxxxxxxxxx\t)"), cut - 5);
+  expect_cut_before_code(text_around_cut(cut - 1, "\xC3\xA9"), cut - 1);
 }
 
 /* Unfinished escapes at the end of the text left j on the terminator, and
@@ -191,6 +240,7 @@ int main(void)
   RUN_TEST(invalid_colour_is_reported_with_descriptor);
   RUN_TEST(huge_unicode_code_point_is_rejected);
   RUN_TEST(oversized_output_is_cut_with_marker);
+  RUN_TEST(overflow_cut_keeps_codes_whole);
   RUN_TEST(unfinished_escapes_stop_at_terminator);
   RUN_TEST(input_nul_bytes_are_dropped_and_counted);
   RUN_TEST(alloc_string_never_returns_null);
