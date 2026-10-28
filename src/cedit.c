@@ -844,7 +844,9 @@ void cedit_parse(struct descriptor_data *d, char *arg)
           mudlog(CMP, MAX(LVL_BUILDER, GET_INVIS_LEV(d->character)), TRUE,
                  "OLC: %s modifies the game configuration.", GET_NAME(d->character));
           cleanup_olc(d, CLEANUP_CONFIG);
-	  if (CONFIG_AUTO_SAVE) {
+	  /* OLC autosave (cedit "Operation" menu), not the player crash-save
+	   * toggle CONFIG_AUTO_SAVE that this used to test. */
+	  if (CONFIG_OLC_SAVE) {
 	    if (cedit_save_to_disk())
 	      write_to_output(d, "Game configuration saved to disk.\r\n");
 	    else {
