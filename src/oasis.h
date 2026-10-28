@@ -473,6 +473,7 @@ int  save_config( IDXTYPE nowhere );
 /* Prototypes to keep. */
 void clear_screen(struct descriptor_data *);
 int can_edit_zone(struct char_data *ch, zone_rnum rnum);
+int can_use_editor(struct char_data *ch, int perm);
 ACMD(do_oasis);
 
 /* public functions from medit.c */
