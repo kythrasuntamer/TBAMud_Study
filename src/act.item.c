@@ -47,6 +47,63 @@ static void perform_remove(struct char_data *ch, int pos);
 static void perform_wear(struct char_data *ch, struct obj_data *obj, int where);
 static void wear_message(struct char_data *ch, struct obj_data *obj, int where);
 
+/* Resumable position in an object list across DG triggers.
+ *
+ * The perform_* helpers run get/drop/give/wear/put triggers, and a script
+ * may extract or move any object (for example 'opurge' with no argument
+ * purges every other object in the room). A loop over an object list must
+ * therefore never follow a next_content pointer saved before the call.
+ * Instead it marks the next object together with its script UID, and after
+ * the call re-acquires it with obj_iter_resume(), which checks that the
+ * address still belongs to that UID (no use-after-free, no reused address)
+ * and that the object is still in the list being walked. A vanished or
+ * moved object ends the loop with an "item-iter-stale" warning; the player
+ * can simply repeat the command for whatever is left. */
+struct obj_iter_mark {
+  struct obj_data *obj;   /* next object to visit, or NULL at the list end */
+  long uid;               /* obj's script UID when the mark was taken */
+};
+
+static void obj_iter_mark(struct obj_iter_mark *mark, struct obj_data *next)
+{
+  mark->obj = next;
+  mark->uid = next ? obj_script_id(next) : 0;
+}
+
+/* Returns the marked object if it is still live and still in the list the
+ * caller walks: carried by holder (holder != NULL), inside cont (cont !=
+ * NULL), or on the floor of room. For a room walk, ch must also still be in
+ * that room. Returns NULL at the list end, or after reporting a stale mark.
+ * sname names the command in the diagnostic. */
+static struct obj_data *obj_iter_resume(const struct obj_iter_mark *mark,
+                                        struct char_data *ch,
+                                        struct char_data *holder,
+                                        struct obj_data *cont, room_rnum room,
+                                        const char *sname)
+{
+  struct obj_data *obj = mark->obj;
+
+  if (!obj)
+    return NULL;
+  /* Compares the registered address before obj is dereferenced. */
+  if (!obj_uid_matches(mark->uid, obj)) {
+    TB_WARN_MSG("act", "item-iter-stale", "obj",
+                "obj uid %ld vanished during %s by " DIAG_CHAR_FMT,
+                mark->uid, sname, DIAG_CHAR(ch));
+    return NULL;
+  }
+  if (holder ? obj->carried_by != holder :
+      cont ? obj->in_obj != cont :
+      (IN_ROOM(obj) != room || IN_ROOM(ch) != room)) {
+    TB_WARN_MSG("act", "item-iter-stale", "obj",
+                "obj vnum %d uid %ld left the list walked by %s for "
+                DIAG_CHAR_FMT, (int) GET_OBJ_VNUM(obj), mark->uid, sname,
+                DIAG_CHAR(ch));
+    return NULL;
+  }
+  return obj;
+}
+
 
 
 
@@ -93,6 +150,7 @@ ACMD(do_put)
   char arg2[MAX_INPUT_LENGTH];
   char arg3[MAX_INPUT_LENGTH];
   struct obj_data *obj, *next_obj, *cont;
+  struct obj_iter_mark mark;
   struct char_data *tmp_char;
   int obj_dotmode, cont_dotmode, found = 0, howmany = 1;
   char *theobj, *thecont;
@@ -132,22 +190,24 @@ ACMD(do_put)
 	  send_to_char(ch, "You attempt to fold it into itself, but fail.\r\n");
 	else {
 	  while (obj && howmany) {
-	    next_obj = obj->next_content;
+	    obj_iter_mark(&mark, obj->next_content);
             if (obj != cont) {
               howmany--;
 	      perform_put(ch, obj, cont);
             }
+	    next_obj = obj_iter_resume(&mark, ch, ch, NULL, NOWHERE, "put");
 	    obj = get_obj_in_list_vis(ch, theobj, NULL, next_obj);
 	  }
 	}
       } else {
 	for (obj = ch->carrying; obj; obj = next_obj) {
-	  next_obj = obj->next_content;
+	  obj_iter_mark(&mark, obj->next_content);
 	  if (obj != cont && CAN_SEE_OBJ(ch, obj) &&
 	      (obj_dotmode == FIND_ALL || isname(theobj, obj->name))) {
 	    found = 1;
 	    perform_put(ch, obj, cont);
 	  }
+	  next_obj = obj_iter_resume(&mark, ch, ch, NULL, NOWHERE, "put");
 	}
 	if (!found) {
 	  if (obj_dotmode == FIND_ALL)
@@ -222,6 +282,7 @@ void get_from_container(struct char_data *ch, struct obj_data *cont,
 			     char *arg, int mode, int howmany)
 {
   struct obj_data *obj, *next_obj;
+  struct obj_iter_mark mark;
   int obj_dotmode, found = 0;
 
   obj_dotmode = find_all_dots(arg);
@@ -235,11 +296,11 @@ void get_from_container(struct char_data *ch, struct obj_data *cont,
       tb_snprintf(buf, sizeof(buf), "There doesn't seem to be %s %s in $p.", AN(arg), arg);
       act(buf, FALSE, ch, cont, 0, TO_CHAR);
     } else {
-      struct obj_data *obj_next;
       while (obj && howmany--) {
-        obj_next = obj->next_content;
+        obj_iter_mark(&mark, obj->next_content);
         perform_get_from_container(ch, obj, cont, mode);
-        obj = get_obj_in_list_vis(ch, arg, NULL, obj_next);
+        next_obj = obj_iter_resume(&mark, ch, NULL, cont, NOWHERE, "get");
+        obj = get_obj_in_list_vis(ch, arg, NULL, next_obj);
       }
     }
   } else {
@@ -248,12 +309,13 @@ void get_from_container(struct char_data *ch, struct obj_data *cont,
       return;
     }
     for (obj = cont->contains; obj; obj = next_obj) {
-      next_obj = obj->next_content;
+      obj_iter_mark(&mark, obj->next_content);
       if (CAN_SEE_OBJ(ch, obj) &&
 	  (obj_dotmode == FIND_ALL || isname(arg, obj->name))) {
 	found = 1;
 	perform_get_from_container(ch, obj, cont, mode);
       }
+      next_obj = obj_iter_resume(&mark, ch, NULL, cont, NOWHERE, "get");
     }
     if (!found) {
       if (obj_dotmode == FIND_ALL)
@@ -284,6 +346,8 @@ static int perform_get_from_room(struct char_data *ch, struct obj_data *obj)
 static void get_from_room(struct char_data *ch, char *arg, int howmany)
 {
   struct obj_data *obj, *next_obj;
+  struct obj_iter_mark mark;
+  room_rnum room = IN_ROOM(ch);
   int dotmode, found = 0;
 
   dotmode = find_all_dots(arg);
@@ -297,11 +361,11 @@ static void get_from_room(struct char_data *ch, char *arg, int howmany)
         }
       send_to_char(ch, "You don't see %s %s here.\r\n", AN(arg), arg);
     } else {
-      struct obj_data *obj_next;
       while(obj && howmany--) {
-	obj_next = obj->next_content;
+	obj_iter_mark(&mark, obj->next_content);
         perform_get_from_room(ch, obj);
-        obj = get_obj_in_list_vis(ch, arg, NULL, obj_next);
+        next_obj = obj_iter_resume(&mark, ch, NULL, NULL, room, "get");
+        obj = get_obj_in_list_vis(ch, arg, NULL, next_obj);
       }
     }
   } else {
@@ -309,13 +373,14 @@ static void get_from_room(struct char_data *ch, char *arg, int howmany)
       send_to_char(ch, "Get all of what?\r\n");
       return;
     }
-    for (obj = world[IN_ROOM(ch)].contents; obj; obj = next_obj) {
-      next_obj = obj->next_content;
+    for (obj = world[room].contents; obj; obj = next_obj) {
+      obj_iter_mark(&mark, obj->next_content);
       if (CAN_SEE_OBJ(ch, obj) &&
 	  (dotmode == FIND_ALL || isname(arg, obj->name))) {
 	found = 1;
 	perform_get_from_room(ch, obj);
       }
+      next_obj = obj_iter_resume(&mark, ch, NULL, NULL, room, "get");
     }
     if (!found) {
       if (dotmode == FIND_ALL)
@@ -333,7 +398,9 @@ ACMD(do_get)
   char arg3[MAX_INPUT_LENGTH];
 
   int cont_dotmode, found = 0, mode;
-  struct obj_data *cont;
+  struct obj_data *cont, *next_cont;
+  struct obj_iter_mark mark;
+  room_rnum room = IN_ROOM(ch);
   struct char_data *tmp_char;
 
   one_argument(two_arguments(argument, arg1, arg2), arg3);	/* three_arguments */
@@ -365,7 +432,10 @@ ACMD(do_get)
 	send_to_char(ch, "Get from all of what?\r\n");
 	return;
       }
-      for (cont = ch->carrying; cont; cont = cont->next_content)
+      /* get_from_container() runs get triggers: resume each walk through a
+       * UID mark, never through a next_content saved before the call. */
+      for (cont = ch->carrying; cont; cont = next_cont) {
+	obj_iter_mark(&mark, cont->next_content);
 	if (CAN_SEE_OBJ(ch, cont) &&
 	    (cont_dotmode == FIND_ALL || isname(arg2, cont->name))) {
 	  if (GET_OBJ_TYPE(cont) == ITEM_CONTAINER) {
@@ -376,7 +446,10 @@ ACMD(do_get)
 	    act("$p is not a container.", FALSE, ch, cont, 0, TO_CHAR);
 	  }
 	}
-      for (cont = world[IN_ROOM(ch)].contents; cont; cont = cont->next_content)
+	next_cont = obj_iter_resume(&mark, ch, ch, NULL, NOWHERE, "get");
+      }
+      for (cont = world[room].contents; cont && IN_ROOM(ch) == room; cont = next_cont) {
+	obj_iter_mark(&mark, cont->next_content);
 	if (CAN_SEE_OBJ(ch, cont) &&
 	    (cont_dotmode == FIND_ALL || isname(arg2, cont->name))) {
 	  if (GET_OBJ_TYPE(cont) == ITEM_CONTAINER) {
@@ -387,6 +460,8 @@ ACMD(do_get)
 	    found = 1;
 	  }
 	}
+	next_cont = obj_iter_resume(&mark, ch, NULL, NULL, room, "get");
+      }
       if (!found) {
 	if (cont_dotmode == FIND_ALL)
 	  send_to_char(ch, "You can't seem to find any containers.\r\n");
@@ -508,6 +583,7 @@ ACMD(do_drop)
 {
   char arg[MAX_INPUT_LENGTH];
   struct obj_data *obj, *next_obj;
+  struct obj_iter_mark mark;
   room_rnum RDR = 0;
   byte mode = SCMD_DROP;
   int dotmode, amount = 0, multi, num_don_rooms;
@@ -565,9 +641,9 @@ ACMD(do_drop)
       send_to_char(ch, "You don't seem to have any %ss.\r\n", arg);
     else {
       do {
-        next_obj = get_obj_in_list_vis(ch, arg, NULL, obj->next_content);
+        obj_iter_mark(&mark, get_obj_in_list_vis(ch, arg, NULL, obj->next_content));
         amount += perform_drop(ch, obj, mode, sname, RDR);
-        obj = next_obj;
+        obj = obj_iter_resume(&mark, ch, ch, NULL, NOWHERE, sname);
       } while (obj && --multi);
     }
   } else {
@@ -586,8 +662,9 @@ ACMD(do_drop)
 	send_to_char(ch, "You don't seem to be carrying anything.\r\n");
       else
 	for (obj = ch->carrying; obj; obj = next_obj) {
-	  next_obj = obj->next_content;
+	  obj_iter_mark(&mark, obj->next_content);
 	  amount += perform_drop(ch, obj, mode, sname, RDR);
+	  next_obj = obj_iter_resume(&mark, ch, ch, NULL, NOWHERE, sname);
 	}
     } else if (dotmode == FIND_ALLDOT) {
       if (!*arg) {
@@ -598,9 +675,9 @@ ACMD(do_drop)
 	send_to_char(ch, "You don't seem to have any %ss.\r\n", arg);
 
       while (obj) {
-	next_obj = get_obj_in_list_vis(ch, arg, NULL, obj->next_content);
+	obj_iter_mark(&mark, get_obj_in_list_vis(ch, arg, NULL, obj->next_content));
 	amount += perform_drop(ch, obj, mode, sname, RDR);
-	obj = next_obj;
+	obj = obj_iter_resume(&mark, ch, ch, NULL, NOWHERE, sname);
       }
     } else {
       if (!(obj = get_obj_in_list_vis(ch, arg, NULL, ch->carrying)))
@@ -698,6 +775,7 @@ ACMD(do_give)
   int amount, dotmode;
   struct char_data *vict;
   struct obj_data *obj, *next_obj;
+  struct obj_iter_mark mark;
 
   argument = one_argument(argument, arg);
 
@@ -719,9 +797,9 @@ ACMD(do_give)
       send_to_char(ch, "You don't seem to have any %ss.\r\n", arg);
     else {
       while (obj && amount--) {
-	next_obj = get_obj_in_list_vis(ch, arg, NULL, obj->next_content);
+	obj_iter_mark(&mark, get_obj_in_list_vis(ch, arg, NULL, obj->next_content));
 	perform_give(ch, vict, obj);
-	obj = next_obj;
+	obj = obj_iter_resume(&mark, ch, ch, NULL, NOWHERE, "give");
       }
     }
   } else {
@@ -745,10 +823,11 @@ ACMD(do_give)
 	send_to_char(ch, "You don't seem to be holding anything.\r\n");
       else
 	for (obj = ch->carrying; obj; obj = next_obj) {
-	  next_obj = obj->next_content;
+	  obj_iter_mark(&mark, obj->next_content);
 	  if (CAN_SEE_OBJ(ch, obj) &&
 	      ((dotmode == FIND_ALL || isname(arg, obj->name))))
 	    perform_give(ch, vict, obj);
+	  next_obj = obj_iter_resume(&mark, ch, ch, NULL, NOWHERE, "give");
 	}
     }
   }
@@ -1359,6 +1438,7 @@ ACMD(do_wear)
   char arg1[MAX_INPUT_LENGTH];
   char arg2[MAX_INPUT_LENGTH];
   struct obj_data *obj, *next_obj;
+  struct obj_iter_mark mark;
   int where, dotmode, items_worn = 0;
 
   two_arguments(argument, arg1, arg2);
@@ -1375,7 +1455,7 @@ ACMD(do_wear)
   }
   if (dotmode == FIND_ALL) {
     for (obj = ch->carrying; obj; obj = next_obj) {
-      next_obj = obj->next_content;
+      obj_iter_mark(&mark, obj->next_content);
       if (CAN_SEE_OBJ(ch, obj) && (where = find_eq_pos(ch, obj, 0)) >= 0) {
         if (GET_LEVEL(ch) < GET_OBJ_LEVEL(obj))
           send_to_char(ch, "You are not experienced enough to use that.\r\n");
@@ -1384,6 +1464,7 @@ ACMD(do_wear)
 	  perform_wear(ch, obj, where);
 	}
       }
+      next_obj = obj_iter_resume(&mark, ch, ch, NULL, NOWHERE, "wear");
     }
     if (!items_worn)
       send_to_char(ch, "You don't seem to have anything wearable.\r\n");
@@ -1398,12 +1479,12 @@ ACMD(do_wear)
       send_to_char(ch, "You are not experienced enough to use that.\r\n");
     else
       while (obj) {
-	next_obj = get_obj_in_list_vis(ch, arg1, NULL, obj->next_content);
+	obj_iter_mark(&mark, get_obj_in_list_vis(ch, arg1, NULL, obj->next_content));
 	if ((where = find_eq_pos(ch, obj, 0)) >= 0)
 	  perform_wear(ch, obj, where);
 	else
 	  act("You can't wear $p.", FALSE, ch, obj, 0, TO_CHAR);
-	obj = next_obj;
+	obj = obj_iter_resume(&mark, ch, ch, NULL, NOWHERE, "wear");
       }
   } else {
     if (!(obj = get_obj_in_list_vis(ch, arg1, NULL, ch->carrying)))
