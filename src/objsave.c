@@ -1149,7 +1149,6 @@ static int gen_receptionist(struct char_data *ch, struct char_data *recep, int c
       SET_BIT_AR(PLR_FLAGS(ch), PLR_CRYO);
     }
 
-
     act("$n helps $N into $S private chamber.", FALSE, recep, 0, ch, TO_NOTVICT);
 
     GET_LOADROOM(ch) = GET_ROOM_VNUM(IN_ROOM(ch));
@@ -1234,44 +1233,38 @@ obj_save_data *objsave_parse_objects(FILE *fl)
     break;
   }
 
-    /* if it's a new record, wrap up the old one, and make space for a new one */
+    /* A '#' line starts a new record. Wrap up the previous object FIRST:
+     * if this record is then skipped (malformed line, missing prototype),
+     * temp must be NULL so the skipped record's tags (Loc, Vals, Name...)
+     * are ignored instead of being applied to the previous object. */
     if (*line == '#') {
-      /* check for false alarm. */
-      if (objsave_parse_int_fields(line + 1, &nr, 1)) {
-        /* If we attempt to load an object with a legal VNUM 0-65534, that
-         * does not exist, skip it. If the object has a VNUM of NOTHING or
-         * 65535, then we assume it doesn't exist on purpose. (Custom Item,
-         * Coins, Corpse, etc...) */
-        if (real_object(nr) == NOTHING && nr != NOTHING) {
-            log("SYSERR: Prevented loading of non-existant item #%d.", nr);
-            continue;
-          }
-          
-        if (temp) {
-          current->obj = temp;
-          CREATE(current->next, obj_save_data, 1);
-          current=current->next;
+      if (temp) {
+        current->obj = temp;
+        CREATE(current->next, obj_save_data, 1);
+        current=current->next;
 
-          current->locate = 0;
-          temp = NULL;
-        }
-      } else
+        current->locate = 0;
+        temp = NULL;
+      }
+
+      if (!objsave_parse_int_fields(line + 1, &nr, 1)) {
+        TB_WARN_MSG("objsave", "rent-record", "rent-object-record",
+                    "malformed '#' record line; record skipped");
         continue;
-        
-      /* we have the number, check it, load obj. */
+      }
+
+      /* If we attempt to load an object with a legal VNUM 0-65534, that
+       * does not exist, skip it. If the object has a VNUM of NOTHING or
+       * 65535, then we assume it doesn't exist on purpose. (Custom Item,
+       * Coins, Corpse, etc...) */
       if (nr == NOTHING) {   /* then it is unique */
         temp = create_obj();
         temp->item_number=NOTHING;
-      } else if (nr < 0) {
-        continue;
-      } else {
-        if(real_object(nr) != NOTHING) {
-          temp=read_object(nr,VIRTUAL);
-	/* Go read next line - nothing more to see here. */
-        } else {
-          log("Nonexistent object %d found in rent file.", nr);
-        }
-      }
+      } else if (nr < 0 || real_object(nr) == NOTHING) {
+        TB_WARN_MSG("objsave", "missing-proto", "rent-object-record",
+                    "rent record vnum %d has no prototype; record skipped", nr);
+      } else
+        temp=read_object(nr,VIRTUAL);
       /* go read next line - nothing more to see here. */
       continue;
     }
