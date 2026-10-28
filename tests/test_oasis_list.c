@@ -568,7 +568,7 @@ void test_single_zone_world_is_listed(void)
 void test_obj_list_bad_type_flag_is_reported_not_indexed(void)
 {
   make_objects(2, "a strange thing");
-  obj_proto[1].obj_flags.type_flag = 200;
+  obj_proto[1].obj_flags.type_flag = 100;   /* past item_types[]; fits the byte */
 
   run_list(SCMD_OASIS_OLIST, "100 110");
 
