@@ -504,6 +504,45 @@ static void test_ibtedit_menu_with_empty_name_and_text(void)
   olc_line(&imm, "q");
 }
 
+/* C1-13: the ibtedit menu showed the number the session opened with, which
+ * named a different record once an earlier one was removed; a removed
+ * record is shown as such, and its discarded save is not logged as an
+ * edit. */
+static void test_ibtedit_menu_shows_current_number(void)
+{
+  submit_bug(&pa, "first", "body one");
+  submit_bug(&pa, "second", "body two");
+
+  do_oasis_ibtedit(&imm.ch, (char[]){"2"}, bug_cmd, SCMD_BUG);
+  TEST_ASSERT_NOT_NULL(strstr(sent, "Number [2]"));
+
+  pb.ch.player.level = LVL_GRGOD;
+  ibt_cmd(&pb, "remove 1");
+  TEST_ASSERT_EQUAL_INT(1, count_bugs());
+  olc_line(&imm, "3");
+  olc_line(&imm, "second, edited");
+  TEST_ASSERT_NOT_NULL(strstr(sent, "Number [1]"));
+
+  /* Remove the edited record itself (bypassing the editor check, as a
+   * record removed between two of the editor's lines would be). */
+  STATE(&imm.desc) = CON_PLAYING;
+  {
+    struct oasis_olc_data *olc = imm.desc.olc;
+    imm.desc.olc = NULL;
+    ibt_cmd(&pb, "remove 1");
+    imm.desc.olc = olc;
+  }
+  STATE(&imm.desc) = CON_IBTEDIT;
+  TEST_ASSERT_EQUAL_INT(0, count_bugs());
+  olc_line(&imm, "3");
+  olc_line(&imm, "edited again");
+  TEST_ASSERT_NOT_NULL(strstr(sent, "Number [removed]"));
+  olc_line(&imm, "q");
+  olc_line(&imm, "y");
+  TEST_ASSERT_EQUAL_STRING("edit-target-gone", tb_captured_operation);
+  TEST_ASSERT_NULL(imm.desc.olc);
+}
+
 int main(void)
 {
   char dir[] = "/tmp/tb_test_ibt.XXXXXX";
@@ -531,5 +570,6 @@ int main(void)
   RUN_TEST(test_failed_save_keeps_previous_file);
   RUN_TEST(test_ibtedit_unexpected_mode_ends_session);
   RUN_TEST(test_ibtedit_menu_with_empty_name_and_text);
+  RUN_TEST(test_ibtedit_menu_shows_current_number);
   return UNITY_END();
 }
