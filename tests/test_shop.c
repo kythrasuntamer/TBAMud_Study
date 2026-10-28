@@ -3,6 +3,25 @@
  * directly (one translation unit) and the link discards every section the
  * tested paths do not reach. Fixtures are disposable.
  */
+#include <setjmp.h>
+#include <stdlib.h>
+
+/* The shop-file readers stop the boot with abort(). While a test has armed
+ * shop_abort_jmp, the abort() calls compiled from shop.c below jump back to
+ * it instead, so the fatal report can be asserted. stdlib.h is included
+ * first so its own declaration of abort() is not rewritten. */
+static jmp_buf shop_abort_jmp;
+static int shop_abort_armed;
+static void shop_test_abort(void) __attribute__((noreturn));
+static void shop_test_abort(void)
+{
+  if (!shop_abort_armed)
+    abort();
+  shop_abort_armed = 0;
+  longjmp(shop_abort_jmp, 1);
+}
+#define abort() shop_test_abort()
+
 #include "unity.h"
 #include "../src/shop.c" /* NOLINT(bugprone-suspicious-include): reach file-static helpers */
 
@@ -288,6 +307,93 @@ static void test_read_type_list_drops_type_past_int(void)
   free(BUY_WORD(list[0]));
 }
 
+/* ---- shop-file numbers: strtol/strtof with a range check per field ---- */
+
+/* Run STMT, which must end in the readers' abort(); fail if it returns. */
+#define EXPECT_SHOP_ABORT(stmt) do { \
+  shop_abort_armed = 1; \
+  if (setjmp(shop_abort_jmp) == 0) { \
+    stmt; \
+    shop_abort_armed = 0; \
+    TEST_FAIL_MESSAGE("expected abort(): " #stmt); \
+  } \
+} while (0)
+
+/* read_line()'s vsscanf("%d") was undefined for a number outside int, and
+ * glibc stored 4294967301 as 5: a produced vnum, room vnum or keeper wrapped
+ * into another, real vnum without a word. Now the boot stops, naming the
+ * shop, the field and the value. */
+static void test_read_list_aborts_on_produce_vnum_past_int(void)
+{
+  static char data[] = "4294967301\n-1\n";
+  struct shop_buy_data list[MAX_PROD + 1];
+  FILE *volatile f = fmemopen(data, strlen(data), "r");
+
+  TEST_ASSERT_NOT_NULL(f);
+  EXPECT_SHOP_ABORT((void)read_list(f, list, TRUE, MAX_PROD, LIST_PRODUCE));
+  TEST_ASSERT_EQUAL_INT(0, fclose(f));
+  TEST_ASSERT_EQUAL_STRING("FATAL", tb_captured_severity);
+  TEST_ASSERT_EQUAL_STRING("shop-field-range", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail,
+                              "shop #3010: produced obj vnum 4294967301 out of range"));
+}
+
+/* A room vnum fits an int but not the IDXTYPE room_vnum it is stored in. */
+static void test_read_list_aborts_on_room_vnum_past_idxtype(void)
+{
+  static char data[] = "70000\n-1\n";
+  struct shop_buy_data list[2];
+  FILE *volatile f = fmemopen(data, strlen(data), "r");
+
+  TEST_ASSERT_NOT_NULL(f);
+  EXPECT_SHOP_ABORT((void)read_list(f, list, TRUE, 1, LIST_ROOM));
+  TEST_ASSERT_EQUAL_INT(0, fclose(f));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail,
+                              "shop #3010: room vnum 70000 out of range"));
+}
+
+/* Overflow past long, a malformed line and end of file all stop the boot;
+ * in-range values, including the -1 "no keeper", are returned. */
+static void test_read_shop_number_reports_each_failure(void)
+{
+  static char data[] = "-1\n65535\n99999999999999999999\nkeeper\n";
+  FILE *volatile f = fmemopen(data, strlen(data), "r");
+
+  TEST_ASSERT_NOT_NULL(f);
+  TEST_ASSERT_EQUAL_INT(-1, (int)read_shop_number(f, "keeper vnum", -1, IDXTYPE_MAX));
+  TEST_ASSERT_EQUAL_INT(65535, (int)read_shop_number(f, "keeper vnum", -1, IDXTYPE_MAX));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+
+  EXPECT_SHOP_ABORT((void)read_shop_number(f, "shop flags", 0, LONG_MAX));
+  TEST_ASSERT_EQUAL_STRING("shop-field-range", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "(past the range of long)"));
+
+  EXPECT_SHOP_ABORT((void)read_shop_number(f, "trade-with flags", INT_MIN, INT_MAX));
+  TEST_ASSERT_EQUAL_STRING("shop-file-parse", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail,
+                              "expected a number for trade-with flags, got an unparsable line"));
+
+  EXPECT_SHOP_ABORT((void)read_shop_number(f, "first opening hour", INT_MIN, INT_MAX));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "got end of file"));
+  TEST_ASSERT_EQUAL_INT(0, fclose(f));
+}
+
+/* Profit factors are finite floats, as sedit requires. */
+static void test_read_shop_profit_rejects_non_finite(void)
+{
+  static char data[] = "1.15\n1e40\nnan\n";
+  FILE *volatile f = fmemopen(data, strlen(data), "r");
+
+  TEST_ASSERT_NOT_NULL(f);
+  TEST_ASSERT_EQUAL_FLOAT(1.15f, read_shop_profit(f, "buy profit"));
+  EXPECT_SHOP_ABORT((void)read_shop_profit(f, "sell profit"));
+  TEST_ASSERT_EQUAL_STRING("shop-field-range", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "shop #3010: sell profit"));
+  EXPECT_SHOP_ABORT((void)read_shop_profit(f, "sell profit"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "is not a finite float"));
+  TEST_ASSERT_EQUAL_INT(0, fclose(f));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -304,5 +410,9 @@ int main(void)
   RUN_TEST(test_buyword_many_operands_rejected);
   RUN_TEST(test_buyword_simple_matches);
   RUN_TEST(test_read_type_list_drops_type_past_int);
+  RUN_TEST(test_read_list_aborts_on_produce_vnum_past_int);
+  RUN_TEST(test_read_list_aborts_on_room_vnum_past_idxtype);
+  RUN_TEST(test_read_shop_number_reports_each_failure);
+  RUN_TEST(test_read_shop_profit_rejects_non_finite);
   return UNITY_END();
 }
