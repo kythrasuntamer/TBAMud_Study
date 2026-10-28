@@ -316,7 +316,7 @@ void hedit_parse(struct descriptor_data *d, char *arg)
     case 'Y':
       tb_snprintf(buf, sizeof(buf), "OLC: %s edits help for %s.", GET_NAME(d->character),
                OLC_HELP(d)->keywords);
-      mudlog(TRUE, MAX(LVL_BUILDER, GET_INVIS_LEV(d->character)), CMP, "%s", buf);
+      mudlog(CMP, MAX(LVL_BUILDER, GET_INVIS_LEV(d->character)), TRUE, "%s", buf);
       if (!hedit_save_internally(d)) {
         write_to_output(d, "Save refused: the help entry being edited is no longer valid.\r\n");
         cleanup_olc(d, CLEANUP_ALL);
@@ -445,8 +445,11 @@ void hedit_parse(struct descriptor_data *d, char *arg)
     break;
 
   case HEDIT_ENTRY:
-    /* We will NEVER get here, we hope. */
-    mudlog(TRUE, LVL_BUILDER, BRF, "SYSERR: Reached HEDIT_ENTRY case in parse_hedit");
+    /* Input in HEDIT_ENTRY goes to string_add, not here; reaching this means
+     * the descriptor's mode and its string editor disagree. */
+    TB_ERROR_MSG("olc", "bad-mode", "hedit",
+                 "mode %d (HEDIT_ENTRY) reached hedit_parse state %d " DIAG_CHAR_FMT,
+                 OLC_MODE(d), STATE(d), DIAG_CHAR(d->character));
     break;
 
   case HEDIT_MIN_LEVEL:
@@ -460,8 +463,10 @@ void hedit_parse(struct descriptor_data *d, char *arg)
     return;
 
   default:
-    /* We should never get here. */
-    mudlog(TRUE, LVL_BUILDER, BRF, "SYSERR: Reached default case in parse_hedit");
+    /* OLC_MODE is set only by this file; an unknown value is an editor bug. */
+    TB_ERROR_MSG("olc", "bad-mode", "hedit",
+                 "unknown mode %d state %d " DIAG_CHAR_FMT,
+                 OLC_MODE(d), STATE(d), DIAG_CHAR(d->character));
     break;
   }
 

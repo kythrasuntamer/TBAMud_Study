@@ -737,6 +737,24 @@ static void test_hedit_null_entry_round_trip(void)
   TEST_ASSERT_EQUAL_INT(HEDIT_MAIN_MENU, OLC_MODE(&builder_desc));
 }
 
+/* F2-29: an impossible editor mode is reported with the mode and editor,
+ * not a mudlog whose arguments were in the wrong order. */
+static void test_hedit_bad_mode_is_reported(void)
+{
+  char cmd[] = " beta";
+
+  search_result = 2;
+  do_oasis_hedit(&builder, cmd, 0, 0);
+  type("y");
+  OLC_MODE(&builder_desc) = 99;
+  tb_error_capture_reset();
+  type("x");
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("bad-mode", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "mode 99"));
+  TEST_ASSERT_EQUAL_INT(HEDIT_MAIN_MENU, OLC_MODE(&builder_desc));
+}
+
 /* ---------------------------------------------------------------------
  * prefedit
  * ------------------------------------------------------------------- */
@@ -1154,6 +1172,7 @@ int main(void)
   RUN_TEST(test_hedit_save_with_stale_rnum_is_refused_loudly);
   RUN_TEST(test_hedit_replace_frees_old_row_and_keeps_duplicates_valid);
   RUN_TEST(test_hedit_save_to_duplicate_row_is_refused_loudly);
+  RUN_TEST(test_hedit_bad_mode_is_reported);
   RUN_TEST(test_hedit_new_topic_does_not_index_nowhere);
   RUN_TEST(test_hedit_duplicate_redirects_to_owner);
   RUN_TEST(test_hedit_orphan_duplicate_is_refused_loudly);
