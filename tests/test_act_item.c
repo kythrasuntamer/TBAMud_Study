@@ -474,9 +474,41 @@ static void test_junk_reward_respects_max_gold(void)
   fx_free_char(pc);
 }
 
+/* A REMOVE script running '%force% %actor% remove plate': the nested
+ * remove takes the item off before the outer one continues. */
+static int nested_remove_hook(enum fx_trigger kind, struct char_data *actor,
+                              struct obj_data *obj, int argn)
+{
+  (void)argn;
+  if (kind == FX_REMOVE_OTRIG && obj && obj->worn_by == actor)
+    obj_to_char(unequip_char(actor, obj->worn_on), actor);
+  return 1;
+}
+
+/* H1-25: the outer remove must not unequip an empty slot. */
+static void test_remove_rechecks_slot_after_trigger(void)
+{
+  struct char_data *pc = fx_new_char("hero", FALSE, 0);
+  struct obj_data *plate = fx_new_obj("plate", ITEM_ARMOR);
+
+  SET_BIT_AR(GET_OBJ_WEAR(plate), ITEM_WEAR_BODY);
+  equip_char(pc, plate, WEAR_BODY);
+  fx_hook = nested_remove_hook;
+
+  do_remove(pc, arg("plate"), 0, 0);
+
+  TEST_ASSERT_EQUAL_INT(0, fx_core_dumps);
+  TEST_ASSERT_NULL(GET_EQ(pc, WEAR_BODY));
+  TEST_ASSERT_EQUAL_PTR(plate, pc->carrying);
+  TEST_ASSERT_NULL(plate->next_content);
+  TEST_ASSERT_EQUAL_STRING("remove-slot-changed", tb_captured_operation);
+  fx_free_char(pc);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(test_remove_rechecks_slot_after_trigger);
   RUN_TEST(test_junk_reward_respects_max_gold);
   RUN_TEST(test_negative_counts_are_refused);
   RUN_TEST(test_drop_gold_refused_by_room_trigger);

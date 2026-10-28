@@ -1761,8 +1761,20 @@ static void perform_remove(struct char_data *ch, int pos)
   else if (IS_CARRYING_N(ch) >= CAN_CARRY_N(ch)&& !PRF_FLAGGED(ch, PRF_NOHASSLE))
     act("$p: you can't carry that many items!", FALSE, ch, obj, 0, TO_CHAR);
   else {
+    long uid = obj_script_id(obj);
+
     if (!remove_otrigger(obj, ch))
       return;
+
+    /* The remove script may have removed, swapped or purged the item
+     * itself (e.g. '%force% %actor% remove all' runs a nested remove that
+     * empties the slot first); unequip only the object we checked. */
+    if (!obj_uid_matches(uid, obj) || GET_EQ(ch, pos) != obj) {
+      TB_WARN_MSG("act", "remove-slot-changed", "obj",
+                  "slot %d obj uid %ld changed by remove trigger for "
+                  DIAG_CHAR_FMT, pos, uid, DIAG_CHAR(ch));
+      return;
+    }
 
     obj_to_char(unequip_char(ch, pos), ch);
     act("You stop using $p.", FALSE, ch, obj, 0, TO_CHAR);
