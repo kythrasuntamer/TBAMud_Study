@@ -838,10 +838,64 @@ static void check_object_repairs_liquid_out_of_range(void)
   obj_index = NULL;
 }
 
+/* ---------------------------------------------------------------------
+ * parse_simple_mob(): byte-sized position and sex fields
+ * ------------------------------------------------------------------- */
+
+static struct char_data simple_mob_fixture[1];
+
+/* Parse a simple-mob numeric block into mob_proto[0]; 1 if it exit()ed. */
+static int parse_simple_mob_text(const char *text, int nr)
+{
+  FILE *volatile fp = stream_of(text, strlen(text));
+  volatile int exited = 1;
+
+  memset(simple_mob_fixture, 0, sizeof(simple_mob_fixture));
+  mob_proto = simple_mob_fixture;
+  tb_test_exit_armed = 1;
+  if (setjmp(tb_test_exit_jmp) == 0) {
+    parse_simple_mob(fp, 0, nr);
+    tb_test_exit_armed = 0;
+    exited = 0;
+  }
+  fclose(fp);
+  mob_proto = NULL;
+  return exited;
+}
+
+/* B1-12: position 8 / default 8 / sex 7 were stored into byte fields with no
+ * check; sex 7 later indexes the three-entry gender tables. */
+static void parse_simple_mob_rejects_sex_out_of_range(void)
+{
+  TEST_ASSERT_EQUAL_INT(1, parse_simple_mob_text(
+    "1 20 10 1d1+1 1d1+0\n0 0\n8 8 7\n", 3005));
+  TEST_ASSERT_EQUAL_STRING("FATAL", tb_captured_severity);
+  TEST_ASSERT_EQUAL_STRING("mob-parse", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "mob vnum 3005"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "sex 7"));
+}
+
+static void parse_simple_mob_rejects_negative_position(void)
+{
+  TEST_ASSERT_EQUAL_INT(1, parse_simple_mob_text(
+    "1 20 10 1d1+1 1d1+0\n0 0\n-1 8 0\n", 3006));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "position -1"));
+}
+
+static void parse_simple_mob_accepts_valid_position(void)
+{
+  TEST_ASSERT_EQUAL_INT(0, parse_simple_mob_text(
+    "1 20 10 1d1+1 1d1+0\n0 0\n8 8 2\n", 3007));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
   RUN_TEST(load_zones_rejects_top_nowhere);
+  RUN_TEST(parse_simple_mob_rejects_sex_out_of_range);
+  RUN_TEST(parse_simple_mob_rejects_negative_position);
+  RUN_TEST(parse_simple_mob_accepts_valid_position);
   RUN_TEST(check_object_repairs_liquid_out_of_range);
   RUN_TEST(load_config_reads_full_length_line);
   RUN_TEST(load_config_restores_default_for_empty_menu);

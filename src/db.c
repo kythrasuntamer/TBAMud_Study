@@ -1896,6 +1896,19 @@ static void parse_simple_mob(FILE *mob_f, int i, int nr)
     exit(1);
   }
 
+  /* Position, default position and sex are stored in byte fields and index
+   * position_types[], positions[] and the gender tables. medit only offers
+   * valid values, so these come from a hand-edited .mob file; a value that
+   * does not fit would silently truncate and index past those tables. */
+  if (t[0] < 0 || t[0] >= NUM_POSITIONS || t[1] < 0 || t[1] >= NUM_POSITIONS ||
+      t[2] < 0 || t[2] >= NUM_GENDERS) {
+    TB_FATAL_MSG("db", "mob-parse", "position",
+                 "mob vnum %d: position %d default %d sex %d out of range "
+                 "(positions 0..%d, sex 0..%d)", nr, t[0], t[1], t[2],
+                 NUM_POSITIONS - 1, NUM_GENDERS - 1);
+    exit(1);
+  }
+
   GET_POS(mob_proto + i) = t[0];
   GET_DEFAULT_POS(mob_proto + i) = t[1];
   GET_SEX(mob_proto + i) = t[2];
