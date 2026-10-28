@@ -982,7 +982,7 @@ static int compute_thaco(struct char_data *ch, struct char_data *victim)
   int calc_thaco;
 
   if (!IS_NPC(ch))
-    calc_thaco = thaco(GET_CLASS(ch), GET_LEVEL(ch));
+    calc_thaco = char_thaco(ch); /* a table miss names ch */
   else		/* THAC0 for monsters is set in the HitRoll */
     calc_thaco = 20;
   calc_thaco -= str_app[STRENGTH_APPLY_INDEX(ch)].tohit;
