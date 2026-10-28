@@ -777,8 +777,10 @@ static void free_extra_descriptions(struct extra_descr_data *edesc)
 /** Free the world, in a memory allocation sense.
  *
  * Call only at shutdown, after every descriptor has been closed: every
- * follower is detached (stop_follower()) before any character is freed, so
- * no follow list points at a freed character, and the freed tables
+ * follower is detached (stop_follower()) and every group member leaves its
+ * group (leave_group()) before any character is freed, so no follow list or
+ * group points at a freed character and group_list is empty for main() to
+ * free; free_char() does neither. The freed tables
  * (world, prototypes, indexes, zone_table, help_table, socials) are left as
  * dangling globals rather than reset, so nothing may touch them afterwards.
  * Zone command strings (sarg1/sarg2) are freed whatever the command letter. */
@@ -795,6 +797,9 @@ void destroy_db(void)
 
     if (chtmp->master)
       stop_follower(chtmp);
+    /* The last member to leave frees the group (free_group()). */
+    if (GROUP(chtmp))
+      leave_group(chtmp);
   }
 
   while (character_list) {

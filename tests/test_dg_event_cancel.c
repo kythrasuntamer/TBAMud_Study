@@ -185,6 +185,43 @@ static void test_use_after_free_all_is_reported(void)
   TEST_ASSERT_TRUE(captured("event-queue-uninit"));
 }
 
+/* D2-12: event_time() read event->q_el->key with no check, so NULL or an
+ * event whose callback is running (q_el NULL) crashed; event_is_queued()
+ * dereferenced NULL. */
+static struct event *timed_event;
+static long time_seen_while_running;
+
+static EVENTFUNC(time_self)
+{
+  (void)event_obj;
+  time_seen_while_running = event_time(timed_event);
+  return 0;
+}
+
+static void test_time_of_unqueued_event_is_reported(void)
+{
+  struct event *e;
+
+  pulse = 10;
+  e = event_create(never_fire, NULL, 5);
+  TEST_ASSERT_EQUAL_INT(5, event_time(e));
+  TEST_ASSERT_EQUAL_INT(0, n_captured);
+
+  TEST_ASSERT_EQUAL_INT(-1, event_time(NULL));
+  TEST_ASSERT_TRUE(captured("event-time-unqueued"));
+  TEST_ASSERT_EQUAL_INT(0, event_is_queued(NULL));
+  TEST_ASSERT_TRUE(captured("event-is-queued-null"));
+  event_cancel(e);
+
+  n_captured = 0;
+  time_seen_while_running = 0;
+  timed_event = event_create(time_self, NULL, 1);
+  pulse = 11;
+  event_process();
+  TEST_ASSERT_EQUAL_INT(-1, time_seen_while_running);
+  TEST_ASSERT_TRUE(captured("event-time-unqueued"));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -192,5 +229,6 @@ int main(void)
   RUN_TEST(test_nonpositive_when_is_clamped_loudly);
   RUN_TEST(test_cancel_null_is_reported);
   RUN_TEST(test_cancel_running_event_is_deferred_and_not_requeued);
+  RUN_TEST(test_time_of_unqueued_event_is_reported);
   return UNITY_END();
 }

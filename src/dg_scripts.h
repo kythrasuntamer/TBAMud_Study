@@ -26,8 +26,13 @@
 /* spells cast by objects and rooms use this level */
 #define DG_SPELL_LEVEL  25
 
-/* Define this if you don't want wear/remove triggers to fire when a player
- * is saved. */
+/* Required; do not undefine. save_char() (players.c) takes off and puts back
+ * every worn item to save base stats. Wear/remove triggers fired there ran
+ * DG scripts while the items sat in a local array with their affects
+ * stripped: a script that purged one left a freed pointer to be equipped
+ * again, and one that equipped another item had its bonuses saved
+ * (finding B2-21). Since that fix players.c runs no such triggers and
+ * stops the build with #error if this is undefined. */
 #define NO_EXTRANEOUS_TRIGGERS
 
 /* %actor.room% behaviour :
@@ -131,12 +136,13 @@
 
 #define SCRIPT_ERROR_CODE     (-9999999) /* this shouldn't happen too often */
 
-/* one line of the trigger */
+/* one line of the trigger.  A command list is shared by the prototype and
+ * every instance of the trigger, so it must hold no per-run state. */
 struct cmdlist_element {
   char *cmd;				/* one line of a trigger */
-  struct cmdlist_element *original;
+  struct cmdlist_element *original; /* 'done': its while line (same for all) */
   struct cmdlist_element *next;
-  int loops;        /* for counting number of runs in a while loop */
+  int loops;        /* unused: a while loop counts GET_TRIG_LOOPS() */
 };
 
 struct trig_var_data {
@@ -181,11 +187,15 @@ struct script_data {
   struct script_data *next;          /**< used for purged_scripts    */
 };
 
-/* The event data for the wait command */
+/* The event data for the wait command. For a room owner, go is only the room
+ * as it was when the wait began: OLC add_room()/delete_room() RECREATE
+ * world[], which can move every room, so trig_wait_event() finds the room
+ * again by owner_vnum. */
 struct wait_event_data {
   struct trig_data *trigger;
   void *go;
   int type;
+  room_vnum owner_vnum;   /**< WLD_TRIGGER: the room's vnum; else NOWHERE */
 };
 
 /* used for actor memory triggers */
@@ -303,6 +313,15 @@ void script_vlog(const char *format, va_list args)
 void script_log(const char *format, ...) __attribute__ ((format (printf, 1, 2)));
 char *matching_quote(char *p);
 struct room_data *dg_room_of_obj(struct obj_data *obj);
+room_rnum dg_owner_room_at(void *go, int type, const trig_data *trig,
+                           const char *what, const char *file, int line,
+                           const char *func);
+/** rnum of the room a script owner (go, of trigger type type) is in, for
+ * code about to index world[]; NOWHERE, after reporting dg/owner-unplaced
+ * with the trigger, the owner and this call site, when it is in no valid
+ * room. what names the lookup (a string literal). */
+#define DG_OWNER_ROOM(go, type, trig, what) \
+  dg_owner_room_at((go), (type), (trig), (what), __FILE__, __LINE__, __func__)
 bool check_flags_by_name_ar(int *array, int numflags, char *search, const char *namelist[]);
 void read_saved_vars_ascii(FILE *file, struct char_data *ch, int count);
 void save_char_vars_ascii(FILE *file, struct char_data *ch);
@@ -312,6 +331,12 @@ int trig_is_attached(struct script_data *sc, int trig_num);
 /* To maintain strict-aliasing we'll have to do this trick with a union */
 /* Thanks to Chris Gilbert for reminding me that there are other options. */
 int script_driver(void *go_adress, trig_data *trig, int type, int mode);
+/* script_driver() whose run returns default_return instead of 1 when the
+ * script ends without 'return' (a damage trigger keeps the damage). */
+int script_driver_default(void *go_adress, trig_data *trig, int type,
+                          int mode, int default_return);
+/* The trigger whose script is running now, or NULL (dg_scripts.c). */
+trig_data *dg_running_trigger(void);
 void dg_script_execution_enter(void);
 void dg_script_execution_leave(void);
 trig_rnum real_trigger(trig_vnum vnum);
@@ -373,7 +398,7 @@ void do_dg_affect(void *go, struct script_data *sc, trig_data *trig,
     int type, char *cmd);
 void send_char_pos(struct char_data *ch, int dam);
 int valid_dg_target(char_data *ch, int bitvector);
-void script_damage(char_data *vict, int dam);
+void script_damage(trig_data *trig, char_data *vict, int dam);
 
 /* Saturating field arithmetic for DG setters (dg_variables.c). */
 int dg_bounded_add(int cur, int add, int lo, int hi);

@@ -338,7 +338,9 @@ int valid_dg_target(struct char_data *ch, int bitvector)
     return FALSE;  /* The rest are gods with nohassle on... */
 }
 
-void script_damage(struct char_data *vict, int dam)
+/* trig is the running trigger (dg_running_trigger()), named by the
+ * field-clamp diagnostic; NULL when no script is running. */
+void script_damage(trig_data *trig, struct char_data *vict, int dam)
 {
   if (GET_LEVEL(vict)>=LVL_IMMORT && (dam > 0)) {
     send_to_char(vict, "Being the cool immortal you are, you sidestep a trap, "
@@ -348,7 +350,7 @@ void script_damage(struct char_data *vict, int dam)
 
   /* dam is a script int; GET_HIT is sh_int. Subtracting in int and storing
    * back wrapped, so a large negative "damage" could kill. */
-  GET_HIT(vict) = (sh_int)dg_clamp_char_field(NULL, vict, "damage",
+  GET_HIT(vict) = (sh_int)dg_clamp_char_field(trig, vict, "damage",
                       MIN((long long)GET_HIT(vict) - dam, GET_MAX_HIT(vict)),
                       SHRT_MIN, SHRT_MAX);
 

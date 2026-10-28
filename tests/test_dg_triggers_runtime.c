@@ -76,11 +76,27 @@ static void test_long_speech_wordlist_is_reported_once(void)
   TEST_ASSERT_NOT_NULL(strstr(dgw_detail("wordlist-truncated"), "trigger 400"));
 }
 
+/* E1-15: command_otrigger() snapshotted world[IN_ROOM(actor)].contents
+ * without dg_trigger_actor_placed(), which command_mtrigger and
+ * command_wtrigger both call first. */
+static void test_command_otrigger_refuses_an_unplaced_actor(void)
+{
+  struct char_data *m = dgw_mob(DGW_MOB_GUARD, 0);
+  char cmd[] = "look", arg[] = "";
+
+  char_from_room(m);
+  TEST_ASSERT_EQUAL_INT(0, command_otrigger(m, cmd, arg));
+  TEST_ASSERT_EQUAL_INT(1, dgw_saw("trigger-dispatch"));
+  TEST_ASSERT_NOT_NULL(strstr(dgw_detail("trigger-dispatch"), "rnum"));
+  char_to_room(m, 0);   /* extract_char() refuses a character in NOWHERE */
+}
+
 int main(void)
 {
   UNITY_BEGIN();
   RUN_TEST(test_one_phrase_bounds_unquoted_words);
   RUN_TEST(test_one_phrase_bounds_quoted_phrases);
   RUN_TEST(test_long_speech_wordlist_is_reported_once);
+  RUN_TEST(test_command_otrigger_refuses_an_unplaced_actor);
   return UNITY_END();
 }

@@ -47,6 +47,21 @@ size_t write_to_output(struct descriptor_data *t, const char *txt, ...)
   return strlen(output);
 }
 
+/* "/i" and "/e" split "<line> <text>" with half_chop(); the shared weak
+ * stub (test_stubs.c) blanks both halves. This mirrors interpreter.c's: the
+ * first word, then the rest after the separating spaces. */
+void half_chop(char *string, char *arg1, char *arg2)
+{
+  while (isspace((unsigned char)*string))
+    string++;
+  while (*string && !isspace((unsigned char)*string))
+    *arg1++ = *string++;
+  *arg1 = '\0';
+  while (isspace((unsigned char)*string))
+    string++;
+  memmove(arg2, string, strlen(string) + 1);
+}
+
 static struct descriptor_data d;
 static char *text;
 
@@ -187,6 +202,38 @@ void test_replace_first_only_and_shrink(void)
   TEST_ASSERT_EQUAL_STRING("1 two one", text);
 }
 
+/* Soak-test finding: "/d1" on a one-line buffer shrank it to "" in a 3-byte
+ * block whose spare bytes held stale text, and "/i1" then measured the tail
+ * with strlen(s + 1) from the terminator, reading past the block (ASan
+ * heap-buffer-overflow). Inserting after the last line of an exact-size
+ * buffer read past it the same way. */
+void test_delete_last_line_then_insert_stays_in_bounds(void)
+{
+  char *del = strdup("/d1"), *ins = strdup("/i1 new text"),
+       *append = strdup("/i2 second");
+
+  TEST_ASSERT_NOT_NULL(del);
+  TEST_ASSERT_NOT_NULL(ins);
+  TEST_ASSERT_NOT_NULL(append);
+  text = strdup("only line\r\n");
+  TEST_ASSERT_NOT_NULL(text);
+
+  improved_editor_execute(&d, del);
+  TEST_ASSERT_EQUAL_STRING("", text);
+  improved_editor_execute(&d, ins);
+  TEST_ASSERT_EQUAL_STRING("new text\r\n", text);
+
+  free(text);
+  text = strdup("first\r\n");                /* exact size: no spare bytes */
+  TEST_ASSERT_NOT_NULL(text);
+  improved_editor_execute(&d, append);
+  TEST_ASSERT_EQUAL_STRING("first\r\nsecond\r\n", text);
+  TEST_ASSERT_EQUAL_INT(0, captured_errors);
+  free(append);
+  free(ins);
+  free(del);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -201,5 +248,6 @@ int main(void)
   RUN_TEST(test_replace_all_overflow_leaves_buffer_unchanged);
   RUN_TEST(test_replace_all_exact_fit_keeps_every_byte);
   RUN_TEST(test_replace_first_only_and_shrink);
+  RUN_TEST(test_delete_last_line_then_insert_stays_in_bounds);
   return UNITY_END();
 }

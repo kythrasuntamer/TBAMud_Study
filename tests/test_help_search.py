@@ -4,14 +4,24 @@
 Boots the real server on a free port against a scratch copy of lib/ with an
 empty player index, creates a character (the first one is the implementor),
 and asks for help on a topic that sorts after every help keyword and on one
-that exists. Requires an answer to both, a server that is still running, and
-no sanitizer report in the server log.
+that exists. Requires an answer to both and a server that is still running.
 
 Regression: search_help() started its binary search at top = top_of_helpt,
 but top_of_helpt counts entries, so "help zzzz" (any player can type it)
 read help_table[top_of_helpt], one past the last entry; "help ~~~~" sorts
 after every stock keyword and reaches it. Under
 ASan that is a heap-buffer-overflow; without it, a crash or a bogus match.
+
+The server must also stop cleanly: the test fails if it exits before the
+test stops it, exits non-zero after SIGTERM, or leaves an AddressSanitizer,
+LeakSanitizer or UndefinedBehaviorSanitizer report in its log, so a defect
+after the last check (or in shutdown) cannot pass unnoticed.
+
+Environment: TB_TEST_SHUTDOWN_GRACE is how many seconds to wait for the
+server to exit after SIGTERM (default 30). A server that is still running
+then is killed and the test fails, since its shutdown (and any leak report
+from a sanitizer or Valgrind) was lost. Freeing the world under Valgrind
+took 14-28 s on a loaded machine, so raise it (e.g. 120) for such runs.
 
 Usage: test_help_search.py <circle binary> <source lib dir>
 """
@@ -26,7 +36,54 @@ import time
 
 BOOT_TIMEOUT = 300
 WAIT = 30
-SANITIZER = re.compile(rb"ERROR: AddressSanitizer|runtime error:|LeakSanitizer")
+# A report from any sanitizer the server may be built with (ASan, LSan, UBSan).
+SANITIZER = re.compile(rb"ERROR: AddressSanitizer|ERROR: LeakSanitizer|"
+                       rb"UndefinedBehaviorSanitizer|runtime error:")
+
+
+def shutdown_grace():
+    """TB_TEST_SHUTDOWN_GRACE in seconds; a bad value fails before boot."""
+    text = os.environ.get("TB_TEST_SHUTDOWN_GRACE", "30")
+    try:
+        grace = float(text)
+    except ValueError:
+        grace = float("nan")
+    if not 0 < grace < float("inf"):
+        sys.exit(f"FAIL: TB_TEST_SHUTDOWN_GRACE={text!r} is not a positive number of seconds")
+    return grace
+
+
+def stop_server(server, grace):
+    """Stop the server; return why its run was abnormal ([] if it was not).
+
+    Abnormal: it exited before the test stopped it, it was still running
+    grace seconds after SIGTERM (it is then killed), or it exited non-zero.
+    """
+    if server.poll() is not None:
+        return [f"server exited by itself (rc={server.returncode}) before the test stopped it"]
+    server.terminate()
+    try:
+        rc = server.wait(timeout=grace)
+    except subprocess.TimeoutExpired:
+        server.kill()
+        server.wait()
+        return [f"server still running {grace:g}s after SIGTERM; killed, so its "
+                f"shutdown and leak report were lost (raise TB_TEST_SHUTDOWN_GRACE)"]
+    return [] if rc == 0 else [f"server exited with rc={rc} after SIGTERM (expected 0)"]
+
+
+def server_problems(server, grace, log_path):
+    """stop_server()'s findings plus a sanitizer report in the server log.
+    Each is printed to stderr (a report with its context) and returned."""
+    problems = stop_server(server, grace)
+    log = open(log_path, "rb").read()
+    m = SANITIZER.search(log)
+    if m:
+        print(log[max(0, m.start() - 200):m.start() + 1500].decode("latin-1"), file=sys.stderr)
+        problems.append("sanitizer report in the server log")
+    for problem in problems:
+        print("FAIL: " + problem, file=sys.stderr)
+    return problems
 
 
 def free_port():
@@ -67,6 +124,7 @@ class Client:
 
 def main():
     circle, src_lib = sys.argv[1], sys.argv[2]
+    grace = shutdown_grace()
     work = tempfile.mkdtemp(prefix="tb-help-")
     lib = os.path.join(work, "lib")
     shutil.copytree(src_lib, lib)
@@ -120,18 +178,10 @@ def main():
             sys.exit("FAIL: server died on 'help score'")
         print("PASS: help past the last keyword is refused, real topics found")
     finally:
-        server.terminate()
-        try:
-            server.wait(timeout=30)
-        except subprocess.TimeoutExpired:
-            server.kill()
-        report = open(log_path, "rb").read()
-        if SANITIZER.search(report):
-            m = SANITIZER.search(report)
-            print(report[max(0, m.start() - 200):m.start() + 1500].decode("latin-1"))
-            shutil.rmtree(work, ignore_errors=True)
-            sys.exit("FAIL: sanitizer report in the server log")
+        problems = server_problems(server, grace, log_path)
         shutil.rmtree(work, ignore_errors=True)
+    if problems:
+        sys.exit(1)
 
 
 if __name__ == "__main__":

@@ -760,6 +760,9 @@ static void wait_resumes_in_the_last_room(void)
   world = rooms;
   top_of_world = 1;                       /* the last room is rooms[1] */
   SCRIPT(&rooms[1]) = &script;
+  /* The resumed wait finds its room by vnum and checks that the room still
+   * holds the trigger (trig_wait_event()), so attach it as a room's own. */
+  TRIGGERS(&script) = &trig;
   rooms[1].number = 4201;
   trig_index = indexes;
   top_of_trigt = 1;
@@ -813,15 +816,15 @@ static void owner_in_no_room_is_not_indexed(void)
 
   strlcpy(line, "[%m.global(quest)%]", sizeof(line));
   var_subst(&owner, NULL, &trig, MOB_TRIGGER, line, out);
-  TEST_ASSERT_EQUAL_STRING("[stage3]", out);
-  TEST_ASSERT_EQUAL_STRING("owner-nowhere", captured_operation);
+  TEST_ASSERT_EQUAL_STRING("[stage3]", out);     /* the UID still resolves */
+  TEST_ASSERT_EQUAL_STRING("owner-unplaced", captured_operation);
 
   captured_errors = 0;
   strlcpy(line, "[%random.char%]", sizeof(line));
   var_subst(&owner, NULL, &trig, MOB_TRIGGER, line, out);
   TEST_ASSERT_EQUAL_STRING("[]", out);
   TEST_ASSERT_EQUAL_INT(1, captured_errors);
-  TEST_ASSERT_EQUAL_STRING("owner-nowhere", captured_operation);
+  TEST_ASSERT_EQUAL_STRING("owner-unplaced", captured_operation);
 
   remove_from_lookup_table(target.script_id, &target);
   free_varlist(target_script.global_vars);

@@ -21,6 +21,7 @@
 struct obj_data *object_list;
 struct trig_data *trigger_list;
 struct index_data **trig_index;
+int top_of_trigt;
 
 /* ---- diagnostic capture ------------------------------------------------ */
 #define EXIT_EXPECTED_OP 42
@@ -57,8 +58,17 @@ void *tb_calloc_array_at(size_t count, size_t element_size,
 }
 
 int str_cmp(const char *a, const char *b) { return strcasecmp(a, b); }
+/* NULL: fail like a name with no file; else the path to hand back. */
+static const char *stub_vars_path;
 int get_filename(char *filename, size_t fbufsize, int mode, const char *orig_name)
-{ (void)filename; (void)fbufsize; (void)mode; (void)orig_name; return 0; }
+{
+  (void)mode; (void)orig_name;
+  if (!stub_vars_path)
+    return 0;
+  (void)snprintf(filename, fbufsize, "%s", stub_vars_path);
+  return 1;
+}
+long get_id_by_name(const char *name) { (void)name; return 4242; }
 
 /* No fixture trigger has a pending wait; reaching the queue is a bug. */
 void event_cancel_at(struct event *event, const char *file, int line,
@@ -156,6 +166,155 @@ static void test_extract_script_bad_args_are_reported(void)
   TEST_ASSERT_EQUAL_STRING("extract-script-type", last_op);
 }
 
+/* ---- trigger extraction (D2-07) ---------------------------------------- */
+static struct index_data one_trig_index;
+static struct index_data *one_trig_table[1];
+
+/* A one-entry trigger index (vnum 500) and an empty trigger_list. */
+static void use_one_trigger_index(void)
+{
+  memset(&one_trig_index, 0, sizeof(one_trig_index));
+  one_trig_index.vnum = 500;
+  one_trig_table[0] = &one_trig_index;
+  trig_index = one_trig_table;
+  top_of_trigt = 1;
+  trigger_list = NULL;
+}
+
+/* An instance of trigger 500, linked as add_trigger() would link it. */
+static struct trig_data *live_trigger(void)
+{
+  struct trig_data *t = calloc(1, sizeof(*t));
+
+  TEST_ASSERT_NOT_NULL(t);
+  t->nr = 0;
+  t->serial = 77;
+  t->next_in_world = trigger_list;
+  trigger_list = t;
+  one_trig_index.number++;
+  return t;
+}
+
+/* D2-07: extracting a trigger twice inside script execution queued it for
+ * dg_script_execution_leave() twice (a double free there) and drove the
+ * use count negative, with no report. */
+static void test_double_extract_is_reported_and_freed_once(void)
+{
+  struct trig_data *t;
+
+  use_one_trigger_index();
+  t = live_trigger();
+  dg_script_execution_enter();
+  extract_trigger(t);
+  extract_trigger(t);
+  TEST_ASSERT_EQUAL_STRING("trigger-double-extract", last_op);
+  TEST_ASSERT_EQUAL_INT(1, n_captured);
+  dg_script_execution_leave();
+  TEST_ASSERT_NULL(trigger_list);
+  TEST_ASSERT_EQUAL_INT(0, one_trig_index.number);
+  trig_index = NULL;
+  top_of_trigt = 0;
+}
+
+/* D2-07: the use count was decremented without checking the rnum or the
+ * count; a bad rnum indexed trig_index out of range. */
+static void test_extract_with_bad_index_bookkeeping_is_reported(void)
+{
+  struct trig_data *t;
+
+  use_one_trigger_index();
+  t = live_trigger();
+  one_trig_index.number = 0;
+  extract_trigger(t);
+  TEST_ASSERT_EQUAL_STRING("trigger-count-underflow", last_op);
+  TEST_ASSERT_EQUAL_INT(0, one_trig_index.number);
+  TEST_ASSERT_NULL(trigger_list);
+
+  t = live_trigger();
+  t->nr = 5;                       /* past the one-entry index */
+  extract_trigger(t);
+  TEST_ASSERT_EQUAL_STRING("trigger-rnum-range", last_op);
+  TEST_ASSERT_NULL(trigger_list);
+  trig_index = NULL;
+  top_of_trigt = 0;
+}
+
+/* D2-08: free_proto_script()/copy_proto_script() silently ignored a bad
+ * owner type (leaving the list attached, or copying nothing),
+ * free_proto_script() dereferenced a NULL owner, and copying over an owner
+ * that still had its own list leaked that list without a word. */
+static void test_proto_script_misuse_is_reported(void)
+{
+  struct trig_proto_list *mine = calloc(1, sizeof(*mine));
+  struct trig_proto_list *theirs = calloc(1, sizeof(*theirs));
+
+  TEST_ASSERT_NOT_NULL(mine);
+  TEST_ASSERT_NOT_NULL(theirs);
+  free_proto_script(NULL, WLD_TRIGGER);
+  TEST_ASSERT_EQUAL_STRING("proto-script-type", last_op);
+  rooms[0].proto_script = mine;
+  free_proto_script(&rooms[0], 99);
+  TEST_ASSERT_EQUAL_STRING("proto-script-type", last_op);
+  TEST_ASSERT_TRUE(rooms[0].proto_script == mine);
+  copy_proto_script(&rooms[0], &rooms[1], 99);
+  TEST_ASSERT_NULL(rooms[1].proto_script);
+
+  n_captured = 0;
+  theirs->vnum = 7;
+  rooms[1].proto_script = theirs;          /* not freed before the copy */
+  copy_proto_script(&rooms[0], &rooms[1], WLD_TRIGGER);
+  TEST_ASSERT_EQUAL_STRING("proto-script-overwrite", last_op);
+  TEST_ASSERT_EQUAL_INT(1, n_captured);
+  TEST_ASSERT_TRUE(rooms[1].proto_script != theirs);
+  free(theirs);                            /* the leak the warning names */
+  free_proto_script(&rooms[1], WLD_TRIGGER);
+  free_proto_script(&rooms[0], WLD_TRIGGER);
+}
+
+static void leave_without_enter(void)
+{
+  dg_script_execution_leave();
+}
+
+/* D2-06: an unbalanced dg_script_execution_leave() was caught only by an
+ * assert(), which NDEBUG removes; the unsigned depth then wrapped and every
+ * later extraction was retired and never freed. */
+static void test_unbalanced_leave_is_fatal(void)
+{
+  TEST_ASSERT_EQUAL_INT(EXIT_EXPECTED_OP,
+      run_in_child(leave_without_enter, "execution-depth-underflow"));
+}
+
+/* D2-11: a variable file that could not be named or removed was logged as
+ * a plain SYSERR (or not at all) with no TB record or idnum; the file then
+ * passes to the next character created with that name. */
+static void test_vars_delete_failures_are_reported(void)
+{
+  char dir[] = "/tmp/tb_dgvars_XXXXXX";
+  char inner[sizeof(dir) + 8];
+  FILE *fp;
+
+  stub_vars_path = NULL;
+  delete_variables("Bob");
+  TEST_ASSERT_EQUAL_STRING("vars-delete", last_op);
+
+  /* remove() of a non-empty directory fails with ENOTEMPTY. */
+  TEST_ASSERT_NOT_NULL(mkdtemp(dir));
+  (void)snprintf(inner, sizeof(inner), "%s/f", dir);
+  fp = fopen(inner, "w");
+  TEST_ASSERT_NOT_NULL(fp);
+  TEST_ASSERT_EQUAL_INT(0, fclose(fp));
+  n_captured = 0;
+  last_op[0] = '\0';
+  stub_vars_path = dir;
+  delete_variables("Bob");
+  stub_vars_path = NULL;
+  TEST_ASSERT_EQUAL_STRING("vars-delete", last_op);
+  TEST_ASSERT_EQUAL_INT(1, n_captured);
+  TEST_ASSERT_EQUAL_INT(0, remove(inner));
+  TEST_ASSERT_EQUAL_INT(0, remove(dir));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -163,5 +322,10 @@ int main(void)
   RUN_TEST(test_proto_shared_with_last_room_is_fatal);
   RUN_TEST(test_script_shared_with_last_room_is_fatal);
   RUN_TEST(test_unshared_script_frees_quietly);
+  RUN_TEST(test_double_extract_is_reported_and_freed_once);
+  RUN_TEST(test_extract_with_bad_index_bookkeeping_is_reported);
+  RUN_TEST(test_unbalanced_leave_is_fatal);
+  RUN_TEST(test_proto_script_misuse_is_reported);
+  RUN_TEST(test_vars_delete_failures_are_reported);
   return UNITY_END();
 }

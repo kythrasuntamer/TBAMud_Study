@@ -20,8 +20,9 @@
  *
  * Ownership and lifetime:
  * - OLC_TRIG(d) is a private scratch trigger.  Its name and arglist are its
- *   own; its cmdlist is borrowed from the prototype it was copied from and is
- *   never freed through the scratch (free_trigger() leaves cmdlist alone).
+ *   own; it has no cmdlist until trigedit_save() gives it the compiled list
+ *   it hands to the prototype (free_trigger() never frees a cmdlist).  It
+ *   never points at a prototype's list, which another builder's save frees.
  *   cleanup_olc() frees the scratch.
  * - OLC_STORAGE(d) is the script text being edited (a heap buffer of at least
  *   MAX_CMD_LENGTH bytes).  trigedit_save() compiles it into a new cmdlist.
@@ -167,11 +168,16 @@ ACMD(do_oasis_trigedit)
     }
   }
   d = ch->desc;
-  /* Give descriptor an OLC structure. */
+  /* Give descriptor an OLC structure.  Every editor leaves through
+   * cleanup_olc(), which frees d->olc, and this command requires
+   * CON_PLAYING, so a leftover structure is a broken invariant.  A bare
+   * free() leaked its scratch trigger, script buffer and copies: report it
+   * with the builder and the stale session, and release all of it. */
   if (d->olc) {
-    mudlog(BRF, LVL_BUILDER, TRUE,
-      "SYSERR: do_oasis_trigedit: Player already had olc structure.");
-    free(d->olc);
+    TB_ERROR_MSG("olc", "olc-stale-state", "descriptor",
+                 "builder " DIAG_CHAR_FMT " stale olc mode %d vnum %d; "
+                 "discarded", DIAG_CHAR(ch), OLC_MODE(d), OLC_NUM(d));
+    cleanup_olc(d, CLEANUP_ALL);
   }
   CREATE(d->olc, struct oasis_olc_data, 1);
 
@@ -210,11 +216,23 @@ ACMD(do_oasis_trigedit)
          GET_NAME(ch), zone_table[OLC_ZNUM(d)].number, GET_OLC_ZONE(ch));
 }
 
-/* Called when a mob or object is being saved to disk, so its script can be 
- * saved. */
-void script_save_to_disk(FILE *fp, void *item, int type)
+/* Called when a mob or object is being saved to disk, so its script can be
+ * saved.  Called through the script_save_to_disk() macro (dg_olc.h) so a
+ * report names the saver.  The gen*.c savers pass literal types; a bad type
+ * or a NULL file or item writes no 'T' lines, so the saved mob, object or
+ * room would silently lose its triggers on the next boot: it is reported as
+ * dg/script-save-type and -1 is returned.  Returns 0 otherwise. */
+int script_save_to_disk_at(FILE *fp, void *item, int type, const char *file,
+                           int line, const char *func)
 {
   struct trig_proto_list *t;
+
+  if (!fp || !item) {
+    tb_error_log_at("ERROR", "dg", "script-save-type", "proto_script", 0,
+                    file, line, func, "fp %p item %p type %d; no trigger "
+                    "lines written", (void *)fp, item, type);
+    return -1;
+  }
 
   if (type==MOB_TRIGGER)
     t = ((struct char_data *)item)->proto_script;
@@ -223,8 +241,11 @@ void script_save_to_disk(FILE *fp, void *item, int type)
   else if (type==WLD_TRIGGER)
     t = ((struct room_data *)item)->proto_script;
   else {
-    log("SYSERR: Invalid type passed to script_save_to_disk()");
-    return;
+    tb_error_log_at("ERROR", "dg", "script-save-type", "proto_script", 0,
+                    file, line, func, "invalid type %d for item %p (expected "
+                    "%d/%d/%d); no trigger lines written", type, item,
+                    MOB_TRIGGER, OBJ_TRIGGER, WLD_TRIGGER);
+    return -1;
   }
 
   while (t)
@@ -232,6 +253,7 @@ void script_save_to_disk(FILE *fp, void *item, int type)
     tb_fprintf(fp,"T %d\n", t->vnum);
     t = t->next;
   }
+  return 0;
 }
 
 static void trigedit_setup_new(struct descriptor_data *d)
@@ -264,8 +286,9 @@ static void trigedit_setup_new(struct descriptor_data *d)
  * @pre d->olc is allocated and rtrg_num is a valid rnum (callers obtain it
  * from real_trigger() and check it against NOTHING).
  * @post Any previous OLC_TRIG/OLC_STORAGE is released and replaced.  The
- * scratch borrows the prototype's cmdlist and carries its nr, which a caller
- * filling the scratch for a different vnum must reset (see TRIGEDIT_COPY).
+ * scratch has no cmdlist (the script is in OLC_STORAGE) and carries the
+ * prototype's nr, which a caller filling the scratch for a different vnum
+ * must reset (see TRIGEDIT_COPY).
  * OLC_VAL(d) is 0.  OLC_STORAGE is sized to the whole script, so it can be
  * larger than MAX_CMD_LENGTH for a trigger loaded from disk; the text
  * editor's max_str is still MAX_CMD_LENGTH, so such a script cannot be
@@ -282,7 +305,7 @@ void trigedit_setup_existing(struct descriptor_data *d, int rtrg_num)
   /* This function owns the editor's scratch state.  "W) Copy Trigger" calls
    * it on a descriptor that already has a scratch trigger and edit buffer;
    * release them first (E2-04).  free_trigger() leaves cmdlist alone: the
-   * scratch only borrows its prototype's list. */
+   * scratch never owns one. */
   if (OLC_TRIG(d)) {
     free_trigger(OLC_TRIG(d));
     OLC_TRIG(d) = NULL;
@@ -313,8 +336,11 @@ void trigedit_setup_existing(struct descriptor_data *d, int rtrg_num)
       strlcat(OLC_STORAGE(d), c->cmd, len);
     strlcat(OLC_STORAGE(d), "\r\n", len);
   }
-  /* Now trig->cmdlist is something to pass to the text editor it will be 
-   * converted back to a real cmdlist_element list later. */
+  /* The script now lives in OLC_STORAGE; trigedit_save() compiles it into a
+   * new list.  Drop the prototype's list: another builder saving this
+   * trigger frees it, which would leave the scratch pointing at freed
+   * memory. */
+  trig->cmdlist = NULL;
 
   OLC_TRIG(d) = trig;
   OLC_VAL(d) = 0;  /* Has changed flag. (It hasn't so far, we just made it.) */
@@ -1228,6 +1254,21 @@ static int trigedit_save_checked(struct descriptor_data *d)
           GET_TRIG_RNUM(OLC_TRIG(dsc)) >= rnum)
         GET_TRIG_RNUM(OLC_TRIG(dsc))++;
 
+    /* Zone reset 'T' commands hold trigger rnums as well (renum_zone_table()
+     * converted their vnums at boot): shift them the way add_mobile() and
+     * add_object() shift the mob and object rnums of reset commands.  Left
+     * alone, a reset attached whatever trigger now sits at the old rnum and
+     * save_zone() wrote that trigger's vnum into the zone file. */
+    {
+      int zn, cmd_no;
+
+      for (zn = 0; zn <= top_of_zone_table; zn++)
+        for (cmd_no = 0; ZCMD(zn, cmd_no).command != 'S'; cmd_no++)
+          if (ZCMD(zn, cmd_no).command == 'T' &&
+              ZCMD(zn, cmd_no).arg2 != NOTHING && ZCMD(zn, cmd_no).arg2 >= rnum)
+            ZCMD(zn, cmd_no).arg2++;
+    }
+
     trigedit_check_live_rnums(d, rnum);
   }
 
@@ -1503,10 +1544,32 @@ void dg_script_menu(struct descriptor_data *d)
   editscript = OLC_SCRIPT(d);
 
   while (editscript) {
+    /* A prototype's list can name a trigger that does not exist:
+     * assign_triggers() skips such vnums rather than dropping them, and a
+     * loader that keeps the 'T' line of a missing trigger (so an OLC save
+     * does not delete it from disk) leaves it in the list.  Look the rnum up
+     * once and check it; NOTHING used to index trig_index out of bounds. */
+    trig_rnum rnum = real_trigger(editscript->vnum);
+
+    if (!VALID_TRIG_RNUM(rnum)) {
+      char_data *builder = d->character;
+
+      write_to_output(d, "     %2d) [%s%d%s] %s** missing trigger **%s\r\n",
+        ++i, cyn, editscript->vnum, nrm, grn, nrm);
+      TB_WARN_MSG("dg", "script-menu-missing-trigger", "proto_script",
+                  "builder " DIAG_CHAR_FMT ": trigger vnum %d on %s vnum %d "
+                  "does not exist; listed as missing", DIAG_CHAR(builder),
+                  editscript->vnum,
+                  OLC_ITEM_TYPE(d) == MOB_TRIGGER ? "mob" :
+                  OLC_ITEM_TYPE(d) == OBJ_TRIGGER ? "obj" : "room",
+                  OLC_NUM(d));
+      editscript = editscript->next;
+      continue;
+    }
     write_to_output(d, "     %2d) [%s%d%s] %s%s%s", ++i, cyn,
       editscript->vnum, nrm, cyn,
-      trig_index[real_trigger(editscript->vnum)]->proto->name, nrm);
-    if (trig_index[real_trigger(editscript->vnum)]->proto->attach_type != OLC_ITEM_TYPE(d))
+      trig_index[rnum]->proto->name, nrm);
+    if (trig_index[rnum]->proto->attach_type != OLC_ITEM_TYPE(d))
       write_to_output(d, "   %s** Mis-matched Trigger Type **%s\r\n",grn,nrm);
     else
       write_to_output(d, "\r\n");
@@ -1527,7 +1590,8 @@ void dg_script_menu(struct descriptor_data *d)
 /**
  * Handle one line of builder input in the trigger-attachment submenu.
  * New entries are accepted only when real_trigger() resolves their vnum;
- * dg_script_menu() relies on every vnum in OLC_SCRIPT(d) resolving.
+ * entries copied from the prototype may not resolve, and dg_script_menu()
+ * lists those as missing.
  * @param d The editing descriptor (OLC_SCRIPT(d) as for dg_olc_script_copy()).
  * @param arg The builder's input line.
  * @retval 0 The builder quit the submenu; the caller returns to its own menu.

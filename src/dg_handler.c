@@ -86,7 +86,16 @@ void dg_script_execution_leave(void)
 {
   struct dg_retired_trigger *t;
   struct dg_retired_script *s;
-  assert(dg_execution_depth != 0);
+
+  /* Engine invariant: every leave pairs with one enter.  An extra leave
+   * wrapped the unsigned depth, after which every extraction was retired
+   * and never freed, with nothing logged.  The assert() it replaces
+   * vanished under NDEBUG; the script_driver breadcrumb names the trigger. */
+  if (dg_execution_depth == 0) {
+    TB_FATAL_MSG("dg", "execution-depth-underflow", "script_driver",
+                 "dg_script_execution_leave() without a matching enter");
+    abort();
+  }
   if (--dg_execution_depth != 0)
     return;
   while ((t = dg_retired_triggers) != NULL) {
@@ -190,26 +199,75 @@ void free_trigger(struct trig_data *trig)
     free(trig);
 }
 
+/** TRUE when trig was extracted during script execution and is waiting in
+ * dg_retired_triggers to be freed (so it is still safe to read). */
+static int dg_trigger_is_retired(const struct trig_data *trig)
+{
+  const struct dg_retired_trigger *r;
+
+  for (r = dg_retired_triggers; r; r = r->next)
+    if (r->trig == trig)
+      return TRUE;
+  return FALSE;
+}
+
 /** remove a single trigger from a mob/obj/room
  * @pre trig is already unlinked from its owner's TRIGGERS(sc) list
  * (remove_trigger() does this; extract_script() discards the whole list).
- * @pre trig has not been extracted before.
+ * @pre trig is live: on trigger_list (add_trigger() put it there) and not
+ * extracted before.  Otherwise dg/trigger-double-extract is reported and
+ * trig is left alone.
  * @post The pending wait is cancelled, the trig_index use count is
  * decremented, trig is off trigger_list, and trig is freed now or, inside
  * script execution, at the outermost dg_script_execution_leave(). */
 void extract_trigger(struct trig_data *trig)
 {
-  struct trig_data *temp;
+  struct trig_data **link;
+
+  /* Engine invariant (no script text reaches it): a trigger is extracted
+   * once.  A second extraction used to be silent (REMOVE_FROM_LIST finds
+   * nothing) and then queued trig for dg_script_execution_leave() twice or
+   * freed it twice.  Look trig up by address before reading it: outside
+   * script execution an earlier extraction has already freed it. */
+  for (link = &trigger_list; *link && *link != trig;
+       link = &(*link)->next_in_world)
+    ;
+  if (*link == NULL) {
+    if (dg_trigger_is_retired(trig))
+      TB_ERROR_MSG("dg", "trigger-double-extract", "trigger",
+                   "trig vnum %d serial %lu was already extracted and awaits "
+                   "its free; not extracted again", DIAG_TRIG_VNUM(trig),
+                   trig->serial);
+    else
+      TB_ERROR_MSG("dg", "trigger-double-extract", "trigger",
+                   "trigger %p is not on trigger_list (already freed, or "
+                   "never attached); not touched", (void *)trig);
+    return;
+  }
 
   if (GET_TRIG_WAIT(trig)) {
     event_cancel(GET_TRIG_WAIT(trig));
     GET_TRIG_WAIT(trig) = NULL;
   }
 
-  trig_index[trig->nr]->number--;
+  /* The use count feeds vstat and zone resets; never index trig_index out
+   * of range or count below zero. */
+  if (!VALID_TRIG_RNUM(trig->nr))
+    TB_ERROR_MSG("dg", "trigger-rnum-range", "trigger",
+                 "trig serial %lu has rnum %d outside the %d-entry trigger "
+                 "index; use count not updated", trig->serial, (int)trig->nr,
+                 top_of_trigt);
+  else if (trig_index[trig->nr]->number <= 0)
+    TB_ERROR_MSG("dg", "trigger-count-underflow", "trigger",
+                 "trig vnum %d serial %lu: use count %d is already <= 0; left "
+                 "unchanged", GET_TRIG_VNUM(trig), trig->serial,
+                 trig_index[trig->nr]->number);
+  else
+    trig_index[trig->nr]->number--;
 
-  /* walk the trigger list and remove this one */
-  REMOVE_FROM_LIST(trig, trigger_list, next_in_world);
+  /* Unlink.  *link still addresses trig: event_cancel() frees only the
+   * event and its payload and never touches trigger_list. */
+  *link = trig->next_in_world;
 
   if (DG_IN_SCRIPT_EXECUTION()) {
     struct dg_retired_trigger *node;
@@ -331,8 +389,8 @@ void extract_script_mem(struct script_memory *sc)
 /** Free the prototype trigger list of a mob, obj or room and set it NULL.
  * @param thing The owner; must be non-NULL and of the struct type that
  * matches type.
- * @param type MOB_TRIGGER, OBJ_TRIGGER or WLD_TRIGGER; any other value
- * frees nothing.
+ * @param type MOB_TRIGGER, OBJ_TRIGGER or WLD_TRIGGER; any other value, or
+ * a NULL thing, frees nothing and is reported as dg/proto-script-type.
  * Aborts with dg/proto-script-shared-owner if another live char, obj or
  * room still points at the same list. */
 void free_proto_script(void *thing, int type)
@@ -341,6 +399,17 @@ void free_proto_script(void *thing, int type)
   char_data *mob;
   obj_data *obj;
   room_data *room;
+
+  /* Engine and OLC callers pass the owner and its literal *_TRIGGER type;
+   * anything else is a caller bug.  Report it and free nothing rather than
+   * dereference NULL or silently leave the list attached. */
+  if (!thing || (type != MOB_TRIGGER && type != OBJ_TRIGGER &&
+                 type != WLD_TRIGGER)) {
+    TB_ERROR_MSG("dg", "proto-script-type", "free_proto_script",
+                 "owner %p type %d (expected %d/%d/%d); list not freed",
+                 thing, type, MOB_TRIGGER, OBJ_TRIGGER, WLD_TRIGGER);
+    return;
+  }
 
   switch (type) {
     case MOB_TRIGGER:
@@ -399,23 +468,44 @@ void free_proto_script(void *thing, int type)
  * must call free_proto_script(dest) first unless dest is a fresh struct
  * copy of source whose pointer is still shared (read_mobile/read_object).
  * If source has no list, dest is left unchanged.
- * @param source,dest Non-NULL structs of the type named by type.
+ * @param source,dest Non-NULL structs of the type named by type (else
+ * dg/proto-script-type is reported and nothing is copied).
  * @param type MOB_TRIGGER, OBJ_TRIGGER or WLD_TRIGGER. */
 void copy_proto_script(void *source, void *dest, int type)
 {
-  struct trig_proto_list *tp_src = NULL, *tp_dst = NULL;
+  struct trig_proto_list *tp_src = NULL, *tp_dst = NULL, *tp_old = NULL;
+
+  /* As in free_proto_script(): literal types from engine and OLC code. */
+  if (!source || !dest || (type != MOB_TRIGGER && type != OBJ_TRIGGER &&
+                           type != WLD_TRIGGER)) {
+    TB_ERROR_MSG("dg", "proto-script-type", "copy_proto_script",
+                 "source %p dest %p type %d (expected %d/%d/%d); nothing "
+                 "copied", source, dest, type, MOB_TRIGGER, OBJ_TRIGGER,
+                 WLD_TRIGGER);
+    return;
+  }
 
   switch (type) {
     case MOB_TRIGGER:
       tp_src = ((char_data *)source)->proto_script;
+      tp_old = ((char_data *)dest)->proto_script;
       break;
     case OBJ_TRIGGER:
       tp_src = ((obj_data *)source)->proto_script;
+      tp_old = ((obj_data *)dest)->proto_script;
       break;
     case WLD_TRIGGER:
       tp_src = ((room_data *)source)->proto_script;
+      tp_old = ((room_data *)dest)->proto_script;
       break;
   }
+
+  /* dest's own list should have been freed first; overwriting it leaks it.
+   * (A fresh struct copy still shares source's list, which is fine.) */
+  if (tp_src && tp_old && tp_old != tp_src)
+    TB_WARN_MSG("dg", "proto-script-overwrite", "copy_proto_script",
+                "dest %p type %d still owned trigger list %p; overwritten by "
+                "the copy and leaked", dest, type, (void *)tp_old);
 
   if (tp_src) {
     CREATE(tp_dst, struct trig_proto_list, 1);
@@ -444,29 +534,36 @@ void copy_proto_script(void *source, void *dest, int type)
 /** Delete the saved global script-variable file of a player.
  * @param charname A validated player name (not script-controlled).
  * If removal fails for any reason other than a missing file the failure is
- * logged; the file then survives and a later character created with the
- * same name inherits its variables. */
+ * reported as dg/vars-delete; the file then survives and a later character
+ * created with the same name inherits its variables (quest flags). The
+ * player's idnum is named while the player table still lists the name. */
 void delete_variables(const char *charname)
 {
   char filename[PATH_MAX];
 
-  if (!get_filename(filename, sizeof(filename), SCRIPT_VARS_FILE, charname))
+  if (!get_filename(filename, sizeof(filename), SCRIPT_VARS_FILE, charname)) {
+    TB_ERROR_MSG("dg", "vars-delete", "script_vars",
+                 "no variable file name for player %s; any file left "
+                 "behind passes to a new character of that name",
+                 charname ? charname : "(null)");
     return;
-
-  if (remove(filename) < 0 && errno != ENOENT) {
-    int saved_errno = errno;
-    log("SYSERR: remove script-variable file %s for character %s failed: %s (errno=%d)",
-        filename, charname ? charname : "(unknown)",
-        strerror(saved_errno), saved_errno);
   }
+
+  if (remove(filename) < 0 && errno != ENOENT)
+    TB_ERROR_ERRNO("dg", "vars-delete", filename,
+                   "player %s idnum %ld: variable file not removed; a new "
+                   "character of that name would inherit it",
+                   charname ? charname : "(null)",
+                   charname ? get_id_by_name(charname) : -1L);
 }
 
 /** Repoint pending wait events of one room's triggers from 'from' to 'to'
  * after the room struct has been copied (genwld.c add/delete shifts).
  * @pre Called before 'from' is overwritten; reads SCRIPT(from).
- * Only covers the one room copied.  It does not fix wait events of rooms
- * that stay at the same index when RECREATE(world) moves the whole array;
- * their wait_event_data->go keeps the old address (finding D2-03). */
+ * Only covers the one room copied, so rooms that keep their index when
+ * RECREATE(world) moves the whole array keep the old address in go.  That
+ * is harmless: trig_wait_event() finds a room owner by its vnum
+ * (wait_event_data->owner_vnum) and never follows go (D2-03). */
 void update_wait_events(struct room_data *to, struct room_data *from)
 {
   struct trig_data *trig;

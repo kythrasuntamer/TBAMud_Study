@@ -92,6 +92,7 @@ static struct cmdlist_element * find_case(struct trig_data *trig, struct cmdlist
           void *go, struct script_data *sc, int type, char *cond);
 static struct cmdlist_element *find_done(struct cmdlist_element *cl);
 static void report_unterminated_block(trig_data *trig, const char *keyword);
+static int dg_line_number(const trig_data *trig, const struct cmdlist_element *cl);
 static struct char_data *find_char_by_uid_in_lookup_table(long uid);
 static struct obj_data *find_obj_by_uid_in_lookup_table(long uid);
 static EVENTFUNC(trig_wait_event);
@@ -810,19 +811,46 @@ void check_time_triggers(void)
   }
 }
 
+/* TRUE when trig is one of sc's triggers (sc may be NULL). */
+static int dg_trig_in_script(const struct script_data *sc, const trig_data *trig)
+{
+  const trig_data *t;
+
+  for (t = sc ? TRIGGERS(sc) : NULL; t; t = t->next)
+    if (t == trig)
+      return TRUE;
+  return FALSE;
+}
+
 static EVENTFUNC(trig_wait_event)
 {
   struct wait_event_data *wait_event_obj = (struct wait_event_data *)event_obj;
   trig_data *trig;
   void *go;
   int type;
+  room_vnum owner_vnum;
+  room_rnum owner_rnum = NOWHERE;
 
   trig = wait_event_obj->trigger;
   go = wait_event_obj->go;
   type = wait_event_obj->type;
+  owner_vnum = wait_event_obj->owner_vnum;
 
   free(wait_event_obj);
   GET_TRIG_WAIT(trig) = NULL;
+
+  /* A room owner is found again by vnum, never through the saved pointer:
+   * OLC add_room()/delete_room() RECREATE world[], which can move every room,
+   * and update_wait_events() repoints only the rooms they shift, so go may
+   * point into the freed old array, or at another room that now occupies
+   * the address. The room the vnum names must still hold the trigger;
+   * otherwise go is NULL, which script_driver() refuses. */
+  if (type == WLD_TRIGGER) {
+    owner_rnum = real_room(owner_vnum);
+    go = (owner_rnum != NOWHERE &&
+          dg_trig_in_script(SCRIPT(&world[owner_rnum]), trig)) ?
+         &world[owner_rnum] : NULL;
+  }
 
 #if 1  /* debugging */
   {
@@ -837,24 +865,25 @@ static EVENTFUNC(trig_wait_event)
       for (obj = object_list;obj && !found;obj = obj->next)
         if (obj == (struct obj_data *)go)
           found = TRUE;
-    } else {
-      room_rnum i;
-      /* top_of_world is the last valid rnum, so it is included. Stopping
-       * short of it treated a wait on the last room as an unknown owner. */
-      for (i = 0;i<=top_of_world && !found;i++)
-        if (&world[i] == (struct room_data *)go)
-          found = TRUE;
-    }
+    } else
+      found = (go != NULL);   /* resolved by vnum above */
     if (!found) {
       /* Extraction cancels a trigger's wait event, so a missing owner is a
        * broken invariant. trig itself is still live (the event owned no
        * reference to free); end its suspended run so TRIGGER_CHECK() does
        * not refuse it forever with depth 1. */
-      TB_ERROR_MSG("dg", "wait-resume", "trig_wait_event",
-                   "trig vnum %d type %d: owner not live on resume; "
-                   "trigger ended (%d instances attached)",
-                   DIAG_TRIG_VNUM(trig), type,
-                   VALID_TRIG_RNUM(trig->nr) ? trig_index[trig->nr]->number : -1);
+      if (type == WLD_TRIGGER)
+        TB_ERROR_MSG("dg", "wait-owner-lost", "trig_wait_event",
+                     "trig vnum %d: owner room vnum %d %s on resume; "
+                     "trigger ended", DIAG_TRIG_VNUM(trig), owner_vnum,
+                     owner_rnum == NOWHERE ? "no longer exists"
+                                           : "no longer holds the trigger");
+      else
+        TB_ERROR_MSG("dg", "wait-resume", "trig_wait_event",
+                     "trig vnum %d type %d: owner not live on resume; "
+                     "trigger ended (%d instances attached)",
+                     DIAG_TRIG_VNUM(trig), type,
+                     VALID_TRIG_RNUM(trig->nr) ? trig_index[trig->nr]->number : -1);
       script_log("Trigger VNum %d: restart attempt on unknown entity.",
                  GET_TRIG_VNUM(trig));
       free_varlist(GET_TRIG_VARS(trig));
@@ -1065,6 +1094,17 @@ void add_trigger(struct script_data *sc, trig_data *t, int loc)
   trigger_list = t;
 }
 
+/* Zone whose builders may attach or detach triggers on a character: a mob's
+ * prototype zone, or the zone of the room a player stands in. NOWHERE (no
+ * prototype, no room) makes can_edit_zone() refuse everyone. */
+static zone_rnum dg_char_edit_zone(const char_data *victim)
+{
+  if (IS_NPC(victim))
+    return real_zone_by_thing(GET_MOB_VNUM(victim));
+  return VALID_ROOM_RNUM(IN_ROOM(victim)) ? world[IN_ROOM(victim)].zone
+                                          : NOWHERE;
+}
+
 ACMD(do_attach)
 {
   char_data *victim;
@@ -1104,7 +1144,13 @@ ACMD(do_attach)
       send_to_char(ch, "Players can't have scripts.\r\n");
       return;
     }
-    if (!can_edit_zone(ch, world[IN_ROOM(ch)].zone)) {
+    /* The target's zone, as do_detach checks: the builder's own room let
+     * anyone standing in their zone attach to a mob anywhere. */
+    if (!can_edit_zone(ch, dg_char_edit_zone(victim))) {
+      TB_WARN_MSG("dg", "attach-denied", "do_attach",
+                  "builder " DIAG_CHAR_FMT ": trigger %d on " DIAG_CHAR_FMT
+                  " outside the builder's zones; refused", DIAG_CHAR(ch), tn,
+                  DIAG_CHAR(victim));
       send_to_char(ch, "You can only attach triggers in your own zone.\r\n");
       return;
     }
@@ -1146,7 +1192,11 @@ ACMD(do_attach)
       }
     }
 
-    if (!can_edit_zone(ch, world[IN_ROOM(ch)].zone)) {
+    if (!can_edit_zone(ch, real_zone_by_thing(GET_OBJ_VNUM(object)))) {
+      TB_WARN_MSG("dg", "attach-denied", "do_attach",
+                  "builder " DIAG_CHAR_FMT ": trigger %d on obj vnum %d uid "
+                  "%ld outside the builder's zones; refused", DIAG_CHAR(ch),
+                  tn, GET_OBJ_VNUM(object), object->script_id);
       send_to_char(ch, "You can only attach triggers in your own zone.\r\n");
       return;
     }
@@ -1425,7 +1475,13 @@ ACMD(do_detach)
 
       if (!SCRIPT(victim)) 
         send_to_char(ch, "That %s doesn't have any triggers.\r\n", IS_NPC(victim) ? "mob" : "player");  
-      else if (!can_edit_zone(ch, real_zone_by_thing(GET_MOB_VNUM(victim))) && IS_NPC(victim)) {
+      /* A player used to skip the zone check, so any builder could strip
+       * another player's triggers; players now follow attach's rule. */
+      else if (!can_edit_zone(ch, dg_char_edit_zone(victim))) {
+        TB_WARN_MSG("dg", "detach-denied", "do_detach",
+                    "builder " DIAG_CHAR_FMT ": triggers of " DIAG_CHAR_FMT
+                    " outside the builder's zones; refused", DIAG_CHAR(ch),
+                    DIAG_CHAR(victim));
         send_to_char(ch, "You can only detach triggers in your own zone\r\n");
         return;
       }
@@ -1896,6 +1952,26 @@ static int process_if(char *cond, void *go, struct script_data *sc,
     return 1;
 }
 
+/* TRUE when the script line p (builder text, leading blanks skipped) is the
+ * control keyword kw as a whole word: kw followed by blank or the end of the
+ * line. Prefix tests made 'else' match "elsewhere", 'end' match "endgame",
+ * and the block scanners' three-letter 'don' match "donate", so ordinary
+ * commands opened or closed blocks; the driver and the scanners now agree.
+ * "endif" (stock 14.trg) is still an 'end', and DG_LINE_IS_ELSEIF() accepts
+ * a condition glued to 'elseif' (stock 27.trg). */
+static int dg_line_is(const char *p, const char *kw)
+{
+  int n = (int) strlen(kw);   /* a short literal keyword */
+
+  return !strn_cmp(p, kw, n) && (!p[n] || isspace((unsigned char) p[n]));
+}
+
+/** 'end' or its common spelling 'endif'. p is evaluated twice. */
+#define DG_LINE_IS_END(p)     (dg_line_is((p), "end") || dg_line_is((p), "endif"))
+/** 'elseif', with or without a blank before its condition (the condition
+ * starts at p + 6). No command begins with "elseif". */
+#define DG_LINE_IS_ELSEIF(p)  (!strn_cmp((p), "elseif", 6))
+
 /* Scans for end of if-block.  returns the line containg 'end', or the last
  * line of the trigger if not found (reported to the builder). Nested if
  * blocks are skipped. Never returns NULL for a non-NULL cl. */
@@ -1914,7 +1990,7 @@ static struct cmdlist_element *find_end(trig_data *trig, struct cmdlist_element 
 
     if (!strn_cmp("if ", p, 3))
       c = find_end(trig, c);
-    else if (!strn_cmp("end", p, 3))
+    else if (DG_LINE_IS_END(p))
       return c;
 
     /* thanks to Russell Ryan for this fix */
@@ -1948,19 +2024,19 @@ static struct cmdlist_element *find_else_end(trig_data *trig,
     if (!strn_cmp("if ", p, 3))
       c = find_end(trig, c);
 
-    else if (!strn_cmp("elseif ", p, 7)) {
-      if (process_if(p + 7, go, sc, trig, type)) {
+    else if (DG_LINE_IS_ELSEIF(p)) {
+      if (process_if(p + 6, go, sc, trig, type)) {
         GET_TRIG_DEPTH(trig)++;
         return c;
       }
     }
 
-    else if (!strn_cmp("else", p, 4)) {
+    else if (dg_line_is(p, "else")) {
       GET_TRIG_DEPTH(trig)++;
       return c;
     }
 
-    else if (!strn_cmp("end", p, 3))
+    else if (DG_LINE_IS_END(p))
       return c;
 
     /* thanks to Russell Ryan for this fix */
@@ -1972,7 +2048,7 @@ static struct cmdlist_element *find_else_end(trig_data *trig,
 
   /* rryan: if we got here, it's the last line, if its not an end, log it. */
   for (p = c->cmd; *p && isspace(*p); p++); /* skip spaces */
-  if(strn_cmp("end", p, 3))
+  if (!DG_LINE_IS_END(p))
     script_log("Trigger VNum %d has 'if' without 'end'. (error 5)", GET_TRIG_VNUM(trig));
   return c;
 }
@@ -2008,10 +2084,13 @@ static int script_wait_number(const char *text, long *number, const char **rest)
 
 /* Accepted forms: "wait N" (pulses), "wait Ns" (seconds), "wait Nt" (mud
  * hours), "wait until H[:MM]" (next mud time of day). A wait below one
- * pulse waits one pulse (reported); a scaled wait above DG_WAIT_MAX_PULSES,
- * an unknown suffix or an out-of-day time is rejected with dg/wait-range
- * or a script_log. The wait_event_data allocated here is owned by the event
- * and freed by trig_wait_event() (or by event_cancel() on extraction).
+ * pulse waits one pulse, and a scaled wait above DG_MAX_WAIT_PULSES (one
+ * mud year) waits that long; both are reported as dg/wait-range warnings.
+ * A missing or malformed number or an unknown suffix is rejected with a
+ * script_log, an out-of-day 'until' time with dg/wait-range, and a wait
+ * whose queue key (when + pulse) would pass LONG_MAX with dg/wait-overflow.
+ * The wait_event_data allocated here is owned by the event and freed by
+ * trig_wait_event() (or by event_cancel() on extraction).
  *
  * Processes a 'wait' command. Returns TRUE when the wait event was created
  * and the trigger is now suspended at cl->next; FALSE when the wait was
@@ -2162,10 +2241,30 @@ static int process_wait(void *go, trig_data *trig, int type, char *cmd,
     when = DG_MAX_WAIT_PULSES;
   }
 
+  /* event_create() keys the event at when + pulse. Near the end of the
+   * pulse range (a long uptime where long is 32 bits) event_key() clamps
+   * that key to LONG_MAX and reports event/event-time without the trigger,
+   * so the wait would end early; once pulse itself passes LONG_MAX no key
+   * fits at all. Reject here, where trigger and owner are known. */
+  if (pulse > (unsigned long)(LONG_MAX - when)) {
+    TB_ERROR_MSG("dg", "wait-overflow", "process_wait",
+                 "trig vnum %d owner type %d uid %ld: wait %ld at pulse %lu "
+                 "overflows the event queue key; wait rejected",
+                 DIAG_TRIG_VNUM(trig), type, dg_owner_uid(go, type), when,
+                 pulse);
+    script_log("Trigger: %s, VNum %d. wait cannot be scheduled at this "
+               "uptime: '%s'", GET_TRIG_NAME(trig), GET_TRIG_VNUM(trig),
+               cl->cmd);
+    return FALSE;
+  }
+
   CREATE(wait_event_obj, struct wait_event_data, 1);
   wait_event_obj->trigger = trig;
   wait_event_obj->go = go;
   wait_event_obj->type = type;
+  /* world[] can move before the wait ends; see trig_wait_event(). */
+  wait_event_obj->owner_vnum =
+    (type == WLD_TRIGGER) ? ((room_data *) go)->number : NOWHERE;
 
   GET_TRIG_WAIT(trig) = event_create(trig_wait_event, wait_event_obj, when);
   trig->curr_state = cl->next;
@@ -2423,6 +2522,55 @@ struct room_data *dg_room_of_obj(struct obj_data *obj)
   return NULL;
 }
 
+/* Called through DG_OWNER_ROOM() (dg_scripts.h). Script owners are placed:
+ * characters in character_list stand in a room, and a scripted object is in
+ * a room or carried, worn or contained by something that is. NOWHERE (65535,
+ * far past world[]) or an rnum past top_of_world therefore means a broken
+ * invariant, not bad script text; it is reported here so the caller can
+ * skip its world[] lookup instead of reading out of bounds. */
+room_rnum dg_owner_room_at(void *go, int type, const trig_data *trig,
+                           const char *what, const char *file, int line,
+                           const char *func)
+{
+  char owner[64];
+  room_rnum rnum = NOWHERE;
+
+  switch (type) {
+    case MOB_TRIGGER: {
+      char_data *mob = (char_data *) go;
+
+      rnum = IN_ROOM(mob);
+      tb_snprintf(owner, sizeof(owner), DIAG_CHAR_FMT " uid %ld",
+                  DIAG_CHAR(mob), mob->script_id);
+      break;
+    }
+    case OBJ_TRIGGER: {
+      obj_data *obj = (obj_data *) go;
+
+      rnum = obj_room(obj);
+      tb_snprintf(owner, sizeof(owner), "obj vnum %d uid %ld",
+                  GET_OBJ_VNUM(obj), obj->script_id);
+      break;
+    }
+    case WLD_TRIGGER:
+      rnum = real_room(((room_data *) go)->number);
+      tb_snprintf(owner, sizeof(owner), "room vnum %d",
+                  ((room_data *) go)->number);
+      break;
+    default:
+      tb_snprintf(owner, sizeof(owner), "owner of type %d", type);
+      break;
+  }
+  if (VALID_ROOM_RNUM(rnum))
+    return rnum;
+
+  tb_error_log_at("ERROR", "dg", "owner-unplaced", "script", 0, file, line,
+                  func, "trig vnum %d: %s needs the owner's room, but %s is "
+                  "at rnum %ld (not a room); the room lookup is skipped",
+                  DIAG_TRIG_VNUM(trig), what, owner, (long) rnum);
+  return NOWHERE;
+}
+
 /* create a UID variable from the id number */
 static void makeuid_var(void *go, struct script_data *sc, trig_data *trig,
                  int type, char *cmd)
@@ -2472,7 +2620,9 @@ static void makeuid_var(void *go, struct script_data *sc, trig_data *trig,
           c = get_char_near_obj((struct obj_data *)go, name);
           break;
         case MOB_TRIGGER:
-          c = get_char_room_vis((struct char_data *)go, name, NULL);
+          /* get_char_room_vis() walks world[IN_ROOM(go)].people. */
+          if (DG_OWNER_ROOM(go, type, trig, "makeuid mob") != NOWHERE)
+            c = get_char_room_vis((struct char_data *)go, name, NULL);
           break;
       }
       if (c)
@@ -2488,33 +2638,17 @@ static void makeuid_var(void *go, struct script_data *sc, trig_data *trig,
           break;
         case MOB_TRIGGER:
           if ((o = get_obj_in_list_vis((struct char_data *)go, name, NULL,
-                    ((struct char_data *)go)->carrying)) == NULL) {
-            if (IN_ROOM((struct char_data *)go) != NOWHERE)
-              o = get_obj_in_list_vis((struct char_data *)go, name, NULL,
-                      world[IN_ROOM((struct char_data *)go)].contents);
-            else
-              TB_WARN_MSG("dg", "owner-nowhere", "makeuid",
-                          "trigger %d: mob vnum %d is in no room; its room is "
-                          "not searched", GET_TRIG_VNUM(trig),
-                          GET_MOB_VNUM((struct char_data *)go));
-          }
+                    ((struct char_data *)go)->carrying)) == NULL &&
+              DG_OWNER_ROOM(go, type, trig, "makeuid obj") != NOWHERE)
+            o = get_obj_in_list_vis((struct char_data *)go, name, NULL,
+                    world[IN_ROOM((struct char_data *)go)].contents);
           break;
       }
       if (o)
         tb_snprintf(uid, sizeof(uid), "%c%ld", UID_CHAR, obj_script_id(o));
     } else if (is_abbrev(arg, "room")) {
-      room_rnum r = NOWHERE;
-      switch (type) {
-        case WLD_TRIGGER:
-          r = real_room(((struct room_data *) go)->number);
-          break;
-        case OBJ_TRIGGER:
-          r = obj_room((struct obj_data *)go);
-          break;
-        case MOB_TRIGGER:
-          r = IN_ROOM((struct char_data *)go);
-          break;
-      }
+      room_rnum r = DG_OWNER_ROOM(go, type, trig, "makeuid room");
+
       if (r != NOWHERE)
         tb_snprintf(uid, sizeof(uid), "%c%ld", UID_CHAR, room_script_id(world + r));
     } else {
@@ -2659,8 +2793,9 @@ ACMD(do_vdelete)
   char buf[MAX_INPUT_LENGTH], buf2[MAX_INPUT_LENGTH];
   long uid;
   room_data *room;
-  char_data *mob;
+  char_data *mob = NULL;
   obj_data *obj;
+  zone_rnum zone;
 
   two_arguments(argument, buf, buf2);
   var = buf;
@@ -2683,12 +2818,29 @@ ACMD(do_vdelete)
 
   if ((room = find_room(uid))) {
     sc_remote = SCRIPT(room);
+    zone = room->zone;
   } else if ((mob = find_char(uid))) {
     sc_remote = SCRIPT(mob);
+    zone = dg_char_edit_zone(mob);
   } else if ((obj = find_obj(uid))) {
     sc_remote = SCRIPT(obj);
+    zone = real_zone_by_thing(GET_OBJ_VNUM(obj));
   } else {
     send_to_char(ch, "vdelete: cannot resolve specified id.\r\n");
+    return;
+  }
+
+  /* Global variables are their owner's state; a player's are saved quest
+   * flags.  vdelete is a builder command, so it follows attach and detach
+   * (the owner's zone must be the builder's), and a player must also rank
+   * below the builder. */
+  if (!can_edit_zone(ch, zone) ||
+      (mob && !IS_NPC(mob) && mob != ch && GET_LEVEL(mob) >= GET_LEVEL(ch))) {
+    TB_WARN_MSG("dg", "vdelete-denied", "do_vdelete",
+                "builder " DIAG_CHAR_FMT ": variables of uid %ld are outside "
+                "the builder's zones or rank; refused", DIAG_CHAR(ch), uid);
+    send_to_char(ch, "You can only delete variables of things in your own "
+                 "zone.\r\n");
     return;
   }
 
@@ -2797,7 +2949,7 @@ static void process_rdelete(struct script_data *sc, trig_data *trig, char *cmd)
   } else if ((obj = find_obj(uid))) {
     sc_remote = SCRIPT(obj);
   } else {
-    script_log("Trigger: %s, VNum %d. remote: uid '%ld' invalid",
+    script_log("Trigger: %s, VNum %d. rdelete: uid '%ld' invalid",
             GET_TRIG_NAME(trig), GET_TRIG_VNUM(trig), uid);
     return;
   }
@@ -2963,6 +3115,19 @@ static void dg_letter_value(struct script_data *sc, trig_data *trig, char *cmd)
   add_var(&GET_TRIG_VARS(trig), varname, junk, sc->context);
 }
 
+/* What the next script_driver() run returns when its script ends without
+ * 'return'. Only script_driver_default() sets it, and the run consumes it
+ * as it starts, so runs nested in it and every later call return 1, which
+ * most trigger handlers read as "carry on". */
+static int dg_next_default_return = 1;
+
+int script_driver_default(void *go_adress, trig_data *trig, int type,
+                          int mode, int default_return)
+{
+  dg_next_default_return = default_return;
+  return script_driver(go_adress, trig, type, mode);
+}
+
 /* This is the core driver for scripts.
  * Arguments:
  * void *go_adress
@@ -2980,12 +3145,17 @@ static void dg_letter_value(struct script_data *sc, trig_data *trig, char *cmd)
      TRIG_NEW     just started from dg_triggers.c
      TRIG_RESTART restarted after a 'wait'
 
- * Owner lifetime: each frame records its own owner on entry (an object's
- * UID, or whether a mobile was already dying) and checks it after every
- * command with dg_frame_owner_gone(). If the owner is gone (purged itself,
- * its container was purged, or a nested trigger purged it) the run stops
- * and, for an object, *go_adress is set to NULL so the caller sees it.
- * Nested frames check only their own owner, so they cannot end this run.
+ * Owner lifetime: a mobile (or player) owner pending extraction is refused
+ * on entry (dg/owner-extracted): its waits and random triggers can still
+ * fire in the pulse it died or quit. Each frame records its own owner (an
+ * object's UID) and checks it after every command with
+ * dg_frame_owner_gone(). If the owner is gone (purged itself, its container
+ * was purged, a damage killed it, or a nested trigger purged it) the run
+ * stops: an object's run returns at once with *go_adress set to NULL so the
+ * caller sees it; a character's run, whose owner stays allocated until
+ * extract_pending_chars(), ends through the normal cleanup and is reported
+ * as dg/owner-extracted unless the command was 'mpurge' of itself. Nested
+ * frames check only their own owner, so they cannot end this run.
  *
  * Exits: only an accepted 'wait' leaves the trigger suspended (depth 1,
  * variables kept, a wait event owning a wait_event_data). Every other exit,
@@ -2994,11 +3164,12 @@ static void dg_letter_value(struct script_data *sc, trig_data *trig, char *cmd)
  * retired mid-run by detach/purge; it stays readable until
  * dg_script_execution_leave(). */
 /* TRUE once a command run by this frame has freed its object owner or
- * extracted its mobile owner.  Each frame checks its own owner, so nested
- * scripts can neither hide nor fake this frame's result.  Rooms are never
- * freed by scripts. */
-static int dg_frame_owner_gone(void *go, int type, long owner_uid,
-                               int owner_was_dying)
+ * extracted its mobile (or player) owner.  Each frame checks its own owner,
+ * so nested scripts can neither hide nor fake this frame's result.  Rooms
+ * are never freed by scripts.  A character owner is never pending
+ * extraction on entry (script_driver() refuses that run), so DEAD() here
+ * means this frame's commands, or a nested trigger, extracted it. */
+static int dg_frame_owner_gone(void *go, int type, long owner_uid)
 {
   switch (type) {
     case OBJ_TRIGGER:
@@ -3006,25 +3177,69 @@ static int dg_frame_owner_gone(void *go, int type, long owner_uid,
       return !obj_uid_matches(owner_uid, (obj_data *) go);
     case MOB_TRIGGER:
       /* Extracted characters stay allocated until the end of the pulse. */
-      return !owner_was_dying && MOB_FLAGGED((char_data *) go, MOB_NOTDEADYET);
+      return DEAD((char_data *) go);
   }
   return FALSE;
+}
+
+/* TRUE when a mob script's command is 'mpurge' aimed at the mob itself, the
+ * one deliberate way for a mob's command to extract its own owner (the
+ * counterpart of 'opurge self' in obj_command_interpreter()). The target is
+ * resolved the way do_mpurge() resolves it; mob is in a valid room here. */
+static int dg_mob_cmd_purges_self(char_data *mob, char *cmd)
+{
+  char word[MAX_INPUT_LENGTH], target[MAX_INPUT_LENGTH];
+  char *rest = any_one_arg(cmd, word);
+  char_data *victim;
+
+  if (str_cmp(word, "mpurge"))
+    return FALSE;
+  one_argument(rest, target);
+  if (!*target)
+    return FALSE;
+  victim = (*target == UID_CHAR) ? get_char(target)
+                                 : get_char_room_vis(mob, target, NULL);
+  return victim == mob;
+}
+
+/* The trigger of the innermost running script_driver() frame, for
+ * diagnostics raised by commands that are not handed one: %damage% reaches
+ * script_damage() through command_interpreter() and the obj/wld command
+ * interpreters. NULL when no script is running (an implementor typing
+ * mdamage). The trigger stays allocated while its frame runs (retired
+ * triggers are freed at the outermost dg_script_execution_leave()). */
+static trig_data *running_trigger;
+
+trig_data *dg_running_trigger(void)
+{
+  return running_trigger;
+}
+
+/* Every return of a script_driver() frame that entered: give the outer
+ * frame back its running trigger, then leave. */
+static void dg_frame_leave(trig_data *outer)
+{
+  running_trigger = outer;
+  dg_script_execution_leave();
 }
 
 int script_driver(void *go_adress, trig_data *trig, int type, int mode)
 {
   static int depth = 0;
-  int ret_val = 1;
+  int ret_val = dg_next_default_return;   /* 1 unless script_driver_default() */
   long owner_uid = 0;
-  int owner_was_dying = FALSE;
+  int purges_self = FALSE;   /* this line is 'mpurge' of the mob itself */
   struct cmdlist_element *cl;
   char cmd[MAX_INPUT_LENGTH], *p;
   struct script_data *sc = 0;
   struct cmdlist_element *temp;
   void *go = NULL;
+  trig_data *outer_trigger;
 
   void obj_command_interpreter(obj_data *obj, char *argument);
   void wld_command_interpreter(struct room_data *room, char *argument);
+
+  dg_next_default_return = 1;   /* consumed: nested and later runs get 1 */
 
   if (!go_adress || !trig) {
     script_log("script_driver called with invalid NULL argument.");
@@ -3057,6 +3272,25 @@ int script_driver(void *go_adress, trig_data *trig, int type, int mode)
 
   if (!sc) {
     script_log("Trigger %d has no owning script.", GET_TRIG_VNUM(trig));
+    return SCRIPT_ERROR_CODE;
+  }
+
+  /* extract_char() only flags a character (MOB_/PLR_NOTDEADYET); its script
+   * and pending waits live on until extract_pending_chars() at the end of
+   * the pulse. A wait expiring, or a random trigger firing, in the pulse a
+   * mob died or a scripted player quit would run commands for a character
+   * that has left the game. End the run instead, as for a lost owner. */
+  if (type == MOB_TRIGGER && DEAD((char_data *) go)) {
+    char_data *mob = (char_data *) go;
+
+    TB_WARN_MSG("dg", "owner-extracted", "script_driver",
+                "trig vnum %d: owner " DIAG_CHAR_FMT " uid %ld is pending "
+                "extraction; %s", DIAG_TRIG_VNUM(trig), DIAG_CHAR(mob),
+                mob->script_id, mode == TRIG_RESTART ?
+                "suspended run ended" : "trigger not run");
+    free_varlist(GET_TRIG_VARS(trig));
+    GET_TRIG_VARS(trig) = NULL;
+    GET_TRIG_DEPTH(trig) = 0;
     return SCRIPT_ERROR_CODE;
   }
 
@@ -3113,7 +3347,6 @@ int script_driver(void *go_adress, trig_data *trig, int type, int mode)
   switch (type) {
     case MOB_TRIGGER:
       owner_uid = char_script_id((char_data *) go);
-      owner_was_dying = MOB_FLAGGED((char_data *) go, MOB_NOTDEADYET);
       break;
     case OBJ_TRIGGER:
       owner_uid = obj_script_id((obj_data *) go);
@@ -3122,6 +3355,8 @@ int script_driver(void *go_adress, trig_data *trig, int type, int mode)
 
   depth++;
   dg_script_execution_enter();
+  outer_trigger = running_trigger;
+  running_trigger = trig;
 
   if (mode == TRIG_NEW) {
     GET_TRIG_DEPTH(trig) = 1;
@@ -3143,8 +3378,7 @@ int script_driver(void *go_adress, trig_data *trig, int type, int mode)
         cl = find_else_end(trig, cl, go, sc, type);
     }
 
-    else if (!strn_cmp("elseif ", p, 7) ||
-       !strn_cmp("else", p, 4)) {
+    else if (DG_LINE_IS_ELSEIF(p) || dg_line_is(p, "else")) {
       /* If not in an if-block, ignore the extra 'else[if]' and warn about it. */
       if (GET_TRIG_DEPTH(trig) == 1) {
         script_log("Trigger VNum %d has 'else' without 'if'.",
@@ -3165,14 +3399,13 @@ int script_driver(void *go_adress, trig_data *trig, int type, int mode)
       if (process_if(p + 6, go, sc, trig, type)) {
          temp->original = cl;
       } else {
-         cl->loops = 0;
          cl = temp;
       }
     } else if (!strn_cmp("switch ", p, 7)) {
       /* NULL: the switch has no 'done' (reported); end the trigger. */
       if (!(cl = find_case(trig, cl, go, sc, type, p + 7)))
         break;
-    } else if (!strn_cmp("end", p, 3)) {
+    } else if (DG_LINE_IS_END(p)) {
       /* If not in an if-block, ignore the extra 'end' and warn about it. */
       if (GET_TRIG_DEPTH(trig) == 1) {
         script_log("Trigger VNum %d has 'end' without 'if'.",
@@ -3180,7 +3413,7 @@ int script_driver(void *go_adress, trig_data *trig, int type, int mode)
         continue;
       }
       GET_TRIG_DEPTH(trig)--;
-    } else if (!strn_cmp("done", p, 4)) {
+    } else if (dg_line_is(p, "done")) {
       /* if in a while loop, cl->original is non-NULL */
       if (cl->original) {
       char *orig_cmd = cl->original->cmd;
@@ -3188,13 +3421,14 @@ int script_driver(void *go_adress, trig_data *trig, int type, int mode)
       if (cl->original && process_if(orig_cmd + 6, go, sc, trig,
           type)) {
         cl = cl->original;
-        cl->loops++;
         GET_TRIG_LOOPS(trig)++;
-        if (cl->loops == 30) {
-          cl->loops = 0;
+        /* Pause every 30 passes. The count must be this instance's own:
+         * cl->loops lived in the command list that every instance of the
+         * trigger shares, so one mob's loop advanced or reset another's. */
+        if (GET_TRIG_LOOPS(trig) % 30 == 0) {
           if (process_wait(go, trig, type, "wait 1", cl)) {
             depth--;
-            dg_script_execution_leave();
+            dg_frame_leave(outer_trigger);
             return ret_val;
           }
           TB_ERROR_MSG("dg", "wait-invalid", "script_driver",
@@ -3212,16 +3446,17 @@ int script_driver(void *go_adress, trig_data *trig, int type, int mode)
          /* if we're falling through a switch statement, this ends it. */
         }
       }
-    } else if (!strn_cmp("break", p, 5)) {
+    } else if (dg_line_is(p, "break")) {
       if (!(cl = find_done(cl))) {
         report_unterminated_block(trig, "break");
         break;
       }
-    } else if (!strn_cmp("case", p, 4)) {
+    } else if (dg_line_is(p, "case") || dg_line_is(p, "default")) {
        /* Do nothing, this allows multiple cases to a single instance */
     }
 
     else {
+      purges_self = FALSE;
       var_subst(go, sc, trig, type, p, cmd);
 
       if (!strn_cmp(cmd, "eval ", 5))
@@ -3275,7 +3510,7 @@ int script_driver(void *go_adress, trig_data *trig, int type, int mode)
          * depth at 1, so TRIGGER_CHECK() refused it until extraction. */
         if (process_wait(go, trig, type, cmd, cl)) {
           depth--;
-          dg_script_execution_leave();
+          dg_frame_leave(outer_trigger);
           return ret_val;
         }
         TB_ERROR_MSG("dg", "wait-invalid", "script_driver",
@@ -3292,9 +3527,26 @@ int script_driver(void *go_adress, trig_data *trig, int type, int mode)
         process_detach(go, sc, trig, type, cmd);
 
       else {
+        /* m-commands (masound, mpurge, mload...) and the other commands a
+         * mob's script runs index world[IN_ROOM(mob)]. A mob in
+         * character_list always stands in a room, so an unplaced owner is a
+         * broken invariant: refuse every command and end the trigger. */
+        if (type == MOB_TRIGGER &&
+            !VALID_ROOM_RNUM(IN_ROOM((char_data *) go))) {
+          char_data *mob = (char_data *) go;
+
+          TB_ERROR_MSG("dg", "mob-cmd-unplaced", "script_driver",
+                       "trig vnum %d line %d: " DIAG_CHAR_FMT " uid %ld is "
+                       "at rnum %ld (not a room); command refused, trigger "
+                       "ended", DIAG_TRIG_VNUM(trig), dg_line_number(trig, cl),
+                       DIAG_CHAR(mob), mob->script_id, (long) IN_ROOM(mob));
+          break;
+        }
         /* The command leaves the script engine here; player text in it
          * reads as typed again. */
         dg_restore_percent(cmd);
+        if (type == MOB_TRIGGER)
+          purges_self = dg_mob_cmd_purges_self((char_data *) go, cmd);
         switch (type) {
           case MOB_TRIGGER:
             if (!script_command_interpreter((char_data *) go, cmd))
@@ -3311,11 +3563,28 @@ int script_driver(void *go_adress, trig_data *trig, int type, int mode)
 
       /* Any command, not just a purge of self, can free the owner: purging
        * the container it is in, a damage that kills it, a nested script. */
-      if (dg_frame_owner_gone(go, type, owner_uid, owner_was_dying)) {
+      if (dg_frame_owner_gone(go, type, owner_uid)) {
+        if (type == MOB_TRIGGER) {
+          /* The mob or player is pending extraction (see the entry check),
+           * still allocated and holding its script: end through the normal
+           * cleanup below. 'mpurge' of itself is the deliberate way; any
+           * other (a damage, a nested trigger) skips lines the builder
+           * wrote, so say which. */
+          char_data *mob = (char_data *) go;
+
+          if (!purges_self)
+            TB_WARN_MSG("dg", "owner-extracted", "script_driver",
+                        "trig vnum %d line %d: owner " DIAG_CHAR_FMT " uid %ld "
+                        "was extracted by its own command or a nested "
+                        "trigger; remaining lines skipped",
+                        DIAG_TRIG_VNUM(trig), dg_line_number(trig, cl),
+                        DIAG_CHAR(mob), mob->script_id);
+          break;
+        }
         depth--;
         if (type == OBJ_TRIGGER)
           *(obj_data **)go_adress = NULL;
-        dg_script_execution_leave();
+        dg_frame_leave(outer_trigger);
         return ret_val;
       }
     }
@@ -3331,7 +3600,7 @@ int script_driver(void *go_adress, trig_data *trig, int type, int mode)
   GET_TRIG_DEPTH(trig) = 0;
 
   depth--;
-  dg_script_execution_leave();
+  dg_frame_leave(outer_trigger);
   return ret_val;
 }
 
@@ -3388,6 +3657,19 @@ static void report_unterminated_block(trig_data *trig, const char *keyword)
              GET_TRIG_VNUM(trig), keyword);
 }
 
+/* 1-based position of cl in trig's command list, for reports that name the
+ * script line; 0 when cl is not in the list. */
+static int dg_line_number(const trig_data *trig, const struct cmdlist_element *cl)
+{
+  const struct cmdlist_element *c;
+  int n = 1;
+
+  for (c = trig->cmdlist; c; c = c->next, n++)
+    if (c == cl)
+      return n;
+  return 0;
+}
+
 /* The last line of the trigger, at or after cl. */
 static struct cmdlist_element *last_line(struct cmdlist_element *cl)
 {
@@ -3413,7 +3695,7 @@ find_case(struct trig_data *trig, struct cmdlist_element *cl,
   for (c = cl->next; c; c = c->next) {
     for (p = c->cmd; *p && isspace(*p); p++);
 
-    if (!strn_cmp("while ", p, 6) || !strn_cmp("switch", p, 6)) {
+    if (!strn_cmp("while ", p, 6) || !strn_cmp("switch ", p, 7)) {
       /* Skip the nested block; its 'done' is not ours. */
       if (!(c = find_done(c)))
         break;
@@ -3424,9 +3706,9 @@ find_case(struct trig_data *trig, struct cmdlist_element *cl,
       eval_op("==", result, value, matched, go, sc, trig);
       if (*matched && *matched != '0')
         return c;
-    } else if (!strn_cmp("default", p, 7))
+    } else if (dg_line_is(p, "default"))
       return c;
-    else if (!strn_cmp("done", p, 3))
+    else if (dg_line_is(p, "done"))
      return c;
   }
 
@@ -3451,7 +3733,7 @@ static struct cmdlist_element *find_done(struct cmdlist_element *cl)
     if (!strn_cmp("while ", p, 6) || !strn_cmp("switch ", p, 7)) {
       if (!(c = find_done(c)))
         return NULL;
-    } else if (!strn_cmp("done", p, 3))
+    } else if (dg_line_is(p, "done"))
       return c;
   }
 
@@ -3487,8 +3769,17 @@ void read_saved_vars(struct char_data *ch)
    * assigned. */
   CREATE(SCRIPT(ch), struct script_data, 1);
 
-  /* find the file that holds the saved variables and open it*/
-  get_filename(fn, sizeof(fn), SCRIPT_VARS_FILE, GET_NAME(ch));
+  /* find the file that holds the saved variables and open it.  The name comes
+   * from the player file: a damaged or crafted one can leave it empty (or, with
+   * the NPC bit set in Act, make GET_NAME() a missing short description), and
+   * get_filename() refuses such names and unsafe ones without writing fn.
+   * Opening the unwritten fn read stack garbage as a path. */
+  if (!get_filename(fn, sizeof(fn), SCRIPT_VARS_FILE, GET_NAME(ch))) {
+    TB_ERROR_MSG("dg", "vars-filename", "script_vars",
+                 "player idnum %ld has no usable name for a variable file; "
+                 "legacy variables not read", (long)GET_IDNUM(ch));
+    return;
+  }
   file = fopen(fn,"r");
 
   /* No legacy file is the normal case: nothing writes plrvars any more. */
@@ -3530,8 +3821,20 @@ void save_char_vars(struct char_data *ch)
   /* we should never be called for an NPC, but just in case... */
   if (IS_NPC(ch)) return;
 
-  get_filename(fn, sizeof(fn), SCRIPT_VARS_FILE, GET_NAME(ch));
-  unlink(fn);
+  /* As in read_saved_vars(): an unwritten fn would be unlinked and opened
+   * for writing as whatever the stack held. */
+  if (!get_filename(fn, sizeof(fn), SCRIPT_VARS_FILE, GET_NAME(ch))) {
+    TB_ERROR_MSG("dg", "vars-filename", "script_vars",
+                 "player idnum %ld has no usable name for a variable file; "
+                 "variables not saved", (long)GET_IDNUM(ch));
+    return;
+  }
+  /* No legacy file is the normal case. Any other failure leaves a stale
+   * file that read_saved_vars() would load at a later login. */
+  if (unlink(fn) != 0 && errno != ENOENT)
+    TB_ERROR_ERRNO("dg", "vars-unlink", "script_vars",
+                   "player idnum %ld: cannot remove the old variable file %s",
+                   (long)GET_IDNUM(ch), fn);
 
   /* make sure this char has global variables to save */
   if (ch->script->global_vars == NULL) return;
@@ -3644,7 +3947,7 @@ void save_char_vars_ascii(FILE *file, struct char_data *ch)
 /* find_char() helpers */
 /* Must be power of 2. */
 #define BUCKET_COUNT 64
-/* To recognize an empty bucket. */
+/* Marks a bucket head, which is a sentinel and never holds an entity. */
 #define UID_OUT_OF_RANGE 1000000000
 
 struct lookup_table_t {
@@ -3748,13 +4051,11 @@ static int lookup_rebind_allowed(long uid, const void *bound, const void *c)
 
 void add_to_lookup_table(long uid, void *c)
 {
+  /* The bucket head is a sentinel holding no entity (uid UID_OUT_OF_RANGE);
+   * lookups start at head->next. Matching the head stored an object whose
+   * UID equals the sentinel (1000000000, a valid object UID) where no
+   * lookup would ever find it. */
   struct lookup_table_t *lt = get_bucket_head(uid);
-
-  if (lt && lt->uid == uid) {
-    if (lookup_rebind_allowed(uid, lt->c, c))
-      lt->c = c;
-    return;
-  }
 
   for (;lt && lt->next; lt = lt->next)
     if (lt->next->uid == uid) {

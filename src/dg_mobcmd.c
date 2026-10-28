@@ -803,7 +803,7 @@ ACMD(do_mdamage) {
     mob_log(ch, "mdamage: victim (%s) does not exist", name);
     return;
   }
-  script_damage(vict, dam);
+  script_damage(dg_running_trigger(), vict, dam);
 }
 
 /* Lets the mobile force someone to do something.  must be mortal level and the 

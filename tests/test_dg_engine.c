@@ -203,7 +203,7 @@ static void uid_var(trig_data *t, const char *name, long uid)
 {
   char buf[32];
 
-  snprintf(buf, sizeof(buf), "%c%ld", UID_CHAR, uid);
+  (void)snprintf(buf, sizeof(buf), "%c%ld", UID_CHAR, uid);
   add_var(&GET_TRIG_VARS(t), name, buf, 0);
 }
 
@@ -293,7 +293,7 @@ void tearDown(void)
   trig_index = NULL;
   top_of_trigt = 0;
   if (logfile)
-    fclose(logfile);
+    (void)fclose(logfile);
   logfile = NULL;
 }
 
@@ -551,7 +551,7 @@ static void random_trigger_purging_next_object_is_safe(void)
   char first[64];
   const char *purge[] = { first, "%purge% %self%", NULL };
 
-  snprintf(first, sizeof(first), "%%purge%% %c%ld", UID_CHAR,
+  (void)snprintf(first, sizeof(first), "%%purge%% %c%ld", UID_CHAR,
            obj_script_id(tail));
   make_scripted_obj("purger", OTRIG_RANDOM, 100, purge);
   script_trigger_check();
@@ -570,6 +570,60 @@ static void time_trigger_self_purge_keeps_scanning(void)
   check_time_triggers();
   TEST_ASSERT_EQUAL_PTR(tail, object_list);
   TEST_ASSERT_NULL(tail->next);
+}
+
+/* D1-07a: purging the owner's container freed the owner and the next line
+ * dereferenced the freed object. script_driver() now checks its own owner's
+ * UID after every command (dg_frame_owner_gone()). */
+static void purging_owner_container_stops_script(void)
+{
+  obj_data *box = make_obj("box"), *owner = make_obj("owner");
+  char first[64];
+  const char *lines[] = { first, "%echo% still here", "context 7", NULL };
+  trig_data *t;
+  obj_data *ref = owner;
+
+  obj_to_room(box, 0);
+  obj_to_obj(owner, box);
+  (void)snprintf(first, sizeof(first), "%%purge%% %c%ld", UID_CHAR,
+           obj_script_id(box));
+  t = make_trigger(OBJ_TRIGGER, OTRIG_RANDOM, 100, lines);
+  attach_to_script(&SCRIPT(owner), t);
+  script_driver(&ref, t, OBJ_TRIGGER, TRIG_NEW);
+  TEST_ASSERT_NULL(ref);
+  TEST_ASSERT_NULL(object_list);
+  /* obj_command_interpreter() (dg_objcmd.c) names the command that
+   * destroyed its own owner indirectly as owner-extracted. */
+  TEST_ASSERT_TRUE(tb_captured_has_op("owner-extracted"));
+}
+
+/* D1-07c: a nested trigger's self-purge used to end the outer object script
+ * too, NULL its caller's live object and leave its trigger at depth 1. Each
+ * frame now checks only its own owner. */
+static void nested_self_purge_does_not_end_outer_script(void)
+{
+  const char *outer[] = { "%load% obj 150", "context 7", NULL };
+  const char *inner[] = { "%purge% %self%", NULL };
+  struct trig_proto_list proto_trig = { TEST_TRIG_VNUM, NULL };
+  obj_data *owner = make_obj("owner"), *ref = owner, *dummy = make_obj("dummy");
+  trig_data *t = make_trigger(OBJ_TRIGGER, OTRIG_RANDOM, 100, outer);
+
+  /* The object prototype carries a load trigger that purges itself. Loading
+   * it from the owner's script runs that trigger nested in the owner's. */
+  test_obj_proto.proto_script = &proto_trig;
+
+  attach_to_script(&SCRIPT(owner), t);
+  /* The prototype's trigger is made last, so oload's read_trigger() copies
+   * it; the instance made here is parked on an inert object. */
+  attach_to_script(&SCRIPT(dummy), make_trigger(OBJ_TRIGGER, OTRIG_LOAD, 100, inner));
+  obj_to_room(owner, 0);
+  script_driver(&ref, t, OBJ_TRIGGER, TRIG_NEW);
+
+  test_obj_proto.proto_script = NULL;
+  TEST_ASSERT_EQUAL_INT(0, test_obj_index.number);   /* loaded and purged */
+  TEST_ASSERT_EQUAL_PTR(owner, ref);
+  TEST_ASSERT_EQUAL_INT(7, SCRIPT(owner)->context);
+  TEST_ASSERT_EQUAL_INT(0, GET_TRIG_DEPTH(t));
 }
 
 /* D1-08: find_done() returned NULL for a block without 'done' nested near
@@ -619,7 +673,7 @@ static void object_uid_never_aliases_a_room(void)
   TEST_ASSERT_EQUAL_INT64(30027108, o->script_id);
   attach_to_script(&SCRIPT(o), make_trigger(OBJ_TRIGGER, OTRIG_RANDOM, 0, quiet));
   attach_to_script(&SCRIPT(&world[0]), make_trigger(WLD_TRIGGER, WTRIG_RANDOM, 0, quiet));
-  snprintf(second, sizeof(second), "remote qflag %ld", o->script_id);
+  (void)snprintf(second, sizeof(second), "remote qflag %ld", o->script_id);
   run_mob_script(make_mob("mob"), lines);
 
   TEST_ASSERT_NULL(SCRIPT(&world[0])->global_vars);
@@ -633,10 +687,10 @@ static void wrapping_room_vnum_is_rejected(void)
 {
   char name[16];
 
-  snprintf(name, sizeof(name), "%d", 65536 + 100);
+  (void)snprintf(name, sizeof(name), "%d", 65536 + 100);
   TEST_ASSERT_NULL(get_room(name));
   TEST_ASSERT_EQUAL_STRING("uid-namespace", tb_captured_operation);
-  snprintf(name, sizeof(name), "%c%ld", UID_CHAR, (long)ROOM_ID_BASE + 100);
+  (void)snprintf(name, sizeof(name), "%c%ld", UID_CHAR, (long)ROOM_ID_BASE + 100);
   TEST_ASSERT_EQUAL_PTR(&world[0], get_room(name));
 }
 
@@ -720,7 +774,7 @@ static void attach_to_player_is_refused_before_allocating(void)
 
   REMOVE_BIT_AR(MOB_FLAGS(pc), MOB_ISNPC);
   GET_IDNUM(pc) = 77;
-  snprintf(line, sizeof(line), "attach %d %ld", TEST_TRIG_VNUM, pc->script_id);
+  (void)snprintf(line, sizeof(line), "attach %d %ld", TEST_TRIG_VNUM, pc->script_id);
   before = test_trig_index.number;
   run_mob_script(mob, lines);
   /* Only the running trigger itself is live. */
@@ -801,12 +855,12 @@ static void legacy_saved_var_with_long_name_is_read_in_bounds(void)
   name[sizeof(name) - 1] = '\0';
   fl = fopen("plrvars/U-Z/zzvars.mem", "w");
   TEST_ASSERT_NOT_NULL(fl);
-  fprintf(fl, "%s 12345678901234567890 value\n", name);
-  fclose(fl);
+  (void)fprintf(fl, "%s 12345678901234567890 value\n", name);
+  (void)fclose(fl);
 
   read_saved_vars(ch);
 
-  remove("plrvars/U-Z/zzvars.mem");
+  (void)remove("plrvars/U-Z/zzvars.mem");
   rmdir("plrvars/U-Z");
   rmdir("plrvars");
   TEST_ASSERT_EQUAL_INT(0, chdir(cwd));
@@ -863,7 +917,7 @@ static void field_setters_saturate_instead_of_wrapping(void)
   GET_WAIT_STATE(mob) = 0;
 
   tb_error_capture_reset();
-  script_damage(mob, -40000);
+  script_damage(t, mob, -40000);
   TEST_ASSERT_EQUAL_INT(GET_MAX_HIT(mob), GET_HIT(mob));
   TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
 }
@@ -876,21 +930,21 @@ static void dg_affect_out_of_range_is_refused(void)
   const char *lines[] = { line, NULL };
   char_data *target = make_mob("target");
 
-  snprintf(line, sizeof(line), "dg_affect %c%ld SANCT 1 65536", UID_CHAR,
+  (void)snprintf(line, sizeof(line), "dg_affect %c%ld SANCT 1 65536", UID_CHAR,
            target->script_id);
   run_mob_script(make_mob("mob"), lines);
   TEST_ASSERT_NULL(target->affected);
   TEST_ASSERT_EQUAL_STRING("affect-range", tb_captured_operation);
 
   tb_error_capture_reset();
-  snprintf(line, sizeof(line), "dg_affect %c%ld str 200 10", UID_CHAR,
+  (void)snprintf(line, sizeof(line), "dg_affect %c%ld str 200 10", UID_CHAR,
            target->script_id);
   run_mob_script(make_mob("mob2"), lines);
   TEST_ASSERT_NULL(target->affected);
   TEST_ASSERT_EQUAL_STRING("affect-range", tb_captured_operation);
 
   tb_error_capture_reset();
-  snprintf(line, sizeof(line), "dg_affect %c%ld str 2 10", UID_CHAR,
+  (void)snprintf(line, sizeof(line), "dg_affect %c%ld str 2 10", UID_CHAR,
            target->script_id);
   run_mob_script(make_mob("mob3"), lines);
   TEST_ASSERT_NOT_NULL(target->affected);
@@ -982,13 +1036,13 @@ static void lost_remote_and_detach_miss_are_reported(void)
   char_data *bare = make_mob("bare"), *scripted = make_mob("scripted");
 
   attach_to_script(&SCRIPT(scripted), make_trigger(MOB_TRIGGER, MTRIG_SPEECH, 0, quiet));
-  snprintf(remote_line, sizeof(remote_line), "remote flag %ld", bare->script_id);
+  (void)snprintf(remote_line, sizeof(remote_line), "remote flag %ld", bare->script_id);
   run_mob_script(make_mob("mob"), remote_lines);
   TEST_ASSERT_EQUAL_STRING("remote-target", tb_captured_operation);
   TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "flag"));
 
   tb_error_capture_reset();
-  snprintf(detach_line, sizeof(detach_line), "detach 4242 %ld",
+  (void)snprintf(detach_line, sizeof(detach_line), "detach 4242 %ld",
            scripted->script_id);
   run_mob_script(make_mob("mob2"), detach_lines);
   TEST_ASSERT_EQUAL_STRING("detach-miss", tb_captured_operation);
@@ -1003,6 +1057,423 @@ static void dotted_variable_name_is_reported(void)
   add_var(&vars, "a.b", "x", 0);
   TEST_ASSERT_NULL(vars);
   TEST_ASSERT_EQUAL_STRING("var-name", tb_captured_operation);
+}
+
+/* D2-02: near the end of the pulse counter's range, when + pulse no longer
+ * fits the event key. event_create() parked the wait forever (reported
+ * without the trigger) and the trigger stayed suspended at depth 1. */
+static void wait_past_the_pulse_range_is_rejected(void)
+{
+  const char *lines[] = { "set x 1", "wait 10", "set y 2", NULL };
+  trig_data *t;
+
+  pulse = (unsigned long)LONG_MAX - 5;
+  t = run_mob_script(make_mob("mob"), lines);
+  TEST_ASSERT_NULL(GET_TRIG_WAIT(t));
+  TEST_ASSERT_EQUAL_INT(0, GET_TRIG_DEPTH(t));
+  TEST_ASSERT_NULL(GET_TRIG_VARS(t));
+  TEST_ASSERT_TRUE(tb_captured_has_op("wait-overflow"));
+  TEST_ASSERT_TRUE(tb_captured_has_op("wait-invalid"));
+  /* Rejected before event_create(), whose clamp (event_key()) would have
+   * reported event/event-time without naming the trigger. */
+  TEST_ASSERT_FALSE(tb_captured_has_op("event-time"));
+}
+
+/* Run the event queue until t's wait has fired (at most four seconds). */
+static void run_wait_out(trig_data *t)
+{
+  int i;
+
+  for (i = 0; i < 4 * PASSES_PER_SEC && GET_TRIG_WAIT(t); i++) {
+    pulse++;
+    event_process();
+  }
+  TEST_ASSERT_NULL(GET_TRIG_WAIT(t));
+}
+
+/* D2-03: OLC add_room()/delete_room() RECREATE world[], which can move every
+ * room, and update_wait_events() repoints only the rooms they shift. A room
+ * wait kept the old &world[rnum], so it was dropped as an unknown owner (or
+ * resumed on whatever room later reused the address). */
+static void room_wait_survives_world_reallocation(void)
+{
+  const char *lines[] = { "wait 1", "set done 1", "global done", NULL };
+  trig_data *t = make_trigger(WLD_TRIGGER, WTRIG_RANDOM, 0, lines);
+  room_data *old_world, *room;
+
+  CREATE(old_world, room_data, NUM_TEST_ROOMS);
+  memcpy(old_world, test_rooms, sizeof(test_rooms));
+  world = old_world;
+  room = &world[1];
+  attach_to_script(&SCRIPT(room), t);
+  script_driver(&room, t, WLD_TRIGGER, TRIG_NEW);
+  TEST_ASSERT_NOT_NULL(GET_TRIG_WAIT(t));
+
+  /* RECREATE(world) moved the array; nothing repointed this room's wait. */
+  memcpy(test_rooms, old_world, sizeof(test_rooms));
+  free(old_world);
+  world = test_rooms;
+
+  run_wait_out(t);
+  TEST_ASSERT_EQUAL_INT(0, GET_TRIG_DEPTH(t));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  TEST_ASSERT_NOT_NULL(SCRIPT(&world[1])->global_vars);
+  TEST_ASSERT_EQUAL_STRING("done", SCRIPT(&world[1])->global_vars->name);
+}
+
+/* D2-03: a room wait whose room no longer resolves is reported with the
+ * room's vnum and ends the trigger instead of leaving it at depth 1. */
+static void room_wait_with_lost_room_is_reported(void)
+{
+  const char *lines[] = { "set x 1", "wait 1", "set y 2", NULL };
+  trig_data *t = make_trigger(WLD_TRIGGER, WTRIG_RANDOM, 0, lines);
+  room_data *room = &world[top_of_world];
+
+  attach_to_script(&SCRIPT(room), t);
+  script_driver(&room, t, WLD_TRIGGER, TRIG_NEW);
+  TEST_ASSERT_NOT_NULL(GET_TRIG_WAIT(t));
+
+  world[top_of_world].number = 199;     /* vnum 102 no longer exists */
+  run_wait_out(t);
+  world[top_of_world].number = 100 + top_of_world;
+
+  TEST_ASSERT_EQUAL_INT(0, GET_TRIG_DEPTH(t));
+  TEST_ASSERT_NULL(GET_TRIG_VARS(t));
+  TEST_ASSERT_TRUE(TRIGGER_CHECK(t, WTRIG_RANDOM));
+  TEST_ASSERT_EQUAL_STRING("wait-owner-lost", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "room vnum 102"));
+}
+
+/* D1-19: lookups that index world[] by the owner's room never checked that
+ * the owner is in one: %random.char% (mob and object owners), %random.dir%,
+ * a mob's variable lookup by name and makeuid read world[NOWHERE]. Random
+ * and time object triggers fire wherever the object is. */
+static void unplaced_owner_room_lookups_are_reported(void)
+{
+  const char *idle[] = { "nop", NULL };
+  const char *mk[] = { "makeuid found obj sword", NULL };
+  obj_data *loose = make_obj("loose");         /* in no room, held by none */
+  trig_data *ot = make_trigger(OBJ_TRIGGER, OTRIG_RANDOM, 100, idle);
+  char_data *mob = make_mob("mob");
+  trig_data *mt;
+  char out[MAX_INPUT_LENGTH];
+  char *line;
+
+  attach_to_script(&SCRIPT(loose), ot);
+  line = strdup("x %random.char% %random.dir%");
+  TEST_ASSERT_NOT_NULL(line);
+  var_subst(loose, SCRIPT(loose), ot, OBJ_TRIGGER, line, out);
+  free(line);
+  TEST_ASSERT_EQUAL_STRING("x  ", out);
+  TEST_ASSERT_EQUAL_INT(2, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("owner-unplaced", tb_captured_ops[0]);
+  TEST_ASSERT_EQUAL_STRING("owner-unplaced", tb_captured_ops[1]);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "obj vnum"));
+
+  char_from_room(mob);
+  mt = idle_mob_trigger(mob);
+  tb_error_capture_reset();
+  subst(mob, mt, "x %random.char%", out);
+  TEST_ASSERT_EQUAL_STRING("x ", out);
+  TEST_ASSERT_EQUAL_STRING("owner-unplaced", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "mob vnum"));
+
+  tb_error_capture_reset();
+  add_var(&GET_TRIG_VARS(mt), "target", "nobody", 0);
+  subst(mob, mt, "x %target.name%", out);
+  TEST_ASSERT_EQUAL_STRING("owner-unplaced", tb_captured_operation);
+
+  tb_error_capture_reset();
+  run_mob_script(mob, mk);
+  TEST_ASSERT_EQUAL_STRING("owner-unplaced", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "makeuid obj"));
+}
+
+/* E1-20: masound, mpurge and mload index world[IN_ROOM(ch)], and a mob's
+ * script dispatched them (and every other command) without checking that
+ * the mob stands in a room. */
+static void unplaced_mob_script_runs_no_command(void)
+{
+  const char *lines[] = { "set before 1", "masound hello", "set after 1", NULL };
+  char_data *mob = make_mob("mob");
+  trig_data *t;
+
+  char_from_room(mob);
+  t = run_mob_script(mob, lines);
+  TEST_ASSERT_EQUAL_STRING("mob-cmd-unplaced", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "line 2"));
+  TEST_ASSERT_EQUAL_INT(0, GET_TRIG_DEPTH(t));
+  TEST_ASSERT_NULL(GET_TRIG_VARS(t));
+}
+
+/* DGDOC-1: %x.level(N)% clamped every target below LVL_IMMORT, so any
+ * builder's script demoted an immortal who set it off; the clamp itself
+ * was silent. */
+static void level_setter_never_changes_an_immortal(void)
+{
+  char_data *imm = make_imm();
+  char_data *mob = make_mob("mob");
+  trig_data *t = idle_mob_trigger(mob);
+  char out[MAX_INPUT_LENGTH];
+
+  uid_var(t, "imm", char_script_id(imm));
+  subst(mob, t, "x %imm.level(1)%", out);
+  TEST_ASSERT_EQUAL_INT(LVL_IMPL, GET_LEVEL(imm));
+  TEST_ASSERT_EQUAL_STRING("field-target", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "idnum 4242"));
+
+  tb_error_capture_reset();
+  GET_LEVEL(mob) = 5;
+  uid_var(t, "m", char_script_id(mob));
+  subst(mob, t, "x %m.level(12)%", out);
+  TEST_ASSERT_EQUAL_INT(12, GET_LEVEL(mob));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  subst(mob, t, "x %m.level(500)%", out);
+  TEST_ASSERT_EQUAL_INT(LVL_IMMORT - 1, GET_LEVEL(mob));
+  TEST_ASSERT_EQUAL_STRING("field-clamp", tb_captured_operation);
+}
+
+/* DGDOC-2: do_attach checked the zone of the room the builder stood in, not
+ * the target's, so a builder in their own zone could attach a trigger to a
+ * mob or object anywhere (do_detach already checked the target). */
+static void attach_checks_the_target_zone(void)
+{
+  char_data *b = make_imm(), *mob = make_mob("zzmob");
+  obj_data *mine = make_proto_obj("zzmine"), *stray = make_obj("zzstray");
+
+  GET_LEVEL(b) = LVL_BUILDER;      /* zone 1's builder, standing in zone 1 */
+  GET_OLC_ZONE(b) = 1;
+  obj_to_room(mine, 0);
+  obj_to_room(stray, 0);           /* no prototype: belongs to no zone */
+
+  immortal_command(do_attach, b, " mob 9000 zzmob");
+  TEST_ASSERT_NULL(SCRIPT(mob));
+  TEST_ASSERT_EQUAL_STRING("attach-denied", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "player idnum 4242"));
+
+  tb_error_capture_reset();
+  immortal_command(do_attach, b, " obj 9000 zzstray");
+  TEST_ASSERT_NULL(SCRIPT(stray));
+  TEST_ASSERT_EQUAL_STRING("attach-denied", tb_captured_operation);
+
+  tb_error_capture_reset();
+  immortal_command(do_attach, b, " obj 9000 zzmine");
+  TEST_ASSERT_NOT_NULL(SCRIPT(mine));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+}
+
+/* Give owner's script (made if missing) a global variable named flag. */
+static void give_global_flag(struct script_data **script)
+{
+  if (!*script)
+    CREATE(*script, struct script_data, 1);
+  add_var(&(*script)->global_vars, "flag", "1", 0);
+}
+
+/* DGDOC-3: vdelete (a builder command) deleted the global variables of any
+ * room, mob, object or player by UID, a player's saved quest flags
+ * included, with no zone or level check. */
+static void vdelete_checks_the_builders_authority(void)
+{
+  char_data *b = make_imm(), *mob = make_mob("zzmob"), *pc = make_mob("zzpc");
+  char cmd[64];
+
+  GET_LEVEL(b) = LVL_BUILDER;      /* zone 1's builder */
+  GET_OLC_ZONE(b) = 1;
+  REMOVE_BIT_AR(MOB_FLAGS(pc), MOB_ISNPC);
+  GET_LEVEL(pc) = LVL_IMPL;        /* in zone 1, but outranks the builder */
+  give_global_flag(&SCRIPT(mob));  /* no prototype: belongs to no zone */
+  give_global_flag(&SCRIPT(pc));
+  give_global_flag(&SCRIPT(&world[0]));
+
+  (void)snprintf(cmd, sizeof(cmd), " flag %ld", mob->script_id);
+  immortal_command(do_vdelete, b, cmd);
+  TEST_ASSERT_NOT_NULL(SCRIPT(mob)->global_vars);
+  TEST_ASSERT_EQUAL_STRING("vdelete-denied", tb_captured_operation);
+
+  tb_error_capture_reset();
+  (void)snprintf(cmd, sizeof(cmd), " flag %ld", pc->script_id);
+  immortal_command(do_vdelete, b, cmd);
+  TEST_ASSERT_NOT_NULL(SCRIPT(pc)->global_vars);
+  TEST_ASSERT_EQUAL_STRING("vdelete-denied", tb_captured_operation);
+
+  tb_error_capture_reset();
+  (void)snprintf(cmd, sizeof(cmd), " flag %ld", room_script_id(&world[0]));
+  immortal_command(do_vdelete, b, cmd);
+  TEST_ASSERT_NULL(SCRIPT(&world[0])->global_vars);
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+}
+
+/* DGDOC-4: extract_char() only flags a character, and its waits fire until
+ * extract_pending_chars() ends the pulse, so a wait expiring in the pulse
+ * its mob died resumed the script for the dead mob. */
+static void wait_of_an_extracted_mob_does_not_resume(void)
+{
+  const char *lines[] = { "set after 1", "wait 1", "global after", NULL };
+  char_data *mob = make_mob("mob");
+  trig_data *t = run_mob_script(mob, lines);
+
+  TEST_ASSERT_NOT_NULL(GET_TRIG_WAIT(t));
+  extract_char(mob);               /* killed or purged this pulse */
+  run_wait_out(t);
+  TEST_ASSERT_NULL(SCRIPT(mob)->global_vars);
+  TEST_ASSERT_EQUAL_INT(0, GET_TRIG_DEPTH(t));
+  TEST_ASSERT_NULL(GET_TRIG_VARS(t));
+  TEST_ASSERT_EQUAL_STRING("owner-extracted", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "suspended run ended"));
+}
+
+/* DGDOC-4: only 'mpurge self' stopped a mob's script; a mob killed by its
+ * own command (die() -> extract_char()) went on running its remaining
+ * lines. */
+static void script_stops_once_its_mob_is_extracted(void)
+{
+  const char *lines[] = { "set after 1", "mdamage %self% 1000", "global after", NULL };
+  char_data *owner = make_mob("zzowner");
+  trig_data *t = run_mob_script(owner, lines);
+
+  TEST_ASSERT_TRUE(MOB_FLAGGED(owner, MOB_NOTDEADYET));
+  TEST_ASSERT_NULL(SCRIPT(owner)->global_vars);
+  TEST_ASSERT_EQUAL_INT(0, GET_TRIG_DEPTH(t));
+  TEST_ASSERT_EQUAL_STRING("owner-extracted", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "line 2"));
+}
+
+/* 'mpurge' of itself is the deliberate way for a mob's script to end its
+ * owner (stock triggers write "%purge% %self%"): the run stops after that
+ * line through the normal cleanup, and nothing is reported. */
+static void mob_purging_itself_stops_without_a_report(void)
+{
+  const char *lines[] = { "set after 1", "%purge% %self%", "global after", NULL };
+  char_data *owner = make_mob("zzpurger");
+  trig_data *t = run_mob_script(owner, lines);
+
+  TEST_ASSERT_TRUE(MOB_FLAGGED(owner, MOB_NOTDEADYET));
+  TEST_ASSERT_NULL(SCRIPT(owner)->global_vars);
+  TEST_ASSERT_EQUAL_INT(0, GET_TRIG_DEPTH(t));
+  TEST_ASSERT_NULL(GET_TRIG_VARS(t));
+  TEST_ASSERT_FALSE(tb_captured_has_op("owner-extracted"));
+}
+
+/* DGDOC-5: a damage trigger's result is the damage dealt, and a script that
+ * ends without 'return' made script_driver() return 1, so a damage trigger
+ * that merely reacted to hits cut every hit on its mob to 1 point. */
+static void damage_trigger_without_return_keeps_the_damage(void)
+{
+  const char *react[] = { "set seen %damage%", NULL };
+  const char *halve[] = { "eval half %damage% / 2", "return %half%", NULL };
+  const char *plain[] = { "set x 1", NULL };
+  char_data *attacker = make_mob("attacker");
+  char_data *reacting = make_mob("reacting"), *halving = make_mob("halving");
+  char_data *other = make_mob("other");
+  trig_data *t;
+
+  attach_to_script(&SCRIPT(reacting), make_trigger(MOB_TRIGGER, MTRIG_DAMAGE, 100, react));
+  attach_to_script(&SCRIPT(halving), make_trigger(MOB_TRIGGER, MTRIG_DAMAGE, 100, halve));
+  TEST_ASSERT_EQUAL_INT(37, damage_mtrigger(attacker, reacting, 37, 0));
+  TEST_ASSERT_EQUAL_INT(20, damage_mtrigger(attacker, halving, 40, 0));
+
+  /* The default applies to that one run only. */
+  t = make_trigger(MOB_TRIGGER, MTRIG_SPEECH, 0, plain);
+  attach_to_script(&SCRIPT(other), t);
+  TEST_ASSERT_EQUAL_INT(1, script_driver(&other, t, MOB_TRIGGER, TRIG_NEW));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+}
+
+/* Run a one-trigger script on room world[1] from the top. */
+static void run_room_script(const char **lines)
+{
+  room_data *room = &world[1];
+  trig_data *t = make_trigger(WLD_TRIGGER, WTRIG_RANDOM, 0, lines);
+
+  attach_to_script(&SCRIPT(room), t);
+  script_driver(&room, t, WLD_TRIGGER, TRIG_NEW);
+}
+
+/* Value of world[1]'s global variable name, or NULL. */
+static const char *room_global(const char *name)
+{
+  struct trig_var_data *v;
+
+  for (v = SCRIPT(&world[1]) ? SCRIPT(&world[1])->global_vars : NULL; v; v = v->next)
+    if (!strcmp(v->name, name))
+      return v->value;
+  return NULL;
+}
+
+/* DGDOC-6: control keywords were matched as prefixes, so a line that only
+ * began with one (here "elsewhere") opened the else branch, and a glued
+ * "elseif%x% == 3" was taken as a plain else. "endif" still ends a block. */
+static void control_keywords_match_whole_words(void)
+{
+  const char *elsewhere[] = { "if 0", "set a 1", "elsewhere", "set a 2",
+                              "end", "global a", NULL };
+  const char *glued[] = { "set x 2", "if %x% == 1", "set d 1",
+                          "elseif%x% == 3", "set d 2", "else", "set d 3",
+                          "end", "global d", NULL };
+  const char *endif[] = { "if 1", "set c 1", "endif", "global c", NULL };
+
+  run_room_script(elsewhere);
+  TEST_ASSERT_NULL(room_global("a"));
+  run_room_script(glued);
+  TEST_ASSERT_EQUAL_STRING("3", room_global("d"));
+  run_room_script(endif);
+  TEST_ASSERT_EQUAL_STRING("1", room_global("c"));
+}
+
+/* DGDOC-6: the every-30-passes loop pause counted in cmdlist->loops, which
+ * every instance of a trigger shares (and which kept its count after a loop
+ * ended), so a second instance paused after 6 passes on the first's count.
+ * The pause itself must still happen. */
+static void while_pause_counts_per_trigger_instance(void)
+{
+  const char *lines[] = { "set i 0", "while %i% < 25", "eval i %i% + 1",
+                          "done", NULL };
+  const char *long_loop[] = { "set i 0", "while %i% < 40", "eval i %i% + 1",
+                              "done", NULL };
+  room_data *ra = &world[1], *rb = &world[2], *rc = &world[0];
+  trig_data *a = make_trigger(WLD_TRIGGER, WTRIG_RANDOM, 0, lines);
+  trig_data *b = read_trigger(0), *c;
+
+  TEST_ASSERT_TRUE(a->cmdlist == b->cmdlist);
+  attach_to_script(&SCRIPT(ra), a);
+  attach_to_script(&SCRIPT(rb), b);
+  script_driver(&ra, a, WLD_TRIGGER, TRIG_NEW);
+  TEST_ASSERT_NULL(GET_TRIG_WAIT(a));
+  script_driver(&rb, b, WLD_TRIGGER, TRIG_NEW);
+  TEST_ASSERT_NULL(GET_TRIG_WAIT(b));
+  TEST_ASSERT_EQUAL_INT(0, GET_TRIG_DEPTH(b));
+
+  c = make_trigger(WLD_TRIGGER, WTRIG_RANDOM, 0, long_loop);
+  attach_to_script(&SCRIPT(rc), c);
+  script_driver(&rc, c, WLD_TRIGGER, TRIG_NEW);
+  TEST_ASSERT_NOT_NULL(GET_TRIG_WAIT(c));     /* paused at 30 passes */
+  TEST_ASSERT_EQUAL_INT(30, GET_TRIG_LOOPS(c));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+}
+
+/* Player-file fuzzer case vars-noname: read_saved_vars() ignored
+ * get_filename()'s result and fopen()ed its unwritten buffer for a player
+ * whose pfile left the name empty; save_char_vars() would also unlink and
+ * create that garbage path. */
+static void nameless_player_variable_file_is_refused(void)
+{
+  char_data *pc = make_mob("pc");
+  char *name = pc->player.name;
+
+  REMOVE_BIT_AR(MOB_FLAGS(pc), MOB_ISNPC);     /* a player ... */
+  GET_IDNUM(pc) = 77;
+  pc->player.name = NULL;                       /* ... with no Name tag */
+  read_saved_vars(pc);
+  TEST_ASSERT_EQUAL_STRING("vars-filename", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "idnum 77"));
+  TEST_ASSERT_NOT_NULL(SCRIPT(pc));            /* as when there is no file */
+
+  tb_error_capture_reset();
+  add_var(&SCRIPT(pc)->global_vars, "flag", "1", 0);
+  save_char_vars(pc);
+  TEST_ASSERT_EQUAL_STRING("vars-filename", tb_captured_operation);
+  pc->player.name = name;
 }
 
 int main(void)
@@ -1025,6 +1496,8 @@ int main(void)
   RUN_TEST(random_trigger_self_purge_keeps_scanning);
   RUN_TEST(random_trigger_purging_next_object_is_safe);
   RUN_TEST(time_trigger_self_purge_keeps_scanning);
+  RUN_TEST(purging_owner_container_stops_script);
+  RUN_TEST(nested_self_purge_does_not_end_outer_script);
   RUN_TEST(switch_with_unterminated_nested_while_is_reported);
   RUN_TEST(break_without_done_is_reported);
   RUN_TEST(well_formed_switch_still_selects_its_case);
@@ -1047,5 +1520,20 @@ int main(void)
   RUN_TEST(trim_handles_empty_and_blank_values);
   RUN_TEST(lost_remote_and_detach_miss_are_reported);
   RUN_TEST(dotted_variable_name_is_reported);
+  RUN_TEST(wait_past_the_pulse_range_is_rejected);
+  RUN_TEST(room_wait_survives_world_reallocation);
+  RUN_TEST(room_wait_with_lost_room_is_reported);
+  RUN_TEST(unplaced_owner_room_lookups_are_reported);
+  RUN_TEST(unplaced_mob_script_runs_no_command);
+  RUN_TEST(level_setter_never_changes_an_immortal);
+  RUN_TEST(attach_checks_the_target_zone);
+  RUN_TEST(vdelete_checks_the_builders_authority);
+  RUN_TEST(wait_of_an_extracted_mob_does_not_resume);
+  RUN_TEST(script_stops_once_its_mob_is_extracted);
+  RUN_TEST(mob_purging_itself_stops_without_a_report);
+  RUN_TEST(damage_trigger_without_return_keeps_the_damage);
+  RUN_TEST(control_keywords_match_whole_words);
+  RUN_TEST(while_pause_counts_per_trigger_instance);
+  RUN_TEST(nameless_player_variable_file_is_refused);
   return UNITY_END();
 }

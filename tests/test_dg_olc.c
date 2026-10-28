@@ -32,6 +32,9 @@
 
 static room_data test_room;
 static struct zone_data test_zone;
+/* The zone's reset commands: just the 'S' terminator unless a test adds
+ * some (a loaded zone always has at least that). */
+static struct reset_com test_cmds[4];
 static char_data *builder;
 static struct descriptor_data *bd;
 static char test_dir[64];
@@ -80,7 +83,7 @@ static void make_index(const int *vnums, int count)
     CREATE(p, trig_data, 1);
     p->nr = i;
     p->name = strdup("proto");
-    snprintf(cmd, sizeof(cmd), "say %d", vnums[i]);
+    (void)snprintf(cmd, sizeof(cmd), "say %d", vnums[i]);
     p->cmdlist = make_cmdlist(cmd);
     trig_index[i]->proto = p;
   }
@@ -103,7 +106,7 @@ static void write_file(const char *path, const char *text)
   FILE *fp = fopen(path, "w");
 
   TEST_ASSERT_NOT_NULL(fp);
-  fputs(text, fp);
+  (void)fputs(text, fp);
   TEST_ASSERT_EQUAL_INT(0, fclose(fp));
 }
 
@@ -119,7 +122,7 @@ static const char *read_file(const char *path)
     return buf;
   n = fread(buf, 1, sizeof(buf) - 1, fp);
   buf[n] = '\0';
-  fclose(fp);
+  (void)fclose(fp);
   return buf;
 }
 
@@ -128,7 +131,7 @@ static void start_edit(int vnum)
 {
   char arg[32];
 
-  snprintf(arg, sizeof(arg), "%d", vnum);
+  (void)snprintf(arg, sizeof(arg), "%d", vnum);
   do_oasis_trigedit(builder, arg, 0, 0);
   TEST_ASSERT_NOT_NULL(bd->olc);
   TEST_ASSERT_EQUAL_INT(CON_TRIGEDIT, STATE(bd));
@@ -186,7 +189,7 @@ void setUp(void)
   logfile = fopen("/dev/null", "w");
 
   TEST_ASSERT_NOT_NULL(getcwd(old_cwd, sizeof(old_cwd)));
-  snprintf(test_dir, sizeof(test_dir), "/tmp/tb_dg_olc_XXXXXX");
+  (void)snprintf(test_dir, sizeof(test_dir), "/tmp/tb_dg_olc_XXXXXX");
   TEST_ASSERT_NOT_NULL(mkdtemp(test_dir));
   TEST_ASSERT_EQUAL_INT(0, chdir(test_dir));
   TEST_ASSERT_EQUAL_INT(0, mkdir("world", 0700));
@@ -205,6 +208,9 @@ void setUp(void)
   test_zone.bot = 100;
   test_zone.top = 199;
   test_zone.name = "test zone";
+  memset(test_cmds, 0, sizeof(test_cmds));
+  test_cmds[0].command = 'S';
+  test_zone.cmd = test_cmds;
   zone_table = &test_zone;
   top_of_zone_table = 0;
 
@@ -278,16 +284,16 @@ void tearDown(void)
   world = NULL;
   zone_table = NULL;
 
-  remove("world/trg/index");
-  remove("world/trg/newindex");
-  remove("world/trg/1.trg");
-  remove("world/trg/1.new");
+  (void)remove("world/trg/index");
+  (void)remove("world/trg/newindex");
+  (void)remove("world/trg/1.trg");
+  (void)remove("world/trg/1.new");
   rmdir("world/trg");
   rmdir("world");
   TEST_ASSERT_EQUAL_INT(0, chdir(old_cwd));
   rmdir(test_dir);
   if (logfile)
-    fclose(logfile);
+    (void)fclose(logfile);
   logfile = NULL;
 }
 
@@ -742,6 +748,117 @@ static void short_highlighted_listing_is_complete(void)
   bd->str = NULL;
 }
 
+/* E2-09: a descriptor still holding an OLC structure while playing was
+ * handled with free(d->olc), leaking the scratch trigger and script buffer
+ * (LeakSanitizer reports them), and was logged only by a mudlog that named
+ * no builder. */
+static void stale_olc_structure_is_released_and_reported(void)
+{
+  const int vnums[] = { 100 };
+
+  make_index(vnums, 1);
+  start_edit(100);
+  STATE(bd) = CON_PLAYING;       /* an editor that left without cleanup_olc() */
+  tb_error_capture_reset();
+  start_edit(100);
+  TEST_ASSERT_EQUAL_STRING("olc-stale-state", tb_captured_ops[0]);
+}
+
+/* E2-12: dg_script_menu() indexed trig_index[real_trigger(vnum)] without
+ * checking for NOTHING. A prototype's list can keep the vnum of a trigger
+ * that does not exist, and the menu then read past trig_index. */
+static void script_menu_lists_a_missing_trigger(void)
+{
+  const int vnums[] = { 100 };
+  struct trig_proto_list missing = { 150, NULL };
+  struct trig_proto_list present = { 100, &missing };
+
+  make_index(vnums, 1);
+  CREATE(bd->olc, struct oasis_olc_data, 1);
+  OLC_ITEM_TYPE(bd) = MOB_TRIGGER;
+  OLC_NUM(bd) = 120;
+  OLC_SCRIPT(bd) = &present;
+  clear_output();
+  dg_script_menu(bd);
+  TEST_ASSERT_NOT_NULL(strstr(bd->output, "[100]"));
+  TEST_ASSERT_NOT_NULL(strstr(bd->output, "missing trigger"));
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("script-menu-missing-trigger", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "trigger vnum 150 on mob vnum 120"));
+  OLC_SCRIPT(bd) = NULL;
+  free(bd->olc);
+  bd->olc = NULL;
+}
+
+/* E2-16: the scratch trigger kept its prototype's cmdlist.  Another builder
+ * saving that trigger frees the list, which left this scratch pointing at
+ * freed memory.  The script lives in OLC_STORAGE; saving still works. */
+static void scratch_trigger_never_borrows_a_cmdlist(void)
+{
+  const int vnums[] = { 100, 102 };
+
+  make_index(vnums, 2);
+  start_edit(100);
+  TEST_ASSERT_NULL(OLC_TRIG(bd)->cmdlist);
+  TEST_ASSERT_NOT_NULL(strstr(OLC_STORAGE(bd), "say 100"));
+
+  feed(TRIGEDIT_COPY, "102");
+  TEST_ASSERT_NULL(OLC_TRIG(bd)->cmdlist);
+  TEST_ASSERT_NOT_NULL(strstr(OLC_STORAGE(bd), "say 102"));
+
+  set_script("say edited\r\n");
+  save_and_quit();
+  TEST_ASSERT_EQUAL_STRING("say edited", trig_index[0]->proto->cmdlist->cmd);
+  TEST_ASSERT_EQUAL_STRING("say 102", trig_index[1]->proto->cmdlist->cmd);
+}
+
+/* E2-15: script_save_to_disk() logged a bare SYSERR (no type, entity or
+ * caller) for a bad type, and dereferenced a NULL item; the saver went on
+ * writing the entity without its trigger lines. */
+static void script_save_rejects_bad_arguments_loudly(void)
+{
+  struct trig_proto_list one = { 100, NULL };
+  FILE *fp = tmpfile();
+
+  TEST_ASSERT_NOT_NULL(fp);
+  test_room.proto_script = &one;
+  TEST_ASSERT_EQUAL_INT(0, script_save_to_disk(fp, &test_room, WLD_TRIGGER));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  TEST_ASSERT_EQUAL_INT(-1, script_save_to_disk(fp, &test_room, 99));
+  TEST_ASSERT_EQUAL_STRING("script-save-type", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "invalid type 99"));
+  TEST_ASSERT_EQUAL_INT(-1, script_save_to_disk(fp, NULL, MOB_TRIGGER));
+  TEST_ASSERT_EQUAL_INT(2, tb_captured_errors);
+  TEST_ASSERT_EQUAL_INT(6, (int)ftell(fp));    /* "T 100\n" and nothing more */
+  test_room.proto_script = NULL;
+  TEST_ASSERT_EQUAL_INT(0, fclose(fp));
+}
+
+/* DGDOC-10: creating trigger 101 between 100 and 102 moved 102 from rnum 1
+ * to rnum 2, but zone reset 'T' commands kept rnum 1, so the reset attached
+ * 101 instead and save_zone() would have written vnum 101. */
+static void inserting_a_trigger_renumbers_zone_reset_commands(void)
+{
+  const int vnums[] = { 100, 102 };
+
+  make_index(vnums, 2);
+  test_cmds[0].command = 'T';
+  test_cmds[0].arg1 = MOB_TRIGGER;
+  test_cmds[0].arg2 = 1;           /* trigger 102 */
+  test_cmds[1].command = 'T';
+  test_cmds[1].arg1 = WLD_TRIGGER;
+  test_cmds[1].arg2 = 0;           /* trigger 100, below the insertion */
+  test_cmds[2].command = 'S';
+
+  start_edit(101);
+  set_script("say 101\r\n");
+  save_and_quit();
+
+  TEST_ASSERT_EQUAL_INT(3, top_of_trigt);
+  TEST_ASSERT_EQUAL_INT(102, trig_index[test_cmds[0].arg2]->vnum);
+  TEST_ASSERT_EQUAL_INT(100, trig_index[test_cmds[1].arg2]->vnum);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -766,5 +883,10 @@ int main(void)
   RUN_TEST(format_script_indents_nested_blocks);
   RUN_TEST(inserting_a_trigger_renumbers_displaced_live_instances);
   RUN_TEST(stale_live_rnum_after_insert_is_reported);
+  RUN_TEST(stale_olc_structure_is_released_and_reported);
+  RUN_TEST(script_menu_lists_a_missing_trigger);
+  RUN_TEST(scratch_trigger_never_borrows_a_cmdlist);
+  RUN_TEST(script_save_rejects_bad_arguments_loudly);
+  RUN_TEST(inserting_a_trigger_renumbers_zone_reset_commands);
   return UNITY_END();
 }

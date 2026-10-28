@@ -122,6 +122,39 @@ Handlers validate the actor's placement with `dg_trigger_actor_placed()`
 before indexing `world[IN_ROOM(actor)]`. An actor outside a valid room is
 reported as a `trigger-dispatch` error and nothing is dispatched.
 
+### Followers: snapshot, then revalidate
+
+Never walk `ch->followers` across anything that can run a command or a
+trigger (`act()`, `perform_move()`, `command_interpreter()`). Such a callback
+can make any follower stop following, and `stop_follower()` frees that
+follower's `follow_type` node at once (an `mfollow` in a command or greet
+trigger does it). It can also purge or kill a follower, or extract the leader.
+A loop that keeps `k` or `k->next` across the callback then reads a freed
+node. This was a heap-use-after-free in `perform_move()` (followers moving
+with their leader) and in `do_order()` ("order followers").
+
+This is the pattern to use (`act.h`):
+
+1. Before the first callback, copy the list with
+   `snapshot_followers(leader, &marks)`. It returns the count and fills an
+   array of `struct follower_mark`, each a character pointer plus its UID
+   (`char_script_id()`). The pointer is only compared, never followed,
+   until the UID confirms it. `free(marks)` when done.
+2. Call `follower_mark_live(&marks[i], leader, "<caller>")` before each
+   follower is used, and again after every callback before using it once
+   more. It requires that `find_char(uid)` still returns that character,
+   that the character is not pending extraction and that it still follows
+   `leader`. Otherwise it reports `act/follower-changed` (both characters,
+   the UID and the caller) and returns FALSE: skip that follower.
+3. Re-test the loop's own conditions (same room, position) after each
+   callback rather than trusting values read before it. If the loop goes
+   on using the leader, re-check the leader too.
+
+The helpers and their first users, `perform_move()` and `do_order()`, land
+with the errloc branch (`audit-deferred-errloc`, commits `bcfe2fb` and
+`f953bdb`). Until that branch is merged, code that walks followers across a
+callback must still follow this pattern.
+
 ## 3. Buffers and strings
 
 - Bound every write by the destination's real size. `tb_snprintf(dst, size,

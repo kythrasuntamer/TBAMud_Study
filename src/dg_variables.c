@@ -44,7 +44,8 @@
  * the rule always was. dg_clamp_char_field() / dg_clamp_obj_field() guard
  * the storage type: reaching their bounds means the script asked for a
  * value the field cannot hold, so they report dg/field-clamp naming the
- * trigger, the field and the entity. trig may be NULL (script_damage). */
+ * trigger, the field and the entity. trig is NULL only when no script is
+ * running (script_damage() for an implementor typing mdamage). */
 int dg_bounded_add(int cur, int add, int lo, int hi)
 {
   long long v = (long long)cur + add;
@@ -498,16 +499,15 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
       case MOB_TRIGGER:
         ch = (char_data *) go;
 
-        if (IN_ROOM(ch) == NOWHERE)
-          TB_WARN_MSG("dg", "owner-nowhere", "find_replacement",
-                      "trigger %d: " DIAG_CHAR_FMT " is in no room; "
-                      "its room is not searched for %s", trig ? GET_TRIG_VNUM(trig) : -1,
-                      DIAG_CHAR(ch), var);
-
         if ((o = get_object_in_equip(ch, name)));
         else if ((o = get_obj_in_list(name, ch->carrying)));
-        else if (IN_ROOM(ch) != NOWHERE && (c = get_char_in_room(&world[IN_ROOM(ch)], name)));
-        else if (IN_ROOM(ch) != NOWHERE && (o = get_obj_in_list(name,world[IN_ROOM(ch)].contents)));
+        /* The room lookups index world[IN_ROOM(ch)]; the NOWHERE test used
+         * to cover only the first of them. An owner in no valid room is
+         * reported once and only its room is skipped: a UID or a name
+         * elsewhere in the world still resolves below. */
+        else if (DG_OWNER_ROOM(go, type, trig, "variable lookup") != NOWHERE &&
+                 ((c = get_char_in_room(&world[IN_ROOM(ch)], name)) ||
+                  (o = get_obj_in_list(name, world[IN_ROOM(ch)].contents))));
         else if ((c = get_char(name)));
         else if ((o = get_obj(name)));
         else if ((r = get_room(name))) {}
@@ -654,40 +654,33 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
           rndm = NULL;
           count = 0;
 
+          /* A mob's or object's room is indexed below; random and time
+           * object triggers fire wherever the object is. */
+          if (type != WLD_TRIGGER &&
+              DG_OWNER_ROOM(go, type, trig, "%random.char%") == NOWHERE) {
+            *str = '\0';
+            return;
+          }
+
           if (type == MOB_TRIGGER) {
             ch = (char_data *) go;
-            if (IN_ROOM(ch) == NOWHERE)
-              TB_WARN_MSG("dg", "owner-nowhere", "random.char",
-                          "trigger %d: " DIAG_CHAR_FMT " is in no room; "
-                          "no character chosen", trig ? GET_TRIG_VNUM(trig) : -1,
-                          DIAG_CHAR(ch));
-            else {
-              for (c = world[IN_ROOM(ch)].people; c; c = c->next_in_room)
-                if ((c != ch) && valid_dg_target(c, DG_ALLOW_GODS) &&
-                    CAN_SEE(ch, c)) {
-                  if (!rand_number(0, count))
-                    rndm = c;
-                  count++;
-                }
-            }
+            for (c = world[IN_ROOM(ch)].people; c; c = c->next_in_room)
+              if ((c != ch) && valid_dg_target(c, DG_ALLOW_GODS) &&
+                  CAN_SEE(ch, c)) {
+                if (!rand_number(0, count))
+                  rndm = c;
+                count++;
+              }
           }
 
           else if (type == OBJ_TRIGGER) {
-            room_rnum in_room = obj_room((obj_data *) go);
-
-            if (in_room == NOWHERE)
-              TB_WARN_MSG("dg", "owner-nowhere", "random.char",
-                          "trigger %d: obj vnum %d is in no room; no character "
-                          "chosen", trig ? GET_TRIG_VNUM(trig) : -1,
-                          GET_OBJ_VNUM((obj_data *) go));
-            else {
-              for (c = world[in_room].people; c; c = c->next_in_room)
-                if (valid_dg_target(c, DG_ALLOW_GODS)) {
-                  if (!rand_number(0, count))
-                    rndm = c;
-                  count++;
-                }
-            }
+            for (c = world[obj_room((obj_data *) go)].people; c;
+                 c = c->next_in_room)
+              if (valid_dg_target(c, DG_ALLOW_GODS)) {
+                if (!rand_number(0, count))
+                  rndm = c;
+                count++;
+              }
           }
 
           else if (type == WLD_TRIGGER) {
@@ -708,19 +701,10 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
         }
 
         else if (!str_cmp(field, "dir")) {
-          room_rnum in_room = NOWHERE;
+          /* NOWHERE (reported) also covers an rnum past top_of_world, which
+           * the old NOWHERE-only test let through to world[]. */
+          room_rnum in_room = DG_OWNER_ROOM(go, type, trig, "%random.dir%");
 
-          switch (type) {
-            case WLD_TRIGGER:
-              in_room = real_room(((struct room_data *) go)->number);
-              break;
-            case OBJ_TRIGGER:
-              in_room = obj_room((struct obj_data *) go);
-              break;
-            case MOB_TRIGGER:
-              in_room = IN_ROOM((struct char_data *)go);
-              break;
-          }
           if (in_room == NOWHERE) {
             *str = '\0';
           } else {
@@ -1037,8 +1021,19 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
         case 'l':
           if (!str_cmp(field, "level")) {
             if (subfield && *subfield) {
-              int lev = tb_parse_int_or_zero(subfield);
-              GET_LEVEL(c) = MIN(MAX(lev, 0), LVL_IMMORT-1);
+              /* The level comes from builder script text and is set
+               * outright, clamped below LVL_IMMORT.  An immortal's level is
+               * a privilege only 'advance' grants or removes: clamping it
+               * demoted any immortal who set the trigger off. */
+              if (!IS_NPC(c) && GET_LEVEL(c) >= LVL_IMMORT)
+                TB_WARN_MSG("dg", "field-target", "find_replacement",
+                            "trig vnum %d: setting level on immortal player "
+                            "idnum %ld (level %d) refused",
+                            DIAG_TRIG_VNUM(trig), GET_IDNUM(c), GET_LEVEL(c));
+              else
+                GET_LEVEL(c) = (unsigned char)dg_clamp_char_field(trig, c,
+                    "level", tb_parse_int_or_zero(subfield), 0,
+                    LVL_IMMORT - 1);
             } else
               tb_snprintf(str, slen, "%d", GET_LEVEL(c));
           }
