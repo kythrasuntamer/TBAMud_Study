@@ -221,6 +221,39 @@ static void test_simple_list_body_may_free_list(void)
   TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
 }
 
+/* H3-15: the owner cancel loop of delete_room()/destroy_db(), verbatim.
+ * Cancelling the room's only event used to free room->events and set it to
+ * NULL, and the free_list(room->events) after the loop crashed. */
+static void test_owner_cancel_loop_with_one_room_event(void)
+{
+  struct room_data *room;
+
+  make_world(2);
+  NEW_EVENT(eSPL_DARKNESS, &world[1], NULL, 50);
+  room = &world[1];
+
+  if (room->events != NULL) {
+    if (room->events->iSize > 0) {
+      struct event * pEvent;
+
+      while ((pEvent = simple_list(room->events)) != NULL)
+        event_cancel(pEvent);
+    }
+    free_list(room->events);
+    room->events = NULL;
+  }
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  TEST_ASSERT_EQUAL_INT(0, room_messages);
+}
+
+/* H3-15: free_list(NULL) is reported, not dereferenced. */
+static void test_free_list_null_reports(void)
+{
+  free_list(NULL);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("free-null", tb_captured_operation);
+}
+
 int main(void)
 {
   int rc;
@@ -232,6 +265,8 @@ int main(void)
   RUN_TEST(test_simple_list_body_may_remove_current);
   RUN_TEST(test_simple_list_body_may_remove_next);
   RUN_TEST(test_simple_list_body_may_free_list);
+  RUN_TEST(test_owner_cancel_loop_with_one_room_event);
+  RUN_TEST(test_free_list_null_reports);
   RUN_TEST(test_room_event_survives_world_realloc);
   RUN_TEST(test_room_event_for_deleted_room_reports);
   rc = UNITY_END();

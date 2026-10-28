@@ -193,14 +193,14 @@ void free_mud_event(struct mud_event_data *pMudEvent)
       d = (struct descriptor_data *) pMudEvent->pStruct;
       remove_from_list(pMudEvent->pEvent, d->events);
     break;
+    /* The owner's events list is left in place, even when it becomes empty:
+     * the owner frees it on teardown (free_char, extract_obj, delete_room,
+     * destroy_db, close_socket), right after a cancel loop that calls this.
+     * Freeing it here used to hand those loops a NULL list for free_list(). */
     case EVENT_CHAR:
       ch = (struct char_data *) pMudEvent->pStruct;
-      remove_from_list(pMudEvent->pEvent, ch->events);
-      
-      if (ch->events->iSize == 0) {
-        free_list(ch->events);
-        ch->events = NULL;
-      }
+      if (ch->events)
+        remove_from_list(pMudEvent->pEvent, ch->events);
     break;
     case EVENT_ROOM:
       if ((rnum = mud_event_room(pMudEvent)) == NOWHERE)
@@ -208,11 +208,6 @@ void free_mud_event(struct mud_event_data *pMudEvent)
       room = &world[rnum];
       if (room->events)
         remove_from_list(pMudEvent->pEvent, room->events);
-
-      if (room->events && (room->events->iSize == 0)) {
-        free_list(room->events);
-        room->events = NULL;
-      }      
     break;
   }
 

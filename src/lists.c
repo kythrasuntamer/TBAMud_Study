@@ -88,6 +88,12 @@ static struct item_data * create_item(void)
 
 void free_list(struct list_data * pList)
 {
+  /* No caller owns a NULL list; report the call rather than crash. */
+  if (pList == NULL) {
+    TB_ERROR_MSG("lists", "free-null", "list_data", "free_list called with NULL");
+    return;
+  }
+
   /* A simple_list() cursor on this list dies with it (e.g. an event cancel
    * loop whose last cancel frees the owner's list). */
   if (Iterator.pList == pList || (loop && pLastList == pList))
