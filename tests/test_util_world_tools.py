@@ -118,13 +118,28 @@ class Wld2HtmlTests(ToolCase):
         self.assertDiag(err, "wld-line-nul")
 
     def test_record_count_mismatch_stops_before_overflow(self):
-        # I3-03: a 259-byte comment line was one record line for neither
-        # pass in the counter but split by the loader so '#101' at offset
-        # 255 started a second room in a world[] sized for one.
+        # I3-03: a 259-byte comment line was not a record for the counter
+        # but the loader split it, so '#101' at offset 255 started a second
+        # room in a world[] sized for one.  Since I3-07 the loader no
+        # longer splits lines, so the overlong line itself is reported.
         rc, err = self.wld("#100\nRoom~\nDesc~\n0 0 0\nS\n*" + "a" * 254 +
                            "#101\nRoom2~\nD~\n0 0 0\nS\n$~\n")
         self.assertEqual(rc, 1, err)
-        self.assertDiag(err, "wld-record-capacity")
+        self.assertDiag(err, "wld-line-too-long")
+        self.assertIn("file in.wld line 6 room #100", err)
+
+    def test_final_line_without_newline_accepted(self):
+        # I3-07: a valid file whose '$~' had no newline was rejected as a
+        # format error blaming room #100.
+        rc, err = self.wld(VALID_ROOM + "$~")
+        self.assertEqual(rc, 0, err)
+        self.assertNotIn("TBERR", err)
+        self.assertTrue(self.exists("100.html"))
+
+    def test_crlf_record_lines_accepted(self):
+        rc, err = self.wld(VALID_ROOM.replace("\n", "\r\n") + "$~\r\n")
+        self.assertEqual(rc, 0, err)
+        self.assertNotIn("TBERR", err)
 
     def test_multiple_files_share_record_capacity(self):
         self.write("b.wld", "#200\nOther~\nD~\n0 0 0\nD0\n~\n~\n0 0 100\nS\n$~\n")

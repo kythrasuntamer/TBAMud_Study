@@ -749,20 +749,17 @@ char *fread_string(FILE * fl, const char *error)
  */
 int get_line(FILE * fl, char *buf, size_t buflen)
 {
-  char temp[256];
-
+  /*
+   * wld_read_line() strips only a real "\n"/"\r\n" (the old code chopped
+   * the last byte unconditionally), never splits a line longer than buflen
+   * (it reports wld-line-too-long instead of returning the tail as a new
+   * record), and returns a final line that has no newline instead of
+   * treating it as end of file.
+   */
   do {
-    if (fgets(temp, sizeof(temp), fl) == NULL)
-      return 0;
-    wld_cur_line++;
-    if (*temp)
-      temp[strlen(temp) - 1] = '\0';
-  } while (*temp == '*' || !*temp);
+    if (!wld_read_line(fl, buf, buflen, "record"))
+      return (0);
+  } while (*buf == '*' || !*buf);
 
-  if (feof(fl))
-    return (0);
-  else {
-    strlcpy(buf, temp, buflen);
-    return (1);
-  }
+  return (1);
 }
