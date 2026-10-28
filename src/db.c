@@ -1523,6 +1523,29 @@ bitvector_t asciiflag_conv(char *flag)
   return (flags);
 }
 
+/** Narrow a parsed flag word to the 32-bit int slot it is stored in (room,
+ * mob, object and zone flag arrays are int[4]). asciiflag_conv() yields a
+ * 64-bit bitvector_t, so letters past 'F' (bits 32 and up) would be dropped
+ * without a word, and bit 31 would make the int negative. The world files
+ * are the implementor's; report the dropped bits with the entity. */
+static int flag_slot(bitvector_t bits, const char *flag, const char *what,
+                     int vnum)
+{
+  bitvector_t high = bits >> 32;
+
+  if (high) {
+    int bit = 32;
+    while (!(high & 1)) {
+      high >>= 1;
+      bit++;
+    }
+    TB_ERROR_MSG("db", "flag-parse", what,
+                 "%s vnum %d: flags '%s' set bit %d, which does not fit the "
+                 "32-bit flag slot; high bits dropped", what, vnum, flag, bit);
+  }
+  return (int)(unsigned int)(bits & 0xFFFFFFFFUL);
+}
+
 static bitvector_t asciiflag_conv_aff(char *flag)
 {
   bitvector_t flags = 0;
@@ -1636,7 +1659,7 @@ void parse_room(FILE *fl, int virtual_nr)
      * will save the entire world later on, when every room, mobile, and object
      * is converted. */
     log("Converting room #%d to 128bits..", virtual_nr);
-    world[room_nr].room_flags[0] = asciiflag_conv(flags);
+    world[room_nr].room_flags[0] = flag_slot(asciiflag_conv(flags), flags, "room", virtual_nr);
     world[room_nr].room_flags[1] = 0;
     world[room_nr].room_flags[2] = 0;
     world[room_nr].room_flags[3] = 0;
@@ -1647,7 +1670,7 @@ void parse_room(FILE *fl, int virtual_nr)
    tb_snprintf(flags, sizeof(flags), "room #%d", virtual_nr);	/* sprintf: OK (until 399-bit integers) */
 
     /* No need to scan the other three sections; they're 0 anyway. */
-    check_bitvector_names(world[room_nr].room_flags[0], room_bits_count, flags, "room");
+    check_bitvector_names((unsigned int)world[room_nr].room_flags[0], room_bits_count, flags, "room");
 
     if(bitsavetodisk) { /* Maybe the implementor just wants to look at the 128bit files */
       add_to_save_list(zone_table[real_zone_by_thing(virtual_nr)].number, 3);
@@ -1658,14 +1681,14 @@ void parse_room(FILE *fl, int virtual_nr)
   } else if (retval == 6) {
     int taeller;
 
-    world[room_nr].room_flags[0] = asciiflag_conv(flags);
-    world[room_nr].room_flags[1] = asciiflag_conv(flags2);
-    world[room_nr].room_flags[2] = asciiflag_conv(flags3);
-    world[room_nr].room_flags[3] = asciiflag_conv(flags4);
+    world[room_nr].room_flags[0] = flag_slot(asciiflag_conv(flags), flags, "room", virtual_nr);
+    world[room_nr].room_flags[1] = flag_slot(asciiflag_conv(flags2), flags2, "room", virtual_nr);
+    world[room_nr].room_flags[2] = flag_slot(asciiflag_conv(flags3), flags3, "room", virtual_nr);
+    world[room_nr].room_flags[3] = flag_slot(asciiflag_conv(flags4), flags4, "room", virtual_nr);
 
     tb_snprintf(flags, sizeof(flags), "room #%d", virtual_nr);	/* sprintf: OK (until 399-bit integers) */
     for(taeller=0; taeller < AF_ARRAY_MAX; taeller++)
-      check_bitvector_names(world[room_nr].room_flags[taeller], room_bits_count, flags, "room");
+      check_bitvector_names((unsigned int)world[room_nr].room_flags[taeller], room_bits_count, flags, "room");
 
     world[room_nr].sector_type = room_sector_or_inside(virtual_nr, t[2]);
     } else {
@@ -2211,13 +2234,13 @@ void parse_mobile(FILE *mob_f, int nr)
     exit(1);
   } else if ((retval == 4) && (bitwarning == FALSE)) {
     log("Converting mobile #%d to 128bits..", nr);
-    MOB_FLAGS(mob_proto + i)[0] = asciiflag_conv(f1);
+    MOB_FLAGS(mob_proto + i)[0] = flag_slot(asciiflag_conv(f1), f1, "mob", nr);
     MOB_FLAGS(mob_proto + i)[1] = 0;
     MOB_FLAGS(mob_proto + i)[2] = 0;
     MOB_FLAGS(mob_proto + i)[3] = 0;
-    check_bitvector_names(MOB_FLAGS(mob_proto + i)[0], action_bits_count, buf2, "mobile");
+    check_bitvector_names((unsigned int)MOB_FLAGS(mob_proto + i)[0], action_bits_count, buf2, "mobile");
 
-    AFF_FLAGS(mob_proto + i)[0] = asciiflag_conv_aff(f2);
+    AFF_FLAGS(mob_proto + i)[0] = flag_slot(asciiflag_conv_aff(f2), f2, "mob", nr);
     AFF_FLAGS(mob_proto + i)[1] = 0;
     AFF_FLAGS(mob_proto + i)[2] = 0;
     AFF_FLAGS(mob_proto + i)[3] = 0;
@@ -2235,7 +2258,7 @@ void parse_mobile(FILE *mob_f, int nr)
     if (MOB_FLAGGED(mob_proto + i, MOB_AGGRESSIVE) && MOB_FLAGGED(mob_proto + i, MOB_AGGR_EVIL))
       REMOVE_BIT_AR(MOB_FLAGS(mob_proto + i), MOB_AGGR_EVIL);
 
-    check_bitvector_names(AFF_FLAGS(mob_proto + i)[0], affected_bits_count, buf2, "mobile affect");
+    check_bitvector_names((unsigned int)AFF_FLAGS(mob_proto + i)[0], affected_bits_count, buf2, "mobile affect");
 
     /* This is necessary, since if we have conventional world files, &letter is
      * loaded into f4 instead of the letter characters. So what we do, is copy
@@ -2252,22 +2275,22 @@ void parse_mobile(FILE *mob_f, int nr)
   } else if (retval == 10) {
     int taeller;
 
-    MOB_FLAGS(mob_proto + i)[0] = asciiflag_conv(f1);
-    MOB_FLAGS(mob_proto + i)[1] = asciiflag_conv(f2);
-    MOB_FLAGS(mob_proto + i)[2] = asciiflag_conv(f3);
-    MOB_FLAGS(mob_proto + i)[3] = asciiflag_conv(f4);
+    MOB_FLAGS(mob_proto + i)[0] = flag_slot(asciiflag_conv(f1), f1, "mob", nr);
+    MOB_FLAGS(mob_proto + i)[1] = flag_slot(asciiflag_conv(f2), f2, "mob", nr);
+    MOB_FLAGS(mob_proto + i)[2] = flag_slot(asciiflag_conv(f3), f3, "mob", nr);
+    MOB_FLAGS(mob_proto + i)[3] = flag_slot(asciiflag_conv(f4), f4, "mob", nr);
     for(taeller=0; taeller < AF_ARRAY_MAX; taeller++)
-      check_bitvector_names(MOB_FLAGS(mob_proto + i)[taeller], action_bits_count, buf2, "mobile");
+      check_bitvector_names((unsigned int)MOB_FLAGS(mob_proto + i)[taeller], action_bits_count, buf2, "mobile");
 
-    AFF_FLAGS(mob_proto + i)[0] = asciiflag_conv(f5);
-    AFF_FLAGS(mob_proto + i)[1] = asciiflag_conv(f6);
-    AFF_FLAGS(mob_proto + i)[2] = asciiflag_conv(f7);
-    AFF_FLAGS(mob_proto + i)[3] = asciiflag_conv(f8);
+    AFF_FLAGS(mob_proto + i)[0] = flag_slot(asciiflag_conv(f5), f5, "mob", nr);
+    AFF_FLAGS(mob_proto + i)[1] = flag_slot(asciiflag_conv(f6), f6, "mob", nr);
+    AFF_FLAGS(mob_proto + i)[2] = flag_slot(asciiflag_conv(f7), f7, "mob", nr);
+    AFF_FLAGS(mob_proto + i)[3] = flag_slot(asciiflag_conv(f8), f8, "mob", nr);
 
     GET_ALIGNMENT(mob_proto + i) = t[2];
 
     for(taeller=0; taeller < AF_ARRAY_MAX; taeller++)
-      check_bitvector_names(AFF_FLAGS(mob_proto + i)[taeller], affected_bits_count, buf2, "mobile affect");
+      check_bitvector_names((unsigned int)AFF_FLAGS(mob_proto + i)[taeller], affected_bits_count, buf2, "mobile affect");
   } else {
     log("SYSERR: Format error after string section of mob #%d\n ...expecting line of form '# # # {S | E}'", nr);
     exit(1);
@@ -2375,18 +2398,18 @@ char *parse_object(FILE *obj_f, int nr)
     if (retval == 3)
       t[3] = 0;
     else if (retval == 4)
-      t[3] = asciiflag_conv_aff(f3);
+      t[3] = flag_slot(asciiflag_conv_aff(f3), f3, "obj", nr);
 
     log("Converting object #%d to 128bits..", nr);
-    GET_OBJ_EXTRA(obj_proto + i)[0] = asciiflag_conv(f1);
+    GET_OBJ_EXTRA(obj_proto + i)[0] = flag_slot(asciiflag_conv(f1), f1, "obj", nr);
     GET_OBJ_EXTRA(obj_proto + i)[1] = 0;
     GET_OBJ_EXTRA(obj_proto + i)[2] = 0;
     GET_OBJ_EXTRA(obj_proto + i)[3] = 0;
-    GET_OBJ_WEAR(obj_proto + i)[0] = asciiflag_conv(f2);
+    GET_OBJ_WEAR(obj_proto + i)[0] = flag_slot(asciiflag_conv(f2), f2, "obj", nr);
     GET_OBJ_WEAR(obj_proto + i)[1] = 0;
     GET_OBJ_WEAR(obj_proto + i)[2] = 0;
     GET_OBJ_WEAR(obj_proto + i)[3] = 0;
-    GET_OBJ_AFFECT(obj_proto + i)[0] = asciiflag_conv_aff(f3);
+    GET_OBJ_AFFECT(obj_proto + i)[0] = flag_slot(asciiflag_conv_aff(f3), f3, "obj", nr);
     GET_OBJ_AFFECT(obj_proto + i)[1] = 0;
     GET_OBJ_AFFECT(obj_proto + i)[2] = 0;
     GET_OBJ_AFFECT(obj_proto + i)[3] = 0;
@@ -2399,18 +2422,18 @@ char *parse_object(FILE *obj_f, int nr)
     log("   done.");
   } else if (retval == 13) {
 
-    GET_OBJ_EXTRA(obj_proto + i)[0] = asciiflag_conv(f1);
-    GET_OBJ_EXTRA(obj_proto + i)[1] = asciiflag_conv(f2);
-    GET_OBJ_EXTRA(obj_proto + i)[2] = asciiflag_conv(f3);
-    GET_OBJ_EXTRA(obj_proto + i)[3] = asciiflag_conv(f4);
-    GET_OBJ_WEAR(obj_proto + i)[0] = asciiflag_conv(f5);
-    GET_OBJ_WEAR(obj_proto + i)[1] = asciiflag_conv(f6);
-    GET_OBJ_WEAR(obj_proto + i)[2] = asciiflag_conv(f7);
-    GET_OBJ_WEAR(obj_proto + i)[3] = asciiflag_conv(f8);
-    GET_OBJ_AFFECT(obj_proto + i)[0] = asciiflag_conv(f9);
-    GET_OBJ_AFFECT(obj_proto + i)[1] = asciiflag_conv(f10);
-    GET_OBJ_AFFECT(obj_proto + i)[2] = asciiflag_conv(f11);
-    GET_OBJ_AFFECT(obj_proto + i)[3] = asciiflag_conv(f12);
+    GET_OBJ_EXTRA(obj_proto + i)[0] = flag_slot(asciiflag_conv(f1), f1, "obj", nr);
+    GET_OBJ_EXTRA(obj_proto + i)[1] = flag_slot(asciiflag_conv(f2), f2, "obj", nr);
+    GET_OBJ_EXTRA(obj_proto + i)[2] = flag_slot(asciiflag_conv(f3), f3, "obj", nr);
+    GET_OBJ_EXTRA(obj_proto + i)[3] = flag_slot(asciiflag_conv(f4), f4, "obj", nr);
+    GET_OBJ_WEAR(obj_proto + i)[0] = flag_slot(asciiflag_conv(f5), f5, "obj", nr);
+    GET_OBJ_WEAR(obj_proto + i)[1] = flag_slot(asciiflag_conv(f6), f6, "obj", nr);
+    GET_OBJ_WEAR(obj_proto + i)[2] = flag_slot(asciiflag_conv(f7), f7, "obj", nr);
+    GET_OBJ_WEAR(obj_proto + i)[3] = flag_slot(asciiflag_conv(f8), f8, "obj", nr);
+    GET_OBJ_AFFECT(obj_proto + i)[0] = flag_slot(asciiflag_conv(f9), f9, "obj", nr);
+    GET_OBJ_AFFECT(obj_proto + i)[1] = flag_slot(asciiflag_conv(f10), f10, "obj", nr);
+    GET_OBJ_AFFECT(obj_proto + i)[2] = flag_slot(asciiflag_conv(f11), f11, "obj", nr);
+    GET_OBJ_AFFECT(obj_proto + i)[3] = flag_slot(asciiflag_conv(f12), f12, "obj", nr);
 
   } else {
     log("SYSERR: Format error in first numeric line (expecting 13 args, got %d), %s", retval, buf2);
@@ -2664,10 +2687,10 @@ static void load_zones(FILE *fl, char *zonename)
   else
   {
     /* We found 10 values, so deal with the strings */
-    Z.zone_flags[0] = asciiflag_conv(zbuf1);
-    Z.zone_flags[1] = asciiflag_conv(zbuf2);
-    Z.zone_flags[2] = asciiflag_conv(zbuf3);
-    Z.zone_flags[3] = asciiflag_conv(zbuf4);
+    Z.zone_flags[0] = flag_slot(asciiflag_conv(zbuf1), zbuf1, "zone", Z.number);
+    Z.zone_flags[1] = flag_slot(asciiflag_conv(zbuf2), zbuf2, "zone", Z.number);
+    Z.zone_flags[2] = flag_slot(asciiflag_conv(zbuf3), zbuf3, "zone", Z.number);
+    Z.zone_flags[3] = flag_slot(asciiflag_conv(zbuf4), zbuf4, "zone", Z.number);
   }
   if (Z.bot > Z.top) {
     log("SYSERR: Zone %d bottom (%d) > top (%d).", Z.number, Z.bot, Z.top);
@@ -4482,9 +4505,9 @@ static int check_object(struct obj_data *obj)
 
   tb_snprintf(objname, sizeof(objname), "Object #%d (%s)", GET_OBJ_VNUM(obj), obj->short_description);
   for(y = 0; y < TW_ARRAY_MAX; y++) {
-    error |= check_bitvector_names(GET_OBJ_WEAR(obj)[y], wear_bits_count, objname, "object wear");
-    error |= check_bitvector_names(GET_OBJ_EXTRA(obj)[y], extra_bits_count, objname, "object extra");
-    error |= check_bitvector_names(GET_OBJ_AFFECT(obj)[y], affected_bits_count, objname, "object affect");
+    error |= check_bitvector_names((unsigned int)GET_OBJ_WEAR(obj)[y], wear_bits_count, objname, "object wear");
+    error |= check_bitvector_names((unsigned int)GET_OBJ_EXTRA(obj)[y], extra_bits_count, objname, "object extra");
+    error |= check_bitvector_names((unsigned int)GET_OBJ_AFFECT(obj)[y], affected_bits_count, objname, "object affect");
   }
 
   switch (GET_OBJ_TYPE(obj)) {

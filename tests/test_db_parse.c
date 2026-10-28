@@ -647,6 +647,20 @@ static void parse_room_skips_disabled_diagonal_exit(void)
   room_fixture_free();
 }
 
+/* B1-24: flag letter 'G' is bit 32, which the int room-flag slot cannot
+ * hold; it used to vanish without a word. 'F' (bit 31) still fits. */
+static void parse_room_reports_flag_bit_past_slot(void)
+{
+  static const char text[] = "Hall~\nA hall.\n~\n0 aFG 0 0 0 0\nS\n$\n";
+
+  room_fixture_use();
+  parse_room_text(text, 107);
+  TEST_ASSERT_EQUAL_UINT32(0x80000001u, (unsigned int)world[top_of_world].room_flags[0]);
+  TEST_ASSERT_EQUAL_STRING("flag-parse", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "room vnum 107: flags 'aFG' set bit 32"));
+  room_fixture_free();
+}
+
 /* ---------------------------------------------------------------------
  * fread_string()/fread_clean_string(): '~'-terminated strings
  * ------------------------------------------------------------------- */
@@ -1225,6 +1239,7 @@ int main(void)
   RUN_TEST(parse_room_rejects_negative_legacy_sector);
   RUN_TEST(parse_room_keeps_valid_sector);
   RUN_TEST(parse_room_skips_disabled_diagonal_exit);
+  RUN_TEST(parse_room_reports_flag_bit_past_slot);
   RUN_TEST(file_to_string_loads_whole_multiline_file);
   RUN_TEST(file_to_string_joins_long_lines_and_keeps_last_char);
   RUN_TEST(file_to_string_rejects_oversized_file);
