@@ -209,7 +209,7 @@ static int parse_int_token(char **cursor, int *out)
     return 0;
 
   p = *cursor;
-  while (isspace((unsigned char)*p))
+  while (tb_ascii_space((unsigned char)*p))
     p++;
 
   errno = 0;
@@ -231,10 +231,10 @@ static int parse_word_token(char **cursor, char *out, size_t out_size)
     return 0;
 
   p = *cursor;
-  while (isspace((unsigned char)*p))
+  while (tb_ascii_space((unsigned char)*p))
     p++;
 
-  while (p[len] != '\0' && !isspace((unsigned char)p[len]))
+  while (p[len] != '\0' && !tb_ascii_space((unsigned char)p[len]))
     len++;
 
   if (len == 0 || len >= out_size)
@@ -617,7 +617,7 @@ unsigned long asciiflag_conv(const char *flag)
     if (bit >= 0)
       flags |= 1UL << bit;
 
-    if (!isdigit(c))
+    if (c < '0' || c > '9')
       is_number = 0;
   }
 
