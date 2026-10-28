@@ -200,8 +200,18 @@ void event_cancel_at(struct event *event, const char *file, int line,
 { (void)event; (void)file; (void)line; (void)func; }
 trig_data *read_trigger(int nr) { (void)nr; return NULL; }
 void extract_trigger(struct trig_data *trig) { (void)trig; }
+int fx_last_event_id = -1;
+void *fx_last_event_struct;
+char fx_last_event_vars[64];
 struct mud_event_data *new_mud_event(event_id iId, void *pStruct, char *sVariables)
-{ (void)iId; (void)pStruct; (void)sVariables; return NULL; }
+{
+  fx_last_event_id = (int) iId;
+  fx_last_event_struct = pStruct;
+  if (snprintf(fx_last_event_vars, sizeof(fx_last_event_vars), "%s",
+               sVariables ? sVariables : "") < 0)
+    fx_last_event_vars[0] = '\0';
+  return NULL;
+}
 void attach_mud_event(struct mud_event_data *pMudEvent, long time)
 { (void)pMudEvent; (void)time; }
 struct mud_event_data *char_has_mud_event(struct char_data *ch, event_id iId)
@@ -218,6 +228,9 @@ void fx_setup(int rooms)
   fx_rand_value = -1;
   fx_core_dumps = fx_log_lines = 0;
   fx_last_send[0] = '\0';
+  fx_last_event_id = -1;
+  fx_last_event_struct = NULL;
+  fx_last_event_vars[0] = '\0';
   object_list = NULL;
   world = calloc((size_t) rooms, sizeof(struct room_data));
   if (!world)

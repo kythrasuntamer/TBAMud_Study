@@ -1027,5 +1027,14 @@ void mag_rooms(int level, struct char_data *ch, int spellnum)
   send_to_char(ch, "%s\r\n", msg);
   act(room, FALSE, ch, 0, 0, TO_ROOM);
   
-  NEW_EVENT(eSPL_DARKNESS, &world[rnum], NULL, duration * PASSES_PER_SEC);
+  /* The expiry event is keyed by room vnum, never by &world[rnum]: OLC
+   * room creation reallocates world[] and room deletion shifts it while
+   * the event is pending, and event_countdown() would then read a freed
+   * or wrong room. eSPL_DARKNESS is a world event for the same reason. */
+  {
+    char vnum_buf[32];
+
+    tb_snprintf(vnum_buf, sizeof(vnum_buf), "%d", (int) GET_ROOM_VNUM(rnum));
+    NEW_EVENT(eSPL_DARKNESS, NULL, vnum_buf, duration * PASSES_PER_SEC);
+  }
 }

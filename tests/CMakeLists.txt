@@ -706,6 +706,16 @@ add_gameplay_test(test_act_item ${CMAKE_CURRENT_SOURCE_DIR}/test_act_item.c)
 add_gameplay_test(test_fight ${CMAKE_CURRENT_SOURCE_DIR}/test_fight.c)
 add_gameplay_test(test_magic ${CMAKE_CURRENT_SOURCE_DIR}/test_magic.c)
 
+# Production event_countdown() (mud_event.c): room-keyed event expiry.
+add_mud_test(test_mud_event
+    ${MUD_SRCDIR}/mud_event.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_mud_event.c
+)
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_compile_options(test_mud_event PRIVATE -ffunction-sections -fdata-sections)
+    target_link_options(test_mud_event PRIVATE -Wl,--gc-sections)
+endif()
+
 find_package(Python3 COMPONENTS Interpreter QUIET)
 if(Python3_Interpreter_FOUND)
     add_test(NAME test_dg_memory_callback_contract

@@ -24,8 +24,43 @@ struct mud_event_list mud_event_index[] = {
   { "Null"         , NULL           , -1          },  /* eNULL */
   { "Protocol"     , get_protocols  , EVENT_DESC  },  /* ePROTOCOLS */
   { "Whirlwind"    , event_whirlwind, EVENT_CHAR  },  /* eWHIRLWIND */
-  { "Spell:Darkness",event_countdown, EVENT_ROOM  }   /* eSPL_DARKNESS */
+  /* A world event whose sVariables hold the room vnum (see mag_rooms):
+   * a room_data pointer would dangle when OLC reallocates world[]. */
+  { "Spell:Darkness",event_countdown, EVENT_WORLD }   /* eSPL_DARKNESS */
 };
+
+/* Resolves the room vnum a room-keyed event carries in sVariables.
+ * Returns NOWHERE, after reporting "room-event-stale", when the text is
+ * not a vnum or the room no longer exists (deleted in OLC). */
+static room_rnum event_room_from_vnum(const struct mud_event_data *pMudEvent)
+{
+  const char *text = pMudEvent->sVariables;
+  char *end = NULL;
+  long vnum;
+  room_rnum rnum;
+
+  if (!text || !*text) {
+    TB_ERROR_MSG("event", "room-event-stale", "room",
+                 "event %d (%s) carries no room vnum", (int) pMudEvent->iId,
+                 mud_event_index[pMudEvent->iId].event_name);
+    return NOWHERE;
+  }
+  errno = 0;
+  vnum = strtol(text, &end, 10);
+  if (errno || *end || vnum < 0 || vnum >= NOWHERE) {
+    TB_ERROR_MSG("event", "room-event-stale", "room",
+                 "event %d (%s) room vnum text of %zu bytes is not a vnum",
+                 (int) pMudEvent->iId,
+                 mud_event_index[pMudEvent->iId].event_name, strlen(text));
+    return NOWHERE;
+  }
+  if ((rnum = real_room((room_vnum) vnum)) == NOWHERE)
+    TB_WARN_MSG("event", "room-event-stale", "room",
+                "room vnum %ld gone before event %d (%s) expiry", vnum,
+                (int) pMudEvent->iId,
+                mud_event_index[pMudEvent->iId].event_name);
+  return rnum;
+}
 
 /* init_events() is the ideal function for starting global events. This
  * might be the case if you were to move the contents of heartbeat() into
@@ -72,6 +107,9 @@ EVENTFUNC(event_countdown)
 
   switch (pMudEvent->iId) {
     case eSPL_DARKNESS:
+      /* Keyed by vnum: the room may have been deleted meanwhile. */
+      if ((rnum = event_room_from_vnum(pMudEvent)) == NOWHERE)
+        break;
       REMOVE_BIT_AR(ROOM_FLAGS(rnum), ROOM_DARK);
       send_to_room(rnum, "The dark shroud disappates.\r\n");
       break;

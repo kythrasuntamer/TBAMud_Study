@@ -12,6 +12,7 @@
 #include "fight.h"
 #include "spells.h"
 #include "dg_scripts.h"
+#include "mud_event.h"
 
 /* utils.c is linked, so its tb_error_log_at() exists; the test build wraps
  * calls from the code under test to this capturing version. */
@@ -143,9 +144,25 @@ static void test_animate_dead_moves_contents(void)
   fx_free_char(pc);
 }
 
+/* H1-10: the darkness expiry event carries the room vnum, not a pointer
+ * into world[] that OLC can reallocate before it fires. */
+static void test_darkness_event_is_keyed_by_room_vnum(void)
+{
+  struct char_data *pc = fx_new_char("necro", FALSE, 1);
+
+  mag_rooms(10, pc, SPELL_DARKNESS);
+
+  TEST_ASSERT_TRUE(ROOM_FLAGGED(1, ROOM_DARK));
+  TEST_ASSERT_EQUAL_INT(eSPL_DARKNESS, fx_last_event_id);
+  TEST_ASSERT_NULL(fx_last_event_struct);
+  TEST_ASSERT_EQUAL_STRING("3001", fx_last_event_vars);
+  fx_free_char(pc);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(test_darkness_event_is_keyed_by_room_vnum);
   RUN_TEST(test_animate_dead_survives_load_trigger_purging_corpse);
   RUN_TEST(test_animate_dead_with_purged_zombie);
   RUN_TEST(test_animate_dead_moves_contents);

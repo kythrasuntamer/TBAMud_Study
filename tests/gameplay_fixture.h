@@ -43,6 +43,10 @@ extern int fx_core_dumps;
 extern int fx_log_lines;
 /* Last text sent to a character with send_to_char(), any recipient. */
 extern char fx_last_send[512];
+/* Arguments of the last new_mud_event() call (no event is scheduled). */
+extern int fx_last_event_id;
+extern void *fx_last_event_struct;
+extern char fx_last_event_vars[64];
 
 /* The tests link utils.c, so tb_error_capture.h's capturing reporter is
  * compiled under this name and the linker (--wrap=tb_error_log_at) routes
