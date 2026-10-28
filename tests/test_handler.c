@@ -333,6 +333,62 @@ static void test_free_group_with_members_is_refused(void)
   global_lists = NULL;
 }
 
+/* Coordinator item (exit(1) on NOWHERE): a character stranded in NOWHERE
+ * by an earlier, reported failure (char_to_room() refusing an invalid
+ * room) is reachable from ordinary input: the stranded player quits, or a
+ * builder purges it. extract_char_final() must recover it, reported,
+ * instead of aborting the server. */
+static int freed_chars;
+void free_char(struct char_data *ch) { freed_chars++; free(ch); }
+void die_follower(struct char_data *ch) { (void)ch; }
+void forget(struct char_data *ch, struct char_data *victim)
+{ (void)ch; (void)victim; }
+void clearMemory(struct char_data *ch) { (void)ch; }
+void extract_script(void *thing, int type) { (void)thing; (void)type; }
+void extract_script_mem(struct script_memory *sc) { (void)sc; }
+void save_char(struct char_data *ch) { (void)ch; }
+int Crash_delete_crashfile(struct char_data *ch) { (void)ch; return 0; }
+void do_return(struct char_data *ch, char *argument, int cmd, int subcmd)
+{ (void)ch; (void)argument; (void)cmd; (void)subcmd; }
+struct char_data *combat_list = NULL;
+void char_from_furniture(struct char_data *ch) { (void)ch; }
+
+static void test_extract_stranded_character_is_recovered(void)
+{
+  struct room_data start_room;
+  struct obj_data *loot;
+  struct char_data *mob = calloc(1, sizeof(*mob));
+
+  TEST_ASSERT_NOT_NULL(mob);
+  memset(&start_room, 0, sizeof(start_room));
+  start_room.number = 3001;
+  world = &start_room;
+  top_of_world = 0;
+  r_mortal_start_room = 0;
+  freed_chars = 0;
+
+  SET_BIT_AR(MOB_FLAGS(mob), MOB_ISNPC);
+  mob->nr = NOBODY;
+  mob->player_specials = &dummy_mob;
+  IN_ROOM(mob) = NOWHERE;             /* stranded */
+  loot = calloc(1, sizeof(*loot));
+  TEST_ASSERT_NOT_NULL(loot);
+  loot->item_number = NOTHING;
+  loot->in_room = NOWHERE;
+  obj_to_char(loot, mob);
+
+  extract_char_final(mob);            /* used to abort the server */
+
+  TEST_ASSERT_EQUAL_INT(1, freed_chars);
+  TEST_ASSERT_EQUAL_STRING("extract-from-nowhere", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "room vnum 3001"));
+  TEST_ASSERT_EQUAL_STRING("ERROR", tb_captured_severity);
+  TEST_ASSERT_EQUAL_PTR(loot, start_room.contents);   /* dropped there */
+  TEST_ASSERT_NULL(start_room.people);
+  world = NULL;
+  free(loot);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -346,5 +402,6 @@ int main(void)
   RUN_TEST(test_char_to_room_invalid_room_names_caller);
   RUN_TEST(test_long_inventory_is_updated_without_deep_recursion);
   RUN_TEST(test_free_group_with_members_is_refused);
+  RUN_TEST(test_extract_stranded_character_is_recovered);
   return UNITY_END();
 }

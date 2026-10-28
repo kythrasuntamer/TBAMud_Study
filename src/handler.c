@@ -444,10 +444,15 @@ void char_from_room_at(const char *src_file, int src_line,
                  src_func);
     abort();
   }
-  if (IN_ROOM(ch) == NOWHERE) {
+  /* NOWHERE, or an rnum past top_of_world, which would index world[] out
+   * of bounds below. Callers that can meet a stranded character (one left
+   * in NOWHERE by an earlier, reported failure) must check first and
+   * refuse; see extract_char_final(). */
+  if (!VALID_ROOM_RNUM(IN_ROOM(ch))) {
     TB_FATAL_MSG("handler", "char-from-nowhere", "room",
-                 DIAG_CHAR_FMT " is in NOWHERE; caller=%s:%d %s",
-                 DIAG_CHAR(ch), src_file, src_line, src_func);
+                 DIAG_CHAR_FMT " is in no valid room (rnum %d); "
+                 "caller=%s:%d %s", DIAG_CHAR(ch), (int) IN_ROOM(ch),
+                 src_file, src_line, src_func);
     abort();
   }
 
@@ -1097,12 +1102,27 @@ void extract_char_final(struct char_data *ch)
   struct obj_data *obj;
   int i;
 
-  /* Every live character is in a room; a NOWHERE character here means the
-   * room lists are already inconsistent. Abort with a core. */
-  if (IN_ROOM(ch) == NOWHERE) {
+  /* Every live character should be in a room, but ordinary input can
+   * strand one in NOWHERE after an earlier, already reported failure:
+   * char_to_room() refuses an invalid room and leaves its character in
+   * NOWHERE (e.g. comm.c's return from the void to a was_in rnum that OLC
+   * room deletion made stale), and the stranded player then quits or is
+   * purged. Recover rather than take the server down: report it and place
+   * it in the mortal start room, so its objects and room links are handled
+   * as usual below. A corrupt rnum, or no start room to recover into, is
+   * unrecoverable. */
+  if (IN_ROOM(ch) == NOWHERE && VALID_ROOM_RNUM(r_mortal_start_room)) {
+    TB_ERROR_MSG("handler", "extract-from-nowhere", "char",
+                 DIAG_CHAR_FMT " is in NOWHERE at final extraction; placed "
+                 "in " DIAG_ROOM_FMT " to be extracted", DIAG_CHAR(ch),
+                 DIAG_ROOM(r_mortal_start_room));
+    char_to_room(ch, r_mortal_start_room);
+  }
+  if (!VALID_ROOM_RNUM(IN_ROOM(ch))) {
     TB_FATAL_MSG("handler", "extract-from-nowhere", "char",
-                 DIAG_CHAR_FMT " is in NOWHERE at final extraction",
-                 DIAG_CHAR(ch));
+                 DIAG_CHAR_FMT " is in no valid room (rnum %d) at final "
+                 "extraction and cannot be recovered", DIAG_CHAR(ch),
+                 (int) IN_ROOM(ch));
     abort();
   }
 
