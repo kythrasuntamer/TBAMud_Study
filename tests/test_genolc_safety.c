@@ -810,6 +810,24 @@ static void save_rooms_handles_null_exdesc_description(void)
 }
 
 /* ------------------------------------------------------------------------ */
+/* C2-V01: start rooms above a deleted room move down with world[].         */
+/* ------------------------------------------------------------------------ */
+static void delete_room_renumbers_start_rooms(void)
+{
+  make_zones(1); make_rooms(4);
+  r_mortal_start_room = 3;             /* vnum 40, the last room */
+  r_immort_start_room = 2;             /* vnum 30 */
+  r_frozen_start_room = 1;             /* vnum 20: deleted below */
+  TEST_ASSERT_TRUE(delete_room(1));
+  TEST_ASSERT_EQUAL_INT(40, world[r_mortal_start_room].number);
+  TEST_ASSERT_EQUAL_INT(30, world[r_immort_start_room].number);
+  TEST_ASSERT_EQUAL_UINT(0, r_frozen_start_room);
+  TEST_ASSERT_EQUAL_STRING("room-delete-start", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "frozen"));
+  r_mortal_start_room = r_immort_start_room = r_frozen_start_room = 0;
+}
+
+/* ------------------------------------------------------------------------ */
 /* Temporary world directory for the writers.                               */
 /* ------------------------------------------------------------------------ */
 static char test_root[] = "/tmp/tb-genolc-XXXXXX";
@@ -881,6 +899,7 @@ int main(void)
   RUN_TEST(create_new_zone_rejects_overlapping_range);
   RUN_TEST(create_new_zone_keeps_existing_file);
   RUN_TEST(save_rooms_handles_null_exdesc_description);
+  RUN_TEST(delete_room_renumbers_start_rooms);
   failures = UNITY_END();
   leave_test_root();
   return failures;

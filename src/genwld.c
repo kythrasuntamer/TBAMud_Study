@@ -182,18 +182,31 @@ int delete_room(room_rnum rnum)
   /* This is something you might want to read about in the logs. */
   log("GenOLC: delete_room: Deleting room #%d (%s).", room->number, room->name);
 
+  /* The start rooms are rnums.  One equal to the deleted room falls back to
+   * the Void; one above it must move down with the world[] shift below
+   * (mirroring add_room()), or it names the following room, or
+   * top_of_world + 1 when it was the last room. */
   if (r_mortal_start_room == rnum) {
-    log("WARNING: GenOLC: delete_room: Deleting mortal start room!");
+    TB_WARN_MSG("olc", "room-delete-start", "room",
+                "deleted room vnum %d was the mortal start room; reset to the Void",
+                room->number);
     r_mortal_start_room = 0;	/* The Void */
-  }
+  } else if (r_mortal_start_room != NOWHERE && r_mortal_start_room > rnum)
+    r_mortal_start_room--;
   if (r_immort_start_room == rnum) {
-    log("WARNING: GenOLC: delete_room: Deleting immortal start room!");
+    TB_WARN_MSG("olc", "room-delete-start", "room",
+                "deleted room vnum %d was the immortal start room; reset to the Void",
+                room->number);
     r_immort_start_room = 0;	/* The Void */
-  }
+  } else if (r_immort_start_room != NOWHERE && r_immort_start_room > rnum)
+    r_immort_start_room--;
   if (r_frozen_start_room == rnum) {
-    log("WARNING: GenOLC: delete_room: Deleting frozen start room!");
+    TB_WARN_MSG("olc", "room-delete-start", "room",
+                "deleted room vnum %d was the frozen start room; reset to the Void",
+                room->number);
     r_frozen_start_room = 0;	/* The Void */
-  }
+  } else if (r_frozen_start_room != NOWHERE && r_frozen_start_room > rnum)
+    r_frozen_start_room--;
 
   /* Dump the contents of this room into the Void.  We could also just extract 
    * the people, mobs, and objects here. */
