@@ -1076,3 +1076,18 @@ if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
     set_source_files_properties(${MUD_SRCDIR}/act.wizard.c
         PROPERTIES COMPILE_OPTIONS "-ffunction-sections;-fdata-sections")
 endif()
+
+# B2-21: save_char() must never fire wear/remove triggers. players.c stops
+# with an #error when NO_EXTRANEOUS_TRIGGERS is undefined; the shim header
+# undefines it behind dg_scripts.h's include guard, as a builder enabling
+# those triggers would. The test passes only if that #error is reported
+# (exit status is ignored when PASS_REGULAR_EXPRESSION is set).
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    add_test(NAME test_players_extraneous_triggers_rejected
+        COMMAND ${CMAKE_C_COMPILER} -std=gnu99 -fsyntax-only
+                -I${CMAKE_SOURCE_DIR}/src -I${CMAKE_BINARY_DIR}
+                -include ${CMAKE_CURRENT_SOURCE_DIR}/players_extraneous_triggers_shim.h
+                ${CMAKE_SOURCE_DIR}/src/players.c)
+    set_tests_properties(test_players_extraneous_triggers_rejected PROPERTIES
+        PASS_REGULAR_EXPRESSION "does not fire wear/remove triggers \\(B2-21\\)")
+endif()

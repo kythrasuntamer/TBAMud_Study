@@ -659,8 +659,27 @@ static void free_affects(struct char_data *ch)
   while (ch->affected)
     affect_remove(ch, ch->affected);
 }
-struct obj_data *unequip_char(struct char_data *ch, int pos) { (void)ch; (void)pos; return NULL; }
-void equip_char_at(const char *src_file, int src_line, const char *src_func, struct char_data *ch, struct obj_data *obj, int pos) { (void)src_file; (void)src_line; (void)src_func;  (void)ch; (void)obj; (void)pos; }
+/* Like handler.c, minus the affects: an item moves between slot and hand. */
+static int equips;
+struct obj_data *unequip_char(struct char_data *ch, int pos)
+{
+  struct obj_data *obj = GET_EQ(ch, pos);
+  GET_EQ(ch, pos) = NULL;
+  return obj;
+}
+void equip_char_at(const char *src_file, int src_line, const char *src_func,
+                   struct char_data *ch, struct obj_data *obj, int pos)
+{
+  (void)src_file; (void)src_line; (void)src_func;
+  TEST_ASSERT_NULL(GET_EQ(ch, pos));
+  GET_EQ(ch, pos) = obj;
+  equips++;
+}
+/* B2-21: save_char() must run no script. These fail any test that does. */
+int remove_otrigger(obj_data *obj, char_data *actor)
+{ (void)obj; (void)actor; TEST_FAIL_MESSAGE("save_char fired a remove trigger"); return 1; }
+int wear_otrigger(obj_data *obj, char_data *actor, int where)
+{ (void)obj; (void)actor; (void)where; TEST_FAIL_MESSAGE("save_char fired a wear trigger"); return 1; }
 void strip_cr(char *buf) { (void)buf; }
 void save_char_vars_ascii(FILE *file, struct char_data *ch) { (void)file; (void)ch; }
 
@@ -712,6 +731,33 @@ static void test_save_of_unindexed_player_is_reported(void)
     (void)remove(path);
 }
 
+/* B2-21: save_char() takes every worn item off and puts it back in its own
+ * slot with no trigger in between (a remove or wear trigger it used to
+ * fire could purge an item it was still holding). */
+static void test_save_restores_worn_items_without_triggers(void)
+{
+  struct obj_data ring, cloak;
+  char path[512];
+
+  memset(&ring, 0, sizeof(ring));
+  memset(&cloak, 0, sizeof(cloak));
+  player.player.name = strdup("Tester");
+  GET_IDNUM(&player) = 4242;
+  GET_PFILEPOS(&player) = 0;
+  GET_EQ(&player, WEAR_FINGER_R) = &ring;
+  GET_EQ(&player, WEAR_ABOUT) = &cloak;
+  equips = 0;
+
+  save_char(&player);
+
+  TEST_ASSERT_EQUAL_PTR(&ring, GET_EQ(&player, WEAR_FINGER_R));
+  TEST_ASSERT_EQUAL_PTR(&cloak, GET_EQ(&player, WEAR_ABOUT));
+  TEST_ASSERT_EQUAL_INT(2, equips);
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  if (get_filename(path, sizeof(path), PLR_FILE, "Tester"))
+    (void)remove(path);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -743,6 +789,7 @@ int main(void)
   RUN_TEST(test_negative_class_is_rejected_at_load);
   RUN_TEST(test_lookups_after_free_player_index_find_nothing);
   RUN_TEST(test_remove_player_rejects_bad_position);
+  RUN_TEST(test_save_restores_worn_items_without_triggers);
   (void)rmdir(scratch_dir);
   return UNITY_END();
 }

@@ -49,6 +49,20 @@
 #include "quest.h"
 #include "modify.h" /* for parse_at */
 
+/* save_char() takes off every worn item and puts it back, so that base
+ * stats are written. With NO_EXTRANEOUS_TRIGGERS undefined it used to fire
+ * each item's remove and wear triggers on the way, running DG scripts while
+ * the equipment sat in a local array and the affects were stripped. A
+ * script that purged an item left a freed pointer there, which was then
+ * equipped or given back (use after free, B2-21); one that made the player
+ * wear something into an emptied slot could get that item's bonuses
+ * written into the saved stats. save_char() therefore runs no scripts, and
+ * a build that asks for those triggers stops here instead of compiling the
+ * unsafe path. */
+#ifndef NO_EXTRANEOUS_TRIGGERS
+#error "save_char() does not fire wear/remove triggers (B2-21): keep NO_EXTRANEOUS_TRIGGERS defined in dg_scripts.h"
+#endif
+
 #define LOAD_HIT	0
 #define LOAD_MANA	1
 #define LOAD_MOVE	2
@@ -969,11 +983,12 @@ int load_char(const char *name, struct char_data *ch)
 
 /** Write a player's file (the ASCII player file save routine).
  * Side effects, all undone before return: every worn item is unequipped
- * (firing wear/remove triggers unless NO_EXTRANEOUS_TRIGGERS) and every
- * affect is removed so the base stats can be written, then both are put
- * back. Not reentrant: a trigger fired from here must not save the same
- * character. At most MAX_AFFECT affects are written; extra ones stay on the
- * character and are reported (save-affects).
+ * and every affect is removed so the base stats can be written, then both
+ * are put back. No wear/remove trigger fires and no script runs in between
+ * (see the B2-21 note at the top of this file), so nothing can purge an
+ * item or re-enter save_char() mid-save. At most MAX_AFFECT affects are
+ * written; extra ones stay on the character and are reported
+ * (save-affects).
  * The file is staged and replaced only after every write succeeded; any
  * failure is reported and leaves the previous file in place. Afterwards the
  * player index entry is refreshed (and the index rewritten if it changed).
@@ -1042,14 +1057,11 @@ void save_char(struct char_data * ch)
     return;
   }
 
-  /* Unaffect everything a character can be affected by. */
+  /* Unaffect everything a character can be affected by. No remove
+   * trigger: char_eq[] must not be left holding an item a script purged. */
   for (i = 0; i < NUM_WEARS; i++) {
-    if (GET_EQ(ch, i)) {
+    if (GET_EQ(ch, i))
       char_eq[i] = unequip_char(ch, i);
-#ifndef NO_EXTRANEOUS_TRIGGERS
-      remove_otrigger(char_eq[i], ch);
-#endif
-    }
     else
       char_eq[i] = NULL;
   }
@@ -1249,17 +1261,10 @@ void save_char(struct char_data * ch)
     affect_to_char(ch, &extra_aff[i]);
   free(extra_aff);
 
-  for (i = 0; i < NUM_WEARS; i++) {
+  /* Every item goes back to the slot it came from; no wear trigger (B2-21). */
+  for (i = 0; i < NUM_WEARS; i++)
     if (char_eq[i])
-#ifndef NO_EXTRANEOUS_TRIGGERS
-        if (wear_otrigger(char_eq[i], ch, i))
-#endif
-    equip_char(ch, char_eq[i], i);
-#ifndef NO_EXTRANEOUS_TRIGGERS
-          else
-          obj_to_char(char_eq[i], ch);
-#endif
-  }
+      equip_char(ch, char_eq[i], i);
   /* end char_to_store code */
 
   if (save_failed)
