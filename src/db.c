@@ -41,6 +41,12 @@
 #include "screen.h"
 #include <sys/stat.h>
 
+/** fgets() window used by fread_string() and fread_clean_string(). Their
+ * chunk buffer is FREAD_CHUNK + 3 bytes: a final chunk with no newline holds
+ * FREAD_CHUNK - 1 characters, and the "\r\n" splice then writes three bytes
+ * ('\r', '\n', NUL) after the last character. */
+#define FREAD_CHUNK 512
+
 /*  declarations of most of the 'global' variables */
 struct config_data config_info; /* Game configuration list.	 */
 
@@ -3252,14 +3258,14 @@ int is_empty(zone_rnum zone_nr)
 /* read and allocate space for a '~'-terminated string from a given file */
 char *fread_string(FILE *fl, const char *error)
 {
-  char buf[MAX_STRING_LENGTH], tmp[513];
+  char buf[MAX_STRING_LENGTH], tmp[FREAD_CHUNK + 3];
   char *point;
   int done = 0, length = 0, templength;
 
   *buf = '\0';
 
   do {
-    if (!fgets(tmp, 512, fl)) {
+    if (!fgets(tmp, FREAD_CHUNK, fl)) {
       log("SYSERR: fread_string: format error at or near %s", error);
       exit(1);
     }
@@ -3273,6 +3279,21 @@ char *fread_string(FILE *fl, const char *error)
     /* If there is a '~', end the string; else put an "\r\n" over the '\n'. */
     /* now only removes trailing ~'s -- Welcor */
     point = strchr(tmp, '\0');
+    /* A chunk with no '\n' that is not the end of the file is the front of a
+     * line longer than the fgets() window (the OLC and IBT editors accept
+     * 511-byte lines). Append it unchanged so the line is rejoined instead of
+     * being split by an inserted "\r\n". */
+    if (point[-1] != '\n' && point[-1] != '~' && !feof(fl)) {
+      templength = point - tmp;
+      if (length + templength >= MAX_STRING_LENGTH) {
+        log("SYSERR: %s: string too large (db.c)", __func__);
+        log("%s", error);
+        exit(1);
+      }
+      strlcat(buf, tmp, sizeof(buf));	/* size checked above */
+      length += templength;
+      continue;
+    }
     for (point-- ; (*point=='\r' || *point=='\n') && point > tmp; point--);
     if (*point=='~') {
       *point='\0';
@@ -3307,7 +3328,7 @@ char *fread_string(FILE *fl, const char *error)
 /* fread_clean_string is the same as fread_string, but skips preceding spaces */
 char *fread_clean_string(FILE *fl, const char *error)
 {
-  char buf[MAX_STRING_LENGTH], tmp[513];
+  char buf[MAX_STRING_LENGTH], tmp[FREAD_CHUNK + 3];
   char *point;
   int c;
   int done = 0, length = 0, templength;
@@ -3334,7 +3355,7 @@ char *fread_clean_string(FILE *fl, const char *error)
   }
 
   do {
-    if (!fgets(tmp, 512, fl)) {
+    if (!fgets(tmp, FREAD_CHUNK, fl)) {
       log("SYSERR: fread_clean_string: format error at or near %s", error);
       exit(1);
     }
@@ -3347,6 +3368,21 @@ char *fread_clean_string(FILE *fl, const char *error)
     /* If there is a '~', end the string; else put an "\r\n" over the '\n'. */
     /* now only removes trailing ~'s -- Welcor */
     point = strchr(tmp, '\0');
+    /* A chunk with no '\n' that is not the end of the file is the front of a
+     * line longer than the fgets() window (the OLC and IBT editors accept
+     * 511-byte lines). Append it unchanged so the line is rejoined instead of
+     * being split by an inserted "\r\n". */
+    if (point[-1] != '\n' && point[-1] != '~' && !feof(fl)) {
+      templength = point - tmp;
+      if (length + templength >= MAX_STRING_LENGTH) {
+        log("SYSERR: %s: string too large (db.c)", __func__);
+        log("%s", error);
+        exit(1);
+      }
+      strlcat(buf, tmp, sizeof(buf));	/* size checked above */
+      length += templength;
+      continue;
+    }
     /* Stop at tmp[0]: a body line that is only "\r\n" (a blank line typed in
      * the IBT editor) used to walk below tmp while stack bytes were CR/LF. */
     for (point-- ; (*point=='\r' || *point=='\n') && point > tmp; point--);

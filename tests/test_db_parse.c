@@ -474,9 +474,50 @@ static void fread_clean_string_reports_nul_at_line_start(void)
   free(s);
 }
 
+/* B1-05: a 600-character line with no newline in the first fgets() window
+ * used to get "\r\n" written at tmp[511..513], one byte past the array
+ * (ASan: stack-buffer-overflow). The long line now comes back whole. */
+static void check_long_line(char *(*reader)(FILE *, const char *))
+{
+  char text[700], expect[700];
+  char *s;
+
+  memset(text, 'q', 600);
+  memcpy(text + 600, "\nend~\n", 7);
+  memset(expect, 'q', 600);
+  memcpy(expect + 600, "\r\nend", 6);
+  s = read_tilde(reader, text, strlen(text));
+  TEST_ASSERT_EQUAL_STRING(expect, s);
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  free(s);
+}
+
+static void fread_string_rejoins_long_line(void)
+{ check_long_line(fread_string); }
+
+static void fread_clean_string_rejoins_long_line(void)
+{ check_long_line(fread_clean_string); }
+
+/* A 511-character final chunk with no newline and no '~' at EOF used to take
+ * the "\r\n" splice to tmp[513]; it now ends in the format-error exit. */
+static void fread_string_long_unterminated_tail_exits(void)
+{
+  char text[520];
+  FILE *volatile fp;
+
+  memset(text, 'z', 511);
+  fp = stream_of(text, 511);
+  EXPECT_EXIT(free(fread_string(fp, "test-string")));
+  fclose(fp);
+  TEST_ASSERT_EQUAL_INT(1, tb_test_exit_code);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(fread_string_rejoins_long_line);
+  RUN_TEST(fread_clean_string_rejoins_long_line);
+  RUN_TEST(fread_string_long_unterminated_tail_exits);
   RUN_TEST(fread_string_reports_nul_at_line_start);
   RUN_TEST(fread_clean_string_reports_nul_at_line_start);
   RUN_TEST(fread_clean_string_keeps_blank_crlf_line);
