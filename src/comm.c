@@ -117,8 +117,11 @@ static struct txt_block *bufpool = 0;  /* pool of large output buffers */
 static int max_players = 0;   /* max descriptors available */
 static int tics_passed = 0;     /* for extern checkpointing */
 static struct timeval null_time; /* zero-valued time structure */
-static byte reread_wizlist;   /* signal: SIGUSR1 */
-static byte emergency_unban;  /* signal: SIGUSR2 */
+/* Set by signal handlers, acted on by game_loop(). Handlers only store to
+ * these; everything else (logging, freeing, exiting) happens in the loop. */
+static volatile sig_atomic_t reread_wizlist;   /* signal: SIGUSR1 */
+static volatile sig_atomic_t emergency_unban;  /* signal: SIGUSR2 */
+static volatile sig_atomic_t shutdown_signal;  /* SIGHUP/SIGINT/SIGTERM */
 
 static int dg_act_check;         /* toggle for act_trigger */
 static bool fCopyOver;          /* Are we booting in copyover mode? */
@@ -911,8 +914,12 @@ void game_loop(socket_t local_mother_desc)
       timediff(&timeout, &last_time, &now);
     } while (timeout.tv_usec || timeout.tv_sec);
 
-    /* Poll (without blocking) for new input, output, and exceptions */
+    /* Poll (without blocking) for new input, output, and exceptions. Signal
+     * handlers are installed without SA_RESTART, so a signal arriving here
+     * (SIGCHLD from reap(), SIGUSR1 ...) is not a failure: poll again. */
     if (select(maxdesc + 1, &input_set, &output_set, &exc_set, &null_time) < 0) {
+      if (errno == EINTR)
+        continue;
       TB_REPORT_ERRNO("select", "main descriptor poll");
       return;
     }
@@ -1037,6 +1044,12 @@ void game_loop(socket_t local_mother_desc)
       heartbeat(++pulse);
 
     /* Check for any signals we may have received. */
+    if (shutdown_signal) {
+      log("SYSERR: Received signal %d (SIGHUP, SIGINT or SIGTERM).  Shutting down...",
+          (int) shutdown_signal);
+      circle_shutdown = 1;
+    }
+
     if (reread_wizlist) {
       reread_wizlist = FALSE;
       mudlog(CMP, LVL_IMMORT, TRUE, "Signal received - rereading wizlists.");
@@ -2620,17 +2633,27 @@ static RETSIGTYPE unrestrict_game(int sig)
 
 #ifdef CIRCLE_UNIX
 
-/* clean up our zombie kids to avoid defunct processes */
+/* clean up our zombie kids to avoid defunct processes. waitpid() can
+ * change errno, and this handler can interrupt code that is about to read
+ * errno (perform_socket_read() checking for EAGAIN), so errno is saved and
+ * restored. */
 static RETSIGTYPE reap(int sig)
 {
+  int saved_errno = errno;
+
   while (waitpid(-1, NULL, WNOHANG) > 0);
 
   my_signal(SIGCHLD, reap);
+  errno = saved_errno;
 }
 
-/* Dying anyway... */
+/* Deadlock protection (SIGVTALRM every 180 s of CPU time). The log()
+ * before abort() is not async-signal-safe; it is kept because the process
+ * is dying anyway and this is the only record of why. errno is preserved
+ * for the code that was interrupted. */
 static RETSIGTYPE checkpointing(int sig)
 {
+  int saved_errno = errno;
 #ifndef MEMORY_DEBUG
   if (!tics_passed) {
     log("SYSERR: CHECKPOINT shutdown: tics not updated. (Infinite loop suspected)");
@@ -2638,13 +2661,15 @@ static RETSIGTYPE checkpointing(int sig)
   } else
     tics_passed = 0;
 #endif
+  errno = saved_errno;
 }
 
-/* Dying anyway... */
+/* SIGHUP/SIGINT/SIGTERM: only record the signal. log() and exit() are not
+ * async-signal-safe (the signal may arrive inside malloc or stdio);
+ * game_loop() logs it and shuts down cleanly, saving players. */
 static RETSIGTYPE hupsig(int sig)
 {
-  log("SYSERR: Received SIGHUP, SIGINT, or SIGTERM.  Shutting down...");
-  exit(1); /* perhaps something more elegant should substituted */
+  shutdown_signal = sig;
 }
 
 #endif	/* CIRCLE_UNIX */
