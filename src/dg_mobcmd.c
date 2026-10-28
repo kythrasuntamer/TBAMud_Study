@@ -7,6 +7,34 @@
 *  $Revision: 1.0.14 $                                                    *
 **************************************************************************/
 
+/**
+ * @file dg_mobcmd.c
+ * The mobile script commands (mecho, mload, mpurge, mforce, mtransform,
+ * mdoor, ...). Unlike object and room commands these are ordinary entries in
+ * the main command table (interpreter.c), so a mob's script runs them
+ * through command_interpreter() like any typed command.
+ *
+ * Who controls the input:
+ *  - From a script: builder-written trigger code, which after var_subst()
+ *    can carry player text. All arguments are parsed as untrusted.
+ *  - Typed by a person: the commands are level 0, so anyone may type them.
+ *    MOB_OR_IMPL() admits only NPCs not switched into by a lower immortal
+ *    and characters that own triggers, and the latter includes players when
+ *    CONFIG_SCRIPT_PLAYERS is on. The commands that create, destroy or force
+ *    additionally require mob_cmd_privileged(); a charmed mob runs none of
+ *    them (MOB_CMD_CHARMED()).
+ *
+ * Lifetime rules: the acting character ch can be extracted by its own
+ * command (mpurge self, a forced command, damage). Characters are extracted
+ * lazily (MOB_NOTDEADYET / PLR_NOTDEADYET), so ch stays readable until the
+ * next extract_pending_chars(), but no command may act on a character after
+ * a callback without re-acquiring it by UID. "all" loops walk a UID snapshot
+ * (dg_cmd.h).
+ *
+ * Failures are reported with mob_log(): one script_log line for builders
+ * plus a structured "cmd-rejected" warning naming the mob and call site.
+ */
+
 #include "conf.h"
 #include "sysdep.h"
 #include "structs.h"

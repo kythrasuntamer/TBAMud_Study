@@ -7,6 +7,36 @@
 *  $Revision: 1.0.14 $                                                    *
 **************************************************************************/
 
+/**
+ * @file dg_objcmd.c
+ * The object script commands (oecho, oload, opurge, otransform, oat, ...)
+ * and obj_command_interpreter(), which script_driver() calls for each
+ * command line of an object trigger after variable substitution.
+ *
+ * Who controls the input: the command text is builder-written trigger code,
+ * but after var_subst() it can carry anything a player said or typed
+ * (%speech%, %arg%, %actor.name%). Every argument is therefore parsed as
+ * untrusted: numbers with DG_PARSE_VNUM_OR_REPORT()/tb_parse_*_checked(),
+ * names with the normal lookup functions, and free text is logged only as
+ * data ("%s"), never as a format.
+ *
+ * Lifetime rules:
+ *  - The owner obj may be extracted by its own command (opurge self, purging
+ *    its container or the room it is in, forcing its carrier to junk it).
+ *    obj_command_interpreter() detects that by UID and sets dg_owner_purged,
+ *    and script_driver() then stops the script. A command must not touch obj
+ *    after anything that can extract it.
+ *  - Commands that act on every occupant of a room walk a UID snapshot
+ *    (dg_cmd.h), never next_in_room across a callback.
+ *  - obj_room() can return NOWHERE (an object that is nowhere, or carried by
+ *    a character that is nowhere); callers check VALID_ROOM_RNUM() before
+ *    indexing world[].
+ *
+ * Failures are reported with obj_log(): one script_log line for builders
+ * plus a structured "cmd-rejected" warning naming the object and the call
+ * site.
+ */
+
 #include "conf.h"
 #include "sysdep.h"
 #include "structs.h"
@@ -110,7 +140,15 @@ static void obj_log_at(obj_data *obj, const char *src_file, int src_line,
                   GET_OBJ_VNUM(obj), obj->script_id, message);
 }
 
-/* returns the real room number that the object or object's carrier is in */
+/**
+ * The room an object is in, directly or through whoever carries or wears it
+ * or the container (recursively) that holds it.
+ * @param obj Any live object.
+ * @return Its room's rnum, or NOWHERE when it is not placed anywhere. NOWHERE
+ * is a normal answer (an object being extracted, an oat clone's source, a
+ * carrier between rooms), so callers must check VALID_ROOM_RNUM() before
+ * indexing world[] with the result.
+ */
 room_rnum obj_room(obj_data *obj)
 {
     if (IN_ROOM(obj) != NOWHERE)
@@ -125,7 +163,19 @@ room_rnum obj_room(obj_data *obj)
         return NOWHERE;
 }
 
-/* returns the real room number, or NOWHERE if not found or invalid */
+/**
+ * Resolves the target-room argument of oteleport and omove.
+ * @param obj The script owner (named in diagnostics, and the viewpoint for
+ * name lookups).
+ * @param rawroomstr Script text; its first word is a room vnum, or the name
+ * or UID of a character or object whose room is meant.
+ * @return The rnum, or NOWHERE when the word is missing, malformed (reported
+ * by DG_PARSE_VNUM_OR_REPORT), names nothing, names something that is in no
+ * room (reported as "target-room"), or the room is off limits to scripts:
+ * GODROOM, IMPROOM, HOUSE, or a PRIVATE room that already holds two people.
+ * The off-limits refusals are silent here; callers log their own failure
+ * with obj_log().
+ */
 static room_rnum find_obj_target_room(obj_data *obj, char *rawroomstr)
 {
     int vnum;

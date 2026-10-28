@@ -7,6 +7,26 @@
 *  $Revision: 1.0.14 $                                                    *
 **************************************************************************/
 
+/**
+ * @file dg_wldcmd.c
+ * The room script commands (wecho, wload, wpurge, wteleport, wdoor, wat,
+ * ...) and wld_command_interpreter(), which script_driver() calls for each
+ * command line of a room trigger after variable substitution.
+ *
+ * Who controls the input: builder-written trigger code, which after
+ * var_subst() can carry player text (%speech%, %arg%, %actor.name%). All
+ * arguments are parsed as untrusted; free text is logged only as data.
+ *
+ * Lifetime rules: a room is never freed while its script runs, but anything
+ * in it can be. Commands that act on every occupant ("all") walk a UID
+ * snapshot (dg_cmd.h) and re-acquire each character, because the callback
+ * they run (a forced command, an enter trigger) can move or extract the
+ * next one.
+ *
+ * Failures are reported with wld_log(): one script_log line for builders
+ * plus a structured "cmd-rejected" warning naming the room and call site.
+ */
+
 #include "conf.h"
 #include "sysdep.h"
 #include "structs.h"
@@ -92,6 +112,15 @@ static void wld_log_at(room_data *room, const char *src_file, int src_line,
 }
 
 /* sends str to room */
+/**
+ * Sends an act() message to everyone in a room. act() needs an actor, so the
+ * message goes out through the room's first occupant: TO_ROOM for everyone
+ * else, then TO_CHAR for that occupant. $n and the other actor codes
+ * therefore name the first occupant, not the room; callers pass text with no
+ * act() codes. An empty room gets nothing.
+ * @param str act() format text.
+ * @param room Any room.
+ */
 void act_to_room(char *str, room_data *room)
 {
     /* no one is in the room */
@@ -750,7 +779,18 @@ static const struct wld_command_info wld_cmd_info[] = {
     { "\n", 0, 0 }        /* this must be last */
 };
 
-/* This is the command interpreter used by rooms, called by script_driver. */
+/**
+ * Runs one room-script command line; called by script_driver().
+ *
+ * The first word (lowercased by any_one_arg()) is matched as a prefix
+ * against wld_cmd_info[] in table order, so an abbreviation runs the first
+ * entry it abbreviates: "w" is wasound, "wd" is wdoor. The trailing space in
+ * most entries has no effect (a word holds no space); wlog has none. The
+ * leading "RESERVED" placeholder has no function, and no lowercased word can
+ * match it. An unknown word is reported with wld_log().
+ * @param room The script owner.
+ * @param argument The substituted command line; commands may modify it.
+ */
 void wld_command_interpreter(room_data *room, char *argument)
 {
     int cmd, length;
