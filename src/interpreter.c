@@ -8,6 +8,19 @@
 *  CircleMUD is based on DikuMUD, Copyright (C) 1990, 1991.               *
 **************************************************************************/
 
+/**
+ * @file interpreter.c
+ * The command interpreter (command_interpreter(), aliases, argument
+ * splitters) and the login state machine nanny().
+ *
+ * Who controls the input: every argument string here is a line typed by a
+ * remote client, bounded to MAX_INPUT_LENGTH by comm.c, and nanny() runs
+ * before the client has authenticated. Other descriptors seen while logging
+ * in can be at any CON_* state, so their characters may have no name or
+ * idnum yet. Argument splitters write at most MAX_INPUT_LENGTH bytes to each
+ * output buffer.
+ */
+
 #include "conf.h"
 #include "sysdep.h"
 #include "structs.h"
@@ -1160,6 +1173,22 @@ static int parse_name_internal(char *arg, char *name)
 #define UNSWITCH	3
 
 /* This function seems a bit over-extended. */
+/**
+ * After a correct password, make @p d the only controller of its player.
+ *
+ * Walks descriptor_list and character_list. Other descriptors holding the
+ * same idnum are closed (their characters freed or unbound), and an in-game
+ * or link-dead character with that idnum is taken over: d->character may be
+ * freed and replaced by it.
+ *
+ * Other descriptors are in any login state, so their characters may have no
+ * name yet (still at the name prompt) and no valid idnum.
+ *
+ * @pre d->character is a loaded player with a valid GET_IDNUM().
+ * @return TRUE when d was reconnected to an existing character (the caller
+ *         must not enter the game again), FALSE to continue logging in.
+ *         Either way the caller must re-read d->character afterwards.
+ */
 static int perform_dupe_check(struct descriptor_data *d)
 {
   struct descriptor_data *k, *next_k;
@@ -1301,6 +1330,19 @@ static int perform_dupe_check(struct descriptor_data *d)
 }
 
 /* New Char dupe-check called at the start of character creation */
+/**
+ * Close other sockets creating, or playing, a character with @p d's new name.
+ *
+ * Any client can open sockets, so the other descriptors may be at any login
+ * state. A character still at CON_GET_NAME, or one that answered 'N' at
+ * CON_NAME_CNFRM, has a NULL player.name and is skipped. A NULL name on a
+ * socket past name confirmation is reported ("new-char-dupe-check").
+ *
+ * @pre d->character is a new player whose player.name is set.
+ * @post If the name is already in game, both sockets are set to CON_CLOSE
+ *       and d->character is NULL; the caller must check STATE(d).
+ * @return TRUE if any socket was closed.
+ */
 static bool perform_new_char_dupe_check(struct descriptor_data *d)
 {
   struct descriptor_data *k, *next_k;
@@ -1456,6 +1498,20 @@ static void banner_append(char *buf, size_t size, size_t *len,
     *len += (size_t) written;
 }
 
+/**
+ * Descriptor event: after protocol negotiation, show what the client
+ * reported and the greeting, then move the socket to CON_GET_NAME.
+ *
+ * @pre event_obj is a mud_event_data whose pStruct is the descriptor.
+ *      new_descriptor() calls init_descriptor(), whose ProtocolCreate()
+ *      allocates d->pProtocol, every pVariables[] entry and every string
+ *      value, before it queues this event; close_socket() cancels the
+ *      descriptor's events, so d is live when this runs.
+ * The client ID is client-controlled text: it is only ever passed as a %s
+ * argument. banner_append() bounds the banner to its buffer and reports a
+ * cut ("protocol-banner").
+ * @return 0 (one-shot event).
+ */
 EVENTFUNC(get_protocols)
 {
   struct descriptor_data *d;
