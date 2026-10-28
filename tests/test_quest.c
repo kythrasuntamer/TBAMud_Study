@@ -360,7 +360,7 @@ static void test_parse_reports_unknown_qm_and_skipped_lines(void)
   TEST_ASSERT_NOT_NULL(fl);
   aquest_table = quests;
   parse_quest(fl, 1234);
-  fclose(fl);
+  TEST_ASSERT_EQUAL_INT(0, fclose(fl));
 
   TEST_ASSERT_EQUAL_INT(1, total_quests);
   row = &quests[0];
