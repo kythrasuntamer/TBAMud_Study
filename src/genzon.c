@@ -215,14 +215,26 @@ zone_rnum create_new_zone(zone_vnum vzone_num, room_vnum bottom, room_vnum top, 
   tb_fprintf(fp, "$~\n");
   tb_fclose(fp);
 
-  /* Update index files. */
-  create_world_index(vzone_num, "qst");
-  create_world_index(vzone_num, "zon");
-  create_world_index(vzone_num, "wld");
-  create_world_index(vzone_num, "mob");
-  create_world_index(vzone_num, "obj");
-  create_world_index(vzone_num, "shp");
-  create_world_index(vzone_num, "trg");
+  /* Update index files.  The zone files exist by now, so the zone is still
+   * created in memory if an index update fails; each failure was reported
+   * by create_world_index(), and the implementor is told the zone will not
+   * load at the next boot until the index is fixed. */
+  {
+    static const char *const index_types[] = { "qst", "zon", "wld", "mob", "obj", "shp", "trg" };
+    int failed = 0;
+
+    for (i = 0; i < (int)(sizeof(index_types) / sizeof(index_types[0])); i++)
+      if (!create_world_index(vzone_num, index_types[i]))
+        failed++;
+    if (failed) {
+      TB_ERROR_MSG("olc", "zone-create-index", "zone",
+                   "zone %d: %d of 7 world index updates failed; the zone "
+                   "will not fully load at the next boot", vzone_num, failed);
+      mudlog(BRF, LVL_IMPL, TRUE,
+             "SYSERR: OLC: zone %d created, but %d world index update(s) failed.",
+             vzone_num, failed);
+    }
+  }
 
   /* Make a new zone in memory. This was the source of all the zedit new
    * crashes. It was happily overwriting the stack.  This new loop by Andrew
@@ -272,11 +284,11 @@ rznum = i;
   return rznum;
 }
 
-void create_world_index(int znum, const char *type)
+int create_world_index(int znum, const char *type)
 {
   FILE *newfile, *oldfile;
   char new_name[32], old_name[32], *prefix;
-  int num, found = FALSE;
+  int num, found = FALSE, terminated = FALSE;
   char buf[MAX_STRING_LENGTH];
   char buf1[MAX_STRING_LENGTH];
 
@@ -304,19 +316,25 @@ void create_world_index(int znum, const char *type)
     break;
   default:
     /* Caller messed up. */
-    return;
+    TB_ERROR_MSG("olc", "world-index-type", type,
+                 "zone %d: unknown index type; no index updated", znum);
+    return FALSE;
   }
 
   tb_snprintf(old_name, sizeof(old_name), "%s/index", prefix);
   tb_snprintf(new_name, sizeof(new_name), "%s/newindex", prefix);
 
   if (!(oldfile = fopen(old_name, "r"))) {
+    TB_ERROR_ERRNO("olc", "world-index-open", old_name,
+                   "zone %d type %s: index not updated", znum, type);
     mudlog(BRF, LVL_IMPL, TRUE, "SYSERR: OLC: Failed to open %s.", old_name);
-    return;
+    return FALSE;
   } else if (!(newfile = fopen(new_name, "w"))) {
+    TB_ERROR_ERRNO("olc", "world-index-open", new_name,
+                   "zone %d type %s: index not updated", znum, type);
     mudlog(BRF, LVL_IMPL, TRUE, "SYSERR: OLC: Failed to open %s.", new_name);
     tb_fclose(oldfile);
-    return;
+    return FALSE;
   }
 
   /* Index contents must be in order: search through the old file for the right
@@ -326,6 +344,7 @@ void create_world_index(int znum, const char *type)
     if (*buf == '$') {
       /* The following used to add a blank line, thanks to Brian Taylor for the fix. */
       tb_fprintf(newfile, "%s", (!found ? strncat(buf1, "\n$\n", sizeof(buf1) - strlen(buf1) - 1) : "$\n"));
+      terminated = TRUE;
       break;
     } else if (!found) {
       if (!parse_zone_index_number(buf, &num)) {
@@ -333,20 +352,32 @@ void create_world_index(int znum, const char *type)
         tb_fclose(oldfile);
         tb_fclose(newfile);
         cleanup_new_zone_index(new_name);
-        return;
+        return FALSE;
       }
       if (num > znum) {
 	found = TRUE;
 	tb_fprintf(newfile, "%s\n", buf1);
       } else if (num == znum) {
-        /* index file already had an entry for this zone. */
+        /* index file already had an entry for this zone: nothing to do. */
         tb_fclose(oldfile);
         tb_fclose(newfile);
         cleanup_new_zone_index(new_name);
-        return;
+        return TRUE;
       }
     }
     tb_fprintf(newfile, "%s\n", buf);
+  }
+
+  /* The boot loader stops at '$'.  Without one the new entry was never
+   * written (it is only emitted at the terminator or before a larger
+   * number), so committing would report success for an unchanged index. */
+  if (!terminated) {
+    TB_ERROR_MSG("olc", "world-index-unterminated", old_name,
+                 "zone %d type %s: no '$' terminator; index unchanged", znum, type);
+    tb_fclose(newfile);
+    tb_fclose(oldfile);
+    cleanup_new_zone_index(new_name);
+    return FALSE;
   }
 
   /* Verify both streams before replacing the last good index. */
@@ -355,24 +386,27 @@ void create_world_index(int znum, const char *type)
     tb_fclose(newfile);
     tb_fclose(oldfile);
     cleanup_new_zone_index(new_name);
-    return;
+    return FALSE;
   }
 
   if (fclose(newfile) == EOF) {
     TB_REPORT_ERRNO("world-index-close", new_name);
     tb_fclose(oldfile);
     cleanup_new_zone_index(new_name);
-    return;
+    return FALSE;
   }
   if (fclose(oldfile) == EOF) {
     TB_REPORT_ERRNO("world-index-close", old_name);
     cleanup_new_zone_index(new_name);
-    return;
+    return FALSE;
   }
 
   /* Never unlink the destination before a successful replacement. */
-  if (!tb_replace_file_checked(new_name, old_name))
+  if (!tb_replace_file_checked(new_name, old_name)) {
     TB_REPORT_ERROR("world-index-commit", old_name);
+    return FALSE;
+  }
+  return TRUE;
 }
 
 void remove_room_zone_commands(zone_rnum zone, room_rnum room_num)

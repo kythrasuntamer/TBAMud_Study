@@ -463,8 +463,10 @@ int save_shops(zone_rnum zone_num)
   if (!tb_replace_file_checked(fname, oldname))
     return FALSE;
 
-  if (num_shops > 0)
-    create_world_index(zone_table[zone_num].number, "shp");
+  /* The .shp file is committed, but without an index entry it is not
+   * loaded at boot: keep the zone in the save list so a later save retries. */
+  if (num_shops > 0 && !create_world_index(zone_table[zone_num].number, "shp"))
+    return FALSE;
 
   if (in_save_list(zone_table[zone_num].number, SL_SHP))
     remove_from_save_list(zone_table[zone_num].number, SL_SHP);

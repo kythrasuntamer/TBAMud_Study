@@ -307,8 +307,10 @@ int save_quests(zone_rnum zone_num)
     return FALSE;
 
   /* Do we need to update the index file? */
-  if (num_quests > 0)
-    create_world_index(zone_table[zone_num].number, "qst");
+  /* The .qst file is committed, but without an index entry it is not
+   * loaded at boot: keep the zone in the save list so a later save retries. */
+  if (num_quests > 0 && !create_world_index(zone_table[zone_num].number, "qst"))
+    return FALSE;
 
   if (in_save_list(zone_table[zone_num].number, SL_QST))
     remove_from_save_list(zone_table[zone_num].number, SL_QST);

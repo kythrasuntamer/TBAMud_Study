@@ -694,6 +694,24 @@ static int file_exists(const char *path)
   return 1;
 }
 
+static void write_text_file(const char *path, const char *text)
+{
+  FILE *fp = fopen(path, "w");
+  TEST_ASSERT_NOT_NULL(fp);
+  fputs(text, fp);
+  fclose(fp);
+}
+
+static void read_text_file(const char *path, char *buf, size_t size)
+{
+  FILE *fp = fopen(path, "r");
+  size_t n;
+  TEST_ASSERT_NOT_NULL(fp);
+  n = fread(buf, 1, size - 1, fp);
+  buf[n] = '\0';
+  fclose(fp);
+}
+
 static void delete_object_drops_matching_shop_product(void)
 {
   static const obj_rnum products[] = { 0, 2 };
@@ -748,6 +766,7 @@ static void save_shops_writes_valid_shop(void)
   make_zones(1); make_objs(1); make_mobs(2, 3000);
   make_shop(5, NULL, 0);
   shop_index[0].keeper = 1;
+  write_text_file(SHP_PREFIX "/index", "$\n");
   TEST_ASSERT_TRUE(save_shops(0));
   TEST_ASSERT_TRUE(file_exists(SHP_PREFIX "0.shp"));
   TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
@@ -756,23 +775,6 @@ static void save_shops_writes_valid_shop(void)
 /* ------------------------------------------------------------------------ */
 /* C2-12: zedit new never duplicates a zone or truncates its files.         */
 /* ------------------------------------------------------------------------ */
-static void write_text_file(const char *path, const char *text)
-{
-  FILE *fp = fopen(path, "w");
-  TEST_ASSERT_NOT_NULL(fp);
-  fputs(text, fp);
-  fclose(fp);
-}
-
-static void read_text_file(const char *path, char *buf, size_t size)
-{
-  FILE *fp = fopen(path, "r");
-  size_t n;
-  TEST_ASSERT_NOT_NULL(fp);
-  n = fread(buf, 1, size - 1, fp);
-  buf[n] = '\0';
-  fclose(fp);
-}
 
 /* The last zone in the table was never compared. */
 static void create_new_zone_rejects_last_zone_number(void)
@@ -1060,6 +1062,36 @@ static void save_zone_reports_disabled_command(void)
 }
 
 /* ------------------------------------------------------------------------ */
+/* C2-20: create_world_index() reports failure instead of committing.       */
+/* ------------------------------------------------------------------------ */
+static void create_world_index_rejects_unterminated_index(void)
+{
+  char text[64];
+  write_text_file(OBJ_PREFIX "/index", "0.obj\n1.obj\n");
+  TEST_ASSERT_FALSE(create_world_index(5, "obj"));
+  TEST_ASSERT_EQUAL_STRING("world-index-unterminated", tb_captured_operation);
+  read_text_file(OBJ_PREFIX "/index", text, sizeof(text));
+  TEST_ASSERT_EQUAL_STRING("0.obj\n1.obj\n", text);
+  TEST_ASSERT_FALSE(file_exists(OBJ_PREFIX "/newindex"));
+}
+
+static void create_world_index_inserts_in_order(void)
+{
+  char text[64];
+  write_text_file(OBJ_PREFIX "/index", "0.obj\n9.obj\n$\n");
+  TEST_ASSERT_TRUE(create_world_index(5, "obj"));
+  read_text_file(OBJ_PREFIX "/index", text, sizeof(text));
+  TEST_ASSERT_EQUAL_STRING("0.obj\n5.obj\n9.obj\n$\n", text);
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+}
+
+static void create_world_index_reports_unknown_type(void)
+{
+  TEST_ASSERT_FALSE(create_world_index(5, "xyz"));
+  TEST_ASSERT_EQUAL_STRING("world-index-type", tb_captured_operation);
+}
+
+/* ------------------------------------------------------------------------ */
 /* Temporary world directory for the writers.                               */
 /* ------------------------------------------------------------------------ */
 static char test_root[] = "/tmp/tb-genolc-XXXXXX";
@@ -1144,6 +1176,9 @@ int main(void)
   RUN_TEST(save_zone_rejects_var_without_strings);
   RUN_TEST(save_zone_writes_valid_commands);
   RUN_TEST(save_zone_reports_disabled_command);
+  RUN_TEST(create_world_index_rejects_unterminated_index);
+  RUN_TEST(create_world_index_inserts_in_order);
+  RUN_TEST(create_world_index_reports_unknown_type);
   failures = UNITY_END();
   leave_test_root();
   return failures;
