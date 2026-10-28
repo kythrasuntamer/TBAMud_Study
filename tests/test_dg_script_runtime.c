@@ -944,6 +944,68 @@ static void uids_resolve_only_their_own_entities(void)
   remove_from_lookup_table(obj.script_id, &obj);
 }
 
+/* Random-trigger fixtures: object_list holds heap objects; firing one may
+ * extract it, as "opurge %self%" does. */
+static obj_data *self_purging;
+static int random_fired;
+void random_otrigger(obj_data *obj)
+{
+  obj_data **link;
+
+  random_fired++;
+  if (obj != self_purging)
+    return;
+  for (link = &object_list; *link; link = &(*link)->next)
+    if (*link == obj) {
+      *link = obj->next;
+      break;
+    }
+  remove_from_lookup_table(obj->script_id, obj);
+  free(SCRIPT(obj));
+  free(obj);
+}
+void random_mtrigger(char_data *ch) { (void)ch; UNREACHED(); }
+int is_empty(zone_rnum zone_nr) { (void)zone_nr; UNREACHED(); return 1; }
+static struct room_data quiet_room;
+void random_wtrigger(room_data *room) { (void)room; UNREACHED(); }
+
+/* script_trigger_check() followed obj->next after the trigger had freed
+ * obj; it now snapshots the scripted objects first. */
+static void random_trigger_may_purge_its_object(void)
+{
+  obj_data *a, *b;
+
+  CREATE(a, obj_data, 1);
+  CREATE(b, obj_data, 1);
+  CREATE(SCRIPT(a), struct script_data, 1);
+  CREATE(SCRIPT(b), struct script_data, 1);
+  SET_BIT(SCRIPT_TYPES(SCRIPT(a)), OTRIG_RANDOM);
+  SET_BIT(SCRIPT_TYPES(SCRIPT(b)), OTRIG_RANDOM);
+  GET_OBJ_RNUM(a) = GET_OBJ_RNUM(b) = NOTHING;
+  a->script_id = OBJ_ID_BASE + 11;
+  b->script_id = OBJ_ID_BASE + 12;
+  init_lookup_table();
+  add_to_lookup_table(a->script_id, a);
+  add_to_lookup_table(b->script_id, b);
+  a->next = b;
+  object_list = a;
+  memset(&quiet_room, 0, sizeof(quiet_room));
+  world = &quiet_room;                       /* one room, no script */
+  top_of_world = 0;
+  self_purging = a;
+  random_fired = 0;
+
+  script_trigger_check();
+
+  TEST_ASSERT_EQUAL_INT(2, random_fired);    /* b still had its turn */
+  TEST_ASSERT_EQUAL_PTR(b, object_list);
+  object_list = NULL;
+  remove_from_lookup_table(b->script_id, b);
+  free(SCRIPT(b));
+  free(b);
+  world = NULL;
+}
+
 static void restore_round_trips_neutralize(void)
 {
   char text[] = "50% off, 100%% sure";
@@ -987,5 +1049,6 @@ int main(void)
   RUN_TEST(switch_leaves_case_text_unchanged);
   RUN_TEST(invalid_wait_leaves_the_trigger_usable);
   RUN_TEST(uids_resolve_only_their_own_entities);
+  RUN_TEST(random_trigger_may_purge_its_object);
   return UNITY_END();
 }

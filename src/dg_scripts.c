@@ -624,10 +624,43 @@ obj_data *get_obj_by_room(room_data *room, char *name)
 }
 
 /* checks every PULSE_SCRIPT for random triggers */
+/* Runs fire() on every object whose script has trigger type flag.  A
+ * trigger can extract any object -- its own, or the next one in
+ * object_list -- so the candidates are snapshotted as (UID, address) pairs
+ * first and each is re-validated before it is dispatched. */
+struct dg_object_target { long uid; obj_data *obj; };
+
+static void fire_object_triggers(long flag, void (*fire)(obj_data *obj))
+{
+  struct dg_object_target *targets;
+  obj_data *obj;
+  size_t count = 0, i;
+
+  for (obj = object_list; obj; obj = obj->next)
+    if (SCRIPT(obj) && IS_SET(SCRIPT_TYPES(SCRIPT(obj)), flag))
+      count++;
+  if (!count)
+    return;
+
+  CREATE(targets, struct dg_object_target, count);
+  for (i = 0, obj = object_list; obj && i < count; obj = obj->next)
+    if (SCRIPT(obj) && IS_SET(SCRIPT_TYPES(SCRIPT(obj)), flag)) {
+      targets[i].uid = obj_script_id(obj);
+      targets[i++].obj = obj;
+    }
+
+  for (i = 0; i < count; i++)
+    if (obj_uid_matches(targets[i].uid, targets[i].obj) &&
+        SCRIPT(targets[i].obj) &&
+        IS_SET(SCRIPT_TYPES(SCRIPT(targets[i].obj)), flag))
+      fire(targets[i].obj);
+
+  free(targets);
+}
+
 void script_trigger_check(void)
 {
   char_data *ch;
-  obj_data *obj;
   struct room_data *room=NULL;
   room_rnum nr;
   struct script_data *sc;
@@ -643,14 +676,7 @@ void script_trigger_check(void)
     }
   }
 
-  for (obj = object_list; obj; obj = obj->next) {
-    if (SCRIPT(obj)) {
-      sc = SCRIPT(obj);
-
-      if (IS_SET(SCRIPT_TYPES(sc), OTRIG_RANDOM))
-        random_otrigger(obj);
-    }
-  }
+  fire_object_triggers(OTRIG_RANDOM, random_otrigger);
 
   for (nr = 0; nr <= top_of_world; nr++) {
     if (SCRIPT(&world[nr])) {
@@ -668,7 +694,6 @@ void script_trigger_check(void)
 void check_time_triggers(void)
 {
   char_data *ch;
-  obj_data *obj;
   struct room_data *room=NULL;
   int nr;
   struct script_data *sc;
@@ -684,14 +709,7 @@ void check_time_triggers(void)
     }
   }
 
-  for (obj = object_list; obj; obj = obj->next) {
-    if (SCRIPT(obj)) {
-      sc = SCRIPT(obj);
-
-      if (IS_SET(SCRIPT_TYPES(sc), OTRIG_TIME))
-        time_otrigger(obj);
-    }
-  }
+  fire_object_triggers(OTRIG_TIME, time_otrigger);
 
   for (nr = 0; nr <= top_of_world; nr++) {
     if (SCRIPT(&world[nr])) {
