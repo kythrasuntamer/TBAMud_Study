@@ -53,10 +53,43 @@ static void Write( descriptor_t *apDescriptor, const char *apData )
    write_to_output( apDescriptor, "%s", apData );
 }
 
-static void ReportBug( const char *apText )
+/* Diagnostics for this file. Escape text comes from builders (room and
+ * object strings) and from players (say/gossip '@' codes), so most of these
+ * conditions can be produced at will: every report goes through
+ * TB_WARN_EVERY (per call site, counted when suppressed) and names the
+ * descriptor with DIAG_DESC. Raw input text is never logged; at most a short
+ * excerpt with control characters, quotes and backslashes replaced by '?'.
+ *
+ * PROTOCOL_WARN(d, op, fmt, ...) accepts a NULL d ("no-descriptor"). */
+static void ProtocolDescIdent( const descriptor_t *apDescriptor, char *apOut,
+                               size_t aSize )
 {
-   log( "%s", apText);
+   if ( apDescriptor == NULL )
+      tb_snprintf(apOut, aSize, "no-descriptor");
+   else
+      tb_snprintf(apOut, aSize, DIAG_DESC_FMT, DIAG_DESC(apDescriptor));
 }
+
+static const char *ProtocolExcerpt( const char *apText, char *apOut, size_t aSize )
+{
+   size_t i;
+
+   for ( i = 0; i + 1 < aSize && apText[i] != '\0'; ++i )
+   {
+      unsigned char c = (unsigned char)apText[i];
+      apOut[i] = ( c < 0x20 || c >= 0x7f || c == '"' || c == '\\' ) ? '?' : (char)c;
+   }
+   if ( aSize > 0 )
+      apOut[i] = '\0';
+   return apOut;
+}
+
+#define PROTOCOL_WARN(d, op, fmt, ...) do { \
+   char pw_ident_[96]; \
+   ProtocolDescIdent((d), pw_ident_, sizeof(pw_ident_)); \
+   TB_WARN_EVERY(60, "protocol", (op), __func__, "%s: " fmt, pw_ident_, \
+                 ##__VA_ARGS__); \
+} while (0)
 
 static void InfoMessage( descriptor_t *apDescriptor, const char *apData )
 {
@@ -72,7 +105,8 @@ static void CompressStart( descriptor_t *apDescriptor )
     * 
     * Otherwise you can just ignore this function.
     */
-   ReportBug( "CompressStart() in protocol.c is being called, but it doesn't do anything!\n" );
+   PROTOCOL_WARN( apDescriptor, "mccp-unsupported",
+                  "CompressStart() called, but MCCP is not implemented" );
 }
 
 static void CompressEnd( descriptor_t *apDescriptor )
@@ -83,7 +117,8 @@ static void CompressEnd( descriptor_t *apDescriptor )
     * 
     * Otherwise you can just ignore this function.
     */
-   ReportBug( "CompressEnd() in protocol.c is being called, but it doesn't do anything!\n" );
+   PROTOCOL_WARN( apDescriptor, "mccp-unsupported",
+                  "CompressEnd() called, but MCCP is not implemented" );
 }
 
 /******************************************************************************
@@ -288,7 +323,9 @@ protocol_t *ProtocolCreate( void )
       {
          if ( VariableNameTable[i].Variable != i )
          {
-            ReportBug( "MSDP: Variable table does not match the enums in the header.\n" );
+            TB_ERROR_MSG( "msdp", "table-mismatch", "ProtocolCreate",
+               "VariableNameTable[%d] holds variable %d; table order must match"
+               " the eMSDP enum in protocol.h", i, (int) VariableNameTable[i].Variable );
             break;
          }
       }
@@ -369,7 +406,10 @@ ssize_t ProtocolInput( descriptor_t *apDescriptor, char *apData, int aSize, char
    protocol_t *pProtocol = apDescriptor ? apDescriptor->pProtocol : NULL;
 
    if (!apDescriptor || !pProtocol || !apData || !apOut || aSize <= 0) {
-      ReportBug("ProtocolInput: invalid input arguments.\n");
+      PROTOCOL_WARN(apDescriptor, "input-args",
+                    "invalid arguments (protocol %s, data %s, out %s, size %d)",
+                    pProtocol ? "set" : "NULL", apData ? "set" : "NULL",
+                    apOut ? "set" : "NULL", aSize);
       return -1;
    }
 
@@ -378,7 +418,9 @@ ssize_t ProtocolInput( descriptor_t *apDescriptor, char *apData, int aSize, char
       /* If we'd overflow the buffer, we just ignore the input */
       if ( CmdIndex >= MAX_PROTOCOL_BUFFER || IacIndex >= MAX_PROTOCOL_BUFFER )
       {
-         ReportBug("ProtocolInput: Too much incoming data to store in the buffer.\n");
+         PROTOCOL_WARN(apDescriptor, "input-overflow",
+                       "more than %d bytes of input in one read; read discarded",
+                       MAX_PROTOCOL_BUFFER);
          return (-1);
       }
 
@@ -694,12 +736,12 @@ const char *ProtocolOutput( descriptor_t *apDescriptor, const char *apData, int 
             case '[':
                if ( tolower(apData[++j]) == 'u' )
                {
-                  char *Buffer = UnicodeSub, BugString[256];
+                  char *Buffer = UnicodeSub, Excerpt[sizeof(UnicodeSub)];
                   int Index = 0;
                   int Number = 0;
+                  bool_t bDone = false, bValid = true;
 
                   memset(UnicodeSub, '\0', sizeof(UnicodeSub));
-                  bool_t bDone = false, bValid = true;
 
                   while ( isdigit(apData[++j]) )
                   {
@@ -725,13 +767,15 @@ const char *ProtocolOutput( descriptor_t *apDescriptor, const char *apData, int 
 
                   if ( !bDone )
                   {
-                     tb_snprintf(BugString, sizeof(BugString), "BUG: Unicode substitute '%s' wasn't terminated with ']'.\n", Buffer );
-                     ReportBug( BugString );
+                     PROTOCOL_WARN( apDescriptor, "malformed-code",
+                        "unicode substitute \"%s\" not terminated with ']' (offset %d)",
+                        ProtocolExcerpt(Buffer, Excerpt, sizeof(Excerpt)), j );
                   }
                   else if ( !bValid )
                   {
-                     tb_snprintf(BugString, sizeof(BugString), "BUG: Unicode substitute '%s' truncated.  Missing ']'?\n", Buffer );
-                     ReportBug( BugString );
+                     PROTOCOL_WARN( apDescriptor, "malformed-code",
+                        "unicode substitute \"%s\" longer than 7 bytes; dropped (offset %d)",
+                        ProtocolExcerpt(Buffer, Excerpt, sizeof(Excerpt)), j );
                   }
                   else if ( pProtocol->pVariables[eMSDP_UTF_8]->ValueInt )
                   {
@@ -747,7 +791,7 @@ const char *ProtocolOutput( descriptor_t *apDescriptor, const char *apData, int 
                }
                else if ( tolower(apData[j]) == 'f' || tolower(apData[j]) == 'b' )
                {
-                  char Buffer[8] = {'\0'}, BugString[256];
+                  char Buffer[8] = {'\0'}, Excerpt[8];
                   int Index = 0;
                   bool_t bDone = false, bValid = true;
 
@@ -766,15 +810,17 @@ const char *ProtocolOutput( descriptor_t *apDescriptor, const char *apData, int 
 
                   if ( !bDone || !bValid)
                   {
-                     tb_snprintf(BugString, sizeof(BugString), "BUG: RGB %sground colour '%s' wasn't terminated with ']'.\n", 
-                        (tolower(Buffer[0]) == 'f') ? "fore" : "back", &Buffer[1] );
-                     ReportBug( BugString );
+                     PROTOCOL_WARN( apDescriptor, "malformed-code",
+                        "RGB %sground colour \"%s\" not terminated with ']' (offset %d)",
+                        (tolower((unsigned char)Buffer[0]) == 'f') ? "fore" : "back",
+                        ProtocolExcerpt(&Buffer[1], Excerpt, sizeof(Excerpt)), j );
                   }
                   else if ( !IsValidColour(Buffer) )
                   {
-                     tb_snprintf(BugString, sizeof(BugString), "BUG: RGB %sground colour '%s' invalid (each digit must be in the range 0-5).\n", 
-                        (tolower(Buffer[0]) == 'f') ? "fore" : "back", &Buffer[1] );
-                     ReportBug( BugString );
+                     PROTOCOL_WARN( apDescriptor, "malformed-code",
+                        "RGB %sground colour \"%s\" invalid: each digit must be 0-5 (offset %d)",
+                        (tolower((unsigned char)Buffer[0]) == 'f') ? "fore" : "back",
+                        ProtocolExcerpt(&Buffer[1], Excerpt, sizeof(Excerpt)), j );
                   }
                   else /* Success */
                   {
@@ -783,7 +829,7 @@ const char *ProtocolOutput( descriptor_t *apDescriptor, const char *apData, int 
                }
                else if ( tolower(apData[j]) == 'x' )
                {
-                  char Buffer[8] = {'\0'}, BugString[256];
+                  char Buffer[8] = {'\0'}, Excerpt[8];
                   int Index = 0;
                   bool_t bDone = false, bValid = true;
 
@@ -804,13 +850,15 @@ const char *ProtocolOutput( descriptor_t *apDescriptor, const char *apData, int 
 
                   if ( !bDone )
                   {
-                     tb_snprintf(BugString, sizeof(BugString), "BUG: Required MXP version '%s' wasn't terminated with ']'.\n", Buffer );
-                     ReportBug( BugString );
+                     PROTOCOL_WARN( apDescriptor, "malformed-code",
+                        "required MXP version \"%s\" not terminated with ']' (offset %d)",
+                        ProtocolExcerpt(Buffer, Excerpt, sizeof(Excerpt)), j );
                   }
                   else if ( !bValid )
                   {
-                     tb_snprintf(BugString, sizeof(BugString), "BUG: Required MXP version '%s' too long.  Missing ']'?\n", Buffer );
-                     ReportBug( BugString );
+                     PROTOCOL_WARN( apDescriptor, "malformed-code",
+                        "required MXP version \"%s\" longer than 7 bytes (offset %d)",
+                        ProtocolExcerpt(Buffer, Excerpt, sizeof(Excerpt)), j );
                   }
                   else if ( !strcmp(pProtocol->pMXPVersion, "Unknown") || 
                      strcmp(pProtocol->pMXPVersion, Buffer) < 0 )
@@ -867,7 +915,9 @@ const char *ProtocolOutput( descriptor_t *apDescriptor, const char *apData, int 
    if ( i >= MAX_OUTPUT_BUFFER )
    {
       i = 0;
-      ReportBug("ProtocolOutput: Too much outgoing data to store in the buffer.\n");
+      PROTOCOL_WARN(apDescriptor, "output-overflow",
+                    "translated output reached %d bytes; whole message dropped",
+                    MAX_OUTPUT_BUFFER);
    }
 
    /* Terminate the string */
@@ -1100,10 +1150,10 @@ void MSDPSend( descriptor_t *apDescriptor, variable_t aMSDP )
          if ( RequiredBuffer >= MAX_VARIABLE_LENGTH )
          {
             tb_snprintf(MSDPBuffer, sizeof(MSDPBuffer), 
-               "MSDPSend: %s %d bytes (exceeds MAX_VARIABLE_LENGTH of %d).\n", 
+               "MSDPSend: %s %d bytes (exceeds MAX_VARIABLE_LENGTH of %d)", 
                VariableNameTable[aMSDP].pName, RequiredBuffer, 
                MAX_VARIABLE_LENGTH );
-            ReportBug( MSDPBuffer );
+            PROTOCOL_WARN( apDescriptor, "msdp-too-long", "%s", MSDPBuffer );
             MSDPBuffer[0] = '\0';
          }
          else if ( pProtocol->bMSDP )
@@ -1164,17 +1214,17 @@ void MSDPSendPair( descriptor_t *apDescriptor, const char *apVariable, const cha
          if ( RequiredBuffer - strlen(apValue) < MAX_VARIABLE_LENGTH )
          {
             tb_snprintf(MSDPBuffer, sizeof(MSDPBuffer), 
-               "MSDPSendPair: %s %d bytes (exceeds MAX_VARIABLE_LENGTH of %d).\n", 
+               "MSDPSendPair: %s %d bytes (exceeds MAX_VARIABLE_LENGTH of %d)", 
                apVariable, RequiredBuffer, MAX_VARIABLE_LENGTH );
          }
          else /* The variable name itself is too long */
          {
             tb_snprintf(MSDPBuffer, sizeof(MSDPBuffer), 
-               "MSDPSendPair: Variable name has a length of %d bytes (exceeds MAX_VARIABLE_LENGTH of %d).\n", 
+               "MSDPSendPair: Variable name has a length of %d bytes (exceeds MAX_VARIABLE_LENGTH of %d)", 
                RequiredBuffer, MAX_VARIABLE_LENGTH );
          }
 
-         ReportBug( MSDPBuffer );
+         PROTOCOL_WARN( apDescriptor, "msdp-too-long", "%s", MSDPBuffer );
          MSDPBuffer[0] = '\0';
       }
       else if ( pProtocol->bMSDP )
@@ -1214,17 +1264,17 @@ void MSDPSendList( descriptor_t *apDescriptor, const char *apVariable, const cha
          if ( RequiredBuffer - strlen(apValue) < MAX_VARIABLE_LENGTH )
          {
             tb_snprintf(MSDPBuffer, sizeof(MSDPBuffer), 
-               "MSDPSendList: %s %d bytes (exceeds MAX_VARIABLE_LENGTH of %d).\n", 
+               "MSDPSendList: %s %d bytes (exceeds MAX_VARIABLE_LENGTH of %d)", 
                apVariable, RequiredBuffer, MAX_VARIABLE_LENGTH );
          }
          else /* The variable name itself is too long */
          {
             tb_snprintf(MSDPBuffer, sizeof(MSDPBuffer), 
-               "MSDPSendList: Variable name has a length of %d bytes (exceeds MAX_VARIABLE_LENGTH of %d).\n", 
+               "MSDPSendList: Variable name has a length of %d bytes (exceeds MAX_VARIABLE_LENGTH of %d)", 
                RequiredBuffer, MAX_VARIABLE_LENGTH );
          }
 
-         ReportBug( MSDPBuffer );
+         PROTOCOL_WARN( apDescriptor, "msdp-too-long", "%s", MSDPBuffer );
          MSDPBuffer[0] = '\0';
       }
       else if ( pProtocol->bMSDP )
@@ -2243,17 +2293,17 @@ static void SendATCP( descriptor_t *apDescriptor, const char *apVariable, const 
          if ( RequiredBuffer - strlen(apValue) < MAX_VARIABLE_LENGTH )
          {
             tb_snprintf(ATCPBuffer, sizeof(ATCPBuffer), 
-               "SendATCP: %s %d bytes (exceeds MAX_VARIABLE_LENGTH of %d).\n", 
+               "SendATCP: %s %d bytes (exceeds MAX_VARIABLE_LENGTH of %d)", 
                apVariable, RequiredBuffer, MAX_VARIABLE_LENGTH );
          }
          else /* The variable name itself is too long */
          {
             tb_snprintf(ATCPBuffer, sizeof(ATCPBuffer), 
-               "SendATCP: Variable name has a length of %d bytes (exceeds MAX_VARIABLE_LENGTH of %d).\n", 
+               "SendATCP: Variable name has a length of %d bytes (exceeds MAX_VARIABLE_LENGTH of %d)", 
                RequiredBuffer, MAX_VARIABLE_LENGTH );
          }
 
-         ReportBug( ATCPBuffer );
+         PROTOCOL_WARN( apDescriptor, "atcp-too-long", "%s", ATCPBuffer );
          ATCPBuffer[0] = '\0';
       }
       else if ( pProtocol->bATCP )

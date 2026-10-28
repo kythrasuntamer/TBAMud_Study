@@ -59,9 +59,23 @@ static void unicode_substitute_is_copied_in_scope(void)
   TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
 }
 
+/* Malformed codes are reported with the descriptor identity and an escaped
+ * excerpt; the old ReportBug() logged the raw text with no locality. */
+static void invalid_colour_is_reported_with_descriptor(void)
+{
+  int len;
+  const char *out = translate("a\t[F9\"9]b", &len);
+  TEST_ASSERT_EQUAL_STRING("ab", out);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("malformed-code", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "desc #77 fd 9 no-char -1: "));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "colour \"9?9\" invalid"));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
   RUN_TEST(unicode_substitute_is_copied_in_scope);
+  RUN_TEST(invalid_colour_is_reported_with_descriptor);
   return UNITY_END();
 }
