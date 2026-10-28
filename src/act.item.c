@@ -30,7 +30,7 @@ static int can_take_obj(struct char_data *ch, struct obj_data *obj);
 static void get_check_money(struct char_data *ch, struct obj_data *obj);
 static void get_from_container(struct char_data *ch, struct obj_data *cont, char *arg, int mode, int amount);
 static void get_from_room(struct char_data *ch, char *arg, int amount);
-static void perform_get_from_container(struct char_data *ch, struct obj_data *obj, struct obj_data *cont, int mode);
+static int perform_get_from_container(struct char_data *ch, struct obj_data *obj, struct obj_data *cont, int mode);
 static int perform_get_from_room(struct char_data *ch, struct obj_data *obj);
 /* do_give utility functions */
 static struct char_data *give_find_vict(struct char_data *ch, char *arg);
@@ -40,7 +40,9 @@ static void perform_give_gold(struct char_data *ch, struct char_data *vict, int 
 static int perform_drop(struct char_data *ch, struct obj_data *obj, byte mode, const char *sname, room_rnum RDR);
 static void perform_drop_gold(struct char_data *ch, int amount, byte mode, room_rnum RDR);
 /* do_put utility functions */
-static void perform_put(struct char_data *ch, struct obj_data *obj, struct obj_data *cont);
+static int perform_put(struct char_data *ch, struct obj_data *obj, struct obj_data *cont);
+static int container_still_reachable(struct char_data *ch, struct obj_data *cont,
+                                     long cont_uid, const char *op);
 /* do_remove utility functions */
 static void perform_remove(struct char_data *ch, int pos);
 /* do_wear utility functions */
@@ -104,18 +106,59 @@ static struct obj_data *obj_iter_resume(const struct obj_iter_mark *mark,
   return obj;
 }
 
+/* After a trigger, is cont (UID cont_uid) still the same live object, and
+ * still carried by ch or on the floor of ch's room? A get or drop script
+ * can purge the container ('opurge bag') or move it. When it cannot be
+ * used any more, reports op (naming the container UID and ch) and returns
+ * FALSE so the caller stops using cont. */
+static int container_still_reachable(struct char_data *ch, struct obj_data *cont,
+                                     long cont_uid, const char *op)
+{
+  if (!obj_uid_matches(cont_uid, cont)) {
+    TB_WARN_MSG("act", op, "obj",
+                "container uid %ld was extracted by a trigger during an "
+                "item command by " DIAG_CHAR_FMT, cont_uid, DIAG_CHAR(ch));
+    return FALSE;
+  }
+  if (cont->carried_by != ch &&
+      (IN_ROOM(cont) == NOWHERE || IN_ROOM(cont) != IN_ROOM(ch))) {
+    TB_WARN_MSG("act", op, "obj",
+                "container vnum %d uid %ld was moved out of reach of "
+                DIAG_CHAR_FMT " by a trigger", (int) GET_OBJ_VNUM(cont),
+                cont_uid, DIAG_CHAR(ch));
+    return FALSE;
+  }
+  return TRUE;
+}
 
-
-
-static void perform_put(struct char_data *ch, struct obj_data *obj, struct obj_data *cont)
+/* Puts obj (carried by ch) into cont. drop_otrigger() can extract or move
+ * obj, cont or any sibling, so both are re-validated after it. Returns FALSE
+ * when cont can no longer be used, so a 'put all' loop must stop; TRUE
+ * otherwise (whether or not obj went in). */
+static int perform_put(struct char_data *ch, struct obj_data *obj, struct obj_data *cont)
 {
   long object_id = obj_script_id(obj);
+  long cont_id = obj_script_id(cont);
+  int allowed = drop_otrigger(obj, ch);
 
-  if (!drop_otrigger(obj, ch))
-    return;
+  if (!container_still_reachable(ch, cont, cont_id, "put-target-changed"))
+    return FALSE;
 
-  if (!has_obj_by_uid_in_lookup_table(object_id)) /* object might be extracted by drop_otrigger */
-    return;
+  if (!allowed)
+    return TRUE;
+
+  /* A script that purges its own object ('the sword crumbles') is a
+   * deliberate outcome, not an error. */
+  if (!obj_uid_matches(object_id, obj))
+    return TRUE;
+
+  if (obj->carried_by != ch) {
+    TB_WARN_MSG("act", "put-target-changed", "obj",
+                "obj vnum %d uid %ld left the hands of " DIAG_CHAR_FMT
+                " during its drop trigger; not put in container uid %ld",
+                (int) GET_OBJ_VNUM(obj), object_id, DIAG_CHAR(ch), cont_id);
+    return TRUE;
+  }
 
   if ((GET_OBJ_VAL(cont, 0) > 0) &&
       (GET_OBJ_WEIGHT(cont) + GET_OBJ_WEIGHT(obj) > GET_OBJ_VAL(cont, 0)))
@@ -136,6 +179,7 @@ static void perform_put(struct char_data *ch, struct obj_data *obj, struct obj_d
     } else
       act("You put $p in $P.", FALSE, ch, obj, cont, TO_CHAR);
   }
+  return TRUE;
 }
 
 /* The following put modes are supported:
@@ -193,7 +237,8 @@ ACMD(do_put)
 	    obj_iter_mark(&mark, obj->next_content);
             if (obj != cont) {
               howmany--;
-	      perform_put(ch, obj, cont);
+	      if (!perform_put(ch, obj, cont))
+	        break;		/* cont is gone: reported by perform_put */
             }
 	    next_obj = obj_iter_resume(&mark, ch, ch, NULL, NOWHERE, "put");
 	    obj = get_obj_in_list_vis(ch, theobj, NULL, next_obj);
@@ -205,7 +250,8 @@ ACMD(do_put)
 	  if (obj != cont && CAN_SEE_OBJ(ch, obj) &&
 	      (obj_dotmode == FIND_ALL || isname(theobj, obj->name))) {
 	    found = 1;
-	    perform_put(ch, obj, cont);
+	    if (!perform_put(ch, obj, cont))
+	      break;		/* cont is gone: reported by perform_put */
 	  }
 	  next_obj = obj_iter_resume(&mark, ch, ch, NULL, NOWHERE, "put");
 	}
@@ -262,13 +308,37 @@ static void get_check_money(struct char_data *ch, struct obj_data *obj)
     send_to_char(ch, "There were %d coins.\r\n", value);
 }
 
-static void perform_get_from_container(struct char_data *ch, struct obj_data *obj,
+/* Takes obj out of cont into ch's inventory. get_otrigger() can extract or
+ * move obj, cont or any sibling, so both are re-validated after it. Returns
+ * FALSE when cont can no longer be used (reported), so a 'get all' loop must
+ * stop; TRUE otherwise. */
+static int perform_get_from_container(struct char_data *ch, struct obj_data *obj,
 				     struct obj_data *cont, int mode)
 {
+  long object_id, cont_id;
+  int allowed;
+
   if (mode == FIND_OBJ_INV || can_take_obj(ch, obj)) {
-    if (IS_CARRYING_N(ch) >= CAN_CARRY_N(ch))
+    if (IS_CARRYING_N(ch) >= CAN_CARRY_N(ch)) {
       act("$p: you can't hold any more items.", FALSE, ch, obj, 0, TO_CHAR);
-    else if (get_otrigger(obj, ch)) {
+      return TRUE;
+    }
+    object_id = obj_script_id(obj);
+    cont_id = obj_script_id(cont);
+    allowed = get_otrigger(obj, ch);
+    if (!container_still_reachable(ch, cont, cont_id, "get-container-changed"))
+      return FALSE;
+    /* A script that purges its own object is a deliberate outcome. */
+    if (!allowed || !obj_uid_matches(object_id, obj))
+      return TRUE;
+    if (obj->in_obj != cont) {
+      TB_WARN_MSG("act", "get-container-changed", "obj",
+                  "obj vnum %d uid %ld left container uid %ld during its get "
+                  "trigger for " DIAG_CHAR_FMT, (int) GET_OBJ_VNUM(obj),
+                  object_id, cont_id, DIAG_CHAR(ch));
+      return TRUE;
+    }
+    {
       obj_from_obj(obj);
       obj_to_char(obj, ch);
       act("You get $p from $P.", FALSE, ch, obj, cont, TO_CHAR);
@@ -276,6 +346,7 @@ static void perform_get_from_container(struct char_data *ch, struct obj_data *ob
       get_check_money(ch, obj);
     }
   }
+  return TRUE;
 }
 
 void get_from_container(struct char_data *ch, struct obj_data *cont,
@@ -298,7 +369,8 @@ void get_from_container(struct char_data *ch, struct obj_data *cont,
     } else {
       while (obj && howmany--) {
         obj_iter_mark(&mark, obj->next_content);
-        perform_get_from_container(ch, obj, cont, mode);
+        if (!perform_get_from_container(ch, obj, cont, mode))
+          return;		/* cont is gone: reported */
         next_obj = obj_iter_resume(&mark, ch, NULL, cont, NOWHERE, "get");
         obj = get_obj_in_list_vis(ch, arg, NULL, next_obj);
       }
@@ -313,7 +385,8 @@ void get_from_container(struct char_data *ch, struct obj_data *cont,
       if (CAN_SEE_OBJ(ch, obj) &&
 	  (obj_dotmode == FIND_ALL || isname(arg, obj->name))) {
 	found = 1;
-	perform_get_from_container(ch, obj, cont, mode);
+	if (!perform_get_from_container(ch, obj, cont, mode))
+	  return;		/* cont is gone: reported */
       }
       next_obj = obj_iter_resume(&mark, ch, NULL, cont, NOWHERE, "get");
     }
@@ -330,9 +403,27 @@ void get_from_container(struct char_data *ch, struct obj_data *cont,
   }
 }
 
+/* Picks obj up from the floor. get_otrigger() can extract or move obj, so it
+ * is re-validated (same instance, still in ch's room) before it is moved. */
 static int perform_get_from_room(struct char_data *ch, struct obj_data *obj)
 {
-  if (can_take_obj(ch, obj) && get_otrigger(obj, ch)) {
+  long object_id;
+  room_rnum room = IN_ROOM(ch);
+
+  if (!can_take_obj(ch, obj))
+    return (0);
+  object_id = obj_script_id(obj);
+  if (!get_otrigger(obj, ch) || !obj_uid_matches(object_id, obj))
+    return (0);		/* refused, or the script purged its own object */
+  if (IN_ROOM(obj) != room || IN_ROOM(ch) != room) {
+    TB_WARN_MSG("act", "get-target-changed", "obj",
+                "obj vnum %d uid %ld or its taker " DIAG_CHAR_FMT
+                " left room vnum %d during the get trigger",
+                (int) GET_OBJ_VNUM(obj), object_id, DIAG_CHAR(ch),
+                (int) GET_ROOM_VNUM(room));
+    return (0);
+  }
+  {
     obj_from_room(obj);
     obj_to_char(obj, ch);
     act("You get $p.", FALSE, ch, obj, 0, TO_CHAR);

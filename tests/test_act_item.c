@@ -185,9 +185,74 @@ static void test_get_all_without_triggers_is_silent(void)
   fx_free_char(pc);
 }
 
+/* H1-02: the object's drop trigger purges the container ('opurge bag').
+ * perform_put must not read the freed bag or link the sword into it. */
+static void test_put_stops_when_trigger_purges_container(void)
+{
+  struct char_data *pc = fx_new_char("hero", FALSE, 0);
+  struct obj_data *bag = fx_new_obj("bag", ITEM_CONTAINER);
+  struct obj_data *sword = fx_new_obj("sword", ITEM_WEAPON);
+  struct obj_data *spear = fx_new_obj("spear", ITEM_WEAPON);
+
+  obj_to_char(bag, pc);
+  obj_to_char(spear, pc);
+  obj_to_char(sword, pc);
+  doom(FX_DROP_OTRIG, bag, NULL);
+
+  do_put(pc, arg("all bag"), 0, 0);
+
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("put-target-changed", tb_captured_operation);
+  TEST_ASSERT_EQUAL_PTR(pc, sword->carried_by);
+  TEST_ASSERT_EQUAL_PTR(pc, spear->carried_by);
+  TEST_ASSERT_NULL(sword->in_obj);
+  fx_free_char(pc);
+}
+
+/* H1-02: a get trigger purges the container being emptied. */
+static void test_get_from_container_stops_when_trigger_purges_it(void)
+{
+  struct char_data *pc = fx_new_char("hero", FALSE, 0);
+  struct obj_data *bag = fx_new_obj("bag", ITEM_CONTAINER);
+
+  obj_to_room(bag, 0);
+  obj_to_obj(fx_new_obj("apple", ITEM_OTHER), bag);
+  obj_to_obj(fx_new_obj("bread", ITEM_OTHER), bag);
+  doom(FX_GET_OTRIG, bag, NULL);   /* extract_obj takes the contents too */
+
+  do_get(pc, arg("all bag"), 0, 0);
+
+  TEST_ASSERT_NULL(pc->carrying);
+  TEST_ASSERT_NULL(world[0].contents);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("get-container-changed", tb_captured_operation);
+  fx_free_char(pc);
+}
+
+/* H1-02: a get trigger that purges its own object is a deliberate script
+ * outcome: nothing is picked up, nothing freed is touched, nothing logged. */
+static void test_get_object_that_purges_itself(void)
+{
+  struct char_data *pc = fx_new_char("hero", FALSE, 0);
+  struct obj_data *a = fx_new_obj("apple", ITEM_OTHER);
+
+  obj_to_room(a, 0);
+  doom(FX_GET_OTRIG, a, NULL);
+
+  do_get(pc, arg("apple"), 0, 0);
+
+  TEST_ASSERT_NULL(pc->carrying);
+  TEST_ASSERT_NULL(world[0].contents);
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  fx_free_char(pc);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(test_put_stops_when_trigger_purges_container);
+  RUN_TEST(test_get_from_container_stops_when_trigger_purges_it);
+  RUN_TEST(test_get_object_that_purges_itself);
   RUN_TEST(test_get_all_survives_trigger_purging_siblings);
   RUN_TEST(test_get_all_from_container_survives_purge);
   RUN_TEST(test_drop_all_survives_trigger_purging_next);
