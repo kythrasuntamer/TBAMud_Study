@@ -117,6 +117,12 @@ static byte emergency_unban;  /* signal: SIGUSR2 */
 static int dg_act_check;         /* toggle for act_trigger */
 static bool fCopyOver;          /* Are we booting in copyover mode? */
 static char *last_act_message = NULL;
+/* Call site of the act() being formatted (NULL for direct perform_act()
+ * calls). act_at() saves and restores it because act triggers can send
+ * further act() messages while one is being delivered. */
+static const char *act_site_file = NULL;
+static int act_site_line = 0;
+static const char *act_site_func = NULL;
 
 /* static local function prototypes (current file scope only) */
 static RETSIGTYPE reread_wizlists(int sig);
@@ -2672,6 +2678,11 @@ static const char *act_format_excerpt(char *dst, size_t dst_size,
   (IS_NPC(to) ? "mob vnum" : "player idnum"), \
   (IS_NPC(to) ? (long) GET_MOB_VNUM(to) : (long) GET_IDNUM(to))
 
+/* "caller=file:line function" of the act() call, for every act diagnostic. */
+#define ACT_DIAG_SITE \
+  (act_site_file ? act_site_file : "(direct perform_act call)"), \
+  act_site_line, (act_site_func ? act_site_func : "-")
+
 /* higher-level communication: the act() function */
 void perform_act(const char *orig, struct char_data *ch, struct obj_data *obj,
     void *vict_obj, struct char_data *to)
@@ -2774,16 +2785,16 @@ void perform_act(const char *orig, struct char_data *ch, struct obj_data *obj,
 	break;
       case '\0':
 	TB_ERROR_MSG("act", "format-parse", "perform_act",
-	             "format ends with a bare '$' (recipient %s %ld) format=\"%s\"",
-	             ACT_DIAG_RECIPIENT(to),
+	             "format ends with a bare '$' caller=%s:%d %s (recipient %s %ld) "
+	             "format=\"%s\"", ACT_DIAG_SITE, ACT_DIAG_RECIPIENT(to),
 	             act_format_excerpt(excerpt, sizeof(excerpt), format));
 	i = "";
 	break;
       default:
 	TB_ERROR_MSG("act", "format-parse", "perform_act",
-	             "illegal $-code 0x%02x at offset %ld (recipient %s %ld) format=\"%s\"",
-	             (unsigned char) *orig, (long) (orig - format),
-	             ACT_DIAG_RECIPIENT(to),
+	             "illegal $-code 0x%02x at offset %ld caller=%s:%d %s (recipient "
+	             "%s %ld) format=\"%s\"", (unsigned char) *orig,
+	             (long) (orig - format), ACT_DIAG_SITE, ACT_DIAG_RECIPIENT(to),
 	             act_format_excerpt(excerpt, sizeof(excerpt), format));
 	i = "";
 	break;
@@ -2815,8 +2826,8 @@ void perform_act(const char *orig, struct char_data *ch, struct obj_data *obj,
   if (truncated)
     TB_ERROR_MSG("act", "format-output", "perform_act",
                  "expanded output exceeded %d bytes and was truncated "
-                 "(recipient %s %ld) format=\"%s\"", (int) sizeof(lbuf),
-                 ACT_DIAG_RECIPIENT(to),
+                 "caller=%s:%d %s (recipient %s %ld) format=\"%s\"",
+                 (int) sizeof(lbuf), ACT_DIAG_SITE, ACT_DIAG_RECIPIENT(to),
                  act_format_excerpt(excerpt, sizeof(excerpt), format));
 
   if (to->desc)
@@ -2829,11 +2840,34 @@ void perform_act(const char *orig, struct char_data *ch, struct obj_data *obj,
     free(last_act_message);
   if ((last_act_message = strdup(lbuf)) == NULL)
     TB_ERROR_ERRNO("act", "allocate", "last_act_message",
-                   "cannot copy %zu-byte act() result; act() will return NULL",
-                   strlen(lbuf) + 1);
+                   "cannot copy %zu-byte act() result; act() will return NULL "
+                   "caller=%s:%d %s", strlen(lbuf) + 1, ACT_DIAG_SITE);
 }
 
-char *act(const char *str, int hide_invisible, struct char_data *ch,
+static char *act_body(const char *str, int hide_invisible, struct char_data *ch,
+	 struct obj_data *obj, void *vict_obj, int type);
+
+/* Target of the act() macro in comm.h: record the caller for diagnostics,
+ * deliver the message, then restore the enclosing act()'s call site. */
+char *act_at(const char *src_file, int src_line, const char *src_func,
+             const char *str, int hide_invisible, struct char_data *ch,
+             struct obj_data *obj, void *vict_obj, int type)
+{
+  const char *saved_file = act_site_file, *saved_func = act_site_func;
+  int saved_line = act_site_line;
+  char *result;
+
+  act_site_file = src_file;
+  act_site_line = src_line;
+  act_site_func = src_func;
+  result = act_body(str, hide_invisible, ch, obj, vict_obj, type);
+  act_site_file = saved_file;
+  act_site_line = saved_line;
+  act_site_func = saved_func;
+  return result;
+}
+
+static char *act_body(const char *str, int hide_invisible, struct char_data *ch,
 	 struct obj_data *obj, void *vict_obj, int type)
 {
   struct char_data *to;

@@ -82,6 +82,9 @@ static void trailing_dollar_stops_at_terminator(void)
   TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
   TEST_ASSERT_EQUAL_STRING("format-parse", tb_captured_operation);
   TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "format=\"cost 5$\""));
+  /* The act() caller's own location is named. */
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "test_act_format.c:"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, " trailing_dollar_stops_at_terminator"));
 }
 /* $T text longer than the output buffer previously overflowed the stack. */
 static void oversized_substitution_is_truncated(void)

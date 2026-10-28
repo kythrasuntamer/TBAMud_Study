@@ -44,7 +44,16 @@ void send_to_range(room_vnum start, room_vnum finish, const char *messg, ...)
 
 /* act functions */
 void perform_act(const char *orig, struct char_data *ch, struct obj_data *obj, void *vict_obj, struct char_data *to);
-char * act(const char *str, int hide_invisible, struct char_data *ch, struct obj_data *obj, void *vict_obj, int type);
+/* act() is a macro so every message records the file, line and function of
+ * the code that sent it; formatting diagnostics in perform_act() report that
+ * call site. Call act() exactly as before. A NULL or empty str means "no
+ * message" (socials use it for absent entries) and returns NULL silently. */
+char *act_at(const char *src_file, int src_line, const char *src_func,
+             const char *str, int hide_invisible, struct char_data *ch,
+             struct obj_data *obj, void *vict_obj, int type);
+#define act(str, hide_invisible, ch, obj, vict_obj, type) \
+  act_at(__FILE__, __LINE__, __func__, (str), (hide_invisible), (ch), (obj), \
+         (vict_obj), (type))
 
 /* I/O functions */
 void	write_to_q(const char *txt, struct txt_q *queue, int aliased);
