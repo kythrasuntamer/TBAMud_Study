@@ -27,7 +27,14 @@ static void postmaster_receive_mail(struct char_data *ch, struct char_data *mail
 static int mail_recip_ok(const char *name);
 static int write_mail_record(FILE *mail_file, struct mail_t *record);
 static void free_mail_record(struct mail_t *record);
-static struct mail_t *read_mail_record(FILE *mail_file);
+static int read_mail_record(FILE *mail_file, int record_no, struct mail_t **out);
+
+/* read_mail_record() results. A NULL record alone cannot tell a clean end
+ * of file from a damaged header, and callers that rewrite the mail file must
+ * never treat damage as the end: that silently drops every later message. */
+#define MAIL_READ_EOF      0
+#define MAIL_READ_OK       1
+#define MAIL_READ_CORRUPT (-1)
 
 static int mail_recip_ok(const char *name)
 {
@@ -47,15 +54,27 @@ static void free_mail_record(struct mail_t *record)
   free(record);
 }
 
-static struct mail_t *read_mail_record(FILE *mail_file)
+/** Read the next record of MAIL_FILE.
+ * The file is a sequence of records: a header line "### <to> <from> <time>"
+ * (recipient and sender idnums, send time in seconds) followed by the
+ * '~'-terminated message body. The file is server-written, but it can be
+ * truncated or damaged on disk.
+ * @param record_no 1-based position of this record, for diagnostics.
+ * @param[out] out The record (caller frees with free_mail_record()) on
+ * MAIL_READ_OK, otherwise NULL.
+ * @return MAIL_READ_OK, MAIL_READ_EOF at a clean end of file, or
+ * MAIL_READ_CORRUPT after reporting a parse-header error. The header text
+ * itself is not logged: only the record number and which field failed. */
+static int read_mail_record(FILE *mail_file, int record_no, struct mail_t **out)
 {
   char line[READ_SIZE];
   long sender, recipient;
   time_t sent_time;
   struct mail_t *record;
 
+  *out = NULL;
   if (!get_line(mail_file, line))
-  	return NULL;
+  	return MAIL_READ_EOF;
 
   {
     char recipient_text[32], sender_text[32], time_text[32];
@@ -63,28 +82,33 @@ static struct mail_t *read_mail_record(FILE *mail_file)
     long parsed_time;
 
     if (sscanf(line, "### %31s %31s %31s", recipient_text, sender_text, time_text) != 3) {
-      log("Mail system - fatal error - malformed mail header");
-      log("Line was: %s", line);
-      return NULL;
+      TB_ERROR_MSG("mail", "parse-header", MAIL_FILE,
+                   "record %d header is not '### to from time'", record_no);
+      return MAIL_READ_CORRUPT;
     }
 
     errno = 0;
     recipient = strtol(recipient_text, &end, 10);
     if (errno == ERANGE || end == recipient_text || *end != '\0') {
-      log("SYSERR: mail record has invalid recipient id '%s' in header '%s'", recipient_text, line);
-      return NULL;
+      TB_ERROR_MSG("mail", "parse-header", MAIL_FILE,
+                   "record %d has an invalid recipient idnum", record_no);
+      return MAIL_READ_CORRUPT;
     }
     errno = 0;
     sender = strtol(sender_text, &end, 10);
     if (errno == ERANGE || end == sender_text || *end != '\0') {
-      log("SYSERR: mail record has invalid sender id '%s' in header '%s'", sender_text, line);
-      return NULL;
+      TB_ERROR_MSG("mail", "parse-header", MAIL_FILE,
+                   "record %d (recipient idnum %ld) has an invalid sender idnum",
+                   record_no, recipient);
+      return MAIL_READ_CORRUPT;
     }
     errno = 0;
     parsed_time = strtol(time_text, &end, 10);
     if (errno == ERANGE || end == time_text || *end != '\0') {
-      log("SYSERR: mail record has invalid timestamp '%s' in header '%s'", time_text, line);
-      return NULL;
+      TB_ERROR_MSG("mail", "parse-header", MAIL_FILE,
+                   "record %d (recipient idnum %ld sender idnum %ld) has an invalid timestamp",
+                   record_no, recipient, sender);
+      return MAIL_READ_CORRUPT;
     }
     sent_time = (time_t)parsed_time;
   }
@@ -96,7 +120,8 @@ static struct mail_t *read_mail_record(FILE *mail_file)
   record->sent_time = sent_time;
   record->body = fread_string(mail_file, "read mail record");
 
-  return record;
+  *out = record;
+  return MAIL_READ_OK;
 }
 
 static int write_mail_record(FILE *mail_file, struct mail_t *record)
@@ -126,7 +151,7 @@ static int write_mail_record(FILE *mail_file, struct mail_t *record)
 int scan_file(void)
 {
   FILE *mail_file;
-  int count = 0;
+  int count = 0, result;
   struct mail_t *record;
 
   if (!(mail_file = fopen(MAIL_FILE, "r"))) {
@@ -142,15 +167,19 @@ int scan_file(void)
     return FALSE;
   }
 
-  record = read_mail_record(mail_file);
-
-  while (record) {
+  while ((result = read_mail_record(mail_file, count + 1, &record)) == MAIL_READ_OK) {
     free_mail_record(record);
-    record = read_mail_record(mail_file);
     count++;
   }
 
   tb_fclose(mail_file);
+  if (result == MAIL_READ_CORRUPT) {
+    /* The caller disables mail: rewriting a damaged file would drop every
+     * message after the bad record. */
+    TB_ERROR_MSG("mail", "scan", MAIL_FILE,
+                 "mail file damaged after %d good messages; mail disabled", count);
+    return FALSE;
+  }
  	log("   Mail file read -- %d messages.", count);
  	return TRUE;
 }
@@ -164,24 +193,28 @@ int has_mail(long recipient)
 {
   FILE *mail_file;
   struct mail_t *record;
+  int record_no = 0, result;
 
   if (!(mail_file = fopen(MAIL_FILE, "r"))) {
     TB_REPORT_ERRNO("fopen", MAIL_FILE);
     return FALSE;
   }
 
-  record = read_mail_record(mail_file);
-
-  while (record) {
+  while ((result = read_mail_record(mail_file, ++record_no, &record)) == MAIL_READ_OK) {
   	if (record->recipient == recipient) {
   		free_mail_record(record);
   		tb_fclose(mail_file);
   		return TRUE;
     }
     free_mail_record(record);
-    record = read_mail_record(mail_file);
   }
   tb_fclose(mail_file);
+  if (result == MAIL_READ_CORRUPT) {
+    no_mail = TRUE;
+    TB_ERROR_MSG("mail", "has-mail", MAIL_FILE,
+                 "mail file damaged at record %d while checking recipient idnum %ld; "
+                 "mail disabled", record_no, recipient);
+  }
   return FALSE;
 }
 
@@ -231,7 +264,7 @@ char *read_delete(long recipient)
   FILE *mail_file, *new_file;
   struct mail_t *record, *record_to_keep = NULL;
   char buf[MAX_STRING_LENGTH], backup_file[MAX_STRING_LENGTH];
-  int name_result;
+  int name_result, record_no = 0, result;
 
   if (!(mail_file = fopen(MAIL_FILE, "r"))) {
     TB_REPORT_ERRNO("fopen", MAIL_FILE);
@@ -246,12 +279,9 @@ char *read_delete(long recipient)
     return strdup("Mail system malfunction - please report this");
   }
 
-  record = read_mail_record(mail_file);
-
-  while (record) {
+  while ((result = read_mail_record(mail_file, ++record_no, &record)) == MAIL_READ_OK) {
   	if (!record_to_keep && record->recipient == recipient) {
   		record_to_keep = record;
-  		record = read_mail_record(mail_file);
   		continue; /* don't write and free this one just yet */
     }
     if (!write_mail_record(new_file, record)) {
@@ -267,7 +297,22 @@ char *read_delete(long recipient)
       return strdup("Mail system malfunction - please report this");
     }
     free_mail_record(record);
-    record = read_mail_record(mail_file);
+  }
+
+  if (result == MAIL_READ_CORRUPT) {
+    /* Committing the partial rewrite would delete every message after the
+     * damaged record. Keep the live file and stop the mail system. */
+    no_mail = TRUE;
+    TB_ERROR_MSG("mail", "parse-header", MAIL_FILE,
+                 "record %d malformed; rewrite aborted for recipient idnum %ld; "
+                 "mail disabled", record_no, recipient);
+    if (record_to_keep)
+      free_mail_record(record_to_keep);
+    tb_fclose(mail_file);
+    tb_fclose(new_file);
+    if (remove(MAIL_FILE_TMP) != 0 && errno != ENOENT)
+      TB_REPORT_ERRNO("remove", MAIL_FILE_TMP);
+    return NULL;
   }
 
   if (!record_to_keep)
