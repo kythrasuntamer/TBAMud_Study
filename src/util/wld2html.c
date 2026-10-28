@@ -7,6 +7,37 @@
 *  Based on the Circle 3.0 syntax checker program                         *
 ************************************************************************ */
 
+/**
+ * @file wld2html.c
+ * Offline tool: convert tbaMUD/CircleMUD room files (.wld) into one static
+ * HTML page per room.
+ *
+ * Usage: wld2html <file.wld> [<file.wld> ...]
+ *
+ * Input (who controls it): the .wld files named on the command line, i.e.
+ * builder data.  It is treated as untrusted for memory safety: every
+ * length, index and number read from it is checked, and any malformed
+ * input stops the run with a structured TBERR diagnostic naming the input
+ * file, line and room vnum (WLD_PARSE_ERROR).  Supported per room:
+ * "#<vnum>", name~, description~, "<zone> <flags> <sector>" (one flag word,
+ * letters a..F or a decimal number), D<0..9> exits, E extra descriptions,
+ * and S.  "T" trigger lines are skipped, "*" lines are comments, "$" ends
+ * a file, and "#99999" is honoured as the old end-of-world sentinel
+ * (reported).  Lines are limited to WLD_MAX_LINE - 1 bytes (255 for record
+ * lines), strings to MAX_STRING_LENGTH - 1 bytes.
+ *
+ * Output: "<vnum>.html" in the current directory for every room, silently
+ * overwriting files of that name.  Builder text is HTML-escaped.  Progress
+ * goes to stderr.
+ *
+ * Exit status: 0 when every page was written; 1 on bad usage, any parse
+ * error, an unopenable input or output file, or a failed write.
+ *
+ * Memory: world[] and every string hang off globals and are deliberately
+ * not freed before exit; Valgrind reports them as "still reachable", not
+ * as leaks.
+ */
+
 #define log(msg) tb_fprintf(stderr, "%s\n", (msg))
 
 #include "conf.h"
@@ -444,6 +475,21 @@ int count_hash_records(FILE * fl)
 
 
 
+/**
+ * Load every .wld file named on the command line into world[].
+ *
+ * Two-pass sizing contract: pass one sums count_hash_records() over all
+ * files into rec_count and world[] is calloc'd with that many entries; pass
+ * two parses the files in the same order.  rec_count is only an upper
+ * bound (a '#' at the start of a string line or the #99999 sentinel is
+ * counted but never loaded), so unused trailing slots stay zeroed with
+ * name == NULL, which write_output() and findRoom() treat as "unused".
+ * parse_room() refuses to store past rec_count (wld-record-capacity).
+ *
+ * @param cnt    argc from main(); names[0] (the program) is skipped.
+ * @param names  argv from main(): input file paths, used for diagnostics.
+ * Exits 1 on any open or parse failure.
+ */
 void index_boot(int cnt, char **names)
 {
   FILE *db_file;
@@ -583,7 +629,20 @@ unsigned long asciiflag_conv(const char *flag)
   return (flags);
 }
 
-/* load the rooms */
+/**
+ * Parse one room record (everything after its "#<vnum>" line through "S")
+ * into the next free world[] slot.
+ *
+ * The static room_nr is a cursor shared by all input files: it is the
+ * world[] index of the next room and only ever grows.  It must stay below
+ * rec_count; that is checked before every store.  A loaded room always has
+ * non-NULL name and description (empty fields are reported and replaced
+ * with ""), which is what distinguishes it from an unused slot.
+ *
+ * @param fl          Input stream positioned after the '#' line.
+ * @param virtual_nr  The room's vnum from that line.
+ * Exits 1 on any format error.
+ */
 void parse_room(FILE * fl, int virtual_nr)
 {
   static int room_nr = 0, zone = 0;
@@ -688,7 +747,17 @@ void parse_room(FILE * fl, int virtual_nr)
 
 
 
-/* read direction data */
+/**
+ * Read one "D<dir>" exit block (general description~, keyword~ and the
+ * "<door-flag> <key> <to-room>" line) into world[room].dir_option[dir].
+ *
+ * Preconditions, all re-checked here: 0 <= room < rec_count,
+ * VALID_DIR(dir) (parse_room() validates the builder's D<dir> first), and
+ * the slot is still empty (a repeated direction is wld-duplicate-door).
+ * to_room is stored as a vnum, not an rnum; write_output() resolves it with
+ * findRoom() and prints "missing room N" when nothing matches.
+ * Exits 1 on any violation or format error.
+ */
 void setup_dir(FILE * fl, int room, int dir)
 {
   int t[5];
@@ -746,7 +815,21 @@ void setup_dir(FILE * fl, int room, int dir)
 *  procedures for resetting, both play-time and boot-time	 	 *
 *********************************************************************** */
 
-/* read and allocate space for a '~'-terminated string from a given file */
+/**
+ * Read a '~'-terminated string from a .wld file.
+ *
+ * Lines are joined with "\r\n"; anything after the '~' on its line is
+ * ignored.  Each line may hold at most sizeof(tmp) - 3 (509) bytes and the
+ * whole string MAX_STRING_LENGTH - 1 bytes; longer input, a NUL byte, or
+ * end of file before the '~' is reported (wld-line-too-long, wld-line-nul,
+ * wld-string-too-long, wld-unexpected-eof) and the tool exits 1.
+ *
+ * @param fl     Input stream.
+ * @param error  Name of the field being read ("room name", "exit D0
+ *               text", ...), used only as diagnostic context.
+ * @return A calloc'd copy owned by the caller (this tool never frees it),
+ *         or NULL for an empty string ("~" alone): callers must handle NULL.
+ */
 char *fread_string(FILE * fl, const char *error)
 {
   char buf[MAX_STRING_LENGTH], tmp[512], *rslt;
@@ -814,9 +897,18 @@ char *fread_string(FILE * fl, const char *error)
 
 
 
-/* get_line reads the next non-blank line off of the input stream.
- * The newline character is removed from the input.  Lines which begin
- * with '*' are considered to be comments.
+/**
+ * Read the next record line, skipping blank lines and '*' comment lines.
+ *
+ * The trailing "\n" or "\r\n" is removed.  A line that does not fit in
+ * buflen - 1 bytes (including a long comment line) or contains a NUL byte
+ * is reported and the tool exits 1; it is never split.  A final line
+ * without a newline is returned normally.
+ *
+ * @param fl      Input stream.
+ * @param buf     Destination, always NUL-terminated on return.
+ * @param buflen  Size of buf in bytes (callers pass 256).
+ * @return 1 when a line was stored, 0 at end of file.
  */
 int get_line(FILE * fl, char *buf, size_t buflen)
 {
