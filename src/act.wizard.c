@@ -3176,6 +3176,27 @@ static void show_page(struct char_data *ch, char *buf, size_t bufsize,
   page_string(ch->desc, buf, TRUE);
 }
 
+/* "show thaco" and "show exp" list the four original classes' tables; the
+ * newer classes use their archetype's (class.h), so say which. */
+static void append_archetype_legend(struct tb_buf *out)
+{
+  static const int columns[] = { CLASS_MAGIC_USER, CLASS_CLERIC, CLASS_THIEF, CLASS_WARRIOR };
+  size_t i;
+  int c, first;
+
+  tb_buf_append(out, "Also:");
+  for (i = 0; i < sizeof(columns) / sizeof(columns[0]); i++) {
+    tb_buf_appendf(out, " %s=", class_abbrevs[columns[i]]);
+    first = TRUE;
+    for (c = 0; c < NUM_CLASSES; c++)
+      if (c != columns[i] && class_progression_archetype(c) == columns[i]) {
+        tb_buf_appendf(out, "%s%s", first ? "" : ",", class_abbrevs[c]);
+        first = FALSE;
+      }
+  }
+  tb_buf_append(out, "\r\n");
+}
+
 ACMD(do_show)
 {
   int i, j, k, l, con, builder =0;		/* i, j, k to specifics? */
@@ -3452,6 +3473,7 @@ ACMD(do_show)
 				thaco(CLASS_THIEF, j),
 				thaco(CLASS_WARRIOR, j));
 
+    append_archetype_legend(&out);
     show_page(ch, buf, sizeof(buf), tb_buf_truncated(&out), "thaco");
     break;
 
@@ -3466,6 +3488,7 @@ ACMD(do_show)
 				level_exp(CLASS_THIEF, i) - level_exp(CLASS_THIEF, i - 1),
 				level_exp(CLASS_WARRIOR, i) - level_exp(CLASS_WARRIOR, i - 1));
 
+    append_archetype_legend(&out);
     show_page(ch, buf, sizeof(buf), tb_buf_truncated(&out), "exp");
     break;
 

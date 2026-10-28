@@ -190,6 +190,20 @@ if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
 endif()
 
 
+# Player saves round-trip in a temporary directory, never live lib/plrfiles.
+add_mud_test(test_player_roundtrip
+    ${MUD_SRCDIR}/players.c
+    ${MUD_SRCDIR}/utils.c
+    ${MUD_SRCDIR}/random.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/player_roundtrip_stubs.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_player_roundtrip.c
+)
+
+# Native tests execute the exact arcane calculations used by live magic.
+add_mud_test(test_arcane_specialization
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_arcane_specialization.c
+)
+
 # ---------------------------------------------------------------------------
 # test_error_handling — strict parsing and transactional failure containment
 # ---------------------------------------------------------------------------
@@ -943,6 +957,8 @@ endif()
 # Production spec procs (spec_procs.c).
 add_mud_test(test_spec_procs
     ${MUD_SRCDIR}/spec_procs.c
+    ${MUD_SRCDIR}/class.c          # guild_info[], prac_params[] for guild_guard/practice
+    ${MUD_SRCDIR}/constants.c      # dirs[], autoexits[]
     ${CMAKE_CURRENT_SOURCE_DIR}/test_spec_procs.c
 )
 if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
@@ -1585,6 +1601,14 @@ endif()
 # clean_pfiles() re-examines a slot after a removal; if a refused removal
 # were counted as done it would spin forever. Fail that regression sooner.
 set_tests_properties(test_players_persist PROPERTIES TIMEOUT 60)
+
+# tools/rebalance_world_50.py: stage-and-report level-50 mobile rebalance.
+if(Python3_Interpreter_FOUND)
+    add_test(NAME test_rebalance_world_50
+        COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_CURRENT_SOURCE_DIR}/test_rebalance_world_50.py)
+    set_tests_properties(test_rebalance_world_50 PROPERTIES LABELS contract
+        ENVIRONMENT TB_SOURCE_DIR=${PROJECT_SOURCE_DIR})
+endif()
 
 # Fil-C only: set aside the tests whose -Wl,--wrap doubles it defeats.
 tb_filc_skip_wrap_tests()

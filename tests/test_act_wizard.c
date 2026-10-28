@@ -190,7 +190,8 @@ struct attack_hit_type attack_hit_text[NUM_ATTACK_TYPES] = {
   {"maul", "mauls"}, {"thrash", "thrashes"}, {"pierce", "pierces"},
   {"blast", "blasts"}, {"punch", "punches"}, {"stab", "stabs"}
 };
-const char *class_abbrevs[] = { "Mu", "Cl", "Th", "Wa", "Mo", "\n" };
+const char *class_abbrevs[] = { "Wi", "Cl", "Th", "Wa", "Mo", "Dr", "Be", "So",
+                                "Pa", "Ra", "Ba", "Ne", "\n" };
 
 /* ---------------------------------------------------------------------
  * Globals owned by unlinked files.
@@ -1705,6 +1706,16 @@ static void test_trans_all_skips_a_stranded_player(void)
   in_game_char = NULL;
 }
 
+/* show thaco / show exp say which original class's table each newer class
+ * uses.  Red before: the tables named only the four original classes. */
+static void test_show_tables_name_archetype_users(void)
+{
+  RUN_CMD(do_show, &imm, "thaco");
+  TEST_ASSERT_NOT_NULL(strstr(sent, "Also: Wi=So,Ne Cl=Dr Th=Ra,Ba Wa=Mo,Be,Pa"));
+  RUN_CMD(do_show, &imm, "exp");
+  TEST_ASSERT_NOT_NULL(strstr(sent, "Wa=Mo,Be,Pa"));
+}
+
 int main(void)
 {
   /* basic_mud_log()/mudlog() are the real utils.c ones; keep them quiet. */
@@ -1713,6 +1724,7 @@ int main(void)
   setenv("TZ", "UTC0", 1);
   tzset();
   UNITY_BEGIN();
+  RUN_TEST(test_show_tables_name_archetype_users);
   RUN_SELECTED(test_set_file_room_is_refused_and_reported);
   RUN_SELECTED(test_stat_file_frees_copy_without_extracting);
   RUN_SELECTED(test_stat_file_outranked_is_denied_before_side_effects);

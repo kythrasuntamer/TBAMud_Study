@@ -14,6 +14,7 @@
 #include "utils.h"
 #include "interpreter.h"
 #include "spells.h"
+#include "arcane_specialization.h"
 #include "handler.h"
 #include "comm.h"
 #include "db.h"
@@ -65,10 +66,12 @@ static int mag_manacost(struct char_data *ch, int spellnum) {
    * SPELL_MIN_LEVEL() sees and refuses a negative (corrupt) class instead
    * of a wrapped 0..255 one. */
   int cls = (int) GET_CLASS(ch);
-
-  return MAX(SINFO.mana_max - (SINFO.mana_change *
+  int mana = MAX(SINFO.mana_max - (SINFO.mana_change *
       (GET_LEVEL(ch) - SPELL_MIN_LEVEL(spellnum, cls))),
-  SINFO.mana_min);
+      SINFO.mana_min);
+
+  return arcane_adjust_mana(cls, GET_LEVEL(ch), SPELL_MIN_LEVEL(spellnum, cls),
+      mana, IS_SET(SINFO.routines, MAG_DAMAGE), IS_NPC(ch), SINFO.mana_min);
 }
 
 static char *obfuscate_spell(const char *unobfuscated) {
@@ -308,7 +311,7 @@ int call_magic(struct char_data *caster, struct char_data *cvict,
   }
 
   if (IS_SET(SINFO.routines, MAG_DAMAGE))
-    if (mag_damage(level, caster, cvict, spellnum, savetype) == -1)
+    if (mag_damage(level, caster, cvict, spellnum, savetype, casttype) == -1)
       return (-1); /* Successful and target died, don't cast again. */
 
   if (IS_SET(SINFO.routines, MAG_AFFECTS))

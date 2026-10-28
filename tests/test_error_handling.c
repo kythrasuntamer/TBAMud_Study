@@ -140,6 +140,20 @@ void test_error_reporter_never_emits_partial_escape(void)
   TEST_ASSERT_EQUAL_STRING("", tiny);
 }
 
+void test_diagnostic_truncation_is_explicit(void)
+{
+  char small[5];
+  char exact[5];
+
+  TEST_ASSERT_TRUE(tb_diag_escape_checked(small, sizeof(small), "abcdef"));
+  TEST_ASSERT_EQUAL_STRING("abcd", small);
+  TEST_ASSERT_FALSE(tb_diag_escape_checked(exact, sizeof(exact), "abcd"));
+  TEST_ASSERT_EQUAL_STRING("abcd", exact);
+  TEST_ASSERT_TRUE(tb_diag_escape_checked(small, sizeof(small), "ab\nxyz"));
+  TEST_ASSERT_EQUAL_STRING("ab\\n", small);
+  TEST_ASSERT_TRUE(tb_diag_escape_checked(NULL, 0, "text"));
+}
+
 void test_error_reporter_exposes_symbolic_errno(void)
 {
 #ifdef ENOENT
@@ -306,6 +320,7 @@ int main(void)
   RUN_TEST(test_error_reporter_preserves_errno);
   RUN_TEST(test_error_reporter_escapes_record_breaking_context);
   RUN_TEST(test_error_reporter_exposes_symbolic_errno);
+  RUN_TEST(test_diagnostic_truncation_is_explicit);
   RUN_TEST(test_error_reporter_never_emits_partial_escape);
   RUN_TEST(test_checked_int_parser_accepts_complete_number);
   RUN_TEST(test_checked_int_parser_rejects_trailing_garbage);

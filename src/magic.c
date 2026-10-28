@@ -14,6 +14,7 @@
 #include "utils.h"
 #include "comm.h"
 #include "spells.h"
+#include "arcane_specialization.h"
 #include "handler.h"
 #include "db.h"
 #include "interpreter.h"
@@ -204,7 +205,7 @@ static int mag_materials(struct char_data *ch, IDXTYPE item0,
  * of damage, adds in any modifiers, determines what the saves are, tests for
  * save and calls damage(). -1 = dead, otherwise the amount of damage done. */
 int mag_damage(int level, struct char_data *ch, struct char_data *victim,
-		     int spellnum, int savetype)
+		     int spellnum, int savetype, int casttype)
 {
   int dam = 0;
 
@@ -296,6 +297,9 @@ int mag_damage(int level, struct char_data *ch, struct char_data *victim,
 
   } /* switch(spellnum) */
 
+
+  dam = arcane_adjust_damage(GET_CLASS(ch), GET_LEVEL(ch),
+                             dam, casttype == CAST_SPELL, IS_NPC(ch));
 
   /* divide damage by two if victim makes his saving throw */
   if (mag_savingthrow(victim, savetype, 0))
@@ -701,7 +705,7 @@ void mag_areas(int level, struct char_data *ch, int spellnum, int savetype)
 	if ((spellnum == SPELL_EARTHQUAKE) && AFF_FLAGGED(tch, AFF_FLYING))
 	  continue;
     /* Doesn't matter if they die here so we don't check. -gg 6/24/98 */
-    mag_damage(level, ch, tch, spellnum, 1);
+    mag_damage(level, ch, tch, spellnum, 1, CAST_UNDEFINED);
   }
   free(targets);
 }

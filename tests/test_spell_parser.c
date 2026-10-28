@@ -167,8 +167,9 @@ void mag_affects(int level, struct char_data *ch, struct char_data *victim,
   affect_calls++;
 }
 int mag_damage(int level, struct char_data *ch, struct char_data *victim,
-    int spellnum, int savetype)
-{ (void)level; (void)ch; (void)victim; (void)spellnum; (void)savetype; return 0; }
+    int spellnum, int savetype, int casttype)
+{ (void)level; (void)ch; (void)victim; (void)spellnum; (void)savetype;
+  (void)casttype; return 0; }
 void mag_unaffects(int level, struct char_data *ch, struct char_data *victim,
     int spellnum, int type)
 { (void)level; (void)ch; (void)victim; (void)spellnum; (void)type; }

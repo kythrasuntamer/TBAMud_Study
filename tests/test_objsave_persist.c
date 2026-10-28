@@ -32,8 +32,8 @@
 /* ------------------------------------------------------------------ */
 struct obj_data *obj_proto;
 struct obj_data *object_list;
-static struct obj_data protos[2];
-static struct index_data indexes[2];
+static struct obj_data protos[3];
+static struct index_data indexes[3];
 static char scratch_dir[256];
 static char paged[MAX_STRING_LENGTH * 2];
 static int pages;
@@ -208,6 +208,8 @@ obj_rnum real_object(obj_vnum vnum)
     return 0;
   if (vnum == 101)
     return 1;
+  if (vnum == 102)
+    return 2;
   return NOTHING;
 }
 
@@ -239,7 +241,8 @@ struct obj_data *read_object(obj_vnum nr, int type)
 static void free_obj_strings(struct obj_data *obj)
 {
   obj_rnum r = obj->item_number;
-  struct obj_data *p = (r != NOTHING && r <= 1) ? &protos[r] : NULL;
+  struct obj_data *p = (r != NOTHING && r < (obj_rnum)(sizeof(protos) / sizeof(protos[0])))
+                         ? &protos[r] : NULL;
 
   if (obj->name && (!p || obj->name != p->name))
     free(obj->name);
@@ -369,11 +372,18 @@ void setUp(void)
   protos[1].short_description = (char *)"a trinket";
   GET_OBJ_TYPE(&protos[1]) = ITEM_TRASH;
   SET_BIT_AR(GET_OBJ_WEAR(&protos[1]), ITEM_WEAR_TAKE);
+  protos[2].item_number = 2;
+  protos[2].name = (char *)"axe";
+  protos[2].short_description = (char *)"an axe";
+  GET_OBJ_TYPE(&protos[2]) = ITEM_WEAPON;
+  SET_BIT_AR(GET_OBJ_WEAR(&protos[2]), ITEM_WEAR_TAKE);
+  SET_BIT_AR(GET_OBJ_WEAR(&protos[2]), ITEM_WEAR_WIELD);   /* not HOLD */
   indexes[0].vnum = 100;
   indexes[1].vnum = 101;
+  indexes[2].vnum = 102;
   obj_proto = protos;
   obj_index = indexes;
-  top_of_objt = 1;
+  top_of_objt = 2;
 
   if (scratch_dir[0] == '\0') {
     const char *base = getenv("TMPDIR");
@@ -653,6 +663,43 @@ static void test_failed_content_record_fails_the_save(void)
   TEST_ASSERT_EQUAL_STRING(old_file, slurp_rent());
   TEST_ASSERT_EQUAL_INT(13, GET_OBJ_WEIGHT(bag));
   TEST_ASSERT_NOT_NULL(strstr(tb_captured_op_log, "rent-write\n"));
+}
+
+/* Rent restore keeps a weapon in the HOLD slot (a second weapon) for every
+ * warrior-archetype class, as for warriors.  Red before: a Berserker's
+ * held axe came back in the inventory. */
+static void test_warrior_archetype_keeps_held_weapon(void)
+{
+  char body[160];
+  const int classes[] = { CLASS_WARRIOR, CLASS_BERSERKER, CLASS_PALADIN };
+  const char *names[] = { "Warrior", "Berserker", "Paladin" };
+  size_t i;
+
+  for (i = 0; i < sizeof(classes) / sizeof(classes[0]); ++i) {
+    GET_CLASS(&player) = classes[i];
+    TEST_ASSERT_TRUE(snprintf(body, sizeof(body), "%d %ld 0 0 0 0\n#102\nLoc : %d\n\n$~\n",
+                              RENT_CRASH, (long)time(0), WEAR_HOLD + 1) > 0);
+    write_rent_file("Tester", body);
+    (void)Crash_load(&player);
+    TEST_ASSERT_NOT_NULL_MESSAGE(GET_EQ(&player, WEAR_HOLD), names[i]);
+    TEST_ASSERT_EQUAL_INT(102, GET_OBJ_VNUM(GET_EQ(&player, WEAR_HOLD)));
+    TEST_ASSERT_NULL(player.carrying);
+    extract_obj(GET_EQ(&player, WEAR_HOLD));
+    GET_EQ(&player, WEAR_HOLD) = NULL;
+  }
+  /* A wizard still gets it back in the inventory; so does a Monk, which is
+   * exempt from the item rules exactly as before (IS_ITEM_ARCHETYPE). */
+  GET_CLASS(&player) = CLASS_MAGIC_USER;
+  write_rent_file("Tester", body);
+  (void)Crash_load(&player);
+  TEST_ASSERT_NULL(GET_EQ(&player, WEAR_HOLD));
+  TEST_ASSERT_NOT_NULL(player.carrying);
+  extract_obj(player.carrying);
+  GET_CLASS(&player) = CLASS_MONK;
+  write_rent_file("Tester", body);
+  (void)Crash_load(&player);
+  TEST_ASSERT_NULL(GET_EQ(&player, WEAR_HOLD));
+  TEST_ASSERT_NOT_NULL(player.carrying);
 }
 
 /* B2-15: a record whose prototype is gone (or whose '#' line is malformed)
@@ -1141,6 +1188,7 @@ int main(void)
   RUN_TEST(test_rentsave_success_extracts_everything);
   RUN_TEST(test_failed_content_record_fails_the_save);
   RUN_TEST(test_skipped_record_tags_do_not_touch_previous_object);
+  RUN_TEST(test_warrior_archetype_keeps_held_weapon);
   RUN_TEST(test_future_rent_timestamp_charges_nothing);
   RUN_TEST(test_rent_paid_from_hand_leaves_bank_alone);
   RUN_TEST(test_record_diagnostics_name_owner_line_and_vnum);

@@ -30,6 +30,41 @@ int char_level_exp(const struct char_data *ch, int level);
 const char *title_female(int chclass, int level);
 const char *title_male(int chclass, int level);
 
+/* New classes reuse validated legacy combat/XP/save curves until their
+ * independently balanced tables are implemented. Stored class IDs remain
+ * distinct; calculations and the ITEM_ANTI_* / NOTRADE_* rules use the
+ * established archetype. An unknown class maps to itself, so each caller
+ * reports it against its own table. Inline so limits.c, shop.c and objsave.c
+ * (and their tests) need not link class.c. */
+static inline int class_progression_archetype(int class_num)
+{
+  switch (class_num) {
+    case CLASS_MONK:
+    case CLASS_BERSERKER:
+    case CLASS_PALADIN: return CLASS_WARRIOR;
+    case CLASS_DRUID: return CLASS_CLERIC;
+    case CLASS_SORCERER:
+    case CLASS_NECROMANCER: return CLASS_MAGIC_USER;
+    case CLASS_RANGER:
+    case CLASS_BARD: return CLASS_THIEF;
+    default: return class_num;
+  }
+}
+
+/** 1 if ch is a player whose class uses archetype a's progression tables
+ * and ITEM_ANTI_* / NOTRADE_* rules (CLASS_MAGIC_USER, _CLERIC, _THIEF or
+ * _WARRIOR). Use instead of IS_MAGIC_USER() etc. where every class of that
+ * family should behave alike. */
+#define IS_ARCHETYPE(ch, a) \
+  (!IS_NPC(ch) && class_progression_archetype(GET_CLASS(ch)) == (a))
+
+/** IS_ARCHETYPE for the item and shop rules (ITEM_ANTI_*, NOTRADE_*, the
+ * held weapon kept at login).  Monk is exempt: it keeps ignoring them, as it
+ * always has, while still using the Warrior progression tables; only the
+ * seven newer classes follow their archetype here. */
+#define IS_ITEM_ARCHETYPE(ch, a) \
+  (IS_ARCHETYPE(ch, a) && GET_CLASS(ch) != CLASS_MONK)
+
 /* Global variables */
 
 extern const char *class_abbrevs[];
