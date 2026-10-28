@@ -325,9 +325,41 @@ static void test_sac_carried_container_spills_into_room(void)
   fx_free_char(pc);
 }
 
+/* H1-13: a unique object from a rent file has rnum NOTHING; emptying it
+ * must not read obj_proto[NOTHING]. */
+static void test_name_from_drinkcon_with_no_prototype(void)
+{
+  struct obj_data *flask = drinkcon("flask", 5, 0, 0);
+
+  free(flask->name);
+  flask->name = strdup("flask water");
+  TEST_ASSERT_EQUAL_INT(NOTHING, GET_OBJ_RNUM(flask));
+
+  name_from_drinkcon(flask);
+
+  TEST_ASSERT_EQUAL_STRING("flask", flask->name);
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+}
+
+/* H1-13: an rnum past the prototype table is reported, name untouched. */
+static void test_name_from_drinkcon_with_bad_rnum(void)
+{
+  struct obj_data *flask = drinkcon("flask", 5, 0, 0);
+
+  flask->item_number = 77;   /* top_of_objt is 0 in this test */
+  name_from_drinkcon(flask);
+  flask->item_number = NOTHING;
+
+  TEST_ASSERT_EQUAL_STRING("flask", flask->name);
+  TEST_ASSERT_EQUAL_STRING("drinkcon-proto", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "rnum 77"));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(test_name_from_drinkcon_with_no_prototype);
+  RUN_TEST(test_name_from_drinkcon_with_bad_rnum);
   RUN_TEST(test_sac_carried_container_spills_into_room);
   RUN_TEST(test_drink_rejects_liquid_out_of_range);
   RUN_TEST(test_pour_rejects_negative_liquid);

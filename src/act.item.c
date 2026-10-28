@@ -981,6 +981,21 @@ static int drinkcon_liquid_ok(struct obj_data *obj, struct char_data *ch,
   return FALSE;
 }
 
+/* The name helpers compare obj->name with its prototype's name to know
+ * whether it is shared (and must be copied, not freed). That needs a valid
+ * prototype rnum or NOTHING: unique objects loaded from rent files carry
+ * NOTHING. Any other out-of-range rnum is reported and the name is left
+ * alone, since it cannot be told whether it is owned. */
+static int drinkcon_proto_ok(struct obj_data *obj)
+{
+  if (GET_OBJ_RNUM(obj) == NOTHING || VALID_OBJ_RNUM(obj))
+    return TRUE;
+  TB_ERROR_MSG("act", "drinkcon-proto", "obj",
+               "obj uid %ld rnum %d not in [0,%d]; name left unchanged",
+               obj_script_id(obj), (int) GET_OBJ_RNUM(obj), (int) top_of_objt);
+  return FALSE;
+}
+
 void name_from_drinkcon(struct obj_data *obj)
 {
   const char *liqname;
@@ -992,8 +1007,11 @@ void name_from_drinkcon(struct obj_data *obj)
   /* The name cannot hold a liquid that has no name; leave it alone. */
   if (!drinkcon_liquid_ok(obj, NULL, "name_from_drinkcon"))
     return;
+  if (!drinkcon_proto_ok(obj))
+    return;
 
-  if (obj->name == obj_proto[GET_OBJ_RNUM(obj)].name)
+  /* obj->name may still alias the prototype's string: copy before writing. */
+  if (GET_OBJ_RNUM(obj) != NOTHING && obj->name == obj_proto[GET_OBJ_RNUM(obj)].name)
     obj->name = strdup(obj_proto[GET_OBJ_RNUM(obj)].name);
 
   liqname = drinknames[DRINK_CON_TYPE(obj)];
@@ -1018,6 +1036,8 @@ void name_to_drinkcon(struct obj_data *obj, int type)
                  NUM_LIQ_TYPES);
     return;
   }
+  if (!drinkcon_proto_ok(obj))
+    return;
 
   {
     size_t new_name_size = strlen(obj->name) + strlen(drinknames[type]) + 2;
