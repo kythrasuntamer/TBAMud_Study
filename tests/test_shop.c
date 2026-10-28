@@ -245,9 +245,30 @@ static void test_read_type_list_leading_nul_reported(void)
   TEST_ASSERT_EQUAL_STRING("shop-file-parse", tb_captured_operation);
 }
 
+/* H2-20: builder text spliced into an act() format has every '$' doubled
+ * so perform_act prints it literally, and truncation never leaves half of
+ * a "$$" pair (which would form a new $-code). */
+static void test_act_escape_doubles_dollar(void)
+{
+  char out[32];
+
+  TEST_ASSERT_EQUAL_INT(1, shop_act_escape(out, sizeof(out), "a $t charm"));
+  TEST_ASSERT_EQUAL_STRING("a $$t charm", out);
+}
+
+static void test_act_escape_truncates_on_pair_boundary(void)
+{
+  char out[4];
+
+  shop_act_escape(out, sizeof(out), "ab$t");
+  TEST_ASSERT_EQUAL_STRING("ab", out);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(test_act_escape_doubles_dollar);
+  RUN_TEST(test_act_escape_truncates_on_pair_boundary);
   RUN_TEST(test_read_type_list_leading_nul_reported);
   RUN_TEST(test_read_list_reports_missing_produce_vnum);
   RUN_TEST(test_read_type_list_drops_out_of_range_type);

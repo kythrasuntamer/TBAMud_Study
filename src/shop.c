@@ -94,6 +94,7 @@ static int same_obj(struct obj_data *obj1, struct obj_data *obj2);
 static int shop_producing(struct obj_data *item, int shop_nr);
 static int transaction_amt(char *arg);
 static char *times_message(struct obj_data *obj, char *name, int num);
+static int shop_act_escape(char *dst, size_t size, const char *src);
 static int buy_price(struct obj_data *obj, int shop_nr, struct char_data *keeper, struct char_data *buyer);
 static int sell_price(struct obj_data *obj, int shop_nr, struct char_data *keeper, struct char_data *seller);
 static int ok_shop_room(int shop_nr, room_vnum room);
@@ -432,6 +433,33 @@ static char *times_message(struct obj_data *obj, char *name, int num)
   return (buf);
 }
 
+/* Copy src into dst for use inside an act() format, doubling every '$' so
+ * perform_act() prints it literally instead of interpreting builder text
+ * (short descriptions) or player keywords as $-codes ('$t' would print the
+ * obj_data struct as a string). Never splits a "$$" pair on truncation.
+ * Returns the number of '$' escaped. */
+static int shop_act_escape(char *dst, size_t size, const char *src)
+{
+  size_t o = 0;
+  int escaped = 0;
+
+  if (size == 0)
+    return 0;
+  for (; *src; src++) {
+    size_t need = (*src == '$') ? 2 : 1;
+
+    if (o + need >= size)
+      break;
+    dst[o++] = *src;
+    if (*src == '$') {
+      dst[o++] = '$';
+      escaped++;
+    }
+  }
+  dst[o] = '\0';
+  return escaped;
+}
+
 static struct obj_data *get_slide_obj_vis(struct char_data *ch, char *name, struct obj_data *list)
 {
   struct obj_data *i, *last_match = NULL;
@@ -539,6 +567,7 @@ static int sell_price(struct obj_data *obj, int shop_nr, struct char_data *keepe
 static void shopping_buy(char *arg, struct char_data *ch, struct char_data *keeper, int shop_nr)
 {
   char tempstr[MAX_INPUT_LENGTH - 10], tempbuf[MAX_INPUT_LENGTH];
+  char actbuf[MAX_INPUT_LENGTH - 10];
   struct obj_data *obj, *last_obj = NULL;
   int goldamt = 0, buynum, bought = 0;
 
@@ -688,8 +717,13 @@ static void shopping_buy(char *arg, struct char_data *ch, struct char_data *keep
       }
   }
   strlcpy(tempstr, times_message(ch->carrying, 0, bought), sizeof(tempstr));
+  if (shop_act_escape(actbuf, sizeof(actbuf), tempstr) > 0)
+    TB_WARN_MSG("shop", "act-dollar", "short_description",
+                "shop #%d obj vnum %d short description contains '$'; escaped",
+                (int) SHOP_NUM(shop_nr),
+                ch->carrying ? (int) GET_OBJ_VNUM(ch->carrying) : NOTHING);
 
-  tb_snprintf(tempbuf, sizeof(tempbuf), "$n buys %s.", tempstr);
+  tb_snprintf(tempbuf, sizeof(tempbuf), "$n buys %s.", actbuf);
   act(tempbuf, FALSE, ch, obj, 0, TO_ROOM);
 
   if (obj && OBJ_FLAGGED(obj, ITEM_QUEST)) {
@@ -802,6 +836,7 @@ static void sort_keeper_objs(struct char_data *keeper, int shop_nr)
 static void shopping_sell(char *arg, struct char_data *ch, struct char_data *keeper, int shop_nr)
 {
   char tempstr[MAX_INPUT_LENGTH - 10], name[MAX_INPUT_LENGTH], tempbuf[MAX_INPUT_LENGTH]; // - 10 to make room for constants in format
+  char actbuf[MAX_INPUT_LENGTH - 10];
   struct obj_data *obj;
   int sellnum, sold = 0, goldamt = 0;
 
@@ -858,7 +893,13 @@ static void shopping_sell(char *arg, struct char_data *ch, struct char_data *kee
   increase_gold(ch, goldamt);
 
   strlcpy(tempstr, times_message(0, name, sold), sizeof(tempstr));
-  tb_snprintf(tempbuf, sizeof(tempbuf), "$n sells %s.", tempstr);
+  /* name is the seller's typed keyword (player text): escape it, and
+   * report only that it happened, never the text. */
+  if (shop_act_escape(actbuf, sizeof(actbuf), tempstr) > 0)
+    TB_WARN_MSG("shop", "act-dollar", "sell keyword",
+                "shop #%d sell keyword from " DIAG_CHAR_FMT " contains '$'; escaped",
+                (int) SHOP_NUM(shop_nr), DIAG_CHAR(ch));
+  tb_snprintf(tempbuf, sizeof(tempbuf), "$n sells %s.", actbuf);
   act(tempbuf, FALSE, ch, obj, 0, TO_ROOM);
 
   SHOP_TELL(keeper, ch, shop_nr, message_sell, goldamt);
