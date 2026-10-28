@@ -1451,6 +1451,30 @@ static void while_pause_counts_per_trigger_instance(void)
   TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
 }
 
+/* Player-file fuzzer case vars-noname: read_saved_vars() ignored
+ * get_filename()'s result and fopen()ed its unwritten buffer for a player
+ * whose pfile left the name empty; save_char_vars() would also unlink and
+ * create that garbage path. */
+static void nameless_player_variable_file_is_refused(void)
+{
+  char_data *pc = make_mob("pc");
+  char *name = pc->player.name;
+
+  REMOVE_BIT_AR(MOB_FLAGS(pc), MOB_ISNPC);     /* a player ... */
+  GET_IDNUM(pc) = 77;
+  pc->player.name = NULL;                       /* ... with no Name tag */
+  read_saved_vars(pc);
+  TEST_ASSERT_EQUAL_STRING("vars-filename", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "idnum 77"));
+  TEST_ASSERT_NOT_NULL(SCRIPT(pc));            /* as when there is no file */
+
+  tb_error_capture_reset();
+  add_var(&SCRIPT(pc)->global_vars, "flag", "1", 0);
+  save_char_vars(pc);
+  TEST_ASSERT_EQUAL_STRING("vars-filename", tb_captured_operation);
+  pc->player.name = name;
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -1509,5 +1533,6 @@ int main(void)
   RUN_TEST(damage_trigger_without_return_keeps_the_damage);
   RUN_TEST(control_keywords_match_whole_words);
   RUN_TEST(while_pause_counts_per_trigger_instance);
+  RUN_TEST(nameless_player_variable_file_is_refused);
   return UNITY_END();
 }

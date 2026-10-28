@@ -3743,8 +3743,17 @@ void read_saved_vars(struct char_data *ch)
    * assigned. */
   CREATE(SCRIPT(ch), struct script_data, 1);
 
-  /* find the file that holds the saved variables and open it*/
-  get_filename(fn, sizeof(fn), SCRIPT_VARS_FILE, GET_NAME(ch));
+  /* find the file that holds the saved variables and open it.  The name comes
+   * from the player file: a damaged or crafted one can leave it empty (or, with
+   * the NPC bit set in Act, make GET_NAME() a missing short description), and
+   * get_filename() refuses such names and unsafe ones without writing fn.
+   * Opening the unwritten fn read stack garbage as a path. */
+  if (!get_filename(fn, sizeof(fn), SCRIPT_VARS_FILE, GET_NAME(ch))) {
+    TB_ERROR_MSG("dg", "vars-filename", "script_vars",
+                 "player idnum %ld has no usable name for a variable file; "
+                 "legacy variables not read", (long)GET_IDNUM(ch));
+    return;
+  }
   file = fopen(fn,"r");
 
   /* No legacy file is the normal case: nothing writes plrvars any more. */
@@ -3786,7 +3795,14 @@ void save_char_vars(struct char_data *ch)
   /* we should never be called for an NPC, but just in case... */
   if (IS_NPC(ch)) return;
 
-  get_filename(fn, sizeof(fn), SCRIPT_VARS_FILE, GET_NAME(ch));
+  /* As in read_saved_vars(): an unwritten fn would be unlinked and opened
+   * for writing as whatever the stack held. */
+  if (!get_filename(fn, sizeof(fn), SCRIPT_VARS_FILE, GET_NAME(ch))) {
+    TB_ERROR_MSG("dg", "vars-filename", "script_vars",
+                 "player idnum %ld has no usable name for a variable file; "
+                 "variables not saved", (long)GET_IDNUM(ch));
+    return;
+  }
   unlink(fn);
 
   /* make sure this char has global variables to save */
