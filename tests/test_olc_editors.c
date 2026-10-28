@@ -794,6 +794,62 @@ static void test_oedit_insert_renumbers_other_oedit_session(void)
   free(other.olc);
 }
 
+/* ------------------------------------------------------------------ */
+/* F1-13: a new room renumbers other sessions without wrapping NOWHERE */
+/* exits or treating a door direction as a room.                       */
+/* ------------------------------------------------------------------ */
+static void test_redit_insert_keeps_nowhere_exits_and_door_directions(void)
+{
+  struct descriptor_data *d = &builder_desc, zd, rd;
+  struct char_data zb, rb;
+  struct player_special_data sp;
+  struct reset_com door;
+  struct room_direction_data *pending;
+
+  make_world(3);
+  memset(&sp, 0, sizeof(sp));
+  memset(&door, 0, sizeof(door));
+  door.command = 'D'; door.arg1 = 1; door.arg2 = 5; door.arg3 = 1;  /* down */
+
+  memset(&zd, 0, sizeof(zd)); memset(&zb, 0, sizeof(zb));
+  zb.player_specials = &sp; zd.character = &zb;
+  CREATE(zd.olc, struct oasis_olc_data, 1);
+  make_zedit_session(&zd, &door, 1);
+
+  memset(&rd, 0, sizeof(rd)); memset(&rb, 0, sizeof(rb));
+  rb.player_specials = &sp; rd.character = &rb;
+  CREATE(rd.olc, struct oasis_olc_data, 1);
+  CREATE(OLC_ROOM(&rd), struct room_data, 1);
+  CREATE(pending, struct room_direction_data, 1);
+  pending->to_room = NOWHERE;
+  OLC_ROOM(&rd)->dir_option[EAST] = pending;
+  STATE(&rd) = CON_REDIT;
+
+  descriptor_list = &zd;
+  zd.next = &rd;
+
+  /* New room 2999 lands at rnum 0. */
+  CREATE(OLC_ROOM(d), struct room_data, 1);
+  OLC_ROOM(d)->name = strdup("A new room");
+  OLC_ROOM(d)->description = strdup("New.\r\n");
+  OLC_ROOM(d)->number = NOWHERE;
+  OLC_NUM(d) = 2999;
+  add_room_result = 0;
+  redit_save_internally(d);
+
+  TEST_ASSERT_EQUAL_INT(1, add_room_calls);
+  TEST_ASSERT_EQUAL_INT(NOWHERE, pending->to_room);
+  TEST_ASSERT_EQUAL_INT(2, OLC_ZONE(&zd)->cmd[0].arg1);
+  TEST_ASSERT_EQUAL_INT(5, OLC_ZONE(&zd)->cmd[0].arg2);
+
+  descriptor_list = NULL;
+  free_zedit_session(&zd);
+  free(zd.olc);
+  free(pending);
+  free(OLC_ROOM(&rd));
+  free(rd.olc);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -809,5 +865,6 @@ int main(void)
   RUN_TEST(test_oedit_delete_refused_without_zone_permission);
   RUN_TEST(test_oedit_delete_refused_when_scratch_rnum_disagrees);
   RUN_TEST(test_oedit_insert_renumbers_other_oedit_session);
+  RUN_TEST(test_redit_insert_keeps_nowhere_exits_and_door_directions);
   return UNITY_END();
 }

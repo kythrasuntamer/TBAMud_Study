@@ -248,8 +248,7 @@ void redit_setup_existing(struct descriptor_data *d, int real_num)
 
 void redit_save_internally(struct descriptor_data *d)
 {
-  int j, room_num, new_room = FALSE;
-  struct descriptor_data *dsc;
+  int room_num, new_room = FALSE;
 
   if (OLC_ROOM(d)->number == NOWHERE)
     new_room = TRUE;
@@ -291,34 +290,12 @@ void redit_save_internally(struct descriptor_data *d)
   if (!new_room)
     return;
 
-  /* Idea contributed by C.Raehl 4/27/99 */
-  for (dsc = descriptor_list; dsc; dsc = dsc->next) {
-    if (dsc == d)
-      continue;
-
-    if (STATE(dsc) == CON_ZEDIT) {
-      for (j = 0; OLC_ZONE(dsc)->cmd[j].command != 'S'; j++)
-        switch (OLC_ZONE(dsc)->cmd[j].command) {
-          case 'O':
-          case 'M':
-          case 'T':
-          case 'V':
-            OLC_ZONE(dsc)->cmd[j].arg3 += (OLC_ZONE(dsc)->cmd[j].arg3 >= room_num);
-            break;
-          case 'D':
-            OLC_ZONE(dsc)->cmd[j].arg2 += (OLC_ZONE(dsc)->cmd[j].arg2 >= room_num);
-            /* Fall through */
-          case 'R':
-            OLC_ZONE(dsc)->cmd[j].arg1 += (OLC_ZONE(dsc)->cmd[j].arg1 >= room_num);
-            break;
-          }
-    } else if (STATE(dsc) == CON_REDIT) {
-      for (j = 0; j < DIR_COUNT; j++)
-        if (OLC_ROOM(dsc)->dir_option[j])
-          if (OLC_ROOM(dsc)->dir_option[j]->to_room >= room_num)
-            OLC_ROOM(dsc)->dir_option[j]->to_room++;
-    }
-  }
+  /* add_room() shifted world[] up from room_num. Move other open sessions'
+   * room rnums with it (idea contributed by C.Raehl 4/27/99). The shared
+   * helper leaves NOWHERE exits alone (room_rnum is unsigned, so NOWHERE
+   * + 1 would wrap to the Void) and moves only arg1 of 'D' commands: arg2
+   * there is a direction, not a room. */
+  olc_renumber_sessions(OLC_RNUM_ROOM, room_num, +1, d);
 }
 
 void redit_save_to_disk(zone_vnum zone_num)
