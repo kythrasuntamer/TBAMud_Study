@@ -15,6 +15,30 @@
  * containng "=filename" at the break point.
  */
 
+/**
+ * @file split.c
+ * Offline tool: split stdin at "=filename" marker lines.
+ *
+ * Usage: split < bigfile
+ *
+ * Input (who controls it): stdin, supplied by the operator running the
+ * tool.  A marker line ("=" at the start of a physical line) may be at most
+ * BSZ - 2 (254) bytes including the '=', and must not contain a NUL byte;
+ * otherwise split reports split-name-line and exits 1.  Data lines of any
+ * length are copied unchanged (fgets() chunks), except that a NUL byte
+ * truncates the chunk it is in.  Lines before the first marker have no
+ * output file; they are discarded and counted (split-orphan-lines, WARN).
+ *
+ * Output: each section is appended (mode "a", never truncated) to the file
+ * its marker names.  The name is used verbatim as a path relative to the
+ * current directory: "../x" and absolute paths are honoured, so only run
+ * split on input you trust.  The file "index" in the current directory is
+ * rewritten with one name per line ending in "\n", then a final "$\r\n".
+ *
+ * Exit status: 0 on success; 1 if index or an output file cannot be
+ * opened, a marker line is malformed, or any write or close fails.
+ */
+
 #define INDEX_NAME "index"
 #define BSZ 256
 #define MAGIC_CHAR '='
