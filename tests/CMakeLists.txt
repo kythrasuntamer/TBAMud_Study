@@ -437,10 +437,27 @@ if(Python3_Interpreter_FOUND)
 
     # Runs the built src/util tools on crafted inputs and asserts on the
     # TBERR operation each malformed input must report.
+    #
+    # wld2html_fortified is the same source built the way distributions
+    # build it (-O2 -D_FORTIFY_SOURCE=3), so glibc's object-size checks
+    # catch a copy whose stated bound exceeds its real destination (I3-04).
+    # Debug and sanitizer trees do not fortify, and ASan replaces the
+    # checked string functions, so it is only built without sanitizers.
+    set(WLD2HTML_FORTIFIED "-")
+    if(NOT ENABLE_SANITIZERS AND
+       CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+        add_executable(wld2html_fortified ${MUD_SRCDIR}/util/wld2html.c)
+        target_include_directories(wld2html_fortified PRIVATE ${TEST_INCLUDES})
+        target_compile_definitions(wld2html_fortified PRIVATE CIRCLE_UTIL)
+        target_compile_options(wld2html_fortified PRIVATE
+            -O2 -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=3)
+        set(WLD2HTML_FORTIFIED $<TARGET_FILE:wld2html_fortified>)
+    endif()
     add_test(NAME test_util_world_tools
         COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/test_util_world_tools.py
-                $<TARGET_FILE:wld2html> $<TARGET_FILE:split>)
+                $<TARGET_FILE:wld2html> $<TARGET_FILE:split>
+                ${WLD2HTML_FORTIFIED})
     add_test(NAME test_dg_wait_suffix_contract
         COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/test_dg_wait_suffix_contract.py

@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """Regression tests for the standalone tools in src/util (wld2html, split).
 
-Usage: test_util_tools.py <path-to-wld2html> <path-to-split>
+Usage: test_util_tools.py <wld2html> <split> [<fortified-wld2html> | -]
+
+The optional third argument is a -O2 -D_FORTIFY_SOURCE=3 build of wld2html
+("-" when the build tree has none, e.g. under sanitizers).
 
 Each case runs the real tool binary in a fresh temporary directory on a
 crafted input and asserts on the exit status and on the stable
@@ -17,6 +20,7 @@ import unittest
 
 WLD2HTML = None
 SPLIT = None
+WLD2HTML_FORTIFIED = None
 
 SANITIZER_MARKERS = ("AddressSanitizer", "LeakSanitizer", "runtime error:")
 
@@ -135,14 +139,37 @@ class Wld2HtmlTests(ToolCase):
         self.assertIn(b"South West to", self.read("100.html"))
 
 
+class FortifiedWld2HtmlTests(ToolCase):
+    """Valid input through a -O2 -D_FORTIFY_SOURCE=3 build of wld2html."""
+
+    def setUp(self):
+        if not WLD2HTML_FORTIFIED:
+            self.skipTest("no fortified wld2html in this build tree")
+        super().setUp()
+
+    def test_fread_string_copy_bound_matches_allocation(self):
+        # I3-04: strlcpy(rslt, buf, 8192) into a length+1 block aborted
+        # with "*** buffer overflow detected ***" on every valid file.
+        self.write("in.wld", VALID_ROOM + "$~\n")
+        rc, err = run_tool([WLD2HTML_FORTIFIED, "in.wld"], self.dir)
+        self.assertNotIn("buffer overflow detected", err)
+        self.assertEqual(rc, 0, err)
+        self.assertIn(b"Desc\r\n", self.read("100.html"))
+
+
 def main():
-    global WLD2HTML, SPLIT
+    global WLD2HTML, SPLIT, WLD2HTML_FORTIFIED
     if len(sys.argv) < 3:
         sys.stderr.write(__doc__)
         return 2
     WLD2HTML = os.path.abspath(sys.argv[1])
     SPLIT = os.path.abspath(sys.argv[2])
-    unittest.main(argv=[sys.argv[0]] + sys.argv[3:], verbosity=2)
+    rest = sys.argv[3:]
+    if rest:
+        if rest[0] != "-":
+            WLD2HTML_FORTIFIED = os.path.abspath(rest[0])
+        rest = rest[1:]
+    unittest.main(argv=[sys.argv[0]] + rest, verbosity=2)
     return 0
 
 

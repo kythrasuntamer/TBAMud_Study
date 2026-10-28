@@ -717,10 +717,24 @@ char *fread_string(FILE * fl, const char *error)
     }
   } while (!done);
 
-  /* allocate space for the new string and copy it */
-  if (strlen(buf) > 0) {
+  /*
+   * Allocate exactly length + 1 bytes and copy exactly that many.  The copy
+   * bound must be the allocation size: the old strlcpy(rslt, buf,
+   * MAX_STRING_LENGTH) claimed 8192 bytes of a length+1 block, which glibc's
+   * _FORTIFY_SOURCE=3 aborts on for every string, and which became a real
+   * heap overflow whenever 'length' undercounted buf.
+   */
+  if (length > 0) {
+    size_t buf_len = strlen(buf);
+
+    if (buf_len != (size_t)length) {
+      WLD_REPORT(TB_SEV_ERROR, TB_ERR_INVARIANT, "wld-fread-string-length",
+                 "%s: counted %d bytes but the buffer holds %lu",
+                 error, length, (unsigned long)buf_len);
+      exit(1);
+    }
     CREATE(rslt, char, length + 1);
-    strlcpy(rslt, buf, MAX_STRING_LENGTH);
+    memcpy(rslt, buf, (size_t)length + 1);
   } else
     rslt = NULL;
 
