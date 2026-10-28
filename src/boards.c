@@ -28,6 +28,30 @@
  *     gen_board to the other bulletin boards, and add your new one in a
  *     similar fashion. */
 
+/* LIFETIME AND OWNERSHIP
+ * - init_boards() runs once from boot_db(), after objects are indexed and
+ *   specials assigned; a board_info vnum with no object is fatal there.
+ *   gen_board refuses to run before it.  A board is identified by the vnum
+ *   of the object whose procedure fired (find_board), so OLC renumbering of
+ *   obj_index cannot point it at another object.
+ * - Message text lives in the slot pool msg_storage[INDEX_SIZE], shared by
+ *   every board; msg_storage_taken[] marks reserved slots.  Each board's
+ *   msg_index[bt][0 .. num_of_msgs[bt]) entries own exactly one heading
+ *   (heap) and one reserved slot each.  Every entry at or past
+ *   num_of_msgs[bt] owns nothing: slot_num == -1, heading == NULL.  Code
+ *   that shrinks the index must reset the vacated entry, and
+ *   board_clear_board() reports (never frees) an entry that breaks this.
+ * - A post is counted (num_of_msgs) as soon as its writer starts.  While
+ *   the editor is open msg_storage[slot] may be NULL, and the writer's
+ *   d->str points at &msg_storage[slot]; board_remove_msg() refuses to
+ *   remove such a message.  The editor finishes in modify.c
+ *   playing_string_cleanup(), which decodes the board as
+ *   d->mail_to - BOARD_MAGIC and saves the board.
+ * - Who controls the input: headlines and bodies are player text (any
+ *   player at a write-level-0 board); board files are written by
+ *   board_save_board() but are re-read from disk and treated as untrusted
+ *   (see board_load_board). */
+
 #include "conf.h"
 #include "sysdep.h"
 #include "structs.h"
@@ -216,6 +240,21 @@ SPECIAL(gen_board)
     return (0);
 }
 
+/** Start a new post on board_type from ch's 'write <headline>' command.
+ *
+ * @param board_type Index into board_info; the caller (gen_board) found it.
+ * @param ch         The writer; must have a descriptor (gen_board checks).
+ * @param arg        The command tail.  It may point anywhere inside the
+ *                   caller's command buffer and is only read: the headline
+ *                   is copied, $$-collapsed and cut to BOARD_HEADLINE_MAX
+ *                   in a local buffer.
+ * @param board      The board object (unused).
+ * @return Always 1 (the command was handled), including on refusal.
+ *
+ * On success the post is counted and ch's editor writes into
+ * msg_storage[slot] with mail_to = board_type + BOARD_MAGIC; see the
+ * ownership notes at the top of this file.  The slot is reserved only
+ * after every check passed, so no early return leaks one. */
 int board_write_message(int board_type, struct char_data *ch, char *arg, struct obj_data *board)
 {
   time_t ct;

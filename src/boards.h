@@ -25,6 +25,12 @@
 
 #define BOARD_MAGIC	1048575	/* arbitrary number - see modify.c */
 
+/** One message's index entry.  It is also, byte for byte, the per-message
+ * record of a board file (board_save_board / board_load_board), so the file
+ * format depends on pointer size and the compiler's padding.  On disk the
+ * heading pointer and slot_num are meaningless: the writer stores NULL and
+ * -1 and the loader ignores them.  Only heading_len, message_len and level
+ * are read back, and the lengths are bounds-checked first. */
 struct board_msginfo {
    int	slot_num;     /* pos of message in "master index" */
    char	*heading;     /* pointer to message's heading */
