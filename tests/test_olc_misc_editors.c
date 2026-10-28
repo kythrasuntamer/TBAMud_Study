@@ -22,6 +22,7 @@
 #include "hedit.h"
 #include "prefedit.h"
 #include "protocol.h"
+#include "quest.h"
 #include "modify.h"
 #include "improved-edit.h"
 #include <stdarg.h>
@@ -159,6 +160,12 @@ void cleanup_olc(struct descriptor_data *d, byte cleanup_type)
     free(OLC_HELP(d));
   }
   free(OLC_PREFS(d));
+  if (OLC_QUEST(d)) {
+    if (cleanup_type == CLEANUP_ALL)
+      free_quest(OLC_QUEST(d));
+    else
+      free(OLC_QUEST(d));
+  }
   free(OLC_STORAGE(d));
   STATE(d) = CON_PLAYING;
   free(d->olc);
@@ -218,6 +225,106 @@ int is_abbrev(const char *arg1, const char *arg2)
     if (LOWER(*arg1) != LOWER(*arg2))
       return 0;
   return !*arg1;
+}
+
+/* ---------------------------------------------------------------------
+ * Quest table fixture (genqst.c / quest.c collaborators)
+ * ------------------------------------------------------------------- */
+struct aq_data *aquest_table = NULL;
+qst_rnum total_quests = 0;
+struct zone_data *zone_table = NULL;
+zone_rnum top_of_zone_table = 0;
+struct char_data *mob_proto = NULL;
+struct obj_data *obj_proto = NULL;
+const char *quest_types[] = {
+  "Object", "Room", "Find mob", "Kill mob", "Save mob", "Return object",
+  "Clear room", "\n"
+};
+const char *aq_flags[] = { "REPEATABLE", "\n" };
+static int quest_deletes, quest_adds, quest_saves;
+
+qst_rnum real_quest(qst_vnum vnum)
+{
+  qst_rnum i;
+  for (i = 0; i < total_quests; i++)
+    if (aquest_table[i].vnum == vnum)
+      return i;
+  return NOTHING;
+}
+int delete_quest(qst_rnum rnum)
+{
+  /* The production delete_quest reads aquest_table[rnum] before its own
+   * range test; any caller passing an invalid rnum is a bug. */
+  TEST_ASSERT_TRUE_MESSAGE(rnum < total_quests, "delete_quest got an invalid rnum");
+  quest_deletes++;
+  return TRUE;
+}
+int add_quest(struct aq_data *nqst) { (void)nqst; quest_adds++; return 0; }
+int save_quests(zone_rnum zone_num) { (void)zone_num; quest_saves++; return TRUE; }
+void free_quest_strings(struct aq_data *quest)
+{
+  free(quest->name); free(quest->desc); free(quest->info);
+  free(quest->done); free(quest->quit);
+}
+void free_quest(struct aq_data *quest) { free_quest_strings(quest); free(quest); }
+int copy_quest(struct aq_data *to, struct aq_data *from, int free_old_strings)
+{
+  (void)free_old_strings;
+  *to = *from;
+  to->name = strdup(from->name); to->desc = strdup(from->desc);
+  to->info = strdup(from->info); to->done = strdup(from->done);
+  to->quit = strdup(from->quit);
+  return TRUE;
+}
+zone_rnum real_zone_by_thing(room_vnum vznum) { (void)vznum; return 0; }
+zone_rnum real_zone(zone_vnum vnum) { (void)vnum; return 0; }
+room_vnum genolc_zone_bottom(zone_rnum rznum) { (void)rznum; return 0; }
+mob_rnum real_mobile(mob_vnum vnum) { (void)vnum; return NOBODY; }
+obj_rnum real_object(obj_vnum vnum) { (void)vnum; return NOTHING; }
+int is_number(const char *str)
+{
+  if (!*str) return 0;
+  for (; *str; str++) if (!isdigit((unsigned char)*str)) return 0;
+  return 1;
+}
+void column_list(struct char_data *ch, int num_cols, const char **list,
+                 int list_length, bool show_nums)
+{ (void)ch; (void)num_cols; (void)list; (void)list_length; (void)show_nums; }
+size_t sprintbit(bitvector_t vektor, const char *names[], char *result,
+                 size_t reslen)
+{ (void)vektor; (void)names; if (reslen) result[0] = '\0'; return 0; }
+int genolc_checkstring(struct descriptor_data *d, char *arg)
+{ (void)d; (void)arg; return TRUE; }
+
+static struct zone_data fixture_zone;
+
+static void quest_fixture(void)
+{
+  memset(&fixture_zone, 0, sizeof(fixture_zone));
+  fixture_zone.number = 30;
+  zone_table = &fixture_zone;
+  top_of_zone_table = 0;
+  total_quests = 1;
+  aquest_table = calloc(1, sizeof(*aquest_table));
+  aquest_table[0].vnum = 3001;
+  aquest_table[0].type = AQ_OBJ_FIND;
+  aquest_table[0].qm = NOBODY;
+  aquest_table[0].name = strdup("Fetch");
+  aquest_table[0].desc = strdup("Fetch it");
+  aquest_table[0].info = strdup("info\r\n");
+  aquest_table[0].done = strdup("done\r\n");
+  aquest_table[0].quit = strdup("quit\r\n");
+  quest_deletes = quest_adds = quest_saves = 0;
+}
+
+static void quest_fixture_free(void)
+{
+  qst_rnum i;
+  for (i = 0; i < total_quests; i++)
+    free_quest_strings(&aquest_table[i]);
+  free(aquest_table);
+  aquest_table = NULL;
+  total_quests = 0;
 }
 
 /* ---------------------------------------------------------------------
@@ -306,6 +413,7 @@ static void type(const char *line)
   switch (STATE(&builder_desc)) {
   case CON_HEDIT: hedit_parse(&builder_desc, buf); break;
   case CON_PREFEDIT: prefedit_parse(&builder_desc, buf); break;
+  case CON_QEDIT: qedit_parse(&builder_desc, buf); break;
   default: TEST_FAIL_MESSAGE("typed into a descriptor that is not editing");
   }
 }
@@ -319,6 +427,7 @@ void setUp(void)
   string_write_backstr = NULL;
   builder_fixture();
   help_fixture();
+  quest_fixture();
 }
 
 void tearDown(void)
@@ -326,6 +435,7 @@ void tearDown(void)
   if (builder_desc.olc)
     cleanup_olc(&builder_desc, CLEANUP_ALL);
   free_help_table();
+  quest_fixture_free();
   victim_destroy();
   descriptor_list = NULL;
   character_list = NULL;
@@ -494,9 +604,38 @@ static void test_prefedit_self_still_resolves(void)
   TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
 }
 
+/* ---------------------------------------------------------------------
+ * qedit
+ * ------------------------------------------------------------------- */
+
+/* F2-07: a new quest is AQ_UNDEFINED (-1); the menu must not index
+ * quest_types[-1]. */
+static void test_qedit_new_quest_menu_names_undefined_type(void)
+{
+  char cmd[] = " 3050";
+
+  do_oasis_qedit(&builder, cmd, 0, 0);
+  TEST_ASSERT_EQUAL_INT(CON_QEDIT, STATE(&builder_desc));
+  TEST_ASSERT_NOT_NULL(strstr(out, "Quest Type     : \tcUndefined"));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+}
+
+/* F2-07: an out-of-range stored type is shown as Undefined, loudly. */
+static void test_qedit_bad_stored_type_is_reported(void)
+{
+  char cmd[] = " 3001";
+
+  aquest_table[0].type = 99;
+  do_oasis_qedit(&builder, cmd, 0, 0);
+  TEST_ASSERT_EQUAL_STRING("quest-type-range", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "quest vnum 3001 type 99"));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(test_qedit_new_quest_menu_names_undefined_type);
+  RUN_TEST(test_qedit_bad_stored_type_is_reported);
   RUN_TEST(test_prefedit_target_extracted_mid_edit);
   RUN_TEST(test_prefedit_self_still_resolves);
   RUN_TEST(test_hedit_null_entry_round_trip);

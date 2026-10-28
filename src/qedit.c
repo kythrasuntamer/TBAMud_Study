@@ -36,6 +36,21 @@ static void qedit_save_to_disk(int num);
 
 /*-------------------------------------------------------------------*/
 
+/* Name of a quest type for display.  quest_types[] has NUM_AQ_TYPES
+ * entries; a new quest starts as AQ_UNDEFINED (-1), and a loaded quest's
+ * type comes from the quest file, so neither may be used as an index
+ * unchecked. */
+static const char *qedit_type_name(const struct aq_data *quest)
+{
+  if (quest->type >= 0 && quest->type < NUM_AQ_TYPES)
+    return quest_types[quest->type];
+  if (quest->type != AQ_UNDEFINED)
+    TB_WARN_MSG("quest", "quest-type-range", "aquest_table",
+                "quest vnum %d type %d outside 0..%d",
+                (int)quest->vnum, quest->type, NUM_AQ_TYPES - 1);
+  return "Undefined";
+}
+
 static void qedit_save_internally(struct descriptor_data *d)
 {
   add_quest(OLC_QUEST(d));
@@ -330,7 +345,7 @@ static void qedit_disp_menu(struct descriptor_data *d)
     quest->quit && (str_cmp(quest->quit, "undefined"))
      ? quest->quit : "Nothing\r\n",
     quest_flags,
-    quest_types[quest->type],
+    qedit_type_name(quest),
     quest->type == AQ_OBJ_RETURN ? buf2 : "",
     quest->qm == NOBODY ? -1 :     quest->qm,
     real_mobile(quest->qm) == NOBODY ? "Invalid Mob" : mob_proto[(real_mobile(quest->qm))].player.short_descr,
