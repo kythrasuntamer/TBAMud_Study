@@ -30,6 +30,8 @@ jobs:
     - name: Install libsodium development headers
       run: sudo apt-get update && sudo apt-get install -y libsodium-dev
 
+    # ENABLE_FUZZING builds the libFuzzer targets in tests/fuzz; ctest then
+    # replays each seed corpus once, so a saved crash input fails CI.
     - name: Configure with Clang sanitizers
       run: >
         cmake -S . -B build-sanitize
@@ -37,6 +39,7 @@ jobs:
         -DCMAKE_C_COMPILER=clang
         -DSTATIC_ANALYSIS=OFF
         -DENABLE_SANITIZERS=ON
+        -DENABLE_FUZZING=ON
 
     - name: Build
       shell: bash

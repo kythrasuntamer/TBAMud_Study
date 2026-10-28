@@ -668,6 +668,19 @@ target_link_libraries(circle ${EXTRA_LIBS})
 add_subdirectory(src/util)
 add_subdirectory(tests)
 
+# ========== libFuzzer targets ==========
+# Off by default: needs Clang's -fsanitize=fuzzer. See tests/fuzz/CMakeLists.txt.
+option(ENABLE_FUZZING "Build libFuzzer targets (Clang only) and their corpus regression tests" OFF)
+if(ENABLE_FUZZING)
+    if(NOT CMAKE_C_COMPILER_ID MATCHES "Clang")
+        message(FATAL_ERROR "ENABLE_FUZZING requires Clang (libFuzzer); configure with -DCMAKE_C_COMPILER=clang.")
+    endif()
+    if(ENABLE_HARDENING)
+        message(FATAL_ERROR "ENABLE_FUZZING builds ASan targets and cannot be combined with ENABLE_HARDENING.")
+    endif()
+    add_subdirectory(tests/fuzz)
+endif()
+
 # ========== Boot smoke test ==========
 # circle -c loads the whole world from lib/ (zones, triggers, rooms, mobs,
 # objects, shops, quests), frees it with destroy_db() and exits. Under ASan
