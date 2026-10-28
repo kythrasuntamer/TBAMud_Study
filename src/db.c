@@ -1594,9 +1594,18 @@ void parse_room(FILE *fl, int virtual_nr)
       exit(1);
     }
     switch (*line) {
-    case 'D':
-      setup_dir(fl, room_nr, tb_parse_int_or_zero(line + 1));
+    case 'D': {
+      int dir;
+
+      /* The direction indexes dir_option[]; setup_dir() range-checks it. */
+      if (!parse_int_text_strict(line + 1, &dir)) {
+        TB_FATAL_MSG("db", "room-parse", "setup_dir",
+                     "room vnum %d: malformed exit direction line", virtual_nr);
+        exit(1);
+      }
+      setup_dir(fl, room_nr, dir);
       break;
+    }
     case 'E':
       CREATE(new_descr, struct extra_descr_data, 1);
       new_descr->keyword = fread_string(fl, buf2);
@@ -1638,9 +1647,31 @@ void setup_dir(FILE *fl, int room, int dir)
 
   tb_snprintf(buf2, sizeof(buf2), "room #%d, direction D%d", GET_ROOM_VNUM(room)+1, dir);
 
+  /* dir comes from the world file and indexes dir_option[NUM_OF_DIRS]. An
+   * index past the end lands on other room_data fields (func, script...)
+   * inside the same allocation, which no sanitizer can see. */
+  if (dir < 0 || dir >= NUM_OF_DIRS) {
+    TB_FATAL_MSG("db", "room-parse", "setup_dir",
+                 "room vnum %d: exit direction %d out of range 0..%d",
+                 world[room].number, dir, NUM_OF_DIRS - 1);
+    exit(1);
+  }
+
   if (!CONFIG_DIAGONAL_DIRS && IS_DIAGONAL(dir)) {
     log("Warning: Diagonal direction disabled: %s", buf2);
     return;
+  }
+
+  /* A second D record for the same direction replaces the first, as it always
+   * did; free the earlier exit instead of leaking it, and say so. */
+  if (world[room].dir_option[dir]) {
+    TB_ERROR_MSG("db", "room-parse", "setup_dir",
+                 "room vnum %d: duplicate exit D%d; the later one replaces the earlier",
+                 world[room].number, dir);
+    free(world[room].dir_option[dir]->general_description);
+    free(world[room].dir_option[dir]->keyword);
+    free(world[room].dir_option[dir]);
+    world[room].dir_option[dir] = NULL;
   }
 
   CREATE(world[room].dir_option[dir], struct room_direction_data, 1);

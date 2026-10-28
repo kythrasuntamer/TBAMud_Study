@@ -129,6 +129,15 @@ struct obj_data *get_obj_in_list_num(int num, struct obj_data *list)
 { (void)num; (void)list; return NULL; }
 unsigned long circle_random(void) { return 0; }
 
+/* World-file fixtures (config.c, constants.c, genolc.c, genzon.c). */
+int bitwarning = 0;
+int bitsavetodisk = 0;
+size_t room_bits_count = 32;
+int add_to_save_list(zone_vnum zone, int type) { (void)zone; (void)type; return 0; }
+zone_rnum real_zone_by_thing(room_vnum vznum) { (void)vznum; return 0; }
+void dg_read_trigger(FILE *fp, void *proto, int type)
+{ (void)fp; (void)proto; (void)type; }
+
 void setUp(void)
 {
   tb_error_capture_reset();
@@ -310,9 +319,110 @@ static void file_to_string_rejects_oversized_file(void)
   remove(temp_path);
 }
 
+/* ---------------------------------------------------------------------
+ * parse_room()/setup_dir(): exit direction range (B1-03)
+ * ------------------------------------------------------------------- */
+
+/* parse_room() keeps its room and zone cursors in statics, so every test
+ * shares one world array large enough for all rooms the tests parse. */
+#define ROOM_FIXTURES 16
+static struct room_data room_fixture[ROOM_FIXTURES];
+static struct zone_data room_zone_fixture[1];
+
+static void room_fixture_use(void)
+{
+  room_zone_fixture[0].number = 1;
+  room_zone_fixture[0].bot = 0;
+  room_zone_fixture[0].top = 65000;
+  zone_table = room_zone_fixture;
+  top_of_zone_table = 0;
+  world = room_fixture;
+}
+
+static void room_fixture_free(void)
+{
+  int r, d;
+  for (r = 0; r < ROOM_FIXTURES; r++) {
+    struct room_data *room = &room_fixture[r];
+    free(room->name);
+    free(room->description);
+    for (d = 0; d < NUM_OF_DIRS; d++)
+      if (room->dir_option[d]) {
+        free(room->dir_option[d]->general_description);
+        free(room->dir_option[d]->keyword);
+        free(room->dir_option[d]);
+      }
+    free_extra_descriptions(room->ex_description);
+    memset(room, 0, sizeof(*room));
+  }
+  world = NULL;
+  zone_table = NULL;
+}
+
+static void parse_room_text(const char *text, int vnum)
+{
+  FILE *fp = stream_of(text, strlen(text));
+  parse_room(fp, vnum);
+  fclose(fp);
+}
+
+/* "D11" used to CREATE() into dir_option[11], i.e. room_data's func/script
+ * fields: an intra-object write invisible to ASan and Valgrind. */
+static void parse_room_rejects_out_of_range_direction(void)
+{
+  static const char text[] =
+    "Hall~\nA hall.\n~\n0 0 0 0 0 0\nD11\n~\n~\n0 -1 0\nS\n$\n";
+  FILE *volatile fp = stream_of(text, sizeof(text) - 1);
+
+  room_fixture_use();
+  EXPECT_EXIT(parse_room(fp, 100));
+  fclose(fp);
+  TEST_ASSERT_EQUAL_INT(1, tb_test_exit_code);
+  TEST_ASSERT_EQUAL_STRING("FATAL", tb_captured_severity);
+  TEST_ASSERT_EQUAL_STRING("room-parse", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "room vnum 100"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "direction 11"));
+  room_fixture_free();
+}
+
+static void parse_room_rejects_negative_direction(void)
+{
+  static const char text[] =
+    "Hall~\nA hall.\n~\n0 0 0 0 0 0\nD-1\n~\n~\n0 -1 0\nS\n$\n";
+  FILE *volatile fp = stream_of(text, sizeof(text) - 1);
+
+  room_fixture_use();
+  EXPECT_EXIT(parse_room(fp, 101));
+  fclose(fp);
+  TEST_ASSERT_EQUAL_STRING("room-parse", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "direction -1"));
+  room_fixture_free();
+}
+
+/* A duplicate exit replaces the earlier one without leaking it, loudly. */
+static void parse_room_reports_duplicate_exit(void)
+{
+  static const char text[] =
+    "Hall~\nA hall.\n~\n0 0 0 0 0 0\n"
+    "D0\nfirst~\ndoor~\n0 -1 3001\n"
+    "D0\nsecond~\ngate~\n0 -1 3002\n"
+    "S\n$\n";
+
+  room_fixture_use();
+  parse_room_text(text, 102);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("room-parse", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "duplicate exit D0"));
+  TEST_ASSERT_EQUAL_INT(3002, world[top_of_world].dir_option[0]->to_room);
+  room_fixture_free();
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(parse_room_rejects_out_of_range_direction);
+  RUN_TEST(parse_room_rejects_negative_direction);
+  RUN_TEST(parse_room_reports_duplicate_exit);
   RUN_TEST(file_to_string_loads_whole_multiline_file);
   RUN_TEST(file_to_string_joins_long_lines_and_keeps_last_char);
   RUN_TEST(file_to_string_rejects_oversized_file);
