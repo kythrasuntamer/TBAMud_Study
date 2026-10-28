@@ -58,7 +58,7 @@ static long ibt_next_serial = 1;
 /* Internal (static) functions */
 static IBT_DATA *new_ibt(void);
 static void free_ibt_list(int mode);
-static IBT_DATA *read_ibt(char *filename, FILE *fp);
+static int read_ibt(const char *filename, FILE *fp, int recno, IBT_DATA **out);
 static IBT_DATA *get_first_ibt(int mode);
 static bool is_ibt_logger(IBT_DATA *ibtData, struct char_data *ch);
 /* Internal (static) OLC functions */
@@ -135,29 +135,61 @@ static void free_ibt_list(int mode)
 
   *last_ptr = NULL;
 }
-static IBT_DATA *read_ibt( char *filename, FILE *fp )
+/* After a malformed record, skip input up to and including its "End" line
+ * so the records after it still load.  Returns at EOF if there is none. */
+static void ibt_skip_record(FILE *fp)
+{
+  char line[MAX_INPUT_LENGTH];
+  char *p, *end;
+
+  while (fgets(line, sizeof(line), fp)) {
+    for (p = line; isspace((unsigned char)*p); p++)
+      ;
+    for (end = strchr(p, '\0'); end > p && isspace((unsigned char)end[-1]); end--)
+      ;
+    *end = '\0';
+    if (!str_cmp(p, "End"))
+      return;
+  }
+}
+
+/* Read one record from an IBT file.
+ *
+ * Returns IBT_READ_OK with *out set to a new record the caller owns,
+ * IBT_READ_EOF when the file holds no more records, or IBT_READ_DROPPED when
+ * the record was malformed: it has been reported (with the file, record
+ * index and field), freed, and the stream moved past its "End" line.  The
+ * caller keeps ownership of fp and closes it.
+ *
+ * The file is written by save_ibt_file() but holds player text and can be
+ * truncated by a crash or a full disk, so no field is trusted to be
+ * present or terminated. */
+#define IBT_READ_DROPPED (-1)
+#define IBT_READ_EOF       0
+#define IBT_READ_OK        1
+static int read_ibt(const char *filename, FILE *fp, int recno, IBT_DATA **out)
 {
    IBT_DATA *ibtData;
-   char *word, *id_num=NULL, *dated=NULL;
-   char buf[MAX_STRING_LENGTH];
+   char *word, *id_num=NULL, *dated=NULL, *text;
+   char context[MAX_INPUT_LENGTH];
+   const char *field = "keyword";
    bool fMatch;
    int letter;
 
+   *out = NULL;
    do
    {
       letter = getc(fp);
       if (letter == EOF)
-      {
-         tb_fclose(fp);
-         return NULL;
-      }
+         return IBT_READ_EOF;
    }
    while (isspace((unsigned char)letter));
    if (ungetc(letter, fp) == EOF)
    {
-      log("SYSERR: IBT reader could not restore lookahead in %s", filename);
-      tb_fclose(fp);
-      return NULL;
+      TB_ERROR_ERRNO("ibt", "ibt-load", filename,
+                     TB_ERRID_PARSER_EOF " record %d: could not restore lookahead; rest of file not loaded",
+                     recno);
+      return IBT_READ_EOF;
    }
 
    ibtData = new_ibt();
@@ -170,14 +202,28 @@ static IBT_DATA *read_ibt( char *filename, FILE *fp )
         word   = feof( fp ) ? "End" : fread_word( fp );
         fMatch = FALSE;
 
+        /* fread_word() returns NULL for a token of MAX_STRING_LENGTH bytes
+         * or more, or when it cannot push back its lookahead. */
+        if (!word) {
+          field = "keyword";
+          goto malformed;
+        }
+
         switch ( UPPER(word[0]) )
         {
           case 'B':
-            if (!str_cmp(word, "Body"))  STRFREE(ibtData->body);
-            KEY("Body",     ibtData->body,   fread_clean_string( fp, buf ));
+            if (!str_cmp(word, "Body")) {
+              field = "Body";
+              tb_snprintf(context, sizeof(context), "%s record %d field Body", filename, recno);
+              if (!(text = fread_clean_string(fp, context)))
+                goto malformed;
+              STRFREE(ibtData->body);
+              ibtData->body = text;
+              fMatch = TRUE;
+            }
             break;
           case 'D':
-            TXT_KEY("Dated", dated, fread_line(fp));          
+            TXT_KEY("Dated", dated, fread_line(fp));
             break;
           case 'E':
             if (!str_cmp(word, "End"))
@@ -185,11 +231,11 @@ static IBT_DATA *read_ibt( char *filename, FILE *fp )
               if ( id_num ) {
                 ibtData->id_num = tb_parse_long_or_zero(id_num);
                 STRFREE( id_num );
-              }  
+              }
               if ( dated ) {
                 ibtData->dated = tb_parse_long_or_zero(dated);
                 STRFREE( dated );
-              }  
+              }
               if ( !ibtData->name )
                 ibtData->name = STRALLOC("");
               if ( !ibtData->text )
@@ -198,7 +244,8 @@ static IBT_DATA *read_ibt( char *filename, FILE *fp )
                 ibtData->body = STRALLOC("");
               if ( !ibtData->notes )
                 ibtData->notes = STRALLOC("");
-              return ibtData;
+              *out = ibtData;
+              return IBT_READ_OK;
             }
             break;
 
@@ -219,9 +266,17 @@ static IBT_DATA *read_ibt( char *filename, FILE *fp )
 
           case 'N':
             if (!str_cmp(word, "Name") && ibtData->name)   STRFREE(ibtData->name);
-            if (!str_cmp(word, "Notes") && ibtData->notes)  STRFREE(ibtData->notes);
             TXT_KEY("Name",     ibtData->name,    fread_line( fp ));
-            KEY("Notes",        ibtData->notes,   fread_clean_string( fp, buf ));
+            if (!str_cmp(word, "Notes")) {
+              field = "Notes";
+              tb_snprintf(context, sizeof(context), "%s record %d field Notes", filename, recno);
+              if (!(text = fread_clean_string(fp, context)))
+                goto malformed;
+              if (ibtData->notes)
+                STRFREE(ibtData->notes);
+              ibtData->notes = text;
+              fMatch = TRUE;
+            }
             break;
 
           case 'R':
@@ -248,20 +303,19 @@ static IBT_DATA *read_ibt( char *filename, FILE *fp )
           log( "read_ibt (%s): no match: %s - aborting line!", filename, word );
         }
    }
-   log ("read_ibt: Aborted! Returning NULL");
-   if ( ibtData->name)
-         STRFREE( ibtData->name);
-   if ( ibtData->text)
-         STRFREE( ibtData->text);
-   if ( ibtData->body)
-         STRFREE( ibtData->body);
+
+malformed:
+   TB_ERROR_MSG("ibt", "ibt-load", filename,
+                TB_ERRID_PARSER_MALFORMED " record %d field %s unreadable or unterminated; record dropped",
+                recno, field);
+   ibt_free_strings(ibtData);
    if ( id_num )
-		 STRFREE( id_num );
+     STRFREE( id_num );
    if ( dated )
-		 STRFREE( dated );
-		 
+     STRFREE( dated );
    DISPOSE( ibtData);
-   return NULL;
+   ibt_skip_record(fp);
+   return IBT_READ_DROPPED;
 }
 
 void load_ibt_file(int mode)
@@ -269,6 +323,7 @@ void load_ibt_file(int mode)
    char filename[MAX_INPUT_LENGTH];
    FILE *fp;
    IBT_DATA *ibtData;
+   int recno, result;
 
    switch(mode) {
      case SCMD_BUG : tb_snprintf(filename, sizeof(filename), "%s",BUGS_FILE);
@@ -290,7 +345,9 @@ void load_ibt_file(int mode)
       return;
    }
 
-   while( ( ibtData = read_ibt( filename, fp ) ) != NULL ) {
+   for (recno = 0; (result = read_ibt(filename, fp, recno, &ibtData)) != IBT_READ_EOF; recno++) {
+     if (result != IBT_READ_OK)
+       continue;   /* reported and skipped by read_ibt() */
      switch(mode) {
        case SCMD_BUG : LINK( ibtData, first_bug, last_bug, next, prev );
                        break;
@@ -301,7 +358,7 @@ void load_ibt_file(int mode)
      }
    }
 
-   return;
+   tb_fclose(fp);
 }
 
 void save_ibt_file(int mode)

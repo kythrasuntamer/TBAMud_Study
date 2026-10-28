@@ -368,6 +368,75 @@ static void test_load_body_with_blank_line(void)
   TEST_ASSERT_EQUAL_STRING("line1\r\n\r\nline3\r\n", first_bug->body);
 }
 
+#define GOOD_RECORD(title) \
+  "Text      " title "~\n" \
+  "Body      body of " title "\n~\n" \
+  "Name      Alice~\n" \
+  "Level     1\n" \
+  "Room      3001\n" \
+  "Flags     0 0 0 0\n" \
+  "End\n"
+
+/* C1-V02: a body cut off before its '~' (crash or full disk during save)
+ * made fread_clean_string() exit(1) at every boot. It is now reported and
+ * the record dropped; this one is the last in the file. */
+static void test_load_truncated_body_is_dropped_not_fatal(void)
+{
+  write_bugs_file(GOOD_RECORD("first")
+                  "Text      second~\n"
+                  "Body      partial text\n");
+  load_ibt_file(SCMD_BUG);
+  TEST_ASSERT_EQUAL_INT(1, count_bugs());
+  TEST_ASSERT_EQUAL_STRING("first", first_bug->text);
+  TEST_ASSERT_EQUAL_STRING("ibt-load", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "record 1 field Body"));
+}
+
+/* C1-10: 'Body' at end of file logged read_ibt's uninitialised stack
+ * buffer as the error context (Valgrind: conditional jump on uninitialised
+ * value). The context is now the file, record and field. */
+static void test_load_body_keyword_at_eof_names_record(void)
+{
+  write_bugs_file(GOOD_RECORD("first") "Body\n");
+  load_ibt_file(SCMD_BUG);
+  TEST_ASSERT_EQUAL_INT(1, count_bugs());
+  TEST_ASSERT_EQUAL_STRING("ibt-load", tb_captured_operation);
+}
+
+/* C1-11: a keyword of MAX_STRING_LENGTH bytes makes fread_word() return
+ * NULL, which read_ibt dereferenced (SEGV before the fix). The record is
+ * dropped and the ones after it still load. */
+static void test_load_overlong_keyword_drops_only_that_record(void)
+{
+  size_t n = MAX_STRING_LENGTH + 10, used;
+  char *content = malloc(n + 1024);
+
+  TEST_ASSERT_NOT_NULL(content);
+  used = strlcpy(content, GOOD_RECORD("first"), n + 1024);
+  memset(content + used, 'A', n);
+  used += n;
+  strlcpy(content + used, "\nEnd\n" GOOD_RECORD("third"), n + 1024 - used);
+  write_bugs_file(content);
+  free(content);
+
+  load_ibt_file(SCMD_BUG);
+  TEST_ASSERT_EQUAL_INT(2, count_bugs());
+  TEST_ASSERT_EQUAL_STRING("first", first_bug->text);
+  TEST_ASSERT_EQUAL_STRING("third", first_bug->next->text);
+  TEST_ASSERT_EQUAL_STRING("ibt-load", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "field keyword"));
+}
+
+/* Empty Notes ("~" alone) is a valid, empty string, not a failure. */
+static void test_load_empty_notes_is_valid(void)
+{
+  write_bugs_file("Text      t~\nBody      b\n~\nNotes     ~\nEnd\n");
+  load_ibt_file(SCMD_BUG);
+  TEST_ASSERT_EQUAL_INT(1, count_bugs());
+  TEST_ASSERT_EQUAL_STRING("", first_bug->notes);
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+}
+
 int main(void)
 {
   char dir[] = "/tmp/tb_test_ibt.XXXXXX";
@@ -388,5 +457,9 @@ int main(void)
   RUN_TEST(test_remove_refuses_record_open_in_ibtedit);
   RUN_TEST(test_remove_frees_admin_notes);
   RUN_TEST(test_load_body_with_blank_line);
+  RUN_TEST(test_load_truncated_body_is_dropped_not_fatal);
+  RUN_TEST(test_load_body_keyword_at_eof_names_record);
+  RUN_TEST(test_load_overlong_keyword_drops_only_that_record);
+  RUN_TEST(test_load_empty_notes_is_valid);
   return UNITY_END();
 }

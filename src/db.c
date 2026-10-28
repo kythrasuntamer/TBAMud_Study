@@ -3725,13 +3725,15 @@ char *fread_string(FILE *fl, const char *error)
   return (strlen(buf) ? strdup(buf) : NULL);
 }
 
-/** Like fread_string(), but skips leading whitespace first.
+/* fread_clean_string is the same as fread_string, but skips preceding spaces.
  *
- * Failure modes differ from fread_string(): EOF while skipping the leading
- * whitespace returns NULL (logged), while a format error or an over-long
- * string after that still exits the process. The IBT loader (ibt.c) reads
- * bug/idea/typo Body and Notes with it, so its input is player-authored text
- * from the in-game editor. Returns a malloc()ed string or NULL for empty. */
+ * Contract (its only caller is the IBT loader, read_ibt() in ibt.c, whose
+ * files hold player text and can be cut short by a crash or a full disk):
+ * returns a newly allocated string -- "" for an empty one -- or NULL when
+ * the string is missing, unterminated or too long.  NULL is always
+ * reported here with 'error' (the caller's file/record/field context) and
+ * the caller drops the record.  It never exits: a truncated bug list must
+ * not make the server unbootable. */
 char *fread_clean_string(FILE *fl, const char *error)
 {
   char buf[MAX_STRING_LENGTH], tmp[FREAD_CHUNK + 3];
@@ -3743,27 +3745,25 @@ char *fread_clean_string(FILE *fl, const char *error)
 
   do
   {
-    if (feof(fl))
-    {
-      log( "%s", "fread_clean_string: EOF encountered on read." );
-      return 0;
-    }
-    c = getc(fl);
-    if (c == EOF) {
-      log("SYSERR: fread_clean_string: unexpected EOF near %s", error);
+    if (feof(fl) || (c = getc(fl)) == EOF) {
+      TB_ERROR_MSG("db", "fread-clean-string", error,
+                   TB_ERRID_PARSER_EOF " file ends before the string starts");
       return NULL;
     }
   }
   while (isspace((unsigned char)c));
   if (ungetc(c, fl) == EOF) {
-    log("SYSERR: fread_clean_string: cannot restore lookahead near %s", error);
+    TB_ERROR_ERRNO("db", "fread-clean-string", error,
+                   TB_ERRID_PARSER_EOF " could not restore lookahead");
     return NULL;
   }
 
   do {
     if (!fgets(tmp, FREAD_CHUNK, fl)) {
-      log("SYSERR: fread_clean_string: format error at or near %s", error);
-      exit(1);
+      TB_ERROR_MSG("db", "fread-clean-string", error,
+                   TB_ERRID_PARSER_EOF " file ends after %d bytes with no closing '~'",
+                   length);
+      return NULL;
     }
     /* See fread_string(): a chunk starting with NUL would scan from tmp[-1]. */
     if (*tmp == '\0') {
@@ -3781,9 +3781,9 @@ char *fread_clean_string(FILE *fl, const char *error)
     if (point[-1] != '\n' && point[-1] != '~' && !feof(fl)) {
       templength = point - tmp;
       if (length + templength >= MAX_STRING_LENGTH) {
-        log("SYSERR: %s: string too large (db.c)", __func__);
-        log("%s", error);
-        exit(1);
+        TB_ERROR_MSG("db", "fread-clean-string", error,
+                     TB_ERRID_PARSER_RANGE " string exceeds %d bytes", MAX_STRING_LENGTH - 1);
+        return NULL;	/* never exit: see the contract above */
       }
       strlcat(buf, tmp, sizeof(buf));	/* size checked above */
       length += templength;
@@ -3807,9 +3807,9 @@ char *fread_clean_string(FILE *fl, const char *error)
     templength = point - tmp;
 
     if (length + templength >= MAX_STRING_LENGTH) {
-      log("SYSERR: fread_clean_string: string too large (db.c)");
-      log("%s", error);
-      exit(1);
+      TB_ERROR_MSG("db", "fread-clean-string", error,
+                   TB_ERRID_PARSER_RANGE " string exceeds %d bytes", MAX_STRING_LENGTH - 1);
+      return NULL;
     } else {
       strlcat(buf, tmp, sizeof(buf));	/* strcat: OK (size checked above) */
       length += templength;
@@ -3818,7 +3818,7 @@ char *fread_clean_string(FILE *fl, const char *error)
   
   parse_at(buf);
   /* allocate space for the new string and copy it */
-  return (strlen(buf) ? strdup(buf) : NULL);
+  return strdup(buf);
 }
 
 /** Read a decimal number (optionally signed, optionally "a|b|..." summed)
