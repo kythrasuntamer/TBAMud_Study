@@ -114,6 +114,11 @@ void char_to_room_at(const char *src_file, int src_line, const char *src_func, s
 void char_from_room_at(const char *src_file, int src_line, const char *src_func, struct char_data *ch)
 { (void)src_file; (void)src_line; (void)src_func; 
   char_from_room_calls++;
+  /* Production (handler.c) logs FATAL char-from-nowhere and aborts on a
+   * character in no valid room; a command that gets here with one fails. */
+  TEST_ASSERT_TRUE_MESSAGE(VALID_ROOM_RNUM(IN_ROOM(ch)),
+                           "char_from_room on a character in no valid room "
+                           "(production aborts)");
   IN_ROOM(ch) = NOWHERE;
 }
 void free_char(struct char_data *ch)
@@ -1589,6 +1594,117 @@ static void test_dc_other_states_and_refusal(void)
     RUN_TEST(fn); \
 } while (0)
 
+/* A character stranded in NOWHERE (char_to_room() refused its room, e.g. a
+ * return from the void to a room OLC deleted) reached char_from_room(),
+ * which aborts the server, through goto/at by a stranded immortal and
+ * trans/teleport of a stranded player; trans by a stranded immortal moved
+ * the victim into NOWHERE. Each is now refused and reported. */
+static void test_goto_and_at_by_a_stranded_immortal_are_refused(void)
+{
+  IN_ROOM(&imm) = NOWHERE;
+  RUN_CMD(do_goto, &imm, "3014");
+  TEST_ASSERT_EQUAL_STRING("stranded-target", captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(captured_detail, "target player idnum 1 is in no valid room"));
+  TEST_ASSERT_NOT_NULL(strstr(captured_detail, "'goto' by player idnum 1 refused"));
+  TEST_ASSERT_NOT_NULL(strstr(sent, "stranded in no valid room"));
+  TEST_ASSERT_EQUAL_INT(0, char_from_room_calls);
+  TEST_ASSERT_EQUAL_INT(0, char_to_room_calls);
+  TEST_ASSERT_EQUAL_INT(NOWHERE, IN_ROOM(&imm));
+
+  reset_counters();
+  RUN_CMD(do_at, &imm, "3014 stat room");
+  TEST_ASSERT_EQUAL_INT(1, captured_errors);
+  TEST_ASSERT_EQUAL_STRING("stranded-target", captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(captured_detail, "'at' by player idnum 1 refused"));
+  TEST_ASSERT_EQUAL_INT(0, char_from_room_calls + char_to_room_calls);
+  TEST_ASSERT_EQUAL_INT(NOWHERE, IN_ROOM(&imm));
+}
+
+static void test_trans_and_teleport_of_a_stranded_player_are_refused(void)
+{
+  make_player();                  /* Bobby, idnum 77, in NOWHERE */
+  RUN_CMD(do_trans, &imm, "bobby");
+  TEST_ASSERT_EQUAL_INT(1, captured_errors);
+  TEST_ASSERT_EQUAL_STRING("stranded-target", captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(captured_detail, "target player idnum 77 is in no valid room (rnum 65535)"));
+  TEST_ASSERT_NOT_NULL(strstr(captured_detail, "'trans' by player idnum 1 refused"));
+  TEST_ASSERT_NOT_NULL(strstr(sent, "Bobby is stranded in no valid room"));
+  TEST_ASSERT_EQUAL_INT(0, char_from_room_calls + char_to_room_calls);
+
+  reset_counters();
+  RUN_CMD(do_teleport, &imm, "bobby 3014");
+  TEST_ASSERT_EQUAL_INT(1, captured_errors);
+  TEST_ASSERT_EQUAL_STRING("stranded-target", captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(captured_detail, "'teleport' by player idnum 1"));
+  TEST_ASSERT_NULL(strstr(sent, "Okay."));
+  TEST_ASSERT_EQUAL_INT(0, char_from_room_calls + char_to_room_calls);
+  TEST_ASSERT_EQUAL_INT(NOWHERE, IN_ROOM(&target));
+
+  /* Placed again, the same commands work. */
+  reset_counters();
+  IN_ROOM(&target) = 1;
+  RUN_CMD(do_teleport, &imm, "bobby 3000");
+  TEST_ASSERT_EQUAL_INT(0, captured_errors);
+  TEST_ASSERT_EQUAL_INT(0, IN_ROOM(&target));
+  in_game_char = NULL;
+}
+
+static void test_trans_by_a_stranded_immortal_is_refused(void)
+{
+  make_player();
+  IN_ROOM(&target) = 1;
+  IN_ROOM(&imm) = NOWHERE;
+  RUN_CMD(do_trans, &imm, "bobby");
+  TEST_ASSERT_EQUAL_INT(1, captured_errors);
+  TEST_ASSERT_EQUAL_STRING("stranded-actor", captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(captured_detail, "actor player idnum 1 is in no valid room"));
+  TEST_ASSERT_EQUAL_INT(0, char_from_room_calls + char_to_room_calls);
+  TEST_ASSERT_EQUAL_INT(1, IN_ROOM(&target));   /* not moved into NOWHERE */
+
+  reset_counters();
+  RUN_CMD(do_trans, &imm, "all");
+  TEST_ASSERT_EQUAL_INT(1, captured_errors);
+  TEST_ASSERT_EQUAL_STRING("stranded-actor", captured_operation);
+  TEST_ASSERT_EQUAL_INT(0, char_from_room_calls + char_to_room_calls);
+  in_game_char = NULL;
+}
+
+/* trans all skips (and reports) a stranded player and still moves the
+ * others. */
+static void test_trans_all_skips_a_stranded_player(void)
+{
+  static struct char_data placed;
+  static struct player_special_data placed_specials;
+  static struct descriptor_data stranded_desc, placed_desc;
+
+  make_player();                  /* Bobby, stranded */
+  memset(&placed, 0, sizeof(placed));
+  memset(&placed_specials, 0, sizeof(placed_specials));
+  memset(&stranded_desc, 0, sizeof(stranded_desc));
+  memset(&placed_desc, 0, sizeof(placed_desc));
+  placed.player_specials = &placed_specials;
+  placed.player.name = (char *)"Placid";
+  GET_IDNUM(&placed) = 78;
+  GET_LEVEL(&placed) = 10;
+  IN_ROOM(&placed) = 1;
+  stranded_desc.character = &target;
+  placed_desc.character = &placed;
+  STATE(&stranded_desc) = STATE(&placed_desc) = CON_PLAYING;
+  stranded_desc.next = &placed_desc;
+  descriptor_list = &stranded_desc;
+
+  RUN_CMD(do_trans, &imm, "all");
+  descriptor_list = NULL;
+  TEST_ASSERT_EQUAL_INT(1, captured_errors);
+  TEST_ASSERT_EQUAL_STRING("stranded-target", captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(captured_detail, "target player idnum 77"));
+  TEST_ASSERT_NOT_NULL(strstr(captured_detail, "'trans all'"));
+  TEST_ASSERT_EQUAL_INT(NOWHERE, IN_ROOM(&target));
+  TEST_ASSERT_EQUAL_INT(0, IN_ROOM(&placed));   /* moved to the immortal */
+  TEST_ASSERT_EQUAL_INT(1, char_from_room_calls);
+  in_game_char = NULL;
+}
+
 int main(void)
 {
   /* basic_mud_log()/mudlog() are the real utils.c ones; keep them quiet. */
@@ -1633,6 +1749,10 @@ int main(void)
   RUN_SELECTED(test_force_room_skips_extracted_occupants);
   RUN_SELECTED(test_dc_builder_in_editor_takes_link_loss_path);
   RUN_SELECTED(test_dc_other_states_and_refusal);
+  RUN_SELECTED(test_goto_and_at_by_a_stranded_immortal_are_refused);
+  RUN_SELECTED(test_trans_and_teleport_of_a_stranded_player_are_refused);
+  RUN_SELECTED(test_trans_by_a_stranded_immortal_is_refused);
+  RUN_SELECTED(test_trans_all_skips_a_stranded_player);
   {
     int failures = UNITY_END();
     if (logfile)

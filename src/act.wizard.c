@@ -351,6 +351,52 @@ ACMD(do_send)
     send_to_char(ch, "You send '%s' to %s.\r\n", buf, GET_NAME(vict));
 }
 
+/** TRUE when who is in a valid room; otherwise reports, tells ch, and
+ * returns FALSE, and the immortal command must refuse. Used by the commands
+ * that move a character (goto, at, trans, teleport) before they call
+ * char_from_room() or use ch's room as the destination.
+ *
+ * A character can be stranded in NOWHERE by an earlier, already reported
+ * failure: char_to_room() refuses an invalid room and leaves its character
+ * there (e.g. a return from the void to a room that OLC deleted).
+ * char_from_room() deliberately aborts on such a character, and NOWHERE is
+ * no destination (char_to_room() would strand whoever is moved there).
+ *
+ * The ERROR names the command, the stranded character and the immortal,
+ * at the caller's line: op stranded-target when who is the character to
+ * be moved, stranded-actor when ch's own room is the destination.
+ * 'set <name> room <vnum>' places a stranded character (it skips
+ * char_from_room() for one in NOWHERE). Reached through WIZ_TARGET_PLACED()
+ * and WIZ_ACTOR_PLACED(). */
+static bool wiz_char_placed_at(struct char_data *ch, struct char_data *who,
+                               bool is_target, const char *cmd,
+                               const char *file, int line, const char *func)
+{
+  if (VALID_ROOM_RNUM(IN_ROOM(who)))
+    return TRUE;
+  tb_error_log_at("ERROR", "act", is_target ? "stranded-target" : "stranded-actor",
+                  cmd, 0, file, line, func,
+                  "%s " DIAG_CHAR_FMT " is in no valid room (rnum %d); '%s' by "
+                  DIAG_CHAR_FMT " refused", is_target ? "target" : "actor",
+                  DIAG_CHAR(who), (int) IN_ROOM(who), cmd, DIAG_CHAR(ch));
+  if (who == ch)
+    send_to_char(ch, "You are stranded in no valid room, so '%s' cannot work; "
+                 "'set <name> room <vnum>' places a stranded character.\r\n", cmd);
+  else
+    send_to_char(ch, "%s is stranded in no valid room and cannot be moved; "
+                 "'set <name> room <vnum>' places a stranded character.\r\n",
+                 GET_NAME(who) ? GET_NAME(who) : "That character");
+  return FALSE;
+}
+/* victim, the character cmd is about to move (it may be ch itself), is in a
+ * valid room. FALSE, after reporting stranded-target: refuse the command. */
+#define WIZ_TARGET_PLACED(ch, victim, cmd) \
+  wiz_char_placed_at((ch), (victim), TRUE, (cmd), __FILE__, __LINE__, __func__)
+/* ch's own room, cmd's destination, is valid. FALSE, after reporting
+ * stranded-actor: refuse the command. */
+#define WIZ_ACTOR_PLACED(ch, cmd) \
+  wiz_char_placed_at((ch), (ch), FALSE, (cmd), __FILE__, __LINE__, __func__)
+
 /** Resolve a room argument for goto, at, teleport, and the DG mgoto/mat/
  * mteleport/wteleport family.  -je 4/6/93
  * @param rawroomstr A room vnum, or a mob/object name (N.name allowed). It
@@ -453,6 +499,8 @@ ACMD(do_at)
 
   if ((location = find_target_room(ch, buf)) == NOWHERE)
     return;
+  if (!WIZ_TARGET_PLACED(ch, ch, "at"))
+    return;
 
   /* a location has been found. Remember both rooms by vnum: the command
    * runs with ch moved and may add or delete rooms (dig, redit, rdelete),
@@ -486,6 +534,8 @@ ACMD(do_goto)
   room_rnum location;
 
   if ((location = find_target_room(ch, argument)) == NOWHERE)
+    return;
+  if (!WIZ_TARGET_PLACED(ch, ch, "goto"))
     return;
 
   if (ZONE_FLAGGED(GET_ROOM_ZONE(location), ZONE_NOIMMORT) && (GET_LEVEL(ch) >= LVL_IMMORT) && (GET_LEVEL(ch) < LVL_GRGOD)) {
@@ -525,6 +575,8 @@ ACMD(do_trans)
 	send_to_char(ch, "Go transfer someone your own size.\r\n");
 	return;
       }
+      if (!WIZ_ACTOR_PLACED(ch, "trans") || !WIZ_TARGET_PLACED(ch, victim, "trans"))
+        return;
       act("$n disappears in a mushroom cloud.", FALSE, victim, 0, 0, TO_ROOM);
       char_from_room(victim);
       char_to_room(victim, IN_ROOM(ch));
@@ -539,12 +591,16 @@ ACMD(do_trans)
       send_to_char(ch, "I think not.\r\n");
       return;
     }
+    if (!WIZ_ACTOR_PLACED(ch, "trans all"))
+      return;
 
     for (i = descriptor_list; i; i = i->next)
       if (STATE(i) == CON_PLAYING && i->character && i->character != ch) {
 	victim = i->character;
 	if (GET_LEVEL(victim) >= GET_LEVEL(ch))
 	  continue;
+	if (!WIZ_TARGET_PLACED(ch, victim, "trans all"))
+	  continue;     /* reported; the others are still transferred */
 	act("$n disappears in a mushroom cloud.", FALSE, victim, 0, 0, TO_ROOM);
 	char_from_room(victim);
 	char_to_room(victim, IN_ROOM(ch));
@@ -576,6 +632,8 @@ ACMD(do_teleport)
   else if (!*buf2)
     send_to_char(ch, "Where do you wish to send this person?\r\n");
   else if ((target = find_target_room(ch, buf2)) != NOWHERE) {
+    if (!WIZ_TARGET_PLACED(ch, victim, "teleport"))
+      return;
     send_to_char(ch, "%s", CONFIG_OK);
     act("$n disappears in a puff of smoke.", FALSE, victim, 0, 0, TO_ROOM);
     char_from_room(victim);
