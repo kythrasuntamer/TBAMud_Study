@@ -443,7 +443,16 @@ static void list_one_char(struct char_data *i, struct char_data *ch)
     send_to_char(ch, " (AFK)");
 
   if (GET_POS(i) != POS_FIGHTING) {
-    if (!SITTING(i))
+    /* A mob's position comes straight from its world file (parse_simple_mob
+     * stores t[0]/t[1] unchecked), so it is file-controlled here. */
+    if ((int) GET_POS(i) < 0 || (int) GET_POS(i) >= (int) (sizeof(positions) / sizeof(positions[0]))) {
+      TB_ERROR_MSG("act", "position-range", "positions",
+                   DIAG_CHAR_FMT " in room vnum %d has position %d outside "
+                   "0..%d", DIAG_CHAR(i),
+                   IN_ROOM(i) != NOWHERE ? (int)GET_ROOM_VNUM(IN_ROOM(i)) : -1,
+                   (int) GET_POS(i), (int) (sizeof(positions) / sizeof(positions[0])) - 1);
+      send_to_char(ch, " is here.");
+    } else if (!SITTING(i))
       send_to_char(ch, "%s", positions[(int) GET_POS(i)]);
     else {
       furniture = SITTING(i);

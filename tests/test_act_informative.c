@@ -352,6 +352,42 @@ static void look_skips_mob_without_short_description(void)
   free_player(ch);
 }
 
+/* --- G2-04: a mob position outside positions[] ------------------------- */
+
+static void look_reports_mob_position_out_of_range(void)
+{
+  struct char_data *ch = make_player(7);
+  struct char_data *mob = make_player(0);
+  struct index_data mob_idx;
+
+  memset(&mob_idx, 0, sizeof(mob_idx));
+  mob_idx.vnum = 3011;
+  mob_index = &mob_idx;
+  enter_test_room(ch);
+  SET_BIT_AR(MOB_FLAGS(mob), MOB_ISNPC);
+  mob->nr = 0;
+  free(mob->player_specials);
+  mob->player_specials = &dummy_mob;
+  mob->player.short_descr = (char *)"a confused guard";
+  GET_POS(mob) = 20;          /* as stored by parse_simple_mob from the file */
+  GET_DEFAULT_POS(mob) = 20;  /* long_descr is NULL, so the position line runs */
+  IN_ROOM(mob) = 0;
+  ch->next_in_room = mob;
+  look_at_room(ch, TRUE);
+  TEST_ASSERT_NOT_NULL(strstr(sent, "A confused guard is here."));
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("position-range", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "mob vnum 3011"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "position 20"));
+  ch->next_in_room = NULL;
+  mob->player_specials = NULL;
+  free(mob->player.name);
+  free(mob);
+  mob_index = NULL;
+  leave_test_room(ch);
+  free_player(ch);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -363,5 +399,6 @@ int main(void)
   RUN_TEST(look_skips_object_without_long_description);
   RUN_TEST(look_groups_past_object_without_short_description);
   RUN_TEST(look_skips_mob_without_short_description);
+  RUN_TEST(look_reports_mob_position_out_of_range);
   return UNITY_END();
 }
