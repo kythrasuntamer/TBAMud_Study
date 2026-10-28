@@ -18,6 +18,8 @@
 #include "structs.h"
 #include "utils.h"
 #include "comm.h"
+#include "db.h"
+#include "handler.h"
 
 extern FILE *logfile;
 
@@ -164,10 +166,132 @@ void test_column_list_short_list_is_silent(void)
   TEST_ASSERT_NULL(strstr(paged, "OVERFLOW"));
 }
 
+/* =====================================================================
+ * I1-02: stop_follower / die_follower across act() callbacks.
+ *
+ * act() runs DG ACT triggers synchronously; a trigger can mforce a
+ * character to unfollow (re-entering stop_follower) or to follow again.
+ * This act_at() replaces the weak stub and plays that trigger.
+ * ===================================================================== */
+
+enum act_script { SCRIPT_NONE, SCRIPT_UNFOLLOW_SELF, SCRIPT_UNFOLLOW_OTHER,
+                  SCRIPT_REFOLLOW };
+static enum act_script act_script;
+static struct char_data *act_script_other;
+static int act_calls;
+
+char *act_at(const char *src_file, int src_line, const char *src_func,
+             const char *str, int hide_invisible, struct char_data *ch,
+             struct obj_data *obj, void *vict_obj, int type)
+{
+  struct char_data *master = (struct char_data *)vict_obj;
+
+  (void)src_file; (void)src_line; (void)src_func; (void)hide_invisible;
+  (void)obj;
+  act_calls++;
+  if (type != TO_NOTVICT || str == NULL || strstr(str, "stops following") == NULL)
+    return NULL;
+
+  switch (act_script) {
+  case SCRIPT_UNFOLLOW_SELF:     /* %force% %actor% unfollow */
+    if (ch->master)
+      stop_follower(ch);
+    break;
+  case SCRIPT_UNFOLLOW_OTHER:    /* %force% <other follower> unfollow */
+    if (act_script_other && act_script_other->master)
+      stop_follower(act_script_other);
+    break;
+  case SCRIPT_REFOLLOW:          /* %force% %actor% follow <leader> */
+    if (ch->master == NULL)
+      add_follower(ch, master);
+    break;
+  default:
+    break;
+  }
+  return NULL;
+}
+
+static struct room_data test_room;   /* SECT_INSIDE: always lit */
+
+static void world_setup(void)
+{
+  memset(&test_room, 0, sizeof(test_room));
+  world = &test_room;
+  top_of_world = 0;
+  act_script = SCRIPT_NONE;
+  act_script_other = NULL;
+  act_calls = 0;
+}
+
+static void world_teardown(void)
+{
+  world = NULL;
+  act_script = SCRIPT_NONE;
+}
+
+void test_stop_follower_survives_reentrant_unfollow(void)
+{
+  struct char_data *a = make_player(1), *b = make_player(2);
+
+  world_setup();
+  add_follower(a, b);
+  act_script = SCRIPT_UNFOLLOW_SELF;
+  stop_follower(a);
+
+  TEST_ASSERT_NULL(a->master);
+  TEST_ASSERT_NULL(b->followers);
+  world_teardown();
+  free_player(a);
+  free_player(b);
+}
+
+void test_die_follower_survives_callback_unfollowing_next(void)
+{
+  struct char_data *lead = make_player(10);
+  struct char_data *a = make_player(11), *b = make_player(12);
+
+  world_setup();
+  add_follower(b, lead);
+  add_follower(a, lead);          /* list: a -> b */
+  act_script = SCRIPT_UNFOLLOW_OTHER;
+  act_script_other = b;           /* a's message makes b unfollow */
+  die_follower(lead);
+
+  TEST_ASSERT_NULL(lead->followers);
+  TEST_ASSERT_NULL(a->master);
+  TEST_ASSERT_NULL(b->master);
+  TEST_ASSERT_EQUAL_INT(0, count_records());
+  world_teardown();
+  free_player(lead);
+  free_player(a);
+  free_player(b);
+}
+
+void test_die_follower_bounds_refollow_loop(void)
+{
+  struct char_data *lead = make_player(20), *a = make_player(21);
+
+  world_setup();
+  add_follower(a, lead);
+  act_script = SCRIPT_REFOLLOW;   /* every removal re-adds a */
+  die_follower(lead);
+
+  TEST_ASSERT_NULL(lead->followers);
+  TEST_ASSERT_NULL(a->master);
+  TEST_ASSERT_EQUAL_INT(1, count_op("follower-readded"));
+  TEST_ASSERT_NOT_NULL(strstr(log_text(), "player idnum 20"));
+  world_teardown();
+  free_player(lead);
+  free_player(a);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
   RUN_TEST(test_column_list_long_list_truncates_and_reports);
   RUN_TEST(test_column_list_short_list_is_silent);
+  RUN_TEST(test_stop_follower_survives_reentrant_unfollow);
+  RUN_TEST(test_die_follower_survives_callback_unfollowing_next);
+  RUN_TEST(test_die_follower_bounds_refollow_loop);
   return UNITY_END();
 }

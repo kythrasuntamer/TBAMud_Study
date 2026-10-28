@@ -1058,11 +1058,20 @@ bool circle_follow(struct char_data *ch, struct char_data *victim)
  * @pre ch MUST be following someone, else core dump.
  * @post The charm affect (AFF_CHARM) will be removed from the character and
  * the character will stop following the "master" they were following.
+ *
+ * Lifetime rule: act() runs DG ACT triggers synchronously, and a trigger can
+ * force ch (or anyone) to unfollow, follow or be purged. So the follow node
+ * is unlinked and ch->master cleared *before* any message is sent; after
+ * that the function touches only the saved master pointer (characters are
+ * freed only at the end of the pulse) and re-checks DEAD() before each
+ * further message.
  * @param ch The character (NPC or PC) to stop from following.
  * */
 void stop_follower(struct char_data *ch)
 {
   struct follow_type *j, *k;
+  struct char_data *master;
+  bool charmed;
 
   /* Makes sure this function is not called when it shouldn't be called. */
   if (ch->master == NULL) {
@@ -1070,33 +1079,49 @@ void stop_follower(struct char_data *ch)
     return;
   }
 
-  if (AFF_FLAGGED(ch, AFF_CHARM)) {
-    act("You realize that $N is a jerk!", FALSE, ch, 0, ch->master, TO_CHAR);
-    act("$n realizes that $N is a jerk!", FALSE, ch, 0, ch->master, TO_NOTVICT);
-    act("$n hates your guts!", FALSE, ch, 0, ch->master, TO_VICT);
-    if (affected_by_spell(ch, SPELL_CHARM))
-      affect_from_char(ch, SPELL_CHARM);
-  } else {
-    act("You stop following $N.", FALSE, ch, 0, ch->master, TO_CHAR);
-    act("$n stops following $N.", TRUE, ch, 0, ch->master, TO_NOTVICT);
-    if (CAN_SEE(ch->master, ch))
-      act("$n stops following you.", TRUE, ch, 0, ch->master, TO_VICT);
-  }
+  master = ch->master;
 
-  if (ch->master->followers->follower == ch) {	/* Head of follower-list? */
-    k = ch->master->followers;
-    ch->master->followers = k->next;
+  /* Unlink first, so a callback below sees a consistent follower list. */
+  if (master->followers->follower == ch) {	/* Head of follower-list? */
+    k = master->followers;
+    master->followers = k->next;
     free(k);
   } else {			/* locate follower who is not head of list */
-    for (k = ch->master->followers; k->next->follower != ch; k = k->next);
+    for (k = master->followers; k->next->follower != ch; k = k->next);
 
     j = k->next;
     k->next = j->next;
     free(j);
   }
 
+  charmed = AFF_FLAGGED(ch, AFF_CHARM);
   ch->master = NULL;
+  /* affect_from_char() first: affect_total() would restore AFF_CHARM from a
+   * remaining SPELL_CHARM affect. Neither call runs triggers. */
+  if (charmed && affected_by_spell(ch, SPELL_CHARM))
+    affect_from_char(ch, SPELL_CHARM);
   REMOVE_BIT_AR(AFF_FLAGS(ch), AFF_CHARM);
+
+  /* Messages last. Each act() may run scripts; stop talking once either
+   * character has been marked for extraction. */
+  if (charmed) {
+    act("You realize that $N is a jerk!", FALSE, ch, 0, master, TO_CHAR);
+    if (DEAD(ch) || DEAD(master))
+      return;
+    act("$n realizes that $N is a jerk!", FALSE, ch, 0, master, TO_NOTVICT);
+    if (DEAD(ch) || DEAD(master))
+      return;
+    act("$n hates your guts!", FALSE, ch, 0, master, TO_VICT);
+  } else {
+    act("You stop following $N.", FALSE, ch, 0, master, TO_CHAR);
+    if (DEAD(ch) || DEAD(master))
+      return;
+    act("$n stops following $N.", TRUE, ch, 0, master, TO_NOTVICT);
+    if (DEAD(ch) || DEAD(master))
+      return;
+    if (CAN_SEE(master, ch))
+      act("$n stops following you.", TRUE, ch, 0, master, TO_VICT);
+  }
 }
 
 /** Finds the number of follows that are following, and charmed by, the
@@ -1119,19 +1144,60 @@ int num_followers_charmed(struct char_data *ch)
  * is the leader of a group, it stops everyone in the group from following
  * them. Despite the title, this function does not actually perform the kill on
  * the character passed in as the argument.
+ *
+ * Every stop_follower() call sends act() messages that can run scripts, and a
+ * script can unfollow, purge or re-add any follower. So the list head is
+ * re-read after every call instead of caching a next pointer. A script that
+ * keeps re-adding followers is bounded: after as many messaged removals as
+ * the list had nodes at entry (plus a small allowance), the remaining nodes
+ * are detached without messages and reported as follower-readded.
  * @param ch The character (NPC or PC) to stop from following.
  * */
 void die_follower(struct char_data *ch)
 {
-  struct follow_type *j, *k;
+  struct follow_type *k;
+  struct char_data *f;
+  int budget = 8, quiet = 0;
 
   if (ch->master)
     stop_follower(ch);
 
-  for (k = ch->followers; k; k = j) {
-    j = k->next;
-    stop_follower(k->follower);
+  for (k = ch->followers; k; k = k->next)
+    budget++;
+
+  while ((k = ch->followers) != NULL) {
+    f = k->follower;
+    if (f == NULL || f->master != ch) {
+      /* The node does not match its follower's master: stop_follower(f)
+       * could not remove it, so drop it here instead of looping forever. */
+      TB_ERROR_MSG("char", "follower-list-corrupt", "die_follower",
+                   "leader " DIAG_CHAR_FMT " lists a follower whose master is "
+                   "%s; node dropped", DIAG_CHAR(ch),
+                   f == NULL ? "(null follower)" : "another character");
+      ch->followers = k->next;
+      free(k);
+      continue;
+    }
+    if (budget > 0) {
+      budget--;
+      stop_follower(f);
+      continue;
+    }
+    /* Scripts keep re-adding followers: detach without act() callbacks. */
+    ch->followers = k->next;
+    free(k);
+    f->master = NULL;
+    if (affected_by_spell(f, SPELL_CHARM))
+      affect_from_char(f, SPELL_CHARM);
+    REMOVE_BIT_AR(AFF_FLAGS(f), AFF_CHARM);
+    quiet++;
   }
+
+  if (quiet > 0)
+    TB_WARN_MSG("char", "follower-readded", "die_follower",
+                "leader " DIAG_CHAR_FMT ": %d follower(s) re-added during "
+                "removal callbacks were detached without messages",
+                DIAG_CHAR(ch), quiet);
 }
 
 /** Adds a new follower to a group.
