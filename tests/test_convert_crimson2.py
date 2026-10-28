@@ -4,6 +4,7 @@ exactly the recipe's output."""
 import importlib.util
 import json
 import pathlib
+import re
 import tempfile
 import unittest
 
@@ -153,6 +154,15 @@ class Crimson2Conversion(unittest.TestCase):
                 stock = (world / ext / f"41.{ext}").read_text(encoding="latin-1")
                 self.assertTrue(frag)
                 self.assertTrue(stock.endswith(frag + end), f"41.{ext} must end with the merge")
+
+    def test_merged_records_ascend(self):
+        # db.c discrete_load() reports a vnum that does not ascend: the merge
+        # renumbers Crimson 4104 to 4109, after 4108, so order by new vnum.
+        world = ROOT / "lib" / "world"
+        for ext in ("mob", "obj"):
+            vnums = [int(v) for v in re.findall(r"(?m)^#(\d+)$",
+                     (world / ext / f"41.{ext}").read_text(encoding="latin-1"))]
+            self.assertEqual(sorted(vnums), vnums, f"41.{ext}")
 
     def test_zone_47_is_not_installed(self):
         world = ROOT / "lib" / "world"

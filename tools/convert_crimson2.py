@@ -141,6 +141,13 @@ class Area:
             return " ".join(words[1:])
         return namelist
 
+    @staticmethod
+    def ascending(records):
+        """Rows of (vnum, lines) records in ascending vnum order: the boot loader
+        expects each file's records to ascend, and a merge map can renumber
+        records out of their source order."""
+        return [line for _, rows in sorted(records, key=lambda r: r[0]) for line in rows]
+
     # -- reading --------------------------------------------------------------
     def records(self, ext):
         path = self.base.with_suffix("." + ext)
@@ -336,10 +343,10 @@ class Area:
                           "; give it the magic_user spec proc to keep it a caster")
             strings[0] = self.keywords(strings[0], "mob", where)
             self.short[("mob", nv)] = strings[1]
-            out += [f"#{nv}", *[s + "~" for s in strings],
-                    f"{act} 0 0 0 {affects} 0 0 0 {align} E",
-                    " ".join(stats), " ".join(money), " ".join(pos), *especs, "E"]
-        return out
+            out.append((nv, [f"#{nv}", *[s + "~" for s in strings],
+                             f"{act} 0 0 0 {affects} 0 0 0 {align} E",
+                             " ".join(stats), " ".join(money), " ".join(pos), *especs, "E"]))
+        return self.ascending(out)
 
     # -- objects --------------------------------------------------------------
     def objs(self):
@@ -435,8 +442,8 @@ class Area:
                     " ".join(map(str, vals)), f"{weight} {cost} {rent} {level}"]
             for x in extras:
                 rows += ["E", x[1] + "~", x[2] + "~"] if x[0] == "E" else ["A", f"{x[1]} {x[2]}"]
-            out += rows
-        return out
+            out.append((nv, rows))
+        return self.ascending(out)
 
     # -- zone -----------------------------------------------------------------
     def resets(self):
