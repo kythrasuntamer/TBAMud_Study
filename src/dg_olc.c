@@ -26,7 +26,7 @@
 /* local functions */
 static void trigedit_disp_menu(struct descriptor_data *d);
 static void trigedit_disp_types(struct descriptor_data *d);
-static void trigedit_create_index(int znum, char *type);
+static int trigedit_create_index(int znum, char *type);
 static void trigedit_setup_new(struct descriptor_data *d);
 
 /* Outcome of trigedit_save_checked(). */
@@ -1178,16 +1178,26 @@ static int trigedit_save_checked(struct descriptor_data *d)
   }
 
   write_to_output(d, "Trigger saved to disk.\r\n");
-  trigedit_create_index(zone, "trg");
+  /* The zone file is written; only a zone new to the index needs the entry,
+   * but a failure is still the builder's to hear about. */
+  if (!trigedit_create_index(zone, "trg"))
+    write_to_output(d, "The trigger index was NOT updated; if this zone has "
+                       "no trigger file yet, tell an implementor.\r\n");
   return TRIGEDIT_SAVED;
 }
 
-static void trigedit_create_index(int znum, char *type)
+/**
+ * Make sure the trigger index lists "<znum>.<type>", rewriting it in order.
+ * @retval TRUE The index lists the zone (it was already there or was added).
+ * @retval FALSE The index could not be read, parsed or replaced; the old
+ * index is kept and the reason has been logged.
+ */
+static int trigedit_create_index(int znum, char *type)
 {
   FILE *newfile, *oldfile;
   char new_name[128], old_name[128], *prefix;
   char buf[MAX_STRING_LENGTH], buf1[MAX_STRING_LENGTH];
-  int num, found = FALSE;
+  int num, found = FALSE, terminated = FALSE, entry = 0;
 
   prefix = TRG_PREFIX;
 
@@ -1195,31 +1205,43 @@ static void trigedit_create_index(int znum, char *type)
   tb_snprintf(new_name, sizeof(new_name), "%s/newindex", prefix);
 
   if (!(oldfile = fopen(old_name, "r"))) {
-    TB_REPORT_ERRNO("fopen", old_name);
+    TB_ERROR_ERRNO("dg", "trigger-index-io", old_name,
+                   "zone %d: cannot open index", znum);
     mudlog(BRF, LVL_IMPL, TRUE, "SYSERR: DG_OLC: Failed to open %s", old_name);
-    return;
+    return FALSE;
   } else if (!(newfile = fopen(new_name, "w"))) {
-    TB_REPORT_ERRNO("fopen", new_name);
+    TB_ERROR_ERRNO("dg", "trigger-index-io", new_name,
+                   "zone %d: cannot create new index", znum);
     mudlog(BRF, LVL_IMPL, TRUE, "SYSERR: DG_OLC: Failed to open %s", new_name);
     tb_fclose(oldfile);
-    return;
+    return FALSE;
   }
 
   /* Index contents must be in order: search through the old file for the right
-   * place, insert the new file, then copy the rest over. */
+   * place, insert the new file, then copy the rest over.  The index is
+   * written by administrators; a malformed entry or a missing '$' terminator
+   * keeps the old index in place rather than writing one the loader would
+   * misread. */
   tb_snprintf(buf1, sizeof(buf1), "%d.%s", znum, type);
   while (get_line(oldfile, buf)) {
+    entry++;
     if (*buf == '$') {
-      tb_fprintf(newfile, "%s\n$\n", (!found ? buf1 : ""));
+      if (!found)
+        tb_fprintf(newfile, "%s\n", buf1);
+      tb_fprintf(newfile, "$\n");   /* no blank line before it on re-save */
+      terminated = TRUE;
       break;
     } else if (!found) {
       if (!trigedit_index_number(buf, &num)) {
-        TB_REPORT_ERROR("trigger-index-parse", old_name);
+        TB_ERROR_MSG("dg", "trigger-index-parse", old_name,
+                     "zone %d: entry %d is not '<zone>.%s' (%lu bytes); "
+                     "index not updated", znum, entry, type,
+                     (unsigned long)strlen(buf));
         tb_fclose(newfile);
         tb_fclose(oldfile);
         if (remove(new_name) != 0 && errno != ENOENT)
           TB_REPORT_ERRNO("remove", new_name);
-        return;
+        return FALSE;
       }
       if (num == znum)
         found = TRUE;
@@ -1231,26 +1253,41 @@ static void trigedit_create_index(int znum, char *type)
     tb_fprintf(newfile, "%s\n", buf);
   }
 
-  /* Preserve the previous index if the new one could not be written. */
-  if (ferror(oldfile) || ferror(newfile)) {
-    TB_REPORT_ERROR("trigger-index-io", old_name);
+  /* Preserve the previous index if the new one could not be written, or if
+   * the old one ended without its '$' terminator. */
+  if (!terminated || ferror(oldfile) || ferror(newfile)) {
+    if (!terminated && !ferror(oldfile))
+      TB_ERROR_MSG("dg", "trigger-index-terminator", old_name,
+                   "zone %d: index ended after %d entries without '$'; "
+                   "index not updated", znum, entry);
+    else
+      TB_ERROR_MSG("dg", "trigger-index-io", old_name,
+                   "zone %d: read %s, write %s; index not updated", znum,
+                   ferror(oldfile) ? "failed" : "ok",
+                   ferror(newfile) ? "failed" : "ok");
     tb_fclose(newfile);
     tb_fclose(oldfile);
     if (remove(new_name) != 0 && errno != ENOENT)
       TB_REPORT_ERRNO("remove", new_name);
-    return;
+    return FALSE;
   }
   {
     int close_new_ok = tb_fclose_checked(newfile, new_name);
     int close_old_ok = tb_fclose_checked(oldfile, old_name);
     if (!close_new_ok || !close_old_ok) {
+      TB_ERROR_MSG("dg", "trigger-index-io", new_name,
+                   "zone %d: close failed; index not updated", znum);
       if (remove(new_name) != 0 && errno != ENOENT)
         TB_REPORT_ERRNO("remove", new_name);
-      return;
+      return FALSE;
     }
   }
-  if (!tb_replace_file_checked(new_name, old_name))
-    TB_REPORT_ERROR("trigger-index-commit", old_name);
+  if (!tb_replace_file_checked(new_name, old_name)) {
+    TB_ERROR_MSG("dg", "trigger-index-commit", old_name,
+                 "zone %d: cannot replace with %s", znum, new_name);
+    return FALSE;
+  }
+  return TRUE;
 }
 
 void dg_olc_script_copy(struct descriptor_data *d)

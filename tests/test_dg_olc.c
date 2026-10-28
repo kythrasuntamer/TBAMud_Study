@@ -548,7 +548,8 @@ static void save_writes_zone_file(void)
   TEST_ASSERT_NOT_NULL(strstr(file, "#100\n"));
   TEST_ASSERT_NOT_NULL(strstr(file, "say one\nsay two\n~\n$~\n"));
   TEST_ASSERT_NOT_NULL(strstr(bd->output, "Trigger saved to disk"));
-  TEST_ASSERT_NOT_NULL(strstr(read_file("world/trg/index"), "1.trg\n"));
+  /* Re-saving a listed zone must not add a blank line before '$'. */
+  TEST_ASSERT_EQUAL_STRING("1.trg\n$\n", read_file("world/trg/index"));
   TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
 }
 
@@ -569,9 +570,62 @@ static void replacing_the_argument_frees_the_old_one(void)
   TEST_ASSERT_NULL(OLC_TRIG(bd)->arglist);
 }
 
+/* A zone missing from the index is inserted in numeric order. */
+static void save_inserts_zone_into_index_in_order(void)
+{
+  const int vnums[] = { 100 };
+
+  make_index(vnums, 1);
+  write_file("world/trg/index", "0.trg\n2.trg\n$\n");
+  start_edit(100);
+  set_script("say one\r\n");
+  save_and_quit();
+
+  TEST_ASSERT_EQUAL_STRING("0.trg\n1.trg\n2.trg\n$\n", read_file("world/trg/index"));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+}
+
+/* E2-08: an index that ends without '$' used to be replaced by one with
+ * neither the new entry nor a terminator, silently. */
+static void index_without_terminator_is_kept_and_reported(void)
+{
+  const int vnums[] = { 100 };
+
+  make_index(vnums, 1);
+  write_file("world/trg/index", "0.trg\n");
+  start_edit(100);
+  set_script("say one\r\n");
+  clear_output();
+  save_and_quit();
+
+  TEST_ASSERT_TRUE(tb_captured_has_op("trigger-index-terminator"));
+  TEST_ASSERT_EQUAL_STRING("0.trg\n", read_file("world/trg/index"));
+  TEST_ASSERT_EQUAL_STRING("", read_file("world/trg/newindex"));
+  TEST_ASSERT_NOT_NULL(strstr(bd->output, "index was NOT updated"));
+}
+
+/* E2-08: a malformed entry keeps the old index and names the zone. */
+static void malformed_index_entry_is_reported(void)
+{
+  const int vnums[] = { 100 };
+
+  make_index(vnums, 1);
+  write_file("world/trg/index", "zero.trg\n$\n");
+  start_edit(100);
+  set_script("say one\r\n");
+  save_and_quit();
+
+  TEST_ASSERT_TRUE(tb_captured_has_op("trigger-index-parse"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "zone 1"));
+  TEST_ASSERT_EQUAL_STRING("zero.trg\n$\n", read_file("world/trg/index"));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(save_inserts_zone_into_index_in_order);
+  RUN_TEST(index_without_terminator_is_kept_and_reported);
+  RUN_TEST(malformed_index_entry_is_reported);
   RUN_TEST(replacing_the_argument_frees_the_old_one);
   RUN_TEST(oversized_script_is_refused_before_memory_changes);
   RUN_TEST(unwritable_zone_file_is_reported);
