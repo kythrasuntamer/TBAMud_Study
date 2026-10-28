@@ -1622,7 +1622,7 @@ static void sorted_room_fixture(const int *vnums, int n)
 }
 
 /* B1-15: discrete_load() only reported a number that did not ascend, and
- * real_room()'s binary search then missed rooms (the stock 301.wld lists
+ * real_room()'s binary search then missed rooms (the stock 301.wld listed
  * #30170 after #30172, which hid 30171 and 30172). Here 102 between 104 and
  * 105 is not found until index_boot()'s sort puts it back. */
 static void sort_boot_records_restores_room_order(void)

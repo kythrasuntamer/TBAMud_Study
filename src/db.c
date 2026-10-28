@@ -1315,14 +1315,15 @@ static void boot_permute(void *base, size_t size,
  *
  * real_room(), real_mobile(), real_object() and real_trigger() binary-search
  * these tables, so one record out of place also hides records that are in
- * place: the stock 301.wld lists #30170 after #30172, and real_room() then
- * found neither 30171 nor 30172, so the exits to them silently led nowhere.
- * The world files are the implementor's, and discrete_load() has reported
- * each record that did not ascend. Nothing holds an rnum into the table yet
- * (renum_world(), renum_zone_table(), shops, quests and spec procs come
- * later in boot_world() and boot_db()), so the records are moved and their
- * own rnum fields renumbered. Records sharing a vnum stay in file order and
- * are reported: a lookup finds only one of them. */
+ * place: when the stock 301.wld still listed #30170 after #30172,
+ * real_room() found neither 30171 nor 30172, so the exits to them silently
+ * led nowhere. The world files are the implementor's (the stock world now
+ * ascends, but a hand-edited file need not), and discrete_load() has
+ * reported each record that did not ascend. Nothing holds an rnum into the
+ * table yet (renum_world(), renum_zone_table(), shops, quests and spec procs
+ * come later in boot_world() and boot_db()), so the records are moved and
+ * their own rnum fields renumbered. Records sharing a vnum stay in file
+ * order and are reported: a lookup finds only one of them. */
 static void sort_boot_records(int mode, const char *index_path)
 {
   struct boot_vnum_slot *order;
@@ -1658,9 +1659,10 @@ void discrete_load(FILE *fl, int mode, char *filename)
       }
       /* A number that does not ascend breaks the binary search in
        * real_room()/real_mobile()/real_object(): lookups of it, or of its
-       * neighbours, fail. The stock world has such a record (301.wld
-       * #30170), so it is reported, not fatal, and index_boot() sorts the
-       * table once the whole index is loaded. */
+       * neighbours, fail. World files are hand-edited (the stock 301.wld
+       * listed #30170 after #30172 until it was reordered), so it is
+       * reported, not fatal, and index_boot() sorts the table once the
+       * whole index is loaded. */
       if (nr <= boot_last_vnum) {
 	TB_ERROR_MSG("db", "record-number", filename,
 	             "%s #%d does not ascend (previous #%d); the table is "
