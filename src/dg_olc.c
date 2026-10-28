@@ -1508,10 +1508,32 @@ void dg_script_menu(struct descriptor_data *d)
   editscript = OLC_SCRIPT(d);
 
   while (editscript) {
+    /* A prototype's list can name a trigger that does not exist:
+     * assign_triggers() skips such vnums rather than dropping them, and a
+     * loader that keeps the 'T' line of a missing trigger (so an OLC save
+     * does not delete it from disk) leaves it in the list.  Look the rnum up
+     * once and check it; NOTHING used to index trig_index out of bounds. */
+    trig_rnum rnum = real_trigger(editscript->vnum);
+
+    if (!VALID_TRIG_RNUM(rnum)) {
+      char_data *builder = d->character;
+
+      write_to_output(d, "     %2d) [%s%d%s] %s** missing trigger **%s\r\n",
+        ++i, cyn, editscript->vnum, nrm, grn, nrm);
+      TB_WARN_MSG("dg", "script-menu-missing-trigger", "proto_script",
+                  "builder " DIAG_CHAR_FMT ": trigger vnum %d on %s vnum %d "
+                  "does not exist; listed as missing", DIAG_CHAR(builder),
+                  editscript->vnum,
+                  OLC_ITEM_TYPE(d) == MOB_TRIGGER ? "mob" :
+                  OLC_ITEM_TYPE(d) == OBJ_TRIGGER ? "obj" : "room",
+                  OLC_NUM(d));
+      editscript = editscript->next;
+      continue;
+    }
     write_to_output(d, "     %2d) [%s%d%s] %s%s%s", ++i, cyn,
       editscript->vnum, nrm, cyn,
-      trig_index[real_trigger(editscript->vnum)]->proto->name, nrm);
-    if (trig_index[real_trigger(editscript->vnum)]->proto->attach_type != OLC_ITEM_TYPE(d))
+      trig_index[rnum]->proto->name, nrm);
+    if (trig_index[rnum]->proto->attach_type != OLC_ITEM_TYPE(d))
       write_to_output(d, "   %s** Mis-matched Trigger Type **%s\r\n",grn,nrm);
     else
       write_to_output(d, "\r\n");
@@ -1532,7 +1554,8 @@ void dg_script_menu(struct descriptor_data *d)
 /**
  * Handle one line of builder input in the trigger-attachment submenu.
  * New entries are accepted only when real_trigger() resolves their vnum;
- * dg_script_menu() relies on every vnum in OLC_SCRIPT(d) resolving.
+ * entries copied from the prototype may not resolve, and dg_script_menu()
+ * lists those as missing.
  * @param d The editing descriptor (OLC_SCRIPT(d) as for dg_olc_script_copy()).
  * @param arg The builder's input line.
  * @retval 0 The builder quit the submenu; the caller returns to its own menu.

@@ -758,6 +758,32 @@ static void stale_olc_structure_is_released_and_reported(void)
   TEST_ASSERT_EQUAL_STRING("olc-stale-state", tb_captured_ops[0]);
 }
 
+/* E2-12: dg_script_menu() indexed trig_index[real_trigger(vnum)] without
+ * checking for NOTHING. A prototype's list can keep the vnum of a trigger
+ * that does not exist, and the menu then read past trig_index. */
+static void script_menu_lists_a_missing_trigger(void)
+{
+  const int vnums[] = { 100 };
+  struct trig_proto_list missing = { 150, NULL };
+  struct trig_proto_list present = { 100, &missing };
+
+  make_index(vnums, 1);
+  CREATE(bd->olc, struct oasis_olc_data, 1);
+  OLC_ITEM_TYPE(bd) = MOB_TRIGGER;
+  OLC_NUM(bd) = 120;
+  OLC_SCRIPT(bd) = &present;
+  clear_output();
+  dg_script_menu(bd);
+  TEST_ASSERT_NOT_NULL(strstr(bd->output, "[100]"));
+  TEST_ASSERT_NOT_NULL(strstr(bd->output, "missing trigger"));
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("script-menu-missing-trigger", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "trigger vnum 150 on mob vnum 120"));
+  OLC_SCRIPT(bd) = NULL;
+  free(bd->olc);
+  bd->olc = NULL;
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -783,5 +809,6 @@ int main(void)
   RUN_TEST(inserting_a_trigger_renumbers_displaced_live_instances);
   RUN_TEST(stale_live_rnum_after_insert_is_reported);
   RUN_TEST(stale_olc_structure_is_released_and_reported);
+  RUN_TEST(script_menu_lists_a_missing_trigger);
   return UNITY_END();
 }
