@@ -586,10 +586,20 @@ int save_zone(zone_rnum zone_num)
       arg3 = world[zc->arg3].number;
       break;
     case '*':
-      /* Invalid commands are replaced with '*' - Ignore them. */
+      /* Commands disabled at boot (an unresolved vnum in renum_zone_table())
+       * or by delete_room() hold no vnums to write back, so saving drops
+       * the reset line from disk for good.  Say so, per line. */
+      TB_WARN_MSG("olc", "zone-save-drop-cmd", fname,
+                  "zone %d cmd %d (line %d) disabled ('*'); not saved",
+                  zone_table[zone_num].number, subcmd, zc->line);
       continue;
     default:
-      mudlog(BRF, LVL_BUILDER, TRUE, "SYSERR: OLC: z_save_to_disk(): Unknown cmd '%c' - NOT saving", ZCMD(zone_num, subcmd).command);
+      TB_ERROR_MSG("olc", "zone-save-drop-cmd", fname,
+                   "zone %d cmd %d (line %d) unknown command '%c'; not saved",
+                   zone_table[zone_num].number, subcmd, zc->line, zc->command);
+      mudlog(BRF, LVL_BUILDER, TRUE,
+             "SYSERR: OLC: save_zone: zone %d cmd %d: unknown command '%c' - NOT saving",
+             zone_table[zone_num].number, subcmd, zc->command);
       continue;
     }
     if (ZCMD(zone_num, subcmd).command != 'V')

@@ -1047,6 +1047,18 @@ static void save_zone_writes_valid_commands(void)
   TEST_ASSERT_NOT_NULL(strstr(text, "D 0 10 2 1"));
 }
 
+/* C2-18: disabled ('*') reset lines are reported when a save drops them. */
+static void save_zone_reports_disabled_command(void)
+{
+  static const int args[][3] = { { 0, 0, 0 } };
+  make_zones(1); make_rooms(1);
+  set_zone_cmds(0, "*", args);
+  TEST_ASSERT_TRUE(save_zone(0));
+  TEST_ASSERT_EQUAL_STRING("zone-save-drop-cmd", tb_captured_operation);
+  TEST_ASSERT_EQUAL_STRING("WARNING", tb_captured_severity);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "line 100"));
+}
+
 /* ------------------------------------------------------------------------ */
 /* Temporary world directory for the writers.                               */
 /* ------------------------------------------------------------------------ */
@@ -1131,6 +1143,7 @@ int main(void)
   RUN_TEST(save_zone_rejects_stale_object_rnum);
   RUN_TEST(save_zone_rejects_var_without_strings);
   RUN_TEST(save_zone_writes_valid_commands);
+  RUN_TEST(save_zone_reports_disabled_command);
   failures = UNITY_END();
   leave_test_root();
   return failures;
