@@ -64,6 +64,53 @@ void add_var(struct trig_var_data **var_list, const char *name, const char *valu
   memcpy(vd->value, value, strlen(value) + 1);
 }
 
+/* Makes every '%' in text inert; see DG_INERT_PERCENT. */
+void dg_neutralize_percent(char *text)
+{
+  for (; *text; text++)
+    if (*text == '%')
+      *text = DG_INERT_PERCENT;
+}
+
+/* Turns inert '%' back into '%' for text leaving the script engine. */
+void dg_restore_percent(char *text)
+{
+  for (; *text; text++)
+    if (*text == DG_INERT_PERCENT)
+      *text = '%';
+}
+
+/* Copies a variable value into buf for display, showing inert '%' as '%'. */
+const char *dg_display_value(const char *value, char *buf, size_t size)
+{
+  if (strlcpy(buf, value, size) >= size)
+    TB_WARN_MSG("dg", "var-display", "value",
+                "%zu-byte variable value shown truncated to %zu bytes",
+                strlen(value), size - 1);
+  dg_restore_percent(buf);
+  return buf;
+}
+
+/* add_var() for player-authored values: any '%' is stored inert so no later
+ * substitution pass can read it as variable syntax. */
+void add_player_var(struct trig_var_data **var_list, const char *name,
+                    const char *value, long id)
+{
+  char *inert = strdup(value);
+
+  if (!inert) {
+    /* Never store the raw text: an empty value fails closed. */
+    TB_ERROR_ERRNO("dg", "player-var", name,
+                   "cannot copy %zu-byte player value; storing it empty",
+                   strlen(value));
+    add_var(var_list, name, "", id);
+    return;
+  }
+  dg_neutralize_percent(inert);
+  add_var(var_list, name, inert, id);
+  free(inert);
+}
+
 /* perhaps not the best place for this, but I didn't want a new file */
 char *skill_percent(struct char_data *ch, char *skill)
 {
@@ -1090,8 +1137,13 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
             if (!IS_NPC(c) && subfield && *subfield && valid_dg_target(c, DG_ALLOW_GODS)) {
               if (GET_TITLE(c)) free(GET_TITLE(c));
                 GET_TITLE(c) = strdup(subfield);
+              /* The title leaves the script engine. */
+              if (GET_TITLE(c))
+                dg_restore_percent(GET_TITLE(c));
             }
             tb_snprintf(str, slen, "%s", IS_NPC(c) ? "" : GET_TITLE(c));
+            /* Players write their own titles. */
+            dg_neutralize_percent(str);
           }
           break;
 	case 'v':
@@ -1685,8 +1737,11 @@ void var_subst(void *go, struct script_data *sc, trig_data *trig,
             *subfield_p = '\0';
             find_replacement(go, sc, trig, type, var, field, subfield, repl_str, sizeof(repl_str));
             if (*repl_str) {
-              tb_snprintf(tmp2, sizeof(tmp2), "eval tmpvr %s", repl_str); //temp var
-              process_eval(go, sc, trig, type, tmp2);
+              /* Bind the field's value as-is.  Evaluating it again would run
+               * any operators or %variables% inside an object name, title or
+               * other field text. */
+              add_var(&GET_TRIG_VARS(trig), "tmpvr", repl_str,
+                      sc ? sc->context : 0);
               strlcpy(var, "tmpvr", sizeof(tmp) - (size_t)(var - tmp));
               field = p;
               dots = 0;

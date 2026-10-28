@@ -104,6 +104,16 @@ the mapping only if it still belongs to the entity being freed.
 purges itself. Capture anything you need afterwards (e.g. the prototype rnum
 in `load_otrigger()`) **before** dispatching.
 
+**Player text never becomes script syntax.** `eval`, `makeuid`, `attach`,
+`detach` and the `%%name%%` idiom substitute a line twice, so a `%` typed by a
+player would be evaluated as `%actor.level(34)%`. Store player-authored text
+(command arguments, speech, act messages, player-set fields such as `title`)
+with `add_player_var()` or `dg_neutralize_percent()`, which keep `%` as the
+inert byte `DG_INERT_PERCENT`. `dg_restore_percent()` turns it back where text
+leaves the engine: dispatched commands, `eval_op()` comparisons and stat
+displays (`dg_display_value()`). Don't restore it anywhere a value can be
+substituted again.
+
 Handlers validate the actor's placement with `dg_trigger_actor_placed()`
 before indexing `world[IN_ROOM(actor)]`. An actor outside a valid room is
 reported as a `trigger-dispatch` error and nothing is dispatched.

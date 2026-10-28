@@ -568,9 +568,9 @@ int command_mtrigger(char_data *actor, char *cmd, char *argument)
           !strn_cmp(GET_TRIG_ARG(t), cmd, strlen(GET_TRIG_ARG(t)))) {
         ADD_UID_VAR(buf, t, actor_uid, "actor", 0);
         skip_spaces(&argument);
-        add_var(&GET_TRIG_VARS(t), "arg", argument, 0);
+        add_player_var(&GET_TRIG_VARS(t), "arg", argument, 0);
         skip_spaces(&cmd);
-        add_var(&GET_TRIG_VARS(t), "cmd", cmd, 0);
+        add_player_var(&GET_TRIG_VARS(t), "cmd", cmd, 0);
 
         if (script_driver(&ch, t, MOB_TRIGGER, TRIG_NEW)) {
           handled = 1;
@@ -631,7 +631,7 @@ void speech_mtrigger(char_data *actor, char *str)
       if (((GET_TRIG_NARG(t) && word_check(str, GET_TRIG_ARG(t))) ||
            (!GET_TRIG_NARG(t) && is_substring(GET_TRIG_ARG(t), str)))) {
         ADD_UID_VAR(buf, t, actor_uid, "actor", 0);
-        add_var(&GET_TRIG_VARS(t), "speech", str, 0);
+        add_player_var(&GET_TRIG_VARS(t), "speech", str, 0);
         script_driver(&ch, t, MOB_TRIGGER, TRIG_NEW);
         break; /* t is not used after dispatch */
       }
@@ -684,7 +684,7 @@ void act_mtrigger(const char_data *ch, char *str, char_data *actor,
                            "act text for trigger %d lacks the \\r\\n act() "
                            "always appends; using it whole", GET_TRIG_VNUM(t));
             skip_spaces(&nstr);
-            add_var(&GET_TRIG_VARS(t), "arg", nstr, 0);
+            add_player_var(&GET_TRIG_VARS(t), "arg", nstr, 0);
             free(fstr);
           }
         }
@@ -1081,9 +1081,9 @@ int cmd_otrig(obj_data *obj, char_data *actor, char *cmd,
         !strn_cmp(GET_TRIG_ARG(t), cmd, strlen(GET_TRIG_ARG(t)))) {
       ADD_UID_VAR(buf, t, actor_uid, "actor", 0);
       skip_spaces(&argument);
-      add_var(&GET_TRIG_VARS(t), "arg", argument, 0);
+      add_player_var(&GET_TRIG_VARS(t), "arg", argument, 0);
       skip_spaces(&cmd);
-      add_var(&GET_TRIG_VARS(t), "cmd", cmd, 0);
+      add_player_var(&GET_TRIG_VARS(t), "cmd", cmd, 0);
       if (script_driver(&obj, t, OBJ_TRIGGER, TRIG_NEW)) {
         handled = 1;
         break;
@@ -1544,9 +1544,9 @@ int command_wtrigger(char_data *actor, char *cmd, char *argument)
         !strn_cmp(GET_TRIG_ARG(t), cmd, strlen(GET_TRIG_ARG(t)))) {
       ADD_UID_VAR(buf, t, char_script_id(actor), "actor", 0);
       skip_spaces(&argument);
-      add_var(&GET_TRIG_VARS(t), "arg", argument, 0);
+      add_player_var(&GET_TRIG_VARS(t), "arg", argument, 0);
       skip_spaces(&cmd);
-      add_var(&GET_TRIG_VARS(t), "cmd", cmd, 0);
+      add_player_var(&GET_TRIG_VARS(t), "cmd", cmd, 0);
 
       return script_driver(&room, t, WLD_TRIGGER, TRIG_NEW);
     }
@@ -1581,7 +1581,7 @@ void speech_wtrigger(char_data *actor, char *str)
        (GET_TRIG_NARG(t) && word_check(str, GET_TRIG_ARG(t))) ||
        (!GET_TRIG_NARG(t) && is_substring(GET_TRIG_ARG(t), str))) {
       ADD_UID_VAR(buf, t, char_script_id(actor), "actor", 0);
-      add_var(&GET_TRIG_VARS(t), "speech", str, 0);
+      add_player_var(&GET_TRIG_VARS(t), "speech", str, 0);
       script_driver(&room, t, WLD_TRIGGER, TRIG_NEW);
       break;
     }

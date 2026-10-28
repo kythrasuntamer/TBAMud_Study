@@ -826,6 +826,7 @@ static void script_stat (char_data *ch, struct script_data *sc)
   char name[MAX_INPUT_LENGTH];
   char namebuf[512];
   char buf1[MAX_STRING_LENGTH];
+  char valbuf[MAX_STRING_LENGTH];
 
   send_to_char(ch, "Global Variables: %s\r\n", sc->global_vars ? "" : "None");
   send_to_char(ch, "Global context: %ld\r\n", sc->context);
@@ -836,7 +837,8 @@ static void script_stat (char_data *ch, struct script_data *sc)
       find_uid_name(tv->value, name, sizeof(name));
       send_to_char(ch, "    %15s:  %s\r\n", tv->context?namebuf:tv->name, name);
     } else
-      send_to_char(ch, "    %15s:  %s\r\n", tv->context?namebuf:tv->name, tv->value);
+      send_to_char(ch, "    %15s:  %s\r\n", tv->context?namebuf:tv->name,
+                   dg_display_value(tv->value, valbuf, sizeof(valbuf)));
   }
 
   for (t = TRIGGERS(sc); t; t = t->next) {
@@ -872,7 +874,8 @@ static void script_stat (char_data *ch, struct script_data *sc)
           find_uid_name(tv->value, name, sizeof(name));
           send_to_char(ch, "    %15s:  %s\r\n", tv->name, name);
         } else
-          send_to_char(ch, "    %15s:  %s\r\n", tv->name, tv->value);
+          send_to_char(ch, "    %15s:  %s\r\n", tv->name,
+                       dg_display_value(tv->value, valbuf, sizeof(valbuf)));
       }
     }
   }
@@ -1418,6 +1421,11 @@ static void eval_op(char *op, char *lhs, char *rhs, char *result, void *go,
   unsigned char *p;
   int lhs_num, rhs_num;
   long long arithmetic;
+
+  /* Every result below is a number, so player text can be compared as
+   * typed without its '%' becoming live again. */
+  dg_restore_percent(lhs);
+  dg_restore_percent(rhs);
 
   /* strip off extra spaces at begin and end */
   while (*lhs && isspace(*lhs))
@@ -2909,6 +2917,9 @@ int script_driver(void *go_adress, trig_data *trig, int type, int mode)
         process_detach(go, sc, trig, type, cmd);
 
       else {
+        /* The command leaves the script engine here; player text in it
+         * reads as typed again. */
+        dg_restore_percent(cmd);
         switch (type) {
           case MOB_TRIGGER:
             if (!script_command_interpreter((char_data *) go, cmd))

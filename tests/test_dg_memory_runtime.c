@@ -93,6 +93,9 @@ int rand_number(int low, int high) { (void)high; return low; }
 void add_var(struct trig_var_data **vars, const char *name,
              const char *value, long context)
 { (void)vars; (void)name; (void)value; (void)context; }
+void add_player_var(struct trig_var_data **vars, const char *name,
+                    const char *value, long context)
+{ (void)vars; (void)name; (void)value; (void)context; }
 
 static struct script_memory *remember(int count, int with_command)
 {

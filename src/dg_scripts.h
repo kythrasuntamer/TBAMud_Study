@@ -333,6 +333,11 @@ void assign_triggers(void *i, int type);
 
 /* From dg_variables.c */
 void add_var(struct trig_var_data **var_list, const char *name, const char *value, long id);
+void add_player_var(struct trig_var_data **var_list, const char *name,
+                    const char *value, long id);
+void dg_neutralize_percent(char *text);
+void dg_restore_percent(char *text);
+const char *dg_display_value(const char *value, char *buf, size_t size);
 int item_in_list(char *item, obj_data *list);
 char *skill_percent(struct char_data *ch, char *skill);
 int char_has_item(char *item, struct char_data *ch);
@@ -412,6 +417,17 @@ void wld_command_interpreter(room_data *room, char *argument);
 
 /* Macros for scripts */
 #define UID_CHAR   '}'
+
+/* A '%' that came from player-authored text (command arguments, speech, act
+ * messages, titles).  Scripts may substitute a line twice -- eval, makeuid,
+ * attach and detach evaluate text that var_subst() has already expanded, which
+ * the %%name%% idiom relies on -- so a literal '%' typed by a player would
+ * otherwise become live variable syntax such as %actor.level(34)%.  Player
+ * text is stored with this byte instead (add_player_var()); var_subst() never
+ * treats it as syntax, and dg_restore_percent() turns it back into '%' where
+ * text leaves the script engine.  comm.c only accepts printable ASCII, so a
+ * player cannot type it. */
+#define DG_INERT_PERCENT '\x1a'
 #define GET_TRIG_NAME(t)          ((t)->name)
 #define GET_TRIG_RNUM(t)          ((t)->nr)
 #define GET_TRIG_VNUM(t)	  (trig_index[(t)->nr]->vnum)

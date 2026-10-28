@@ -975,6 +975,7 @@ static void do_stat_character(struct char_data *ch, struct char_data *k)
     if (k->script && k->script->global_vars) {
       struct trig_var_data *tv;
       char uname[MAX_INPUT_LENGTH];
+      char valbuf[MAX_STRING_LENGTH];
 
       send_to_char(ch, "Global Variables:\r\n");
 
@@ -985,7 +986,8 @@ static void do_stat_character(struct char_data *ch, struct char_data *k)
           find_uid_name(tv->value, uname, sizeof(uname));
           send_to_char(ch, "    %10s:  [UID]: %s\r\n", tv->name, uname);
         } else
-          send_to_char(ch, "    %10s:  %s\r\n", tv->name, tv->value);
+          send_to_char(ch, "    %10s:  %s\r\n", tv->name,
+                       dg_display_value(tv->value, valbuf, sizeof(valbuf)));
       }
     }
   }
