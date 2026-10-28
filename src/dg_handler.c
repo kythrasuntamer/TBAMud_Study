@@ -63,6 +63,23 @@ void dg_script_execution_leave(void)
   }
 }
 
+/** Report that a script (or proto-script list) about to be freed is still
+ * referenced by another entity, then abort.  Continuing would leave that
+ * entity with a dangling pointer that is later freed or executed again.
+ * @param op Diagnostic operation name.
+ * @param list The script_data or trig_proto_list being freed.
+ * @param kind "char", "obj" or "room": the other owner's type.
+ * @param vnum The other owner's vnum (NOBODY for a player).
+ * @param idnum The other owner's player idnum, or -1. */
+static void dg_shared_owner_fatal(const char *op, const void *list,
+                                  const char *kind, int vnum, long idnum)
+{
+  TB_ERROR_LOG("FATAL", "dg", op, "script", 0,
+               "%p being freed is still owned by %s vnum=%d idnum=%ld",
+               list, kind, vnum, idnum);
+  abort();
+}
+
 /* frees memory associated with var */
 void free_var_el(struct trig_var_data *var)
 {
@@ -195,18 +212,29 @@ void extract_script(void *thing, int type)
 
 #if 1 /* debugging */
   {
+    /* Invariant: SCRIPT(thing) was the only owner of sc.  A second owner
+     * would keep a dangling script after sc is freed below, so stop now
+     * rather than corrupt the heap later.  These used to be assert()s,
+     * compiled out under NDEBUG and silent about which entity was wrong. */
     struct char_data *i = character_list;
     struct obj_data *j = object_list;
     room_rnum k;
     if (sc) {
       for ( ; i ; i = i->next)
-        assert(sc != SCRIPT(i));
+        if (sc == SCRIPT(i))
+          dg_shared_owner_fatal("script-shared-owner", sc, "char",
+                                IS_NPC(i) ? GET_MOB_VNUM(i) : NOBODY,
+                                IS_NPC(i) ? -1 : GET_IDNUM(i));
 
       for ( ; j ; j = j->next)
-        assert(sc != SCRIPT(j));
+        if (sc == SCRIPT(j))
+          dg_shared_owner_fatal("script-shared-owner", sc, "obj",
+                                GET_OBJ_VNUM(j), -1);
 
       for (k = 0; k <= top_of_world; k++)
-        assert(sc != SCRIPT(&world[k]));
+        if (sc == SCRIPT(&world[k]))
+          dg_shared_owner_fatal("script-shared-owner", sc, "room",
+                                world[k].number, -1);
     }
   }
 #endif
@@ -267,18 +295,27 @@ void free_proto_script(void *thing, int type)
   }
 #if 1 /* debugging */
   {
+    /* Invariant: thing was the only owner of proto (see the matching
+     * check in extract_script()). */
     struct char_data *i = character_list;
     struct obj_data *j = object_list;
     room_rnum k;
     if (proto) {
       for ( ; i ; i = i->next)
-        assert(proto != i->proto_script);
+        if (proto == i->proto_script)
+          dg_shared_owner_fatal("proto-script-shared-owner", proto, "char",
+                                IS_NPC(i) ? GET_MOB_VNUM(i) : NOBODY,
+                                IS_NPC(i) ? -1 : GET_IDNUM(i));
 
       for ( ; j ; j = j->next)
-        assert(proto != j->proto_script);
+        if (proto == j->proto_script)
+          dg_shared_owner_fatal("proto-script-shared-owner", proto, "obj",
+                                GET_OBJ_VNUM(j), -1);
 
       for (k = 0; k <= top_of_world; k++)
-        assert(proto != world[k].proto_script);
+        if (proto == world[k].proto_script)
+          dg_shared_owner_fatal("proto-script-shared-owner", proto, "room",
+                                world[k].number, -1);
     }
   }
 #endif

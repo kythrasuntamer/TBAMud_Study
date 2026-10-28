@@ -543,6 +543,12 @@ if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
         PROPERTIES COMPILE_OPTIONS "-ffunction-sections;-fdata-sections")
 endif()
 
+# test_dg_handler — DG script/trigger memory handlers (src/dg_handler.c)
+add_mud_test(test_dg_handler
+    ${MUD_SRCDIR}/dg_handler.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_dg_handler.c
+)
+
 find_package(Python3 COMPONENTS Interpreter QUIET)
 if(Python3_Interpreter_FOUND)
     add_test(NAME test_dg_memory_callback_contract
