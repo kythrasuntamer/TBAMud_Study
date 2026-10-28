@@ -5,6 +5,18 @@
 * By Levork. Copyright 1996 Harvey Gilpin. 1997-2001 George Greer.        *
 **************************************************************************/
 
+/**
+ * @file oasis.c
+ * Shared OLC plumbing: the per-descriptor workspace lifecycle
+ * (cleanup_olc, olc_attach_at), zone edit permission (can_edit_zone) and the
+ * menu colour globals.
+ *
+ * Ownership: d->olc and everything it owns is released only here, by
+ * cleanup_olc().  The per-field rules are documented on struct
+ * oasis_olc_data in oasis.h.  Inputs are builder commands (LVL_BUILDER and
+ * up) and the world tables; nothing here parses player text.
+ */
+
 #include "conf.h"
 #include "sysdep.h"
 #include "structs.h"
@@ -43,9 +55,14 @@ void clear_screen(struct descriptor_data *d)
 }
 
 /* Exported utilities */
-/* Set the color string pointers for that which this char will see at color
- * level NRM.  Changing the entries here will change the colour scheme
- * throughout the OLC. */
+/** Set the colour string pointers for that which this char will see at
+ * colour level NRM.  Changing the entries here will change the colour scheme
+ * throughout the OLC.
+ *
+ * nrm/grn/cyn/yel are process-global and hold the codes of whichever
+ * character called this last.  Every menu must call get_char_colors()
+ * immediately before formatting with them, and must not keep using them
+ * after another descriptor's input has been processed. */
 void get_char_colors(struct char_data *ch)
 {
   nrm = CCNRM(ch, C_NRM);
@@ -106,8 +123,22 @@ static void olc_release_script(struct descriptor_data *d)
   }
 }
 
-/* This procedure frees up the strings and/or the structures attatched to a
- * descriptor, sets all flags back to how they should be. */
+/** Release d's OLC workspace and return d to normal play.
+ *
+ * Frees, according to cleanup_type (see CLEANUP_* in oasis.h):
+ * - always: OLC_SCRIPT (unless a save handed it to the prototype),
+ *   OLC_CONFIG, the zone copy with its command sargs, the shop copy, ibt,
+ *   message list, storage, trig and prefs;
+ * - room/quest/action/help: struct and strings for CLEANUP_ALL, struct only
+ *   for CLEANUP_STRUCTS; obj and mob: struct and strings either way.
+ * Never frees OLC_DESC (borrowed) or OLC_IEDIT_OBJ (a live object).
+ *
+ * Safe on any descriptor, including from close_socket during link loss: it
+ * makes no assumption about the character's room.  If STATE(d) is an editor
+ * state it clears PLR_WRITING, broadcasts "$n stops using OLC." to the room,
+ * logs to mudlog and resets STATE(d) to CON_PLAYING; one-shot internal users
+ * (dig, buildwalk, copy) stay in CON_PLAYING and are therefore silent.
+ * d->olc is NULL on return. */
 void cleanup_olc(struct descriptor_data *d, byte cleanup_type)
 {
   /* Clean up WHAT? */
@@ -343,10 +374,17 @@ static void free_config(struct config_data *data)
   free(data);
 }
 
-/* Checks to see if a builder can modify the specified zone. Ch is the imm
- * requesting access to modify this zone. Rnum is the real number of the zone
- * attempted to be modified. Returns TRUE if the builder has access, otherwisei
- * FALSE. */
+/** Checks to see if a builder can modify the specified zone.
+ *
+ * @param ch   The immortal requesting access.  A character with no
+ *             descriptor (linkless, or an NPC) is always denied, which is
+ *             also what keeps buildwalk inert for linkless characters.
+ * @param rnum Either a real zone number (0..top_of_zone_table) or one of
+ *             the permission sentinels HEDIT_PERMISSION, AEDIT_PERMISSION or
+ *             ALL_PERMISSION.  The sentinels share the zone_rnum space: in a
+ *             world with more than 666 zones a real rnum can equal one, and
+ *             would then be treated as the sentinel.  NOWHERE is denied.
+ * @return TRUE if the builder has access, otherwise FALSE. */
 int can_edit_zone(struct char_data *ch, zone_rnum rnum)
 {
   /* no access if called with bad arguments */
