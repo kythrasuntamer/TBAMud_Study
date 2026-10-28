@@ -26,7 +26,14 @@ mob_rnum top_of_mobt = 0;
 struct index_data *obj_index = NULL; /* no-target diagnostics name obj vnums */
 obj_rnum top_of_objt = 0;
 void basic_mud_log(const char *format, ...) { (void)format; }
-int room_is_dark(room_rnum room) { (void)room; return 0; }
+/* CHECK_PLAYER_SPECIAL's reporter (utils.c). */
+void tb_player_special_on_mob_at(const struct char_data *ch, const char *field,
+                                 const char *source_file, int source_line,
+                                 const char *source_func)
+{ (void)ch; (void)field; (void)source_file; (void)source_line; (void)source_func; }
+int room_is_dark_at(room_rnum room, const char *source_file, int source_line,
+                    const char *source_func)
+{ (void)room; (void)source_file; (void)source_line; (void)source_func; return 0; }
 char *fname(const char *namelist) { return (char *)namelist; }
 /* Reached only for descriptor output, which these tests never produce. */
 char *CAP(char *txt) { return txt; }

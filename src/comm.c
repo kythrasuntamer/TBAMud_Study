@@ -117,6 +117,7 @@
 #include "quest.h"
 #include "ibt.h" /* for free_ibt_lists */
 #include "mud_event.h"
+#include "asan_annotations.h"
 
 #ifndef INVALID_SOCKET
 #define INVALID_SOCKET (-1)
@@ -202,6 +203,8 @@ static struct in_addr *get_bind_addr(void);
 static int parse_ip(const char *addr, struct in_addr *inaddr);
 static int set_sendbuf(socket_t s);
 static void free_bufpool(void);
+static void bufpool_put(struct txt_block *block);
+static struct txt_block *bufpool_take(void);
 static void setup_log(const char *filename, int fd);
 static const char *act_format_excerpt(char *dst, size_t dst_size,
                                       const char *format);
@@ -1559,8 +1562,7 @@ static void flush_input_queue(struct descriptor_data *d)
 static void outbuf_reset_small(struct descriptor_data *d)
 {
   if (d->large_outbuf) {
-    d->large_outbuf->next = bufpool;
-    bufpool = d->large_outbuf;
+    bufpool_put(d->large_outbuf);   /* poisons the text under ASan */
     d->large_outbuf = NULL;
   }
   d->output = d->small_outbuf;
@@ -1734,11 +1736,9 @@ size_t vwrite_to_output(struct descriptor_data *t, const char *format, va_list a
 
   buf_switches++;
 
-  /* if the pool has a buffer in it, grab it */
-  if (bufpool != NULL) {
-    t->large_outbuf = bufpool;
-    bufpool = bufpool->next;
-  } else {			/* else create a new one */
+  /* if the pool has a buffer in it, grab it, else create a new one */
+  t->large_outbuf = bufpool_take();
+  if (t->large_outbuf == NULL) {
     CREATE(t->large_outbuf, struct txt_block, 1);
     CREATE(t->large_outbuf->text, char, LARGE_BUFSIZE);
     buf_largecount++;
@@ -1757,14 +1757,40 @@ size_t vwrite_to_output(struct descriptor_data *t, const char *format, va_list a
   return (t->bufspace);
 }
 
+/* The large-output-buffer pool. A pooled buffer's text is poisoned under ASan
+ * (asan_annotations.h): a descriptor that kept t->output pointing into a
+ * buffer it gave back would otherwise write into memory the next descriptor
+ * owns, and ASan could not see it because the block was never freed. The
+ * txt_block itself stays unpoisoned so the pool can follow ->next. */
+static void bufpool_put(struct txt_block *block)
+{
+  TB_ASAN_POISON(block->text, LARGE_BUFSIZE);
+  block->next = bufpool;
+  bufpool = block;
+}
+
+static struct txt_block *bufpool_take(void)
+{
+  struct txt_block *block = bufpool;
+
+  if (block == NULL)
+    return NULL;
+  bufpool = block->next;
+  block->next = NULL;
+  TB_ASAN_UNPOISON(block->text, LARGE_BUFSIZE);
+  return block;
+}
+
 static void free_bufpool(void)
 {
   struct txt_block *tmp;
 
   while (bufpool) {
     tmp = bufpool->next;
-    if (bufpool->text)
+    if (bufpool->text) {
+      TB_ASAN_UNPOISON(bufpool->text, LARGE_BUFSIZE);
       free(bufpool->text);
+    }
     free(bufpool);
     bufpool = tmp;
   }

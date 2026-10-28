@@ -848,6 +848,10 @@ void destroy_db(void)
     }
   }
   free(world);
+  /* Leave no dangling pointer: top_of_world == 0 still means "one room,
+   * world[0]", so code that runs during the rest of teardown (the script
+   * ownership scans in dg_handler.c) must be able to see the world is gone. */
+  world = NULL;
   top_of_world = 0;
 
   /* Objects */
@@ -4327,6 +4331,8 @@ static int file_to_string(const char *name, char *buf, size_t bufsize)
   int partial = FALSE;
   struct stat statbuf;
 
+  if (bufsize == 0)                 /* no room even for the terminator */
+    return (-1);
   *buf = '\0';
 
   if (!(fl = fopen(name, "r"))) {

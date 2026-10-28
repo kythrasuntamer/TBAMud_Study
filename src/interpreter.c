@@ -1913,6 +1913,10 @@ void nanny(struct descriptor_data *d, char *arg)
     STATE(d) = CON_RMOTD;
     /* make sure the last log is updated correctly. */
     GET_PREF(d->character)= rand_number(1, 128000);
+    /* GET_HOST() was already set when the descriptor got its character;
+     * free it or every new character leaks one host string. */
+    if (GET_HOST(d->character))
+      free(GET_HOST(d->character));
     GET_HOST(d->character)= strdup(d->host);
 
     mudlog(NRM, LVL_GOD, TRUE, "%s [%s] new player.", GET_NAME(d->character), d->host);

@@ -288,7 +288,9 @@ void extract_script(void *thing, int type)
           dg_shared_owner_fatal("script-shared-owner", sc, "obj",
                                 GET_OBJ_VNUM(j), -1);
 
-      for (k = 0; k <= top_of_world; k++)
+      /* world is NULL once destroy_db() has freed it; the objects and
+       * mobiles freed after that must not scan the freed array. */
+      for (k = 0; world && k <= top_of_world; k++)
         if (sc == SCRIPT(&world[k]))
           dg_shared_owner_fatal("script-shared-owner", sc, "room",
                                 world[k].number, -1);
@@ -376,7 +378,9 @@ void free_proto_script(void *thing, int type)
           dg_shared_owner_fatal("proto-script-shared-owner", proto, "obj",
                                 GET_OBJ_VNUM(j), -1);
 
-      for (k = 0; k <= top_of_world; k++)
+      /* world is NULL once destroy_db() has freed it; the objects and
+       * mobiles freed after that must not scan the freed array. */
+      for (k = 0; world && k <= top_of_world; k++)
         if (proto == world[k].proto_script)
           dg_shared_owner_fatal("proto-script-shared-owner", proto, "room",
                                 world[k].number, -1);

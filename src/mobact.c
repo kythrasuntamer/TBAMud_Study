@@ -23,9 +23,26 @@
 #include "fight.h"
 
 
+/* TRUE while mob ch may keep acting this pulse. Spec procs, hunt_victim()
+ * and perform_move() (enter/greet triggers), act() (act triggers) and hit()
+ * (fight/death triggers) can all run DG scripts that purge ch. Extraction
+ * is deferred, so ch stays allocated and on character_list until the end of
+ * the pulse, but it is flagged MOB_NOTDEADYET (and may be in no room): it
+ * must not go on to fight, loot or move. Evaluates ch several times. */
+#define MOB_STILL_ACTING(ch) (!MOB_FLAGGED((ch), MOB_NOTDEADYET) && \
+                              VALID_ROOM_RNUM(IN_ROOM(ch)))
+
 /* local file scope only function prototypes */
 static bool aggressive_mob_on_a_leash(struct char_data *slave, struct char_data *master, struct char_data *attack);
 
+/* Run one round of default NPC behaviour (called every PULSE_MOBILE): spec
+ * procs, hunting, scavenging, wandering, aggression, memory, charm rebellion
+ * and helping. Stages that can run DG scripts (spec procs, hunt_victim,
+ * perform_move, act, hit) may purge this mob or others. Extraction is
+ * deferred to the end of the pulse, so ch and next_ch stay allocated, but a
+ * purged ch is MOB_NOTDEADYET: MOB_STILL_ACTING(ch) is re-checked after each
+ * such stage before ch acts again. Victims found in a room scan are used
+ * immediately, never kept across a callback. */
 void mobile_activity(void)
 {
   struct char_data *ch, *next_ch, *vict;
@@ -44,8 +61,9 @@ void mobile_activity(void)
     if (MOB_FLAGGED(ch, MOB_SPEC) && !no_specials &&
         !MOB_FLAGGED(ch, MOB_NOTDEADYET)) {
       if (mob_index[GET_MOB_RNUM(ch)].func == NULL) {
-	log("SYSERR: %s (#%d): Attempting to call non-existing mob function.",
-		GET_NAME(ch), GET_MOB_VNUM(ch));
+	TB_ERROR_MSG("mobact", "spec-missing", "mob_index",
+	             DIAG_CHAR_FMT " has MOB_SPEC but no spec proc; flag cleared",
+	             DIAG_CHAR(ch));
 	REMOVE_BIT_AR(MOB_FLAGS(ch), MOB_SPEC);
       } else {
         char actbuf[MAX_INPUT_LENGTH] = "";
@@ -55,11 +73,13 @@ void mobile_activity(void)
     }
 
     /* If the mob has no specproc, do the default actions */
-    if (FIGHTING(ch) || !AWAKE(ch))
+    if (!MOB_STILL_ACTING(ch) || FIGHTING(ch) || !AWAKE(ch))
       continue;
 
     /* hunt a victim, if applicable */
     hunt_victim(ch);
+    if (!MOB_STILL_ACTING(ch))
+      continue;
 
     /* Scavenger (picking up objects) */
     if (MOB_FLAGGED(ch, MOB_SCAVENGER))
@@ -77,6 +97,8 @@ void mobile_activity(void)
 	  act("$n gets $p.", FALSE, ch, best_obj, 0, TO_ROOM);
 	}
       }
+    if (!MOB_STILL_ACTING(ch))
+      continue;
 
     /* Mob Movement */
     if (!MOB_FLAGGED(ch, MOB_SENTINEL) && (GET_POS(ch) == POS_STANDING) &&
@@ -90,6 +112,8 @@ void mobile_activity(void)
       if (ch->master == NULL)
         perform_move(ch, door, 1);
     }
+    if (!MOB_STILL_ACTING(ch))
+      continue;
 
     /* Aggressive Mobs */
      if (!MOB_FLAGGED(ch, MOB_HELPER) && (!AFF_FLAGGED(ch, AFF_BLIND) || !AFF_FLAGGED(ch, AFF_CHARM))) {
@@ -115,6 +139,8 @@ void mobile_activity(void)
 	}
       }
     }
+    if (!MOB_STILL_ACTING(ch))
+      continue;
 
     /* Mob Memory */
     if (MOB_FLAGGED(ch, MOB_MEMORY) && MEMORY(ch)) {
@@ -139,6 +165,8 @@ void mobile_activity(void)
         }
       }
     }
+    if (!MOB_STILL_ACTING(ch))
+      continue;
 
     /* Charmed Mob Rebellion: In order to rebel, there need to be more charmed 
      * monsters than the person can feasibly control at a time.  Then the
@@ -151,6 +179,8 @@ void mobile_activity(void)
         stop_follower(ch);
       }
     }
+    if (!MOB_STILL_ACTING(ch))
+      continue;
 
     /* Helper Mobs */
     if (MOB_FLAGGED(ch, MOB_HELPER) && (!AFF_FLAGGED(ch, AFF_BLIND) || !AFF_FLAGGED(ch, AFF_CHARM))) 

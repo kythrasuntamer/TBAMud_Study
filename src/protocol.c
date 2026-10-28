@@ -2518,14 +2518,14 @@ static void SendATCP( descriptor_t *apDescriptor, const char *apVariable, const 
  Local MSSP functions.
  ******************************************************************************/
 
-static const char *GetMSSP_Players()
+static const char *GetMSSP_Players(void)
 {
    static char Buffer[32];
    tb_snprintf(Buffer, sizeof(Buffer), "%d", s_Players);
    return Buffer;
 }
 
-static const char *GetMSSP_Uptime()
+static const char *GetMSSP_Uptime(void)
 {
    static char Buffer[32];
    tb_snprintf(Buffer, sizeof(Buffer), "%d", (int)s_Uptime);

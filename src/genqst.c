@@ -140,7 +140,7 @@ int add_quest(struct aq_data *nqst)
   /* Make sure we assign spec procs to the questmaster */
   if (qmrnum != NOBODY && mob_index[qmrnum].func &&
      mob_index[qmrnum].func != questmaster)
-     QST_FUNC(rnum) = mob_index[qmrnum].func;
+     quest_set_qm_secondary(QST_MASTER(rnum), mob_index[qmrnum].func);
   if(qmrnum != NOBODY) 
     mob_index[qmrnum].func = questmaster;
 
@@ -171,8 +171,8 @@ int delete_quest(qst_rnum rnum)
   qst_rnum i;
   zone_rnum rznum;
   mob_vnum qm;
-  qst_vnum qvnum;
   mob_rnum qmr;
+  qst_vnum deleted_vnum;
   SPECIAL (*tempfunc);
   int  quests_remaining = 0;
 
@@ -182,14 +182,14 @@ int delete_quest(qst_rnum rnum)
     TB_ERROR_MSG("olc", "quest-delete-range", "quest",
                  "rnum %d out of range 0..%d", (int)rnum, (int)total_quests - 1);
     return FALSE;
-  }
   qm = QST_MASTER(rnum);
-  qvnum = QST_NUM(rnum);
-  rznum = real_zone_by_thing(QST_NUM(rnum));
+  deleted_vnum = QST_NUM(rnum);
+  rznum = real_zone_by_thing(QST_NUM(rnum)); 
   log("GenOLC: delete_quest: Deleting quest #%d (%s).",
        QST_NUM(rnum), QST_NAME(rnum));
-  /* make a note of the quest master's secondary spec proc */
-  tempfunc = QST_FUNC(rnum);
+  /* make a note of the quest master's secondary spec proc; any of the QM's
+   * quests may hold it (see quest_qm_secondary()). */
+  tempfunc = quest_qm_secondary(qm);
 
 
   free_quest_strings(&aquest_table[rnum]);
@@ -215,13 +215,14 @@ int delete_quest(qst_rnum rnum)
       if (QST_MASTER(i) == qm)
         quests_remaining++;
     }
+    /* QST_MASTER is a mob VNUM: mob_index[] is indexed by rnum. */
     if (quests_remaining == 0) {
       if ((qmr = real_mobile(qm)) == NOBODY)
-        TB_WARN_MSG("olc", "quest-delete-qm", "quest",
-                    "quest vnum %d: questmaster mob vnum %d has no prototype; "
-                    "spec proc not restored", qvnum, qm);
+        TB_ERROR_MSG("genqst", "delete-quest-qm", "mob_index",
+                     "quest vnum %d qm mob vnum %d has no rnum; spec proc not restored",
+                     (int) deleted_vnum, (int) qm);
       else
-        mob_index[qmr].func = tempfunc; /* point back to original spec proc */
+        mob_index[qmr].func = tempfunc; // point back to original spec proc
     }
   }
   return TRUE;

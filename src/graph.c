@@ -48,6 +48,14 @@ static int VALID_EDGE(room_rnum x, int y)
 {
   if (world[x].dir_option[y] == NULL || TOROOM(x, y) == NOWHERE)
     return 0;
+  /* Exits are renumbered at boot and by redit; one past top_of_world
+   * would index world[] out of bounds below. */
+  if (!VALID_ROOM_RNUM(TOROOM(x, y))) {
+    TB_ERROR_MSG("graph", "exit-range", "world",
+                 "room vnum %d exit %d leads to rnum %d outside [0,%d]",
+                 (int) GET_ROOM_VNUM(x), y, (int) TOROOM(x, y), (int) top_of_world);
+    return 0;
+  }
   if (CONFIG_TRACK_T_DOORS == FALSE && IS_CLOSED(x, y))
     return 0;
   if (ROOM_FLAGGED(TOROOM(x, y), ROOM_NOTRACK) || IS_MARKED(TOROOM(x, y)))
@@ -92,7 +100,16 @@ static void bfs_clear_queue(void)
 /* find_first_step: given a source room and a target room, find the first step 
  * on the shortest path from the source to the target. Intended usage: in 
  * mobile_activity, give a mob a dir to go if they're tracking another mob or a
- * PC.  Or, a 'track' skill for PCs. */
+ * PC.  Or, a 'track' skill for PCs.
+ *
+ * Returns a direction (0..DIR_COUNT-1), BFS_ALREADY_THERE (src == target),
+ * BFS_NO_PATH, or BFS_ERROR (src or target not a valid rnum).
+ *
+ * Cost and state: clears the ROOM_BFS_MARK flag on every room, then marks
+ * rooms as it searches (O(rooms) per call). The marks live in the room
+ * flags and are left set after the search, so a room saved by OLC between
+ * searches may carry the flag; the next search clears it first. The search
+ * queue is file-static: not reentrant, one search at a time. */
 static int find_first_step(room_rnum src, room_rnum target)
 {
   int curr_dir;

@@ -31,7 +31,9 @@ size_t send_to_char(struct char_data *ch, const char *messg, ...)
 }
 void script_log(const char *format, ...) { (void)format; script_logs++; }
 void basic_mud_log(const char *format, ...) { (void)format; }
-int room_is_dark(room_rnum room) { (void)room; return 0; }
+int room_is_dark_at(room_rnum room, const char *source_file, int source_line,
+                    const char *source_func)
+{ (void)room; (void)source_file; (void)source_line; (void)source_func; return 0; }
 /* Name tokens resolve to nothing: sub_write renders "someone"/"something". */
 struct char_data *get_char_in_room(room_data *room, char *name)
 { (void)room; (void)name; return NULL; }

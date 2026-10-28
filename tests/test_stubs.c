@@ -111,6 +111,14 @@ void echo_off(struct descriptor_data *d) { (void)d; }
 __attribute__((weak))
 void echo_on(struct descriptor_data *d) { (void)d; }
 
+/* ---------- utils.c ---------- */
+/* CHECK_PLAYER_SPECIAL's reporter, for tests that do not link utils.c. */
+__attribute__((weak))
+void tb_player_special_on_mob_at(const struct char_data *ch, const char *field,
+                                 const char *source_file, int source_line,
+                                 const char *source_func)
+{ (void)ch; (void)field; (void)source_file; (void)source_line; (void)source_func; }
+
 /* ---------- modify.c ---------- */
 __attribute__((weak))
 void page_string(struct descriptor_data *d, char *str, int keep_internal)
@@ -135,11 +143,14 @@ __attribute__((weak))
 void extract_char_final(struct char_data *ch) { (void)ch; }
 
 __attribute__((weak))
-void char_from_room(struct char_data *ch) { (void)ch; }
+void char_from_room_at(const char *src_file, int src_line,
+                       const char *src_func, struct char_data *ch)
+{ (void)src_file; (void)src_line; (void)src_func; (void)ch; }
 
 __attribute__((weak))
-void char_to_room(struct char_data *ch, room_rnum room)
-{ (void)ch; (void)room; }
+void char_to_room_at(const char *src_file, int src_line, const char *src_func,
+                     struct char_data *ch, room_rnum room)
+{ (void)src_file; (void)src_line; (void)src_func; (void)ch; (void)room; }
 
 __attribute__((weak))
 void free_char(struct char_data *ch) { (void)ch; }

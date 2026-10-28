@@ -36,6 +36,12 @@
 #define MAX_MAP_SIZE ((CANVAS_WIDTH - 1) / 4)
 #define MAX_MAP      CANVAS_WIDTH
 
+/* TRUE if (x, y) is a cell of map[][]. Evaluates x and y once each. */
+#define VALID_MAP_COORD(x, y) ((unsigned)(x) < MAX_MAP && (unsigned)(y) < MAX_MAP)
+/* Largest step MapArea takes from a cell it expands on the normal map
+ * (offsets[], ±2; offsets_worldmap[] is ±1). */
+#define MAP_MAX_STEP 2
+
 #define MAX_MAP_DIR 10
 #define MAX_MAP_FOLLOW 10
 
@@ -184,6 +190,13 @@ static struct map_info_type world_map_info[] =
 };
 
 
+/* The drawing grid, rebuilt by every map/automap. Coordinates are 0 ..
+ * MAX_MAP-1 (VALID_MAP_COORD); the viewer's room is drawn at the centre
+ * (MAX_MAP/2). A cell >= 0 is a sector glyph index into map_info[] /
+ * world_map_info[] (0..NUM_ROOM_SECTORS-1, or SECT_EMPTY / SECT_STRANGE /
+ * SECT_HERE); a cell < 0 is a door glyph, read as door_info[NUM_DOOR_TYPES
+ * + v] (DOOR_NONE .. DOOR_NS). MapArea() keeps every value in those ranges
+ * (map_sector()). Not reentrant; one map is drawn at a time. */
 static int map[MAX_MAP][MAX_MAP];
 /*
 static int offsets[4][2] ={ {-2, 0},{ 0, 2},{ 2, 0},{ 0, -2} };
@@ -223,13 +236,75 @@ bool can_see_map(struct char_data *ch) {
   return TRUE;
 }
 
-/* MapArea function - create the actual map */
+/* Map cell value for room's sector. Cells are read back as indexes: a value
+ * >= 0 indexes map_info[]/world_map_info[] (SECT_HERE + 1 entries) and a
+ * negative one door_info[NUM_DOOR_TYPES + v]. sector_type comes from the
+ * world file, whose loader does not fully range-check it, so anything
+ * outside 0..NUM_ROOM_SECTORS-1 is drawn as SECT_STRANGE and reported (once
+ * per room in a row, since every 'look' redraws it). */
+static int map_sector(room_rnum room)
+{
+  static room_rnum last_reported = NOWHERE;
+  int sector = SECT(room);
+
+  if (sector >= 0 && sector < NUM_ROOM_SECTORS)
+    return sector;
+  if (room != last_reported) {
+    TB_WARN_MSG("map", "bad-sector", "world",
+                "room vnum %d sector %d outside [0,%d); drawn as unknown",
+                VALID_ROOM_RNUM(room) ? (int) GET_ROOM_VNUM(room) : -1,
+                sector, NUM_ROOM_SECTORS);
+    last_reported = room;
+  }
+  return SECT_STRANGE;
+}
+
+/* TRUE if exit `door` of room leads to a room MapArea can index. NOWHERE
+ * is an ordinary "no destination"; anything past top_of_world is corrupt
+ * world data and is reported (once per room in a row, as for sectors). */
+static bool map_exit_target_ok(room_rnum room, int door,
+                               const struct room_direction_data *pexit)
+{
+  static room_rnum last_reported = NOWHERE;
+
+  if (pexit->to_room == NOWHERE)
+    return FALSE;
+  if (VALID_ROOM_RNUM(pexit->to_room))
+    return TRUE;
+  if (room != last_reported) {
+    TB_ERROR_MSG("map", "exit-range", "world",
+                 "room vnum %d exit %d leads to rnum %d outside [0,%d]",
+                 (int) GET_ROOM_VNUM(room), door, (int) pexit->to_room,
+                 (int) top_of_world);
+    last_reported = room;
+  }
+  return FALSE;
+}
+
+/* MapArea function - create the actual map.
+ * Marks room at cell (x, y) and recurses through its exits, one room step
+ * (2 cells on the normal map, 1 on the world map) per exit. Cells outside
+ * [min, max] are marked but not expanded. Callers must keep [min, max] at
+ * least one room step inside the grid: perform_map() and str_and_map()
+ * clamp the size to [1, MAX_MAP_SIZE] for that; violations are reported
+ * as map/map-bounds and the cell is skipped. */
 static void MapArea(room_rnum room, struct char_data *ch, int x, int y, int min, int max, sh_int xpos, sh_int ypos, bool worldmap)
 {
   room_rnum prospect_room;
   struct room_direction_data *pexit;
-  int door, ew_size=0, ns_size=0, x_exit_pos=0, y_exit_pos=0;
+  int door, ew_size=0, ns_size=0, x_exit_pos=0, y_exit_pos=0, step;
   sh_int prospect_xpos, prospect_ypos;
+
+  /* Invariant: callers keep [min, max] at least MAP_MAX_STEP cells inside
+   * the grid, so every cell reached (x, and x + offset for an expanded
+   * cell) is in map[][]. min/max derive from the minimap size, which comes
+   * from the config file and cedit; check rather than trust it. */
+  if (!VALID_MAP_COORD(x, y)) {
+    TB_ERROR_MSG("map", "map-bounds", "map",
+                 DIAG_CHAR_FMT " cell (%d,%d) outside %dx%d grid (min %d max %d)",
+                 DIAG_CHAR(ch), x, y, MAX_MAP, MAX_MAP, min, max);
+    return;
+  }
 
   if (map[x][y] < 0)
     return; /* this is a door */
@@ -238,9 +313,22 @@ static void MapArea(room_rnum room, struct char_data *ch, int x, int y, int min,
   if(room == IN_ROOM(ch))
     map[x][y] = SECT_HERE;
   else
-    map[x][y] = SECT(room);
+    map[x][y] = map_sector(room);
 
   if ( (x < min) || ( y < min) || ( x > max ) || ( y > max) ) return;
+
+  /* Expanding probes and writes cells up to one room step away: 1 cell on
+   * the world map, MAP_MAX_STEP on the normal map. (The virtual-exit branch
+   * below also uses offsets[], but ns_size/ew_size are always 0 here, so it
+   * never runs.) */
+  step = worldmap ? 1 : MAP_MAX_STEP;
+  if (!VALID_MAP_COORD(x - step, y - step) ||
+      !VALID_MAP_COORD(x + step, y + step)) {
+    TB_ERROR_MSG("map", "map-bounds", "map",
+                 DIAG_CHAR_FMT " cell (%d,%d) too close to the %dx%d grid edge to expand (min %d max %d)",
+                 DIAG_CHAR(ch), x, y, MAX_MAP, MAX_MAP, min, max);
+    return;
+  }
 
   /* Check for exits */
   for ( door = 0; door < MAX_MAP_DIR; door++ ) {
@@ -259,7 +347,7 @@ static void MapArea(room_rnum room, struct char_data *ch, int x, int y, int min,
     }
 
     if ( (pexit = world[room].dir_option[door]) != NULL  &&
-         (pexit->to_room > 0 ) && (pexit->to_room != NOWHERE) &&
+         (pexit->to_room > 0 ) && map_exit_target_ok(room, door, pexit) &&
          (!IS_SET(pexit->exit_info, EX_CLOSED)) &&
          (!IS_SET(pexit->exit_info, EX_HIDDEN) || PRF_FLAGGED(ch, PRF_HOLYLIGHT)) )
     { /* A real exit */
@@ -356,7 +444,9 @@ static void MapArea(room_rnum room, struct char_data *ch, int x, int y, int min,
   return;
 }
 
-/* Returns a string representation of the map */
+/* Returns a string representation of the map. StringMap, WorldMap and
+ * CompactStringMap each return a static buffer that the next call of the
+ * same function overwrites; callers copy or send it at once. */
 static char *StringMap(int centre, int size)
 {
   static char strmap[MAX_MAP*MAX_MAP*11 + MAX_MAP*2 + 1];
@@ -552,7 +642,10 @@ static void perform_map( struct char_data *ch, char *argument, bool worldmap )
   return;
 }
 
-/* Display a string with the map beside it */
+/* Display a string with the map beside it (the automap beside a room
+ * description). target_room is an RNUM despite its room_vnum type (the only
+ * caller, look_at_room(), passes IN_ROOM). The size comes from
+ * CONFIG_MINIMAP_SIZE (config file / cedit, any int) and is clamped here. */
 void str_and_map(char *str, struct char_data *ch, room_vnum target_room ) {
   int size, centre, x, y, min, max, char_size;
   int ew_size=0, ns_size=0;
@@ -571,10 +664,24 @@ void str_and_map(char *str, struct char_data *ch, room_vnum target_room ) {
     return;
   }
 
-  size = CONFIG_MINIMAP_SIZE;
+  /* CONFIG_MINIMAP_SIZE comes from the config file (any int) or cedit.
+   * Clamp it as perform_map() does and say so: an unclamped size let
+   * MapArea read and write outside map[][]. */
+  size = URANGE(1, CONFIG_MINIMAP_SIZE, MAX_MAP_SIZE);
+  if (size != CONFIG_MINIMAP_SIZE)
+    TB_WARN_MSG("map", "minimap-size-clamp", "config",
+                "minimap size %d outside [1,%d]; using %d",
+                CONFIG_MINIMAP_SIZE, MAX_MAP_SIZE, size);
   centre = MAX_MAP/2;
-  min = centre - 2*size;
-  max = centre + 2*size;
+  /* Same reach as perform_map(): rooms are 1 cell apart on the world map
+   * and 2 cells apart (a door between) on the normal map. */
+  if (worldmap) {
+    min = centre - 2*size;
+    max = centre + 2*size;
+  } else {
+    min = centre - size;
+    max = centre + size;
+  }
 
   for (x = 0; x < MAX_MAP; ++x)
     for (y = 0; y < MAX_MAP; ++y)
