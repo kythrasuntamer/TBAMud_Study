@@ -416,7 +416,8 @@ static bool cast_item_spells(struct char_data *ch, struct obj_data *obj,
  * DikuMUD format did not specify staff and wand levels in the world files */
 void mag_objectmagic(struct char_data *ch, struct obj_data *obj, char *argument) {
   char arg[MAX_INPUT_LENGTH];
-  int i, k;
+  int i, k, spl, vnum;
+  long uid;
   struct char_data *tch = NULL, *next_tch;
   struct obj_data *tobj = NULL;
 
@@ -449,22 +450,34 @@ void mag_objectmagic(struct char_data *ch, struct obj_data *obj, char *argument)
       WAIT_STATE(ch, PULSE_VIOLENCE);
       /* Level to cast spell at. */
       k = GET_OBJ_VAL(obj, 0) ? GET_OBJ_VAL(obj, 0) : DEFAULT_STAFF_LVL;
+      /* Each call_magic() runs cast triggers that may purge the staff (a
+       * world UID purge frees it at once). Read its values once, and stop
+       * as soon as its UID no longer resolves to it. */
+      spl = GET_OBJ_VAL(obj, 3);
+      uid = obj_script_id(obj);
+      vnum = GET_OBJ_VNUM(obj);
 
       /* Area/mass spells on staves can cause crashes. So we use special cases
        * for those spells spells here. */
-      if (HAS_SPELL_ROUTINE(GET_OBJ_VAL(obj, 3), MAG_MASSES | MAG_AREAS)) {
+      if (HAS_SPELL_ROUTINE(spl, MAG_MASSES | MAG_AREAS)) {
         for (i = 0, tch = world[IN_ROOM(ch)].people; tch;
             tch = tch->next_in_room)
           i++;
-        while (i-- > 0)
-          call_magic(ch, NULL, NULL, GET_OBJ_VAL(obj, 3), k, CAST_STAFF);
+        while (i-- > 0 && obj_uid_matches(uid, obj))
+          call_magic(ch, NULL, NULL, spl, k, CAST_STAFF);
       } else {
-        for (tch = world[IN_ROOM(ch)].people; tch; tch = next_tch) {
+        for (tch = world[IN_ROOM(ch)].people; tch && obj_uid_matches(uid, obj);
+            tch = next_tch) {
           next_tch = tch->next_in_room;
           if (ch != tch)
-            call_magic(ch, tch, NULL, GET_OBJ_VAL(obj, 3), k, CAST_STAFF);
+            call_magic(ch, tch, NULL, spl, k, CAST_STAFF);
         }
       }
+      if (!obj_uid_matches(uid, obj))
+        TB_WARN_MSG("magic", "magic-item-purged", "staff",
+                    "obj vnum %d uid %ld purged during staff cast by "
+                    DIAG_CHAR_FMT "; remaining targets skipped", vnum, uid,
+                    DIAG_CHAR(ch));
     }
     break;
   case ITEM_WAND:
