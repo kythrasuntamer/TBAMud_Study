@@ -33,6 +33,27 @@ static void qedit_setup_existing(struct descriptor_data *d, qst_rnum rnum);
 static void qedit_disp_menu(struct descriptor_data *d);
 static void qedit_save_internally(struct descriptor_data *d);
 static int qedit_save_to_disk(struct descriptor_data *d, zone_rnum num);
+static int qedit_parse_int_range_at(struct descriptor_data *d, const char *arg,
+                                    long lo, long hi, int *out,
+                                    const char *operation, const char *field,
+                                    const char *file, int line, const char *func);
+
+/** Parse the builder's numeric answer for quest field 'field' into *out.
+ * TRUE when arg is a whole number in lo..hi.  Otherwise a WARNING with op
+ * 'operation', the quest vnum, the field, the range and the editor is
+ * logged at the call site, the builder is re-prompted with the range, and
+ * FALSE is returned; the caller returns with OLC_MODE unchanged so the next
+ * line answers again.  Junk used to become 0, out-of-range rewards and
+ * limits were silently clamped, and vnums wider than IDXTYPE were
+ * truncated (68537 -> 3001) before real_mobile()/real_object(). */
+#define QEDIT_PARSE_INT(d, arg, lo, hi, out, operation, field) \
+  qedit_parse_int_range_at((d), (arg), (lo), (hi), (out), (operation), (field), \
+                           __FILE__, __LINE__, __func__)
+
+/** Range for a vnum answer where -1 means "none": the stored types are
+ * IDXTYPE, whose all-ones value is NOBODY/NOTHING. */
+#define QEDIT_VNUM_MIN  (-1L)
+#define QEDIT_VNUM_MAX  ((long)IDXTYPE_MAX - 1)
 
 /*-------------------------------------------------------------------*/
 
@@ -66,6 +87,25 @@ static int qedit_save_to_disk(struct descriptor_data *d, zone_rnum num)
   TB_ERROR_MSG("olc", "qedit-save", "quest file",
                "zone rnum %d (top %d) quest vnum %d not written; editor " DIAG_CHAR_FMT,
                (int)num, (int)top_of_zone_table, (int)OLC_NUM(d), DIAG_CHAR(d->character));
+  return FALSE;
+}
+
+static int qedit_parse_int_range_at(struct descriptor_data *d, const char *arg,
+                                    long lo, long hi, int *out,
+                                    const char *operation, const char *field,
+                                    const char *file, int line, const char *func)
+{
+  long value;
+
+  if (tb_parse_long_checked(arg, &value) && value >= lo && value <= hi) {
+    *out = (int)value;
+    return TRUE;
+  }
+  /* Only the length of the input is logged: it is free text. */
+  tb_error_log_at("WARNING", "olc", operation, field, 0, file, line, func,
+                  "quest vnum %d input length %zu not a number in %ld..%ld; editor " DIAG_CHAR_FMT,
+                  (int)OLC_NUM(d), strlen(arg), lo, hi, DIAG_CHAR(d->character));
+  write_to_output(d, "Enter a number from %ld to %ld : ", lo, hi);
   return FALSE;
 }
 
@@ -666,6 +706,9 @@ void qedit_parse(struct descriptor_data *d, char *arg)
       OLC_QUEST(d)->desc = str_udup(arg);
       break;
     case QEDIT_QUESTMASTER:
+      if (!QEDIT_PARSE_INT(d, arg, QEDIT_VNUM_MIN, QEDIT_VNUM_MAX, &number,
+                           "vnum-range", "questmaster"))
+        return;
       if (number != -1)
         if (real_mobile(number) == NOBODY) {
           write_to_output(d, "That mobile does not exist, try again : ");
@@ -699,16 +742,25 @@ void qedit_parse(struct descriptor_data *d, char *arg)
       }
       return;
     case QEDIT_QUANTITY:
-      OLC_QUEST(d)->value[6] = LIMIT(number, 1, 50);
+      if (!QEDIT_PARSE_INT(d, arg, 1, 50, &number, "input-range", "quantity"))
+        return;
+      OLC_QUEST(d)->value[6] = number;
       break;
     case QEDIT_POINTSCOMP:
-      OLC_QUEST(d)->value[0] = LIMIT(number, 0, 999999);
+      if (!QEDIT_PARSE_INT(d, arg, 0, 999999, &number, "input-range", "points_complete"))
+        return;
+      OLC_QUEST(d)->value[0] = number;
       break;
     case QEDIT_POINTSQUIT:
-      OLC_QUEST(d)->value[1] = LIMIT(number, 0, 999999);
+      if (!QEDIT_PARSE_INT(d, arg, 0, 999999, &number, "input-range", "points_quit"))
+        return;
+      OLC_QUEST(d)->value[1] = number;
       break;
     case QEDIT_PREREQ:
-      if ((number = tb_parse_int_or_zero(arg)) != -1)
+      if (!QEDIT_PARSE_INT(d, arg, QEDIT_VNUM_MIN, QEDIT_VNUM_MAX, &number,
+                           "vnum-range", "prereq"))
+        return;
+      if (number != -1)
         if (real_object(number) == NOTHING) {
           write_to_output(d, "That object does not exist, try again : ");
           return;
@@ -742,10 +794,15 @@ void qedit_parse(struct descriptor_data *d, char *arg)
         break;
       }
     case QEDIT_TIMELIMIT:
-      OLC_QUEST(d)->value[4] = LIMIT(number, -1, 100);
+      if (!QEDIT_PARSE_INT(d, arg, -1, 100, &number, "input-range", "time_limit"))
+        return;
+      OLC_QUEST(d)->value[4] = number;
       break;
     case QEDIT_RETURNMOB:
-      if ((number = tb_parse_int_or_zero(arg)) != -1)
+      if (!QEDIT_PARSE_INT(d, arg, QEDIT_VNUM_MIN, QEDIT_VNUM_MAX, &number,
+                           "vnum-range", "return_mob"))
+        return;
+      if (number != -1)
         if (real_mobile(number) == NOBODY) {
           write_to_output(d, "That mobile does not exist, try again : ");
           return;
@@ -753,34 +810,50 @@ void qedit_parse(struct descriptor_data *d, char *arg)
       OLC_QUEST(d)->value[5] = number;
       break;
     case QEDIT_TARGET:
+      if (!QEDIT_PARSE_INT(d, arg, QEDIT_VNUM_MIN, QEDIT_VNUM_MAX, &number,
+                           "vnum-range", "target"))
+        return;
       OLC_QUEST(d)->target = number;
       break;
     case QEDIT_NEXTQUEST:
-      if ((number = tb_parse_int_or_zero(arg)) != -1) {
+      if (!QEDIT_PARSE_INT(d, arg, QEDIT_VNUM_MIN, QEDIT_VNUM_MAX, &number,
+                           "vnum-range", "next_quest"))
+        return;
+      if (number != -1) {
         if (real_quest(number) == NOTHING) {
           write_to_output(d, "That is not a valid quest, try again (-1 for none) : ");
           return;
         }
       }
-      OLC_QUEST(d)->next_quest = (number == -1 ? NOTHING : tb_parse_int_or_zero(arg));
+      OLC_QUEST(d)->next_quest = (number == -1 ? NOTHING : (qst_vnum)number);
       break;
     case QEDIT_PREVQUEST:
-      if ((number = tb_parse_int_or_zero(arg)) != -1) {
+      if (!QEDIT_PARSE_INT(d, arg, QEDIT_VNUM_MIN, QEDIT_VNUM_MAX, &number,
+                           "vnum-range", "prev_quest"))
+        return;
+      if (number != -1) {
         if (real_quest(number) == NOTHING) {
           write_to_output(d, "That is not a valid quest, try again (-1 for none) : ");
           return;
         }
       }
-      OLC_QUEST(d)->prev_quest = (number == -1 ? NOTHING : tb_parse_int_or_zero(arg));
+      OLC_QUEST(d)->prev_quest = (number == -1 ? NOTHING : (qst_vnum)number);
       break;
     case QEDIT_GOLD:
-      OLC_QUEST(d)->gold_reward = LIMIT(number, 0, 99999);
+      if (!QEDIT_PARSE_INT(d, arg, 0, 99999, &number, "input-range", "gold_reward"))
+        return;
+      OLC_QUEST(d)->gold_reward = number;
       break;
     case QEDIT_EXP:
-      OLC_QUEST(d)->exp_reward = LIMIT(number, 0, 99999);
+      if (!QEDIT_PARSE_INT(d, arg, 0, 99999, &number, "input-range", "exp_reward"))
+        return;
+      OLC_QUEST(d)->exp_reward = number;
       break;
     case QEDIT_OBJ:
-      if ((number = tb_parse_int_or_zero(arg)) != -1)
+      if (!QEDIT_PARSE_INT(d, arg, QEDIT_VNUM_MIN, QEDIT_VNUM_MAX, &number,
+                           "vnum-range", "obj_reward"))
+        return;
+      if (number != -1)
         if (real_object(number) == NOTHING) {
           write_to_output(d, "That object does not exist, try again : ");
           return;

@@ -1406,7 +1406,9 @@ void cedit_parse(struct descriptor_data *d, char *arg)
           "That is an invalid choice!\r\n"
           "Enter the minimum level a player must be to shout, gossip, etc : ");
       } else {
-        OLC_CONFIG(d)->play.level_can_shout = tb_parse_int_or_zero(arg);
+        if (!CEDIT_PARSE_INT(d, arg, 0, LVL_IMPL, &number, "input-range", "level_can_shout"))
+          break;
+        OLC_CONFIG(d)->play.level_can_shout = number;
         cedit_disp_game_play_options(d);
       }
       break;
@@ -1417,7 +1419,9 @@ void cedit_parse(struct descriptor_data *d, char *arg)
           "That is an invalid choice!\r\n"
           "Enter the amount it costs (in move points) to holler : ");
       } else {
-        OLC_CONFIG(d)->play.holler_move_cost = tb_parse_int_or_zero(arg);
+        if (!CEDIT_PARSE_INT(d, arg, 0, INT_MAX, &number, "input-range", "holler_move_cost"))
+          break;
+        OLC_CONFIG(d)->play.holler_move_cost = number;
         cedit_disp_game_play_options(d);
       }
       break;
@@ -1428,21 +1432,29 @@ void cedit_parse(struct descriptor_data *d, char *arg)
           "That is an invalid choice!\r\n"
           "Enter the maximum number of people allowed in a tunnel : ");
       } else {
-        OLC_CONFIG(d)->play.tunnel_size = tb_parse_int_or_zero(arg);
+        if (!CEDIT_PARSE_INT(d, arg, 0, INT_MAX, &number, "input-range", "tunnel_size"))
+          break;
+        OLC_CONFIG(d)->play.tunnel_size = number;
         cedit_disp_game_play_options(d);
       }
       break;
 
     case CEDIT_MAX_EXP_GAIN:
-      if (*arg)
-        OLC_CONFIG(d)->play.max_exp_gain = tb_parse_int_or_zero(arg);
+      if (*arg) {
+        if (!CEDIT_PARSE_INT(d, arg, 0, INT_MAX, &number, "input-range", "max_exp_gain"))
+          break;
+        OLC_CONFIG(d)->play.max_exp_gain = number;
+      }
 
       cedit_disp_game_play_options(d);
       break;
 
     case CEDIT_MAX_EXP_LOSS:
-      if (*arg)
-        OLC_CONFIG(d)->play.max_exp_loss = tb_parse_int_or_zero(arg);
+      if (*arg) {
+        if (!CEDIT_PARSE_INT(d, arg, 0, INT_MAX, &number, "input-range", "max_exp_loss"))
+          break;
+        OLC_CONFIG(d)->play.max_exp_loss = number;
+      }
 
       cedit_disp_game_play_options(d);
       break;
@@ -1453,7 +1465,9 @@ void cedit_parse(struct descriptor_data *d, char *arg)
           "That is an invalid choice!\r\n"
           "Enter the number of tics before NPC corpses decompose : ");
       } else {
-        OLC_CONFIG(d)->play.max_npc_corpse_time = tb_parse_int_or_zero(arg);
+        if (!CEDIT_PARSE_INT(d, arg, 0, INT_MAX, &number, "input-range", "max_npc_corpse_time"))
+          break;
+        OLC_CONFIG(d)->play.max_npc_corpse_time = number;
         cedit_disp_game_play_options(d);
       }
       break;
@@ -1464,7 +1478,9 @@ void cedit_parse(struct descriptor_data *d, char *arg)
           "That is an invalid choice!\r\n"
           "Enter the number of tics before PC corpses decompose : ");
         } else {
-          OLC_CONFIG(d)->play.max_pc_corpse_time = tb_parse_int_or_zero(arg);
+          if (!CEDIT_PARSE_INT(d, arg, 0, INT_MAX, &number, "input-range", "max_pc_corpse_time"))
+            break;
+          OLC_CONFIG(d)->play.max_pc_corpse_time = number;
           cedit_disp_game_play_options(d);
         }
         break;
@@ -1475,7 +1491,9 @@ void cedit_parse(struct descriptor_data *d, char *arg)
           "That is an invalid choice!\r\n"
           "Enter the number of tics before PC's are sent to the void (idle) : ");
       } else {
-        OLC_CONFIG(d)->play.idle_void = tb_parse_int_or_zero(arg);
+        if (!CEDIT_PARSE_INT(d, arg, 0, INT_MAX, &number, "input-range", "idle_void"))
+          break;
+        OLC_CONFIG(d)->play.idle_void = number;
         cedit_disp_game_play_options(d);
       }
       break;
@@ -1486,7 +1504,9 @@ void cedit_parse(struct descriptor_data *d, char *arg)
           "That is an invalid choice!\r\n"
           "Enter the number of tics before PC's are automatically rented and forced to quit : ");
       } else {
-        OLC_CONFIG(d)->play.idle_rent_time = tb_parse_int_or_zero(arg);
+        if (!CEDIT_PARSE_INT(d, arg, 0, INT_MAX, &number, "input-range", "idle_rent_time"))
+          break;
+        OLC_CONFIG(d)->play.idle_rent_time = number;
         cedit_disp_game_play_options(d);
       }
       break;
@@ -1497,7 +1517,9 @@ void cedit_parse(struct descriptor_data *d, char *arg)
           "That is an invalid choice!\r\n"
           "Enter the level a player must be to become immune to IDLE : ");
       } else {
-        OLC_CONFIG(d)->play.idle_max_level = tb_parse_int_or_zero(arg);
+        if (!CEDIT_PARSE_INT(d, arg, 0, LVL_IMPL, &number, "input-range", "idle_max_level"))
+          break;
+        OLC_CONFIG(d)->play.idle_max_level = number;
         cedit_disp_game_play_options(d);
       }
       break;
@@ -1556,7 +1578,9 @@ void cedit_parse(struct descriptor_data *d, char *arg)
           "That is an invalid choice!\r\n"
           "Enter the maximum objects a player can save : ");
         } else {
-          OLC_CONFIG(d)->csd.max_obj_save = tb_parse_int_or_zero(arg);
+          if (!CEDIT_PARSE_INT(d, arg, 0, INT_MAX, &number, "input-range", "max_obj_save"))
+            break;
+          OLC_CONFIG(d)->csd.max_obj_save = number;
           cedit_disp_crash_save_options(d);
         }
         break;
@@ -1567,7 +1591,9 @@ void cedit_parse(struct descriptor_data *d, char *arg)
           "That is an invalid choice!\r\n"
           "Enter the minimum amount it costs to rent : ");
       } else {
-        OLC_CONFIG(d)->csd.min_rent_cost = tb_parse_int_or_zero(arg);
+        if (!CEDIT_PARSE_INT(d, arg, 0, INT_MAX, &number, "input-range", "min_rent_cost"))
+          break;
+        OLC_CONFIG(d)->csd.min_rent_cost = number;
         cedit_disp_crash_save_options(d);
       }
       break;
@@ -1578,18 +1604,24 @@ void cedit_parse(struct descriptor_data *d, char *arg)
           "That is an invalid choice!\r\n"
           "Enter the interval for player's being autosaved : ");
       } else {
-        OLC_CONFIG(d)->csd.autosave_time = tb_parse_int_or_zero(arg);
+        if (!CEDIT_PARSE_INT(d, arg, 0, INT_MAX, &number, "input-range", "autosave_time"))
+          break;
+        OLC_CONFIG(d)->csd.autosave_time = number;
         cedit_disp_crash_save_options(d);
       }
       break;
 
+    /* The two file timeouts are days, multiplied by SECS_PER_REAL_DAY as an
+     * int in objsave.c, so larger values overflow. */
     case CEDIT_CRASH_FILE_TIMEOUT:
       if (!*arg) {
         write_to_output(d,
           "That is an invalid choice!\r\n"
           "Enter the lifetime of crash and idlesave files (days) : ");
       } else {
-        OLC_CONFIG(d)->csd.crash_file_timeout = tb_parse_int_or_zero(arg);
+        if (!CEDIT_PARSE_INT(d, arg, 0, INT_MAX / SECS_PER_REAL_DAY, &number, "input-range", "crash_file_timeout"))
+          break;
+        OLC_CONFIG(d)->csd.crash_file_timeout = number;
         cedit_disp_crash_save_options(d);
       }
       break;
@@ -1600,7 +1632,9 @@ void cedit_parse(struct descriptor_data *d, char *arg)
           "That is an invalid choice!\r\n"
           "Enter the lifetime of rent files (days) : ");
       } else {
-        OLC_CONFIG(d)->csd.rent_file_timeout = tb_parse_int_or_zero(arg);
+        if (!CEDIT_PARSE_INT(d, arg, 0, INT_MAX / SECS_PER_REAL_DAY, &number, "input-range", "rent_file_timeout"))
+          break;
+        OLC_CONFIG(d)->csd.rent_file_timeout = number;
         cedit_disp_crash_save_options(d);
       }
       break;
@@ -1716,7 +1750,10 @@ void cedit_parse(struct descriptor_data *d, char *arg)
       break;
 
     case CEDIT_DFLT_PORT:
-      OLC_CONFIG(d)->operation.DFLT_PORT = tb_parse_int_or_zero(arg);
+      /* DFLT_PORT is a ush_int: wider values were truncated, junk became 0. */
+      if (!CEDIT_PARSE_INT(d, arg, 1, USHRT_MAX, &number, "input-range", "DFLT_PORT"))
+        break;
+      OLC_CONFIG(d)->operation.DFLT_PORT = (ush_int)number;
       cedit_disp_operation_options(d);
       break;
 
@@ -1758,32 +1795,36 @@ void cedit_parse(struct descriptor_data *d, char *arg)
       break;
 
     case CEDIT_MAX_PLAYING:
-      OLC_CONFIG(d)->operation.max_playing = tb_parse_int_or_zero(arg);
+      if (!CEDIT_PARSE_INT(d, arg, 1, 65535, &number, "input-range", "max_playing"))
+        break;
+      OLC_CONFIG(d)->operation.max_playing = number;
       cedit_disp_operation_options(d);
       break;
 
     case CEDIT_MAX_FILESIZE:
-      OLC_CONFIG(d)->operation.max_filesize = tb_parse_int_or_zero(arg);
+      if (!CEDIT_PARSE_INT(d, arg, 0, INT_MAX, &number, "input-range", "max_filesize"))
+        break;
+      OLC_CONFIG(d)->operation.max_filesize = number;
       cedit_disp_operation_options(d);
       break;
 
     case CEDIT_MAX_BAD_PWS:
-      OLC_CONFIG(d)->operation.max_bad_pws = tb_parse_int_or_zero(arg);
+      if (!CEDIT_PARSE_INT(d, arg, 0, INT_MAX, &number, "input-range", "max_bad_pws"))
+        break;
+      OLC_CONFIG(d)->operation.max_bad_pws = number;
       cedit_disp_operation_options(d);
       break;
 
     case CEDIT_DEBUG_MODE:
-      OLC_CONFIG(d)->operation.debug_mode = LIMIT(tb_parse_int_or_zero(arg), 0, 3);
+      if (!CEDIT_PARSE_INT(d, arg, 0, 3, &number, "input-range", "debug_mode"))
+        break;
+      OLC_CONFIG(d)->operation.debug_mode = number;
       cedit_disp_operation_options(d);
       break;
 
     case CEDIT_MIN_WIZLIST_LEV:
-      if (tb_parse_int_or_zero(arg) > LVL_IMPL) {
-        write_to_output(d,
-          "The minimum wizlist level can't be greater than %d.\r\n"
-          "Enter the minimum level for players to appear on the wizlist : ", LVL_IMPL);
-      } else {
-        OLC_CONFIG(d)->autowiz.min_wizlist_lev = tb_parse_int_or_zero(arg);
+      if (CEDIT_PARSE_INT(d, arg, 0, LVL_IMPL, &number, "input-range", "min_wizlist_lev")) {
+        OLC_CONFIG(d)->autowiz.min_wizlist_lev = number;
         cedit_disp_autowiz_options(d);
       }
       break;
@@ -1793,9 +1834,9 @@ void cedit_parse(struct descriptor_data *d, char *arg)
         write_to_output(d,
           "That is an invalid choice!\r\n"
           "Select 1, 2 or 3 (0 to cancel) :");
-      } else {
-        if ((tb_parse_int_or_zero(arg) >= 1) && (tb_parse_int_or_zero(arg) <= 3))
-          OLC_CONFIG(d)->play.map_option = (tb_parse_int_or_zero(arg) - 1);
+      } else if (CEDIT_PARSE_INT(d, arg, 0, 3, &number, "input-range", "map_option")) {
+        if (number >= 1)        /* 0 cancels */
+          OLC_CONFIG(d)->play.map_option = number - 1;
         cedit_disp_game_play_options(d);
       }
       break;
@@ -1806,7 +1847,9 @@ void cedit_parse(struct descriptor_data *d, char *arg)
         OLC_CONFIG(d)->play.map_size = 6;
         cedit_disp_game_play_options(d);
       } else {
-        OLC_CONFIG(d)->play.map_size = MIN(MAX((tb_parse_int_or_zero(arg)), 1), 12);
+        if (!CEDIT_PARSE_INT(d, arg, 1, 12, &number, "input-range", "map_size"))
+          break;
+        OLC_CONFIG(d)->play.map_size = number;
         cedit_disp_game_play_options(d);
       }
       break;
@@ -1817,31 +1860,33 @@ void cedit_parse(struct descriptor_data *d, char *arg)
         OLC_CONFIG(d)->play.minimap_size = 2;
         cedit_disp_game_play_options(d);
       } else {
-        OLC_CONFIG(d)->play.minimap_size = MIN(MAX((tb_parse_int_or_zero(arg)), 1), 12);
+        if (!CEDIT_PARSE_INT(d, arg, 1, 12, &number, "input-range", "minimap_size"))
+          break;
+        OLC_CONFIG(d)->play.minimap_size = number;
         cedit_disp_game_play_options(d);
       }
       break;
 
     case CEDIT_PK_SETTING:
-      if (!*arg || (tb_parse_int_or_zero(arg) < 0) || (tb_parse_int_or_zero(arg) > 3) ) {
+      if (!*arg) {
         write_to_output(d,
           "That is an invalid choice!\r\n"
           "Select 1, 2 or 3 (0 to cancel) :");
-      } else {
-        if ((tb_parse_int_or_zero(arg) >= 1) && (tb_parse_int_or_zero(arg) <= 3))
-          OLC_CONFIG(d)->play.pk_setting = (tb_parse_int_or_zero(arg) - 1);
+      } else if (CEDIT_PARSE_INT(d, arg, 0, 3, &number, "input-range", "pk_setting")) {
+        if (number >= 1)        /* 0 cancels */
+          OLC_CONFIG(d)->play.pk_setting = number - 1;
         cedit_disp_game_play_options(d);
       }
       break;
 
     case CEDIT_PT_SETTING:
-      if (!*arg || (tb_parse_int_or_zero(arg) < 0) || (tb_parse_int_or_zero(arg) > 3) ) {
+      if (!*arg) {
         write_to_output(d,
           "That is an invalid choice!\r\n"
           "Select 1, 2 or 3 (0 to cancel) :");
-      } else {
-        if ((tb_parse_int_or_zero(arg) >= 1) && (tb_parse_int_or_zero(arg) <= 3))
-          OLC_CONFIG(d)->play.pt_setting = (tb_parse_int_or_zero(arg) - 1);
+      } else if (CEDIT_PARSE_INT(d, arg, 0, 3, &number, "input-range", "pt_setting")) {
+        if (number >= 1)        /* 0 cancels */
+          OLC_CONFIG(d)->play.pt_setting = number - 1;
         cedit_disp_game_play_options(d);
       }
       break;

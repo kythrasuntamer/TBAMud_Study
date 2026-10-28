@@ -962,9 +962,60 @@ static void test_qedit_failed_disk_save_is_loud(void)
   TEST_ASSERT_NULL(builder_desc.olc);
 }
 
+/* F2-22: out-of-range and junk numbers are re-prompted loudly instead of
+ * being clamped or turned into 0; vnums wider than IDXTYPE are refused
+ * instead of truncated. */
+static void test_qedit_numeric_input_is_range_checked_loudly(void)
+{
+  char cmd[] = " 3001";
+
+  do_oasis_qedit(&builder, cmd, 0, 0);
+  type("g");
+  TEST_ASSERT_EQUAL_INT(QEDIT_GOLD, OLC_MODE(&builder_desc));
+  type("150000");
+  TEST_ASSERT_EQUAL_STRING("input-range", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "quest vnum 3001"));
+  TEST_ASSERT_EQUAL_INT(QEDIT_GOLD, OLC_MODE(&builder_desc));
+  TEST_ASSERT_EQUAL_INT(0, OLC_QUEST(&builder_desc)->gold_reward);
+  type("lots");
+  TEST_ASSERT_EQUAL_INT(2, tb_captured_errors);
+  type("500");
+  TEST_ASSERT_EQUAL_INT(500, OLC_QUEST(&builder_desc)->gold_reward);
+  TEST_ASSERT_EQUAL_INT(QEDIT_MAIN_MENU, OLC_MODE(&builder_desc));
+
+  type("8");
+  TEST_ASSERT_EQUAL_INT(QEDIT_QUESTMASTER, OLC_MODE(&builder_desc));
+  tb_error_capture_reset();
+  type("68537");                /* 68537 & 0xffff == 3001 */
+  TEST_ASSERT_EQUAL_STRING("vnum-range", tb_captured_operation);
+  TEST_ASSERT_EQUAL_INT(QEDIT_QUESTMASTER, OLC_MODE(&builder_desc));
+  type("-1");
+  TEST_ASSERT_EQUAL_INT(NOBODY, OLC_QUEST(&builder_desc)->qm);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+}
+
 /* ---------------------------------------------------------------------
  * aedit
  * ------------------------------------------------------------------- */
+
+/* F2-22: a social command with a space is refused with a diagnostic and a
+ * re-prompt; it used to drop back to the menu without a word. */
+static void test_aedit_command_with_space_is_refused_loudly(void)
+{
+  char cmd[] = " smile";
+
+  do_oasis_aedit(&builder, cmd, 0, 0);
+  type("y");
+  type("1");
+  TEST_ASSERT_EQUAL_INT(AEDIT_SORT_AS, OLC_MODE(&builder_desc));
+  type("big smile");
+  TEST_ASSERT_EQUAL_STRING("input-format", tb_captured_operation);
+  TEST_ASSERT_EQUAL_INT(AEDIT_SORT_AS, OLC_MODE(&builder_desc));
+  TEST_ASSERT_EQUAL_STRING("smile", OLC_ACTION(&builder_desc)->sort_as);
+  type("grin");
+  TEST_ASSERT_EQUAL_STRING("grin", OLC_ACTION(&builder_desc)->sort_as);
+  TEST_ASSERT_EQUAL_INT(AEDIT_MAIN_MENU, OLC_MODE(&builder_desc));
+}
 
 /* F2-21: the socials file cannot be written in the test tree (no misc/
  * directory); the save must say so instead of "Action saved to disk". */
@@ -1313,6 +1364,8 @@ int main(void)
   RUN_TEST(test_aedit_rejects_out_of_range_position_and_level);
   RUN_TEST(test_astat_bad_stored_position_is_reported);
   RUN_TEST(test_aedit_rejects_reserved_hash_prefix);
+  RUN_TEST(test_aedit_command_with_space_is_refused_loudly);
+  RUN_TEST(test_qedit_numeric_input_is_range_checked_loudly);
   RUN_TEST(test_qedit_delete_unsaved_quest_is_refused_loudly);
   RUN_TEST(test_qedit_delete_saved_quest);
   RUN_TEST(test_qedit_save_frees_editor_strings);

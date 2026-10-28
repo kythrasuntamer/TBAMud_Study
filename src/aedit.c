@@ -628,25 +628,33 @@ void aedit_parse(struct descriptor_data * d, char *arg) {
       return;
 
     case AEDIT_ACTION_NAME:
-      if (!*arg || strchr(arg,' ')) {
+    case AEDIT_SORT_AS:
+      /* An empty line cancels.  Both fields are written as single words on
+       * the socials file's '~command sort_as ...' line, so a space would
+       * corrupt the record; the old code dropped such input back at the
+       * menu without a word. */
+      if (!*arg) {
         aedit_disp_menu(d);
         return;
+      }
+      if (strchr(arg, ' ')) {
+        TB_WARN_MSG("olc", "input-format", "socials",
+                    "social rnum %d field %s input length %zu contains a space; editor " DIAG_CHAR_FMT,
+                    (int)OLC_ZNUM(d),
+                    OLC_MODE(d) == AEDIT_ACTION_NAME ? "command" : "sort_as",
+                    strlen(arg), DIAG_CHAR(d->character));
+        write_to_output(d, "It must be a single word, without spaces.\r\nEnter it again: ");
+        return;
+      }
+      if (OLC_MODE(d) == AEDIT_SORT_AS) {
+        free(OLC_ACTION(d)->sort_as);
+        OLC_ACTION(d)->sort_as = strdup(arg);
+        break;
       }
       if (OLC_ACTION(d)->command)
         free(OLC_ACTION(d)->command);
       OLC_ACTION(d)->command = strdup(arg);
 
-      break;
-
-    case AEDIT_SORT_AS:
-      if (!*arg || strchr(arg,' ')) {
-        aedit_disp_menu(d);
-        return;
-      }
-      if (OLC_ACTION(d)->sort_as) 
-        free(OLC_ACTION(d)->sort_as);
-      OLC_ACTION(d)->sort_as = strdup(arg);
-      
       break;
 
     case AEDIT_MIN_CHAR_POS:
