@@ -934,10 +934,7 @@ static void zedit_disp_arg1(struct descriptor_data *d)
     break;
   default:
     /* We should never get here. */
-    cleanup_olc(d, CLEANUP_ALL);
-    mudlog(BRF, LVL_BUILDER, TRUE, "SYSERR: OLC: zedit_disp_arg1(): Help!");
-    write_to_output(d, "Oops...\r\n");
-    return;
+    OLC_ABORT(d, "zedit-bad-command");
   }
 }
 
@@ -976,10 +973,7 @@ static void zedit_disp_arg2(struct descriptor_data *d)
     break;
   default:
     /* We should never get here, but just in case.  */
-    cleanup_olc(d, CLEANUP_ALL);
-    mudlog(BRF, LVL_BUILDER, TRUE, "SYSERR: OLC: zedit_disp_arg2(): Help!");
-    write_to_output(d, "Oops...\r\n");
-    return;
+    OLC_ABORT(d, "zedit-bad-command");
   }
   OLC_MODE(d) = ZEDIT_ARG2;
 }
@@ -1013,10 +1007,7 @@ static void zedit_disp_arg3(struct descriptor_data *d)
   case 'G':
   default:
     /* We should never get here, just in case. */
-    cleanup_olc(d, CLEANUP_ALL);
-    mudlog(BRF, LVL_BUILDER, TRUE, "SYSERR: OLC: zedit_disp_arg3(): Help!");
-    write_to_output(d, "Oops...\r\n");
-    return;
+    OLC_ABORT(d, "zedit-bad-command");
   }
   OLC_MODE(d) = ZEDIT_ARG3;
 }
@@ -1369,10 +1360,7 @@ void zedit_parse(struct descriptor_data *d, char *arg)
     case 'R':
     default:
       /* We should never get here. */
-      cleanup_olc(d, CLEANUP_ALL);
-      mudlog(BRF, LVL_BUILDER, TRUE, "SYSERR: OLC: zedit_parse(): case ARG1: Ack!");
-      write_to_output(d, "Oops...\r\n");
-      break;
+      OLC_ABORT(d, "zedit-bad-command");
     }
     break;
 
@@ -1434,10 +1422,7 @@ void zedit_parse(struct descriptor_data *d, char *arg)
       break;
     default:
       /* We should never get here, but just in case. */
-      cleanup_olc(d, CLEANUP_ALL);
-      mudlog(BRF, LVL_BUILDER, TRUE, "SYSERR: OLC: zedit_parse(): case ARG2: Ack!");
-      write_to_output(d, "Oops...\r\n");
-      break;
+      OLC_ABORT(d, "zedit-bad-command");
     }
     break;
 
@@ -1483,10 +1468,7 @@ void zedit_parse(struct descriptor_data *d, char *arg)
     case 'V':
     default:
       /* We should never get here, but just in case. */
-      cleanup_olc(d, CLEANUP_ALL);
-      mudlog(BRF, LVL_BUILDER, TRUE, "SYSERR: OLC: zedit_parse(): case ARG3: Ack!");
-      write_to_output(d, "Oops...\r\n");
-      break;
+      OLC_ABORT(d, "zedit-bad-command");
     }
     break;
 
@@ -1630,9 +1612,6 @@ void zedit_parse(struct descriptor_data *d, char *arg)
 
   default:
     /* We should never get here, but just in case... */
-    cleanup_olc(d, CLEANUP_ALL);
-    mudlog(BRF, LVL_BUILDER, TRUE, "SYSERR: OLC: zedit_parse(): Reached default case!");
-    write_to_output(d, "Oops...\r\n");
-    break;
+    OLC_ABORT(d, "zedit-bad-mode");
   }
 }

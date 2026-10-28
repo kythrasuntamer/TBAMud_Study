@@ -77,6 +77,25 @@
     (lval) = olc_v_; \
   } while (0)
 
+/** The identity every OLC diagnostic carries: who is editing, in which
+ * menu mode, and which vnum. Use as TB_ERROR_MSG(..., OLC_DIAG_FMT "...",
+ * OLC_DIAG(d), ...). OLC_DIAG evaluates d several times and needs
+ * d->character. */
+#define OLC_DIAG_FMT "builder " DIAG_CHAR_FMT " olc mode %d vnum %d"
+#define OLC_DIAG(d)  DIAG_CHAR((d)->character), OLC_MODE(d), OLC_NUM(d)
+
+/** "We should never get here": a menu mode or command no case handles.
+ * Reports op with the session identity, closes the session and returns
+ * from the calling void function, so nothing can touch d->olc after
+ * cleanup_olc() freed it (the old pattern fell through to
+ * "OLC_VAL(d) = 1; *_disp_menu(d)" on a NULL d->olc). */
+#define OLC_ABORT(d, op) do { \
+    TB_ERROR_MSG("olc", (op), "olc", OLC_DIAG_FMT "; session closed", OLC_DIAG(d)); \
+    write_to_output((d), "Oops...\r\n"); \
+    cleanup_olc((d), CLEANUP_ALL); \
+    return; \
+  } while (0)
+
 /** A builder starting an OLC session must not already have one: every exit
  * path ends in cleanup_olc(), which frees d->olc. If one is found anyway,
  * report olc-stale-state with the builder and the stale session's mode and

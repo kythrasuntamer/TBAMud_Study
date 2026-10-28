@@ -746,7 +746,7 @@ void redit_parse(struct descriptor_data *d, char *arg)
 
   case REDIT_DESC:
     /* We will NEVER get here, we hope. */
-    mudlog(BRF, LVL_BUILDER, TRUE, "SYSERR: Reached REDIT_DESC case in parse_redit().");
+    TB_ERROR_MSG("olc", "redit-bad-mode", "olc", OLC_DIAG_FMT " (REDIT_DESC belongs to the string editor)", OLC_DIAG(d));
     write_to_output(d, "Oops, in REDIT_DESC.\r\n");
     break;
 
@@ -834,7 +834,7 @@ void redit_parse(struct descriptor_data *d, char *arg)
 
   case REDIT_EXIT_DESCRIPTION:
     /* We should NEVER get here, hopefully. */
-    mudlog(BRF, LVL_BUILDER, TRUE, "SYSERR: Reached REDIT_EXIT_DESC case in parse_redit");
+    TB_ERROR_MSG("olc", "redit-bad-mode", "olc", OLC_DIAG_FMT " (REDIT_EXIT_DESCRIPTION belongs to the string editor)", OLC_DIAG(d));
     write_to_output(d, "Oops, in REDIT_EXIT_DESCRIPTION.\r\n");
     break;
 
@@ -1001,7 +1001,7 @@ void redit_parse(struct descriptor_data *d, char *arg)
 
   default:
     /* We should never get here. */
-    mudlog(BRF, LVL_BUILDER, TRUE, "SYSERR: Reached default case in parse_redit");
+    TB_ERROR_MSG("olc", "redit-bad-mode", "olc", OLC_DIAG_FMT, OLC_DIAG(d));
     break;
   }
   /* If we get this far, something has been changed. */

@@ -913,10 +913,7 @@ void medit_parse(struct descriptor_data *d, char *arg)
     /*
      * We should never get here.
      */
-    cleanup_olc(d, CLEANUP_ALL);
-    mudlog(BRF, LVL_BUILDER, TRUE, "SYSERR: OLC: medit_parse(): Reached D_DESC case!");
-    write_to_output(d, "Oops...\r\n");
-    break;
+    OLC_ABORT(d, "medit-bad-mode");
 
   case MEDIT_NPC_FLAGS:
     if ((i = tb_parse_int_or_zero(arg)) <= 0)
@@ -1171,10 +1168,7 @@ void medit_parse(struct descriptor_data *d, char *arg)
 
   default:
     /* We should never get here. */
-    cleanup_olc(d, CLEANUP_ALL);
-    mudlog(BRF, LVL_BUILDER, TRUE, "SYSERR: OLC: medit_parse(): Reached default case!");
-    write_to_output(d, "Oops...\r\n");
-    break;
+    OLC_ABORT(d, "medit-bad-mode");
   }
 
 /* END OF CASE If we get here, we have probably changed something, and now want

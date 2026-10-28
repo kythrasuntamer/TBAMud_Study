@@ -751,7 +751,8 @@ static void oedit_disp_val1_menu(struct descriptor_data *d)
     oedit_disp_menu(d);
     break;
   default:
-    mudlog(BRF, LVL_BUILDER, TRUE, "SYSERR: OLC: Reached default case in oedit_disp_val1_menu()!");
+    TB_ERROR_MSG("olc", "oedit-bad-item-type", "object", OLC_DIAG_FMT " item type %d has no value menu",
+                 OLC_DIAG(d), GET_OBJ_TYPE(OLC_OBJ(d)));
     break;
   }
 }
@@ -1562,7 +1563,7 @@ void oedit_parse(struct descriptor_data *d, char *arg)
       write_to_output(d, "Please answer 'Y' or 'N': ");
     return;
   default:
-    mudlog(BRF, LVL_BUILDER, TRUE, "SYSERR: OLC: Reached default case in oedit_parse()!");
+    TB_ERROR_MSG("olc", "oedit-bad-mode", "olc", OLC_DIAG_FMT, OLC_DIAG(d));
     write_to_output(d, "Oops...\r\n");
     break;
   }

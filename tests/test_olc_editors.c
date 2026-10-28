@@ -1956,6 +1956,45 @@ static void test_iedit_start_with_stale_session_reports_and_releases_it(void)
   free_scratch_obj(sword);
 }
 
+
+/* ------------------------------------------------------------------ */
+/* F1-12: an unhandled mode closes the session and returns, instead of */
+/* redrawing the menu through the d->olc that cleanup_olc() freed.     */
+/* ------------------------------------------------------------------ */
+static void test_sedit_unknown_mode_aborts_without_touching_freed_session(void)
+{
+  struct descriptor_data *d = &builder_desc;
+  struct shop_data scratch;
+
+  memset(&scratch, 0, sizeof(scratch));
+  OLC_SHOP(d) = &scratch;
+  OLC_NUM(d) = 3000;
+  OLC_MODE(d) = 999;
+
+  sedit_parse(d, "1");             /* old code: NULL d->olc write, SIGSEGV */
+
+  TEST_ASSERT_NULL(d->olc);
+  TEST_ASSERT_EQUAL_STRING("sedit-bad-mode", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "player idnum 4242 olc mode 999 vnum 3000; session closed"));
+}
+
+static void test_zedit_unknown_mode_aborts_and_reports(void)
+{
+  struct descriptor_data *d = &builder_desc;
+  struct reset_com cmd;
+
+  make_zone();
+  memset(&cmd, 0, sizeof(cmd));
+  cmd.command = '*';
+  make_zedit_session(d, &cmd, 1);
+  OLC_MODE(d) = 999;
+
+  zedit_parse(d, "x");
+
+  TEST_ASSERT_NULL(d->olc);
+  TEST_ASSERT_EQUAL_STRING("zedit-bad-mode", tb_captured_operation);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -2007,5 +2046,7 @@ int main(void)
   RUN_TEST(test_redit_name_over_byte_limit_is_refused_not_cut);
   RUN_TEST(test_iedit_refuses_object_from_zone_builder_cannot_edit);
   RUN_TEST(test_iedit_start_with_stale_session_reports_and_releases_it);
+  RUN_TEST(test_sedit_unknown_mode_aborts_without_touching_freed_session);
+  RUN_TEST(test_zedit_unknown_mode_aborts_and_reports);
   return UNITY_END();
 }
