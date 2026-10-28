@@ -230,6 +230,20 @@ static void test_extract_with_bad_index_bookkeeping_is_reported(void)
   top_of_trigt = 0;
 }
 
+static void leave_without_enter(void)
+{
+  dg_script_execution_leave();
+}
+
+/* D2-06: an unbalanced dg_script_execution_leave() was caught only by an
+ * assert(), which NDEBUG removes; the unsigned depth then wrapped and every
+ * later extraction was retired and never freed. */
+static void test_unbalanced_leave_is_fatal(void)
+{
+  TEST_ASSERT_EQUAL_INT(EXIT_EXPECTED_OP,
+      run_in_child(leave_without_enter, "execution-depth-underflow"));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -239,5 +253,6 @@ int main(void)
   RUN_TEST(test_unshared_script_frees_quietly);
   RUN_TEST(test_double_extract_is_reported_and_freed_once);
   RUN_TEST(test_extract_with_bad_index_bookkeeping_is_reported);
+  RUN_TEST(test_unbalanced_leave_is_fatal);
   return UNITY_END();
 }

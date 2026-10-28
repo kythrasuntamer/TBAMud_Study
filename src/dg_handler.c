@@ -86,7 +86,16 @@ void dg_script_execution_leave(void)
 {
   struct dg_retired_trigger *t;
   struct dg_retired_script *s;
-  assert(dg_execution_depth != 0);
+
+  /* Engine invariant: every leave pairs with one enter.  An extra leave
+   * wrapped the unsigned depth, after which every extraction was retired
+   * and never freed, with nothing logged.  The assert() it replaces
+   * vanished under NDEBUG; the script_driver breadcrumb names the trigger. */
+  if (dg_execution_depth == 0) {
+    TB_FATAL_MSG("dg", "execution-depth-underflow", "script_driver",
+                 "dg_script_execution_leave() without a matching enter");
+    abort();
+  }
   if (--dg_execution_depth != 0)
     return;
   while ((t = dg_retired_triggers) != NULL) {
