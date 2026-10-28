@@ -386,6 +386,25 @@ static void test_remove_player_with_unrepresentable_last_login(void)
   leave_scratch();
 }
 
+/* B2-28: remove_player() compacts the table, so clean_pfiles()'s i++
+ * skipped the player that shifted into the removed slot: of two adjacent
+ * deleted players only the first was removed. */
+struct pclean_criteria_data pclean_criteria[] = { { -1, 0 } };
+
+static void test_clean_pfiles_removes_adjacent_deleted_players(void)
+{
+  enter_scratch();
+  write_index("4242 tester 10 1 1000\n4243 other 5 1 1000\n4244 keeper 5 0 1000\n~\n");
+  build_player_index();
+  TEST_ASSERT_EQUAL_INT(2, top_of_p_table);
+
+  clean_pfiles();
+
+  TEST_ASSERT_EQUAL_INT(0, top_of_p_table);
+  TEST_ASSERT_EQUAL_STRING("keeper", player_table[0].name);
+  leave_scratch();
+}
+
 /* B2-16: Clas/Levl/Sex index tables (class_abbrevs[], titles, exp) and
  * skills[] is unsigned char; out-of-range file values were stored as-is. */
 static void test_out_of_range_class_level_sex_skill(void)
@@ -549,6 +568,7 @@ int main(void)
   RUN_TEST(test_malformed_index_record_is_skipped_and_kept);
   RUN_TEST(test_index_save_failure_keeps_live_index);
   RUN_TEST(test_remove_player_with_unrepresentable_last_login);
+  RUN_TEST(test_clean_pfiles_removes_adjacent_deleted_players);
   RUN_TEST(test_out_of_range_class_level_sex_skill);
   RUN_TEST(test_legacy_pref_uses_its_own_value);
   RUN_TEST(test_wrong_flag_word_count_is_reported);

@@ -1256,11 +1256,18 @@ void remove_player(int pfilepos)
   save_player_index();
 }
 
+/* Walk the player index and remove deleted or expired players.
+ *
+ * remove_player() compacts player_table: the entry after i moves into slot
+ * i and top_of_p_table drops by one. The loop must therefore re-examine
+ * slot i after a removal instead of advancing past it, or every player that
+ * directly follows a removed one escapes the sweep. */
 void clean_pfiles(void)
 {
-  int i, ci;
+  int i, ci, removed;
 
   for (i = 0; i <= top_of_p_table; i++) {
+    removed = FALSE;
     /* We only want to go further if the player isn't protected from deletion
      * and hasn't already been deleted. */
     if (!IS_SET(player_table[i].flags, PINDEX_NODELETE) &&
@@ -1269,6 +1276,7 @@ void clean_pfiles(void)
        * rid of him. */
       if (IS_SET(player_table[i].flags, PINDEX_DELETED)) {
 	remove_player(i);
+	removed = TRUE;
       } else {
         /* Check to see if the player has overstayed his welcome based on level. */
 	for (ci = 0; pclean_criteria[ci].level > -1; ci++) {
@@ -1276,6 +1284,7 @@ void clean_pfiles(void)
 	      ((time(0) - player_table[i].last) >
 	       (pclean_criteria[ci].days * SECS_PER_REAL_DAY))) {
 	    remove_player(i);
+	    removed = TRUE;
 	    break;
 	  }
 	}
@@ -1283,6 +1292,8 @@ void clean_pfiles(void)
 	 * can stay a little while longer. */
       }
     }
+    if (removed)
+      i--;	/* slot i now holds the next player; examine it */
   }
   /* After everything is done, we should rebuild player_index and remove the
    * entries of the players that were just deleted. */
