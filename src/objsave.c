@@ -1232,8 +1232,19 @@ obj_save_data *objsave_parse_objects(FILE *fl)
       }
       break;
     case 'L':
-      if(!strcmp(tag, "Loc "))
+      if(!strcmp(tag, "Loc ")) {
+        /* Loc is 1..NUM_WEARS for a worn slot, 0 for inventory, and negative
+         * for the nesting depth inside a container (Crash_save writes depths
+         * past MAX_BAG_ROWS, which handle_obj flattens). A worn slot past
+         * NUM_WEARS would index ch->equipment out of bounds. */
+        if (num > NUM_WEARS) {
+          TB_ERROR_MSG("objsave", "rent-loc-range", "rent-object-record",
+                       "obj vnum %d Loc %d outside 1..%d; loading into inventory",
+                       GET_OBJ_VNUM(temp), num, NUM_WEARS);
+          num = LOC_INVENTORY;
+        }
         current->locate = num;
+      }
       break;
     case 'N':
       if (!strcmp(tag, "Name"))
@@ -1440,7 +1451,14 @@ static int handle_obj(struct obj_data *temp, struct char_data *ch, int locate, s
         cont_row[j] = NULL;
       }
     if (cont_row[0]) { /* content list existing */
-      if (GET_OBJ_TYPE(temp) == ITEM_CONTAINER) {
+      /* auto_equip() may have refused the slot recorded in the rent file
+       * (wrong wear flags, alignment/class zap, slot already taken, slot out
+       * of range) and put the container in inventory instead. The file's
+       * Loc value is player-file data, so never assume the object is worn:
+       * unequip_char() on an empty slot returns NULL, and on an occupied slot
+       * it returns a different object. Fill the container where it really is. */
+      if (GET_OBJ_TYPE(temp) == ITEM_CONTAINER &&
+          locate - 1 < NUM_WEARS && GET_EQ(ch, locate - 1) == temp) {
         /* rem item ; fill ; equip again */
         temp = unequip_char(ch, locate-1);
         temp->contains = NULL; /* should be empty - but who knows */
@@ -1449,6 +1467,18 @@ static int handle_obj(struct obj_data *temp, struct char_data *ch, int locate, s
           obj_to_obj(cont_row[0], temp);
         }
         equip_char(ch, temp, locate-1);
+      } else if (GET_OBJ_TYPE(temp) == ITEM_CONTAINER) {
+        TB_ERROR_MSG("objsave", "autoeq-container", "rent-object-record",
+                     "player idnum %ld obj vnum %d locate %d not equipped; "
+                     "contents restored into the container in inventory",
+                     GET_IDNUM(ch), GET_OBJ_VNUM(temp), locate);
+        obj_from_char(temp);
+        temp->contains = NULL;
+        for (;cont_row[0];cont_row[0] = obj1) {
+          obj1 = cont_row[0]->next_content;
+          obj_to_obj(cont_row[0], temp);
+        }
+        obj_to_char(temp, ch);
       } else { /* object isn't container -> empty content list */
         for (;cont_row[0];cont_row[0] = obj1) {
           obj1 = cont_row[0]->next_content;

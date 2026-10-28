@@ -376,6 +376,20 @@ if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
     target_link_options(test_db_parse PRIVATE -Wl,--gc-sections)
 endif()
 
+
+# Production rent/crash-save loader and writer (objsave.c), driven through
+# Crash_load()/Crash_listrent() against scratch rent files.
+add_mud_test(test_objsave_persist
+    ${MUD_SRCDIR}/objsave.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_objsave_persist.c
+)
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_compile_options(test_objsave_persist PRIVATE -ffunction-sections -fdata-sections)
+    target_link_options(test_objsave_persist PRIVATE -Wl,--gc-sections)
+    set_source_files_properties(${MUD_SRCDIR}/objsave.c
+        PROPERTIES COMPILE_OPTIONS "-ffunction-sections;-fdata-sections")
+endif()
+
 find_package(Python3 COMPONENTS Interpreter QUIET)
 if(Python3_Interpreter_FOUND)
     add_test(NAME test_dg_memory_callback_contract
