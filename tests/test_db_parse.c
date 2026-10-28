@@ -230,9 +230,92 @@ static void reset_zone_keeps_object_when_trigger_does_not_purge(void)
   zone_fixture_teardown();
 }
 
+/* ---------------------------------------------------------------------
+ * Helpers: named temporary files and FILE streams with given contents.
+ * ------------------------------------------------------------------- */
+
+static char temp_path[64];
+
+/* Write len bytes to a fresh temporary file; its name is in temp_path. */
+static void write_temp_file(const char *data, size_t len)
+{
+  int fd;
+  FILE *fp;
+
+  strlcpy(temp_path, "/tmp/tb_db_parse_XXXXXX", sizeof(temp_path));
+  fd = mkstemp(temp_path);
+  TEST_ASSERT_TRUE(fd >= 0);
+  fp = fdopen(fd, "wb");
+  TEST_ASSERT_NOT_NULL(fp);
+  TEST_ASSERT_EQUAL_size_t(len, fwrite(data, 1, len, fp));
+  TEST_ASSERT_EQUAL_INT(0, fclose(fp));
+}
+
+/* A read stream over len bytes of data (may contain NUL bytes). */
+static FILE *stream_of(const char *data, size_t len)
+{
+  FILE *fp = tmpfile();
+  TEST_ASSERT_NOT_NULL(fp);
+  TEST_ASSERT_EQUAL_size_t(len, fwrite(data, 1, len, fp));
+  rewind(fp);
+  return fp;
+}
+
+/* ---------------------------------------------------------------------
+ * file_to_string(): bounded by the real buffer size (B1-01)
+ * ------------------------------------------------------------------- */
+
+/* Before the fix strlcat() was given sizeof(char *) == 8, so every text file
+ * loaded as its first 7 bytes and the load still reported success. */
+static void file_to_string_loads_whole_multiline_file(void)
+{
+  static const char text[] = "Welcome to the game.\nSecond line here.\n";
+  char buf[MAX_STRING_LENGTH];
+
+  write_temp_file(text, sizeof(text) - 1);
+  TEST_ASSERT_EQUAL_INT(0, file_to_string(temp_path, buf, sizeof(buf)));
+  TEST_ASSERT_EQUAL_STRING("Welcome to the game.\r\nSecond line here.\r\n", buf);
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  remove(temp_path);
+}
+
+/* Lines longer than one fgets() chunk are joined, and a final line without
+ * a newline keeps its last character. */
+static void file_to_string_joins_long_lines_and_keeps_last_char(void)
+{
+  char text[READ_SIZE * 2 + 8], expect[READ_SIZE * 2 + 16];
+  char buf[MAX_STRING_LENGTH];
+
+  memset(text, 'x', READ_SIZE + 40);
+  memcpy(text + READ_SIZE + 40, "\nend", 5);
+  memset(expect, 'x', READ_SIZE + 40);
+  memcpy(expect + READ_SIZE + 40, "\r\nend\r\n", 8);
+  write_temp_file(text, strlen(text));
+  TEST_ASSERT_EQUAL_INT(0, file_to_string(temp_path, buf, sizeof(buf)));
+  TEST_ASSERT_EQUAL_STRING(expect, buf);
+  remove(temp_path);
+}
+
+/* A file larger than the buffer is rejected whole, loudly. */
+static void file_to_string_rejects_oversized_file(void)
+{
+  static const char text[] = "0123456789\nabcdefghij\n";
+  char buf[16];
+
+  write_temp_file(text, sizeof(text) - 1);
+  TEST_ASSERT_EQUAL_INT(-1, file_to_string(temp_path, buf, sizeof(buf)));
+  TEST_ASSERT_EQUAL_STRING("", buf);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("text-file-load", tb_captured_operation);
+  remove(temp_path);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(file_to_string_loads_whole_multiline_file);
+  RUN_TEST(file_to_string_joins_long_lines_and_keeps_last_char);
+  RUN_TEST(file_to_string_rejects_oversized_file);
   RUN_TEST(reset_zone_skips_trigger_after_load_purge);
   RUN_TEST(reset_zone_keeps_object_when_trigger_does_not_purge);
   return UNITY_END();

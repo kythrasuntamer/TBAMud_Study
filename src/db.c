@@ -132,7 +132,7 @@ static int check_object_spell_number(struct obj_data *obj, int val);
 static int check_object_level(struct obj_data *obj, int val);
 static int check_object(struct obj_data *);
 static void load_zones(FILE *fl, char *zonename);
-static int file_to_string(const char *name, char *buf);
+static int file_to_string(const char *name, char *buf, size_t bufsize);
 static int file_to_string_alloc(const char *name, char **buf);
 static int count_alias_records(FILE *fl);
 static void parse_simple_mob(FILE *mob_f, int i, int nr);
@@ -3770,7 +3770,7 @@ static int file_to_string_alloc(const char *name, char **buf)
       return (-1);
 
   /* Lets not free() what used to be there unless we succeeded. */
-  if (file_to_string(name, temp) < 0)
+  if (file_to_string(name, temp, sizeof(temp)) < 0)
     return (-1);
 
   for (in_use = descriptor_list; in_use; in_use = in_use->next) {
@@ -3793,12 +3793,20 @@ static int file_to_string_alloc(const char *name, char **buf)
   return (0);
 }
 
-/* read contents of a text file, and place in buf */
-static int file_to_string(const char *name, char *buf)
+/* Read the text file 'name' into buf, which holds bufsize bytes, converting
+ * every line ending to "\r\n". A line longer than one fgets() chunk is joined,
+ * not split. Returns 0, or -1 with buf empty and a diagnostic: a file that
+ * does not fit is rejected whole rather than shown truncated.
+ *
+ * The capacity is an explicit parameter because buf is a pointer here:
+ * sizeof(buf) would be the pointer size, which once limited every text file
+ * to its first 7 bytes. Input is implementor-controlled (lib/text/). */
+static int file_to_string(const char *name, char *buf, size_t bufsize)
 {
   FILE *fl;
-  char tmp[READ_SIZE + 3];
-  int len;
+  char tmp[READ_SIZE];
+  size_t used = 0, len;
+  int partial = FALSE;
   struct stat statbuf;
 
   *buf = '\0';
@@ -3808,32 +3816,72 @@ static int file_to_string(const char *name, char *buf)
     return (-1);
   }
 
-   /* Grab the date/time the file was last edited */
-   if (!strcmp(name, NEWS_FILE))
-   {
-     fstat(fileno(fl), &statbuf);
-     newsmod = statbuf.st_mtime;
-   }
-   if (!strcmp(name, MOTD_FILE))
-   {
-     fstat(fileno(fl), &statbuf);
-     motdmod = statbuf.st_mtime;
-   }
+  /* Grab the date/time the file was last edited */
+  if (!strcmp(name, NEWS_FILE) || !strcmp(name, MOTD_FILE)) {
+    if (fstat(fileno(fl), &statbuf) != 0)
+      TB_ERROR_ERRNO("db", "text-file-load", name,
+                     "fstat failed; modification time not updated");
+    else if (!strcmp(name, NEWS_FILE))
+      newsmod = statbuf.st_mtime;
+    else
+      motdmod = statbuf.st_mtime;
+  }
 
-  for (;;) {
-    if (!fgets(tmp, READ_SIZE, fl))	/* EOF check */
-      break;
-    if ((len = strlen(tmp)) > 0)
-      tmp[len - 1] = '\0'; /* take off the trailing \n */
-    strlcat(tmp, "\r\n", sizeof(tmp));	/* strcat: OK (tmp:READ_SIZE+3) */
+  while (fgets(tmp, sizeof(tmp), fl)) {
+    int line_end;
 
-    if (strlen(buf) + strlen(tmp) + 1 > MAX_STRING_LENGTH) {
-      log("SYSERR: %s: string too big (%d max)", name, MAX_STRING_LENGTH);
+    len = strlen(tmp);
+    line_end = len > 0 && tmp[len - 1] == '\n';
+    if (!line_end && len + 1 < sizeof(tmp) && !feof(fl)) {
+      /* fgets() stopped early without a newline: a NUL byte hid the rest. */
+      TB_WARN_MSG("db", "text-file-load", name,
+                  "NUL byte after %zu bytes; rest of that line dropped",
+                  used + len);
+      line_end = TRUE;
+    }
+    if (line_end)
+      while (len > 0 && (tmp[len - 1] == '\n' || tmp[len - 1] == '\r'))
+        len--;
+
+    if (used + len + (line_end ? 2 : 0) >= bufsize) {
+      TB_ERROR_MSG("db", "text-file-load", name,
+                   "text exceeds the %zu-byte buffer at %zu bytes; file not loaded",
+                   bufsize, used + len);
       *buf = '\0';
       tb_fclose(fl);
       return (-1);
     }
-    strlcat(buf, tmp, sizeof(buf));	/* strcat: OK (size checked above) */
+    memcpy(buf + used, tmp, len);
+    used += len;
+    if (line_end) {
+      buf[used++] = '\r';
+      buf[used++] = '\n';
+    }
+    buf[used] = '\0';
+    partial = !line_end;
+  }
+
+  if (ferror(fl)) {
+    TB_ERROR_ERRNO("db", "text-file-load", name,
+                   "read failed after %zu bytes; file not loaded", used);
+    *buf = '\0';
+    tb_fclose(fl);
+    return (-1);
+  }
+
+  /* Last line without a newline: terminate it like the others. */
+  if (partial) {
+    if (used + 2 >= bufsize) {
+      TB_ERROR_MSG("db", "text-file-load", name,
+                   "text exceeds the %zu-byte buffer at %zu bytes; file not loaded",
+                   bufsize, used + 2);
+      *buf = '\0';
+      tb_fclose(fl);
+      return (-1);
+    }
+    buf[used++] = '\r';
+    buf[used++] = '\n';
+    buf[used] = '\0';
   }
 
   tb_fclose(fl);
