@@ -142,11 +142,62 @@ static void test_scavenger_leaves_occupied_furniture(void)
   room.contents = NULL;
 }
 
+/* Coordinator item (a): the aggression and helper checks read
+ * !AFF_BLIND || !AFF_CHARM, so only a mob both blind and charmed was held
+ * back. A charmed aggressive pet attacked the player beside it (here its
+ * own master), and a charmed or blind helper "jumped to the aid" of any
+ * NPC fighting a player. */
+static void test_charmed_aggressive_mob_does_not_attack(void)
+{
+  SET_BIT_AR(AFF_FLAGS(&mob), AFF_CHARM);
+  mob.master = &player;
+  mobile_activity();
+  TEST_ASSERT_EQUAL_INT(0, hits);
+}
+
+static struct char_data brawler;   /* an NPC fighting the player */
+
+static void make_helper_scene(void)
+{
+  memset(&brawler, 0, sizeof(brawler));
+  SET_BIT_AR(MOB_FLAGS(&brawler), MOB_ISNPC);
+  brawler.nr = 0;
+  brawler.in_room = 0;
+  brawler.player_specials = &dummy_mob;
+  brawler.char_specials.fighting = &player;
+  player.next_in_room = &brawler;
+  REMOVE_BIT_AR(MOB_FLAGS(&mob), MOB_AGGRESSIVE);
+  SET_BIT_AR(MOB_FLAGS(&mob), MOB_HELPER);
+}
+
+static void test_charmed_or_blind_helper_does_not_help(void)
+{
+  make_helper_scene();
+  SET_BIT_AR(AFF_FLAGS(&mob), AFF_CHARM);
+  mobile_activity();
+  TEST_ASSERT_EQUAL_INT(0, hits);
+
+  REMOVE_BIT_AR(AFF_FLAGS(&mob), AFF_CHARM);
+  SET_BIT_AR(AFF_FLAGS(&mob), AFF_BLIND);
+  mobile_activity();
+  TEST_ASSERT_EQUAL_INT(0, hits);
+}
+
+static void test_free_helper_helps(void)
+{
+  make_helper_scene();
+  mobile_activity();
+  TEST_ASSERT_EQUAL_INT(1, hits);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
   RUN_TEST(test_aggressive_mob_attacks);
   RUN_TEST(test_purged_mob_stops_acting);
   RUN_TEST(test_scavenger_leaves_occupied_furniture);
+  RUN_TEST(test_charmed_aggressive_mob_does_not_attack);
+  RUN_TEST(test_charmed_or_blind_helper_does_not_help);
+  RUN_TEST(test_free_helper_helps);
   return UNITY_END();
 }
