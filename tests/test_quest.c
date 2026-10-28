@@ -52,6 +52,26 @@ void *tb_calloc_array_at(size_t count, size_t element_size,
   return calloc(count ? count : 1, element_size ? element_size : 1);
 }
 int MAX(int a, int b) { return a > b ? a : b; }
+mob_rnum real_mobile(mob_vnum vnum) { return vnum == 500 ? 0 : NOBODY; }
+size_t sprintbit(bitvector_t vektor, const char *names[], char *result,
+                 size_t reslen)
+{ (void)vektor; (void)names; return strlcpy(result, "NOBITS", reslen); }
+/* do_quest's argument parsing: "word word" only. */
+char *two_arguments(char *argument, char *first_arg, char *second_arg)
+{
+  if (sscanf(argument, "%63s %63s", first_arg, second_arg) < 2)
+    *second_arg = '\0';
+  return argument + strlen(argument);
+}
+int search_block(char *arg, const char **list, int exact)
+{
+  int k;
+  (void)exact;
+  for (k = 0; *list[k] != '\n'; k++)
+    if (!strcmp(arg, list[k]))
+      return k;
+  return -1;
+}
 int increase_gold(struct char_data *ch, int amt)
 { GET_GOLD(ch) += amt; return GET_GOLD(ch); }
 void gain_exp(struct char_data *ch, int gain) { GET_EXP(ch) += gain; }
@@ -270,9 +290,31 @@ static void test_complete_dangling_next_reports(void)
   TEST_ASSERT_EQUAL_STRING("dangling-chain", tb_captured_operation);
 }
 
+/* H3-04: a quest row with an out-of-range type is reported by the trigger
+ * check and shown as "<invalid>" by 'quest status', never used to index
+ * quest_types[]. */
+static void test_invalid_type_reported_and_named_safely(void)
+{
+  char cmd[MAX_INPUT_LENGTH] = "status 100";
+
+  add_quest_fixture(0, 100, AQ_ROOM_FIND, 3001, 1);
+  set_quest(&player, 0);
+  quests[0].type = 9;
+
+  autoquest_trigger_check(&player, NULL, NULL, 9);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("trigger-type", tb_captured_operation);
+
+  TEST_ASSERT_EQUAL_STRING("<invalid>", QST_TYPE_NAME(0));
+  GET_LEVEL(&player) = LVL_IMPL;
+  do_quest(&player, cmd, 0, 0);
+  TEST_ASSERT_NOT_NULL(strstr(sent, "<invalid>"));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(test_invalid_type_reported_and_named_safely);
   RUN_TEST(test_quest_list_dangling_prev_reports);
   RUN_TEST(test_complete_dangling_next_reports);
   RUN_TEST(test_reward_equal_to_target_pays_once);

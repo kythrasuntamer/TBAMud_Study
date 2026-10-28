@@ -237,6 +237,14 @@ void parse_quest(FILE *quest_f, int nr)
     log("Format error in quest header numeric line, %s\n", line);
     exit(1);
   }
+  /* The type indexes quest_types[] and selects the trigger check; only qedit
+   * limits it, so a hand-edited .qst file can hold anything. */
+  if (t[0] < 0 || t[0] >= NUM_AQ_TYPES) {
+    TB_FATAL_MSG("quest", "parse-type-range", "qst-file",
+                 "quest vnum %d type %d out of range [0,%d) near byte %ld",
+                 nr, t[0], NUM_AQ_TYPES, ftell(quest_f));
+    exit(1);
+  }
   aquest_table[i].type = t[0];
   aquest_table[i].qm = (real_mobile(t[1]) == NOBODY) ? NOBODY : t[1];
   aquest_table[i].flags = asciiflag_conv(f1);
@@ -580,7 +588,9 @@ void autoquest_trigger_check(struct char_data *ch, struct char_data *vict,
       }
       break;
     default:
-      log("SYSERR: Invalid quest type passed to autoquest_trigger_check");
+      TB_ERROR_MSG("quest", "trigger-type", "aquest_table",
+                   DIAG_CHAR_FMT " quest vnum %d has invalid type %d",
+                   DIAG_CHAR(ch), (int) active, type);
       break;
   }
 }
@@ -865,7 +875,7 @@ static void quest_stat(struct char_data *ch, char *argument)
  (QST_QUIT(rnum) &&
   (str_cmp(QST_QUIT(rnum), "undefined") != 0)
           ? QST_QUIT(rnum) : "Nothing\r\n"),
-     quest_types[QST_TYPE(rnum)],
+     QST_TYPE_NAME(rnum),
  QST_TARGET(rnum) == NOBODY ? -1 : QST_TARGET(rnum),
  targetname,
  QST_QUANTITY(rnum),

@@ -85,6 +85,13 @@ struct aq_data {
  * for a vnum that does not exist (prev/next links are not repaired when a
  * quest is deleted), so check before QST_*(r). Evaluates r twice. */
 #define VALID_QST_RNUM(r)      ((r) != NOTHING && (r) < total_quests)
+
+/** quest_types[] name of quest r's type, or "<invalid>" when the stored type
+ * is outside 0..NUM_AQ_TYPES-1. parse_quest rejects such types at boot; this
+ * keeps display code safe if a table row is corrupted later. Evaluates r
+ * twice. */
+#define QST_TYPE_NAME(r)       ((QST_TYPE(r) >= 0 && QST_TYPE(r) < NUM_AQ_TYPES) ? \
+                                quest_types[QST_TYPE(r)] : "<invalid>")
 /* Quest Functions **************************************************** */
 /* Implemented in quest.c */
 void destroy_quests(void);
