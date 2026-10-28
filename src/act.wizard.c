@@ -5780,14 +5780,15 @@ bool AddRecentPlayer(char *chname, char *chhost, bool newplr, bool cpyplr)
 }
 
 /** Free the recent-players list. Called at shutdown (comm.c). The list
- * head is left pointing at freed memory, so nothing may use the list
- * afterwards. */
+ * head is cleared, so a later AddRecentPlayer() starts a new list instead
+ * of linking to freed memory. */
 void free_recent_players(void)
 {
   struct recent_player *this;
   struct recent_player *temp;
 
   this = recent_list;
+  recent_list = NULL;
 
   while((temp = this) != NULL)
   {

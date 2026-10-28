@@ -1241,6 +1241,17 @@ static void test_show_zones_overflow_is_clamped_and_reported(void)
   TEST_ASSERT_TRUE(strlen(sent) < MAX_STRING_LENGTH);
 }
 
+/* free_recent_players() left recent_list pointing at the freed list, so
+ * any later AddRecentPlayer() linked a new node to freed memory (ASan
+ * heap-use-after-free in get_max_recent). */
+static void test_recent_list_is_reusable_after_free(void)
+{
+  TEST_ASSERT_TRUE(AddRecentPlayer((char[]){"bobby"}, (char[]){"host"}, FALSE, FALSE));
+  free_recent_players();
+  TEST_ASSERT_TRUE(AddRecentPlayer((char[]){"alice"}, NULL, TRUE, FALSE));
+  free_recent_players();
+}
+
 int main(void)
 {
   /* basic_mud_log()/mudlog() are the real utils.c ones; keep them quiet. */
@@ -1279,6 +1290,7 @@ int main(void)
   RUN_TEST(test_set_level_demotion_drops_disallowed_snoop);
   RUN_TEST(test_wizutil_unknown_subcmd_is_reported_without_save);
   RUN_TEST(test_show_zones_overflow_is_clamped_and_reported);
+  RUN_TEST(test_recent_list_is_reusable_after_free);
   {
     int failures = UNITY_END();
     if (logfile)
