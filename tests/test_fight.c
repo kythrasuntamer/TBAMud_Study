@@ -12,6 +12,7 @@
 #include "fight.h"
 #include "spells.h"
 #include "dg_scripts.h"
+#include "act.h"
 
 /* utils.c is linked, so its tb_error_log_at() exists; the test build wraps
  * calls from the code under test to this capturing version. */
@@ -292,9 +293,31 @@ static void test_peaceful_room_stops_player_without_proxy_mob(void)
   fx_free_char(pc);
 }
 
+/* H1-23 (act.offensive.c): a skilled bandager rolling under the skill
+ * succeeds; the test used to be inverted and hurt the patient instead. */
+static void test_bandage_succeeds_when_roll_is_under_skill(void)
+{
+  struct char_data *pc = fx_new_char("healer", FALSE, 0);
+  struct char_data *mob = fx_new_char("rat", TRUE, 0);
+  char buf[MAX_INPUT_LENGTH];
+
+  SET_SKILL(pc, SKILL_BANDAGE, 95);
+  GET_HIT(mob) = -5;
+  GET_POS(mob) = POS_MORTALLYW;
+  fx_rand_value = 50;               /* rand_number(1, 101) rolls 50 */
+  strlcpy(buf, "rat", sizeof(buf));
+
+  do_bandage(pc, buf, 0, 0);
+
+  TEST_ASSERT_EQUAL_INT(0, GET_HIT(mob));
+  fx_free_char(mob);
+  fx_free_char(pc);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(test_bandage_succeeds_when_roll_is_under_skill);
   RUN_TEST(test_peaceful_room_stops_player_without_proxy_mob);
   RUN_TEST(test_hit_clamps_weapon_dice);
   RUN_TEST(test_autoloot_takes_the_new_corpse);
