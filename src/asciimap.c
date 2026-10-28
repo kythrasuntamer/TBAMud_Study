@@ -259,6 +259,28 @@ static int map_sector(room_rnum room)
   return SECT_STRANGE;
 }
 
+/* TRUE if exit `door` of room leads to a room MapArea can index. NOWHERE
+ * is an ordinary "no destination"; anything past top_of_world is corrupt
+ * world data and is reported (once per room in a row, as for sectors). */
+static bool map_exit_target_ok(room_rnum room, int door,
+                               const struct room_direction_data *pexit)
+{
+  static room_rnum last_reported = NOWHERE;
+
+  if (pexit->to_room == NOWHERE)
+    return FALSE;
+  if (VALID_ROOM_RNUM(pexit->to_room))
+    return TRUE;
+  if (room != last_reported) {
+    TB_ERROR_MSG("map", "exit-range", "world",
+                 "room vnum %d exit %d leads to rnum %d outside [0,%d]",
+                 (int) GET_ROOM_VNUM(room), door, (int) pexit->to_room,
+                 (int) top_of_world);
+    last_reported = room;
+  }
+  return FALSE;
+}
+
 /* MapArea function - create the actual map.
  * Marks room at cell (x, y) and recurses through its exits, one room step
  * (2 cells on the normal map, 1 on the world map) per exit. Cells outside
@@ -325,7 +347,7 @@ static void MapArea(room_rnum room, struct char_data *ch, int x, int y, int min,
     }
 
     if ( (pexit = world[room].dir_option[door]) != NULL  &&
-         (pexit->to_room > 0 ) && (pexit->to_room != NOWHERE) &&
+         (pexit->to_room > 0 ) && map_exit_target_ok(room, door, pexit) &&
          (!IS_SET(pexit->exit_info, EX_CLOSED)) &&
          (!IS_SET(pexit->exit_info, EX_HIDDEN) || PRF_FLAGGED(ch, PRF_HOLYLIGHT)) )
     { /* A real exit */

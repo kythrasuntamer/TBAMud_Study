@@ -122,9 +122,21 @@ static void test_bad_sector_drawn_as_unknown(void)
   TEST_ASSERT_EQUAL_STRING("bad-sector", tb_captured_operation);
 }
 
+/* An exit past top_of_world (corrupt world data) is skipped and reported,
+ * never used to index world[]. */
+static void test_exit_out_of_range_reported(void)
+{
+  CONFIG_MINIMAP_SIZE = 4;
+  exits[CORRIDOR / 2][1].to_room = 500;
+  look();
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("exit-range", tb_captured_operation);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(test_exit_out_of_range_reported);
   RUN_TEST(test_bad_sector_drawn_as_unknown);
   RUN_TEST(test_minimap_max_size_stays_in_grid);
   RUN_TEST(test_minimap_oversize_is_clamped_loudly);

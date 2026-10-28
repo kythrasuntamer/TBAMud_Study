@@ -48,6 +48,14 @@ static int VALID_EDGE(room_rnum x, int y)
 {
   if (world[x].dir_option[y] == NULL || TOROOM(x, y) == NOWHERE)
     return 0;
+  /* Exits are renumbered at boot and by redit; one past top_of_world
+   * would index world[] out of bounds below. */
+  if (!VALID_ROOM_RNUM(TOROOM(x, y))) {
+    TB_ERROR_MSG("graph", "exit-range", "world",
+                 "room vnum %d exit %d leads to rnum %d outside [0,%d]",
+                 (int) GET_ROOM_VNUM(x), y, (int) TOROOM(x, y), (int) top_of_world);
+    return 0;
+  }
   if (CONFIG_TRACK_T_DOORS == FALSE && IS_CLOSED(x, y))
     return 0;
   if (ROOM_FLAGGED(TOROOM(x, y), ROOM_NOTRACK) || IS_MARKED(TOROOM(x, y)))
