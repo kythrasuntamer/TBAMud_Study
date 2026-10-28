@@ -434,6 +434,21 @@ static void test_out_of_range_class_level_sex_skill(void)
   TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail_log, "tag Clas value 99"));
 }
 
+/* G2-12, H2-09: the class indexes class_abbrevs[] (who, users), the shift
+ * 1 << GET_CLASS (who -c) and spell_info[].min_level[] (cast). Pin the
+ * lower bound too: -1 is CLASS_UNDEFINED, and min_level[-1] reads the
+ * field before the array. Every class is validated where it is loaded. */
+static void test_negative_class_is_rejected_at_load(void)
+{
+  write_pfile("tester", "Id  : 4242\nClas: -1\n");
+
+  TEST_ASSERT_EQUAL_INT(0, load_char("tester", &player));
+
+  TEST_ASSERT_EQUAL_INT(PFDEF_CLASS, GET_CLASS(&player));
+  TEST_ASSERT_EQUAL_STRING("pfile-range\n", tb_captured_op_log);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "player idnum 4242 tag Clas value -1"));
+}
+
 /* G2-02: Qcur was loaded unchecked. A quest deleted since the save made
  * real_quest() return NOTHING, and do_score() then read
  * aquest_table[NOTHING]. A stale quest must be reported and cleared. */
@@ -680,6 +695,7 @@ int main(void)
   RUN_TEST(test_loaded_current_quest_is_kept);
   RUN_TEST(test_out_of_range_current_quest_is_rejected);
   RUN_TEST(test_negative_current_quest_is_rejected);
+  RUN_TEST(test_negative_class_is_rejected_at_load);
   (void)rmdir(scratch_dir);
   return UNITY_END();
 }
