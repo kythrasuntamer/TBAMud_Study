@@ -628,6 +628,58 @@ static void add_var_accepts_its_own_value(void)
   free_varlist(list);
 }
 
+/* page_string() is a weak stub; keep what tstat would page. */
+static char *paged;
+void page_string(struct descriptor_data *d, char *str, int keep_internal)
+{
+  (void)d; (void)keep_internal;
+  free(paged);
+  paged = strdup(str);
+}
+
+/* tstat added snprintf's would-be length, so one long line carried len
+ * past the 48K buffer and the next write went out of bounds. */
+static void tstat_of_a_long_script_stays_in_bounds(void)
+{
+  enum { LINES = 120, WIDTH = 480 };
+  static struct cmdlist_element cl[LINES];
+  static char text[LINES][WIDTH + 1];
+  static trig_data proto;
+  static struct index_data index;
+  static struct index_data *indexes[1] = { &index };
+  static char_data imm;
+  static struct player_special_data imm_specials;
+  char arg[] = "4242";
+  int i;
+
+  memset(&proto, 0, sizeof(proto));
+  memset(&imm, 0, sizeof(imm));
+  memset(&imm_specials, 0, sizeof(imm_specials));
+  imm.player_specials = &imm_specials;      /* colour preferences */
+  for (i = 0; i < LINES; i++) {
+    memset(text[i], 'c', WIDTH);
+    text[i][WIDTH] = '\0';
+    cl[i].cmd = text[i];
+    cl[i].next = i + 1 < LINES ? &cl[i + 1] : NULL;
+  }
+  proto.name = "long script";
+  proto.cmdlist = cl;
+  index.vnum = 4242;
+  index.proto = &proto;
+  trig_index = indexes;
+  top_of_trigt = 1;
+
+  do_tstat(&imm, arg, 0, 0);
+
+  TEST_ASSERT_NOT_NULL(paged);
+  TEST_ASSERT_TRUE(strlen(paged) < MAX_STRING_LENGTH);
+  TEST_ASSERT_NOT_NULL(strstr(paged, "*** Overflow - script too long! ***"));
+  free(paged);
+  paged = NULL;
+  trig_index = NULL;
+  top_of_trigt = 0;
+}
+
 static void restore_round_trips_neutralize(void)
 {
   char text[] = "50% off, 100%% sure";
@@ -661,5 +713,6 @@ int main(void)
   RUN_TEST(switch_with_unclosed_nested_while_ends_the_script);
   RUN_TEST(switch_still_selects_its_case);
   RUN_TEST(add_var_accepts_its_own_value);
+  RUN_TEST(tstat_of_a_long_script_stays_in_bounds);
   return UNITY_END();
 }

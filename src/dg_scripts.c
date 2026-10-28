@@ -754,11 +754,36 @@ static EVENTFUNC(trig_wait_event)
   return 0;
 }
 
+/* Appends formatted text to sb (size bytes) at *len, never past its end.
+ * Returns FALSE, leaving sb terminated at the end, once the text does not
+ * fit; snprintf's would-be length used to carry len past the buffer. */
+static int stat_appendf(char *sb, size_t size, size_t *len, const char *fmt, ...)
+  __attribute__ ((format (printf, 4, 5)));
+static int stat_appendf(char *sb, size_t size, size_t *len, const char *fmt, ...)
+{
+  va_list args;
+  int n;
+
+  if (*len >= size)
+    return FALSE;
+  va_start(args, fmt);
+  n = vsnprintf(sb + *len, size - *len, fmt, args);
+  va_end(args);
+  if (n < 0 || (size_t)n >= size - *len) {
+    *len = size - 1;
+    return FALSE;
+  }
+  *len += (size_t)n;
+  return TRUE;
+}
+
 static void do_stat_trigger(struct char_data *ch, trig_data *trig)
 {
     struct cmdlist_element *cmd_list;
     char sb[MAX_STRING_LENGTH], buf[MAX_STRING_LENGTH];
-    int len = 0;
+    size_t len = 0;
+    /* Everything but the last 80 bytes; those hold the overflow notice. */
+    const size_t limit = sizeof(sb) - 80;
 
     if (!trig)
     {
@@ -766,35 +791,33 @@ static void do_stat_trigger(struct char_data *ch, trig_data *trig)
         return;
     }
 
-    len += snprintf(sb, sizeof(sb), "Name: '%s%s%s',  VNum: [%s%5d%s], RNum: [%5d]\r\n",
+    stat_appendf(sb, limit, &len, "Name: '%s%s%s',  VNum: [%s%5d%s], RNum: [%5d]\r\n",
               CCYEL(ch, C_NRM), GET_TRIG_NAME(trig), CCNRM(ch, C_NRM),
               CCGRN(ch, C_NRM), GET_TRIG_VNUM(trig), CCNRM(ch, C_NRM),
               GET_TRIG_RNUM(trig));
 
     if (trig->attach_type==OBJ_TRIGGER) {
-      len += snprintf(sb + len, sizeof(sb)-len, "Trigger Intended Assignment: Objects\r\n");
+      stat_appendf(sb, limit, &len, "Trigger Intended Assignment: Objects\r\n");
       sprintbit(GET_TRIG_TYPE(trig), otrig_types, buf, sizeof(buf));
     } else if (trig->attach_type==WLD_TRIGGER) {
-      len += snprintf(sb + len, sizeof(sb)-len, "Trigger Intended Assignment: Rooms\r\n");
+      stat_appendf(sb, limit, &len, "Trigger Intended Assignment: Rooms\r\n");
       sprintbit(GET_TRIG_TYPE(trig), wtrig_types, buf, sizeof(buf));
     } else {
-      len += snprintf(sb + len, sizeof(sb)-len, "Trigger Intended Assignment: Mobiles\r\n");
+      stat_appendf(sb, limit, &len, "Trigger Intended Assignment: Mobiles\r\n");
       sprintbit(GET_TRIG_TYPE(trig), trig_types, buf, sizeof(buf));
     }
 
-    len += snprintf(sb + len, sizeof(sb)-len, "Trigger Type: %s, Numeric Arg: %d, Arg list: %s\r\n",
+    stat_appendf(sb, limit, &len, "Trigger Type: %s, Numeric Arg: %d, Arg list: %s\r\n",
                      buf, GET_TRIG_NARG(trig),
                     ((GET_TRIG_ARG(trig) && *GET_TRIG_ARG(trig))
                      ? GET_TRIG_ARG(trig) : "None"));
 
-    len += snprintf(sb + len, sizeof(sb)-len, "Commands:\r\n");
+    stat_appendf(sb, limit, &len, "Commands:\r\n");
 
     cmd_list = trig->cmdlist;
     while (cmd_list) {
-      if (cmd_list->cmd)
-        len += snprintf(sb + len, sizeof(sb)-len, "%s\r\n", cmd_list->cmd);
-
-      if (len>MAX_STRING_LENGTH-80) {
+      if (cmd_list->cmd &&
+          !stat_appendf(sb, limit, &len, "%s\r\n", cmd_list->cmd)) {
         tb_snprintf(sb + len, sizeof(sb)-len, "*** Overflow - script too long! ***\r\n");
         break;
       }
