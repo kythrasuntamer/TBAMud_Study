@@ -153,9 +153,22 @@ class FormattingAndBoundsContracts(unittest.TestCase):
         self.assertIn("static int objsave_parse_int_fields(", src)
         self.assertIn("static int objsave_parse_rent_header(", src)
         self.assertIn("errno == ERANGE", src)
-        self.assertEqual(src.count("objsave_parse_rent_header(line,"), 3)
+        # Every reader of a rent-file header validates all six fields.  The
+        # count was 3 with Crash_delete_crashfile() parsing the rent code
+        # alone; 71912f2e made it read the full header (a truncated header
+        # must not pass), so the old count and the one-field parse it pinned
+        # were stale, not the code.
+        for start, end in (("int Crash_delete_crashfile(", "int Crash_clean_file("),
+                           ("int Crash_clean_file(", "void update_obj_file("),
+                           ("void Crash_listrent(", "int Crash_load("),
+                           ("static int Crash_load_objs(struct char_data *ch) {", None)):
+            body = src[src.index(start):]
+            if end:
+                body = body[:body.index(end)]
+            self.assertEqual(body.count("objsave_parse_rent_header(line,"), 1, start)
+        self.assertEqual(src.count("objsave_parse_rent_header(line,"), 4)
         self.assertNotIn('sscanf(line, "%d %d %d %d %d %d"', src)
-        self.assertIn("if (!objsave_parse_int_fields(line, &rentcode, 1))", src)
+        self.assertNotIn("objsave_parse_int_fields(line, &rentcode, 1)", src)
 
     def test_db_zone_and_help_numeric_parsers(self):
         db = (ROOT / "src" / "db.c").read_text(encoding="utf-8")

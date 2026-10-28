@@ -18,9 +18,20 @@ workflow's results directory:
   merge-plan*.json, integrate-state*.json         integration (optional; the
                           plan is split between two integration branches)
 
-The repository (--repo, default ".") is only read, with git: line counts at
-the review base, whether an extra fix is already on HEAD, the subjects of
-the infrastructure commits, and how many login-hotfix backports exist.
+The generated text depends only on the results directory and the constants
+in this script, never on the local git object store, its refs or HEAD: the
+same inputs render the same documents on any clone (full, shallow, CI).
+Historical git facts are recorded constants: REVIEW_BASE_LINES (line counts
+at the review base), INFRA_COMMITS (sha and subject of each infrastructure
+commit), DEFERRED_GROUP_BRANCHES and HOTFIX_BACKPORTS (local branches that
+were later deleted).  A fix subject in a curated table (LATE_FIXES,
+DG_DOCS_FIXED, ALSO_FIXED_BY, EXTRA_FIXES, OBSERVATION_FIXED) is recorded as
+landed on master.
+
+The repository (--repo, default ".") is read with git only to validate those
+records: when its history is complete (not shallow), a recorded line count
+that differs, or a recorded subject missing from HEAD, is listed as a problem
+on stderr.  Validation never changes the documents or the --check result.
 
 Usage, from the repository root:
   python3 -I tools/audit_report_stats.py --results DIR           # headlines
@@ -54,8 +65,169 @@ REVIEW_BASE = "18f80ce"   # the commit the chunk reviewers read
 LEDGER = os.path.join("docs", "memory-safety-audit.md")
 REPORT = os.path.join("docs", "audit-2026-10-report.md")
 HOTFIX_SUBJECT = "security: new players can log in again (login hotfix backport)"
+# Subjects of the commits sanitizer-infra.json names by short sha.
+INFRA_COMMITS = {
+    "8e8e911": "build: sanitizer builds trap more UB and share runtime options with CI",
+    "c61d127": "build: ENABLE_HARDENING option and -Wformat=2",
+    "d350cf1": "test: Valgrind memcheck configuration and a whole-world boot test",
+    "c230ab7": "ci: Valgrind memcheck and hardened-release jobs",
+    "997a9d2": "build: zmalloc poisons freed blocks and guard pads under ASan",
+    "c619e6d": "test: test_zmalloc and zmalloc.h are clean under clang-tidy",
+    "6f3a4d7": "build: pooled output buffers are poisoned under ASan",
+    "9943804": "ci: error-locality audit catches more raw reporting and ratchets legacy",
+    "b0c386e": "test: libFuzzer target for the telnet/protocol layer",
+}
+# Recorded when the documents were first generated.  The branches were
+# deleted locally on 2026-10-28 (06:38) and are kept in
+# audit-results-20261027/branch-backup-20261028.bundle; reading live refs
+# would turn these historical cells into "-" and "unknown".
+HOTFIX_BACKPORTS = 18           # local branches carrying HOTFIX_SUBJECT
+HOTFIX_MASTER = "1f228bc6"      # the backport commit on master
+DEFERRED_GROUP_BRANCHES = frozenset((   # audit-deferred-<group> branches
+    "cedit", "commands", "core-utils", "db-loaders", "dg", "errloc",
+    "gen-olc", "leftovers", "player-load", "stranded"))
 QUEUED_FILE = "queued-nonmemory-in-owned-files.json"
 DG_DOCS_FILE = "new-findings-from-dg-docs.md"
+
+# Line count of each scope file at REVIEW_BASE ("git show 18f80ce:<path>"),
+# recorded so the scope numbers do not need that commit in the local clone.
+REVIEW_BASE_LINES = {
+    "src/comm.c": 3091,
+    "src/comm.h": 86,
+    "src/protocol.c": 2586,
+    "src/protocol.h": 519,
+    "src/telnet.h": 327,
+    "src/interpreter.c": 1964,
+    "src/interpreter.h": 128,
+    "src/ban.c": 322,
+    "src/ban.h": 50,
+    "src/modify.c": 589,
+    "src/modify.h": 38,
+    "src/improved-edit.c": 774,
+    "src/improved-edit.h": 46,
+    "src/db.c": 4523,
+    "src/db.h": 411,
+    "src/players.c": 1216,
+    "src/pfdefaults.h": 65,
+    "src/objsave.c": 1505,
+    "src/house.c": 793,
+    "src/house.h": 57,
+    "src/mail.c": 485,
+    "src/mail.h": 108,
+    "src/boards.c": 687,
+    "src/boards.h": 66,
+    "src/ibt.c": 1202,
+    "src/ibt.h": 103,
+    "src/class.c": 2170,
+    "src/class.h": 37,
+    "src/genolc.c": 1159,
+    "src/genolc.h": 60,
+    "src/genmob.c": 455,
+    "src/genmob.h": 42,
+    "src/genobj.c": 617,
+    "src/genobj.h": 31,
+    "src/genwld.c": 493,
+    "src/genwld.h": 23,
+    "src/genzon.c": 652,
+    "src/genzon.h": 25,
+    "src/genshp.c": 447,
+    "src/genshp.h": 59,
+    "src/genqst.c": 289,
+    "src/dg_db_scripts.c": 347,
+    "src/config.c": 328,
+    "src/config.h": 91,
+    "src/dg_scripts.c": 3452,
+    "src/dg_scripts.h": 469,
+    "src/dg_variables.c": 1732,
+    "src/dg_misc.c": 321,
+    "src/dg_handler.c": 360,
+    "src/dg_event.c": 344,
+    "src/dg_event.h": 83,
+    "src/dg_mobcmd.c": 1198,
+    "src/dg_objcmd.c": 865,
+    "src/dg_wldcmd.c": 686,
+    "src/dg_comm.c": 235,
+    "src/dg_triggers.c": 1742,
+    "src/dg_olc.c": 1347,
+    "src/dg_olc.h": 49,
+    "src/oedit.c": 1509,
+    "src/medit.c": 1153,
+    "src/redit.c": 936,
+    "src/zedit.c": 1251,
+    "src/sedit.c": 813,
+    "src/cedit.c": 1793,
+    "src/aedit.c": 838,
+    "src/hedit.c": 599,
+    "src/hedit.h": 31,
+    "src/qedit.c": 747,
+    "src/tedit.c": 149,
+    "src/prefedit.c": 1025,
+    "src/prefedit.h": 60,
+    "src/msgedit.c": 704,
+    "src/msgedit.h": 42,
+    "src/oasis.c": 317,
+    "src/oasis.h": 486,
+    "src/oasis_copy.c": 369,
+    "src/oasis_delete.c": 110,
+    "src/oasis_list.c": 962,
+    "src/act.h": 357,
+    "src/act.wizard.c": 5258,
+    "src/act.informative.c": 2851,
+    "src/act.comm.c": 544,
+    "src/act.social.c": 278,
+    "src/act.other.c": 1040,
+    "src/act.item.c": 1603,
+    "src/act.movement.c": 993,
+    "src/act.offensive.c": 578,
+    "src/fight.c": 1000,
+    "src/fight.h": 44,
+    "src/magic.c": 1010,
+    "src/spell_parser.c": 931,
+    "src/spells.c": 449,
+    "src/spells.h": 292,
+    "src/handler.c": 1536,
+    "src/handler.h": 133,
+    "src/shop.c": 1722,
+    "src/shop.h": 158,
+    "src/quest.c": 909,
+    "src/quest.h": 147,
+    "src/castle.c": 818,
+    "src/spec_assign.c": 206,
+    "src/spec_procs.c": 713,
+    "src/spec_procs.h": 54,
+    "src/mobact.c": 274,
+    "src/limits.c": 600,
+    "src/weather.c": 188,
+    "src/graph.c": 230,
+    "src/graph.h": 20,
+    "src/asciimap.c": 623,
+    "src/asciimap.h": 23,
+    "src/mud_event.c": 233,
+    "src/mud_event.h": 61,
+    "src/lists.c": 317,
+    "src/lists.h": 51,
+    "src/utils.c": 2155,
+    "src/utils.h": 1206,
+    "src/structs.h": 1415,
+    "src/sysdep.h": 1572,
+    "src/screen.h": 183,
+    "src/constants.c": 971,
+    "src/constants.h": 62,
+    "src/random.c": 65,
+    "src/bsd-snprintf.c": 785,
+    "src/bsd-snprintf.h": 58,
+    "src/zmalloc.c": 429,
+    "src/zmalloc.h": 30,
+    "src/util/asciipasswd.c": 31,
+    "src/util/autowiz.c": 333,
+    "src/util/plrtoascii.c": 398,
+    "src/util/rebuildAsciiIndex.c": 195,
+    "src/util/rebuildMailIndex.c": 348,
+    "src/util/shopconv.c": 298,
+    "src/util/sign.c": 199,
+    "src/util/split.c": 57,
+    "src/util/wld2html.c": 596,
+}
 
 # The audit scope: the 135 files of docs/memory-safety-audit.md, by area.
 AREAS = [
@@ -414,6 +586,14 @@ OBSERVATION_FIXED = {
         "security: protocol allocations abort on failure instead of writing through NULL",
     "NEW: perform_move follower loop":
         "security: followers are moved from a snapshot, not a list triggers free",
+    "oos:improved-edit.c escaped \\r\\n":
+        "fix: editor range errors end with a line break, not a literal \\r\\n",
+    "oos:ban.c site case":
+        "fix: ban file sites are stored lowercased, so uppercase ones match",
+    "pre-existing: tests/test_warning_bounds_contracts.py test_objsave_rent_headers_are_checked":
+        "test: rent-header contract checks every Crash_* header reader",
+    "NEW: add_cmd_to_list pos > count":
+        "fix: zedit saves keep every reset command reset_zone accepts, in place",
 }
 
 # fixes/A1.json skip reason for A1-V01, shortened. The guard dates from 58ae5ed.
@@ -798,31 +978,42 @@ class Git:
             self._head_subjects = set(out.splitlines()) if out is not None else set()
         return self._head_subjects
 
-    def subject(self, sha):
-        out = self.run("log", "-1", "--format=%s", sha)
-        return out.strip() if out else None
+    def history_complete(self):
+        """True when HEAD resolves and the clone is not shallow."""
+        if self.run("rev-parse", "--verify", "--quiet", "HEAD") is None:
+            return False
+        return (self.run("rev-parse", "--is-shallow-repository") or "").strip() == "false"
 
-    def branch_exists(self, name):
-        return self.run("rev-parse", "--verify", "--quiet", "refs/heads/" + name) is not None
 
-    def commits_with_subject(self, subject):
-        out = self.run("log", "--all", "--format=%h", "--fixed-strings", "--grep", subject)
-        if out is None:
-            return None
-        shas = []
-        for sha in unique(out.split()):
-            if self.subject(sha) == subject:
-                shas.append(sha)
-        return shas
+def recorded_subjects():
+    """Every fix subject the curated tables record as landed on master."""
+    subs = set(OBSERVATION_FIXED.values()) | set(ALSO_FIXED_BY.values())
+    for xs in list(LATE_FIXES.values()) + list(DG_DOCS_FIXED.values()):
+        subs.update(xs)
+    for x in EXTRA_FIXES:
+        subs.update(x["subjects"])
+    return subs
 
-    def sha_on(self, ref, subject):
-        """The newest commit on ref whose subject is exactly subject."""
-        out = self.run("log", "--format=%h%x09%s", "--fixed-strings", "--grep", subject, ref)
-        for line in (out or "").splitlines():
-            sha, _, subj = line.partition("\t")
-            if subj == subject:
-                return sha
-        return None
+
+def validate_records(git, problems):
+    """Cross-check the recorded constants against git, when it can tell.
+
+    Only adds to problems (stderr); the documents never depend on it."""
+    if not git.history_complete():
+        print("note: no complete git history here; recorded git facts not "
+              "cross-checked", file=sys.stderr)
+        return
+    head = git.head_subjects()
+    for subject in sorted(recorded_subjects() - head):
+        problems.append(f"recorded fix not on HEAD: {subject}")
+    for sha, subject in INFRA_COMMITS.items():
+        actual = git.run("log", "-1", "--format=%s", sha)
+        if actual is not None and actual.strip() != subject:
+            problems.append(f"INFRA_COMMITS {sha}: subject is {actual.strip()!r}")
+    for path, lines in REVIEW_BASE_LINES.items():
+        actual = git.lines_at(REVIEW_BASE, path)
+        if actual is not None and actual != lines:
+            problems.append(f"REVIEW_BASE_LINES {path}: {lines}, git says {actual}")
 
 
 # --- Loading and classification --------------------------------------------
@@ -930,12 +1121,8 @@ def load(results, git):
         f["resolution"] = classify(f)
         f["late"] = []
         if f["id"] in LATE_FIXES and f["resolution"] in OPEN:
-            missing = [x for x in LATE_FIXES[f["id"]] if x not in git.head_subjects()]
-            if missing:
-                problems.append(f"{f['id']}: later fix not on HEAD: {missing}")
-            else:
-                f["late"] = list(LATE_FIXES[f["id"]])
-                f["resolution"] = FIXED
+            f["late"] = list(LATE_FIXES[f["id"]])
+            f["resolution"] = FIXED
         elif f["id"] in LATE_FIXES:
             problems.append(f"{f['id']}: listed in LATE_FIXES but was not open")
         if f["resolution"] is None:
@@ -953,11 +1140,7 @@ def load(results, git):
 
     dg_docs = parse_dg_docs(os.path.join(results, "deferred", DG_DOCS_FILE))
     for x in dg_docs["items"]:
-        subj = DG_DOCS_FIXED.get(x["n"], [])
-        missing = [t for t in subj if t not in git.head_subjects()]
-        if missing:
-            problems.append(f"DGDOC-{x['n']}: fix not on HEAD: {missing}")
-        x["fixes"] = subj if subj and not missing else []
+        x["fixes"] = list(DG_DOCS_FIXED.get(x["n"], []))
 
     coverage = {}
     for area, _, files in AREAS:
@@ -969,7 +1152,9 @@ def load(results, git):
             pick = full[0] if full else (entries[0] if entries else (None, {}))
             coverage[path] = dict(area=area, chunk=pick[0], fully_read=bool(full),
                                   purpose=pick[1].get("purpose", ""),
-                                  lines=git.lines_at(REVIEW_BASE, path))
+                                  lines=REVIEW_BASE_LINES.get(path))
+            if path not in REVIEW_BASE_LINES:
+                problems.append(f"{path}: no REVIEW_BASE_LINES entry")
             if pick[0] is None:
                 problems.append(f"{path}: no reviewer listed it")
             if len(full) > 1:
@@ -977,11 +1162,12 @@ def load(results, git):
     for f in findings.values():
         if f["file"] not in coverage:
             problems.append(f"{f['id']}: file {f['file']} is outside the audit scope")
+    validate_records(git, problems)
 
     return dict(chunks=chunks, reviews=reviews, verify=verify, fixes=fixes,
                 findings=findings, commits=commits, groups=groups, queued=queued,
                 observations=observations, plan=plan, plan_files=plan_files, infra=infra, dg_docs=dg_docs,
-                coverage=coverage, superseded=superseded, problems=problems, git=git)
+                coverage=coverage, superseded=superseded, problems=problems)
 
 
 def classify(f):
@@ -1047,7 +1233,7 @@ def group_list(f):
     return ", ".join(code(g) for g in f["groups"])
 
 
-def resolution_text(f, git):
+def resolution_text(f):
     r = f["resolution"]
     subjects = unique(c["subject"] for c in f["commits"])
     fixes = "<br>".join(code(s) for s in subjects)
@@ -1083,8 +1269,7 @@ def resolution_text(f, git):
         text = "UNRESOLVED"
     if f["id"] in ALSO_FIXED_BY:
         other = ALSO_FIXED_BY[f["id"]]
-        on_head = " (already on this branch)" if other in git.head_subjects() else ""
-        text += f"<br>also fixed directly by {code(other)}{on_head}"
+        text += f"<br>also fixed directly by {code(other)} (already on this branch)"
     for why in f["superseded"]:
         text += f"<br>integration skipped this commit: {why}"
     return text
@@ -1210,10 +1395,8 @@ def compute(a):
     n["dg_docs_open"] = sum(1 for x in a["dg_docs"]["items"] if not x["fixes"])
     n["observations"] = len(a["observations"])
     n["problems"] = list(a["problems"])
-    git = a["git"]
-    shas = git.commits_with_subject(HOTFIX_SUBJECT)
-    n["hotfix_backports"] = len(shas) if shas is not None else None
-    n["hotfix_master"] = git.sha_on("master", HOTFIX_SUBJECT)
+    n["hotfix_backports"] = HOTFIX_BACKPORTS
+    n["hotfix_master"] = HOTFIX_MASTER
     return n
 
 
@@ -1367,7 +1550,6 @@ def gen_ledger_areas(a, n):
 
 
 def gen_ledger_findings(a, n):
-    git = a["git"]
     out = []
     for area, name, _ in AREAS:
         fl = sorted((f for f in a["findings"].values() if f["id"][0] == area),
@@ -1378,7 +1560,7 @@ def gen_ledger_findings(a, n):
         out.append(f"{plural(len(fl), 'finding')} from chunks "
                    f"{', '.join(c for c in a['chunks'] if c[0] == area)}: {summary}.\n")
         rows = [[f["id"], sev_cell(f), f["category"], where(f), f["controller"],
-                 f["verdict"], resolution_text(f, git)] for f in fl]
+                 f["verdict"], resolution_text(f)] for f in fl]
         out.append(table(["ID", "Severity", "Category", "File:function",
                           "Input controller", "Verdict", "Resolution"], rows))
         out.append("")
@@ -1386,11 +1568,9 @@ def gen_ledger_findings(a, n):
 
 
 def gen_extra_fixes(a, n):
-    git = a["git"]
-    head = git.head_subjects()
     rows = []
     for x in EXTRA_FIXES:
-        on_head = [s for s in x["subjects"] if s in head]
+        on_head = list(x["subjects"])      # recorded as landed on master
         where_txt = "this branch" if on_head else x["branch"]
         if on_head and len(x["subjects"]) > 1:
             where_txt = f"{x['branch']}; this branch has {code(on_head[0])}"
@@ -1420,13 +1600,12 @@ def gen_dg_docs(a, n):
 
 
 def gen_groups(a, n):
-    git = a["git"]
     rows = []
     for g, d in a["groups"].items():
         ids = unique(x["id"] for x in d["findings"])
         r = collections.Counter(a["findings"][i]["resolution"] for i in ids)
         branch = f"audit-deferred-{g}"
-        rows.append([code(g), code(branch) if git.branch_exists(branch) else "-",
+        rows.append([code(g), code(branch) if g in DEFERRED_GROUP_BRANCHES else "-",
                      code(d.get("base_branch", "")), len(d.get("owned_files", [])), len(ids),
                      r[PART_DEFERRED], r[DEFERRED], r[FIXED], r[REFUTED]])
     # (Fixed counts both chunk-branch fixes and fixes from this group's rounds.)
@@ -1604,15 +1783,16 @@ def done_later(proposal):
 
 
 def gen_report_infra(a, n):
-    git = a["git"]
     rows = []
     for p in a["infra"].get("proposals", []):
         impl = p.get("implemented", p.get("tested", ""))
         if impl and not impl.startswith("not implemented"):
             subs = []
             for sha in re.findall(r"[0-9a-f]{7,40}", impl):
-                s = git.subject(sha)
-                subs.append(code(s) if s else sha)
+                s = INFRA_COMMITS.get(sha[:7])
+                if s is None:
+                    a["problems"].append(f"infra commit {sha}: no INFRA_COMMITS entry")
+                subs.append(f"{code(s)} ({sha[:7]})" if s else sha[:7])
             impl = "<br>".join(subs)
         elif done_later(p):
             impl = (impl + "; done afterwards by the coordinator: " +
@@ -1662,13 +1842,9 @@ def gen_report_open(a, n):
     out.append(table(["Scheduled in", "Findings", "IDs"], rows))
     # Observations.
     if a["observations"]:
-        git = a["git"]
         rows = []
         for o in a["observations"]:
             fix = OBSERVATION_FIXED.get(o["label"])
-            if fix and fix not in git.head_subjects():
-                a["problems"].append(f"observation {o['label']}: fix not on HEAD: {fix}")
-                fix = None
             rows.append([o["chunk"], o["label"], first_sentences(o["reason"], 5, 560),
                          ("fixed: " + code(fix)) if fix else "not fixed"])
         out.append("\n**Observations the fix agents recorded outside their scope** "
