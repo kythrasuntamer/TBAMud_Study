@@ -41,10 +41,9 @@ ASPELL(spell_create_water)
      * has no table entry, naming it and the caster (H1-07). */
     if (!VALID_LIQ_TYPE(GET_OBJ_VAL(obj, 2))) {
       TB_ERROR_MSG("magic", "liquid-type-range", "obj",
-                   "obj vnum %d uid %ld liquid %d not in [0,%d) during "
-                   "create water by " DIAG_CHAR_FMT, (int) GET_OBJ_VNUM(obj),
-                   obj_script_id(obj), GET_OBJ_VAL(obj, 2), NUM_LIQ_TYPES,
-                   DIAG_CHAR(ch));
+                   DIAG_OBJ_FMT " liquid %d not in [0,%d) during create "
+                   "water by " DIAG_CHAR_FMT, DIAG_OBJ(obj),
+                   GET_OBJ_VAL(obj, 2), NUM_LIQ_TYPES, DIAG_CHAR(ch));
       act("You can't make out what is in $p.", FALSE, ch, obj, 0, TO_CHAR);
       return;
     }

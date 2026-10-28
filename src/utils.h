@@ -78,6 +78,26 @@ void tb_error_log_at(const char *severity, const char *subsystem,
   (IS_NPC(ch) ? "mob vnum" : "player idnum"), \
   (IS_NPC(ch) ? (long) GET_MOB_VNUM(ch) : (long) GET_IDNUM(ch))
 
+/* Stable identity of an object in diagnostics: its prototype vnum (NOTHING
+ * for a unique object) and its DG UID. Use as a pair, e.g.
+ *   TB_ERROR_MSG(..., DIAG_OBJ_FMT " ...", DIAG_OBJ(obj));
+ * The UID is printed as stored, 0 until a script first asks for one:
+ * DIAG_OBJ never assigns one (obj_script_id() would register the object in
+ * the UID table), so it has no side effects and is safe on prototypes and
+ * during boot. obj must be non-NULL. Evaluates obj several times: pass a
+ * plain variable. */
+#define DIAG_OBJ_FMT "obj vnum %d uid %ld"
+#define DIAG_OBJ(obj) (int) GET_OBJ_VNUM(obj), (long) (obj)->script_id
+
+/* Stable identity of a room in diagnostics: its vnum (-1 when r is not a
+ * valid rnum) and the rnum itself, so a bad index is visible as such. Use
+ * as a pair, e.g.
+ *   TB_ERROR_MSG(..., DIAG_ROOM_FMT " ...", DIAG_ROOM(rnum));
+ * Evaluates r several times: pass a plain variable. */
+#define DIAG_ROOM_FMT "room vnum %d (rnum %d)"
+#define DIAG_ROOM(r) \
+  (VALID_ROOM_RNUM(r) ? (int) world[(r)].number : -1), (int) (r)
+
 /*
  * Persistent-parser context.  A context follows a FILE * while a loader is
  * consuming it so diagnostics can identify the physical line, logical record,
