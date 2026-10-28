@@ -1316,9 +1316,15 @@ obj_save_data *objsave_parse_objects_from(FILE *fl, const char *resource,
     switch(*tag) {
     case 'A':
       if (!strcmp(tag, "ADes")) {
-        char error[40];
-        tb_snprintf(error, sizeof(error)-1, "rent(Ades):%s", temp->name);
-        temp->action_description = fread_string(fl, error);
+        /* fread_string() exit(1)s the server at EOF, so one truncated rent
+         * or house file would take the game down at the owner's login. */
+        char *text;
+        if (fread_string_checked(fl, resource, "ADes", &text))
+          temp->action_description = text;
+        else
+          TB_ERROR_MSG("objsave", "rent-string", resource,
+                       OBJSAVE_REC_FMT "unterminated or oversize ADes; "
+                       "prototype text kept", OBJSAVE_REC_ARGS(GET_OBJ_VNUM(temp)));
       } else if (!strcmp(tag, "Aff ")) {
         if (!objsave_parse_int_fields(line, t, 3)) {
           TB_ERROR_MSG("objsave", "parse-affect", resource,
@@ -1343,8 +1349,20 @@ obj_save_data *objsave_parse_objects_from(FILE *fl, const char *resource,
     case 'E':
       if(!strcmp(tag, "EDes")) {
         struct extra_descr_data *new_desc;
-        char error[40];
-        tb_snprintf(error, sizeof(error)-1, "rent(Edes): %s", temp->name);
+        char *keyword = NULL, *description = NULL;
+
+        /* Read both strings before touching the object: a truncated file
+         * (no closing '~') must neither exit(1) via fread_string() nor
+         * leave half an extra description behind. */
+        if (!fread_string_checked(fl, resource, "EDes keyword", &keyword) ||
+            !fread_string_checked(fl, resource, "EDes description", &description)) {
+          free(keyword);
+          TB_ERROR_MSG("objsave", "rent-string", resource,
+                       OBJSAVE_REC_FMT "unterminated or oversize EDes; "
+                       "extra description dropped",
+                       OBJSAVE_REC_ARGS(GET_OBJ_VNUM(temp)));
+          break;
+        }
         if (temp->item_number != NOTHING && temp->ex_description) {
           obj_rnum proto_rnum = real_object(temp->item_number);
 
@@ -1353,8 +1371,8 @@ obj_save_data *objsave_parse_objects_from(FILE *fl, const char *resource,
             temp->ex_description = NULL;
         }
         CREATE(new_desc, struct extra_descr_data, 1);
-        new_desc->keyword = fread_string(fl, error);
-        new_desc->description = fread_string(fl, error);
+        new_desc->keyword = keyword;
+        new_desc->description = description;
         new_desc->next = temp->ex_description;
         temp->ex_description = new_desc;
       }

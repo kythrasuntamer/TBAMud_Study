@@ -110,6 +110,27 @@ char *fread_string(FILE *fl, const char *error)
 
 void strip_cr(char *buf) { (void)buf; }
 
+/* Contract of players.c fread_string_checked() (tested in
+ * test_players_persist): read up to a line ending in '~'; FALSE at EOF. */
+int fread_string_checked(FILE *fl, const char *resource, const char *field,
+                         char **out)
+{
+  char line[READ_SIZE], buf[MAX_STRING_LENGTH] = "";
+  (void)resource; (void)field;
+  *out = NULL;
+  while (fgets(line, sizeof(line), fl)) {
+    char *tilde = strchr(line, '~');
+    if (tilde) {
+      *tilde = '\0';
+      strlcat(buf, line, sizeof(buf));
+      *out = *buf ? strdup(buf) : NULL;
+      return 1;
+    }
+    strlcat(buf, line, sizeof(buf));
+  }
+  return 0;
+}
+
 obj_rnum real_object(obj_vnum vnum)
 {
   if (vnum == 100)
@@ -596,6 +617,49 @@ static void test_record_diagnostics_name_owner_line_and_vnum(void)
                               "player idnum 4242 object line 3 obj vnum 101: unknown tag Zzzz"));
 }
 
+/* B2-07 follow-up: ADes/EDes went through fread_string(), which exit(1)s
+ * the server at end of file; a rent file truncated inside an extra
+ * description took the game down at its owner's login. */
+static void test_truncated_extra_description_is_dropped_not_fatal(void)
+{
+  char body[256];
+
+  TEST_ASSERT_TRUE(snprintf(body, sizeof(body),
+                            "%d %ld 0 0 0 0\n#101\nEDes:\nkey~\nno terminator\n",
+                            RENT_CRASH, (long)time(0)) > 0);
+  write_rent_file("Tester", body);
+
+  TEST_ASSERT_EQUAL_INT(1, Crash_load(&player));
+
+  TEST_ASSERT_NOT_NULL(player.carrying);
+  TEST_ASSERT_EQUAL_INT(101, GET_OBJ_VNUM(player.carrying));
+  TEST_ASSERT_NULL(player.carrying->ex_description);
+  TEST_ASSERT_EQUAL_STRING("rent-string", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "obj vnum 101"));
+}
+
+/* A terminated extra description is kept. */
+static void test_extra_description_loads(void)
+{
+  char body[256];
+
+  TEST_ASSERT_TRUE(snprintf(body, sizeof(body),
+                            "%d %ld 0 0 0 0\n#101\nEDes:\nkey~\nA fine thing.\n~\n\n$~\n",
+                            RENT_CRASH, (long)time(0)) > 0);
+  write_rent_file("Tester", body);
+
+  TEST_ASSERT_EQUAL_INT(1, Crash_load(&player));
+
+  TEST_ASSERT_NOT_NULL(player.carrying);
+  TEST_ASSERT_NOT_NULL(player.carrying->ex_description);
+  TEST_ASSERT_EQUAL_STRING("key", player.carrying->ex_description->keyword);
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  free(player.carrying->ex_description->keyword);
+  free(player.carrying->ex_description->description);
+  free(player.carrying->ex_description);
+  player.carrying->ex_description = NULL;
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -611,6 +675,8 @@ int main(void)
   RUN_TEST(test_future_rent_timestamp_charges_nothing);
   RUN_TEST(test_rent_paid_from_hand_leaves_bank_alone);
   RUN_TEST(test_record_diagnostics_name_owner_line_and_vnum);
+  RUN_TEST(test_truncated_extra_description_is_dropped_not_fatal);
+  RUN_TEST(test_extra_description_loads);
   (void)rmdir(scratch_dir);
   return UNITY_END();
 }
