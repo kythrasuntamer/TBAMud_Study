@@ -260,6 +260,35 @@ void test_range_errors_end_with_a_real_line_break(void)
   TEST_ASSERT_EQUAL_STRING("one\r\ntwo\r\n", text);
 }
 
+/* help.hlp documents "/d# - deletes line #, or a range #-#". Guard the range
+ * form: deleting inside the buffer, past its end, and a reversed range. */
+void test_delete_range_removes_those_lines(void)
+{
+  char line[32];
+
+  text = strdup("one\r\ntwo\r\nthree\r\nfour\r\n");
+  TEST_ASSERT_NOT_NULL(text);
+  strlcpy(line, "/d2-3", sizeof(line));
+  TEST_ASSERT_EQUAL_INT(STRINGADD_ACTION, improved_editor_execute(&d, line));
+  TEST_ASSERT_EQUAL_STRING("one\r\nfour\r\n", text);
+  TEST_ASSERT_EQUAL_STRING("2 lines deleted.\r\n", output);
+
+  /* A range running past the last line deletes to the end. */
+  output[0] = '\0';
+  strlcpy(line, "/d2-9", sizeof(line));
+  improved_editor_execute(&d, line);
+  TEST_ASSERT_EQUAL_STRING("one\r\n", text);
+  TEST_ASSERT_EQUAL_STRING("1 line deleted.\r\n", output);
+
+  /* A reversed range is refused out loud and changes nothing. */
+  output[0] = '\0';
+  strlcpy(line, "/d3-1", sizeof(line));
+  improved_editor_execute(&d, line);
+  TEST_ASSERT_EQUAL_STRING("one\r\n", text);
+  TEST_ASSERT_EQUAL_STRING("That range is invalid.\r\n", output);
+  TEST_ASSERT_EQUAL_INT(0, captured_errors);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -276,5 +305,6 @@ int main(void)
   RUN_TEST(test_replace_first_only_and_shrink);
   RUN_TEST(test_delete_last_line_then_insert_stays_in_bounds);
   RUN_TEST(test_range_errors_end_with_a_real_line_break);
+  RUN_TEST(test_delete_range_removes_those_lines);
   return UNITY_END();
 }

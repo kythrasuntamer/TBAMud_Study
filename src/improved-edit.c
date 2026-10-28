@@ -182,7 +182,7 @@ void parse_edit_action(int command, char *string, struct descriptor_data *d)
             "Editor command formats: /<letter>\r\n\r\n"
             "/a         -  aborts editor\r\n"
             "/c         -  clears buffer\r\n"
-            "/d#        -  deletes a line #\r\n"
+            "/d#[-#]    -  deletes line #, or lines #-#\r\n"
             "/e# <text> -  changes the line at # with <text>\r\n"
             "/f         -  formats text\r\n"
             "/fi        -  indented formatting of text\r\n"
