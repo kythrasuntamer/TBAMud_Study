@@ -873,15 +873,19 @@ void trigedit_save(struct descriptor_data *d)
     trig_index = new_index;
     top_of_trigt++;
 
-    /* HERE IT HAS TO GO THROUGH AND FIX ALL SCRIPTS/TRIGS OF HIGHER RNUM */
+    /* Every prototype from rnum up moved one slot, so every live trigger
+     * and edit buffer that pointed at rnum or above follows it.  The new
+     * trigger's own buffer (d) already names rnum, and buffers for unsaved
+     * triggers (NOTHING) point nowhere. */
     for (live_trig = trigger_list; live_trig; live_trig = live_trig->next_in_world)
-      GET_TRIG_RNUM(live_trig) += (GET_TRIG_RNUM(live_trig) != NOTHING && GET_TRIG_RNUM(live_trig) > rnum);
+      if (GET_TRIG_RNUM(live_trig) != NOTHING && GET_TRIG_RNUM(live_trig) >= rnum)
+        GET_TRIG_RNUM(live_trig)++;
 
-    /* Update other trigs being edited. */
-     for (dsc = descriptor_list; dsc; dsc = dsc->next)
-       if (STATE(dsc) == CON_TRIGEDIT)
-         if (GET_TRIG_RNUM(OLC_TRIG(dsc)) >= rnum)
-           GET_TRIG_RNUM(OLC_TRIG(dsc))++;
+    for (dsc = descriptor_list; dsc; dsc = dsc->next)
+      if (dsc != d && STATE(dsc) == CON_TRIGEDIT &&
+          GET_TRIG_RNUM(OLC_TRIG(dsc)) != NOTHING &&
+          GET_TRIG_RNUM(OLC_TRIG(dsc)) >= rnum)
+        GET_TRIG_RNUM(OLC_TRIG(dsc))++;
 
   }
 
