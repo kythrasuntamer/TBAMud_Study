@@ -1406,11 +1406,22 @@ static int read_type_list(FILE *shop_f, struct shop_buy_data *list,
     ptr = buf;
     if (num == -1) {
       char *endptr;
-      long parsed = strtol(buf, &endptr, 10);
+      long parsed;
 
+      errno = 0;
+      parsed = strtol(buf, &endptr, 10);
       if (endptr == buf) {
         num = -1;
         ptr = END_OF(buf);
+      } else if (errno == ERANGE || parsed < INT_MIN || parsed > INT_MAX) {
+        /* (int)parsed would wrap into another number, perhaps a valid type
+         * (4294967301 became 5). The shop file is the only source here
+         * (sedit offers valid types): drop the entry and keep reading. */
+        TB_ERROR_MSG("shop", "buytype-range", "shop file",
+                     "shop #%d buy type %ld does not fit an int; dropped",
+                     (int) SHOP_NUM(top_shop), parsed);
+        num = 0;	/* not the "-1" end marker: read the next line */
+        continue;
       } else {
         num = (int)parsed;
         ptr = endptr;

@@ -264,6 +264,30 @@ static void test_act_escape_truncates_on_pair_boundary(void)
   TEST_ASSERT_EQUAL_STRING("ab", out);
 }
 
+/* A buy type that does not fit an int was cast with (int): 4294967301
+ * became type 5 (weapon) and -4294967296 type 0, without a word. Both are
+ * now dropped and reported, and the entry after them is kept. */
+static void test_read_type_list_drops_type_past_int(void)
+{
+  static char data[] = "4294967301 sword;\n-4294967296;\n9 armor;\n-1\n";
+  struct shop_buy_data list[MAX_TRADE + 1];
+  FILE *f = fmemopen(data, strlen(data), "r");
+  int len;
+
+  TEST_ASSERT_NOT_NULL(f);
+  len = read_type_list(f, list, TRUE, MAX_TRADE);
+  TEST_ASSERT_EQUAL_INT(0, fclose(f));
+  TEST_ASSERT_EQUAL_INT(2, len); /* type 9 plus the NOTHING terminator */
+  TEST_ASSERT_EQUAL_INT(9, BUY_TYPE(list[0]));
+  TEST_ASSERT_EQUAL_STRING("armor", BUY_WORD(list[0]));
+  TEST_ASSERT_EQUAL_INT(NOTHING, BUY_TYPE(list[1]));
+  TEST_ASSERT_EQUAL_INT(2, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("buytype-range", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "shop #3010 buy type"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "does not fit an int"));
+  free(BUY_WORD(list[0]));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -279,5 +303,6 @@ int main(void)
   RUN_TEST(test_buyword_deep_parens_rejected);
   RUN_TEST(test_buyword_many_operands_rejected);
   RUN_TEST(test_buyword_simple_matches);
+  RUN_TEST(test_read_type_list_drops_type_past_int);
   return UNITY_END();
 }
