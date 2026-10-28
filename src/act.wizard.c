@@ -2761,10 +2761,14 @@ ACMD(do_wizutil)
       }
       break;
     default:
-      log("SYSERR: Unknown subcmd %d passed to do_wizutil (%s)", subcmd, __FILE__);
-      /*  SYSERR_DESC: This is the same as the unhandled case in do_gen_ps(),
-       *  but this function handles 'reroll', 'pardon', 'freeze', etc. */
-      break;
+      /* Invariant: subcmd comes from the command table (interpreter.c),
+       * which only passes SCMD_REROLL..SCMD_UNAFFECT here. Nothing was
+       * changed, so do not save. */
+      TB_ERROR_MSG("act", "wizutil-subcmd", "subcmd",
+                   "subcmd %d caller " DIAG_CHAR_FMT " target player idnum %ld",
+                   subcmd, DIAG_CHAR(ch), GET_IDNUM(vict));
+      send_to_char(ch, "That command is miswired; it has been logged.\r\n");
+      return;
     }
     save_char(vict);
   }

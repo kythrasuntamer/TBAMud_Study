@@ -1197,6 +1197,20 @@ static void test_set_level_demotion_drops_disallowed_snoop(void)
   in_game_char = NULL;
 }
 
+/* G1-30: an unknown wizutil subcmd was logged with plain log() (no
+ * target identity) and the victim was saved anyway. */
+static void test_wizutil_unknown_subcmd_is_reported_without_save(void)
+{
+  char arg[] = "bobby";
+  make_player();
+  do_wizutil(&imm, arg, 0, 99);
+  TEST_ASSERT_EQUAL_STRING("wizutil-subcmd", captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(captured_detail, "subcmd 99"));
+  TEST_ASSERT_NOT_NULL(strstr(captured_detail, "player idnum 77"));
+  TEST_ASSERT_EQUAL_INT(0, save_char_calls);
+  in_game_char = NULL;
+}
+
 int main(void)
 {
   /* basic_mud_log()/mudlog() are the real utils.c ones; keep them quiet. */
@@ -1233,6 +1247,7 @@ int main(void)
   RUN_TEST(test_idnum1_level_restore_is_logged);
   RUN_TEST(test_zpurge_all_below_god_is_refused);
   RUN_TEST(test_set_level_demotion_drops_disallowed_snoop);
+  RUN_TEST(test_wizutil_unknown_subcmd_is_reported_without_save);
   {
     int failures = UNITY_END();
     if (logfile)
