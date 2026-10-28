@@ -342,6 +342,80 @@ void test_add_follower_twice_reports_and_keeps_one_node(void)
   free_player(c);
 }
 
+/* =====================================================================
+ * I1-04: get_line consumes whole physical lines and reports overlong ones.
+ * ===================================================================== */
+
+static FILE *file_with(const char *text)
+{
+  FILE *fp = tmpfile();
+
+  TEST_ASSERT_NOT_NULL(fp);
+  TEST_ASSERT_TRUE(fputs(text, fp) >= 0);
+  TEST_ASSERT_EQUAL_INT(0, fseek(fp, 0L, SEEK_SET));
+  return fp;
+}
+
+void test_get_line_long_line_tail_is_discarded_and_reported(void)
+{
+  char line[400], text[512], buf[READ_SIZE];
+  FILE *fp;
+
+  /* A zone reset line whose comment carries a 300-byte mob short desc. */
+  memset(line, 'a', sizeof(line));
+  memcpy(line, "M 0 3001 1 3001 \t(", 18);
+  line[320] = '\0';
+  (void)snprintf(text, sizeof(text), "%s\nS\n", line);
+  fp = file_with(text);
+  tb_parse_context_begin(fp, "test.zon", "zone");
+
+  TEST_ASSERT_EQUAL_INT(1, get_line(fp, buf));
+  TEST_ASSERT_EQUAL_INT('M', buf[0]);
+  TEST_ASSERT_EQUAL_INT(READ_SIZE - 1, (int)strlen(buf));
+  TEST_ASSERT_EQUAL_INT(1, get_line(fp, buf));
+  TEST_ASSERT_EQUAL_STRING("S", buf);   /* not the tail of the M line */
+  TEST_ASSERT_EQUAL_INT(1, count_op("line-too-long"));
+  TEST_ASSERT_NOT_NULL(strstr(log_text(), "test.zon"));
+  TEST_ASSERT_NOT_NULL(strstr(log_text(), "65 tail bytes"));
+
+  tb_parse_context_end(fp);
+  TEST_ASSERT_EQUAL_INT(0, fclose(fp));
+}
+
+void test_get_line_exact_fit_line_is_silent(void)
+{
+  char line[READ_SIZE + 8], buf[READ_SIZE];
+  FILE *fp;
+
+  /* 255 bytes plus CRLF: fills the buffer, nothing is lost. */
+  memset(line, 'b', READ_SIZE - 1);
+  memcpy(line + READ_SIZE - 1, "\r\nS\n", 5);
+  fp = file_with(line);
+
+  TEST_ASSERT_EQUAL_INT(1, get_line(fp, buf));
+  TEST_ASSERT_EQUAL_INT(READ_SIZE - 1, (int)strlen(buf));
+  TEST_ASSERT_EQUAL_INT(1, get_line(fp, buf));
+  TEST_ASSERT_EQUAL_STRING("S", buf);
+  TEST_ASSERT_EQUAL_INT(0, count_records());
+  TEST_ASSERT_EQUAL_INT(0, fclose(fp));
+}
+
+void test_get_line_long_comment_is_skipped_silently(void)
+{
+  char text[700], buf[READ_SIZE];
+  FILE *fp;
+
+  memset(text, 'c', 600);
+  text[0] = '*';
+  memcpy(text + 600, "\nS\n", 4);
+  fp = file_with(text);
+
+  TEST_ASSERT_EQUAL_INT(2, get_line(fp, buf));
+  TEST_ASSERT_EQUAL_STRING("S", buf);
+  TEST_ASSERT_EQUAL_INT(0, count_records());
+  TEST_ASSERT_EQUAL_INT(0, fclose(fp));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -353,5 +427,8 @@ int main(void)
   RUN_TEST(test_stop_follower_missing_node_reports_and_clears_master);
   RUN_TEST(test_stop_follower_without_master_reports);
   RUN_TEST(test_add_follower_twice_reports_and_keeps_one_node);
+  RUN_TEST(test_get_line_long_line_tail_is_discarded_and_reported);
+  RUN_TEST(test_get_line_exact_fit_line_is_silent);
+  RUN_TEST(test_get_line_long_comment_is_skipped_silently);
   return UNITY_END();
 }

@@ -1252,6 +1252,39 @@ void add_follower(struct char_data *ch, struct char_data *leader)
   act("$n starts to follow $N.", TRUE, ch, 0, leader, TO_NOTVICT);
 }
 
+/** Discard the rest of a physical line that did not fit in get_line()'s
+ * READ_SIZE buffer. When report is TRUE and any bytes other than the line
+ * ending were dropped, emit a PARSER line-too-long error naming the parse
+ * context (file and physical line) when the loader set one up. */
+static void get_line_drain_tail(FILE *fl, int report)
+{
+  struct tb_parse_context_slot *ctx;
+  size_t discarded = 0;
+  int c;
+
+  while ((c = getc(fl)) != EOF && c != '\n')
+    if (c != '\r')
+      discarded++;
+
+  if (!report || discarded == 0)
+    return;
+
+  ctx = tb_parse_context_find(fl, FALSE);
+  if (ctx != NULL)
+    TB_ERROR_MSG("PARSER", "line-too-long", ctx->resource,
+                 "line %lu exceeds %d bytes; %zu tail bytes discarded "
+                 "(parser=%s record=%s:%ld field=%s) id=%s",
+                 ctx->line, READ_SIZE - 1, discarded, ctx->parser,
+                 ctx->record_type[0] ? ctx->record_type : "(none)",
+                 ctx->record_id, ctx->field[0] ? ctx->field : "(none)",
+                 TB_ERRID_PARSER_MALFORMED);
+  else
+    TB_ERROR_MSG("PARSER", "line-too-long", "get_line",
+                 "line exceeds %d bytes; %zu tail bytes discarded "
+                 "(no parse context for this file) id=%s", READ_SIZE - 1,
+                 discarded, TB_ERRID_PARSER_MALFORMED);
+}
+
 /** Reads the next non-blank line off of the input stream. Empty lines are
  * skipped. Lines which begin with '*' are considered to be comments and are
  * skipped.
@@ -1273,25 +1306,19 @@ int get_line(FILE *fl, char *buf)
       return (0);
     lines++;
     tb_parse_context_note_line(fl);
-
     sl = strlen(temp);
-    if (sl == READ_SIZE - 1 && temp[sl - 1] != '\n') {
-      /* Longer than the buffer.  The rest must not come back as the next
-       * line: in a player file it would be parsed as a tag of its own. */
-      size_t dropped = 0;
-      int c;
-
-      while ((c = getc(fl)) != EOF && c != '\n')
-        if (c != '\r')
-          dropped++;
-      if (dropped > 0 && *temp != '*')
-        TB_PARSE_CONTEXT_ERROR(fl, "line longer than %d bytes; discarded "
-                               "its last %zu bytes", READ_SIZE - 1, dropped);
-    }
+    /* Invariant: one call consumes whole physical lines. World and save
+     * files are written by OLC and builders (e.g. genzon's "\t(<short
+     * desc>)" zone comments), so a line can exceed READ_SIZE - 1 bytes.
+     * fgets() then stops mid-line, and the tail used to come back as the
+     * next "line", which loaders parsed as a separate record (in a player
+     * file, a script variable ending in "Levl: 34" set that tag). Drain the
+     * tail and report it; a '*' comment's tail is still comment. */
+    if (sl == READ_SIZE - 1 && temp[sl - 1] != '\n')
+      get_line_drain_tail(fl, *temp != '*');
   } while (*temp == '*' || *temp == '\n' || *temp == '\r');
 
   /* Last line of file doesn't always have a \n, but it should. */
-  sl = strlen(temp);
   while (sl > 0 && (temp[sl - 1] == '\n' || temp[sl - 1] == '\r'))
     temp[--sl] = '\0';
 
