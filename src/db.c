@@ -4496,7 +4496,10 @@ static void load_default_config( void )
 void load_config( void )
 {
   FILE *fl;
-  char line[READ_SIZE - 2]; // to make sure there's room for readding \r\n
+  /* get_line() writes up to READ_SIZE bytes (READ_SIZE - 1 characters and
+   * the NUL). The values that get "\r\n" re-added are copied into their own
+   * READ_SIZE + 2 buffers below. */
+  char line[READ_SIZE];
   char tag[MAX_INPUT_LENGTH];
   int  num;
   char buf[MAX_INPUT_LENGTH];
@@ -4587,7 +4590,7 @@ void load_config( void )
         if (!str_cmp(tag, "holler_move_cost"))
           CONFIG_HOLLER_MOVE_COST = num;
         else if (!str_cmp(tag, "huh")) {
-          char tmp[READ_SIZE];
+          char tmp[READ_SIZE + 2];	/* line plus "\r\n" */
           if (CONFIG_HUH)
             free(CONFIG_HUH);
           tb_snprintf(tmp, sizeof(tmp), "%s\r\n", line);
@@ -4664,13 +4667,13 @@ void load_config( void )
         else if (!str_cmp(tag, "no_mort_to_immort"))
           CONFIG_NO_MORT_TO_IMMORT = num;
         else if (!str_cmp(tag, "noperson")) {
-          char tmp[READ_SIZE];
+          char tmp[READ_SIZE + 2];	/* line plus "\r\n" */
           if (CONFIG_NOPERSON)
             free(CONFIG_NOPERSON);
           tb_snprintf(tmp, sizeof(tmp), "%s\r\n", line);
           CONFIG_NOPERSON = strdup(tmp);
         } else if (!str_cmp(tag, "noeffect")) {
-          char tmp[READ_SIZE];
+          char tmp[READ_SIZE + 2];	/* line plus "\r\n" */
           if (CONFIG_NOEFFECT)
             free(CONFIG_NOEFFECT);
           tb_snprintf(tmp, sizeof(tmp), "%s\r\n", line);
@@ -4680,7 +4683,7 @@ void load_config( void )
 
       case 'o':
         if (!str_cmp(tag, "ok")) {
-          char tmp[READ_SIZE];
+          char tmp[READ_SIZE + 2];	/* line plus "\r\n" */
           if (CONFIG_OK)
             free(CONFIG_OK);
           tb_snprintf(tmp, sizeof(tmp), "%s\r\n", line);

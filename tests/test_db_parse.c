@@ -129,9 +129,8 @@ struct obj_data *get_obj_in_list_num(int num, struct obj_data *list)
 { (void)num; (void)list; return NULL; }
 unsigned long circle_random(void) { return 0; }
 
-/* World-file fixtures (config.c, constants.c, genolc.c, genzon.c). */
-int bitwarning = 0;
-int bitsavetodisk = 0;
+/* World-file fixtures (constants.c, genolc.c, genzon.c). config.c is linked
+ * whole: it is data only, and load_config() reads its defaults. */
 size_t room_bits_count = 32;
 int add_to_save_list(zone_vnum zone, int type) { (void)zone; (void)type; return 0; }
 zone_rnum real_zone_by_thing(room_vnum vznum) { (void)vznum; return 0; }
@@ -139,6 +138,22 @@ void dg_read_trigger(FILE *fp, void *proto, int type)
 { (void)fp; (void)proto; (void)type; }
 void skip_spaces(char **string)                /* interpreter.c */
 { while (**string && isspace((unsigned char)**string)) (*string)++; }
+void split_argument(char *argument, char *tag) /* oasis.c, verbatim logic */
+{
+  char *tmp = argument, *ttag = tag, *wrt = argument;
+  for (; *tmp; tmp++) {
+    if (*tmp != ' ' && *tmp != '=')
+      *(ttag++) = *tmp;
+    else if (*tmp == '=')
+      break;
+  }
+  *ttag = '\0';
+  while (*tmp == '=' || *tmp == ' ')
+    tmp++;
+  while (*tmp)
+    *(wrt++) = *(tmp++);
+  *wrt = '\0';
+}
 
 void setUp(void)
 {
@@ -623,10 +638,50 @@ static void load_zones_rejects_top_nowhere(void)
   zone_load_fixture_free();
 }
 
+/* ---------------------------------------------------------------------
+ * load_config(): line buffer size and empty multi-line values
+ * ------------------------------------------------------------------- */
+
+static void config_fixture_free(void)
+{
+  free(CONFIG_OK); free(CONFIG_HUH); free(CONFIG_NOPERSON);
+  free(CONFIG_NOEFFECT); free(CONFIG_DFLT_IP); free(CONFIG_DFLT_DIR);
+  free(CONFIG_LOGNAME); free(CONFIG_MENU); free(CONFIG_WELC_MESSG);
+  free(CONFIG_START_MESSG);
+  memset(&config_info, 0, sizeof(config_info));
+}
+
+static void load_config_text(const char *text)
+{
+  write_temp_file(text, strlen(text));
+  CONFIG_CONFFILE = temp_path;
+  load_config();
+  remove(temp_path);
+}
+
+/* B1-08: line[] was READ_SIZE - 2 bytes, but get_line() writes up to
+ * READ_SIZE, so a 255+ character config line overflowed it by two bytes
+ * (ASan: stack-buffer-overflow in split_argument). */
+static void load_config_reads_full_length_line(void)
+{
+  char text[400];
+
+  memcpy(text, "ok = ", 5);
+  memset(text + 5, 'O', 300);
+  memcpy(text + 305, "\n", 2);
+  load_config_text(text);
+  TEST_ASSERT_NOT_NULL(CONFIG_OK);
+  TEST_ASSERT_EQUAL_CHAR('O', CONFIG_OK[0]);
+  /* The value keeps its re-added "\r\n" even at the maximum line length. */
+  TEST_ASSERT_NOT_NULL(strstr(CONFIG_OK, "\r\n"));
+  config_fixture_free();
+}
+
 int main(void)
 {
   UNITY_BEGIN();
   RUN_TEST(load_zones_rejects_top_nowhere);
+  RUN_TEST(load_config_reads_full_length_line);
   RUN_TEST(fread_string_rejoins_long_line);
   RUN_TEST(fread_clean_string_rejoins_long_line);
   RUN_TEST(fread_string_long_unterminated_tail_exits);

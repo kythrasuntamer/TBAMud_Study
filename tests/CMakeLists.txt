@@ -364,6 +364,7 @@ target_compile_definitions(db_parse_utils PRIVATE tb_error_log_at=tb_error_log_a
 add_executable(test_db_parse
     $<TARGET_OBJECTS:unity_vendor>
     $<TARGET_OBJECTS:db_parse_utils>
+    ${MUD_SRCDIR}/config.c
     ${CMAKE_CURRENT_SOURCE_DIR}/test_db_parse.c
 )
 target_include_directories(test_db_parse PRIVATE ${TEST_INCLUDES})
