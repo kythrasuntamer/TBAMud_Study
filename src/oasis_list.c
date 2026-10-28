@@ -378,7 +378,7 @@ static void perform_obj_aff_list(struct char_data * ch, char *arg)
      * come from r_num, the validated rnum of this row's vnum. */
     for (i = 0; i < MAX_OBJ_LIST; i++){
       if ((r_num = real_object(lst[i].vobj)) != NOTHING) {
-        if (r_num > top_of_objt) {
+        if (!VALID_OBJ_RNUM_IDX(r_num)) {
           TB_ERROR_MSG("olc", "list-index", "obj_proto",
                        "rnum %d > top_of_objt %d for vnum %d",
                        (int)r_num, (int)top_of_objt, (int)lst[i].vobj);
@@ -420,7 +420,7 @@ static void perform_obj_aff_list(struct char_data * ch, char *arg)
   tb_buf_appendf(&tb, "Objects with highest %s affect\r\n", apply_types[(apply)]);
   for (i = 0; i < MAX_OBJ_LIST; i++) {
     if ((r_num = real_object(lst[i].vobj)) != NOTHING) {
-      if (r_num > top_of_objt) {
+      if (!VALID_OBJ_RNUM_IDX(r_num)) {
         TB_ERROR_MSG("olc", "list-index", "obj_proto",
                      "rnum %d > top_of_objt %d for vnum %d",
                      (int)r_num, (int)top_of_objt, (int)lst[i].vobj);

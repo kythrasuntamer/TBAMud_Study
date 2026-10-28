@@ -164,6 +164,13 @@ struct oasis_olc_data {
 /* Exported globals. */
 extern const char *nrm, *grn, *cyn, *yel;
 
+/* Index-validity checks for prototype and zone table rnums, in the style of
+ * VALID_ROOM_RNUM (utils.h).  utils.h's VALID_OBJ_RNUM takes an object, not
+ * an index, hence the _IDX suffix.  r is evaluated twice: pass a plain
+ * variable. */
+#define VALID_OBJ_RNUM_IDX(r)  ((r) != NOTHING && (r) <= top_of_objt)
+#define VALID_ZONE_RNUM(r)     ((r) != NOWHERE && (r) <= top_of_zone_table)
+
 /* Descriptor access macros. */
 #define OLC(d)         ((d)->olc)
 #define OLC_MODE(d)    (OLC(d)->mode)     /**< Parse input mode.	*/
