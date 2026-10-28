@@ -366,8 +366,19 @@ void generic_complete_quest(struct char_data *ch)
   struct obj_data *new_obj;
   int happy_qp, happy_gold, happy_exp;
 
+  /* Invariant: the caller's active quest still exists in aquest_table.
+   * Completion clears GET_QUEST(ch) and builders can delete quests with
+   * qedit, so a stale or NOTHING vnum here would make every QST_*() below
+   * read aquest_table[NOTHING]. Resolve before touching the counter. */
+  if ((rnum = real_quest(vnum)) == NOTHING) {
+    TB_ERROR_MSG("quest", "complete-missing-quest", "aquest_table",
+                 DIAG_CHAR_FMT " quest vnum %d has no rnum (counter %d)",
+                 DIAG_CHAR(ch), (int) vnum, GET_QUEST_COUNTER(ch));
+    clear_quest(ch);
+    return;
+  }
+
   if (--GET_QUEST_COUNTER(ch) <= 0) {
-    rnum = real_quest(vnum);
     if (IS_HAPPYHOUR && IS_HAPPYQP) {
       happy_qp = (int)(QST_POINTS(rnum) * (((float)(100+HAPPY_QP))/(float)100));
       happy_qp = MAX(happy_qp, 0);
@@ -440,11 +451,12 @@ void autoquest_trigger_check(struct char_data *ch, struct char_data *vict,
 {
   struct char_data *i;
   qst_rnum rnum;
+  qst_vnum active;
   int found = TRUE;
 
   if (IS_NPC(ch))
     return;
-  if (GET_QUEST(ch) == NOTHING)  /* No current quest, skip this */
+  if ((active = GET_QUEST(ch)) == NOTHING)  /* No current quest, skip this */
     return;
   if (GET_QUEST_TYPE(ch) != type)
     return;
@@ -460,7 +472,12 @@ void autoquest_trigger_check(struct char_data *ch, struct char_data *vict,
         generic_complete_quest(ch);
       break;
     case AQ_MOB_FIND:
-      for (i=world[IN_ROOM(ch)].people; i; i = i->next_in_room)
+      /* Each matching NPC counts once towards the quantity, but only while
+       * this quest is still the active one: generic_complete_quest() clears
+       * the quest (or chains the next one) when the counter reaches zero,
+       * and later matches must not count against whatever follows. */
+      for (i=world[IN_ROOM(ch)].people; i && GET_QUEST(ch) == active;
+           i = i->next_in_room)
         if (IS_NPC(i))
           if (QST_TARGET(rnum) == GET_MOB_VNUM(i))
             generic_complete_quest(ch);
