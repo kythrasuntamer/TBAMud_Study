@@ -64,6 +64,11 @@ struct event {
   struct q_element *q_el;
   bool isMudEvent;  /**< event_obj is a mud_event_data (see EVENTFUNC) */
 };
+
+/** TRUE while ev sits in the queue; FALSE while its callback is running
+ * (event_process clears q_el first) or for a stale event.  ev is evaluated
+ * once. */
+#define EVENT_IS_QUEUED(ev)  ((ev)->q_el != NULL)
 /**************************************************************************
  * End event structures and defines.
  **************************************************************************/

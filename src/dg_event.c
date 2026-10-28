@@ -172,7 +172,7 @@ void event_cancel_at(struct event *event, const char *file, int line,
     return;
   }
 
-  if (!event->q_el && event == dg_running_event) {
+  if (!EVENT_IS_QUEUED(event) && event == dg_running_event) {
     /* Cancelling the event whose callback is on the stack: release the
      * payload now (a mud event must leave its owner's list before the owner
      * is freed) but leave the event struct to event_process(). */
@@ -197,7 +197,7 @@ void event_cancel_at(struct event *event, const char *file, int line,
     return;
   }
 
-  if (!event->q_el) {
+  if (!EVENT_IS_QUEUED(event)) {
     /* Every event_create()d event is queued unless it is running, so this
      * is a stale or foreign pointer.  Legacy behaviour frees it anyway. */
     tb_error_log_at("ERROR", "dg", "event-cancel-unqueued", "event", 0,
@@ -316,7 +316,7 @@ void event_free_all(void)
  **/
 int event_is_queued(struct event *event)
 {
-   if (event->q_el)
+   if (EVENT_IS_QUEUED(event))
      return 1;
    else
      return 0;
