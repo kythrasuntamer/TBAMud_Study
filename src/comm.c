@@ -476,6 +476,14 @@ int main(int argc, char **argv)
     free_ibt_lists();       /* ibt.c */
     free_recent_players();  /* act.informative.c */
     free_list(world_events); /* free up our global lists */
+    /* destroy_db() made every character leave its group, so group_list is
+     * empty. free_list() frees only the list, never the groups: a group
+     * still listed here would leak, and its members are already freed. */
+    if (group_list->iSize)
+      TB_ERROR_MSG("comm", "shutdown-groups", "group_list",
+                   "%u group(s) still listed after destroy_db(); leaked",
+                   (unsigned) group_list->iSize);
+    free_list(group_list);
     free_list(global_lists);
   }
 
