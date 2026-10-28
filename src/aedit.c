@@ -39,6 +39,14 @@
  * File format.  A message line that starts with '#' is read back as "no
  * message" (fread_action in db.c), so aedit refuses that prefix. */
 
+/** TRUE when r indexes a live soc_mess_list row.  top_of_socialt is the
+ * LAST index (inclusive; -1 when empty), unlike help's exclusive
+ * top_of_helpt.  In aedit, OLC_ZNUM is such a row or, past the end, the
+ * marker for "add a new social".  r is evaluated more than once: pass a
+ * plain variable. */
+#define VALID_SOCIAL_RNUM(r) \
+  ((long)(r) >= 0 && (long)(r) <= (long)top_of_socialt)
+
 /* local utility functions */
 static int aedit_find_command(const char *txt);
 static void aedit_disp_menu(struct descriptor_data * d);
@@ -130,7 +138,7 @@ ACMD(do_oasis_aedit)
     if (is_abbrev(OLC_STORAGE(d), soc_mess_list[OLC_ZNUM(d)].command))
       break;
 
-  if (OLC_ZNUM(d) > top_of_socialt)  {
+  if (!VALID_SOCIAL_RNUM(OLC_ZNUM(d)))  {
     if ((i = aedit_find_command(OLC_STORAGE(d))) != -1)  {
       send_to_char(ch, "The '%s' command already exists (%s).\r\n", OLC_STORAGE(d), complete_cmd_info[i].command);
       cleanup_olc(d, CLEANUP_ALL);
@@ -220,7 +228,7 @@ static int aedit_save_internally(struct descriptor_data *d) {
    int i;
 
    /* add a new social into the list */
-   if (OLC_ZNUM(d) > top_of_socialt)  {
+   if (!VALID_SOCIAL_RNUM(OLC_ZNUM(d)))  {
       CREATE(new_soc_mess_list, struct social_messg, top_of_socialt + 2);
       for (i = 0; i <= top_of_socialt; i++)
               new_soc_mess_list[i] = soc_mess_list[i];
@@ -458,7 +466,7 @@ void aedit_parse(struct descriptor_data * d, char *arg) {
            if (is_abbrev(OLC_STORAGE(d), soc_mess_list[OLC_ZNUM(d)].command))
              break;
 
-         if (OLC_ZNUM(d) > top_of_socialt) {
+         if (!VALID_SOCIAL_RNUM(OLC_ZNUM(d))) {
             if (aedit_find_command(OLC_STORAGE(d)) != -1)  {
                cleanup_olc(d, CLEANUP_ALL);
                break;

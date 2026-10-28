@@ -69,6 +69,12 @@ static int qedit_parse_int_range_at(struct descriptor_data *d, const char *arg,
 #define QEDIT_VNUM_MIN  (-1L)
 #define QEDIT_VNUM_MAX  ((long)IDXTYPE_MAX - 1)
 
+/** TRUE when r indexes a live aquest_table row (0..total_quests-1).
+ * real_quest() returns NOTHING for a vnum with no row, which must never
+ * reach aquest_table[] or delete_quest().  r is evaluated more than once:
+ * pass a plain variable. */
+#define VALID_QUEST_RNUM(r)  ((r) != NOTHING && (r) < total_quests)
+
 /*-------------------------------------------------------------------*/
 
 /* Name of a quest type for display.  quest_types[] has NUM_AQ_TYPES
@@ -272,7 +278,8 @@ ACMD(do_oasis_qedit)
 
   OLC_NUM(d) = number;
 
-  if ((real_num = real_quest(number)) != NOTHING)
+  real_num = real_quest(number);
+  if (VALID_QUEST_RNUM(real_num))
     qedit_setup_existing(d, real_num);
   else
     qedit_setup_new(d);
@@ -519,7 +526,7 @@ void qedit_parse(struct descriptor_data *d, char *arg)
            * vnum and the builder are known. */
           qst_rnum del_rnum = real_quest(OLC_NUM(d));
 
-          if (del_rnum == NOTHING) {
+          if (!VALID_QUEST_RNUM(del_rnum)) {
             TB_WARN_MSG("olc", "qedit-delete-unsaved", "aquest_table",
                         "quest vnum %d has no table row; editor " DIAG_CHAR_FMT,
                         (int)OLC_NUM(d), DIAG_CHAR(d->character));
