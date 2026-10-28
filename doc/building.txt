@@ -916,7 +916,7 @@ should be one of the following numbers:
  1) sting                7) pound          12) blast
  2) whip                 8) claw           13) punch
  3) slash                9) maul           14) stab
- 4) bite                10) thrash         15) impale
+ 4) bite                10) thrash
  5) bludgeon
 
 Messages given when attackers miss or kill their victims are taken from the 
@@ -1123,7 +1123,7 @@ value 3: Weapon type for damage messages, one of:
  1) sting                7) pound          12) blast
  2) whip                 8) claw           13) punch
  3) slash                9) maul           14) stab
- 4) bite                10) thrash         15) impale
+ 4) bite                10) thrash
  5) bludgeon
 
 FURNITURE: (Type Flag 6)
