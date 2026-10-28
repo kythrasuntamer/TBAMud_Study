@@ -83,8 +83,15 @@ void do_dg_cast(void *go, struct script_data *sc, trig_data *t, int type, char *
 { (void)go; (void)sc; (void)t; (void)type; (void)cmd; UNREACHED(); }
 void do_dg_affect(void *go, struct script_data *sc, trig_data *t, int type, char *cmd)
 { (void)go; (void)sc; (void)t; (void)type; (void)cmd; UNREACHED(); }
+/* process_wait() schedules through this; record the delay it asked for. */
+static long scheduled_delay;
 struct event *event_create(EVENTFUNC(*func), void *event_obj, long when)
-{ (void)func; (void)event_obj; (void)when; UNREACHED(); return NULL; }
+{
+  (void)func;
+  free(event_obj);
+  scheduled_delay = when;
+  return NULL;
+}
 int remove_var(struct trig_var_data **var_list, char *name)
 { (void)var_list; (void)name; UNREACHED(); return 0; }
 
@@ -491,6 +498,42 @@ static void saved_vars_never_exceed_one_pfile_line(void)
   free(SCRIPT(&reloaded));
 }
 
+/* A huge wait used to reach the event queue as a key that wrapped
+ * negative; it is now capped at one mud year. */
+static void huge_wait_is_capped_at_one_mud_year(void)
+{
+  static struct cmdlist_element wait_line = { "wait 999999999999 s", NULL, NULL, 0 };
+  static struct cmdlist_element short_wait = { "wait 3 s", NULL, NULL, 0 };
+  static struct index_data index = { 0 };
+  static struct index_data *indexes[1] = { &index };
+  static obj_data obj;
+  static struct script_data script;
+  obj_data *owner = &obj;
+
+  memset(&obj, 0, sizeof(obj));
+  memset(&script, 0, sizeof(script));
+  init_lookup_table();
+  SCRIPT(&obj) = &script;
+  GET_OBJ_RNUM(&obj) = NOTHING;
+  obj.script_id = OBJ_ID_BASE + 6;
+  add_to_lookup_table(obj.script_id, &obj);
+  trig_index = indexes;
+  top_of_trigt = 1;
+  trig.attach_type = OBJ_TRIGGER;
+
+  trig.cmdlist = &wait_line;
+  script_driver(&owner, &trig, OBJ_TRIGGER, TRIG_NEW);
+  TEST_ASSERT_EQUAL_INT(DG_MAX_WAIT_PULSES, scheduled_delay);
+
+  trig.cmdlist = &short_wait;
+  script_driver(&owner, &trig, OBJ_TRIGGER, TRIG_NEW);
+  TEST_ASSERT_EQUAL_INT(3 * PASSES_PER_SEC, scheduled_delay);
+
+  trig_index = NULL;
+  top_of_trigt = 0;
+  remove_from_lookup_table(obj.script_id, &obj);
+}
+
 static void restore_round_trips_neutralize(void)
 {
   char text[] = "50% off, 100%% sure";
@@ -518,5 +561,6 @@ int main(void)
   RUN_TEST(script_runs_on_while_its_object_owner_lives);
   RUN_TEST(script_stops_when_its_mob_owner_is_extracted);
   RUN_TEST(saved_vars_never_exceed_one_pfile_line);
+  RUN_TEST(huge_wait_is_capped_at_one_mud_year);
   return UNITY_END();
 }

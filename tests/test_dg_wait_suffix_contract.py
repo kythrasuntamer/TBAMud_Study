@@ -11,6 +11,9 @@ assert "invalid wait suffix" in body
 assert "suffix_len >= sizeof(suffix)" in body
 assert "while (isspace((unsigned char)*suffix_end))" in body
 assert "memcpy(suffix, rest, suffix_len);" in body
-assert "when *= PASSES_PER_SEC;" in body
-assert "when *= PULSES_PER_MUD_HOUR;" in body
+# "t" counts mud hours, every other accepted suffix counts seconds.
+assert "long unit = (c == 't') ? PULSES_PER_MUD_HOUR : PASSES_PER_SEC;" in body
+assert "when *= unit;" in body
+# Oversized waits saturate and are capped (with a log), never wrapped.
+assert "when > DG_MAX_WAIT_PULSES" in body
 print("DG wait suffix contract verified")

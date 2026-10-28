@@ -428,6 +428,9 @@ void wld_command_interpreter(room_data *room, char *argument);
  * text leaves the script engine.  comm.c only accepts printable ASCII, so a
  * player cannot type it. */
 #define DG_INERT_PERCENT '\x1a'
+
+/* Longest delay a script 'wait' may schedule, in pulses: one mud year. */
+#define DG_MAX_WAIT_PULSES ((long)SECS_PER_MUD_YEAR * PASSES_PER_SEC)
 #define GET_TRIG_NAME(t)          ((t)->name)
 #define GET_TRIG_RNUM(t)          ((t)->nr)
 #define GET_TRIG_VNUM(t)	  (trig_index[(t)->nr]->vnum)

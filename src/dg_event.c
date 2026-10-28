@@ -54,6 +54,22 @@ void event_init(void)
  * @param when Number of pulses between firing(s) of this event.
  * @retval event * Returns a pointer to the newly created event.
  **/
+/* Queue key for an event due delay pulses from now.  The key indexes the
+ * queue buckets (key % NUM_EVENT_QUEUES), so it must never wrap negative;
+ * an absurd delay is clamped to the latest representable pulse. */
+static long event_key(long delay, const char *caller)
+{
+  long latest = pulse < (unsigned long)LONG_MAX ? LONG_MAX - (long)pulse : 0;
+
+  if (delay > latest) {
+    TB_ERROR_MSG("event", "event-time", caller,
+                 "delay of %ld pulses at pulse %lu overflows the queue key; "
+                 "clamped to %ld", delay, pulse, latest);
+    delay = latest;
+  }
+  return delay + (long)pulse;
+}
+
 struct event *event_create(EVENTFUNC(*func), void *event_obj, long when)
 {
   struct event *new_event;
@@ -64,7 +80,8 @@ struct event *event_create(EVENTFUNC(*func), void *event_obj, long when)
   CREATE(new_event, struct event, 1);
   new_event->func = func;
   new_event->event_obj = event_obj;
-  new_event->q_el = queue_enq(event_q, new_event, when + pulse);
+  new_event->q_el = queue_enq(event_q, new_event,
+                              event_key(when, "event_create"));
   new_event->isMudEvent = FALSE;
 
   return new_event;
@@ -124,7 +141,8 @@ void event_process(void)
 
     /* call event func, reenqueue event if retval > 0 */
     if ((new_time = (the_event->func)(the_event->event_obj)) > 0)
-      the_event->q_el = queue_enq(event_q, the_event, new_time + pulse);
+      the_event->q_el = queue_enq(event_q, the_event,
+                                  event_key(new_time, "event_process"));
     else
     {
       if (the_event->isMudEvent && the_event->event_obj != NULL)

@@ -1907,16 +1907,24 @@ static void process_wait(void *go, trig_data *trig, int type, char *cmd,
       return;
     }
     if (fields == 2) {
-      if (c == 't') {
-        if (when > LONG_MAX / PULSES_PER_MUD_HOUR || when < LONG_MIN / PULSES_PER_MUD_HOUR)
-          return;
-        when *= PULSES_PER_MUD_HOUR;
-      } else if (c == 's') {
-        if (when > LONG_MAX / PASSES_PER_SEC || when < LONG_MIN / PASSES_PER_SEC)
-          return;
-        when *= PASSES_PER_SEC;
-      }
+      long unit = (c == 't') ? PULSES_PER_MUD_HOUR : PASSES_PER_SEC;
+
+      /* Saturate rather than overflow; the cap below reports it. */
+      if (when > LONG_MAX / unit)
+        when = LONG_MAX;
+      else if (when < LONG_MIN / unit)
+        when = LONG_MIN;
+      else
+        when *= unit;
     }
+  }
+
+  /* A wait longer than a mud year is a script error, not a schedule. */
+  if (when > DG_MAX_WAIT_PULSES) {
+    script_log("Trigger: %s, VNum %d. wait longer than one mud year "
+               "shortened to one year: '%s'",
+               GET_TRIG_NAME(trig), GET_TRIG_VNUM(trig), cl->cmd);
+    when = DG_MAX_WAIT_PULSES;
   }
 
   CREATE(wait_event_obj, struct wait_event_data, 1);
