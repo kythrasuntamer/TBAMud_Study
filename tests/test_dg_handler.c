@@ -230,6 +230,38 @@ static void test_extract_with_bad_index_bookkeeping_is_reported(void)
   top_of_trigt = 0;
 }
 
+/* D2-08: free_proto_script()/copy_proto_script() silently ignored a bad
+ * owner type (leaving the list attached, or copying nothing),
+ * free_proto_script() dereferenced a NULL owner, and copying over an owner
+ * that still had its own list leaked that list without a word. */
+static void test_proto_script_misuse_is_reported(void)
+{
+  struct trig_proto_list *mine = calloc(1, sizeof(*mine));
+  struct trig_proto_list *theirs = calloc(1, sizeof(*theirs));
+
+  TEST_ASSERT_NOT_NULL(mine);
+  TEST_ASSERT_NOT_NULL(theirs);
+  free_proto_script(NULL, WLD_TRIGGER);
+  TEST_ASSERT_EQUAL_STRING("proto-script-type", last_op);
+  rooms[0].proto_script = mine;
+  free_proto_script(&rooms[0], 99);
+  TEST_ASSERT_EQUAL_STRING("proto-script-type", last_op);
+  TEST_ASSERT_TRUE(rooms[0].proto_script == mine);
+  copy_proto_script(&rooms[0], &rooms[1], 99);
+  TEST_ASSERT_NULL(rooms[1].proto_script);
+
+  n_captured = 0;
+  theirs->vnum = 7;
+  rooms[1].proto_script = theirs;          /* not freed before the copy */
+  copy_proto_script(&rooms[0], &rooms[1], WLD_TRIGGER);
+  TEST_ASSERT_EQUAL_STRING("proto-script-overwrite", last_op);
+  TEST_ASSERT_EQUAL_INT(1, n_captured);
+  TEST_ASSERT_TRUE(rooms[1].proto_script != theirs);
+  free(theirs);                            /* the leak the warning names */
+  free_proto_script(&rooms[1], WLD_TRIGGER);
+  free_proto_script(&rooms[0], WLD_TRIGGER);
+}
+
 static void leave_without_enter(void)
 {
   dg_script_execution_leave();
@@ -254,5 +286,6 @@ int main(void)
   RUN_TEST(test_double_extract_is_reported_and_freed_once);
   RUN_TEST(test_extract_with_bad_index_bookkeeping_is_reported);
   RUN_TEST(test_unbalanced_leave_is_fatal);
+  RUN_TEST(test_proto_script_misuse_is_reported);
   return UNITY_END();
 }

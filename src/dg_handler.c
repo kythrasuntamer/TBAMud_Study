@@ -389,8 +389,8 @@ void extract_script_mem(struct script_memory *sc)
 /** Free the prototype trigger list of a mob, obj or room and set it NULL.
  * @param thing The owner; must be non-NULL and of the struct type that
  * matches type.
- * @param type MOB_TRIGGER, OBJ_TRIGGER or WLD_TRIGGER; any other value
- * frees nothing.
+ * @param type MOB_TRIGGER, OBJ_TRIGGER or WLD_TRIGGER; any other value, or
+ * a NULL thing, frees nothing and is reported as dg/proto-script-type.
  * Aborts with dg/proto-script-shared-owner if another live char, obj or
  * room still points at the same list. */
 void free_proto_script(void *thing, int type)
@@ -399,6 +399,17 @@ void free_proto_script(void *thing, int type)
   char_data *mob;
   obj_data *obj;
   room_data *room;
+
+  /* Engine and OLC callers pass the owner and its literal *_TRIGGER type;
+   * anything else is a caller bug.  Report it and free nothing rather than
+   * dereference NULL or silently leave the list attached. */
+  if (!thing || (type != MOB_TRIGGER && type != OBJ_TRIGGER &&
+                 type != WLD_TRIGGER)) {
+    TB_ERROR_MSG("dg", "proto-script-type", "free_proto_script",
+                 "owner %p type %d (expected %d/%d/%d); list not freed",
+                 thing, type, MOB_TRIGGER, OBJ_TRIGGER, WLD_TRIGGER);
+    return;
+  }
 
   switch (type) {
     case MOB_TRIGGER:
@@ -457,23 +468,44 @@ void free_proto_script(void *thing, int type)
  * must call free_proto_script(dest) first unless dest is a fresh struct
  * copy of source whose pointer is still shared (read_mobile/read_object).
  * If source has no list, dest is left unchanged.
- * @param source,dest Non-NULL structs of the type named by type.
+ * @param source,dest Non-NULL structs of the type named by type (else
+ * dg/proto-script-type is reported and nothing is copied).
  * @param type MOB_TRIGGER, OBJ_TRIGGER or WLD_TRIGGER. */
 void copy_proto_script(void *source, void *dest, int type)
 {
-  struct trig_proto_list *tp_src = NULL, *tp_dst = NULL;
+  struct trig_proto_list *tp_src = NULL, *tp_dst = NULL, *tp_old = NULL;
+
+  /* As in free_proto_script(): literal types from engine and OLC code. */
+  if (!source || !dest || (type != MOB_TRIGGER && type != OBJ_TRIGGER &&
+                           type != WLD_TRIGGER)) {
+    TB_ERROR_MSG("dg", "proto-script-type", "copy_proto_script",
+                 "source %p dest %p type %d (expected %d/%d/%d); nothing "
+                 "copied", source, dest, type, MOB_TRIGGER, OBJ_TRIGGER,
+                 WLD_TRIGGER);
+    return;
+  }
 
   switch (type) {
     case MOB_TRIGGER:
       tp_src = ((char_data *)source)->proto_script;
+      tp_old = ((char_data *)dest)->proto_script;
       break;
     case OBJ_TRIGGER:
       tp_src = ((obj_data *)source)->proto_script;
+      tp_old = ((obj_data *)dest)->proto_script;
       break;
     case WLD_TRIGGER:
       tp_src = ((room_data *)source)->proto_script;
+      tp_old = ((room_data *)dest)->proto_script;
       break;
   }
+
+  /* dest's own list should have been freed first; overwriting it leaks it.
+   * (A fresh struct copy still shares source's list, which is fine.) */
+  if (tp_src && tp_old && tp_old != tp_src)
+    TB_WARN_MSG("dg", "proto-script-overwrite", "copy_proto_script",
+                "dest %p type %d still owned trigger list %p; overwritten by "
+                "the copy and leaked", dest, type, (void *)tp_old);
 
   if (tp_src) {
     CREATE(tp_dst, struct trig_proto_list, 1);
