@@ -462,6 +462,44 @@ static void test_stat_weapon_bad_attack_type_is_reported(void)
   TEST_ASSERT_NOT_NULL(strstr(sent, "Message type: slash"));
 }
 
+/* A player in the world, for the 'stat player' / 'show player' paths. */
+static struct char_data target;
+static struct player_special_data target_specials;
+static void make_player(void)
+{
+  memset(&target, 0, sizeof(target));
+  memset(&target_specials, 0, sizeof(target_specials));
+  target.player_specials = &target_specials;
+  target.player.name = (char *)"Bobby";
+  GET_IDNUM(&target) = 77;
+  GET_LEVEL(&target) = 10;
+  IN_ROOM(&target) = NOWHERE;
+  in_game_char = &target;
+}
+
+/* G1-09: an affect's location (from the pfile 'Affs' line) indexed
+ * apply_types[] unchecked. */
+static void test_stat_affect_bad_location_is_reported(void)
+{
+  static struct affected_type af;
+  make_player();
+  memset(&af, 0, sizeof(af));
+  af.modifier = 2;
+  af.location = 90;
+  target.affected = &af;
+  RUN_CMD(do_stat, &imm, "player bobby");
+  TEST_ASSERT_EQUAL_STRING("stat-apply", captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(captured_detail, "player idnum 77"));
+  TEST_ASSERT_NOT_NULL(strstr(sent, "+2 to <invalid>"));
+
+  reset_counters();
+  af.location = APPLY_STR;
+  RUN_CMD(do_stat, &imm, "player bobby");
+  TEST_ASSERT_EQUAL_INT(0, captured_errors);
+  TEST_ASSERT_NOT_NULL(strstr(sent, "+2 to STR"));
+  target.affected = NULL;
+}
+
 int main(void)
 {
   /* basic_mud_log()/mudlog() are the real utils.c ones; keep them quiet. */
@@ -474,6 +512,7 @@ int main(void)
   RUN_TEST(test_return_and_switch_without_descriptor_are_reported);
   RUN_TEST(test_return_to_char_requires_switched_body);
   RUN_TEST(test_stat_weapon_bad_attack_type_is_reported);
+  RUN_TEST(test_stat_affect_bad_location_is_reported);
   {
     int failures = UNITY_END();
     if (logfile)

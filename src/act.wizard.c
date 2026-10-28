@@ -47,6 +47,35 @@
 #define TABLE_INDEX_OK(i, n)     ((unsigned int) (i) < (unsigned int) (n))
 #define VALID_ATTACK_TYPE(t)     TABLE_INDEX_OK((t), NUM_ATTACK_TYPES)
 
+/** Checked lookup in one of the "\n"-terminated name tables in constants.c.
+ * @param table   The table; count is its number of real entries (not
+ *                counting the "\n" sentinel), e.g. NUM_APPLIES.
+ * @param idx     The index. It comes from a world file, a player file, OLC
+ *                or a DG script, none of which range-check it.
+ * @param op      Stable diagnostic operation for this call site.
+ * @param id_kind/id  The entity that owns the bad value ("player idnum",
+ *                "zone vnum", ...). DIAG_CHAR(ch) supplies both.
+ * @return table[idx], or "<invalid>" after a WARNING naming the table, the
+ *         index and the entity, reported at the caller's file and line.
+ * Unlike sprinttype(), a bad index is never silent. */
+static const char *table_name_at(const char *const *table, int count, long idx,
+                                 const char *table_name, const char *op,
+                                 const char *id_kind, long id,
+                                 const char *file, int line, const char *func)
+{
+  if (idx >= 0 && idx < count)
+    return table[idx];
+  tb_error_log_at("WARNING", "act", op, table_name, 0, file, line, func,
+                  "%s %ld: %s index %ld outside 0..%d",
+                  id_kind, id, table_name, idx, count - 1);
+  return "<invalid>";
+}
+/* TABLE_NAME(apply_types, NUM_APPLIES, loc, "stat-apply", DIAG_CHAR(k)):
+ * idx is evaluated once; the last argument expands to "kind", id. */
+#define TABLE_NAME(table, count, idx, op, id_kind_and_id) \
+  table_name_at((table), (count), (long) (idx), #table, (op), \
+                id_kind_and_id, __FILE__, __LINE__, __func__)
+
 /* local utility functions with file scope */
 static int perform_set(struct char_data *ch, struct char_data *vict, int mode, char *val_arg);
 static void perform_immort_invis(struct char_data *ch, int level);
@@ -957,7 +986,10 @@ static void do_stat_character(struct char_data *ch, struct char_data *k)
       send_to_char(ch, "SPL: (%3dhr) %s%-21s%s ", aff->duration + 1, CCCYN(ch, C_NRM), skill_name(aff->spell), CCNRM(ch, C_NRM));
 
       if (aff->modifier)
-	send_to_char(ch, "%+d to %s", aff->modifier, apply_types[(int) aff->location]);
+	send_to_char(ch, "%+d to %s", aff->modifier,
+	    /* location comes from the pfile 'Affs' line, unchecked at load. */
+	    TABLE_NAME(apply_types, NUM_APPLIES, aff->location, "stat-apply",
+	               DIAG_CHAR(k)));
 
       if (aff->bitvector[0] || aff->bitvector[1] || aff->bitvector[2] || aff->bitvector[3]) {
         if (aff->modifier)
