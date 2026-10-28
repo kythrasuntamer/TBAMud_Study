@@ -355,9 +355,79 @@ static void test_name_from_drinkcon_with_bad_rnum(void)
   TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "rnum 77"));
 }
 
+static int refuse_drop_hook(enum fx_trigger kind, struct char_data *actor,
+                            struct obj_data *obj, int argn)
+{
+  (void)actor; (void)obj; (void)argn;
+  return kind == FX_DROP_WTRIG ? 0 : 1;
+}
+
+static int purge_dropped_hook(enum fx_trigger kind, struct char_data *actor,
+                              struct obj_data *obj, int argn)
+{
+  (void)actor; (void)argn;
+  if (kind == FX_DROP_WTRIG && obj)
+    extract_obj(obj);
+  return 1;
+}
+
+/* H1-17: a room drop trigger that refuses a gold drop: the coins stay in
+ * the purse and the player is told. */
+static void test_drop_gold_refused_by_room_trigger(void)
+{
+  struct char_data *pc = fx_new_char("hero", FALSE, 0);
+
+  GET_GOLD(pc) = 50;
+  fx_hook = refuse_drop_hook;
+  do_drop(pc, arg("10 coins"), 0, SCMD_DROP);
+
+  TEST_ASSERT_EQUAL_INT(1, fx_trigger_calls[FX_DROP_WTRIG]);
+  TEST_ASSERT_EQUAL_INT(50, GET_GOLD(pc));
+  TEST_ASSERT_NULL(pc->carrying);
+  TEST_ASSERT_NULL(world[0].contents);
+  TEST_ASSERT_NOT_NULL(strstr(fx_last_send, "can't drop"));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  fx_free_char(pc);
+}
+
+/* H1-17: an allowed gold drop moves the coins from purse to floor. */
+static void test_drop_gold_allowed(void)
+{
+  struct char_data *pc = fx_new_char("hero", FALSE, 0);
+
+  GET_GOLD(pc) = 50;
+  do_drop(pc, arg("10 coins"), 0, SCMD_DROP);
+
+  TEST_ASSERT_EQUAL_INT(40, GET_GOLD(pc));
+  TEST_ASSERT_NULL(pc->carrying);
+  TEST_ASSERT_NOT_NULL(world[0].contents);
+  TEST_ASSERT_EQUAL_INT(ITEM_MONEY, GET_OBJ_TYPE(world[0].contents));
+  TEST_ASSERT_EQUAL_INT(10, GET_OBJ_VAL(world[0].contents, 0));
+  fx_free_char(pc);
+}
+
+/* H1-17: a drop script that purges the coins is reported. */
+static void test_drop_gold_purged_by_room_trigger(void)
+{
+  struct char_data *pc = fx_new_char("hero", FALSE, 0);
+
+  GET_GOLD(pc) = 50;
+  fx_hook = purge_dropped_hook;
+  do_drop(pc, arg("10 coins"), 0, SCMD_DROP);
+
+  TEST_ASSERT_EQUAL_INT(40, GET_GOLD(pc));
+  TEST_ASSERT_NULL(pc->carrying);
+  TEST_ASSERT_NULL(world[0].contents);
+  TEST_ASSERT_EQUAL_STRING("drop-gold-vanished", tb_captured_operation);
+  fx_free_char(pc);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(test_drop_gold_refused_by_room_trigger);
+  RUN_TEST(test_drop_gold_allowed);
+  RUN_TEST(test_drop_gold_purged_by_room_trigger);
   RUN_TEST(test_name_from_drinkcon_with_no_prototype);
   RUN_TEST(test_name_from_drinkcon_with_bad_rnum);
   RUN_TEST(test_sac_carried_container_spills_into_room);

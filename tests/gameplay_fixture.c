@@ -153,6 +153,14 @@ struct obj_data *create_obj(void)
 
 void free_obj(struct obj_data *obj)
 {
+  struct extra_descr_data *ed, *next_ed;
+
+  for (ed = obj->ex_description; ed; ed = next_ed) {   /* create_money() */
+    next_ed = ed->next;
+    free(ed->keyword);
+    free(ed->description);
+    free(ed);
+  }
   free(obj->name);
   free(obj->description);
   free(obj->short_description);

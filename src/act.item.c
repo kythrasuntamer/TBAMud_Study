@@ -584,11 +584,37 @@ static void perform_drop_gold(struct char_data *ch, int amount, byte mode, room_
       } else {
         char buf[MAX_STRING_LENGTH];
         long object_id = obj_script_id(obj);
+        int allowed;
 
-        if (!drop_wtrigger(obj, ch)) {
-          if (has_obj_by_uid_in_lookup_table(object_id))
-            extract_obj(obj);
+        /* drop_wtrigger() treats an object its actor does not carry as
+         * gone, so the coins are in ch's hands (and out of GET_GOLD) while
+         * the room's drop script runs, exactly like a dropped object. */
+        decrease_gold(ch, amount);
+        obj_to_char(obj, ch);
+        allowed = drop_wtrigger(obj, ch);
 
+        if (!obj_uid_matches(object_id, obj)) {
+          /* The script took the coins: the drop happened, its way. */
+          TB_WARN_MSG("act", "drop-gold-vanished", "obj",
+                      "money uid %ld (%d coins) purged by a drop trigger in "
+                      "room vnum %d for " DIAG_CHAR_FMT, object_id, amount,
+                      (int) GET_ROOM_VNUM(IN_ROOM(ch)), DIAG_CHAR(ch));
+          return;
+        }
+        if (obj->carried_by != ch) {
+          TB_WARN_MSG("act", "drop-gold-vanished", "obj",
+                      "money uid %ld (%d coins) moved away from "
+                      DIAG_CHAR_FMT " by a drop trigger in room vnum %d",
+                      object_id, amount, DIAG_CHAR(ch),
+                      (int) GET_ROOM_VNUM(IN_ROOM(ch)));
+          return;
+        }
+        obj_from_char(obj);
+        if (!allowed) {
+          /* Refused: the coins go back to ch's purse. */
+          extract_obj(obj);
+          increase_gold(ch, amount);
+          send_to_char(ch, "You can't drop your gold here.\r\n");
           return;
         }
 
@@ -597,6 +623,7 @@ static void perform_drop_gold(struct char_data *ch, int amount, byte mode, room_
 
 	      send_to_char(ch, "You drop some gold.\r\n");
 	      obj_to_room(obj, IN_ROOM(ch));
+	      return;		/* gold already deducted above */
       }
     } else {
       char buf[MAX_STRING_LENGTH];
