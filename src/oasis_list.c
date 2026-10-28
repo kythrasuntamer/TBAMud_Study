@@ -101,6 +101,22 @@ static int olc_list_rowf(struct tb_buf *tb, const char *format, ...)
   page_string((ch)->desc, (tb)->data, TRUE); \
 } while (0)
 
+/* Name of item type t for a listing row.  t is a prototype's type_flag,
+ * read from a world file or set in oedit, so it is checked against the
+ * item_types[] table instead of being used as a raw index.  A bad value is
+ * logged (op=table-index, with the object's vnum) and shown as "<invalid>".
+ * t is evaluated once. */
+static const char *olc_item_type_name(int t, obj_vnum vnum)
+{
+  if (t >= 0 && t < NUM_ITEM_TYPES)
+    return item_types[t];
+  TB_WARN_MSG("olc", "table-index", "item_types",
+              "type_flag %d outside [0,%d) on object vnum %d",
+              t, NUM_ITEM_TYPES, (int)vnum);
+  return "<invalid>";
+}
+#define ITEM_TYPE_NAME(t, vnum) olc_item_type_name((t), (vnum))
+
 struct obj_list_item {
   obj_vnum vobj;
   int val;
@@ -388,7 +404,7 @@ static void perform_obj_aff_list(struct char_data * ch, char *arg)
                   QGRN, found + 1, QNRM, QCYN, QYEL, lst[i].vobj, QCYN,
                   QYEL, lst[i].val, QCYN, 42+count_color_chars(obj_proto[r_num].short_description),
                   obj_proto[r_num].short_description,
-                  QYEL, item_types[obj_proto[r_num].obj_flags.type_flag], QNRM,
+                  QYEL, ITEM_TYPE_NAME(obj_proto[r_num].obj_flags.type_flag, lst[i].vobj), QNRM,
                   obj_proto[r_num].proto_script ? " [TRIG]" : ""))
           break;
         found++;
@@ -430,7 +446,7 @@ static void perform_obj_aff_list(struct char_data * ch, char *arg)
                 QGRN, found + 1, QNRM, QCYN, QYEL, lst[i].vobj, QCYN,
                 QYEL, lst[i].val, QCYN, 42+count_color_chars(obj_proto[r_num].short_description),
                 obj_proto[r_num].short_description,
-                QYEL, item_types[obj_proto[r_num].obj_flags.type_flag], QNRM,
+                QYEL, ITEM_TYPE_NAME(obj_proto[r_num].obj_flags.type_flag, lst[i].vobj), QNRM,
                 obj_proto[r_num].proto_script ? " [TRIG]" : ""))
         break;
       found++;
@@ -458,7 +474,7 @@ static void perform_obj_name_list(struct char_data * ch, char *arg)
       if (!olc_list_rowf(&tb, "%s%4d%s) %s[%s%5d%s] %s(%s%3d%s)%s %-*s%s [%s]%s%s\r\n",
                 QGRN, found + 1, QNRM, QCYN, QYEL, ov, QCYN, QNRM,
                 QGRN, obj_index[num].number, QNRM, QCYN, 42+count_color_chars(obj_proto[num].short_description),
-                obj_proto[num].short_description, QYEL, item_types[obj_proto[num].obj_flags.type_flag], QNRM,
+                obj_proto[num].short_description, QYEL, ITEM_TYPE_NAME(obj_proto[num].obj_flags.type_flag, ov), QNRM,
                 obj_proto[num].proto_script ? " [TRIG]" : ""))
         break;
       found++;
@@ -816,7 +832,7 @@ static void list_objects(struct char_data *ch, zone_rnum rnum, obj_vnum vmin, ob
       if (!olc_list_rowf(&tb, "%s%4d%s) [%s%-5d%s] %s%-*s %s[%s]%s%s\r\n",
                    QGRN, counter + 1, QNRM, QGRN, obj_index[i].vnum, QNRM,
                    QCYN, count_color_chars(obj_proto[i].short_description)+44, obj_proto[i].short_description, QYEL,
-                   item_types[obj_proto[i].obj_flags.type_flag], QNRM,
+                   ITEM_TYPE_NAME(obj_proto[i].obj_flags.type_flag, obj_index[i].vnum), QNRM,
                    obj_proto[i].proto_script ? " [TRIG]" : ""
               ))
         break;

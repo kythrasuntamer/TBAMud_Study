@@ -560,6 +560,24 @@ void test_single_zone_world_is_listed(void)
   TEST_ASSERT_NOT_NULL(strstr(paged, "The Only Zone"));
 }
 
+/* ---------------------------------------------------------------------
+ * ITEM_TYPE_NAME: a prototype's type_flag (world-file data) indexed
+ * item_types[] unchecked in the listing rows.
+ * --------------------------------------------------------------------- */
+void test_obj_list_bad_type_flag_is_reported_not_indexed(void)
+{
+  make_objects(2, "a strange thing");
+  obj_proto[1].obj_flags.type_flag = 200;
+
+  run_list(SCMD_OASIS_OLIST, "100 110");
+
+  TEST_ASSERT_EQUAL_INT(1, paged_calls);
+  TEST_ASSERT_NOT_NULL(strstr(paged, "[<invalid>]"));
+  TEST_ASSERT_NOT_NULL(strstr(paged, "[TRASH]"));
+  TEST_ASSERT_TRUE(log_has("op=table-index"));
+  TEST_ASSERT_TRUE(log_has("vnum 101"));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -579,5 +597,6 @@ int main(void)
   RUN_TEST(test_single_mobile_world_is_listed);
   RUN_TEST(test_single_object_world_is_listed);
   RUN_TEST(test_single_zone_world_is_listed);
+  RUN_TEST(test_obj_list_bad_type_flag_is_reported_not_indexed);
   return UNITY_END();
 }
