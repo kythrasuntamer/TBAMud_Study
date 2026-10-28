@@ -225,6 +225,26 @@ static void auto_prompt_handles_negative_hit_points(void)
   desc.character = NULL;
 }
 
+/* Formatted text longer than vwrite_to_output's buffer was cut with no
+ * report (the size check was dead code once ProtocolOutput rewrote the
+ * size through an int * aliasing a size_t). Runs after
+ * overflow_of_large_buffer_keeps_it, so the rate-limited output-overflow
+ * report from the large-buffer clamp is suppressed here and the
+ * truncation report is the only record. */
+static void oversized_format_is_reported(void)
+{
+  static char big[MAX_STRING_LENGTH + 100];
+
+  memset(big, 'z', sizeof(big) - 1);
+  big[sizeof(big) - 1] = '\0';
+  write_to_output(&desc, "%s", big);
+
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("output-truncate", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "desc #42 fd 7"));
+  TEST_ASSERT_EQUAL_INT(0, desc.bufspace); /* overflow state */
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -234,5 +254,6 @@ int main(void)
   RUN_TEST(overflow_of_large_buffer_keeps_it);
   RUN_TEST(opponent_with_zero_max_hit_is_reported);
   RUN_TEST(auto_prompt_handles_negative_hit_points);
+  RUN_TEST(oversized_format_is_reported);
   return UNITY_END();
 }

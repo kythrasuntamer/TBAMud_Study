@@ -1470,8 +1470,9 @@ size_t vwrite_to_output(struct descriptor_data *t, const char *format, va_list a
 {
   const char *text_overflow = "\r\nOVERFLOW\r\n";
   static char txt[MAX_STRING_LENGTH];
-  size_t wantsize;
-  int size;
+  const char *translated;
+  int size, proto_len;
+  bool fmt_truncated;
 
   /* The offsets below index t->output directly; never write through a
    * broken bufptr (it would land in neighbouring descriptor fields). */
@@ -1481,17 +1482,45 @@ size_t vwrite_to_output(struct descriptor_data *t, const char *format, va_list a
   if (t->bufspace == 0)
     return (0);
 
-  wantsize = size = vsnprintf(txt, sizeof(txt), format, args);
+  size = vsnprintf(txt, sizeof(txt), format, args);
+  if (size < 0) {
+    TB_ERROR_ERRNO("network", "output-format", "vwrite_to_output",
+                   DIAG_DESC_FMT " vsnprintf failed; message dropped",
+                   DIAG_DESC(t));
+    return (t->bufspace);
+  }
+  fmt_truncated = ((size_t) size >= sizeof(txt));
+  if (fmt_truncated) {
+    TB_WARN_EVERY(60, "network", "output-truncate", "vwrite_to_output",
+                  DIAG_DESC_FMT " formatted text needs %d bytes; cut to %d",
+                  DIAG_DESC(t), size, (int) sizeof(txt) - 1);
+    size = (int) sizeof(txt) - 1;
+  }
 
-  strlcpy(txt, ProtocolOutput( t, txt, (int*)&wantsize ), sizeof(txt)); /* <--- Add this line */
-  size = wantsize;                    /* <--- Add this line */
-  if ( t->pProtocol->WriteOOB > 0 )   /* <--- Add this line */
-    --t->pProtocol->WriteOOB;         /* <--- Add this line */
+  /* KaVir's protocol layer translates colour/MXP/unicode escapes. Its
+   * length argument is an int in/out parameter (it used to be handed a
+   * size_t through an int *). The result is measured with strlen() so
+   * bufptr always matches the text actually copied. ProtocolOutput()
+   * returns its argument unchanged when there is no protocol state, so
+   * never strlcpy() txt onto itself. */
+  proto_len = size;
+  translated = ProtocolOutput(t, txt, &proto_len);
+  if (translated != txt)
+    strlcpy(txt, translated, sizeof(txt));
+  size = (int) strlen(txt);
+  if (t->pProtocol && t->pProtocol->WriteOOB > 0)
+    --t->pProtocol->WriteOOB;
 
-  /* If exceeding the size of the buffer, truncate it for the overflow message */
-  if (size < 0 || wantsize >= sizeof(txt)) {
-    size = sizeof(txt) - 1;
-    strlcpy(txt + size - strlen(text_overflow), text_overflow, sizeof(txt) - (size_t)(size - strlen(text_overflow)));	/* strcpy: OK */
+  /* Mark output that was cut above, making room for the marker if the
+   * translated text still fills txt. */
+  if (fmt_truncated) {
+    int room = (int) (sizeof(txt) - 1 - strlen(text_overflow));
+    if (size > room) {
+      size = room;
+      txt[size] = '\0';
+    }
+    strlcat(txt, text_overflow, sizeof(txt));
+    size = (int) strlen(txt);
   }
 
   /* If the text is too big to fit into even a large buffer, truncate
