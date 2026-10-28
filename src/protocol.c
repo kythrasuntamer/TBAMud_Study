@@ -548,6 +548,9 @@ const char *ProtocolOutput( descriptor_t *apDescriptor, const char *apData, int 
    const char LinkStop[] = "\033[1z</send>\033[7z";
    bool_t bTerminate = false, bUseMXP = false, bUseMSP = false;
    int i = 0, j = 0; /* Index values */
+   /* Text of a '\t[u...]' unicode substitute. It is copied into Result after
+    * the escape's block has ended, so it must live at function scope. */
+   char UnicodeSub[8];
 
    protocol_t *pProtocol = apDescriptor ? apDescriptor->pProtocol : NULL;
    if ( pProtocol == NULL || apData == NULL )
@@ -691,9 +694,11 @@ const char *ProtocolOutput( descriptor_t *apDescriptor, const char *apData, int 
             case '[':
                if ( tolower(apData[++j]) == 'u' )
                {
-                  char Buffer[8] = {'\0'}, BugString[256];
+                  char *Buffer = UnicodeSub, BugString[256];
                   int Index = 0;
                   int Number = 0;
+
+                  memset(UnicodeSub, '\0', sizeof(UnicodeSub));
                   bool_t bDone = false, bValid = true;
 
                   while ( isdigit(apData[++j]) )

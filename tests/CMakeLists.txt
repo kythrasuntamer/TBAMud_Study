@@ -278,6 +278,20 @@ if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
     target_link_options(test_comm_output PRIVATE -Wl,--gc-sections -Wl,--wrap=write)
 endif()
 
+# Production KaVir protocol layer (ProtocolOutput/ProtocolInput).
+# test_protocol.c #includes protocol.c to reach its file-static helpers.
+add_executable(test_protocol
+    $<TARGET_OBJECTS:unity_vendor>
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_protocol.c
+)
+target_include_directories(test_protocol PRIVATE ${TEST_INCLUDES})
+target_compile_options(test_protocol PRIVATE ${TEST_CFLAGS})
+add_test(NAME test_protocol COMMAND test_protocol)
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_compile_options(test_protocol PRIVATE -ffunction-sections -fdata-sections)
+    target_link_options(test_protocol PRIVATE -Wl,--gc-sections)
+endif()
+
 # Production DG sub_write() message builder (dg_comm.c).
 add_mud_test(test_dg_sub_write
     ${MUD_SRCDIR}/dg_comm.c
