@@ -24,6 +24,11 @@
 
 /* Global Variables definitions, used elsewhere */
 struct spell_info_type spell_info[TOP_SPELL_DEFINE + 1];
+/* The target keyword typed to 'cast', for spells that search by name
+ * (spell_locate_object). Written only by do_cast and cleared when do_cast
+ * returns, so it is non-empty only while a player's cast is in progress;
+ * wands, scrolls and dg_cast see "" and the spell falls back to the target
+ * object's own keyword. Player text: never log it. */
 char cast_arg2[MAX_INPUT_LENGTH];
 const char *unused_spellname = "!UNUSED!"; /* So we can get &unused_spellname */
 
@@ -636,7 +641,16 @@ int cast_spell(struct char_data *ch, struct char_data *tch,
  * determines the spell number and finds a target, throws the die to see if
  * the spell can be cast, checks for sufficient mana and subtracts it, and
  * passes control to cast_spell(). */
+static void do_cast_body(struct char_data *ch, char *argument);
+
 ACMD(do_cast) {
+  do_cast_body(ch, argument);
+  /* Never leave this cast's target keyword for a later wand, scroll or
+   * script cast to pick up. */
+  *cast_arg2 = '\0';
+}
+
+static void do_cast_body(struct char_data *ch, char *argument) {
   struct char_data *tch = NULL;
   struct obj_data *tobj = NULL;
   char *s, *t;

@@ -232,8 +232,20 @@ ASPELL(spell_locate_object)
     return;
   }
 
-  /*  added a global var to catch 2nd arg. */
-  tb_snprintf(name, sizeof(name), "%s", cast_arg2);
+  /* cast_arg2 holds the keyword typed to 'cast'; other cast paths (wands,
+   * scrolls, dg_cast) leave it empty, so search for the target object's own
+   * first keyword instead. An empty keyword would match every object. */
+  if (*cast_arg2)
+    tb_snprintf(name, sizeof(name), "%s", cast_arg2);
+  else
+    tb_snprintf(name, sizeof(name), "%s", obj->name ? fname(obj->name) : "");
+  if (!*name) {
+    TB_WARN_MSG("magic", "locate-no-keyword", "cast_arg2",
+                DIAG_CHAR_FMT " cast locate object with no keyword (target "
+                "obj vnum %d)", DIAG_CHAR(ch), (int) GET_OBJ_VNUM(obj));
+    send_to_char(ch, "You sense nothing.\r\n");
+    return;
+  }
 
   j = GET_LEVEL(ch) / 2;  /* # items to show = twice char's level */
 
