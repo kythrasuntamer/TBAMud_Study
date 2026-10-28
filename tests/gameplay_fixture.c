@@ -80,7 +80,7 @@ void extract_script(void *thing, int type) { (void)thing; (void)type; }
 void free_proto_script(void *thing, int type) { (void)thing; (void)type; }
 
 /* ---- utils.c functions observed by the tests (linked with --wrap) ------ */
-int __wrap_rand_number(int from, int to)
+int __wrap_rand_number(int from, int to) /* NOLINT(cert-dcl37-c,cert-dcl51-cpp): --wrap name */
 {
   if (fx_rand_value < 0)
     return from;
@@ -89,13 +89,13 @@ int __wrap_rand_number(int from, int to)
   return fx_rand_value > to ? to : fx_rand_value;
 }
 
-void __wrap_core_dump_real(const char *who, int line)
+void __wrap_core_dump_real(const char *who, int line) /* NOLINT(cert-dcl37-c,cert-dcl51-cpp): --wrap name */
 {
   (void)who; (void)line;
   fx_core_dumps++;
 }
 
-void __wrap_basic_mud_log(const char *format, ...)
+void __wrap_basic_mud_log(const char *format, ...) /* NOLINT(cert-dcl37-c,cert-dcl51-cpp): --wrap name */
 {
   (void)format;
   fx_log_lines++;
