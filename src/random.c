@@ -19,6 +19,16 @@
  * THIS GENERATOR REPRESENTS THE MINIMUM STANDARD AGAINST WHICH OTHER 
  * GENERATORS SHOULD BE JUDGED. */
 
+/* Contract (tbaMUD):
+ *  - Valid state is 1 <= seed <= 2^31 - 2; circle_srandom() maps any input
+ *    into it (reporting the degenerate multiples of 2^31 - 1).
+ *  - circle_random() returns values in [1, 2^31 - 2], period 2^31 - 2.
+ *  - Not cryptographic: never use it for anything an attacker must not
+ *    predict (it is seeded from time(0) in comm.c).  Not thread-safe.
+ *  - rand_number(from, to) in utils.c reduces the result with a modulo of
+ *    the range, which has a small bias for ranges that do not divide
+ *    2^31 - 2; acceptable for game rolls, not for statistics. */
+
 #include "conf.h"
 #include "sysdep.h"
 #include "structs.h"

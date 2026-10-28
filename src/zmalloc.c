@@ -9,7 +9,31 @@
  *  as below, make clean, and reboot.
  *
  *  Makefile: # Any special flags you want to pass to the compiler
- *  Makefile: MYFLAGS = -Wall -DMEMORY_DEBUG */
+ *  Makefile: MYFLAGS = -Wall -DMEMORY_DEBUG
+ *  CMake:    -DMEMORY_DEBUG=ON (refused together with ENABLE_SANITIZERS)
+ *
+ *  How it works and what it costs:
+ *  - With MEMORY_DEBUG, structs.h includes zmalloc.h, whose macros route
+ *    malloc/calloc/realloc/free/strdup in every server file through here
+ *    with the caller's __FILE__/__LINE__.  comm.c calls zmalloc_init() at
+ *    start-up and zmalloc_check() at shutdown.
+ *  - Each block is calloc()ed with a 16-byte guard pad on each side (keeps
+ *    malloc's alignment) and recorded in memlist with its allocation site.
+ *  - zfree() NEVER releases memory: it checks the pads, counts the free
+ *    and keeps the block until zmalloc_check(), which reports unfreed
+ *    blocks and only then frees everything.  The process therefore grows by
+ *    every byte it ever frees, and ASan, LSan and Valgrind cannot see
+ *    use-after-free, double free or leaks in such a build -- use one tool
+ *    or the other, not both.  (Under ASan, freed blocks are poisoned as a
+ *    partial backstop.)
+ *  - Detected misuse -- double free, free or realloc of a pointer zmalloc
+ *    did not hand out, realloc after free, an overwritten guard pad -- is
+ *    reported on stderr (TBERR record at the caller's file:line) and
+ *    aborts.  Allocation failure is reported and returns NULL.
+ *  - ./zmalloc.log (in the server's working directory) receives the
+ *    verbose trace, hex dumps and the leak summary; if it cannot be opened
+ *    that is reported once and the trace is skipped.
+ *  - Not thread-safe (one global table); the server is single-threaded. */
 
 #include "conf.h"
 #include "sysdep.h"
@@ -392,7 +416,11 @@ unsigned char *zrealloc(unsigned char *what, size_t len, char *file, int line)
   return (zmalloc(len, file, line));
 }
 
-/* doesn't actually free memory */
+/* free() under MEMORY_DEBUG.  Doesn't actually free memory: the block is
+ * pad-checked, marked freed (and poisoned under ASan) and kept until
+ * zmalloc_check(), so a second free or a realloc of it can be detected and
+ * reported with both sites.  free(NULL) is legal and only traced.  Any
+ * other misuse is reported and aborts (see the file header). */
 void zfree(unsigned char *what, char *file, int line)
 {
   meminfo *m;
