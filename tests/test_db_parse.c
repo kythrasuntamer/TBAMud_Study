@@ -1262,10 +1262,51 @@ static void interpret_espec_reports_clamp_and_garbage(void)
   mob_proto = NULL;
 }
 
+/* ---------------------------------------------------------------------
+ * fread_number(): int range (B1-31)
+ * ------------------------------------------------------------------- */
+
+static int read_number(const char *text)
+{
+  FILE *fp = stream_of(text, strlen(text));
+  int n = fread_number(fp);
+  fclose(fp);
+  return n;
+}
+
+/* "number * 10 + digit" on an int overflowed (UBSan: signed-integer-
+ * overflow) for a long digit string; now it is reported and read as 0. */
+static void fread_number_reports_out_of_range(void)
+{
+  TEST_ASSERT_EQUAL_INT(0, read_number("99999999999999999999 "));
+  TEST_ASSERT_EQUAL_STRING("fread-number", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "out of int range"));
+}
+
+static void fread_number_reads_limits_and_sums(void)
+{
+  TEST_ASSERT_EQUAL_INT(INT_MAX, read_number("2147483647 "));
+  TEST_ASSERT_EQUAL_INT(INT_MIN, read_number("-2147483648 "));
+  TEST_ASSERT_EQUAL_INT(7, read_number("3|4 "));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  TEST_ASSERT_EQUAL_INT(0, read_number("2147483647|1 "));
+  TEST_ASSERT_EQUAL_STRING("fread-number", tb_captured_operation);
+}
+
+static void fread_number_reports_bad_format(void)
+{
+  TEST_ASSERT_EQUAL_INT(0, read_number("x12"));
+  TEST_ASSERT_EQUAL_STRING("fread-number", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "expected a digit"));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
   RUN_TEST(load_zones_rejects_top_nowhere);
+  RUN_TEST(fread_number_reports_out_of_range);
+  RUN_TEST(fread_number_reads_limits_and_sums);
+  RUN_TEST(fread_number_reports_bad_format);
   RUN_TEST(get_one_line_reports_leading_nul);
   RUN_TEST(get_one_line_keeps_long_line_characters);
   RUN_TEST(starts_with_article_handles_long_first_word);

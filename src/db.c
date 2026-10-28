@@ -3690,27 +3690,33 @@ char *fread_clean_string(FILE *fl, const char *error)
   return (strlen(buf) ? strdup(buf) : NULL);
 }
 
-/* Read a numerical value from a given file */
+/** Read a decimal number (optionally signed, optionally "a|b|..." summed)
+ * from fp. Used by the IBT loader (ibt.c) for Level and Room, so the input
+ * is the bug/idea/typo file the game writes, possibly hand-edited.
+ *
+ * Returns the value, or 0 after a "fread-number" diagnostic naming the file
+ * line on EOF, a non-digit, or a value outside int: the digits are
+ * accumulated in long long and checked, because "number * 10 + digit" on an
+ * int overflowed (undefined behaviour) for long digit strings. */
 int fread_number(FILE *fp)
 {
-  int number;
-  bool sign;
+  long long number = 0, rest;
+  bool sign = FALSE, overflow = FALSE;
   int c;
 
   do
   {
     if( feof( fp ) )
     {
-      log( "%s", "fread_number: EOF encountered on read." );
+      TB_ERROR_MSG("db", "fread-number", "eof",
+                   "EOF before a number at file line %lu",
+                   tb_parse_context_line(fp));
       return 0;
     }
     c = getc( fp );
   }
   while( isspace( c ) );
 
-  number = 0;
-
-  sign = FALSE;
   if( c == '+' )
     c = getc( fp );
   else if( c == '-' ) {
@@ -3719,30 +3725,46 @@ int fread_number(FILE *fp)
   }
 
   if(!isdigit(c)) {
-    log( "fread_number: bad format. (%c)", c );
-    return 0;
+    TB_ERROR_MSG("db", "fread-number", "format",
+                 "expected a digit, found %s0x%02x at file line %lu",
+                 c == EOF ? "EOF " : "", c == EOF ? 0 : (unsigned)c,
+                 tb_parse_context_line(fp));
+    return 0;	/* the bad character stays consumed, as it always was */
   }
 
   while(isdigit(c)) {
-    if(feof(fp)) {
-      log( "%s", "fread_number: EOF encountered on read." );
-      return number;
+    if (!overflow) {
+      number = number * 10 + (c - '0');
+      if (number > (long long)INT_MAX + 1)	/* INT_MIN's magnitude fits */
+        overflow = TRUE;
     }
-    number = number * 10 + c - '0';
     c = getc( fp );
   }
 
   if( sign )
-    number = 0 - number;
+    number = -number;
+  if (overflow || number > INT_MAX || number < INT_MIN) {
+    TB_ERROR_MSG("db", "fread-number", "range",
+                 "number out of int range at file line %lu; using 0",
+                 tb_parse_context_line(fp));
+    number = 0;
+  }
 
-  if( c == '|' )
-    number += fread_number( fp );
-  else if (c != ' ' && c != EOF && ungetc(c, fp) == EOF) {
+  if( c == '|' ) {
+    rest = fread_number( fp );
+    if (number + rest > INT_MAX || number + rest < INT_MIN) {
+      TB_ERROR_MSG("db", "fread-number", "range",
+                   "sum %lld + %lld out of int range at file line %lu; using 0",
+                   number, rest, tb_parse_context_line(fp));
+      return 0;
+    }
+    number += rest;
+  } else if (c != ' ' && c != EOF && ungetc(c, fp) == EOF) {
     log("SYSERR: fread_number: cannot restore lookahead");
     return 0;
   }
 
-  return number;
+  return (int)number;
 }
 
 /* Read to end of line from a given file into a static buffer */
