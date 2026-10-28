@@ -24,6 +24,7 @@ ACMD(do_mhunt);
 ACMD(do_mremember);
 ACMD(do_mforget);
 ACMD(do_mtransform);
+ACMD(do_mjunk);
 
 void setUp(void) { dgw_setup(); }
 void tearDown(void) { dgw_teardown(); }
@@ -165,6 +166,51 @@ static void test_mtransform_refuses_players(void)
   dgw_free_player(p);
 }
 
+static struct obj_data *give(struct char_data *ch, obj_vnum vnum)
+{
+  struct obj_data *o = dgw_obj(vnum, NOWHERE);
+  obj_to_char(o, ch);
+  return o;
+}
+
+/* E1-11: a plain name junks only the matching item. 'mjunk axe' (any
+ * three-letter name) used to destroy the whole inventory, and shorter names
+ * read arg[3] / arg + 4 past what one_argument() wrote. */
+static void test_mjunk_plain_name_junks_one_matching_item(void)
+{
+  struct char_data *m = dgw_mob(DGW_MOB_GUARD, 0);
+  give(m, DGW_OBJ_STONE);
+  give(m, DGW_OBJ_STONE);
+  give(m, DGW_OBJ_BAG);
+
+  run(do_mjunk, m, "bag");
+  TEST_ASSERT_EQUAL_INT(2, count_carried(m));
+  run(do_mjunk, m, "axe");
+  TEST_ASSERT_EQUAL_INT(2, count_carried(m));
+  run(do_mjunk, m, "ax");
+  TEST_ASSERT_EQUAL_INT(2, count_carried(m));
+  TEST_ASSERT_EQUAL_INT(2, dgw_saw("mjunk-nomatch"));
+  run(do_mjunk, m, "stone");
+  TEST_ASSERT_EQUAL_INT(1, count_carried(m));
+}
+
+/* E1-11: all.<name> junks every match; all junks the inventory. */
+static void test_mjunk_all_forms(void)
+{
+  struct char_data *m = dgw_mob(DGW_MOB_GUARD, 0);
+  give(m, DGW_OBJ_STONE);
+  give(m, DGW_OBJ_BAG);
+  give(m, DGW_OBJ_STONE);
+
+  run(do_mjunk, m, "all.stone");
+  TEST_ASSERT_EQUAL_INT(1, count_carried(m));
+  TEST_ASSERT_EQUAL_INT(DGW_OBJ_BAG, GET_OBJ_VNUM(m->carrying));
+  run(do_mjunk, m, "all");
+  TEST_ASSERT_EQUAL_INT(0, count_carried(m));
+  run(do_mjunk, m, "all");           /* nothing left: not an error */
+  TEST_ASSERT_EQUAL_INT(0, dgw_saw("mjunk-nomatch"));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -174,5 +220,7 @@ int main(void)
   RUN_TEST(test_mtransform_keeps_furniture_link);
   RUN_TEST(test_mtransform_keeps_memory_and_frees_old_strings);
   RUN_TEST(test_mtransform_refuses_players);
+  RUN_TEST(test_mjunk_plain_name_junks_one_matching_item);
+  RUN_TEST(test_mjunk_all_forms);
   return UNITY_END();
 }

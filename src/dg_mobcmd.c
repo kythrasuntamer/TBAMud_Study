@@ -179,7 +179,7 @@ ACMD(do_mkill)
 ACMD(do_mjunk)
 {
     char arg[MAX_INPUT_LENGTH];
-    int pos, dots;
+    int pos, dots, junked = 0;
     obj_data *obj;
     obj_data *obj_next;
 
@@ -198,37 +198,51 @@ ACMD(do_mjunk)
         return;
     }
 
-    /* find_all_dots() strips a leading "all.", leaving the bare name.  The
-     * test used to be inverted, sending plain names down the "all." path
-     * where arg[3] and arg + 4 read past a short name's terminator. */
+    /* The argument is script text. find_all_dots() classifies it and strips
+     * a leading "all.", leaving the bare name. The test used to be inverted,
+     * sending plain names down the "all." path, where arg[3] and arg + 4 read
+     * past a short name's terminator and 'mjunk axe' junked everything. */
     dots = find_all_dots(arg);
 
     if (dots == FIND_INDIV) {
+      /* One item: worn first, then carried. */
       /* Thanks to Carlos Myers for fixing the line below */
       if ((pos = get_obj_pos_in_equip_vis(ch, arg, NULL, ch->equipment)) >= 0) {
-         extract_obj(unequip_char(ch, pos));
-         return;
-      }
-      if ((obj = get_obj_in_list_vis(ch, arg, NULL, ch->carrying)) != NULL )
+        extract_obj(unequip_char(ch, pos));
+        junked++;
+      } else if ((obj = get_obj_in_list_vis(ch, arg, NULL, ch->carrying)) != NULL) {
         extract_obj(obj);
-      return;
+        junked++;
+      }
+    } else {
+      /* "all" junks everything; "all.<name>" junks what matches name. */
+      for (obj = ch->carrying; obj != NULL; obj = obj_next) {
+        obj_next = obj->next_content;
+        if (dots == FIND_ALL || isname(arg, obj->name)) {
+          extract_obj(obj);
+          junked++;
+        }
+      }
+      if (dots == FIND_ALL) {
+        for (pos = 0; pos < NUM_WEARS; pos++)
+          if (GET_EQ(ch, pos)) {
+            extract_obj(unequip_char(ch, pos));
+            junked++;
+          }
+      } else {
+        while ((pos = get_obj_pos_in_equip_vis(ch, arg, NULL, ch->equipment)) >= 0) {
+          extract_obj(unequip_char(ch, pos));
+          junked++;
+        }
+      }
     }
 
-    /* "all" junks everything; "all.<name>" junks what matches name. */
-    for (obj = ch->carrying; obj != NULL; obj = obj_next) {
-        obj_next = obj->next_content;
-        if (dots == FIND_ALL || isname(arg, obj->name))
-            extract_obj(obj);
+    if (!junked && dots != FIND_ALL) {   /* an empty inventory is not an error */
+      TB_WARN_MSG("dg", "mjunk-nomatch", "do_mjunk",
+                  DIAG_CHAR_FMT " has nothing matching the %zu-byte argument; "
+                  "nothing junked", DIAG_CHAR(ch), strlen(arg));
+      mob_log(ch, "mjunk: nothing matches '%s'", arg);
     }
-    if (dots == FIND_ALL) {
-      for (pos = 0; pos < NUM_WEARS; pos++)
-        if (GET_EQ(ch, pos))
-          extract_obj(unequip_char(ch, pos));
-    } else {
-      while ((pos = get_obj_pos_in_equip_vis(ch, arg, NULL, ch->equipment)) >= 0)
-        extract_obj(unequip_char(ch, pos));
-    }
-    return;
 }
 
 /* prints the message to everyone in the room other than the mob and victim */
