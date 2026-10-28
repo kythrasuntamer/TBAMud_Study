@@ -109,7 +109,6 @@ void setUp(void)
   mud_frees = 0;
   self_calls = 0;
   never_calls = 0;
-  huge_calls = 0;
   pulse = 0;
   event_init();
 }
@@ -166,9 +165,28 @@ static void test_nonpositive_when_is_clamped_loudly(void)
   TEST_ASSERT_EQUAL_INT(1, never_calls);
 }
 
+/* D2-V02: after event_free_all() the queue is gone; later calls must
+ * report instead of using the freed queue or the freed events. */
+static void test_use_after_free_all_is_reported(void)
+{
+  struct event stale;
+
+  memset(&stale, 0, sizeof(stale));
+  event_free_all();
+  event_free_all();              /* second call is harmless */
+
+  event_cancel(&stale);
+  TEST_ASSERT_TRUE(captured("event-queue-uninit"));
+  n_captured = 0;
+  pulse = 1;
+  event_process();
+  TEST_ASSERT_TRUE(captured("event-queue-uninit"));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(test_use_after_free_all_is_reported);
   RUN_TEST(test_nonpositive_when_is_clamped_loudly);
   RUN_TEST(test_cancel_null_is_reported);
   RUN_TEST(test_cancel_running_event_is_deferred_and_not_requeued);

@@ -93,6 +93,14 @@ struct event *event_create(EVENTFUNC(*func), void *event_obj, long when)
 {
   struct event *new_event;
 
+  if (event_q == NULL) {
+    /* Before event_init() or after event_free_all().  Callers dereference
+     * the result, so there is nothing safe to return. */
+    TB_ERROR_LOG("FATAL", "dg", "event-queue-uninit", "event", 0,
+                 "event_create(when=%ld) with no event queue", when);
+    abort();
+  }
+
   if (when < 1) { /* make sure its in the future */
     /* A DG 'wait 0', 'wait -5' or an 'until' time already past reaches
      * here; the event still runs next pulse (legacy behaviour), but the
@@ -122,6 +130,16 @@ void event_cancel_at(struct event *event, const char *file, int line,
   if (!event) {
     tb_error_log_at("ERROR", "dg", "event-cancel-null", "event", 0,
                     file, line, func, "attempted to cancel a NULL event");
+    return;
+  }
+
+  if (event_q == NULL) {
+    /* After event_free_all() every queued event is already freed, so the
+     * pointer must not be read; leaking is the only safe outcome. */
+    tb_error_log_at("ERROR", "dg", "event-queue-uninit", "event", 0,
+                    file, line, func,
+                    "cancel of event %p with no event queue; not touched",
+                    (void *)event);
     return;
   }
 
@@ -188,6 +206,12 @@ void event_process(void)
   struct event *the_event;
   long new_time;
 
+  if (event_q == NULL) {
+    TB_ERROR_MSG("dg", "event-queue-uninit", "event",
+                 "event_process at pulse %lu with no event queue", pulse);
+    return;
+  }
+
   while ((long) pulse >= queue_key(event_q)) {
     if (!(the_event = (struct event *) queue_head(event_q))) {
       /* queue_key() saw a head in this pulse's bucket, so queue_head()
@@ -245,6 +269,10 @@ void event_free_all(void)
 {
   if (event_q != NULL)
     queue_free(event_q);
+  /* Every queued event was freed with the queue; NULL makes any later
+   * create/cancel/process report event-queue-uninit instead of touching
+   * freed memory. */
+  event_q = NULL;
 }
 
 /** Boolean function to tell whether an event is queued or not. Does this by
