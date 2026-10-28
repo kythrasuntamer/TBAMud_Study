@@ -63,10 +63,66 @@ static void other_characters_leave_editors_alone(void)
   TEST_ASSERT_EQUAL_INT(0, cleanups);
 }
 
+/* do_oasis_prefedit() fixtures; the self-edit path reaches none of the
+ * world or logging code these satisfy. */
+#define UNREACHED() TEST_FAIL_MESSAGE(__func__)
+void basic_mud_log(const char *format, ...) { (void)format; UNREACHED(); }
+void mudlog(int type, int level, int file, const char *str, ...)
+{ (void)type; (void)level; (void)file; (void)str; UNREACHED(); }
+struct char_data *get_player_vis(struct char_data *ch, char *name, int *number, int inroom)
+{ (void)ch; (void)name; (void)number; (void)inroom; UNREACHED(); return NULL; }
+int room_is_dark(room_rnum room) { (void)room; return 0; }
+void *tb_calloc_array_at(size_t count, size_t element_size,
+                         const char *file, int line, const char *func)
+{
+  (void)file; (void)line; (void)func;
+  void *allocation = calloc(count, element_size);
+  if (!allocation) abort();
+  return allocation;
+}
+static int acts, sends;
+char *act_at(const char *src_file, int src_line, const char *src_func,
+             const char *str, int hide_invisible, struct char_data *ch,
+             struct obj_data *obj, void *vict_obj, int type)
+{
+  (void)src_file; (void)src_line; (void)src_func; (void)str;
+  (void)hide_invisible; (void)ch; (void)obj; (void)vict_obj; (void)type;
+  acts++;
+  return NULL;
+}
+size_t send_to_char(struct char_data *ch, const char *messg, ...)
+{ (void)ch; (void)messg; sends++; return 0; }
+char *two_arguments(char *argument, char *first_arg, char *second_arg)
+{
+  *first_arg = *second_arg = '\0';
+  return argument;
+}
+
+/* A player checking their own preferences while an implementor edits them
+ * gets the direct message only; act() used to run too, on a buffer that
+ * was never written. */
+static void own_prefs_being_edited_sends_one_message(void)
+{
+  static struct player_special_data specials, imp_specials;
+  char none[] = "";
+
+  memset(&specials, 0, sizeof(specials));
+  memset(&imp_specials, 0, sizeof(imp_specials));
+  victim.player_specials = &specials;
+  imp.player_specials = &imp_specials;     /* PERS() checks visibility */
+  acts = sends = 0;
+
+  do_oasis_prefedit(&victim, none, 0, 0);
+
+  TEST_ASSERT_EQUAL_INT(1, sends);
+  TEST_ASSERT_EQUAL_INT(0, acts);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
   RUN_TEST(editors_of_a_freed_character_are_abandoned);
   RUN_TEST(other_characters_leave_editors_alone);
+  RUN_TEST(own_prefs_being_edited_sends_one_message);
   return UNITY_END();
 }
