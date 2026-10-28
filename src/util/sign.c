@@ -116,13 +116,19 @@ char *get_text(char *fname)
 }
 
 
-/* clean up our zombie kids to avoid defunct processes */
+/* clean up our zombie kids to avoid defunct processes.  The loop always
+ * ends with waitpid() failing (ECHILD), and this handler can run between a
+ * failing accept() and main()'s errno read, so errno is restored: otherwise
+ * an EMFILE from accept() would be reported as "No child processes". */
 RETSIGTYPE reap(int sig)
 {
+  int saved_errno = errno;
+
   (void)sig;
 
   while (waitpid(-1, NULL, WNOHANG) > 0)
     ;
+  errno = saved_errno;
 }
 
 
