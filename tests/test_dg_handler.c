@@ -58,8 +58,17 @@ void *tb_calloc_array_at(size_t count, size_t element_size,
 }
 
 int str_cmp(const char *a, const char *b) { return strcasecmp(a, b); }
+/* NULL: fail like a name with no file; else the path to hand back. */
+static const char *stub_vars_path;
 int get_filename(char *filename, size_t fbufsize, int mode, const char *orig_name)
-{ (void)filename; (void)fbufsize; (void)mode; (void)orig_name; return 0; }
+{
+  (void)mode; (void)orig_name;
+  if (!stub_vars_path)
+    return 0;
+  (void)snprintf(filename, fbufsize, "%s", stub_vars_path);
+  return 1;
+}
+long get_id_by_name(const char *name) { (void)name; return 4242; }
 
 /* No fixture trigger has a pending wait; reaching the queue is a bug. */
 void event_cancel_at(struct event *event, const char *file, int line,
@@ -276,6 +285,36 @@ static void test_unbalanced_leave_is_fatal(void)
       run_in_child(leave_without_enter, "execution-depth-underflow"));
 }
 
+/* D2-11: a variable file that could not be named or removed was logged as
+ * a plain SYSERR (or not at all) with no TB record or idnum; the file then
+ * passes to the next character created with that name. */
+static void test_vars_delete_failures_are_reported(void)
+{
+  char dir[] = "/tmp/tb_dgvars_XXXXXX";
+  char inner[sizeof(dir) + 8];
+  FILE *fp;
+
+  stub_vars_path = NULL;
+  delete_variables("Bob");
+  TEST_ASSERT_EQUAL_STRING("vars-delete", last_op);
+
+  /* remove() of a non-empty directory fails with ENOTEMPTY. */
+  TEST_ASSERT_NOT_NULL(mkdtemp(dir));
+  (void)snprintf(inner, sizeof(inner), "%s/f", dir);
+  fp = fopen(inner, "w");
+  TEST_ASSERT_NOT_NULL(fp);
+  TEST_ASSERT_EQUAL_INT(0, fclose(fp));
+  n_captured = 0;
+  last_op[0] = '\0';
+  stub_vars_path = dir;
+  delete_variables("Bob");
+  stub_vars_path = NULL;
+  TEST_ASSERT_EQUAL_STRING("vars-delete", last_op);
+  TEST_ASSERT_EQUAL_INT(1, n_captured);
+  TEST_ASSERT_EQUAL_INT(0, remove(inner));
+  TEST_ASSERT_EQUAL_INT(0, remove(dir));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -287,5 +326,6 @@ int main(void)
   RUN_TEST(test_extract_with_bad_index_bookkeeping_is_reported);
   RUN_TEST(test_unbalanced_leave_is_fatal);
   RUN_TEST(test_proto_script_misuse_is_reported);
+  RUN_TEST(test_vars_delete_failures_are_reported);
   return UNITY_END();
 }

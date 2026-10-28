@@ -534,21 +534,27 @@ void copy_proto_script(void *source, void *dest, int type)
 /** Delete the saved global script-variable file of a player.
  * @param charname A validated player name (not script-controlled).
  * If removal fails for any reason other than a missing file the failure is
- * logged; the file then survives and a later character created with the
- * same name inherits its variables. */
+ * reported as dg/vars-delete; the file then survives and a later character
+ * created with the same name inherits its variables (quest flags). The
+ * player's idnum is named while the player table still lists the name. */
 void delete_variables(const char *charname)
 {
   char filename[PATH_MAX];
 
-  if (!get_filename(filename, sizeof(filename), SCRIPT_VARS_FILE, charname))
+  if (!get_filename(filename, sizeof(filename), SCRIPT_VARS_FILE, charname)) {
+    TB_ERROR_MSG("dg", "vars-delete", "script_vars",
+                 "no variable file name for player %s; any file left "
+                 "behind passes to a new character of that name",
+                 charname ? charname : "(null)");
     return;
-
-  if (remove(filename) < 0 && errno != ENOENT) {
-    int saved_errno = errno;
-    log("SYSERR: remove script-variable file %s for character %s failed: %s (errno=%d)",
-        filename, charname ? charname : "(unknown)",
-        strerror(saved_errno), saved_errno);
   }
+
+  if (remove(filename) < 0 && errno != ENOENT)
+    TB_ERROR_ERRNO("dg", "vars-delete", filename,
+                   "player %s idnum %ld: variable file not removed; a new "
+                   "character of that name would inherit it",
+                   charname ? charname : "(null)",
+                   charname ? get_id_by_name(charname) : -1L);
 }
 
 /** Repoint pending wait events of one room's triggers from 'from' to 'to'
