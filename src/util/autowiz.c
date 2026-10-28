@@ -55,6 +55,10 @@ void initialize(void)
 
   while (level_params[i].level > 0) {
     tmp = (struct level_rec *) malloc(sizeof(struct level_rec));
+    if (tmp == NULL) {
+      TB_REPORT_FATAL_ERRNO(TB_ERR_INVARIANT, "malloc", "autowiz level_rec");
+      exit(1);
+    }
     tmp->names = 0;
     tmp->params = &(level_params[i++]);
     tmp->next = levels;
@@ -83,7 +87,7 @@ static int rejected_records = 0;
  */
 void read_file(void)
 {
-  void add_name(byte level, char *name);
+  void add_name(int level, char *name);
   char *CAP(char *txt);
   int read_index_line(FILE *fl, char *buf, size_t buf_size, const char *path,
                long *line_no);
@@ -94,7 +98,7 @@ void read_file(void)
   bitvector_t flags = 0;
   long line_no = 0;
   char index_name[40], line[256], bits[64];
-  char name[MAX_NAME_LENGTH];
+  char name[MAX_NAME_LENGTH + 1];
 
   tb_snprintf(index_name, sizeof(index_name), "%s%s", LIB_PLRFILES, INDEX_FILE);
   if (!(fl = fopen(index_name, "r"))) {
@@ -137,6 +141,29 @@ void read_file(void)
         continue;
       }
       level = (int)parsed;
+      /* add_name() files a name under the highest bucket whose level does
+       * not exceed it; a level above LVL_IMPL (or a negative one) cannot
+       * come from the server and has no correct bucket. */
+      if (level < 0 || level > LVL_IMPL) {
+        TB_REPORT_DOMAIN_ERRORF(TB_SEV_ERROR, TB_ERR_PARSER, "index-level-range",
+                                "index=%s line=%ld id=%.20s level=%d "
+                                "range=0..%d", index_name, line_no, id_text,
+                                level, LVL_IMPL);
+        rejected_records++;
+        continue;
+      }
+      /* The name becomes wizlist text; the server only creates letter
+       * names, so anything else means a corrupt or edited index. */
+      {
+        const char *ptr;
+
+        for (ptr = name; *ptr && isalpha((unsigned char)*ptr); ptr++)
+          ;
+        if (*name == '\0' || *ptr != '\0') {
+          REJECT_RECORD(index_name, line_no, "name-chars", id_text);
+          continue;
+        }
+      }
       errno = 0;
       parsed = strtol(last_text, &end, 10);
       if (end == last_text || *end || errno == ERANGE) {
@@ -155,26 +182,35 @@ void read_file(void)
   tb_fclose(fl);
 }
 
-void add_name(byte level, char *name)
+/* File name under the level bucket it belongs to.  level is an int (it was a
+ * signed `byte`, so index levels 128-255 wrapped negative and the bucket walk
+ * below ran off the list).  read_file() has already checked
+ * MIN_LEVEL <= level <= LVL_IMPL and that name is letters only. */
+void add_name(int level, char *name)
 {
   struct name_rec *tmp;
   struct level_rec *curr_level;
-  char *ptr;
-
-  if (!*name)
-    return;
-
-  for (ptr = name; *ptr; ptr++)
-    if (!isalpha((unsigned char)*ptr))
-      return;
-
-  tmp = (struct name_rec *) malloc(sizeof(struct name_rec));
-  strlcpy(tmp->name, name, sizeof(tmp->name));
-  tmp->next = 0;
 
   curr_level = levels;
-  while (curr_level->params->level > level)
+  while (curr_level && curr_level->params->level > level)
     curr_level = curr_level->next;
+  if (curr_level == NULL) {
+    /* Only reachable if read_file()'s range check and level_params[] drift
+     * apart (a level below the lowest bucket). */
+    TB_REPORT_DOMAIN_ERRORF(TB_SEV_ERROR, TB_ERR_INVARIANT, "wizlist-bucket",
+                            "name=%s level=%d: no wizlist bucket at or below "
+                            "this level", name, level);
+    rejected_records++;
+    return;
+  }
+
+  tmp = (struct name_rec *) malloc(sizeof(struct name_rec));
+  if (tmp == NULL) {
+    TB_REPORT_FATAL_ERRNO(TB_ERR_INVARIANT, "malloc", "autowiz name_rec");
+    exit(1);
+  }
+  strlcpy(tmp->name, name, sizeof(tmp->name));
+  tmp->next = 0;
 
   tmp->next = curr_level->names;
   curr_level->names = tmp;

@@ -99,6 +99,27 @@ def autowiz_high_flag_letter_is_defined(tmp):
     check("Alice" in wiz, "record with flag Z lost:\n" + wiz)
 
 
+@test("autowiz")
+def autowiz_reports_level_out_of_range(tmp):
+    """I2-07: level 150 became a negative byte; the bucket walk hit NULL."""
+    rc, wiz, imm, err = autowiz(tmp, "1 alice 60 0 1700000000\n"
+                                     "4 dave 150 0 1700000000\n"
+                                     "5 abcdefghijklmnopqrst 55 0 1700000000\n"
+                                     "~\n")
+    check(rc == 1, "rc=%d err=%s" % (rc, err))
+    check("index-level-range" in operations(err), err)
+    check("Alice" in wiz and "Dave" not in wiz, wiz)
+    check("Abcdefghijklmnopqrst" in wiz, "20-letter name rejected:\n" + wiz)
+
+
+@test("autowiz")
+def autowiz_reports_non_letter_name(tmp):
+    """I2-07: add_name() dropped a non-letter name with a bare return."""
+    rc, wiz, imm, err = autowiz(tmp, "1 al1ce 60 0 1700000000\n~\n")
+    check(rc == 1, "rc=%d" % rc)
+    check("field=name-chars" in err, err)
+
+
 # ------------------------------------------------------- rebuildMailIndex
 
 def mail_index(tmp, files):
