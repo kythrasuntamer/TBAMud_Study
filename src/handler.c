@@ -396,7 +396,8 @@ void affect_join(struct char_data *ch, struct affected_type *af,
        * often they stack (scrolls bypass the self-cast check), so sum in
        * int and clamp: a wrap would turn -129 into +127, or a long
        * duration into -1 (permanent). */
-      int dur = af->duration, mod = af->modifier;
+      int dur = af->duration;
+      int mod = af->modifier; /* NOLINT(bugprone-signed-char-misuse,cert-str34-c): sbyte is a signed number, not a character */
 
       if (add_dur)
 	dur += hjp->duration;

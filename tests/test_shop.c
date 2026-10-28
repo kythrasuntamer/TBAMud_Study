@@ -4,7 +4,7 @@
  * tested paths do not reach. Fixtures are disposable.
  */
 #include "unity.h"
-#include "../src/shop.c"
+#include "../src/shop.c" /* NOLINT(bugprone-suspicious-include): reach file-static helpers */
 
 #include <stdlib.h>
 #include "tb_error_capture.h"
@@ -32,7 +32,7 @@ int get_line(FILE *fl, char *buf)
   if (!fgets(temp, sizeof(temp), fl))
     return 0;
   temp[strcspn(temp, "\r\n")] = '\0';
-  strcpy(buf, temp);
+  memcpy(buf, temp, strlen(temp) + 1);
   return 1;
 }
 int strn_cmp(const char *a, const char *b, size_t n)
@@ -201,7 +201,7 @@ static void test_read_type_list_drops_out_of_range_type(void)
 
   TEST_ASSERT_NOT_NULL(f);
   len = read_type_list(f, list, TRUE, MAX_TRADE);
-  fclose(f);
+  TEST_ASSERT_EQUAL_INT(0, fclose(f));
   TEST_ASSERT_EQUAL_INT(2, len); /* type 5 plus the NOTHING terminator */
   TEST_ASSERT_EQUAL_INT(5, BUY_TYPE(list[0]));
   TEST_ASSERT_EQUAL_INT(NOTHING, BUY_TYPE(list[1]));
@@ -221,7 +221,7 @@ static void test_read_list_reports_missing_produce_vnum(void)
 
   TEST_ASSERT_NOT_NULL(f);
   len = read_list(f, list, TRUE, MAX_PROD, LIST_PRODUCE);
-  fclose(f);
+  TEST_ASSERT_EQUAL_INT(0, fclose(f));
   TEST_ASSERT_EQUAL_INT(1, len); /* only the NOTHING terminator */
   TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
   TEST_ASSERT_EQUAL_STRING("produce-vnum", tb_captured_operation);
@@ -239,7 +239,7 @@ static void test_read_type_list_leading_nul_reported(void)
 
   TEST_ASSERT_NOT_NULL(f);
   len = read_type_list(f, list, TRUE, MAX_TRADE);
-  fclose(f);
+  TEST_ASSERT_EQUAL_INT(0, fclose(f));
   TEST_ASSERT_EQUAL_INT(1, len); /* nothing but the terminator */
   TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
   TEST_ASSERT_EQUAL_STRING("shop-file-parse", tb_captured_operation);
