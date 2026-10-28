@@ -146,6 +146,36 @@ if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
         PROPERTIES COMPILE_OPTIONS "-ffunction-sections;-fdata-sections")
 endif()
 
+# Production act()/perform_act() formatter. comm.c owns main(); rename it and
+# discard sections the formatter does not reach. test_stubs.c is omitted
+# because it defines comm.c's globals; the test supplies its own fixtures.
+add_executable(test_act_format
+    $<TARGET_OBJECTS:unity_vendor>
+    ${MUD_SRCDIR}/comm.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_act_format.c
+)
+target_include_directories(test_act_format PRIVATE ${TEST_INCLUDES})
+target_compile_options(test_act_format PRIVATE ${TEST_CFLAGS})
+add_test(NAME test_act_format COMMAND test_act_format)
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_compile_options(test_act_format PRIVATE -ffunction-sections -fdata-sections)
+    target_link_options(test_act_format PRIVATE -Wl,--gc-sections)
+    set_source_files_properties(${MUD_SRCDIR}/comm.c
+        PROPERTIES COMPILE_OPTIONS "-ffunction-sections;-fdata-sections;-Dmain=tb_comm_main_unused")
+endif()
+
+# Production DG sub_write() message builder (dg_comm.c).
+add_mud_test(test_dg_sub_write
+    ${MUD_SRCDIR}/dg_comm.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_dg_sub_write.c
+)
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_compile_options(test_dg_sub_write PRIVATE -ffunction-sections -fdata-sections)
+    target_link_options(test_dg_sub_write PRIVATE -Wl,--gc-sections)
+    set_source_files_properties(${MUD_SRCDIR}/dg_comm.c
+        PROPERTIES COMPILE_OPTIONS "-ffunction-sections;-fdata-sections")
+endif()
+
 find_package(Python3 COMPONENTS Interpreter QUIET)
 if(Python3_Interpreter_FOUND)
     add_test(NAME test_dg_memory_callback_contract
