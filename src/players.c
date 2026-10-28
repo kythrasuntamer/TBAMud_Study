@@ -473,6 +473,8 @@ int load_char(const char *name, struct char_data *ch)
 
     while (get_line(fl, line)) {
       tag_argument(line, tag);
+      if (!*tag)
+        continue;	/* short line, already reported by tag_argument() */
 
       switch (*tag) {
       case 'A':
@@ -931,11 +933,30 @@ void save_char(struct char_data * ch)
     save_player_index();
 }
 
-/* Separate a 4-character id tag from the data it precedes */
+/** Separate a 4-character id tag from the data it precedes.
+ * Used by the player-file and rent-file parsers on lines read from disk.
+ * @param[in,out] argument A line such as "Name: Joe". On return it holds only
+ * the value ("Joe"), shifted down in place.
+ * @param[out] tag At least 5 bytes; receives the 4-character tag.
+ * A line shorter than 4 characters cannot hold a tag: the old code copied
+ * 4 bytes and stepped past the terminator, reading (and then copying)
+ * whatever followed the string. Such a line now yields an empty tag and an
+ * empty value, which callers skip, and is reported as a pfile-tag warning. */
 void tag_argument(char *argument, char *tag)
 {
   char *tmp = argument, *ttag = tag, *wrt = argument;
+  size_t len = 0;
   int i;
+
+  while (len < 4 && argument[len] != '\0')
+    len++;
+  if (len < 4) {
+    TB_WARN_MSG("player", "pfile-tag", "tag-line",
+                "short tag line (%zu bytes); line skipped", len);
+    tag[0] = '\0';
+    argument[0] = '\0';
+    return;
+  }
 
   for (i = 0; i < 4; i++)
     *(ttag++) = *(tmp++);

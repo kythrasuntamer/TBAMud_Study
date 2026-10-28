@@ -1171,6 +1171,8 @@ obj_save_data *objsave_parse_objects(FILE *fl)
       continue;
 
     tag_argument(line, tag);
+    if (!*tag)
+      continue;	/* short line, already reported by tag_argument() */
     num = tb_parse_int_or_zero(line);
 
     switch(*tag) {

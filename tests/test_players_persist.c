@@ -183,11 +183,54 @@ static void test_four_flag_words_load(void)
   TEST_ASSERT_EQUAL_INT(8, AFF_FLAGS(&player)[3]);
 }
 
+/* B2-03: tag_argument() on a line shorter than a tag must not read past the
+ * terminator (heap copy, so ASan sees any over-read). */
+static void test_short_tag_line_is_reported(void)
+{
+  char tag[6];
+  char *line = strdup("Ab");
+
+  TEST_ASSERT_NOT_NULL(line);
+  memset(tag, 'x', sizeof(tag));
+  tag_argument(line, tag);
+  TEST_ASSERT_EQUAL_STRING("", tag);
+  TEST_ASSERT_EQUAL_STRING("", line);
+  TEST_ASSERT_EQUAL_STRING("pfile-tag", tb_captured_operation);
+  free(line);
+}
+
+static void test_tag_and_value_are_split(void)
+{
+  char tag[6];
+  char *line = strdup("Name: Joe");
+
+  TEST_ASSERT_NOT_NULL(line);
+  tag_argument(line, tag);
+  TEST_ASSERT_EQUAL_STRING("Name", tag);
+  TEST_ASSERT_EQUAL_STRING("Joe", line);
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  free(line);
+}
+
+/* B2-03: a short line inside a pfile is skipped, and later tags still load. */
+static void test_short_pfile_line_is_skipped(void)
+{
+  write_pfile("tester", "Ab\nId  : 4242\nAct : 1 2 3 4\n");
+
+  TEST_ASSERT_EQUAL_INT(0, load_char("tester", &player));
+  TEST_ASSERT_EQUAL_STRING("pfile-tag", tb_captured_operation);
+  TEST_ASSERT_EQUAL_INT(4242, GET_IDNUM(&player));
+  TEST_ASSERT_EQUAL_INT(4, PLR_FLAGS(&player)[3]);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
   RUN_TEST(test_overlong_act_flag_word_is_rejected);
   RUN_TEST(test_four_flag_words_load);
+  RUN_TEST(test_short_tag_line_is_reported);
+  RUN_TEST(test_tag_and_value_are_split);
+  RUN_TEST(test_short_pfile_line_is_skipped);
   (void)rmdir(scratch_dir);
   return UNITY_END();
 }
