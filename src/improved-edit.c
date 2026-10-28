@@ -611,6 +611,21 @@ int format_text(char **ptr_string, int mode, struct descriptor_data *d, unsigned
     if (*flow) {
       start = flow;
       while (*flow && !strchr("\n\r\f\v .?!", *flow)) {
+        /* A '\t' colour code owns the next byte, so skipping it moves flow
+         * by two. Text loaded by fread_string() can end in a lone '\t'
+         * (parse_at() turns a trailing '@' into one); stepping over its
+         * missing code byte would leave flow past the terminator, and the
+         * loops and writes below would touch bytes outside *ptr_string.
+         * The introducer displays nothing, so drop it and say so. */
+        if (*flow == '\t' && !flow[1]) {
+          TB_WARN_MSG("editor", "format-color", "edit-buffer",
+                      "dangling tab colour code at offset %td dropped; "
+                      "desc %d", flow - *ptr_string, d->desc_num);
+          write_to_output(d, "Dropped a colour code with nothing after it "
+                             "at the end of the text.\r\n");
+          *flow = '\0';
+          break;
+        }
         if (*flow == '\t') {
           if (*(flow + 1) == '\t')
             color_chars++;
@@ -629,8 +644,9 @@ int format_text(char **ptr_string, int mode, struct descriptor_data *d, unsigned
       }
 
       /* This is so that if we stopped on a sentence, we move off the sentence 
-       * delimiter. */
-      while (strchr(".!?", *flow)) {
+       * delimiter. strchr() matches the terminator itself, so test *flow
+       * first: text that ends without a newline stops here on the NUL. */
+      while (*flow && strchr(".!?", *flow)) {
         cap_next_next = TRUE;
         flow++;
       }
@@ -640,7 +656,7 @@ int format_text(char **ptr_string, int mode, struct descriptor_data *d, unsigned
        * to the \r (or \n) character after the delimiter. Thus *flow will be 
        * non-null, and an extra (blank) line might be added erroneously. We 
        * fix it by skipping the newline characters in between. - Welcor */
-      if (strchr("\n\r", *flow)) {
+      if (*flow && strchr("\n\r", *flow)) {
         *flow = '\0';  /* terminate 'start' string */
         flow++;        /* we know this is safe     */
         if (*flow == '\n' && i++ >= high)
