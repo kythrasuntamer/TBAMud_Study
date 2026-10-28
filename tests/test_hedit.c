@@ -105,7 +105,9 @@ char *one_argument(char *argument, char *first_arg)
 }
 static int search_result;
 int search_help(const char *argument, int level) { (void)argument; (void)level; return search_result; }
-int can_edit_zone(struct char_data *ch, zone_rnum rnum) { (void)ch; (void)rnum; return 1; }
+/* hedit asks can_use_editor(ch, HEDIT_PERMISSION) (oasis.c), not
+ * can_edit_zone(), since help is tied to no zone. */
+int can_use_editor(struct char_data *ch, int perm) { (void)ch; (void)perm; return 1; }
 size_t send_to_char(struct char_data *ch, const char *messg, ...)
 {
   va_list args;

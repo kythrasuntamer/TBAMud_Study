@@ -181,16 +181,25 @@ void parse_quest(FILE *quest_f, int nr) { (void)quest_f; (void)nr; }
 void dg_obj_trigger(char *line, struct obj_data *obj) { (void)line; (void)obj; }
 void skip_spaces(char **string)                /* interpreter.c */
 { while (**string && isspace((unsigned char)**string)) (*string)++; }
-void split_argument(char *argument, char *tag) /* oasis.c, verbatim logic */
+/* oasis.c's logic, without its tag-too-long report; load_config() calls it
+ * through the oasis.h split_argument(argument, tag) macro, which passes
+ * sizeof(tag). */
+void split_argument_bounded(char *argument, char *tag, size_t tag_size)
 {
-  char *tmp = argument, *ttag = tag, *wrt = argument;
+  char *tmp = argument, *wrt = argument;
+  size_t key_len = 0;
+
+  if (tag_size == 0)
+    return;
   for (; *tmp; tmp++) {
-    if (*tmp != ' ' && *tmp != '=')
-      *(ttag++) = *tmp;
-    else if (*tmp == '=')
+    if (*tmp != ' ' && *tmp != '=') {
+      if (key_len + 1 < tag_size)
+        tag[key_len] = *tmp;
+      key_len++;
+    } else if (*tmp == '=')
       break;
   }
-  *ttag = '\0';
+  tag[key_len < tag_size ? key_len : 0] = '\0';
   while (*tmp == '=' || *tmp == ' ')
     tmp++;
   while (*tmp)
