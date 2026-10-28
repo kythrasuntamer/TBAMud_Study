@@ -190,6 +190,13 @@ static struct map_info_type world_map_info[] =
 };
 
 
+/* The drawing grid, rebuilt by every map/automap. Coordinates are 0 ..
+ * MAX_MAP-1 (VALID_MAP_COORD); the viewer's room is drawn at the centre
+ * (MAX_MAP/2). A cell >= 0 is a sector glyph index into map_info[] /
+ * world_map_info[] (0..NUM_ROOM_SECTORS-1, or SECT_EMPTY / SECT_STRANGE /
+ * SECT_HERE); a cell < 0 is a door glyph, read as door_info[NUM_DOOR_TYPES
+ * + v] (DOOR_NONE .. DOOR_NS). MapArea() keeps every value in those ranges
+ * (map_sector()). Not reentrant; one map is drawn at a time. */
 static int map[MAX_MAP][MAX_MAP];
 /*
 static int offsets[4][2] ={ {-2, 0},{ 0, 2},{ 2, 0},{ 0, -2} };
@@ -252,7 +259,13 @@ static int map_sector(room_rnum room)
   return SECT_STRANGE;
 }
 
-/* MapArea function - create the actual map */
+/* MapArea function - create the actual map.
+ * Marks room at cell (x, y) and recurses through its exits, one room step
+ * (2 cells on the normal map, 1 on the world map) per exit. Cells outside
+ * [min, max] are marked but not expanded. Callers must keep [min, max] at
+ * least one room step inside the grid: perform_map() and str_and_map()
+ * clamp the size to [1, MAX_MAP_SIZE] for that; violations are reported
+ * as map/map-bounds and the cell is skipped. */
 static void MapArea(room_rnum room, struct char_data *ch, int x, int y, int min, int max, sh_int xpos, sh_int ypos, bool worldmap)
 {
   room_rnum prospect_room;
@@ -409,7 +422,9 @@ static void MapArea(room_rnum room, struct char_data *ch, int x, int y, int min,
   return;
 }
 
-/* Returns a string representation of the map */
+/* Returns a string representation of the map. StringMap, WorldMap and
+ * CompactStringMap each return a static buffer that the next call of the
+ * same function overwrites; callers copy or send it at once. */
 static char *StringMap(int centre, int size)
 {
   static char strmap[MAX_MAP*MAX_MAP*11 + MAX_MAP*2 + 1];
@@ -605,7 +620,10 @@ static void perform_map( struct char_data *ch, char *argument, bool worldmap )
   return;
 }
 
-/* Display a string with the map beside it */
+/* Display a string with the map beside it (the automap beside a room
+ * description). target_room is an RNUM despite its room_vnum type (the only
+ * caller, look_at_room(), passes IN_ROOM). The size comes from
+ * CONFIG_MINIMAP_SIZE (config file / cedit, any int) and is clamped here. */
 void str_and_map(char *str, struct char_data *ch, room_vnum target_room ) {
   int size, centre, x, y, min, max, char_size;
   int ew_size=0, ns_size=0;

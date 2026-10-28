@@ -528,7 +528,14 @@ static void decay_corpse(struct obj_data *j, long uid)
   extract_obj(j);
 }
 
-/* Update PCs, NPCs, and objects */
+/* Update PCs, NPCs, and objects. Called once per mud hour (heartbeat).
+ * Characters: regeneration, conditions, poison/bleeding damage (which can
+ * kill: damage() == -1 skips the rest for that character), and idling.
+ * Character extraction is deferred to the end of the pulse, so next_char
+ * stays valid. Objects: see the two-pass comment below; a decaying corpse
+ * spills its contents into whatever holds it (container, then carrier's
+ * room, then its own room), and contents of a corpse that is nowhere are
+ * extracted and reported. */
 void point_update(void)
 {
   struct char_data *i, *next_char;
