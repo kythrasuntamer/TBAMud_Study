@@ -272,6 +272,30 @@ static int hedit_save_to_disk(struct descriptor_data *d)
   int i, name_result;
 
   tb_snprintf(index_name, sizeof(index_name), "%s%s", HLP_PREFIX, HELP_FILE);
+
+  /* Every written entry passes through buf1 (strip_cr works in place).
+   * Entry text comes from builders through hedit (the editor caps it at
+   * MAX_MESSAGE_LENGTH) and from the help file (load_help caps it at 32384
+   * bytes); both are below sizeof(buf1) today, but nothing ties those caps
+   * to buf1. The old strncpy left a longer entry unterminated, so strip_cr
+   * could read past buf1, and writing it cut short would lose help text.
+   * So an entry that does not fit fails the save before the disk is
+   * touched (F2-27). */
+  for (i = 0; i < top_of_helpt; i++) {
+    size_t entry_len;
+
+    if (help_table[i].duplicate || !help_table[i].entry)
+      continue;
+    if ((entry_len = strlen(help_table[i].entry)) >= sizeof(buf1)) {
+      TB_ERROR_MSG("olc", "hedit-truncate", index_name,
+                   "help row %d entry is %zu bytes, the save buffer holds "
+                   "%zu; help index not written, %d rows stay in memory "
+                   "only; editor " DIAG_CHAR_FMT, i, entry_len,
+                   sizeof(buf1) - 1, top_of_helpt, DIAG_CHAR(d->character));
+      return FALSE;
+    }
+  }
+
   name_result = snprintf(temp_name, sizeof(temp_name), "%s.tmp", index_name);
   if (name_result < 0 || (size_t)name_result >= sizeof(temp_name)) {
     log("SYSERR: help temporary filename is too long for %s", index_name);
@@ -286,7 +310,8 @@ static int hedit_save_to_disk(struct descriptor_data *d)
   for (i = 0; i < top_of_helpt; i++) {
     if (help_table[i].duplicate)
       continue;
-    strncpy(buf1, help_table[i].entry ? help_table[i].entry : "Empty\r\n", sizeof(buf1) - 1);
+    /* Fits and is terminated: every entry was checked against buf1 above. */
+    strlcpy(buf1, help_table[i].entry ? help_table[i].entry : "Empty\r\n", sizeof(buf1));
     strip_cr(buf1);
 
     /* Forget making a buffer, lets just write the thing now. */
