@@ -58,6 +58,38 @@ ssize_t __wrap_write(int fd, const void *buf, size_t count)
   return (ssize_t)n;
 }
 
+/* Scripted socket input for process_input(): one read returns it all. */
+static char read_script[MAX_RAW_INPUT_LENGTH];
+static size_t read_script_len;
+
+ssize_t __wrap_read(int fd, void *buf, size_t count);
+ssize_t __wrap_read(int fd, void *buf, size_t count)
+{
+  size_t n = read_script_len < count ? read_script_len : count;
+  (void)fd;
+  if (n == 0) {
+    errno = EAGAIN;
+    return -1;
+  }
+  memcpy(buf, read_script, n);
+  read_script_len = 0;
+  return (ssize_t)n;
+}
+
+/* History ('!') helpers from interpreter.c; unused by these inputs. */
+int is_abbrev(const char *arg1, const char *arg2) { (void)arg1; (void)arg2; return 0; }
+void skip_spaces(char **string) { (void)string; }
+
+/* The protocol layer passes plain text through unchanged. */
+ssize_t ProtocolInput(descriptor_t *d, char *data, int size, char *out,
+                      size_t out_size)
+{
+  size_t before = strlen(out);
+  (void)d; (void)size;
+  strlcat(out, data, out_size);
+  return (ssize_t)(strlen(out) - before);
+}
+
 static struct descriptor_data desc;
 static protocol_t proto;
 static char *edit_target; /* d->str only needs to be non-NULL: prompt "] " */
@@ -245,6 +277,33 @@ static void oversized_format_is_reported(void)
   TEST_ASSERT_EQUAL_INT(0, desc.bufspace); /* overflow state */
 }
 
+/* A typed line longer than the command buffer was cut without the notice
+ * or any record, because the notice tested space_left <= 0 while the copy
+ * loop stops at space_left == 1. */
+static void long_input_line_is_reported(void)
+{
+  static char *history[HISTORY_SIZE];
+  size_t n = MAX_INPUT_LENGTH + 100;
+
+  memset(read_script, 'q', n);
+  read_script[n] = '\n';
+  read_script_len = n + 1;
+  desc.history = history;
+  desc.str = NULL;
+  write_budget = sizeof(written) - 1;
+
+  TEST_ASSERT_EQUAL_INT(1, process_input(&desc));
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("input-truncate", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(written, "Line too long."));
+  TEST_ASSERT_EQUAL_size_t(MAX_INPUT_LENGTH - 2, strlen(desc.input.head->text));
+
+  flush_input_queue(&desc);
+  free(history[0]);
+  history[0] = NULL;
+  desc.history = NULL;
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -255,5 +314,6 @@ int main(void)
   RUN_TEST(opponent_with_zero_max_hit_is_reported);
   RUN_TEST(auto_prompt_handles_negative_hit_points);
   RUN_TEST(oversized_format_is_reported);
+  RUN_TEST(long_input_line_is_reported);
   return UNITY_END();
 }

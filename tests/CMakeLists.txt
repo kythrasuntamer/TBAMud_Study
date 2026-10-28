@@ -275,7 +275,7 @@ target_compile_options(test_comm_output PRIVATE ${TEST_CFLAGS})
 add_test(NAME test_comm_output COMMAND test_comm_output)
 if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
     target_compile_options(test_comm_output PRIVATE -ffunction-sections -fdata-sections)
-    target_link_options(test_comm_output PRIVATE -Wl,--gc-sections -Wl,--wrap=write)
+    target_link_options(test_comm_output PRIVATE -Wl,--gc-sections -Wl,--wrap=write -Wl,--wrap=read)
 endif()
 
 # Production KaVir protocol layer (ProtocolOutput/ProtocolInput).

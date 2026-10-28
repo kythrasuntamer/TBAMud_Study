@@ -2269,9 +2269,16 @@ static int process_input(struct descriptor_data *t)
 
     *write_point = '\0';
 
-    if ((space_left <= 0) && (ptr < nl_pos)) {
+    /* The copy loop stops early only when tmp is full. It exits with
+     * space_left == 1 on ordinary text (0 only after a doubled '$'), so the
+     * old 'space_left <= 0' test missed most cut lines. */
+    if (ptr < nl_pos) {
       char buffer[MAX_INPUT_LENGTH + 64];
 
+      TB_WARN_EVERY(60, "network", "input-truncate", "process_input",
+                    DIAG_DESC_FMT " input line of %ld bytes cut to %lu",
+                    DIAG_DESC(t), (long) (nl_pos - read_point),
+                    (unsigned long) strlen(tmp));
       tb_snprintf(buffer, sizeof(buffer), "Line too long.  Truncated to:\r\n%s\r\n", tmp);
       if (write_to_descriptor(t->descriptor, buffer) < 0)
 	return (-1);
