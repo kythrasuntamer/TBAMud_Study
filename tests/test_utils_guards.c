@@ -604,6 +604,31 @@ void test_get_filename_null_name_reports(void)
   TEST_ASSERT_EQUAL_INT(1, count_op("filename-args"));
 }
 
+/* =====================================================================
+ * I1-13: get_filename refuses names that would leave the data directory.
+ * ===================================================================== */
+
+void test_get_filename_rejects_path_traversal(void)
+{
+  char path[PATH_MAX];
+
+  path[0] = '\0';
+  TEST_ASSERT_EQUAL_INT(0, get_filename(path, sizeof(path), CRASH_FILE,
+                                        "../../etc/x"));
+  TEST_ASSERT_NULL(strstr(path, ".."));
+  TEST_ASSERT_EQUAL_INT(1, count_op("filename-name-invalid"));
+  TEST_ASSERT_NULL(strstr(log_text(), "etc"));   /* raw text not logged */
+}
+
+void test_get_filename_accepts_player_name(void)
+{
+  char path[PATH_MAX];
+
+  TEST_ASSERT_EQUAL_INT(1, get_filename(path, sizeof(path), CRASH_FILE, "Bob"));
+  TEST_ASSERT_NOT_NULL(strstr(path, "A-E" SLASH "bob."));
+  TEST_ASSERT_EQUAL_INT(0, count_records());
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -632,5 +657,7 @@ int main(void)
   RUN_TEST(test_mudlog_null_format_reports);
   RUN_TEST(test_get_filename_unknown_mode_reports);
   RUN_TEST(test_get_filename_null_name_reports);
+  RUN_TEST(test_get_filename_rejects_path_traversal);
+  RUN_TEST(test_get_filename_accepts_player_name);
   return UNITY_END();
 }

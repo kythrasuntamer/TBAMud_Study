@@ -1360,7 +1360,7 @@ int get_line(FILE *fl, char *buf)
  * for. */
 int get_filename(char *filename, size_t fbufsize, int mode, const char *orig_name)
 {
-  const char *prefix, *middle, *suffix;
+  const char *prefix, *middle, *suffix, *q;
   char name[PATH_MAX], *ptr;
 
   if (orig_name == NULL || *orig_name == '\0' || filename == NULL) {
@@ -1395,6 +1395,23 @@ int get_filename(char *filename, size_t fbufsize, int mode, const char *orig_nam
                  "unknown mode %d for name of length %zu", mode,
                  strlen(orig_name));
     return (0);
+  }
+
+  /* orig_name becomes a path component. Most callers pass a validated
+   * player name (letters only), but `show rent <text>` passes immortal-typed
+   * text through Crash_listrent, so "../../x" would leave lib/plrobjs.
+   * Accept only [A-Za-z0-9_-]: no separators, dots or control bytes. The
+   * raw text is not logged (it may hold line breaks); its length is. */
+  for (q = orig_name; *q; q++) {
+    unsigned char c = (unsigned char)*q;
+
+    if (!(isascii(c) && (isalnum(c) || c == '_' || c == '-'))) {
+      TB_ERROR_MSG("persist", "filename-name-invalid", "get_filename",
+                   "mode=%d name_len=%zu rejected: byte 0x%02x at offset %td "
+                   "is not [A-Za-z0-9_-]", mode, strlen(orig_name),
+                   (unsigned int)c, q - orig_name);
+      return (0);
+    }
   }
 
   strlcpy(name, orig_name, sizeof(name));
