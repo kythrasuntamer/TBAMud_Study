@@ -425,11 +425,34 @@ void qedit_parse(struct descriptor_data *d, char *arg)
     case QEDIT_CONFIRM_DELETE:
       switch (*arg) {
         case 'y':
-        case 'Y':
-          if (delete_quest(real_quest(OLC_NUM(d))))
+        case 'Y': {
+          /* A quest opened with "qedit <new vnum>" is not in aquest_table
+           * until it is saved, so real_quest() is NOTHING; delete_quest()
+           * read aquest_table[NOTHING] before its own range test (and the
+           * table is NULL when no quests exist).  Check here, where the
+           * vnum and the builder are known. */
+          qst_rnum del_rnum = real_quest(OLC_NUM(d));
+
+          if (del_rnum == NOTHING) {
+            TB_WARN_MSG("olc", "qedit-delete-unsaved", "aquest_table",
+                        "quest vnum %d has no table row; editor " DIAG_CHAR_FMT,
+                        (int)OLC_NUM(d), DIAG_CHAR(d->character));
+            write_to_output(d, "Quest %d was never saved; there is nothing to delete.\r\n",
+                            (int)OLC_NUM(d));
+            cleanup_olc(d, CLEANUP_ALL);
+            return;
+          }
+          if (delete_quest(del_rnum))
             write_to_output(d, "Quest deleted.\r\n");
-   else
+          else {
+            TB_ERROR_MSG("olc", "qedit-delete", "aquest_table",
+                         "delete_quest failed for vnum %d rnum %d editor " DIAG_CHAR_FMT,
+                         (int)OLC_NUM(d), (int)del_rnum, DIAG_CHAR(d->character));
             write_to_output(d, "Couldn't delete the quest!\r\n");
+            cleanup_olc(d, CLEANUP_ALL);
+            return;
+          }
+          }
           if (CONFIG_OLC_SAVE) {
             qedit_save_to_disk(real_zone_by_thing(OLC_NUM(d)));
             write_to_output(d, "Quest file saved to disk.\r\n");

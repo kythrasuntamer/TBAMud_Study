@@ -631,9 +631,40 @@ static void test_qedit_bad_stored_type_is_reported(void)
   TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "quest vnum 3001 type 99"));
 }
 
+/* F2-08: deleting a quest that was never saved must not call delete_quest
+ * with NOTHING (it read aquest_table[NOTHING] before its range test). */
+static void test_qedit_delete_unsaved_quest_is_refused_loudly(void)
+{
+  char cmd[] = " 3050";
+
+  do_oasis_qedit(&builder, cmd, 0, 0);
+  type("x");
+  TEST_ASSERT_EQUAL_INT(QEDIT_CONFIRM_DELETE, OLC_MODE(&builder_desc));
+  type("y");
+  TEST_ASSERT_EQUAL_INT(0, quest_deletes);
+  TEST_ASSERT_EQUAL_INT(0, quest_saves);
+  TEST_ASSERT_NULL(builder_desc.olc);
+  TEST_ASSERT_EQUAL_STRING("qedit-delete-unsaved", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "quest vnum 3050"));
+}
+
+/* F2-08: deleting a saved quest still works. */
+static void test_qedit_delete_saved_quest(void)
+{
+  char cmd[] = " 3001";
+
+  do_oasis_qedit(&builder, cmd, 0, 0);
+  type("x");
+  type("y");
+  TEST_ASSERT_EQUAL_INT(1, quest_deletes);
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(test_qedit_delete_unsaved_quest_is_refused_loudly);
+  RUN_TEST(test_qedit_delete_saved_quest);
   RUN_TEST(test_qedit_new_quest_menu_names_undefined_type);
   RUN_TEST(test_qedit_bad_stored_type_is_reported);
   RUN_TEST(test_prefedit_target_extracted_mid_edit);
