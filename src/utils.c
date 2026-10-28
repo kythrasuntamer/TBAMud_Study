@@ -2,6 +2,25 @@
 * @file utils.c
 * Various utility functions used within the core mud code.
 *
+* Contents: random numbers and dice, string helpers, the structured
+* diagnostics (tb_error_log_at, breadcrumbs, correlation IDs, parse
+* contexts), checked allocation and the tb_buf bounded builder, logging
+* (basic_mud_log, mudlog), flag/type printers, follower lists, file-line
+* reading (get_line) and player file names, light, colour/protocol counting
+* and the automap text formatters.
+*
+* Ownership and lifetime rules that callers must know:
+*  - Several functions return a pointer to a static buffer that the next
+*    call overwrites: strfrmt, strpaste, age, real_time_passed and
+*    mud_time_passed. None is reentrant; copy the result before calling
+*    again.
+*  - stop_follower, die_follower and add_follower send act() messages, which
+*    run DG triggers synchronously; see their comments.
+*
+* Who controls the input: get_line reads world, player and save files that
+* builders and OLC write; count_* and strfrmt see raw builder text (room
+* names and descriptions); get_filename may see immortal-typed text.
+*
 * Part of the core tbaMUD source code distribution, which is a derivative
 * of, and continuation of, CircleMUD.
 *
@@ -26,17 +45,27 @@
 #include "class.h"
 
 
-/** Aportable random number function.
+/** Aportable random number function. Call it as rand_number(from, to); the
+ * macro in utils.h supplies the caller's location.
  * @param from The lower bounds of the random number.
- * @param to The upper bounds of the random number. */
-int rand_number(int from, int to)
+ * @param to The upper bounds of the random number.
+ * @param source_file Caller's __FILE__.
+ * @param source_line Caller's __LINE__.
+ * @param source_func Caller's __func__. */
+int rand_number_at(int from, int to, const char *source_file, int source_line,
+                   const char *source_func)
 {
-  /* error checking in case people call this incorrectly */
+  /* Inverted bounds are usually builder data (e.g. read_mobile's
+   * rand_number(hit, mana) for a mob whose hit dice exceed its max hp).
+   * Swap them so the result stays in range, and say where it came from;
+   * breadcrumbs name the zone reset or trigger that was running. */
   if (from > to) {
     int tmp = from;
     from = to;
     to = tmp;
-    log("SYSERR: rand_number() should be called with lowest, then highest. (%d, %d), not (%d, %d).", from, to, to, from);
+    tb_error_log_at("WARNING", "utils", "rand-range-inverted", "rand_number",
+                    0, source_file, source_line, source_func,
+                    "called with (%d, %d); using (%d, %d)", to, from, from, to);
   }
 
   /* This should always be of the form: ((float)(to - from + 1) * rand() /
@@ -92,7 +121,7 @@ char *CAP(char *txt)
     if (*p == '\t') p += 2;  /* Skip \t sign and color letter/number */
     else {
       p += 2;                          /* Skip the CSI section of the ANSI code */
-      while (*p && !isalpha(*p)) p++;  /* Skip until a 'letter' is found */
+      while (*p && !TB_ISALPHA(*p)) p++;  /* Skip until a 'letter' is found */
       if (*p) p++;                     /* Skip the letter */
     }
   }
@@ -237,7 +266,7 @@ static const char *tb_error_id_for(const char *subsystem, const char *operation,
     if (!str_cmp(subsystem, "PARSER"))
       return TB_ERRID_PARSER_MALFORMED;
     if (!str_cmp(subsystem, "PERSISTENCE"))
-      return (!str_cmp(operation ? operation : "", "rollback"))
+      return (!str_cmp(NULLSTR(operation), "rollback"))
                ? TB_ERRID_PERSIST_ROLLBACK : TB_ERRID_PERSIST_WRITE;
     if (!str_cmp(subsystem, "NETWORK"))
       return TB_ERRID_NETWORK_IO;
@@ -252,6 +281,14 @@ static const char *tb_error_id_for(const char *subsystem, const char *operation,
   return "TB-GENERAL-0001";
 }
 
+/** Start a correlation scope: every TB_ERROR record and breadcrumb until
+ * tb_correlation_end(id) carries id, so the records of one operation can be
+ * grouped. Intended scope: one top-level unit of work (a command, a zone
+ * reset, a boot phase); the code that starts that unit owns begin/end.
+ * The API does not nest: an inner begin replaces the outer id, and the
+ * outer end then no longer matches. As of this writing nothing calls it,
+ * so records log correlation=0.
+ * @return The new, non-zero correlation id. */
 unsigned long tb_correlation_begin(const char *kind, const char *detail)
 {
   unsigned long id = ++tb_correlation_sequence;
@@ -265,6 +302,8 @@ unsigned long tb_correlation_begin(const char *kind, const char *detail)
   return id;
 }
 
+/** End the correlation scope started by tb_correlation_begin(). Does
+ * nothing when id is not the current scope (e.g. after a nested begin). */
 void tb_correlation_end(unsigned long id)
 {
   if (id != 0 && tb_current_correlation == id) {
@@ -345,6 +384,16 @@ size_t tb_breadcrumb_snapshot(char *dst, size_t dst_size)
   return out.length;
 }
 
+/* tb_buf: bounded string builder.
+ * Invariant: length <= capacity - 1 and data[length] == '\0', as long as
+ * the struct is changed only through these functions.
+ * Truncation sets ->truncated (sticky) and keeps the longest prefix that
+ * fits, but reports nothing: the caller must check tb_buf_truncated() and
+ * emit a diagnostic with the sizes (see column_list()). A NULL buf reads
+ * as truncated. After a vsnprintf encoding error the contents past
+ * ->length are unspecified, and ->truncated is set. */
+
+/** Point buf at caller-owned storage of capacity bytes and empty it. */
 void tb_buf_init(struct tb_buf *buf, char *storage, size_t capacity)
 {
   if (buf == NULL)
@@ -576,7 +625,7 @@ void tb_parse_context_error_at(FILE *stream, const char *source_file,
 {
   struct tb_parse_context_slot *ctx = tb_parse_context_find(stream, FALSE);
   char detail[512];
-  char resource[PATH_MAX + 160];
+  char resource[PATH_MAX + 256];
   va_list args;
   int n;
 
@@ -801,8 +850,14 @@ void mudlog(int type, int level, int file, const char *str, ...)
   struct descriptor_data *i;
   va_list args;
 
-  if (str == NULL)
-    return;	/* eh, oh well. */
+  /* A NULL format means a caller lost the message it meant to log; drop it,
+   * but leave a record (breadcrumbs carry the running command/trigger). */
+  if (str == NULL) {
+    TB_ERROR_MSG("log", "mudlog-null-format", "mudlog",
+                 "NULL format type=%d level=%d file=%d; message dropped",
+                 type, level, file);
+    return;
+  }
 
   if (file) {
     va_start(args, str);
@@ -815,8 +870,10 @@ void mudlog(int type, int level, int file, const char *str, ...)
 
   strlcpy(buf, "[ ", sizeof(buf));	/* strcpy: OK */
   va_start(args, str);
-  vsnprintf(buf + 2, sizeof(buf) - 6, str, args);
+  int formatted_length = vsnprintf(buf + 2, sizeof(buf) - 6, str, args);
   va_end(args);
+  if (formatted_length < 0)
+    strlcpy(buf + 2, "(log formatting failed)", sizeof(buf) - 2);
   strlcat(buf, " ]\r\n", sizeof(buf));	/* strcat: OK */
 
   for (i = descriptor_list; i; i = i->next) {
@@ -851,7 +908,10 @@ void mudlog(int type, int level, int file, const char *str, ...)
  * Will be set to "NOBITS" if no bits are set in bitvector (ie bitvector = 0).
  * @param[in] reslen The length of the available memory in the result buffer.
  * Ideally, results will be large enough to hold the description of every bit
- * that could possibly be set in bitvector. */
+ * that could possibly be set in bitvector. Must be at least 1: result[0] is
+ * written unconditionally. Output that does not fit is cut at the last
+ * whole name and reported as sprintbit-truncated.
+ * Bits past the "\n" terminator print as "UNDEFINED". */
 size_t sprintbit(bitvector_t bitvector, const char *names[], char *result, size_t reslen)
 {
   size_t len = 0;
@@ -863,8 +923,14 @@ size_t sprintbit(bitvector_t bitvector, const char *names[], char *result, size_
   for (nr = 0; bitvector && len < reslen; bitvector >>= 1) {
     if (IS_SET(bitvector, 1)) {
       nlen = snprintf(result + len, reslen - len, "%s ", *names[nr] != '\n' ? names[nr] : "UNDEFINED");
-      if (len + nlen >= reslen || nlen < 0)
+      if (len + nlen >= reslen || nlen < 0) {
+        /* snprintf() left part of this name behind: cut at the last whole
+         * name, as documented, and say so (I1-14). */
+        result[len] = '\0';
+        TB_WARN_MSG("utils", "sprintbit-truncated", "sprintbit",
+                    "flag names cut after %zu of %zu bytes", len, reslen);
         break;
+      }
       len += nlen;
     }
 
@@ -889,7 +955,7 @@ size_t sprintbit(bitvector_t bitvector, const char *names[], char *result, size_
  * @param[out] result Holds the translated name of the type.
  * Caller of sprintbit is responsible for creating the buffer for result.
  * Will be set to "UNDEFINED" if the type is greater than the number of names
- * available.
+ * available, or negative (a negative type counts down to the terminator).
  * @param[in] reslen The length of the available memory in the result buffer. */
 size_t sprinttype(int type, const char *names[], char *result, size_t reslen)
 {
@@ -922,6 +988,9 @@ size_t sprinttype(int type, const char *names[], char *result, size_t reslen)
  * to hold the description of every bit that could possibly be set in bitvector.
  * Will be set to "NOBITS" if no bits are set in bitarray (ie all bits in the
  * bitarray are equal to 0).
+ * Scanning stops at the names terminator, so set bits beyond NUM_* are not
+ * shown. Output is bounded by reslen through tb_buf and cut silently when
+ * it does not fit; size result for the whole flag table.
  */
 void sprintbitarray(int bitvector[], const char *names[], int maxar, char *result, size_t reslen)
 {
@@ -954,13 +1023,16 @@ void sprintbitarray(int bitvector[], const char *names[], int maxar, char *resul
 
   if (out.length == 0)
     (void)tb_buf_append(&out, "NOBITS ");
+  /* The appends above truncate safely but only flag it (I1-14). */
+  TB_BUF_CHECK(out, "sprintbitarray-truncated");
 }
 
 /** Calculate the REAL time passed between two time invervals.
  * @todo Recommend making this function foresightedly useful by calculating
  * real months and years, too.
  * @param t2 The later time.
- * @param t1 The earlier time. */
+ * @param t1 The earlier time.
+ * @return A static struct overwritten by the next call (not reentrant). */
 struct time_info_data *real_time_passed(time_t t2, time_t t1)
 {
   long secs;
@@ -982,7 +1054,8 @@ struct time_info_data *real_time_passed(time_t t2, time_t t1)
 
 /** Calculate the MUD time passed between two time invervals.
  * @param t2 The later time.
- * @param t1 The earlier time. */
+ * @param t1 The earlier time.
+ * @return A static struct overwritten by the next call (not reentrant). */
 struct time_info_data *mud_time_passed(time_t t2, time_t t1)
 {
   long secs;
@@ -1020,7 +1093,8 @@ time_t mud_time_to_secs(struct time_info_data *now)
 /** Calculate a player's MUD age.
  * @todo The minimum starting age of 17 is hardcoded in this function. Recommend
  * changing the minimum age to a property (variable) external to this function.
- * @param ch A valid player character. */
+ * @param ch A valid player character.
+ * @return A static struct overwritten by the next call (not reentrant). */
 struct time_info_data *age(struct char_data *ch)
 {
   static struct time_info_data player_age;
@@ -1053,48 +1127,83 @@ bool circle_follow(struct char_data *ch, struct char_data *victim)
  * to break any charm affect.
  * @todo Make the messages returned from the broken charm affect more
  * understandable.
- * @pre ch MUST be following someone, else core dump.
+ * @pre ch MUST be following someone; otherwise a follower-no-master error is
+ * logged and nothing changes.
  * @post The charm affect (AFF_CHARM) will be removed from the character and
  * the character will stop following the "master" they were following.
+ *
+ * Lifetime rule: act() runs DG ACT triggers synchronously, and a trigger can
+ * force ch (or anyone) to unfollow, follow or be purged. So the follow node
+ * is unlinked and ch->master cleared *before* any message is sent; after
+ * that the function touches only the saved master pointer (characters are
+ * freed only at the end of the pulse) and re-checks DEAD() before each
+ * further message.
  * @param ch The character (NPC or PC) to stop from following.
  * */
 void stop_follower(struct char_data *ch)
 {
-  struct follow_type *j, *k;
+  struct follow_type *prev, *k;
+  struct char_data *master;
+  bool charmed;
 
-  /* Makes sure this function is not called when it shouldn't be called. */
+  /* Callers check ch->master first; reaching here without one is a caller
+   * bug, reported with the character so the call path can be found. */
   if (ch->master == NULL) {
-    core_dump();
+    TB_ERROR_MSG("char", "follower-no-master", "stop_follower",
+                 DIAG_CHAR_FMT " is not following anyone", DIAG_CHAR(ch));
     return;
   }
 
-  if (AFF_FLAGGED(ch, AFF_CHARM)) {
-    act("You realize that $N is a jerk!", FALSE, ch, 0, ch->master, TO_CHAR);
-    act("$n realizes that $N is a jerk!", FALSE, ch, 0, ch->master, TO_NOTVICT);
-    act("$n hates your guts!", FALSE, ch, 0, ch->master, TO_VICT);
-    if (affected_by_spell(ch, SPELL_CHARM))
-      affect_from_char(ch, SPELL_CHARM);
+  master = ch->master;
+
+  /* Unlink first, so a callback below sees a consistent follower list.
+   * Invariant: ch is on master->followers exactly when ch->master == master.
+   * If the list lost the node, report both characters and still clear
+   * ch->master, so ch does not keep pointing at a leader that no longer
+   * lists it. */
+  for (prev = NULL, k = master->followers; k && k->follower != ch;
+       prev = k, k = k->next)
+    ;
+  if (k == NULL) {
+    TB_ERROR_MSG("char", "follower-unlink", "stop_follower",
+                 "follower " DIAG_CHAR_FMT " not in master " DIAG_CHAR_FMT
+                 " follower list", DIAG_CHAR(ch), DIAG_CHAR(master));
   } else {
-    act("You stop following $N.", FALSE, ch, 0, ch->master, TO_CHAR);
-    act("$n stops following $N.", TRUE, ch, 0, ch->master, TO_NOTVICT);
-    if (CAN_SEE(ch->master, ch))
-      act("$n stops following you.", TRUE, ch, 0, ch->master, TO_VICT);
-  }
-
-  if (ch->master->followers->follower == ch) {	/* Head of follower-list? */
-    k = ch->master->followers;
-    ch->master->followers = k->next;
+    if (prev == NULL)
+      master->followers = k->next;
+    else
+      prev->next = k->next;
     free(k);
-  } else {			/* locate follower who is not head of list */
-    for (k = ch->master->followers; k->next->follower != ch; k = k->next);
-
-    j = k->next;
-    k->next = j->next;
-    free(j);
   }
 
+  charmed = AFF_FLAGGED(ch, AFF_CHARM);
   ch->master = NULL;
+  /* affect_from_char() first: affect_total() would restore AFF_CHARM from a
+   * remaining SPELL_CHARM affect. Neither call runs triggers. */
+  if (charmed && affected_by_spell(ch, SPELL_CHARM))
+    affect_from_char(ch, SPELL_CHARM);
   REMOVE_BIT_AR(AFF_FLAGS(ch), AFF_CHARM);
+
+  /* Messages last. Each act() may run scripts; stop talking once either
+   * character has been marked for extraction. */
+  if (charmed) {
+    act("You realize that $N is a jerk!", FALSE, ch, 0, master, TO_CHAR);
+    if (DEAD(ch) || DEAD(master))
+      return;
+    act("$n realizes that $N is a jerk!", FALSE, ch, 0, master, TO_NOTVICT);
+    if (DEAD(ch) || DEAD(master))
+      return;
+    act("$n hates your guts!", FALSE, ch, 0, master, TO_VICT);
+  } else {
+    act("You stop following $N.", FALSE, ch, 0, master, TO_CHAR);
+    if (DEAD(ch) || DEAD(master))
+      return;
+    act("$n stops following $N.", TRUE, ch, 0, master, TO_NOTVICT);
+    if (DEAD(ch) || DEAD(master))
+      return;
+    if (CAN_SEE(master, ch))
+      act("$n stops following you.", TRUE, ch, 0, master, TO_VICT);
+  }
 }
 
 /** Finds the number of follows that are following, and charmed by, the
@@ -1117,33 +1226,90 @@ int num_followers_charmed(struct char_data *ch)
  * is the leader of a group, it stops everyone in the group from following
  * them. Despite the title, this function does not actually perform the kill on
  * the character passed in as the argument.
+ *
+ * Every stop_follower() call sends act() messages that can run scripts, and a
+ * script can unfollow, purge or re-add any follower. So the list head is
+ * re-read after every call instead of caching a next pointer. A script that
+ * keeps re-adding followers is bounded: after as many messaged removals as
+ * the list had nodes at entry (plus a small allowance), the remaining nodes
+ * are detached without messages and reported as follower-readded.
  * @param ch The character (NPC or PC) to stop from following.
  * */
 void die_follower(struct char_data *ch)
 {
-  struct follow_type *j, *k;
+  struct follow_type *k;
+  struct char_data *f;
+  int budget = 8, quiet = 0;
 
   if (ch->master)
     stop_follower(ch);
 
-  for (k = ch->followers; k; k = j) {
-    j = k->next;
-    stop_follower(k->follower);
+  for (k = ch->followers; k; k = k->next)
+    budget++;
+
+  while ((k = ch->followers) != NULL) {
+    f = k->follower;
+    if (f == NULL || f->master != ch) {
+      /* The node does not match its follower's master: stop_follower(f)
+       * could not remove it, so drop it here instead of looping forever. */
+      TB_ERROR_MSG("char", "follower-list-corrupt", "die_follower",
+                   "leader " DIAG_CHAR_FMT " lists a follower whose master is "
+                   "%s; node dropped", DIAG_CHAR(ch),
+                   f == NULL ? "(null follower)" : "another character");
+      ch->followers = k->next;
+      free(k);
+      continue;
+    }
+    if (budget > 0) {
+      budget--;
+      stop_follower(f);
+      continue;
+    }
+    /* Scripts keep re-adding followers: detach without act() callbacks. */
+    ch->followers = k->next;
+    free(k);
+    f->master = NULL;
+    if (affected_by_spell(f, SPELL_CHARM))
+      affect_from_char(f, SPELL_CHARM);
+    REMOVE_BIT_AR(AFF_FLAGS(f), AFF_CHARM);
+    quiet++;
   }
+
+  if (quiet > 0)
+    TB_WARN_MSG("char", "follower-readded", "die_follower",
+                "leader " DIAG_CHAR_FMT ": %d follower(s) re-added during "
+                "removal callbacks were detached without messages",
+                DIAG_CHAR(ch), quiet);
 }
 
 /** Adds a new follower to a group.
  * @todo Maybe make circle_follow an inherent part of this function?
  * @pre Make sure to call circle_follow first. ch may also not already
- * be following anyone, otherwise core dump.
+ * be following anyone; otherwise a follower-add error is logged and nothing
+ * changes.
+ * The node is linked before any message is sent, so the act() calls (which
+ * may run DG triggers that unfollow or purge either character) always see
+ * a consistent list.
  * @param ch The character to follow.
  * @param leader The character to be followed. */
 void add_follower(struct char_data *ch, struct char_data *leader)
 {
   struct follow_type *k;
 
+  /* Callers must stop_follower() first: a second node would leave ch on two
+   * leaders' lists with ch->master naming only one of them. */
+  if (leader == NULL) {
+    TB_ERROR_MSG("char", "follower-add", "add_follower",
+                 DIAG_CHAR_FMT " asked to follow a NULL leader", DIAG_CHAR(ch));
+    return;
+  }
   if (ch->master) {
-    core_dump();
+    struct char_data *current = ch->master;
+
+    TB_ERROR_MSG("char", "follower-add", "add_follower",
+                 DIAG_CHAR_FMT " already follows " DIAG_CHAR_FMT
+                 "; not added to " DIAG_CHAR_FMT, DIAG_CHAR(ch),
+                 DIAG_CHAR(current), DIAG_CHAR(leader));
     return;
   }
 
@@ -1161,13 +1327,53 @@ void add_follower(struct char_data *ch, struct char_data *leader)
   act("$n starts to follow $N.", TRUE, ch, 0, leader, TO_NOTVICT);
 }
 
+/** Discard the rest of a physical line that did not fit in get_line()'s
+ * READ_SIZE buffer. When report is TRUE and any bytes other than the line
+ * ending were dropped, emit a PARSER line-too-long error naming the parse
+ * context (file and physical line) when the loader set one up. */
+static void get_line_drain_tail(FILE *fl, int report)
+{
+  struct tb_parse_context_slot *ctx;
+  size_t discarded = 0;
+  int c;
+
+  while ((c = getc(fl)) != EOF && c != '\n')
+    if (c != '\r')
+      discarded++;
+
+  if (!report || discarded == 0)
+    return;
+
+  ctx = tb_parse_context_find(fl, FALSE);
+  if (ctx != NULL)
+    TB_ERROR_MSG("PARSER", "line-too-long", ctx->resource,
+                 "line %lu exceeds %d bytes; %zu tail bytes discarded "
+                 "(parser=%s record=%s:%ld field=%s) id=%s",
+                 ctx->line, READ_SIZE - 1, discarded, ctx->parser,
+                 ctx->record_type[0] ? ctx->record_type : "(none)",
+                 ctx->record_id, ctx->field[0] ? ctx->field : "(none)",
+                 TB_ERRID_PARSER_MALFORMED);
+  else
+    TB_ERROR_MSG("PARSER", "line-too-long", "get_line",
+                 "line exceeds %d bytes; %zu tail bytes discarded "
+                 "(no parse context for this file) id=%s", READ_SIZE - 1,
+                 discarded, TB_ERRID_PARSER_MALFORMED);
+}
+
 /** Reads the next non-blank line off of the input stream. Empty lines are
  * skipped. Lines which begin with '*' are considered to be comments and are
  * skipped.
- * @pre Caller must allocate memory for buf.
- * @post If a there is a line to be read, the newline character is removed from
- * the file line ending and the string is returned. Else a null string is
- * returned in buf.
+ * Input comes from world, player and save files, which builders and OLC
+ * write. A physical line longer than READ_SIZE - 1 bytes returns its first
+ * READ_SIZE - 1 bytes; the rest of that line is discarded and reported as a
+ * PARSER line-too-long error (silently for '*' comments).
+ * @pre Caller must allocate at least READ_SIZE bytes for buf.
+ * @post If a there is a line to be read, the newline character (and any
+ * '\r') is removed from the file line ending and the string is returned.
+ * At end of file 0 is returned and buf is left unchanged.
+ * @return The number of physical lines consumed, including skipped blank
+ * and comment lines (load_zones adds it to its line counter), or 0 at end
+ * of file. It is a count, not a boolean.
  * @param[in] fl The file to be read from.
  * @param[out] buf The next non-blank line read from the file. Buffer given must
  * be at least READ_SIZE (256) characters large. */
@@ -1182,15 +1388,82 @@ int get_line(FILE *fl, char *buf)
       return (0);
     lines++;
     tb_parse_context_note_line(fl);
+    sl = strlen(temp);
+    /* Invariant: one call consumes whole physical lines. World and save
+     * files are written by OLC and builders (e.g. genzon's "\t(<short
+     * desc>)" zone comments), so a line can exceed READ_SIZE - 1 bytes.
+     * fgets() then stops mid-line, and the tail used to come back as the
+     * next "line", which loaders parsed as a separate record (in a player
+     * file, a script variable ending in "Levl: 34" set that tag). Drain the
+     * tail and report it; a '*' comment's tail is still comment. */
+    if (sl == READ_SIZE - 1 && temp[sl - 1] != '\n')
+      get_line_drain_tail(fl, *temp != '*');
   } while (*temp == '*' || *temp == '\n' || *temp == '\r');
 
   /* Last line of file doesn't always have a \n, but it should. */
-  sl = strlen(temp);
   while (sl > 0 && (temp[sl - 1] == '\n' || temp[sl - 1] == '\r'))
     temp[--sl] = '\0';
 
-  strlcpy(buf, temp, sizeof(buf)); /* strcpy: OK, if buf >= READ_SIZE (256) */
+  /* buf is a pointer here: sizeof(buf) is only pointer size, not capacity.
+   * The API requires callers to supply at least READ_SIZE bytes. */
+  strlcpy(buf, temp, READ_SIZE);
   return (lines);
+}
+
+/* TRUE if name is a name a player can actually have, the rule nanny
+ * enforces at character creation (_parse_name): ASCII letters only,
+ * between 1 and MAX_NAME_LENGTH of them. Anything else (dots, separators,
+ * digits, control or high bytes, overlong text) is not a player and must
+ * not become a file name. */
+static int tb_filename_name_ok(const char *name)
+{
+  size_t len;
+
+  for (len = 0; name[len] != '\0'; len++)
+    if (len >= MAX_NAME_LENGTH || !isascii((unsigned char) name[len]) ||
+        !TB_ISALPHA(name[len]))
+      return FALSE;
+  return len > 0;
+}
+
+/* Room for TB_EXCERPT_BYTES input bytes at 4 output bytes each ("\xHH"),
+ * the "..." marker and the terminator. */
+#define TB_EXCERPT_BYTES 32
+#define TB_EXCERPT_SIZE  (TB_EXCERPT_BYTES * 4 + 4)
+
+/* Copy the start of untrusted text (a name from a file) into dst for a
+ * diagnostic: printable ASCII is kept with backslash and double quote
+ * escaped, every other byte becomes \xHH, and text longer than
+ * TB_EXCERPT_BYTES ends in "...". tb_error_log_at() embeds the detail
+ * as is, so this keeps the record on one line and unforgeable. dst_size
+ * must be at least TB_EXCERPT_SIZE. */
+static void tb_escape_excerpt(char *dst, size_t dst_size, const char *src)
+{
+  static const char hex[] = "0123456789abcdef";
+  size_t used = 0, i;
+
+  for (i = 0; src[i] != '\0' && i < TB_EXCERPT_BYTES; i++) {
+    unsigned char c = (unsigned char) src[i];
+
+    if (used + 4 >= dst_size)
+      break;
+    if (c == '\\' || c == '"') {
+      dst[used++] = '\\';
+      dst[used++] = (char) c;
+    } else if (c >= 0x20 && c < 0x7f) {
+      dst[used++] = (char) c;
+    } else {
+      dst[used++] = '\\';
+      dst[used++] = 'x';
+      dst[used++] = hex[c >> 4];
+      dst[used++] = hex[c & 0x0f];
+    }
+  }
+  if (src[i] != '\0' && used + 3 < dst_size) {
+    memcpy(dst + used, "...", 3);
+    used += 3;
+  }
+  dst[used] = '\0';
 }
 
 /** Create the full path, relative to the library path, of the player type
@@ -1206,15 +1479,27 @@ int get_line(FILE *fl, char *buf)
  * @param[in] mode What type of files can be created. Currently, recognized
  * modes are CRASH_FILE, ETEXT_FILE, SCRIPT_VARS_FILE and PLR_FILE.
  * @param[in] orig_name The player name to create the filepath (of type mode)
- * for. */
+ * for. It must be a name a player can actually have: ASCII letters only,
+ * 1 to MAX_NAME_LENGTH of them (see tb_filename_name_ok()).
+ * @return 1 on success. 0, after a persist error, when an argument is
+ * missing (filename-args), mode is unknown (filename-mode) or the name is
+ * not a legal player name (filename-unsafe); filename then holds "" (when
+ * it has room), so a caller that ignores the result opens nothing. A path
+ * longer than fbufsize is cut by tb_snprintf. */
 int get_filename(char *filename, size_t fbufsize, int mode, const char *orig_name)
 {
   const char *prefix, *middle, *suffix;
-  char name[PATH_MAX], *ptr;
+  char name[MAX_NAME_LENGTH + 1], *ptr;
 
-  if (orig_name == NULL || *orig_name == '\0' || filename == NULL) {
-    log("SYSERR: NULL pointer or empty string passed to get_filename(), %p or %p.",
-		(const void *)orig_name, (void *)filename);
+  /* Every failure below leaves an empty path, never a stale one. */
+  if (filename != NULL && fbufsize > 0)
+    *filename = '\0';
+
+  if (orig_name == NULL || filename == NULL) {
+    TB_ERROR_MSG("persist", "filename-args", "get_filename",
+                 "mode=%d name=%s filename=%s", mode,
+                 orig_name == NULL ? "NULL" : "set",
+                 filename == NULL ? "NULL" : "set");
     return (0);
   }
 
@@ -1236,6 +1521,29 @@ int get_filename(char *filename, size_t fbufsize, int mode, const char *orig_nam
     suffix = SUF_PLR;
     break;
   default:
+    /* Internal invariant: mode is one of the *_FILE constants above. A new
+     * mode added to callers but not here would make every save fail. */
+    TB_ERROR_MSG("persist", "filename-mode", "get_filename",
+                 "unknown mode %d for name of length %zu", mode,
+                 strlen(orig_name));
+    return (0);
+  }
+
+  /* orig_name becomes a path component, and it does not only come from
+   * the game: remove_player() and the index rebuild take it from the player
+   * index, a pfile's Name tag is read before login, and `show rent <text>`
+   * passes immortal-typed text. A crafted record named "../x" made
+   * remove_player() unlink, read_saved_vars() open and the Crash_* savers
+   * read and write files outside lib/. Accept only a legal player name;
+   * report anything else, escaped, with the mode. */
+  if (!tb_filename_name_ok(orig_name)) {
+    char excerpt[TB_EXCERPT_SIZE];
+
+    tb_escape_excerpt(excerpt, sizeof(excerpt), orig_name);
+    TB_ERROR_MSG("persist", "filename-unsafe", "get_filename",
+                 "mode=%d name=\"%s\" (length %zu) is not a legal player "
+                 "name (ASCII letters only, 1..%d of them); no path built",
+                 mode, excerpt, strlen(orig_name), MAX_NAME_LENGTH);
     return (0);
   }
 
@@ -1284,6 +1592,73 @@ int num_pc_in_room(struct room_data *room)
 }
 
 
+/** Report that code read or wrote a player-only field on a mob. Called only
+ * by CHECK_PLAYER_SPECIAL(), which passes its caller's location; the access
+ * then continues against the shared dummy_mob storage.
+ * @param ch The mob whose player_specials is dummy_mob.
+ * @param field The field expression, as written at the call site.
+ * @param source_file Caller's __FILE__.
+ * @param source_line Caller's __LINE__.
+ * @param source_func Caller's __func__. */
+void tb_player_special_on_mob_at(const struct char_data *ch, const char *field,
+                                 const char *source_file, int source_line,
+                                 const char *source_func)
+{
+  tb_error_log_at("ERROR", "char", "player-special-on-mob", "player_specials",
+                  0, source_file, source_line, source_func,
+                  DIAG_CHAR_FMT " used player-only field '%s' (shared "
+                  "dummy_mob storage)", DIAG_CHAR(ch),
+                  field ? field : "(unknown)");
+}
+
+/** Report that a player's class cannot index a per-class table. Called by
+ * CLASS_ABBR() (and similar lookups) when VALID_CLASS(GET_CLASS(ch)) fails;
+ * GET_CLASS comes from the pfile 'Clas' tag with no range check, so a
+ * corrupt or hand-edited pfile reaches here (G2-12). The report carries the
+ * caller's location, the player and the bad class.
+ * @param ch The player whose class is out of range.
+ * @param table Name of the table the caller was about to index.
+ * @param source_file Caller's __FILE__.
+ * @param source_line Caller's __LINE__.
+ * @param source_func Caller's __func__.
+ * @return "??", a display placeholder in place of the table entry. */
+const char *tb_class_range_error_at(const struct char_data *ch,
+                                    const char *table,
+                                    const char *source_file, int source_line,
+                                    const char *source_func)
+{
+  tb_error_log_at("ERROR", "char", "class-range", table ? table : "(unknown)",
+                  0, source_file, source_line, source_func,
+                  DIAG_CHAR_FMT " class %d outside 0..%d", DIAG_CHAR(ch),
+                  (int) GET_CLASS(ch), NUM_CLASSES - 1);
+  return "??";
+}
+
+/** Range-checked name-table lookup behind TB_TABLE_NAME(). The index comes
+ * from world, player or script data that nothing range-checked, so an
+ * out-of-range one is a data error: it is reported at the caller's
+ * location (subsystem "table", op "name-lookup-range", resource = the
+ * table's name) and a placeholder is shown instead of reading past the
+ * table.
+ * @param table The name table.
+ * @param count Number of valid entries (the "\n" sentinel excluded).
+ * @param idx The index to look up.
+ * @param table_name The table's name, for the report.
+ * @return table[idx], or "<invalid>". */
+const char *tb_table_name_at(const char *const table[], size_t count, long idx,
+                             const char *table_name, const char *source_file,
+                             int source_line, const char *source_func)
+{
+  if (table != NULL && idx >= 0 && (size_t) idx < count && table[idx] != NULL)
+    return table[idx];
+  tb_error_log_at("ERROR", "table", "name-lookup-range",
+                  table_name ? table_name : "(unknown)", 0, source_file,
+                  source_line, source_func, "index %ld not in [0,%zu)%s",
+                  idx, count, table == NULL ? "; NULL table" :
+                  (idx >= 0 && (size_t) idx < count) ? "; NULL entry" : "");
+  return "<invalid>";
+}
+
 /** This function (derived from basic fork() abort() idea by Erwin S Andreasen)
  * causes your MUD to dump core (assuming you can) but continue running. The
  * core dump will allow post-mortem debugging that is less severe than assert();
@@ -1316,6 +1691,9 @@ void core_dump_real(const char *who, int line)
 
 /** Count the number bytes taken up by color codes in a string that will be
  * empty space once the color codes are converted and made non-printable.
+ * A colour code is a tab plus one byte (two hidden bytes); "\t\t" counts
+ * as one. A lone trailing tab counts as one hidden byte and is reported as
+ * protocol-escape-truncated. Input may be raw builder text.
  * @param string The string in which to check for color codes. */
 int count_color_chars(char *string)
 {
@@ -1328,6 +1706,14 @@ int count_color_chars(char *string)
 	len = strlen(string);
   for (i = 0; i < len; i++) {
     while (string[i] == '\t') {
+      /* A tab is a two-byte colour code; a lone trailing tab (raw builder
+       * text or a world-file name) must not step past the terminator. */
+      if (string[i + 1] == '\0') {
+        num++;
+        TB_WARN_MSG("utils", "protocol-escape-truncated", "count_color_chars",
+                    "string ends inside a colour escape at offset %d", i);
+        return num;
+      }
       if (string[i + 1] == '\t')
         num++;
       else
@@ -1340,7 +1726,12 @@ int count_color_chars(char *string)
 
 /* Not the prettiest thing I've ever written but it does the task which
  * is counting all characters in a string which are not part of the
- * protocol system. This is with the exception of detailed MXP codes. */
+ * protocol system. This is with the exception of detailed MXP codes.
+ * Returns the number of *visible* characters (the complement of
+ * count_color_chars). '@' or '\t' starts an escape: the next byte is part
+ * of it, and "[...]" runs to the closing ']'. An escape cut off by the end
+ * of the string ends the count and is reported as
+ * protocol-escape-truncated. Input may be raw builder text (redit). */
 int count_non_protocol_chars(char * str)
 {
   int count = 0;
@@ -1352,12 +1743,28 @@ int count_non_protocol_chars(char * str)
       continue;
     }
     if (*string == '@' || *string == '\t') {
+      /* Every extra step must first check for the terminator: str is raw
+       * builder text (redit room names) and may end inside an escape. */
       string++;
+      if (!*string) {
+        TB_WARN_MSG("utils", "protocol-escape-truncated",
+                    "count_non_protocol_chars",
+                    "string ends inside an escape at offset %td",
+                    string - str);
+        break;
+      }
       if (*string != '[' && *string != '<' && *string != '>' && *string != '(' && *string != ')')
         string++;
       else if (*string == '[') {
         while (*string && *string != ']')
           string++;
+        if (!*string) {
+          TB_WARN_MSG("utils", "protocol-escape-truncated",
+                      "count_non_protocol_chars",
+                      "unterminated '[' escape runs to the end at offset %td",
+                      string - str);
+          break;
+        }
         string++;
       } else
         string++;
@@ -1372,13 +1779,25 @@ int count_non_protocol_chars(char * str)
 
 /** Tests to see if a room is dark. Rules (unless overridden by ROOM_DARK):
  * Inside and City rooms are always lit. Outside rooms are dark at sunset and
- * night.
+ * night. Call it as room_is_dark(room) or IS_DARK(room); the macro passes
+ * the caller's location.
  * @todo Make the return value a bool.
- * @param room The real room to test for. */
-int room_is_dark(room_rnum room)
+ * @param room The real room to test for.
+ * @param source_file Caller's __FILE__.
+ * @param source_line Caller's __LINE__.
+ * @param source_func Caller's __func__. */
+int room_is_dark_at(room_rnum room, const char *source_file, int source_line,
+                    const char *source_func)
 {
+  /* Invariant: callers pass a valid rnum, usually IN_ROOM(ch). A character
+   * at NOWHERE (pending extraction, mid-login) reaches here through
+   * CAN_SEE/LIGHT_OK; the room is treated as lit, as before, and the
+   * caller's location says which path skipped the placement check. */
   if (!VALID_ROOM_RNUM(room)) {
-    log("room_is_dark: Invalid room rnum %d. (0-%d)", room, top_of_world);
+    tb_error_log_at("ERROR", "world", "room-rnum-invalid", "room_is_dark", 0,
+                    source_file, source_line, source_func,
+                    "rnum=%d top_of_world=%d; treated as lit",
+                    (int)room, (int)top_of_world);
     return (FALSE);
   }
 
@@ -1510,14 +1929,26 @@ void char_from_furniture(struct char_data *ch)
      list        - a pointer to a list of strings
      list_length - So we can work with lists that don't end with /n
      show_nums   - when set to TRUE, it will show a number before the list entry.
+
+   Invariant: every write into buf is bounded by struct tb_buf, so output can
+   never pass the end of the stack buffer. The list entries (social names,
+   command names) and the viewer's screen width decide the size: social names
+   come from builders through aedit and screen width from the player (40..200),
+   so a long list on a wide screen can need more than MAX_STRING_LENGTH. When
+   that happens the list is cut at the last entry that fits, the viewer sees
+   the OVERFLOW marker, and a column-list-truncated warning names the viewer.
 */
+#define COLUMN_LIST_OVERFLOW "\r\n*** OVERFLOW ***\r\n"
+
 void column_list(struct char_data *ch, int num_cols, const char **list, int list_length, bool show_nums)
 {
-   size_t max_len = 0, len = 0, temp_len;
+   size_t max_len = 0;
    int num_per_col, col_width, r, c, i, offset = 0;
    char buf[MAX_STRING_LENGTH];
+   struct tb_buf out;
 
-   *buf='\0';
+   /* Reserve room for the overflow marker so it always fits after a cut. */
+   tb_buf_init(&out, buf, sizeof(buf) - (sizeof(COLUMN_LIST_OVERFLOW) - 1));
    /* Work out the longest list item */
    for (i=0; i<list_length; i++)
      if (max_len < strlen(list[i]))
@@ -1538,36 +1969,44 @@ void column_list(struct char_data *ch, int num_cols, const char **list, int list
    if (show_nums) col_width-=4;
 
    if (col_width < 0 || (size_t)col_width < max_len)
-     log("Warning: columns too narrow for correct output to %s in simple_column_list (utils.c)", GET_NAME(ch));
+     TB_WARN_MSG("utils", "column-list-narrow", "column_list",
+                 "col_width=%d max_len=%zu num_cols=%d for " DIAG_CHAR_FMT,
+                 col_width, max_len, num_cols, DIAG_CHAR(ch));
 
    /* Calculate how many list items there should be per column */
    num_per_col = (list_length / num_cols) + ((list_length % num_cols) ? 1 : 0);
 
-   /* Fill 'buf' with the columnised list */
-   for (r=0; r<num_per_col; r++)
+   /* Fill 'buf' with the columnised list; stop at the first cut. */
+   for (r=0; r<num_per_col && !tb_buf_truncated(&out); r++)
    {
-     for (c=0; c<num_cols; c++)
+     for (c=0; c<num_cols && !tb_buf_truncated(&out); c++)
      {
        offset = (c*num_per_col)+r;
        if (offset < list_length)
        {
          if (show_nums)
-           temp_len = snprintf(buf+len, sizeof(buf) - len, "%2d) %-*s", offset+1, col_width, list[(offset)]);
+           (void)tb_buf_appendf(&out, "%2d) %-*s", offset+1, col_width, list[(offset)]);
          else
-           temp_len = snprintf(buf+len, sizeof(buf) - len, "%-*s", col_width, list[(offset)]);
-         len += temp_len;
+           (void)tb_buf_appendf(&out, "%-*s", col_width, list[(offset)]);
        }
      }
-     temp_len = snprintf(buf+len, sizeof(buf) - len, "\r\n");
-     len += temp_len;
+     (void)tb_buf_append(&out, "\r\n");
    }
 
-   if (len >= sizeof(buf))
-     tb_snprintf((buf + MAX_STRING_LENGTH) - 22, 22, "\r\n*** OVERFLOW ***\r\n");
+   if (tb_buf_truncated(&out)) {
+     /* out.length <= its capacity - 1, so the reserved tail holds the marker. */
+     strlcpy(buf + out.length, COLUMN_LIST_OVERFLOW, sizeof(buf) - out.length);
+     TB_WARN_MSG("utils", "column-list-truncated", "column_list",
+                 "list_length=%d num_cols=%d col_width=%d max_len=%zu "
+                 "kept=%zu of capacity=%zu for " DIAG_CHAR_FMT,
+                 list_length, num_cols, col_width, max_len, out.length,
+                 sizeof(buf), DIAG_CHAR(ch));
+   }
 
    /* Send the list to the player */
    page_string(ch->desc, buf, TRUE);
 }
+#undef COLUMN_LIST_OVERFLOW
 
 
 /**
@@ -1828,7 +2267,9 @@ IDXTYPE atoidx( const char *str_to_conv )
     return (IDXTYPE) result;
 }
 
-#define isspace_ignoretabs(c) ((c)!='\t' && isspace(c))
+/* ctype functions take an unsigned char value: a high-bit byte in a plain
+ * (signed) char would be a negative argument, which is undefined behaviour. */
+#define isspace_ignoretabs(c) ((c)!='\t' && TB_ISSPACE(c))
 
 /*
    strfrmt (String Format) function
@@ -1837,12 +2278,22 @@ IDXTYPE atoidx( const char *str_to_conv )
    Recognises @ color codes, and if a line ends in one color, the
    next line will start with the same color.
    Ends every line with \tn to prevent color bleeds.
+
+   Returns a static buffer that the next call overwrites (not reentrant);
+   strpaste(strfrmt(...), ...) is safe only because the two use different
+   buffers. A NULL str is formatted as "" with a strfrmt-null warning. Output
+   that does not fit in MAX_STRING_LENGTH, a word longer than a line and
+   padding past the end are cut and reported once as strfrmt-truncated;
+   w is clamped to the line buffer.
 */
-static char *strfrmt_append(char *dst, const char *end, const char *src)
+static char *strfrmt_append(char *dst, const char *end, const char *src,
+                            int *cut)
 {
   while (*src && dst < end)
     *dst++ = *src++;
   *dst = '\0';
+  if (*src)
+    *cut = TRUE;
   return dst;
 }
 
@@ -1867,6 +2318,7 @@ char *strfrmt(char *str, int w, int h, int justify, int hpad, int vpad)
   const char *lend = line + sizeof(line) - 5;
   const char *rend = ret + sizeof(ret) - 1;
   int wlen = 0, llen = 0, lcount = 0;
+  int cut = FALSE;	/* any output byte dropped (I1-14) */
   char last_color='n';
   bool new_line_started = FALSE;
 
@@ -1881,6 +2333,21 @@ char *strfrmt(char *str, int w, int h, int justify, int hpad, int vpad)
     w = 0;
   if (w > (int)sizeof(line) - 5)
     w = (int)sizeof(line) - 5;
+
+  /* ret is shared by every caller: start empty, so an input that writes
+   * nothing (empty text, vpad FALSE) cannot return the previous caller's
+   * formatted text. */
+  ret[0] = '\0';
+
+  /* A room description loaded as "~" is stored as NULL (fread_string), and
+   * str_and_map() passes it straight here. Format it as empty text. */
+  if (str == NULL) {
+    static char empty_text[] = "";
+
+    TB_WARN_MSG("utils", "strfrmt-null", "strfrmt",
+                "NULL text to format w=%d h=%d", w, h);
+    sp = str = empty_text;
+  }
 
   memset(line, '\0', MAX_INPUT_LENGTH);
   /* Nomalize spaces and newlines */
@@ -1906,7 +2373,7 @@ char *strfrmt(char *str, int w, int h, int justify, int hpad, int vpad)
         *lp++ = '\r';
         *lp++ = '\n';
         *lp = '\0';
-        rp = strfrmt_append(rp, rend, line);
+        rp = strfrmt_append(rp, rend, line, &cut);
         llen = 0;
         lcount++;
         lp = line;
@@ -1945,7 +2412,7 @@ char *strfrmt(char *str, int w, int h, int justify, int hpad, int vpad)
       *lp++ = '\r'; /* New line */
       *lp++ = '\n';
       *lp = '\0';
-      rp = strfrmt_append(rp, rend, line);
+      rp = strfrmt_append(rp, rend, line, &cut);
       llen = 0;
       lcount++;
       lp = line;
@@ -1967,6 +2434,8 @@ char *strfrmt(char *str, int w, int h, int justify, int hpad, int vpad)
      * broken at all, whatever its length.  Neither of those is a reason
      * to write past the end of line. */
     for( ; wp!=sp && lp<lend ; *lp++ = *wp++);
+    if (wp != sp)
+      cut = TRUE;	/* the word did not fit in the line buffer */
   }
   /* Copy over the last line */
   if(lp!=line) {
@@ -1976,7 +2445,7 @@ char *strfrmt(char *str, int w, int h, int justify, int hpad, int vpad)
     *lp++ = '\r';
     *lp++ = '\n';
     *lp = '\0';
-    rp = strfrmt_append(rp, rend, line);
+    rp = strfrmt_append(rp, rend, line, &cut);
     lcount++;
   }
   if(vpad) {
@@ -1984,17 +2453,24 @@ char *strfrmt(char *str, int w, int h, int justify, int hpad, int vpad)
       if(hpad) {
         int pad = w < rend - rp ? w : (int)(rend - rp);
 
+        if (pad < w)
+          cut = TRUE;
         if (pad > 0) {
           memset(rp, ' ', pad);
           rp += pad;
         }
       }
-      if (rp < rend) *rp++ = '\r';
-      if (rp < rend) *rp++ = '\n';
+      if (rp < rend) *rp++ = '\r'; else cut = TRUE;
+      if (rp < rend) *rp++ = '\n'; else cut = TRUE;
       lcount++;
     }
     *rp = '\0';
   }
+  if (cut)
+    TB_WARN_MSG("utils", "strfrmt-truncated", "strfrmt",
+                "text of %zu bytes did not fit: output cut at %d of %d "
+                "bytes (w=%d h=%d)", strlen(str), (int) (rp - ret),
+                (int) sizeof(ret) - 1, w, h);
   return ret;
 }
 
@@ -2003,20 +2479,28 @@ char *strfrmt(char *str, int w, int h, int justify, int hpad, int vpad)
    Used by the automap/map system
    @param str1 The string to be displayed on the left.
    @param str2 The string to be displayed on the right.
-   @param joiner ???.
+   @param joiner Text placed between the two columns on every line.
+   @return A static buffer overwritten by the next call (not reentrant).
+   NULL inputs are treated as "". Output stops at MAX_STRING_LENGTH, and
+   text that did not fit is reported as strpaste-truncated.
 */
 char *strpaste(char *str1, char *str2, char *joiner)
 {
   static char ret[MAX_STRING_LENGTH + 1];
-  const char *sp1 = str1 ? str1 : "";
-  const char *sp2 = str2 ? str2 : "";
-  const char *safe_joiner = joiner ? joiner : "";
+  const char *sp1 = NULLSTR(str1);
+  const char *sp2 = NULLSTR(str2);
+  const char *safe_joiner = NULLSTR(joiner);
   size_t used = 0;
   size_t jlen = strlen(safe_joiner);
+  int cut = FALSE;
 
   while (used < MAX_STRING_LENGTH && (*sp1 || *sp2)) {
     while (used < MAX_STRING_LENGTH && *sp1 && !ISNEWL(*sp1))
       ret[used++] = *sp1++;
+    if (*sp1 && !ISNEWL(*sp1)) {
+      cut = TRUE;	/* out of room in the middle of a left line */
+      break;
+    }
 
     if (*sp1) {
       if (sp1[1] && sp1[1] != sp1[0] && ISNEWL(sp1[1]))
@@ -2033,6 +2517,10 @@ char *strpaste(char *str1, char *str2, char *joiner)
 
     while (used < MAX_STRING_LENGTH && *sp2 && !ISNEWL(*sp2))
       ret[used++] = *sp2++;
+    if (*sp2 && !ISNEWL(*sp2)) {
+      cut = TRUE;	/* out of room in the middle of a right line */
+      break;
+    }
 
     if (*sp2) {
       if (sp2[1] && sp2[1] != sp2[0] && ISNEWL(sp2[1]))
@@ -2040,13 +2528,20 @@ char *strpaste(char *str1, char *str2, char *joiner)
       sp2++;
     }
 
-    if (MAX_STRING_LENGTH - used < 2)
+    if (used > MAX_STRING_LENGTH - 2)
       break;
     ret[used++] = '\r';
     ret[used++] = '\n';
   }
 
   ret[used] = '\0';
+  /* The bounds above keep ret in range; say when they dropped text
+   * (I1-14), e.g. a long description pasted beside the automap. */
+  if (cut || *sp1 || *sp2)
+    TB_WARN_MSG("utils", "strpaste-truncated", "strpaste",
+                "output cut at %zu of %d bytes; %zu and %zu bytes of the "
+                "two columns not pasted", used, MAX_STRING_LENGTH,
+                strlen(sp1), strlen(sp2));
   return ret;
 }
 
@@ -2061,12 +2556,41 @@ void new_affect(struct affected_type *af)
   for (i=0; i<AF_ARRAY_MAX; i++) af->bitvector[i]=0;
 }
 
-/* Handy function to get class ID number by name (abbreviations allowed) */
+/* Former class names that still name a class after a rename. "Magic User"
+ * became "Wizard" in pc_class_types[], but builders, `set <char> class` and
+ * DG %actor.class(<name>)% subfields written before the rename still say
+ * "magic user" or "mage". This table mirrors parse_class()'s legacy 'm'
+ * letter for full names. The canonical names in pc_class_types[] are tried
+ * first, so an abbreviation shared with a current class ("m" -> Monk) keeps
+ * resolving to the current class. Add a row here whenever a class is renamed. */
+static const struct {
+  const char *name;   /* former name; is_abbrev() matches abbreviations */
+  int class_num;      /* CLASS_* constant it still names */
+} legacy_class_aliases[] = {
+  { "magic user", CLASS_MAGIC_USER },
+  { "mage",       CLASS_MAGIC_USER },
+};
+
+#define NUM_LEGACY_CLASS_ALIASES \
+  (sizeof(legacy_class_aliases) / sizeof(legacy_class_aliases[0]))
+
+/* Handy function to get class ID number by name (abbreviations allowed).
+ * Current names in pc_class_types[] win; otherwise a legacy alias from
+ * legacy_class_aliases[] is accepted. Returns -1 when nothing matches. */
 int get_class_by_name(char *classname)
 {
     int i;
+    size_t a;
+
+    if (classname == NULL)
+      return (-1);
+
     for (i=0; i<NUM_CLASSES; i++)
       if (is_abbrev(classname, pc_class_types[i])) return(i);
+
+    for (a = 0; a < NUM_LEGACY_CLASS_ALIASES; a++)
+      if (is_abbrev(classname, legacy_class_aliases[a].name))
+        return (legacy_class_aliases[a].class_num);
 
     return (-1);
 }
@@ -2089,8 +2613,8 @@ char *right_trim_whitespace(const char *string)
     size_t len = strlen(r);
 
     while (len > 0 &&
-           (isspace((unsigned char) r[len - 1]) ||
-            !isprint((unsigned char) r[len - 1])))
+           (TB_ISSPACE(r[len - 1]) ||
+            !TB_ISPRINT(r[len - 1])))
       len--;
 
     r[len] = '\0';
@@ -2101,6 +2625,12 @@ char *right_trim_whitespace(const char *string)
 
 /**
  * Remove all occurrences of a given word in string.
+ * Only the end of a match is checked for a word boundary (space, tab,
+ * newline or end), so "water" is also removed from "saltwater". The drink
+ * container callers rely on whole-word removal of liquid names and pass
+ * names that do not occur as suffixes of other words.
+ * @pre to_remove must be non-empty: an empty word matches at every boundary
+ * without shortening the string, and the loop never ends.
  */
 void remove_from_string(char *string, const char *to_remove)
 {

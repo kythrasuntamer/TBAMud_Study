@@ -9,6 +9,25 @@
 *  CircleMUD is based on DikuMUD, Copyright (C) 1990, 1991.               *
 **************************************************************************/
 
+/* LIFETIME AND OWNERSHIP
+ * - Each mode (SCMD_BUG/IDEA/TYPO) has a doubly linked list
+ *   (first_x/last_x) of IBT_DATA nodes; the list owns the nodes and all
+ *   four strings (ibt_free_strings frees them).
+ * - 'submit' links its node at once, with the submitter's d->str pointing
+ *   at node->body until the editor closes (modify.c
+ *   playing_string_cleanup).  While a descriptor writes a node's body
+ *   (ibt_body_writer) or an ibtedit session holds it (ibt_olc_editor), the
+ *   node must not be freed: 'remove' refuses, and clean_ibt_list() frees
+ *   only the aborting writer's own node plus abandoned empty ones.
+ * - ibtedit works on a private copy (OLC_IBT) that carries the record's
+ *   never-reused serial; OLC_NUM is the list position the session opened
+ *   with and goes stale when an earlier record is removed, so the menu and
+ *   the save log show the current position (ibt_num_by_serial).  OLC_ZNUM
+ *   is reused as the "changed" flag.
+ * - Who controls the input: header, body and notes are player text; the
+ *   files are written by save_ibt_file() (via a temporary file) and read
+ *   back by read_ibt(), which treats them as untrusted. */
+
 //#if defined(macintosh)
 //#include <types.h>
 //#include <time.h>
@@ -33,6 +52,7 @@
 #include "utils.h"
 #include "ibt.h"
 #include "oasis.h"
+#include "olc_checks.h"
 #include "improved-edit.h"
 #include "modify.h"
 
@@ -50,15 +70,20 @@ static const char *ibt_types[]={
   "\n"
 };
 
+/* Source of IBT_DATA.serial.  List positions shift when a record is removed,
+ * so anything that must find "the same record" later (an ibtedit session)
+ * keeps the serial instead. */
+static long ibt_next_serial = 1;
+
 /* Internal (static) functions */
 static IBT_DATA *new_ibt(void);
 static void free_ibt_list(int mode);
-static IBT_DATA *read_ibt(char *filename, FILE *fp);
+static int read_ibt(const char *filename, FILE *fp, int recno, IBT_DATA **out);
 static IBT_DATA *get_first_ibt(int mode);
 static bool is_ibt_logger(IBT_DATA *ibtData, struct char_data *ch);
 /* Internal (static) OLC functions */
 static void ibtedit_setup(struct descriptor_data *d);
-static void ibtedit_save(struct descriptor_data *d);
+static bool ibtedit_save(struct descriptor_data *d);
 static void ibtedit_disp_main_menu(struct descriptor_data *d);
 static void ibtedit_disp_flags(struct descriptor_data *d);
 
@@ -79,11 +104,23 @@ static IBT_DATA *new_ibt(void)
    ibtData->id_num     = NOBODY;
    ibtData->room       = NOWHERE;
    ibtData->dated      = 0;
+   ibtData->serial     = ibt_next_serial++;
 
    for (i=0; i<IBT_ARRAY_MAX; i++)
      ibtData->flags[i]   = 0;
 
    return ibtData;
+}
+
+/* Free every string an IBT owns (body, name, text and notes) and NULL the
+ * fields.  The one place that knows the full set, so no free path can
+ * forget one of them. */
+static void ibt_free_strings(IBT_DATA *ibt)
+{
+  if (ibt->body)  STRFREE(ibt->body);
+  if (ibt->name)  STRFREE(ibt->name);
+  if (ibt->text)  STRFREE(ibt->text);
+  if (ibt->notes) STRFREE(ibt->notes);
 }
 
 static void free_ibt_list(int mode)
@@ -112,35 +149,68 @@ static void free_ibt_list(int mode)
   while ((this_ibt = *first_ptr) != NULL) {
     *first_ptr = this_ibt->next;
 
-    if (this_ibt->body)  STRFREE(this_ibt->body);
-    if (this_ibt->name)  STRFREE(this_ibt->name);
-    if (this_ibt->text)  STRFREE(this_ibt->text);
-    if (this_ibt->notes) STRFREE(this_ibt->notes);
-
+    ibt_free_strings(this_ibt);
     DISPOSE(this_ibt);
   }
 
   *last_ptr = NULL;
 }
-static IBT_DATA *read_ibt( char *filename, FILE *fp )
+/* After a malformed record, skip input up to and including its "End" line
+ * so the records after it still load.  Returns at EOF if there is none. */
+static void ibt_skip_record(FILE *fp)
+{
+  char line[MAX_INPUT_LENGTH];
+  char *p, *end;
+
+  while (fgets(line, sizeof(line), fp)) {
+    for (p = line; isspace((unsigned char)*p); p++)
+      ;
+    for (end = strchr(p, '\0'); end > p && isspace((unsigned char)end[-1]); end--)
+      ;
+    *end = '\0';
+    if (!str_cmp(p, "End"))
+      return;
+  }
+}
+
+/* Read one record from an IBT file.
+ *
+ * Returns IBT_READ_OK with *out set to a new record the caller owns,
+ * IBT_READ_EOF when the file holds no more records, or IBT_READ_DROPPED when
+ * the record was malformed: it has been reported (with the file, record
+ * index and field), freed, and the stream moved past its "End" line.  The
+ * caller keeps ownership of fp and closes it.
+ *
+ * The file is written by save_ibt_file() but holds player text and can be
+ * truncated by a crash or a full disk, so no field is trusted to be
+ * present or terminated. */
+#define IBT_READ_DROPPED (-1)
+#define IBT_READ_EOF       0
+#define IBT_READ_OK        1
+static int read_ibt(const char *filename, FILE *fp, int recno, IBT_DATA **out)
 {
    IBT_DATA *ibtData;
-   char *word, *id_num=NULL, *dated=NULL;
-   char buf[MAX_STRING_LENGTH];
+   char *word, *id_num=NULL, *dated=NULL, *text;
+   char context[MAX_INPUT_LENGTH];
+   const char *field = "keyword";
    bool fMatch;
-   char letter;
+   int letter;
 
+   *out = NULL;
    do
    {
-      letter = getc( fp );
-      if( feof(fp) )
-      {
-         tb_fclose( fp );
-         return NULL;
-      }
+      letter = getc(fp);
+      if (letter == EOF)
+         return IBT_READ_EOF;
    }
-   while( isspace(letter) );
-   ungetc( letter, fp );
+   while (isspace((unsigned char)letter));
+   if (ungetc(letter, fp) == EOF)
+   {
+      TB_ERROR_ERRNO("ibt", "ibt-load", filename,
+                     TB_ERRID_PARSER_EOF " record %d: could not restore lookahead; rest of file not loaded",
+                     recno);
+      return IBT_READ_EOF;
+   }
 
    ibtData = new_ibt();
    ibtData->name       = STRALLOC("");
@@ -152,14 +222,28 @@ static IBT_DATA *read_ibt( char *filename, FILE *fp )
         word   = feof( fp ) ? "End" : fread_word( fp );
         fMatch = FALSE;
 
+        /* fread_word() returns NULL for a token of MAX_STRING_LENGTH bytes
+         * or more, or when it cannot push back its lookahead. */
+        if (!word) {
+          field = "keyword";
+          goto malformed;
+        }
+
         switch ( UPPER(word[0]) )
         {
           case 'B':
-            if (!str_cmp(word, "Body"))  STRFREE(ibtData->body);
-            KEY("Body",     ibtData->body,   fread_clean_string( fp, buf ));
+            if (!str_cmp(word, "Body")) {
+              field = "Body";
+              tb_snprintf(context, sizeof(context), "%s record %d field Body", filename, recno);
+              if (!(text = fread_clean_string(fp, context)))
+                goto malformed;
+              STRFREE(ibtData->body);
+              ibtData->body = text;
+              fMatch = TRUE;
+            }
             break;
           case 'D':
-            TXT_KEY("Dated", dated, fread_line(fp));          
+            TXT_KEY("Dated", dated, fread_line(fp));
             break;
           case 'E':
             if (!str_cmp(word, "End"))
@@ -167,11 +251,19 @@ static IBT_DATA *read_ibt( char *filename, FILE *fp )
               if ( id_num ) {
                 ibtData->id_num = tb_parse_long_or_zero(id_num);
                 STRFREE( id_num );
-              }  
+              }
               if ( dated ) {
                 ibtData->dated = tb_parse_long_or_zero(dated);
                 STRFREE( dated );
-              }  
+                /* A submission time before 1970 means the file is corrupt;
+                 * 0 is shown as "Unknown". */
+                if (ibtData->dated < 0) {
+                  TB_WARN_MSG("ibt", "ibt-load", filename,
+                              TB_ERRID_PARSER_RANGE " record %d field Dated %ld is negative; shown as unknown",
+                              recno, ibtData->dated);
+                  ibtData->dated = 0;
+                }
+              }
               if ( !ibtData->name )
                 ibtData->name = STRALLOC("");
               if ( !ibtData->text )
@@ -180,7 +272,8 @@ static IBT_DATA *read_ibt( char *filename, FILE *fp )
                 ibtData->body = STRALLOC("");
               if ( !ibtData->notes )
                 ibtData->notes = STRALLOC("");
-              return ibtData;
+              *out = ibtData;
+              return IBT_READ_OK;
             }
             break;
 
@@ -201,9 +294,17 @@ static IBT_DATA *read_ibt( char *filename, FILE *fp )
 
           case 'N':
             if (!str_cmp(word, "Name") && ibtData->name)   STRFREE(ibtData->name);
-            if (!str_cmp(word, "Notes") && ibtData->notes)  STRFREE(ibtData->notes);
             TXT_KEY("Name",     ibtData->name,    fread_line( fp ));
-            KEY("Notes",        ibtData->notes,   fread_clean_string( fp, buf ));
+            if (!str_cmp(word, "Notes")) {
+              field = "Notes";
+              tb_snprintf(context, sizeof(context), "%s record %d field Notes", filename, recno);
+              if (!(text = fread_clean_string(fp, context)))
+                goto malformed;
+              if (ibtData->notes)
+                STRFREE(ibtData->notes);
+              ibtData->notes = text;
+              fMatch = TRUE;
+            }
             break;
 
           case 'R':
@@ -230,20 +331,19 @@ static IBT_DATA *read_ibt( char *filename, FILE *fp )
           log( "read_ibt (%s): no match: %s - aborting line!", filename, word );
         }
    }
-   log ("read_ibt: Aborted! Returning NULL");
-   if ( ibtData->name)
-         STRFREE( ibtData->name);
-   if ( ibtData->text)
-         STRFREE( ibtData->text);
-   if ( ibtData->body)
-         STRFREE( ibtData->body);
+
+malformed:
+   TB_ERROR_MSG("ibt", "ibt-load", filename,
+                TB_ERRID_PARSER_MALFORMED " record %d field %s unreadable or unterminated; record dropped",
+                recno, field);
+   ibt_free_strings(ibtData);
    if ( id_num )
-		 STRFREE( id_num );
+     STRFREE( id_num );
    if ( dated )
-		 STRFREE( dated );
-		 
+     STRFREE( dated );
    DISPOSE( ibtData);
-   return NULL;
+   ibt_skip_record(fp);
+   return IBT_READ_DROPPED;
 }
 
 void load_ibt_file(int mode)
@@ -251,13 +351,14 @@ void load_ibt_file(int mode)
    char filename[MAX_INPUT_LENGTH];
    FILE *fp;
    IBT_DATA *ibtData;
+   int recno, result;
 
    switch(mode) {
-     case SCMD_BUG : snprintf(filename, sizeof(filename), "%s",BUGS_FILE);
+     case SCMD_BUG : tb_snprintf(filename, sizeof(filename), "%s",BUGS_FILE);
                      break;
-     case SCMD_IDEA: snprintf(filename, sizeof(filename), "%s",IDEAS_FILE);
+     case SCMD_IDEA: tb_snprintf(filename, sizeof(filename), "%s",IDEAS_FILE);
                      break;
-     case SCMD_TYPO: snprintf(filename, sizeof(filename), "%s",TYPOS_FILE);
+     case SCMD_TYPO: tb_snprintf(filename, sizeof(filename), "%s",TYPOS_FILE);
                      break;
      default       : log("SYSERR: Invalid mode (%d) in load_ibt_file", mode);
                      return;
@@ -272,7 +373,9 @@ void load_ibt_file(int mode)
       return;
    }
 
-   while( ( ibtData = read_ibt( filename, fp ) ) != NULL ) {
+   for (recno = 0; (result = read_ibt(filename, fp, recno, &ibtData)) != IBT_READ_EOF; recno++) {
+     if (result != IBT_READ_OK)
+       continue;   /* reported and skipped by read_ibt() */
      switch(mode) {
        case SCMD_BUG : LINK( ibtData, first_bug, last_bug, next, prev );
                        break;
@@ -283,58 +386,86 @@ void load_ibt_file(int mode)
      }
    }
 
-   return;
+   tb_fclose(fp);
 }
 
-void save_ibt_file(int mode)
+/* Write the list for 'mode' to its file.  Returns TRUE when the new file is
+ * in place, FALSE (after reporting op "ibt-save") when it is not -- in
+ * which case the previous file is left untouched.
+ *
+ * The list is written to "<file>.new" and only renamed over the live file
+ * after every write, the flush and the close succeeded: writing the live
+ * file in place meant a full disk or a crash left it truncated, and the
+ * next boot then lost every record after the cut. */
+int save_ibt_file(int mode)
 {
    IBT_DATA *ibtData, *first_ibt;
    FILE *fp;
-   char filename[256];
+   char filename[256], tmpname[256 + 8];
+   int count = 0, write_ok, flush_ok, close_ok;
 
    switch(mode) {
-     case SCMD_BUG : snprintf(filename, sizeof(filename), "%s",BUGS_FILE);
+     case SCMD_BUG : tb_snprintf(filename, sizeof(filename), "%s",BUGS_FILE);
                      first_ibt = first_bug;
                      break;
-     case SCMD_IDEA: snprintf(filename, sizeof(filename), "%s",IDEAS_FILE);
+     case SCMD_IDEA: tb_snprintf(filename, sizeof(filename), "%s",IDEAS_FILE);
                      first_ibt = first_idea;
                      break;
-     case SCMD_TYPO: snprintf(filename, sizeof(filename), "%s",TYPOS_FILE);
+     case SCMD_TYPO: tb_snprintf(filename, sizeof(filename), "%s",TYPOS_FILE);
                      first_ibt = first_typo;
                      break;
-     default       : log("SYSERR: Invalid mode (%d) in save_ibt_file", mode);
-                     return;
+     default       : TB_ERROR_MSG("ibt", "ibt-save", "save_ibt_file",
+                                  TB_ERRID_INVARIANT " invalid mode %d; nothing saved", mode);
+                     return FALSE;
+   }
+   tb_snprintf(tmpname, sizeof(tmpname), "%s.new", filename);
+
+   if ((fp = fopen(tmpname, "w")) == NULL) {
+     TB_ERROR_ERRNO("ibt", "ibt-save", tmpname,
+                    TB_ERRID_PERSIST_WRITE " %s list: could not open the temporary file; %s unchanged",
+                    ibt_types[mode], filename);
+     return FALSE;
+   }
+   for (ibtData = first_ibt;ibtData;ibtData=ibtData->next)
+   {
+     count++;
+     if (ibtData->text && *(ibtData->text))
+       tb_fprintf(fp,"Text      %s~\n",ibtData->text);
+     if (ibtData->body && *(ibtData->body))
+       tb_fprintf(fp,"Body      %s~\n",ibtData->body);
+     if (ibtData->name && *(ibtData->name))
+       tb_fprintf(fp,"Name      %s~\n",ibtData->name);
+     if (ibtData->notes && *(ibtData->notes))
+       tb_fprintf(fp,"Notes     %s~\n",ibtData->notes);
+     if (ibtData->id_num != NOBODY)
+       tb_fprintf(fp,"IdNum     %ld\n",ibtData->id_num);
+     if (ibtData->dated != 0)
+       tb_fprintf(fp,"Dated     %ld\n",ibtData->dated);
+     tb_fprintf(fp,"Level     %d\n",ibtData->level);
+     tb_fprintf(fp,"Room      %d\n",ibtData->room);
+     tb_fprintf(fp,"Flags     %d %d %d %d\n",ibtData->flags[0],ibtData->flags[1],
+                                          ibtData->flags[2],ibtData->flags[3]);
+     tb_fprintf(fp,"End\n");
    }
 
-   if ((fp = fopen(filename, "w")) == NULL) {
-     TB_REPORT_ERRNO("fopen", filename);
-     log("SYSERR: Unable to open IBT file for writing in save_ibt_file");
-     log("        IBT File: %s", filename);
-     return;
-   } else {
-     for (ibtData = first_ibt;ibtData;ibtData=ibtData->next)
-     {
-       if (ibtData->text && *(ibtData->text))
-         tb_fprintf(fp,"Text      %s~\n",ibtData->text);
-       if (ibtData->body && *(ibtData->body))
-         tb_fprintf(fp,"Body      %s~\n",ibtData->body);
-       if (ibtData->name && *(ibtData->name))
-         tb_fprintf(fp,"Name      %s~\n",ibtData->name);
-       if (ibtData->notes && *(ibtData->notes))
-         tb_fprintf(fp,"Notes     %s~\n",ibtData->notes);
-       if (ibtData->id_num != NOBODY)
-         tb_fprintf(fp,"IdNum     %ld\n",ibtData->id_num);
-       if (ibtData->dated != 0)
-         tb_fprintf(fp,"Dated     %ld\n",ibtData->dated);
-       tb_fprintf(fp,"Level     %d\n",ibtData->level);
-       tb_fprintf(fp,"Room      %d\n",ibtData->room);
-       tb_fprintf(fp,"Flags     %d %d %d %d\n",ibtData->flags[0],ibtData->flags[1],
-                                            ibtData->flags[2],ibtData->flags[3]);
-       tb_fprintf(fp,"End\n");
-     }
-     tb_fclose(fp);
-     return;
+   write_ok = !ferror(fp);
+   flush_ok = tb_fflush_checked(fp, tmpname);
+   close_ok = tb_fclose_checked(fp, tmpname);
+   if (!write_ok || !flush_ok || !close_ok) {
+     TB_ERROR_MSG("ibt", "ibt-save", tmpname,
+                  TB_ERRID_PERSIST_WRITE " %s list of %d records not fully written; %s unchanged",
+                  ibt_types[mode], count, filename);
+     if (remove(tmpname) != 0 && errno != ENOENT)
+       TB_REPORT_ERRNO("remove", tmpname);
+     return FALSE;
    }
+   if (!tb_replace_file_checked(tmpname, filename)) {
+     TB_ERROR_MSG("ibt", "ibt-save", filename,
+                  TB_ERRID_PERSIST_COMMIT " %s list of %d records written to %s but not committed",
+                  ibt_types[mode], count, tmpname);
+     return FALSE;
+   }
+   return TRUE;
 }
 
 static IBT_DATA *get_first_ibt(int mode)
@@ -367,6 +498,55 @@ static IBT_DATA *get_ibt_by_num(int mode, int target_num)
       return target_ibt;
     }
   }
+  return NULL;
+}
+
+/* Find a listed IBT by its never-reused serial, or NULL if it was removed. */
+static IBT_DATA *get_ibt_by_serial(int mode, long serial)
+{
+  IBT_DATA *target_ibt;
+
+  for (target_ibt = get_first_ibt(mode); target_ibt; target_ibt = target_ibt->next)
+    if (target_ibt->serial == serial)
+      return target_ibt;
+  return NULL;
+}
+
+/* The current number ('list' numbering, from 1) of the IBT with this
+ * serial, or 0 when it was removed. */
+static int ibt_num_by_serial(int mode, long serial)
+{
+  IBT_DATA *target_ibt;
+  int num = 1;
+
+  for (target_ibt = get_first_ibt(mode); target_ibt; target_ibt = target_ibt->next, num++)
+    if (target_ibt->serial == serial)
+      return num;
+  return 0;
+}
+
+/* Return the ibtedit session editing this listed IBT, or NULL. */
+static struct descriptor_data *ibt_olc_editor(int mode, IBT_DATA *ibt)
+{
+  struct descriptor_data *d;
+
+  for (d = descriptor_list; d; d = d->next)
+    if (STATE(d) == CON_IBTEDIT && d->olc && OLC_IBT(d) &&
+        OLC_VAL(d) == mode && OLC_IBT(d)->serial == ibt->serial)
+      return d;
+  return NULL;
+}
+
+/* Return the descriptor whose string editor is writing this IBT's body
+ * (d->str == &ibt->body), or NULL.  While one exists the node must not be
+ * freed: string_add() writes through d->str on the writer's next line. */
+static struct descriptor_data *ibt_body_writer(IBT_DATA *ibt)
+{
+  struct descriptor_data *d;
+
+  for (d = descriptor_list; d; d = d->next)
+    if (d->str == &(ibt->body))
+      return d;
   return NULL;
 }
 
@@ -403,10 +583,9 @@ static bool free_ibt(int mode, IBT_DATA *ibtData)
     }
   }
 
-  /* Free the strings first */
-  if (ibtData->body) STRFREE(ibtData->body);
-  if (ibtData->name) STRFREE(ibtData->name);
-  if (ibtData->text) STRFREE(ibtData->text);
+  /* Free the strings first (including the admin notes, which this path
+   * used to leak on every 'remove' of a record that had them). */
+  ibt_free_strings(ibtData);
 
   /* And free the struct */
   DISPOSE(ibtData);
@@ -498,7 +677,22 @@ ACMD(do_ibt)
       } else {
         send_to_char(ch, "%s%s by %s%s\r\n",QCYN, ibt_types[subcmd], QYEL, ibtData->name);
         if (ibtData->dated != 0) {
-          tb_strftime(timestr, sizeof(timestr), "%c", localtime(&(ibtData->dated)));
+          /* dated is a long (ibt.h) read from the IBT file.  localtime()
+           * takes a time_t, which is wider than long on LLP64 and 32-bit
+           * builds, and returns NULL for a time it cannot represent; then
+           * tb_strftime() left timestr unwritten and its stack bytes were
+           * sent to the player. */
+          time_t dated = (time_t)ibtData->dated;
+          const struct tm *when = localtime(&dated);
+
+          if (when)
+            tb_strftime(timestr, sizeof(timestr), "%c", when);
+          else {
+            TB_WARN_MSG("ibt", "ibt-date", ibt_types[subcmd],
+                        "%s %d (serial %ld) date %ld cannot be converted; shown as unknown",
+                        ibt_types[subcmd], ano, ibtData->serial, ibtData->dated);
+            strlcpy(timestr, "Unknown", sizeof(timestr));
+          }
         } else {
           strlcpy(timestr, "Unknown", sizeof(timestr));
         }
@@ -726,9 +920,9 @@ ACMD(do_ibt)
       } else {
         send_to_char(ch,"%s %d resolved!\r\n", ibt_types[subcmd], ano);
         SET_BIT_AR(IBT_FLAGS(ibtData), IBT_RESOLVED);
-        if (CONFIG_IBT_AUTOSAVE) {
-		  save_ibt_file(subcmd);
-		}
+        if (CONFIG_IBT_AUTOSAVE && !save_ibt_file(subcmd))
+          send_to_char(ch, "%sWarning: the %s list could not be saved to disk.%s\r\n",
+                       QRED, ibt_types[subcmd], QNRM);
       }
     }
     return;
@@ -748,11 +942,27 @@ ACMD(do_ibt)
       send_to_char(ch, "%s not found\r\n", ibt_types[subcmd]);
       return;
     } else {
+      struct descriptor_data *busy;
+
+      /* A record still being submitted has a writer whose d->str points at
+       * its body, and one open in ibtedit is saved back later: freeing
+       * either leaves the other side writing into freed memory. */
+      if ((busy = ibt_body_writer(ibtData)) != NULL ||
+          (busy = ibt_olc_editor(subcmd, ibtData)) != NULL) {
+        TB_WARN_MSG("ibt", "remove-busy", ibt_types[subcmd],
+                    "%s %d (logged by idnum %ld) not removed by " DIAG_CHAR_FMT
+                    ": in use by descriptor %d (player idnum %ld)",
+                    ibt_types[subcmd], ano, ibtData->id_num, DIAG_CHAR(ch),
+                    busy->desc_num,
+                    busy->character ? (long)GET_IDNUM(busy->character) : -1L);
+        send_to_char(ch, "That %s is still being written or edited.\r\n", CMD_NAME);
+        return;
+      }
       if (free_ibt(subcmd, ibtData)) {
         send_to_char(ch,"%s%s Number %d removed.%s\r\n", QCYN, ibt_types[subcmd], ano, QNRM);
-        if (CONFIG_IBT_AUTOSAVE) {
-		  save_ibt_file(subcmd);
-		}
+        if (CONFIG_IBT_AUTOSAVE && !save_ibt_file(subcmd))
+          send_to_char(ch, "%sWarning: the %s list could not be saved to disk.%s\r\n",
+                       QRED, ibt_types[subcmd], QNRM);
       } else {
         send_to_char(ch,"%sUnable to remove %s %d!%s\r\n", QRED, CMD_NAME, ano, QNRM);
       }
@@ -763,8 +973,11 @@ ACMD(do_ibt)
       send_to_char(ch, "%s what?\r\n", ibt_types[subcmd]);
       return;
     }
-    save_ibt_file(subcmd);
-    send_to_char(ch,"%s list saved.\r\n", ibt_types[subcmd]);
+    if (save_ibt_file(subcmd))
+      send_to_char(ch,"%s list saved.\r\n", ibt_types[subcmd]);
+    else
+      send_to_char(ch, "%sThe %s list could not be saved; see the syslog.%s\r\n",
+                   QRED, ibt_types[subcmd], QNRM);
   } else if (is_abbrev(arg,"edit")) {
     if (GET_LEVEL(ch) < LVL_GRGOD){
       send_to_char(ch, "%s what?\r\n", ibt_types[subcmd]);
@@ -786,12 +999,15 @@ ACMD(do_ibt)
 
 /* IBT Editor OLC */
 /* OLC_VAL(d)  - The IBT 'mode' - Idea, Bug or Typo */
-/* OLC_NUM(d)  - The IBT number (shown in 'list')   */
+/* OLC_NUM(d)  - The IBT number (shown in 'list') when the session opened;
+ *               stale after an earlier record is removed.  The record is
+ *               found again by OLC_IBT(d)->serial                       */
 /* OLC_ZNUM(d) - Used as 'has changed' flag         */
 ACMD(do_oasis_ibtedit)
 {
   int number = NOTHING;
   struct descriptor_data *d;
+  IBT_DATA *target;
   char buf1[MAX_STRING_LENGTH], buf2[MAX_STRING_LENGTH];
 
   /* No editing as a mob or while being forced. */
@@ -814,29 +1030,27 @@ ACMD(do_oasis_ibtedit)
     number = tb_parse_int_or_zero(buf1);
 
   /* Validate that the IBT number exists */
-  if (get_ibt_by_num(subcmd, number) == NULL) {
+  if ((target = get_ibt_by_num(subcmd, number)) == NULL) {
     send_to_char(ch, "That %s number doesn't exist!\r\n", ibt_types[subcmd]);
     return;
   }
 
-  /* Check that whatever it is isn't already being edited. */
-  for (d = descriptor_list; d; d = d->next) {
-    if (STATE(d) == CON_IBTEDIT) {
-      if (d->olc && OLC_NUM(d) == number) {
-        send_to_char(ch, "That %s is currently being edited by %s.\r\n",
-          ibt_types[subcmd], GET_NAME(d->character));
-        return;
-      }
-    }
+  /* Check that whatever it is isn't already being edited.  Sessions hold
+   * the record's serial: a list position names a different record (or one
+   * of another type) once anything is removed. */
+  if ((d = ibt_olc_editor(subcmd, target)) != NULL) {
+    send_to_char(ch, "That %s is currently being edited by %s.\r\n",
+      ibt_types[subcmd], d->character ? GET_NAME(d->character) : "someone");
+    return;
   }
 
   d = ch->desc;
 
-  /* Give descriptor an OLC structure. */
-  if (d->olc) {
-    mudlog(BRF, LVL_IMMORT, TRUE, "SYSERR: do_oasis_ibtedit: Player already had olc structure.");
-    free(d->olc);
-  }
+  /* Give descriptor an OLC structure.  Entry requires CON_PLAYING, where no
+   * editor is open, so a leftover one is an invariant break: a bare free()
+   * leaked its IBT working copy.  Release it fully and report it. */
+  if (d->olc)
+    OLC_DISCARD_STALE_SESSION(d, ch);
 
   CREATE(d->olc, struct oasis_olc_data, 1);
 
@@ -873,14 +1087,16 @@ static void ibtedit_setup(struct descriptor_data *d)
 
   /* Should always be the case, but just to make sure */
   if ((ibtData = get_ibt_by_num(OLC_VAL(d), OLC_NUM(d))) != NULL) {
-    if ((ibtData->text) && *(ibtData->text)) {
-      OLC_IBT(d)->text  = STRALLOC(ibtData->text);
-    }
+    /* The working copy carries the record's identity, not just its
+     * position; ibtedit_save() finds the record again by it. */
+    OLC_IBT(d)->serial = ibtData->serial;
+    /* name and text are always present in the working copy: the menu
+     * prints them with %s, and a record loaded without a Name or Text line
+     * has them empty.  body and notes may stay NULL ("<Not Set!>"). */
+    OLC_IBT(d)->text  = STRALLOC(ibtData->text ? ibtData->text : "");
+    OLC_IBT(d)->name  = STRALLOC(ibtData->name ? ibtData->name : "");
     if ((ibtData->body) && *(ibtData->body)) {
       OLC_IBT(d)->body  = STRALLOC(ibtData->body);
-    }
-    if ((ibtData->name) && *(ibtData->name)) {
-      OLC_IBT(d)->name  = STRALLOC(ibtData->name);
     }
     if ((ibtData->notes) && *(ibtData->notes)) {
       OLC_IBT(d)->notes = STRALLOC(ibtData->notes);
@@ -890,18 +1106,29 @@ static void ibtedit_setup(struct descriptor_data *d)
     for (i=0; i<IBT_ARRAY_MAX; i++) {
       OLC_IBT(d)->flags[i] = ibtData->flags[i];
     }
+  } else {
+    /* do_oasis_ibtedit() checked the number just before; keep the menu's
+     * %s arguments valid anyway and say what went wrong. */
+    TB_ERROR_MSG("ibt", "olc-setup", ibt_types[OLC_VAL(d)],
+                 TB_ERRID_INVARIANT " %s %d vanished before its ibtedit session started",
+                 ibt_types[OLC_VAL(d)], OLC_NUM(d));
+    OLC_IBT(d)->text = STRALLOC("");
+    OLC_IBT(d)->name = STRALLOC("");
   }
 }
 
 /*-------------------------------------------------------------------*/
-/* Copy IBT data back to the correct list                            */
-static void ibtedit_save(struct descriptor_data *d)
+/* Copy IBT data back to the correct list.  FALSE, reported, when the
+ * record was removed during the session and nothing was saved. */
+static bool ibtedit_save(struct descriptor_data *d)
 {
   IBT_DATA *ibtData;
   int i;
 
-  /* Should always be the case, but just to make sure */
-  if ((ibtData = get_ibt_by_num(OLC_VAL(d), OLC_NUM(d))) != NULL) {
+  /* Find the record by serial: its list position (OLC_NUM) shifts when an
+   * earlier record is removed during the session, and saving by position
+   * would overwrite a different record. */
+  if ((ibtData = get_ibt_by_serial(OLC_VAL(d), OLC_IBT(d)->serial)) != NULL) {
     if ((OLC_IBT(d)->text) && *(OLC_IBT(d)->text)) {
       if (ibtData->text) STRFREE(ibtData->text);
       ibtData->text = STRALLOC(OLC_IBT(d)->text);
@@ -928,35 +1155,27 @@ static void ibtedit_save(struct descriptor_data *d)
       ibtData->flags[i] = OLC_IBT(d)->flags[i];
     }
   } else {
-    log("SYSERR: ibtedit_save: Invalid IBT vnum (%d) in OLC struct", OLC_NUM(d));
-    log("        IBT possibly removed while being edited");
-    return;
+    TB_WARN_MSG("ibt", "edit-target-gone", ibt_types[OLC_VAL(d)],
+                "%s %d (serial %ld) was removed while " DIAG_CHAR_FMT " edited it; edits discarded",
+                ibt_types[OLC_VAL(d)], OLC_NUM(d), OLC_IBT(d)->serial,
+                DIAG_CHAR(d->character));
+    write_to_output(d, "That %s was removed while you edited it; changes not saved.\r\n",
+                    ibt_types[OLC_VAL(d)]);
+    return FALSE;
   }
 
-  save_ibt_file(OLC_VAL(d));
+  if (!save_ibt_file(OLC_VAL(d)))
+    write_to_output(d, "Warning: the %s list could not be saved to disk.\r\n",
+                    ibt_types[OLC_VAL(d)]);
+  return TRUE;
 }
 
 void free_olc_ibt(IBT_DATA *toFree) {
 	
 	if (!toFree)
 	  return;
- 
-	if (toFree->text) {
-	  STRFREE(toFree->text);
-	}
 
-	if (toFree->body) {
-	  STRFREE(toFree->body);
-	}
-
-	if (toFree->name) {
-	  STRFREE(toFree->name);
-	}
-
-	if (toFree->notes) {
-	  STRFREE(toFree->notes);
-	}
-	
+	ibt_free_strings(toFree);
 	free(toFree);
 }
 
@@ -965,16 +1184,23 @@ void free_olc_ibt(IBT_DATA *toFree) {
 static void ibtedit_disp_main_menu(struct descriptor_data *d)
 {
   struct char_data *ch = d->character;
-  char flg_text[MAX_STRING_LENGTH];
+  char flg_text[MAX_STRING_LENGTH], num_text[32];
   room_rnum rr;
+  int num;
 
   get_char_colors(ch);
   clear_screen(d);
 
+  /* The record's number now, not when the session opened (OLC_NUM). */
+  if ((num = ibt_num_by_serial(OLC_VAL(d), OLC_IBT(d)->serial)) > 0)
+    tb_snprintf(num_text, sizeof(num_text), "%d", num);
+  else
+    strlcpy(num_text, "removed", sizeof(num_text));
+
   rr = real_room(OLC_IBT(d)->room);
   sprintbitarray(OLC_IBT(d)->flags, ibt_bits, IBT_ARRAY_MAX, flg_text, sizeof(flg_text));
 
-  send_to_char(ch, "%s-- Edit %s Number %s[%s%d%s]\r\n"
+  send_to_char(ch, "%s-- Edit %s Number %s[%s%s%s]\r\n"
                    "%s1%s) Reported By: %s%-12s\r\n"
                    "%s2%s) Reported In: %s[%s%-5d%s]%s - %s%s\r\n"
                    "%s3%s) Header Text: %s%s\r\n"
@@ -982,7 +1208,7 @@ static void ibtedit_disp_main_menu(struct descriptor_data *d)
                    "%s5%s) Details:\r\n%s%s\r\n"
                    "%s6%s) Admin Notes:\r\n%s%s\r\n"
                    "%sQ%s) Quit %s Editor\r\n",
-                   QBGRN, IBT_TYPE, cyn, yel, OLC_NUM(d), cyn,
+                   QBGRN, IBT_TYPE, cyn, yel, num_text, cyn,
                    yel, nrm, yel, OLC_IBT(d)->name,
                    yel, nrm, cyn, yel, OLC_IBT(d)->room, cyn, nrm, (rr == NOWHERE) ? CCRED(d->character, C_NRM) : cyn, (rr == NOWHERE) ? "<Invalid Room!>" : world[rr].name,
                    yel, nrm, yel, OLC_IBT(d)->text,
@@ -1023,9 +1249,12 @@ void ibtedit_parse(struct descriptor_data *d, char *arg)
       switch (*arg) {
       case 'y':
       case 'Y':
-        /* Save the IBT in memory and to disk. */
-        ibtedit_save(d);
-        mudlog(CMP, MAX(LVL_BUILDER, GET_INVIS_LEV(d->character)), TRUE, "OLC: %s edits %s %d", GET_NAME(d->character), IBT_TYPE, OLC_NUM(d));
+        /* Save the IBT in memory and to disk.  A record removed during the
+         * session was reported and not saved: log no edit for it. */
+        if (ibtedit_save(d))
+          mudlog(CMP, MAX(LVL_BUILDER, GET_INVIS_LEV(d->character)), TRUE, "OLC: %s edits %s %d",
+                 GET_NAME(d->character), IBT_TYPE,
+                 ibt_num_by_serial(OLC_VAL(d), OLC_IBT(d)->serial));
         cleanup_olc(d, CLEANUP_ALL);
         return;
       case 'n':
@@ -1136,25 +1365,20 @@ void ibtedit_parse(struct descriptor_data *d, char *arg)
       return;
 
     case IBTEDIT_BODY:
-      /* We should never get here, modify.c throws user through ibtedit_string_cleanup. */
-      cleanup_olc(d, CLEANUP_ALL);
-      mudlog(BRF, LVL_BUILDER, TRUE, "SYSERR: OLC: ibtedit_parse(): Reached BODY case!");
-      write_to_output(d, "Oops...\r\n");
-      break;
-
     case IBTEDIT_NOTES:
-      /* We should never get here, modify.c throws user through ibtedit_string_cleanup. */
-      cleanup_olc(d, CLEANUP_ALL);
-      mudlog(BRF, LVL_BUILDER, TRUE, "SYSERR: OLC: ibtedit_parse(): Reached NOTES case!");
-      write_to_output(d, "Oops...\r\n");
-      break;
-
     default:
-      /* We should never get here. */
+      /* We should never get here: while BODY/NOTES are open, modify.c routes
+       * input to string_add() and back through ibtedit_string_cleanup(), and
+       * no other mode exists.  Report the broken invariant (before
+       * cleanup_olc() frees the state it reads), end the session, and
+       * return: falling out of the switch would use the freed d->olc. */
+      TB_ERROR_MSG("ibt", "olc-mode", "ibtedit_parse",
+                   TB_ERRID_INVARIANT " ibtedit received input in mode %d (%s %d) from " DIAG_CHAR_FMT,
+                   OLC_MODE(d), ibt_types[OLC_VAL(d)], OLC_NUM(d), DIAG_CHAR(d->character));
+      mudlog(BRF, LVL_BUILDER, TRUE, "SYSERR: OLC: ibtedit_parse(): unexpected mode %d", OLC_MODE(d));
       cleanup_olc(d, CLEANUP_ALL);
-      mudlog(BRF, LVL_BUILDER, TRUE, "SYSERR: OLC: ibtedit_parse(): Reached default case!");
       write_to_output(d, "Oops...\r\n");
-      break;
+      return;
   }
 
   /* If we get here, something was changed */
@@ -1184,14 +1408,36 @@ void free_ibt_lists(void)
     free_ibt_list(mode);
 }
 
-void clean_ibt_list(int mode)
+/* Drop an abandoned submission.  Called from playing_string_cleanup() when
+ * 'writer' aborts an IBT (or saves it empty).
+ *
+ * 'bug submit' links its node into the list at once, with the submitter's
+ * d->str pointing at node->body until the editor closes.  So the node this
+ * writer was filling is freed whatever its body holds, and other empty
+ * nodes are freed only if no descriptor is still writing them: those are
+ * left over from writers who disconnected.  Freeing a node another player
+ * is still filling would leave that player's d->str pointing into freed
+ * memory, which string_add() writes through on their next line. */
+void clean_ibt_list(int mode, struct descriptor_data *writer)
 {
   IBT_DATA *ibtData = get_first_ibt(mode), *ibtTemp;
+  struct descriptor_data *busy;
+
   while (ibtData) {
     ibtTemp = ibtData;
     ibtData = ibtData->next;
-    if (!ibtTemp->body || !*ibtTemp->body) {
+    busy = ibt_body_writer(ibtTemp);
+    if (!busy)
+      busy = ibt_olc_editor(mode, ibtTemp);
+    if (busy && busy == writer)
       free_ibt(mode, ibtTemp);
-    }
+    else if (busy) {
+      if (!ibtTemp->body || !*ibtTemp->body)
+        TB_WARN_MSG("ibt", "ibt-pending-free", ibt_types[mode],
+                    "empty %s logged by idnum %ld kept: descriptor %d (player idnum %ld) is still writing it",
+                    ibt_types[mode], ibtTemp->id_num, busy->desc_num,
+                    busy->character ? (long)GET_IDNUM(busy->character) : -1L);
+    } else if (!ibtTemp->body || !*ibtTemp->body)
+      free_ibt(mode, ibtTemp);
   }
 }

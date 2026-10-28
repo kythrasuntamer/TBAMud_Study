@@ -10,8 +10,21 @@
 #ifndef TBAMUD_PFDEFAULTS_H_INCLUDED
 #define TBAMUD_PFDEFAULTS_H_INCLUDED
 
-/* WARNING:  Do not change the values below if you have existing ascii player 
+/* WARNING:  Do not change the values below if you have existing ascii player
  * files you don't want to screw up. */
+
+/* How these are used (players.c):
+ * - save_char() omits a field whose value equals its PFDEF_* default, and
+ *   load_char() starts every field at its default. Changing a default
+ *   therefore silently changes the value of that field for every existing
+ *   player who had the old default.
+ * - load_char() also falls back to the default when a field in the file is
+ *   malformed or out of range (reported as pfile-int / pfile-range /
+ *   pfile-flags), so a default must be a valid value for its field
+ *   (PFDEF_CLASS a real class, PFDEF_LEVEL within 0..LVL_IMPL, ...).
+ * - PFDEF_LASTMOTD and PFDEF_LASTNEWS are compared with time_t fields that
+ *   are written as int ("Lmot"/"Lnew"), so those two fields truncate after
+ *   January 2038. */
 
 #define PFDEF_SEX		0
 #define PFDEF_CLASS		0

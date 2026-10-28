@@ -12,6 +12,19 @@
 *  $Revision: 1.0.14 $                                                    *
 **************************************************************************/
 
+/**
+ * @file dg_comm.c
+ * Message output for DG scripts: sub_write() (the m/o/w echo and send commands'
+ * token substitution), send_to_zone(), and any_one_name().
+ *
+ * Who controls the input: messages are builder-written trigger text after
+ * var_subst(), and so can carry player text. They are copied into bounded
+ * buffers (truncation is reported) and always sent as data ("%s").
+ *
+ * Lifetime: nothing here runs a callback (no triggers, no act()), so a
+ * room's people list is stable while it is walked.
+ */
+
 #include "conf.h"
 #include "sysdep.h"
 #include "structs.h"
@@ -25,25 +38,42 @@
 /* local functions */
 static void sub_write_to_char(char_data *ch, char *tokens[], void *otokens[], char type[]);
 
-/* same as any_one_arg except that it stops at punctuation */
+/* same as any_one_arg except that it stops at punctuation.
+ * first_arg must hold MAX_INPUT_LENGTH bytes; longer names are truncated
+ * but still consumed from argument. */
 char *any_one_name(char *argument, char *first_arg)
 {
-  char* arg;
+  char *arg = first_arg, *const arg_end = first_arg + MAX_INPUT_LENGTH - 1;
 
   /* Find first non blank */
   while(isspace(*argument))
     argument++;
 
   /* Find length of first word */
-  for(arg = first_arg ;
+  size_t length = 0;
+  for(;
     *argument && !isspace(*argument) && (!ispunct(*argument) || *argument == '#' || *argument == '-') ;
-  arg++, argument++)
-  *arg = LOWER(*argument);
+  argument++, length++)
+    if (arg < arg_end)
+      *arg++ = LOWER(*argument);
   *arg = '\0';
+
+  if (length > (size_t)(arg_end - first_arg))
+    TB_ERROR_MSG("dg", "parse-name", "any_one_name",
+                 "name of %zu bytes truncated to %d; target lookup uses the "
+                 "truncated name", length, MAX_INPUT_LENGTH - 1);
 
   return argument;
 }
 
+/**
+ * Assembles and sends one viewer's copy of a sub_write() message: the text
+ * pieces in tokens[], each followed by the viewer-specific rendering of the
+ * referenced character or object in otokens[] (type[] holds the token
+ * character), up to the NULL sentinel. The result is bounded by
+ * MAX_STRING_LENGTH (strlcat truncates).
+ * @param ch The viewer.
+ */
 static void sub_write_to_char(char_data *ch, char *tokens[], void *otokens[], char type[])
 {
   char sb[MAX_STRING_LENGTH];
@@ -116,6 +146,33 @@ static void sub_write_to_char(char_data *ch, char *tokens[], void *otokens[], ch
   send_to_char(ch, "%s", sb);
 }
 
+/**
+ * Sends a script message with per-viewer name substitution.
+ *
+ * Token grammar: each token character is followed by a name (read by
+ * any_one_name(), so it ends at whitespace or punctuation other than '#'
+ * and '-'):
+ *  - ~name  the character's name as the viewer sees it ("you" for itself)
+ *  - |name  possessive name ("your")
+ *  - ^name  his/her/its       &name  he/she/it       *name  him/her/it
+ *  - `name  an object; with find_invis (every current caller) an object
+ *           in the room, otherwise the first object ch can see in the
+ *           room, then in ch's equipment, then in ch's inventory.
+ *  - \x     the character x literally (a trailing backslash is dropped and
+ *           reported)
+ * A name that matches nothing renders as "someone", "it" or "something".
+ *
+ * @param arg The message; at most MAX_INPUT_LENGTH * 2 - 2 bytes and
+ * MAX_INPUT_LENGTH - 2 tokens are used, the rest is reported and dropped.
+ * @param ch The character the message is anchored on: the acting mob, or
+ * for object and room scripts the target character or the room's first
+ * occupant. Its room is where names are looked up and where TO_ROOM sends;
+ * it must be a valid room, anything else is reported ("sub-write") and the
+ * message dropped.
+ * @param find_invis TRUE looks names up regardless of visibility (scripts
+ * see everything); FALSE uses what ch can see.
+ * @param targets TO_CHAR and/or TO_ROOM (everyone in the room but ch).
+ */
 void sub_write(char *arg, char_data *ch, byte find_invis, int targets)
 {
   char str[MAX_INPUT_LENGTH * 2];
@@ -127,12 +184,38 @@ void sub_write(char *arg, char_data *ch, byte find_invis, int targets)
   int i, tmp;
   int to_sleeping = 1; /* mainly for windows compiles */
 
-  if (!arg)
+  /* Every caller passes a message and a character standing in a room; the
+   * room is indexed below (world[IN_ROOM(ch)]), so any rnum past the world
+   * table is as bad as NOWHERE. */
+  if (!arg || !ch || !VALID_ROOM_RNUM(IN_ROOM(ch))) {
+    if (!ch)
+      TB_ERROR_MSG("dg", "sub-write", "sub_write",
+                   "invariant violated: arg=%s, no speaker; message dropped",
+                   arg ? "set" : "NULL");
+    else
+      TB_ERROR_MSG("dg", "sub-write", "sub_write",
+                   "invariant violated: arg=%s, speaker " DIAG_CHAR_FMT
+                   " uid %ld at rnum %ld (%s); message dropped",
+                   arg ? "set" : "NULL", DIAG_CHAR(ch), ch->script_id,
+                   (long)IN_ROOM(ch),
+                   VALID_ROOM_RNUM(IN_ROOM(ch)) ? "a room" : "not a room");
     return;
+  }
 
   tokens[0] = str;
 
   for (i = 0, p = arg, s = str; *p;) {
+    /* Each pass writes at most one byte to str and adds at most one token;
+     * keep room for the final terminator and the NULL token sentinel. */
+    if (i >= MAX_INPUT_LENGTH - 2 || s >= str + sizeof(str) - 2) {
+      TB_ERROR_MSG("dg", "sub-write", "sub_write",
+                   "message of %zu bytes truncated at %d tokens, %d bytes "
+                   "(speaker " DIAG_CHAR_FMT ")", strlen(arg), i, (int)(s - str),
+                   DIAG_CHAR(ch));
+      script_log("sub_write: message truncated at %d tokens, %d bytes.",
+                 i, (int)(s - str));
+      break;
+    }
     switch (*p) {
       case '~':
       case '|':
@@ -154,9 +237,14 @@ void sub_write(char *arg, char_data *ch, byte find_invis, int targets)
         *s = '\0';
         p = any_one_name(++p, name);
 
+        /* Each later place is searched only when the earlier ones found
+         * nothing. The tests were inverted: a miss in the room ended the
+         * search, and a room match was replaced by the equipment lookup,
+         * then the inventory one, so a visible object rendered as
+         * "something" unless it was in all three places. */
         if (find_invis) obj = get_obj_in_room(&world[IN_ROOM(ch)], name);
-        else if (!(obj = get_obj_in_list_vis(ch, name, NULL, world[IN_ROOM(ch)].contents))) ;
-        else if (!(obj = get_obj_in_equip_vis(ch, name, &tmp, ch->equipment))) ;
+        else if ((obj = get_obj_in_list_vis(ch, name, NULL, world[IN_ROOM(ch)].contents))) ;
+        else if ((obj = get_obj_in_equip_vis(ch, name, &tmp, ch->equipment))) ;
         else obj = get_obj_in_list_vis(ch, name, NULL, ch->carrying);
 
         otokens[i] = (void *)obj;
@@ -164,8 +252,15 @@ void sub_write(char *arg, char_data *ch, byte find_invis, int targets)
       break;
 
       case '\\':
-        p++;
-        *s++ = *p++;
+        /* A trailing backslash escapes nothing; never step past the NUL. */
+        if (*++p)
+          *s++ = *p++;
+        else {
+          TB_ERROR_MSG("dg", "sub-write", "sub_write",
+                       "message ends with an unescaped backslash; dropped it "
+                       "(speaker " DIAG_CHAR_FMT ")", DIAG_CHAR(ch));
+          script_log("sub_write: message ends with a dangling backslash.");
+        }
       break;
 
       default:
@@ -186,6 +281,12 @@ void sub_write(char *arg, char_data *ch, byte find_invis, int targets)
       sub_write_to_char(to, tokens, otokens, type);
 }
 
+/**
+ * Sends messg to every awake, playing character in a zone. An empty or NULL
+ * message sends nothing.
+ * @param messg Finished text, sent as data.
+ * @param zone The zone's rnum.
+ */
 void send_to_zone(char *messg, zone_rnum zone)
 {
   struct descriptor_data *i;

@@ -1,0 +1,48 @@
+M#10000
+hermit~
+the hermit~
+A hermit is standing here, oblivious to you and the rest of the world.
+~
+   This recluse has been living outside of the city for too long.  He is
+disheveled and in desperate need of a bath and clean clothes.  He must be strong
+and determined to survive out here on his own.
+~
+2124 0 0 0 64 0 0 0 0 E
+3 19 8 0d0+30 1d2+0
+30 900
+8 8 1
+BareHandAttack: 13
+E
+#10001
+bobcat~
+the bobcat~
+A bobcat is crouching here, protectively guarding her young.
+~
+   Normally this animal would flee at the first sign of humans, but she has her
+young close by and will not leave them.  You have heard about how ferocious
+animals can become when protecting their young.  Now you are about to experience
+it first hand.
+~
+4170 0 0 0 0 0 0 0 0 E
+3 19 8 0d0+30 1d2+0
+30 900
+8 8 2
+BareHandAttack: 8
+E
+#10002
+chipmunk~
+the chipmunk~
+A cute little chipmunk scurries around gathering nuts.
+~
+   Its cheeks are puffed out to the max and look like they are ready to explode.
+It must be gathering food to stash away for emergencies.  It's a small brown
+furry critter with black and white stripes running from the top of its head all
+the way down to its tail.
+~
+200 0 0 0 0 0 0 0 0 E
+3 19 8 0d0+30 1d2+0
+30 900
+8 8 1
+BareHandAttack: 4
+E
+$

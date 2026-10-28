@@ -1,0 +1,26 @@
+# Reproducer: shutdown with a character mud event pending dereferences NULL.
+#
+# Run:  tests/e2e/soak_gameplay.py --circle <ASan build>/bin/circle \
+#           --replay tests/e2e/repro_shutdown_pending_char_event.txt
+# Expect (unfixed code), during "shutdown die":
+#   lists.c:63: runtime error: member access within null pointer of type
+#   'struct list_data'
+#     #0 free_list lists.c:63   #1 free_char db.c:3660   #2 destroy_db db.c:722
+#     #3 main comm.c:365
+# (a plain build takes SIGSEGV there instead of exiting 0).
+#
+# Cause: free_char() cancels the character's events with event_cancel(),
+# and free_mud_event() frees ch->events and sets it to NULL when the last
+# event is removed; free_char() then calls free_list(ch->events) on the NULL
+# it was handed back.  Any character with exactly one pending mud event when
+# destroy_db() runs (here: a warrior still spinning in a whirlwind) triggers
+# it.  The replay ends while Alric is spinning, so the harness's
+# "shutdown die" lands mid-spin.
+create Soakimp w
+create Alric w
+Soakimp: advance alric 30
+Soakimp: skillset alric 'whirlwind' 100
+Soakimp: teleport alric 3044
+Soakimp: at 3044 load mob 3065 3
+Alric: whirlwind
+expect Alric WHIRLWIND

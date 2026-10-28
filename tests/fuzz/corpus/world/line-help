@@ -1,0 +1,43 @@
+L! ^ !
+
+Use ! to repeat the last command typed #0
+%ASOUND% OASOUND MASOUND WASOUND ASOUND
+
+%asound% <message>
+   
+   The message is sent to all surrounding rooms.
+
+Trigger Intended Assignment: Rooms
+Trigger Type: Random , Numeric Arg: 10, Arg list: None
+Commands:
+   %asound% You hear a blood chilling howl from nearby.
+
+See Examples: @RTSTAT 7505, 154@n
+#31
+%AT% WAT MAT OAT %MAT% %WAT% %OAT%
+
+%at% <target> <command>
+
+   Using %at% will perform the command in the room where target is found.
+
+Example: @RTSTAT 19, 20@n
+#31
+%DAMAGE% ODAMAGE MDAMAGE WDAMAGE TRIGEDIT-DAMAGE TRIGEDIT-ROOM-DAMAGE TRIG-DAMAGE
+
+%damage% %victim% amount
+
+   Cause amount points of damage to victim. The amount can be negative, to 
+create a healing effect. This requires an actor to damage, so if it is a random
+trigger you must define actor.
+
+%damage% %actor% -20          - cause 20 points of healing 
+%damage% %actor% 20           - cause 20 points damage
+%damage% %actor% %random.20%  - cause 1-20 points damage randomly
+
+set stunned %actor.hitp%      - evaluate all hitpoints and then damage
+%damage% %actor% %stunned%    - leaving the player stunned, but will recover 
+
+eval random_up_to_stunned %%random.%stunned%%%
+*comment line
+
+last line without newline

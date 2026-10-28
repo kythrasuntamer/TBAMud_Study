@@ -8,6 +8,23 @@
 * Copyright (C) 1997 MS                                                  *
 *********************************************************************** */
 
+/**
+ * @file quest.c
+ * Autoquests: loading (.qst files), the questmaster spec proc, the 'quest'
+ * command, and progress/completion checks driven from the game loop.
+ *
+ * Ownership: aquest_table (db.c) holds total_quests rows in vnum order; it
+ * is filled at boot by parse_quest() and edited in place by qedit
+ * (genqst.c add_quest/delete_quest), which may reallocate it, so never keep
+ * a row pointer or rnum across OLC. Players refer to quests by vnum only
+ * (GET_QUEST, completed_quests[]); resolve with real_quest() and check with
+ * VALID_QUEST_RNUM() each time, because quests can be deleted under them.
+ *
+ * Who controls input: quest records are builder data (world files, qedit),
+ * including prev/next links, which are not repaired on delete; quest
+ * numbers typed after 'quest list/join/status' come from players.
+ */
+
 #include "conf.h"
 #include "sysdep.h"
 
@@ -79,6 +96,35 @@ int is_complete(struct char_data *ch, qst_vnum vnum)
   return FALSE;
 }
 
+/* Report a prev/next link of quest `from` that names no existing quest.
+ * Links are builder data: qedit stores any number typed and delete_quest()
+ * never repairs the links that pointed at the deleted quest. */
+static void quest_report_dangling(qst_rnum from, qst_vnum link)
+{
+  TB_WARN_MSG("quest", "dangling-chain", "aquest_table",
+              "quest vnum %d prev %d next %d: linked quest vnum %d does not exist",
+              (int) QST_NUM(from), (int) QST_PREV(from), (int) QST_NEXT(from),
+              (int) link);
+}
+
+/* Display text (name or description) of the quest that link `link` of quest
+ * `from` names, or a "(missing quest N)" marker, reported, when the link
+ * dangles. The marker lives in a static buffer overwritten by the next call. */
+static const char *quest_link_text(qst_rnum from, qst_vnum link, int want_name)
+{
+  static char missing[48];
+  qst_rnum to = real_quest(link);
+  const char *text;
+
+  if (VALID_QUEST_RNUM(to)) {
+    text = want_name ? QST_NAME(to) : QST_DESC(to);
+    return text ? text : "";
+  }
+  quest_report_dangling(from, link);
+  tb_snprintf(missing, sizeof(missing), "(missing quest %d)", (int) link);
+  return missing;
+}
+
 qst_vnum find_quest_by_qmnum(struct char_data *ch, mob_vnum qm, int num)
 {
   qst_rnum rnum;
@@ -126,11 +172,90 @@ int count_quests(qst_vnum low, qst_vnum high)
   return j;
 }
 
+/* Quest records contain whitespace-separated signed integers. */
+static int quest_parse_int(const char **cursor, int *out)
+{
+  char *end;
+  long value;
+  const char *p = *cursor;
+  while (isspace((unsigned char)*p))
+    p++;
+  errno = 0;
+  value = strtol(p, &end, 10);
+  if (p == end || errno == ERANGE || value < INT_MIN || value > INT_MAX ||
+      (*end && !isspace((unsigned char)*end)))
+    return FALSE;
+  *out = (int)value;
+  *cursor = end;
+  return TRUE;
+}
+
+static int quest_parse_record(const char *line, int *fields, size_t count,
+                              char *flags, size_t flag_size)
+{
+  size_t i;
+  const char *p = line;
+  for (i = 0; i < count; i++) {
+    if (flags && i == 2) {
+      size_t n = 0;
+      while (isspace((unsigned char)*p))
+        p++;
+      while (p[n] && !isspace((unsigned char)p[n]))
+        n++;
+      if (!n || n >= flag_size)
+        return FALSE;
+      memcpy(flags, p, n);
+      flags[n] = '\0';
+      p += n;
+    }
+    if (!quest_parse_int(&p, &fields[i]))
+      return FALSE;
+  }
+  while (isspace((unsigned char)*p))
+    p++;
+  return *p == '\0';
+}
+
+/* A malformed .qst record stops the boot (as every world-file loader does),
+ * naming the quest vnum, the line that failed and the file offset. The raw
+ * line is not logged. Expands at the call site so the record names the
+ * failing check. */
+#define QUEST_PARSE_FATAL(fl, vnum, what) do { \
+    TB_FATAL_MSG("quest", "parse", "qst-file", \
+                 "quest vnum %d: missing or malformed %s line near byte %ld", \
+                 (vnum), (what), ftell(fl)); \
+    exit(1); \
+  } while (0)
+
+/**
+ * Read one quest record (the part after "#<nr>") from a .qst file into the
+ * next free row of aquest_table.
+ *
+ * Record grammar:
+ *   name~ / desc~ / info~ / done~ / quit~     (fread_string, '~'-terminated)
+ *   <type> <qm vnum> <flags> <target> <prev> <next> <prereq>
+ *   <points> <penalty> <minlvl> <maxlvl> <time> <return mob> <quantity>
+ *   <gold> <exp> <obj vnum>
+ *   S                                        (end of record)
+ * -1 in target/prev/next/prereq/obj means "none" (stored as NOTHING).
+ *
+ * Validation: every number must parse as an int; type must be in
+ * [0, NUM_AQ_TYPES) (boot stops otherwise). The QM vnum is checked against
+ * the mob prototypes, so mobs must be loaded first (boot_world order); an
+ * unknown QM is reported and stored as NOBODY. Chain links (prev/next) are
+ * cross-checked later, in assign_the_quests(), once every quest is loaded.
+ * Levels, quantity, time and rewards are taken as written.
+ *
+ * The row index is a function-static counter shared by every call:
+ * index_boot() sizes aquest_table for the whole set of files and calls this
+ * once per record, and total_quests follows the counter. Input is world-file
+ * (builder) data.
+ */
 void parse_quest(FILE *quest_f, int nr)
 {
   static char line[256];
   static int i = 0, j;
-  int retval = 0, t[7];
+  int t[7];
   char f1[128], buf2[MAX_STRING_LENGTH];
   aquest_table[i].vnum = nr;
   aquest_table[i].qm = NOBODY;
@@ -160,53 +285,101 @@ void parse_quest(FILE *quest_f, int nr)
   aquest_table[i].done = fread_string(quest_f, buf2);
   aquest_table[i].quit = fread_string(quest_f, buf2);
   if (!get_line(quest_f, line) ||
-      (retval = sscanf(line, " %d %d %s %d %d %d %d",
-             t, t+1, f1, t+2, t+3, t + 4, t + 5)) != 7) {
-    log("Format error in numeric line (expected 7, got %d), %s\n",
-        retval, line);
+      !quest_parse_record(line, t, 6, f1, sizeof(f1)))
+    QUEST_PARSE_FATAL(quest_f, nr, "header (type qm flags target prev next prereq)");
+  /* The type indexes quest_types[] and selects the trigger check; only qedit
+   * limits it, so a hand-edited .qst file can hold anything. */
+  if (t[0] < 0 || t[0] >= NUM_AQ_TYPES) {
+    TB_FATAL_MSG("quest", "parse-type-range", "qst-file",
+                 "quest vnum %d type %d out of range [0,%d) near byte %ld",
+                 nr, t[0], NUM_AQ_TYPES, ftell(quest_f));
     exit(1);
   }
-  aquest_table[i].type       = t[0];
-  aquest_table[i].qm         = (real_mobile(t[1]) == NOBODY) ? NOBODY : t[1];
-  aquest_table[i].flags      = asciiflag_conv(f1);
-  aquest_table[i].target     = (t[2] == -1) ? NOTHING : t[2];
+  aquest_table[i].type = t[0];
+  /* Mobiles are loaded before quests (boot_world), so an unknown QM vnum here
+   * is a real world-file error; the quest still loads but has no QM. */
+  if (real_mobile(t[1]) == NOBODY) {
+    TB_WARN_MSG("quest", "unknown-questmaster", "aquest_table",
+                "quest vnum %d qm mob vnum %d does not exist; quest has no questmaster",
+                nr, t[1]);
+    aquest_table[i].qm = NOBODY;
+  } else
+    aquest_table[i].qm = t[1];
+  aquest_table[i].flags = asciiflag_conv(f1);
+  aquest_table[i].target = (t[2] == -1) ? NOTHING : t[2];
   aquest_table[i].prev_quest = (t[3] == -1) ? NOTHING : t[3];
   aquest_table[i].next_quest = (t[4] == -1) ? NOTHING : t[4];
-  aquest_table[i].prereq     = (t[5] == -1) ? NOTHING : t[5];
+  aquest_table[i].prereq = (t[5] == -1) ? NOTHING : t[5];
   if (!get_line(quest_f, line) ||
-      (retval = sscanf(line, " %d %d %d %d %d %d %d",
-          t, t+1, t+2, t+3, t+4, t + 5, t + 6)) != 7) {
-    log("Format error in numeric line (expected 7, got %d), %s\n",
-        retval, line);
-    exit(1);
-  }
+      !quest_parse_record(line, t, 7, NULL, 0))
+    QUEST_PARSE_FATAL(quest_f, nr, "values (7 integers)");
   for (j = 0; j < 7; j++)
     aquest_table[i].value[j] = t[j];
-
   if (!get_line(quest_f, line) ||
-      (retval = sscanf(line, " %d %d %d",
-             t, t+1, t+2)) != 3) {
-    log("Format error in numeric (rewards) line (expected 3, got %d), %s\n",
-        retval, line);
-    exit(1);
-  }
+      !quest_parse_record(line, t, 3, NULL, 0))
+    QUEST_PARSE_FATAL(quest_f, nr, "rewards (gold exp obj)");
 
   aquest_table[i].gold_reward = t[0];
   aquest_table[i].exp_reward  = t[1];
   aquest_table[i].obj_reward  = (t[2] == -1) ? NOTHING : t[2];
+  /* Legal, but almost certainly a builder mistake: picking up the target
+   * completes the quest and hands out another copy of the target. */
+  if (aquest_table[i].type == AQ_OBJ_FIND &&
+      aquest_table[i].obj_reward != NOTHING &&
+      aquest_table[i].obj_reward == aquest_table[i].target)
+    TB_WARN_MSG("quest", "reward-equals-target", "aquest_table",
+                "quest vnum %d type %d target obj vnum %d is also the reward",
+                nr, aquest_table[i].type, (int) aquest_table[i].target);
 
   for (;;) {
-    if (!get_line(quest_f, line)) {
-      log("Format error in %s\n", line);
-      exit(1);
-    }
+    if (!get_line(quest_f, line))
+      QUEST_PARSE_FATAL(quest_f, nr, "terminator ('S' before end of file)");
     switch(*line) {
     case 'S':
       total_quests = ++i;
       return;
+    default:
+      /* No other record lines are defined; say what is being ignored. */
+      TB_WARN_MSG("quest", "parse-skip-line", "qst-file",
+                  "quest vnum %d: ignoring unknown line starting 0x%02x (%zu bytes) near byte %ld",
+                  nr, (unsigned char) *line, strlen(line), ftell(quest_f));
+      break;
     }
   }
 } /* parse_quest */
+
+/* Questmaster secondary spec procs.
+ *
+ * A questmaster mob's mob_index[].func is replaced by questmaster(); the
+ * mob's original proc (shop_keeper, a guild, ...) is parked in QST_FUNC of
+ * that mob's quests, and questmaster() calls it first. Invariant: any quest
+ * of the QM may hold it. qedit-created quests start with QST_FUNC == NULL
+ * and add_quest() inserts them in vnum order, so the proc must be looked up
+ * across all of the QM's quests, never only in the first one. */
+quest_spec_proc *quest_qm_secondary(mob_vnum qm)
+{
+  qst_rnum rnum;
+
+  if (qm == NOBODY)
+    return NULL;
+  for (rnum = 0; rnum < total_quests; rnum++)
+    if (QST_MASTER(rnum) == qm && QST_FUNC(rnum) &&
+        QST_FUNC(rnum) != questmaster)
+      return QST_FUNC(rnum);
+  return NULL;
+}
+
+/* Record func as the secondary proc on every quest of questmaster qm. */
+void quest_set_qm_secondary(mob_vnum qm, quest_spec_proc *func)
+{
+  qst_rnum rnum;
+
+  if (qm == NOBODY || func == questmaster)
+    return;
+  for (rnum = 0; rnum < total_quests; rnum++)
+    if (QST_MASTER(rnum) == qm)
+      QST_FUNC(rnum) = func;
+}
 
 void assign_the_quests(void)
 {
@@ -216,17 +389,26 @@ void assign_the_quests(void)
   cmd_tell = find_command("tell");
 
   for (rnum = 0; rnum < total_quests; rnum ++) {
+    /* All quests are loaded now: report chain links naming no quest. */
+    if (QST_PREV(rnum) != NOTHING && real_quest(QST_PREV(rnum)) == NOTHING)
+      quest_report_dangling(rnum, QST_PREV(rnum));
+    if (QST_NEXT(rnum) != NOTHING && real_quest(QST_NEXT(rnum)) == NOTHING)
+      quest_report_dangling(rnum, QST_NEXT(rnum));
     if (QST_MASTER(rnum) == NOBODY) {
-      log("SYSERR: Quest #%d has no questmaster specified.", QST_NUM(rnum));
+      TB_WARN_MSG("quest", "no-questmaster", "aquest_table",
+                  "quest vnum %d has no questmaster; nobody can offer it",
+                  (int) QST_NUM(rnum));
       continue;
     }
     if ((mrnum = real_mobile(QST_MASTER(rnum))) == NOBODY) {
-      log("SYSERR: Quest #%d has an invalid questmaster.", QST_NUM(rnum));
+      TB_WARN_MSG("quest", "unknown-questmaster", "aquest_table",
+                  "quest vnum %d qm mob vnum %d does not exist",
+                  (int) QST_NUM(rnum), (int) QST_MASTER(rnum));
       continue;
     }
     if (mob_index[(mrnum)].func &&
  mob_index[(mrnum)].func != questmaster)
-      QST_FUNC(rnum) = mob_index[(mrnum)].func;
+      quest_set_qm_secondary(QST_MASTER(rnum), mob_index[(mrnum)].func);
     mob_index[(mrnum)].func = questmaster;
   }
 }
@@ -258,14 +440,27 @@ void add_completed_quest(struct char_data *ch, qst_vnum vnum)
   qst_vnum *temp;
   int count, i;
 
-  if (!ch || !ch->player_specials)
+  if (!ch || !ch->player_specials) {
+    TB_ERROR_MSG("quest", "completed-list-owner", "player_specials",
+                 "quest vnum %d completed by %s", (int) vnum,
+                 ch ? "a character with no player_specials" : "NULL character");
     return;
+  }
 
+  /* Invariant: GET_NUM_QUESTS(ch) is the length of completed_quests (both
+   * come from the pfile). If they disagree the list is rebuilt from what is
+   * usable, and the lost history is reported. */
   count = GET_NUM_QUESTS(ch);
-  if (count < 0)
+  if (count < 0) {
+    TB_ERROR_MSG("quest", "completed-list-corrupt", "player_specials",
+                 DIAG_CHAR_FMT " completed quest count %d is negative; reset to 0",
+                 DIAG_CHAR(ch), count);
     count = 0;
+  }
   if (count > 0 && !ch->player_specials->saved.completed_quests) {
-    log("SYSERR: Character has %d completed quests but no quest list.", count);
+    TB_ERROR_MSG("quest", "completed-list-corrupt", "player_specials",
+                 DIAG_CHAR_FMT " completed quest count %d but no list; history dropped",
+                 DIAG_CHAR(ch), count);
     count = 0;
   }
 
@@ -322,15 +517,64 @@ void remove_completed_quest(struct char_data *ch, qst_vnum vnum)
 
 /* NOLINTEND(clang-analyzer-security.ArrayBound) */
 
+/* TRUE while generic_complete_quest() is paying out rewards. */
+static int completing_quest = FALSE;
+
+/**
+ * Count one goal of ch's active quest and, when the counter reaches zero,
+ * complete it: record it (unless repeatable), clear it, pay points, gold,
+ * exp and the reward object, then start the chained next quest if any.
+ *
+ * Re-entrancy: rewards call out of this file. gain_exp() can level the
+ * player and obj_to_char() runs autoquest_trigger_check(AQ_OBJ_FIND) again.
+ * The quest is cleared before any reward is paid, so a nested check finds no
+ * active quest; a static guard reports any other re-entry. When this returns,
+ * GET_QUEST(ch) may have changed (cleared, or the next quest in the chain),
+ * so callers that loop must re-check it.
+ *
+ * @pre ch is a player whose GET_QUEST() is the quest being counted; a quest
+ *      that no longer resolves is reported and cleared.
+ */
 void generic_complete_quest(struct char_data *ch)
 {
   qst_rnum rnum;
-  qst_vnum vnum = GET_QUEST(ch);
+  qst_vnum vnum = GET_QUEST(ch), next;
   struct obj_data *new_obj;
   int happy_qp, happy_gold, happy_exp;
 
+  /* Invariant: the caller's active quest still exists in aquest_table.
+   * Completion clears GET_QUEST(ch) and builders can delete quests with
+   * qedit, so a stale or NOTHING vnum here would make every QST_*() below
+   * read aquest_table[NOTHING]. Resolve before touching the counter. */
+  if ((rnum = real_quest(vnum)) == NOTHING) {
+    TB_ERROR_MSG("quest", "complete-missing-quest", "aquest_table",
+                 DIAG_CHAR_FMT " quest vnum %d has no rnum (counter %d)",
+                 DIAG_CHAR(ch), (int) vnum, GET_QUEST_COUNTER(ch));
+    clear_quest(ch);
+    return;
+  }
+
+  /* Invariant: completion is not re-entered. Rewards call out of this file
+   * (obj_to_char() runs autoquest_trigger_check() for AQ_OBJ_FIND), and a
+   * quest whose reward object is also its target would otherwise pay out
+   * again on every nested level until the stack overflows. The quest is
+   * cleared before any reward is handed out, so this only fires if a new
+   * path re-enters; report it rather than paying twice. */
+  if (completing_quest) {
+    TB_ERROR_MSG("quest", "complete-reentry", "aquest_table",
+                 DIAG_CHAR_FMT " quest vnum %d completion re-entered",
+                 DIAG_CHAR(ch), (int) vnum);
+    return;
+  }
+
   if (--GET_QUEST_COUNTER(ch) <= 0) {
-    rnum = real_quest(vnum);
+    next = QST_NEXT(rnum);
+    /* The quest is finished before rewards are paid, so a reward that
+     * triggers another quest check (see above) sees no active quest. */
+    if (!IS_SET(QST_FLAGS(rnum), AQ_REPEATABLE))
+      add_completed_quest(ch, vnum);
+    clear_quest(ch);
+    completing_quest = TRUE;
     if (IS_HAPPYHOUR && IS_HAPPYQP) {
       happy_qp = (int)(QST_POINTS(rnum) * (((float)(100+HAPPY_QP))/(float)100));
       happy_qp = MAX(happy_qp, 0);
@@ -374,21 +618,27 @@ void generic_complete_quest(struct char_data *ch)
       }
     }
     if (QST_OBJ(rnum) && QST_OBJ(rnum) != NOTHING) {
-      if (real_object(QST_OBJ(rnum)) != NOTHING) {
-        if ((new_obj = read_object((QST_OBJ(rnum)),VIRTUAL)) != NULL) {
-            obj_to_char(new_obj, ch);
-            send_to_char(ch, "You have been presented with %s%s for your service.\r\n",
-                GET_OBJ_SHORT(new_obj), CCNRM(ch, C_NRM));
-        }
+      /* The reward vnum is builder data; the object may have been deleted
+       * since the quest was written. Tell the player and the log. */
+      if (real_object(QST_OBJ(rnum)) == NOTHING ||
+          (new_obj = read_object((QST_OBJ(rnum)),VIRTUAL)) == NULL) {
+        TB_ERROR_MSG("quest", "reward-missing", "obj_proto",
+                     DIAG_CHAR_FMT " quest vnum %d reward obj vnum %d could not be loaded",
+                     DIAG_CHAR(ch), (int) vnum, (int) QST_OBJ(rnum));
+        send_to_char(ch, "The reward object for this quest could not be found; please tell an immortal.\r\n");
+      } else {
+        obj_to_char(new_obj, ch);
+        send_to_char(ch, "You have been presented with %s%s for your service.\r\n",
+            GET_OBJ_SHORT(new_obj), CCNRM(ch, C_NRM));
       }
     }
-    if (!IS_SET(QST_FLAGS(rnum), AQ_REPEATABLE))
-      add_completed_quest(ch, vnum);
-    clear_quest(ch);
-    if ((real_quest(QST_NEXT(rnum)) != NOTHING) &&
-        (QST_NEXT(rnum) != vnum) &&
-        !is_complete(ch, QST_NEXT(rnum))) {
-      rnum = real_quest(QST_NEXT(rnum));
+    completing_quest = FALSE;
+    if (next != NOTHING && real_quest(next) == NOTHING)
+      quest_report_dangling(rnum, next);
+    else if ((real_quest(next) != NOTHING) &&
+        (next != vnum) &&
+        !is_complete(ch, next)) {
+      rnum = real_quest(next);
       set_quest(ch, rnum);
       send_to_char(ch,
           "The next stage of your quest awaits:\r\n%s",
@@ -398,16 +648,35 @@ void generic_complete_quest(struct char_data *ch)
   save_char(ch);
 }
 
+/**
+ * Check whether an event advances ch's active quest of the given type.
+ *
+ * Callers and what each type needs:
+ *   AQ_OBJ_FIND   obj_to_char()           object non-NULL
+ *   AQ_ROOM_FIND  char_to_room()          IN_ROOM(ch) valid
+ *   AQ_MOB_FIND   char_to_room()          IN_ROOM(ch) valid
+ *   AQ_MOB_KILL   raw_kill()              vict non-NULL
+ *   AQ_MOB_SAVE   raw_kill()              IN_ROOM(ch) valid; vict may be NULL
+ *   AQ_OBJ_RETURN perform_give()          vict and object non-NULL
+ *   AQ_ROOM_CLEAR raw_kill()              IN_ROOM(ch) valid
+ * Every caller has just placed ch in a room or acted on vict/object, which
+ * is what makes those guarantees hold.
+ *
+ * AQ_OBJ_RETURN extracts the returned object on completion: the caller must
+ * not use object afterwards. Completion can change GET_QUEST(ch) (see
+ * generic_complete_quest()).
+ */
 void autoquest_trigger_check(struct char_data *ch, struct char_data *vict,
                 struct obj_data *object, int type)
 {
   struct char_data *i;
   qst_rnum rnum;
+  qst_vnum active;
   int found = TRUE;
 
   if (IS_NPC(ch))
     return;
-  if (GET_QUEST(ch) == NOTHING)  /* No current quest, skip this */
+  if ((active = GET_QUEST(ch)) == NOTHING)  /* No current quest, skip this */
     return;
   if (GET_QUEST_TYPE(ch) != type)
     return;
@@ -423,7 +692,12 @@ void autoquest_trigger_check(struct char_data *ch, struct char_data *vict,
         generic_complete_quest(ch);
       break;
     case AQ_MOB_FIND:
-      for (i=world[IN_ROOM(ch)].people; i; i = i->next_in_room)
+      /* Each matching NPC counts once towards the quantity, but only while
+       * this quest is still the active one: generic_complete_quest() clears
+       * the quest (or chains the next one) when the counter reaches zero,
+       * and later matches must not count against whatever follows. */
+      for (i=world[IN_ROOM(ch)].people; i && GET_QUEST(ch) == active;
+           i = i->next_in_room)
         if (IS_NPC(i))
           if (QST_TARGET(rnum) == GET_MOB_VNUM(i))
             generic_complete_quest(ch);
@@ -461,7 +735,9 @@ void autoquest_trigger_check(struct char_data *ch, struct char_data *vict,
       }
       break;
     default:
-      log("SYSERR: Invalid quest type passed to autoquest_trigger_check");
+      TB_ERROR_MSG("quest", "trigger-type", "aquest_table",
+                   DIAG_CHAR_FMT " quest vnum %d has invalid type %d",
+                   DIAG_CHAR(ch), (int) active, type);
       break;
   }
 }
@@ -608,7 +884,7 @@ void quest_list(struct char_data *ch, struct char_data *qm, char argument[MAX_IN
          QST_INFO(rnum));
     if (QST_PREV(rnum) != NOTHING)
       send_to_char(ch, "You have to have completed quest %s first.\r\n",
-          QST_NAME(real_quest(QST_PREV(rnum))));
+          quest_link_text(rnum, QST_PREV(rnum), TRUE));
     if (QST_TIME(rnum) != -1)
       send_to_char(ch,
          "There is a time limit of %d turn%s to complete the quest.\r\n",
@@ -746,7 +1022,7 @@ static void quest_stat(struct char_data *ch, char *argument)
  (QST_QUIT(rnum) &&
   (str_cmp(QST_QUIT(rnum), "undefined") != 0)
           ? QST_QUIT(rnum) : "Nothing\r\n"),
-     quest_types[QST_TYPE(rnum)],
+     QST_TYPE_NAME(rnum),
  QST_TARGET(rnum) == NOBODY ? -1 : QST_TARGET(rnum),
  targetname,
  QST_QUANTITY(rnum),
@@ -774,13 +1050,13 @@ static void quest_stat(struct char_data *ch, char *argument)
       send_to_char(ch, " \tyNone.\tn\r\n");
     else
       send_to_char(ch, " [\ty%5d\tn] \tc%s\tn\r\n",
-        QST_PREV(rnum), QST_DESC(real_quest(QST_PREV(rnum))));
+        QST_PREV(rnum), quest_link_text(rnum, QST_PREV(rnum), FALSE));
     send_to_char(ch, "Next  :");
     if (QST_NEXT(rnum) == NOTHING)
       send_to_char(ch, " \tyNone.\tn\r\n");
     else
       send_to_char(ch, " [\ty%5d\tn] \tc%s\tn\r\n",
-        QST_NEXT(rnum), QST_DESC(real_quest(QST_NEXT(rnum))));
+        QST_NEXT(rnum), quest_link_text(rnum, QST_NEXT(rnum), FALSE));
   }
 }
 
@@ -830,19 +1106,28 @@ ACMD(do_quest)
   }
 }
 
+/**
+ * Spec proc of every mob that offers quests (installed by
+ * assign_the_quests() and add_quest()). The mob's original spec proc, if
+ * any, is kept on its quests and found with quest_qm_secondary(); it gets
+ * the first chance at every command. Handles 'quest list' and 'quest join';
+ * other quest subcommands fall through to do_quest().
+ */
 SPECIAL(questmaster)
 {
   qst_rnum rnum;
   char arg1[MAX_INPUT_LENGTH], arg2[MAX_INPUT_LENGTH];
   int  tp;
   struct char_data *qm = (struct char_data *)me;
+  quest_spec_proc *secondary;
 
   /* check that qm mob has quests assigned */
   for (rnum = 0; (rnum < total_quests &&
       QST_MASTER(rnum) != GET_MOB_VNUM(qm)) ; rnum ++);
   if (rnum >= total_quests)
     return FALSE; /* No quests for this mob */
-  else if (QST_FUNC(rnum) && (QST_FUNC(rnum) (ch, me, cmd, argument)))
+  else if ((secondary = quest_qm_secondary(GET_MOB_VNUM(qm))) != NULL &&
+           secondary(ch, me, cmd, argument))
     return TRUE;  /* The secondary spec proc handled this command */
   else if (CMD_IS("quest")) {
     two_arguments(argument, arg1, arg2);

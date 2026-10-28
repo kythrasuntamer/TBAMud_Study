@@ -27,7 +27,22 @@ void assign_objects(void);
 void assign_rooms(void);
 
 #include "structs.h"
+/** Display name of a spec proc for 'stat'. Never NULL: a proc missing from
+ * spec_func_list is named "Unknown" (and reported once), so the result can
+ * be passed to %s directly. */
 const char *get_spec_func_name(SPECIAL(*func));
+
+/* King's Castle procs (castle.c), named by get_spec_func_name(). */
+SPECIAL(CastleGuard);
+SPECIAL(James);
+SPECIAL(cleaning);
+SPECIAL(DicknDavid);
+SPECIAL(tim);
+SPECIAL(tom);
+SPECIAL(king_welmar);
+SPECIAL(training_master);
+SPECIAL(peter);
+SPECIAL(jerry);
 
 /*****************************************************************************
  * Begin Functions and defines for spec_procs.c 

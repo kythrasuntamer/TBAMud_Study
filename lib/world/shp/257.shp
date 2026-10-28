@@ -37,7 +37,7 @@ CircleMUD v3.0 Shop File~
 1.50
 0.40
 10
-2scroll
+2 ; scroll
 -1
 %s Haven't got that on storage - try list!~
 %s You don't seem to have that.~

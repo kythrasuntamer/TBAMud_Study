@@ -5,6 +5,18 @@
 * By Levork. Copyright 1996 Harvey Gilpin. 1997-2001 George Greer.        *
 **************************************************************************/
 
+/**
+ * @file oasis.c
+ * Shared OLC plumbing: the per-descriptor workspace lifecycle
+ * (cleanup_olc, olc_attach_at), zone edit permission (can_edit_zone) and the
+ * menu colour globals.
+ *
+ * Ownership: d->olc and everything it owns is released only here, by
+ * cleanup_olc().  The per-field rules are documented on struct
+ * oasis_olc_data in oasis.h.  Inputs are builder commands (LVL_BUILDER and
+ * up) and the world tables; nothing here parses player text.
+ */
+
 #include "conf.h"
 #include "sysdep.h"
 #include "structs.h"
@@ -20,6 +32,7 @@
 #include "genwld.h"
 #include "genobj.h"
 #include "oasis.h"
+#include "olc_checks.h"
 #include "screen.h"
 #include "dg_olc.h"
 #include "act.h"
@@ -42,9 +55,14 @@ void clear_screen(struct descriptor_data *d)
 }
 
 /* Exported utilities */
-/* Set the color string pointers for that which this char will see at color
- * level NRM.  Changing the entries here will change the colour scheme
- * throughout the OLC. */
+/** Set the colour string pointers for that which this char will see at
+ * colour level NRM.  Changing the entries here will change the colour scheme
+ * throughout the OLC.
+ *
+ * nrm/grn/cyn/yel are process-global and hold the codes of whichever
+ * character called this last.  Every menu must call get_char_colors()
+ * immediately before formatting with them, and must not keep using them
+ * after another descriptor's input has been processed. */
 void get_char_colors(struct char_data *ch)
 {
   nrm = CCNRM(ch, C_NRM);
@@ -53,32 +71,115 @@ void get_char_colors(struct char_data *ch)
   yel = CCYEL(ch, C_NRM);
 }
 
-/* This procedure frees up the strings and/or the structures attatched to a
- * descriptor, sets all flags back to how they should be. */
+/* Release the descriptor's working trigger list (OLC_SCRIPT).
+ *
+ * Ownership rule (F3-08): dg_olc_script_copy gives the descriptor a private
+ * copy of the edited entity's trigger list.  The descriptor owns it until a
+ * *_save_internally hands it to the live prototype, which then sets
+ * OLC_SCRIPT(d) to NULL.  Every other exit (quit without changes, link loss
+ * through close_socket, editor errors) reaches here still owning it.
+ *
+ * The 'n' (abandon) paths in redit/medit re-attach the list to the scratch
+ * entity's proto_script; detach it there so it is freed exactly once.  A
+ * list that is also a live prototype's proto_script means a save path forgot
+ * to clear OLC_SCRIPT: report it and do not free what the world still uses. */
+static void olc_release_script(struct descriptor_data *d)
+{
+  struct trig_proto_list *script = OLC_SCRIPT(d), *next;
+  struct trig_proto_list *live = NULL;
+  room_rnum rr;
+  obj_rnum ro;
+  mob_rnum rm;
+
+  if (script == NULL)
+    return;
+  OLC_SCRIPT(d) = NULL;
+
+  if (OLC_ROOM(d) && (rr = real_room(OLC_NUM(d))) != NOWHERE)
+    live = world[rr].proto_script;
+  else if (OLC_OBJ(d) && (ro = real_object(OLC_NUM(d))) != NOTHING)
+    live = obj_proto[ro].proto_script;
+  else if (OLC_MOB(d) && (rm = real_mobile(OLC_NUM(d))) != NOBODY)
+    live = mob_proto[rm].proto_script;
+
+  if (live == script) {
+    TB_ERROR_MSG("olc", "script-owner", "trig_proto_list",
+                 "OLC_SCRIPT still set after save for vnum %d (state %d) of "
+                 DIAG_CHAR_FMT "; left with the prototype",
+                 (int)OLC_NUM(d), STATE(d), DIAG_CHAR(d->character));
+    return;
+  }
+
+  if (OLC_ROOM(d) && OLC_ROOM(d)->proto_script == script)
+    OLC_ROOM(d)->proto_script = NULL;
+  if (OLC_OBJ(d) && OLC_OBJ(d)->proto_script == script)
+    OLC_OBJ(d)->proto_script = NULL;
+  if (OLC_MOB(d) && OLC_MOB(d)->proto_script == script)
+    OLC_MOB(d)->proto_script = NULL;
+
+  for (; script; script = next) {
+    next = script->next;
+    free(script);
+  }
+}
+
+/** Release d's OLC workspace and return d to normal play.
+ *
+ * Frees, according to cleanup_type (see CLEANUP_* in oasis.h):
+ * - always: OLC_SCRIPT (unless a save handed it to the prototype),
+ *   OLC_CONFIG, the zone copy with its command sargs, the shop copy, ibt,
+ *   message list, storage, trig and prefs;
+ * - room/quest/action/help: struct and strings for CLEANUP_ALL, struct only
+ *   for CLEANUP_STRUCTS; obj and mob: struct and strings either way.
+ * Never frees OLC_DESC (borrowed) or OLC_IEDIT_OBJ (a live object).
+ *
+ * Safe on any descriptor, including from close_socket during link loss: it
+ * makes no assumption about the character's room.  If STATE(d) is an editor
+ * state it clears PLR_WRITING, broadcasts "$n stops using OLC." to the room,
+ * logs to mudlog and resets STATE(d) to CON_PLAYING; one-shot internal users
+ * (dig, buildwalk, copy) stay in CON_PLAYING and are therefore silent.
+ * d->olc is NULL on return. */
 void cleanup_olc(struct descriptor_data *d, byte cleanup_type)
 {
   /* Clean up WHAT? */
   if (d->olc == NULL)
     return;
 
+  /* F3-13: cleanup_type decides whether scratch entities' strings are still
+   * owned here (CLEANUP_ALL, CLEANUP_CONFIG) or were handed to the live
+   * table (CLEANUP_STRUCTS).  An unknown type is a caller bug: report it and
+   * free structs only, since freeing strings that may be shared with the
+   * world would be a use-after-free, while a missed string is only a leak. */
+  if (cleanup_type != CLEANUP_ALL && cleanup_type != CLEANUP_STRUCTS &&
+      cleanup_type != CLEANUP_CONFIG) {
+    TB_ERROR_MSG("olc", "cleanup-type", "oasis_olc_data",
+                 "type %d for " DIAG_CHAR_FMT " state %d olc_num %d; "
+                 "freeing structs only", cleanup_type, DIAG_CHAR(d->character),
+                 STATE(d), (int)OLC_NUM(d));
+    cleanup_type = CLEANUP_STRUCTS;
+  }
+
+  /* Before the scratch entities: the script may be attached to one. */
+  olc_release_script(d);
+
+  /* F3-07: the cedit scratch configuration is a deep copy (cedit_setup and
+   * cedit_save_internally str_udup/strdup every string), so it is always
+   * owned here, whatever cleanup_type the caller passed.  It used to be
+   * freed only from inside the OLC_ROOM branch below, which cedit never
+   * sets, so every cedit session leaked the struct and its strings. */
+  if (OLC_CONFIG(d)) {
+    free_config(OLC_CONFIG(d));
+    OLC_CONFIG(d) = NULL;
+  }
+
   /* Check for a room. free_room doesn't perform sanity checks, we must be
    * careful here. */
   if (OLC_ROOM(d)) {
-    switch (cleanup_type) {
-    case CLEANUP_ALL:
-      /* free(OLC_SCRIPT(d)) equivalent */
+    if (cleanup_type == CLEANUP_STRUCTS)
+      free(OLC_ROOM(d));
+    else {
       free_proto_script(OLC_ROOM(d), WLD_TRIGGER);
       free_room(OLC_ROOM(d));
-      break;
-    case CLEANUP_STRUCTS:
-      free(OLC_ROOM(d));
-      break;
-    case CLEANUP_CONFIG:
-      free_config(OLC_CONFIG(d));
-      break;
-    default: /* The caller has screwed up. */
-      log("SYSERR: cleanup_olc: Unknown type!");
-      break;
     }
   }
 
@@ -94,14 +195,25 @@ void cleanup_olc(struct descriptor_data *d, byte cleanup_type)
   if (OLC_MOB(d))
     free_mobile(OLC_MOB(d));
 
-  /* Check for a zone.  cleanup_type is irrelevant here, free() everything. */
+  /* Check for a zone.  cleanup_type is irrelevant here, free() everything.
+   * F3-12: the OLC copy owns every sarg1/sarg2 in its command list
+   * (zedit_setup strdup's them, zedit_save_internally gives zone_table its
+   * own copies), so they are freed here with the array. */
   if (OLC_ZONE(d)) {
     if (OLC_ZONE(d)->builders)
       free(OLC_ZONE(d)->builders);
     if (OLC_ZONE(d)->name)
       free(OLC_ZONE(d)->name);
-    if (OLC_ZONE(d)->cmd)
+    if (OLC_ZONE(d)->cmd) {
+      int subcmd;
+      /* The scratch list owns its 'V' strings; a save gave zone_table
+       * copies of its own (zedit_save_internally). */
+      for (subcmd = 0; OLC_ZONE(d)->cmd[subcmd].command != 'S'; subcmd++) {
+        free(OLC_ZONE(d)->cmd[subcmd].sarg1);
+        free(OLC_ZONE(d)->cmd[subcmd].sarg2);
+      }
       free(OLC_ZONE(d)->cmd);
+    }
     free(OLC_ZONE(d));
   }
 
@@ -113,45 +225,30 @@ void cleanup_olc(struct descriptor_data *d, byte cleanup_type)
 
   /* Check for a quest. */
   if (OLC_QUEST(d)) {
-    switch (cleanup_type) {
-      case CLEANUP_ALL:
-        free_quest(OLC_QUEST(d));
-        break;
-      case CLEANUP_STRUCTS:
-        free(OLC_QUEST(d));
-        break;
-      default:
-        break;
-    }
+    if (cleanup_type == CLEANUP_STRUCTS)
+      free(OLC_QUEST(d));
+    else
+      free_quest(OLC_QUEST(d));
   }
 
-  /*. Check for aedit stuff -- M. Scott */
+  /*. Check for aedit stuff -- M. Scott
+   * free_action() releases a social's strings but not the struct, because
+   * it also serves soc_mess_list[] entries. The workspace's struct is
+   * aedit's own CREATE, so it is freed here in every case; with
+   * CLEANUP_STRUCTS its strings now belong to soc_mess_list and stay. */
   if (OLC_ACTION(d))  {
-    switch(cleanup_type)  {
-      case CLEANUP_ALL:
- 	free_action(OLC_ACTION(d));
- 	break;
-      case CLEANUP_STRUCTS:
-        free(OLC_ACTION(d));
-        break;
-      default:
-        /* Caller has screwed up */
- 	break;
-    }
+    if (cleanup_type != CLEANUP_STRUCTS)
+      free_action(OLC_ACTION(d));
+    free(OLC_ACTION(d));
+    OLC_ACTION(d) = NULL;
   }
 
   /* Used for cleanup of Hedit */
   if (OLC_HELP(d))  {
-    switch(cleanup_type)  {
-      case CLEANUP_ALL:
- 	free_help(OLC_HELP(d));
- 	break;
-      case CLEANUP_STRUCTS:
-        free(OLC_HELP(d));
-        break;
-      default:
- 	break;
-    }
+    if (cleanup_type == CLEANUP_STRUCTS)
+      free(OLC_HELP(d));
+    else
+      free_help(OLC_HELP(d));
   }
 
    if (OLC_IBT(d)) {
@@ -188,11 +285,11 @@ void cleanup_olc(struct descriptor_data *d, byte cleanup_type)
      OLC_PREFS(d) = NULL;
    }
 
-   /* OLC_SCRIPT is always set as trig_proto of OLC_OBJ/MOB/ROOM. Therefore it
-    * should not be free'd here. */
-
-  /* Restore descriptor playing status. */
-  if (d->character) {
+  /* Restore descriptor playing status.  One-shot internal users (dig,
+   * buildwalk, the copy commands, editor entry error paths) borrow d->olc
+   * without ever leaving CON_PLAYING; they never announced "starts using
+   * OLC" or set PLR_WRITING, so do not announce a stop or touch the flag. */
+  if (d->character && STATE(d) != CON_PLAYING) {
     REMOVE_BIT_AR(PLR_FLAGS(d->character), PLR_WRITING);
     act("$n stops using OLC.", TRUE, d->character, NULL, NULL, TO_ROOM);
 
@@ -205,10 +302,14 @@ void cleanup_olc(struct descriptor_data *d, byte cleanup_type)
     else if (STATE(d) == CON_HEDIT)
       mudlog(CMP, MAX(LVL_IMMORT, GET_INVIS_LEV(d->character)),
        TRUE, "OLC: %s stops editing help files.", GET_NAME(d->character));
+    else if (VALID_ZONE_RNUM(OLC_ZNUM(d)))
+      mudlog(CMP, MAX(LVL_IMMORT, GET_INVIS_LEV(d->character)),
+        TRUE, "OLC: %s stops editing zone %d allowed zone %d",
+        GET_NAME(d->character), zone_table[OLC_ZNUM(d)].number, GET_OLC_ZONE(d->character));
     else
       mudlog(CMP, MAX(LVL_IMMORT, GET_INVIS_LEV(d->character)),
-        TRUE, "OLC: %s stops editing zone %d allowed zone %d", 
-        GET_NAME(d->character), zone_table[OLC_ZNUM(d)].number, GET_OLC_ZONE(d->character));
+        TRUE, "OLC: %s stops editing an object instance or unzoned data (zone index %d)",
+        GET_NAME(d->character), OLC_ZNUM(d));
 
     STATE(d) = CON_PLAYING;
   }
@@ -217,19 +318,76 @@ void cleanup_olc(struct descriptor_data *d, byte cleanup_type)
   d->olc = NULL;
 }
 
-void split_argument(char *argument, char *tag)
+/* See OLC_ATTACH in oasis.h.  F3-10: do_dig and buildwalk used to free()
+ * an existing d->olc (shallowly, leaking the editor's scratch entity) and
+ * carry on; do_force can put a builder who is mid-edit into either. */
+int olc_attach_at(struct descriptor_data *d, struct char_data *ch,
+                  const char *what, const char *source_file, int source_line,
+                  const char *source_func)
 {
-  char *tmp = argument, *ttag = tag, *wrt = argument;
-  int i;
+  /* Every caller passes the acting character; DIAG_CHAR below needs it. */
+  if (ch == NULL) {
+    tb_error_log_at("ERROR", "olc", "olc-busy", what, 0,
+                    source_file, source_line, source_func,
+                    "no character (descriptor %s)", d ? "present" : "NULL");
+    return FALSE;
+  }
 
-  for (i = 0; *tmp; tmp++, i++) {
-    if (*tmp != ' ' && *tmp != '=')
-      *(ttag++) = *tmp;
-    else if (*tmp == '=')
+  if (d == NULL) {
+    tb_error_log_at("ERROR", "olc", "olc-busy", what, 0,
+                    source_file, source_line, source_func,
+                    "no descriptor for " DIAG_CHAR_FMT, DIAG_CHAR(ch));
+    return FALSE;
+  }
+
+  if (STATE(d) != CON_PLAYING || d->olc != NULL) {
+    send_to_char(ch, "You are already editing something.\r\n");
+    tb_error_log_at("ERROR", "olc", "olc-busy", what, 0,
+                    source_file, source_line, source_func,
+                    DIAG_CHAR_FMT " state %d olc_num %d",
+                    DIAG_CHAR(ch), STATE(d), d->olc ? (int)OLC_NUM(d) : -1);
+    return FALSE;
+  }
+
+  CREATE(d->olc, struct oasis_olc_data, 1);
+  return TRUE;
+}
+
+/* Split a "key = value" line of the game configuration file (load_config;
+ * the file is written by the server administrator and by cedit): the key,
+ * with spaces dropped, goes to tag and the value moves to the start of
+ * argument. Callers use the split_argument(argument, tag) macro (oasis.h),
+ * which passes sizeof(tag). The key used to be copied with no bound (F3-19).
+ * A key that does not fit is not cut short, because a prefix could name
+ * another setting: tag is left empty, so the caller matches no key, and the
+ * key and buffer sizes are reported as tag-too-long. */
+void split_argument_bounded(char *argument, char *tag, size_t tag_size)
+{
+  char *tmp = argument, *wrt = argument;
+  size_t key_len = 0;
+
+  if (tag_size == 0) {
+    TB_ERROR_MSG("config", "tag-too-long", "split_argument",
+                 "no room for a key (tag_size 0); line left unsplit");
+    return;
+  }
+
+  for (; *tmp; tmp++) {
+    if (*tmp != ' ' && *tmp != '=') {
+      if (key_len + 1 < tag_size)
+        tag[key_len] = *tmp;
+      key_len++;
+    } else if (*tmp == '=')
       break;
   }
 
-  *ttag = '\0';
+  if (key_len >= tag_size) {
+    TB_ERROR_MSG("config", "tag-too-long", "split_argument",
+                 "key of %zu bytes does not fit its %zu-byte buffer; "
+                 "key left empty", key_len, tag_size);
+    tag[0] = '\0';
+  } else
+    tag[key_len] = '\0';
 
   while (*tmp == '=' || *tmp == ' ')
     tmp++;
@@ -249,27 +407,69 @@ static void free_config(struct config_data *data)
   free(data);
 }
 
-/* Checks to see if a builder can modify the specified zone. Ch is the imm
- * requesting access to modify this zone. Rnum is the real number of the zone
- * attempted to be modified. Returns TRUE if the builder has access, otherwisei
- * FALSE. */
+/** Checks whether ch may use the help (HEDIT_PERMISSION) or socials
+ * (AEDIT_PERMISSION) editor, which are not tied to a zone: ch's 'set olc'
+ * value is ALL_PERMISSION or that editor's permission, or ch is LVL_GRGOD
+ * or above.  A character with no descriptor (linkless, or an NPC) is
+ * denied, as by can_edit_zone().  Any other perm is a caller bug and is
+ * reported as editor-permission (F3-20).
+ * @return TRUE if ch may use the editor, otherwise FALSE. */
+int can_use_editor(struct char_data *ch, int perm)
+{
+  if (!ch->desc || IS_NPC(ch))
+    return FALSE;
+
+  if (perm != HEDIT_PERMISSION && perm != AEDIT_PERMISSION) {
+    TB_ERROR_MSG("olc", "editor-permission", "can_use_editor",
+                 "perm %d is neither HEDIT_PERMISSION nor AEDIT_PERMISSION; "
+                 DIAG_CHAR_FMT " denied", perm, DIAG_CHAR(ch));
+    return FALSE;
+  }
+
+  if (GET_OLC_ZONE(ch) == ALL_PERMISSION || GET_OLC_ZONE(ch) == perm)
+    return TRUE;
+
+  return GET_LEVEL(ch) >= LVL_GRGOD;
+}
+
+/** Checks to see if a builder can modify the specified zone.
+ *
+ * @param ch   The immortal requesting access.  A character with no
+ *             descriptor (linkless, or an NPC) is always denied, which is
+ *             also what keeps buildwalk inert for linkless characters.
+ * @param rnum A real zone number (0..top_of_zone_table), from OLC_ZNUM or
+ *             world[].zone.  The help and socials editors ask
+ *             can_use_editor() instead; a HEDIT_PERMISSION or
+ *             AEDIT_PERMISSION sentinel passed here is still honoured, but
+ *             only when it is above top_of_zone_table, because in a world
+ *             with that many zones the same number is a real zone, which
+ *             must keep its NOBUILD and builder checks (F3-20).  Any other
+ *             rnum outside the table is reported as zone-index and denied.
+ *             NOWHERE is denied.
+ * @return TRUE if the builder has access, otherwise FALSE. */
 int can_edit_zone(struct char_data *ch, zone_rnum rnum)
 {
   /* no access if called with bad arguments */
   if (!ch->desc || IS_NPC(ch) || rnum == NOWHERE)
     return FALSE;
 
+  /* Invariant (internal): rnum indexes zone_table[] below, so it must be in
+   * range unless it is an editor sentinel that no real zone can have. */
+  if (!VALID_ZONE_RNUM(rnum)) {
+    if (rnum == HEDIT_PERMISSION || rnum == AEDIT_PERMISSION)
+      return can_use_editor(ch, rnum);
+    TB_ERROR_MSG("olc", "zone-index", "zone_table",
+                 "rnum %d > top_of_zone_table %d for " DIAG_CHAR_FMT
+                 "; access denied", (int)rnum, (int)top_of_zone_table,
+                 DIAG_CHAR(ch));
+    return FALSE;
+  }
+
   /* If zone is flagged NOBUILD, then No-one can edit it (use zunlock to open it) */
-  if (rnum != HEDIT_PERMISSION && rnum != AEDIT_PERMISSION && ZONE_FLAGGED(rnum, ZONE_NOBUILD) )
+  if (ZONE_FLAGGED(rnum, ZONE_NOBUILD))
     return FALSE;
 
   if (GET_OLC_ZONE(ch) == ALL_PERMISSION)
-    return TRUE;
-
-  if (GET_OLC_ZONE(ch) == HEDIT_PERMISSION && rnum == HEDIT_PERMISSION)
-    return TRUE;
-
-  if (GET_OLC_ZONE(ch) == AEDIT_PERMISSION && rnum == AEDIT_PERMISSION)
     return TRUE;
 
   /* always access if ch is high enough level */
@@ -277,9 +477,8 @@ int can_edit_zone(struct char_data *ch, zone_rnum rnum)
     return (TRUE);
 
   /* always access if a player helped build the zone in the first place */
-  if (rnum != HEDIT_PERMISSION && rnum != AEDIT_PERMISSION)
-    if (is_name(GET_NAME(ch), zone_table[rnum].builders))
-      return (TRUE);
+  if (is_name(GET_NAME(ch), zone_table[rnum].builders))
+    return (TRUE);
 
   /* no access if you haven't been assigned a zone */
   if (GET_OLC_ZONE(ch) == NOWHERE) {

@@ -5,6 +5,28 @@
 *  Copyright 1996 by Harvey Gilpin, 1997-2001 by George Greer.            *
 **************************************************************************/
 
+/**
+ * @file genobj.c
+ * Object prototype table maintenance for OLC (oedit), the object file
+ * writer, and the oset setters used by DG scripts and the oset command.
+ *
+ * Input: prototypes come from builders through oedit; oset values come from
+ * DG scripts (builder-written) and immortals.  None of it is trusted for
+ * length or range.
+ *
+ * Ownership: obj_proto[r] owns its strings, extra descriptions and
+ * proto_script.  A live instance shares those pointers until it is
+ * restrung; a pointer that differs from the prototype's belongs to the
+ * instance.  An object with rnum NOTHING (corpse, money) owns everything.
+ * Runtime state (script, events, location and list links) belongs to the
+ * instance and is never copied between objects.
+ *
+ * Index stability: add_object() and delete_object() shift obj_proto[] and
+ * obj_index[]; every stored object rnum (live objects, zone commands, shop
+ * products, boards) is renumbered here.  obj_rnum is unsigned and NOTHING
+ * is its maximum, so every renumber must skip NOTHING explicitly.
+ */
+
 #include "conf.h"
 #include "sysdep.h"
 #include "structs.h"
@@ -15,14 +37,27 @@
 #include "genolc.h"
 #include "genobj.h"
 #include "genzon.h"
+#include "genshp.h"
 #include "dg_olc.h"
 #include "handler.h"
 #include "interpreter.h"
 #include "boards.h" /* for board_info */
 
 
+/** TRUE when obj->field is a private string the object must free itself:
+ * set, and either the object has no prototype (rnum NOTHING: corpses and
+ * money own everything) or the pointer differs from its prototype's.  A
+ * stale rnum (> top_of_objt) yields FALSE, so the string is leaked rather
+ * than freed twice; callers report that case.  obj is evaluated several
+ * times: pass a plain variable. */
+#define OBJ_OWNS_STR(obj, field) \
+  ((obj)->field && (GET_OBJ_RNUM(obj) == NOTHING || \
+   (GET_OBJ_RNUM(obj) <= top_of_objt && \
+    (obj)->field != obj_proto[GET_OBJ_RNUM(obj)].field)))
+
 /* local functions */
 static int update_all_objects(struct obj_data *obj);
+static int release_instance_state(obj_rnum rnum);
 static void copy_object_strings(struct obj_data *to, struct obj_data *from);
 
 obj_rnum add_object(struct obj_data *newobj, obj_vnum ovnum)
@@ -30,12 +65,32 @@ obj_rnum add_object(struct obj_data *newobj, obj_vnum ovnum)
   int found = NOTHING;
   zone_rnum rznum = real_zone_by_thing(ovnum);
 
+  /* Invariant: a prototype's vnum lies in a zone's range; that zone names
+   * the file it is saved to.  oedit (builder input) checked the zone when
+   * the session started, but zedit can shrink a zone's range while the
+   * session is open, and real_zone_by_thing() then returns NOWHERE, far
+   * past zone_table.  Refuse before obj_proto or any live instance changes. */
+  if (!VALID_ZONE_RNUM(rznum)) {
+    TB_ERROR_MSG("olc", "add-object", "object",
+                 "obj vnum %d belongs to no zone; not added", ovnum);
+    return NOTHING;
+  }
+
   /* Write object to internal tables. */
   if ((newobj->item_number = real_object(ovnum)) != NOTHING) {
-    copy_object(&obj_proto[newobj->item_number], newobj);
-    update_all_objects(&obj_proto[newobj->item_number]);
+    obj_rnum rnum = newobj->item_number;
+    /* Must run before copy_object() frees the old prototype strings: it
+     * tells instance-owned strings from shared ones by comparing them. */
+    int reset = release_instance_state(rnum);
+
+    copy_object(&obj_proto[rnum], newobj);
+    update_all_objects(&obj_proto[rnum]);
+    if (reset > 0)
+      TB_WARN_MSG("olc", "obj-proto-update", "object",
+                  "proto vnum %d: %d live instances lost restrung text on "
+                  "prototype update", ovnum, reset);
     add_to_save_list(zone_table[rznum].number, SL_OBJ);
-    return newobj->item_number;
+    return rnum;
   }
 
   found = insert_object(newobj, ovnum);
@@ -44,10 +99,44 @@ obj_rnum add_object(struct obj_data *newobj, obj_vnum ovnum)
   return found;
 }
 
+/* Free what each live instance of prototype rnum owns privately and that
+ * update_all_objects() is about to overwrite: restrung text (strings that
+ * are not the prototype's).  Its running script and trigger list are kept
+ * (update_all_objects() restores them); the caller rebuilds them when the
+ * prototype's trigger list changes (oedit_save_checked()), since a rebuild
+ * discards the script's variables and pending waits.  Returns how many
+ * instances lost a restring. */
+static int release_instance_state(obj_rnum rnum)
+{
+  struct obj_data *obj;
+  int lost = 0;
+
+  for (obj = object_list; obj; obj = obj->next) {
+    bool restrung;
+
+    if (obj->item_number != rnum)
+      continue;
+    restrung = (obj->name != obj_proto[rnum].name ||
+                obj->description != obj_proto[rnum].description ||
+                obj->short_description != obj_proto[rnum].short_description ||
+                obj->action_description != obj_proto[rnum].action_description ||
+                obj->ex_description != obj_proto[rnum].ex_description);
+    if (restrung) {
+      lost++;
+      free_object_strings_proto(obj);
+    }
+  }
+  return lost;
+}
+
 /* Fix all existing objects to have these values. We need to run through each
  * and every object currently in the game to see which ones are pointing to
  * this prototype. If object is pointing to this prototype, then we need to
- * replace it with the new one. */
+ * replace it with the new one.  release_instance_state() must have run
+ * first: everything not restored below is replaced by the prototype's value.
+ * Location, list links, UID, events, the running script and the private
+ * trigger list stay with the instance; the caller rebuilds the triggers
+ * when the prototype's list changed (oedit_save_checked()). */
 static int update_all_objects(struct obj_data *refobj)
 {
   struct obj_data *obj, swap;
@@ -74,6 +163,13 @@ static int update_all_objects(struct obj_data *refobj)
     obj->next_content = swap.next_content;
     obj->next = swap.next;
     obj->sitting_here = swap.sitting_here;
+    /* Pending events point at this instance; losing the list would leave
+     * them unreachable by extract_obj() and firing after the free. */
+    obj->events = swap.events;
+    /* The instance's own script (variables, pending waits) and trigger list
+     * stay; the prototype's are never shared. */
+    obj->script = swap.script;
+    obj->proto_script = swap.proto_script;
   }
 
   return count;
@@ -187,17 +283,15 @@ int save_objects(zone_rnum zone_num)
   struct obj_data *obj;
   struct extra_descr_data *ex_desc;
 
-#if CIRCLE_UNSIGNED_INDEX
-  if (zone_num == NOWHERE || zone_num > top_of_zone_table) {
-#else
-  if (zone_num < 0 || zone_num > top_of_zone_table) {
-#endif
+  if (!VALID_ZONE_RNUM(zone_num)) {
     log("SYSERR: GenOLC: save_objects: Invalid real zone number %d. (0-%d)", zone_num, top_of_zone_table);
     return FALSE;
   }
 
   tb_snprintf(filename, sizeof(filename), "%s/%d.new", OBJ_PREFIX, zone_table[zone_num].number);
-  if (!(fp = fopen(filename, "w+"))) {
+  if (!(fp = fopen(filename, "w"))) {
+    TB_ERROR_ERRNO("olc", "obj-save-open", filename, "zone %d objects not saved",
+                   zone_table[zone_num].number);
     mudlog(BRF, LVL_IMMORT, TRUE, "SYSERR: OLC: Cannot open objects file %s!", filename);
     return FALSE;
   }
@@ -228,7 +322,8 @@ int save_objects(zone_rnum zone_num)
                "SYSERR: Could not format object #%d for saving; zone %d not saved.",
                GET_OBJ_VNUM(obj), zone_table[zone_num].number);
         tb_fclose(fp);
-        remove(filename);
+        if (remove(filename) != 0 && errno != ENOENT)
+          TB_REPORT_ERRNO("remove", filename);
         return FALSE;
       }
 
@@ -238,7 +333,8 @@ int save_objects(zone_rnum zone_num)
                "zone %d not saved.",
                GET_OBJ_VNUM(obj), n, MAX_STRING_LENGTH, zone_table[zone_num].number);
         tb_fclose(fp);
-        remove(filename);
+        if (remove(filename) != 0 && errno != ENOENT)
+          TB_REPORT_ERRNO("remove", filename);
         return FALSE;
       }
       
@@ -277,9 +373,17 @@ int save_objects(zone_rnum zone_num)
       /* Do we have extra descriptions? */
       if (obj->ex_description) {	/* Yes, save them too. */
 	for (ex_desc = obj->ex_description; ex_desc; ex_desc = ex_desc->next) {
-	  /* Sanity check to prevent nasty protection faults. */
+	  /* An extra description with an empty keyword or text cannot be read
+	   * back (the loader needs both), so it is dropped from the file.  The
+	   * builder controls these strings through oedit; say which object
+	   * lost it, because the entry disappears at the next reboot. */
 	  if (!ex_desc->keyword || !ex_desc->description || !*ex_desc->keyword || !*ex_desc->description) {
-	    mudlog(BRF, LVL_IMMORT, TRUE, "SYSERR: OLC: oedit_save_to_disk: Corrupt ex_desc!");
+	    TB_WARN_MSG("olc", "obj-save-exdesc", filename,
+	                "obj vnum %d zone %d: extra desc with empty %s dropped",
+	                GET_OBJ_VNUM(obj), zone_table[zone_num].number,
+	                (!ex_desc->keyword || !*ex_desc->keyword) ? "keyword" : "description");
+	    mudlog(BRF, LVL_IMMORT, TRUE, "SYSERR: OLC: object #%d: empty extra description dropped from save.",
+	           GET_OBJ_VNUM(obj));
 	    continue;
 	  }
 	  strlcpy(buf, ex_desc->description, sizeof(buf));
@@ -301,9 +405,17 @@ int save_objects(zone_rnum zone_num)
   /* Write the final line and commit only a fully flushed temporary file. */
   tb_fprintf(fp, "$~\n");
   {
+    /* ferror() stays set after any failed write.  tb_fprintf() reported
+     * each one, but a later flush that succeeds would hide it and commit a
+     * file with a hole in it (C2-16). */
+    int stream_ok = !ferror(fp);
     int flush_ok = tb_fflush_checked(fp, filename);
     int close_ok = tb_fclose_checked(fp, filename);
-    if (!flush_ok || !close_ok) {
+    if (!stream_ok)
+      TB_ERROR_MSG("olc", "save-stream-error", filename,
+                   TB_ERRID_PERSIST_WRITE " zone %d objects: a write failed; previous file kept",
+                   zone_table[zone_num].number);
+    if (!stream_ok || !flush_ok || !close_ok) {
       if (remove(filename) != 0 && errno != ENOENT)
         TB_REPORT_ERRNO("remove", filename);
       return FALSE;
@@ -333,18 +445,43 @@ void free_object_strings(struct obj_data *obj)
     free_ex_descriptions(obj->ex_description);
 }
 
-/* For object instances that are not the prototype. */
+/**
+ * Free the strings a live instance owns, leaving the ones it shares with
+ * its prototype.
+ *
+ * Precondition: GET_OBJ_RNUM(obj) is a valid prototype rnum (free_obj()
+ * guarantees it; a NOTHING-rnum object owns everything and is freed with
+ * free_object_strings()).  A bad rnum is reported and nothing is freed.
+ *
+ * Extra descriptions are shared per node and per string: an instance may
+ * hold the prototype's node, a private node pointing at the prototype's
+ * keyword or description, or a fully private node.  Each keyword,
+ * description and node is freed only when no prototype node has the same
+ * pointer.
+ */
 void free_object_strings_proto(struct obj_data *obj)
 {
-  int robj_num = GET_OBJ_RNUM(obj);
+  obj_rnum robj_num = GET_OBJ_RNUM(obj);
 
-  if (obj->name && obj->name != obj_proto[robj_num].name)
+  /* The strings are compared against the prototype's to find which ones the
+   * instance owns, so the rnum must name a prototype.  free_obj() only calls
+   * this with a valid rnum; a NOTHING or stale rnum here means a renumbering
+   * bug.  Freeing would risk a double free of strings a prototype still
+   * owns, so leak them and report instead. */
+  if (robj_num == NOTHING || robj_num > top_of_objt) {
+    TB_ERROR_MSG("olc", "obj-rnum-range", "object",
+                 "obj uid %ld rnum %d outside 0..%d; strings not freed",
+                 obj->script_id, (int)robj_num, (int)top_of_objt);
+    return;
+  }
+
+  if (OBJ_OWNS_STR(obj, name))
     free(obj->name);
-  if (obj->description && obj->description != obj_proto[robj_num].description)
+  if (OBJ_OWNS_STR(obj, description))
     free(obj->description);
-  if (obj->short_description && obj->short_description != obj_proto[robj_num].short_description)
+  if (OBJ_OWNS_STR(obj, short_description))
     free(obj->short_description);
-  if (obj->action_description && obj->action_description != obj_proto[robj_num].action_description)
+  if (OBJ_OWNS_STR(obj, action_description))
     free(obj->action_description);
   if (obj->ex_description) {
     struct extra_descr_data *thised, *plist, *next_one; /* O(horrible) */
@@ -382,76 +519,182 @@ static void copy_object_strings(struct obj_data *to, struct obj_data *from)
     to->ex_description = NULL;
 }
 
+/**
+ * Copy prototype data from `from` into `to`, which owns its old strings.
+ *
+ * The struct is copied by value, then the strings and extra descriptions
+ * are deep-copied, so `to` owns new copies and `from` keeps its own.  `to`
+ * keeps its running script and events.  proto_script, contains,
+ * item_number and the other pointers are copied by value: afterwards `to`
+ * and `from` share proto_script, and the caller decides which one keeps
+ * it (oedit re-attaches it to the prototype).  `to`'s old strings are
+ * freed first.  Its old trigger list is not: the caller holds it and frees
+ * it (oedit_save_checked() captures it before add_object(), audit F1-08).
+ *
+ * @return TRUE.
+ */
 int copy_object(struct obj_data *to, struct obj_data *from)
 {
   free_object_strings(to);
   return copy_object_main(to, from, TRUE);
 }
 
+/**
+ * Like copy_object(), but frees nothing in `to`: for a slot whose old
+ * pointers now belong to a neighbour after a table shift (insert_object()).
+ * The caller must make sure nothing still owned by `to` is lost.
+ */
 int copy_object_preserve(struct obj_data *to, struct obj_data *from)
 {
   return copy_object_main(to, from, FALSE);
 }
 
+/**
+ * Shared body of copy_object() and copy_object_preserve().
+ *
+ * @param free_object TRUE from copy_object(), which freed `to`'s strings
+ *        itself; FALSE from copy_object_preserve(), whose slot's old
+ *        pointers belong to a neighbour.  Nothing here depends on it: `to`'s
+ *        old proto_script is never freed here, whichever caller.  Its owner
+ *        frees it: oedit_save_checked() captures the prototype's list before
+ *        add_object() and frees it after (audit F1-08).  Freeing it here as
+ *        well (C2-11) freed the list twice on every oedit save of an object
+ *        with triggers.
+ */
 int copy_object_main(struct obj_data *to, struct obj_data *from, int free_object)
 {
+  struct script_data *to_script = to->script;
+  struct list_data *to_events = to->events;
+
+  (void)free_object;            /* see the function comment */
   *to = *from;
   copy_object_strings(to, from);
+  /* A running script and pending events belong to one object; they are
+   * never copied, and `to` keeps its own. */
+  to->script = to_script;
+  to->events = to_events;
   return TRUE;
 }
 
+/**
+ * Delete object prototype rnum and every live instance of it.
+ *
+ * Preconditions: no oedit session is editing this rnum's working copy in a
+ * way that will be saved back (the rnum would be stale), and the object is
+ * not a board (refused, obj-delete-board).
+ *
+ * Effects: each instance's contents move to the instance's room, carrier,
+ * wearer or container (or are extracted, reported, when it has none); the
+ * instances are extracted; the prototype's strings and triggers are freed;
+ * obj_proto[]/obj_index[] shift down; live objects, boards, shop products
+ * and zone commands with a higher rnum are decremented; shop products and
+ * zone commands naming the deleted prototype are removed and reported.
+ * The object's zone file is rewritten.
+ *
+ * @param rnum Prototype rnum from oedit (may be NOTHING for an object that
+ *             was never saved; reported).
+ * @return rnum on success; NOTHING, reported, when nothing was deleted.
+ */
 int delete_object(obj_rnum rnum)
 {
   obj_rnum i;
-  zone_rnum zrnum;
-  struct obj_data *obj, *tmp, *next_obj;
+  zone_rnum zrnum, shop_zone;
+  struct obj_data *obj, *tmp;
   int shop, j, zone, cmd_no;
+  obj_vnum deleted_vnum;
 
-  if (rnum == NOTHING || rnum > top_of_objt)
+  /* oedit can confirm 'delete' on an object that was never saved, whose
+   * rnum is NOTHING. */
+  if (rnum == NOTHING || rnum > top_of_objt) {
+    TB_WARN_MSG("olc", "obj-delete-range", "object",
+                "rnum %d out of range 0..%d; nothing deleted",
+                (int)rnum, (int)top_of_objt);
     return NOTHING;
+  }
 
   obj = &obj_proto[rnum];
+  /* Captured before the prototype table shifts down over this slot. */
+  deleted_vnum = GET_OBJ_VNUM(obj);
+
+  /* A board's messages are bound to its object; boards.c has no way to
+   * detach one at run time, so refuse rather than leave the board pointing
+   * at whichever prototype slides into this rnum. */
+  for (j = 0; j < NUM_OF_BOARDS; j++)
+    if (BOARD_RNUM(j) == rnum) {
+      TB_ERROR_MSG("olc", "obj-delete-board", "object",
+                   "obj vnum %d is the object of board %d; not deleted",
+                   deleted_vnum, j);
+      return NOTHING;
+    }
 
   zrnum = real_zone_by_thing(GET_OBJ_VNUM(obj));
 
   /* This is something you might want to read about in the logs. */
   log("GenOLC: delete_object: Deleting object #%d (%s).", GET_OBJ_VNUM(obj), obj->short_description);
 
-  for (tmp = object_list; tmp; tmp = next_obj) {
-	next_obj = tmp->next;
-    if (tmp->item_number != obj->item_number)
+  /* Extract every live instance.  extract_obj() would destroy the contents
+   * too, so each content first moves to where the container is: its room
+   * (IN_ROOM != NOWHERE; rnum 0 is a real room), the character carrying or
+   * wearing it, or the container holding it.  extract_obj() can free objects
+   * other than tmp (an orphaned content below), and any of them may be the
+   * next element of object_list, so the scan restarts from the head after
+   * each extraction instead of keeping a saved next pointer. */
+  for (tmp = object_list; tmp; ) {
+    if (tmp->item_number != rnum) {
+      tmp = tmp->next;
       continue;
+    }
 
-    /* extract_obj() will just axe contents. */
-    if (tmp->contains) {
-      struct obj_data *this_content, *next_content;
-      for (this_content = tmp->contains; this_content; this_content = next_content) {
-        next_content = this_content->next_content;
-        if (IN_ROOM(tmp)) {
-          /* Transfer stuff from object to room. */
-          obj_from_obj(this_content);
-          obj_to_room(this_content, IN_ROOM(tmp));
-        } else if (tmp->worn_by || tmp->carried_by) {
-          /* Transfer stuff from object to person inventory. */
-          obj_from_char(this_content);
-          obj_to_char(this_content, tmp->carried_by);
-        } else if (tmp->in_obj) {
-          /* Transfer stuff from object to containing object. */
-          obj_from_obj(this_content);
-          obj_to_obj(this_content, tmp->in_obj);
-        }
+    while (tmp->contains) {
+      struct obj_data *content = tmp->contains;
+
+      obj_from_obj(content);
+      if (IN_ROOM(tmp) != NOWHERE)
+        obj_to_room(content, IN_ROOM(tmp));
+      else if (tmp->carried_by)
+        obj_to_char(content, tmp->carried_by);
+      else if (tmp->worn_by)
+        obj_to_char(content, tmp->worn_by);
+      else if (tmp->in_obj)
+        obj_to_obj(content, tmp->in_obj);
+      else {
+        TB_ERROR_MSG("olc", "obj-delete-orphan", "object",
+                     "container vnum %d uid %ld has no location; content "
+                     "vnum %d uid %ld extracted", deleted_vnum, tmp->script_id,
+                     GET_OBJ_VNUM(content), content->script_id);
+        extract_obj(content);
       }
     }
     /* Remove from object_list, etc. - handles weightchanges, and similar. */
     extract_obj(tmp);
+    tmp = object_list;
   }
 
-  /* Make sure all are removed. */
-  assert(obj_index[rnum].number == 0);
+  /* Every instance was extracted above, so the live count must be zero.
+   * This used to be an assert(), which NDEBUG builds compile out.  A
+   * non-zero count means an instance escaped object_list (or the count was
+   * corrupted); shifting the table now would leave that instance naming the
+   * next prototype, so refuse the delete and keep the prototype. */
+  if (obj_index[rnum].number != 0) {
+    TB_ERROR_MSG("olc", "obj-delete-instances", "object",
+                 "obj vnum %d still counts %d live instances after "
+                 "extraction; not deleted", deleted_vnum,
+                 obj_index[rnum].number);
+    return NOTHING;
+  }
 
-  /* Adjust rnums of all other objects. */
+  /* The prototype owns its strings, extra descriptions and trigger list
+   * (no instance shares them any more), and the slot is overwritten by the
+   * shift below, so release them now or they leak. */
+  free_object_strings(obj);
+  free_proto_script(obj, OBJ_TRIGGER);
+
+  /* Adjust rnums of all other objects.  obj_rnum is unsigned and NOTHING is
+   * its maximum, so prototype-less objects (corpses, money) compare greater
+   * than any rnum and must be skipped, or they would point at a prototype. */
   for (tmp = object_list; tmp; tmp = tmp->next) {
-    GET_OBJ_RNUM(tmp) -= (GET_OBJ_RNUM(tmp) > rnum);
+    if (GET_OBJ_RNUM(tmp) != NOTHING && GET_OBJ_RNUM(tmp) > rnum)
+      GET_OBJ_RNUM(tmp)--;
   }
 
   for (i = rnum; i < top_of_objt; i++) {
@@ -464,40 +707,82 @@ int delete_object(obj_rnum rnum)
   RECREATE(obj_index, struct index_data, top_of_objt + 1);
   RECREATE(obj_proto, struct obj_data, top_of_objt + 1);
 
-  /* Renumber notice boards. */
+  /* Renumber notice boards.  No board names rnum (checked above); a board
+   * whose object never loaded keeps NOTHING. */
   for (j = 0; j < NUM_OF_BOARDS; j++)
-    BOARD_RNUM(j) -= (BOARD_RNUM(j) > rnum);
+    if (BOARD_RNUM(j) != NOTHING && BOARD_RNUM(j) > rnum)
+      BOARD_RNUM(j)--;
 
-  /* Renumber shop produce. */
+  /* Renumber shop produce.  A product equal to rnum would otherwise name
+   * the next prototype, or top_of_objt + 1 when the last one was deleted, so
+   * it is removed from the shop (the list then slides down over j). */
   for (shop = 0; shop <= top_shop; shop++)
-    for (j = 0; SHOP_PRODUCT(shop, j) != NOTHING; j++)
-      SHOP_PRODUCT(shop, j) -= (SHOP_PRODUCT(shop, j) > rnum);
+    for (j = 0; SHOP_PRODUCT(shop, j) != NOTHING; ) {
+      if (SHOP_PRODUCT(shop, j) != rnum) {
+        SHOP_PRODUCT(shop, j) -= (SHOP_PRODUCT(shop, j) > rnum);
+        j++;
+        continue;
+      }
+      TB_WARN_MSG("olc", "shop-product-drop", "shop",
+                  "shop vnum %d lost product obj vnum %d (deleted)",
+                  SHOP_NUM(shop), deleted_vnum);
+      remove_shop_from_int_list(&shop_index[shop].producing, j);
+      if ((shop_zone = real_zone_by_thing(SHOP_NUM(shop))) != NOWHERE)
+        add_to_save_list(zone_table[shop_zone].number, SL_SHP);
+    }
 
-  /* Renumber zone table. */
+  /* Renumber zone table.  A command that names the deleted prototype is
+   * removed, which slides the next command into cmd_no and reallocates the
+   * list: cmd_no must not advance after a removal, and the removed slot must
+   * not be read again (so 'P' never falls through once it is dropped).  Each
+   * dropped command is reported, because the builder loses a reset line. */
   for (zone = 0; zone <= top_of_zone_table; zone++) {
-    for (cmd_no = 0; ZCMD(zone, cmd_no).command != 'S'; cmd_no++) {
-      switch (ZCMD(zone, cmd_no).command) {
+    for (cmd_no = 0; ZCMD(zone, cmd_no).command != 'S'; ) {
+      struct reset_com *zcmd = &ZCMD(zone, cmd_no);
+      bool drop = FALSE;
+
+      switch (zcmd->command) {
       case 'P':
-        if (ZCMD(zone, cmd_no).arg3 == rnum) {
-          delete_zone_command(&zone_table[zone], cmd_no);
-        } else
-          ZCMD(zone, cmd_no).arg3 -= (ZCMD(zone, cmd_no).arg3 > rnum);
-        /* fall through */
+        if (zcmd->arg3 == rnum) {
+          drop = TRUE;
+          break;
+        }
+        zcmd->arg3 -= (zcmd->arg3 > rnum);
+        /* fall through: arg1 of 'P' is an object rnum as well. */
       case 'O':
       case 'G':
       case 'E':
-        if (ZCMD(zone, cmd_no).arg1 == rnum) {
-          delete_zone_command(&zone_table[zone], cmd_no);
-        } else
-          ZCMD(zone, cmd_no).arg1 -= (ZCMD(zone, cmd_no).arg1 > rnum);
-	break;
+        if (zcmd->arg1 == rnum)
+          drop = TRUE;
+        else
+          zcmd->arg1 -= (zcmd->arg1 > rnum);
+        break;
       case 'R':
-        if (ZCMD(zone, cmd_no).arg2 == rnum) {
-          delete_zone_command(&zone_table[zone], cmd_no);
-        } else
-          ZCMD(zone, cmd_no).arg2 -= (ZCMD(zone, cmd_no).arg2 > rnum);
-	break;
+        if (zcmd->arg2 == rnum)
+          drop = TRUE;
+        else
+          zcmd->arg2 -= (zcmd->arg2 > rnum);
+        break;
       }
+
+      if (!drop) {
+        cmd_no++;
+        continue;
+      }
+      TB_WARN_MSG("olc", "zone-cmd-drop", "zone",
+                  "zone %d cmd %d '%c' (line %d) dropped: obj vnum %d deleted",
+                  zone_table[zone].number, cmd_no, zcmd->command, zcmd->line,
+                  deleted_vnum);
+      if (!delete_zone_command(&zone_table[zone], cmd_no)) {
+        /* Already reported by delete_zone_command(); step past the command
+         * so the scan still terminates. */
+        TB_ERROR_MSG("olc", "zone-cmd-remove", "zone",
+                     "zone %d cmd %d still names deleted obj vnum %d",
+                     zone_table[zone].number, cmd_no, deleted_vnum);
+        cmd_no++;
+        continue;
+      }
+      add_to_save_list(zone_table[zone].number, SL_ZON);
     }
   }
 
@@ -507,36 +792,104 @@ int delete_object(obj_rnum rnum)
 }
 
 /* oset handling, this location should be temporary */
-bool oset_alias(struct obj_data *obj, char * argument)
-{ 
-  static size_t max_len = 64;
-  int i = GET_OBJ_RNUM(obj);
-  
-  skip_spaces(&argument);
-  
-  if (strlen(argument) > max_len)
+
+/**
+ * Replace one restringable text field of a live object for oset.
+ *
+ * An instance shares its strings with its prototype until it is restrung;
+ * a prototype-less object (corpse, money; rnum NOTHING) owns all of its
+ * strings (free_obj() frees them unconditionally).  The old string is freed
+ * only when this instance owns it.  A stale rnum (> top_of_objt) means a
+ * renumbering bug: ownership cannot be decided, so the old string is leaked
+ * and reported rather than risking a double free of prototype text.
+ *
+ * The value comes from a DG script (%obj.alias(...)% etc.) or the immortal
+ * oset command, so an over-long value is rejected and reported.
+ *
+ * @param obj          Live object being changed.
+ * @param field        Address of the field inside obj (name, description...).
+ * @param owned        OBJ_OWNS_STR() of that field: free the old string.
+ * @param what         Field name for diagnostics.
+ * @param value        New text (leading spaces already skipped).
+ * @param max_len      Longest accepted value in bytes.
+ * @return TRUE when the field was replaced, FALSE (reported) otherwise.
+ */
+static bool oset_replace_string(struct obj_data *obj, char **field,
+                                bool owned, const char *what,
+                                const char *value, size_t max_len)
+{
+  obj_rnum rnum = GET_OBJ_RNUM(obj);
+  char *copy;
+
+  if (strlen(value) > max_len) {
+    TB_WARN_MSG("dg", "oset-reject", "object",
+                "obj vnum %d uid %ld: %s is %zu bytes, maximum %zu",
+                GET_OBJ_VNUM(obj), obj->script_id, what, strlen(value),
+                max_len);
     return FALSE;
-  
-  if (i != NOWHERE && obj->name && obj->name != obj_proto[i].name)
-    free(obj->name);  
-		   	   
-  obj->name = strdup(argument);  
-  
+  }
+
+  /* OBJ_OWNS_STR() is FALSE for a stale rnum; say why the old text leaks. */
+  if (rnum != NOTHING && rnum > top_of_objt)
+    TB_ERROR_MSG("olc", "obj-rnum-range", "object",
+                 "obj uid %ld rnum %d outside 0..%d; old %s not freed",
+                 obj->script_id, (int)rnum, (int)top_of_objt, what);
+
+  if ((copy = strdup(value)) == NULL) {
+    TB_ERROR_ERRNO("dg", "oset-alloc", "object",
+                   "obj vnum %d uid %ld: %s (%zu bytes) unchanged",
+                   GET_OBJ_VNUM(obj), obj->script_id, what, strlen(value));
+    return FALSE;
+  }
+
+  if (owned)
+    free(*field);
+  *field = copy;
   return TRUE;
 }
 
+bool oset_alias(struct obj_data *obj, char * argument)
+{
+  skip_spaces(&argument);
+  return oset_replace_string(obj, &obj->name, OBJ_OWNS_STR(obj, name),
+                             "alias", argument, 64);
+}
+
+/**
+ * Add `<amount>` to one apply of a live object: "oset apply <name> <amount>".
+ *
+ * Input comes from a DG script or the immortal oset command.  The apply
+ * name must abbreviate an apply_types[] entry, the amount must be a
+ * non-zero integer, and the resulting modifier must fit an sbyte.  An apply
+ * that reaches 0 frees its slot.
+ *
+ * @return TRUE when the apply changed; FALSE, reported as oset-reject,
+ *         otherwise.  dg_variables.c's handle_oset() ignores the result, so
+ *         the diagnostic is the only trace of a rejected change.
+ */
 bool oset_apply(struct obj_data *obj, char * argument)
 { 
   int i = 0, apply = -1, location = -1, mod = 0, empty = -1, value;
-  char arg[MAX_INPUT_LENGTH];
-  
+  char arg[MAX_INPUT_LENGTH], *end;
+  long parsed;
+
   argument = one_argument(argument, arg);
-  
+
   skip_spaces(&argument);
-  
-  if ((value = tb_parse_int_or_zero(argument)) == 0)
+
+  /* The amount comes from a DG script or the immortal oset command.  Parse
+   * it strictly: tb_parse_int_or_zero() cannot tell "0" from "abc". */
+  errno = 0;
+  parsed = strtol(argument, &end, 10);
+  if (end == argument || (*end && !isspace((unsigned char)*end)) ||
+      errno == ERANGE || parsed == 0 || parsed < INT_MIN || parsed > INT_MAX) {
+    TB_WARN_MSG("dg", "oset-reject", "object",
+                "obj vnum %d uid %ld: apply amount is not a non-zero integer "
+                "(%zu bytes)", GET_OBJ_VNUM(obj), obj->script_id, strlen(argument));
     return FALSE;
-  
+  }
+  value = (int)parsed;
+
   while (*apply_types[i] != '\n') {
     if (is_abbrev(apply_types[i], arg)) {
       apply = i;
@@ -544,10 +897,14 @@ bool oset_apply(struct obj_data *obj, char * argument)
     }
     i++;
   }
-  
-  if (apply == -1)
+
+  if (apply == -1) {
+    TB_WARN_MSG("dg", "oset-reject", "object",
+                "obj vnum %d uid %ld: unknown apply name (%zu bytes)",
+                GET_OBJ_VNUM(obj), obj->script_id, strlen(arg));
     return FALSE;
-    
+  }
+
   for (i = 0; i < MAX_OBJ_AFFECT; i++) {
     if (obj->affected[i].location == apply) {
       location = i;
@@ -563,10 +920,23 @@ bool oset_apply(struct obj_data *obj, char * argument)
     location = empty;  
   
   /* There is no slot already using our APPLY_XXX type, and no empty slots either */
-  if (location == -1)
+  if (location == -1) {
+    TB_WARN_MSG("dg", "oset-reject", "object",
+                "obj vnum %d uid %ld: apply %s: all %d affect slots in use",
+                GET_OBJ_VNUM(obj), obj->script_id, apply_types[apply], MAX_OBJ_AFFECT);
     return FALSE;
-  
-  obj->affected[location].modifier = mod + value;
+  }
+
+  /* modifier is an sbyte: a sum outside its range would wrap (+200 became
+   * -56).  value is bounded by INT_MAX and mod by sbyte, so compare in long. */
+  if ((long)mod + value < SCHAR_MIN || (long)mod + value > SCHAR_MAX) {
+    TB_WARN_MSG("dg", "oset-reject", "object",
+                "obj vnum %d uid %ld: apply %s %ld out of range %d..%d",
+                GET_OBJ_VNUM(obj), obj->script_id, apply_types[apply],
+                (long)mod + value, SCHAR_MIN, SCHAR_MAX);
+    return FALSE;
+  }
+  obj->affected[location].modifier = (sbyte)(mod + value);
   
   /* Our modifier is set at 0, so lets just clear the apply location so that it may
    * be reused at a later point */
@@ -579,37 +949,17 @@ bool oset_apply(struct obj_data *obj, char * argument)
 }
 
 bool oset_short_description(struct obj_data *obj, char * argument)
-{ 
-  static size_t max_len = 64;
-  int i = GET_OBJ_RNUM(obj);
-  
+{
   skip_spaces(&argument);
-  
-  if (strlen(argument) > max_len)
-    return FALSE;
-  
-  if (i != NOWHERE && obj->short_description && obj->short_description != obj_proto[i].short_description)
-    free(obj->short_description);  
-		   	   
-  obj->short_description = strdup(argument);  
-  
-  return TRUE;
+  return oset_replace_string(obj, &obj->short_description,
+                             OBJ_OWNS_STR(obj, short_description),
+                             "short description", argument, 64);
 }
 
 bool oset_long_description(struct obj_data *obj, char * argument)
 {
-  static size_t max_len = 128;
-  int i = GET_OBJ_RNUM(obj);  
-  
   skip_spaces(&argument);
-  
-  if (strlen(argument) > max_len)
-    return FALSE;  
-  
-  if (i != NOWHERE && obj->description && obj->description != obj_proto[i].description)
-    free(obj->description);  
-		   	   
-  obj->description = strdup(argument);  
-  
-  return TRUE;
+  return oset_replace_string(obj, &obj->description,
+                             OBJ_OWNS_STR(obj, description),
+                             "long description", argument, 128);
 }
