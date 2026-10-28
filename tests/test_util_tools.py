@@ -91,6 +91,14 @@ def autowiz_reports_malformed_record(tmp):
     check("line=2 field=level id=2" in err, err)
 
 
+@test("autowiz")
+def autowiz_high_flag_letter_is_defined(tmp):
+    """I2-08: flag 'Z' was `1 << 51` on int (UBSan: shift exponent 51)."""
+    rc, wiz, imm, err = autowiz(tmp, "1 alice 60 Z 1700000000\n~\n")
+    check(rc == 0, "rc=%d err=%s" % (rc, err))
+    check("Alice" in wiz, "record with flag Z lost:\n" + wiz)
+
+
 # ------------------------------------------------------------- plrtoascii
 
 def plr_record_size(tmp):

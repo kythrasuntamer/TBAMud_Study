@@ -49,7 +49,8 @@ static int parse_int_or_zero(const char *text)
   return (int)value;
 }
 
-#define FLAG(n) (1 << (n))
+/* Unsigned so bit 31 (letter F) is not a signed-overflow shift. */
+#define FLAG(n) (1UL << (n))
 
 #ifndef FALSE
 typedef enum boolean_type {
@@ -59,7 +60,7 @@ typedef enum boolean_type {
 
 /* 128-bit flag defines (from utils.h) */
 #define Q_FIELD(x)  ((int) (x) / 32)
-#define Q_BIT(x)    (1 << ((x) % 32))
+#define Q_BIT(x)    (1UL << ((x) % 32))
 #define IS_SET_AR(var, bit)       ((var)[Q_FIELD(bit)] & Q_BIT(bit))
 #define SET_BIT_AR(var, bit)      ((var)[Q_FIELD(bit)] |= Q_BIT(bit))
 
@@ -87,8 +88,8 @@ typedef enum boolean_type {
 
 void walkdir(FILE* index_file, char *dir);
 int get_line(FILE *fl, char *buf);
-long asciiflag_conv(char *flag);
-int sprintascii(char *out, long bits);
+unsigned long asciiflag_conv(char *flag);
+int sprintascii(char *out, unsigned long bits);
 
 int main(int argc, char** argv)
 {
@@ -178,7 +179,8 @@ char *parse_subject(FILE *plr_file) {
 
 /* Search file for mail flags and return as bitvector */
 int parse_mail_flags(FILE *plr_file) {
-  int fl[4], ret=0;
+  unsigned long fl[4];
+  int ret = 0;
   char *txt, f1[33], f2[33], f3[33], f4[33];
 
   if ((txt = findLine(plr_file, "Flag:")) != NULL) {
@@ -306,37 +308,51 @@ int get_line(FILE *fl, char *buf)
   return (lines);
 }
 
-long asciiflag_conv(char *flag)
+/* Convert one mail "Flag:" word (letters a-z = bits 0-25, A-Z = 26-51, or a
+ * decimal number) to a 32-bit flag word: mail.c stores the flags as four
+ * 32-bit words, so a letter past bit 31 cannot come from the server and is
+ * reported ("ascii-flag-range") and ignored instead of being an undefined
+ * shift.  The text comes from a mail file on disk. */
+unsigned long asciiflag_conv(char *flag)
 {
-  long flags = 0;
+  unsigned long flags = 0;
   int is_num = TRUE;
   char *p;
 
   for (p = flag; *p; p++) {
-    if (islower(*p))
-      flags |= 1 << (*p - 'a');
-    else if (isupper(*p))
-      flags |= 1 << (26 + (*p - 'A'));
+    unsigned char ch = (unsigned char)*p;
+    int bit = -1;
+
+    if (islower(ch))
+      bit = ch - 'a';
+    else if (isupper(ch))
+      bit = 26 + (ch - 'A');
+    if (bit >= 32)
+      TB_REPORT_DOMAIN_ERRORF(TB_SEV_ERROR, TB_ERR_PARSER, "ascii-flag-range",
+                              "flags=%.64s letter=%c bit=%d width=32", flag,
+                              (char)ch, bit);
+    else if (bit >= 0)
+      flags |= FLAG(bit);
 
     /* Allow the first character to be a minus sign */
-    if (!isdigit(*p) && (*p != '-' || p != flag))
+    if (!isdigit(ch) && (ch != '-' || p != flag))
       is_num = FALSE;
   }
 
   if (is_num)
-    flags = parse_long_or_zero(flag);
+    flags = (unsigned long)parse_long_or_zero(flag);
 
   return (flags);
 }
 
-int sprintascii(char *out, long bits)
+int sprintascii(char *out, unsigned long bits)
 {
   int i, j = 0;
   /* 32 bits, don't just add letters to try to get more unless your bitvector_t is also as large. */
   char *flags = "abcdefghijklmnopqrstuvwxyzABCDEF";
 
   for (i = 0; flags[i] != '\0'; i++)
-    if (bits & (1 << i))
+    if (bits & FLAG(i))
       out[j++] = flags[i];
 
   if (j == 0) /* Didn't write anything. */

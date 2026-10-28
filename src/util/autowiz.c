@@ -90,7 +90,8 @@ void read_file(void)
   bitvector_t asciiflag_conv(char *flag);
 
   FILE *fl;
-  int level = 0, flags = 0, got;
+  int level = 0, got;
+  bitvector_t flags = 0;
   long line_no = 0;
   char index_name[40], line[256], bits[64];
   char name[MAX_NAME_LENGTH];
@@ -164,7 +165,7 @@ void add_name(byte level, char *name)
     return;
 
   for (ptr = name; *ptr; ptr++)
-    if (!isalpha(*ptr))
+    if (!isalpha((unsigned char)*ptr))
       return;
 
   tmp = (struct name_rec *) malloc(sizeof(struct name_rec));
@@ -354,6 +355,11 @@ int read_index_line(FILE * fl, char *buf, size_t buf_size, const char *path,
   return (1);
 }
 
+/* Convert the index "flags" field (letters a-z = bits 0-25, A-Z = 26-51, or
+ * a decimal number) to a bitvector, as db.c's asciiflag_conv() does.  The
+ * text comes from the index file, so a letter whose bit does not fit
+ * bitvector_t is reported ("ascii-flag-range") and ignored instead of being
+ * an undefined shift. */
 bitvector_t asciiflag_conv(char *flag)
 {
   bitvector_t flags = 0;
@@ -361,12 +367,21 @@ bitvector_t asciiflag_conv(char *flag)
   register char *p;
 
   for (p = flag; *p; p++) {
-    if (islower(*p))
-      flags |= 1 << (*p - 'a');
-    else if (isupper(*p))
-     flags |= 1 << (26 + (*p - 'A'));
+    unsigned char ch = (unsigned char)*p;
+    int bit = -1;
 
-    if (!isdigit(*p))
+    if (islower(ch))
+      bit = ch - 'a';
+    else if (isupper(ch))
+      bit = 26 + (ch - 'A');
+    if (bit >= (int)(sizeof(bitvector_t) * CHAR_BIT))
+      TB_REPORT_DOMAIN_ERRORF(TB_SEV_ERROR, TB_ERR_PARSER, "ascii-flag-range",
+                              "flags=%.64s letter=%c bit=%d width=%zu", flag,
+                              (char)ch, bit, sizeof(bitvector_t) * CHAR_BIT);
+    else if (bit >= 0)
+      flags |= (bitvector_t)1 << bit;
+
+    if (!isdigit(ch))
       is_number = 0;
   }
 
