@@ -71,7 +71,7 @@ static int mag_manacost(struct char_data *ch, int spellnum) {
       SINFO.mana_min);
 
   return arcane_adjust_mana(cls, GET_LEVEL(ch), SPELL_MIN_LEVEL(spellnum, cls),
-      mana, IS_SET(SINFO.routines, MAG_DAMAGE), IS_NPC(ch));
+      mana, IS_SET(SINFO.routines, MAG_DAMAGE), IS_NPC(ch), SINFO.mana_min);
 }
 
 static char *obfuscate_spell(const char *unobfuscated) {

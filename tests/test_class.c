@@ -487,6 +487,7 @@ void test_anti_class_flags_follow_archetype(void)
             memset(&obj, 0, sizeof(obj));
             SET_BIT_AR(GET_OBJ_EXTRA(&obj), anti[f].flag);
             TEST_ASSERT_EQUAL_INT_MESSAGE(
+                klass != CLASS_MONK &&
                 class_progression_archetype(klass) == anti[f].archetype,
                 invalid_class(&lvl_ch, &obj), pc_class_types[klass]);
         }
@@ -499,6 +500,14 @@ void test_anti_class_flags_follow_archetype(void)
     TEST_ASSERT_TRUE(invalid_class(&lvl_ch, &obj));
     prepare_leveler(CLASS_PALADIN, 10);
     TEST_ASSERT_FALSE(invalid_class(&lvl_ch, &obj));
+    /* Monk keeps ignoring every anti-class flag (owner decision), so the
+     * gear it already wears stays equipped at login. */
+    memset(&obj, 0, sizeof(obj));
+    SET_BIT_AR(GET_OBJ_EXTRA(&obj), ITEM_ANTI_WARRIOR);
+    prepare_leveler(CLASS_MONK, 10);
+    TEST_ASSERT_FALSE(invalid_class(&lvl_ch, &obj));
+    prepare_leveler(CLASS_BERSERKER, 10);
+    TEST_ASSERT_TRUE(invalid_class(&lvl_ch, &obj));
 }
 
 /* An out-of-range class is reported at the item check.  Red before the fix:

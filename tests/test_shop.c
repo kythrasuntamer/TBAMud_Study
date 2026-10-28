@@ -560,8 +560,8 @@ static void test_no_trade_rule_follows_class_archetype(void)
   shop.with_who = TRADE_NOWARRIOR;
   GET_CLASS(&pc) = CLASS_BERSERKER;
   TEST_ASSERT_FALSE(is_ok_char(&pc, &pc, 0));
-  GET_CLASS(&pc) = CLASS_MONK;
-  TEST_ASSERT_FALSE(is_ok_char(&pc, &pc, 0));
+  GET_CLASS(&pc) = CLASS_MONK;            /* exempt, as before */
+  TEST_ASSERT_TRUE(is_ok_char(&pc, &pc, 0));
   GET_CLASS(&pc) = CLASS_BARD;
   TEST_ASSERT_TRUE(is_ok_char(&pc, &pc, 0));
 

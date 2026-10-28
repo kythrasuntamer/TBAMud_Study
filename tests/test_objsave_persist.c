@@ -671,8 +671,8 @@ static void test_failed_content_record_fails_the_save(void)
 static void test_warrior_archetype_keeps_held_weapon(void)
 {
   char body[160];
-  const int classes[] = { CLASS_WARRIOR, CLASS_BERSERKER, CLASS_PALADIN, CLASS_MONK };
-  const char *names[] = { "Warrior", "Berserker", "Paladin", "Monk" };
+  const int classes[] = { CLASS_WARRIOR, CLASS_BERSERKER, CLASS_PALADIN };
+  const char *names[] = { "Warrior", "Berserker", "Paladin" };
   size_t i;
 
   for (i = 0; i < sizeof(classes) / sizeof(classes[0]); ++i) {
@@ -687,8 +687,15 @@ static void test_warrior_archetype_keeps_held_weapon(void)
     extract_obj(GET_EQ(&player, WEAR_HOLD));
     GET_EQ(&player, WEAR_HOLD) = NULL;
   }
-  /* A wizard still gets it back in the inventory. */
+  /* A wizard still gets it back in the inventory; so does a Monk, which is
+   * exempt from the item rules exactly as before (IS_ITEM_ARCHETYPE). */
   GET_CLASS(&player) = CLASS_MAGIC_USER;
+  write_rent_file("Tester", body);
+  (void)Crash_load(&player);
+  TEST_ASSERT_NULL(GET_EQ(&player, WEAR_HOLD));
+  TEST_ASSERT_NOT_NULL(player.carrying);
+  extract_obj(player.carrying);
+  GET_CLASS(&player) = CLASS_MONK;
   write_rent_file("Tester", body);
   (void)Crash_load(&player);
   TEST_ASSERT_NULL(GET_EQ(&player, WEAR_HOLD));

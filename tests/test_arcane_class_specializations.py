@@ -11,6 +11,7 @@ class ArcaneSpecializationTests(unittest.TestCase):
         manacost = source[source.index("static int mag_manacost(struct char_data *ch, int spellnum) {"):]
         manacost = manacost[:manacost.index("\n}\n")]
         self.assertIn("arcane_adjust_mana(cls,", manacost)
+        self.assertIn("SINFO.mana_min);", manacost)
         # GET_CLASS() comes from the pfile; only the VALID_CLASS_NUM-guarded
         # SPELL_MIN_LEVEL() may index min_level[] with it.
         self.assertIn("SPELL_MIN_LEVEL(spellnum, cls)", manacost)

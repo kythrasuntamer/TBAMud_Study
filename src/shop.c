@@ -172,11 +172,12 @@ static int is_ok_char(struct char_data *keeper, struct char_data *ch, int shop_n
   if (IS_NPC(ch))
     return (TRUE);
 
-  /* Each class trades like its archetype (a no-mage shop refuses Sorcerers). */
-  if ((IS_ARCHETYPE(ch, CLASS_MAGIC_USER) && NOTRADE_MAGIC_USER(shop_nr)) ||
-      (IS_ARCHETYPE(ch, CLASS_CLERIC) && NOTRADE_CLERIC(shop_nr)) ||
-      (IS_ARCHETYPE(ch, CLASS_THIEF) && NOTRADE_THIEF(shop_nr)) ||
-      (IS_ARCHETYPE(ch, CLASS_WARRIOR) && NOTRADE_WARRIOR(shop_nr))) {
+  /* Each class trades like its archetype (a no-mage shop refuses Sorcerers);
+   * Monk is exempt, as before (IS_ITEM_ARCHETYPE). */
+  if ((IS_ITEM_ARCHETYPE(ch, CLASS_MAGIC_USER) && NOTRADE_MAGIC_USER(shop_nr)) ||
+      (IS_ITEM_ARCHETYPE(ch, CLASS_CLERIC) && NOTRADE_CLERIC(shop_nr)) ||
+      (IS_ITEM_ARCHETYPE(ch, CLASS_THIEF) && NOTRADE_THIEF(shop_nr)) ||
+      (IS_ITEM_ARCHETYPE(ch, CLASS_WARRIOR) && NOTRADE_WARRIOR(shop_nr))) {
     tb_snprintf(buf, sizeof(buf), "%s %s", GET_NAME(ch), MSG_NO_SELL_CLASS);
     do_tell(keeper, buf, cmd_tell, 0);
     return (FALSE);

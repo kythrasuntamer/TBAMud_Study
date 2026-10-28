@@ -58,6 +58,13 @@ static inline int class_progression_archetype(int class_num)
 #define IS_ARCHETYPE(ch, a) \
   (!IS_NPC(ch) && class_progression_archetype(GET_CLASS(ch)) == (a))
 
+/** IS_ARCHETYPE for the item and shop rules (ITEM_ANTI_*, NOTRADE_*, the
+ * held weapon kept at login).  Monk is exempt: it keeps ignoring them, as it
+ * always has, while still using the Warrior progression tables; only the
+ * seven newer classes follow their archetype here. */
+#define IS_ITEM_ARCHETYPE(ch, a) \
+  (IS_ARCHETYPE(ch, a) && GET_CLASS(ch) != CLASS_MONK)
+
 /* Global variables */
 
 extern const char *class_abbrevs[];

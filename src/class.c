@@ -157,6 +157,22 @@ struct guild_info_type guild_info[] = {
  { CLASS_THIEF,         3027,    EAST   },
  { CLASS_WARRIOR,       3021,    EAST   },
 
+/* Midgaard Hall of Seven Paths (3034) and the passages beyond it.  An exit
+ * listed for several classes admits each of them: the Druid garden (3036)
+ * leads on to the Ranger and Bard halls, the Sorcerer observatory (3038) to
+ * the Necromancer study.  The guards are mobs 3030-3032 (spec_assign.c). */
+ { CLASS_MONK,          3034,    NORTH   },
+ { CLASS_DRUID,         3034,    EAST    },
+ { CLASS_RANGER,        3034,    EAST    },
+ { CLASS_BARD,          3034,    EAST    },
+ { CLASS_BERSERKER,     3034,    SOUTH   },
+ { CLASS_SORCERER,      3034,    UP      },
+ { CLASS_NECROMANCER,   3034,    UP      },
+ { CLASS_PALADIN,       3034,    DOWN    },
+ { CLASS_RANGER,        3036,    NORTH   },
+ { CLASS_BARD,          3036,    SOUTH   },
+ { CLASS_NECROMANCER,   3038,    EAST    },
+
 /* Brass Dragon */
   { -999 /* all */ ,	5065,	WEST	},
 
@@ -1727,16 +1743,16 @@ int invalid_class(struct char_data *ch, struct obj_data *obj)
     return FALSE;
   }
 
-  if (OBJ_FLAGGED(obj, ITEM_ANTI_MAGIC_USER) && IS_ARCHETYPE(ch, CLASS_MAGIC_USER))
+  if (OBJ_FLAGGED(obj, ITEM_ANTI_MAGIC_USER) && IS_ITEM_ARCHETYPE(ch, CLASS_MAGIC_USER))
     return TRUE;
 
-  if (OBJ_FLAGGED(obj, ITEM_ANTI_CLERIC) && IS_ARCHETYPE(ch, CLASS_CLERIC))
+  if (OBJ_FLAGGED(obj, ITEM_ANTI_CLERIC) && IS_ITEM_ARCHETYPE(ch, CLASS_CLERIC))
     return TRUE;
 
-  if (OBJ_FLAGGED(obj, ITEM_ANTI_WARRIOR) && IS_ARCHETYPE(ch, CLASS_WARRIOR))
+  if (OBJ_FLAGGED(obj, ITEM_ANTI_WARRIOR) && IS_ITEM_ARCHETYPE(ch, CLASS_WARRIOR))
     return TRUE;
 
-  if (OBJ_FLAGGED(obj, ITEM_ANTI_THIEF) && IS_ARCHETYPE(ch, CLASS_THIEF))
+  if (OBJ_FLAGGED(obj, ITEM_ANTI_THIEF) && IS_ITEM_ARCHETYPE(ch, CLASS_THIEF))
     return TRUE;
 
   return FALSE;

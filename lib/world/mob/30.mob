@@ -403,6 +403,42 @@ A necromancer scholar is reviewing a book of careful observations.
 340 115600
 8 8 1
 E
+#3030
+warden hall guard~
+the hall warden~
+A stern warden watches every doorway of the hall.
+~
+   The warden admits each discipline only to its own hall.
+~
+256010 0 0 0 80 0 0 0 900 E
+33 9 -9 6d6+330 5d5+5
+330 108900
+8 8 1
+E
+#3031
+keeper garden guard~
+the garden keeper~
+A keeper tends the paths to the lodge and the conservatory.
+~
+   Only rangers pass north and only bards pass south.
+~
+256010 0 0 0 80 0 0 0 900 E
+33 9 -9 6d6+330 5d5+5
+330 108900
+8 8 1
+E
+#3032
+keeper observatory guard~
+the observatory keeper~
+A keeper stands before the door to the study.
+~
+   Only necromancers may pass into the study to the east.
+~
+256010 0 0 0 80 0 0 0 900 E
+33 9 -9 6d6+330 5d5+5
+330 108900
+8 8 1
+E
 #3040
 bartender~
 the bartender~

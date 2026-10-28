@@ -89,6 +89,9 @@ void assign_mobiles(void)
   ASSIGNMOB(3019, guild); /* Ranger */
   ASSIGNMOB(3028, guild); /* Bard */
   ASSIGNMOB(3029, guild); /* Necromancer */
+  ASSIGNMOB(3030, guild_guard); /* warden, Hall of Seven Paths */
+  ASSIGNMOB(3031, guild_guard); /* keeper, Druid garden */
+  ASSIGNMOB(3032, guild_guard); /* keeper, Sorcerer observatory */
   ASSIGNMOB(5400, guild);
   ASSIGNMOB(5401, guild);
   ASSIGNMOB(5402, guild);
