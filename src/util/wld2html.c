@@ -28,6 +28,9 @@
 
 #define NUM_OF_DIRS    10
 
+/* True when d may index room_data.dir_option[].  Evaluates d twice. */
+#define VALID_DIR(d)   ((d) >= 0 && (d) < NUM_OF_DIRS)
+
 #define CREATE(result, type, number)  do {\
 	if (!((result) = (type *) calloc ((number), sizeof(type))))\
 		{ TB_REPORT_ERRNO("malloc", "wld2html allocation"); abort(); } } while(0)
@@ -501,9 +504,23 @@ void parse_room(FILE * fl, int virtual_nr)
       WLD_PARSE_ERROR("wld-unexpected-eof",
                       "file ended inside the room (expecting D/E/S)");
     switch (*line) {
-    case 'D':
-      setup_dir(fl, room_nr, tb_parse_int_or_zero(line + 1));
+    case 'D': {
+      /*
+       * "D<dir>" comes straight from the builder's .wld file and is used
+       * as an index into dir_option[NUM_OF_DIRS], so anything that is not
+       * an integer in 0..NUM_OF_DIRS-1 is rejected here rather than
+       * becoming an out-of-bounds write (or silently direction 0).
+       */
+      char *cursor = line + 1;
+      int dir;
+
+      if (!parse_int_token(&cursor, &dir) || !VALID_DIR(dir))
+        WLD_PARSE_ERROR("wld-door-index",
+                        "door line '%.40s' needs a direction 0..%d",
+                        line, NUM_OF_DIRS - 1);
+      setup_dir(fl, room_nr, dir);
       break;
+    }
     case 'E':
       CREATE(new_descr, struct extra_descr_data, 1);
       new_descr->keyword = fread_string(fl, "extra description keyword");
@@ -530,6 +547,14 @@ void setup_dir(FILE * fl, int room, int dir)
 {
   int t[5];
   char line[256];
+
+  /* Precondition (checked by parse_room): dir indexes dir_option[]. */
+  if (!VALID_DIR(dir)) {
+    WLD_REPORT(TB_SEV_ERROR, TB_ERR_INVARIANT, "wld-setup-dir",
+               "record %d exit D%d outside dir_option[0..%d]",
+               room, dir, NUM_OF_DIRS - 1);
+    exit(1);
+  }
 
   tb_snprintf(buf2, sizeof(buf2), "exit D%d text", dir);
 

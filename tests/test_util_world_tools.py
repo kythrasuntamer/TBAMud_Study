@@ -83,6 +83,23 @@ class Wld2HtmlTests(ToolCase):
         self.assertDiag(err, "wld-room-flags-line")
         self.assertIn("file in.wld line 4 room #100", err)
 
+    def test_door_index_out_of_range_rejected(self):
+        # I3-01: D12 / D-1 / Dx used to index dir_option[] unchecked.
+        for door in ("D12", "D-1", "Dx", "D10"):
+            with self.subTest(door=door):
+                rc, err = self.wld("#100\nRoom~\nDesc~\n0 0 0\n%s\n~\n~\n"
+                                   "0 0 100\nS\n$~\n" % door)
+                self.assertEqual(rc, 1, err)
+                self.assertDiag(err, "wld-door-index")
+                self.assertIn("room #100", err)
+                self.assertFalse(self.exists("100.html"))
+
+    def test_door_index_in_range_accepted(self):
+        rc, err = self.wld("#100\nRoom~\nDesc~\n0 0 0\nD9\n~\n~\n"
+                           "0 0 100\nS\n$~\n")
+        self.assertEqual(rc, 0, err)
+        self.assertIn(b"South West to", self.read("100.html"))
+
 
 def main():
     global WLD2HTML, SPLIT
