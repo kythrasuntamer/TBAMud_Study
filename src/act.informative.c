@@ -70,6 +70,15 @@
  * reading TRIGGERS(SCRIPT(thing))->next. Evaluates thing twice. */
 #define SCRIPT_HAS_TRIGGERS(thing)  (SCRIPT(thing) && TRIGGERS(SCRIPT(thing)))
 
+/** TRUE if exit @p door of ch's room leads somewhere and is listed to ch by
+ * 'exits' and autoexits: closed doors only with CONFIG_DISP_CLOSED_DOORS,
+ * hidden exits only with HOLYLIGHT. Keeps the two listings in step.
+ * Evaluates ch and door several times. */
+#define EXIT_SHOWN_TO(ch, door) \
+  (EXIT(ch, door) && EXIT(ch, door)->to_room != NOWHERE && \
+   (!EXIT_FLAGGED(EXIT(ch, door), EX_CLOSED) || CONFIG_DISP_CLOSED_DOORS) && \
+   (!EXIT_FLAGGED(EXIT(ch, door), EX_HIDDEN) || PRF_FLAGGED(ch, PRF_HOLYLIGHT)))
+
 /* Nonnegative level argument or low-high range with checked conversion. */
 static int parse_info_level_range(const char *input, int *low, int *high)
 {
@@ -574,11 +583,7 @@ static void do_auto_exits(struct char_data *ch)
   send_to_char(ch, "%s[ Exits: ", CCCYN(ch, C_NRM));
 
   for (door = 0; door < DIR_COUNT; door++) {
-    if (!EXIT(ch, door) || EXIT(ch, door)->to_room == NOWHERE)
-      continue;
-    if (EXIT_FLAGGED(EXIT(ch, door), EX_CLOSED) && !CONFIG_DISP_CLOSED_DOORS)
-      continue;
-    if (EXIT_FLAGGED(EXIT(ch, door), EX_HIDDEN) && !PRF_FLAGGED(ch, PRF_HOLYLIGHT))
+    if (!EXIT_SHOWN_TO(ch, door))
       continue;
     if (EXIT_FLAGGED(EXIT(ch, door), EX_CLOSED))
       send_to_char(ch, "%s(%s)%s ", EXIT_FLAGGED(EXIT(ch, door), EX_HIDDEN) ? CCWHT(ch, C_NRM) : CCRED(ch, C_NRM), autoexits[door], CCCYN(ch, C_NRM));
@@ -606,11 +611,7 @@ ACMD(do_exits)
 
   for (door = 0; door < DIR_COUNT; door++)
   {
-    if (!EXIT(ch, door) || EXIT(ch, door)->to_room == NOWHERE)
-      continue;
-    if (EXIT_FLAGGED(EXIT(ch, door), EX_CLOSED) && !CONFIG_DISP_CLOSED_DOORS)
-      continue;
-    if (EXIT_FLAGGED(EXIT(ch, door), EX_HIDDEN) && !PRF_FLAGGED(ch, PRF_HOLYLIGHT))
+    if (!EXIT_SHOWN_TO(ch, door))
       continue;
 
     len++;
