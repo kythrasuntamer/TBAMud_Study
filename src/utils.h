@@ -744,19 +744,34 @@ do                                                              \
 /** TRUE if the room has light, FALSE if not. */
 #define IS_LIGHT(room)  (!IS_DARK(room))
 
-/** 1 if this is a valid room number, 0 if not. */
-#define VALID_ROOM_RNUM(rnum)	((rnum) != NOWHERE && (rnum) <= top_of_world)
-/** 1 if rnum indexes mob_proto[]/mob_index[], 0 if not. rnum is evaluated
- * twice: pass a plain variable or side-effect-free expression. */
-#define VALID_MOB_RNUM(rnum)	((rnum) != NOBODY && (rnum) <= top_of_mobt)
-/** TRUE when r names a loaded zone: usable as zone_table[r]. r is evaluated
- * twice: pass a plain variable. Same text as genzon.h's and oasis.h's
- * copies, so they coexist. */
-#if CIRCLE_UNSIGNED_INDEX
-#define VALID_ZONE_RNUM(r)	((r) != NOWHERE && (r) <= top_of_zone_table)
-#else
-#define VALID_ZONE_RNUM(r)	((r) >= 0 && (r) <= top_of_zone_table)
-#endif
+/** The rule behind every VALID_*_RNUM check: TRUE when rnum is not the
+ * table's sentinel none (NOWHERE, NOTHING or NOBODY) and indexes a table
+ * whose last valid index is top. All three are compared as long, so the
+ * answer does not depend on the caller's integer type. A plain int or long
+ * holding -1 (a zone-command argument the builder has not set yet, a lookup
+ * result kept in an int) used to pass the unsigned sentinel test and the
+ * "<= top" test and index table[-1]; it is refused here. No comparison is
+ * made in an unsigned rnum type, where "rnum >= 0" is always true and draws
+ * -Wtype-limits. An empty table (top -1) accepts nothing. */
+static inline int tb_rnum_valid(long rnum, long none, long top)
+{
+  return rnum != none && rnum >= 0 && rnum <= top;
+}
+
+/** TRUE if rnum indexes world[]: not NOWHERE, not negative, at most
+ * top_of_world. Any integer type; rnum is evaluated once. */
+#define VALID_ROOM_RNUM(rnum) \
+	tb_rnum_valid((long) (rnum), (long) NOWHERE, (long) top_of_world)
+/** TRUE if rnum indexes mob_proto[]/mob_index[]: not NOBODY, not negative,
+ * at most top_of_mobt. Any integer type; rnum is evaluated once. */
+#define VALID_MOB_RNUM(rnum) \
+	tb_rnum_valid((long) (rnum), (long) NOBODY, (long) top_of_mobt)
+/** TRUE when r names a loaded zone: usable as zone_table[r] (not NOWHERE,
+ * not negative, at most top_of_zone_table). Any integer type; r is
+ * evaluated once. Same text as genzon.h's and oasis.h's copies, so they
+ * coexist until the final cleanup removes them. */
+#define VALID_ZONE_RNUM(r) \
+	tb_rnum_valid((long) (r), (long) NOWHERE, (long) top_of_zone_table)
 
 /* Range predicates for values that index a fixed table and come from world,
  * player or script data: sector_type (movement_loss[], map glyphs),
@@ -1032,11 +1047,12 @@ do                                                              \
 			!PLR_FLAGGED((ch), PLR_WRITING))
 
 /* object utils */
-/** Check for NOWHERE or the top array index? If using unsigned types, the top
- * array index will catch everything. If using signed types, NOTHING will
- * catch the majority of bad accesses. */
-#define VALID_OBJ_RNUM(obj)	(GET_OBJ_RNUM(obj) <= top_of_objt && \
-				 GET_OBJ_RNUM(obj) != NOTHING)
+/** TRUE if obj's prototype rnum indexes obj_proto[]/obj_index[]: not
+ * NOTHING (an object without a prototype), not negative and at most
+ * top_of_objt, with signed and unsigned index types alike (tb_rnum_valid).
+ * obj is evaluated once. */
+#define VALID_OBJ_RNUM(obj) \
+	tb_rnum_valid((long) GET_OBJ_RNUM(obj), (long) NOTHING, (long) top_of_objt)
 
 /** Level of obj. */
 #define GET_OBJ_LEVEL(obj)      ((obj)->obj_flags.level)

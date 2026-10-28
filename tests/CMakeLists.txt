@@ -1180,3 +1180,19 @@ if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
     set_source_files_properties(${MUD_SRCDIR}/oasis.c
         PROPERTIES COMPILE_OPTIONS "-ffunction-sections;-fdata-sections")
 endif()
+
+# test_rnum_macros — the VALID_*_RNUM checks (utils.h tb_rnum_valid and the
+# checks built on it in genzon.h, oasis.h, olc_checks.h and dg_scripts.h): a
+# negative value of any integer type is refused before a table is indexed,
+# the sentinels never pass, and VALID_TRIG_RNUM never reads trig_index[-1].
+# The test source is compiled with -Wtype-limits -Werror: the checks must
+# keep comparing as long (no "always true" warning for the unsigned rnum
+# types), and a VALID_ZONE_RNUM copy that drifts from utils.h's ("redefined")
+# fails the build.
+add_mud_test(test_rnum_macros
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_rnum_macros.c
+)
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/test_rnum_macros.c
+        PROPERTIES COMPILE_OPTIONS "-Wtype-limits;-Werror")
+endif()
