@@ -219,6 +219,12 @@ Master Roshis Kamehameha Wave - 10329 ~
 1 c 1
 kame~
 * Fires only for the headband being worn (numeric arg 1 = equipped).
+* Players only: a mob (say, a charmed follower given the headband and
+* ordered to use it) cannot hold the cooldown below, so it never fires.
+if !%actor.is_pc%
+  return 0
+  halt
+end
 * Anything but "kamehameha wave" passes through to the normal command.
 if %cmd% != kamehameha || %arg% != wave
   return 0
@@ -231,10 +237,10 @@ end
 * A strong ki blast, not an instant kill: 2-4 times the user's level
 * (the fireball band, 22-99, at levels 15-25), capped at 150 so it never
 * fells a zone boss (300+ hit points) from full health.
-* One wave per player per mud hour (75 seconds), kept on the player so
-* several headbands cannot chain waves. The key counts mud hours since
-* year 0: 17 months of 35 days of 24 hours (%time.month% and %time.day%
-* are 1-based, %time.hour% 0-based). One operation per eval.
+* At least one full mud hour (75 seconds) between waves, kept on the
+* player so several headbands cannot chain waves. The key counts mud hours
+* since year 0: 17 months of 35 days of 24 hours (%time.month% and
+* %time.day% are 1-based, %time.hour% 0-based). One operation per eval.
 eval kame_now %time.year% * 17
 eval kame_part %time.month% - 1
 eval kame_now %kame_now% + %kame_part%
@@ -243,10 +249,16 @@ eval kame_part %time.day% - 1
 eval kame_now %kame_now% + %kame_part%
 eval kame_now %kame_now% * 24
 eval kame_now %kame_now% + %time.hour%
+* Refused until the key is 2 past the last wave, so a wave late in one hour
+* and one early in the next are refused too. A stored key ahead of the clock
+* (a reset mud clock) counts as no wave rather than a lockout.
 if %actor.varexists(kame_used)%
-  if %actor.kame_used% == %kame_now%
-    %send% %actor% @GYour ki is spent; you cannot gather another wave yet.@n
-    halt
+  eval kame_wait %kame_now% - %actor.kame_used%
+  if %kame_wait% >= 0
+    if %kame_wait% < 2
+      %send% %actor% @GYour ki is spent; you cannot gather another wave yet.@n
+      halt
+    end
   end
 end
 set kame_used %kame_now%
