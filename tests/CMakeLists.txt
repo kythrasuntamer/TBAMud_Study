@@ -552,6 +552,23 @@ add_mud_test(test_dg_handler
 # DG script commands against the real server objects and a tiny world.
 add_subdirectory(dg_world)
 
+# Production OLC editors outside F1 (hedit.c, ...), driven through their entry
+# points with a fixture world; collaborators outside the editors are supplied
+# by the test, and unrelated sections are discarded.
+set(OLC_MISC_EDITOR_SOURCES
+    ${MUD_SRCDIR}/hedit.c
+)
+add_mud_test(test_olc_misc_editors
+    ${OLC_MISC_EDITOR_SOURCES}
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_olc_misc_editors.c
+)
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_compile_options(test_olc_misc_editors PRIVATE -ffunction-sections -fdata-sections)
+    target_link_options(test_olc_misc_editors PRIVATE -Wl,--gc-sections)
+    set_source_files_properties(${OLC_MISC_EDITOR_SOURCES}
+        PROPERTIES COMPILE_OPTIONS "-ffunction-sections;-fdata-sections")
+endif()
+
 find_package(Python3 COMPONENTS Interpreter QUIET)
 if(Python3_Interpreter_FOUND)
     add_test(NAME test_dg_memory_callback_contract

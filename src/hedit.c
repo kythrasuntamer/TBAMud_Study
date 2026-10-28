@@ -30,7 +30,7 @@ static void hedit_disp_menu(struct descriptor_data *);
 static void hedit_setup_new(struct descriptor_data *);
 static void hedit_setup_existing(struct descriptor_data *, int);
 static void hedit_save_to_disk(struct descriptor_data *);
-static void hedit_save_internally(struct descriptor_data *);
+static int hedit_save_internally(struct descriptor_data *);
 
 
 ACMD(do_oasis_hedit)
@@ -123,6 +123,19 @@ static void hedit_setup_new(struct descriptor_data *d)
 
 static void hedit_setup_existing(struct descriptor_data *d, int rnum)
 {
+  /* rnum comes from OLC_ZNUM, which do_oasis_hedit and the CONFIRM_EDIT walk
+   * set from search_help() and a scan of help_table.  Anything outside the
+   * table here is an editor bug, and copying from it would read past the
+   * allocation, so refuse loudly rather than open a garbage entry. */
+  if (!VALID_HELP_RNUM(rnum)) {
+    TB_ERROR_MSG("olc", "hedit-rnum-range", "help_table",
+                 "setup rnum %d top_of_helpt %d editor " DIAG_CHAR_FMT,
+                 rnum, top_of_helpt, DIAG_CHAR(d->character));
+    write_to_output(d, "That help entry no longer exists; nothing to edit.\r\n");
+    cleanup_olc(d, CLEANUP_ALL);
+    return;
+  }
+
   CREATE(OLC_HELP(d), struct help_index_element, 1);
 
   OLC_HELP(d)->keywords		= str_udup(help_table[rnum].keywords);
@@ -134,15 +147,20 @@ static void hedit_setup_existing(struct descriptor_data *d, int rnum)
   hedit_disp_menu(d);
 }
 
-static void hedit_save_internally(struct descriptor_data *d)
+/* Returns FALSE, having reported why, when the edit cannot be stored; the
+ * caller still owns OLC_HELP and its strings and must use CLEANUP_ALL. */
+static int hedit_save_internally(struct descriptor_data *d)
 {
   struct help_index_element *new_help_table = NULL;
 
-  if (OLC_ZNUM(d) != NOWHERE && OLC_ZNUM(d) >= top_of_helpt) {
-    TB_ERROR_MSG("olc", "help-index", "hedit_save_internally",
-                 "help index %d is past the %d-entry table; saving as a new "
-                 "entry", (int)OLC_ZNUM(d), top_of_helpt);
-    OLC_ZNUM(d) = NOWHERE;
+  /* OLC_ZNUM is NOWHERE (append) or a live row (replace); see
+   * VALID_HELP_RNUM.  A stale or walked-off index here used to be written
+   * through, past the end of help_table. */
+  if (OLC_ZNUM(d) != NOWHERE && !VALID_HELP_RNUM(OLC_ZNUM(d))) {
+    TB_ERROR_MSG("olc", "hedit-rnum-range", "help_table",
+                 "save rnum %d top_of_helpt %d editor " DIAG_CHAR_FMT,
+                 (int)OLC_ZNUM(d), top_of_helpt, DIAG_CHAR(d->character));
+    return FALSE;
   }
 
   if (OLC_ZNUM(d) == NOWHERE) {
@@ -160,6 +178,7 @@ static void hedit_save_internally(struct descriptor_data *d)
 
   add_to_save_list(HEDIT_PERMISSION, SL_HLP);
   hedit_save_to_disk(d);
+  return TRUE;
 }
 
 static void hedit_save_to_disk(struct descriptor_data *d)
@@ -245,8 +264,12 @@ void hedit_parse(struct descriptor_data *d, char *arg)
       tb_snprintf(buf, sizeof(buf), "OLC: %s edits help for %s.", GET_NAME(d->character),
                OLC_HELP(d)->keywords);
       mudlog(TRUE, MAX(LVL_BUILDER, GET_INVIS_LEV(d->character)), CMP, "%s", buf);
+      if (!hedit_save_internally(d)) {
+        write_to_output(d, "Save refused: the help entry being edited is no longer valid.\r\n");
+        cleanup_olc(d, CLEANUP_ALL);
+        break;
+      }
       write_to_output(d, "Help saved to disk.\r\n");
-      hedit_save_internally(d);
 
       /* Do not free strings, just the help structure. */
       cleanup_olc(d, CLEANUP_STRUCTS);
@@ -270,25 +293,31 @@ void hedit_parse(struct descriptor_data *d, char *arg)
     case 'q': case 'Q': 
       cleanup_olc(d, CLEANUP_ALL);
       break;       
-    case 'n': case 'N':
-      /* Offer the next entry that matches, or adding a new one.  The old
-       * loop gave up at the first entry that did not match and left
-       * OLC_ZNUM at top_of_helpt + 2, which a save then wrote to. */
-      for (OLC_ZNUM(d)++; OLC_ZNUM(d) < top_of_helpt; OLC_ZNUM(d)++)
-        if (is_abbrev(OLC_STORAGE(d), help_table[OLC_ZNUM(d)].keywords))
+    case 'n': case 'N': {
+      /* Offer the next row that matches, or fall through to "add".  The old
+       * loop set OLC_ZNUM to top_of_helpt + 1 on the first non-matching row
+       * and then incremented it, leaving top_of_helpt + 2: past the table but
+       * not NOWHERE, so "add" then overwrote help_table[top + 2].  Search
+       * with a local and store only a live row or NOWHERE. */
+      int next;
+
+      for (next = (int)OLC_ZNUM(d) + 1; next < top_of_helpt; next++)
+        if (is_abbrev(OLC_STORAGE(d), help_table[next].keywords))
           break;
 
-      if (OLC_ZNUM(d) >= top_of_helpt) {
-        OLC_ZNUM(d) = NOWHERE;            /* a new entry is appended */
+      if (next >= top_of_helpt) {
+        OLC_ZNUM(d) = NOWHERE;
         write_to_output(d, "Do you wish to add the '%s' help file? ",
             OLC_STORAGE(d));
         OLC_MODE(d) = HEDIT_CONFIRM_ADD;
       } else {
+        OLC_ZNUM(d) = next;
         write_to_output(d, "Do you wish to edit the '%s' help file? ",
             help_table[OLC_ZNUM(d)].keywords);
         OLC_MODE(d) = HEDIT_CONFIRM_EDIT;
-      }     
+      }
       break;
+    }
     default:
       write_to_output(d, "Invalid choice!\r\n"
                          "Do you wish to edit the '%s' help file? ",
