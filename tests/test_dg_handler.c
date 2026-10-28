@@ -61,7 +61,9 @@ int get_filename(char *filename, size_t fbufsize, int mode, const char *orig_nam
 { (void)filename; (void)fbufsize; (void)mode; (void)orig_name; return 0; }
 
 /* No fixture trigger has a pending wait; reaching the queue is a bug. */
-void event_cancel(struct event *event) { (void)event; abort(); }
+void event_cancel_at(struct event *event, const char *file, int line,
+                     const char *func)
+{ (void)event; (void)file; (void)line; (void)func; abort(); }
 
 /* ---- fixtures ---------------------------------------------------------- */
 static struct room_data rooms[3];
@@ -145,9 +147,19 @@ static void test_unshared_script_frees_quietly(void)
   TEST_ASSERT_EQUAL_INT(0, n_captured);
 }
 
+/* D2-09: bad extract_script() arguments report a structured op. */
+static void test_extract_script_bad_args_are_reported(void)
+{
+  extract_script(NULL, WLD_TRIGGER);
+  TEST_ASSERT_EQUAL_STRING("extract-script-null", last_op);
+  extract_script(&rooms[0], 99);
+  TEST_ASSERT_EQUAL_STRING("extract-script-type", last_op);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(test_extract_script_bad_args_are_reported);
   RUN_TEST(test_proto_shared_with_last_room_is_fatal);
   RUN_TEST(test_script_shared_with_last_room_is_fatal);
   RUN_TEST(test_unshared_script_frees_quietly);

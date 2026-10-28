@@ -110,29 +110,33 @@ struct event *event_create(EVENTFUNC(*func), void *event_obj, long when)
 /** Removes an event from event_q and frees the event. 
  * @param event Pointer to the event to be dequeued and removed. 
  */
-void event_cancel(struct event *event)
+void event_cancel_at(struct event *event, const char *file, int line,
+                     const char *func)
 {
   if (!event) {
-    log("SYSERR:  Attempted to cancel a NULL event");
+    tb_error_log_at("ERROR", "dg", "event-cancel-null", "event", 0,
+                    file, line, func, "attempted to cancel a NULL event");
     return;
-    }
+  }
 
   if (!event->q_el && event == dg_running_event) {
     /* Cancelling the event whose callback is on the stack: release the
      * payload now (a mud event must leave its owner's list before the owner
      * is freed) but leave the event struct to event_process(). */
     if (dg_running_event_cancelled) {
-      TB_ERROR_MSG("dg", "event-cancel-running-twice", "event",
-                   "running event %p (mud=%d) cancelled again; ignored",
-                   (void *)event, (int)event->isMudEvent);
+      tb_error_log_at("ERROR", "dg", "event-cancel-running-twice", "event", 0,
+                      file, line, func,
+                      "running event %p (mud=%d) cancelled again; ignored",
+                      (void *)event, (int)event->isMudEvent);
       return;
     }
-    TB_ERROR_LOG("WARN", "dg", "event-cancel-running", "event", 0,
-                 "event %p (mud=%d mud_id=%d obj=%p) cancelled from inside "
-                 "its own callback; payload freed now, event freed after the "
-                 "callback returns and not re-enqueued",
-                 (void *)event, (int)event->isMudEvent, event_mud_id(event),
-                 event->event_obj);
+    tb_error_log_at("WARN", "dg", "event-cancel-running", "event", 0,
+                    file, line, func,
+                    "event %p (mud=%d mud_id=%d obj=%p) cancelled from inside "
+                    "its own callback; payload freed now, event freed after "
+                    "the callback returns and not re-enqueued",
+                    (void *)event, (int)event->isMudEvent,
+                    event_mud_id(event), event->event_obj);
     if (event->event_obj)
       cleanup_event_obj(event);
     event->event_obj = NULL;
@@ -141,7 +145,14 @@ void event_cancel(struct event *event)
   }
 
   if (!event->q_el) {
-    log("SYSERR:  Attempted to cancel a non-NULL unqueued event, freeing anyway");
+    /* Every event_create()d event is queued unless it is running, so this
+     * is a stale or foreign pointer.  Legacy behaviour frees it anyway. */
+    tb_error_log_at("ERROR", "dg", "event-cancel-unqueued", "event", 0,
+                    file, line, func,
+                    "event %p (mud=%d mud_id=%d) is neither queued nor "
+                    "running; freeing anyway",
+                    (void *)event, (int)event->isMudEvent,
+                    event_mud_id(event));
   } else
     queue_deq(event_q, event->q_el);
 
@@ -173,7 +184,11 @@ void event_process(void)
 
   while ((long) pulse >= queue_key(event_q)) {
     if (!(the_event = (struct event *) queue_head(event_q))) {
-      log("SYSERR: Attempt to get a NULL event");
+      /* queue_key() saw a head in this pulse's bucket, so queue_head()
+       * must return it; NULL means the queue holds a NULL data pointer. */
+      TB_ERROR_MSG("dg", "event-queue-null-head", "event",
+                   "queue head for pulse %lu is NULL; stopping this pulse",
+                   pulse);
       return;
     }
 

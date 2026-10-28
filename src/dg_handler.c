@@ -182,7 +182,8 @@ void extract_script(void *thing, int type)
   room_data *room;
 
   if (!thing) {
-    log("SYSERR: NULL thing passed to extract_script().");
+    TB_ERROR_MSG("dg", "extract-script-null", "script",
+                 "NULL owner passed with type %d; nothing extracted", type);
     return;
   }
 
@@ -203,7 +204,13 @@ void extract_script(void *thing, int type)
       SCRIPT(room) = NULL;
       break;
     default:
-      log("SYSERR: Invalid script type %d passed to extract_script().", type);
+      /* type is always a *_TRIGGER constant chosen by engine code; any
+       * other value means the caller cast the wrong struct, so the
+       * owner's script is left attached (and leaks) rather than guessed. */
+      TB_ERROR_MSG("dg", "extract-script-type", "script",
+                   "invalid owner type %d for owner %p (expected %d/%d/%d); "
+                   "script left attached", type, thing,
+                   MOB_TRIGGER, OBJ_TRIGGER, WLD_TRIGGER);
       return;
   }
 

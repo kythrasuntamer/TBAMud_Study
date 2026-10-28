@@ -64,7 +64,10 @@ struct q_element {
 /* - events - function protos needed by other modules */
 void event_init(void);
 struct event *event_create(EVENTFUNC(*func), void *event_obj, long when);
-void event_cancel(struct event *event);
+void event_cancel_at(struct event *event, const char *file, int line,
+                     const char *func);
+/** Cancel and free an event; diagnostics name the calling file/line/func. */
+#define event_cancel(ev) event_cancel_at((ev), __FILE__, __LINE__, __func__)
 void event_process(void);
 long event_time(struct event *event);
 void event_free_all(void);

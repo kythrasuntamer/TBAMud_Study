@@ -137,9 +137,17 @@ static void test_cancel_running_event_is_deferred_and_not_requeued(void)
   TEST_ASSERT_EQUAL_INT(1, self_calls);
 }
 
+/* D2-09: cancelling NULL names the operation instead of a bare SYSERR. */
+static void test_cancel_null_is_reported(void)
+{
+  event_cancel(NULL);
+  TEST_ASSERT_TRUE(captured("event-cancel-null"));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(test_cancel_null_is_reported);
   RUN_TEST(test_cancel_running_event_is_deferred_and_not_requeued);
   return UNITY_END();
 }
