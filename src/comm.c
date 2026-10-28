@@ -2837,14 +2837,22 @@ void send_to_range(room_vnum start, room_vnum finish, const char *messg, ...)
   va_list args;
   int j;
 
+  /* start and finish are room vnums, both included. DG scripts pass
+   * script-supplied numbers (zoneecho and friends). */
   if (start > finish) {
-    log("send_to_range passed start room value greater then finish.");
+    TB_ERROR_MSG("comm", "send-range", "send_to_range",
+                 "start vnum %d > finish vnum %d; message not sent",
+                 (int) start, (int) finish);
     return;
   }
-  if (messg == NULL)
+  if (messg == NULL) {
+    TB_ERROR_MSG("comm", "send-range", "send_to_range",
+                 "NULL message for vnums %d-%d", (int) start, (int) finish);
     return;
+  }
 
-  for (j = 0; j < top_of_world; j++) {
+  /* top_of_world is the highest valid rnum, so it is included. */
+  for (j = 0; j <= top_of_world; j++) {
     if (GET_ROOM_VNUM(j) >= start && GET_ROOM_VNUM(j) <= finish) {
       for (i = world[j].people; i; i = i->next_in_room) {
         if (!i->desc)

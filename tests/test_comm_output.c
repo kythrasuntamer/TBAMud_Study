@@ -21,6 +21,8 @@
 struct player_special_data dummy_mob;
 struct index_data *mob_index = NULL; /* DIAG_DESC names mob vnums */
 mob_rnum top_of_mobt = 0;
+struct room_data *world = NULL;
+room_rnum top_of_world = 0;
 time_t motdmod = 0;
 time_t newsmod = 0;
 void basic_mud_log(const char *format, ...) { (void)format; }
@@ -330,6 +332,36 @@ static void input_flood_is_reported(void)
   desc.history = NULL;
 }
 
+/* send_to_range() looped 'j < top_of_world' and never reached the highest
+ * room; a reversed range was logged with no detail. */
+static void send_to_range_includes_last_room(void)
+{
+  static struct room_data rooms[2];
+  static char_data listener;
+
+  memset(rooms, 0, sizeof(rooms));
+  memset(&listener, 0, sizeof(listener));
+  rooms[0].number = 100;
+  rooms[1].number = 101;
+  world = rooms;
+  top_of_world = 1;
+  listener.in_room = 1;
+  listener.desc = &desc;
+  rooms[1].people = &listener;
+
+  send_to_range(100, 101, "echo");
+  TEST_ASSERT_EQUAL_STRING("echo", desc.output);
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+
+  send_to_range(101, 100, "reversed");
+  TEST_ASSERT_EQUAL_STRING("echo", desc.output);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("send-range", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "start vnum 101 > finish vnum 100"));
+  world = NULL;
+  top_of_world = 0;
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -342,5 +374,6 @@ int main(void)
   RUN_TEST(oversized_format_is_reported);
   RUN_TEST(long_input_line_is_reported);
   RUN_TEST(input_flood_is_reported);
+  RUN_TEST(send_to_range_includes_last_room);
   return UNITY_END();
 }
