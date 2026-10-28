@@ -92,28 +92,72 @@ char *str_udupnl(const char *txt)
   return str;
 }
 
-/* Original use: to be called at shutdown time. */
+/* Save every zone/type queued in save_list.  Called at shutdown, from
+ * 'saveall' and when converting world files at boot.
+ *
+ * Saver contract (save_types[].func): return > 0 after writing the file and
+ * removing the (zone, type) entry with remove_from_save_list(); return
+ * <= 0, leaving the entry queued, on failure.  This loop never waits for a
+ * failing saver to succeed -- it used to retry the head entry forever, so a
+ * read-only world directory or full disk hung shutdown.  Every entry is
+ * visited once: a failure is reported and its entry dropped, as are the
+ * SL_ACT / SL_HLP entries that cannot be autosaved.
+ *
+ * Returns TRUE when every queued save succeeded. */
 int save_all(void)
 {
-  while (save_list) {
-    if (save_list->type < 0 || save_list->type > SL_MAX) {
-      switch (save_list->type) {
+  struct save_list_data *entry;
+  int all_ok = TRUE, budget = 0, result, type, zone;
+
+  for (entry = save_list; entry; entry = entry->next)
+    budget++;
+
+  while ((entry = save_list) != NULL) {
+    if (budget-- <= 0) {
+      /* A saver queued more work than it removed; stop rather than spin. */
+      TB_ERROR_MSG("genolc", "save-all", "save_list",
+                   TB_ERRID_INVARIANT " save list still holds zone %d type %d after every queued entry was tried",
+                   entry->zone, entry->type);
+      return FALSE;
+    }
+    type = entry->type;
+    zone = entry->zone;
+
+    if (type < 0 || type > SL_MAX) {
+      switch (type) {
         case SL_ACT:
           log("Actions not saved - can not autosave. Use 'aedit save'.");
-          save_list = save_list->next;    /* Fatal error, skip this one. */
           break;
         case SL_HLP:
           log("Help not saved - can not autosave. Use 'hedit save'.");
-          save_list = save_list->next;    /* Fatal error, skip this one. */
           break;
         default:
-          log("SYSERR: GenOLC: Invalid save type %d in save list.\n", save_list->type);
+          TB_ERROR_MSG("genolc", "save-all", "save_list",
+                       TB_ERRID_INVARIANT " invalid save type %d for zone %d; entry dropped",
+                       type, zone);
+          all_ok = FALSE;
           break;
-        }
-      } else if ((*save_types[save_list->type].func) (real_zone(save_list->zone)) < 0)
-        save_list = save_list->next;      /* Fatal error, skip this one. */
+      }
+      save_list = entry->next;
+      free(entry);
+      continue;
     }
-    return TRUE;
+
+    result = (*save_types[type].func) (real_zone(zone));
+    if (in_save_list(zone, type)) {
+      TB_ERROR_MSG("genolc", "save-all", save_types[type].message,
+                   TB_ERRID_PERSIST_WRITE " zone %d %s save failed (result %d); entry dropped, changes not on disk",
+                   zone, save_types[type].message, result);
+      remove_from_save_list(zone, type);
+      all_ok = FALSE;
+    } else if (result <= 0) {
+      TB_ERROR_MSG("genolc", "save-all", save_types[type].message,
+                   TB_ERRID_PERSIST_WRITE " zone %d %s saver returned %d after clearing its entry",
+                   zone, save_types[type].message, result);
+      all_ok = FALSE;
+    }
+  }
+  return all_ok;
 }
 
 /* NOTE: This changes the buffer passed in. */
@@ -229,6 +273,7 @@ void free_save_list(void)
     next_sld = sld->next;
     free(sld);
   }
+  save_list = NULL;   /* no dangling head for a later add/save */
 }
 
 /* Used from do_show(), ideally. */

@@ -472,6 +472,21 @@ if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
 endif()
 target_link_libraries(test_ibt PRIVATE ${CRYPT_LIBRARY} ${SODIUM_LIBRARY})
 
+# Production GenOLC core (genolc.c, #included by the test for its file-scope
+# export writers): the save-list driver and zone export.
+add_mud_test(test_genolc
+    ${MUD_SRCDIR}/utils.c
+    ${MUD_SRCDIR}/random.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_genolc.c
+)
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_compile_options(test_genolc PRIVATE -ffunction-sections -fdata-sections)
+    target_link_options(test_genolc PRIVATE
+        -Wl,--gc-sections
+        -Wl,--wrap=tb_error_log_at)
+endif()
+target_link_libraries(test_genolc PRIVATE ${CRYPT_LIBRARY} ${SODIUM_LIBRARY})
+
 find_package(Python3 COMPONENTS Interpreter QUIET)
 if(Python3_Interpreter_FOUND)
     add_test(NAME test_dg_memory_callback_contract
