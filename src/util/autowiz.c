@@ -23,8 +23,10 @@
  * index record is reported (index path, line, field, idnum) and left out;
  * both lists are still written from the records that parsed (they are
  * truncated and rewritten only after the whole index was read), the server
- * is still signalled, and the exit status is 1 ("index-incomplete").  The
- * level arguments are parsed atoi-style (bad text becomes 0).
+ * is still signalled, and the exit status is 1 ("index-incomplete").  A
+ * level argument that is not a whole number in 0..LVL_IMPL, or a pid that
+ * is not a whole positive number, is reported ("autowiz-argument") and
+ * exits 1 before any list is touched or any process signalled.
  */
 
 #include "conf.h"
@@ -334,12 +336,33 @@ int main(int argc, char **argv)
 	   argv[0]);
     exit(0);
   }
-  wizlevel = tb_parse_int_or_zero(argv[1]);
-  immlevel = tb_parse_int_or_zero(argv[3]);
+  /* The arguments come from the server (run_autowiz() in limits.c) or an
+   * operator.  atoi-style parsing turned "abc" or an overflowing level into
+   * 0 and quietly produced wrong lists (I2-26), so a level must be a whole
+   * number in 0..LVL_IMPL and a pid a whole positive number; anything else
+   * is reported and nothing is written or signalled. */
+  if (!tb_parse_int_checked(argv[1], &wizlevel) || wizlevel < 0 ||
+      wizlevel > LVL_IMPL) {
+    TB_REPORT_DOMAIN_ERRORF(TB_SEV_ERROR, TB_ERR_PARSER, "autowiz-argument",
+                            "arg=wizlev text=%.40s range=0..%d",
+                            argv[1], LVL_IMPL);
+    return (1);
+  }
+  if (!tb_parse_int_checked(argv[3], &immlevel) || immlevel < 0 ||
+      immlevel > LVL_IMPL) {
+    TB_REPORT_DOMAIN_ERRORF(TB_SEV_ERROR, TB_ERR_PARSER, "autowiz-argument",
+                            "arg=immlev text=%.40s range=0..%d",
+                            argv[3], LVL_IMPL);
+    return (1);
+  }
 
 #ifdef CIRCLE_UNIX	/* Perhaps #ifndef CIRCLE_WINDOWS but ... */
-  if (argc == 6)
-    pid = tb_parse_int_or_zero(argv[5]);
+  if (argc == 6 && (!tb_parse_int_checked(argv[5], &pid) || pid <= 0)) {
+    TB_REPORT_DOMAIN_ERRORF(TB_SEV_ERROR, TB_ERR_PARSER, "autowiz-argument",
+                            "arg=pid text=%.40s range=1..%d", argv[5],
+                            INT_MAX);
+    return (1);
+  }
 #endif
 
   initialize();

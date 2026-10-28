@@ -158,47 +158,6 @@ extern void abort(), exit();
 #include <errno.h>
 #endif
 
-/*
- * Replacements for legacy atoi()/atol() call sites, with atoi()'s contract
- * kept on purpose:
- *   - text with no leading number ("", "abc") returns 0;
- *   - a value outside long (or, for the int form, int) returns 0 -- strtol's
- *     ERANGE is caught so there is no undefined overflow, but it is NOT
- *     reported anywhere;
- *   - trailing text is ignored ("12abc" returns 12).
- * So the caller cannot tell "0", "garbage" and "overflow" apart, and nothing
- * is logged.  Use them only for legacy fields where 0 is a safe, expected
- * value for bad input.  New code, and any input whose rejection matters
- * (file formats, command arguments that select or size something), should
- * use tb_parse_long_checked() / tb_parse_int_checked() below and report the
- * failure with its context.
- */
-static inline long tb_parse_long_or_zero(const char *text)
-{
-  char *end = NULL;
-  long value;
-
-  if (text == NULL)
-    return 0;
-
-  errno = 0;
-  value = strtol(text, &end, 10);
-  if (end == text || errno == ERANGE)
-    return 0;
-
-  return value;
-}
-
-static inline int tb_parse_int_or_zero(const char *text)
-{
-  long value = tb_parse_long_or_zero(text);
-
-  if (value < INT_MIN || value > INT_MAX)
-    return 0;
-
-  return (int)value;
-}
-
 static inline int tb_ascii_space(unsigned char ch)
 {
   return ch == ' ' || ch == '\t' || ch == '\n' ||
@@ -1001,6 +960,89 @@ static inline void tb_report_domain_errorf_at(tb_error_severity severity,
                              tb_saved_errnof_, __FILE__, __LINE__, __func__, \
                              __VA_ARGS__); \
 } while (0)
+
+/*
+ * Replacements for legacy atoi()/atol() call sites, with atoi()'s contract
+ * kept on purpose:
+ *   - text with no leading number ("", "abc") returns 0, silently;
+ *   - trailing text is ignored ("12abc" returns 12, "10d4" returns 10),
+ *     silently -- several legacy callers rely on parsing a number prefix;
+ *   - a value outside long (or, for the int form, int) returns 0 AND emits
+ *     one TBERR WARN record, category PARSER, operation
+ *     "parse-number-overflow", naming the text (first 40 bytes, escaped),
+ *     the limit that was exceeded and the call site.  Overflow is never a
+ *     legitimate value, so unlike the two cases above it is always reported
+ *     (I2-26): a DG script's %actor.prac(99999999999)% or an over-long field
+ *     in a world or player file is visible in the log instead of quietly
+ *     becoming 0.
+ * The text is controlled by whoever wrote it: players and builders (command
+ * arguments, DG script text, OLC input), or the files on disk.
+ *
+ * So the caller still cannot tell "0" and "garbage" apart.  Use these only
+ * for legacy fields where 0 is a safe, expected value for bad input.  New
+ * code, and any input whose rejection matters (file formats, command
+ * arguments that select or size something), should use
+ * tb_parse_long_checked() / tb_parse_int_checked() above and report the
+ * failure with its own entity IDs.
+ *
+ * The public names are macros so each report carries the caller's
+ * __FILE__/__LINE__/__func__; text is evaluated exactly once.  Errno is left
+ * as strtol() set it (ERANGE after an overflow); the report preserves it.
+ * Not async-signal-safe (the reporter is not).
+ */
+#define TB_PARSE_EXCERPT_LEN 40   /* bytes of the offending text quoted */
+
+static inline long tb_parse_long_or_zero_at(const char *text,
+                                            const char *source_file,
+                                            int source_line,
+                                            const char *source_func)
+{
+  char *end = NULL;
+  long value;
+
+  if (text == NULL)
+    return 0;
+
+  errno = 0;
+  value = strtol(text, &end, 10);
+  if (end == text)
+    return 0;
+  if (errno == ERANGE) {
+    tb_report_domain_errorf_at(TB_SEV_WARN, TB_ERR_PARSER,
+                               "parse-number-overflow", ERANGE,
+                               source_file, source_line, source_func,
+                               "text=\"%.*s\" limit=long result=0",
+                               TB_PARSE_EXCERPT_LEN, text);
+    return 0;
+  }
+
+  return value;
+}
+
+static inline int tb_parse_int_or_zero_at(const char *text,
+                                          const char *source_file,
+                                          int source_line,
+                                          const char *source_func)
+{
+  long value = tb_parse_long_or_zero_at(text, source_file, source_line,
+                                        source_func);
+
+  if (value < INT_MIN || value > INT_MAX) {
+    tb_report_domain_errorf_at(TB_SEV_WARN, TB_ERR_PARSER,
+                               "parse-number-overflow", 0,
+                               source_file, source_line, source_func,
+                               "text=\"%.*s\" limit=int value=%ld result=0",
+                               TB_PARSE_EXCERPT_LEN, text, value);
+    return 0;
+  }
+
+  return (int)value;
+}
+
+#define tb_parse_long_or_zero(text) \
+  tb_parse_long_or_zero_at((text), __FILE__, __LINE__, __func__)
+#define tb_parse_int_or_zero(text) \
+  tb_parse_int_or_zero_at((text), __FILE__, __LINE__, __func__)
 
 #define TB_INVARIANT(expr, context) \
   ((expr) ? 1 : \

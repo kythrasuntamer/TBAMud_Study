@@ -152,6 +152,72 @@ void test_checked_int_parser_rejects_overflow(void)
   TEST_ASSERT_EQUAL_INT(123, value);
 }
 
+/* Redirect stderr (where TBERR records go) into a tmpfile around a call. */
+static FILE *stderr_capture_begin(int *saved_fd)
+{
+  FILE *capture = tmpfile();
+
+  TEST_ASSERT_NOT_NULL(capture);
+  fflush(stderr);
+  *saved_fd = dup(STDERR_FILENO);
+  TEST_ASSERT_TRUE(*saved_fd >= 0);
+  TEST_ASSERT_TRUE(dup2(fileno(capture), STDERR_FILENO) >= 0);
+  return capture;
+}
+
+static void stderr_capture_end(FILE *capture, int saved_fd, char *out,
+                               size_t out_size)
+{
+  size_t got;
+
+  fflush(stderr);
+  TEST_ASSERT_TRUE(dup2(saved_fd, STDERR_FILENO) >= 0);
+  TEST_ASSERT_EQUAL_INT(0, close(saved_fd));
+  rewind(capture);
+  got = fread(out, 1, out_size - 1, capture);
+  out[got] = '\0';
+  TEST_ASSERT_EQUAL_INT(0, fclose(capture));
+}
+
+/* I2-26: the atoi-compatible parsers keep returning 0 for an overflow, but
+ * now say so, with the text, the limit and this call site. */
+void test_or_zero_parsers_report_overflow(void)
+{
+  char records[4096];
+  int saved_fd;
+  FILE *capture = stderr_capture_begin(&saved_fd);
+  long lvalue = tb_parse_long_or_zero("999999999999999999999999");
+  int ivalue = tb_parse_int_or_zero("99999999999");
+
+  stderr_capture_end(capture, saved_fd, records, sizeof(records));
+  TEST_ASSERT_EQUAL_INT(0, (int)lvalue);
+  TEST_ASSERT_EQUAL_INT(0, ivalue);
+  TEST_ASSERT_NOT_NULL_MESSAGE(strstr(records,
+      "operation=\"parse-number-overflow\""), records);
+  TEST_ASSERT_NOT_NULL_MESSAGE(strstr(records, "limit=long"), records);
+  TEST_ASSERT_NOT_NULL_MESSAGE(strstr(records, "limit=int"), records);
+  TEST_ASSERT_NOT_NULL_MESSAGE(strstr(records, "severity=WARN"), records);
+  TEST_ASSERT_NOT_NULL_MESSAGE(strstr(records, "test_error_handling.c:"),
+                               records);
+}
+
+/* atoi's contract is kept for everything else: no number gives 0, a prefix
+ * is accepted, and neither is reported. */
+void test_or_zero_parsers_keep_atoi_contract_quietly(void)
+{
+  char records[4096];
+  int saved_fd;
+  FILE *capture = stderr_capture_begin(&saved_fd);
+
+  TEST_ASSERT_EQUAL_INT(0, tb_parse_int_or_zero("abc"));
+  TEST_ASSERT_EQUAL_INT(0, tb_parse_int_or_zero(""));
+  TEST_ASSERT_EQUAL_INT(0, tb_parse_int_or_zero(NULL));
+  TEST_ASSERT_EQUAL_INT(12, tb_parse_int_or_zero("12abc"));
+  TEST_ASSERT_EQUAL_INT(-7, (int)tb_parse_long_or_zero(" -7"));
+  stderr_capture_end(capture, saved_fd, records, sizeof(records));
+  TEST_ASSERT_NULL_MESSAGE(strstr(records, "TBERR"), records);
+}
+
 void test_replace_file_commits_new_contents(void)
 {
   write_text(dest_path, "old");
@@ -254,6 +320,8 @@ int main(void)
   RUN_TEST(test_checked_int_parser_accepts_complete_number);
   RUN_TEST(test_checked_int_parser_rejects_trailing_garbage);
   RUN_TEST(test_checked_int_parser_rejects_overflow);
+  RUN_TEST(test_or_zero_parsers_report_overflow);
+  RUN_TEST(test_or_zero_parsers_keep_atoi_contract_quietly);
   RUN_TEST(test_replace_file_commits_new_contents);
   RUN_TEST(test_replace_file_rolls_back_after_commit_failure);
   RUN_TEST(test_replace_file_reports_rollback_failure_without_destroying_backup);

@@ -113,6 +113,21 @@ def autowiz_reports_level_out_of_range(tmp):
 
 
 @test("autowiz")
+def autowiz_rejects_bad_arguments(tmp):
+    """I2-26: a bad level argument parsed as 0 and produced wrong lists."""
+    write(os.path.join(tmp, "plrfiles", "index"), "1 alice 60 0 1700000000\n~\n")
+    for args in (["abc", "wiz", "51", "imm"],
+                 ["51", "wiz", "99999999999", "imm"],
+                 ["51x", "wiz", "51", "imm"],
+                 ["51", "wiz", "51", "imm", "0"]):
+        rc, out, err = run("autowiz", args, tmp)
+        check(rc == 1, "args=%r rc=%d err=%s" % (args, rc, err))
+        check("autowiz-argument" in operations(err), err)
+        check(not os.path.exists(os.path.join(tmp, "wiz")),
+              "wizlist written despite bad args %r" % (args,))
+
+
+@test("autowiz")
 def autowiz_reports_non_letter_name(tmp):
     """I2-07: add_name() dropped a non-letter name with a bare return."""
     rc, wiz, imm, err = autowiz(tmp, "1 al1ce 60 0 1700000000\n~\n")

@@ -41,32 +41,6 @@
   TB_REPORT_ERRNO((operation), (context))
 
 
-static long parse_long_or_zero(const char *text)
-{
-  char *end = NULL;
-  long value;
-
-  if (text == NULL)
-    return 0;
-
-  errno = 0;
-  value = strtol(text, &end, 10);
-  if (end == text || errno == ERANGE)
-    return 0;
-
-  return value;
-}
-
-static int parse_int_or_zero(const char *text)
-{
-  long value = parse_long_or_zero(text);
-
-  if (value < INT_MIN || value > INT_MAX)
-    return 0;
-
-  return (int)value;
-}
-
 /* Unsigned so bit 31 (letter F) is not a signed-overflow shift. */
 #define FLAG(n) (1UL << (n))
 
@@ -173,25 +147,25 @@ char *findLine(FILE *plr_file, char *tag) {
 /* Search file for mail ID and convert to long */
 long parse_mailid(FILE *plr_file) {
   char *value = findLine(plr_file, "MlID:");
-  return value ? parse_long_or_zero(value) : 0;
+  return value ? tb_parse_long_or_zero(value) : 0;
 }
 
 /* Search file for sender ID and convert to long */
 long parse_sender(FILE *plr_file) {
   char *value = findLine(plr_file, "Send:");
-  return value ? parse_long_or_zero(value) : 0;
+  return value ? tb_parse_long_or_zero(value) : 0;
 }
 
 /* Search file for recipient ID and convert to long */
 long parse_recipient(FILE *plr_file) {
   char *value = findLine(plr_file, "Reci:");
-  return value ? parse_long_or_zero(value) : 0;
+  return value ? tb_parse_long_or_zero(value) : 0;
 }
 
 /* Search file for date/time mail was sent and convert to long */
 long parse_send_time(FILE *plr_file) {
   char *value = findLine(plr_file, "Sent:");
-  return value ? parse_long_or_zero(value) : 0;
+  return value ? tb_parse_long_or_zero(value) : 0;
 }
 
 /* Search file for mail subject and return as string */
@@ -262,7 +236,7 @@ int parse_mail_flags(FILE *plr_file, const char *path) {
     }
   }
   if ((txt = findLine(plr_file, "Gold:")) != NULL) {
-    if (parse_long_or_zero(txt) > 0) SET_BIT(ret, MINDEX_HAS_GOLD);
+    if (tb_parse_long_or_zero(txt) > 0) SET_BIT(ret, MINDEX_HAS_GOLD);
   }
   if ((txt = findLine(plr_file, "Objs:")) != NULL) {
     SET_BIT(ret, MINDEX_HAS_OBJ);
@@ -273,7 +247,7 @@ int parse_mail_flags(FILE *plr_file, const char *path) {
 int parseadminlevel(FILE *plr_file, int level) {
 	char *fromFile = findLine(plr_file, "Admn:");
 	if (fromFile != NULL)
-		return parse_int_or_zero(fromFile);
+		return tb_parse_int_or_zero(fromFile);
 
 	if (level >= 30)
 		return level-30;
@@ -283,7 +257,7 @@ int parseadminlevel(FILE *plr_file, int level) {
 
 long parselast(FILE *plr_file) {
   char *value = findLine(plr_file, "Last:");
-  return value ? parse_long_or_zero(value) : 0;
+  return value ? tb_parse_long_or_zero(value) : 0;
 }
 
 
@@ -431,7 +405,7 @@ unsigned long asciiflag_conv(char *flag)
   }
 
   if (is_num)
-    flags = (unsigned long)parse_long_or_zero(flag);
+    flags = (unsigned long)tb_parse_long_or_zero(flag);
 
   return (flags);
 }
