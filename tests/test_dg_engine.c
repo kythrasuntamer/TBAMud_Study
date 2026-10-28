@@ -936,6 +936,25 @@ static void wait_in_last_room_resumes(void)
   TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
 }
 
+/* D1-24: eval saturated out-of-range operands and results and turned x / 0
+ * into 0 without any report. */
+static void saturated_arithmetic_is_reported(void)
+{
+  const char *ok[] = { "eval x 2 + 3", NULL };
+  const char *big[] = { "eval x 2147483647 + 1", NULL };
+  const char *zero[] = { "eval x 5 / 0", NULL };
+
+  run_mob_script(make_mob("mob"), ok);
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  run_mob_script(make_mob("mob2"), big);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("script-arith", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "result"));
+  run_mob_script(make_mob("mob3"), zero);
+  TEST_ASSERT_EQUAL_INT(2, tb_captured_errors);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "division by zero"));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -974,5 +993,6 @@ int main(void)
   RUN_TEST(dg_affect_out_of_range_is_refused);
   RUN_TEST(player_flag_setters_ignore_mobs);
   RUN_TEST(wait_in_last_room_resumes);
+  RUN_TEST(saturated_arithmetic_is_reported);
   return UNITY_END();
 }

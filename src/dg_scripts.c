@@ -1520,29 +1520,45 @@ static int is_num(char *arg)
    return TRUE;
 }
 
-static int script_int_value(const char *arg)
+/* Script arithmetic is int. Operands and results outside int saturate to
+ * INT_MIN / INT_MAX, as they always have, but now say so: a saturated
+ * value is never what the builder meant. Operand text is not logged, since
+ * either side may be player text. */
+static void report_script_arith(const trig_data *trig, const char *op,
+                                const char *what)
+{
+  TB_WARN_MSG("dg", "script-arith", "eval_op",
+              "trig vnum %d: %s (op %s) clamped to int range",
+              DIAG_TRIG_VNUM(trig), what, op);
+  script_log("Trigger VNum %d: %s (op %s) clamped to int range.",
+             DIAG_TRIG_VNUM(trig), what, op);
+}
+
+static int script_int_value(const trig_data *trig, const char *op,
+                            const char *arg)
 {
   long value;
 
   errno = 0;
   value = strtol(arg, NULL, 10);
 
-  if (errno == ERANGE)
-    return (*arg == '-') ? INT_MIN : INT_MAX;
-  if (value > INT_MAX)
-    return INT_MAX;
-  if (value < INT_MIN)
-    return INT_MIN;
+  if (errno == ERANGE || value > INT_MAX || value < INT_MIN) {
+    report_script_arith(trig, op, "operand");
+    if (errno == ERANGE)
+      return (*arg == '-') ? INT_MIN : INT_MAX;
+    return value > INT_MAX ? INT_MAX : INT_MIN;
+  }
 
   return (int)value;
 }
 
-static int clamp_script_int(long long value)
+static int clamp_script_int(const trig_data *trig, const char *op,
+                            long long value)
 {
-  if (value > INT_MAX)
-    return INT_MAX;
-  if (value < INT_MIN)
-    return INT_MIN;
+  if (value > INT_MAX || value < INT_MIN) {
+    report_script_arith(trig, op, "result");
+    return value > INT_MAX ? INT_MAX : INT_MIN;
+  }
   return (int)value;
 }
 
@@ -1590,42 +1606,42 @@ static void eval_op(char *op, char *lhs, char *rhs, char *result, void *go,
 
   else if (!strcmp("==", op)) {
     if (is_num(lhs) && is_num(rhs))
-      tb_snprintf(result, MAX_INPUT_LENGTH, "%d", script_int_value(lhs) == script_int_value(rhs));
+      tb_snprintf(result, MAX_INPUT_LENGTH, "%d", script_int_value(trig, op, lhs) == script_int_value(trig, op, rhs));
     else
       tb_snprintf(result, MAX_INPUT_LENGTH, "%d", !str_cmp(lhs, rhs));
   }
 
   else if (!strcmp("!=", op)) {
     if (is_num(lhs) && is_num(rhs))
-      tb_snprintf(result, MAX_INPUT_LENGTH, "%d", script_int_value(lhs) != script_int_value(rhs));
+      tb_snprintf(result, MAX_INPUT_LENGTH, "%d", script_int_value(trig, op, lhs) != script_int_value(trig, op, rhs));
     else
       tb_snprintf(result, MAX_INPUT_LENGTH, "%d", str_cmp(lhs, rhs));
   }
 
   else if (!strcmp("<=", op)) {
     if (is_num(lhs) && is_num(rhs))
-      tb_snprintf(result, MAX_INPUT_LENGTH, "%d", script_int_value(lhs) <= script_int_value(rhs));
+      tb_snprintf(result, MAX_INPUT_LENGTH, "%d", script_int_value(trig, op, lhs) <= script_int_value(trig, op, rhs));
     else
       tb_snprintf(result, MAX_INPUT_LENGTH, "%d", str_cmp(lhs, rhs) <= 0);
   }
 
   else if (!strcmp(">=", op)) {
     if (is_num(lhs) && is_num(rhs))
-      tb_snprintf(result, MAX_INPUT_LENGTH, "%d", script_int_value(lhs) >= script_int_value(rhs));
+      tb_snprintf(result, MAX_INPUT_LENGTH, "%d", script_int_value(trig, op, lhs) >= script_int_value(trig, op, rhs));
     else
       tb_snprintf(result, MAX_INPUT_LENGTH, "%d", str_cmp(lhs, rhs) >= 0);
   }
 
   else if (!strcmp("<", op)) {
     if (is_num(lhs) && is_num(rhs))
-      tb_snprintf(result, MAX_INPUT_LENGTH, "%d", script_int_value(lhs) < script_int_value(rhs));
+      tb_snprintf(result, MAX_INPUT_LENGTH, "%d", script_int_value(trig, op, lhs) < script_int_value(trig, op, rhs));
     else
       tb_snprintf(result, MAX_INPUT_LENGTH, "%d", str_cmp(lhs, rhs) < 0);
   }
 
   else if (!strcmp(">", op)) {
     if (is_num(lhs) && is_num(rhs))
-      tb_snprintf(result, MAX_INPUT_LENGTH, "%d", script_int_value(lhs) > script_int_value(rhs));
+      tb_snprintf(result, MAX_INPUT_LENGTH, "%d", script_int_value(trig, op, lhs) > script_int_value(trig, op, rhs));
     else
       tb_snprintf(result, MAX_INPUT_LENGTH, "%d", str_cmp(lhs, rhs) > 0);
   }
@@ -1634,40 +1650,42 @@ static void eval_op(char *op, char *lhs, char *rhs, char *result, void *go,
     tb_snprintf(result, MAX_INPUT_LENGTH, "%c", str_str(lhs, rhs) ? '1' : '0');
 
   else if (!strcmp("*", op)) {
-    lhs_num = script_int_value(lhs);
-    rhs_num = script_int_value(rhs);
+    lhs_num = script_int_value(trig, op, lhs);
+    rhs_num = script_int_value(trig, op, rhs);
     arithmetic = (long long)lhs_num * (long long)rhs_num;
-    tb_snprintf(result, MAX_INPUT_LENGTH, "%d", clamp_script_int(arithmetic));
+    tb_snprintf(result, MAX_INPUT_LENGTH, "%d", clamp_script_int(trig, op, arithmetic));
   }
 
   else if (!strcmp("/", op)) {
-    lhs_num = script_int_value(lhs);
-    rhs_num = script_int_value(rhs);
-    if (rhs_num == 0)
+    lhs_num = script_int_value(trig, op, lhs);
+    rhs_num = script_int_value(trig, op, rhs);
+    if (rhs_num == 0) {
+      /* Division by zero yields 0 (legacy), reported. */
+      report_script_arith(trig, op, "division by zero");
       strlcpy(result, "0", MAX_INPUT_LENGTH);
-    else {
+    } else {
       arithmetic = (long long)lhs_num / (long long)rhs_num;
-      tb_snprintf(result, MAX_INPUT_LENGTH, "%d", clamp_script_int(arithmetic));
+      tb_snprintf(result, MAX_INPUT_LENGTH, "%d", clamp_script_int(trig, op, arithmetic));
     }
   }
 
   else if (!strcmp("+", op)) {
-    lhs_num = script_int_value(lhs);
-    rhs_num = script_int_value(rhs);
+    lhs_num = script_int_value(trig, op, lhs);
+    rhs_num = script_int_value(trig, op, rhs);
     arithmetic = (long long)lhs_num + (long long)rhs_num;
-    tb_snprintf(result, MAX_INPUT_LENGTH, "%d", clamp_script_int(arithmetic));
+    tb_snprintf(result, MAX_INPUT_LENGTH, "%d", clamp_script_int(trig, op, arithmetic));
   }
 
   else if (!strcmp("-", op)) {
-    lhs_num = script_int_value(lhs);
-    rhs_num = script_int_value(rhs);
+    lhs_num = script_int_value(trig, op, lhs);
+    rhs_num = script_int_value(trig, op, rhs);
     arithmetic = (long long)lhs_num - (long long)rhs_num;
-    tb_snprintf(result, MAX_INPUT_LENGTH, "%d", clamp_script_int(arithmetic));
+    tb_snprintf(result, MAX_INPUT_LENGTH, "%d", clamp_script_int(trig, op, arithmetic));
   }
 
   else if (!strcmp("!", op)) {
     if (is_num(rhs))
-      tb_snprintf(result, MAX_INPUT_LENGTH, "%d", !script_int_value(rhs));
+      tb_snprintf(result, MAX_INPUT_LENGTH, "%d", !script_int_value(trig, op, rhs));
     else
       tb_snprintf(result, MAX_INPUT_LENGTH, "%d", !*rhs);
   }
