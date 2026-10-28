@@ -326,8 +326,15 @@ void greet_memory_mtrigger(char_data *actor)
         /* The command interpreter may delete the memory node supplying
          * this string. Own a private copy for the whole invocation. */
         char *command_copy = strdup(mem->cmd);
-        if (!command_copy)
+        if (!command_copy) {
+          /* Out of memory: stop this greet dispatch, but say why (as
+           * act_mtrigger does for the same failure). */
+          TB_ERROR_ERRNO("dg", "allocate", "greet_memory_mtrigger",
+                         DIAG_CHAR_FMT ": copy of a %zu-byte memory "
+                         "command failed; greet-memory dispatch stopped",
+                         DIAG_CHAR(ch), strlen(mem->cmd) + 1);
           goto cleanup;
+        }
         command_interpreter(ch, command_copy);
         free(command_copy); /* command memory itself stays linked */
         /* The callback can remove or relocate the owner. The command node
