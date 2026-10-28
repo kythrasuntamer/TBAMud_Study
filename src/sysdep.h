@@ -312,9 +312,14 @@ static inline int tb_parse_float_checked(const char *text, float *out)
 #endif
 
 #ifndef HAVE_STRUCT_IN_ADDR
+/* Fallback for platforms whose headers lack struct in_addr.  s_addr is an
+ * IPv4 address: exactly 32 bits (unsigned long is 64 bits on LP64).  The
+ * terminating ';' was missing, so this fused with the next declaration and
+ * failed to parse inside the following system header. */
+#include <stdint.h>
 struct in_addr {
-  unsigned long int s_addr;	/* for inet_addr, etc. */
-}
+  uint32_t s_addr;	/* for inet_addr, etc. */
+};
 #endif
 
 #ifdef HAVE_SYS_SELECT_H
