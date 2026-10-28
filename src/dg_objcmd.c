@@ -92,6 +92,12 @@ struct obj_command_info {
    int        subcmd;
 };
 
+/** TRUE when obj is somewhere in a room: stores obj_room(obj) in rvar (an
+ * rnum variable) and range-checks it, so world[rvar] may be indexed.
+ * obj_room() runs once; rvar must be a plain variable. */
+#define VALID_OBJ_ROOM(obj, rvar) \
+  (((rvar) = obj_room(obj)), VALID_ROOM_RNUM(rvar))
+
 /* do_osend */
 #define SCMD_OSEND         0
 #define SCMD_OECHOAROUND   1
@@ -243,7 +249,7 @@ static OCMD(do_oecho)
     if (!*argument)
         obj_log(obj, "oecho called with no args");
 
-    else if ((room = obj_room(obj)) != NOWHERE)
+    else if (VALID_OBJ_ROOM(obj, room))
     {
 	  if (world[room].people) {
 		sub_write(argument, world[room].people, TRUE, TO_ROOM);
@@ -280,7 +286,7 @@ static OCMD(do_oforce)
 
     if (!str_cmp(arg1, "all"))
     {
-        if ((room = obj_room(obj)) == NOWHERE)
+        if (!VALID_OBJ_ROOM(obj, room))
             obj_log(obj, "oforce called by object in NOWHERE");
         else
         {
@@ -557,7 +563,9 @@ static OCMD(do_opurge)
 
     if (!*arg) {
       /* purge all */
-      if ((rm = obj_room(obj)) != NOWHERE) {
+      if (!VALID_OBJ_ROOM(obj, rm)) {
+        obj_log(obj, "opurge: called by object in NOWHERE; nothing purged");
+      } else {
         for (ch = world[rm].people; ch; ch = next_ch ) {
            next_ch = ch->next_in_room;
            if (IS_NPC(ch))
@@ -617,8 +625,7 @@ static OCMD(do_oteleport)
         /* obj_room() is NOWHERE for an object that is not placed anywhere
          * (e.g. carried by nobody after a failed move); world[NOWHERE] is far
          * past the end of the world table. */
-        rm = obj_room(obj);
-        if (!VALID_ROOM_RNUM(rm)) {
+        if (!VALID_OBJ_ROOM(obj, rm)) {
             TB_ERROR_MSG("dg", "oteleport-origin", "do_oteleport",
                          "obj vnum %d uid %ld is not in a room (rnum %ld); "
                          "nobody teleported", GET_OBJ_VNUM(obj),
@@ -673,7 +680,7 @@ static OCMD(do_dgoload)
         return;
     }
 
-    if ((room = obj_room(obj)) == NOWHERE)
+    if (!VALID_OBJ_ROOM(obj, room))
     {
         obj_log(obj, "oload: object in NOWHERE trying to load");
         return;
@@ -795,7 +802,7 @@ static OCMD(do_oasound)
     return;
   }
 
-  if ((room = obj_room(obj)) == NOWHERE) {
+  if (!VALID_OBJ_ROOM(obj, room)) {
     obj_log(obj, "oasound called by object in NOWHERE");
     return;
   }

@@ -359,6 +359,18 @@ static void test_obj_rejection_is_reported_and_olog_is_not(void)
   TEST_ASSERT_NOT_NULL(strstr(dgw_detail("cmd-rejected"), "obj vnum 201"));
 }
 
+/* An unplaced object's commands that need its room refuse loudly
+ * (VALID_OBJ_ROOM); bare 'opurge' used to return without a word. */
+static void test_unplaced_object_room_commands_are_reported(void)
+{
+  struct obj_data *o = dgw_obj(DGW_OBJ_STONE, NOWHERE);
+
+  ocmd(o, "opurge");
+  ocmd(o, "oecho hello");
+  ocmd(o, "oload obj 201");
+  TEST_ASSERT_EQUAL_INT(3, dgw_saw("cmd-rejected"));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -381,5 +393,6 @@ int main(void)
   RUN_TEST(test_object_target_character_in_no_room);
   RUN_TEST(test_obj_numeric_arguments_are_checked);
   RUN_TEST(test_obj_rejection_is_reported_and_olog_is_not);
+  RUN_TEST(test_unplaced_object_room_commands_are_reported);
   return UNITY_END();
 }
