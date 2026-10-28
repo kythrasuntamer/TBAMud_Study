@@ -786,6 +786,39 @@ static void test_contents_without_container_reach_inventory(void)
                               "player idnum 4242: 1 object(s) at depth 1 lost their container"));
 }
 
+/* Fuzzer PLAYER-6 (restrung-leak): Name, Shrt and Desc (and ADes) were set
+ * with a raw strdup() and no free, so a record repeating a tag leaked the
+ * earlier copy (LeakSanitizer / Valgrind at exit). A repeat now replaces
+ * the object's own copy, while a string still shared with the prototype
+ * (the fixture's are literals) is never freed. A unique object owns all of
+ * its strings. */
+static void test_repeated_string_tags_replace_their_copy(void)
+{
+  char body[512];
+  struct obj_data *unique, *trinket;
+
+  TEST_ASSERT_TRUE(snprintf(body, sizeof(body),
+                            "%d %ld 0 0 0 0\n"
+                            "#101\nShrt: first\nShrt: second\nName: n1\nName: n2\n"
+                            "Desc: d1\nDesc: d2\nADes:\none\n~\nADes:\ntwo\n~\n"
+                            "#%d\nShrt: u1\nShrt: u2\n$~\n",
+                            RENT_CRASH, (long)time(0), NOTHING) > 0);
+  write_rent_file("Tester", body);
+
+  TEST_ASSERT_EQUAL_INT(1, Crash_load(&player));
+
+  unique = player.carrying;
+  TEST_ASSERT_NOT_NULL(unique);
+  trinket = unique->next_content;
+  TEST_ASSERT_NOT_NULL(trinket);
+  TEST_ASSERT_EQUAL_STRING("u2", unique->short_description);
+  TEST_ASSERT_EQUAL_STRING("second", trinket->short_description);
+  TEST_ASSERT_EQUAL_STRING("n2", trinket->name);
+  TEST_ASSERT_EQUAL_STRING("d2", trinket->description);
+  TEST_ASSERT_EQUAL_STRING("two\n", trinket->action_description);
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+}
+
 /* --- receptionist fixtures: "offer" is command 1; every act() is kept. --- */
 SPECIAL(receptionist);
 static struct command_info offer_cmd_table[] = {
@@ -1010,6 +1043,7 @@ int main(void)
   RUN_TEST(test_rent_values_check_object_reports_are_kept);
   RUN_TEST(test_listrent_pager_owns_its_copy);
   RUN_TEST(test_contents_without_container_reach_inventory);
+  RUN_TEST(test_repeated_string_tags_replace_their_copy);
   (void)rmdir(scratch_dir);
   return UNITY_END();
 }

@@ -1275,6 +1275,42 @@ obj_save_data *objsave_parse_objects(FILE *fl)
 #define OBJSAVE_REC_FMT "%s object line %d obj vnum %d: "
 #define OBJSAVE_REC_ARGS(vnum) owner, lineno, (int) (vnum)
 
+/* The prototype's value of string field fld of obj, or NULL for a unique
+ * object (no prototype), which owns all of its strings. Evaluates obj
+ * twice: pass a plain name. */
+#define OBJSAVE_PROTO_STR(obj, fld) \
+  (GET_OBJ_RNUM(obj) != NOTHING ? obj_proto[GET_OBJ_RNUM(obj)].fld : NULL)
+
+/** Give one of an object's string fields a new value read from a record,
+ * taking ownership of value (NULL, an empty string, is allowed). The old
+ * value is freed only if the object owns it: read_object() leaves an
+ * object's strings shared with its prototype (proto_value), and free_obj()
+ * frees only the ones that differ, as this does. A record repeating a tag
+ * used to leak the earlier copy (fuzzer PLAYER-6). */
+static void objsave_replace_string(char **field, const char *proto_value,
+                                   char *value)
+{
+  if (*field != NULL && *field != proto_value)
+    free(*field);
+  *field = value;
+}
+
+/* Set string field fld of the object being parsed to a copy of a record
+ * value, CircleMUD REPLACE_STR style (like players.c's PFILE_SET_STRING).
+ * A failed copy is reported and the field keeps its value. Uses the
+ * parser's resource, owner and lineno; obj and fld are evaluated more than
+ * once: pass plain names. */
+#define OBJSAVE_SET_STRING(obj, fld, value, tag) do { \
+  char *objsave_new_str_ = strdup(value); \
+  if (objsave_new_str_ == NULL) \
+    TB_ERROR_ERRNO("objsave", "rent-string", resource, \
+                   OBJSAVE_REC_FMT "tag %.4s not stored", \
+                   OBJSAVE_REC_ARGS(GET_OBJ_VNUM(obj)), (tag)); \
+  else \
+    objsave_replace_string(&(obj)->fld, OBJSAVE_PROTO_STR(obj, fld), \
+                           objsave_new_str_); \
+} while (0)
+
 /* A spell number an object may carry: -1 or 0 is "none", otherwise
  * 1..TOP_SPELL_DEFINE but not a skill (MAX_SPELLS+1..MAX_SKILLS), as in
  * db.c's check_object_spell_number(). Evaluates s several times. */
@@ -1490,7 +1526,9 @@ obj_save_data *objsave_parse_objects_from(FILE *fl, const char *resource,
          * or house file would take the game down at the owner's login. */
         char *text;
         if (fread_string_checked(fl, resource, "ADes", &text))
-          temp->action_description = text;
+          objsave_replace_string(&temp->action_description,
+                                 OBJSAVE_PROTO_STR(temp, action_description),
+                                 text);
         else
           TB_ERROR_MSG("objsave", "rent-string", resource,
                        OBJSAVE_REC_FMT "unterminated or oversize ADes; "
@@ -1514,7 +1552,7 @@ obj_save_data *objsave_parse_objects_from(FILE *fl, const char *resource,
       break;
     case 'D':
       if (!strcmp(tag, "Desc"))
-        temp->description = strdup(line);
+        OBJSAVE_SET_STRING(temp, description, line, tag);
       break;
     case 'E':
       if(!strcmp(tag, "EDes")) {
@@ -1578,7 +1616,7 @@ obj_save_data *objsave_parse_objects_from(FILE *fl, const char *resource,
       break;
     case 'N':
       if (!strcmp(tag, "Name"))
-        temp->name = strdup(line);
+        OBJSAVE_SET_STRING(temp, name, line, tag);
       break;
     case 'P':
       if (!strcmp(tag, "Perm")) {
@@ -1600,7 +1638,7 @@ obj_save_data *objsave_parse_objects_from(FILE *fl, const char *resource,
       break;
     case 'S':
       if (!strcmp(tag, "Shrt"))
-        temp->short_description = strdup(line);
+        OBJSAVE_SET_STRING(temp, short_description, line, tag);
       break;
     case 'T':
       if (!strcmp(tag, "Type"))
@@ -1643,6 +1681,8 @@ obj_save_data *objsave_parse_objects_from(FILE *fl, const char *resource,
 
   return head;
 }
+#undef OBJSAVE_SET_STRING
+#undef OBJSAVE_PROTO_STR
 #undef OBJSAVE_REC_FMT
 #undef OBJSAVE_REC_ARGS
 
