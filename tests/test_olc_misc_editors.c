@@ -291,7 +291,17 @@ int delete_quest(qst_rnum rnum)
   quest_deletes++;
   return TRUE;
 }
-int add_quest(struct aq_data *nqst) { (void)nqst; quest_adds++; return 0; }
+/* As genqst.c: an existing row is replaced by copies of nqst's strings;
+ * the caller keeps ownership of nqst. */
+int add_quest(struct aq_data *nqst)
+{
+  qst_rnum rnum = real_quest(nqst->vnum);
+  quest_adds++;
+  TEST_ASSERT_TRUE_MESSAGE(rnum != NOTHING, "fixture only replaces rows");
+  free_quest_strings(&aquest_table[rnum]);
+  copy_quest(&aquest_table[rnum], nqst, FALSE);
+  return rnum;
+}
 int save_quests(zone_rnum zone_num) { (void)zone_num; quest_saves++; return TRUE; }
 void free_quest_strings(struct aq_data *quest)
 {
@@ -794,6 +804,23 @@ static void test_qedit_delete_saved_quest(void)
   TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
 }
 
+/* F2-13: add_quest copies the strings, so saving must free the editor's
+ * copies (CLEANUP_ALL).  CLEANUP_STRUCTS leaked them: LeakSanitizer fails
+ * this test on the original code. */
+static void test_qedit_save_frees_editor_strings(void)
+{
+  char cmd[] = " 3001";
+
+  do_oasis_qedit(&builder, cmd, 0, 0);
+  type("1");
+  type("Renamed");
+  type("q");
+  type("y");
+  TEST_ASSERT_EQUAL_INT(1, quest_adds);
+  TEST_ASSERT_EQUAL_STRING("Renamed", aquest_table[0].name);
+  TEST_ASSERT_NULL(builder_desc.olc);
+}
+
 /* ---------------------------------------------------------------------
  * aedit
  * ------------------------------------------------------------------- */
@@ -1067,6 +1094,7 @@ int main(void)
   RUN_TEST(test_astat_bad_stored_position_is_reported);
   RUN_TEST(test_qedit_delete_unsaved_quest_is_refused_loudly);
   RUN_TEST(test_qedit_delete_saved_quest);
+  RUN_TEST(test_qedit_save_frees_editor_strings);
   RUN_TEST(test_qedit_new_quest_menu_names_undefined_type);
   RUN_TEST(test_qedit_bad_stored_type_is_reported);
   RUN_TEST(test_prefedit_target_extracted_mid_edit);

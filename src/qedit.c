@@ -419,7 +419,10 @@ void qedit_parse(struct descriptor_data *d, char *arg)
             write_to_output(d, "Quest %d saved to disk.\r\n", OLC_NUM(d));
           } else
             write_to_output(d, "Quest %d saved to memory.\r\n", OLC_NUM(d));
-          cleanup_olc(d, CLEANUP_STRUCTS);
+          /* add_quest copies every string into aquest_table (copy_quest ->
+           * str_udup), so the editor still owns OLC_QUEST's strings: free
+           * them too.  CLEANUP_STRUCTS leaked all five on every save. */
+          cleanup_olc(d, CLEANUP_ALL);
    return;
         case 'n':
         case 'N':
