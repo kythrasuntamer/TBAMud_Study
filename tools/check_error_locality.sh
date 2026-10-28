@@ -83,8 +83,12 @@ ratchet 'log("SYSERR...")' 391 '(^|[^A-Za-z0-9_])log[[:space:]]*\([[:space:]]*"S
 ratchet 'mudlog(..."SYSERR...")' 88 '(^|[^A-Za-z0-9_])mudlog[[:space:]]*\([^;]*"SYSERR'
 
 # unlink/remove/rename as a bare statement discards the result: a file that
-# should be gone (or renamed into place) silently is not.
-ratchet "unchecked unlink/remove/rename" 4 '^[[:space:]]*(unlink|remove|rename)[[:space:]]*\('
+# should be gone (or renamed into place) silently is not. A bare statement is
+# a line that starts with the call and either ends it with ';' or carries its
+# arguments on to the next line. A checked call that continues a longer
+# condition, such as the line "    rename(to, from) != 0)", is not counted.
+ratchet "unchecked unlink/remove/rename" 4 \
+  '^[[:space:]]*(unlink|remove|rename)[[:space:]]*\(([^;]*\)[[:space:]]*;|[^;]*,[[:space:]]*$|[[:space:]]*$)'
 
 # TB_REPORT_* operations name the failing call or step ("fopen",
 # "parse-options"); prose with spaces cannot be searched for reliably.
