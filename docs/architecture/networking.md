@@ -548,7 +548,10 @@ an entry when the entry's site is a substring of the lower-cased host name.
 | `BAN_SELECT` | only characters with `PLR_SITEOK` may log in |
 | `BAN_ALL` | connections are refused in `new_descriptor()` |
 
-`isbanned()` lower-cases the host string it is given, in place. `do_ban` and
+`isbanned()` lower-cases the host string it is given, in place, and matches
+it against sites that are stored lower-case: `do_ban` lower-cases the site it
+is given, and `load_banned()` lower-cases a site from the file and reports
+one that had uppercase letters (`ban/load-site-case`). `do_ban` and
 `do_unban` (level `LVL_GRGOD`) edit the list and rewrite the file. `SIGUSR2`
 clears the bans, the invalid-name list and the wizlock in an emergency.
 
