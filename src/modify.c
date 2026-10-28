@@ -8,6 +8,33 @@
 *  CircleMUD is based on DikuMUD, Copyright (C) 1990, 1991.               *
 **************************************************************************/
 
+/**
+ * @file modify.c
+ * The line editor's input path (string_write(), string_add()), the pager
+ * (page_string(), show_string()), the '@' <-> '\t' colour-code converters
+ * and do_skillset.
+ *
+ * Who controls the input:
+ * - string_add() receives one line typed by the player, in game_loop()'s
+ *   MAX_INPUT_LENGTH line buffer. comm.c has already dropped non-printable
+ *   bytes, so a player cannot type ESC or a raw tab.
+ * - The pager pages text built by the game and text loaded from world, help
+ *   and lib files. File text can contain ESC and, through parse_at(), a
+ *   '\t' as its last byte; next_page() must not trust either.
+ *
+ * Ownership:
+ * - While a descriptor is writing, d->str points at the caller's char *
+ *   (a field of an OLC copy, a mail buffer, ...). string_add() allocates,
+ *   grows and on abort frees *d->str; the caller frees it after its
+ *   *_string_cleanup() handler runs on save.
+ * - d->backstr is the text before editing (improved editor only). It is
+ *   restored on abort and freed on save.
+ * - The pager keeps d->showstr_vector (page start pointers) and, when
+ *   page_string() was asked to keep_internal, its own copy in
+ *   d->showstr_head. Both are freed when the last page is shown, on 'q', on
+ *   an inconsistent offset, and by close_socket().
+ */
+
 #include <stddef.h>
 
 #include "conf.h"
@@ -107,6 +134,21 @@ void parse_tab(char *str)
  * can use it to pass whatever else you may want through it.  The improved
  * editor patch when updated could use it to pass the old text buffer, for
  * instance. */
+/**
+ * Put a descriptor into line-editor mode.
+ *
+ * @param d       The writer. Its character, if a player, gets PLR_WRITING.
+ * @param writeto The caller's char * that receives the text. It must stay
+ *                valid until the matching *_string_cleanup() runs: string_add()
+ *                stores it in d->str and allocates, grows or frees *writeto.
+ *                *writeto may be NULL (empty buffer) or a malloc'd string.
+ * @param len     Hard cap for the whole text in bytes, including the final
+ *                "\r\n" and NUL. format_text() requires len <= MAX_STRING_LENGTH.
+ * @param mailto  Recipient idnum when writing mail, otherwise 0.
+ * @param data    The text before editing, or NULL. Ownership passes to this
+ *                function: the improved editor keeps it in d->backstr (restored
+ *                on abort, freed on save); the basic editor frees it now.
+ */
 void string_write(struct descriptor_data *d, char **writeto, size_t len, long mailto, void *data)
 {
   if (d->character && !IS_NPC(d->character))
@@ -124,6 +166,20 @@ void string_write(struct descriptor_data *d, char **writeto, size_t len, long ma
 
 /* Add user input to the 'current' string (as defined by d->str). This is still
  * overly complex. */
+/**
+ * Append one typed line to the text being edited, or run an editor command.
+ *
+ * @param d   A descriptor set up by string_write(); d->str must be non-NULL.
+ * @param str The player's line, in game_loop()'s MAX_INPUT_LENGTH buffer. It
+ *            is modified in place ('$$' collapsed, line-end '~' removed, and
+ *            cut to d->max_str - 3 bytes when it alone is too long).
+ *
+ * On save or abort the descriptor's *_string_cleanup() handler runs while
+ * d->str is still set; afterwards d->str, d->mail_to and d->max_str are reset
+ * and the writing flags are cleared. On abort *d->str is freed and replaced by
+ * d->backstr. A line that would overflow d->max_str is skipped with a message
+ * to the player.
+ */
 void string_add(struct descriptor_data *d, char *str)
 {
   int action;
@@ -468,6 +524,15 @@ static char *next_page(char *str, struct char_data *ch)
 }
 
 /* Function that returns the number of pages in the string. */
+/**
+ * Count the pages page_string() will show for @p str.
+ *
+ * @param str A NUL-terminated string owned by the caller.
+ * @param ch  The reader. GET_PAGE_LENGTH() and GET_SCREEN_WIDTH() (40..250,
+ *            else PAGE_WIDTH) decide where pages break; colour codes are
+ *            zero-width.
+ * @return At least 1.
+ */
 static int count_pages(char *str, struct char_data *ch)
 {
   int pages;
@@ -494,6 +559,18 @@ void paginate_string(char *str, struct descriptor_data *d)
 }
 
 /* The call that gets the paging ball rolling... */
+/**
+ * Start paging @p str to @p d and show the first page.
+ *
+ * @param d             Reader; d->character must be set. NULL is ignored.
+ * @param str           NUL-terminated text; NULL or "" is ignored. It may come
+ *                      from files and contain colour codes, ESC and a trailing
+ *                      '\t' (next_page() handles all three).
+ * @param keep_internal TRUE: the pager pages its own copy (d->showstr_head),
+ *                      so the caller may free @p str at once. FALSE: the
+ *                      caller must keep @p str alive and unchanged until the
+ *                      last page is shown or the descriptor closes.
+ */
 void page_string(struct descriptor_data *d, char *str, int keep_internal)
 {
   char actbuf[MAX_INPUT_LENGTH] = "";
