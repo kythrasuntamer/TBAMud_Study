@@ -13,6 +13,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include "tb_error_capture.h"
 
 enum attack { QUIET, FORGET_REMAINING, RELOCATE_OWNER, PURGE_OWNER,
               PURGE_ACTOR, REENTER, RECREATE_MEMORY, PURGE_NEXT_TRIGGER, PURGE_TIMER_OBJECT, PURGE_TIMER_OBJECT_FALSE,
@@ -247,6 +248,7 @@ void setUp(void)
   active_timer_object = 0;
   attack = QUIET;
   callbacks = commands = nested_calls = reenter_greeting = 0;
+  tb_error_capture_reset();
 }
 void tearDown(void)
 {
@@ -550,8 +552,12 @@ static void timer_object_reused_trigger_address(void)
   trigger->next = next_trigger;
   attack = REUSE_NEXT_TRIGGER_ADDRESS;
   timer_otrigger(timer_object);
-  /* The replacement is not part of the original dispatch set. */
+  /* The replacement is not part of the original dispatch set, and the
+   * reuse is reported rather than silently skipped. */
   TEST_ASSERT_EQUAL_INT(1, callbacks);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("WARNING", tb_captured_severity);
+  TEST_ASSERT_EQUAL_STRING("trigger-identity", tb_captured_operation);
 }
 static void timer_object_extracted_next_trigger(void)
 {

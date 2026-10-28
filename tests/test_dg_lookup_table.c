@@ -9,6 +9,7 @@
 #include "utils.h"
 #include "db.h"
 #include "dg_scripts.h"
+#include "tb_error_capture.h"
 
 /* ID counters live in db.c, which this fixture does not link. */
 long max_mob_id = MOB_ID_BASE;
@@ -46,6 +47,7 @@ void setUp(void)
   max_mob_id = MOB_ID_BASE;
   max_obj_id = OBJ_ID_BASE;
   mudlogs = 0;
+  tb_error_capture_reset();
 }
 void tearDown(void)
 {
@@ -67,8 +69,14 @@ static void stale_holder_removal_keeps_rebound_uid(void)
   old_ch.script_id = new_ch.script_id = 42;
   add_to_lookup_table(42, &old_ch);
   add_to_lookup_table(42, &new_ch);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("uid-rebind", tb_captured_operation);
   remove_from_lookup_table(42, &old_ch);
   TEST_ASSERT_EQUAL_PTR(&new_ch, find_char(42));
+  /* The refused removal is reported with both identities. */
+  TEST_ASSERT_EQUAL_INT(2, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("WARNING", tb_captured_severity);
+  TEST_ASSERT_EQUAL_STRING("uid-remove", tb_captured_operation);
   old_ch.script_id = 0;
 }
 static void owner_removal_unregisters_uid(void)
@@ -77,6 +85,7 @@ static void owner_removal_unregisters_uid(void)
   add_to_lookup_table(42, &new_ch);
   remove_from_lookup_table(42, &new_ch);
   TEST_ASSERT_NULL(find_char(42));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
   new_ch.script_id = 0;
 }
 static void mob_ids_skip_registered_uid(void)
@@ -95,6 +104,8 @@ static void mob_ids_wrap_within_mobile_range(void)
   TEST_ASSERT_TRUE(id >= MOB_ID_BASE && id < ROOM_ID_BASE);
   TEST_ASSERT_EQUAL_PTR(&mob_a, find_char(id));
   TEST_ASSERT_EQUAL_INT(1, mudlogs);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("uid-allocate", tb_captured_operation);
 }
 static void obj_ids_skip_registered_uid(void)
 {
@@ -110,6 +121,15 @@ static void obj_ids_wrap_within_object_range(void)
   long id = obj_script_id(&obj_a);
   TEST_ASSERT_EQUAL_INT64(OBJ_ID_BASE, id);
   TEST_ASSERT_TRUE(obj_uid_matches(id, &obj_a));
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("uid-allocate", tb_captured_operation);
+}
+static void removing_unregistered_uid_is_reported(void)
+{
+  remove_from_lookup_table(4242, &new_ch);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("ERROR", tb_captured_severity);
+  TEST_ASSERT_EQUAL_STRING("uid-remove", tb_captured_operation);
 }
 static void object_existence_requires_object_range(void)
 {
@@ -127,6 +147,7 @@ int main(void)
   RUN_TEST(mob_ids_wrap_within_mobile_range);
   RUN_TEST(obj_ids_skip_registered_uid);
   RUN_TEST(obj_ids_wrap_within_object_range);
+  RUN_TEST(removing_unregistered_uid_is_reported);
   RUN_TEST(object_existence_requires_object_range);
   return UNITY_END();
 }
