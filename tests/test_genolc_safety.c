@@ -1447,6 +1447,44 @@ static void add_object_refuses_vnum_outside_every_zone(void)
 }
 
 /* ------------------------------------------------------------------------ */
+/* I1-03: shop list removal with a builder index outside the list.          */
+/* ------------------------------------------------------------------------ */
+
+/* sedit passes the builder's number straight to these; one outside the list
+ * used to be ignored without a word.  A valid removal still leaves a
+ * correctly terminated list (walked under ASan). */
+static void remove_shop_list_entries_reports_bad_index(void)
+{
+  struct shop_buy_data *types;
+  IDXTYPE *rooms;
+
+  CREATE(types, struct shop_buy_data, 3);
+  types[0].type = 1; BUY_WORD(types[0]) = strdup("sword");
+  types[1].type = 5;
+  types[2].type = NOTHING;
+  remove_shop_from_type_list(&types, 2);
+  TEST_ASSERT_EQUAL_STRING("shop-list-index", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "remove index 2 out of range 0..1"));
+  TEST_ASSERT_EQUAL_STRING("sword", BUY_WORD(types[0]));
+  TEST_ASSERT_EQUAL_INT(5, BUY_TYPE(types[1]));
+  remove_shop_from_type_list(&types, 0);
+  TEST_ASSERT_EQUAL_INT(5, BUY_TYPE(types[0]));
+  TEST_ASSERT_EQUAL_INT(NOTHING, BUY_TYPE(types[1]));
+  free(types);
+
+  CREATE(rooms, IDXTYPE, 2);
+  rooms[0] = 3001; rooms[1] = NOTHING;
+  tb_error_capture_reset();
+  remove_shop_from_int_list(&rooms, 1);
+  TEST_ASSERT_EQUAL_STRING("shop-list-index", tb_captured_operation);
+  TEST_ASSERT_EQUAL_INT(3001, rooms[0]);
+  remove_shop_from_int_list(&rooms, 0);
+  TEST_ASSERT_EQUAL_INT(NOTHING, rooms[0]);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  free(rooms);
+}
+
+/* ------------------------------------------------------------------------ */
 /* Temporary world directory for the writers.                               */
 /* ------------------------------------------------------------------------ */
 static char test_root[] = "/tmp/tb-genolc-XXXXXX";
@@ -1553,6 +1591,7 @@ int main(void)
   RUN_TEST(new_command_is_zeroed);
   RUN_TEST(new_command_reports_bad_position);
   RUN_TEST(add_object_refuses_vnum_outside_every_zone);
+  RUN_TEST(remove_shop_list_entries_reports_bad_index);
   failures = UNITY_END();
   leave_test_root();
   return failures;
