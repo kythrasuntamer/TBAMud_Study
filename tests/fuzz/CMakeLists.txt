@@ -125,8 +125,14 @@ target_compile_options(fuzz_player PRIVATE -ftrivial-auto-var-init=pattern)
 #     Name:/Shrt:/Desc: leaks the first copy (objsave.c:1404/1468/1490) --
 #     the players.c PFILE_SET_STRING fix was never applied here. Fixed by
 #     f8de88c: a repeated tag replaces the object's own copy.
+#   PLAYER-7 regression-alias-dup-count0: a pfile with several "Alis:" tags,
+#     one of which ("Alis:Gold 3") parses to count 0; read_aliases_ascii()
+#     set GET_ALIASES(ch) to NULL for count 0 without freeing the aliases an
+#     earlier block had loaded (leak, players.c). Fixed on audit/p2-alias-leak:
+#     a duplicate Alis: tag is reported (pfile-alias-dup) and the later block
+#     replaces the earlier list, which is freed.
 foreach(_crash vars-noname name-path-login name-path-index hcontrol-time
-               fread-string-nul controw-leak restrung-leak)
+               fread-string-nul controw-leak restrung-leak alias-dup-count0)
     add_test(NAME fuzz_player_regression_${_crash}
              COMMAND fuzz_player ${CMAKE_CURRENT_SOURCE_DIR}/corpus/player/regression-${_crash})
     set_tests_properties(fuzz_player_regression_${_crash} PROPERTIES

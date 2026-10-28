@@ -750,6 +750,47 @@ static void test_huge_alias_count_is_rejected(void)
   TEST_ASSERT_EQUAL_STRING("pfile-alias", tb_captured_operation);
 }
 
+/* Same contract as interpreter.c free_alias() (not linked here). */
+void free_alias(struct alias_data *a)
+{
+  free(a->alias);
+  free(a->replacement);
+  free(a);
+}
+
+/* P2 fuzz_player leak: a second "Alis: 0" set the list to NULL without
+ * freeing the aliases the first block loaded (LeakSanitizer). Policy: the
+ * later block replaces the earlier one, and the duplicate is reported. */
+static void test_duplicate_alias_tag_count0_frees_earlier_list(void)
+{
+  write_pfile("tester", "Id  : 4242\nName: tester\nAlis: 2\n foo\n bar\n0\n"
+                        " baz\n qux\n0\nAlis: 0\n");
+
+  TEST_ASSERT_EQUAL_INT(0, load_char("tester", &player));
+  TEST_ASSERT_NULL(player_specials.aliases);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("pfile-alias-dup", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "player idnum 4242 name tester"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "2 alias(es) dropped"));
+}
+
+/* A second non-empty "Alis:" block replaces the first instead of silently
+ * merging into it. */
+static void test_duplicate_alias_tag_later_block_wins(void)
+{
+  write_pfile("tester", "Id  : 4242\nAlis: 1\n foo\n bar\n0\n"
+                        "Alis: 1\n baz\n qux\n1\n");
+
+  TEST_ASSERT_EQUAL_INT(0, load_char("tester", &player));
+  TEST_ASSERT_NOT_NULL(player_specials.aliases);
+  TEST_ASSERT_NULL(player_specials.aliases->next);
+  TEST_ASSERT_EQUAL_STRING("baz", player_specials.aliases->alias);
+  TEST_ASSERT_EQUAL_INT(1, player_specials.aliases->type);
+  TEST_ASSERT_EQUAL_STRING("pfile-alias-dup", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "name (no name yet)"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "1 alias(es) dropped"));
+}
+
 /* --- save_char() fixtures: a heap affect list handled like handler.c. --- */
 void affect_remove(struct char_data *ch, struct affected_type *af)
 {
@@ -897,6 +938,8 @@ int main(void)
   RUN_TEST(test_wrong_flag_word_count_is_reported);
   RUN_TEST(test_truncated_alias_list_is_reported);
   RUN_TEST(test_huge_alias_count_is_rejected);
+  RUN_TEST(test_duplicate_alias_tag_count0_frees_earlier_list);
+  RUN_TEST(test_duplicate_alias_tag_later_block_wins);
   RUN_TEST(test_save_keeps_affects_past_max);
   RUN_TEST(test_save_of_unindexed_player_is_reported);
   RUN_TEST(test_stale_current_quest_is_cleared);

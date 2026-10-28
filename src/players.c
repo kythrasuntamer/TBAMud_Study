@@ -103,7 +103,7 @@ static void load_HMVS(struct char_data *ch, const char *line, int mode,
 static void pfile_unknown_tag(const char *filename, const char *tag, long idnum);
 static void write_aliases_ascii(FILE *file, struct char_data *ch);
 static void read_aliases_ascii(FILE *file, struct char_data *ch, int count,
-                               const char *filename);
+                               const char *filename, int *alis_seen);
 
 /* Parse one pfile tag's integer value. The pfile is untrusted on read
  * (hand-edited, truncated or corrupted); a malformed or out-of-range value
@@ -729,6 +729,7 @@ int load_char(const char *name, struct char_data *ch)
   char line[MAX_INPUT_LENGTH + 1], tag[6];
   trig_data *t = NULL;
   trig_rnum t_rnum = NOTHING;
+  int alis_seen = FALSE;	/* an "Alis:" tag was read; see read_aliases_ascii() */
 
   if ((id = get_ptable_by_name(name)) < 0)
     return (-1);
@@ -826,7 +827,7 @@ int load_char(const char *name, struct char_data *ch)
 	}
 	else if (!strcmp(tag, "Affs")) 	load_affects(fl, ch);
         else if (!strcmp(tag, "Alin"))	GET_ALIGNMENT(ch)	= parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
-	else if (!strcmp(tag, "Alis"))	read_aliases_ascii(fl, ch, parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch)), filename);
+	else if (!strcmp(tag, "Alis"))	read_aliases_ascii(fl, ch, parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch)), filename, &alis_seen);
 	else pfile_unknown_tag(filename, tag, GET_IDNUM(ch));
 	break;
 
@@ -1756,20 +1757,58 @@ static void write_aliases_ascii(FILE *file, struct char_data *ch)
  * and every alias costs three get_line() calls at login. */
 #define PFILE_MAX_ALIASES 1000
 
+/* Name for pfile diagnostics: "Alis:" may come before "Name:" in a
+ * damaged or hand-edited file, so the name can still be unset. */
+#define PFILE_DIAG_NAME(ch) (GET_PC_NAME(ch) ? GET_PC_NAME(ch) : "(no name yet)")
+
+/* Free every alias in ch's list and leave the list empty. */
+static void free_alias_list(struct char_data *ch)
+{
+  struct alias_data *a, *next_a;
+
+  for (a = GET_ALIASES(ch); a; a = next_a) {
+    next_a = a->next;
+    free_alias(a);
+  }
+  GET_ALIASES(ch) = NULL;
+}
+
 /* Read count alias records (alias line, replacement line, type line) that
  * follow an "Alis: <count>" tag. A record cut off by end of file used to
  * leave the line buffers uninitialised or holding the previous record, so
  * an alias was built from garbage or duplicated; it now ends the list with
- * a pfile-alias error. */
+ * a pfile-alias error.
+ *
+ * Duplicate "Alis:" tags. save_char() writes exactly one, so a second one
+ * means a damaged or hand-edited file. Policy: the LAST block wins, as for
+ * every other pfile tag read twice. The duplicate is reported as
+ * pfile-alias-dup (naming the aliases dropped), the earlier list is freed,
+ * and the later block is read in its place -- including a later
+ * "Alis: 0", which leaves no aliases. Previously "Alis: 0" just set the
+ * list to NULL, leaking the aliases already loaded, and a later non-zero
+ * block silently merged into the earlier list. *alis_seen is load_char()'s
+ * per-file flag. */
 static void read_aliases_ascii(FILE *file, struct char_data *ch, int count,
-                               const char *filename)
+                               const char *filename, int *alis_seen)
 {
   int i;
 
-  if (count == 0) {
-    GET_ALIASES(ch) = NULL;
-    return; /* No aliases in the list. */
+  if (*alis_seen) {
+    int dropped = 0;
+    struct alias_data *a;
+
+    for (a = GET_ALIASES(ch); a; a = a->next)
+      dropped++;
+    TB_ERROR_MSG("player", "pfile-alias-dup", filename,
+                 "player idnum %ld name %s: duplicate Alis: tag (count %d); "
+                 "the later block replaces the earlier one, %d alias(es) dropped",
+                 GET_IDNUM(ch), PFILE_DIAG_NAME(ch), count, dropped);
+    free_alias_list(ch);
   }
+  *alis_seen = TRUE;
+
+  if (count == 0)
+    return; /* No aliases in the list. */
   if (count < 0 || count > PFILE_MAX_ALIASES) {
     TB_ERROR_MSG("player", "pfile-alias", filename,
                  "player idnum %ld alias count %d outside 1..%d; aliases not loaded",
