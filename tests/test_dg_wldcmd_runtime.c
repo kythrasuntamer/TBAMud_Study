@@ -137,9 +137,48 @@ static void test_wload_and_wdamage_bad_numbers(void)
   TEST_ASSERT_EQUAL_INT(DGW_MOB_OGRE, GET_MOB_VNUM(world[1].people));
 }
 
+/* E1-14: an exit created by a non-room field leads nowhere (calloc made it
+ * lead to rnum 0, a real room), and saying so; bad room/key values are
+ * refused. */
+static void test_wdoor_new_exit_leads_nowhere(void)
+{
+  struct room_direction_data *e;
+
+  wcmd(0, "wdoor 100 up flags a");
+  e = world[0].dir_option[UP];
+  TEST_ASSERT_NOT_NULL(e);
+  TEST_ASSERT_EQUAL_INT(NOWHERE, e->to_room);
+  TEST_ASSERT_EQUAL_INT(1, dgw_saw("door-create"));
+
+  wcmd(0, "wdoor 100 up room 101");
+  TEST_ASSERT_EQUAL_INT(1, e->to_room);
+  wcmd(0, "wdoor 100 up room 65637");          /* wraps onto 101 */
+  TEST_ASSERT_EQUAL_INT(NOWHERE, e->to_room);
+  TEST_ASSERT_EQUAL_INT(1, dgw_saw("door-target"));
+
+  wcmd(0, "wdoor 100 up key -1");
+  TEST_ASSERT_EQUAL_INT(NOTHING, e->key);
+  wcmd(0, "wdoor 100 up key 205");
+  TEST_ASSERT_EQUAL_INT(205, e->key);
+  wcmd(0, "wdoor 100 up key 70000");
+  TEST_ASSERT_EQUAL_INT(205, e->key);
+  TEST_ASSERT_EQUAL_INT(1, dgw_saw("parse-vnum"));
+
+  wcmd(0, "wdoor 100 north room 102");          /* room field: no warning */
+  TEST_ASSERT_EQUAL_INT(2, world[0].dir_option[NORTH]->to_room);
+  TEST_ASSERT_EQUAL_INT(1, dgw_saw("door-create"));
+
+  wcmd(0, "wdoor 100 up name hatch");
+  wcmd(0, "wdoor 100 up description A hatch.");
+  TEST_ASSERT_EQUAL_STRING("hatch", e->keyword);
+  wcmd(0, "wdoor 100 up purge");
+  TEST_ASSERT_NULL(world[0].dir_option[UP]);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(test_wdoor_new_exit_leads_nowhere);
   RUN_TEST(test_wteleport_non_numeric_target_is_refused);
   RUN_TEST(test_wteleport_vnum_overflow_is_refused);
   RUN_TEST(test_wload_and_wdamage_bad_numbers);

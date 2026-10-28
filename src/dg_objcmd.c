@@ -734,8 +734,7 @@ static OCMD(do_odoor)
     char target[MAX_INPUT_LENGTH], direction[MAX_INPUT_LENGTH];
     char field[MAX_INPUT_LENGTH], *value;
     room_data *rm;
-    struct room_direction_data *newexit;
-    int dir, fd, to_room;
+    int dir, fd;
 
     const char *door_field[] = {
         "purge",
@@ -781,62 +780,8 @@ static OCMD(do_odoor)
         return;
     }
 
-    newexit = rm->dir_option[dir];
-
-    /* purge exit */
-    if (fd == 0) {
-        if (newexit) {
-            if (newexit->general_description)
-                free(newexit->general_description);
-            if (newexit->keyword)
-                free(newexit->keyword);
-            free(newexit);
-            rm->dir_option[dir] = NULL;
-        }
-    }
-
-    else {
-        if (!newexit) {
-            CREATE(newexit, struct room_direction_data, 1);
-            rm->dir_option[dir] = newexit;
-        }
-
-        switch (fd) {
-        case 1:  /* description */
-            if (newexit->general_description)
-                free(newexit->general_description);
-            {
-                size_t desc_size = strlen(value) + 3;
-                CREATE(newexit->general_description, char, desc_size);
-                strlcpy(newexit->general_description, value, desc_size);
-                strlcat(newexit->general_description, "\r\n", desc_size);
-            } /* strcat : OK */
-            break;
-        case 2:  /* flags       */
-            newexit->exit_info = (sh_int)asciiflag_conv(value);
-            break;
-        case 3:  /* key         */
-            newexit->key = tb_parse_int_or_zero(value);
-            break;
-        case 4:  /* name        */
-            if (newexit->keyword)
-                free(newexit->keyword);
-            {
-                size_t keyword_size = strlen(value) + 1;
-                CREATE(newexit->keyword, char, keyword_size);
-                strlcpy(newexit->keyword, value, keyword_size);
-            }
-            break;
-        case 5:  /* room        */
-            if ((to_room = real_room(dg_parse_vnum(value))) != NOWHERE)
-                newexit->to_room = to_room;
-            else {
-                newexit->to_room = NOWHERE;
-                obj_log(obj, "odoor: invalid door target (arg == %s)", value);
-            }
-            break;
-        }
-    }
+    if (!dg_door_edit(rm, dir, fd, value, "do_odoor"))
+        obj_log(obj, "odoor: invalid %s (arg == %s)", door_field[fd], value);
 }
 
 /* Some object values are used, unchecked, as array indexes by the game:

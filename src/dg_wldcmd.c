@@ -207,13 +207,100 @@ WCMD(do_wrecho)
 
 }
 
+/* Shared body of mdoor, odoor and wdoor: apply one field edit to exit dir of
+ * room rm. field indexes the door_field[] table the commands share (0 purge,
+ * 1 description, 2 flags, 3 key, 4 name, 5 room); value is script text.
+ *
+ * A missing exit is created for any field but "purge". It is created
+ * leading NOWHERE: CREATE() zero-fills, and to_room 0 is a real room, so an
+ * exit made by "flags" or "name" alone used to be a walkable exit into
+ * rnum 0. Such an exit is reported, since it stays unusable until its room
+ * is set. Returns FALSE (after reporting, with cmd as the resource) when
+ * the room or key value is rejected; the caller adds its builder-log line. */
+int dg_door_edit(room_data *rm, int dir, int field, char *value,
+                 const char *cmd)
+{
+  struct room_direction_data *exit_p = rm->dir_option[dir];
+  long key;
+  int vnum;
+  room_rnum to_room;
+
+  if (field == 0) {               /* purge */
+    if (exit_p) {
+      free(exit_p->general_description);
+      free(exit_p->keyword);
+      free(exit_p);
+      rm->dir_option[dir] = NULL;
+    }
+    return TRUE;
+  }
+
+  if (!exit_p) {
+    CREATE(exit_p, struct room_direction_data, 1);
+    exit_p->to_room = NOWHERE;
+    exit_p->key = NOTHING;
+    rm->dir_option[dir] = exit_p;
+    if (field != 5)
+      TB_WARN_MSG("dg", "door-create", cmd,
+                  "room vnum %d dir %s: field %d set on a missing exit; "
+                  "created it leading nowhere until its room is set",
+                  rm->number, dirs[dir], field);
+  }
+
+  switch (field) {
+  case 1:  /* description */
+    {
+      size_t desc_size = strlen(value) + 3;
+      free(exit_p->general_description);
+      CREATE(exit_p->general_description, char, desc_size);
+      strlcpy(exit_p->general_description, value, desc_size);
+      strlcat(exit_p->general_description, "\r\n", desc_size);
+    }
+    break;
+  case 2:  /* flags       */
+    exit_p->exit_info = (sh_int)asciiflag_conv(value);
+    break;
+  case 3:  /* key: an object vnum, or -1 for none */
+    if (!tb_parse_long_checked(value, &key) || key < -1 ||
+        key >= (long)IDXTYPE_MAX) {
+      TB_ERROR_MSG("dg", "parse-vnum", cmd,
+                   "room vnum %d dir %s: key argument of %zu bytes is not an "
+                   "object vnum or -1; key unchanged", rm->number, dirs[dir],
+                   strlen(value));
+      return FALSE;
+    }
+    exit_p->key = key < 0 ? NOTHING : (obj_vnum)key;
+    break;
+  case 4:  /* name        */
+    {
+      size_t keyword_size = strlen(value) + 1;
+      free(exit_p->keyword);
+      CREATE(exit_p->keyword, char, keyword_size);
+      strlcpy(exit_p->keyword, value, keyword_size);
+    }
+    break;
+  case 5:  /* room        */
+    if (dg_parse_vnum_strict(value, &vnum) && (to_room = real_room(vnum)) != NOWHERE)
+      exit_p->to_room = to_room;
+    else {
+      exit_p->to_room = NOWHERE;
+      TB_ERROR_MSG("dg", "door-target", cmd,
+                   "room vnum %d dir %s: room argument of %zu bytes is not an "
+                   "existing room vnum; exit leads nowhere", rm->number,
+                   dirs[dir], strlen(value));
+      return FALSE;
+    }
+    break;
+  }
+  return TRUE;
+}
+
 WCMD(do_wdoor)
 {
     char target[MAX_INPUT_LENGTH], direction[MAX_INPUT_LENGTH];
     char field[MAX_INPUT_LENGTH], *value;
     room_data *rm;
-    struct room_direction_data *newexit;
-    int dir, fd, to_room;
+    int dir, fd;
 
     const char *door_field[] = {
         "purge",
@@ -260,62 +347,8 @@ WCMD(do_wdoor)
         return;
     }
 
-    newexit = rm->dir_option[dir];
-
-    /* purge exit */
-    if (fd == 0) {
-        if (newexit) {
-            if (newexit->general_description)
-                free(newexit->general_description);
-            if (newexit->keyword)
-                free(newexit->keyword);
-            free(newexit);
-            rm->dir_option[dir] = NULL;
-        }
-    }
-
-    else {
-        if (!newexit) {
-            CREATE(newexit, struct room_direction_data, 1);
-            rm->dir_option[dir] = newexit;
-        }
-
-        switch (fd) {
-        case 1:  /* description */
-            if (newexit->general_description)
-                free(newexit->general_description);
-            {
-                size_t desc_size = strlen(value) + 3;
-                CREATE(newexit->general_description, char, desc_size);
-                strlcpy(newexit->general_description, value, desc_size);
-                strlcat(newexit->general_description, "\r\n", desc_size);
-            }
-            break;
-        case 2:  /* flags       */
-            newexit->exit_info = (sh_int)asciiflag_conv(value);
-            break;
-        case 3:  /* key         */
-            newexit->key = tb_parse_int_or_zero(value);
-            break;
-        case 4:  /* name        */
-            if (newexit->keyword)
-                free(newexit->keyword);
-            {
-                size_t keyword_size = strlen(value) + 1;
-                CREATE(newexit->keyword, char, keyword_size);
-                strlcpy(newexit->keyword, value, keyword_size);
-            }
-            break;
-        case 5:  /* room        */
-            if ((to_room = real_room(dg_parse_vnum(value))) != NOWHERE)
-                newexit->to_room = to_room;
-            else {
-                newexit->to_room = NOWHERE;
-                wld_log(room, "wdoor: invalid door target (arg == %s)", value);
-            }
-            break;
-        }
-    }
+    if (!dg_door_edit(rm, dir, fd, value, "do_wdoor"))
+        wld_log(room, "wdoor: invalid %s (arg == %s)", door_field[fd], value);
 }
 
 WCMD(do_wteleport)

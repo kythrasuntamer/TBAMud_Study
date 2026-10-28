@@ -40,6 +40,13 @@ char_data *dg_room_occupant_live(long uid, room_rnum room);
  * it. */
 void dg_report_occupant_skipped(long uid, room_rnum room, const char *cmd);
 
+/** mdoor/odoor/wdoor: apply one field edit (0 purge, 1 description,
+ * 2 flags, 3 key, 4 name, 5 room) to exit dir of rm. New exits lead
+ * NOWHERE until their room is set. Returns FALSE after a structured report
+ * (resource cmd) when the key or room value is rejected. dg_wldcmd.c. */
+int dg_door_edit(room_data *rm, int dir, int field, char *value,
+                 const char *cmd);
+
 /* Numeric script arguments.
  *
  * Script text is written by builders and often carries player input through
