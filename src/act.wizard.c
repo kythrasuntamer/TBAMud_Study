@@ -8,6 +8,32 @@
 *  CircleMUD is based on DikuMUD, Copyright (C) 1990, 1991.               *
 **************************************************************************/
 
+/** @file act.wizard.c
+ * Immortal commands (goto, stat, set, show, zcheck, copyover, ...) and the
+ * last-login (LAST_FILE) and recent-player bookkeeping.
+ *
+ * Who controls the input:
+ * - Command arguments come from immortals, and also from mortals and DG
+ *   scripts through 'force', mforce and the level 0 commands (return).
+ *   ch->desc may therefore be NULL in any ACMD; commands that need it
+ *   check it first (command-no-desc).
+ * - Values shown by stat/show/zcheck come from world files, player files,
+ *   OLC and DG scripts, none of which range-check them. Every table lookup
+ *   goes through TABLE_NAME / VALID_ATTACK_TYPE, every vnum argument
+ *   through parse_vnum_arg(), and every time display through TIME_STR.
+ *
+ * Temporary file copies of players (stat file, show player, last <name>,
+ * set file): the command owns the char_data it CREATEs and load_char()s,
+ * frees it with free_char() before returning, and never links it into
+ * world[].people or character_list. extract_char_final() must not be used
+ * on it: for a character without a descriptor it save_char()s the stale
+ * copy over the pfile and Crash_delete_crashfile()s the player's objects.
+ * If the player is in the world (even linkdead) the in-world character is
+ * the current one; 'stat file' refuses such a player (stat-file-online).
+ *
+ * Diagnostics use subsystem "act"; the stable operation names are listed
+ * at each TB_* call and asserted in tests/test_act_wizard.c. */
+
 #include <limits.h>
 #include <errno.h>
 #include <stdlib.h>
@@ -143,6 +169,12 @@ bool zedit_get_levels(struct descriptor_data *d, char *buf);
 /* Local Globals */
 static struct recent_player *recent_list = NULL;  /** Global list of recent players */
 
+/** Purge every NPC and object in room. Players are skipped.
+ * Objects are extracted immediately. NPCs go through extract_char(), which
+ * only marks them pending extraction (extract_pending_chars() frees them at
+ * the end of the pulse), so following vict->next_in_room after it is safe.
+ * If extract_char() ever becomes immediate this loop must snapshot first.
+ * @return 0 for an invalid rnum, otherwise 1. */
 static int purge_room(room_rnum room)
 {
   int j;
@@ -254,7 +286,15 @@ ACMD(do_send)
     send_to_char(ch, "You send '%s' to %s.\r\n", buf, GET_NAME(vict));
 }
 
-/* take a string, and return an rnum.. used for goto, at, etc.  -je 4/6/93 */
+/** Resolve a room argument for goto, at, teleport, and the DG mgoto/mat/
+ * mteleport/wteleport family.  -je 4/6/93
+ * @param rawroomstr A room vnum, or a mob/object name (N.name allowed). It
+ *        comes from the immortal or the script.
+ * @return An rnum, valid only until the next room insert or delete, or
+ *         NOWHERE. On NOWHERE this function has already told ch why, so
+ *         callers must not send a second message.
+ * Below LVL_GRGOD the GODROOM, PRIVATE (two or more occupants) and HOUSE
+ * restrictions apply; at LVL_GRGOD and above there are none. */
 room_rnum find_target_room(struct char_data *ch, char *rawroomstr)
 {
   room_rnum location = NOWHERE;
@@ -324,6 +364,11 @@ room_rnum find_target_room(struct char_data *ch, char *rawroomstr)
   return (NOWHERE);
 }
 
+/** at <room> <command>: run command with ch temporarily in another room.
+ * The command may move ch (then ch stays where it went), get ch extracted
+ * (ch is left in NOWHERE pending extraction and not moved back), or add
+ * or delete rooms (both rooms are remembered by vnum and re-resolved, see
+ * G1-22; a vanished original room is reported as at-return). */
 ACMD(do_at)
 {
   char command[MAX_INPUT_LENGTH], buf[MAX_INPUT_LENGTH];
@@ -510,6 +555,13 @@ ACMD(do_vnum)
 
 #define ZOCMD zone_table[zrnum].cmd[subcmd]
 
+/** List the zone reset commands that act on room rvnum ('stat room').
+ * Like mob_checkload/obj_checkload/trg_checkload below, this trusts that
+ * renum_zone_table() and reset_zone() disabled ('*') every command whose
+ * rnums are invalid. Known exceptions, still checked here: an 'E' with an
+ * invalid position (reset_zone logs it but keeps the command) and a 'D'
+ * direction; both go through TABLE_NAME. cmd_room carries over from the
+ * preceding M/O command, because G/E/P act on what that command loaded. */
 static void list_zone_commands_room(struct char_data *ch, room_vnum rvnum)
 {
   zone_rnum zrnum = real_zone_by_thing(rvnum);
@@ -2215,6 +2267,14 @@ static void mod_llog_entry(struct last_entry *llast,int type) {
   return;
 }
 
+/** Record a login event for ch in LAST_FILE (see LLOG_RECSIZE).
+ * Callers: interpreter.c (LAST_CONNECT on entering the game, LAST_QUIT,
+ * LAST_RECONNECT), comm.c (LAST_DISCONNECT on a dropped link) and limits.c
+ * (LAST_IDLEOUT). A login with no pref yet (bad password, early link loss)
+ * is not recorded. A new session appends a record; a later event for the
+ * same idnum and pref updates that record's close time and type in place.
+ * The record is written raw (host byte order, padding zeroed by CREATE),
+ * so LAST_FILE is specific to the build's ABI. */
 void add_llog_entry(struct char_data *ch, int type) {
   FILE *fp;
   struct last_entry *llast;
@@ -2263,6 +2323,9 @@ void add_llog_entry(struct char_data *ch, int type) {
   free(llast);
 }
 
+/** Trim LAST_FILE to its newest MAX_LAST_ENTRIES records. Called once at
+ * boot (db.c); the copy goes through etc/nlast and is renamed into place
+ * only when every record was copied. */
 void clean_llog_entries(void) {
   FILE *ofp, *nfp;
   struct last_entry mlast;
@@ -2484,6 +2547,15 @@ ACMD(do_last)
   tb_fclose(fp);
 }
 
+/** force <victim|room|all> <command>.
+ * Forced commands run with the victim's privileges and without its
+ * consent, can reach commands that assume ch->desc != NULL (each such
+ * command checks it; see command-no-desc), and can fire DG command, enter
+ * and leave triggers that move or extract other occupants. The 'room'
+ * loop follows next_force across those callbacks; the safety guide's
+ * snapshot-and-revalidate rule (section 2) applies and is not yet
+ * implemented here (G1-07, open). Players at or above the caller's level
+ * are never forced. */
 ACMD(do_force)
 {
   struct descriptor_data *i, *next_desc;
@@ -2775,7 +2847,7 @@ ACMD(do_wizutil)
 }
 
 /* single zone printing fn used by "show zone" so it's not repeated in the
-   code 3 times ... -je, 4/6/93 FIXME: overflow possible */
+   code 3 times ... -je, 4/6/93 (the old FIXME overflow is fixed: G1-23) */
 /** Account for one snprintf() into print_zone_to_buf's buffer: used bytes
  * were already there, n is snprintf's result for the remaining space.
  * @return the new length, never more than left - 1. A truncated or failed
@@ -3296,6 +3368,18 @@ static struct set_struct {
    { "\n", 0, BOTH, MISC }
   };
 
+/** Apply one 'set' field to vict.
+ * @param mode    Index into set_fields[]; do_set has already checked the
+ *                field's level and its PC/NPC applicability.
+ * @param val_arg The value text from the immortal. NUMBER fields are
+ *                parsed with tb_parse_int_or_zero() and clamped by RANGE(),
+ *                and the clamped value is what is stored.
+ * @return 1 when vict was changed and do_set must save it, 0 when nothing
+ *         changed (an error has been sent to ch).
+ * vict may be a temporary file copy (do_set's 'file' form): fields with
+ * world side effects (room) are refused for it, because the copy is freed
+ * without being unlinked. GET_COND and other player_specials writes on an
+ * NPC land in the shared dummy_mob specials. */
 static int perform_set(struct char_data *ch, struct char_data *vict, int mode, char *val_arg)
 {
   int i, on = 0, off = 0, value = 0, qvnum;
@@ -4661,6 +4745,18 @@ ACMD(do_checkloadstatus)
 /* Zone Checker code above. */
 
 /* (c) 1996-97 Erwin S. Andreasen. */
+/** copyover: save every player and exec a fresh server that inherits the
+ * sockets.
+ * COPYOVER_FILE format, read back by copyover_recover() in comm.c:
+ *   line 1      boot_time as %ld
+ *   per player  "<socket> <pref> <name> <host> <protocol state>"
+ *   last line   -1
+ * A switched immortal is returned to its own body first, so each record
+ * names a player (an NPC record is refused: copyover-save). Descriptors
+ * not in CON_PLAYING (login, OLC menus) are closed, not preserved. If the
+ * file cannot be written completely the copyover is aborted before exec
+ * (copyover-open / copyover-write). A failed chdir or execl exits the
+ * process. */
 ACMD(do_copyover)
 {
   FILE *fp;
@@ -5315,7 +5411,16 @@ rollback:
   return FALSE;
 }
 
-/* NOTE: This is called from perform_set */
+/** Rename vict to new_name: 'set <player> name <new>' (perform_set).
+ * Preconditions: vict is in the player index; ch is an IMPL or vict itself.
+ * new_name is validated here (length, valid_name, fill/reserved words, not
+ * online, not in the index).
+ * Order: the per-player files are moved first (rename_player_files), then
+ * the index entry and in-memory name change and the index is saved. If a
+ * file cannot be moved, everything is rolled back and FALSE is returned;
+ * the index is untouched. perform_set saves the pfile under the new name.
+ * The player is told only when online.
+ * @return TRUE when the rename is complete. */
 bool change_player_name(struct char_data *ch, struct char_data *vict, char *new_name)
 {
   int i, k;
@@ -5641,7 +5746,13 @@ static struct recent_player *create_recent(void)
   return newrecent;
 }
 
-/* Add player to recent player list */
+/** Add a player to the recent-players list shown by 'recent'.
+ * Callers: interpreter.c on login (newplr for a new character) and comm.c
+ * on copyover recovery (cpyplr). The list grows for the life of the
+ * process (one entry per login) and its numbering restarts after a
+ * copyover. name and host are copied with strlcpy into fixed fields and
+ * cut silently at their size.
+ * @return FALSE for a connection that never gave a name. */
 bool AddRecentPlayer(char *chname, char *chhost, bool newplr, bool cpyplr)
 {
   struct recent_player *this;
@@ -5668,18 +5779,21 @@ bool AddRecentPlayer(char *chname, char *chhost, bool newplr, bool cpyplr)
   return TRUE;
 }
 
-void free_recent_players(void) 
+/** Free the recent-players list. Called at shutdown (comm.c). The list
+ * head is left pointing at freed memory, so nothing may use the list
+ * afterwards. */
+void free_recent_players(void)
 {
   struct recent_player *this;
   struct recent_player *temp;
-  
+
   this = recent_list;
-  
+
   while((temp = this) != NULL)
   {
 	this = this->next;
-	free(temp);  
-  }  	
+	free(temp);
+  }
 }
 
 ACMD(do_recent)
