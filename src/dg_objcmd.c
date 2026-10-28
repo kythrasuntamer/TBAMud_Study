@@ -486,7 +486,7 @@ static OCMD(do_otransform)
       carried_contents = c;
     }
 
-    if (old_rnum != NOTHING && old_rnum <= top_of_objt)
+    if (VALID_OBJ_RNUM_NUM(old_rnum))
       free_object_strings_proto(obj);
     else
       free_object_strings(obj);
@@ -525,7 +525,7 @@ static OCMD(do_otransform)
     o->sitting_here = NULL;
 
     /* obj is now an instance of the new prototype. */
-    if (old_rnum != NOTHING && old_rnum <= top_of_objt)
+    if (VALID_OBJ_RNUM_NUM(old_rnum))
       obj_index[old_rnum].number--;
     if (GET_OBJ_RNUM(obj) != NOTHING)
       obj_index[GET_OBJ_RNUM(obj)].number++;

@@ -1433,7 +1433,7 @@ void load_otrigger(obj_data *obj)
     TB_ERROR_MSG("dg", "load-proto-disable", "load_otrigger",
                  "obj vnum %d: load trigger %d returned SCRIPT_ERROR_CODE; "
                  "the prototype's scripts are removed until reboot",
-                 (obj_index && rnum != NOTHING && rnum <= top_of_objt)
+                 (obj_index && VALID_OBJ_RNUM_NUM(rnum))
                    ? obj_index[rnum].vnum : NOTHING,
                  dg_trig_rnum_to_vnum(trig));
     if (rnum != NOTHING) {
