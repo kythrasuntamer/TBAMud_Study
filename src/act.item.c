@@ -49,6 +49,13 @@ static void perform_remove(struct char_data *ch, int pos);
 static void perform_wear(struct char_data *ch, struct obj_data *obj, int where);
 static void wear_message(struct char_data *ch, struct obj_data *obj, int where);
 
+/* TRUE if n is a usable "get/put/give/drop N items" count. is_number()
+ * accepts a leading '-', so the parsed count can be zero, negative or
+ * INT_MIN: a negative count used to mean "all of them" and 'howmany--' on
+ * INT_MIN overflowed. Commands refuse such counts with a player message
+ * (bad player input, so no server diagnostic). */
+#define COUNT_ARG_OK(n) ((n) > 0)
+
 /* Resumable position in an object list across DG triggers.
  *
  * The perform_* helpers run get/drop/give/wear/put triggers, and a script
@@ -203,6 +210,10 @@ ACMD(do_put)
 
   if (*arg3 && is_number(arg1)) {
     howmany = tb_parse_int_or_zero(arg1);
+    if (!COUNT_ARG_OK(howmany)) {
+      send_to_char(ch, "Yeah, that makes sense.\r\n");
+      return;
+    }
     theobj = arg2;
     thecont = arg3;
   } else {
@@ -500,12 +511,14 @@ ACMD(do_get)
     send_to_char(ch, "Get what?\r\n");
   else if (!*arg2)
     get_from_room(ch, arg1, 1);
+  else if (is_number(arg1) && !COUNT_ARG_OK(tb_parse_int_or_zero(arg1)))
+    send_to_char(ch, "Yeah, that makes sense.\r\n");
   else if (is_number(arg1) && !*arg3)
     get_from_room(ch, arg2, tb_parse_int_or_zero(arg1));
   else {
     int amount = 1;
     if (is_number(arg1)) {
-      amount = tb_parse_int_or_zero(arg1);
+      amount = tb_parse_int_or_zero(arg1);   /* > 0: checked above */
       strlcpy(arg1, arg2, sizeof(arg1)); /* strcpy: OK (sizeof: arg1 == arg2) */
       strlcpy(arg2, arg3, sizeof(arg2)); /* strcpy: OK (sizeof: arg2 == arg3) */
     }
@@ -907,7 +920,9 @@ ACMD(do_give)
       if ((vict = give_find_vict(ch, arg)) != NULL)
 	perform_give_gold(ch, vict, amount);
       return;
-    } else if (!*arg) /* Give multiple code. */
+    } else if (!COUNT_ARG_OK(amount))
+      send_to_char(ch, "Yeah, that makes sense.\r\n");
+    else if (!*arg) /* Give multiple code. */
       send_to_char(ch, "What do you want to give %d of?\r\n", amount);
     else if (!(vict = give_find_vict(ch, argument)))
       return;

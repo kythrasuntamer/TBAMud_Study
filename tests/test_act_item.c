@@ -422,9 +422,44 @@ static void test_drop_gold_purged_by_room_trigger(void)
   fx_free_char(pc);
 }
 
+/* H1-20: a count of INT_MIN (or any count <= 0) is refused instead of
+ * meaning "all" and overflowing 'howmany--'. */
+static void test_negative_counts_are_refused(void)
+{
+  struct char_data *pc = fx_new_char("hero", FALSE, 0);
+  struct char_data *bob = fx_new_char("bob", FALSE, 0);
+  struct obj_data *bag = fx_new_obj("bag", ITEM_CONTAINER);
+
+  obj_to_room(fx_new_obj("bread", ITEM_FOOD), 0);
+  obj_to_room(bag, 0);
+  obj_to_obj(fx_new_obj("bread", ITEM_FOOD), bag);
+  obj_to_char(fx_new_obj("bread", ITEM_FOOD), pc);
+
+  do_get(pc, arg("-2147483648 bread"), 0, 0);
+  TEST_ASSERT_NOT_NULL(strstr(fx_last_send, "makes sense"));
+  fx_last_send[0] = '\0';
+  do_get(pc, arg("-1 bread bag"), 0, 0);
+  TEST_ASSERT_NOT_NULL(strstr(fx_last_send, "makes sense"));
+  fx_last_send[0] = '\0';
+  do_put(pc, arg("0 bread bag"), 0, 0);
+  TEST_ASSERT_NOT_NULL(strstr(fx_last_send, "makes sense"));
+  fx_last_send[0] = '\0';
+  do_give(pc, arg("-1 bread bob"), 0, 0);
+  TEST_ASSERT_NOT_NULL(strstr(fx_last_send, "makes sense"));
+
+  /* Nothing moved. */
+  TEST_ASSERT_NOT_NULL(pc->carrying);
+  TEST_ASSERT_NULL(pc->carrying->next_content);
+  TEST_ASSERT_NULL(bob->carrying);
+  TEST_ASSERT_NOT_NULL(bag->contains);
+  fx_free_char(bob);
+  fx_free_char(pc);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(test_negative_counts_are_refused);
   RUN_TEST(test_drop_gold_refused_by_room_trigger);
   RUN_TEST(test_drop_gold_allowed);
   RUN_TEST(test_drop_gold_purged_by_room_trigger);
