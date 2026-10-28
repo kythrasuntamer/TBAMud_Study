@@ -31,6 +31,26 @@ ACMD(do_skillset);
 void  string_write(struct descriptor_data *d, char **txt, size_t len, long mailto, void *data);
 void  string_add(struct descriptor_data *d, char *str);
 void  page_string(struct descriptor_data *d, char *str, int keep_internal);
+/** Drop an in-game editor session (CON_PLAYING) that ends without /s or /a:
+ * the link was lost, or a duplicate login is booting it. A note written on
+ * paper (do_write()) gets its old text back from d->backstr, as /a would,
+ * and the saved copy is released instead of leaked. Mail, board posts and
+ * bug/idea/typo reports carry no backstr; their own code releases them.
+ * @return TRUE if d->backstr was handled (d->str and d->backstr are NULL). */
+static inline int string_abandon_in_game_edit(struct descriptor_data *d)
+{
+  if (STATE(d) != CON_PLAYING || !d->backstr)
+    return FALSE;
+  if (d->str) {
+    free(*d->str);
+    *d->str = d->backstr;
+  } else
+    free(d->backstr);
+  d->backstr = NULL;
+  d->str = NULL;
+  return TRUE;
+}
+
 /* page string function & defines */
 #define PAGE_LENGTH 22
 #define PAGE_WIDTH  80
