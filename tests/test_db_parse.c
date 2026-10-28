@@ -624,6 +624,29 @@ static void parse_room_keeps_valid_sector(void)
   room_fixture_free();
 }
 
+/* B1-23: with diagonal directions off, setup_dir() returned without reading
+ * the exit's strings, so parse_room() took the exit description for the
+ * next D/E/S line and exited. The exit is now skipped whole, loudly. */
+static void parse_room_skips_disabled_diagonal_exit(void)
+{
+  static const char text[] =
+    "Hall~\nA hall.\n~\n0 0 0 0 0 0\n"
+    "D6\nA path northwest.\n~\npath~\n0 -1 3001\n"
+    "D0\nNorth.\n~\n~\n0 -1 3002\n"
+    "S\n$\n";
+
+  room_fixture_use();
+  CONFIG_DIAGONAL_DIRS = FALSE;
+  parse_room_text(text, 106);
+  TEST_ASSERT_NULL(world[top_of_world].dir_option[6]);
+  TEST_ASSERT_NOT_NULL(world[top_of_world].dir_option[0]);
+  TEST_ASSERT_EQUAL_INT(3002, world[top_of_world].dir_option[0]->to_room);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("WARNING", tb_captured_severity);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "room vnum 106: D6 skipped"));
+  room_fixture_free();
+}
+
 /* ---------------------------------------------------------------------
  * fread_string()/fread_clean_string(): '~'-terminated strings
  * ------------------------------------------------------------------- */
@@ -1201,6 +1224,7 @@ int main(void)
   RUN_TEST(parse_room_rejects_sector_out_of_range);
   RUN_TEST(parse_room_rejects_negative_legacy_sector);
   RUN_TEST(parse_room_keeps_valid_sector);
+  RUN_TEST(parse_room_skips_disabled_diagonal_exit);
   RUN_TEST(file_to_string_loads_whole_multiline_file);
   RUN_TEST(file_to_string_joins_long_lines_and_keeps_last_char);
   RUN_TEST(file_to_string_rejects_oversized_file);

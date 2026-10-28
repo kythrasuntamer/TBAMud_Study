@@ -1742,7 +1742,9 @@ void setup_dir(FILE *fl, int room, int dir)
   int t[5];
   char line[READ_SIZE], buf2[128];
 
-  tb_snprintf(buf2, sizeof(buf2), "room #%d, direction D%d", GET_ROOM_VNUM(room)+1, dir);
+  /* world[room].number, not GET_ROOM_VNUM(): during boot room is above
+   * top_of_world (set only at the room's 'S'), so the macro gave NOWHERE. */
+  tb_snprintf(buf2, sizeof(buf2), "room #%d, direction D%d", world[room].number, dir);
 
   /* dir comes from the world file and indexes dir_option[NUM_OF_DIRS]. An
    * index past the end lands on other room_data fields (func, script...)
@@ -1754,8 +1756,19 @@ void setup_dir(FILE *fl, int room, int dir)
     exit(1);
   }
 
+  /* With diagonal directions off the exit is dropped, but its two strings
+   * and numeric line are still part of the record: consume them, or
+   * parse_room() would read the description as the next D/E/S line. */
   if (!CONFIG_DIAGONAL_DIRS && IS_DIAGONAL(dir)) {
-    log("Warning: Diagonal direction disabled: %s", buf2);
+    free(fread_string(fl, buf2));
+    free(fread_string(fl, buf2));
+    if (!get_line(fl, line) || parse_int_fields(line, t, 3) != 3) {
+      log("SYSERR: Format error, %s", buf2);
+      exit(1);
+    }
+    TB_WARN_MSG("db", "room-parse", "diagonal-exit",
+                "room vnum %d: D%d skipped (diagonal_dirs off)",
+                world[room].number, dir);
     return;
   }
 
