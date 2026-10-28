@@ -3900,7 +3900,7 @@ void save_char_vars_ascii(FILE *file, struct char_data *ch)
 /* find_char() helpers */
 /* Must be power of 2. */
 #define BUCKET_COUNT 64
-/* To recognize an empty bucket. */
+/* Marks a bucket head, which is a sentinel and never holds an entity. */
 #define UID_OUT_OF_RANGE 1000000000
 
 struct lookup_table_t {
@@ -3977,14 +3977,11 @@ int obj_uid_matches(long uid, const obj_data *obj)
 
 void add_to_lookup_table(long uid, void *c)
 {
+  /* The bucket head is a sentinel holding no entity (uid UID_OUT_OF_RANGE);
+   * lookups start at head->next. Matching the head stored an object whose
+   * UID equals the sentinel (1000000000, a valid object UID) where no
+   * lookup would ever find it. */
   struct lookup_table_t *lt = get_bucket_head(uid);
-
-  if (lt && lt->uid == uid) {
-    TB_WARN_MSG("dg", "uid-rebind", "lookup_table",
-                "uid=%ld rebound from %p to %p (bucket head)", uid, lt->c, c);
-    lt->c = c;
-    return;
-  }
 
   for (;lt && lt->next; lt = lt->next)
     if (lt->next->uid == uid) {

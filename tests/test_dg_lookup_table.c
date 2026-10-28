@@ -137,6 +137,20 @@ static void object_existence_requires_object_range(void)
   add_to_lookup_table(42, &new_ch);
   TEST_ASSERT_FALSE(has_obj_by_uid_in_lookup_table(42));
 }
+/* DGDOC-9: the object UID 1000000000 equals the bucket heads' sentinel; it
+ * was stored in the head, where no lookup looks, so the object could never
+ * be found or removed. */
+static void object_uid_equal_to_the_sentinel_is_found(void)
+{
+  obj_a.script_id = 1000000000L;
+  add_to_lookup_table(obj_a.script_id, &obj_a);
+  TEST_ASSERT_TRUE(obj_uid_matches(obj_a.script_id, &obj_a));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  remove_from_lookup_table(obj_a.script_id, &obj_a);
+  TEST_ASSERT_FALSE(obj_uid_matches(obj_a.script_id, &obj_a));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  obj_a.script_id = 0;
+}
 
 int main(void)
 {
@@ -149,5 +163,6 @@ int main(void)
   RUN_TEST(obj_ids_wrap_within_object_range);
   RUN_TEST(removing_unregistered_uid_is_reported);
   RUN_TEST(object_existence_requires_object_range);
+  RUN_TEST(object_uid_equal_to_the_sentinel_is_found);
   return UNITY_END();
 }
