@@ -974,6 +974,11 @@ ACMD(do_mtransform)
     }
     GET_GOLD(&tmpmob) = GET_GOLD(ch);
     GET_POS(&tmpmob) = GET_POS(ch);
+    /* A sitting mob stays on its furniture's sitter chain; taking these from
+     * the fresh mob broke the chain and left the furniture pointing at a
+     * character that no longer knew it was sitting there. */
+    SITTING(&tmpmob) = SITTING(ch);
+    NEXT_SITTING(&tmpmob) = NEXT_SITTING(ch);
     IS_CARRYING_W(&tmpmob) = IS_CARRYING_W(ch);
     IS_CARRYING_N(&tmpmob) = IS_CARRYING_N(ch);
     FIGHTING(&tmpmob) = FIGHTING(ch);

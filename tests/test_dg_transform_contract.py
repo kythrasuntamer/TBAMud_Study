@@ -15,4 +15,13 @@ for field in ("in_room", "carried_by", "worn_by", "worn_on", "in_obj",
               "contains", "script_id", "proto_script", "script",
               "next_content", "next", "sitting_here", "events"):
     assert f"tmpobj.{field} = " in body, "otransform keeps " + field
+mobcmd = Path(sys.argv[2]).read_text(encoding="utf-8")
+body = mobcmd[mobcmd.index("ACMD(do_mtransform)"):]
+body = body[:body.index("memcpy(ch, &tmpmob, sizeof(*ch));")]
+for field in ("script_id", "affected", "carrying", "proto_script", "script",
+              "memory", "events", "next_in_room", "next", "next_fighting",
+              "followers", "master", "group"):
+    assert f"tmpmob.{field} = ch->{field};" in body, "mtransform keeps " + field
+for macro in ("SITTING", "NEXT_SITTING", "GET_POS", "FIGHTING", "HUNTING"):
+    assert f"{macro}(&tmpmob) = {macro}(ch);" in body, "mtransform keeps " + macro
 print("transform contract verified")
