@@ -44,6 +44,8 @@
 #define MAX_STRING_LENGTH	8192
 /* Longest physical input line (with its terminator) any reader accepts. */
 #define WLD_MAX_LINE		512
+/* Old Diku "#99999" end-of-world marker. */
+#define WLD_SENTINEL_VNUM	99999
 
 typedef signed char sbyte;
 typedef unsigned char ubyte;
@@ -503,10 +505,18 @@ void discrete_load(FILE * fl)
       }
       wld_cur_vnum = nr;
       wld_have_vnum = 1;
-      if (nr >= 99999)
-	return;
-      else
-	parse_room(fl, nr);
+      /*
+       * "#99999" is the old Diku end-of-world sentinel.  Honour only that
+       * exact value, and say so, because everything after it in the file
+       * is ignored.  Any other vnum (the old ">= 99999" test silently
+       * dropped real rooms numbered 100000 and up) is converted.
+       */
+      if (nr == WLD_SENTINEL_VNUM) {
+        WLD_REPORT(TB_SEV_WARN, TB_ERR_PARSER, "wld-sentinel",
+                   "'#%d' end-of-world sentinel: rest of file ignored", nr);
+        return;
+      }
+      parse_room(fl, nr);
     } else
       WLD_PARSE_ERROR("wld-record-start",
                       "expected '#<vnum>', 'T' or '$', got '%.40s'", line);

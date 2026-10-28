@@ -128,6 +128,22 @@ class Wld2HtmlTests(ToolCase):
         self.assertDiag(err, "wld-line-too-long")
         self.assertIn("file in.wld line 6 room #100", err)
 
+    def test_large_vnum_converted_not_dropped(self):
+        # I3-06: '#100000' silently ended the file with exit status 0.
+        rc, err = self.wld(VALID_ROOM + VALID_ROOM.replace("#100", "#100000")
+                           + "$~\n")
+        self.assertEqual(rc, 0, err)
+        self.assertTrue(self.exists("100.html"))
+        self.assertTrue(self.exists("100000.html"))
+
+    def test_sentinel_vnum_reported(self):
+        rc, err = self.wld(VALID_ROOM + "#99999\n" +
+                           VALID_ROOM.replace("#100", "#101") + "$~\n")
+        self.assertEqual(rc, 0, err)
+        self.assertDiag(err, "wld-sentinel")
+        self.assertIn("severity=WARN", err)
+        self.assertFalse(self.exists("101.html"))
+
     def test_final_line_without_newline_accepted(self):
         # I3-07: a valid file whose '$~' had no newline was rejected as a
         # format error blaming room #100.
