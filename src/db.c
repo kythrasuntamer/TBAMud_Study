@@ -766,6 +766,8 @@ void destroy_db(void)
     }
   }
   free(world);
+  /* Freed: nothing may index it now (the prototype frees below scan it). */
+  world = NULL;
   top_of_world = 0;
 
   /* Objects */
