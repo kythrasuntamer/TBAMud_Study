@@ -95,6 +95,39 @@ void send_cannot_edit(struct char_data *ch, zone_vnum zone);
 /* OLC structures. */
 /* NO and YES are defined in utils.h. Removed from here. */
 
+/** Per-descriptor OLC workspace (d->olc).
+ *
+ * Allocated zeroed by an editor's do_oasis_* entry point or by OLC_ATTACH,
+ * and released only by cleanup_olc(), which close_socket also calls for any
+ * descriptor that still has one.  Input reaching these fields is typed by
+ * the builder (immortal-only commands) or read from world files.
+ *
+ * Ownership of the pointer members:
+ * - Scratch copies, owned here until save, freed by cleanup_olc:
+ *   room, obj, mob, zone (including every cmd[].sarg1/sarg2), shop, config,
+ *   quest, action, help, trig, prefs, ibt, msg, storage.  redit, oedit,
+ *   medit and zedit saves deep-copy strings into the live table
+ *   (add_room/copy_room_strings and friends), so the scratch copy keeps its
+ *   own strings and is released with CLEANUP_ALL.  aedit and hedit move the
+ *   strings into the live table on save and then use CLEANUP_STRUCTS.
+ * - script: the descriptor's private trigger list (dg_olc_script_copy).
+ *   Owned here until a *_save_internally hands it to the prototype and sets
+ *   it to NULL; cleanup_olc frees whatever is still here.
+ * - desc: BORROWED.  Points into the scratch entity's ex_description list
+ *   while an extra description is being edited; never freed on its own.
+ * - iedit_obj: LIVE object instance being edited by iedit.  Never freed by
+ *   cleanup_olc; the object belongs to the world.
+ * - m_type: BORROWED pointer into msg.
+ * - trig is freed regardless of cleanup type (see cleanup_olc).
+ *
+ * Scalars:
+ * - zone_num: real zone number, or NOWHERE for editors not tied to a zone
+ *   (iedit, cedit, hedit, ...).  Check before indexing zone_table.
+ * - number: vnum of the subject; NOWHERE in some editors' "new" paths.
+ * - value: two unrelated uses.  Most editors use it as the 'has changed'
+ *   flag; redit's exit menus use it as the direction index behind
+ *   OLC_EXIT(d), and zedit as the command index behind OLC_CMD(d).  Only
+ *   the editor's own mode logic knows which meaning is live. */
 struct oasis_olc_data {
   int mode;                      /* how to parse input       */
   zone_rnum zone_num;            /* current zone             */
@@ -135,14 +168,7 @@ extern const char *nrm, *grn, *cyn, *yel;
 #define OLC(d)         ((d)->olc)
 #define OLC_MODE(d)    (OLC(d)->mode)     /**< Parse input mode.	*/
 #define OLC_NUM(d)     (OLC(d)->number)   /**< Room/Obj VNUM.	*/
-/** Scratch variable, overloaded per editor; any use as an index must be
- * range-checked again after the list it indexes changes:
- * - oedit/medit/redit/sedit main menus: "something was modified" flag.
- * - oedit apply menu: affected[] slot being edited.
- * - redit exit menus: direction of OLC_EXIT (dir_option index).
- * - zedit: index of the command OLC_CMD edits (reset to 0 on delete).
- * - sedit type menu: the buy type being added. */
-#define OLC_VAL(d)     (OLC(d)->value)    /**< Scratch variable.	*/
+#define OLC_VAL(d)     (OLC(d)->value)    /**< Changed flag OR exit/command index; see struct.	*/
 #define OLC_ZNUM(d)    (OLC(d)->zone_num) /**< Real zone number.	*/
 
 #define OLC_STORAGE(d) (OLC(d)->storage)  /**< char pointer.	*/
@@ -164,10 +190,21 @@ extern const char *nrm, *grn, *cyn, *yel;
 #define OLC_PREFS(d)   (OLC(d)->prefs)    /**< Preferences structure */
 #define OLC_IBT(d)     (OLC(d)->ibt)      /**< IBT (idea/bug/typo) structure */
 /* Other macros. */
+/** The exit slot redit's exit menus are editing.  Valid only while OLC_VAL(d)
+ * holds a direction (0..DIR_COUNT-1), i.e. inside the REDIT_EXIT_* modes. */
 #define OLC_EXIT(d)    (OLC_ROOM(d)->dir_option[OLC_VAL(d)])
 #define OLC_MSG(d)     (OLC(d)->m_type)
 
-/* Cleanup types. */
+/* Cleanup types for cleanup_olc().
+ * CLEANUP_ALL frees scratch structs and their strings; use it whenever the
+ * strings were deep-copied into a live table (redit, oedit, medit, zedit,
+ * dig, buildwalk, the copy commands) or never saved.  CLEANUP_STRUCTS frees
+ * the structs but not their strings: valid ONLY when a save moved the
+ * strings into a live table (aedit, hedit).  add_room never moves them, so
+ * using it after redit/dig/buildwalk leaks.
+ * Whatever the type, OLC_CONFIG, OLC_SCRIPT, OLC_TRIG, zone commands and
+ * prefs are always freed.  An unknown type is reported (op=cleanup-type)
+ * and treated as CLEANUP_STRUCTS. */
 #define CLEANUP_ALL		1	/* Free the whole lot.			*/
 #define CLEANUP_STRUCTS 	2	/* Don't free strings.			*/
 #define CLEANUP_CONFIG          3       /* Used just to send proper message. 	*/
