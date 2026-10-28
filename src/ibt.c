@@ -1288,25 +1288,20 @@ void ibtedit_parse(struct descriptor_data *d, char *arg)
       return;
 
     case IBTEDIT_BODY:
-      /* We should never get here, modify.c throws user through ibtedit_string_cleanup. */
-      cleanup_olc(d, CLEANUP_ALL);
-      mudlog(BRF, LVL_BUILDER, TRUE, "SYSERR: OLC: ibtedit_parse(): Reached BODY case!");
-      write_to_output(d, "Oops...\r\n");
-      break;
-
     case IBTEDIT_NOTES:
-      /* We should never get here, modify.c throws user through ibtedit_string_cleanup. */
-      cleanup_olc(d, CLEANUP_ALL);
-      mudlog(BRF, LVL_BUILDER, TRUE, "SYSERR: OLC: ibtedit_parse(): Reached NOTES case!");
-      write_to_output(d, "Oops...\r\n");
-      break;
-
     default:
-      /* We should never get here. */
+      /* We should never get here: while BODY/NOTES are open, modify.c routes
+       * input to string_add() and back through ibtedit_string_cleanup(), and
+       * no other mode exists.  Report the broken invariant (before
+       * cleanup_olc() frees the state it reads), end the session, and
+       * return: falling out of the switch would use the freed d->olc. */
+      TB_ERROR_MSG("ibt", "olc-mode", "ibtedit_parse",
+                   TB_ERRID_INVARIANT " ibtedit received input in mode %d (%s %d) from " DIAG_CHAR_FMT,
+                   OLC_MODE(d), ibt_types[OLC_VAL(d)], OLC_NUM(d), DIAG_CHAR(d->character));
+      mudlog(BRF, LVL_BUILDER, TRUE, "SYSERR: OLC: ibtedit_parse(): unexpected mode %d", OLC_MODE(d));
       cleanup_olc(d, CLEANUP_ALL);
-      mudlog(BRF, LVL_BUILDER, TRUE, "SYSERR: OLC: ibtedit_parse(): Reached default case!");
       write_to_output(d, "Oops...\r\n");
-      break;
+      return;
   }
 
   /* If we get here, something was changed */

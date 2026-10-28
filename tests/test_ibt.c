@@ -476,6 +476,19 @@ static void test_failed_save_keeps_previous_file(void)
   TEST_ASSERT_NOT_NULL(strstr(slurp(BUGS_FILE), "Text      new~"));
 }
 
+/* C1-14: input reaching ibtedit_parse in BODY mode freed d->olc and then
+ * fell through to OLC_ZNUM(d) = 1 (NULL dereference before the fix). */
+static void test_ibtedit_unexpected_mode_ends_session(void)
+{
+  submit_bug(&pa, "first", "body one");
+  do_oasis_ibtedit(&imm.ch, (char[]){"1"}, bug_cmd, SCMD_BUG);
+  TEST_ASSERT_NOT_NULL(imm.desc.olc);
+  OLC_MODE(&imm.desc) = IBTEDIT_BODY;
+  olc_line(&imm, "stray line");
+  TEST_ASSERT_NULL(imm.desc.olc);
+  TEST_ASSERT_EQUAL_STRING("olc-mode", tb_captured_operation);
+}
+
 int main(void)
 {
   char dir[] = "/tmp/tb_test_ibt.XXXXXX";
@@ -501,5 +514,6 @@ int main(void)
   RUN_TEST(test_load_overlong_keyword_drops_only_that_record);
   RUN_TEST(test_load_empty_notes_is_valid);
   RUN_TEST(test_failed_save_keeps_previous_file);
+  RUN_TEST(test_ibtedit_unexpected_mode_ends_session);
   return UNITY_END();
 }
