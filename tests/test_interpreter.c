@@ -1285,7 +1285,8 @@ static void check_unverifiable_prompt(const char *name, int state, int want)
   TEST_ASSERT_NULL_MESSAGE(strstr(shown, "Incorrect password"), name);
   TEST_ASSERT_EQUAL_INT_MESSAGE(1, captured_errors, name);
   TEST_ASSERT_EQUAL_STRING("password-verify", captured_operation);
-  snprintf(who, sizeof(who), "player idnum 0 name %s", name);
+  TEST_ASSERT_TRUE(snprintf(who, sizeof(who), "player idnum 0 name %s", name)
+                   < (int)sizeof(who));
   TEST_ASSERT_NOT_NULL_MESSAGE(strstr(captured_detail, who), name);
   dch->desc = NULL;
   free_heap_chars();
