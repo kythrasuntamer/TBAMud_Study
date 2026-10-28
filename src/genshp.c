@@ -420,6 +420,18 @@ int save_shops(zone_rnum zone_num)
               convert_from_tabs(S_BUY(shop) ? S_BUY(shop) : "%s Ke?! %d?"));
       tb_fprintf(shop_file, "%s~\n",
               convert_from_tabs(S_SELL(shop) ? S_SELL(shop) : "%s Ke?! %d?"));
+      /* keeper is a mob rnum kept in step by delete_mobile(); a stale value
+       * (e.g. NOBODY decremented to 65534) would read past mob_index[]. */
+      if (S_KEEPER(shop) != NOBODY && S_KEEPER(shop) > top_of_mobt) {
+        TB_ERROR_MSG("olc", "shop-save-keeper", fname,
+                     "shop vnum %d keeper rnum %d > top %d; zone %d not saved",
+                     S_NUM(shop), (int)S_KEEPER(shop), (int)top_of_mobt,
+                     zone_table[zone_num].number);
+        tb_fclose(shop_file);
+        if (remove(fname) != 0 && errno != ENOENT)
+          TB_REPORT_ERRNO("remove", fname);
+        return FALSE;
+      }
       tb_fprintf(shop_file, "%d\n%ld\n%d\n%d\n",
               S_BROKE_TEMPER(shop),
               S_BITVECTOR(shop),

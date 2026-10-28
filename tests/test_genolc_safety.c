@@ -717,6 +717,28 @@ static void save_shops_rejects_stale_product(void)
   TEST_ASSERT_FALSE(file_exists(SHP_PREFIX "0.new"));
 }
 
+/* C2-09: a keeper rnum past mob_index[] (65534: NOBODY decremented by
+ * delete_mobile()) aborts the save instead of being dereferenced. */
+static void save_shops_rejects_stale_keeper(void)
+{
+  make_zones(1); make_objs(1); make_mobs(2, 3000);
+  make_shop(5, NULL, 0);
+  shop_index[0].keeper = 65534;
+  TEST_ASSERT_FALSE(save_shops(0));
+  TEST_ASSERT_EQUAL_STRING("shop-save-keeper", tb_captured_operation);
+  TEST_ASSERT_FALSE(file_exists(SHP_PREFIX "0.new"));
+}
+
+static void save_shops_writes_valid_shop(void)
+{
+  make_zones(1); make_objs(1); make_mobs(2, 3000);
+  make_shop(5, NULL, 0);
+  shop_index[0].keeper = 1;
+  TEST_ASSERT_TRUE(save_shops(0));
+  TEST_ASSERT_TRUE(file_exists(SHP_PREFIX "0.shp"));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+}
+
 /* ------------------------------------------------------------------------ */
 /* Temporary world directory for the writers.                               */
 /* ------------------------------------------------------------------------ */
@@ -783,6 +805,8 @@ int main(void)
   RUN_TEST(delete_object_refuses_board_object);
   RUN_TEST(delete_object_reports_unsaved_rnum);
   RUN_TEST(save_shops_rejects_stale_product);
+  RUN_TEST(save_shops_rejects_stale_keeper);
+  RUN_TEST(save_shops_writes_valid_shop);
   failures = UNITY_END();
   leave_test_root();
   return failures;
