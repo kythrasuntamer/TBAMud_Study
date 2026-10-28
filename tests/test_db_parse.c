@@ -889,10 +889,84 @@ static void parse_simple_mob_accepts_valid_position(void)
   TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
 }
 
+/* ---------------------------------------------------------------------
+ * boot_social_messages(): parsed socials never exceed the allocation
+ * ------------------------------------------------------------------- */
+
+static char social_dir[64];
+static char social_cwd[PATH_MAX];
+
+/* Write misc/socials.new under a fresh directory and chdir() into it. */
+static void social_fixture_use(const char *text)
+{
+  char path[128];
+  FILE *fp;
+
+  strlcpy(social_dir, "/tmp/tb_soc_XXXXXX", sizeof(social_dir));
+  TEST_ASSERT_NOT_NULL(mkdtemp(social_dir));
+  TEST_ASSERT_NOT_NULL(getcwd(social_cwd, sizeof(social_cwd)));
+  TEST_ASSERT_EQUAL_INT(0, chdir(social_dir));
+  TEST_ASSERT_EQUAL_INT(0, mkdir("misc", 0700));
+  strlcpy(path, SOCMESS_FILE_NEW, sizeof(path));
+  fp = fopen(path, "w");
+  TEST_ASSERT_NOT_NULL(fp);
+  TEST_ASSERT_EQUAL_INT(1, fputs(text, fp) >= 0);
+  TEST_ASSERT_EQUAL_INT(0, fclose(fp));
+  CONFIG_NEW_SOCIALS = TRUE;
+  top_of_socialt = 0;
+  soc_mess_list = NULL;
+}
+
+static void social_fixture_free(int slots)
+{
+  int k;
+  for (k = 0; k < slots; k++) {
+    free(soc_mess_list[k].command);
+    free(soc_mess_list[k].sort_as);
+  }
+  free(soc_mess_list);
+  soc_mess_list = NULL;
+  remove(SOCMESS_FILE_NEW);
+  rmdir("misc");
+  TEST_ASSERT_EQUAL_INT(0, chdir(social_cwd));
+  rmdir(social_dir);
+  CONFIG_NEW_SOCIALS = FALSE;
+}
+
+#define SOCIAL_BODY "#\n#\n#\n#\n#\n#\n#\n#\n#\n#\n#\n#\n#\n"
+
+/* B1-13: the count sees only lines starting with '~', but fscanf(" %s ")
+ * skips leading blanks, so " ~b" and " ~c" were parsed without being counted
+ * and curr_soc ran past soc_mess_list[] (2 slots for 1 counted social). */
+static void boot_social_messages_rejects_uncounted_socials(void)
+{
+  social_fixture_use("~a a 0 0 0 0\n" SOCIAL_BODY "\n"
+                     " ~b b 0 0 0 0\n" SOCIAL_BODY "\n"
+                     " ~c c 0 0 0 0\n" SOCIAL_BODY "\n$\n");
+  EXPECT_EXIT(boot_social_messages());
+  TEST_ASSERT_EQUAL_STRING("FATAL", tb_captured_severity);
+  TEST_ASSERT_EQUAL_STRING("social-parse", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "social '~c'"));
+  social_fixture_free(2);
+}
+
+static void boot_social_messages_loads_counted_socials(void)
+{
+  social_fixture_use("~a a 0 0 0 0\n" SOCIAL_BODY "\n"
+                     "~b b 0 0 0 0\n" SOCIAL_BODY "\n$\n");
+  boot_social_messages();
+  TEST_ASSERT_EQUAL_INT(1, top_of_socialt);
+  TEST_ASSERT_EQUAL_STRING("b", soc_mess_list[1].command);
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  social_fixture_free(2);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
   RUN_TEST(load_zones_rejects_top_nowhere);
+  RUN_TEST(boot_social_messages_rejects_uncounted_socials);
+  RUN_TEST(boot_social_messages_loads_counted_socials);
   RUN_TEST(parse_simple_mob_rejects_sex_out_of_range);
   RUN_TEST(parse_simple_mob_rejects_negative_position);
   RUN_TEST(parse_simple_mob_accepts_valid_position);

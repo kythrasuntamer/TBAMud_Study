@@ -387,8 +387,10 @@ char *fread_action(FILE *fl, int nr)
 static void boot_social_messages(void)
 {
   FILE *fl;
-  int line_number, nr = 0, hide, min_char_pos, min_pos, min_lvl, curr_soc = -1;
+  int line_number, hide, min_char_pos, min_pos, min_lvl, curr_soc = -1;
   char next_soc[MAX_STRING_LENGTH], sorted[MAX_INPUT_LENGTH];
+  char soc_name[256];	/* bounded by the " %255s " read below */
+  const char *socfile = CONFIG_NEW_SOCIALS == TRUE ? SOCMESS_FILE_NEW : SOCMESS_FILE;
   char hide_text[32], min_char_text[32], min_pos_text[32], min_lvl_text[32];
 
   if (CONFIG_NEW_SOCIALS == TRUE) {
@@ -439,16 +441,33 @@ static void boot_social_messages(void)
 
   /* now read 'em */
   for (line_number = 0;; ++line_number) {
-    if (fscanf(fl, " %s ", next_soc) != 1) {
+    if (fscanf(fl, " %255s ", soc_name) != 1) {
       if(feof(fl))
-        log("SYSERR: unexpected end of file encountered in socials file %s", SOCMESS_FILE_NEW);
+        log("SYSERR: unexpected end of file encountered in socials file %s", socfile);
       else if(ferror(fl))
-        TB_REPORT_ERRNO("fscanf", CONFIG_NEW_SOCIALS == TRUE ? SOCMESS_FILE_NEW : SOCMESS_FILE);
+        TB_REPORT_ERRNO("fscanf", socfile);
       else
         log("SYSERR: format error in social file near line %d", line_number);
       exit(1);
     }
-    if (*next_soc == '$') break;
+    if (*soc_name == '$') break;
+
+    /* The count above sees only lines that start with '~' (new format) or
+     * are empty (old format), but fscanf() skips leading whitespace, so a
+     * social written as " ~name" or a separator line holding a space is
+     * parsed without being counted. The socials file is the implementor's;
+     * soc_mess_list[] has top_of_socialt + 1 slots (the spare one holds an
+     * old-format last social with no blank line after it); a social past
+     * them would write beyond the array. */
+    if (curr_soc + 1 > top_of_socialt) {
+      TB_FATAL_MSG("db", "social-parse", socfile,
+                   "social '%s' is past the %d slots allocated for %d counted "
+                   "socials; check for leading whitespace on a name or "
+                   "separator line", soc_name, top_of_socialt + 1,
+                   top_of_socialt);
+      exit(1);
+    }
+
     if (CONFIG_NEW_SOCIALS == TRUE) {
       if (fscanf(fl, " %255s %31s %31s %31s %31s \n",
                  sorted, hide_text, min_char_text, min_pos_text, min_lvl_text) != 5 ||
@@ -456,7 +475,7 @@ static void boot_social_messages(void)
           !parse_int_text_strict(min_char_text, &min_char_pos) ||
           !parse_int_text_strict(min_pos_text, &min_pos) ||
           !parse_int_text_strict(min_lvl_text, &min_lvl)) {
-      log("SYSERR: format error in social file near social '%s'", next_soc);
+      log("SYSERR: format error in social file near social '%s'", soc_name);
       /* SYSERR_DESC: From boot_social_messages(), this error is output when
        * the server is expecting to find the remainder of the first line of the
        * social ('hide' and 'minimum position').  These must follow the name of
@@ -466,7 +485,7 @@ static void boot_social_messages(void)
       exit(1);
     }
       curr_soc++;
-      soc_mess_list[curr_soc].command = strdup(next_soc+1);
+      soc_mess_list[curr_soc].command = strdup(soc_name+1);
       soc_mess_list[curr_soc].sort_as = strdup(sorted);
       soc_mess_list[curr_soc].hide = hide;
       soc_mess_list[curr_soc].min_char_position = min_char_pos;
@@ -476,7 +495,7 @@ static void boot_social_messages(void)
       if (fscanf(fl, " %31s %31s \n", hide_text, min_pos_text) != 2 ||
           !parse_int_text_strict(hide_text, &hide) ||
           !parse_int_text_strict(min_pos_text, &min_pos)) {
-        log("SYSERR: format error in social file near social '%s'", next_soc);
+        log("SYSERR: format error in social file near social '%s'", soc_name);
       /* SYSERR_DESC: From boot_social_messages(), this error is output when the
        * server is expecting to find the remainder of the first line of the
        * social ('hide' and 'minimum position').  These must follow the name of
@@ -486,8 +505,8 @@ static void boot_social_messages(void)
       exit(1);
       }
       curr_soc++;
-      soc_mess_list[curr_soc].command = strdup(next_soc);
-      soc_mess_list[curr_soc].sort_as = strdup(next_soc);
+      soc_mess_list[curr_soc].command = strdup(soc_name);
+      soc_mess_list[curr_soc].sort_as = strdup(soc_name);
       soc_mess_list[curr_soc].hide = hide;
       soc_mess_list[curr_soc].min_char_position = POS_RESTING;
       soc_mess_list[curr_soc].min_victim_position = min_pos;
@@ -504,28 +523,28 @@ static void boot_social_messages(void)
        * is in boot_social_messages(). */
 #endif
 
-    soc_mess_list[curr_soc].char_no_arg = fread_action(fl, nr);
-    soc_mess_list[curr_soc].others_no_arg = fread_action(fl, nr);
-    soc_mess_list[curr_soc].char_found = fread_action(fl, nr);
+    soc_mess_list[curr_soc].char_no_arg = fread_action(fl, curr_soc);
+    soc_mess_list[curr_soc].others_no_arg = fread_action(fl, curr_soc);
+    soc_mess_list[curr_soc].char_found = fread_action(fl, curr_soc);
 
     /* if no char_found, the rest is to be ignored */
     if (CONFIG_NEW_SOCIALS == FALSE && !soc_mess_list[curr_soc].char_found)
       continue;
 
-    soc_mess_list[curr_soc].others_found = fread_action(fl, nr);
-    soc_mess_list[curr_soc].vict_found = fread_action(fl, nr);
-    soc_mess_list[curr_soc].not_found = fread_action(fl, nr);
-    soc_mess_list[curr_soc].char_auto = fread_action(fl, nr);
-    soc_mess_list[curr_soc].others_auto = fread_action(fl, nr);
+    soc_mess_list[curr_soc].others_found = fread_action(fl, curr_soc);
+    soc_mess_list[curr_soc].vict_found = fread_action(fl, curr_soc);
+    soc_mess_list[curr_soc].not_found = fread_action(fl, curr_soc);
+    soc_mess_list[curr_soc].char_auto = fread_action(fl, curr_soc);
+    soc_mess_list[curr_soc].others_auto = fread_action(fl, curr_soc);
 
     if (CONFIG_NEW_SOCIALS == FALSE)
       continue;
 
-    soc_mess_list[curr_soc].char_body_found = fread_action(fl, nr);
-    soc_mess_list[curr_soc].others_body_found = fread_action(fl, nr);
-    soc_mess_list[curr_soc].vict_body_found = fread_action(fl, nr);
-    soc_mess_list[curr_soc].char_obj_found = fread_action(fl, nr);
-    soc_mess_list[curr_soc].others_obj_found = fread_action(fl, nr);
+    soc_mess_list[curr_soc].char_body_found = fread_action(fl, curr_soc);
+    soc_mess_list[curr_soc].others_body_found = fread_action(fl, curr_soc);
+    soc_mess_list[curr_soc].vict_body_found = fread_action(fl, curr_soc);
+    soc_mess_list[curr_soc].char_obj_found = fread_action(fl, curr_soc);
+    soc_mess_list[curr_soc].others_obj_found = fread_action(fl, curr_soc);
   }
 
   /* close file & set top */
