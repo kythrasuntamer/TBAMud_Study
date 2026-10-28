@@ -39,3 +39,4 @@ macro(add_dg_world_test TEST_NAME)
 endmacro()
 
 add_dg_world_test(test_dg_objcmd_runtime)
+add_dg_world_test(test_dg_mobcmd_runtime)

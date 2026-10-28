@@ -43,12 +43,44 @@ static void mob_log(char_data *mob, const char *format, ...)
     strlcpy(message, "(message formatting failed)", sizeof(message));
   va_end(args);
 
-  script_log("Mob (%s, VNum %d):: %s", GET_SHORT(mob), GET_MOB_VNUM(mob), message);
+  /* A player who owns triggers can reach here too: players have no short
+   * description, so name them by their name. */
+  script_log("Mob (%s, VNum %d):: %s",
+             IS_NPC(mob) ? (GET_SHORT(mob) ? GET_SHORT(mob) : "(no short desc)")
+                         : (GET_NAME(mob) ? GET_NAME(mob) : "(no name)"),
+             GET_MOB_VNUM(mob), message);
 }
 
-/* Macro to determine if a mob is permitted to use these commands. */
+/* Macro to determine if a mob is permitted to use these commands.
+ * Note: the second clause also admits a *player* who owns triggers (allowed
+ * when CONFIG_SCRIPT_PLAYERS is on), and such a player can type every
+ * m-command by hand, because a typed command cannot be told apart from one
+ * the player's own script runs. The commands that create, destroy or force
+ * therefore check mob_cmd_privileged() as well. */
 #define MOB_OR_IMPL(ch) \
  ((IS_NPC(ch) && (!(ch)->desc || GET_LEVEL((ch)->desc->original) >= LVL_IMPL)) || (SCRIPT(ch) && TRIGGERS(SCRIPT(ch))))
+
+/* mload, mpurge, mforce, mhunt, mremember and mforget must not be usable by
+ * a person typing them. A character with a descriptor is controlled by a
+ * person: an immortal switched into a mob (desc->original is the immortal),
+ * or a player who owns triggers (desc->original is NULL; the old check read
+ * GET_LEVEL(desc->original) and dereferenced NULL). Only an implementor may
+ * go on; GET_REAL_LEVEL() picks the controlling person in both cases. A
+ * script-driven mob has no descriptor and is always allowed. */
+static int mob_cmd_privileged(char_data *ch, const char *cmd)
+{
+  if (!ch->desc || GET_REAL_LEVEL(ch) >= LVL_IMPL)
+    return TRUE;
+
+  TB_WARN_MSG("dg", "mob-cmd-denied", cmd,
+              DIAG_CHAR_FMT " is controlled by a %s of level %d (< %d); "
+              "%s refused", DIAG_CHAR(ch),
+              ch->desc->original ? "switched immortal" : "player",
+              GET_REAL_LEVEL(ch), LVL_IMPL, cmd);
+  mob_log(ch, "%s: refused, controlled by a person below implementor level", cmd);
+  send_to_char(ch, "%s", CONFIG_HUH);
+  return FALSE;
+}
 
 /* mob commands */
 /* prints the argument to all the rooms aroud the mobile */
@@ -362,7 +394,7 @@ ACMD(do_mload)
     if (AFF_FLAGGED(ch, AFF_CHARM))
         return;
 
-    if( ch->desc && GET_LEVEL(ch->desc->original) < LVL_IMPL)
+    if (!mob_cmd_privileged(ch, "mload"))
         return;
 
     target = two_arguments(argument, arg1, arg2);
@@ -463,7 +495,7 @@ ACMD(do_mpurge)
   if (AFF_FLAGGED(ch, AFF_CHARM))
     return;
 
-  if (ch->desc && (GET_LEVEL(ch->desc->original) < LVL_IMPL))
+  if (!mob_cmd_privileged(ch, "mpurge"))
     return;
 
   one_argument(argument, arg);
@@ -690,7 +722,7 @@ ACMD(do_mforce)
     if (AFF_FLAGGED(ch, AFF_CHARM))
         return;
 
-    if (ch->desc && (GET_LEVEL(ch->desc->original) < LVL_IMPL))
+    if (!mob_cmd_privileged(ch, "mforce"))
         return;
 
     argument = one_argument(argument, arg);
@@ -751,7 +783,7 @@ ACMD(do_mhunt)
     if (AFF_FLAGGED(ch, AFF_CHARM))
         return;
 
-    if (ch->desc && (GET_LEVEL(ch->desc->original) < LVL_IMPL))
+    if (!mob_cmd_privileged(ch, "mhunt"))
         return;
 
     one_argument(argument, arg);
@@ -793,7 +825,7 @@ ACMD(do_mremember)
     if (AFF_FLAGGED(ch, AFF_CHARM))
         return;
 
-    if (ch->desc && (GET_LEVEL(ch->desc->original) < LVL_IMPL))
+    if (!mob_cmd_privileged(ch, "mremember"))
         return;
 
     argument = one_argument(argument, arg);
@@ -844,7 +876,7 @@ ACMD(do_mforget)
     if (AFF_FLAGGED(ch, AFF_CHARM))
         return;
 
-    if (ch->desc && (GET_LEVEL(ch->desc->original) < LVL_IMPL))
+    if (!mob_cmd_privileged(ch, "mforget"))
         return;
 
     one_argument(argument, arg);
