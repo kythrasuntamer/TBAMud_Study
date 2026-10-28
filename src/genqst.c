@@ -17,6 +17,25 @@
 #include "genolc.h"
 #include "genzon.h" /* for create_world_index */
 
+/**
+ * @file genqst.c
+ * Quest table maintenance for OLC (qedit) and the quest file writer.
+ *
+ * Input: quests come from builders through qedit (string lengths capped by
+ * qedit: MAX_QUEST_NAME/DESC/MSG) or from hand-edited .qst files at boot.
+ *
+ * Table: aquest_table[0..total_quests-1] is sorted by vnum; qst_rnum is
+ * unsigned and NOTHING marks "no quest".  QST_MASTER is a mob VNUM, not an
+ * rnum: resolve it with real_mobile() before indexing mob_index.
+ *
+ * Questmaster spec procs: a mob that is some quest's questmaster runs
+ * questmaster().  If it already had another spec proc, that one is kept in
+ * the quest's QST_FUNC and questmaster() chains to it; delete_quest()
+ * restores it when the mob is no longer a questmaster of any quest.
+ * Changing a quest's questmaster in qedit does not restore the previous
+ * mob's spec proc (it stays questmaster() until reboot).
+ */
+
 
 /*-------------------------------------------------------------------*/
 
@@ -79,6 +98,17 @@ void free_quest(struct aq_data *quest)
 
 /*-------------------------------------------------------------------*/
 
+/**
+ * Add a quest, or update the quest with the same vnum, from qedit's copy.
+ *
+ * Strings are deep-copied; nqst keeps its own.  Inserting shifts later
+ * quests up one slot (their string pointers move with them, so the new
+ * slot is filled without freeing).  The questmaster mob (if it has a
+ * prototype) gets questmaster() as its spec proc, its previous spec proc
+ * being saved in QST_FUNC.
+ *
+ * @return The quest's rnum.
+ */
 int add_quest(struct aq_data *nqst)
 {
   qst_rnum rnum;
@@ -126,6 +156,16 @@ int add_quest(struct aq_data *nqst)
 
 /*-------------------------------------------------------------------*/
 
+/**
+ * Delete quest rnum (qedit delete).
+ *
+ * Precondition: rnum < total_quests; NOTHING (a quest never saved) and any
+ * other out-of-range value are reported and refused.  Frees the quest's
+ * strings, shifts later quests down, and restores the questmaster's saved
+ * spec proc when no remaining quest uses that mob.
+ *
+ * @return TRUE when deleted; FALSE, reported, otherwise.
+ */
 int delete_quest(qst_rnum rnum)
 {
   qst_rnum i;
