@@ -5,6 +5,26 @@
 *  By Levork. Copyright 1996 by Harvey Gilpin, 1997-2001 by George Greer. *
 **************************************************************************/
 
+/**
+ * @file genwld.c
+ * Room table maintenance for OLC (redit, rcopy, zedit new) and the room
+ * file writer.
+ *
+ * Input: room data comes from builders through redit; vnums are checked by
+ * the OLC front end against the builder's zone.
+ *
+ * Pointer stability: add_room() (insert path) and delete_room() reallocate
+ * and shift world[], so every struct room_data * held anywhere becomes
+ * invalid.  Room mud events and DG wait events are re-pointed here; any
+ * other holder of a room pointer must re-resolve it by vnum.  Stored room
+ * rnums are renumbered here: characters' and objects' IN_ROOM, GET_WAS_IN,
+ * exits, every zone's reset commands and the three start rooms.
+ *
+ * Ownership: world[r] owns its strings, exits, extra descriptions and
+ * proto_script.  people, contents, events and script are runtime lists of
+ * the live room and are never taken from an OLC copy.
+ */
+
 #include "conf.h"
 #include "sysdep.h"
 #include "structs.h"
@@ -49,8 +69,22 @@ static void rebase_room_events(void)
 }
 
 
-/* This function will copy the strings so be sure you free your own copies of 
- * the description, title, and such. */
+/**
+ * Add a new room, or update the live room with the same vnum.
+ *
+ * The strings are copied, so the caller keeps (and must free) its own.
+ * The caller's people/contents/events/script are never taken over: a new
+ * room starts with empty lists (reported, room-add-shared-list, if the
+ * caller passed live ones) and an updated room keeps its own.  proto_script
+ * is taken by pointer: afterwards the room owns the list the caller passed.
+ *
+ * Inserting shifts world[] (see the file comment): every room pointer is
+ * invalidated and every stored room rnum >= the new index is incremented.
+ *
+ * @param room Room to add, built by redit or rcopy; room->zone must be a
+ *             valid zone rnum.
+ * @return The room's rnum, or NOWHERE (reported) when room is NULL.
+ */
 room_rnum add_room(struct room_data *room)
 {
   struct char_data *tch;
@@ -58,8 +92,10 @@ room_rnum add_room(struct room_data *room)
   int j, found = FALSE;
   room_rnum i;
 
-  if (room == NULL)
+  if (room == NULL) {
+    TB_ERROR_MSG("olc", "room-add-null", "room", "called with no room; nothing added");
     return NOWHERE;
+  }
 
   if ((i = real_room(room->number)) != NOWHERE) {
     if (SCRIPT(&world[i]))
@@ -171,6 +207,20 @@ room_rnum add_room(struct room_data *room)
   return found;
 }
 
+/**
+ * Delete room rnum.
+ *
+ * People and objects in it move to the Void (rnum 0); its scripts and
+ * events are cancelled; exits into it are removed (or lead to NOWHERE when
+ * they carry a keyword or description); reset commands that name it are
+ * disabled ('*'); start rooms and GET_WAS_IN that were this room fall back
+ * to the Void.  world[] then shifts down
+ * (see the file comment) and every stored room rnum above rnum is
+ * decremented.
+ *
+ * @param rnum Room rnum from redit; 0 (the Void) cannot be deleted.
+ * @return TRUE when the room was deleted; FALSE, reported, otherwise.
+ */
 int delete_room(room_rnum rnum)
 {
   room_rnum i;
@@ -179,8 +229,13 @@ int delete_room(room_rnum rnum)
   struct obj_data *obj, *next_obj;
   struct room_data *room;
 
-  if (rnum <= 0 || rnum > top_of_world)	/* Can't delete void yet. */
+  /* Can't delete the Void: it is where everything else is moved. */
+  if (rnum <= 0 || rnum > top_of_world) {
+    TB_WARN_MSG("olc", "room-delete-range", "room",
+                "rnum %d out of range 1..%d; nothing deleted",
+                (int)rnum, (int)top_of_world);
     return FALSE;
+  }
 
   room = &world[rnum];
 
@@ -503,6 +558,17 @@ int save_rooms(zone_rnum rzone)
   return TRUE;
 }
 
+/**
+ * Replace live room `to` with the OLC copy `from`.
+ *
+ * `to`'s strings and (unless shared) proto_script are freed; the copy's
+ * strings are deep-copied and its proto_script pointer is taken over.  `to`
+ * keeps its own events.  `from`'s people, contents and events are cleared
+ * so nothing is linked from two rooms; the caller restores `to`'s people
+ * and contents (add_room() does).
+ *
+ * @return TRUE.
+ */
 int copy_room(struct room_data *to, struct room_data *from)
 {
   struct list_data *to_events = to->events;
