@@ -816,6 +816,24 @@ static void legacy_saved_var_with_long_name_is_read_in_bounds(void)
   TEST_ASSERT_EQUAL_STRING("value", SCRIPT(ch)->global_vars->value);
 }
 
+/* D1-18: %obj.extra% passed sizeof(str) (a pointer) as the capacity, so the
+ * flag list was silently cut to seven bytes. */
+static void obj_extra_lists_every_flag(void)
+{
+  char_data *mob = make_mob("mob");
+  trig_data *t = idle_mob_trigger(mob);
+  obj_data *o = make_obj("thing");
+  char out[MAX_INPUT_LENGTH];
+
+  SET_BIT_AR(GET_OBJ_EXTRA(o), ITEM_GLOW);
+  SET_BIT_AR(GET_OBJ_EXTRA(o), ITEM_HUM);
+  SET_BIT_AR(GET_OBJ_EXTRA(o), ITEM_MAGIC);
+  uid_var(t, "o", o->script_id);
+  subst(mob, t, "x %o.extra%", out);
+  TEST_ASSERT_EQUAL_STRING("x GLOW HUM MAGIC ", out);
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -849,5 +867,6 @@ int main(void)
   RUN_TEST(extract_past_last_word_stops_and_reports);
   RUN_TEST(tstat_of_long_script_is_truncated_and_reported);
   RUN_TEST(legacy_saved_var_with_long_name_is_read_in_bounds);
+  RUN_TEST(obj_extra_lists_every_flag);
   return UNITY_END();
 }

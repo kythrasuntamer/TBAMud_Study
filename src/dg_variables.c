@@ -1344,7 +1344,18 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
               else
                 tb_snprintf(str, slen, "0");
             } else {
-              sprintbitarray(GET_OBJ_EXTRA(o), extra_bits, EF_ARRAY_MAX, str, slen);
+              /* str is a parameter, so sizeof(str) was the pointer size and
+               * the list was cut to 7 bytes. Render in full, then copy into
+               * the caller's slen bytes and report anything that is cut. */
+              char flags[MAX_STRING_LENGTH];
+
+              sprintbitarray(GET_OBJ_EXTRA(o), extra_bits, EF_ARRAY_MAX,
+                             flags, sizeof(flags));
+              if (strlcpy(str, flags, slen) >= slen)
+                TB_WARN_MSG("dg", "field-truncate", "find_replacement",
+                            "trig vnum %d: obj vnum %d uid %ld field extra "
+                            "truncated to %zu bytes", DIAG_TRIG_VNUM(trig),
+                            GET_OBJ_VNUM(o), obj_script_id(o), slen - 1);
             }
           }
           break;
