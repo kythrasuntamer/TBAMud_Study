@@ -98,7 +98,10 @@ obj_rnum real_object(obj_vnum vnum) { (void)vnum; return NOTHING; }
 int save_rooms(zone_rnum z) { (void)z; return FALSE; }
 int save_config(IDXTYPE z) { (void)z; return FALSE; }
 int save_quests(zone_rnum z) { (void)z; return FALSE; }
-void script_save_to_disk(FILE *fp, void *item, int type) { (void)fp; (void)item; (void)type; }
+/* dg_olc.h calls it through the script_save_to_disk() macro. */
+int script_save_to_disk_at(FILE *fp, void *item, int type, const char *file,
+                           int line, const char *func)
+{ (void)fp; (void)item; (void)type; (void)file; (void)line; (void)func; return 0; }
 
 /* ---- fixture ---------------------------------------------------------- */
 

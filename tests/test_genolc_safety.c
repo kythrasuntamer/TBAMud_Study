@@ -163,7 +163,10 @@ bitvector_t asciiflag_conv(char *flag) { (void)flag; return 0; }
 void strip_cr(char *buffer) { (void)buffer; }
 char *convert_from_tabs(char *string) { return string; }
 int sprintascii(char *out, bitvector_t bits) { (void)bits; out[0] = '0'; out[1] = '\0'; return 1; }
-void script_save_to_disk(FILE *fp, void *item, int type) { (void)fp; (void)item; (void)type; }
+/* dg_olc.h calls it through the script_save_to_disk() macro. */
+int script_save_to_disk_at(FILE *fp, void *item, int type, const char *file,
+                           int line, const char *func)
+{ (void)fp; (void)item; (void)type; (void)file; (void)line; (void)func; return 0; }
 void skip_spaces(char **string) { while (**string && isspace((unsigned char)**string)) (*string)++; }
 char *str_udup(const char *txt) { return strdup(txt && *txt ? txt : "undefined"); }
 int is_abbrev(const char *arg1, const char *arg2)
