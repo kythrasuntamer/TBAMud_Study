@@ -417,6 +417,45 @@ static void parse_room_reports_duplicate_exit(void)
   room_fixture_free();
 }
 
+/* B1-06: sector 10 (== NUM_ROOM_SECTORS) and negative sectors passed the old
+ * "> NUM_ROOM_SECTORS" check and later indexed movement_loss[] out of
+ * bounds. Both are now replaced by SECT_INSIDE, loudly. */
+static void parse_room_rejects_sector_out_of_range(void)
+{
+  static const char text[] = "Hall~\nA hall.\n~\n0 0 0 0 0 10\nS\n$\n";
+
+  room_fixture_use();
+  parse_room_text(text, 103);
+  TEST_ASSERT_EQUAL_INT(SECT_INSIDE, world[top_of_world].sector_type);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("room-parse", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "room vnum 103"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "sector 10"));
+  room_fixture_free();
+}
+
+static void parse_room_rejects_negative_legacy_sector(void)
+{
+  static const char text[] = "Hall~\nA hall.\n~\n0 0 -3\nS\n$\n";
+
+  room_fixture_use();
+  parse_room_text(text, 104);
+  TEST_ASSERT_EQUAL_INT(SECT_INSIDE, world[top_of_world].sector_type);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "sector -3"));
+  room_fixture_free();
+}
+
+static void parse_room_keeps_valid_sector(void)
+{
+  static const char text[] = "Hall~\nA hall.\n~\n0 0 0 0 0 9\nS\n$\n";
+
+  room_fixture_use();
+  parse_room_text(text, 105);
+  TEST_ASSERT_EQUAL_INT(9, world[top_of_world].sector_type);
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  room_fixture_free();
+}
+
 /* ---------------------------------------------------------------------
  * fread_string()/fread_clean_string(): '~'-terminated strings
  * ------------------------------------------------------------------- */
@@ -525,6 +564,9 @@ int main(void)
   RUN_TEST(parse_room_rejects_out_of_range_direction);
   RUN_TEST(parse_room_rejects_negative_direction);
   RUN_TEST(parse_room_reports_duplicate_exit);
+  RUN_TEST(parse_room_rejects_sector_out_of_range);
+  RUN_TEST(parse_room_rejects_negative_legacy_sector);
+  RUN_TEST(parse_room_keeps_valid_sector);
   RUN_TEST(file_to_string_loads_whole_multiline_file);
   RUN_TEST(file_to_string_joins_long_lines_and_keeps_last_char);
   RUN_TEST(file_to_string_rejects_oversized_file);

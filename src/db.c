@@ -1490,6 +1490,20 @@ void ensure_newline_terminated(struct extra_descr_data* new_descr) {
   }
 }
 
+/** Return sector, or SECT_INSIDE with a diagnostic when it is outside
+ * 0..NUM_ROOM_SECTORS-1. The sector comes from a hand-edited world file
+ * (redit only offers valid sectors) and later indexes movement_loss[] and
+ * sector_types[], so an out-of-range value must never reach a room. */
+static int room_sector_or_inside(int vnum, int sector)
+{
+  if (sector >= 0 && sector < NUM_ROOM_SECTORS)
+    return sector;
+  TB_ERROR_MSG("db", "room-parse", "sector",
+               "room vnum %d: sector %d out of range 0..%d; using SECT_INSIDE",
+               vnum, sector, NUM_ROOM_SECTORS - 1);
+  return SECT_INSIDE;
+}
+
 /* load the rooms */
 void parse_room(FILE *fl, int virtual_nr)
 {
@@ -1548,7 +1562,7 @@ void parse_room(FILE *fl, int virtual_nr)
     world[room_nr].room_flags[3] = 0;
 
     /* In the old-style files, the 3rd item was the sector-type */
-    world[room_nr].sector_type = t[2];
+    world[room_nr].sector_type = room_sector_or_inside(virtual_nr, t[2]);
 
    tb_snprintf(flags, sizeof(flags), "room #%d", virtual_nr);	/* sprintf: OK (until 399-bit integers) */
 
@@ -1573,10 +1587,7 @@ void parse_room(FILE *fl, int virtual_nr)
     for(taeller=0; taeller < AF_ARRAY_MAX; taeller++)
       check_bitvector_names(world[room_nr].room_flags[taeller], room_bits_count, flags, "room");
 
-    /* Added Sanity check */
-    if (t[2] > NUM_ROOM_SECTORS) t[2] = SECT_INSIDE;
-
-    world[room_nr].sector_type = t[2];
+    world[room_nr].sector_type = room_sector_or_inside(virtual_nr, t[2]);
     } else {
       log("SYSERR: Format error in roomflags/sector type of room #%d", virtual_nr);
     exit(1);
