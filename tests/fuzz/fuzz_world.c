@@ -269,7 +269,9 @@ static int fuzz_reset_room, fuzz_reset_mob, fuzz_reset_obj, fuzz_reset_zone;
  *     in no zone, i.e. zone_table[NOWHERE].
  *   note-exdesc-null-keyword: check_object() hands a note's extra
  *     descriptions to find_exdesc(), which reads *keyword; an empty "~"
- *     keyword was stored as NULL. */
+ *     keyword was stored as NULL.
+ * trg-empty-script and note-exdesc-null-keyword are fixed (their inputs are
+ * now corpus/world/regression-*): masking them only hides a regression. */
 static int fuzz_mask_trg_empty_script;
 static int fuzz_mask_convert_room, fuzz_mask_convert_mob, fuzz_mask_convert_obj;
 static int fuzz_mask_note_null_keyword;

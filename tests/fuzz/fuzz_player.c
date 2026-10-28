@@ -132,7 +132,9 @@ static char **fixed_argv;   /* argv as rewritten at startup (kept reachable) */
 /* Known findings, recorded in tests/fuzz/known-crashes/player/. A campaign
  * sets FUZZ_PLAYER_MASK=name[,name...] to step around the ones it has
  * already reported and keep fuzzing; without it every one still reproduces
- * (the DISABLED known-crash ctests rely on that). */
+ * (the DISABLED known-crash ctests rely on that). name-path is fixed:
+ * get_filename() rejects such names (2f7889b), so masking it only hides a
+ * regression; name-path-login now stops at vars-noname instead. */
 enum known_bug {
   KNOWN_VARS_NONAME,    /* read_saved_vars() fopen()s an unwritten name buffer */
   KNOWN_HCONTROL_TIME,  /* hcontrol show prints an unwritten date buffer */
