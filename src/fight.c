@@ -711,8 +711,11 @@ int damage(struct char_data *ch, struct char_data *victim, int dam, int attackty
     return (0);
   }
 
-  /* peaceful rooms */
-  if (ch->nr != real_mobile(DG_CASTER_PROXY) &&
+  /* peaceful rooms. Only the DG caster proxy mob (dg_cast's stand-in) may
+   * hurt there. Compare by vnum and only for NPCs: players have nr ==
+   * NOBODY, which is also what real_mobile() returns on a world without
+   * the proxy mob, and that used to exempt every player. */
+  if (!(IS_NPC(ch) && GET_MOB_VNUM(ch) == DG_CASTER_PROXY) &&
       ch != victim && ROOM_FLAGGED(IN_ROOM(ch), ROOM_PEACEFUL)) {
     send_to_char(ch, "This room just has such a peaceful, easy feeling...\r\n");
     return (0);

@@ -275,9 +275,27 @@ static void test_hit_clamps_weapon_dice(void)
   fx_free_char(pc);
 }
 
+/* H1-16: on a world without the DG caster proxy mob, real_mobile() returns
+ * NOBODY, the same as a player's nr; players must still be stopped by a
+ * peaceful room. (The fixture's real_mobile() always returns NOBODY.) */
+static void test_peaceful_room_stops_player_without_proxy_mob(void)
+{
+  struct char_data *pc = fx_new_char("hero", FALSE, 0);
+  struct char_data *mob = fx_new_char("guard", TRUE, 0);
+
+  SET_BIT_AR(ROOM_FLAGS(0), ROOM_PEACEFUL);
+
+  TEST_ASSERT_EQUAL_INT(0, damage(pc, mob, 10, TYPE_HIT));
+  TEST_ASSERT_EQUAL_INT(100, GET_HIT(mob));
+  TEST_ASSERT_NOT_NULL(strstr(fx_last_send, "peaceful"));
+  fx_free_char(mob);
+  fx_free_char(pc);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(test_peaceful_room_stops_player_without_proxy_mob);
   RUN_TEST(test_hit_clamps_weapon_dice);
   RUN_TEST(test_autoloot_takes_the_new_corpse);
   RUN_TEST(test_hit_rejects_weapon_attack_type_out_of_range);
