@@ -30,7 +30,10 @@
  * plain value. */
 #define VALID_MOB_RNUM(r)     ((long)(r) >= 0 && (long)(r) <= (long)top_of_mobt)
 #define VALID_OBJ_RNUM_NUM(r) ((long)(r) >= 0 && (long)(r) <= (long)top_of_objt)
-#define VALID_TRIG_RNUM(r)    ((long)(r) >= 0 && (long)(r) < (long)top_of_trigt)
+/* Token-identical to dg_scripts.h's definition (rejects NOTHING and empty
+ * index slots), so including both headers is not a redefinition. */
+#define VALID_TRIG_RNUM(rn) \
+  ((rn) != NOTHING && (int)(rn) < top_of_trigt && trig_index[(rn)] != NULL)
 
 /* The rnum tables an OLC scratch copy can refer to. */
 #define OLC_RNUM_OBJ   0

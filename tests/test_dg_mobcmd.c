@@ -143,6 +143,11 @@ struct char_data *get_char_vis(struct char_data *ch, char *name, int *number, in
   (void)ch; (void)number; (void)where;
   return !strcmp(name, "new") ? &new_leader : NULL;
 }
+/* DG_FIND_CHAR_ROOM() looks names up in the mob's room; same fixture. */
+struct char_data *get_char_room_vis(struct char_data *ch, char *name, int *number)
+{
+  return get_char_vis(ch, name, number, FIND_CHAR_ROOM);
+}
 struct char_data *get_char(char *name) { (void)name; return NULL; }
 bool circle_follow(struct char_data *ch, struct char_data *victim)
 { (void)ch; (void)victim; return FALSE; }

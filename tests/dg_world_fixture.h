@@ -78,7 +78,7 @@ void __wrap_tb_error_log_at(const char *severity, const char *subsystem,
 }
 
 /* Number of captured records whose operation is op. */
-static int dgw_saw(const char *op)
+static inline int dgw_saw(const char *op)
 {
   int i, n = 0;
   for (i = 0; i < dgw_diag_count; i++)
@@ -88,7 +88,7 @@ static int dgw_saw(const char *op)
 }
 
 /* Detail text of the most recent record with operation op, or "". */
-static const char *dgw_detail(const char *op)
+static inline const char *dgw_detail(const char *op)
 {
   int i;
   for (i = dgw_diag_count - 1; i >= 0; i--)
@@ -111,7 +111,7 @@ static struct index_data *dgw_trig_index[1];
 static struct cmdlist_element *dgw_cmdlists[DGW_MAX_CMDLISTS];
 static int dgw_num_cmdlists;
 
-static void dgw_obj_proto_set(int i, obj_vnum vnum, int type, char *name,
+static inline void dgw_obj_proto_set(int i, obj_vnum vnum, int type, char *name,
                               char *shortdesc, int weight)
 {
   struct obj_data *p = &dgw_obj_proto[i];
@@ -127,7 +127,7 @@ static void dgw_obj_proto_set(int i, obj_vnum vnum, int type, char *name,
   SET_BIT_AR(GET_OBJ_WEAR(p), ITEM_WEAR_TAKE);
 }
 
-static void dgw_mob_proto_set(int i, mob_vnum vnum, char *name, char *shortdesc)
+static inline void dgw_mob_proto_set(int i, mob_vnum vnum, char *name, char *shortdesc)
 {
   struct char_data *p = &dgw_mob_proto[i];
   memset(p, 0, sizeof(*p));
@@ -144,7 +144,7 @@ static void dgw_mob_proto_set(int i, mob_vnum vnum, char *name, char *shortdesc)
   GET_DEFAULT_POS(p) = POS_STANDING;
 }
 
-static void dgw_setup(void)
+static inline void dgw_setup(void)
 {
   int i;
 
@@ -188,7 +188,7 @@ static void dgw_setup(void)
 }
 
 /* An object placed in room rnum (or nowhere when rnum == NOWHERE). */
-static struct obj_data *dgw_obj(obj_vnum vnum, room_rnum rnum)
+static inline struct obj_data *dgw_obj(obj_vnum vnum, room_rnum rnum)
 {
   struct obj_data *o = read_object(vnum, VIRTUAL);
   TEST_ASSERT_NOT_NULL(o);
@@ -197,7 +197,7 @@ static struct obj_data *dgw_obj(obj_vnum vnum, room_rnum rnum)
   return o;
 }
 
-static struct char_data *dgw_mob(mob_vnum vnum, room_rnum rnum)
+static inline struct char_data *dgw_mob(mob_vnum vnum, room_rnum rnum)
 {
   struct char_data *m = read_mobile(vnum, VIRTUAL);
   TEST_ASSERT_NOT_NULL(m);
@@ -210,7 +210,7 @@ static struct char_data *dgw_mob(mob_vnum vnum, room_rnum rnum)
  * as in the server where they are shared with the prototype). */
 
 /* A trigger whose body is the NULL-terminated array of script lines. */
-static struct trig_data *dgw_trigger(int attach_type, long trigger_type,
+static inline struct trig_data *dgw_trigger(int attach_type, long trigger_type,
                                      const char *const lines[])
 {
   struct trig_data *t;
@@ -240,7 +240,7 @@ static struct trig_data *dgw_trigger(int attach_type, long trigger_type,
 
 /* A script holding one trigger (inert when lines is NULL), so MOB_OR_IMPL
  * and SCRIPT() checks pass. Freed by extract_script(). */
-static struct script_data *dgw_script_with(int attach_type, long trigger_type,
+static inline struct script_data *dgw_script_with(int attach_type, long trigger_type,
                                            const char *const lines[])
 {
   struct script_data *sc;
@@ -250,14 +250,14 @@ static struct script_data *dgw_script_with(int attach_type, long trigger_type,
   return sc;
 }
 
-static struct script_data *dgw_script(void)
+static inline struct script_data *dgw_script(void)
 {
   return dgw_script_with(MOB_TRIGGER, 0, NULL);
 }
 
 /* A connected (unswitched) player who owns a trigger. Not on
  * character_list; release with dgw_free_player(). */
-static struct char_data *dgw_player(long idnum, room_rnum rnum)
+static inline struct char_data *dgw_player(long idnum, room_rnum rnum)
 {
   struct char_data *ch;
   CREATE(ch, struct char_data, 1);
@@ -277,7 +277,7 @@ static struct char_data *dgw_player(long idnum, room_rnum rnum)
   return ch;
 }
 
-static void dgw_free_player(struct char_data *ch)
+static inline void dgw_free_player(struct char_data *ch)
 {
   struct obj_data *o;
   while ((o = ch->carrying) != NULL) {
@@ -295,7 +295,7 @@ static void dgw_free_player(struct char_data *ch)
   free(ch);
 }
 
-static void dgw_teardown(void)
+static inline void dgw_teardown(void)
 {
   struct char_data *ch;
   int i, d;

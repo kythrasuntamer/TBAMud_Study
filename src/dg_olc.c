@@ -873,7 +873,7 @@ void trigedit_parse(struct descriptor_data *d, char *arg)
        * with it; a vnum outside IDXTYPE would be truncated by real_trigger. */
       if (!tb_parse_int_checked(arg, &i) || i < IDXTYPE_MIN || i > IDXTYPE_MAX)
         write_to_output(d, "That is not a trigger vnum.\r\n");
-      else if ((i = real_trigger(i)) != NOWHERE) {
+      else if ((i = real_trigger(i)) != NOTHING) {
         trigedit_setup_existing(d, i);
         /* The scratch now holds the source's rnum, but it is still the work
          * in progress for OLC_NUM(d) (E2-03). */

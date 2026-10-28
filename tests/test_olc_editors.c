@@ -362,12 +362,12 @@ int new_command(struct zone_data *zone, int pos)
   return 1;
 }
 
-void delete_zone_command(struct zone_data *zone, int pos)
+int delete_zone_command(struct zone_data *zone, int pos)
 {
   int count = count_commands(zone->cmd), i, l;
   struct reset_com *newlist;
   if (pos < 0 || pos >= count)
-    return;
+    return 0;
   newlist = calloc((size_t)count, sizeof(*newlist));
   TEST_ASSERT_NOT_NULL(newlist);
   for (i = 0, l = 0; i < count; i++)
@@ -376,6 +376,7 @@ void delete_zone_command(struct zone_data *zone, int pos)
   newlist[count - 1].command = 'S';
   free(zone->cmd);
   zone->cmd = newlist;
+  return 1;
 }
 
 static char *dup_or_null(const char *s) { return s ? strdup(s) : NULL; }
