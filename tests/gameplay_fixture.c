@@ -79,6 +79,7 @@ void extract_script(void *thing, int type) { (void)thing; (void)type; }
 void free_proto_script(void *thing, int type) { (void)thing; (void)type; }
 
 /* ---- utils.c functions observed by the tests (linked with --wrap) ------ */
+/* NOLINTNEXTLINE(cert-dcl37-c,cert-dcl51-cpp): --wrap requires this name. */
 int __wrap_rand_number(int from, int to)
 {
   if (fx_rand_value < 0)
@@ -88,12 +89,14 @@ int __wrap_rand_number(int from, int to)
   return fx_rand_value > to ? to : fx_rand_value;
 }
 
+/* NOLINTNEXTLINE(cert-dcl37-c,cert-dcl51-cpp): --wrap requires this name. */
 void __wrap_core_dump_real(const char *who, int line)
 {
   (void)who; (void)line;
   fx_core_dumps++;
 }
 
+/* NOLINTNEXTLINE(cert-dcl37-c,cert-dcl51-cpp): --wrap requires this name. */
 void __wrap_basic_mud_log(const char *format, ...)
 {
   (void)format;

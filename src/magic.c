@@ -46,7 +46,9 @@ int mag_savingthrow(struct char_data *ch, int type, int modifier)
   if (!IS_NPC(ch))
     class_sav = (int)GET_CLASS(ch);
 
-  save = (unsigned char)saving_throws(class_sav, type, GET_LEVEL(ch));
+  /* char_saving_throw() names ch in the class-table report if its class
+   * or level misses the table (C1-19). */
+  save = (unsigned char)char_saving_throw(ch, class_sav, type);
   save += GET_SAVE(ch, type);
   save += modifier;
 
@@ -934,7 +936,13 @@ void mag_unaffects(int level, struct char_data *ch, struct char_data *victim,
     to_vict = "You don't feel so unlucky.";
     break;
   default:
-    log("SYSERR: unknown spellnum %d passed to mag_unaffects.", spellnum);
+    /* Internal invariant: call_magic() routes a spell here only when its
+     * spell_info[] routines include MAG_UNAFFECTS, so each such spell
+     * needs a case above; a new one without a case lands here (H1-26). */
+    TB_ERROR_MSG("magic", "unaffects-unknown-spell", skill_name(spellnum),
+                 "spell %d has MAG_UNAFFECTS but no case in mag_unaffects(); "
+                 "caster " DIAG_CHAR_FMT " victim " DIAG_CHAR_FMT, spellnum,
+                 DIAG_CHAR(ch), DIAG_CHAR(victim));
     return;
   }
 
@@ -1032,14 +1040,21 @@ void mag_creations(int level, struct char_data *ch, int spellnum)
     z = 10;
     break;
   default:
+    /* The same invariant for MAG_CREATIONS. */
+    TB_ERROR_MSG("magic", "creations-unknown-spell", skill_name(spellnum),
+                 "spell %d has MAG_CREATIONS but no case in "
+                 "mag_creations(); caster " DIAG_CHAR_FMT, spellnum,
+                 DIAG_CHAR(ch));
     send_to_char(ch, "Spell unimplemented, it would seem.\r\n");
     return;
   }
 
+  /* The created object's prototype comes from the world files. */
   if (!(tobj = read_object(z, VIRTUAL))) {
     send_to_char(ch, "I seem to have goofed.\r\n");
-    log("SYSERR: spell_creations, spell %d, obj %d: obj not found",
-	    spellnum, z);
+    TB_ERROR_MSG("magic", "creations-proto-missing", skill_name(spellnum),
+                 "spell %d creates obj vnum %d, which is not loaded; caster "
+                 DIAG_CHAR_FMT, spellnum, (int) z, DIAG_CHAR(ch));
     return;
   }
   obj_to_char(tobj, ch);
