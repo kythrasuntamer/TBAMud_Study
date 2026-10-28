@@ -26,7 +26,65 @@
 #include "spells.h"
  
 #define MAX_OBJ_LIST 100
- 
+
+/* Bounded listing output.
+ *
+ * Every list builder in this file renders into one MAX_STRING_LENGTH stack
+ * buffer whose rows contain builder- and world-file-controlled text (short
+ * descriptions, room names, builder lists).  Rows are appended atomically
+ * with olc_list_rowf(): a row that does not fit is rolled back whole and the
+ * list stops.  OLC_LIST_FINISH then appends a visible trailer and emits a
+ * WARN diagnostic so truncation is never silent.  The row area is
+ * sizeof(OLC_LIST_TRAILER) bytes short of the storage so the trailer always
+ * fits. */
+#define OLC_LIST_TRAILER "\r\n*** list truncated ***\r\n"
+
+static void olc_list_begin(struct tb_buf *tb, char *storage, size_t size)
+{
+  tb_buf_init(tb, storage, size - sizeof(OLC_LIST_TRAILER));
+}
+
+/* Append one whole row, or nothing.  Returns FALSE (and marks tb truncated)
+ * when the row does not fit, leaving tb exactly as it was before the call. */
+static int olc_list_rowf(struct tb_buf *tb, const char *format, ...)
+  __attribute__ ((format (printf, 2, 3)));
+static int olc_list_rowf(struct tb_buf *tb, const char *format, ...)
+{
+  va_list args;
+  size_t available = tb_buf_remaining(tb);
+  int n;
+
+  if (tb->truncated)
+    return FALSE;
+
+  va_start(args, format);
+  n = vsnprintf(tb->data + tb->length, available + 1, format, args);
+  va_end(args);
+
+  if (n < 0 || (size_t)n > available) {
+    tb->data[tb->length] = '\0';
+    tb->truncated = TRUE;
+    return FALSE;
+  }
+  tb->length += (size_t)n;
+  return TRUE;
+}
+
+/* Page the finished list to ch.  If any row was dropped, append the trailer
+ * and log a WARN naming the command, the rows shown and the actor.  A macro so
+ * the diagnostic carries the caller's file/line/function.  ch and tb are
+ * evaluated several times: pass plain variables. */
+#define OLC_LIST_FINISH(ch, tb, what, shown) do { \
+  if (tb_buf_truncated(tb)) { \
+    (tb)->capacity += sizeof(OLC_LIST_TRAILER); \
+    tb_buf_append((tb), OLC_LIST_TRAILER); \
+    TB_WARN_MSG("olc", "list-truncated", (what), \
+                "%d rows shown, buf %zu bytes, " DIAG_CHAR_FMT, \
+                (shown), (tb)->capacity, DIAG_CHAR(ch)); \
+  } \
+  page_string((ch)->desc, (tb)->data, TRUE); \
+} while (0)
+
 struct obj_list_item {
   obj_vnum vobj;
   int val;
@@ -249,11 +307,11 @@ static void perform_obj_type_list(struct char_data * ch, char *arg)
 static void perform_obj_aff_list(struct char_data * ch, char *arg)
 {
   int num, i, apply, v1 = 0, found = 0;
-  size_t len = 0, tmp_len = 0;
   struct obj_list_item lst[MAX_OBJ_LIST];
   obj_rnum r_num;
   obj_vnum ov;
   char buf[MAX_STRING_LENGTH];
+  struct tb_buf tb;
 
   for (i = 0; i < MAX_OBJ_LIST; i++) {
     lst[i].vobj = NOTHING;
@@ -281,10 +339,11 @@ static void perform_obj_aff_list(struct char_data * ch, char *arg)
       }
     }
 
+    olc_list_begin(&tb, buf, sizeof(buf));
     if (apply == APPLY_CLASS)
-      len = snprintf(buf, sizeof(buf), "Highest average damage per hit for Weapons\r\n");
+      tb_buf_append(&tb, "Highest average damage per hit for Weapons\r\n");
     else if (apply == APPLY_LEVEL)
-      len = snprintf(buf, sizeof(buf), "Highest AC Apply for Armor\r\n");
+      tb_buf_append(&tb, "Highest AC Apply for Armor\r\n");
 
     /* F3-02: num is top_of_objt + 1 here (the scan loop above ran to the
      * end), one past the obj_proto allocation.  Every per-row field must
@@ -297,18 +356,17 @@ static void perform_obj_aff_list(struct char_data * ch, char *arg)
                        (int)r_num, (int)top_of_objt, (int)lst[i].vobj);
           continue;
         }
-        tmp_len = snprintf(buf+len, sizeof(buf)-len, "%s%3d%s) %s[%s%5d%s] %s%3d %s%-*s %s[%s]%s%s\r\n",
-                  QGRN, ++found, QNRM, QCYN, QYEL, lst[i].vobj, QCYN,
+        if (!olc_list_rowf(&tb, "%s%3d%s) %s[%s%5d%s] %s%3d %s%-*s %s[%s]%s%s\r\n",
+                  QGRN, found + 1, QNRM, QCYN, QYEL, lst[i].vobj, QCYN,
                   QYEL, lst[i].val, QCYN, 42+count_color_chars(obj_proto[r_num].short_description),
                   obj_proto[r_num].short_description,
                   QYEL, item_types[obj_proto[r_num].obj_flags.type_flag], QNRM,
-                  obj_proto[r_num].proto_script ? " [TRIG]" : "");
-        len += tmp_len;
-        if (len > sizeof(buf))
+                  obj_proto[r_num].proto_script ? " [TRIG]" : ""))
           break;
+        found++;
       }
     }
-    page_string(ch->desc, buf, TRUE);
+    OLC_LIST_FINISH(ch, &tb, "olist-affect", found);
     return;  /* End of special-case handling */
   }
   /* Non-special cases, list objects by affect */
@@ -325,7 +383,13 @@ static void perform_obj_aff_list(struct char_data * ch, char *arg)
       }
     }
   }
-  len = snprintf(buf, sizeof(buf), "Objects with highest %s affect\r\n", apply_types[(apply)]);
+  /* F3-01: rows carry builder-written short descriptions (up to one input
+   * line each) and MAX_OBJ_LIST of them can exceed MAX_STRING_LENGTH.  The
+   * old `len += snprintf()` loop had no bound, so once len passed sizeof(buf)
+   * the size_t remainder wrapped and snprintf wrote past the stack buffer.
+   * olc_list_rowf() refuses a row that does not fit and the list stops. */
+  olc_list_begin(&tb, buf, sizeof(buf));
+  tb_buf_appendf(&tb, "Objects with highest %s affect\r\n", apply_types[(apply)]);
   for (i = 0; i < MAX_OBJ_LIST; i++) {
     if ((r_num = real_object(lst[i].vobj)) != NOTHING) {
       if (r_num > top_of_objt) {
@@ -334,16 +398,17 @@ static void perform_obj_aff_list(struct char_data * ch, char *arg)
                      (int)r_num, (int)top_of_objt, (int)lst[i].vobj);
         continue;
       }
-      tmp_len = snprintf(buf+len, sizeof(buf)-len, "%s%3d%s) %s[%s%8d%s] %s%3d %s%-*s %s[%s]%s%s\r\n",
-                QGRN, ++found, QNRM, QCYN, QYEL, lst[i].vobj, QCYN,
+      if (!olc_list_rowf(&tb, "%s%3d%s) %s[%s%8d%s] %s%3d %s%-*s %s[%s]%s%s\r\n",
+                QGRN, found + 1, QNRM, QCYN, QYEL, lst[i].vobj, QCYN,
                 QYEL, lst[i].val, QCYN, 42+count_color_chars(obj_proto[r_num].short_description),
                 obj_proto[r_num].short_description,
                 QYEL, item_types[obj_proto[r_num].obj_flags.type_flag], QNRM,
-                obj_proto[r_num].proto_script ? " [TRIG]" : "");
-      len += tmp_len;
+                obj_proto[r_num].proto_script ? " [TRIG]" : ""))
+        break;
+      found++;
     }
   }
-  page_string(ch->desc, buf, TRUE);
+  OLC_LIST_FINISH(ch, &tb, "olist-affect", found);
 }
 
 static void perform_obj_name_list(struct char_data * ch, char *arg)

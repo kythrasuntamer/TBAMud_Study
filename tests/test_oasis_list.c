@@ -267,10 +267,52 @@ void test_obj_aff_list_generic_affect_uses_row_rnum(void)
   TEST_ASSERT_FALSE(log_has("op=list-index"));
 }
 
+/* ---------------------------------------------------------------------
+ * F3-01: 100 rows of ~560 bytes overflowed the 49152-byte stack buffer in
+ * olist affect (unbounded len += snprintf).  Now the list stops at the last
+ * whole row, shows a trailer, and logs op=list-truncated.
+ * --------------------------------------------------------------------- */
+void test_obj_aff_list_truncates_loudly_instead_of_overflowing(void)
+{
+  char longdesc[501];
+  int i;
+
+  memset(longdesc, 'x', sizeof(longdesc) - 1);
+  longdesc[sizeof(longdesc) - 1] = '\0';
+  make_objects(100, longdesc);
+  for (i = 0; i <= top_of_objt; i++) {
+    obj_proto[i].affected[0].location = APPLY_STR;
+    obj_proto[i].affected[0].modifier = 1 + i;
+  }
+
+  run_list(SCMD_OASIS_OLIST, "affect 1");
+
+  TEST_ASSERT_EQUAL_INT(1, paged_calls);
+  TEST_ASSERT_TRUE(strlen(paged) < MAX_STRING_LENGTH);
+  TEST_ASSERT_NOT_NULL(strstr(paged, "*** list truncated ***"));
+  TEST_ASSERT_TRUE(log_has("op=list-truncated"));
+  TEST_ASSERT_TRUE(log_has("resource=olist-affect"));
+}
+
+void test_obj_aff_list_short_list_is_not_reported_truncated(void)
+{
+  make_objects(3, "a dagger");
+  obj_proto[1].affected[0].location = APPLY_STR;
+  obj_proto[1].affected[0].modifier = 2;
+
+  run_list(SCMD_OASIS_OLIST, "affect 1");
+
+  TEST_ASSERT_NOT_NULL(strstr(paged, "a dagger"));
+  TEST_ASSERT_NULL(strstr(paged, "*** list truncated ***"));
+  TEST_ASSERT_FALSE(log_has("op=list-truncated"));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
   RUN_TEST(test_obj_aff_list_weapon_special_case_uses_row_rnum);
   RUN_TEST(test_obj_aff_list_generic_affect_uses_row_rnum);
+  RUN_TEST(test_obj_aff_list_truncates_loudly_instead_of_overflowing);
+  RUN_TEST(test_obj_aff_list_short_list_is_not_reported_truncated);
   return UNITY_END();
 }
