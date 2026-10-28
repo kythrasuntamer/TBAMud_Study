@@ -432,33 +432,62 @@ static void remove_player_from_index(int pos)
   }
 }
 
-/* This function necessary to save a seperate ASCII player index */
+/** Write the in-memory player index to LIB_PLRFILES/INDEX_FILE.
+ * The index is the only map from player names to player files, and an
+ * empty or truncated index makes the next new character implementor
+ * (init_char()). It is therefore staged in a mkstemp() file beside the
+ * live one, every write is checked, and the live file is replaced only
+ * after a complete, flushed write (tb_replace_file_checked()). On any
+ * failure the live index is kept and index-save is reported. */
 void save_player_index(void)
 {
-  int i;
-  char index_name[50], bits[64];
+  int i, failed = FALSE, temp_fd;
+  char index_name[50], temp_name[64], bits[64];
   FILE *index_file;
 
   tb_snprintf(index_name, sizeof(index_name), "%s%s", LIB_PLRFILES, INDEX_FILE);
-  if (!(index_file = fopen(index_name, "w"))) {
-    log("SYSERR: Could not write player index file");
+  tb_snprintf(temp_name, sizeof(temp_name), "%s.tmpXXXXXX", index_name);
+  if ((temp_fd = mkstemp(temp_name)) < 0) {
+    TB_ERROR_ERRNO("player", "index-save", index_name,
+                   "cannot stage %d entries; live index kept", top_of_p_table + 1);
+    return;
+  }
+  if (!(index_file = fdopen(temp_fd, "w"))) {
+    TB_ERROR_ERRNO("player", "index-save", temp_name,
+                   "cannot open staged index for %d entries; live index kept",
+                   top_of_p_table + 1);
+    close(temp_fd);
+    unlink(temp_name);
     return;
   }
 
-  for (i = 0; i <= top_of_p_table; i++)
+  for (i = 0; i <= top_of_p_table && !failed; i++)
     if (*player_table[i].name) {
       sprintascii(bits, player_table[i].flags);
-      tb_fprintf(index_file, "%ld %s %d %s %ld\n", player_table[i].id,
-	player_table[i].name, player_table[i].level, *bits ? bits : "0",
-        (long)player_table[i].last);
+      if (fprintf(index_file, "%ld %s %d %s %ld\n", player_table[i].id,
+                  player_table[i].name, player_table[i].level, *bits ? bits : "0",
+                  (long)player_table[i].last) < 0)
+        failed = TRUE;
     }
   /* Records boot could not parse are carried forward, not erased. */
-  for (i = 0; i < index_kept_count; i++)
-    tb_fprintf(index_file, "%s\n", index_kept_lines[i]);
-  tb_fprintf(index_file, "~\n");
-
-  tb_fclose(index_file);
+  for (i = 0; i < index_kept_count && !failed; i++)
+    if (fprintf(index_file, "%s\n", index_kept_lines[i]) < 0)
+      failed = TRUE;
+  if (!failed && fprintf(index_file, "~\n") < 0)
+    failed = TRUE;
+  if (ferror(index_file) || fflush(index_file) != 0)
+    failed = TRUE;
+  if (fclose(index_file) != 0)
+    failed = TRUE;
+  if (!failed && !tb_replace_file_checked(temp_name, index_name))
+    failed = TRUE;
+  if (failed) {
+    TB_ERROR_ERRNO("player", "index-save", index_name,
+                   "%d entries not written; live index kept", top_of_p_table + 1);
+    unlink(temp_name);
+  }
 }
+
 
 void free_player_index(void)
 {

@@ -330,6 +330,34 @@ static void test_malformed_index_record_is_skipped_and_kept(void)
   leave_scratch();
 }
 
+/* B2-11: the index was truncated in place with fopen("w") and its write
+ * errors ignored; a failed save left an empty index (next new character
+ * became implementor). A save that cannot be staged must keep the live
+ * index and report. */
+static void test_index_save_failure_keeps_live_index(void)
+{
+  static const char body[] = "4242 tester 10 0 1000\n~\n";
+
+  if (geteuid() == 0)
+    TEST_IGNORE_MESSAGE("directory permissions do not bind root");
+  enter_scratch();
+  write_index(body);
+  build_player_index();
+  player_table[0].level = 11;	/* a change worth saving */
+  TEST_ASSERT_EQUAL_INT(0, chmod(LIB_PLRFILES, 0500));
+
+  save_player_index();
+
+  TEST_ASSERT_EQUAL_INT(0, chmod(LIB_PLRFILES, 0700));
+  TEST_ASSERT_EQUAL_STRING(body, read_index());
+  TEST_ASSERT_EQUAL_STRING("index-save", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "live index kept"));
+
+  save_player_index();
+  TEST_ASSERT_EQUAL_STRING("4242 tester 11 0 1000\n~\n", read_index());
+  leave_scratch();
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -342,6 +370,7 @@ int main(void)
   RUN_TEST(test_oversize_desc_is_skipped);
   RUN_TEST(test_terminated_desc_loads);
   RUN_TEST(test_malformed_index_record_is_skipped_and_kept);
+  RUN_TEST(test_index_save_failure_keeps_live_index);
   (void)rmdir(scratch_dir);
   return UNITY_END();
 }
