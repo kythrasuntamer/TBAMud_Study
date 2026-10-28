@@ -182,9 +182,10 @@ int delete_quest(qst_rnum rnum)
     TB_ERROR_MSG("olc", "quest-delete-range", "quest",
                  "rnum %d out of range 0..%d", (int)rnum, (int)total_quests - 1);
     return FALSE;
+  }
   qm = QST_MASTER(rnum);
   deleted_vnum = QST_NUM(rnum);
-  rznum = real_zone_by_thing(QST_NUM(rnum)); 
+  rznum = real_zone_by_thing(QST_NUM(rnum));
   log("GenOLC: delete_quest: Deleting quest #%d (%s).",
        QST_NUM(rnum), QST_NAME(rnum));
   /* make a note of the quest master's secondary spec proc; any of the QM's

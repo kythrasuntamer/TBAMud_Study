@@ -28,7 +28,7 @@
  * the checks correct for int, signed and unsigned index types alike, and
  * NOWHERE/NOTHING/NOBODY always fail them. Each evaluates r twice: pass a
  * plain value. */
-#define VALID_MOB_RNUM(r)     ((long)(r) >= 0 && (long)(r) <= (long)top_of_mobt)
+/* VALID_MOB_RNUM(r) comes from utils.h (NOBODY excluded, r <= top_of_mobt). */
 #define VALID_OBJ_RNUM_NUM(r) ((long)(r) >= 0 && (long)(r) <= (long)top_of_objt)
 /* Token-identical to dg_scripts.h's definition (rejects NOTHING and empty
  * index slots), so including both headers is not a redefinition. */
