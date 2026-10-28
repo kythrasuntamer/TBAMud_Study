@@ -34,7 +34,7 @@ static void wcmd(room_rnum r, const char *line)
  * front of bystander: an "all" loop that saved victim as its next occupant
  * then walks room 102's list. */
 static char enter_line[64];
-static const char *enter_lines[] = { enter_line, NULL };
+static const char *const enter_lines[] = { enter_line, NULL };
 
 static void arm_enter_trigger(struct char_data *victim)
 {
