@@ -1082,3 +1082,16 @@ endif()
 add_mud_test(test_strftime
     ${CMAKE_CURRENT_SOURCE_DIR}/test_strftime.c
 )
+
+# Production manual spells (spells.c): create water refuses a liquid type
+# outside the drink tables (H1-07).
+add_mud_test(test_spells
+    ${MUD_SRCDIR}/spells.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_spells.c
+)
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_compile_options(test_spells PRIVATE -ffunction-sections -fdata-sections)
+    target_link_options(test_spells PRIVATE -Wl,--gc-sections)
+    set_source_files_properties(${MUD_SRCDIR}/spells.c
+        PROPERTIES COMPILE_OPTIONS "-ffunction-sections;-fdata-sections")
+endif()

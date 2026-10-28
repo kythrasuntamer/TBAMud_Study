@@ -35,6 +35,19 @@ ASPELL(spell_create_water)
   /* level = MAX(MIN(level, LVL_IMPL), 1);	 - not used */
 
   if (GET_OBJ_TYPE(obj) == ITEM_DRINKCON) {
+    /* Value 2 (the liquid) comes from world files and 'osetval 2 N' with no
+     * range check, and both branches below hand it to name_from_drinkcon(),
+     * which indexes drinknames[] with it. Refuse a container whose liquid
+     * has no table entry, naming it and the caster (H1-07). */
+    if (!VALID_LIQ_TYPE(GET_OBJ_VAL(obj, 2))) {
+      TB_ERROR_MSG("magic", "liquid-type-range", "obj",
+                   "obj vnum %d uid %ld liquid %d not in [0,%d) during "
+                   "create water by " DIAG_CHAR_FMT, (int) GET_OBJ_VNUM(obj),
+                   obj_script_id(obj), GET_OBJ_VAL(obj, 2), NUM_LIQ_TYPES,
+                   DIAG_CHAR(ch));
+      act("You can't make out what is in $p.", FALSE, ch, obj, 0, TO_CHAR);
+      return;
+    }
     if ((GET_OBJ_VAL(obj, 2) != LIQ_WATER) && (GET_OBJ_VAL(obj, 1) != 0)) {
       name_from_drinkcon(obj);
       GET_OBJ_VAL(obj, 2) = LIQ_SLIME;

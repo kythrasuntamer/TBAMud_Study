@@ -934,6 +934,12 @@ do                                                              \
 #define GET_OBJ_WEAR(obj)	((obj)->obj_flags.wear_flags)
 /** Return value val for obj. */
 #define GET_OBJ_VAL(obj, val)	((obj)->obj_flags.value[(val)])
+/** TRUE if t indexes drinks[], drinknames[] and drink_aff[] (NUM_LIQ_TYPES
+ * entries each). The liquid type is value 2 of a drink container or
+ * fountain: it comes from world files and from scripts ('osetval 2 N'),
+ * and neither validates it, so check before every table lookup.
+ * Evaluates t twice: no side effects. Same text as act.item.c's copy. */
+#define VALID_LIQ_TYPE(t) ((t) >= 0 && (t) < NUM_LIQ_TYPES)
 /** Weight of obj. */
 #define GET_OBJ_WEIGHT(obj)	((obj)->obj_flags.weight)
 /** Current timer of obj. */
