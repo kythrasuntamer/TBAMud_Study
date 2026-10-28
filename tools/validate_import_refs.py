@@ -11,15 +11,19 @@ import re
 import sys
 
 HEADER = re.compile(r"^#(\d+)\s*$")
-FILE = re.compile(r"^\d+\.(wld|mob|obj|zon)$")
-TYPES = ("wld", "mob", "obj", "zon")
-RESET_FIELDS = {"M": ((1,"mob"), (3,"wld")),
-                "O": ((1,"obj"), (3,"wld")),
-                "G": ((1,"obj"),),
-                "E": ((1,"obj"),),
-                "P": ((1,"obj"), (3,"obj")),
-                "D": ((1,"wld"),),
-                "R": ((1,"wld"), (2,"obj"))}
+FILE = re.compile(r"^\d+\.(wld|mob|obj|zon|trg)$")
+TYPES = ("wld", "mob", "obj", "zon", "trg")
+# parts[0] is the command and parts[1] its if-flag; the vnums follow, laid
+# out as arg1 arg2 arg3 exactly as load_zones()/renum_zone_table() read them.
+RESET_FIELDS = {"M": ((2,"mob"), (4,"wld")),
+                "O": ((2,"obj"), (4,"wld")),
+                "G": ((2,"obj"),),
+                "E": ((2,"obj"),),
+                "P": ((2,"obj"), (4,"obj")),
+                "D": ((2,"wld"),),
+                "R": ((2,"wld"), (3,"obj")),
+                "T": ((3,"trg"), (4,"wld")),
+                "V": ((4,"wld"),)}
 
 def read_records(root, ext):
     records, issues = {}, []
@@ -69,9 +73,11 @@ def validate(existing, incoming, permitted_external_rooms=()):
                     raw=lines[j][1].strip()
                     if re.fullmatch(r"-?\d+\s+-?\d+\s+-?\d+",raw):
                         door,key,target=map(int,raw.split())
-                        if target >= 0 and target not in allids["wld"] and target not in permitted:
+                        # setup_dir(): to_room -1 or 0 is NOWHERE; key -1/65535 is
+                        # NOTHING, and stock tbaMUD writes 0 for "no key".
+                        if target > 0 and target not in allids["wld"] and target not in permitted:
                             problems.append(f"unresolved exit {v} -> {target} at {rec['file']}:{lineno}")
-                        if key >= 0 and key not in allids["obj"]:
+                        if key > 0 and key != 65535 and key not in allids["obj"]:
                             problems.append(f"unresolved door key {key} in room {v}")
                         found=True
                         break

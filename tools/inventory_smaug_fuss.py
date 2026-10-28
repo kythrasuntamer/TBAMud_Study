@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Lossless structural inventory of a SMAUG FUSS area for conversion planning.
+"""Room/mobile/object inventory of a SMAUG FUSS area for conversion planning.
 
-Writes no tbaMUD world files. Preserves raw record text and reset commands so
-unsupported mechanics cannot be silently discarded.
+Writes no tbaMUD world files. Preserves the raw text of #ROOM, #MOBILE and
+#OBJECT records and their resets; other sections (#AREADATA, #SHOP,
+#SPECIALS, #REPAIR, ...) are not inventoried, so it is not a lossless copy.
 """
 import argparse
 import json

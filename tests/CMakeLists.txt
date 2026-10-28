@@ -1565,5 +1565,15 @@ endif()
 # were counted as done it would spin forever. Fail that regression sooner.
 set_tests_properties(test_players_persist PROPERTIES TIMEOUT 60)
 
+# Area-import tools (tools/*.py): reference, inventory, safety and regression
+# checks. They read only their own fixtures and the repository tree.
+if(Python3_Interpreter_FOUND)
+    foreach(area_test test_area_inventory test_area_safety test_import_refs
+                      test_area_import_regressions)
+        add_test(NAME ${area_test}
+            COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_CURRENT_SOURCE_DIR}/${area_test}.py)
+    endforeach()
+endif()
+
 # Fil-C only: set aside the tests whose -Wl,--wrap doubles it defeats.
 tb_filc_skip_wrap_tests()

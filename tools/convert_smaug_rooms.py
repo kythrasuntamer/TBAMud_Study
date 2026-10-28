@@ -13,8 +13,12 @@ DIRS = {"north": 0, "east": 1, "south": 2, "west": 3, "up": 4, "down": 5}
 SECTORS = {
     "inside": 0, "city": 1, "field": 2, "forest": 3, "hills": 4,
     "mountain": 5, "water_swim": 6, "water_noswim": 7,
-    "underwater": 8, "air": 9, "desert": 10,
+    "air": 8, "underwater": 9,
 }
+# SMAUG's own numbering differs from tbaMUD's SECT_* (structs.h): SMAUG
+# underwater=8/air=9, tbaMUD SECT_FLYING=8/SECT_UNDERWATER=9, and tbaMUD has
+# no desert, so "desert" is rejected rather than guessed.
+MAX_VNUM = 65534  # IDXTYPE_MAX - 1; 65535 is NOWHERE (structs.h)
 # Known SMAUG flags mapped conservatively. Others intentionally rejected.
 ROOM_FLAGS = {"dark": 1, "nomob": 4, "indoors": 8}
 MAX_TEXT = 16000
@@ -131,7 +135,7 @@ def parse_area(text):
 
 def convert(rooms, offset):
     remap = {n: n + offset for n in rooms}
-    if any(n < 0 or n > 99999999 for n in remap.values()):
+    if any(n < 1 or n > MAX_VNUM for n in remap.values()):
         reject("destination VNUM outside permitted range")
     result = []
     unresolved = []
@@ -139,7 +143,8 @@ def convert(rooms, offset):
         new = remap[original]
         result += [f"#{new}", room["name"] + "~",
                    room.get("desc", "An empty room.") + "~",
-                   f"0 {room['flags']} {room['sector']} 0 0 0"]
+                   # 128-bit layout read by parse_room(): zone flags1..4 sector
+                   f"0 {room['flags']} 0 0 0 {room['sector']}"]
         used = set()
         for ex in room["exits"]:
             if ex["dir"] in used:
@@ -181,7 +186,7 @@ def main():
         if args.output.exists():
             reject(f"refusing to overwrite {args.output}")
         args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(output, encoding="utf-8")
+        args.output.write_text(output, encoding="latin-1")
         print(f"Converted {len(rooms)} rooms to {args.output}; NOT an installable zone.")
         print("Next: validate VNUMs, create zone definition and index, stage, boot-test.")
     except (OSError, ValueError) as exc:

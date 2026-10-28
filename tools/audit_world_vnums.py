@@ -11,11 +11,12 @@ import re
 import sys
 
 FAMILIES = ("wld", "mob", "obj", "trg", "qst", "shp", "zon")
-HEADER = re.compile(r"^#(\d+)\s*$")
+# Shop records are headed "#3000~"; every other family "#3000".
+HEADER = re.compile(r"^#(\d+)~?\s*$")
 FILE = re.compile(r"^\d{1,8}\.(?:wld|mob|obj|trg|qst|shp|zon)$")
 LIMIT = 8 * 1024 * 1024
 
-def inventory(root):
+def inventory(root, notes=None):
     records = {family: {} for family in FAMILIES}
     problems = []
     for family in FAMILIES:
@@ -27,6 +28,12 @@ def inventory(root):
             continue
         for p in sorted(directory.iterdir()):
             if p.name in ("index", "index.mini"):
+                continue
+            if (notes is not None and p.is_file() and not p.is_symlink()
+                    and p.suffix.lstrip(".") not in FAMILIES):
+                # Helper scripts ship beside world files (lib/world/shp/shop-convert.pl);
+                # the boot never reads them, so list them instead of failing.
+                notes.append(f"Skipped non-world file: {p}")
                 continue
             if p.is_symlink() or not p.is_file() or not FILE.fullmatch(p.name) or p.suffix != "." + family:
                 problems.append(f"Unexpected world file: {p}")
@@ -48,7 +55,8 @@ def inventory(root):
     return records, problems
 
 def audit(existing, incoming):
-    old, errors = inventory(existing)
+    notes = []
+    old, errors = inventory(existing, notes)
     new, more = inventory(incoming)
     errors.extend(more)
     for family in FAMILIES:
@@ -59,6 +67,7 @@ def audit(existing, incoming):
         "existing_counts": {x: len(old[x]) for x in FAMILIES},
         "incoming_counts": {x: len(new[x]) for x in FAMILIES},
         "problems": errors,
+        "notes": notes,
     }
 
 def main():
