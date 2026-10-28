@@ -25,6 +25,27 @@
 #include "hedit.h"
 #include "modify.h"
 
+/** @file hedit.c
+ * Help editor: edits one help_table entry at a time (one editor at a time,
+ * see do_oasis_hedit), builder level and HEDIT_PERMISSION only.
+ *
+ * Index rules.  help_table holds top_of_helpt rows; top_of_helpt is a COUNT
+ * (rows 0..top_of_helpt-1), unlike top_of_socialt or top_of_world.  Each
+ * keyword of an entry is its own row, sorted by keyword; the first row of
+ * an entry owns 'entry' and the others are duplicates (duplicate != 0) that
+ * alias the same pointer and are skipped by hedit_save_to_disk.  In this
+ * editor OLC_ZNUM is either a live OWNING row (VALID_HELP_RNUM) or NOWHERE,
+ * meaning "add a new entry"; nothing else may be stored there, and
+ * search_help() results are range-checked before use.
+ *
+ * Ownership.  OLC_HELP and its keywords/entry strings belong to the editor
+ * until hedit_save_internally() succeeds; then the table row owns them and
+ * the caller uses CLEANUP_STRUCTS.  Every other exit uses CLEANUP_ALL.
+ * hedit_save_to_disk() frees and reboots the whole table after a committed
+ * write, so no help_table index or pointer may be held across it.
+ *
+ * Input.  Topic names, entry text and levels are builder free text. */
+
 /* local functions */
 static void hedit_disp_menu(struct descriptor_data *);
 static void hedit_setup_new(struct descriptor_data *);
