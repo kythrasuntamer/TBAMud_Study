@@ -444,7 +444,7 @@ static void redit_disp_flag_menu(struct descriptor_data *d)
   clear_screen(d);
   column_list(d->character, 0, room_bits, NUM_ROOM_FLAGS, TRUE);
 
-  sprintbitarray(OLC_ROOM(d)->room_flags, room_bits, RF_ARRAY_MAX, bits, sizeof(bits));
+  SPRINTBITARRAY_FIELD(OLC_ROOM(d)->room_flags, room_bits, bits);
   write_to_output(d, "\r\nRoom flags: %s%s%s\r\n"
 	  "Enter room flags, 0 to quit : ", cyn, bits, nrm);
   OLC_MODE(d) = REDIT_FLAGS;
@@ -470,7 +470,7 @@ static void redit_disp_menu(struct descriptor_data *d)
   clear_screen(d);
   room = OLC_ROOM(d);
 
-  sprintbitarray(room->room_flags, room_bits, RF_ARRAY_MAX, buf1, sizeof(buf1));
+  SPRINTBITARRAY_FIELD(room->room_flags, room_bits, buf1);
   sprinttype(room->sector_type, sector_types, buf2, sizeof(buf2));
   write_to_output(d,
       "-- Room number : [%s%d%s] Room zone: [%s%d%s]\r\n"

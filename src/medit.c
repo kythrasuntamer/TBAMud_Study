@@ -408,7 +408,7 @@ static void medit_disp_mob_flags(struct descriptor_data *d)
                 !(++columns % 2) ? "\r\n" : "");
   }
 
-  sprintbitarray(MOB_FLAGS(OLC_MOB(d)), action_bits, AF_ARRAY_MAX, flags, sizeof(flags));
+  SPRINTBITARRAY_FIELD(MOB_FLAGS(OLC_MOB(d)), action_bits, flags);
   write_to_output(d, "\r\nCurrent flags : %s%s%s\r\nEnter mob flags (0 to quit) : ", cyn, flags, nrm);
 }
 
@@ -421,7 +421,7 @@ static void medit_disp_aff_flags(struct descriptor_data *d)
   clear_screen(d);
   /* +1/-1 antics needed because AFF_FLAGS doesn't start at 0. */
   column_list(d->character, 0, affected_bits + 1, NUM_AFF_FLAGS - 1, TRUE);
-  sprintbitarray(AFF_FLAGS(OLC_MOB(d)), affected_bits, AF_ARRAY_MAX, flags, sizeof(flags));
+  SPRINTBITARRAY_FIELD(AFF_FLAGS(OLC_MOB(d)), affected_bits, flags);
   write_to_output(d, "\r\nCurrent flags   : %s%s%s\r\nEnter aff flags (0 to quit) : ",
                           cyn, flags, nrm);
 }
@@ -451,8 +451,8 @@ static void medit_disp_menu(struct descriptor_data *d)
 	  grn, nrm, yel, GET_DDESC(mob)
 	  );
 
-  sprintbitarray(MOB_FLAGS(mob), action_bits, AF_ARRAY_MAX, flags, sizeof(flags));
-  sprintbitarray(AFF_FLAGS(mob), affected_bits, AF_ARRAY_MAX, flag2, sizeof(flag2));
+  SPRINTBITARRAY_FIELD(MOB_FLAGS(mob), action_bits, flags);
+  SPRINTBITARRAY_FIELD(AFF_FLAGS(mob), affected_bits, flag2);
   write_to_output(d,
 	  "%s6%s) Position  : %s%s\r\n"
 	  "%s7%s) Default   : %s%s\r\n"

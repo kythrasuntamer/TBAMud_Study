@@ -77,6 +77,15 @@
     (lval) = olc_v_; \
   } while (0)
 
+/** sprintbitarray() with the element count taken from the array actually
+ * passed, so a flag array can never be printed with another array's
+ * *_ARRAY_MAX (oedit printed wear and affect bits with EF_ARRAY_MAX, medit
+ * NPC flags with AF_ARRAY_MAX; all four constants are equal today, so a
+ * future change to one would read past the other). arr and buf must be
+ * real arrays, not pointers (clang warns on sizeof of a pointer). */
+#define SPRINTBITARRAY_FIELD(arr, names, buf) \
+  sprintbitarray((arr), (names), (int)(sizeof(arr) / sizeof((arr)[0])), (buf), sizeof(buf))
+
 /** The identity every OLC diagnostic carries: who is editing, in which
  * menu mode, and which vnum. Use as TB_ERROR_MSG(..., OLC_DIAG_FMT "...",
  * OLC_DIAG(d), ...). OLC_DIAG evaluates d several times and needs
