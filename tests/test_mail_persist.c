@@ -22,6 +22,8 @@
 #include "tb_persist_support.h"
 
 int no_mail = 0;
+/* players.c globals (its index lookups run against an empty table). */
+int top_of_p_table = -1;
 struct obj_data *object_list;
 
 static char scratch_dir[256];
@@ -60,31 +62,11 @@ int get_line(FILE *fl, char *buf)
   return lines;
 }
 
-char *get_name_by_id(long id) { (void)id; return NULL; }
 /* Referenced by the postmaster's "mail" command, which these tests do not run. */
-long get_id_by_name(const char *name) { (void)name; return -1; }
 int decrease_gold(struct char_data *ch, int amt) { (void)ch; return amt; }
 char *one_argument(char *argument, char *first_arg) { *first_arg = '\0'; return argument; }
 void string_write(struct descriptor_data *d, char **txt, size_t len, long mailto, void *data)
 { (void)d; (void)txt; (void)len; (void)mailto; (void)data; }
-
-/* Body reader with fread_string()'s result: the text before '~'. */
-char *fread_string(FILE *fl, const char *error)
-{
-  char line[READ_SIZE], buf[MAX_STRING_LENGTH];
-  (void)error;
-  buf[0] = '\0';
-  while (fgets(line, sizeof(line), fl)) {
-    char *tilde = strchr(line, '~');
-    if (tilde) {
-      *tilde = '\0';
-      strlcat(buf, line, sizeof(buf));
-      return *buf ? strdup(buf) : NULL;
-    }
-    strlcat(buf, line, sizeof(buf));
-  }
-  return NULL;
-}
 
 struct obj_data *create_obj(void)
 {
@@ -187,6 +169,26 @@ static void test_scan_file_reports_damage(void)
   TEST_ASSERT_EQUAL_STRING("scan", tb_captured_operation);
 }
 
+/* B2-07: a body cut off by a truncated file used to reach fread_string(),
+ * which exit(1)s the server. It is now reported as corruption. */
+static void test_truncated_body_is_corruption_not_exit(void)
+{
+  char *text = NULL;
+
+  write_mail_file("### 7 1 1000\nhello, and then the disk filled");
+  TEST_ASSERT_FALSE(scan_file());
+  TEST_ASSERT_EQUAL_STRING("scan", tb_captured_operation);
+
+  tb_error_capture_reset();
+  TEST_ASSERT_FALSE(has_mail(7));
+  TEST_ASSERT_TRUE(no_mail);
+
+  TEST_ASSERT_FALSE(read_delete(7, &text));
+  TEST_ASSERT_NULL(text);
+  TEST_ASSERT_EQUAL_STRING("### 7 1 1000\nhello, and then the disk filled",
+                           slurp(MAIL_FILE));
+}
+
 static void test_scan_file_counts_good_file(void)
 {
   write_mail_file("### 7 1 1000\nhello\n~\n");
@@ -269,6 +271,7 @@ int main(void)
   RUN_TEST(test_read_delete_keeps_file_on_damaged_record);
   RUN_TEST(test_scan_file_reports_damage);
   RUN_TEST(test_scan_file_counts_good_file);
+  RUN_TEST(test_truncated_body_is_corruption_not_exit);
   RUN_TEST(test_receive_stops_when_message_not_removed);
   RUN_TEST(test_receive_delivers_and_removes);
   {

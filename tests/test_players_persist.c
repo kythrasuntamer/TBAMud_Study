@@ -65,15 +65,7 @@ bitvector_t asciiflag_conv(char *flag)
   return (bitvector_t)strtoul(flag, NULL, 10);
 }
 
-char *fread_string(FILE *fl, const char *error)
-{
-  char line[READ_SIZE];
-  (void)error;
-  while (fgets(line, sizeof(line), fl))
-    if (strchr(line, '~'))
-      break;
-  return NULL;
-}
+void parse_at(char *str) { (void)str; }
 
 void affect_total(struct char_data *ch) { (void)ch; }
 void affect_to_char(struct char_data *ch, struct affected_type *af) { (void)ch; (void)af; }
@@ -223,6 +215,49 @@ static void test_short_pfile_line_is_skipped(void)
   TEST_ASSERT_EQUAL_INT(4, PLR_FLAGS(&player)[3]);
 }
 
+/* B2-07: an unterminated Desc used to reach fread_string(), which exit(1)s
+ * the whole server (and printed an uninitialised context buffer). */
+static void test_unterminated_desc_is_dropped_not_fatal(void)
+{
+  write_pfile("tester", "Id  : 4242\nDesc:\nA tall stranger\nwith no end");
+
+  TEST_ASSERT_EQUAL_INT(0, load_char("tester", &player));
+  TEST_ASSERT_NULL(player.player.description);
+  TEST_ASSERT_EQUAL_STRING("pfile-desc", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "player idnum 4242"));
+}
+
+/* B2-07: an oversize Desc is consumed up to its '~' and later tags load. */
+static void test_oversize_desc_is_skipped(void)
+{
+  static char body[MAX_STRING_LENGTH + 4096];
+  char line[201];
+  size_t used = 0;
+  int i;
+
+  memset(line, 'd', sizeof(line) - 1);
+  line[sizeof(line) - 1] = '\0';
+  used += (size_t)snprintf(body + used, sizeof(body) - used, "Id  : 4242\nDesc:\n");
+  for (i = 0; i < (MAX_STRING_LENGTH / 200) + 4; i++)
+    used += (size_t)snprintf(body + used, sizeof(body) - used, "%s\n", line);
+  TEST_ASSERT_TRUE(snprintf(body + used, sizeof(body) - used, "~\nAct : 1 2 3 4\n") > 0);
+  write_pfile("tester", body);
+
+  TEST_ASSERT_EQUAL_INT(0, load_char("tester", &player));
+  TEST_ASSERT_NULL(player.player.description);
+  TEST_ASSERT_EQUAL_STRING("pfile-desc", tb_captured_operation);
+  TEST_ASSERT_EQUAL_INT(4, PLR_FLAGS(&player)[3]);
+}
+
+static void test_terminated_desc_loads(void)
+{
+  write_pfile("tester", "Id  : 4242\nDesc:\nA tall stranger.\n~\n");
+
+  TEST_ASSERT_EQUAL_INT(0, load_char("tester", &player));
+  TEST_ASSERT_EQUAL_STRING("A tall stranger.\r\n", player.player.description);
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -231,6 +266,9 @@ int main(void)
   RUN_TEST(test_short_tag_line_is_reported);
   RUN_TEST(test_tag_and_value_are_split);
   RUN_TEST(test_short_pfile_line_is_skipped);
+  RUN_TEST(test_unterminated_desc_is_dropped_not_fatal);
+  RUN_TEST(test_oversize_desc_is_skipped);
+  RUN_TEST(test_terminated_desc_loads);
   (void)rmdir(scratch_dir);
   return UNITY_END();
 }

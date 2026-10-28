@@ -306,6 +306,7 @@ SPECIAL(cryogenicist);
 
 /* Functions from players.c */
 void   tag_argument(char *argument, char *tag);
+int    fread_string_checked(FILE *fl, const char *resource, const char *field, char **out);
 int    load_char(const char *name, struct char_data *ch);
 void   save_char(struct char_data *ch);
 void   init_char(struct char_data *ch);

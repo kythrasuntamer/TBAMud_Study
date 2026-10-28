@@ -118,7 +118,15 @@ static int read_mail_record(FILE *mail_file, int record_no, struct mail_t **out)
   record->recipient = recipient;
   record->sender = sender;
   record->sent_time = sent_time;
-  record->body = fread_string(mail_file, "read mail record");
+  /* fread_string() would exit(1) on a body cut off by a truncated file;
+   * a damaged body is corruption, handled like a damaged header. */
+  if (!fread_string_checked(mail_file, MAIL_FILE, "mail body", &record->body)) {
+    TB_ERROR_MSG("mail", "parse-body", MAIL_FILE,
+                 "record %d (recipient idnum %ld sender idnum %ld) has an "
+                 "unterminated or oversize body", record_no, recipient, sender);
+    free_mail_record(record);
+    return MAIL_READ_CORRUPT;
+  }
 
   *out = record;
   return MAIL_READ_OK;

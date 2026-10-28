@@ -22,6 +22,7 @@
 #include "config.h" /* for pclean_criteria[] */
 #include "dg_scripts.h" /* To enable saving of player variables to disk */
 #include "quest.h"
+#include "modify.h" /* for parse_at */
 
 #define LOAD_HIT	0
 #define LOAD_MANA	1
@@ -141,6 +142,81 @@ static int load_pfile_flag_words(const char *line, int *flags,
   for (i = 0; i < 4; i++)
     flags[i] = asciiflag_conv(words[i]);
   return 1;
+}
+
+/** Read a '~'-terminated string, like fread_string(), without exit(1).
+ * fread_string() terminates the whole server on end of file or on a string
+ * of MAX_STRING_LENGTH bytes or more, so a single truncated player
+ * description or mail body would take the game down. Player files and the
+ * mail file are persistent data that can be truncated on disk.
+ * @param fl Stream positioned at the first line of the string.
+ * @param resource File name, for diagnostics.
+ * @param field Which string is being read (e.g. "Desc"), for diagnostics.
+ * @param[out] out On success the string (malloc'd, CR/LF line endings, NULL
+ * for an empty string), owned by the caller. NULL on failure.
+ * @return TRUE on success. FALSE after reporting an fread-string error: at
+ * end of file the stream is at EOF; for an oversize string the rest of it
+ * is consumed up to its '~' so the caller can keep parsing. */
+int fread_string_checked(FILE *fl, const char *resource, const char *field,
+                         char **out)
+{
+  /* fgets() stores up to 511 characters; a line without its newline then
+   * gains "\r\n\0" after them, so tmp needs 514 bytes. */
+  char buf[MAX_STRING_LENGTH], tmp[514];
+  char *point;
+  size_t length = 0, templength;
+  int oversize = FALSE;
+
+  *out = NULL;
+  *buf = '\0';
+  for (;;) {
+    if (!fgets(tmp, 512, fl)) {
+      TB_ERROR_MSG("db", "fread-string", resource,
+                   "%s: end of file before '~' after %zu bytes", field, length);
+      return FALSE;
+    }
+    /* Strip the line ending; a trailing '~' ends the string, otherwise the
+     * line is stored with a CR/LF ending (same rules as fread_string()). */
+    point = strchr(tmp, '\0');
+    for (point--; (*point == '\r' || *point == '\n') && point > tmp; point--)
+      ;
+    if (*point == '~') {
+      *point = '\0';
+      templength = (size_t)(point - tmp);
+      if (!oversize && length + templength < sizeof(buf)) {
+        strlcat(buf, tmp, sizeof(buf));
+        length += templength;
+      } else
+        oversize = TRUE;
+      break;
+    }
+    if (*point == '\n' || *point == '\r')
+      *point = '\r';
+    else
+      *(++point) = '\r';
+    *(++point) = '\n';
+    *(++point) = '\0';
+    templength = (size_t)(point - tmp);
+    if (oversize || length + templength >= sizeof(buf)) {
+      oversize = TRUE;	/* keep consuming up to the '~' */
+      continue;
+    }
+    strlcat(buf, tmp, sizeof(buf));
+    length += templength;
+  }
+
+  if (oversize) {
+    TB_ERROR_MSG("db", "fread-string", resource,
+                 "%s: string exceeds %zu bytes; discarded", field, sizeof(buf) - 1);
+    return FALSE;
+  }
+  parse_at(buf);
+  if (*buf && (*out = strdup(buf)) == NULL) {
+    TB_ERROR_ERRNO("db", "fread-string", resource, "%s: strdup of %zu bytes",
+                   field, length);
+    return FALSE;
+  }
+  return TRUE;
 }
 
 /* Read a whitespace-delimited signed number with overflow detection. */
@@ -393,7 +469,7 @@ int load_char(const char *name, struct char_data *ch)
   int id, i;
   FILE *fl;
   char filename[40];
-  char buf2[128], line[MAX_INPUT_LENGTH + 1], tag[6];
+  char line[MAX_INPUT_LENGTH + 1], tag[6];
   char f1[128];
   trig_data *t = NULL;
   trig_rnum t_rnum = NOTHING;
@@ -504,7 +580,15 @@ int load_char(const char *name, struct char_data *ch)
 	break;
 
       case 'D':
-	     if (!strcmp(tag, "Desc"))	ch->player.description	= fread_string(fl, buf2);
+	     if (!strcmp(tag, "Desc")) {
+          /* A truncated or oversize description is dropped, not fatal:
+           * fread_string() would exit(1) the whole server here. */
+          free(ch->player.description);
+          if (!fread_string_checked(fl, filename, "Desc", &ch->player.description))
+            TB_ERROR_MSG("player", "pfile-desc", filename,
+                         "player idnum %ld unterminated or oversize Desc; "
+                         "description dropped", GET_IDNUM(ch));
+        }
 	else if (!strcmp(tag, "Dex "))	ch->real_abils.dex	= parse_pfile_int_or_zero(line, filename, tag);
 	else if (!strcmp(tag, "Drnk"))	GET_COND(ch, DRUNK)	= parse_pfile_int_or_zero(line, filename, tag);
 	else if (!strcmp(tag, "Drol"))	GET_DAMROLL(ch)		= parse_pfile_int_or_zero(line, filename, tag);

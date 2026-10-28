@@ -404,8 +404,10 @@ if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
 endif()
 
 # Production mud-mail store (mail.c) against a scratch lib/etc tree.
+# players.c supplies fread_string_checked(); the rest of it is discarded.
 add_mud_test(test_mail_persist
     ${MUD_SRCDIR}/mail.c
+    ${MUD_SRCDIR}/players.c
     ${CMAKE_CURRENT_SOURCE_DIR}/test_mail_persist.c
 )
 # A regression of the receive loop (B2-06) spins forever; fail it instead.
