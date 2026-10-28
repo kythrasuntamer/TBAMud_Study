@@ -9,6 +9,24 @@
 *  CircleMUD is based on DikuMUD, Copyright (C) 1990, 1991.               *
 **************************************************************************/
 
+/* LIFETIME AND OWNERSHIP
+ * - Each mode (SCMD_BUG/IDEA/TYPO) has a doubly linked list
+ *   (first_x/last_x) of IBT_DATA nodes; the list owns the nodes and all
+ *   four strings (ibt_free_strings frees them).
+ * - 'submit' links its node at once, with the submitter's d->str pointing
+ *   at node->body until the editor closes (modify.c
+ *   playing_string_cleanup).  While a descriptor writes a node's body
+ *   (ibt_body_writer) or an ibtedit session holds it (ibt_olc_editor), the
+ *   node must not be freed: 'remove' refuses, and clean_ibt_list() frees
+ *   only the aborting writer's own node plus abandoned empty ones.
+ * - ibtedit works on a private copy (OLC_IBT) that carries the record's
+ *   never-reused serial; OLC_NUM is only the list position shown to the
+ *   editor and goes stale when an earlier record is removed.  OLC_ZNUM is
+ *   reused as the "changed" flag.
+ * - Who controls the input: header, body and notes are player text; the
+ *   files are written by save_ibt_file() (via a temporary file) and read
+ *   back by read_ibt(), which treats them as untrusted. */
+
 //#if defined(macintosh)
 //#include <types.h>
 //#include <time.h>
@@ -943,7 +961,8 @@ ACMD(do_ibt)
 
 /* IBT Editor OLC */
 /* OLC_VAL(d)  - The IBT 'mode' - Idea, Bug or Typo */
-/* OLC_NUM(d)  - The IBT number (shown in 'list')   */
+/* OLC_NUM(d)  - The IBT number (shown in 'list'); a position, display only:
+ *               the record is found again by OLC_IBT(d)->serial        */
 /* OLC_ZNUM(d) - Used as 'has changed' flag         */
 ACMD(do_oasis_ibtedit)
 {

@@ -45,6 +45,10 @@ typedef struct  ibt_data               IBT_DATA;
 #define IBTEDIT_BODY               7
 #define IBTEDIT_NOTES              8
 
+/* KEY / TXT_KEY are only for read_ibt()'s keyword switch: each ends in a
+ * 'break' that leaves the enclosing switch case when the keyword matches,
+ * and they need the locals 'word' and 'fMatch'.  Never use them outside a
+ * switch. */
 #ifdef KEY
 #undef KEY
 #endif
@@ -96,10 +100,13 @@ extern  IBT_DATA       *last_typo;
 /* Functions in ibt.c that are used externally */
 ACMD(do_ibt);
 ACMD(do_oasis_ibtedit);
+/** Save mode's list atomically; FALSE (reported) leaves the old file. */
 int save_ibt_file(int mode);
+/** Replace mode's list from its file; malformed records are reported and skipped. */
 void load_ibt_file(int mode);
 void ibtedit_parse(struct descriptor_data *d, char *arg);
 void ibtedit_string_cleanup(struct descriptor_data *d, int terminator);
 void free_ibt_lists(void);
 void free_olc_ibt(IBT_DATA *toFree);
+/** Drop writer's abandoned submission and unclaimed empty records of mode. */
 void clean_ibt_list(int mode, struct descriptor_data *writer);
