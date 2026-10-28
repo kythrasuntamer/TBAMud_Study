@@ -135,11 +135,14 @@ __attribute__((weak))
 void extract_char_final(struct char_data *ch) { (void)ch; }
 
 __attribute__((weak))
-void char_from_room(struct char_data *ch) { (void)ch; }
+void char_from_room_at(const char *src_file, int src_line,
+                       const char *src_func, struct char_data *ch)
+{ (void)src_file; (void)src_line; (void)src_func; (void)ch; }
 
 __attribute__((weak))
-void char_to_room(struct char_data *ch, room_rnum room)
-{ (void)ch; (void)room; }
+void char_to_room_at(const char *src_file, int src_line, const char *src_func,
+                     struct char_data *ch, room_rnum room)
+{ (void)src_file; (void)src_line; (void)src_func; (void)ch; (void)room; }
 
 __attribute__((weak))
 void free_char(struct char_data *ch) { (void)ch; }

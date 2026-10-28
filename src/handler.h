@@ -62,8 +62,19 @@ void update_char_objects(struct char_data *ch);
 struct char_data *get_char_room(char *name, int *num, room_rnum room);
 struct char_data *get_char_num(mob_rnum nr);
 
-void	char_from_room(struct char_data *ch);
-void	char_to_room(struct char_data *ch, room_rnum room);
+/* Room movement primitives. Call-site-recording macros (like act()), so an
+ * invariant failure names the originating caller. char_from_room() aborts
+ * on a NULL or roomless character; char_to_room() rejects and reports an
+ * invalid room, leaving the character in NOWHERE. */
+void	char_from_room_at(const char *src_file, int src_line,
+                          const char *src_func, struct char_data *ch);
+void	char_to_room_at(const char *src_file, int src_line,
+                        const char *src_func, struct char_data *ch,
+                        room_rnum room);
+#define char_from_room(ch) \
+  char_from_room_at(__FILE__, __LINE__, __func__, (ch))
+#define char_to_room(ch, room) \
+  char_to_room_at(__FILE__, __LINE__, __func__, (ch), (room))
 void	extract_char(struct char_data *ch);
 void	extract_char_final(struct char_data *ch);
 void	extract_pending_chars(void);

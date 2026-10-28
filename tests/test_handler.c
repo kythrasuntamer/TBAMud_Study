@@ -23,6 +23,7 @@ long char_script_id(char_data *ch) { return ch->script_id; }
 void autoquest_trigger_check(struct char_data *ch, struct char_data *vict,
                              struct obj_data *object, int type)
 { (void)ch; (void)vict; (void)object; (void)type; }
+void stop_fighting(struct char_data *ch) { (void)ch; }
 int invalid_class(struct char_data *ch, struct obj_data *obj)
 { (void)ch; (void)obj; return 0; }
 int MAX(int a, int b) { return a > b ? a : b; }
@@ -198,6 +199,25 @@ static void test_equip_char_occupied_slot_falls_back_to_inventory(void)
   free(ch);
 }
 
+/* H2-13: an invalid room is reported with the character and the
+ * originating call site, not a raw pointer. */
+static void test_char_to_room_invalid_room_names_caller(void)
+{
+  struct char_data *ch = calloc(1, sizeof(*ch));
+
+  TEST_ASSERT_NOT_NULL(ch);
+  ch->player_specials = &dummy_mob;
+  GET_IDNUM(ch) = 99;
+  IN_ROOM(ch) = NOWHERE;
+  char_to_room(ch, NOWHERE);
+  TEST_ASSERT_EQUAL_INT(NOWHERE, IN_ROOM(ch));
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("char-to-room", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "player idnum 99"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "test_handler.c"));
+  free(ch);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -208,5 +228,6 @@ int main(void)
   RUN_TEST(test_obj_from_room_clears_furniture_backpointer);
   RUN_TEST(test_affect_join_clamps_modifier);
   RUN_TEST(test_equip_char_occupied_slot_falls_back_to_inventory);
+  RUN_TEST(test_char_to_room_invalid_room_names_caller);
   return UNITY_END();
 }

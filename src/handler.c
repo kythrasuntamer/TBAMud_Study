@@ -410,14 +410,26 @@ void affect_join(struct char_data *ch, struct affected_type *af,
     affect_to_char(ch, af);
 }
 
-/* move a player out of a room */
-void char_from_room(struct char_data *ch)
+/* move a player out of a room. Reached through the char_from_room() macro,
+ * which records the caller. A NULL or roomless character means the room
+ * lists are already inconsistent (internal invariant), so abort with a core
+ * rather than exit(1). */
+void char_from_room_at(const char *src_file, int src_line,
+                       const char *src_func, struct char_data *ch)
 {
   struct char_data *temp;
 
-  if (ch == NULL || IN_ROOM(ch) == NOWHERE) {
-    log("SYSERR: NULL character or NOWHERE in %s, char_from_room", __FILE__);
-    exit(1);
+  if (ch == NULL) {
+    TB_FATAL_MSG("handler", "char-from-nowhere", "room",
+                 "NULL character; caller=%s:%d %s", src_file, src_line,
+                 src_func);
+    abort();
+  }
+  if (IN_ROOM(ch) == NOWHERE) {
+    TB_FATAL_MSG("handler", "char-from-nowhere", "room",
+                 DIAG_CHAR_FMT " is in NOWHERE; caller=%s:%d %s",
+                 DIAG_CHAR(ch), src_file, src_line, src_func);
+    abort();
   }
 
   if (FIGHTING(ch) != NULL)
@@ -435,12 +447,22 @@ void char_from_room(struct char_data *ch)
   ch->next_in_room = NULL;
 }
 
-/* place a character in a room */
-void char_to_room(struct char_data *ch, room_rnum room)
+/* place a character in a room. Reached through the char_to_room() macro,
+ * which records the caller. An invalid room or NULL character is rejected
+ * and reported; the character then stays in NOWHERE, which the caller
+ * must handle. */
+void char_to_room_at(const char *src_file, int src_line, const char *src_func,
+                     struct char_data *ch, room_rnum room)
 {
-  if (ch == NULL || room == NOWHERE || room > top_of_world)
-    log("SYSERR: Illegal value(s) passed to char_to_room. (Room: %d/%d Ch: %p",
-		room, top_of_world, (void *)ch);
+  if (ch == NULL)
+    TB_ERROR_MSG("handler", "char-to-room", "room",
+                 "NULL character for room rnum %d; caller=%s:%d %s",
+                 (int) room, src_file, src_line, src_func);
+  else if (room == NOWHERE || room > top_of_world)
+    TB_ERROR_MSG("handler", "char-to-room", "room",
+                 DIAG_CHAR_FMT " room rnum %d not in [0,%d]; left in NOWHERE; "
+                 "caller=%s:%d %s", DIAG_CHAR(ch), (int) room,
+                 (int) top_of_world, src_file, src_line, src_func);
   else {
     ch->next_in_room = world[room].people;
     world[room].people = ch;
@@ -478,8 +500,13 @@ void obj_to_char(struct obj_data *object, struct char_data *ch)
     /* set flag for crash-save system, but not on mobs! */
     if (!IS_NPC(ch))
       SET_BIT_AR(PLR_FLAGS(ch), PLR_CRASH);
-  } else
-    log("SYSERR: NULL obj (%p) or char (%p) passed to obj_to_char.", (void *)object, (void *)ch);
+  } else if (!object)
+    TB_ERROR_MSG("handler", "obj-to-char", "obj", "NULL object for %s",
+                 ch ? "a character" : "a NULL character");
+  else
+    TB_ERROR_MSG("handler", "obj-to-char", "obj",
+                 "obj vnum %d uid %ld given to a NULL character; not moved",
+                 (int) GET_OBJ_VNUM(object), obj_script_id(object));
 }
 
 /* take an object from a char */
@@ -488,11 +515,13 @@ void obj_from_char(struct obj_data *object)
   struct obj_data *temp;
 
   if (object == NULL) {
-    log("SYSERR: NULL object passed to obj_from_char.");
+    TB_ERROR_MSG("handler", "obj-from-char", "obj", "NULL object");
     return;
   }
   if (object->carried_by == NULL) {
-    log("SYSERR: Object %p passed to obj_from_char() is not carried by anyone.", (void *)object);
+    TB_ERROR_MSG("handler", "obj-from-char", "obj",
+                 "obj vnum %d uid %ld is not carried by anyone",
+                 (int) GET_OBJ_VNUM(object), obj_script_id(object));
     return;
   }
   REMOVE_FROM_LIST(object, object->carried_by->carrying, next_content);
@@ -745,9 +774,14 @@ struct char_data *get_char_num(mob_rnum nr)
 /* put an object in a room */
 void obj_to_room(struct obj_data *object, room_rnum room)
 {
-  if (!object || room == NOWHERE || room > top_of_world){
-    log("SYSERR: Illegal value(s) passed to obj_to_room. (Room #%d/%d, obj %p)",
-	room, top_of_world, (void *)object);
+  if (!object) {
+    TB_ERROR_MSG("handler", "obj-to-room", "obj",
+                 "NULL object for room rnum %d", (int) room);
+  } else if (room == NOWHERE || room > top_of_world) {
+    TB_ERROR_MSG("handler", "obj-to-room", "obj",
+                 "obj vnum %d uid %ld room rnum %d not in [0,%d]; not moved",
+                 (int) GET_OBJ_VNUM(object), obj_script_id(object), (int) room,
+                 (int) top_of_world);
   }
   else {
     if (world[room].contents == NULL){  // if list is empty
@@ -848,7 +882,9 @@ void obj_from_obj(struct obj_data *obj)
   struct obj_data *temp, *obj_from;
 
   if (obj->in_obj == NULL) {
-    log("SYSERR: (%s): trying to illegally extract obj from obj.", __FILE__);
+    TB_ERROR_MSG("handler", "obj-from-obj", "obj",
+                 "obj vnum %d uid %ld is not in a container",
+                 (int) GET_OBJ_VNUM(obj), obj_script_id(obj));
     return;
   }
   obj_from = obj->in_obj;
@@ -886,7 +922,9 @@ void extract_obj(struct obj_data *obj)
 
   if (obj->worn_by != NULL)
     if (unequip_char(obj->worn_by, obj->worn_on) != obj)
-      log("SYSERR: Inconsistent worn_by and worn_on pointers!!");
+      TB_ERROR_MSG("handler", "extract-obj", "obj",
+                   "obj vnum %d uid %ld worn_by/worn_on %d inconsistent",
+                   (int) GET_OBJ_VNUM(obj), obj_script_id(obj), obj->worn_on);
   if (IN_ROOM(obj) != NOWHERE)
     obj_from_room(obj);
   else if (obj->carried_by)
@@ -979,10 +1017,13 @@ void extract_char_final(struct char_data *ch)
   struct obj_data *obj;
   int i;
 
+  /* Every live character is in a room; a NOWHERE character here means the
+   * room lists are already inconsistent. Abort with a core. */
   if (IN_ROOM(ch) == NOWHERE) {
-    log("SYSERR: NOWHERE extracting char %s. (%s, extract_char_final)",
-        GET_NAME(ch), __FILE__);
-    exit(1);
+    TB_FATAL_MSG("handler", "extract-from-nowhere", "char",
+                 DIAG_CHAR_FMT " is in NOWHERE at final extraction",
+                 DIAG_CHAR(ch));
+    abort();
   }
 
   /* We're booting the character of someone who has switched so first we need
