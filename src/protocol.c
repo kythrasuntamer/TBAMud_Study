@@ -557,8 +557,12 @@ const char *ProtocolOutput( descriptor_t *apDescriptor, const char *apData, int 
    if ( pProtocol->bMSP || pProtocol->pVariables[eMSDP_SOUND]->ValueInt )
       bUseMSP = true;
 
-   for ( ; i < MAX_OUTPUT_BUFFER && apData[j] != '\0' && !bTerminate && 
-      (*apLength <= 0 || j < *apLength); ++j )
+   /* Test bTerminate and the length before reading apData[j]: a tab escape
+    * that meets the terminating NUL sets bTerminate after advancing j onto
+    * the NUL, and the loop's ++j then points one byte past the end of the
+    * string (output ending in "\t" over-read by one byte). */
+   for ( ; i < MAX_OUTPUT_BUFFER && !bTerminate &&
+      (*apLength <= 0 || j < *apLength) && apData[j] != '\0'; ++j )
    {
       if ( apData[j] == '\t' )
       {
@@ -2268,14 +2272,14 @@ static void SendATCP( descriptor_t *apDescriptor, const char *apVariable, const 
  Local MSSP functions.
  ******************************************************************************/
 
-static const char *GetMSSP_Players()
+static const char *GetMSSP_Players(void)
 {
    static char Buffer[32];
    tb_snprintf(Buffer, sizeof(Buffer), "%d", s_Players);
    return Buffer;
 }
 
-static const char *GetMSSP_Uptime()
+static const char *GetMSSP_Uptime(void)
 {
    static char Buffer[32];
    tb_snprintf(Buffer, sizeof(Buffer), "%d", (int)s_Uptime);

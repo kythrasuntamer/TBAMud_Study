@@ -31,20 +31,18 @@ add_mud_fuzzer(fuzz_protocol protocol
     ${CMAKE_CURRENT_SOURCE_DIR}/fuzz_protocol.c
     ${CMAKE_SOURCE_DIR}/src/protocol.c)
 
-# Known crashes: inputs the fuzzer found in code this harness does not own.
-# Each is a DISABLED test so ctest lists it as "Disabled" until the bug is
-# fixed; then delete DISABLED and move the file into corpus/<target>/.
-#   FUZZ-1 output-trailing-tab-overread: ProtocolOutput()'s loop condition
-#     reads apData[j] before testing bTerminate, so text ending in a tab
-#     ("\t" then NUL) reads one byte past the terminator (protocol.c:560).
-#   FUZZ-2 mssp-callback-function-type: the GetMSSP_* callbacks are declared
-#     "static const char *GetMSSP_Players()" (no prototype) and called
-#     through "const char *(*)(void)"; UBSan -fsanitize=function rejects the
-#     call (protocol.c:2419). Declaring them (void) fixes it.
+# Regression inputs: crashes the fuzzer found, kept in corpus/protocol/ and
+# replayed as ordinary tests so the bugs stay fixed.
+#   FUZZ-1 regression-output-trailing-tab-overread: ProtocolOutput()'s loop
+#     condition read apData[j] before testing bTerminate, so text ending in
+#     a tab read one byte past the terminator.
+#   FUZZ-2 regression-mssp-callback-function-type: the GetMSSP_* callbacks
+#     had no prototype and were called through "const char *(*)(void)";
+#     UBSan -fsanitize=function rejected the call.
 foreach(_crash output-trailing-tab-overread mssp-callback-function-type)
-    add_test(NAME fuzz_protocol_known_${_crash}
-             COMMAND fuzz_protocol ${CMAKE_CURRENT_SOURCE_DIR}/known-crashes/protocol/${_crash})
-    set_tests_properties(fuzz_protocol_known_${_crash} PROPERTIES
-        LABELS "fuzz" DISABLED TRUE
+    add_test(NAME fuzz_protocol_regression_${_crash}
+             COMMAND fuzz_protocol ${CMAKE_CURRENT_SOURCE_DIR}/corpus/protocol/regression-${_crash})
+    set_tests_properties(fuzz_protocol_regression_${_crash} PROPERTIES
+        LABELS "fuzz"
         ENVIRONMENT "ASAN_OPTIONS=${TBAMUD_ASAN_OPTIONS};UBSAN_OPTIONS=${TBAMUD_UBSAN_OPTIONS}")
 endforeach()
