@@ -3895,15 +3895,16 @@ ACMD (do_zcheck)
   for (i=0; i<top_of_mobt;i++) {
       if (real_zone_by_thing(mob_index[i].vnum) == zrnum) {  /*is mob in this zone?*/
         mob = &mob_proto[i];
-        if (!strcmp(mob->player.name, "mob unfinished") && (found=1))
+        /* Mob strings may be NULL when the file text was empty. */
+        if (mob->player.name && !strcmp(mob->player.name, "mob unfinished") && (found=1))
           tb_buf_appendf(&report,
                           "- Alias hasn't been set.\r\n");
 
-        if (!strcmp(mob->player.short_descr, "the unfinished mob") && (found=1))
+        if (mob->player.short_descr && !strcmp(mob->player.short_descr, "the unfinished mob") && (found=1))
           tb_buf_appendf(&report,
                           "- Short description hasn't been set.\r\n");
 
-        if (!strncmp(mob->player.long_descr, "An unfinished mob stands here.", 30) && (found=1))
+        if (mob->player.long_descr && !strncmp(mob->player.long_descr, "An unfinished mob stands here.", 30) && (found=1))
           tb_buf_appendf(&report,
                           "- Long description hasn't been set.\r\n");
 
@@ -4117,8 +4118,9 @@ ACMD (do_zcheck)
                        tohit, MAX_APPLY_HITROLL_TOTAL);
 
 
+     /* A NULL extra description (empty '~' text) counts as unformatted. */
      for (ext2 = NULL, ext = obj->ex_description; ext; ext = ext->next)
-       if (strncmp(ext->description, "   ", 3))
+       if (!ext->description || strncmp(ext->description, "   ", 3))
          ext2 = ext;
 
      if (ext2 && (found = 1))
@@ -4167,23 +4169,33 @@ ACMD (do_zcheck)
                             ROOM_FLAGGED(i, ROOM_OLC) ? "OLC" : "",
                             ROOM_FLAGGED(i, ROOM_BFS_MARK) ? "*" : "");
 
-      if ((MIN_ROOM_DESC_LENGTH) && strlen(world[i].description)<MIN_ROOM_DESC_LENGTH && (found=1))
-        tb_buf_appendf(&report,
-          "- Room description is too short. (%4.4d of min. %d characters).\r\n",
-          (int)strlen(world[i].description), MIN_ROOM_DESC_LENGTH);
+      /* fread_string() and redit store NULL for an empty ('~') text, so
+       * every description below may be NULL. */
+      if (!world[i].description) {
+        found = 1;
+        TB_WARN_MSG("act", "zcheck-null-desc", "room", "room vnum %d has no description",
+                    world[i].number);
+        tb_buf_appendf(&report, "- Room has no description.\r\n");
+      } else {
+        if ((MIN_ROOM_DESC_LENGTH) && strlen(world[i].description)<MIN_ROOM_DESC_LENGTH && (found=1))
+          tb_buf_appendf(&report,
+            "- Room description is too short. (%4.4d of min. %d characters).\r\n",
+            (int)strlen(world[i].description), MIN_ROOM_DESC_LENGTH);
 
-      if (strncmp(world[i].description, "   ", 3) && (found=1))
-        tb_buf_appendf(&report,
-                        "- Room description not formatted with indent (/fi in the editor).\r\n");
+        if (strncmp(world[i].description, "   ", 3) && (found=1))
+          tb_buf_appendf(&report,
+                          "- Room description not formatted with indent (/fi in the editor).\r\n");
 
-      /* strcspan = size of text in first arg before any character in second arg */
-      if ((strcspn(world[i].description, "\r\n")>MAX_COLOUMN_WIDTH) && (found=1))
-        tb_buf_appendf(&report,
-                        "- Room description not wrapped at %d chars (/fi in the editor).\r\n",
-                             MAX_COLOUMN_WIDTH);
+        /* strcspan = size of text in first arg before any character in second arg */
+        if ((strcspn(world[i].description, "\r\n")>MAX_COLOUMN_WIDTH) && (found=1))
+          tb_buf_appendf(&report,
+                          "- Room description not wrapped at %d chars (/fi in the editor).\r\n",
+                               MAX_COLOUMN_WIDTH);
+      }
 
+     /* A NULL extra description counts as unformatted. */
      for (ext2 = NULL, ext = world[i].ex_description; ext; ext = ext->next)
-       if (strncmp(ext->description, "   ", 3))
+       if (!ext->description || strncmp(ext->description, "   ", 3))
          ext2 = ext;
 
      if (ext2 && (found = 1))

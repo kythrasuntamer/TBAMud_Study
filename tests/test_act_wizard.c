@@ -624,6 +624,24 @@ static void test_zcheck_bad_apply_location_is_reported(void)
   top_of_objt = 0;
 }
 
+/* G1-20: an empty ('~') room description or extra description is NULL
+ * after boot; zcheck passed it to strlen/strncmp/strcspn. */
+static void test_zcheck_null_room_description_is_reported(void)
+{
+  static struct extra_descr_data ext;
+  memset(&ext, 0, sizeof(ext));
+  ext.keyword = (char *)"sign";
+  rooms[0].description = NULL;
+  rooms[0].ex_description = &ext;
+  rooms[0].name = (char *)"Bare";
+  rooms[1].description = good_desc;
+  RUN_CMD(do_zcheck, &imm, "30");
+  TEST_ASSERT_EQUAL_STRING("zcheck-null-desc", captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(captured_detail, "room vnum 3000"));
+  TEST_ASSERT_NOT_NULL(strstr(sent, "- Room has no description."));
+  TEST_ASSERT_NOT_NULL(strstr(sent, "- has unformatted extra description"));
+}
+
 int main(void)
 {
   /* basic_mud_log()/mudlog() are the real utils.c ones; keep them quiet. */
@@ -641,6 +659,7 @@ int main(void)
   RUN_TEST(test_show_player_and_last_bad_sex_class_are_reported);
   RUN_TEST(test_zcheck_room_flag_finding_is_reported_for_its_room);
   RUN_TEST(test_zcheck_bad_apply_location_is_reported);
+  RUN_TEST(test_zcheck_null_room_description_is_reported);
   {
     int failures = UNITY_END();
     if (logfile)
