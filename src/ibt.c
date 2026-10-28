@@ -20,9 +20,10 @@
  *   node must not be freed: 'remove' refuses, and clean_ibt_list() frees
  *   only the aborting writer's own node plus abandoned empty ones.
  * - ibtedit works on a private copy (OLC_IBT) that carries the record's
- *   never-reused serial; OLC_NUM is only the list position shown to the
- *   editor and goes stale when an earlier record is removed.  OLC_ZNUM is
- *   reused as the "changed" flag.
+ *   never-reused serial; OLC_NUM is the list position the session opened
+ *   with and goes stale when an earlier record is removed, so the menu and
+ *   the save log show the current position (ibt_num_by_serial).  OLC_ZNUM
+ *   is reused as the "changed" flag.
  * - Who controls the input: header, body and notes are player text; the
  *   files are written by save_ibt_file() (via a temporary file) and read
  *   back by read_ibt(), which treats them as untrusted. */
@@ -51,6 +52,7 @@
 #include "utils.h"
 #include "ibt.h"
 #include "oasis.h"
+#include "olc_checks.h"
 #include "improved-edit.h"
 #include "modify.h"
 
@@ -81,7 +83,7 @@ static IBT_DATA *get_first_ibt(int mode);
 static bool is_ibt_logger(IBT_DATA *ibtData, struct char_data *ch);
 /* Internal (static) OLC functions */
 static void ibtedit_setup(struct descriptor_data *d);
-static void ibtedit_save(struct descriptor_data *d);
+static bool ibtedit_save(struct descriptor_data *d);
 static void ibtedit_disp_main_menu(struct descriptor_data *d);
 static void ibtedit_disp_flags(struct descriptor_data *d);
 
@@ -253,6 +255,14 @@ static int read_ibt(const char *filename, FILE *fp, int recno, IBT_DATA **out)
               if ( dated ) {
                 ibtData->dated = tb_parse_long_or_zero(dated);
                 STRFREE( dated );
+                /* A submission time before 1970 means the file is corrupt;
+                 * 0 is shown as "Unknown". */
+                if (ibtData->dated < 0) {
+                  TB_WARN_MSG("ibt", "ibt-load", filename,
+                              TB_ERRID_PARSER_RANGE " record %d field Dated %ld is negative; shown as unknown",
+                              recno, ibtData->dated);
+                  ibtData->dated = 0;
+                }
               }
               if ( !ibtData->name )
                 ibtData->name = STRALLOC("");
@@ -502,6 +512,19 @@ static IBT_DATA *get_ibt_by_serial(int mode, long serial)
   return NULL;
 }
 
+/* The current number ('list' numbering, from 1) of the IBT with this
+ * serial, or 0 when it was removed. */
+static int ibt_num_by_serial(int mode, long serial)
+{
+  IBT_DATA *target_ibt;
+  int num = 1;
+
+  for (target_ibt = get_first_ibt(mode); target_ibt; target_ibt = target_ibt->next, num++)
+    if (target_ibt->serial == serial)
+      return num;
+  return 0;
+}
+
 /* Return the ibtedit session editing this listed IBT, or NULL. */
 static struct descriptor_data *ibt_olc_editor(int mode, IBT_DATA *ibt)
 {
@@ -654,7 +677,22 @@ ACMD(do_ibt)
       } else {
         send_to_char(ch, "%s%s by %s%s\r\n",QCYN, ibt_types[subcmd], QYEL, ibtData->name);
         if (ibtData->dated != 0) {
-          tb_strftime(timestr, sizeof(timestr), "%c", localtime(&(ibtData->dated)));
+          /* dated is a long (ibt.h) read from the IBT file.  localtime()
+           * takes a time_t, which is wider than long on LLP64 and 32-bit
+           * builds, and returns NULL for a time it cannot represent; then
+           * tb_strftime() left timestr unwritten and its stack bytes were
+           * sent to the player. */
+          time_t dated = (time_t)ibtData->dated;
+          const struct tm *when = localtime(&dated);
+
+          if (when)
+            tb_strftime(timestr, sizeof(timestr), "%c", when);
+          else {
+            TB_WARN_MSG("ibt", "ibt-date", ibt_types[subcmd],
+                        "%s %d (serial %ld) date %ld cannot be converted; shown as unknown",
+                        ibt_types[subcmd], ano, ibtData->serial, ibtData->dated);
+            strlcpy(timestr, "Unknown", sizeof(timestr));
+          }
         } else {
           strlcpy(timestr, "Unknown", sizeof(timestr));
         }
@@ -961,8 +999,9 @@ ACMD(do_ibt)
 
 /* IBT Editor OLC */
 /* OLC_VAL(d)  - The IBT 'mode' - Idea, Bug or Typo */
-/* OLC_NUM(d)  - The IBT number (shown in 'list'); a position, display only:
- *               the record is found again by OLC_IBT(d)->serial        */
+/* OLC_NUM(d)  - The IBT number (shown in 'list') when the session opened;
+ *               stale after an earlier record is removed.  The record is
+ *               found again by OLC_IBT(d)->serial                       */
 /* OLC_ZNUM(d) - Used as 'has changed' flag         */
 ACMD(do_oasis_ibtedit)
 {
@@ -1007,11 +1046,11 @@ ACMD(do_oasis_ibtedit)
 
   d = ch->desc;
 
-  /* Give descriptor an OLC structure. */
-  if (d->olc) {
-    mudlog(BRF, LVL_IMMORT, TRUE, "SYSERR: do_oasis_ibtedit: Player already had olc structure.");
-    free(d->olc);
-  }
+  /* Give descriptor an OLC structure.  Entry requires CON_PLAYING, where no
+   * editor is open, so a leftover one is an invariant break: a bare free()
+   * leaked its IBT working copy.  Release it fully and report it. */
+  if (d->olc)
+    OLC_DISCARD_STALE_SESSION(d, ch);
 
   CREATE(d->olc, struct oasis_olc_data, 1);
 
@@ -1079,8 +1118,9 @@ static void ibtedit_setup(struct descriptor_data *d)
 }
 
 /*-------------------------------------------------------------------*/
-/* Copy IBT data back to the correct list                            */
-static void ibtedit_save(struct descriptor_data *d)
+/* Copy IBT data back to the correct list.  FALSE, reported, when the
+ * record was removed during the session and nothing was saved. */
+static bool ibtedit_save(struct descriptor_data *d)
 {
   IBT_DATA *ibtData;
   int i;
@@ -1121,12 +1161,13 @@ static void ibtedit_save(struct descriptor_data *d)
                 DIAG_CHAR(d->character));
     write_to_output(d, "That %s was removed while you edited it; changes not saved.\r\n",
                     ibt_types[OLC_VAL(d)]);
-    return;
+    return FALSE;
   }
 
   if (!save_ibt_file(OLC_VAL(d)))
     write_to_output(d, "Warning: the %s list could not be saved to disk.\r\n",
                     ibt_types[OLC_VAL(d)]);
+  return TRUE;
 }
 
 void free_olc_ibt(IBT_DATA *toFree) {
@@ -1143,16 +1184,23 @@ void free_olc_ibt(IBT_DATA *toFree) {
 static void ibtedit_disp_main_menu(struct descriptor_data *d)
 {
   struct char_data *ch = d->character;
-  char flg_text[MAX_STRING_LENGTH];
+  char flg_text[MAX_STRING_LENGTH], num_text[32];
   room_rnum rr;
+  int num;
 
   get_char_colors(ch);
   clear_screen(d);
 
+  /* The record's number now, not when the session opened (OLC_NUM). */
+  if ((num = ibt_num_by_serial(OLC_VAL(d), OLC_IBT(d)->serial)) > 0)
+    tb_snprintf(num_text, sizeof(num_text), "%d", num);
+  else
+    strlcpy(num_text, "removed", sizeof(num_text));
+
   rr = real_room(OLC_IBT(d)->room);
   sprintbitarray(OLC_IBT(d)->flags, ibt_bits, IBT_ARRAY_MAX, flg_text, sizeof(flg_text));
 
-  send_to_char(ch, "%s-- Edit %s Number %s[%s%d%s]\r\n"
+  send_to_char(ch, "%s-- Edit %s Number %s[%s%s%s]\r\n"
                    "%s1%s) Reported By: %s%-12s\r\n"
                    "%s2%s) Reported In: %s[%s%-5d%s]%s - %s%s\r\n"
                    "%s3%s) Header Text: %s%s\r\n"
@@ -1160,7 +1208,7 @@ static void ibtedit_disp_main_menu(struct descriptor_data *d)
                    "%s5%s) Details:\r\n%s%s\r\n"
                    "%s6%s) Admin Notes:\r\n%s%s\r\n"
                    "%sQ%s) Quit %s Editor\r\n",
-                   QBGRN, IBT_TYPE, cyn, yel, OLC_NUM(d), cyn,
+                   QBGRN, IBT_TYPE, cyn, yel, num_text, cyn,
                    yel, nrm, yel, OLC_IBT(d)->name,
                    yel, nrm, cyn, yel, OLC_IBT(d)->room, cyn, nrm, (rr == NOWHERE) ? CCRED(d->character, C_NRM) : cyn, (rr == NOWHERE) ? "<Invalid Room!>" : world[rr].name,
                    yel, nrm, yel, OLC_IBT(d)->text,
@@ -1201,9 +1249,12 @@ void ibtedit_parse(struct descriptor_data *d, char *arg)
       switch (*arg) {
       case 'y':
       case 'Y':
-        /* Save the IBT in memory and to disk. */
-        ibtedit_save(d);
-        mudlog(CMP, MAX(LVL_BUILDER, GET_INVIS_LEV(d->character)), TRUE, "OLC: %s edits %s %d", GET_NAME(d->character), IBT_TYPE, OLC_NUM(d));
+        /* Save the IBT in memory and to disk.  A record removed during the
+         * session was reported and not saved: log no edit for it. */
+        if (ibtedit_save(d))
+          mudlog(CMP, MAX(LVL_BUILDER, GET_INVIS_LEV(d->character)), TRUE, "OLC: %s edits %s %d",
+                 GET_NAME(d->character), IBT_TYPE,
+                 ibt_num_by_serial(OLC_VAL(d), OLC_IBT(d)->serial));
         cleanup_olc(d, CLEANUP_ALL);
         return;
       case 'n':

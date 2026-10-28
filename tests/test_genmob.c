@@ -18,6 +18,8 @@
 #include "boards.h"
 #include "dg_scripts.h"
 #include "comm.h"
+#include <sys/stat.h>
+#include <unistd.h>
 
 /* utils.c is linked, so its tb_error_log_at() exists; the test build wraps
  * calls from the code under test to this capturing version. */
@@ -47,9 +49,10 @@ void extract_char(struct char_data *ch)
     SET_BIT_AR(MOB_FLAGS(ch), MOB_NOTDEADYET);
 }
 
-/* genobj.c's delete_object() now queues the zone for saving, and
- * add_to_save_list() (genolc.c) resolves the zone through db.c's
- * real_zone(), which this test does not link. */
+/* genobj.c's delete_object() and genmob.c's delete_mobile() queue a zone
+ * whose reset list changed for saving, and add_to_save_list() (genolc.c)
+ * resolves the zone through db.c's real_zone(), which this test does not
+ * link. */
 zone_rnum real_zone(zone_vnum vnum)
 {
   zone_rnum i;
@@ -150,10 +153,9 @@ void tearDown(void)
 {
   int i;
 
-  for (i = 0; i <= top_of_mobt; i++) {
-    free(mob_proto[i].player.name);
-    free(mob_proto[i].player.short_descr);
-  }
+  /* All five strings: save_mobiles() fills missing ones with placeholders. */
+  for (i = 0; i <= top_of_mobt; i++)
+    free_mobile_strings(&mob_proto[i]);
   free(mob_proto);
   free(mob_index);
   mob_proto = NULL;
@@ -166,6 +168,8 @@ void tearDown(void)
   free(shop_index);
   shop_index = NULL;
   top_shop = -1;
+  free_save_list();      /* runs at shutdown only: it leaves the head set */
+  save_list = NULL;
 }
 
 /* Zone-table tests do not exercise the prototype's strings; free them up
@@ -371,8 +375,130 @@ static void test_delete_object_zone_commands(void)
   free_objs();
 }
 
+/* C2-01: delete_mobile() removed the deleted mob's zone resets in memory
+ * but never queued the zone for saving, so they came back from the zone
+ * file at the next boot; and a removal that failed would have been
+ * revisited forever (delete_zone_command() now reports and returns FALSE). */
+static void test_delete_mobile_queues_changed_zone_for_save(void)
+{
+  struct reset_com cmds[] = { mcmd(1), mcmd(2) };
+
+  make_zone(cmds, 2);
+  drop_strings(1);
+  TEST_ASSERT_FALSE(in_save_list(zone_table[0].number, SL_ZON));
+  delete_mobile(1);
+  TEST_ASSERT_EQUAL_CHAR('M', ZCMD(0, 0).command);
+  TEST_ASSERT_EQUAL_INT(1, ZCMD(0, 0).arg1);      /* old rnum 2 -> 1 */
+  TEST_ASSERT_EQUAL_CHAR('S', ZCMD(0, 1).command);
+  TEST_ASSERT_TRUE(in_save_list(zone_table[0].number, SL_ZON));
+  TEST_ASSERT_EQUAL_STRING("zcmd-delete", tb_captured_operation);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+}
+
+/* C1-28: add_mobile() indexed zone_table with real_zone_by_thing(vnum)
+ * unchecked.  A vnum in no zone (zedit shrank the range while medit was
+ * open) read zone_table[NOWHERE] (ASan heap-buffer-overflow before the fix,
+ * after mob_proto had already grown). */
+static void test_add_mobile_refuses_vnum_outside_every_zone(void)
+{
+  struct reset_com none[1];
+  struct char_data scratch;
+
+  memset(none, 0, sizeof(none));
+  make_zone(none, 0);                     /* zone 0 covers vnums 0..99 */
+  memset(&scratch, 0, sizeof(scratch));
+  scratch.nr = NOBODY;
+  scratch.player_specials = &dummy_mob;
+
+  TEST_ASSERT_EQUAL_INT(NOBODY, add_mobile(&scratch, 500));
+  TEST_ASSERT_EQUAL_INT(NMOBS - 1, top_of_mobt);
+  TEST_ASSERT_EQUAL_STRING("add-mobile", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "mob vnum 500 belongs to no zone"));
+
+  /* An existing prototype whose zone no longer covers it is left alone. */
+  zone_table[0].bot = 50;
+  tb_error_capture_reset();
+  TEST_ASSERT_EQUAL_INT(NOBODY, add_mobile(&scratch, 2));
+  TEST_ASSERT_EQUAL_STRING("mob", mob_proto[1].player.name);
+  TEST_ASSERT_EQUAL_STRING("add-mobile", tb_captured_operation);
+}
+
+/* ---- save_mobiles (genmob.c) ------------------------------------------ */
+
+/* fopen() as the code under test sees it (linked with --wrap=fopen).  When
+ * armed, the next write-only stream starts with its error indicator set,
+ * as if a write had failed earlier while the final flush still works:
+ * reading a write-only stream sets the indicator (EBADF). */
+/* NOLINTNEXTLINE(cert-dcl37-c,cert-dcl51-cpp): --wrap requires this name. */
+FILE *__real_fopen(const char *path, const char *mode);
+/* NOLINTNEXTLINE(cert-dcl37-c,cert-dcl51-cpp): --wrap requires this name. */
+FILE *__wrap_fopen(const char *path, const char *mode);
+static int poison_next_write_stream;
+
+FILE *__wrap_fopen(const char *path, const char *mode)
+{
+  FILE *fp = __real_fopen(path, mode);
+
+  if (fp && poison_next_write_stream && mode[0] == 'w' && !strchr(mode, '+')) {
+    poison_next_write_stream = 0;
+    (void)fgetc(fp);
+    TEST_ASSERT_TRUE(ferror(fp));
+  }
+  return fp;
+}
+
+static void read_file(const char *path, char *buf, size_t size)
+{
+  FILE *fp = fopen(path, "r");
+  size_t n;
+  TEST_ASSERT_NOT_NULL(fp);
+  n = fread(buf, 1, size - 1, fp);
+  buf[n] = '\0';
+  (void)fclose(fp);
+}
+
+/* C1-29: save_mobiles() replaced the zone's .mob file after a write had
+ * failed, as long as the final flush worked, so the zone lost mobs at the
+ * next boot. */
+static void test_save_mobiles_keeps_previous_file_after_stream_error(void)
+{
+  struct reset_com none[1];
+  char text[64];
+  FILE *fp;
+
+  memset(none, 0, sizeof(none));
+  make_zone(none, 0);
+  fp = fopen(MOB_PREFIX "0.mob", "w");
+  TEST_ASSERT_NOT_NULL(fp);
+  (void)fputs("previous\n", fp);
+  (void)fclose(fp);
+
+  poison_next_write_stream = 1;
+  TEST_ASSERT_FALSE(save_mobiles(0));
+  TEST_ASSERT_EQUAL_STRING("save-stream-error", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "zone 0 mobiles"));
+  read_file(MOB_PREFIX "0.mob", text, sizeof(text));
+  TEST_ASSERT_EQUAL_STRING("previous\n", text);
+  fp = fopen(MOB_PREFIX "0.new", "r");
+  TEST_ASSERT_NULL(fp);
+
+  TEST_ASSERT_TRUE(save_mobiles(0));          /* a clean stream commits */
+  read_file(MOB_PREFIX "0.mob", text, sizeof(text));
+  TEST_ASSERT_EQUAL_STRING_LEN("#1\nmob~\n", text, 8);
+}
+
 int main(void)
 {
+  char dir[] = "/tmp/tb_test_genmob.XXXXXX";
+  int failures;
+
+  /* save_mobiles() writes LIB_WORLD "mob/" relative to the working
+   * directory. */
+  if (!mkdtemp(dir) || chdir(dir) != 0 || mkdir("world", 0700) != 0 ||
+      mkdir("world/mob", 0700) != 0) {
+    perror("test_genmob fixture directory");
+    return 1;
+  }
   logfile = stderr;
 
   UNITY_BEGIN();
@@ -382,5 +508,15 @@ int main(void)
   RUN_TEST(test_delete_mobile_releases_prototype_and_detaches_instances);
   RUN_TEST(test_check_mobile_strings_with_unprototyped_mob);
   RUN_TEST(test_delete_object_zone_commands);
-  return UNITY_END();
+  RUN_TEST(test_delete_mobile_queues_changed_zone_for_save);
+  RUN_TEST(test_add_mobile_refuses_vnum_outside_every_zone);
+  RUN_TEST(test_save_mobiles_keeps_previous_file_after_stream_error);
+  failures = UNITY_END();
+
+  (void)remove(MOB_PREFIX "0.mob");
+  (void)rmdir("world/mob");
+  (void)rmdir("world");
+  if (chdir("/") == 0)
+    (void)rmdir(dir);
+  return failures;
 }

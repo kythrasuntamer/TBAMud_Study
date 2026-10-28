@@ -13,6 +13,7 @@
 #include "structs.h"
 #include "utils.h"
 #include "db.h"
+#include "comm.h"
 #include "quest.h"
 #include "genolc.h"
 #include "genzon.h" /* for create_world_index */
@@ -156,13 +157,48 @@ int add_quest(struct aq_data *nqst)
 
 /*-------------------------------------------------------------------*/
 
+/* Take player ch off quest vnum qvnum, which delete_quest() just removed,
+ * as quest_quit() does for a quest that no longer exists.  A player left
+ * on it would keep a vnum that real_quest() no longer finds (do_score read
+ * aquest_table[NOTHING] for it) and save it to the player file. */
+static void delete_quest_clear_player(struct char_data *ch, qst_vnum qvnum)
+{
+  if (IS_NPC(ch) || !ch->player_specials || GET_QUEST(ch) != qvnum)
+    return;
+  TB_WARN_MSG("olc", "quest-delete-player", "quest",
+              "quest vnum %d deleted while " DIAG_CHAR_FMT " was on it; quest cleared",
+              qvnum, DIAG_CHAR(ch));
+  clear_quest(ch);
+  send_to_char(ch, "The quest you were on has been removed.\r\n");
+}
+
+/* TRUE when dsc holds a loaded player who is out of the game (login MOTD,
+ * main menu and the menu's prompts), so not on character_list. */
+static bool delete_quest_menu_player(const struct descriptor_data *dsc)
+{
+  switch (STATE(dsc)) {
+  case CON_RMOTD:
+  case CON_MENU:
+  case CON_PLR_DESC:
+  case CON_CHPWD_GETOLD:
+  case CON_CHPWD_GETNEW:
+  case CON_CHPWD_VRFY:
+  case CON_DELCNF1:
+  case CON_DELCNF2:
+    return dsc->character != NULL;
+  default:
+    return FALSE;
+  }
+}
+
 /**
  * Delete quest rnum (qedit delete).
  *
  * Precondition: rnum < total_quests; NOTHING (a quest never saved) and any
  * other out-of-range value are reported and refused.  Frees the quest's
- * strings, shifts later quests down, and restores the questmaster's saved
- * spec proc when no remaining quest uses that mob.
+ * strings, shifts later quests down, restores the questmaster's saved
+ * spec proc when no remaining quest uses that mob, and takes every loaded
+ * player who was on the quest off it.
  *
  * @return TRUE when deleted; FALSE, reported, otherwise.
  */
@@ -175,6 +211,8 @@ int delete_quest(qst_rnum rnum)
   qst_vnum deleted_vnum;
   SPECIAL (*tempfunc);
   int  quests_remaining = 0;
+  struct char_data *ch;
+  struct descriptor_data *dsc;
 
   /* qedit can confirm 'delete' on a quest that was never saved, so the
    * caller's real_quest() may return NOTHING; check before any table read. */
@@ -226,6 +264,14 @@ int delete_quest(qst_rnum rnum)
         mob_index[qmr].func = tempfunc; // point back to original spec proc
     }
   }
+  /* Players in the game (link-dead ones included) are on character_list;
+   * players at the menu are not, and are reached through their
+   * descriptors. */
+  for (ch = character_list; ch; ch = ch->next)
+    delete_quest_clear_player(ch, deleted_vnum);
+  for (dsc = descriptor_list; dsc; dsc = dsc->next)
+    if (delete_quest_menu_player(dsc))
+      delete_quest_clear_player(dsc->character, deleted_vnum);
   return TRUE;
 }
 
@@ -329,9 +375,17 @@ int save_quests(zone_rnum zone_num)
   /* Write the final line and commit only a fully flushed temporary file. */
   tb_fprintf(sf, "$~\n");
   {
+    /* ferror() stays set after any failed write.  tb_fprintf() reported
+     * each one, but a later flush that succeeds would hide it and commit a
+     * file with a hole in it (C2-16). */
+    int stream_ok = !ferror(sf);
     int flush_ok = tb_fflush_checked(sf, filename);
     int close_ok = tb_fclose_checked(sf, filename);
-    if (!flush_ok || !close_ok) {
+    if (!stream_ok)
+      TB_ERROR_MSG("olc", "save-stream-error", filename,
+                   TB_ERRID_PERSIST_WRITE " zone %d quests: a write failed; previous file kept",
+                   zone_table[zone_num].number);
+    if (!stream_ok || !flush_ok || !close_ok) {
       if (remove(filename) != 0 && errno != ENOENT)
         TB_REPORT_ERRNO("remove", filename);
       return FALSE;

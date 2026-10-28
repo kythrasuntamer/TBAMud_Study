@@ -21,9 +21,12 @@
  * arguments are rnums; they are converted back to vnums only when saving,
  * and a stale rnum aborts the save rather than being indexed.
  *
- * Ownership: struct reset_com is copied by value between lists, so the
- * sarg1/sarg2 strings of a 'V' command are shared between zedit's working
- * copy and zone_table (see remove_cmd_from_list()).
+ * Ownership: a command list owns the sarg1/sarg2 strings of its commands
+ * (only a 'V' command has them).  zone_table's come from load_zones() or a
+ * zedit save; zedit_setup() gives its working list deep copies, and a zedit
+ * save gives zone_table fresh copies of the working list's strings (the
+ * working list keeps its own until cleanup_olc()), so no two lists share a
+ * string.  Removing a command (remove_cmd_from_list()) frees its strings.
  */
 
 #include "conf.h"
@@ -317,6 +320,19 @@ rznum = i;
 
   top_of_zone_table++;
 
+  /* Zone rnums at or above rznum moved up by one.  world[].zone was shifted
+   * above and zedit_new_zone() moves open OLC sessions, but the reset queue
+   * (db.c zone_update()) holds zone rnums as well.  An entry left behind
+   * resets the zone that now has its rnum, and its own zone stays at
+   * ZO_DEAD, never resetting until 'zreset' or a reboot (finding O8d). */
+  {
+    struct reset_q_element *queued;
+
+    for (queued = reset_q.head; queued; queued = queued->next)
+      if (queued->zone_to_reset >= rznum)
+        queued->zone_to_reset++;
+  }
+
   add_to_save_list(zone->number, SL_ZON);
   return rznum;
 }
@@ -481,21 +497,11 @@ void remove_room_zone_commands(zone_rnum zone, room_rnum room_num)
     default:
       break;
     }
-    if (cmd_room == room_num) {
-      /* zone_table owns its 'V' strings (zedit_setup gives sessions deep
-       * copies); remove_cmd_from_list() only drops the struct, so free them
-       * once it has. A failed removal is already reported and keeps the
-       * command (and its strings); step past it so the scan terminates. */
-      char *sarg1 = zone_table[zone].cmd[subcmd].sarg1;
-      char *sarg2 = zone_table[zone].cmd[subcmd].sarg2;
-
-      if (remove_cmd_from_list(&zone_table[zone].cmd, subcmd,
-                               zone_table[zone].number)) {
-        free(sarg1);
-        free(sarg2);
-      } else
-        subcmd++;
-    } else
+    /* A failed removal is already reported; step past it so the scan
+     * still terminates.  remove_cmd_from_list() frees a removed command's
+     * 'V' strings. */
+    if (cmd_room != room_num ||
+        !remove_cmd_from_list(&zone_table[zone].cmd, subcmd, zone_table[zone].number))
       subcmd++;
   }
 }
@@ -709,9 +715,17 @@ int save_zone(zone_rnum zone_num)
 #undef ZSAVE_CHECK
   tb_fputs("S\n$\n", zfile);
   {
+    /* ferror() stays set after any failed write.  tb_fprintf() reported
+     * each one, but a later flush that succeeds would hide it and commit a
+     * file with a hole in it (C2-16). */
+    int stream_ok = !ferror(zfile);
     int flush_ok = tb_fflush_checked(zfile, fname);
     int close_ok = tb_fclose_checked(zfile, fname);
-    if (!flush_ok || !close_ok) {
+    if (!stream_ok)
+      TB_ERROR_MSG("olc", "save-stream-error", fname,
+                   TB_ERRID_PERSIST_WRITE " zone %d: a write failed; previous file kept",
+                   zone_table[zone_num].number);
+    if (!stream_ok || !flush_ok || !close_ok) {
       if (remove(fname) != 0 && errno != ENOENT)
         TB_REPORT_ERRNO("remove", fname);
       return FALSE;
@@ -748,9 +762,12 @@ int count_commands(struct reset_com *list)
  * Insert a copy of *newcmd at index pos of a zone command list.
  *
  * The list is reallocated (every pointer into it is invalidated) and the
- * command is copied by value, so a 'V' command's sarg1/sarg2 become shared
- * with newcmd's owner.  pos is expected in 0..count; a larger pos is not
- * checked and the command is not inserted.
+ * command is copied by value, so the list takes over a 'V' command's
+ * sarg1/sarg2: the caller hands in fresh duplicates (zedit_setup(),
+ * zedit_save_internally()) and keeps its own strings, if any, for itself.
+ * pos is expected in 0..count; any other pos is reported (zone-cmd-insert)
+ * and the command appended: it used to be left out without a word, and its
+ * 'V' strings with it.
  *
  * @param list   Address of the list (zone_table[z].cmd or zedit's copy).
  * @param newcmd Command to copy in.
@@ -763,6 +780,14 @@ void add_cmd_to_list(struct reset_com **list, struct reset_com *newcmd, int pos)
 
   /* Count number of commands (not including terminator). */
   count = count_commands(*list);
+
+  if (pos < 0 || pos > count) {
+    TB_ERROR_MSG("olc", "zone-cmd-insert", "zone",
+                 "insert position %d outside 0..%d; command '%c' appended",
+                 pos, count,
+                 isprint((unsigned char)newcmd->command) ? newcmd->command : '?');
+    pos = count;
+  }
 
   /* Value is +2 for the terminator and new field to add. */
   CREATE(newlist, struct reset_com, count + 2);
@@ -784,12 +809,12 @@ void add_cmd_to_list(struct reset_com **list, struct reset_com *newcmd, int pos)
  * The list is reallocated to one slot fewer and every later command slides
  * down, so a caller scanning by index must re-examine pos afterwards.
  *
- * Ownership: this only drops the struct; the sarg1/sarg2 strings of a 'V'
- * command belong to zone_table and are freed by the caller once the
- * removal succeeds (zedit_setup() gives editing sessions deep copies, so
- * nothing else points at them; findings C2-27, F1-20).
+ * Ownership: the list owns the removed command's sarg1/sarg2 ('V' only),
+ * so they are freed here.  This holds for zone_table and for a zedit
+ * working list alike: zedit_setup() gives the working list deep copies, so
+ * no other list shares them (findings C2-27, F1-20).
  *
- * @param list Address of the zone's command list (zone_table[z].cmd).
+ * @param list Address of the command list (zone_table[z].cmd or zedit's).
  * @param pos  Index to remove, 0..count-1; callers derive it from their own
  *             scan or from builder input already range-checked.
  * @param znum Zone vnum, for diagnostics only.
@@ -828,6 +853,9 @@ static int remove_cmd_from_list(struct reset_com **list, int pos, zone_vnum znum
   }
   /* Add the terminator, then insert the new list. */
   newlist[count - 1].command = 'S';
+  /* The removed command's strings go with it. */
+  free((*list)[pos].sarg1);
+  free((*list)[pos].sarg2);
   free(*list);
   *list = newlist;
   return TRUE;

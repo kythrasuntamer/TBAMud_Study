@@ -158,5 +158,9 @@ void olc_renumber_sessions(int kind, int refpt, int delta,
 /** Free OLC_SCRIPT(d) unless a save already handed it to a prototype (save
  * paths set it to NULL). Called by cleanup_olc() and before 'W' re-setup. */
 void olc_free_script_copy(struct descriptor_data *d);
+/** TRUE when two trigger lists name the same vnums in the same order. A
+ * save rebuilds live instances' scripts only when the list changed. */
+int olc_trig_lists_equal(const struct trig_proto_list *a,
+                         const struct trig_proto_list *b);
 
 #endif /* TBAMUD_OLC_CHECKS_H_INCLUDED */

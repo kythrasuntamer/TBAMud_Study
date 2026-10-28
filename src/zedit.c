@@ -97,11 +97,15 @@ int olc_check_rnum_at(const char *file, int line, const char *func,
   long top;
   int valid;
 
+  /* rnum may come from a plain int zone-command argument, where -1 means
+   * "not set yet".  VALID_MOB_RNUM and VALID_ROOM_RNUM (utils.h) test their
+   * sentinel only, and VALID_TRIG_RNUM indexes trig_index[] with the value,
+   * so a negative rnum is refused before any of them sees it. */
   switch (kind) {
   case OLC_RNUM_OBJ:  valid = VALID_OBJ_RNUM_NUM(rnum); top = (long)top_of_objt; break;
-  case OLC_RNUM_MOB:  valid = VALID_MOB_RNUM(rnum);     top = (long)top_of_mobt; break;
-  case OLC_RNUM_ROOM: valid = VALID_ROOM_RNUM(rnum);    top = (long)top_of_world; break;
-  case OLC_RNUM_TRIG: valid = VALID_TRIG_RNUM(rnum);    top = (long)top_of_trigt - 1; break;
+  case OLC_RNUM_MOB:  valid = rnum >= 0 && VALID_MOB_RNUM(rnum);  top = (long)top_of_mobt; break;
+  case OLC_RNUM_ROOM: valid = rnum >= 0 && VALID_ROOM_RNUM(rnum); top = (long)top_of_world; break;
+  case OLC_RNUM_TRIG: valid = rnum >= 0 && VALID_TRIG_RNUM(rnum); top = (long)top_of_trigt - 1; break;
   default:            valid = FALSE;                    top = -1; break;
   }
 
@@ -335,6 +339,19 @@ void olc_free_script_copy(struct descriptor_data *d)
     free(tp);
   }
   OLC_SCRIPT(d) = NULL;
+}
+
+/* TRUE when two trigger lists name the same trigger vnums in the same order
+ * (two empty lists are equal).  oedit and medit compare the prototype's list
+ * with the session's edited copy: only a changed list makes live instances
+ * rebuild their scripts, which discards their variables and pending waits. */
+int olc_trig_lists_equal(const struct trig_proto_list *a,
+                         const struct trig_proto_list *b)
+{
+  for (; a && b; a = a->next, b = b->next)
+    if (a->vnum != b->vnum)
+      return FALSE;
+  return a == NULL && b == NULL;
 }
 
 ACMD(do_oasis_zedit)
@@ -596,23 +613,124 @@ static void zedit_new_zone(struct char_data *ch, zone_vnum vzone_num, room_vnum 
   write_to_output(ch->desc, "Zone created successfully.\r\n");
 }
 
+/* Rnums in reset commands are plain ints here, and -1 is an argument the
+ * builder has not set yet (zedit_init_new_command): a negative or stale one
+ * must fail these tests.  utils.h's VALID_ROOM_RNUM and VALID_MOB_RNUM
+ * compare against their NOWHERE/NOBODY sentinel only, and dg_scripts.h's
+ * VALID_TRIG_RNUM then indexes trig_index[] with the value.  Each evaluates
+ * r more than once: pass a plain value. */
+#define ZEDIT_VALID_ROOM(r) ((long)(r) >= 0 && (long)(r) <= (long)top_of_world)
+#define ZEDIT_VALID_MOB(r)  ((long)(r) >= 0 && (long)(r) <= (long)top_of_mobt)
+#define ZEDIT_VALID_TRIG(r) ((long)(r) >= 0 && VALID_TRIG_RNUM(r))
+
+/* Why scratch command c cannot be saved, or NULL when it can.  The rule is
+ * db.c:reset_zone()'s and nothing stricter: a stricter save deletes valid
+ * commands from the world files the first time anyone saves the room
+ * (finding O1).
+ * - Every stored rnum must index its table, as save_zone() requires; a stale
+ *   one would abort the whole zone file.
+ * - 'G' and 'E' act on the mobile the last 'M' before them loaded, which may
+ *   sit in an earlier room's block, so they need such an 'M' (mob_parent is
+ *   FALSE when there is none, or when the nearest one was refused).
+ *   reset_zone() disables a 'G' or 'E' without one.
+ * - 'P' finds its container anywhere in the world by rnum, so no particular
+ *   command has to come before it.
+ * - 'E' needs a wear position and 'D' an exit slot; 'V' needs both strings.
+ * - '*' (disabled) is kept, as before; a letter reset_zone() does not know
+ *   is refused. */
+static const char *zedit_refusal(const struct reset_com *c, int mob_parent)
+{
+  switch (c->command) {
+  case 'M':
+    if (!ZEDIT_VALID_MOB(c->arg1))
+      return "its mobile does not exist";
+    return ZEDIT_VALID_ROOM(c->arg3) ? NULL : "its room does not exist";
+  case 'O':
+    if (!VALID_OBJ_RNUM_NUM(c->arg1))
+      return "its object does not exist";
+    return ZEDIT_VALID_ROOM(c->arg3) ? NULL : "its room does not exist";
+  case 'G':
+  case 'E':
+    if (!VALID_OBJ_RNUM_NUM(c->arg1))
+      return "its object does not exist";
+    if (!mob_parent)
+      return "no mobile is loaded before it";
+    if (c->command == 'E' && (c->arg3 < 0 || c->arg3 >= NUM_WEARS))
+      return "its wear position is invalid";
+    return NULL;
+  case 'P':
+    return (VALID_OBJ_RNUM_NUM(c->arg1) && VALID_OBJ_RNUM_NUM(c->arg3)) ?
+           NULL : "its object or container does not exist";
+  case 'D':
+    if (!ZEDIT_VALID_ROOM(c->arg1))
+      return "its room does not exist";
+    return (c->arg2 >= 0 && c->arg2 < NUM_OF_DIRS) ? NULL : "its direction is invalid";
+  case 'R':
+    if (!ZEDIT_VALID_ROOM(c->arg1))
+      return "its room does not exist";
+    return VALID_OBJ_RNUM_NUM(c->arg2) ? NULL : "its object does not exist";
+  case 'T':
+    if (!ZEDIT_VALID_TRIG(c->arg2))
+      return "its trigger does not exist";
+    return ZEDIT_VALID_ROOM(c->arg3) ? NULL : "its room does not exist";
+  case 'V':
+    if (!ZEDIT_VALID_ROOM(c->arg3))
+      return "its room does not exist";
+    return (c->sarg1 && c->sarg2) ? NULL : "its variable name or value is missing";
+  case '*':
+    return NULL;
+  default:
+    return "it is not a reset command";
+  }
+}
+
+/* Index of the first command of room_num's block in zone's list, by the
+ * grouping rule of zedit_setup() and remove_room_zone_commands() ('M', 'O',
+ * 'T', 'V' name their room in arg3, 'D' and 'R' in arg1, and 'G', 'E',
+ * 'P', '*' belong to the command before them), or -1 when it has none. */
+static int zedit_room_block_start(zone_rnum zone, room_rnum room_num)
+{
+  int subcmd, cmd_room = NOWHERE;
+
+  for (subcmd = 0; ZCMD(zone, subcmd).command != 'S'; subcmd++) {
+    switch (ZCMD(zone, subcmd).command) {
+    case 'M':
+    case 'O':
+    case 'T':
+    case 'V':
+      cmd_room = ZCMD(zone, subcmd).arg3;
+      break;
+    case 'D':
+    case 'R':
+      cmd_room = ZCMD(zone, subcmd).arg1;
+      break;
+    default:
+      break;
+    }
+    if (cmd_room == room_num)
+      return subcmd;
+  }
+  return -1;
+}
+
 /* Save all the information in the player's temporary buffer back into
  * the current zone table. */
 /* Splice the scratch room commands and header into zone_table; FALSE
  * (reported as zedit-save) when nothing was saved.
  *
- * The room's old commands are removed and the scratch ones inserted at
- * positions 0..n of the zone list, so the room's commands move to the top
- * of the zone. 'G'/'E' without a preceding 'M' and 'P' without an 'O' are
- * dropped with a message. The header is copied only when changed; two
- * builders editing different rooms of one zone write the header last-
- * writer-wins. */
+ * The room's old commands are removed and the scratch ones inserted where
+ * the room's first command was (at the end of the zone when it had none),
+ * one after another, so saving an unchanged room leaves the zone list as it
+ * was.  A command is refused only for what reset_zone() would refuse (see
+ * zedit_refusal()); each one is reported as zedit-save with the zone, room,
+ * index and letter, and told to the builder.  The header is copied only
+ * when changed; two builders editing different rooms of one zone write the
+ * header last-writer-wins. */
 static int zedit_save_internally(struct descriptor_data *d)
 {
-  int	mobloaded = FALSE,
-	objloaded = FALSE,
-	subcmd, i;
+  int subcmd, pos, mob_parent, i;
   room_rnum room_num = real_room(OLC_NUM(d));
+  zone_rnum zone = OLC_ZNUM(d);
 
   if (room_num == NOWHERE) {
     struct char_data *builder = d->character;
@@ -622,47 +740,43 @@ static int zedit_save_internally(struct descriptor_data *d)
     return FALSE;
   }
 
-  remove_room_zone_commands(OLC_ZNUM(d), room_num);
+  /* Every command before the block keeps its index through the removal. */
+  pos = zedit_room_block_start(zone, room_num);
+  remove_room_zone_commands(zone, room_num);
+  if (pos < 0)
+    pos = count_commands(zone_table[zone].cmd);
 
-  /* Now add all the entries in the players descriptor list */
+  /* A 'G' or 'E' at the front of the block acts on the mobile the last 'M'
+   * before the block loaded, as in reset_zone(). */
+  mob_parent = FALSE;
+  for (i = 0; i < pos; i++)
+    if (ZCMD(zone, i).command == 'M')
+      mob_parent = TRUE;
+
+  /* Now add all the entries in the players descriptor list.  pos advances
+   * only for a command that is inserted: a refused one used to leave a gap
+   * that pulled another room's command into this room's block. */
   for (subcmd = 0; MYCMD.command != 'S'; subcmd++) {
-    /* Since Circle does not keep track of what rooms the 'G', 'E', and
-     * 'P' commands are exitted in, but OasisOLC groups zone commands
-     * by rooms, this creates interesting problems when builders use these
-     * commands without loading a mob or object first.  This fix prevents such
-     * commands from being saved and 'wandering' through the zone command
-     * list looking for mobs/objects to latch onto.
-     * C.Raehl 4/27/99 */
-    switch (MYCMD.command) {
-      /* Possible fail cases. */
-      case 'G':
-      case 'E':
-        if (mobloaded)
-          break;
-        write_to_output(d, "Equip/Give command not saved since no mob was loaded first.\r\n");
-        continue;
-      case 'P':
-        if (objloaded)
-          break;
-        write_to_output(d, "Put command not saved since another object was not loaded first.\r\n");
-        continue;
-      /* Pass cases. */
-      case 'M':
-        mobloaded = TRUE;
-        break;
-      case 'O':
-        objloaded = TRUE;
-        break;
-      default:
-        mobloaded = objloaded = FALSE;
-        break;
+    const char *why = zedit_refusal(&MYCMD, mob_parent);
+
+    if (MYCMD.command == 'M')
+      mob_parent = (why == NULL);   /* its 'G'/'E' follow it, or nothing */
+    if (why) {
+      struct char_data *builder = d->character;
+      char letter = isprint((unsigned char)MYCMD.command) ? MYCMD.command : '?';
+
+      TB_ERROR_MSG("olc", "zedit-save", "zone",
+                   "builder " DIAG_CHAR_FMT " zone %d room vnum %d command %d '%c' not saved: %s",
+                   DIAG_CHAR(builder), zone_table[zone].number, OLC_NUM(d), subcmd,
+                   letter, why);
+      write_to_output(d, "Command %d (%c) was not saved: %s.\r\n", subcmd, letter, why);
+      continue;
     }
     {
       /* F3-12: zone_table owns its sarg strings ('V' commands only; db.c
        * frees them only there), and the OLC copy keeps its own until
        * cleanup_olc.  Hand the live table fresh copies. */
       struct reset_com live = MYCMD;
-      int live_count = count_commands(zone_table[OLC_ZNUM(d)].cmd);
 
       if (live.command == 'V') {
         live.sarg1 = MYCMD.sarg1 ? strdup(MYCMD.sarg1) : NULL;
@@ -670,18 +784,11 @@ static int zedit_save_internally(struct descriptor_data *d)
       } else
         live.sarg1 = live.sarg2 = NULL;
 
-      /* add_cmd_to_list silently drops a command whose position is past
-       * the end of the list (possible after skipped G/E/P commands). */
-      if (subcmd > live_count) {
-        TB_WARN_MSG("olc", "zone-cmd-dropped", "zone_table",
-                    "command %c at position %d past end %d of zone %d for "
-                    DIAG_CHAR_FMT, live.command, subcmd, live_count,
-                    zone_table[OLC_ZNUM(d)].number, DIAG_CHAR(d->character));
-        free(live.sarg1);
-        free(live.sarg2);
-        continue;
-      }
-      add_cmd_to_list(&(zone_table[OLC_ZNUM(d)].cmd), &live, subcmd);
+      /* pos starts at the block's old place (or the end of the list) and
+       * advances once per insert, so it never passes the end; a position
+       * that did would be reported by add_cmd_to_list() (zone-cmd-insert)
+       * and the command appended, never dropped. */
+      add_cmd_to_list(&(zone_table[zone].cmd), &live, pos++);
     }
   }
 
@@ -1296,10 +1403,8 @@ void zedit_parse(struct descriptor_data *d, char *arg)
     /* Get the line number and delete the line. */
     pos = tb_parse_int_or_zero(arg);
     if (isdigit(*arg)) {
-      /* The scratch list owns its 'V' strings; delete_zone_command() only
-       * drops the struct. */
-      if (pos >= 0 && pos < count_commands(OLC_ZONE(d)->cmd))
-        ZEDIT_FREE_SARGS(OLC_ZONE(d)->cmd[pos]);
+      /* delete_zone_command() frees the removed command's 'V' strings: the
+       * scratch list owns deep copies (zedit_setup). */
       delete_zone_command(OLC_ZONE(d), pos);
       OLC_ZONE(d)->age = 1;
       /* The list shrank: OLC_VAL may now index past it (see
@@ -1348,6 +1453,11 @@ void zedit_parse(struct descriptor_data *d, char *arg)
     if (!OLC_CMD(d).command || (strchr("MOPEDGRTV", OLC_CMD(d).command) == NULL)) {
       write_to_output(d, "Invalid choice, try again : ");
     } else {
+      /* Only a 'V' command owns strings: save_zone(), reset_zone() and
+       * destroy_db() use or free them for 'V' alone.  A command retyped
+       * from 'V' drops them here rather than carry them unused. */
+      if (OLC_CMD(d).command != 'V')
+        ZEDIT_FREE_SARGS(OLC_CMD(d));
       if (OLC_VAL(d)) {	/* If there was a previous command. */
         if (OLC_CMD(d).command == 'T' || OLC_CMD(d).command == 'V') {
           OLC_CMD(d).if_flag = 1;

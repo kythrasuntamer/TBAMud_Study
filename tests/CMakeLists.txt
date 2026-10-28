@@ -1136,3 +1136,47 @@ if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
     set_source_files_properties(${MUD_SRCDIR}/lists.c
         PROPERTIES COMPILE_OPTIONS "-ffunction-sections;-fdata-sections")
 endif()
+
+# Production social editor (aedit.c): name-length refusals and the report of
+# messages a saved social cannot run without.  utils.c supplies str_cmp,
+# mudlog and convert_from_tabs; the test supplies the OLC, social and
+# command-table collaborators and discards the rest by section GC.
+add_mud_test(test_aedit
+    ${MUD_SRCDIR}/aedit.c
+    ${MUD_SRCDIR}/utils.c
+    ${MUD_SRCDIR}/random.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_aedit.c
+)
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_compile_options(test_aedit PRIVATE -ffunction-sections -fdata-sections)
+    target_link_options(test_aedit PRIVATE
+        -Wl,--gc-sections
+        -Wl,--wrap=tb_error_log_at)
+endif()
+target_link_libraries(test_aedit PRIVATE ${CRYPT_LIBRARY} ${SODIUM_LIBRARY})
+
+# C2-16: test_genolc_safety wraps fopen() so a test can hand the GenOLC
+# writers a stream whose error indicator is already set.
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_link_options(test_genolc_safety PRIVATE -Wl,--wrap=fopen)
+endif()
+
+# C1-29: test_genmob wraps fopen() the same way for save_mobiles().
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_link_options(test_genmob PRIVATE -Wl,--wrap=fopen)
+endif()
+
+# Production zone and editor access checks (oasis.c can_edit_zone and
+# can_use_editor): bounded zone_table index, editor sentinels kept out of
+# the real zone range (F3-20). Unreferenced oasis.c sections are discarded;
+# tb_error_capture.h in the test supplies tb_error_log_at.
+add_mud_test(test_oasis_access
+    ${MUD_SRCDIR}/oasis.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_oasis_access.c
+)
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_compile_options(test_oasis_access PRIVATE -ffunction-sections -fdata-sections)
+    target_link_options(test_oasis_access PRIVATE -Wl,--gc-sections)
+    set_source_files_properties(${MUD_SRCDIR}/oasis.c
+        PROPERTIES COMPILE_OPTIONS "-ffunction-sections;-fdata-sections")
+endif()
