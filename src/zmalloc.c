@@ -24,12 +24,13 @@
  *    blocks and only then frees everything.  The process therefore grows by
  *    every byte it ever frees, and ASan, LSan and Valgrind cannot see
  *    use-after-free, double free or leaks in such a build -- use one tool
- *    or the other, not both.  (Under ASan, freed blocks are poisoned as a
- *    partial backstop.)
+ *    or the other, not both.  (Under ASan, freed blocks and the guard pads
+ *    are poisoned as a partial backstop: see asan_annotations.h.)
  *  - Detected misuse -- double free, free or realloc of a pointer zmalloc
- *    did not hand out, realloc after free, an overwritten guard pad -- is
- *    reported on stderr (TBERR record at the caller's file:line) and
- *    aborts.  Allocation failure is reported and returns NULL.
+ *    did not hand out, realloc after free, an overwritten guard pad,
+ *    strdup(NULL) -- is reported on stderr (TBERR record at the caller's
+ *    file:line) and aborts.  Allocation failure is reported and returns
+ *    NULL.
  *  - ./zmalloc.log (in the server's working directory) receives the
  *    verbose trace, hex dumps and the leak summary; if it cannot be opened
  *    that is reported once and the trace is skipped.
@@ -52,23 +53,13 @@
  * CMake build refuses MEMORY_DEBUG together with ENABLE_SANITIZERS.  When
  * this file is nevertheless built with ASan (another build system, or the
  * test_zmalloc unit test), freed blocks are poisoned so a later access is
- * still reported.
+ * still reported, and the guard pads are poisoned so an under- or overrun
+ * aborts at the faulting write instead of at the next pad check.  Outside
+ * ASan both macros evaluate their arguments and do nothing.
  */
-#if defined(__SANITIZE_ADDRESS__)
-# define ZM_HAVE_ASAN 1
-#elif defined(__has_feature)
-# if __has_feature(address_sanitizer)
-#  define ZM_HAVE_ASAN 1
-# endif
-#endif
-#ifdef ZM_HAVE_ASAN
-# include <sanitizer/asan_interface.h>
-# define ZM_POISON(addr, size)   ASAN_POISON_MEMORY_REGION((addr), (size_t)(size))
-# define ZM_UNPOISON(addr, size) ASAN_UNPOISON_MEMORY_REGION((addr), (size_t)(size))
-#else
-# define ZM_POISON(addr, size)   ((void)(addr), (void)(size))
-# define ZM_UNPOISON(addr, size) ((void)(addr), (void)(size))
-#endif
+#include "asan_annotations.h"
+#define ZM_POISON(addr, size)   TB_ASAN_POISON((addr), (size))
+#define ZM_UNPOISON(addr, size) TB_ASAN_UNPOISON((addr), (size))
 
 #define NUM_ZBUCKETS 256
 #define GET_ZBUCKET(addr) (((long)(addr) >> 3) & 0xFF)
@@ -227,6 +218,8 @@ void zdump(meminfo *m)
     }
   }
   zlogf( "\n");
+  if (m->frees > 0)
+    ZM_POISON(m->addr, m->size);
 }
 
 
@@ -246,6 +239,38 @@ void zdump(meminfo *m)
  * Each evaluates its argument once. */
 #define ZM_BASE(user_ptr) ((unsigned char *)(user_ptr) - ZM_PAD_SIZE)
 #define ZM_USER(base_ptr) ((unsigned char *)(base_ptr) + ZM_PAD_SIZE)
+
+/* ASan view of a block: the guard pads are always poisoned, the caller's
+ * bytes once zfree() has been called (zfree keeps the memory).  Only
+ * zmalloc's own sanctioned reads (pad_check, zdump) and libc's realloc()
+ * and free() unpoison them first. */
+static void zm_poison_pads(const meminfo *m)
+{
+#ifndef NO_MEMORY_PADDING
+  ZM_POISON(ZM_BASE(m->addr), sizeof(beginPad));
+  ZM_POISON(m->addr + m->size, sizeof(endPad));
+#else
+  (void)m;
+#endif
+}
+
+static void zm_unpoison_pads(const meminfo *m)
+{
+#ifndef NO_MEMORY_PADDING
+  ZM_UNPOISON(ZM_BASE(m->addr), sizeof(beginPad));
+  ZM_UNPOISON(m->addr + m->size, sizeof(endPad));
+#else
+  (void)m;
+#endif
+}
+
+/* Make the whole block, pads included, accessible to libc again before
+ * realloc() or free() hands it back. */
+static void zm_unpoison_block(const meminfo *m)
+{
+  zm_unpoison_pads(m);
+  ZM_UNPOISON(m->addr, m->size);
+}
 
 /* Sizes are size_t end to end.  They used to be int, so a request of
  * 2 GiB or more became negative and `len + padding` wrapped to a few bytes
@@ -330,6 +355,7 @@ unsigned char *zmalloc(size_t len, char *file, int line)
   m->line = line;
   m->next = memlist[GET_ZBUCKET(ret)];
   memlist[GET_ZBUCKET(ret)] = m;
+  zm_poison_pads(m);
   return (ret);
 }
 
@@ -352,6 +378,10 @@ unsigned char *zrealloc(unsigned char *what, size_t len, char *file, int line)
           ZM_FATAL("zrealloc-after-free", file, line,
                    "addr=%p size=%zu allocated=%s:%d freed %d time(s)",
                    (void *)m->addr, m->size, m->file, m->line, m->frees);
+        /* An overrun of the old block is reported here, before realloc()
+         * copies it, rather than at some later free. */
+        pad_check(m);
+        zm_unpoison_block(m);
 	ret = (unsigned char *) realloc(ZM_BASE(what), len + ZM_PAD_TOTAL);
 	if (!ret) {
 	  /* Like realloc(): the old block is untouched and still tracked. */
@@ -364,6 +394,7 @@ unsigned char *zrealloc(unsigned char *what, size_t len, char *file, int line)
 		      "          %zu bytes reallocd at %s:%d.\n",
 		    (void *)m->addr, m->size, m->file, m->line, len, file, line);
 	  if (zmalloclogging > 1) zdump(m);
+	  zm_poison_pads(m);
 	  return NULL;
 	}
 #ifndef NO_MEMORY_PADDING
@@ -392,6 +423,7 @@ unsigned char *zrealloc(unsigned char *what, size_t len, char *file, int line)
         /* readd to proper bucket */
         m->next = memlist[GET_ZBUCKET(ret)];
         memlist[GET_ZBUCKET(ret)] = m;
+        zm_poison_pads(m);
 
 	/* could continue the loop to check for multiply-allocd memory */
 	/* but that's highly improbable so lets just return instead. */
@@ -481,6 +513,10 @@ void zfree(unsigned char *what, char *file, int line)
 char *zstrdup(const char *src, char *file, int line)
 {
   char *result;
+
+  /* libc's strdup(NULL) crashes in strlen(); report the caller instead. */
+  if (src == NULL)
+    ZM_FATAL("zstrdup-null", file, line, "strdup(NULL)");
 #ifndef NO_MEMORY_STRDUP    
   result = (char*)zmalloc(strlen(src) + 1, file, line);
   if (!result)
@@ -521,7 +557,7 @@ void zmalloc_check()
         num_leaks++;
       }
       if (m->addr)
-        ZM_UNPOISON(m->addr, m->size);
+        zm_unpoison_block(m);
       if (m->addr) free(ZM_BASE(m->addr));
       if (m->file) free(m->file);
       free(m);
@@ -558,17 +594,25 @@ void zmalloc_check()
 void pad_check(meminfo *m)
 {
 #ifndef NO_MEMORY_PADDING
+  int begin_ok, end_ok;
+
+  /* The pads are poisoned under ASan; this is the one sanctioned read. */
+  zm_unpoison_pads(m);
+  begin_ok = memcmp(ZM_BASE(m->addr), beginPad, sizeof(beginPad)) == 0;
+  end_ok = memcmp(m->addr + m->size, endPad, sizeof(endPad)) == 0;
+  zm_poison_pads(m);
+
   /* An overwritten guard pad means a buffer under- or overrun already
    * happened; the report names the allocation site (the overrun itself is
    * somewhere between allocation and this check). */
-  if (memcmp(ZM_BASE(m->addr), beginPad, sizeof(beginPad)) != 0) {
+  if (!begin_ok) {
     zlogf("pad_check: ERR: beginPad was modified! (mallocd@ %s:%d)\n", m->file, m->line);
     if (zmalloclogging > 1) zdump(m);
     ZM_FATAL("zmalloc-pad", m->file, m->line,
              "beginPad overwritten (underrun): addr=%p size=%zu",
              (void *)m->addr, m->size);
   }
-  if (memcmp(m->addr + m->size, endPad, sizeof(endPad)) != 0) {
+  if (!end_ok) {
     zlogf("pad_check: ERR: endPad was modified! (mallocd@ %s:%d)\n", m->file, m->line);
     if (zmalloclogging > 1) zdump(m);
     ZM_FATAL("zmalloc-pad", m->file, m->line,

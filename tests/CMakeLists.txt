@@ -399,7 +399,8 @@ add_mud_test(test_constants
     ${CMAKE_CURRENT_SOURCE_DIR}/test_constants.c
 )
 
-# MEMORY_DEBUG allocator (zmalloc.c) as built: misuse is reported and aborts.
+# MEMORY_DEBUG allocator (zmalloc.c) as built: misuse is reported and aborts;
+# under ASan freed blocks and guard pads are poisoned; calloc() is checked.
 add_mud_test(test_zmalloc
     ${MUD_SRCDIR}/zmalloc.c
     ${CMAKE_CURRENT_SOURCE_DIR}/test_zmalloc.c

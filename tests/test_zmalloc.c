@@ -6,14 +6,26 @@
  * expected operation was reported.  The functions are called directly (not
  * through the zmalloc.h malloc/free macros) so this file's own stdio and
  * Unity allocations stay on libc.
+ *
+ * The last section includes zmalloc.h and goes through the macros, as a
+ * MEMORY_DEBUG server file does: calloc() expands with its arguments
+ * parenthesised and overflow-checked, and (under ASan) the guard pads and
+ * freed blocks are poisoned, so an overrun or use-after-free is reported at
+ * the faulting access (zfree() keeps memory, so without the poisoning ASan
+ * would see a freed block as live).
  */
 #include "unity.h"
 
 #include "conf.h"
 #include "sysdep.h"
+#include "asan_annotations.h"
 
 #include <signal.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
 #include <sys/wait.h>
+#include <unistd.h>
 
 unsigned char *zmalloc(size_t, char *, int);
 unsigned char *zcalloc(size_t, size_t, char *, int);
@@ -21,6 +33,7 @@ unsigned char *zrealloc(unsigned char *, size_t, char *, int);
 void zfree(unsigned char *, char *, int);
 void zmalloc_init(void);
 void zmalloc_check(void);
+char *zstrdup(const char *, char *, int);
 
 #define ZM_FILE ((char *)__FILE__)
 
@@ -68,6 +81,58 @@ static void assert_aborted_with(zm_case_fn fn, const char *operation)
                             operation) < (int)sizeof(want));
   TEST_ASSERT_NOT_NULL_MESSAGE(strstr(records, want), records);
   TEST_ASSERT_NOT_NULL_MESSAGE(strstr(records, "severity=FATAL"), records);
+}
+
+#ifdef TB_ASAN_ENABLED
+/* Under ASan a poisoned guard pad or freed block makes the faulting access
+ * itself the report (use-after-poison); zmalloc's own check never runs. */
+static void assert_asan_poison_report(zm_case_fn fn)
+{
+  char records[8192];
+  int status = run_child(fn, records, sizeof(records));
+
+  TEST_ASSERT_FALSE_MESSAGE(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+                            records);
+  TEST_ASSERT_NOT_NULL_MESSAGE(strstr(records, "use-after-poison"), records);
+}
+#endif
+
+/* ---- stderr capture for reports that do not abort (refused sizes) ---- */
+static char captured[8192];
+static int saved_stderr = -1;
+static FILE *capture_file;
+
+static void capture_begin(void)
+{
+  captured[0] = '\0';
+  capture_file = tmpfile();
+  TEST_ASSERT_NOT_NULL(capture_file);
+  saved_stderr = dup(STDERR_FILENO);
+  TEST_ASSERT_TRUE(saved_stderr >= 0);
+  TEST_ASSERT_TRUE(dup2(fileno(capture_file), STDERR_FILENO) >= 0);
+}
+
+static void capture_end(void)
+{
+  size_t got;
+
+  TEST_ASSERT_TRUE(dup2(saved_stderr, STDERR_FILENO) >= 0);
+  close(saved_stderr);
+  saved_stderr = -1;
+  rewind(capture_file);
+  got = fread(captured, 1, sizeof(captured) - 1, capture_file);
+  captured[got] = '\0';
+  fclose(capture_file);
+  capture_file = NULL;
+}
+
+static void assert_reported(const char *operation)
+{
+  char needle[96];
+
+  snprintf(needle, sizeof(needle), "operation=\"%s\"", operation);
+  if (strstr(captured, needle) == NULL)
+    TEST_FAIL_MESSAGE(captured[0] ? captured : "nothing was reported");
 }
 
 void setUp(void) {}
@@ -204,7 +269,7 @@ void test_realloc_after_free_is_fatal(void)
   assert_aborted_with(case_realloc_after_free, "zrealloc-after-free");
 }
 
-#if defined(__SANITIZE_ADDRESS__)
+#ifdef TB_ASAN_ENABLED
 static volatile unsigned char zm_sink;
 
 static void case_read_after_free(void)
@@ -237,14 +302,35 @@ void test_free_of_untracked_pointer_is_fatal(void)
   assert_aborted_with(case_free_unknown, "zfree-unknown");
 }
 
+/* Without ASan the pad check in zfree() catches the overrun; with ASan the
+ * poisoned pad makes the write itself the report. */
 void test_end_pad_overrun_is_fatal(void)
 {
+#ifdef TB_ASAN_ENABLED
+  assert_asan_poison_report(case_end_pad_overrun);
+#else
   assert_aborted_with(case_end_pad_overrun, "zmalloc-pad");
+#endif
 }
 
 void test_begin_pad_underrun_is_fatal(void)
 {
+#ifdef TB_ASAN_ENABLED
+  assert_asan_poison_report(case_begin_pad_underrun);
+#else
   assert_aborted_with(case_begin_pad_underrun, "zmalloc-pad");
+#endif
+}
+
+/* SI-5: strdup(NULL) used to crash inside strlen() with no caller named. */
+static void case_strdup_null(void)
+{
+  (void)zstrdup(NULL, ZM_FILE, __LINE__);
+}
+
+static void test_strdup_null_fails_loudly(void)
+{
+  assert_aborted_with(case_strdup_null, "zstrdup-null");
 }
 
 static void case_clean_alloc_free(void)
@@ -267,6 +353,151 @@ void test_clean_alloc_free_reports_nothing(void)
   TEST_ASSERT_NULL_MESSAGE(strstr(records, "TBERR"), records);
 }
 
+/* =====================================================================
+ * From here on malloc/calloc/realloc/free are the zmalloc.h macros, as in a
+ * MEMORY_DEBUG server file (SI-5).
+ * ===================================================================== */
+#include "zmalloc.h"
+
+static void test_calloc_parenthesises_arguments(void)
+{
+  int extra = 3;
+  unsigned char *block = (unsigned char *)calloc(2, extra + 1);
+  int i;
+
+  TEST_ASSERT_NOT_NULL(block);
+  /* The old expansion zmalloc((n*x)) allocated 2*3+1 = 7 bytes here. */
+  for (i = 0; i < 8; i++)
+    TEST_ASSERT_EQUAL_UINT8(0, block[i]);
+#ifdef TB_ASAN_ENABLED
+  TEST_ASSERT_FALSE(__asan_address_is_poisoned(block + 7));
+  TEST_ASSERT_TRUE(__asan_address_is_poisoned(block + 8));
+#endif
+  free(block);
+}
+
+/* The pads used to be 4 bytes, so every block was only 4-byte aligned. */
+static void test_blocks_are_malloc_aligned(void)
+{
+  void *a = malloc(1);
+  void *b = malloc(24);
+
+  TEST_ASSERT_NOT_NULL(a);
+  TEST_ASSERT_NOT_NULL(b);
+  TEST_ASSERT_EQUAL_UINT(0, (uintptr_t)a % 16);
+  TEST_ASSERT_EQUAL_UINT(0, (uintptr_t)b % 16);
+  b = realloc(b, 100);
+  TEST_ASSERT_NOT_NULL(b);
+  TEST_ASSERT_EQUAL_UINT(0, (uintptr_t)b % 16);
+  free(a);
+  free(b);
+}
+
+/* Refused, not fatal: the caller's own allocation-failure path runs. */
+static void test_calloc_overflow_fails_loudly(void)
+{
+  void *block;
+
+  capture_begin();
+  block = calloc(SIZE_MAX / 2, 4);
+  capture_end();
+  TEST_ASSERT_NULL(block);
+  assert_reported("zmalloc-size");
+}
+
+/* A negative int size converts to a size_t that cannot be padded. */
+static void test_negative_size_fails_loudly(void)
+{
+  void *block;
+
+  capture_begin();
+  block = malloc(-1);
+  capture_end();
+  TEST_ASSERT_NULL(block);
+  assert_reported("zmalloc-size");
+}
+
+static void case_double_free_via_macros(void)
+{
+  char *block = (char *)malloc(16);
+
+  if (block == NULL)
+    _exit(97);
+  free(block);
+  free(block);
+}
+
+static void test_double_free_is_reported(void)
+{
+  assert_aborted_with(case_double_free_via_macros, "zfree-double");
+}
+
+/* An interior pointer of a live block is not a block zmalloc handed out. */
+static void case_free_interior_pointer(void)
+{
+  char *block = (char *)malloc(16);
+
+  if (block == NULL)
+    _exit(97);
+  free(block + 4);
+}
+
+static void test_unknown_pointer_free_is_reported(void)
+{
+  assert_aborted_with(case_free_interior_pointer, "zfree-unknown");
+}
+
+static void test_realloc_keeps_contents(void)
+{
+  char *block = (char *)malloc(8);
+
+  TEST_ASSERT_NOT_NULL(block);
+  memcpy(block, "abcdefg", 8);
+  block = (char *)realloc(block, 64);
+  TEST_ASSERT_NOT_NULL(block);
+  TEST_ASSERT_EQUAL_STRING("abcdefg", block);
+#ifdef TB_ASAN_ENABLED
+  TEST_ASSERT_FALSE(__asan_address_is_poisoned(block + 63));
+  TEST_ASSERT_TRUE(__asan_address_is_poisoned(block + 64));
+  TEST_ASSERT_TRUE(__asan_address_is_poisoned(block - 1));
+#endif
+  free(block);
+}
+
+#ifdef TB_ASAN_ENABLED
+/* Under ASan the guards are poisoned, so an overrun aborts at the write and
+ * a use-after-free aborts at the access; check the shadow state directly. */
+static void test_asan_poisons_pads_and_freed_blocks(void)
+{
+  unsigned char *block = (unsigned char *)malloc(32);
+
+  TEST_ASSERT_NOT_NULL(block);
+  TEST_ASSERT_TRUE(__asan_address_is_poisoned(block - 1));
+  TEST_ASSERT_TRUE(__asan_address_is_poisoned(block + 32));
+  TEST_ASSERT_NULL(__asan_region_is_poisoned(block, 32));
+  free(block);
+  TEST_ASSERT_TRUE(__asan_address_is_poisoned(block));
+  TEST_ASSERT_TRUE(__asan_address_is_poisoned(block + 31));
+}
+#else
+/* Without ASan the pads are the only overrun detector: corrupting one must
+ * reach the diagnostic stream when the block is freed. */
+static void case_pad_overrun_via_macros(void)
+{
+  unsigned char *block = (unsigned char *)malloc(32);
+
+  if (block == NULL)
+    _exit(97);
+  block[32] = 0xbb;
+  free(block);
+}
+
+static void test_pad_overrun_is_reported(void)
+{
+  assert_aborted_with(case_pad_overrun_via_macros, "zmalloc-pad");
+}
+#endif
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -283,8 +514,23 @@ int main(void)
   RUN_TEST(test_oversized_request_is_refused_and_reported);
   RUN_TEST(test_calloc_zero_fills_count_times_size);
   RUN_TEST(test_blocks_are_max_aligned);
-#if defined(__SANITIZE_ADDRESS__)
+#ifdef TB_ASAN_ENABLED
   RUN_TEST(test_read_after_free_is_seen_by_asan);
+#endif
+  RUN_TEST(test_strdup_null_fails_loudly);
+
+  /* Through the zmalloc.h macros (SI-5). */
+  RUN_TEST(test_calloc_parenthesises_arguments);
+  RUN_TEST(test_blocks_are_malloc_aligned);
+  RUN_TEST(test_calloc_overflow_fails_loudly);
+  RUN_TEST(test_negative_size_fails_loudly);
+  RUN_TEST(test_double_free_is_reported);
+  RUN_TEST(test_unknown_pointer_free_is_reported);
+  RUN_TEST(test_realloc_keeps_contents);
+#ifdef TB_ASAN_ENABLED
+  RUN_TEST(test_asan_poisons_pads_and_freed_blocks);
+#else
+  RUN_TEST(test_pad_overrun_is_reported);
 #endif
 
   zmalloc_check();		/* releases every tracked block */
