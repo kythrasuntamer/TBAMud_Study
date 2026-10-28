@@ -1569,7 +1569,7 @@ set_tests_properties(test_players_persist PROPERTIES TIMEOUT 60)
 # checks. They read only their own fixtures and the repository tree.
 if(Python3_Interpreter_FOUND)
     foreach(area_test test_area_inventory test_area_safety test_import_refs
-                      test_area_import_regressions)
+                      test_area_import_regressions test_convert_crimson2)
         add_test(NAME ${area_test}
             COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_CURRENT_SOURCE_DIR}/${area_test}.py)
     endforeach()

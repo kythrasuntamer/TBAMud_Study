@@ -81,6 +81,10 @@ void assign_mobiles(void)
   ASSIGNMOB(3021, guild);
   ASSIGNMOB(3022, guild);
   ASSIGNMOB(3023, guild);
+  /* Crimson 2 import, zone 47: casters in the source area (SKILL=SPELL_*). */
+  ASSIGNMOB(4700, magic_user);   /* the Mage */
+  ASSIGNMOB(4708, magic_user);   /* Melcrin, sovereign of the trolls */
+
   ASSIGNMOB(5400, guild);
   ASSIGNMOB(5401, guild);
   ASSIGNMOB(5402, guild);

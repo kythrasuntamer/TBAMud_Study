@@ -1,0 +1,176 @@
+#4700
+mage small~
+the Mage~
+A small, intelligent looking mage is here standing here, ready to make a fight.
+~
+  Having fought his way here through the mines, the mage has become quite
+crazed. He attacks everything in sight, and unfortunately, you are in his
+path.
+~
+1806 0 0 0 2064 0 0 0 -100 E
+20 20 24 20d19+450 4d5+15
+48 60855
+8 8 1
+Str: 17
+Int: 17
+Wis: 16
+Dex: 16
+Con: 12
+Cha: 15
+E
+#4701
+troll~
+the troll~
+A large mean-looking troll is here.
+~
+  An outcast of his tribe, the troll has taken up residence in this 
+small room, and defends his domain with sheer voracity.
+~
+1806 0 0 0 2064 0 0 0 -800 E
+18 22 26 9d9+285 5d5+10
+43 5525
+8 8 1
+BareHandAttack: 6
+Str: 16
+Int: 17
+Wis: 14
+Dex: 15
+Con: 12
+Cha: 12
+E
+#4702
+snake~
+the snake~
+A large green snake, looks like a guardian for an evil force.
+~
+You see a evil creature.
+~
+1806 0 0 0 0 0 0 0 -700 E
+10 29 34 9d9+75 3d5+2
+0 3185
+8 8 1
+BareHandAttack: 4
+Str: 13
+Int: 12
+Wis: 11
+Dex: 13
+Con: 12
+Cha: 8
+E
+#4703
+thief~
+the Thief~
+A thief, all dressed in black.
+~
+  An expert in pickpocketing, the thief doesn't care whose pocket he picks, 
+as long as he gets some loot!
+~
+76 0 0 0 1572864 0 0 0 100 E
+8 30 35 7d9+19 2d5+1
+4 245
+8 8 1
+Str: 14
+Int: 13
+Wis: 13
+Dex: 12
+Con: 9
+Cha: 12
+E
+#4704
+phantom~
+The phantom~
+A shadowy phantom floats about, looking for a soul.
+~
+  The soul of a dead warrior, risen by the powers of evil, the phantom 
+now spends its days looking for souls of the living to feed off of.
+~
+1996 0 0 0 2048 0 0 0 -200 E
+18 22 26 10d29+150 4d5+15
+0 5480
+8 8 1
+BareHandAttack: 0
+Str: 16
+Int: 17
+Wis: 14
+Dex: 15
+Con: 12
+Cha: 10
+E
+#4705
+centipede~
+a centipede~
+A small harmless centipede is here.
+~
+Well it doesn't seem to pay any attention towards you.
+~
+8 0 0 0 0 0 0 0 300 E
+6 31 36 7d9+10 1d8+1
+0 185
+8 8 0
+BareHandAttack: 4
+Str: 13
+Int: 11
+Wis: 11
+Dex: 10
+Con: 9
+Cha: 10
+E
+#4706
+warrior big moria~
+the Warrior~
+A human warrior is here. He has a evil grin in his face.
+~
+He doesn't look friendly at all...
+~
+1868 0 0 0 16 0 0 0 -300 E
+15 25 29 9d9+165 4d4+2
+30 4795
+8 8 1
+BareHandAttack: 0
+Str: 15
+Int: 15
+Wis: 14
+Dex: 13
+Con: 12
+Cha: 10
+E
+#4707
+kobold~
+the kobold~
+A green kobold is here.
+~
+It looks slimy..
+~
+1868 0 0 0 2048 0 0 0 -100 E
+8 30 35 9d5+25 3d5+2
+4 253
+8 8 1
+Str: 13
+Int: 14
+Wis: 13
+Dex: 13
+Con: 9
+Cha: 10
+E
+#4708
+Melcrin troll sovereign leader~
+Melcrin, sovereign of the trolls~
+A huge troll is here, grinding boulders with his fists.
+~
+ Born a godling, Melcrin abuses his power as much as possible. Anything
+within his power to further the cause of the moors trolls is his goal.
+Perhaps this is the reason he is so highly revered by his charges.
+~
+1802 0 0 0 320 0 0 0 -1000 E
+48 4 -35 35d10+24000 20d20+50
+50000 1500000
+8 8 1
+BareHandAttack: 8
+Str: 17
+Int: 16
+Wis: 15
+Dex: 14
+Con: 12
+Cha: 13
+E
+$~
