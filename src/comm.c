@@ -168,6 +168,8 @@ static int parse_ip(const char *addr, struct in_addr *inaddr);
 static int set_sendbuf(socket_t s);
 static void free_bufpool(void);
 static void setup_log(const char *filename, int fd);
+static const char *act_format_excerpt(char *dst, size_t dst_size,
+                                      const char *format);
 static int open_logfile(const char *filename, FILE *stderr_fp);
 #if defined(POSIX)
 static sigfunc *my_signal(int signo, sigfunc *func);
@@ -416,7 +418,7 @@ void copyover_recover()
   char host[1024], guiopt[1024];
   int desc, i, player_i;
   bool fOld;
-  char name[MAX_INPUT_LENGTH];
+  char name[MAX_INPUT_LENGTH], name_excerpt[48];
   long pref;
 
   log ("Copyover recovery initiated");
@@ -505,8 +507,30 @@ void copyover_recover()
     if (desc == -1)
       break;
 
+    /* copyover.dat is written by do_copyover() of the previous process and
+     * names sockets it left open across exec(). Trust it only as far as it
+     * can be checked: the descriptor must be one select() can watch and
+     * must actually be open, or FD_SET in game_loop() writes out of bounds
+     * and every later write goes to the wrong file. Each player who cannot
+     * be restored is reported with the reason. */
+    act_format_excerpt(name_excerpt, sizeof(name_excerpt), name);
+#ifndef CIRCLE_WINDOWS
+    if (desc < 0 || desc >= FD_SETSIZE || fcntl(desc, F_GETFD) == -1) {
+      TB_ERROR_MSG("copyover", "bad-fd", "copyover_recover",
+                   "fd %d for player '%s' is %s; player not restored", desc,
+                   name_excerpt, (desc < 0 || desc >= FD_SETSIZE)
+                   ? "outside 0..FD_SETSIZE-1" : "not open");
+      if (desc >= FD_SETSIZE && fcntl(desc, F_GETFD) != -1)
+        close(desc);
+      continue;
+    }
+#endif
+
     /* Write something, and check if it goes error-free */
     if (write_to_descriptor (desc, "\n\rRestoring from copyover...\n\r") < 0) {
+      TB_ERROR_MSG("copyover", "restore-player", "copyover_recover",
+                   "fd %d name '%s' reason write-failed; player not restored",
+                   desc, name_excerpt);
       close (desc); /* nope */
       continue;
     }
@@ -546,6 +570,10 @@ void copyover_recover()
 
     /* Player file not found?! */
     if (!fOld) {
+      TB_ERROR_MSG("copyover", "restore-player", "copyover_recover",
+                   "fd %d name '%s' reason %s; connection closed", desc,
+                   name_excerpt, player_i < 0 ? "load_char-failed"
+                                              : "player-deleted");
       write_to_descriptor (desc, "\n\rSomehow, your character was lost in the copyover. Sorry.\n\r");
       close_socket (d);
     } else {
