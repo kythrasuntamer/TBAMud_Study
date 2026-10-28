@@ -128,12 +128,15 @@ struct obj_data *create_obj(void)
   return obj;
 }
 
+/* read_object() of this vnum fails, to make objsave_save_obj_record() fail. */
+static obj_vnum fail_read_vnum = NOTHING;
+
 struct obj_data *read_object(obj_vnum nr, int type)
 {
   obj_rnum r = (type == VIRTUAL) ? real_object(nr) : (obj_rnum)nr;
   struct obj_data *obj;
 
-  if (r == NOTHING)
+  if (r == NOTHING || nr == fail_read_vnum)
     return NULL;
   obj = create_obj();
   *obj = protos[r];
@@ -156,8 +159,15 @@ static void free_obj_strings(struct obj_data *obj)
     free(obj->action_description);
 }
 
+void obj_from_char(struct obj_data *object);
+
+/* Like handler.c: take the object off whoever wears or carries it first. */
 void extract_obj(struct obj_data *obj)
 {
+  if (obj->worn_by)
+    GET_EQ(obj->worn_by, obj->worn_on) = NULL;
+  else if (obj->carried_by)
+    obj_from_char(obj);
   free_obj_strings(obj);
   free(obj);
   live_objects--;
@@ -282,6 +292,7 @@ void setUp(void)
   paged[0] = '\0';
   pages = 0;
   live_objects = 0;
+  fail_read_vnum = NOTHING;
   tb_error_capture_reset();
 }
 
@@ -427,6 +438,42 @@ static void test_crashsave_commits(void)
   TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
 }
 
+/* B2-13: when a later record failed, earlier equipment slots had already
+ * been saved and extracted, so they existed neither in the game nor in a
+ * committed file. Nothing may be extracted unless the whole file commits. */
+static void test_rentsave_failure_extracts_nothing(void)
+{
+  struct obj_data *worn = read_object(100, VIRTUAL);
+  struct obj_data *carried = read_object(101, VIRTUAL);
+  int before;
+
+  equip_char(&player, worn, WEAR_LIGHT);
+  obj_to_char(carried, &player);
+  before = live_objects;
+  fail_read_vnum = 101;	/* the inventory record cannot be written */
+
+  TEST_ASSERT_FALSE(Crash_rentsave(&player, 10));
+
+  TEST_ASSERT_EQUAL_PTR(worn, GET_EQ(&player, WEAR_LIGHT));
+  TEST_ASSERT_EQUAL_PTR(carried, player.carrying);
+  TEST_ASSERT_EQUAL_INT(before, live_objects);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_op_log, "rent-write\n"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail_log, "obj vnum 101"));
+}
+
+static void test_rentsave_success_extracts_everything(void)
+{
+  equip_char(&player, read_object(100, VIRTUAL), WEAR_LIGHT);
+  obj_to_char(read_object(101, VIRTUAL), &player);
+
+  TEST_ASSERT_TRUE(Crash_rentsave(&player, 10));
+
+  TEST_ASSERT_NULL(GET_EQ(&player, WEAR_LIGHT));
+  TEST_ASSERT_NULL(player.carrying);
+  TEST_ASSERT_EQUAL_INT(0, live_objects);
+  TEST_ASSERT_NOT_NULL(strstr(slurp_rent(), "#100\nLoc : 1\n"));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -435,6 +482,8 @@ int main(void)
   RUN_TEST(test_listrent_truncates_loudly);
   RUN_TEST(test_crashsave_failure_keeps_live_file);
   RUN_TEST(test_crashsave_commits);
+  RUN_TEST(test_rentsave_failure_extracts_nothing);
+  RUN_TEST(test_rentsave_success_extracts_everything);
   (void)rmdir(scratch_dir);
   return UNITY_END();
 }

@@ -754,53 +754,107 @@ static FILE *Crash_open_rentfile(struct char_data *ch, int rentcode,
 /* Report a rent save that did not reach the disk. */
 #define CRASH_SAVE_FAILED(ch, filename, rentcode) \
   TB_ERROR_MSG("objsave", "rent-write", (filename), \
-               "player idnum %ld rentcode %d: rent file not written; live file kept", \
-               GET_IDNUM(ch), (rentcode))
+               "player idnum %ld rentcode %d: rent file not written; " \
+               "objects kept on the character", GET_IDNUM(ch), (rentcode))
+
+static int objsave_write_rentcode(FILE *fl, int rentcode, int cost_per_day, struct char_data *ch)
+{
+  if (fprintf(fl, "%d %ld %d %d %d %d\r\n",
+          rentcode,
+          (long) time(0),
+          cost_per_day,
+          GET_GOLD(ch),
+          GET_BANK_GOLD(ch),
+          0)
+       < 1)
+    {
+       TB_REPORT_ERRNO("fprintf", "rent code");
+       return FALSE;
+    }
+  return TRUE;
+
+}
+
+/* Write the rent header, every equipped object (Loc = slot + 1, with its
+ * contents) and the inventory, then the "$~" terminator. Container weights
+ * are always restored. Nothing is extracted here: the caller extracts only
+ * after objsave_commit_staged() succeeds, so a failed write never leaves
+ * the player with objects that exist neither in the game nor on disk.
+ * @return TRUE when every record was written; FALSE after reporting
+ * rent-write with the slot and obj vnum. */
+static int Crash_write_char_objs(struct char_data *ch, FILE *fp,
+                                 const char *filename, int rentcode, int cost)
+{
+  int j;
+
+  if (!objsave_write_rentcode(fp, rentcode, cost, ch))
+    return FALSE;
+  for (j = 0; j < NUM_WEARS; j++)
+    if (GET_EQ(ch, j)) {
+      int ok = Crash_save(GET_EQ(ch, j), fp, j + 1);
+      Crash_restore_weight(GET_EQ(ch, j));
+      if (!ok) {
+        TB_ERROR_MSG("objsave", "rent-write", filename,
+                     "player idnum %ld failed at slot %d obj vnum %d",
+                     GET_IDNUM(ch), j, GET_OBJ_VNUM(GET_EQ(ch, j)));
+        return FALSE;
+      }
+    }
+  if (ch->carrying) {
+    int ok = Crash_save(ch->carrying, fp, 0);
+    Crash_restore_weight(ch->carrying);
+    if (!ok) {
+      TB_ERROR_MSG("objsave", "rent-write", filename,
+                   "player idnum %ld failed in inventory (first obj vnum %d)",
+                   GET_IDNUM(ch), GET_OBJ_VNUM(ch->carrying));
+      return FALSE;
+    }
+  }
+  return fprintf(fp, "$~\n") >= 0;
+}
+
+/* Extract everything a character wears and carries (after a committed
+ * rent save). */
+static void Crash_extract_char_objs(struct char_data *ch)
+{
+  int j;
+
+  for (j = 0; j < NUM_WEARS; j++)
+    if (GET_EQ(ch, j))
+      Crash_extract_objs(GET_EQ(ch, j));
+  Crash_extract_objs(ch->carrying);
+}
+
+/* Stage, write and commit ch's rent file. @return TRUE when committed. */
+static int Crash_save_char_file(struct char_data *ch, int rentcode, int cost)
+{
+  char filename[MAX_INPUT_LENGTH], temp[MAX_INPUT_LENGTH + 16];
+  FILE *fp;
+
+  if (!(fp = Crash_open_rentfile(ch, rentcode, filename, sizeof(filename),
+                                 temp, sizeof(temp))))
+    return FALSE;
+  if (!Crash_write_char_objs(ch, fp, filename, rentcode, cost)) {
+    objsave_abort_staged(fp, temp);
+    CRASH_SAVE_FAILED(ch, filename, rentcode);
+    return FALSE;
+  }
+  if (!objsave_commit_staged(fp, temp, filename)) {
+    CRASH_SAVE_FAILED(ch, filename, rentcode);
+    return FALSE;
+  }
+  return TRUE;
+}
 
 /** Crash-save a player's equipment and inventory (rent code RENT_CRASH).
  * Objects stay on the character. PLR_CRASH is cleared only on success, so a
  * failed save is retried. @return TRUE when the file was written. */
 int Crash_crashsave(struct char_data *ch)
 {
-  char filename[MAX_INPUT_LENGTH], temp[MAX_INPUT_LENGTH + 16];
-  int j;
-  FILE *fp;
-
   if (IS_NPC(ch))
     return FALSE;
-
-  if (!(fp = Crash_open_rentfile(ch, RENT_CRASH, filename, sizeof(filename),
-                                 temp, sizeof(temp))))
+  if (!Crash_save_char_file(ch, RENT_CRASH, 0))
     return FALSE;
-
-  if (!objsave_write_rentcode(fp, RENT_CRASH, 0, ch)) {
-    objsave_abort_staged(fp, temp);
-    CRASH_SAVE_FAILED(ch, filename, RENT_CRASH);
-    return FALSE;
-  }
-
-  for (j = 0; j < NUM_WEARS; j++)
-    if (GET_EQ(ch, j)) {
-      if (!Crash_save(GET_EQ(ch, j), fp, j + 1)) {
-        objsave_abort_staged(fp, temp);
-        CRASH_SAVE_FAILED(ch, filename, RENT_CRASH);
-        return FALSE;
-      }
-      Crash_restore_weight(GET_EQ(ch, j));
-    }
-
-  if (!Crash_save(ch->carrying, fp, 0)) {
-    objsave_abort_staged(fp, temp);
-    CRASH_SAVE_FAILED(ch, filename, RENT_CRASH);
-    return FALSE;
-  }
-  Crash_restore_weight(ch->carrying);
-
-  tb_fprintf(fp, "$~\n");
-  if (!objsave_commit_staged(fp, temp, filename)) {
-    CRASH_SAVE_FAILED(ch, filename, RENT_CRASH);
-    return FALSE;
-  }
   REMOVE_BIT_AR(PLR_FLAGS(ch), PLR_CRASH);
   return TRUE;
 }
@@ -808,19 +862,15 @@ int Crash_crashsave(struct char_data *ch)
 /** Force-rent an idle player (RENT_TIMEDOUT, twice the normal rent).
  * !RENT objects are extracted first; if gold is short the most expensive
  * objects are extracted until the rent is affordable. The saved objects are
- * extracted from the character. @return TRUE when the file was written. */
+ * extracted only after the file is committed; on failure they stay on the
+ * character. @return TRUE when the file was written (or nothing was left
+ * to save). */
 int Crash_idlesave(struct char_data *ch)
 {
-  char filename[MAX_INPUT_LENGTH], temp[MAX_INPUT_LENGTH + 16];
   int j;
   int cost, cost_eq;
-  FILE *fp;
 
   if (IS_NPC(ch))
-    return FALSE;
-
-  if (!(fp = Crash_open_rentfile(ch, RENT_TIMEDOUT, filename, sizeof(filename),
-                                 temp, sizeof(temp))))
     return FALSE;
 
   Crash_extract_norent_eq(ch);
@@ -852,162 +902,56 @@ int Crash_idlesave(struct char_data *ch)
   if (ch->carrying == NULL) {
     for (j = 0; j < NUM_WEARS && GET_EQ(ch, j) == NULL; j++) /* Nothing */ ;
     if (j == NUM_WEARS) {  /* No equipment or inventory. */
-      objsave_abort_staged(fp, temp);
       Crash_delete_file(GET_NAME(ch));
       return TRUE;
     }
   }
 
-  if (!objsave_write_rentcode(fp, RENT_TIMEDOUT, cost, ch)) {
-    objsave_abort_staged(fp, temp);
-    CRASH_SAVE_FAILED(ch, filename, RENT_TIMEDOUT);
+  if (!Crash_save_char_file(ch, RENT_TIMEDOUT, cost))
     return FALSE;
-  }
-
-  for (j = 0; j < NUM_WEARS; j++) {
-    if (GET_EQ(ch, j)) {
-      if (!Crash_save(GET_EQ(ch, j), fp, j + 1)) {
-        objsave_abort_staged(fp, temp);
-        CRASH_SAVE_FAILED(ch, filename, RENT_TIMEDOUT);
-        return FALSE;
-      }
-      Crash_restore_weight(GET_EQ(ch, j));
-      Crash_extract_objs(GET_EQ(ch, j));
-    }
-  }
-  if (!Crash_save(ch->carrying, fp, 0)) {
-    objsave_abort_staged(fp, temp);
-    CRASH_SAVE_FAILED(ch, filename, RENT_TIMEDOUT);
-    return FALSE;
-  }
-  tb_fprintf(fp, "$~\n");
-  if (!objsave_commit_staged(fp, temp, filename)) {
-    CRASH_SAVE_FAILED(ch, filename, RENT_TIMEDOUT);
-    return FALSE;
-  }
-
-  Crash_extract_objs(ch->carrying);
+  Crash_extract_char_objs(ch);
   return TRUE;
 }
 
 /** Rent a player out (RENT_RENTED) at cost per day. !RENT objects are
- * extracted first; the saved objects are extracted from the character.
- * @return TRUE when the file was written. */
+ * extracted first; the saved objects are extracted only after the file is
+ * committed. @return TRUE when the file was written. */
 int Crash_rentsave(struct char_data *ch, int cost)
 {
-  char filename[MAX_INPUT_LENGTH], temp[MAX_INPUT_LENGTH + 16];
-  int j;
-  FILE *fp;
-
   if (IS_NPC(ch))
-    return FALSE;
-
-  if (!(fp = Crash_open_rentfile(ch, RENT_RENTED, filename, sizeof(filename),
-                                 temp, sizeof(temp))))
     return FALSE;
 
   Crash_extract_norent_eq(ch);
   Crash_extract_norents(ch->carrying);
 
-  if (!objsave_write_rentcode(fp, RENT_RENTED, cost, ch)) {
-    objsave_abort_staged(fp, temp);
-    CRASH_SAVE_FAILED(ch, filename, RENT_RENTED);
+  if (!Crash_save_char_file(ch, RENT_RENTED, cost))
     return FALSE;
-  }
-
-  for (j = 0; j < NUM_WEARS; j++)
-    if (GET_EQ(ch, j)) {
-      if (!Crash_save(GET_EQ(ch,j), fp, j + 1)) {
-        objsave_abort_staged(fp, temp);
-        CRASH_SAVE_FAILED(ch, filename, RENT_RENTED);
-        return FALSE;
-      }
-      Crash_restore_weight(GET_EQ(ch, j));
-      Crash_extract_objs(GET_EQ(ch, j));
-
-    }
-  if (!Crash_save(ch->carrying, fp, 0)) {
-    objsave_abort_staged(fp, temp);
-    CRASH_SAVE_FAILED(ch, filename, RENT_RENTED);
-    return FALSE;
-  }
-  tb_fprintf(fp, "$~\n");
-  if (!objsave_commit_staged(fp, temp, filename)) {
-    CRASH_SAVE_FAILED(ch, filename, RENT_RENTED);
-    return FALSE;
-  }
-
-  Crash_extract_objs(ch->carrying);
+  Crash_extract_char_objs(ch);
   return TRUE;
 }
 
-static int objsave_write_rentcode(FILE *fl, int rentcode, int cost_per_day, struct char_data *ch)
-{
-  if (fprintf(fl, "%d %ld %d %d %d %d\r\n",
-          rentcode,
-          (long) time(0),
-          cost_per_day,
-          GET_GOLD(ch),
-          GET_BANK_GOLD(ch),
-          0)
-       < 1)
-    {
-       TB_REPORT_ERRNO("fprintf", "rent code");
-       return FALSE;
-    }
-  return TRUE;
-
-}
-
-/** Cryo-rent a player (RENT_CRYO): cost is taken from gold on hand, the
- * saved objects are extracted and PLR_CRYO is set. @return TRUE when the
- * file was written. */
+/** Cryo-rent a player (RENT_CRYO): cost is taken from gold on hand (the
+ * header records the reduced gold), the saved objects are extracted and
+ * PLR_CRYO is set, all only after the file is committed. On failure the
+ * gold is given back and the objects stay. @return TRUE when written. */
 static int Crash_cryosave(struct char_data *ch, int cost)
 {
-  char filename[MAX_INPUT_LENGTH], temp[MAX_INPUT_LENGTH + 16];
-  int j;
-  FILE *fp;
+  int old_gold;
 
   if (IS_NPC(ch))
-    return FALSE;
-
-  if (!(fp = Crash_open_rentfile(ch, RENT_CRYO, filename, sizeof(filename),
-                                 temp, sizeof(temp))))
     return FALSE;
 
   Crash_extract_norent_eq(ch);
   Crash_extract_norents(ch->carrying);
 
+  old_gold = GET_GOLD(ch);
   GET_GOLD(ch) = MAX(0, GET_GOLD(ch) - cost);
 
-  if (!objsave_write_rentcode(fp, RENT_CRYO, 0, ch)) {
-    objsave_abort_staged(fp, temp);
-    CRASH_SAVE_FAILED(ch, filename, RENT_CRYO);
+  if (!Crash_save_char_file(ch, RENT_CRYO, 0)) {
+    GET_GOLD(ch) = old_gold;
     return FALSE;
   }
-
-  for (j = 0; j < NUM_WEARS; j++)
-    if (GET_EQ(ch, j)) {
-      if (!Crash_save(GET_EQ(ch, j), fp, j + 1)) {
-        objsave_abort_staged(fp, temp);
-        CRASH_SAVE_FAILED(ch, filename, RENT_CRYO);
-        return FALSE;
-      }
-      Crash_restore_weight(GET_EQ(ch, j));
-      Crash_extract_objs(GET_EQ(ch, j));
-    }
-  if (!Crash_save(ch->carrying, fp, 0)) {
-    objsave_abort_staged(fp, temp);
-    CRASH_SAVE_FAILED(ch, filename, RENT_CRYO);
-    return FALSE;
-  }
-  tb_fprintf(fp, "$~\n");
-  if (!objsave_commit_staged(fp, temp, filename)) {
-    CRASH_SAVE_FAILED(ch, filename, RENT_CRYO);
-    return FALSE;
-  }
-
-  Crash_extract_objs(ch->carrying);
+  Crash_extract_char_objs(ch);
   SET_BIT_AR(PLR_FLAGS(ch), PLR_CRYO);
   return TRUE;
 }
