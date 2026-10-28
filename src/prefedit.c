@@ -954,6 +954,11 @@ ACMD(do_oasis_prefedit)
   char buf1[MAX_STRING_LENGTH];
   char buf2[MAX_STRING_LENGTH];
 
+  /* No building as a mob or while being forced: the editor lives on the
+   * caller's own descriptor, which those have none of. */
+  if (IS_NPC(ch) || !ch->desc || STATE(ch->desc) != CON_PLAYING)
+    return;
+
   /****************************************************************************/
   /** Parse any arguments.                                                   **/
   /****************************************************************************/

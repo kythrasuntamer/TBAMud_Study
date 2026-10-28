@@ -110,12 +110,35 @@ static void own_prefs_being_edited_sends_one_message(void)
   memset(&imp_specials, 0, sizeof(imp_specials));
   victim.player_specials = &specials;
   imp.player_specials = &imp_specials;     /* PERS() checks visibility */
+  /* Victim is playing on their own connection; only the implementor's
+   * session is editing them. */
+  static struct descriptor_data playing;
+  memset(&playing, 0, sizeof(playing));
+  playing.character = &victim;
+  STATE(&playing) = CON_PLAYING;
+  victim.desc = &playing;
+  imp_desc.next = NULL;
   acts = sends = 0;
 
   do_oasis_prefedit(&victim, none, 0, 0);
+  victim.desc = NULL;
 
   TEST_ASSERT_EQUAL_INT(1, sends);
   TEST_ASSERT_EQUAL_INT(0, acts);
+}
+
+/* A character without a connection of its own (a forced mob, a switched
+ * body) has no descriptor to hang the editor on; the old code
+ * dereferenced ch->desc anyway. */
+static void prefedit_without_a_descriptor_does_nothing(void)
+{
+  char none[] = "";
+
+  victim.desc = NULL;
+  acts = sends = 0;
+  do_oasis_prefedit(&victim, none, 0, 0);
+  TEST_ASSERT_EQUAL_INT(0, sends);
+  TEST_ASSERT_EQUAL_INT(0, cleanups);
 }
 
 int main(void)
@@ -124,5 +147,6 @@ int main(void)
   RUN_TEST(editors_of_a_freed_character_are_abandoned);
   RUN_TEST(other_characters_leave_editors_alone);
   RUN_TEST(own_prefs_being_edited_sends_one_message);
+  RUN_TEST(prefedit_without_a_descriptor_does_nothing);
   return UNITY_END();
 }
