@@ -367,6 +367,25 @@ static void test_index_save_failure_keeps_live_index(void)
   leave_scratch();
 }
 
+/* B2-26: localtime() fails for a last-login value it cannot represent and
+ * tb_strftime() then left the PCLEAN log's time string unwritten (an
+ * uninitialised read under Valgrind). It is now reported and replaced. */
+static void test_remove_player_with_unrepresentable_last_login(void)
+{
+  enter_scratch();
+  write_index("4242 tester 10 0 100000000000000000\n4243 other 5 0 1000\n~\n");
+  build_player_index();
+  TEST_ASSERT_EQUAL_INT(1, top_of_p_table);
+
+  remove_player(0);
+
+  TEST_ASSERT_EQUAL_INT(0, top_of_p_table);
+  TEST_ASSERT_EQUAL_STRING("other", player_table[0].name);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_op_log, "pclean-time\n"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail_log, "player idnum 4242"));
+  leave_scratch();
+}
+
 /* B2-16: Clas/Levl/Sex index tables (class_abbrevs[], titles, exp) and
  * skills[] is unsigned char; out-of-range file values were stored as-is. */
 static void test_out_of_range_class_level_sex_skill(void)
@@ -529,6 +548,7 @@ int main(void)
   RUN_TEST(test_terminated_desc_loads);
   RUN_TEST(test_malformed_index_record_is_skipped_and_kept);
   RUN_TEST(test_index_save_failure_keeps_live_index);
+  RUN_TEST(test_remove_player_with_unrepresentable_last_login);
   RUN_TEST(test_out_of_range_class_level_sex_skill);
   RUN_TEST(test_legacy_pref_uses_its_own_value);
   RUN_TEST(test_wrong_flag_word_count_is_reported);

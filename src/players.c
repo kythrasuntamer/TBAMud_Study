@@ -1230,7 +1230,21 @@ void remove_player(int pfilepos)
     }
   }
 
-  tb_strftime(timestr, sizeof(timestr), "%c", localtime(&(player_table[pfilepos].last)));
+  /* 'last' comes from the player index file. localtime() returns NULL for a
+   * value it cannot represent (around 1e17), and tb_strftime() then leaves
+   * timestr unwritten, so the log line below used to print stack garbage. */
+  {
+    const struct tm *last_tm = localtime(&(player_table[pfilepos].last));
+
+    if (last_tm == NULL) {
+      TB_WARN_MSG("player", "pclean-time", player_table[pfilepos].name,
+                  "player idnum %ld index last-login %lld is not a valid time",
+                  player_table[pfilepos].id,
+                  (long long) player_table[pfilepos].last);
+      strlcpy(timestr, "unknown", sizeof(timestr));
+    } else
+      tb_strftime(timestr, sizeof(timestr), "%c", last_tm);
+  }
   log("PCLEAN: %s Lev: %d Last: %s",
 	player_table[pfilepos].name, player_table[pfilepos].level,
 	timestr);
