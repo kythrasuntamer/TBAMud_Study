@@ -268,6 +268,22 @@ static void test_receive_delivers_and_removes(void)
   free_inventory();
 }
 
+/* store_mail() is void, so a lost message must at least be reported in
+ * the structured form (it used plain log() lines with no operation). */
+static void test_store_mail_failure_is_reported(void)
+{
+  char body[] = "hello\r\n";
+
+  (void)remove(MAIL_FILE);
+  TEST_ASSERT_EQUAL_INT(0, mkdir(MAIL_FILE, 0700));
+
+  store_mail(7, 9, body);
+
+  TEST_ASSERT_EQUAL_INT(0, rmdir(MAIL_FILE));
+  TEST_ASSERT_EQUAL_STRING("store", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "from idnum 9 to idnum 7"));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -277,6 +293,7 @@ int main(void)
   RUN_TEST(test_truncated_body_is_corruption_not_exit);
   RUN_TEST(test_receive_stops_when_message_not_removed);
   RUN_TEST(test_receive_delivers_and_removes);
+  RUN_TEST(test_store_mail_failure_is_reported);
   {
     char etc[300];
     if (snprintf(etc, sizeof(etc), "%s/etc", scratch_dir) > 0)

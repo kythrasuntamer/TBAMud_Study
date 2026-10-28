@@ -135,17 +135,19 @@ static int read_mail_record(FILE *mail_file, int record_no, struct mail_t **out)
 static int write_mail_record(FILE *mail_file, struct mail_t *record)
 {
   if (mail_file == NULL || record == NULL || record->body == NULL) {
-    log("SYSERR: write_mail_record called with invalid argument (stream=%p record=%p body=%p)",
-        (void *)mail_file, (void *)record, record ? (void *)record->body : NULL);
+    TB_ERROR_MSG("mail", "write-record", MAIL_FILE,
+                 "invalid argument (stream=%p record=%p body=%p)",
+                 (void *)mail_file, (void *)record,
+                 record ? (void *)record->body : NULL);
     return FALSE;
   }
 
   if (fprintf(mail_file, "### %ld %ld %ld\n%s~\n",
               record->recipient, record->sender, (long)record->sent_time,
               record->body) < 0) {
-    int saved_errno = errno;
-    log("SYSERR: mail write failed for sender %ld recipient %ld: %s (errno=%d)",
-        record->sender, record->recipient, strerror(saved_errno), saved_errno);
+    TB_ERROR_ERRNO("mail", "write-record", MAIL_FILE,
+                   "message from idnum %ld to idnum %ld not written",
+                   record->sender, record->recipient);
     return FALSE;
   }
   return TRUE;
@@ -240,8 +242,9 @@ void store_mail(long to, long from, char *message_pointer)
   struct mail_t *record;
 
   if (!(mail_file = fopen(MAIL_FILE, "a"))) {
-    TB_REPORT_ERRNO("fopen", MAIL_FILE);
-    log("SYSERR: store_mail failed before writing message from %ld to %ld", from, to);
+    TB_ERROR_ERRNO("mail", "store", MAIL_FILE,
+                   "message from idnum %ld to idnum %ld lost: cannot open",
+                   from, to);
     return;
   }
   CREATE(record, struct mail_t, 1);
@@ -252,13 +255,18 @@ void store_mail(long to, long from, char *message_pointer)
   record->body = message_pointer;
 
   if (!write_mail_record(mail_file, record)) {
-    log("SYSERR: store_mail failed while persisting message from %ld to %ld", from, to);
+    TB_ERROR_MSG("mail", "store", MAIL_FILE,
+                 "message from idnum %ld to idnum %ld not written", from, to);
   } else if (!tb_fflush_checked(mail_file, MAIL_FILE)) {
-    log("SYSERR: store_mail write for message from %ld to %ld could not be flushed", from, to);
+    TB_ERROR_MSG("mail", "store", MAIL_FILE,
+                 "message from idnum %ld to idnum %ld could not be flushed",
+                 from, to);
   }
   free(record); /* don't free the body */
   if (!tb_fclose_checked(mail_file, MAIL_FILE))
-    log("SYSERR: store_mail close failed after message from %ld to %ld", from, to);
+    TB_ERROR_MSG("mail", "store", MAIL_FILE,
+                 "close failed after message from idnum %ld to idnum %ld",
+                 from, to);
 }
 
 /* Abandon a read_delete() rewrite: close both streams and remove the
