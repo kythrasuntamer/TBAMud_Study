@@ -836,7 +836,7 @@ void mag_summons(int level, struct char_data *ch, struct obj_data *obj,
     load_mtrigger(mob);
     /* A load script that purges its own mob leaves it pending extraction:
      * it must not become a follower or group member. */
-    if (CHAR_PENDING_EXTRACTION(mob)) {
+    if (DEAD(mob)) {
       TB_WARN_MSG("magic", "summon-mob-purged", "char",
                   "summoned mob vnum %d purged by its load trigger; not "
                   "following " DIAG_CHAR_FMT, (int) mob_num, DIAG_CHAR(ch));
@@ -856,7 +856,7 @@ void mag_summons(int level, struct char_data *ch, struct obj_data *obj,
                   DIAG_CHAR_FMT, corpse_uid, (int) mob_num, DIAG_CHAR(ch));
       return;
     }
-    if (CHAR_PENDING_EXTRACTION(mob))
+    if (DEAD(mob))
       return;		/* reported above; the corpse keeps its contents */
     for (tobj = obj->contains; tobj; tobj = next_obj) {
       next_obj = tobj->next_content;

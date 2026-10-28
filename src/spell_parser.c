@@ -61,7 +61,10 @@ static struct syllable syls[] = { { " ", " " }, { "ar", "abra" },
         "y", "l" }, { "z", "k" }, { "", "" } };
 
 static int mag_manacost(struct char_data *ch, int spellnum) {
-  int cls = (int) GET_CLASS(ch);	/* byte; CLASS_UNDEFINED is -1 */
+  /* chclass is a signed byte (CLASS_UNDEFINED is -1); keep its sign so
+   * SPELL_MIN_LEVEL() sees and refuses a negative (corrupt) class instead
+   * of a wrapped 0..255 one. */
+  int cls = (int) GET_CLASS(ch);
 
   return MAX(SINFO.mana_max - (SINFO.mana_change *
       (GET_LEVEL(ch) - SPELL_MIN_LEVEL(spellnum, cls))),
@@ -708,7 +711,7 @@ static void do_cast_body(struct char_data *ch, char *argument) {
 
   /* GET_CLASS indexes spell_info[].min_level[]; it comes from the pfile,
    * which does not range-check it. A bad class can never cast. */
-  if (!VALID_CLASS_NUM(GET_CLASS(ch))) {
+  if (!VALID_CLASS(GET_CLASS(ch))) {
     TB_ERROR_MSG("magic", "player-class", "min_level",
                  DIAG_CHAR_FMT " class %d not in [0,%d); cast refused",
                  DIAG_CHAR(ch), (int) GET_CLASS(ch), NUM_CLASSES);

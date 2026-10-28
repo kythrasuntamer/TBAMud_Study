@@ -353,7 +353,7 @@ void death_cry(struct char_data *ch)
  * (killer != NULL; the script may suppress the death cry), credits kill
  * quests, makes the corpse (make_corpse) and calls extract_char(). The
  * extraction is deferred: ch stays allocated, flagged NOTDEADYET
- * (CHAR_PENDING_EXTRACTION), until extract_pending_chars() at the end of
+ * (DEAD(ch)), until extract_pending_chars() at the end of
  * the pulse, so callers may still read ch but must not act with it. */
 void raw_kill(struct char_data * ch, struct char_data * killer)
 {
@@ -731,7 +731,7 @@ int skill_message(int dam, struct char_data *ch, struct char_data *vict,
  * get_from_container/do_split/sacrifice_obj for ch's AUTOGOLD, AUTOLOOT,
  * AUTOSPLIT and AUTOSAC, which run get triggers in turn. Callers must
  * assume that ch and victim may have changed room or be pending
- * extraction afterwards (check IN_ROOM and CHAR_PENDING_EXTRACTION), and
+ * extraction afterwards (check IN_ROOM and DEAD()), and
  * must not use object pointers read before the call. */
 int damage(struct char_data *ch, struct char_data *victim, int dam, int attacktype)
 {
@@ -1004,7 +1004,7 @@ void hit(struct char_data *ch, struct char_data *victim, int type)
   /* A victim killed earlier this round is "normal" with delayed extraction
    * (damage() ignores it); a fight already pending is noted here so only a
    * change made by the trigger below is reported. */
-  was_pending = CHAR_PENDING_EXTRACTION(ch) || CHAR_PENDING_EXTRACTION(victim);
+  was_pending = DEAD(ch) || DEAD(victim);
 
   /* check if the character has a fight trigger */
   fight_mtrigger(ch);
@@ -1018,7 +1018,7 @@ void hit(struct char_data *ch, struct char_data *victim, int type)
 
   /* The fight script may have purged ch or victim (extraction is deferred,
    * so the pointers stay allocated but must not fight on). */
-  if (CHAR_PENDING_EXTRACTION(ch) || CHAR_PENDING_EXTRACTION(victim)) {
+  if (DEAD(ch) || DEAD(victim)) {
     if (!was_pending)
       TB_WARN_MSG("fight", "hit-after-trigger", "char",
                   DIAG_CHAR_FMT " vs " DIAG_CHAR_FMT ": one was purged by the "

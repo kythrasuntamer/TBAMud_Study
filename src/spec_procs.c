@@ -96,10 +96,6 @@ static const char *prac_types[] = {
 #define MAXGAIN(ch) (prac_params[MAX_PER_PRAC][(int)GET_CLASS(ch)])
 #define SPLSKL(ch) (prac_types[prac_params[PRAC_TYPE][(int)GET_CLASS(ch)]])
 
-/* TRUE if c indexes the per-class tables (prac_params[][NUM_CLASSES],
- * spell_info[].min_level[]). Evaluates c twice. */
-#define VALID_CLASS(c) ((c) >= 0 && (c) < NUM_CLASSES)
-
 /* The tables above are indexed by GET_CLASS(ch), which is read from the
  * pfile without a range check (players.c). Report and refuse a character
  * whose class cannot index them, instead of reading past prac_params[]. */

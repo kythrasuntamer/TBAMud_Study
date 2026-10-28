@@ -721,7 +721,12 @@ do                                                              \
 /** Toggle flag in ch PRF_FLAGS; turns on if off, or off if on. */
 #define PRF_TOG_CHK(ch,flag) ((TOGGLE_BIT_AR(PRF_FLAGS(ch), (flag))) & Q_BIT(flag))
 
-/** Checks to see if a PC or NPC is dead. */
+/** TRUE if ch (PC or NPC) has been extracted (killed, purged) and awaits
+ * extract_pending_chars() at the end of the pulse. The pointer is still
+ * allocated, but ch must not act or be acted on. MOB_FLAGS and PLR_FLAGS
+ * share storage; PLR_FLAGGED and MOB_FLAGGED test IS_NPC, so each flag is
+ * read only for its own kind. Evaluates ch more than once: pass a plain
+ * variable. (fight.h's CHAR_PENDING_EXTRACTION was the same test.) */
 #define DEAD(ch) (PLR_FLAGGED((ch), PLR_NOTDEADYET) || MOB_FLAGGED((ch), MOB_NOTDEADYET))
 
 /* room utils */
@@ -809,7 +814,8 @@ do                                                              \
  * prac_params[][NUM_CLASSES], spell_info[].min_level[]). GET_CLASS is read
  * from the pfile 'Clas' tag, which a corrupt or hand-edited pfile can set to
  * anything, so check before indexing. Evaluates c twice: no side effects.
- * Kept token-identical to the local copy in spec_procs.c. */
+ * The one definition: spells.h's SPELL_MIN_LEVEL() and spec_procs.c's
+ * practice check use it. */
 #define VALID_CLASS(c) ((c) >= 0 && (c) < NUM_CLASSES)
 /** Height of ch. */
 #define GET_HEIGHT(ch)	((ch)->player.height)

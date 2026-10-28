@@ -27,12 +27,7 @@
 #include "oasis.h"
 #include "improved-edit.h"
 
-/** Free p and set it to NULL, so a struct that outlives the call never holds
- * a dangling pointer.  free(NULL) is a no-op, so no test is needed.  p is
- * evaluated twice: it must be an lvalue without side effects. */
-#ifndef FREE_NULL
-#define FREE_NULL(p) do { free(p); (p) = NULL; } while (0)
-#endif
+/* FREE_NULL(p) (free p, then set it to NULL) comes from utils.h. */
 
 /** Free the strings of a scratch room or configuration.
  *
