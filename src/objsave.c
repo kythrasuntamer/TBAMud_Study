@@ -8,6 +8,31 @@
 *  CircleMUD is based on DikuMUD, Copyright (C) 1990, 1991.               *
 **************************************************************************/
 
+/**
+ * @file objsave.c
+ * Rent and crash-save files (lib/plrobjs/<x>/<name>.objs): the objects a
+ * player wears and carries while logged out, plus the shared object-record
+ * reader/writer that house.c uses for house contents.
+ *
+ * File format: one rent header line "rentcode timed netcost gold account
+ * nitems", then object records ("#vnum" followed by "Tag : value" lines
+ * that differ from the prototype), ended by "$~". Each record's "Loc"
+ * encodes where the object was (see objsave_parse_objects_from()).
+ *
+ * Who controls the input: rent files are written by this server but are
+ * plain text that can be truncated or hand-edited, so every header field,
+ * Loc value, flag word and string is untrusted on read. Bad values are
+ * reported (objsave operations with the owner, object line and obj vnum)
+ * and the record or field is skipped; reading never exits the server.
+ *
+ * Ownership and lifetime: objects read from a file are created with
+ * read_object()/create_obj() (so they are on object_list) and handed to the
+ * caller, which must place or extract each one. Writes are staged through
+ * objsave_open_staged()/objsave_commit_staged(); rented objects are
+ * extracted only after the file is committed, so a failed save never loses
+ * them.
+ */
+
 #include "conf.h"
 #include "sysdep.h"
 #include "structs.h"
@@ -101,7 +126,17 @@ static int objsave_parse_rent_header(const char *text, int *rentcode,
   return 1;
 }
 
-/* Writes one object record to FILE.  Old name: Obj_to_store() */
+/** Write one object record to fp (old name: Obj_to_store()).
+ * Only fields that differ from the object's prototype are written. To
+ * compare, a full prototype instance is created with read_object() (which
+ * bumps obj_index[].number and attaches prototype triggers) and extracted
+ * again before return, on every path.
+ * @param locate The record's Loc: wear slot + 1, 0 for inventory, or minus
+ * the container nesting depth.
+ * ADes and EDes bodies are cut at MAX_STRING_LENGTH. Extra descriptions
+ * with an empty or NULL keyword or text are not written (write-edesc).
+ * @return 1 on success, 0 after reporting a write or prototype failure; the
+ * caller must then abandon the staged file. */
 int objsave_save_obj_record(struct obj_data *obj, FILE *fp, int locate)
 {
   int counter2;
@@ -248,7 +283,14 @@ int objsave_save_obj_record(struct obj_data *obj, FILE *fp, int locate)
 #undef TEST_OBJS
 #undef TEST_OBJN
 
-/* AutoEQ by Burkhard Knopf. */
+/** Put a freshly loaded object where its rent record says (AutoEQ by
+ * Burkhard Knopf).
+ * @param location The record's Loc. Above 0 asks for wear slot location-1;
+ * the object is equipped only if the slot is in range and free, the object
+ * can be worn there, and the wearer passes the alignment/class checks.
+ * Otherwise, and for every location <= 0, the object goes to inventory.
+ * Callers must therefore not assume the object ended up equipped: check
+ * GET_EQ(ch, location-1) == obj (handle_obj() does). */
 static void auto_equip(struct char_data *ch, struct obj_data *obj, int location)
 {
   int j;
@@ -1196,9 +1238,17 @@ void Crash_save_all(void)
   }
 }
 
-/* Parses the object records stored in fl, and returns the first object in a
- * linked list, which also handles location if worn. This list can then be
- * handled by house code, listrent code, autoeq code, etc.
+/** Parse the object records in fl (positioned after any rent header).
+ * @return A malloc'd obj_save_data list in file order, or NULL if there
+ * are no records. Each node's obj is a live object (on object_list) that is
+ * in no room, inventory or container yet: the caller must place it
+ * (obj_to_char, obj_to_room, handle_obj ...) or extract_obj() it, and must
+ * free() every node.
+ * Each node's locate is the record's Loc: 1..NUM_WEARS = worn in slot
+ * locate-1, 0 = inventory, negative = inside a container, -locate levels
+ * deep (contents are written before their container). A Loc above
+ * NUM_WEARS is reported and becomes inventory. A record whose prototype no
+ * longer exists is skipped (missing-proto) together with its tags.
  *
  * Callers that know which file and owner they are reading should use
  * objsave_parse_objects_from(), so that diagnostics name them. */
@@ -1618,6 +1668,17 @@ static int Crash_load_objs(struct char_data *ch) {
     return 1;
 }
 
+/** Place one parsed rent object on ch and rebuild container nesting.
+ * cont_row[MAX_BAG_ROWS] is per-load state, NULL-initialised by the
+ * caller: cont_row[d] holds the objects read so far at nesting depth d+1
+ * whose container has not been seen yet (contents are written before their
+ * container). When a container arrives at depth d, it takes cont_row[d] as
+ * its contents. A row whose container never arrives is spilled into ch's
+ * inventory. An object nested deeper than MAX_BAG_ROWS stays loose in
+ * inventory (reported as rent-nesting).
+ * A worn container is filled only if auto_equip() really equipped it;
+ * otherwise it is filled in inventory and reported (autoeq-container).
+ * @return TRUE if temp was placed (counts toward the hoarding total). */
 static int handle_obj(struct obj_data *temp, struct char_data *ch, int locate, struct obj_data **cont_row)
 {
   int j;
