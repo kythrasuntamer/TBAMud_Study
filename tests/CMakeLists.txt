@@ -1196,3 +1196,23 @@ if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
     set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/test_rnum_macros.c
         PROPERTIES COMPILE_OPTIONS "-Wtype-limits;-Werror")
 endif()
+
+# Leftovers O6c/O6d: the production text-file editor (tedit.c) and
+# combat-message editor (msgedit.c).  A live text must never become NULL and
+# a failed save must never stop the server; the test supplies the editor,
+# OLC and output collaborators and discards the rest by section GC.
+add_mud_test(test_tedit_msgedit
+    ${MUD_SRCDIR}/tedit.c
+    ${MUD_SRCDIR}/msgedit.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_tedit_msgedit.c
+)
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_compile_options(test_tedit_msgedit PRIVATE -ffunction-sections -fdata-sections)
+    target_link_options(test_tedit_msgedit PRIVATE -Wl,--gc-sections)
+endif()
+
+# test_tedit_msgedit wraps fopen() so a test can hand the tedit and msgedit
+# savers a stream whose error indicator is already set (the C2-16 check).
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_link_options(test_tedit_msgedit PRIVATE -Wl,--wrap=fopen)
+endif()

@@ -9,6 +9,7 @@
 #include "unity.h"
 #include "genolc.c"  /* NOLINT(bugprone-suspicious-include): tests its file-scope writers */
 #include <sys/stat.h>
+#include <dirent.h>
 
 /* utils.c is linked, so its tb_error_log_at() exists; the test build wraps
  * calls from the code under test to this capturing version. */
@@ -39,14 +40,18 @@ zone_rnum real_zone(zone_vnum vnum)
 
 /* ---- saver fakes: each counts calls and succeeds or fails on demand ---- */
 
-static int saver_calls, saver_fails;
+static int saver_calls, saver_fails, saver_keeps_entry, saver_requeues;
 
 static int fake_save(IDXTYPE rznum, int type)
 {
   saver_calls++;
   if (saver_fails)
     return FALSE;                       /* failure: entry left queued */
+  if (saver_keeps_entry)
+    return TRUE;                        /* "success", entry still queued */
   remove_from_save_list(zone_table[rznum].number, type);
+  if (saver_requeues)                   /* queues the other zone instead */
+    add_to_save_list(zone_table[rznum].number ? 0 : 30, type);
   return TRUE;
 }
 int save_mobiles(zone_rnum z) { return fake_save(z, SL_MOB); }
@@ -62,7 +67,7 @@ void setUp(void)
   memset(zones, 0, sizeof(zones));
   zones[0].number = 0;
   zones[1].number = 30;
-  saver_calls = saver_fails = 0;
+  saver_calls = saver_fails = saver_keeps_entry = saver_requeues = 0;
   tb_error_capture_reset();
 }
 
@@ -289,12 +294,98 @@ static void test_export_room_extra_descriptions(void)
   free(huge);
 }
 
+/* ---- save list teardown ----------------------------------------------- */
+
+/* Leftovers 4: free_save_list() (comm.c, at shutdown) freed every node but
+ * left save_list pointing at the first, so any later add, lookup or save
+ * walked freed memory.  The head is cleared now (C1-20). */
+static void test_free_save_list_clears_the_head(void)
+{
+  add_to_save_list(30, SL_MOB);
+  add_to_save_list(0, SL_OBJ);
+  free_save_list();
+  TEST_ASSERT_NULL(save_list);
+
+  TEST_ASSERT_TRUE(add_to_save_list(30, SL_WLD));
+  TEST_ASSERT_TRUE(in_save_list(30, SL_WLD));
+  TEST_ASSERT_FALSE(in_save_list(30, SL_MOB));
+  TEST_ASSERT_NULL(save_list->next);
+}
+
+/* O8c: a saver that neither removes its entry nor returns failure left
+ * save_all() retrying the same head forever ('saveall' and shutdown hung).
+ * Each entry is tried once; one still queued afterwards is reported and
+ * dropped. */
+static void test_saver_keeping_its_entry_does_not_hang_save_all(void)
+{
+  add_to_save_list(30, SL_WLD);
+  add_to_save_list(0, SL_WLD);
+  saver_keeps_entry = 1;
+
+  TEST_ASSERT_FALSE(save_all());
+  TEST_ASSERT_EQUAL_INT(2, saver_calls);
+  TEST_ASSERT_NULL(save_list);
+  TEST_ASSERT_EQUAL_INT(2, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("save-all", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "zone 30 room save failed (result 1)"));
+}
+
+/* O8c: a saver that queues new work as it removes its own entry never
+ * drains the list; the loop is bounded by the list's starting length and
+ * the entry left over is reported (and kept for the next save). */
+static void test_saver_requeueing_work_is_bounded(void)
+{
+  add_to_save_list(30, SL_WLD);
+  saver_requeues = 1;
+
+  TEST_ASSERT_FALSE(save_all());
+  TEST_ASSERT_EQUAL_INT(1, saver_calls);
+  TEST_ASSERT_EQUAL_STRING("save-all", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "still holds zone 0 type 3"));
+  TEST_ASSERT_TRUE(in_save_list(0, SL_WLD));
+}
+
+/* The fixture directory main() creates.  remove_fixture_dir() deletes what
+ * the exporters left in world/export and world, then the directories; it
+ * runs at exit (atexit), so a run that fails an assertion or exits early
+ * cleans up too.  Only a crash (abort) still leaves the directory. */
+static char fixture_dir[] = "/tmp/tb_test_genolc.XXXXXX";
+
+static void remove_dir_entries(const char *path)
+{
+  DIR *dir = opendir(path);
+  struct dirent *entry;
+  char name[PATH_MAX];
+
+  if (!dir)
+    return;
+  while ((entry = readdir(dir)) != NULL) {
+    if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, ".."))
+      continue;
+    if (snprintf(name, sizeof(name), "%s/%s", path, entry->d_name) < (int)sizeof(name))
+      (void)remove(name);
+  }
+  (void)closedir(dir);
+}
+
+static void remove_fixture_dir(void)
+{
+  if (chdir(fixture_dir) == 0) {
+    remove_dir_entries("world/export");
+    (void)rmdir("world/export");
+    remove_dir_entries("world");
+    (void)rmdir("world");
+  }
+  if (chdir("/") != 0 || rmdir(fixture_dir) != 0)
+    (void)fprintf(stdout, "test_genolc: could not remove %s\n", fixture_dir);
+}
+
 int main(void)
 {
-  char dir[] = "/tmp/tb_test_genolc.XXXXXX";
+  char *dir = fixture_dir;
 
-  if (!mkdtemp(dir) || chdir(dir) != 0 || mkdir("world", 0700) != 0 ||
-      mkdir("world/export", 0700) != 0) {
+  if (!mkdtemp(dir) || atexit(remove_fixture_dir) != 0 || chdir(dir) != 0 ||
+      mkdir("world", 0700) != 0 || mkdir("world/export", 0700) != 0) {
     perror("test_genolc fixture directory");
     return 1;
   }
@@ -309,5 +400,8 @@ int main(void)
   RUN_TEST(test_successful_saves_empty_the_list);
   RUN_TEST(test_unsavable_types_are_freed);
   RUN_TEST(test_show_save_list_reports_unknown_type);
+  RUN_TEST(test_free_save_list_clears_the_head);
+  RUN_TEST(test_saver_keeping_its_entry_does_not_hang_save_all);
+  RUN_TEST(test_saver_requeueing_work_is_bounded);
   return UNITY_END();
 }

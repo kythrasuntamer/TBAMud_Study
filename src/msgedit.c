@@ -219,7 +219,7 @@ static void show_messages(struct char_data *ch)
 int save_messages_to_disk(void)
 {
   FILE *fp;
-  int i, name_result, flush_ok, close_ok;
+  int i, name_result, stream_ok, flush_ok, close_ok;
   struct message_type *msg;
   char temp_name[MAX_STRING_LENGTH];
 
@@ -273,10 +273,18 @@ int save_messages_to_disk(void)
     }
   }
 
+  /* ferror() stays set after any failed write.  tb_fprintf() reported
+   * each one, but a later flush that succeeds would hide it and commit a
+   * file with a hole in it, which load_messages() rejects at the next
+   * boot by exiting. */
+  stream_ok = !ferror(fp);
   flush_ok = tb_fflush_checked(fp, temp_name);
   close_ok = tb_fclose_checked(fp, temp_name);
-  if (!flush_ok || !close_ok) {
-    int saved_errno = errno;
+  if (!stream_ok)
+    TB_ERROR_MSG("olc", "save-stream-error", temp_name,
+                 TB_ERRID_PERSIST_WRITE " combat messages: a write failed; previous file kept");
+  if (!stream_ok || !flush_ok || !close_ok) {
+    int saved_errno = flush_ok && close_ok ? EIO : errno;
     if (remove(temp_name) != 0 && errno != ENOENT)
       TB_REPORT_ERRNO("remove", temp_name);
     errno = saved_errno;

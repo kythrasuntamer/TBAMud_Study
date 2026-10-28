@@ -28,6 +28,7 @@
 #include "genwld.h"
 #include "shop.h"
 #include "genshp.h"
+#include "quest.h"
 #include "olc_checks.h"
 #include "modify.h"
 #include <stdarg.h>
@@ -545,9 +546,16 @@ void free_shop(struct shop_data *shop) { free(shop); }
 void modify_shop_string(char **str, char *newstr) { free(*str); *str = strdup(newstr); }
 static long last_int_list_add = -2;
 void add_shop_to_int_list(IDXTYPE **tlist, IDXTYPE newi) { (void)tlist; last_int_list_add = (long)newi; }
-void remove_shop_from_int_list(IDXTYPE **list, IDXTYPE num) { (void)list; (void)num; }
+/* Quest table and questmaster(): sedit checks a keeper's quests before
+ * wrapping its spec proc (O4). */
+struct aq_data *aquest_table = NULL;
+qst_rnum total_quests = 0;
+SPECIAL(questmaster) { (void)ch; (void)me; (void)cmd; (void)argument; return FALSE; }
+
+static long last_int_list_remove = -2, last_type_list_remove = -2;
+void remove_shop_from_int_list(IDXTYPE **list, IDXTYPE num) { (void)list; last_int_list_remove = (long)num; }
 void add_shop_to_type_list(struct shop_buy_data **list, struct shop_buy_data *newl) { (void)list; (void)newl; }
-void remove_shop_from_type_list(struct shop_buy_data **list, int num) { (void)list; (void)num; }
+void remove_shop_from_type_list(struct shop_buy_data **list, int num) { (void)list; last_type_list_remove = num; }
 
 static int zone_editable = TRUE;
 int can_edit_zone(struct char_data *ch, zone_rnum rnum) { (void)ch; (void)rnum; return zone_editable; }
@@ -2436,6 +2444,183 @@ static void test_zedit_menu_reports_unset_mob_and_trigger_args(void)
   free_zedit_session(d);
 }
 
+/* ------------------------------------------------------------------ */
+/* Leftovers 5: a delete-entry index outside a shop list is refused in */
+/* sedit, reported with the shop and builder, and explained.  genshp.c */
+/* refused it with a log line only: the builder just saw the menu      */
+/* again with nothing deleted.                                         */
+/* ------------------------------------------------------------------ */
+static void test_sedit_delete_index_outside_list_is_refused_and_explained(void)
+{
+  struct descriptor_data *d = &builder_desc;
+  struct shop_data scratch;
+  IDXTYPE products[] = { 0, 1, NOTHING };
+  IDXTYPE rooms[] = { NOWHERE };
+  struct shop_buy_data types[2];
+
+  make_objects(2);
+  memset(&scratch, 0, sizeof(scratch));
+  memset(types, 0, sizeof(types));
+  BUY_TYPE(types[0]) = 0;
+  BUY_TYPE(types[1]) = NOTHING;
+  S_PRODUCTS(&scratch) = products;
+  S_ROOMS(&scratch) = rooms;
+  S_NAMELISTS(&scratch) = types;
+  OLC_SHOP(d) = &scratch;
+  OLC_NUM(d) = 3000;
+  last_int_list_remove = last_type_list_remove = -2;
+
+  OLC_MODE(d) = SEDIT_DELETE_PRODUCT;
+  sedit_parse(d, "2");
+  TEST_ASSERT_EQUAL_INT(-2, last_int_list_remove);
+  TEST_ASSERT_EQUAL_STRING("shop-list-index", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail,
+                              "shop vnum 3000 product list: delete index 2 out of range 0..1"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "player idnum 4242"));
+  TEST_ASSERT_NOT_NULL(strstr(out_buf, "There is no product 2 (choose 0 to 1); nothing deleted."));
+  TEST_ASSERT_EQUAL_INT(SEDIT_PRODUCTS_MENU, OLC_MODE(d));
+
+  OLC_MODE(d) = SEDIT_DELETE_TYPE;
+  sedit_parse(d, "-1");
+  TEST_ASSERT_EQUAL_INT(-2, last_type_list_remove);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "entry list: delete index -1 out of range 0..0"));
+
+  out_buf[0] = '\0';
+  OLC_MODE(d) = SEDIT_DELETE_ROOM;
+  sedit_parse(d, "0");
+  TEST_ASSERT_EQUAL_INT(-2, last_int_list_remove);
+  TEST_ASSERT_NOT_NULL(strstr(out_buf, "There is no room to delete."));
+
+  OLC_MODE(d) = SEDIT_DELETE_PRODUCT;
+  sedit_parse(d, "99999999999");   /* digits, but no int */
+  TEST_ASSERT_EQUAL_INT(-2, last_int_list_remove);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "delete answer (11 chars) is not an int"));
+  TEST_ASSERT_EQUAL_INT(4, tb_captured_errors);
+
+  /* An index in the list is still passed on, silently. */
+  OLC_MODE(d) = SEDIT_DELETE_PRODUCT;
+  sedit_parse(d, "1");
+  TEST_ASSERT_EQUAL_INT(1, last_int_list_remove);
+  OLC_MODE(d) = SEDIT_DELETE_TYPE;
+  sedit_parse(d, "0");
+  TEST_ASSERT_EQUAL_INT(0, last_type_list_remove);
+  TEST_ASSERT_EQUAL_INT(4, tb_captured_errors);
+
+  OLC_SHOP(d) = NULL;
+  free(obj_index); obj_index = NULL;
+  free(obj_proto); obj_proto = NULL;
+  top_of_objt = 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* O4: sedit never wraps a questmaster whose quests already chain to   */
+/* shop_keeper (assign_the_quests() leaves a keeper that gives quests  */
+/* like that): shop_keeper -> questmaster -> shop_keeper looped until  */
+/* the stack ran out.                                                  */
+/* ------------------------------------------------------------------ */
+
+/* Mob 1201 (rnum 1) gives quest 50, whose secondary proc is qst_func. */
+static void make_questmaster_1201(SPECIAL((*qst_func)))
+{
+  make_keeper_mobs();
+  mob_index[1].func = questmaster;
+  aquest_table = calloc(1, sizeof(*aquest_table));
+  TEST_ASSERT_NOT_NULL(aquest_table);
+  total_quests = 1;
+  aquest_table[0].vnum = 50;
+  aquest_table[0].qm = 1201;
+  aquest_table[0].func = qst_func;
+}
+
+static void free_questmaster_1201(void)
+{
+  free(aquest_table); aquest_table = NULL;
+  total_quests = 0;
+  free_keeper_mobs();
+}
+
+static void save_shop_3000_with_keeper_1201(struct shop_data *scratch)
+{
+  struct descriptor_data *d = &builder_desc;
+
+  memset(scratch, 0, sizeof(*scratch));
+  S_KEEPER(scratch) = NOBODY;
+  OLC_SHOP(d) = scratch;
+  OLC_NUM(d) = 3000;
+  OLC_MODE(d) = SEDIT_KEEPER;
+  sedit_parse(d, "1201");
+  sedit_save_internally(d);
+  OLC_SHOP(d) = NULL;
+}
+
+static void test_sedit_keeper_running_shop_through_questmaster_is_not_rewrapped(void)
+{
+  static struct shop_data scratch;   /* outlives the OLC session pointer */
+
+  make_questmaster_1201(shop_keeper);
+  save_shop_3000_with_keeper_1201(&scratch);
+
+  TEST_ASSERT_EQUAL_PTR(questmaster, mob_index[1].func);
+  TEST_ASSERT_NULL(S_FUNC(&scratch));
+  TEST_ASSERT_EQUAL_PTR(shop_keeper, aquest_table[0].func);
+  TEST_ASSERT_EQUAL_STRING("spec-proc-cycle", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail,
+                              "shop vnum 3000 keeper vnum 1201 already runs shop_keeper through questmaster"));
+  TEST_ASSERT_NOT_NULL(strstr(out_buf, "Mobile 1201 is a questmaster that already runs shop code"));
+  free_questmaster_1201();
+}
+
+/* A questmaster whose quests do not run shop_keeper is wrapped as before:
+ * shop_keeper -> questmaster -> its own secondary, which ends the chain. */
+static void test_sedit_plain_questmaster_keeper_is_wrapped_once(void)
+{
+  static struct shop_data scratch;   /* outlives the OLC session pointer */
+
+  make_questmaster_1201(test_guild_proc);
+  save_shop_3000_with_keeper_1201(&scratch);
+
+  TEST_ASSERT_EQUAL_PTR(shop_keeper, mob_index[1].func);
+  TEST_ASSERT_EQUAL_PTR(questmaster, S_FUNC(&scratch));
+  TEST_ASSERT_EQUAL_PTR(test_guild_proc, aquest_table[0].func);
+  TEST_ASSERT_EQUAL_STRING("shop-keeper-func", tb_captured_operation);
+  free_questmaster_1201();
+}
+
+/* Leftovers round 2: the old keeper of a shop that moves to another mob gets
+ * its original proc back even when it runs shop_keeper through
+ * questmaster() (assign_the_quests() at boot): the quest's secondary
+ * becomes the shop's saved proc again.  It used to stay shop_keeper. */
+static void test_sedit_keeper_change_restores_questmaster_keepers_proc(void)
+{
+  static struct shop_data scratch;   /* outlives the OLC session pointer */
+  struct descriptor_data *d = &builder_desc;
+
+  make_questmaster_1201(shop_keeper);
+  shop_index = calloc(1, sizeof(*shop_index));
+  TEST_ASSERT_NOT_NULL(shop_index);
+  top_shop = 0;
+  shop_index[0].vnum = 3000;
+  shop_index[0].keeper = 1;             /* mob 1201 */
+  shop_index[0].func = test_guild_proc;
+
+  memset(&scratch, 0, sizeof(scratch));
+  S_KEEPER(&scratch) = 1;
+  OLC_SHOP(d) = &scratch;
+  OLC_NUM(d) = 3000;
+  OLC_MODE(d) = SEDIT_KEEPER;
+  sedit_parse(d, "1202");
+  sedit_save_internally(d);
+  OLC_SHOP(d) = NULL;
+
+  TEST_ASSERT_EQUAL_PTR(questmaster, mob_index[1].func);
+  TEST_ASSERT_EQUAL_PTR(test_guild_proc, aquest_table[0].func);
+  TEST_ASSERT_EQUAL_PTR(shop_keeper, mob_index[2].func);
+
+  free(shop_index); shop_index = NULL;
+  top_shop = -1;
+  free_questmaster_1201();
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -2500,5 +2685,9 @@ int main(void)
   RUN_TEST(test_zedit_save_appends_a_new_room_block);
   RUN_TEST(test_zedit_save_refuses_unset_mob_and_trigger_args);
   RUN_TEST(test_zedit_menu_reports_unset_mob_and_trigger_args);
+  RUN_TEST(test_sedit_delete_index_outside_list_is_refused_and_explained);
+  RUN_TEST(test_sedit_keeper_running_shop_through_questmaster_is_not_rewrapped);
+  RUN_TEST(test_sedit_plain_questmaster_keeper_is_wrapped_once);
+  RUN_TEST(test_sedit_keeper_change_restores_questmaster_keepers_proc);
   return UNITY_END();
 }

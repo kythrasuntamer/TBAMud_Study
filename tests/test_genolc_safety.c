@@ -183,6 +183,7 @@ char *one_argument(char *argument, char *first_arg)
   return argument;
 }
 SPECIAL(questmaster) { (void)ch; (void)me; (void)cmd; (void)argument; return 0; }
+SPECIAL(shop_keeper) { (void)ch; (void)me; (void)cmd; (void)argument; return 0; }
 /* delete_quest() (genqst.c) finds the questmaster's secondary spec proc
  * through quest.c's quest_qm_secondary(), not linked here; same logic. */
 quest_spec_proc *quest_qm_secondary(mob_vnum qm)
@@ -196,6 +197,19 @@ quest_spec_proc *quest_qm_secondary(mob_vnum qm)
         QST_FUNC(rnum) != questmaster)
       return QST_FUNC(rnum);
   return NULL;
+}
+/* add_quest() (genqst.c) records the questmaster's original spec proc on
+ * every quest of that mob through quest.c's quest_set_qm_secondary(), not
+ * linked here; same logic. */
+void quest_set_qm_secondary(mob_vnum qm, quest_spec_proc *func)
+{
+  qst_rnum rnum;
+
+  if (qm == NOBODY || func == questmaster)
+    return;
+  for (rnum = 0; rnum < total_quests; rnum++)
+    if (QST_MASTER(rnum) == qm)
+      QST_FUNC(rnum) = func;
 }
 
 void free_ex_descriptions(struct extra_descr_data *ex)
@@ -1722,6 +1736,304 @@ static void create_new_zone_renumbers_reset_queue(void)
 }
 
 /* ------------------------------------------------------------------------ */
+/* Leftovers 1: add_room() refuses a zone rnum outside zone_table.          */
+/* ------------------------------------------------------------------------ */
+
+/* Both the insert and the update path indexed zone_table[room->zone] for the
+ * save list (an ASan heap overflow for zone rnum 5 of a one-zone table). */
+static void add_room_refuses_out_of_range_zone(void)
+{
+  struct room_data nr;
+  make_zones(1); make_rooms(2);       /* vnums 10 20 */
+  memset(&nr, 0, sizeof(nr));
+  nr.number = 15;                      /* new: would be inserted */
+  nr.zone = 5;
+  nr.name = "n";
+  nr.description = "d";
+  TEST_ASSERT_EQUAL_UINT(NOWHERE, add_room(&nr));
+  TEST_ASSERT_EQUAL_UINT(1, top_of_world);
+  TEST_ASSERT_EQUAL_INT(20, world[1].number);
+  TEST_ASSERT_EQUAL_STRING("room-add-zone", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "room vnum 15: zone rnum 5"));
+
+  tb_error_capture_reset();
+  nr.number = 20;                      /* existing: would be updated */
+  nr.zone = NOWHERE;
+  TEST_ASSERT_EQUAL_UINT(NOWHERE, add_room(&nr));
+  TEST_ASSERT_EQUAL_STRING("room", world[1].name);
+  TEST_ASSERT_EQUAL_STRING("room-add-zone", tb_captured_operation);
+  TEST_ASSERT_EQUAL_INT(0, save_list_adds);
+}
+
+/* ------------------------------------------------------------------------ */
+/* Leftovers 2: save_rooms() keeps the previous file after a write error,   */
+/* like the other writers (C2-16 above).                                    */
+/* ------------------------------------------------------------------------ */
+static void save_rooms_keeps_previous_file_after_stream_error(void)
+{
+  make_zones(1); make_rooms(2);
+  write_text_file(WLD_PREFIX "/0.wld", "previous\n");
+  poison_next_write_stream = 1;
+  check_previous_file_kept(save_rooms(0), WLD_PREFIX "/0.wld", WLD_PREFIX "/0.new");
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "zone 0 rooms"));
+
+  /* A clean stream still commits. */
+  tb_error_capture_reset();
+  TEST_ASSERT_TRUE(save_rooms(0));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  TEST_ASSERT_FALSE(file_exists(WLD_PREFIX "/0.new"));
+}
+
+/* ------------------------------------------------------------------------ */
+/* Leftovers 3: delete_room() frees the strings of a 'V' command it         */
+/* cancels; destroy_db() frees them for 'V' alone, so a '*' leaked them.    */
+/* ------------------------------------------------------------------------ */
+static void delete_room_frees_cancelled_var_strings(void)
+{
+  static const int args[][3] = { { WLD_TRIGGER, 0, 1 },   /* 'V' in rnum 1 */
+                                 { WLD_TRIGGER, 0, 2 },   /* 'V' in rnum 2 */
+                                 { 1, 0, 0 } };           /* 'D' in rnum 1 */
+  make_zones(1); make_rooms(3);       /* vnums 10 20 30 */
+  set_zone_cmds(0, "VVD", args);
+  zone_table[0].cmd[0].sarg1 = strdup("gone");
+  zone_table[0].cmd[0].sarg2 = strdup("value");
+  zone_table[0].cmd[1].sarg1 = strdup("kept");
+  zone_table[0].cmd[1].sarg2 = strdup("value");
+
+  TEST_ASSERT_TRUE(delete_room(1));
+
+  TEST_ASSERT_EQUAL_INT('*', zone_table[0].cmd[0].command);
+  TEST_ASSERT_NULL(zone_table[0].cmd[0].sarg1);
+  TEST_ASSERT_NULL(zone_table[0].cmd[0].sarg2);
+  TEST_ASSERT_EQUAL_INT('V', zone_table[0].cmd[1].command);
+  TEST_ASSERT_EQUAL_INT(1, zone_table[0].cmd[1].arg3);
+  TEST_ASSERT_EQUAL_STRING("kept", zone_table[0].cmd[1].sarg1);
+  TEST_ASSERT_EQUAL_INT('*', zone_table[0].cmd[2].command);
+  free(zone_table[0].cmd[1].sarg1);
+  free(zone_table[0].cmd[1].sarg2);
+}
+
+/* ------------------------------------------------------------------------ */
+/* O4: add_quest() never wraps a shop_keeper that already chains to         */
+/* questmaster(); the two procs called each other until the stack ran out. */
+/* ------------------------------------------------------------------------ */
+
+/* Follow mob rnum r's spec procs the way the runtime dispatches them:
+ * shop_keeper() calls the S_FUNC of the first shop r keeps, questmaster()
+ * the secondary proc quest_qm_secondary() finds on r's quests.  Returns the
+ * number of wrapper calls before an ordinary proc (or none) ends the chain,
+ * or -1 when a wrapper would run a second time: an endless loop. */
+static int spec_chain_length(mob_rnum r)
+{
+  SPECIAL((*proc)) = mob_index[r].func;
+  int calls = 0, seen_shop = 0, seen_quest = 0, i;
+
+  for (;;) {
+    if (proc == shop_keeper) {
+      if (seen_shop++)
+        return -1;
+      for (i = 0; i <= top_shop && SHOP_KEEPER(i) != r; i++)
+        ;
+      proc = i <= top_shop ? SHOP_FUNC(i) : NULL;
+    } else if (proc == questmaster) {
+      if (seen_quest++)
+        return -1;
+      proc = quest_qm_secondary(mob_index[r].vnum);
+    } else
+      return calls;
+    calls++;
+  }
+}
+
+/* Mob 3001 (rnum 1) keeps shop 5, whose secondary proc is shop_func. */
+static void make_keeper_3001(SPECIAL((*shop_func)))
+{
+  make_zones(1); make_mobs(2, 3000);
+  make_shop(5, NULL, 0);
+  shop_index[0].keeper = 1;
+  shop_index[0].func = shop_func;
+  mob_index[1].func = shop_keeper;
+}
+
+static void free_quest_table_strings(void)
+{
+  qst_rnum i;
+  for (i = 0; i < total_quests; i++)
+    free_quest_strings(&aquest_table[i]);
+}
+
+/* assign_the_shopkeepers() then assign_the_quests() at boot, or a qedit
+ * save: questmaster() -> shop_keeper() -> the original proc.  Saving the
+ * quest again changes nothing. */
+static void add_quest_wraps_a_plain_keeper_once(void)
+{
+  struct aq_data q;
+  make_keeper_3001(original_spec);
+  memset(&q, 0, sizeof(q));
+  q.vnum = 7;
+  q.qm = 3001;
+
+  add_quest(&q);
+  TEST_ASSERT_EQUAL_PTR(questmaster, mob_index[1].func);
+  TEST_ASSERT_EQUAL_PTR(shop_keeper, QST_FUNC(0));
+  TEST_ASSERT_EQUAL_INT(2, spec_chain_length(1));
+
+  q.func = QST_FUNC(0);                /* qedit's copy of the live quest */
+  add_quest(&q);
+  TEST_ASSERT_EQUAL_PTR(questmaster, mob_index[1].func);
+  TEST_ASSERT_EQUAL_PTR(shop_keeper, QST_FUNC(0));
+  TEST_ASSERT_EQUAL_INT(2, spec_chain_length(1));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  free_quest_table_strings();
+}
+
+/* sedit made a questmaster the keeper: shop_keeper() -> questmaster().
+ * Wrapping that shop_keeper in questmaster made the loop. */
+static void add_quest_does_not_rewrap_a_shop_running_questmaster(void)
+{
+  struct aq_data q;
+  make_keeper_3001(questmaster);
+  memset(&q, 0, sizeof(q));
+  q.vnum = 7;
+  q.qm = 3001;
+
+  add_quest(&q);
+  TEST_ASSERT_EQUAL_PTR(shop_keeper, mob_index[1].func);
+  TEST_ASSERT_NULL(QST_FUNC(0));
+  TEST_ASSERT_EQUAL_INT(2, spec_chain_length(1));
+  TEST_ASSERT_EQUAL_STRING("spec-proc-cycle", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail,
+                              "quest vnum 7: questmaster mob vnum 3001 already runs questmaster through shop_keeper"));
+
+  /* A qedit copy taken while questmaster() still chained to shop_keeper
+   * would close the loop through QST_FUNC: the secondary is dropped. */
+  tb_error_capture_reset();
+  q.func = shop_keeper;
+  add_quest(&q);
+  TEST_ASSERT_EQUAL_PTR(shop_keeper, mob_index[1].func);
+  TEST_ASSERT_NULL(QST_FUNC(0));
+  TEST_ASSERT_EQUAL_INT(2, spec_chain_length(1));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "secondary proc leads back to questmaster; dropped"));
+  free_quest_table_strings();
+}
+
+/* ------------------------------------------------------------------------ */
+/* Core-utils follow-up: a GET_WAS_IN that was the deleted room becomes the */
+/* character's start room, by vnum; it used to be the Void (rnum 0), where  */
+/* an idle player was put back on their next command and stranded.         */
+/* ------------------------------------------------------------------------ */
+static void delete_room_sends_was_in_to_start_room(void)
+{
+  struct char_data mortal, immortal, frozen, elsewhere;
+  make_zones(1); make_rooms(5);        /* vnums 10 20 30 40 50 */
+  CONFIG_MORTAL_START = 40;
+  CONFIG_IMMORTAL_START = 30;
+  CONFIG_FROZEN_START = 10;
+  r_mortal_start_room = 3;
+  r_immort_start_room = 2;
+  r_frozen_start_room = 0;
+  memset(&mortal, 0, sizeof(mortal));
+  memset(&immortal, 0, sizeof(immortal));
+  memset(&frozen, 0, sizeof(frozen));
+  memset(&elsewhere, 0, sizeof(elsewhere));
+  mortal.next = &immortal;
+  immortal.next = &frozen;
+  frozen.next = &elsewhere;
+  character_list = &mortal;
+  mortal.was_in_room = immortal.was_in_room = frozen.was_in_room = 1;   /* vnum 20 */
+  immortal.player.level = LVL_IMMORT;
+  SET_BIT_AR(PLR_FLAGS(&frozen), PLR_FROZEN);
+  elsewhere.was_in_room = 4;           /* vnum 50 */
+
+  TEST_ASSERT_TRUE(delete_room(1));
+
+  TEST_ASSERT_EQUAL_INT(40, world[mortal.was_in_room].number);
+  TEST_ASSERT_EQUAL_INT(30, world[immortal.was_in_room].number);
+  TEST_ASSERT_EQUAL_INT(10, world[frozen.was_in_room].number);
+  TEST_ASSERT_EQUAL_INT(50, world[elsewhere.was_in_room].number);
+  TEST_ASSERT_EQUAL_INT(3, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("room-delete-wasin", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail,
+                              "was_in room vnum 20, which was deleted; now start room vnum 10"));
+
+  /* A start vnum with no room falls back to the (renumbered) mortal start
+   * room.  Rooms are now 10 30 40 50. */
+  tb_error_capture_reset();
+  CONFIG_MORTAL_START = 99;
+  mortal.next = NULL;
+  mortal.was_in_room = 3;              /* vnum 50 */
+  TEST_ASSERT_TRUE(delete_room(3));
+  TEST_ASSERT_EQUAL_INT(40, world[mortal.was_in_room].number);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "now start room vnum 40"));
+
+  character_list = NULL;
+  CONFIG_MORTAL_START = CONFIG_IMMORTAL_START = CONFIG_FROZEN_START = 0;
+  r_mortal_start_room = r_immort_start_room = r_frozen_start_room = 0;
+}
+
+/* ------------------------------------------------------------------------ */
+/* Leftovers round 2: delete_quest() keeps the questmaster's other procs    */
+/* and never leaves a proc calling itself.                                  */
+/* ------------------------------------------------------------------------ */
+
+/* sedit made the questmaster a keeper: shop_keeper() -> questmaster() ->
+ * original.  Deleting its last quest takes questmaster out of the shop; it
+ * used to overwrite shop_keeper itself with the original, closing the
+ * shop. */
+static void delete_quest_keeps_the_shop_of_a_keeper_questmaster(void)
+{
+  make_keeper_3001(questmaster);
+  make_quest(7, 3001);                 /* secondary original_spec */
+  TEST_ASSERT_TRUE(delete_quest(0));
+  TEST_ASSERT_EQUAL_PTR(shop_keeper, mob_index[1].func);
+  TEST_ASSERT_EQUAL_PTR(original_spec, shop_index[0].func);
+  TEST_ASSERT_EQUAL_INT(1, spec_chain_length(1));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+}
+
+/* Boot order: questmaster() -> shop_keeper() -> original, the secondary on
+ * quest 7 only.  Deleting quest 7 hands it to quest 8, which questmaster()
+ * calls now; it used to be dropped, and the shop with it. */
+static void delete_quest_hands_the_secondary_to_a_remaining_quest(void)
+{
+  make_keeper_3001(original_spec);
+  mob_index[1].func = questmaster;
+  total_quests = 2;
+  CREATE(aquest_table, struct aq_data, 2);
+  aquest_table[0].vnum = 7;
+  aquest_table[0].qm = 3001;
+  aquest_table[0].func = shop_keeper;
+  aquest_table[1].vnum = 8;
+  aquest_table[1].qm = 3001;
+
+  TEST_ASSERT_TRUE(delete_quest(0));
+  TEST_ASSERT_EQUAL_PTR(questmaster, mob_index[1].func);
+  TEST_ASSERT_EQUAL_PTR(shop_keeper, QST_FUNC(0));
+  TEST_ASSERT_EQUAL_INT(2, spec_chain_length(1));
+
+  /* The last quest goes: shop_keeper takes questmaster's place. */
+  TEST_ASSERT_TRUE(delete_quest(0));
+  TEST_ASSERT_EQUAL_PTR(shop_keeper, mob_index[1].func);
+  TEST_ASSERT_EQUAL_INT(1, spec_chain_length(1));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+}
+
+/* A questmaster mob that runs some other proc keeps it, reported; it used
+ * to get the quest's secondary (here none) in its place. */
+static void delete_quest_leaves_an_unrelated_proc(void)
+{
+  make_zones(1); make_mobs(2, 3000);
+  make_quest(7, 3001);
+  aquest_table[0].func = NULL;
+  mob_index[1].func = original_spec;
+  TEST_ASSERT_TRUE(delete_quest(0));
+  TEST_ASSERT_EQUAL_PTR(original_spec, mob_index[1].func);
+  TEST_ASSERT_EQUAL_STRING("quest-delete-qm-proc", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "quest vnum 7: questmaster mob vnum 3001"));
+}
+
+/* ------------------------------------------------------------------------ */
 /* Temporary world directory for the writers.                               */
 /* ------------------------------------------------------------------------ */
 static char test_root[] = "/tmp/tb-genolc-XXXXXX";
@@ -1834,6 +2146,15 @@ int main(void)
   RUN_TEST(writers_keep_previous_file_after_stream_error);
   RUN_TEST(add_cmd_to_list_appends_past_the_end);
   RUN_TEST(create_new_zone_renumbers_reset_queue);
+  RUN_TEST(add_room_refuses_out_of_range_zone);
+  RUN_TEST(save_rooms_keeps_previous_file_after_stream_error);
+  RUN_TEST(delete_room_frees_cancelled_var_strings);
+  RUN_TEST(add_quest_wraps_a_plain_keeper_once);
+  RUN_TEST(add_quest_does_not_rewrap_a_shop_running_questmaster);
+  RUN_TEST(delete_room_sends_was_in_to_start_room);
+  RUN_TEST(delete_quest_keeps_the_shop_of_a_keeper_questmaster);
+  RUN_TEST(delete_quest_hands_the_secondary_to_a_remaining_quest);
+  RUN_TEST(delete_quest_leaves_an_unrelated_proc);
   failures = UNITY_END();
   leave_test_root();
   return failures;

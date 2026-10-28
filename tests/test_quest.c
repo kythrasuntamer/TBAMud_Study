@@ -11,6 +11,7 @@
 #include "db.h"
 #include "handler.h"
 #include "quest.h"
+#include "shop.h"
 #include "interpreter.h"
 #include <stdarg.h>
 #include "tb_error_capture.h"
@@ -405,6 +406,11 @@ static void test_questmaster_finds_secondary_on_any_quest(void)
 }
 
 /* genqst.c fixtures for delete_quest(). */
+/* delete_quest() takes questmaster() out of a shop a questmaster keeps
+ * (delete_quest_unwrap()); shop.c is not linked and there are no shops. */
+struct shop_data *shop_index;
+int top_shop = -1;
+SPECIAL(shop_keeper) { (void)ch; (void)me; (void)cmd; (void)argument; return FALSE; }
 zone_rnum real_zone_by_thing(room_vnum vznum) { (void)vznum; return NOWHERE; }
 void add_to_save_list(zone_vnum zone, int type) { (void)zone; (void)type; }
 void *tb_realloc_array_at(void *ptr, size_t count, size_t element_size,
