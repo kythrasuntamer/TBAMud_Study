@@ -768,8 +768,8 @@ FILE *objsave_open_staged(const char *dest, char *temp, size_t temp_size)
 void objsave_abort_staged(FILE *fp, const char *temp)
 {
   if (fp)
-    fclose(fp);
-  unlink(temp);
+    (void) fclose(fp);	/* discarding the staged file; nothing to keep */
+  (void) unlink(temp);
 }
 
 /** Flush, close and commit a staged file over dest. Always closes fp.

@@ -96,8 +96,8 @@ int objsave_commit_staged(FILE *fp, const char *temp, const char *dest)
 void objsave_abort_staged(FILE *fp, const char *temp)
 {
   if (fp)
-    fclose(fp);
-  unlink(temp);
+    (void) fclose(fp);
+  (void) unlink(temp);
 }
 /* Vnum 300 is the only object prototype (rnum 0); used by asciiconvert. */
 static int live_objects;
