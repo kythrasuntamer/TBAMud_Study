@@ -1354,6 +1354,37 @@ ACMD(do_help)
   page_string(ch->desc, help_table[mid].entry, 0);
 }
 
+/* A player's class index for who/users.
+ *
+ * GET_CLASS is loaded from the player file (Clas) and is not re-validated
+ * at login, so a corrupt or hand-edited pfile can hold any value. Those
+ * listings shift by it ('who -c') and index class_abbrevs[] (CLASS_ABBR),
+ * which is undefined for values outside 0..NUM_CLASSES-1. NPCs have no
+ * class: CLASS_ABBR prints "--" for them and no class filter matches. */
+static bool who_class_index_ok(const struct char_data *tch)
+{
+  if (IS_NPC(tch) || (GET_CLASS(tch) >= 0 && GET_CLASS(tch) < NUM_CLASSES))
+    return TRUE;
+  TB_ERROR_MSG("act", "class-range", "class_abbrevs",
+               DIAG_CHAR_FMT " has class %d outside 0..%d",
+               DIAG_CHAR(tch), (int) GET_CLASS(tch), NUM_CLASSES - 1);
+  return FALSE;
+}
+
+/* CLASS_ABBR, or "??" (reported) for an out-of-range class. */
+static const char *who_class_abbr(const struct char_data *tch)
+{
+  return who_class_index_ok(tch) ? CLASS_ABBR(tch) : "??";
+}
+
+/* TRUE if tch's class is in a 'who/users -c' class bit mask. */
+static bool who_class_in_mask(int showclass, const struct char_data *tch)
+{
+  if (IS_NPC(tch) || !who_class_index_ok(tch))
+    return FALSE;
+  return (showclass & (1 << GET_CLASS(tch))) != 0;
+}
+
 #define WHO_FORMAT \
 "Usage: who [minlev[-maxlev]] [-n name] [-c classlist] [-k] [-l] [-n] [-q] [-r] [-s] [-z]\r\n"
 
@@ -1462,7 +1493,7 @@ ACMD(do_who)
         continue;
       if (who_room && (IN_ROOM(tch) != IN_ROOM(ch)))
         continue;
-      if (showclass && !(showclass & (1 << GET_CLASS(tch))))
+      if (showclass && !who_class_in_mask(showclass, tch))
         continue;
       if (showgroup && !GROUP(tch))
         continue;
@@ -1506,7 +1537,7 @@ ACMD(do_who)
         continue;
       if (who_room && (IN_ROOM(tch) != IN_ROOM(ch)))
         continue;
-      if (showclass && !(showclass & (1 << GET_CLASS(tch))))
+      if (showclass && !who_class_in_mask(showclass, tch))
         continue;
       if (showgroup && !GROUP(tch))
         continue;
@@ -1516,13 +1547,13 @@ ACMD(do_who)
       if (short_list) {
         send_to_char(ch, "%s[%2d %s] %-12.12s%s%s",
           (GET_LEVEL(tch) >= LVL_IMMORT ? CCYEL(ch, C_SPR) : ""),
-          GET_LEVEL(tch), CLASS_ABBR(tch), GET_NAME(tch),
+          GET_LEVEL(tch), who_class_abbr(tch), GET_NAME(tch),
           CCNRM(ch, C_SPR), ((!(++num_can_see % 4)) ? "\r\n" : ""));
       } else {
         num_can_see++;
         send_to_char(ch, "%s[%2d %s] %s%s%s%s",
             (GET_LEVEL(tch) >= LVL_IMMORT ? CCYEL(ch, C_SPR) : ""),
-            GET_LEVEL(tch), CLASS_ABBR(tch),
+            GET_LEVEL(tch), who_class_abbr(tch),
             GET_NAME(tch), (*GET_TITLE(tch) ? " " : ""), GET_TITLE(tch),
             CCNRM(ch, C_SPR));
 
@@ -1699,17 +1730,17 @@ ACMD(do_users)
       if (outlaws && !PLR_FLAGGED(tch, PLR_KILLER) &&
       !PLR_FLAGGED(tch, PLR_THIEF))
         continue;
-      if (showclass && !(showclass & (1 << GET_CLASS(tch))))
+      if (showclass && !who_class_in_mask(showclass, tch))
         continue;
       if (GET_INVIS_LEV(tch) > GET_LEVEL(ch))
         continue;
 
       if (d->original)
     tb_snprintf(classname, sizeof(classname), "[%2d %s]", GET_LEVEL(d->original),
-        CLASS_ABBR(d->original));
+        who_class_abbr(d->original));
       else
     tb_snprintf(classname, sizeof(classname), "[%2d %s]", GET_LEVEL(d->character),
-        CLASS_ABBR(d->character));
+        who_class_abbr(d->character));
     } else
       strlcpy(classname, "   -   ", sizeof(classname));
 

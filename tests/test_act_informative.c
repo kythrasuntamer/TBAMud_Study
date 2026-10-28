@@ -12,6 +12,7 @@
 #include "db.h"
 #include "act.h"
 #include "quest.h"
+#include "class.h"
 
 #include "tb_error_capture.h"
 
@@ -35,6 +36,7 @@ struct zone_data *zone_table = NULL;
 zone_rnum top_of_zone_table = 0;
 FILE *logfile = NULL;
 struct weather_data weather_info;
+struct descriptor_data *descriptor_list = NULL;
 
 
 /* --- Fixtures for functions outside act.informative.c ------------------- */
@@ -58,6 +60,25 @@ char *one_argument(char *argument, char *first_arg)
   first_arg[n] = '\0';
   return argument;
 }
+void skip_spaces(char **string)
+{
+  while (**string == ' ')
+    (*string)++;
+}
+void half_chop(char *string, char *arg1, char *arg2)
+{
+  char *rest = one_argument(string, arg1);
+
+  while (*rest == ' ')
+    rest++;
+  strlcpy(arg2, rest, MAX_INPUT_LENGTH);
+}
+/* Every class letter selects every class. */
+bitvector_t find_class_bitvector(const char *arg)
+{ (void)arg; return (1 << NUM_CLASSES) - 1; }
+/* The real class table (class.c is not linked). */
+const char *class_abbrevs[] = { "Wi", "Cl", "Th", "Wa", "Mo", "\n" };
+struct happyhour happy_data;
 /* act() output is not under test; the formatter has its own tests. */
 char *act_at(const char *src_file, int src_line, const char *src_func,
              const char *str, int hide_invisible, struct char_data *ch,
@@ -186,6 +207,7 @@ static struct char_data *make_player(long idnum)
   ch->player_specials = calloc(1, sizeof(*ch->player_specials));
   TEST_ASSERT_NOT_NULL(ch->player_specials);
   ch->player.name = strdup("Tester");
+  ch->player.title = (char *)"";
   ch->player.time.logon = time(0);
   ch->player.time.birth = time(0);
   GET_IDNUM(ch) = idnum;
@@ -476,6 +498,51 @@ static void areas_truncates_long_listing_and_reports(void)
   free_player(ch);
 }
 
+/* --- G2-12: a player class outside class_abbrevs[] -------------------- */
+
+static void who_reports_class_out_of_range(void)
+{
+  struct char_data *ch = make_player(7);
+  struct char_data *odd = make_player(8);
+  struct descriptor_data odd_desc;
+
+  enter_test_room(ch);
+  viewer_desc.character = ch;
+  STATE(&viewer_desc) = CON_PLAYING;
+  memset(&odd_desc, 0, sizeof(odd_desc));
+  odd_desc.character = odd;
+  STATE(&odd_desc) = CON_PLAYING;
+  odd->desc = &odd_desc;
+  IN_ROOM(odd) = 0;
+  ch->next_in_room = odd;
+  free(odd->player.name);
+  odd->player.name = strdup("Victim");
+  GET_CLASS(odd) = 40;          /* corrupt 'Clas' in the player file */
+  descriptor_list = &odd_desc;
+
+  do_who(ch, (char *)"", 0, 0);
+  /* class_abbrevs[40] read an unrelated global before the fix. */
+  TEST_ASSERT_NOT_NULL(strstr(sent, "[ 1 ??] Victim"));
+  TEST_ASSERT_TRUE(tb_captured_errors >= 1);
+  TEST_ASSERT_EQUAL_STRING("class-range", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "player idnum 8 has class 40"));
+
+  /* 'who -c' shifted 1 << 40 (UBSan) before the fix; it now matches nothing. */
+  sent[0] = '\0';
+  tb_error_capture_reset();
+  do_who(ch, (char *)"-c mctwk", 0, 0);
+  TEST_ASSERT_NULL(strstr(sent, "Victim"));
+  TEST_ASSERT_TRUE(tb_captured_errors >= 1);
+  TEST_ASSERT_EQUAL_STRING("class-range", tb_captured_operation);
+
+  descriptor_list = NULL;
+  ch->next_in_room = NULL;
+  odd->desc = NULL;
+  leave_test_room(ch);
+  free_player(odd);
+  free_player(ch);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -490,5 +557,6 @@ int main(void)
   RUN_TEST(look_reports_mob_position_out_of_range);
   RUN_TEST(look_reports_room_sector_out_of_range);
   RUN_TEST(areas_truncates_long_listing_and_reports);
+  RUN_TEST(who_reports_class_out_of_range);
   return UNITY_END();
 }
