@@ -266,7 +266,7 @@ static const char *tb_error_id_for(const char *subsystem, const char *operation,
     if (!str_cmp(subsystem, "PARSER"))
       return TB_ERRID_PARSER_MALFORMED;
     if (!str_cmp(subsystem, "PERSISTENCE"))
-      return (!str_cmp(operation ? operation : "", "rollback"))
+      return (!str_cmp(NULLSTR(operation), "rollback"))
                ? TB_ERRID_PERSIST_ROLLBACK : TB_ERRID_PERSIST_WRITE;
     if (!str_cmp(subsystem, "NETWORK"))
       return TB_ERRID_NETWORK_IO;
@@ -2404,7 +2404,7 @@ char *strpaste(char *str1, char *str2, char *joiner)
   static char ret[MAX_STRING_LENGTH + 1];
   const char *sp1 = str1 ? str1 : "";
   const char *sp2 = str2 ? str2 : "";
-  const char *safe_joiner = joiner ? joiner : "";
+  const char *safe_joiner = NULLSTR(joiner);
   size_t used = 0;
   size_t jlen = strlen(safe_joiner);
 

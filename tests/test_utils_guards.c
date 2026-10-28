@@ -643,6 +643,18 @@ void test_an_handles_empty_and_null(void)
   TEST_ASSERT_EQUAL_STRING("a", TANA(none));
 }
 
+void test_nullstr_maps_null_to_empty(void)
+{
+  const char *none = NULL;
+  int calls = 0;
+
+  TEST_ASSERT_EQUAL_STRING("", NULLSTR(none));
+  TEST_ASSERT_EQUAL_STRING("x", NULLSTR("x"));
+  /* The argument is evaluated once. */
+  TEST_ASSERT_EQUAL_STRING("", NULLSTR((calls++, none)));
+  TEST_ASSERT_EQUAL_INT(1, calls);
+}
+
 /* =====================================================================
  * G2-12: CLASS_ABBR range-checks a pfile class before indexing
  * class_abbrevs[], and reports the player and the caller.
@@ -747,6 +759,7 @@ int main(void)
   RUN_TEST(test_get_filename_rejects_path_traversal);
   RUN_TEST(test_get_filename_accepts_player_name);
   RUN_TEST(test_an_handles_empty_and_null);
+  RUN_TEST(test_nullstr_maps_null_to_empty);
   RUN_TEST(test_class_abbr_out_of_range_class_reports_caller);
   RUN_TEST(test_class_abbr_valid_class_and_npc_are_silent);
   RUN_TEST(test_table_name_out_of_range_reports_caller);

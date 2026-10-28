@@ -444,6 +444,16 @@ static inline int tb_starts_with_vowel(const char *s)
  * "a". */
 #define AN(string) (STARTS_WITH_VOWEL(string) ? "an" : "a")
 
+/** s, or "" when s is NULL. For "%s" arguments and string comparisons that
+ * may meet NULL: world strings fread_string() stored as NULL, unset OLC
+ * fields, optional parameters. Passing NULL to "%s" is undefined behaviour.
+ * s is evaluated once. */
+static inline const char *tb_nullstr(const char *s)
+{
+  return s != NULL ? s : "";
+}
+#define NULLSTR(s) tb_nullstr((s))
+
 /** A calloc based memory allocation macro.
  * Contract: number is converted to size_t once; a count of 0, or one whose
  * byte size overflows, is reported as a FATAL allocation-size error and the
