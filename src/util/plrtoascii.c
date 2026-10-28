@@ -169,6 +169,29 @@ void convert(char *filename)
     TB_REPORT_ERRNO("fopen", filename);
     exit(1);
   }
+  /* The playerfile is an array of raw structs written by the old server, so
+   * its size must be a whole number of records of the layout compiled here.
+   * Any remainder means a truncated file or a writer with a different ABI
+   * (time_t/long width, padding): every field after the first mismatch would
+   * be garbage, so refuse the whole file before writing anything. */
+  {
+    struct stat st;
+
+    if (fstat(fileno(fl), &st) != 0) {
+      TB_REPORT_ERRNO("fstat", filename);
+      exit(1);
+    }
+    if (st.st_size <= 0 ||
+        (unsigned long long)st.st_size % sizeof(struct char_file_u_plrtoascii) != 0) {
+      TB_REPORT_DOMAIN_ERRORF(TB_SEV_FATAL, TB_ERR_PERSISTENCE, "plrfile-size",
+                              "file=%s size=%lld record_size=%zu: not a whole "
+                              "number of records (truncated file or a "
+                              "playerfile written with a different ABI)",
+                              filename, (long long)st.st_size,
+                              sizeof(struct char_file_u_plrtoascii));
+      exit(1);
+    }
+  }
   tb_snprintf(index_name, sizeof(index_name), "%s%s", LIB_PLRFILES, INDEX_FILE);
   if (!(index_file = fopen(index_name, "w"))) {
     TB_REPORT_ERRNO("fopen", index_name);

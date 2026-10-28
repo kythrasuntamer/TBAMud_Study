@@ -91,6 +91,29 @@ def autowiz_reports_malformed_record(tmp):
     check("line=2 field=level id=2" in err, err)
 
 
+# ------------------------------------------------------------- plrtoascii
+
+def plr_record_size(tmp):
+    """Learn sizeof(struct char_file_u_plrtoascii) from the size diagnostic."""
+    write(os.path.join(tmp, "probe"), b"x")
+    os.makedirs(os.path.join(tmp, "plrfiles"), exist_ok=True)
+    rc, out, err = run("plrtoascii", ["probe"], tmp)
+    m = re.search(r"record_size=(\d+)", err)
+    check(rc == 1 and m, "no record size reported: rc=%d\n%s" % (rc, err))
+    return int(m.group(1))
+
+
+@test("plrtoascii")
+def plrtoascii_rejects_partial_record(tmp):
+    """I2-24: a trailing partial record ended in a silent, successful return."""
+    size = plr_record_size(tmp)
+    write(os.path.join(tmp, "players"), b"\0" * (size + 7))
+    rc, out, err = run("plrtoascii", ["players"], tmp)
+    check(rc == 1, "rc=%d" % rc)
+    check("plrfile-size" in operations(err), err)
+    check("writing:" not in out, "converted despite bad size:\n" + out)
+
+
 def main(argv):
     for arg in argv[1:]:
         name, _, path = arg.partition("=")
