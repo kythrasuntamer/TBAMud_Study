@@ -75,6 +75,7 @@ void setUp(void)
   desc.str = &edit_target;
   STATE(&desc) = CON_PLAYING;
   write_budget = 0;
+  buf_largecount = 0; /* tearDown() freed every pooled buffer */
   written_len = 0;
   written[0] = '\0';
   tb_error_capture_reset();
@@ -138,11 +139,46 @@ static void corrupt_bufptr_is_reported_not_used(void)
   TEST_ASSERT_EQUAL_INT(2, desc.bufptr);
 }
 
+/* A write that overflows an already-large buffer must not take a second
+ * large buffer (the first one leaked); it fills the live one and enters the
+ * reported overflow state. */
+static void overflow_of_large_buffer_keeps_it(void)
+{
+  static char big[30001];
+  struct txt_block *first;
+
+  memset(big, 'a', 2000);
+  big[2000] = '\0';
+  write_to_output(&desc, "%s", big);
+  TEST_ASSERT_NOT_NULL(desc.large_outbuf);
+  first = desc.large_outbuf;
+  TEST_ASSERT_EQUAL_INT(1, buf_largecount);
+
+  memset(big, 'b', 30000);
+  big[30000] = '\0';
+  write_to_output(&desc, "%s", big);
+
+  TEST_ASSERT_EQUAL_PTR(first, desc.large_outbuf);
+  TEST_ASSERT_EQUAL_PTR(first->text, desc.output);
+  TEST_ASSERT_EQUAL_INT(1, buf_largecount);
+  TEST_ASSERT_EQUAL_INT(0, desc.bufspace);
+  TEST_ASSERT_EQUAL_INT(LARGE_BUFSIZE - 1, desc.bufptr);
+  TEST_ASSERT_EQUAL_size_t(LARGE_BUFSIZE - 1, strlen(desc.output));
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("output-overflow", tb_captured_operation);
+  TEST_ASSERT_EQUAL_STRING("WARNING", tb_captured_severity);
+
+  /* Overflow state: later output is discarded until the next flush. */
+  TEST_ASSERT_EQUAL_size_t(0, write_to_output(&desc, "more"));
+  TEST_ASSERT_EQUAL_INT(LARGE_BUFSIZE - 1, desc.bufptr);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
   RUN_TEST(partial_prompt_tail_is_carried_over);
   RUN_TEST(partial_crlf_counts_as_nothing_sent);
   RUN_TEST(corrupt_bufptr_is_reported_not_used);
+  RUN_TEST(overflow_of_large_buffer_keeps_it);
   return UNITY_END();
 }

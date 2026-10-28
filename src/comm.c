@@ -1480,9 +1480,18 @@ size_t vwrite_to_output(struct descriptor_data *t, const char *format, va_list a
    * the new text to make it fit.  (This will switch to the overflow
    * state automatically because t->bufspace will end up 0.) */
   if (size + t->bufptr + 1 > LARGE_BUFSIZE) {
+    int dropped = size - (LARGE_BUFSIZE - t->bufptr - 1);
+
     size = LARGE_BUFSIZE - t->bufptr - 1;
     txt[size] = '\0';
     buf_overflows++;
+    /* Once per overflow episode: afterwards bufspace is 0 and further
+     * output is discarded at the top of this function until the buffer is
+     * flushed (the player sees **OVERFLOW**). Rate-limited because any
+     * player can cause it by requesting enough output. */
+    TB_WARN_EVERY(60, "network", "output-overflow", "vwrite_to_output",
+                  DIAG_DESC_FMT " output buffer full: dropped %d bytes"
+                  " (bufptr=%d)", DIAG_DESC(t), dropped, t->bufptr);
   }
 
   /* If we have enough space, just write to buffer and that's it! If the
@@ -1491,6 +1500,16 @@ size_t vwrite_to_output(struct descriptor_data *t, const char *format, va_list a
     strlcpy(t->output + t->bufptr, txt, (size_t)t->bufspace);	/* strcpy: OK (size checked above) */
     t->bufspace -= size;
     t->bufptr += size;
+    return (t->bufspace);
+  }
+
+  /* Already in the large buffer: the clamp above guarantees the text fits
+   * exactly (size == bufspace), leaving the overflow state. Never switch
+   * again here; that would replace large_outbuf and leak the live one. */
+  if (t->large_outbuf) {
+    strlcpy(t->output + t->bufptr, txt, (size_t)t->bufspace + 1);	/* strcpy: OK (bufptr + bufspace + 1 == LARGE_BUFSIZE) */
+    t->bufptr += size;
+    t->bufspace -= size;
     return (t->bufspace);
   }
 
