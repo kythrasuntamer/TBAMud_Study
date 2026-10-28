@@ -39,6 +39,7 @@
 #include "constants.h"
 #include <float.h>
 #include "shop.h"
+#include "quest.h"
 #include "olc_checks.h"
 
 /* local functions */
@@ -148,6 +149,23 @@ static shop_rnum sedit_other_shop_of_keeper(mob_rnum keeper, shop_rnum skip)
   return NOWHERE;
 }
 
+/* TRUE when mob rnum keeper's spec proc already runs shop_keeper() through
+ * questmaster(): one of its quests keeps shop_keeper as the secondary proc
+ * questmaster() calls first (assign_the_quests() at boot, or add_quest(),
+ * wrapped the shop_keeper of a mob that also gives quests).  Every such
+ * quest counts, not only the one questmaster() picks today. */
+static int sedit_questmaster_runs_shop(mob_rnum keeper)
+{
+  qst_rnum q;
+
+  if (mob_index[keeper].func != questmaster)
+    return FALSE;
+  for (q = 0; q < total_quests; q++)
+    if (QST_MASTER(q) == mob_index[keeper].vnum && QST_FUNC(q) == shop_keeper)
+      return TRUE;
+  return FALSE;
+}
+
 /* Install the shop's keeper in the live mob_index at save time, never
  * while editing: SEDIT_KEEPER only records the choice, so an abandoned edit
  * leaves every mobile's spec proc untouched.
@@ -156,7 +174,9 @@ static shop_rnum sedit_other_shop_of_keeper(mob_rnum keeper, shop_rnum skip)
  * mob_index[].func becomes shop_keeper, and the spec proc it had before is
  * kept in the shop's S_FUNC and called first by shop_keeper. When the
  * keeper changes, the previous keeper gets that spec proc back unless
- * another shop still uses it. */
+ * another shop still uses it.  A keeper that already runs shop_keeper
+ * through questmaster() is left alone (see sedit_questmaster_runs_shop()):
+ * wrapping it again would make each proc call the other forever. */
 static void sedit_install_keeper(struct descriptor_data *d)
 {
   struct shop_data *shop = OLC_SHOP(d);
@@ -180,6 +200,21 @@ static void sedit_install_keeper(struct descriptor_data *d)
     shop_rnum other = sedit_other_shop_of_keeper(new_keeper, existing);
     if (other != NOWHERE)
       S_FUNC(shop) = SHOP_FUNC(other);
+  } else if (sedit_questmaster_runs_shop(new_keeper)) {
+    /* questmaster() -> shop_keeper() already.  Storing questmaster in
+     * S_FUNC and installing shop_keeper would close the loop
+     * shop_keeper() -> questmaster() -> shop_keeper() (a stack overflow on
+     * the next command in the keeper's room).  Leave questmaster() outside;
+     * another shop of this keeper holds its original spec proc. */
+    shop_rnum other = sedit_other_shop_of_keeper(new_keeper, existing);
+    TB_WARN_MSG("olc", "spec-proc-cycle", "mobile",
+                "builder " DIAG_CHAR_FMT " shop vnum %d keeper vnum %d already runs shop_keeper through questmaster; not wrapped again",
+                DIAG_CHAR(builder), OLC_NUM(d), mob_index[new_keeper].vnum);
+    write_to_output(d, "Mobile %d is a questmaster that already runs shop code; "
+                       "its special procedure is left as it is.\r\n", mob_index[new_keeper].vnum);
+    if (other != NOWHERE)
+      S_FUNC(shop) = SHOP_FUNC(other);
+    return;
   } else if (mob_index[new_keeper].func) {
     TB_WARN_MSG("olc", "shop-keeper-func", "mobile",
                 "builder " DIAG_CHAR_FMT " shop vnum %d keeper vnum %d: its spec proc now runs before shop_keeper",

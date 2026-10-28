@@ -15,6 +15,7 @@
 #include "db.h"
 #include "comm.h"
 #include "quest.h"
+#include "shop.h"   /* shop_keeper(), the other spec-proc wrapper */
 #include "genolc.h"
 #include "genzon.h" /* for create_world_index */
 
@@ -32,7 +33,9 @@
  * Questmaster spec procs: a mob that is some quest's questmaster runs
  * questmaster().  If it already had another spec proc, that one is kept in
  * the quest's QST_FUNC and questmaster() chains to it; delete_quest()
- * restores it when the mob is no longer a questmaster of any quest.
+ * restores it when the mob is no longer a questmaster of any quest.  A
+ * shopkeeper whose shop_keeper() already chains to questmaster() is not
+ * wrapped again (add_quest()): the two procs would call each other.
  * Changing a quest's questmaster in qedit does not restore the previous
  * mob's spec proc (it stays questmaster() until reboot).
  */
@@ -99,6 +102,25 @@ void free_quest(struct aq_data *quest)
 
 /*-------------------------------------------------------------------*/
 
+/* TRUE when proc, run for questmaster mob rnum qm, leads back to
+ * questmaster(): it is questmaster itself, or shop_keeper() for a keeper
+ * one of whose shops keeps questmaster as the secondary proc (S_FUNC) that
+ * shop_keeper() calls first (sedit wrapped a questmaster in its shop).
+ * Every such shop counts, not only the one shop_keeper() picks today. */
+static int quest_proc_reaches_questmaster(mob_rnum qm, SPECIAL((*proc)))
+{
+  int s;
+
+  if (proc == questmaster)
+    return TRUE;
+  if (proc != shop_keeper)
+    return FALSE;
+  for (s = 0; s <= top_shop; s++)
+    if (SHOP_KEEPER(s) == qm && SHOP_FUNC(s) == questmaster)
+      return TRUE;
+  return FALSE;
+}
+
 /**
  * Add a quest, or update the quest with the same vnum, from qedit's copy.
  *
@@ -106,7 +128,11 @@ void free_quest(struct aq_data *quest)
  * quests up one slot (their string pointers move with them, so the new
  * slot is filled without freeing).  The questmaster mob (if it has a
  * prototype) gets questmaster() as its spec proc, its previous spec proc
- * being saved in QST_FUNC.
+ * being kept as the secondary proc of every quest of that mob
+ * (quest_set_qm_secondary()), unless that proc already leads to
+ * questmaster() (spec-proc-cycle reported, nothing wrapped).  A QST_FUNC
+ * (from qedit's copy) that would lead back to questmaster() is dropped and
+ * reported the same way.
  *
  * @return The quest's rnum.
  */
@@ -138,12 +164,32 @@ int add_quest(struct aq_data *nqst)
     copy_quest(&aquest_table[rnum], nqst, FALSE);
   }
   qmrnum = real_mobile(QST_MASTER(rnum));
-  /* Make sure we assign spec procs to the questmaster */
-  if (qmrnum != NOBODY && mob_index[qmrnum].func &&
-     mob_index[qmrnum].func != questmaster)
-     quest_set_qm_secondary(QST_MASTER(rnum), mob_index[qmrnum].func);
-  if(qmrnum != NOBODY) 
+  /* Make sure we assign spec procs to the questmaster, but never wrap a
+   * proc that already leads to questmaster(): questmaster itself, or a
+   * shop_keeper() that chains to it.  Wrapping that shop_keeper would close
+   * the loop questmaster() -> shop_keeper() -> questmaster() (a stack
+   * overflow on the next command in the mob's room). */
+  if (qmrnum != NOBODY &&
+      quest_proc_reaches_questmaster(qmrnum, mob_index[qmrnum].func)) {
+    if (mob_index[qmrnum].func != questmaster)
+      TB_WARN_MSG("olc", "spec-proc-cycle", "quest",
+                  "quest vnum %d: questmaster mob vnum %d already runs questmaster through shop_keeper; not wrapped again",
+                  QST_NUM(rnum), QST_MASTER(rnum));
+  } else if (qmrnum != NOBODY) {
+    if (mob_index[qmrnum].func)
+      quest_set_qm_secondary(QST_MASTER(rnum), mob_index[qmrnum].func);
     mob_index[qmrnum].func = questmaster;
+  }
+  /* The secondary questmaster() calls must not lead back to it either: a
+   * qedit copy taken earlier can still hold shop_keeper for a mob whose
+   * shop has since come to chain to questmaster(). */
+  if (qmrnum != NOBODY && QST_FUNC(rnum) &&
+      quest_proc_reaches_questmaster(qmrnum, QST_FUNC(rnum))) {
+    TB_WARN_MSG("olc", "spec-proc-cycle", "quest",
+                "quest vnum %d: questmaster mob vnum %d secondary proc leads back to questmaster; dropped",
+                QST_NUM(rnum), QST_MASTER(rnum));
+    QST_FUNC(rnum) = NULL;
+  }
 
   /* And make sure we save the updated quest information to disk */
   if (rznum != NOWHERE)

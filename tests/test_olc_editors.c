@@ -28,6 +28,7 @@
 #include "genwld.h"
 #include "shop.h"
 #include "genshp.h"
+#include "quest.h"
 #include "olc_checks.h"
 #include "modify.h"
 #include <stdarg.h>
@@ -545,6 +546,12 @@ void free_shop(struct shop_data *shop) { free(shop); }
 void modify_shop_string(char **str, char *newstr) { free(*str); *str = strdup(newstr); }
 static long last_int_list_add = -2;
 void add_shop_to_int_list(IDXTYPE **tlist, IDXTYPE newi) { (void)tlist; last_int_list_add = (long)newi; }
+/* Quest table and questmaster(): sedit checks a keeper's quests before
+ * wrapping its spec proc (O4). */
+struct aq_data *aquest_table = NULL;
+qst_rnum total_quests = 0;
+SPECIAL(questmaster) { (void)ch; (void)me; (void)cmd; (void)argument; return FALSE; }
+
 static long last_int_list_remove = -2, last_type_list_remove = -2;
 void remove_shop_from_int_list(IDXTYPE **list, IDXTYPE num) { (void)list; last_int_list_remove = (long)num; }
 void add_shop_to_type_list(struct shop_buy_data **list, struct shop_buy_data *newl) { (void)list; (void)newl; }
@@ -2504,6 +2511,80 @@ static void test_sedit_delete_index_outside_list_is_refused_and_explained(void)
   top_of_objt = 0;
 }
 
+/* ------------------------------------------------------------------ */
+/* O4: sedit never wraps a questmaster whose quests already chain to   */
+/* shop_keeper (assign_the_quests() leaves a keeper that gives quests  */
+/* like that): shop_keeper -> questmaster -> shop_keeper looped until  */
+/* the stack ran out.                                                  */
+/* ------------------------------------------------------------------ */
+
+/* Mob 1201 (rnum 1) gives quest 50, whose secondary proc is qst_func. */
+static void make_questmaster_1201(SPECIAL((*qst_func)))
+{
+  make_keeper_mobs();
+  mob_index[1].func = questmaster;
+  aquest_table = calloc(1, sizeof(*aquest_table));
+  TEST_ASSERT_NOT_NULL(aquest_table);
+  total_quests = 1;
+  aquest_table[0].vnum = 50;
+  aquest_table[0].qm = 1201;
+  aquest_table[0].func = qst_func;
+}
+
+static void free_questmaster_1201(void)
+{
+  free(aquest_table); aquest_table = NULL;
+  total_quests = 0;
+  free_keeper_mobs();
+}
+
+static void save_shop_3000_with_keeper_1201(struct shop_data *scratch)
+{
+  struct descriptor_data *d = &builder_desc;
+
+  memset(scratch, 0, sizeof(*scratch));
+  S_KEEPER(scratch) = NOBODY;
+  OLC_SHOP(d) = scratch;
+  OLC_NUM(d) = 3000;
+  OLC_MODE(d) = SEDIT_KEEPER;
+  sedit_parse(d, "1201");
+  sedit_save_internally(d);
+  OLC_SHOP(d) = NULL;
+}
+
+static void test_sedit_keeper_running_shop_through_questmaster_is_not_rewrapped(void)
+{
+  struct shop_data scratch;
+
+  make_questmaster_1201(shop_keeper);
+  save_shop_3000_with_keeper_1201(&scratch);
+
+  TEST_ASSERT_EQUAL_PTR(questmaster, mob_index[1].func);
+  TEST_ASSERT_NULL(S_FUNC(&scratch));
+  TEST_ASSERT_EQUAL_PTR(shop_keeper, aquest_table[0].func);
+  TEST_ASSERT_EQUAL_STRING("spec-proc-cycle", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail,
+                              "shop vnum 3000 keeper vnum 1201 already runs shop_keeper through questmaster"));
+  TEST_ASSERT_NOT_NULL(strstr(out_buf, "Mobile 1201 is a questmaster that already runs shop code"));
+  free_questmaster_1201();
+}
+
+/* A questmaster whose quests do not run shop_keeper is wrapped as before:
+ * shop_keeper -> questmaster -> its own secondary, which ends the chain. */
+static void test_sedit_plain_questmaster_keeper_is_wrapped_once(void)
+{
+  struct shop_data scratch;
+
+  make_questmaster_1201(test_guild_proc);
+  save_shop_3000_with_keeper_1201(&scratch);
+
+  TEST_ASSERT_EQUAL_PTR(shop_keeper, mob_index[1].func);
+  TEST_ASSERT_EQUAL_PTR(questmaster, S_FUNC(&scratch));
+  TEST_ASSERT_EQUAL_PTR(test_guild_proc, aquest_table[0].func);
+  TEST_ASSERT_EQUAL_STRING("shop-keeper-func", tb_captured_operation);
+  free_questmaster_1201();
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -2569,5 +2650,7 @@ int main(void)
   RUN_TEST(test_zedit_save_refuses_unset_mob_and_trigger_args);
   RUN_TEST(test_zedit_menu_reports_unset_mob_and_trigger_args);
   RUN_TEST(test_sedit_delete_index_outside_list_is_refused_and_explained);
+  RUN_TEST(test_sedit_keeper_running_shop_through_questmaster_is_not_rewrapped);
+  RUN_TEST(test_sedit_plain_questmaster_keeper_is_wrapped_once);
   return UNITY_END();
 }

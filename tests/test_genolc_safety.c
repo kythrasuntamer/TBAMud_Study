@@ -183,6 +183,7 @@ char *one_argument(char *argument, char *first_arg)
   return argument;
 }
 SPECIAL(questmaster) { (void)ch; (void)me; (void)cmd; (void)argument; return 0; }
+SPECIAL(shop_keeper) { (void)ch; (void)me; (void)cmd; (void)argument; return 0; }
 /* delete_quest() (genqst.c) finds the questmaster's secondary spec proc
  * through quest.c's quest_qm_secondary(), not linked here; same logic. */
 quest_spec_proc *quest_qm_secondary(mob_vnum qm)
@@ -196,6 +197,19 @@ quest_spec_proc *quest_qm_secondary(mob_vnum qm)
         QST_FUNC(rnum) != questmaster)
       return QST_FUNC(rnum);
   return NULL;
+}
+/* add_quest() (genqst.c) records the questmaster's original spec proc on
+ * every quest of that mob through quest.c's quest_set_qm_secondary(), not
+ * linked here; same logic. */
+void quest_set_qm_secondary(mob_vnum qm, quest_spec_proc *func)
+{
+  qst_rnum rnum;
+
+  if (qm == NOBODY || func == questmaster)
+    return;
+  for (rnum = 0; rnum < total_quests; rnum++)
+    if (QST_MASTER(rnum) == qm)
+      QST_FUNC(rnum) = func;
 }
 
 void free_ex_descriptions(struct extra_descr_data *ex)
@@ -1800,6 +1814,110 @@ static void delete_room_frees_cancelled_var_strings(void)
 }
 
 /* ------------------------------------------------------------------------ */
+/* O4: add_quest() never wraps a shop_keeper that already chains to         */
+/* questmaster(); the two procs called each other until the stack ran out. */
+/* ------------------------------------------------------------------------ */
+
+/* Follow mob rnum r's spec procs the way the runtime dispatches them:
+ * shop_keeper() calls the S_FUNC of the first shop r keeps, questmaster()
+ * the secondary proc quest_qm_secondary() finds on r's quests.  Returns the
+ * number of wrapper calls before an ordinary proc (or none) ends the chain,
+ * or -1 when a wrapper would run a second time: an endless loop. */
+static int spec_chain_length(mob_rnum r)
+{
+  SPECIAL((*proc)) = mob_index[r].func;
+  int calls = 0, seen_shop = 0, seen_quest = 0, i;
+
+  for (;;) {
+    if (proc == shop_keeper) {
+      if (seen_shop++)
+        return -1;
+      for (i = 0; i <= top_shop && SHOP_KEEPER(i) != r; i++)
+        ;
+      proc = i <= top_shop ? SHOP_FUNC(i) : NULL;
+    } else if (proc == questmaster) {
+      if (seen_quest++)
+        return -1;
+      proc = quest_qm_secondary(mob_index[r].vnum);
+    } else
+      return calls;
+    calls++;
+  }
+}
+
+/* Mob 3001 (rnum 1) keeps shop 5, whose secondary proc is shop_func. */
+static void make_keeper_3001(SPECIAL((*shop_func)))
+{
+  make_zones(1); make_mobs(2, 3000);
+  make_shop(5, NULL, 0);
+  shop_index[0].keeper = 1;
+  shop_index[0].func = shop_func;
+  mob_index[1].func = shop_keeper;
+}
+
+static void free_quest_table_strings(void)
+{
+  qst_rnum i;
+  for (i = 0; i < total_quests; i++)
+    free_quest_strings(&aquest_table[i]);
+}
+
+/* assign_the_shopkeepers() then assign_the_quests() at boot, or a qedit
+ * save: questmaster() -> shop_keeper() -> the original proc.  Saving the
+ * quest again changes nothing. */
+static void add_quest_wraps_a_plain_keeper_once(void)
+{
+  struct aq_data q;
+  make_keeper_3001(original_spec);
+  memset(&q, 0, sizeof(q));
+  q.vnum = 7;
+  q.qm = 3001;
+
+  add_quest(&q);
+  TEST_ASSERT_EQUAL_PTR(questmaster, mob_index[1].func);
+  TEST_ASSERT_EQUAL_PTR(shop_keeper, QST_FUNC(0));
+  TEST_ASSERT_EQUAL_INT(2, spec_chain_length(1));
+
+  q.func = QST_FUNC(0);                /* qedit's copy of the live quest */
+  add_quest(&q);
+  TEST_ASSERT_EQUAL_PTR(questmaster, mob_index[1].func);
+  TEST_ASSERT_EQUAL_PTR(shop_keeper, QST_FUNC(0));
+  TEST_ASSERT_EQUAL_INT(2, spec_chain_length(1));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  free_quest_table_strings();
+}
+
+/* sedit made a questmaster the keeper: shop_keeper() -> questmaster().
+ * Wrapping that shop_keeper in questmaster made the loop. */
+static void add_quest_does_not_rewrap_a_shop_running_questmaster(void)
+{
+  struct aq_data q;
+  make_keeper_3001(questmaster);
+  memset(&q, 0, sizeof(q));
+  q.vnum = 7;
+  q.qm = 3001;
+
+  add_quest(&q);
+  TEST_ASSERT_EQUAL_PTR(shop_keeper, mob_index[1].func);
+  TEST_ASSERT_NULL(QST_FUNC(0));
+  TEST_ASSERT_EQUAL_INT(2, spec_chain_length(1));
+  TEST_ASSERT_EQUAL_STRING("spec-proc-cycle", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail,
+                              "quest vnum 7: questmaster mob vnum 3001 already runs questmaster through shop_keeper"));
+
+  /* A qedit copy taken while questmaster() still chained to shop_keeper
+   * would close the loop through QST_FUNC: the secondary is dropped. */
+  tb_error_capture_reset();
+  q.func = shop_keeper;
+  add_quest(&q);
+  TEST_ASSERT_EQUAL_PTR(shop_keeper, mob_index[1].func);
+  TEST_ASSERT_NULL(QST_FUNC(0));
+  TEST_ASSERT_EQUAL_INT(2, spec_chain_length(1));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "secondary proc leads back to questmaster; dropped"));
+  free_quest_table_strings();
+}
+
+/* ------------------------------------------------------------------------ */
 /* Temporary world directory for the writers.                               */
 /* ------------------------------------------------------------------------ */
 static char test_root[] = "/tmp/tb-genolc-XXXXXX";
@@ -1915,6 +2033,8 @@ int main(void)
   RUN_TEST(add_room_refuses_out_of_range_zone);
   RUN_TEST(save_rooms_keeps_previous_file_after_stream_error);
   RUN_TEST(delete_room_frees_cancelled_var_strings);
+  RUN_TEST(add_quest_wraps_a_plain_keeper_once);
+  RUN_TEST(add_quest_does_not_rewrap_a_shop_running_questmaster);
   failures = UNITY_END();
   leave_test_root();
   return failures;
