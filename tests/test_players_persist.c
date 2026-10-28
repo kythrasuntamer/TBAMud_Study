@@ -574,6 +574,41 @@ static void test_negative_class_is_rejected_at_load(void)
   TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "player idnum 4242 tag Clas value -1"));
 }
 
+/* Errloc finding: the endgame ranks EgHP/EgMP (0..100; do_endgame()
+ * refuses a purchase at 100) were clamped below 0 silently and taken as-is
+ * above 100, and EgAP/EgXP were clamped below 0 silently. Each now goes to
+ * its nearest bound and is reported. */
+static void test_endgame_values_are_clamped_and_reported(void)
+{
+  write_pfile("tester", "Id  : 4242\nEgHP: -3\nEgMP: 150\nEgAP: -7\nEgXP: 12\n");
+
+  TEST_ASSERT_EQUAL_INT(0, load_char("tester", &player));
+
+  TEST_ASSERT_EQUAL_INT(0, GET_ENDGAME_HP_RANK(&player));
+  TEST_ASSERT_EQUAL_INT(100, GET_ENDGAME_MP_RANK(&player));
+  TEST_ASSERT_EQUAL_INT(0, GET_ENDGAME_AP(&player));
+  TEST_ASSERT_EQUAL_INT(12, GET_ENDGAME_XP(&player));
+  TEST_ASSERT_EQUAL_STRING("pfile-range\npfile-range\npfile-range\n", tb_captured_op_log);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail_log,
+                              "player idnum 4242 tag EgHP value -3 outside 0..100; using 0"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail_log,
+                              "player idnum 4242 tag EgMP value 150 outside 0..100; using 100"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail_log,
+                              "player idnum 4242 tag EgAP value -7 outside 0.."));
+}
+
+/* The bounds themselves are valid ranks and load silently. */
+static void test_endgame_ranks_at_their_bounds_load(void)
+{
+  write_pfile("tester", "Id  : 4242\nEgHP: 100\nEgMP: 0\n");
+
+  TEST_ASSERT_EQUAL_INT(0, load_char("tester", &player));
+
+  TEST_ASSERT_EQUAL_INT(100, GET_ENDGAME_HP_RANK(&player));
+  TEST_ASSERT_EQUAL_INT(0, GET_ENDGAME_MP_RANK(&player));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+}
+
 /* G2-02: Qcur was loaded unchecked. A quest deleted since the save made
  * real_quest() return NOTHING, and do_score() then read
  * aquest_table[NOTHING]. A stale quest must be reported and cleared. */
@@ -868,6 +903,8 @@ int main(void)
   RUN_TEST(test_out_of_range_current_quest_is_rejected);
   RUN_TEST(test_negative_current_quest_is_rejected);
   RUN_TEST(test_negative_class_is_rejected_at_load);
+  RUN_TEST(test_endgame_values_are_clamped_and_reported);
+  RUN_TEST(test_endgame_ranks_at_their_bounds_load);
   RUN_TEST(test_lookups_after_free_player_index_find_nothing);
   RUN_TEST(test_remove_player_rejects_bad_position);
   RUN_TEST(test_clean_pfiles_refuses_unsafe_name_and_moves_on);

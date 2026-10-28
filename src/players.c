@@ -189,6 +189,30 @@ static int pfile_int_in_range(const char *line, const char *filename,
   return value;
 }
 
+/* Parse a pfile integer whose repair is its nearest bound rather than a
+ * default: a count that can only have been pushed past a limit (endgame
+ * ranks and points). A value outside lo..hi is clamped and reported
+ * (pfile-range) with the player idnum, tag and value; it used to be
+ * clamped below silently, and not at all above. */
+static int pfile_int_clamped(const char *line, const char *filename,
+                             const char *tag, long idnum, int lo, int hi)
+{
+  int value = parse_pfile_int_or_zero(line, filename, tag, idnum);
+  int fixed = value < lo ? lo : hi;
+
+  if (value < lo || value > hi) {
+    TB_ERROR_MSG("player", "pfile-range", filename,
+                 "player idnum %ld tag %.4s value %d outside %d..%d; using %d",
+                 idnum, tag, value, lo, hi, fixed);
+    return fixed;
+  }
+  return value;
+}
+
+/* Endgame HP/mana upgrade ranks run 0..100: do_endgame() (act.other.c)
+ * refuses a purchase once a rank reaches 100. Keep the two in step. */
+#define PFILE_ENDGAME_RANK_MAX 100
+
 /* Longest flag word accepted from an "Act :", "Aff :" or "Pref:" line.
  * sprintascii() writes at most 33 characters per 32-bit word, so anything
  * longer is corruption or tampering, not a flag set the server produced. */
@@ -836,10 +860,10 @@ int load_char(const char *name, struct char_data *ch)
 
       case 'E':
 	     if (!strcmp(tag, "Exp "))	GET_EXP(ch)		= parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
-             else if (!strcmp(tag, "EgAP")) GET_ENDGAME_AP(ch) = MAX(0, parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch)));
-             else if (!strcmp(tag, "EgXP")) GET_ENDGAME_XP(ch) = MAX(0, parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch)));
-             else if (!strcmp(tag, "EgHP")) GET_ENDGAME_HP_RANK(ch) = MAX(0, parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch)));
-             else if (!strcmp(tag, "EgMP")) GET_ENDGAME_MP_RANK(ch) = MAX(0, parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch)));
+             else if (!strcmp(tag, "EgAP")) GET_ENDGAME_AP(ch) = pfile_int_clamped(line, filename, tag, GET_IDNUM(ch), 0, INT_MAX);
+             else if (!strcmp(tag, "EgXP")) GET_ENDGAME_XP(ch) = pfile_int_clamped(line, filename, tag, GET_IDNUM(ch), 0, INT_MAX);
+             else if (!strcmp(tag, "EgHP")) GET_ENDGAME_HP_RANK(ch) = pfile_int_clamped(line, filename, tag, GET_IDNUM(ch), 0, PFILE_ENDGAME_RANK_MAX);
+             else if (!strcmp(tag, "EgMP")) GET_ENDGAME_MP_RANK(ch) = pfile_int_clamped(line, filename, tag, GET_IDNUM(ch), 0, PFILE_ENDGAME_RANK_MAX);
 	else pfile_unknown_tag(filename, tag, GET_IDNUM(ch));
 	break;
 
