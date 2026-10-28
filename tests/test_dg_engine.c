@@ -1261,6 +1261,48 @@ static void attach_checks_the_target_zone(void)
   TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
 }
 
+/* Give owner's script (made if missing) a global variable named flag. */
+static void give_global_flag(struct script_data **script)
+{
+  if (!*script)
+    CREATE(*script, struct script_data, 1);
+  add_var(&(*script)->global_vars, "flag", "1", 0);
+}
+
+/* DGDOC-3: vdelete (a builder command) deleted the global variables of any
+ * room, mob, object or player by UID, a player's saved quest flags
+ * included, with no zone or level check. */
+static void vdelete_checks_the_builders_authority(void)
+{
+  char_data *b = make_imm(), *mob = make_mob("zzmob"), *pc = make_mob("zzpc");
+  char cmd[64];
+
+  GET_LEVEL(b) = LVL_BUILDER;      /* zone 1's builder */
+  GET_OLC_ZONE(b) = 1;
+  REMOVE_BIT_AR(MOB_FLAGS(pc), MOB_ISNPC);
+  GET_LEVEL(pc) = LVL_IMPL;        /* in zone 1, but outranks the builder */
+  give_global_flag(&SCRIPT(mob));  /* no prototype: belongs to no zone */
+  give_global_flag(&SCRIPT(pc));
+  give_global_flag(&SCRIPT(&world[0]));
+
+  snprintf(cmd, sizeof(cmd), " flag %ld", mob->script_id);
+  immortal_command(do_vdelete, b, cmd);
+  TEST_ASSERT_NOT_NULL(SCRIPT(mob)->global_vars);
+  TEST_ASSERT_EQUAL_STRING("vdelete-denied", tb_captured_operation);
+
+  tb_error_capture_reset();
+  snprintf(cmd, sizeof(cmd), " flag %ld", pc->script_id);
+  immortal_command(do_vdelete, b, cmd);
+  TEST_ASSERT_NOT_NULL(SCRIPT(pc)->global_vars);
+  TEST_ASSERT_EQUAL_STRING("vdelete-denied", tb_captured_operation);
+
+  tb_error_capture_reset();
+  snprintf(cmd, sizeof(cmd), " flag %ld", room_script_id(&world[0]));
+  immortal_command(do_vdelete, b, cmd);
+  TEST_ASSERT_NULL(SCRIPT(&world[0])->global_vars);
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -1312,5 +1354,6 @@ int main(void)
   RUN_TEST(unplaced_mob_script_runs_no_command);
   RUN_TEST(level_setter_never_changes_an_immortal);
   RUN_TEST(attach_checks_the_target_zone);
+  RUN_TEST(vdelete_checks_the_builders_authority);
   return UNITY_END();
 }

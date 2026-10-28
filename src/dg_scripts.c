@@ -2771,8 +2771,9 @@ ACMD(do_vdelete)
   char buf[MAX_INPUT_LENGTH], buf2[MAX_INPUT_LENGTH];
   long uid;
   room_data *room;
-  char_data *mob;
+  char_data *mob = NULL;
   obj_data *obj;
+  zone_rnum zone;
 
   two_arguments(argument, buf, buf2);
   var = buf;
@@ -2795,12 +2796,29 @@ ACMD(do_vdelete)
 
   if ((room = find_room(uid))) {
     sc_remote = SCRIPT(room);
+    zone = room->zone;
   } else if ((mob = find_char(uid))) {
     sc_remote = SCRIPT(mob);
+    zone = dg_char_edit_zone(mob);
   } else if ((obj = find_obj(uid))) {
     sc_remote = SCRIPT(obj);
+    zone = real_zone_by_thing(GET_OBJ_VNUM(obj));
   } else {
     send_to_char(ch, "vdelete: cannot resolve specified id.\r\n");
+    return;
+  }
+
+  /* Global variables are their owner's state; a player's are saved quest
+   * flags.  vdelete is a builder command, so it follows attach and detach
+   * (the owner's zone must be the builder's), and a player must also rank
+   * below the builder. */
+  if (!can_edit_zone(ch, zone) ||
+      (mob && !IS_NPC(mob) && mob != ch && GET_LEVEL(mob) >= GET_LEVEL(ch))) {
+    TB_WARN_MSG("dg", "vdelete-denied", "do_vdelete",
+                "builder " DIAG_CHAR_FMT ": variables of uid %ld are outside "
+                "the builder's zones or rank; refused", DIAG_CHAR(ch), uid);
+    send_to_char(ch, "You can only delete variables of things in your own "
+                 "zone.\r\n");
     return;
   }
 
