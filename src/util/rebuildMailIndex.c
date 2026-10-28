@@ -185,19 +185,54 @@ char *parse_subject(FILE *plr_file) {
 	return (subj);
 }
 
-/* Search file for mail flags and return as bitvector */
-int parse_mail_flags(FILE *plr_file) {
+/* Length of one flag word in a "Flag:" line; mail.c writes 32 letters at most
+ * (one per bit of a 32-bit word). */
+#define MAIL_FLAG_WORD_LEN 32
+
+/* Split a "Flag:" value into exactly four words of at most
+ * MAIL_FLAG_WORD_LEN bytes.  The line comes from a mail file on disk (server
+ * written, but hand-editable), so an over-long word or a wrong word count
+ * is reported by the caller instead of overflowing a fixed buffer or being
+ * split silently.  Returns 1 on success. */
+static int split_mail_flags(const char *txt, char words[4][MAIL_FLAG_WORD_LEN + 1])
+{
+  int n;
+  size_t len;
+
+  for (n = 0; n < 4; n++) {
+    txt += strspn(txt, " \t");
+    len = strcspn(txt, " \t");
+    if (len == 0 || len > MAIL_FLAG_WORD_LEN)
+      return 0;
+    memcpy(words[n], txt, len);
+    words[n][len] = '\0';
+    txt += len;
+  }
+  txt += strspn(txt, " \t");
+  return *txt == '\0';
+}
+
+/* Search file for mail flags and return as bitvector, or -1 after reporting
+ * a malformed "Flag:" line ("mail-flag-parse"; the caller skips the file). */
+int parse_mail_flags(FILE *plr_file, const char *path) {
   unsigned long fl[4];
   int ret = 0;
-  char *txt, f1[33], f2[33], f3[33], f4[33];
+  char *txt, words[4][MAIL_FLAG_WORD_LEN + 1];
 
   if ((txt = findLine(plr_file, "Flag:")) != NULL) {
     /* Read the flags */
-    if (sscanf(txt, "%s %s %s %s", f1, f2, f3, f4) == 4) {
-      fl[0] = asciiflag_conv(f1);
-      fl[1] = asciiflag_conv(f2);
-      fl[2] = asciiflag_conv(f3);
-      fl[3] = asciiflag_conv(f4);
+    if (!split_mail_flags(txt, words)) {
+      TB_REPORT_DOMAIN_ERRORF(TB_SEV_ERROR, TB_ERR_PARSER, "mail-flag-parse",
+                              "mail=%s: Flag line is not four words of at "
+                              "most %d letters; file skipped", path,
+                              MAIL_FLAG_WORD_LEN);
+      return -1;
+    }
+    {
+      fl[0] = asciiflag_conv(words[0]);
+      fl[1] = asciiflag_conv(words[1]);
+      fl[2] = asciiflag_conv(words[2]);
+      fl[3] = asciiflag_conv(words[3]);
 
       /* convert from mail flags to mail index flags */
       if (IS_SET_AR(fl, MAIL_DELETED))  SET_BIT(ret, MINDEX_DELETED);
@@ -300,7 +335,12 @@ int walkdir(FILE *index_file, char *dir) {
         sender    = parse_sender(mail_file);
         recipient = parse_recipient(mail_file);
         sent_time = parse_send_time(mail_file);
-        flags     = parse_mail_flags(mail_file);
+        flags     = parse_mail_flags(mail_file, filename_qfd);
+        if (flags < 0) {		/* reported by parse_mail_flags() */
+          errors++;
+          if (fclose(mail_file) != 0) UTIL_REPORT_ERRNO("fclose", filename_qfd);
+          continue;
+        }
         subject   = parse_subject(mail_file);
 
         sprintascii(bits, flags);

@@ -143,6 +143,18 @@ def mail_flag_bit31_is_defined(tmp):
           "record missing:\n" + index)
 
 
+@test("rebuildMailIndex")
+def mail_flag_line_overflow_is_reported(tmp):
+    """I2-04: sscanf("%s") wrote a 100-byte word into char[33]."""
+    rc, index, out, err = mail_index(tmp, {
+        "x.ml": mail_file("a" * 100 + " b c d"),
+        "y.ml": mail_file("0 0 0 0").replace("MlID: 7", "MlID: 8"),
+    })
+    check(rc == 1, "rc=%d" % rc)
+    check("mail-flag-parse" in operations(err), err)
+    check("\n7 " not in index and "\n8 " in index, index)
+
+
 # ----------------------------------------------------------- rebuildIndex
 
 def rebuild_index(tmp, pfiles):
