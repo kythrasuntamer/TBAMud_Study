@@ -8,6 +8,20 @@
 *  Copyright (C) 1993, 94 by the Trustees of the Johns Hopkins University *
 *  CircleMUD is based on DikuMUD, Copyright (C) 1990, 1991.               *
 **************************************************************************/
+#ifndef TBAMUD_PREFEDIT_H_INCLUDED
+#define TBAMUD_PREFEDIT_H_INCLUDED
+
+/** @file prefedit.h
+ * Player preference editor (prefedit), level 0: any player edits their
+ * own toggles, and an IMPL may edit another player's.
+ *
+ * Include after structs.h (PR_ARRAY_MAX, ACMD) and oasis.h (OLC_PREFS).
+ *
+ * The PREFEDIT_* accessors expand to code that uses a variable named 'd'
+ * (the editor's descriptor) in the caller's scope; PREFEDIT_GET_CHAR is a
+ * lookup by idnum that returns NULL once the edited player is gone, so
+ * test it before dereferencing.  OLC_PREFS holds copies of the player's
+ * values; they are written back to the player only on save. */
 
 /* Toggle structure held for OLC purposes */
 struct prefs_data
@@ -66,4 +80,6 @@ void prefedit_Restore_Defaults(struct descriptor_data *d);
 void prefedit_parse(struct descriptor_data * d, char *arg);
 void prefedit_forget_char(struct char_data *ch);
 ACMD(do_oasis_prefedit);
+
+#endif /* TBAMUD_PREFEDIT_H_INCLUDED */
 
