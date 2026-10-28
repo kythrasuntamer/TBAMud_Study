@@ -545,6 +545,74 @@ static void each_reference_has_its_own_subfield(void)
   TEST_ASSERT_EQUAL_STRING("0 1", out);
 }
 
+/* Runs lines (NULL-terminated) as an object script; returns the number of
+ * commands dispatched to the object's interpreter. */
+static int run_object_lines(const char *const *lines)
+{
+  static struct cmdlist_element cl[8];
+  static struct index_data index = { 0 };
+  static struct index_data *indexes[1] = { &index };
+  static obj_data obj;
+  static struct script_data script;
+  obj_data *owner = &obj;
+  int n;
+
+  memset(cl, 0, sizeof(cl));
+  for (n = 0; lines[n]; n++) {
+    TEST_ASSERT_TRUE(n < 8);
+    cl[n].cmd = (char *)lines[n];
+    cl[n].next = lines[n + 1] ? &cl[n + 1] : NULL;
+  }
+  memset(&obj, 0, sizeof(obj));
+  memset(&script, 0, sizeof(script));
+  init_lookup_table();
+  SCRIPT(&obj) = &script;
+  GET_OBJ_RNUM(&obj) = NOTHING;
+  obj.script_id = OBJ_ID_BASE + 8;
+  add_to_lookup_table(obj.script_id, &obj);
+  trig_index = indexes;
+  top_of_trigt = 1;
+  trig.cmdlist = cl;
+  trig.attach_type = OBJ_TRIGGER;
+  purge_obj = NULL;
+  dispatched = 0;
+
+  script_driver(&owner, &trig, OBJ_TRIGGER, TRIG_NEW);
+
+  TEST_ASSERT_EQUAL_INT(0, execution_depth);
+  trig_index = NULL;
+  top_of_trigt = 0;
+  remove_from_lookup_table(obj.script_id, &obj);
+  return dispatched;
+}
+
+/* find_done() used to return NULL when a nested block ran to the end, and
+ * break/switch then followed cl->next from NULL. */
+static void break_without_done_ends_the_script(void)
+{
+  static const char *const lines[] = { "break", "while 1", "nop x", NULL };
+
+  TEST_ASSERT_EQUAL_INT(0, run_object_lines(lines));
+  TEST_ASSERT_EQUAL_STRING("block-unterminated", captured_operation);
+}
+
+static void switch_with_unclosed_nested_while_ends_the_script(void)
+{
+  static const char *const lines[] = { "switch 1", "while 0", "nop x", NULL };
+
+  TEST_ASSERT_EQUAL_INT(0, run_object_lines(lines));
+  TEST_ASSERT_EQUAL_STRING("block-unterminated", captured_operation);
+}
+
+static void switch_still_selects_its_case(void)
+{
+  static const char *const lines[] = {
+    "switch 2", "case 1", "first", "case 2", "second", "done", NULL };
+
+  TEST_ASSERT_EQUAL_INT(1, run_object_lines(lines));
+  TEST_ASSERT_EQUAL_INT(0, captured_errors);
+}
+
 static void restore_round_trips_neutralize(void)
 {
   char text[] = "50% off, 100%% sure";
@@ -574,5 +642,8 @@ int main(void)
   RUN_TEST(saved_vars_never_exceed_one_pfile_line);
   RUN_TEST(huge_wait_is_capped_at_one_mud_year);
   RUN_TEST(each_reference_has_its_own_subfield);
+  RUN_TEST(break_without_done_ends_the_script);
+  RUN_TEST(switch_with_unclosed_nested_while_ends_the_script);
+  RUN_TEST(switch_still_selects_its_case);
   return UNITY_END();
 }

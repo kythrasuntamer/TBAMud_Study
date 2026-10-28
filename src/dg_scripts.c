@@ -71,6 +71,7 @@ static void dg_letter_value(struct script_data *sc, trig_data *trig, char *cmd);
 static struct cmdlist_element * find_case(struct trig_data *trig, struct cmdlist_element *cl,
           void *go, struct script_data *sc, int type, char *cond);
 static struct cmdlist_element *find_done(struct cmdlist_element *cl);
+static void report_unterminated_block(trig_data *trig, const char *keyword);
 static struct char_data *find_char_by_uid_in_lookup_table(long uid);
 static struct obj_data *find_obj_by_uid_in_lookup_table(long uid);
 static EVENTFUNC(trig_wait_event);
@@ -2839,8 +2840,7 @@ int script_driver(void *go_adress, trig_data *trig, int type, int mode)
     } else if (!strn_cmp("while ", p, 6)) {
       temp = find_done(cl);
       if (!temp) {
-        script_log("Trigger VNum %d has 'while' without 'done'.",
-                   GET_TRIG_VNUM(trig));
+        report_unterminated_block(trig, "while");
         depth--;
         dg_script_execution_leave();
         return ret_val;
@@ -2888,7 +2888,10 @@ int script_driver(void *go_adress, trig_data *trig, int type, int mode)
         }
       }
     } else if (!strn_cmp("break", p, 5)) {
-      cl = find_done(cl);
+      if (!(cl = find_done(cl))) {
+        report_unterminated_block(trig, "break");
+        break;
+      }
     } else if (!strn_cmp("case", p, 4)) {
        /* Do nothing, this allows multiple cases to a single instance */
     }
@@ -3041,8 +3044,27 @@ ACMD(do_tstat)
     send_to_char(ch, "Usage: tstat <vnum>\r\n");
 }
 
-/* Scans for a case/default instance. Returns the line containg the correct 
- * case instance, or the last line of the trigger if not found. */
+/* Reports a while/switch block that the trigger ends before closing. */
+static void report_unterminated_block(trig_data *trig, const char *keyword)
+{
+  TB_ERROR_MSG("dg", "block-unterminated", "script_driver",
+               "trigger %d: '%s' has no matching 'done'",
+               GET_TRIG_VNUM(trig), keyword);
+  script_log("Trigger VNum %d has '%s' without 'done'.",
+             GET_TRIG_VNUM(trig), keyword);
+}
+
+/* The last line of the trigger, at or after cl. */
+static struct cmdlist_element *last_line(struct cmdlist_element *cl)
+{
+  while (cl->next)
+    cl = cl->next;
+  return cl;
+}
+
+/* Scans for a case/default instance. Returns the line containg the correct
+ * case instance, the closing 'done' if none matches, or the last line of
+ * the trigger if the switch is never closed. */
 static struct cmdlist_element *
 find_case(struct trig_data *trig, struct cmdlist_element *cl,
           void *go, struct script_data *sc, int type, char *cond)
@@ -3053,15 +3075,14 @@ find_case(struct trig_data *trig, struct cmdlist_element *cl,
 
   eval_expr(cond, result, go, sc, trig, type);
 
-  if (!(cl->next))
-    return cl;
-
-  for (c = cl->next; c->next; c = c->next) {
+  for (c = cl->next; c; c = c->next) {
     for (p = c->cmd; *p && isspace(*p); p++);
 
-    if (!strn_cmp("while ", p, 6) || !strn_cmp("switch", p, 6))
-      c = find_done(c);
-    else if (!strn_cmp("case ", p, 5)) {
+    if (!strn_cmp("while ", p, 6) || !strn_cmp("switch", p, 6)) {
+      /* Skip the nested block; its 'done' is not ours. */
+      if (!(c = find_done(c)))
+        break;
+    } else if (!strn_cmp("case ", p, 5)) {
       buf = (char*)malloc(MAX_STRING_LENGTH);
       eval_op("==", result, p + 5, buf, go, sc, trig);
       if (*buf && *buf!='0') {
@@ -3074,30 +3095,33 @@ find_case(struct trig_data *trig, struct cmdlist_element *cl,
     else if (!strn_cmp("done", p, 3))
      return c;
   }
-  return c;
+
+  report_unterminated_block(trig, "switch");
+  return last_line(cl);
 }
 
-/* Scans for end of while/switch-blocks. Returns the line containg 'end', or 
- * the last line of the trigger if not found. Malformed scripts may cause NULL 
- * to be returned. */
+/* Scans for the 'done' that closes the while/switch block opened at cl.
+ * Returns that line, or NULL if the trigger ends first; callers report it.
+ * Never returns a line past the end of the trigger. */
 static struct cmdlist_element *find_done(struct cmdlist_element *cl)
 {
   struct cmdlist_element *c;
   char *p;
 
-  if (!cl || !(cl->next))
-    return cl;
+  if (!cl)
+    return NULL;
 
-  for (c = cl->next; c && c->next; c = c->next) {
+  for (c = cl->next; c; c = c->next) {
     for (p = c->cmd; *p && isspace(*p); p++);
 
-    if (!strn_cmp("while ", p, 6) || !strn_cmp("switch ", p, 7))
-      c = find_done(c);
-    else if (!strn_cmp("done", p, 3))
+    if (!strn_cmp("while ", p, 6) || !strn_cmp("switch ", p, 7)) {
+      if (!(c = find_done(c)))
+        return NULL;
+    } else if (!strn_cmp("done", p, 3))
       return c;
   }
 
-  return c;
+  return NULL;
 }
 
 
