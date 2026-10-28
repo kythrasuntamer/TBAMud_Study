@@ -397,6 +397,37 @@ def load_json(path):
         return json.load(fh)
 
 
+def hand_resolved_notes(state, state_path, problems):
+    """(sha, note) for each entry of an integrate-state file's hand_resolved.
+
+    The integrators wrote three shapes: [sha, note] pairs,
+    {"sha": ..., "note": ...} objects and "sha note" strings (sha first,
+    possibly abbreviated). Anything else, or an entry whose sha is not hex,
+    is reported as a problem and left out rather than guessed at."""
+    out = []
+    entries = state.get("hand_resolved", [])
+    if not isinstance(entries, list):
+        problems.append(f"{os.path.basename(state_path)}: hand_resolved is not a list")
+        return out
+    for i, entry in enumerate(entries):
+        sha = note = None
+        if isinstance(entry, (list, tuple)) and len(entry) == 2:
+            sha, note = entry
+        elif isinstance(entry, dict):
+            sha, note = entry.get("sha"), entry.get("note")
+        elif isinstance(entry, str):
+            parts = entry.split(None, 1)
+            if len(parts) == 2:
+                sha, note = parts
+        if not (isinstance(sha, str) and re.fullmatch(r"[0-9a-f]{7,40}", sha)
+                and isinstance(note, str)):
+            problems.append(f"{os.path.basename(state_path)}: hand_resolved[{i}] is "
+                            "not [sha, note], {\"sha\", \"note\"} or \"sha note\"")
+            continue
+        out.append((sha, note))
+    return out
+
+
 def cell(text):
     """Make text safe for one GitHub-markdown table cell."""
     return str(text).replace("\r", " ").replace("\n", " ").replace("|", "\\|")
@@ -579,8 +610,8 @@ def load(results, git):
             f["commits"] = list(findings[other]["commits"])
             f["same_as"] = other
 
-    # Integration (split into plans and states A and B): chunk commits the
-    # integrator skipped by hand, with its reason.
+    # Integration (split into several merge-plan*/integrate-state* pairs):
+    # chunk commits an integrator skipped by hand, with its reason.
     superseded = {}
     for state_path in sorted(glob.glob(os.path.join(results, "integrate-state*.json"))):
         try:
@@ -589,7 +620,7 @@ def load(results, git):
             print(f"warning: {state_path} unreadable ({exc}); its integration notes "
                   f"are left out", file=sys.stderr)
             continue
-        for sha, note in state.get("hand_resolved", []):
+        for sha, note in hand_resolved_notes(state, state_path, problems):
             if "SKIPPED" in note:
                 why = note[note.index("SKIPPED") + len("SKIPPED"):].lstrip(" ,:")
                 superseded[sha[:7]] = re.sub(r"^as\s+", "", why)
