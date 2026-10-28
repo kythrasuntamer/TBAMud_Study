@@ -31,7 +31,10 @@
  * (oasis.c; that path must not depend on OLC_ROOM, audit finding F2-12).
  *
  * Input.  Every numeric answer goes through CEDIT_PARSE_INT with an
- * explicit range and is re-prompted, loudly, when it does not fit.
+ * explicit range and is re-prompted, loudly, when it does not fit.  Every
+ * one-line text answer (the OK/HUH/NOPERSON/NOEFFECT messages, default IP,
+ * directory and log name) goes through CEDIT_LINE_FITS, which refuses,
+ * loudly, more characters than one config file line holds after its key.
  *
  * Persistence.  save_config() writes CONFIG_CONFFILE through a verified
  * temporary file and returns FALSE on any I/O failure; its IDXTYPE
@@ -39,7 +42,9 @@
  * unused.  Callers must report a FALSE result to the builder.  A change
  * applied to config_info is queued on GenOLC's save list (one
  * (NOWHERE, SL_CFG) entry, cedit_queue_config_save()) until save_config()
- * replaces the file, so 'olc' and save_all() know it is not on disk. */
+ * replaces the file, so 'olc' and save_all() know it is not on disk.
+ * save_config() writes nothing, and returns FALSE, if a one-line value in
+ * config_info would not fit its line (cedit_config_lines_fit()). */
 
 /* local scope functions, not used externally */
 static void cedit_disp_menu(struct descriptor_data *d);
@@ -56,6 +61,10 @@ static int cedit_parse_int_range_at(struct descriptor_data *d, const char *arg,
                                     long lo, long hi, int *out,
                                     const char *operation, const char *field,
                                     const char *file, int line, const char *func);
+static int cedit_line_fits_at(struct descriptor_data *d, const char *arg,
+                              size_t max, const char *field, const char *prompt,
+                              const char *file, int line, const char *func);
+static int cedit_config_lines_fit(void);
 
 /** Parse the builder's numeric answer for config field 'field' into *out.
  * TRUE when arg is a whole number in lo..hi.  Otherwise a WARNING with op
@@ -85,6 +94,100 @@ static int cedit_parse_int_range_at(struct descriptor_data *d, const char *arg,
                   strlen(arg), lo, hi, DIAG_CHAR(d->character));
   write_to_output(d, "Enter a number from %ld to %ld : ", lo, hi);
   return FALSE;
+}
+
+/* One-line settings.  save_config() writes each as its key below followed
+ * by the value on a single line, and load_config() (db.c) reads the line
+ * back with get_line(), which returns at most READ_SIZE - 1 characters;
+ * the rest of a longer line is cut off.  CEDIT_LINE_MAX(key) is the
+ * longest value that still comes back whole after 'key'. */
+#define CEDIT_KEY_OK        "ok = "
+#define CEDIT_KEY_HUH       "huh = "
+#define CEDIT_KEY_NOPERSON  "noperson = "
+#define CEDIT_KEY_NOEFFECT  "noeffect = "
+#define CEDIT_KEY_DFLT_IP   "DFLT_IP = "
+#define CEDIT_KEY_DFLT_DIR  "DFLT_DIR = "
+#define CEDIT_KEY_LOGNAME   "LOGNAME = "
+#define CEDIT_LINE_MAX(key) ((size_t)(READ_SIZE - 1) - (sizeof(key) - 1))
+
+/** TRUE when the builder's one-line answer 'arg' for config key 'field' is
+ * at most 'max' characters (CEDIT_LINE_MAX of its key).  Otherwise a
+ * WARNING with op "cedit-value-too-long" names the field, the length, the
+ * limit and the editor at the call site, the builder is told the limit and
+ * asked again with 'prompt', and FALSE is returned: the caller leaves
+ * OLC_MODE unchanged so the next line answers again.  A longer value used
+ * to be kept and saved, then cut at the next boot. */
+#define CEDIT_LINE_FITS(d, arg, key, field, prompt) \
+  cedit_line_fits_at((d), (arg), CEDIT_LINE_MAX(key), (field), (prompt), \
+                     __FILE__, __LINE__, __func__)
+
+static int cedit_line_fits_at(struct descriptor_data *d, const char *arg,
+                              size_t max, const char *field, const char *prompt,
+                              const char *file, int line, const char *func)
+{
+  size_t len = strlen(arg);
+
+  if (len <= max)
+    return TRUE;
+  /* Only the length of the input is logged: it is free text. */
+  tb_error_log_at("WARNING", "olc", "cedit-value-too-long", field, 0, file, line, func,
+                  "%s: input length %zu exceeds %zu, the most one config file line "
+                  "holds after its key; editor " DIAG_CHAR_FMT,
+                  field, len, max, DIAG_CHAR(d->character));
+  write_to_output(d, "That is too long to save: the configuration file holds at most "
+                     "%zu characters for this setting, and you entered %zu.\r\n%s",
+                  max, len, prompt);
+  return FALSE;
+}
+
+/* Characters save_config() writes for 'value' after its key: the text up
+ * to the first newline, without the '\r's strip_cr() removes. */
+static size_t cedit_line_length(const char *value)
+{
+  size_t n = 0;
+
+  for (; *value && *value != '\n'; value++)
+    if (*value != '\r')
+      n++;
+  return n;
+}
+
+/* TRUE when every one-line setting in config_info fits its config file
+ * line.  Values reach config_info without the editor's check too: comm.c's
+ * -o sets the log name, and a hand-written file may use a shorter "key="
+ * than save_config() writes.  Each value that does not fit is reported
+ * with op "cedit-value-too-long"; save_config() then writes nothing. */
+static int cedit_config_lines_fit(void)
+{
+  const struct {
+    const char *field;
+    const char *value;
+    size_t max;
+  } lines[] = {
+    { "ok",       CONFIG_OK,       CEDIT_LINE_MAX(CEDIT_KEY_OK) },
+    { "huh",      CONFIG_HUH,      CEDIT_LINE_MAX(CEDIT_KEY_HUH) },
+    { "noperson", CONFIG_NOPERSON, CEDIT_LINE_MAX(CEDIT_KEY_NOPERSON) },
+    { "noeffect", CONFIG_NOEFFECT, CEDIT_LINE_MAX(CEDIT_KEY_NOEFFECT) },
+    { "DFLT_IP",  CONFIG_DFLT_IP,  CEDIT_LINE_MAX(CEDIT_KEY_DFLT_IP) },
+    { "DFLT_DIR", CONFIG_DFLT_DIR, CEDIT_LINE_MAX(CEDIT_KEY_DFLT_DIR) },
+    { "LOGNAME",  CONFIG_LOGNAME,  CEDIT_LINE_MAX(CEDIT_KEY_LOGNAME) },
+  };
+  size_t i, len;
+  int fits = TRUE;
+
+  for (i = 0; i < sizeof(lines) / sizeof(lines[0]); i++) {
+    if (!lines[i].value)
+      continue;                     /* a NULL value is not written */
+    len = cedit_line_length(lines[i].value);
+    if (len > lines[i].max) {
+      TB_ERROR_MSG("olc", "cedit-value-too-long", lines[i].field,
+                   "%s: %zu characters exceed %zu, the most one line of %s holds "
+                   "after its key; configuration not written, file unchanged",
+                   lines[i].field, len, lines[i].max, CONFIG_CONFFILE);
+      fits = FALSE;
+    }
+  }
+  return fits;
 }
 
 
@@ -416,6 +519,10 @@ int save_config( IDXTYPE nowhere )
   char buf[MAX_STRING_LENGTH], temp_file[MAX_STRING_LENGTH];
   int name_result;
 
+  /* Nothing is written if a one-line value would come back cut. */
+  if (!cedit_config_lines_fit())
+    return FALSE;
+
   name_result = snprintf(temp_file, sizeof(temp_file), "%s.tmp", CONFIG_CONFFILE);
   if (name_result < 0 || (size_t)name_result >= sizeof(temp_file)) {
     log("SYSERR: config temporary filename is too long for %s", CONFIG_CONFFILE);
@@ -493,25 +600,25 @@ int save_config( IDXTYPE nowhere )
   strip_cr(buf);
 
   tb_fprintf(fl, "* Text sent to players when OK is all that is needed.\n"
-              "ok = %s\n\n", buf);
+              CEDIT_KEY_OK "%s\n\n", buf);
 
   strlcpy(buf, CONFIG_HUH, sizeof(buf));
   strip_cr(buf);
 
   tb_fprintf(fl, "* Text sent to players for an unrecognized command.\n"
-              "huh = %s\n\n", buf);
+              CEDIT_KEY_HUH "%s\n\n", buf);
 
   strlcpy(buf, CONFIG_NOPERSON, sizeof(buf));
   strip_cr(buf);
 
   tb_fprintf(fl, "* Text sent to players when noone is available.\n"
-              "noperson = %s\n\n", buf);
+              CEDIT_KEY_NOPERSON "%s\n\n", buf);
 
   strlcpy(buf, CONFIG_NOEFFECT, sizeof(buf));
   strip_cr(buf);
 
   tb_fprintf(fl, "* Text sent to players when an effect fails.\n"
-              "noeffect = %s\n", buf);
+              CEDIT_KEY_NOEFFECT "%s\n", buf);
 
    /* RENT / CRASHSAVE OPTIONS */
   tb_fprintf(fl, "\n\n\n* [ Rent/Crashsave Options ]\n");
@@ -577,7 +684,8 @@ int save_config( IDXTYPE nowhere )
     strlcpy(buf, CONFIG_DFLT_IP, sizeof(buf));
     strip_cr(buf);
 
-    tb_fprintf(fl, "* IP address to which the MUD should bind.\nDFLT_IP = %s\n\n", buf);
+    tb_fprintf(fl, "* IP address to which the MUD should bind.\n"
+                CEDIT_KEY_DFLT_IP "%s\n\n", buf);
   }
 
   if (CONFIG_DFLT_DIR) {
@@ -585,7 +693,7 @@ int save_config( IDXTYPE nowhere )
     strip_cr(buf);
 
     tb_fprintf(fl, "* default directory to use as data directory.\n"
-                "DFLT_DIR = %s\n\n", buf);
+                CEDIT_KEY_DFLT_DIR "%s\n\n", buf);
   }
 
   if (CONFIG_LOGNAME) {
@@ -593,7 +701,7 @@ int save_config( IDXTYPE nowhere )
     strip_cr(buf);
 
     tb_fprintf(fl, "* What file to log messages to (ex: 'log/syslog').\n"
-                "LOGNAME = %s\n\n", buf);
+                CEDIT_KEY_LOGNAME "%s\n\n", buf);
   }
 
   tb_fprintf(fl, "* Maximum number of players allowed before game starts to turn people away.\n"
@@ -1576,6 +1684,8 @@ void cedit_parse(struct descriptor_data *d, char *arg)
       break;
 
     case CEDIT_OK:
+      if (!CEDIT_LINE_FITS(d, arg, CEDIT_KEY_OK, "ok", "Enter the OK message : "))
+        break;
       if (!genolc_checkstring(d, arg))
         break;
 
@@ -1588,6 +1698,8 @@ void cedit_parse(struct descriptor_data *d, char *arg)
       break;
 
     case CEDIT_HUH:
+      if (!CEDIT_LINE_FITS(d, arg, CEDIT_KEY_HUH, "huh", "Enter the HUH message : "))
+        break;
       if (!genolc_checkstring(d, arg))
         break;
 
@@ -1600,6 +1712,8 @@ void cedit_parse(struct descriptor_data *d, char *arg)
       break;
 
     case CEDIT_NOPERSON:
+      if (!CEDIT_LINE_FITS(d, arg, CEDIT_KEY_NOPERSON, "noperson", "Enter the NOPERSON message : "))
+        break;
       if (!genolc_checkstring(d, arg))
         break;
 
@@ -1612,6 +1726,8 @@ void cedit_parse(struct descriptor_data *d, char *arg)
       break;
 
     case CEDIT_NOEFFECT:
+      if (!CEDIT_LINE_FITS(d, arg, CEDIT_KEY_NOEFFECT, "noeffect", "Enter the NOEFFECT message : "))
+        break;
       if (!genolc_checkstring(d, arg))
         break;
 
@@ -1813,7 +1929,8 @@ void cedit_parse(struct descriptor_data *d, char *arg)
         write_to_output(d,
           "That is an invalid choice!\r\n"
           "Enter the default ip address : ");
-      } else {
+      } else if (CEDIT_LINE_FITS(d, arg, CEDIT_KEY_DFLT_IP, "DFLT_IP",
+                                 "Enter the default ip address : ")) {
         /* The setup copy owns the old string; replacing it leaked it. */
         free(OLC_CONFIG(d)->operation.DFLT_IP);
         OLC_CONFIG(d)->operation.DFLT_IP = str_udup(arg);
@@ -1826,7 +1943,8 @@ void cedit_parse(struct descriptor_data *d, char *arg)
         write_to_output(d,
           "That is an invalid choice!\r\n"
           "Enter the default directory : ");
-      } else {
+      } else if (CEDIT_LINE_FITS(d, arg, CEDIT_KEY_DFLT_DIR, "DFLT_DIR",
+                                 "Enter the default directory : ")) {
         free(OLC_CONFIG(d)->operation.DFLT_DIR);
         OLC_CONFIG(d)->operation.DFLT_DIR = str_udup(arg);
         cedit_disp_operation_options(d);
@@ -1838,7 +1956,8 @@ void cedit_parse(struct descriptor_data *d, char *arg)
         write_to_output(d,
           "That is an invalid choice!\r\n"
           "Enter the name of the logfile : ");
-      } else {
+      } else if (CEDIT_LINE_FITS(d, arg, CEDIT_KEY_LOGNAME, "LOGNAME",
+                                 "Enter the name of the logfile : ")) {
         free(OLC_CONFIG(d)->operation.LOGNAME);
         OLC_CONFIG(d)->operation.LOGNAME = str_udup(arg);
         cedit_disp_operation_options(d);

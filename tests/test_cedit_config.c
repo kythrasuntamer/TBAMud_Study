@@ -680,6 +680,172 @@ static void test_successful_autosave_leaves_nothing_queued(void)
   TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
 }
 
+/* ---------------------------------------------------------------------
+ * One-line settings.  save_config() writes each as "<key> = <value>" on
+ * one line, and load_config() reads the line back with get_line(), which
+ * returns at most READ_SIZE - 1 characters; a longer value came back cut.
+ * ------------------------------------------------------------------- */
+struct one_line_setting {
+  const char *menu;       /* main-menu choice */
+  const char *option;     /* sub-menu choice that asks for the value */
+  int mode;               /* OLC_MODE while the editor waits for it */
+  const char *key;        /* what save_config() writes before the value */
+  const char *field;      /* the field the diagnostic names */
+  char **(*live)(void);   /* the config_info string the value ends up in */
+};
+
+static char **live_ok(void) { return &CONFIG_OK; }
+static char **live_huh(void) { return &CONFIG_HUH; }
+static char **live_noperson(void) { return &CONFIG_NOPERSON; }
+static char **live_noeffect(void) { return &CONFIG_NOEFFECT; }
+static char **live_dflt_ip(void) { return &CONFIG_DFLT_IP; }
+static char **live_dflt_dir(void) { return &CONFIG_DFLT_DIR; }
+static char **live_logname(void) { return &CONFIG_LOGNAME; }
+
+static const struct one_line_setting one_line_settings[] = {
+  { "g", "1", CEDIT_OK,       "ok = ",       "ok",       live_ok },
+  { "g", "2", CEDIT_HUH,      "huh = ",      "huh",      live_huh },
+  { "g", "3", CEDIT_NOPERSON, "noperson = ", "noperson", live_noperson },
+  { "g", "4", CEDIT_NOEFFECT, "noeffect = ", "noeffect", live_noeffect },
+  { "o", "b", CEDIT_DFLT_IP,  "DFLT_IP = ",  "DFLT_IP",  live_dflt_ip },
+  { "o", "c", CEDIT_DFLT_DIR, "DFLT_DIR = ", "DFLT_DIR", live_dflt_dir },
+  { "o", "d", CEDIT_LOGNAME,  "LOGNAME = ",  "LOGNAME",  live_logname },
+};
+#define ONE_LINE_SETTINGS (sizeof(one_line_settings) / sizeof(one_line_settings[0]))
+
+/* The longest value that fits after s->key in one line get_line() returns
+ * whole (READ_SIZE - 1 characters). */
+static size_t line_cap(const struct one_line_setting *s)
+{
+  return (size_t)(READ_SIZE - 1) - strlen(s->key);
+}
+
+/* n copies of c in dst, NUL-terminated. */
+static void fill_text(char *dst, size_t dst_size, char c, size_t n)
+{
+  TEST_ASSERT_TRUE(n < dst_size);
+  memset(dst, c, n);
+  dst[n] = '\0';
+}
+
+/* The written file has exactly one line for key, it is key followed by
+ * value, and get_line() can return it whole. */
+static void assert_config_line(const char *key, const char *value,
+                               const char *field)
+{
+  char line[1024], expect[1024];
+  FILE *fl;
+  int found = 0;
+  int n = snprintf(expect, sizeof(expect), "%s%s", key, value);
+
+  TEST_ASSERT_TRUE(n > 0 && (size_t)n < sizeof(expect));
+  fl = fopen(conf_path, "r");
+  TEST_ASSERT_NOT_NULL(fl);
+  while (fgets(line, sizeof(line), fl)) {
+    char *newline = strchr(line, '\n');
+
+    if (newline)
+      *newline = '\0';
+    if (strncmp(line, key, strlen(key)) != 0)
+      continue;
+    found++;
+    TEST_ASSERT_TRUE_MESSAGE(strlen(line) <= (size_t)(READ_SIZE - 1), field);
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(expect, line, field);
+  }
+  TEST_ASSERT_EQUAL_INT(0, fclose(fl));
+  TEST_ASSERT_EQUAL_INT_MESSAGE(1, found, field);
+}
+
+/* Each one-line setting: one character past what a config line can hold
+ * after its key is refused, reported and asked for again; a value at the
+ * limit is kept, saved, and written on a line get_line() reads whole.
+ * Over-long values used to be stored and saved, then cut at the next
+ * boot. */
+static void test_one_line_settings_refuse_more_than_a_config_line_holds(void)
+{
+  size_t i;
+
+  CONFIG_OLC_SAVE = YES;
+  for (i = 0; i < ONE_LINE_SETTINGS; i++) {
+    const struct one_line_setting *s = &one_line_settings[i];
+    size_t cap = line_cap(s);
+    char too_long[MAX_INPUT_LENGTH], at_cap[MAX_INPUT_LENGTH], limit[64];
+    const char *kept;
+    int n;
+
+    fill_text(too_long, sizeof(too_long), 'x', cap + 1);
+    fill_text(at_cap, sizeof(at_cap), (char)('a' + i), cap);
+    n = snprintf(limit, sizeof(limit), "at most %zu characters", cap);
+    TEST_ASSERT_TRUE(n > 0 && (size_t)n < sizeof(limit));
+
+    open_cedit();
+    type(s->menu);
+    type(s->option);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(s->mode, OLC_MODE(&builder_desc), s->field);
+
+    tb_error_capture_reset();
+    type(too_long);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(s->mode, OLC_MODE(&builder_desc), s->field);
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(out, limit), s->field);
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("cedit-value-too-long", tb_captured_operation,
+                                     s->field);
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(tb_captured_detail, s->field), s->field);
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(tb_captured_detail, "player idnum 42"),
+                                 s->field);
+
+    type(at_cap);
+    TEST_ASSERT_NOT_EQUAL_INT_MESSAGE(s->mode, OLC_MODE(&builder_desc), s->field);
+    type("q");                       /* back to the main menu */
+    quit_and_apply();
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(out, "saved to disk"), s->field);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, tb_captured_errors, s->field);
+
+    /* The four messages are kept with the "\r\n" the editor adds. */
+    kept = *s->live();
+    TEST_ASSERT_NOT_NULL_MESSAGE(kept, s->field);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, strncmp(kept, at_cap, cap), s->field);
+    TEST_ASSERT_TRUE_MESSAGE(!strcmp(kept + cap, "") || !strcmp(kept + cap, "\r\n"),
+                             s->field);
+    assert_config_line(s->key, at_cap, s->field);
+  }
+}
+
+/* Values reach config_info without the editor's check too: comm.c's -o
+ * sets the log name, and a hand-written config file may use a shorter
+ * "key=" than save_config() writes.  save_config() must refuse to write a
+ * value the loader would cut, report it, and leave the file alone. */
+static void test_save_config_refuses_a_value_the_loader_would_cut(void)
+{
+  char temp_path[600];
+  struct stat st;
+  size_t i;
+  int n = snprintf(temp_path, sizeof(temp_path), "%s.tmp", conf_path);
+
+  TEST_ASSERT_TRUE(n > 0 && (size_t)n < sizeof(temp_path));
+  for (i = 0; i < ONE_LINE_SETTINGS; i++) {
+    const struct one_line_setting *s = &one_line_settings[i];
+    char too_long[MAX_INPUT_LENGTH];
+    char **live = s->live();
+    char *kept = *live;
+    int saved;
+
+    fill_text(too_long, sizeof(too_long), 'x', line_cap(s) + 1);
+    *live = too_long;               /* borrowed: restored before any check */
+    tb_error_capture_reset();
+    saved = save_config(NOWHERE);
+    *live = kept;
+
+    TEST_ASSERT_FALSE_MESSAGE(saved, s->field);
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("cedit-value-too-long", tb_captured_operation,
+                                     s->field);
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(tb_captured_detail, s->field), s->field);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, stat(conf_path, &st), s->field);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, (int)st.st_size, s->field);  /* setUp's empty file */
+    TEST_ASSERT_NOT_EQUAL_INT_MESSAGE(0, stat(temp_path, &st), s->field);
+  }
+  TEST_ASSERT_TRUE(save_config(NOWHERE));     /* every value restored: saves */
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -692,5 +858,7 @@ int main(void)
   RUN_TEST(test_cedit_save_command_clears_the_queued_config);
   RUN_TEST(test_failed_autosave_keeps_the_config_queued);
   RUN_TEST(test_successful_autosave_leaves_nothing_queued);
+  RUN_TEST(test_one_line_settings_refuse_more_than_a_config_line_holds);
+  RUN_TEST(test_save_config_refuses_a_value_the_loader_would_cut);
   return UNITY_END();
 }
