@@ -540,6 +540,42 @@ static void well_formed_switch_still_selects_its_case(void)
   TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
 }
 
+/* D1-09: find_room() had no upper bound, so an object UID whose offset from
+ * ROOM_ID_BASE is 100 mod 65536 named room vnum 100. */
+static void object_uid_never_aliases_a_room(void)
+{
+  const char *quiet[] = { "nop", NULL };
+  char second[64];
+  const char *lines[] = { "set qflag done", second, NULL };
+  obj_data *o;
+  struct trig_var_data *v;
+
+  max_obj_id = ROOM_ID_BASE + 153L * 65536 + 100;   /* 30027108 */
+  o = make_obj("target");
+  TEST_ASSERT_EQUAL_INT64(30027108, o->script_id);
+  attach_to_script(&SCRIPT(o), make_trigger(OBJ_TRIGGER, OTRIG_RANDOM, 0, quiet));
+  attach_to_script(&SCRIPT(&world[0]), make_trigger(WLD_TRIGGER, WTRIG_RANDOM, 0, quiet));
+  snprintf(second, sizeof(second), "remote qflag %ld", o->script_id);
+  run_mob_script(make_mob("mob"), lines);
+
+  TEST_ASSERT_NULL(SCRIPT(&world[0])->global_vars);
+  v = SCRIPT(o)->global_vars;
+  TEST_ASSERT_NOT_NULL(v);
+  TEST_ASSERT_EQUAL_STRING("qflag", v->name);
+  TEST_ASSERT_EQUAL_STRING("done", v->value);
+}
+
+static void wrapping_room_vnum_is_rejected(void)
+{
+  char name[16];
+
+  snprintf(name, sizeof(name), "%d", 65536 + 100);
+  TEST_ASSERT_NULL(get_room(name));
+  TEST_ASSERT_EQUAL_STRING("uid-namespace", tb_captured_operation);
+  snprintf(name, sizeof(name), "%c%ld", UID_CHAR, (long)ROOM_ID_BASE + 100);
+  TEST_ASSERT_EQUAL_PTR(&world[0], get_room(name));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -563,5 +599,7 @@ int main(void)
   RUN_TEST(switch_with_unterminated_nested_while_is_reported);
   RUN_TEST(break_without_done_is_reported);
   RUN_TEST(well_formed_switch_still_selects_its_case);
+  RUN_TEST(object_uid_never_aliases_a_room);
+  RUN_TEST(wrapping_room_vnum_is_rejected);
   return UNITY_END();
 }

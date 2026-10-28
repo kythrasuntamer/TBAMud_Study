@@ -363,11 +363,22 @@ static room_data *find_room(long n)
 {
   room_rnum rnum;
 
-  /* A room UID is ROOM_ID_BASE + vnum.  Anything past the largest vnum (an
-   * object UID, say) used to be truncated onto some real room. */
-  if (n < ROOM_ID_BASE || n - ROOM_ID_BASE > IDXTYPE_MAX)
+  /* Room UIDs are ROOM_ID_BASE + vnum, below OBJ_ID_BASE. An object UID such
+   * as 30030009 used to truncate onto room_vnum 3001, so remote, rdelete,
+   * attach and detach acted on that room. Callers try several namespaces in
+   * turn, so a UID outside this one is not an error here. The vnum bound is
+   * IDXTYPE_MAX, as in dg_parse_vnum(), so it also holds for signed builds
+   * where NOWHERE is -1. */
+  if (n < ROOM_ID_BASE || n >= OBJ_ID_BASE)
     return NULL;
-  rnum = real_room((room_vnum)(n - ROOM_ID_BASE));
+  n -= ROOM_ID_BASE;
+  if (n >= IDXTYPE_MAX) {
+    TB_WARN_MSG("dg", "uid-namespace", "find_room",
+                "room uid %ld names vnum %ld, outside room_vnum [0,%d)",
+                n + ROOM_ID_BASE, n, (int)IDXTYPE_MAX);
+    return NULL;
+  }
+  rnum = real_room((room_vnum)n);
 
   if (rnum != NOWHERE)
     return &world[rnum];
@@ -529,13 +540,23 @@ obj_data *get_obj(char *name)
 room_data *get_room(char *name)
 {
   room_rnum nr;
+  long vnum;
 
   if (*name == UID_CHAR)
     return find_room(PARSE_UID(name + 1));
-  else if ((nr = real_room(dg_parse_vnum(name))) == NOWHERE)
+
+  /* A plain number is a room vnum. Script text controls it: reject values
+   * that would wrap when narrowed to room_vnum (70537 used to be 5001),
+   * with the same bound as dg_parse_vnum(). */
+  vnum = tb_parse_long_or_zero(name);
+  if (vnum < 0 || vnum >= IDXTYPE_MAX) {
+    TB_WARN_MSG("dg", "uid-namespace", "get_room",
+                "room vnum %ld outside room_vnum [0,%d)", vnum, (int)IDXTYPE_MAX);
     return NULL;
-  else
-    return &world[nr];
+  }
+  if ((nr = real_room((room_vnum)vnum)) == NOWHERE)
+    return NULL;
+  return &world[nr];
 }
 
 /* Returns a pointer to the first character in world by name name, or NULL if 
