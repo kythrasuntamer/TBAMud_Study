@@ -308,7 +308,7 @@ void gain_exp(struct char_data *ch, int gain)
     GET_EXP(ch) += gain;
     while (GET_LEVEL(ch) < LVL_IMMORT - 1 &&
            GET_LEVEL(ch) < LVL_IMMORT - CONFIG_NO_MORT_TO_IMMORT &&
-	GET_EXP(ch) >= level_exp(GET_CLASS(ch), GET_LEVEL(ch) + 1)) {
+	GET_EXP(ch) >= char_level_exp(ch, GET_LEVEL(ch) + 1)) {
       GET_LEVEL(ch) += 1;
       num_levels++;
       advance_level(ch);
@@ -350,7 +350,7 @@ void gain_exp_regardless(struct char_data *ch, int gain)
 
   if (!IS_NPC(ch)) {
     while (GET_LEVEL(ch) < LVL_IMPL &&
-	GET_EXP(ch) >= level_exp(GET_CLASS(ch), GET_LEVEL(ch) + 1)) {
+	GET_EXP(ch) >= char_level_exp(ch, GET_LEVEL(ch) + 1)) {
       GET_LEVEL(ch) += 1;
       num_levels++;
       advance_level(ch);

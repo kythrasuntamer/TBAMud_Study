@@ -46,7 +46,9 @@ int mag_savingthrow(struct char_data *ch, int type, int modifier)
   if (!IS_NPC(ch))
     class_sav = (int)GET_CLASS(ch);
 
-  save = (unsigned char)saving_throws(class_sav, type, GET_LEVEL(ch));
+  /* char_saving_throw() names ch in the class-table report if its class
+   * or level misses the table (C1-19). */
+  save = (unsigned char)char_saving_throw(ch, class_sav, type);
   save += GET_SAVE(ch, type);
   save += modifier;
 

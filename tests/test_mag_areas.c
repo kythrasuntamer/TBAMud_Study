@@ -38,9 +38,13 @@ int room_is_dark_at(room_rnum room, const char *source_file, int source_line,
                     const char *source_func)
 { (void)room; (void)source_file; (void)source_line; (void)source_func; return 0; }
 const char *skill_name(int num) { (void)num; return "earthquake"; }
-/* class.c: 100 means no save is ever made (full damage). */
-byte saving_throws(int class_num, int type, int level)
-{ (void)class_num; (void)type; (void)level; return 100; }
+/* class.c: 100 means no save is ever made (full damage). The checked
+ * lookup records whose save was asked for, so the tests can see that
+ * mag_savingthrow() names the character (C1-19 adoption). */
+static const struct char_data *save_subject;
+static int save_class, save_type;
+byte char_saving_throw(const struct char_data *ch, int class_num, int type)
+{ save_subject = ch; save_class = class_num; save_type = type; return 100; }
 void core_dump_real(const char *who, int line) { (void)who; (void)line; }
 void *tb_calloc_array_at(size_t count, size_t element_size,
                          const char *file, int line, const char *func)
@@ -192,6 +196,18 @@ static void test_area_spell_without_interference_hits_everyone_else(void)
   TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
 }
 
+/* C1-19 adoption: the saving throw is looked up through
+ * char_saving_throw() for the victim, so a class-table miss names it. NPCs
+ * use the warrior table. */
+static void test_saving_throw_names_the_victim(void)
+{
+  save_subject = NULL;
+  TEST_ASSERT_FALSE(mag_savingthrow(&mob_a, SAVING_SPELL, 0));
+  TEST_ASSERT_EQUAL_PTR(&mob_a, save_subject);
+  TEST_ASSERT_EQUAL_INT(CLASS_WARRIOR, save_class);
+  TEST_ASSERT_EQUAL_INT(SAVING_SPELL, save_type);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -199,5 +215,6 @@ int main(void)
   RUN_TEST(test_area_spell_skips_occupant_purged_by_a_trigger);
   RUN_TEST(test_area_spell_stops_when_the_caster_is_purged);
   RUN_TEST(test_area_spell_without_interference_hits_everyone_else);
+  RUN_TEST(test_saving_throw_names_the_victim);
   return UNITY_END();
 }
