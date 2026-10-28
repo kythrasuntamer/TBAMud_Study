@@ -1752,6 +1752,25 @@ static void add_room_refuses_out_of_range_zone(void)
 }
 
 /* ------------------------------------------------------------------------ */
+/* Leftovers 2: save_rooms() keeps the previous file after a write error,   */
+/* like the other writers (C2-16 above).                                    */
+/* ------------------------------------------------------------------------ */
+static void save_rooms_keeps_previous_file_after_stream_error(void)
+{
+  make_zones(1); make_rooms(2);
+  write_text_file(WLD_PREFIX "/0.wld", "previous\n");
+  poison_next_write_stream = 1;
+  check_previous_file_kept(save_rooms(0), WLD_PREFIX "/0.wld", WLD_PREFIX "/0.new");
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "zone 0 rooms"));
+
+  /* A clean stream still commits. */
+  tb_error_capture_reset();
+  TEST_ASSERT_TRUE(save_rooms(0));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  TEST_ASSERT_FALSE(file_exists(WLD_PREFIX "/0.new"));
+}
+
+/* ------------------------------------------------------------------------ */
 /* Temporary world directory for the writers.                               */
 /* ------------------------------------------------------------------------ */
 static char test_root[] = "/tmp/tb-genolc-XXXXXX";
@@ -1865,6 +1884,7 @@ int main(void)
   RUN_TEST(add_cmd_to_list_appends_past_the_end);
   RUN_TEST(create_new_zone_renumbers_reset_queue);
   RUN_TEST(add_room_refuses_out_of_range_zone);
+  RUN_TEST(save_rooms_keeps_previous_file_after_stream_error);
   failures = UNITY_END();
   leave_test_root();
   return failures;

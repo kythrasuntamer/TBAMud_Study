@@ -546,9 +546,17 @@ int save_rooms(zone_rnum rzone)
   /* Write the final line and commit only a fully flushed temporary file. */
   tb_fprintf(sf, "$~\n");
   {
+    /* ferror() stays set after any failed write.  tb_fprintf() reported
+     * each one, but a later flush that succeeds would hide it and commit a
+     * file with a hole in it (C2-16). */
+    int stream_ok = !ferror(sf);
     int flush_ok = tb_fflush_checked(sf, filename);
     int close_ok = tb_fclose_checked(sf, filename);
-    if (!flush_ok || !close_ok) {
+    if (!stream_ok)
+      TB_ERROR_MSG("olc", "save-stream-error", filename,
+                   TB_ERRID_PERSIST_WRITE " zone %d rooms: a write failed; previous file kept",
+                   zone_table[rzone].number);
+    if (!stream_ok || !flush_ok || !close_ok) {
       if (remove(filename) != 0 && errno != ENOENT)
         TB_REPORT_ERRNO("remove", filename);
       return FALSE;
