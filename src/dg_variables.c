@@ -35,17 +35,25 @@
 void add_var(struct trig_var_data **var_list, const char *name, const char *value, long id)
 {
   struct trig_var_data *vd;
+  size_t len;
+  char *copy;
 
   if (strchr(name, '.')) {
     log("add_var() : Attempt to add illegal var: %s", name);
     return;
   }
 
+  /* Copy first: value may be (part of) the value being replaced, as when a
+   * script runs "remote var %self.id%" on its own globals. */
+  len = strlen(value) + 1;
+  CREATE(copy, char, len);
+  memcpy(copy, value, len);
+
   for (vd = *var_list; vd && str_cmp(vd->name, name); vd = vd->next);
 
   if (vd && (!vd->context || vd->context==id)) {
     free(vd->value);
-    CREATE(vd->value, char, strlen(value) + 1);
+    vd->value = copy;
   }
 
   else {
@@ -54,14 +62,59 @@ void add_var(struct trig_var_data **var_list, const char *name, const char *valu
     CREATE(vd->name, char, strlen(name) + 1);
     memcpy(vd->name, name, strlen(name) + 1);
 
-    CREATE(vd->value, char, strlen(value) + 1);
+    vd->value = copy;
 
     vd->next = *var_list;
     vd->context = id;
     *var_list = vd;
   }
+}
 
-  memcpy(vd->value, value, strlen(value) + 1);
+/* Makes every '%' in text inert; see DG_INERT_PERCENT. */
+void dg_neutralize_percent(char *text)
+{
+  for (; *text; text++)
+    if (*text == '%')
+      *text = DG_INERT_PERCENT;
+}
+
+/* Turns inert '%' back into '%' for text leaving the script engine. */
+void dg_restore_percent(char *text)
+{
+  for (; *text; text++)
+    if (*text == DG_INERT_PERCENT)
+      *text = '%';
+}
+
+/* Copies a variable value into buf for display, showing inert '%' as '%'. */
+const char *dg_display_value(const char *value, char *buf, size_t size)
+{
+  if (strlcpy(buf, value, size) >= size)
+    TB_WARN_MSG("dg", "var-display", "value",
+                "%zu-byte variable value shown truncated to %zu bytes",
+                strlen(value), size - 1);
+  dg_restore_percent(buf);
+  return buf;
+}
+
+/* add_var() for player-authored values: any '%' is stored inert so no later
+ * substitution pass can read it as variable syntax. */
+void add_player_var(struct trig_var_data **var_list, const char *name,
+                    const char *value, long id)
+{
+  char *inert = strdup(value);
+
+  if (!inert) {
+    /* Never store the raw text: an empty value fails closed. */
+    TB_ERROR_ERRNO("dg", "player-var", name,
+                   "cannot copy %zu-byte player value; storing it empty",
+                   strlen(value));
+    add_var(var_list, name, "", id);
+    return;
+  }
+  dg_neutralize_percent(inert);
+  add_var(var_list, name, inert, id);
+  free(inert);
 }
 
 /* perhaps not the best place for this, but I didn't want a new file */
@@ -205,10 +258,20 @@ int text_processed(char *field, char *subfield, struct trig_var_data *vd,
       strlcpy(str, "0", slen);
     return TRUE;
   } else if (!str_cmp(field, "car")) {                 /* car       */
-    char *car = vd->value;
-    while (*car && !isspace(*car))
-      *str++ = *car++;
-    *str = '\0';
+    const char *car = vd->value;
+    size_t len = 0;
+
+    while (car[len] && !isspace((unsigned char)car[len]))
+      len++;
+    /* Values are unbounded; the destination is not. */
+    if (len >= slen) {
+      TB_ERROR_MSG("dg", "field-truncated", "car",
+                   "var %s: %zu-byte first word truncated to %zu bytes",
+                   vd->name, len, slen - 1);
+      len = slen - 1;
+    }
+    memcpy(str, car, len);
+    str[len] = '\0';
     return TRUE;
 
   } else if (!str_cmp(field, "cdr")) {                 /* cdr       */
@@ -363,10 +426,16 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
       case MOB_TRIGGER:
         ch = (char_data *) go;
 
+        if (IN_ROOM(ch) == NOWHERE)
+          TB_WARN_MSG("dg", "owner-nowhere", "find_replacement",
+                      "trigger %d: " DIAG_CHAR_FMT " is in no room; "
+                      "its room is not searched for %s", trig ? GET_TRIG_VNUM(trig) : -1,
+                      DIAG_CHAR(ch), var);
+
         if ((o = get_object_in_equip(ch, name)));
         else if ((o = get_obj_in_list(name, ch->carrying)));
         else if (IN_ROOM(ch) != NOWHERE && (c = get_char_in_room(&world[IN_ROOM(ch)], name)));
-        else if ((o = get_obj_in_list(name,world[IN_ROOM(ch)].contents)));
+        else if (IN_ROOM(ch) != NOWHERE && (o = get_obj_in_list(name,world[IN_ROOM(ch)].contents)));
         else if ((c = get_char(name)));
         else if ((o = get_obj(name)));
         else if ((r = get_room(name))) {}
@@ -469,7 +538,7 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
           script_log("findmob.vnum(mvnum) - illegal syntax");
           strlcpy(str, "0", slen);
         } else {
-          room_rnum rrnum = real_room(tb_parse_int_or_zero(field));
+          room_rnum rrnum = real_room(dg_parse_vnum(field));
           mob_vnum mvnum = tb_parse_int_or_zero(subfield);
 
           if (rrnum == NOWHERE) {
@@ -490,7 +559,7 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
           script_log("findobj.vnum(ovnum) - illegal syntax");
           strlcpy(str, "0", slen);
         } else {
-          room_rnum rrnum = real_room(tb_parse_int_or_zero(field));
+          room_rnum rrnum = real_room(dg_parse_vnum(field));
 
           if (rrnum == NOWHERE) {
             script_log("findobj.vnum(ovnum): No room with vnum %d", tb_parse_int_or_zero(field));
@@ -508,23 +577,38 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
 
           if (type == MOB_TRIGGER) {
             ch = (char_data *) go;
-            for (c = world[IN_ROOM(ch)].people; c; c = c->next_in_room)
-              if ((c != ch) && valid_dg_target(c, DG_ALLOW_GODS) &&
-                  CAN_SEE(ch, c)) {
-                if (!rand_number(0, count))
-                  rndm = c;
-                count++;
-              }
+            if (IN_ROOM(ch) == NOWHERE)
+              TB_WARN_MSG("dg", "owner-nowhere", "random.char",
+                          "trigger %d: " DIAG_CHAR_FMT " is in no room; "
+                          "no character chosen", trig ? GET_TRIG_VNUM(trig) : -1,
+                          DIAG_CHAR(ch));
+            else {
+              for (c = world[IN_ROOM(ch)].people; c; c = c->next_in_room)
+                if ((c != ch) && valid_dg_target(c, DG_ALLOW_GODS) &&
+                    CAN_SEE(ch, c)) {
+                  if (!rand_number(0, count))
+                    rndm = c;
+                  count++;
+                }
+            }
           }
 
           else if (type == OBJ_TRIGGER) {
-            for (c = world[obj_room((obj_data *) go)].people; c;
-                 c = c->next_in_room)
-              if (valid_dg_target(c, DG_ALLOW_GODS)) {
-                if (!rand_number(0, count))
-                  rndm = c;
-                count++;
-              }
+            room_rnum in_room = obj_room((obj_data *) go);
+
+            if (in_room == NOWHERE)
+              TB_WARN_MSG("dg", "owner-nowhere", "random.char",
+                          "trigger %d: obj vnum %d is in no room; no character "
+                          "chosen", trig ? GET_TRIG_VNUM(trig) : -1,
+                          GET_OBJ_VNUM((obj_data *) go));
+            else {
+              for (c = world[in_room].people; c; c = c->next_in_room)
+                if (valid_dg_target(c, DG_ALLOW_GODS)) {
+                  if (!rand_number(0, count))
+                    rndm = c;
+                  count++;
+                }
+            }
           }
 
           else if (type == WLD_TRIGGER) {
@@ -588,10 +672,23 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
 
     if (c) {
       if (!str_cmp(field, "global")) { /* get global of something else */
-        if (IS_NPC(c) && c->script) {
-          find_replacement(go, c->script, NULL, MOB_TRIGGER,
-            subfield, NULL, NULL, str, slen);
+        *str = '\0';
+        if (!subfield || !*subfield) {
+          script_log("Trigger: %s, VNum %d. %s.global() needs a variable name",
+                     (trig && GET_TRIG_NAME(trig) ? GET_TRIG_NAME(trig) : "(no trigger)"),
+                     (trig ? GET_TRIG_VNUM(trig) : -1), var);
+          return;
         }
+        /* An unset global reads as empty, as it does for the script's own. */
+        if (IS_NPC(c) && c->script) {
+          for (vd = c->script->global_vars; vd; vd = vd->next)
+            if (!str_cmp(vd->name, subfield) &&
+                (vd->context == 0 || vd->context == c->script->context))
+              break;
+          if (vd)
+            tb_snprintf(str, slen, "%s", vd->value);
+        }
+        return;
       }
       /* set str to some 'non-text' first */
       *str = '\x1';
@@ -1087,11 +1184,22 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
             tb_snprintf(str, slen, "%d", GET_COND(c, THIRST));
           }
           else if (!str_cmp(field, "title")) {
-            if (!IS_NPC(c) && subfield && *subfield && valid_dg_target(c, DG_ALLOW_GODS)) {
+            if (!IS_NPC(c) && subfield && strlen(subfield) > MAX_TITLE_LENGTH)
+              script_log("Trigger: %s, VNum %d. title longer than %d characters "
+                         "refused for player idnum %ld",
+                         (trig && GET_TRIG_NAME(trig) ? GET_TRIG_NAME(trig) : "(no trigger)"),
+                         (trig ? GET_TRIG_VNUM(trig) : -1), MAX_TITLE_LENGTH,
+                         GET_IDNUM(c));
+            else if (!IS_NPC(c) && subfield && *subfield && valid_dg_target(c, DG_ALLOW_GODS)) {
               if (GET_TITLE(c)) free(GET_TITLE(c));
                 GET_TITLE(c) = strdup(subfield);
+              /* The title leaves the script engine. */
+              if (GET_TITLE(c))
+                dg_restore_percent(GET_TITLE(c));
             }
             tb_snprintf(str, slen, "%s", IS_NPC(c) ? "" : GET_TITLE(c));
+            /* Players write their own titles. */
+            dg_neutralize_percent(str);
           }
           break;
 	case 'v':
@@ -1234,7 +1342,7 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
               else
                 tb_snprintf(str, slen, "0");
             } else {
-              sprintbitarray(GET_OBJ_EXTRA(o), extra_bits, EF_ARRAY_MAX, str, sizeof(str));
+              sprintbitarray(GET_OBJ_EXTRA(o), extra_bits, EF_ARRAY_MAX, str, slen);
             }
           }
           break;
@@ -1673,6 +1781,11 @@ void var_subst(void *go, struct script_data *sc, trig_data *trig,
     /* so it wasn't double %'s */
     else if (*p && (left > 0)) {
 
+      /* Each reference collects its own (subfield). */
+      subfield_p = subfield;
+      *subfield = '\0';
+      paren_count = 0;
+
       /* search until end of var or beginning of field */
       for (var = p; *p && (*p != '%') && (*p != '.'); p++);
 
@@ -1685,8 +1798,11 @@ void var_subst(void *go, struct script_data *sc, trig_data *trig,
             *subfield_p = '\0';
             find_replacement(go, sc, trig, type, var, field, subfield, repl_str, sizeof(repl_str));
             if (*repl_str) {
-              tb_snprintf(tmp2, sizeof(tmp2), "eval tmpvr %s", repl_str); //temp var
-              process_eval(go, sc, trig, type, tmp2);
+              /* Bind the field's value as-is.  Evaluating it again would run
+               * any operators or %variables% inside an object name, title or
+               * other field text. */
+              add_var(&GET_TRIG_VARS(trig), "tmpvr", repl_str,
+                      sc ? sc->context : 0);
               strlcpy(var, "tmpvr", sizeof(tmp) - (size_t)(var - tmp));
               field = p;
               dots = 0;
@@ -1708,7 +1824,23 @@ void var_subst(void *go, struct script_data *sc, trig_data *trig,
         } /* for (field.. */
       } /* if *p == '.' */
 
-      *(p++) = '\0';
+      if (*p)
+        *(p++) = '\0';
+      else {
+        /* The reference ran to the end of the line: no closing '%', or an
+         * unclosed '('.  Substitute what was read, but never step past the
+         * terminator. */
+        int vnum = (trig && trig_index) ? GET_TRIG_VNUM(trig) : NOTHING;
+        int column = (int)(var - tmp);
+
+        TB_ERROR_MSG("dg", "var-unterminated", "var_subst",
+                     "trigger %d: variable reference at column %d %s",
+                     vnum, column, paren_count > 0 ? "has an unclosed '('"
+                                                   : "has no closing '%'");
+        script_log("Trigger VNum %d: variable reference at column %d %s.",
+                   vnum, column, paren_count > 0 ? "has an unclosed '('"
+                                                 : "has no closing '%'");
+      }
       *subfield_p = '\0';
 
       if (*subfield) {

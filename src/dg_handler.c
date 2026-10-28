@@ -205,7 +205,7 @@ void extract_script(void *thing, int type)
       for ( ; j ; j = j->next)
         assert(sc != SCRIPT(j));
 
-      for (k = 0; k < top_of_world; k++)
+      for (k = 0; world && k <= top_of_world; k++)
         assert(sc != SCRIPT(&world[k]));
     }
   }
@@ -277,7 +277,7 @@ void free_proto_script(void *thing, int type)
       for ( ; j ; j = j->next)
         assert(proto != j->proto_script);
 
-      for (k = 0; k < top_of_world; k++)
+      for (k = 0; world && k <= top_of_world; k++)
         assert(proto != world[k].proto_script);
     }
   }

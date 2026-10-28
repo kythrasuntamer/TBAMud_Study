@@ -44,13 +44,25 @@ void send_to_range(room_vnum start, room_vnum finish, const char *messg, ...)
 
 /* act functions */
 void perform_act(const char *orig, struct char_data *ch, struct obj_data *obj, void *vict_obj, struct char_data *to);
-char * act(const char *str, int hide_invisible, struct char_data *ch, struct obj_data *obj, void *vict_obj, int type);
+/* act() is a macro so every message records the file, line and function of
+ * the code that sent it; formatting diagnostics in perform_act() report that
+ * call site. Call act() exactly as before. A NULL or empty str means "no
+ * message" (socials use it for absent entries) and returns NULL silently. */
+char *act_at(const char *src_file, int src_line, const char *src_func,
+             const char *str, int hide_invisible, struct char_data *ch,
+             struct obj_data *obj, void *vict_obj, int type);
+#define act(str, hide_invisible, ch, obj, vict_obj, type) \
+  act_at(__FILE__, __LINE__, __func__, (str), (hide_invisible), (ch), (obj), \
+         (vict_obj), (type))
 
 /* I/O functions */
 void	write_to_q(const char *txt, struct txt_q *queue, int aliased);
 int	write_to_descriptor(socket_t desc, const char *txt);
 size_t	write_to_output(struct descriptor_data *d, const char *txt, ...) __attribute__ ((format (printf, 2, 3)));
-size_t	vwrite_to_output(struct descriptor_data *d, const char *format, va_list args);
+/* va_list form of write_to_output(); format(printf, 2, 0) marks it as
+ * forwarding a caller's checked format. */
+size_t	vwrite_to_output(struct descriptor_data *d, const char *format, va_list args)
+  __attribute__ ((format (printf, 2, 0)));
 
 typedef RETSIGTYPE sigfunc(int);
 

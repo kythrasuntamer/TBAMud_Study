@@ -56,5 +56,6 @@ struct prefs_data
 /* External Functions in prefedit.c */
 void prefedit_Restore_Defaults(struct descriptor_data *d);
 void prefedit_parse(struct descriptor_data * d, char *arg);
+void prefedit_forget_char(struct char_data *ch);
 ACMD(do_oasis_prefedit);
 

@@ -181,6 +181,11 @@ void redit_setup_existing(struct descriptor_data *d, int real_num)
   /* and you are your next_in_room          -- anderyu (10-05-22) */ 
   room->people = NULL; 
 
+  /* Nor the room's objects: a new room saved from this buffer (a copy into
+   * a new vnum) took over the source's contents list, so both rooms shared
+   * one list whose objects named only the source as their room. */
+  room->contents = NULL;
+
   /* Nullify the events structure. */
   room->events = NULL;
 
@@ -270,24 +275,30 @@ void redit_save_internally(struct descriptor_data *d)
     if (STATE(dsc) == CON_ZEDIT) {
       for (j = 0; OLC_ZONE(dsc)->cmd[j].command != 'S'; j++)
         switch (OLC_ZONE(dsc)->cmd[j].command) {
+          /* Room rnums at or above the new room moved up one, as add_room()
+           * does for the live table.  A door's arg2 is its direction, not a
+           * room, and NOWHERE must stay NOWHERE: both used to be shifted. */
           case 'O':
           case 'M':
           case 'T':
           case 'V':
-            OLC_ZONE(dsc)->cmd[j].arg3 += (OLC_ZONE(dsc)->cmd[j].arg3 >= room_num);
+            if (OLC_ZONE(dsc)->cmd[j].arg3 != NOWHERE &&
+                OLC_ZONE(dsc)->cmd[j].arg3 >= room_num)
+              OLC_ZONE(dsc)->cmd[j].arg3++;
             break;
           case 'D':
-            OLC_ZONE(dsc)->cmd[j].arg2 += (OLC_ZONE(dsc)->cmd[j].arg2 >= room_num);
-            /* Fall through */
           case 'R':
-            OLC_ZONE(dsc)->cmd[j].arg1 += (OLC_ZONE(dsc)->cmd[j].arg1 >= room_num);
+            if (OLC_ZONE(dsc)->cmd[j].arg1 != NOWHERE &&
+                OLC_ZONE(dsc)->cmd[j].arg1 >= room_num)
+              OLC_ZONE(dsc)->cmd[j].arg1++;
             break;
           }
     } else if (STATE(dsc) == CON_REDIT) {
       for (j = 0; j < DIR_COUNT; j++)
-        if (OLC_ROOM(dsc)->dir_option[j])
-          if (OLC_ROOM(dsc)->dir_option[j]->to_room >= room_num)
-            OLC_ROOM(dsc)->dir_option[j]->to_room++;
+        if (OLC_ROOM(dsc)->dir_option[j] &&
+            OLC_ROOM(dsc)->dir_option[j]->to_room != NOWHERE &&
+            OLC_ROOM(dsc)->dir_option[j]->to_room >= room_num)
+          OLC_ROOM(dsc)->dir_option[j]->to_room++;
     }
   }
 }
@@ -887,6 +898,12 @@ void redit_parse(struct descriptor_data *d, char *arg)
 
   case REDIT_COPY:
     if ((number = real_room(tb_parse_int_or_zero(arg))) != NOWHERE) {
+      /* Release the buffer being replaced, as quitting without saving
+       * does; the copy used to leak it and its trigger list. */
+      OLC_ROOM(d)->proto_script = OLC_SCRIPT(d);
+      free_room(OLC_ROOM(d));
+      OLC_ROOM(d) = NULL;
+      OLC_SCRIPT(d) = NULL;
       redit_setup_existing(d, number);
     } else
       write_to_output(d, "That room does not exist.\r\n");
@@ -894,7 +911,9 @@ void redit_parse(struct descriptor_data *d, char *arg)
   
   case REDIT_DELETE:
     if (*arg == 'y' || *arg == 'Y') {
-      if (delete_room(real_room(OLC_ROOM(d)->number)))
+      /* Delete the vnum being edited: after a copy the buffer holds the
+       * source's number, and deleting by it removed the source. */
+      if (delete_room(real_room(OLC_NUM(d))))
         write_to_output(d, "Room deleted.\r\n");
      else
         write_to_output(d, "Couldn't delete the room!.\r\n");

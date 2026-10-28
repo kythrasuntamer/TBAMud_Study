@@ -6,6 +6,8 @@
  */
 
 #include "unity.h"
+#include <stdlib.h>
+#include <string.h>
 
 #include "conf.h"
 #include "sysdep.h"
@@ -229,6 +231,37 @@ void test_one_word_leading_spaces_skipped(void)
     char first[64];
     one_word("  hello", first);
     TEST_ASSERT_EQUAL_STRING("hello", first);
+}
+
+/* The splitters fill MAX_INPUT_LENGTH-byte buffers, but script-forced
+ * commands can carry longer words. Exact-size heap buffers make ASan report
+ * any write or read beyond the contract. */
+void test_any_one_arg_truncates_overlong_word(void)
+{
+    size_t len = MAX_INPUT_LENGTH * 2;
+    char *input = malloc(len + 1);
+    char *first = malloc(MAX_INPUT_LENGTH);
+    TEST_ASSERT_NOT_NULL(input);
+    TEST_ASSERT_NOT_NULL(first);
+    memset(input, 'w', len);
+    input[len] = '\0';
+    char *rest = any_one_arg(input, first);
+    TEST_ASSERT_EQUAL_size_t(MAX_INPUT_LENGTH - 1, strlen(first));
+    /* The whole word is consumed, not split into a second argument. */
+    TEST_ASSERT_EQUAL_STRING("", rest);
+    free(first);
+    free(input);
+}
+
+void test_one_word_unclosed_quote_stops_at_terminator(void)
+{
+    char *input = strdup("\"never closed");
+    char first[MAX_INPUT_LENGTH];
+    TEST_ASSERT_NOT_NULL(input);
+    char *rest = one_word(input, first);
+    TEST_ASSERT_EQUAL_STRING("never closed", first);
+    TEST_ASSERT_TRUE(rest == input + strlen(input));
+    free(input);
 }
 
 /* =========================================================
@@ -549,6 +582,8 @@ int main(void)
     RUN_TEST(test_one_word_quoted_string);
     RUN_TEST(test_one_word_empty_quoted);
     RUN_TEST(test_one_word_leading_spaces_skipped);
+    RUN_TEST(test_any_one_arg_truncates_overlong_word);
+    RUN_TEST(test_one_word_unclosed_quote_stops_at_terminator);
 
     /* perform_complex_alias */
     RUN_TEST(test_pca_literal);

@@ -975,6 +975,7 @@ static void do_stat_character(struct char_data *ch, struct char_data *k)
     if (k->script && k->script->global_vars) {
       struct trig_var_data *tv;
       char uname[MAX_INPUT_LENGTH];
+      char valbuf[MAX_STRING_LENGTH];
 
       send_to_char(ch, "Global Variables:\r\n");
 
@@ -985,7 +986,8 @@ static void do_stat_character(struct char_data *ch, struct char_data *k)
           find_uid_name(tv->value, uname, sizeof(uname));
           send_to_char(ch, "    %10s:  [UID]: %s\r\n", tv->name, uname);
         } else
-          send_to_char(ch, "    %10s:  %s\r\n", tv->name, tv->value);
+          send_to_char(ch, "    %10s:  %s\r\n", tv->name,
+                       dg_display_value(tv->value, valbuf, sizeof(valbuf)));
       }
     }
   }
@@ -4654,7 +4656,7 @@ static int parse_plist_range(const char *arg, int *low, int *high)
 ACMD(do_plist)
 {
   int i, len = 0, count = 0;
-  char mode, buf[MAX_STRING_LENGTH * 20], name_search[MAX_NAME_LENGTH], timestr[MAX_STRING_LENGTH];
+  char mode, buf[MAX_STRING_LENGTH * 20], name_search[MAX_INPUT_LENGTH] /* half_chop() output */, timestr[MAX_STRING_LENGTH];
   struct time_info_data time_away;
   int low = 0, high = LVL_IMPL, low_day = 0, high_day = 10000, low_hr = 0, high_hr = 24;
 

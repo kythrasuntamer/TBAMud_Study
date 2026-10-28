@@ -482,7 +482,8 @@ static void zedit_disp_menu(struct descriptor_data *d)
 	      MYCMD.if_flag ? " then " : "",
 	      obj_proto[MYCMD.arg1].short_description,
 	      cyn, obj_index[MYCMD.arg1].vnum, yel,
-	      equipment_types[MYCMD.arg3],
+	      (MYCMD.arg3 >= 0 && MYCMD.arg3 < NUM_WEARS)
+	        ? equipment_types[MYCMD.arg3] : "an invalid position",
 	      MYCMD.arg2
 	      );
       break;
@@ -506,7 +507,9 @@ static void zedit_disp_menu(struct descriptor_data *d)
     case 'D':
       write_to_output(d, "%sSet door %s as %s.",
 	      MYCMD.if_flag ? " then " : "",
-	      dirs[MYCMD.arg2],
+	      /* Zone files are not checked until reset; show, don't index. */
+	      (MYCMD.arg2 >= 0 && MYCMD.arg2 < NUM_OF_DIRS)
+	        ? dirs[MYCMD.arg2] : "an invalid direction",
 	      MYCMD.arg3 ? ((MYCMD.arg3 == 1) ? "closed" : "locked") : "open"
 	      );
       break;
@@ -913,7 +916,10 @@ void zedit_parse(struct descriptor_data *d, char *arg)
     /* Parse the input for which line to edit, and goto next quiz. Abort edit,
        and return to main menu idea from Mark Garringer zizazat@hotmail.com */
     if (toupper(*arg) == 'A') {
-      if (OLC_CMD(d).command == 'N') {
+      /* OLC_VAL is left over from the last command edited and can be past
+       * the end of the list once commands have been deleted. */
+      if (OLC_VAL(d) >= 0 && OLC_VAL(d) < count_commands(OLC_ZONE(d)->cmd) &&
+          OLC_CMD(d).command == 'N') {
         OLC_CMD(d).command = '*';
       }
       zedit_disp_menu(d);
@@ -1054,7 +1060,9 @@ void zedit_parse(struct descriptor_data *d, char *arg)
     case 'D':
       pos = tb_parse_int_or_zero(arg);
       /* Count directions. */
-      if (pos < 0 || pos > DIR_COUNT)
+      /* DIR_COUNT itself is one past the last direction: the reset then
+       * disables the command as a door that does not exist. */
+      if (pos < 0 || pos >= DIR_COUNT)
 	write_to_output(d, "Try again : ");
       else {
 	OLC_CMD(d).arg2 = pos;
@@ -1246,6 +1254,6 @@ void zedit_parse(struct descriptor_data *d, char *arg)
     cleanup_olc(d, CLEANUP_ALL);
     mudlog(BRF, LVL_BUILDER, TRUE, "SYSERR: OLC: zedit_parse(): Reached default case!");
     write_to_output(d, "Oops...\r\n");
-    break;
+    return;   /* the editor is gone */
   }
 }

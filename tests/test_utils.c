@@ -27,6 +27,43 @@ void test_get_line_preserves_zone_header(void)
     TEST_ASSERT_EQUAL_INT(0, fclose(fp));
 }
 
+/* A line longer than the buffer used to come back in pieces, so a player
+ * file value could end in a tag ("Levl: 34") read as a line of its own. */
+void test_get_line_discards_rest_of_overlong_line(void)
+{
+    FILE *fp = tmpfile();
+    char buf[READ_SIZE], line[READ_SIZE + 64];
+    TEST_ASSERT_NOT_NULL(fp);
+    memset(line, 'x', READ_SIZE - 1);
+    strlcpy(line + READ_SIZE - 1, "Levl: 34\n", sizeof(line) - (READ_SIZE - 1));
+    TEST_ASSERT_TRUE(fputs(line, fp) >= 0);
+    TEST_ASSERT_TRUE(fputs("Next\n", fp) >= 0);
+    TEST_ASSERT_EQUAL_INT(0, fseek(fp, 0L, SEEK_SET));
+    TEST_ASSERT_EQUAL_INT(1, get_line(fp, buf));
+    TEST_ASSERT_EQUAL_size_t(READ_SIZE - 1, strlen(buf));
+    TEST_ASSERT_EQUAL_INT(1, get_line(fp, buf));
+    TEST_ASSERT_EQUAL_STRING("Next", buf);
+    TEST_ASSERT_EQUAL_INT(0, fclose(fp));
+}
+
+/* A line that exactly fills the buffer is whole; the next line is intact. */
+void test_get_line_reads_full_buffer_line_whole(void)
+{
+    FILE *fp = tmpfile();
+    char buf[READ_SIZE], line[READ_SIZE + 2];
+    TEST_ASSERT_NOT_NULL(fp);
+    memset(line, 'y', READ_SIZE - 1);
+    strlcpy(line + READ_SIZE - 1, "\r\n", sizeof(line) - (READ_SIZE - 1));
+    TEST_ASSERT_TRUE(fputs(line, fp) >= 0);
+    TEST_ASSERT_TRUE(fputs("Next\n", fp) >= 0);
+    TEST_ASSERT_EQUAL_INT(0, fseek(fp, 0L, SEEK_SET));
+    TEST_ASSERT_EQUAL_INT(1, get_line(fp, buf));
+    TEST_ASSERT_EQUAL_size_t(READ_SIZE - 1, strlen(buf));
+    TEST_ASSERT_EQUAL_INT(1, get_line(fp, buf));
+    TEST_ASSERT_EQUAL_STRING("Next", buf);
+    TEST_ASSERT_EQUAL_INT(0, fclose(fp));
+}
+
 void setUp(void)    { logfile = stderr; }
 void tearDown(void) { logfile = NULL; }
 
@@ -450,6 +487,8 @@ int main(void)
 
     /* prune_crlf */
     RUN_TEST(test_get_line_preserves_zone_header);
+    RUN_TEST(test_get_line_discards_rest_of_overlong_line);
+    RUN_TEST(test_get_line_reads_full_buffer_line_whole);
     RUN_TEST(test_prune_crlf_strips_crlf);
     RUN_TEST(test_prune_crlf_strips_lf_only);
     RUN_TEST(test_prune_crlf_no_op_on_clean);

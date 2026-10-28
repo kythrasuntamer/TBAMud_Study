@@ -13,15 +13,49 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include "tb_error_capture.h"
 
 enum attack { QUIET, FORGET_REMAINING, RELOCATE_OWNER, PURGE_OWNER,
-              PURGE_ACTOR, REENTER, RECREATE_MEMORY };
+              PURGE_ACTOR, REENTER, RECREATE_MEMORY, PURGE_NEXT_TRIGGER, PURGE_TIMER_OBJECT, PURGE_TIMER_OBJECT_FALSE,
+              PURGE_NEXT_TRIGGER_FALSE, PURGE_CURRENT_TRIGGER_FALSE,
+              PURGE_LOAD_OBJECT_ERROR, REUSE_NEXT_TRIGGER_ADDRESS };
+/* Standalone DG test executable: the full game's direction tables are
+ * deliberately not linked. These definitions match constants.h's types
+ * and support both valid and invalid direction test paths.
+ */
+const char *dirs[NUM_OF_DIRS] = {
+  "north", "east", "south", "west", "up", "down",
+  "northwest", "northeast", "southeast", "southwest"
+};
+int rev_dir[NUM_OF_DIRS] = {
+  SOUTH, WEST, NORTH, EAST, DOWN, UP,
+  SOUTHEAST, SOUTHWEST, NORTHWEST, NORTHEAST
+};
+
+/* Standalone fixture dependencies for command-trigger diagnostics.
+ * Invalid trigger-argument paths must never dereference a missing index.
+ * Production engine supplies these definitions in its normal link. */
+struct index_data **trig_index;
+void mudlog(int type, int level, int file, const char *str, ...)
+{
+  (void)type; (void)level; (void)file; (void)str;
+}
+void skip_spaces(char **string)
+{
+  if (!string || !*string)
+    return;
+  while (**string == ' ' || **string == '\t')
+    ++*string;
+}
+
 static enum attack attack;
 static char_data *owner, *visitor;
 static struct script_data *script;
-static struct trig_data *trigger;
+static struct trig_data *trigger, *next_trigger;
 static int callbacks, commands, nested_calls;
 static int active_owner, active_visitor;
+static obj_data *timer_object;
+static int active_timer_object;
 static int reenter_greeting;
 
 /* CREATE() in the production callback uses the checked allocation API.
@@ -39,6 +73,16 @@ void *tb_calloc_array_at(size_t count, size_t element_size,
 }
 
 long char_script_id(char_data *ch) { return ch->script_id; }
+long obj_script_id(obj_data *obj) { return obj->script_id; }
+int has_obj_by_uid_in_lookup_table(long uid)
+{
+  return active_timer_object && timer_object && timer_object->script_id == uid;
+}
+int obj_uid_matches(long uid, const obj_data *obj)
+{
+  return uid >= OBJ_ID_BASE && active_timer_object &&
+         timer_object == obj && timer_object->script_id == uid;
+}
 char_data *find_char(long id)
 {
   if (active_owner && owner && owner->script_id == id) return owner;
@@ -48,6 +92,9 @@ char_data *find_char(long id)
 int rand_number(int low, int high) { (void)high; return low; }
 void add_var(struct trig_var_data **vars, const char *name,
              const char *value, long context)
+{ (void)vars; (void)name; (void)value; (void)context; }
+void add_player_var(struct trig_var_data **vars, const char *name,
+                    const char *value, long context)
 { (void)vars; (void)name; (void)value; (void)context; }
 
 static struct script_memory *remember(int count, int with_command)
@@ -95,6 +142,40 @@ static void mutate(void)
     free(visitor);
     visitor = NULL;
     break;
+  case PURGE_TIMER_OBJECT_FALSE:
+  case PURGE_TIMER_OBJECT:
+    if (timer_object) {
+      active_timer_object = 0;
+      if (world && world[0].contents == timer_object)
+        world[0].contents = timer_object->next_content;
+      free(timer_object);
+      timer_object = NULL;
+    }
+    break;
+  case PURGE_NEXT_TRIGGER_FALSE:
+  case PURGE_NEXT_TRIGGER:
+    if (next_trigger) {
+      trigger->next = NULL;
+      free(next_trigger->arglist);
+      free(next_trigger);
+      next_trigger = NULL;
+    }
+    break;
+  case PURGE_CURRENT_TRIGGER_FALSE:
+    /* Models a script which detaches the trigger that is running it. */
+    if (trigger) {
+      script->trig_list = trigger->next;
+      free(trigger->arglist);
+      free(trigger);
+      trigger = NULL;
+    }
+    break;
+  case REUSE_NEXT_TRIGGER_ADDRESS:
+    /* The next trigger is freed and a different trigger instance is
+     * allocated at the same address: same pointer, new serial. */
+    if (next_trigger && next_trigger->serial != 99)
+      next_trigger->serial = 99;
+    break;
   case RECREATE_MEMORY:
     /* A malicious trigger keeps re-remembering the same actor. */
     if (owner && visitor) {
@@ -117,10 +198,20 @@ static void mutate(void)
 }
 int script_driver(void *go, trig_data *t, int type, int mode)
 {
-  (void)go; (void)t; (void)type; (void)mode;
+  (void)t; (void)type; (void)mode;
   callbacks++;
+  if (attack == PURGE_LOAD_OBJECT_ERROR) {
+    /* The production driver clears the caller's pointer on self-purge. */
+    attack = PURGE_TIMER_OBJECT;
+    mutate();
+    attack = PURGE_LOAD_OBJECT_ERROR;
+    *(obj_data **)go = NULL;
+    return SCRIPT_ERROR_CODE;
+  }
   mutate();
-  return 1;
+  return attack != PURGE_TIMER_OBJECT_FALSE &&
+         attack != PURGE_NEXT_TRIGGER_FALSE &&
+         attack != PURGE_CURRENT_TRIGGER_FALSE;
 }
 void command_interpreter(char_data *ch, char *command)
 {
@@ -151,20 +242,29 @@ void setUp(void)
   world[0].people = owner;
   owner->next_in_room = visitor;
   script->trig_list = trigger;
+  next_trigger = NULL;
   trigger->trigger_type = MTRIG_MEMORY;
   trigger->narg = 100;
   owner->script = script;
   active_owner = active_visitor = 1;
+  timer_object = NULL;
+  active_timer_object = 0;
   attack = QUIET;
   callbacks = commands = nested_calls = reenter_greeting = 0;
+  tb_error_capture_reset();
 }
 void tearDown(void)
 {
+  free(timer_object);
+  timer_object = NULL;
   if (owner) {
     clear_memory(&owner->memory);
     free(owner);
   }
   if (visitor) free(visitor);
+  if (next_trigger) free(next_trigger->arglist);
+  free(next_trigger);
+  if (trigger) free(trigger->arglist);
   free(trigger);
   free(script);
   free(world);
@@ -370,6 +470,466 @@ static void greet_script_recreate_bounded(void)
   TEST_ASSERT_NOT_NULL(owner->memory);
 }
 
+/* Ordinary greeting dispatch must survive callbacks that invalidate the
+ * room occupant or the next trigger, without losing the return contract.
+ */
+static void setup_ordinary_greet(void)
+{
+  SET_BIT_AR(MOB_FLAGS(owner), MOB_ISNPC);
+  SET_BIT_AR(MOB_FLAGS(visitor), MOB_ISNPC);
+  script->types = MTRIG_GREET;
+  trigger->trigger_type = MTRIG_GREET;
+}
+static void ordinary_greet_baseline(void)
+{
+  setup_ordinary_greet();
+  TEST_ASSERT_EQUAL_INT(1, greet_mtrigger(visitor, -1));
+  TEST_ASSERT_EQUAL_INT(1, callbacks);
+}
+static void ordinary_greet_owner_purge(void)
+{
+  setup_ordinary_greet();
+  attack = PURGE_OWNER;
+  TEST_ASSERT_EQUAL_INT(1, greet_mtrigger(visitor, -1));
+  TEST_ASSERT_EQUAL_INT(1, callbacks);
+  TEST_ASSERT_NULL(owner);
+}
+static void ordinary_greet_actor_purge(void)
+{
+  setup_ordinary_greet();
+  attack = PURGE_ACTOR;
+  TEST_ASSERT_EQUAL_INT(1, greet_mtrigger(visitor, -1));
+  TEST_ASSERT_EQUAL_INT(1, callbacks);
+  TEST_ASSERT_NULL(visitor);
+}
+static void ordinary_greet_owner_teleport(void)
+{
+  setup_ordinary_greet();
+  attack = RELOCATE_OWNER;
+  TEST_ASSERT_EQUAL_INT(1, greet_mtrigger(visitor, -1));
+  TEST_ASSERT_EQUAL_INT(1, callbacks);
+  TEST_ASSERT_EQUAL_INT(1, owner->in_room);
+}
+static void ordinary_greet_extracted_next_trigger(void)
+{
+  setup_ordinary_greet();
+  next_trigger = calloc(1, sizeof(*next_trigger));
+  TEST_ASSERT_NOT_NULL(next_trigger);
+  next_trigger->trigger_type = MTRIG_GREET;
+  next_trigger->narg = 100;
+  trigger->next = next_trigger;
+  attack = PURGE_NEXT_TRIGGER;
+  TEST_ASSERT_EQUAL_INT(1, greet_mtrigger(visitor, -1));
+  TEST_ASSERT_EQUAL_INT(1, callbacks);
+  TEST_ASSERT_NULL(next_trigger);
+}
+
+static void setup_timer_object(void)
+{
+  timer_object = calloc(1, sizeof(*timer_object));
+  TEST_ASSERT_NOT_NULL(timer_object);
+  timer_object->script_id = OBJ_ID_BASE + 4001;
+  timer_object->script = script;
+  active_timer_object = 1;
+  script->types = OTRIG_TIMER;
+  trigger->trigger_type = OTRIG_TIMER;
+}
+static void timer_object_two_triggers(void)
+{
+  setup_timer_object();
+  next_trigger = calloc(1, sizeof(*next_trigger));
+  TEST_ASSERT_NOT_NULL(next_trigger);
+  next_trigger->trigger_type = OTRIG_TIMER;
+  trigger->next = next_trigger;
+  timer_otrigger(timer_object);
+  TEST_ASSERT_EQUAL_INT(2, callbacks);
+}
+static void timer_object_reused_trigger_address(void)
+{
+  setup_timer_object();
+  next_trigger = calloc(1, sizeof(*next_trigger));
+  TEST_ASSERT_NOT_NULL(next_trigger);
+  next_trigger->trigger_type = OTRIG_TIMER;
+  trigger->serial = 1;
+  next_trigger->serial = 2;
+  trigger->next = next_trigger;
+  attack = REUSE_NEXT_TRIGGER_ADDRESS;
+  timer_otrigger(timer_object);
+  /* The replacement is not part of the original dispatch set, and the
+   * reuse is reported rather than silently skipped. */
+  TEST_ASSERT_EQUAL_INT(1, callbacks);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("WARNING", tb_captured_severity);
+  TEST_ASSERT_EQUAL_STRING("trigger-identity", tb_captured_operation);
+}
+static void timer_object_extracted_next_trigger(void)
+{
+  setup_timer_object();
+  next_trigger = calloc(1, sizeof(*next_trigger));
+  TEST_ASSERT_NOT_NULL(next_trigger);
+  next_trigger->trigger_type = OTRIG_TIMER;
+  trigger->next = next_trigger;
+  attack = PURGE_NEXT_TRIGGER;
+  timer_otrigger(timer_object);
+  TEST_ASSERT_EQUAL_INT(1, callbacks);
+}
+static void timer_object_extracted_owner(void)
+{
+  setup_timer_object();
+  next_trigger = calloc(1, sizeof(*next_trigger));
+  TEST_ASSERT_NOT_NULL(next_trigger);
+  next_trigger->trigger_type = OTRIG_TIMER;
+  trigger->next = next_trigger;
+  attack = PURGE_TIMER_OBJECT;
+  timer_otrigger(timer_object);
+  TEST_ASSERT_EQUAL_INT(1, callbacks);
+  TEST_ASSERT_NULL(timer_object);
+}
+
+/* Each action callback must reject an extracted object rather than trusting
+ * a non-NULL local pointer following script_driver(). */
+static void object_action_extraction_denied(void)
+{
+  setup_timer_object();
+  timer_object->carried_by = owner;
+  script->types = OTRIG_GIVE;
+  trigger->trigger_type = OTRIG_GIVE;
+  trigger->narg = 100;
+  attack = PURGE_TIMER_OBJECT;
+  TEST_ASSERT_EQUAL_INT(0, give_otrigger(timer_object, owner, visitor));
+  TEST_ASSERT_EQUAL_INT(1, callbacks);
+  TEST_ASSERT_NULL(timer_object);
+}
+static void object_drop_extraction_denied(void)
+{
+  setup_timer_object();
+  script->types = OTRIG_DROP;
+  trigger->trigger_type = OTRIG_DROP;
+  trigger->narg = 100;
+  attack = PURGE_TIMER_OBJECT;
+  TEST_ASSERT_EQUAL_INT(0, drop_otrigger(timer_object, owner));
+  TEST_ASSERT_EQUAL_INT(1, callbacks);
+}
+static void object_get_extraction_denied(void)
+{
+  setup_timer_object();
+  script->types = OTRIG_GET;
+  trigger->trigger_type = OTRIG_GET;
+  trigger->narg = 100;
+  attack = PURGE_TIMER_OBJECT;
+  TEST_ASSERT_EQUAL_INT(0, get_otrigger(timer_object, owner));
+  TEST_ASSERT_EQUAL_INT(1, callbacks);
+}
+static void object_wear_extraction_denied(void)
+{
+  setup_timer_object();
+  script->types = OTRIG_WEAR;
+  trigger->trigger_type = OTRIG_WEAR;
+  attack = PURGE_TIMER_OBJECT;
+  TEST_ASSERT_EQUAL_INT(0, wear_otrigger(timer_object, owner, 0));
+  TEST_ASSERT_EQUAL_INT(1, callbacks);
+}
+static void object_remove_extraction_denied(void)
+{
+  setup_timer_object();
+  script->types = OTRIG_REMOVE;
+  trigger->trigger_type = OTRIG_REMOVE;
+  attack = PURGE_TIMER_OBJECT;
+  TEST_ASSERT_EQUAL_INT(0, remove_otrigger(timer_object, owner));
+  TEST_ASSERT_EQUAL_INT(1, callbacks);
+}
+static void object_consume_extraction_denied(void)
+{
+  setup_timer_object();
+  script->types = OTRIG_CONSUME;
+  trigger->trigger_type = OTRIG_CONSUME;
+  attack = PURGE_TIMER_OBJECT;
+  TEST_ASSERT_EQUAL_INT(0, consume_otrigger(timer_object, owner, OCMD_EAT));
+  TEST_ASSERT_EQUAL_INT(1, callbacks);
+}
+
+static void leave_object_two_triggers(void)
+{
+  setup_timer_object();
+  world[0].contents = timer_object;
+  script->types = OTRIG_LEAVE;
+  trigger->trigger_type = OTRIG_LEAVE;
+  trigger->narg = 100;
+  next_trigger = calloc(1, sizeof(*next_trigger));
+  TEST_ASSERT_NOT_NULL(next_trigger);
+  next_trigger->trigger_type = OTRIG_LEAVE;
+  next_trigger->narg = 100;
+  trigger->next = next_trigger;
+  TEST_ASSERT_EQUAL_INT(1, leave_otrigger(&world[0], owner, -1));
+  TEST_ASSERT_EQUAL_INT(2, callbacks);
+}
+static void leave_object_extracted_owner(void)
+{
+  setup_timer_object();
+  world[0].contents = timer_object;
+  script->types = OTRIG_LEAVE;
+  trigger->trigger_type = OTRIG_LEAVE;
+  trigger->narg = 100;
+  attack = PURGE_TIMER_OBJECT;
+  TEST_ASSERT_EQUAL_INT(1, leave_otrigger(&world[0], owner, -1));
+  TEST_ASSERT_EQUAL_INT(1, callbacks);
+  TEST_ASSERT_NULL(timer_object);
+}
+static void leave_object_extracted_next_trigger(void)
+{
+  setup_timer_object();
+  world[0].contents = timer_object;
+  script->types = OTRIG_LEAVE;
+  trigger->trigger_type = OTRIG_LEAVE;
+  trigger->narg = 100;
+  next_trigger = calloc(1, sizeof(*next_trigger));
+  TEST_ASSERT_NOT_NULL(next_trigger);
+  next_trigger->trigger_type = OTRIG_LEAVE;
+  next_trigger->narg = 100;
+  trigger->next = next_trigger;
+  attack = PURGE_NEXT_TRIGGER;
+  TEST_ASSERT_EQUAL_INT(1, leave_otrigger(&world[0], owner, -1));
+  TEST_ASSERT_EQUAL_INT(1, callbacks);
+}
+
+static void setup_command_object(void)
+{
+  setup_timer_object();
+  SET_BIT_AR(MOB_FLAGS(owner), MOB_ISNPC);
+  script->types = OTRIG_COMMAND;
+  trigger->trigger_type = OTRIG_COMMAND;
+  trigger->narg = OCMD_ROOM;
+  trigger->arglist = strdup("*");
+  TEST_ASSERT_NOT_NULL(trigger->arglist);
+  world[0].contents = timer_object;
+}
+static void command_object_baseline(void)
+{
+  setup_command_object();
+  char cmd[] = "look", arg[] = "";
+  TEST_ASSERT_EQUAL_INT(1, command_otrigger(owner, cmd, arg));
+  TEST_ASSERT_EQUAL_INT(1, callbacks);
+}
+static void command_object_extracted_on_false(void)
+{
+  setup_command_object();
+  char cmd[] = "look", arg[] = "";
+  attack = PURGE_TIMER_OBJECT_FALSE;
+  TEST_ASSERT_EQUAL_INT(0, command_otrigger(owner, cmd, arg));
+  TEST_ASSERT_EQUAL_INT(1, callbacks);
+  TEST_ASSERT_NULL(timer_object);
+}
+static void command_object_removed_next_trigger(void)
+{
+  setup_command_object();
+  next_trigger = calloc(1, sizeof(*next_trigger));
+  TEST_ASSERT_NOT_NULL(next_trigger);
+  next_trigger->trigger_type = OTRIG_COMMAND;
+  next_trigger->narg = OCMD_ROOM;
+  next_trigger->arglist = strdup("*");
+  TEST_ASSERT_NOT_NULL(next_trigger->arglist);
+  trigger->next = next_trigger;
+  char cmd[] = "look", arg[] = "";
+  attack = PURGE_NEXT_TRIGGER_FALSE;
+  TEST_ASSERT_EQUAL_INT(0, command_otrigger(owner, cmd, arg));
+  TEST_ASSERT_EQUAL_INT(1, callbacks);
+}
+
+static void leave_actor_extracted_mid_dispatch(void)
+{
+  setup_timer_object();
+  world[0].contents = timer_object;
+  script->types = OTRIG_LEAVE;
+  trigger->trigger_type = OTRIG_LEAVE;
+  trigger->narg = 100;
+  next_trigger = calloc(1, sizeof(*next_trigger));
+  TEST_ASSERT_NOT_NULL(next_trigger);
+  next_trigger->trigger_type = OTRIG_LEAVE;
+  next_trigger->narg = 100;
+  trigger->next = next_trigger;
+  attack = PURGE_OWNER;
+  TEST_ASSERT_EQUAL_INT(1, leave_otrigger(&world[0], owner, -1));
+  TEST_ASSERT_EQUAL_INT(1, callbacks);
+  TEST_ASSERT_NULL(owner);
+}
+
+/* Mobile command triggers: a false-returning script may detach the trigger
+ * which ran it. The handler must not follow that trigger's next link. */
+static void setup_command_mob(void)
+{
+  SET_BIT_AR(MOB_FLAGS(owner), MOB_ISNPC);
+  script->types = MTRIG_COMMAND;
+  trigger->trigger_type = MTRIG_COMMAND;
+  trigger->arglist = strdup("*");
+  TEST_ASSERT_NOT_NULL(trigger->arglist);
+}
+static void command_mob_baseline(void)
+{
+  setup_command_mob();
+  char cmd[] = "look", arg[] = "";
+  TEST_ASSERT_EQUAL_INT(1, command_mtrigger(visitor, cmd, arg));
+  TEST_ASSERT_EQUAL_INT(1, callbacks);
+}
+static void command_mob_detached_current_trigger(void)
+{
+  setup_command_mob();
+  next_trigger = calloc(1, sizeof(*next_trigger));
+  TEST_ASSERT_NOT_NULL(next_trigger);
+  next_trigger->trigger_type = MTRIG_COMMAND;
+  next_trigger->arglist = strdup("*");
+  TEST_ASSERT_NOT_NULL(next_trigger->arglist);
+  trigger->next = next_trigger;
+  char cmd[] = "look", arg[] = "";
+  attack = PURGE_CURRENT_TRIGGER_FALSE;
+  TEST_ASSERT_EQUAL_INT(0, command_mtrigger(visitor, cmd, arg));
+  /* The surviving trigger still receives the command, as before. */
+  TEST_ASSERT_EQUAL_INT(2, callbacks);
+  TEST_ASSERT_NULL(trigger);
+}
+/* Speech matching links is_substring()/word_check(); these fixtures follow
+ * the dg_scripts.c contracts (case-insensitive search, quoted phrases). */
+char *str_str(char *cs, char *ct)
+{
+  if (!cs || !ct || !*ct)
+    return NULL;
+  for (; *cs; cs++) {
+    size_t i = 0;
+    while (ct[i] && cs[i] && LOWER(cs[i]) == LOWER(ct[i]))
+      i++;
+    if (!ct[i])
+      return cs;
+  }
+  return NULL;
+}
+char *matching_quote(char *p)
+{
+  char *start = p;
+  for (p++; *p && *p != '"'; p++)
+    if (*p == '\\' && p[1] != '\0')
+      p++;
+  if (!*p && p > start)
+    p--;
+  return p;
+}
+/* Speech triggers reacquire listeners by UID rather than next_in_room. */
+static void setup_speech_mob(void)
+{
+  SET_BIT_AR(MOB_FLAGS(owner), MOB_ISNPC);
+  script->types = MTRIG_SPEECH;
+  trigger->trigger_type = MTRIG_SPEECH;
+  trigger->narg = 0;
+  trigger->arglist = strdup("hello");
+  TEST_ASSERT_NOT_NULL(trigger->arglist);
+}
+static void speech_mob_baseline(void)
+{
+  setup_speech_mob();
+  char said[] = "hello there";
+  speech_mtrigger(visitor, said);
+  TEST_ASSERT_EQUAL_INT(1, callbacks);
+}
+static void speech_mob_listener_purged(void)
+{
+  setup_speech_mob();
+  char said[] = "hello there";
+  attack = PURGE_OWNER;
+  speech_mtrigger(visitor, said);
+  TEST_ASSERT_EQUAL_INT(1, callbacks);
+  TEST_ASSERT_NULL(owner);
+}
+
+/* NULL speech is a caller bug for room speech triggers too: the old code
+ * handed it to word_check()/is_substring(). */
+static void speech_room_null_text_is_reported(void)
+{
+  struct script_data *room_script = script;
+
+  script->types = WTRIG_SPEECH;
+  trigger->trigger_type = WTRIG_SPEECH;
+  trigger->narg = 0;
+  trigger->arglist = strdup("hello");
+  TEST_ASSERT_NOT_NULL(trigger->arglist);
+  world[IN_ROOM(visitor)].script = room_script;
+
+  speech_wtrigger(visitor, NULL);
+
+  world[IN_ROOM(visitor)].script = NULL;
+  TEST_ASSERT_EQUAL_INT(0, callbacks);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("trigger-dispatch", tb_captured_operation);
+}
+
+/* one_phrase() copied an unquoted word without looking at the size it was
+ * given; a heap destination lets ASan see the old overflow. */
+static void one_phrase_honours_its_buffer_size(void)
+{
+  char text[] = "abcdefghij rest";
+  char *word = malloc(4);
+  char *rest;
+
+  TEST_ASSERT_NOT_NULL(word);
+  rest = one_phrase(text, word, 4);
+  TEST_ASSERT_EQUAL_STRING("abc", word);
+  TEST_ASSERT_EQUAL_STRING(" rest", rest);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("phrase-truncated", tb_captured_operation);
+  rest = one_phrase(rest, word, 4);
+  TEST_ASSERT_EQUAL_STRING("res", word);
+  free(word);
+}
+
+/* An actor outside any room is a caller bug: reported, nothing dispatched. */
+static void unplaced_actor_is_reported(void)
+{
+  setup_ordinary_greet();
+  visitor->in_room = NOWHERE;
+  TEST_ASSERT_EQUAL_INT(1, greet_mtrigger(visitor, -1));
+  TEST_ASSERT_EQUAL_INT(0, callbacks);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("trigger-dispatch", tb_captured_operation);
+  char said[] = "hello";
+  speech_mtrigger(visitor, said);
+  TEST_ASSERT_EQUAL_INT(2, tb_captured_errors);
+  /* Object command triggers scan the actor's room too. */
+  char cmd[] = "push", arg[] = "button";
+  TEST_ASSERT_EQUAL_INT(0, command_otrigger(visitor, cmd, arg));
+  TEST_ASSERT_EQUAL_INT(3, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("trigger-dispatch", tb_captured_operation);
+}
+
+/* Load triggers: a script may "return" SCRIPT_ERROR_CODE and purge itself,
+ * leaving the handler's object pointer NULL. */
+struct obj_data *obj_proto;
+static int proto_script_frees;
+static void *proto_script_freed;
+void free_proto_script(void *thing, int type)
+{
+  (void)type;
+  proto_script_frees++;
+  proto_script_freed = thing;
+}
+static void load_object_purged_on_error(void)
+{
+  struct obj_data prototype[1];
+  memset(prototype, 0, sizeof(prototype));
+  obj_proto = prototype;
+  setup_timer_object();
+  script->types = OTRIG_LOAD;
+  trigger->trigger_type = OTRIG_LOAD;
+  trigger->narg = 100;
+  timer_object->item_number = 0;
+  proto_script_frees = 0;
+  proto_script_freed = NULL;
+  attack = PURGE_LOAD_OBJECT_ERROR;
+  load_otrigger(timer_object);
+  TEST_ASSERT_EQUAL_INT(1, callbacks);
+  TEST_ASSERT_NULL(timer_object);
+  /* Recursion-error semantics are preserved for the original prototype. */
+  TEST_ASSERT_EQUAL_INT(1, proto_script_frees);
+  TEST_ASSERT_EQUAL_PTR(&prototype[0], proto_script_freed);
+  obj_proto = NULL;
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -393,5 +953,35 @@ int main(void)
   RUN_TEST(greet_script_reentrant);
   RUN_TEST(entry_script_recreate_bounded);
   RUN_TEST(greet_script_recreate_bounded);
+  RUN_TEST(ordinary_greet_baseline);
+  RUN_TEST(ordinary_greet_owner_purge);
+  RUN_TEST(ordinary_greet_actor_purge);
+  RUN_TEST(ordinary_greet_owner_teleport);
+  RUN_TEST(ordinary_greet_extracted_next_trigger);
+  RUN_TEST(timer_object_two_triggers);
+  RUN_TEST(timer_object_extracted_next_trigger);
+  RUN_TEST(timer_object_reused_trigger_address);
+  RUN_TEST(timer_object_extracted_owner);
+  RUN_TEST(object_action_extraction_denied);
+  RUN_TEST(object_drop_extraction_denied);
+  RUN_TEST(object_get_extraction_denied);
+  RUN_TEST(object_wear_extraction_denied);
+  RUN_TEST(object_remove_extraction_denied);
+  RUN_TEST(object_consume_extraction_denied);
+  RUN_TEST(leave_object_two_triggers);
+  RUN_TEST(leave_object_extracted_owner);
+  RUN_TEST(leave_object_extracted_next_trigger);
+  RUN_TEST(command_object_baseline);
+  RUN_TEST(command_object_extracted_on_false);
+  RUN_TEST(command_object_removed_next_trigger);
+  RUN_TEST(leave_actor_extracted_mid_dispatch);
+  RUN_TEST(command_mob_baseline);
+  RUN_TEST(command_mob_detached_current_trigger);
+  RUN_TEST(speech_mob_baseline);
+  RUN_TEST(speech_mob_listener_purged);
+  RUN_TEST(speech_room_null_text_is_reported);
+  RUN_TEST(one_phrase_honours_its_buffer_size);
+  RUN_TEST(unplaced_actor_is_reported);
+  RUN_TEST(load_object_purged_on_error);
   return UNITY_END();
 }

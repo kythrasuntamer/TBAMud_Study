@@ -58,6 +58,23 @@ static void prefedit_setup(struct descriptor_data *d, struct char_data *vict)
   prefedit_disp_main_menu(d);
 }
 
+/* Called as a character is freed.  An implementor editing that character's
+ * preferences held a pointer to it that outlived the character, and saving
+ * then wrote through freed memory.  Such edits are abandoned; a player's own
+ * prefedit goes away with their connection. */
+void prefedit_forget_char(struct char_data *ch)
+{
+  struct descriptor_data *d;
+
+  for (d = descriptor_list; d; d = d->next)
+    if (STATE(d) == CON_PREFEDIT && d->olc && OLC_PREFS(d) &&
+        OLC_PREFS(d)->ch == ch && d->character != ch) {
+      write_to_output(d, "%s has left the game; preference edit "
+                         "abandoned.\r\n", GET_NAME(ch));
+      cleanup_olc(d, CLEANUP_ALL);
+    }
+}
+
 static void prefedit_save_to_char(struct descriptor_data *d)
 {
   int i;
@@ -816,7 +833,9 @@ void prefedit_Restore_Defaults(struct descriptor_data *d)
      SET_BIT_AR(PREFEDIT_GET_FLAGS, PRF_AUTOEXIT);
 
   /* PRF_NOHASSLE   - On for Imms */
-  if (!PREFEDIT_FLAGGED(PRF_NOHASSLE) && GET_LEVEL(PREFEDIT_GET_CHAR) > LVL_IMMORT)
+  /* An immortal who already had it used to have it switched off, and the
+   * lowest immortal level was not counted as one. */
+  if (GET_LEVEL(PREFEDIT_GET_CHAR) >= LVL_IMMORT)
      SET_BIT_AR(PREFEDIT_GET_FLAGS, PRF_NOHASSLE);
   else
      REMOVE_BIT_AR(PREFEDIT_GET_FLAGS, PRF_NOHASSLE);
@@ -834,7 +853,9 @@ void prefedit_Restore_Defaults(struct descriptor_data *d)
      REMOVE_BIT_AR(PREFEDIT_GET_FLAGS, PRF_NOREPEAT);
 
   /* PRF_HOLYLIGHT  - On for Imms */
-  if (!PREFEDIT_FLAGGED(PRF_HOLYLIGHT) && GET_LEVEL(PREFEDIT_GET_CHAR) > LVL_IMMORT)
+  /* An immortal who already had it used to have it switched off, and the
+   * lowest immortal level was not counted as one. */
+  if (GET_LEVEL(PREFEDIT_GET_CHAR) >= LVL_IMMORT)
      SET_BIT_AR(PREFEDIT_GET_FLAGS, PRF_HOLYLIGHT);
   else
      REMOVE_BIT_AR(PREFEDIT_GET_FLAGS, PRF_HOLYLIGHT);
@@ -870,7 +891,9 @@ void prefedit_Restore_Defaults(struct descriptor_data *d)
      REMOVE_BIT_AR(PREFEDIT_GET_FLAGS, PRF_NOGRATZ);
 
   /* PRF_SHOWVNUMS  - On for Imms */
-  if (!PREFEDIT_FLAGGED(PRF_SHOWVNUMS) && GET_LEVEL(PREFEDIT_GET_CHAR) > LVL_IMMORT)
+  /* An immortal who already had it used to have it switched off, and the
+   * lowest immortal level was not counted as one. */
+  if (GET_LEVEL(PREFEDIT_GET_CHAR) >= LVL_IMMORT)
      SET_BIT_AR(PREFEDIT_GET_FLAGS, PRF_SHOWVNUMS);
   else
      REMOVE_BIT_AR(PREFEDIT_GET_FLAGS, PRF_SHOWVNUMS);
@@ -908,20 +931,16 @@ void prefedit_Restore_Defaults(struct descriptor_data *d)
      REMOVE_BIT_AR(PREFEDIT_GET_FLAGS, PRF_AUTOASSIST);
 
   /* PRF_AUTOMAP    - On */
-  if (PREFEDIT_FLAGGED(PRF_AUTOMAP))
-     SET_BIT_AR(PREFEDIT_GET_FLAGS, PRF_AUTOMAP);
+  SET_BIT_AR(PREFEDIT_GET_FLAGS, PRF_AUTOMAP);   /* "if flagged, set" turned nothing on */
 
   /* PRF_AUTOKEY    - On */
-  if (PREFEDIT_FLAGGED(PRF_AUTOKEY))
-     SET_BIT_AR(PREFEDIT_GET_FLAGS, PRF_AUTOKEY);
+  SET_BIT_AR(PREFEDIT_GET_FLAGS, PRF_AUTOKEY);   /* "if flagged, set" turned nothing on */
 
   /* PRF_AUTODOOR   - On */
-  if (PREFEDIT_FLAGGED(PRF_AUTODOOR))
-     SET_BIT_AR(PREFEDIT_GET_FLAGS, PRF_AUTODOOR);
+  SET_BIT_AR(PREFEDIT_GET_FLAGS, PRF_AUTODOOR);   /* "if flagged, set" turned nothing on */
 
   /* PRF_VERBOSE    - On */
-  if (PREFEDIT_FLAGGED(PRF_VERBOSE))
-    SET_BIT_AR(PREFEDIT_GET_FLAGS, PRF_VERBOSE);
+  SET_BIT_AR(PREFEDIT_GET_FLAGS, PRF_VERBOSE);   /* "if flagged, set" turned nothing on */
 
   /* Other (non-toggle) options */
   PREFEDIT_GET_WIMP_LEV   = 0;   /* Wimpy off by default */
@@ -936,6 +955,11 @@ ACMD(do_oasis_prefedit)
   char buf[MAX_STRING_LENGTH];
   char buf1[MAX_STRING_LENGTH];
   char buf2[MAX_STRING_LENGTH];
+
+  /* No building as a mob or while being forced: the editor lives on the
+   * caller's own descriptor, which those have none of. */
+  if (IS_NPC(ch) || !ch->desc || STATE(ch->desc) != CON_PLAYING)
+    return;
 
   /****************************************************************************/
   /** Parse any arguments.                                                   **/
@@ -975,11 +999,14 @@ ACMD(do_oasis_prefedit)
   for (d = descriptor_list; d; d = d->next) {
     if (STATE(d) == CON_PREFEDIT) {
       if (d->olc && OLC_PREFS(d)->ch == vict) {
+        /* Without braces the act() also ran for ch == vict, with buf never
+         * written. */
         if (ch == vict)
           send_to_char(ch, "Your preferences are currently being edited by %s.\r\n", PERS(d->character, ch));
-        else
+        else {
           tb_snprintf(buf, sizeof(buf), "$S$u preferences are currently being edited by %s.", PERS(d->character, ch));
-        act(buf, FALSE, ch, 0, vict, TO_CHAR);
+          act(buf, FALSE, ch, 0, vict, TO_CHAR);
+        }
         return;
       }
     }

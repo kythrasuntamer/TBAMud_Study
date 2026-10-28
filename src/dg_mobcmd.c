@@ -25,21 +25,25 @@
 
 
 /* Local file scope functions. */
-static void mob_log(char_data *mob, const char *format, ...);
+static void mob_log(char_data *mob, const char *format, ...)
+  __attribute__ ((format (printf, 2, 3)));
 
 
 /* attaches mob's name and vnum to msg and sends it to script_log */
 static void mob_log(char_data *mob, const char *format, ...)
 {
   va_list args;
-  char output[MAX_STRING_LENGTH];
+  char message[MAX_STRING_LENGTH];
 
-  tb_snprintf(output, sizeof(output), "Mob (%s, VNum %d):: %s",
-                   GET_SHORT(mob), GET_MOB_VNUM(mob), format);
-
+  /* Format the caller's message on its own, then log it as data. Embedding
+   * the name in the format would let a '%' in a builder-written name, or in
+   * player text a script passes along, be interpreted as a conversion. */
   va_start(args, format);
-  script_vlog(output, args);
+  if (vsnprintf(message, sizeof(message), format, args) < 0)
+    strlcpy(message, "(message formatting failed)", sizeof(message));
   va_end(args);
+
+  script_log("Mob (%s, VNum %d):: %s", GET_SHORT(mob), GET_MOB_VNUM(mob), message);
 }
 
 /* Macro to determine if a mob is permitted to use these commands. */
@@ -142,7 +146,7 @@ ACMD(do_mkill)
 ACMD(do_mjunk)
 {
     char arg[MAX_INPUT_LENGTH];
-    int pos, junk_all = 0;
+    int pos, dots;
     obj_data *obj;
     obj_data *obj_next;
 
@@ -161,9 +165,12 @@ ACMD(do_mjunk)
         return;
     }
 
-    if (!str_cmp(arg, "all")) junk_all = 1;
+    /* find_all_dots() strips a leading "all.", leaving the bare name.  The
+     * test used to be inverted, sending plain names down the "all." path
+     * where arg[3] and arg + 4 read past a short name's terminator. */
+    dots = find_all_dots(arg);
 
-    if ((find_all_dots(arg) != FIND_INDIV) && !junk_all) {
+    if (dots == FIND_INDIV) {
       /* Thanks to Carlos Myers for fixing the line below */
       if ((pos = get_obj_pos_in_equip_vis(ch, arg, NULL, ch->equipment)) >= 0) {
          extract_obj(unequip_char(ch, pos));
@@ -172,14 +179,19 @@ ACMD(do_mjunk)
       if ((obj = get_obj_in_list_vis(ch, arg, NULL, ch->carrying)) != NULL )
         extract_obj(obj);
       return;
+    }
+
+    /* "all" junks everything; "all.<name>" junks what matches name. */
+    for (obj = ch->carrying; obj != NULL; obj = obj_next) {
+        obj_next = obj->next_content;
+        if (dots == FIND_ALL || isname(arg, obj->name))
+            extract_obj(obj);
+    }
+    if (dots == FIND_ALL) {
+      for (pos = 0; pos < NUM_WEARS; pos++)
+        if (GET_EQ(ch, pos))
+          extract_obj(unequip_char(ch, pos));
     } else {
-        for (obj = ch->carrying; obj != NULL; obj = obj_next) {
-            obj_next = obj->next_content;
-            if (arg[3] == '\0' || isname(arg+4, obj->name)) {
-                extract_obj(obj);
-            }
-        }
-      /* Thanks to Carlos Myers for fixing the line below */
       while ((pos = get_obj_pos_in_equip_vis(ch, arg, NULL, ch->equipment)) >= 0)
         extract_obj(unequip_char(ch, pos));
     }
@@ -300,7 +312,7 @@ ACMD(do_mlog)
     p = argument;
     skip_spaces(&p);
 
-    mob_log(ch, p);
+    mob_log(ch, "%s", p); /* script text, may hold player input */
 
 }
 
@@ -355,7 +367,7 @@ ACMD(do_mload)
 
     target = two_arguments(argument, arg1, arg2);
 
-    if (!*arg1 || !*arg2 || !is_number(arg2) || ((number = tb_parse_int_or_zero(arg2)) < 0)) {
+    if (!*arg1 || !*arg2 || !is_number(arg2) || ((number = dg_parse_vnum(arg2)) == NOTHING)) {
         mob_log(ch, "mload: bad syntax");
         return;
     }
@@ -366,7 +378,7 @@ ACMD(do_mload)
       if (!target || !*target) {
         rnum = IN_ROOM(ch);
       } else {
-        if (!isdigit(*target) || (rnum = real_room(tb_parse_int_or_zero(target))) == NOWHERE) {
+        if (!isdigit(*target) || (rnum = real_room(dg_parse_vnum(target))) == NOWHERE) {
           mob_log(ch, "mload: room target vnum doesn't exist "
                       "(loading mob vnum %d to room %s)", number, target);
           return;
@@ -499,8 +511,6 @@ ACMD(do_mpurge)
       return;
   }
 
-  if (victim==ch) dg_owner_purged = 1;
-
   extract_char(victim);
 }
 
@@ -582,7 +592,7 @@ ACMD(do_mteleport)
 {
   char arg1[MAX_INPUT_LENGTH], arg2[MAX_INPUT_LENGTH];
   room_rnum target;
-  char_data *vict, *next_ch;
+  char_data *vict;
 
   if (!MOB_OR_IMPL(ch)) {
     send_to_char(ch, "%s", CONFIG_HUH);
@@ -612,15 +622,7 @@ ACMD(do_mteleport)
       return;
     }
 
-    for (vict = world[IN_ROOM(ch)].people; vict; vict = next_ch) {
-      next_ch = vict->next_in_room;
-
-      if (valid_dg_target(vict, DG_ALLOW_GODS)) {
-        char_from_room(vict);
-        char_to_room(vict, target);
-        enter_wtrigger(&world[IN_ROOM(vict)], vict, -1);
-      }
-    }
+    dg_teleport_all(IN_ROOM(ch), target);
   } else {
     if (*arg1 == UID_CHAR) {
       if (!(vict = get_char(arg1))) {
@@ -914,10 +916,10 @@ ACMD(do_mtransform)
     mob_log(ch, "mtransform: bad argument");
   else {
     if (isdigit(*arg))
-      m = read_mobile(tb_parse_int_or_zero(arg), VIRTUAL);
+      m = read_mobile(dg_parse_vnum(arg), VIRTUAL);
     else {
       keep_hp = 0;
-      m = read_mobile(tb_parse_int_or_zero(arg+1), VIRTUAL);
+      m = read_mobile(dg_parse_vnum(arg+1), VIRTUAL);
     }
     if (m==NULL) {
       mob_log(ch, "mtransform: bad mobile vnum");
@@ -972,6 +974,11 @@ ACMD(do_mtransform)
     }
     GET_GOLD(&tmpmob) = GET_GOLD(ch);
     GET_POS(&tmpmob) = GET_POS(ch);
+    /* A sitting mob stays on its furniture's sitter chain; taking these from
+     * the fresh mob broke the chain and left the furniture pointing at a
+     * character that no longer knew it was sitting there. */
+    SITTING(&tmpmob) = SITTING(ch);
+    NEXT_SITTING(&tmpmob) = NEXT_SITTING(ch);
     IS_CARRYING_W(&tmpmob) = IS_CARRYING_W(ch);
     IS_CARRYING_N(&tmpmob) = IS_CARRYING_N(ch);
     FIGHTING(&tmpmob) = FIGHTING(ch);
@@ -1095,7 +1102,7 @@ ACMD(do_mdoor)
             }
             break;
         case 5:  /* room        */
-            if ((to_room = real_room(tb_parse_int_or_zero(value))) != NOWHERE)
+            if ((to_room = real_room(dg_parse_vnum(value))) != NOWHERE)
                 newexit->to_room = to_room;
             else {
                 newexit->to_room = NOWHERE;
@@ -1110,7 +1117,7 @@ ACMD(do_mfollow)
 {
   char buf[MAX_INPUT_LENGTH];
   struct char_data *leader;
-  struct follow_type *j, *k;
+  struct follow_type *k;
 
   if (!MOB_OR_IMPL(ch)) {
     send_to_char(ch, "%s", CONFIG_HUH);
@@ -1146,17 +1153,20 @@ ACMD(do_mfollow)
 
   /* stop following someone else first */
   if (ch->master) {
-    if (ch->master->followers->follower == ch) {	/* Head of follower-list? */
-      k = ch->master->followers;
-      ch->master->followers = k->next;
-      free(k);
-    } else {			/* locate follower who is not head of list */
-      for (k = ch->master->followers; k->next->follower != ch; k = k->next);
+    struct follow_type **link;
 
-      j = k->next;
-      k->next = j->next;
-      free(j);
-    }
+    /* The old unlink assumed ch was on the list and dereferenced NULL when
+     * the list was empty or did not hold it. */
+    for (link = &ch->master->followers; *link && (*link)->follower != ch;
+         link = &(*link)->next);
+    if (*link) {
+      k = *link;
+      *link = k->next;
+      free(k);
+    } else
+      TB_ERROR_MSG("dg", "follower-list", "mfollow",
+                   DIAG_CHAR_FMT " is not in its master's follower list",
+                   DIAG_CHAR(ch));
     ch->master = NULL;
   }
 

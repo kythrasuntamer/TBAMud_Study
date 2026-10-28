@@ -2,7 +2,9 @@ name: Native Sanitizers
 
 on:
   push:
-    branches: [ "master" ]
+    # Security/audit work lands on audit/** branches before any PR exists;
+    # sanitize every push there so memory errors surface per commit.
+    branches: [ "master", "audit/**" ]
   pull_request:
     branches: [ "master" ]
 

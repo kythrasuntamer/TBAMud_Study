@@ -143,5 +143,9 @@ int save_quests(zone_rnum zone_num);
 /* AQ Global Variables ************************************************ */
 extern const char *aq_flags[];       /* names for quest flags (quest.c) */
 extern const char *quest_types[];    /* named for quest types (quest.c) */
+/* Name of a quest type, or "Undefined" for AQ_UNDEFINED (-1, every new
+ * quest) and anything else outside quest_types[].  Evaluates type twice. */
+#define QUEST_TYPE_NAME(type) \
+  (((type) >= 0 && (type) < NUM_AQ_TYPES) ? quest_types[(type)] : "Undefined")
 
 #endif /* TBAMUD_QUEST_H_INCLUDED */

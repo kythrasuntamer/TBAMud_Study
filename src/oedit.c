@@ -37,7 +37,6 @@
 
 /* Forward declarations needed because iedit is inserted before oedit's normal static prototypes. */
 static void oedit_disp_menu(struct descriptor_data *d);
-static int iedit_object_still_exists(struct obj_data *obj);
 static int iedit_is_prototype_string(struct obj_data *obj, char *str, int field_id);
 static void iedit_replace_string(struct obj_data *obj, char **field, char *new_string, int field_id);
 static void iedit_save_internally(struct descriptor_data *d);
@@ -79,6 +78,7 @@ ACMD(do_oasis_iedit)
   CREATE(d->olc, struct oasis_olc_data, 1);
 
   OLC_IEDIT_OBJ(d) = obj;
+  OLC_IEDIT_UID(d) = obj_script_id(obj);
   OLC_NUM(d) = GET_OBJ_VNUM(obj);
   OLC_ZNUM(d) = NOWHERE;
 
@@ -101,17 +101,6 @@ ACMD(do_oasis_iedit)
   mudlog(CMP, MAX(LVL_IMMORT, GET_INVIS_LEV(ch)), TRUE,
          "OLC: %s starts iediting %s",
          GET_NAME(ch), obj->short_description ? obj->short_description : "an object");
-}
-
-static int iedit_object_still_exists(struct obj_data *target)
-{
-  struct obj_data *obj;
-
-  for (obj = object_list; obj; obj = obj->next)
-    if (obj == target)
-      return TRUE;
-
-  return FALSE;
 }
 
 static int iedit_is_prototype_string(struct obj_data *obj, char *str, int field)
@@ -195,7 +184,10 @@ static void iedit_save_internally(struct descriptor_data *d)
   struct obj_data *top_obj;
   struct char_data *owner = NULL;
 
-  if (!target || !edited || !iedit_object_still_exists(target)) {
+  /* Check identity by UID: searching object_list for the address accepted
+   * a different object that had been allocated where the edited one was
+   * freed, and the edit was applied to it. */
+  if (!target || !edited || !obj_uid_matches(OLC_IEDIT_UID(d), target)) {
     write_to_output(d, "The object you were editing no longer exists.\r\n");
     return;
   }
@@ -270,7 +262,6 @@ static void oedit_disp_wear_menu(struct descriptor_data *d);
 static void oedit_disp_menu(struct descriptor_data *d);
 static void oedit_disp_perm_menu(struct descriptor_data *d);
 static void oedit_save_to_disk(int zone_num);
-static int iedit_object_still_exists(struct obj_data *obj);
 static int iedit_is_prototype_string(struct obj_data *obj, char *str, int field);
 static int iedit_is_prototype_ex_description(struct obj_data *obj);
 static void iedit_replace_string(struct obj_data *obj, char **field, char *new_string, int field_id);
@@ -1420,6 +1411,14 @@ void oedit_parse(struct descriptor_data *d, char *arg)
 
   case OEDIT_COPY:
     if ((number = real_object(tb_parse_int_or_zero(arg))) != NOTHING) {
+      /* Release the buffer being replaced, as quitting without saving
+       * does; the copy used to leak its strings and trigger list. */
+      OLC_OBJ(d)->proto_script = OLC_SCRIPT(d);
+      free_proto_script(OLC_OBJ(d), OBJ_TRIGGER);
+      free_object_strings(OLC_OBJ(d));
+      free(OLC_OBJ(d));
+      OLC_OBJ(d) = NULL;
+      OLC_SCRIPT(d) = NULL;
       oedit_setup_existing(d, number);
     } else
       write_to_output(d, "That object does not exist.\r\n");
@@ -1427,7 +1426,9 @@ void oedit_parse(struct descriptor_data *d, char *arg)
 
   case OEDIT_DELETE:
     if (*arg == 'y' || *arg == 'Y') {
-      if (delete_object(GET_OBJ_RNUM(OLC_OBJ(d))) != NOTHING)
+      /* Delete the vnum being edited: after a copy the buffer's rnum is
+       * the source's, and deleting by it removed the source. */
+      if (delete_object(real_object(OLC_NUM(d))) != NOTHING)
         write_to_output(d, "Object deleted.\r\n");
       else
         write_to_output(d, "Couldn't delete the object!\r\n");

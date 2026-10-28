@@ -628,7 +628,10 @@ int new_command(struct zone_data *zone, int pos)
   if (pos < 0 || pos > subcmd)
     return 0;
 
-  /* Ok, let's add a new (blank) command. */
+  /* Ok, let's add a new (blank) command.  Only the type used to be set: the
+   * rest, sarg1/sarg2 pointers included, was stack garbage that the menu
+   * indexed with and deletion freed. */
+  memset(&new_com, 0, sizeof(new_com));
   new_com.command = 'N';
   add_cmd_to_list(&zone->cmd, &new_com, pos);
   return 1;

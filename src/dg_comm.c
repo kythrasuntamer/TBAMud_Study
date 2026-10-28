@@ -25,21 +25,30 @@
 /* local functions */
 static void sub_write_to_char(char_data *ch, char *tokens[], void *otokens[], char type[]);
 
-/* same as any_one_arg except that it stops at punctuation */
+/* same as any_one_arg except that it stops at punctuation.
+ * first_arg must hold MAX_INPUT_LENGTH bytes; longer names are truncated
+ * but still consumed from argument. */
 char *any_one_name(char *argument, char *first_arg)
 {
-  char* arg;
+  char *arg = first_arg, *const arg_end = first_arg + MAX_INPUT_LENGTH - 1;
 
   /* Find first non blank */
   while(isspace(*argument))
     argument++;
 
   /* Find length of first word */
-  for(arg = first_arg ;
+  size_t length = 0;
+  for(;
     *argument && !isspace(*argument) && (!ispunct(*argument) || *argument == '#' || *argument == '-') ;
-  arg++, argument++)
-  *arg = LOWER(*argument);
+  argument++, length++)
+    if (arg < arg_end)
+      *arg++ = LOWER(*argument);
   *arg = '\0';
+
+  if (length > (size_t)(arg_end - first_arg))
+    TB_ERROR_MSG("dg", "parse-name", "any_one_name",
+                 "name of %zu bytes truncated to %d; target lookup uses the "
+                 "truncated name", length, MAX_INPUT_LENGTH - 1);
 
   return argument;
 }
@@ -127,12 +136,29 @@ void sub_write(char *arg, char_data *ch, byte find_invis, int targets)
   int i, tmp;
   int to_sleeping = 1; /* mainly for windows compiles */
 
-  if (!arg)
+  /* Every caller passes a message and a character standing in a room. */
+  if (!arg || !ch || IN_ROOM(ch) == NOWHERE) {
+    TB_ERROR_MSG("dg", "sub-write", "sub_write",
+                 "invariant violated: arg=%s ch=%p room=%s; message dropped",
+                 arg ? "set" : "NULL", (void *)ch,
+                 !ch ? "n/a" : (IN_ROOM(ch) == NOWHERE ? "NOWHERE" : "valid"));
     return;
+  }
 
   tokens[0] = str;
 
   for (i = 0, p = arg, s = str; *p;) {
+    /* Each pass writes at most one byte to str and adds at most one token;
+     * keep room for the final terminator and the NULL token sentinel. */
+    if (i >= MAX_INPUT_LENGTH - 2 || s >= str + sizeof(str) - 2) {
+      TB_ERROR_MSG("dg", "sub-write", "sub_write",
+                   "message of %zu bytes truncated at %d tokens, %d bytes "
+                   "(speaker " DIAG_CHAR_FMT ")", strlen(arg), i, (int)(s - str),
+                   DIAG_CHAR(ch));
+      script_log("sub_write: message truncated at %d tokens, %d bytes.",
+                 i, (int)(s - str));
+      break;
+    }
     switch (*p) {
       case '~':
       case '|':
@@ -164,8 +190,15 @@ void sub_write(char *arg, char_data *ch, byte find_invis, int targets)
       break;
 
       case '\\':
-        p++;
-        *s++ = *p++;
+        /* A trailing backslash escapes nothing; never step past the NUL. */
+        if (*++p)
+          *s++ = *p++;
+        else {
+          TB_ERROR_MSG("dg", "sub-write", "sub_write",
+                       "message ends with an unescaped backslash; dropped it "
+                       "(speaker " DIAG_CHAR_FMT ")", DIAG_CHAR(ch));
+          script_log("sub_write: message ends with a dangling backslash.");
+        }
       break;
 
       default:

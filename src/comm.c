@@ -117,6 +117,12 @@ static byte emergency_unban;  /* signal: SIGUSR2 */
 static int dg_act_check;         /* toggle for act_trigger */
 static bool fCopyOver;          /* Are we booting in copyover mode? */
 static char *last_act_message = NULL;
+/* Call site of the act() being formatted (NULL for direct perform_act()
+ * calls). act_at() saves and restores it because act triggers can send
+ * further act() messages while one is being delivered. */
+static const char *act_site_file = NULL;
+static int act_site_line = 0;
+static const char *act_site_func = NULL;
 
 /* static local function prototypes (current file scope only) */
 static RETSIGTYPE reread_wizlists(int sig);
@@ -140,6 +146,7 @@ static int process_input(struct descriptor_data *t);
 static void timediff(struct timeval *diff, struct timeval *a, struct timeval *b);
 static void timeadd(struct timeval *sum, struct timeval *a, struct timeval *b);
 static void flush_queues(struct descriptor_data *d);
+static void flush_input_queue(struct descriptor_data *d);
 static void nonblock(socket_t s);
 static int perform_subst(struct descriptor_data *t, char *orig, char *subst);
 static void record_usage(void);
@@ -1338,19 +1345,35 @@ static int get_from_q(struct txt_q *queue, char *dest, int *aliased)
   return (1);
 }
 
-/* Empty the queues before closing connection */
-static void flush_queues(struct descriptor_data *d)
+/* Discard queued, not-yet-executed input lines (the "--" command). Output
+ * state is untouched: the descriptor keeps using its current buffer. */
+static void flush_input_queue(struct descriptor_data *d)
 {
-  if (d->large_outbuf) {
-    d->large_outbuf->next = bufpool;
-    bufpool = d->large_outbuf;
-  }
   while (d->input.head) {
     struct txt_block *tmp = d->input.head;
     d->input.head = d->input.head->next;
     free(tmp->text);
     free(tmp);
   }
+  d->input.tail = NULL;
+}
+
+/* Release a closing connection's queues. The large output buffer goes back
+ * to the shared pool, so this descriptor must never write output again:
+ * only close_socket() may call this. The pointer is cleared so a stray later
+ * use cannot write into a buffer another descriptor now owns. */
+static void flush_queues(struct descriptor_data *d)
+{
+  if (d->large_outbuf) {
+    d->large_outbuf->next = bufpool;
+    bufpool = d->large_outbuf;
+    d->large_outbuf = NULL;
+    d->output = d->small_outbuf;
+    *d->output = '\0';
+    d->bufptr = 0;
+    d->bufspace = SMALL_BUFSIZE - 1;
+  }
+  flush_input_queue(d);
 }
 
 /* Add a new string to a player's output queue. For outside use. */
@@ -2133,7 +2156,9 @@ static int process_input(struct descriptor_data *t)
    if ( (*tmp == '-') && (*(tmp+1) == '-') && !(*(tmp+2)) )
    {
      write_to_output(t, "All queued commands cancelled.\r\n");
-     flush_queues(t);  /* Flush the command queue */
+     /* Input only: flush_queues() would hand this descriptor's live output
+      * buffer back to the shared pool while it is still in use. */
+     flush_input_queue(t);
      failed_subst = 1;  /* Allow the read point to be moved, but don't add to queue */
    }
 
@@ -2649,13 +2674,42 @@ void send_to_range(room_vnum start, room_vnum finish, const char *messg, ...)
 static const char *ACTNULL = "<NULL>";
 #define CHECK_NULL(pointer, expression) \
   if ((pointer) == NULL) i = ACTNULL; else i = (expression);
+/* Bounded, escaped copy of an act() format for diagnostics. The format is
+ * usually a string literal, so it identifies the act() call site; it may also
+ * embed player text (emote), so control characters, quotes and backslashes
+ * are replaced to keep each log record one parseable line. */
+static const char *act_format_excerpt(char *dst, size_t dst_size,
+                                      const char *format)
+{
+  size_t n = 0;
+
+  for (; format && *format && n + 4 < dst_size; format++) {
+    unsigned char c = (unsigned char) *format;
+    dst[n++] = (c < 0x20 || c == 0x7f || c == '"' || c == '\\') ? '?' : (char) c;
+  }
+  if (format && *format && n + 3 < dst_size)
+    dst[n++] = '.', dst[n++] = '.', dst[n++] = '.';
+  dst[n] = '\0';
+  return dst;
+}
+
+/* "caller=file:line function" of the act() call, for every act diagnostic. */
+#define ACT_DIAG_SITE \
+  (act_site_file ? act_site_file : "(direct perform_act call)"), \
+  act_site_line, (act_site_func ? act_site_func : "-")
+
 /* higher-level communication: the act() function */
 void perform_act(const char *orig, struct char_data *ch, struct obj_data *obj,
     void *vict_obj, struct char_data *to)
 {
+  const char *const format = orig;
+  char excerpt[96];
   const char *i = NULL;
   char lbuf[MAX_STRING_LENGTH], *buf, *j;
-  bool uppercasenext = FALSE;
+  /* Last position the terminating NUL may occupy; it is later overwritten
+   * by "\r\n\0", which needs two more bytes. */
+  char *const lbuf_end = lbuf + sizeof(lbuf) - 3;
+  bool uppercasenext = FALSE, truncated = FALSE;
   struct char_data *dg_victim = (to == vict_obj) ? vict_obj : NULL;
   struct obj_data *dg_target = NULL;
   char *dg_arg = NULL;
@@ -2663,7 +2717,12 @@ void perform_act(const char *orig, struct char_data *ch, struct obj_data *obj,
   buf = lbuf;
 
   for (;;) {
-    if (*orig == '$') {
+    if (buf >= lbuf_end) {
+      /* Substitutions such as $T carry script- and player-supplied text. */
+      *(buf++) = '\0';
+      truncated = TRUE;
+      break;
+    } else if (*orig == '$') {
       switch (*(++orig)) {
       case 'n':
 	i = PERS(ch, to);
@@ -2739,13 +2798,23 @@ void perform_act(const char *orig, struct char_data *ch, struct obj_data *obj,
       case '$':
 	i = "$";
 	break;
+      case '\0':
+	TB_ERROR_MSG("act", "format-parse", "perform_act",
+	             "format ends with a bare '$' caller=%s:%d %s (recipient " DIAG_CHAR_FMT ") "
+	             "format=\"%s\"", ACT_DIAG_SITE, DIAG_CHAR(to),
+	             act_format_excerpt(excerpt, sizeof(excerpt), format));
+	i = "";
+	break;
       default:
-	log("SYSERR: Illegal $-code to act(): %c", *orig);
-	log("SYSERR: %s", orig);
+	TB_ERROR_MSG("act", "format-parse", "perform_act",
+	             "illegal $-code 0x%02x at offset %ld caller=%s:%d %s (recipient "
+	             DIAG_CHAR_FMT ") format=\"%s\"", (unsigned char) *orig,
+	             (long) (orig - format), ACT_DIAG_SITE, DIAG_CHAR(to),
+	             act_format_excerpt(excerpt, sizeof(excerpt), format));
 	i = "";
 	break;
       }
-      while ((*buf = *(i++)))
+      while (buf < lbuf_end && (*buf = *(i++)))
         {
         if (uppercasenext && !isspace((int) *buf))
           {
@@ -2754,7 +2823,9 @@ void perform_act(const char *orig, struct char_data *ch, struct obj_data *obj,
           }
 	buf++;
         }
-      orig++;
+      /* A trailing '$' leaves orig on the terminator: do not step past it. */
+      if (*orig)
+        orig++;
     } else if (!(*(buf++) = *(orig++))) {
       break;
     } else if (uppercasenext && !isspace((int) *(buf-1))) {
@@ -2767,6 +2838,13 @@ void perform_act(const char *orig, struct char_data *ch, struct obj_data *obj,
   *(++buf) = '\n';
   *(++buf) = '\0';
 
+  if (truncated)
+    TB_ERROR_MSG("act", "format-output", "perform_act",
+                 "expanded output exceeded %d bytes and was truncated "
+                 "caller=%s:%d %s (recipient " DIAG_CHAR_FMT ") format=\"%s\"",
+                 (int) sizeof(lbuf), ACT_DIAG_SITE, DIAG_CHAR(to),
+                 act_format_excerpt(excerpt, sizeof(excerpt), format));
+
   if (to->desc)
     write_to_output(to->desc, "%s", CAP(lbuf));
 
@@ -2775,10 +2853,36 @@ void perform_act(const char *orig, struct char_data *ch, struct obj_data *obj,
 
   if (last_act_message)
     free(last_act_message);
-  last_act_message = strdup(lbuf);
+  if ((last_act_message = strdup(lbuf)) == NULL)
+    TB_ERROR_ERRNO("act", "allocate", "last_act_message",
+                   "cannot copy %zu-byte act() result; act() will return NULL "
+                   "caller=%s:%d %s", strlen(lbuf) + 1, ACT_DIAG_SITE);
 }
 
-char *act(const char *str, int hide_invisible, struct char_data *ch,
+static char *act_body(const char *str, int hide_invisible, struct char_data *ch,
+	 struct obj_data *obj, void *vict_obj, int type);
+
+/* Target of the act() macro in comm.h: record the caller for diagnostics,
+ * deliver the message, then restore the enclosing act()'s call site. */
+char *act_at(const char *src_file, int src_line, const char *src_func,
+             const char *str, int hide_invisible, struct char_data *ch,
+             struct obj_data *obj, void *vict_obj, int type)
+{
+  const char *saved_file = act_site_file, *saved_func = act_site_func;
+  int saved_line = act_site_line;
+  char *result;
+
+  act_site_file = src_file;
+  act_site_line = src_line;
+  act_site_func = src_func;
+  result = act_body(str, hide_invisible, ch, obj, vict_obj, type);
+  act_site_file = saved_file;
+  act_site_line = saved_line;
+  act_site_func = saved_func;
+  return result;
+}
+
+static char *act_body(const char *str, int hide_invisible, struct char_data *ch,
 	 struct obj_data *obj, void *vict_obj, int type)
 {
   struct char_data *to;

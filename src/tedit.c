@@ -65,6 +65,7 @@ ACMD(do_tedit)
   int l, i = 0;
   char field[MAX_INPUT_LENGTH];
   char *backstr = NULL;
+  struct descriptor_data *d;
 
   struct {
     char *cmd;
@@ -90,7 +91,8 @@ ACMD(do_tedit)
 	{ "\n",		0,		NULL,		0,	NULL }
   };
 
-  if (ch->desc == NULL)
+  /* No building as a mob or while being forced. */
+  if (IS_NPC(ch) || !ch->desc || STATE(ch->desc) != CON_PLAYING)
     return;
 
   one_argument(argument, field);
@@ -123,6 +125,16 @@ ACMD(do_tedit)
     send_to_char(ch, "You are not godly enough for that!\r\n");
     return;
   }
+
+  /* Every editor of a file writes through the same global (&motd, ...): two
+   * at once interleave their text, and one's abort restores its own backup
+   * under the other. */
+  for (d = descriptor_list; d; d = d->next)
+    if (STATE(d) == CON_TEDIT && d->olc && OLC_STORAGE(d) &&
+        !strcmp(OLC_STORAGE(d), fields[l].filename)) {
+      send_to_char(ch, "Someone is already editing that file.\r\n");
+      return;
+    }
 
   /* set up editor stats */
   clear_screen(ch->desc);

@@ -880,7 +880,7 @@ void medit_parse(struct descriptor_data *d, char *arg)
     cleanup_olc(d, CLEANUP_ALL);
     mudlog(BRF, LVL_BUILDER, TRUE, "SYSERR: OLC: medit_parse(): Reached D_DESC case!");
     write_to_output(d, "Oops...\r\n");
-    break;
+    return;   /* the editor is gone: the menu below would use it */
 
   case MEDIT_NPC_FLAGS:
     if ((i = tb_parse_int_or_zero(arg)) <= 0)
@@ -1065,7 +1065,13 @@ void medit_parse(struct descriptor_data *d, char *arg)
     return;
 
   case MEDIT_COPY:
-    if ((i = real_mobile(tb_parse_int_or_zero(arg))) != NOWHERE) {
+    if ((i = real_mobile(tb_parse_int_or_zero(arg))) != NOBODY) {
+      /* Release the buffer being replaced, as quitting without saving
+       * does; the copy used to leak it and its trigger list. */
+      OLC_MOB(d)->proto_script = OLC_SCRIPT(d);
+      free_mobile(OLC_MOB(d));
+      OLC_MOB(d) = NULL;
+      OLC_SCRIPT(d) = NULL;
       medit_setup_existing(d, i);
     } else
       write_to_output(d, "That mob does not exist.\r\n");
@@ -1073,7 +1079,9 @@ void medit_parse(struct descriptor_data *d, char *arg)
 
   case MEDIT_DELETE:
     if (*arg == 'y' || *arg == 'Y') {
-      if (delete_mobile(GET_MOB_RNUM(OLC_MOB(d))) != NOBODY)
+      /* Delete the vnum being edited: after a copy the buffer's rnum is
+       * the source's, and deleting by it removed the source. */
+      if (delete_mobile(real_mobile(OLC_NUM(d))) != NOBODY)
         write_to_output(d, "Mobile deleted.\r\n");
       else
         write_to_output(d, "Couldn't delete the mobile!\r\n");
@@ -1093,7 +1101,7 @@ void medit_parse(struct descriptor_data *d, char *arg)
     cleanup_olc(d, CLEANUP_ALL);
     mudlog(BRF, LVL_BUILDER, TRUE, "SYSERR: OLC: medit_parse(): Reached default case!");
     write_to_output(d, "Oops...\r\n");
-    break;
+    return;   /* the editor is gone: the menu below would use it */
   }
 
 /* END OF CASE If we get here, we have probably changed something, and now want

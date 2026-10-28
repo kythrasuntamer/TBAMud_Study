@@ -85,7 +85,20 @@ static int sell_price(struct obj_data *obj, int shop_nr, struct char_data *keepe
 static int ok_shop_room(int shop_nr, room_vnum room);
 static int add_to_shop_list(struct shop_buy_data *list, int type, int *len, int *val);
 static int end_read_list(struct shop_buy_data *list, int len, int error);
-static void read_line(FILE *shop_f, const char *string, void *data);
+static void read_line(FILE *shop_f, const char *string, ...)
+  __attribute__ ((format (scanf, 2, 3)));
+static void shop_format_message(char *dst, size_t size, const char *template,
+                                const char *field, int shop_nr,
+                                const char *name, int amount);
+static void shop_tell_message(struct char_data *keeper, struct char_data *ch,
+                              int shop_nr, const char *template,
+                              const char *field, int amount);
+
+/* Have the keeper tell ch one of the shop's builder-written messages, e.g.
+ * SHOP_TELL(keeper, ch, shop_nr, missing_cash2, 0). See shop_tell_message(). */
+#define SHOP_TELL(keeper, ch, shop_nr, field, amount) \
+  shop_tell_message((keeper), (ch), (shop_nr), shop_index[(shop_nr)].field, \
+                    #field, (amount))
 
 /* Local file scope only variables */
 static int cmd_say;
@@ -423,12 +436,8 @@ static struct obj_data *get_purchase_obj(struct char_data *ch, char *arg, struct
     else
       obj = get_slide_obj_vis(ch, name, keeper->carrying);
     if (!obj) {
-      if (msg) {
-        char buf[MAX_INPUT_LENGTH];
-
-	tb_snprintf(buf, sizeof(buf), shop_index[shop_nr].no_such_item1, GET_NAME(ch));
-	do_tell(keeper, buf, cmd_tell, 0);
-      }
+      if (msg)
+	SHOP_TELL(keeper, ch, shop_nr, no_such_item1, 0);
       return (NULL);
     }
     if (GET_OBJ_COST(obj) <= 0) {
@@ -517,8 +526,7 @@ static void shopping_buy(char *arg, struct char_data *ch, struct char_data *keep
   if (buy_price(obj, shop_nr, keeper, ch) > GET_GOLD(ch) && !IS_GOD(ch)) {
     char actbuf[MAX_INPUT_LENGTH];
 
-    tb_snprintf(actbuf, sizeof(actbuf), shop_index[shop_nr].missing_cash2, GET_NAME(ch));
-    do_tell(keeper, actbuf, cmd_tell, 0);
+    SHOP_TELL(keeper, ch, shop_nr, missing_cash2, 0);
 
     switch (SHOP_BROKE_TEMPER(shop_nr)) {
     case 0:
@@ -631,12 +639,11 @@ static void shopping_buy(char *arg, struct char_data *ch, struct char_data *keep
   tb_snprintf(tempbuf, sizeof(tempbuf), "$n buys %s.", tempstr);
   act(tempbuf, FALSE, ch, obj, 0, TO_ROOM);
 
-  if (obj && OBJ_FLAGGED(obj, ITEM_QUEST))
+  if (obj && OBJ_FLAGGED(obj, ITEM_QUEST)) {
     tb_snprintf(tempbuf, sizeof(tempbuf), "%s That has cost you %d quest points.", GET_NAME(ch), goldamt);
-  else
-    tb_snprintf(tempbuf, sizeof(tempbuf), shop_index[shop_nr].message_buy, GET_NAME(ch), goldamt);
-
-  do_tell(keeper, tempbuf, cmd_tell, 0);
+    do_tell(keeper, tempbuf, cmd_tell, 0);
+  } else
+    SHOP_TELL(keeper, ch, shop_nr, message_buy, goldamt);
 
   send_to_char(ch, "You now have %s.\r\n", tempstr);
 
@@ -650,10 +657,7 @@ static struct obj_data *get_selling_obj(struct char_data *ch, char *name, struct
 
   if (!(obj = get_obj_in_list_vis(ch, name, NULL, ch->carrying))) {
     if (msg) {
-      char tbuf[MAX_INPUT_LENGTH];
-
-      tb_snprintf(tbuf, sizeof(tbuf), shop_index[shop_nr].no_such_item2, GET_NAME(ch));
-      do_tell(keeper, tbuf, cmd_tell, 0);
+      SHOP_TELL(keeper, ch, shop_nr, no_such_item2, 0);
     }
     return (NULL);
   }
@@ -668,7 +672,8 @@ static struct obj_data *get_selling_obj(struct char_data *ch, char *name, struct
     tb_snprintf(buf, sizeof(buf), "%s You've got to be kidding, that thing is worthless!", GET_NAME(ch));
     break;
   case OBJECT_NOTOK:
-    tb_snprintf(buf, sizeof(buf), shop_index[shop_nr].do_not_buy, GET_NAME(ch));
+    shop_format_message(buf, sizeof(buf), shop_index[shop_nr].do_not_buy,
+                        "do_not_buy", shop_nr, GET_NAME(ch), 0);
     break;
   case OBJECT_DEAD:
     tb_snprintf(buf, sizeof(buf), "%s %s", GET_NAME(ch), MSG_NO_USED_WANDSTAFF);
@@ -769,10 +774,7 @@ static void shopping_sell(char *arg, struct char_data *ch, struct char_data *kee
     return;
 
   if (!IS_SET(SHOP_BITVECTOR(shop_nr), HAS_UNLIMITED_CASH) && GET_GOLD(keeper) + SHOP_BANK(shop_nr) < sell_price(obj, shop_nr, keeper, ch)) {
-    char buf[MAX_INPUT_LENGTH];
-
-    tb_snprintf(buf, sizeof(buf), shop_index[shop_nr].missing_cash1, GET_NAME(ch));
-    do_tell(keeper, buf, cmd_tell, 0);
+    SHOP_TELL(keeper, ch, shop_nr, missing_cash1, 0);
     return;
   }
   while (obj && (IS_SET(SHOP_BITVECTOR(shop_nr), HAS_UNLIMITED_CASH) || GET_GOLD(keeper) + SHOP_BANK(shop_nr) >= sell_price(obj, shop_nr, keeper, ch)) && sold < sellnum) {
@@ -806,8 +808,7 @@ static void shopping_sell(char *arg, struct char_data *ch, struct char_data *kee
   tb_snprintf(tempbuf, sizeof(tempbuf), "$n sells %s.", tempstr);
   act(tempbuf, FALSE, ch, obj, 0, TO_ROOM);
 
-  tb_snprintf(tempbuf, sizeof(tempbuf), shop_index[shop_nr].message_sell, GET_NAME(ch), goldamt);
-  do_tell(keeper, tempbuf, cmd_tell, 0);
+  SHOP_TELL(keeper, ch, shop_nr, message_sell, goldamt);
 
   send_to_char(ch, "The shopkeeper now has %s.\r\n", tempstr);
 
@@ -1052,11 +1053,99 @@ static int end_read_list(struct shop_buy_data *list, int len, int error)
   return (len);
 }
 
-static void read_line(FILE *shop_f, const char *string, void *data)
+/*
+ * Expand a shop's builder-written message template (no_such_item1,
+ * missing_cash2, message_buy, ...) into dst.
+ *
+ * Templates are edited live in sedit, so they are never used as printf
+ * formats. Only these placeholders are substituted:
+ *   %s  the customer's name,
+ *   %d  amount (message_buy / message_sell),
+ *   %%  a literal '%'.
+ * Any other '%' sequence is copied literally and reported, and so is a
+ * missing template or truncated output. dst is always NUL-terminated;
+ * it is empty if there is nothing to say.
+ */
+static void shop_format_message(char *dst, size_t size, const char *template,
+                                const char *field, int shop_nr,
+                                const char *name, int amount)
+{
+  size_t len = 0;
+  int bad_specifiers = 0;
+  const char *p;
+
+  if (size == 0)
+    return;
+  dst[0] = '\0';
+  if (!template) {
+    TB_ERROR_MSG("shop", "message", field,
+                 "shop #%d has no %s message; keeper says nothing",
+                 SHOP_NUM(shop_nr), field);
+    return;
+  }
+
+  for (p = template; *p && len + 1 < size; p++) {
+    char number[16];
+    const char *insert = NULL;
+
+    if (*p == '%' && p[1] == 's')
+      insert = name;
+    else if (*p == '%' && p[1] == 'd') {
+      tb_snprintf(number, sizeof(number), "%d", amount);
+      insert = number;
+    } else if (*p == '%' && p[1] == '%')
+      insert = "%";
+    else if (*p == '%')
+      bad_specifiers++;
+
+    if (insert) {
+      len += strlcpy(dst + len, insert, size - len);
+      if (len >= size)
+        len = size - 1;
+      p++; /* consume the specifier letter */
+    } else
+      dst[len++] = *p;
+  }
+  dst[len] = '\0';
+
+  if (bad_specifiers)
+    TB_ERROR_MSG("shop", "message", field,
+                 "shop #%d %s message has %d unsupported %%-sequence(s); "
+                 "printed literally (only %%s, %%d and %%%% are expanded)",
+                 SHOP_NUM(shop_nr), field, bad_specifiers);
+  if (*p)
+    TB_ERROR_MSG("shop", "message", field,
+                 "shop #%d %s message truncated to %zu bytes",
+                 SHOP_NUM(shop_nr), field, size - 1);
+}
+
+/* Expand a shop message for ch and have the keeper tell it (see SHOP_TELL). */
+static void shop_tell_message(struct char_data *keeper, struct char_data *ch,
+                              int shop_nr, const char *template,
+                              const char *field, int amount)
+{
+  char buf[MAX_INPUT_LENGTH];
+
+  shop_format_message(buf, sizeof(buf), template, field, shop_nr,
+                      GET_NAME(ch), amount);
+  if (*buf)
+    do_tell(keeper, buf, cmd_tell, 0);
+}
+
+/* Read one line of a shop file and parse a single value from it. The shop
+ * file loader treats a malformed line as fatal. */
+static void read_line(FILE *shop_f, const char *string, ...)
 {
   char buf[READ_SIZE];
+  va_list args;
+  int parsed = 0;
 
-  if (!get_line(shop_f, buf) || sscanf(buf, string, data) != 1) {
+  if (get_line(shop_f, buf)) {
+    va_start(args, string);
+    parsed = vsscanf(buf, string, args);
+    va_end(args);
+  }
+  if (parsed != 1) {
     log("SYSERR: Error in shop #%d, near '%s' with '%s'", SHOP_NUM(top_shop), buf, string);
     exit(1);
   }

@@ -84,11 +84,14 @@ __attribute__((weak))
 size_t send_to_char(struct char_data *ch, const char *messg, ...)
 { (void)ch; (void)messg; return 0; }
 
+/* act() is a call-site-recording macro for act_at(); see comm.h. */
 __attribute__((weak))
-char *act(const char *str, int hide_invisible, struct char_data *ch,
-          struct obj_data *obj, void *vict_obj, int type)
-{ (void)str; (void)hide_invisible; (void)ch;
-  (void)obj; (void)vict_obj; (void)type; return NULL; }
+char *act_at(const char *src_file, int src_line, const char *src_func,
+             const char *str, int hide_invisible, struct char_data *ch,
+             struct obj_data *obj, void *vict_obj, int type)
+{ (void)src_file; (void)src_line; (void)src_func; (void)str;
+  (void)hide_invisible; (void)ch; (void)obj; (void)vict_obj; (void)type;
+  return NULL; }
 
 __attribute__((weak))
 void write_to_q(const char *txt, struct txt_q *queue, int aliased)

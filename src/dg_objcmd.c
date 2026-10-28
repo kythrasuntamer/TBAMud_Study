@@ -27,7 +27,8 @@
 #define OCMD(name)  \
    void (name)(obj_data *obj, char *argument, int cmd, int subcmd)
 
-static void obj_log(obj_data *obj, const char *format, ...);
+static void obj_log(obj_data *obj, const char *format, ...)
+  __attribute__ ((format (printf, 2, 3)));
 static room_rnum find_obj_target_room(obj_data *obj, char *rawroomstr);
 static OCMD(do_oecho);
 static OCMD(do_oforce);
@@ -61,13 +62,17 @@ struct obj_command_info {
 static void obj_log(obj_data *obj, const char *format, ...)
 {
   va_list args;
-  char output[MAX_STRING_LENGTH];
+  char message[MAX_STRING_LENGTH];
 
-  tb_snprintf(output, sizeof(output), "Obj (%s, VNum %d):: %s", obj->short_description, GET_OBJ_VNUM(obj), format);
-
+  /* Format the caller's message on its own, then log it as data. Embedding
+   * the name in the format would let a '%' in a builder-written name, or in
+   * player text a script passes along, be interpreted as a conversion. */
   va_start(args, format);
-  script_vlog(output, args);
+  if (vsnprintf(message, sizeof(message), format, args) < 0)
+    strlcpy(message, "(message formatting failed)", sizeof(message));
   va_end(args);
+
+  script_log("Obj (%s, VNum %d):: %s", obj->short_description, GET_OBJ_VNUM(obj), message);
 }
 
 /* returns the real room number that the object or object's carrier is in */
@@ -160,7 +165,7 @@ static OCMD(do_olog)
   skip_spaces(&argument);
 
   if (*argument)
-    obj_log(obj, argument);
+    obj_log(obj, "%s", argument); /* script text, may hold player input */
 }
 
 static OCMD(do_oforce)
@@ -310,7 +315,7 @@ static OCMD(do_otransform)
   else if (!isdigit(*arg))
     obj_log(obj, "otransform: bad argument");
   else {
-    o = read_object(tb_parse_int_or_zero(arg), VIRTUAL);
+    o = read_object(dg_parse_vnum(arg), VIRTUAL);
     if (o==NULL) {
       obj_log(obj, "otransform: bad object vnum");
       return;
@@ -335,6 +340,11 @@ static OCMD(do_otransform)
     tmpobj.script = obj->script;
     tmpobj.next_content = obj->next_content;
     tmpobj.next = obj->next;
+    /* Who sits on it and its pending events belong to this instance too:
+     * losing them left sitters and events pointing at an object that no
+     * longer knew about them. */
+    tmpobj.sitting_here = obj->sitting_here;
+    tmpobj.events = obj->events;
     memcpy(obj, &tmpobj, sizeof(*obj));
 
     if (wearer) {
@@ -378,8 +388,6 @@ static OCMD(do_opurge)
     if (!ch) {
       o = get_obj_by_obj(obj, arg);
       if (o) {
-        if (o==obj)
-          dg_owner_purged = 1;
         extract_obj(o);
       } else
         obj_log(obj, "opurge: bad argument");
@@ -397,7 +405,7 @@ static OCMD(do_opurge)
 
 static OCMD(do_oteleport)
 {
-    char_data *ch, *next_ch;
+    char_data *ch;
     room_rnum target, rm;
     char arg1[MAX_INPUT_LENGTH], arg2[MAX_INPUT_LENGTH];
 
@@ -417,18 +425,16 @@ static OCMD(do_oteleport)
     else if (!str_cmp(arg1, "all"))
     {
         rm = obj_room(obj);
-        if (target == rm)
-            obj_log(obj, "oteleport target is itself");
-
-        for (ch = world[rm].people; ch; ch = next_ch)
-        {
-            next_ch = ch->next_in_room;
-            if (!valid_dg_target(ch, DG_ALLOW_GODS))
-              continue;
-            char_from_room(ch);
-            char_to_room(ch, target);
-            enter_wtrigger(&world[IN_ROOM(ch)], ch, -1);
+        if (rm == NOWHERE) {
+            obj_log(obj, "oteleport all: the object is in no room");
+            return;
         }
+        if (target == rm) {
+            obj_log(obj, "oteleport target is itself");
+            return;
+        }
+
+        dg_teleport_all(rm, target);
     }
 
     else
@@ -459,7 +465,7 @@ static OCMD(do_dgoload)
 
     target = two_arguments(argument, arg1, arg2);
 
-    if (!*arg1 || !*arg2 || !is_number(arg2) || ((number = tb_parse_int_or_zero(arg2)) < 0))
+    if (!*arg1 || !*arg2 || !is_number(arg2) || ((number = dg_parse_vnum(arg2)) == NOTHING))
     {
         obj_log(obj, "oload: bad syntax");
         return;
@@ -477,7 +483,7 @@ static OCMD(do_dgoload)
       if (!target || !*target) {
         rnum = room;
       } else {
-        if (!isdigit(*target) || (rnum = real_room(tb_parse_int_or_zero(target))) == NOWHERE) {
+        if (!isdigit(*target) || (rnum = real_room(dg_parse_vnum(target))) == NOWHERE) {
           obj_log(obj, "oload: room target vnum doesn't exist "
                        "(loading mob vnum %d to room %s)", number, target);
           return;
@@ -696,7 +702,7 @@ static OCMD(do_odoor)
             }
             break;
         case 5:  /* room        */
-            if ((to_room = real_room(tb_parse_int_or_zero(value))) != NOWHERE)
+            if ((to_room = real_room(dg_parse_vnum(value))) != NOWHERE)
                 newexit->to_room = to_room;
             else {
                 newexit->to_room = NOWHERE;
@@ -746,6 +752,7 @@ static OCMD(do_oat)
   struct char_data *ch;
   struct obj_data *object;
   char arg[MAX_INPUT_LENGTH], *command;
+  long copy_uid;
 
   command = any_one_arg(argument, arg);
 
@@ -761,7 +768,7 @@ static OCMD(do_oat)
     return;
   }
 
-  if (isdigit(*arg)) loc = real_room(tb_parse_int_or_zero(arg));
+  if (isdigit(*arg)) loc = real_room(dg_parse_vnum(arg));
   else if ((ch = get_char_by_obj(obj, arg))) loc = IN_ROOM(ch); 
 
   if (loc == NOWHERE) {
@@ -769,13 +776,19 @@ static OCMD(do_oat)
     return;
   }
 
-  if (!(object = read_object(GET_OBJ_VNUM(obj), VIRTUAL)))
+  if (!(object = read_object(GET_OBJ_VNUM(obj), VIRTUAL))) {
+    obj_log(obj, "oat: cannot create a copy of object %d", GET_OBJ_VNUM(obj));
     return;
+  }
 
+  /* The command runs through a temporary copy.  It may purge the copy
+   * (reading object afterwards was a use-after-free) or move it (the copy
+   * was then never extracted), so check it by UID and always remove it. */
+  copy_uid = obj_script_id(object);
   obj_to_room(object, loc);
   obj_command_interpreter(object, command);
 
-  if (object->in_room == loc) 
+  if (obj_uid_matches(copy_uid, object))
     extract_obj(object);
 }
 
@@ -794,8 +807,11 @@ static OCMD(do_omove)
 
     target = find_obj_target_room(obj, arg1);
 
-    if (target == NOWHERE)
+    if (target == NOWHERE) {
+        /* Carrying on moved the object into world[NOWHERE]. */
         obj_log(obj, "omove target is an invalid room");
+        return;
+    }
 
     // Remove the object from it's current location
     if (obj->carried_by != NULL) {

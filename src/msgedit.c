@@ -321,7 +321,12 @@ ACMD(do_msgedit)
 {
   int num;
   struct descriptor_data *d;
-  
+
+  /* No building as a mob or while being forced: the editor lives on the
+   * caller's own descriptor, which those have none of. */
+  if (IS_NPC(ch) || !ch->desc || STATE(ch->desc) != CON_PLAYING)
+    return;
+
   if (!*argument) {
     show_messages(ch);
     return;  

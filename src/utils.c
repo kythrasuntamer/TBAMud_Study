@@ -1184,6 +1184,21 @@ int get_line(FILE *fl, char *buf)
       return (0);
     lines++;
     tb_parse_context_note_line(fl);
+
+    sl = strlen(temp);
+    if (sl == READ_SIZE - 1 && temp[sl - 1] != '\n') {
+      /* Longer than the buffer.  The rest must not come back as the next
+       * line: in a player file it would be parsed as a tag of its own. */
+      size_t dropped = 0;
+      int c;
+
+      while ((c = getc(fl)) != EOF && c != '\n')
+        if (c != '\r')
+          dropped++;
+      if (dropped > 0 && *temp != '*')
+        TB_PARSE_CONTEXT_ERROR(fl, "line longer than %d bytes; discarded "
+                               "its last %zu bytes", READ_SIZE - 1, dropped);
+    }
   } while (*temp == '*' || *temp == '\n' || *temp == '\r');
 
   /* Last line of file doesn't always have a \n, but it should. */

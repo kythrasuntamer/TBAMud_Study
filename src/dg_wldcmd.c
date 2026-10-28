@@ -37,7 +37,8 @@ struct wld_command_info {
     int        subcmd;
 };
 
-void wld_log(room_data *room, const char *format, ...);
+void wld_log(room_data *room, const char *format, ...)
+  __attribute__ ((format (printf, 2, 3)));
 void act_to_room(char *str, room_data *room);
 WCMD(do_wasound);
 WCMD(do_wecho);
@@ -59,13 +60,17 @@ WCMD(do_wlog);
 void wld_log(room_data *room, const char *format, ...)
 {
   va_list args;
-  char output[MAX_STRING_LENGTH];
+  char message[MAX_STRING_LENGTH];
 
-  tb_snprintf(output, sizeof(output), "Room %d :: %s", room->number, format);
-
+  /* Format the caller's message on its own, then log it as data. Embedding
+   * it in the format would let a '%' in player text a script passes along be
+   * interpreted as a conversion. */
   va_start(args, format);
-  script_vlog(output, args);
+  if (vsnprintf(message, sizeof(message), format, args) < 0)
+    strlcpy(message, "(message formatting failed)", sizeof(message));
   va_end(args);
+
+  script_log("Room %d :: %s", room->number, message);
 }
 
 /* sends str to room */
@@ -122,7 +127,7 @@ WCMD(do_wlog)
   if (!*argument)
     return;
 
-  wld_log(room, argument);
+  wld_log(room, "%s", argument); /* script text, may hold player input */
 }
 
 WCMD(do_wsend)
@@ -295,7 +300,7 @@ WCMD(do_wdoor)
             }
             break;
         case 5:  /* room        */
-            if ((to_room = real_room(tb_parse_int_or_zero(value))) != NOWHERE)
+            if ((to_room = real_room(dg_parse_vnum(value))) != NOWHERE)
                 newexit->to_room = to_room;
             else {
                 newexit->to_room = NOWHERE;
@@ -308,7 +313,7 @@ WCMD(do_wdoor)
 
 WCMD(do_wteleport)
 {
-    char_data *ch, *next_ch;
+    char_data *ch;
     room_rnum target, nr;
     char arg1[MAX_INPUT_LENGTH], arg2[MAX_INPUT_LENGTH];
 
@@ -319,7 +324,7 @@ WCMD(do_wteleport)
         return;
     }
 
-    nr = tb_parse_int_or_zero(arg2);
+    nr = dg_parse_vnum(arg2);
     target = real_room(nr);
 
     if (target == NOWHERE)
@@ -331,15 +336,7 @@ WCMD(do_wteleport)
             return;
         }
 
-        for (ch = room->people; ch; ch = next_ch)
-        {
-            next_ch = ch->next_in_room;
-            if (!valid_dg_target(ch, DG_ALLOW_GODS))
-              continue;
-            char_from_room(ch);
-            char_to_room(ch, target);
-            enter_wtrigger(&world[IN_ROOM(ch)], ch, -1);
-        }
+        dg_teleport_all(real_room(room->number), target);
     }
 
     else
@@ -463,7 +460,7 @@ WCMD(do_wload)
 
     target = two_arguments(argument, arg1, arg2);
 
-    if (!*arg1 || !*arg2 || !is_number(arg2) || ((number = tb_parse_int_or_zero(arg2)) < 0)) {
+    if (!*arg1 || !*arg2 || !is_number(arg2) || ((number = dg_parse_vnum(arg2)) == NOTHING)) {
         wld_log(room, "wload: bad syntax");
         return;
     }
@@ -474,7 +471,7 @@ WCMD(do_wload)
       if (!target || !*target) {
         rnum = real_room(room->number);
       } else {
-        if (!isdigit(*target) || (rnum = real_room(tb_parse_int_or_zero(target))) == NOWHERE) {
+        if (!isdigit(*target) || (rnum = real_room(dg_parse_vnum(target))) == NOWHERE) {
           wld_log(room, "wload: room target vnum doesn't exist (loading mob vnum %d to room %s)", number, target);
           return;
         }
@@ -582,7 +579,7 @@ WCMD(do_wat)
     return;
   }
 
-  if (isdigit(*arg)) loc = real_room(tb_parse_int_or_zero(arg));
+  if (isdigit(*arg)) loc = real_room(dg_parse_vnum(arg));
   else if ((ch = get_char_by_room(room, arg))) loc = IN_ROOM(ch);
   
   if (loc == NOWHERE) {
@@ -605,7 +602,7 @@ WCMD(do_wmove)
         return;
     }
 
-    nr = tb_parse_int_or_zero(arg2);
+    nr = dg_parse_vnum(arg2);
     target = real_room(nr);
 
     if (target == NOWHERE) {

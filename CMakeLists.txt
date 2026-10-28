@@ -40,9 +40,39 @@ include(CheckStructHasMember)
 include(CheckSymbolExists)
 include(CheckCSourceCompiles)
 
-# Output paths
-set(BIN_OUTPUT_DIR ${CMAKE_SOURCE_DIR}/bin)
+# ========== Output paths ==========
+# Executables (circle and every test_*) go to <build>/bin by default, so each
+# build tree owns its binaries. Writing every tree to <source>/bin let an
+# ASan build, a Valgrind build and a release build overwrite one another's
+# executables, and ctest in one tree could then run another tree's binary.
+#
+# The autoconf build (src/Makefile) still writes <source>/bin/circle, which is
+# what autorun runs. To have a CMake build feed autorun instead, configure it
+# with -DTBAMUD_BIN_DIR=<source>/bin, and use only one tree that way.
+set(TBAMUD_BIN_DIR "${CMAKE_BINARY_DIR}/bin" CACHE PATH
+    "Directory for the circle server and test executables")
+set(BIN_OUTPUT_DIR ${TBAMUD_BIN_DIR})
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${BIN_OUTPUT_DIR})
+
+# Fail loudly if another build tree already writes to this directory: the
+# two trees would silently clobber each other's executables. The owner file
+# records which build tree claimed the directory.
+set(TBAMUD_BIN_OWNER_FILE "${BIN_OUTPUT_DIR}/.tbamud-build-owner")
+if(EXISTS "${TBAMUD_BIN_OWNER_FILE}")
+    file(READ "${TBAMUD_BIN_OWNER_FILE}" TBAMUD_BIN_OWNER)
+    string(STRIP "${TBAMUD_BIN_OWNER}" TBAMUD_BIN_OWNER)
+    if(NOT TBAMUD_BIN_OWNER STREQUAL CMAKE_BINARY_DIR
+       AND EXISTS "${TBAMUD_BIN_OWNER}/CMakeCache.txt")
+        message(WARNING
+            "TBAMUD_BIN_DIR ${BIN_OUTPUT_DIR} is also used by build tree "
+            "${TBAMUD_BIN_OWNER}. Building both will overwrite each other's "
+            "executables. Pick a different -DTBAMUD_BIN_DIR, or delete "
+            "${TBAMUD_BIN_OWNER_FILE} to hand the directory to this tree.")
+    endif()
+endif()
+file(MAKE_DIRECTORY "${BIN_OUTPUT_DIR}")
+file(WRITE "${TBAMUD_BIN_OWNER_FILE}" "${CMAKE_BINARY_DIR}\n")
+message(STATUS "Executables will be written to ${BIN_OUTPUT_DIR}")
 
 # Include source and build paths
 include_directories(src ${CMAKE_BINARY_DIR})
@@ -99,6 +129,14 @@ check_include_file("unistd.h" HAVE_UNISTD_H)
 check_include_file("memory.h" HAVE_MEMORY_H)
 check_include_file("assert.h" HAVE_ASSERT_H)
 check_include_file("arpa/telnet.h" HAVE_ARPA_TELNET_H)
+# A printf-style format that is not a string literal is a build error. Output
+# functions carry format(printf) attributes, so this catches player or client
+# text used as a format (e.g. a '%' in a client-reported ID) at compile time.
+# Pass untrusted text as data: write_to_output(d, "%s", text).
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    add_compile_options(-Wformat -Werror=format-security -Werror=format-nonliteral)
+endif()
+
 check_include_file("arpa/inet.h" HAVE_ARPA_INET_H)
 check_include_file("sys/stat.h" HAVE_SYS_STAT_H)
 check_include_file("sys/socket.h" HAVE_SYS_SOCKET_H)

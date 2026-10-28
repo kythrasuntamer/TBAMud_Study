@@ -58,6 +58,11 @@ ACMD(do_oasis_qedit)
   char buf1[MAX_INPUT_LENGTH];
   char buf2[MAX_INPUT_LENGTH];
 
+  /* No building as a mob or while being forced: the editor lives on the
+   * caller's own descriptor, which those have none of. */
+  if (IS_NPC(ch) || !ch->desc || STATE(ch->desc) != CON_PLAYING)
+    return;
+
   /****************************************************************************/
   /** Parse any arguments.                                                   **/
   /****************************************************************************/
@@ -330,7 +335,7 @@ static void qedit_disp_menu(struct descriptor_data *d)
     quest->quit && (str_cmp(quest->quit, "undefined"))
      ? quest->quit : "Nothing\r\n",
     quest_flags,
-    quest_types[quest->type],
+    QUEST_TYPE_NAME(quest->type),
     quest->type == AQ_OBJ_RETURN ? buf2 : "",
     quest->qm == NOBODY ? -1 :     quest->qm,
     real_mobile(quest->qm) == NOBODY ? "Invalid Mob" : mob_proto[(real_mobile(quest->qm))].player.short_descr,
@@ -723,7 +728,7 @@ void qedit_parse(struct descriptor_data *d, char *arg)
       mudlog(BRF, LVL_BUILDER, TRUE, "SYSERR: OLC: qedit_parse(): "
         "Reached default case!");
       write_to_output(d, "Oops...\r\n");
-      break;
+      return;   /* the editor is gone: the menu below would use it */
   }
   /*-------------------------------------------------------------------*/
   /*. END OF CASE

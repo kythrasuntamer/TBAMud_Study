@@ -35,6 +35,8 @@ static unsigned char endPad[4] = {
 static FILE *zfd = NULL;
 
 static void zlogf(const char *format, ...)
+  __attribute__ ((format (printf, 1, 2)));
+static void zlogf(const char *format, ...)
 {
   va_list args;
 

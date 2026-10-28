@@ -212,16 +212,24 @@ int create_entry(char *name)
 
     RECREATE(player_table, struct player_index_element, i);
     pos = top_of_p_table;
+  } else {
+    /* Re-using a deleted character's slot: release its old name before the
+     * slot is reset below, or it leaks. */
+    free(player_table[pos].name);
   }
+
+  /* RECREATE() is realloc(): the new slot is uninitialised. save_char()
+   * compares level and last, and save_player_index() writes id, level and
+   * last to the index file, before init_char() fills them in, so garbage
+   * reached the player index on disk (found by Valgrind; ASan cannot see
+   * uninitialised reads). Start every slot, new or re-used, from zero. */
+  memset(&player_table[pos], 0, sizeof(player_table[pos]));
 
   CREATE(player_table[pos].name, char, strlen(name) + 1);
 
   /* copy lowercase equivalent of name to table field */
   for (i = 0; (player_table[pos].name[i] = LOWER(name[i])); i++)
     /* Nothing */;
-
-  /* clear the bitflag in case we have garbage data */
-  player_table[pos].flags = 0;
 
   return (pos);
 }

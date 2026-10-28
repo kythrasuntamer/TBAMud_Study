@@ -981,6 +981,31 @@ int reserved_word(char *argument)
   return (search_block(argument, reserved, TRUE) >= 0);
 }
 
+/* Copy one word into an argument buffer. The argument splitters below all
+ * follow the CircleMUD contract that the output buffer holds
+ * MAX_INPUT_LENGTH bytes. Input can be longer (script-forced commands), so
+ * copy at most MAX_INPUT_LENGTH-1 bytes, keep consuming the word, and report
+ * truncation. Returns the input position just past the copied word. */
+static char *copy_arg_word(char *argument, char *first_arg, char stop_quote,
+                           const char *caller)
+{
+  char *out = first_arg, *const out_end = first_arg + MAX_INPUT_LENGTH - 1;
+  size_t length = 0;
+
+  for (; *argument && (stop_quote ? *argument != stop_quote
+                                  : !isspace((unsigned char) *argument));
+       argument++, length++)
+    if (out < out_end)
+      *out++ = LOWER(*argument);
+  *out = '\0';
+
+  if (length > (size_t) (out_end - first_arg))
+    TB_ERROR_MSG("interpreter", "parse-argument", caller,
+                 "word of %zu bytes truncated to %d", length,
+                 MAX_INPUT_LENGTH - 1);
+  return argument;
+}
+
 /* Copy the first non-fill-word, space-delimited argument of 'argument'
  * to 'first_arg'; return a pointer to the remainder of the string. */
 char *one_argument(char *argument, char *first_arg)
@@ -995,14 +1020,7 @@ char *one_argument(char *argument, char *first_arg)
 
   do {
     skip_spaces(&argument);
-
-    first_arg = begin;
-    while (*argument && !isspace(*argument)) {
-      *(first_arg++) = LOWER(*argument);
-      argument++;
-    }
-
-    *first_arg = '\0';
+    argument = copy_arg_word(argument, begin, '\0', "one_argument");
   } while (fill_word(begin));
 
   return (argument);
@@ -1015,20 +1033,12 @@ char *one_word(char *argument, char *first_arg)
     skip_spaces(&argument);
 
     if (*argument == '\"') {
-      argument++;
-      while (*argument && *argument != '\"') {
-        *(first_arg++) = LOWER(*argument);
-        argument++;
-      }
-      argument++;
-    } else {
-      while (*argument && !isspace(*argument)) {
-        *(first_arg++) = LOWER(*argument);
-        argument++;
-      }
-    }
+      argument = copy_arg_word(argument + 1, first_arg, '\"', "one_word");
+      if (*argument)
+        argument++; /* closing quote; an unclosed quote ends at the NUL */
+    } else
+      argument = copy_arg_word(argument, first_arg, '\0', "one_word");
 
-    *first_arg = '\0';
   return (argument);
 }
 
@@ -1036,15 +1046,7 @@ char *one_word(char *argument, char *first_arg)
 char *any_one_arg(char *argument, char *first_arg)
 {
   skip_spaces(&argument);
-
-  while (*argument && !isspace(*argument)) {
-    *(first_arg++) = LOWER(*argument);
-    argument++;
-  }
-
-  *first_arg = '\0';
-
-  return (argument);
+  return (copy_arg_word(argument, first_arg, '\0', "any_one_arg"));
 }
 
 /* Same as one_argument except that it takes two args and returns the rest;
@@ -1407,12 +1409,45 @@ int enter_player_game (struct descriptor_data *d)
   return load_result;
 }
 
+/* Append to the connection's protocol banner. snprintf() returns the length
+ * it *wanted*, so "len += snprintf(...)" runs past the buffer on truncation
+ * and the next call's size (size - len) wraps to a huge value. Stop at the
+ * buffer end and report instead. */
+static void banner_append(char *buf, size_t size, size_t *len,
+                          const char *format, ...)
+  __attribute__ ((format (printf, 4, 5)));
+static void banner_append(char *buf, size_t size, size_t *len,
+                          const char *format, ...)
+{
+  va_list args;
+  int written;
+
+  if (*len >= size - 1)
+    return; /* already truncated and reported */
+  va_start(args, format);
+  written = vsnprintf(buf + *len, size - *len, format, args);
+  va_end(args);
+  if (written < 0) {
+    TB_ERROR_ERRNO("network", "protocol-banner", "get_protocols",
+                   "formatting the protocol banner failed; banner cut at %zu "
+                   "bytes", *len);
+    buf[*len] = '\0';
+    *len = size - 1;
+  } else if ((size_t) written >= size - *len) {
+    TB_ERROR_MSG("network", "protocol-banner", "get_protocols",
+                 "protocol banner truncated at %zu bytes (needed %zu)",
+                 size - 1, *len + (size_t) written);
+    *len = size - 1;
+  } else
+    *len += (size_t) written;
+}
+
 EVENTFUNC(get_protocols)
 {
   struct descriptor_data *d;
   struct mud_event_data *pMudEvent;
   char buf[MAX_STRING_LENGTH];
-  size_t len;
+  size_t len = 0;
 
   if (event_obj == NULL)
     return 0;
@@ -1423,22 +1458,26 @@ EVENTFUNC(get_protocols)
   /* Clear extra white space from the "protocol scroll" */
   write_to_output(d, "[H[J");
 
-  len = snprintf(buf, MAX_STRING_LENGTH,   "\tO[\toClient\tO] \tw%s\tn | ", d->pProtocol->pVariables[eMSDP_CLIENT_ID]->pValueString);
+  buf[0] = '\0';
+  /* CLIENT_ID is whatever the client reported (TTYPE or MSDP): untrusted. */
+  banner_append(buf, sizeof(buf), &len, "\tO[\toClient\tO] \tw%s\tn | ", d->pProtocol->pVariables[eMSDP_CLIENT_ID]->pValueString);
 
   if (d->pProtocol->pVariables[eMSDP_XTERM_256_COLORS]->ValueInt)
-    len += snprintf(buf + len, MAX_STRING_LENGTH - len, "\tO[\toColors\tO] \tw256\tn | ");
+    banner_append(buf, sizeof(buf), &len, "\tO[\toColors\tO] \tw256\tn | ");
   else if (d->pProtocol->pVariables[eMSDP_ANSI_COLORS]->ValueInt)
-    len += snprintf(buf + len, MAX_STRING_LENGTH - len, "\tO[\toColors\tO] \twAnsi\tn | ");
+    banner_append(buf, sizeof(buf), &len, "\tO[\toColors\tO] \twAnsi\tn | ");
   else
-    len += snprintf(buf + len, MAX_STRING_LENGTH - len, "[Colors] No Color | ");
- 
-  len += snprintf(buf + len, MAX_STRING_LENGTH - len,   "\tO[\toMXP\tO] \tw%s\tn | ", d->pProtocol->bMXP ? "Yes" : "No");
-  len += snprintf(buf + len, MAX_STRING_LENGTH - len,   "\tO[\toMSDP\tO] \tw%s\tn | ", d->pProtocol->bMSDP ? "Yes" : "No");
-  tb_snprintf(buf + len, MAX_STRING_LENGTH - len, "\tO[\toATCP\tO] \tw%s\tn\r\n\r\n", d->pProtocol->bATCP ? "Yes" : "No");
-   
-  write_to_output(d, buf, 0);
-    
-  write_to_output(d, GREETINGS, 0); 
+    banner_append(buf, sizeof(buf), &len, "[Colors] No Color | ");
+
+  banner_append(buf, sizeof(buf), &len, "\tO[\toMXP\tO] \tw%s\tn | ", d->pProtocol->bMXP ? "Yes" : "No");
+  banner_append(buf, sizeof(buf), &len, "\tO[\toMSDP\tO] \tw%s\tn | ", d->pProtocol->bMSDP ? "Yes" : "No");
+  banner_append(buf, sizeof(buf), &len, "\tO[\toATCP\tO] \tw%s\tn\r\n\r\n", d->pProtocol->bATCP ? "Yes" : "No");
+
+  /* The banner holds client-supplied text: always send it as data, never as
+   * a format string (a '%' in the client ID would otherwise be interpreted). */
+  write_to_output(d, "%s", buf);
+
+  write_to_output(d, "%s", GREETINGS);
   STATE(d) = CON_GET_NAME;
   return 0;
 }
@@ -1793,6 +1832,10 @@ void nanny(struct descriptor_data *d, char *arg)
     STATE(d) = CON_RMOTD;
     /* make sure the last log is updated correctly. */
     GET_PREF(d->character)= rand_number(1, 128000);
+    /* GET_HOST() was already set when the descriptor got its character;
+     * free it or every new character leaks one host string. */
+    if (GET_HOST(d->character))
+      free(GET_HOST(d->character));
     GET_HOST(d->character)= strdup(d->host);
 
     mudlog(NRM, LVL_GOD, TRUE, "%s [%s] new player.", GET_NAME(d->character), d->host);

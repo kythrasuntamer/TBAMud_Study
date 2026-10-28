@@ -37,6 +37,7 @@
 #include "ibt.h"
 #include "mud_event.h"
 #include "msgedit.h"
+#include "prefedit.h"
 #include "screen.h"
 #include <sys/stat.h>
 
@@ -73,7 +74,6 @@ struct trig_data *trigger_list = NULL;  /* all attached triggers */
 int top_of_trigt = 0;           /* top of trigger index table    */
 long max_mob_id = MOB_ID_BASE;  /* for unique mob id's           */
 long max_obj_id = OBJ_ID_BASE;  /* for unique obj id's           */
-int dg_owner_purged;            /* For control of scripts        */
 
 struct aq_data *aquest_table;   /* Autoquests table              */
 qst_rnum total_quests = 0;      /* top of autoquest table        */
@@ -132,7 +132,7 @@ static int check_object_spell_number(struct obj_data *obj, int val);
 static int check_object_level(struct obj_data *obj, int val);
 static int check_object(struct obj_data *);
 static void load_zones(FILE *fl, char *zonename);
-static int file_to_string(const char *name, char *buf);
+static int file_to_string(const char *name, char *buf, size_t buf_size);
 static int file_to_string_alloc(const char *name, char **buf);
 static int count_alias_records(FILE *fl);
 static void parse_simple_mob(FILE *mob_f, int i, int nr);
@@ -766,6 +766,8 @@ void destroy_db(void)
     }
   }
   free(world);
+  /* Freed: nothing may index it now (the prototype frees below scan it). */
+  world = NULL;
   top_of_world = 0;
 
   /* Objects */
@@ -1774,6 +1776,21 @@ static void renum_zone_table(void)
     }
 }
 
+/* A mob file value that indexes a name table (position_types[], genders[])
+ * must be inside it.  An out-of-range value used to be stored as is and
+ * read past the table wherever the mob was shown; it is reported with the
+ * mob's vnum and replaced by fallback. */
+static int mob_table_value(int nr, const char *field, int value, int count,
+                           int fallback)
+{
+  if (value >= 0 && value < count)
+    return value;
+  TB_ERROR_MSG("db", "mob-load", "parse_simple_mob",
+               "mob #%d: %s %d is outside 0..%d; using %d", nr, field, value,
+               count - 1, fallback);
+  return fallback;
+}
+
 static void parse_simple_mob(FILE *mob_f, int i, int nr)
 {
   int j, t[10];
@@ -1848,9 +1865,12 @@ static void parse_simple_mob(FILE *mob_f, int i, int nr)
     exit(1);
   }
 
-  GET_POS(mob_proto + i) = t[0];
-  GET_DEFAULT_POS(mob_proto + i) = t[1];
-  GET_SEX(mob_proto + i) = t[2];
+  GET_POS(mob_proto + i) =
+    mob_table_value(nr, "position", t[0], NUM_POSITIONS, POS_STANDING);
+  GET_DEFAULT_POS(mob_proto + i) =
+    mob_table_value(nr, "default position", t[1], NUM_POSITIONS, POS_STANDING);
+  GET_SEX(mob_proto + i) =
+    mob_table_value(nr, "sex", t[2], NUM_GENDERS, SEX_NEUTRAL);
 
   GET_CLASS(mob_proto + i) = 0;
   GET_WEIGHT(mob_proto + i) = 200;
@@ -3562,6 +3582,10 @@ void free_char(struct char_data *ch)
   int i;
   struct alias_data *a;
 
+  /* No editor may keep pointing at this character. */
+  if (!IS_NPC(ch))
+    prefedit_forget_char(ch);
+
   if (ch->player_specials != NULL && ch->player_specials != &dummy_mob) {
     while ((a = GET_ALIASES(ch)) != NULL) {
       GET_ALIASES(ch) = (GET_ALIASES(ch))->next;
@@ -3646,7 +3670,7 @@ void free_char(struct char_data *ch)
   /* find_char helper, when free_char is called with a blank character struct,
    * ID is set to 0, and has not yet been added to the lookup table. */
   if (ch->script_id != 0) {
-    remove_from_lookup_table(ch->script_id);
+    remove_from_lookup_table(ch->script_id, ch);
   }
 
   free(ch);
@@ -3671,7 +3695,7 @@ void free_obj(struct obj_data *obj)
 
   /* find_obj helper (0 is not-yet-added to the table) */
   if (obj->script_id != 0) {
-    remove_from_lookup_table(obj->script_id);
+    remove_from_lookup_table(obj->script_id, obj);
   }
 
   free(obj);
@@ -3697,7 +3721,7 @@ static int file_to_string_alloc(const char *name, char **buf)
       return (-1);
 
   /* Lets not free() what used to be there unless we succeeded. */
-  if (file_to_string(name, temp) < 0)
+  if (file_to_string(name, temp, sizeof(temp)) < 0)
     return (-1);
 
   for (in_use = descriptor_list; in_use; in_use = in_use->next) {
@@ -3720,14 +3744,24 @@ static int file_to_string_alloc(const char *name, char **buf)
   return (0);
 }
 
-/* read contents of a text file, and place in buf */
-static int file_to_string(const char *name, char *buf)
+/** Read a whole text file into buf, converting each line ending to "\r\n".
+ * @param name     Path of the text file (greetings, motd, news, ...).
+ * @param buf      Destination; always NUL-terminated, empty on failure.
+ * @param buf_size Size of buf in bytes. It must be passed explicitly: buf is
+ *                 a pointer here, so sizeof(buf) would be the size of a
+ *                 pointer (8), and a copy bounded by it silently cut every
+ *                 text file to 7 characters (the login greeting lost its
+ *                 name prompt).
+ * @return 0 on success, -1 if the file cannot be opened or does not fit. */
+static int file_to_string(const char *name, char *buf, size_t buf_size)
 {
   FILE *fl;
   char tmp[READ_SIZE + 3];
   int len;
   struct stat statbuf;
 
+  if (buf_size == 0)
+    return (-1);
   *buf = '\0';
 
   if (!(fl = fopen(name, "r"))) {
@@ -3754,13 +3788,15 @@ static int file_to_string(const char *name, char *buf)
       tmp[len - 1] = '\0'; /* take off the trailing \n */
     strlcat(tmp, "\r\n", sizeof(tmp));	/* strcat: OK (tmp:READ_SIZE+3) */
 
-    if (strlen(buf) + strlen(tmp) + 1 > MAX_STRING_LENGTH) {
-      log("SYSERR: %s: string too big (%d max)", name, MAX_STRING_LENGTH);
+    if (strlen(buf) + strlen(tmp) + 1 > buf_size) {
+      TB_ERROR_MSG("db", "text-file-load", name,
+                   "text file does not fit in %zu bytes; not loaded",
+                   buf_size);
       *buf = '\0';
       tb_fclose(fl);
       return (-1);
     }
-    strlcat(buf, tmp, sizeof(buf));	/* strcat: OK (size checked above) */
+    strlcat(buf, tmp, buf_size);	/* fits: checked above */
   }
 
   tb_fclose(fl);

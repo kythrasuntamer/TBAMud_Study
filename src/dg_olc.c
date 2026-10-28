@@ -678,6 +678,7 @@ void trigedit_parse(struct descriptor_data *d, char *arg)
 
     case TRIGEDIT_ARGUMENT:
       smash_tilde(arg);
+      free(OLC_TRIG(d)->arglist);   /* each new argument replaced it unfreed */
       OLC_TRIG(d)->arglist = (*arg?strdup(arg):NULL);
       OLC_VAL(d)++;
       break;
@@ -692,8 +693,16 @@ void trigedit_parse(struct descriptor_data *d, char *arg)
       return;
 
     case TRIGEDIT_COPY:
-      if ((i = real_trigger(tb_parse_int_or_zero(arg))) != NOWHERE) {
+      if ((i = real_trigger(dg_parse_vnum(arg))) != NOTHING) {
+        /* Replace the edit buffer with the source's contents, but keep the
+         * identity of the trigger being edited: a buffer naming the
+         * source's rnum gave the saved prototype that rnum, and later
+         * edits then missed (and freed the commands under) its instances. */
+        free_trigger(OLC_TRIG(d));
+        free(OLC_STORAGE(d));
+        OLC_STORAGE(d) = NULL;
         trigedit_setup_existing(d, i);
+        GET_TRIG_RNUM(OLC_TRIG(d)) = real_trigger(OLC_NUM(d));
       } else
         write_to_output(d, "That trigger does not exist.\r\n");
       break;
@@ -762,6 +771,7 @@ void trigedit_save(struct descriptor_data *d)
 
     /* make the prorotype look like what we have */
     trig_data_copy(proto, trig);
+    proto->nr = rnum;   /* the slot it lives in, whatever the buffer said */
 
     /* go through the mud and replace existing triggers         */
     live_trig = trigger_list;
@@ -873,15 +883,19 @@ void trigedit_save(struct descriptor_data *d)
     trig_index = new_index;
     top_of_trigt++;
 
-    /* HERE IT HAS TO GO THROUGH AND FIX ALL SCRIPTS/TRIGS OF HIGHER RNUM */
+    /* Every prototype from rnum up moved one slot, so every live trigger
+     * and edit buffer that pointed at rnum or above follows it.  The new
+     * trigger's own buffer (d) already names rnum, and buffers for unsaved
+     * triggers (NOTHING) point nowhere. */
     for (live_trig = trigger_list; live_trig; live_trig = live_trig->next_in_world)
-      GET_TRIG_RNUM(live_trig) += (GET_TRIG_RNUM(live_trig) != NOTHING && GET_TRIG_RNUM(live_trig) > rnum);
+      if (GET_TRIG_RNUM(live_trig) != NOTHING && GET_TRIG_RNUM(live_trig) >= rnum)
+        GET_TRIG_RNUM(live_trig)++;
 
-    /* Update other trigs being edited. */
-     for (dsc = descriptor_list; dsc; dsc = dsc->next)
-       if (STATE(dsc) == CON_TRIGEDIT)
-         if (GET_TRIG_RNUM(OLC_TRIG(dsc)) >= rnum)
-           GET_TRIG_RNUM(OLC_TRIG(dsc))++;
+    for (dsc = descriptor_list; dsc; dsc = dsc->next)
+      if (dsc != d && STATE(dsc) == CON_TRIGEDIT &&
+          GET_TRIG_RNUM(OLC_TRIG(dsc)) != NOTHING &&
+          GET_TRIG_RNUM(OLC_TRIG(dsc)) >= rnum)
+        GET_TRIG_RNUM(OLC_TRIG(dsc))++;
 
   }
 
@@ -1243,7 +1257,7 @@ int format_script(struct descriptor_data *d)
   char nsc[MAX_CMD_LENGTH], *t, line[READ_SIZE];
   char *sc;
   size_t len = 0, nlen = 0, llen = 0;
-  int indent = 0, indent_next = FALSE, line_num = 0, ret, i; // Declare i here
+  int indent = 0, indent_next = FALSE, line_num = 0, ret;
   int block_stack[READ_SIZE]; // Stack to track block types
   int stack_top = -1; // Initialize stack as empty
   int switch_indent[READ_SIZE]; // Array to track switch indent levels
@@ -1261,6 +1275,16 @@ int format_script(struct descriptor_data *d)
   while (t) {
     line_num++;
     skip_spaces(&t);
+
+    /* Every opener pushes one entry; switch_indent never holds more. */
+    if ((!strn_cmp(t, "switch ", 7) || !strn_cmp(t, "if ", 3) ||
+         !strn_cmp(t, "while ", 6)) &&
+        stack_top + 1 >= (int)(sizeof(block_stack) / sizeof(*block_stack))) {
+      write_to_output(d, "Blocks nested too deeply to format (line %d)!\r\n",
+                      line_num);
+      free(sc);
+      return FALSE;
+    }
 
     if (!strn_cmp(t, "switch ", 7)) {
       indent_next = TRUE;
@@ -1313,15 +1337,20 @@ int format_script(struct descriptor_data *d)
       indent_next = FALSE; // Ensure no automatic increase for next line after break
     }
 
-    *line = '\0';
-    for (nlen = 0, i = 0; i < indent; i++) {
-      strncat(line, "  ", sizeof(line) - strlen(line) - 1);
-      nlen += 2;
+    /* The indented line must fit whole: nlen past the buffer used to wrap
+     * the snprintf size, and a long line was cut silently. */
+    nlen = indent > 0 ? 2 * (size_t)indent : 0;
+    if (nlen + strlen(t) + 2 >= sizeof(line)) {
+      write_to_output(d, "Line %d is too long to indent, formatting aborted\r\n",
+                      line_num);
+      free(sc);
+      return FALSE;
     }
-
+    memset(line, ' ', nlen);
     ret = snprintf(line + nlen, sizeof(line) - nlen, "%s\r\n", t);
     llen = (size_t)ret;
-    if (ret < 0 || llen + nlen + len > d->max_str - 1) {
+    if (ret < 0 || llen + nlen + len > d->max_str - 1 ||
+        llen + nlen + len >= sizeof(nsc)) {
       write_to_output(d, "String too long, formatting aborted\r\n");
       free(sc);
       return FALSE;
