@@ -742,13 +742,26 @@ void obj_from_room(struct obj_data *object)
     return;
   }
 
-   /* if people are sitting in it, toss their butt to the ground */
-  if (OBJ_SAT_IN_BY(object) != NULL) {
-    for (tempch = OBJ_SAT_IN_BY(object); tempch; tempch = t) {
+  /* If people are sitting in it, toss their butt to the ground (they keep
+   * their sitting position, on the floor). The furniture side of the link
+   * must be cleared too: once SITTING(ch) is NULL, char_from_furniture()
+   * returns early and can never remove ch from OBJ_SAT_IN_BY, so a stale
+   * back-pointer would outlive the character (use after free in
+   * extract_obj or look). Callers that move occupied furniture (scavenger
+   * mobs, omove/wmove) are not expected to, so report it. */
+  if ((tempch = OBJ_SAT_IN_BY(object)) != NULL) {
+    TB_WARN_MSG("handler", "furniture-move-occupied", "obj",
+                "obj vnum %d uid %ld left room %d with %d sitter(s); first "
+                DIAG_CHAR_FMT, (int) GET_OBJ_VNUM(object),
+                obj_script_id(object), (int) GET_ROOM_VNUM(IN_ROOM(object)),
+                GET_OBJ_VAL(object, 1), DIAG_CHAR(tempch));
+    for (; tempch; tempch = t) {
        t = NEXT_SITTING(tempch);
        SITTING(tempch) = NULL;
        NEXT_SITTING(tempch) = NULL;
     }
+    OBJ_SAT_IN_BY(object) = NULL;
+    GET_OBJ_VAL(object, 1) = 0;
   }
 
   REMOVE_FROM_LIST(object, world[IN_ROOM(object)].contents, next_content);

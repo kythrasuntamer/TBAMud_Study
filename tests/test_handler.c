@@ -74,6 +74,48 @@ static void test_obj_from_room_nowhere_reported(void)
   free(obj);
 }
 
+/* H2-06: moving occupied furniture out of a room must clear the furniture's
+ * back-pointer to its sitters, not only the sitters' forward pointers;
+ * otherwise a later extract_obj walks a freed character. */
+static void test_obj_from_room_clears_furniture_backpointer(void)
+{
+  struct room_data rooms[1];
+  struct obj_data *chair = calloc(1, sizeof(*chair));
+  struct char_data *sitter = calloc(1, sizeof(*sitter));
+  struct room_data *saved_world = world;
+  room_rnum saved_top = top_of_world;
+
+  TEST_ASSERT_NOT_NULL(chair);
+  TEST_ASSERT_NOT_NULL(sitter);
+  memset(rooms, 0, sizeof(rooms));
+  rooms[0].number = 3001;
+  world = rooms;
+  top_of_world = 0;
+
+  chair->item_number = NOTHING;
+  GET_OBJ_TYPE(chair) = ITEM_FURNITURE;
+  IN_ROOM(chair) = NOWHERE;
+  obj_to_room(chair, 0);
+  GET_IDNUM(sitter) = 42;
+  SITTING(sitter) = chair;
+  OBJ_SAT_IN_BY(chair) = sitter;
+  GET_OBJ_VAL(chair, 1) = 1;
+
+  obj_from_room(chair);
+
+  TEST_ASSERT_NULL(SITTING(sitter));
+  TEST_ASSERT_NULL(OBJ_SAT_IN_BY(chair));
+  TEST_ASSERT_EQUAL_INT(0, GET_OBJ_VAL(chair, 1));
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("furniture-move-occupied", tb_captured_operation);
+  TEST_ASSERT_NULL(rooms[0].contents);
+
+  world = saved_world;
+  top_of_world = saved_top;
+  free(sitter);
+  free(chair);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -81,5 +123,6 @@ int main(void)
   RUN_TEST(test_fname_normal_keyword_silent);
   RUN_TEST(test_obj_from_room_null_reported);
   RUN_TEST(test_obj_from_room_nowhere_reported);
+  RUN_TEST(test_obj_from_room_clears_furniture_backpointer);
   return UNITY_END();
 }
