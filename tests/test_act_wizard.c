@@ -357,12 +357,61 @@ static void test_set_file_room_is_refused_and_reported(void)
   TEST_ASSERT_NULL(rooms[1].people);
 }
 
+/* G1-04: "stat file" released its temp copy with extract_char_final(),
+ * which saves the stale copy and deletes the player's crash file. The
+ * extract_char_final() stub fails the test if it is reached. */
+static void test_stat_file_frees_copy_without_extracting(void)
+{
+  load_char_result = 0;
+  RUN_CMD(do_stat, &imm, "file bobby");
+  TEST_ASSERT_EQUAL_INT(0, extract_final_calls);
+  TEST_ASSERT_EQUAL_INT(0, save_char_calls);
+  TEST_ASSERT_EQUAL_INT(0, char_to_room_calls);
+  TEST_ASSERT_EQUAL_INT(1, free_char_calls);
+  TEST_ASSERT_EQUAL_INT(0, captured_errors);
+}
+
+/* G1-V01: the level refusal must come before any side effect, and be
+ * reported. */
+static void test_stat_file_outranked_is_denied_before_side_effects(void)
+{
+  GET_LEVEL(&imm) = LVL_IMMORT;
+  load_char_result = 0;
+  load_char_level = LVL_IMPL;
+  RUN_CMD(do_stat, &imm, "file bobby");
+  TEST_ASSERT_EQUAL_INT(0, extract_final_calls);
+  TEST_ASSERT_EQUAL_INT(0, save_char_calls);
+  TEST_ASSERT_EQUAL_INT(1, free_char_calls);
+  TEST_ASSERT_EQUAL_STRING("stat-file-denied", captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(sent, "Sorry"));
+}
+
+/* G1-04: a player who is in the world (here linkdead) but not visible to
+ * the caller must not be shown from the stale disk copy. */
+static void test_stat_file_of_player_in_world_is_refused(void)
+{
+  static struct char_data online;
+  static struct player_special_data online_specials;
+  memset(&online, 0, sizeof(online));
+  online.player_specials = &online_specials;
+  GET_IDNUM(&online) = 77;
+  character_list = &online;
+  load_char_result = 0;
+  RUN_CMD(do_stat, &imm, "file bobby");
+  character_list = NULL;
+  TEST_ASSERT_EQUAL_INT(1, free_char_calls);
+  TEST_ASSERT_EQUAL_STRING("stat-file-online", captured_operation);
+}
+
 int main(void)
 {
   /* basic_mud_log()/mudlog() are the real utils.c ones; keep them quiet. */
   logfile = fopen("/dev/null", "w");
   UNITY_BEGIN();
   RUN_TEST(test_set_file_room_is_refused_and_reported);
+  RUN_TEST(test_stat_file_frees_copy_without_extracting);
+  RUN_TEST(test_stat_file_outranked_is_denied_before_side_effects);
+  RUN_TEST(test_stat_file_of_player_in_world_is_refused);
   {
     int failures = UNITY_END();
     if (logfile)

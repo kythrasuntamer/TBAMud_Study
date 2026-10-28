@@ -49,6 +49,7 @@ static void do_stat_character(struct char_data *ch, struct char_data *k);
 static void stop_snooping(struct char_data *ch);
 static size_t print_zone_to_buf(char *bufptr, size_t left, zone_rnum zone, int listall);
 static struct char_data *is_in_game(long idnum);
+static struct char_data *find_player_in_world(long idnum);
 static void mob_checkload(struct char_data *ch, mob_vnum mvnum);
 static void obj_checkload(struct char_data *ch, obj_vnum ovnum);
 static void trg_checkload(struct char_data *ch, trig_vnum tvnum);
@@ -1041,17 +1042,32 @@ ACMD(do_stat)
     else if ((victim = get_player_vis(ch, buf2, NULL, FIND_CHAR_WORLD)) != NULL)
 	do_stat_character(ch, victim);
     else {
+      /* The file copy is read-only and never enters the world: it is not
+       * placed in a room and is released with free_char(). Releasing it with
+       * extract_char_final() would save_char() the stale copy over the pfile
+       * and Crash_delete_crashfile() the player's RENT_CRASH objects. The
+       * target name comes from the immortal; the level check runs before
+       * anything is shown. */
       CREATE(victim, struct char_data, 1);
       clear_char(victim);
       CREATE(victim->player_specials, struct player_special_data, 1);
       new_mobile_data(victim);
       if (load_char(buf2, victim) >= 0) {
-        char_to_room(victim, 0);
-        if (GET_LEVEL(victim) > GET_LEVEL(ch))
+        if (GET_LEVEL(victim) > GET_LEVEL(ch)) {
+          TB_WARN_MSG("act", "stat-file-denied", "player",
+                      "caller " DIAG_CHAR_FMT " level %d < target idnum %ld level %d",
+                      DIAG_CHAR(ch), GET_LEVEL(ch), GET_IDNUM(victim), GET_LEVEL(victim));
 	  send_to_char(ch, "Sorry, you can't do that.\r\n");
-	else
+        } else if (find_player_in_world(GET_IDNUM(victim))) {
+          /* Online but not visible to the caller (e.g. wizinvis): the disk
+           * copy is stale and must not be presented as current. */
+          TB_WARN_MSG("act", "stat-file-online", "player",
+                      "player idnum %ld is in game; caller " DIAG_CHAR_FMT,
+                      GET_IDNUM(victim), DIAG_CHAR(ch));
+          send_to_char(ch, "That player is in the game; use 'stat player'.\r\n");
+        } else
 	  do_stat_character(ch, victim);
-	extract_char_final(victim);
+	free_char(victim);
       } else {
 	send_to_char(ch, "There is no such player.\r\n");
 	free_char(victim);
@@ -2096,6 +2112,20 @@ static void list_llog_entries(struct char_data *ch)
     send_to_char(ch, "Error reading last_log file.");
   }
   tb_fclose(fp);
+}
+
+/** Find a player character in the world by idnum, linkless or not.
+ * @param idnum The player's idnum.
+ * @return The in-world character, or NULL when the player is offline. Unlike
+ * is_in_game(), this also finds linkdead players (no descriptor). */
+static struct char_data *find_player_in_world(long idnum)
+{
+  struct char_data *i;
+
+  for (i = character_list; i; i = i->next)
+    if (!IS_NPC(i) && GET_IDNUM(i) == idnum)
+      return i;
+  return NULL;
 }
 
 static struct char_data *is_in_game(long idnum) {
