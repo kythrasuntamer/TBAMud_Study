@@ -23,6 +23,7 @@
 #include "config.h"
 #include "act.h"
 #include "lists.h"
+#include "prefedit.h"
 
 #include <stdarg.h>
 
@@ -31,6 +32,15 @@
 #define UNEXPECTED() do { \
   fprintf(stderr, "==fuzz_player== ERROR: unexpected call to %s(): a stub " \
           "was reached; link the real function\n", __func__); \
+  abort(); \
+} while (0)
+
+/* The same for a stub of an *_at function (the target of a call-site macro
+ * such as simple_list() -> simple_list_at()): also names the caller. */
+#define UNEXPECTED_AT(file, line, func) do { \
+  fprintf(stderr, "==fuzz_player== ERROR: unexpected call to %s() from " \
+          "%s:%d (%s): a stub was reached; link the real function\n", \
+          __func__, (file) ? (file) : "?", (line), (func) ? (func) : "?"); \
   abort(); \
 } while (0)
 
@@ -145,8 +155,40 @@ void stop_fighting(struct char_data *ch) { (void) ch; UNEXPECTED(); }
  * character has none. */
 void free_history(struct char_data *ch, int type) { (void) ch; (void) type; UNEXPECTED(); }
 
+/* prefedit.c: free_char() makes every preference editor still pointing at a
+ * departing player let go of it, by walking descriptor_list. The harness
+ * never puts a descriptor on that list (fuzz_player.c's player_desc is only
+ * reached through ch->desc), so the real function finds nothing to do; this
+ * does the same, and stops if the list is ever non-empty, where it could not
+ * stand in for the real walk (and its cleanup_olc()). */
+void prefedit_forget_char(struct char_data *ch)
+{
+  (void) ch;
+  if (descriptor_list != NULL)
+    UNEXPECTED();
+}
+
 /* lists.c / dg_event.c: extract_obj() and free_char() cancel pending
- * events; nothing here schedules any (ch->events and obj->events stay NULL). */
-void *simple_list(struct list_data *pList) { (void) pList; UNEXPECTED(); }
-void free_list(struct list_data *pList) { (void) pList; UNEXPECTED(); }
-void event_cancel(struct event *event) { (void) event; UNEXPECTED(); }
+ * events; nothing here schedules any (ch->events and obj->events stay NULL).
+ * simple_list(), free_list() and event_cancel() are call-site macros over
+ * these *_at functions (lists.h, dg_event.h). */
+void *simple_list_at(struct list_data *pList, const char *file, int line,
+                     const char *func)
+{
+  (void) pList;
+  UNEXPECTED_AT(file, line, func);
+}
+
+void free_list_at(struct list_data *pList, const char *file, int line,
+                  const char *func)
+{
+  (void) pList;
+  UNEXPECTED_AT(file, line, func);
+}
+
+void event_cancel_at(struct event *event, const char *file, int line,
+                     const char *func)
+{
+  (void) event;
+  UNEXPECTED_AT(file, line, func);
+}
