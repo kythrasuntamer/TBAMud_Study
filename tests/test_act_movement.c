@@ -242,7 +242,8 @@ static void assert_move_refused_at(struct char_data *pc, const char *stage)
   TEST_ASSERT_EQUAL_INT(0, IN_ROOM(pc));
   TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
   TEST_ASSERT_EQUAL_STRING("move-index", tb_captured_operation);
-  snprintf(want, sizeof(want), "not valid at %s;", stage);
+  TEST_ASSERT_TRUE(snprintf(want, sizeof(want), "not valid at %s;", stage)
+                   < (int)sizeof(want));
   TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, want));
   TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "player idnum"));
 }
