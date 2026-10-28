@@ -49,15 +49,15 @@
 /* Old Diku "#99999" end-of-world marker. */
 #define WLD_SENTINEL_VNUM	99999
 
-typedef signed char sbyte;
-typedef unsigned char ubyte;
+/*
+ * Only the types this tool uses.  It must not typedef bool: that is a
+ * keyword in C23 (GCC 15's default when src/util/Makefile.in passes no
+ * -std), where "typedef char bool;" is a hard error.
+ */
 typedef signed short int sh_int;
-typedef unsigned short int ush_int;
-typedef char bool;
-typedef char byte;
 
 typedef int room_num;
-typedef sh_int obj_num;
+typedef int obj_num;
 
 
 char buf[MAX_STRING_LENGTH];
@@ -206,7 +206,6 @@ static int parse_word_token(char **cursor, char *out, size_t out_size)
   *cursor = p + len;
   return 1;
 }
-int real_room(int virtual, int reference);
 
 /* room-related structures *********************************************** */
 
@@ -227,40 +226,6 @@ struct extra_descr_data {
   struct extra_descr_data *next;	/* Next in list                     */
 };
 
-struct reset_com {
-  char command;			/* current command                      */
-
-  bool if_flag;			/* if TRUE: exe only if preceding exe'd */
-  int arg1;			/* */
-  int arg2;			/* Arguments to the command             */
-  int arg3;			/* */
-
-  /*
-   * Commands:              * 'M': Read a mobile     * 'O': Read an object    *
-   * 'G': Give obj to mob   * 'P': Put obj in obj    * 'G': Obj to char       *
-   * 'E': Obj to char equip * 'D': Set state of door *
-   */
-};
-
-
-
-struct zone_data {
-  char *name;			/* name of this zone                  */
-  int lifespan;			/* how long between resets (minutes)  */
-  int age;			/* current age of this zone (minutes) */
-  int top;			/* upper limit for rooms in this zone */
-
-  int reset_mode;		/* conditions for reset (see below)   */
-  int number;			/* virtual number of this zone    */
-  struct reset_com *cmd;	/* command table for reset                */
-
-  /*
-   * Reset mode:                              * 0: Don't reset, and don't
-   * update age.    * 1: Reset if no PC's are located in zone. * 2: Just
-   * reset.                           *
-   */
-};
-
 /* ================== Memory Structure for room ======================= */
 struct room_data {
   room_num number;		/* Rooms number (vnum)                */
@@ -272,7 +237,7 @@ struct room_data {
   struct room_direction_data *dir_option[NUM_OF_DIRS];	/* Directions */
   unsigned long room_flags;	/* DEATH,DARK ... (32 bits used)      */
 
-  byte light;			/* Number of lightsources in room     */
+  signed char light;		/* Number of lightsources in room     */
 };
 
 /* ====================================================================== */
@@ -294,10 +259,6 @@ void setup_dir(FILE * fl, int room, int dir);
 void index_boot(int cnt, char **name);
 void discrete_load(FILE * fl);
 void parse_room(FILE * fl, int virtual_nr);
-void parse_mobile(FILE * mob_f, int nr);
-char *parse_object(FILE * obj_f, int nr);
-void assign_rooms(void);
-void renum_world(void);
 void write_output(void);
 
 

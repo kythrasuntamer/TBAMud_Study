@@ -443,6 +443,18 @@ if(Python3_Interpreter_FOUND)
     # catch a copy whose stated bound exceeds its real destination (I3-04).
     # Debug and sanitizer trees do not fortify, and ASan replaces the
     # checked string functions, so it is only built without sanitizers.
+    # Compile wld2html as C23 too: the autoconf build (src/util/Makefile.in)
+    # passes no -std, and GCC 15 defaults to C23, where the old
+    # "typedef char bool;" was a hard error (I3-13).
+    if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.21 AND
+       "c_std_23" IN_LIST CMAKE_C_COMPILE_FEATURES)
+        add_library(wld2html_c23 OBJECT ${MUD_SRCDIR}/util/wld2html.c)
+        target_include_directories(wld2html_c23 PRIVATE ${TEST_INCLUDES})
+        target_compile_definitions(wld2html_c23 PRIVATE CIRCLE_UTIL)
+        set_target_properties(wld2html_c23 PROPERTIES
+            C_STANDARD 23 C_STANDARD_REQUIRED ON C_EXTENSIONS ON)
+    endif()
+
     set(WLD2HTML_FORTIFIED "-")
     if(NOT ENABLE_SANITIZERS AND
        CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
