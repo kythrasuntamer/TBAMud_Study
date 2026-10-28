@@ -27,6 +27,8 @@
 #include "modify.h"
 #include "improved-edit.h"
 #include <stdarg.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #include "tb_error_capture.h"
 
 /* ---------------------------------------------------------------------
@@ -785,6 +787,45 @@ static void test_astat_bad_stored_position_is_reported(void)
  * tedit
  * ------------------------------------------------------------------- */
 
+/* Editors that save text files write relative to the lib directory.  Run
+ * those tests inside a fresh temporary directory; with_text_dir creates
+ * text/ so saves can commit. */
+static char saved_cwd[4096];
+static char scratch_dir[256];
+
+static void enter_scratch_dir(int with_text_dir)
+{
+  TEST_ASSERT_NOT_NULL(getcwd(saved_cwd, sizeof(saved_cwd)));
+  strlcpy(scratch_dir, "/tmp/tb-olc-test-XXXXXX", sizeof(scratch_dir));
+  TEST_ASSERT_NOT_NULL(mkdtemp(scratch_dir));
+  TEST_ASSERT_EQUAL_INT(0, chdir(scratch_dir));
+  if (with_text_dir)
+    TEST_ASSERT_EQUAL_INT(0, mkdir("text", 0700));
+}
+
+static void leave_scratch_dir(void)
+{
+  char cmd[512];
+
+  TEST_ASSERT_EQUAL_INT(0, chdir(saved_cwd));
+  snprintf(cmd, sizeof(cmd), "rm -rf '%s'", scratch_dir);
+  TEST_ASSERT_EQUAL_INT(0, system(cmd));
+}
+
+static char *slurp(const char *path)
+{
+  static char buf[4096];
+  FILE *fl = fopen(path, "r");
+  size_t n;
+
+  if (!fl)
+    return NULL;
+  n = fread(buf, 1, sizeof(buf) - 1, fl);
+  buf[n] = '\0';
+  fclose(fl);
+  return buf;
+}
+
 /* F2-04: the editor works on a private copy.  '/c' must not free or NULL
  * the live GREETINGS, and saving an empty buffer publishes "" (comm.c runs
  * strlen(GREETINGS) on each connection) with a warning. */
@@ -792,6 +833,7 @@ static void test_tedit_clear_then_save_keeps_greetings_non_null(void)
 {
   char cmd[] = " greetings";
 
+  enter_scratch_dir(TRUE);
   GREETINGS = strdup("Welcome!\r\n");
   do_tedit(&builder, cmd, 0, 0);
   TEST_ASSERT_EQUAL_INT(CON_TEDIT, STATE(&builder_desc));
@@ -809,8 +851,57 @@ static void test_tedit_clear_then_save_keeps_greetings_non_null(void)
   TEST_ASSERT_EQUAL_STRING("", GREETINGS);
   TEST_ASSERT_EQUAL_STRING("tedit-empty", tb_captured_operation);
   TEST_ASSERT_NULL(builder_desc.olc);
+  TEST_ASSERT_EQUAL_STRING("", slurp("text/greetings"));
   free(GREETINGS);
   GREETINGS = NULL;
+  leave_scratch_dir();
+}
+
+/* F2-15: a save that cannot be written is reported with errno, the builder
+ * is told, and neither the file nor the live text changes. */
+static void test_tedit_failed_save_is_loud_and_changes_nothing(void)
+{
+  char cmd[] = " motd";
+  char *before;
+
+  enter_scratch_dir(FALSE);          /* no text/ directory: fopen fails */
+  motd = strdup("Old motd\r\n");
+  before = motd;
+  do_tedit(&builder, cmd, 0, 0);
+  free(*builder_desc.str);
+  *builder_desc.str = strdup("New motd\r\n");
+  free(builder_desc.backstr);
+  builder_desc.backstr = NULL;
+  tedit_string_cleanup(&builder_desc, STRINGADD_SAVE);
+  TEST_ASSERT_TRUE(motd == before);
+  TEST_ASSERT_EQUAL_STRING("Old motd\r\n", motd);
+  TEST_ASSERT_EQUAL_STRING("tedit-save", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(out, "Save FAILED"));
+  TEST_ASSERT_NULL(builder_desc.olc);
+  free(motd);
+  motd = NULL;
+  leave_scratch_dir();
+}
+
+/* F2-15: a successful save replaces the file and then the live text. */
+static void test_tedit_save_commits_file_then_text(void)
+{
+  char cmd[] = " motd";
+
+  enter_scratch_dir(TRUE);
+  motd = strdup("Old motd\r\n");
+  do_tedit(&builder, cmd, 0, 0);
+  free(*builder_desc.str);
+  *builder_desc.str = strdup("New motd\r\n");
+  free(builder_desc.backstr);
+  builder_desc.backstr = NULL;
+  tedit_string_cleanup(&builder_desc, STRINGADD_SAVE);
+  TEST_ASSERT_EQUAL_STRING("New motd\n", motd);
+  TEST_ASSERT_EQUAL_STRING("New motd\n", slurp("text/motd"));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  free(motd);
+  motd = NULL;
+  leave_scratch_dir();
 }
 
 /* F2-04: an abort leaves the live text exactly as it was. */
@@ -839,6 +930,8 @@ int main(void)
   UNITY_BEGIN();
   RUN_TEST(test_tedit_clear_then_save_keeps_greetings_non_null);
   RUN_TEST(test_tedit_abort_leaves_live_text);
+  RUN_TEST(test_tedit_failed_save_is_loud_and_changes_nothing);
+  RUN_TEST(test_tedit_save_commits_file_then_text);
   RUN_TEST(test_aedit_rejects_out_of_range_position_and_level);
   RUN_TEST(test_astat_bad_stored_position_is_reported);
   RUN_TEST(test_qedit_delete_unsaved_quest_is_refused_loudly);

@@ -54,9 +54,37 @@ static const struct tedit_file {
  * global is left alone until a save publishes the copy, so '/c' or a
  * disconnect can no longer leave GREETINGS NULL or freed under every other
  * connection, and two editors of one file no longer share one buffer. */
-void tedit_string_cleanup(struct descriptor_data *d, int terminator)
+/* Replace filename with text through filename.tmp.  Returns FALSE, after the
+ * sysdep helpers have reported the failing call, if anything failed; the
+ * original file is then untouched. */
+static int tedit_write_file(const char *filename, const char *text)
 {
   FILE *fl;
+  char temp_name[MAX_STRING_LENGTH];
+  int name_result, flush_ok, close_ok;
+
+  name_result = snprintf(temp_name, sizeof(temp_name), "%s.tmp", filename);
+  if (name_result < 0 || (size_t)name_result >= sizeof(temp_name)) {
+    errno = ENAMETOOLONG;
+    return FALSE;
+  }
+  if (!(fl = fopen(temp_name, "w")))
+    return FALSE;
+  tb_fputs(text, fl);
+  flush_ok = tb_fflush_checked(fl, temp_name);
+  close_ok = tb_fclose_checked(fl, temp_name);
+  if (!flush_ok || !close_ok) {
+    int saved_errno = errno;
+    if (remove(temp_name) != 0 && errno != ENOENT)
+      TB_REPORT_ERRNO("remove", temp_name);
+    errno = saved_errno;
+    return FALSE;
+  }
+  return tb_replace_file_checked(temp_name, filename);
+}
+
+void tedit_string_cleanup(struct descriptor_data *d, int terminator)
+{
   int row = (int)OLC_NUM(d);
   const struct tedit_file *file;
   char *text;
@@ -85,21 +113,28 @@ void tedit_string_cleanup(struct descriptor_data *d, int terminator)
       text = strdup("");
     }
     strip_cr(text);
+
+    /* Write a temporary file, verify flush and close, then rename it over
+     * the original, so a full disk or I/O error leaves the old file intact
+     * instead of truncated.  Publish to the live global only after the
+     * file committed, so memory and disk agree. */
+    if (!tedit_write_file(file->filename, text)) {
+      TB_ERROR_ERRNO("olc", "tedit-save", file->filename,
+                     "text length %zu editor " DIAG_CHAR_FMT,
+                     strlen(text), DIAG_CHAR(d->character));
+      mudlog(CMP, LVL_IMPL, TRUE, "SYSERR: Can't write file '%s'.", file->filename);
+      write_to_output(d, "Save FAILED; the file and the in-game text are unchanged.\r\n");
+      free(text);
+      break;
+    }
     free(*file->buffer);
     *file->buffer = text;
-
-    if (!(fl = fopen(file->filename, "w")))
-      mudlog(CMP, LVL_IMPL, TRUE, "SYSERR: Can't write file '%s'.", file->filename);
-    else {
-      tb_fputs(text, fl);
-      tb_fclose(fl);
-      mudlog(CMP, MAX(LVL_GOD, GET_INVIS_LEV(d->character)), TRUE, "OLC: %s saves '%s'.", GET_NAME(d->character), file->filename);
-      write_to_output(d, "Saved.\r\n");
-      if (!strcmp(file->filename, NEWS_FILE))
-        newsmod = time(0);
-      if (!strcmp(file->filename, MOTD_FILE))
-        motdmod = time(0);
-    }
+    mudlog(CMP, MAX(LVL_GOD, GET_INVIS_LEV(d->character)), TRUE, "OLC: %s saves '%s'.", GET_NAME(d->character), file->filename);
+    write_to_output(d, "Saved.\r\n");
+    if (!strcmp(file->filename, NEWS_FILE))
+      newsmod = time(0);
+    if (!strcmp(file->filename, MOTD_FILE))
+      motdmod = time(0);
     break;
   case STRINGADD_ABORT:
     write_to_output(d, "Edit aborted.\r\n");
