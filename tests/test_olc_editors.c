@@ -1715,7 +1715,7 @@ static void test_oedit_weight_over_max_is_clamped_and_reported(void)
   OLC_OBJ(d) = scratch_obj("a heavy thing");
   OLC_NUM(d) = 3001;
   OLC_MODE(d) = OEDIT_WEIGHT;
-  snprintf(input, sizeof(input), "%d", MAX_OBJ_WEIGHT + 1);
+  TEST_ASSERT_TRUE(snprintf(input, sizeof(input), "%d", MAX_OBJ_WEIGHT + 1) > 0);
 
   oedit_parse(d, input);
 
@@ -1964,7 +1964,7 @@ static void test_iedit_start_with_stale_session_reports_and_releases_it(void)
 static void test_sedit_unknown_mode_aborts_without_touching_freed_session(void)
 {
   struct descriptor_data *d = &builder_desc;
-  struct shop_data scratch;
+  static struct shop_data scratch;   /* static: the session outlives a failed assert */
 
   memset(&scratch, 0, sizeof(scratch));
   OLC_SHOP(d) = &scratch;

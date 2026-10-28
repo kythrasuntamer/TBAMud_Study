@@ -931,8 +931,7 @@ void medit_parse(struct descriptor_data *d, char *arg)
       char *ldesc;
 
       CREATE(ldesc, char, len + 3);
-      memcpy(ldesc, arg, len);
-      memcpy(ldesc + len, "\r\n", 3);
+      tb_snprintf(ldesc, len + 3, "%s\r\n", arg);   /* fits exactly */
       GET_LDESC(OLC_MOB(d)) = ldesc;
     } else
       GET_LDESC(OLC_MOB(d)) = strdup("undefined");
