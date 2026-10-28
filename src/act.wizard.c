@@ -73,6 +73,11 @@
 #define TABLE_INDEX_OK(i, n)     ((unsigned int) (i) < (unsigned int) (n))
 #define VALID_ATTACK_TYPE(t)     TABLE_INDEX_OK((t), NUM_ATTACK_TYPES)
 
+/* TRUE when ch asked not to have its own communication echoed back. NPCs
+ * (and switched immortals' bodies) have no preferences of their own: their
+ * PRF_FLAGS are the shared dummy_mob's. ch is evaluated twice. */
+#define NOREPEAT(ch)             (!IS_NPC(ch) && PRF_FLAGGED((ch), PRF_NOREPEAT))
+
 /* Number of elements of a true array (never a pointer parameter). Compile
  * time only: the argument is not evaluated. */
 #ifndef TB_ARRAY_LEN
@@ -255,7 +260,7 @@ ACMD(do_echo)
       }
     act(buf, FALSE, ch, 0, 0, TO_ROOM);
 
-    if (!IS_NPC(ch) && PRF_FLAGGED(ch, PRF_NOREPEAT))
+    if (NOREPEAT(ch))
       send_to_char(ch, "%s", CONFIG_OK);
     else
       act(buf, FALSE, ch, 0, 0, TO_CHAR);
@@ -280,7 +285,7 @@ ACMD(do_send)
   send_to_char(vict, "%s\r\n", buf);
   mudlog(CMP, MAX(LVL_GOD, GET_INVIS_LEV(ch)), TRUE, "(GC) %s sent %s: %s", GET_NAME(ch), GET_NAME(vict), buf);
 
-  if (!IS_NPC(ch) && PRF_FLAGGED(ch, PRF_NOREPEAT))
+  if (NOREPEAT(ch))
     send_to_char(ch, "Sent.\r\n");
   else
     send_to_char(ch, "You send '%s' to %s.\r\n", buf, GET_NAME(vict));
@@ -1989,7 +1994,7 @@ ACMD(do_gecho)
 
     mudlog(CMP, MAX(LVL_BUILDER, GET_INVIS_LEV(ch)), TRUE, "(GC) %s gechoed: %s", GET_NAME(ch), argument);
 
-    if (PRF_FLAGGED(ch, PRF_NOREPEAT))
+    if (NOREPEAT(ch))
       send_to_char(ch, "%s", CONFIG_OK);
     else
       send_to_char(ch, "%s\r\n", argument);
@@ -2682,7 +2687,7 @@ ACMD(do_wiznet)
   for (d = descriptor_list; d; d = d->next) {
     if (IS_PLAYING(d) && (GET_LEVEL(d->character) >= level) &&
 	(!PRF_FLAGGED(d->character, PRF_NOWIZ))
-	&& (d != ch->desc || !(PRF_FLAGGED(d->character, PRF_NOREPEAT)))) {
+	&& (d != ch->desc || !NOREPEAT(d->character))) {
       if (CAN_SEE(d->character, ch)) {
         parse_at(buf1);
         send_to_char(d->character, "%s%s%s", CCCYN(d->character, C_NRM), buf1, CCNRM(d->character, C_NRM));
@@ -2695,7 +2700,7 @@ ACMD(do_wiznet)
     }
   }
 
-  if (PRF_FLAGGED(ch, PRF_NOREPEAT))
+  if (NOREPEAT(ch))
     send_to_char(ch, "%s", CONFIG_OK);
 }
 
