@@ -1421,9 +1421,7 @@ static int Crash_load_objs(struct char_data *ch) {
   char filename[PATH_MAX];
   char line[READ_SIZE];
   char buf[MAX_STRING_LENGTH];
-  char str[64];
-  int i, num_of_days, orig_rent_code, num_objs=0;
-  unsigned long cost;
+  int i, orig_rent_code, num_objs=0;
   struct obj_data *cont_row[MAX_BAG_ROWS];
   int rentcode = RENT_UNDEF;
   int timed=0,netcost=0,gold,account,nitems;
@@ -1462,18 +1460,41 @@ static int Crash_load_objs(struct char_data *ch) {
   }
 
   if (rentcode == RENT_RENTED || rentcode == RENT_TIMEDOUT) {
-    tb_snprintf(str, sizeof(str), "%d", SECS_PER_REAL_DAY);
-    num_of_days = (int)((float) (time(0) - timed) / tb_parse_int_or_zero(str));
-    cost = (unsigned int) (netcost * num_of_days);
-    if (cost > (unsigned int)GET_GOLD(ch) + (unsigned int)GET_BANK_GOLD(ch)) {
+    /* 'timed' and 'netcost' come from the rent file (written by the server,
+     * but hand-editable and exposed to clock changes). A timestamp in the
+     * future made the day count negative, and the old unsigned cost then
+     * wrapped to a huge value and destroyed the rented equipment. The old
+     * unsigned deduction also wrapped when gold on hand exceeded the cost
+     * and credited the bank. All arithmetic is now signed 64-bit. */
+    long long elapsed = (long long) time(0) - (long long) timed;
+    long long days, cost, on_hand = GET_GOLD(ch), in_bank = GET_BANK_GOLD(ch);
+
+    if (elapsed < 0) {
+      TB_ERROR_MSG("objsave", "rent-clock", filename,
+                   "player idnum %ld rent timed %d is %lld s in the future; "
+                   "charging 0 days", GET_IDNUM(ch), timed, -elapsed);
+      elapsed = 0;
+    }
+    if (netcost < 0) {
+      TB_ERROR_MSG("objsave", "rent-clock", filename,
+                   "player idnum %ld negative rent netcost %d; charging 0",
+                   GET_IDNUM(ch), netcost);
+      netcost = 0;
+    }
+    days = elapsed / SECS_PER_REAL_DAY;
+    cost = (long long) netcost * days;
+    if (cost > on_hand + in_bank) {
       tb_fclose(fl);
       mudlog(BRF, MAX(LVL_IMMORT, GET_INVIS_LEV(ch)), TRUE,
              "%s entering game, rented equipment lost (no $).", GET_NAME(ch));
       Crash_crashsave(ch);
       return 2;
     } else {
-      GET_BANK_GOLD(ch) -= MAX(cost - GET_GOLD(ch), 0);
-      GET_GOLD(ch) = MAX(GET_GOLD(ch) - cost, 0);
+      if (cost > on_hand) {
+        GET_BANK_GOLD(ch) = (int) (in_bank - (cost - on_hand));
+        GET_GOLD(ch) = 0;
+      } else
+        GET_GOLD(ch) = (int) (on_hand - cost);
       save_char(ch);
     }
   }
