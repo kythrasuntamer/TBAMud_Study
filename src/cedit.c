@@ -1660,6 +1660,8 @@ void cedit_parse(struct descriptor_data *d, char *arg)
           "That is an invalid choice!\r\n"
           "Enter the default ip address : ");
       } else {
+        /* The setup copy owns the old string; replacing it leaked it. */
+        free(OLC_CONFIG(d)->operation.DFLT_IP);
         OLC_CONFIG(d)->operation.DFLT_IP = str_udup(arg);
         cedit_disp_operation_options(d);
       }
@@ -1671,6 +1673,7 @@ void cedit_parse(struct descriptor_data *d, char *arg)
           "That is an invalid choice!\r\n"
           "Enter the default directory : ");
       } else {
+        free(OLC_CONFIG(d)->operation.DFLT_DIR);
         OLC_CONFIG(d)->operation.DFLT_DIR = str_udup(arg);
         cedit_disp_operation_options(d);
       }
@@ -1682,6 +1685,7 @@ void cedit_parse(struct descriptor_data *d, char *arg)
           "That is an invalid choice!\r\n"
           "Enter the name of the logfile : ");
       } else {
+        free(OLC_CONFIG(d)->operation.LOGNAME);
         OLC_CONFIG(d)->operation.LOGNAME = str_udup(arg);
         cedit_disp_operation_options(d);
       }
