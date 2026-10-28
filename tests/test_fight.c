@@ -314,9 +314,34 @@ static void test_bandage_succeeds_when_roll_is_under_skill(void)
   fx_free_char(pc);
 }
 
+/* H1-24: a second set_fighting() names both characters and the caller's
+ * line, not just fight.c's core_dump(). */
+static void test_set_fighting_twice_is_reported_at_caller(void)
+{
+  struct char_data *pc = fx_new_char("hero", FALSE, 0);
+  struct char_data *a = fx_new_char("rat", TRUE, 0);
+  struct char_data *b = fx_new_char("cat", TRUE, 0);
+  int line;
+
+  set_fighting(pc, a);
+  line = __LINE__ + 1;
+  set_fighting(pc, b);
+
+  TEST_ASSERT_EQUAL_PTR(a, FIGHTING(pc));
+  TEST_ASSERT_EQUAL_INT(1, fx_core_dumps);
+  TEST_ASSERT_EQUAL_STRING("set-fighting-twice", tb_captured_operation);
+  TEST_ASSERT_EQUAL_INT(line, tb_captured_line);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "player idnum 4242 already fighting"));
+  stop_fighting(pc);
+  fx_free_char(b);
+  fx_free_char(a);
+  fx_free_char(pc);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(test_set_fighting_twice_is_reported_at_caller);
   RUN_TEST(test_bandage_succeeds_when_roll_is_under_skill);
   RUN_TEST(test_peaceful_room_stops_player_without_proxy_mob);
   RUN_TEST(test_hit_clamps_weapon_dice);

@@ -72,7 +72,15 @@ void die(struct char_data * ch, struct char_data * killer);
 void hit(struct char_data *ch, struct char_data *victim, int type);
 void perform_violence(void);
 void raw_kill(struct char_data * ch, struct char_data * killer);
-void  set_fighting(struct char_data *ch, struct char_data *victim);
+/** Starts ch fighting victim: links ch into combat_list and sets
+ * POS_FIGHTING (unseating ch from furniture). ch must not already be
+ * fighting; a violation is reported as "set-fighting-twice" naming both
+ * characters and the originating call site, which set_fighting() passes
+ * in. */
+void set_fighting_at(const char *src_file, int src_line, const char *src_func,
+                     struct char_data *ch, struct char_data *victim);
+#define set_fighting(ch, victim) \
+  set_fighting_at(__FILE__, __LINE__, __func__, (ch), (victim))
 int skill_message(int dam, struct char_data *ch, struct char_data *vict,
           int attacktype);
 void  stop_fighting(struct char_data *ch);

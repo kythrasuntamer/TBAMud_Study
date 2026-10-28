@@ -150,12 +150,22 @@ bool pk_allowed(struct char_data *ch, struct char_data *victim)
 
 
 /* start one char fighting another (yes, it is horrible, I know... )  */
-void set_fighting(struct char_data *ch, struct char_data *vict)
+void set_fighting_at(const char *src_file, int src_line, const char *src_func,
+                     struct char_data *ch, struct char_data *vict)
 {
   if (ch == vict)
     return;
 
   if (FIGHTING(ch)) {
+    struct char_data *cur = FIGHTING(ch);
+
+    /* Reported at the caller's location: which combat path double-started
+     * the fight is what the log must say. */
+    tb_error_log_at("ERROR", "fight", "set-fighting-twice", "char", 0,
+                    src_file, src_line, src_func,
+                    DIAG_CHAR_FMT " already fighting " DIAG_CHAR_FMT
+                    ", new target " DIAG_CHAR_FMT, DIAG_CHAR(ch),
+                    DIAG_CHAR(cur), DIAG_CHAR(vict));
     core_dump();
     return;
   }
