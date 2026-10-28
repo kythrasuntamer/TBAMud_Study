@@ -2068,7 +2068,20 @@ static void parse_simple_mob(FILE *mob_f, int i, int nr)
 #define CASE(test)	\
 	if (value && !matched && !str_cmp(keyword, test) && (matched = TRUE))
 #define RANGE(low, high)	\
-	(num_arg = MAX((low), MIN((high), (num_arg))))
+	espec_range(&num_arg, (low), (high), keyword, value, nr)
+
+/** Clamp an E-spec value to [low, high], reporting any change. The value
+ * comes from a hand-edited .mob file (medit writes in-range values). */
+static void espec_range(int *num_arg, int low, int high, const char *keyword,
+                        const char *value, int nr)
+{
+  if (*num_arg >= low && *num_arg <= high)
+    return;
+  TB_WARN_MSG("db", "mob-espec", keyword,
+              "mob vnum %d %s value '%s' clamped to [%d,%d]",
+              nr, keyword, value, low, high);
+  *num_arg = MAX(low, MIN(high, *num_arg));
+}
 
 static void interpret_espec(const char *keyword, const char *value, int i, int nr)
 {
@@ -2076,8 +2089,12 @@ static void interpret_espec(const char *keyword, const char *value, int i, int n
 
   /* If there isn't a colon, there is no value.  While Boolean options are
    * possible, we don't actually have any.  Feel free to make some. */
-  if (value)
-    num_arg = tb_parse_int_or_zero(value);
+  if (value && !parse_int_text_strict(value, &num_arg)) {
+    TB_WARN_MSG("db", "mob-espec", keyword,
+                "mob vnum %d %s value '%s' is not a number; using 0",
+                nr, keyword, value);
+    num_arg = 0;
+  }
 
   CASE("BareHandAttack") {
     RANGE(0, NUM_ATTACK_TYPES - 1);
@@ -2144,10 +2161,10 @@ static void interpret_espec(const char *keyword, const char *value, int i, int n
     mob_proto[i].char_specials.saved.apply_saving_throw[SAVING_SPELL] = num_arg;
   }
 
-  if (!matched) {
-    log("SYSERR: Warning: unrecognized espec keyword %s in mob #%d",
-	    keyword, nr);
-  }
+  if (!matched)
+    TB_WARN_MSG("db", "mob-espec", keyword,
+                "mob vnum %d: unrecognized espec keyword '%s'%s", nr, keyword,
+                value ? "" : " (or a known keyword with no ': value')");
 }
 
 #undef CASE

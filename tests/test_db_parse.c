@@ -1202,6 +1202,30 @@ static void get_one_line_keeps_long_line_characters(void)
   fclose(fp);
 }
 
+/* B1-27: E-spec values were parsed with tb_parse_int_or_zero() (garbage
+ * became 0) and clamped by RANGE() without a word. */
+static void interpret_espec_reports_clamp_and_garbage(void)
+{
+  memset(simple_mob_fixture, 0, sizeof(simple_mob_fixture));
+  mob_proto = simple_mob_fixture;
+
+  interpret_espec("Str", "40", 0, 3008);
+  TEST_ASSERT_EQUAL_INT(25, mob_proto[0].real_abils.str);
+  TEST_ASSERT_EQUAL_STRING("mob-espec", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "mob vnum 3008 Str value '40' clamped to [3,25]"));
+
+  tb_error_capture_reset();
+  interpret_espec("StrAdd", "x7", 0, 3008);
+  TEST_ASSERT_EQUAL_INT(0, mob_proto[0].real_abils.str_add);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "'x7' is not a number"));
+
+  tb_error_capture_reset();
+  interpret_espec("Dex", "18", 0, 3008);
+  TEST_ASSERT_EQUAL_INT(18, mob_proto[0].real_abils.dex);
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  mob_proto = NULL;
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -1221,6 +1245,7 @@ int main(void)
   RUN_TEST(parse_simple_mob_rejects_sex_out_of_range);
   RUN_TEST(parse_simple_mob_rejects_negative_position);
   RUN_TEST(parse_simple_mob_accepts_valid_position);
+  RUN_TEST(interpret_espec_reports_clamp_and_garbage);
   RUN_TEST(check_object_repairs_liquid_out_of_range);
   RUN_TEST(load_config_reads_full_length_line);
   RUN_TEST(load_config_restores_default_for_empty_menu);
