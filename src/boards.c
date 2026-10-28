@@ -84,6 +84,14 @@ static char *msg_storage[INDEX_SIZE];
 static int msg_storage_taken[INDEX_SIZE];
 static int num_of_msgs[NUM_OF_BOARDS];
 static struct board_msginfo msg_index[NUM_OF_BOARDS][MAX_BOARD_MESSAGES];
+/* Reset index entry i of board bt to "owns nothing" (slot -1, heading NULL).
+ * Entries at or past num_of_msgs[bt] must always be in this state.
+ * Evaluates bt and i twice: pass plain variables or simple expressions. */
+#define MSG_INDEX_CLEAR(bt, i) do { \
+  memset(&msg_index[(bt)][(i)], 0, sizeof(struct board_msginfo)); \
+  msg_index[(bt)][(i)].slot_num = -1; \
+} while (0)
+
 /* Set once init_boards() has reset the index and loaded the board files. */
 static int boards_initialized = FALSE;
 
@@ -180,10 +188,8 @@ int init_boards(void)
       missing++;
     }
     num_of_msgs[i] = 0;
-    for (j = 0; j < MAX_BOARD_MESSAGES; j++) {
-      memset((char *) &(msg_index[i][j]), 0, sizeof(struct board_msginfo));
-      msg_index[i][j].slot_num = -1;
-    }
+    for (j = 0; j < MAX_BOARD_MESSAGES; j++)
+      MSG_INDEX_CLEAR(i, j);
     board_load_board(i);
   }
 
@@ -431,8 +437,7 @@ int board_display_msg(int board_type, struct char_data *ch, char *arg, struct ob
 #else
   ind = msg - 1;
 #endif
-  if (MSG_SLOTNUM(board_type, ind) < 0 ||
-      MSG_SLOTNUM(board_type, ind) >= INDEX_SIZE) {
+  if (!MSG_SLOT_OK(MSG_SLOTNUM(board_type, ind))) {
     send_to_char(ch, "Sorry, the board is not working.\r\n");
     TB_ERROR_MSG("board", "msg-index-invariant", FILENAME(board_type),
                  TB_ERRID_INVARIANT " board vnum %d message %d slot %d outside 0..%d (read by " DIAG_CHAR_FMT " in room %d)",
@@ -498,7 +503,7 @@ int board_remove_msg(int board_type, struct char_data *ch, char *arg, struct obj
     return (1);
   }
   slot_num = MSG_SLOTNUM(board_type, ind);
-  if (slot_num < 0 || slot_num >= INDEX_SIZE) {
+  if (!MSG_SLOT_OK(slot_num)) {
     send_to_char(ch, "That message is majorly screwed up.\r\n");
     TB_ERROR_MSG("board", "msg-index-invariant", FILENAME(board_type),
                  TB_ERRID_INVARIANT " board vnum %d message %d slot %d outside 0..%d (remove by " DIAG_CHAR_FMT " in room %d)",
@@ -528,8 +533,7 @@ int board_remove_msg(int board_type, struct char_data *ch, char *arg, struct obj
    * (or, when the last message was removed, still holding the heading just
    * freed).  Entries at or past num_of_msgs must own nothing: reset it, or
    * board_clear_board() frees that heading and slot a second time. */
-  memset(&msg_index[board_type][num_of_msgs[board_type]], 0, sizeof(struct board_msginfo));
-  msg_index[board_type][num_of_msgs[board_type]].slot_num = -1;
+  MSG_INDEX_CLEAR(board_type, num_of_msgs[board_type]);
 
   send_to_char(ch, "Message removed.\r\n");
   tb_snprintf(buf, sizeof(buf), "$n just removed message %d.", msg);
@@ -547,6 +551,13 @@ void board_save_board(int board_type)
   char tmpname[MAX_STRING_LENGTH], bakname[MAX_STRING_LENGTH];
   int name_result;
 
+  /* modify.c decodes board_type from d->mail_to - BOARD_MAGIC. */
+  if (!BOARD_TYPE_OK(board_type)) {
+    TB_ERROR_MSG("board", "board-save", "board_save_board",
+                 TB_ERRID_INVARIANT " board type %d outside 0..%d; nothing saved",
+                 board_type, NUM_OF_BOARDS - 1);
+    return;
+  }
   if (!num_of_msgs[board_type]) {
     if (remove(FILENAME(board_type)) != 0 && errno != ENOENT)
       TB_ERROR_ERRNO("board", "board-save", FILENAME(board_type),
@@ -586,8 +597,7 @@ void board_save_board(int board_type)
     else
       msg_index[board_type][i].heading_len = 0;
 
-    if (MSG_SLOTNUM(board_type, i) < 0 ||
-	MSG_SLOTNUM(board_type, i) >= INDEX_SIZE ||
+    if (!MSG_SLOT_OK(MSG_SLOTNUM(board_type, i)) ||
 	(!(tmp2 = msg_storage[MSG_SLOTNUM(board_type, i)])))
       msg_index[board_type][i].message_len = 0;
     else
@@ -802,7 +812,7 @@ void board_load_board(int board_type)
     }
 
     /* Commit the fully read message. */
-    memset(&msg_index[board_type][i], 0, sizeof(struct board_msginfo));
+    MSG_INDEX_CLEAR(board_type, i);
     MSG_HEADING(board_type, i) = tmp1;
     MSG_SLOTNUM(board_type, i) = slot;
     MSG_LEVEL(board_type, i) = rec.level;
@@ -855,7 +865,7 @@ void board_clear_board(int board_type)
     } else {
       if (MSG_HEADING(board_type, i))
         free(MSG_HEADING(board_type, i));
-      if (slot >= 0 && slot < INDEX_SIZE) {
+      if (MSG_SLOT_OK(slot)) {
         if (msg_storage[slot])
           free(msg_storage[slot]);
         msg_storage[slot] = NULL;
@@ -865,8 +875,7 @@ void board_clear_board(int board_type)
                      TB_ERRID_INVARIANT " board vnum %d message %d slot %d outside 0..%d",
                      BOARD_VNUM(board_type), i, slot, INDEX_SIZE - 1);
     }
-    memset((char *)&(msg_index[board_type][i]),0,sizeof(struct board_msginfo));
-    msg_index[board_type][i].slot_num = -1;
+    MSG_INDEX_CLEAR(board_type, i);
   }
   num_of_msgs[board_type] = 0;
 }

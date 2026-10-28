@@ -393,6 +393,16 @@ static void test_empty_headlines_do_not_leak_slots(void)
   TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
 }
 
+/* board_save_board() takes the board type modify.c decodes from
+ * d->mail_to - BOARD_MAGIC; one outside board_info is refused loudly. */
+static void test_save_rejects_unknown_board_type(void)
+{
+  board_save_board(NUM_OF_BOARDS);
+  TEST_ASSERT_EQUAL_STRING("board-save", tb_captured_operation);
+  board_save_board(-1);
+  TEST_ASSERT_EQUAL_INT(2, tb_captured_errors);
+}
+
 /* Saved boards load back with their headings and bodies. */
 static void test_save_load_round_trip(void)
 {
@@ -434,6 +444,7 @@ int main(void)
   RUN_TEST(test_load_rejects_oversized_lengths);
   RUN_TEST(test_load_rejects_unterminated_heading);
   RUN_TEST(test_empty_headlines_do_not_leak_slots);
+  RUN_TEST(test_save_rejects_unknown_board_type);
   RUN_TEST(test_save_load_round_trip);
   return UNITY_END();
 }

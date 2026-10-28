@@ -55,6 +55,11 @@ struct board_info_type {
 #define FILENAME(i) (board_info[i].filename)
 #define BOARD_RNUM(i) (board_info[i].rnum)
 
+/** TRUE if bt indexes board_info (and the per-board arrays). */
+#define BOARD_TYPE_OK(bt)  ((bt) >= 0 && (bt) < NUM_OF_BOARDS)
+/** TRUE if s indexes the shared message slot pool (msg_storage). */
+#define MSG_SLOT_OK(s)     ((s) >= 0 && (s) < INDEX_SIZE)
+
 #define NEW_MSG_INDEX(i) (msg_index[i][num_of_msgs[i]])
 #define MSG_HEADING(i, j) (msg_index[i][j].heading)
 #define MSG_SLOTNUM(i, j) (msg_index[i][j].slot_num)
