@@ -642,6 +642,52 @@ void test_dig_creates_room_when_idle(void)
 }
 
 /* ---------------------------------------------------------------------
+ * F3-14: do_oasis_copy returned silently for an unknown subcmd and for a
+ * caller it refuses, and printed "Done." even when the save failed.
+ * --------------------------------------------------------------------- */
+void test_copy_reports_failed_save_instead_of_done(void)
+{
+  fake_save_fails = 1;
+
+  run_cmd(do_oasis_copy, "3001 3050", CON_REDIT);
+
+  TEST_ASSERT_EQUAL_INT(1, save_calls);
+  TEST_ASSERT_NULL(strstr(sent, "Done."));
+  TEST_ASSERT_NOT_NULL(strstr(sent, "The copy failed"));
+  TEST_ASSERT_TRUE(log_has("op=copy-failed"));
+  TEST_ASSERT_TRUE(log_has("resource=rcopy"));
+  TEST_ASSERT_NULL(builder_desc.olc);
+}
+
+void test_copy_success_still_says_done(void)
+{
+  run_cmd(do_oasis_copy, "3001 3050", CON_REDIT);
+
+  TEST_ASSERT_NOT_NULL(strstr(sent, "Done."));
+  TEST_ASSERT_FALSE(log_has("op=copy-failed"));
+}
+
+void test_copy_unknown_subcmd_is_reported(void)
+{
+  run_cmd(do_oasis_copy, "3001 3050", CON_ZEDIT);
+
+  TEST_ASSERT_EQUAL_INT(0, save_calls);
+  TEST_ASSERT_TRUE(log_has("op=copy-dispatch"));
+}
+
+void test_copy_while_editing_tells_the_builder(void)
+{
+  struct oasis_olc_data *open_editor = attach_mob_editor();
+
+  run_cmd(do_oasis_copy, "3001 3050", CON_REDIT);
+
+  TEST_ASSERT_EQUAL_PTR(open_editor, builder_desc.olc);
+  TEST_ASSERT_EQUAL_INT(0, save_calls);
+  TEST_ASSERT_NOT_NULL(strstr(sent, "while editing"));
+  TEST_ASSERT_TRUE(log_has("op=copy-refused"));
+}
+
+/* ---------------------------------------------------------------------
  * F3-18: dig narrowed its target vnum to room_vnum with no range check
  * (68001 -> 2465; 65535 == NOWHERE deleted the exit) and treated a
  * non-numeric target as limbo.
@@ -730,6 +776,10 @@ int main(void)
   RUN_TEST(test_dig_refuses_while_another_editor_is_open);
   RUN_TEST(test_buildwalk_refuses_while_another_editor_is_open);
   RUN_TEST(test_dig_creates_room_when_idle);
+  RUN_TEST(test_copy_reports_failed_save_instead_of_done);
+  RUN_TEST(test_copy_success_still_says_done);
+  RUN_TEST(test_copy_unknown_subcmd_is_reported);
+  RUN_TEST(test_copy_while_editing_tells_the_builder);
   RUN_TEST(test_dig_rejects_vnum_that_would_be_narrowed);
   RUN_TEST(test_dig_nowhere_sentinel_does_not_delete_exit);
   RUN_TEST(test_dig_rejects_non_numeric_target);

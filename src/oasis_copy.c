@@ -62,13 +62,29 @@ ACMD(do_oasis_copy)
   for (i = 0; *(oasis_copy_info[i].text) != '\n'; i++)
     if (subcmd == oasis_copy_info[i].con_type)
       break;
-  /* If not found, we don't support copying that type of data. */
-  if (*(oasis_copy_info[i].text) == '\n')
+  /* F3-14: subcmd comes from the command table (interpreter.c), so a miss
+   * here is a table mismatch, not user error: report it instead of making
+   * the command silently do nothing. */
+  if (*(oasis_copy_info[i].text) == '\n') {
+    send_to_char(ch, "That kind of data cannot be copied.\r\n");
+    TB_ERROR_MSG("olc", "copy-dispatch", "oasis_copy_info",
+                 "subcmd %d not in table for " DIAG_CHAR_FMT,
+                 subcmd, DIAG_CHAR(ch));
     return;
+  }
 
-  /* No copying as a mob or while being forced. */
-  if (IS_NPC(ch) || !ch->desc || STATE(ch->desc) != CON_PLAYING) 
+  /* No copying as a mob, without a connection (switched/linkless), or while
+   * the descriptor is in another editor (e.g. forced from inside medit):
+   * the copy borrows d->olc.  Say why rather than returning silently. */
+  if (IS_NPC(ch) || !ch->desc || STATE(ch->desc) != CON_PLAYING) {
+    send_to_char(ch, "You can only %s from normal play, not as a mob or "
+                 "while editing.\r\n", oasis_copy_info[i].command);
+    TB_WARN_MSG("olc", "copy-refused", oasis_copy_info[i].command,
+                "npc %d desc %s state %d for " DIAG_CHAR_FMT,
+                IS_NPC(ch) ? 1 : 0, ch->desc ? "yes" : "no",
+                ch->desc ? STATE(ch->desc) : -1, DIAG_CHAR(ch));
     return;
+  }
 
   /* We need two arguments. */
   two_arguments(argument, buf1, buf2);
@@ -179,6 +195,19 @@ ACMD(do_oasis_copy)
 
   /* Currently CLEANUP_ALL should be used for everything. */
   cleanup_olc(d, CLEANUP_ALL);
+
+  /* F3-14: the *_save_internally helpers return void and report their own
+   * failures only to the builder (e.g. redit's "Something went wrong").
+   * The target did not exist before the save, so it exists now exactly when
+   * the copy worked; check that before claiming success. */
+  if ((*oasis_copy_info[i].binary_search)(dst_vnum) == NOWHERE) {
+    send_to_char(ch, "The copy failed: %s #%d was not created.\r\n",
+                 oasis_copy_info[i].text, dst_vnum);
+    TB_ERROR_MSG("olc", "copy-failed", oasis_copy_info[i].command,
+                 "src %d dst %d not created for " DIAG_CHAR_FMT,
+                 src_vnum, dst_vnum, DIAG_CHAR(ch));
+    return;
+  }
   send_to_char(ch, "Done.\r\n");
 }
 
