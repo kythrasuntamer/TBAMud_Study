@@ -271,7 +271,8 @@ void print_zone(struct char_data *ch, zone_rnum rnum) { (void)ch; (void)rnum; }
 struct char_data *read_mobile(mob_vnum nr, int type) { (void)nr; (void)type; UNREACHED(); return NULL; }
 struct obj_data *read_object(obj_vnum nr, int type) { (void)nr; (void)type; UNREACHED(); return NULL; }
 mob_rnum real_mobile(mob_vnum vnum) { (void)vnum; return NOBODY; }
-obj_rnum real_object(obj_vnum vnum) { (void)vnum; return NOTHING; }
+/* real_object() knows only the default object table's entry (vnum 1). */
+obj_rnum real_object(obj_vnum vnum) { return vnum == 1 ? 0 : NOTHING; }
 qst_rnum real_quest(qst_vnum vnum) { (void)vnum; return NOTHING; }
 trig_rnum real_trigger(trig_vnum vnum) { (void)vnum; return NOTHING; }
 zone_rnum real_zone(zone_vnum vnum)
@@ -1260,6 +1261,21 @@ static void test_recent_list_is_reusable_after_free(void)
   free_recent_players();
 }
 
+/* ROOM_NAME_SAFE: an 'O' zone command whose room is literally NOWHERE
+ * survives renum_zone_table; checkload read world[NOWHERE].name. */
+static void test_checkload_object_in_nowhere_room_is_safe(void)
+{
+  static struct reset_com cmds[2];
+  memset(cmds, 0, sizeof(cmds));
+  cmds[0].command = 'O'; cmds[0].arg1 = 0; cmds[0].arg2 = 1; cmds[0].arg3 = NOWHERE;
+  cmds[1].command = 'S';
+  zones[0].cmd = cmds;
+  default_obj.short_description = (char *)"a stone";
+  RUN_CMD(do_checkloadstatus, &imm, "o 1");
+  zones[0].cmd = NULL;
+  TEST_ASSERT_NOT_NULL(strstr(sent, "<invalid room> (1 Max)"));
+}
+
 int main(void)
 {
   /* basic_mud_log()/mudlog() are the real utils.c ones; keep them quiet. */
@@ -1299,6 +1315,7 @@ int main(void)
   RUN_TEST(test_wizutil_unknown_subcmd_is_reported_without_save);
   RUN_TEST(test_show_zones_overflow_is_clamped_and_reported);
   RUN_TEST(test_recent_list_is_reusable_after_free);
+  RUN_TEST(test_checkload_object_in_nowhere_room_is_safe);
   {
     int failures = UNITY_END();
     if (logfile)

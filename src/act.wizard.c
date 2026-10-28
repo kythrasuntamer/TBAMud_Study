@@ -4045,6 +4045,14 @@ ACMD(do_links)
 
 #define ZCMD2 zone_table[zone].cmd[cmd_no]  /*fom DB.C*/
 
+/* Room name for display from a zone command's room rnum. The checkload
+ * listings trust renum_zone_table() to have disabled bad commands, but an
+ * 'O' whose room is literally NOWHERE survives renum (db.c). rnum is
+ * evaluated up to three times: pass a plain value. GET_ROOM_VNUM is the
+ * matching checked accessor for the number. */
+#define ROOM_NAME_SAFE(rnum) \
+  ((VALID_ROOM_RNUM(rnum) && world[(rnum)].name) ? world[(rnum)].name : "<invalid room>")
+
 /*item limits*/
 #define MAX_DAM_ALLOWED            50    /* for weapons  - avg. dam*/
 #define MAX_AFFECTS_ALLOWED        3
@@ -4540,8 +4548,8 @@ static void mob_checkload(struct char_data *ch, mob_vnum mvnum)
       /* read a mobile */
       if (ZCMD2.arg1 == mrnum) {
         send_to_char(ch, "  [%5d] %s (%d MAX)\r\n",
-                         world[ZCMD2.arg3].number,
-                         world[ZCMD2.arg3].name,
+                         GET_ROOM_VNUM(ZCMD2.arg3),
+                         ROOM_NAME_SAFE(ZCMD2.arg3),
                          ZCMD2.arg2);
       }
     }
@@ -4569,31 +4577,31 @@ static void obj_checkload(struct char_data *ch, obj_vnum ovnum)
     for (cmd_no = 0; ZCMD2.command != 'S'; cmd_no++) {
       switch (ZCMD2.command) {
         case 'M':
-          lastroom_v = world[ZCMD2.arg3].number;
+          lastroom_v = GET_ROOM_VNUM(ZCMD2.arg3);
           lastroom_r = ZCMD2.arg3;
           lastmob_r = ZCMD2.arg1;
           break;
         case 'O':                   /* read an object */
-          lastroom_v = world[ZCMD2.arg3].number;
+          lastroom_v = GET_ROOM_VNUM(ZCMD2.arg3);
           lastroom_r = ZCMD2.arg3;
           if (ZCMD2.arg1 == ornum)
             send_to_char(ch, "  [%5d] %s (%d Max)\r\n",
                              lastroom_v,
-                             world[lastroom_r].name,
+                             ROOM_NAME_SAFE(lastroom_r),
                              ZCMD2.arg2);
           break;
         case 'P':                   /* object to object */
           if (ZCMD2.arg1 == ornum)
             send_to_char(ch, "  [%5d] %s (Put in another object [%d Max])\r\n",
                              lastroom_v,
-                             world[lastroom_r].name,
+                             ROOM_NAME_SAFE(lastroom_r),
                              ZCMD2.arg2);
           break;
         case 'G':                   /* obj_to_char */
           if (ZCMD2.arg1 == ornum)
             send_to_char(ch, "  [%5d] %s (Given to %s [%d][%d Max])\r\n",
                              lastroom_v,
-                             world[lastroom_r].name,
+                             ROOM_NAME_SAFE(lastroom_r),
                              mob_proto[lastmob_r].player.short_descr,
                              mob_index[lastmob_r].vnum,
                              ZCMD2.arg2);
@@ -4602,18 +4610,18 @@ static void obj_checkload(struct char_data *ch, obj_vnum ovnum)
           if (ZCMD2.arg1 == ornum)
             send_to_char(ch, "  [%5d] %s (Equipped to %s [%d][%d Max])\r\n",
                              lastroom_v,
-                             world[lastroom_r].name,
+                             ROOM_NAME_SAFE(lastroom_r),
                              mob_proto[lastmob_r].player.short_descr,
                              mob_index[lastmob_r].vnum,
                              ZCMD2.arg2);
           break;
         case 'R': /* rem obj from room */
-          lastroom_v = world[ZCMD2.arg1].number;
+          lastroom_v = GET_ROOM_VNUM(ZCMD2.arg1);
           lastroom_r = ZCMD2.arg1;
           if (ZCMD2.arg2 == ornum)
             send_to_char(ch, "  [%5d] %s (Removed from room)\r\n",
                              lastroom_v,
-                             world[lastroom_r].name);
+                             ROOM_NAME_SAFE(lastroom_r));
           break;
       }/* switch */
     } /*for cmd_no......*/
@@ -4645,12 +4653,12 @@ static void trg_checkload(struct char_data *ch, trig_vnum tvnum)
     for (cmd_no = 0; ZCMD2.command != 'S'; cmd_no++) {
       switch (ZCMD2.command) {
         case 'M':
-          lastroom_v = world[ZCMD2.arg3].number;
+          lastroom_v = GET_ROOM_VNUM(ZCMD2.arg3);
           lastroom_r = ZCMD2.arg3;
           lastmob_r = ZCMD2.arg1;
           break;
         case 'O':                   /* read an object */
-          lastroom_v = world[ZCMD2.arg3].number;
+          lastroom_v = GET_ROOM_VNUM(ZCMD2.arg3);
           lastroom_r = ZCMD2.arg3;
           lastobj_r = ZCMD2.arg1;
           break;
@@ -4687,7 +4695,7 @@ static void trg_checkload(struct char_data *ch, trig_vnum tvnum)
           } else if (ZCMD2.arg1==WLD_TRIGGER) {
             send_to_char(ch, "room [%5d] %-60s (zedit)\r\n",
                                lastroom_v,
-                               world[lastroom_r].name);
+                               ROOM_NAME_SAFE(lastroom_r));
             found = 1;
           }
         break;
