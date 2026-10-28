@@ -340,11 +340,45 @@ static void test_loc_past_num_wears_is_reported(void)
   TEST_ASSERT_EQUAL_STRING("rent-loc-range", tb_captured_operation);
 }
 
+/* B2-04: a listing longer than the page buffer used to push snprintf()'s
+ * running length past the buffer and then write out of bounds. */
+static void test_listrent_truncates_loudly(void)
+{
+  char shrt[241];
+  FILE *fl;
+  char path[512];
+  int i;
+  struct descriptor_data desc;
+
+  memset(&desc, 0, sizeof(desc));
+  player.desc = &desc;
+  memset(shrt, 'x', sizeof(shrt) - 1);
+  shrt[sizeof(shrt) - 1] = '\0';
+  TEST_ASSERT_TRUE(get_filename(path, sizeof(path), CRASH_FILE, "Tester"));
+  fl = fopen(path, "w");
+  TEST_ASSERT_NOT_NULL(fl);
+  TEST_ASSERT_TRUE(fprintf(fl, "%d %ld 0 0 0 0\n", RENT_CRASH, (long)time(0)) > 0);
+  for (i = 0; i < 400; i++)
+    TEST_ASSERT_TRUE(fprintf(fl, "#101\nShrt: %s\n\n", shrt) > 0);
+  TEST_ASSERT_TRUE(fputs("$~\n", fl) >= 0);
+  TEST_ASSERT_EQUAL_INT(0, fclose(fl));
+
+  Crash_listrent(&player, (char *)"Tester");
+  player.desc = NULL;
+
+  TEST_ASSERT_EQUAL_INT(1, pages);
+  TEST_ASSERT_EQUAL_STRING("listrent-truncate", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "of 400"));
+  TEST_ASSERT_NOT_NULL(strstr(paged, "listing truncated"));
+  TEST_ASSERT_EQUAL_INT(0, live_objects);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
   RUN_TEST(test_container_refused_by_autoeq_keeps_contents);
   RUN_TEST(test_loc_past_num_wears_is_reported);
+  RUN_TEST(test_listrent_truncates_loudly);
   (void)rmdir(scratch_dir);
   return UNITY_END();
 }

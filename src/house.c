@@ -175,7 +175,9 @@ static void House_listrent(struct char_data *ch, room_vnum vnum)
   char filename[MAX_STRING_LENGTH];
   char buf[MAX_STRING_LENGTH];
 	obj_save_data *loaded, *current;
-	int len = 0;
+	int listed = 0, total = 0;
+	struct tb_buf out;
+	static const char truncated[] = "*** listing truncated; see server log ***\r\n";
 
   if (!House_get_filename(vnum, filename, sizeof(filename)))
     return;
@@ -190,14 +192,28 @@ static void House_listrent(struct char_data *ch, room_vnum vnum)
     }
     return;
   }
-  *buf = '\0';
-	len = snprintf(buf, sizeof(buf), "filename: %s\r\n", filename);
+  /* Bounded by buf: a house may hold any number of objects with
+   * builder- or restring-length descriptions. */
+  tb_buf_init(&out, buf, sizeof(buf) - sizeof(truncated));
+	tb_buf_appendf(&out, "filename: %s\r\n", filename);
 
 	loaded = objsave_parse_objects(fl);
 
-	for (current = loaded; current != NULL; current = current->next)
-	  len += snprintf(buf+len, sizeof(buf)-len, " [%5d] (%5dau) %s\r\n",
-	    GET_OBJ_VNUM(current->obj), GET_OBJ_RENT(current->obj), current->obj->short_description);
+	for (current = loaded; current != NULL; current = current->next) {
+	  total++;
+	  if (!tb_buf_truncated(&out) &&
+	      tb_buf_appendf(&out, " [%5d] (%5dau) %s\r\n",
+	        GET_OBJ_VNUM(current->obj), GET_OBJ_RENT(current->obj),
+	        current->obj->short_description ? current->obj->short_description
+	                                        : "<no short description>"))
+	    listed++;
+	}
+	if (tb_buf_truncated(&out)) {
+	  TB_WARN_MSG("house", "listrent-truncate", filename,
+	              "house vnum %d: %d objects listed of %d; listing exceeds %zu bytes",
+	              vnum, listed, total, sizeof(buf));
+	  strlcat(buf, truncated, sizeof(buf));
+	}
 
 	/* now it's safe to free the obj_save_data list - all members of it
 	 * have been put in the correct lists by obj_to_room()

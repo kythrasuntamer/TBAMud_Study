@@ -30,6 +30,15 @@
 #define LOC_INVENTORY  0
 #define MAX_BAG_ROWS   5
 
+/* Short description for listings and diagnostics. A unique (vnum -1)
+ * object loaded from a rent file without a "Shrt" tag has none, and
+ * printf("%s", NULL) is undefined. Evaluates obj twice. */
+#define OBJSAVE_SDESC(obj) \
+  ((obj)->short_description ? (obj)->short_description : "<no short description>")
+
+/* Appended when a rent or house listing does not fit its page buffer. */
+#define OBJSAVE_LIST_TRUNCATED "*** listing truncated; see server log ***\r\n"
+
 /* local functions */
 static int Crash_save(struct obj_data *obj, FILE *fp, int location);
 static void Crash_extract_norent_eq(struct char_data *ch);
@@ -467,7 +476,9 @@ void Crash_listrent(struct char_data *ch, char *name)
   FILE *fl;
   char filename[MAX_INPUT_LENGTH], buf[MAX_STRING_LENGTH], line[READ_SIZE];
   obj_save_data *loaded, *current;
-  int rentcode = RENT_UNDEF, timed, netcost, gold, account, nitems, numread, len;
+  int rentcode = RENT_UNDEF, timed, netcost, gold, account, nitems, numread;
+  int listed = 0, total = 0;
+  struct tb_buf out;
   
   if (!get_filename(filename, sizeof(filename), CRASH_FILE, name))
     return;
@@ -476,7 +487,11 @@ void Crash_listrent(struct char_data *ch, char *name)
     send_to_char(ch, "%s has no rent file.\r\n", name);
     return;
   }
-  len = snprintf(buf, sizeof(buf),"%s\r\n", filename);
+  /* The listing is bounded by buf; a rent file may hold any number of
+   * objects with builder- or restring-length descriptions. Keep room for the
+   * truncation marker. */
+  tb_buf_init(&out, buf, sizeof(buf) - sizeof(OBJSAVE_LIST_TRUNCATED));
+  tb_buf_appendf(&out, "%s\r\n", filename);
 
   numread = get_line(fl, line);
 
@@ -498,30 +513,40 @@ void Crash_listrent(struct char_data *ch, char *name)
 
   switch (rentcode) {
   case RENT_RENTED:
-    len += snprintf(buf+len, sizeof(buf)-len, "Rent\r\n");
+    tb_buf_append(&out, "Rent\r\n");
     break;
   case RENT_CRASH:
-    len += snprintf(buf+len, sizeof(buf)-len,"Crash\r\n");
+    tb_buf_append(&out, "Crash\r\n");
     break;
   case RENT_CRYO:
-    len += snprintf(buf+len, sizeof(buf)-len, "Cryo\r\n");
+    tb_buf_append(&out, "Cryo\r\n");
     break;
   case RENT_TIMEDOUT:
   case RENT_FORCED:
-    len += snprintf(buf+len, sizeof(buf)-len, "TimedOut\r\n");
+    tb_buf_append(&out, "TimedOut\r\n");
     break;
   default:
-    len += snprintf(buf+len, sizeof(buf)-len, "Undef\r\n");
+    tb_buf_append(&out, "Undef\r\n");
     break;
   }
 
 	loaded = objsave_parse_objects(fl);
 
-	for (current = loaded; current != NULL; current=current->next)
-	  len += snprintf(buf+len, sizeof(buf)-len, "[%5d] (%5dau) %-20s\r\n",
+	for (current = loaded; current != NULL; current=current->next) {
+	  total++;
+	  if (!tb_buf_truncated(&out) &&
+	      tb_buf_appendf(&out, "[%5d] (%5dau) %-20s\r\n",
                 GET_OBJ_VNUM(current->obj),
                 GET_OBJ_RENT(current->obj),
-                current->obj->short_description);
+                OBJSAVE_SDESC(current->obj)))
+	    listed++;
+	}
+	if (tb_buf_truncated(&out)) {
+	  TB_WARN_MSG("objsave", "listrent-truncate", filename,
+	              "%d objects listed of %d; listing exceeds %zu bytes",
+	              listed, total, sizeof(buf));
+	  strlcat(buf, OBJSAVE_LIST_TRUNCATED, sizeof(buf));
+	}
 
 	/* Now it's safe to free the obj_save_data list and the objects on it. */
 	while (loaded != NULL) {
