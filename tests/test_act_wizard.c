@@ -264,7 +264,8 @@ zone_rnum real_zone(zone_vnum vnum)
       return i;
   return NOWHERE;
 }
-zone_rnum real_zone_by_thing(room_vnum vznum) { (void)vznum; return NOWHERE; }
+static zone_rnum zone_by_thing = NOWHERE;   /* real_zone_by_thing() result */
+zone_rnum real_zone_by_thing(room_vnum vznum) { (void)vznum; return zone_by_thing; }
 void remove_completed_quest(struct char_data *ch, qst_vnum vnum) { (void)ch; (void)vnum; UNREACHED(); }
 void reset_zone(zone_rnum zone) { (void)zone; UNREACHED(); }
 void roll_real_abils(struct char_data *ch) { (void)ch; UNREACHED(); }
@@ -330,6 +331,7 @@ void setUp(void)
 
   in_game_char = NULL;
   vis_obj = NULL;
+  zone_by_thing = NOWHERE;
   load_char_result = -1;
   load_char_level = 1;
   load_char_idnum = 77;
@@ -500,6 +502,46 @@ static void test_stat_affect_bad_location_is_reported(void)
   target.affected = NULL;
 }
 
+/* G1-11: 'stat room' printed equipment_types[arg3] and dirs[arg2] of the
+ * room's zone commands unchecked; reset_zone keeps a bad 'E' position. */
+static void test_stat_room_bad_zone_command_args_are_reported(void)
+{
+  static struct char_data mob;
+  static struct obj_data obj;
+  static struct index_data mindex, oindex;
+  static struct reset_com cmds[4];
+
+  memset(&mob, 0, sizeof(mob));
+  mob.player.short_descr = (char *)"the guard";
+  make_obj(&obj, ITEM_WEAPON);
+  mindex.vnum = 3010;
+  oindex.vnum = 3011;
+  mob_proto = &mob;
+  obj_proto = &obj;
+  mob_index = &mindex;
+  obj_index = &oindex;
+  memset(cmds, 0, sizeof(cmds));
+  cmds[0].command = 'M'; cmds[0].arg1 = 0; cmds[0].arg3 = 0;
+  cmds[1].command = 'E'; cmds[1].arg1 = 0; cmds[1].arg3 = 99;
+  cmds[2].command = 'D'; cmds[2].arg1 = 0; cmds[2].arg2 = -4;
+  cmds[3].command = 'S';
+  zones[0].cmd = cmds;
+  zone_by_thing = 0;
+  rooms[0].name = (char *)"Temple";
+
+  RUN_CMD(do_stat, &imm, "room");
+  TEST_ASSERT_EQUAL_INT(2, captured_errors);
+  TEST_ASSERT_EQUAL_STRING("zone-cmd-arg", captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(captured_detail, "zone vnum 30 cmd 2"));
+  TEST_ASSERT_NOT_NULL(strstr(sent, "Equip with a sword"));
+  TEST_ASSERT_NOT_NULL(strstr(sent, "<invalid>, Max"));
+  TEST_ASSERT_NOT_NULL(strstr(sent, "Set door <invalid> as open"));
+  zones[0].cmd = NULL;
+  mob_proto = NULL;
+  obj_proto = NULL;
+  mob_index = obj_index = NULL;
+}
+
 int main(void)
 {
   /* basic_mud_log()/mudlog() are the real utils.c ones; keep them quiet. */
@@ -513,6 +555,7 @@ int main(void)
   RUN_TEST(test_return_to_char_requires_switched_body);
   RUN_TEST(test_stat_weapon_bad_attack_type_is_reported);
   RUN_TEST(test_stat_affect_bad_location_is_reported);
+  RUN_TEST(test_stat_room_bad_zone_command_args_are_reported);
   {
     int failures = UNITY_END();
     if (logfile)

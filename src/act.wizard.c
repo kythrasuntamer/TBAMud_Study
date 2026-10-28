@@ -70,11 +70,12 @@ static const char *table_name_at(const char *const *table, int count, long idx,
                   id_kind, id, table_name, idx, count - 1);
   return "<invalid>";
 }
-/* TABLE_NAME(apply_types, NUM_APPLIES, loc, "stat-apply", DIAG_CHAR(k)):
- * idx is evaluated once; the last argument expands to "kind", id. */
-#define TABLE_NAME(table, count, idx, op, id_kind_and_id) \
+/* TABLE_NAME(apply_types, NUM_APPLIES, loc, "stat-apply", DIAG_CHAR(k)) or
+ * TABLE_NAME(dirs, NUM_OF_DIRS, d, "op", "zone vnum", znum): the trailing
+ * arguments are the (id_kind, id) pair. idx is evaluated once. */
+#define TABLE_NAME(table, count, idx, op, ...) \
   table_name_at((table), (count), (long) (idx), #table, (op), \
-                id_kind_and_id, __FILE__, __LINE__, __func__)
+                __VA_ARGS__, __FILE__, __LINE__, __func__)
 
 /* local utility functions with file scope */
 static int perform_set(struct char_data *ch, struct char_data *vict, int mode, char *val_arg);
@@ -454,11 +455,14 @@ static void list_zone_commands_room(struct char_data *ch, room_vnum rvnum)
   zone_rnum zrnum = real_zone_by_thing(rvnum);
   room_rnum rrnum = real_room(rvnum), cmd_room = NOWHERE;
   int subcmd = 0, count = 0;
+  char cmd_id[64];   /* "zone vnum N cmd" for table diagnostics */
 
   if (zrnum == NOWHERE || rrnum == NOWHERE) {
     send_to_char(ch, "No zone information available.\r\n");
     return;
   }
+  tb_snprintf(cmd_id, sizeof(cmd_id), "zone vnum %d cmd",
+              zone_table[zrnum].number);
 
   get_char_colors(ch);
 
@@ -510,7 +514,10 @@ static void list_zone_commands_room(struct char_data *ch, room_vnum rvnum)
     	      ZOCMD.if_flag ? " then " : "",
     	      obj_proto[ZOCMD.arg1].short_description,
     	      cyn, obj_index[ZOCMD.arg1].vnum, yel,
-    	      equipment_types[ZOCMD.arg3],
+    	      /* reset_zone logs a bad 'E' position but keeps the command,
+    	       * so arg3 (from the zone file or zedit) is unchecked here. */
+    	      TABLE_NAME(equipment_types, NUM_WEARS, ZOCMD.arg3,
+    	                 "zone-cmd-arg", cmd_id, subcmd),
     	      ZOCMD.arg2
     	      );
           break;
@@ -534,7 +541,8 @@ static void list_zone_commands_room(struct char_data *ch, room_vnum rvnum)
         case 'D':
           send_to_char(ch, "%sSet door %s as %s.\r\n",
     	      ZOCMD.if_flag ? " then " : "",
-    	      dirs[ZOCMD.arg2],
+    	      TABLE_NAME(dirs, NUM_OF_DIRS, ZOCMD.arg2, "zone-cmd-arg",
+    	                 cmd_id, subcmd),
     	      ZOCMD.arg3 ? ((ZOCMD.arg3 == 1) ? "closed" : "locked") : "open"
     	      );
           break;
