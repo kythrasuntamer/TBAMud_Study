@@ -2798,15 +2798,35 @@ static void extract_value(struct script_data *sc, trig_data *trig, char *cmd)
 
   num = tb_parse_int_or_zero(buf);
   if (num < 1) {
-    script_log("extract number < 1!");
+    TB_WARN_MSG("dg", "extract-range", "extract_value",
+                "trig vnum %d: word number %d < 1; variable not set",
+                DIAG_TRIG_VNUM(trig), num);
+    script_log("Trigger: %s, VNum %d. extract number < 1!",
+               GET_TRIG_NAME(trig), GET_TRIG_VNUM(trig));
     return;
   }
 
   half_chop(buf, buf3, buf2);
 
-  while (num>0) {
-    half_chop(buf2, buf, buf2);
-    num--;
+  /* num is script-controlled (up to INT_MAX) and the string may be player
+   * text. Each pass consumes one word, so stop once the words run out
+   * instead of spinning num times on an empty string, which stalled the
+   * game loop for seconds. A word past the end yields an empty value, as
+   * before, but now says so. */
+  {
+    int wanted = num;
+
+    while (num > 0) {
+      if (!*buf2) {
+        TB_WARN_MSG("dg", "extract-range", "extract_value",
+                    "trig vnum %d: word %d requested beyond end of string; "
+                    "variable set empty", DIAG_TRIG_VNUM(trig), wanted);
+        *buf = '\0';
+        break;
+      }
+      half_chop(buf2, buf, buf2);
+      num--;
+    }
   }
 
   add_var(&GET_TRIG_VARS(trig), to, buf, sc ? sc->context : 0);

@@ -734,6 +734,21 @@ static void self_detaching_script_frees_its_variables(void)
   TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
 }
 
+/* D1-15: extract looped num times even after the words ran out; with num
+ * near INT_MAX that stalled the game loop for minutes, silently. */
+static void extract_past_last_word_stops_and_reports(void)
+{
+  const char *ok[] = { "extract w 2 a b", NULL };
+  const char *far[] = { "extract w 2000000000 a b", NULL };
+
+  run_mob_script(make_mob("mob"), ok);
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  run_mob_script(make_mob("mob2"), far);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("extract-range", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "9000"));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -764,5 +779,6 @@ int main(void)
   RUN_TEST(detach_does_not_instantiate_a_trigger);
   RUN_TEST(attach_to_player_is_refused_before_allocating);
   RUN_TEST(self_detaching_script_frees_its_variables);
+  RUN_TEST(extract_past_last_word_stops_and_reports);
   return UNITY_END();
 }
