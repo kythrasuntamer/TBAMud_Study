@@ -1110,3 +1110,17 @@ if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
     set_source_files_properties(${MUD_SRCDIR}/spell_parser.c ${MUD_SRCDIR}/handler.c
         PROPERTIES COMPILE_OPTIONS "-ffunction-sections;-fdata-sections")
 endif()
+
+# Production mag_areas() (magic.c) with the production handler.c: damage
+# and death triggers that teleport or purge occupants mid-spell (H1-19).
+add_mud_test(test_mag_areas
+    ${MUD_SRCDIR}/magic.c
+    ${MUD_SRCDIR}/handler.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_mag_areas.c
+)
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_compile_options(test_mag_areas PRIVATE -ffunction-sections -fdata-sections)
+    target_link_options(test_mag_areas PRIVATE -Wl,--gc-sections)
+    set_source_files_properties(${MUD_SRCDIR}/magic.c ${MUD_SRCDIR}/handler.c
+        PROPERTIES COMPILE_OPTIONS "-ffunction-sections;-fdata-sections")
+endif()
