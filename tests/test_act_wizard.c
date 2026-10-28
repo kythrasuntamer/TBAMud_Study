@@ -966,6 +966,19 @@ static void test_last_file_torn_tail_is_reported_and_repaired(void)
   in_game_char = NULL;
 }
 
+/* G1-19: localtime() returns NULL for an out-of-range time_t from a
+ * pfile; tb_strftime() then left the buffer unwritten and stat printed
+ * uninitialised stack (Valgrind: use of uninitialised value). */
+static void test_stat_out_of_range_time_prints_placeholder(void)
+{
+  make_player();
+  target.player.time.birth = (time_t) LLONG_MAX;
+  target.player.time.logon = 0;
+  RUN_CMD(do_stat, &imm, "player bobby");
+  TEST_ASSERT_NOT_NULL(strstr(sent, "Created: [?], Last Logon: [" ));
+  in_game_char = NULL;
+}
+
 int main(void)
 {
   /* basic_mud_log()/mudlog() are the real utils.c ones; keep them quiet. */
@@ -990,6 +1003,7 @@ int main(void)
   RUN_TEST(test_changelog_empty_preamble_and_failure);
   RUN_TEST(test_rename_moves_player_files_and_checks_the_index);
   RUN_TEST(test_last_file_torn_tail_is_reported_and_repaired);
+  RUN_TEST(test_stat_out_of_range_time_prints_placeholder);
   {
     int failures = UNITY_END();
     if (logfile)

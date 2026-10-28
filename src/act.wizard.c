@@ -53,6 +53,16 @@
 #define TB_ARRAY_LEN(a)          (sizeof(a) / sizeof((a)[0]))
 #endif
 
+/* tb_strftime() reports a NULL struct tm (localtime()/gmtime() of an
+ * out-of-range time_t from a pfile or LAST_FILE) at the call site but
+ * leaves dst unwritten, and every caller here prints dst. TIME_STR fills
+ * dst with "?" first, so the caller prints that instead of stack garbage.
+ * dst must be an array (sizeof); it is evaluated more than once. */
+#define TIME_STR(dst, fmt, tmptr) do { \
+  strlcpy((dst), "?", sizeof(dst)); \
+  tb_strftime((dst), sizeof(dst), (fmt), (tmptr)); \
+} while (0)
+
 /** Checked lookup in one of the "\n"-terminated name tables in constants.c.
  * @param table   The table; count is its number of real entries (not
  *                counting the "\n" sentinel), e.g. NUM_APPLIES.
@@ -864,8 +874,8 @@ static void do_stat_character(struct char_data *ch, struct char_data *k)
   if (!IS_NPC(k)) {
     char buf1[64], buf2[64];
 
-    tb_strftime(buf1, sizeof(buf1), "%a %b %d %Y", localtime(&(k->player.time.birth)));
-    tb_strftime(buf2, sizeof(buf2), "%a %b %d %Y", localtime(&(k->player.time.logon)));
+    TIME_STR(buf1, "%a %b %d %Y", localtime(&(k->player.time.birth)));
+    TIME_STR(buf2, "%a %b %d %Y", localtime(&(k->player.time.logon)));
 
     send_to_char(ch, "Created: [%s], Last Logon: [%s]\r\n", buf1, buf2);
 
@@ -1934,7 +1944,7 @@ ACMD(do_date)
   else
     mytime = boot_time;
 
-  tb_strftime(timestr, sizeof(timestr), "%c", localtime(&mytime));
+  TIME_STR(timestr, "%c", localtime(&mytime));
 
   if (subcmd == SCMD_DATE)
     send_to_char(ch, "Current machine time: %s\r\n", timestr);
@@ -2244,7 +2254,7 @@ static void list_llog_entries(struct char_data *ch)
   while(fread(&llast, sizeof(struct last_entry), 1, fp) == 1) {
     llast.username[sizeof(llast.username) - 1] = '\0';
     llast.hostname[sizeof(llast.hostname) - 1] = '\0';
-    tb_strftime(timestr, sizeof(timestr), "%a %b %d %Y %H:%M:%S", localtime(&llast.time));
+    TIME_STR(timestr, "%a %b %d %Y %H:%M:%S", localtime(&llast.time));
     send_to_char(ch, "%10s    %d    %s    %s\r\n", llast.username, llast.punique,
         last_type_name(llast.close_type), timestr);
   }
@@ -2326,7 +2336,7 @@ ACMD(do_last)
       return;
     }
 
-    tb_strftime(timestr, sizeof(timestr), "%a %b %d %H:%M:%S %Y", localtime(&(vict->player.time.logon)));
+    TIME_STR(timestr, "%a %b %d %H:%M:%S %Y", localtime(&(vict->player.time.logon)));
 
     send_to_char(ch, "[%5ld] [%2d %s] %-12s : %-18s : %-24s\r\n",
     GET_IDNUM(vict), (int) GET_LEVEL(vict),
@@ -2360,15 +2370,15 @@ ACMD(do_last)
       return;
     }
     if(!*name ||(*name && !str_cmp(name, mlast.username))) {
-      tb_strftime(timestr, sizeof(timestr), "%a %b %d %Y %H:%M", localtime(&mlast.time));
+      TIME_STR(timestr, "%a %b %d %Y %H:%M", localtime(&mlast.time));
       send_to_char(ch, "%10.10s %20.20s %20.21s - ",
         mlast.username, mlast.hostname, timestr);
       if((temp=is_in_game(mlast.idnum)) && mlast.punique == GET_PREF(temp)) {
         send_to_char(ch, "Still Playing  ");
       } else {
         delta = mlast.close_time - mlast.time;
-	tb_strftime(to, sizeof(to), "%H:%M", localtime(&mlast.close_time));
-	tb_strftime(deltastr, sizeof(deltastr), "%H:%M", gmtime(&delta));
+	TIME_STR(to, "%H:%M", localtime(&mlast.close_time));
+	TIME_STR(deltastr, "%H:%M", gmtime(&delta));
 
         send_to_char(ch, "%5.5s (%5.5s) %s", to, deltastr,
           last_type_name(mlast.close_type));
@@ -2870,8 +2880,8 @@ ACMD(do_show)
       return;
     }
 
-    tb_strftime(buf1, sizeof(buf1), "%a %b %d %H:%M:%S %Y", localtime(&(vict->player.time.birth)));
-    tb_strftime(buf2, sizeof(buf2), "%a %b %d %H:%H:%S %Y", localtime(&(vict->player.time.logon)));
+    TIME_STR(buf1, "%a %b %d %H:%M:%S %Y", localtime(&(vict->player.time.birth)));
+    TIME_STR(buf2, "%a %b %d %H:%H:%S %Y", localtime(&(vict->player.time.logon)));
 
     send_to_char(ch, "Player: %-12s (%s) [%2d %s]\r\n", GET_NAME(vict),
       /* Sex and class come from the pfile 'Sex '/'Clas' tags, unchecked. */
@@ -4900,8 +4910,7 @@ ACMD(do_changelog)
   }
 
   rawtime = time(0);
-  timestr[0] = '\0';
-  tb_strftime(timestr, sizeof(timestr), "%b %d %Y", localtime(&rawtime));
+  TIME_STR(timestr, "%b %d %Y", localtime(&rawtime));
 
   tb_snprintf(line, sizeof(line), "[%s] - %s", timestr, GET_NAME(ch));
   ok &= tb_fprintf_checked(new, CHANGE_LOG_FILE, "%s\n  %s\n", line, argument);
@@ -5063,7 +5072,7 @@ ACMD(do_plist)
     if (time_away.hours > high_hr || time_away.hours < low_hr)
       continue;
 
-    tb_strftime(timestr, sizeof(timestr), "%c", localtime(&player_table[i].last));
+    TIME_STR(timestr, "%c", localtime(&player_table[i].last));
 
     len += snprintf(buf + len, sizeof(buf) - len, "[%3ld] (%2d) %c%-15s %s\r\n",
                     player_table[i].id, player_table[i].level,
@@ -5536,7 +5545,7 @@ ACMD(do_recent)
     loc = FALSE;
     hits++;
     ct = this->time;
-    tb_strftime(timestr, sizeof(timestr), "%a %b %d %H:%M:%S %Y", localtime(&ct));
+    TIME_STR(timestr, "%a %b %d %H:%M:%S %Y", localtime(&ct));
 
     if (*(this->host)) {
       if (!strcmp(this->host, "localhost")) loc = TRUE;
@@ -5575,7 +5584,7 @@ ACMD(do_recent)
   }
 
   ct = time(0);  /* Grab the current time */
-  tb_strftime(timestr, sizeof(timestr), "%c", localtime(&ct));
+  TIME_STR(timestr, "%c", localtime(&ct));
   send_to_char(ch, "Current Server Time: %s\r\nShowing %d players since last copyover/reboot\r\n", timestr, hits);
 }
 
