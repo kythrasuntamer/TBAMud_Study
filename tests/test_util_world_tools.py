@@ -208,6 +208,36 @@ class Wld2HtmlTests(ToolCase):
         self.assertIn(b"South West to", self.read("100.html"))
 
 
+class SplitTests(ToolCase):
+    def test_split_writes_files_and_index(self):
+        rc, err = self.split(b"=a.wld\nfirst\n=b.wld\nsecond\n")
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(self.read("a.wld"), b"first\n")
+        self.assertEqual(self.read("b.wld"), b"second\n")
+        self.assertEqual(self.read("index"), b"a.wld\nb.wld\n$\r\n")
+
+    def test_overlong_name_line_rejected(self):
+        # I3-05: *(strchr(line, '\n')) stored through NULL (SIGSEGV).
+        rc, err = self.split(b"=" + b"n" * 300 + b"\nabc\n")
+        self.assertEqual(rc, 1, err)
+        self.assertDiag(err, "split-name-line")
+        self.assertIn("stdin line 1", err)
+
+    def test_final_name_line_without_newline(self):
+        # I3-05: the same NULL store for a last '=' line with no newline.
+        rc, err = self.split(b"=out\nabc\n=last")
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(self.read("out"), b"abc\n")
+        self.assertTrue(self.exists("last"))
+
+    def test_equals_at_chunk_boundary_is_data(self):
+        data = b"x" * 255 + b"=notafile\n"
+        rc, err = self.split(b"=out\n" + data)
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(self.read("out"), data)
+        self.assertFalse(self.exists("notafile"))
+
+
 class FortifiedWld2HtmlTests(ToolCase):
     """Valid input through a -O2 -D_FORTIFY_SOURCE=3 build of wld2html."""
 
