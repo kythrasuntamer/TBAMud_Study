@@ -119,10 +119,11 @@ static void capture_end(void)
   TEST_ASSERT_TRUE(dup2(saved_stderr, STDERR_FILENO) >= 0);
   close(saved_stderr);
   saved_stderr = -1;
-  rewind(capture_file);
+  TEST_ASSERT_EQUAL_INT(0, fseek(capture_file, 0L, SEEK_SET));
   got = fread(captured, 1, sizeof(captured) - 1, capture_file);
+  TEST_ASSERT_EQUAL_INT(0, ferror(capture_file));
   captured[got] = '\0';
-  fclose(capture_file);
+  TEST_ASSERT_EQUAL_INT(0, fclose(capture_file));
   capture_file = NULL;
 }
 
@@ -130,7 +131,8 @@ static void assert_reported(const char *operation)
 {
   char needle[96];
 
-  snprintf(needle, sizeof(needle), "operation=\"%s\"", operation);
+  TEST_ASSERT_TRUE(snprintf(needle, sizeof(needle), "operation=\"%s\"",
+                            operation) < (int)sizeof(needle));
   if (strstr(captured, needle) == NULL)
     TEST_FAIL_MESSAGE(captured[0] ? captured : "nothing was reported");
 }
@@ -362,7 +364,7 @@ void test_clean_alloc_free_reports_nothing(void)
 static void test_calloc_parenthesises_arguments(void)
 {
   int extra = 3;
-  unsigned char *block = (unsigned char *)calloc(2, extra + 1);
+  unsigned char *block = calloc(2, extra + 1);
   int i;
 
   TEST_ASSERT_NOT_NULL(block);
@@ -419,7 +421,7 @@ static void test_negative_size_fails_loudly(void)
 
 static void case_double_free_via_macros(void)
 {
-  char *block = (char *)malloc(16);
+  char *block = malloc(16);
 
   if (block == NULL)
     _exit(97);
@@ -435,7 +437,7 @@ static void test_double_free_is_reported(void)
 /* An interior pointer of a live block is not a block zmalloc handed out. */
 static void case_free_interior_pointer(void)
 {
-  char *block = (char *)malloc(16);
+  char *block = malloc(16);
 
   if (block == NULL)
     _exit(97);
@@ -449,11 +451,11 @@ static void test_unknown_pointer_free_is_reported(void)
 
 static void test_realloc_keeps_contents(void)
 {
-  char *block = (char *)malloc(8);
+  char *block = malloc(8);
 
   TEST_ASSERT_NOT_NULL(block);
   memcpy(block, "abcdefg", 8);
-  block = (char *)realloc(block, 64);
+  block = realloc(block, 64);
   TEST_ASSERT_NOT_NULL(block);
   TEST_ASSERT_EQUAL_STRING("abcdefg", block);
 #ifdef TB_ASAN_ENABLED
@@ -469,7 +471,7 @@ static void test_realloc_keeps_contents(void)
  * a use-after-free aborts at the access; check the shadow state directly. */
 static void test_asan_poisons_pads_and_freed_blocks(void)
 {
-  unsigned char *block = (unsigned char *)malloc(32);
+  unsigned char *block = malloc(32);
 
   TEST_ASSERT_NOT_NULL(block);
   TEST_ASSERT_TRUE(__asan_address_is_poisoned(block - 1));
@@ -484,7 +486,7 @@ static void test_asan_poisons_pads_and_freed_blocks(void)
  * reach the diagnostic stream when the block is freed. */
 static void case_pad_overrun_via_macros(void)
 {
-  unsigned char *block = (unsigned char *)malloc(32);
+  unsigned char *block = malloc(32);
 
   if (block == NULL)
     _exit(97);

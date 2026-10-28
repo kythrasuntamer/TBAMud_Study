@@ -624,7 +624,7 @@ void pad_check(meminfo *m)
 
 
 #ifdef ZTEST
-#undef ZMALLOC_H
+#undef TBAMUD_ZMALLOC_H
 
 #include "zmalloc.h"
 

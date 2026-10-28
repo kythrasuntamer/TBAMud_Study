@@ -10,8 +10,8 @@
 * Version 1.1 Copyright 1996, 1998, 1999, 2000 Eric Murray ericm@lne.com
 */
 
-#ifndef _ZMALLOC_H_
-#define _ZMALLOC_H_
+#ifndef TBAMUD_ZMALLOC_H
+#define TBAMUD_ZMALLOC_H
 
 #include <stddef.h>
 
@@ -38,4 +38,4 @@ char *zstrdup(const char *, char *, int);
 #undef  strdup
 #define strdup(x)	zstrdup((x), __FILE__, __LINE__)
 
-#endif /* _ZMALLOC_H_ */
+#endif /* TBAMUD_ZMALLOC_H */
