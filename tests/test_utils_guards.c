@@ -728,6 +728,75 @@ void test_table_name_valid_index_is_silent(void)
   TEST_ASSERT_EQUAL_INT(0, count_records());
 }
 
+/* =====================================================================
+ * I1-14: the bounded string builders report what they cut.
+ * ===================================================================== */
+
+static const char *test_flag_names[] = { "ALPHA", "BETA", "GAMMA", "\n" };
+
+void test_sprintbitarray_small_buffer_reports(void)
+{
+  int bits[1] = { 0x7 };        /* ALPHA BETA GAMMA */
+  char small[8], big[64];
+
+  sprintbitarray(bits, test_flag_names, 1, small, sizeof(small));
+  TEST_ASSERT_EQUAL_INT(1, count_op("sprintbitarray-truncated"));
+  TEST_ASSERT_TRUE(strlen(small) < sizeof(small));
+
+  sprintbitarray(bits, test_flag_names, 1, big, sizeof(big));
+  TEST_ASSERT_EQUAL_STRING("ALPHA BETA GAMMA ", big);
+  TEST_ASSERT_EQUAL_INT(1, count_records());
+}
+
+void test_sprintbit_cuts_at_whole_name_and_reports(void)
+{
+  char small[9], big[64];
+
+  /* "ALPHA " fits, "BETA " does not: no partial "BE" may be left. */
+  sprintbit(0x3, test_flag_names, small, sizeof(small));
+  TEST_ASSERT_EQUAL_STRING("ALPHA ", small);
+  TEST_ASSERT_EQUAL_INT(1, count_op("sprintbit-truncated"));
+
+  sprintbit(0x3, test_flag_names, big, sizeof(big));
+  TEST_ASSERT_EQUAL_STRING("ALPHA BETA ", big);
+  TEST_ASSERT_EQUAL_INT(1, count_records());
+}
+
+void test_strpaste_long_column_reports(void)
+{
+  char *left = malloc(MAX_STRING_LENGTH + 100);
+  char right[] = "map";
+  char joiner[] = " | ";
+
+  TEST_ASSERT_NOT_NULL(left);
+  memset(left, 'a', MAX_STRING_LENGTH + 99);
+  left[MAX_STRING_LENGTH + 99] = '\0';
+  (void)strpaste(left, right, joiner);
+  TEST_ASSERT_EQUAL_INT(1, count_op("strpaste-truncated"));
+
+  (void)strpaste(right, right, joiner);
+  TEST_ASSERT_EQUAL_INT(1, count_records());
+  free(left);
+}
+
+void test_strfrmt_long_text_reports(void)
+{
+  size_t n = 2 * MAX_STRING_LENGTH, i;
+  char *text = malloc(n + 1);
+  char small_text[] = "A short room description.";
+
+  TEST_ASSERT_NOT_NULL(text);
+  for (i = 0; i < n; i++)
+    text[i] = (i % 5 == 4) ? ' ' : 'w';
+  text[n] = '\0';
+  (void)strfrmt(text, 60, 1, FALSE, FALSE, FALSE);
+  TEST_ASSERT_EQUAL_INT(1, count_op("strfrmt-truncated"));
+
+  (void)strfrmt(small_text, 60, 1, FALSE, FALSE, FALSE);
+  TEST_ASSERT_EQUAL_INT(1, count_records());
+  free(text);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -764,5 +833,9 @@ int main(void)
   RUN_TEST(test_class_abbr_valid_class_and_npc_are_silent);
   RUN_TEST(test_table_name_out_of_range_reports_caller);
   RUN_TEST(test_table_name_valid_index_is_silent);
+  RUN_TEST(test_sprintbitarray_small_buffer_reports);
+  RUN_TEST(test_sprintbit_cuts_at_whole_name_and_reports);
+  RUN_TEST(test_strpaste_long_column_reports);
+  RUN_TEST(test_strfrmt_long_text_reports);
   return UNITY_END();
 }

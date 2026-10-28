@@ -910,7 +910,7 @@ void mudlog(int type, int level, int file, const char *str, ...)
  * Ideally, results will be large enough to hold the description of every bit
  * that could possibly be set in bitvector. Must be at least 1: result[0] is
  * written unconditionally. Output that does not fit is cut at the last
- * whole name, without a report.
+ * whole name and reported as sprintbit-truncated.
  * Bits past the "\n" terminator print as "UNDEFINED". */
 size_t sprintbit(bitvector_t bitvector, const char *names[], char *result, size_t reslen)
 {
@@ -923,8 +923,14 @@ size_t sprintbit(bitvector_t bitvector, const char *names[], char *result, size_
   for (nr = 0; bitvector && len < reslen; bitvector >>= 1) {
     if (IS_SET(bitvector, 1)) {
       nlen = snprintf(result + len, reslen - len, "%s ", *names[nr] != '\n' ? names[nr] : "UNDEFINED");
-      if (len + nlen >= reslen || nlen < 0)
+      if (len + nlen >= reslen || nlen < 0) {
+        /* snprintf() left part of this name behind: cut at the last whole
+         * name, as documented, and say so (I1-14). */
+        result[len] = '\0';
+        TB_WARN_MSG("utils", "sprintbit-truncated", "sprintbit",
+                    "flag names cut after %zu of %zu bytes", len, reslen);
         break;
+      }
       len += nlen;
     }
 
@@ -1017,6 +1023,8 @@ void sprintbitarray(int bitvector[], const char *names[], int maxar, char *resul
 
   if (out.length == 0)
     (void)tb_buf_append(&out, "NOBITS ");
+  /* The appends above truncate safely but only flag it (I1-14). */
+  TB_BUF_CHECK(out, "sprintbitarray-truncated");
 }
 
 /** Calculate the REAL time passed between two time invervals.
@@ -2212,13 +2220,18 @@ IDXTYPE atoidx( const char *str_to_conv )
    Returns a static buffer that the next call overwrites (not reentrant);
    strpaste(strfrmt(...), ...) is safe only because the two use different
    buffers. A NULL str is formatted as "" with a strfrmt-null warning. Output
-   is cut silently at MAX_STRING_LENGTH and w is clamped to the line buffer.
+   that does not fit in MAX_STRING_LENGTH, a word longer than a line and
+   padding past the end are cut and reported once as strfrmt-truncated;
+   w is clamped to the line buffer.
 */
-static char *strfrmt_append(char *dst, const char *end, const char *src)
+static char *strfrmt_append(char *dst, const char *end, const char *src,
+                            int *cut)
 {
   while (*src && dst < end)
     *dst++ = *src++;
   *dst = '\0';
+  if (*src)
+    *cut = TRUE;
   return dst;
 }
 
@@ -2243,6 +2256,7 @@ char *strfrmt(char *str, int w, int h, int justify, int hpad, int vpad)
   const char *lend = line + sizeof(line) - 5;
   const char *rend = ret + sizeof(ret) - 1;
   int wlen = 0, llen = 0, lcount = 0;
+  int cut = FALSE;	/* any output byte dropped (I1-14) */
   char last_color='n';
   bool new_line_started = FALSE;
 
@@ -2297,7 +2311,7 @@ char *strfrmt(char *str, int w, int h, int justify, int hpad, int vpad)
         *lp++ = '\r';
         *lp++ = '\n';
         *lp = '\0';
-        rp = strfrmt_append(rp, rend, line);
+        rp = strfrmt_append(rp, rend, line, &cut);
         llen = 0;
         lcount++;
         lp = line;
@@ -2336,7 +2350,7 @@ char *strfrmt(char *str, int w, int h, int justify, int hpad, int vpad)
       *lp++ = '\r'; /* New line */
       *lp++ = '\n';
       *lp = '\0';
-      rp = strfrmt_append(rp, rend, line);
+      rp = strfrmt_append(rp, rend, line, &cut);
       llen = 0;
       lcount++;
       lp = line;
@@ -2358,6 +2372,8 @@ char *strfrmt(char *str, int w, int h, int justify, int hpad, int vpad)
      * broken at all, whatever its length.  Neither of those is a reason
      * to write past the end of line. */
     for( ; wp!=sp && lp<lend ; *lp++ = *wp++);
+    if (wp != sp)
+      cut = TRUE;	/* the word did not fit in the line buffer */
   }
   /* Copy over the last line */
   if(lp!=line) {
@@ -2367,7 +2383,7 @@ char *strfrmt(char *str, int w, int h, int justify, int hpad, int vpad)
     *lp++ = '\r';
     *lp++ = '\n';
     *lp = '\0';
-    rp = strfrmt_append(rp, rend, line);
+    rp = strfrmt_append(rp, rend, line, &cut);
     lcount++;
   }
   if(vpad) {
@@ -2375,17 +2391,26 @@ char *strfrmt(char *str, int w, int h, int justify, int hpad, int vpad)
       if(hpad) {
         int pad = w < rend - rp ? w : (int)(rend - rp);
 
+        if (pad < w)
+          cut = TRUE;
         if (pad > 0) {
           memset(rp, ' ', pad);
           rp += pad;
         }
       }
+      if (rend - rp < 2)
+        cut = TRUE;
       if (rp < rend) *rp++ = '\r';
       if (rp < rend) *rp++ = '\n';
       lcount++;
     }
     *rp = '\0';
   }
+  if (cut)
+    TB_WARN_MSG("utils", "strfrmt-truncated", "strfrmt",
+                "text of %zu bytes did not fit: output cut at %d of %d "
+                "bytes (w=%d h=%d)", strlen(str), (int) (rp - ret),
+                (int) sizeof(ret) - 1, w, h);
   return ret;
 }
 
@@ -2396,21 +2421,26 @@ char *strfrmt(char *str, int w, int h, int justify, int hpad, int vpad)
    @param str2 The string to be displayed on the right.
    @param joiner Text placed between the two columns on every line.
    @return A static buffer overwritten by the next call (not reentrant).
-   NULL inputs are treated as "". Output stops silently at
-   MAX_STRING_LENGTH.
+   NULL inputs are treated as "". Output stops at MAX_STRING_LENGTH, and
+   text that did not fit is reported as strpaste-truncated.
 */
 char *strpaste(char *str1, char *str2, char *joiner)
 {
   static char ret[MAX_STRING_LENGTH + 1];
-  const char *sp1 = str1 ? str1 : "";
-  const char *sp2 = str2 ? str2 : "";
+  const char *sp1 = NULLSTR(str1);
+  const char *sp2 = NULLSTR(str2);
   const char *safe_joiner = NULLSTR(joiner);
   size_t used = 0;
   size_t jlen = strlen(safe_joiner);
+  int cut = FALSE;
 
   while (used < MAX_STRING_LENGTH && (*sp1 || *sp2)) {
     while (used < MAX_STRING_LENGTH && *sp1 && !ISNEWL(*sp1))
       ret[used++] = *sp1++;
+    if (*sp1 && !ISNEWL(*sp1)) {
+      cut = TRUE;	/* out of room in the middle of a left line */
+      break;
+    }
 
     if (*sp1) {
       if (sp1[1] && sp1[1] != sp1[0] && ISNEWL(sp1[1]))
@@ -2427,6 +2457,10 @@ char *strpaste(char *str1, char *str2, char *joiner)
 
     while (used < MAX_STRING_LENGTH && *sp2 && !ISNEWL(*sp2))
       ret[used++] = *sp2++;
+    if (*sp2 && !ISNEWL(*sp2)) {
+      cut = TRUE;	/* out of room in the middle of a right line */
+      break;
+    }
 
     if (*sp2) {
       if (sp2[1] && sp2[1] != sp2[0] && ISNEWL(sp2[1]))
@@ -2441,6 +2475,13 @@ char *strpaste(char *str1, char *str2, char *joiner)
   }
 
   ret[used] = '\0';
+  /* The bounds above keep ret in range; say when they dropped text
+   * (I1-14), e.g. a long description pasted beside the automap. */
+  if (cut || *sp1 || *sp2)
+    TB_WARN_MSG("utils", "strpaste-truncated", "strpaste",
+                "output cut at %zu of %d bytes; %zu and %zu bytes of the "
+                "two columns not pasted", used, MAX_STRING_LENGTH,
+                strlen(sp1), strlen(sp2));
   return ret;
 }
 

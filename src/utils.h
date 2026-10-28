@@ -171,6 +171,19 @@ int tb_buf_appendf(struct tb_buf *buf, const char *format, ...)
 size_t tb_buf_remaining(const struct tb_buf *buf);
 int tb_buf_truncated(const struct tb_buf *buf);
 
+/** Report a tb_buf that ran out of room while it was built: a WARNING with
+ * operation op (e.g. "sprintbitarray-truncated"), naming the function that
+ * built it and the bytes kept of its capacity. tb_buf truncates safely but
+ * only records the fact in ->truncated; call this once the buffer is
+ * complete so the loss is not silent. name is the struct tb_buf itself (not
+ * a pointer) and is evaluated several times. */
+#define TB_BUF_CHECK(name, op) do { \
+  if (tb_buf_truncated(&(name))) \
+    TB_WARN_MSG("utils", (op), __func__, \
+                "output truncated at %zu of %zu bytes", \
+                (name).length, (name).capacity); \
+} while (0)
+
 /* Checked allocation arithmetic used by CREATE/RECREATE and direct callers. */
 int tb_size_mul_checked(size_t count, size_t element_size, size_t *out);
 void *tb_calloc_array_at(size_t count, size_t element_size,
