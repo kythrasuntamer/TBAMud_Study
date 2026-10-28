@@ -361,11 +361,20 @@ static void sedit_rooms_menu(struct descriptor_data *d)
   clear_screen(d);
   write_to_output(d, "##     VNUM     Room\r\n\r\n");
   for (i = 0; S_ROOM(shop, i) != NOWHERE; i++) {
+    /* S_ROOMS holds room vnums. A room deleted since the shop was loaded
+     * has no rnum: show it as deleted and leave the vnum alone so the
+     * builder can remove it ('D'). Displaying must never change the shop
+     * (this used to rewrite it to room 0, the Void, which a save kept). */
     rnum = real_room(S_ROOM(shop, i));
-    /* if the room has been deleted, this may crash us otherwise. */
-    /* set to 0 to be deletable.   -- Welcor 09/04                */
-    if (rnum == NOWHERE)
-      S_ROOM(shop, i) = rnum = 0;
+    if (rnum == NOWHERE) {
+      struct char_data *builder = d->character;
+      TB_WARN_MSG("olc", "shop-room-missing", "shop",
+                  "builder " DIAG_CHAR_FMT " shop vnum %d room vnum %d (entry %d) does not exist",
+                  DIAG_CHAR(builder), OLC_NUM(d), S_ROOM(shop, i), i);
+      write_to_output(d, "%2d - [%s%5d%s] - %s<deleted room>%s\r\n", i, cyn, S_ROOM(shop, i), nrm,
+                      yel, nrm);
+      continue;
+    }
 
     write_to_output(d, "%2d - [%s%5d%s] - %s%s%s\r\n", i, cyn, S_ROOM(shop, i), nrm,
 	    yel, world[rnum].name, nrm);
@@ -835,7 +844,8 @@ void sedit_parse(struct descriptor_data *d, char *arg)
 	write_to_output(d, "That object does not exist, try again : ");
 	return;
       }
-    if (i > 0)
+    /* i is an object rnum, and rnum 0 is a real object; -1 means none. */
+    if (i >= 0)
       add_shop_to_int_list(&(S_PRODUCTS(OLC_SHOP(d))), i);
     sedit_products_menu(d);
     return;

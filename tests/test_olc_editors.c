@@ -503,7 +503,8 @@ void copy_shop(struct shop_data *tshop, struct shop_data *fshop, int free_old_st
 { (void)free_old_strings; *tshop = *fshop; }
 void free_shop(struct shop_data *shop) { free(shop); }
 void modify_shop_string(char **str, char *newstr) { free(*str); *str = strdup(newstr); }
-void add_shop_to_int_list(IDXTYPE **tlist, IDXTYPE newi) { (void)tlist; (void)newi; }
+static long last_int_list_add = -2;
+void add_shop_to_int_list(IDXTYPE **tlist, IDXTYPE newi) { (void)tlist; last_int_list_add = (long)newi; }
 void remove_shop_from_int_list(IDXTYPE **list, IDXTYPE num) { (void)list; (void)num; }
 void add_shop_to_type_list(struct shop_buy_data **list, struct shop_buy_data *newl) { (void)list; (void)newl; }
 void remove_shop_from_type_list(struct shop_buy_data **list, int num) { (void)list; (void)num; }
@@ -1797,6 +1798,53 @@ static void test_oedit_duplicate_apply_is_refused_and_neighbour_allowed(void)
   TEST_ASSERT_EQUAL_INT(OEDIT_APPLYMOD, OLC_MODE(d));
 }
 
+
+/* ------------------------------------------------------------------ */
+/* F1-26: listing shop rooms never rewrites a deleted room; object     */
+/* rnum 0 can be a product.                                            */
+/* ------------------------------------------------------------------ */
+static void test_sedit_room_list_reports_deleted_room_without_rewriting(void)
+{
+  struct descriptor_data *d = &builder_desc;
+  struct shop_data scratch;
+  IDXTYPE rooms[3];
+
+  make_world(3);
+  memset(&scratch, 0, sizeof(scratch));
+  rooms[0] = 3001; rooms[1] = 4999; rooms[2] = NOWHERE;
+  S_ROOMS(&scratch) = rooms;
+  OLC_SHOP(d) = &scratch;
+  OLC_NUM(d) = 3000;
+  OLC_MODE(d) = SEDIT_DELETE_ROOM;
+
+  sedit_parse(d, "9");             /* redisplays the room list */
+
+  TEST_ASSERT_EQUAL_INT(4999, rooms[1]);
+  TEST_ASSERT_NOT_NULL(strstr(out_buf, "<deleted room>"));
+  TEST_ASSERT_EQUAL_STRING("shop-room-missing", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "shop vnum 3000 room vnum 4999"));
+  OLC_SHOP(d) = NULL;
+}
+
+static void test_sedit_object_rnum_zero_can_be_a_product(void)
+{
+  struct descriptor_data *d = &builder_desc;
+  struct shop_data scratch;
+  IDXTYPE products[1] = { NOTHING };
+
+  make_objects(3);
+  memset(&scratch, 0, sizeof(scratch));
+  S_PRODUCTS(&scratch) = products;
+  OLC_SHOP(d) = &scratch;
+  OLC_MODE(d) = SEDIT_NEW_PRODUCT;
+  last_int_list_add = -2;
+
+  sedit_parse(d, "3000");          /* obj_proto[0] */
+
+  TEST_ASSERT_EQUAL_INT(0, last_int_list_add);
+  OLC_SHOP(d) = NULL;
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -1843,5 +1891,7 @@ int main(void)
   RUN_TEST(test_sedit_non_numeric_input_is_refused);
   RUN_TEST(test_oedit_furniture_bad_seat_count_reprompts_value_1);
   RUN_TEST(test_oedit_duplicate_apply_is_refused_and_neighbour_allowed);
+  RUN_TEST(test_sedit_room_list_reports_deleted_room_without_rewriting);
+  RUN_TEST(test_sedit_object_rnum_zero_can_be_a_product);
   return UNITY_END();
 }
