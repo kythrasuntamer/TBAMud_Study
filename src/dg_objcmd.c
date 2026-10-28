@@ -936,8 +936,15 @@ static OCMD(do_omove)
 
     target = find_obj_target_room(obj, arg1);
 
+    /* The target comes from script text. Moving on regardless took the object
+     * out of its carrier, room or container and then had obj_to_room()
+     * refuse NOWHERE, leaving it in object_list with no location: lost to the
+     * player, never saved. Stop before removing anything. */
     if (target == NOWHERE) {
-        /* Carrying on moved the object into world[NOWHERE]. */
+        TB_ERROR_MSG("dg", "omove-target", "do_omove",
+                     "obj vnum %d uid %ld: target (%zu bytes) is not a "
+                     "permitted room; object not moved", GET_OBJ_VNUM(obj),
+                     obj_script_id(obj), strlen(arg1));
         obj_log(obj, "omove target is an invalid room");
         return;
     }
@@ -999,7 +1006,7 @@ void obj_command_interpreter(obj_data *obj, char *argument)
     char *line, arg[MAX_INPUT_LENGTH];
     long owner_uid;
     obj_vnum owner_vnum;
-    int owner_gone;
+    int owner_gone, purges_self;
 
     skip_spaces(&argument);
 
@@ -1023,14 +1030,23 @@ void obj_command_interpreter(obj_data *obj, char *argument)
 
     owner_uid = obj_script_id(obj);
     owner_vnum = GET_OBJ_VNUM(obj);
+    /* 'opurge' aimed at the owner itself is the one deliberate way for a
+     * command to destroy it; resolve the target the way do_opurge() will. */
+    purges_self = FALSE;
+    if (obj_cmd_info[cmd].command_pointer == do_opurge) {
+      char target[MAX_INPUT_LENGTH];
+      one_argument(line, target);
+      purges_self = *target && !get_char_by_obj(obj, target) &&
+                    get_obj_by_obj(obj, target) == obj;
+    }
 
     ((*obj_cmd_info[cmd].command_pointer)
      (obj, line, cmd, obj_cmd_info[cmd].subcmd));
 
-    /* 'opurge' is the one command meant to destroy its owner; any other
-     * command that did so destroyed it indirectly. */
+    /* Any other way of losing the owner (purging its container or the room
+     * around it, forcing someone to junk it...) destroyed it indirectly. */
     owner_gone = !obj_uid_matches(owner_uid, obj);
-    if (owner_gone && obj_cmd_info[cmd].command_pointer != do_opurge) {
+    if (owner_gone && !purges_self) {
       /* Handled (the script stops), but it means the script destroyed its
        * own owner indirectly; say which object and which command. */
       TB_WARN_MSG("dg", "owner-extracted", "obj_command_interpreter",

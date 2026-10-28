@@ -263,6 +263,23 @@ static void test_otransform_moves_the_instance_count(void)
   TEST_ASSERT_EQUAL_INT(1, obj_index[real_object(DGW_OBJ_ROCK)].number);
 }
 
+/* E1-08: an unresolvable omove target leaves the object where it was. */
+static void test_omove_to_invalid_room_keeps_the_object(void)
+{
+  struct char_data *m = dgw_mob(DGW_MOB_GUARD, 0);
+  struct obj_data *stone = dgw_obj(DGW_OBJ_STONE, NOWHERE);
+  obj_to_char(stone, m);
+
+  ocmd(stone, "omove 99999");
+  TEST_ASSERT_EQUAL_PTR(m, stone->carried_by);
+  TEST_ASSERT_EQUAL_PTR(stone, m->carrying);
+  TEST_ASSERT_EQUAL_INT(1, dgw_saw("omove-target"));
+
+  ocmd(stone, "omove 102");
+  TEST_ASSERT_NULL(stone->carried_by);
+  TEST_ASSERT_EQUAL_INT(2, IN_ROOM(stone));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -279,5 +296,6 @@ int main(void)
   RUN_TEST(test_otransform_to_non_furniture_unseats);
   RUN_TEST(test_otransform_recomputes_weights);
   RUN_TEST(test_otransform_moves_the_instance_count);
+  RUN_TEST(test_omove_to_invalid_room_keeps_the_object);
   return UNITY_END();
 }
