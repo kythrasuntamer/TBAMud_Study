@@ -51,6 +51,7 @@ qst_rnum total_quests = 0;
 struct index_data **trig_index = NULL;
 int top_of_trigt = 0;
 struct board_info_type board_info[NUM_OF_BOARDS];
+struct reset_q_type reset_q;
 
 const char *apply_types[] = {
   "NONE", "STR", "DEX", "INT", "WIS", "CON", "CHA", "CLASS", "LEVEL", "AGE",
@@ -1670,6 +1671,57 @@ static void add_cmd_to_list_appends_past_the_end(void)
 }
 
 /* ------------------------------------------------------------------------ */
+/* O8d: 'zedit new' and the zone reset queue.                               */
+/* ------------------------------------------------------------------------ */
+
+/* create_new_zone() shifted zone_table but not the reset queue, whose
+ * entries hold zone rnums: a queued zone above the new one was reset under
+ * the wrong rnum, and its own zone stayed at ZO_DEAD. */
+static void create_new_zone_renumbers_reset_queue(void)
+{
+  static const char *const prefixes[] = { ZON_PREFIX, WLD_PREFIX, MOB_PREFIX,
+    OBJ_PREFIX, SHP_PREFIX, QST_PREFIX, TRG_PREFIX };
+  static const char *const types[] = { "zon", "wld", "mob", "obj", "shp", "qst", "trg" };
+  struct reset_q_element low, high;
+  const char *err = NULL;
+  char path[128];
+  size_t i;
+
+  make_zones(2);
+  zone_table[1].number = 5;              /* zone 5 at rnum 1: 501-599 */
+  zone_table[1].bot = 501;
+  zone_table[1].top = 599;
+  for (i = 0; i < sizeof(prefixes) / sizeof(prefixes[0]); i++) {
+    (void)snprintf(path, sizeof(path), "%s/index", prefixes[i]);
+    write_text_file(path, "$\n");
+  }
+  memset(&low, 0, sizeof(low));
+  memset(&high, 0, sizeof(high));
+  low.zone_to_reset = 0;
+  low.next = &high;
+  high.zone_to_reset = 1;                /* zone 5, waiting for its reset */
+  reset_q.head = &low;
+  reset_q.tail = &high;
+
+  TEST_ASSERT_EQUAL_UINT(1, create_new_zone(3, 300, 399, &err));
+  TEST_ASSERT_EQUAL_INT(3, zone_table[1].number);
+  TEST_ASSERT_EQUAL_INT(5, zone_table[2].number);
+  TEST_ASSERT_EQUAL_INT(0, low.zone_to_reset);
+  TEST_ASSERT_EQUAL_INT(2, high.zone_to_reset);      /* still zone 5 */
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+
+  reset_q.head = reset_q.tail = NULL;
+  free(zone_table[1].name);
+  free(zone_table[1].builders);
+  for (i = 0; i < sizeof(prefixes) / sizeof(prefixes[0]); i++) {
+    (void)snprintf(path, sizeof(path), "%s/3.%s", prefixes[i], types[i]);
+    (void)remove(path);
+    (void)snprintf(path, sizeof(path), "%s/index", prefixes[i]);
+    (void)remove(path);
+  }
+}
+
+/* ------------------------------------------------------------------------ */
 /* Temporary world directory for the writers.                               */
 /* ------------------------------------------------------------------------ */
 static char test_root[] = "/tmp/tb-genolc-XXXXXX";
@@ -1781,6 +1833,7 @@ int main(void)
   RUN_TEST(delete_quest_clears_players_on_it);
   RUN_TEST(writers_keep_previous_file_after_stream_error);
   RUN_TEST(add_cmd_to_list_appends_past_the_end);
+  RUN_TEST(create_new_zone_renumbers_reset_queue);
   failures = UNITY_END();
   leave_test_root();
   return failures;

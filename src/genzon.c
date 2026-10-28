@@ -320,6 +320,19 @@ rznum = i;
 
   top_of_zone_table++;
 
+  /* Zone rnums at or above rznum moved up by one.  world[].zone was shifted
+   * above and zedit_new_zone() moves open OLC sessions, but the reset queue
+   * (db.c zone_update()) holds zone rnums as well.  An entry left behind
+   * resets the zone that now has its rnum, and its own zone stays at
+   * ZO_DEAD, never resetting until 'zreset' or a reboot (finding O8d). */
+  {
+    struct reset_q_element *queued;
+
+    for (queued = reset_q.head; queued; queued = queued->next)
+      if (queued->zone_to_reset >= rznum)
+        queued->zone_to_reset++;
+  }
+
   add_to_save_list(zone->number, SL_ZON);
   return rznum;
 }
