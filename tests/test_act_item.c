@@ -505,9 +505,57 @@ static void test_remove_rechecks_slot_after_trigger(void)
   fx_free_char(pc);
 }
 
+/* db.c's real_room() over the fixture's rooms (vnums 3000 + rnum). */
+room_rnum real_room(room_vnum vnum)
+{
+  return (vnum >= 3000 && vnum <= 3000 + top_of_world) ?
+         (room_rnum) (vnum - 3000) : NOWHERE;
+}
+
+/* H1-27: with only donation room 3 configured, every roll but the junk
+ * one must reach it (cases 1/2 used to try room 1 = NOWHERE and fail). */
+static void test_donate_with_only_room_three(void)
+{
+  struct char_data *pc = fx_new_char("hero", FALSE, 0);
+  struct obj_data *cup = fx_new_obj("cup", ITEM_OTHER);
+
+  CONFIG_DON_ROOM_1 = NOWHERE;
+  CONFIG_DON_ROOM_2 = NOWHERE;
+  CONFIG_DON_ROOM_3 = 3001;
+  obj_to_char(cup, pc);
+  fx_rand_value = 1;               /* the first non-junk outcome */
+
+  do_drop(pc, arg("cup"), 0, SCMD_DONATE);
+
+  TEST_ASSERT_EQUAL_INT(1, IN_ROOM(cup));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  fx_free_char(pc);
+}
+
+/* H1-27: a configured donation room that does not exist is reported. */
+static void test_donate_reports_missing_room(void)
+{
+  struct char_data *pc = fx_new_char("hero", FALSE, 0);
+
+  CONFIG_DON_ROOM_1 = 3063;        /* no such room */
+  CONFIG_DON_ROOM_2 = NOWHERE;
+  CONFIG_DON_ROOM_3 = NOWHERE;
+  obj_to_char(fx_new_obj("cup", ITEM_OTHER), pc);
+
+  do_drop(pc, arg("cup"), 0, SCMD_DONATE);
+
+  TEST_ASSERT_NOT_NULL(pc->carrying);
+  TEST_ASSERT_NOT_NULL(strstr(fx_last_send, "can't donate"));
+  TEST_ASSERT_EQUAL_STRING("donation-room-missing", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "vnum 3063"));
+  fx_free_char(pc);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(test_donate_with_only_room_three);
+  RUN_TEST(test_donate_reports_missing_room);
   RUN_TEST(test_remove_rechecks_slot_after_trigger);
   RUN_TEST(test_junk_reward_respects_max_gold);
   RUN_TEST(test_negative_counts_are_refused);

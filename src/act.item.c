@@ -710,6 +710,35 @@ static int perform_drop(struct char_data *ch, struct obj_data *obj,
   return (0);
 }
 
+/* Fills cand[] (at least 4 entries) with the donation rooms that exist:
+ * CONFIG_DON_ROOM_1 twice (its traditional double chance), then rooms 2
+ * and 3. A slot set to NOWHERE is simply not configured; a configured vnum
+ * with no room (deleted, mistyped in cedit) is reported as
+ * "donation-room-missing" so the operator learns why donations fail.
+ * Returns the number of entries filled. */
+static int donation_rooms(room_rnum cand[4])
+{
+  const room_vnum vnums[3] = { CONFIG_DON_ROOM_1, CONFIG_DON_ROOM_2, CONFIG_DON_ROOM_3 };
+  int i, n = 0;
+
+  for (i = 0; i < 3; i++) {
+    room_rnum r;
+
+    if (vnums[i] == NOWHERE)
+      continue;
+    if ((r = real_room(vnums[i])) == NOWHERE) {
+      TB_WARN_MSG("config", "donation-room-missing", "room",
+                  "donation room %d is vnum %d, which does not exist; skipped",
+                  i + 1, (int) vnums[i]);
+      continue;
+    }
+    cand[n++] = r;
+    if (i == 0)
+      cand[n++] = r;
+  }
+  return n;
+}
+
 ACMD(do_drop)
 {
   char arg[MAX_INPUT_LENGTH];
@@ -717,7 +746,7 @@ ACMD(do_drop)
   struct obj_iter_mark mark;
   room_rnum RDR = 0;
   byte mode = SCMD_DROP;
-  int dotmode, amount = 0, multi, num_don_rooms;
+  int dotmode, amount = 0, multi;
   const char *sname;
 
   switch (subcmd) {
@@ -728,25 +757,21 @@ ACMD(do_drop)
   case SCMD_DONATE:
     sname = "donate";
     mode = SCMD_DONATE;
-    /* fail + double chance for room 1   */
-    num_don_rooms = (CONFIG_DON_ROOM_1 != NOWHERE) * 2 +
-                    (CONFIG_DON_ROOM_2 != NOWHERE)     +
-                    (CONFIG_DON_ROOM_3 != NOWHERE)     + 1 ;
-    switch (rand_number(0, num_don_rooms)) {
-    case 0:
-      mode = SCMD_JUNK;
-      break;
-    case 1:
-    case 2:
-      RDR = real_room(CONFIG_DON_ROOM_1);
-      break;
-    case 3: RDR = real_room(CONFIG_DON_ROOM_2); break;
-    case 4: RDR = real_room(CONFIG_DON_ROOM_3); break;
+    {
+      room_rnum don_rooms[4];
+      int num_don_rooms = donation_rooms(don_rooms), roll;
 
-    }
-    if (RDR == NOWHERE) {
-      send_to_char(ch, "Sorry, you can't donate anything right now.\r\n");
-      return;
+      if (!num_don_rooms) {
+        send_to_char(ch, "Sorry, you can't donate anything right now.\r\n");
+        return;
+      }
+      /* 0: the item is junked instead; otherwise one of the rooms that
+       * exist, room 1 with a double chance. */
+      roll = rand_number(0, num_don_rooms);
+      if (roll == 0)
+        mode = SCMD_JUNK;
+      else
+        RDR = don_rooms[roll - 1];
     }
     break;
   default:
