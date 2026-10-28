@@ -38,6 +38,13 @@ static const char *ban_types[] = {
   "ERROR"
 };
 
+/** Name of ban type @p t for display and for BAN_FILE. A type outside
+ * BAN_NOT..BAN_ALL (a corrupted node) shows as "ERROR" instead of reading
+ * past ban_types[]; written to BAN_FILE, it is then rejected and reported
+ * ("load-type") on the next boot. Evaluates @p t twice: pass a plain value. */
+#define BAN_TYPE_NAME(t) \
+  (((t) >= BAN_NOT && (t) <= BAN_ALL) ? ban_types[(t)] : ban_types[BAN_ALL + 1])
+
 /**
  * Replace ban_list with the records in BAN_FILE (boot time).
  *
@@ -167,7 +174,7 @@ static void write_one_node(FILE *fp, struct ban_list_element *node)
 {
   if (node) {
     write_one_node(fp, node->next);
-    tb_fprintf(fp, "%s %s %ld %s\n", ban_types[node->type],
+    tb_fprintf(fp, "%s %s %ld %s\n", BAN_TYPE_NAME(node->type),
 	    node->site, (long) node->date, node->name);
   }
 }
@@ -215,7 +222,7 @@ ACMD(do_ban)
       } else
 	strlcpy(timestr, "Unknown", sizeof(timestr));	/* strcpy: OK (strlen("Unknown") < 16) */
 
-      send_to_char(ch, BAN_LIST_FORMAT, ban_node->site, ban_types[ban_node->type], timestr, ban_node->name);
+      send_to_char(ch, BAN_LIST_FORMAT, ban_node->site, BAN_TYPE_NAME(ban_node->type), timestr, ban_node->name);
     }
     return;
   }
@@ -265,7 +272,7 @@ ACMD(do_ban)
   ban_list = ban_node;
 
   mudlog(NRM, MAX(LVL_GOD, GET_INVIS_LEV(ch)), TRUE, "%s has banned %s for %s players.",
-	GET_NAME(ch), site, ban_types[ban_node->type]);
+	GET_NAME(ch), site, BAN_TYPE_NAME(ban_node->type));
   send_to_char(ch, "Site banned.\r\n");
   write_ban_list();
 }
@@ -297,7 +304,7 @@ ACMD(do_unban)
   REMOVE_FROM_LIST(ban_node, ban_list, next);
   send_to_char(ch, "Site unbanned.\r\n");
   mudlog(NRM, MAX(LVL_GOD, GET_INVIS_LEV(ch)), TRUE, "%s removed the %s-player ban on %s.",
-	GET_NAME(ch), ban_types[ban_node->type], ban_node->site);
+	GET_NAME(ch), BAN_TYPE_NAME(ban_node->type), ban_node->site);
 
   free(ban_node);
   write_ban_list();
