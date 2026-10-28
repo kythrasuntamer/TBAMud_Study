@@ -146,22 +146,23 @@ if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
         PROPERTIES COMPILE_OPTIONS "-ffunction-sections;-fdata-sections")
 endif()
 
-# Production DG substitution and eval: player text must not become variable
-# syntax on the second pass (dg_variables.c var_subst, dg_scripts.c eval).
-add_mud_test(test_dg_var_subst
+# Production DG substitution, eval and script_driver(): player text must not
+# become variable syntax, and a script stops once its owner is freed.
+add_mud_test(test_dg_script_runtime
     ${MUD_SRCDIR}/dg_variables.c
     ${MUD_SRCDIR}/dg_scripts.c
     ${MUD_SRCDIR}/interpreter.c
     ${MUD_SRCDIR}/constants.c
     ${MUD_SRCDIR}/utils.c
     ${MUD_SRCDIR}/random.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/test_dg_var_subst.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_dg_script_runtime.c
 )
 if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
-    target_compile_options(test_dg_var_subst PRIVATE -ffunction-sections -fdata-sections)
-    target_link_options(test_dg_var_subst PRIVATE -Wl,--gc-sections
-        -Wl,--wrap=tb_error_log_at)
-    target_link_libraries(test_dg_var_subst PRIVATE ${CRYPT_LIBRARY} ${SODIUM_LIBRARY})
+    target_compile_options(test_dg_script_runtime PRIVATE -ffunction-sections -fdata-sections)
+    target_link_options(test_dg_script_runtime PRIVATE -Wl,--gc-sections
+        -Wl,--wrap=tb_error_log_at -Wl,--wrap=script_command_interpreter
+        -Wl,--wrap=command_interpreter)
+    target_link_libraries(test_dg_script_runtime PRIVATE ${CRYPT_LIBRARY} ${SODIUM_LIBRARY})
     set_source_files_properties(${MUD_SRCDIR}/dg_variables.c
         PROPERTIES COMPILE_OPTIONS "-ffunction-sections;-fdata-sections")
 endif()

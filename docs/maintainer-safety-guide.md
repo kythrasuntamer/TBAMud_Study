@@ -100,8 +100,12 @@ character with the same idnum still awaits extraction, the UID is rebound to
 the new character. `remove_from_lookup_table(uid, entity)` therefore removes
 the mapping only if it still belongs to the entity being freed.
 
-`script_driver()` sets the caller's *object* pointer to NULL when the object
-purges itself. Capture anything you need afterwards (e.g. the prototype rnum
+After every command, `script_driver()` checks that its own owner is still
+live: an object by UID (`obj_uid_matches()`), a mobile by whether the frame
+made it pending extraction. If not, the frame stops and sets the caller's
+*object* pointer to NULL. This catches any way of freeing the owner (purging
+its container, a fatal `%damage%`, a nested script), and each frame checks only
+its own owner. Capture anything you need afterwards (e.g. the prototype rnum
 in `load_otrigger()`) **before** dispatching.
 
 **Player text never becomes script syntax.** `eval`, `makeuid`, `attach`,

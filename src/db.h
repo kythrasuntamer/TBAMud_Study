@@ -388,7 +388,6 @@ extern struct trig_data *trigger_list;
 extern int top_of_trigt;
 extern long max_mob_id;
 extern long max_obj_id;
-extern int dg_owner_purged;
 
 extern struct message_list fight_messages[MAX_MESSAGES];
 

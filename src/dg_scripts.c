@@ -2668,10 +2668,30 @@ static void dg_letter_value(struct script_data *sc, trig_data *trig, char *cmd)
  * int mode
      TRIG_NEW     just started from dg_triggers.c
      TRIG_RESTART restarted after a 'wait' */
+/* TRUE once a command run by this frame has freed its object owner or
+ * extracted its mobile owner.  Each frame checks its own owner, so nested
+ * scripts can neither hide nor fake this frame's result.  Rooms are never
+ * freed by scripts. */
+static int dg_frame_owner_gone(void *go, int type, long owner_uid,
+                               int owner_was_dying)
+{
+  switch (type) {
+    case OBJ_TRIGGER:
+      /* Compares the registered address; go itself may be freed. */
+      return !obj_uid_matches(owner_uid, (obj_data *) go);
+    case MOB_TRIGGER:
+      /* Extracted characters stay allocated until the end of the pulse. */
+      return !owner_was_dying && MOB_FLAGGED((char_data *) go, MOB_NOTDEADYET);
+  }
+  return FALSE;
+}
+
 int script_driver(void *go_adress, trig_data *trig, int type, int mode)
 {
   static int depth = 0;
   int ret_val = 1;
+  long owner_uid = 0;
+  int owner_was_dying = FALSE;
   struct cmdlist_element *cl;
   char cmd[MAX_INPUT_LENGTH], *p;
   struct script_data *sc = 0;
@@ -2764,6 +2784,17 @@ int script_driver(void *go_adress, trig_data *trig, int type, int mode)
       break;
   }
 
+  /* Remember who owns this frame; its commands can free or extract it. */
+  switch (type) {
+    case MOB_TRIGGER:
+      owner_uid = char_script_id((char_data *) go);
+      owner_was_dying = MOB_FLAGGED((char_data *) go, MOB_NOTDEADYET);
+      break;
+    case OBJ_TRIGGER:
+      owner_uid = obj_script_id((obj_data *) go);
+      break;
+  }
+
   depth++;
   dg_script_execution_enter();
 
@@ -2772,8 +2803,6 @@ int script_driver(void *go_adress, trig_data *trig, int type, int mode)
     GET_TRIG_LOOPS(trig) = 0;
     sc->context = 0;
   }
-
-  dg_owner_purged = 0;
 
   for (cl = (mode == TRIG_NEW) ? trig->cmdlist : trig->curr_state;
       cl && GET_TRIG_DEPTH(trig); cl = cl->next) {
@@ -2932,13 +2961,16 @@ int script_driver(void *go_adress, trig_data *trig, int type, int mode)
             wld_command_interpreter((struct room_data *) go, cmd);
             break;
         }
-        if (dg_owner_purged) {
-          depth--;
-          if (type == OBJ_TRIGGER)
-            *(obj_data **)go_adress = NULL;
-          dg_script_execution_leave();
-          return ret_val;
-        }
+      }
+
+      /* Any command, not just a purge of self, can free the owner: purging
+       * the container it is in, a damage that kills it, a nested script. */
+      if (dg_frame_owner_gone(go, type, owner_uid, owner_was_dying)) {
+        depth--;
+        if (type == OBJ_TRIGGER)
+          *(obj_data **)go_adress = NULL;
+        dg_script_execution_leave();
+        return ret_val;
       }
     }
   }

@@ -73,7 +73,6 @@ struct trig_data *trigger_list = NULL;  /* all attached triggers */
 int top_of_trigt = 0;           /* top of trigger index table    */
 long max_mob_id = MOB_ID_BASE;  /* for unique mob id's           */
 long max_obj_id = OBJ_ID_BASE;  /* for unique obj id's           */
-int dg_owner_purged;            /* For control of scripts        */
 
 struct aq_data *aquest_table;   /* Autoquests table              */
 qst_rnum total_quests = 0;      /* top of autoquest table        */

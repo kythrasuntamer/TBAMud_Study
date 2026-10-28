@@ -1,7 +1,8 @@
-/* Executable tests of production DG substitution (dg_variables.c var_subst)
- * and eval (dg_scripts.c process_eval).  A script line is expanded once by
- * script_driver() and, for eval, evaluated again; these tests drive the same
- * two calls.  Only trigger-local variables are used, so no entities exist.
+/* Executable tests of the production DG runtime: substitution
+ * (dg_variables.c var_subst), eval (dg_scripts.c process_eval) and the
+ * command loop (script_driver).  A script line is expanded once by
+ * script_driver() and, for eval, evaluated again.  Entities are zeroed
+ * fixtures registered in the production UID lookup table.
  */
 #include "unity.h"
 #include "conf.h"
@@ -19,6 +20,8 @@
 #include "quest.h"
 #include "spells.h"
 #include "genobj.h"
+#include "comm.h"
+#include "dg_event.h"
 
 /* ID counters live in db.c, which this fixture does not link. */
 long max_mob_id = MOB_ID_BASE;
@@ -74,6 +77,25 @@ zone_rnum real_zone_by_thing(room_vnum vznum) { (void)vznum; UNREACHED(); return
 void update_pos(struct char_data *victim) { (void)victim; UNREACHED(); }
 /* Name lookups filter targets with this; every fixture is a valid target. */
 int valid_dg_target(char_data *ch, int bitvector) { (void)ch; (void)bitvector; return 1; }
+
+unsigned long pulse;
+void do_dg_cast(void *go, struct script_data *sc, trig_data *t, int type, char *cmd)
+{ (void)go; (void)sc; (void)t; (void)type; (void)cmd; UNREACHED(); }
+void do_dg_affect(void *go, struct script_data *sc, trig_data *t, int type, char *cmd)
+{ (void)go; (void)sc; (void)t; (void)type; (void)cmd; UNREACHED(); }
+struct event *event_create(EVENTFUNC(*func), void *event_obj, long when)
+{ (void)func; (void)event_obj; (void)when; UNREACHED(); return NULL; }
+int remove_var(struct trig_var_data **var_list, char *name)
+{ (void)var_list; (void)name; UNREACHED(); return 0; }
+
+/* dg_handler.c is not linked: script_driver() frames must stay balanced. */
+static int execution_depth;
+void dg_script_execution_enter(void) { execution_depth++; }
+void dg_script_execution_leave(void)
+{
+  TEST_ASSERT_TRUE(execution_depth > 0);
+  execution_depth--;
+}
 
 /* dg_handler.c is not linked; this matches its list free. */
 void free_varlist(struct trig_var_data *vd)
@@ -307,6 +329,124 @@ static void mob_global_field_reads_the_variable(void)
   world = NULL;
 }
 
+/* script_driver() fixtures: a two-line script whose first command frees or
+ * extracts its owner, as purging the container holding an object does. */
+static obj_data *purge_obj;
+static char_data *purge_mob;
+static int dispatched;
+
+void obj_command_interpreter(obj_data *obj, char *argument)
+{
+  (void)argument;
+  dispatched++;
+  if (obj == purge_obj) {
+    /* What extract_obj() does to the identity before freeing it. */
+    remove_from_lookup_table(obj->script_id, obj);
+    purge_obj = NULL;
+  }
+}
+/* interpreter.c is linked for its string helpers; the link wraps (--wrap)
+ * its two command entry points so script_driver() reaches these. */
+/* NOLINTNEXTLINE(cert-dcl37-c,cert-dcl51-cpp): --wrap requires this name. */
+int __wrap_script_command_interpreter(struct char_data *ch, char *arg)
+{
+  (void)arg;
+  dispatched++;
+  if (ch == purge_mob)
+    SET_BIT_AR(MOB_FLAGS(ch), MOB_NOTDEADYET);   /* extract_char() */
+  return 1;
+}
+/* NOLINTNEXTLINE(cert-dcl37-c,cert-dcl51-cpp): --wrap requires this name. */
+void __wrap_command_interpreter(struct char_data *ch, char *argument)
+{ (void)ch; (void)argument; UNREACHED(); }
+void wld_command_interpreter(room_data *room, char *argument)
+{ (void)room; (void)argument; UNREACHED(); }
+
+static struct cmdlist_element line2 = { "second", NULL, NULL, 0 };
+static struct cmdlist_element line1 = { "first", NULL, &line2, 0 };
+
+static void run_owned_script(void *go_address, int type)
+{
+  static struct index_data index = { 0 };
+  static struct index_data *indexes[1] = { &index };
+
+  index.vnum = 4242;
+  trig_index = indexes;
+  top_of_trigt = 1;
+  trig.cmdlist = &line1;
+  trig.attach_type = type;
+  dispatched = 0;
+  script_driver(go_address, &trig, type, TRIG_NEW);
+  TEST_ASSERT_EQUAL_INT(0, execution_depth);
+  trig_index = NULL;
+  top_of_trigt = 0;
+}
+
+/* The flag-based check only noticed an object purging itself by name, and
+ * a nested script cleared it; the frame now checks its own owner's UID. */
+static void script_stops_when_its_object_owner_is_freed(void)
+{
+  static obj_data obj;
+  static struct script_data script;
+  obj_data *owner = &obj;
+
+  memset(&obj, 0, sizeof(obj));
+  memset(&script, 0, sizeof(script));
+  init_lookup_table();
+  SCRIPT(&obj) = &script;
+  GET_OBJ_RNUM(&obj) = NOTHING;           /* no prototype */
+  obj.script_id = OBJ_ID_BASE + 3;
+  add_to_lookup_table(obj.script_id, &obj);
+  purge_obj = &obj;
+
+  run_owned_script(&owner, OBJ_TRIGGER);
+  TEST_ASSERT_EQUAL_INT(1, dispatched);
+  TEST_ASSERT_NULL(owner);        /* the caller learns the object is gone */
+}
+
+static void script_runs_on_while_its_object_owner_lives(void)
+{
+  static obj_data obj;
+  static struct script_data script;
+  obj_data *owner = &obj;
+
+  memset(&obj, 0, sizeof(obj));
+  memset(&script, 0, sizeof(script));
+  init_lookup_table();
+  SCRIPT(&obj) = &script;
+  GET_OBJ_RNUM(&obj) = NOTHING;           /* no prototype */
+  obj.script_id = OBJ_ID_BASE + 4;
+  add_to_lookup_table(obj.script_id, &obj);
+  purge_obj = NULL;
+
+  run_owned_script(&owner, OBJ_TRIGGER);
+  TEST_ASSERT_EQUAL_INT(2, dispatched);
+  TEST_ASSERT_EQUAL_PTR(&obj, owner);
+  remove_from_lookup_table(obj.script_id, &obj);
+}
+
+static void script_stops_when_its_mob_owner_is_extracted(void)
+{
+  static char_data mob;
+  static struct script_data script;
+  char_data *owner = &mob;
+
+  memset(&mob, 0, sizeof(mob));
+  memset(&script, 0, sizeof(script));
+  init_lookup_table();
+  SET_BIT_AR(MOB_FLAGS(&mob), MOB_ISNPC);
+  SCRIPT(&mob) = &script;
+  GET_MOB_RNUM(&mob) = NOBODY;            /* no prototype */
+  mob.script_id = MOB_ID_BASE + 5;
+  add_to_lookup_table(mob.script_id, &mob);
+  purge_mob = &mob;
+
+  run_owned_script(&owner, MOB_TRIGGER);
+  TEST_ASSERT_EQUAL_INT(1, dispatched);
+  purge_mob = NULL;
+  remove_from_lookup_table(mob.script_id, &mob);
+}
+
 static void restore_round_trips_neutralize(void)
 {
   char text[] = "50% off, 100%% sure";
@@ -330,5 +470,8 @@ int main(void)
   RUN_TEST(closed_reference_reports_nothing);
   RUN_TEST(car_is_bounded_by_destination);
   RUN_TEST(mob_global_field_reads_the_variable);
+  RUN_TEST(script_stops_when_its_object_owner_is_freed);
+  RUN_TEST(script_runs_on_while_its_object_owner_lives);
+  RUN_TEST(script_stops_when_its_mob_owner_is_extracted);
   return UNITY_END();
 }
