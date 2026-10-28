@@ -280,7 +280,18 @@ zone_rnum real_zone(zone_vnum vnum)
   return NOWHERE;
 }
 static zone_rnum zone_by_thing = NOWHERE;   /* real_zone_by_thing() result */
-zone_rnum real_zone_by_thing(room_vnum vznum) { (void)vznum; return zone_by_thing; }
+/* Runs inside real_zone_by_thing(), i.e. in the middle of 'stat room': lets
+ * a test change the world while a command runs. */
+static void (*during_command)(void);
+zone_rnum real_zone_by_thing(room_vnum vznum)
+{
+  void (*hook)(void) = during_command;
+  (void)vznum;
+  during_command = NULL;
+  if (hook)
+    hook();
+  return zone_by_thing;
+}
 void remove_completed_quest(struct char_data *ch, qst_vnum vnum) { (void)ch; (void)vnum; UNREACHED(); }
 void reset_zone(zone_rnum zone) { (void)zone; UNREACHED(); }
 void roll_real_abils(struct char_data *ch) { (void)ch; UNREACHED(); }
@@ -369,6 +380,7 @@ void setUp(void)
   in_game_char = NULL;
   vis_obj = NULL;
   zone_by_thing = NOWHERE;
+  during_command = NULL;
   taken_name = NULL;
   load_char_result = -1;
   load_char_level = 1;
@@ -1048,6 +1060,45 @@ static void test_set_other_players_poof_below_impl_is_refused(void)
   in_game_char = NULL;
 }
 
+/* What add_room() does when a room is inserted below an occupied one:
+ * rnums shift and occupants' IN_ROOM follow, but do_at's locals do not. */
+static void shift_rooms(void)
+{
+  rooms[0].number = 3014;
+  rooms[1].number = 3000;
+  IN_ROOM(&imm) = 0;           /* imm is in 3014, now rnum 0 */
+}
+static void delete_origin(void)
+{
+  rooms[0].number = 3001;      /* room 3000 is gone */
+}
+
+/* G1-22: do_at kept rnums across the command; after an insert the return
+ * test failed (the immortal was stranded) or sent them to another room. */
+static void test_at_returns_by_vnum_after_rooms_shift(void)
+{
+  /* command_interpreter() dispatches through the real command table. */
+  complete_cmd_info = (struct command_info *) cmd_info;
+  GET_POS(&imm) = POS_STANDING;
+  rooms[0].name = rooms[1].name = (char *)"Room";
+  during_command = shift_rooms;
+  RUN_CMD(do_at, &imm, "3014 stat room");
+  TEST_ASSERT_NULL(during_command);   /* the command ran and shifted rooms */
+  TEST_ASSERT_EQUAL_INT(3000, world[IN_ROOM(&imm)].number);
+  TEST_ASSERT_EQUAL_INT(0, captured_errors);
+
+  reset_counters();
+  rooms[0].number = 3000;
+  rooms[1].number = 3014;
+  IN_ROOM(&imm) = 0;
+  during_command = delete_origin;
+  RUN_CMD(do_at, &imm, "3014 stat room");
+  TEST_ASSERT_EQUAL_STRING("at-return", captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(captured_detail, "vnum 3000 vanished"));
+  TEST_ASSERT_EQUAL_INT(1, IN_ROOM(&imm));
+  complete_cmd_info = NULL;
+}
+
 int main(void)
 {
   /* basic_mud_log()/mudlog() are the real utils.c ones; keep them quiet. */
@@ -1079,6 +1130,7 @@ int main(void)
   RUN_TEST(test_show_player_last_logon_has_minutes);
   RUN_TEST(test_out_of_range_vnums_are_rejected);
   RUN_TEST(test_set_other_players_poof_below_impl_is_refused);
+  RUN_TEST(test_at_returns_by_vnum_after_rooms_shift);
   {
     int failures = UNITY_END();
     if (logfile)

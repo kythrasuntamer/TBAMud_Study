@@ -328,6 +328,7 @@ ACMD(do_at)
 {
   char command[MAX_INPUT_LENGTH], buf[MAX_INPUT_LENGTH];
   room_rnum location, original_loc;
+  room_vnum original_vnum, target_vnum;
 
   half_chop(argument, buf, command);
   if (!*buf) {
@@ -343,17 +344,30 @@ ACMD(do_at)
   if ((location = find_target_room(ch, buf)) == NOWHERE)
     return;
 
-  /* a location has been found. */
+  /* a location has been found. Remember both rooms by vnum: the command
+   * runs with ch moved and may add or delete rooms (dig, redit, rdelete),
+   * which shifts every later rnum. */
   original_loc = IN_ROOM(ch);
+  original_vnum = GET_ROOM_VNUM(original_loc);
+  target_vnum = GET_ROOM_VNUM(location);
   char_from_room(ch);
   char_to_room(ch, location);
   command_interpreter(ch, command);
 
-  /* check if the char is still there */
-  if (IN_ROOM(ch) == location) {
-    char_from_room(ch);
-    char_to_room(ch, original_loc);
+  /* check if the char is still there (it may have moved, or be pending
+   * extraction in NOWHERE) */
+  location = real_room(target_vnum);
+  if (IN_ROOM(ch) == NOWHERE || IN_ROOM(ch) != location)
+    return;
+  if ((original_loc = real_room(original_vnum)) == NOWHERE) {
+    TB_WARN_MSG("act", "at-return", "room",
+                DIAG_CHAR_FMT " original room vnum %d vanished during 'at'",
+                DIAG_CHAR(ch), original_vnum);
+    send_to_char(ch, "Your original room no longer exists; you stay here.\r\n");
+    return;
   }
+  char_from_room(ch);
+  char_to_room(ch, original_loc);
 }
 
 ACMD(do_goto)
