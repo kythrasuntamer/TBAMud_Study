@@ -80,16 +80,27 @@ void parse_trigger(FILE *trig_f, int nr)
 
     trig->arglist = fread_string(trig_f, errors);
 
-    cmds = s = fread_string(trig_f, errors);
+    cmds = fread_string(trig_f, errors);
 
+    /* The .trg file is hand-editable.  fread_string() returns NULL for an
+     * empty '~' body, and a body of only line breaks has no first token;
+     * either way the trigger still needs one command line, because every
+     * instance shares this cmdlist. */
     CREATE(trig->cmdlist, struct cmdlist_element, 1);
-    trig->cmdlist->cmd = strdup(strtok(s, "\n\r"));
-    cle = trig->cmdlist;
+    s = cmds ? strtok(cmds, "\n\r") : NULL;
+    if (s == NULL) {
+      TB_WARN_MSG("dg", "trigger-parse-empty", "trigger",
+                  "trig vnum %d has an empty command body; using '* No script'", nr);
+      trig->cmdlist->cmd = strdup("* No script");
+    } else {
+      trig->cmdlist->cmd = strdup(s);
+      cle = trig->cmdlist;
 
-    while ((s = strtok(NULL, "\n\r"))) {
+      while ((s = strtok(NULL, "\n\r"))) {
 	CREATE(cle->next, struct cmdlist_element, 1);
 	cle = cle->next;
 	cle->cmd = strdup(s);
+      }
     }
 
     free(cmds);

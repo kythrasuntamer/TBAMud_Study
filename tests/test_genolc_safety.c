@@ -146,6 +146,20 @@ int get_line(FILE *fl, char *buf)
   strcpy(buf, temp);
   return lines;
 }
+/* db.c fread_string(): text up to '~'; NULL for an empty body. */
+char *fread_string(FILE *fl, const char *error)
+{
+  char buf[MAX_STRING_LENGTH];
+  size_t len = 0;
+  int c;
+  (void)error;
+  while ((c = fgetc(fl)) != EOF && c != '~' && len < sizeof(buf) - 1)
+    buf[len++] = (char)c;
+  while (c != EOF && c != '\n') c = fgetc(fl);   /* rest of the '~' line */
+  buf[len] = '\0';
+  return len ? strdup(buf) : NULL;
+}
+bitvector_t asciiflag_conv(char *flag) { (void)flag; return 0; }
 void strip_cr(char *buffer) { (void)buffer; }
 char *convert_from_tabs(char *string) { return string; }
 int sprintascii(char *out, bitvector_t bits) { (void)bits; strcpy(out, "0"); return 1; }
@@ -914,6 +928,64 @@ static void add_room_update_keeps_live_events(void)
 }
 
 /* ------------------------------------------------------------------------ */
+/* C2-14: a trigger with an empty command body loads with a placeholder.    */
+/* ------------------------------------------------------------------------ */
+static void free_trigger_index(void)
+{
+  int i;
+  for (i = 0; i < top_of_trigt; i++) {
+    struct trig_data *t = trig_index[i]->proto;
+    struct cmdlist_element *c, *next;
+    for (c = t->cmdlist; c; c = next) { next = c->next; free(c->cmd); free(c); }
+    free(t->name);
+    free(t->arglist);
+    free(t);
+    free(trig_index[i]);
+  }
+  free(trig_index);
+  trig_index = NULL;
+  top_of_trigt = 0;
+}
+
+static void parse_body(const char *text)
+{
+  FILE *fp;
+  write_text_file(TRG_PREFIX "/t.trg", text);
+  fp = fopen(TRG_PREFIX "/t.trg", "r");
+  TEST_ASSERT_NOT_NULL(fp);
+  CREATE(trig_index, struct index_data *, 1);
+  top_of_trigt = 0;
+  parse_trigger(fp, 100);
+  fclose(fp);
+}
+
+static void parse_trigger_accepts_empty_body(void)
+{
+  parse_body("empty~\n0 g 100\n~\n~\n");
+  TEST_ASSERT_EQUAL_INT(1, top_of_trigt);
+  TEST_ASSERT_EQUAL_STRING("* No script", trig_index[0]->proto->cmdlist->cmd);
+  TEST_ASSERT_EQUAL_STRING("trigger-parse-empty", tb_captured_operation);
+  free_trigger_index();
+}
+
+static void parse_trigger_accepts_blank_line_body(void)
+{
+  parse_body("blank~\n0 g 100\n~\n\n\n~\n");
+  TEST_ASSERT_EQUAL_STRING("* No script", trig_index[0]->proto->cmdlist->cmd);
+  TEST_ASSERT_EQUAL_STRING("trigger-parse-empty", tb_captured_operation);
+  free_trigger_index();
+}
+
+static void parse_trigger_reads_commands(void)
+{
+  parse_body("ok~\n0 g 100\n~\nsay hi\nwait 1\n~\n");
+  TEST_ASSERT_EQUAL_STRING("say hi", trig_index[0]->proto->cmdlist->cmd);
+  TEST_ASSERT_EQUAL_STRING("wait 1", trig_index[0]->proto->cmdlist->next->cmd);
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  free_trigger_index();
+}
+
+/* ------------------------------------------------------------------------ */
 /* Temporary world directory for the writers.                               */
 /* ------------------------------------------------------------------------ */
 static char test_root[] = "/tmp/tb-genolc-XXXXXX";
@@ -990,6 +1062,9 @@ int main(void)
   RUN_TEST(add_object_frees_replaced_proto_script);
   RUN_TEST(copy_object_keeps_destination_runtime_state);
   RUN_TEST(add_room_update_keeps_live_events);
+  RUN_TEST(parse_trigger_accepts_empty_body);
+  RUN_TEST(parse_trigger_accepts_blank_line_body);
+  RUN_TEST(parse_trigger_reads_commands);
   failures = UNITY_END();
   leave_test_root();
   return failures;
