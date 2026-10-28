@@ -21,6 +21,7 @@
 struct obj_data *object_list;
 struct trig_data *trigger_list;
 struct index_data **trig_index;
+int top_of_trigt;
 
 /* ---- diagnostic capture ------------------------------------------------ */
 #define EXIT_EXPECTED_OP 42
@@ -156,6 +157,79 @@ static void test_extract_script_bad_args_are_reported(void)
   TEST_ASSERT_EQUAL_STRING("extract-script-type", last_op);
 }
 
+/* ---- trigger extraction (D2-07) ---------------------------------------- */
+static struct index_data one_trig_index;
+static struct index_data *one_trig_table[1];
+
+/* A one-entry trigger index (vnum 500) and an empty trigger_list. */
+static void use_one_trigger_index(void)
+{
+  memset(&one_trig_index, 0, sizeof(one_trig_index));
+  one_trig_index.vnum = 500;
+  one_trig_table[0] = &one_trig_index;
+  trig_index = one_trig_table;
+  top_of_trigt = 1;
+  trigger_list = NULL;
+}
+
+/* An instance of trigger 500, linked as add_trigger() would link it. */
+static struct trig_data *live_trigger(void)
+{
+  struct trig_data *t = calloc(1, sizeof(*t));
+
+  TEST_ASSERT_NOT_NULL(t);
+  t->nr = 0;
+  t->serial = 77;
+  t->next_in_world = trigger_list;
+  trigger_list = t;
+  one_trig_index.number++;
+  return t;
+}
+
+/* D2-07: extracting a trigger twice inside script execution queued it for
+ * dg_script_execution_leave() twice (a double free there) and drove the
+ * use count negative, with no report. */
+static void test_double_extract_is_reported_and_freed_once(void)
+{
+  struct trig_data *t;
+
+  use_one_trigger_index();
+  t = live_trigger();
+  dg_script_execution_enter();
+  extract_trigger(t);
+  extract_trigger(t);
+  TEST_ASSERT_EQUAL_STRING("trigger-double-extract", last_op);
+  TEST_ASSERT_EQUAL_INT(1, n_captured);
+  dg_script_execution_leave();
+  TEST_ASSERT_NULL(trigger_list);
+  TEST_ASSERT_EQUAL_INT(0, one_trig_index.number);
+  trig_index = NULL;
+  top_of_trigt = 0;
+}
+
+/* D2-07: the use count was decremented without checking the rnum or the
+ * count; a bad rnum indexed trig_index out of range. */
+static void test_extract_with_bad_index_bookkeeping_is_reported(void)
+{
+  struct trig_data *t;
+
+  use_one_trigger_index();
+  t = live_trigger();
+  one_trig_index.number = 0;
+  extract_trigger(t);
+  TEST_ASSERT_EQUAL_STRING("trigger-count-underflow", last_op);
+  TEST_ASSERT_EQUAL_INT(0, one_trig_index.number);
+  TEST_ASSERT_NULL(trigger_list);
+
+  t = live_trigger();
+  t->nr = 5;                       /* past the one-entry index */
+  extract_trigger(t);
+  TEST_ASSERT_EQUAL_STRING("trigger-rnum-range", last_op);
+  TEST_ASSERT_NULL(trigger_list);
+  trig_index = NULL;
+  top_of_trigt = 0;
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -163,5 +237,7 @@ int main(void)
   RUN_TEST(test_proto_shared_with_last_room_is_fatal);
   RUN_TEST(test_script_shared_with_last_room_is_fatal);
   RUN_TEST(test_unshared_script_frees_quietly);
+  RUN_TEST(test_double_extract_is_reported_and_freed_once);
+  RUN_TEST(test_extract_with_bad_index_bookkeeping_is_reported);
   return UNITY_END();
 }

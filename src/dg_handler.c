@@ -190,26 +190,75 @@ void free_trigger(struct trig_data *trig)
     free(trig);
 }
 
+/** TRUE when trig was extracted during script execution and is waiting in
+ * dg_retired_triggers to be freed (so it is still safe to read). */
+static int dg_trigger_is_retired(const struct trig_data *trig)
+{
+  const struct dg_retired_trigger *r;
+
+  for (r = dg_retired_triggers; r; r = r->next)
+    if (r->trig == trig)
+      return TRUE;
+  return FALSE;
+}
+
 /** remove a single trigger from a mob/obj/room
  * @pre trig is already unlinked from its owner's TRIGGERS(sc) list
  * (remove_trigger() does this; extract_script() discards the whole list).
- * @pre trig has not been extracted before.
+ * @pre trig is live: on trigger_list (add_trigger() put it there) and not
+ * extracted before.  Otherwise dg/trigger-double-extract is reported and
+ * trig is left alone.
  * @post The pending wait is cancelled, the trig_index use count is
  * decremented, trig is off trigger_list, and trig is freed now or, inside
  * script execution, at the outermost dg_script_execution_leave(). */
 void extract_trigger(struct trig_data *trig)
 {
-  struct trig_data *temp;
+  struct trig_data **link;
+
+  /* Engine invariant (no script text reaches it): a trigger is extracted
+   * once.  A second extraction used to be silent (REMOVE_FROM_LIST finds
+   * nothing) and then queued trig for dg_script_execution_leave() twice or
+   * freed it twice.  Look trig up by address before reading it: outside
+   * script execution an earlier extraction has already freed it. */
+  for (link = &trigger_list; *link && *link != trig;
+       link = &(*link)->next_in_world)
+    ;
+  if (*link == NULL) {
+    if (dg_trigger_is_retired(trig))
+      TB_ERROR_MSG("dg", "trigger-double-extract", "trigger",
+                   "trig vnum %d serial %lu was already extracted and awaits "
+                   "its free; not extracted again", DIAG_TRIG_VNUM(trig),
+                   trig->serial);
+    else
+      TB_ERROR_MSG("dg", "trigger-double-extract", "trigger",
+                   "trigger %p is not on trigger_list (already freed, or "
+                   "never attached); not touched", (void *)trig);
+    return;
+  }
 
   if (GET_TRIG_WAIT(trig)) {
     event_cancel(GET_TRIG_WAIT(trig));
     GET_TRIG_WAIT(trig) = NULL;
   }
 
-  trig_index[trig->nr]->number--;
+  /* The use count feeds vstat and zone resets; never index trig_index out
+   * of range or count below zero. */
+  if (!VALID_TRIG_RNUM(trig->nr))
+    TB_ERROR_MSG("dg", "trigger-rnum-range", "trigger",
+                 "trig serial %lu has rnum %d outside the %d-entry trigger "
+                 "index; use count not updated", trig->serial, (int)trig->nr,
+                 top_of_trigt);
+  else if (trig_index[trig->nr]->number <= 0)
+    TB_ERROR_MSG("dg", "trigger-count-underflow", "trigger",
+                 "trig vnum %d serial %lu: use count %d is already <= 0; left "
+                 "unchanged", GET_TRIG_VNUM(trig), trig->serial,
+                 trig_index[trig->nr]->number);
+  else
+    trig_index[trig->nr]->number--;
 
-  /* walk the trigger list and remove this one */
-  REMOVE_FROM_LIST(trig, trigger_list, next_in_world);
+  /* Unlink.  *link still addresses trig: event_cancel() frees only the
+   * event and its payload and never touches trigger_list. */
+  *link = trig->next_in_world;
 
   if (DG_IN_SCRIPT_EXECUTION()) {
     struct dg_retired_trigger *node;
