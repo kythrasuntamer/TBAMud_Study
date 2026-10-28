@@ -408,6 +408,8 @@ add_mud_test(test_mail_persist
     ${MUD_SRCDIR}/mail.c
     ${CMAKE_CURRENT_SOURCE_DIR}/test_mail_persist.c
 )
+# A regression of the receive loop (B2-06) spins forever; fail it instead.
+set_tests_properties(test_mail_persist PROPERTIES TIMEOUT 60)
 if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
     target_compile_options(test_mail_persist PRIVATE -ffunction-sections -fdata-sections)
     target_link_options(test_mail_persist PRIVATE -Wl,--gc-sections)

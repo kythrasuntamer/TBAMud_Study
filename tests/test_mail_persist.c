@@ -61,6 +61,12 @@ int get_line(FILE *fl, char *buf)
 }
 
 char *get_name_by_id(long id) { (void)id; return NULL; }
+/* Referenced by the postmaster's "mail" command, which these tests do not run. */
+long get_id_by_name(const char *name) { (void)name; return -1; }
+int decrease_gold(struct char_data *ch, int amt) { (void)ch; return amt; }
+char *one_argument(char *argument, char *first_arg) { *first_arg = '\0'; return argument; }
+void string_write(struct descriptor_data *d, char **txt, size_t len, long mailto, void *data)
+{ (void)d; (void)txt; (void)len; (void)mailto; (void)data; }
 
 /* Body reader with fread_string()'s result: the text before '~'. */
 char *fread_string(FILE *fl, const char *error)
@@ -161,11 +167,11 @@ void tearDown(void)
  * message. The live file must survive untouched. */
 static void test_read_delete_keeps_file_on_damaged_record(void)
 {
-  char *text;
+  char *text = NULL;
 
   write_mail_file(three_with_bad_middle);
-  text = read_delete(7);
-  free(text);
+  TEST_ASSERT_FALSE(read_delete(7, &text));
+  TEST_ASSERT_NULL(text);
 
   TEST_ASSERT_EQUAL_STRING(three_with_bad_middle, slurp(MAIL_FILE));
   TEST_ASSERT_TRUE(no_mail);
@@ -188,12 +194,83 @@ static void test_scan_file_counts_good_file(void)
   TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
 }
 
+/* The postmaster's "receive" command, reached through SPECIAL(postmaster). */
+static struct command_info receive_cmd[] = {
+  { "receive", "receive", POS_STANDING, NULL, 0, 0 },
+};
+struct command_info *complete_cmd_info = receive_cmd;
+
+static struct char_data player, mailman;
+static struct player_special_data player_specials;
+static struct descriptor_data desc;
+
+static void receive_mail(void)
+{
+  memset(&player, 0, sizeof(player));
+  memset(&mailman, 0, sizeof(mailman));
+  memset(&player_specials, 0, sizeof(player_specials));
+  memset(&desc, 0, sizeof(desc));
+  player.player_specials = &player_specials;
+  player.desc = &desc;
+  GET_IDNUM(&player) = 7;
+  GET_LEVEL(&player) = 1;
+  mailman.player_specials = &player_specials;
+  SET_BIT_AR(MOB_FLAGS(&mailman), MOB_ISNPC);
+  TEST_ASSERT_TRUE(postmaster(&player, &mailman, 0, (char *)""));
+}
+
+static void free_inventory(void)
+{
+  while (player.carrying) {
+    struct obj_data *next = player.carrying->next_content;
+    free_mail_obj(player.carrying);
+    player.carrying = next;
+  }
+}
+
+/* B2-06: when the message cannot be removed (here the rewrite file cannot
+ * be created), has_mail() stays true; the receive loop used to create a new
+ * note on every pass, forever. It must stop after reporting. */
+static void test_receive_stops_when_message_not_removed(void)
+{
+  write_mail_file("### 7 1 1000\nhello\n~\n");
+  TEST_ASSERT_EQUAL_INT(0, mkdir(MAIL_FILE_TMP, 0700));
+
+  receive_mail();
+
+  TEST_ASSERT_EQUAL_INT(0, rmdir(MAIL_FILE_TMP));
+  TEST_ASSERT_EQUAL_INT(0, objects_given);
+  TEST_ASSERT_TRUE(no_mail);
+  TEST_ASSERT_EQUAL_STRING("read-delete", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "player idnum 7"));
+  TEST_ASSERT_EQUAL_STRING("### 7 1 1000\nhello\n~\n", slurp(MAIL_FILE));
+}
+
+/* B2-06: the normal path delivers each message once and removes it. */
+static void test_receive_delivers_and_removes(void)
+{
+  write_mail_file("### 7 1 1000\nhello\n~\n### 9 1 1000\nother\n~\n"
+                  "### 7 1 1001\nagain\n~\n");
+
+  receive_mail();
+
+  TEST_ASSERT_EQUAL_INT(2, objects_given);
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  TEST_ASSERT_NOT_NULL(strstr(slurp(MAIL_FILE), "### 9 1 1000"));
+  TEST_ASSERT_NULL(strstr(slurp(MAIL_FILE), "### 7"));
+  TEST_ASSERT_NOT_NULL(player.carrying);
+  TEST_ASSERT_NOT_NULL(strstr(player.carrying->action_description, "again"));
+  free_inventory();
+}
+
 int main(void)
 {
   UNITY_BEGIN();
   RUN_TEST(test_read_delete_keeps_file_on_damaged_record);
   RUN_TEST(test_scan_file_reports_damage);
   RUN_TEST(test_scan_file_counts_good_file);
+  RUN_TEST(test_receive_stops_when_message_not_removed);
+  RUN_TEST(test_receive_delivers_and_removes);
   {
     char etc[300];
     if (snprintf(etc, sizeof(etc), "%s/etc", scratch_dir) > 0)
