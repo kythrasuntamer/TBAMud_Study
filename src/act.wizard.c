@@ -47,6 +47,12 @@
 #define TABLE_INDEX_OK(i, n)     ((unsigned int) (i) < (unsigned int) (n))
 #define VALID_ATTACK_TYPE(t)     TABLE_INDEX_OK((t), NUM_ATTACK_TYPES)
 
+/* Number of elements of a true array (never a pointer parameter). Compile
+ * time only: the argument is not evaluated. */
+#ifndef TB_ARRAY_LEN
+#define TB_ARRAY_LEN(a)          (sizeof(a) / sizeof((a)[0]))
+#endif
+
 /** Checked lookup in one of the "\n"-terminated name tables in constants.c.
  * @param table   The table; count is its number of real entries (not
  *                counting the "\n" sentinel), e.g. NUM_APPLIES.
@@ -3817,6 +3823,12 @@ static struct zcheck_affs {
   {APPLY_SAVING_SPELL,-2,   2, "saving throw (spell)"}
 };
 
+/* zaffs[] is indexed by APPLY_* location: one entry per apply. A new
+ * APPLY_* without a zaffs entry fails the build here (C99 has no
+ * _Static_assert, so a negative array size does the job). */
+typedef char zaffs_needs_one_entry_per_apply
+  [(TB_ARRAY_LEN(zaffs) == NUM_APPLIES) ? 1 : -1];
+
 /* These are ABS() values. */
 #define MAX_APPLY_HITROLL_TOTAL   5
 #define MAX_APPLY_DAMROLL_TOTAL   5
@@ -4062,17 +4074,31 @@ ACMD (do_zcheck)
                              affs, MAX_AFFECTS_ALLOWED);
 
       /*check for out of range affections. */
-      for (j=0;j<MAX_OBJ_AFFECT;j++)
-        if (zaffs[(int)obj->affected[j].location].max_aff != -99 && /* only care if a range is set */
-            (obj->affected[j].modifier > zaffs[(int)obj->affected[j].location].max_aff ||
-             obj->affected[j].modifier < zaffs[(int)obj->affected[j].location].min_aff ||
-             zaffs[(int)obj->affected[j].location].min_aff == zaffs[(int)obj->affected[j].location].max_aff) && (found=1))
+      for (j=0;j<MAX_OBJ_AFFECT;j++) {
+        /* The location comes from the object file's 'A' line or oedit and
+         * is not range-checked at load (db.c). */
+        int loc = obj->affected[j].location;
+        const struct zcheck_affs *za;
+
+        if (!TABLE_INDEX_OK(loc, TB_ARRAY_LEN(zaffs))) {
+          found = 1;
+          TB_WARN_MSG("act", "zcheck-apply", "object",
+                      "obj vnum %d apply slot %d location %d outside 0..%d",
+                      GET_OBJ_VNUM(obj), j, loc, (int) TB_ARRAY_LEN(zaffs) - 1);
+          tb_buf_appendf(&report, "- apply slot %d has invalid location %d.\r\n",
+                         j, loc);
+          continue;
+        }
+        za = &zaffs[loc];
+        if (za->max_aff != -99 && /* only care if a range is set */
+            (obj->affected[j].modifier > za->max_aff ||
+             obj->affected[j].modifier < za->min_aff ||
+             za->min_aff == za->max_aff) && (found=1))
           tb_buf_appendf(&report,
                           "- apply to %s is %d (limit %d - %d).\r\n",
-                               zaffs[(int)obj->affected[j].location].message,
-                               obj->affected[j].modifier,
-                               zaffs[(int)obj->affected[j].location].min_aff,
-                               zaffs[(int)obj->affected[j].location].max_aff);
+                               za->message, obj->affected[j].modifier,
+                               za->min_aff, za->max_aff);
+      }
 
      /* special handling of +hit and +dam because of +hit_n_dam */
      for (todam=0, tohit=0, j=0;j<MAX_OBJ_AFFECT;j++) {

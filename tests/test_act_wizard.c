@@ -595,6 +595,35 @@ static void test_zcheck_room_flag_finding_is_reported_for_its_room(void)
   TEST_ASSERT_EQUAL_INT(0, captured_errors);
 }
 
+/* G1-10: zcheck indexed zaffs[] (NUM_APPLIES entries) with an object's
+ * unchecked apply location from the world file. */
+static void test_zcheck_bad_apply_location_is_reported(void)
+{
+  static struct obj_data obj;
+  static struct index_data oindex;
+
+  make_obj(&obj, ITEM_TRASH);
+  obj.item_number = 0;
+  oindex.vnum = 3022;
+  obj_proto = &obj;
+  obj_index = &oindex;
+  top_of_objt = 1;      /* the '<' loop bound checks rnum 0 only */
+  zone_by_thing = 0;
+  obj.affected[1].location = 100;
+  obj.affected[1].modifier = 2;
+  rooms[0].description = good_desc;
+  rooms[1].description = good_desc;
+
+  RUN_CMD(do_zcheck, &imm, "30");
+  TEST_ASSERT_EQUAL_STRING("zcheck-apply", captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(captured_detail, "obj vnum 3022 apply slot 1 location 100"));
+  TEST_ASSERT_NOT_NULL(strstr(sent, "- apply slot 1 has invalid location 100."));
+
+  obj_proto = NULL;
+  obj_index = NULL;
+  top_of_objt = 0;
+}
+
 int main(void)
 {
   /* basic_mud_log()/mudlog() are the real utils.c ones; keep them quiet. */
@@ -611,6 +640,7 @@ int main(void)
   RUN_TEST(test_stat_room_bad_zone_command_args_are_reported);
   RUN_TEST(test_show_player_and_last_bad_sex_class_are_reported);
   RUN_TEST(test_zcheck_room_flag_finding_is_reported_for_its_room);
+  RUN_TEST(test_zcheck_bad_apply_location_is_reported);
   {
     int failures = UNITY_END();
     if (logfile)
