@@ -116,6 +116,306 @@ FIXED_EARLIER = {
               "security: player text never becomes DG variable syntax on a second pass"),
 }
 
+# Findings the chunk branches left open (deferred to a follow-up group,
+# queued, or partly fixed) that a later round fixed: the deferred groups
+# (db-loaders r1-5, player-load r1-3, dg, gen-olc r1-2, core-utils r1-2,
+# commands, errloc, cedit r1-4), leftovers r1-2, world-data r1-2, followups,
+# stranded and verify-static. Each subject was found by searching the merged
+# history for the finding ID (D2-04 and D2-V01 by reading the code); every
+# subject must be on HEAD, or the run reports a problem.
+LATE_FIXES = {
+    "A1-14": [
+        'security: a failed socket poll no longer passes for a normal shutdown',
+    ],
+    "A2-07": [
+        "security: command_interpreter checks a switched NPC's original before use",
+    ],
+    "B1-15": [
+        'security: index_boot sorts a table whose record numbers did not ascend',
+        'security: world record numbers must fit a vnum; disorder is reported',
+    ],
+    "B1-18": [
+        'security: world loading tests for a leading article without fname()',
+    ],
+    "B2-21": [
+        'security: save_char runs no wear/remove triggers mid-save',
+    ],
+    "B2-23": [
+        'security: hcontrol carries a format header; other layouts fail loudly',
+        'security: zero a newly built house record before it is written to hcontrol',
+    ],
+    "B2-26": [
+        'security: tb_strftime leaves an empty string when the time is unrepresentable',
+        'diag: remove_player reports an unrepresentable last-login time',
+    ],
+    "B2-29": [
+        'security: an empty player index is -1, and remove_player checks its slot',
+    ],
+    "B2-32": [
+        'security: rent offers pass the object to act() as $p, not as format text',
+    ],
+    "C1-07": [
+        'security: boot the bulletin boards in boot_db instead of on first use',
+    ],
+    "C1-13": [
+        "diag: ibtedit shows and logs a record's current number",
+        'security: IBT remove and ibtedit track records, not list positions',
+    ],
+    "C1-17": [
+        'security: IBT dates are converted as time_t and checked before display',
+    ],
+    "C1-19": [
+        'diag: saving throws and level thresholds name the character on a table miss',
+        'diag: class-table misses name the character whose data is out of range',
+        'diag: class-table misses report the table, class, save type and level',
+    ],
+    "C1-28": [
+        'security: add_mobile refuses a vnum that belongs to no zone',
+    ],
+    "C1-29": [
+        'security: save_mobiles keeps the old file when a write failed earlier',
+    ],
+    "C2-01": [
+        'security: delete_mobile steps past a zone command it could not remove',
+        'security: save_zone range-checks stored rnums before converting to vnums',
+        'security: delete_object re-examines the zone command that slides into a drop',
+    ],
+    "C2-13": [
+        'security: redit copies a world-file extra description with no body',
+        'security: save_rooms writes a NULL extra-description field as empty',
+    ],
+    "C2-16": [
+        'security: save_rooms keeps the old file when a write failed earlier',
+        'security: save_mobiles keeps the old file when a write failed earlier',
+        'security: OLC writers keep the old file when a write failed earlier',
+    ],
+    "C2-27": [
+        "security: delete_room frees the 'V' strings of the commands it cancels",
+        "security: a zone command list owns its 'V' strings and frees them on removal",
+        'diag: remove_cmd_from_list reports a refused removal instead of returning',
+    ],
+    "C2-28": [
+        'security: add_object refuses a vnum that belongs to no zone',
+    ],
+    "D1-19": [
+        'security: DG room lookups check that the script owner is in a room',
+    ],
+    "D1-27": [
+        'diag: an rdelete with an unknown UID says rdelete, not remote',
+        'diag: lost DG remote writes and detach misses are reported',
+    ],
+    "D2-02": [
+        'security: a DG wait whose event key would overflow is rejected by its trigger',
+        'security: reject event keys that overflow into negative buckets',
+    ],
+    "D2-03": [
+        'security: a room wait finds its room by vnum after world[] moves',
+    ],
+    "D2-04": [
+        'security: a room wait finds its room by vnum after world[] moves',
+    ],
+    "D2-06": [
+        'diag: an unbalanced DG execution leave is fatal and named',
+    ],
+    "D2-07": [
+        'security: extract_trigger refuses a trigger it has already extracted',
+    ],
+    "D2-08": [
+        'diag: proto-script helpers report a bad owner and a leaked list',
+    ],
+    "D2-11": [
+        'diag: a script-variable file that survives deletion is reported with its player',
+    ],
+    "D2-12": [
+        'security: event_time and event_is_queued refuse an event that has no slot',
+    ],
+    "D2-V01": [
+        'security: bound DG wait lengths before they reach the event queue',
+    ],
+    "E1-15": [
+        "security: command_otrigger checks the actor's room before reading it",
+    ],
+    "E1-20": [
+        'security: a mob script runs no command while its mob is in no room',
+    ],
+    "E2-09": [
+        'diag: trigedit releases a stale OLC session with cleanup_olc and reports it',
+    ],
+    "E2-12": [
+        'security: the trigger attachment menu checks each trigger vnum it lists',
+    ],
+    "E2-15": [
+        'diag: script_save_to_disk names the saver and returns a status on bad input',
+    ],
+    "E2-16": [
+        "security: the trigedit scratch trigger never points at a prototype's script",
+    ],
+    "F1-16": [
+        'security: read_type_list drops a buy type that does not fit an int',
+        "security: load_zones disables an 'E' or 'D' whose slot or direction is out of range",
+        'security: OLC menus bound name-table lookups by the table size',
+    ],
+    "F2-27": [
+        'security: hedit refuses to save a help entry longer than its buffer',
+    ],
+    "F2-28": [
+        "fix: qedit's flag menu toggles the bit of the flag the builder chose",
+    ],
+    "F3-19": [
+        'security: split_argument bounds the config key by its buffer',
+    ],
+    "F3-20": [
+        'security: aedit checks the socials-editor permission with can_use_editor',
+        'security: can_edit_zone bounds its zone index and keeps editor sentinels out',
+    ],
+    "G1-07": [
+        "security: 'force room' forces a UID snapshot, never a stale next_in_room",
+    ],
+    "G1-19": [
+        'security: tb_strftime leaves an empty string when the time is unrepresentable',
+        'security: immortal time displays never print an unwritten buffer',
+    ],
+    "G2-02": [
+        'security: delete_quest takes every loaded player off the deleted quest',
+        'security: load_char clears a current quest that is no longer loaded',
+        'security: score checks the current quest before reading aquest_table',
+    ],
+    "G2-03": [
+        'security: parse_mobile stores "undefined" for an empty mob alias list',
+        'security: world loaders store "undefined" for empty display strings',
+        'security: room and object display never dereference NULL world strings',
+    ],
+    "G2-11": [
+        'security: split refuses a share that would pass MAX_GOLD',
+    ],
+    "G2-12": [
+        'security: CLASS_ABBR range-checks a pfile class before indexing class_abbrevs',
+        "security: who and users range-check a player's class",
+    ],
+    "G2-13": [
+        'diag: aedit reports a saved social that lacks a message it needs',
+        'diag: boot reports socials missing a message their command needs',
+        'security: socials report a missing message instead of printing NULL',
+    ],
+    "G2-16": [
+        'diag: a trigger-less object script is reported, not silently skipped',
+    ],
+    "G2-17": [
+        'security: look_at_room reports an unplaced viewer at its caller',
+    ],
+    "G2-18": [
+        'diag: report a drink container holding more than its capacity',
+    ],
+    "G2-20": [
+        'security: do_help logs an escaped excerpt of a missed topic, not raw text',
+    ],
+    "G2-21": [
+        'diag: endgame reports a corrupt rank instead of calling it the limit',
+    ],
+    "H1-07": [
+        'security: create water refuses a container whose liquid has no table entry',
+        'security: range-check the liquid type before the drink tables',
+    ],
+    "H1-08": [
+        "security: rent and house records get check_object's value checks",
+        'security: check_object repairs a weapon attack type outside attack_hit_text[]',
+        'security: validate weapon attack types before attack_hit_text',
+    ],
+    "H1-14": [
+        'security: range-check the room sector before movement_loss[]',
+    ],
+    "H1-16": [
+        'diag: boot reports a world without the DG caster proxy mob',
+        'security: peaceful rooms stop players even without the DG proxy mob',
+    ],
+    "H1-18": [
+        "security: rent and house records get check_object's value checks",
+        'security: parse_simple_mob rejects numbers its byte and sh_int fields cannot hold',
+        'security: check_object clamps weapon damage dice to the oedit limit',
+        'security: clamp and report oversized damage dice in hit()',
+    ],
+    "H1-19": [
+        'security: area spells re-resolve each occupant instead of following next_in_room',
+    ],
+    "H1-26": [
+        'diag: mag_unaffects and mag_creations report the spell and the characters',
+        'diag: item and corpse guards name the object, character and room',
+    ],
+    "H1-27": [
+        'diag: boot checks the configured donation rooms against the world',
+        'diag: donate picks only donation rooms that exist and reports bad ones',
+    ],
+    "H2-01": [
+        'security: call_magic stops when a cast trigger purges a participant',
+    ],
+    "H2-06": [
+        'security: scavenger mobs leave occupied furniture where it is',
+        "security: obj_from_room clears the furniture's sitter back-pointer",
+    ],
+    "H2-09": [
+        'security: do_cast refuses a player class outside min_level[]',
+    ],
+    "H2-10": [
+        'security: area spells re-resolve each occupant instead of following next_in_room',
+        'security: a staff re-resolves each occupant instead of following next_in_room',
+    ],
+    "H2-25": [
+        'security: object timer and owner walks loop over siblings instead of recursing',
+        'fix: object timers count down once per tick, carried and worn ones included',
+    ],
+    "H2-26": [
+        'security: free_group refuses a group that still has members',
+    ],
+    "I1-01": [
+        'security: aedit refuses social names longer than 30 characters',
+        'security: column_list stays inside its output buffer',
+    ],
+    "I1-04": [
+        'security: get_line reports and drops the tail of an overlong line',
+    ],
+    "I1-07": [
+        'diag: the automap names a room whose description is NULL',
+        'security: strfrmt formats NULL text as empty and never returns stale output',
+    ],
+    "I1-10": [
+        'diag: rand_number reports inverted bounds at the calling line',
+    ],
+    "I1-14": [
+        'diag: the bounded string builders report what they cut',
+    ],
+    "I2-26": [
+        'diag: atoi-style parsers report overflow; autowiz arguments are checked',
+    ],
+}
+
+# The DG documentation pass's numbered findings (new-findings-from-dg-docs.md)
+# and the commits on HEAD that fixed them.
+DG_DOCS_FIXED = {
+    1: ["security: a DG level setter never changes an immortal's level"],
+    2: ["security: attach and detach check the zone of the trigger's target"],
+    3: ["security: vdelete checks the builder's zone and rank before deleting"],
+    4: ["security: a mob script never runs for a character pending extraction"],
+    5: ["fix: a mob damage trigger without 'return' keeps the damage"],
+    6: ["fix: DG control keywords match whole words, the same way in every scanner",
+        "fix: the DG while-loop pause counts each trigger instance's own passes"],
+    7: ["fix: oedit and medit keep live scripts when the trigger list is unchanged"],
+    8: ["fix: sub_write's visible-object lookup tries room, equipment, inventory"],
+    9: ["fix: an object UID equal to the lookup sentinel is stored where lookups look"],
+}
+
+# Observations the fix agents recorded outside their scope (fixes/*.json
+# skipped entries labelled oos:/NEW:/pre-existing:) that a later commit
+# fixed, keyed by the observation label.
+OBSERVATION_FIXED = {
+    "oos:utils.c count_color_chars": "security: count_color_chars stops at a lone trailing tab",
+    "oos:interpreter.c perform_new_char_dupe_check leak":
+        "security: the new-character dupe check frees the characters it boots",
+    "oos:protocol.c ProtocolCreate":
+        "security: protocol allocations abort on failure instead of writing through NULL",
+    "NEW: perform_move follower loop":
+        "security: followers are moved from a snapshot, not a list triggers free",
+}
+
 # fixes/A1.json skip reason for A1-V01, shortened. The guard dates from 58ae5ed.
 SKIP_REASON = {
     "A1-V01": "already safe: hitprcnt_mtrigger() tests GET_MAX_HIT(ch) before "
@@ -628,17 +928,36 @@ def load(results, git):
         f["superseded"] = [superseded[c["sha"][:7]] for c in f["commits"]
                            if c["sha"][:7] in superseded]
         f["resolution"] = classify(f)
+        f["late"] = []
+        if f["id"] in LATE_FIXES and f["resolution"] in OPEN:
+            missing = [x for x in LATE_FIXES[f["id"]] if x not in git.head_subjects()]
+            if missing:
+                problems.append(f"{f['id']}: later fix not on HEAD: {missing}")
+            else:
+                f["late"] = list(LATE_FIXES[f["id"]])
+                f["resolution"] = FIXED
+        elif f["id"] in LATE_FIXES:
+            problems.append(f"{f['id']}: listed in LATE_FIXES but was not open")
         if f["resolution"] is None:
             problems.append(f"{f['id']}: no resolution (no fix, skip, group or queue entry)")
 
+    # The plans overlap: later plans re-list branches and commits an earlier
+    # plan already carried, so the totals count each branch and commit once.
     plan = []
     for plan_path in sorted(glob.glob(os.path.join(results, "merge-plan*.json"))):
         plan.extend(load_json(plan_path))
+    plan_files = len(glob.glob(os.path.join(results, "merge-plan*.json")))
 
     infra_path = os.path.join(results, "fixes", "sanitizer-infra.json")
     infra = load_json(infra_path) if os.path.exists(infra_path) else {}
 
     dg_docs = parse_dg_docs(os.path.join(results, "deferred", DG_DOCS_FILE))
+    for x in dg_docs["items"]:
+        subj = DG_DOCS_FIXED.get(x["n"], [])
+        missing = [t for t in subj if t not in git.head_subjects()]
+        if missing:
+            problems.append(f"DGDOC-{x['n']}: fix not on HEAD: {missing}")
+        x["fixes"] = subj if subj and not missing else []
 
     coverage = {}
     for area, _, files in AREAS:
@@ -661,7 +980,7 @@ def load(results, git):
 
     return dict(chunks=chunks, reviews=reviews, verify=verify, fixes=fixes,
                 findings=findings, commits=commits, groups=groups, queued=queued,
-                observations=observations, plan=plan, infra=infra, dg_docs=dg_docs,
+                observations=observations, plan=plan, plan_files=plan_files, infra=infra, dg_docs=dg_docs,
                 coverage=coverage, superseded=superseded, problems=problems, git=git)
 
 
@@ -740,7 +1059,11 @@ def resolution_text(f, git):
             text = "fixed: " + fixes
         if f.get("same_as"):
             text += f"<br>(the same defect as {f['same_as']}; fixed by that chunk's commit)"
-        if f["groups"]:
+        if f["late"]:
+            first = ("fixed in part on the chunk branch: " + fixes + "<br>") if subjects else ""
+            text = (first + "fixed in a later round: "
+                    + "<br>".join(code(x) for x in f["late"]))
+        if f["groups"] and not f["late"]:
             text += f"<br>(follow-up {group_list(f)} asked to confirm the fix)"
     elif r == PART_DEFERRED:
         text = f"fixed in part: {fixes}<br>rest: follow-up {group_list(f)}"
@@ -880,8 +1203,11 @@ def compute(a):
                                   and f["resolution"] not in (FIXED, DEFERRED, QUEUED,
                                                               PART_DEFERRED, PART_QUEUED)]
     n["dg_docs"] = len(a["dg_docs"]["items"])
-    n["plan_branches"] = len(a["plan"])
-    n["plan_commits"] = sum(len(p["commits"]) for p in a["plan"])
+    n["plan_files"] = a["plan_files"]
+    n["plan_branches"] = len({p["branch"] for p in a["plan"]})
+    n["plan_commits"] = len({c[:12] for p in a["plan"] for c in p["commits"]})
+    n["fixed_late"] = sum(1 for f in F if f["late"])
+    n["dg_docs_open"] = sum(1 for x in a["dg_docs"]["items"] if not x["fixes"])
     n["observations"] = len(a["observations"])
     n["problems"] = list(a["problems"])
     git = a["git"]
@@ -928,9 +1254,14 @@ def gen_ledger_numbers(a, n):
         f"- Follow-up: {n['group_unique']} findings in {n['groups']} follow-up groups, "
         f"{n['queued']} queued for a later round, and "
         f"{n['dg_docs']} new DG findings from the documentation pass.",
-        f"- Integration: the merge plans cherry-pick {n['plan_commits']} commits from "
-        f"{n['plan_branches']} branches onto {code('audit/full-hardening-integration')} "
-        f"and {code('audit/full-hardening-integration-b')}.",
+        f"- Later rounds: {n['fixed_late']} findings the chunk branches left open were "
+        f"fixed by the follow-up rounds; {n['dg_docs'] - n['dg_docs_open']} of the "
+        f"{n['dg_docs']} DG documentation findings are fixed.",
+        f"- Integration: {n['plan_files']} merge plans cherry-pick {n['plan_commits']} "
+        f"distinct commits from {n['plan_branches']} distinct branches onto the "
+        f"{code('audit/full-hardening-integration*')} branches (A, B, C, C2-C8), which "
+        f"the M1, M2 and C fan-in branches merged into "
+        f"{code('audit/master-merge-20261028')}.",
     ]
     return "\n".join(lines)
 
@@ -940,15 +1271,11 @@ def file_status(path, cov, flist):
         return "not reviewed"
     base = "reviewed" if cov["fully_read"] else "reviewed (not every line, see note)"
     n_open = sum(1 for f in flist if f["resolution"] in OPEN)
-    branch = any(f["resolution"] in HAS_BRANCH_FIX and f["commits"] for f in flist)
-    if not branch and not n_open:
+    # Every fix branch is merged (see "How the fixes reached master"), so a
+    # file is done unless a finding against it is still open.
+    if not n_open:
         return base + "; done"
-    parts = [base]
-    if branch:
-        parts.append("fixes on branch")
-    if n_open:
-        parts.append(f"{n_open} open")
-    return "; ".join(parts)
+    return f"{base}; {n_open} open"
 
 
 def findings_cell(flist):
@@ -1083,7 +1410,8 @@ def gen_dg_docs(a, n):
     d = a["dg_docs"]
     if not d["items"]:
         return "No new findings file was found."
-    rows = [[f"DGDOC-{x['n']}", x["text"], x["severity"], x["owner"], "open"]
+    rows = [[f"DGDOC-{x['n']}", x["text"], x["severity"], x["owner"],
+             ("fixed: " + "<br>".join(code(t) for t in x["fixes"])) if x["fixes"] else "open"]
             for x in d["items"]]
     out = table(["Label", "Finding (as reported)", "Severity", "Fix owner", "Status"], rows)
     if d["note"]:
@@ -1101,8 +1429,9 @@ def gen_groups(a, n):
         rows.append([code(g), code(branch) if git.branch_exists(branch) else "-",
                      code(d.get("base_branch", "")), len(d.get("owned_files", [])), len(ids),
                      r[PART_DEFERRED], r[DEFERRED], r[FIXED], r[REFUTED]])
+    # (Fixed counts both chunk-branch fixes and fixes from this group's rounds.)
     return table(["Group", "Branch", "Based on", "Files owned", "Findings",
-                  "Partly fixed", "Not started", "Fixed on a chunk branch (confirm)",
+                  "Still partly open", "Not started", "Fixed",
                   "Refuted"], rows)
 
 
@@ -1112,10 +1441,10 @@ def gen_ledger_outside(a, n):
              "chunk reviewer reported the same bug and its fix agent fixed it on "
              "the chunk branch too; integration keeps one of the two.\n",
              gen_extra_fixes(a, n),
-             "\n### New DG findings from the documentation pass (open)\n",
-             "Reported by the dg-scripts documentation agent after the fix pass; "
-             "none is covered by a fix branch yet. They have no chunk ID; the "
-             "DGDOC labels are this ledger's.\n",
+             "\n### New DG findings from the documentation pass\n",
+             "Reported by the dg-scripts documentation agent after the fix pass and "
+             "fixed by the dg and gen-olc follow-up rounds. They have no chunk ID; "
+             "the DGDOC labels are this ledger's.\n",
              gen_dg_docs(a, n),
              "\n### Follow-up groups\n",
              "Findings whose fix needs files outside the reporting chunk, the "
@@ -1155,9 +1484,11 @@ def gen_report_glance(a, n):
         f"- **Commits:** {n['commits']} fix commits on {n['fix_branches']} chunk "
         f"branches, {n['commits_with_test']} of them with a regression test; plus "
         f"the infrastructure and coordinator branches listed below.",
-        f"- **Still open:** {n['open']} findings (partly fixed or not started), "
-        f"{n['dg_docs']} new DG findings from the documentation pass, and the "
-        f"integration of {n['plan_branches']} branches.",
+        f"- **Later rounds:** {n['fixed_late']} of the findings above were fixed by the "
+        f"follow-up rounds after the chunk branches (they count as fixed).",
+        f"- **Still open:** {n['open']} findings, {n['dg_docs_open']} of the "
+        f"{n['dg_docs']} DG documentation findings. All {n['plan_branches']} branches "
+        f"of the merge plans are integrated.",
     ]
     return "\n".join(lines)
 
@@ -1293,7 +1624,8 @@ def gen_report_infra(a, n):
 def gen_report_open(a, n):
     F = a["findings"]
     out = []
-    out.append("**Follow-up groups** (fixes in progress on the branches shown):\n")
+    out.append("**Follow-up groups** (all merged; \"Fixed\" counts chunk-branch and "
+               "later-round fixes):\n")
     out.append(gen_groups(a, n))
     # Open findings by group.
     rows = []
@@ -1302,7 +1634,7 @@ def gen_report_open(a, n):
         part = [i for i in ids if F[i]["resolution"] == PART_DEFERRED]
         todo = [i for i in ids if F[i]["resolution"] == DEFERRED]
         rows.append([code(g), ", ".join(part) or "-", ", ".join(todo) or "-"])
-    out.append("\n**Open findings per group:**\n")
+    out.append("\n**Open findings per group** (none, when every group is done):\n")
     out.append(table(["Group", "Partly fixed (rest open)", "Not started"], rows))
     # Queued.
     rows = []
@@ -1330,11 +1662,19 @@ def gen_report_open(a, n):
     out.append(table(["Scheduled in", "Findings", "IDs"], rows))
     # Observations.
     if a["observations"]:
-        rows = [[o["chunk"], o["label"], first_sentences(o["reason"], 5, 560)]
-                for o in a["observations"]]
-        out.append("\n**Observations the fix agents recorded but nobody has triaged** "
-                   "(not findings; no group owns them):\n")
-        out.append(table(["Chunk", "Observation", "What the fix agent wrote"], rows))
+        git = a["git"]
+        rows = []
+        for o in a["observations"]:
+            fix = OBSERVATION_FIXED.get(o["label"])
+            if fix and fix not in git.head_subjects():
+                a["problems"].append(f"observation {o['label']}: fix not on HEAD: {fix}")
+                fix = None
+            rows.append([o["chunk"], o["label"], first_sentences(o["reason"], 5, 560),
+                         ("fixed: " + code(fix)) if fix else "not fixed"])
+        out.append("\n**Observations the fix agents recorded outside their scope** "
+                   "(not findings; a later commit fixed some of them):\n")
+        out.append(table(["Chunk", "Observation", "What the fix agent wrote", "Status"],
+                         rows))
     # Infrastructure not implemented (and not done later by the coordinator).
     rows = [[p["title"], p["priority"], p.get("implemented", "")[len("not implemented: "):]]
             for p in a["infra"].get("proposals", [])

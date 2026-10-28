@@ -109,14 +109,18 @@ directory `audit-results-20261027/`: `reviews/`, `verify/`, `fixes/` and
 10. **Semgrep CI.** Branch `audit/semgrep-ci` adds a `semgrep ci` job for
     pushes to `master` and `audit/**`, pull requests, a weekly schedule and
     manual runs. It uploads to the Semgrep AppSec Platform.
-11. **Integration.** The fix branches are being cherry-picked in a fixed
-    order, split between two integrators: chunks A1 to H1 onto
-    `audit/full-hardening-integration` (`merge-plan.json`), and H2 to I3
-    plus the infrastructure and coordinator branches onto
-    `audit/full-hardening-integration-b` (`merge-plan-b.json`), which is
-    then merged into the first. Conflicts are resolved by hand and recorded
-    in `integrate-state*.json`. Commit subjects survive cherry-picks, so
-    this ledger cites fixes by subject, not by hash.
+11. **Integration.** The fix branches were cherry-picked in a fixed
+    order: chunks A1 to H1 onto `audit/full-hardening-integration`
+    (`merge-plan.json`), H2 to I3 plus the infrastructure and coordinator
+    branches onto `audit/full-hardening-integration-b` (`merge-plan-b.json`),
+    which was merged into the first, and the follow-up rounds onto
+    `-c` through `-c8` (`merge-plan-c*.json`). Conflicts were resolved by
+    hand and recorded in `integrate-state*.json`. Commit subjects survive
+    cherry-picks, so this ledger cites fixes by subject, not by hash.
+12. **Master merge.** Phase 1 pushed the audit branch, the A+B tag and
+    `audit/verify-static` to `master` as 2c180c9b; phase 2 merged the
+    fan-in branches `-c`, `-m2` and `-m1` (see the report's "How the fixes
+    reached master").
 
 In numbers:
 
@@ -130,7 +134,8 @@ In numbers:
 - Fix commits: 603 on 21 chunk branches (353 security, 91 diag, 19 fix, 69 docs, 58 style, 13 test); 468 name finding IDs and 430 record a regression test.
 - Documentation and macros: reviewers reported 249 documentation gaps and 172 macro proposals; fix agents passed 82 cross-cutting macros on to the core-utils follow-up.
 - Follow-up: 68 findings in 7 follow-up groups, 14 queued for a later round, and 9 new DG findings from the documentation pass.
-- Integration: the merge plans cherry-pick 624 commits from 26 branches onto `audit/full-hardening-integration` and `audit/full-hardening-integration-b`.
+- Later rounds: 74 findings the chunk branches left open were fixed by the follow-up rounds; 9 of the 9 DG documentation findings are fixed.
+- Integration: 10 merge plans cherry-pick 1205 distinct commits from 43 distinct branches onto the `audit/full-hardening-integration*` branches (A, B, C, C2-C8), which the M1, M2 and C fan-in branches merged into `audit/master-merge-20261028`.
 
 <!-- END GENERATED: ledger-numbers -->
 
@@ -141,13 +146,9 @@ Status values:
 - `done`: nothing is left to change. The file has no findings, or every
   finding was refuted, found already safe, or fixed on the audit branch
   before the fix pass.
-- `fixes on branch`: at least one finding is fixed by a commit on a chunk
-  fix branch that is not merged into this branch yet. It is being
-  integrated; the file becomes `done` when that work is merged and nothing
-  is open.
-- `N open`: N findings against the file still need work. Either a chunk
-  branch fixed part of the finding and the rest is in a follow-up group or
-  queued, or no fix has started.
+- `done` also covers files whose findings were fixed on chunk or
+  follow-up branches: all of those branches are merged.
+- `N open`: N findings against the file still need work.
 
 ## Areas and coverage
 
@@ -155,16 +156,16 @@ Status values:
 
 | Area | Files | Read in full | Findings | Fixed | Partly fixed | Open | Skipped | Refuted |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| A: Untrusted network input | 13 | 13 | 45 | 37 | 0 | 2 | 0 | 6 |
-| B: Player and world persistence | 9 | 9 | 67 | 56 | 4 | 3 | 0 | 4 |
-| C: Boards, bug reports, class import, OLC save writers, trigger files, config | 22 | 21 | 63 | 49 | 6 | 5 | 0 | 3 |
-| D: DG script engine core | 7 | 7 | 43 | 32 | 2 | 9 | 0 | 0 |
-| E: DG script commands, triggers and trigger OLC | 7 | 7 | 41 | 33 | 0 | 6 | 1 | 1 |
-| F: OLC editors | 20 | 20 | 75 | 69 | 1 | 4 | 0 | 1 |
-| G: Player and immortal commands | 6 | 6 | 53 | 40 | 8 | 4 | 0 | 1 |
-| H: Gameplay and world mechanics | 30 | 30 | 77 | 62 | 9 | 5 | 0 | 1 |
-| I: Foundations (utilities, macros, core headers) and standalone tools | 21 | 21 | 59 | 53 | 5 | 1 | 0 | 0 |
-| **Total** | 135 | 134 | 523 | 431 | 35 | 39 | 1 | 17 |
+| A: Untrusted network input | 13 | 13 | 45 | 39 | 0 | 0 | 0 | 6 |
+| B: Player and world persistence | 9 | 9 | 67 | 63 | 0 | 0 | 0 | 4 |
+| C: Boards, bug reports, class import, OLC save writers, trigger files, config | 22 | 21 | 63 | 60 | 0 | 0 | 0 | 3 |
+| D: DG script engine core | 7 | 7 | 43 | 43 | 0 | 0 | 0 | 0 |
+| E: DG script commands, triggers and trigger OLC | 7 | 7 | 41 | 39 | 0 | 0 | 1 | 1 |
+| F: OLC editors | 20 | 20 | 75 | 74 | 0 | 0 | 0 | 1 |
+| G: Player and immortal commands | 6 | 6 | 53 | 52 | 0 | 0 | 0 | 1 |
+| H: Gameplay and world mechanics | 30 | 30 | 77 | 76 | 0 | 0 | 0 | 1 |
+| I: Foundations (utilities, macros, core headers) and standalone tools | 21 | 21 | 59 | 59 | 0 | 0 | 0 | 0 |
+| **Total** | 135 | 134 | 523 | 505 | 0 | 0 | 1 | 17 |
 
 Findings are counted against the file they name, so a finding one chunk reported about another area's file counts in that file's area. "Partly fixed" means a chunk branch fixed the part in its own files and the rest is in a follow-up group or queued; "open" means no fix yet.
 
@@ -174,7 +175,7 @@ Findings are counted against the file they name, so a finding one chunk reported
 
 ### Area A: Untrusted network input
 
-Status: reviewed by A1, A2 (every file read in full); 7 files done, 6 with fixes on branch; 2 findings against these files still open.
+Status: reviewed by A1, A2 (every file read in full); 13 files done, 0 with fixes on branch; 0 findings against these files still open.
 
 | Chunk | Files | Lines | Findings reported | Fix branch | Fix commits |
 | --- | --- | --- | --- | --- | --- |
@@ -183,23 +184,23 @@ Status: reviewed by A1, A2 (every file read in full); 7 files done, 6 with fixes
 
 | File | Status | Findings |
 | --- | --- | --- |
-| `src/comm.c` | reviewed; fixes on branch; 1 open | 25: 21 fixed, 1 open, 3 refuted |
+| `src/comm.c` | reviewed; done | 25: 22 fixed, 3 refuted |
 | `src/comm.h` | reviewed; done | none |
-| `src/protocol.c` | reviewed; fixes on branch | 9: 8 fixed, 1 refuted |
+| `src/protocol.c` | reviewed; done | 9: 8 fixed, 1 refuted |
 | `src/protocol.h` | reviewed; done | none |
 | `src/telnet.h` | reviewed; done | none |
-| `src/interpreter.c` | reviewed; fixes on branch; 1 open | 3: 1 fixed, 1 open, 1 refuted |
+| `src/interpreter.c` | reviewed; done | 3: 2 fixed, 1 refuted |
 | `src/interpreter.h` | reviewed; done | none |
-| `src/ban.c` | reviewed; fixes on branch | 2: 2 fixed |
+| `src/ban.c` | reviewed; done | 2: 2 fixed |
 | `src/ban.h` | reviewed; done | none |
-| `src/modify.c` | reviewed; fixes on branch | 3: 3 fixed |
+| `src/modify.c` | reviewed; done | 3: 3 fixed |
 | `src/modify.h` | reviewed; done | none |
-| `src/improved-edit.c` | reviewed; fixes on branch | 3: 2 fixed, 1 refuted |
+| `src/improved-edit.c` | reviewed; done | 3: 2 fixed, 1 refuted |
 | `src/improved-edit.h` | reviewed; done | none |
 
 ### Area B: Player and world persistence
 
-Status: reviewed by B1, B2 (every file read in full); 4 files done, 5 with fixes on branch; 7 findings against these files still open.
+Status: reviewed by B1, B2 (every file read in full); 9 files done, 0 with fixes on branch; 0 findings against these files still open.
 
 | Chunk | Files | Lines | Findings reported | Fix branch | Fix commits |
 | --- | --- | --- | --- | --- | --- |
@@ -208,19 +209,19 @@ Status: reviewed by B1, B2 (every file read in full); 4 files done, 5 with fixes
 
 | File | Status | Findings |
 | --- | --- | --- |
-| `src/db.c` | reviewed; fixes on branch; 2 open | 35: 29 fixed, 2 partly fixed, 4 refuted |
+| `src/db.c` | reviewed; done | 35: 31 fixed, 4 refuted |
 | `src/db.h` | reviewed; done | none |
-| `src/players.c` | reviewed; fixes on branch; 3 open | 14: 11 fixed, 1 partly fixed, 2 open |
+| `src/players.c` | reviewed; done | 14: 14 fixed |
 | `src/pfdefaults.h` | reviewed; done | none |
-| `src/objsave.c` | reviewed; fixes on branch; 1 open | 9: 8 fixed, 1 open |
-| `src/house.c` | reviewed; fixes on branch; 1 open | 5: 4 fixed, 1 partly fixed |
+| `src/objsave.c` | reviewed; done | 9: 9 fixed |
+| `src/house.c` | reviewed; done | 5: 5 fixed |
 | `src/house.h` | reviewed; done | none |
-| `src/mail.c` | reviewed; fixes on branch | 4: 4 fixed |
+| `src/mail.c` | reviewed; done | 4: 4 fixed |
 | `src/mail.h` | reviewed; done | none |
 
 ### Area C: Boards, bug reports, class import, OLC save writers, trigger files, config
 
-Status: reviewed by C1, C2 (every file read in full except `src/class.c`); 11 files done, 11 with fixes on branch; 11 findings against these files still open.
+Status: reviewed by C1, C2 (every file read in full except `src/class.c`); 22 files done, 0 with fixes on branch; 0 findings against these files still open.
 
 | Chunk | Files | Lines | Findings reported | Fix branch | Fix commits |
 | --- | --- | --- | --- | --- | --- |
@@ -229,26 +230,26 @@ Status: reviewed by C1, C2 (every file read in full except `src/class.c`); 11 fi
 
 | File | Status | Findings |
 | --- | --- | --- |
-| `src/boards.c` | reviewed; fixes on branch; 1 open | 7: 6 fixed, 1 partly fixed |
+| `src/boards.c` | reviewed; done | 7: 7 fixed |
 | `src/boards.h` | reviewed; done | none |
-| `src/ibt.c` | reviewed; fixes on branch; 2 open | 9: 7 fixed, 1 partly fixed, 1 open |
+| `src/ibt.c` | reviewed; done | 9: 9 fixed |
 | `src/ibt.h` | reviewed; done | none |
-| `src/class.c` | reviewed (not every line, see note); fixes on branch; 1 open | 2: 1 fixed, 1 partly fixed |
+| `src/class.c` | reviewed (not every line, see note); done | 2: 2 fixed |
 | `src/class.h` | reviewed; done | none |
-| `src/genolc.c` | reviewed; fixes on branch | 5: 4 fixed, 1 refuted |
+| `src/genolc.c` | reviewed; done | 5: 4 fixed, 1 refuted |
 | `src/genolc.h` | reviewed; done | none |
-| `src/genmob.c` | reviewed; fixes on branch; 2 open | 6: 4 fixed, 2 open |
+| `src/genmob.c` | reviewed; done | 6: 6 fixed |
 | `src/genmob.h` | reviewed; done | none |
-| `src/genobj.c` | reviewed; fixes on branch; 3 open | 14: 11 fixed, 1 partly fixed, 2 open |
+| `src/genobj.c` | reviewed; done | 14: 14 fixed |
 | `src/genobj.h` | reviewed; done | none |
-| `src/genwld.c` | reviewed; fixes on branch; 1 open | 5: 4 fixed, 1 partly fixed |
+| `src/genwld.c` | reviewed; done | 5: 5 fixed |
 | `src/genwld.h` | reviewed; done | none |
-| `src/genzon.c` | reviewed; fixes on branch; 1 open | 7: 6 fixed, 1 partly fixed |
+| `src/genzon.c` | reviewed; done | 7: 7 fixed |
 | `src/genzon.h` | reviewed; done | none |
-| `src/genshp.c` | reviewed; fixes on branch | 3: 1 fixed, 2 refuted |
+| `src/genshp.c` | reviewed; done | 3: 1 fixed, 2 refuted |
 | `src/genshp.h` | reviewed; done | none |
-| `src/genqst.c` | reviewed; fixes on branch | 3: 3 fixed |
-| `src/dg_db_scripts.c` | reviewed; fixes on branch | 2: 2 fixed |
+| `src/genqst.c` | reviewed; done | 3: 3 fixed |
+| `src/dg_db_scripts.c` | reviewed; done | 2: 2 fixed |
 | `src/config.c` | reviewed; done | none |
 | `src/config.h` | reviewed; done | none |
 
@@ -256,7 +257,7 @@ Note: the C1 reviewer did not read every line of `src/class.c`: "Class tables an
 
 ### Area D: DG script engine core
 
-Status: reviewed by D1, D2 (every file read in full); 2 files done, 5 with fixes on branch; 11 findings against these files still open.
+Status: reviewed by D1, D2 (every file read in full); 7 files done, 0 with fixes on branch; 0 findings against these files still open.
 
 | Chunk | Files | Lines | Findings reported | Fix branch | Fix commits |
 | --- | --- | --- | --- | --- | --- |
@@ -265,17 +266,17 @@ Status: reviewed by D1, D2 (every file read in full); 2 files done, 5 with fixes
 
 | File | Status | Findings |
 | --- | --- | --- |
-| `src/dg_scripts.c` | reviewed; fixes on branch; 3 open | 21: 18 fixed, 1 partly fixed, 2 open |
+| `src/dg_scripts.c` | reviewed; done | 21: 21 fixed |
 | `src/dg_scripts.h` | reviewed; done | none |
-| `src/dg_variables.c` | reviewed; fixes on branch; 1 open | 9: 8 fixed, 1 open |
-| `src/dg_misc.c` | reviewed; fixes on branch | 1: 1 fixed |
-| `src/dg_handler.c` | reviewed; fixes on branch; 5 open | 6: 1 fixed, 5 open |
-| `src/dg_event.c` | reviewed; fixes on branch; 2 open | 6: 4 fixed, 1 partly fixed, 1 open |
+| `src/dg_variables.c` | reviewed; done | 9: 9 fixed |
+| `src/dg_misc.c` | reviewed; done | 1: 1 fixed |
+| `src/dg_handler.c` | reviewed; done | 6: 6 fixed |
+| `src/dg_event.c` | reviewed; done | 6: 6 fixed |
 | `src/dg_event.h` | reviewed; done | none |
 
 ### Area E: DG script commands, triggers and trigger OLC
 
-Status: reviewed by E1, E2 (every file read in full); 1 file done, 6 with fixes on branch; 6 findings against these files still open.
+Status: reviewed by E1, E2 (every file read in full); 7 files done, 0 with fixes on branch; 0 findings against these files still open.
 
 | Chunk | Files | Lines | Findings reported | Fix branch | Fix commits |
 | --- | --- | --- | --- | --- | --- |
@@ -284,17 +285,17 @@ Status: reviewed by E1, E2 (every file read in full); 1 file done, 6 with fixes 
 
 | File | Status | Findings |
 | --- | --- | --- |
-| `src/dg_mobcmd.c` | reviewed; fixes on branch; 1 open | 8: 6 fixed, 1 open, 1 refuted |
-| `src/dg_objcmd.c` | reviewed; fixes on branch | 7: 7 fixed |
-| `src/dg_wldcmd.c` | reviewed; fixes on branch | 4: 4 fixed |
-| `src/dg_comm.c` | reviewed; fixes on branch | 1: 1 fixed |
-| `src/dg_triggers.c` | reviewed; fixes on branch; 1 open | 5: 3 fixed, 1 open, 1 skipped |
-| `src/dg_olc.c` | reviewed; fixes on branch; 4 open | 16: 12 fixed, 4 open |
+| `src/dg_mobcmd.c` | reviewed; done | 8: 7 fixed, 1 refuted |
+| `src/dg_objcmd.c` | reviewed; done | 7: 7 fixed |
+| `src/dg_wldcmd.c` | reviewed; done | 4: 4 fixed |
+| `src/dg_comm.c` | reviewed; done | 1: 1 fixed |
+| `src/dg_triggers.c` | reviewed; done | 5: 4 fixed, 1 skipped |
+| `src/dg_olc.c` | reviewed; done | 16: 16 fixed |
 | `src/dg_olc.h` | reviewed; done | none |
 
 ### Area F: OLC editors
 
-Status: reviewed by F1, F2, F3 (every file read in full); 5 files done, 15 with fixes on branch; 5 findings against these files still open.
+Status: reviewed by F1, F2, F3 (every file read in full); 20 files done, 0 with fixes on branch; 0 findings against these files still open.
 
 | Chunk | Files | Lines | Findings reported | Fix branch | Fix commits |
 | --- | --- | --- | --- | --- | --- |
@@ -304,30 +305,30 @@ Status: reviewed by F1, F2, F3 (every file read in full); 5 files done, 15 with 
 
 | File | Status | Findings |
 | --- | --- | --- |
-| `src/oedit.c` | reviewed; fixes on branch | 13: 13 fixed |
-| `src/medit.c` | reviewed; fixes on branch | 5: 5 fixed |
-| `src/redit.c` | reviewed; fixes on branch | 4: 4 fixed |
-| `src/zedit.c` | reviewed; fixes on branch; 1 open | 4: 3 fixed, 1 partly fixed |
-| `src/sedit.c` | reviewed; fixes on branch | 3: 2 fixed, 1 refuted |
-| `src/cedit.c` | reviewed; fixes on branch | 6: 6 fixed |
-| `src/aedit.c` | reviewed; fixes on branch | 4: 4 fixed |
-| `src/hedit.c` | reviewed; fixes on branch; 1 open | 6: 5 fixed, 1 open |
+| `src/oedit.c` | reviewed; done | 13: 13 fixed |
+| `src/medit.c` | reviewed; done | 5: 5 fixed |
+| `src/redit.c` | reviewed; done | 4: 4 fixed |
+| `src/zedit.c` | reviewed; done | 4: 4 fixed |
+| `src/sedit.c` | reviewed; done | 3: 2 fixed, 1 refuted |
+| `src/cedit.c` | reviewed; done | 6: 6 fixed |
+| `src/aedit.c` | reviewed; done | 4: 4 fixed |
+| `src/hedit.c` | reviewed; done | 6: 6 fixed |
 | `src/hedit.h` | reviewed; done | none |
-| `src/qedit.c` | reviewed; fixes on branch; 1 open | 4: 3 fixed, 1 open |
-| `src/tedit.c` | reviewed; fixes on branch | 2: 2 fixed |
-| `src/prefedit.c` | reviewed; fixes on branch | 3: 3 fixed |
+| `src/qedit.c` | reviewed; done | 4: 4 fixed |
+| `src/tedit.c` | reviewed; done | 2: 2 fixed |
+| `src/prefedit.c` | reviewed; done | 3: 3 fixed |
 | `src/prefedit.h` | reviewed; done | none |
-| `src/msgedit.c` | reviewed; fixes on branch | 2: 2 fixed |
+| `src/msgedit.c` | reviewed; done | 2: 2 fixed |
 | `src/msgedit.h` | reviewed; done | none |
-| `src/oasis.c` | reviewed; fixes on branch; 2 open | 7: 5 fixed, 2 open |
+| `src/oasis.c` | reviewed; done | 7: 7 fixed |
 | `src/oasis.h` | reviewed; done | none |
-| `src/oasis_copy.c` | reviewed; fixes on branch | 6: 6 fixed |
+| `src/oasis_copy.c` | reviewed; done | 6: 6 fixed |
 | `src/oasis_delete.c` | reviewed; done | none |
-| `src/oasis_list.c` | reviewed; fixes on branch | 6: 6 fixed |
+| `src/oasis_list.c` | reviewed; done | 6: 6 fixed |
 
 ### Area G: Player and immortal commands
 
-Status: reviewed by G1, G2 (every file read in full); 1 file done, 5 with fixes on branch; 12 findings against these files still open.
+Status: reviewed by G1, G2 (every file read in full); 6 files done, 0 with fixes on branch; 0 findings against these files still open.
 
 | Chunk | Files | Lines | Findings reported | Fix branch | Fix commits |
 | --- | --- | --- | --- | --- | --- |
@@ -337,15 +338,15 @@ Status: reviewed by G1, G2 (every file read in full); 1 file done, 5 with fixes 
 | File | Status | Findings |
 | --- | --- | --- |
 | `src/act.h` | reviewed; done | none |
-| `src/act.wizard.c` | reviewed; fixes on branch; 2 open | 32: 29 fixed, 1 partly fixed, 1 open, 1 refuted |
-| `src/act.informative.c` | reviewed; fixes on branch; 7 open | 13: 6 fixed, 4 partly fixed, 3 open |
-| `src/act.comm.c` | reviewed; fixes on branch | 3: 3 fixed |
-| `src/act.social.c` | reviewed; fixes on branch; 1 open | 2: 1 fixed, 1 partly fixed |
-| `src/act.other.c` | reviewed; fixes on branch; 2 open | 3: 1 fixed, 2 partly fixed |
+| `src/act.wizard.c` | reviewed; done | 32: 31 fixed, 1 refuted |
+| `src/act.informative.c` | reviewed; done | 13: 13 fixed |
+| `src/act.comm.c` | reviewed; done | 3: 3 fixed |
+| `src/act.social.c` | reviewed; done | 2: 2 fixed |
+| `src/act.other.c` | reviewed; done | 3: 3 fixed |
 
 ### Area H: Gameplay and world mechanics
 
-Status: reviewed by H1, H2, H3 (every file read in full); 13 files done, 17 with fixes on branch; 14 findings against these files still open.
+Status: reviewed by H1, H2, H3 (every file read in full); 30 files done, 0 with fixes on branch; 0 findings against these files still open.
 
 | Chunk | Files | Lines | Findings reported | Fix branch | Fix commits |
 | --- | --- | --- | --- | --- | --- |
@@ -355,40 +356,40 @@ Status: reviewed by H1, H2, H3 (every file read in full); 13 files done, 17 with
 
 | File | Status | Findings |
 | --- | --- | --- |
-| `src/act.item.c` | reviewed; fixes on branch; 3 open | 11: 8 fixed, 2 partly fixed, 1 open |
-| `src/act.movement.c` | reviewed; fixes on branch; 1 open | 2: 1 fixed, 1 partly fixed |
-| `src/act.offensive.c` | reviewed; fixes on branch | 1: 1 fixed |
-| `src/fight.c` | reviewed; fixes on branch; 3 open | 8: 5 fixed, 3 partly fixed |
+| `src/act.item.c` | reviewed; done | 11: 11 fixed |
+| `src/act.movement.c` | reviewed; done | 2: 2 fixed |
+| `src/act.offensive.c` | reviewed; done | 1: 1 fixed |
+| `src/fight.c` | reviewed; done | 8: 8 fixed |
 | `src/fight.h` | reviewed; done | none |
-| `src/magic.c` | reviewed; fixes on branch; 1 open | 5: 3 fixed, 1 open, 1 refuted |
-| `src/spell_parser.c` | reviewed; fixes on branch; 3 open | 9: 6 fixed, 2 partly fixed, 1 open |
-| `src/spells.c` | reviewed; fixes on branch | 2: 2 fixed |
+| `src/magic.c` | reviewed; done | 5: 4 fixed, 1 refuted |
+| `src/spell_parser.c` | reviewed; done | 9: 9 fixed |
+| `src/spells.c` | reviewed; done | 2: 2 fixed |
 | `src/spells.h` | reviewed; done | none |
-| `src/handler.c` | reviewed; fixes on branch; 3 open | 8: 5 fixed, 1 partly fixed, 2 open |
+| `src/handler.c` | reviewed; done | 8: 8 fixed |
 | `src/handler.h` | reviewed; done | none |
-| `src/shop.c` | reviewed; fixes on branch | 9: 9 fixed |
+| `src/shop.c` | reviewed; done | 9: 9 fixed |
 | `src/shop.h` | reviewed; done | none |
-| `src/quest.c` | reviewed; fixes on branch | 7: 7 fixed |
+| `src/quest.c` | reviewed; done | 7: 7 fixed |
 | `src/quest.h` | reviewed; done | none |
 | `src/castle.c` | reviewed; done | none |
-| `src/spec_assign.c` | reviewed; fixes on branch | 1: 1 fixed |
-| `src/spec_procs.c` | reviewed; fixes on branch | 3: 3 fixed |
+| `src/spec_assign.c` | reviewed; done | 1: 1 fixed |
+| `src/spec_procs.c` | reviewed; done | 3: 3 fixed |
 | `src/spec_procs.h` | reviewed; done | none |
-| `src/mobact.c` | reviewed; fixes on branch | 1: 1 fixed |
-| `src/limits.c` | reviewed; fixes on branch | 3: 3 fixed |
+| `src/mobact.c` | reviewed; done | 1: 1 fixed |
+| `src/limits.c` | reviewed; done | 3: 3 fixed |
 | `src/weather.c` | reviewed; done | none |
 | `src/graph.c` | reviewed; done | none |
 | `src/graph.h` | reviewed; done | none |
-| `src/asciimap.c` | reviewed; fixes on branch | 2: 2 fixed |
+| `src/asciimap.c` | reviewed; done | 2: 2 fixed |
 | `src/asciimap.h` | reviewed; done | none |
-| `src/mud_event.c` | reviewed; fixes on branch | 2: 2 fixed |
+| `src/mud_event.c` | reviewed; done | 2: 2 fixed |
 | `src/mud_event.h` | reviewed; done | none |
-| `src/lists.c` | reviewed; fixes on branch | 3: 3 fixed |
+| `src/lists.c` | reviewed; done | 3: 3 fixed |
 | `src/lists.h` | reviewed; done | none |
 
 ### Area I: Foundations (utilities, macros, core headers) and standalone tools
 
-Status: reviewed by I1, I2, I3 (every file read in full); 4 files done, 17 with fixes on branch; 6 findings against these files still open.
+Status: reviewed by I1, I2, I3 (every file read in full); 21 files done, 0 with fixes on branch; 0 findings against these files still open.
 
 | Chunk | Files | Lines | Findings reported | Fix branch | Fix commits |
 | --- | --- | --- | --- | --- | --- |
@@ -398,27 +399,27 @@ Status: reviewed by I1, I2, I3 (every file read in full); 4 files done, 17 with 
 
 | File | Status | Findings |
 | --- | --- | --- |
-| `src/utils.c` | reviewed; fixes on branch; 5 open | 14: 9 fixed, 4 partly fixed, 1 open |
-| `src/utils.h` | reviewed; fixes on branch | 1: 1 fixed |
+| `src/utils.c` | reviewed; done | 14: 14 fixed |
+| `src/utils.h` | reviewed; done | 1: 1 fixed |
 | `src/structs.h` | reviewed; done | none |
-| `src/sysdep.h` | reviewed; fixes on branch; 1 open | 3: 2 fixed, 1 partly fixed |
+| `src/sysdep.h` | reviewed; done | 3: 3 fixed |
 | `src/screen.h` | reviewed; done | none |
-| `src/constants.c` | reviewed; fixes on branch | 2: 2 fixed |
+| `src/constants.c` | reviewed; done | 2: 2 fixed |
 | `src/constants.h` | reviewed; done | none |
-| `src/random.c` | reviewed; fixes on branch | 1: 1 fixed |
-| `src/bsd-snprintf.c` | reviewed; fixes on branch | 1: 1 fixed |
+| `src/random.c` | reviewed; done | 1: 1 fixed |
+| `src/bsd-snprintf.c` | reviewed; done | 1: 1 fixed |
 | `src/bsd-snprintf.h` | reviewed; done | none |
-| `src/zmalloc.c` | reviewed; fixes on branch | 4: 4 fixed |
-| `src/zmalloc.h` | reviewed; fixes on branch | 1: 1 fixed |
-| `src/util/asciipasswd.c` | reviewed; fixes on branch | 1: 1 fixed |
-| `src/util/autowiz.c` | reviewed; fixes on branch | 4: 4 fixed |
-| `src/util/plrtoascii.c` | reviewed; fixes on branch | 3: 3 fixed |
-| `src/util/rebuildAsciiIndex.c` | reviewed; fixes on branch | 3: 3 fixed |
-| `src/util/rebuildMailIndex.c` | reviewed; fixes on branch | 2: 2 fixed |
-| `src/util/shopconv.c` | reviewed; fixes on branch | 2: 2 fixed |
-| `src/util/sign.c` | reviewed; fixes on branch | 2: 2 fixed |
-| `src/util/split.c` | reviewed; fixes on branch | 2: 2 fixed |
-| `src/util/wld2html.c` | reviewed; fixes on branch | 13: 13 fixed |
+| `src/zmalloc.c` | reviewed; done | 4: 4 fixed |
+| `src/zmalloc.h` | reviewed; done | 1: 1 fixed |
+| `src/util/asciipasswd.c` | reviewed; done | 1: 1 fixed |
+| `src/util/autowiz.c` | reviewed; done | 4: 4 fixed |
+| `src/util/plrtoascii.c` | reviewed; done | 3: 3 fixed |
+| `src/util/rebuildAsciiIndex.c` | reviewed; done | 3: 3 fixed |
+| `src/util/rebuildMailIndex.c` | reviewed; done | 2: 2 fixed |
+| `src/util/shopconv.c` | reviewed; done | 2: 2 fixed |
+| `src/util/sign.c` | reviewed; done | 2: 2 fixed |
+| `src/util/split.c` | reviewed; done | 2: 2 fixed |
+| `src/util/wld2html.c` | reviewed; done | 13: 13 fixed |
 
 <!-- END GENERATED: ledger-areas -->
 
@@ -435,8 +436,10 @@ the file. The columns:
 - **Verdict:** the verifier's verdict. `verifier-added` findings were
   reported by the verifier itself.
 - **Resolution:** `fixed` cites the fix commit's subject, which stays the
-  same across cherry-picks. `fixed in part` cites the commit and says where
-  the rest is: a follow-up group, or the queue for a later round.
+  same across cherry-picks. `fixed in a later round` cites the follow-up
+  round's commits (with the chunk branch's partial fix before it, if any).
+  `fixed in part` cites the commit and says where the rest is: a follow-up
+  group, or the queue for a later round.
   `deferred` names the follow-up group. `skipped` and `refuted` give the
   reason.
 
@@ -444,7 +447,7 @@ the file. The columns:
 
 ### Area A: Untrusted network input
 
-44 findings from chunks A1, A2: 36 fixed; 2 deferred to a follow-up group; 1 skipped, no change needed; 5 refuted.
+44 findings from chunks A1, A2: 38 fixed; 1 skipped, no change needed; 5 refuted.
 
 | ID | Severity | Category | File:function | Input controller | Verdict | Resolution |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -453,15 +456,15 @@ the file. The columns:
 | A1-03 | - (claimed high) | lifetime | `src/comm.c:process_input` | remote-unauthenticated | refuted | refuted: already fixed by `security: "--" flushes only queued input, not the live output buffer` (35a2832) |
 | A1-04 | medium (was high) | lifetime | `src/protocol.c:ProtocolOutput` | player | confirmed | fixed: `security: unicode substitute text outlives its escape block in ProtocolOutput` |
 | A1-05 | medium | integer | `src/protocol.c:ProtocolOutput` | player | confirmed | fixed: `security: bound the unicode code point parsed from '\t[u...]' escapes`<br>`style: ISDIGIT_C / ISALPHA_C / TOLOWER_C classify protocol bytes safely` |
-| A1-06 | low (was medium) | read-past-terminator | `src/protocol.c:ProtocolOutput` | builder-olc | confirmed | fixed: `security: ProtocolOutput stops at the terminator after an unfinished escape`<br>also fixed directly by `security: protocol output never reads past a trailing tab; MSSP callbacks typed` |
+| A1-06 | low (was medium) | read-past-terminator | `src/protocol.c:ProtocolOutput` | builder-olc | confirmed | fixed: `security: ProtocolOutput stops at the terminator after an unfinished escape`<br>also fixed directly by `security: protocol output never reads past a trailing tab; MSSP callbacks typed` (already on this branch) |
 | A1-07 | high | undefined-behavior | `src/comm.c:msdp_update` | builder-olc | confirmed | fixed: `security: MSDP opponent health no longer divides by a zero max_hit` |
 | A1-08 | medium (was high) | buffer-bounds | `src/comm.c:new_descriptor` | immortal | confirmed | fixed: `security: refuse connections whose fd select() cannot watch`<br>`security: copyover recovery validates each fd and reports lost players` |
 | A1-09 | medium | sanitizer-hazard | `src/comm.c:make_prompt` | player | confirmed | fixed: `security: auto prompt compares quarter thresholds without shifting negatives` |
-| A1-10 | low (was medium) | undefined-behavior | `src/comm.c:vwrite_to_output` | internal-invariant | confirmed | fixed: `security: vwrite_to_output passes ProtocolOutput a real int length`<br>also fixed directly by `security: protocol output length is written through a real int` |
+| A1-10 | low (was medium) | undefined-behavior | `src/comm.c:vwrite_to_output` | internal-invariant | confirmed | fixed: `security: vwrite_to_output passes ProtocolOutput a real int length`<br>also fixed directly by `security: protocol output length is written through a real int` (already on this branch) |
 | A1-11 | medium | silent-failure | `src/protocol.c:ProtocolOutput` | player | confirmed | fixed: `security: oversized protocol output is cut with a marker, not dropped whole` |
 | A1-12 | medium | lifetime | `src/comm.c:act_body` | dg-script | confirmed | fixed: `security: act() snapshots room recipients before running act triggers` |
 | A1-13 | medium | silent-failure | `src/comm.c:act_body` | dg-script | confirmed | fixed: `security: nested act() no longer changes the outer act's trigger setting` |
-| A1-14 | medium | silent-failure | `src/comm.c:game_loop` | internal-invariant | plausible | deferred: follow-up `errloc` (plausible, not attempted yet) |
+| A1-14 | medium | silent-failure | `src/comm.c:game_loop` | internal-invariant | plausible | fixed in a later round: `security: a failed socket poll no longer passes for a normal shutdown` |
 | A1-15 | low | read-past-terminator | `src/protocol.c:ProtocolInput` | remote-unauthenticated | confirmed | fixed: `security: ProtocolInput drops NUL bytes and returns the bytes it appended` |
 | A1-16 | low | silent-failure | `src/comm.c:process_input` | player | confirmed | fixed: `diag: report input lines cut to the command buffer` |
 | A1-17 | low | silent-failure | `src/comm.c:write_to_q` | player | confirmed | fixed: `diag: report commands dropped by the pending-input bound` |
@@ -488,14 +491,14 @@ the file. The columns:
 | A2-04 | - (claimed medium) | buffer-bounds | `src/improved-edit.c:format_text` | player | refuted | refuted: no reachable string is long enough for strncpy() to leave the buffer unterminated (editor input is capped far below MAX_STRING_LENGTH) |
 | A2-05 | medium | silent-failure | `src/ban.c:load_banned` | save-or-world-file | confirmed | fixed: `security: ban file loader reports every record it rejects or truncates` |
 | A2-06 | low | silent-failure | `src/ban.c:do_ban` | immortal | confirmed | fixed: `security: ban refuses a site longer than it can store` |
-| A2-07 | low | null-deref | `src/interpreter.c:command_interpreter` | internal-invariant | plausible | deferred: follow-up `commands` (plausible, not attempted yet) |
+| A2-07 | low | null-deref | `src/interpreter.c:command_interpreter` | internal-invariant | plausible | fixed in a later round: `security: command_interpreter checks a switched NPC's original before use` |
 | A2-08 | low | silent-failure | `src/modify.c:show_string` | player | confirmed | fixed: `diag: report a pager page clamped to show_string's buffer` |
 | A2-V01 | medium | read-past-terminator | `src/modify.c:next_page` | save-or-world-file | verifier-added | fixed: `security: pager colour-code scans stop at the string terminator` |
 | A2-V02 | medium | read-past-terminator | `src/improved-edit.c:format_text` | save-or-world-file | verifier-added | fixed: `security: editor /f word scan stays inside the edit buffer` |
 
 ### Area B: Player and world persistence
 
-65 findings from chunks B1, B2: 54 fixed; 4 partly fixed, rest in a follow-up group; 3 deferred to a follow-up group; 4 refuted.
+65 findings from chunks B1, B2: 61 fixed; 4 refuted.
 
 | ID | Severity | Category | File:function | Input controller | Verdict | Resolution |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -513,10 +516,10 @@ the file. The columns:
 | B1-12 | medium | untrusted-index | `src/db.c:parse_simple_mob` | save-or-world-file | confirmed | fixed: `security: reject mob positions and sex outside their tables` |
 | B1-13 | medium | buffer-bounds | `src/db.c:boot_social_messages` | save-or-world-file | confirmed | fixed: `security: boot_social_messages stops at the slots it allocated` |
 | B1-14 | medium | buffer-bounds | `src/db.c:parse_object` | save-or-world-file | confirmed | fixed: `security: discrete_load never fills a prototype slot past the allocation` |
-| B1-15 | medium | integer | `src/db.c:discrete_load` | save-or-world-file | confirmed | fixed in part: `security: world record numbers must fit a vnum; disorder is reported`<br>rest: follow-up `db-loaders` |
+| B1-15 | medium | integer | `src/db.c:discrete_load` | save-or-world-file | confirmed | fixed in part on the chunk branch: `security: world record numbers must fit a vnum; disorder is reported`<br>fixed in a later round: `security: index_boot sorts a table whose record numbers did not ascend`<br>`security: world record numbers must fit a vnum; disorder is reported` |
 | B1-16 | medium | integer | `src/db.c:renum_zone_table` | builder-olc | confirmed | fixed: `security: zone command vnums are range-checked before they are narrowed` |
 | B1-17 | - (claimed medium) | read-past-terminator | `src/db.c:load_help` | builder-olc | refuted | refuted: already fixed by `security: bound the argument splitters to their MAX_INPUT_LENGTH contract` (05425e1) |
-| B1-18 | medium | buffer-bounds | `src/db.c:parse_mobile` | builder-olc | confirmed | fixed in part: `security: world loading tests for a leading article without fname()`<br>rest: follow-up `core-utils` |
+| B1-18 | medium | buffer-bounds | `src/db.c:parse_mobile` | builder-olc | confirmed | fixed in part on the chunk branch: `security: world loading tests for a leading article without fname()`<br>fixed in a later round: `security: world loading tests for a leading article without fname()` |
 | B1-19 | - (claimed low) | buffer-bounds | `src/db.c:check_object` | save-or-world-file | refuted | refuted: already fixed by `security: bound the argument splitters to their MAX_INPUT_LENGTH contract` (05425e1) |
 | B1-20 | - (claimed low) | buffer-bounds | `src/db.c:fread_flags` | save-or-world-file | refuted | refuted: already fixed by `security: bound the argument splitters to their MAX_INPUT_LENGTH contract` (05425e1); the silent tb_parse_int_or_zero() it mentions is a separate low issue |
 | B1-21 | medium | buffer-bounds | `src/db.c:get_one_line` | save-or-world-file | confirmed | fixed: `security: get_one_line strips only line endings and reports odd lines` |
@@ -552,22 +555,22 @@ the file. The columns:
 | B2-18 | medium | uninitialized | `src/players.c:read_aliases_ascii` | save-or-world-file | confirmed | fixed: `security: check every alias line read from a player file` |
 | B2-19 | medium | silent-failure | `src/players.c:save_char` | player | confirmed | fixed: `security: save_char keeps affects it cannot store` |
 | B2-20 | medium | silent-failure | `src/players.c:save_char` | player | confirmed | fixed: `security: a re-created deleted character is indexed, and save_char reports a missing index entry` |
-| B2-21 | low (was medium) | lifetime | `src/players.c:save_char` | dg-script | plausible | deferred: follow-up `player-load` (plausible, not attempted yet) |
+| B2-21 | low (was medium) | lifetime | `src/players.c:save_char` | dg-script | plausible | fixed in a later round: `security: save_char runs no wear/remove triggers mid-save` |
 | B2-22 | medium | integer | `src/objsave.c:Crash_load_objs` | save-or-world-file | confirmed | fixed: `security: rent charges use signed 64-bit days and never wrap` |
-| B2-23 | medium | sanitizer-hazard | `src/house.c:hcontrol_build_house` | immortal | confirmed | fixed in part: `security: zero a newly built house record before it is written to hcontrol`<br>rest: follow-up `player-load` |
+| B2-23 | medium | sanitizer-hazard | `src/house.c:hcontrol_build_house` | immortal | confirmed | fixed in part on the chunk branch: `security: zero a newly built house record before it is written to hcontrol`<br>fixed in a later round: `security: hcontrol carries a format header; other layouts fail loudly`<br>`security: zero a newly built house record before it is written to hcontrol` |
 | B2-24 | low (was medium) | untrusted-index | `src/house.c:do_house` | player | confirmed | fixed: `security: deleting the last house guest no longer reads past guests[]` |
 | B2-25 | medium | untrusted-index | `src/mail.c:postmaster_receive_mail` | internal-invariant | confirmed | fixed: `security: mail notes carry no prototype rnum` |
-| B2-26 | low | uninitialized | `src/players.c:remove_player` | save-or-world-file | confirmed | fixed in part: `diag: remove_player reports an unrepresentable last-login time`<br>rest: follow-up `core-utils` |
+| B2-26 | low | uninitialized | `src/players.c:remove_player` | save-or-world-file | confirmed | fixed in part on the chunk branch: `diag: remove_player reports an unrepresentable last-login time`<br>fixed in a later round: `security: tb_strftime leaves an empty string when the time is unrepresentable`<br>`diag: remove_player reports an unrepresentable last-login time` |
 | B2-27 | low | double-free-or-leak | `src/house.c:ascii_convert_house` | immortal | confirmed | fixed: `security: house asciiconvert releases its objects and skips missing prototypes` |
 | B2-28 | low | other | `src/players.c:clean_pfiles` | internal-invariant | confirmed | fixed: `security: clean_pfiles re-examines the slot a removed player vacates` |
-| B2-29 | low | null-deref | `src/players.c:free_player_index` | internal-invariant | plausible | deferred: follow-up `player-load` (plausible, not attempted yet) |
+| B2-29 | low | null-deref | `src/players.c:free_player_index` | internal-invariant | plausible | fixed in a later round: `security: an empty player index is -1, and remove_player checks its slot` |
 | B2-30 | medium | error-locality | `src/players.c:parse_pfile_int_or_zero / load_affects / load_skills / load_quests / load_HMVS` | save-or-world-file | confirmed | fixed: `diag: pfile integer and unknown-tag diagnostics name the player and tag` |
 | B2-31 | medium | error-locality | `src/objsave.c:objsave_parse_objects` | save-or-world-file | confirmed | fixed: `diag: rent and house object-record diagnostics name the file, owner, line and vnum` |
-| B2-32 | low | format-string | `src/objsave.c:Crash_report_unrentables / Crash_report_rent` | builder-olc | plausible | deferred: follow-up `player-load` (plausible, not attempted yet) |
+| B2-32 | low | format-string | `src/objsave.c:Crash_report_unrentables / Crash_report_rent` | builder-olc | plausible | fixed in a later round: `security: rent offers pass the object to act() as $p, not as format text` |
 
 ### Area C: Boards, bug reports, class import, OLC save writers, trigger files, config
 
-62 findings from chunks C1, C2: 49 fixed; 6 partly fixed, rest in a follow-up group; 3 deferred to a follow-up group; 2 queued for a later round; 2 refuted.
+62 findings from chunks C1, C2: 60 fixed; 2 refuted.
 
 | ID | Severity | Category | File:function | Input controller | Verdict | Resolution |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -577,19 +580,19 @@ the file. The columns:
 | C1-04 | high | untrusted-index | `src/boards.c:board_load_board` | save-or-world-file | confirmed | fixed: `security: board loader never trusts pointers, slots or lengths from disk` |
 | C1-05 | medium | read-past-terminator | `src/boards.c:board_load_board` | save-or-world-file | confirmed | fixed: `security: board loader requires NUL-terminated headings and bodies` |
 | C1-06 | medium | double-free-or-leak | `src/boards.c:board_write_message` | player | confirmed | fixed: `security: board writes validate the headline before reserving a slot` |
-| C1-07 | high | error-locality | `src/boards.c:init_boards` | builder-olc | confirmed | fixed in part: `security: boot the bulletin boards in boot_db instead of on first use`<br>rest: follow-up `errloc` |
+| C1-07 | high | error-locality | `src/boards.c:init_boards` | builder-olc | confirmed | fixed in part on the chunk branch: `security: boot the bulletin boards in boot_db instead of on first use`<br>fixed in a later round: `security: boot the bulletin boards in boot_db instead of on first use` |
 | C1-08 | low | error-locality | `src/boards.c:gen_board` | internal-invariant | confirmed | fixed: `diag: board diagnostics name the board vnum, message, slot and character` |
 | C1-09 | medium | buffer-bounds | `src/db.c:fread_clean_string` | player | confirmed | fixed: `security: fread_clean_string stops its line-ending scan at the buffer start` |
 | C1-10 | low (was medium) | uninitialized | `src/ibt.c:read_ibt` | save-or-world-file | confirmed | fixed: `security: IBT loader drops malformed records instead of exiting or crashing` |
 | C1-11 | medium | null-deref | `src/ibt.c:read_ibt` | save-or-world-file | confirmed | fixed: `security: IBT loader drops malformed records instead of exiting or crashing` |
 | C1-12 | low | double-free-or-leak | `src/ibt.c:free_ibt` | immortal | confirmed | fixed: `security: removing an IBT frees its admin notes` |
-| C1-13 | high (was medium) | lifetime | `src/ibt.c:do_ibt` | immortal | confirmed | fixed in part: `security: IBT remove and ibtedit track records, not list positions`<br>rest: follow-up `gen-olc` |
+| C1-13 | high (was medium) | lifetime | `src/ibt.c:do_ibt` | immortal | confirmed | fixed in part on the chunk branch: `security: IBT remove and ibtedit track records, not list positions`<br>fixed in a later round: `diag: ibtedit shows and logs a record's current number`<br>`security: IBT remove and ibtedit track records, not list positions` |
 | C1-14 | low (was medium) | null-deref | `src/ibt.c:ibtedit_parse` | internal-invariant | confirmed | fixed: `security: ibtedit_parse returns after ending a session in a bad mode` |
 | C1-15 | medium | silent-failure | `src/ibt.c:save_ibt_file` | internal-invariant | confirmed | fixed: `security: IBT lists are saved through a temporary file and checked` |
 | C1-16 | low | undefined-behavior | `src/ibt.c:ibtedit_disp_main_menu` | save-or-world-file | confirmed | fixed: `security: ibtedit working copy always has a name and header text` |
-| C1-17 | low | sanitizer-hazard | `src/ibt.c:do_ibt` | save-or-world-file | plausible | deferred: follow-up `gen-olc` (plausible, not attempted yet) |
+| C1-17 | low | sanitizer-hazard | `src/ibt.c:do_ibt` | save-or-world-file | plausible | fixed in a later round: `security: IBT dates are converted as time_t and checked before display` |
 | C1-18 | medium (was high) | other | `src/class.c:saving_throws` | player | confirmed | fixed: `security: saving throws past the end of a class table use its last row` |
-| C1-19 | low | error-locality | `src/class.c:level_exp` | save-or-world-file | confirmed | fixed in part: `diag: class-table misses report the table, class, save type and level`<br>rest: follow-up `errloc` |
+| C1-19 | low | error-locality | `src/class.c:level_exp` | save-or-world-file | confirmed | fixed in part on the chunk branch: `diag: class-table misses report the table, class, save type and level`<br>fixed in a later round: `diag: saving throws and level thresholds name the character on a table miss`<br>`diag: class-table misses name the character whose data is out of range`<br>`diag: class-table misses report the table, class, save type and level` |
 | C1-20 | high | silent-failure | `src/genolc.c:save_all` | builder-olc | confirmed | fixed: `security: save_all tries each queued save once instead of spinning` |
 | C1-21 | high | buffer-bounds | `src/genmob.c:delete_mobile` | builder-olc | confirmed | fixed: `security: delete_mobile revisits the slot a deleted zone command vacates` |
 | C1-22 | medium | silent-failure | `src/genmob.c:delete_mobile` | builder-olc | confirmed | fixed: `security: delete_mobile never renumbers NOBODY or hands a shop to another mob` |
@@ -598,12 +601,12 @@ the file. The columns:
 | C1-25 | medium (was low) | read-past-terminator | `src/genolc.c:export_save_objects` | save-or-world-file | confirmed | fixed: `security: zone export copies strings with a terminating, reporting copy` |
 | C1-26 | low | silent-failure | `src/genolc.c:do_export_zone` | immortal | confirmed | fixed: `diag: zone export writers report incomplete files; info file counts exits` |
 | C1-27 | - (claimed low) | other | `src/genolc.c:do_export_zone` | immortal | refuted | refuted: process_input() keeps only printable ASCII and splits lines, so the argument cannot forge a log record; the command is LVL_IMPL only |
-| C1-28 | low | untrusted-index | `src/genmob.c:add_mobile` | builder-olc | plausible | deferred: follow-up `gen-olc` (plausible, not attempted yet) |
-| C1-29 | low | silent-failure | `src/genmob.c:save_mobiles` | internal-invariant | plausible | queued for a later round (not memory safety) |
+| C1-28 | low | untrusted-index | `src/genmob.c:add_mobile` | builder-olc | plausible | fixed in a later round: `security: add_mobile refuses a vnum that belongs to no zone` |
+| C1-29 | low | silent-failure | `src/genmob.c:save_mobiles` | internal-invariant | plausible | fixed in a later round: `security: save_mobiles keeps the old file when a write failed earlier` |
 | C1-V01 | high | untrusted-index | `src/genmob.c:delete_mobile` | builder-olc | verifier-added | fixed: `security: delete_mobile never renumbers NOBODY or hands a shop to another mob` |
 | C1-V02 | medium | silent-failure | `src/db.c:fread_clean_string` | save-or-world-file | verifier-added | fixed: `security: IBT loader drops malformed records instead of exiting or crashing` |
 | C1-V03 | high | buffer-bounds | `src/genobj.c:delete_object` | builder-olc | verifier-added | fixed: `security: delete_object revisits the slot a deleted zone command vacates` |
-| C2-01 | critical | buffer-bounds | `src/genobj.c:delete_object` | builder-olc | confirmed | fixed in part: `security: delete_object re-examines the zone command that slides into a drop`<br>rest: follow-up `gen-olc` |
+| C2-01 | critical | buffer-bounds | `src/genobj.c:delete_object` | builder-olc | confirmed | fixed in part on the chunk branch: `security: delete_object re-examines the zone command that slides into a drop`<br>fixed in a later round: `security: delete_mobile steps past a zone command it could not remove`<br>`security: save_zone range-checks stored rnums before converting to vnums`<br>`security: delete_object re-examines the zone command that slides into a drop` |
 | C2-02 | critical | integer | `src/genobj.c:delete_object` | builder-olc | confirmed | fixed: `security: delete_object leaves prototype-less objects at NOTHING` |
 | C2-03 | high (was critical) | lifetime | `src/genwld.c:add_room / delete_room` | builder-olc | confirmed | fixed: `security: re-point room mud events after add_room/delete_room move world[]` |
 | C2-04 | high | lifetime | `src/genwld.c:add_room` | builder-olc | confirmed | fixed: `security: a newly added room never inherits the caller's live lists` |
@@ -613,12 +616,12 @@ the file. The columns:
 | C2-08 | high | untrusted-index | `src/genobj.c:delete_object` | builder-olc | confirmed | fixed: `security: drop shop products of a deleted prototype; refuse board objects` |
 | C2-09 | high | untrusted-index | `src/genshp.c:save_shops` | builder-olc | confirmed | fixed: `security: save_shops validates the keeper rnum before indexing mob_index` |
 | C2-10 | medium (was high) | double-free-or-leak | `src/genobj.c:update_all_objects` | builder-olc | confirmed | fixed: `security: free live instances' private state before a prototype update` |
-| C2-11 | medium | double-free-or-leak | `src/genobj.c:copy_object_main` | builder-olc | confirmed | fixed: `security: copy_object/copy_room own triggers and keep the live events list`<br>its trigger-list free was dropped at integration (`fix: integrate fan-in m1 OLC saves free a replaced trigger list once`): with F1-08's editor free it freed the list twice; F1-08 alone now frees it |
+| C2-11 | medium | double-free-or-leak | `src/genobj.c:copy_object_main` | builder-olc | confirmed | fixed: `security: copy_object/copy_room own triggers and keep the live events list` |
 | C2-12 | high | buffer-bounds | `src/genzon.c:create_new_zone` | immortal | confirmed | fixed: `security: zedit new rejects the last zone's number and never truncates files` |
-| C2-13 | high | null-deref | `src/genwld.c:save_rooms` | save-or-world-file | confirmed | fixed in part: `security: save_rooms writes a NULL extra-description field as empty`<br>rest: follow-up `gen-olc` |
+| C2-13 | high | null-deref | `src/genwld.c:save_rooms` | save-or-world-file | confirmed | fixed in part on the chunk branch: `security: save_rooms writes a NULL extra-description field as empty`<br>fixed in a later round: `security: redit copies a world-file extra description with no body`<br>`security: save_rooms writes a NULL extra-description field as empty` |
 | C2-14 | medium (was high) | null-deref | `src/dg_db_scripts.c:parse_trigger` | save-or-world-file | confirmed | fixed: `security: parse_trigger loads an empty command body as '* No script'` |
 | C2-15 | medium (was high) | silent-failure | `src/genqst.c:save_quests` | builder-olc | confirmed | fixed: `diag: save_quests abandons the zone save when a quest record does not fit` |
-| C2-16 | medium | silent-failure | `src/genobj.c:save_objects` | internal-invariant | plausible | queued for a later round (not memory safety) |
+| C2-16 | medium | silent-failure | `src/genobj.c:save_objects` | internal-invariant | plausible | fixed in a later round: `security: save_rooms keeps the old file when a write failed earlier`<br>`security: save_mobiles keeps the old file when a write failed earlier`<br>`security: OLC writers keep the old file when a write failed earlier` |
 | C2-17 | medium | untrusted-index | `src/genzon.c:save_zone` | internal-invariant | confirmed | fixed: `security: save_zone range-checks stored rnums before converting to vnums` |
 | C2-18 | medium | silent-failure | `src/genzon.c:save_zone` | builder-olc | confirmed | fixed: `diag: report each reset line save_zone drops from disk` |
 | C2-19 | low (was medium) | uninitialized | `src/genzon.c:new_command` | builder-olc | confirmed | fixed: `security: new_command inserts a fully zeroed blank zone command` |
@@ -629,14 +632,14 @@ the file. The columns:
 | C2-24 | low | double-free-or-leak | `src/genobj.c:oset_alias` | dg-script | confirmed | fixed: `security: oset string setters free what a prototype-less object owns` |
 | C2-25 | low | error-locality | `src/genobj.c:save_objects` | builder-olc | confirmed | fixed: `diag: OLC writers name the object, zone, path and errno when they fail`<br>`test: clear clang-tidy findings in the genolc safety test and save_shops` |
 | C2-26 | medium | silent-failure | `src/dg_db_scripts.c:dg_read_trigger` | save-or-world-file | confirmed | fixed: `diag: keep a missing trigger vnum in the prototype's trigger list` |
-| C2-27 | low | double-free-or-leak | `src/genzon.c:remove_cmd_from_list` | builder-olc | confirmed | fixed in part: `diag: remove_cmd_from_list reports a refused removal instead of returning`<br>rest: follow-up `gen-olc` |
-| C2-28 | low | untrusted-index | `src/genobj.c:add_object` | internal-invariant | plausible | deferred: follow-up `gen-olc` (plausible, not attempted yet) |
+| C2-27 | low | double-free-or-leak | `src/genzon.c:remove_cmd_from_list` | builder-olc | confirmed | fixed in part on the chunk branch: `diag: remove_cmd_from_list reports a refused removal instead of returning`<br>fixed in a later round: `security: delete_room frees the 'V' strings of the commands it cancels`<br>`security: a zone command list owns its 'V' strings and frees them on removal`<br>`diag: remove_cmd_from_list reports a refused removal instead of returning` |
+| C2-28 | low | untrusted-index | `src/genobj.c:add_object` | internal-invariant | plausible | fixed in a later round: `security: add_object refuses a vnum that belongs to no zone` |
 | C2-29 | low | silent-failure | `src/genzon.c:create_new_zone` | immortal | confirmed | fixed: `diag: zedit new checks every stub write and removes files of a failed create` |
 | C2-V01 | high | untrusted-index | `src/genwld.c:delete_room` | builder-olc | verifier-added | fixed: `security: delete_room moves start-room rnums down with world[]` |
 
 ### Area D: DG script engine core
 
-43 findings from chunks D1, D2: 32 fixed; 1 partly fixed, rest in a follow-up group; 1 partly fixed, rest queued for a later round; 6 deferred to a follow-up group; 3 queued for a later round.
+43 findings from chunks D1, D2: 43 fixed.
 
 | ID | Severity | Category | File:function | Input controller | Verdict | Resolution |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -658,7 +661,7 @@ the file. The columns:
 | D1-16 | medium | buffer-bounds | `src/dg_scripts.c:do_stat_trigger` | save-or-world-file | confirmed | fixed: `security: tstat builds its listing with a bounded buffer` |
 | D1-17 | medium | buffer-bounds | `src/dg_scripts.c:read_saved_vars` | save-or-world-file | confirmed | fixed: `security: legacy saved DG variables parse into argument-sized buffers` |
 | D1-18 | medium | buffer-bounds | `src/dg_variables.c:find_replacement` | dg-script | confirmed | fixed: `security: %obj.extra% lists every flag instead of seven bytes` |
-| D1-19 | low (was medium) | untrusted-index | `src/dg_variables.c:find_replacement` | internal-invariant | plausible | deferred: follow-up `dg` (plausible, not attempted yet) |
+| D1-19 | low (was medium) | untrusted-index | `src/dg_variables.c:find_replacement` | internal-invariant | plausible | fixed in a later round: `security: DG room lookups check that the script owner is in a room` |
 | D1-20 | medium | integer | `src/dg_variables.c:find_replacement` | dg-script | confirmed | fixed: `security: DG field setters saturate instead of wrapping narrow fields` |
 | D1-21 | medium | integer | `src/dg_misc.c:do_dg_affect` | dg-script | confirmed | fixed: `security: dg_affect refuses values its affect fields cannot hold` |
 | D1-22 | low | other | `src/dg_variables.c:find_replacement` | dg-script | confirmed | fixed: `security: is_killer/is_thief setters no longer flip mob flags` |
@@ -666,27 +669,27 @@ the file. The columns:
 | D1-24 | low | silent-failure | `src/dg_scripts.c:eval_op` | dg-script | confirmed | fixed: `diag: DG arithmetic reports saturation and division by zero` |
 | D1-25 | low | null-deref | `src/dg_scripts.c:find_case` | internal-invariant | confirmed | fixed: `security: switch case comparison uses a stack buffer`<br>integration skipped this commit: superseded by audit-branch stack buffers + prototype-safe copy |
 | D1-26 | low | sanitizer-hazard | `src/dg_variables.c:text_processed` | dg-script | confirmed | fixed: `security: %var.trim% trims by index, never before the buffer` |
-| D1-27 | low | silent-failure | `src/dg_scripts.c:process_rdelete` | dg-script | confirmed | fixed in part: `diag: lost DG remote writes and detach misses are reported`<br>rest: queued for a later round |
+| D1-27 | low | silent-failure | `src/dg_scripts.c:process_rdelete` | dg-script | confirmed | fixed in part on the chunk branch: `diag: lost DG remote writes and detach misses are reported`<br>fixed in a later round: `diag: an rdelete with an unknown UID says rdelete, not remote`<br>`diag: lost DG remote writes and detach misses are reported` |
 | D1-28 | low | error-locality | `src/dg_scripts.c:find_char_by_uid_in_lookup_table` | internal-invariant | confirmed | fixed: `diag: DG lookup misses and engine log lines name their trigger` |
 | D1-29 | medium (was low) | silent-failure | `src/dg_variables.c:var_subst` | dg-script | confirmed | fixed: `security: field chains no longer rename the variable inside var_subst's copy` |
 | D2-01 | high (was critical) | lifetime | `src/dg_event.c:event_cancel / event_process` | dg-script | confirmed | fixed: `security: defer freeing an event cancelled from its own callback` |
-| D2-02 | high (was critical) | integer | `src/dg_event.c:event_create / queue_enq / queue_deq` | dg-script | confirmed | fixed in part: `security: reject event keys that overflow into negative buckets`<br>rest: follow-up `dg` |
-| D2-03 | medium | lifetime | `src/dg_handler.c:update_wait_events` | builder-olc | confirmed | deferred: follow-up `dg` |
-| D2-04 | medium | buffer-bounds | `src/dg_scripts.c:trig_wait_event` | save-or-world-file | confirmed | deferred: follow-up `dg` |
+| D2-02 | high (was critical) | integer | `src/dg_event.c:event_create / queue_enq / queue_deq` | dg-script | confirmed | fixed in part on the chunk branch: `security: reject event keys that overflow into negative buckets`<br>fixed in a later round: `security: a DG wait whose event key would overflow is rejected by its trigger`<br>`security: reject event keys that overflow into negative buckets` |
+| D2-03 | medium | lifetime | `src/dg_handler.c:update_wait_events` | builder-olc | confirmed | fixed in a later round: `security: a room wait finds its room by vnum after world[] moves` |
+| D2-04 | medium | buffer-bounds | `src/dg_scripts.c:trig_wait_event` | save-or-world-file | confirmed | fixed in a later round: `security: a room wait finds its room by vnum after world[] moves` |
 | D2-05 | low | silent-failure | `src/dg_handler.c:extract_script / free_proto_script` | internal-invariant | confirmed | fixed: `diag: make DG script ownership checks cover the last room and fail loudly` |
-| D2-06 | low | silent-failure | `src/dg_handler.c:dg_script_execution_leave` | internal-invariant | plausible | queued for a later round (not memory safety) |
-| D2-07 | low | double-free-or-leak | `src/dg_handler.c:extract_trigger` | internal-invariant | plausible | deferred: follow-up `dg` (plausible, not attempted yet) |
-| D2-08 | low | silent-failure | `src/dg_handler.c:free_proto_script / copy_proto_script` | builder-olc | plausible | queued for a later round (not memory safety) |
+| D2-06 | low | silent-failure | `src/dg_handler.c:dg_script_execution_leave` | internal-invariant | plausible | fixed in a later round: `diag: an unbalanced DG execution leave is fatal and named` |
+| D2-07 | low | double-free-or-leak | `src/dg_handler.c:extract_trigger` | internal-invariant | plausible | fixed in a later round: `security: extract_trigger refuses a trigger it has already extracted` |
+| D2-08 | low | silent-failure | `src/dg_handler.c:free_proto_script / copy_proto_script` | builder-olc | plausible | fixed in a later round: `diag: proto-script helpers report a bad owner and a leaked list` |
 | D2-09 | low | error-locality | `src/dg_event.c:event_cancel / event_process / extract_script` | internal-invariant | confirmed | fixed: `diag: report DG event cancel and extract_script misuse with call sites` |
 | D2-10 | low | silent-failure | `src/dg_event.c:event_create` | dg-script | confirmed | fixed: `diag: warn when event_create clamps a non-positive delay` |
-| D2-11 | low | error-locality | `src/dg_handler.c:delete_variables` | player | plausible | queued for a later round (not memory safety) |
-| D2-12 | low | null-deref | `src/dg_event.c:event_time / event_is_queued` | internal-invariant | plausible | deferred: follow-up `dg` (plausible, not attempted yet) |
-| D2-V01 | medium | integer | `src/dg_scripts.c:1852` | dg-script | verifier-added | deferred: follow-up `dg` |
+| D2-11 | low | error-locality | `src/dg_handler.c:delete_variables` | player | plausible | fixed in a later round: `diag: a script-variable file that survives deletion is reported with its player` |
+| D2-12 | low | null-deref | `src/dg_event.c:event_time / event_is_queued` | internal-invariant | plausible | fixed in a later round: `security: event_time and event_is_queued refuse an event that has no slot` |
+| D2-V01 | medium | integer | `src/dg_scripts.c:1852` | dg-script | verifier-added | fixed in a later round: `security: bound DG wait lengths before they reach the event queue` |
 | D2-V02 | low | lifetime | `src/dg_event.c:155` | internal-invariant | verifier-added | fixed: `security: clear event_q after event_free_all and guard its users` |
 
 ### Area E: DG script commands, triggers and trigger OLC
 
-40 findings from chunks E1, E2: 33 fixed; 5 deferred to a follow-up group; 1 queued for a later round; 1 refuted.
+40 findings from chunks E1, E2: 39 fixed; 1 refuted.
 
 | ID | Severity | Category | File:function | Input controller | Verdict | Resolution |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -704,12 +707,12 @@ the file. The columns:
 | E1-12 | medium | silent-failure | `src/dg_mobcmd.c:do_mload` | dg-script | confirmed | fixed: `security: mload never loads an object into itself` |
 | E1-13 | medium | silent-failure | `src/dg_wldcmd.c:do_wteleport / do_wmove (and other numeric DG args)` | dg-script | confirmed | fixed: `security: DG numeric arguments are parsed strictly, vnums range-checked` |
 | E1-14 | low (was medium) | other | `src/dg_mobcmd.c:do_mdoor (also do_odoor, do_wdoor)` | dg-script | confirmed | fixed: `security: DG doors are edited by one helper; new exits lead nowhere` |
-| E1-15 | low | untrusted-index | `src/dg_triggers.c:command_otrigger` | internal-invariant | plausible | deferred: follow-up `dg` (plausible, not attempted yet) |
+| E1-15 | low | untrusted-index | `src/dg_triggers.c:command_otrigger` | internal-invariant | plausible | fixed in a later round: `security: command_otrigger checks the actor's room before reading it` |
 | E1-16 | low | silent-failure | `src/dg_triggers.c:load_mtrigger / load_otrigger` | dg-script | confirmed | fixed: `diag: report load triggers that disable their prototype's scripts` |
 | E1-17 | low | buffer-bounds | `src/dg_triggers.c:one_phrase / word_check` | builder-olc | confirmed | fixed: `security: one_phrase honours its buffer size; long word lists reported` |
 | E1-18 | low | silent-failure | `src/dg_triggers.c:greet_memory_mtrigger` | internal-invariant | confirmed | fixed: `diag: report a failed memory-command copy in greet_memory_mtrigger` |
 | E1-19 | low | other | `src/dg_wldcmd.c:do_wload` | dg-script | confirmed | fixed: `security: wload sets %lastloaded% for every placement` |
-| E1-20 | low | untrusted-index | `src/dg_mobcmd.c:do_masound / do_mpurge / do_mecho` | internal-invariant | plausible | deferred: follow-up `dg` (plausible, not attempted yet) |
+| E1-20 | low | untrusted-index | `src/dg_mobcmd.c:do_masound / do_mpurge / do_mecho` | internal-invariant | plausible | fixed in a later round: `security: a mob script runs no command while its mob is in no room` |
 | E1-21 | low | error-locality | `src/dg_comm.c:sub_write` | internal-invariant | confirmed | fixed: `diag: sub_write names a misplaced speaker and rejects any non-room` |
 | E1-22 | low | error-locality | `src/dg_mobcmd.c:mob_log / obj_log / wld_log callers` | dg-script | confirmed | fixed: `diag: DG command rejections and charm refusals reach the error log` |
 | E1-V01 | medium | integer | `src/dg_wldcmd.c:do_wteleport / do_wmove` | dg-script | verifier-added | fixed: `security: DG numeric arguments are parsed strictly, vnums range-checked` |
@@ -722,18 +725,18 @@ the file. The columns:
 | E2-06 | medium | silent-failure | `src/dg_olc.c:format_script` | builder-olc | confirmed | fixed: `security: format_script writes whole lines or refuses loudly` |
 | E2-07 | medium | silent-failure | `src/dg_olc.c:trigedit_save` | builder-olc | confirmed | fixed: `diag: trigedit_save checks the zone first and reports every failure` |
 | E2-08 | low (was medium) | silent-failure | `src/dg_olc.c:trigedit_create_index` | save-or-world-file | confirmed | fixed: `diag: trigger index rewrite keeps a truncated index and reports it` |
-| E2-09 | low (was medium) | double-free-or-leak | `src/dg_olc.c:do_oasis_trigedit` | internal-invariant | plausible | deferred: follow-up `dg` (plausible, not attempted yet) |
+| E2-09 | low (was medium) | double-free-or-leak | `src/dg_olc.c:do_oasis_trigedit` | internal-invariant | plausible | fixed in a later round: `diag: trigedit releases a stale OLC session with cleanup_olc and reports it` |
 | E2-10 | low (was medium) | silent-failure | `src/dg_olc.c:trigedit_parse` | builder-olc | confirmed | fixed: `security: trigger editor rejects non-numeric answers instead of using 0` |
 | E2-11 | low | untrusted-index | `src/dg_olc.c:trigedit_disp_types` | builder-olc | confirmed | fixed: `security: trigger type menu is bounded by each attach type's table` |
-| E2-12 | low | untrusted-index | `src/dg_olc.c:dg_script_menu` | internal-invariant | plausible | deferred: follow-up `dg` (plausible, not attempted yet) |
+| E2-12 | low | untrusted-index | `src/dg_olc.c:dg_script_menu` | internal-invariant | plausible | fixed in a later round: `security: the trigger attachment menu checks each trigger vnum it lists` |
 | E2-13 | low | silent-failure | `src/dg_olc.c:script_syntax_highlighting` | builder-olc | confirmed | fixed: `diag: trigger listing says when it was cut and reports failed allocations` |
 | E2-14 | low | null-deref | `src/dg_olc.c:format_script` | internal-invariant | confirmed | fixed: `security: trigger editor never stores a NULL from a failed strdup` |
-| E2-15 | low | error-locality | `src/dg_olc.c:script_save_to_disk` | internal-invariant | plausible | queued for a later round (not memory safety) |
-| E2-16 | low | lifetime | `src/dg_olc.c:trigedit_save` | builder-olc | plausible | deferred: follow-up `dg` (plausible, not attempted yet) |
+| E2-15 | low | error-locality | `src/dg_olc.c:script_save_to_disk` | internal-invariant | plausible | fixed in a later round: `diag: script_save_to_disk names the saver and returns a status on bad input` |
+| E2-16 | low | lifetime | `src/dg_olc.c:trigedit_save` | builder-olc | plausible | fixed in a later round: `security: the trigedit scratch trigger never points at a prototype's script` |
 
 ### Area F: OLC editors
 
-79 findings from chunks F1, F2, F3: 72 fixed; 1 partly fixed, rest in a follow-up group; 3 deferred to a follow-up group; 1 queued for a later round; 2 refuted.
+79 findings from chunks F1, F2, F3: 77 fixed; 2 refuted.
 
 | ID | Severity | Category | File:function | Input controller | Verdict | Resolution |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -752,7 +755,7 @@ the file. The columns:
 | F1-13 | medium | integer | `src/redit.c:redit_save_internally` | builder-olc | confirmed | fixed: `security: room inserts no longer wrap NOWHERE exits or move door directions` |
 | F1-14 | medium | silent-failure | `src/redit.c:redit_save_internally` | builder-olc | confirmed | fixed: `security: redit decides insert-or-update from OLC_NUM, not the scratch vnum` |
 | F1-15 | medium | untrusted-index | `src/zedit.c:zedit_parse (ZEDIT_CHANGE_ENTRY 'A')` | builder-olc | confirmed | fixed: `security: zedit abort no longer indexes past a shrunken command list` |
-| F1-16 | low (was medium) | untrusted-index | `src/zedit.c:zedit_disp_menu / medit_disp_menu / sedit_namelist_menu` | save-or-world-file | confirmed | fixed in part: `security: OLC menus bound name-table lookups by the table size`<br>rest: follow-up `db-loaders` |
+| F1-16 | low (was medium) | untrusted-index | `src/zedit.c:zedit_disp_menu / medit_disp_menu / sedit_namelist_menu` | save-or-world-file | confirmed | fixed in part on the chunk branch: `security: OLC menus bound name-table lookups by the table size`<br>fixed in a later round: `security: read_type_list drops a buy type that does not fit an int`<br>`security: load_zones disables an 'E' or 'D' whose slot or direction is out of range`<br>`security: OLC menus bound name-table lookups by the table size` |
 | F1-17 | medium | other | `src/oedit.c:iedit_save_internally / iedit_replace_values` | builder-olc | confirmed | fixed: `fix: iedit re-inserts a held object so its weight and affects are re-accounted` |
 | F1-18 | medium | other | `src/sedit.c:sedit_parse (SEDIT_KEEPER)` | builder-olc | confirmed | fixed: `security: sedit installs a shopkeeper's spec proc at save, with zone permission` |
 | F1-19 | low | buffer-bounds | `src/zedit.c:zedit_parse (ZEDIT_ARG2 'D')` | builder-olc | confirmed | fixed: `fix: zedit door direction accepts only the game's exits` |
@@ -793,8 +796,8 @@ the file. The columns:
 | F2-24 | low | error-locality | `src/aedit.c:do_oasis_aedit (also hedit.c:77, qedit.c:127, prefedit.c:997, msgedit.c:353, tedit.c:133; default cases cedit.c:1765, qedit.c:723, hedit.c:354/369, prefedit.c:775, aedit.c:752)` | internal-invariant | confirmed | fixed: `diag: OLC editors release a stale workspace with cleanup_olc and report it` |
 | F2-25 | low | silent-failure | `src/aedit.c:aedit_parse (message fields) / msgedit_parse (msgedit.c:588-698)` | builder-olc | confirmed | fixed: `diag: aedit refuses social messages that start with the reserved '#'` |
 | F2-26 | low | other | `src/cedit.c:cedit_parse (CEDIT_CONFIRM_SAVESTRING)` | builder-olc | confirmed | fixed: `security: cedit autosaves on the OLC autosave toggle, not the crash-save one` |
-| F2-27 | low | read-past-terminator | `src/hedit.c:hedit_save_to_disk` | save-or-world-file | plausible | deferred: follow-up `commands` (plausible, not attempted yet) |
-| F2-28 | low | other | `src/qedit.c:qedit_parse (QEDIT_FLAGS)` | builder-olc | plausible | deferred: follow-up `errloc` (plausible, not attempted yet) |
+| F2-27 | low | read-past-terminator | `src/hedit.c:hedit_save_to_disk` | save-or-world-file | plausible | fixed in a later round: `security: hedit refuses to save a help entry longer than its buffer` |
+| F2-28 | low | other | `src/qedit.c:qedit_parse (QEDIT_FLAGS)` | builder-olc | plausible | fixed in a later round: `fix: qedit's flag menu toggles the bit of the flag the builder chose` |
 | F2-29 | low | error-locality | `src/hedit.c:hedit_parse` | internal-invariant | confirmed | fixed: `diag: hedit logs saves with mudlog's real argument order and reports bad modes` |
 | F3-01 | critical | buffer-bounds | `src/oasis_list.c:perform_obj_aff_list` | builder-olc | confirmed | fixed: `security: bound olist affect output and report truncation` |
 | F3-02 | high | buffer-bounds | `src/oasis_list.c:perform_obj_aff_list` | builder-olc | confirmed | fixed: `security: index olist affect rows by their rnum, not the stale scan index` |
@@ -814,12 +817,12 @@ the file. The columns:
 | F3-16 | low | silent-failure | `src/oasis_list.c:list_mobiles` | builder-olc | confirmed | fixed: `security: mlist, olist and zlist list a one-record table` |
 | F3-17 | low | other | `src/oasis_list.c:perform_mob_flag_list` | builder-olc | confirmed | fixed: `security: mlist level/flags read prototypes instead of spawning mobs` |
 | F3-18 | low | integer | `src/oasis_copy.c:do_dig` | builder-olc | confirmed | fixed: `security: dig range-checks its target vnum` |
-| F3-19 | low | buffer-bounds | `src/oasis.c:split_argument` | save-or-world-file | plausible | fixed: `security: split_argument bounds the config key by its buffer` |
-| F3-20 | low | other | `src/oasis.c:can_edit_zone` | internal-invariant | plausible | fixed: `security: can_edit_zone bounds its zone index and keeps editor sentinels out` |
+| F3-19 | low | buffer-bounds | `src/oasis.c:split_argument` | save-or-world-file | plausible | fixed in a later round: `security: split_argument bounds the config key by its buffer` |
+| F3-20 | low | other | `src/oasis.c:can_edit_zone` | internal-invariant | plausible | fixed in a later round: `security: aedit checks the socials-editor permission with can_use_editor`<br>`security: can_edit_zone bounds its zone index and keeps editor sentinels out` |
 
 ### Area G: Player and immortal commands
 
-53 findings from chunks G1, G2: 40 fixed; 7 partly fixed, rest in a follow-up group; 1 partly fixed, rest queued for a later round; 3 deferred to a follow-up group; 1 queued for a later round; 1 refuted.
+53 findings from chunks G1, G2: 52 fixed; 1 refuted.
 
 | ID | Severity | Category | File:function | Input controller | Verdict | Resolution |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -829,7 +832,7 @@ the file. The columns:
 | G1-04 | high | other | `src/act.wizard.c:do_stat` | immortal | confirmed | fixed: `security: "stat file" never saves the stale copy or deletes crash files` |
 | G1-05 | high | null-deref | `src/act.wizard.c:do_return / do_switch` | dg-script | confirmed | fixed: `security: return and switch refuse a caller with no descriptor`<br>`test: test_act_wizard can run a single test (TB_TEST_ONLY)` |
 | G1-06 | medium | lifetime | `src/act.wizard.c:do_copyover` | immortal | confirmed | fixed: `fix: copyover records and saves a switched immortal's own body` |
-| G1-07 | medium | lifetime | `src/act.wizard.c:do_force` | immortal | plausible | deferred: follow-up `commands` |
+| G1-07 | medium | lifetime | `src/act.wizard.c:do_force` | immortal | plausible | fixed in a later round: `security: 'force room' forces a UID snapshot, never a stale next_in_room` |
 | G1-08 | medium | untrusted-index | `src/act.wizard.c:do_stat_object` | save-or-world-file | confirmed | fixed: `security: stat and zcheck bound attack types before indexing attack_hit_text`<br>`style: clang-tidy clean for the G1 changes and test_act_wizard.c` |
 | G1-09 | medium | untrusted-index | `src/act.wizard.c:do_stat_character` | save-or-world-file | confirmed | fixed: `security: stat bounds an affect's apply location before naming it` |
 | G1-10 | medium | untrusted-index | `src/act.wizard.c:do_zcheck` | save-or-world-file | confirmed | fixed: `security: zcheck bounds object apply locations before indexing zaffs`<br>`style: clang-tidy clean for the G1 changes and test_act_wizard.c` |
@@ -841,7 +844,7 @@ the file. The columns:
 | G1-16 | low | double-free-or-leak | `src/act.wizard.c:change_player_name` | immortal | confirmed | fixed: `security: set name checks the new name in the index without leaking a probe` |
 | G1-17 | low | buffer-bounds | `src/act.wizard.c:change_player_name` | internal-invariant | plausible | fixed: `security: set name tests the index bound instead of reading past it`<br>(follow-up `commands` asked to confirm the fix) |
 | G1-18 | medium | silent-failure | `src/act.wizard.c:mod_llog_entry / find_llog_entry / do_last` | save-or-world-file | confirmed | fixed: `security: last-login file is read and written by record index` |
-| G1-19 | medium | uninitialized | `src/act.wizard.c:list_llog_entries / do_last / do_stat_character / do_show` | save-or-world-file | confirmed | fixed in part: `security: immortal time displays never print an unwritten buffer`<br>rest: follow-up `core-utils` |
+| G1-19 | medium | uninitialized | `src/act.wizard.c:list_llog_entries / do_last / do_stat_character / do_show` | save-or-world-file | confirmed | fixed in part on the chunk branch: `security: immortal time displays never print an unwritten buffer`<br>fixed in a later round: `security: tb_strftime leaves an empty string when the time is unrepresentable`<br>`security: immortal time displays never print an unwritten buffer` |
 | G1-20 | medium (was low) | null-deref | `src/act.wizard.c:do_zcheck` | save-or-world-file | confirmed | fixed: `security: zcheck treats NULL room, extra and mob descriptions as findings` |
 | G1-21 | low | silent-failure | `src/act.wizard.c:perform_set` | immortal | confirmed | fixed: `fix: set poofin/poofout on another player below IMPL is refused, not "Okay."` |
 | G1-22 | low | lifetime | `src/act.wizard.c:do_at` | immortal | confirmed | fixed: `fix: at re-resolves both rooms by vnum after the command runs` |
@@ -855,9 +858,9 @@ the file. The columns:
 | G1-30 | low | error-locality | `src/act.wizard.c:do_wizutil` | internal-invariant | confirmed | fixed: `diag: an unknown wizutil subcmd is reported with both identities, no save` |
 | G1-31 | low | other | `src/act.wizard.c:do_show` | immortal | confirmed | fixed: `fix: show player prints the last logon's minutes` |
 | G1-V01 | medium | silent-failure | `src/act.wizard.c:do_stat` | immortal | verifier-added | fixed: `security: "stat file" never saves the stale copy or deletes crash files` |
-| G2-01 | high | buffer-bounds | `src/act.informative.c:search_help` | player | confirmed | fixed: `security: search_help stays inside the help table`<br>also fixed directly by `security: help on a topic past the last keyword no longer over-reads` |
-| G2-02 | high | read-past-terminator | `src/act.informative.c:do_score` | builder-olc | confirmed | fixed in part: `security: score checks the current quest before reading aquest_table`<br>rest: follow-up `gen-olc`, `player-load` |
-| G2-03 | high | null-deref | `src/act.informative.c:show_obj_to_char / list_obj_to_char / list_one_char / find_exdesc` | save-or-world-file | confirmed | fixed in part: `security: room and object display never dereference NULL world strings`<br>rest: follow-up `db-loaders` |
+| G2-01 | high | buffer-bounds | `src/act.informative.c:search_help` | player | confirmed | fixed: `security: search_help stays inside the help table`<br>also fixed directly by `security: help on a topic past the last keyword no longer over-reads` (already on this branch) |
+| G2-02 | high | read-past-terminator | `src/act.informative.c:do_score` | builder-olc | confirmed | fixed in part on the chunk branch: `security: score checks the current quest before reading aquest_table`<br>fixed in a later round: `security: delete_quest takes every loaded player off the deleted quest`<br>`security: load_char clears a current quest that is no longer loaded`<br>`security: score checks the current quest before reading aquest_table` |
+| G2-03 | high | null-deref | `src/act.informative.c:show_obj_to_char / list_obj_to_char / list_one_char / find_exdesc` | save-or-world-file | confirmed | fixed in part on the chunk branch: `security: room and object display never dereference NULL world strings`<br>fixed in a later round: `security: parse_mobile stores "undefined" for an empty mob alias list`<br>`security: world loaders store "undefined" for empty display strings`<br>`security: room and object display never dereference NULL world strings` |
 | G2-04 | medium | untrusted-index | `src/act.informative.c:list_one_char` | save-or-world-file | confirmed | fixed: `security: room display range-checks a mob's position` |
 | G2-05 | medium | untrusted-index | `src/act.informative.c:look_at_room` | save-or-world-file | confirmed | fixed: `security: showvnums room header range-checks the sector type` |
 | G2-06 | medium | buffer-bounds | `src/act.informative.c:do_areas` | builder-olc | confirmed | fixed: `security: 'areas' builds its listing with a bounded tb_buf` |
@@ -865,21 +868,21 @@ the file. The columns:
 | G2-08 | medium | undefined-behavior | `src/act.social.c:do_action` | builder-olc | confirmed | fixed: `security: body-part socials refuse messages that read the part as an object` |
 | G2-09 | medium | read-past-terminator | `src/act.comm.c:legal_communication` | player | confirmed | fixed: `security: legal_communication stops at a trailing '@'` |
 | G2-10 | medium | integer | `src/act.other.c:do_steal` | player | confirmed | fixed: `security: steal computes the gold share without int overflow` |
-| G2-11 | medium | silent-failure | `src/act.other.c:do_split` | player | confirmed | fixed in part: `security: split refuses a share that would pass MAX_GOLD`<br>rest: follow-up `errloc` |
-| G2-12 | medium | untrusted-index | `src/act.informative.c:do_who / do_users` | save-or-world-file | confirmed | fixed in part: `security: who and users range-check a player's class`<br>rest: follow-up `core-utils`, `player-load` |
-| G2-13 | low | null-deref | `src/act.social.c:do_gmote / do_action` | save-or-world-file | confirmed | fixed in part: `security: socials report a missing message instead of printing NULL`<br>rest: follow-up `db-loaders`, `gen-olc` |
+| G2-11 | medium | silent-failure | `src/act.other.c:do_split` | player | confirmed | fixed in part on the chunk branch: `security: split refuses a share that would pass MAX_GOLD`<br>fixed in a later round: `security: split refuses a share that would pass MAX_GOLD` |
+| G2-12 | medium | untrusted-index | `src/act.informative.c:do_who / do_users` | save-or-world-file | confirmed | fixed in part on the chunk branch: `security: who and users range-check a player's class`<br>fixed in a later round: `security: CLASS_ABBR range-checks a pfile class before indexing class_abbrevs`<br>`security: who and users range-check a player's class` |
+| G2-13 | low | null-deref | `src/act.social.c:do_gmote / do_action` | save-or-world-file | confirmed | fixed in part on the chunk branch: `security: socials report a missing message instead of printing NULL`<br>fixed in a later round: `diag: aedit reports a saved social that lacks a message it needs`<br>`diag: boot reports socials missing a message their command needs`<br>`security: socials report a missing message instead of printing NULL` |
 | G2-14 | low | silent-failure | `src/act.comm.c:do_say / perform_tell / do_gen_comm` | dg-script | confirmed | fixed: `security: history stores only what act() delivered to each listener` |
 | G2-15 | low | silent-failure | `src/act.informative.c:perform_immort_where` | immortal | confirmed | fixed: `diag: immortal 'where' shows and reports a truncated listing` |
-| G2-16 | low | null-deref | `src/act.informative.c:show_obj_to_char / print_object_location` | internal-invariant | plausible | deferred: follow-up `commands` (plausible, not attempted yet) |
-| G2-17 | low | untrusted-index | `src/act.informative.c:look_at_room` | internal-invariant | plausible | fixed: `security: look_at_room reports an unplaced viewer at its caller` |
-| G2-18 | low | silent-failure | `src/act.informative.c:look_in_obj` | save-or-world-file | confirmed | fixed in part: `diag: report a drink container holding more than its capacity`<br>rest: queued for a later round |
+| G2-16 | low | null-deref | `src/act.informative.c:show_obj_to_char / print_object_location` | internal-invariant | plausible | fixed in a later round: `diag: a trigger-less object script is reported, not silently skipped` |
+| G2-17 | low | untrusted-index | `src/act.informative.c:look_at_room` | internal-invariant | plausible | fixed in a later round: `security: look_at_room reports an unplaced viewer at its caller` |
+| G2-18 | low | silent-failure | `src/act.informative.c:look_in_obj` | save-or-world-file | confirmed | fixed in part on the chunk branch: `diag: report a drink container holding more than its capacity`<br>fixed in a later round: `diag: report a drink container holding more than its capacity` |
 | G2-19 | low | error-locality | `src/act.informative.c:show_obj_to_char / do_gen_ps / do_use / do_gen_tog / is_tell_ok` | internal-invariant | confirmed | fixed: `diag: player command guards report call site and entity IDs` |
-| G2-20 | low | other | `src/act.informative.c:do_help` | player | plausible | queued for a later round (not memory safety) |
-| G2-21 | low | silent-failure | `src/act.other.c:do_endgame` | save-or-world-file | confirmed | fixed in part: `diag: endgame reports a corrupt rank instead of calling it the limit`<br>rest: follow-up `errloc` |
+| G2-20 | low | other | `src/act.informative.c:do_help` | player | plausible | fixed in a later round: `security: do_help logs an escaped excerpt of a missed topic, not raw text` |
+| G2-21 | low | silent-failure | `src/act.other.c:do_endgame` | save-or-world-file | confirmed | fixed in part on the chunk branch: `diag: endgame reports a corrupt rank instead of calling it the limit`<br>fixed in a later round: `diag: endgame reports a corrupt rank instead of calling it the limit` |
 
 ### Area H: Gameplay and world mechanics
 
-78 findings from chunks H1, H2, H3: 63 fixed; 9 partly fixed, rest in a follow-up group; 5 deferred to a follow-up group; 1 refuted.
+78 findings from chunks H1, H2, H3: 77 fixed; 1 refuted.
 
 | ID | Severity | Category | File:function | Input controller | Verdict | Resolution |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -889,37 +892,37 @@ the file. The columns:
 | H1-04 | high | lifetime | `src/fight.c:hit` | dg-script | confirmed | fixed: `security: hit() reads the weapon after the fight trigger` |
 | H1-05 | high | lifetime | `src/fight.c:make_corpse` | dg-script | confirmed | fixed: `security: make_corpse moves the inventory before running remove triggers` |
 | H1-06 | critical (was high) | lifetime | `src/fight.c:set_fighting / stop_fighting (with do_sit in act.movement.c:800)` | player | confirmed | fixed: `security: unseat characters when a fight stands them up` |
-| H1-07 | high | untrusted-index | `src/act.item.c:do_drink / do_pour / name_from_drinkcon / name_to_drinkcon` | dg-script | confirmed | fixed in part: `security: range-check the liquid type before the drink tables`<br>rest: follow-up `core-utils`, `db-loaders` |
-| H1-08 | high | untrusted-index | `src/fight.c:hit / dam_message / replace_string` | save-or-world-file | confirmed | fixed in part: `security: validate weapon attack types before attack_hit_text`<br>rest: follow-up `db-loaders` |
+| H1-07 | high | untrusted-index | `src/act.item.c:do_drink / do_pour / name_from_drinkcon / name_to_drinkcon` | dg-script | confirmed | fixed in part on the chunk branch: `security: range-check the liquid type before the drink tables`<br>fixed in a later round: `security: create water refuses a container whose liquid has no table entry`<br>`security: range-check the liquid type before the drink tables` |
+| H1-08 | high | untrusted-index | `src/fight.c:hit / dam_message / replace_string` | save-or-world-file | confirmed | fixed in part on the chunk branch: `security: validate weapon attack types before attack_hit_text`<br>fixed in a later round: `security: rent and house records get check_object's value checks`<br>`security: check_object repairs a weapon attack type outside attack_hit_text[]`<br>`security: validate weapon attack types before attack_hit_text` |
 | H1-09 | high (was medium) | lifetime | `src/magic.c:mag_summons` | dg-script | confirmed | fixed: `security: animate dead re-validates the corpse after the load trigger` |
 | H1-10 | high (was medium) | lifetime | `src/magic.c:mag_rooms` | builder-olc | confirmed | fixed: `security: key the darkness expiry event by room vnum` |
 | H1-11 | - (claimed medium) | silent-failure | `src/magic.c:mag_rooms` | player | refuted | refuted: call_magic() returns before mag_rooms() in a NOMAGIC room, so the darkness bit is never set there; the check is dead code |
 | H1-12 | medium | double-free-or-leak | `src/act.item.c:do_sac` | player | confirmed | fixed: `security: sacrificing a carried container spills it into the room` |
 | H1-13 | medium | untrusted-index | `src/act.item.c:name_from_drinkcon` | save-or-world-file | confirmed | fixed: `security: drink-container names check the prototype rnum` |
-| H1-14 | medium | untrusted-index | `src/act.movement.c:do_simple_move` | save-or-world-file | confirmed | fixed in part: `security: range-check the room sector before movement_loss[]`<br>rest: follow-up `db-loaders` |
+| H1-14 | medium | untrusted-index | `src/act.movement.c:do_simple_move` | save-or-world-file | confirmed | fixed in part on the chunk branch: `security: range-check the room sector before movement_loss[]`<br>fixed in a later round: `security: range-check the room sector before movement_loss[]` |
 | H1-15 | medium | other | `src/fight.c:damage` | player | confirmed | fixed: `security: autoloot and autosac act on the corpse just made` |
-| H1-16 | low (was medium) | silent-failure | `src/fight.c:damage` | save-or-world-file | confirmed | fixed in part: `security: peaceful rooms stop players even without the DG proxy mob`<br>rest: follow-up `errloc` |
+| H1-16 | low (was medium) | silent-failure | `src/fight.c:damage` | save-or-world-file | confirmed | fixed in part on the chunk branch: `security: peaceful rooms stop players even without the DG proxy mob`<br>fixed in a later round: `diag: boot reports a world without the DG caster proxy mob`<br>`security: peaceful rooms stop players even without the DG proxy mob` |
 | H1-17 | medium | silent-failure | `src/act.item.c:perform_drop_gold` | dg-script | confirmed | fixed: `security: gold drops run the room drop trigger with the coins in hand` |
-| H1-18 | medium | integer | `src/fight.c:hit` | dg-script | confirmed | fixed in part: `security: clamp and report oversized damage dice in hit()`<br>rest: follow-up `db-loaders` |
-| H1-19 | low | lifetime | `src/magic.c:mag_areas` | dg-script | plausible | deferred: follow-up `core-utils` (plausible, not attempted yet) |
+| H1-18 | medium | integer | `src/fight.c:hit` | dg-script | confirmed | fixed in part on the chunk branch: `security: clamp and report oversized damage dice in hit()`<br>fixed in a later round: `security: rent and house records get check_object's value checks`<br>`security: parse_simple_mob rejects numbers its byte and sh_int fields cannot hold`<br>`security: check_object clamps weapon damage dice to the oedit limit`<br>`security: clamp and report oversized damage dice in hit()` |
+| H1-19 | low | lifetime | `src/magic.c:mag_areas` | dg-script | plausible | fixed in a later round: `security: area spells re-resolve each occupant instead of following next_in_room` |
 | H1-20 | low | integer | `src/act.item.c:get_from_container / get_from_room / do_give / do_put` | player | confirmed | fixed: `security: get, put and give refuse counts that are not positive` |
 | H1-21 | low | integer | `src/act.item.c:do_drop` | player | confirmed | fixed: `security: the junk reward goes through increase_gold()` |
 | H1-22 | low | other | `src/magic.c:mag_summons` | internal-invariant | confirmed | fixed: `fix: clone and animate dead print their own summon messages` |
 | H1-23 | low | other | `src/act.offensive.c:do_bandage` | player | confirmed | fixed: `fix: bandage succeeds when the roll is under the skill` |
 | H1-24 | low | error-locality | `src/fight.c:set_fighting` | internal-invariant | confirmed | fixed: `diag: set_fighting reports a double start at its caller` |
 | H1-25 | low | lifetime | `src/act.item.c:perform_remove` | dg-script | confirmed | fixed: `security: remove re-checks the equipment slot after its trigger` |
-| H1-26 | low | error-locality | `src/act.item.c:weight_change_object / perform_drop / perform_remove / do_pour` | internal-invariant | plausible | deferred: follow-up `errloc` (plausible, not attempted yet) |
-| H1-27 | low | silent-failure | `src/act.item.c:do_drop` | immortal | confirmed | fixed in part: `diag: donate picks only donation rooms that exist and reports bad ones`<br>rest: follow-up `errloc` |
-| H2-01 | high | lifetime | `src/spell_parser.c:call_magic` | dg-script | confirmed | fixed in part: `security: call_magic stops when a cast trigger purges a participant`<br>rest: follow-up `core-utils` |
+| H1-26 | low | error-locality | `src/act.item.c:weight_change_object / perform_drop / perform_remove / do_pour` | internal-invariant | plausible | fixed in a later round: `diag: mag_unaffects and mag_creations report the spell and the characters`<br>`diag: item and corpse guards name the object, character and room` |
+| H1-27 | low | silent-failure | `src/act.item.c:do_drop` | immortal | confirmed | fixed in part on the chunk branch: `diag: donate picks only donation rooms that exist and reports bad ones`<br>fixed in a later round: `diag: boot checks the configured donation rooms against the world`<br>`diag: donate picks only donation rooms that exist and reports bad ones` |
+| H2-01 | high | lifetime | `src/spell_parser.c:call_magic` | dg-script | confirmed | fixed in part on the chunk branch: `security: call_magic stops when a cast trigger purges a participant`<br>fixed in a later round: `security: call_magic stops when a cast trigger purges a participant` |
 | H2-02 | high | lifetime | `src/spell_parser.c:mag_objectmagic` | dg-script | confirmed | fixed: `security: scrolls and potions are not extracted twice after a cast purge` |
 | H2-03 | high | untrusted-index | `src/spell_parser.c:mag_objectmagic` | dg-script | confirmed | fixed: `security: wands and staves check value 3 before indexing spell_info` |
 | H2-04 | high | buffer-bounds | `src/handler.c:fname` | builder-olc | confirmed | fixed: `security: fname bounds its copy to the static keyword buffer` |
 | H2-05 | high | buffer-bounds | `src/shop.c:push` | builder-olc | confirmed | fixed: `security: shop buyword evaluation rejects expressions deeper than its stack` |
-| H2-06 | high | lifetime | `src/handler.c:obj_from_room` | player | confirmed | fixed in part: `security: obj_from_room clears the furniture's sitter back-pointer`<br>rest: follow-up `core-utils` |
+| H2-06 | high | lifetime | `src/handler.c:obj_from_room` | player | confirmed | fixed in part on the chunk branch: `security: obj_from_room clears the furniture's sitter back-pointer`<br>fixed in a later round: `security: scavenger mobs leave occupied furniture where it is`<br>`security: obj_from_room clears the furniture's sitter back-pointer` |
 | H2-07 | medium | untrusted-index | `src/shop.c:list_object` | dg-script | confirmed | fixed: `security: shop list checks a drink container's liquid against drinks[]` |
 | H2-08 | medium | untrusted-index | `src/shop.c:list_detailed_shop` | save-or-world-file | confirmed | fixed: `security: shop buy types outside item_types[] are dropped at load` |
-| H2-09 | medium | untrusted-index | `src/spell_parser.c:do_cast` | save-or-world-file | confirmed | fixed in part: `security: do_cast refuses a player class outside min_level[]`<br>rest: follow-up `player-load` |
-| H2-10 | low (was medium) | lifetime | `src/spell_parser.c:mag_objectmagic` | dg-script | plausible | deferred: follow-up `core-utils` (plausible, not attempted yet) |
+| H2-09 | medium | untrusted-index | `src/spell_parser.c:do_cast` | save-or-world-file | confirmed | fixed in part on the chunk branch: `security: do_cast refuses a player class outside min_level[]`<br>fixed in a later round: `security: do_cast refuses a player class outside min_level[]` |
+| H2-10 | low (was medium) | lifetime | `src/spell_parser.c:mag_objectmagic` | dg-script | plausible | fixed in a later round: `security: area spells re-resolve each occupant instead of following next_in_room`<br>`security: a staff re-resolves each occupant instead of following next_in_room` |
 | H2-11 | medium | integer | `src/handler.c:affect_join` | player | confirmed | fixed: `security: affect_join clamps stacked modifiers and durations` |
 | H2-12 | medium | silent-failure | `src/handler.c:equip_char` | save-or-world-file | confirmed | fixed: `security: equip_char rejections name the caller and never orphan the object` |
 | H2-13 | medium | error-locality | `src/handler.c:char_from_room` | internal-invariant | confirmed | fixed: `diag: room and object primitives report the entity and the caller` |
@@ -934,8 +937,8 @@ the file. The columns:
 | H2-22 | low | silent-failure | `src/shop.c:get_purchase_obj` | builder-olc | confirmed | fixed: `diag: report shop items destroyed for having no cost` |
 | H2-23 | low | silent-failure | `src/spell_parser.c:call_magic` | save-or-world-file | confirmed | fixed: `diag: call_magic reports out-of-range spell numbers` |
 | H2-24 | low | other | `src/spell_parser.c:mag_assign_spells` | internal-invariant | confirmed | fixed: `security: identify is registered once, with its mana cost` |
-| H2-25 | low | sanitizer-hazard | `src/handler.c:update_object` | player | plausible | deferred: follow-up `core-utils` (plausible, not attempted yet) |
-| H2-26 | low | lifetime | `src/handler.c:free_group` | internal-invariant | plausible | deferred: follow-up `core-utils` (plausible, not attempted yet) |
+| H2-25 | low | sanitizer-hazard | `src/handler.c:update_object` | player | plausible | fixed in a later round: `security: object timer and owner walks loop over siblings instead of recursing`<br>`fix: object timers count down once per tick, carried and worn ones included` |
+| H2-26 | low | lifetime | `src/handler.c:free_group` | internal-invariant | plausible | fixed in a later round: `security: free_group refuses a group that still has members` |
 | H2-27 | low | other | `src/spells.c:spell_teleport` | builder-olc | confirmed | fixed: `security: teleport gives up when no room is eligible` |
 | H2-V01 | high | lifetime | `src/spell_parser.c:mag_objectmagic` | dg-script | verifier-added | fixed: `security: a staff purged by a cast trigger is not read again` |
 | H3-01 | critical | untrusted-index | `src/quest.c:autoquest_trigger_check / generic_complete_quest` | player | confirmed | fixed: `security: Find-mob quests complete once per quest, not once per matching mob` |
@@ -964,24 +967,24 @@ the file. The columns:
 
 ### Area I: Foundations (utilities, macros, core headers) and standalone tools
 
-59 findings from chunks I1, I2, I3: 52 fixed; 2 partly fixed, rest in a follow-up group; 3 partly fixed, rest queued for a later round; 1 queued for a later round; 1 refuted.
+59 findings from chunks I1, I2, I3: 58 fixed; 1 refuted.
 
 | ID | Severity | Category | File:function | Input controller | Verdict | Resolution |
 | --- | --- | --- | --- | --- | --- | --- |
-| I1-01 | high | buffer-bounds | `src/utils.c:column_list` | builder-olc | confirmed | fixed in part: `security: column_list stays inside its output buffer`<br>rest: follow-up `gen-olc` |
+| I1-01 | high | buffer-bounds | `src/utils.c:column_list` | builder-olc | confirmed | fixed in part on the chunk branch: `security: column_list stays inside its output buffer`<br>fixed in a later round: `security: aedit refuses social names longer than 30 characters`<br>`security: column_list stays inside its output buffer` |
 | I1-02 | high | lifetime | `src/utils.c:stop_follower / die_follower` | dg-script | confirmed | fixed: `security: unlink a follower before act() can run scripts` |
 | I1-03 | - (claimed high) | lifetime | `src/genshp.c:remove_shop_from_type_list` | builder-olc | refuted | refuted: the duplicate free/assign pair is not in this tree (the reviewer read another checkout); only a silent out-of-range return remains, listed in the gen-olc follow-up |
-| I1-04 | medium | silent-failure | `src/utils.c:get_line` | save-or-world-file | confirmed | fixed in part: `security: get_line reports and drops the tail of an overlong line`<br>rest: queued for a later round |
+| I1-04 | medium | silent-failure | `src/utils.c:get_line` | save-or-world-file | confirmed | fixed in part on the chunk branch: `security: get_line reports and drops the tail of an overlong line`<br>fixed in a later round: `security: get_line reports and drops the tail of an overlong line` |
 | I1-05 | low (was medium) | read-past-terminator | `src/utils.c:count_non_protocol_chars` | builder-olc | confirmed | fixed: `security: count_non_protocol_chars stops at the end of the string` |
 | I1-06 | low | read-past-terminator | `src/utils.c:count_color_chars` | save-or-world-file | confirmed | fixed: `security: count_color_chars stops at a lone trailing tab` |
-| I1-07 | medium (was low) | uninitialized | `src/utils.c:strfrmt` | builder-olc | confirmed | fixed in part: `security: strfrmt formats NULL text as empty and never returns stale output`<br>rest: follow-up `core-utils` |
+| I1-07 | medium (was low) | uninitialized | `src/utils.c:strfrmt` | builder-olc | confirmed | fixed in part on the chunk branch: `security: strfrmt formats NULL text as empty and never returns stale output`<br>fixed in a later round: `diag: the automap names a room whose description is NULL`<br>`security: strfrmt formats NULL text as empty and never returns stale output` |
 | I1-08 | low | error-locality | `src/utils.h:CHECK_PLAYER_SPECIAL` | internal-invariant | confirmed | fixed: `diag: CHECK_PLAYER_SPECIAL names the mob and the calling function` |
 | I1-09 | low | error-locality | `src/utils.c:room_is_dark` | internal-invariant | confirmed | fixed: `diag: room_is_dark reports an invalid rnum with its caller` |
-| I1-10 | low | error-locality | `src/utils.c:rand_number` | builder-olc | confirmed | fixed in part: `diag: rand_number reports inverted bounds at the calling line`<br>rest: queued for a later round |
+| I1-10 | low | error-locality | `src/utils.c:rand_number` | builder-olc | confirmed | fixed in part on the chunk branch: `diag: rand_number reports inverted bounds at the calling line`<br>fixed in a later round: `diag: rand_number reports inverted bounds at the calling line` |
 | I1-11 | low | null-deref | `src/utils.c:stop_follower` | internal-invariant | confirmed | fixed: `diag: name both characters when the follower list is inconsistent` |
 | I1-12 | low | silent-failure | `src/utils.c:mudlog / get_filename` | internal-invariant | confirmed | fixed: `diag: mudlog and get_filename report what they drop` |
 | I1-13 | low | untrusted-index | `src/utils.c:get_filename` | immortal | confirmed | fixed: `security: get_filename rejects names that are not plain path components` |
-| I1-14 | low | silent-failure | `src/utils.c:sprintbitarray / strpaste / strfrmt_append / tb_buf_*` | builder-olc | plausible | queued for a later round (not memory safety) |
+| I1-14 | low | silent-failure | `src/utils.c:sprintbitarray / strpaste / strfrmt_append / tb_buf_*` | builder-olc | plausible | fixed in a later round: `diag: the bounded string builders report what they cut` |
 | I1-15 | low | undefined-behavior | `src/utils.c:CAP / strfrmt (isspace_ignoretabs)` | builder-olc | confirmed | fixed: `security: pass unsigned char values to ctype in CAP and strfrmt` |
 | I2-01 | high | buffer-bounds | `src/util/autowiz.c:get_line` | internal-invariant | confirmed | fixed: `security: autowiz reads whole index lines and reports rejected records`<br>also fixed directly by `security: autowiz reads whole index lines, not their first 7 bytes` (already on this branch) |
 | I2-02 | high | buffer-bounds | `src/util/plrtoascii.c:plr_filename` | save-or-world-file | confirmed | fixed: `security: plrtoascii validates the raw name field before using it as a path`<br>`style: FIXED_STR_ARGS for plrtoascii's fixed-width text fields` |
@@ -1008,7 +1011,7 @@ the file. The columns:
 | I2-23 | low | other | `src/util/sign.c:reap` | remote-unauthenticated | confirmed | fixed: `diag: sign's SIGCHLD handler preserves errno` |
 | I2-24 | medium | silent-failure | `src/util/plrtoascii.c:convert` | save-or-world-file | confirmed | fixed: `security: plrtoascii refuses a playerfile that is not whole records`<br>`security: plrtoascii writes index records in the server's format` |
 | I2-25 | low | double-free-or-leak | `src/util/rebuildMailIndex.c:walkdir` | save-or-world-file | confirmed | fixed: `security: rebuildMailIndex closes each directory and does not follow symlinks` |
-| I2-26 | low | silent-failure | `src/sysdep.h:tb_parse_long_or_zero` | dg-script | confirmed | fixed in part: `diag: atoi-style parsers report overflow; autowiz arguments are checked`<br>rest: queued for a later round |
+| I2-26 | low | silent-failure | `src/sysdep.h:tb_parse_long_or_zero` | dg-script | confirmed | fixed in part on the chunk branch: `diag: atoi-style parsers report overflow; autowiz arguments are checked`<br>fixed in a later round: `diag: atoi-style parsers report overflow; autowiz arguments are checked` |
 | I2-27 | low | other | `src/sysdep.h:struct in_addr fallback` | internal-invariant | confirmed | fixed: `security: sysdep.h struct in_addr fallback parses and is 32 bits` |
 | I2-V01 | medium | sanitizer-hazard | `src/zmalloc.c:zmalloc` | internal-invariant | verifier-added | fixed: `security: zmalloc blocks keep malloc's alignment` |
 | I2-V02 | high | silent-failure | `src/util/rebuildAsciiIndex.c:walkdir` | save-or-world-file | verifier-added | fixed: `security: rebuildIndex writes the 5-field index the server parses, unclamped` |
@@ -1038,33 +1041,33 @@ Fixed directly by the coordinator. A related chunk finding means a chunk reviewe
 
 | Bug | Found by | Who or what triggers it | Fix (commit subject) | Where the fix is | Chunk finding | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| Text files loaded as their first 7 bytes: no login prompt for new players | new players could not log in; the B1 reviewer had also reported it (B1-01) | every new connection | `security: text files load whole again, not as their first 7 bytes` | this branch | B1-01 | adds the WarnOnSizeOfPointer clang-tidy error and tests/test_login_greeting.py; backported as `security: new players can log in again (login hotfix backport)` to 18 local branches (master: 1f228bc) |
+| Text files loaded as their first 7 bytes: no login prompt for new players | new players could not log in; the B1 reviewer had also reported it (B1-01) | every new connection | `security: text files load whole again, not as their first 7 bytes` | this branch | B1-01 | adds the WarnOnSizeOfPointer clang-tidy error and tests/test_login_greeting.py; backported as `security: new players can log in again (login hotfix backport)` to 18 local branches (master: 1f228bc6) |
 | autowiz read player-index lines as their first 7 bytes | the sizeof-of-pointer sweep; the I2 reviewer had also reported it (I2-01) | every autowiz run (empty wizlist and immlist) | `security: autowiz reads whole index lines, not their first 7 bytes` | this branch | I2-01 | - |
 | New player-index slots written to disk uninitialised; a reused slot leaked its name | Valgrind on a live server | every new character | `security: new player-index slots start zeroed, not as realloc garbage` | this branch | - | - |
 | Host string leaked once per new character | Valgrind on a live server | every new character | `security: creating a character no longer leaks its host string` | this branch | - | - |
-| search_help() read one entry past the help table ('help ~~~~') | the cloud review; the G2 reviewer had also reported it (G2-01) | any player | `security: help on a topic past the last keyword no longer over-reads` | audit-fix-cloud-review | G2-01 | adds tests/test_help_search.py |
-| BOOT-UAF: world teardown left world[] dangling for the DG debugging scans | circle_boot_check (circle -c) under ASan and Valgrind | every clean shutdown and every circle -c | `security: world teardown leaves no dangling world pointer (BOOT-UAF)`<br>`fix: shutdown no longer reads the freed world (regression from 4f33b6c)` | audit-fix-infra-findings; this branch has `fix: shutdown no longer reads the freed world (regression from 4f33b6c)` | D2-05 | re-enables circle_boot_check |
-| FUZZ-1: ProtocolOutput() read one byte past text ending in a tab | fuzz_protocol (libFuzzer); the same loop as A1-06 | any output that ends in a tab | `security: protocol output never reads past a trailing tab; MSSP callbacks typed` | audit-fix-infra-findings | A1-06 | - |
-| FUZZ-2: MSSP callbacks called through a mismatched function type | fuzz_protocol (libFuzzer) | any MSSP request, no login needed | `security: protocol output never reads past a trailing tab; MSSP callbacks typed` | audit-fix-infra-findings | - | - |
-| vwrite_to_output() wrote a size_t length through an int pointer | the sanitizer-infrastructure review (also A1-10) | every line of output | `security: protocol output length is written through a real int` | audit-fix-infra-findings | A1-10 | - |
+| search_help() read one entry past the help table ('help ~~~~') | the cloud review; the G2 reviewer had also reported it (G2-01) | any player | `security: help on a topic past the last keyword no longer over-reads` | this branch | G2-01 | adds tests/test_help_search.py |
+| BOOT-UAF: world teardown left world[] dangling for the DG debugging scans | circle_boot_check (circle -c) under ASan and Valgrind | every clean shutdown and every circle -c | `security: world teardown leaves no dangling world pointer (BOOT-UAF)`<br>`fix: shutdown no longer reads the freed world (regression from 4f33b6c)` | audit-fix-infra-findings; this branch has `security: world teardown leaves no dangling world pointer (BOOT-UAF)` | D2-05 | re-enables circle_boot_check |
+| FUZZ-1: ProtocolOutput() read one byte past text ending in a tab | fuzz_protocol (libFuzzer); the same loop as A1-06 | any output that ends in a tab | `security: protocol output never reads past a trailing tab; MSSP callbacks typed` | this branch | A1-06 | - |
+| FUZZ-2: MSSP callbacks called through a mismatched function type | fuzz_protocol (libFuzzer) | any MSSP request, no login needed | `security: protocol output never reads past a trailing tab; MSSP callbacks typed` | this branch | - | - |
+| vwrite_to_output() wrote a size_t length through an int pointer | the sanitizer-infrastructure review (also A1-10) | every line of output | `security: protocol output length is written through a real int` | this branch | A1-10 | - |
 | Parallel builds overwrote one another's bin/circle | the coordinator, before the fix agents started | tooling | `build: give each CMake build tree its own bin directory` | this branch | - | - |
-| No SAST in CI | the coordinator | tooling | `ci: run Semgrep SAST and upload to the Semgrep AppSec Platform` | audit/semgrep-ci | - | - |
+| No SAST in CI | the coordinator | tooling | `ci: run Semgrep SAST and upload to the Semgrep AppSec Platform` | this branch | - | - |
 
-### New DG findings from the documentation pass (open)
+### New DG findings from the documentation pass
 
-Reported by the dg-scripts documentation agent after the fix pass; none is covered by a fix branch yet. They have no chunk ID; the DGDOC labels are this ledger's.
+Reported by the dg-scripts documentation agent after the fix pass and fixed by the dg and gen-olc follow-up rounds. They have no chunk ID; the DGDOC labels are this ledger's.
 
 | Label | Finding (as reported) | Severity | Fix owner | Status |
 | --- | --- | --- | --- | --- |
-| DGDOC-1 | dg_variables.c:find_replacement(), `%x.level(N)%` setter: no target check — any builder script can lower an immortal's level (privilege change by builder input). | high | dg follow-up | open |
-| DGDOC-2 | dg_scripts.c:do_attach(): for mobs/objects checks the zone of the builder's own room, not the target's zone (detach checks the target). Builder authority bypass. | not rated | dg follow-up | open |
-| DGDOC-3 | dg_scripts.c:do_vdelete(): any builder can delete any player's saved script variables by UID; no zone/level check. | not rated | dg follow-up | open |
-| DGDOC-4 | script_driver() owner check: misses a player owner being extracted; a script can run for a mob already pending extraction (wait expiring in the same pulse the mob died). Lifetime. | not rated | dg follow-up | open |
-| DGDOC-5 | dg_triggers.c:damage_mtrigger(): the script's return value becomes the damage and the default is 1, so a damage trigger without `return %damage%` reduces every hit to 1. | not rated | dg follow-up | open |
-| DGDOC-6 | script_driver(): control keywords matched by prefix (`else` matches `elsewhere`, `end` matches `endure`); `while` counters live in the command list shared by all instances of a trigger. | not rated | dg follow-up | open |
-| DGDOC-7 | medit_save_internally()/oedit_save_internally() (owner: gen-olc agent): every save rebuilds the scripts of all live copies, wiping their variables and pending waits even when the trigger list did not change. | not rated | gen-olc agent | open |
-| DGDOC-8 | dg_comm.c:sub_write(): visibility-dependent object lookup is inverted (dead code today; owner: errloc or later round). | not rated | errloc or later round | open |
-| DGDOC-9 | Lookup table: an object ID equal to the bucket sentinel (1,000,000,000) could never be found (theoretical). | not rated | dg follow-up | open |
+| DGDOC-1 | dg_variables.c:find_replacement(), `%x.level(N)%` setter: no target check — any builder script can lower an immortal's level (privilege change by builder input). | high | dg follow-up | fixed: `security: a DG level setter never changes an immortal's level` |
+| DGDOC-2 | dg_scripts.c:do_attach(): for mobs/objects checks the zone of the builder's own room, not the target's zone (detach checks the target). Builder authority bypass. | not rated | dg follow-up | fixed: `security: attach and detach check the zone of the trigger's target` |
+| DGDOC-3 | dg_scripts.c:do_vdelete(): any builder can delete any player's saved script variables by UID; no zone/level check. | not rated | dg follow-up | fixed: `security: vdelete checks the builder's zone and rank before deleting` |
+| DGDOC-4 | script_driver() owner check: misses a player owner being extracted; a script can run for a mob already pending extraction (wait expiring in the same pulse the mob died). Lifetime. | not rated | dg follow-up | fixed: `security: a mob script never runs for a character pending extraction` |
+| DGDOC-5 | dg_triggers.c:damage_mtrigger(): the script's return value becomes the damage and the default is 1, so a damage trigger without `return %damage%` reduces every hit to 1. | not rated | dg follow-up | fixed: `fix: a mob damage trigger without 'return' keeps the damage` |
+| DGDOC-6 | script_driver(): control keywords matched by prefix (`else` matches `elsewhere`, `end` matches `endure`); `while` counters live in the command list shared by all instances of a trigger. | not rated | dg follow-up | fixed: `fix: DG control keywords match whole words, the same way in every scanner`<br>`fix: the DG while-loop pause counts each trigger instance's own passes` |
+| DGDOC-7 | medit_save_internally()/oedit_save_internally() (owner: gen-olc agent): every save rebuilds the scripts of all live copies, wiping their variables and pending waits even when the trigger list did not change. | not rated | gen-olc agent | fixed: `fix: oedit and medit keep live scripts when the trigger list is unchanged` |
+| DGDOC-8 | dg_comm.c:sub_write(): visibility-dependent object lookup is inverted (dead code today; owner: errloc or later round). | not rated | errloc or later round | fixed: `fix: sub_write's visible-object lookup tries room, equipment, inventory` |
+| DGDOC-9 | Lookup table: an object ID equal to the bucket sentinel (1,000,000,000) could never be found (theoretical). | not rated | dg follow-up | fixed: `fix: an object UID equal to the lookup sentinel is stored where lookups look` |
 
 Merge note from the same file: cfa23ca/eed9ae3 (C2) keep missing-trigger T lines; dg_olc.c:dg_script_menu() then needs -28's checked lookup merged too, or it reads past the trigger index.
 
@@ -1072,14 +1075,14 @@ Merge note from the same file: cfa23ca/eed9ae3 (C2) keep missing-trigger T lines
 
 Findings whose fix needs files outside the reporting chunk, the plausible low and medium findings no fix agent was asked to fix, and the error-locality findings, regrouped by the files they touch. A finding can be in two groups when each owns half of the fix.
 
-| Group | Branch | Based on | Files owned | Findings | Partly fixed | Not started | Fixed on a chunk branch (confirm) | Refuted |
+| Group | Branch | Based on | Files owned | Findings | Still partly open | Not started | Fixed | Refuted |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `commands` | `audit-deferred-commands` | `audit-fix-G1` | 5 | 8 | 0 | 6 | 2 | 0 |
-| `core-utils` | `audit-deferred-core-utils` | `audit-fix-I2` | 11 | 13 | 8 | 4 | 1 | 0 |
-| `db-loaders` | `audit-deferred-db-loaders` | `worktree-wf_c613c2c5-f9f-30` | 2 | 8 | 8 | 0 | 0 | 0 |
-| `dg` | `audit-deferred-dg` | `worktree-wf_c613c2c5-f9f-33` | 10 | 12 | 1 | 11 | 0 | 0 |
-| `errloc` | `audit-deferred-errloc` | `worktree-wf_c613c2c5-f9f-28` | 7 | 9 | 6 | 3 | 0 | 0 |
-| `gen-olc` | `audit-deferred-gen-olc` | `worktree-wf_c613c2c5-f9f-32` | 11 | 15 | 7 | 3 | 4 | 1 |
-| `player-load` | `audit-deferred-player-load` | `worktree-wf_c613c2c5-f9f-31` | 3 | 7 | 4 | 3 | 0 | 0 |
+| `commands` | `audit-deferred-commands` | `audit-fix-G1` | 5 | 8 | 0 | 0 | 8 | 0 |
+| `core-utils` | `audit-deferred-core-utils` | `audit-fix-I2` | 11 | 13 | 0 | 0 | 13 | 0 |
+| `db-loaders` | `audit-deferred-db-loaders` | `worktree-wf_c613c2c5-f9f-30` | 2 | 8 | 0 | 0 | 8 | 0 |
+| `dg` | `audit-deferred-dg` | `worktree-wf_c613c2c5-f9f-33` | 10 | 12 | 0 | 0 | 12 | 0 |
+| `errloc` | `audit-deferred-errloc` | `worktree-wf_c613c2c5-f9f-28` | 7 | 9 | 0 | 0 | 9 | 0 |
+| `gen-olc` | `audit-deferred-gen-olc` | `worktree-wf_c613c2c5-f9f-32` | 11 | 15 | 0 | 0 | 14 | 1 |
+| `player-load` | `audit-deferred-player-load` | `worktree-wf_c613c2c5-f9f-31` | 3 | 7 | 0 | 0 | 7 | 0 |
 
 <!-- END GENERATED: ledger-outside -->

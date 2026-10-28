@@ -5,7 +5,8 @@ read line by line for memory-safety bugs, silent failures and missing
 diagnostics. A second, adversarial agent then tried to refute every
 finding, running most of the serious ones under ASan, UBSan and Valgrind.
 Fix agents fixed the confirmed ones, one commit per finding, on per-chunk
-branches that are now being integrated.
+branches; follow-up rounds fixed what the chunk branches left open. All of
+it is merged into `master` (see "How the fixes reached master").
 
 The per-file and per-finding record is `docs/memory-safety-audit.md`, which
 also describes the method in full. Every number and generated table in this
@@ -18,21 +19,19 @@ report comes from `tools/audit_report_stats.py` (see "Regenerating").
 - **Scope:** 135 source files, 93,473 lines at the review base `18f80ce`, in 9 areas and 21 review chunks. 134 files were read line by line; `src/class.c` was not (see the ledger note).
 - **Findings:** 523 (502 from the reviewers, 21 added by the verifiers). After verification: 442 confirmed, 43 plausible, 17 refuted.
 - **Severity** of the 506 findings that stand: 16 critical, 103 high, 171 medium, 216 low.
-- **Resolution:** 431 fixed, 35 partly fixed (the rest handed on), 30 deferred to follow-up groups, 9 queued for a later round, 1 skipped (no change needed), 17 refuted.
+- **Resolution:** 505 fixed, 0 partly fixed (the rest handed on), 0 deferred to follow-up groups, 0 queued for a later round, 1 skipped (no change needed), 17 refuted.
 - **Commits:** 603 fix commits on 21 chunk branches, 430 of them with a regression test; plus the infrastructure and coordinator branches listed below.
-- **Still open:** 74 findings (partly fixed or not started), 9 new DG findings from the documentation pass, and the integration of 26 branches.
+- **Later rounds:** 74 of the findings above were fixed by the follow-up rounds after the chunk branches (they count as fixed).
+- **Still open:** 0 findings, 0 of the 9 DG documentation findings. All 43 branches of the merge plans are integrated.
 
 <!-- END GENERATED: report-glance -->
 
 What matters most:
 
-- **The chunk fixes are not merged yet.** They sit on the chunk branches and
-  are being cherry-picked onto `audit/full-hardening-integration` and
-  `audit/full-hardening-integration-b`. Until that work is merged, the chunk
-  findings are still live on `master` and on the audit branch. Of the
-  coordinator's direct fixes, the ones marked "this branch" under "Found
-  outside the chunk review" are already on the audit branch, and the login
-  fix is on `master` as well.
+- **Every fix is merged.** The chunk branches, the follow-up rounds and
+  the coordinator's direct fixes reached `master` through the integration
+  branches and the two-phase master merge described below. No finding is
+  left open; the one skipped finding needed no change.
 - **One critical bug needed no account.** A2-01: two connections still at
   the name prompt could crash the server through the new-character
   duplicate check.
@@ -70,30 +69,30 @@ What matters most:
 
 | Severity | Findings | Fixed | Partly fixed, rest in a group | Partly fixed, rest queued | Deferred to a group | Queued | Skipped |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| critical | 16 | 15 | 1 | 0 | 0 | 0 | 0 |
-| high | 103 | 91 | 11 | 0 | 0 | 0 | 1 |
-| medium | 171 | 154 | 10 | 1 | 5 | 1 | 0 |
-| low | 216 | 171 | 8 | 4 | 25 | 8 | 0 |
-| **Total** | 506 | 431 | 30 | 5 | 30 | 9 | 1 |
+| critical | 16 | 16 | 0 | 0 | 0 | 0 | 0 |
+| high | 103 | 102 | 0 | 0 | 0 | 0 | 1 |
+| medium | 171 | 171 | 0 | 0 | 0 | 0 | 0 |
+| low | 216 | 216 | 0 | 0 | 0 | 0 | 0 |
+| **Total** | 506 | 505 | 0 | 0 | 0 | 0 | 1 |
 
 **By category:**
 
 | Category | Findings | Critical | High | Medium | Low | Refuted | Fixed |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| buffer-bounds | 53 | 5 | 21 | 14 | 9 | 4 | 44 |
-| integer | 29 | 1 | 2 | 17 | 9 | 0 | 25 |
-| read-past-terminator | 20 | 0 | 4 | 7 | 8 | 1 | 17 |
-| untrusted-index | 67 | 2 | 20 | 31 | 12 | 2 | 52 |
-| lifetime | 54 | 6 | 27 | 9 | 10 | 2 | 42 |
-| null-deref | 31 | 2 | 7 | 9 | 12 | 1 | 23 |
-| double-free-or-leak | 42 | 0 | 3 | 13 | 26 | 0 | 39 |
-| format-string | 8 | 0 | 0 | 1 | 3 | 4 | 3 |
-| uninitialized | 13 | 0 | 1 | 7 | 5 | 0 | 10 |
-| silent-failure | 110 | 0 | 8 | 41 | 59 | 2 | 94 |
-| error-locality | 39 | 0 | 3 | 9 | 27 | 0 | 33 |
+| buffer-bounds | 53 | 5 | 21 | 14 | 9 | 4 | 49 |
+| integer | 29 | 1 | 2 | 17 | 9 | 0 | 29 |
+| read-past-terminator | 20 | 0 | 4 | 7 | 8 | 1 | 19 |
+| untrusted-index | 67 | 2 | 20 | 31 | 12 | 2 | 65 |
+| lifetime | 54 | 6 | 27 | 9 | 10 | 2 | 52 |
+| null-deref | 31 | 2 | 7 | 9 | 12 | 1 | 30 |
+| double-free-or-leak | 42 | 0 | 3 | 13 | 26 | 0 | 42 |
+| format-string | 8 | 0 | 0 | 1 | 3 | 4 | 4 |
+| uninitialized | 13 | 0 | 1 | 7 | 5 | 0 | 13 |
+| silent-failure | 110 | 0 | 8 | 41 | 59 | 2 | 108 |
+| error-locality | 39 | 0 | 3 | 9 | 27 | 0 | 39 |
 | undefined-behavior | 12 | 0 | 2 | 3 | 7 | 0 | 11 |
-| sanitizer-hazard | 10 | 0 | 1 | 4 | 5 | 0 | 7 |
-| other | 35 | 0 | 4 | 6 | 24 | 1 | 31 |
+| sanitizer-hazard | 10 | 0 | 1 | 4 | 5 | 0 | 10 |
+| other | 35 | 0 | 4 | 6 | 24 | 1 | 34 |
 
 **By who controls the triggering input:**
 
@@ -153,7 +152,7 @@ fix commits.
 | H3-01 | `src/quest.c:autoquest_trigger_check / generic_complete_quest` | any player | Completing a 'find mob' quest with two matching mobs present completes it twice; the second pass indexes the quest table with NOTHING. | fixed |
 | B1-02 | `src/db.c:reset_zone` | DG script, written by a builder | A self-purging object load trigger frees the object inside reset_zone(), which keeps using it (heap use-after-free at boot or reset). | fixed |
 | D1-06 | `src/dg_scripts.c:script_trigger_check` | DG script, written by a builder | A self-purging random or time object trigger frees the object while the trigger scan still walks it (use-after-free). | fixed |
-| C2-01 | `src/genobj.c:delete_object` | builder, through OLC | Deleting an object whose reset is the zone's last command reads past the reset list and keeps scanning the heap. | partly fixed; rest: gen-olc |
+| C2-01 | `src/genobj.c:delete_object` | builder, through OLC | Deleting an object whose reset is the zone's last command reads past the reset list and keeps scanning the heap. | fixed |
 | C2-02 | `src/genobj.c:delete_object` | builder, through OLC | Deleting any object renumbers corpses and money to rnum 65534; extracting them later writes out of bounds. | fixed |
 | C2-05 | `src/genqst.c:delete_quest` | builder, through OLC | Deleting a quest writes the questmaster's spec proc into mob_index[vnum] (heap out-of-bounds write). | fixed |
 | E2-02 | `src/dg_olc.c:trigedit_save` | builder, through OLC | Creating a trigger leaves live copies of the displaced trigger on the wrong index entry; later saves free scripts still in use. | fixed |
@@ -180,11 +179,11 @@ fix commits.
 | E1-04 | `src/dg_mobcmd.c:do_mload, do_mpurge, do_mforce, do_mhunt, do_mremember, do_mforget` | any player | With script_players on, mob commands run by a player character dereference a NULL desc->original. | fixed |
 | F1-01 | `src/oedit.c:iedit_parse / iedit_save_internally / iedit_object_still_exists` | any player | Another player can junk an object that is being iedited; saving the edit then writes to the freed object. | fixed |
 | G2-01 | `src/act.informative.c:search_help` | any player | 'help ~~~~' (any topic after the last keyword) reads past the end of the help table. | fixed |
-| H2-06 | `src/handler.c:obj_from_room` | any player | Furniture taken by a scavenger or moved by a script keeps a pointer to its sitter, written after the sitter is freed. | partly fixed; rest: core-utils |
+| H2-06 | `src/handler.c:obj_from_room` | any player | Furniture taken by a scavenger or moved by a script keeps a pointer to its sitter, written after the sitter is freed. | fixed |
 | D1-02 | `src/dg_scripts.c:process_wait` | DG script, written by a builder | 'wait' with a huge count overflows the event key into a negative bucket (heap write before the queue). | fixed |
 | D1-07 | `src/dg_scripts.c:script_driver` | DG script, written by a builder | A script that frees its own owner indirectly (container purge, forced command) keeps running on the freed owner. | fixed |
 | D2-01 | `src/dg_event.c:event_cancel / event_process` | DG script, written by a builder | An event cancelled from inside its own callback is freed while it runs (use-after-free). | fixed |
-| D2-02 | `src/dg_event.c:event_create / queue_enq / queue_deq` | DG script, written by a builder | 'wait 9223372036854775807' overflows the event key and indexes the event queue out of bounds. | partly fixed; rest: dg |
+| D2-02 | `src/dg_event.c:event_create / queue_enq / queue_deq` | DG script, written by a builder | 'wait 9223372036854775807' overflows the event key and indexes the event queue out of bounds. | fixed |
 | E1-02 | `src/dg_objcmd.c:do_oat` | DG script, written by a builder | 'oat <room> opurge self' frees the object do_oat() then reads; 'oat ... omove' leaves a permanent clone. | fixed |
 | E1-03 | `src/dg_objcmd.c:do_opurge / do_oforce (script_driver owner contract)` | DG script, written by a builder | 'opurge <container>' frees the running object without telling the script driver (use-after-free on the next line). | fixed |
 | E1-05 | `src/dg_objcmd.c:do_osetval` | DG script, written by a builder | 'osetval' stores any value, so a later drink or hit indexes a table out of bounds. | fixed |
@@ -196,16 +195,16 @@ fix commits.
 | H1-03 | `src/act.movement.c:do_doorcmd` | DG script, written by a builder | A door trigger that removes the exit or purges the container makes the door command use NULL or freed memory. | fixed |
 | H1-04 | `src/fight.c:hit` | DG script, written by a builder | A fight trigger that junks the attacker's weapon makes hit() read the freed weapon. | fixed |
 | H1-05 | `src/fight.c:make_corpse` | DG script, written by a builder | A remove trigger that loads an object during death orphans it, leading to a use-after-free when it is extracted. | fixed |
-| H1-07 | `src/act.item.c:do_drink / do_pour / name_from_drinkcon / name_to_drinkcon` | DG script, written by a builder | An out-of-range liquid type (osetval or world file) makes drink and pour index tables out of bounds. | partly fixed; rest: core-utils, db-loaders |
+| H1-07 | `src/act.item.c:do_drink / do_pour / name_from_drinkcon / name_to_drinkcon` | DG script, written by a builder | An out-of-range liquid type (osetval or world file) makes drink and pour index tables out of bounds. | fixed |
 | H1-09 | `src/magic.c:mag_summons` | DG script, written by a builder | A zombie load trigger that purges the corpse makes animate dead read and free the corpse again. | fixed |
-| H2-01 | `src/spell_parser.c:call_magic` | DG script, written by a builder | A cast trigger that purges its object makes call_magic() use the freed object. | partly fixed; rest: core-utils |
+| H2-01 | `src/spell_parser.c:call_magic` | DG script, written by a builder | A cast trigger that purges its object makes call_magic() use the freed object. | fixed |
 | H2-02 | `src/spell_parser.c:mag_objectmagic` | DG script, written by a builder | A cast trigger that purges the scroll or potion makes it be extracted twice (double free). | fixed |
 | H2-03 | `src/spell_parser.c:mag_objectmagic` | DG script, written by a builder | An out-of-range spell number on a wand or staff indexes spell_info[] out of bounds. | fixed |
 | H2-V01 | `src/spell_parser.c:mag_objectmagic` | DG script, written by a builder | A cast trigger that purges the staff makes the staff loop read the freed object on its next pass. | fixed |
 | H3-08 | `src/limits.c:point_update` | DG script, written by a builder | A timer trigger that purges the next object makes point_update() follow a freed pointer. | fixed |
 | I1-02 | `src/utils.c:stop_follower / die_follower` | DG script, written by a builder | An act trigger that forces 'unfollow' during stop_follower() makes it dereference a NULL master. | fixed |
 | A1-07 | `src/comm.c:msdp_update` | builder, through OLC | A mob with 0d0+0 hit dice has max_hit 0, and fighting it divides by zero in the MSDP update (SIGFPE). | fixed |
-| C1-07 | `src/boards.c:init_boards` | builder, through OLC | A missing board object makes the first 'look board' call exit(1) mid-game, losing unsaved progress. | partly fixed; rest: errloc |
+| C1-07 | `src/boards.c:init_boards` | builder, through OLC | A missing board object makes the first 'look board' call exit(1) mid-game, losing unsaved progress. | fixed |
 | C1-20 | `src/genolc.c:save_all` | builder, through OLC | One failed OLC save makes 'saveall', and the save at shutdown, loop forever. | fixed |
 | C1-21 | `src/genmob.c:delete_mobile` | builder, through OLC | Deleting a mob whose reset is the zone's last command reads past the reset list (the C2-01 bug in genmob.c). | fixed |
 | C1-V01 | `src/genmob.c:delete_mobile` | builder, through OLC | Deleting a mob renumbers keeper-less shops to keeper 65534; saves and shop listings then read mob_index out of bounds. | fixed |
@@ -229,7 +228,7 @@ fix commits.
 | F2-09 | `src/aedit.c:aedit_parse (AEDIT_MIN_CHAR_POS/AEDIT_MIN_VICT_POS)` | builder, through OLC | aedit stores any position number; any player's 'astat' then reads out of bounds, and the value is saved to disk. | fixed |
 | F3-02 | `src/oasis_list.c:perform_obj_aff_list` | builder, through OLC | 'olist affect' reads one past the object table and follows a wild pointer. | fixed |
 | F3-03 | `src/oasis_list.c:perform_obj_type_list` | builder, through OLC | 'olist type <n>' indexes item_types[] with an unchecked number. | fixed |
-| G2-02 | `src/act.informative.c:do_score` | builder, through OLC | A player on a deleted quest crashes the server with 'score'. | partly fixed; rest: gen-olc, player-load |
+| G2-02 | `src/act.informative.c:do_score` | builder, through OLC | A player on a deleted quest crashes the server with 'score'. | fixed |
 | H1-10 | `src/magic.c:mag_rooms` | builder, through OLC | Darkness keeps a raw world[] pointer for 5 seconds; an OLC room save in that window leaves it dangling. | fixed |
 | H2-04 | `src/handler.c:fname` | builder, through OLC | A keyword of 256 or more letters (an exit keyword, say) overflows fname()'s static buffer. | fixed |
 | H2-05 | `src/shop.c:push` | builder, through OLC | A shop namelist of 101 or more terms overflows the expression stack when an item is sold or valued. | fixed |
@@ -238,7 +237,7 @@ fix commits.
 | H3-13 | `src/mud_event.c:event_countdown / attach_mud_event / free_mud_event` | builder, through OLC | The dangling world[] pointer of H1-10, seen from mud_event.c. | fixed |
 | H3-15 | `src/mud_event.c:free_mud_event (EVENT_ROOM/EVENT_CHAR) with free_list` | builder, through OLC | Cancelling the last room or character event NULLs the list under the caller; free_list(NULL) then crashes. | fixed |
 | H3-V01 | `src/genqst.c:169` | builder, through OLC | delete_quest() writes the questmaster's spec pointer into mob_index[vnum] (the C2-05 defect). | fixed |
-| I1-01 | `src/utils.c:column_list` | builder, through OLC | A social name of 60 or more characters plus a wide screen makes 'socials' overflow column_list()'s buffer. | partly fixed; rest: gen-olc |
+| I1-01 | `src/utils.c:column_list` | builder, through OLC | A social name of 60 or more characters plus a wide screen makes 'socials' overflow column_list()'s buffer. | fixed |
 | B1-03 | `src/db.c:setup_dir` | world file | A 'D' direction outside 0-9 in a world file writes a heap pointer over other room fields (silent corruption). | fixed |
 | B1-05 | `src/db.c:fread_string` | world file | A world-file line of 512 or more characters writes past a stack buffer in fread_string(). | fixed |
 | B2-02 | `src/players.c:load_char` | save file | An over-long Act, Aff or Pref line in a player file overflows 128-byte stack buffers at login. | fixed |
@@ -249,9 +248,9 @@ fix commits.
 | B2-09 | `src/house.c:House_boot` | save file | Houses that fail validation at boot are dropped from hcontrol for good, with no log line. | fixed |
 | B2-10 | `src/players.c:build_player_index` | save file | One malformed player-index line hides every later player (they become new characters) and loses their mail and houses. | fixed |
 | C1-04 | `src/boards.c:board_load_board` | save file | A corrupt board file supplies raw pointers and slot numbers that are freed and used as indexes. | fixed |
-| C2-13 | `src/genwld.c:save_rooms` | world file | An empty extra-description body loads as NULL, and the next save of that zone crashes the server. | partly fixed; rest: gen-olc |
-| G2-03 | `src/act.informative.c:show_obj_to_char / list_obj_to_char / list_one_char / find_exdesc` | world file | An object or mob with an empty description crashes 'look' (NULL dereference). | partly fixed; rest: db-loaders |
-| H1-08 | `src/fight.c:hit / dam_message / replace_string` | world file | A weapon type out of range indexes attack_hit_text past its end and overflows a global buffer. | partly fixed; rest: db-loaders |
+| C2-13 | `src/genwld.c:save_rooms` | world file | An empty extra-description body loads as NULL, and the next save of that zone crashes the server. | fixed |
+| G2-03 | `src/act.informative.c:show_obj_to_char / list_obj_to_char / list_one_char / find_exdesc` | world file | An object or mob with an empty description crashes 'look' (NULL dereference). | fixed |
+| H1-08 | `src/fight.c:hit / dam_message / replace_string` | world file | A weapon type out of range indexes attack_hit_text past its end and overflows a global buffer. | fixed |
 | I2-02 | `src/util/plrtoascii.c:plr_filename` | save file (offline tool) | plrtoascii writes a 78-byte name into a 40-byte buffer; names like '../../x' leave the output directory. | fixed |
 | I2-03 | `src/util/plrtoascii.c:convert` | save file (offline tool) | plrtoascii prints an uninitialised buffer as the first record's name; later records get wrong names. | fixed |
 | I2-05 | `src/util/rebuildAsciiIndex.c:walkdir` | save file (offline tool) | rebuildAsciiIndex writes 6 fields per record; the server rejects the index and every character becomes unknown. | fixed |
@@ -261,7 +260,7 @@ fix commits.
 | I3-03 | `src/util/wld2html.c:423` | world file (offline tool) | wld2html: a '#' that the 128-byte chunk reader misses is parsed but not counted (heap overflow). | fixed |
 | I3-04 | `src/util/wld2html.c:566` | world file (offline tool) | wld2html: a false strlcpy() bound aborts every run under _FORTIFY_SOURCE and hides overflows from the sanitizers. | fixed |
 | I3-V01 | `src/util/wld2html.c:566` | world file (offline tool) | wld2html: I3-02 and I3-04 together give a real heap overflow in ordinary builds. | fixed |
-| C1-13 | `src/ibt.c:do_ibt` | immortal | 'bug remove' frees a report another player is still writing, or makes an open ibtedit save over a different report. | partly fixed; rest: gen-olc |
+| C1-13 | `src/ibt.c:do_ibt` | immortal | 'bug remove' frees a report another player is still writing, or makes an open ibtedit save over a different report. | fixed |
 | C2-12 | `src/genzon.c:create_new_zone` | immortal | 'zedit new' on the highest zone overwrites that zone's seven world files with empty stubs, silently. | fixed |
 | F2-06 | `src/prefedit.c:prefedit_setup / prefedit_disp_main_menu / prefedit_save_to_char` | immortal | 'prefedit <player>' keeps a pointer to a player who then quits; saving writes to freed memory. | fixed |
 | F3-05 | `src/oasis_copy.c:do_oasis_copy` | immortal | 'rcopy' shares the source room's object list with the copy (use-after-free after a 'junk'). | fixed |
@@ -288,17 +287,17 @@ use were rebuilt with it.
 
 | Bug | Found by | Who or what triggers it | Fix (commit subject) | Where the fix is | Chunk finding | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| Text files loaded as their first 7 bytes: no login prompt for new players | new players could not log in; the B1 reviewer had also reported it (B1-01) | every new connection | `security: text files load whole again, not as their first 7 bytes` | this branch | B1-01 | adds the WarnOnSizeOfPointer clang-tidy error and tests/test_login_greeting.py; backported as `security: new players can log in again (login hotfix backport)` to 18 local branches (master: 1f228bc) |
+| Text files loaded as their first 7 bytes: no login prompt for new players | new players could not log in; the B1 reviewer had also reported it (B1-01) | every new connection | `security: text files load whole again, not as their first 7 bytes` | this branch | B1-01 | adds the WarnOnSizeOfPointer clang-tidy error and tests/test_login_greeting.py; backported as `security: new players can log in again (login hotfix backport)` to 18 local branches (master: 1f228bc6) |
 | autowiz read player-index lines as their first 7 bytes | the sizeof-of-pointer sweep; the I2 reviewer had also reported it (I2-01) | every autowiz run (empty wizlist and immlist) | `security: autowiz reads whole index lines, not their first 7 bytes` | this branch | I2-01 | - |
 | New player-index slots written to disk uninitialised; a reused slot leaked its name | Valgrind on a live server | every new character | `security: new player-index slots start zeroed, not as realloc garbage` | this branch | - | - |
 | Host string leaked once per new character | Valgrind on a live server | every new character | `security: creating a character no longer leaks its host string` | this branch | - | - |
-| search_help() read one entry past the help table ('help ~~~~') | the cloud review; the G2 reviewer had also reported it (G2-01) | any player | `security: help on a topic past the last keyword no longer over-reads` | audit-fix-cloud-review | G2-01 | adds tests/test_help_search.py |
-| BOOT-UAF: world teardown left world[] dangling for the DG debugging scans | circle_boot_check (circle -c) under ASan and Valgrind | every clean shutdown and every circle -c | `security: world teardown leaves no dangling world pointer (BOOT-UAF)`<br>`fix: shutdown no longer reads the freed world (regression from 4f33b6c)` | audit-fix-infra-findings; this branch has `fix: shutdown no longer reads the freed world (regression from 4f33b6c)` | D2-05 | re-enables circle_boot_check |
-| FUZZ-1: ProtocolOutput() read one byte past text ending in a tab | fuzz_protocol (libFuzzer); the same loop as A1-06 | any output that ends in a tab | `security: protocol output never reads past a trailing tab; MSSP callbacks typed` | audit-fix-infra-findings | A1-06 | - |
-| FUZZ-2: MSSP callbacks called through a mismatched function type | fuzz_protocol (libFuzzer) | any MSSP request, no login needed | `security: protocol output never reads past a trailing tab; MSSP callbacks typed` | audit-fix-infra-findings | - | - |
-| vwrite_to_output() wrote a size_t length through an int pointer | the sanitizer-infrastructure review (also A1-10) | every line of output | `security: protocol output length is written through a real int` | audit-fix-infra-findings | A1-10 | - |
+| search_help() read one entry past the help table ('help ~~~~') | the cloud review; the G2 reviewer had also reported it (G2-01) | any player | `security: help on a topic past the last keyword no longer over-reads` | this branch | G2-01 | adds tests/test_help_search.py |
+| BOOT-UAF: world teardown left world[] dangling for the DG debugging scans | circle_boot_check (circle -c) under ASan and Valgrind | every clean shutdown and every circle -c | `security: world teardown leaves no dangling world pointer (BOOT-UAF)`<br>`fix: shutdown no longer reads the freed world (regression from 4f33b6c)` | audit-fix-infra-findings; this branch has `security: world teardown leaves no dangling world pointer (BOOT-UAF)` | D2-05 | re-enables circle_boot_check |
+| FUZZ-1: ProtocolOutput() read one byte past text ending in a tab | fuzz_protocol (libFuzzer); the same loop as A1-06 | any output that ends in a tab | `security: protocol output never reads past a trailing tab; MSSP callbacks typed` | this branch | A1-06 | - |
+| FUZZ-2: MSSP callbacks called through a mismatched function type | fuzz_protocol (libFuzzer) | any MSSP request, no login needed | `security: protocol output never reads past a trailing tab; MSSP callbacks typed` | this branch | - | - |
+| vwrite_to_output() wrote a size_t length through an int pointer | the sanitizer-infrastructure review (also A1-10) | every line of output | `security: protocol output length is written through a real int` | this branch | A1-10 | - |
 | Parallel builds overwrote one another's bin/circle | the coordinator, before the fix agents started | tooling | `build: give each CMake build tree its own bin directory` | this branch | - | - |
-| No SAST in CI | the coordinator | tooling | `ci: run Semgrep SAST and upload to the Semgrep AppSec Platform` | audit/semgrep-ci | - | - |
+| No SAST in CI | the coordinator | tooling | `ci: run Semgrep SAST and upload to the Semgrep AppSec Platform` | this branch | - | - |
 
 <!-- END GENERATED: report-extra -->
 
@@ -368,26 +367,41 @@ The infrastructure pass's proposals, and the commit that implemented each:
 
 <!-- END GENERATED: report-infra -->
 
+## How the fixes reached master
+
+1. **Chunk and follow-up branches.** Each chunk fix agent worked on its own
+   `audit-fix-<chunk>` branch. Findings that needed files outside the chunk,
+   and the queued non-memory findings, went to follow-up groups that fixed
+   them in later rounds on `audit-deferred-<group>` branches: db-loaders
+   (rounds 1-5), player-load (1-3), dg, gen-olc (1-2), core-utils (1-2),
+   commands, errloc and cedit (1-4), plus the leftovers (1-2), world-data
+   (1-2), followups, stranded and verify-static branches.
+2. **Integration.** Integrators cherry-picked the plans in the results
+   directory's `merge-plan*.json` onto `audit/full-hardening-integration`
+   (A) and `-b`; A merged B and was tagged `audit-merge-ab-green`
+   (ddd51b6). The later branches went onto `-c` through `-c8`, which fanned
+   in to `-m1` (c3, c5, c8 and the cedit/e2e work) and `-m2` (c4, c6, c7).
+   Where a chunk fix and a coordinator fix covered the same bug (B1-01,
+   I2-01, G2-01, A1-06, A1-10), one of the two was kept. The fan-in also
+   fixed the bugs merging exposed, such as the double free of a replaced
+   trigger list in the OLC saves (0076760) and `VALID_*_RNUM` accepting
+   negative rnums (M2's `tb_rnum_valid`).
+3. **Phase 1.** `audit/master-merge-20261028`, cut from `origin/master`,
+   merged the audit branch, the tag and `audit/verify-static`, and was
+   pushed to `master` as 2c180c9b (fast-forward).
+4. **Phase 2.** The same branch then merged the three fan-in branches,
+   `audit/full-hardening-integration-c` (DG and followups),
+   `-m2` and `-m1`, with the hand resolutions recorded in the results
+   directory's `master-merge-notes.md`, and re-enabled the remaining fuzz
+   regression inputs.
+
 ## What remains open
 
-- **Integration and merge.** The chunk branches, the infrastructure branch
-  and the coordinator's fix branches have to land on
-  `audit/full-hardening-integration` (the second half goes through
-  `audit/full-hardening-integration-b`), which then has to be verified and
-  merged. Where a chunk fix and a coordinator fix cover the same bug
-  (B1-01, I2-01, G2-01, A1-06, A1-10), one of the two is kept.
-- **Follow-up groups** are being fixed on `audit-deferred-<group>` branches
-  (tables below).
-- **New DG findings** from the documentation pass are assigned to fix
-  agents and stay open until they are fixed (table below). DGDOC-1, a
-  script that can lower an immortal's level, is the most serious.
-- **Queued findings** are non-memory problems in files the follow-up groups
-  own. They wait for a later round.
-- **Untriaged observations.** Fix agents noted problems outside their
-  scope that no group owns (table below). Three are memory-safety issues:
-  a one-byte over-read in `count_color_chars()`, a leaked character in
-  `perform_new_char_dupe_check()`, and a follower loop in `perform_move()`
-  that can follow a freed node.
+- **No finding is open.** The follow-up rounds fixed every deferred,
+  partly fixed and queued finding, the nine DG documentation findings and
+  the memory-safety observations the fix agents recorded outside their
+  scope (tables below; each cites its fix commit). A few non-memory
+  observations remain marked "not fixed".
 - **Semgrep needs a token.** Add the repository secret `SEMGREP_APP_TOKEN`
   (a Semgrep CI token), then re-run the failed Semgrep job. Without the
   token the job fails on purpose rather than passing without a scan. Pull
@@ -403,15 +417,15 @@ The infrastructure pass's proposals, and the commit that implemented each:
 
 | Label | Finding (as reported) | Severity | Fix owner | Status |
 | --- | --- | --- | --- | --- |
-| DGDOC-1 | dg_variables.c:find_replacement(), `%x.level(N)%` setter: no target check — any builder script can lower an immortal's level (privilege change by builder input). | high | dg follow-up | open |
-| DGDOC-2 | dg_scripts.c:do_attach(): for mobs/objects checks the zone of the builder's own room, not the target's zone (detach checks the target). Builder authority bypass. | not rated | dg follow-up | open |
-| DGDOC-3 | dg_scripts.c:do_vdelete(): any builder can delete any player's saved script variables by UID; no zone/level check. | not rated | dg follow-up | open |
-| DGDOC-4 | script_driver() owner check: misses a player owner being extracted; a script can run for a mob already pending extraction (wait expiring in the same pulse the mob died). Lifetime. | not rated | dg follow-up | open |
-| DGDOC-5 | dg_triggers.c:damage_mtrigger(): the script's return value becomes the damage and the default is 1, so a damage trigger without `return %damage%` reduces every hit to 1. | not rated | dg follow-up | open |
-| DGDOC-6 | script_driver(): control keywords matched by prefix (`else` matches `elsewhere`, `end` matches `endure`); `while` counters live in the command list shared by all instances of a trigger. | not rated | dg follow-up | open |
-| DGDOC-7 | medit_save_internally()/oedit_save_internally() (owner: gen-olc agent): every save rebuilds the scripts of all live copies, wiping their variables and pending waits even when the trigger list did not change. | not rated | gen-olc agent | open |
-| DGDOC-8 | dg_comm.c:sub_write(): visibility-dependent object lookup is inverted (dead code today; owner: errloc or later round). | not rated | errloc or later round | open |
-| DGDOC-9 | Lookup table: an object ID equal to the bucket sentinel (1,000,000,000) could never be found (theoretical). | not rated | dg follow-up | open |
+| DGDOC-1 | dg_variables.c:find_replacement(), `%x.level(N)%` setter: no target check — any builder script can lower an immortal's level (privilege change by builder input). | high | dg follow-up | fixed: `security: a DG level setter never changes an immortal's level` |
+| DGDOC-2 | dg_scripts.c:do_attach(): for mobs/objects checks the zone of the builder's own room, not the target's zone (detach checks the target). Builder authority bypass. | not rated | dg follow-up | fixed: `security: attach and detach check the zone of the trigger's target` |
+| DGDOC-3 | dg_scripts.c:do_vdelete(): any builder can delete any player's saved script variables by UID; no zone/level check. | not rated | dg follow-up | fixed: `security: vdelete checks the builder's zone and rank before deleting` |
+| DGDOC-4 | script_driver() owner check: misses a player owner being extracted; a script can run for a mob already pending extraction (wait expiring in the same pulse the mob died). Lifetime. | not rated | dg follow-up | fixed: `security: a mob script never runs for a character pending extraction` |
+| DGDOC-5 | dg_triggers.c:damage_mtrigger(): the script's return value becomes the damage and the default is 1, so a damage trigger without `return %damage%` reduces every hit to 1. | not rated | dg follow-up | fixed: `fix: a mob damage trigger without 'return' keeps the damage` |
+| DGDOC-6 | script_driver(): control keywords matched by prefix (`else` matches `elsewhere`, `end` matches `endure`); `while` counters live in the command list shared by all instances of a trigger. | not rated | dg follow-up | fixed: `fix: DG control keywords match whole words, the same way in every scanner`<br>`fix: the DG while-loop pause counts each trigger instance's own passes` |
+| DGDOC-7 | medit_save_internally()/oedit_save_internally() (owner: gen-olc agent): every save rebuilds the scripts of all live copies, wiping their variables and pending waits even when the trigger list did not change. | not rated | gen-olc agent | fixed: `fix: oedit and medit keep live scripts when the trigger list is unchanged` |
+| DGDOC-8 | dg_comm.c:sub_write(): visibility-dependent object lookup is inverted (dead code today; owner: errloc or later round). | not rated | errloc or later round | fixed: `fix: sub_write's visible-object lookup tries room, equipment, inventory` |
+| DGDOC-9 | Lookup table: an object ID equal to the bucket sentinel (1,000,000,000) could never be found (theoretical). | not rated | dg follow-up | fixed: `fix: an object UID equal to the lookup sentinel is stored where lookups look` |
 
 Merge note from the same file: cfa23ca/eed9ae3 (C2) keep missing-trigger T lines; dg_olc.c:dg_script_menu() then needs -28's checked lookup merged too, or it reads past the trigger index.
 
@@ -421,73 +435,66 @@ Merge note from the same file: cfa23ca/eed9ae3 (C2) keep missing-trigger T lines
 
 <!-- BEGIN GENERATED: report-open -->
 
-**Follow-up groups** (fixes in progress on the branches shown):
+**Follow-up groups** (all merged; "Fixed" counts chunk-branch and later-round fixes):
 
-| Group | Branch | Based on | Files owned | Findings | Partly fixed | Not started | Fixed on a chunk branch (confirm) | Refuted |
+| Group | Branch | Based on | Files owned | Findings | Still partly open | Not started | Fixed | Refuted |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `commands` | `audit-deferred-commands` | `audit-fix-G1` | 5 | 8 | 0 | 6 | 2 | 0 |
-| `core-utils` | `audit-deferred-core-utils` | `audit-fix-I2` | 11 | 13 | 8 | 4 | 1 | 0 |
-| `db-loaders` | `audit-deferred-db-loaders` | `worktree-wf_c613c2c5-f9f-30` | 2 | 8 | 8 | 0 | 0 | 0 |
-| `dg` | `audit-deferred-dg` | `worktree-wf_c613c2c5-f9f-33` | 10 | 12 | 1 | 11 | 0 | 0 |
-| `errloc` | `audit-deferred-errloc` | `worktree-wf_c613c2c5-f9f-28` | 7 | 9 | 6 | 3 | 0 | 0 |
-| `gen-olc` | `audit-deferred-gen-olc` | `worktree-wf_c613c2c5-f9f-32` | 11 | 15 | 7 | 3 | 4 | 1 |
-| `player-load` | `audit-deferred-player-load` | `worktree-wf_c613c2c5-f9f-31` | 3 | 7 | 4 | 3 | 0 | 0 |
+| `commands` | `audit-deferred-commands` | `audit-fix-G1` | 5 | 8 | 0 | 0 | 8 | 0 |
+| `core-utils` | `audit-deferred-core-utils` | `audit-fix-I2` | 11 | 13 | 0 | 0 | 13 | 0 |
+| `db-loaders` | `audit-deferred-db-loaders` | `worktree-wf_c613c2c5-f9f-30` | 2 | 8 | 0 | 0 | 8 | 0 |
+| `dg` | `audit-deferred-dg` | `worktree-wf_c613c2c5-f9f-33` | 10 | 12 | 0 | 0 | 12 | 0 |
+| `errloc` | `audit-deferred-errloc` | `worktree-wf_c613c2c5-f9f-28` | 7 | 9 | 0 | 0 | 9 | 0 |
+| `gen-olc` | `audit-deferred-gen-olc` | `worktree-wf_c613c2c5-f9f-32` | 11 | 15 | 0 | 0 | 14 | 1 |
+| `player-load` | `audit-deferred-player-load` | `worktree-wf_c613c2c5-f9f-31` | 3 | 7 | 0 | 0 | 7 | 0 |
 
-**Open findings per group:**
+**Open findings per group** (none, when every group is done):
 
 | Group | Partly fixed (rest open) | Not started |
 | --- | --- | --- |
-| `commands` | - | G1-07, G2-16, G2-17, A2-07, F2-27, F3-19 |
-| `core-utils` | G1-19, B2-26, G2-12, B1-18, I1-07, H2-06, H1-07, H2-01 | H1-19, H2-10, H2-25, H2-26 |
-| `db-loaders` | G2-03, H1-08, H1-14, H1-18, F1-16, B1-15, G2-13, H1-07 | - |
-| `dg` | D2-02 | D2-03, D2-04, D2-V01, D1-19, D2-07, D2-12, E1-15, E1-20, E2-09, E2-12, E2-16 |
-| `errloc` | C1-07, C1-19, H1-16, H1-27, G2-11, G2-21 | A1-14, F2-28, H1-26 |
-| `gen-olc` | C2-01, C2-13, C2-27, I1-01, G2-02, G2-13, C1-13 | C1-17, C1-28, C2-28 |
-| `player-load` | G2-02, G2-12, H2-09, B2-23 | B2-21, B2-29, B2-32 |
+| `commands` | - | - |
+| `core-utils` | - | - |
+| `db-loaders` | - | - |
+| `dg` | - | - |
+| `errloc` | - | - |
+| `gen-olc` | - | - |
+| `player-load` | - | - |
 
 **Queued for a later round** (14 findings, not memory safety, in files the follow-up groups own):
 
 | ID | File | Category | Severity | Kind | Status |
 | --- | --- | --- | --- | --- | --- |
-| D2-06 | `src/dg_handler.c` | silent-failure | low | plausible | open: queued |
-| D2-08 | `src/dg_handler.c` | silent-failure | low | plausible | open: queued |
-| D2-11 | `src/dg_handler.c` | error-locality | low | plausible | open: queued |
-| I1-04 | `src/utils.c` | silent-failure | medium | deferred | partly fixed; rest queued |
-| I1-10 | `src/utils.c` | error-locality | low | deferred | partly fixed; rest queued |
-| I1-14 | `src/utils.c` | silent-failure | low | deferred | open: queued |
-| F3-20 | `src/oasis.c` | other | low | plausible | open: queued |
-| C2-16 | `src/genobj.c` | silent-failure | medium | plausible | open: queued |
-| C1-29 | `src/genmob.c` | silent-failure | low | plausible | open: queued |
-| E2-15 | `src/dg_olc.c` | error-locality | low | plausible | open: queued |
-| G2-18 | `src/act.informative.c` | silent-failure | low | deferred | partly fixed; rest queued |
-| G2-20 | `src/act.informative.c` | other | low | plausible | open: queued |
-| D1-27 | `src/dg_scripts.c` | silent-failure | low | deferred | partly fixed; rest queued |
-| I2-26 | `src/sysdep.h` | silent-failure | low | deferred | partly fixed; rest queued |
+| D2-06 | `src/dg_handler.c` | silent-failure | low | plausible | fixed |
+| D2-08 | `src/dg_handler.c` | silent-failure | low | plausible | fixed |
+| D2-11 | `src/dg_handler.c` | error-locality | low | plausible | fixed |
+| I1-04 | `src/utils.c` | silent-failure | medium | deferred | fixed |
+| I1-10 | `src/utils.c` | error-locality | low | deferred | fixed |
+| I1-14 | `src/utils.c` | silent-failure | low | deferred | fixed |
+| F3-20 | `src/oasis.c` | other | low | plausible | fixed |
+| C2-16 | `src/genobj.c` | silent-failure | medium | plausible | fixed |
+| C1-29 | `src/genmob.c` | silent-failure | low | plausible | fixed |
+| E2-15 | `src/dg_olc.c` | error-locality | low | plausible | fixed |
+| G2-18 | `src/act.informative.c` | silent-failure | low | deferred | fixed |
+| G2-20 | `src/act.informative.c` | other | low | plausible | fixed |
+| D1-27 | `src/dg_scripts.c` | silent-failure | low | deferred | fixed |
+| I2-26 | `src/sysdep.h` | silent-failure | low | deferred | fixed |
 
-**Plausible findings not fixed yet:** 36 of 43 (7 were fixed); every one of them is scheduled in a follow-up group or the queue.
+**Plausible findings not fixed yet:** 0 of 43 (43 were fixed); every one of them is scheduled in a follow-up group or the queue.
 
 | Scheduled in | Findings | IDs |
 | --- | --- | --- |
-| commands | 6 | A2-07, F2-27, F3-19, G1-07, G2-16, G2-17 |
-| core-utils | 4 | H1-19, H2-10, H2-25, H2-26 |
-| dg | 8 | D1-19, D2-07, D2-12, E1-15, E1-20, E2-09, E2-12, E2-16 |
-| errloc | 3 | A1-14, F2-28, H1-26 |
-| gen-olc | 3 | C1-17, C1-28, C2-28 |
-| player-load | 3 | B2-21, B2-29, B2-32 |
-| queued | 9 | C1-29, C2-16, D2-06, D2-08, D2-11, E2-15, F3-20, G2-20, I1-14 |
 
-**Observations the fix agents recorded but nobody has triaged** (not findings; no group owns them):
+**Observations the fix agents recorded outside their scope** (not findings; a later commit fixed some of them):
 
-| Chunk | Observation | What the fix agent wrote |
-| --- | --- | --- |
-| A2 | oos:utils.c count_color_chars | Out of scope (src/utils.c, line 1334). A string ending in a lone '\t' gives i += 2, then the while test reads string[len+1], one byte past the terminator. Callers include act.other.c:345 (GET_NAME) and medit.c:495. format_text no longer passes it such a string, but the function itself still needs fixing by the utils.c owner. |
-| A2 | oos:interpreter.c perform_new_char_dupe_check leak | Not fixed; it was not a listed finding, and the fix changes descriptor lifetime. In the 'boot the older one' branch, k->character is set to NULL without free_char(), so close_socket() leaks that pre-creation char_data. Suggested fix: leave k->character attached and set STATE(k)=CON_CLOSE so close_socket() frees it. This needs a socket-lifecycle test first. |
-| A2 | oos:protocol.c ProtocolCreate | Out of scope (protocol.c; only protocol.h is in this chunk). The malloc() results for pVariables and each MSDP_t are used without a NULL check, so get_protocols' precondition holds only while allocation succeeds. |
-| A2 | oos:improved-edit.c escaped \r\n | Minor, user-visible, not a listed finding. parse_edit_action PARSE_FORMAT prints "Invalid line range.\\r\\n" and "That range is invalid.\\r\\n" with doubled backslashes, so the player sees a literal \r\n. Left unchanged. |
-| A2 | oos:ban.c site case | Documented, not changed. load_banned() keeps file sites as written, but isbanned() lowercases the host, so an uppercase site in a hand-edited BAN_FILE never matches. A follow-up could lowercase sites on load and emit a warning. |
-| B2 | pre-existing: tests/test_warning_bounds_contracts.py test_objsave_rent_headers_are_checked | Fails at the audit base 1e03b0c as well: it expects 3 objsave_parse_rent_header(line, calls and finds 4. It is not registered with ctest and is unrelated to these commits, so it was left alone. |
-| C2 | NEW: add_cmd_to_list pos > count | Not an assigned finding, reported for triage. add_cmd_to_list (genzon.c) does not check pos. zedit_save_internally (zedit.c:303-335) advances subcmd past G/E/P commands it refuses to save, so a later command's pos can exceed the live list's count. That command is then silently not inserted. Example: a room whose only other zone commands are [G (no mob), O] loses the O. |
-| H1 | NEW: perform_move follower loop | Not in the findings list, so documented only (7d39533). perform_move saves k->next before perform_move(follower). The follower's leave/entry/greet triggers can reach stop_follower() on another follower of ch, which frees that follow_type node, and the loop then follows a dangling pointer. Suggested fix: snapshot follower UIDs and re-acquire each one with find_char() plus an IN_ROOM check. |
+| Chunk | Observation | What the fix agent wrote | Status |
+| --- | --- | --- | --- |
+| A2 | oos:utils.c count_color_chars | Out of scope (src/utils.c, line 1334). A string ending in a lone '\t' gives i += 2, then the while test reads string[len+1], one byte past the terminator. Callers include act.other.c:345 (GET_NAME) and medit.c:495. format_text no longer passes it such a string, but the function itself still needs fixing by the utils.c owner. | fixed: `security: count_color_chars stops at a lone trailing tab` |
+| A2 | oos:interpreter.c perform_new_char_dupe_check leak | Not fixed; it was not a listed finding, and the fix changes descriptor lifetime. In the 'boot the older one' branch, k->character is set to NULL without free_char(), so close_socket() leaks that pre-creation char_data. Suggested fix: leave k->character attached and set STATE(k)=CON_CLOSE so close_socket() frees it. This needs a socket-lifecycle test first. | fixed: `security: the new-character dupe check frees the characters it boots` |
+| A2 | oos:protocol.c ProtocolCreate | Out of scope (protocol.c; only protocol.h is in this chunk). The malloc() results for pVariables and each MSDP_t are used without a NULL check, so get_protocols' precondition holds only while allocation succeeds. | fixed: `security: protocol allocations abort on failure instead of writing through NULL` |
+| A2 | oos:improved-edit.c escaped \r\n | Minor, user-visible, not a listed finding. parse_edit_action PARSE_FORMAT prints "Invalid line range.\\r\\n" and "That range is invalid.\\r\\n" with doubled backslashes, so the player sees a literal \r\n. Left unchanged. | not fixed |
+| A2 | oos:ban.c site case | Documented, not changed. load_banned() keeps file sites as written, but isbanned() lowercases the host, so an uppercase site in a hand-edited BAN_FILE never matches. A follow-up could lowercase sites on load and emit a warning. | not fixed |
+| B2 | pre-existing: tests/test_warning_bounds_contracts.py test_objsave_rent_headers_are_checked | Fails at the audit base 1e03b0c as well: it expects 3 objsave_parse_rent_header(line, calls and finds 4. It is not registered with ctest and is unrelated to these commits, so it was left alone. | not fixed |
+| C2 | NEW: add_cmd_to_list pos > count | Not an assigned finding, reported for triage. add_cmd_to_list (genzon.c) does not check pos. zedit_save_internally (zedit.c:303-335) advances subcmd past G/E/P commands it refuses to save, so a later command's pos can exceed the live list's count. That command is then silently not inserted. Example: a room whose only other zone commands are [G (no mob), O] loses the O. | not fixed |
+| H1 | NEW: perform_move follower loop | Not in the findings list, so documented only (7d39533). perform_move saves k->next before perform_move(follower). The follower's leave/entry/greet triggers can reach stop_follower() on another follower of ch, which frees that follow_type node, and the loop then follows a dangling pointer. Suggested fix: snapshot follower UIDs and re-acquire each one with find_char() plus an IN_ROOM check. | fixed: `security: followers are moved from a snapshot, not a list triggers free` |
 
 **Infrastructure proposals still not implemented:**
 
