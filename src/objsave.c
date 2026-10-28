@@ -214,8 +214,15 @@ int objsave_save_obj_record(struct obj_data *obj, FILE *fp, int locate)
          obj->ex_description != temp->ex_description) ||
         !obj->ex_description || !temp->ex_description) {
       for (ex_desc = obj->ex_description; ex_desc; ex_desc = ex_desc->next) {
-        /*. Sanity check to prevent nasty protection faults . */
-        if (!*ex_desc->keyword || !*ex_desc->description) {
+        /* A keyword or description can be NULL: fread_string() and the rent
+         * loader return NULL for an empty "~" string, and OLC can leave
+         * either empty. The old check dereferenced them. An entry without
+         * both cannot be written in the EDes format and is dropped, loudly. */
+        if (!ex_desc->keyword || !*ex_desc->keyword ||
+            !ex_desc->description || !*ex_desc->description) {
+          TB_WARN_MSG("objsave", "write-edesc", "rent-object-record",
+                      "obj vnum %d extra description with empty keyword or "
+                      "text not saved", GET_OBJ_VNUM(obj));
           continue;
         }
         strlcpy(buf1, ex_desc->description, sizeof(buf1));

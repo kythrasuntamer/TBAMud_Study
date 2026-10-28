@@ -660,6 +660,30 @@ static void test_extra_description_loads(void)
   player.carrying->ex_description = NULL;
 }
 
+/* An empty "~" keyword loads as NULL; the next save dereferenced it in
+ * objsave_save_obj_record()'s "!*ex_desc->keyword" sanity check. */
+static void test_save_skips_extra_description_with_null_keyword(void)
+{
+  char body[256];
+
+  TEST_ASSERT_TRUE(snprintf(body, sizeof(body),
+                            "%d %ld 0 0 0 0\n#101\nEDes:\n~\nA fine thing.\n~\n\n$~\n",
+                            RENT_CRASH, (long)time(0)) > 0);
+  write_rent_file("Tester", body);
+  TEST_ASSERT_EQUAL_INT(1, Crash_load(&player));
+  TEST_ASSERT_NOT_NULL(player.carrying);
+  TEST_ASSERT_NOT_NULL(player.carrying->ex_description);
+  TEST_ASSERT_NULL(player.carrying->ex_description->keyword);
+
+  TEST_ASSERT_TRUE(Crash_crashsave(&player));
+
+  TEST_ASSERT_EQUAL_STRING("write-edesc", tb_captured_operation);
+  TEST_ASSERT_NULL(strstr(slurp_rent(), "EDes"));
+  free(player.carrying->ex_description->description);
+  free(player.carrying->ex_description);
+  player.carrying->ex_description = NULL;
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -677,6 +701,7 @@ int main(void)
   RUN_TEST(test_record_diagnostics_name_owner_line_and_vnum);
   RUN_TEST(test_truncated_extra_description_is_dropped_not_fatal);
   RUN_TEST(test_extra_description_loads);
+  RUN_TEST(test_save_skips_extra_description_with_null_keyword);
   (void)rmdir(scratch_dir);
   return UNITY_END();
 }
