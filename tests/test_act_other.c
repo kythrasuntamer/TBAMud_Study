@@ -42,7 +42,7 @@ char *one_argument(char *argument, char *first_arg)
   first_arg[n] = '\0';
   return argument;
 }
-int str_cmp(const char *a, const char *b) { return strcasecmp(a, b); }
+/* str_cmp is sysdep.h's alias for libc strcasecmp(): no stub needed. */
 void save_char(struct char_data *ch) { (void)ch; }
 void *tb_calloc_array_at(size_t count, size_t element_size,
                          const char *file, int line, const char *func)
@@ -150,9 +150,49 @@ static void split_refuses_share_past_max_gold(void)
   free_pc(b);
 }
 
+/* --- G2-21: a corrupt endgame rank is not the upgrade limit ----------- */
+
+static void endgame_corrupt_rank_is_reported(void)
+{
+  struct char_data *ch = make_pc("Cara", 5, 0);
+  char *arg = strdup("hp");
+
+  GET_LEVEL(ch) = LVL_IMMORT - 1;
+  GET_ENDGAME_AP(ch) = 4;
+  GET_MAX_HIT(ch) = 500;
+  GET_ENDGAME_HP_RANK(ch) = -3;     /* corrupt player file */
+  do_endgame(ch, arg, 0, 0);
+  TEST_ASSERT_EQUAL_INT(4, GET_ENDGAME_AP(ch));      /* nothing bought */
+  TEST_ASSERT_EQUAL_INT(500, GET_MAX_HIT(ch));
+  TEST_ASSERT_NOT_NULL(strstr(sent, "damaged"));
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("rank-corrupt", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "player idnum 5 endgame hp rank -3"));
+
+  /* The legitimate limit is not an error. */
+  sent[0] = '\0';
+  tb_error_capture_reset();
+  GET_ENDGAME_HP_RANK(ch) = 100;
+  do_endgame(ch, arg, 0, 0);
+  TEST_ASSERT_NOT_NULL(strstr(sent, "upgrade limit"));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+
+  /* A normal purchase still works. */
+  sent[0] = '\0';
+  GET_ENDGAME_HP_RANK(ch) = 0;
+  do_endgame(ch, arg, 0, 0);
+  TEST_ASSERT_EQUAL_INT(1, GET_ENDGAME_HP_RANK(ch));
+  TEST_ASSERT_EQUAL_INT(510, GET_MAX_HIT(ch));
+  TEST_ASSERT_EQUAL_INT(2, GET_ENDGAME_AP(ch));
+
+  free(arg);
+  free_pc(ch);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
   RUN_TEST(split_refuses_share_past_max_gold);
+  RUN_TEST(endgame_corrupt_rank_is_reported);
   return UNITY_END();
 }

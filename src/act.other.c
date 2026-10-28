@@ -1052,7 +1052,17 @@ ACMD(do_endgame)
   }
   cost = 2;
   amount = 10;
-  if (*rank < 0 || *rank >= 100 || *maximum > SHRT_MAX - amount) {
+  /* A rank is 0..100 and changes only here; the saved value comes from the
+   * player file. Outside that range is corrupt (or hand-edited) data, not
+   * the normal upgrade limit, so it is reported and nothing is bought. */
+  if (*rank < 0 || *rank > 100) {
+    TB_ERROR_MSG("endgame", "rank-corrupt", "pfile",
+                 DIAG_CHAR_FMT " endgame %s rank %d outside 0..100",
+                 DIAG_CHAR(ch), choice, *rank);
+    send_to_char(ch, "Your advancement record is damaged; please tell an immortal.\r\n");
+    return;
+  }
+  if (*rank >= 100 || *maximum > SHRT_MAX - amount) {
     send_to_char(ch, "You have reached the upgrade limit.\r\n");
     return;
   }
