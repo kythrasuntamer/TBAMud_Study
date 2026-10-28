@@ -657,9 +657,32 @@ static int zedit_save_internally(struct descriptor_data *d)
         mobloaded = objloaded = FALSE;
         break;
     }
-    add_cmd_to_list(&(zone_table[OLC_ZNUM(d)].cmd), &MYCMD, subcmd);
-    /* zone_table now owns this command's 'V' strings. */
-    MYCMD.sarg1 = MYCMD.sarg2 = NULL;
+    {
+      /* F3-12: zone_table owns its sarg strings ('V' commands only; db.c
+       * frees them only there), and the OLC copy keeps its own until
+       * cleanup_olc.  Hand the live table fresh copies. */
+      struct reset_com live = MYCMD;
+      int live_count = count_commands(zone_table[OLC_ZNUM(d)].cmd);
+
+      if (live.command == 'V') {
+        live.sarg1 = MYCMD.sarg1 ? strdup(MYCMD.sarg1) : NULL;
+        live.sarg2 = MYCMD.sarg2 ? strdup(MYCMD.sarg2) : NULL;
+      } else
+        live.sarg1 = live.sarg2 = NULL;
+
+      /* add_cmd_to_list silently drops a command whose position is past
+       * the end of the list (possible after skipped G/E/P commands). */
+      if (subcmd > live_count) {
+        TB_WARN_MSG("olc", "zone-cmd-dropped", "zone_table",
+                    "command %c at position %d past end %d of zone %d for "
+                    DIAG_CHAR_FMT, live.command, subcmd, live_count,
+                    zone_table[OLC_ZNUM(d)].number, DIAG_CHAR(d->character));
+        free(live.sarg1);
+        free(live.sarg2);
+        continue;
+      }
+      add_cmd_to_list(&(zone_table[OLC_ZNUM(d)].cmd), &live, subcmd);
+    }
   }
 
   /* Finally, if zone headers have been changed, copy over */

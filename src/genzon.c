@@ -857,7 +857,9 @@ int new_command(struct zone_data *zone, int pos)
     return 0;
   }
 
-  /* Ok, let's add a new (blank) command. */
+  /* Ok, let's add a new (blank) command.  Zero it first: the args and the
+   * sarg pointers were left uninitialised, and cleanup_olc frees sargs. */
+  memset(&new_com, 0, sizeof(new_com));
   new_com.command = 'N';
   add_cmd_to_list(&zone->cmd, &new_com, pos);
   return 1;

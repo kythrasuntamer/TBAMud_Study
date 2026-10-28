@@ -688,6 +688,32 @@ void test_copy_while_editing_tells_the_builder(void)
 }
 
 /* ---------------------------------------------------------------------
+ * F3-12: a 'V' command's sarg strings typed in zedit (or copied from the
+ * zone by zedit_setup) were never freed when the editor closed.  The leak
+ * is what fails this test (LeakSanitizer / Valgrind) if it regresses.
+ * --------------------------------------------------------------------- */
+void test_cleanup_frees_zone_command_sargs(void)
+{
+  struct zone_data *zone;
+
+  CREATE(builder_desc.olc, struct oasis_olc_data, 1);
+  CREATE(zone, struct zone_data, 1);
+  zone->name = strdup("Scratch Zone");
+  CREATE(zone->cmd, struct reset_com, 3);
+  zone->cmd[0].command = 'V';
+  zone->cmd[0].sarg1 = strdup("questflag");
+  zone->cmd[0].sarg2 = strdup("1");
+  zone->cmd[1].command = 'M';             /* no strings: NULL sargs */
+  zone->cmd[2].command = 'S';
+  OLC_ZONE(&builder_desc) = zone;
+  STATE(&builder_desc) = CON_ZEDIT;
+
+  cleanup_olc(&builder_desc, CLEANUP_ALL);
+
+  TEST_ASSERT_NULL(builder_desc.olc);
+}
+
+/* ---------------------------------------------------------------------
  * F3-18: dig narrowed its target vnum to room_vnum with no range check
  * (68001 -> 2465; 65535 == NOWHERE deleted the exit) and treated a
  * non-numeric target as limbo.
@@ -776,6 +802,7 @@ int main(void)
   RUN_TEST(test_dig_refuses_while_another_editor_is_open);
   RUN_TEST(test_buildwalk_refuses_while_another_editor_is_open);
   RUN_TEST(test_dig_creates_room_when_idle);
+  RUN_TEST(test_cleanup_frees_zone_command_sargs);
   RUN_TEST(test_copy_reports_failed_save_instead_of_done);
   RUN_TEST(test_copy_success_still_says_done);
   RUN_TEST(test_copy_unknown_subcmd_is_reported);

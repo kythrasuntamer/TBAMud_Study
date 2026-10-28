@@ -164,7 +164,10 @@ void cleanup_olc(struct descriptor_data *d, byte cleanup_type)
   if (OLC_MOB(d))
     free_mobile(OLC_MOB(d));
 
-  /* Check for a zone.  cleanup_type is irrelevant here, free() everything. */
+  /* Check for a zone.  cleanup_type is irrelevant here, free() everything.
+   * F3-12: the OLC copy owns every sarg1/sarg2 in its command list
+   * (zedit_setup strdup's them, zedit_save_internally gives zone_table its
+   * own copies), so they are freed here with the array. */
   if (OLC_ZONE(d)) {
     if (OLC_ZONE(d)->builders)
       free(OLC_ZONE(d)->builders);
