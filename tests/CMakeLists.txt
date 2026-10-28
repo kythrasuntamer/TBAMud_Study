@@ -220,6 +220,10 @@ if(Python3_Interpreter_FOUND)
         COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/test_crash_save_header_contract.py
                 ${MUD_SRCDIR}/objsave.c)
+    add_test(NAME test_dg_detach_contract
+        COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/test_dg_detach_contract.py
+                ${MUD_SRCDIR}/dg_scripts.c)
     add_test(NAME test_dg_wait_suffix_contract
         COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/test_dg_wait_suffix_contract.py

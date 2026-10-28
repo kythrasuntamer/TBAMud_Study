@@ -1144,22 +1144,33 @@ static int remove_trigger(struct script_data *sc, char *name)
     return 0;
 }
 
+/* Names the trigger a detach argument selected, for the confirmation: the
+ * prototype's vnum and name when it is a vnum, else the argument itself. */
+static const char *detach_label(const char *arg, char *buf, size_t size)
+{
+  trig_rnum rn = real_trigger(tb_parse_int_or_zero(arg));
+
+  if (rn != NOTHING)
+    tb_snprintf(buf, size, "%d (%s)", trig_index[rn]->vnum,
+                GET_TRIG_NAME(trig_index[rn]->proto));
+  else
+    tb_snprintf(buf, size, "'%s'", arg);
+  return buf;
+}
+
 ACMD(do_detach)
 {
   char_data *victim = NULL;
   obj_data *object = NULL;
   struct room_data *room;
   char arg1[MAX_INPUT_LENGTH], arg2[MAX_INPUT_LENGTH], arg3[MAX_INPUT_LENGTH], *snum;
+  char label[MAX_INPUT_LENGTH * 2];
   char *trigger = 0;
-  int num_arg, tn, rn;
+  int num_arg;
   room_rnum rnum;
-  trig_data *trig;
 
   argument = two_arguments(argument, arg1, arg2);
   one_argument(argument, arg3);
-  tn = tb_parse_int_or_zero(arg3);
-  rn = real_trigger(tn);
-  trig = read_trigger(rn);
 
   if (!*arg1 || !*arg2) {
     send_to_char(ch, "Usage: detach [ mob | object | room ] { target } { trigger |"
@@ -1200,7 +1211,8 @@ ACMD(do_detach)
         snum = arg2;
 
     if (remove_trigger(SCRIPT(room), snum)) {
-      send_to_char(ch, "Trigger %d (%s) removed from %d.\r\n", tn, GET_TRIG_NAME(trig), world[rnum].number);
+      send_to_char(ch, "Trigger %s removed from %d.\r\n",
+                   detach_label(snum, label, sizeof(label)), world[rnum].number);
       
       if (!TRIGGERS(SCRIPT(room)))
         extract_script(room, WLD_TRIGGER);
@@ -1282,8 +1294,9 @@ ACMD(do_detach)
       }
 
       else if (trigger && remove_trigger(SCRIPT(victim), trigger)) {
-        send_to_char(ch, "Trigger %d (%s) removed from %s.\r\n", 
-          tn, GET_TRIG_NAME(trig), IS_NPC(victim) ? GET_SHORT(victim) : GET_NAME(victim));
+        send_to_char(ch, "Trigger %s removed from %s.\r\n",
+          detach_label(trigger, label, sizeof(label)),
+          IS_NPC(victim) ? GET_SHORT(victim) : GET_NAME(victim));
 
         if (!TRIGGERS(SCRIPT(victim))) {
           extract_script(victim, MOB_TRIGGER);
@@ -1307,10 +1320,10 @@ ACMD(do_detach)
                 object->name);
       }
 
-      else if (remove_trigger(SCRIPT(object), trigger)) {
-        send_to_char(ch, "Trigger %d (%s) removed from %s.\r\n", 
-          tn, GET_TRIG_NAME(trig), object->short_description ? object->short_description : 
-          object->name);
+      else if (trigger && remove_trigger(SCRIPT(object), trigger)) {
+        send_to_char(ch, "Trigger %s removed from %s.\r\n",
+          detach_label(trigger, label, sizeof(label)),
+          object->short_description ? object->short_description : object->name);
         if (!TRIGGERS(SCRIPT(object))) {
           extract_script(object, OBJ_TRIGGER);
         }
