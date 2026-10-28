@@ -29,7 +29,7 @@
 static void hedit_disp_menu(struct descriptor_data *);
 static void hedit_setup_new(struct descriptor_data *);
 static void hedit_setup_existing(struct descriptor_data *, int);
-static void hedit_save_to_disk(struct descriptor_data *);
+static int hedit_save_to_disk(struct descriptor_data *);
 static int hedit_save_internally(struct descriptor_data *);
 
 
@@ -67,8 +67,9 @@ ACMD(do_oasis_hedit)
   if (!str_cmp("save", arg)) {
     mudlog(CMP, MAX(LVL_BUILDER, GET_INVIS_LEV(ch)), TRUE, "OLC: %s saves help files.",
            GET_NAME(ch));
-    hedit_save_to_disk(d);
     send_to_char(ch, "Saving help files.\r\n");
+    if (!hedit_save_to_disk(d))
+      send_to_char(ch, "Saving the help file FAILED; the file on disk is unchanged.\r\n");
     return;
   }
 
@@ -171,8 +172,10 @@ static void hedit_setup_existing(struct descriptor_data *d, int rnum)
   hedit_disp_menu(d);
 }
 
-/* Returns FALSE, having reported why, when the edit cannot be stored; the
- * caller still owns OLC_HELP and its strings and must use CLEANUP_ALL. */
+/* Stores the edit in help_table.  Returns FALSE, having reported why, when
+ * the edit cannot be stored; the caller still owns OLC_HELP and its strings
+ * and must use CLEANUP_ALL.  On TRUE the table owns the strings (use
+ * CLEANUP_STRUCTS) and the caller writes the file with hedit_save_to_disk. */
 static int hedit_save_internally(struct descriptor_data *d)
 {
   struct help_index_element *new_help_table = NULL;
@@ -227,11 +230,15 @@ static int hedit_save_internally(struct descriptor_data *d)
   }
 
   add_to_save_list(HEDIT_PERMISSION, SL_HLP);
-  hedit_save_to_disk(d);
   return TRUE;
 }
 
-static void hedit_save_to_disk(struct descriptor_data *d)
+/* Writes help_table to the help index through a verified temporary file,
+ * then frees and reboots the table, so no help_table index or pointer may
+ * be held across this call.  Returns FALSE, having reported the failure
+ * with the editor named, when the file on disk was not replaced; the
+ * in-memory table is then unchanged and stays on the save list. */
+static int hedit_save_to_disk(struct descriptor_data *d)
 {
   FILE *fp;
   char buf1[MAX_STRING_LENGTH], index_name[READ_SIZE], temp_name[READ_SIZE];
@@ -241,13 +248,12 @@ static void hedit_save_to_disk(struct descriptor_data *d)
   name_result = snprintf(temp_name, sizeof(temp_name), "%s.tmp", index_name);
   if (name_result < 0 || (size_t)name_result >= sizeof(temp_name)) {
     log("SYSERR: help temporary filename is too long for %s", index_name);
-    return;
+    goto failed;
   }
 
   if (!(fp = fopen(temp_name, "w"))) {
     TB_REPORT_ERRNO("fopen", temp_name);
-    log("SYSERR: Could not write temporary help index file");
-    return;
+    goto failed;
   }
 
   for (i = 0; i < top_of_helpt; i++) {
@@ -267,18 +273,27 @@ static void hedit_save_to_disk(struct descriptor_data *d)
     if (!flush_ok || !close_ok) {
       if (remove(temp_name) != 0 && errno != ENOENT)
         TB_REPORT_ERRNO("remove", temp_name);
-      return;
+      goto failed;
     }
   }
 
   if (!tb_replace_file_checked(temp_name, index_name))
-    return;
+    goto failed;
 
   remove_from_save_list(HEDIT_PERMISSION, SL_HLP);
 
   /* Reboot the help files only after the replacement committed. */
   free_help_table();
   index_boot(DB_BOOT_HLP);
+  return TRUE;
+
+failed:
+  /* The low-level cause (errno, path) was reported above; this names the
+   * editor and the table size so the failed save can be traced. */
+  TB_ERROR_MSG("olc", "hedit-save", index_name,
+               "help index not written; %d rows stay in memory only; editor " DIAG_CHAR_FMT,
+               top_of_helpt, DIAG_CHAR(d->character));
+  return FALSE;
 }
 
 /* The main menu. */
@@ -322,7 +337,11 @@ void hedit_parse(struct descriptor_data *d, char *arg)
         cleanup_olc(d, CLEANUP_ALL);
         break;
       }
-      write_to_output(d, "Help saved to disk.\r\n");
+      if (hedit_save_to_disk(d))
+        write_to_output(d, "Help saved to disk.\r\n");
+      else
+        write_to_output(d, "Help saved to memory, but writing the help file FAILED; "
+                           "the file on disk is unchanged.\r\n");
 
       /* Do not free strings, just the help structure. */
       cleanup_olc(d, CLEANUP_STRUCTS);

@@ -32,7 +32,7 @@ static void qedit_setup_new(struct descriptor_data *d);
 static void qedit_setup_existing(struct descriptor_data *d, qst_rnum rnum);
 static void qedit_disp_menu(struct descriptor_data *d);
 static void qedit_save_internally(struct descriptor_data *d);
-static void qedit_save_to_disk(int num);
+static int qedit_save_to_disk(struct descriptor_data *d, zone_rnum num);
 
 /*-------------------------------------------------------------------*/
 
@@ -56,9 +56,17 @@ static void qedit_save_internally(struct descriptor_data *d)
   add_quest(OLC_QUEST(d));
 }
 
-static void qedit_save_to_disk(int num)
+/* Writes zone rnum num's quests.  save_quests() reports the I/O cause;
+ * this adds the editor and zone, so a failed save is never reported to the
+ * builder as "saved".  Returns FALSE when the quest file was not written. */
+static int qedit_save_to_disk(struct descriptor_data *d, zone_rnum num)
 {
-  save_quests(num);
+  if (save_quests(num))
+    return TRUE;
+  TB_ERROR_MSG("olc", "qedit-save", "quest file",
+               "zone rnum %d (top %d) quest vnum %d not written; editor " DIAG_CHAR_FMT,
+               (int)num, (int)top_of_zone_table, (int)OLC_NUM(d), DIAG_CHAR(d->character));
+  return FALSE;
 }
 
 /*-------------------------------------------------------------------*\
@@ -189,7 +197,8 @@ ACMD(do_oasis_qedit)
     /**************************************************************************/
     /** Save the quest to the quest file.                                    **/
     /**************************************************************************/
-    qedit_save_to_disk(OLC_ZNUM(d));
+    if (!qedit_save_to_disk(d, OLC_ZNUM(d)))
+      send_to_char(ch, "Saving the quest file FAILED; the file on disk is unchanged.\r\n");
 
     /**************************************************************************/
     /** Free the OLC structure.                                              **/
@@ -415,8 +424,11 @@ void qedit_parse(struct descriptor_data *d, char *arg)
           mudlog(CMP, MAX(LVL_BUILDER, GET_INVIS_LEV(d->character)), TRUE,
      "OLC: %s edits quest %d", GET_NAME(d->character), OLC_NUM(d));
           if (CONFIG_OLC_SAVE) {
-            qedit_save_to_disk(real_zone_by_thing(OLC_NUM(d)));
-            write_to_output(d, "Quest %d saved to disk.\r\n", OLC_NUM(d));
+            if (qedit_save_to_disk(d, real_zone_by_thing(OLC_NUM(d))))
+              write_to_output(d, "Quest %d saved to disk.\r\n", OLC_NUM(d));
+            else
+              write_to_output(d, "Quest %d saved to memory, but writing the quest file "
+                                 "FAILED; the file on disk is unchanged.\r\n", OLC_NUM(d));
           } else
             write_to_output(d, "Quest %d saved to memory.\r\n", OLC_NUM(d));
           /* add_quest copies every string into aquest_table (copy_quest ->
@@ -466,8 +478,11 @@ void qedit_parse(struct descriptor_data *d, char *arg)
           }
           }
           if (CONFIG_OLC_SAVE) {
-            qedit_save_to_disk(real_zone_by_thing(OLC_NUM(d)));
-            write_to_output(d, "Quest file saved to disk.\r\n");
+            if (qedit_save_to_disk(d, real_zone_by_thing(OLC_NUM(d))))
+              write_to_output(d, "Quest file saved to disk.\r\n");
+            else
+              write_to_output(d, "Quest deleted in memory, but writing the quest file "
+                                 "FAILED; the file on disk is unchanged.\r\n");
           } else
             write_to_output(d, "Quest file saved to memory.\r\n");
           cleanup_olc(d, CLEANUP_ALL);

@@ -302,7 +302,8 @@ int add_quest(struct aq_data *nqst)
   copy_quest(&aquest_table[rnum], nqst, FALSE);
   return rnum;
 }
-int save_quests(zone_rnum zone_num) { (void)zone_num; quest_saves++; return TRUE; }
+static int save_quests_result = TRUE;
+int save_quests(zone_rnum zone_num) { (void)zone_num; quest_saves++; return save_quests_result; }
 void free_quest_strings(struct aq_data *quest)
 {
   free(quest->name); free(quest->desc); free(quest->info);
@@ -357,6 +358,7 @@ static void quest_fixture(void)
   aquest_table[0].done = strdup("done\r\n");
   aquest_table[0].quit = strdup("quit\r\n");
   quest_deletes = quest_adds = quest_saves = 0;
+  save_quests_result = TRUE;
 }
 
 static void quest_fixture_free(void)
@@ -755,6 +757,27 @@ static void test_hedit_bad_mode_is_reported(void)
   TEST_ASSERT_EQUAL_INT(HEDIT_MAIN_MENU, OLC_MODE(&builder_desc));
 }
 
+/* F2-21: the help index cannot be written in the test tree (no text/help
+ * directory); the builder is told and the failure names the editor. */
+static void test_hedit_failed_disk_save_is_loud(void)
+{
+  char cmd[] = " beta";
+
+  search_result = 2;
+  do_oasis_hedit(&builder, cmd, 0, 0);
+  type("y");
+  type("2");
+  type("5");
+  type("q");
+  tb_error_capture_reset();
+  type("y");
+  TEST_ASSERT_EQUAL_STRING("hedit-save", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "player idnum 42"));
+  TEST_ASSERT_NOT_NULL(strstr(out, "FAILED"));
+  TEST_ASSERT_NULL(strstr(out, "saved to disk"));
+  TEST_ASSERT_EQUAL_INT(5, help_table[2].min_level);
+}
+
 /* ---------------------------------------------------------------------
  * prefedit
  * ------------------------------------------------------------------- */
@@ -887,9 +910,51 @@ static void test_qedit_save_frees_editor_strings(void)
   TEST_ASSERT_NULL(builder_desc.olc);
 }
 
+/* F2-21: a quest file that could not be written is reported to the builder
+ * and in the log, not announced as "saved to disk". */
+static void test_qedit_failed_disk_save_is_loud(void)
+{
+  char cmd[] = " 3001";
+
+  config_info.operation.auto_save_olc = 1;
+  save_quests_result = FALSE;
+  do_oasis_qedit(&builder, cmd, 0, 0);
+  type("1");
+  type("Renamed");
+  type("q");
+  type("y");
+  config_info.operation.auto_save_olc = 0;
+  TEST_ASSERT_EQUAL_INT(1, quest_saves);
+  TEST_ASSERT_EQUAL_STRING("qedit-save", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "quest vnum 3001"));
+  TEST_ASSERT_NOT_NULL(strstr(out, "FAILED"));
+  TEST_ASSERT_NULL(strstr(out, "saved to disk"));
+  TEST_ASSERT_NULL(builder_desc.olc);
+}
+
 /* ---------------------------------------------------------------------
  * aedit
  * ------------------------------------------------------------------- */
+
+/* F2-21: the socials file cannot be written in the test tree (no misc/
+ * directory); the save must say so instead of "Action saved to disk". */
+static void test_aedit_failed_disk_save_is_loud(void)
+{
+  char cmd[] = " smile";
+
+  do_oasis_aedit(&builder, cmd, 0, 0);
+  type("y");
+  type("4");
+  type("5");
+  type("q");
+  tb_error_capture_reset();
+  type("y");
+  TEST_ASSERT_EQUAL_STRING("aedit-save", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(out, "FAILED"));
+  TEST_ASSERT_NULL(strstr(out, "saved to disk"));
+  TEST_ASSERT_NULL(builder_desc.olc);
+  TEST_ASSERT_EQUAL_INT(5, soc_mess_list[0].min_level_char);
+}
 
 /* F2-09: out-of-range positions and levels are re-prompted, loudly; the old
  * '&&' tests accepted any int and the menu then indexed position_types[]
@@ -1173,6 +1238,9 @@ int main(void)
   RUN_TEST(test_hedit_replace_frees_old_row_and_keeps_duplicates_valid);
   RUN_TEST(test_hedit_save_to_duplicate_row_is_refused_loudly);
   RUN_TEST(test_hedit_bad_mode_is_reported);
+  RUN_TEST(test_hedit_failed_disk_save_is_loud);
+  RUN_TEST(test_qedit_failed_disk_save_is_loud);
+  RUN_TEST(test_aedit_failed_disk_save_is_loud);
   RUN_TEST(test_hedit_new_topic_does_not_index_nowhere);
   RUN_TEST(test_hedit_duplicate_redirects_to_owner);
   RUN_TEST(test_hedit_orphan_duplicate_is_refused_loudly);

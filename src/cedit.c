@@ -69,7 +69,12 @@ ACMD(do_oasis_cedit)
   mudlog(CMP, MAX(LVL_BUILDER, GET_INVIS_LEV(ch)), TRUE,
     "OLC: %s saves the game configuration.", GET_NAME(ch));
 
-  cedit_save_to_disk();
+  if (!cedit_save_to_disk()) {
+    TB_ERROR_MSG("olc", "cedit-save", CONFIG_CONFFILE,
+                 "configuration not written by 'cedit save'; editor " DIAG_CHAR_FMT,
+                 DIAG_CHAR(ch));
+    send_to_char(ch, "Saving the game configuration FAILED; the file on disk is unchanged.\r\n");
+  }
 }
 
 static void cedit_setup(struct descriptor_data *d)
@@ -308,10 +313,12 @@ static void cedit_save_internally(struct descriptor_data *d)
   add_to_save_list(NOWHERE, SL_CFG);
 }
 
-void cedit_save_to_disk( void )
+/* Writes the live configuration to CONFIG_CONFFILE.  Returns save_config's
+ * result: FALSE, with the I/O cause already reported, when the file on disk
+ * was not replaced.  Callers must report the failure to the builder. */
+int cedit_save_to_disk( void )
 {
-  /* Just call save_config and get it over with. */
-  save_config( NOWHERE );
+  return save_config( NOWHERE );
 }
 
 int save_config( IDXTYPE nowhere )
@@ -838,8 +845,15 @@ void cedit_parse(struct descriptor_data *d, char *arg)
                  "OLC: %s modifies the game configuration.", GET_NAME(d->character));
           cleanup_olc(d, CLEANUP_CONFIG);
 	  if (CONFIG_AUTO_SAVE) {
-	    cedit_save_to_disk();
-	    write_to_output(d, "Game configuration saved to disk.\r\n");
+	    if (cedit_save_to_disk())
+	      write_to_output(d, "Game configuration saved to disk.\r\n");
+	    else {
+	      TB_ERROR_MSG("olc", "cedit-save", CONFIG_CONFFILE,
+	                   "configuration applied in memory but not written; editor " DIAG_CHAR_FMT,
+	                   DIAG_CHAR(d->character));
+	      write_to_output(d, "Game configuration saved to memory, but writing the "
+	                         "configuration file FAILED; the file on disk is unchanged.\r\n");
+	    }
 	  } else
             write_to_output(d, "Game configuration saved to memory.\r\n");
           return;

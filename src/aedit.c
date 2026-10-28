@@ -23,11 +23,11 @@
 /* local utility functions */
 static int aedit_find_command(const char *txt);
 static void aedit_disp_menu(struct descriptor_data * d);
-static void aedit_save_to_disk(struct descriptor_data *d);
+static int aedit_save_to_disk(struct descriptor_data *d);
 /* used in aedit parse */
 static void aedit_setup_new(struct descriptor_data *d);
 static void aedit_setup_existing(struct descriptor_data *d, int real_num);
-static void aedit_save_internally(struct descriptor_data *d);
+static int aedit_save_internally(struct descriptor_data *d);
 
 /* Name of a social's minimum position.  The value comes from the socials
  * file (not range-checked by boot_social_messages) or from an older aedit
@@ -84,8 +84,10 @@ ACMD(do_oasis_aedit)
   if (!str_cmp("save", arg)) {
     mudlog(CMP, MAX(LVL_BUILDER, GET_INVIS_LEV(ch)), TRUE, "OLC: %s saves socials.", GET_NAME(ch));
     send_to_char(ch, "Writing social file.\r\n");
-    aedit_save_to_disk(d);
-    send_to_char(ch, "Done.\r\n");
+    if (aedit_save_to_disk(d))
+      send_to_char(ch, "Done.\r\n");
+    else
+      send_to_char(ch, "Writing the social file FAILED; the file on disk is unchanged.\r\n");
     return;
   }
 
@@ -184,7 +186,11 @@ static void aedit_setup_existing(struct descriptor_data *d, int real_num) {
    aedit_disp_menu(d);
 }
 
-static void aedit_save_internally(struct descriptor_data *d) {
+/* Stores the edit in soc_mess_list (the list takes OLC_ACTION's strings, so
+ * the caller uses CLEANUP_STRUCTS) and writes the socials file.  Returns the
+ * result of aedit_save_to_disk: FALSE means the edit is live in memory but
+ * the file on disk was not replaced. */
+static int aedit_save_internally(struct descriptor_data *d) {
    struct social_messg *new_soc_mess_list = NULL;
    int i;
 
@@ -211,10 +217,14 @@ static void aedit_save_internally(struct descriptor_data *d) {
    sort_commands();
 
    add_to_save_list(AEDIT_PERMISSION, SL_ACT);
-   aedit_save_to_disk(d); /* autosave by Rumble */
+   return aedit_save_to_disk(d); /* autosave by Rumble */
 }
 
-static void aedit_save_to_disk(struct descriptor_data *d) {
+/* Writes soc_mess_list to SOCMESS_FILE_NEW through a verified temporary
+ * file.  Returns FALSE, having reported the failure with the editor named,
+ * when the file on disk was not replaced; the socials stay on the save
+ * list. */
+static int aedit_save_to_disk(struct descriptor_data *d) {
    FILE *fp;
    int i, name_result;
    char buf[MAX_STRING_LENGTH], temp_file[MAX_STRING_LENGTH];
@@ -222,12 +232,12 @@ static void aedit_save_to_disk(struct descriptor_data *d) {
    name_result = snprintf(temp_file, sizeof(temp_file), "%s.tmp", SOCMESS_FILE_NEW);
    if (name_result < 0 || (size_t)name_result >= sizeof(temp_file)) {
      log("SYSERR: socials temporary filename is too long for %s", SOCMESS_FILE_NEW);
-     return;
+     goto failed;
    }
 
    if (!(fp = fopen(temp_file, "w+")))  {
      TB_REPORT_ERRNO("fopen", temp_file);
-     return;
+     goto failed;
    }
 
    for (i = 0; i <= top_of_socialt; i++)  {
@@ -272,14 +282,22 @@ static void aedit_save_to_disk(struct descriptor_data *d) {
      if (!flush_ok || !close_ok) {
        if (remove(temp_file) != 0 && errno != ENOENT)
          TB_REPORT_ERRNO("remove", temp_file);
-       return;
+       goto failed;
      }
    }
 
    if (!tb_replace_file_checked(temp_file, SOCMESS_FILE_NEW))
-     return;
+     goto failed;
 
    remove_from_save_list(AEDIT_PERMISSION, SL_ACT);
+   return TRUE;
+
+failed:
+   /* The low-level cause (errno, path) was reported above. */
+   TB_ERROR_MSG("olc", "aedit-save", SOCMESS_FILE_NEW,
+                "socials not written; %d socials stay in memory only; editor " DIAG_CHAR_FMT,
+                top_of_socialt + 1, DIAG_CHAR(d->character));
+   return FALSE;
 }
 
 /* The Main Menu. */
@@ -359,15 +377,21 @@ void aedit_parse(struct descriptor_data * d, char *arg) {
    switch (OLC_MODE(d)) {
     case AEDIT_CONFIRM_SAVESTRING:
       switch (*arg) {
-       case 'y': case 'Y':
-         aedit_save_internally(d);
+       case 'y': case 'Y': {
+         int on_disk = aedit_save_internally(d);
+
          mudlog (CMP, MAX(LVL_GOD, GET_INVIS_LEV(d->character)), TRUE, "OLC: %s edits action %s",
                  GET_NAME(d->character), OLC_ACTION(d)->command);
 
          /* do not free the strings.. just the structure */
          cleanup_olc(d, CLEANUP_STRUCTS);
-         write_to_output(d, "Action saved to disk.\r\n");
+         if (on_disk)
+           write_to_output(d, "Action saved to disk.\r\n");
+         else
+           write_to_output(d, "Action saved to memory, but writing the social file FAILED; "
+                              "the file on disk is unchanged.\r\n");
          break;
+       }
        case 'n': case 'N':
          /* free everything up, including strings etc */
          cleanup_olc(d, CLEANUP_ALL);
