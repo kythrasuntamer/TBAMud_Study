@@ -40,6 +40,9 @@
 #define IMM_NSIZE  16
 #define LINE_LEN   64
 #define MIN_LEVEL LVL_IMMORT
+/* sscanf widths for an index record's fields (buffers hold one more). */
+#define FIELD_LEN       63
+#define NAME_FIELD_LEN 127
 
 /* max level that should be in columns instead of centered */
 #define COL_LEVEL LVL_IMMORT
@@ -120,7 +123,7 @@ void read_file(void)
   int level = 0, got;
   bitvector_t flags = 0;
   long line_no = 0;
-  char index_name[40], line[256], bits[64];
+  char index_name[40], line[256], bits[FIELD_LEN + 1];
   char name[MAX_NAME_LENGTH + 1];
 
   tb_snprintf(index_name, sizeof(index_name), "%s%s", LIB_PLRFILES, INDEX_FILE);
@@ -137,9 +140,14 @@ void read_file(void)
     if (*line == '~')		/* end-of-index marker */
       continue;
     {
-      char id_text[64] = "", level_text[64], last_text[64], name_text[128], extra[2], *end;
+      char id_text[FIELD_LEN + 1] = "", level_text[FIELD_LEN + 1];
+      char last_text[FIELD_LEN + 1], name_text[NAME_FIELD_LEN + 1];
+      char extra[2], *end;
       long parsed;
-      int fields = sscanf(line, "%63s %127s %63s %63s %63s %1s",
+      int fields = sscanf(line, TB_SCAN_STR(FIELD_LEN) " "
+                          TB_SCAN_STR(NAME_FIELD_LEN) " "
+                          TB_SCAN_STR(FIELD_LEN) " " TB_SCAN_STR(FIELD_LEN) " "
+                          TB_SCAN_STR(FIELD_LEN) " %1s",
                           id_text, name_text, level_text, bits, last_text, extra);
       if (fields != 5) {
         REJECT_RECORD(index_name, line_no,

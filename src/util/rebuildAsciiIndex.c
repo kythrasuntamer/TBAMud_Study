@@ -46,6 +46,9 @@
 #include "pfdefaults.h"	/* PFDEF_LEVEL */
 
 
+/* Width of the first word of a pfile "Act :" line (the flag text). */
+#define FLAG_TEXT_LEN 63
+
 #define UTIL_REPORT_ERRNO(operation, context) \
   TB_REPORT_ERRNO((operation), (context))
 
@@ -296,7 +299,7 @@ static void pfile_index_flags(bitvector_t plr0, char *out, size_t out_size)
 static int index_pfile(FILE *index_file, FILE *plr_file, const char *path,
                        const char *name)
 {
-  char *value, flag_text[64] = "0", index_flags[40];
+  char *value, flag_text[FLAG_TEXT_LEN + 1] = "0", index_flags[40];
   struct pfile_tags tags;
   long id, last, level = PFDEF_LEVEL;
   const char *p;
@@ -355,7 +358,7 @@ static int index_pfile(FILE *index_file, FILE *plr_file, const char *path,
   }
   /* "Act : w0 w1 w2 w3": only word 0 holds the flags the index carries. */
   if ((value = tags.act) != NULL &&
-      sscanf(value, "%63s", flag_text) != 1) {
+      sscanf(value, TB_SCAN_STR(FLAG_TEXT_LEN), flag_text) != 1) {
     TB_REPORT_DOMAIN_ERRORF(TB_SEV_ERROR, TB_ERR_PARSER, "pfile-tag-value",
                             "pfile=%s idnum=%ld tag=Act: record skipped",
                             path, id);

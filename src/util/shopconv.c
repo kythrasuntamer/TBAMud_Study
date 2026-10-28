@@ -39,21 +39,25 @@ static int parse_int_text(const char *text, int *out)
   return 1;
 }
 
+/* One whitespace-delimited numeric token from the shop file (TOKEN_LEN
+ * bytes at most; a longer one is split and then fails to parse). */
+#define TOKEN_LEN 63
+
 static int read_int_token(FILE *stream, int *out)
 {
-  char token[64];
+  char token[TOKEN_LEN + 1];
 
-  if (fscanf(stream, "%63s", token) != 1)
+  if (fscanf(stream, TB_SCAN_STR(TOKEN_LEN), token) != 1)
     return 0;
   return parse_int_text(token, out);
 }
 
 static int read_float_token(FILE *stream, float *out)
 {
-  char token[64], *end;
+  char token[TOKEN_LEN + 1], *end;
   float value;
 
-  if (fscanf(stream, "%63s", token) != 1)
+  if (fscanf(stream, TB_SCAN_STR(TOKEN_LEN), token) != 1)
     return 0;
 
   errno = 0;

@@ -154,6 +154,21 @@ extern void abort(), exit();
 #include <limits.h>
 #endif
 
+/*
+ * TB_SCAN_STR(width): a scanf "%<width>s" conversion built from a named
+ * length constant, so the field width and the buffer size cannot drift
+ * apart and an unbounded "%s" (I2-04) is never written by hand.  width must
+ * be an integer literal or a macro expanding to one (it is stringified, not
+ * evaluated); the buffer must hold width + 1 bytes.  The result is a string
+ * literal, so -Wformat still checks the call.
+ *   #define TOKEN_LEN 63
+ *   char token[TOKEN_LEN + 1];
+ *   fscanf(fp, TB_SCAN_STR(TOKEN_LEN), token);
+ */
+#define TB_STR_(x)          #x
+#define TB_XSTR(x)          TB_STR_(x)
+#define TB_SCAN_STR(width)  "%" TB_XSTR(width) "s"
+
 #ifdef HAVE_ERRNO_H
 #include <errno.h>
 #endif
