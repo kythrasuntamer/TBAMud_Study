@@ -444,11 +444,63 @@ static void check_idling(struct char_data *ch)
   }
 }
 
+/* An object whose timer expired this tick, captured before any callback.
+ * obj is compared by address only (obj_uid_matches) and dereferenced only
+ * after the UID still maps to it. */
+struct timed_obj_target {
+  struct obj_data *obj;
+  long uid;
+};
+
+/* Corpse j (UID uid) has rotted: tell whoever can see it, spill its
+ * contents where the corpse is, and extract it. act() can run act triggers
+ * that purge the corpse, so it is re-validated after each act(). */
+static void decay_corpse(struct obj_data *j, long uid)
+{
+  struct obj_data *jj, *next_thing2;
+
+  if (j->carried_by)
+    act("$p decays in your hands.", FALSE, j->carried_by, j, 0, TO_CHAR);
+  else if ((IN_ROOM(j) != NOWHERE) && (world[IN_ROOM(j)].people)) {
+    act("A quivering horde of maggots consumes $p.",
+        TRUE, world[IN_ROOM(j)].people, j, 0, TO_ROOM);
+    if (obj_uid_matches(uid, j) && IN_ROOM(j) != NOWHERE &&
+        world[IN_ROOM(j)].people)
+      act("A quivering horde of maggots consumes $p.",
+          TRUE, world[IN_ROOM(j)].people, j, 0, TO_CHAR);
+  }
+  if (!obj_uid_matches(uid, j)) {
+    TB_WARN_MSG("limits", "timer-target-purged", "object_list",
+                "decaying corpse uid %ld was purged by a script during its decay message",
+                uid);
+    return;
+  }
+  /* Moving contents runs no scripts, so next_content stays valid here. */
+  for (jj = j->contains; jj; jj = next_thing2) {
+    next_thing2 = jj->next_content;	/* Next in inventory */
+    obj_from_obj(jj);
+
+    if (j->in_obj)
+      obj_to_obj(jj, j->in_obj);
+    else if (j->carried_by)
+      obj_to_room(jj, IN_ROOM(j->carried_by));
+    else if (IN_ROOM(j) != NOWHERE)
+      obj_to_room(jj, IN_ROOM(j));
+    else
+      core_dump();
+  }
+  extract_obj(j);
+}
+
 /* Update PCs, NPCs, and objects */
 void point_update(void)
 {
   struct char_data *i, *next_char;
-  struct obj_data *j, *next_thing, *jj, *next_thing2;
+  struct obj_data *j;
+  /* Reused across ticks; holds no pointer beyond the tick that filled it. */
+  static struct timed_obj_target *timed = NULL;
+  static size_t timed_cap = 0;
+  size_t ntimed, k;
 
   /* characters */
   for (i = character_list; i; i = next_char) {
@@ -482,49 +534,43 @@ void point_update(void)
     }
   }
 
-  /* objects */
-  for (j = object_list; j; j = next_thing) {
-    next_thing = j->next;	/* Next in object list */
-
-    /* If this is a corpse */
+  /* objects. Pass 1 runs no callbacks: it counts every timer down and
+   * snapshots the objects that expired as (address, UID) pairs. Pass 2 then
+   * decays corpses and fires timer triggers. Both can run scripts (act
+   * triggers, the timer trigger itself) that purge ANY object, and
+   * extract_obj() frees immediately, so no saved list pointer (j->next) is
+   * followed across a callback: each target is re-validated by UID first. */
+  ntimed = 0;
+  for (j = object_list; j; j = j->next) {
     if (IS_CORPSE(j)) {
-      /* timer count down */
       if (GET_OBJ_TIMER(j) > 0)
 	GET_OBJ_TIMER(j)--;
-
-      if (!GET_OBJ_TIMER(j)) {
-
-	if (j->carried_by)
-	  act("$p decays in your hands.", FALSE, j->carried_by, j, 0, TO_CHAR);
-	else if ((IN_ROOM(j) != NOWHERE) && (world[IN_ROOM(j)].people)) {
-	  act("A quivering horde of maggots consumes $p.",
-	      TRUE, world[IN_ROOM(j)].people, j, 0, TO_ROOM);
-	  act("A quivering horde of maggots consumes $p.",
-	      TRUE, world[IN_ROOM(j)].people, j, 0, TO_CHAR);
-	}
-	for (jj = j->contains; jj; jj = next_thing2) {
-	  next_thing2 = jj->next_content;	/* Next in inventory */
-	  obj_from_obj(jj);
-
-	  if (j->in_obj)
-	    obj_to_obj(jj, j->in_obj);
-	  else if (j->carried_by)
-	    obj_to_room(jj, IN_ROOM(j->carried_by));
-	  else if (IN_ROOM(j) != NOWHERE)
-	    obj_to_room(jj, IN_ROOM(j));
-	  else
-	    core_dump();
-	}
-	extract_obj(j);
-      }
+      if (GET_OBJ_TIMER(j))
+        continue;
+    } else if (GET_OBJ_TIMER(j) <= 0 || --GET_OBJ_TIMER(j) > 0)
+      continue;
+    /* note to .rej hand-patchers: timer triggers fire last in point_update() */
+    if (ntimed == timed_cap) {
+      timed_cap = timed_cap ? timed_cap * 2 : 64;
+      RECREATE(timed, struct timed_obj_target, timed_cap);
     }
-    /* If the timer is set, count it down and at 0, try the trigger
-     * note to .rej hand-patchers: make this last in your point-update() */
-    else if (GET_OBJ_TIMER(j)>0) {
-      GET_OBJ_TIMER(j)--;
-      if (!GET_OBJ_TIMER(j))
-        timer_otrigger(j);
+    timed[ntimed].obj = j;
+    timed[ntimed].uid = obj_script_id(j);
+    ntimed++;
+  }
+
+  for (k = 0; k < ntimed; k++) {
+    j = timed[k].obj;
+    if (!obj_uid_matches(timed[k].uid, j)) {
+      TB_WARN_MSG("limits", "timer-target-purged", "object_list",
+                  "expired object uid %ld was purged by an earlier script this tick",
+                  timed[k].uid);
+      continue;
     }
+    if (IS_CORPSE(j))
+      decay_corpse(j, timed[k].uid);
+    else
+      timer_otrigger(j);
   }
 
   /* Take 1 from the happy-hour tick counter, and end happy-hour if zero */
