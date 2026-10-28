@@ -236,6 +236,9 @@ SPECIAL(dump)
   return (TRUE);
 }
 
+/* The mayor walks open_path at 6:00 and close_path at 20:00. As in
+ * king_welmar(), the walk state is function-static and shared by every mob
+ * running this proc, so only one mayor should exist. */
 SPECIAL(mayor)
 {
   char actbuf[MAX_INPUT_LENGTH];
@@ -640,6 +643,12 @@ SPECIAL(cityguard)
 }
 
 #define PET_PRICE(pet) (GET_LEVEL(pet) * 300)
+/* Room proc for pet shops: 'list' shows and 'buy <pet> [name]' sells the
+ * NPCs standing in the storage room (shop vnum + 1, same zone). A bought pet
+ * is a fresh read_mobile() copy. Naming it gives the copy its own strdup'd
+ * name and description; until then those point at the prototype's strings,
+ * which must never be freed through the pet (free_char() compares against
+ * the prototype before freeing). */
 SPECIAL(pet_shops)
 {
   char buf[MAX_STRING_LENGTH], pet_name[MAX_INPUT_LENGTH];
