@@ -8,6 +8,32 @@
 *  CircleMUD is based on DikuMUD, Copyright (C) 1990, 1991.               *
 **************************************************************************/
 
+/**
+ * @file act.informative.c
+ * Player and immortal commands that show the world: look, examine, score,
+ * who, users, where, help, areas, toggles and communication history.
+ *
+ * Input and trust:
+ * - Command arguments come from the player (or from DG scripts and
+ *   'force'); they are bounded by MAX_INPUT_LENGTH and are never used as
+ *   format strings.
+ * - Displayed strings come from world files, OLC and player files. The
+ *   loaders store NULL for an empty string (fread_string()), so object
+ *   and mob strings may be NULL; the display helpers check them and report
+ *   obj-string-missing rather than dereference.
+ * - Indexes read from files (positions, sectors, classes, quest vnums) are
+ *   range-checked before they index a name table, and a value outside its
+ *   table is reported (position-range, sector-range, class-range,
+ *   score-quest-lookup).
+ *
+ * Ownership: nothing here owns world data. Listings are built in fixed
+ * stack buffers whose truncation is marked "***OVERFLOW***" and reported
+ * (areas-truncated, where-truncated, commands-truncated). do_whois may
+ * build a temporary char_data from the player file and frees it before
+ * returning. Communication history (add_history) is owned by the player's
+ * player_specials and freed by free_history().
+ */
+
 #include <errno.h>
 #include <limits.h>
 #include <stdlib.h>
@@ -239,6 +265,19 @@ static void show_obj_modifiers(struct obj_data *obj, struct char_data *ch)
     send_to_char(ch, " ..It emits a faint humming sound!");
 }
 
+/**
+ * List the objects in @p list to @p ch, grouping identical prototypes.
+ *
+ * Objects missing a string the mode needs (name, short_description, or
+ * description for SHOW_OBJ_LONG; the loaders store NULL for empty
+ * strings) are reported by show_obj_to_char() and skipped, not shown.
+ *
+ * @param list Head of a next_content chain (room contents, inventory or
+ *             container contents); may be NULL.
+ * @param ch   Viewer; output goes through send_to_char().
+ * @param mode SHOW_OBJ_LONG, SHOW_OBJ_SHORT or SHOW_OBJ_ACTION.
+ * @param show TRUE prints " Nothing." for an empty listing.
+ */
 static void list_obj_to_char(struct obj_data *list, struct char_data *ch, int mode, int show)
 {
   struct obj_data *i, *j, *display;
@@ -360,6 +399,13 @@ static void look_at_char(struct char_data *i, struct char_data *ch)
   }
 }
 
+/**
+ * Show one character @p i in the room to the viewer @p ch.
+ *
+ * A mob's short_descr and long_descr may be NULL (empty in the world
+ * file); its position comes from the world file and is range-checked
+ * against positions[] before use. Neither is dereferenced unchecked.
+ */
 static void list_one_char(struct char_data *i, struct char_data *ch)
 {
   struct obj_data *furniture;
@@ -580,6 +626,20 @@ ACMD(do_exits)
       send_to_char(ch, " None.\r\n");
 }
 
+/**
+ * Describe the room @p ch is standing in.
+ *
+ * Exported: called by do_look, after movement and teleport, and from DG
+ * callbacks. Precondition: IN_ROOM(ch) is a valid room rnum. A character
+ * without a descriptor (mob, linkless player) sees nothing and the
+ * function returns at once. Room name and description are required by
+ * the loader; object and mob strings shown here may be NULL and are
+ * handled by the list helpers. The sector type is range-checked before
+ * it indexes sector_types[].
+ *
+ * @param ch           Viewer.
+ * @param ignore_brief Nonzero shows the full description even with BRIEF.
+ */
 void look_at_room(struct char_data *ch, int ignore_brief)
 {
   trig_data * t;
@@ -1891,6 +1951,21 @@ static void perform_mortal_where(struct char_data *ch, char *arg)
   }
 }
 
+/**
+ * Append the location of @p obj to an immortal 'where' listing.
+ *
+ * @param num      Match number to print, or 0 for a container line.
+ * @param buf      Listing buffer.
+ * @param len      Bytes already used in @p buf (must be < @p buf_size).
+ * @param buf_size Budget for listing text. The caller reserves room for its
+ *                 overflow marker beyond this, so it is less than the real
+ *                 size of @p buf.
+ * @param recur    Nonzero follows in_obj up through nested containers; the
+ *                 recursion depth equals the nesting depth.
+ * @return The would-be total length. A value >= @p buf_size means the text
+ *         was truncated; snprintf() then left the NUL at buf[buf_size - 1],
+ *         and the caller appends the marker with where_overflow().
+ */
 static size_t print_object_location(const int num, const obj_data *obj, const char_data *ch, // NOLINT(*-no-recursion)
                    char *buf, size_t len, const size_t buf_size, const int recur)
 {
@@ -2214,6 +2289,12 @@ ACMD(do_toggle)
   int toggle, tp, wimp_lev, result = 0, len = 0, i;
   const char *types[] = { "off", "brief", "normal", "on", "\n" };
 
+    /* Row order must match the SCMD_* toggle constants in act.h: the
+     * selected row's index is compared with SCMD_* values in the switch
+     * below (for example SCMD_COLOR), and do_gen_tog() in act.other.c
+     * indexes its own tog_messages[] by the same constants. A row inserted
+     * out of order silently mismatches messages and cases; change this
+     * table, act.h and act.other.c together. */
     const struct {
     char *command;
     bitvector_t toggle; /* this needs changing once hashmaps are implemented */
@@ -2708,6 +2789,19 @@ ACMD(do_history)
 }
 
 #define HIST_LENGTH 100
+/**
+ * Append a line to a player's communication history.
+ *
+ * @param ch   Owner; NPCs keep no history and are ignored.
+ * @param str  Text to store, usually act()'s return value. Must not be
+ *             NULL (act() returns NULL when it delivered nothing; callers
+ *             check that). A NULL is reported as history-null and dropped.
+ *             The text is copied; the caller keeps ownership of @p str.
+ * @param type HIST_* channel index, below NUM_HIST. Every entry is also
+ *             added to HIST_ALL.
+ *
+ * Each channel keeps the newest HIST_LENGTH entries; older ones are freed.
+ */
 void add_history(struct char_data *ch, char *str, int type)
 {
   int i = 0;
@@ -2759,6 +2853,16 @@ void add_history(struct char_data *ch, char *str, int type)
     add_history(ch, str, HIST_ALL);
 }
 
+/**
+ * Show public information about a player, online or from the player file.
+ *
+ * When get_player_vis() does not find the target (offline, or online but
+ * invisible to @p ch), a temporary char_data is built with load_char().
+ * That copy is never placed in a room, the character list or the UID
+ * table, and free_char() releases it on every exit path. An invisible
+ * online player is therefore read from file a second time; the file copy
+ * shows the last saved state.
+ */
 ACMD(do_whois)
 {
   struct char_data *victim = 0;
