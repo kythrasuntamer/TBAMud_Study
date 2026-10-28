@@ -24,6 +24,10 @@
 #include <sys/stat.h>
 #include "tb_error_capture.h"
 #include "tb_persist_support.h"
+#ifdef TB_SAVE_FAULT_INJECTION
+#include <dirent.h>
+#include <errno.h>
+#endif
 
 /* db.c globals players.c maintains. */
 int top_of_p_table = -1;
@@ -915,9 +919,252 @@ static void test_save_restores_worn_items_without_triggers(void)
     (void)remove(path);
 }
 
+#ifdef TB_SAVE_FAULT_INJECTION
+/* save_char()'s commit as players.c sees it (this executable is linked with
+ * --wrap=rename and --wrap=fclose): fail on demand, to prove each failure is
+ * reported where it happens and never replaces the existing pfile. */
+/* NOLINTNEXTLINE(cert-dcl37-c,cert-dcl51-cpp): --wrap requires this name. */
+int __real_rename(const char *from, const char *to);
+/* NOLINTNEXTLINE(cert-dcl37-c,cert-dcl51-cpp): --wrap requires this name. */
+int __real_fclose(FILE *fl);
+static int fail_rename, fail_fclose, fail_fflush, fail_unlink, fail_ferror;
+/* NOLINTNEXTLINE(cert-dcl37-c,cert-dcl51-cpp): --wrap requires this name. */
+int __real_fflush(FILE *fl);
+/* NOLINTNEXTLINE(cert-dcl37-c,cert-dcl51-cpp): --wrap requires this name. */
+int __real_unlink(const char *path);
+/* NOLINTNEXTLINE(cert-dcl37-c,cert-dcl51-cpp): --wrap requires this name. */
+int __real_ferror(FILE *fl);
+
+/* NOLINTNEXTLINE(cert-dcl37-c,cert-dcl51-cpp): --wrap requires this name. */
+int __wrap_fflush(FILE *fl);
+int __wrap_fflush(FILE *fl)
+{
+  if (fail_fflush && fl != NULL) {
+    errno = ENOSPC;
+    return EOF;
+  }
+  return __real_fflush(fl);
+}
+
+/* NOLINTNEXTLINE(cert-dcl37-c,cert-dcl51-cpp): --wrap requires this name. */
+int __wrap_unlink(const char *path);
+int __wrap_unlink(const char *path)
+{
+  if (fail_unlink) {
+    errno = EACCES;
+    return -1;
+  }
+  return __real_unlink(path);
+}
+
+/* NOLINTNEXTLINE(cert-dcl37-c,cert-dcl51-cpp): --wrap requires this name. */
+int __wrap_ferror(FILE *fl);
+int __wrap_ferror(FILE *fl)
+{
+  return fail_ferror ? 1 : __real_ferror(fl);
+}
+
+/* NOLINTNEXTLINE(cert-dcl37-c,cert-dcl51-cpp): --wrap requires this name. */
+int __wrap_rename(const char *from, const char *to);
+int __wrap_rename(const char *from, const char *to)
+{
+  if (fail_rename) {
+    errno = EXDEV;
+    return -1;
+  }
+  return __real_rename(from, to);
+}
+
+/* NOLINTNEXTLINE(cert-dcl37-c,cert-dcl51-cpp): --wrap requires this name. */
+int __wrap_fclose(FILE *fl);
+int __wrap_fclose(FILE *fl)
+{
+  int rc = __real_fclose(fl);   /* the stream is closed either way */
+
+  if (fail_fclose && rc == 0) {
+    errno = EIO;
+    return EOF;
+  }
+  return rc;
+}
+
+static void read_whole_file(const char *path, char *buf, size_t size)
+{
+  FILE *fl = fopen(path, "r");
+  size_t n;
+
+  TEST_ASSERT_NOT_NULL(fl);
+  n = fread(buf, 1, size - 1, fl);
+  buf[n] = '\0';
+  TEST_ASSERT_EQUAL_INT(0, fclose(fl));
+}
+
+/* Staged "<pfile>.tmpXXXXXX" files left beside the pfile at path. */
+static int staged_files_left(const char *path)
+{
+  char dir[512], prefix[256];
+  const char *slash = strrchr(path, '/');
+  struct dirent *entry;
+  DIR *dp;
+  int left = 0;
+
+  TEST_ASSERT_NOT_NULL(slash);
+  TEST_ASSERT_TRUE(snprintf(dir, sizeof(dir), "%.*s", (int)(slash - path), path) < (int)sizeof(dir));
+  TEST_ASSERT_TRUE(snprintf(prefix, sizeof(prefix), "%s.tmp", slash + 1) < (int)sizeof(prefix));
+  dp = opendir(dir);
+  TEST_ASSERT_NOT_NULL(dp);
+  while ((entry = readdir(dp)) != NULL)
+    if (!strncmp(entry->d_name, prefix, strlen(prefix)))
+      left++;
+  TEST_ASSERT_EQUAL_INT(0, closedir(dp));
+  return left;
+}
+
+/* Remove the staged files a test deliberately left behind. */
+static void remove_staged_files(const char *path)
+{
+  char dir[512], prefix[256], victim[1024];
+  const char *slash = strrchr(path, '/');
+  struct dirent *entry;
+  DIR *dp;
+
+  TEST_ASSERT_NOT_NULL(slash);
+  TEST_ASSERT_TRUE(snprintf(dir, sizeof(dir), "%.*s", (int)(slash - path), path) < (int)sizeof(dir));
+  TEST_ASSERT_TRUE(snprintf(prefix, sizeof(prefix), "%s.tmp", slash + 1) < (int)sizeof(prefix));
+  dp = opendir(dir);
+  TEST_ASSERT_NOT_NULL(dp);
+  while ((entry = readdir(dp)) != NULL)
+    if (!strncmp(entry->d_name, prefix, strlen(prefix))) {
+      TEST_ASSERT_TRUE(snprintf(victim, sizeof(victim), "%s/%s", dir, entry->d_name)
+                       < (int)sizeof(victim));
+      TEST_ASSERT_EQUAL_INT(0, remove(victim));
+    }
+  TEST_ASSERT_EQUAL_INT(0, closedir(dp));
+}
+
+#define ORIGINAL_PFILE "Id  : 4242\nName: tester\nLevl: 7\n"
+
+static void save_with_existing_pfile(char *path, size_t size)
+{
+  write_pfile("tester", ORIGINAL_PFILE);
+  TEST_ASSERT_TRUE(get_filename(path, size, PLR_FILE, "tester"));
+  player.player.name = strdup("tester");
+  GET_IDNUM(&player) = 4242;
+  GET_PFILEPOS(&player) = 0;
+}
+
+/* A refused rename() keeps the previous pfile and removes the staged copy;
+ * the report names rename and the player.  Red before: one generic "save"
+ * record after the fact. */
+static void test_save_rename_failure_keeps_pfile_and_reports_rename(void)
+{
+  char path[512], body[256];
+
+  save_with_existing_pfile(path, sizeof(path));
+  fail_rename = 1;
+  save_char(&player);
+  fail_rename = 0;
+
+  read_whole_file(path, body, sizeof(body));
+  TEST_ASSERT_EQUAL_STRING(ORIGINAL_PFILE, body);
+  TEST_ASSERT_EQUAL_INT(0, staged_files_left(path));
+  TEST_ASSERT_EQUAL_STRING("rename", tb_captured_operation);
+  TEST_ASSERT_EQUAL_STRING("ERROR", tb_captured_severity);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "player idnum 4242"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "previous file kept"));
+}
+
+/* A failing fclose() of the staged file is reported as fclose, the commit is
+ * never attempted, and the staged copy is removed.  Red before: reported as
+ * a generic "save" failure. */
+static void test_save_close_failure_reports_fclose_and_skips_commit(void)
+{
+  char path[512], body[256];
+
+  save_with_existing_pfile(path, sizeof(path));
+  fail_fclose = 1;
+  save_char(&player);
+  fail_fclose = 0;
+
+  read_whole_file(path, body, sizeof(body));
+  TEST_ASSERT_EQUAL_STRING(ORIGINAL_PFILE, body);
+  TEST_ASSERT_EQUAL_INT(0, staged_files_left(path));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_op_log, "fclose\n"));
+  TEST_ASSERT_NULL(strstr(tb_captured_op_log, "rename\n"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail_log, "player idnum 4242"));
+}
+
+/* A failing fflush() of the staged file is reported as fflush (with errno),
+ * the commit is never attempted and the previous pfile is kept.  Red before:
+ * folded into one generic "save" record with ferror(). */
+static void test_save_flush_failure_reports_fflush(void)
+{
+  char path[512], body[256];
+
+  save_with_existing_pfile(path, sizeof(path));
+  fail_fflush = 1;
+  save_char(&player);
+  fail_fflush = 0;
+
+  read_whole_file(path, body, sizeof(body));
+  TEST_ASSERT_EQUAL_STRING(ORIGINAL_PFILE, body);
+  TEST_ASSERT_EQUAL_INT(0, staged_files_left(path));
+  TEST_ASSERT_TRUE(tb_captured_has_op("fflush"));
+  TEST_ASSERT_FALSE(tb_captured_has_op("rename"));
+  TEST_ASSERT_FALSE(tb_captured_has_op("save"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail_log, "player idnum 4242"));
+}
+
+/* A stream error latched by an earlier write is reported as write. */
+static void test_save_stream_error_reports_write(void)
+{
+  char path[512], body[256];
+
+  save_with_existing_pfile(path, sizeof(path));
+  fail_ferror = 1;
+  save_char(&player);
+  fail_ferror = 0;
+
+  read_whole_file(path, body, sizeof(body));
+  TEST_ASSERT_EQUAL_STRING(ORIGINAL_PFILE, body);
+  TEST_ASSERT_EQUAL_INT(0, staged_files_left(path));
+  TEST_ASSERT_EQUAL_STRING("write", tb_captured_ops[0]);
+  TEST_ASSERT_FALSE(tb_captured_has_op("rename"));
+}
+
+/* rename() and then the cleanup unlink() both fail: each is reported at its
+ * own call, the previous pfile is kept, and the staged copy survives as
+ * evidence.  Red before: one "save" record, the unlink result discarded. */
+static void test_save_cleanup_failure_after_rename_failure_reports_unlink(void)
+{
+  char path[512], body[256];
+
+  save_with_existing_pfile(path, sizeof(path));
+  fail_rename = fail_unlink = 1;
+  save_char(&player);
+  fail_rename = fail_unlink = 0;
+
+  read_whole_file(path, body, sizeof(body));
+  TEST_ASSERT_EQUAL_STRING(ORIGINAL_PFILE, body);
+  TEST_ASSERT_EQUAL_INT(1, staged_files_left(path));
+  TEST_ASSERT_EQUAL_INT(2, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("rename", tb_captured_ops[0]);
+  TEST_ASSERT_EQUAL_STRING("unlink", tb_captured_ops[1]);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "player idnum 4242"));
+  remove_staged_files(path);
+}
+#endif /* TB_SAVE_FAULT_INJECTION */
+
 int main(void)
 {
   UNITY_BEGIN();
+#ifdef TB_SAVE_FAULT_INJECTION
+  RUN_TEST(test_save_rename_failure_keeps_pfile_and_reports_rename);
+  RUN_TEST(test_save_close_failure_reports_fclose_and_skips_commit);
+  RUN_TEST(test_save_flush_failure_reports_fflush);
+  RUN_TEST(test_save_stream_error_reports_write);
+  RUN_TEST(test_save_cleanup_failure_after_rename_failure_reports_unlink);
+#endif
   RUN_TEST(test_overlong_act_flag_word_is_rejected);
   RUN_TEST(test_four_flag_words_load);
   RUN_TEST(test_short_tag_line_is_reported);
