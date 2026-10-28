@@ -796,7 +796,7 @@ set(GAMEPLAY_SRCS
     ${CMAKE_CURRENT_SOURCE_DIR}/gameplay_fixture.c
 )
 macro(add_gameplay_test TEST_NAME TEST_SRC)
-    add_mud_test(${TEST_NAME} ${GAMEPLAY_SRCS} ${TEST_SRC})
+    add_mud_test(${TEST_NAME} ${GAMEPLAY_SRCS} ${TEST_SRC} ${ARGN})
     if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
         target_compile_options(${TEST_NAME} PRIVATE -ffunction-sections -fdata-sections)
         target_link_options(${TEST_NAME} PRIVATE
@@ -813,6 +813,11 @@ add_gameplay_test(test_act_movement ${CMAKE_CURRENT_SOURCE_DIR}/test_act_movemen
 add_gameplay_test(test_act_item ${CMAKE_CURRENT_SOURCE_DIR}/test_act_item.c)
 add_gameplay_test(test_fight ${CMAKE_CURRENT_SOURCE_DIR}/test_fight.c)
 add_gameplay_test(test_magic ${CMAKE_CURRENT_SOURCE_DIR}/test_magic.c)
+# perform_violence()'s group autoassist loop with the real lists.c, so the
+# test sees the member list's live-iterator count (the fixture's list stubs
+# are weak and yield to lists.c here).
+add_gameplay_test(test_fight_group
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_fight_group.c ${MUD_SRCDIR}/lists.c)
 
 # Production event_countdown() (mud_event.c): room-keyed event expiry.
 add_mud_test(test_mud_event

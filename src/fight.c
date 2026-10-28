@@ -1173,11 +1173,11 @@ void perform_violence(void)
       continue;
     }
 
- if (GROUP(ch) && GROUP(ch)->members && GROUP(ch)->members->iSize) {
+    if (GROUP(ch) && GROUP(ch)->members && GROUP(ch)->members->iSize) {
       struct iterator_data Iterator;
 
       tch = (struct char_data *) merge_iterator(&Iterator, GROUP(ch)->members);
-    for (; tch ; tch = next_in_list(&Iterator)) {
+      for (; tch ; tch = next_in_list(&Iterator)) {
         if (tch == ch)
           continue;
         if (!IS_NPC(tch) && !PRF_FLAGGED(tch, PRF_AUTOASSIST))
@@ -1191,8 +1191,13 @@ void perform_violence(void)
         if (!CAN_SEE(tch, ch))
           continue;
       
-        do_assist(tch, GET_NAME(ch), 0, 0);				  
+        do_assist(tch, GET_NAME(ch), 0, 0);
       }
+      /* merge_iterator() registered a live iterator on the member list;
+       * without this every round leaked one, and free_group() later found
+       * the list "freed with N live iterators". The loop above has no
+       * break or return, so this is its only exit. */
+      remove_iterator(&Iterator);
     }
 
     hit(ch, FIGHTING(ch), TYPE_UNDEFINED);

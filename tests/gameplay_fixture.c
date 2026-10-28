@@ -210,7 +210,11 @@ void send_to_group(struct char_data *ch, struct group_data *group, const char *m
 { (void)ch; (void)group; (void)msg; }
 int thaco(int class_num, int level) { (void)class_num; (void)level; return 20; }
 int char_thaco(const struct char_data *ch) { (void)ch; return 20; }
+/* lists.c is not linked by most gameplay tests; these are weak so a test
+ * that links the real lists.c (test_fight_group) gets its definitions. */
+__attribute__((weak))
 void *simple_list_at(struct list_data *pList, const char *src_file, int src_line, const char *src_func) { (void)src_file; (void)src_line; (void)src_func;  (void)pList; return NULL; }
+__attribute__((weak))
 void free_list_at(struct list_data *pList, const char *src_file, int src_line, const char *src_func) { (void)src_file; (void)src_line; (void)src_func;  (void)pList; }
 /* event_cancel() is a macro over event_cancel_at() (call-site capture). */
 void event_cancel_at(struct event *event, const char *file, int line,
