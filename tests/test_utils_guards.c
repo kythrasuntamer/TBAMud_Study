@@ -95,7 +95,7 @@ void tearDown(void)
 {
   if (logfile != NULL && logfile != stderr) {
     /* Echo the captured records so a failing run shows what was logged. */
-    fputs(log_text(), stderr);
+    (void)fputs(log_text(), stderr);
     (void)fclose(logfile);
   }
   logfile = NULL;
