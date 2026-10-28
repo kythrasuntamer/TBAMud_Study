@@ -197,8 +197,34 @@ static int hedit_save_internally(struct descriptor_data *d)
     new_help_table[top_of_helpt++] = *OLC_HELP(d);
     free(help_table);
     help_table = new_help_table;
-  } else
-    help_table[OLC_ZNUM(d)] = *OLC_HELP(d);
+  } else {
+    struct help_index_element *row = &help_table[OLC_ZNUM(d)];
+    char *old_entry = row->entry;
+    int i;
+
+    /* do_oasis_hedit redirects a duplicate keyword to its owning row, so
+     * the row being replaced owns its entry.  A duplicate row is skipped by
+     * hedit_save_to_disk, so storing an edit there would be dropped without
+     * a word: refuse it instead. */
+    if (row->duplicate || OLC_HELP(d)->duplicate) {
+      TB_ERROR_MSG("olc", "hedit-duplicate-save", "help_table",
+                   "rnum %d keywords '%s' row duplicate %d edit duplicate %d editor " DIAG_CHAR_FMT,
+                   (int)OLC_ZNUM(d), row->keywords ? row->keywords : "(null)",
+                   row->duplicate, OLC_HELP(d)->duplicate, DIAG_CHAR(d->character));
+      return FALSE;
+    }
+
+    /* The struct copy below replaces the row's strings; free the old ones
+     * (they used to leak on every edit).  Duplicate rows alias the owner's
+     * entry pointer, so move them to the new text first: if the disk write
+     * below fails the table is not rebooted and they stay in use. */
+    for (i = 0; i < top_of_helpt; i++)
+      if (help_table[i].duplicate && help_table[i].entry == old_entry)
+        help_table[i].entry = OLC_HELP(d)->entry;
+    free(row->keywords);
+    free(old_entry);
+    *row = *OLC_HELP(d);
+  }
 
   add_to_save_list(HEDIT_PERMISSION, SL_HLP);
   hedit_save_to_disk(d);
@@ -328,8 +354,12 @@ void hedit_parse(struct descriptor_data *d, char *arg)
        * with a local and store only a live row or NOWHERE. */
       int next;
 
+      /* Duplicate rows are other keywords of an entry owned by another row;
+       * hedit_save_internally refuses them because hedit_save_to_disk skips
+       * them, so only offer owning rows here. */
       for (next = (int)OLC_ZNUM(d) + 1; next < top_of_helpt; next++)
-        if (is_abbrev(OLC_STORAGE(d), help_table[next].keywords))
+        if (!help_table[next].duplicate &&
+            is_abbrev(OLC_STORAGE(d), help_table[next].keywords))
           break;
 
       if (next >= top_of_helpt) {

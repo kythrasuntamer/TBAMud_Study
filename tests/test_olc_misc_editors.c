@@ -592,17 +592,65 @@ static void test_hedit_no_then_add_appends_instead_of_writing_past_table(void)
   TEST_ASSERT_NULL(builder_desc.olc);
 }
 
-/* F2-01: a matching later row is offered as an edit, not skipped. */
+/* F2-01: a matching later row is offered as an edit, not skipped.
+ * F2-19: duplicate rows (row 1) are not offered; their owner is. */
 static void test_hedit_no_offers_next_matching_row(void)
+{
+  char cmd[] = " alpha";
+
+  free(help_table[2].keywords);
+  help_table[2].keywords = strdup("alphabet");
+  search_result = 0;
+  do_oasis_hedit(&builder, cmd, 0, 0);
+  type("n");
+  TEST_ASSERT_EQUAL_INT(HEDIT_CONFIRM_EDIT, OLC_MODE(&builder_desc));
+  TEST_ASSERT_EQUAL_INT(2, OLC_ZNUM(&builder_desc));
+  type("n");
+  TEST_ASSERT_EQUAL_INT(HEDIT_CONFIRM_ADD, OLC_MODE(&builder_desc));
+  type("q");
+}
+
+/* F2-19: replacing a row frees the old strings and moves the duplicate
+ * rows that shared the old entry onto the new one (ASan/Valgrind see the
+ * leak or a dangling duplicate).  The disk write fails in the test tree,
+ * so the table is not rebooted and can be inspected. */
+static void test_hedit_replace_frees_old_row_and_keeps_duplicates_valid(void)
 {
   char cmd[] = " alpha";
 
   search_result = 0;
   do_oasis_hedit(&builder, cmd, 0, 0);
-  type("n");
-  TEST_ASSERT_EQUAL_INT(HEDIT_CONFIRM_EDIT, OLC_MODE(&builder_desc));
-  TEST_ASSERT_EQUAL_INT(1, OLC_ZNUM(&builder_desc));
+  type("y");
+  type("2");
+  type("7");
   type("q");
+  type("y");
+  TEST_ASSERT_NULL(builder_desc.olc);
+  TEST_ASSERT_EQUAL_INT(3, top_of_helpt);
+  TEST_ASSERT_EQUAL_INT(7, help_table[0].min_level);
+  TEST_ASSERT_TRUE(help_table[1].entry == help_table[0].entry);
+  TEST_ASSERT_EQUAL_STRING("ALPHA\r\n\r\nAlpha text.\r\n", help_table[1].entry);
+}
+
+/* F2-19: a save aimed at a duplicate row would be skipped by the writer;
+ * it is refused loudly and the table is unchanged. */
+static void test_hedit_save_to_duplicate_row_is_refused_loudly(void)
+{
+  char cmd[] = " alpha";
+
+  search_result = 0;
+  do_oasis_hedit(&builder, cmd, 0, 0);
+  type("y");
+  type("2");
+  type("9");
+  type("q");
+  OLC_ZNUM(&builder_desc) = 1;   /* simulate a walk that landed on a duplicate */
+  tb_error_capture_reset();
+  type("y");
+  TEST_ASSERT_EQUAL_STRING("hedit-duplicate-save", tb_captured_operation);
+  TEST_ASSERT_NULL(builder_desc.olc);
+  TEST_ASSERT_EQUAL_INT(0, help_table[1].min_level);
+  TEST_ASSERT_TRUE(help_table[1].entry == help_table[0].entry);
 }
 
 /* F2-01: a save whose row went stale is refused with a diagnostic. */
@@ -1104,6 +1152,8 @@ int main(void)
   RUN_TEST(test_hedit_no_then_add_appends_instead_of_writing_past_table);
   RUN_TEST(test_hedit_no_offers_next_matching_row);
   RUN_TEST(test_hedit_save_with_stale_rnum_is_refused_loudly);
+  RUN_TEST(test_hedit_replace_frees_old_row_and_keeps_duplicates_valid);
+  RUN_TEST(test_hedit_save_to_duplicate_row_is_refused_loudly);
   RUN_TEST(test_hedit_new_topic_does_not_index_nowhere);
   RUN_TEST(test_hedit_duplicate_redirects_to_owner);
   RUN_TEST(test_hedit_orphan_duplicate_is_refused_loudly);
