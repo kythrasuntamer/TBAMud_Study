@@ -97,6 +97,9 @@ static int obj_rnum_in(const obj_rnum *set, int n, obj_rnum r)
 
 /* delete_room()'s pass over one zone's reset commands.  A command that loads
  * into the deleted room (rnum) is cancelled; one above it is renumbered.
+ * 'T'/'V' keep a room rnum in arg3 for every trigger type (zedit stores the
+ * room being edited, save_zone() writes it as a vnum, zedit's check wants it
+ * valid, add_room() shifts it), so they are renumbered the same way.
  * Commands that act on what an earlier command loaded are chained the way
  * reset_zone() runs them: 'G'/'E' give to the mobile the last 'M' loaded
  * (until the next 'M'); 'P' puts into the latest loaded copy of its
@@ -119,9 +122,6 @@ static void cancel_room_reset_commands(zone_rnum zone, room_rnum rnum,
     switch (cmd) {
     case 'T':
     case 'V':
-      if (c->arg1 != WLD_TRIGGER)
-        break;          /* a mob/object target: arg3 is not a room */
-      /* fall through */
     case 'M':
     case 'O':
       if (c->arg3 == rnum)
