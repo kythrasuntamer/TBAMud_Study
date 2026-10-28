@@ -411,9 +411,36 @@ static void saving_keeps_the_prototype_rnum(void)
   TEST_ASSERT_FALSE(tb_captured_has_op("trigedit-proto-nr"));
 }
 
+/* E2-03/E2-04: "W) Copy Trigger" replaces the scratch trigger and buffer
+ * (which leaked before) and must still ask to save on quit.  LeakSanitizer
+ * and Valgrind see the leak; the state checks cover the rest. */
+static void copy_trigger_replaces_scratch_and_keeps_save_prompt(void)
+{
+  const int vnums[] = { 100, 102 };
+
+  make_index(vnums, 2);
+  start_edit(100);
+  feed(TRIGEDIT_NAME, "my name");
+  feed(TRIGEDIT_ARGUMENT, "my arg");
+  feed(TRIGEDIT_COPY, "102");
+
+  TEST_ASSERT_EQUAL_INT(0, GET_TRIG_RNUM(OLC_TRIG(bd)));
+  TEST_ASSERT_NOT_NULL(strstr(OLC_STORAGE(bd), "say 102"));
+  TEST_ASSERT_TRUE(OLC_VAL(bd) != 0);
+
+  feed(TRIGEDIT_MAIN_MENU, "q");
+  TEST_ASSERT_EQUAL_INT(TRIGEDIT_CONFIRM_SAVESTRING, OLC_MODE(bd));
+  save_and_quit();
+
+  TEST_ASSERT_EQUAL_INT(0, GET_TRIG_RNUM(trig_index[0]->proto));
+  TEST_ASSERT_EQUAL_STRING("say 102", trig_index[0]->proto->cmdlist->cmd);
+  TEST_ASSERT_FALSE(tb_captured_has_op("trigedit-proto-nr"));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(copy_trigger_replaces_scratch_and_keeps_save_prompt);
   RUN_TEST(saving_keeps_the_prototype_rnum);
   RUN_TEST(format_script_refuses_nesting_past_its_stack);
   RUN_TEST(format_script_indents_nested_blocks);

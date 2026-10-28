@@ -216,6 +216,19 @@ void trigedit_setup_existing(struct descriptor_data *d, int rtrg_num)
   struct cmdlist_element *c;
   size_t len;
 
+  /* This function owns the editor's scratch state.  "W) Copy Trigger" calls
+   * it on a descriptor that already has a scratch trigger and edit buffer;
+   * release them first (E2-04).  free_trigger() leaves cmdlist alone: the
+   * scratch only borrows its prototype's list. */
+  if (OLC_TRIG(d)) {
+    free_trigger(OLC_TRIG(d));
+    OLC_TRIG(d) = NULL;
+  }
+  if (OLC_STORAGE(d)) {
+    free(OLC_STORAGE(d));
+    OLC_STORAGE(d) = NULL;
+  }
+
   /* Allocate a scratch trigger structure. */
   CREATE(trig, struct trig_data, 1);
 
@@ -705,6 +718,9 @@ void trigedit_parse(struct descriptor_data *d, char *arg)
         /* The scratch now holds the source's rnum, but it is still the work
          * in progress for OLC_NUM(d) (E2-03). */
         GET_TRIG_RNUM(OLC_TRIG(d)) = real_trigger(OLC_NUM(d));
+        /* The copy replaced the work in progress: quitting must still ask
+         * whether to save it. */
+        OLC_VAL(d) = 1;
       } else
         write_to_output(d, "That trigger does not exist.\r\n");
       break;
