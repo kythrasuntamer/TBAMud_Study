@@ -1342,7 +1342,7 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
               else
                 tb_snprintf(str, slen, "0");
             } else {
-              sprintbitarray(GET_OBJ_EXTRA(o), extra_bits, EF_ARRAY_MAX, str, sizeof(str));
+              sprintbitarray(GET_OBJ_EXTRA(o), extra_bits, EF_ARRAY_MAX, str, slen);
             }
           }
           break;

@@ -143,11 +143,18 @@ void __wrap_tb_error_log_at(const char *severity, const char *subsystem,
 
 static trig_data trig;
 
+/* Diagnostics name the running trigger, so every test has an index entry
+ * for trig (rnum 0); tests that install their own put this one back. */
+static struct index_data default_index;
+static struct index_data *default_indexes[1] = { &default_index };
+
 void setUp(void)
 {
   memset(&trig, 0, sizeof(trig));
   captured_errors = 0;
   *captured_operation = '\0';
+  trig_index = default_indexes;
+  top_of_trigt = 1;
 }
 void tearDown(void)
 {
@@ -811,6 +818,36 @@ static void owner_in_no_room_is_not_indexed(void)
   top_of_trigt = 0;
 }
 
+/* %obj.extra% passed sizeof(pointer) as the buffer size, so the flag list
+ * was cut to 7 bytes ("GLOW HU"). */
+static void obj_extra_field_lists_every_flag(void)
+{
+  static char_data owner;
+  static obj_data obj;
+  char line[MAX_INPUT_LENGTH], out[MAX_INPUT_LENGTH];
+
+  memset(&owner, 0, sizeof(owner));
+  memset(&obj, 0, sizeof(obj));
+  SET_BIT_AR(MOB_FLAGS(&owner), MOB_ISNPC);
+  GET_MOB_RNUM(&owner) = NOBODY;
+  IN_ROOM(&owner) = NOWHERE;
+  GET_OBJ_RNUM(&obj) = NOTHING;
+  SET_BIT_AR(GET_OBJ_EXTRA(&obj), ITEM_GLOW);
+  SET_BIT_AR(GET_OBJ_EXTRA(&obj), ITEM_HUM);
+  obj.script_id = OBJ_ID_BASE + 10;
+  init_lookup_table();
+  add_to_lookup_table(obj.script_id, &obj);
+  tb_snprintf(line, sizeof(line), "%c%ld", UID_CHAR, obj.script_id);
+  add_var(&GET_TRIG_VARS(&trig), "o", line, 0);
+
+  strlcpy(line, "%o.extra%", sizeof(line));
+  var_subst(&owner, NULL, &trig, MOB_TRIGGER, line, out);
+  TEST_ASSERT_NOT_NULL(strstr(out, "GLOW"));
+  TEST_ASSERT_NOT_NULL(strstr(out, "HUM"));
+
+  remove_from_lookup_table(obj.script_id, &obj);
+}
+
 static void restore_round_trips_neutralize(void)
 {
   char text[] = "50% off, 100%% sure";
@@ -848,5 +885,6 @@ int main(void)
   RUN_TEST(legacy_var_file_accepts_long_names);
   RUN_TEST(wait_resumes_in_the_last_room);
   RUN_TEST(owner_in_no_room_is_not_indexed);
+  RUN_TEST(obj_extra_field_lists_every_flag);
   return UNITY_END();
 }
