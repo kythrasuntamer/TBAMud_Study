@@ -1564,6 +1564,31 @@ const char *tb_class_range_error_at(const struct char_data *ch,
   return "??";
 }
 
+/** Range-checked name-table lookup behind TB_TABLE_NAME(). The index comes
+ * from world, player or script data that nothing range-checked, so an
+ * out-of-range one is a data error: it is reported at the caller's
+ * location (subsystem "table", op "name-lookup-range", resource = the
+ * table's name) and a placeholder is shown instead of reading past the
+ * table.
+ * @param table The name table.
+ * @param count Number of valid entries (the "\n" sentinel excluded).
+ * @param idx The index to look up.
+ * @param table_name The table's name, for the report.
+ * @return table[idx], or "<invalid>". */
+const char *tb_table_name_at(const char *const table[], size_t count, long idx,
+                             const char *table_name, const char *source_file,
+                             int source_line, const char *source_func)
+{
+  if (table != NULL && idx >= 0 && (size_t) idx < count && table[idx] != NULL)
+    return table[idx];
+  tb_error_log_at("ERROR", "table", "name-lookup-range",
+                  table_name ? table_name : "(unknown)", 0, source_file,
+                  source_line, source_func, "index %ld not in [0,%zu)%s",
+                  idx, count, table == NULL ? "; NULL table" :
+                  (idx >= 0 && (size_t) idx < count) ? "; NULL entry" : "");
+  return "<invalid>";
+}
+
 /** This function (derived from basic fork() abort() idea by Erwin S Andreasen)
  * causes your MUD to dump core (assuming you can) but continue running. The
  * core dump will allow post-mortem debugging that is less severe than assert();

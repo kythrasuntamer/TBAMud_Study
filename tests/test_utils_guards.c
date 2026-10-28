@@ -686,6 +686,36 @@ void test_class_abbr_valid_class_and_npc_are_silent(void)
   free_player(c);
 }
 
+/* =====================================================================
+ * TB_TABLE_NAME: a name-table lookup that reports a bad index at its
+ * caller instead of reading past the table.
+ * ===================================================================== */
+
+void test_table_name_out_of_range_reports_caller(void)
+{
+  static const char *colours[] = { "red", "green", "\n" };
+  char where[64];
+
+  (void)snprintf(where, sizeof(where), "test_utils_guards.c:%d", __LINE__ + 1);
+  TEST_ASSERT_EQUAL_STRING("<invalid>", TB_TABLE_NAME(colours, 2, 7));
+  TEST_ASSERT_EQUAL_INT(1, count_op("name-lookup-range"));
+  TEST_ASSERT_NOT_NULL(strstr(log_text(), where));
+  TEST_ASSERT_NOT_NULL(strstr(log_text(), "resource=colours"));
+  TEST_ASSERT_NOT_NULL(strstr(log_text(), "index 7 not in [0,2)"));
+
+  TEST_ASSERT_EQUAL_STRING("<invalid>", TB_TABLE_NAME(colours, 2, -1));
+  TEST_ASSERT_EQUAL_INT(2, count_op("name-lookup-range"));
+}
+
+void test_table_name_valid_index_is_silent(void)
+{
+  static const char *colours[] = { "red", "green", "\n" };
+
+  TEST_ASSERT_EQUAL_STRING("red", TB_TABLE_NAME(colours, 2, 0));
+  TEST_ASSERT_EQUAL_STRING("green", TB_TABLE_NAME(colours, 2, 1));
+  TEST_ASSERT_EQUAL_INT(0, count_records());
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -719,5 +749,7 @@ int main(void)
   RUN_TEST(test_an_handles_empty_and_null);
   RUN_TEST(test_class_abbr_out_of_range_class_reports_caller);
   RUN_TEST(test_class_abbr_valid_class_and_npc_are_silent);
+  RUN_TEST(test_table_name_out_of_range_reports_caller);
+  RUN_TEST(test_table_name_valid_index_is_silent);
   return UNITY_END();
 }

@@ -234,6 +234,19 @@ const char *tb_class_range_error_at(const struct char_data *ch,
                                     const char *table,
                                     const char *source_file, int source_line,
                                     const char *source_func);
+const char *tb_table_name_at(const char *const table[], size_t count, long idx,
+                             const char *table_name, const char *source_file,
+                             int source_line, const char *source_func);
+/** table[idx] when 0 <= idx < count and the entry is set; otherwise
+ * "<invalid>", after a table/name-lookup-range error naming the table, the
+ * index, the count and the caller's file, line and function. For name
+ * tables (item_types[], genders[], position_types[], ...) indexed by world,
+ * player or script data. count is the number of real entries, not counting
+ * a trailing "\n" sentinel: a NUM_* constant or TB_ARRAY_LEN(table) - 1.
+ * Each argument is evaluated once. */
+#define TB_TABLE_NAME(table, count, idx) \
+  tb_table_name_at((table), (count), (long) (idx), #table, \
+                   __FILE__, __LINE__, __func__)
 int count_color_chars(char *string);
 int room_is_dark_at(room_rnum room, const char *source_file, int source_line,
                     const char *source_func);
