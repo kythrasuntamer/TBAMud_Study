@@ -961,7 +961,14 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
             }
           }
           else if (!str_cmp(field, "is_killer")) {
-            if (subfield && *subfield) {
+            /* PLR_FLAGS and MOB_FLAGS share one array, so on a mob this
+             * bit is a MOB_ flag (PLR_THIEF is MOB_SENTINEL). */
+            if (subfield && *subfield && IS_NPC(c))
+              TB_WARN_MSG("dg", "field-target", "find_replacement",
+                          "trig vnum %d: setting is_killer on mob vnum %d uid %ld "
+                          "ignored; players only", DIAG_TRIG_VNUM(trig),
+                          GET_MOB_VNUM(c), char_script_id(c));
+            else if (subfield && *subfield) {
               if (!str_cmp("on", subfield))
                 SET_BIT_AR(PLR_FLAGS(c), PLR_KILLER);
               else if (!str_cmp("off", subfield))
@@ -973,7 +980,14 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
               strlcpy(str, "0", slen);
           }
           else if (!str_cmp(field, "is_thief")) {
-            if (subfield && *subfield) {
+            /* PLR_FLAGS and MOB_FLAGS share one array, so on a mob this
+             * bit is a MOB_ flag (PLR_THIEF is MOB_SENTINEL). */
+            if (subfield && *subfield && IS_NPC(c))
+              TB_WARN_MSG("dg", "field-target", "find_replacement",
+                          "trig vnum %d: setting is_thief on mob vnum %d uid %ld "
+                          "ignored; players only", DIAG_TRIG_VNUM(trig),
+                          GET_MOB_VNUM(c), char_script_id(c));
+            else if (subfield && *subfield) {
               if (!str_cmp("on", subfield))
                 SET_BIT_AR(PLR_FLAGS(c), PLR_THIEF);
               else if (!str_cmp("off", subfield))

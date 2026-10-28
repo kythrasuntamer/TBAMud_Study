@@ -900,6 +900,21 @@ static void dg_affect_out_of_range_is_refused(void)
   affect_from_char(target, SPELL_DG_AFFECT);
 }
 
+/* D1-22: is_thief(on) on a mob set PLR_THIEF in the shared flag array, which
+ * is MOB_SENTINEL, while reading back 0. */
+static void player_flag_setters_ignore_mobs(void)
+{
+  char_data *mob = make_mob("mob");
+  trig_data *t = idle_mob_trigger(mob);
+  char out[MAX_INPUT_LENGTH];
+
+  uid_var(t, "a", mob->script_id);
+  subst(mob, t, "%a.is_thief(on)%", out);
+  TEST_ASSERT_FALSE(MOB_FLAGGED(mob, MOB_SENTINEL));
+  TEST_ASSERT_EQUAL_STRING("0", out);
+  TEST_ASSERT_EQUAL_STRING("field-target", tb_captured_operation);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -936,5 +951,6 @@ int main(void)
   RUN_TEST(obj_extra_lists_every_flag);
   RUN_TEST(field_setters_saturate_instead_of_wrapping);
   RUN_TEST(dg_affect_out_of_range_is_refused);
+  RUN_TEST(player_flag_setters_ignore_mobs);
   return UNITY_END();
 }
