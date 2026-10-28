@@ -792,6 +792,18 @@ static int get_max_players(void)
   /* now calculate max _players_ based on max descs */
   max_descs = MIN(CONFIG_MAX_PLAYING, max_descs - NUM_RESERVED_DESCS);
 
+  /* game_loop() polls every socket with select(), which cannot watch a
+   * descriptor >= FD_SETSIZE; new_descriptor() refuses those too. */
+  if (max_descs > FD_SETSIZE - NUM_RESERVED_DESCS) {
+    TB_WARN_MSG("config", "max-playing", "get_max_players",
+                "player limit %d (max_playing %d, by %s) exceeds what select()"
+                " can poll; using %d (FD_SETSIZE %d less %d reserved)",
+                max_descs, CONFIG_MAX_PLAYING, method,
+                FD_SETSIZE - NUM_RESERVED_DESCS, (int) FD_SETSIZE,
+                NUM_RESERVED_DESCS);
+    max_descs = FD_SETSIZE - NUM_RESERVED_DESCS;
+  }
+
   if (max_descs <= 0) {
     log("SYSERR: Non-positive max player limit!  (Set at %d using %s).",
 	    max_descs, method);
@@ -1742,11 +1754,37 @@ static int new_descriptor(socket_t s)
     return (0);
   }
 
-  /* make sure we have room for it */
+  /* Make sure we have room for it. Three limits apply:
+   *  - CONFIG_MAX_PLAYING: set by implementors (cedit, config file), any
+   *    value is accepted there;
+   *  - max_players: what the process descriptor limit allows, computed at
+   *    boot by get_max_players();
+   *  - FD_SETSIZE: game_loop() watches every socket with select(); FD_SET
+   *    on a descriptor >= FD_SETSIZE writes past its stack fd_set.
+   * A remote peer can hit these at will, so the reports are rate-limited. */
   for (newd = descriptor_list; newd; newd = newd->next)
     sockets_connected++;
 
-  if (sockets_connected >= CONFIG_MAX_PLAYING) {
+#ifndef CIRCLE_WINDOWS /* Winsock's FD_SETSIZE counts sockets, not values */
+  if (desc >= FD_SETSIZE) {
+    TB_ERROR_EVERY(60, "network", "accept-limit", "new_descriptor",
+                   "fd %ld >= FD_SETSIZE %d (connected %d, max_playing %d,"
+                   " max_players %d): select() cannot watch it; connection"
+                   " from %s refused", (long) desc, (int) FD_SETSIZE,
+                   sockets_connected, CONFIG_MAX_PLAYING, max_players,
+                   inet_ntoa(peer.sin_addr));
+    write_to_descriptor(desc, "Sorry, the game is full right now... please try again later!\r\n");
+    CLOSE_SOCKET(desc);
+    return (0);
+  }
+#endif
+
+  if (sockets_connected >= MIN(CONFIG_MAX_PLAYING, max_players)) {
+    TB_WARN_EVERY(60, "network", "game-full", "new_descriptor",
+                  "%d connections, limit %d (max_playing %d, max_players %d):"
+                  " connection from %s refused", sockets_connected,
+                  MIN(CONFIG_MAX_PLAYING, max_players), CONFIG_MAX_PLAYING,
+                  max_players, inet_ntoa(peer.sin_addr));
     write_to_descriptor(desc, "Sorry, the game is full right now... please try again later!\r\n");
     CLOSE_SOCKET(desc);
     return (0);
