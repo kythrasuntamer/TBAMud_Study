@@ -599,6 +599,24 @@ if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
         PROPERTIES COMPILE_OPTIONS "-ffunction-sections;-fdata-sections")
 endif()
 
+# Production informative commands (act.informative.c): help search, room and
+# object display, score, areas, where and history. Unreferenced sections are
+# discarded; the test supplies the fixtures the reached code needs.
+add_executable(test_act_informative
+    $<TARGET_OBJECTS:unity_vendor>
+    ${MUD_SRCDIR}/act.informative.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_act_informative.c
+)
+target_include_directories(test_act_informative PRIVATE ${TEST_INCLUDES})
+target_compile_options(test_act_informative PRIVATE ${TEST_CFLAGS})
+add_test(NAME test_act_informative COMMAND test_act_informative)
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_compile_options(test_act_informative PRIVATE -ffunction-sections -fdata-sections)
+    target_link_options(test_act_informative PRIVATE -Wl,--gc-sections)
+    set_source_files_properties(${MUD_SRCDIR}/act.informative.c
+        PROPERTIES COMPILE_OPTIONS "-ffunction-sections;-fdata-sections")
+endif()
+
 find_package(Python3 COMPONENTS Interpreter QUIET)
 if(Python3_Interpreter_FOUND)
     add_test(NAME test_dg_memory_callback_contract

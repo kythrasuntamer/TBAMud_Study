@@ -1093,12 +1093,34 @@ void space_to_minus(char *str)
     *str = '-';
 }
 
+/**
+ * Binary search of the sorted help table for a keyword prefix.
+ *
+ * top_of_helpt is a COUNT of entries (help_table[0 .. top_of_helpt-1]),
+ * unlike top_of_socialt, which is the last index. The boot loader allocates
+ * exactly that many entries; hedit reallocates with spare slots, which hid
+ * the old 'top = top_of_helpt' off-by-one at runtime after an hedit save.
+ * help_table is sorted case-insensitively by keywords (hsort in db.c).
+ *
+ * @param argument Player-controlled keyword prefix (any length).
+ * @param level    Reader's level; entries above it are skipped.
+ * @return Index of the first visible matching entry, or NOWHERE on a miss.
+ */
 int search_help(const char *argument, int level)
 {
   int chk, bot, top, mid, minlen;
 
+  if (top_of_helpt > 0 && !help_table) {
+    TB_ERROR_MSG("help", "search-index", "help_table",
+                 "help table is NULL but top_of_helpt counts %d entries "
+                 "(key length %zu, level %d)", top_of_helpt,
+                 strlen(argument), level);
+    return NOWHERE;
+  }
+
    bot = 0;
-   top = top_of_helpt;
+   /* Last valid index. An empty table gives top = -1 and the loop never runs. */
+   top = top_of_helpt - 1;
    minlen = strlen(argument);
 
   while (bot <= top) {
