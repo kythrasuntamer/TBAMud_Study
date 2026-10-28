@@ -1890,6 +1890,25 @@ static int room_zone(int vnum, int *zone)
   return *zone;
 }
 
+/** Queue the zone that holds vnum for saving, after a legacy record (an
+ * old-format flag line in a hand-edited .wld/.mob/.obj file) was converted
+ * to 128-bit flags with bitsavetodisk on. real_zone_by_thing() returns
+ * NOWHERE for a vnum that no zone holds, and zone_table[NOWHERE] lies 65535
+ * entries past the table (fuzz input obj-convert-zone-nowhere). Such a
+ * record could not be saved to any zone file either, so the boot stops
+ * naming it. */
+static void save_converted_zone(const char *record, int vnum, int save_type)
+{
+  zone_rnum znum = real_zone_by_thing(vnum);
+
+  if (znum == NOWHERE) {
+    BOOT_FATAL("world-convert", record,
+               "%s vnum %d is in no zone, so its converted 128-bit record "
+               "cannot be saved", record, vnum);
+  }
+  add_to_save_list(zone_table[znum].number, save_type);
+}
+
 /** Parse room #virtual_nr into the next world[] slot.
  *
  * Boot-only, one sequential pass: the room cursor and the zone cursor are
@@ -2772,7 +2791,7 @@ char *parse_object(FILE *obj_f, int nr)
     GET_OBJ_AFFECT(obj_proto + i)[3] = 0;
 
     if(bitsavetodisk) {
-      add_to_save_list(zone_table[real_zone_by_thing(nr)].number, 1);
+      save_converted_zone("obj", nr, 1);
       converting = TRUE;
     }
 

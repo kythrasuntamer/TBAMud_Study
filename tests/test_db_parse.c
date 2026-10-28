@@ -148,7 +148,16 @@ unsigned long circle_random(void) { return 0; }
  * whole: it is data only, and load_config() reads its defaults. */
 size_t room_bits_count = 32;
 int add_to_save_list(zone_vnum zone, int type) { (void)zone; (void)type; return 0; }
-zone_rnum real_zone_by_thing(room_vnum vznum) { (void)vznum; return 0; }
+/* genzon.c's contract: the zone whose bot..top holds vznum, else NOWHERE. */
+zone_rnum real_zone_by_thing(room_vnum vznum)
+{
+  zone_rnum z;
+
+  for (z = 0; zone_table && z <= top_of_zone_table; z++)
+    if (zone_table[z].bot <= vznum && vznum <= zone_table[z].top)
+      return z;
+  return NOWHERE;
+}
 void dg_read_trigger(FILE *fp, void *proto, int type)
 { (void)fp; (void)proto; (void)type; }
 /* check_object() fixtures (constants.c, spell_parser.c, interpreter.c,
@@ -1873,6 +1882,47 @@ static void setup_dir_reports_bad_exit_line_with_room_and_direction(void)
   room_fixture_free();
 }
 
+/* ---------------------------------------------------------------------
+ * Legacy-record conversion: the converted record's zone must exist
+ * ------------------------------------------------------------------- */
+
+/* FUZZ-W2 (tests/fuzz/known-crashes/world/obj-convert-zone-nowhere): a
+ * legacy 3-field object line is converted to 128-bit flags, and with
+ * bitsavetodisk on (the default) parse_object() read
+ * zone_table[real_zone_by_thing(vnum)]: zone_table[NOWHERE] for a vnum in
+ * no zone, 4.7 MB past the table (ASan: SEGV). Object 1500 lies between
+ * zones 10 and 20; it now stops the boot, and 1050 converts as before. */
+static void parse_object_rejects_converted_record_in_no_zone(void)
+{
+  static const char text[] =
+    "sword~\na sword~\nA sword lies here.~\n~\n"
+    "12 0 0\n0 0 0 0\n1 2 3 4 5\n$\n";
+  FILE *volatile fp = stream_of(text, sizeof(text) - 1);
+
+  gap_zone_fixture_use();
+  obj_proto = obj_proto_fixture;
+  obj_index = obj_index_fixture;
+  EXPECT_EXIT((void)parse_object(fp, 1500));
+  TEST_ASSERT_EQUAL_INT(0, fclose(fp));
+  TEST_ASSERT_EQUAL_STRING("FATAL", tb_captured_severity);
+  TEST_ASSERT_EQUAL_STRING("world-convert", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail,
+                              "obj vnum 1500 is in no zone"));
+  proto_fixture_free();
+
+  tb_error_capture_reset();
+  fp = stream_of(text, sizeof(text) - 1);
+  obj_proto = obj_proto_fixture;
+  obj_index = obj_index_fixture;
+  (void)parse_object(fp, 1050);
+  TEST_ASSERT_EQUAL_INT(0, fclose(fp));
+  TEST_ASSERT_EQUAL_STRING("sword", obj_proto[top_of_objt].name);
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  proto_fixture_free();
+  zone_table = NULL;
+  top_of_zone_table = 0;
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -1943,5 +1993,6 @@ int main(void)
   RUN_TEST(room_zone_rejects_room_between_zones);
   RUN_TEST(room_zone_follows_ascending_rooms);
   RUN_TEST(setup_dir_reports_bad_exit_line_with_room_and_direction);
+  RUN_TEST(parse_object_rejects_converted_record_in_no_zone);
   return UNITY_END();
 }
