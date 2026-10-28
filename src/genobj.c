@@ -338,7 +338,19 @@ void free_object_strings(struct obj_data *obj)
 /* For object instances that are not the prototype. */
 void free_object_strings_proto(struct obj_data *obj)
 {
-  int robj_num = GET_OBJ_RNUM(obj);
+  obj_rnum robj_num = GET_OBJ_RNUM(obj);
+
+  /* The strings are compared against the prototype's to find which ones the
+   * instance owns, so the rnum must name a prototype.  free_obj() only calls
+   * this with a valid rnum; a NOTHING or stale rnum here means a renumbering
+   * bug.  Freeing would risk a double free of strings a prototype still
+   * owns, so leak them and report instead. */
+  if (robj_num == NOTHING || robj_num > top_of_objt) {
+    TB_ERROR_MSG("olc", "obj-rnum-range", "object",
+                 "obj uid %ld rnum %d outside 0..%d; strings not freed",
+                 obj->script_id, (int)robj_num, (int)top_of_objt);
+    return;
+  }
 
   if (obj->name && obj->name != obj_proto[robj_num].name)
     free(obj->name);
@@ -454,9 +466,12 @@ int delete_object(obj_rnum rnum)
   /* Make sure all are removed. */
   assert(obj_index[rnum].number == 0);
 
-  /* Adjust rnums of all other objects. */
+  /* Adjust rnums of all other objects.  obj_rnum is unsigned and NOTHING is
+   * its maximum, so prototype-less objects (corpses, money) compare greater
+   * than any rnum and must be skipped, or they would point at a prototype. */
   for (tmp = object_list; tmp; tmp = tmp->next) {
-    GET_OBJ_RNUM(tmp) -= (GET_OBJ_RNUM(tmp) > rnum);
+    if (GET_OBJ_RNUM(tmp) != NOTHING && GET_OBJ_RNUM(tmp) > rnum)
+      GET_OBJ_RNUM(tmp)--;
   }
 
   for (i = rnum; i < top_of_objt; i++) {

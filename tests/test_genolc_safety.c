@@ -438,6 +438,33 @@ static void delete_zone_command_reports_bad_position(void)
 }
 
 /* ------------------------------------------------------------------------ */
+/* C2-02: prototype-less objects keep NOTHING across delete_object().       */
+/* ------------------------------------------------------------------------ */
+static void delete_object_keeps_nothing_rnum(void)
+{
+  struct obj_data *corpse, *other;
+  make_zones(1); make_objs(3);
+  corpse = make_instance(NOTHING);
+  other = make_instance(2);
+  delete_object(0);
+  TEST_ASSERT_EQUAL_UINT(NOTHING, GET_OBJ_RNUM(corpse));
+  TEST_ASSERT_EQUAL_UINT(1, GET_OBJ_RNUM(other));
+}
+
+/* A stale rnum is reported rather than used to index obj_proto[]. */
+static void free_object_strings_proto_reports_bad_rnum(void)
+{
+  struct obj_data stale;
+  make_objs(1);
+  memset(&stale, 0, sizeof(stale));
+  stale.item_number = 65534;
+  stale.script_id = 77;
+  free_object_strings_proto(&stale);
+  TEST_ASSERT_EQUAL_STRING("obj-rnum-range", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "uid 77"));
+}
+
+/* ------------------------------------------------------------------------ */
 /* Temporary world directory for the writers.                               */
 /* ------------------------------------------------------------------------ */
 static char test_root[] = "/tmp/tb-genolc-XXXXXX";
@@ -488,6 +515,8 @@ int main(void)
   RUN_TEST(delete_object_renumbers_command_after_drop);
   RUN_TEST(delete_object_dropped_put_does_not_touch_next_command);
   RUN_TEST(delete_zone_command_reports_bad_position);
+  RUN_TEST(delete_object_keeps_nothing_rnum);
+  RUN_TEST(free_object_strings_proto_reports_bad_rnum);
   failures = UNITY_END();
   leave_test_root();
   return failures;
