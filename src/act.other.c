@@ -266,8 +266,12 @@ ACMD(do_steal)
       act("$n tries to steal gold from $N.", TRUE, ch, 0, vict, TO_NOTVICT);
     } else {
       /* Steal some gold coins */
-      gold = (GET_GOLD(vict) * rand_number(1, 10)) / 100;
-      gold = MIN(1782, gold);
+      /* GET_GOLD can reach MAX_GOLD (2.14e9): multiply in long long so a
+       * rich victim does not overflow int (undefined behaviour, and a
+       * negative result that read as "no gold"). */
+      long long take = ((long long) GET_GOLD(vict) * rand_number(1, 10)) / 100;
+
+      gold = (int) (take < 1782 ? take : 1782);
       if (gold > 0) {
 		increase_gold(ch, gold);
 		decrease_gold(vict, gold);
