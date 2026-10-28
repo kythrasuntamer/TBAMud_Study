@@ -165,7 +165,7 @@
 #define CLASS_PALADIN     8    /**< PC Class Paladin */
 #define CLASS_RANGER      9    /**< PC Class Ranger */
 #define CLASS_BARD       10    /**< PC Class Bard */
-#define CLASS_NECROMANCER 11   /**< Reserved: Necromancer */
+#define CLASS_NECROMANCER 11   /**< PC Class Necromancer */
 /** Total number of available PC Classes */
 /* Class IDs 0-11; preserve historical IDs for saved characters. */
 #define NUM_CLASSES	  12

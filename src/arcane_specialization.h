@@ -1,6 +1,10 @@
 #ifndef TBAMUD_ARCANE_SPECIALIZATION_H
 #define TBAMUD_ARCANE_SPECIALIZATION_H
 
+/* Uses CLASS_* (structs.h); conf.h and sysdep.h come first in every
+ * translation unit, as everywhere in the codebase. */
+#include "structs.h"
+
 /* Pure casting calculations shared by live combat and native regression tests.
  * Inputs are already validated by the spell system. */
 static inline int arcane_adjust_mana(int class_id, int level,
@@ -20,11 +24,13 @@ static inline int arcane_adjust_mana(int class_id, int level,
   return base_mana;
 }
 
+/* direct_cast: the spell was cast (CAST_SPELL), not used from a wand,
+ * staff, scroll or potion, nor an area effect. */
 static inline int arcane_adjust_damage(int class_id, int level, int damage,
-                                      int casttype, int is_npc)
+                                      int direct_cast, int is_npc)
 {
   if (!is_npc && class_id == CLASS_SORCERER &&
-      level >= 20 && casttype == CAST_SPELL && damage > 0)
+      level >= 20 && direct_cast && damage > 0)
     return damage + damage / 4;
   return damage;
 }

@@ -887,13 +887,20 @@ static inline void tb_report_domain_error_at(tb_error_severity severity,
     size_t length = (size_t)result;
 
     if (length >= sizeof(record)) {
-      /* Never output a half-formatted record: the original truncation
-       * destroyed its closing quotes, obscuring the true failure site. */
-      static const char fallback[] =
-        "TBERR severity=ERROR category=GENERAL operation=\"diagnostic-overflow\" "
-        "context=\"record exceeded bounded diagnostic buffer\" "
-        "truncated_fields=record\\n";
-      (void)tb_diag_emit(fallback, sizeof(fallback) - 1);
+      /* Never output a half-formatted record (its closing quotes would be
+       * lost): emit a short one that still names the operation and the
+       * failing call site.  The escaped fields are bounded well below
+       * record[], so this needs a pathological format string to happen. */
+      int short_len = snprintf(record, sizeof(record),
+                               "TBERR timestamp=%s pid=%ld severity=%s category=%s "
+                               "operation=\"%s\" source=\"%s:%d\" function=\"%s\" "
+                               "truncated_fields=record\n",
+                               timestamp, process_id,
+                               tb_error_severity_name(severity),
+                               tb_error_category_name(category),
+                               escaped_op, escaped_file, source_line, escaped_func);
+      if (short_len > 0 && (size_t)short_len < sizeof(record))
+        (void)tb_diag_emit(record, (size_t)short_len);
       errno = caller_errno;
       return;
     }

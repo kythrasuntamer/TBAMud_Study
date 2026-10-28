@@ -529,9 +529,50 @@ static void test_buying_quest_item_pays_no_gold(void)
   item.short_description = NULL;
 }
 
+/* A shop's NOTRADE_<class> refusal follows the class archetype: a no-mage
+ * shop refuses Sorcerers, a no-warrior shop Berserkers and Monks.  Red
+ * before: every new class traded everywhere.  (keeper == customer makes
+ * CAN_SEE() true via SELF() without a world.) */
+static void test_no_trade_rule_follows_class_archetype(void)
+{
+  static struct char_data pc;
+  static struct player_special_data sp;
+  struct shop_data *saved_index = shop_index;
+  int saved_top = top_shop;
+
+  memset(&pc, 0, sizeof(pc));
+  memset(&sp, 0, sizeof(sp));
+  pc.player_specials = &sp;
+  pc.player.name = (char *)"Hero";
+  GET_LEVEL(&pc) = 10;
+  memset(&shop, 0, sizeof(shop));
+  shop_index = &shop;
+  top_shop = 0;
+
+  shop.with_who = TRADE_NOMAGIC_USER;
+  GET_CLASS(&pc) = CLASS_SORCERER;
+  TEST_ASSERT_FALSE(is_ok_char(&pc, &pc, 0));
+  GET_CLASS(&pc) = CLASS_NECROMANCER;
+  TEST_ASSERT_FALSE(is_ok_char(&pc, &pc, 0));
+  GET_CLASS(&pc) = CLASS_PALADIN;
+  TEST_ASSERT_TRUE(is_ok_char(&pc, &pc, 0));
+
+  shop.with_who = TRADE_NOWARRIOR;
+  GET_CLASS(&pc) = CLASS_BERSERKER;
+  TEST_ASSERT_FALSE(is_ok_char(&pc, &pc, 0));
+  GET_CLASS(&pc) = CLASS_MONK;
+  TEST_ASSERT_FALSE(is_ok_char(&pc, &pc, 0));
+  GET_CLASS(&pc) = CLASS_BARD;
+  TEST_ASSERT_TRUE(is_ok_char(&pc, &pc, 0));
+
+  shop_index = saved_index;
+  top_shop = saved_top;
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(test_no_trade_rule_follows_class_archetype);
   RUN_TEST(test_act_escape_doubles_dollar);
   RUN_TEST(test_act_escape_truncates_on_pair_boundary);
   RUN_TEST(test_read_type_list_leading_nul_reported);

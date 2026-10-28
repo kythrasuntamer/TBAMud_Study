@@ -66,8 +66,12 @@ struct obj_data *unequip_char(struct char_data *ch, int pos)
   (void)ch; (void)pos;
   return NULL;
 }
-void equip_char(struct char_data *ch, struct obj_data *obj, int pos)
+/* equip_char() is a macro that records its caller (handler.h); stub the
+ * function it expands to. */
+void equip_char_at(const char *src_file, int src_line, const char *src_func,
+                   struct char_data *ch, struct obj_data *obj, int pos)
 {
+  (void)src_file; (void)src_line; (void)src_func;
   (void)ch; (void)obj; (void)pos;
 }
 void strip_cr(char *s)
@@ -79,6 +83,9 @@ void strip_cr(char *s)
   }
   *out = '\0';
 }
+qst_rnum real_quest(qst_vnum vnum) { (void)vnum; return NOTHING; }
+void clear_quest(struct char_data *ch) { (void)ch; }
+void free_alias(struct alias_data *a) { free(a); }
 void add_completed_quest(struct char_data *ch, qst_vnum vnum)
 {
   (void)ch; (void)vnum;

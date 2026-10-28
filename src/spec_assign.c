@@ -88,7 +88,7 @@ void assign_mobiles(void)
   ASSIGNMOB(3018, guild); /* Paladin */
   ASSIGNMOB(3019, guild); /* Ranger */
   ASSIGNMOB(3028, guild); /* Bard */
-  ASSIGNMOB(3029, guild); /* Reserved Necromancer trainer. */
+  ASSIGNMOB(3029, guild); /* Necromancer */
   ASSIGNMOB(5400, guild);
   ASSIGNMOB(5401, guild);
   ASSIGNMOB(5402, guild);

@@ -24,23 +24,6 @@
 #include "act.h"
 #include "class.h"
 
-/* New classes reuse validated legacy combat/XP/save curves until their
- * independently balanced tables are implemented. Stored class IDs remain
- * distinct; only calculations use the corresponding established archetype. */
-static int class_progression_archetype(int class_num)
-{
-  switch (class_num) {
-    case CLASS_MONK:
-    case CLASS_BERSERKER:
-    case CLASS_PALADIN: return CLASS_WARRIOR;
-    case CLASS_DRUID: return CLASS_CLERIC;
-    case CLASS_SORCERER:
-    case CLASS_NECROMANCER: return CLASS_MAGIC_USER;
-    case CLASS_RANGER:
-    case CLASS_BARD: return CLASS_THIEF;
-    default: return class_num;
-  }
-}
 
 /* Names first */
 const char *class_abbrevs[] = {
@@ -1648,15 +1631,30 @@ void advance_level(struct char_data *ch)
     break;
 
   case CLASS_THIEF:
-  case CLASS_RANGER:
-  case CLASS_BARD:
     add_hp += rand_number(7, 13);
     add_mana = 0;
     add_move = rand_number(1, 3);
     break;
 
-  case CLASS_MONK:
+  /* Half casters: hit points and movement of their archetype, and half the
+   * full-caster mana roll above (L/2..3L/4 instead of L..1.5L, capped at 5
+   * instead of 10). */
+  case CLASS_RANGER:
+  case CLASS_BARD:
+    add_hp += rand_number(7, 13);
+    add_mana = rand_number(GET_LEVEL(ch) / 2, (3 * GET_LEVEL(ch)) / 4);
+    add_mana = MIN(add_mana, 5);
+    add_move = rand_number(1, 3);
+    break;
+
   case CLASS_PALADIN:
+    add_hp += rand_number(7, 12);
+    add_mana = rand_number(GET_LEVEL(ch) / 2, (3 * GET_LEVEL(ch)) / 4);
+    add_mana = MIN(add_mana, 5);
+    add_move = rand_number(2, 4);
+    break;
+
+  case CLASS_MONK:
     add_hp += rand_number(7, 12);
     add_mana = 0;
     add_move = rand_number(2, 4);
@@ -1667,6 +1665,12 @@ void advance_level(struct char_data *ch)
     add_mana = 0;
     add_move = rand_number(1, 3);
     break;
+
+  default:
+    /* The pfile loader clamps the class, so this is a new class without a
+     * case here: report it rather than level with no gains. */
+    CLASS_TABLE_ERROR("advance-level", GET_CLASS(ch), -1, GET_LEVEL(ch));
+    break;
   }
 
   ch->points.max_hit += MAX(1, add_hp);
@@ -1675,9 +1679,7 @@ void advance_level(struct char_data *ch)
   if (GET_LEVEL(ch) > 1)
     ch->points.max_mana += add_mana;
 
-  if (IS_MAGIC_USER(ch) || IS_CLERIC(ch) ||
-      GET_CLASS(ch) == CLASS_DRUID || GET_CLASS(ch) == CLASS_SORCERER ||
-      GET_CLASS(ch) == CLASS_NECROMANCER)
+  if (IS_ARCHETYPE(ch, CLASS_MAGIC_USER) || IS_ARCHETYPE(ch, CLASS_CLERIC))
     GET_PRACTICES(ch) += MAX(2, wis_app[GET_WIS(ch)].bonus);
   else
     GET_PRACTICES(ch) += MIN(2, MAX(1, wis_app[GET_WIS(ch)].bonus));
@@ -1713,19 +1715,28 @@ int backstab_mult(int level)
 }
 
 /* invalid_class is used by handler.c to determine if a piece of equipment is
- * usable by a particular class, based on the ITEM_ANTI_{class} bitvectors. */
+ * usable by a particular class, based on the ITEM_ANTI_{class} bitvectors.
+ * Every class obeys the flags of its archetype: an anti-mage item is refused
+ * by Wizards, Sorcerers and Necromancers alike. */
 int invalid_class(struct char_data *ch, struct obj_data *obj)
 {
-  if (OBJ_FLAGGED(obj, ITEM_ANTI_MAGIC_USER) && IS_MAGIC_USER(ch))
+  if (!IS_NPC(ch) && (GET_CLASS(ch) < 0 || GET_CLASS(ch) >= NUM_CLASSES)) {
+    /* Unreachable for loaded players (the pfile loader clamps the class);
+     * report it where the item check happens, and keep the old answer. */
+    CLASS_TABLE_ERROR("anti-class", GET_CLASS(ch), -1, GET_LEVEL(ch));
+    return FALSE;
+  }
+
+  if (OBJ_FLAGGED(obj, ITEM_ANTI_MAGIC_USER) && IS_ARCHETYPE(ch, CLASS_MAGIC_USER))
     return TRUE;
 
-  if (OBJ_FLAGGED(obj, ITEM_ANTI_CLERIC) && IS_CLERIC(ch))
+  if (OBJ_FLAGGED(obj, ITEM_ANTI_CLERIC) && IS_ARCHETYPE(ch, CLASS_CLERIC))
     return TRUE;
 
-  if (OBJ_FLAGGED(obj, ITEM_ANTI_WARRIOR) && IS_WARRIOR(ch))
+  if (OBJ_FLAGGED(obj, ITEM_ANTI_WARRIOR) && IS_ARCHETYPE(ch, CLASS_WARRIOR))
     return TRUE;
 
-  if (OBJ_FLAGGED(obj, ITEM_ANTI_THIEF) && IS_THIEF(ch))
+  if (OBJ_FLAGGED(obj, ITEM_ANTI_THIEF) && IS_ARCHETYPE(ch, CLASS_THIEF))
     return TRUE;
 
   return FALSE;
@@ -2125,13 +2136,29 @@ int char_level_exp(const struct char_data *ch, int level)
 }
 
 /* Default titles of male characters. */
+/* Mortal titles of the classes that have no title tables yet, like "the
+ * Monk", from CLASS_DRUID to CLASS_NECROMANCER (the typedef stops the build
+ * if a class is added without a title). */
+static const char *const new_class_titles[] = {
+  "the Druid", "the Berserker", "the Sorcerer", "the Paladin",
+  "the Ranger", "the Bard", "the Necromancer"
+};
+typedef char new_class_titles_cover_druid_to_necromancer
+  [(sizeof(new_class_titles) / sizeof(new_class_titles[0]) ==
+    CLASS_NECROMANCER - CLASS_DRUID + 1) ? 1 : -1];
+
+static const char *new_class_title(int chclass)
+{
+  return new_class_titles[chclass - CLASS_DRUID];
+}
+
 const char *title_male(int chclass, int level)
 {
   if (chclass == CLASS_MONK && level < LVL_IMMORT && level > 0)
     return "the Monk";
   if (chclass >= CLASS_DRUID && chclass <= CLASS_NECROMANCER &&
       level > 0 && level < LVL_IMMORT)
-    return pc_class_types[chclass];
+    return new_class_title(chclass);
   if (level <= 0 || level > LVL_IMPL)
     return "the Man";
   if (level == LVL_IMPL)
@@ -2278,7 +2305,7 @@ const char *title_female(int chclass, int level)
     return "the Monk";
   if (chclass >= CLASS_DRUID && chclass <= CLASS_NECROMANCER &&
       level > 0 && level < LVL_IMMORT)
-    return pc_class_types[chclass];
+    return new_class_title(chclass);
   if (level <= 0 || level > LVL_IMPL)
     return "the Woman";
   if (level == LVL_IMPL)

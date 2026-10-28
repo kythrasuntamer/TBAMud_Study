@@ -14,6 +14,11 @@
 #include "class.h"
 #include "interpreter.h" /* is_abbrev() */
 #include "spells.h" /* SAVING_PARA and other saving throw identifiers */
+#include "constants.h"
+
+/* A pfile class past every table (as in test_utils_guards.c).  A fixed
+ * value: NUM_CLASSES itself grew from 5 to 12 under these tests once. */
+#define TEST_BAD_CLASS 40
 
 extern FILE *logfile;
 
@@ -79,7 +84,7 @@ void test_get_class_by_name_legacy_magic_user_aliases(void)
 void test_get_class_by_name_current_names_win_and_misses(void)
 {
     TEST_ASSERT_EQUAL_INT(CLASS_MONK, get_class_by_name("m"));
-    TEST_ASSERT_EQUAL_INT(-1, get_class_by_name("ranger"));
+    TEST_ASSERT_EQUAL_INT(-1, get_class_by_name("knight"));
     TEST_ASSERT_EQUAL_INT(-1, get_class_by_name("magic users"));
     TEST_ASSERT_EQUAL_INT(-1, get_class_by_name(""));
     TEST_ASSERT_EQUAL_INT(-1, get_class_by_name(NULL));
@@ -357,14 +362,15 @@ void test_saving_throws_invalid_level_is_reported(void)
  * the record now carries the table, class, type and level. */
 void test_class_table_misses_name_their_inputs(void)
 {
+    TEST_ASSERT_TRUE(TEST_BAD_CLASS + 1 > NUM_CLASSES);
     tb_error_capture_reset();
-    TEST_ASSERT_EQUAL_INT(123456, level_exp(7, 10));
+    TEST_ASSERT_EQUAL_INT(123456, level_exp(TEST_BAD_CLASS, 10));
     TEST_ASSERT_EQUAL_STRING("class-table", tb_captured_operation);
-    TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "class 7 type -1 level 10"));
+    TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "class 40 type -1 level 10"));
     TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "level-exp"));
 
-    TEST_ASSERT_EQUAL_INT(100, thaco(9, 5));
-    TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "class 9 type -1 level 5 is outside the thac0"));
+    TEST_ASSERT_EQUAL_INT(100, thaco(TEST_BAD_CLASS + 1, 5));
+    TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "class 41 type -1 level 5 is outside the thac0"));
 
     TEST_ASSERT_EQUAL_INT(100, saving_throws(CLASS_CLERIC, 42, 10));
     TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "class 1 type 42 level 10"));
@@ -380,7 +386,7 @@ void test_class_table_misses_name_the_character(void)
     struct char_data ch;
 
     memset(&ch, 0, sizeof(ch));
-    GET_CLASS(&ch) = 7;            /* corrupt player file data */
+    GET_CLASS(&ch) = TEST_BAD_CLASS;            /* corrupt player file data */
     GET_LEVEL(&ch) = 10;
     GET_IDNUM(&ch) = 1234;
 
@@ -388,13 +394,13 @@ void test_class_table_misses_name_the_character(void)
     TEST_ASSERT_EQUAL_INT(100, char_thaco(&ch));
     TEST_ASSERT_EQUAL_STRING("class-table", tb_captured_operation);
     TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail,
-        "class 7 type -1 level 10 is outside the thac0 table for player idnum 1234"));
+        "class 40 type -1 level 10 is outside the thac0 table for player idnum 1234"));
 
     TEST_ASSERT_EQUAL_INT(123456, char_level_exp(&ch, 11));
     TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail,
-        "class 7 type -1 level 11 is outside the level-exp table for player idnum 1234"));
+        "class 40 type -1 level 11 is outside the level-exp table for player idnum 1234"));
 
-    TEST_ASSERT_EQUAL_INT(100, char_saving_throw(&ch, 7, SAVING_SPELL));
+    TEST_ASSERT_EQUAL_INT(100, char_saving_throw(&ch, TEST_BAD_CLASS, SAVING_SPELL));
     TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "saving-throw table for player idnum 1234"));
     TEST_ASSERT_EQUAL_INT(3, tb_captured_errors);
 
@@ -402,6 +408,143 @@ void test_class_table_misses_name_the_character(void)
     GET_CLASS(&ch) = CLASS_WARRIOR;
     TEST_ASSERT_EQUAL_INT(thaco(CLASS_WARRIOR, 10), char_thaco(&ch));
     TEST_ASSERT_EQUAL_INT(3, tb_captured_errors);
+}
+
+/* advance_level() needs a player with specials; the stubs make
+ * save_char()/snoop_check() no-ops and con_app/wis_app all zero. */
+static struct char_data lvl_ch;
+static struct player_special_data lvl_specials;
+
+static void prepare_leveler(int chclass, int level)
+{
+    memset(&lvl_ch, 0, sizeof(lvl_ch));
+    memset(&lvl_specials, 0, sizeof(lvl_specials));
+    lvl_ch.player_specials = &lvl_specials;
+    GET_CLASS(&lvl_ch) = chclass;
+    GET_LEVEL(&lvl_ch) = level;
+    GET_MAX_MANA(&lvl_ch) = 100;
+}
+
+static int mana_gained(int chclass, int level)
+{
+    prepare_leveler(chclass, level);
+    advance_level(&lvl_ch);
+    return GET_MAX_MANA(&lvl_ch) - 100;
+}
+
+/* Paladin, Ranger and Bard learn spells, so they gain mana: half the
+ * full-caster roll.  Red before the fix: they gained none. */
+void test_hybrid_casters_gain_half_caster_mana(void)
+{
+    const int hybrids[] = { CLASS_PALADIN, CLASS_RANGER, CLASS_BARD };
+    size_t i;
+    int trial, gain;
+
+    for (i = 0; i < sizeof(hybrids) / sizeof(hybrids[0]); ++i) {
+        TEST_ASSERT_EQUAL_INT(5, mana_gained(hybrids[i], 20)); /* past the cap */
+        for (trial = 0; trial < 50; ++trial) {
+            gain = mana_gained(hybrids[i], 6);                  /* roll 3..4 */
+            TEST_ASSERT_TRUE(gain >= 3 && gain <= 4);
+        }
+    }
+    TEST_ASSERT_EQUAL_INT(10, mana_gained(CLASS_MAGIC_USER, 20));
+    TEST_ASSERT_EQUAL_INT(10, mana_gained(CLASS_DRUID, 20));
+    TEST_ASSERT_EQUAL_INT(0, mana_gained(CLASS_WARRIOR, 20));
+    TEST_ASSERT_EQUAL_INT(0, mana_gained(CLASS_MONK, 20));
+    TEST_ASSERT_EQUAL_INT(0, mana_gained(CLASS_THIEF, 20));
+}
+
+/* A class with no advance_level() case is reported where it levels.
+ * Red before the fix: it silently gained nothing. */
+void test_advance_level_unknown_class_is_reported(void)
+{
+    tb_error_capture_reset();
+    prepare_leveler(TEST_BAD_CLASS, 10);
+    advance_level(&lvl_ch);
+    TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+    TEST_ASSERT_EQUAL_STRING("class-table", tb_captured_operation);
+    TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "class 40 type -1 level 10"));
+    TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "advance-level"));
+}
+
+/* ITEM_ANTI_* follow the archetype.  Red before the fix: the seven new
+ * classes (and Monk) ignored every anti-class flag. */
+void test_anti_class_flags_follow_archetype(void)
+{
+    static struct obj_data obj;
+    const struct { int flag, archetype; } anti[] = {
+        { ITEM_ANTI_MAGIC_USER, CLASS_MAGIC_USER },
+        { ITEM_ANTI_CLERIC,     CLASS_CLERIC },
+        { ITEM_ANTI_THIEF,      CLASS_THIEF },
+        { ITEM_ANTI_WARRIOR,    CLASS_WARRIOR },
+    };
+    size_t f;
+    int klass;
+
+    for (klass = 0; klass < NUM_CLASSES; ++klass) {
+        prepare_leveler(klass, 10);
+        for (f = 0; f < sizeof(anti) / sizeof(anti[0]); ++f) {
+            memset(&obj, 0, sizeof(obj));
+            SET_BIT_AR(GET_OBJ_EXTRA(&obj), anti[f].flag);
+            TEST_ASSERT_EQUAL_INT_MESSAGE(
+                class_progression_archetype(klass) == anti[f].archetype,
+                invalid_class(&lvl_ch, &obj), pc_class_types[klass]);
+        }
+    }
+    memset(&obj, 0, sizeof(obj));
+    SET_BIT_AR(GET_OBJ_EXTRA(&obj), ITEM_ANTI_MAGIC_USER);
+    prepare_leveler(CLASS_SORCERER, 10);
+    TEST_ASSERT_TRUE(invalid_class(&lvl_ch, &obj));
+    prepare_leveler(CLASS_NECROMANCER, 10);
+    TEST_ASSERT_TRUE(invalid_class(&lvl_ch, &obj));
+    prepare_leveler(CLASS_PALADIN, 10);
+    TEST_ASSERT_FALSE(invalid_class(&lvl_ch, &obj));
+}
+
+/* An out-of-range class is reported at the item check.  Red before the fix:
+ * it was silently allowed every item. */
+void test_invalid_class_out_of_range_is_reported(void)
+{
+    static struct obj_data obj;
+
+    memset(&obj, 0, sizeof(obj));
+    tb_error_capture_reset();
+    prepare_leveler(TEST_BAD_CLASS, 10);
+    TEST_ASSERT_FALSE(invalid_class(&lvl_ch, &obj));
+    TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+    TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "anti-class"));
+}
+
+/* Every class is selectable: exactly one creation letter maps to it, and
+ * the menu shows that letter.  Necromancer is a playable class. */
+void test_every_class_has_one_listed_creation_letter(void)
+{
+    int letters_for[NUM_CLASSES] = { 0 };
+    char tag[8];
+    int c, klass;
+
+    for (c = 'a'; c <= 'z'; ++c) {
+        klass = parse_class((char) c);
+        if (klass == CLASS_UNDEFINED || c == 'm')  /* 'm': legacy Wizard alias */
+            continue;
+        TEST_ASSERT_TRUE(klass >= 0 && klass < NUM_CLASSES);
+        letters_for[klass]++;
+        snprintf(tag, sizeof(tag), "\t(%c\t)", UPPER(c));
+        TEST_ASSERT_NOT_NULL_MESSAGE(strstr(class_menu, tag), pc_class_types[klass]);
+    }
+    for (klass = 0; klass < NUM_CLASSES; ++klass)
+        TEST_ASSERT_EQUAL_INT_MESSAGE(1, letters_for[klass], pc_class_types[klass]);
+    TEST_ASSERT_EQUAL_INT(CLASS_NECROMANCER, parse_class('n'));
+}
+
+/* The new classes' mortal titles read like Monk's ("Bob the Druid").
+ * Red before the fix: the bare class name ("Bob Druid"). */
+void test_new_class_titles_read_like_monk(void)
+{
+    TEST_ASSERT_EQUAL_STRING("the Monk", title_male(CLASS_MONK, 10));
+    TEST_ASSERT_EQUAL_STRING("the Druid", title_male(CLASS_DRUID, 10));
+    TEST_ASSERT_EQUAL_STRING("the Necromancer", title_female(CLASS_NECROMANCER, 49));
+    TEST_ASSERT_EQUAL_STRING("the Bard", title_female(CLASS_BARD, 1));
 }
 
 /* =========================================================
@@ -420,6 +563,12 @@ int main(void)
     RUN_TEST(test_saving_throws_invalid_level_is_reported);
     RUN_TEST(test_class_table_misses_name_their_inputs);
     RUN_TEST(test_class_table_misses_name_the_character);
+    RUN_TEST(test_hybrid_casters_gain_half_caster_mana);
+    RUN_TEST(test_advance_level_unknown_class_is_reported);
+    RUN_TEST(test_anti_class_flags_follow_archetype);
+    RUN_TEST(test_invalid_class_out_of_range_is_reported);
+    RUN_TEST(test_every_class_has_one_listed_creation_letter);
+    RUN_TEST(test_new_class_titles_read_like_monk);
 
     /* parse_class */
     RUN_TEST(test_parse_class_magic_user_lowercase);

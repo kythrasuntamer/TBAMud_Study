@@ -2,10 +2,11 @@
 #include "unity.h"
 #include "conf.h"
 #include "sysdep.h"
+/* First after the standard preamble: the header must bring what it uses. */
+#include "arcane_specialization.h"
 #include "structs.h"
 #include "utils.h"
 #include "spells.h"
-#include "arcane_specialization.h"
 
 void setUp(void) {}
 void tearDown(void) {}
@@ -32,18 +33,18 @@ void test_other_classes_have_no_adjustment(void)
   for (klass = CLASS_CLERIC; klass < NUM_CLASSES; ++klass) {
     if (klass == CLASS_SORCERER) continue;
     TEST_ASSERT_EQUAL_INT(100, arcane_adjust_mana(klass, 50, 1, 100, 1, 0));
-    TEST_ASSERT_EQUAL_INT(100, arcane_adjust_damage(klass, 50, 100, CAST_SPELL, 0));
+    TEST_ASSERT_EQUAL_INT(100, arcane_adjust_damage(klass, 50, 100, TRUE, 0));
   }
 }
 void test_damage_applies_only_to_direct_sorcerer_spells(void)
 {
-  TEST_ASSERT_EQUAL_INT(125, arcane_adjust_damage(CLASS_SORCERER, 20, 100, CAST_SPELL, 0));
-  TEST_ASSERT_EQUAL_INT(6, arcane_adjust_damage(CLASS_SORCERER, 20, 5, CAST_SPELL, 0));
-  TEST_ASSERT_EQUAL_INT(100, arcane_adjust_damage(CLASS_SORCERER, 19, 100, CAST_SPELL, 0));
-  TEST_ASSERT_EQUAL_INT(100, arcane_adjust_damage(CLASS_SORCERER, 50, 100, CAST_WAND, 0));
-  TEST_ASSERT_EQUAL_INT(100, arcane_adjust_damage(CLASS_SORCERER, 50, 100, CAST_SCROLL, 0));
-  TEST_ASSERT_EQUAL_INT(100, arcane_adjust_damage(CLASS_SORCERER, 50, 100, CAST_SPELL, 1));
-  TEST_ASSERT_EQUAL_INT(0, arcane_adjust_damage(CLASS_SORCERER, 50, 0, CAST_SPELL, 0));
+  TEST_ASSERT_EQUAL_INT(125, arcane_adjust_damage(CLASS_SORCERER, 20, 100, TRUE, 0));
+  TEST_ASSERT_EQUAL_INT(6, arcane_adjust_damage(CLASS_SORCERER, 20, 5, TRUE, 0));
+  TEST_ASSERT_EQUAL_INT(100, arcane_adjust_damage(CLASS_SORCERER, 19, 100, TRUE, 0));
+  TEST_ASSERT_EQUAL_INT(100, arcane_adjust_damage(CLASS_SORCERER, 50, 100, FALSE, 0));
+  TEST_ASSERT_EQUAL_INT(100, arcane_adjust_damage(CLASS_SORCERER, 50, 100, FALSE, 0));
+  TEST_ASSERT_EQUAL_INT(100, arcane_adjust_damage(CLASS_SORCERER, 50, 100, TRUE, 1));
+  TEST_ASSERT_EQUAL_INT(0, arcane_adjust_damage(CLASS_SORCERER, 50, 0, TRUE, 0));
 }
 int main(void)
 {

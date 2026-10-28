@@ -299,7 +299,7 @@ int mag_damage(int level, struct char_data *ch, struct char_data *victim,
 
 
   dam = arcane_adjust_damage(GET_CLASS(ch), GET_LEVEL(ch),
-                             dam, casttype, IS_NPC(ch));
+                             dam, casttype == CAST_SPELL, IS_NPC(ch));
 
   /* divide damage by two if victim makes his saving throw */
   if (mag_savingthrow(victim, savetype, 0))

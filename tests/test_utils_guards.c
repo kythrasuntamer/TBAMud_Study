@@ -705,7 +705,8 @@ void test_nullstr_maps_null_to_empty(void)
  * ===================================================================== */
 
 /* class.c's table (not linked here). */
-const char *class_abbrevs[] = { "Wi", "Cl", "Th", "Wa", "Mo", "\n" };
+const char *class_abbrevs[] = { "Wi", "Cl", "Th", "Wa", "Mo", "Dr", "Be",
+                                "So", "Pa", "Ra", "Ba", "Ne", "\n" };
 
 void test_class_abbr_out_of_range_class_reports_caller(void)
 {
@@ -734,7 +735,7 @@ void test_class_abbr_valid_class_and_npc_are_silent(void)
   GET_CLASS(c) = CLASS_WARRIOR;
   TEST_ASSERT_EQUAL_STRING("Wa", CLASS_ABBR(c));
   GET_CLASS(c) = NUM_CLASSES - 1;
-  TEST_ASSERT_EQUAL_STRING("Mo", CLASS_ABBR(c));
+  TEST_ASSERT_EQUAL_STRING("Ne", CLASS_ABBR(c));
   SET_BIT_AR(MOB_FLAGS(c), MOB_ISNPC);
   GET_CLASS(c) = 40;              /* NPC classes never index the table */
   TEST_ASSERT_EQUAL_STRING("--", CLASS_ABBR(c));

@@ -129,7 +129,7 @@ void list_skills(struct char_data *ch)
 
   for (sortpos = 1; sortpos <= MAX_SKILLS; sortpos++) {
     i = spell_sort_info[sortpos];
-    if (GET_LEVEL(ch) >= spell_info[i].min_level[(int) GET_CLASS(ch)]) {
+    if (GET_LEVEL(ch) >= SPELL_MIN_LEVEL(i, (int) GET_CLASS(ch))) {
     ret = snprintf(buf2 + len, sizeof(buf2) - len, "%-20s %s\r\n", spell_info[i].name, how_good(GET_SKILL(ch, i)));
       if (ret < 0 || len + ret >= sizeof(buf2)) {
         truncated = TRUE;
@@ -177,7 +177,7 @@ SPECIAL(guild)
   skill_num = find_skill_num(argument);
 
   if (skill_num < 1 ||
-      GET_LEVEL(ch) < spell_info[skill_num].min_level[(int) GET_CLASS(ch)]) {
+      GET_LEVEL(ch) < SPELL_MIN_LEVEL(skill_num, (int) GET_CLASS(ch))) {
     send_to_char(ch, "You do not know of that %s.\r\n", SPLSKL(ch));
     return (TRUE);
   }

@@ -56,6 +56,7 @@ character persistence, quests, builder content or other existing features.
 - CI build retains compiler output; this branch adds Python regression checks
   and treats the existing invalid world reset as an error to resolve.
 - Native C class tests cover the 12 class archetypes and 50 mortal levels.
-- Player round-trip integration harness is currently under repair; do not
-  claim it is passing until the linker and runtime checks are verified.
-- Guild and arcane specialization features remain on draft PR #36 until verified.
+- Player round-trip integration harness (test_player_roundtrip) saves and
+  reloads every class at level 50 with endgame data under ASan.
+- Guild and arcane specialization features (PR #36) are gated like every
+  other change: native tests, sanitizers, Fil-C, e2e soaks.

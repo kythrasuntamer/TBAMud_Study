@@ -27,10 +27,7 @@ TRG_DIR = ROOT / "lib/world/trg"
 # comparison against an unknown class still fails, and a stale entry fails
 # test_known_nonexistent_class_guards_are_still_present.
 KNOWN_NONEXISTENT_CLASS_GUARDS = {
-    ("257.trg", 25702, "ranger"),
-    ("316.trg", 31601, "ranger"),
     ("316.trg", 31605, "death knight"),
-    ("316.trg", 31606, "paladin"),
 }
 
 CLASS_VAR = r"%[A-Za-z_][A-Za-z0-9_]*\.class%"
