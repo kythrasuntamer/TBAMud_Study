@@ -16,6 +16,7 @@
 #include "comm.h"
 #include "interpreter.h"
 #include "dg_scripts.h"
+#include "db.h"
 
 extern FILE *logfile;
 
@@ -697,6 +698,145 @@ static void test_sort_commands_twice_does_not_leak(void)
 }
 
 /* =========================================================
+ * perform_new_char_dupe_check: booted characters are freed
+ *
+ * Booting a socket set its character pointer to NULL without free_char(),
+ * and close_socket() frees nothing once d->character is NULL: a character
+ * still in creation, a twin at the menu, and the new character on d itself
+ * when both sockets were closed were all leaked. A twin in the game stays
+ * in the world, linkless.
+ * ========================================================= */
+
+/* free_char() for these tests (overrides the weak stub): a character made
+ * by heap_char() is really freed and forgotten, so ASan sees any later use
+ * and a test can tell which characters the code released. The stack
+ * characters of the fixture above are only counted. */
+enum { MAX_HEAP_CHARS = 4 };
+static struct char_data *heap_chars[MAX_HEAP_CHARS];
+static int free_char_calls;
+
+void free_char(struct char_data *ch)
+{
+  int i;
+
+  free_char_calls++;
+  for (i = 0; i < MAX_HEAP_CHARS; i++)
+    if (heap_chars[i] == ch) {
+      heap_chars[i] = NULL;
+      free(ch->player.name);
+      free(ch->player_specials);
+      free(ch);
+      return;
+    }
+}
+
+static struct char_data *heap_char(const char *name)
+{
+  struct char_data *ch = calloc(1, sizeof(*ch));
+  int i;
+
+  TEST_ASSERT_NOT_NULL(ch);
+  ch->player_specials = calloc(1, sizeof(*ch->player_specials));
+  TEST_ASSERT_NOT_NULL(ch->player_specials);
+  ch->player.name = strdup(name);
+  TEST_ASSERT_NOT_NULL(ch->player.name);
+  GET_IDNUM(ch) = -1;
+  for (i = 0; i < MAX_HEAP_CHARS && heap_chars[i]; i++)
+    ;
+  TEST_ASSERT_TRUE(i < MAX_HEAP_CHARS);
+  heap_chars[i] = ch;
+  return ch;
+}
+
+/* Compares addresses only: a released character is never dereferenced. */
+static int heap_char_live(const struct char_data *ch)
+{
+  int i;
+
+  for (i = 0; i < MAX_HEAP_CHARS; i++)
+    if (heap_chars[i] == ch)
+      return 1;
+  return 0;
+}
+
+static void free_heap_chars(void)
+{
+  int i;
+
+  for (i = 0; i < MAX_HEAP_CHARS; i++)
+    if (heap_chars[i])
+      free_char(heap_chars[i]);
+}
+
+/* d confirms the new name "Zorblaxe"; k already has a character by that
+ * name, in peer_state. */
+struct heap_dupe {
+  struct descriptor_data d, k;
+  struct char_data *dch, *kch;
+};
+
+static void run_heap_dupe(struct heap_dupe *f, int peer_state)
+{
+  char arg[] = "y";
+
+  memset(f, 0, sizeof(*f));
+  f->dch = heap_char("Zorblaxe");
+  f->kch = heap_char("Zorblaxe");
+  f->dch->desc = &f->d;
+  f->d.character = f->dch;
+  f->kch->desc = &f->k;
+  f->k.character = f->kch;
+  f->d.desc_num = 2;
+  f->k.desc_num = 1;
+  STATE(&f->d) = CON_NAME_CNFRM;
+  STATE(&f->k) = peer_state;
+  f->k.next = &f->d;
+  descriptor_list = &f->k;
+  free_char_calls = 0;
+  nanny(&f->d, arg);
+  descriptor_list = NULL;
+}
+
+void test_new_char_dupe_check_frees_the_booted_creation_character(void)
+{
+  struct heap_dupe f;
+
+  run_heap_dupe(&f, CON_QSEX);
+  TEST_ASSERT_EQUAL_INT(CON_CLOSE, STATE(&f.k));
+  TEST_ASSERT_NULL(f.k.character);
+  TEST_ASSERT_FALSE(heap_char_live(f.kch));
+  TEST_ASSERT_EQUAL_INT(CON_NEWPASSWD, STATE(&f.d));   /* the new one goes on */
+  TEST_ASSERT_TRUE(heap_char_live(f.dch));
+  free_heap_chars();
+}
+
+void test_new_char_dupe_check_closing_both_keeps_only_the_in_game_twin(void)
+{
+  struct heap_dupe f;
+
+  run_heap_dupe(&f, CON_PLAYING);
+  TEST_ASSERT_EQUAL_INT(CON_CLOSE, STATE(&f.d));
+  TEST_ASSERT_NULL(f.d.character);
+  TEST_ASSERT_FALSE(heap_char_live(f.dch));            /* still in creation */
+  TEST_ASSERT_TRUE(heap_char_live(f.kch));             /* in the world */
+  TEST_ASSERT_NULL(f.kch->desc);
+  free_heap_chars();
+}
+
+void test_new_char_dupe_check_closing_both_frees_a_twin_at_the_menu(void)
+{
+  struct heap_dupe f;
+
+  run_heap_dupe(&f, CON_MENU);
+  TEST_ASSERT_EQUAL_INT(CON_CLOSE, STATE(&f.d));
+  TEST_ASSERT_EQUAL_INT(CON_CLOSE, STATE(&f.k));
+  TEST_ASSERT_FALSE(heap_char_live(f.dch));
+  TEST_ASSERT_FALSE(heap_char_live(f.kch));
+  TEST_ASSERT_EQUAL_INT(2, free_char_calls);
+  free_heap_chars();
+}
+
+/* =========================================================
  * command_interpreter: switched-IMPL script commands (finding A2-07)
  *
  * An NPC has a descriptor only while an immortal is switched into it, and
@@ -822,6 +962,11 @@ int main(void)
     RUN_TEST(test_new_char_dupe_check_in_game_twin_closes_without_null_deref);
 
     RUN_TEST(test_sort_commands_twice_does_not_leak);
+
+    /* perform_new_char_dupe_check frees booted characters */
+    RUN_TEST(test_new_char_dupe_check_frees_the_booted_creation_character);
+    RUN_TEST(test_new_char_dupe_check_closing_both_keeps_only_the_in_game_twin);
+    RUN_TEST(test_new_char_dupe_check_closing_both_frees_a_twin_at_the_menu);
 
     /* command_interpreter switched-IMPL check */
     RUN_TEST(test_command_interpreter_switched_impl_runs_script_commands);

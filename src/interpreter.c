@@ -1355,7 +1355,9 @@ static int perform_dupe_check(struct descriptor_data *d)
  *
  * @pre d->character is a new player whose player.name is set.
  * @post If the name is already in game, both sockets are set to CON_CLOSE
- *       and d->character is NULL; the caller must check STATE(d).
+ *       and d->character is freed and NULL; the caller must check STATE(d).
+ *       A booted socket's character is freed unless it is in the world,
+ *       where it stays without a descriptor.
  * @return TRUE if any socket was closed.
  */
 static bool perform_new_char_dupe_check(struct descriptor_data *d)
@@ -1391,10 +1393,16 @@ static bool perform_new_char_dupe_check(struct descriptor_data *d)
     if (!str_cmp(GET_PC_NAME(k->character), GET_PC_NAME(d->character))) {
       /* Check the other character is still in creation? */
       if ((STATE(k) > CON_PLAYING) && (STATE(k) < CON_QCLASS)) {
-        /* Boot the older one */
-        k->character->desc = NULL;
+        /* Boot the older one. Its character belongs to that login alone (a
+         * character in creation is in no list), and close_socket() frees
+         * nothing once k->character is NULL, so it is freed here; it used
+         * to be dropped and leaked. */
+        struct char_data *older = k->character;
+
         k->character = NULL;
         k->original = NULL;
+        older->desc = NULL;
+        free_char(older);
         write_to_output(k, "\r\nMultiple login detected -- disconnecting.\r\n");
         STATE(k) = CON_CLOSE;
 
@@ -1402,14 +1410,24 @@ static bool perform_new_char_dupe_check(struct descriptor_data *d)
 
         found = TRUE;
       } else {
-        /* Something went VERY wrong, boot both chars */
-        k->character->desc = NULL;
+        /* Something went VERY wrong, boot both chars. k's character stays,
+         * linkless, only if it is in the world (in the game, in an editor or
+         * already linkless); at the menu or another pre-game prompt it
+         * belongs to that login alone. d's character is still being created.
+         * Both of those used to be dropped and leaked; they are freed. */
+        struct char_data *other = k->character;
+        bool other_in_world = IS_PLAYING(k) || STATE(k) == CON_DISCONNECT;
+
+        other->desc = NULL;
         k->character = NULL;
         k->original = NULL;
+        if (!other_in_world)
+          free_char(other);
         write_to_output(k, "\r\nMultiple login detected -- disconnecting.\r\n");
         STATE(k) = CON_CLOSE;
 
         d->character->desc = NULL;
+        free_char(d->character);
         d->character = NULL;
         d->original = NULL;
         write_to_output(d, "\r\nSorry, due to multiple connections, all your connections are being closed.\r\n");
