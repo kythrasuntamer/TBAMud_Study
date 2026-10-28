@@ -139,8 +139,12 @@ static void skip_field_space(FILE *stream)
 
   while ((ch = fgetc(stream)) != EOF && isspace(ch))
     ;
-  if (ch != EOF)
-    ungetc(ch, stream);
+  /* Pushing back the one byte just read cannot fail on a conforming
+   * stdio; if it ever does, the next field would silently lose a byte. */
+  if (ch != EOF && ungetc(ch, stream) == EOF)
+    TB_REPORT_DOMAIN_ERRORF(TB_SEV_ERROR, TB_ERR_PERSISTENCE, "shop-ungetc",
+                            "byte=0x%02x: pushback failed; the next field "
+                            "will be misread", (unsigned int)ch);
 }
 
 #define SHOP_FIELD_ERROR(where, field, ordinal) \

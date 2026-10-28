@@ -535,7 +535,9 @@ int plr_filename(const char *name_field, size_t name_field_size,
   for (i = 0; i < len; i++) {
     unsigned char ch = (unsigned char)name_field[i];
 
-    if (ch > 127 || !isalpha(ch)) {
+    /* ASCII letters only, tested directly (not via isalpha()) so the check
+     * does not depend on the locale or index a ctype table with file data. */
+    if (!((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z'))) {
       TB_REPORT_DOMAIN_ERRORF(TB_SEV_ERROR, TB_ERR_PERSISTENCE, "plr-name",
                               "byte %zu of the name is 0x%02x, not a letter",
                               i, (unsigned int)ch);

@@ -36,23 +36,23 @@ static int run_child(zm_case_fn fn, char *out, size_t out_size)
   ssize_t n;
 
   TEST_ASSERT_EQUAL_INT(0, pipe(fds));
-  fflush(stdout);
-  fflush(stderr);
+  TEST_ASSERT_EQUAL_INT(0, fflush(stdout));
+  TEST_ASSERT_EQUAL_INT(0, fflush(stderr));
   pid = fork();
   TEST_ASSERT_TRUE(pid >= 0);
   if (pid == 0) {
-    close(fds[0]);
+    (void)close(fds[0]);
     if (dup2(fds[1], STDERR_FILENO) < 0)
       _exit(98);
     fn();
     _exit(0);
   }
-  close(fds[1]);
+  TEST_ASSERT_EQUAL_INT(0, close(fds[1]));
   while (got + 1 < out_size &&
          (n = read(fds[0], out + got, out_size - 1 - got)) > 0)
     got += (size_t)n;
   out[got] = '\0';
-  close(fds[0]);
+  TEST_ASSERT_EQUAL_INT(0, close(fds[0]));
   TEST_ASSERT_EQUAL_INT(pid, waitpid(pid, &status, 0));
   return status;
 }
@@ -64,7 +64,8 @@ static void assert_aborted_with(zm_case_fn fn, const char *operation)
 
   TEST_ASSERT_TRUE_MESSAGE(WIFSIGNALED(status) && WTERMSIG(status) == SIGABRT,
                            records);
-  snprintf(want, sizeof(want), "operation=\"%s\"", operation);
+  TEST_ASSERT_TRUE(snprintf(want, sizeof(want), "operation=\"%s\"",
+                            operation) < (int)sizeof(want));
   TEST_ASSERT_NOT_NULL_MESSAGE(strstr(records, want), records);
   TEST_ASSERT_NOT_NULL_MESSAGE(strstr(records, "severity=FATAL"), records);
 }
@@ -152,7 +153,7 @@ void test_blocks_are_max_aligned(void)
   p = zmalloc(sizeof(*w), ZM_FILE, __LINE__);
   TEST_ASSERT_NOT_NULL(p);
   TEST_ASSERT_EQUAL_UINT(0, (unsigned)((uintptr_t)p % align));
-  w = (struct zm_wide *)(void *)p;
+  w = (struct zm_wide *)p;
   w->d = 1.5;			/* UBSan: misaligned access before the fix */
   w->l = 2;
   w->p = w;
@@ -160,7 +161,7 @@ void test_blocks_are_max_aligned(void)
   p = zrealloc(p, 3 * sizeof(*w), ZM_FILE, __LINE__);
   TEST_ASSERT_NOT_NULL(p);
   TEST_ASSERT_EQUAL_UINT(0, (unsigned)((uintptr_t)p % align));
-  TEST_ASSERT_TRUE(((struct zm_wide *)(void *)p)->d == 1.5);
+  TEST_ASSERT_TRUE(((struct zm_wide *)p)->d == 1.5);
   zfree(p, ZM_FILE, __LINE__);
 }
 

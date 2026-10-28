@@ -19,26 +19,43 @@ static void cleanup_files(void)
   (void)remove(operator_bak_path);
 }
 
+/* Redirect stderr (where TBERR records go) into a tmpfile around a call. */
+static FILE *stderr_capture_begin(int *saved_fd)
+{
+  FILE *capture = tmpfile();
+
+  TEST_ASSERT_NOT_NULL(capture);
+  TEST_ASSERT_EQUAL_INT(0, fflush(stderr));
+  *saved_fd = dup(STDERR_FILENO);
+  TEST_ASSERT_TRUE(*saved_fd >= 0);
+  TEST_ASSERT_TRUE(dup2(fileno(capture), STDERR_FILENO) >= 0);
+  return capture;
+}
+
+static void stderr_capture_end(FILE *capture, int saved_fd, char *out,
+                               size_t out_size)
+{
+  size_t got;
+
+  TEST_ASSERT_EQUAL_INT(0, fflush(stderr));
+  TEST_ASSERT_TRUE(dup2(saved_fd, STDERR_FILENO) >= 0);
+  TEST_ASSERT_EQUAL_INT(0, close(saved_fd));
+  TEST_ASSERT_EQUAL_INT(0, fseek(capture, 0L, SEEK_SET));
+  got = fread(out, 1, out_size - 1, capture);
+  TEST_ASSERT_FALSE(ferror(capture));
+  out[got] = '\0';
+  TEST_ASSERT_EQUAL_INT(0, fclose(capture));
+}
+
 /* Run tb_replace_file_checked() with stderr (where the TBERR records go)
  * redirected to a file, and return the captured records in out. */
 static int replace_capturing(char *out, size_t out_size)
 {
-  FILE *capture = tmpfile();
   int saved_fd, result;
-  size_t got;
+  FILE *capture = stderr_capture_begin(&saved_fd);
 
-  TEST_ASSERT_NOT_NULL(capture);
-  fflush(stderr);
-  saved_fd = dup(STDERR_FILENO);
-  TEST_ASSERT_TRUE(saved_fd >= 0);
-  TEST_ASSERT_TRUE(dup2(fileno(capture), STDERR_FILENO) >= 0);
   result = tb_replace_file_checked(temp_path, dest_path);
-  TEST_ASSERT_TRUE(dup2(saved_fd, STDERR_FILENO) >= 0);
-  TEST_ASSERT_EQUAL_INT(0, close(saved_fd));
-  rewind(capture);
-  got = fread(out, 1, out_size - 1, capture);
-  out[got] = '\0';
-  TEST_ASSERT_EQUAL_INT(0, fclose(capture));
+  stderr_capture_end(capture, saved_fd, out, out_size);
   return result;
 }
 
@@ -150,33 +167,6 @@ void test_checked_int_parser_rejects_overflow(void)
   int value = 123;
   TEST_ASSERT_FALSE(tb_parse_int_checked("999999999999999999999999", &value));
   TEST_ASSERT_EQUAL_INT(123, value);
-}
-
-/* Redirect stderr (where TBERR records go) into a tmpfile around a call. */
-static FILE *stderr_capture_begin(int *saved_fd)
-{
-  FILE *capture = tmpfile();
-
-  TEST_ASSERT_NOT_NULL(capture);
-  fflush(stderr);
-  *saved_fd = dup(STDERR_FILENO);
-  TEST_ASSERT_TRUE(*saved_fd >= 0);
-  TEST_ASSERT_TRUE(dup2(fileno(capture), STDERR_FILENO) >= 0);
-  return capture;
-}
-
-static void stderr_capture_end(FILE *capture, int saved_fd, char *out,
-                               size_t out_size)
-{
-  size_t got;
-
-  fflush(stderr);
-  TEST_ASSERT_TRUE(dup2(saved_fd, STDERR_FILENO) >= 0);
-  TEST_ASSERT_EQUAL_INT(0, close(saved_fd));
-  rewind(capture);
-  got = fread(out, 1, out_size - 1, capture);
-  out[got] = '\0';
-  TEST_ASSERT_EQUAL_INT(0, fclose(capture));
 }
 
 /* I2-26: the atoi-compatible parsers keep returning 0 for an overflow, but

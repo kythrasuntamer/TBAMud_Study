@@ -17,6 +17,7 @@ extern FILE *logfile;
 static int captured_errors;
 static char captured_operation[64];
 
+/* NOLINTNEXTLINE(cert-dcl37-c,cert-dcl51-cpp): --wrap requires this name. */
 void __wrap_tb_error_log_at(const char *severity, const char *subsystem,
                             const char *operation, const char *resource,
                             int errnum, const char *source_file,
