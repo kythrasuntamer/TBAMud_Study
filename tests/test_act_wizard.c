@@ -904,6 +904,68 @@ static void test_rename_moves_player_files_and_checks_the_index(void)
   in_game_char = NULL;
 }
 
+/* G1-18: the last-login readers walked back from SEEK_END, so a file
+ * ending in a torn append shifted every record: lookups never matched,
+ * and mod_llog_entry wrote a whole record at a misaligned offset. */
+static void test_last_file_torn_tail_is_reported_and_repaired(void)
+{
+  char tmpl[] = "/tmp/tb_last_XXXXXX";
+  char old_cwd[4096];
+  char *dir = mkdtemp(tmpl);
+  struct last_entry rec[2], *found;
+  static const char junk[100] = "torn";
+  struct stat st;
+  FILE *fp;
+
+  TEST_ASSERT_NOT_NULL(dir);
+  TEST_ASSERT_NOT_NULL(getcwd(old_cwd, sizeof(old_cwd)));
+  TEST_ASSERT_EQUAL_INT(0, chdir(dir));
+  TEST_ASSERT_EQUAL_INT(0, mkdir("etc", 0700));
+  memset(rec, 0, sizeof(rec));
+  rec[0].idnum = 5;  rec[0].punique = 50;  strcpy(rec[0].username, "alice");
+  rec[1].idnum = 77; rec[1].punique = 770; strcpy(rec[1].username, "bobby");
+  rec[1].close_type = LAST_CONNECT;
+  fp = fopen(LAST_FILE, "wb");
+  TEST_ASSERT_NOT_NULL(fp);
+  TEST_ASSERT_EQUAL_INT(2, (int) fwrite(rec, sizeof(rec[0]), 2, fp));
+  TEST_ASSERT_EQUAL_INT(1, (int) fwrite(junk, sizeof(junk), 1, fp));
+  fclose(fp);
+
+  found = find_llog_entry(770, 77);
+  TEST_ASSERT_NOT_NULL(found);
+  TEST_ASSERT_EQUAL_STRING("bobby", found->username);
+  free(found);
+  TEST_ASSERT_EQUAL_STRING("last-file-align", captured_operation);
+
+  /* A logout updates bobby's own record in place. */
+  make_player();
+  GET_PREF(&target) = 770;
+  reset_counters();
+  add_llog_entry(&target, LAST_QUIT);
+  fp = fopen(LAST_FILE, "rb");
+  TEST_ASSERT_NOT_NULL(fp);
+  TEST_ASSERT_EQUAL_INT(2, (int) fread(rec, sizeof(rec[0]), 2, fp));
+  fclose(fp);
+  TEST_ASSERT_EQUAL_INT(LAST_QUIT, rec[1].close_type);
+  TEST_ASSERT_EQUAL_INT(5, rec[0].idnum);
+
+  /* A new login drops the torn tail before appending. */
+  reset_counters();
+  GET_PREF(&target) = 771;
+  target_specials.host = (char *)"example.org";
+  add_llog_entry(&target, LAST_CONNECT);
+  TEST_ASSERT_EQUAL_INT(0, stat(LAST_FILE, &st));
+  TEST_ASSERT_EQUAL_INT(3 * (long) sizeof(struct last_entry), (long) st.st_size);
+  TEST_ASSERT_EQUAL_STRING("last-file-align", captured_operation);
+  target_specials.host = NULL;
+
+  remove(LAST_FILE);
+  TEST_ASSERT_EQUAL_INT(0, rmdir("etc"));
+  TEST_ASSERT_EQUAL_INT(0, chdir(old_cwd));
+  TEST_ASSERT_EQUAL_INT(0, rmdir(dir));
+  in_game_char = NULL;
+}
+
 int main(void)
 {
   /* basic_mud_log()/mudlog() are the real utils.c ones; keep them quiet. */
@@ -927,6 +989,7 @@ int main(void)
   RUN_TEST(test_copyover_saves_the_switched_players_own_body);
   RUN_TEST(test_changelog_empty_preamble_and_failure);
   RUN_TEST(test_rename_moves_player_files_and_checks_the_index);
+  RUN_TEST(test_last_file_torn_tail_is_reported_and_repaired);
   {
     int failures = UNITY_END();
     if (logfile)

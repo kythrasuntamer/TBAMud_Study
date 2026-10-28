@@ -1974,43 +1974,81 @@ static const char *last_type_name(int type)
   return last_array[type];
 }
 
+/* LAST_FILE is an array of raw struct last_entry records (host byte order
+ * and padding; 304 bytes on LP64). Record k is at offset k * LLOG_RECSIZE
+ * from the start, so every reader and writer below seeks from SEEK_SET;
+ * walking back from SEEK_END would shift every record if the file ended
+ * in a torn append. */
+#define LLOG_RECSIZE ((long) sizeof(struct last_entry))
+
+/** Count the whole records in the open LAST_FILE fp.
+ * A size that is not a multiple of LLOG_RECSIZE means an append was torn
+ * (ENOSPC, crash): it is reported as last-file-align and, when repair is
+ * set and fp is writable, the partial tail is truncated away so later
+ * appends stay aligned.
+ * @return 1 and *recs on success, 0 (reported) on a seek error. */
+static int llog_record_count(FILE *fp, long *recs, int repair)
+{
+  long size, tail;
+
+  if (fseek(fp, 0L, SEEK_END) != 0 || (size = ftell(fp)) < 0) {
+    TB_ERROR_ERRNO("act", "last-file-seek", LAST_FILE, "cannot find the file size");
+    return 0;
+  }
+  *recs = size / LLOG_RECSIZE;
+  tail = size % LLOG_RECSIZE;
+  if (tail) {
+    TB_ERROR_MSG("act", "last-file-align", LAST_FILE,
+                 "size %ld not a multiple of %ld: %ld torn trailing bytes%s",
+                 size, LLOG_RECSIZE, tail, repair ? "; truncating them" : "");
+    if (repair && (fflush(fp) != 0 ||
+                   ftruncate(fileno(fp), (off_t) (*recs * LLOG_RECSIZE)) != 0))
+      TB_ERROR_ERRNO("act", "last-file-align", LAST_FILE,
+                     "could not truncate to %ld records", *recs);
+  }
+  return 1;
+}
+
+/** Read record index (0-based from the start) of LAST_FILE into out. The
+ * fixed-width name fields are NUL-terminated, since the file is data.
+ * @return 1, or 0 (reported) on a seek or read error. */
+static int llog_read_record(FILE *fp, long index, struct last_entry *out)
+{
+  if (fseek(fp, index * LLOG_RECSIZE, SEEK_SET) != 0) {
+    TB_ERROR_ERRNO("act", "last-file-seek", LAST_FILE, "record %ld", index);
+    return 0;
+  }
+  if (fread(out, sizeof(*out), 1, fp) != 1) {
+    TB_ERROR_ERRNO("act", "last-file-read", LAST_FILE, "record %ld", index);
+    return 0;
+  }
+  out->username[sizeof(out->username) - 1] = '\0';
+  out->hostname[sizeof(out->hostname) - 1] = '\0';
+  return 1;
+}
+
 struct last_entry *find_llog_entry(int punique, long idnum) {
   FILE *fp;
   struct last_entry mlast;
   struct last_entry *llast;
-  long size, recs, tmp;
+  long recs, tmp;
 
   if(!(fp=fopen(LAST_FILE,"r"))) {
     log("Error opening last_file for reading, will create.");
     return NULL;
   }
-  if (fseek(fp, 0L, SEEK_END) != 0 || (size = ftell(fp)) < 0) {
-    TB_REPORT_ERRNO("seek last-login file", LAST_FILE);
+  if (!llog_record_count(fp, &recs, FALSE)) {
     tb_fclose(fp);
     return NULL;
   }
 
-  /* recs = number of records in the last file */
-  recs = size/sizeof(struct last_entry);
   /* we'll search last to first, since it's faster than any thing else we can
    * do (like searching for the last shutdown/etc..) */
-  for(tmp=recs; tmp > 0; tmp--) {
-    if (fseek(fp, -(long)sizeof(struct last_entry), SEEK_CUR) != 0) {
-      TB_REPORT_ERRNO("seek last-login record", LAST_FILE);
+  for(tmp=recs - 1; tmp >= 0; tmp--) {
+    if (!llog_read_record(fp, tmp, &mlast)) {
       tb_fclose(fp);
       return NULL;
     }
-    if (fread(&mlast,sizeof(struct last_entry),1,fp) != 1) {
-      tb_fclose(fp);
-      return NULL;
-    }
-        /*another one to keep that stepback */
-    if (fseek(fp, -(long)sizeof(struct last_entry), SEEK_CUR) != 0) {
-      TB_REPORT_ERRNO("seek last-login record", LAST_FILE);
-      tb_fclose(fp);
-      return NULL;
-    }
-
     if(mlast.idnum == idnum && mlast.punique == punique) {
       /* then we've found a match */
       CREATE(llast,struct last_entry,1);
@@ -2029,37 +2067,22 @@ struct last_entry *find_llog_entry(int punique, long idnum) {
 static void mod_llog_entry(struct last_entry *llast,int type) {
   FILE *fp;
   struct last_entry mlast;
-  long size, recs, tmp;
+  long recs, tmp;
 
   if(!(fp=fopen(LAST_FILE,"r+"))) {
-    log("Error opening last_file for reading and writing.");
+    TB_ERROR_ERRNO("act", "last-file-open", LAST_FILE,
+                   "cannot update player idnum %d", llast->idnum);
     return;
   }
-  if (fseek(fp, 0L, SEEK_END) != 0 || (size = ftell(fp)) < 0) {
-    TB_REPORT_ERRNO("seek last-login file", LAST_FILE);
+  if (!llog_record_count(fp, &recs, FALSE)) {
     tb_fclose(fp);
     return;
   }
 
-  /* recs = number of records in the last file */
-  recs = size/sizeof(struct last_entry);
-
   /* We'll search last to first, since it's faster than any thing else we can
    * do (like searching for the last shutdown/etc..) */
-  for(tmp=recs; tmp > 0; tmp--) {
-    if (fseek(fp, -(long)sizeof(struct last_entry), SEEK_CUR) != 0) {
-      TB_REPORT_ERRNO("seek last-login record", LAST_FILE);
-      tb_fclose(fp);
-      return;
-    }
-    if(fread(&mlast,sizeof(struct last_entry),1,fp) != 1) {
-      log("mod_llog_entry: read error or unexpected end of file.");
-      tb_fclose(fp);
-      return;
-    }
-    /* Another one to keep that stepback. */
-    if (fseek(fp, -(long)sizeof(struct last_entry), SEEK_CUR) != 0) {
-      TB_REPORT_ERRNO("seek last-login record", LAST_FILE);
+  for(tmp=recs - 1; tmp >= 0; tmp--) {
+    if (!llog_read_record(fp, tmp, &mlast)) {
       tb_fclose(fp);
       return;
     }
@@ -2074,9 +2097,12 @@ static void mod_llog_entry(struct last_entry *llast,int type) {
         mlast.close_type=type;
       }
       mlast.close_time=time(0);
-      /*write it, and we're done!*/
-      tb_fwrite(&mlast,sizeof(struct last_entry),1,fp);
-      tb_fclose(fp);
+      /* Write it back over the same record, and we're done. */
+      if (fseek(fp, tmp * LLOG_RECSIZE, SEEK_SET) != 0 ||
+          fwrite(&mlast, sizeof(mlast), 1, fp) != 1)
+        TB_ERROR_ERRNO("act", "last-file-write", LAST_FILE,
+                       "record %ld player idnum %d", tmp, mlast.idnum);
+      tb_fclose_checked(fp, LAST_FILE);
       return;
     }
     /* Not the one we seek, next. */
@@ -2114,12 +2140,20 @@ void add_llog_entry(struct char_data *ch, int type) {
     llast->close_type=type;
 
     if(!(fp=fopen(LAST_FILE,"a"))) {
-      log("error opening last_file for appending");
+      TB_ERROR_ERRNO("act", "last-file-open", LAST_FILE,
+                     "cannot append player idnum %d", llast->idnum);
       free(llast);
       return;
     }
-    tb_fwrite(llast,sizeof(struct last_entry),1,fp);
-    tb_fclose(fp);
+    {
+      long recs;
+      /* Drop a torn tail first, or this record would be misaligned too. */
+      if (llog_record_count(fp, &recs, TRUE) &&
+          fwrite(llast, sizeof(struct last_entry), 1, fp) != 1)
+        TB_ERROR_ERRNO("act", "last-file-write", LAST_FILE,
+                       "append for player idnum %d", llast->idnum);
+    }
+    tb_fclose_checked(fp, LAST_FILE);
   } else {
     /* We've found a login - update it */
     mod_llog_entry(llast,type);
@@ -2208,6 +2242,8 @@ static void list_llog_entries(struct char_data *ch)
   send_to_char(ch, "Last log\r\n");
 
   while(fread(&llast, sizeof(struct last_entry), 1, fp) == 1) {
+    llast.username[sizeof(llast.username) - 1] = '\0';
+    llast.hostname[sizeof(llast.hostname) - 1] = '\0';
     tb_strftime(timestr, sizeof(timestr), "%a %b %d %Y %H:%M:%S", localtime(&llast.time));
     send_to_char(ch, "%10s    %d    %s    %s\r\n", llast.username, llast.punique,
         last_type_name(llast.close_type), timestr);
@@ -2310,29 +2346,15 @@ ACMD(do_last)
     send_to_char(ch, "No entries found.\r\n");
     return;
   }
-  if (fseek(fp, 0L, SEEK_END) != 0 || (recs = ftell(fp)) < 0) {
-    TB_REPORT_ERRNO("seek", LAST_FILE);
+  if (!llog_record_count(fp, &recs, FALSE)) {
     send_to_char(ch, "Error reading log file.\r\n");
     tb_fclose(fp);
     return;
   }
-  recs /= (long)sizeof(struct last_entry);
 
   send_to_char(ch, "Last log\r\n");
   while(num > 0 && recs > 0) {
-    if (fseek(fp, -(long)sizeof(struct last_entry), SEEK_CUR) != 0) {
-      TB_REPORT_ERRNO("seek", LAST_FILE);
-      send_to_char(ch, "Error reading log file.\r\n");
-      tb_fclose(fp);
-      return;
-    }
-    if(fread(&mlast,sizeof(struct last_entry),1,fp) != 1) {
-      send_to_char(ch, "Error reading log file.");
-      tb_fclose(fp);
-      return;
-    }
-    if (fseek(fp, -(long)sizeof(struct last_entry), SEEK_CUR) != 0) {
-      TB_REPORT_ERRNO("seek", LAST_FILE);
+    if (!llog_read_record(fp, recs - 1, &mlast)) {
       send_to_char(ch, "Error reading log file.\r\n");
       tb_fclose(fp);
       return;
