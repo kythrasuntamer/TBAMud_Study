@@ -600,10 +600,22 @@ void look_at_room(struct char_data *ch, int ignore_brief)
   send_to_char(ch, "%s", CCYEL(ch, C_NRM));
   if (!IS_NPC(ch) && PRF_FLAGGED(ch, PRF_SHOWVNUMS)) {
     char buf[MAX_STRING_LENGTH];
+    const char *sector = "<invalid>";
+    int sect = world[IN_ROOM(ch)].sector_type;
+
+    /* sector_type is read from the world file (parse_room) and only loosely
+     * checked there, so range-check it before indexing sector_types[]. */
+    if (sect >= 0 && sect < NUM_ROOM_SECTORS)
+      sector = sector_types[sect];
+    else
+      TB_ERROR_MSG("act", "sector-range", "sector_types",
+                   "room vnum %d has sector %d outside 0..%d (viewer "
+                   DIAG_CHAR_FMT ")", (int)GET_ROOM_VNUM(IN_ROOM(ch)), sect,
+                   NUM_ROOM_SECTORS - 1, DIAG_CHAR(ch));
 
     sprintbitarray(ROOM_FLAGS(IN_ROOM(ch)), room_bits, RF_ARRAY_MAX, buf, sizeof(buf));
     send_to_char(ch, "[%5d] ", GET_ROOM_VNUM(IN_ROOM(ch)));
-    send_to_char(ch, "%s[ %s][ %s ]", world[IN_ROOM(ch)].name, buf, sector_types[world[IN_ROOM(ch)].sector_type]);
+    send_to_char(ch, "%s[ %s][ %s ]", world[IN_ROOM(ch)].name, buf, sector);
 
     if (SCRIPT(rm)) {
       send_to_char(ch, "[T");

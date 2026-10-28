@@ -388,6 +388,38 @@ static void look_reports_mob_position_out_of_range(void)
   free_player(ch);
 }
 
+/* --- G2-05: a room sector outside sector_types[] ---------------------- */
+
+static void look_reports_room_sector_out_of_range(void)
+{
+  struct char_data *ch = make_player(7);
+
+  enter_test_room(ch);
+  GET_LEVEL(ch) = LVL_IMPL;
+  SET_BIT_AR(PRF_FLAGS(ch), PRF_SHOWVNUMS);
+  test_room.sector_type = -5;   /* parse_room let negative sectors through */
+  look_at_room(ch, TRUE);
+  TEST_ASSERT_NOT_NULL(strstr(sent, "[ <invalid> ]"));
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("sector-range", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "room vnum 3001 has sector -5"));
+
+  sent[0] = '\0';
+  tb_error_capture_reset();
+  test_room.sector_type = NUM_ROOM_SECTORS;
+  look_at_room(ch, TRUE);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+
+  sent[0] = '\0';
+  tb_error_capture_reset();
+  test_room.sector_type = SECT_FIELD;
+  look_at_room(ch, TRUE);
+  TEST_ASSERT_NOT_NULL(strstr(sent, "[ Field ]"));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  leave_test_room(ch);
+  free_player(ch);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -400,5 +432,6 @@ int main(void)
   RUN_TEST(look_groups_past_object_without_short_description);
   RUN_TEST(look_skips_mob_without_short_description);
   RUN_TEST(look_reports_mob_position_out_of_range);
+  RUN_TEST(look_reports_room_sector_out_of_range);
   return UNITY_END();
 }
