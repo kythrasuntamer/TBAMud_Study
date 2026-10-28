@@ -1776,6 +1776,21 @@ static void renum_zone_table(void)
     }
 }
 
+/* A mob file value that indexes a name table (position_types[], genders[])
+ * must be inside it.  An out-of-range value used to be stored as is and
+ * read past the table wherever the mob was shown; it is reported with the
+ * mob's vnum and replaced by fallback. */
+static int mob_table_value(int nr, const char *field, int value, int count,
+                           int fallback)
+{
+  if (value >= 0 && value < count)
+    return value;
+  TB_ERROR_MSG("db", "mob-load", "parse_simple_mob",
+               "mob #%d: %s %d is outside 0..%d; using %d", nr, field, value,
+               count - 1, fallback);
+  return fallback;
+}
+
 static void parse_simple_mob(FILE *mob_f, int i, int nr)
 {
   int j, t[10];
@@ -1850,9 +1865,12 @@ static void parse_simple_mob(FILE *mob_f, int i, int nr)
     exit(1);
   }
 
-  GET_POS(mob_proto + i) = t[0];
-  GET_DEFAULT_POS(mob_proto + i) = t[1];
-  GET_SEX(mob_proto + i) = t[2];
+  GET_POS(mob_proto + i) =
+    mob_table_value(nr, "position", t[0], NUM_POSITIONS, POS_STANDING);
+  GET_DEFAULT_POS(mob_proto + i) =
+    mob_table_value(nr, "default position", t[1], NUM_POSITIONS, POS_STANDING);
+  GET_SEX(mob_proto + i) =
+    mob_table_value(nr, "sex", t[2], NUM_GENDERS, SEX_NEUTRAL);
 
   GET_CLASS(mob_proto + i) = 0;
   GET_WEIGHT(mob_proto + i) = 200;
