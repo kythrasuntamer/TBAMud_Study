@@ -228,7 +228,18 @@ int delete_mobile(mob_rnum refpt)
           TB_WARN_MSG("genolc", "zcmd-delete", "zone",
                       "zone %d cmd %d removed: it loads mob vnum %d, which was deleted",
                       zone_table[zone].number, cmd_no, vnum);
-          delete_zone_command(&zone_table[zone], cmd_no);
+          if (!delete_zone_command(&zone_table[zone], cmd_no)) {
+            /* delete_zone_command() reported why.  The command is still
+             * here, so revisiting cmd_no would never end: step past it. */
+            TB_ERROR_MSG("genolc", "zone-cmd-remove", "zone",
+                         "zone %d cmd %d still loads deleted mob vnum %d",
+                         zone_table[zone].number, cmd_no, vnum);
+            cmd_no++;
+            continue;
+          }
+          /* The reset list changed: write the zone file at the next save,
+           * or the deleted mob's load comes back at reboot. */
+          add_to_save_list(zone_table[zone].number, SL_ZON);
           continue;
         }
         ZCMD(zone, cmd_no).arg1 -= (ZCMD(zone, cmd_no).arg1 > refpt);

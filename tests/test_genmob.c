@@ -47,9 +47,10 @@ void extract_char(struct char_data *ch)
     SET_BIT_AR(MOB_FLAGS(ch), MOB_NOTDEADYET);
 }
 
-/* genobj.c's delete_object() now queues the zone for saving, and
- * add_to_save_list() (genolc.c) resolves the zone through db.c's
- * real_zone(), which this test does not link. */
+/* genobj.c's delete_object() and genmob.c's delete_mobile() queue a zone
+ * whose reset list changed for saving, and add_to_save_list() (genolc.c)
+ * resolves the zone through db.c's real_zone(), which this test does not
+ * link. */
 zone_rnum real_zone(zone_vnum vnum)
 {
   zone_rnum i;
@@ -166,6 +167,8 @@ void tearDown(void)
   free(shop_index);
   shop_index = NULL;
   top_shop = -1;
+  free_save_list();      /* runs at shutdown only: it leaves the head set */
+  save_list = NULL;
 }
 
 /* Zone-table tests do not exercise the prototype's strings; free them up
@@ -371,6 +374,26 @@ static void test_delete_object_zone_commands(void)
   free_objs();
 }
 
+/* C2-01: delete_mobile() removed the deleted mob's zone resets in memory
+ * but never queued the zone for saving, so they came back from the zone
+ * file at the next boot; and a removal that failed would have been
+ * revisited forever (delete_zone_command() now reports and returns FALSE). */
+static void test_delete_mobile_queues_changed_zone_for_save(void)
+{
+  struct reset_com cmds[] = { mcmd(1), mcmd(2) };
+
+  make_zone(cmds, 2);
+  drop_strings(1);
+  TEST_ASSERT_FALSE(in_save_list(zone_table[0].number, SL_ZON));
+  delete_mobile(1);
+  TEST_ASSERT_EQUAL_CHAR('M', ZCMD(0, 0).command);
+  TEST_ASSERT_EQUAL_INT(1, ZCMD(0, 0).arg1);      /* old rnum 2 -> 1 */
+  TEST_ASSERT_EQUAL_CHAR('S', ZCMD(0, 1).command);
+  TEST_ASSERT_TRUE(in_save_list(zone_table[0].number, SL_ZON));
+  TEST_ASSERT_EQUAL_STRING("zcmd-delete", tb_captured_operation);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+}
+
 int main(void)
 {
   logfile = stderr;
@@ -382,5 +405,6 @@ int main(void)
   RUN_TEST(test_delete_mobile_releases_prototype_and_detaches_instances);
   RUN_TEST(test_check_mobile_strings_with_unprototyped_mob);
   RUN_TEST(test_delete_object_zone_commands);
+  RUN_TEST(test_delete_mobile_queues_changed_zone_for_save);
   return UNITY_END();
 }
