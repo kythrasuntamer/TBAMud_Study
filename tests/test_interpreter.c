@@ -1050,6 +1050,94 @@ void test_dupe_check_without_a_start_room_is_reported(void)
   dupe_world_free();
 }
 
+/* =========================================================
+ * perform_dupe_check: a booted character at the menu is freed
+ *
+ * Logging in over a connection of the same player that sits at the menu
+ * (after quit, rent or death) or another pre-game prompt booted that
+ * connection with k->character = NULL and never freed its character,
+ * which is in no list: ~9 KB leaked per login, by any player (e2e soak,
+ * tests/e2e/repro_login_over_menu_leaks_char.txt on audit-e2e-gameplay).
+ * An in-game copy is still taken over, not freed.
+ * ========================================================= */
+
+/* k holds a copy of idnum 31 in state; d then logs in as idnum 31. */
+static struct char_data *login_over(struct descriptor_data *d,
+                                    struct descriptor_data *k, int state)
+{
+  struct char_data *kch;
+
+  free_heap_chars();      /* left over only if an earlier test failed */
+  kch = heap_char("Twinnie");
+  password_login(d);
+  memset(k, 0, sizeof(*k));
+  GET_IDNUM(kch) = 31;
+  kch->desc = k;
+  k->character = kch;
+  k->desc_num = 1;
+  STATE(k) = state;
+  k->next = d;
+  descriptor_list = k;
+  free_char_calls = 0;
+  return kch;
+}
+
+static void login_over_run(struct descriptor_data *d)
+{
+  char arg[sizeof(dupe_password)];
+
+  strlcpy(arg, dupe_password, sizeof(arg));
+  nanny(d, arg);
+  descriptor_list = NULL;
+}
+
+void test_dupe_check_frees_a_twin_at_the_menu(void)
+{
+  struct descriptor_data d, k;
+  struct char_data *kch = login_over(&d, &k, CON_MENU);
+
+  login_over_run(&d);
+  TEST_ASSERT_EQUAL_INT(CON_CLOSE, STATE(&k));
+  TEST_ASSERT_NULL(k.character);
+  TEST_ASSERT_FALSE(heap_char_live(kch));       /* freed, not leaked */
+  TEST_ASSERT_EQUAL_INT(1, free_char_calls);
+  TEST_ASSERT_EQUAL_INT(CON_RMOTD, STATE(&d));  /* d logs in as usual */
+  free(GET_HOST(d.character));
+  free_heap_chars();
+}
+
+void test_dupe_check_detaches_the_menu_description_editor(void)
+{
+  struct descriptor_data d, k;
+  struct char_data *kch = login_over(&d, &k, CON_PLR_DESC);
+
+  /* As nanny's menu option 2 leaves it. */
+  k.str = &kch->player.description;
+  k.backstr = strdup("old description");
+  TEST_ASSERT_NOT_NULL(k.backstr);
+  login_over_run(&d);
+  TEST_ASSERT_FALSE(heap_char_live(kch));
+  TEST_ASSERT_NULL(k.str);          /* no pointer into the freed character */
+  TEST_ASSERT_NULL(k.backstr);      /* released, as close_socket() would */
+  free(GET_HOST(d.character));
+  free_heap_chars();
+}
+
+void test_dupe_check_takes_over_an_in_game_twin(void)
+{
+  struct descriptor_data d, k;
+  struct char_data *kch = login_over(&d, &k, CON_PLAYING);
+
+  login_over_run(&d);
+  TEST_ASSERT_EQUAL_INT(CON_CLOSE, STATE(&k));
+  TEST_ASSERT_TRUE(heap_char_live(kch));        /* in the world: kept */
+  TEST_ASSERT_EQUAL_PTR(kch, d.character);      /* and taken over */
+  TEST_ASSERT_EQUAL_INT(1, free_char_calls);    /* d's own copy only */
+  free(GET_HOST(kch));
+  kch->desc = NULL;
+  free_heap_chars();
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -1124,6 +1212,11 @@ int main(void)
     /* perform_dupe_check: duplicate extraction room */
     RUN_TEST(test_dupe_check_extracts_a_duplicate_in_the_start_room);
     RUN_TEST(test_dupe_check_without_a_start_room_is_reported);
+
+    /* perform_dupe_check: booted characters */
+    RUN_TEST(test_dupe_check_frees_a_twin_at_the_menu);
+    RUN_TEST(test_dupe_check_detaches_the_menu_description_editor);
+    RUN_TEST(test_dupe_check_takes_over_an_in_game_twin);
 
     return UNITY_END();
 }

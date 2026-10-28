@@ -1240,17 +1240,42 @@ static int perform_dupe_check(struct descriptor_data *d)
 
       do_return(k->character, NULL, 0, 0);
     } else if (k->character && GET_IDNUM(k->character) == id) {
-      /* Character taking over their own body. */
-      pref_temp=GET_PREF(k->character);
+      /* Character taking over their own body. k's character stays, linkless,
+       * only if it is in the world (in the game, where it may be taken over
+       * below, in an editor, or link-dead). At the menu or another pre-game
+       * prompt it belongs to k's login alone: it is in no list, and
+       * close_socket() frees nothing once k->character is NULL, so it is
+       * freed here; it used to leak (~9 KB per login). */
+      struct char_data *other = k->character;
+      bool other_in_world = IS_PLAYING(k) || STATE(k) == CON_DISCONNECT;
+
+      pref_temp=GET_PREF(other);
 
       if (!target && STATE(k) == CON_PLAYING) {
 	write_to_output(k, "\r\nThis body has been usurped!\r\n");
-	target = k->character;
+	target = other;
 	mode = USURP;
       }
-      k->character->desc = NULL;
+      other->desc = NULL;
       k->character = NULL;
       k->original = NULL;
+      if (!other_in_world) {
+        /* k's editor buffers are released as close_socket() would release
+         * them, since it does so only while k->character is set. At the
+         * menu's description editor (CON_PLR_DESC) k->str points into
+         * other and k->backstr is k's copy of the old text. k->str must not
+         * outlive other: input k already queued is still processed this
+         * pulse, and string_add() writes through k->str. */
+        if (PLR_FLAGGED(other, PLR_MAILING) && k->str) {
+          if (*k->str)
+            free(*k->str);
+          free(k->str);
+        } else if (k->backstr && !PLR_FLAGGED(other, PLR_WRITING))
+          free(k->backstr);
+        k->str = NULL;
+        k->backstr = NULL;
+        free_char(other);
+      }
       write_to_output(k, "\r\nMultiple login detected -- disconnecting.\r\n");
       STATE(k) = CON_CLOSE;
     }
