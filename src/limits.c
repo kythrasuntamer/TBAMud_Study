@@ -405,10 +405,34 @@ void gain_condition(struct char_data *ch, int condition, int value)
 
 }
 
+/* Rooms idle players are moved to, by VNUM. They used to be the hard-coded
+ * rnums 1 and 3, which name different rooms once redit adds or deletes a
+ * room below them. Stock world: vnum 1 is Limbo, vnum 3 is in zone 0. */
+#define IDLE_VOID_ROOM_VNUM  1
+#define IDLE_RENT_ROOM_VNUM  3
+
+/* rnum of idle room vnum, or NOWHERE (reported with op) if it is missing. */
+static room_rnum idle_room(struct char_data *ch, room_vnum vnum, const char *op)
+{
+  room_rnum rnum = real_room(vnum);
+
+  if (VALID_ROOM_RNUM(rnum))
+    return rnum;
+  TB_ERROR_MSG("limits", op, "world",
+               DIAG_CHAR_FMT " idle target room vnum %d does not exist",
+               DIAG_CHAR(ch), (int) vnum);
+  return NOWHERE;
+}
+
 static void check_idling(struct char_data *ch)
 {
+  room_rnum target;
+
   if (ch->char_specials.timer > CONFIG_IDLE_VOID) {
-    if (GET_WAS_IN(ch) == NOWHERE && IN_ROOM(ch) != NOWHERE) {
+    /* A missing void room leaves the player where they are (reported each
+     * tick) until the rent timeout below applies. */
+    if (GET_WAS_IN(ch) == NOWHERE && IN_ROOM(ch) != NOWHERE &&
+        (target = idle_room(ch, IDLE_VOID_ROOM_VNUM, "idle-void-room")) != NOWHERE) {
       GET_WAS_IN(ch) = IN_ROOM(ch);
       if (FIGHTING(ch)) {
 	stop_fighting(FIGHTING(ch));
@@ -419,11 +443,16 @@ static void check_idling(struct char_data *ch)
       save_char(ch);
       Crash_crashsave(ch);
       char_from_room(ch);
-      char_to_room(ch, 1);
+      char_to_room(ch, target);
     } else if (ch->char_specials.timer > CONFIG_IDLE_RENT_TIME) {
-      if (IN_ROOM(ch) != NOWHERE)
-	char_from_room(ch);
-      char_to_room(ch, 3);
+      /* extract_char_final() requires a room: without the rent room, stay
+       * put, or fall back to rnum 0 (always loaded) if in no room at all. */
+      if ((target = idle_room(ch, IDLE_RENT_ROOM_VNUM, "idle-rent-room")) != NOWHERE) {
+        if (IN_ROOM(ch) != NOWHERE)
+          char_from_room(ch);
+        char_to_room(ch, target);
+      } else if (IN_ROOM(ch) == NOWHERE)
+        char_to_room(ch, 0);
       if (ch->desc) {
 	STATE(ch->desc) = CON_DISCONNECT;
 	/*
@@ -486,8 +515,15 @@ static void decay_corpse(struct obj_data *j, long uid)
       obj_to_room(jj, IN_ROOM(j->carried_by));
     else if (IN_ROOM(j) != NOWHERE)
       obj_to_room(jj, IN_ROOM(j));
-    else
-      core_dump();
+    else {
+      /* Invariant: a corpse on object_list is in a room, an object or an
+       * inventory. One that is nowhere has nowhere to spill to; extracting
+       * the content keeps it from staying on object_list unreachable. */
+      TB_ERROR_MSG("limits", "corpse-orphan", "object_list",
+                   "corpse vnum %d uid %ld has no location; content vnum %d extracted",
+                   (int) GET_OBJ_VNUM(j), uid, (int) GET_OBJ_VNUM(jj));
+      extract_obj(jj);
+    }
   }
   extract_obj(j);
 }

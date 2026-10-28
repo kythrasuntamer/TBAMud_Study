@@ -37,8 +37,18 @@ int damage(struct char_data *ch, struct char_data *victim, int dam, int attackty
 void stop_fighting(struct char_data *ch) { (void)ch; UNREACHED(); }
 void update_char_objects(struct char_data *ch) { (void)ch; UNREACHED(); }
 void update_pos(struct char_data *victim) { (void)victim; UNREACHED(); }
-/* Corpse contents: these tests use empty corpses. */
-void obj_from_obj(struct obj_data *obj) { (void)obj; UNREACHED(); }
+/* Corpse contents: only the orphaned-corpse test has any. */
+void obj_from_obj(struct obj_data *obj)
+{
+  struct obj_data **pp;
+  for (pp = &obj->in_obj->contains; *pp; pp = &(*pp)->next_content)
+    if (*pp == obj) {
+      *pp = obj->next_content;
+      break;
+    }
+  obj->in_obj = NULL;
+  obj->next_content = NULL;
+}
 void obj_to_obj(struct obj_data *obj, struct obj_data *obj_to) { (void)obj; (void)obj_to; UNREACHED(); }
 void obj_to_room(struct obj_data *object, room_rnum room) { (void)object; (void)room; UNREACHED(); }
 int MAX(int a, int b) { return a > b ? a : b; }
@@ -113,6 +123,7 @@ static struct obj_data *new_timed_obj(int timer)
   TEST_ASSERT_NOT_NULL(obj);
   GET_OBJ_TYPE(obj) = ITEM_TRASH;
   GET_OBJ_TIMER(obj) = timer;
+  GET_OBJ_RNUM(obj) = NOTHING;
   IN_ROOM(obj) = NOWHERE;
   return obj;
 }
@@ -222,9 +233,32 @@ static void test_in_range_changes_are_silent(void)
   TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
 }
 
+/* H3-10: a rotting corpse that is in no room, object or inventory used to
+ * core_dump() and leave its contents unreachable. They are now reported and
+ * extracted. */
+static void test_orphaned_corpse_contents_reported(void)
+{
+  struct obj_data *corpse = new_timed_obj(1), *content = new_timed_obj(0);
+
+  GET_OBJ_TYPE(corpse) = ITEM_CONTAINER;
+  GET_OBJ_VAL(corpse, 3) = 1;
+  corpse->contains = content;
+  content->in_obj = corpse;
+  corpse->next = content;
+  object_list = corpse;
+
+  point_update();
+
+  TEST_ASSERT_EQUAL_INT(2, extracted);
+  TEST_ASSERT_NULL(object_list);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("corpse-orphan", tb_captured_operation);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(test_orphaned_corpse_contents_reported);
   RUN_TEST(test_increase_gold_near_cap_clamps_loudly);
   RUN_TEST(test_increase_bank_near_cap_clamps_loudly);
   RUN_TEST(test_decrease_int_min_does_not_overflow);
