@@ -1096,3 +1096,20 @@ endif()
 # (a player whose files cannot be named safely) were counted as done, it
 # would spin forever. Fail such a regression instead of hanging.
 set_tests_properties(test_players_persist PROPERTIES TIMEOUT 60)
+
+# A1-14: game_loop()'s handling of a failed socket poll (comm.c). Signals are
+# retried, player sockets closed outside close_socket() are reported and
+# dropped, and any other failure is FATAL. test_comm_poll.c #includes comm.c
+# to reach its file-static helpers; test_stubs.c is omitted because it
+# defines comm.c's globals.
+add_executable(test_comm_poll
+    $<TARGET_OBJECTS:unity_vendor>
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_comm_poll.c
+)
+target_include_directories(test_comm_poll PRIVATE ${TEST_INCLUDES})
+target_compile_options(test_comm_poll PRIVATE ${TEST_CFLAGS})
+add_test(NAME test_comm_poll COMMAND test_comm_poll)
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_compile_options(test_comm_poll PRIVATE -ffunction-sections -fdata-sections)
+    target_link_options(test_comm_poll PRIVATE -Wl,--gc-sections)
+endif()
