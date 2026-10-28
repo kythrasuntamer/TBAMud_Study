@@ -895,6 +895,7 @@ void redit_parse(struct descriptor_data *d, char *arg)
 	/* Clean up pointers. */
 	REMOVE_FROM_LIST(OLC_DESC(d), OLC_ROOM(d)->ex_description, next);
 	free(OLC_DESC(d));
+	OLC_DESC(d) = NULL;   /* as oedit does: never leave it dangling */
       }
       break;
     case 1:
