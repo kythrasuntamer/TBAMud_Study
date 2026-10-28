@@ -273,10 +273,46 @@ static void test_tedit_lost_link_leaves_live_text(void)
   motd = NULL;
 }
 
+/* ------------------------------------------------------------------ */
+/* O6c: a msgedit save that cannot be written is refused and reported; */
+/* it used to exit(1) the whole server from the editor.                */
+/* ------------------------------------------------------------------ */
+static void test_msgedit_failed_save_is_reported_and_server_keeps_running(void)
+{
+  char cmd[] = " 1", yes[] = "y";
+
+  enter_scratch_dir(NULL, NULL);       /* no misc/: the file cannot be opened */
+  do_msgedit(&builder, cmd, 0, 0);
+  TEST_ASSERT_EQUAL_INT(CON_MSGEDIT, STATE(&builder_desc));
+  OLC_VAL(&builder_desc) = 1;          /* there are unsaved changes */
+  OLC_MODE(&builder_desc) = MSGEDIT_CONFIRM_SAVE;
+  out_buf[0] = '\0';
+
+  msgedit_parse(&builder_desc, yes);
+
+  TEST_ASSERT_EQUAL_STRING("msgedit-save", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "slot 1 editor player idnum 4242"));
+  TEST_ASSERT_NOT_NULL(strstr(out_buf, "writing " MESS_FILE " FAILED; the file is unchanged"));
+  TEST_ASSERT_NULL(strstr(out_buf, "Messages saved."));
+  TEST_ASSERT_EQUAL_INT(1, OLC_VAL(&builder_desc));
+  TEST_ASSERT_EQUAL_INT(CON_MSGEDIT, STATE(&builder_desc));
+}
+
+/* With misc/ present the save commits the file and says nothing. */
+static void test_msgedit_save_commits_the_messages_file(void)
+{
+  enter_scratch_dir("misc", MESS_FILE);
+  TEST_ASSERT_TRUE(save_messages_to_disk());
+  TEST_ASSERT_NOT_NULL(strstr(slurp(MESS_FILE), "Combat Message File"));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
   RUN_TEST(test_tedit_clear_then_save_never_leaves_greetings_null);
   RUN_TEST(test_tedit_lost_link_leaves_live_text);
+  RUN_TEST(test_msgedit_failed_save_is_reported_and_server_keeps_running);
+  RUN_TEST(test_msgedit_save_commits_the_messages_file);
   return UNITY_END();
 }
