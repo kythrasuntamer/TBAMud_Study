@@ -223,8 +223,8 @@ static int handle_oset(struct obj_data * obj, char * argument)
   return 1;
 }
 
-int text_processed(char *field, char *subfield, struct trig_var_data *vd,
-                   char *str, size_t slen)
+int text_processed(trig_data *trig, char *field, char *subfield,
+                   struct trig_var_data *vd, char *str, size_t slen)
 {
   char *p, *p2;
   char tmpvar[MAX_STRING_LENGTH];
@@ -258,20 +258,22 @@ int text_processed(char *field, char *subfield, struct trig_var_data *vd,
       strlcpy(str, "0", slen);
     return TRUE;
   } else if (!str_cmp(field, "car")) {                 /* car       */
-    const char *car = vd->value;
-    size_t len = 0;
+    /* First word of the value. The value may be raw player text (%speech%,
+     * %arg%), so its length is not bounded by the script: copy at most
+     * slen - 1 bytes and report a word that does not fit. */
+    size_t n = strcspn(vd->value, " \t\n\v\f\r");
 
-    while (car[len] && !isspace((unsigned char)car[len]))
-      len++;
-    /* Values are unbounded; the destination is not. */
-    if (len >= slen) {
-      TB_ERROR_MSG("dg", "field-truncated", "car",
-                   "var %s: %zu-byte first word truncated to %zu bytes",
-                   vd->name, len, slen - 1);
-      len = slen - 1;
+    if (slen == 0)
+      return TRUE;
+    if (n >= slen) {
+      TB_ERROR_MSG("dg", "field-truncate", "text_processed",
+                   "trig vnum %d: field car of var '%s' is %zu bytes; "
+                   "truncated to %zu", DIAG_TRIG_VNUM(trig), vd->name, n,
+                   slen - 1);
+      n = slen - 1;
     }
-    memcpy(str, car, len);
-    str[len] = '\0';
+    memcpy(str, vd->value, n);
+    str[n] = '\0';
     return TRUE;
 
   } else if (!str_cmp(field, "cdr")) {                 /* cdr       */
@@ -416,7 +418,7 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
     return;
   }
 
-  else if (vd && text_processed(field, subfield, vd, str, slen)) return;
+  else if (vd && text_processed(trig, field, subfield, vd, str, slen)) return;
 
   else {
     if (vd) {

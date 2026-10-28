@@ -568,3 +568,31 @@ if(Python3_Interpreter_FOUND)
                 ${CMAKE_CURRENT_SOURCE_DIR}/test_dg_wait_suffix_contract.py
                 ${MUD_SRCDIR}/dg_scripts.c)
 endif()
+
+# ---------------------------------------------------------------------------
+# test_dg_engine — the DG script engine (dg_scripts.c, dg_variables.c,
+# dg_misc.c) driven through script_driver()/var_subst() with the complete
+# production server linked in. comm.c's main() is renamed (see the comm.c
+# source property above) and the test supplies a small hand-built world.
+# utils.c is compiled separately with its logger renamed so that
+# tests/tb_error_capture.h captures every structured diagnostic.
+# ---------------------------------------------------------------------------
+file(GLOB TB_ENGINE_SRC ${MUD_SRCDIR}/*.c)
+list(REMOVE_ITEM TB_ENGINE_SRC ${MUD_SRCDIR}/utils.c)
+add_library(tb_engine_utils OBJECT ${MUD_SRCDIR}/utils.c)
+target_include_directories(tb_engine_utils PRIVATE ${TEST_INCLUDES})
+target_compile_definitions(tb_engine_utils PRIVATE
+    tb_error_log_at=tb_error_log_at_production)
+set_target_properties(tb_engine_utils PROPERTIES C_CLANG_TIDY "")
+add_executable(test_dg_engine
+    $<TARGET_OBJECTS:unity_vendor>
+    $<TARGET_OBJECTS:tb_engine_utils>
+    ${TB_ENGINE_SRC}
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_dg_engine.c
+)
+target_include_directories(test_dg_engine PRIVATE ${TEST_INCLUDES})
+target_compile_options(test_dg_engine PRIVATE ${TEST_CFLAGS})
+target_link_libraries(test_dg_engine PRIVATE ${EXTRA_LIBS})
+# The production sources are already analysed as part of the circle target.
+set_target_properties(test_dg_engine PROPERTIES C_CLANG_TIDY "")
+add_test(NAME test_dg_engine COMMAND test_dg_engine)
