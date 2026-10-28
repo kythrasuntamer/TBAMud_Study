@@ -3284,14 +3284,18 @@ void add_to_lookup_table(long uid, void *c)
   struct lookup_table_t *lt = get_bucket_head(uid);
 
   if (lt && lt->uid == uid) {
-   log("add_to_lookup updating existing value for uid=%ld (%p -> %p)", uid, lt->c, c);
-   lt->c = c;
-   return;
+    TB_ERROR_LOG("WARNING", "dg", "uid-rebind", "lookup_table", 0,
+                 "uid=%ld rebound from %p to %p (bucket head)", uid, lt->c, c);
+    lt->c = c;
+    return;
   }
 
   for (;lt && lt->next; lt = lt->next)
     if (lt->next->uid == uid) {
-      log("add_to_lookup updating existing value for uid=%ld (%p -> %p)", uid, lt->next->c, c);
+      /* Expected when a player logs in while an earlier character with the
+       * same idnum awaits extraction; unexpected anywhere else. */
+      TB_ERROR_LOG("WARNING", "dg", "uid-rebind", "lookup_table", 0,
+                   "uid=%ld rebound from %p to %p", uid, lt->next->c, c);
       lt->next->c = c;
       return;
     }
@@ -3317,8 +3321,9 @@ void remove_from_lookup_table(long uid, const void *c)
   flt = find_element_by_uid_in_lookup_table(uid);
 
   if (flt && flt->c != c) {
-    log("SYSERR: remove_from_lookup: UID %ld is bound to another entity; "
-        "keeping the current mapping.", uid);
+    TB_ERROR_LOG("WARNING", "dg", "uid-remove", "lookup_table", 0,
+                 "uid=%ld is bound to %p, not the freed entity %p; keeping the "
+                 "live mapping", uid, flt->c, c);
     return;
   }
 
@@ -3330,7 +3335,9 @@ void remove_from_lookup_table(long uid, const void *c)
     return;
   }
 
-  log("remove_from_lookup. UID %ld not found.", uid);
+  TB_ERROR_MSG("dg", "uid-remove", "lookup_table",
+               "uid=%ld (entity %p) is not registered; it was never added or "
+               "was already removed", uid, c);
 }
 
 bool check_flags_by_name_ar(int *array, int numflags, char *search, const char *namelist[]) 
@@ -3378,6 +3385,9 @@ long char_script_id(char_data *ch)
     long attempts;
     for (attempts = 0; attempts < ROOM_ID_BASE - MOB_ID_BASE; attempts++) {
       if (max_mob_id < MOB_ID_BASE || max_mob_id >= ROOM_ID_BASE) {
+        TB_ERROR_LOG("WARNING", "dg", "uid-allocate", "mobile_ids", 0,
+                     "mobile id counter %ld left [%d, %d); wrapping and reusing "
+                     "IDs of extracted mobiles", max_mob_id, MOB_ID_BASE, ROOM_ID_BASE);
         mudlog(CMP, LVL_BUILDER, TRUE, "SYSERR: Script IDs for mobiles wrapped; reusing IDs of extracted mobiles");
         max_mob_id = MOB_ID_BASE;
       }
@@ -3386,7 +3396,9 @@ long char_script_id(char_data *ch)
       max_mob_id++;
     }
     if (attempts == ROOM_ID_BASE - MOB_ID_BASE) {
-      mudlog(CMP, LVL_BUILDER, TRUE, "SYSERR: No free mobile script IDs remain");
+      TB_ERROR_LOG("FATAL", "dg", "uid-allocate", "mobile_ids", 0,
+                   "all %d mobile script IDs are registered; aborting",
+                   ROOM_ID_BASE - MOB_ID_BASE);
       abort();
     }
     ch->script_id = max_mob_id++;
@@ -3409,9 +3421,19 @@ long obj_script_id(obj_data *obj)
   if (obj->script_id == 0) {
     /* Never wrap into the character/room ranges (long may be 32 bits), and
      * never take an ID that is still registered. */
+    int wraps = 0;
     while (max_obj_id < OBJ_ID_BASE || max_obj_id == LONG_MAX ||
            find_element_by_uid_in_lookup_table(max_obj_id)) {
       if (max_obj_id < OBJ_ID_BASE || max_obj_id == LONG_MAX) {
+        if (wraps++) {
+          TB_ERROR_LOG("FATAL", "dg", "uid-allocate", "object_ids", 0,
+                       "every object script ID from %d is registered; aborting",
+                       OBJ_ID_BASE);
+          abort();
+        }
+        TB_ERROR_LOG("WARNING", "dg", "uid-allocate", "object_ids", 0,
+                     "object id counter %ld left [%d, LONG_MAX); wrapping and "
+                     "reusing IDs of extracted objects", max_obj_id, OBJ_ID_BASE);
         mudlog(CMP, LVL_BUILDER, TRUE, "SYSERR: Script IDs for objects wrapped; reusing IDs of extracted objects");
         max_obj_id = OBJ_ID_BASE;
       } else
