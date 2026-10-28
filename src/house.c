@@ -122,31 +122,44 @@ static void House_restore_weight(struct obj_data *obj)
   }
 }
 
-/* Save all objects in a house */
+/* Save all objects in a house. The object file is staged beside the live
+ * one and replaced only after a complete write, so a failed save keeps the
+ * previous contents. ROOM_HOUSE_CRASH stays set on failure, so
+ * House_save_all() retries. */
 void House_crashsave(room_vnum vnum)
 {
   int rnum;
-  char buf[MAX_STRING_LENGTH];
+  char buf[MAX_STRING_LENGTH], temp[MAX_STRING_LENGTH + 16];
   FILE *fp;
 
-  if ((rnum = real_room(vnum)) == NOWHERE)
+  if ((rnum = real_room(vnum)) == NOWHERE) {
+    TB_ERROR_MSG("house", "crashsave", "house-file",
+                 "house vnum %d has no room; objects not saved", vnum);
     return;
+  }
   if (!House_get_filename(vnum, buf, sizeof(buf)))
     return;
-  if (!(fp = fopen(buf, "wb"))) {
-    int saved_errno = errno;
-    log("SYSERR: House_crashsave could not open %s for house #%d: %s (errno=%d)",
-        buf, vnum, strerror(saved_errno), saved_errno);
+  if (!(fp = objsave_open_staged(buf, temp, sizeof(temp)))) {
+    TB_ERROR_MSG("house", "crashsave", buf,
+                 "house vnum %d objects not saved; live file kept", vnum);
     return;
   }
   if (!House_save(world[rnum].contents, fp)) {
-    tb_fclose(fp);
+    objsave_abort_staged(fp, temp);
+    TB_ERROR_MSG("house", "crashsave", buf,
+                 "house vnum %d object write failed; live file kept", vnum);
     return;
   }
-  tb_fclose(fp);
+  if (!objsave_commit_staged(fp, temp, buf)) {
+    House_restore_weight(world[rnum].contents);
+    TB_ERROR_MSG("house", "crashsave", buf,
+                 "house vnum %d objects not committed; live file kept", vnum);
+    return;
+  }
   House_restore_weight(world[rnum].contents);
   REMOVE_BIT_AR(ROOM_FLAGS(rnum), ROOM_HOUSE_CRASH);
 }
+
 
 /* Delete a house save file */
 static void House_delete_file(room_vnum vnum)

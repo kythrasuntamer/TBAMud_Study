@@ -373,12 +373,68 @@ static void test_listrent_truncates_loudly(void)
   TEST_ASSERT_EQUAL_INT(0, live_objects);
 }
 
+static char *slurp_rent(void)
+{
+  static char buf[4096];
+  char path[512];
+  size_t n;
+  FILE *fl;
+
+  TEST_ASSERT_TRUE(get_filename(path, sizeof(path), CRASH_FILE, "Tester"));
+  fl = fopen(path, "r");
+  TEST_ASSERT_NOT_NULL(fl);
+  n = fread(buf, 1, sizeof(buf) - 1, fl);
+  buf[n] = '\0';
+  TEST_ASSERT_EQUAL_INT(0, fclose(fl));
+  return buf;
+}
+
+/* B2-12: the savers truncated the live rent file in place and returned
+ * silently when it could not be opened; the receptionist then logged a
+ * successful rent and extracted the player. A save that cannot be staged
+ * must report, keep the live file and tell the caller. */
+static void test_crashsave_failure_keeps_live_file(void)
+{
+  static const char old_file[] = "1 1000 0 0 0 0\n#101\n\n$~\n";
+
+  if (geteuid() == 0)
+    TEST_IGNORE_MESSAGE("directory permissions do not bind root");
+  write_rent_file("Tester", old_file);
+  obj_to_char(read_object(100, VIRTUAL), &player);
+  SET_BIT_AR(PLR_FLAGS(&player), PLR_CRASH);
+  TEST_ASSERT_EQUAL_INT(0, chmod(scratch_dir, 0500));
+
+  TEST_ASSERT_FALSE(Crash_crashsave(&player));
+
+  TEST_ASSERT_EQUAL_INT(0, chmod(scratch_dir, 0700));
+  TEST_ASSERT_EQUAL_STRING(old_file, slurp_rent());
+  TEST_ASSERT_TRUE(PLR_FLAGGED(&player, PLR_CRASH));
+  TEST_ASSERT_EQUAL_STRING("rent-open", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "player idnum 4242"));
+}
+
+/* B2-12: a committed crash save replaces the file and clears PLR_CRASH. */
+static void test_crashsave_commits(void)
+{
+  write_rent_file("Tester", "1 1000 0 0 0 0\n$~\n");
+  obj_to_char(read_object(101, VIRTUAL), &player);
+  SET_BIT_AR(PLR_FLAGS(&player), PLR_CRASH);
+
+  TEST_ASSERT_TRUE(Crash_crashsave(&player));
+
+  TEST_ASSERT_FALSE(PLR_FLAGGED(&player, PLR_CRASH));
+  TEST_ASSERT_NOT_NULL(strstr(slurp_rent(), "#101\n"));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
   RUN_TEST(test_container_refused_by_autoeq_keeps_contents);
   RUN_TEST(test_loc_past_num_wears_is_reported);
   RUN_TEST(test_listrent_truncates_loudly);
+  RUN_TEST(test_crashsave_failure_keeps_live_file);
+  RUN_TEST(test_crashsave_commits);
   (void)rmdir(scratch_dir);
   return UNITY_END();
 }
