@@ -109,14 +109,27 @@ void tb_error_log_at(const char *severity, const char *subsystem,
  *    tb_parse_context_end() *before* fclose(). Slots are keyed by the FILE *
  *    address, so a context left behind would be inherited by the next
  *    stream that malloc places at the same address.
- *  - get_line() counts physical lines through tb_parse_context_note_line();
- *    without a begin() the count stays 0 and get_line's line-too-long error
- *    says "no parse context".
+ *  - get_line(), fread_string() and fread_clean_string() count physical
+ *    lines through tb_parse_context_note_line(); the getc() readers
+ *    (fread_number, fread_letter, fread_line) do not, so a line reported
+ *    after them can be low. Without a begin() the count stays 0 and
+ *    get_line's line-too-long error says "no parse context". index_boot()
+ *    begins a context for every world, mob, object, zone, shop, help,
+ *    trigger and quest file it loads.
  *  - There are TB_PARSE_CONTEXT_COUNT (16) slots. When all are in use,
- *    begin() does nothing and later calls on that stream are no-ops, so
- *    diagnostics fall back to "(parser context unavailable)".
+ *    begin() logs parse-context-exhausted at the caller's location, naming
+ *    the resource and parser (at most 5 records a minute; the next one says
+ *    how many were suppressed), and later calls on that stream are no-ops,
+ *    so diagnostics fall back to "(parser context unavailable)". Running
+ *    out of slots means some loader is missing tb_parse_context_end().
  */
-void tb_parse_context_begin(FILE *stream, const char *resource, const char *parser);
+#define TB_PARSE_CONTEXT_COUNT 16   /* parser-context slots */
+void tb_parse_context_begin_at(FILE *stream, const char *resource,
+                               const char *parser, const char *src_file,
+                               int src_line, const char *src_func);
+#define tb_parse_context_begin(stream, resource, parser) \
+  tb_parse_context_begin_at((stream), (resource), (parser), \
+                            __FILE__, __LINE__, __func__)
 void tb_parse_context_end(FILE *stream);
 void tb_parse_context_record(FILE *stream, const char *record_type, long record_id);
 void tb_parse_context_field(FILE *stream, const char *field);
@@ -150,6 +163,16 @@ void tb_correlation_end(unsigned long id);
 unsigned long tb_correlation_current(void);
 
 /* Fixed-size rolling breadcrumbs: no allocation, safe to use on error paths. */
+/** The one in-place truncation marker for free text that has to be cut to
+ * fit a buffer (log messages, breadcrumbs, parser details); grep for
+ * "[TRUNCATED]". Structured TB_ERROR records name their cut fields in
+ * truncated_fields= instead. */
+#define TB_TRUNC_MARKER "...[TRUNCATED]"
+/** Mark buf (size bytes, NUL-terminated) as truncated: the marker replaces
+ * the end of the visible text, so it is never hidden behind the NUL, and
+ * a buffer too small for all of it still shows as much as fits. */
+void tb_mark_truncated(char *buf, size_t size);
+
 void tb_breadcrumb(const char *kind, const char *detail);
 void tb_breadcrumbf(const char *kind, const char *format, ...)
                     __attribute__ ((format (printf, 2, 3)));

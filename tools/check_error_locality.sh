@@ -87,7 +87,7 @@ ratchet 'mudlog(..."SYSERR...")' 50 '(^|[^A-Za-z0-9_])mudlog[[:space:]]*\([^;]*"
 # a line that starts with the call and either ends it with ';' or carries its
 # arguments on to the next line. A checked call that continues a longer
 # condition, such as the line "    rename(to, from) != 0)", is not counted.
-ratchet "unchecked unlink/remove/rename" 3 \
+ratchet "unchecked unlink/remove/rename" 1 \
   '^[[:space:]]*(unlink|remove|rename)[[:space:]]*\(([^;]*\)[[:space:]]*;|[^;]*,[[:space:]]*$|[[:space:]]*$)'
 
 # TB_REPORT_* operations name the failing call or step ("fopen",

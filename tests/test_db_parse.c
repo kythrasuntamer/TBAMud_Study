@@ -48,6 +48,13 @@ static void tb_test_exit(int code)
 #define exit(code) tb_test_exit(code)
 /* NOLINTNEXTLINE(bugprone-suspicious-include): reach db.c's statics. */
 #include "db.c"
+
+/* index_boot() also reaches the shop and help loaders; these tests boot only
+ * world files, so those paths must never run here. */
+void boot_the_shops(FILE *shop_f, char *filename, int rec_count)
+{ (void)shop_f; (void)filename; (void)rec_count; TEST_FAIL_MESSAGE("boot_the_shops"); }
+char *one_word(char *argument, char *first_arg)
+{ (void)argument; (void)first_arg; TEST_FAIL_MESSAGE("one_word"); return NULL; }
 #undef exit
 
 /* ---------------------------------------------------------------------
@@ -1031,6 +1038,78 @@ static void parse_simple_mob_accepts_valid_position(void)
 
 static char social_dir[64];
 static char social_cwd[PATH_MAX];
+
+/* PR #37: index_boot() gives each world file a parse context, so a parser
+ * report names the file and its physical line.  Red before: nothing ever
+ * began a context, so get_line() said "no parse context for this file". */
+static void index_boot_parser_reports_name_file_and_line(void)
+{
+  char dir[64], cwd[PATH_MAX], longline[400], logged[8192];
+  FILE *fp, *log_capture, *saved_log = logfile;
+  size_t got;
+  room_rnum r;
+  volatile int exited = 1;
+
+  strlcpy(dir, "/tmp/tb_boot_XXXXXX", sizeof(dir));
+  TEST_ASSERT_NOT_NULL(mkdtemp(dir));
+  TEST_ASSERT_NOT_NULL(getcwd(cwd, sizeof(cwd)));
+  TEST_ASSERT_EQUAL_INT(0, chdir(dir));
+  TEST_ASSERT_EQUAL_INT(0, mkdir("world", 0700));
+  TEST_ASSERT_EQUAL_INT(0, mkdir(WLD_PREFIX, 0700));
+  fp = fopen(WLD_PREFIX INDEX_FILE, "w");
+  TEST_ASSERT_NOT_NULL(fp);
+  TEST_ASSERT_TRUE(fputs("1.wld\n$\n", fp) >= 0);
+  TEST_ASSERT_EQUAL_INT(0, fclose(fp));
+  /* Line 5 (the room's flag line) is longer than READ_SIZE. */
+  memset(longline, ' ', sizeof(longline) - 1);
+  longline[sizeof(longline) - 1] = '\0';
+  memcpy(longline, "0 0 0 0 0 0", 11);
+  fp = fopen(WLD_PREFIX "1.wld", "w");
+  TEST_ASSERT_NOT_NULL(fp);
+  TEST_ASSERT_TRUE(fprintf(fp, "#100\nA room~\nPlain.\n~\n%s\nS\n$\n", longline) > 0);
+  TEST_ASSERT_EQUAL_INT(0, fclose(fp));
+
+  room_fixture_use();          /* zone 1 covers the room; world is replaced */
+  world = NULL;
+  top_of_world = -1;
+  /* get_line() reports from utils.c, which this harness does not capture:
+   * read its record from the log instead. */
+  log_capture = tmpfile();
+  TEST_ASSERT_NOT_NULL(log_capture);
+  logfile = log_capture;
+  tb_test_exit_armed = 1;
+  if (setjmp(tb_test_exit_jmp) == 0) {
+    index_boot(DB_BOOT_WLD);
+    tb_test_exit_armed = 0;
+    exited = 0;
+  }
+  logfile = saved_log;
+  TEST_ASSERT_EQUAL_INT(0, fseek(log_capture, 0L, SEEK_SET));
+  got = fread(logged, 1, sizeof(logged) - 1, log_capture);
+  logged[got] = '\0';
+  TEST_ASSERT_EQUAL_INT(0, fclose(log_capture));
+
+  TEST_ASSERT_EQUAL_INT(0, exited);
+  TEST_ASSERT_NOT_NULL(strstr(logged, "op=line-too-long"));
+  TEST_ASSERT_NOT_NULL(strstr(logged, "resource=" WLD_PREFIX "1.wld"));
+  TEST_ASSERT_NOT_NULL(strstr(logged, "line 5 exceeds"));
+  TEST_ASSERT_NOT_NULL(strstr(logged, "parser=wld"));
+
+  for (r = 0; r <= top_of_world; r++) {
+    free(world[r].name);
+    free(world[r].description);
+  }
+  free(world);
+  world = NULL;
+  top_of_world = 0;
+  (void)remove(WLD_PREFIX "1.wld");
+  (void)remove(WLD_PREFIX INDEX_FILE);
+  (void)rmdir(WLD_PREFIX);
+  (void)rmdir("world");
+  TEST_ASSERT_EQUAL_INT(0, chdir(cwd));
+  (void)rmdir(dir);
+  room_fixture_free();
+}
 
 /* Write misc/socials.new under a fresh directory and chdir() into it. */
 static void social_fixture_use(const char *text)
@@ -2234,6 +2313,9 @@ static void load_zones_cancelled_variable_keeps_no_strings(void)
 int main(void)
 {
   UNITY_BEGIN();
+  /* First: parse_room() counts rooms in a function static that no test
+   * can reset, and index_boot() allocates exactly the rooms it counted. */
+  RUN_TEST(index_boot_parser_reports_name_file_and_line);
   RUN_TEST(load_zones_rejects_top_nowhere);
   RUN_TEST(fread_number_reports_out_of_range);
   RUN_TEST(fread_number_reads_limits_and_sums);

@@ -64,7 +64,8 @@ int damage_mtrigger(char_data *ch, char_data *victim, int dam, int attacktype)
 void bribe_mtrigger(char_data *ch, char_data *actor, int amount)
 { (void)ch; (void)actor; (void)amount; }
 void load_otrigger(obj_data *obj) { (void)obj; }
-int leave_mtrigger(char_data *actor, int dir) { (void)actor; (void)dir; return 1; }
+int leave_mtrigger(char_data *actor, int dir)
+{ return fx_fire(FX_LEAVE_MTRIG, actor, NULL, dir); }
 int leave_wtrigger(struct room_data *room, char_data *actor, int dir)
 { (void)room; (void)actor; (void)dir; return 1; }
 int leave_otrigger(struct room_data *room, char_data *actor, int dir)
@@ -180,6 +181,7 @@ void free_obj(struct obj_data *obj)
 
 /* ---- link-only stubs: not reached by the tests, or reached harmlessly -- */
 struct zone_data *zone_table;
+zone_rnum top_of_zone_table;   /* tests install a one-zone table */
 struct index_data **trig_index;
 struct trig_data *trigger_list;
 int top_of_trigt;
