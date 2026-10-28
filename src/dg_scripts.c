@@ -1952,6 +1952,26 @@ static int process_if(char *cond, void *go, struct script_data *sc,
     return 1;
 }
 
+/* TRUE when the script line p (builder text, leading blanks skipped) is the
+ * control keyword kw as a whole word: kw followed by blank or the end of the
+ * line. Prefix tests made 'else' match "elsewhere", 'end' match "endgame",
+ * and the block scanners' three-letter 'don' match "donate", so ordinary
+ * commands opened or closed blocks; the driver and the scanners now agree.
+ * "endif" (stock 14.trg) is still an 'end', and DG_LINE_IS_ELSEIF() accepts
+ * a condition glued to 'elseif' (stock 27.trg). */
+static int dg_line_is(const char *p, const char *kw)
+{
+  int n = (int) strlen(kw);   /* a short literal keyword */
+
+  return !strn_cmp(p, kw, n) && (!p[n] || isspace((unsigned char) p[n]));
+}
+
+/** 'end' or its common spelling 'endif'. p is evaluated twice. */
+#define DG_LINE_IS_END(p)     (dg_line_is((p), "end") || dg_line_is((p), "endif"))
+/** 'elseif', with or without a blank before its condition (the condition
+ * starts at p + 6). No command begins with "elseif". */
+#define DG_LINE_IS_ELSEIF(p)  (!strn_cmp((p), "elseif", 6))
+
 /* Scans for end of if-block.  returns the line containg 'end', or the last
  * line of the trigger if not found (reported to the builder). Nested if
  * blocks are skipped. Never returns NULL for a non-NULL cl. */
@@ -1970,7 +1990,7 @@ static struct cmdlist_element *find_end(trig_data *trig, struct cmdlist_element 
 
     if (!strn_cmp("if ", p, 3))
       c = find_end(trig, c);
-    else if (!strn_cmp("end", p, 3))
+    else if (DG_LINE_IS_END(p))
       return c;
 
     /* thanks to Russell Ryan for this fix */
@@ -2004,19 +2024,19 @@ static struct cmdlist_element *find_else_end(trig_data *trig,
     if (!strn_cmp("if ", p, 3))
       c = find_end(trig, c);
 
-    else if (!strn_cmp("elseif ", p, 7)) {
-      if (process_if(p + 7, go, sc, trig, type)) {
+    else if (DG_LINE_IS_ELSEIF(p)) {
+      if (process_if(p + 6, go, sc, trig, type)) {
         GET_TRIG_DEPTH(trig)++;
         return c;
       }
     }
 
-    else if (!strn_cmp("else", p, 4)) {
+    else if (dg_line_is(p, "else")) {
       GET_TRIG_DEPTH(trig)++;
       return c;
     }
 
-    else if (!strn_cmp("end", p, 3))
+    else if (DG_LINE_IS_END(p))
       return c;
 
     /* thanks to Russell Ryan for this fix */
@@ -2028,7 +2048,7 @@ static struct cmdlist_element *find_else_end(trig_data *trig,
 
   /* rryan: if we got here, it's the last line, if its not an end, log it. */
   for (p = c->cmd; *p && isspace(*p); p++); /* skip spaces */
-  if(strn_cmp("end", p, 3))
+  if (!DG_LINE_IS_END(p))
     script_log("Trigger VNum %d has 'if' without 'end'. (error 5)", GET_TRIG_VNUM(trig));
   return c;
 }
@@ -3332,8 +3352,7 @@ int script_driver(void *go_adress, trig_data *trig, int type, int mode)
         cl = find_else_end(trig, cl, go, sc, type);
     }
 
-    else if (!strn_cmp("elseif ", p, 7) ||
-       !strn_cmp("else", p, 4)) {
+    else if (DG_LINE_IS_ELSEIF(p) || dg_line_is(p, "else")) {
       /* If not in an if-block, ignore the extra 'else[if]' and warn about it. */
       if (GET_TRIG_DEPTH(trig) == 1) {
         script_log("Trigger VNum %d has 'else' without 'if'.",
@@ -3361,7 +3380,7 @@ int script_driver(void *go_adress, trig_data *trig, int type, int mode)
       /* NULL: the switch has no 'done' (reported); end the trigger. */
       if (!(cl = find_case(trig, cl, go, sc, type, p + 7)))
         break;
-    } else if (!strn_cmp("end", p, 3)) {
+    } else if (DG_LINE_IS_END(p)) {
       /* If not in an if-block, ignore the extra 'end' and warn about it. */
       if (GET_TRIG_DEPTH(trig) == 1) {
         script_log("Trigger VNum %d has 'end' without 'if'.",
@@ -3369,7 +3388,7 @@ int script_driver(void *go_adress, trig_data *trig, int type, int mode)
         continue;
       }
       GET_TRIG_DEPTH(trig)--;
-    } else if (!strn_cmp("done", p, 4)) {
+    } else if (dg_line_is(p, "done")) {
       /* if in a while loop, cl->original is non-NULL */
       if (cl->original) {
       char *orig_cmd = cl->original->cmd;
@@ -3401,12 +3420,12 @@ int script_driver(void *go_adress, trig_data *trig, int type, int mode)
          /* if we're falling through a switch statement, this ends it. */
         }
       }
-    } else if (!strn_cmp("break", p, 5)) {
+    } else if (dg_line_is(p, "break")) {
       if (!(cl = find_done(cl))) {
         report_unterminated_block(trig, "break");
         break;
       }
-    } else if (!strn_cmp("case", p, 4)) {
+    } else if (dg_line_is(p, "case") || dg_line_is(p, "default")) {
        /* Do nothing, this allows multiple cases to a single instance */
     }
 
@@ -3650,7 +3669,7 @@ find_case(struct trig_data *trig, struct cmdlist_element *cl,
   for (c = cl->next; c; c = c->next) {
     for (p = c->cmd; *p && isspace(*p); p++);
 
-    if (!strn_cmp("while ", p, 6) || !strn_cmp("switch", p, 6)) {
+    if (!strn_cmp("while ", p, 6) || !strn_cmp("switch ", p, 7)) {
       /* Skip the nested block; its 'done' is not ours. */
       if (!(c = find_done(c)))
         break;
@@ -3661,9 +3680,9 @@ find_case(struct trig_data *trig, struct cmdlist_element *cl,
       eval_op("==", result, value, matched, go, sc, trig);
       if (*matched && *matched != '0')
         return c;
-    } else if (!strn_cmp("default", p, 7))
+    } else if (dg_line_is(p, "default"))
       return c;
-    else if (!strn_cmp("done", p, 3))
+    else if (dg_line_is(p, "done"))
      return c;
   }
 
@@ -3688,7 +3707,7 @@ static struct cmdlist_element *find_done(struct cmdlist_element *cl)
     if (!strn_cmp("while ", p, 6) || !strn_cmp("switch ", p, 7)) {
       if (!(c = find_done(c)))
         return NULL;
-    } else if (!strn_cmp("done", p, 3))
+    } else if (dg_line_is(p, "done"))
       return c;
   }
 

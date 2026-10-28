@@ -1379,6 +1379,47 @@ static void damage_trigger_without_return_keeps_the_damage(void)
   TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
 }
 
+/* Run a one-trigger script on room world[1] from the top. */
+static void run_room_script(const char **lines)
+{
+  room_data *room = &world[1];
+  trig_data *t = make_trigger(WLD_TRIGGER, WTRIG_RANDOM, 0, lines);
+
+  attach_to_script(&SCRIPT(room), t);
+  script_driver(&room, t, WLD_TRIGGER, TRIG_NEW);
+}
+
+/* Value of world[1]'s global variable name, or NULL. */
+static const char *room_global(const char *name)
+{
+  struct trig_var_data *v;
+
+  for (v = SCRIPT(&world[1]) ? SCRIPT(&world[1])->global_vars : NULL; v; v = v->next)
+    if (!strcmp(v->name, name))
+      return v->value;
+  return NULL;
+}
+
+/* DGDOC-6: control keywords were matched as prefixes, so a line that only
+ * began with one (here "elsewhere") opened the else branch, and a glued
+ * "elseif%x% == 3" was taken as a plain else. "endif" still ends a block. */
+static void control_keywords_match_whole_words(void)
+{
+  const char *elsewhere[] = { "if 0", "set a 1", "elsewhere", "set a 2",
+                              "end", "global a", NULL };
+  const char *glued[] = { "set x 2", "if %x% == 1", "set d 1",
+                          "elseif%x% == 3", "set d 2", "else", "set d 3",
+                          "end", "global d", NULL };
+  const char *endif[] = { "if 1", "set c 1", "endif", "global c", NULL };
+
+  run_room_script(elsewhere);
+  TEST_ASSERT_NULL(room_global("a"));
+  run_room_script(glued);
+  TEST_ASSERT_EQUAL_STRING("3", room_global("d"));
+  run_room_script(endif);
+  TEST_ASSERT_EQUAL_STRING("1", room_global("c"));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -1435,5 +1476,6 @@ int main(void)
   RUN_TEST(script_stops_once_its_mob_is_extracted);
   RUN_TEST(mob_purging_itself_stops_without_a_report);
   RUN_TEST(damage_trigger_without_return_keeps_the_damage);
+  RUN_TEST(control_keywords_match_whole_words);
   return UNITY_END();
 }
