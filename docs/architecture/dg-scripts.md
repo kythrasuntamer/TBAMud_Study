@@ -246,10 +246,12 @@ Two ways exist, with different checks:
   `dg_scripts.c:do_detach()`, level `LVL_BUILDER`). They find the target by
   name or by vnum in the room/inventory. Attaching to a player requires
   `CONFIG_SCRIPT_PLAYERS`. Zone permission (`oasis.c:can_edit_zone()`, see
-  [olc.md](olc.md#builder-permissions)) is checked against the *target room*
-  for rooms, against the *target's prototype zone* for `detach` of mobiles
-  and objects, but against the *immortal's current room* for `attach` to
-  mobiles and objects.
+  [olc.md](olc.md#builder-permissions)) is checked against the *target's*
+  zone by both commands: the room's zone for rooms, the prototype's zone for
+  mobiles and objects, and for a player the zone of the room the player
+  stands in (`dg_char_edit_zone()`). A refusal is reported as
+  `dg/attach-denied` or `dg/detach-denied`. (Before DGDOC-2, `attach` checked
+  the immortal's own room and `detach` skipped the check for players.)
 * **Script commands** `attach <vnum> <uid>` and `detach <vnum|all> <uid>`
   (`dg_scripts.c:process_attach()`, `process_detach()`). The target is any
   UID; there is no zone check. A player target is refused unless
@@ -334,7 +336,7 @@ the trigger. The caller decides what that means:
 | Consume | `act.item.c` eat and drink, `spell_parser.c` quaff | blocks it. |
 | Cast (room, obj, mob) | `spell_parser.c:call_magic()` | cancels the spell. |
 | Death | `fight.c:raw_kill()` | suppresses the death cry. |
-| Damage | `fight.c:damage()` | **replaces the damage**: the return value is the new damage. A damage trigger that does not `return %damage%` (or another number) reduces the hit to 1. |
+| Damage | `fight.c:damage()` | **replaces the damage**: the return value is the new damage (`return -1` cancels the hit). A script that ends without `return` keeps the damage: `damage_mtrigger()` runs it through `script_driver_default()` with the damage as the default result, and a run the driver refuses leaves the damage unchanged. (Before DGDOC-5 such a trigger cut every hit to 1.) |
 | Login (room) | `interpreter.c:enter_player_game()` | ignored. |
 
 ### Who fires what
@@ -430,8 +432,13 @@ On entry the driver:
    most 11 frames can therefore be active at once.
 3. Records a breadcrumb (`tb_breadcrumbf()`) naming the trigger, owner and
    depth, so any later `TB_ERROR_*` record says which script was running.
-4. Snapshots the owner's identity: its UID, and for a mobile whether it was
-   already pending extraction (`MOB_NOTDEADYET`).
+4. Snapshots the owner's identity: its UID. A mobile or player owner that is
+   already pending extraction (`DEAD()`: `MOB_NOTDEADYET` or
+   `PLR_NOTDEADYET`) never gets this far: before the depth check the driver
+   reports `dg/owner-extracted`, frees the run's locals, sets the trigger's
+   `depth` to 0 and returns `SCRIPT_ERROR_CODE`, so a `wait` that expires, or
+   a random trigger that fires, in the pulse its mob died does not run
+   (DGDOC-4).
 5. Increments `depth` and calls `dg_script_execution_enter()`.
 6. For `TRIG_NEW`: sets the trigger's `depth` to 1, its loop counter to 0, and
    the script's `context` to 0. A restart keeps them.
@@ -455,12 +462,18 @@ classified in this order; the first match wins:
 | `end` | Close an `if` block (`depth--`); at depth 1 reported and ignored. |
 | `done` | Loop back to a `while`, or end a `switch`. |
 | `break` | Jump to the next `done` (`find_done()`). |
-| `case` | Nothing (allows fall-through between cases). |
+| `case`, `default` | Nothing (allows fall-through between cases). |
 | anything else | Expand variables with `var_subst()` into a `MAX_INPUT_LENGTH` buffer, then dispatch as a script command or a game command (next table). |
 
-These keywords are recognized **by prefix and before variable expansion**:
-`else` also matches `elsewhere`, `end` matches `endure`, `break` matches
-`breakfast`. Control flow can never come from a variable. The script
+These keywords are recognized **as whole words and before variable
+expansion**: `dg_line_is()` accepts a keyword followed by a blank or the end
+of the line, and the driver and every block scanner (`find_end()`,
+`find_else_end()`, `find_case()`, `find_done()`) use it, so `elsewhere`,
+`endure`, `breakfast` or `donate` are ordinary commands. Two stock spellings
+still work: `endif` is an `end`, and `elseif` may be glued to its condition
+(`elseif%arg%== x`). Before DGDOC-6 the keywords matched by prefix and the
+scanners compared only `don` for `done`. Control flow can never come from a
+variable. The script
 commands below, by contrast, are matched *after* expansion, so a variable can
 expand into one.
 
@@ -512,14 +525,16 @@ the body runs; if false, execution continues after the `done`. On reaching
 `done` with `original` set, the condition is evaluated again; true jumps back
 to the `while` line (the loop then advances to its body). Two limits apply:
 
-* every 30 iterations of the same loop (`cl->loops`), the driver inserts an
-  implicit `wait 1` (one pulse) and returns, so a long loop cannot starve the
-  game loop;
+* every 30 passes, counted in the trigger instance's own `GET_TRIG_LOOPS()`,
+  the driver inserts an implicit `wait 1` (one pulse) and returns, so a long
+  loop cannot starve the game loop;
 * when the run's total iterations (`GET_TRIG_LOOPS()`) reach 100, the run is
   stopped and "looped 100 times" is logged.
 
-`cl->loops` and `original` live in the shared command list, so concurrent
-instances of one trigger share the 30-iteration counter.
+`original` lives in the command list that the prototype and every instance
+share, but it is the same for all of them (a `done` line's `while` line). The
+pass counter used to be `cl->loops` in that shared list, so one instance's
+loop advanced or reset another's pause; it is now per instance.
 
 **`switch <expr>` / `case <value>` / `default` / `break` / `done`.**
 `find_case()` evaluates the expression once and scans forward, skipping
@@ -589,12 +604,14 @@ the driver **without** freeing the locals or resetting `depth`. The trigger is
 therefore busy (it will not fire again) until the rest of the script has run.
 
 When the event fires, `trig_wait_event()` frees its payload, clears
-`GET_TRIG_WAIT(trig)`, and checks that the owner pointer is still a live
-character, object or room by scanning `character_list`, `object_list` or
-`world[]` (comparing addresses, never dereferencing). If it is, it calls
-`script_driver(&go, trig, type, TRIG_RESTART)`. If not, it logs "Trigger
-restarted on unknown entity" and drops the continuation; the trigger keeps a
-non-zero `depth` and will never fire again. Normally an owner cannot vanish
+`GET_TRIG_WAIT(trig)`, and checks that the owner is still live: a character
+or object by scanning `character_list` or `object_list` (comparing
+addresses, never dereferencing), a room by resolving the room vnum the
+payload recorded with `real_room()` and checking that the room still holds
+the trigger. If it is, it calls `script_driver(&go, trig, type,
+TRIG_RESTART)`. If not, it reports `dg/wait-resume` (`dg/wait-owner-lost`
+for a room), logs "restart attempt on unknown entity", and ends the
+suspended run (locals freed, `depth` 0), so the trigger can fire again. Normally an owner cannot vanish
 while its trigger waits, because extracting the owner extracts its script,
 which cancels the wait (`extract_trigger()`). Rooms are the exception; see
 [The event queue](#the-event-queue).
@@ -780,10 +797,15 @@ wrap, and never while still registered.
 (`uid = UID_OUT_OF_RANGE`, 1,000,000,000) and a chain of `{uid, pointer}`
 entries.
 
-* `add_to_lookup_table(uid, ptr)`: adds an entry, or **rebinds** an existing
-  one to the new pointer with a `uid-rebind` warning. Rebinding is expected
-  when a player logs in while an older character with the same idnum still
-  awaits extraction.
+* `add_to_lookup_table(uid, ptr)`: adds an entry. For a UID already
+  registered (`lookup_rebind_allowed()`): the same pointer again changes
+  nothing; a player UID (an idnum, below `MOB_ID_BASE`) is **rebound** to the
+  new pointer with a `uid-rebind` warning, which is expected when a player
+  logs in while an older character with the same idnum still awaits
+  extraction; a mobile or object UID is never rebound (they are allocated
+  unique, so a second claimant is a bug): the entry keeps its entity and the
+  attempt is a `uid-rebind` error. The bucket's sentinel head is never
+  matched.
 * `remove_from_lookup_table(uid, ptr)`: removes the entry **only if it still
   maps to `ptr`**. Freeing that older character must not remove the live
   player's mapping, so a mismatch is reported (`uid-remove` warning) and the
@@ -913,21 +935,23 @@ After every non-control line, `script_driver()` calls
   driver sets the caller's object pointer to NULL and returns. This catches
   any way the object was freed: `opurge self`, purging its container, a
   forced `junk`, a nested script.
-* **Mobile owner:** gone if it was not pending extraction when the frame
-  started and is now (`MOB_NOTDEADYET`). The driver returns; the caller's
-  pointer stays valid until the end of the pulse.
+* **Mobile (or player) owner:** gone once it is pending extraction
+  (`DEAD()`), which it was not when the frame started (see step 4). It stays
+  allocated until `extract_pending_chars()`, so the run ends through the
+  normal cleanup (locals freed, `depth` 0) and the caller's pointer stays
+  valid. Unless the line was `mpurge` aimed at the mob itself
+  (`dg_mob_cmd_purges_self()`, the counterpart of `opurge self`), the stop is
+  reported as `dg/owner-extracted` with the script line.
 * **Room owner:** never gone.
 
 Each frame checks only its own owner, so nested scripts cannot hide or fake
 the result. Control-flow lines are not followed by the check; they only
 evaluate expressions, which can change fields but not free entities.
 
-Two consequences are worth knowing. A script can run on behalf of a mobile
-that is already pending extraction (for example a `wait` that expires in the
-pulse in which a player killed the mob); the check only notices extraction
-caused during the frame. And the check uses `MOB_FLAGGED()`, which is false
-for players, so a trigger on a player (`CONFIG_SCRIPT_PLAYERS`) keeps running
-after its owner is extracted.
+Two gaps an earlier version of this check had are closed (DGDOC-4): a run
+never starts or resumes for an owner already pending extraction (step 4), and
+a player owner (`CONFIG_SCRIPT_PLAYERS`) is covered, because `DEAD()` tests
+`PLR_NOTDEADYET` as well as `MOB_NOTDEADYET`.
 
 ### Recursion and loop limits
 
@@ -1012,15 +1036,14 @@ callback and always returns 0. `extract_trigger()` and `free_trigger()` cancel
 a trigger's pending wait, so an owner that is extracted takes its waits with
 it.
 
-Room owners are the weak spot. The payload stores `&world[rnum]`. When OLC
-adds or deletes a room, `genwld.c:add_room()` and `genwld.c:delete_room()`
-`RECREATE()` the `world` array, and `dg_handler.c:update_wait_events()` repoints
-only the rooms they shift. If `realloc` moved the array, every other room's
-pending wait still points into the old block. `trig_wait_event()` then fails
-to find the pointer in `world[]`, logs "Trigger restarted on unknown entity",
-and drops the rest of the script; the trigger stays busy and never fires again
-until the room's script is rebuilt. Nothing is dereferenced, so this is a
-behaviour fault, not a memory fault.
+Room owners are found again by vnum (D2-03). When OLC adds or deletes a
+room, `genwld.c:add_room()` and `genwld.c:delete_room()` `RECREATE()` the
+`world` array, and `dg_handler.c:update_wait_events()` repoints only the rooms
+they shift, so a saved `&world[rnum]` can point into the freed old block or at
+another room. The payload therefore also records the room's vnum, and
+`trig_wait_event()` resumes through `real_room()` of that vnum, never through
+the saved pointer; a room that no longer exists or no longer holds the
+trigger is reported as `dg/wait-owner-lost` and its suspended run ended.
 
 ### Invariants
 
@@ -1166,7 +1189,9 @@ list is for maintainers deciding whether a change widens or narrows it.
 * target an immortal with no-hassle on, or force a `LVL_GRGOD` and above
   (`valid_dg_target()`); immortals take no positive script damage;
 * raise a character's level to immortal (`level` is clamped to
-  `LVL_IMMORT - 1`);
+  `LVL_IMMORT - 1`), or change an immortal's level at all (the setter
+  refuses a player at `LVL_IMMORT` or above with `dg/field-target`,
+  DGDOC-1);
 * trigger command triggers as a protected immortal (those actors are skipped);
 * nest scripts more than 11 frames deep, loop more than 100 times per run, or
   run a line longer than `MAX_INPUT_LENGTH`;
@@ -1177,12 +1202,13 @@ list is for maintainers deciding whether a change widens or narrows it.
 
 **Where the limits are weaker than they look** (behaviour of this branch):
 
-* the `level` setter has no target check, so it can *lower* an immortal's
-  level to `LVL_IMMORT - 1`;
 * `mdoor`, `odoor` and `wdoor` edit exits anywhere, regardless of zone;
-* `wteleport` and `wmove` ignore god rooms, houses and private rooms;
-* the immortal `vdelete` command (level `LVL_BUILDER`) can delete any
-  entity's globals, including a player's saved variables, with no zone check.
+* `wteleport` and `wmove` ignore god rooms, houses and private rooms.
+
+The immortal `vdelete` command (level `LVL_BUILDER`) now follows `attach` and
+`detach` (DGDOC-3): the owner's zone must pass `can_edit_zone()`, and a player
+must rank below the builder unless it is the builder; a refusal is reported as
+`dg/vdelete-denied`.
 
 ## Trigger OLC
 
@@ -1229,10 +1255,11 @@ while a script runs, so no retired trigger can still hold the old list.
 prototype inserted at its sorted position. Every prototype above it gets
 `nr + 1`, and so does every live trigger and every other `CON_TRIGEDIT`
 session's scratch trigger whose rnum is at or above the insertion point.
-Nothing renumbers the trigger rnums held by `'T'` zone reset commands, live
-or in `zedit` sessions: after an insert, every `'T'` command for a higher
-trigger vnum names the trigger just below it, so resets attach the wrong
-trigger and `save_zone()` writes the wrong vnum. See
+The insert also shifts the trigger rnum (`arg2`) of every `'T'` zone reset
+command at or above the insertion point (DGDOC-10), the way `add_mobile()`
+and `add_object()` shift the mob and object rnums of reset commands. Like
+those, it updates `zone_table` only: a `zedit` session open at that moment
+keeps its own copy. See
 [olc.md](olc.md#renumbering-on-insert-and-delete) for the general renumbering
 pattern.
 
@@ -1280,7 +1307,8 @@ draft's list of trigger vnums. The ownership model (explained in a comment in
 * `tlist` lists triggers in a zone; `tcopy` copies a prototype through
   `trigedit_setup_existing()` and `trigedit_save()` (both in `oasis_*.c`, see
   [olc.md](olc.md)).
-* `vdelete <var|all> <uid>`: delete globals from any entity.
+* `vdelete <var|all> <uid>`: delete globals from an entity in a zone the
+  builder may edit (a player only below the builder's rank).
 
 ### Invariants
 
@@ -1330,21 +1358,24 @@ Events
 
 * Do not cancel an event from inside its own callback.
 * Clear every pointer to an event you cancel.
-* Room wait payloads point into `world[]`; anything that moves `world[]` must
-  repoint every room's waits.
+* A room wait resumes through the room vnum in its payload, never through
+  the saved `&world[rnum]`, which OLC can move.
 
 OLC
 
 * Saving a mobile or object prototype rebuilds every live instance's script
   (an object's old script is orphaned, not freed).
-* Inserting a trigger prototype renumbers prototypes, live triggers and other
-  drafts, but not `'T'` zone reset commands.
+* Inserting a trigger prototype renumbers prototypes, live triggers, other
+  drafts and `'T'` zone reset commands (not an open `zedit` session's copy).
 * `trigedit_save()` changes memory before it writes the disk.
 
-## Pending changes on audit fix branches
+## Changes merged from the audit fix branches
 
-The commits below exist only on the named branches and are **not** in this
-branch. Each was read on its branch. Several other DG fixes listed by
+When this guide was written, the commits below existed only on the named
+branches. All of them are now in the integrated tree, some reconciled with
+another fix of the same finding (the integration notes record which), so the
+table reads as a change log of behaviour described above. Each was read on
+its branch. Several other DG fixes listed by
 `git log` on those branches are already present here in another form (for
 example the per-frame owner check, the object dispatch snapshot, the bounded
 `wait`, the room UID namespace check and the bounded `one_phrase()`); they are
