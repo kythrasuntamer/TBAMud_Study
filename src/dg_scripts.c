@@ -40,7 +40,9 @@ static obj_data *find_obj(long n);
 static room_data *find_room(long n);
 static void do_stat_trigger(struct char_data *ch, trig_data *trig);
 static void script_stat(char_data *ch, struct script_data *sc);
-static int remove_trigger(struct script_data *sc, char *name);
+static int remove_trigger(struct script_data *sc, char *name,
+                          trig_vnum *vnum_out, char *name_out,
+                          size_t name_size);
 static int is_num(char *arg);
 static void eval_op(char *op, char *lhs, char *rhs, char *result, void *go,
           struct script_data *sc, trig_data *trig);
@@ -1193,8 +1195,14 @@ ACMD(do_attach)
  * trigger, including things like 2.beggar-death. Returns 0 if did not find the
  * trigger, otherwise 1.  If it matters, you might need to check to see if all 
  * the triggers were removed after this function returns, in order to remove 
- * the script. */
-static int remove_trigger(struct script_data *sc, char *name)
+ * the script.
+ *
+ * When vnum_out / name_out are non-NULL they receive the removed trigger's
+ * vnum and name, captured before the trigger is freed, so callers can report
+ * what they removed without instantiating a prototype copy. */
+static int remove_trigger(struct script_data *sc, char *name,
+                          trig_vnum *vnum_out, char *name_out,
+                          size_t name_size)
 {
   trig_data *i, *j;
   int num = 0, string = FALSE, n;
@@ -1237,6 +1245,11 @@ static int remove_trigger(struct script_data *sc, char *name)
   }
 
   if (i) {
+    if (vnum_out)
+      *vnum_out = GET_TRIG_VNUM(i);
+    if (name_out && name_size)
+      strlcpy(name_out, GET_TRIG_NAME(i) ? GET_TRIG_NAME(i) : "(unnamed)",
+              name_size);
     if (j) {
       j->next = i->next;
       extract_trigger(i);
@@ -1258,28 +1271,18 @@ static int remove_trigger(struct script_data *sc, char *name)
     return 0;
 }
 
-/* Names the trigger a detach argument selected, for the confirmation: the
- * prototype's vnum and name when it is a vnum, else the argument itself. */
-static const char *detach_label(const char *arg, char *buf, size_t size)
-{
-  trig_rnum rn = real_trigger(dg_parse_vnum(arg));
-
-  if (rn != NOTHING)
-    tb_snprintf(buf, size, "%d (%s)", trig_index[rn]->vnum,
-                GET_TRIG_NAME(trig_index[rn]->proto));
-  else
-    tb_snprintf(buf, size, "'%s'", arg);
-  return buf;
-}
-
 ACMD(do_detach)
 {
   char_data *victim = NULL;
   obj_data *object = NULL;
   struct room_data *room;
   char arg1[MAX_INPUT_LENGTH], arg2[MAX_INPUT_LENGTH], arg3[MAX_INPUT_LENGTH], *snum;
-  char label[MAX_INPUT_LENGTH * 2];
   char *trigger = 0;
+  /* Vnum and name of the trigger remove_trigger() actually removed. This
+   * used to instantiate the prototype named by arg3 with read_trigger() on
+   * every call, leaking one trigger (and bumping its live count) each time. */
+  char removed_name[MAX_INPUT_LENGTH];
+  trig_vnum removed_vnum = NOTHING;
   int num_arg;
   room_rnum rnum;
 
@@ -1324,9 +1327,10 @@ ACMD(do_detach)
       else
         snum = arg2;
 
-    if (remove_trigger(SCRIPT(room), snum)) {
-      send_to_char(ch, "Trigger %s removed from %d.\r\n",
-                   detach_label(snum, label, sizeof(label)), world[rnum].number);
+    if (remove_trigger(SCRIPT(room), snum, &removed_vnum, removed_name,
+                       sizeof(removed_name))) {
+      send_to_char(ch, "Trigger %d (%s) removed from %d.\r\n", removed_vnum,
+                   removed_name, world[rnum].number);
       
       if (!TRIGGERS(SCRIPT(room)))
         extract_script(room, WLD_TRIGGER);
@@ -1409,10 +1413,10 @@ ACMD(do_detach)
         send_to_char(ch, "All triggers removed from %s.\r\n", IS_NPC(victim) ? GET_SHORT(victim) : GET_NAME(victim));
       }
 
-      else if (trigger && remove_trigger(SCRIPT(victim), trigger)) {
-        send_to_char(ch, "Trigger %s removed from %s.\r\n",
-          detach_label(trigger, label, sizeof(label)),
-          IS_NPC(victim) ? GET_SHORT(victim) : GET_NAME(victim));
+      else if (trigger && remove_trigger(SCRIPT(victim), trigger, &removed_vnum,
+                                         removed_name, sizeof(removed_name))) {
+        send_to_char(ch, "Trigger %d (%s) removed from %s.\r\n", 
+          removed_vnum, removed_name, IS_NPC(victim) ? GET_SHORT(victim) : GET_NAME(victim));
 
         if (!TRIGGERS(SCRIPT(victim))) {
           extract_script(victim, MOB_TRIGGER);
@@ -1436,10 +1440,11 @@ ACMD(do_detach)
                 object->name);
       }
 
-      else if (trigger && remove_trigger(SCRIPT(object), trigger)) {
-        send_to_char(ch, "Trigger %s removed from %s.\r\n",
-          detach_label(trigger, label, sizeof(label)),
-          object->short_description ? object->short_description : object->name);
+      else if (trigger && remove_trigger(SCRIPT(object), trigger, &removed_vnum,
+                                         removed_name, sizeof(removed_name))) {
+        send_to_char(ch, "Trigger %d (%s) removed from %s.\r\n", 
+          removed_vnum, removed_name, object->short_description ? object->short_description : 
+          object->name);
         if (!TRIGGERS(SCRIPT(object))) {
           extract_script(object, OBJ_TRIGGER);
         }
@@ -2287,7 +2292,7 @@ static void process_detach(void *go, struct script_data *sc, trig_data *trig,
       extract_script(c, MOB_TRIGGER);
       return;
     }
-    if (remove_trigger(SCRIPT(c), trignum_s)) {
+    if (remove_trigger(SCRIPT(c), trignum_s, NULL, NULL, 0)) {
       if (!TRIGGERS(SCRIPT(c))) {
         extract_script(c, MOB_TRIGGER);
       }
@@ -2300,7 +2305,7 @@ static void process_detach(void *go, struct script_data *sc, trig_data *trig,
       extract_script(o, OBJ_TRIGGER);
       return;
     }
-    if (remove_trigger(SCRIPT(o), trignum_s)) {
+    if (remove_trigger(SCRIPT(o), trignum_s, NULL, NULL, 0)) {
       if (!TRIGGERS(SCRIPT(o))) {
         extract_script(o, OBJ_TRIGGER);
       }
@@ -2313,7 +2318,7 @@ static void process_detach(void *go, struct script_data *sc, trig_data *trig,
       extract_script(r, WLD_TRIGGER);
       return;
     }
-    if (remove_trigger(SCRIPT(r), trignum_s)) {
+    if (remove_trigger(SCRIPT(r), trignum_s, NULL, NULL, 0)) {
       if (!TRIGGERS(SCRIPT(r))) {
         extract_script(r, WLD_TRIGGER);
       }

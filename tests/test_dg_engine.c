@@ -678,6 +678,28 @@ static void detach_mobile_without_trigger_argument_is_refused(void)
   TEST_ASSERT_NULL(strstr(imm->desc->output, "not found"));
 }
 
+/* D1-11: do_detach instantiated the prototype named by its third argument
+ * with read_trigger() before validating anything, and never freed it. */
+static void detach_does_not_instantiate_a_trigger(void)
+{
+  const char *quiet[] = { "nop", NULL };
+  char_data *imm = make_imm();
+  int before;
+
+  attach_to_script(&SCRIPT(&test_rooms[0]),
+                   make_trigger(WLD_TRIGGER, WTRIG_RANDOM, 0, quiet));
+  before = test_trig_index.number;
+  immortal_command(do_detach, imm, "");
+  immortal_command(do_detach, imm, " room");
+  TEST_ASSERT_EQUAL_INT(before, test_trig_index.number);
+  /* The report names the trigger that was really removed. */
+  immortal_command(do_detach, imm, " room 100 9000");
+  TEST_ASSERT_NULL(SCRIPT(&test_rooms[0]));
+  TEST_ASSERT_EQUAL_INT(before - 1, test_trig_index.number);
+  TEST_ASSERT_NOT_NULL(strstr(imm->desc->output,
+                              "Trigger 9000 (test trigger) removed"));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -705,5 +727,6 @@ int main(void)
   RUN_TEST(wrapping_room_vnum_is_rejected);
   RUN_TEST(detach_object_without_trigger_argument_is_refused);
   RUN_TEST(detach_mobile_without_trigger_argument_is_refused);
+  RUN_TEST(detach_does_not_instantiate_a_trigger);
   return UNITY_END();
 }
