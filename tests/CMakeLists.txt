@@ -335,6 +335,10 @@ if(Python3_Interpreter_FOUND)
         COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/test_dg_trigedit_contract.py
                 ${MUD_SRCDIR}/dg_olc.c)
+    add_test(NAME test_olc_cleanup_contract
+        COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/test_olc_cleanup_contract.py
+                ${MUD_SRCDIR})
     add_test(NAME test_olc_entry_guard_contract
         COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/test_olc_entry_guard_contract.py

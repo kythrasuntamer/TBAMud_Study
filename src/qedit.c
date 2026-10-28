@@ -728,7 +728,7 @@ void qedit_parse(struct descriptor_data *d, char *arg)
       mudlog(BRF, LVL_BUILDER, TRUE, "SYSERR: OLC: qedit_parse(): "
         "Reached default case!");
       write_to_output(d, "Oops...\r\n");
-      break;
+      return;   /* the editor is gone: the menu below would use it */
   }
   /*-------------------------------------------------------------------*/
   /*. END OF CASE

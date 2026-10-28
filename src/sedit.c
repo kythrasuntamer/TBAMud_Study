@@ -803,7 +803,7 @@ void sedit_parse(struct descriptor_data *d, char *arg)
     cleanup_olc(d, CLEANUP_ALL);
     mudlog(BRF, LVL_BUILDER, TRUE, "SYSERR: OLC: sedit_parse(): Reached default case!");
     write_to_output(d, "Oops...\r\n");
-    break;
+    return;   /* the editor is gone: the menu below would use it */
   }
 
 /* If we get here, we have probably changed something, and now want to return 
