@@ -2738,6 +2738,30 @@ static int zone_cmd_vnums_in_range(const struct reset_com *cmd, int zone_vnum,
   return TRUE;
 }
 
+/** TRUE if a parsed zone command's table-index argument is in range: the
+ * wear position of 'E' (arg3; equipment[] and equipment_types[]) and the
+ * direction of 'D' (arg2; dir_option[] and dirs[]). zedit writes only valid
+ * ones, so a bad value comes from a hand-edited .zon file, and zedit's
+ * command list would index those name tables with it before any reset
+ * could disable it. Reports the bad argument. */
+static int zone_cmd_indexes_in_range(const struct reset_com *cmd, int zone_vnum,
+                                     const char *zname, int line_num)
+{
+  if (cmd->command == 'E' && !VALID_WEAR_POS(cmd->arg3)) {
+    TB_ERROR_MSG("db", "zone-parse", zname,
+                 "zone %d line %d cmd E wear position %d out of range 0..%d; "
+                 "cmd disabled", zone_vnum, line_num, cmd->arg3, NUM_WEARS - 1);
+    return FALSE;
+  }
+  if (cmd->command == 'D' && !VALID_DIR(cmd->arg2)) {
+    TB_ERROR_MSG("db", "zone-parse", zname,
+                 "zone %d line %d cmd D direction %d out of range 0..%d; "
+                 "cmd disabled", zone_vnum, line_num, cmd->arg2, NUM_OF_DIRS - 1);
+    return FALSE;
+  }
+  return TRUE;
+}
+
 #define Z	zone_table[zone]
 /* load the zone table and command tables */
 static void load_zones(FILE *fl, char *zonename)
@@ -2921,7 +2945,8 @@ static void load_zones(FILE *fl, char *zonename)
       exit(1);
     }
     ZCMD.line = line_num;
-    if (!zone_cmd_vnums_in_range(&ZCMD, Z.number, zname, line_num))
+    if (!zone_cmd_vnums_in_range(&ZCMD, Z.number, zname, line_num) ||
+        !zone_cmd_indexes_in_range(&ZCMD, Z.number, zname, line_num))
       ZCMD.command = '*';	/* a 'V' still owns its sarg1/sarg2 strings */
     cmd_no++;
   }

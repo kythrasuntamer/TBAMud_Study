@@ -1508,6 +1508,36 @@ static void check_object_clamps_weapon_dice(void)
   obj_index = NULL;
 }
 
+/* F1-16: load_zones() kept 'E 1 3201 1 40' and 'D 0 3200 42 1', and zedit's
+ * command list then read equipment_types[40] and dirs[42]. Both commands
+ * are now disabled at load, loudly; the last valid slot and direction
+ * (NUM_WEARS - 1, NUM_OF_DIRS - 1) stay. */
+static void load_zones_disables_bad_wear_position_and_direction(void)
+{
+  static const char text[] =
+    "#32\nbuilder~\nZone~\n3200 3299 30 2\n"
+    "M 0 3200 1 3200\n"
+    "E 1 3201 1 40\n"
+    "D 0 3200 42 1\n"
+    "E 1 3201 1 17\n"
+    "D 0 3200 9 1\n"
+    "S\n$\n";
+  struct reset_com *cmd;
+
+  TEST_ASSERT_EQUAL_INT(0, load_zone_text(text));
+  cmd = zone_table[top_of_zone_table].cmd;
+  TEST_ASSERT_EQUAL_CHAR('M', cmd[0].command);
+  TEST_ASSERT_EQUAL_CHAR('*', cmd[1].command);
+  TEST_ASSERT_EQUAL_CHAR('*', cmd[2].command);
+  TEST_ASSERT_EQUAL_CHAR('E', cmd[3].command);
+  TEST_ASSERT_EQUAL_CHAR('D', cmd[4].command);
+  TEST_ASSERT_EQUAL_INT(2, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("zone-parse", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail,
+                              "zone 32 line 7 cmd D direction 42"));
+  zone_load_fixture_free();
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -1566,5 +1596,6 @@ int main(void)
   RUN_TEST(parse_mobile_replaces_empty_short_description);
   RUN_TEST(check_object_repairs_attack_type_out_of_range);
   RUN_TEST(check_object_clamps_weapon_dice);
+  RUN_TEST(load_zones_disables_bad_wear_position_and_direction);
   return UNITY_END();
 }
