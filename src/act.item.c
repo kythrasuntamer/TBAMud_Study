@@ -23,6 +23,29 @@
 #include "act.h"
 #include "quest.h"
 
+/*
+ * Lifetime rules for this file.
+ *
+ * Who controls the input: command arguments come from players; object
+ * values (liquid type, weights, costs, container capacity) come from world
+ * files, OLC and DG scripts ('osetval'), and are range-checked before they
+ * index a table.
+ *
+ * Every perform_* helper runs DG triggers (get/drop/give/receive/wear/
+ * remove/consume), and a script can extract, move or swap any object or
+ * character: the object being handled, its container, its siblings in the
+ * same list, or the actor. Therefore:
+ *  - a perform_* helper re-validates what it touches after its trigger:
+ *    the object by script UID (obj_uid_matches) and location, the
+ *    container with container_still_reachable(), the equipment slot by
+ *    comparing GET_EQ again;
+ *  - after any perform_* call, a caller may use no pointer it read before
+ *    the call except through a UID re-check. Loops over object lists use
+ *    obj_iter_mark()/obj_iter_resume() rather than a saved next_content;
+ *  - helpers that return a status (perform_put, perform_get_from_container)
+ *    return FALSE when the container is gone, and the caller must stop.
+ */
+
 
 /* local function prototypes */
 /* do_get utility functions */
@@ -650,6 +673,11 @@ static void perform_drop_gold(struct char_data *ch, int amount, byte mode, room_
   }
 }
 
+/* Drops, donates (to room RDR) or junks obj, which ch carries. Runs the
+ * object's drop trigger and, for a plain drop, the room's; returns early
+ * (0) if either refuses or purged obj. The triggers may also purge
+ * siblings, so callers walking ch->carrying resume through a UID mark.
+ * Returns the junk reward in gold (0 unless obj was junked). */
 #define VANISH(mode) ((((mode) == SCMD_DONATE) || ((mode) == SCMD_JUNK)) ? \
 		      "  It vanishes in a puff of smoke!" : "")
 static int perform_drop(struct char_data *ch, struct obj_data *obj,
@@ -850,6 +878,11 @@ ACMD(do_drop)
   }
 }
 
+/* Gives obj (carried by ch) to vict. give_otrigger and receive_mtrigger
+ * return 0 when the object was purged or left ch's hands, so obj is
+ * valid whenever they allow the give; they may still purge siblings of
+ * obj or move vict, and callers walking ch->carrying resume through a UID
+ * mark. */
 static void perform_give(struct char_data *ch, struct char_data *vict,
 		       struct obj_data *obj)
 {
@@ -991,6 +1024,14 @@ ACMD(do_give)
   }
 }
 
+/** Adds weight (negative to subtract) to obj and keeps its holder's
+ * totals right: obj is lifted out of its room, carrier or container,
+ * changed, and put back, so IS_CARRYING_W and container weights follow.
+ * Precondition: obj is on the floor, carried, or inside another object.
+ * A worn object (worn_by set) is not supported: the change is skipped
+ * and only a SYSERR line is logged. Nothing stops the result going
+ * negative; callers (drinking, pouring) subtract at most the current
+ * contents. */
 void weight_change_object(struct obj_data *obj, int weight)
 {
   struct obj_data *tmp_obj;
@@ -1063,6 +1104,13 @@ static int drinkcon_proto_ok(struct obj_data *obj)
   return FALSE;
 }
 
+/** Removes the liquid's name (drinknames[value 2]) from obj's keyword
+ * list when a drink container is emptied.
+ * Ownership: obj->name may alias its prototype's string
+ * (obj_proto[rnum].name); it is copied before it is modified, and the
+ * object owns the result. Preconditions: a valid prototype rnum or
+ * NOTHING (unique rent objects), and a valid liquid type; otherwise the
+ * name is left as it is and the problem is reported. */
 void name_from_drinkcon(struct obj_data *obj)
 {
   const char *liqname;
@@ -1089,6 +1137,11 @@ void name_from_drinkcon(struct obj_data *obj)
   obj->name = new_name;
 }
 
+/** Appends drinknames[type] to obj's keyword list when an empty drink
+ * container is filled with liquid type. The new string is always owned by
+ * obj; the old one is freed unless it is the prototype's shared name.
+ * Same preconditions as name_from_drinkcon(), with type in
+ * [0, NUM_LIQ_TYPES). */
 void name_to_drinkcon(struct obj_data *obj, int type)
 {
   char *new_name;
@@ -1550,6 +1603,10 @@ static void wear_message(struct char_data *ch, struct obj_data *obj, int where)
   act(wear_messages[where][1], FALSE, ch, obj, 0, TO_CHAR);
 }
 
+/* Equips obj (carried by ch) at where. wear_otrigger returns 0 when obj
+ * was purged; obj->carried_by is re-checked because the script may have
+ * moved it. The trigger may purge siblings, so callers walking
+ * ch->carrying resume through a UID mark. */
 static void perform_wear(struct char_data *ch, struct obj_data *obj, int where)
 {
   /*
@@ -1773,6 +1830,10 @@ ACMD(do_grab)
   }
 }
 
+/* Moves the item worn at pos to ch's inventory. After remove_otrigger the
+ * slot is re-read: a script that removed, swapped or purged the item is
+ * reported ("remove-slot-changed") and nothing more is done. do_remove's
+ * loops index slots, not object pointers, so they need no mark. */
 static void perform_remove(struct char_data *ch, int pos)
 {
   struct obj_data *obj;
