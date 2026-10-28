@@ -101,6 +101,20 @@ room_rnum add_room(struct room_data *room)
     world[0] = *room;	/* Last place, in front. */
     copy_room_strings(&world[0], room);
   }
+  /* A new room starts empty.  The struct copy above also copied the
+   * caller's runtime lists; rcopy and redit 'copy' pass a room set up from a
+   * live room whose contents are still linked there, so keeping them would
+   * make two rooms share one object list whose IN_ROOM names the source. */
+  if (room->people || room->contents || room->events || room->script)
+    TB_WARN_MSG("olc", "room-add-shared-list", "room",
+                "room vnum %d: caller passed live%s%s%s%s; cleared in the new room",
+                room->number, room->people ? " people" : "",
+                room->contents ? " contents" : "", room->events ? " events" : "",
+                room->script ? " script" : "");
+  world[found].people = NULL;
+  world[found].contents = NULL;
+  world[found].events = NULL;
+  world[found].script = NULL;
   /* world[] was reallocated and shifted: re-point room event owners. */
   rebase_room_events();
 

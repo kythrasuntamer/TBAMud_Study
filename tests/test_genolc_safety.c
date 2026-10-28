@@ -567,6 +567,26 @@ static void delete_room_rebases_room_events(void)
 }
 
 /* ------------------------------------------------------------------------ */
+/* C2-04: a copied room does not share the source room's contents.          */
+/* ------------------------------------------------------------------------ */
+static void add_room_does_not_share_source_contents(void)
+{
+  struct obj_data *sword;
+  struct room_data nr;
+  make_zones(1); make_rooms(2); make_objs(1);
+  sword = make_instance(0);
+  obj_to_room(sword, 0);
+  nr = world[0];          /* as redit_setup_existing() + rcopy */
+  nr.number = 5;
+  add_room(&nr);
+  TEST_ASSERT_NULL(world[0].contents);
+  TEST_ASSERT_TRUE(world[1].contents == sword);
+  TEST_ASSERT_EQUAL_STRING("room-add-shared-list", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "contents"));
+  world[1].contents = NULL;
+}
+
+/* ------------------------------------------------------------------------ */
 /* Temporary world directory for the writers.                               */
 /* ------------------------------------------------------------------------ */
 static char test_root[] = "/tmp/tb-genolc-XXXXXX";
@@ -624,6 +644,7 @@ int main(void)
   RUN_TEST(delete_quest_restores_spec_on_questmaster_rnum);
   RUN_TEST(add_room_rebases_room_events);
   RUN_TEST(delete_room_rebases_room_events);
+  RUN_TEST(add_room_does_not_share_source_contents);
   failures = UNITY_END();
   leave_test_root();
   return failures;
