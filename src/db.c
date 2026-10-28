@@ -2794,7 +2794,9 @@ char *parse_object(FILE *obj_f, int nr)
     GET_OBJ_WEAR(obj_proto + i)[1] = 0;
     GET_OBJ_WEAR(obj_proto + i)[2] = 0;
     GET_OBJ_WEAR(obj_proto + i)[3] = 0;
-    GET_OBJ_AFFECT(obj_proto + i)[0] = flag_slot(asciiflag_conv_aff(f3), f3, "obj", nr);
+    /* t[3], parsed above: a 3-field line has no affect field, and sscanf()
+     * left f3 unset (re-parsing it read uninitialised stack bytes). */
+    GET_OBJ_AFFECT(obj_proto + i)[0] = t[3];
     GET_OBJ_AFFECT(obj_proto + i)[1] = 0;
     GET_OBJ_AFFECT(obj_proto + i)[2] = 0;
     GET_OBJ_AFFECT(obj_proto + i)[3] = 0;

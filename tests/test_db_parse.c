@@ -2052,6 +2052,44 @@ static void trigger_lines_see_their_owner_vnum(void)
   proto_fixture_free();
 }
 
+/* A legacy 3-field object line ("type extra wear") has no affect field,
+ * but the conversion parsed f3 for the affect flags anyway: sscanf() had
+ * left it unset, so it read uninitialised stack bytes (Valgrind:
+ * conditional jump on uninitialised value in asciiflag_conv_aff()). The
+ * 4-field form keeps its affect letters. */
+static void parse_object_converts_legacy_affect_field(void)
+{
+  static const char three[] =
+    "sword~\na sword~\nA sword lies here.~\n~\n"
+    "12 a b\n0 0 0 0\n1 2 3 4 5\n$\n";
+  static const char four[] =
+    "sword~\na sword~\nA sword lies here.~\n~\n"
+    "12 a b c\n0 0 0 0\n1 2 3 4 5\n$\n";
+  struct obj_data *obj;
+  FILE *fp;
+
+  gap_zone_fixture_use();
+  obj_proto = obj_proto_fixture;
+  obj_index = obj_index_fixture;
+  fp = stream_of(three, sizeof(three) - 1);
+  (void)parse_object(fp, 1060);
+  TEST_ASSERT_EQUAL_INT(0, fclose(fp));
+  obj = &obj_proto[top_of_objt];
+  TEST_ASSERT_EQUAL_INT(1, GET_OBJ_EXTRA(obj)[0]);	/* 'a' */
+  TEST_ASSERT_EQUAL_INT(2, GET_OBJ_WEAR(obj)[0]);	/* 'b' */
+  TEST_ASSERT_EQUAL_INT(0, GET_OBJ_AFFECT(obj)[0]);
+
+  fp = stream_of(four, sizeof(four) - 1);
+  (void)parse_object(fp, 1061);
+  TEST_ASSERT_EQUAL_INT(0, fclose(fp));
+  obj = &obj_proto[top_of_objt];
+  TEST_ASSERT_EQUAL_INT(8, GET_OBJ_AFFECT(obj)[0]);	/* 'c', affect bit 3 */
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  proto_fixture_free();
+  zone_table = NULL;
+  top_of_zone_table = 0;
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -2126,5 +2164,6 @@ int main(void)
   RUN_TEST(parse_mobile_rejects_converted_record_in_no_zone);
   RUN_TEST(load_zones_skips_blank_and_nul_lines);
   RUN_TEST(trigger_lines_see_their_owner_vnum);
+  RUN_TEST(parse_object_converts_legacy_affect_field);
   return UNITY_END();
 }
