@@ -2,9 +2,9 @@
 
 Do **not** copy downloaded files directly into `lib/world`. Existing zone
 numbers, per-record VNUMs, reset commands, special functions and triggers may
-conflict, even when filenames differ. Two Crimson 2 areas are installed
-(zones 47 and 58), converted by `tools/convert_crimson2.py`; see
-"Installed Crimson 2 areas" below. Nothing else is installed.
+conflict, even when filenames differ. Two Crimson 2 areas are installed by
+`tools/convert_crimson2.py` (Moria34 merged into stock zone 41, Shatterstone
+as zone 58); see "Installed Crimson 2 areas" below. Nothing else is installed.
 
 ## Sources to review
 
@@ -96,7 +96,7 @@ a validated `.zon` file and index. Do not copy it directly to
 `lib/world`. The source sample `chapel.are` contains resets and keyed
 exits, so the converter will currently **reject** it, by design.
 The only third-party areas in this repository are the two Crimson 2
-specimens (imports/quarantine/README.md) and their converted zones 47/58.
+specimens (imports/quarantine/README.md) and what was installed from them.
 
 ## SillyMUD converter status
 
@@ -244,10 +244,9 @@ Do not activate until ALL are true:
 7. A reviewed bridge connects an unoccupied existing exit to the imported
    area and back, with both directions tested in-game.
 
-The tools cover steps 3-5 and 7. The two installed Crimson 2 zones passed
-steps 3-6 (see below); step 1 is the owner's Crimson 2 exception, step 2
-remains open (author redistribution rights unverified), and step 7 is not
-done: the zones are not linked to the stock world yet.
+The tools cover steps 3-5 and 7. The installed Crimson 2 content passed
+steps 3-7 (see below); step 1 is the owner's Crimson 2 exception and step 2
+remains open (author redistribution rights unverified).
 
 ## Crimson 2: PvP source (see the owner-approved exception below)
 
@@ -268,54 +267,74 @@ Conversion must eliminate PvP-only commands, scripts, rewards, flags, arena/duel
 
 The source repository has separate `.wld`, `.mob`, `.obj`, `.zon` files in `dev/lib/areas` and nonstandard records; these **must not** be copied into live `lib/world` unconverted. The original source exception does not automatically clear third-party content licensing.
 
-## Installed Crimson 2 areas (zones 47 and 58)
+## Installed Crimson 2 areas
 
-Converted from the quarantined specimens by `tools/convert_crimson2.py`,
-which maps every field by its meaning in Crimson 2's own loader (src/db.c at
-c2admins/Crimson-2-MUD 2b7207b), reports every value it drops with
-`file:line vnum`, and refuses unresolved references. `tests/test_convert_crimson2.py`
-regenerates both zones and requires them to match the installed files byte
-for byte, so they cannot drift by hand edits.
+`tools/convert_crimson2.py` converts by the meaning each field has in
+Crimson 2's own loader (src/db.c at c2admins/Crimson-2-MUD 2b7207b), reports
+every value it drops with `file:line vnum`, and refuses unresolved
+references. What is installed, and how, is recorded in
+`imports/quarantine/crimson2/recipe.json`; reproduce it with
 
 ```sh
-python3 tools/convert_crimson2.py imports/quarantine/crimson2/Moria34 \
-  --zone 47 --offset 600 --out /tmp/c2 --drop-external \
-  --name "Mines of Moria, Levels 3-4 (Crimson 2)"
-python3 tools/convert_crimson2.py imports/quarantine/crimson2/Shatterstone \
-  --zone 58 --out /tmp/c2 --drop-external \
-  --name "Shatterstone (Crimson 2, unfinished)"
+python3 tools/convert_crimson2.py --recipe imports/quarantine/crimson2/recipe.json \
+  --area Shatterstone --out /tmp/c2 --install lib/world
+python3 tools/convert_crimson2.py --recipe imports/quarantine/crimson2/recipe.json \
+  --area Moria34 --out /tmp/c2 --install lib/world
 ```
 
-| Zone | Source | Vnums | Rooms / mobs / objs / resets |
-| --- | --- | --- | --- |
-| 47 | Moria34 | 4700-4799 (source 4100-4125, +600: they collided with stock zone 41) | 26 / 9 / 6 / 21 |
-| 58 | Shatterstone | 5800-5899 (source 5830-5841, unchanged) | 12 / 2 / 1 / 0 |
+(`--install` refuses to overwrite a zone or to append a merge twice).
+`tests/test_convert_crimson2.py` regenerates both from the recipe and requires
+zone 58 to match byte for byte and zone 41 to end with exactly the merged
+Moria34 additions, so neither can drift by hand edits.
 
-What the conversion changed (the full list prints when the tool runs):
-- **PvP stripped:** room flag NOPKILL (room 4715) and any ARENA flag are
-  dropped; no Crimson code, commands or scripts are imported.
+### Moria34: merged into stock zone 41
+
+Moria34 is Crimson's edition of the DikuMUD Mines of Moria levels 3-4 that
+already ship as zone 41: all 26 of its rooms are zone 41 rooms (25 with the
+same name; 4115 differs only in case). So no rooms are added. Only what is
+new is merged, into zone 41's own rooms, as Crimson's zone file placed it:
+
+| New in zone 41 | From Moria34 | Loaded |
+| --- | --- | --- |
+| mob 4108 Melcrin, sovereign of the trolls | mob 4108 | room 4115 (max 1), wielding obj 4105 |
+| mob 4109 the phantom | mob 4104 (stock 4104 is the orc) | rooms 4106 and 4113 (max 4) |
+| obj 4105 Blade of the moors trolls | obj 4105 | worn by Melcrin |
+
+Melcrin cast spells in Crimson, so it gets tbaMUD's `magic_user` spec proc
+(src/spec_assign.c). The Mage needs nothing: its counterpart, stock 4100,
+already casts through DG trigger 4100. Crimson's other zone 41 variants (the
+mage, troll, snake, thief, centipede, warrior, kobold and their items) are
+the stock records; zone 41 keeps its own.
+
+### Shatterstone: zone 58
+
+| Zone | Vnums | Rooms / mobs / objs / resets |
+| --- | --- | --- |
+| 58 Shatterstone (Crimson 2, unfinished) | 5830-5841 | 12 / 2 / 1 / 0 |
+
+- **Linked** from the Dwarven Kingdom: room 6542 "At The Bottom Of The
+  Mineshaft" `down` <-> 5830 "Overlooking the cavern" `up`, a plain two-way
+  exit (no door, no key). A deeper descent from the dwarven mines opens on a
+  ledge over a ruined dwarven city; zone 65 is the stock dwarven zone (levels
+  3-33) and 6542 is the deepest point of its mine.
+- **No resets.** The upstream zone is an unfinished template ("Blank Zone",
+  a "Blank Mob", no resets) and its rooms imply no particular loads, so none
+  are invented: the rooms are explorable and empty.
+- **The torch is an ordinary light.** In the template it carried +100 hitroll
+  and +145 damroll, and its keywords ("rusty hoop") did not include "torch".
+  The recipe overrides it to match the stock torch (obj 3030): take+hold, 24
+  hours of light, weight 1, cost 10, rent 10, level 0, keywords
+  "torch rusty hoop". Nothing loads it yet.
+
+### What the conversion changed (the full list prints when the tool runs)
+- **PvP stripped:** room flag NOPKILL (Moria34 room 4115, not installed) and
+  any ARENA flag are dropped; no Crimson code, commands or scripts are imported.
 - Crimson-only mechanics with no tbaMUD equivalent are dropped: act2/act3
-  words, creature classes (undead, giant), poisonous, regeneration, demon
-  flesh, magic resist, extra attacks and attack skills, teleport-block room
-  flags, room level limits, and weapon value 0.
-- Casters: the Mage (4700) and Melcrin (4708) listed Crimson spells; tbaMUD
-  gives them the `magic_user` spec proc (src/spec_assign.c) instead.
+  words, creature classes (undead, giant), demon flesh, magic resist, extra
+  attacks and attack skills, room level limits and weapon value 0.
 - Numbering that differs is mapped: anti-thief/anti-cleric bits swap,
   SPELL_IDENTIFY 53 -> 52, Crimson attack types -> tbaMUD's, object level
-  from Crimson's MINLVL flags, and keyword lists lose Crimson's "mob"/"obj"
-  prefix.
-- Exits into Crimson's own world (4099, 5100, 21400, 21420) are dropped.
+  from Crimson's MINLVL flags, colour codes `&X` -> `@X`, and keyword lists
+  lose Crimson's "mob"/"obj" prefix.
 
-Open owner decisions:
-- **Not linked.** Neither zone has an entrance from the stock world; use
-  `tools/bridge_areas.py` once an entry room is chosen. Immortals can
-  `goto 4700` / `goto 5830`.
-- **Zone 47 duplicates stock content.** Moria34 is Crimson's edition of the
-  same DikuMUD Mines of Moria levels 3-4 that ship as zone 41 (25 of 26
-  rooms share vnum and name). New in it: Melcrin, the Blade of the Moors
-  Trolls and the phantom.
-- **Zone 58 is an unfinished upstream template** ("Blank Zone", a "Blank
-  Mob", no resets); its torch carries +100 hitroll and +145 damroll. It boots
-  but loads nothing until resets are written.
-- Author redistribution rights remain unverified (see the README).
-
+Open: author redistribution rights remain unverified (see the README).
