@@ -980,25 +980,36 @@ static void add_object_releases_live_instance_state(void)
 {
   struct obj_data *inst, newobj;
   struct list_data *events = (struct list_data *)&newobj; /* opaque marker */
+  struct script_data *script;
+  struct trig_proto_list *triggers;
   make_zones(1); make_objs(1);
   give_proto_strings(0);
   inst = make_instance(0);
   inst->name = strdup("restrung live name");   /* instance-owned */
-  CREATE(inst->script, struct script_data, 1);
-  CREATE(inst->proto_script, struct trig_proto_list, 1);
+  CREATE(script, struct script_data, 1);
+  CREATE(triggers, struct trig_proto_list, 1);
+  inst->script = script;
+  inst->proto_script = triggers;
   inst->events = events;
   memset(&newobj, 0, sizeof(newobj));
   newobj.name = "new";
   newobj.short_description = "a new thing";
   TEST_ASSERT_EQUAL_UINT(0, add_object(&newobj, 10));
-  TEST_ASSERT_EQUAL_INT(1, scripts_extracted);
+  /* The restring is released.  The running script (variables, pending
+   * waits) and the instance's own trigger list are kept: oedit rebuilds
+   * them only when the prototype's trigger list changes. */
+  TEST_ASSERT_EQUAL_INT(0, scripts_extracted);
   TEST_ASSERT_TRUE(inst->name == obj_proto[0].name);
   TEST_ASSERT_EQUAL_STRING("new", inst->name);
-  TEST_ASSERT_NULL(inst->script);
-  TEST_ASSERT_NULL(inst->proto_script);
+  TEST_ASSERT_TRUE(inst->script == script);
+  TEST_ASSERT_TRUE(inst->proto_script == triggers);
   TEST_ASSERT_TRUE(inst->events == events);
   TEST_ASSERT_EQUAL_STRING("obj-proto-update", tb_captured_operation);
   inst->events = NULL;
+  inst->script = NULL;
+  inst->proto_script = NULL;
+  free(script);
+  free(triggers);
 }
 
 /* ------------------------------------------------------------------------ */

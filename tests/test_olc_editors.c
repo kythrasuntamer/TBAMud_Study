@@ -486,22 +486,16 @@ static int add_object_result = -1;   /* < 0: update in place */
 obj_rnum add_object(struct obj_data *newobj, obj_vnum ovnum)
 {
   obj_rnum r;
-  struct obj_data *obj;
   (void)newobj;
   if (add_object_result >= 0)
     return (obj_rnum)add_object_result;
   /* An update in place: genobj's update_all_objects() struct-copies the
-   * prototype over each live instance, so script and proto_script become
-   * the prototype's (NULL). */
+   * prototype over each live instance but keeps the instance's own script
+   * and trigger list, which this model leaves untouched. */
   if ((r = real_object(ovnum)) == NOTHING)
     return r;
   /* copy_object(&obj_proto[r], newobj) is a struct copy as well. */
   obj_proto[r].proto_script = newobj->proto_script;
-  for (obj = object_list; obj; obj = obj->next)
-      if (obj->item_number == r) {
-        obj->script = NULL;
-        obj->proto_script = NULL;
-      }
   return r;
 }
 
@@ -1209,6 +1203,7 @@ static void test_oedit_save_releases_live_instance_scripts_first(void)
   OLC_NUM(d) = 3001;
   oedit_setup_existing(d, 1);
   STATE(d) = CON_OEDIT;
+  OLC_SCRIPT(d) = make_trig_list(1);    /* a changed list: rebuild */
 
   oedit_save_internally(d);
 
@@ -1216,6 +1211,8 @@ static void test_oedit_save_releases_live_instance_scripts_first(void)
   TEST_ASSERT_EQUAL_PTR(&instance, last_extracted_thing);
   TEST_ASSERT_NULL(instance.proto_script);
   TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  free_trig_list(obj_proto[1].proto_script);
+  obj_proto[1].proto_script = NULL;
   object_list = NULL;
 }
 
@@ -2105,6 +2102,123 @@ static void test_zedit_retyping_a_global_drops_its_strings(void)
   free_zedit_session(d);
 }
 
+
+/* ------------------------------------------------------------------ */
+/* DG docs item 7: a save rebuilt the scripts of every live instance,  */
+/* discarding their variables and pending waits, even when the trigger */
+/* list had not changed.                                               */
+/* ------------------------------------------------------------------ */
+static void test_oedit_save_with_unchanged_triggers_keeps_live_scripts(void)
+{
+  struct descriptor_data *d = &builder_desc;
+  struct obj_data instance;
+  struct script_data fake_script;
+  struct trig_proto_list *instance_list = make_trig_list(2);
+
+  make_objects(3);
+  obj_proto[1].proto_script = make_trig_list(2);
+  memset(&instance, 0, sizeof(instance));
+  memset(&fake_script, 0, sizeof(fake_script));
+  instance.item_number = 1;
+  instance.script = &fake_script;
+  instance.proto_script = instance_list;
+  object_list = &instance;
+
+  OLC_NUM(d) = 3001;
+  oedit_setup_existing(d, 1);
+  STATE(d) = CON_OEDIT;
+  OLC_SCRIPT(d) = make_trig_list(2);      /* the same vnums: unchanged */
+
+  oedit_save_internally(d);
+
+  TEST_ASSERT_EQUAL_INT(0, extract_script_calls);
+  TEST_ASSERT_EQUAL_PTR(&fake_script, instance.script);
+  TEST_ASSERT_EQUAL_PTR(instance_list, instance.proto_script);
+  TEST_ASSERT_EQUAL_INT(1, free_proto_calls);   /* the old prototype list */
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  free_trig_list(instance_list);
+  free_trig_list(obj_proto[1].proto_script);
+  obj_proto[1].proto_script = NULL;
+  object_list = NULL;
+}
+
+/* One live mob of prototype 3001 (rnum 1) holding a script, and a medit
+ * session saving 3001 with the given trigger list. */
+static struct char_data live_mob;
+static struct script_data live_mob_script;
+
+static void medit_save_with_live_mob(struct trig_proto_list *proto_list,
+                                     struct trig_proto_list *live_list,
+                                     struct trig_proto_list *edited)
+{
+  struct descriptor_data *d = &builder_desc;
+  struct char_data *scratch;
+  int i;
+
+  mob_index = calloc(3, sizeof(*mob_index));
+  mob_proto = calloc(3, sizeof(*mob_proto));
+  TEST_ASSERT_NOT_NULL(mob_index);
+  TEST_ASSERT_NOT_NULL(mob_proto);
+  for (i = 0; i < 3; i++) {
+    mob_index[i].vnum = 3000 + i;
+    mob_proto[i].nr = i;
+  }
+  top_of_mobt = 2;
+  mob_proto[1].proto_script = proto_list;
+
+  memset(&live_mob, 0, sizeof(live_mob));
+  memset(&live_mob_script, 0, sizeof(live_mob_script));
+  live_mob.nr = 1;
+  live_mob.script = &live_mob_script;
+  live_mob.proto_script = live_list;
+  character_list = &live_mob;
+
+  CREATE(scratch, struct char_data, 1);
+  scratch->nr = 1;
+  OLC_MOB(d) = scratch;
+  OLC_NUM(d) = 3001;
+  STATE(d) = CON_MEDIT;
+  OLC_SCRIPT(d) = edited;
+
+  medit_save_internally(d);
+
+  free(scratch);
+  OLC_MOB(d) = NULL;
+  character_list = NULL;
+}
+
+static void free_medit_fixture(void)
+{
+  free_trig_list(mob_proto[1].proto_script);
+  free(mob_index); mob_index = NULL;
+  free(mob_proto); mob_proto = NULL;
+  top_of_mobt = 0;
+}
+
+static void test_medit_save_with_unchanged_triggers_keeps_live_scripts(void)
+{
+  struct trig_proto_list *live_list = make_trig_list(1);
+
+  medit_save_with_live_mob(make_trig_list(1), live_list, make_trig_list(1));
+
+  TEST_ASSERT_EQUAL_INT(0, extract_script_calls);
+  TEST_ASSERT_EQUAL_PTR(&live_mob_script, live_mob.script);
+  TEST_ASSERT_EQUAL_PTR(live_list, live_mob.proto_script);
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  free_trig_list(live_list);
+  free_medit_fixture();
+}
+
+static void test_medit_save_with_changed_triggers_rebuilds_live_scripts(void)
+{
+  medit_save_with_live_mob(make_trig_list(1), make_trig_list(1), make_trig_list(2));
+
+  TEST_ASSERT_EQUAL_INT(1, extract_script_calls);
+  TEST_ASSERT_EQUAL_PTR(&live_mob, last_extracted_thing);
+  TEST_ASSERT_NULL(live_mob.proto_script);       /* freed, then rebuilt */
+  free_medit_fixture();
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -2161,5 +2275,8 @@ int main(void)
   RUN_TEST(test_oedit_save_outside_every_zone_keeps_live_scripts);
   RUN_TEST(test_redit_copies_incomplete_world_exdesc_and_reports_it);
   RUN_TEST(test_zedit_retyping_a_global_drops_its_strings);
+  RUN_TEST(test_oedit_save_with_unchanged_triggers_keeps_live_scripts);
+  RUN_TEST(test_medit_save_with_unchanged_triggers_keeps_live_scripts);
+  RUN_TEST(test_medit_save_with_changed_triggers_rebuilds_live_scripts);
   return UNITY_END();
 }

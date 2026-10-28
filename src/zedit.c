@@ -337,6 +337,19 @@ void olc_free_script_copy(struct descriptor_data *d)
   OLC_SCRIPT(d) = NULL;
 }
 
+/* TRUE when two trigger lists name the same trigger vnums in the same order
+ * (two empty lists are equal).  oedit and medit compare the prototype's list
+ * with the session's edited copy: only a changed list makes live instances
+ * rebuild their scripts, which discards their variables and pending waits. */
+int olc_trig_lists_equal(const struct trig_proto_list *a,
+                         const struct trig_proto_list *b)
+{
+  for (; a && b; a = a->next, b = b->next)
+    if (a->vnum != b->vnum)
+      return FALSE;
+  return a == NULL && b == NULL;
+}
+
 ACMD(do_oasis_zedit)
 {
   int number = NOWHERE, save = 0, real_num;

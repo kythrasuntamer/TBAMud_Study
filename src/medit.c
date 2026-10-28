@@ -274,12 +274,13 @@ static void init_mobile(struct char_data *mob)
  * OLC_SCRIPT(d) holds the edited trigger list. add_mobile() overwrites the
  * prototype by struct copy and does not take ownership of proto_script:
  * this function frees the previous list, gives the prototype OLC_SCRIPT
- * (clearing the session's handle) and rebuilds live mobs' triggers.
+ * (clearing the session's handle) and, when the list changed, rebuilds
+ * live mobs' triggers.
  * Postcondition on insert: other sessions' mobile rnums were moved.
  * Returns FALSE, after reporting medit-save, when nothing was saved. */
 static int medit_save_checked(struct descriptor_data *d)
 {
-  int i;
+  int i, rebuild_scripts;
   mob_rnum new_rnum, existing;
   struct char_data *mob;
   struct trig_proto_list *old_proto;
@@ -290,6 +291,10 @@ static int medit_save_checked(struct descriptor_data *d)
    * medit_setup_existing) over the prototype, so after it returns the old
    * trigger list is reachable only through this pointer. */
   old_proto = i ? NULL : mob_proto[existing].proto_script;
+  /* Rebuilding a live mob's triggers discards its script variables and
+   * pending waits: do it only when the trigger list changed.  A new mob has
+   * no live instances. */
+  rebuild_scripts = !i && !olc_trig_lists_equal(old_proto, OLC_SCRIPT(d));
 
   /* Invariant: the scratch copy's nr is the rnum of the prototype this
    * session edits (OLC_NUM), or NOBODY for a new one. add_mobile()'s update
@@ -326,7 +331,7 @@ static int medit_save_checked(struct descriptor_data *d)
   OLC_SCRIPT(d) = NULL; /* now owned by the prototype; see cleanup_olc */
 
   /* this takes care of the mobs currently in-game */
-  for (mob = character_list; mob; mob = mob->next) {
+  for (mob = character_list; rebuild_scripts && mob; mob = mob->next) {
     if (GET_MOB_RNUM(mob) != new_rnum)
       continue;
 

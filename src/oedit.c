@@ -546,17 +546,17 @@ void oedit_setup_existing(struct descriptor_data *d, int real_num)
  * NULL; OLC_SCRIPT(d) is its edited trigger list (or NULL).
  * add_object() overwrites the prototype by struct copy and, for an existing
  * prototype, struct-copies it over every live instance (update_all_objects
- * keeps only location and list fields). So this function, not add_object,
- * owns: tearing down each instance's script and proto list beforehand,
- * freeing the prototype's previous trigger list, giving the prototype
- * OLC_SCRIPT (and clearing the session's handle), and rebuilding every
- * instance's triggers.
+ * keeps location, list fields, events, script and trigger list). So this
+ * function, not add_object, owns: freeing the prototype's previous trigger
+ * list, giving the prototype OLC_SCRIPT (and clearing the session's
+ * handle), and, only when the trigger list changed, tearing down each
+ * instance's script and proto list beforehand and rebuilding them after.
  * Postcondition on insert: every other open session's object rnums were
  * moved (olc_renumber_sessions). Delete renumbers in OEDIT_DELETE.
  * Returns FALSE, after reporting oedit-save, when nothing was saved. */
 static int oedit_save_checked(struct descriptor_data *d)
 {
-  int i;
+  int i, rebuild_scripts;
   obj_rnum robj_num, existing;
   zone_rnum rznum;
   struct obj_data *obj;
@@ -581,15 +581,16 @@ static int oedit_save_checked(struct descriptor_data *d)
    * oedit_setup_existing) over the prototype, so after it returns the old
    * trigger list is reachable only through this pointer. */
   old_proto = i ? NULL : obj_proto[existing].proto_script;
+  /* add_object() leaves each live instance's script (triggers, variables,
+   * pending waits) and its private trigger list as they are.  Rebuilding
+   * them discards that state, so do it only when the trigger list changed.
+   * A new object has no live instances. */
+  rebuild_scripts = !i && !olc_trig_lists_equal(old_proto, OLC_SCRIPT(d));
 
-  /* add_object() -> update_all_objects() struct-copies the prototype over
-   * every live instance and keeps only location and list fields, so each
-   * instance's script (triggers, globals, pending waits) and its private
-   * proto_script list would be overwritten with the prototype's NULLs and
-   * leaked, leaving its triggers orphaned on trigger_list. Tear them down
+  /* The list changed: tear each instance's script and trigger list down
    * properly first; the refresh loop below rebuilds them from the new
    * prototype. */
-  if (!i)
+  if (rebuild_scripts)
     for (obj = object_list; obj; obj = obj->next) {
       if (obj->item_number != existing)
         continue;
@@ -617,12 +618,13 @@ static int oedit_save_checked(struct descriptor_data *d)
   OLC_SCRIPT(d) = NULL; /* now owned by the prototype; see cleanup_olc */
 
   /* this takes care of the objects currently in-game */
-  for (obj = object_list; obj; obj = obj->next) {
+  for (obj = object_list; rebuild_scripts && obj; obj = obj->next) {
     if (obj->item_number != robj_num)
       continue;
     /* Invariant: the teardown above released every instance's script, and
-     * a prototype never carries one, so anything here was struct-copied
-     * from the prototype and is shared. Detach it without freeing. */
+     * add_object() leaves instance scripts as they are, so nothing is here.
+     * Anything that is has no known owner: detach it without freeing (a
+     * leak, never a double free). */
     if (SCRIPT(obj) || obj->proto_script) {
       TB_ERROR_MSG("olc", "oedit-script-refresh", "object",
                    "obj vnum %d instance uid %ld still holds %s%s after add_object; detached unfreed",
