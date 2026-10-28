@@ -1,0 +1,25 @@
+# Reproducer: a mob's memory of its attacker leaks at shutdown.
+#
+# Run:  tests/e2e/soak_gameplay.py --circle <ASan build>/bin/circle \
+#           --replay tests/e2e/repro_mob_memory_shutdown_leak.txt
+# Expect (unfixed code), after "shutdown die":
+#   ERROR: LeakSanitizer: Direct leak of 16 byte(s) in 1 object(s)
+#     #2 remember mobact.c:194   #3 damage fight.c:676   #4 hit fight.c
+#     #5 do_hit act.offensive.c
+#
+# Cause: damage() makes a MOB_MEMORY victim remember() a player attacker
+# (one memory_rec per attacker).  Only extract_char_final() releases that
+# list (clearMemory()); destroy_db() frees every live character with
+# free_char(), which never touches MEMORY(ch).  Any memory mob (cityguards,
+# Peacekeepers, ...) that was attacked by a player and is still alive at
+# shutdown leaks its records.  Shutdown-only: a mob that dies or is purged is
+# extracted and cleared.
+#
+# One exchange is enough: remember() runs when the victim starts fighting,
+# hit or miss.  Alric stays level 1 so the Peacekeeper (about 176 hp)
+# survives until the harness sends "shutdown die" right after this script.
+create Soakimp w
+create Alric w
+Soakimp: teleport alric 3044
+Soakimp: at 3044 load mob 3059 1
+Alric: hit peacekeeper
