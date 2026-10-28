@@ -310,7 +310,7 @@ int can_wear_on_pos(struct obj_data *obj, int pos)
  */
 struct char_data *find_char(long n)
 {
-  if (n>=ROOM_ID_BASE) /* See note in dg_scripts.h */
+  if (!UID_IS_CHAR(n)) /* See note in dg_scripts.h */
     return NULL;
 
   return find_char_by_uid_in_lookup_table(n);
@@ -323,7 +323,7 @@ struct char_data *find_char(long n)
  */
 static obj_data *find_obj(long n)
 {
-  if (n < OBJ_ID_BASE) /* see note in dg_scripts.h */
+  if (!UID_IS_OBJ(n)) /* see note in dg_scripts.h */
     return NULL;
 
   return find_obj_by_uid_in_lookup_table(n);
@@ -385,7 +385,7 @@ static room_data *find_room(long n)
    * turn, so a UID outside this one is not an error here. The vnum bound is
    * IDXTYPE_MAX, as in dg_parse_vnum(), so it also holds for signed builds
    * where NOWHERE is -1. */
-  if (n < ROOM_ID_BASE || n >= OBJ_ID_BASE)
+  if (!UID_IS_ROOM(n))
     return NULL;
   n -= ROOM_ID_BASE;
   if (n >= IDXTYPE_MAX) {
@@ -3699,7 +3699,7 @@ static struct obj_data *find_obj_by_uid_in_lookup_table(long uid)
 int has_obj_by_uid_in_lookup_table(long uid)
 {
   /* Only object-range UIDs name objects; see note in dg_scripts.h. */
-  return uid >= OBJ_ID_BASE && find_element_by_uid_in_lookup_table(uid) != NULL;
+  return UID_IS_OBJ(uid) && find_element_by_uid_in_lookup_table(uid) != NULL;
 }
 
 /* Validate both the object UID namespace and the original allocation's
@@ -3707,7 +3707,7 @@ int has_obj_by_uid_in_lookup_table(long uid)
 int obj_uid_matches(long uid, const obj_data *obj)
 {
   struct lookup_table_t *entry;
-  if (!obj || uid < OBJ_ID_BASE)
+  if (!obj || !UID_IS_OBJ(uid))
     return FALSE;
   entry = find_element_by_uid_in_lookup_table(uid);
   return entry && entry->c == (const void *)obj;

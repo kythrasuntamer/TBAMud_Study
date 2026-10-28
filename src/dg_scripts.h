@@ -475,6 +475,13 @@ void dg_teleport_all(room_rnum from, room_rnum to);
 #define ROOM_ID_BASE    (10000000 + MOB_ID_BASE) /* 10000000 Mobs */
 #define OBJ_ID_BASE     (10000000 + ROOM_ID_BASE) /* 10000000 Rooms */
 
+/* Which namespace a UID belongs to (see the ranges above). Each resolver
+ * accepts only its own range, so an object UID can never alias a room.
+ * Evaluate u more than once: pass a plain long. */
+#define UID_IS_CHAR(u)  ((u) > 0 && (u) < ROOM_ID_BASE)
+#define UID_IS_ROOM(u)  ((u) >= ROOM_ID_BASE && (u) < OBJ_ID_BASE)
+#define UID_IS_OBJ(u)   ((u) >= OBJ_ID_BASE)
+
 #define SCRIPT(o)		  ((o)->script)
 #define SCRIPT_MEM(c)             ((c)->memory)
 
