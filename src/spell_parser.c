@@ -248,6 +248,18 @@ int call_magic(struct char_data *caster, struct char_data *cvict,
     return (0);
   }
 
+  /* The cast triggers and the room flag checks below index world[] with
+   * the caster's room. A caster stranded in NOWHERE by an earlier, reported
+   * failure (see extract_char_final()) can still type 'cast': refuse it
+   * rather than read past world[]. */
+  if (!VALID_ROOM_RNUM(IN_ROOM(caster))) {
+    TB_ERROR_MSG("magic", "caster-nowhere", "call_magic",
+                 "spell %d casttype %d by " DIAG_CHAR_FMT " from no valid "
+                 "room (rnum %d); refused", spellnum, casttype,
+                 DIAG_CHAR(caster), (int) IN_ROOM(caster));
+    return (0);
+  }
+
   /* Snapshot the object's identity before any script can free it. */
   ouid = ovict ? obj_script_id(ovict) : 0;
 

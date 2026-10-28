@@ -66,9 +66,30 @@ ASPELL(spell_create_water)
   }
 }
 
+/* Recall, teleport and summon move a character, and summon finds its
+ * victim by name across the world. A character stranded in NOWHERE by an
+ * earlier, reported failure (see extract_char_final()) cannot be moved: its
+ * zone flags would be read from zone_table[] out of bounds and
+ * char_from_room() aborts on it. Report the spell, the stranded character
+ * and the caster, and refuse. */
+static bool spell_target_placed(struct char_data *ch, struct char_data *victim,
+                                const char *spell)
+{
+  if (VALID_ROOM_RNUM(IN_ROOM(victim)))
+    return TRUE;
+  TB_ERROR_MSG("magic", "victim-nowhere", spell,
+               DIAG_CHAR_FMT " is in no valid room (rnum %d); %s by "
+               DIAG_CHAR_FMT " refused", DIAG_CHAR(victim),
+               (int) IN_ROOM(victim), spell, DIAG_CHAR(ch));
+  send_to_char(ch, "You failed.\r\n");
+  return FALSE;
+}
+
 ASPELL(spell_recall)
 {
   if (victim == NULL || IS_NPC(victim))
+    return;
+  if (!spell_target_placed(ch, victim, "recall"))
     return;
 
   if (ZONE_FLAGGED(GET_ROOM_ZONE(IN_ROOM(victim)), ZONE_NOASTRAL)) {
@@ -92,6 +113,8 @@ ASPELL(spell_teleport)
   int tries, max_tries = 10 * ((int) top_of_world + 1);
 
   if (victim == NULL || IS_NPC(victim))
+    return;
+  if (!spell_target_placed(ch, victim, "teleport"))
     return;
 
   if (ZONE_FLAGGED(GET_ROOM_ZONE(IN_ROOM(victim)), ZONE_NOASTRAL)) {
@@ -132,6 +155,8 @@ ASPELL(spell_teleport)
 ASPELL(spell_summon)
 {
   if (ch == NULL || victim == NULL)
+    return;
+  if (!spell_target_placed(ch, victim, "summon"))
     return;
 
   if (GET_LEVEL(victim) > MIN(LVL_IMMORT - 1, level + 3)) {

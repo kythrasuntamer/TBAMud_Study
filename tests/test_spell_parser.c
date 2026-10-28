@@ -384,6 +384,19 @@ static void test_room_people_uids_invalid_room_reports_caller(void)
   free(uids);
 }
 
+/* Coordinator item: a caster stranded in NOWHERE (by an earlier, reported
+ * char_to_room() refusal) can still type 'cast'. call_magic() must refuse
+ * before the triggers and room-flag checks index world[] with NOWHERE. */
+static void test_call_magic_refuses_a_stranded_caster(void)
+{
+  char_from_room(&caster);             /* stranded in NOWHERE */
+  TEST_ASSERT_EQUAL_INT(0, call_magic(&caster, &mob_a, NULL, TEST_SPELL_CHAR,
+                                      10, CAST_SPELL));
+  TEST_ASSERT_EQUAL_INT(0, affect_calls);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("caster-nowhere", tb_captured_operation);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -394,5 +407,6 @@ int main(void)
   RUN_TEST(test_staff_skips_occupant_purged_by_a_trigger);
   RUN_TEST(test_staff_without_interference_hits_everyone_else);
   RUN_TEST(test_room_people_uids_invalid_room_reports_caller);
+  RUN_TEST(test_call_magic_refuses_a_stranded_caster);
   return UNITY_END();
 }
