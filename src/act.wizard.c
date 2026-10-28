@@ -23,9 +23,9 @@
  *   through parse_vnum_arg(), and every time display through TIME_STR.
  *
  * Temporary file copies of players (stat file, show player, last <name>,
- * set file): the command owns the char_data it CREATEs and load_char()s,
- * frees it with free_char() before returning, and never links it into
- * world[].people or character_list. extract_char_final() must not be used
+ * set file): the command owns the char_data it gets from
+ * load_offline_char(), releases it with FREE_OFFLINE_CHAR before
+ * returning, and never links it into world[].people or character_list. extract_char_final() must not be used
  * on it: for a character without a descriptor it save_char()s the stale
  * copy over the pfile and Crash_delete_crashfile()s the player's objects.
  * If the player is in the world (even linkdead) the in-world character is
@@ -222,6 +222,55 @@ static int purge_room(room_rnum room)
 
   return 1;
 }
+
+/** Load the player called name from disk into a new temporary char_data
+ * (stat file, show player, last <name>, set file). The caller owns the
+ * copy and must release it with FREE_OFFLINE_CHAR; it is never linked
+ * into world[].people or character_list (see the file header).
+ * @param name     Player name from the immortal.
+ * @param pfilepos If not NULL, receives load_char()'s result (the index
+ *                 position save_char needs as GET_PFILEPOS).
+ * @return The copy, or NULL (nothing left allocated) when there is no such
+ *         player. */
+static struct char_data *load_offline_char(const char *name, int *pfilepos)
+{
+  struct char_data *tch;
+  int pos;
+
+  CREATE(tch, struct char_data, 1);
+  clear_char(tch);
+  CREATE(tch->player_specials, struct player_special_data, 1);
+  new_mobile_data(tch);
+  if ((pos = load_char(name, tch)) < 0) {
+    free_char(tch);
+    return NULL;
+  }
+  if (pfilepos)
+    *pfilepos = pos;
+  return tch;
+}
+
+/** Release a copy from load_offline_char(). free_char() does not unlink
+ * from world[].people, so a copy found in a room breaks the invariant: it
+ * is reported as offline-char-linked (at the caller's location) and taken
+ * out of the room before it is freed. */
+static void free_offline_char_at(struct char_data *tch, const char *file,
+                                 int line, const char *func)
+{
+  if (IN_ROOM(tch) != NOWHERE) {
+    tb_error_log_at("ERROR", "act", "offline-char-linked", "room", 0, file, line, func,
+                    "player idnum %ld still in room vnum %d before free",
+                    GET_IDNUM(tch), GET_ROOM_VNUM(IN_ROOM(tch)));
+    char_from_room(tch);
+  }
+  free_char(tch);
+}
+/* Free a temporary player copy and NULL the pointer, so it cannot be used
+ * again. ch must be a plain variable. */
+#define FREE_OFFLINE_CHAR(ch) do { \
+  free_offline_char_at((ch), __FILE__, __LINE__, __func__); \
+  (ch) = NULL; \
+} while (0)
 
 ACMD(do_wizhelp) 
 { 
@@ -1247,16 +1296,12 @@ ACMD(do_stat)
 	do_stat_character(ch, victim);
     else {
       /* The file copy is read-only and never enters the world: it is not
-       * placed in a room and is released with free_char(). Releasing it with
+       * placed in a room and is released with FREE_OFFLINE_CHAR. Releasing it with
        * extract_char_final() would save_char() the stale copy over the pfile
        * and Crash_delete_crashfile() the player's RENT_CRASH objects. The
        * target name comes from the immortal; the level check runs before
        * anything is shown. */
-      CREATE(victim, struct char_data, 1);
-      clear_char(victim);
-      CREATE(victim->player_specials, struct player_special_data, 1);
-      new_mobile_data(victim);
-      if (load_char(buf2, victim) >= 0) {
+      if ((victim = load_offline_char(buf2, NULL)) != NULL) {
         if (GET_LEVEL(victim) > GET_LEVEL(ch)) {
           TB_WARN_MSG("act", "stat-file-denied", "player",
                       "caller " DIAG_CHAR_FMT " level %d < target idnum %ld level %d",
@@ -1271,11 +1316,9 @@ ACMD(do_stat)
           send_to_char(ch, "That player is in the game; use 'stat player'.\r\n");
         } else
 	  do_stat_character(ch, victim);
-	free_char(victim);
-      } else {
+	FREE_OFFLINE_CHAR(victim);
+      } else
 	send_to_char(ch, "There is no such player.\r\n");
-	free_char(victim);
-      }
     }
   } else if (is_abbrev(buf1, "object")) {
     if (!*buf2)
@@ -2488,13 +2531,8 @@ ACMD(do_last)
   }
 
   if (*name && !num) {
-    CREATE(vict, struct char_data, 1);
-    clear_char(vict);
-    CREATE(vict->player_specials, struct player_special_data, 1);
-    new_mobile_data(vict);
-    if (load_char(name, vict) <  0) {
+    if ((vict = load_offline_char(name, NULL)) == NULL) {
       send_to_char(ch, "There is no such player.\r\n");
-      free_char(vict);
       return;
     }
 
@@ -2506,7 +2544,7 @@ ACMD(do_last)
     TABLE_NAME(class_abbrevs, NUM_CLASSES, GET_CLASS(vict), "last-player-field",
                DIAG_CHAR(vict)), GET_NAME(vict),
     GET_HOST(vict) && *GET_HOST(vict) ? GET_HOST(vict) : "(NOHOST)", timestr);
-    free_char(vict);
+    FREE_OFFLINE_CHAR(vict);
     return;
     }
 
@@ -3102,13 +3140,8 @@ ACMD(do_show)
       return;
     }
 
-    CREATE(vict, struct char_data, 1);
-    clear_char(vict);
-    CREATE(vict->player_specials, struct player_special_data, 1);
-    new_mobile_data(vict);
-    if (load_char(value, vict) < 0) {
+    if ((vict = load_offline_char(value, NULL)) == NULL) {
       send_to_char(ch, "There is no such player.\r\n");
-      free_char(vict);
       return;
     }
 
@@ -3130,7 +3163,7 @@ ACMD(do_show)
       (int) (vict->player.time.played / 3600),
       (int) (vict->player.time.played / 60 % 60));
 
-    free_char(vict);
+    FREE_OFFLINE_CHAR(vict);
     break;
   }
   /* show rent */
@@ -3899,19 +3932,14 @@ ACMD(do_set)
     }
   } else if (is_file) {
     /* try to load the player off disk */
-    CREATE(cbuf, struct char_data, 1);
-    clear_char(cbuf);
-    CREATE(cbuf->player_specials, struct player_special_data, 1);
-    new_mobile_data(cbuf);
-    if ((player_i = load_char(name, cbuf)) > -1) {
+    if ((cbuf = load_offline_char(name, &player_i)) != NULL) {
       if (GET_LEVEL(cbuf) > GET_LEVEL(ch)) {
-	free_char(cbuf);
+	FREE_OFFLINE_CHAR(cbuf);
 	send_to_char(ch, "Sorry, you can't do that.\r\n");
 	return;
       }
       vict = cbuf;
     } else {
-      free_char(cbuf);
       send_to_char(ch, "There is no such player.\r\n");
       return;
     }
@@ -3953,17 +3981,10 @@ ACMD(do_set)
   }
 
   /* free the memory if we allocated it earlier */
-  if (is_file) {
-    /* Defense in depth: free_char() leaves world[].people untouched, so a
-     * temp char that somehow entered a room must leave it first. */
-    if (IN_ROOM(cbuf) != NOWHERE) {
-      TB_ERROR_MSG("act", "set-file-free", "cbuf",
-                   "player idnum %ld still in room vnum %d before free",
-                   GET_IDNUM(cbuf), GET_ROOM_VNUM(IN_ROOM(cbuf)));
-      char_from_room(cbuf);
-    }
-    free_char(cbuf);
-  }
+  /* FREE_OFFLINE_CHAR also catches a copy that somehow entered a room
+   * (offline-char-linked), since free_char() leaves world[].people alone. */
+  if (is_file)
+    FREE_OFFLINE_CHAR(cbuf);
 }
 
 #undef SET_PC
