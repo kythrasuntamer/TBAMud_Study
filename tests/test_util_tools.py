@@ -302,6 +302,22 @@ def shopconv_restores_original_on_bad_field(tmp):
     check(not os.path.exists(os.path.join(tmp, "30.shp.tmp")), "tmp left")
 
 
+@test("shopconv")
+def shopconv_rejects_bad_ratio(tmp):
+    """I2-11: '1e20' was silently truncated by "%f" into char[20]."""
+    for ratio in ("1e20", "nan", "inf", "-1"):
+        original = shop_220(ratio=ratio)
+        rc, out, err = shopconv(tmp, original)
+        if ratio == "1e20":
+            check(rc == 0 and "\n1e+20 \n" in out,
+                  "1e20 not kept exactly: rc=%d\n%s" % (rc, out))
+            os.remove(os.path.join(tmp, "30.shp.bak"))
+            continue
+        check(rc == 1, "%s: rc=%d" % (ratio, rc))
+        check("shop-ratio-range" in operations(err), err)
+        check(out == original, "original not restored")
+
+
 # ------------------------------------------------------------- plrtoascii
 
 def plr_record_size(tmp):

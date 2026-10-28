@@ -6,6 +6,7 @@
 
 #include "conf.h"
 #include "sysdep.h"
+#include <math.h>	/* isfinite */
 
 #include "structs.h"
 #include "utils.h"
@@ -167,15 +168,30 @@ int do_float(FILE * shop_f, FILE * newshop_f, const char *where,
              const char *field)
 {
   float f;
-  char str[20];
+  char str[64];
+  int written;
+
   if (!read_float_token(shop_f, &f)) {
     SHOP_FIELD_ERROR(where, field, 1);
     return 0;
   }
   skip_field_space(shop_f);
-  tb_snprintf(str, sizeof(str), "%f", f);
-  while ((str[strlen(str) - 1] == '0') && (str[strlen(str) - 2] != '.'))
-    str[strlen(str) - 1] = 0;
+  /* A buy/sell ratio is a positive finite multiplier.  strtof() accepts
+   * "inf", "nan" and 1e20 from the file; the old "%f" into char[20] then
+   * truncated 1e20 silently to a different number. */
+  if (!isfinite(f) || f <= 0.0f) {
+    TB_REPORT_DOMAIN_ERRORF(TB_SEV_ERROR, TB_ERR_PARSER, "shop-ratio-range",
+                            "%s field=%s value=%g: not a positive finite "
+                            "ratio", where, field, (double)f);
+    return 0;
+  }
+  written = snprintf(str, sizeof(str), "%.6g", (double)f);
+  if (written < 0 || (size_t)written >= sizeof(str)) {
+    TB_REPORT_DOMAIN_ERRORF(TB_SEV_ERROR, TB_ERR_PARSER, "shop-ratio-format",
+                            "%s field=%s need=%d have=%zu", where, field,
+                            written, sizeof(str));
+    return 0;
+  }
   tb_fprintf(newshop_f, "%s \n", str);
   return 1;
 }
