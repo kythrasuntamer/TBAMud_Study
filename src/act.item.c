@@ -1107,17 +1107,10 @@ void weight_change_object(struct obj_data *obj, int weight)
 
 #define DRINK_CON_MAX(cont) (GET_OBJ_VAL((cont), 0))
 #define DRINK_CON_NOW(cont) (GET_OBJ_VAL((cont), 1))
-#define DRINK_CON_TYPE(cont) (GET_OBJ_VAL((cont), 2))
 #define DRINK_CON_POISON(cont) (GET_OBJ_VAL((cont), 3))
 
 #define LIMITED_DRINK_CONTAINER(cont) (DRINK_CON_MAX((cont)) >= 0 && DRINK_CON_NOW((cont)) >= 0)
 #define EMPTY_DRINK_CONTAINER(cont) (LIMITED_DRINK_CONTAINER((cont)) && DRINK_CON_NOW((cont)) < 1)
-
-/* TRUE if t indexes drinks[], drinknames[] and drink_aff[] (NUM_LIQ_TYPES
- * entries each). The liquid type is value 2 of a drink container or
- * fountain: it comes from world files and from scripts ('osetval 2 N'),
- * and neither validates it, so check before every table lookup. */
-#define VALID_LIQ_TYPE(t) ((t) >= 0 && (t) < NUM_LIQ_TYPES)
 
 /* Reports obj's out-of-range liquid type for the action op (ch may be NULL
  * when no character is involved) and returns FALSE; TRUE if it is valid. */

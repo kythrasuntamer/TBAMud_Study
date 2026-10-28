@@ -50,7 +50,7 @@
  * wrapping and is not the NOWHERE/NOTHING sentinel (IDXTYPE_MAX with the
  * default unsigned index type). Loaders, OLC and DG parse vnums as int or
  * long and narrow them into IDXTYPE fields. Evaluates n twice: pass a plain
- * variable. Same text as the copy in db.c. */
+ * variable. */
 #define VNUM_STORABLE(n)  ((long)(n) >= IDXTYPE_MIN && (long)(n) < IDXTYPE_MAX)
 
 /** Function macro for the mob, obj and room special functions */

@@ -59,11 +59,6 @@
 #include "asciimap.h"
 #include "quest.h"
 
-/** The character a descriptor speaks for: the immortal's own body while
- * switched into a mob, otherwise the descriptor's character (NULL before
- * login completes). Evaluates d twice: pass a plain variable. */
-#define REAL_CHAR(d)  ((d)->original ? (d)->original : (d)->character)
-
 /** TRUE if a mob, object or room has a script with at least one trigger.
  * A character's script_data can exist with no triggers (it may hold only
  * global variables: saved player variables, 'set <char> <var>'), so the

@@ -74,15 +74,10 @@
  * ('\r', '\n', NUL) after the last character. */
 #define FREAD_CHUNK 512
 
-/* Range predicates for file-derived values that index a table. The unsigned
- * cast folds "x < 0" into the upper-bound test, so each evaluates its
- * argument once. In the CircleMUD VALID_* style (see VALID_ROOM_RNUM). */
-#define VALID_SECTOR(s)   ((unsigned int)(s) < NUM_ROOM_SECTORS)
-#define VALID_DIR(d)      ((unsigned int)(d) < NUM_OF_DIRS)
-#define VALID_LIQ(l)      ((unsigned int)(l) < NUM_LIQ_TYPES)
-#define VALID_POS(p)      ((unsigned int)(p) < NUM_POSITIONS)
-#define VALID_SEX(x)      ((unsigned int)(x) < NUM_GENDERS)
-#define VALID_WEAR_POS(w) ((unsigned int)(w) < NUM_WEARS)
+/* Range predicate for file-derived attack types, in the CircleMUD VALID_*
+ * style of utils.h's VALID_SECTOR and friends (which db.c also uses). The
+ * unsigned cast folds "x < 0" into the upper-bound test, so a evaluates
+ * once. */
 #define VALID_ATTACK(a)   ((unsigned int)(a) < NUM_ATTACK_TYPES)
 
 /* TRUE if n dice of s sides fit the weapon limit oedit enforces
@@ -90,11 +85,6 @@
  * Each argument is evaluated once. */
 #define VALID_WEAPON_DICE(n, s) \
   ((unsigned int)(n) <= MAX_WEAPON_NDICE && (unsigned int)(s) <= MAX_WEAPON_SDICE)
-
-/* TRUE if a parsed int/long can be stored in an IDXTYPE vnum field without
- * wrapping and is not the NOWHERE/NOTHING sentinel (IDXTYPE_MAX).
- * Evaluates n twice: pass a plain variable. */
-#define VNUM_STORABLE(n)  ((long)(n) >= IDXTYPE_MIN && (long)(n) < IDXTYPE_MAX)
 
 /* Report a fatal boot-time defect in the "db" subsystem with call-site
  * locality and stop: the structured replacement for the CircleMUD
@@ -5056,7 +5046,7 @@ static int check_object(struct obj_data *obj)
      * drinknames[] (do_drink, shops). oedit only offers valid liquids, so
      * an out-of-range value comes from a hand-edited .obj file: report it
      * and make the container hold water. */
-    if (!VALID_LIQ(GET_OBJ_VAL(obj, 2))) {
+    if (!VALID_LIQ_TYPE(GET_OBJ_VAL(obj, 2))) {
       TB_ERROR_MSG("db", "object-check", "liquid",
                    "obj vnum %d liquid %d out of range 0..%d; using LIQ_WATER",
                    GET_OBJ_VNUM(obj), GET_OBJ_VAL(obj, 2), NUM_LIQ_TYPES - 1);

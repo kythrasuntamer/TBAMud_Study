@@ -5,6 +5,7 @@ Position, default position and sex index position_types[], positions[] and
 the gender tables wherever the mob is shown; a hand-edited .mob file used to
 store any value. parse_simple_mob() must check all three before storing
 them and refuse the world with a structured FATAL naming the mob.
+argv: db.c utils.h (VALID_POS and VALID_SEX are defined once, in utils.h).
 """
 from pathlib import Path
 import sys
@@ -18,7 +19,9 @@ for store in ("GET_POS(mob_proto + i) = t[0];",
               "GET_DEFAULT_POS(mob_proto + i) = t[1];",
               "GET_SEX(mob_proto + i) = t[2];"):
     assert fatal < mob.index(store), store
+u = Path(sys.argv[2]).read_text(encoding="utf-8")
 for macro, table in (("VALID_POS(p)", "NUM_POSITIONS"), ("VALID_SEX(x)", "NUM_GENDERS")):
-    line = s[s.index("#define " + macro):]
+    assert "#define " + macro not in s, "duplicate %s in db.c" % macro
+    line = u[u.index("#define " + macro):]
     assert table in line[:line.index("\n")], macro
 print("mob load contract verified")

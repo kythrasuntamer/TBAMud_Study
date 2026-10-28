@@ -773,10 +773,23 @@ static inline int tb_rnum_valid(long rnum, long none, long top)
 	tb_rnum_valid((long) (rnum), (long) NOBODY, (long) top_of_mobt)
 /** TRUE when r names a loaded zone: usable as zone_table[r] (not NOWHERE,
  * not negative, at most top_of_zone_table). Any integer type; r is
- * evaluated once. Same text as genzon.h's and oasis.h's copies, so they
- * coexist until the final cleanup removes them. */
+ * evaluated once. */
 #define VALID_ZONE_RNUM(r) \
 	tb_rnum_valid((long) (r), (long) NOWHERE, (long) top_of_zone_table)
+/** TRUE if r, an object rnum held as a plain number (a zone-command
+ * argument, a shop or list entry), indexes obj_proto[]/obj_index[]: not
+ * NOTHING, not negative, at most top_of_objt. VALID_OBJ_RNUM takes an
+ * object pointer, hence the _NUM suffix. Any integer type; r is evaluated
+ * once. */
+#define VALID_OBJ_RNUM_NUM(r) \
+	tb_rnum_valid((long) (r), (long) NOTHING, (long) top_of_objt)
+/** TRUE if r indexes a live aquest_table row (0..total_quests-1).
+ * real_quest() returns NOTHING for a vnum with no row (prev/next links are
+ * not repaired when a quest is deleted), and an int holding -1 must not
+ * reach aquest_table[] or delete_quest(). Any integer type; r is evaluated
+ * once. */
+#define VALID_QUEST_RNUM(r) \
+	tb_rnum_valid((long) (r), (long) NOTHING, (long) total_quests - 1)
 
 /* Range predicates for values that index a fixed table and come from world,
  * player or script data: sector_type (movement_loss[], map glyphs),
@@ -784,7 +797,7 @@ static inline int tb_rnum_valid(long rnum, long none, long top)
  * (genders[]) and wear slots (GET_EQ, wear_where[]). The unsigned cast folds
  * "x < 0" into the upper-bound test, so each evaluates its argument once;
  * the argument must be an int-sized value (a long beyond UINT_MAX would
- * wrap). Same text as the copies in db.c, so they coexist. */
+ * wrap). */
 #define VALID_SECTOR(s)   ((unsigned int)(s) < NUM_ROOM_SECTORS)
 #define VALID_DIR(d)      ((unsigned int)(d) < NUM_OF_DIRS)
 #define VALID_POS(p)      ((unsigned int)(p) < NUM_POSITIONS)
@@ -1042,8 +1055,7 @@ static inline int tb_rnum_valid(long rnum, long none, long top)
 
 /** The player behind descriptor d: the switcher's own character while it
  * is switched into another body, else d->character (NULL until login
- * completes). Evaluates d twice: pass a plain variable. Same text as the
- * copy in act.informative.c, so the two coexist. */
+ * completes). Evaluates d twice: pass a plain variable. */
 #define REAL_CHAR(d)  ((d)->original ? (d)->original : (d)->character)
 
 /** Defines if it is ok to send a message to ch. */
@@ -1080,12 +1092,13 @@ static inline int tb_rnum_valid(long rnum, long none, long top)
 /** TRUE if t indexes drinks[], drinknames[] and drink_aff[] (NUM_LIQ_TYPES
  * entries each). The liquid type is value 2 of a drink container or
  * fountain: it comes from world files and from scripts ('osetval 2 N'),
- * and neither validates it, so check before every table lookup.
- * Evaluates t twice: no side effects. Same text as act.item.c's copy. */
-#define VALID_LIQ_TYPE(t) ((t) >= 0 && (t) < NUM_LIQ_TYPES)
+ * and neither validates it, so check before every table lookup. The
+ * unsigned cast folds "t < 0" into the upper-bound test, so t is evaluated
+ * once; t must be int-sized. */
+#define VALID_LIQ_TYPE(t) ((unsigned int)(t) < NUM_LIQ_TYPES)
 /** The liquid type (value 2) of a drink container or fountain: an index
  * into drinks[], drinknames[] and drink_aff[] once VALID_LIQ_TYPE() has
- * accepted it. Same text as act.item.c's copy, so the two coexist. */
+ * accepted it. */
 #define DRINK_CON_TYPE(cont) (GET_OBJ_VAL((cont), 2))
 /** Weight of obj. */
 #define GET_OBJ_WEIGHT(obj)	((obj)->obj_flags.weight)

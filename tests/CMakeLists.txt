@@ -942,7 +942,7 @@ if(Python3_Interpreter_FOUND)
     add_test(NAME test_mob_load_contract
         COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/test_mob_load_contract.py
-                ${MUD_SRCDIR}/db.c)
+                ${MUD_SRCDIR}/db.c ${MUD_SRCDIR}/utils.h)
     add_test(NAME test_zedit_contract
         COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/test_zedit_contract.py
