@@ -1795,6 +1795,16 @@ void var_subst(void *go, struct script_data *sc, trig_data *trig,
 
     /* so it wasn't double %'s */
     else if (*p && (left > 0)) {
+      /* Offset of this variable's opening '%' in line (tmp is a copy). */
+      size_t open_off = (size_t)(p - tmp) - 1;
+
+      /* Each variable starts with an empty subfield and no open parentheses.
+       * They were set once per call, so in "%a.gold(5)% ... %a.gold%" the
+       * second variable re-ran the setter with the first one's "5". */
+      subfield_p = subfield;
+      *subfield = '\0';
+      paren_count = 0;
+      dots = 0;
 
       /* Each reference collects its own (subfield). */
       subfield_p = subfield;
@@ -1821,6 +1831,9 @@ void var_subst(void *go, struct script_data *sc, trig_data *trig,
               strlcpy(var, "tmpvr", sizeof(tmp) - (size_t)(var - tmp));
               field = p;
               dots = 0;
+              /* The next field in the chain has its own subfield. */
+              subfield_p = subfield;
+              *subfield = '\0';
               continue;
             }
             dots = 0;
@@ -1857,6 +1870,14 @@ void var_subst(void *go, struct script_data *sc, trig_data *trig,
                                                  : "has no closing '%'");
       }
       *subfield_p = '\0';
+
+      /* An extra ')' closes the variable early; the text after it is lost.
+       * An unclosed '(' at the line end was already reported above. */
+      if (paren_count < 0)
+        TB_WARN_MSG("dg", "subst-paren", "var_subst",
+                    "trig vnum %d: %%-variable at column %zu has unbalanced "
+                    "parentheses (%d unmatched)", DIAG_TRIG_VNUM(trig),
+                    open_off, paren_count);
 
       if (*subfield) {
         var_subst(go, sc, trig, type, subfield, tmp2);

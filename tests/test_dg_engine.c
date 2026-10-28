@@ -388,6 +388,34 @@ static void lone_percent_at_line_end_is_kept(void)
   TEST_ASSERT_EQUAL_STRING("subst-unterminated", tb_captured_operation);
 }
 
+/* D1-05: the subfield buffer was never reset between variables, so the
+ * second variable on a line received the first one's subfield. */
+static void each_variable_gets_its_own_subfield(void)
+{
+  char_data *mob = make_mob("mob");
+  trig_data *t = idle_mob_trigger(mob);
+  char out[MAX_INPUT_LENGTH];
+
+  uid_var(t, "actor", char_script_id(mob));
+  GET_GOLD(mob) = 0;
+  subst(mob, t, "say %actor.gold(5)% coins, total %actor.gold%", out);
+  TEST_ASSERT_EQUAL_STRING("say 5 coins, total 5", out);
+  TEST_ASSERT_EQUAL_INT(5, GET_GOLD(mob));
+  subst(mob, t, "say %actor.gold(5)% then %actor.name%", out);
+  TEST_ASSERT_EQUAL_STRING("say 10 then mob", out);
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+}
+
+static void unbalanced_close_paren_is_reported(void)
+{
+  char_data *mob = make_mob("mob");
+  trig_data *t = idle_mob_trigger(mob);
+  char out[MAX_INPUT_LENGTH];
+
+  subst(mob, t, "say %self.name)%", out);
+  TEST_ASSERT_EQUAL_STRING("subst-paren", tb_captured_operation);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -401,5 +429,7 @@ int main(void)
   RUN_TEST(overflowing_wait_is_capped_not_wedged);
   RUN_TEST(accepted_wait_keeps_trigger_suspended);
   RUN_TEST(lone_percent_at_line_end_is_kept);
+  RUN_TEST(each_variable_gets_its_own_subfield);
+  RUN_TEST(unbalanced_close_paren_is_reported);
   return UNITY_END();
 }
