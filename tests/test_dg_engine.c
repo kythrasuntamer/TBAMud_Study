@@ -1060,6 +1060,24 @@ static void dotted_variable_name_is_reported(void)
   TEST_ASSERT_EQUAL_STRING("var-name", tb_captured_operation);
 }
 
+/* D2-02: near the end of the pulse counter's range, when + pulse no longer
+ * fits the event key. event_create() parked the wait forever (reported
+ * without the trigger) and the trigger stayed suspended at depth 1. */
+static void wait_past_the_pulse_range_is_rejected(void)
+{
+  const char *lines[] = { "set x 1", "wait 10", "set y 2", NULL };
+  trig_data *t;
+
+  pulse = (unsigned long)LONG_MAX - 5;
+  t = run_mob_script(make_mob("mob"), lines);
+  TEST_ASSERT_NULL(GET_TRIG_WAIT(t));
+  TEST_ASSERT_EQUAL_INT(0, GET_TRIG_DEPTH(t));
+  TEST_ASSERT_NULL(GET_TRIG_VARS(t));
+  TEST_ASSERT_TRUE(tb_captured_has_op("wait-overflow"));
+  TEST_ASSERT_TRUE(tb_captured_has_op("wait-invalid"));
+  TEST_ASSERT_FALSE(tb_captured_has_op("event-schedule-overflow"));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -1104,5 +1122,6 @@ int main(void)
   RUN_TEST(trim_handles_empty_and_blank_values);
   RUN_TEST(lost_remote_and_detach_miss_are_reported);
   RUN_TEST(dotted_variable_name_is_reported);
+  RUN_TEST(wait_past_the_pulse_range_is_rejected);
   return UNITY_END();
 }

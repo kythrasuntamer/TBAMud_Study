@@ -2010,8 +2010,10 @@ static int script_wait_number(const char *text, long *number, const char **rest)
  * hours), "wait until H[:MM]" (next mud time of day). A wait below one
  * pulse waits one pulse (reported); a scaled wait above DG_WAIT_MAX_PULSES,
  * an unknown suffix or an out-of-day time is rejected with dg/wait-range
- * or a script_log. The wait_event_data allocated here is owned by the event
- * and freed by trig_wait_event() (or by event_cancel() on extraction).
+ * or a script_log, and a wait whose queue key (when + pulse) would pass
+ * LONG_MAX with dg/wait-overflow. The wait_event_data allocated here is
+ * owned by the event and freed by trig_wait_event() (or by event_cancel()
+ * on extraction).
  *
  * Processes a 'wait' command. Returns TRUE when the wait event was created
  * and the trigger is now suspended at cl->next; FALSE when the wait was
@@ -2160,6 +2162,22 @@ static int process_wait(void *go, trig_data *trig, int type, char *cmd,
                "shortened to one year: '%s'",
                GET_TRIG_NAME(trig), GET_TRIG_VNUM(trig), cl->cmd);
     when = DG_MAX_WAIT_PULSES;
+  }
+
+  /* event_create() keys the event at when + pulse. Past LONG_MAX (a long
+   * uptime where long is 32 bits) it parks the event, which never fires, and
+   * its dg/event-schedule-overflow cannot name the trigger, which would stay
+   * suspended at depth 1. Reject here, where trigger and owner are known. */
+  if (pulse > (unsigned long)(LONG_MAX - when)) {
+    TB_ERROR_MSG("dg", "wait-overflow", "process_wait",
+                 "trig vnum %d owner type %d uid %ld: wait %ld at pulse %lu "
+                 "overflows the event queue key; wait rejected",
+                 DIAG_TRIG_VNUM(trig), type, dg_owner_uid(go, type), when,
+                 pulse);
+    script_log("Trigger: %s, VNum %d. wait cannot be scheduled at this "
+               "uptime: '%s'", GET_TRIG_NAME(trig), GET_TRIG_VNUM(trig),
+               cl->cmd);
+    return FALSE;
   }
 
   CREATE(wait_event_obj, struct wait_event_data, 1);
