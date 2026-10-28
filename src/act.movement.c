@@ -160,6 +160,30 @@ static int has_scuba(struct char_data *ch)
  * enter_wtrigger and greet_mtrigger after it; any of them may teleport,
  * purge or kill ch, so callers re-check IN_ROOM(ch) rather than assume the
  * destination. */
+/* Report and refuse a move whose room or zone indices are not valid, at the
+ * stage that found it: a corrupt exit, or a special or leave trigger that
+ * changed the world while the move was pending. */
+static int move_indices_valid_at(struct char_data *ch, int dir,
+                                 room_rnum was_in, room_rnum going_to,
+                                 zone_rnum zone, const char *stage,
+                                 const char *file, int line, const char *func)
+{
+  if (world && zone_table && VALID_ROOM_RNUM(was_in) &&
+      VALID_ROOM_RNUM(going_to) && VALID_ZONE_RNUM(zone) &&
+      world[going_to].zone == zone)
+    return TRUE;
+  tb_error_log_at("ERROR", "movement", "move-index", "room", 0,
+                  file, line, func,
+                  DIAG_CHAR_FMT " dir %d: room rnum %d -> %d (top %d), zone %d "
+                  "(top %d) not valid at %s; move refused",
+                  DIAG_CHAR(ch), dir, (int)was_in, (int)going_to,
+                  (int)top_of_world, (int)zone, (int)top_of_zone_table, stage);
+  return FALSE;
+}
+#define MOVE_INDICES_VALID(stage) \
+  move_indices_valid_at(ch, dir, was_in, going_to, destination_zone, (stage), \
+                        __FILE__, __LINE__, __func__)
+
 int do_simple_move(struct char_data *ch, int dir, int need_specials_check)
 {
   /* Begin Local variable definitions */
@@ -181,16 +205,11 @@ int do_simple_move(struct char_data *ch, int dir, int need_specials_check)
   /* End Local variable definitions */
 
 
-  /* Reject corrupt exit destinations before room or zone array access.
-   * Never bypass zone restrictions when a destination has no valid zone. */
-  if (!world || !zone_table || !VALID_ROOM_RNUM(was_in) ||
-      !VALID_ROOM_RNUM(going_to))
-    return 0;
-
-  destination_zone = world[going_to].zone;
-  if (destination_zone == NOWHERE ||
-      (long long)destination_zone < 0 ||
-      destination_zone > top_of_zone_table)
+  /* Reject a corrupt exit before any room or zone array access; never
+   * bypass zone restrictions for a destination with no valid zone. */
+  destination_zone = (world && VALID_ROOM_RNUM(going_to)) ? world[going_to].zone
+                                                          : NOWHERE;
+  if (!MOVE_INDICES_VALID("exit"))
     return 0;
 
   /* Begin checks that can prevent a character from leaving the was_in room. */
@@ -204,29 +223,21 @@ int do_simple_move(struct char_data *ch, int dir, int need_specials_check)
   if (need_specials_check && special(ch, dir + 1, spec_proc_args))
     return 0;
 
-  /* Specials can run arbitrary game logic: validate indices again before
-   * dereferencing the current room or using the destination zone. */
-  if (IN_ROOM(ch) != was_in || !world || !zone_table ||
-      !VALID_ROOM_RNUM(was_in) || !VALID_ROOM_RNUM(going_to) ||
-      world[going_to].zone != destination_zone ||
-      destination_zone == NOWHERE || destination_zone > top_of_zone_table)
+  /* Specials and leave triggers run arbitrary game logic: a character they
+   * moved is simply not moved again; a world they changed is reported. */
+  if (IN_ROOM(ch) != was_in || !MOVE_INDICES_VALID("special"))
     return 0;
 
   /* Leave Trigger Checks: Does a leave trigger block exit from the room? */
   if (!leave_mtrigger(ch, dir) || IN_ROOM(ch) != was_in) /* prevent teleport crashes */
     return 0;
-  if (!world || !VALID_ROOM_RNUM(IN_ROOM(ch)) ||
-      !leave_wtrigger(&world[IN_ROOM(ch)], ch, dir) || IN_ROOM(ch) != was_in) /* prevent teleport crashes */
+  if (!MOVE_INDICES_VALID("leave-mtrigger") ||
+      !leave_wtrigger(&world[IN_ROOM(ch)], ch, dir) || IN_ROOM(ch) != was_in)
     return 0;
-  if (!world || !VALID_ROOM_RNUM(IN_ROOM(ch)) ||
-      !leave_otrigger(&world[IN_ROOM(ch)], ch, dir) || IN_ROOM(ch) != was_in) /* prevent teleport crashes */
+  if (!MOVE_INDICES_VALID("leave-wtrigger") ||
+      !leave_otrigger(&world[IN_ROOM(ch)], ch, dir) || IN_ROOM(ch) != was_in)
     return 0;
-
-  /* A leave trigger may have mutated world/zone state. Fail closed rather
-   * than use an old zone index in subsequent restriction checks. */
-  if (!world || !zone_table || !VALID_ROOM_RNUM(going_to) ||
-      world[going_to].zone != destination_zone ||
-      destination_zone == NOWHERE || destination_zone > top_of_zone_table)
+  if (!MOVE_INDICES_VALID("leave-otrigger"))
     return 0;
 
   /* Charm effect: Does it override the movement? */

@@ -215,6 +215,81 @@ static void test_move_into_room_with_bad_sector(void)
   zone_table = NULL;
 }
 
+/* #41: a move is checked before any world[]/zone_table[] access and again
+ * after every special and leave trigger; a bad index is refused and reported
+ * at the stage that found it.  Red before: master read past both arrays. */
+static struct zone_data move_zone[1];
+
+static struct char_data *open_north_exit_to_room_1(void)
+{
+  struct char_data *pc = fx_new_char("hero", FALSE, 0);
+  struct room_direction_data *ex = door_exit(0, NORTH, 1);
+
+  memset(move_zone, 0, sizeof(move_zone));
+  move_zone[0].min_level = move_zone[0].max_level = -1;
+  zone_table = move_zone;
+  top_of_zone_table = 0;
+  ex->exit_info = 0;
+  GET_MOVE(pc) = GET_MAX_MOVE(pc) = 50;
+  return pc;
+}
+
+static void assert_move_refused_at(struct char_data *pc, const char *stage)
+{
+  char want[64];
+
+  TEST_ASSERT_EQUAL_INT(0, do_simple_move(pc, NORTH, 0));
+  TEST_ASSERT_EQUAL_INT(0, IN_ROOM(pc));
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("move-index", tb_captured_operation);
+  snprintf(want, sizeof(want), "not valid at %s;", stage);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, want));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "player idnum"));
+}
+
+static void test_move_through_exit_past_world_is_refused(void)
+{
+  struct char_data *pc = open_north_exit_to_room_1();
+
+  W_EXIT(0, NORTH)->to_room = top_of_world + 5;
+  assert_move_refused_at(pc, "exit");
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "dir 0"));
+  fx_free_char(pc);
+  zone_table = NULL;
+}
+
+static void test_move_into_room_past_zone_table_is_refused(void)
+{
+  struct char_data *pc = open_north_exit_to_room_1();
+
+  world[1].zone = 3;
+  assert_move_refused_at(pc, "exit");
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "zone 3 (top 0)"));
+  fx_free_char(pc);
+  zone_table = NULL;
+}
+
+/* A leave trigger that renumbers the destination's zone mid-move. */
+static int rezone_on_leave_hook(enum fx_trigger kind, struct char_data *actor,
+                                struct obj_data *obj, int dir)
+{
+  (void)actor; (void)obj; (void)dir;
+  if (kind == FX_LEAVE_MTRIG)
+    world[1].zone = 3;
+  return 1;
+}
+
+static void test_leave_trigger_invalidating_zone_is_refused(void)
+{
+  struct char_data *pc = open_north_exit_to_room_1();
+
+  fx_hook = rezone_on_leave_hook;
+  assert_move_refused_at(pc, "leave-mtrigger");
+  fx_hook = NULL;
+  fx_free_char(pc);
+  zone_table = NULL;
+}
+
 /* The greet trigger fired for 'trigger_mover' (a mob's script in the room
  * it enters) makes 'released' stop following, as an mfollow would; that
  * frees released's follow_type node. */
@@ -273,6 +348,9 @@ int main(void)
   UNITY_BEGIN();
   RUN_TEST(test_follower_released_by_trigger_is_skipped);
   RUN_TEST(test_move_into_room_with_bad_sector);
+  RUN_TEST(test_move_through_exit_past_world_is_refused);
+  RUN_TEST(test_move_into_room_past_zone_table_is_refused);
+  RUN_TEST(test_leave_trigger_invalidating_zone_is_refused);
   RUN_TEST(test_door_trigger_purging_exit_is_reported);
   RUN_TEST(test_autokey_stops_after_failed_unlock);
   RUN_TEST(test_door_open_without_interference);
