@@ -83,7 +83,8 @@ static void rebase_room_events(void)
  *
  * @param room Room to add, built by redit or rcopy; room->zone must be a
  *             valid zone rnum.
- * @return The room's rnum, or NOWHERE (reported) when room is NULL.
+ * @return The room's rnum, or NOWHERE (reported) when room is NULL or its
+ *         zone rnum is out of range; world[] is then unchanged.
  */
 room_rnum add_room(struct room_data *room)
 {
@@ -94,6 +95,16 @@ room_rnum add_room(struct room_data *room)
 
   if (room == NULL) {
     TB_ERROR_MSG("olc", "room-add-null", "room", "called with no room; nothing added");
+    return NOWHERE;
+  }
+
+  /* Both paths below index zone_table[room->zone] for the save list.  The
+   * caller sets it from its own zone rnum, so a bad one is a broken caller:
+   * refuse before world[] changes. */
+  if (!VALID_ZONE_RNUM(room->zone)) {
+    TB_ERROR_MSG("olc", "room-add-zone", "room",
+                 "room vnum %d: zone rnum %d out of range 0..%d; nothing added",
+                 room->number, (int)room->zone, (int)top_of_zone_table);
     return NOWHERE;
   }
 

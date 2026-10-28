@@ -1722,6 +1722,36 @@ static void create_new_zone_renumbers_reset_queue(void)
 }
 
 /* ------------------------------------------------------------------------ */
+/* Leftovers 1: add_room() refuses a zone rnum outside zone_table.          */
+/* ------------------------------------------------------------------------ */
+
+/* Both the insert and the update path indexed zone_table[room->zone] for the
+ * save list (an ASan heap overflow for zone rnum 5 of a one-zone table). */
+static void add_room_refuses_out_of_range_zone(void)
+{
+  struct room_data nr;
+  make_zones(1); make_rooms(2);       /* vnums 10 20 */
+  memset(&nr, 0, sizeof(nr));
+  nr.number = 15;                      /* new: would be inserted */
+  nr.zone = 5;
+  nr.name = "n";
+  nr.description = "d";
+  TEST_ASSERT_EQUAL_UINT(NOWHERE, add_room(&nr));
+  TEST_ASSERT_EQUAL_UINT(1, top_of_world);
+  TEST_ASSERT_EQUAL_INT(20, world[1].number);
+  TEST_ASSERT_EQUAL_STRING("room-add-zone", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "room vnum 15: zone rnum 5"));
+
+  tb_error_capture_reset();
+  nr.number = 20;                      /* existing: would be updated */
+  nr.zone = NOWHERE;
+  TEST_ASSERT_EQUAL_UINT(NOWHERE, add_room(&nr));
+  TEST_ASSERT_EQUAL_STRING("room", world[1].name);
+  TEST_ASSERT_EQUAL_STRING("room-add-zone", tb_captured_operation);
+  TEST_ASSERT_EQUAL_INT(0, save_list_adds);
+}
+
+/* ------------------------------------------------------------------------ */
 /* Temporary world directory for the writers.                               */
 /* ------------------------------------------------------------------------ */
 static char test_root[] = "/tmp/tb-genolc-XXXXXX";
@@ -1834,6 +1864,7 @@ int main(void)
   RUN_TEST(writers_keep_previous_file_after_stream_error);
   RUN_TEST(add_cmd_to_list_appends_past_the_end);
   RUN_TEST(create_new_zone_renumbers_reset_queue);
+  RUN_TEST(add_room_refuses_out_of_range_zone);
   failures = UNITY_END();
   leave_test_root();
   return failures;
