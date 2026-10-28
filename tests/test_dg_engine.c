@@ -296,7 +296,7 @@ static void wait_until_out_of_day_is_rejected(void)
   trig_data *t = run_mob_script(make_mob("mob"), lines);
 
   TEST_ASSERT_NULL(GET_TRIG_WAIT(t));
-  TEST_ASSERT_EQUAL_STRING("wait-range", tb_captured_operation);
+  TEST_ASSERT_TRUE(tb_captured_has_op("wait-range"));
 }
 
 static void wait_until_midnight_is_accepted(void)
@@ -318,6 +318,44 @@ static void nonpositive_wait_waits_one_pulse_with_warning(void)
   TEST_ASSERT_EQUAL_STRING("wait-range", tb_captured_operation);
 }
 
+/* D1-12: a rejected wait returned from script_driver() with depth 1 and the
+ * variables kept, so TRIGGER_CHECK() refused the trigger until extraction. */
+static void rejected_wait_ends_trigger_cleanly(void)
+{
+  const char *lines[] = { "set x 1", "wait 5 minutes", "set y 2", NULL };
+  trig_data *t = run_mob_script(make_mob("mob"), lines);
+
+  TEST_ASSERT_NULL(GET_TRIG_WAIT(t));
+  TEST_ASSERT_EQUAL_INT(0, GET_TRIG_DEPTH(t));
+  TEST_ASSERT_NULL(GET_TRIG_VARS(t));
+  TEST_ASSERT_TRUE(TRIGGER_CHECK(t, MTRIG_SPEECH));
+  TEST_ASSERT_EQUAL_STRING("wait-invalid", tb_captured_operation);
+}
+
+/* An overflowing wait is not rejected on this branch: it saturates and is
+ * capped at one mud year (reported as wait-range), so the trigger is
+ * legitimately suspended on a real event, not wedged without one. */
+static void overflowing_wait_is_capped_not_wedged(void)
+{
+  const char *lines[] = { "wait 99999999999999999 t", NULL };
+  trig_data *t = run_mob_script(make_mob("mob"), lines);
+
+  TEST_ASSERT_NOT_NULL(GET_TRIG_WAIT(t));
+  TEST_ASSERT_TRUE(tb_captured_has_op("wait-range"));
+  TEST_ASSERT_FALSE(tb_captured_has_op("wait-invalid"));
+}
+
+static void accepted_wait_keeps_trigger_suspended(void)
+{
+  const char *lines[] = { "set x 1", "wait 1", "set y 2", NULL };
+  trig_data *t = run_mob_script(make_mob("mob"), lines);
+
+  TEST_ASSERT_NOT_NULL(GET_TRIG_WAIT(t));
+  TEST_ASSERT_EQUAL_INT(1, GET_TRIG_DEPTH(t));
+  TEST_ASSERT_EQUAL_STRING("1", trig_var(t, "x"));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -327,5 +365,8 @@ int main(void)
   RUN_TEST(wait_until_out_of_day_is_rejected);
   RUN_TEST(wait_until_midnight_is_accepted);
   RUN_TEST(nonpositive_wait_waits_one_pulse_with_warning);
+  RUN_TEST(rejected_wait_ends_trigger_cleanly);
+  RUN_TEST(overflowing_wait_is_capped_not_wedged);
+  RUN_TEST(accepted_wait_keeps_trigger_suspended);
   return UNITY_END();
 }

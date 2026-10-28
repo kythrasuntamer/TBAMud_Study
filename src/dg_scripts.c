@@ -1921,8 +1921,10 @@ static int script_wait_number(const char *text, long *number, const char **rest)
   return TRUE;
 }
 
-/* processes any 'wait' commands in a trigger.  Returns TRUE once the rest of
- * the script is scheduled, FALSE (after logging why) if the wait is invalid. */
+/* Processes a 'wait' command. Returns TRUE when the wait event was created
+ * and the trigger is now suspended at cl->next; FALSE when the wait was
+ * rejected (already reported), in which case the caller must end the trigger
+ * through its normal cleanup rather than leave it half-suspended. */
 static int process_wait(void *go, trig_data *trig, int type, char *cmd,
                   struct cmdlist_element *cl)
 {
@@ -2990,10 +2992,11 @@ int script_driver(void *go_adress, trig_data *trig, int type, int mode)
     } else if (!strn_cmp("while ", p, 6)) {
       temp = find_done(cl);
       if (!temp) {
+        /* End through the normal cleanup below: returning here left the
+         * trigger at depth 1, so TRIGGER_CHECK() refused it until its owner
+         * was extracted. */
         report_unterminated_block(trig, "while");
-        depth--;
-        dg_script_execution_leave();
-        return ret_val;
+        break;
       }
       if (process_if(p + 6, go, sc, trig, type)) {
          temp->original = cl;
@@ -3023,10 +3026,16 @@ int script_driver(void *go_adress, trig_data *trig, int type, int mode)
         GET_TRIG_LOOPS(trig)++;
         if (cl->loops == 30) {
           cl->loops = 0;
-          process_wait(go, trig, type, "wait 1", cl);
-           depth--;
-          dg_script_execution_leave();
-          return ret_val;
+          if (process_wait(go, trig, type, "wait 1", cl)) {
+            depth--;
+            dg_script_execution_leave();
+            return ret_val;
+          }
+          TB_ERROR_MSG("dg", "wait-invalid", "script_driver",
+                       "trig vnum %d owner type %d uid %ld: loop pause "
+                       "rejected; trigger ended", DIAG_TRIG_VNUM(trig), type,
+                       dg_owner_uid(go, type));
+          break;
         }
           if (GET_TRIG_LOOPS(trig) >= 100) {
           script_log("Trigger VNum %d has looped 100 times!!!",
@@ -3094,13 +3103,20 @@ int script_driver(void *go_adress, trig_data *trig, int type, int mode)
         process_unset(sc, trig, cmd);
 
       else if (!strn_cmp(cmd, "wait ", 5)) {
-        /* An invalid wait ends this run normally; leaving it suspended with
-         * no event would keep the trigger busy, so it never fired again. */
-        if (!process_wait(go, trig, type, cmd, cl))
-          break;
-        depth--;
-        dg_script_execution_leave();
-        return ret_val;
+        /* Only a scheduled wait may leave the trigger suspended (depth and
+         * variables kept for trig_wait_event()). A rejected wait ends the
+         * trigger through the cleanup below: returning here instead left
+         * depth at 1, so TRIGGER_CHECK() refused it until extraction. */
+        if (process_wait(go, trig, type, cmd, cl)) {
+          depth--;
+          dg_script_execution_leave();
+          return ret_val;
+        }
+        TB_ERROR_MSG("dg", "wait-invalid", "script_driver",
+                     "trig vnum %d owner type %d uid %ld: wait rejected; "
+                     "trigger ended", DIAG_TRIG_VNUM(trig), type,
+                     dg_owner_uid(go, type));
+        break;
       }
 
       else if (!strn_cmp(cmd, "attach ", 7))
