@@ -1419,6 +1419,25 @@ int num_pc_in_room(struct room_data *room)
 }
 
 
+/** Report that code read or wrote a player-only field on a mob. Called only
+ * by CHECK_PLAYER_SPECIAL(), which passes its caller's location; the access
+ * then continues against the shared dummy_mob storage.
+ * @param ch The mob whose player_specials is dummy_mob.
+ * @param field The field expression, as written at the call site.
+ * @param source_file Caller's __FILE__.
+ * @param source_line Caller's __LINE__.
+ * @param source_func Caller's __func__. */
+void tb_player_special_on_mob_at(const struct char_data *ch, const char *field,
+                                 const char *source_file, int source_line,
+                                 const char *source_func)
+{
+  tb_error_log_at("ERROR", "char", "player-special-on-mob", "player_specials",
+                  0, source_file, source_line, source_func,
+                  DIAG_CHAR_FMT " used player-only field '%s' (shared "
+                  "dummy_mob storage)", DIAG_CHAR(ch),
+                  field ? field : "(unknown)");
+}
+
 /** This function (derived from basic fork() abort() idea by Erwin S Andreasen)
  * causes your MUD to dump core (assuming you can) but continue running. The
  * core dump will allow post-mortem debugging that is less severe than assert();

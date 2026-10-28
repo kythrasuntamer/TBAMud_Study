@@ -111,6 +111,14 @@ void echo_off(struct descriptor_data *d) { (void)d; }
 __attribute__((weak))
 void echo_on(struct descriptor_data *d) { (void)d; }
 
+/* ---------- utils.c ---------- */
+/* CHECK_PLAYER_SPECIAL's reporter, for tests that do not link utils.c. */
+__attribute__((weak))
+void tb_player_special_on_mob_at(const struct char_data *ch, const char *field,
+                                 const char *source_file, int source_line,
+                                 const char *source_func)
+{ (void)ch; (void)field; (void)source_file; (void)source_line; (void)source_func; }
+
 /* ---------- modify.c ---------- */
 __attribute__((weak))
 void page_string(struct descriptor_data *d, char *str, int keep_internal)

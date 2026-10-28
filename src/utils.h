@@ -161,6 +161,9 @@ time_t mud_time_to_secs(struct time_info_data *now);
 struct time_info_data *age(struct char_data *ch);
 int num_pc_in_room(struct room_data *room);
 void core_dump_real(const char *who, int line);
+void tb_player_special_on_mob_at(const struct char_data *ch, const char *field,
+                                 const char *source_file, int source_line,
+                                 const char *source_func);
 int count_color_chars(char *string);
 int room_is_dark(room_rnum room);
 int levenshtein_distance(const char *s1, const char *s2);
@@ -480,10 +483,15 @@ do                                                              \
  * for it, 'wimpy' would be an extremely bad thing for a mob to do, as an
  * example.  If you really couldn't care less, change this to a '#if 0'. */
 #if 1
-/** Warn if accessing player_specials on a mob.
- * @todo Subtle bug in the var reporting, but works well for now. */
+/** Report access to player_specials on a mob, then continue with the shared
+ * dummy_mob storage (long-standing behaviour: reads see zero, and a write
+ * changes the value every mob sees). The report is a player-special-on-mob
+ * error carrying the caller's file, line and function, the mob vnum and the
+ * field expression, so the offending call site and mob can be found.
+ * ch is evaluated more than once: pass a plain variable. */
 #define CHECK_PLAYER_SPECIAL(ch, var) \
-	(*(((ch)->player_specials == &dummy_mob) ? (log("SYSERR: Mob using '"#var"' at %s:%d.", __FILE__, __LINE__), &(var)) : &(var)))
+	(*(((ch)->player_specials == &dummy_mob) ? \
+	   (tb_player_special_on_mob_at((ch), #var, __FILE__, __LINE__, __func__), &(var)) : &(var)))
 #else
 #define CHECK_PLAYER_SPECIAL(ch, var)	(var)
 #endif

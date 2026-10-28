@@ -503,6 +503,31 @@ void test_strfrmt_empty_text_does_not_return_previous_output(void)
   TEST_ASSERT_EQUAL_INT(0, count_records());
 }
 
+/* =====================================================================
+ * I1-08: player_specials on a mob is reported with the caller's location.
+ * ===================================================================== */
+
+void test_check_player_special_on_mob_reports_call_site(void)
+{
+  struct char_data mob;
+  char where[64];
+  int width;
+
+  memset(&mob, 0, sizeof(mob));
+  SET_BIT_AR(MOB_FLAGS(&mob), MOB_ISNPC);
+  mob.nr = NOBODY;
+  mob.player_specials = &dummy_mob;
+
+  (void)snprintf(where, sizeof(where), "test_utils_guards.c:%d", __LINE__ + 1);
+  width = GET_SCREEN_WIDTH(&mob);
+
+  TEST_ASSERT_EQUAL_INT(dummy_mob.saved.screen_width, width);
+  TEST_ASSERT_EQUAL_INT(1, count_op("player-special-on-mob"));
+  TEST_ASSERT_NOT_NULL(strstr(log_text(), where));
+  TEST_ASSERT_NOT_NULL(strstr(log_text(), "screen_width"));
+  TEST_ASSERT_NOT_NULL(strstr(log_text(), "mob vnum"));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -524,5 +549,6 @@ int main(void)
   RUN_TEST(test_count_color_chars_complete_codes_are_silent);
   RUN_TEST(test_strfrmt_null_text_reports_and_returns_empty);
   RUN_TEST(test_strfrmt_empty_text_does_not_return_previous_output);
+  RUN_TEST(test_check_player_special_on_mob_reports_call_site);
   return UNITY_END();
 }
