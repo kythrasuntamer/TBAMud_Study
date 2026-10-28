@@ -110,7 +110,7 @@ int add_quest(struct aq_data *nqst)
   /* Make sure we assign spec procs to the questmaster */
   if (qmrnum != NOBODY && mob_index[qmrnum].func &&
      mob_index[qmrnum].func != questmaster)
-     QST_FUNC(rnum) = mob_index[qmrnum].func;
+     quest_set_qm_secondary(QST_MASTER(rnum), mob_index[qmrnum].func);
   if(qmrnum != NOBODY) 
     mob_index[qmrnum].func = questmaster;
 
@@ -139,8 +139,9 @@ int delete_quest(qst_rnum rnum)
   rznum = real_zone_by_thing(QST_NUM(rnum)); 
   log("GenOLC: delete_quest: Deleting quest #%d (%s).",
        QST_NUM(rnum), QST_NAME(rnum));
-  /* make a note of the quest master's secondary spec proc */
-  tempfunc = QST_FUNC(rnum);
+  /* make a note of the quest master's secondary spec proc; any of the QM's
+   * quests may hold it (see quest_qm_secondary()). */
+  tempfunc = quest_qm_secondary(qm);
 
 
   free_quest_strings(&aquest_table[rnum]);

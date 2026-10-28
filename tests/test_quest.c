@@ -11,6 +11,7 @@
 #include "db.h"
 #include "handler.h"
 #include "quest.h"
+#include "interpreter.h"
 #include <stdarg.h>
 #include "tb_error_capture.h"
 
@@ -52,6 +53,9 @@ void *tb_calloc_array_at(size_t count, size_t element_size,
   return calloc(count ? count : 1, element_size ? element_size : 1);
 }
 int MAX(int a, int b) { return a > b ? a : b; }
+struct command_info *complete_cmd_info;
+struct obj_data *get_obj_in_list_num(int num, struct obj_data *list)
+{ (void)num; (void)list; return NULL; }
 mob_rnum real_mobile(mob_vnum vnum) { return vnum == 500 ? 0 : NOBODY; }
 size_t sprintbit(bitvector_t vektor, const char *names[], char *result,
                  size_t reslen)
@@ -370,9 +374,40 @@ static void test_parse_reports_unknown_qm_and_skipped_lines(void)
   free(row->done); free(row->quit);
 }
 
+static int shop_calls;
+static SPECIAL(fake_shop)
+{
+  (void)ch; (void)me; (void)cmd; (void)argument;
+  shop_calls++;
+  return TRUE;
+}
+
+/* H3-06: a questmaster's original spec proc survives a lower-vnum quest
+ * added later by qedit (QST_FUNC NULL, inserted first in vnum order). */
+static void test_questmaster_finds_secondary_on_any_quest(void)
+{
+  char arg[MAX_INPUT_LENGTH] = "list";
+
+  add_quest_fixture(0, 450, AQ_ROOM_FIND, 3001, 1);
+  add_quest_fixture(1, 500, AQ_ROOM_FIND, 3001, 1);
+  quests[0].qm = quests[1].qm = 500;
+  quests[1].func = fake_shop;
+  shop_calls = 0;
+
+  TEST_ASSERT_TRUE(quest_qm_secondary(500) == fake_shop);
+  TEST_ASSERT_TRUE(questmaster(&player, &npc[0], 0, arg));
+  TEST_ASSERT_EQUAL_INT(1, shop_calls);
+
+  quest_set_qm_secondary(500, fake_shop);
+  TEST_ASSERT_TRUE(quests[0].func == fake_shop);
+  quest_set_qm_secondary(500, questmaster);   /* never parks questmaster */
+  TEST_ASSERT_TRUE(quests[0].func == fake_shop);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(test_questmaster_finds_secondary_on_any_quest);
   /* parse_quest keeps its row index across calls: run it first, once. */
   RUN_TEST(test_parse_reports_unknown_qm_and_skipped_lines);
   RUN_TEST(test_invalid_type_reported_and_named_safely);

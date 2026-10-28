@@ -307,6 +307,39 @@ void parse_quest(FILE *quest_f, int nr)
   }
 } /* parse_quest */
 
+/* Questmaster secondary spec procs.
+ *
+ * A questmaster mob's mob_index[].func is replaced by questmaster(); the
+ * mob's original proc (shop_keeper, a guild, ...) is parked in QST_FUNC of
+ * that mob's quests, and questmaster() calls it first. Invariant: any quest
+ * of the QM may hold it. qedit-created quests start with QST_FUNC == NULL
+ * and add_quest() inserts them in vnum order, so the proc must be looked up
+ * across all of the QM's quests, never only in the first one. */
+quest_spec_proc *quest_qm_secondary(mob_vnum qm)
+{
+  qst_rnum rnum;
+
+  if (qm == NOBODY)
+    return NULL;
+  for (rnum = 0; rnum < total_quests; rnum++)
+    if (QST_MASTER(rnum) == qm && QST_FUNC(rnum) &&
+        QST_FUNC(rnum) != questmaster)
+      return QST_FUNC(rnum);
+  return NULL;
+}
+
+/* Record func as the secondary proc on every quest of questmaster qm. */
+void quest_set_qm_secondary(mob_vnum qm, quest_spec_proc *func)
+{
+  qst_rnum rnum;
+
+  if (qm == NOBODY || func == questmaster)
+    return;
+  for (rnum = 0; rnum < total_quests; rnum++)
+    if (QST_MASTER(rnum) == qm)
+      QST_FUNC(rnum) = func;
+}
+
 void assign_the_quests(void)
 {
   qst_rnum rnum;
@@ -334,7 +367,7 @@ void assign_the_quests(void)
     }
     if (mob_index[(mrnum)].func &&
  mob_index[(mrnum)].func != questmaster)
-      QST_FUNC(rnum) = mob_index[(mrnum)].func;
+      quest_set_qm_secondary(QST_MASTER(rnum), mob_index[(mrnum)].func);
     mob_index[(mrnum)].func = questmaster;
   }
 }
@@ -986,13 +1019,15 @@ SPECIAL(questmaster)
   char arg1[MAX_INPUT_LENGTH], arg2[MAX_INPUT_LENGTH];
   int  tp;
   struct char_data *qm = (struct char_data *)me;
+  quest_spec_proc *secondary;
 
   /* check that qm mob has quests assigned */
   for (rnum = 0; (rnum < total_quests &&
       QST_MASTER(rnum) != GET_MOB_VNUM(qm)) ; rnum ++);
   if (rnum >= total_quests)
     return FALSE; /* No quests for this mob */
-  else if (QST_FUNC(rnum) && (QST_FUNC(rnum) (ch, me, cmd, argument)))
+  else if ((secondary = quest_qm_secondary(GET_MOB_VNUM(qm))) != NULL &&
+           secondary(ch, me, cmd, argument))
     return TRUE;  /* The secondary spec proc handled this command */
   else if (CMD_IS("quest")) {
     two_arguments(argument, arg1, arg2);

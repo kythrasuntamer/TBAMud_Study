@@ -93,7 +93,11 @@ struct aq_data {
 #define QST_TYPE_NAME(r)       ((QST_TYPE(r) >= 0 && QST_TYPE(r) < NUM_AQ_TYPES) ? \
                                 quest_types[QST_TYPE(r)] : "<invalid>")
 /* Quest Functions **************************************************** */
+/** Signature of a mob spec proc, for the questmaster secondary-proc API. */
+typedef SPECIAL(quest_spec_proc);
 /* Implemented in quest.c */
+quest_spec_proc *quest_qm_secondary(mob_vnum qm);
+void quest_set_qm_secondary(mob_vnum qm, quest_spec_proc *func);
 void destroy_quests(void);
 void assign_the_quests(void);
 void parse_quest(FILE *quest_f, int nr);
