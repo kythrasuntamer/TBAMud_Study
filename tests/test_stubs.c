@@ -94,8 +94,8 @@ char *act_at(const char *src_file, int src_line, const char *src_func,
   return NULL; }
 
 __attribute__((weak))
-void write_to_q(const char *txt, struct txt_q *queue, int aliased)
-{ (void)txt; (void)queue; (void)aliased; }
+int write_to_q(const char *txt, struct txt_q *queue, int aliased)
+{ (void)txt; (void)queue; (void)aliased; return 1; }
 
 __attribute__((weak))
 size_t write_to_output(struct descriptor_data *d, const char *txt, ...)

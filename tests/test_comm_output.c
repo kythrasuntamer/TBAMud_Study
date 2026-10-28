@@ -304,6 +304,32 @@ static void long_input_line_is_reported(void)
   desc.history = NULL;
 }
 
+/* Commands beyond the pending-command bound were dropped silently. */
+static void input_flood_is_reported(void)
+{
+  static char *history[HISTORY_SIZE];
+  int i;
+
+  for (i = 0; i < TB_MAX_PENDING_COMMANDS; i++)
+    TEST_ASSERT_EQUAL_INT(1, write_to_q("north", &desc.input, 0));
+  TEST_ASSERT_EQUAL_INT(0, write_to_q("north", &desc.input, 0));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors); /* reported by the caller */
+
+  strlcpy(read_script, "look\n", sizeof(read_script));
+  read_script_len = 5;
+  desc.history = history;
+  desc.str = NULL;
+  TEST_ASSERT_EQUAL_INT(1, process_input(&desc));
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("input-flood", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(desc.output, "Too many commands queued"));
+
+  flush_input_queue(&desc);
+  free(history[0]);
+  history[0] = NULL;
+  desc.history = NULL;
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -315,5 +341,6 @@ int main(void)
   RUN_TEST(auto_prompt_handles_negative_hit_points);
   RUN_TEST(oversized_format_is_reported);
   RUN_TEST(long_input_line_is_reported);
+  RUN_TEST(input_flood_is_reported);
   return UNITY_END();
 }

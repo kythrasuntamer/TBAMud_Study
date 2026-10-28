@@ -27,7 +27,7 @@ void tearDown(void) { logfile = NULL; }
  * the queue is actually populated and we can inspect its contents.
  * ========================================================= */
 
-void write_to_q(const char *txt, struct txt_q *queue, int aliased)
+int write_to_q(const char *txt, struct txt_q *queue, int aliased)
 {
     struct txt_block *newt;
     CREATE(newt, struct txt_block, 1);
@@ -41,6 +41,7 @@ void write_to_q(const char *txt, struct txt_q *queue, int aliased)
         queue->tail       = newt;
         newt->next        = NULL;
     }
+    return 1;
 }
 
 /* =========================================================

@@ -1305,18 +1305,27 @@ static char *make_prompt(struct descriptor_data *d)
  * growing an unbounded linked list while the game loop is busy. */
 #define TB_MAX_PENDING_COMMANDS 64
 
-void write_to_q(const char *txt, struct txt_q *queue, int aliased)
+/* Append a command to an input queue. Returns 1 if it was queued, 0 if it
+ * was dropped: the queue already holds TB_MAX_PENDING_COMMANDS entries
+ * (the remote player is typing faster than the game executes), allocation
+ * failed, or an argument was NULL. Every drop is reported here; the flood
+ * case is left to the caller, which knows the descriptor (process_input()
+ * reports it with DIAG_DESC and tells the player). */
+int write_to_q(const char *txt, struct txt_q *queue, int aliased)
 {
   struct txt_block *newt;
   struct txt_block *scan;
   size_t pending = 0;
 
-  if (queue == NULL || txt == NULL)
-    return;
+  if (queue == NULL || txt == NULL) {
+    TB_ERROR_MSG("network", "input-queue", "write_to_q",
+                 "NULL %s; command dropped", queue ? "text" : "queue");
+    return (0);
+  }
 
   for (scan = queue->head; scan != NULL; scan = scan->next) {
     if (++pending >= TB_MAX_PENDING_COMMANDS)
-      return; /* Drop excess commands; do not amplify the flood in logs. */
+      return (0);
   }
 
   CREATE(newt, struct txt_block, 1);
@@ -1326,7 +1335,7 @@ void write_to_q(const char *txt, struct txt_q *queue, int aliased)
     free(newt);
     errno = saved_errno;
     TB_REPORT_ERRNO("strdup", "input command queue");
-    return;
+    return (0);
   }
   newt->aliased = aliased;
 
@@ -1339,6 +1348,7 @@ void write_to_q(const char *txt, struct txt_q *queue, int aliased)
     queue->tail = newt;
     newt->next = NULL;
   }
+  return (1);
 }
 
 /* NOTE: 'dest' must be at least MAX_INPUT_LENGTH big. */
@@ -2327,8 +2337,14 @@ static int process_input(struct descriptor_data *t)
      failed_subst = 1;  /* Allow the read point to be moved, but don't add to queue */
    }
 
-    if (!failed_subst)
-      write_to_q(tmp, &t->input, 0);
+    if (!failed_subst && !write_to_q(tmp, &t->input, 0) && t->input.head) {
+      /* Queue full: the peer is sending commands faster than they run.
+       * Rate-limited so the flood cannot be amplified into the log. */
+      TB_WARN_EVERY(60, "network", "input-flood", "process_input",
+                    DIAG_DESC_FMT " %d commands pending; command dropped",
+                    DIAG_DESC(t), TB_MAX_PENDING_COMMANDS);
+      write_to_output(t, "Too many commands queued; command ignored.\r\n");
+    }
 
     /* find the end of this line */
     while (ISNEWL(*nl_pos))
