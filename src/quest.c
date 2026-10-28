@@ -231,6 +231,14 @@ void parse_quest(FILE *quest_f, int nr)
   aquest_table[i].gold_reward = t[0];
   aquest_table[i].exp_reward  = t[1];
   aquest_table[i].obj_reward  = (t[2] == -1) ? NOTHING : t[2];
+  /* Legal, but almost certainly a builder mistake: picking up the target
+   * completes the quest and hands out another copy of the target. */
+  if (aquest_table[i].type == AQ_OBJ_FIND &&
+      aquest_table[i].obj_reward != NOTHING &&
+      aquest_table[i].obj_reward == aquest_table[i].target)
+    TB_WARN_MSG("quest", "reward-equals-target", "aquest_table",
+                "quest vnum %d type %d target obj vnum %d is also the reward",
+                nr, aquest_table[i].type, (int) aquest_table[i].target);
 
   for (;;) {
     if (!get_line(quest_f, line)) {
@@ -359,10 +367,13 @@ void remove_completed_quest(struct char_data *ch, qst_vnum vnum)
 
 /* NOLINTEND(clang-analyzer-security.ArrayBound) */
 
+/* TRUE while generic_complete_quest() is paying out rewards. */
+static int completing_quest = FALSE;
+
 void generic_complete_quest(struct char_data *ch)
 {
   qst_rnum rnum;
-  qst_vnum vnum = GET_QUEST(ch);
+  qst_vnum vnum = GET_QUEST(ch), next;
   struct obj_data *new_obj;
   int happy_qp, happy_gold, happy_exp;
 
@@ -378,7 +389,27 @@ void generic_complete_quest(struct char_data *ch)
     return;
   }
 
+  /* Invariant: completion is not re-entered. Rewards call out of this file
+   * (obj_to_char() runs autoquest_trigger_check() for AQ_OBJ_FIND), and a
+   * quest whose reward object is also its target would otherwise pay out
+   * again on every nested level until the stack overflows. The quest is
+   * cleared before any reward is handed out, so this only fires if a new
+   * path re-enters; report it rather than paying twice. */
+  if (completing_quest) {
+    TB_ERROR_MSG("quest", "complete-reentry", "aquest_table",
+                 DIAG_CHAR_FMT " quest vnum %d completion re-entered",
+                 DIAG_CHAR(ch), (int) vnum);
+    return;
+  }
+
   if (--GET_QUEST_COUNTER(ch) <= 0) {
+    next = QST_NEXT(rnum);
+    /* The quest is finished before rewards are paid, so a reward that
+     * triggers another quest check (see above) sees no active quest. */
+    if (!IS_SET(QST_FLAGS(rnum), AQ_REPEATABLE))
+      add_completed_quest(ch, vnum);
+    clear_quest(ch);
+    completing_quest = TRUE;
     if (IS_HAPPYHOUR && IS_HAPPYQP) {
       happy_qp = (int)(QST_POINTS(rnum) * (((float)(100+HAPPY_QP))/(float)100));
       happy_qp = MAX(happy_qp, 0);
@@ -430,13 +461,11 @@ void generic_complete_quest(struct char_data *ch)
         }
       }
     }
-    if (!IS_SET(QST_FLAGS(rnum), AQ_REPEATABLE))
-      add_completed_quest(ch, vnum);
-    clear_quest(ch);
-    if ((real_quest(QST_NEXT(rnum)) != NOTHING) &&
-        (QST_NEXT(rnum) != vnum) &&
-        !is_complete(ch, QST_NEXT(rnum))) {
-      rnum = real_quest(QST_NEXT(rnum));
+    completing_quest = FALSE;
+    if ((real_quest(next) != NOTHING) &&
+        (next != vnum) &&
+        !is_complete(ch, next)) {
+      rnum = real_quest(next);
       set_quest(ch, rnum);
       send_to_char(ch,
           "The next stage of your quest awaits:\r\n%s",

@@ -210,9 +210,32 @@ static void test_complete_missing_quest_reports(void)
   TEST_ASSERT_EQUAL_INT(0, GET_QUESTPOINTS(&player));
 }
 
+/* H3-02: an Object quest whose reward object is also its target. Handing
+ * out the reward runs the AQ_OBJ_FIND check again (obj_to_char); it must not
+ * complete the quest a second time. */
+static void test_reward_equal_to_target_pays_once(void)
+{
+  add_quest_fixture(0, 100, AQ_OBJ_FIND, FIXTURE_OBJ_VNUM, 1);
+  quests[0].obj_reward = FIXTURE_OBJ_VNUM;
+  quests[0].value[0] = 5;           /* QST_POINTS */
+  quests[0].gold_reward = 10;
+  set_quest(&player, 0);
+
+  obj_to_char(read_object(FIXTURE_OBJ_VNUM, VIRTUAL), &player);
+
+  TEST_ASSERT_EQUAL_INT(2, reward_objects);   /* the pickup + one reward */
+  TEST_ASSERT_EQUAL_INT(2, obj_to_char_calls);
+  TEST_ASSERT_EQUAL_INT(5, GET_QUESTPOINTS(&player));
+  TEST_ASSERT_EQUAL_INT(10, GET_GOLD(&player));
+  TEST_ASSERT_EQUAL_INT(NOTHING, GET_QUEST(&player));
+  TEST_ASSERT_EQUAL_INT(1, GET_NUM_QUESTS(&player));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(test_reward_equal_to_target_pays_once);
   RUN_TEST(test_mob_find_two_targets_completes_once);
   RUN_TEST(test_mob_find_does_not_count_against_chained_quest);
   RUN_TEST(test_complete_missing_quest_reports);
