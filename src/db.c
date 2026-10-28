@@ -1275,6 +1275,116 @@ static int boot_capacity, boot_records;
  * real_room(), real_mobile() and real_object() binary-search the prototype
  * arrays, so the vnums must ascend through the whole index. */
 static int boot_last_vnum;
+/* Set by discrete_load() when a record number did not ascend; index_boot()
+ * then sorts the table with sort_boot_records(). */
+static int boot_disordered;
+
+/** A loaded record's vnum and table slot, for sort_boot_records(). */
+struct boot_vnum_slot {
+  int vnum;
+  int slot;
+};
+
+/* Ascending vnum; records sharing a vnum keep their file order. */
+static int boot_vnum_slot_cmp(const void *a, const void *b)
+{
+  const struct boot_vnum_slot *x = a, *y = b;
+
+  if (x->vnum != y->vnum)
+    return x->vnum < y->vnum ? -1 : 1;
+  return (x->slot > y->slot) - (x->slot < y->slot);
+}
+
+/** Reorder the n elements of size bytes at base so that element k becomes
+ * the old element order[k].slot. */
+static void boot_permute(void *base, size_t size,
+                         const struct boot_vnum_slot *order, int n)
+{
+  char *copy;
+  int k;
+
+  CREATE(copy, char, (size_t)n * size);
+  memcpy(copy, base, (size_t)n * size);
+  for (k = 0; k < n; k++)
+    memcpy((char *)base + (size_t)k * size,
+           copy + (size_t)order[k].slot * size, size);
+  free(copy);
+}
+
+/** Put the table index_boot() just loaded back in ascending vnum order.
+ *
+ * real_room(), real_mobile(), real_object() and real_trigger() binary-search
+ * these tables, so one record out of place also hides records that are in
+ * place: the stock 301.wld lists #30170 after #30172, and real_room() then
+ * found neither 30171 nor 30172, so the exits to them silently led nowhere.
+ * The world files are the implementor's, and discrete_load() has reported
+ * each record that did not ascend. Nothing holds an rnum into the table yet
+ * (renum_world(), renum_zone_table(), shops, quests and spec procs come
+ * later in boot_world() and boot_db()), so the records are moved and their
+ * own rnum fields renumbered. Records sharing a vnum stay in file order and
+ * are reported: a lookup finds only one of them. */
+static void sort_boot_records(int mode, const char *index_path)
+{
+  struct boot_vnum_slot *order;
+  int n, k;
+
+  switch (mode) {
+  case DB_BOOT_WLD: n = top_of_world + 1; break;
+  case DB_BOOT_MOB: n = top_of_mobt + 1; break;
+  case DB_BOOT_OBJ: n = top_of_objt + 1; break;
+  case DB_BOOT_TRG: n = top_of_trigt; break;
+  case DB_BOOT_QST: n = total_quests; break;
+  default: return;
+  }
+  if (n < 2)
+    return;
+
+  CREATE(order, struct boot_vnum_slot, n);
+  for (k = 0; k < n; k++) {
+    order[k].slot = k;
+    switch (mode) {
+    case DB_BOOT_WLD: order[k].vnum = world[k].number; break;
+    case DB_BOOT_MOB: order[k].vnum = mob_index[k].vnum; break;
+    case DB_BOOT_OBJ: order[k].vnum = obj_index[k].vnum; break;
+    case DB_BOOT_TRG: order[k].vnum = trig_index[k]->vnum; break;
+    default:          order[k].vnum = aquest_table[k].vnum; break;
+    }
+  }
+  qsort(order, n, sizeof(*order), boot_vnum_slot_cmp);
+
+  switch (mode) {
+  case DB_BOOT_WLD:
+    boot_permute(world, sizeof(*world), order, n);
+    break;
+  case DB_BOOT_MOB:
+    boot_permute(mob_proto, sizeof(*mob_proto), order, n);
+    boot_permute(mob_index, sizeof(*mob_index), order, n);
+    for (k = 0; k < n; k++)
+      mob_proto[k].nr = k;
+    break;
+  case DB_BOOT_OBJ:
+    boot_permute(obj_proto, sizeof(*obj_proto), order, n);
+    boot_permute(obj_index, sizeof(*obj_index), order, n);
+    for (k = 0; k < n; k++)
+      obj_proto[k].item_number = k;
+    break;
+  case DB_BOOT_TRG:
+    boot_permute(trig_index, sizeof(*trig_index), order, n);
+    for (k = 0; k < n; k++)
+      trig_index[k]->proto->nr = k;
+    break;
+  default:
+    boot_permute(aquest_table, sizeof(*aquest_table), order, n);
+    break;
+  }
+
+  for (k = 1; k < n; k++)
+    if (order[k].vnum == order[k - 1].vnum)
+      TB_ERROR_MSG("db", "record-number", index_path,
+                   "vnum %d is used by more than one record; lookups find "
+                   "only one of them", order[k].vnum);
+  free(order);
+}
 
 /** Count the '#'-delimited records in a world file, to size the prototype
  * arrays. Reads in READ_SIZE chunks, as get_line() does, so a '#' that
@@ -1443,6 +1553,7 @@ void index_boot(int mode)
   boot_capacity = rec_count;
   boot_records = 0;
   boot_last_vnum = -1;
+  boot_disordered = FALSE;
 
   for (line_number = 1;; ++line_number) {
     if (fscanf(db_index, INDEX_NAME_FMT, buf1) != 1) {
@@ -1487,6 +1598,10 @@ void index_boot(int mode)
     tb_fclose(db_file);
   }
   tb_fclose(db_index);
+
+  /* discrete_load() reported each record number that did not ascend. */
+  if (boot_disordered)
+    sort_boot_records(mode, index_path);
 
   /* Sort the help index. */
   if (mode == DB_BOOT_HLP) {
@@ -1543,12 +1658,15 @@ void discrete_load(FILE *fl, int mode, char *filename)
       }
       /* A number that does not ascend breaks the binary search in
        * real_room()/real_mobile()/real_object(): lookups of it, or of its
-       * neighbours, can fail. The stock world has such a record
-       * (301.wld #30170), so this is reported, not fatal. */
-      if (nr <= boot_last_vnum)
+       * neighbours, fail. The stock world has such a record (301.wld
+       * #30170), so it is reported, not fatal, and index_boot() sorts the
+       * table once the whole index is loaded. */
+      if (nr <= boot_last_vnum) {
 	TB_ERROR_MSG("db", "record-number", filename,
-	             "%s #%d does not ascend (previous #%d); real-number "
-	             "lookups of it may fail", modes[mode], nr, boot_last_vnum);
+	             "%s #%d does not ascend (previous #%d); the table is "
+	             "sorted after loading", modes[mode], nr, boot_last_vnum);
+	boot_disordered = TRUE;
+      }
       boot_last_vnum = nr;
       /* Each record fills the next prototype slot (parse_room(),
        * parse_mobile(), parse_object()... keep their own cursor). The

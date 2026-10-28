@@ -1569,6 +1569,136 @@ static void boot_social_messages_reports_missing_required_messages(void)
   social_fixture_free(3);
 }
 
+/* ---------------------------------------------------------------------
+ * sort_boot_records(): tables loaded out of vnum order (B1-15)
+ * ------------------------------------------------------------------- */
+
+/* Rooms with the given vnums in world[]; light records the file slot. */
+static void sorted_room_fixture(const int *vnums, int n)
+{
+  int k;
+
+  memset(room_fixture, 0, sizeof(room_fixture));
+  world = room_fixture;
+  for (k = 0; k < n; k++) {
+    room_fixture[k].number = vnums[k];
+    room_fixture[k].light = (byte)k;
+  }
+  top_of_world = n - 1;
+}
+
+/* B1-15: discrete_load() only reported a number that did not ascend, and
+ * real_room()'s binary search then missed rooms (the stock 301.wld lists
+ * #30170 after #30172, which hid 30171 and 30172). Here 102 between 104 and
+ * 105 is not found until index_boot()'s sort puts it back. */
+static void sort_boot_records_restores_room_order(void)
+{
+  static const int vnums[] = { 100, 101, 103, 104, 102, 105, 106 };
+  const int n = (int)(sizeof(vnums) / sizeof(vnums[0]));
+  int k;
+
+  sorted_room_fixture(vnums, n);
+  TEST_ASSERT_EQUAL_INT(NOWHERE, real_room(102));
+  sort_boot_records(DB_BOOT_WLD, "world/wld/index");
+  for (k = 0; k < n; k++) {
+    TEST_ASSERT_EQUAL_INT(100 + k, world[k].number);
+    TEST_ASSERT_EQUAL_INT(k, real_room(100 + k));
+  }
+  TEST_ASSERT_EQUAL_INT(4, world[2].light);	/* 102 came from slot 4 */
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  room_fixture_free();
+}
+
+/* A shared vnum cannot be sorted apart: both records stay, in file order,
+ * and the duplicate is reported. */
+static void sort_boot_records_reports_duplicate_vnum(void)
+{
+  static const int vnums[] = { 5, 7, 5 };
+
+  sorted_room_fixture(vnums, 3);
+  sort_boot_records(DB_BOOT_WLD, "world/wld/index");
+  TEST_ASSERT_EQUAL_INT(5, world[0].number);
+  TEST_ASSERT_EQUAL_INT(0, world[0].light);
+  TEST_ASSERT_EQUAL_INT(5, world[1].number);
+  TEST_ASSERT_EQUAL_INT(2, world[1].light);
+  TEST_ASSERT_EQUAL_INT(7, world[2].number);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("record-number", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail,
+                              "vnum 5 is used by more than one record"));
+  room_fixture_free();
+}
+
+/* Mobs and objects live in two parallel arrays and store their own rnum
+ * (nr, item_number); triggers store it in their prototype. Each moves with
+ * its index entry and is renumbered. */
+static void sort_boot_records_renumbers_prototypes(void)
+{
+  static const int vnums[] = { 20, 10, 30 };
+  static struct index_data trig_idx[2];
+  static struct trig_data trig_protos[2];
+  struct index_data *trig_slots[2];
+  int k;
+
+  mob_proto = mob_proto_fixture;
+  mob_index = mob_index_fixture;
+  obj_proto = obj_proto_fixture;
+  obj_index = obj_index_fixture;
+  for (k = 0; k < 3; k++) {
+    mob_index[k].vnum = obj_index[k].vnum = vnums[k];
+    mob_proto[k].nr = obj_proto[k].item_number = k;
+    GET_LEVEL(&mob_proto[k]) = vnums[k];	/* follows its prototype */
+    GET_OBJ_WEIGHT(&obj_proto[k]) = vnums[k];
+  }
+  top_of_mobt = top_of_objt = 2;
+  sort_boot_records(DB_BOOT_MOB, "world/mob/index");
+  sort_boot_records(DB_BOOT_OBJ, "world/obj/index");
+  for (k = 0; k < 3; k++) {
+    TEST_ASSERT_EQUAL_INT(10 * (k + 1), mob_index[k].vnum);
+    TEST_ASSERT_EQUAL_INT(10 * (k + 1), GET_LEVEL(&mob_proto[k]));
+    TEST_ASSERT_EQUAL_INT(k, mob_proto[k].nr);
+    TEST_ASSERT_EQUAL_INT(k, real_mobile(10 * (k + 1)));
+    TEST_ASSERT_EQUAL_INT(10 * (k + 1), obj_index[k].vnum);
+    TEST_ASSERT_EQUAL_INT(10 * (k + 1), GET_OBJ_WEIGHT(&obj_proto[k]));
+    TEST_ASSERT_EQUAL_INT(k, obj_proto[k].item_number);
+    TEST_ASSERT_EQUAL_INT(k, real_object(10 * (k + 1)));
+  }
+  proto_fixture_free();
+
+  for (k = 0; k < 2; k++) {
+    trig_idx[k].vnum = (k == 0) ? 9 : 5;
+    trig_idx[k].proto = &trig_protos[k];
+    trig_protos[k].nr = k;
+    trig_slots[k] = &trig_idx[k];
+  }
+  trig_index = trig_slots;
+  top_of_trigt = 2;
+  sort_boot_records(DB_BOOT_TRG, "world/trg/index");
+  TEST_ASSERT_EQUAL_INT(5, trig_index[0]->vnum);
+  TEST_ASSERT_TRUE(trig_index[0]->proto == &trig_protos[1]);
+  TEST_ASSERT_EQUAL_INT(0, trig_index[0]->proto->nr);
+  TEST_ASSERT_EQUAL_INT(1, trig_index[1]->proto->nr);
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  trig_index = NULL;
+  top_of_trigt = 0;
+}
+
+/* discrete_load() marks the pass so index_boot() sorts it. */
+static void discrete_load_marks_descending_vnum_for_sorting(void)
+{
+  room_fixture_use();
+  boot_disordered = FALSE;
+  TEST_ASSERT_EQUAL_INT(0, discrete_load_text(
+    "#221\nA~\nA.\n~\n0 0 0 0 0 0\nS\n"
+    "#220\nB~\nB.\n~\n0 0 0 0 0 0\nS\n$\n", DB_BOOT_WLD, 4));
+  TEST_ASSERT_TRUE(boot_disordered);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail,
+                              "#220 does not ascend (previous #221); the "
+                              "table is sorted after loading"));
+  boot_disordered = FALSE;
+  room_fixture_free();
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -1629,5 +1759,9 @@ int main(void)
   RUN_TEST(check_object_clamps_weapon_dice);
   RUN_TEST(load_zones_disables_bad_wear_position_and_direction);
   RUN_TEST(boot_social_messages_reports_missing_required_messages);
+  RUN_TEST(sort_boot_records_restores_room_order);
+  RUN_TEST(sort_boot_records_reports_duplicate_vnum);
+  RUN_TEST(sort_boot_records_renumbers_prototypes);
+  RUN_TEST(discrete_load_marks_descending_vnum_for_sorting);
   return UNITY_END();
 }
