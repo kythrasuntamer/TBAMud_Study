@@ -1071,10 +1071,30 @@ static void count_hash_records_counts_hash_at_get_line_chunk(void)
   fclose(fp);
 }
 
+/* B1-16: an 'M' naming mob 70000 was narrowed to vnum 4464 by real_mobile()
+ * and reset the wrong mob. load_zones() now disables the command loudly. */
+static void load_zones_disables_command_with_vnum_past_idxtype(void)
+{
+  static const char text[] =
+    "#31\nbuilder~\nZone~\n3100 3199 30 2\n"
+    "M 0 70000 1 3100\n"
+    "O 0 3100 1 3100\n"
+    "S\n$\n";
+
+  TEST_ASSERT_EQUAL_INT(0, load_zone_text(text));
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("zone-parse", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "zone 31 line 5 cmd M arg1=70000"));
+  TEST_ASSERT_EQUAL_CHAR('*', zone_table[top_of_zone_table].cmd[0].command);
+  TEST_ASSERT_EQUAL_CHAR('O', zone_table[top_of_zone_table].cmd[1].command);
+  zone_load_fixture_free();
+}
+
 int main(void)
 {
   UNITY_BEGIN();
   RUN_TEST(load_zones_rejects_top_nowhere);
+  RUN_TEST(load_zones_disables_command_with_vnum_past_idxtype);
   RUN_TEST(discrete_load_rejects_record_past_capacity);
   RUN_TEST(discrete_load_accepts_records_within_capacity);
   RUN_TEST(count_hash_records_counts_hash_at_get_line_chunk);

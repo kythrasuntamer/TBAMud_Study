@@ -1837,7 +1837,8 @@ void renum_world(void)
 static void renum_zone_table(void)
 {
   int cmd_no;
-  room_rnum a, b, c, olda, oldb, oldc;
+  room_rnum a, b, c;
+  int olda, oldb, oldc;	/* the file's vnums, untruncated, for the report */
   zone_rnum zone;
   char buf[128];
 
@@ -2487,6 +2488,50 @@ char *parse_object(FILE *obj_f, int nr)
   }
 }
 
+/** Which of a zone command's arguments hold a vnum, as a bit mask (1 = arg1,
+ * 2 = arg2, 4 = arg3). renum_zone_table() passes these to real_room(),
+ * real_mobile(), real_object() and real_trigger(), which take IDXTYPE
+ * (ush_int) vnums, so each must be checked before it is narrowed. */
+static int zone_cmd_vnum_args(char command)
+{
+  switch (command) {
+  case 'M': case 'O': case 'P': return 1 | 4;
+  case 'G': case 'E': case 'D': return 1;
+  case 'R': return 1 | 2;
+  case 'T': return 2 | 4;
+  case 'V': return 4;
+  default:  return 0;
+  }
+}
+
+/** TRUE if every vnum argument of a parsed zone command fits 0..IDXTYPE_MAX-1.
+ * The .zon file is hand-editable (zedit only writes existing vnums); 70000
+ * would otherwise wrap to vnum 4464 and reset the wrong thing. 'O' may name
+ * NOWHERE as its room ("load nowhere"). Reports the first bad argument. */
+static int zone_cmd_vnums_in_range(const struct reset_com *cmd, int zone_vnum,
+                                   const char *zname, int line_num)
+{
+  int args[3], mask = zone_cmd_vnum_args(cmd->command), n;
+
+  args[0] = cmd->arg1;
+  args[1] = cmd->arg2;
+  args[2] = cmd->arg3;
+  for (n = 0; n < 3; n++) {
+    if (!(mask & (1 << n)))
+      continue;
+    if (cmd->command == 'O' && n == 2 && args[n] == NOWHERE)
+      continue;
+    if (args[n] < 0 || args[n] >= IDXTYPE_MAX) {
+      TB_ERROR_MSG("db", "zone-parse", zname,
+                   "zone %d line %d cmd %c arg%d=%d out of vnum range 0..%d; "
+                   "cmd disabled", zone_vnum, line_num, cmd->command, n + 1,
+                   args[n], IDXTYPE_MAX - 1);
+      return FALSE;
+    }
+  }
+  return TRUE;
+}
+
 #define Z	zone_table[zone]
 /* load the zone table and command tables */
 static void load_zones(FILE *fl, char *zonename)
@@ -2671,6 +2716,8 @@ static void load_zones(FILE *fl, char *zonename)
       exit(1);
     }
     ZCMD.line = line_num;
+    if (!zone_cmd_vnums_in_range(&ZCMD, Z.number, zname, line_num))
+      ZCMD.command = '*';	/* a 'V' still owns its sarg1/sarg2 strings */
     cmd_no++;
   }
 
