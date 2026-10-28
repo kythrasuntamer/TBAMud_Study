@@ -1291,16 +1291,25 @@ void snoop_check(struct char_data *ch)
   /*  This short routine is to ensure that characters that happen to be snooping
    *  (or snooped) and get advanced/demoted will not be snooping/snooped someone
    *  of a higher/lower level (and thus, not entitled to be snooping. */
+  /* Callers: advance_level() (class.c) on promotion, do_advance and
+   * 'set level' on any change. A peer descriptor may have no character
+   * (it is mid-login or closing); its snoop link is dropped as well. */
   if (!ch || !ch->desc)
     return;
   if (ch->desc->snooping &&
-     (GET_LEVEL(ch->desc->snooping->character) >= GET_LEVEL(ch))) {
+     (!ch->desc->snooping->character ||
+      GET_LEVEL(ch->desc->snooping->character) >= GET_LEVEL(ch))) {
     ch->desc->snooping->snoop_by = NULL;
     ch->desc->snooping = NULL;
+    send_to_char(ch, "You can no longer snoop at your level; snoop stopped.\r\n");
   }
 
   if (ch->desc->snoop_by &&
-     (GET_LEVEL(ch) >= GET_LEVEL(ch->desc->snoop_by->character))) {
+     (!ch->desc->snoop_by->character ||
+      GET_LEVEL(ch) >= GET_LEVEL(ch->desc->snoop_by->character))) {
+    if (ch->desc->snoop_by->character)
+      send_to_char(ch->desc->snoop_by->character,
+                   "%s now outranks you; snoop stopped.\r\n", GET_NAME(ch));
     ch->desc->snoop_by->snooping = NULL;
     ch->desc->snoop_by = NULL;
   }
@@ -1744,6 +1753,9 @@ ACMD(do_advance)
   if (newlevel < GET_LEVEL(victim)) {
     do_start(victim);
     GET_LEVEL(victim) = newlevel;
+    /* Promotion reaches snoop_check() through advance_level(); a
+     * demotion has to drop snoops the new level no longer allows here. */
+    snoop_check(victim);
     send_to_char(victim, "You are momentarily enveloped by darkness!\r\nYou feel somewhat diminished.\r\n");
   } else {
     act("$n makes some strange gestures. A strange feeling comes upon you,\r\n"
@@ -3447,6 +3459,7 @@ static int perform_set(struct char_data *ch, struct char_data *vict, int mode, c
       }
       RANGE(1, LVL_IMPL);
       vict->player.level = value;
+      snoop_check(vict);   /* drop snoops the new level no longer allows */
       break;
     case 26: /* loadroom */
       if (!str_cmp(val_arg, "off")) {

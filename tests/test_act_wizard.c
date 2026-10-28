@@ -1166,6 +1166,37 @@ static void test_zpurge_all_below_god_is_refused(void)
   TEST_ASSERT_NULL(strstr(sent, "Purged world."));
 }
 
+/* G1-28: demotion by 'set level' (or 'advance') never called
+ * snoop_check(), so a demoted god kept snooping a higher immortal. */
+static void test_set_level_demotion_drops_disallowed_snoop(void)
+{
+  static struct descriptor_data target_desc, other_desc;
+  static struct char_data other;
+  static struct player_special_data other_specials;
+
+  make_player();
+  memset(&target_desc, 0, sizeof(target_desc));
+  memset(&other_desc, 0, sizeof(other_desc));
+  memset(&other, 0, sizeof(other));
+  other.player_specials = &other_specials;
+  GET_LEVEL(&target) = LVL_GRGOD;
+  GET_LEVEL(&other) = LVL_GOD;
+  target.desc = &target_desc;
+  target_desc.character = &target;
+  other.desc = &other_desc;
+  other_desc.character = &other;
+  target_desc.snooping = &other_desc;
+  other_desc.snoop_by = &target_desc;
+
+  RUN_CMD(do_set, &imm, "player bobby level 31");
+  TEST_ASSERT_EQUAL_INT(31, GET_LEVEL(&target));
+  TEST_ASSERT_NULL(target_desc.snooping);
+  TEST_ASSERT_NULL(other_desc.snoop_by);
+  TEST_ASSERT_NOT_NULL(strstr(sent, "snoop stopped"));
+  target.desc = NULL;
+  in_game_char = NULL;
+}
+
 int main(void)
 {
   /* basic_mud_log()/mudlog() are the real utils.c ones; keep them quiet. */
@@ -1201,6 +1232,7 @@ int main(void)
   RUN_TEST(test_show_errors_overflow_is_marked_and_reported);
   RUN_TEST(test_idnum1_level_restore_is_logged);
   RUN_TEST(test_zpurge_all_below_god_is_refused);
+  RUN_TEST(test_set_level_demotion_drops_disallowed_snoop);
   {
     int failures = UNITY_END();
     if (logfile)
