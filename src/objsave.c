@@ -611,7 +611,10 @@ void Crash_listrent(struct char_data *ch, char *name)
 		free(current);
 	}
 
-  page_string(ch->desc,buf,0);
+  /* buf lives in this frame, but a listing longer than one page is shown
+   * after we return (the immortal pages on), so the pager must keep its own
+   * copy; without keep_internal it pointed into the dead frame. */
+  page_string(ch->desc, buf, TRUE);
   tb_fclose(fl);
 }
 

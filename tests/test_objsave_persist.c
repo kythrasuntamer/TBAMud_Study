@@ -38,16 +38,49 @@ static char paged[MAX_STRING_LENGTH * 2];
 static int pages;
 static int live_objects;
 
+/* Under ASan, report a read of a dead stack frame (see pager_page_on());
+ * ASAN_OPTIONS from the environment still apply on top. Unused without
+ * ASan. */
+const char *__asan_default_options(void); /* NOLINT(bugprone-reserved-identifier,cert-dcl37-c,cert-dcl51-cpp) */
+const char *__asan_default_options(void) /* NOLINT(bugprone-reserved-identifier,cert-dcl37-c,cert-dcl51-cpp) */
+{
+  return "detect_stack_use_after_return=1";
+}
+
 /* Diagnostics the production code may log while running. */
 void basic_mud_log(const char *format, ...) { (void)format; }
 void mudlog(int type, int level, int file, const char *str, ...)
 { (void)type; (void)level; (void)file; (void)str; }
+
+/* Like modify.c's page_string(): with keep_internal the pager owns a copy
+ * of str; without it, it keeps str itself and shows the later pages from
+ * it after the caller has returned. */
+static const char *pager_text;
+static char *pager_copy;
+static int pager_kept;
 void page_string(struct descriptor_data *d, char *str, int keep_internal)
 {
-  (void)d; (void)keep_internal;
+  (void)d;
+  free(pager_copy);
+  pager_copy = NULL;
+  pager_kept = keep_internal;
+  if (keep_internal) {
+    pager_copy = strdup(str);
+    TEST_ASSERT_NOT_NULL(pager_copy);
+    pager_text = pager_copy;
+  } else
+    pager_text = str;
   if (snprintf(paged, sizeof(paged), "%s", str) < 0)
     paged[0] = '\0';
   pages++;
+}
+
+/* The player pages on: show_string() reads the pager's text again, after
+ * the listing function has returned. */
+static void pager_page_on(char *out, size_t size)
+{
+  if (snprintf(out, size, "%s", pager_text ? pager_text : "") < 0)
+    out[0] = '\0';
 }
 
 int get_filename(char *filename, size_t fbufsize, int mode, const char *orig_name)
@@ -333,6 +366,9 @@ void tearDown(void)
     }
   remove_rent_file("Tester");
   obj_index = NULL;
+  free(pager_copy);
+  pager_copy = NULL;
+  pager_text = NULL;
 }
 
 /* B2-01: a container recorded on a finger slot it cannot be worn on is put in
@@ -406,6 +442,28 @@ static void test_listrent_truncates_loudly(void)
   TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "of 400"));
   TEST_ASSERT_NOT_NULL(strstr(paged, "listing truncated"));
   TEST_ASSERT_EQUAL_INT(0, live_objects);
+}
+
+/* Crash_listrent() built its listing in a stack buffer and handed it to
+ * page_string() without keep_internal, so the pager kept pointing into
+ * that buffer. A listing longer than one page is shown after the call
+ * returns, from a dead frame: stack use after return under ASan
+ * (detect_stack_use_after_return). The pager must own a copy. */
+static void test_listrent_pager_owns_its_copy(void)
+{
+  char again[256];
+  struct descriptor_data desc;
+
+  memset(&desc, 0, sizeof(desc));
+  player.desc = &desc;
+  write_rent_file("Tester", "1 1000 0 0 0 0\n#101\n\n$~\n");
+
+  Crash_listrent(&player, (char *)"Tester");
+  player.desc = NULL;
+  pager_page_on(again, sizeof(again));
+
+  TEST_ASSERT_TRUE(pager_kept);
+  TEST_ASSERT_NOT_NULL(strstr(again, "a trinket"));
 }
 
 static char *slurp_rent(void)
@@ -928,6 +986,7 @@ int main(void)
   RUN_TEST(test_rent_values_are_repaired_like_world_objects);
   RUN_TEST(test_rent_values_in_range_are_kept);
   RUN_TEST(test_rent_values_check_object_reports_are_kept);
+  RUN_TEST(test_listrent_pager_owns_its_copy);
   (void)rmdir(scratch_dir);
   return UNITY_END();
 }

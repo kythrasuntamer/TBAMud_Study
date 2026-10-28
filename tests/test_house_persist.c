@@ -30,9 +30,47 @@ static char scratch_dir[256];
 static char start_dir[1024];
 static char sent[MAX_STRING_LENGTH];
 
+/* Under ASan, report a read of a dead stack frame (see pager_page_on());
+ * ASAN_OPTIONS from the environment still apply on top. Unused without
+ * ASan. */
+const char *__asan_default_options(void); /* NOLINT(bugprone-reserved-identifier,cert-dcl37-c,cert-dcl51-cpp) */
+const char *__asan_default_options(void) /* NOLINT(bugprone-reserved-identifier,cert-dcl37-c,cert-dcl51-cpp) */
+{
+  return "detect_stack_use_after_return=1";
+}
+
 void basic_mud_log(const char *format, ...) { (void)format; }
 void mudlog(int type, int level, int file, const char *str, ...)
 { (void)type; (void)level; (void)file; (void)str; }
+
+/* Like modify.c's page_string(): with keep_internal the pager owns a copy
+ * of str; without it, it keeps str itself and shows the later pages from
+ * it after the caller has returned. */
+static const char *pager_text;
+static char *pager_copy;
+static int pager_kept;
+void page_string(struct descriptor_data *d, char *str, int keep_internal)
+{
+  (void)d;
+  free(pager_copy);
+  pager_copy = NULL;
+  pager_kept = keep_internal;
+  if (keep_internal) {
+    pager_copy = strdup(str);
+    TEST_ASSERT_NOT_NULL(pager_copy);
+    pager_text = pager_copy;
+  } else
+    pager_text = str;
+}
+
+/* The player pages on: show_string() reads the pager's text again, after
+ * the listing function has returned. */
+static void pager_page_on(char *out, size_t size)
+{
+  if (snprintf(out, size, "%s", pager_text ? pager_text : "") < 0)
+    out[0] = '\0';
+}
+
 size_t send_to_char(struct char_data *ch, const char *messg, ...)
 {
   va_list args;
@@ -274,6 +312,9 @@ void tearDown(void)
 {
   (void)remove(HCONTROL_FILE);
   world = NULL;
+  free(pager_copy);
+  pager_copy = NULL;
+  pager_text = NULL;
   TEST_ASSERT_EQUAL_INT(0, chdir(start_dir));
 }
 
@@ -690,6 +731,33 @@ static void test_unopenable_hcontrol_is_not_replaced(void)
   (void)remove(path);
 }
 
+/* House_listrent() ('hcontrol show <vnum>') built its listing in a stack
+ * buffer and handed it to page_string() without keep_internal, so the
+ * pager kept pointing into that buffer: a listing longer than one page is
+ * shown after the call returns, from a dead frame. The pager must own a
+ * copy. */
+static void test_house_listing_pager_owns_its_copy(void)
+{
+  char show[] = "100", again[256], path[64];
+  struct house_control_rec rec = good_record();
+  FILE *fl;
+
+  write_hcontrol(&rec, 1);
+  House_boot();
+  TEST_ASSERT_TRUE(snprintf(path, sizeof(path), LIB_HOUSE "%d.house", 100) > 0);
+  fl = fopen(path, "w");
+  TEST_ASSERT_NOT_NULL(fl);
+  TEST_ASSERT_TRUE(fputs("$~\n", fl) >= 0);
+  TEST_ASSERT_EQUAL_INT(0, fclose(fl));
+
+  hcontrol_list_houses(&imm, show);
+  pager_page_on(again, sizeof(again));
+
+  TEST_ASSERT_TRUE(pager_kept);
+  TEST_ASSERT_NOT_NULL(strstr(again, "filename: " LIB_HOUSE "100.house"));
+  (void)remove(path);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -707,6 +775,7 @@ int main(void)
   RUN_TEST(test_truncated_hcontrol_header_is_refused);
   RUN_TEST(test_hcontrol_record_count_mismatch_is_reported);
   RUN_TEST(test_unopenable_hcontrol_is_not_replaced);
+  RUN_TEST(test_house_listing_pager_owns_its_copy);
   {
     char sub[300];
     if (snprintf(sub, sizeof(sub), "%s/etc", scratch_dir) > 0)
