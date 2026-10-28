@@ -369,13 +369,16 @@ int free_mobile(struct char_data *mob)
   return TRUE;
 }
 
+/* Write zone rznum's mob prototypes to its .mob file through a temporary
+ * file.  Returns TRUE when the file was replaced; FALSE, reported, when the
+ * previous file was kept. */
 int save_mobiles(zone_rnum rznum)
 {
   zone_vnum vznum;
   FILE *mobfd;
   room_vnum i;
   mob_rnum rmob;
-  int written;
+  long written;
   char mobfname[64], usedfname[64];
 
 #if CIRCLE_UNSIGNED_INDEX
@@ -406,11 +409,19 @@ int save_mobiles(zone_rnum rznum)
     }
   }
   tb_fputs("$\n", mobfd);
-  written = ftell(mobfd);
+  written = ftell(mobfd);       /* for the log line; ftell() returns a long */
   {
+    /* ferror() stays set after any failed write.  tb_fprintf() and
+     * tb_fputs() reported each one, but a later flush that succeeds would
+     * hide it and commit a file with a hole in it (C1-29). */
+    int stream_ok = !ferror(mobfd);
     int flush_ok = tb_fflush_checked(mobfd, mobfname);
     int close_ok = tb_fclose_checked(mobfd, mobfname);
-    if (!flush_ok || !close_ok) {
+    if (!stream_ok)
+      TB_ERROR_MSG("genolc", "save-stream-error", mobfname,
+                   TB_ERRID_PERSIST_WRITE " zone %d mobiles: a write failed; previous file kept",
+                   vznum);
+    if (!stream_ok || !flush_ok || !close_ok) {
       if (remove(mobfname) != 0 && errno != ENOENT)
         TB_REPORT_ERRNO("remove", mobfname);
       return FALSE;
@@ -422,8 +433,8 @@ int save_mobiles(zone_rnum rznum)
 
   if (in_save_list(vznum, SL_MOB))
     remove_from_save_list(vznum, SL_MOB);
-  log("GenOLC: '%s' saved, %d bytes written.", usedfname, written);
-  return written;
+  log("GenOLC: '%s' saved, %ld bytes written.", usedfname, written);
+  return TRUE;
 }
 
 int write_mobile_espec(mob_vnum mvnum, struct char_data *mob, FILE *fd)

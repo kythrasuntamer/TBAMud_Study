@@ -1100,3 +1100,8 @@ target_link_libraries(test_aedit PRIVATE ${CRYPT_LIBRARY} ${SODIUM_LIBRARY})
 if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
     target_link_options(test_genolc_safety PRIVATE -Wl,--wrap=fopen)
 endif()
+
+# C1-29: test_genmob wraps fopen() the same way for save_mobiles().
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_link_options(test_genmob PRIVATE -Wl,--wrap=fopen)
+endif()
