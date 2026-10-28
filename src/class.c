@@ -1239,7 +1239,11 @@ byte saving_throws(int class_num, int type, int level)
   return 100;
 }
 
-/* THAC0 for classes and levels.  (To Hit Armor Class 0) */
+/* THAC0 for classes and levels.  (To Hit Armor Class 0)
+ *
+ * The tables list levels 0-34; levels 35..LVL_IMPL use the level-34 row.
+ * Anything else, or an unknown class, is reported through CLASS_TABLE_ERROR
+ * and returns 100 (cannot hit). */
 int thaco(int class_num, int level)
 {
   if (class_num == CLASS_MONK) class_num = CLASS_WARRIOR;
@@ -1743,7 +1747,14 @@ void init_spell_levels(void)
  * exp required for immortality, plus at least 20,000 or so. */
 #define EXP_MAX  10000000
 
-/* Function to return the exp required for each class/level */
+/* Function to return the exp required for each class/level.
+ *
+ * Levels 0-30 come from the per-class tables, 31 to LVL_IMMORT from a
+ * linear extension, and immortal levels (above LVL_IMMORT, up to LVL_IMPL)
+ * sit just below EXP_MAX.  A level outside 0..LVL_IMPL returns 0; an
+ * unknown class returns 0 for levels 31..LVL_IMMORT and 123456 (the
+ * historical "tables are incomplete" marker) for 0-30;
+ * both are reported through CLASS_TABLE_ERROR. */
 int level_exp(int chclass, int level)
 {
   if (chclass == CLASS_MONK) chclass = CLASS_WARRIOR;
