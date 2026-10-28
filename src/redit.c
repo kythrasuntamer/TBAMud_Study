@@ -898,6 +898,12 @@ void redit_parse(struct descriptor_data *d, char *arg)
 
   case REDIT_COPY:
     if ((number = real_room(tb_parse_int_or_zero(arg))) != NOWHERE) {
+      /* Release the buffer being replaced, as quitting without saving
+       * does; the copy used to leak it and its trigger list. */
+      OLC_ROOM(d)->proto_script = OLC_SCRIPT(d);
+      free_room(OLC_ROOM(d));
+      OLC_ROOM(d) = NULL;
+      OLC_SCRIPT(d) = NULL;
       redit_setup_existing(d, number);
     } else
       write_to_output(d, "That room does not exist.\r\n");

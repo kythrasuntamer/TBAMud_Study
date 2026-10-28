@@ -1065,7 +1065,13 @@ void medit_parse(struct descriptor_data *d, char *arg)
     return;
 
   case MEDIT_COPY:
-    if ((i = real_mobile(tb_parse_int_or_zero(arg))) != NOWHERE) {
+    if ((i = real_mobile(tb_parse_int_or_zero(arg))) != NOBODY) {
+      /* Release the buffer being replaced, as quitting without saving
+       * does; the copy used to leak it and its trigger list. */
+      OLC_MOB(d)->proto_script = OLC_SCRIPT(d);
+      free_mobile(OLC_MOB(d));
+      OLC_MOB(d) = NULL;
+      OLC_SCRIPT(d) = NULL;
       medit_setup_existing(d, i);
     } else
       write_to_output(d, "That mob does not exist.\r\n");

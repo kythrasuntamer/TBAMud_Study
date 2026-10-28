@@ -1411,6 +1411,14 @@ void oedit_parse(struct descriptor_data *d, char *arg)
 
   case OEDIT_COPY:
     if ((number = real_object(tb_parse_int_or_zero(arg))) != NOTHING) {
+      /* Release the buffer being replaced, as quitting without saving
+       * does; the copy used to leak its strings and trigger list. */
+      OLC_OBJ(d)->proto_script = OLC_SCRIPT(d);
+      free_proto_script(OLC_OBJ(d), OBJ_TRIGGER);
+      free_object_strings(OLC_OBJ(d));
+      free(OLC_OBJ(d));
+      OLC_OBJ(d) = NULL;
+      OLC_SCRIPT(d) = NULL;
       oedit_setup_existing(d, number);
     } else
       write_to_output(d, "That object does not exist.\r\n");
