@@ -15,6 +15,26 @@
 #include "genshp.h"
 #include "genzon.h"
 
+/**
+ * @file genshp.c
+ * Shop table maintenance for OLC (sedit) and the shop file writer.
+ *
+ * Input: shop data comes from builders through sedit; keeper messages are
+ * free text typed by the builder.
+ *
+ * List conventions: in_room and producing are IDXTYPE arrays terminated by
+ * NOTHING; the buy-type list is a shop_buy_data array terminated by an
+ * entry whose type is NOTHING (BUY_TYPE()).  producing is declared as
+ * obj_vnum * in shop.h but holds object prototype RNUMs while the server
+ * runs (converted from vnums at boot, back to vnums by save_shops()), so
+ * delete_object()/add_object() renumber it.  keeper is a mob RNUM (or
+ * NOBODY).  Stored rnums are range-checked before save_shops() indexes
+ * with them.
+ *
+ * Ownership: each shop_index[] entry owns its lists and message strings;
+ * see add_shop() for the one place where a slot is filled without freeing.
+ */
+
 /* NOTE (gg): Didn't modify sedit much. Don't consider it as 'recent' as the
  * other editors with regard to updates or style. */
 
@@ -270,7 +290,19 @@ shop_rnum real_shop(shop_vnum vnum)
   return NOWHERE;
 }
 
-/* Generic string modifier for shop keeper messages. */
+/**
+ * Replace a shop keeper message with builder text, prefixing "%s " when
+ * the text does not start with '%' (the customer's name comes first).
+ *
+ * The result is a template, not a printf format: shop.c renders it with
+ * shop_format_message(), which substitutes only %s (customer name), %d
+ * (amount, buy/sell messages) and %%, and copies and reports anything
+ * else.  So no format validation is needed here, and a message must never
+ * be passed to a printf-family function as the format.
+ *
+ * @param str   Message field to replace; the old string is freed.
+ * @param new_s Builder text from sedit.
+ */
 void modify_shop_string(char **str, char *new_s)
 {
 
@@ -289,6 +321,19 @@ void modify_shop_string(char **str, char *new_s)
   *str = strdup(pointer);
 }
 
+/**
+ * Add a new shop or update the one with the same vnum, from sedit's copy.
+ *
+ * Update: the live entry's lists and strings are freed and replaced by deep
+ * copies.  Insert: shop_index[] grows by one and later shops shift up by
+ * struct copy, so each shifted slot's pointers now belong to the slot
+ * above.  The new slot is therefore filled with copy_shop(..., FALSE)
+ * after its list pointers are cleared: its old strings are still owned by
+ * the neighbour and must not be freed.  nshp keeps its own copies.
+ *
+ * @return The shop's rnum.  A vnum outside every zone is reported to
+ *         builders and the shop is not queued for saving.
+ */
 int add_shop(struct shop_data *nshp)
 {
   shop_rnum rshop;
