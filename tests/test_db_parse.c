@@ -158,8 +158,18 @@ zone_rnum real_zone_by_thing(room_vnum vznum)
       return z;
   return NOWHERE;
 }
+/* dg_db_scripts.c's trigger readers name a missing trigger's owner by
+ * GET_MOB_VNUM(), the room's number or GET_OBJ_VNUM(); these fixtures
+ * record that vnum (dg_read_trigger() also consumes its "T <vnum>" line). */
+static int fixture_trigger_owner_vnum;
 void dg_read_trigger(FILE *fp, void *proto, int type)
-{ (void)fp; (void)proto; (void)type; }
+{
+  char line[READ_SIZE];
+
+  (void)get_line(fp, line);
+  fixture_trigger_owner_vnum = type == MOB_TRIGGER ?
+    (int) GET_MOB_VNUM((char_data *) proto) : (int) ((room_data *) proto)->number;
+}
 /* check_object() fixtures (constants.c, spell_parser.c, interpreter.c,
  * handler.c). Zero bit counts make check_bitvector_names() accept nothing
  * set, and the test objects set no flags. */
@@ -187,7 +197,8 @@ char *find_exdesc(char *word, struct extra_descr_data *list)
 size_t action_bits_count = 0;
 void parse_trigger(FILE *trig_f, int nr) { (void)trig_f; (void)nr; }
 void parse_quest(FILE *quest_f, int nr) { (void)quest_f; (void)nr; }
-void dg_obj_trigger(char *line, struct obj_data *obj) { (void)line; (void)obj; }
+void dg_obj_trigger(char *line, struct obj_data *obj)
+{ (void)line; fixture_trigger_owner_vnum = (int) GET_OBJ_VNUM(obj); }
 void skip_spaces(char **string)                /* interpreter.c */
 { while (**string && isspace((unsigned char)**string)) (*string)++; }
 /* oasis.c's logic, without its tag-too-long report; load_config() calls it
@@ -2003,6 +2014,44 @@ static void load_zones_skips_blank_and_nul_lines(void)
   zone_load_fixture_free();
 }
 
+/* dg_read_trigger() and dg_obj_trigger() name a missing trigger's owner by
+ * GET_MOB_VNUM()/GET_OBJ_VNUM(). parse_mobile() set the mob's rnum and
+ * top_of_mobt only after its 'T' lines, and parse_object() top_of_objt
+ * only after its own, so both reports named 65535 (NOBODY/NOTHING; for
+ * objects from the second one on). The owner's real vnum is seen now. */
+static void trigger_lines_see_their_owner_vnum(void)
+{
+  static const char mob_text[] =
+    "guard~\nthe guard~\nA guard stands here.\n~\nHe looks tough.\n~\n"
+    "0 0 0 0 0 0 0 0 0 S\n1 20 10 1d1+1 1d1+0\n0 0\n8 8 1\nT 999\n$\n";
+  static const char obj_text[] =
+    "sword~\na sword~\nA sword lies here.~\n~\n"
+    "12 0 0 0 0 0 0 0 0 0 0 0 0\n0 0 0 0\n1 2 3 4 5\nT 999\n$\n";
+  FILE *fp;
+  int k;
+
+  mob_proto = mob_proto_fixture;
+  mob_index = mob_index_fixture;
+  fixture_trigger_owner_vnum = -1;
+  fp = stream_of(mob_text, sizeof(mob_text) - 1);
+  parse_mobile(fp, 3016);
+  TEST_ASSERT_EQUAL_INT(0, fclose(fp));
+  TEST_ASSERT_EQUAL_INT(3016, fixture_trigger_owner_vnum);
+
+  /* Two objects: the first slot also passed when top_of_objt was 0. */
+  obj_proto = obj_proto_fixture;
+  obj_index = obj_index_fixture;
+  for (k = 0; k < 2; k++) {
+    fixture_trigger_owner_vnum = -1;
+    fp = stream_of(obj_text, sizeof(obj_text) - 1);
+    (void)parse_object(fp, 3017 + k);
+    TEST_ASSERT_EQUAL_INT(0, fclose(fp));
+    TEST_ASSERT_EQUAL_INT(3017 + k, fixture_trigger_owner_vnum);
+  }
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  proto_fixture_free();
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -2076,5 +2125,6 @@ int main(void)
   RUN_TEST(parse_object_rejects_converted_record_in_no_zone);
   RUN_TEST(parse_mobile_rejects_converted_record_in_no_zone);
   RUN_TEST(load_zones_skips_blank_and_nul_lines);
+  RUN_TEST(trigger_lines_see_their_owner_vnum);
   return UNITY_END();
 }

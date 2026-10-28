@@ -2684,6 +2684,12 @@ void parse_mobile(FILE *mob_f, int nr)
     exit(1);
   }
 
+  /* The prototype is in the table from here on: dg_read_trigger() names a
+   * missing trigger's owner with GET_MOB_VNUM(), which reads mob_index[nr]
+   * only while nr <= top_of_mobt and otherwise printed NOBODY (65535). */
+  mob_proto[i].nr = i;
+  top_of_mobt = i;
+
   /* DG triggers -- script info follows mob S/E section */
   letter = fread_letter(mob_f);
   if (ungetc(letter, mob_f) == EOF) {
@@ -2704,10 +2710,9 @@ void parse_mobile(FILE *mob_f, int nr)
   for (j = 0; j < NUM_WEARS; j++)
     mob_proto[i].equipment[j] = NULL;
 
-  mob_proto[i].nr = i;
   mob_proto[i].desc = NULL;
 
-  top_of_mobt = i++;
+  i++;
 }
 
 /** Parse object #nr into the next obj_proto[]/obj_index[] slot.
@@ -2734,6 +2739,10 @@ char *parse_object(FILE *obj_f, int nr)
 
   clear_object(obj_proto + i);
   obj_proto[i].item_number = i;
+  /* In the table from here on, so GET_OBJ_VNUM() (VALID_OBJ_RNUM() checks
+   * item_number <= top_of_objt) works for dg_obj_trigger()'s report on a
+   * missing trigger, which otherwise named NOTHING (65535). */
+  top_of_objt = i;
 
   tb_snprintf(buf2, sizeof(buf2), "object #%d", nr);	/* sprintf: OK (for 'buf2 >= 19') */
 
