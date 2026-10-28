@@ -59,6 +59,7 @@ void page_string(struct descriptor_data *d, char *str, int keep_internal)
 { (void)d; (void)str; (void)keep_internal; }
 void send_editor_help(struct descriptor_data *d) { (void)d; }
 void parse_at(char *str) { (void)str; }
+void smash_tilde(char *str) { (void)str; }
 void string_write(struct descriptor_data *d, char **writeto, size_t len,
                   long mailto, void *data)
 {
@@ -244,6 +245,93 @@ static void test_abort_drops_own_text_and_orphans(void)
   TEST_ASSERT_EQUAL_INT(0, count_bugs());
 }
 
+/* Submit a complete bug as p (what 'bug submit' + typing + save leaves). */
+static void submit_bug(struct player *p, const char *title, const char *body)
+{
+  char args[MAX_INPUT_LENGTH];
+  snprintf(args, sizeof(args), "submit %s", title);
+  ibt_cmd(p, args);
+  type_line(p, body);
+  p->desc.str = NULL;
+}
+
+static void olc_line(struct player *p, const char *text)
+{
+  char buf[MAX_INPUT_LENGTH];
+  strlcpy(buf, text, sizeof(buf));
+  ibtedit_parse(&p->desc, buf);
+}
+
+/* C1-13(a): 'bug remove N' freed a record whose submitter was still
+ * writing it; the submitter's next line wrote into freed memory. */
+static void test_remove_refuses_record_being_written(void)
+{
+  ibt_cmd(&pa, "submit in progress");
+  ibt_cmd(&imm, "remove 1");
+  TEST_ASSERT_EQUAL_STRING("remove-busy", tb_captured_operation);
+  TEST_ASSERT_EQUAL_INT(1, count_bugs());
+  type_line(&pa, "still mine");
+  TEST_ASSERT_EQUAL_STRING("still mine", first_bug->body);
+  pa.desc.str = NULL;
+}
+
+/* C1-13(b): ibtedit saved by list position, so removing an earlier record
+ * during the session made the save overwrite the following record. */
+static void test_ibtedit_save_follows_record_not_position(void)
+{
+  submit_bug(&pa, "first", "body one");
+  submit_bug(&pa, "second", "body two");
+  submit_bug(&pa, "third", "body three");
+
+  do_oasis_ibtedit(&imm.ch, (char[]){"2"}, bug_cmd, SCMD_BUG);
+  TEST_ASSERT_EQUAL_INT(CON_IBTEDIT, STATE(&imm.desc));
+  olc_line(&imm, "3");
+  olc_line(&imm, "second, edited");
+
+  /* Another GRGOD removes record 1; "second" is now at position 1. */
+  pb.ch.player.level = LVL_GRGOD;
+  ibt_cmd(&pb, "remove 1");
+  TEST_ASSERT_EQUAL_INT(2, count_bugs());
+
+  olc_line(&imm, "q");
+  olc_line(&imm, "y");
+  TEST_ASSERT_EQUAL_STRING("second, edited", first_bug->text);
+  TEST_ASSERT_EQUAL_STRING("body two", first_bug->body);
+  TEST_ASSERT_EQUAL_STRING("third", first_bug->next->text);
+
+  /* A record removed during the session is reported, not retargeted. */
+  do_oasis_ibtedit(&imm.ch, (char[]){"2"}, bug_cmd, SCMD_BUG);
+  olc_line(&imm, "3");
+  olc_line(&imm, "gone");
+  imm.ch.player.level = LVL_GRGOD;
+  STATE(&imm.desc) = CON_PLAYING;  /* let remove pass the editor check */
+  {
+    struct oasis_olc_data *olc = imm.desc.olc;
+    imm.desc.olc = NULL;
+    ibt_cmd(&pb, "remove 2");
+    imm.desc.olc = olc;
+  }
+  STATE(&imm.desc) = CON_IBTEDIT;
+  tb_error_capture_reset();
+  olc_line(&imm, "q");
+  olc_line(&imm, "y");
+  TEST_ASSERT_EQUAL_STRING("edit-target-gone", tb_captured_operation);
+  TEST_ASSERT_EQUAL_INT(1, count_bugs());
+  TEST_ASSERT_EQUAL_STRING("second, edited", first_bug->text);
+}
+
+/* C1-13: a record open in ibtedit cannot be removed under the editor. */
+static void test_remove_refuses_record_open_in_ibtedit(void)
+{
+  submit_bug(&pa, "first", "body one");
+  do_oasis_ibtedit(&imm.ch, (char[]){"1"}, bug_cmd, SCMD_BUG);
+  pb.ch.player.level = LVL_GRGOD;
+  ibt_cmd(&pb, "remove 1");
+  TEST_ASSERT_EQUAL_STRING("remove-busy", tb_captured_operation);
+  TEST_ASSERT_EQUAL_INT(1, count_bugs());
+  olc_line(&imm, "q");
+}
+
 int main(void)
 {
   char dir[] = "/tmp/tb_test_ibt.XXXXXX";
@@ -259,5 +347,8 @@ int main(void)
   UNITY_BEGIN();
   RUN_TEST(test_abort_frees_only_the_aborting_writers_node);
   RUN_TEST(test_abort_drops_own_text_and_orphans);
+  RUN_TEST(test_remove_refuses_record_being_written);
+  RUN_TEST(test_ibtedit_save_follows_record_not_position);
+  RUN_TEST(test_remove_refuses_record_open_in_ibtedit);
   return UNITY_END();
 }

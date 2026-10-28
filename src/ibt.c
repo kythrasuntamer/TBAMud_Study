@@ -50,6 +50,11 @@ static const char *ibt_types[]={
   "\n"
 };
 
+/* Source of IBT_DATA.serial.  List positions shift when a record is removed,
+ * so anything that must find "the same record" later (an ibtedit session)
+ * keeps the serial instead. */
+static long ibt_next_serial = 1;
+
 /* Internal (static) functions */
 static IBT_DATA *new_ibt(void);
 static void free_ibt_list(int mode);
@@ -79,6 +84,7 @@ static IBT_DATA *new_ibt(void)
    ibtData->id_num     = NOBODY;
    ibtData->room       = NOWHERE;
    ibtData->dated      = 0;
+   ibtData->serial     = ibt_next_serial++;
 
    for (i=0; i<IBT_ARRAY_MAX; i++)
      ibtData->flags[i]   = 0;
@@ -372,6 +378,29 @@ static IBT_DATA *get_ibt_by_num(int mode, int target_num)
       return target_ibt;
     }
   }
+  return NULL;
+}
+
+/* Find a listed IBT by its never-reused serial, or NULL if it was removed. */
+static IBT_DATA *get_ibt_by_serial(int mode, long serial)
+{
+  IBT_DATA *target_ibt;
+
+  for (target_ibt = get_first_ibt(mode); target_ibt; target_ibt = target_ibt->next)
+    if (target_ibt->serial == serial)
+      return target_ibt;
+  return NULL;
+}
+
+/* Return the ibtedit session editing this listed IBT, or NULL. */
+static struct descriptor_data *ibt_olc_editor(int mode, IBT_DATA *ibt)
+{
+  struct descriptor_data *d;
+
+  for (d = descriptor_list; d; d = d->next)
+    if (STATE(d) == CON_IBTEDIT && d->olc && OLC_IBT(d) &&
+        OLC_VAL(d) == mode && OLC_IBT(d)->serial == ibt->serial)
+      return d;
   return NULL;
 }
 
@@ -766,6 +795,22 @@ ACMD(do_ibt)
       send_to_char(ch, "%s not found\r\n", ibt_types[subcmd]);
       return;
     } else {
+      struct descriptor_data *busy;
+
+      /* A record still being submitted has a writer whose d->str points at
+       * its body, and one open in ibtedit is saved back later: freeing
+       * either leaves the other side writing into freed memory. */
+      if ((busy = ibt_body_writer(ibtData)) != NULL ||
+          (busy = ibt_olc_editor(subcmd, ibtData)) != NULL) {
+        TB_WARN_MSG("ibt", "remove-busy", ibt_types[subcmd],
+                    "%s %d (logged by idnum %ld) not removed by " DIAG_CHAR_FMT
+                    ": in use by descriptor %d (player idnum %ld)",
+                    ibt_types[subcmd], ano, ibtData->id_num, DIAG_CHAR(ch),
+                    busy->desc_num,
+                    busy->character ? (long)GET_IDNUM(busy->character) : -1L);
+        send_to_char(ch, "That %s is still being written or edited.\r\n", CMD_NAME);
+        return;
+      }
       if (free_ibt(subcmd, ibtData)) {
         send_to_char(ch,"%s%s Number %d removed.%s\r\n", QCYN, ibt_types[subcmd], ano, QNRM);
         if (CONFIG_IBT_AUTOSAVE) {
@@ -810,6 +855,7 @@ ACMD(do_oasis_ibtedit)
 {
   int number = NOTHING;
   struct descriptor_data *d;
+  IBT_DATA *target;
   char buf1[MAX_STRING_LENGTH], buf2[MAX_STRING_LENGTH];
 
   /* No editing as a mob or while being forced. */
@@ -832,20 +878,18 @@ ACMD(do_oasis_ibtedit)
     number = tb_parse_int_or_zero(buf1);
 
   /* Validate that the IBT number exists */
-  if (get_ibt_by_num(subcmd, number) == NULL) {
+  if ((target = get_ibt_by_num(subcmd, number)) == NULL) {
     send_to_char(ch, "That %s number doesn't exist!\r\n", ibt_types[subcmd]);
     return;
   }
 
-  /* Check that whatever it is isn't already being edited. */
-  for (d = descriptor_list; d; d = d->next) {
-    if (STATE(d) == CON_IBTEDIT) {
-      if (d->olc && OLC_NUM(d) == number) {
-        send_to_char(ch, "That %s is currently being edited by %s.\r\n",
-          ibt_types[subcmd], GET_NAME(d->character));
-        return;
-      }
-    }
+  /* Check that whatever it is isn't already being edited.  Sessions hold
+   * the record's serial: a list position names a different record (or one
+   * of another type) once anything is removed. */
+  if ((d = ibt_olc_editor(subcmd, target)) != NULL) {
+    send_to_char(ch, "That %s is currently being edited by %s.\r\n",
+      ibt_types[subcmd], d->character ? GET_NAME(d->character) : "someone");
+    return;
   }
 
   d = ch->desc;
@@ -891,6 +935,9 @@ static void ibtedit_setup(struct descriptor_data *d)
 
   /* Should always be the case, but just to make sure */
   if ((ibtData = get_ibt_by_num(OLC_VAL(d), OLC_NUM(d))) != NULL) {
+    /* The working copy carries the record's identity, not just its
+     * position; ibtedit_save() finds the record again by it. */
+    OLC_IBT(d)->serial = ibtData->serial;
     if ((ibtData->text) && *(ibtData->text)) {
       OLC_IBT(d)->text  = STRALLOC(ibtData->text);
     }
@@ -918,8 +965,10 @@ static void ibtedit_save(struct descriptor_data *d)
   IBT_DATA *ibtData;
   int i;
 
-  /* Should always be the case, but just to make sure */
-  if ((ibtData = get_ibt_by_num(OLC_VAL(d), OLC_NUM(d))) != NULL) {
+  /* Find the record by serial: its list position (OLC_NUM) shifts when an
+   * earlier record is removed during the session, and saving by position
+   * would overwrite a different record. */
+  if ((ibtData = get_ibt_by_serial(OLC_VAL(d), OLC_IBT(d)->serial)) != NULL) {
     if ((OLC_IBT(d)->text) && *(OLC_IBT(d)->text)) {
       if (ibtData->text) STRFREE(ibtData->text);
       ibtData->text = STRALLOC(OLC_IBT(d)->text);
@@ -946,8 +995,12 @@ static void ibtedit_save(struct descriptor_data *d)
       ibtData->flags[i] = OLC_IBT(d)->flags[i];
     }
   } else {
-    log("SYSERR: ibtedit_save: Invalid IBT vnum (%d) in OLC struct", OLC_NUM(d));
-    log("        IBT possibly removed while being edited");
+    TB_WARN_MSG("ibt", "edit-target-gone", ibt_types[OLC_VAL(d)],
+                "%s %d (serial %ld) was removed while " DIAG_CHAR_FMT " edited it; edits discarded",
+                ibt_types[OLC_VAL(d)], OLC_NUM(d), OLC_IBT(d)->serial,
+                DIAG_CHAR(d->character));
+    write_to_output(d, "That %s was removed while you edited it; changes not saved.\r\n",
+                    ibt_types[OLC_VAL(d)]);
     return;
   }
 
@@ -1221,6 +1274,8 @@ void clean_ibt_list(int mode, struct descriptor_data *writer)
     ibtTemp = ibtData;
     ibtData = ibtData->next;
     busy = ibt_body_writer(ibtTemp);
+    if (!busy)
+      busy = ibt_olc_editor(mode, ibtTemp);
     if (busy && busy == writer)
       free_ibt(mode, ibtTemp);
     else if (busy) {
