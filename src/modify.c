@@ -403,10 +403,16 @@ ACMD(do_skillset)
 }
 
 /* By Michael Buselli. Traverse down the string until the begining of the next
- * page has been reached.  Return NULL if this is the last page of the string. */
+ * page has been reached.  Return NULL if this is the last page of the string.
+ *
+ * The text comes from world, help and lib files (fread_string() turns a
+ * trailing '@' into '\t') as well as from the game, so a colour introducer
+ * ('\t' or ESC) can be the last byte. Each scan below stops at the
+ * terminator: the outer loop's str++ would otherwise step past it. */
 static char *next_page(char *str, struct char_data *ch)
 {
   int col = 1, line = 1, count, pw;
+  const char *page_start = str;
 
   pw = (GET_SCREEN_WIDTH(ch) >= 40 && GET_SCREEN_WIDTH(ch) <= 250) ? GET_SCREEN_WIDTH(ch) : PAGE_WIDTH;
 
@@ -420,13 +426,26 @@ static char *next_page(char *str, struct char_data *ch)
       return (str);
 
     /* Check for the beginning of an ANSI color code block. */
-    else if (*str == '\x1B')  /* Jump to the end of the ANSI code, or max 9 chars */
-      for (count=0; *str != 'm' && count < 9; count++)
+    else if (*str == '\x1B') { /* Jump to the end of the ANSI code, or max 9 chars */
+      for (count = 0; *str && *str != 'm' && count < 9; count++)
         str++;
+      if (!*str) {
+        TB_WARN_MSG("pager", "ansi-scan", "page-string",
+                    "unterminated ESC sequence at page offset %td; "
+                    DIAG_CHAR_FMT, str - page_start, DIAG_CHAR(ch));
+        return (NULL);
+      }
+    }
 
+    /* '\t' and its code character are zero-width ("\t\t" displays a tab). */
     else if (*str == '\t') {
-      if (*(str + 1) != '\t')
-        str++;
+      if (!str[1]) {
+        TB_WARN_MSG("pager", "color-scan", "page-string",
+                    "dangling tab colour code at page offset %td; "
+                    DIAG_CHAR_FMT, str - page_start, DIAG_CHAR(ch));
+        return (NULL);
+      }
+      str++;
     }
 
     /* Check for everything else. */
