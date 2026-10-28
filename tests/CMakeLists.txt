@@ -534,4 +534,11 @@ set_tests_properties(${_tb_all_tests} PROPERTIES TIMEOUT 120)
 if(ENABLE_SANITIZERS)
     set_tests_properties(${_tb_all_tests} PROPERTIES ENVIRONMENT
         "ASAN_OPTIONS=${TBAMUD_ASAN_OPTIONS};UBSAN_OPTIONS=${TBAMUD_UBSAN_OPTIONS};LSAN_OPTIONS=report_objects=1")
+
+    # End-to-end: boot the real server and require the login name prompt.
+    add_test(NAME test_login_greeting
+        COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/test_login_greeting.py
+                $<TARGET_FILE:circle>
+                ${CMAKE_SOURCE_DIR}/lib)
 endif()
