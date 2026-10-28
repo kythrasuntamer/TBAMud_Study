@@ -456,9 +456,28 @@ static void test_negative_counts_are_refused(void)
   fx_free_char(pc);
 }
 
+/* H1-21: the junk reward goes through increase_gold(), which caps at
+ * MAX_GOLD, instead of adding to GET_GOLD directly. */
+static void test_junk_reward_respects_max_gold(void)
+{
+  struct char_data *pc = fx_new_char("hero", FALSE, 0);
+  struct obj_data *gem = fx_new_obj("gem", ITEM_TREASURE);
+
+  GET_OBJ_COST(gem) = 3200;          /* reward MIN(200, 3200 / 16) = 200 */
+  obj_to_char(gem, pc);
+  GET_GOLD(pc) = MAX_GOLD - 1;
+
+  do_drop(pc, arg("gem"), 0, SCMD_JUNK);
+
+  TEST_ASSERT_NULL(pc->carrying);
+  TEST_ASSERT_EQUAL_INT(MAX_GOLD, GET_GOLD(pc));
+  fx_free_char(pc);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(test_junk_reward_respects_max_gold);
   RUN_TEST(test_negative_counts_are_refused);
   RUN_TEST(test_drop_gold_refused_by_room_trigger);
   RUN_TEST(test_drop_gold_allowed);

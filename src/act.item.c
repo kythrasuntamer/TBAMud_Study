@@ -821,7 +821,7 @@ ACMD(do_drop)
   if (amount && (subcmd == SCMD_JUNK)) {
     send_to_char(ch, "You have been rewarded by the gods!\r\n");
     act("$n has been rewarded by the gods!", TRUE, ch, 0, 0, TO_ROOM);
-    GET_GOLD(ch) += amount;
+    increase_gold(ch, amount);   /* clamps at MAX_GOLD; never overflows */
   }
 }
 
