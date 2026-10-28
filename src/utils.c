@@ -1541,6 +1541,29 @@ void tb_player_special_on_mob_at(const struct char_data *ch, const char *field,
                   field ? field : "(unknown)");
 }
 
+/** Report that a player's class cannot index a per-class table. Called by
+ * CLASS_ABBR() (and similar lookups) when VALID_CLASS(GET_CLASS(ch)) fails;
+ * GET_CLASS comes from the pfile 'Clas' tag with no range check, so a
+ * corrupt or hand-edited pfile reaches here (G2-12). The report carries the
+ * caller's location, the player and the bad class.
+ * @param ch The player whose class is out of range.
+ * @param table Name of the table the caller was about to index.
+ * @param source_file Caller's __FILE__.
+ * @param source_line Caller's __LINE__.
+ * @param source_func Caller's __func__.
+ * @return "??", a display placeholder in place of the table entry. */
+const char *tb_class_range_error_at(const struct char_data *ch,
+                                    const char *table,
+                                    const char *source_file, int source_line,
+                                    const char *source_func)
+{
+  tb_error_log_at("ERROR", "char", "class-range", table ? table : "(unknown)",
+                  0, source_file, source_line, source_func,
+                  DIAG_CHAR_FMT " class %d outside 0..%d", DIAG_CHAR(ch),
+                  (int) GET_CLASS(ch), NUM_CLASSES - 1);
+  return "??";
+}
+
 /** This function (derived from basic fork() abort() idea by Erwin S Andreasen)
  * causes your MUD to dump core (assuming you can) but continue running. The
  * core dump will allow post-mortem debugging that is less severe than assert();

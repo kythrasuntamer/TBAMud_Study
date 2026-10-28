@@ -186,6 +186,10 @@ void core_dump_real(const char *who, int line);
 void tb_player_special_on_mob_at(const struct char_data *ch, const char *field,
                                  const char *source_file, int source_line,
                                  const char *source_func);
+const char *tb_class_range_error_at(const struct char_data *ch,
+                                    const char *table,
+                                    const char *source_file, int source_line,
+                                    const char *source_func);
 int count_color_chars(char *string);
 int room_is_dark_at(room_rnum room, const char *source_file, int source_line,
                     const char *source_func);
@@ -691,6 +695,12 @@ do                                                              \
 
 /** Class of ch. */
 #define GET_CLASS(ch)   ((ch)->player.chclass)
+/** TRUE if c indexes the per-class tables (class_abbrevs[], pc_class_types[],
+ * prac_params[][NUM_CLASSES], spell_info[].min_level[]). GET_CLASS is read
+ * from the pfile 'Clas' tag, which a corrupt or hand-edited pfile can set to
+ * anything, so check before indexing. Evaluates c twice: no side effects.
+ * Kept token-identical to the local copy in spec_procs.c. */
+#define VALID_CLASS(c) ((c) >= 0 && (c) < NUM_CLASSES)
 /** Height of ch. */
 #define GET_HEIGHT(ch)	((ch)->player.height)
 /** Weight of ch. */
@@ -1057,8 +1067,15 @@ do                                                              \
 #define IS_DIAGONAL(dir) (((dir) == NORTHWEST) || ((dir) == NORTHEAST) || \
 		((dir) == SOUTHEAST) || ((dir) == SOUTHWEST) )
 
-/** Return the class abbreviation for ch. */
-#define CLASS_ABBR(ch) (IS_NPC(ch) ? "--" : class_abbrevs[(int)GET_CLASS(ch)])
+/** Return the class abbreviation for ch: "--" for an NPC, class_abbrevs[]
+ * for a player whose class passes VALID_CLASS(), and "??" otherwise. The
+ * class comes from the pfile unchecked, so an out-of-range one (who, users)
+ * is reported as a class-range error naming the player and the caller's
+ * file, line and function instead of reading past class_abbrevs[] (G2-12).
+ * Evaluates ch several times: pass a plain variable. */
+#define CLASS_ABBR(ch) (IS_NPC(ch) ? "--" : \
+	VALID_CLASS(GET_CLASS(ch)) ? class_abbrevs[(int)GET_CLASS(ch)] : \
+	tb_class_range_error_at((ch), "class_abbrevs", __FILE__, __LINE__, __func__))
 
 /** 1 if ch is magic user class, 0 if not. */
 #define IS_MAGIC_USER(ch)	(!IS_NPC(ch) && \

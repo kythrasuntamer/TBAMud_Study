@@ -643,6 +643,49 @@ void test_an_handles_empty_and_null(void)
   TEST_ASSERT_EQUAL_STRING("a", TANA(none));
 }
 
+/* =====================================================================
+ * G2-12: CLASS_ABBR range-checks a pfile class before indexing
+ * class_abbrevs[], and reports the player and the caller.
+ * ===================================================================== */
+
+/* class.c's table (not linked here). */
+const char *class_abbrevs[] = { "Wi", "Cl", "Th", "Wa", "Mo", "\n" };
+
+void test_class_abbr_out_of_range_class_reports_caller(void)
+{
+  struct char_data *c = make_player(4242);
+  char where[64];
+  const char *abbr;
+
+  GET_CLASS(c) = 40;              /* 'Clas: 40' from a hand-edited pfile */
+  (void)snprintf(where, sizeof(where), "test_utils_guards.c:%d", __LINE__ + 1);
+  abbr = CLASS_ABBR(c);
+  TEST_ASSERT_EQUAL_STRING("??", abbr);
+  TEST_ASSERT_EQUAL_INT(1, count_op("class-range"));
+  TEST_ASSERT_NOT_NULL(strstr(log_text(), where));
+  TEST_ASSERT_NOT_NULL(strstr(log_text(), "player idnum 4242 class 40"));
+
+  GET_CLASS(c) = -3;
+  TEST_ASSERT_EQUAL_STRING("??", CLASS_ABBR(c));
+  TEST_ASSERT_EQUAL_INT(2, count_op("class-range"));
+  free_player(c);
+}
+
+void test_class_abbr_valid_class_and_npc_are_silent(void)
+{
+  struct char_data *c = make_player(7);
+
+  GET_CLASS(c) = CLASS_WARRIOR;
+  TEST_ASSERT_EQUAL_STRING("Wa", CLASS_ABBR(c));
+  GET_CLASS(c) = NUM_CLASSES - 1;
+  TEST_ASSERT_EQUAL_STRING("Mo", CLASS_ABBR(c));
+  SET_BIT_AR(MOB_FLAGS(c), MOB_ISNPC);
+  GET_CLASS(c) = 40;              /* NPC classes never index the table */
+  TEST_ASSERT_EQUAL_STRING("--", CLASS_ABBR(c));
+  TEST_ASSERT_EQUAL_INT(0, count_records());
+  free_player(c);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -674,5 +717,7 @@ int main(void)
   RUN_TEST(test_get_filename_rejects_path_traversal);
   RUN_TEST(test_get_filename_accepts_player_name);
   RUN_TEST(test_an_handles_empty_and_null);
+  RUN_TEST(test_class_abbr_out_of_range_class_reports_caller);
+  RUN_TEST(test_class_abbr_valid_class_and_npc_are_silent);
   return UNITY_END();
 }
