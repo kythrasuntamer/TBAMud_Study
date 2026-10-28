@@ -71,11 +71,26 @@ FILE *objsave_open_staged(const char *dest, char *temp, size_t temp_size)
 int objsave_commit_staged(FILE *fp, const char *temp, const char *dest)
 { (void)fp; (void)temp; (void)dest; return 0; }
 void objsave_abort_staged(FILE *fp, const char *temp) { (void)fp; (void)temp; }
-obj_rnum real_object(obj_vnum vnum) { (void)vnum; return NOTHING; }
-struct obj_data *read_object(obj_vnum nr, int type) { (void)nr; (void)type; return NULL; }
+/* Vnum 300 is the only object prototype (rnum 0); used by asciiconvert. */
+static int live_objects;
+obj_rnum real_object(obj_vnum vnum) { return vnum == 300 ? 0 : NOTHING; }
+struct obj_data *read_object(obj_vnum nr, int type)
+{
+  struct obj_data *obj;
+  if (type != REAL || nr != 0)
+    return NULL;
+  obj = calloc(1, sizeof(*obj));
+  TEST_ASSERT_NOT_NULL(obj);
+  live_objects++;
+  return obj;
+}
 
 void obj_to_room(struct obj_data *object, room_rnum room) { (void)object; (void)room; }
-void extract_obj(struct obj_data *obj) { (void)obj; }
+void extract_obj(struct obj_data *obj)
+{
+  free(obj);
+  live_objects--;
+}
 char *CAP(char *txt)
 {
   if (txt && *txt)
@@ -338,6 +353,43 @@ static void test_deleting_last_guest_reads_inside_guests(void)
   TEST_ASSERT_EQUAL_INT(1234, on_disk.last_payment);
 }
 
+/* B2-27: asciiconvert never released the objects Obj_from_store() built
+ * (one leaked live object per record) and reported a record whose
+ * prototype is gone as a write error, abandoning the conversion. */
+static void test_asciiconvert_releases_objects_and_skips_missing_proto(void)
+{
+  char cmd[] = "asciiconvert";
+  struct house_control_rec rec = good_record();
+  struct obj_file_elem elems[3];
+  char path[64], ascii[80];
+  FILE *fl;
+
+  write_hcontrol(&rec, 1);
+  House_boot();
+  memset(elems, 0, sizeof(elems));
+  elems[0].item_number = 300;
+  elems[1].item_number = 999;	/* prototype deleted since */
+  elems[2].item_number = 300;
+  TEST_ASSERT_TRUE(snprintf(path, sizeof(path), LIB_HOUSE "%d.house", 100) > 0);
+  TEST_ASSERT_TRUE(snprintf(ascii, sizeof(ascii), "%s.ascii", path) > 0);
+  fl = fopen(path, "wb");
+  TEST_ASSERT_NOT_NULL(fl);
+  TEST_ASSERT_EQUAL_size_t(3, fwrite(elems, sizeof(elems[0]), 3, fl));
+  TEST_ASSERT_EQUAL_INT(0, fclose(fl));
+  live_objects = 0;
+  GET_LEVEL(&imm) = LVL_IMPL;
+
+  do_hcontrol(&imm, cmd, 0, 0);
+
+  TEST_ASSERT_EQUAL_INT(0, live_objects);
+  TEST_ASSERT_NOT_NULL(strstr(sent, "...2 items"));
+  TEST_ASSERT_NOT_NULL(strstr(sent, "All done"));
+  TEST_ASSERT_EQUAL_STRING("convert-missing-proto", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "obj vnum 999"));
+  TEST_ASSERT_EQUAL_INT(0, remove(path));
+  TEST_ASSERT_EQUAL_INT(0, remove(ascii));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -347,6 +399,7 @@ int main(void)
   RUN_TEST(test_clean_boot_loads_house);
   RUN_TEST(test_built_house_record_has_no_stack_garbage);
   RUN_TEST(test_deleting_last_guest_reads_inside_guests);
+  RUN_TEST(test_asciiconvert_releases_objects_and_skips_missing_proto);
   {
     char sub[300];
     if (snprintf(sub, sizeof(sub), "%s/etc", scratch_dir) > 0)

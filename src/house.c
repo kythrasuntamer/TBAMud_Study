@@ -807,7 +807,7 @@ static int ascii_convert_house(struct char_data *ch, obj_vnum vnum)
 	FILE *in, *out;
 	char infile[MAX_INPUT_LENGTH], *outfile;
 	struct obj_data *tmp;
-	int i, j=0;
+	int i, j=0, skipped = 0, saved;
 
   House_get_filename(vnum, infile, sizeof(infile));
 
@@ -858,12 +858,31 @@ static int ascii_convert_house(struct char_data *ch, obj_vnum vnum)
       break;
     }
 
+    /* The binary record's vnum comes from an old house file; its prototype
+     * may have been deleted since. That is not a write error: skip and
+     * report the record, as the ASCII loader does. */
     tmp = Obj_from_store(object, &i);
-    if (!tmp || !objsave_save_obj_record(tmp, out, i)) {
+    if (!tmp) {
+      TB_WARN_MSG("house", "convert-missing-proto", infile,
+                  "house vnum %d record %d obj vnum %d has no prototype; skipped",
+                  vnum, j + skipped, object.item_number);
+      skipped++;
+      continue;
+    }
+    /* Obj_from_store() built a live object (read_object() put it on
+     * object_list) only to serialise it; release it whether or not the
+     * write worked, or every converted object leaks into the world. */
+    saved = objsave_save_obj_record(tmp, out, i);
+    extract_obj(tmp);
+    if (!saved) {
+      TB_ERROR_MSG("house", "convert-write", outfile,
+                   "house vnum %d record %d obj vnum %d not written; "
+                   "conversion aborted", vnum, j + skipped, object.item_number);
       send_to_char(ch, "...write error in house rent file.\r\n");
-      free(outfile);
       tb_fclose(in);
       tb_fclose(out);
+      (void) remove(outfile);
+      free(outfile);
       return 0;
     }
     j++;
@@ -877,6 +896,8 @@ static int ascii_convert_house(struct char_data *ch, obj_vnum vnum)
 	free(outfile);
 
 	send_to_char(ch, "...%d items", j);
+	if (skipped)
+	  send_to_char(ch, " (%d skipped, no prototype; see server log)", skipped);
 	return 1;
 }
 
@@ -891,7 +912,12 @@ static struct obj_data *Obj_from_store(struct obj_file_elem object, int *locatio
   if ((itemnum = real_object(object.item_number)) == NOTHING)
     return (NULL);
 
-  obj = read_object(itemnum, REAL);
+  if ((obj = read_object(itemnum, REAL)) == NULL) {
+    TB_ERROR_MSG("house", "convert-read-object", "Obj_from_store",
+                 "obj vnum %d rnum %d could not be instantiated",
+                 object.item_number, itemnum);
+    return (NULL);
+  }
 #if USE_AUTOEQ
   *location = object.location;
 #endif
