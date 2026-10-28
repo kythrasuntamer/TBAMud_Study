@@ -955,6 +955,31 @@ void weight_change_object(struct obj_data *obj, int weight)
 #define LIMITED_DRINK_CONTAINER(cont) (DRINK_CON_MAX((cont)) >= 0 && DRINK_CON_NOW((cont)) >= 0)
 #define EMPTY_DRINK_CONTAINER(cont) (LIMITED_DRINK_CONTAINER((cont)) && DRINK_CON_NOW((cont)) < 1)
 
+/* TRUE if t indexes drinks[], drinknames[] and drink_aff[] (NUM_LIQ_TYPES
+ * entries each). The liquid type is value 2 of a drink container or
+ * fountain: it comes from world files and from scripts ('osetval 2 N'),
+ * and neither validates it, so check before every table lookup. */
+#define VALID_LIQ_TYPE(t) ((t) >= 0 && (t) < NUM_LIQ_TYPES)
+
+/* Reports obj's out-of-range liquid type for the action op (ch may be NULL
+ * when no character is involved) and returns FALSE; TRUE if it is valid. */
+static int drinkcon_liquid_ok(struct obj_data *obj, struct char_data *ch,
+                              const char *action)
+{
+  if (VALID_LIQ_TYPE(DRINK_CON_TYPE(obj)))
+    return TRUE;
+  if (ch)
+    TB_ERROR_MSG("act", "liquid-type-range", "obj",
+                 "obj vnum %d uid %ld liquid %d not in [0,%d) during %s for "
+                 DIAG_CHAR_FMT, (int) GET_OBJ_VNUM(obj), obj_script_id(obj),
+                 DRINK_CON_TYPE(obj), NUM_LIQ_TYPES, action, DIAG_CHAR(ch));
+  else
+    TB_ERROR_MSG("act", "liquid-type-range", "obj",
+                 "obj vnum %d uid %ld liquid %d not in [0,%d) during %s",
+                 (int) GET_OBJ_VNUM(obj), obj_script_id(obj),
+                 DRINK_CON_TYPE(obj), NUM_LIQ_TYPES, action);
+  return FALSE;
+}
 
 void name_from_drinkcon(struct obj_data *obj)
 {
@@ -962,6 +987,10 @@ void name_from_drinkcon(struct obj_data *obj)
   char *new_name;
 
   if (!obj || (GET_OBJ_TYPE(obj) != ITEM_DRINKCON && GET_OBJ_TYPE(obj) != ITEM_FOUNTAIN))
+    return;
+
+  /* The name cannot hold a liquid that has no name; leave it alone. */
+  if (!drinkcon_liquid_ok(obj, NULL, "name_from_drinkcon"))
     return;
 
   if (obj->name == obj_proto[GET_OBJ_RNUM(obj)].name)
@@ -981,6 +1010,14 @@ void name_to_drinkcon(struct obj_data *obj, int type)
 
   if (!obj || (GET_OBJ_TYPE(obj) != ITEM_DRINKCON && GET_OBJ_TYPE(obj) != ITEM_FOUNTAIN))
     return;
+
+  if (!VALID_LIQ_TYPE(type)) {
+    TB_ERROR_MSG("act", "liquid-type-range", "obj",
+                 "obj vnum %d uid %ld: liquid %d not in [0,%d); name unchanged",
+                 (int) GET_OBJ_VNUM(obj), obj_script_id(obj), type,
+                 NUM_LIQ_TYPES);
+    return;
+  }
 
   {
     size_t new_name_size = strlen(obj->name) + strlen(drinknames[type]) + 2;
@@ -1057,6 +1094,10 @@ ACMD(do_drink)
   }
   if (EMPTY_DRINK_CONTAINER(temp)) {
     send_to_char(ch, "It is empty.\r\n");
+    return;
+  }
+  if (!drinkcon_liquid_ok(temp, ch, "drink")) {
+    send_to_char(ch, "You can't make out what is in it.\r\n");
     return;
   }
 
@@ -1260,6 +1301,10 @@ ACMD(do_pour)
 
   if (EMPTY_DRINK_CONTAINER(from_obj)) {
     act("The $p is empty.", FALSE, ch, from_obj, 0, TO_CHAR);
+    return;
+  }
+  if (!drinkcon_liquid_ok(from_obj, ch, subcmd == SCMD_POUR ? "pour" : "fill")) {
+    act("You can't make out what is in $p.", FALSE, ch, from_obj, 0, TO_CHAR);
     return;
   }
   if (subcmd == SCMD_POUR) { /* pour */

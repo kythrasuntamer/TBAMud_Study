@@ -247,9 +247,66 @@ static void test_get_object_that_purges_itself(void)
   fx_free_char(pc);
 }
 
+static struct obj_data *drinkcon(const char *name, int max, int now, int liquid)
+{
+  struct obj_data *o = fx_new_obj(name, ITEM_DRINKCON);
+  GET_OBJ_VAL(o, 0) = max;
+  GET_OBJ_VAL(o, 1) = now;
+  GET_OBJ_VAL(o, 2) = liquid;
+  GET_OBJ_WEIGHT(o) = now + 1;
+  return o;
+}
+
+/* H1-07: a liquid type past drinks[] (world file or 'osetval 2 40') is
+ * refused and reported before any table lookup. */
+static void test_drink_rejects_liquid_out_of_range(void)
+{
+  struct char_data *pc = fx_new_char("hero", FALSE, 0);
+  struct obj_data *bottle = drinkcon("bottle", 10, 5, 40);
+
+  obj_to_char(bottle, pc);
+  do_drink(pc, arg("bottle"), 0, SCMD_DRINK);
+
+  TEST_ASSERT_EQUAL_INT(0, fx_trigger_calls[FX_CONSUME_OTRIG]);
+  TEST_ASSERT_EQUAL_INT(5, GET_OBJ_VAL(bottle, 1));
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("liquid-type-range", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "liquid 40"));
+  fx_free_char(pc);
+}
+
+/* H1-07: a negative liquid type is refused by pour as well. */
+static void test_pour_rejects_negative_liquid(void)
+{
+  struct char_data *pc = fx_new_char("hero", FALSE, 0);
+  struct obj_data *bottle = drinkcon("bottle", 10, 5, -3);
+  struct obj_data *cup = drinkcon("cup", 5, 0, 0);
+
+  obj_to_char(cup, pc);
+  obj_to_char(bottle, pc);
+  do_pour(pc, arg("bottle cup"), 0, SCMD_POUR);
+
+  TEST_ASSERT_EQUAL_INT(0, GET_OBJ_VAL(cup, 1));
+  TEST_ASSERT_EQUAL_STRING("liquid-type-range", tb_captured_operation);
+  fx_free_char(pc);
+}
+
+/* H1-07: the name helpers refuse an out-of-range type and keep the name. */
+static void test_name_to_drinkcon_rejects_bad_type(void)
+{
+  struct obj_data *cup = drinkcon("cup", 5, 0, 0);
+
+  name_to_drinkcon(cup, NUM_LIQ_TYPES);
+  TEST_ASSERT_EQUAL_STRING("cup", cup->name);
+  TEST_ASSERT_EQUAL_STRING("liquid-type-range", tb_captured_operation);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(test_drink_rejects_liquid_out_of_range);
+  RUN_TEST(test_pour_rejects_negative_liquid);
+  RUN_TEST(test_name_to_drinkcon_rejects_bad_type);
   RUN_TEST(test_put_stops_when_trigger_purges_container);
   RUN_TEST(test_get_from_container_stops_when_trigger_purges_it);
   RUN_TEST(test_get_object_that_purges_itself);
