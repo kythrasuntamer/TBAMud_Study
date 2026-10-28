@@ -225,6 +225,7 @@ void free_proto_script(void *thing, int type)
   *head = NULL;
 }
 void update_wait_events(struct room_data *to, struct room_data *from) { (void)to; (void)from; }
+void add_trigger(struct script_data *sc, trig_data *t, int loc) { (void)sc; (void)t; (void)loc; }
 void event_cancel(struct event *event) { (void)event; }
 void *simple_list(struct list_data *list) { (void)list; return NULL; }
 void free_list(struct list_data *list) { (void)list; }
@@ -1179,6 +1180,43 @@ static void oset_apply_sets_valid_modifier(void)
 }
 
 /* ------------------------------------------------------------------------ */
+/* C2-26: a missing trigger vnum stays in the prototype's trigger list.     */
+/* ------------------------------------------------------------------------ */
+static void dg_obj_trigger_keeps_missing_vnum(void)
+{
+  struct obj_data o;
+  char line[] = "T 999";
+  make_objs(1);
+  memset(&o, 0, sizeof(o));
+  CREATE(o.proto_script, struct trig_proto_list, 1);
+  o.proto_script->vnum = 5;
+  dg_obj_trigger(line, &o);
+  TEST_ASSERT_NOT_NULL(o.proto_script->next);
+  TEST_ASSERT_EQUAL_INT(999, o.proto_script->next->vnum);
+  TEST_ASSERT_EQUAL_STRING("trigger-attach-missing", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "obj vnum 10"));
+  free_proto_script(&o, OBJ_TRIGGER);
+}
+
+static void dg_read_trigger_keeps_missing_room_vnum(void)
+{
+  struct room_data r;
+  FILE *fp;
+  write_text_file(WLD_PREFIX "/t.wld", "T 998\n");
+  fp = fopen(WLD_PREFIX "/t.wld", "r");
+  TEST_ASSERT_NOT_NULL(fp);
+  memset(&r, 0, sizeof(r));
+  r.number = 3001;
+  dg_read_trigger(fp, &r, WLD_TRIGGER);
+  fclose(fp);
+  TEST_ASSERT_NOT_NULL(r.proto_script);
+  TEST_ASSERT_EQUAL_INT(998, r.proto_script->vnum);
+  TEST_ASSERT_NULL(r.script);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "room vnum 3001"));
+  free_proto_script(&r, WLD_TRIGGER);
+}
+
+/* ------------------------------------------------------------------------ */
 /* Temporary world directory for the writers.                               */
 /* ------------------------------------------------------------------------ */
 static char test_root[] = "/tmp/tb-genolc-XXXXXX";
@@ -1271,6 +1309,8 @@ int main(void)
   RUN_TEST(oset_apply_rejects_out_of_range_modifier);
   RUN_TEST(oset_apply_rejects_non_number);
   RUN_TEST(oset_apply_sets_valid_modifier);
+  RUN_TEST(dg_obj_trigger_keeps_missing_vnum);
+  RUN_TEST(dg_read_trigger_keeps_missing_room_vnum);
   failures = UNITY_END();
   leave_test_root();
   return failures;

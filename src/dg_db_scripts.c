@@ -169,6 +169,31 @@ void trig_data_copy(trig_data *this_data, const trig_data *trg)
     if (trg->arglist) this_data->arglist = strdup(trg->arglist);
 }
 
+/* Append trigger vnum to the end of a prototype's trigger list. */
+static void append_proto_trigger(struct trig_proto_list **head, int vnum)
+{
+  struct trig_proto_list *new_trg;
+
+  CREATE(new_trg, struct trig_proto_list, 1);
+  new_trg->vnum = vnum;
+  new_trg->next = NULL;
+  while (*head)
+    head = &(*head)->next;
+  *head = new_trg;
+}
+
+/* A prototype names a trigger vnum that has no trigger: tell builders in
+ * game and leave a structured record naming the owner. */
+static void report_missing_trigger(int vnum, const char *owner_type, int owner_vnum)
+{
+  TB_WARN_MSG("dg", "trigger-attach-missing", "trigger",
+              "trig vnum %d missing for %s vnum %d; kept in proto list, not attached",
+              vnum, owner_type, owner_vnum);
+  mudlog(BRF, LVL_BUILDER, TRUE,
+         "SYSERR: Trigger vnum #%d asked for but non-existant! (%s %d)",
+         vnum, owner_type, owner_vnum);
+}
+
 /* for mobs and rooms: */
 void dg_read_trigger(FILE *fp, void *proto, int type)
 {
@@ -177,7 +202,6 @@ void dg_read_trigger(FILE *fp, void *proto, int type)
   int vnum, rnum, count;
   char_data *mob;
   room_data *room;
-  struct trig_proto_list *trg_proto, *new_trg;
 
   get_line(fp, line);
   count = sscanf(line, "%7s %31s", junk, vnum_text);
@@ -188,68 +212,33 @@ void dg_read_trigger(FILE *fp, void *proto, int type)
     return;
   }
 
+  /* A 'T' line naming a trigger that does not exist (yet) is kept in the
+   * proto list, as assign_triggers() does, and only not instantiated:
+   * dropping it would make the next OLC save, which writes proto_script,
+   * delete the line from disk for good. */
   rnum = real_trigger(vnum);
-  if (rnum == NOTHING) {
-    switch(type) {
-      case MOB_TRIGGER:
-        mudlog(BRF, LVL_BUILDER, TRUE,
-               "SYSERR: dg_read_trigger: Trigger vnum #%d asked for but non-existant! (mob: %s - %d)",
-               vnum, GET_NAME((char_data *)proto), GET_MOB_VNUM((char_data *)proto));
-        break;
-      case WLD_TRIGGER:
-        mudlog(BRF, LVL_BUILDER, TRUE,
-               "SYSERR: dg_read_trigger: Trigger vnum #%d asked for but non-existant! (room:%d)",
-               vnum, GET_ROOM_VNUM( ((room_data *)proto)->number ));
-        break;
-      default:
-        mudlog(BRF, LVL_BUILDER, TRUE,
-               "SYSERR: dg_read_trigger: Trigger vnum #%d asked for but non-existant! (?)", vnum);
-        break;
-    }
-    return;
-  }
 
   switch(type) {
     case MOB_TRIGGER:
-      CREATE(new_trg, struct trig_proto_list, 1);
-      new_trg->vnum = vnum;
-      new_trg->next = NULL;
-
       mob = (char_data *)proto;
-      trg_proto = mob->proto_script;
-      if (!trg_proto) {
-        mob->proto_script = trg_proto = new_trg;
-      } else {
-        while (trg_proto->next)
-          trg_proto = trg_proto->next;
-        trg_proto->next = new_trg;
-      }
+      append_proto_trigger(&mob->proto_script, vnum);
+      if (rnum == NOTHING)
+        report_missing_trigger(vnum, "mob", GET_MOB_VNUM(mob));
       break;
     case WLD_TRIGGER:
-      CREATE(new_trg, struct trig_proto_list, 1);
-      new_trg->vnum = vnum;
-      new_trg->next = NULL;
       room = (room_data *)proto;
-      trg_proto = room->proto_script;
-      if (!trg_proto) {
-        room->proto_script = trg_proto = new_trg;
-      } else {
-        while (trg_proto->next)
-          trg_proto = trg_proto->next;
-        trg_proto->next = new_trg;
-      }
-
+      append_proto_trigger(&room->proto_script, vnum);
       if (rnum != NOTHING) {
         if (!(room->script))
           CREATE(room->script, struct script_data, 1);
         add_trigger(SCRIPT(room), read_trigger(rnum), -1);
-      } else {
-        mudlog(BRF, LVL_BUILDER, TRUE,
-               "SYSERR: non-existant trigger #%d assigned to room #%d",
-               vnum, room->number);
-      }
+      } else
+        report_missing_trigger(vnum, "room", room->number);
       break;
     default:
+      TB_ERROR_MSG("dg", "trigger-attach-type", "trigger",
+                   "trig vnum %d: owner type %d is not mob or room; not attached",
+                   vnum, type);
       mudlog(BRF, LVL_BUILDER, TRUE,
              "SYSERR: Trigger vnum #%d assigned to non-mob/obj/room", vnum);
   }
@@ -258,8 +247,7 @@ void dg_read_trigger(FILE *fp, void *proto, int type)
 void dg_obj_trigger(char *line, struct obj_data *obj)
 {
   char junk[8], vnum_text[32];
-  int vnum, rnum, count;
-  struct trig_proto_list *trg_proto, *new_trg;
+  int vnum, count;
 
   count = sscanf(line, "%7s %31s", junk, vnum_text);
 
@@ -269,25 +257,10 @@ void dg_obj_trigger(char *line, struct obj_data *obj)
     return;
   }
 
-  rnum = real_trigger(vnum);
-  if (rnum==NOTHING) {
-    mudlog(BRF, LVL_BUILDER, TRUE,
-           "SYSERR: Trigger vnum #%d asked for but non-existant! (Object: %s - %d)",
-            vnum, obj->short_description, GET_OBJ_VNUM(obj));
-    return;
-  }
-
-  CREATE(new_trg, struct trig_proto_list, 1);
-  new_trg->vnum = vnum;
-  new_trg->next = NULL;
-
-  trg_proto = obj->proto_script;
-  if (!trg_proto) {
-    obj->proto_script = trg_proto = new_trg;
-  } else {
-    while (trg_proto->next) trg_proto = trg_proto->next;
-    trg_proto->next = new_trg;
-  }
+  /* Kept even when missing; see dg_read_trigger(). */
+  append_proto_trigger(&obj->proto_script, vnum);
+  if (real_trigger(vnum) == NOTHING)
+    report_missing_trigger(vnum, "obj", GET_OBJ_VNUM(obj));
 }
 
 void assign_triggers(void *i, int type)
