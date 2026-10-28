@@ -1092,6 +1092,56 @@ static void create_world_index_reports_unknown_type(void)
 }
 
 /* ------------------------------------------------------------------------ */
+/* C2-21: every room rnum holder is renumbered by add_room()/delete_room(). */
+/* ------------------------------------------------------------------------ */
+
+/* A reset command in zone 0 that loads into a zone-1 room must follow that
+ * room when a room is inserted in zone 1. */
+static void add_room_renumbers_lower_zone_commands(void)
+{
+  static const int args[][3] = { { 0, 1, 1 } };      /* 'O' into rnum 1 */
+  struct room_data nr;
+  make_zones(2); make_objs(1); make_rooms(2);
+  world[1].number = 150;
+  world[1].zone = 1;
+  set_zone_cmds(0, "O", args);
+  memset(&nr, 0, sizeof(nr));
+  nr.number = 120;
+  nr.zone = 1;
+  nr.name = "n";
+  nr.description = "d";
+  TEST_ASSERT_EQUAL_UINT(1, add_room(&nr));
+  TEST_ASSERT_EQUAL_INT(2, zone_table[0].cmd[0].arg3);
+  TEST_ASSERT_EQUAL_INT(150, world[zone_table[0].cmd[0].arg3].number);
+}
+
+static void room_changes_renumber_was_in_room(void)
+{
+  struct char_data a, b;
+  struct room_data nr;
+  make_zones(1); make_rooms(3);       /* vnums 10 20 30 */
+  memset(&a, 0, sizeof(a));
+  memset(&b, 0, sizeof(b));
+  a.next = &b;
+  character_list = &a;
+  a.was_in_room = 2;                   /* vnum 30 */
+  b.was_in_room = NOWHERE;
+  memset(&nr, 0, sizeof(nr));
+  nr.number = 15;
+  nr.name = "n";
+  nr.description = "d";
+  add_room(&nr);                       /* 10 15 20 30 */
+  TEST_ASSERT_EQUAL_INT(30, world[a.was_in_room].number);
+  TEST_ASSERT_EQUAL_UINT(NOWHERE, b.was_in_room);
+  b.was_in_room = 1;                   /* vnum 15: deleted next */
+  TEST_ASSERT_TRUE(delete_room(1));
+  TEST_ASSERT_EQUAL_INT(30, world[a.was_in_room].number);
+  TEST_ASSERT_EQUAL_UINT(0, b.was_in_room);
+  TEST_ASSERT_EQUAL_STRING("room-delete-wasin", tb_captured_operation);
+  character_list = NULL;
+}
+
+/* ------------------------------------------------------------------------ */
 /* Temporary world directory for the writers.                               */
 /* ------------------------------------------------------------------------ */
 static char test_root[] = "/tmp/tb-genolc-XXXXXX";
@@ -1179,6 +1229,8 @@ int main(void)
   RUN_TEST(create_world_index_rejects_unterminated_index);
   RUN_TEST(create_world_index_inserts_in_order);
   RUN_TEST(create_world_index_reports_unknown_type);
+  RUN_TEST(add_room_renumbers_lower_zone_commands);
+  RUN_TEST(room_changes_renumber_was_in_room);
   failures = UNITY_END();
   leave_test_root();
   return failures;

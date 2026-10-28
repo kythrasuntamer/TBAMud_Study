@@ -121,8 +121,10 @@ room_rnum add_room(struct room_data *room)
   log("GenOLC: add_room: Added room %d at index #%d.", room->number, found);
   /* found is equal to the array index where we added the room. */
 
-  /* Find what zone that room was in so we can update the loading table. */
-  for (i = room->zone; i <= top_of_zone_table; i++)
+  /* Renumber the room rnums stored in reset commands.  Every zone is
+   * scanned: a command in a lower zone may name a room of a later zone
+   * (delete_room() scans from 0 for the same reason). */
+  for (i = 0; i <= top_of_zone_table; i++)
     for (j = 0; ZCMD(i, j).command != 'S'; j++)
       switch (ZCMD(i, j).command) {
       case 'M':
@@ -144,10 +146,15 @@ room_rnum add_room(struct room_data *room)
         mudlog(BRF, LVL_GOD, TRUE, "SYSERR: GenOLC: add_room: Unknown zone entry found!");
       }
 
-  /* Update the loadroom table. Adds 1 or 0. */
-  r_mortal_start_room += (r_mortal_start_room >= found);
-  r_immort_start_room += (r_immort_start_room >= found);
-  r_frozen_start_room += (r_frozen_start_room >= found);
+  /* Update the loadroom table. Adds 1 or 0; NOWHERE must not wrap to 0. */
+  r_mortal_start_room += (r_mortal_start_room != NOWHERE && r_mortal_start_room >= found);
+  r_immort_start_room += (r_immort_start_room != NOWHERE && r_immort_start_room >= found);
+  r_frozen_start_room += (r_frozen_start_room != NOWHERE && r_frozen_start_room >= found);
+
+  /* GET_WAS_IN (set when a linkless player is moved to the Void, used to
+   * put them back on reconnect) is a room rnum too. */
+  for (tch = character_list; tch; tch = tch->next)
+    GET_WAS_IN(tch) += (GET_WAS_IN(tch) != NOWHERE && GET_WAS_IN(tch) >= found);
 
   /* Update world exits. */
   i = top_of_world + 1;
@@ -207,6 +214,20 @@ int delete_room(room_rnum rnum)
     r_frozen_start_room = 0;	/* The Void */
   } else if (r_frozen_start_room != NOWHERE && r_frozen_start_room > rnum)
     r_frozen_start_room--;
+
+  /* GET_WAS_IN is where a linkless player returns on reconnect; renumber
+   * it like the start rooms. */
+  for (ppl = character_list; ppl; ppl = ppl->next) {
+    if (GET_WAS_IN(ppl) == NOWHERE)
+      continue;
+    if (GET_WAS_IN(ppl) == rnum) {
+      TB_WARN_MSG("olc", "room-delete-wasin", "room",
+                  DIAG_CHAR_FMT " was_in room vnum %d, which is being deleted; "
+                  "reset to the Void", DIAG_CHAR(ppl), room->number);
+      GET_WAS_IN(ppl) = 0;
+    } else if (GET_WAS_IN(ppl) > rnum)
+      GET_WAS_IN(ppl)--;
+  }
 
   /* Dump the contents of this room into the Void.  We could also just extract 
    * the people, mobs, and objects here. */
