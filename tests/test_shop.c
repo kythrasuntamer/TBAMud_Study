@@ -401,7 +401,16 @@ static void test_read_shop_profit_rejects_non_finite(void)
  * for one keeper and one buyer in a lit room. */
 struct time_info_data time_info;
 const struct str_app_type str_app[31] = { [11] = { 0, 0, 1000, 100 } };
+/* Newer utils.h makes room_is_dark() a call-site macro over
+ * room_is_dark_at(); supply whichever this tree's utils.h calls. */
+#ifndef room_is_dark
 int room_is_dark(room_rnum room) { (void)room; return FALSE; }
+#endif
+int room_is_dark_at(room_rnum room, const char *source_file, int source_line,
+                    const char *source_func);
+int room_is_dark_at(room_rnum room, const char *source_file, int source_line,
+                    const char *source_func)
+{ (void)room; (void)source_file; (void)source_line; (void)source_func; return FALSE; }
 int increase_gold(struct char_data *ch, int amt) { return GET_GOLD(ch) += amt; }
 int decrease_gold(struct char_data *ch, int amt) { return GET_GOLD(ch) -= amt; }
 struct obj_data *read_object(obj_vnum nr, int type) { (void)nr; (void)type; return NULL; }
