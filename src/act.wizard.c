@@ -2776,6 +2776,26 @@ ACMD(do_wizutil)
 
 /* single zone printing fn used by "show zone" so it's not repeated in the
    code 3 times ... -je, 4/6/93 FIXME: overflow possible */
+/** Account for one snprintf() into print_zone_to_buf's buffer: used bytes
+ * were already there, n is snprintf's result for the remaining space.
+ * @return the new length, never more than left - 1. A truncated or failed
+ * write is reported as show-zone-truncate with the zone vnum (the old code
+ * added the would-be length and wrapped 'left - tmp'). */
+static size_t zone_buf_add(int n, size_t used, size_t left, zone_rnum zone)
+{
+  if (n < 0 || (size_t) n >= left - used) {
+    TB_WARN_MSG("act", "show-zone-truncate", "zone",
+                "zone vnum %d: listing needs more than %zu bytes",
+                zone_table[zone].number, left);
+    return left - 1;
+  }
+  return used + (size_t) n;
+}
+
+/** Print one zone's summary (listall: with its stats) into bufptr, which
+ * has left bytes (left >= 1).
+ * @return the bytes written, at most left - 1; left - 1 means it was
+ *         truncated (and reported). */
 static size_t print_zone_to_buf(char *bufptr, size_t left, zone_rnum zone, int listall)
 {
   size_t tmp;
@@ -2786,12 +2806,14 @@ static size_t print_zone_to_buf(char *bufptr, size_t left, zone_rnum zone, int l
 
     sprintbitarray(zone_table[zone].zone_flags, zone_bits, ZN_ARRAY_MAX, buf, sizeof(buf));
 
-    tmp = snprintf(bufptr, left,
+    tmp = zone_buf_add(snprintf(bufptr, left,
 	"%3d %-30.30s%s By: %-10.10s%s Age: %3d; Reset: %3d (%s); Range: %5d-%5d\r\n",
 	zone_table[zone].number, zone_table[zone].name, KNRM, zone_table[zone].builders, KNRM,
 	zone_table[zone].age, zone_table[zone].lifespan,
         zone_table[zone].reset_mode ? ((zone_table[zone].reset_mode == 1) ? "Reset when no players are in zone" : "Normal reset") : "Never reset",
-	zone_table[zone].bot, zone_table[zone].top);
+	zone_table[zone].bot, zone_table[zone].top), 0, left, zone);
+        if (tmp >= left - 1)
+          return tmp;
         j = k = l = m = n = o = 0;
 
         /* top_of_world/objt/mobt are the last valid rnums (inclusive);
@@ -2818,7 +2840,7 @@ static size_t print_zone_to_buf(char *bufptr, size_t left, zone_rnum zone, int l
 
         o = count_quests(zone_table[zone].bot, zone_table[zone].top);
 
-	tmp += snprintf(bufptr + tmp, left - tmp,
+	tmp = zone_buf_add(snprintf(bufptr + tmp, left - tmp,
                         "       Zone stats:\r\n"
                         "       ---------------\r\n"
                         "         Flags:    %s\r\n"
@@ -2831,15 +2853,16 @@ static size_t print_zone_to_buf(char *bufptr, size_t left, zone_rnum zone, int l
                         "         Triggers: %2d\r\n"
                         "         Quests:   %2d\r\n",
 			buf, zone_table[zone].min_level, zone_table[zone].max_level,
-                        j, k, l, m, n, o);
+                        j, k, l, m, n, o), tmp, left, zone);
 
     return tmp;
   }
 
-    return snprintf(bufptr, left,
+    return zone_buf_add(snprintf(bufptr, left,
         "%3d %-*s%s By: %-10.10s%s Range: %5d-%5d\r\n", zone_table[zone].number,
 	count_color_chars(zone_table[zone].name)+30, zone_table[zone].name, KNRM,
-	zone_table[zone].builders, KNRM, zone_table[zone].bot, zone_table[zone].top);
+	zone_table[zone].builders, KNRM, zone_table[zone].bot, zone_table[zone].top),
+	0, left, zone);
 }
 
 /* Room kept at the end of a 'show' buffer for the truncation marker. */
@@ -2977,6 +3000,7 @@ ACMD(do_show)
 	}
 	nlen = print_zone_to_buf(buf + len, sizeof(buf) - len, zrn, 0);
         if (len + nlen >= sizeof(buf) - 1) {
+          /* print_zone_to_buf already reported show-zone-truncate. */
           zones_truncated = TRUE;
           break;
         }

@@ -36,6 +36,7 @@
  * (--wrap) so tests can assert which guard fired.
  * --------------------------------------------------------------------- */
 static int captured_errors;
+static int captured_zone_truncations;   /* show-zone-truncate reports */
 static char captured_operation[64];
 static char captured_detail[512];
 /* NOLINTNEXTLINE(cert-dcl37-c,cert-dcl51-cpp): --wrap requires this name. */
@@ -56,6 +57,8 @@ void __wrap_tb_error_log_at(const char *severity, const char *subsystem,
   (void)severity; (void)subsystem; (void)resource; (void)errnum;
   (void)source_file; (void)source_line; (void)source_func;
   captured_errors++;
+  if (operation && !strcmp(operation, "show-zone-truncate"))
+    captured_zone_truncations++;
   strlcpy(captured_operation, operation ? operation : "",
           sizeof(captured_operation));
   va_start(args, detail_fmt);
@@ -331,6 +334,7 @@ static struct index_data default_mob_index, default_obj_index;
 static void reset_counters(void)
 {
   captured_errors = 0;
+  captured_zone_truncations = 0;
   captured_operation[0] = captured_detail[0] = '\0';
   sent[0] = '\0';
   char_to_room_calls = char_from_room_calls = free_char_calls = 0;
@@ -1211,6 +1215,32 @@ static void test_wizutil_unknown_subcmd_is_reported_without_save(void)
   in_game_char = NULL;
 }
 
+/* G1-23: print_zone_to_buf added snprintf's would-be length, so a
+ * truncated line made 'left - tmp' wrap and bufptr + tmp point past the
+ * buffer. 'show zones' over a full buffer exercises the clamp. */
+static void test_show_zones_overflow_is_clamped_and_reported(void)
+{
+  enum { NZONES = 900 };
+  static struct zone_data many[NZONES];
+  int i;
+
+  memset(many, 0, sizeof(many));
+  for (i = 0; i < NZONES; i++) {
+    many[i].number = (zone_vnum) i;
+    many[i].name = (char *)"A zone with a reasonably long name";
+    many[i].builders = (char *)"nobody";
+  }
+  zone_table = many;
+  top_of_zone_table = NZONES - 1;
+  RUN_CMD(do_show, &imm, "zones");
+  zone_table = zones;
+  top_of_zone_table = 0;
+
+  TEST_ASSERT_EQUAL_INT(1, captured_zone_truncations);
+  TEST_ASSERT_EQUAL_STRING("show-truncate", captured_operation);
+  TEST_ASSERT_TRUE(strlen(sent) < MAX_STRING_LENGTH);
+}
+
 int main(void)
 {
   /* basic_mud_log()/mudlog() are the real utils.c ones; keep them quiet. */
@@ -1248,6 +1278,7 @@ int main(void)
   RUN_TEST(test_zpurge_all_below_god_is_refused);
   RUN_TEST(test_set_level_demotion_drops_disallowed_snoop);
   RUN_TEST(test_wizutil_unknown_subcmd_is_reported_without_save);
+  RUN_TEST(test_show_zones_overflow_is_clamped_and_reported);
   {
     int failures = UNITY_END();
     if (logfile)
