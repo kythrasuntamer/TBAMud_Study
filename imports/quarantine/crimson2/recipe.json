@@ -105,7 +105,8 @@
             "short": "the spirit of a dwarven guard",
             "long": "The spirit of a dwarven guard stands watch here, still bearing its death wounds.\n",
             "description": "This is the spirit of a dwarven guard, still showing the wounds that killed his body.\n",
-            "reason": "unfinished template (keywords 'blank', level 48, 1d1+1 hp, 99d99-25 damage, AC -40, 2M exp, aggressive to all); now a non-aggressive level-20 sentinel like stock level-20 guards (4d4+200, 3d3+3, thac0 14), texts from the source description"
+            "reason": "unfinished template (keywords 'blank', level 48, 1d1+1 hp, 99d99-25 damage, AC -40, 2M exp, aggressive to all); now a non-aggressive level-20 sentinel like stock level-20 guards (4d4+200, 3d3+3, thac0 14), texts from the source description; Str 25 from the template lowered to 18 like stock guard-class mobs",
+            "str": 18
           }
         }
       },

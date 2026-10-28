@@ -184,6 +184,8 @@ class Crimson2Conversion(unittest.TestCase):
         for vnum, level in levels.items():
             self.assertTrue(6 <= level <= 16, f"mob {vnum} level {level} outside 6..16")
         self.assertIn("16 15 -1 4d4+200 2d4+3", text.splitlines())
+        guard = (ROOT / "lib" / "world" / "mob" / "58.mob").read_text(encoding="latin-1")
+        self.assertIn("Str: 18", guard.split("#5830\n", 1)[1].split("\nE\n", 1)[0])
         self.assertNotIn("35d10+24000", text)
 
     def test_mob_override_is_applied_and_unknown_field_fails(self):
@@ -243,6 +245,35 @@ class Crimson2Conversion(unittest.TestCase):
             with self.assertRaises(ValueError):
                 conv.install(world, 41, {"mob": "#4108\nnew\n", "obj": "#4105\nnew\n"}, "merge")
             self.assertEqual("#4100\nstock\n$\n", mob.read_text())
+            self.assertEqual([], [p.name for p in world.rglob("*.tmp")])
+
+
+    def test_failed_replace_is_located_and_leaves_no_temp_files(self):
+        # A replace that fails partway names the file it stopped at and the
+        # ones already replaced, and removes every remaining temporary file.
+        with tempfile.TemporaryDirectory() as td:
+            world = pathlib.Path(td)
+            for ext in ("mob", "obj"):
+                (world / ext).mkdir()
+                (world / ext / "index").write_text("30.%s\n$\n" % ext)
+            real, calls = conv.os.replace, []
+
+            def flaky(src, dst):
+                calls.append(dst)
+                if len(calls) == 2:
+                    raise OSError(28, "No space left on device")
+                return real(src, dst)
+
+            conv.os.replace = flaky
+            try:
+                with self.assertRaises(OSError) as cm:
+                    conv.install(world, 9, {"mob": "#900\n$\n", "obj": "#900\n$~\n"}, "zone")
+            finally:
+                conv.os.replace = real
+            msg = str(cm.exception)
+            self.assertIn("install stopped at", msg)
+            self.assertIn("already replaced:", msg)
+            self.assertIn("9.mob", msg)
             self.assertEqual([], [p.name for p in world.rglob("*.tmp")])
 
 

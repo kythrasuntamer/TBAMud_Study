@@ -86,7 +86,8 @@ OBJ_OVERRIDES = {"keywords", "wear", "values", "weight", "cost", "rent", "level"
 # Mob overrides set tbaMUD values directly: stats, money, the final action and
 # affect bitvectors, and the four texts.
 MOB_OVERRIDES = {"level", "thac0", "ac", "hp", "damage", "gold", "exp", "act",
-                 "affects", "keywords", "short", "long", "description", "reason"}
+                 "affects", "keywords", "short", "long", "description",
+                 "str", "int", "wis", "dex", "con", "cha", "reason"}
 
 
 class Area:
@@ -322,6 +323,9 @@ class Area:
                 for key, k in (("keywords", 0), ("short", 1), ("long", 2), ("description", 3)):
                     if key in ov:
                         strings[k] = ov[key]
+                for key, k in (("str", 2), ("int", 3), ("wis", 4), ("dex", 5), ("con", 6), ("cha", 7)):
+                    if key in ov:
+                        attrs[k] = int(ov[key])
                 self.note(where, f"override {sorted(set(ov) - {'reason'})}: "
                                  f"{ov.get('reason', 'recipe override')}")
             hp = re.fullmatch(r"(\d+)d(\d+)\+(-?\d+)", stats[3])
@@ -605,8 +609,19 @@ def install(world, zone, texts, mode):
             except OSError:
                 pass
         raise
-    for tmp, path in staged:
-        os.replace(tmp, path)
+    done = []
+    for k, (tmp, path) in enumerate(staged):
+        try:
+            os.replace(tmp, path)
+        except OSError as exc:
+            for left, _ in staged[k:]:
+                try:
+                    os.unlink(left)
+                except OSError:
+                    pass
+            raise OSError(f"install stopped at {path}: {exc}; already replaced: "
+                          f"{', '.join(str(p) for p in done) or 'none'}") from exc
+        done.append(path)
 
 
 def main(argv=None):
