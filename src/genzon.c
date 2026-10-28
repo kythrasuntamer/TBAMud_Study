@@ -634,8 +634,10 @@ int new_command(struct zone_data *zone, int pos)
   return 1;
 }
 
-/* Error check user input and then remove command. */
-void delete_zone_command(struct zone_data *zone, int pos)
+/* Error check user input and then remove command.  Returns TRUE when the
+ * command at pos was removed.  The commands after it slide down one slot, so a
+ * caller scanning by index must re-examine pos rather than advance past it. */
+int delete_zone_command(struct zone_data *zone, int pos)
 {
   int subcmd = 0;
 
@@ -643,10 +645,15 @@ void delete_zone_command(struct zone_data *zone, int pos)
   while (zone->cmd[subcmd].command != 'S')
     subcmd++;
 
-  if (pos < 0 || pos >= subcmd)
-    return;
+  if (pos < 0 || pos >= subcmd) {
+    TB_WARN_MSG("olc", "zone-cmd-index", "zone",
+                "zone %d delete pos %d out of range 0..%d",
+                zone->number, pos, subcmd - 1);
+    return FALSE;
+  }
 
   /* Ok, let's zap it. */
   remove_cmd_from_list(&zone->cmd, pos);
+  return TRUE;
 }
 
