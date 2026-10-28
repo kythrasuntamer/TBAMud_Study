@@ -223,8 +223,9 @@ struct obj_data *get_obj_in_equip_vis(struct char_data *ch, char *arg, int *numb
 struct obj_data *get_obj_in_list_vis(struct char_data *ch, char *name, int *number,
                                      struct obj_data *list)
 { (void)ch; (void)name; (void)number; (void)list; return NULL; }
+static struct obj_data *vis_obj;   /* returned by get_obj_vis() */
 struct obj_data *get_obj_vis(struct char_data *ch, char *name, int *num)
-{ (void)ch; (void)name; (void)num; return NULL; }
+{ (void)ch; (void)name; (void)num; return vis_obj; }
 const char *get_spec_func_name(SPECIAL(*func)) { (void)func; return "None"; }
 void hcontrol_list_houses(struct char_data *ch, char *arg) { (void)ch; (void)arg; UNREACHED(); }
 int is_complete(struct char_data *ch, qst_vnum vnum) { (void)ch; (void)vnum; return 0; }
@@ -328,6 +329,7 @@ void setUp(void)
   imm_desc.character = &imm;
 
   in_game_char = NULL;
+  vis_obj = NULL;
   load_char_result = -1;
   load_char_level = 1;
   load_char_idnum = 77;
@@ -426,6 +428,40 @@ static void test_return_to_char_requires_switched_body(void)
   TEST_ASSERT_EQUAL_PTR(&imm, imm_desc.character);
 }
 
+/* An object outside the world with no prototype (rnum NOTHING). */
+static void make_obj(struct obj_data *obj, int type)
+{
+  memset(obj, 0, sizeof(*obj));
+  obj->item_number = NOTHING;
+  IN_ROOM(obj) = NOWHERE;
+  obj->name = (char *)"sword";
+  obj->short_description = (char *)"a sword";
+  GET_OBJ_TYPE(obj) = type;
+}
+
+/* G1-08: weapon value[3] indexed attack_hit_text[] unchecked. */
+static void test_stat_weapon_bad_attack_type_is_reported(void)
+{
+  static struct obj_data sword;
+  make_obj(&sword, ITEM_WEAPON);
+  GET_OBJ_VAL(&sword, 3) = 120;
+  vis_obj = &sword;
+  RUN_CMD(do_stat, &imm, "object sword");
+  TEST_ASSERT_EQUAL_STRING("stat-attack-type", captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(sent, "Message type: <invalid>"));
+
+  reset_counters();
+  GET_OBJ_VAL(&sword, 3) = -1;
+  RUN_CMD(do_stat, &imm, "object sword");
+  TEST_ASSERT_EQUAL_STRING("stat-attack-type", captured_operation);
+
+  reset_counters();
+  GET_OBJ_VAL(&sword, 3) = 3;
+  RUN_CMD(do_stat, &imm, "object sword");
+  TEST_ASSERT_EQUAL_INT(0, captured_errors);
+  TEST_ASSERT_NOT_NULL(strstr(sent, "Message type: slash"));
+}
+
 int main(void)
 {
   /* basic_mud_log()/mudlog() are the real utils.c ones; keep them quiet. */
@@ -437,6 +473,7 @@ int main(void)
   RUN_TEST(test_stat_file_of_player_in_world_is_refused);
   RUN_TEST(test_return_and_switch_without_descriptor_are_reported);
   RUN_TEST(test_return_to_char_requires_switched_body);
+  RUN_TEST(test_stat_weapon_bad_attack_type_is_reported);
   {
     int failures = UNITY_END();
     if (logfile)

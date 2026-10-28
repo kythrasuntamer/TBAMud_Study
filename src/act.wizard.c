@@ -39,6 +39,14 @@
 #include "ban.h"
 #include "screen.h"
 
+/* Range checks for indexing the display tables (attack_hit_text[],
+ * apply_types[], genders[], ...). The indexes come from world files, player
+ * files, OLC or DG scripts, and none of those bound them, so every table
+ * lookup in this file goes through one of these. The unsigned cast makes a
+ * negative index fail the test. Each evaluates its argument once. */
+#define TABLE_INDEX_OK(i, n)     ((unsigned int) (i) < (unsigned int) (n))
+#define VALID_ATTACK_TYPE(t)     TABLE_INDEX_OK((t), NUM_ATTACK_TYPES)
+
 /* local utility functions with file scope */
 static int perform_set(struct char_data *ch, struct char_data *vict, int mode, char *val_arg);
 static void perform_immort_invis(struct char_data *ch, int level);
@@ -693,10 +701,22 @@ static void do_stat_object(struct char_data *ch, struct obj_data *j)
 	    skill_name(GET_OBJ_VAL(j, 3)), GET_OBJ_VAL(j, 0),
 	    GET_OBJ_VAL(j, 2), GET_OBJ_VAL(j, 1));
     break;
-  case ITEM_WEAPON:
+  case ITEM_WEAPON: {
+    /* value[3] comes from the world file, oedit or DG osetval; none of them
+     * bound it to attack_hit_text[]. */
+    int atype = GET_OBJ_VAL(j, 3);
+    const char *aname = "<invalid>";
+
+    if (VALID_ATTACK_TYPE(atype))
+      aname = attack_hit_text[atype].singular;
+    else
+      TB_WARN_MSG("act", "stat-attack-type", "object",
+                  "obj vnum %d value3 %d outside 0..%d",
+                  GET_OBJ_VNUM(j), atype, NUM_ATTACK_TYPES - 1);
     send_to_char(ch, "Todam: %dd%d, Avg Damage: %.1f. Message type: %s\r\n",
-	    GET_OBJ_VAL(j, 1), GET_OBJ_VAL(j, 2), ((GET_OBJ_VAL(j, 2) + 1) / 2.0) * GET_OBJ_VAL(j, 1),  attack_hit_text[GET_OBJ_VAL(j, 3)].singular);
+	    GET_OBJ_VAL(j, 1), GET_OBJ_VAL(j, 2), ((GET_OBJ_VAL(j, 2) + 1) / 2.0) * GET_OBJ_VAL(j, 1), aname);
     break;
+  }
   case ITEM_ARMOR:
     send_to_char(ch, "AC-apply: [%d]\r\n", GET_OBJ_VAL(j, 0));
     break;
@@ -855,8 +875,19 @@ static void do_stat_character(struct char_data *ch, struct char_data *k)
   sprinttype(GET_POS(k), position_types, buf, sizeof(buf));
   send_to_char(ch, "Pos: %s, Fighting: %s", buf, FIGHTING(k) ? GET_NAME(FIGHTING(k)) : "Nobody");
 
-  if (IS_NPC(k))
-    send_to_char(ch, ", Attack type: %s", attack_hit_text[(int) k->mob_specials.attack_type].singular);
+  if (IS_NPC(k)) {
+    /* attack_type comes from the mob file ('BareHandAttack') or medit. */
+    int atype = k->mob_specials.attack_type;
+
+    if (VALID_ATTACK_TYPE(atype))
+      send_to_char(ch, ", Attack type: %s", attack_hit_text[atype].singular);
+    else {
+      TB_WARN_MSG("act", "stat-attack-type", "mob",
+                  "mob vnum %d attack type %d outside 0..%d",
+                  GET_MOB_VNUM(k), atype, NUM_ATTACK_TYPES - 1);
+      send_to_char(ch, ", Attack type: <invalid %d>", atype);
+    }
+  }
 
   if (k->desc) {
     sprinttype(STATE(k->desc), connected_types, buf, sizeof(buf));
@@ -3891,7 +3922,7 @@ ACMD (do_zcheck)
                                  value, MAX_OBJ_GOLD_ALLOWED);
           break;
         case ITEM_WEAPON:
-          if (GET_OBJ_VAL(obj, 3) >= NUM_ATTACK_TYPES && (found=1))
+          if (!VALID_ATTACK_TYPE(GET_OBJ_VAL(obj, 3)) && (found=1))
             len += snprintf(buf + len, sizeof(buf) - len,
                             "- has out of range attack type %d.\r\n",
                                  GET_OBJ_VAL(obj, 3));
