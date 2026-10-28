@@ -2061,6 +2061,13 @@ static void process_attach(void *go, struct script_data *sc, trig_data *trig,
     }
   }
 
+  /* Refuse the target before instantiating a trigger it cannot take. */
+  if (c && !IS_NPC(c) && !CONFIG_SCRIPT_PLAYERS) {
+    script_log("Trigger: %s, VNum %d. attach invalid target: '%s'",
+            GET_TRIG_NAME(trig), GET_TRIG_VNUM(trig), GET_NAME(c));
+    return;
+  }
+
   /* locate and load the trigger specified */
   trignum = real_trigger(tb_parse_int_or_zero(trignum_s));
   if (trignum == NOTHING || !(newtrig=read_trigger(trignum))) {
@@ -2070,11 +2077,6 @@ static void process_attach(void *go, struct script_data *sc, trig_data *trig,
   }
 
   if (c) {
-    if (!IS_NPC(c) && !CONFIG_SCRIPT_PLAYERS) {
-      script_log("Trigger: %s, VNum %d. attach invalid target: '%s'",
-              GET_TRIG_NAME(trig), GET_TRIG_VNUM(trig), GET_NAME(c));
-      return;
-    }
     if (!SCRIPT(c))
       CREATE(SCRIPT(c), struct script_data, 1);
     add_trigger(SCRIPT(c), newtrig, -1);
@@ -3029,12 +3031,8 @@ int script_driver(void *go_adress, trig_data *trig, int type, int mode)
     }
   }
 
-  switch (type) { /* the script may have been detached */
-    case MOB_TRIGGER:    sc = SCRIPT((char_data *) go);           break;
-    case OBJ_TRIGGER:    sc = SCRIPT((obj_data *) go);            break;
-    case WLD_TRIGGER:    sc = SCRIPT((room_data *) go);    break;
-  }
-  if (sc)
+  /* Free the run's variables even if the script was detached: the trigger
+   * itself is only retired until the outermost frame returns. */
   free_varlist(GET_TRIG_VARS(trig));
   GET_TRIG_VARS(trig) = NULL;
   GET_TRIG_DEPTH(trig) = 0;

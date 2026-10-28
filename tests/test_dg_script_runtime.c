@@ -359,6 +359,8 @@ void obj_command_interpreter(obj_data *obj, char *argument)
 {
   (void)argument;
   dispatched++;
+  if (!strcmp(argument, "detach-me"))
+    SCRIPT(obj) = NULL;     /* what extract_script() leaves behind */
   if (obj == purge_obj) {
     /* What extract_obj() does to the identity before freeing it. */
     remove_from_lookup_table(obj->script_id, obj);
@@ -578,11 +580,11 @@ static int run_object_lines(const char *const *lines)
   }
   memset(&obj, 0, sizeof(obj));
   memset(&script, 0, sizeof(script));
-  init_lookup_table();
   SCRIPT(&obj) = &script;
   GET_OBJ_RNUM(&obj) = NOTHING;
   obj.script_id = OBJ_ID_BASE + 8;
   add_to_lookup_table(obj.script_id, &obj);
+  index.vnum = 4242;                      /* the vnum attach tests name */
   trig_index = indexes;
   top_of_trigt = 1;
   trig.cmdlist = cl;
@@ -848,6 +850,32 @@ static void obj_extra_field_lists_every_flag(void)
   remove_from_lookup_table(obj.script_id, &obj);
 }
 
+/* A script detached by its own command dropped the run's variables without
+ * freeing them; LeakSanitizer reports the old leak. */
+static void detached_script_frees_its_variables(void)
+{
+  static const char *const lines[] = { "eval x 5", "detach-me", "after", NULL };
+
+  TEST_ASSERT_EQUAL_INT(2, run_object_lines(lines));
+  TEST_ASSERT_NULL(GET_TRIG_VARS(&trig));
+}
+
+/* attach refused a player target only after read_trigger() had built the
+ * trigger, which was then leaked; the stub fails if it is reached. */
+static void attach_to_a_player_is_refused_before_loading(void)
+{
+  static char_data pc;
+  static const char *const lines[] = { "attach 4242 9001", NULL };
+
+  memset(&pc, 0, sizeof(pc));
+  pc.player.name = "Bob";
+  pc.script_id = 9001;
+  init_lookup_table();
+  add_to_lookup_table(pc.script_id, &pc);
+  TEST_ASSERT_EQUAL_INT(0, run_object_lines(lines));
+  remove_from_lookup_table(pc.script_id, &pc);
+}
+
 static void restore_round_trips_neutralize(void)
 {
   char text[] = "50% off, 100%% sure";
@@ -886,5 +914,7 @@ int main(void)
   RUN_TEST(wait_resumes_in_the_last_room);
   RUN_TEST(owner_in_no_room_is_not_indexed);
   RUN_TEST(obj_extra_field_lists_every_flag);
+  RUN_TEST(detached_script_frees_its_variables);
+  RUN_TEST(attach_to_a_player_is_refused_before_loading);
   return UNITY_END();
 }
