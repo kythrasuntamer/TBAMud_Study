@@ -1603,15 +1603,7 @@ static bool outbuf_check(struct descriptor_data *d, const char *where, bool full
  * use cannot write into a buffer another descriptor now owns. */
 static void flush_queues(struct descriptor_data *d)
 {
-  if (d->large_outbuf) {
-    d->large_outbuf->next = bufpool;
-    bufpool = d->large_outbuf;
-    d->large_outbuf = NULL;
-    d->output = d->small_outbuf;
-    *d->output = '\0';
-    d->bufptr = 0;
-    d->bufspace = SMALL_BUFSIZE - 1;
-  }
+  outbuf_reset_small(d);
   flush_input_queue(d);
 }
 
