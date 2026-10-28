@@ -1,6 +1,20 @@
 /**
 * @file dg_scripts.c
 * Contains the main script driver interface.
+*
+* Ownership and input rules (maintainer summary):
+* - Trigger command lists belong to the prototype (trig_index[rn]->proto) and
+*   are shared by every instance; script_driver() copies each line into a
+*   MAX_INPUT_LENGTH buffer and runs var_subst() on the copy before dispatch.
+* - Script text is builder input (trigedit, world files). Variable values can
+*   be player text (%speech%, %arg%, %cmd%); dg_triggers.c stores them with
+*   '%' made inert so they never become variable syntax again.
+* - A trigger extracted while any script runs is retired, not freed, until
+*   dg_script_execution_leave(); owners (mob, obj, room) can be extracted by
+*   any command a script runs, so pointers to them are revalidated after
+*   every callback (script_driver, random/time dispatch).
+* - UIDs live in disjoint namespaces (see dg_scripts.h); each resolver accepts
+*   only its own range.
 * 
 * Part of the core tbaMUD source code distribution, which is a derivative
 * of, and continuation of, CircleMUD.
@@ -1187,7 +1201,12 @@ ACMD(do_attach)
     send_to_char(ch, "Please specify 'mob', 'obj', or 'room'.\r\n");
 }
 
-/* Removes the trigger specified by name, and the script of o if it removes the
+/* name is modified in place (a '.' is replaced by NUL) and must not be NULL.
+ * A number matches either a list position or a vnum; "N.name" matches the
+ * Nth trigger with that name. extract_trigger() defers the free while any
+ * script runs.
+ *
+ * Removes the trigger specified by name, and the script of o if it removes the
  * last trigger.  name can either be a number, or a 'silly' name for the 
  * trigger, including things like 2.beggar-death. Returns 0 if did not find the
  * trigger, otherwise 1.  If it matters, you might need to check to see if all 
@@ -1726,7 +1745,15 @@ static char *matching_paren(char *p)
   return --p;
 }
 
-/* evaluates line, and returns answer in result */
+/* evaluates line, and returns answer in result.
+ * result must hold MAX_INPUT_LENGTH bytes. line has normally been through
+ * var_subst() already; operators are split on copies. Precedence, lowest
+ * first: ||, &&, comparisons (== != <= >= /= < >), + -, * /, then unary !.
+ * Parentheses recurse, so depth is bounded by the line length. A leaf with
+ * no operator goes through var_subst() a second time (the legacy %%var%%
+ * idiom); player-authored values are stored with '%' inert, so only
+ * script-built text expands twice. Arithmetic is int and saturates,
+ * reporting dg/script-arith (see eval_op()). */
 static void eval_expr(char *line, char *result, void *go, struct script_data *sc,
                trig_data *trig, int type)
 {
@@ -1865,7 +1892,8 @@ static int process_if(char *cond, void *go, struct script_data *sc,
 }
 
 /* Scans for end of if-block.  returns the line containg 'end', or the last
- * line of the trigger if not found. */
+ * line of the trigger if not found (reported to the builder). Nested if
+ * blocks are skipped. Never returns NULL for a non-NULL cl. */
 static struct cmdlist_element *find_end(trig_data *trig, struct cmdlist_element *cl)
 {
   struct cmdlist_element *c;
@@ -1896,8 +1924,10 @@ static struct cmdlist_element *find_end(trig_data *trig, struct cmdlist_element 
   return c;
 }
 
-/* Searches for valid elseif, else, or end to continue execution at. Returns 
- * line of elseif, else, or end if found, or last line of trigger. */
+/* Searches for valid elseif, else, or end to continue execution at. Returns
+ * line of elseif, else, or end if found, or last line of trigger.
+ * Side effect: when it stops on a true elseif or an else it increments
+ * GET_TRIG_DEPTH(trig), entering that branch as script_driver() would. */
 static struct cmdlist_element *find_else_end(trig_data *trig,
     struct cmdlist_element *cl, void *go, struct script_data *sc, int type)
 {
@@ -1971,7 +2001,14 @@ static int script_wait_number(const char *text, long *number, const char **rest)
   return TRUE;
 }
 
-/* Processes a 'wait' command. Returns TRUE when the wait event was created
+/* Accepted forms: "wait N" (pulses), "wait Ns" (seconds), "wait Nt" (mud
+ * hours), "wait until H[:MM]" (next mud time of day). A wait below one
+ * pulse waits one pulse (reported); a scaled wait above DG_WAIT_MAX_PULSES,
+ * an unknown suffix or an out-of-day time is rejected with dg/wait-range
+ * or a script_log. The wait_event_data allocated here is owned by the event
+ * and freed by trig_wait_event() (or by event_cancel() on extraction).
+ *
+ * Processes a 'wait' command. Returns TRUE when the wait event was created
  * and the trigger is now suspended at cl->next; FALSE when the wait was
  * rejected (already reported), in which case the caller must end the trigger
  * through its normal cleanup rather than leave it half-suspended. */
@@ -2936,7 +2973,21 @@ static void dg_letter_value(struct script_data *sc, trig_data *trig, char *cmd)
  *
  * int mode
      TRIG_NEW     just started from dg_triggers.c
-     TRIG_RESTART restarted after a 'wait' */
+     TRIG_RESTART restarted after a 'wait'
+
+ * Owner lifetime: each frame records its own owner on entry (an object's
+ * UID, or whether a mobile was already dying) and checks it after every
+ * command with dg_frame_owner_gone(). If the owner is gone (purged itself,
+ * its container was purged, or a nested trigger purged it) the run stops
+ * and, for an object, *go_adress is set to NULL so the caller sees it.
+ * Nested frames check only their own owner, so they cannot end this run.
+ *
+ * Exits: only an accepted 'wait' leaves the trigger suspended (depth 1,
+ * variables kept, a wait event owning a wait_event_data). Every other exit,
+ * including a rejected wait and a malformed while/switch, frees var_list and
+ * resets depth to 0 so TRIGGER_CHECK() accepts the trigger again. sc may be
+ * retired mid-run by detach/purge; it stays readable until
+ * dg_script_execution_leave(). */
 /* TRUE once a command run by this frame has freed its object owner or
  * extracted its mobile owner.  Each frame checks its own owner, so nested
  * scripts can neither hide nor fake this frame's result.  Rooms are never
@@ -3403,7 +3454,11 @@ static struct cmdlist_element *find_done(struct cmdlist_element *cl)
 }
 
 
-/* load in a character's saved variables */
+/* load in a character's saved variables.
+ * Legacy plrvars file, one "name context value" per line; get_line() caps a
+ * line at READ_SIZE - 1 bytes. Nothing writes these files any more (the
+ * ASCII pfile Vars section replaced them), so the input is a legacy or
+ * admin-placed file. */
 void read_saved_vars(struct char_data *ch)
 {
   FILE *file;
@@ -3455,7 +3510,8 @@ void read_saved_vars(struct char_data *ch)
   tb_fclose(file);
 }
 
-/* save a characters variables out to disk */
+/* save a characters variables out to disk (legacy format; no callers).
+ * Variables whose name starts with '-' are never saved. */
 void save_char_vars(struct char_data *ch)
 {
   FILE *file;
