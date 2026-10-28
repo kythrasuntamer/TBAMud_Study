@@ -166,6 +166,20 @@ static int sedit_questmaster_runs_shop(mob_rnum keeper)
   return FALSE;
 }
 
+/* Mob rnum keeper keeps no shop any more but runs shop_keeper() through
+ * questmaster(): every quest of its that keeps shop_keeper as its secondary
+ * gets original instead, the proc shop_keeper() wrapped (the shop's
+ * S_FUNC), so questmaster() -> original as before the shop.  original is
+ * never questmaster itself, which would make questmaster() call itself. */
+static void sedit_unwrap_quest_shop(mob_rnum keeper, SPECIAL((*original)))
+{
+  qst_rnum q;
+
+  for (q = 0; q < total_quests; q++)
+    if (QST_MASTER(q) == mob_index[keeper].vnum && QST_FUNC(q) == shop_keeper)
+      QST_FUNC(q) = original == questmaster ? NULL : original;
+}
+
 /* Install the shop's keeper in the live mob_index at save time, never
  * while editing: SEDIT_KEEPER only records the choice, so an abandoned edit
  * leaves every mobile's spec proc untouched.
@@ -174,7 +188,8 @@ static int sedit_questmaster_runs_shop(mob_rnum keeper)
  * mob_index[].func becomes shop_keeper, and the spec proc it had before is
  * kept in the shop's S_FUNC and called first by shop_keeper. When the
  * keeper changes, the previous keeper gets that spec proc back unless
- * another shop still uses it.  A keeper that already runs shop_keeper
+ * another shop still uses it (through questmaster() when it gives quests:
+ * sedit_unwrap_quest_shop()).  A keeper that already runs shop_keeper
  * through questmaster() is left alone (see sedit_questmaster_runs_shop()):
  * wrapping it again would make each proc call the other forever. */
 static void sedit_install_keeper(struct descriptor_data *d)
@@ -191,6 +206,9 @@ static void sedit_install_keeper(struct descriptor_data *d)
   if (VALID_MOB_RNUM(old_keeper) && mob_index[old_keeper].func == shop_keeper &&
       sedit_other_shop_of_keeper(old_keeper, existing) == NOWHERE)
     mob_index[old_keeper].func = SHOP_FUNC(existing);
+  else if (VALID_MOB_RNUM(old_keeper) && sedit_questmaster_runs_shop(old_keeper) &&
+           sedit_other_shop_of_keeper(old_keeper, existing) == NOWHERE)
+    sedit_unwrap_quest_shop(old_keeper, SHOP_FUNC(existing));
 
   S_FUNC(shop) = NULL;
   if (!VALID_MOB_RNUM(new_keeper))

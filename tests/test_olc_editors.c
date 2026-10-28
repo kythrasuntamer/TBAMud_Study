@@ -2585,6 +2585,41 @@ static void test_sedit_plain_questmaster_keeper_is_wrapped_once(void)
   free_questmaster_1201();
 }
 
+/* Leftovers round 2: the old keeper of a shop that moves to another mob gets
+ * its original proc back even when it runs shop_keeper through
+ * questmaster() (assign_the_quests() at boot): the quest's secondary
+ * becomes the shop's saved proc again.  It used to stay shop_keeper. */
+static void test_sedit_keeper_change_restores_questmaster_keepers_proc(void)
+{
+  static struct shop_data scratch;   /* outlives the OLC session pointer */
+  struct descriptor_data *d = &builder_desc;
+
+  make_questmaster_1201(shop_keeper);
+  shop_index = calloc(1, sizeof(*shop_index));
+  TEST_ASSERT_NOT_NULL(shop_index);
+  top_shop = 0;
+  shop_index[0].vnum = 3000;
+  shop_index[0].keeper = 1;             /* mob 1201 */
+  shop_index[0].func = test_guild_proc;
+
+  memset(&scratch, 0, sizeof(scratch));
+  S_KEEPER(&scratch) = 1;
+  OLC_SHOP(d) = &scratch;
+  OLC_NUM(d) = 3000;
+  OLC_MODE(d) = SEDIT_KEEPER;
+  sedit_parse(d, "1202");
+  sedit_save_internally(d);
+  OLC_SHOP(d) = NULL;
+
+  TEST_ASSERT_EQUAL_PTR(questmaster, mob_index[1].func);
+  TEST_ASSERT_EQUAL_PTR(test_guild_proc, aquest_table[0].func);
+  TEST_ASSERT_EQUAL_PTR(shop_keeper, mob_index[2].func);
+
+  free(shop_index); shop_index = NULL;
+  top_shop = -1;
+  free_questmaster_1201();
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -2652,5 +2687,6 @@ int main(void)
   RUN_TEST(test_sedit_delete_index_outside_list_is_refused_and_explained);
   RUN_TEST(test_sedit_keeper_running_shop_through_questmaster_is_not_rewrapped);
   RUN_TEST(test_sedit_plain_questmaster_keeper_is_wrapped_once);
+  RUN_TEST(test_sedit_keeper_change_restores_questmaster_keepers_proc);
   return UNITY_END();
 }
