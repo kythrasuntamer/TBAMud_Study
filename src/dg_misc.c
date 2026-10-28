@@ -354,19 +354,27 @@ void script_damage(trig_data *trig, struct char_data *vict, int dam)
     return;
   }
 
-  /* dam is a script int; GET_HIT is sh_int. Subtracting in int and storing
-   * back wrapped, so a large negative "damage" could kill. */
-  result = MIN((long long)GET_HIT(vict) - dam, GET_MAX_HIT(vict));
-  if (dam > 0 && result < SHRT_MIN)
-    /* Overkill: the victim dies either way, as damage() kills on overkill.
-     * Death traps do this on purpose ("%damage% %actor% 99999"), so store
-     * the floor without a field-clamp report; a player's death is still
-     * logged below ("killed by script"). */
+  /* dam is any script int (INT_MIN..INT_MAX); GET_HIT is sh_int. Work in
+   * long long throughout: MIN() and MAX() here are int functions, and
+   * passing them this difference truncated it, so extreme values wrapped
+   * (INT_MAX "damage" healed an incapacitated victim). */
+  result = (long long)GET_HIT(vict) - (long long)dam;
+
+  /* Healing stops at max_hit but never lowers HP that is already above
+   * it (set by hitp() or affects); damage always just subtracts. */
+  if (dam < 0 && result > GET_MAX_HIT(vict))
+    result = GET_HIT(vict) > GET_MAX_HIT(vict) ? GET_HIT(vict)
+                                               : GET_MAX_HIT(vict);
+
+  /* Now result <= SHRT_MAX: a heal yields at most max(HP, max_hit), both
+   * sh_int, and damage at most the current HP. Below SHRT_MIN only damage
+   * can reach: overkill, which kills either way (as damage() does), and
+   * death traps use on purpose ("%damage% %actor% 99999"). Store the floor
+   * without a field-clamp report; a player's death is still logged below
+   * ("killed by script"). */
+  if (result < SHRT_MIN)
     GET_HIT(vict) = SHRT_MIN;
   else
-    /* In range by construction: for dam <= 0 the result is at least the
-     * current sh_int HP and at most max_hit (an sh_int); for dam > 0 it is
-     * at most the current HP, and below SHRT_MIN took the branch above. */
     GET_HIT(vict) = (sh_int)result;
 
   update_pos(vict);

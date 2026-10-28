@@ -916,7 +916,10 @@ static void field_setters_saturate_instead_of_wrapping(void)
   TEST_ASSERT_EQUAL_STRING("field-clamp", tb_captured_operation);
   GET_WAIT_STATE(mob) = 0;
 
+  /* A huge heal from below max_hit stops at max_hit. (hitp(40000) above
+   * left HP at 32767, above max; a heal no longer lowers that.) */
   tb_error_capture_reset();
+  GET_HIT(mob) = 10;
   script_damage(t, mob, -40000);
   TEST_ASSERT_EQUAL_INT(GET_MAX_HIT(mob), GET_HIT(mob));
   TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
@@ -927,6 +930,33 @@ static void field_setters_saturate_instead_of_wrapping(void)
   GET_HIT(mob) = 50;
   script_damage(t, mob, 99999);
   TEST_ASSERT_EQUAL_INT(SHRT_MIN, GET_HIT(mob));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+
+  /* Extreme script ints must not wrap through the int MIN()/MAX()
+   * functions. Red before: INT_MAX healed an incapacitated victim to
+   * max_hit, and INT_MIN / -2147483598 left HP at 50 or 0. */
+  GET_MAX_HIT(mob) = 100;
+  GET_HIT(mob) = -5;
+  script_damage(t, mob, INT_MAX);
+  TEST_ASSERT_EQUAL_INT(SHRT_MIN, GET_HIT(mob));       /* a kill, not a heal */
+
+  GET_HIT(mob) = 50;
+  script_damage(t, mob, INT_MIN);
+  TEST_ASSERT_EQUAL_INT(100, GET_HIT(mob));
+
+  GET_HIT(mob) = 50;
+  script_damage(t, mob, -2147483598);
+  TEST_ASSERT_EQUAL_INT(100, GET_HIT(mob));
+
+  /* HP above max_hit (hitp() or affects): damage just subtracts, and a
+   * heal never lowers it to max_hit. */
+  GET_HIT(mob) = 150;
+  script_damage(t, mob, 5);
+  TEST_ASSERT_EQUAL_INT(145, GET_HIT(mob));
+
+  GET_HIT(mob) = 150;
+  script_damage(t, mob, -10);
+  TEST_ASSERT_EQUAL_INT(150, GET_HIT(mob));
   TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
 }
 
