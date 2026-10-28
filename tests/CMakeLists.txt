@@ -549,6 +549,27 @@ if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
         PROPERTIES COMPILE_OPTIONS "-ffunction-sections;-fdata-sections")
 endif()
 
+# save_char()'s commit under injected rename()/fclose() failures: the same
+# fixtures, linked with --wrap (so Fil-C skips it; see the end of this file).
+add_mud_test(test_players_save_faults
+    ${MUD_SRCDIR}/players.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_players_persist.c
+)
+target_compile_definitions(test_players_save_faults PRIVATE TB_SAVE_FAULT_INJECTION)
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_compile_options(test_players_save_faults PRIVATE -ffunction-sections -fdata-sections)
+    target_link_options(test_players_save_faults PRIVATE -Wl,--gc-sections
+        -Wl,--wrap=rename -Wl,--wrap=fclose
+        -Wl,--wrap=fflush -Wl,--wrap=unlink -Wl,--wrap=ferror)
+endif()
+set_tests_properties(test_players_save_faults PROPERTIES TIMEOUT 60)
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME test_player_save_failure_contracts
+        COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/test_player_save_failure_contracts.py)
+endif()
+
 # Production mud-mail store (mail.c) against a scratch lib/etc tree.
 # players.c supplies fread_string_checked(); the rest of it is discarded.
 add_mud_test(test_mail_persist
