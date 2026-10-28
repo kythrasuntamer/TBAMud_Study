@@ -335,7 +335,9 @@ static struct trig_proto_list *make_trig_list(int n)
 }
 void copy_proto_script(void *source, void *dest, int type) { (void)source; (void)dest; (void)type; }
 
-zone_rnum real_zone_by_thing(room_vnum vznum) { (void)vznum; return 0; }
+/* Every vnum is in zone 0 unless a test moves it out (NOWHERE). */
+static zone_rnum zone_by_thing_result = 0;
+zone_rnum real_zone_by_thing(room_vnum vznum) { (void)vznum; return zone_by_thing_result; }
 int save_objects(zone_rnum zone_num) { (void)zone_num; return TRUE; }
 
 obj_rnum real_object(obj_vnum vnum)
@@ -565,6 +567,7 @@ void setUp(void)
   add_room_calls = 0;
   deleted_rnum = -1;
   add_object_result = -1;
+  zone_by_thing_result = 0;
   delete_calls = 0;
   zone_editable = TRUE;
   add_room_result = NOWHERE;
@@ -1996,6 +1999,44 @@ static void test_zedit_unknown_mode_aborts_and_reports(void)
   TEST_ASSERT_EQUAL_STRING("zedit-bad-mode", tb_captured_operation);
 }
 
+
+/* ------------------------------------------------------------------ */
+/* C2-28: a save for a vnum that no longer belongs to any zone (zedit  */
+/* shrank the range during the session) is refused before the live    */
+/* instances' scripts are torn down.                                   */
+/* ------------------------------------------------------------------ */
+static void test_oedit_save_outside_every_zone_keeps_live_scripts(void)
+{
+  struct descriptor_data *d = &builder_desc;
+  struct obj_data instance;
+  struct script_data fake_script;
+  struct trig_proto_list *instance_list = make_trig_list(1);
+
+  make_objects(3);
+  memset(&instance, 0, sizeof(instance));
+  memset(&fake_script, 0, sizeof(fake_script));
+  instance.item_number = 1;
+  instance.script = &fake_script;
+  instance.proto_script = instance_list;
+  object_list = &instance;
+
+  OLC_NUM(d) = 3001;
+  oedit_setup_existing(d, 1);
+  STATE(d) = CON_OEDIT;
+  OLC_SCRIPT(d) = make_trig_list(2);      /* the trigger list was edited */
+  zone_by_thing_result = NOWHERE;
+
+  oedit_save_internally(d);
+
+  TEST_ASSERT_EQUAL_INT(0, extract_script_calls);
+  TEST_ASSERT_EQUAL_PTR(&fake_script, instance.script);
+  TEST_ASSERT_EQUAL_PTR(instance_list, instance.proto_script);
+  TEST_ASSERT_EQUAL_STRING("oedit-save", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "obj vnum 3001 belongs to no zone"));
+  free_trig_list(instance_list);
+  object_list = NULL;
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -2049,5 +2090,6 @@ int main(void)
   RUN_TEST(test_iedit_start_with_stale_session_reports_and_releases_it);
   RUN_TEST(test_sedit_unknown_mode_aborts_without_touching_freed_session);
   RUN_TEST(test_zedit_unknown_mode_aborts_and_reports);
+  RUN_TEST(test_oedit_save_outside_every_zone_keeps_live_scripts);
   return UNITY_END();
 }

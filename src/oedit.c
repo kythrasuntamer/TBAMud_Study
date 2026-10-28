@@ -558,8 +558,22 @@ static int oedit_save_checked(struct descriptor_data *d)
 {
   int i;
   obj_rnum robj_num, existing;
+  zone_rnum rznum;
   struct obj_data *obj;
   struct trig_proto_list *old_proto;
+
+  /* add_object() refuses a vnum in no zone (zedit can shrink the range
+   * while this session is open).  Refuse here first: the teardown below
+   * strips every live instance's script, and a refused save must leave the
+   * live objects as they were. */
+  rznum = real_zone_by_thing(OLC_NUM(d));
+  if (!VALID_ZONE_RNUM(rznum)) {
+    struct char_data *builder = d->character;
+    TB_ERROR_MSG("olc", "oedit-save", "object",
+                 "builder " DIAG_CHAR_FMT " obj vnum %d belongs to no zone; edits not saved",
+                 DIAG_CHAR(builder), OLC_NUM(d));
+    return FALSE;
+  }
 
   existing = real_object(OLC_NUM(d));
   i = (existing == NOTHING);

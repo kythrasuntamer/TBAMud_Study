@@ -1420,6 +1420,33 @@ static void new_command_reports_bad_position(void)
 }
 
 /* ------------------------------------------------------------------------ */
+/* C2-28: add_object() and the zone a vnum belongs to.                      */
+/* ------------------------------------------------------------------------ */
+
+/* A vnum in no zone (zedit shrank the range while oedit was open) made
+ * add_object() read zone_table[NOWHERE] after obj_proto had grown (ASan
+ * heap-buffer-overflow before the fix).  It is refused before any change. */
+static void add_object_refuses_vnum_outside_every_zone(void)
+{
+  struct obj_data newobj;
+  make_zones(1); make_objs(1);            /* zone 0 covers vnums 1..99 */
+  memset(&newobj, 0, sizeof(newobj));
+  newobj.name = "new";
+  TEST_ASSERT_EQUAL_UINT(NOTHING, add_object(&newobj, 500));
+  TEST_ASSERT_EQUAL_INT(0, top_of_objt);
+  TEST_ASSERT_EQUAL_INT(0, save_list_adds);
+  TEST_ASSERT_EQUAL_STRING("add-object", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "obj vnum 500 belongs to no zone"));
+
+  /* An existing prototype whose zone no longer covers it is left alone. */
+  zone_table[0].bot = 50;
+  tb_error_capture_reset();
+  TEST_ASSERT_EQUAL_UINT(NOTHING, add_object(&newobj, 10));
+  TEST_ASSERT_NULL(obj_proto[0].name);
+  TEST_ASSERT_EQUAL_STRING("add-object", tb_captured_operation);
+}
+
+/* ------------------------------------------------------------------------ */
 /* Temporary world directory for the writers.                               */
 /* ------------------------------------------------------------------------ */
 static char test_root[] = "/tmp/tb-genolc-XXXXXX";
@@ -1525,6 +1552,7 @@ int main(void)
   RUN_TEST(dg_read_trigger_keeps_missing_room_vnum);
   RUN_TEST(new_command_is_zeroed);
   RUN_TEST(new_command_reports_bad_position);
+  RUN_TEST(add_object_refuses_vnum_outside_every_zone);
   failures = UNITY_END();
   leave_test_root();
   return failures;

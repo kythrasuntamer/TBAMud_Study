@@ -65,6 +65,17 @@ obj_rnum add_object(struct obj_data *newobj, obj_vnum ovnum)
   int found = NOTHING;
   zone_rnum rznum = real_zone_by_thing(ovnum);
 
+  /* Invariant: a prototype's vnum lies in a zone's range; that zone names
+   * the file it is saved to.  oedit (builder input) checked the zone when
+   * the session started, but zedit can shrink a zone's range while the
+   * session is open, and real_zone_by_thing() then returns NOWHERE, far
+   * past zone_table.  Refuse before obj_proto or any live instance changes. */
+  if (!VALID_ZONE_RNUM(rznum)) {
+    TB_ERROR_MSG("olc", "add-object", "object",
+                 "obj vnum %d belongs to no zone; not added", ovnum);
+    return NOTHING;
+  }
+
   /* Write object to internal tables. */
   if ((newobj->item_number = real_object(ovnum)) != NOTHING) {
     obj_rnum rnum = newobj->item_number;
