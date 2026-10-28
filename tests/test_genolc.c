@@ -99,6 +99,26 @@ static void test_successful_saves_empty_the_list(void)
 
 /* C1-20: SL_ACT/SL_HLP entries were skipped by moving the head without
  * freeing the node (a leak LeakSanitizer reports). */
+/* 'show save' indexed save_types[] with the entry's type unchecked. */
+static void test_show_save_list_reports_unknown_type(void)
+{
+  struct char_data ch;
+  struct save_list_data *bad;
+
+  memset(&ch, 0, sizeof(ch));
+  CREATE(bad, struct save_list_data, 1);
+  bad->zone = 30;
+  bad->type = 42;
+  save_list = bad;
+  do_show_save_list(&ch, (char[]){""}, 0, 0);
+  TEST_ASSERT_EQUAL_STRING("save-list", tb_captured_operation);
+
+  tb_error_capture_reset();
+  TEST_ASSERT_FALSE(save_all());
+  TEST_ASSERT_NULL(save_list);
+  TEST_ASSERT_EQUAL_STRING("save-all", tb_captured_operation);
+}
+
 static void test_unsavable_types_are_freed(void)
 {
   add_to_save_list(AEDIT_PERMISSION, SL_ACT);
@@ -288,5 +308,6 @@ int main(void)
   RUN_TEST(test_failing_saver_does_not_hang_save_all);
   RUN_TEST(test_successful_saves_empty_the_list);
   RUN_TEST(test_unsavable_types_are_freed);
+  RUN_TEST(test_show_save_list_reports_unknown_type);
   return UNITY_END();
 }

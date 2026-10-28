@@ -52,6 +52,13 @@ static struct {
   { SL_HLP, NULL, "help" },
   { -1, NULL, NULL },
 };
+/* TRUE if t is an SL_* value with its own save_types[] entry (the table is
+ * indexed by type, so the entry at t must say it is type t).  Evaluates t
+ * several times: pass a plain variable. */
+#define SAVE_TYPE_OK(t) \
+  ((t) >= 0 && (size_t)(t) < sizeof(save_types) / sizeof(save_types[0]) - 1 && \
+   save_types[(t)].save_type == (t))
+
 /* for Zone Export */
 
 /* Copy a world string into an export buffer.  The copy always terminates
@@ -139,7 +146,7 @@ int save_all(void)
     type = entry->type;
     zone = entry->zone;
 
-    if (type < 0 || type > SL_MAX) {
+    if (!SAVE_TYPE_OK(type) || !save_types[type].func) {
       switch (type) {
         case SL_ACT:
           log("Actions not saved - can not autosave. Use 'aedit save'.");
@@ -308,7 +315,12 @@ ACMD(do_show_save_list)
 
     send_to_char(ch, "The following files need saving:\r\n");
     for (item = save_list; item; item = item->next) {
-      if (item->type != SL_CFG)
+      if (!SAVE_TYPE_OK(item->type)) {
+        TB_ERROR_MSG("genolc", "save-list", "save_list",
+                     TB_ERRID_INVARIANT " entry for zone %d has unknown save type %d",
+                     item->zone, item->type);
+        send_to_char(ch, " - unknown (type %d) data for zone %d.\r\n", item->type, item->zone);
+      } else if (item->type != SL_CFG)
         send_to_char(ch, " - %s data for zone %d.\r\n", save_types[item->type].message, item->zone);
       else
         send_to_char(ch, " - Game configuration data.\r\n");
