@@ -642,6 +642,47 @@ void test_dig_creates_room_when_idle(void)
 }
 
 /* ---------------------------------------------------------------------
+ * F3-18: dig narrowed its target vnum to room_vnum with no range check
+ * (68001 -> 2465; 65535 == NOWHERE deleted the exit) and treated a
+ * non-numeric target as limbo.
+ * --------------------------------------------------------------------- */
+void test_dig_rejects_vnum_that_would_be_narrowed(void)
+{
+  run_cmd(do_dig, "north 68001", 0);
+
+  TEST_ASSERT_EQUAL_INT(0, save_calls);
+  TEST_ASSERT_NULL(world[0].dir_option[NORTH]);
+  TEST_ASSERT_NOT_NULL(strstr(sent, "is not a room vnum"));
+  TEST_ASSERT_TRUE(log_has("op=arg-range"));
+  TEST_ASSERT_TRUE(log_has("resource=dig"));
+}
+
+void test_dig_nowhere_sentinel_does_not_delete_exit(void)
+{
+  struct room_direction_data *exit;
+
+  CREATE(exit, struct room_direction_data, 1);
+  exit->to_room = 1;
+  world[0].dir_option[NORTH] = exit;
+
+  run_cmd(do_dig, "north 65535", 0);
+
+  TEST_ASSERT_EQUAL_PTR(exit, world[0].dir_option[NORTH]);
+  TEST_ASSERT_TRUE(log_has("op=arg-range"));
+  world[0].dir_option[NORTH] = NULL;
+  free(exit);
+}
+
+void test_dig_rejects_non_numeric_target(void)
+{
+  run_cmd(do_dig, "north temple", 0);
+
+  TEST_ASSERT_EQUAL_INT(0, save_calls);
+  TEST_ASSERT_NULL(strstr(sent, "limbo"));
+  TEST_ASSERT_TRUE(log_has("op=arg-range"));
+}
+
+/* ---------------------------------------------------------------------
  * F3-13: an unknown cleanup type logged a bare "Unknown type!" and leaked
  * the room; internal one-shot users (dig/buildwalk/copy) broadcast
  * "$n stops using OLC." for an editor they never opened.
@@ -689,6 +730,9 @@ int main(void)
   RUN_TEST(test_dig_refuses_while_another_editor_is_open);
   RUN_TEST(test_buildwalk_refuses_while_another_editor_is_open);
   RUN_TEST(test_dig_creates_room_when_idle);
+  RUN_TEST(test_dig_rejects_vnum_that_would_be_narrowed);
+  RUN_TEST(test_dig_nowhere_sentinel_does_not_delete_exit);
+  RUN_TEST(test_dig_rejects_non_numeric_target);
   RUN_TEST(test_buildwalk_releases_template_strings);
   RUN_TEST(test_cleanup_frees_unsaved_script_on_link_loss);
   RUN_TEST(test_cleanup_frees_script_reattached_to_scratch_once);

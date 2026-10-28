@@ -203,7 +203,20 @@ ACMD(do_dig)
     return;
   }
 
-  rawvnum = tb_parse_int_or_zero(sroom);
+  /* F3-18: sroom is builder-typed.  -1 means "delete the exit"; anything
+   * else must be a whole number that fits room_vnum without becoming the
+   * NOWHERE sentinel.  Unchecked, `dig north 68001` narrowed to 2465,
+   * `dig north 65535` equalled NOWHERE and deleted the exit, and a
+   * non-numeric argument parsed as 0 (limbo). */
+  if (!tb_parse_int_checked(sroom, &rawvnum) ||
+      (rawvnum != -1 && (rawvnum < 0 || rawvnum >= IDXTYPE_MAX))) {
+    send_to_char(ch, "'%s' is not a room vnum: use 1 to %d, or -1 to remove the exit.\r\n",
+                 sroom, IDXTYPE_MAX - 1);
+    TB_WARN_MSG("olc", "arg-range", "dig",
+                "value '%s' outside {-1} or [0,%d] from " DIAG_CHAR_FMT,
+                sroom, IDXTYPE_MAX - 1, DIAG_CHAR(ch));
+    return;
+  }
   if (rawvnum == -1)
     rvnum = NOWHERE;
   else
