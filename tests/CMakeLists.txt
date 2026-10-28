@@ -703,6 +703,7 @@ endmacro()
 
 add_gameplay_test(test_act_movement ${CMAKE_CURRENT_SOURCE_DIR}/test_act_movement.c)
 add_gameplay_test(test_act_item ${CMAKE_CURRENT_SOURCE_DIR}/test_act_item.c)
+add_gameplay_test(test_fight ${CMAKE_CURRENT_SOURCE_DIR}/test_fight.c)
 
 find_package(Python3 COMPONENTS Interpreter QUIET)
 if(Python3_Interpreter_FOUND)

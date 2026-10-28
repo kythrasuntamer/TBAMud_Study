@@ -841,11 +841,16 @@ static int compute_thaco(struct char_data *ch, struct char_data *victim)
 
 void hit(struct char_data *ch, struct char_data *victim, int type)
 {
-  struct obj_data *wielded = GET_EQ(ch, WEAR_WIELD);
-  int w_type, victim_ac, calc_thaco, dam, diceroll;
+  struct obj_data *wielded;
+  int w_type, victim_ac, calc_thaco, dam, diceroll, was_pending;
 
   /* Check that the attacker and victim exist */
   if (!ch || !victim) return;
+
+  /* A victim killed earlier this round is "normal" with delayed extraction
+   * (damage() ignores it); a fight already pending is noted here so only a
+   * change made by the trigger below is reported. */
+  was_pending = CHAR_PENDING_EXTRACTION(ch) || CHAR_PENDING_EXTRACTION(victim);
 
   /* check if the character has a fight trigger */
   fight_mtrigger(ch);
@@ -856,6 +861,20 @@ void hit(struct char_data *ch, struct char_data *victim, int type)
       stop_fighting(ch);
     return;
   }
+
+  /* The fight script may have purged ch or victim (extraction is deferred,
+   * so the pointers stay allocated but must not fight on). */
+  if (CHAR_PENDING_EXTRACTION(ch) || CHAR_PENDING_EXTRACTION(victim)) {
+    if (!was_pending)
+      TB_WARN_MSG("fight", "hit-after-trigger", "char",
+                  DIAG_CHAR_FMT " vs " DIAG_CHAR_FMT ": one was purged by the "
+                  "fight trigger; hit skipped", DIAG_CHAR(ch), DIAG_CHAR(victim));
+    return;
+  }
+
+  /* Only now look at the weapon: the fight script can junk, purge or swap
+   * it ('mjunk dagger'), so a pointer read before the trigger may be freed. */
+  wielded = GET_EQ(ch, WEAR_WIELD);
 
   /* Find the weapon type (for display purposes only) */
   if (wielded && GET_OBJ_TYPE(wielded) == ITEM_WEAPON)
