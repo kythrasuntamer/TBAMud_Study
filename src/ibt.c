@@ -92,6 +92,17 @@ static IBT_DATA *new_ibt(void)
    return ibtData;
 }
 
+/* Free every string an IBT owns (body, name, text and notes) and NULL the
+ * fields.  The one place that knows the full set, so no free path can
+ * forget one of them. */
+static void ibt_free_strings(IBT_DATA *ibt)
+{
+  if (ibt->body)  STRFREE(ibt->body);
+  if (ibt->name)  STRFREE(ibt->name);
+  if (ibt->text)  STRFREE(ibt->text);
+  if (ibt->notes) STRFREE(ibt->notes);
+}
+
 static void free_ibt_list(int mode)
 {
   IBT_DATA **first_ptr = NULL, **last_ptr = NULL;
@@ -118,11 +129,7 @@ static void free_ibt_list(int mode)
   while ((this_ibt = *first_ptr) != NULL) {
     *first_ptr = this_ibt->next;
 
-    if (this_ibt->body)  STRFREE(this_ibt->body);
-    if (this_ibt->name)  STRFREE(this_ibt->name);
-    if (this_ibt->text)  STRFREE(this_ibt->text);
-    if (this_ibt->notes) STRFREE(this_ibt->notes);
-
+    ibt_free_strings(this_ibt);
     DISPOSE(this_ibt);
   }
 
@@ -450,10 +457,9 @@ static bool free_ibt(int mode, IBT_DATA *ibtData)
     }
   }
 
-  /* Free the strings first */
-  if (ibtData->body) STRFREE(ibtData->body);
-  if (ibtData->name) STRFREE(ibtData->name);
-  if (ibtData->text) STRFREE(ibtData->text);
+  /* Free the strings first (including the admin notes, which this path
+   * used to leak on every 'remove' of a record that had them). */
+  ibt_free_strings(ibtData);
 
   /* And free the struct */
   DISPOSE(ibtData);
@@ -1011,23 +1017,8 @@ void free_olc_ibt(IBT_DATA *toFree) {
 	
 	if (!toFree)
 	  return;
- 
-	if (toFree->text) {
-	  STRFREE(toFree->text);
-	}
 
-	if (toFree->body) {
-	  STRFREE(toFree->body);
-	}
-
-	if (toFree->name) {
-	  STRFREE(toFree->name);
-	}
-
-	if (toFree->notes) {
-	  STRFREE(toFree->notes);
-	}
-	
+	ibt_free_strings(toFree);
 	free(toFree);
 }
 

@@ -332,6 +332,16 @@ static void test_remove_refuses_record_open_in_ibtedit(void)
   olc_line(&imm, "q");
 }
 
+/* C1-12: removing a record leaked its admin notes (LeakSanitizer and
+ * Valgrind report the strdup before the fix). */
+static void test_remove_frees_admin_notes(void)
+{
+  submit_bug(&pa, "with notes", "body");
+  first_bug->notes = strdup("admin notes");
+  ibt_cmd(&imm, "remove 1");
+  TEST_ASSERT_EQUAL_INT(0, count_bugs());
+}
+
 int main(void)
 {
   char dir[] = "/tmp/tb_test_ibt.XXXXXX";
@@ -350,5 +360,6 @@ int main(void)
   RUN_TEST(test_remove_refuses_record_being_written);
   RUN_TEST(test_ibtedit_save_follows_record_not_position);
   RUN_TEST(test_remove_refuses_record_open_in_ibtedit);
+  RUN_TEST(test_remove_frees_admin_notes);
   return UNITY_END();
 }
