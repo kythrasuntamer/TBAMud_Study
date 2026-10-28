@@ -206,8 +206,8 @@ void cleanup_olc(struct descriptor_data *d, byte cleanup_type)
       free(OLC_ZONE(d)->name);
     if (OLC_ZONE(d)->cmd) {
       int subcmd;
-      /* The scratch list owns its 'V' strings until zedit_save_internally
-       * hands them to zone_table (and clears them here). */
+      /* The scratch list owns its 'V' strings; a save gave zone_table
+       * copies of its own (zedit_save_internally). */
       for (subcmd = 0; OLC_ZONE(d)->cmd[subcmd].command != 'S'; subcmd++) {
         free(OLC_ZONE(d)->cmd[subcmd].sarg1);
         free(OLC_ZONE(d)->cmd[subcmd].sarg2);
@@ -412,13 +412,14 @@ int can_use_editor(struct char_data *ch, int perm)
  *             descriptor (linkless, or an NPC) is always denied, which is
  *             also what keeps buildwalk inert for linkless characters.
  * @param rnum A real zone number (0..top_of_zone_table), from OLC_ZNUM or
- *             world[].zone.  The socials editor still passes its
- *             AEDIT_PERMISSION sentinel here (hedit calls can_use_editor()
- *             itself); a sentinel is honoured only when it is above
- *             top_of_zone_table, because in a world with that many zones the
- *             same number is a real zone, which must keep its NOBUILD and
- *             builder checks (F3-20).  Any other rnum outside the table is
- *             reported as zone-index and denied.  NOWHERE is denied.
+ *             world[].zone.  The help and socials editors ask
+ *             can_use_editor() instead; a HEDIT_PERMISSION or
+ *             AEDIT_PERMISSION sentinel passed here is still honoured, but
+ *             only when it is above top_of_zone_table, because in a world
+ *             with that many zones the same number is a real zone, which
+ *             must keep its NOBUILD and builder checks (F3-20).  Any other
+ *             rnum outside the table is reported as zone-index and denied.
+ *             NOWHERE is denied.
  * @return TRUE if the builder has access, otherwise FALSE. */
 int can_edit_zone(struct char_data *ch, zone_rnum rnum)
 {
