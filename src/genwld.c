@@ -77,6 +77,8 @@ static void rebase_room_events(void)
  * room starts with empty lists (reported, room-add-shared-list, if the
  * caller passed live ones) and an updated room keeps its own.  proto_script
  * is taken by pointer: afterwards the room owns the list the caller passed.
+ * An updated room's previous list is not freed here (see copy_room()): the
+ * caller captured it before the call and frees it (redit_save_checked()).
  *
  * Inserting shifts world[] (see the file comment): every room pointer is
  * invalidated and every stored room rnum >= the new index is incremented.
@@ -557,11 +559,14 @@ int save_rooms(zone_rnum rzone)
 /**
  * Replace live room `to` with the OLC copy `from`.
  *
- * `to`'s strings and (unless shared) proto_script are freed; the copy's
- * strings are deep-copied and its proto_script pointer is taken over.  `to`
- * keeps its own events.  `from`'s people, contents and events are cleared
- * so nothing is linked from two rooms; the caller restores `to`'s people
- * and contents (add_room() does).
+ * `to`'s strings are freed; the copy's strings are deep-copied and its
+ * proto_script pointer is taken over.  `to`'s previous proto_script is NOT
+ * freed: it belongs to the caller, which captured it before add_room() and
+ * frees it after (redit_save_checked(), audit F1-08).  Freeing it here as
+ * well (C2-11) freed the list twice on every redit save of a room with
+ * triggers.  `to` keeps its own events.  `from`'s people, contents and
+ * events are cleared so nothing is linked from two rooms; the caller
+ * restores `to`'s people and contents (add_room() does).
  *
  * @return TRUE.
  */
@@ -577,10 +582,8 @@ int copy_room(struct room_data *to, struct room_data *from)
     TB_WARN_MSG("olc", "room-copy-events", "room",
                 "room vnum %d: source copy carried its own events list; "
                 "the live room's list was kept", from->number);
-  /* The live room's trigger list is replaced by the copy's; free it unless
-   * the copy shares it. */
-  if (to->proto_script && to->proto_script != from->proto_script)
-    free_proto_script(to, WLD_TRIGGER);
+  /* The live room's trigger list is overwritten below but not freed: the
+   * caller holds it and frees it (see the function comment). */
   free_room_strings(to);
   *to = *from;
   copy_room_strings(to, from);

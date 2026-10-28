@@ -228,9 +228,11 @@ void extract_script(void *thing, int type)
   else if (type == WLD_TRIGGER) { sc = ((struct room_data *)thing)->script; ((struct room_data *)thing)->script = NULL; }
   free(sc);
 }
+static int proto_scripts_freed;   /* free_proto_script() calls; tests reset it */
 void free_proto_script(void *thing, int type)
 {
   struct trig_proto_list **head = NULL, *p, *next;
+  proto_scripts_freed++;
   if (type == OBJ_TRIGGER) head = &((struct obj_data *)thing)->proto_script;
   else if (type == WLD_TRIGGER) head = &((struct room_data *)thing)->proto_script;
   else if (type == MOB_TRIGGER) head = &((struct char_data *)thing)->proto_script;
@@ -1004,16 +1006,30 @@ static void add_object_releases_live_instance_state(void)
 /* C2-11: copy_object()/copy_room() ownership of triggers and events.       */
 /* ------------------------------------------------------------------------ */
 
-/* The prototype's old trigger list is freed (LSan catches the old leak). */
-static void add_object_frees_replaced_proto_script(void)
+/* add_object() over an existing prototype takes the new trigger list by
+ * pointer and leaves the replaced one to its caller, which captured it and
+ * frees it (oedit_save_checked(), F1-08).  copy_object() freeing it as
+ * well freed it twice on every oedit save of an object with triggers: the
+ * model counts frees, and the caller's free below would be a double free
+ * under ASan or Valgrind. */
+static void add_object_leaves_replaced_proto_script_to_caller(void)
 {
-  struct obj_data newobj;
+  struct obj_data newobj, holder;
+  struct trig_proto_list *old;
   make_zones(1); make_objs(1);
-  CREATE(obj_proto[0].proto_script, struct trig_proto_list, 1);
+  CREATE(old, struct trig_proto_list, 1);
+  obj_proto[0].proto_script = old;
   memset(&newobj, 0, sizeof(newobj));
   newobj.name = "new";
+  proto_scripts_freed = 0;
   add_object(&newobj, 10);
+  TEST_ASSERT_EQUAL_INT(0, proto_scripts_freed);
   TEST_ASSERT_NULL(obj_proto[0].proto_script);
+  /* The caller's free, as oedit_save_checked() does it. */
+  memset(&holder, 0, sizeof(holder));
+  holder.proto_script = old;
+  free_proto_script(&holder, OBJ_TRIGGER);
+  TEST_ASSERT_EQUAL_INT(1, proto_scripts_freed);
 }
 
 static void copy_object_keeps_destination_runtime_state(void)
@@ -1037,25 +1053,35 @@ static void copy_object_keeps_destination_runtime_state(void)
   free(from.script);
 }
 
-/* Updating an existing room keeps its pending events and frees the trigger
- * list the OLC copy replaces. */
+/* Updating an existing room keeps its pending events and takes the OLC
+ * copy's trigger list; the list it replaces is left to the caller, which
+ * frees it (redit_save_checked(), F1-08).  copy_room() freeing it as well
+ * freed it twice on every redit save of a room with triggers. */
 static void add_room_update_keeps_live_events(void)
 {
   struct room_event_fixture f;
-  struct room_data nr;
+  struct room_data nr, holder;
+  struct trig_proto_list *old;
   make_zones(1); make_rooms(1);
   attach_room_event(&f, 0);
-  CREATE(world[0].proto_script, struct trig_proto_list, 1);
+  CREATE(old, struct trig_proto_list, 1);
+  world[0].proto_script = old;
   memset(&nr, 0, sizeof(nr));
   nr.number = 10;                      /* existing room */
   nr.name = "renamed";
   nr.description = "d";
+  proto_scripts_freed = 0;
   TEST_ASSERT_EQUAL_UINT(0, add_room(&nr));
   TEST_ASSERT_TRUE(world[0].events == &f.list);
   TEST_ASSERT_NULL(world[0].proto_script);
+  TEST_ASSERT_EQUAL_INT(0, proto_scripts_freed);
   TEST_ASSERT_EQUAL_STRING("renamed", world[0].name);
   TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
   world[0].events = NULL;
+  /* The caller's free, as redit_save_checked() does it. */
+  memset(&holder, 0, sizeof(holder));
+  holder.proto_script = old;
+  free_proto_script(&holder, WLD_TRIGGER);
 }
 
 /* ------------------------------------------------------------------------ */
@@ -1499,7 +1525,7 @@ int main(void)
   RUN_TEST(save_rooms_handles_null_exdesc_description);
   RUN_TEST(delete_room_renumbers_start_rooms);
   RUN_TEST(add_object_releases_live_instance_state);
-  RUN_TEST(add_object_frees_replaced_proto_script);
+  RUN_TEST(add_object_leaves_replaced_proto_script_to_caller);
   RUN_TEST(copy_object_keeps_destination_runtime_state);
   RUN_TEST(add_room_update_keeps_live_events);
   RUN_TEST(parse_trigger_accepts_empty_body);

@@ -508,8 +508,9 @@ static void copy_object_strings(struct obj_data *to, struct obj_data *from)
  * keeps its running script and events.  proto_script, contains,
  * item_number and the other pointers are copied by value: afterwards `to`
  * and `from` share proto_script, and the caller decides which one keeps
- * it (oedit re-attaches it to the prototype).  `to`'s old strings and old
- * trigger list are freed first.
+ * it (oedit re-attaches it to the prototype).  `to`'s old strings are
+ * freed first.  Its old trigger list is not: the caller holds it and frees
+ * it (oedit_save_checked() captures it before add_object(), audit F1-08).
  *
  * @return TRUE.
  */
@@ -532,23 +533,21 @@ int copy_object_preserve(struct obj_data *to, struct obj_data *from)
 /**
  * Shared body of copy_object() and copy_object_preserve().
  *
- * @param free_object TRUE when `to`'s old proto_script belongs to it and is
- *        to be freed (unless `from` shares the same list); FALSE when the
- *        old pointers belong to someone else.  Strings are freed by
- *        copy_object() itself, not here.
+ * @param free_object TRUE from copy_object(), which freed `to`'s strings
+ *        itself; FALSE from copy_object_preserve(), whose slot's old
+ *        pointers belong to a neighbour.  Nothing here depends on it: `to`'s
+ *        old proto_script is never freed here, whichever caller.  Its owner
+ *        frees it: oedit_save_checked() captures the prototype's list before
+ *        add_object() and frees it after (audit F1-08).  Freeing it here as
+ *        well (C2-11) freed the list twice on every oedit save of an object
+ *        with triggers.
  */
 int copy_object_main(struct obj_data *to, struct obj_data *from, int free_object)
 {
   struct script_data *to_script = to->script;
   struct list_data *to_events = to->events;
 
-  /* copy_object() (free_object TRUE) replaces data `to` owns.  Its
-   * proto_script is then dropped unless `from` shares the same list, as
-   * when oedit re-saves a prototype whose trigger list it re-attaches.
-   * copy_object_preserve() is for slots whose old pointers belong to a
-   * neighbour after a table shift, so it frees nothing. */
-  if (free_object && to->proto_script && to->proto_script != from->proto_script)
-    free_proto_script(to, OBJ_TRIGGER);
+  (void)free_object;            /* see the function comment */
   *to = *from;
   copy_object_strings(to, from);
   /* A running script and pending events belong to one object; they are
