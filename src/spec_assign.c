@@ -92,6 +92,12 @@ void assign_mobiles(void)
   ASSIGNMOB(3030, guild_guard); /* warden, Hall of Seven Paths */
   ASSIGNMOB(3031, guild_guard); /* keeper, Druid garden */
   ASSIGNMOB(3032, guild_guard); /* keeper, Sorcerer observatory */
+
+  /* Crimson 2 import merged into zone 41: Melcrin cast spells in the source
+   * (SKILL=SPELL_*). The Mage's counterpart, stock 4100, already casts through
+   * DG trigger 4100, so it gets no second caster. */
+  ASSIGNMOB(4108, magic_user);   /* Melcrin, sovereign of the trolls */
+
   ASSIGNMOB(5400, guild);
   ASSIGNMOB(5401, guild);
   ASSIGNMOB(5402, guild);
