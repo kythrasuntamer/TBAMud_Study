@@ -158,6 +158,12 @@ struct char_data *get_char_vis(struct char_data *ch, char *name,
                                int *number, int where)
 { (void)ch; (void)name; (void)number; (void)where; return in_game_char; }
 void run_autowiz(void) { run_autowiz_calls++; }
+int valid_name(char *newname) { (void)newname; return 1; }
+static int save_index_calls;
+void save_player_index(void) { save_index_calls++; }
+static const char *taken_name;   /* get_ptable_by_name() finds only this */
+long get_ptable_by_name(const char *name)
+{ return (taken_name && !str_cmp(name, taken_name)) ? 0 : -1; }
 
 /* ---------------------------------------------------------------------
  * Lookup tables owned by files this fixture does not link. Sized exactly as
@@ -317,6 +323,7 @@ static void reset_counters(void)
   char_to_room_calls = char_from_room_calls = free_char_calls = 0;
   save_char_calls = extract_final_calls = run_autowiz_calls = 0;
   saved_char = rentsaved_char = NULL;
+  save_index_calls = 0;
 }
 
 void setUp(void)
@@ -360,6 +367,7 @@ void setUp(void)
   in_game_char = NULL;
   vis_obj = NULL;
   zone_by_thing = NOWHERE;
+  taken_name = NULL;
   load_char_result = -1;
   load_char_level = 1;
   load_char_idnum = 77;
@@ -804,6 +812,73 @@ static void test_changelog_empty_preamble_and_failure(void)
   TEST_ASSERT_NOT_NULL(strstr(sent, "Could not update"));
 }
 
+/* Create <dir>/<path> (and its parent) with some content. */
+static void make_file(const char *dir, const char *sub, const char *name)
+{
+  char path[512];
+  FILE *fp;
+  snprintf(path, sizeof(path), "%s/%s", dir, sub);
+  mkdir(path, 0700);
+  snprintf(path, sizeof(path), "%s/%s/A-E", dir, sub);
+  mkdir(path, 0700);
+  snprintf(path, sizeof(path), "%s/%s/P-T", dir, sub);
+  mkdir(path, 0700);
+  if (!name)
+    return;
+  snprintf(path, sizeof(path), "%s/%s/%s", dir, sub, name);
+  fp = fopen(path, "w");
+  TEST_ASSERT_NOT_NULL(fp);
+  fputs("data\n", fp);
+  fclose(fp);
+}
+
+/* G1-16: change_player_name's disk probe for the new name leaked a
+ * char_data whenever the name was free (LSan reports it at exit). */
+static void test_rename_moves_player_files_and_checks_the_index(void)
+{
+  static struct player_index_element ptable[1];
+  char tmpl[] = "/tmp/tb_rename_XXXXXX";
+  char old_cwd[4096], new_name[] = "robert", taken[] = "alice";
+  char *dir = mkdtemp(tmpl);
+
+  TEST_ASSERT_NOT_NULL(dir);
+  make_player();
+  in_game_char = NULL;   /* nobody online holds the new name */
+  GET_PC_NAME(&target) = strdup("Bobby");
+  ptable[0].name = strdup("bobby");
+  ptable[0].id = 77;
+  player_table = ptable;
+  top_of_p_table = 0;
+  make_file(dir, "plrfiles", "A-E/bobby.plr");
+  make_file(dir, "plrobjs", "A-E/bobby.objs");
+  make_file(dir, "plrvars", NULL);
+  make_file(dir, "plrtext", NULL);
+  TEST_ASSERT_NOT_NULL(getcwd(old_cwd, sizeof(old_cwd)));
+  TEST_ASSERT_EQUAL_INT(0, chdir(dir));
+
+  /* G1-16: the name check needs no allocation (ASan/LSan: no leak). */
+  taken_name = "alice";
+  TEST_ASSERT_FALSE(change_player_name(&imm, &target, taken));
+  TEST_ASSERT_NOT_NULL(strstr(sent, "already exists"));
+
+  reset_counters();
+  TEST_ASSERT_TRUE(change_player_name(&imm, &target, new_name));
+  TEST_ASSERT_EQUAL_STRING("robert", ptable[0].name);
+  TEST_ASSERT_EQUAL_INT(1, save_index_calls);
+
+  remove("plrfiles/A-E/bobby.plr");
+  remove("plrfiles/P-T/robert.plr");
+  remove("plrobjs/A-E/bobby.objs");
+  remove("plrobjs/P-T/robert.objs");
+  TEST_ASSERT_EQUAL_INT(0, system("rm -r plrfiles plrobjs plrvars plrtext"));
+  TEST_ASSERT_EQUAL_INT(0, chdir(old_cwd));
+  TEST_ASSERT_EQUAL_INT(0, rmdir(dir));
+  free(GET_PC_NAME(&target));
+  free(ptable[0].name);
+  player_table = NULL;
+  in_game_char = NULL;
+}
+
 int main(void)
 {
   /* basic_mud_log()/mudlog() are the real utils.c ones; keep them quiet. */
@@ -826,6 +901,7 @@ int main(void)
   RUN_TEST(test_copyover_aborts_before_exec_when_state_file_fails);
   RUN_TEST(test_copyover_saves_the_switched_players_own_body);
   RUN_TEST(test_changelog_empty_preamble_and_failure);
+  RUN_TEST(test_rename_moves_player_files_and_checks_the_index);
   {
     int failures = UNITY_END();
     if (logfile)

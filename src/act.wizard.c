@@ -5062,8 +5062,7 @@ ACMD(do_wizupdate)
 /* NOTE: This is called from perform_set */
 bool change_player_name(struct char_data *ch, struct char_data *vict, char *new_name)
 {
-  struct char_data *temp_ch=NULL;
-  int plr_i = 0, i, k;
+  int i, k;
   char old_name[MAX_NAME_LENGTH], old_pfile[50], new_pfile[50], buf[MAX_STRING_LENGTH];
 
   if (!ch)
@@ -5086,21 +5085,13 @@ bool change_player_name(struct char_data *ch, struct char_data *vict, char *new_
     return FALSE;
   }
 
-  /* Check that someone with new_name isn't already logged in */
-  if ((temp_ch = get_player_vis(ch, new_name, NULL, FIND_CHAR_WORLD)) != NULL) {
+  /* Check that nobody online or in the index already has new_name.
+   * load_char() finds players only through the index, so the index check
+   * is the same test without allocating a probe character. */
+  if (get_player_vis(ch, new_name, NULL, FIND_CHAR_WORLD) != NULL ||
+      get_ptable_by_name(new_name) >= 0) {
     send_to_char(ch, "Sorry, the new name already exists.\r\n");
     return FALSE;
-  } else  {
-    /* try to load the player off disk */
-    CREATE(temp_ch, struct char_data, 1);
-    clear_char(temp_ch);
-    CREATE(temp_ch->player_specials, struct player_special_data, 1);
-    new_mobile_data(temp_ch);
-    if ((plr_i = load_char(new_name, temp_ch)) > -1) {
-      free_char(temp_ch);
-      send_to_char(ch, "Sorry, the new name already exists.\r\n");
-      return FALSE;
-    }
   }
 
   /* New playername is OK - find the entry in the index */
