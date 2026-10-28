@@ -16,6 +16,44 @@
 #define NUM_RESERVED_DESCS	8
 #define COPYOVER_FILE "copyover.dat"
 
+/* Stable identity of a connection in diagnostics: descriptor number, socket
+ * and the attached character (mob vnum or player idnum, "no-char -1" before
+ * login). The host name is deliberately absent: it comes from reverse DNS,
+ * which the remote side controls. Use as a pair, e.g.
+ *   TB_WARN_MSG("network", "input-flood", "write_to_q",
+ *               DIAG_DESC_FMT " dropped", DIAG_DESC(d));
+ * DIAG_DESC evaluates d several times: pass a plain, non-NULL variable. */
+#define DIAG_DESC_FMT "desc #%d fd %ld %s %ld"
+#define DIAG_DESC(d) (d)->desc_num, (long) (d)->descriptor, \
+  ((d)->character ? (IS_NPC((d)->character) ? "mob vnum" : "player idnum") \
+                  : "no-char"), \
+  ((d)->character ? (IS_NPC((d)->character) \
+                     ? (long) GET_MOB_VNUM((d)->character) \
+                     : (long) GET_IDNUM((d)->character)) : -1L)
+
+/* Rate-limited TB_WARN_MSG for conditions a remote peer can trigger at will
+ * (input floods, connection storms). The first report from a call site is
+ * logged at once; later ones within 'seconds' are counted, and the count is
+ * logged with the next report that gets through, so nothing is dropped
+ * silently but the log cannot be flooded. State is per call site (a static
+ * pair inside the expansion). The variadic arguments are evaluated only when
+ * a record is written. */
+#define TB_WARN_EVERY(seconds, subsystem, operation, resource, ...) do { \
+  static time_t tb_we_last_; \
+  static unsigned long tb_we_suppressed_; \
+  time_t tb_we_now_ = time(NULL); \
+  if (tb_we_last_ == 0 || tb_we_now_ - tb_we_last_ >= (seconds)) { \
+    TB_WARN_MSG((subsystem), (operation), (resource), __VA_ARGS__); \
+    if (tb_we_suppressed_) \
+      TB_WARN_MSG((subsystem), (operation), (resource), \
+                  "%lu similar reports suppressed in the last %ld s", \
+                  tb_we_suppressed_, (long) (tb_we_now_ - tb_we_last_)); \
+    tb_we_last_ = tb_we_now_; \
+    tb_we_suppressed_ = 0; \
+  } else \
+    ++tb_we_suppressed_; \
+} while (0)
+
 /* comm.c */
 void close_socket(struct descriptor_data *d);
 void game_info(const char *messg, ...) __attribute__ ((format (printf, 1, 2)));
