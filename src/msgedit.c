@@ -19,6 +19,17 @@
 #include "interpreter.h"
 #include "modify.h"
 
+/** @file msgedit.c
+ * Combat messages: boot loader, writer and the GOD-level editor.
+ *
+ * fight_messages[] has MAX_MESSAGES slots, each a list of message_type
+ * alternatives for one attack type (a_type).  The editor works on a deep
+ * copy (OLC_MSG_LIST, OLC_NUM = slot) and only copy_message_list() on
+ * save replaces the slot's list, freeing the old message_type nodes: fight
+ * code must not cache message_type pointers across an msgedit save.  Each
+ * editor's "save prompt came from Q" state is its own OLC_MODE
+ * (MSGEDIT_CONFIRM_SAVE_QUIT). */
+
 /* Statics */
 static void free_messages_type(struct msg_type *msg);
 static void msgedit_main_menu(struct descriptor_data * d);
@@ -70,6 +81,14 @@ void free_messages(void)
     }
 }
 
+/** Boot-time loader for MESS_FILE (exits on a missing or malformed file).
+ * Format: blank lines and lines starting with '*' are skipped; each record
+ * is an 'M' line, a line holding the attack type (a non-negative int),
+ * then 12 message lines read by fread_action(), where a line starting
+ * with '#' means "no message" (NULL).  Lines are read through a 128-byte
+ * fgets buffer.  A record joins the first slot whose a_type matches or is
+ * still 0, so type 0 is indistinguishable from an empty slot.  The closing
+ * log line reports the index of the last slot used, not a count. */
 void load_messages(void)
 {
   FILE *fl;
@@ -275,6 +294,12 @@ static void msgedit_setup(struct descriptor_data *d)
   OLC_MSG(d) = OLC_MSG_LIST(d)->msg;
 }
 
+/** Replace to's messages with deep copies of from's.  to's old nodes and
+ * strings are freed first.  The copy is built by prepending, so the order
+ * of the alternatives is reversed on every copy (setup and save); fight
+ * code picks one at random, so the order carries no meaning.  An empty
+ * from yields one blank message while number_of_attacks stays as copied
+ * (0). */
 static void copy_message_list(struct message_list *to, struct message_list *from) 
 {
   struct message_type * msg, * tmp_msg, * orig;
