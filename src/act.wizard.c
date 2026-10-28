@@ -3510,7 +3510,11 @@ static int perform_set(struct char_data *ch, struct char_data *vict, int mode, c
           POOFIN(vict) = NULL;
         else
           POOFIN(vict) = strdup(val_arg);
-        }
+      } else {
+        /* Was a silent no-op that still answered "Okay." and saved. */
+        send_to_char(ch, "Only Imps can set another player's poofin.\r\n");
+        return (0);
+      }
       break;
     case 40: /* poofout */
       if ((vict == ch) || (GET_LEVEL(ch) == LVL_IMPL)) {
@@ -3524,7 +3528,11 @@ static int perform_set(struct char_data *ch, struct char_data *vict, int mode, c
           POOFOUT(vict) = NULL;
         else
           POOFOUT(vict) = strdup(val_arg);
-        }
+      } else {
+        /* Was a silent no-op that still answered "Okay." and saved. */
+        send_to_char(ch, "Only Imps can set another player's poofout.\r\n");
+        return (0);
+      }
       break;
     case 41: /* practices */
       GET_PRACTICES(vict) = RANGE(0, 100);

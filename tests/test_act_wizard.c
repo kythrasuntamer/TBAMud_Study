@@ -1033,6 +1033,21 @@ static void test_out_of_range_vnums_are_rejected(void)
   TEST_ASSERT_EQUAL_INT(1, IN_ROOM(&imm));
 }
 
+/* G1-21: a non-IMPL setting another player's poofs got "Okay." and a
+ * save although nothing changed. */
+static void test_set_other_players_poof_below_impl_is_refused(void)
+{
+  make_player();
+  GET_LEVEL(&target) = LVL_IMMORT;
+  GET_LEVEL(&imm) = LVL_GRGOD;
+  RUN_CMD(do_set, &imm, "player bobby poofin waves");
+  TEST_ASSERT_NOT_NULL(strstr(sent, "Only Imps can set another player's poofin."));
+  TEST_ASSERT_NULL(strstr(sent, "Okay."));
+  TEST_ASSERT_EQUAL_INT(0, save_char_calls);
+  TEST_ASSERT_NULL(POOFIN(&target));
+  in_game_char = NULL;
+}
+
 int main(void)
 {
   /* basic_mud_log()/mudlog() are the real utils.c ones; keep them quiet. */
@@ -1063,6 +1078,7 @@ int main(void)
   RUN_TEST(test_stat_out_of_range_time_prints_placeholder);
   RUN_TEST(test_show_player_last_logon_has_minutes);
   RUN_TEST(test_out_of_range_vnums_are_rejected);
+  RUN_TEST(test_set_other_players_poof_below_impl_is_refused);
   {
     int failures = UNITY_END();
     if (logfile)
