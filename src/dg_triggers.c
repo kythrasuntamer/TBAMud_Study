@@ -295,7 +295,20 @@ struct dg_greet_trigger_target {
 static int dg_trigger_target_is(const trig_data *current,
                                 const struct dg_greet_trigger_target *entry)
 {
-  return current == entry->identity && current->serial == entry->serial;
+  if (current != entry->identity)
+    return FALSE;
+  if (current->serial != entry->serial) {
+    /* The snapshotted trigger was freed during a callback and its address
+     * reused. Correctly skipped, but reported: it means a script detached
+     * and re-attached triggers mid-dispatch. */
+    TB_ERROR_LOG("WARNING", "dg", "trigger-identity", "dispatch_snapshot", 0,
+                 "trigger address %p reused (serial %lu -> %lu, now vnum %d); "
+                 "skipping the replacement", (const void *)current,
+                 entry->serial, current->serial,
+                 trig_index ? GET_TRIG_VNUM(current) : -1);
+    return FALSE;
+  }
+  return TRUE;
 }
 
 static struct dg_greet_trigger_target *dg_greet_trigger_targets(trig_data *first)
@@ -503,8 +516,13 @@ int command_mtrigger(char_data *actor, char *cmd, char *argument)
   if (!valid_dg_target(actor, 0))
     return 0;
   if (!world || (long long)IN_ROOM(actor) < 0 ||
-      !VALID_ROOM_RNUM(IN_ROOM(actor)))
+      !VALID_ROOM_RNUM(IN_ROOM(actor))) {
+    TB_ERROR_MSG("dg", "command-trigger", "command_mtrigger",
+                 "actor uid=%ld is not in a valid room (rnum %ld); no mobile "
+                 "command triggers dispatched", actor->script_id,
+                 (long) IN_ROOM(actor));
     return 0;
+  }
 
   origin_room = IN_ROOM(actor);
   actor_uid = char_script_id(actor);
@@ -570,8 +588,13 @@ void speech_mtrigger(char_data *actor, char *str)
   long actor_uid;
 
   if (!actor || !str || !world || (long long)IN_ROOM(actor) < 0 ||
-      !VALID_ROOM_RNUM(IN_ROOM(actor)))
+      !VALID_ROOM_RNUM(IN_ROOM(actor))) {
+    TB_ERROR_MSG("dg", "speech-trigger", "speech_mtrigger",
+                 "invariant violated: actor=%p str=%s room=%ld; no speech "
+                 "triggers dispatched", (void *)actor, str ? "set" : "NULL",
+                 actor ? (long) IN_ROOM(actor) : -1L);
     return;
+  }
 
   /* A callback may teleport or purge the next occupant, so never follow a
    * cached next_in_room link; reacquire each listener by UID instead. */
@@ -643,9 +666,17 @@ void act_mtrigger(const char_data *ch, char *str, char_data *actor,
         if (str) {
           /* act() supplies a string ending with \r\n\0; do not rely on it. */
           char *nstr = strdup(str), *fstr = nstr, *p;
-          if (nstr) {
+          if (!nstr) {
+            TB_ERROR_ERRNO("dg", "allocate", "act_mtrigger",
+                           "cannot copy act text for trigger %d; dispatching "
+                           "without $arg", GET_TRIG_VNUM(t));
+          } else {
             if ((p = strchr(nstr, '\r')) != NULL)
               *p = '\0';
+            else
+              TB_ERROR_MSG("dg", "act-trigger", "act_mtrigger",
+                           "act text for trigger %d lacks the \\r\\n act() "
+                           "always appends; using it whole", GET_TRIG_VNUM(t));
             skip_spaces(&nstr);
             add_var(&GET_TRIG_VARS(t), "arg", nstr, 0);
             free(fstr);
