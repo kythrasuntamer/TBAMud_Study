@@ -176,7 +176,7 @@ extern const char *nrm, *grn, *cyn, *yel;
 #define OLC(d)         ((d)->olc)
 #define OLC_MODE(d)    (OLC(d)->mode)     /**< Parse input mode.	*/
 #define OLC_NUM(d)     (OLC(d)->number)   /**< Room/Obj VNUM.	*/
-#define OLC_VAL(d)     (OLC(d)->value)    /**< Changed flag OR exit/command index; see struct.	*/
+#define OLC_VAL(d)     (OLC(d)->value)    /**< Per-editor scratch value; see struct.	*/
 #define OLC_ZNUM(d)    (OLC(d)->zone_num) /**< Real zone number.	*/
 
 #define OLC_STORAGE(d) (OLC(d)->storage)  /**< char pointer.	*/
