@@ -1283,8 +1283,19 @@ static int read_type_list(FILE *shop_f, struct shop_buy_data *list,
     }
     if ((ptr = strchr(buf, ';')) != NULL)
       *ptr = '\0';
-    else
-      *(END_OF(buf) - 1) = '\0';
+    else {
+      /* Strip only a real line ending: a line that begins with a NUL byte
+       * has strlen 0 (stripping would write buf[-1]), and a final line
+       * without a newline must keep its last character. */
+      size_t blen = strlen(buf);
+
+      if (blen == 0)
+        TB_ERROR_MSG("shop", "shop-file-parse", "shop file",
+                     "shop #%d type list line starts with a NUL byte",
+                     (int) SHOP_NUM(top_shop));
+      while (blen > 0 && (buf[blen - 1] == '\n' || buf[blen - 1] == '\r'))
+        buf[--blen] = '\0';
+    }
 
     num = -1;
 

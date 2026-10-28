@@ -228,9 +228,27 @@ static void test_read_list_reports_missing_produce_vnum(void)
   TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "shop #3010"));
 }
 
+/* H2-18: a type-list line that starts with a NUL byte must not make the
+ * newline strip write before the buffer; it is reported instead. */
+static void test_read_type_list_leading_nul_reported(void)
+{
+  static char data[] = "\0junk\n-1\n";
+  struct shop_buy_data list[MAX_TRADE + 1];
+  FILE *f = fmemopen(data, sizeof(data) - 1, "r");
+  int len;
+
+  TEST_ASSERT_NOT_NULL(f);
+  len = read_type_list(f, list, TRUE, MAX_TRADE);
+  fclose(f);
+  TEST_ASSERT_EQUAL_INT(1, len); /* nothing but the terminator */
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("shop-file-parse", tb_captured_operation);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(test_read_type_list_leading_nul_reported);
   RUN_TEST(test_read_list_reports_missing_produce_vnum);
   RUN_TEST(test_read_type_list_drops_out_of_range_type);
   RUN_TEST(test_list_object_bad_liquid_reported);
