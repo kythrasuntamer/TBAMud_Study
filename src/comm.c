@@ -3011,11 +3011,28 @@ char *act_at(const char *src_file, int src_line, const char *src_func,
   return result;
 }
 
+/* One snapshotted TO_ROOM/TO_NOTVICT recipient (see act_body()). */
+struct act_target {
+  struct char_data *ch;
+  long uid;
+};
+
+/* Still the same character, still registered, still in the act's room.
+ * A character pending extraction keeps its UID and room until the end of
+ * the pulse, so it still counts as present (as before the snapshot). */
+static bool act_target_live(struct char_data *ch, long uid, room_rnum room)
+{
+  return find_char(uid) == ch && IN_ROOM(ch) == room;
+}
+
 static char *act_body(const char *str, int hide_invisible, struct char_data *ch,
 	 struct obj_data *obj, void *vict_obj, int type)
 {
   struct char_data *to;
   int to_sleeping;
+  room_rnum room;
+  struct act_target local_targets[32], *targets;
+  size_t count = 0, n = 0, k;
 
   if (!str || !*str)
     return NULL;
@@ -3072,15 +3089,42 @@ static char *act_body(const char *str, int hide_invisible, struct char_data *ch,
   /* ASSUMPTION: at this point we know type must be TO_NOTVICT or TO_ROOM */
 
   if (ch && IN_ROOM(ch) != NOWHERE)
-    to = world[IN_ROOM(ch)].people;
+    room = IN_ROOM(ch);
   else if (obj && IN_ROOM(obj) != NOWHERE)
-    to = world[IN_ROOM(obj)].people;
+    room = IN_ROOM(obj);
   else {
     log("SYSERR: no valid target to act()!");
     return NULL;
   }
 
-  for (; to; to = to->next_in_room) {
+  /* perform_act() runs act triggers synchronously, and a trigger can move
+   * characters (mteleport, mforce ... ) in or out of this room: char_to_room
+   * prepends to the room list, so following to->next_in_room after a
+   * delivery could skip, repeat or loop forever over recipients. Snapshot
+   * the occupants as (pointer, UID) pairs first and re-validate each one
+   * before delivery. Extraction is deferred to the end of the pulse, so the
+   * pointers stay allocated for the whole call. */
+  for (to = world[room].people; to; to = to->next_in_room)
+    count++;
+  if (count > sizeof(local_targets) / sizeof(local_targets[0]))
+    CREATE(targets, struct act_target, count);
+  else
+    targets = local_targets;
+  for (to = world[room].people; to && n < count; to = to->next_in_room) {
+    targets[n].ch = to;
+    targets[n].uid = char_script_id(to);
+    n++;
+  }
+
+  for (k = 0; k < n; k++) {
+    to = targets[k].ch;
+    if (!act_target_live(to, targets[k].uid, room)) {
+      TB_WARN_EVERY(60, "act", "recipient-moved", "act_body",
+                    "caller=%s:%d %s recipient " DIAG_CHAR_FMT " left room"
+                    " vnum %d or was extracted during delivery; skipped",
+                    ACT_DIAG_SITE, DIAG_CHAR(to), GET_ROOM_VNUM(room));
+      continue;
+    }
     if (!SENDOK(to) || (to == ch))
       continue;
     if (hide_invisible && ch && !CAN_SEE(to, ch))
@@ -3089,6 +3133,8 @@ static char *act_body(const char *str, int hide_invisible, struct char_data *ch,
       continue;
     perform_act(str, ch, obj, vict_obj, to);
   }
+  if (targets != local_targets)
+    free(targets);
   return last_act_message;
 }
 
