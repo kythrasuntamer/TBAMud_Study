@@ -29,6 +29,40 @@ static void cedit_disp_operation_options(struct descriptor_data *d);
 static void cedit_disp_autowiz_options(struct descriptor_data *d);
 static void reassign_rooms(void);
 static void cedit_setup(struct descriptor_data *d);
+static int cedit_parse_int_range_at(struct descriptor_data *d, const char *arg,
+                                    long lo, long hi, int *out,
+                                    const char *operation, const char *field,
+                                    const char *file, int line, const char *func);
+
+/** Parse the builder's numeric answer for config field 'field' into *out.
+ * TRUE when arg is a whole number in lo..hi.  Otherwise a WARNING with op
+ * 'operation', the field, the range and the editor is logged at the call
+ * site, the builder is re-prompted with the range, and FALSE is returned:
+ * the caller leaves OLC_MODE unchanged so the next line answers again.
+ * The input is the IMPL builder's free text; junk used to become 0 and
+ * out-of-range values were stored or silently clamped. */
+#define CEDIT_PARSE_INT(d, arg, lo, hi, out, operation, field) \
+  cedit_parse_int_range_at((d), (arg), (lo), (hi), (out), (operation), (field), \
+                           __FILE__, __LINE__, __func__)
+
+static int cedit_parse_int_range_at(struct descriptor_data *d, const char *arg,
+                                    long lo, long hi, int *out,
+                                    const char *operation, const char *field,
+                                    const char *file, int line, const char *func)
+{
+  long value;
+
+  if (tb_parse_long_checked(arg, &value) && value >= lo && value <= hi) {
+    *out = (int)value;
+    return TRUE;
+  }
+  /* Only the length of the input is logged: it is free text. */
+  tb_error_log_at("WARNING", "olc", operation, field, 0, file, line, func,
+                  "input length %zu not a number in %ld..%ld; editor " DIAG_CHAR_FMT,
+                  strlen(arg), lo, hi, DIAG_CHAR(d->character));
+  write_to_output(d, "Enter a number from %ld to %ld : ", lo, hi);
+  return FALSE;
+}
 
 
 ACMD(do_oasis_cedit)
@@ -845,6 +879,7 @@ static void cedit_disp_autowiz_options(struct descriptor_data *d)
 void cedit_parse(struct descriptor_data *d, char *arg)
 {
   char *oldtext = NULL;
+  int number = 0;
 
   switch (OLC_MODE(d)) {
     case CEDIT_CONFIRM_SAVESTRING:
@@ -1575,12 +1610,17 @@ void cedit_parse(struct descriptor_data *d, char *arg)
         write_to_output(d,
           "That is an invalid choice!\r\n"
           "Enter the room's vnum where mortals should load into : ");
-      } else if (real_room(tb_parse_int_or_zero(arg)) == NOWHERE) {
+      } else if (!CEDIT_PARSE_INT(d, arg, IDXTYPE_MIN, IDXTYPE_MAX - 1, &number,
+                                  "vnum-range", "mortal_start_room")) {
+        /* Re-prompted.  real_room() takes a room_vnum, so an unchecked
+         * int such as 68537 was truncated to 3001 in both the existence
+         * check and the stored value. */
+      } else if (real_room((room_vnum)number) == NOWHERE) {
         write_to_output(d,
           "That room doesn't exist!\r\n"
           "Enter the room's vnum where mortals should load into : ");
       } else {
-        OLC_CONFIG(d)->room_nums.mortal_start_room = tb_parse_int_or_zero(arg);
+        OLC_CONFIG(d)->room_nums.mortal_start_room = (room_vnum)number;
         cedit_disp_room_numbers(d);
       }
       break;
@@ -1590,12 +1630,15 @@ void cedit_parse(struct descriptor_data *d, char *arg)
         write_to_output(d,
           "That is an invalid choice!\r\n"
           "Enter the room's vnum where immortals should load into : ");
-      } else if (real_room(tb_parse_int_or_zero(arg)) == NOWHERE) {
+      } else if (!CEDIT_PARSE_INT(d, arg, IDXTYPE_MIN, IDXTYPE_MAX - 1, &number,
+                                  "vnum-range", "immort_start_room")) {
+        /* Re-prompted by CEDIT_PARSE_INT. */
+      } else if (real_room((room_vnum)number) == NOWHERE) {
         write_to_output(d,
           "That room doesn't exist!\r\n"
           "Enter the room's vnum where immortals should load into : ");
       } else {
-        OLC_CONFIG(d)->room_nums.immort_start_room = tb_parse_int_or_zero(arg);
+        OLC_CONFIG(d)->room_nums.immort_start_room = (room_vnum)number;
         cedit_disp_room_numbers(d);
       }
       break;
@@ -1605,12 +1648,15 @@ void cedit_parse(struct descriptor_data *d, char *arg)
         write_to_output(d,
           "That is an invalid choice!\r\n"
           "Enter the room's vnum where frozen people should load into : ");
-      } else if (real_room(tb_parse_int_or_zero(arg)) == NOWHERE) {
+      } else if (!CEDIT_PARSE_INT(d, arg, IDXTYPE_MIN, IDXTYPE_MAX - 1, &number,
+                                  "vnum-range", "frozen_start_room")) {
+        /* Re-prompted by CEDIT_PARSE_INT. */
+      } else if (real_room((room_vnum)number) == NOWHERE) {
         write_to_output(d,
           "That room doesn't exist!\r\n"
           "Enter the room's vnum where frozen people should load into : ");
       } else {
-        OLC_CONFIG(d)->room_nums.frozen_start_room = tb_parse_int_or_zero(arg);
+        OLC_CONFIG(d)->room_nums.frozen_start_room = (room_vnum)number;
         cedit_disp_room_numbers(d);
       }
       break;
@@ -1620,12 +1666,15 @@ void cedit_parse(struct descriptor_data *d, char *arg)
         write_to_output(d,
           "That is an invalid choice!\r\n"
           "Enter the vnum for donation room #1 : ");
-      } else if (real_room(tb_parse_int_or_zero(arg)) == NOWHERE) {
+      } else if (!CEDIT_PARSE_INT(d, arg, IDXTYPE_MIN, IDXTYPE_MAX - 1, &number,
+                                  "vnum-range", "donation_room_1")) {
+        /* Re-prompted by CEDIT_PARSE_INT. */
+      } else if (real_room((room_vnum)number) == NOWHERE) {
         write_to_output(d,
           "That room doesn't exist!\r\n"
           "Enter the vnum for donation room #1 : ");
       } else {
-        OLC_CONFIG(d)->room_nums.donation_room_1 = tb_parse_int_or_zero(arg);
+        OLC_CONFIG(d)->room_nums.donation_room_1 = (room_vnum)number;
         cedit_disp_room_numbers(d);
       }
       break;
@@ -1635,12 +1684,15 @@ void cedit_parse(struct descriptor_data *d, char *arg)
         write_to_output(d,
           "That is an invalid choice!\r\n"
           "Enter the vnum for donation room #2 : ");
-      } else if (real_room(tb_parse_int_or_zero(arg)) == NOWHERE) {
+      } else if (!CEDIT_PARSE_INT(d, arg, IDXTYPE_MIN, IDXTYPE_MAX - 1, &number,
+                                  "vnum-range", "donation_room_2")) {
+        /* Re-prompted by CEDIT_PARSE_INT. */
+      } else if (real_room((room_vnum)number) == NOWHERE) {
         write_to_output(d,
           "That room doesn't exist!\r\n"
           "Enter the vnum for donation room #2 : ");
       } else {
-        OLC_CONFIG(d)->room_nums.donation_room_2 = tb_parse_int_or_zero(arg);
+        OLC_CONFIG(d)->room_nums.donation_room_2 = (room_vnum)number;
         cedit_disp_room_numbers(d);
       }
       break;
@@ -1650,12 +1702,15 @@ void cedit_parse(struct descriptor_data *d, char *arg)
         write_to_output(d,
           "That is an invalid choice!\r\n"
           "Enter the vnum for donation room #3 : ");
-      } else if (real_room(tb_parse_int_or_zero(arg)) == NOWHERE) {
+      } else if (!CEDIT_PARSE_INT(d, arg, IDXTYPE_MIN, IDXTYPE_MAX - 1, &number,
+                                  "vnum-range", "donation_room_3")) {
+        /* Re-prompted by CEDIT_PARSE_INT. */
+      } else if (real_room((room_vnum)number) == NOWHERE) {
         write_to_output(d,
           "That room doesn't exist!\r\n"
           "Enter the vnum for donation room #3 : ");
       } else {
-        OLC_CONFIG(d)->room_nums.donation_room_3 = tb_parse_int_or_zero(arg);
+        OLC_CONFIG(d)->room_nums.donation_room_3 = (room_vnum)number;
         cedit_disp_room_numbers(d);
       }
       break;
