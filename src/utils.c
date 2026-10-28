@@ -2,6 +2,25 @@
 * @file utils.c
 * Various utility functions used within the core mud code.
 *
+* Contents: random numbers and dice, string helpers, the structured
+* diagnostics (tb_error_log_at, breadcrumbs, correlation IDs, parse
+* contexts), checked allocation and the tb_buf bounded builder, logging
+* (basic_mud_log, mudlog), flag/type printers, follower lists, file-line
+* reading (get_line) and player file names, light, colour/protocol counting
+* and the automap text formatters.
+*
+* Ownership and lifetime rules that callers must know:
+*  - Several functions return a pointer to a static buffer that the next
+*    call overwrites: strfrmt, strpaste, age, real_time_passed and
+*    mud_time_passed. None is reentrant; copy the result before calling
+*    again.
+*  - stop_follower, die_follower and add_follower send act() messages, which
+*    run DG triggers synchronously; see their comments.
+*
+* Who controls the input: get_line reads world, player and save files that
+* builders and OLC write; count_* and strfrmt see raw builder text (room
+* names and descriptions); get_filename may see immortal-typed text.
+*
 * Part of the core tbaMUD source code distribution, which is a derivative
 * of, and continuation of, CircleMUD.
 *
@@ -262,6 +281,14 @@ static const char *tb_error_id_for(const char *subsystem, const char *operation,
   return "TB-GENERAL-0001";
 }
 
+/** Start a correlation scope: every TB_ERROR record and breadcrumb until
+ * tb_correlation_end(id) carries id, so the records of one operation can be
+ * grouped. Intended scope: one top-level unit of work (a command, a zone
+ * reset, a boot phase); the code that starts that unit owns begin/end.
+ * The API does not nest: an inner begin replaces the outer id, and the
+ * outer end then no longer matches. As of this writing nothing calls it,
+ * so records log correlation=0.
+ * @return The new, non-zero correlation id. */
 unsigned long tb_correlation_begin(const char *kind, const char *detail)
 {
   unsigned long id = ++tb_correlation_sequence;
@@ -275,6 +302,8 @@ unsigned long tb_correlation_begin(const char *kind, const char *detail)
   return id;
 }
 
+/** End the correlation scope started by tb_correlation_begin(). Does
+ * nothing when id is not the current scope (e.g. after a nested begin). */
 void tb_correlation_end(unsigned long id)
 {
   if (id != 0 && tb_current_correlation == id) {
@@ -355,6 +384,16 @@ size_t tb_breadcrumb_snapshot(char *dst, size_t dst_size)
   return out.length;
 }
 
+/* tb_buf: bounded string builder.
+ * Invariant: length <= capacity - 1 and data[length] == '\0', as long as
+ * the struct is changed only through these functions.
+ * Truncation sets ->truncated (sticky) and keeps the longest prefix that
+ * fits, but reports nothing: the caller must check tb_buf_truncated() and
+ * emit a diagnostic with the sizes (see column_list()). A NULL buf reads
+ * as truncated. After a vsnprintf encoding error the contents past
+ * ->length are unspecified, and ->truncated is set. */
+
+/** Point buf at caller-owned storage of capacity bytes and empty it. */
 void tb_buf_init(struct tb_buf *buf, char *storage, size_t capacity)
 {
   if (buf == NULL)
@@ -869,7 +908,10 @@ void mudlog(int type, int level, int file, const char *str, ...)
  * Will be set to "NOBITS" if no bits are set in bitvector (ie bitvector = 0).
  * @param[in] reslen The length of the available memory in the result buffer.
  * Ideally, results will be large enough to hold the description of every bit
- * that could possibly be set in bitvector. */
+ * that could possibly be set in bitvector. Must be at least 1: result[0] is
+ * written unconditionally. Output that does not fit is cut at the last
+ * whole name, without a report.
+ * Bits past the "\n" terminator print as "UNDEFINED". */
 size_t sprintbit(bitvector_t bitvector, const char *names[], char *result, size_t reslen)
 {
   size_t len = 0;
@@ -907,7 +949,7 @@ size_t sprintbit(bitvector_t bitvector, const char *names[], char *result, size_
  * @param[out] result Holds the translated name of the type.
  * Caller of sprintbit is responsible for creating the buffer for result.
  * Will be set to "UNDEFINED" if the type is greater than the number of names
- * available.
+ * available, or negative (a negative type counts down to the terminator).
  * @param[in] reslen The length of the available memory in the result buffer. */
 size_t sprinttype(int type, const char *names[], char *result, size_t reslen)
 {
@@ -940,6 +982,9 @@ size_t sprinttype(int type, const char *names[], char *result, size_t reslen)
  * to hold the description of every bit that could possibly be set in bitvector.
  * Will be set to "NOBITS" if no bits are set in bitarray (ie all bits in the
  * bitarray are equal to 0).
+ * Scanning stops at the names terminator, so set bits beyond NUM_* are not
+ * shown. Output is bounded by reslen through tb_buf and cut silently when
+ * it does not fit; size result for the whole flag table.
  */
 void sprintbitarray(int bitvector[], const char *names[], int maxar, char *result, size_t reslen)
 {
@@ -978,7 +1023,8 @@ void sprintbitarray(int bitvector[], const char *names[], int maxar, char *resul
  * @todo Recommend making this function foresightedly useful by calculating
  * real months and years, too.
  * @param t2 The later time.
- * @param t1 The earlier time. */
+ * @param t1 The earlier time.
+ * @return A static struct overwritten by the next call (not reentrant). */
 struct time_info_data *real_time_passed(time_t t2, time_t t1)
 {
   long secs;
@@ -1000,7 +1046,8 @@ struct time_info_data *real_time_passed(time_t t2, time_t t1)
 
 /** Calculate the MUD time passed between two time invervals.
  * @param t2 The later time.
- * @param t1 The earlier time. */
+ * @param t1 The earlier time.
+ * @return A static struct overwritten by the next call (not reentrant). */
 struct time_info_data *mud_time_passed(time_t t2, time_t t1)
 {
   long secs;
@@ -1038,7 +1085,8 @@ time_t mud_time_to_secs(struct time_info_data *now)
 /** Calculate a player's MUD age.
  * @todo The minimum starting age of 17 is hardcoded in this function. Recommend
  * changing the minimum age to a property (variable) external to this function.
- * @param ch A valid player character. */
+ * @param ch A valid player character.
+ * @return A static struct overwritten by the next call (not reentrant). */
 struct time_info_data *age(struct char_data *ch)
 {
   static struct time_info_data player_age;
@@ -1231,6 +1279,9 @@ void die_follower(struct char_data *ch)
  * @pre Make sure to call circle_follow first. ch may also not already
  * be following anyone; otherwise a follower-add error is logged and nothing
  * changes.
+ * The node is linked before any message is sent, so the act() calls (which
+ * may run DG triggers that unfollow or purge either character) always see
+ * a consistent list.
  * @param ch The character to follow.
  * @param leader The character to be followed. */
 void add_follower(struct char_data *ch, struct char_data *leader)
@@ -1304,10 +1355,17 @@ static void get_line_drain_tail(FILE *fl, int report)
 /** Reads the next non-blank line off of the input stream. Empty lines are
  * skipped. Lines which begin with '*' are considered to be comments and are
  * skipped.
- * @pre Caller must allocate memory for buf.
- * @post If a there is a line to be read, the newline character is removed from
- * the file line ending and the string is returned. Else a null string is
- * returned in buf.
+ * Input comes from world, player and save files, which builders and OLC
+ * write. A physical line longer than READ_SIZE - 1 bytes returns its first
+ * READ_SIZE - 1 bytes; the rest of that line is discarded and reported as a
+ * PARSER line-too-long error (silently for '*' comments).
+ * @pre Caller must allocate at least READ_SIZE bytes for buf.
+ * @post If a there is a line to be read, the newline character (and any
+ * '\r') is removed from the file line ending and the string is returned.
+ * At end of file 0 is returned and buf is left unchanged.
+ * @return The number of physical lines consumed, including skipped blank
+ * and comment lines (load_zones adds it to its line counter), or 0 at end
+ * of file. It is a count, not a boolean.
  * @param[in] fl The file to be read from.
  * @param[out] buf The next non-blank line read from the file. Buffer given must
  * be at least READ_SIZE (256) characters large. */
@@ -1357,7 +1415,12 @@ int get_line(FILE *fl, char *buf)
  * @param[in] mode What type of files can be created. Currently, recognized
  * modes are CRASH_FILE, ETEXT_FILE, SCRIPT_VARS_FILE and PLR_FILE.
  * @param[in] orig_name The player name to create the filepath (of type mode)
- * for. */
+ * for. Usually a validated name from the player index or GET_NAME(), but
+ * `show rent` passes immortal-typed text, so names outside [A-Za-z0-9_-]
+ * are rejected.
+ * @return 1 on success. 0, after a persist error (filename-args,
+ * filename-mode or filename-name-invalid), when an argument is missing or
+ * invalid. A path longer than fbufsize is cut by tb_snprintf. */
 int get_filename(char *filename, size_t fbufsize, int mode, const char *orig_name)
 {
   const char *prefix, *middle, *suffix, *q;
@@ -1510,6 +1573,9 @@ void core_dump_real(const char *who, int line)
 
 /** Count the number bytes taken up by color codes in a string that will be
  * empty space once the color codes are converted and made non-printable.
+ * A colour code is a tab plus one byte (two hidden bytes); "\t\t" counts
+ * as one. A lone trailing tab counts as one hidden byte and is reported as
+ * protocol-escape-truncated. Input may be raw builder text.
  * @param string The string in which to check for color codes. */
 int count_color_chars(char *string)
 {
@@ -1542,7 +1608,12 @@ int count_color_chars(char *string)
 
 /* Not the prettiest thing I've ever written but it does the task which
  * is counting all characters in a string which are not part of the
- * protocol system. This is with the exception of detailed MXP codes. */
+ * protocol system. This is with the exception of detailed MXP codes.
+ * Returns the number of *visible* characters (the complement of
+ * count_color_chars). '@' or '\t' starts an escape: the next byte is part
+ * of it, and "[...]" runs to the closing ']'. An escape cut off by the end
+ * of the string ends the count and is reported as
+ * protocol-escape-truncated. Input may be raw builder text (redit). */
 int count_non_protocol_chars(char * str)
 {
   int count = 0;
@@ -2089,6 +2160,11 @@ IDXTYPE atoidx( const char *str_to_conv )
    Recognises @ color codes, and if a line ends in one color, the
    next line will start with the same color.
    Ends every line with \tn to prevent color bleeds.
+
+   Returns a static buffer that the next call overwrites (not reentrant);
+   strpaste(strfrmt(...), ...) is safe only because the two use different
+   buffers. A NULL str is formatted as "" with a strfrmt-null warning. Output
+   is cut silently at MAX_STRING_LENGTH and w is clamped to the line buffer.
 */
 static char *strfrmt_append(char *dst, const char *end, const char *src)
 {
@@ -2270,7 +2346,10 @@ char *strfrmt(char *str, int w, int h, int justify, int hpad, int vpad)
    Used by the automap/map system
    @param str1 The string to be displayed on the left.
    @param str2 The string to be displayed on the right.
-   @param joiner ???.
+   @param joiner Text placed between the two columns on every line.
+   @return A static buffer overwritten by the next call (not reentrant).
+   NULL inputs are treated as "". Output stops silently at
+   MAX_STRING_LENGTH.
 */
 char *strpaste(char *str1, char *str2, char *joiner)
 {
@@ -2368,6 +2447,12 @@ char *right_trim_whitespace(const char *string)
 
 /**
  * Remove all occurrences of a given word in string.
+ * Only the end of a match is checked for a word boundary (space, tab,
+ * newline or end), so "water" is also removed from "saltwater". The drink
+ * container callers rely on whole-word removal of liquid names and pass
+ * names that do not occur as suffixes of other words.
+ * @pre to_remove must be non-empty: an empty word matches at every boundary
+ * without shortening the string, and the loop never ends.
  */
 void remove_from_string(char *string, const char *to_remove)
 {
