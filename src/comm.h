@@ -31,28 +31,36 @@
                      ? (long) GET_MOB_VNUM((d)->character) \
                      : (long) GET_IDNUM((d)->character)) : -1L)
 
-/* Rate-limited TB_WARN_MSG for conditions a remote peer can trigger at will
- * (input floods, connection storms). The first report from a call site is
- * logged at once; later ones within 'seconds' are counted, and the count is
- * logged with the next report that gets through, so nothing is dropped
- * silently but the log cannot be flooded. State is per call site (a static
- * pair inside the expansion). The variadic arguments are evaluated only when
- * a record is written. */
-#define TB_WARN_EVERY(seconds, subsystem, operation, resource, ...) do { \
+/* Rate-limited TB_WARN_MSG / TB_ERROR_MSG for conditions that recur on
+ * every pulse or that a remote peer can trigger at will (input floods,
+ * connection storms, bad data read once per second). The first report from
+ * a call site is logged at once; later ones within 'seconds' are counted,
+ * and the count is logged with the next report that gets through, so
+ * nothing is dropped silently but the log cannot be flooded. State is per
+ * call site (a static pair inside the expansion). The variadic arguments
+ * are evaluated only when a record is written. */
+#define TB_LOG_EVERY_(severity, seconds, subsystem, operation, resource, ...) do { \
   static time_t tb_we_last_; \
   static unsigned long tb_we_suppressed_; \
   time_t tb_we_now_ = time(NULL); \
   if (tb_we_last_ == 0 || tb_we_now_ - tb_we_last_ >= (seconds)) { \
-    TB_WARN_MSG((subsystem), (operation), (resource), __VA_ARGS__); \
+    TB_ERROR_LOG((severity), (subsystem), (operation), (resource), 0, \
+                 __VA_ARGS__); \
     if (tb_we_suppressed_) \
-      TB_WARN_MSG((subsystem), (operation), (resource), \
-                  "%lu similar reports suppressed in the last %ld s", \
-                  tb_we_suppressed_, (long) (tb_we_now_ - tb_we_last_)); \
+      TB_ERROR_LOG((severity), (subsystem), (operation), (resource), 0, \
+                   "%lu similar reports suppressed in the last %ld s", \
+                   tb_we_suppressed_, (long) (tb_we_now_ - tb_we_last_)); \
     tb_we_last_ = tb_we_now_; \
     tb_we_suppressed_ = 0; \
   } else \
     ++tb_we_suppressed_; \
 } while (0)
+#define TB_WARN_EVERY(seconds, subsystem, operation, resource, ...) \
+  TB_LOG_EVERY_("WARNING", (seconds), (subsystem), (operation), (resource), \
+                __VA_ARGS__)
+#define TB_ERROR_EVERY(seconds, subsystem, operation, resource, ...) \
+  TB_LOG_EVERY_("ERROR", (seconds), (subsystem), (operation), (resource), \
+                __VA_ARGS__)
 
 /* comm.c */
 void close_socket(struct descriptor_data *d);

@@ -173,6 +173,35 @@ static void overflow_of_large_buffer_keeps_it(void)
   TEST_ASSERT_EQUAL_INT(LARGE_BUFSIZE - 1, desc.bufptr);
 }
 
+/* A mob built with 0d0+0 hit dice has max_hit 0; the MSDP opponent health
+ * once divided by it every second (SIGFPE). */
+static void opponent_with_zero_max_hit_is_reported(void)
+{
+  static struct index_data index[1];
+  static char_data mob;
+
+  memset(&mob, 0, sizeof(mob));
+  index[0].vnum = 3001;
+  mob_index = index;
+  top_of_mobt = 0;
+  SET_BIT_AR(MOB_FLAGS(&mob), MOB_ISNPC);
+  mob.nr = 0;
+  GET_HIT(&mob) = 5;
+  GET_MAX_HIT(&mob) = 0;
+
+  TEST_ASSERT_EQUAL_INT(0, msdp_opponent_health_percent(&desc, &mob));
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("opponent-health", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "opponent mob vnum 3001 has max_hit 0"));
+
+  /* Normal case, with hit * 100 beyond what sh_int arithmetic would hold. */
+  GET_MAX_HIT(&mob) = 30000;
+  GET_HIT(&mob) = 15000;
+  TEST_ASSERT_EQUAL_INT(50, msdp_opponent_health_percent(&desc, &mob));
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  mob_index = NULL;
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -180,5 +209,6 @@ int main(void)
   RUN_TEST(partial_crlf_counts_as_nothing_sent);
   RUN_TEST(corrupt_bufptr_is_reported_not_used);
   RUN_TEST(overflow_of_large_buffer_keeps_it);
+  RUN_TEST(opponent_with_zero_max_hit_is_reported);
   return UNITY_END();
 }

@@ -3132,6 +3132,25 @@ static void circle_sleep(struct timeval *timeout)
 
 #endif /* CIRCLE_WINDOWS */
 
+/* Opponent health as a percentage for MSDP. max_hit comes from the mob
+ * prototype's hit dice (builder/OLC data): "0d0+0" yields max_hit 0, which
+ * would be an integer division by zero (SIGFPE, taking down the server)
+ * once per second for every player fighting that mob. Such an opponent is
+ * reported and shown as 0%. The product is computed in long so hit * 100
+ * cannot overflow. */
+static int msdp_opponent_health_percent(struct descriptor_data *d,
+                                        struct char_data *opponent)
+{
+  if (GET_MAX_HIT(opponent) <= 0) {
+    TB_ERROR_EVERY(60, "msdp", "opponent-health", "msdp_update",
+                   DIAG_DESC_FMT " opponent " DIAG_CHAR_FMT " has max_hit %d;"
+                   " health percentage needs max_hit > 0, sent 0",
+                   DIAG_DESC(d), DIAG_CHAR(opponent), GET_MAX_HIT(opponent));
+    return 0;
+  }
+  return (int) (((long) GET_HIT(opponent) * 100L) / (long) GET_MAX_HIT(opponent));
+}
+
 /* KaVir's plugin*/
 static void msdp_update( void )
 {
@@ -3170,8 +3189,8 @@ static void msdp_update( void )
       /* This would be better moved elsewhere */
       if ( pOpponent != NULL )
       {
-          int hit_points = (GET_HIT(pOpponent) * 100) / GET_MAX_HIT(pOpponent);
-          MSDPSetNumber( d, eMSDP_OPPONENT_HEALTH, hit_points );
+          MSDPSetNumber( d, eMSDP_OPPONENT_HEALTH,
+                         msdp_opponent_health_percent(d, pOpponent) );
           MSDPSetNumber( d, eMSDP_OPPONENT_HEALTH_MAX, 100 );
           MSDPSetNumber( d, eMSDP_OPPONENT_LEVEL, GET_LEVEL(pOpponent) );
           MSDPSetString( d, eMSDP_OPPONENT_NAME, PERS(pOpponent, ch) );
