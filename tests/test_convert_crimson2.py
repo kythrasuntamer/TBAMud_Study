@@ -221,6 +221,58 @@ class Crimson2Conversion(unittest.TestCase):
             self.assertNotIn("#601\n", mob)
         self.assertNotIn("#5831\n", (ROOT / "lib" / "world" / "mob" / "58.mob").read_text(encoding="latin-1"))
 
+    def test_recipe_resets_exit_text_and_zone_timing(self):
+        # A zone with no upstream resets gets them from the recipe, in source
+        # vnums, checked like the source's own; an exit's text can be
+        # replaced; the zone's lifespan and reset mode can be set.
+        garbled = "D5\nsteps going down.Steps going down\n~\nsteps going down.~\n0 -1 100\n"
+        with tempfile.TemporaryDirectory() as td:
+            base = self.area(td, exits=garbled, resets="")
+            area = {"mode": "zone", "zone": 6, "offset": 500, "lifespan": 20, "reset_mode": 2,
+                    "resets": ["M 0 100 2 100", "E 1 100 2 0"],
+                    "exits": [{"room": 100, "dir": "down", "description": "Steps.\n",
+                               "keywords": "", "reason": "test"}]}
+            out = base.parent.parent / "out"
+            self.assertEqual(0, conv.main(["--recipe", str(self.recipe(base, area)),
+                                           "--area", "T", "--out", str(out)]))
+            zon = (out / "zon" / "6.zon").read_text().splitlines()
+            self.assertEqual("600 699 20 2", zon[3])
+            self.assertEqual(["M 0 600 2 600 \t(the orc)", "E 1 600 2 0 \t(an axe)"], zon[4:6])
+            self.assertIn("D5\nSteps.\n~\n~\n0 -1 600\n", (out / "wld" / "6.wld").read_text())
+        for bad in ({"resets": ["M 0 999 1 100"]},              # undefined mob
+                    {"resets": ["E 1 100 1 0"]},                # E with no M before it
+                    {"resets": ["M 0 100 1"]},                  # too few fields
+                    {"exits": [{"room": 100, "dir": "up", "description": "x"}]},   # no such exit
+                    {"exits": [{"room": 100, "dir": "down", "desc": "x"}]},        # unknown field
+                    {"reset_mode": 3}):
+            with tempfile.TemporaryDirectory() as td:
+                base = self.area(td, exits=garbled, resets="")
+                area = dict({"mode": "zone", "zone": 6, "offset": 500}, **bad)
+                with contextlib.redirect_stderr(io.StringIO()), \
+                     contextlib.redirect_stdout(io.StringIO()):
+                    rc = conv.main(["--recipe", str(self.recipe(base, area)), "--area", "T",
+                                    "--out", str(base.parent.parent / "out")])
+                self.assertEqual(1, rc, bad)
+                self.assertFalse((base.parent.parent / "out").exists(), bad)
+
+    def test_zone_58_loads_its_guards_and_torches(self):
+        # Shatterstone's rooms put two dwarven guards at the city gate (5832
+        # "a massive gate guarded by two dwarven guards", 5833 "Before the
+        # gates"); each holds the zone's torch in its light slot. The zone
+        # repopulates like the Dwarven Kingdom (zone 65) it is linked from.
+        world = ROOT / "lib" / "world"
+        zon = (world / "zon" / "58.zon").read_text(encoding="latin-1").splitlines()
+        self.assertEqual("5800 5899 20 2", zon[3])
+        self.assertEqual(["M 0 5830 2 5833 \t(the spirit of a dwarven guard)",
+                          "E 1 5830 2 0 \t(A torch)",
+                          "M 0 5830 2 5833 \t(the spirit of a dwarven guard)",
+                          "E 1 5830 2 0 \t(A torch)", "S", "$"], zon[4:])
+        wld = (world / "wld" / "58.wld").read_text(encoding="latin-1")
+        room = wld.split("#5830\n", 1)[1].split("\nS\n", 1)[0]
+        self.assertNotIn("steps going down.", room)
+        self.assertIn("D5\nA broad stairway leads down into the city below.\n~\n~\n0 -1 5831",
+                      room)
+
     def test_unterminated_string_names_file_line_and_vnum(self):
         with tempfile.TemporaryDirectory() as td:
             base = self.area(td)
