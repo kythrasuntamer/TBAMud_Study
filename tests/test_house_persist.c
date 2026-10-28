@@ -100,12 +100,34 @@ long get_id_by_name(const char *name)
   return !strcmp(name, "guest") ? 5000 : -1;
 }
 
-/* House object files are not under test: none exist in the scratch tree. */
+/* The object-record format itself is objsave.c's (test_objsave_persist).
+ * Here a house object file "parses" as the list a test queued (queue_parsed();
+ * empty by default), and each written record's object, Loc and weight is
+ * logged, so House_load()/House_save() are tested on their own. */
+static obj_save_data *parse_result;
 obj_save_data *objsave_parse_objects_from(FILE *fl, const char *resource,
                                           const char *owner)
-{ (void)fl; (void)resource; (void)owner; return NULL; }
+{
+  obj_save_data *result = parse_result;
+  (void)fl; (void)resource; (void)owner;
+  parse_result = NULL;
+  return result;
+}
+#define MAX_RECORDED 16
+static int recorded;
+static struct obj_data *recorded_obj[MAX_RECORDED];
+static int recorded_loc[MAX_RECORDED], recorded_weight[MAX_RECORDED];
 int objsave_save_obj_record(struct obj_data *obj, FILE *fl, int location)
-{ (void)obj; (void)fl; (void)location; return 1; }
+{
+  (void)fl;
+  if (recorded < MAX_RECORDED) {
+    recorded_obj[recorded] = obj;
+    recorded_loc[recorded] = location;
+    recorded_weight[recorded] = GET_OBJ_WEIGHT(obj);
+  }
+  recorded++;
+  return 1;
+}
 
 /* Same contract as objsave.c's staged-file helpers: mkstemp() beside dest,
  * rename() over it on commit. House_save_control() stages hcontrol. */
@@ -153,7 +175,26 @@ struct obj_data *read_object(obj_vnum nr, int type)
   return obj;
 }
 
-void obj_to_room(struct obj_data *object, room_rnum room) { (void)object; (void)room; }
+/* Like handler.c: the object goes to the head of the room's contents. */
+void obj_to_room(struct obj_data *object, room_rnum room)
+{
+  object->next_content = world[room].contents;
+  world[room].contents = object;
+  IN_ROOM(object) = room;
+}
+/* Like handler.c: to the head of the contents; the weight joins every
+ * container up the chain unless the container's capacity is unlimited. */
+void obj_to_obj(struct obj_data *obj, struct obj_data *obj_to)
+{
+  struct obj_data *t;
+
+  obj->next_content = obj_to->contains;
+  obj_to->contains = obj;
+  obj->in_obj = obj_to;
+  if (GET_OBJ_VAL(obj_to, 0) > 0)
+    for (t = obj_to; t; t = t->in_obj)
+      GET_OBJ_WEIGHT(t) += GET_OBJ_WEIGHT(obj);
+}
 void extract_obj(struct obj_data *obj)
 {
   free(obj);
@@ -305,12 +346,35 @@ void setUp(void)
   imm.player_specials = &imm_specials;
   GET_LEVEL(&imm) = LVL_IMPL;
   sent[0] = '\0';
+  recorded = 0;
   tb_error_capture_reset();
+}
+
+/* Free a test object tree (new_obj() objects): contents and siblings. */
+static void free_objs(struct obj_data *obj)
+{
+  struct obj_data *next;
+
+  for (; obj; obj = next) {
+    next = obj->next_content;
+    free_objs(obj->contains);
+    free(obj);
+  }
 }
 
 void tearDown(void)
 {
   (void)remove(HCONTROL_FILE);
+  /* Whatever a failed test left queued or on the floor. */
+  while (parse_result) {
+    obj_save_data *next = parse_result->next;
+    free_objs(parse_result->obj);
+    free(parse_result);
+    parse_result = next;
+  }
+  free_objs(rooms[0].contents);
+  free_objs(rooms[1].contents);
+  rooms[0].contents = rooms[1].contents = NULL;
   world = NULL;
   free(pager_copy);
   pager_copy = NULL;
@@ -758,6 +822,173 @@ static void test_house_listing_pager_owns_its_copy(void)
   (void)remove(path);
 }
 
+/* A unique (no prototype) test object; containers hold up to 50. */
+static struct obj_data *new_obj(int type, int weight)
+{
+  struct obj_data *obj = calloc(1, sizeof(*obj));
+
+  TEST_ASSERT_NOT_NULL(obj);
+  obj->item_number = NOTHING;
+  IN_ROOM(obj) = NOWHERE;
+  GET_OBJ_TYPE(obj) = type;
+  GET_OBJ_WEIGHT(obj) = weight;
+  if (type == ITEM_CONTAINER)
+    GET_OBJ_VAL(obj, 0) = 50;
+  return obj;
+}
+
+/* Append obj, read with this Loc, to what the house file "parses" as. */
+static void queue_parsed(struct obj_data *obj, int locate)
+{
+  obj_save_data *node = calloc(1, sizeof(*node)), **tail = &parse_result;
+
+  TEST_ASSERT_NOT_NULL(node);
+  node->obj = obj;
+  node->locate = locate;
+  while (*tail)
+    tail = &(*tail)->next;
+  *tail = node;
+}
+
+/* Boot house 100 with an object file that parses as the queued list. */
+static void boot_house_with_queue(void)
+{
+  struct house_control_rec rec = good_record();
+  char path[64];
+  FILE *fl;
+
+  write_hcontrol(&rec, 1);
+  TEST_ASSERT_TRUE(snprintf(path, sizeof(path), LIB_HOUSE "%d.house", 100) > 0);
+  fl = fopen(path, "w");
+  TEST_ASSERT_NOT_NULL(fl);
+  TEST_ASSERT_TRUE(fputs("$~\n", fl) >= 0);
+  TEST_ASSERT_EQUAL_INT(0, fclose(fl));
+  House_boot();
+  TEST_ASSERT_EQUAL_INT(0, remove(path));
+}
+
+static int floor_count(void)
+{
+  struct obj_data *obj;
+  int n = 0;
+
+  for (obj = rooms[0].contents; obj; obj = obj->next_content)
+    n++;
+  return n;
+}
+
+/* House_save() wrote every record at Loc 0, so after a reboot a house's
+ * containers came back empty with their contents on the floor. Records now
+ * carry their depth, contents before their container (Crash_save()'s
+ * order), and a container is saved without its contents' weight. */
+static void test_house_save_writes_container_depth(void)
+{
+  struct obj_data *bag = new_obj(ITEM_CONTAINER, 7);
+  struct obj_data *gem = new_obj(ITEM_OTHER, 3), *coin = new_obj(ITEM_OTHER, 1);
+  char path[64];
+
+  obj_to_obj(gem, bag);
+  obj_to_room(coin, 0);
+  obj_to_room(bag, 0);	/* floor: bag, coin; bag weighs 10 */
+
+  House_crashsave(100);
+
+  TEST_ASSERT_EQUAL_INT(3, recorded);
+  TEST_ASSERT_EQUAL_PTR(coin, recorded_obj[0]);
+  TEST_ASSERT_EQUAL_INT(0, recorded_loc[0]);
+  TEST_ASSERT_EQUAL_PTR(gem, recorded_obj[1]);
+  TEST_ASSERT_EQUAL_INT(-1, recorded_loc[1]);
+  TEST_ASSERT_EQUAL_PTR(bag, recorded_obj[2]);
+  TEST_ASSERT_EQUAL_INT(0, recorded_loc[2]);
+  TEST_ASSERT_EQUAL_INT(7, recorded_weight[2]);
+  TEST_ASSERT_EQUAL_INT(10, GET_OBJ_WEIGHT(bag));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  TEST_ASSERT_TRUE(snprintf(path, sizeof(path), LIB_HOUSE "%d.house", 100) > 0);
+  TEST_ASSERT_EQUAL_INT(0, remove(path));
+}
+
+/* The records House_save() writes load back nested, in their saved order,
+ * with the container's weight restored. */
+static void test_house_load_rebuilds_containers(void)
+{
+  struct obj_data *bag = new_obj(ITEM_CONTAINER, 7);
+  struct obj_data *gem = new_obj(ITEM_OTHER, 3), *coin = new_obj(ITEM_OTHER, 1);
+
+  queue_parsed(coin, 0);
+  queue_parsed(gem, -1);
+  queue_parsed(bag, 0);
+
+  boot_house_with_queue();
+
+  TEST_ASSERT_EQUAL_PTR(gem, bag->contains);
+  TEST_ASSERT_EQUAL_PTR(bag, gem->in_obj);
+  TEST_ASSERT_EQUAL_INT(10, GET_OBJ_WEIGHT(bag));
+  TEST_ASSERT_EQUAL_PTR(bag, rooms[0].contents);
+  TEST_ASSERT_EQUAL_PTR(coin, bag->next_content);
+  TEST_ASSERT_NULL(coin->next_content);
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+}
+
+/* Every house file written before this change holds only Loc 0: it still
+ * loads, flat, as it always did, and silently. */
+static void test_house_load_flat_file_stays_flat(void)
+{
+  struct obj_data *bag = new_obj(ITEM_CONTAINER, 7);
+
+  queue_parsed(new_obj(ITEM_OTHER, 1), 0);
+  queue_parsed(new_obj(ITEM_OTHER, 3), 0);
+  queue_parsed(bag, 0);
+
+  boot_house_with_queue();
+
+  TEST_ASSERT_EQUAL_INT(3, floor_count());
+  TEST_ASSERT_NULL(bag->contains);
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+}
+
+/* Contents whose container never arrives (its record was skipped, or the
+ * file was cut short) go on the floor, reported, never into limbo. */
+static void test_house_load_orphaned_contents_go_on_the_floor(void)
+{
+  struct obj_data *ring = new_obj(ITEM_OTHER, 1), *gem = new_obj(ITEM_OTHER, 3);
+
+  queue_parsed(ring, -3);			/* its containers never come */
+  queue_parsed(new_obj(ITEM_OTHER, 1), 0);
+  queue_parsed(gem, -1);			/* the file ends here */
+
+  boot_house_with_queue();
+
+  TEST_ASSERT_EQUAL_INT(3, floor_count());
+  TEST_ASSERT_EQUAL_INT(0, IN_ROOM(ring));
+  TEST_ASSERT_EQUAL_INT(0, IN_ROOM(gem));
+  TEST_ASSERT_EQUAL_STRING("house-nesting\nhouse-nesting\n", tb_captured_op_log);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail_log,
+                              "house vnum 100: 1 object(s) at depth 3 lost their container"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail_log,
+                              "house vnum 100: 1 object(s) at depth 1 lost their container"));
+}
+
+/* Contents followed by an object that is not a container, an object nested
+ * deeper than HOUSE_NEST_ROWS and a wear-slot Loc are each put on the floor
+ * and reported. */
+static void test_house_load_odd_locs_are_reported(void)
+{
+  queue_parsed(new_obj(ITEM_OTHER, 3), -1);
+  queue_parsed(new_obj(ITEM_OTHER, 1), 0);	/* not a container */
+  queue_parsed(new_obj(ITEM_OTHER, 1), -6);	/* deeper than 5 */
+  queue_parsed(new_obj(ITEM_OTHER, 1), 3);	/* a wear slot */
+
+  boot_house_with_queue();
+
+  TEST_ASSERT_EQUAL_INT(4, floor_count());
+  TEST_ASSERT_EQUAL_STRING("house-nesting\nhouse-nesting\nhouse-nesting\n",
+                           tb_captured_op_log);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail_log,
+                              "precede an object that is not a container"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail_log, "nested 6 deep (max 5)"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail_log, "wear-slot Loc 3"));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -776,6 +1007,11 @@ int main(void)
   RUN_TEST(test_hcontrol_record_count_mismatch_is_reported);
   RUN_TEST(test_unopenable_hcontrol_is_not_replaced);
   RUN_TEST(test_house_listing_pager_owns_its_copy);
+  RUN_TEST(test_house_save_writes_container_depth);
+  RUN_TEST(test_house_load_rebuilds_containers);
+  RUN_TEST(test_house_load_flat_file_stays_flat);
+  RUN_TEST(test_house_load_orphaned_contents_go_on_the_floor);
+  RUN_TEST(test_house_load_odd_locs_are_reported);
   {
     char sub[300];
     if (snprintf(sub, sizeof(sub), "%s/etc", scratch_dir) > 0)

@@ -24,8 +24,9 @@
  * Lifetime: house_control[] is a fixed static table of num_of_houses
  * records, owned here. Both hcontrol and the object files are written
  * through staged files and committed only after a complete write.
- * Objects are restored flat into the house room: container nesting is not
- * kept across a reload (House_save() writes every record with Loc 0).
+ * Container nesting is kept across a reload: House_save() writes each
+ * record's depth as its Loc and House_load() rebuilds it (object files
+ * written before that hold only Loc 0 and load flat, as they always did).
  */
 
 #include "conf.h"
@@ -111,13 +112,92 @@ static int House_get_filename(room_vnum vnum, char *filename, size_t maxlen)
   return (1);
 }
 
-/* Load all objects for a house */
+/* Container depth House_load() rebuilds (Loc -1 .. -HOUSE_NEST_ROWS), as
+ * MAX_BAG_ROWS does for rent in objsave.c. House_save() writes any depth;
+ * an object nested deeper is put on the floor and reported. */
+#define HOUSE_NEST_ROWS 5
+
+/* Put every object of a pending contents row on the house floor, and
+ * report it: its container never arrived (that record was skipped, or the
+ * file was cut short), or the object read next is not a container. */
+static void House_spill_row(struct obj_data **row, room_rnum rnum,
+                            const char *filename, room_vnum vnum, int depth,
+                            const char *why)
+{
+  struct obj_data *obj, *next;
+  int count = 0;
+
+  for (obj = *row; obj; obj = next) {
+    next = obj->next_content;
+    obj_to_room(obj, rnum);
+    count++;
+  }
+  *row = NULL;
+  if (count)
+    TB_WARN_MSG("house", "house-nesting", filename,
+                "house vnum %d: %d object(s) at depth %d %s; placed on the floor",
+                vnum, count, depth, why);
+}
+
+/** Place one object House_load() read and rebuild container nesting, as
+ * handle_obj() does for rent. House_save() writes contents (Loc -1, -2,
+ * ...) before their container, so cont_row[d] collects the objects read
+ * at depth d+1 until their container arrives (at depth d) and takes them.
+ * Loc 0 is the floor; files written before nesting was saved hold only
+ * Loc 0 and load flat, as they always did. A wear slot (Loc > 0, a rent
+ * value) is put on the floor and reported. */
+static void House_place_obj(struct obj_data *obj, int locate,
+                            struct obj_data **cont_row, room_rnum rnum,
+                            const char *filename, room_vnum vnum)
+{
+  struct obj_data *next, **tail;
+  int j;
+
+  if (locate > 0) {
+    TB_WARN_MSG("house", "house-nesting", filename,
+                "house vnum %d obj vnum %d has wear-slot Loc %d; placed on the floor",
+                vnum, GET_OBJ_VNUM(obj), locate);
+    locate = 0;
+  }
+  /* Rows deeper than this object's own contents belong to containers that
+   * never arrived. */
+  for (j = HOUSE_NEST_ROWS - 1; j > -locate; j--)
+    House_spill_row(&cont_row[j], rnum, filename, vnum, j + 1,
+                    "lost their container");
+  if (j == -locate && cont_row[j]) {
+    if (GET_OBJ_TYPE(obj) == ITEM_CONTAINER)
+      for (; cont_row[j]; cont_row[j] = next) {
+        next = cont_row[j]->next_content;
+        obj_to_obj(cont_row[j], obj);
+      }
+    else
+      House_spill_row(&cont_row[j], rnum, filename, vnum, j + 1,
+                      "precede an object that is not a container");
+  }
+  if (locate == 0)
+    obj_to_room(obj, rnum);
+  else if (locate >= -HOUSE_NEST_ROWS) {
+    /* Append, so contents keep their saved order once filled. */
+    for (tail = &cont_row[-locate - 1]; *tail; tail = &(*tail)->next_content)
+      ;
+    *tail = obj;
+  } else {
+    TB_WARN_MSG("house", "house-nesting", filename,
+                "house vnum %d obj vnum %d nested %d deep (max %d); placed on the floor",
+                vnum, GET_OBJ_VNUM(obj), -locate, HOUSE_NEST_ROWS);
+    obj_to_room(obj, rnum);
+  }
+}
+
+/* Load all objects for a house, with their container nesting. */
 static int House_load(room_vnum vnum)
 {
   FILE *fl;
   char filename[MAX_STRING_LENGTH];
 	obj_save_data *loaded, *current;
   room_rnum rnum;
+  struct obj_data *cont_row[HOUSE_NEST_ROWS];
+  int j;
 
   if ((rnum = real_room(vnum)) == NOWHERE)
     return (0);
@@ -137,11 +217,18 @@ static int House_load(room_vnum vnum)
 	  loaded = objsave_parse_objects_from(fl, filename, owner);
 	}
 
+	for (j = 0; j < HOUSE_NEST_ROWS; j++)
+	  cont_row[j] = NULL;
 	for (current = loaded; current != NULL; current = current->next)
-    obj_to_room(current->obj, rnum);
+	  House_place_obj(current->obj, current->locate, cont_row, rnum,
+	                  filename, vnum);
+	/* Contents still waiting at the end of the file never got a container. */
+	for (j = HOUSE_NEST_ROWS - 1; j >= 0; j--)
+	  House_spill_row(&cont_row[j], rnum, filename, vnum, j + 1,
+	                  "lost their container");
 
 	/* now it's safe to free the obj_save_data list - all members of it
-	 * have been put in the correct lists by obj_to_room()
+	 * have been put in the correct lists by House_place_obj()
 	 */
 	while (loaded != NULL) {
 		current = loaded;
@@ -154,31 +241,42 @@ static int House_load(room_vnum vnum)
   return (1);
 }
 
-/** Save all objects for a house (recursive). Assumes fp is open.
- * Each object's weight is subtracted from its containers while saving, so
- * the initial call MUST be followed by House_restore_weight() on the same
- * tree, on failure too. Every object is visited even after a failed record
- * so that pass stays exact. Records are written flat (Loc 0): container
- * nesting is not kept across a house reload.
- * @return 1 only when every record in the tree was written (failures below
- * the head used to be ignored); objsave_save_obj_record() reports each. */
-int House_save(struct obj_data *obj, FILE *fp)
+/* House_save() at a given Loc: 0 for the floor, -1, -2 ... for container
+ * contents. Same order as objsave.c's Crash_save(): the sibling chain,
+ * then the contents one level deeper, then obj itself, so contents come
+ * before their container, as House_place_obj() expects. Every record used
+ * to be written at Loc 0, so a reload put all contents on the floor. */
+static int House_save_at(struct obj_data *obj, FILE *fp, int location)
 {
   struct obj_data *tmp;
   int ok = 1;
 
   if (obj) {
-    if (!House_save(obj->contains, fp))
+    if (!House_save_at(obj->next_content, fp, location))
       ok = 0;
-    if (!House_save(obj->next_content, fp))
+    if (!House_save_at(obj->contains, fp, MIN(0, location) - 1))
       ok = 0;
-    if (!objsave_save_obj_record(obj, fp, 0))
+    if (!objsave_save_obj_record(obj, fp, location))
       ok = 0;
 
     for (tmp = obj->in_obj; tmp; tmp = tmp->in_obj)
       GET_OBJ_WEIGHT(tmp) -= GET_OBJ_WEIGHT(obj);
   }
   return ok;
+}
+
+/** Save all objects for a house (recursive). Assumes fp is open.
+ * Records carry their container nesting (Loc 0 on the floor, negative
+ * inside a container; see House_save_at()). Each object's weight is
+ * subtracted from its containers while saving, so the initial call MUST be
+ * followed by House_restore_weight() on the same tree, on failure too.
+ * Every object is visited even after a failed record so that pass stays
+ * exact.
+ * @return 1 only when every record in the tree was written (failures below
+ * the head used to be ignored); objsave_save_obj_record() reports each. */
+int House_save(struct obj_data *obj, FILE *fp)
+{
+  return House_save_at(obj, fp, 0);
 }
 
 /* restore weight of containers after House_save has changed them for saving */
