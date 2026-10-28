@@ -22,6 +22,19 @@
 /* Symbols protocol.c reaches outside itself. */
 struct player_special_data dummy_mob;
 
+/* utils.c's CHECK_PLAYER_SPECIAL reporter (an NPC read a player-only field
+ * through PRF_FLAGGED). desc.character stays NULL below, so protocol.c never
+ * reaches it; if it ever does, the harness no longer models what it claims,
+ * so stop loudly instead of carrying on. */
+void tb_player_special_on_mob_at(const struct char_data *ch, const char *field,
+                                 const char *source_file, int source_line,
+                                 const char *source_func)
+{
+  (void)ch; (void)field; (void)source_file; (void)source_line;
+  (void)source_func;
+  abort();
+}
+
 void basic_mud_log(const char *format, ...)
 {
   (void)format;
