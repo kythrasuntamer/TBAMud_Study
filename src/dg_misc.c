@@ -338,11 +338,15 @@ int valid_dg_target(struct char_data *ch, int bitvector)
     return FALSE;  /* The rest are gods with nohassle on... */
 }
 
-/* trig is the running trigger (dg_running_trigger()), named by the
- * field-clamp diagnostic; NULL when no script is running. */
+/* trig is the running trigger (dg_running_trigger()); NULL when no script
+ * is running. script_damage() can no longer report a field clamp (see the
+ * store below), so trig is unused; it stays in the signature for its three
+ * callers (mdamage, odamage, wdamage). */
 void script_damage(trig_data *trig, struct char_data *vict, int dam)
 {
   long long result;
+
+  (void)trig;
 
   if (GET_LEVEL(vict)>=LVL_IMMORT && (dam > 0)) {
     send_to_char(vict, "Being the cool immortal you are, you sidestep a trap, "
@@ -360,8 +364,10 @@ void script_damage(trig_data *trig, struct char_data *vict, int dam)
      * logged below ("killed by script"). */
     GET_HIT(vict) = SHRT_MIN;
   else
-    GET_HIT(vict) = (sh_int)dg_clamp_char_field(trig, vict, "damage", result,
-                                                SHRT_MIN, SHRT_MAX);
+    /* In range by construction: for dam <= 0 the result is at least the
+     * current sh_int HP and at most max_hit (an sh_int); for dam > 0 it is
+     * at most the current HP, and below SHRT_MIN took the branch above. */
+    GET_HIT(vict) = (sh_int)result;
 
   update_pos(vict);
   send_char_pos(vict, dam);
