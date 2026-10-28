@@ -153,7 +153,6 @@ static void test_purging_something_else_keeps_the_owner(void)
 
   TEST_ASSERT_EQUAL_PTR(stone, run_obj_script(stone, lines));
   TEST_ASSERT_EQUAL_INT(0, dgw_saw("owner-extracted"));
-  TEST_ASSERT_EQUAL_INT(0, dg_owner_purged);
 }
 
 /* E1-05: values used as array indexes elsewhere are range checked. */
@@ -180,6 +179,90 @@ static void test_osetval_rejects_out_of_range_index_values(void)
   TEST_ASSERT_EQUAL_INT(3, dgw_saw("osetval-range"));
 }
 
+static struct char_data *seat(struct obj_data *bench)
+{
+  struct char_data *m = dgw_mob(DGW_MOB_GUARD, IN_ROOM(bench));
+  SITTING(m) = bench;
+  NEXT_SITTING(m) = OBJ_SAT_IN_BY(bench);
+  OBJ_SAT_IN_BY(bench) = m;
+  GET_OBJ_VAL(bench, 1)++;
+  GET_POS(m) = POS_SITTING;
+  return m;
+}
+
+/* E1-07: furniture transformed into furniture keeps its sitters. Before the
+ * fix sitting_here was lost, the bench was freed with a sitter still
+ * pointing at it, and the sitter standing up read the freed bench. */
+static void test_otransform_keeps_sitters_on_furniture(void)
+{
+  struct obj_data *bench = dgw_obj(DGW_OBJ_BENCH, 0);
+  struct char_data *m = seat(bench);
+
+  ocmd(bench, "otransform 202");
+  TEST_ASSERT_EQUAL_PTR(m, OBJ_SAT_IN_BY(bench));
+  TEST_ASSERT_EQUAL_INT(1, GET_OBJ_VAL(bench, 1));
+
+  extract_obj(bench);       /* unseats m */
+  TEST_ASSERT_NULL(SITTING(m));
+  char_from_furniture(m);
+}
+
+/* E1-07: furniture transformed into something else unseats its sitters,
+ * and says so. */
+static void test_otransform_to_non_furniture_unseats(void)
+{
+  struct obj_data *bench = dgw_obj(DGW_OBJ_BENCH, 0);
+  struct char_data *m = seat(bench);
+
+  ocmd(bench, "otransform 206");
+  TEST_ASSERT_NULL(SITTING(m));
+  TEST_ASSERT_NULL(OBJ_SAT_IN_BY(bench));
+  TEST_ASSERT_EQUAL_INT(1, dgw_saw("otransform"));
+  extract_obj(bench);
+  char_from_furniture(m);
+}
+
+/* E1-07: carried and container weights follow the new weight. */
+static void test_otransform_recomputes_weights(void)
+{
+  struct char_data *m = dgw_mob(DGW_MOB_GUARD, 0);
+  struct obj_data *bag = dgw_obj(DGW_OBJ_BAG, NOWHERE);
+  struct obj_data *stone = dgw_obj(DGW_OBJ_STONE, NOWHERE);
+  struct obj_data *loose = dgw_obj(DGW_OBJ_STONE, NOWHERE);
+
+  obj_to_char(bag, m);
+  obj_to_obj(stone, bag);
+  obj_to_char(loose, m);
+  TEST_ASSERT_EQUAL_INT(9, IS_CARRYING_W(m));     /* 5 + 2 + 2 */
+
+  ocmd(stone, "otransform 206");                   /* 2 -> 20, in the bag */
+  TEST_ASSERT_EQUAL_PTR(bag, stone->in_obj);
+  TEST_ASSERT_EQUAL_INT(25, GET_OBJ_WEIGHT(bag));
+  TEST_ASSERT_EQUAL_INT(27, IS_CARRYING_W(m));
+
+  ocmd(loose, "otransform 206");                   /* 2 -> 20, carried */
+  TEST_ASSERT_EQUAL_PTR(m, loose->carried_by);
+  TEST_ASSERT_EQUAL_INT(45, IS_CARRYING_W(m));
+  TEST_ASSERT_EQUAL_INT(2, IS_CARRYING_N(m));     /* bag, rock */
+
+  ocmd(bag, "otransform 205");                     /* bag 5 -> chest 10 */
+  TEST_ASSERT_EQUAL_PTR(stone, bag->contains);
+  TEST_ASSERT_EQUAL_INT(30, GET_OBJ_WEIGHT(bag));
+  TEST_ASSERT_EQUAL_INT(50, IS_CARRYING_W(m));
+}
+
+/* E1-07 / E1-V02: the transformed object counts as an instance of the new
+ * prototype only (teardown also checks every count returns to zero). */
+static void test_otransform_moves_the_instance_count(void)
+{
+  struct obj_data *stone = dgw_obj(DGW_OBJ_STONE, 0);
+  obj_rnum stone_r = GET_OBJ_RNUM(stone);
+
+  ocmd(stone, "otransform 206");
+  TEST_ASSERT_EQUAL_INT(0, obj_index[stone_r].number);
+  TEST_ASSERT_EQUAL_INT(1, obj_index[real_object(DGW_OBJ_ROCK)].number);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -192,5 +275,9 @@ int main(void)
   RUN_TEST(test_opurge_self_is_not_reported);
   RUN_TEST(test_purging_something_else_keeps_the_owner);
   RUN_TEST(test_osetval_rejects_out_of_range_index_values);
+  RUN_TEST(test_otransform_keeps_sitters_on_furniture);
+  RUN_TEST(test_otransform_to_non_furniture_unseats);
+  RUN_TEST(test_otransform_recomputes_weights);
+  RUN_TEST(test_otransform_moves_the_instance_count);
   return UNITY_END();
 }

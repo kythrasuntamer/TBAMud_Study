@@ -21,6 +21,7 @@
 #include "genzon.h" /* for access to real_zone_by_thing */
 #include "fight.h" /* for die() */
 #include "spells.h" /* for NUM_ATTACK_TYPES */
+#include "genobj.h" /* for free_object_strings[_proto]() */
 
 
 
@@ -300,14 +301,34 @@ static OCMD(do_otimer)
     GET_OBJ_TIMER(obj) = tb_parse_int_or_zero(arg);
 }
 
-/* Transform into a different object. Note: this shouldn't be used with 
- * containers unless both objects are containers! */
+/* Transform into a different object. Note: this shouldn't be used with
+ * containers unless both objects are containers!
+ *
+ * A fresh instance o of the new prototype is copied over obj, so obj keeps
+ * its address and every pointer other code holds to it stays valid. obj
+ * keeps: its place in the world (room, carrier, container, wearer) and in
+ * object_list, its contents, script_id, script and proto_script, pending
+ * events (extract_obj() cancels them; losing them left them running), and
+ * anyone sitting on it, provided it is still furniture (the sitters'
+ * SITTING() points at obj; losing sitting_here left them pointing at obj
+ * after it was freed). Everything else comes from the new prototype.
+ *
+ * Bookkeeping the copy would otherwise corrupt:
+ *  - weights: obj is taken out of its carrier or container and its contents
+ *    out of it, then all are put back, so obj_to_char()/obj_to_obj()
+ *    recompute IS_CARRYING_W and container weights for the new weight;
+ *  - obj_index counts: obj stops being an instance of the old prototype
+ *    and becomes one of the new (o's own count is dropped by extract_obj);
+ *  - strings obj owned (not the old prototype's) are freed before o's
+ *    prototype strings replace them. */
 static OCMD(do_otransform)
 {
   char arg[MAX_INPUT_LENGTH];
-  obj_data *o, tmpobj;
-  struct char_data *wearer=NULL;
-  int pos = 0;
+  obj_data *o, tmpobj, *carried_contents = NULL, *c, *container = NULL;
+  struct char_data *wearer = NULL, *carrier = NULL, *sitter, *next_sitter;
+  obj_rnum old_rnum;
+  obj_vnum old_vnum;
+  int pos = 0, unseated = 0;
 
   one_argument(argument, arg);
 
@@ -322,32 +343,89 @@ static OCMD(do_otransform)
       return;
     }
 
+    old_rnum = GET_OBJ_RNUM(obj);
+    old_vnum = GET_OBJ_VNUM(obj);
+    tb_breadcrumbf("dg", "otransform obj uid=%ld vnum %d -> %d",
+                   obj_script_id(obj), old_vnum, GET_OBJ_VNUM(o));
+
     if (obj->worn_by) {
       pos = obj->worn_on;
       wearer = obj->worn_by;
       unequip_char(obj->worn_by, pos);
     }
+    if (obj->carried_by) {
+      carrier = obj->carried_by;
+      obj_from_char(obj);
+    } else if (obj->in_obj) {
+      container = obj->in_obj;
+      obj_from_obj(obj);
+    }
+    /* Reversed here, and reversed again by obj_to_obj() below. */
+    while ((c = obj->contains) != NULL) {
+      obj_from_obj(c);
+      c->next_content = carried_contents;
+      carried_contents = c;
+    }
+
+    if (old_rnum != NOTHING && old_rnum <= top_of_objt)
+      free_object_strings_proto(obj);
+    else
+      free_object_strings(obj);
 
     /* move new obj info over to old object and delete new obj */
     memcpy(&tmpobj, o, sizeof(*o));
     tmpobj.in_room = IN_ROOM(obj);
-    tmpobj.carried_by = obj->carried_by;
-    tmpobj.worn_by = obj->worn_by;
+    tmpobj.carried_by = NULL;
+    tmpobj.worn_by = NULL;
     tmpobj.worn_on = obj->worn_on;
-    tmpobj.in_obj = obj->in_obj;
-    tmpobj.contains = obj->contains;
+    tmpobj.in_obj = NULL;
+    tmpobj.contains = NULL;
     tmpobj.script_id = obj->script_id;
     tmpobj.proto_script = obj->proto_script;
     tmpobj.script = obj->script;
     tmpobj.next_content = obj->next_content;
     tmpobj.next = obj->next;
-    /* Who sits on it and its pending events belong to this instance too:
-     * losing them left sitters and events pointing at an object that no
-     * longer knew about them. */
-    tmpobj.sitting_here = obj->sitting_here;
     tmpobj.events = obj->events;
+    tmpobj.sitting_here = obj->sitting_here;
+    if (tmpobj.sitting_here) {
+      if (GET_OBJ_TYPE(&tmpobj) == ITEM_FURNITURE)
+        GET_OBJ_VAL(&tmpobj, 1) = GET_OBJ_VAL(obj, 1);   /* seats taken */
+      else {
+        /* Not furniture any more: unseat everyone, as extract_obj() does. */
+        for (sitter = tmpobj.sitting_here; sitter; sitter = next_sitter) {
+          next_sitter = NEXT_SITTING(sitter);
+          SITTING(sitter) = NULL;
+          NEXT_SITTING(sitter) = NULL;
+          unseated++;
+        }
+        tmpobj.sitting_here = NULL;
+      }
+    }
     memcpy(obj, &tmpobj, sizeof(*obj));
+    o->events = NULL;          /* read_object() gave o none; obj owns them */
+    o->sitting_here = NULL;
 
+    /* obj is now an instance of the new prototype. */
+    if (old_rnum != NOTHING && old_rnum <= top_of_objt)
+      obj_index[old_rnum].number--;
+    if (GET_OBJ_RNUM(obj) != NOTHING)
+      obj_index[GET_OBJ_RNUM(obj)].number++;
+
+    if (unseated)
+      TB_WARN_MSG("dg", "otransform", "do_otransform",
+                  "obj uid %ld vnum %d -> %d is no longer furniture; %d "
+                  "sitter(s) unseated", obj->script_id, old_vnum,
+                  GET_OBJ_VNUM(obj), unseated);
+
+    if (carrier)
+      obj_to_char(obj, carrier);
+    else if (container)
+      obj_to_obj(obj, container);
+    while ((c = carried_contents) != NULL) {
+      carried_contents = c->next_content;
+      c->next_content = NULL;
+      obj_to_obj(c, obj);
+    }
     if (wearer) {
       equip_char(wearer, obj, pos);
     }
@@ -906,16 +984,15 @@ static const struct obj_command_info obj_cmd_info[] = {
 /* This is the command interpreter used by objects, called by script_driver
  * (and by do_oat for its temporary clone).
  *
- * Owner lifetime contract: script_driver() stops a script and NULLs its
- * owner pointer only when dg_owner_purged is set after a command. 'opurge
- * self' sets it directly, but an object's own command can free the object in
- * other ways: purging the container it is in (extract_obj() frees contents
- * recursively), purging the room it sits in inside a container, or forcing
- * a character to junk the container holding it. Any of these left
- * script_driver reading the freed owner on the next line. The owner's UID is
- * therefore captured before every command and checked afterwards: on return
- * dg_owner_purged is set exactly when the owner is gone, so the caller stops.
- * Callers must not use obj after this returns with dg_owner_purged set. */
+ * Owner lifetime contract: an object's own command can free the object in
+ * more ways than 'opurge self': purging the container it is in
+ * (extract_obj() frees contents recursively), purging the room it sits in
+ * inside a container, or forcing a character to junk the container holding
+ * it. script_driver() checks its own owner by UID after every command
+ * (dg_frame_owner_gone()) and stops, so callers must not use obj after this
+ * returns unless obj_uid_matches() still holds. Here the owner's UID is
+ * captured before the command only to report an indirect self-destruction,
+ * which is handled but usually a script bug. */
 void obj_command_interpreter(obj_data *obj, char *argument)
 {
     int cmd, length;
@@ -946,16 +1023,14 @@ void obj_command_interpreter(obj_data *obj, char *argument)
 
     owner_uid = obj_script_id(obj);
     owner_vnum = GET_OBJ_VNUM(obj);
-    dg_owner_purged = 0;
 
     ((*obj_cmd_info[cmd].command_pointer)
      (obj, line, cmd, obj_cmd_info[cmd].subcmd));
 
-    /* The flag must describe this owner only. A nested script run by the
-     * command (another entity's trigger) may have left it set for its own
-     * owner, which is not ours. */
+    /* 'opurge' is the one command meant to destroy its owner; any other
+     * command that did so destroyed it indirectly. */
     owner_gone = !obj_uid_matches(owner_uid, obj);
-    if (owner_gone && !dg_owner_purged) {
+    if (owner_gone && obj_cmd_info[cmd].command_pointer != do_opurge) {
       /* Handled (the script stops), but it means the script destroyed its
        * own owner indirectly; say which object and which command. */
       TB_WARN_MSG("dg", "owner-extracted", "obj_command_interpreter",
@@ -964,5 +1039,4 @@ void obj_command_interpreter(obj_data *obj, char *argument)
                   owner_uid, (int)strcspn(obj_cmd_info[cmd].command, " "),
                   obj_cmd_info[cmd].command);
     }
-    dg_owner_purged = owner_gone;
 }
