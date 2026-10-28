@@ -24,4 +24,8 @@ assert "object->in_room" not in after, "the copy may be freed by now"
 tele = body_of("do_oteleport")
 rm = tele[tele.index("rm = obj_room(obj);"):tele.index("for (ch = world[rm].people;")]
 assert "rm == NOWHERE" in rm and rm.count("return;") == 2
+# omove stops at an invalid target instead of moving into world[NOWHERE].
+move = body_of("do_omove")
+bad = move[move.index("if (target == NOWHERE)"):move.index("obj_from_char(obj)")]
+assert "return;" in bad
 print("object command contract verified")

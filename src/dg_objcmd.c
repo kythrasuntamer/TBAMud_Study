@@ -815,8 +815,11 @@ static OCMD(do_omove)
 
     target = find_obj_target_room(obj, arg1);
 
-    if (target == NOWHERE)
+    if (target == NOWHERE) {
+        /* Carrying on moved the object into world[NOWHERE]. */
         obj_log(obj, "omove target is an invalid room");
+        return;
+    }
 
     // Remove the object from it's current location
     if (obj->carried_by != NULL) {
