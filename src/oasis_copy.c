@@ -6,6 +6,19 @@
 * 2002 Kip Potter [Mythran].                                              *
 **************************************************************************/
 
+/**
+ * @file oasis_copy.c
+ * One-shot OLC commands that create world data without opening an editor:
+ * rcopy/ocopy/mcopy/scopy/tcopy (do_oasis_copy), dig, and buildwalk.
+ *
+ * Each borrows the caller's descriptor OLC slot through OLC_ATTACH, drives
+ * an editor's setup_existing/save_internally back end, and releases the
+ * slot with cleanup_olc(d, CLEANUP_ALL) before returning.  Inputs are
+ * builder-typed vnums and directions (LVL_BUILDER commands) plus movement
+ * for buildwalk; every vnum is range-checked before it is narrowed to
+ * IDXTYPE.
+ */
+
 #include "conf.h"
 #include "sysdep.h"
 #include "structs.h"
@@ -35,6 +48,19 @@ static room_vnum redit_find_new_vnum(zone_rnum zone);
 * determined by the subcmd variable and the functions are  *
 * looked up in a table.                                    *
 ***********************************************************/
+/** Copy one prototype to a new vnum (rcopy, ocopy, mcopy, scopy, tcopy).
+ *
+ * The source may be in any zone; the target must not exist, must lie in a
+ * zone the builder can edit, and must not be open in another editor.
+ *
+ * Contract with the editor back ends: setup_existing must produce a scratch
+ * copy that is safe to insert as a NEW entity, i.e. one that shares no
+ * runtime lists with the source (room contents, people and events are
+ * cleared, and re-checked here for rooms, op=room-copy), and for rooms its
+ * number is set to NOWHERE so redit_save_internally runs its new-room
+ * renumbering of other builders' open editors.  save_func returns void, so
+ * success is confirmed by looking the target up again afterwards
+ * (op=copy-failed if it is missing). */
 ACMD(do_oasis_copy)
 {
   int i, src_vnum, src_rnum, dst_vnum, dst_rnum;
@@ -212,6 +238,16 @@ ACMD(do_oasis_copy)
 }
 
 /* Commands */
+/** dig <direction> <vnum | -1>: link the caller's room to vnum, creating
+ * the target room if it does not exist; -1 removes the exit.
+ *
+ * Borrows ch->desc's OLC slot (OLC_ATTACH), so it requires STATE(d) ==
+ * CON_PLAYING; do_force can run it on a builder who is inside an editor,
+ * and OLC_ATTACH then refuses (op=olc-busy).  Creating a room goes through
+ * add_room, which may reallocate world[] and shift rnums: IN_ROOM(ch) and
+ * any rnum computed earlier must be re-read afterwards.  The new room's
+ * strings are strdup'd here and deep-copied by add_room, so the scratch
+ * copy is released with CLEANUP_ALL. */
 ACMD(do_dig)
 {
   char sdir[MAX_INPUT_LENGTH], sroom[MAX_INPUT_LENGTH], *new_room_name;
@@ -381,6 +417,16 @@ static room_vnum redit_find_new_vnum(zone_rnum zone)
   return(vnum);
 }
 
+/** Called on every move of a character with PRF_BUILDWALK: when moving in
+ * a direction with no exit, create a room at the zone's next free vnum and
+ * link it.  Returns 1 if a room was created (the caller then moves ch).
+ *
+ * Same borrowing rules as do_dig: OLC_ATTACH refuses while ch's descriptor
+ * is in an editor; add_room may reallocate world[], so the new room's rnum
+ * is looked up again after the save; the strdup'd name and description are
+ * owned by the scratch room and freed by cleanup_olc(d, CLEANUP_ALL).
+ * can_edit_zone denies a character with no descriptor, so a linkless
+ * builder never reaches the OLC slot. */
 int buildwalk(struct char_data *ch, int dir)
 {
   char buf[MAX_INPUT_LENGTH];
