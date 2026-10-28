@@ -136,6 +136,14 @@ static void release_char(char_data *ch)
       break;
     }
   if (ch->desc) {
+    /* Paged text (page_string) and a large output buffer, as
+     * close_socket() would release them. */
+    free(ch->desc->showstr_head);
+    free(ch->desc->showstr_vector);
+    if (ch->desc->large_outbuf) {
+      free(ch->desc->large_outbuf->text);
+      free(ch->desc->large_outbuf);
+    }
     ProtocolDestroy(ch->desc->pProtocol);
     free(ch->desc);
   }
@@ -749,6 +757,32 @@ static void extract_past_last_word_stops_and_reports(void)
   TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "9000"));
 }
 
+/* D1-16: do_stat_trigger() summed untruncated snprintf() returns, so a long
+ * command list pushed its offset past sb and the overflow notice was written
+ * beyond the buffer (ASan: stack-buffer-overflow WRITE). */
+#define TSTAT_LINES 199
+#define TSTAT_LINE_LEN 299
+static void tstat_of_long_script_is_truncated_and_reported(void)
+{
+  static char text[TSTAT_LINES][TSTAT_LINE_LEN + 1];
+  const char *lines[TSTAT_LINES + 1];
+  char_data *imm = make_imm();
+  int i;
+
+  for (i = 0; i < TSTAT_LINES; i++) {
+    memset(text[i], 'n', TSTAT_LINE_LEN);
+    text[i][TSTAT_LINE_LEN] = '\0';
+    lines[i] = text[i];
+  }
+  lines[TSTAT_LINES] = NULL;
+  /* Attached only so tearDown frees the instance. */
+  attach_to_script(&SCRIPT(imm), make_trigger(MOB_TRIGGER, MTRIG_SPEECH, 0, lines));
+  immortal_command(do_tstat, imm, " 9000");
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("tstat-truncate", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "9000"));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -780,5 +814,6 @@ int main(void)
   RUN_TEST(attach_to_player_is_refused_before_allocating);
   RUN_TEST(self_detaching_script_frees_its_variables);
   RUN_TEST(extract_past_last_word_stops_and_reports);
+  RUN_TEST(tstat_of_long_script_is_truncated_and_reported);
   return UNITY_END();
 }

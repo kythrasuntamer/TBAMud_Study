@@ -840,36 +840,13 @@ static EVENTFUNC(trig_wait_event)
   return 0;
 }
 
-/* Appends formatted text to sb (size bytes) at *len, never past its end.
- * Returns FALSE, leaving sb terminated at the end, once the text does not
- * fit; snprintf's would-be length used to carry len past the buffer. */
-static int stat_appendf(char *sb, size_t size, size_t *len, const char *fmt, ...)
-  __attribute__ ((format (printf, 4, 5)));
-static int stat_appendf(char *sb, size_t size, size_t *len, const char *fmt, ...)
-{
-  va_list args;
-  int n;
-
-  if (*len >= size)
-    return FALSE;
-  va_start(args, fmt);
-  n = vsnprintf(sb + *len, size - *len, fmt, args);
-  va_end(args);
-  if (n < 0 || (size_t)n >= size - *len) {
-    *len = size - 1;
-    return FALSE;
-  }
-  *len += (size_t)n;
-  return TRUE;
-}
-
 static void do_stat_trigger(struct char_data *ch, trig_data *trig)
 {
+    /* Room kept free at the end of sb for the overflow notice. */
+    static const char overflow_notice[] = "*** Overflow - script too long! ***\r\n";
     struct cmdlist_element *cmd_list;
     char sb[MAX_STRING_LENGTH], buf[MAX_STRING_LENGTH];
-    size_t len = 0;
-    /* Everything but the last 80 bytes; those hold the overflow notice. */
-    const size_t limit = sizeof(sb) - 80;
+    struct tb_buf out;
 
     if (!trig)
     {
@@ -877,38 +854,46 @@ static void do_stat_trigger(struct char_data *ch, trig_data *trig)
         return;
     }
 
-    stat_appendf(sb, limit, &len, "Name: '%s%s%s',  VNum: [%s%5d%s], RNum: [%5d]\r\n",
+    /* The command list is builder text of any total length. Summing raw
+     * snprintf() returns let one long line push the offset past sb, and the
+     * overflow notice was then written beyond it with a wrapped size. The
+     * bounded builder stops at its capacity; the notice fits in the space
+     * reserved after it. */
+    tb_buf_init(&out, sb, sizeof(sb) - sizeof(overflow_notice));
+
+    tb_buf_appendf(&out, "Name: '%s%s%s',  VNum: [%s%5d%s], RNum: [%5d]\r\n",
               CCYEL(ch, C_NRM), GET_TRIG_NAME(trig), CCNRM(ch, C_NRM),
               CCGRN(ch, C_NRM), GET_TRIG_VNUM(trig), CCNRM(ch, C_NRM),
               GET_TRIG_RNUM(trig));
 
     if (trig->attach_type==OBJ_TRIGGER) {
-      stat_appendf(sb, limit, &len, "Trigger Intended Assignment: Objects\r\n");
+      tb_buf_append(&out, "Trigger Intended Assignment: Objects\r\n");
       sprintbit(GET_TRIG_TYPE(trig), otrig_types, buf, sizeof(buf));
     } else if (trig->attach_type==WLD_TRIGGER) {
-      stat_appendf(sb, limit, &len, "Trigger Intended Assignment: Rooms\r\n");
+      tb_buf_append(&out, "Trigger Intended Assignment: Rooms\r\n");
       sprintbit(GET_TRIG_TYPE(trig), wtrig_types, buf, sizeof(buf));
     } else {
-      stat_appendf(sb, limit, &len, "Trigger Intended Assignment: Mobiles\r\n");
+      tb_buf_append(&out, "Trigger Intended Assignment: Mobiles\r\n");
       sprintbit(GET_TRIG_TYPE(trig), trig_types, buf, sizeof(buf));
     }
 
-    stat_appendf(sb, limit, &len, "Trigger Type: %s, Numeric Arg: %d, Arg list: %s\r\n",
+    tb_buf_appendf(&out, "Trigger Type: %s, Numeric Arg: %d, Arg list: %s\r\n",
                      buf, GET_TRIG_NARG(trig),
                     ((GET_TRIG_ARG(trig) && *GET_TRIG_ARG(trig))
                      ? GET_TRIG_ARG(trig) : "None"));
 
-    stat_appendf(sb, limit, &len, "Commands:\r\n");
+    tb_buf_append(&out, "Commands:\r\n");
 
-    cmd_list = trig->cmdlist;
-    while (cmd_list) {
-      if (cmd_list->cmd &&
-          !stat_appendf(sb, limit, &len, "%s\r\n", cmd_list->cmd)) {
-        tb_snprintf(sb + len, sizeof(sb)-len, "*** Overflow - script too long! ***\r\n");
-        break;
-      }
-      
-      cmd_list = cmd_list->next;
+    for (cmd_list = trig->cmdlist; cmd_list && !tb_buf_truncated(&out);
+         cmd_list = cmd_list->next)
+      if (cmd_list->cmd)
+        tb_buf_appendf(&out, "%s\r\n", cmd_list->cmd);
+
+    if (tb_buf_truncated(&out)) {
+      TB_WARN_MSG("dg", "tstat-truncate", "do_stat_trigger",
+                  "trig vnum %d: listing truncated at %zu bytes",
+                  GET_TRIG_VNUM(trig), out.length);
+      strlcat(sb, overflow_notice, sizeof(sb));
     }
 
     page_string(ch->desc, sb, 1);
