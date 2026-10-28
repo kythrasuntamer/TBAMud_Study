@@ -156,6 +156,30 @@ static void test_purging_something_else_keeps_the_owner(void)
   TEST_ASSERT_EQUAL_INT(0, dg_owner_purged);
 }
 
+/* E1-05: values used as array indexes elsewhere are range checked. */
+static void test_osetval_rejects_out_of_range_index_values(void)
+{
+  struct obj_data *skin = dgw_obj(DGW_OBJ_SKIN, 0);
+  struct obj_data *sword = dgw_obj(DGW_OBJ_SWORD, 0);
+  struct obj_data *stone = dgw_obj(DGW_OBJ_STONE, 0);
+
+  ocmd(skin, "osetval 2 5000");
+  TEST_ASSERT_EQUAL_INT(0, GET_OBJ_VAL(skin, 2));
+  ocmd(skin, "osetval 2 -1");
+  TEST_ASSERT_EQUAL_INT(0, GET_OBJ_VAL(skin, 2));
+  ocmd(sword, "osetval 3 200");
+  TEST_ASSERT_EQUAL_INT(0, GET_OBJ_VAL(sword, 3));
+  TEST_ASSERT_EQUAL_INT(3, dgw_saw("osetval-range"));
+
+  ocmd(skin, "osetval 2 3");
+  TEST_ASSERT_EQUAL_INT(3, GET_OBJ_VAL(skin, 2));
+  ocmd(sword, "osetval 3 14");
+  TEST_ASSERT_EQUAL_INT(14, GET_OBJ_VAL(sword, 3));
+  ocmd(stone, "osetval 2 5000");   /* not an index for this type */
+  TEST_ASSERT_EQUAL_INT(5000, GET_OBJ_VAL(stone, 2));
+  TEST_ASSERT_EQUAL_INT(3, dgw_saw("osetval-range"));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -167,5 +191,6 @@ int main(void)
   RUN_TEST(test_purging_the_room_from_inside_a_container_stops_the_script);
   RUN_TEST(test_opurge_self_is_not_reported);
   RUN_TEST(test_purging_something_else_keeps_the_owner);
+  RUN_TEST(test_osetval_rejects_out_of_range_index_values);
   return UNITY_END();
 }

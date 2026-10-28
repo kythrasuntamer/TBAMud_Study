@@ -20,6 +20,7 @@
 #include "constants.h"
 #include "genzon.h" /* for access to real_zone_by_thing */
 #include "fight.h" /* for die() */
+#include "spells.h" /* for NUM_ATTACK_TYPES */
 
 
 
@@ -713,6 +714,40 @@ static OCMD(do_odoor)
     }
 }
 
+/* Some object values are used, unchecked, as array indexes by the game:
+ * a drink container's or fountain's liquid (value 2) indexes drinks[],
+ * drinknames[] and drink_aff[] (act.item.c, shop.c), and a weapon's attack
+ * type (value 3) indexes attack_hit_text[] (fight.c). World files are
+ * checked when they are loaded; osetval takes the value from script text,
+ * which builders and the players it quotes control, so it must check too.
+ * Returns TRUE if value may be stored in position pos of obj; otherwise
+ * stores the permitted range in *lo..*hi. */
+static int obj_value_in_range(const obj_data *obj, int pos, int value,
+                              int *lo, int *hi)
+{
+  *lo = INT_MIN;
+  *hi = INT_MAX;
+
+  switch (GET_OBJ_TYPE(obj)) {
+  case ITEM_DRINKCON:
+  case ITEM_FOUNTAIN:
+    if (pos == 2) {
+      *lo = 0;
+      *hi = NUM_LIQ_TYPES - 1;
+    }
+    break;
+  case ITEM_WEAPON:
+    if (pos == 3) {
+      *lo = 0;
+      *hi = NUM_ATTACK_TYPES - 1;
+    }
+    break;
+  default:
+    break;
+  }
+  return value >= *lo && value <= *hi;
+}
+
 static OCMD(do_osetval)
 {
   char arg1[MAX_INPUT_LENGTH], arg2[MAX_INPUT_LENGTH];
@@ -729,6 +764,18 @@ static OCMD(do_osetval)
   new_value = tb_parse_int_or_zero(arg2);
 
   if (position>=0 && position<NUM_OBJ_VAL_POSITIONS) {
+    int lo, hi;
+
+    if (!obj_value_in_range(obj, position, new_value, &lo, &hi)) {
+      TB_ERROR_MSG("dg", "osetval-range", "do_osetval",
+                   "obj vnum %d uid %ld type %d: value[%d]=%d outside [%d, %d]; "
+                   "not stored", GET_OBJ_VNUM(obj), obj_script_id(obj),
+                   GET_OBJ_TYPE(obj), position, new_value, lo, hi);
+      obj_log(obj, "osetval: value %d for position %d out of range [%d, %d]",
+              new_value, position, lo, hi);
+      return;
+    }
+
     worn_by = obj->worn_by;
     worn_on = obj->worn_on;
 
