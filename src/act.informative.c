@@ -889,7 +889,20 @@ ACMD(do_score)
     send_to_char(ch, "and you are not on a quest at the moment.\r\n");
   else
   {
-    send_to_char(ch, "and your current quest is: %s", QST_NAME(real_quest(GET_QUEST(ch))));
+    /* GET_QUEST comes from the player file (Qcur) and survives quest
+     * deletion in qedit or a quest file removed between boots, so it can
+     * name a vnum with no loaded quest. Never index aquest_table with an
+     * unchecked rnum. */
+    qst_rnum qrnum = real_quest(GET_QUEST(ch));
+
+    if (qrnum == NOTHING || qrnum >= total_quests) {
+      TB_WARN_MSG("quest", "score-quest-lookup", "aquest_table",
+                  DIAG_CHAR_FMT " holds quest vnum %d, which is not loaded "
+                  "(rnum %d, %d quests)", DIAG_CHAR(ch), (int)GET_QUEST(ch),
+                  (int)qrnum, (int)total_quests);
+      send_to_char(ch, "and your current quest is: an unknown quest");
+    } else
+      send_to_char(ch, "and your current quest is: %s", QST_NAME(qrnum));
 
     if (!IS_NPC(ch) && PRF_FLAGGED(ch, PRF_SHOWVNUMS))
         send_to_char(ch, " [%d]\r\n", GET_QUEST(ch));
