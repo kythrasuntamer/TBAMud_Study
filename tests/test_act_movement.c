@@ -191,9 +191,34 @@ static void test_door_open_without_interference(void)
   fx_free_char(pc);
 }
 
+/* H1-14: a .wld sector past movement_loss[] (sector 10 passed the
+ * loader's off-by-one check) costs 1 and is reported, not read OOB. */
+static void test_move_into_room_with_bad_sector(void)
+{
+  struct char_data *pc = fx_new_char("hero", FALSE, 0);
+  struct room_direction_data *ex = door_exit(0, NORTH, 1);
+  static struct zone_data zone[1];
+
+  zone[0].min_level = zone[0].max_level = -1;
+  zone_table = zone;                 /* both rooms are in zone 0 */
+  ex->exit_info = 0;                 /* a plain open exit */
+  world[1].sector_type = NUM_ROOM_SECTORS;
+  GET_MOVE(pc) = GET_MAX_MOVE(pc) = 50;
+
+  TEST_ASSERT_EQUAL_INT(1, do_simple_move(pc, NORTH, 0));
+
+  TEST_ASSERT_EQUAL_INT(1, IN_ROOM(pc));
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("sector-range", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "room vnum 3001 sector 10"));
+  fx_free_char(pc);
+  zone_table = NULL;
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(test_move_into_room_with_bad_sector);
   RUN_TEST(test_door_trigger_purging_exit_is_reported);
   RUN_TEST(test_autokey_stops_after_failed_unlock);
   RUN_TEST(test_door_open_without_interference);

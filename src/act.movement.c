@@ -34,6 +34,26 @@ static int has_key(struct char_data *ch, obj_vnum key);
 static int do_doorcmd(struct char_data *ch, struct obj_data *obj, int door, int scmd);
 static int ok_pick(struct char_data *ch, obj_vnum keynum, int pickproof, int scmd);
 
+/* TRUE if s indexes the per-sector tables (movement_loss[] has
+ * NUM_ROOM_SECTORS entries). A room's sector comes from its .wld file and
+ * the loader's range check has been wrong before, so check before use. */
+#define VALID_SECTOR(s) ((s) >= 0 && (s) < NUM_ROOM_SECTORS)
+
+/* Movement cost of room's sector. An out-of-range sector is reported as
+ * "sector-range" with the room vnum and costs 1, rather than reading past
+ * movement_loss[]. */
+static int sect_move_loss(room_rnum room)
+{
+  int sect = SECT(room);
+
+  if (VALID_SECTOR(sect))
+    return movement_loss[sect];
+  TB_ERROR_MSG("act", "sector-range", "room",
+               "room vnum %d sector %d not in [0,%d); move cost 1",
+               (int) GET_ROOM_VNUM(room), sect, NUM_ROOM_SECTORS);
+  return 1;
+}
+
 
 /* simple function to determine if char can walk on water */
 static int has_boat(struct char_data *ch)
@@ -249,8 +269,7 @@ int do_simple_move(struct char_data *ch, int dir, int need_specials_check)
   /* All checks passed, nothing will prevent movement now other than lack of
    * move points. */
   /* move points needed is avg. move loss for src and destination sect type */
-  need_movement = (movement_loss[SECT(was_in)] +
-		   movement_loss[SECT(going_to)]) / 2;
+  need_movement = (sect_move_loss(was_in) + sect_move_loss(going_to)) / 2;
 
   /* Move Point Requirement Check */
   if (GET_MOVE(ch) < need_movement && !IS_NPC(ch))
