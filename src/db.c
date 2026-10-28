@@ -3225,19 +3225,22 @@ void reset_zone(zone_rnum zone)
       break;
 
     case 'V':
+      /* 'V' <type> <context> <room> <name> <value>: arg2 is the variable
+       * context for every target type (zedit and save_zone() write it
+       * there); arg3 is the room rnum after renum_zone_table(). */
       if (ZCMD.arg1==MOB_TRIGGER && tmob) {
         if (!SCRIPT(tmob)) {
           ZONE_ERROR("Attempt to give variable to scriptless mobile");
         } else
           add_var(&(SCRIPT(tmob)->global_vars), ZCMD.sarg1, ZCMD.sarg2,
-                  ZCMD.arg3);
+                  ZCMD.arg2);
         last_cmd = 1;
       } else if (ZCMD.arg1==OBJ_TRIGGER && tobj) {
         if (!SCRIPT(tobj)) {
           ZONE_ERROR("Attempt to give variable to scriptless object");
         } else
           add_var(&(SCRIPT(tobj)->global_vars), ZCMD.sarg1, ZCMD.sarg2,
-                  ZCMD.arg3);
+                  ZCMD.arg2);
         last_cmd = 1;
       } else if (ZCMD.arg1==WLD_TRIGGER) {
         if (ZCMD.arg3 == NOWHERE || ZCMD.arg3>top_of_world) {

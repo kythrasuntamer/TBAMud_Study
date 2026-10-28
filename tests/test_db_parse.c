@@ -65,6 +65,7 @@ static long fixture_uid;
 static const void *fixture_uid_owner;
 static int fixture_purge_on_load, fixture_load_triggers, fixture_triggers_added;
 static int fixture_vars_added;
+static long fixture_last_var_context;
 
 long obj_script_id(obj_data *obj)
 {
@@ -113,7 +114,11 @@ void add_trigger(struct script_data *sc, trig_data *t, int loc)
 { (void)sc; (void)t; (void)loc; fixture_triggers_added++; }
 void add_var(struct trig_var_data **var_list, const char *name,
              const char *value, long id)
-{ (void)var_list; (void)name; (void)value; (void)id; fixture_vars_added++; }
+{
+  (void)var_list; (void)name; (void)value;
+  fixture_vars_added++;
+  fixture_last_var_context = id;
+}
 void reset_wtrigger(room_data *room) { (void)room; }
 void load_mtrigger(char_data *ch) { (void)ch; }
 void char_to_room(struct char_data *ch, room_rnum room)
@@ -331,6 +336,26 @@ static void reset_zone_put_without_container_creates_nothing(void)
   TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
   TEST_ASSERT_EQUAL_STRING("zone-reset", tb_captured_operation);
   TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "obj vnum 3022"));
+  zone_fixture_teardown();
+}
+
+/* B1-V02: 'V' for an object or mob passed arg3 (the room rnum after
+ * renum_zone_table()) as the variable context instead of arg2, so a global
+ * assigned with context 7 landed in context <room rnum>. */
+static void reset_zone_object_variable_uses_arg2_context(void)
+{
+  struct reset_com cmds[] = {
+    { 'O', FALSE, 0, 99, 0, 1, NULL, NULL },
+    { 'V', TRUE, OBJ_TRIGGER, 7, 0, 2, (char *)"foo", (char *)"bar" },
+    { 'S', FALSE, 0, 0, 0, 3, NULL, NULL },
+  };
+
+  zone_fixture_setup(cmds);
+  fixture_purge_on_load = 0;
+  fixture_last_var_context = -1;
+  reset_zone(0);
+  TEST_ASSERT_EQUAL_INT(1, fixture_vars_added);
+  TEST_ASSERT_EQUAL_INT(7, (int)fixture_last_var_context);
   zone_fixture_teardown();
 }
 
@@ -791,5 +816,6 @@ int main(void)
   RUN_TEST(reset_zone_wtrigger_walk_ends_at_top_max);
   RUN_TEST(reset_zone_disables_equip_with_bad_wear_pos);
   RUN_TEST(reset_zone_put_without_container_creates_nothing);
+  RUN_TEST(reset_zone_object_variable_uses_arg2_context);
   return UNITY_END();
 }
