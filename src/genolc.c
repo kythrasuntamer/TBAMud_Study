@@ -613,7 +613,7 @@ static int export_info_file(zone_rnum zrnum)
 
 static int export_save_shops(zone_rnum zrnum)
 {
-  int i, j, rshop;
+  int i, j, rshop, keeper_qq;
   FILE *shop_file;
   struct shop_data *shop;
 
@@ -655,6 +655,17 @@ static int export_save_shops(zone_rnum zrnum)
 		S_BUYWORD(shop, j) ? S_BUYWORD(shop, j) : "");
       tb_fprintf(shop_file, "-1\n");
 
+      /* A shop may have no keeper (sedit before one is chosen, or its keeper
+       * mob was deleted): NOBODY must not index mob_index (65535 with
+       * unsigned rnums, ~2 MB past the table). Export it as -1. */
+      if (S_KEEPER(shop) == NOBODY || S_KEEPER(shop) > top_of_mobt) {
+        TB_WARN_MSG("genolc", "export-shop", "qq.shp",
+                    "shop %d in zone %d has no valid keeper (rnum %d); exported as -1",
+                    SHOP_NUM(rshop), zone_table[zrnum].number, S_KEEPER(shop));
+        keeper_qq = -1;
+      } else
+        keeper_qq = mob_index[S_KEEPER(shop)].vnum % 100;
+
       /* Save messages. Added some defaults as sanity checks. */
       tb_fprintf(shop_file,
 	      "%s~\n"
@@ -677,7 +688,7 @@ static int export_save_shops(zone_rnum zrnum)
 	      S_SELL(shop) ? S_SELL(shop) : "%s Ke?! %d?",
 	      S_BROKE_TEMPER(shop),
 	      S_BITVECTOR(shop),
-	      mob_index[S_KEEPER(shop)].vnum%100,
+	      keeper_qq,
 	      S_NOTRADE(shop)
 	      );
 

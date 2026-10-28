@@ -108,11 +108,74 @@ static void test_unsavable_types_are_freed(void)
   TEST_ASSERT_EQUAL_INT(0, saver_calls);
 }
 
+/* ---- zone export ------------------------------------------------------ */
+
+struct shop_data *shop_index = NULL;
+int top_shop = -1;
+
+shop_rnum real_shop(shop_vnum vnum)
+{
+  int i;
+  for (i = 0; i <= top_shop; i++)
+    if (shop_index[i].vnum == vnum)
+      return i;
+  return NOWHERE;
+}
+
+static char *slurp(const char *path)
+{
+  static char buf[16384];
+  FILE *fl = fopen(path, "rb");
+  size_t n;
+
+  if (!fl)
+    return NULL;
+  n = fread(buf, 1, sizeof(buf) - 1, fl);
+  buf[n] = '\0';
+  fclose(fl);
+  return buf;
+}
+
+/* C1-24: a shop with no keeper (NOBODY) made the exporter read
+ * mob_index[NOBODY], ~2 MB past the table (ASan SEGV before the fix). */
+static void test_export_shop_without_keeper(void)
+{
+  static obj_vnum no_products[] = { NOTHING };
+  static struct shop_buy_data no_types[] = { { NOTHING, NULL } };
+  static room_vnum no_rooms[] = { NOWHERE };
+  struct shop_data shop;
+
+  memset(&shop, 0, sizeof(shop));
+  shop.vnum = 3010;
+  shop.keeper = NOBODY;
+  shop.producing = no_products;
+  shop.type = no_types;
+  shop.in_room = no_rooms;
+  shop_index = &shop;
+  top_shop = 0;
+  zones[1].bot = 3000;
+  zones[1].top = 3099;
+
+  TEST_ASSERT_TRUE(export_save_shops(1));
+  TEST_ASSERT_EQUAL_STRING("export-shop", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(slurp("world/export/qq.shp"), "QQ-1\n"));
+  shop_index = NULL;
+  top_shop = -1;
+}
+
 int main(void)
 {
+  char dir[] = "/tmp/tb_test_genolc.XXXXXX";
+
+  if (!mkdtemp(dir) || chdir(dir) != 0 || mkdir("world", 0700) != 0 ||
+      mkdir("world/export", 0700) != 0) {
+    perror("test_genolc fixture directory");
+    return 1;
+  }
   logfile = stderr;
 
   UNITY_BEGIN();
+  RUN_TEST(test_export_shop_without_keeper);
   RUN_TEST(test_failing_saver_does_not_hang_save_all);
   RUN_TEST(test_successful_saves_empty_the_list);
   RUN_TEST(test_unsavable_types_are_freed);
