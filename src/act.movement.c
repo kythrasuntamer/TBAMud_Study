@@ -143,9 +143,20 @@ static int has_scuba(struct char_data *ch)
  * @param ch The character structure to attempt to move.
  * @param dir The defined direction (NORTH, SOUTH, etc...) to attempt to
  * move into.
- * @param need_specials_check If TRUE will cause 
- * @retval int 1 for a successful move (ch is now in a new location)		
- * or 0 for a failed move (ch is still in the original location). */
+ * @pre EXIT(ch, dir) exists and leads to a room (perform_move checks).
+ * @param need_specials_check If TRUE, ch is a follower being dragged along
+ * by its leader's move: room special procedures are checked with a NULL
+ * argument instead of the movement command, and the move is suppressed if
+ * one of them claims it.
+ * @retval int 1 for a successful move (ch is now in a new location)
+ * or 0 for a failed move. A 0 does not always mean ch is where it was: a
+ * move into a death trap returns 0 after death_cry() and extract_char()
+ * (ch is then pending extraction and must not act again), and an entry or
+ * greet trigger that refuses the move puts ch back in the old room.
+ * Triggers: the leave triggers run before the move and entry_mtrigger,
+ * enter_wtrigger and greet_mtrigger after it; any of them may teleport,
+ * purge or kill ch, so callers re-check IN_ROOM(ch) rather than assume the
+ * destination. */
 int do_simple_move(struct char_data *ch, int dir, int need_specials_check)
 {
   /* Begin Local variable definitions */
@@ -380,6 +391,14 @@ int perform_move(struct char_data *ch, int dir, int need_specials_check)
     if (!do_simple_move(ch, dir, need_specials_check))
       return (0);
 
+    /* Each follower's perform_move() recurses (moving its own followers)
+     * and runs leave/entry/greet triggers. follow_type nodes are freed by
+     * stop_follower(), which those triggers can reach (a script that makes
+     * a mob stop following, purges a follower, or kills one); 'next' is
+     * read before the call, so a trigger that frees the next node of
+     * ch->followers leaves this loop holding a dangling pointer. Code
+     * reached from here must not call stop_follower() on another follower
+     * of ch; detaching the follower currently moving is safe. */
     for (k = ch->followers; k; k = next) {
       next = k->next;
       if ((IN_ROOM(k->follower) == was_in) &&
@@ -518,6 +537,12 @@ static const int flags_door[] =
   NEED_CLOSED | NEED_LOCKED
 };
 
+/* Door/container helpers. Every macro below takes (room or ch, obj, door)
+ * where obj and door are mutually exclusive: obj != NULL means a container
+ * and door is then -1 (never index EXIT with it); obj == NULL means
+ * EXITN(room, door) / EXIT(ch, door), which must be non-NULL. The exit is
+ * only known to exist when do_gen_door looked it up: after any door
+ * trigger, do_doorcmd re-validates it (door_target_still_valid). */
 #define EXITN(room, door)		(world[room].dir_option[door])
 #define OPEN_DOOR(room, obj, door)	((obj) ?\
 		(REMOVE_BIT(GET_OBJ_VAL(obj, 1), CONT_CLOSED)) :\
@@ -825,6 +850,16 @@ ACMD(do_stand)
   }
 }
 
+/* Furniture invariant (do_sit, do_rest, do_sleep, do_stand, handler.c):
+ *  - SITTING(ch) != NULL exactly when ch is in that furniture's
+ *    sitting_here list (OBJ_SAT_IN_BY(furniture), chained through
+ *    NEXT_SITTING), and GET_OBJ_VAL(furniture, 1) counts that list;
+ *  - only POS_SITTING, POS_RESTING and POS_SLEEPING characters are seated.
+ * Every path that moves ch out of the seated positions or out of the room
+ * must call char_from_furniture() first: do_stand, char_from_room,
+ * extract_char, and the fight code through POS_CHANGE_UNSEAT (fight.h).
+ * Assigning GET_POS(ch) = POS_STANDING/POS_FIGHTING directly breaks it;
+ * do_sit reports such a desync ("furniture-desync") and repairs it. */
 ACMD(do_sit)
 {
   char arg[MAX_STRING_LENGTH];
