@@ -780,10 +780,10 @@ int format_text(char **ptr_string, int mode, struct descriptor_data *d, unsigned
  */
 int replace_str(char **string, char *pattern, char *replacement, int rep_all, unsigned int max_size)
 {
-  char *replace_buffer = NULL;
-  char *flow, *jetsam, temp;
-  size_t len, current_len, pattern_len, replacement_len;
-  int i;
+  const char *scan, *hit;
+  char *result, *out;
+  size_t current_len, result_len, pattern_len, replacement_len, room, growth;
+  int count = 0, i;
 
   if (!string || !*string || !pattern || !*pattern || !replacement || max_size < 2)
     return 0;
@@ -791,53 +791,46 @@ int replace_str(char **string, char *pattern, char *replacement, int rep_all, un
   current_len = strlen(*string);
   pattern_len = strlen(pattern);
   replacement_len = strlen(replacement);
-  if (replacement_len > pattern_len &&
-      current_len > max_size - MIN(max_size, replacement_len - pattern_len))
+
+  /* Size the whole result before changing anything. The edit buffer is
+   * either fully rewritten or left exactly as it was: the old loop cut the
+   * buffer at the failing match on overflow, and its strncat() bounds
+   * dropped the last byte of a result that exactly filled max_size, both
+   * without a word. */
+  for (scan = *string; count < INT_MAX && (hit = strstr(scan, pattern)) != NULL;
+       scan = hit + pattern_len) {
+    count++;
+    if (!rep_all)
+      break;
+  }
+  if (count == 0)
+    return 0;
+
+  room = current_len < max_size - 1 ? max_size - 1 - current_len : 0;
+  if (replacement_len >= pattern_len) {
+    growth = replacement_len - pattern_len;
+    if (growth && (size_t)count > room / growth)
+      return -1;
+    result_len = current_len + (size_t)count * growth;
+  } else
+    result_len = current_len - (size_t)count * (pattern_len - replacement_len);
+  if (result_len > max_size - 1)
     return -1;
 
-  CREATE(replace_buffer, char, max_size);
-  i = 0;
-  jetsam = *string;
-  flow = *string;
-  *replace_buffer = '\0';
-
-  if (rep_all) {
-    while ((flow = (char *)strstr(flow, pattern)) != NULL) {
-      i++;
-      temp = *flow;
-      *flow = '\0';
-      if ((strlen(replace_buffer) + strlen(jetsam) + strlen(replacement)) > max_size) {
-        i = -1;
-        break;
-      }
-      strncat(replace_buffer, jetsam, max_size - strlen(replace_buffer) -1);
-      strncat(replace_buffer, replacement, max_size - strlen(replace_buffer) - 1);
-      *flow = temp;
-      flow += strlen(pattern);
-      jetsam = flow;
-    }
-    strncat(replace_buffer, jetsam, max_size - strlen(replace_buffer) - 1);
-  } else {
-    if ((flow = (char *)strstr(*string, pattern)) != NULL) {
-      i++;
-      flow += strlen(pattern);
-      len = ((char *)flow - (char *)*string) - strlen(pattern);
-      strncpy(replace_buffer, *string, len < max_size - 1 ? len : max_size - 1);
-      replace_buffer[max_size - 1] = '\0';
-      strncat(replace_buffer, replacement, max_size - strlen(replace_buffer) - 1);
-      strncat(replace_buffer, flow, max_size - strlen(replace_buffer) - 1);
-    }
+  CREATE(result, char, result_len + 3); /* +3: room for a "\r\n" append */
+  out = result;
+  for (scan = *string, i = 0; i < count && (hit = strstr(scan, pattern)) != NULL; i++) {
+    memcpy(out, scan, (size_t)(hit - scan));
+    out += hit - scan;
+    memcpy(out, replacement, replacement_len);
+    out += replacement_len;
+    scan = hit + pattern_len;
   }
+  memcpy(out, scan, strlen(scan) + 1);
 
-  if (i <= 0) {
-    free(replace_buffer);
-    return i;
-  } else {
-    RECREATE(*string, char, strlen(replace_buffer) + 3);
-    memcpy(*string, replace_buffer, strlen(replace_buffer) + 1);
-  }
-  free(replace_buffer);
-  return i;
+  free(*string);
+  *string = result;
+  return count;
 }
 
 #endif

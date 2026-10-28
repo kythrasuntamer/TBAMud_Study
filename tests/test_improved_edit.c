@@ -132,6 +132,38 @@ void test_save_command_still_parses(void)
   free(line);
 }
 
+/* replace_str(): an overflowing "/ra" used to leave the buffer cut at the
+ * failing match while the player was told the replace was aborted. */
+void test_replace_all_overflow_leaves_buffer_unchanged(void)
+{
+  text = strdup("aXaXaX");
+  TEST_ASSERT_NOT_NULL(text);
+
+  TEST_ASSERT_EQUAL_INT(-1, replace_str(&text, (char *)"X", (char *)"YYYYY", TRUE, 12));
+  TEST_ASSERT_EQUAL_STRING("aXaXaX", text);
+}
+
+void test_replace_all_exact_fit_keeps_every_byte(void)
+{
+  /* 3 + 3*3 = 12 bytes of text + NUL = 13 = max_size. */
+  text = strdup("aXaXaX");
+  TEST_ASSERT_NOT_NULL(text);
+
+  TEST_ASSERT_EQUAL_INT(3, replace_str(&text, (char *)"X", (char *)"YYY", TRUE, 13));
+  TEST_ASSERT_EQUAL_STRING("aYYYaYYYaYYY", text);
+}
+
+void test_replace_first_only_and_shrink(void)
+{
+  text = strdup("one two one");
+  TEST_ASSERT_NOT_NULL(text);
+
+  TEST_ASSERT_EQUAL_INT(1, replace_str(&text, (char *)"one", (char *)"1", FALSE, 64));
+  TEST_ASSERT_EQUAL_STRING("1 two one", text);
+  TEST_ASSERT_EQUAL_INT(0, replace_str(&text, (char *)"three", (char *)"3", TRUE, 64));
+  TEST_ASSERT_EQUAL_STRING("1 two one", text);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -141,5 +173,8 @@ int main(void)
   RUN_TEST(test_format_keeps_complete_colour_codes);
   RUN_TEST(test_bare_slash_is_rejected_without_reading_past_it);
   RUN_TEST(test_save_command_still_parses);
+  RUN_TEST(test_replace_all_overflow_leaves_buffer_unchanged);
+  RUN_TEST(test_replace_all_exact_fit_keeps_every_byte);
+  RUN_TEST(test_replace_first_only_and_shrink);
   return UNITY_END();
 }
