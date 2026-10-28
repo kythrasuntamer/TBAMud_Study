@@ -36,6 +36,7 @@ int rev_dir[NUM_OF_DIRS] = {
  * Invalid trigger-argument paths must never dereference a missing index.
  * Production engine supplies these definitions in its normal link. */
 struct index_data **trig_index;
+int top_of_trigt;   /* no trigger prototypes: load diagnostics name NOTHING */
 void mudlog(int type, int level, int file, const char *str, ...)
 {
   (void)type; (void)level; (void)file; (void)str;

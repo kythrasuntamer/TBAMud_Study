@@ -829,20 +829,40 @@ int death_mtrigger(char_data *ch, char_data *actor)
   return 1;
 }
 
+/* Load triggers and SCRIPT_ERROR_CODE: when the load trigger's script
+ * returns SCRIPT_ERROR_CODE, the prototype's trigger list is freed for good,
+ * so this instance is the last one to load with scripts. script_driver()
+ * returns it on depth overflow (a load trigger that loads another copy of
+ * its own mob/object, recursively), and reports that itself; but a builder's
+ * `return -9999999` and the no-owning-script path reach it as well. The
+ * removal is therefore always reported here, with the prototype and the
+ * trigger, so builders can find out why later copies have no scripts. */
+/* Trigger vnum for diagnostics, from an rnum captured before a dispatch
+ * (the trigger itself may be freed by then). NOTHING if out of range. */
+static trig_vnum dg_trig_rnum_to_vnum(trig_rnum rnum)
+{
+  if (rnum == NOTHING || rnum >= top_of_trigt || !trig_index || !trig_index[rnum])
+    return NOTHING;
+  return trig_index[rnum]->vnum;
+}
+
 void load_mtrigger(char_data *ch)
 {
   trig_data *t;
   int result = 0;
   mob_rnum rnum;
+  trig_rnum trig = NOTHING;
 
   if (!SCRIPT_CHECK(ch, MTRIG_LOAD))
     return;
 
-  /* The script may extract its owner; capture the prototype beforehand. */
+  /* The script may extract its owner (and, at the outermost level, free a
+   * detached trigger); capture the prototype and trigger rnums beforehand. */
   rnum = GET_MOB_RNUM(ch);
   for (t = TRIGGERS(SCRIPT(ch)); t; t = t->next) {
     if (TRIGGER_CHECK(t, MTRIG_LOAD) &&
         (rand_number(1, 100) <= GET_TRIG_NARG(t))) {
+      trig = GET_TRIG_RNUM(t);
       result = script_driver(&ch, t, MOB_TRIGGER, TRIG_NEW);
       break;
     }
@@ -850,6 +870,12 @@ void load_mtrigger(char_data *ch)
   if (result == SCRIPT_ERROR_CODE) {
     /* we have recursed beyond reasonable depth */
     /* make sure this mob is the last one in the load chain */
+    TB_ERROR_MSG("dg", "load-proto-disable", "load_mtrigger",
+                 "mob vnum %d: load trigger %d returned SCRIPT_ERROR_CODE; "
+                 "the prototype's scripts are removed until reboot",
+                 (mob_index && rnum != NOBODY && rnum <= top_of_mobt)
+                   ? mob_index[rnum].vnum : NOBODY,
+                 dg_trig_rnum_to_vnum(trig));
     if (rnum != NOBODY) {
       free_proto_script(&mob_proto[rnum], MOB_TRIGGER);
     }
@@ -1302,16 +1328,19 @@ void load_otrigger(obj_data *obj)
   trig_data *t;
   int result = 0;
   obj_rnum rnum;
+  trig_rnum trig = NOTHING;
 
   if (!SCRIPT_CHECK(obj, OTRIG_LOAD))
     return;
 
   /* script_driver() sets obj to NULL if the script purges it, and a script
-   * may "return" SCRIPT_ERROR_CODE itself. Capture the prototype beforehand. */
+   * may "return" SCRIPT_ERROR_CODE itself. Capture the prototype (and the
+   * trigger, see load_mtrigger) beforehand. */
   rnum = GET_OBJ_RNUM(obj);
   for (t = TRIGGERS(SCRIPT(obj)); t; t = t->next) {
     if (TRIGGER_CHECK(t, OTRIG_LOAD) &&
         (rand_number(1, 100) <= GET_TRIG_NARG(t))) {
+      trig = GET_TRIG_RNUM(t);
       result = script_driver(&obj, t, OBJ_TRIGGER, TRIG_NEW);
       break;
     }
@@ -1319,6 +1348,12 @@ void load_otrigger(obj_data *obj)
   if (result == SCRIPT_ERROR_CODE) {
     /* we have recursed beyond reasonable depth */
     /* make sure this mob is the last one in the load chain */
+    TB_ERROR_MSG("dg", "load-proto-disable", "load_otrigger",
+                 "obj vnum %d: load trigger %d returned SCRIPT_ERROR_CODE; "
+                 "the prototype's scripts are removed until reboot",
+                 (obj_index && rnum != NOTHING && rnum <= top_of_objt)
+                   ? obj_index[rnum].vnum : NOTHING,
+                 dg_trig_rnum_to_vnum(trig));
     if (rnum != NOTHING) {
       free_proto_script(&obj_proto[rnum], OBJ_TRIGGER);
     }

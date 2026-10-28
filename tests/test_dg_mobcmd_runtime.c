@@ -253,6 +253,28 @@ static void test_mob_numeric_arguments_are_checked(void)
   (void)v;
 }
 
+/* E1-16: a load trigger returning SCRIPT_ERROR_CODE removes the
+ * prototype's scripts; that must be reported with the prototype and the
+ * trigger, for mobs and objects. */
+static void test_load_trigger_error_code_is_reported(void)
+{
+  static const char *const lines[] = { "return -9999999", NULL };
+  struct char_data *m = dgw_mob(DGW_MOB_GUARD, 0);
+  struct obj_data *o = dgw_obj(DGW_OBJ_STONE, 0);
+
+  SCRIPT(m) = dgw_script_with(MOB_TRIGGER, MTRIG_LOAD, lines);
+  load_mtrigger(m);
+  TEST_ASSERT_EQUAL_INT(1, dgw_saw("load-proto-disable"));
+  TEST_ASSERT_NOT_NULL(strstr(dgw_detail("load-proto-disable"),
+                              "mob vnum 300: load trigger 400"));
+
+  SCRIPT(o) = dgw_script_with(OBJ_TRIGGER, OTRIG_LOAD, lines);
+  load_otrigger(o);
+  TEST_ASSERT_EQUAL_INT(2, dgw_saw("load-proto-disable"));
+  TEST_ASSERT_NOT_NULL(strstr(dgw_detail("load-proto-disable"),
+                              "obj vnum 201: load trigger 400"));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -266,5 +288,6 @@ int main(void)
   RUN_TEST(test_mjunk_all_forms);
   RUN_TEST(test_mload_container_into_its_own_name);
   RUN_TEST(test_mob_numeric_arguments_are_checked);
+  RUN_TEST(test_load_trigger_error_code_is_reported);
   return UNITY_END();
 }
