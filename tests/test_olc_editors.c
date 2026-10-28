@@ -100,6 +100,53 @@ int obj_uid_matches(long uid, const obj_data *obj)
 }
 
 /* ------------------------------------------------------------------ */
+/* handler.c moves, reduced to the accounting they own: carry weight   */
+/* for inventory, the sum of affected[] modifiers for equipment.       */
+/* ------------------------------------------------------------------ */
+static int worn_modifier_total;
+static int obj_modifier_sum(struct obj_data *obj)
+{
+  int i, sum = 0;
+  for (i = 0; i < MAX_OBJ_AFFECT; i++)
+    sum += obj->affected[i].modifier;
+  return sum;
+}
+void obj_to_char(struct obj_data *object, struct char_data *ch)
+{
+  object->carried_by = ch;
+  IS_CARRYING_W(ch) += GET_OBJ_WEIGHT(object);
+}
+void obj_from_char(struct obj_data *object)
+{
+  IS_CARRYING_W(object->carried_by) -= GET_OBJ_WEIGHT(object);
+  object->carried_by = NULL;
+}
+void obj_to_obj(struct obj_data *obj, struct obj_data *obj_to)
+{
+  obj->in_obj = obj_to;
+  GET_OBJ_WEIGHT(obj_to) += GET_OBJ_WEIGHT(obj);
+}
+void obj_from_obj(struct obj_data *obj)
+{
+  GET_OBJ_WEIGHT(obj->in_obj) -= GET_OBJ_WEIGHT(obj);
+  obj->in_obj = NULL;
+}
+void equip_char(struct char_data *ch, struct obj_data *obj, int pos)
+{
+  obj->worn_by = ch;
+  obj->worn_on = pos;
+  worn_modifier_total += obj_modifier_sum(obj);
+}
+struct obj_data *unequip_char(struct char_data *ch, int pos)
+{
+  struct obj_data *obj = OLC_IEDIT_OBJ(ch->desc);
+  (void)pos;
+  worn_modifier_total -= obj_modifier_sum(obj);
+  obj->worn_by = NULL;
+  return obj;
+}
+
+/* ------------------------------------------------------------------ */
 /* OLC session lifecycle                                               */
 /* ------------------------------------------------------------------ */
 static int cleanups;
@@ -1397,6 +1444,83 @@ static void test_zedit_menu_reports_out_of_range_wear_and_door_values(void)
   free_zedit_session(d);
 }
 
+
+/* ------------------------------------------------------------------ */
+/* F1-17: iedit re-inserts a carried, contained or worn object so the  */
+/* handler re-accounts its weight and affects.                         */
+/* ------------------------------------------------------------------ */
+static struct obj_data *iedit_live_session(const char *sdesc)
+{
+  struct descriptor_data *d = &builder_desc;
+  struct obj_data *target = scratch_obj(sdesc);
+
+  OLC_OBJ(d) = scratch_obj(sdesc);
+  OLC_IEDIT_OBJ(d) = target;
+  OLC_IEDIT_UID(d) = obj_script_id(target);
+  OLC_NUM(d) = 3005;
+  OLC_MODE(d) = OEDIT_CONFIRM_SAVESTRING;
+  live_uid = target->script_id;
+  live_uid_obj = target;
+  return target;
+}
+
+static void test_iedit_weight_change_on_carried_object_keeps_carry_weight(void)
+{
+  struct descriptor_data *d = &builder_desc;
+  struct obj_data *target = iedit_live_session("a rock");
+
+  GET_OBJ_WEIGHT(target) = 1;
+  obj_to_char(target, &builder);
+  GET_OBJ_WEIGHT(OLC_OBJ(d)) = 500;
+
+  iedit_parse(d, "y");
+
+  TEST_ASSERT_EQUAL_INT(500, IS_CARRYING_W(&builder));
+  TEST_ASSERT_EQUAL_PTR(&builder, target->carried_by);
+  free_scratch_obj(target);
+}
+
+static void test_iedit_weight_change_inside_container_updates_container(void)
+{
+  struct descriptor_data *d = &builder_desc;
+  struct obj_data *target = iedit_live_session("a coin");
+  struct obj_data bag;
+
+  memset(&bag, 0, sizeof(bag));
+  GET_OBJ_WEIGHT(&bag) = 3;
+  GET_OBJ_WEIGHT(target) = 2;
+  obj_to_obj(target, &bag);          /* bag now weighs 5 */
+  GET_OBJ_WEIGHT(OLC_OBJ(d)) = 10;
+
+  iedit_parse(d, "y");
+
+  TEST_ASSERT_EQUAL_INT(13, GET_OBJ_WEIGHT(&bag));
+  TEST_ASSERT_EQUAL_PTR(&bag, target->in_obj);
+  free_scratch_obj(target);
+}
+
+static void test_iedit_affect_change_on_worn_object_is_reapplied(void)
+{
+  struct descriptor_data *d = &builder_desc;
+  struct obj_data *target = iedit_live_session("a ring");
+
+  worn_modifier_total = 0;
+  target->affected[0].location = APPLY_HIT;
+  target->affected[0].modifier = 10;
+  equip_char(&builder, target, WEAR_FINGER_R);   /* +10 accounted */
+  OLC_OBJ(d)->affected[0].location = APPLY_HIT;
+  OLC_OBJ(d)->affected[0].modifier = 50;
+
+  iedit_parse(d, "y");
+
+  /* -10 on the way out, +50 on the way back in: removing it later
+   * subtracts exactly what is applied. */
+  TEST_ASSERT_EQUAL_INT(50, worn_modifier_total);
+  TEST_ASSERT_EQUAL_PTR(&builder, target->worn_by);
+  TEST_ASSERT_EQUAL_INT(WEAR_FINGER_R, target->worn_on);
+  free_scratch_obj(target);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -1431,5 +1555,8 @@ int main(void)
   RUN_TEST(test_zedit_reediting_global_frees_previous_strings);
   RUN_TEST(test_zedit_deleting_global_frees_its_strings);
   RUN_TEST(test_zedit_menu_reports_out_of_range_wear_and_door_values);
+  RUN_TEST(test_iedit_weight_change_on_carried_object_keeps_carry_weight);
+  RUN_TEST(test_iedit_weight_change_inside_container_updates_container);
+  RUN_TEST(test_iedit_affect_change_on_worn_object_is_reapplied);
   return UNITY_END();
 }

@@ -172,11 +172,8 @@ static void iedit_replace_values(struct obj_data *target, struct obj_data *edite
   if (!target || !edited)
     return;
 
-  /* Values only make sense relative to the object type. iedit does not allow
-   * changing type, but this guard keeps the save path defensive. */
-  if (GET_OBJ_TYPE(target) != GET_OBJ_TYPE(edited))
-    return;
-
+  /* Values are interpreted by the object type, which iedit copies first
+   * (menu '5' may change it), so they are always copied together. */
   for (i = 0; i < NUM_OBJ_VAL_POSITIONS; i++)
     GET_OBJ_VAL(target, i) = GET_OBJ_VAL(edited, i);
 }
@@ -193,9 +190,10 @@ static int iedit_save_internally(struct descriptor_data *d)
 {
   struct obj_data *target = OLC_IEDIT_OBJ(d);
   struct obj_data *edited = OLC_OBJ(d);
-  struct obj_data *top_obj;
-  struct char_data *owner = NULL;
+  struct obj_data *top_obj, *container;
+  struct char_data *owner = NULL, *wearer, *carrier;
   struct char_data *builder = d->character;
+  int wear_pos;
 
   if (!edited || !obj_uid_matches(OLC_IEDIT_UID(d), target)) {
     TB_ERROR_MSG("olc", "iedit-target-gone", "object",
@@ -205,6 +203,24 @@ static int iedit_save_internally(struct descriptor_data *d)
     OLC_IEDIT_OBJ(d) = NULL;
     return FALSE;
   }
+
+  /* Invariant: carry weight, container weight, character affects and room
+   * light were accounted for from the object's current type, weight,
+   * affected[] and AFF bits when it was equipped, picked up or put in a
+   * container. Writing new values in place would leave that accounting
+   * wrong (a +10 HIT ring edited to +50 removes 50 on unequip). Take the
+   * object out through the handler first and put it back afterwards, so
+   * the handler subtracts the old values and adds the new ones. */
+  wearer = target->worn_by;
+  wear_pos = target->worn_on;
+  carrier = target->carried_by;
+  container = target->in_obj;
+  if (wearer)
+    unequip_char(wearer, wear_pos);
+  else if (carrier)
+    obj_from_char(target);
+  else if (container)
+    obj_from_obj(target);
 
   iedit_replace_string(target, &target->name, edited->name, IEDIT_STRING_NAME);
   iedit_replace_string(target, &target->short_description, edited->short_description, IEDIT_STRING_SHORT);
@@ -231,6 +247,15 @@ static int iedit_save_internally(struct descriptor_data *d)
       target->affected[i] = edited->affected[i];
   }
   iedit_replace_values(target, edited);
+
+  /* Re-insert with the new values (equip_char may refuse a now-invalid
+   * item and leave it in the wearer's inventory, with its usual message). */
+  if (wearer)
+    equip_char(wearer, target, wear_pos);
+  else if (carrier)
+    obj_to_char(target, carrier);
+  else if (container)
+    obj_to_obj(target, container);
 
   /* If the object, or its top-level container, belongs to a player, make sure
    * the crash/rent save code notices the change. */
