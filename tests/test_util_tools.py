@@ -143,6 +143,60 @@ def mail_flag_bit31_is_defined(tmp):
           "record missing:\n" + index)
 
 
+# ----------------------------------------------------------- rebuildIndex
+
+def rebuild_index(tmp, pfiles):
+    root = os.path.join(tmp, "plrfiles")
+    for name, text in pfiles.items():
+        write(os.path.join(root, name), text)
+    os.makedirs(root, exist_ok=True)
+    rc, out, err = run("rebuildIndex", [os.path.join(tmp, "index")], root)
+    lines = [l for l in read(os.path.join(tmp, "index")).splitlines()
+             if l != "~"]
+    return rc, lines, err
+
+
+def pfile(*tags):
+    return "Name: X\n" + "".join(t + "\n" for t in tags)
+
+
+@test("rebuildIndex")
+def rebuild_index_server_format(tmp):
+    """I2-05/I2-V02: 6 fields with level clamped to 30; server wants 5."""
+    rc, lines, err = rebuild_index(tmp, {
+        "A-E/alice.plr": pfile("Levl: 60", "Id  : 1", "Last: 1700000000"),
+        "U-Z/zed.plr": pfile("Levl: 3", "Id  : 2", "Last: 1700000001",
+                             "Act : k 0 0 0"),
+    })
+    check(rc == 0, "rc=%d err=%s" % (rc, err))
+    check(sorted(lines) == ["1 alice 60 0 1700000000",
+                            "2 zed 3 a 1700000001"],
+          "index is not 'id name level flags last':\n%r" % lines)
+
+
+@test("rebuildIndex")
+def rebuild_index_reports_missing_tag(tmp):
+    """I2-05: a pfile without Id was indexed as idnum 0, silently."""
+    rc, lines, err = rebuild_index(tmp, {
+        "A-E/alice.plr": pfile("Levl: 60", "Last: 1700000000"),
+        "A-E/bob.plr": pfile("Id  : 2", "Last: 1700000000"),
+    })
+    check(rc == 1, "rc=%d" % rc)
+    check("pfile-tag-missing" in operations(err), err)
+    check(lines == ["2 bob 0 0 1700000000"], "%r" % lines)
+
+
+@test("rebuildIndex")
+def rebuild_index_reports_level_range(tmp):
+    """I2-V02: an out-of-range level was clamped to 30 without a report."""
+    rc, lines, err = rebuild_index(tmp, {
+        "A-E/alice.plr": pfile("Levl: 99", "Id  : 1", "Last: 1700000000"),
+    })
+    check(rc == 1, "rc=%d" % rc)
+    check("pfile-level-range" in operations(err), err)
+    check(lines == [], "%r" % lines)
+
+
 # ------------------------------------------------------------- plrtoascii
 
 def plr_record_size(tmp):
