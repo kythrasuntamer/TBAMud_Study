@@ -955,6 +955,22 @@ static void saturated_arithmetic_is_reported(void)
   TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "division by zero"));
 }
 
+/* D1-26: trim formed tmpvar - 1 for an empty value (undefined behaviour the
+ * sanitizers do not flag); check the edge cases of the index rewrite. */
+static void trim_handles_empty_and_blank_values(void)
+{
+  char_data *mob = make_mob("mob");
+  trig_data *t = idle_mob_trigger(mob);
+  char out[MAX_INPUT_LENGTH];
+
+  add_var(&GET_TRIG_VARS(t), "e", "", 0);
+  add_var(&GET_TRIG_VARS(t), "b", "   ", 0);
+  add_var(&GET_TRIG_VARS(t), "w", "  a b  ", 0);
+  subst(mob, t, "x [%e.trim%][%b.trim%][%w.trim%]", out);
+  TEST_ASSERT_EQUAL_STRING("x [][][a b]", out);
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -994,5 +1010,6 @@ int main(void)
   RUN_TEST(player_flag_setters_ignore_mobs);
   RUN_TEST(wait_in_last_room_resumes);
   RUN_TEST(saturated_arithmetic_is_reported);
+  RUN_TEST(trim_handles_empty_and_blank_values);
   return UNITY_END();
 }

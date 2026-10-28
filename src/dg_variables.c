@@ -268,10 +268,7 @@ static int handle_oset(struct obj_data * obj, char * argument)
 int text_processed(trig_data *trig, char *field, char *subfield,
                    struct trig_var_data *vd, char *str, size_t slen)
 {
-  char *p, *p2;
-  char tmpvar[MAX_STRING_LENGTH];
-
-  if (!str_cmp(field, "strlen")) {                     /* strlen    */
+  if (!str_cmp(field, "strlen")) {                    /* strlen    */
     tb_snprintf(str, slen, "%d", (int)strlen(vd->value));
     return TRUE;
   } else if (!str_cmp(field, "toupper")) {             /* toupper   */
@@ -280,18 +277,29 @@ int text_processed(trig_data *trig, char *field, char *subfield,
       tb_snprintf(str, slen, "%c%s", UPPER(*upper), upper + 1);
     return TRUE;
   } else if (!str_cmp(field, "trim")) {                /* trim      */
-    /* trim whitespace from ends */
-    tb_snprintf(tmpvar, sizeof(tmpvar)-1 , "%s", vd->value); /* -1 to use later*/
-    p = tmpvar;
-    p2 = tmpvar + strlen(tmpvar) - 1;
-    while (*p && isspace(*p)) p++;
-    while ((p<=p2) && isspace(*p2)) p2--;
-    if (p>p2) { /* nothing left */
-      *str = '\0';
+    /* Trim whitespace from both ends, by index: the old pointer walk formed
+     * tmpvar - 1 for an empty value (undefined behaviour), and copied the
+     * value through a fixed buffer first. The value may be player text of
+     * any length, so a result longer than slen - 1 is cut and reported. */
+    const char *v = vd->value;
+    size_t start = 0, end = strlen(v), n;
+
+    while (start < end && isspace((unsigned char)v[start]))
+      start++;
+    while (end > start && isspace((unsigned char)v[end - 1]))
+      end--;
+    n = end - start;
+    if (slen == 0)
       return TRUE;
+    if (n >= slen) {
+      TB_ERROR_MSG("dg", "field-truncate", "text_processed",
+                   "trig vnum %d: field trim of var '%s' is %zu bytes; "
+                   "truncated to %zu", DIAG_TRIG_VNUM(trig), vd->name, n,
+                   slen - 1);
+      n = slen - 1;
     }
-    *(++p2) = '\0';                                         /* +1 ok (see above) */
-    tb_snprintf(str, slen, "%s", p);
+    memcpy(str, v + start, n);
+    str[n] = '\0';
     return TRUE;
   } else if (!str_cmp(field, "contains")) {            /* contains  */
     if (str_str(vd->value, subfield))
