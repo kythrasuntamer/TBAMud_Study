@@ -5099,10 +5099,14 @@ bool change_player_name(struct char_data *ch, struct char_data *vict, char *new_
     if (player_table[i].id == GET_IDNUM(vict))
       break;
 
-  if (player_table[i].id != GET_IDNUM(vict))
+  /* Invariant: vict came from the index (online or load_char), so it is
+   * there. i == top_of_p_table + 1 is one past the end of player_table. */
+  if (i > top_of_p_table)
   {
     send_to_char(ch, "Your target was not found in the player index.\r\n");
-    log("SYSERR: Player %s, with ID %ld, could not be found in the player index.", GET_NAME(vict), GET_IDNUM(vict));
+    TB_ERROR_MSG("act", "rename-index", "player_table",
+                 "player idnum %ld not in index (top %d); caller " DIAG_CHAR_FMT,
+                 GET_IDNUM(vict), top_of_p_table, DIAG_CHAR(ch));
     return FALSE;
   }
 

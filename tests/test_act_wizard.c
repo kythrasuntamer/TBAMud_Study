@@ -833,7 +833,9 @@ static void make_file(const char *dir, const char *sub, const char *name)
 }
 
 /* G1-16: change_player_name's disk probe for the new name leaked a
- * char_data whenever the name was free (LSan reports it at exit). */
+ * char_data whenever the name was free (LSan reports it at exit).
+ * G1-17: a missing index entry was detected by reading player_table one
+ * past the end (ASan heap-buffer-overflow). */
 static void test_rename_moves_player_files_and_checks_the_index(void)
 {
   static struct player_index_element ptable[1];
@@ -865,6 +867,13 @@ static void test_rename_moves_player_files_and_checks_the_index(void)
   TEST_ASSERT_TRUE(change_player_name(&imm, &target, new_name));
   TEST_ASSERT_EQUAL_STRING("robert", ptable[0].name);
   TEST_ASSERT_EQUAL_INT(1, save_index_calls);
+
+  /* G1-17: a victim missing from the index is reported, not read past. */
+  reset_counters();
+  GET_IDNUM(&target) = 999;
+  TEST_ASSERT_FALSE(change_player_name(&imm, &target, (char[]){"carol"}));
+  TEST_ASSERT_EQUAL_STRING("rename-index", captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(captured_detail, "idnum 999"));
 
   remove("plrfiles/A-E/bobby.plr");
   remove("plrfiles/P-T/robert.plr");
