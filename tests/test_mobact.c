@@ -17,13 +17,11 @@
 #include "tb_error_capture.h"
 
 void basic_mud_log(const char *format, ...) { (void)format; }
-/* utils.h: rand_number() and room_is_dark() are call-site macros over these. */
+/* utils.h maps rand_number() and room_is_dark() to their _at forms. */
 int rand_number_at(int from, int to, const char *source_file, int source_line,
                    const char *source_func)
-{
-  (void)to; (void)source_file; (void)source_line; (void)source_func;
-  return from == 0 ? 18 : from;
-}
+{ (void)to; (void)source_file; (void)source_line; (void)source_func;
+  return from == 0 ? 18 : from; }
 int MAX(int a, int b) { return a > b ? a : b; }
 int MIN(int a, int b) { return a < b ? a : b; }
 
@@ -46,7 +44,8 @@ void obj_from_room(struct obj_data *object) { (void)object; }
 void obj_to_char(struct obj_data *object, struct char_data *ch) { (void)object; (void)ch; }
 int room_is_dark_at(room_rnum room, const char *source_file, int source_line,
                     const char *source_func)
-{ (void)room; (void)source_file; (void)source_line; (void)source_func; return 0; }
+{ (void)room; (void)source_file; (void)source_line; (void)source_func;
+  return 0; }
 int find_command(const char *command) { (void)command; return 0; }
 /* Scavenging (CAN_CARRY_W) is not exercised: the mob is not a scavenger. */
 const struct str_app_type str_app[26];
