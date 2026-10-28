@@ -253,6 +253,7 @@ const char *preference_bits[] = {
   "AUTOKEY",
   "AUTODOOR",
   "ZONERESETS",
+  "VERBOSE",
   "\n"
 };
 
@@ -984,3 +985,7 @@ const char *ibt_bits[] = {
 /** connected_types[] covers CON_PLAYING .. CON_GET_PROTOCOL (the last). */
 CONST_TABLE_ASSERT(CONST_TABLE_LEN(connected_types) == CON_GET_PROTOCOL + 2,
                    connected_types_len);
+
+/** preference_bits[] names every PRF_ flag (NUM_PRF_FLAGS of them). */
+CONST_TABLE_ASSERT(CONST_TABLE_LEN(preference_bits) == NUM_PRF_FLAGS + 1,
+                   preference_bits_len);
