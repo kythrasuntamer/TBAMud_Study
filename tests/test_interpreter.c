@@ -777,10 +777,8 @@ struct heap_dupe {
   struct char_data *dch, *kch;
 };
 
-static void run_heap_dupe(struct heap_dupe *f, int peer_state)
+static void setup_heap_dupe(struct heap_dupe *f, int peer_state)
 {
-  char arg[] = "y";
-
   memset(f, 0, sizeof(*f));
   f->dch = heap_char("Zorblaxe");
   f->kch = heap_char("Zorblaxe");
@@ -795,8 +793,21 @@ static void run_heap_dupe(struct heap_dupe *f, int peer_state)
   f->k.next = &f->d;
   descriptor_list = &f->k;
   free_char_calls = 0;
+}
+
+/* d answers 'y' to confirm its new name. */
+static void finish_heap_dupe(struct heap_dupe *f)
+{
+  char arg[] = "y";
+
   nanny(&f->d, arg);
   descriptor_list = NULL;
+}
+
+static void run_heap_dupe(struct heap_dupe *f, int peer_state)
+{
+  setup_heap_dupe(f, peer_state);
+  finish_heap_dupe(f);
 }
 
 void test_new_char_dupe_check_frees_the_booted_creation_character(void)
@@ -835,6 +846,47 @@ void test_new_char_dupe_check_closing_both_frees_a_twin_at_the_menu(void)
   TEST_ASSERT_FALSE(heap_char_live(f.dch));
   TEST_ASSERT_FALSE(heap_char_live(f.kch));
   TEST_ASSERT_EQUAL_INT(2, free_char_calls);
+  free_heap_chars();
+}
+
+/* A twin booted at the menu's description editor: k->str points into the
+ * character "boot both" frees, and string_add() still runs k's queued
+ * input this pulse (k stays in descriptor_list until the close pass), so
+ * it wrote into freed memory. k's editor buffers are released first, as
+ * perform_dupe_check() does (fd3ae09). */
+void test_new_char_dupe_check_closing_both_detaches_the_description_editor(void)
+{
+  struct heap_dupe f;
+
+  setup_heap_dupe(&f, CON_PLR_DESC);
+  /* As nanny's menu option 2 leaves it. */
+  f.k.str = &f.kch->player.description;
+  f.k.backstr = strdup("old description");
+  TEST_ASSERT_NOT_NULL(f.k.backstr);
+  finish_heap_dupe(&f);
+  TEST_ASSERT_EQUAL_INT(CON_CLOSE, STATE(&f.k));
+  TEST_ASSERT_FALSE(heap_char_live(f.kch));
+  TEST_ASSERT_NULL(f.k.str);        /* no pointer into the freed twin */
+  TEST_ASSERT_NULL(f.k.backstr);    /* released, as close_socket() would */
+  free_heap_chars();
+}
+
+/* "Boot the older one" also takes CON_CLOSE, which an immortal's dc gives a
+ * socket at the description editor while k->str still points into its
+ * character: released the same way before that character is freed. */
+void test_new_char_dupe_check_booting_a_closed_editor_detaches_it(void)
+{
+  struct heap_dupe f;
+
+  setup_heap_dupe(&f, CON_CLOSE);
+  f.k.str = &f.kch->player.description;
+  f.k.backstr = strdup("old description");
+  TEST_ASSERT_NOT_NULL(f.k.backstr);
+  finish_heap_dupe(&f);
+  TEST_ASSERT_FALSE(heap_char_live(f.kch));
+  TEST_ASSERT_NULL(f.k.str);
+  TEST_ASSERT_NULL(f.k.backstr);
+  TEST_ASSERT_EQUAL_INT(CON_NEWPASSWD, STATE(&f.d));   /* the new one goes on */
   free_heap_chars();
 }
 
@@ -1204,6 +1256,8 @@ int main(void)
     RUN_TEST(test_new_char_dupe_check_frees_the_booted_creation_character);
     RUN_TEST(test_new_char_dupe_check_closing_both_keeps_only_the_in_game_twin);
     RUN_TEST(test_new_char_dupe_check_closing_both_frees_a_twin_at_the_menu);
+    RUN_TEST(test_new_char_dupe_check_closing_both_detaches_the_description_editor);
+    RUN_TEST(test_new_char_dupe_check_booting_a_closed_editor_detaches_it);
 
     /* command_interpreter switched-IMPL check */
     RUN_TEST(test_command_interpreter_switched_impl_runs_script_commands);

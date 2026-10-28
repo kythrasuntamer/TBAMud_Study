@@ -1187,6 +1187,36 @@ static int parse_name_internal(char *arg, char *name)
 #define USURP		2
 #define UNSWITCH	3
 
+/**
+ * Release the editor buffers of @p k, a socket a dupe check is booting,
+ * before its character @p booted is freed.
+ *
+ * The dupe checks set k->character to NULL, and close_socket() releases
+ * k's buffers only while k->character is set, so this does it as
+ * close_socket() would: a mail being written (PLR_MAILING) owns *k->str and
+ * k->str; otherwise k->backstr, k's copy of the old text, is freed unless
+ * PLR_WRITING. Both pointers are cleared either way: at the menu's
+ * description editor (CON_PLR_DESC, or CON_CLOSE after an immortal's dc
+ * there) k->str points into @p booted, and k stays in descriptor_list until
+ * the close pass, so input k already queued is still processed this pulse
+ * by string_add(), which writes through k->str.
+ *
+ * @param k      The socket being booted; its character is about to be freed.
+ * @param booted k's character, a player not in the world.
+ */
+static void release_booted_editor(struct descriptor_data *k,
+                                  struct char_data *booted)
+{
+  if (PLR_FLAGGED(booted, PLR_MAILING) && k->str) {
+    if (*k->str)
+      free(*k->str);
+    free(k->str);
+  } else if (k->backstr && !PLR_FLAGGED(booted, PLR_WRITING))
+    free(k->backstr);
+  k->str = NULL;
+  k->backstr = NULL;
+}
+
 /* This function seems a bit over-extended. */
 /**
  * After a correct password, make @p d the only controller of its player.
@@ -1260,20 +1290,9 @@ static int perform_dupe_check(struct descriptor_data *d)
       k->character = NULL;
       k->original = NULL;
       if (!other_in_world) {
-        /* k's editor buffers are released as close_socket() would release
-         * them, since it does so only while k->character is set. At the
-         * menu's description editor (CON_PLR_DESC) k->str points into
-         * other and k->backstr is k's copy of the old text. k->str must not
-         * outlive other: input k already queued is still processed this
-         * pulse, and string_add() writes through k->str. */
-        if (PLR_FLAGGED(other, PLR_MAILING) && k->str) {
-          if (*k->str)
-            free(*k->str);
-          free(k->str);
-        } else if (k->backstr && !PLR_FLAGGED(other, PLR_WRITING))
-          free(k->backstr);
-        k->str = NULL;
-        k->backstr = NULL;
+        /* k->str must not outlive other (the menu's description editor
+         * points into it); see release_booted_editor(). */
+        release_booted_editor(k, other);
         free_char(other);
       }
       write_to_output(k, "\r\nMultiple login detected -- disconnecting.\r\n");
@@ -1399,7 +1418,8 @@ static int perform_dupe_check(struct descriptor_data *d)
  * @post If the name is already in game, both sockets are set to CON_CLOSE
  *       and d->character is freed and NULL; the caller must check STATE(d).
  *       A booted socket's character is freed unless it is in the world,
- *       where it stays without a descriptor.
+ *       where it stays without a descriptor; before it is freed, the
+ *       socket's editor buffers are released (release_booted_editor()).
  * @return TRUE if any socket was closed.
  */
 static bool perform_new_char_dupe_check(struct descriptor_data *d)
@@ -1444,6 +1464,10 @@ static bool perform_new_char_dupe_check(struct descriptor_data *d)
         k->character = NULL;
         k->original = NULL;
         older->desc = NULL;
+        /* Creation prompts have no editor, but k may be CON_CLOSE after an
+         * immortal's dc at the menu's description editor, with k->str still
+         * pointing into older. */
+        release_booted_editor(k, older);
         free_char(older);
         write_to_output(k, "\r\nMultiple login detected -- disconnecting.\r\n");
         STATE(k) = CON_CLOSE;
@@ -1463,8 +1487,12 @@ static bool perform_new_char_dupe_check(struct descriptor_data *d)
         other->desc = NULL;
         k->character = NULL;
         k->original = NULL;
-        if (!other_in_world)
+        if (!other_in_world) {
+          /* At the menu's description editor k->str points into other, and
+           * string_add() may still write through it this pulse. */
+          release_booted_editor(k, other);
           free_char(other);
+        }
         write_to_output(k, "\r\nMultiple login detected -- disconnecting.\r\n");
         STATE(k) = CON_CLOSE;
 
