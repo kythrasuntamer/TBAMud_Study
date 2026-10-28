@@ -1095,3 +1095,17 @@ if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
     set_source_files_properties(${MUD_SRCDIR}/spells.c
         PROPERTIES COMPILE_OPTIONS "-ffunction-sections;-fdata-sections")
 endif()
+
+# Production call_magic() and mag_objectmagic() (spell_parser.c) with the
+# production handler.c: cast triggers that purge participants (H2-01).
+add_mud_test(test_spell_parser
+    ${MUD_SRCDIR}/spell_parser.c
+    ${MUD_SRCDIR}/handler.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_spell_parser.c
+)
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_compile_options(test_spell_parser PRIVATE -ffunction-sections -fdata-sections)
+    target_link_options(test_spell_parser PRIVATE -Wl,--gc-sections)
+    set_source_files_properties(${MUD_SRCDIR}/spell_parser.c ${MUD_SRCDIR}/handler.c
+        PROPERTIES COMPILE_OPTIONS "-ffunction-sections;-fdata-sections")
+endif()
