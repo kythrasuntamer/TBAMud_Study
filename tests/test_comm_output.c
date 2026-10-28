@@ -395,6 +395,28 @@ static void failed_log_open_keeps_stream(void)
   remove(path);
 }
 
+/* The snoop copy used "%*s" (a field width, so the whole buffer including
+ * unsent bytes) and ended with a literal "%%". */
+static void snooper_sees_only_sent_bytes(void)
+{
+  static struct descriptor_data snooper;
+  static protocol_t snooper_proto;
+
+  memset(&snooper, 0, sizeof(snooper));
+  memset(&snooper_proto, 0, sizeof(snooper_proto));
+  snooper.pProtocol = &snooper_proto;
+  snooper.output = snooper.small_outbuf;
+  snooper.bufspace = SMALL_BUFSIZE - 1;
+  desc.snoop_by = &snooper;
+
+  write_to_output(&desc, "ABCDEF");
+  write_budget = 3;
+  TEST_ASSERT_EQUAL_INT(3, process_output(&desc));
+  TEST_ASSERT_EQUAL_STRING("% ABC%", snooper.output);
+  TEST_ASSERT_EQUAL_STRING("DEF", desc.output);
+  desc.snoop_by = NULL;
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -409,5 +431,6 @@ int main(void)
   RUN_TEST(input_flood_is_reported);
   RUN_TEST(send_to_range_includes_last_room);
   RUN_TEST(failed_log_open_keeps_stream);
+  RUN_TEST(snooper_sees_only_sent_bytes);
   return UNITY_END();
 }

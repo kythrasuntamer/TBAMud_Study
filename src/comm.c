@@ -1997,9 +1997,12 @@ static int process_output(struct descriptor_data *t)
   } else if (result == 0)	/* Socket buffer full. Try later. */
     return (0);
 
-  /* Handle snooping: prepend "% " and send to snooper. */
+  /* Handle snooping: show the snooper what was actually sent, as
+   * "% <text>%". The precision (not a field width, as the old "%*s" was)
+   * limits it to the 'result' bytes the kernel accepted; unsent text is
+   * shown when it is sent. */
   if (t->snoop_by)
-    write_to_output(t->snoop_by, "%% %*s%%%%", result, t->output);
+    write_to_output(t->snoop_by, "%% %.*s%%", result, t->output);
 
   /* The common case: all saved output was handed off to the kernel buffer. */
   if (result >= t->bufptr) {
