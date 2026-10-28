@@ -36,8 +36,9 @@ typedef int (*fx_trigger_fn)(enum fx_trigger kind, struct char_data *actor,
 extern fx_trigger_fn fx_hook;
 extern int fx_trigger_calls[FX_TRIGGER_COUNT];
 
-/* rand_number() as seen by the code under test: returns fx_rand_value when
- * it is >= 0 (clamped into [from, to]), otherwise from. */
+/* rand_number() as seen by the code under test (rand_number_at() is
+ * wrapped): returns fx_rand_value when it is >= 0 (clamped into
+ * [from, to]), otherwise from. */
 extern int fx_rand_value;
 /* Counts of core_dump() and log() calls made by the code under test. */
 extern int fx_core_dumps;

@@ -80,8 +80,12 @@ void extract_script(void *thing, int type) { (void)thing; (void)type; }
 void free_proto_script(void *thing, int type) { (void)thing; (void)type; }
 
 /* ---- utils.c functions observed by the tests (linked with --wrap) ------ */
-int __wrap_rand_number(int from, int to) /* NOLINT(cert-dcl37-c,cert-dcl51-cpp): --wrap name */
+/* rand_number() is a call-site macro over rand_number_at() (utils.h), so
+ * that is the symbol the code under test references and the one wrapped. */
+int __wrap_rand_number_at(int from, int to, const char *source_file, /* NOLINT(cert-dcl37-c,cert-dcl51-cpp): --wrap name */
+                          int source_line, const char *source_func)
 {
+  (void)source_file; (void)source_line; (void)source_func;
   if (fx_rand_value < 0)
     return from;
   if (fx_rand_value < from)

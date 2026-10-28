@@ -676,8 +676,10 @@ endif()
 # Gameplay regression tests (act.item.c, act.movement.c, act.offensive.c,
 # fight.c, magic.c). Each links the production gameplay sources plus the real
 # handler.c/utils.c/dg_scripts.c, and gameplay_fixture.c for DG trigger entry
-# points and world setup. utils.c's rand_number(), core_dump_real(),
-# basic_mud_log() and tb_error_log_at() are wrapped so tests can drive and
+# points and world setup. utils.c's rand_number_at() (the function behind
+# the rand_number() call-site macro; wrapping the macro name would not
+# intercept anything), core_dump_real(), basic_mud_log() and
+# tb_error_log_at() are wrapped so tests can drive and
 # observe them (tb_error_capture.h provides __wrap_tb_error_log_at).
 set(GAMEPLAY_SRCS
     ${MUD_SRCDIR}/act.item.c
@@ -700,7 +702,7 @@ macro(add_gameplay_test TEST_NAME TEST_SRC)
         target_link_options(${TEST_NAME} PRIVATE
             -Wl,--gc-sections
             -Wl,--wrap=tb_error_log_at
-            -Wl,--wrap=rand_number
+            -Wl,--wrap=rand_number_at
             -Wl,--wrap=core_dump_real
             -Wl,--wrap=basic_mud_log)
     endif()
