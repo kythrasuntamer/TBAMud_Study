@@ -198,6 +198,12 @@ struct spell_info_type {
    const char *wear_off_msg;	/* Input size not limited. Originates from string constants. */
 };
 
+/** TRUE when spl names a real spell or skill slot in spell_info[] (slot 0
+ * is the reserved "no spell"). Spell numbers come from object values,
+ * scripts and player input, so check before indexing. spl evaluated twice:
+ * pass a plain variable. */
+#define VALID_SPELLNUM(spl)	((spl) >= 1 && (spl) <= TOP_SPELL_DEFINE)
+
 /** TRUE when c may index spell_info[].min_level[]. c evaluated twice. */
 #define VALID_CLASS_NUM(c)	((c) >= 0 && (c) < NUM_CLASSES)
 /** Minimum level at which class c learns spell spl; an invalid class can

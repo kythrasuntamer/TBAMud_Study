@@ -143,7 +143,7 @@ static void say_spell(struct char_data *ch, int spellnum, struct char_data *tch,
  * a valid spell/skill number.  A typical for() loop would not need to use
  * this because you can guarantee > 0 and <= TOP_SPELL_DEFINE. */
 const char *skill_name(int num) {
-  if (num > 0 && num <= TOP_SPELL_DEFINE)
+  if (VALID_SPELLNUM(num))
     return (spell_info[num].name);
   else if (num == -1)
     return ("UNUSED");
@@ -237,7 +237,7 @@ int call_magic(struct char_data *caster, struct char_data *cvict,
   /* 0 and -1 are the documented "no spell" values of scroll and potion
    * slots, and stay silent. Anything else out of range (object values,
    * osetval, dg_cast) is a data error and is reported. */
-  if (spellnum < 1 || spellnum > TOP_SPELL_DEFINE) {
+  if (!VALID_SPELLNUM(spellnum)) {
     if (spellnum != 0 && spellnum != -1)
       TB_ERROR_MSG("magic", "spellnum-range", "call_magic",
                    "spell %d not in [1,%d] casttype %d by " DIAG_CHAR_FMT
@@ -374,7 +374,7 @@ int call_magic(struct char_data *caster, struct char_data *cvict,
  * fizzles when the value is not a real spell. */
 static bool item_spell_valid(struct char_data *ch, struct obj_data *obj,
     int spl, int slot, const char *kind) {
-  if (spl >= 1 && spl <= TOP_SPELL_DEFINE)
+  if (VALID_SPELLNUM(spl))
     return TRUE;
   TB_ERROR_MSG("magic", "item-spellnum", kind,
                "obj vnum %d uid %ld value%d spell %d out of range [1,%d]; "
