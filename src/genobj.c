@@ -418,7 +418,7 @@ int delete_object(obj_rnum rnum)
 {
   obj_rnum i;
   zone_rnum zrnum;
-  struct obj_data *obj, *tmp, *next_obj;
+  struct obj_data *obj, *tmp;
   int shop, j, zone, cmd_no;
   obj_vnum deleted_vnum;
 
@@ -434,33 +434,42 @@ int delete_object(obj_rnum rnum)
   /* This is something you might want to read about in the logs. */
   log("GenOLC: delete_object: Deleting object #%d (%s).", GET_OBJ_VNUM(obj), obj->short_description);
 
-  for (tmp = object_list; tmp; tmp = next_obj) {
-	next_obj = tmp->next;
-    if (tmp->item_number != obj->item_number)
+  /* Extract every live instance.  extract_obj() would destroy the contents
+   * too, so each content first moves to where the container is: its room
+   * (IN_ROOM != NOWHERE; rnum 0 is a real room), the character carrying or
+   * wearing it, or the container holding it.  extract_obj() can free objects
+   * other than tmp (an orphaned content below), and any of them may be the
+   * next element of object_list, so the scan restarts from the head after
+   * each extraction instead of keeping a saved next pointer. */
+  for (tmp = object_list; tmp; ) {
+    if (tmp->item_number != rnum) {
+      tmp = tmp->next;
       continue;
+    }
 
-    /* extract_obj() will just axe contents. */
-    if (tmp->contains) {
-      struct obj_data *this_content, *next_content;
-      for (this_content = tmp->contains; this_content; this_content = next_content) {
-        next_content = this_content->next_content;
-        if (IN_ROOM(tmp)) {
-          /* Transfer stuff from object to room. */
-          obj_from_obj(this_content);
-          obj_to_room(this_content, IN_ROOM(tmp));
-        } else if (tmp->worn_by || tmp->carried_by) {
-          /* Transfer stuff from object to person inventory. */
-          obj_from_char(this_content);
-          obj_to_char(this_content, tmp->carried_by);
-        } else if (tmp->in_obj) {
-          /* Transfer stuff from object to containing object. */
-          obj_from_obj(this_content);
-          obj_to_obj(this_content, tmp->in_obj);
-        }
+    while (tmp->contains) {
+      struct obj_data *content = tmp->contains;
+
+      obj_from_obj(content);
+      if (IN_ROOM(tmp) != NOWHERE)
+        obj_to_room(content, IN_ROOM(tmp));
+      else if (tmp->carried_by)
+        obj_to_char(content, tmp->carried_by);
+      else if (tmp->worn_by)
+        obj_to_char(content, tmp->worn_by);
+      else if (tmp->in_obj)
+        obj_to_obj(content, tmp->in_obj);
+      else {
+        TB_ERROR_MSG("olc", "obj-delete-orphan", "object",
+                     "container vnum %d uid %ld has no location; content "
+                     "vnum %d uid %ld extracted", deleted_vnum, tmp->script_id,
+                     GET_OBJ_VNUM(content), content->script_id);
+        extract_obj(content);
       }
     }
     /* Remove from object_list, etc. - handles weightchanges, and similar. */
     extract_obj(tmp);
+    tmp = object_list;
   }
 
   /* Make sure all are removed. */

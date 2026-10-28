@@ -587,6 +587,59 @@ static void add_room_does_not_share_source_contents(void)
 }
 
 /* ------------------------------------------------------------------------ */
+/* C2-07: contents of a deleted container go where the container was.      */
+/* ------------------------------------------------------------------------ */
+static struct char_data carrier;
+
+/* Prototype 0 is the bag being deleted, prototype 1 the sword inside it. */
+static struct obj_data *bag_with_sword(struct obj_data **bag_out)
+{
+  struct obj_data *bag, *sword;
+  make_zones(1); make_objs(2);
+  bag = make_instance(0);
+  sword = make_instance(1);
+  obj_to_obj(sword, bag);
+  *bag_out = bag;
+  return sword;
+}
+
+static void delete_object_moves_contents_to_carrier(void)
+{
+  struct obj_data *bag, *sword = bag_with_sword(&bag);
+  memset(&carrier, 0, sizeof(carrier));
+  bag->carried_by = &carrier;          /* carried: IN_ROOM is NOWHERE */
+  delete_object(0);
+  TEST_ASSERT_TRUE(object_list == sword);
+  TEST_ASSERT_TRUE(sword->carried_by == &carrier);
+  TEST_ASSERT_NULL(sword->in_obj);
+  TEST_ASSERT_EQUAL_UINT(0, GET_OBJ_RNUM(sword));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+}
+
+static void delete_object_moves_contents_to_room_zero(void)
+{
+  struct obj_data *bag, *sword;
+  make_rooms(1);
+  sword = bag_with_sword(&bag);
+  obj_to_room(bag, 0);                 /* rnum 0 is a real room */
+  delete_object(0);
+  TEST_ASSERT_TRUE(object_list == sword);
+  TEST_ASSERT_EQUAL_UINT(0, sword->in_room);
+  TEST_ASSERT_TRUE(world[0].contents == sword);
+  world[0].contents = NULL;
+}
+
+static void delete_object_reports_orphaned_contents(void)
+{
+  struct obj_data *bag;
+  bag_with_sword(&bag);                /* bag has no location at all */
+  delete_object(0);
+  TEST_ASSERT_NULL(object_list);
+  TEST_ASSERT_EQUAL_INT(2, objs_extracted);
+  TEST_ASSERT_EQUAL_STRING("obj-delete-orphan", tb_captured_operation);
+}
+
+/* ------------------------------------------------------------------------ */
 /* Temporary world directory for the writers.                               */
 /* ------------------------------------------------------------------------ */
 static char test_root[] = "/tmp/tb-genolc-XXXXXX";
@@ -645,6 +698,9 @@ int main(void)
   RUN_TEST(add_room_rebases_room_events);
   RUN_TEST(delete_room_rebases_room_events);
   RUN_TEST(add_room_does_not_share_source_contents);
+  RUN_TEST(delete_object_moves_contents_to_carrier);
+  RUN_TEST(delete_object_moves_contents_to_room_zero);
+  RUN_TEST(delete_object_reports_orphaned_contents);
   failures = UNITY_END();
   leave_test_root();
   return failures;
