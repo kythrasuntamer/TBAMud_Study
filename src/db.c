@@ -4647,8 +4647,15 @@ void load_config( void )
           if (CONFIG_MENU)
             free(CONFIG_MENU);
           strncpy(buf, "Reading menu in load_config()", sizeof(buf));
+          /* fread_string() already ran parse_at(), and returns NULL for an
+           * empty value, which every reader of CONFIG_MENU dereferences. */
           CONFIG_MENU = fread_string(fl, buf);
-          parse_at(CONFIG_MENU);
+          if (!CONFIG_MENU) {
+            TB_ERROR_MSG("db", "config-load", "menu",
+                         "empty 'menu' value in %s; using built-in default",
+                         CONFIG_CONFFILE);
+            CONFIG_MENU = strdup(MENU);
+          }
         } else if (!str_cmp(tag, "min_rent_cost"))
           CONFIG_MIN_RENT_COST = num;
         else if (!str_cmp(tag, "min_wizlist_lev"))
@@ -4716,8 +4723,14 @@ void load_config( void )
           strncpy(buf, "Reading start message in load_config()", sizeof(buf));
           if (CONFIG_START_MESSG)
             free(CONFIG_START_MESSG);
+          /* See "menu": no second parse_at(), and never a NULL message. */
           CONFIG_START_MESSG = fread_string(fl, buf);
-          parse_at(CONFIG_START_MESSG);
+          if (!CONFIG_START_MESSG) {
+            TB_ERROR_MSG("db", "config-load", "start_messg",
+                         "empty 'start_messg' value in %s; using built-in default",
+                         CONFIG_CONFFILE);
+            CONFIG_START_MESSG = strdup(START_MESSG);
+          }
         }
         break;
 

@@ -677,11 +677,35 @@ static void load_config_reads_full_length_line(void)
   config_fixture_free();
 }
 
+/* B1-09: an empty "menu" or "start_messg" left the value NULL (fread_string()
+ * returns NULL for ""), and the extra parse_at() call then dereferenced it. */
+static void load_config_restores_default_for_empty_menu(void)
+{
+  load_config_text("menu\n~\n");
+  TEST_ASSERT_NOT_NULL(CONFIG_MENU);
+  TEST_ASSERT_EQUAL_STRING(MENU, CONFIG_MENU);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("config-load", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "'menu'"));
+  config_fixture_free();
+}
+
+static void load_config_restores_default_for_empty_start_messg(void)
+{
+  load_config_text("start_messg\n~\n");
+  TEST_ASSERT_NOT_NULL(CONFIG_START_MESSG);
+  TEST_ASSERT_EQUAL_STRING(START_MESSG, CONFIG_START_MESSG);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "'start_messg'"));
+  config_fixture_free();
+}
+
 int main(void)
 {
   UNITY_BEGIN();
   RUN_TEST(load_zones_rejects_top_nowhere);
   RUN_TEST(load_config_reads_full_length_line);
+  RUN_TEST(load_config_restores_default_for_empty_menu);
+  RUN_TEST(load_config_restores_default_for_empty_start_messg);
   RUN_TEST(fread_string_rejoins_long_line);
   RUN_TEST(fread_clean_string_rejoins_long_line);
   RUN_TEST(fread_string_long_unterminated_tail_exits);
