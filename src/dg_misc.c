@@ -2,6 +2,10 @@
 *  File: dg_misc.c                                         Part of tbaMUD *
 *  Usage: Contains general functions for script usage.                    *
 *                                                                         *
+*  dg_cast, dg_affect and script damage act on targets named by script   *
+*  text (often a UID); values and durations are script ints and are      *
+*  range-checked against the narrower fields they land in.               *
+*                                                                         *
 *  $Author: Mark A. Heilpern/egreen/Welcor $                              *
 *  $Date: 2004/10/11 12:07:00$                                            *
 *  $Revision: 1.0.14 $                                                    *
@@ -33,6 +37,13 @@
  * system is designed to have a character caster, and this cast routine may
  * overlook certain issues. LIMITATION: a target MUST exist for the spell unless
  * the spell is set to TAR_IGNORE. Also, group spells are not permitted. */
+/* Proxy caster: for object and room owners a DG_CASTER_PROXY mob is loaded
+ * and linked into the room's people list by hand (no char_to_room(), so no
+ * light count or entry triggers). Its short_descr is replaced by a strdup of
+ * the object's short description or "The gods" (freed with the mob, since
+ * the proxy is not a prototype-shared string after this). call_magic() may
+ * run nested triggers; extract_char() then defers the proxy's free. cmd is
+ * tokenised destructively with strtok(). */
 void do_dg_cast(void *go, struct script_data *sc, trig_data *trig, int type, char *cmd)
 {
   struct char_data *caster = NULL;
@@ -59,12 +70,19 @@ void do_dg_cast(void *go, struct script_data *sc, trig_data *trig, int type, cha
     case OBJ_TRIGGER:
       caster_room = dg_room_of_obj((struct obj_data *)go);
       if (!caster_room) {
-        script_log("dg_do_cast: unknown room for object-caster!");
+        script_log("Trigger VNum %d: dg_cast: obj vnum %d uid %ld is in no "
+                   "room; no caster.", GET_TRIG_VNUM(trig),
+                   GET_OBJ_VNUM((struct obj_data *)go),
+                   obj_script_id((struct obj_data *)go));
         return;
       }
       break;
     default:
-      script_log("dg_do_cast: unknown trigger type!");
+      TB_ERROR_MSG("dg", "cast-type", "do_dg_cast",
+                   "trig vnum %d: unknown owner type %d", GET_TRIG_VNUM(trig),
+                   type);
+      script_log("Trigger VNum %d: dg_cast: unknown trigger type %d!",
+                 GET_TRIG_VNUM(trig), type);
       return;
   }
 
@@ -130,13 +148,20 @@ void do_dg_cast(void *go, struct script_data *sc, trig_data *trig, int type, cha
 
   if (!caster) {
     if (!caster_room) {
-      script_log("dg_do_cast: no room available for temporary caster.");
+      script_log("Trigger VNum %d: dg_cast: no room available for temporary "
+                 "caster.", GET_TRIG_VNUM(trig));
       return;
     }
 
     caster = read_mobile(DG_CASTER_PROXY, VIRTUAL);
     if (!caster) {
-      script_log("dg_cast: Cannot load the caster mob!");
+      /* The proxy caster is a world prototype; its absence is a broken
+       * world file, not a script error. */
+      TB_ERROR_MSG("dg", "cast-proxy", "do_dg_cast",
+                   "trig vnum %d: caster proxy mob vnum %d cannot be loaded",
+                   GET_TRIG_VNUM(trig), DG_CASTER_PROXY);
+      script_log("Trigger VNum %d: dg_cast: cannot load the caster mob %d!",
+                 GET_TRIG_VNUM(trig), DG_CASTER_PROXY);
       return;
     }
     /* set the caster's name to that of the object, or the gods.... */
@@ -234,6 +259,22 @@ void do_dg_affect(void *go, struct script_data *sc, trig_data *trig,
     return;
   }
 
+  /* value and duration are script ints, but the affect stores them as
+   * sbyte modifier and sh_int duration. Narrowing silently turned a
+   * duration of 65536 into -1 (permanent to affect_update()) and a
+   * modifier of 200 into -56. Out-of-range requests are refused. */
+  if (duration - 1 > SHRT_MAX || value < SCHAR_MIN || value > SCHAR_MAX) {
+    TB_ERROR_MSG("dg", "affect-range", "do_dg_affect",
+                 "trig vnum %d target " DIAG_CHAR_FMT " property %s value %d "
+                 "duration %d outside modifier [%d,%d] / duration [1,%d]",
+                 DIAG_TRIG_VNUM(trig), DIAG_CHAR(ch), property, value,
+                 duration, SCHAR_MIN, SCHAR_MAX, SHRT_MAX + 1);
+    script_log("Trigger: %s, VNum %d. dg_affect: value %d or duration %d out "
+               "of range; affect not applied",
+               GET_TRIG_NAME(trig), GET_TRIG_VNUM(trig), value, duration);
+    return;
+  }
+
   /* add the affect */
   new_affect(&af);
   af.spell = SPELL_DG_AFFECT;
@@ -297,7 +338,9 @@ int valid_dg_target(struct char_data *ch, int bitvector)
     return FALSE;  /* The rest are gods with nohassle on... */
 }
 
-void script_damage(struct char_data *vict, int dam)
+/* trig is the running trigger (dg_running_trigger()), named by the
+ * field-clamp diagnostic; NULL when no script is running. */
+void script_damage(trig_data *trig, struct char_data *vict, int dam)
 {
   if (GET_LEVEL(vict)>=LVL_IMMORT && (dam > 0)) {
     send_to_char(vict, "Being the cool immortal you are, you sidestep a trap, "
@@ -305,8 +348,11 @@ void script_damage(struct char_data *vict, int dam)
     return;
   }
 
-  GET_HIT(vict) -= dam;
-  GET_HIT(vict) = MIN(GET_HIT(vict), GET_MAX_HIT(vict));
+  /* dam is a script int; GET_HIT is sh_int. Subtracting in int and storing
+   * back wrapped, so a large negative "damage" could kill. */
+  GET_HIT(vict) = (sh_int)dg_clamp_char_field(trig, vict, "damage",
+                      MIN((long long)GET_HIT(vict) - dam, GET_MAX_HIT(vict)),
+                      SHRT_MIN, SHRT_MAX);
 
   update_pos(vict);
   send_char_pos(vict, dam);

@@ -96,12 +96,32 @@ static const char *prac_types[] = {
 #define MAXGAIN(ch) (prac_params[MAX_PER_PRAC][(int)GET_CLASS(ch)])
 #define SPLSKL(ch) (prac_types[prac_params[PRAC_TYPE][(int)GET_CLASS(ch)]])
 
+/* The tables above are indexed by GET_CLASS(ch), which is read from the
+ * pfile without a range check (players.c). Report and refuse a character
+ * whose class cannot index them, instead of reading past prac_params[]. */
+static bool practice_class_ok(struct char_data *ch)
+{
+  int chclass = (int) GET_CLASS(ch);
+
+  if (VALID_CLASS(chclass))
+    return TRUE;
+  TB_ERROR_MSG("spec", "class-range", "prac_params",
+               DIAG_CHAR_FMT " class %d outside [0,%d); cannot practice",
+               DIAG_CHAR(ch), chclass, NUM_CLASSES);
+  send_to_char(ch, "Something is wrong with your class; please tell an immortal.\r\n");
+  return FALSE;
+}
+
 void list_skills(struct char_data *ch)
 {
   const char *overflow = "\r\n**OVERFLOW**\r\n";
   int i, sortpos, ret;
   size_t len = 0;
+  bool truncated = FALSE;
   char buf2[MAX_STRING_LENGTH];
+
+  if (!practice_class_ok(ch))
+    return;
 
   len = snprintf(buf2, sizeof(buf2), "You have %d practice session%s remaining.\r\n"
 	"You know of the following %ss:\r\n", GET_PRACTICES(ch),
@@ -111,13 +131,24 @@ void list_skills(struct char_data *ch)
     i = spell_sort_info[sortpos];
     if (GET_LEVEL(ch) >= spell_info[i].min_level[(int) GET_CLASS(ch)]) {
     ret = snprintf(buf2 + len, sizeof(buf2) - len, "%-20s %s\r\n", spell_info[i].name, how_good(GET_SKILL(ch, i)));
-      if (ret < 0 || len + ret >= sizeof(buf2))
+      if (ret < 0 || len + ret >= sizeof(buf2)) {
+        truncated = TRUE;
         break;
+      }
       len += ret;
     }
   }
-  if (len >= sizeof(buf2))
-    memcpy(buf2 + sizeof(buf2) - strlen(overflow) - 1, overflow, strlen(overflow) + 1); /* strcpy: OK */
+  /* The loop stops before overflowing buf2, so the old 'len >= sizeof(buf2)'
+   * marker test could never fire and a cut-short list looked complete. Mark
+   * it (overwriting the tail if needed) and report it. */
+  if (truncated) {
+    size_t mark = strlen(overflow);
+    size_t at = (len < sizeof(buf2) - mark - 1) ? len : sizeof(buf2) - mark - 1;
+    memcpy(buf2 + at, overflow, mark + 1);
+    TB_WARN_MSG("spec", "skill-list-truncated", "buf2",
+                DIAG_CHAR_FMT " skill list cut at sort position %d (%zu of %zu bytes used)",
+                DIAG_CHAR(ch), sortpos, len, sizeof(buf2));
+  }
 
   page_string(ch->desc, buf2, TRUE);
 }
@@ -128,6 +159,9 @@ SPECIAL(guild)
 
   if (IS_NPC(ch) || !CMD_IS("practice"))
     return (FALSE);
+
+  if (!practice_class_ok(ch))
+    return (TRUE);
 
   skip_spaces(&argument);
 
@@ -198,6 +232,9 @@ SPECIAL(dump)
   return (TRUE);
 }
 
+/* The mayor walks open_path at 6:00 and close_path at 20:00. As in
+ * king_welmar(), the walk state is function-static and shared by every mob
+ * running this proc, so only one mayor should exist. */
 SPECIAL(mayor)
 {
   char actbuf[MAX_INPUT_LENGTH];
@@ -602,17 +639,36 @@ SPECIAL(cityguard)
 }
 
 #define PET_PRICE(pet) (GET_LEVEL(pet) * 300)
+/* Room proc for pet shops: 'list' shows and 'buy <pet> [name]' sells the
+ * NPCs standing in the storage room (shop vnum + 1, same zone). A bought pet
+ * is a fresh read_mobile() copy. Naming it gives the copy its own strdup'd
+ * name and description; until then those point at the prototype's strings,
+ * which must never be freed through the pet (free_char() compares against
+ * the prototype before freeing). */
 SPECIAL(pet_shops)
 {
   char buf[MAX_STRING_LENGTH], pet_name[MAX_INPUT_LENGTH];
   room_rnum pet_room;
   struct char_data *pet;
 
-  /* Gross. */
-  pet_room = IN_ROOM(ch) + 1;
+  if (!CMD_IS("list") && !CMD_IS("buy"))
+    return (FALSE);	/* All commands except list and buy */
 
-  if (pet_room > top_of_world)
-    return (FALSE);
+  /* The pets wait in the room whose VNUM follows the shop's, in the same
+   * zone. This used to be rnum + 1, which names an unrelated room once
+   * redit adds or deletes rooms, letting players buy whatever NPC stood
+   * there. */
+  pet_room = real_room(GET_ROOM_VNUM(IN_ROOM(ch)) + 1);
+  if (!VALID_ROOM_RNUM(pet_room) ||
+      world[pet_room].zone != world[IN_ROOM(ch)].zone) {
+    TB_ERROR_MSG("spec", "pet-room-missing", "world",
+                 "pet shop room vnum %d: storage room vnum %d %s",
+                 (int) GET_ROOM_VNUM(IN_ROOM(ch)),
+                 (int) GET_ROOM_VNUM(IN_ROOM(ch)) + 1,
+                 VALID_ROOM_RNUM(pet_room) ? "is in another zone" : "does not exist");
+    send_to_char(ch, "The pet shop has no pets to offer right now.\r\n");
+    return (TRUE);
+  }
 
   if (CMD_IS("list")) {
     send_to_char(ch, "Available pets are:\r\n");
@@ -688,6 +744,13 @@ SPECIAL(bank)
       send_to_char(ch, "You don't have that many coins!\r\n");
       return (TRUE);
     }
+    /* Refuse before debiting: increase_bank() clamps at MAX_BANK, and the
+     * excess would already have left the purse. */
+    if ((long long) GET_BANK_GOLD(ch) + amount > MAX_BANK) {
+      send_to_char(ch, "Your account cannot hold that much; it can take at most %d more coins.\r\n",
+                   MAX(0, MAX_BANK - GET_BANK_GOLD(ch)));
+      return (TRUE);
+    }
     decrease_gold(ch, amount);
 	increase_bank(ch, amount);
     send_to_char(ch, "You deposit %d coins.\r\n", amount);
@@ -700,6 +763,13 @@ SPECIAL(bank)
     }
     if (GET_BANK_GOLD(ch) < amount) {
       send_to_char(ch, "You don't have that many coins deposited!\r\n");
+      return (TRUE);
+    }
+    /* Refuse before crediting: increase_gold() clamps at MAX_GOLD, and the
+     * full amount would still leave the account. */
+    if ((long long) GET_GOLD(ch) + amount > MAX_GOLD) {
+      send_to_char(ch, "You cannot carry that much; you can take at most %d more coins.\r\n",
+                   MAX(0, MAX_GOLD - GET_GOLD(ch)));
       return (TRUE);
     }
     increase_gold(ch, amount);

@@ -1,0 +1,32 @@
+# Reproducer: logging in while another connection of the same character sits
+# at the main menu leaks that connection's whole character.
+#
+# Run:  tests/e2e/soak_gameplay.py --circle <ASan build>/bin/circle \
+#           --replay tests/e2e/repro_login_over_menu_leaks_char.txt
+#       (or a plain build with --valgrind)
+# Expect (unfixed code), after "shutdown die":
+#   ERROR: LeakSanitizer: Direct leak of 672 byte(s) in 1 object(s)
+#     #1 tb_calloc_array_at utils.c   #2 nanny interpreter.c:1529
+#     #3 game_loop comm.c            (plus ~8 KB indirect: player_specials,
+#                                     name, title, host, ...)
+#   Valgrind: "8,857 (672 direct, 8,185 indirect) bytes in 1 blocks are
+#   definitely lost ... by nanny (interpreter.c:1529)".
+#
+# Cause: perform_dupe_check() (interpreter.c) boots every other descriptor
+# holding the same idnum.  For one that is not CON_PLAYING (the main menu
+# after quit/rent/death, the MOTD, the password-change prompts...) it sets
+# k->character->desc = NULL and k->character = NULL and closes k, but never
+# frees the character.  A character at the menu was already extracted and
+# unlinked from character_list, so nothing references it any more, and
+# close_socket() frees nothing once k->character is NULL ("Losing descriptor
+# without char.").  Any player can repeat this: ~9 KB per login.
+#
+# c87d346 (audit-deferred-commands) fixes the same pattern in
+# perform_new_char_dupe_check(); perform_dupe_check() is unchanged on every
+# audit branch.
+create Soakimp w
+create Alric w
+Alric: quit
+expect Alric Make your choice
+login Alric as alric2
+alric2: look

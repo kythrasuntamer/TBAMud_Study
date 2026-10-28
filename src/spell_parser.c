@@ -24,6 +24,11 @@
 
 /* Global Variables definitions, used elsewhere */
 struct spell_info_type spell_info[TOP_SPELL_DEFINE + 1];
+/* The target keyword typed to 'cast', for spells that search by name
+ * (spell_locate_object). Written only by do_cast and cleared when do_cast
+ * returns, so it is non-empty only while a player's cast is in progress;
+ * wands, scrolls and dg_cast see "" and the spell falls back to the target
+ * object's own keyword. Player text: never log it. */
 char cast_arg2[MAX_INPUT_LENGTH];
 const char *unused_spellname = "!UNUSED!"; /* So we can get &unused_spellname */
 
@@ -56,8 +61,13 @@ static struct syllable syls[] = { { " ", " " }, { "ar", "abra" },
         "y", "l" }, { "z", "k" }, { "", "" } };
 
 static int mag_manacost(struct char_data *ch, int spellnum) {
+  /* chclass is a signed byte (CLASS_UNDEFINED is -1); keep its sign so
+   * SPELL_MIN_LEVEL() sees and refuses a negative (corrupt) class instead
+   * of a wrapped 0..255 one. */
+  int cls = (int) GET_CLASS(ch);
+
   return MAX(SINFO.mana_max - (SINFO.mana_change *
-      (GET_LEVEL(ch) - SINFO.min_level[(int) GET_CLASS(ch)])),
+      (GET_LEVEL(ch) - SPELL_MIN_LEVEL(spellnum, cls))),
   SINFO.mana_min);
 }
 
@@ -94,25 +104,27 @@ static char *obfuscate_spell(const char *unobfuscated) {
 
 static void say_spell(struct char_data *ch, int spellnum, struct char_data *tch,
     struct obj_data *tobj) {
-  const char *format, *spell = skill_name(spellnum);
+  const char *lead, *spell = skill_name(spellnum);
   char act_buf_original[256], act_buf_obfuscated[256], *obfuscated = obfuscate_spell(spell);
 
 
   struct char_data *i;
 
+  /* Pick the act() lead-in; the format itself stays a literal so the
+   * compiler can check it (format strings are never chosen at runtime). */
   if (tch != NULL && IN_ROOM(tch) == IN_ROOM(ch)) {
     if (tch == ch)
-      format = "$n closes $s eyes and utters the words, '%s'.";
+      lead = "$n closes $s eyes and utters the words";
     else
-      format = "$n stares at $N and utters the words, '%s'.";
+      lead = "$n stares at $N and utters the words";
   } else if (tobj != NULL
       && ((IN_ROOM(tobj) == IN_ROOM(ch)) || (tobj->carried_by == ch)))
-    format = "$n stares at $p and utters the words, '%s'.";
+    lead = "$n stares at $p and utters the words";
   else
-    format = "$n utters the words, '%s'.";
+    lead = "$n utters the words";
 
-  tb_snprintf(act_buf_original, sizeof(act_buf_original), format, spell);
-  tb_snprintf(act_buf_obfuscated, sizeof(act_buf_obfuscated), format, obfuscated);
+  tb_snprintf(act_buf_original, sizeof(act_buf_original), "%s, '%s'.", lead, spell);
+  tb_snprintf(act_buf_obfuscated, sizeof(act_buf_obfuscated), "%s, '%s'.", lead, obfuscated);
 
   for (i = world[IN_ROOM(ch)].people; i; i = i->next_in_room) {
     if (i == ch || i == tch || !i->desc || !AWAKE(i))
@@ -134,7 +146,7 @@ static void say_spell(struct char_data *ch, int spellnum, struct char_data *tch,
  * a valid spell/skill number.  A typical for() loop would not need to use
  * this because you can guarantee > 0 and <= TOP_SPELL_DEFINE. */
 const char *skill_name(int num) {
-  if (num > 0 && num <= TOP_SPELL_DEFINE)
+  if (VALID_SPELLNUM(num))
     return (spell_info[num].name);
   else if (num == -1)
     return ("UNUSED");
@@ -145,7 +157,8 @@ const char *skill_name(int num) {
 int find_skill_num(char *name) {
   int skindex, ok;
   char *temp, *temp2;
-  char first[256], first2[256], tempbuf[256];
+  /* any_one_arg() fills MAX_INPUT_LENGTH-byte buffers; name is player input. */
+  char first[MAX_INPUT_LENGTH], first2[MAX_INPUT_LENGTH], tempbuf[MAX_INPUT_LENGTH];
 
   for (skindex = 1; skindex <= TOP_SPELL_DEFINE; skindex++) {
     if (is_abbrev(name, spell_info[skindex].name))
@@ -174,18 +187,94 @@ int find_skill_num(char *name) {
  * works -- all come through this function eventually. This is also the entry
  * point for non-spoken or unrestricted spells. Spellnum 0 is legal but silently
  * ignored here, to make callers simpler. */
+/* Re-validate call_magic's participants after a cast trigger ran. DG scripts
+ * (builder-controlled) can purge the target object, which extract_obj()
+ * frees immediately, so ovict is checked by UID without dereferencing it.
+ * Characters are only marked for extraction (freed at end of pulse), so a
+ * purged caster or cvict is still allocated but must not be acted on.
+ * Returns TRUE when the cast may continue; otherwise reports
+ * cast-target-purged and returns FALSE. */
+static bool cast_targets_intact(struct char_data *caster,
+    struct char_data *cvict, struct obj_data *ovict, long ouid, int spellnum,
+    const char *trigger) {
+  if (ovict && !obj_uid_matches(ouid, ovict)) {
+    TB_WARN_MSG("magic", "cast-target-purged", skill_name(spellnum),
+                "spell %d obj uid %ld purged by %s cast trigger; caster "
+                DIAG_CHAR_FMT, spellnum, ouid, trigger, DIAG_CHAR(caster));
+    return FALSE;
+  }
+  if (DEAD(caster)) {
+    TB_WARN_MSG("magic", "cast-target-purged", skill_name(spellnum),
+                "spell %d caster " DIAG_CHAR_FMT " purged by %s cast trigger",
+                spellnum, DIAG_CHAR(caster), trigger);
+    return FALSE;
+  }
+  if (cvict && DEAD(cvict)) {
+    TB_WARN_MSG("magic", "cast-target-purged", skill_name(spellnum),
+                "spell %d victim " DIAG_CHAR_FMT " purged by %s cast trigger; "
+                "caster " DIAG_CHAR_FMT, spellnum, DIAG_CHAR(cvict), trigger,
+                DIAG_CHAR(caster));
+    return FALSE;
+  }
+  return TRUE;
+}
+
+/**
+ * Cast spellnum from caster at cvict and/or ovict.
+ *
+ * The room, object and mob cast triggers run first and can purge or move
+ * caster, cvict and ovict. ovict is freed at once by extract_obj(); the
+ * function re-validates all three after each trigger and stops (returns 0)
+ * when one was purged. Callers that keep using any of these pointers after
+ * call_magic() returns must re-validate them the same way (obj by UID with
+ * obj_uid_matches(), characters with DEAD()).
+ *
+ * @return -1 the target died (do not cast again); 0 the cast was blocked,
+ *         invalid, or a participant was purged; 1 the spell was cast.
+ */
 int call_magic(struct char_data *caster, struct char_data *cvict,
     struct obj_data *ovict, int spellnum, int level, int casttype) {
   int savetype;
+  long ouid;
 
-  if (spellnum < 1 || spellnum > TOP_SPELL_DEFINE)
+  /* 0 and -1 are the documented "no spell" values of scroll and potion
+   * slots, and stay silent. Anything else out of range (object values,
+   * osetval, dg_cast) is a data error and is reported. */
+  if (!VALID_SPELLNUM(spellnum)) {
+    if (spellnum != 0 && spellnum != -1)
+      TB_ERROR_MSG("magic", "spellnum-range", "call_magic",
+                   "spell %d not in [1,%d] casttype %d by " DIAG_CHAR_FMT
+                   " ovict vnum %d", spellnum, TOP_SPELL_DEFINE, casttype,
+                   DIAG_CHAR(caster), ovict ? (int) GET_OBJ_VNUM(ovict) : NOTHING);
     return (0);
+  }
+
+  /* The cast triggers and the room flag checks below index world[] with
+   * the caster's room. A caster stranded in NOWHERE by an earlier, reported
+   * failure (see extract_char_final()) can still type 'cast': refuse it
+   * rather than read past world[]. */
+  if (!VALID_ROOM_RNUM(IN_ROOM(caster))) {
+    TB_ERROR_MSG("magic", "caster-nowhere", "call_magic",
+                 "spell %d casttype %d by " DIAG_CHAR_FMT " from no valid "
+                 "room (rnum %d); refused", spellnum, casttype,
+                 DIAG_CHAR(caster), (int) IN_ROOM(caster));
+    return (0);
+  }
+
+  /* Snapshot the object's identity before any script can free it. */
+  ouid = ovict ? obj_script_id(ovict) : 0;
 
   if (!cast_wtrigger(caster, cvict, ovict, spellnum))
     return 0;
+  if (!cast_targets_intact(caster, cvict, ovict, ouid, spellnum, "room"))
+    return 0;
   if (!cast_otrigger(caster, ovict, spellnum))
     return 0;
+  if (!cast_targets_intact(caster, cvict, ovict, ouid, spellnum, "object"))
+    return 0;
   if (!cast_mtrigger(caster, cvict, spellnum))
+    return 0;
+  if (!cast_targets_intact(caster, cvict, ovict, ouid, spellnum, "mob"))
     return 0;
 
   if (ROOM_FLAGGED(IN_ROOM(caster), ROOM_NOMAGIC)) {
@@ -295,6 +384,58 @@ int call_magic(struct char_data *caster, struct char_data *cvict,
   return (1);
 }
 
+/* Check a magic item's spell value before it indexes spell_info[]. Reports
+ * item-spellnum (obj vnum/UID, value slot, user) and tells the user it
+ * fizzles when the value is not a real spell. */
+static bool item_spell_valid(struct char_data *ch, struct obj_data *obj,
+    int spl, int slot, const char *kind) {
+  if (VALID_SPELLNUM(spl))
+    return TRUE;
+  TB_ERROR_MSG("magic", "item-spellnum", kind,
+               "obj vnum %d uid %ld value%d spell %d out of range [1,%d]; "
+               "used by " DIAG_CHAR_FMT, (int) GET_OBJ_VNUM(obj),
+               obj_script_id(obj), slot, spl, TOP_SPELL_DEFINE, DIAG_CHAR(ch));
+  send_to_char(ch, "It fizzles.\r\n");
+  return FALSE;
+}
+
+/* Cast a scroll's or potion's spells (values 1-3, at level value 0) until
+ * one returns <= 0. Every call_magic() runs DG cast triggers, which can purge
+ * the item itself or the target object (both freed at once by extract_obj),
+ * so their identities are snapshotted as UIDs and re-checked before the item
+ * is read again or the target is passed on. Returns TRUE while the item still
+ * exists (the caller then consumes it), FALSE after reporting
+ * magic-item-purged when a trigger destroyed it. */
+static bool cast_item_spells(struct char_data *ch, struct obj_data *obj,
+    struct char_data *tch, struct obj_data *tobj, int casttype,
+    const char *kind) {
+  long uid = obj_script_id(obj);
+  long tuid = tobj ? obj_script_id(tobj) : 0;
+  int vnum = GET_OBJ_VNUM(obj), i;
+
+  for (i = 1; i <= 3; i++) {
+    if (call_magic(ch, tch, tobj, GET_OBJ_VAL(obj, i), GET_OBJ_VAL(obj, 0),
+        casttype) <= 0)
+      break;
+    if (!obj_uid_matches(uid, obj))
+      break;
+    if (tobj && !obj_uid_matches(tuid, tobj)) {
+      TB_WARN_MSG("magic", "magic-item-purged", kind,
+                  "target obj uid %ld purged during %s cast by "
+                  DIAG_CHAR_FMT "; remaining spells of obj vnum %d skipped",
+                  tuid, kind, DIAG_CHAR(ch), vnum);
+      break;
+    }
+  }
+  if (!obj_uid_matches(uid, obj)) {
+    TB_WARN_MSG("magic", "magic-item-purged", kind,
+                "obj vnum %d uid %ld purged during %s cast by " DIAG_CHAR_FMT,
+                vnum, uid, kind, DIAG_CHAR(ch));
+    return FALSE;
+  }
+  return TRUE;
+}
+
 /* mag_objectmagic: This is the entry-point for all magic items.  This should
  * only be called by the 'quaff', 'use', 'recite', etc. routines.
  * For reference, object values 0-3:
@@ -303,17 +444,36 @@ int call_magic(struct char_data *caster, struct char_data *cvict,
  * scroll - [0]	level	[1] spell num	[2] spell num	[3] spell num
  * potion - [0] level	[1] spell num	[2] spell num	[3] spell num
  * Staves and wands will default to level 14 if the level is not specified; the
- * DikuMUD format did not specify staff and wand levels in the world files */
+ * DikuMUD format did not specify staff and wand levels in the world files
+ *
+ * Ownership: a scroll or potion is consumed (extract_obj, freed at once) by
+ * this function unless a cast trigger already purged it; a wand or staff
+ * may also be purged by a trigger. The caller must not use obj after this
+ * returns.
+ *
+ * Trust: the values are builder/script data (world file, oedit, DG
+ * osetval). Boot only logs bad spell numbers, so value 3 of a wand or staff
+ * is range-checked here before it indexes spell_info[], and scroll/potion
+ * spell values are checked by call_magic(). */
 void mag_objectmagic(struct char_data *ch, struct obj_data *obj, char *argument) {
   char arg[MAX_INPUT_LENGTH];
-  int i, k;
-  struct char_data *tch = NULL, *next_tch;
+  int i, k, spl, vnum;
+  long uid;
+  struct char_data *tch = NULL;
   struct obj_data *tobj = NULL;
 
   one_argument(argument, arg);
 
   k = generic_find(arg, FIND_CHAR_ROOM | FIND_OBJ_INV | FIND_OBJ_ROOM |
   FIND_OBJ_EQUIP, ch, &tch, &tobj);
+
+  /* Wand and staff value 3 indexes spell_info[] below. It comes from the
+   * world file (boot only logs a bad value), OLC, or DG osetval (any int),
+   * so it is untrusted: -1 ("no spell") and out-of-range values fizzle. */
+  if ((GET_OBJ_TYPE(obj) == ITEM_WAND || GET_OBJ_TYPE(obj) == ITEM_STAFF) &&
+      !item_spell_valid(ch, obj, GET_OBJ_VAL(obj, 3), 3,
+                        GET_OBJ_TYPE(obj) == ITEM_WAND ? "wand" : "staff"))
+    return;
 
   switch (GET_OBJ_TYPE(obj)) {
   case ITEM_STAFF:
@@ -331,22 +491,59 @@ void mag_objectmagic(struct char_data *ch, struct obj_data *obj, char *argument)
       WAIT_STATE(ch, PULSE_VIOLENCE);
       /* Level to cast spell at. */
       k = GET_OBJ_VAL(obj, 0) ? GET_OBJ_VAL(obj, 0) : DEFAULT_STAFF_LVL;
+      /* Each call_magic() runs cast triggers that may purge the staff (a
+       * world UID purge frees it at once). Read its values once, and stop
+       * as soon as its UID no longer resolves to it. */
+      spl = GET_OBJ_VAL(obj, 3);
+      uid = obj_script_id(obj);
+      vnum = GET_OBJ_VNUM(obj);
 
       /* Area/mass spells on staves can cause crashes. So we use special cases
        * for those spells spells here. */
-      if (HAS_SPELL_ROUTINE(GET_OBJ_VAL(obj, 3), MAG_MASSES | MAG_AREAS)) {
+      if (HAS_SPELL_ROUTINE(spl, MAG_MASSES | MAG_AREAS)) {
         for (i = 0, tch = world[IN_ROOM(ch)].people; tch;
             tch = tch->next_in_room)
           i++;
-        while (i-- > 0)
-          call_magic(ch, NULL, NULL, GET_OBJ_VAL(obj, 3), k, CAST_STAFF);
+        while (i-- > 0 && obj_uid_matches(uid, obj))
+          call_magic(ch, NULL, NULL, spl, k, CAST_STAFF);
       } else {
-        for (tch = world[IN_ROOM(ch)].people; tch; tch = next_tch) {
-          next_tch = tch->next_in_room;
+        /* call_magic() runs cast triggers, and the spell itself can kill
+         * (death triggers): any of them can teleport or purge the next
+         * occupant, so next_in_room is not kept across it. The room is
+         * snapshotted as UIDs and each target re-resolved; one that left
+         * the caster's room or is pending extraction is skipped and
+         * reported, and the staff stops if the caster itself is purged or
+         * moved (H2-10). */
+        room_rnum origin = IN_ROOM(ch);
+        long *targets;
+        int count = room_people_uids(origin, &targets);
+
+        for (i = 0; i < count && obj_uid_matches(uid, obj); i++) {
+          if (DEAD(ch) || IN_ROOM(ch) != origin) {
+            TB_WARN_MSG("magic", "staff-caster-moved", "staff",
+                        "obj vnum %d uid %ld: caster " DIAG_CHAR_FMT
+                        " purged or moved during the staff cast; %d "
+                        "target(s) skipped", vnum, uid, DIAG_CHAR(ch),
+                        count - i);
+            break;
+          }
+          if ((tch = room_person_live(targets[i], origin)) == NULL) {
+            TB_WARN_MSG("magic", "staff-target-moved", "staff",
+                        "target uid %ld moved or purged during the staff "
+                        "cast of obj vnum %d by " DIAG_CHAR_FMT "; skipped",
+                        targets[i], vnum, DIAG_CHAR(ch));
+            continue;
+          }
           if (ch != tch)
-            call_magic(ch, tch, NULL, GET_OBJ_VAL(obj, 3), k, CAST_STAFF);
+            call_magic(ch, tch, NULL, spl, k, CAST_STAFF);
         }
+        free(targets);
       }
+      if (!obj_uid_matches(uid, obj))
+        TB_WARN_MSG("magic", "magic-item-purged", "staff",
+                    "obj vnum %d uid %ld purged during staff cast by "
+                    DIAG_CHAR_FMT "; remaining targets skipped", vnum, uid,
+                    DIAG_CHAR(ch));
     }
     break;
   case ITEM_WAND:
@@ -408,12 +605,9 @@ void mag_objectmagic(struct char_data *ch, struct obj_data *obj, char *argument)
       act("$n recites $p.", FALSE, ch, obj, NULL, TO_ROOM);
 
     WAIT_STATE(ch, PULSE_VIOLENCE);
-    for (i = 1; i <= 3; i++)
-      if (call_magic(ch, tch, tobj, GET_OBJ_VAL(obj, i), GET_OBJ_VAL(obj, 0),
-          CAST_SCROLL) <= 0)
-        break;
-
-    if (obj != NULL)
+    /* The scroll is consumed here, unless a cast trigger already purged it
+     * (extract_obj frees at once, so it must not be extracted twice). */
+    if (cast_item_spells(ch, obj, tch, tobj, CAST_SCROLL, "scroll"))
       extract_obj(obj);
     break;
   case ITEM_POTION:
@@ -429,12 +623,7 @@ void mag_objectmagic(struct char_data *ch, struct obj_data *obj, char *argument)
       act("$n quaffs $p.", TRUE, ch, obj, NULL, TO_ROOM);
 
     WAIT_STATE(ch, PULSE_VIOLENCE);
-    for (i = 1; i <= 3; i++)
-      if (call_magic(ch, ch, NULL, GET_OBJ_VAL(obj, i), GET_OBJ_VAL(obj, 0),
-          CAST_POTION) <= 0)
-        break;
-
-    if (obj != NULL)
+    if (cast_item_spells(ch, obj, ch, NULL, CAST_POTION, "potion"))
       extract_obj(obj);
     break;
   default:
@@ -502,7 +691,16 @@ int cast_spell(struct char_data *ch, struct char_data *tch,
  * determines the spell number and finds a target, throws the die to see if
  * the spell can be cast, checks for sufficient mana and subtracts it, and
  * passes control to cast_spell(). */
+static void do_cast_body(struct char_data *ch, char *argument);
+
 ACMD(do_cast) {
+  do_cast_body(ch, argument);
+  /* Never leave this cast's target keyword for a later wand, scroll or
+   * script cast to pick up. */
+  *cast_arg2 = '\0';
+}
+
+static void do_cast_body(struct char_data *ch, char *argument) {
   struct char_data *tch = NULL;
   struct obj_data *tobj = NULL;
   char *s, *t;
@@ -510,6 +708,16 @@ ACMD(do_cast) {
 
   if (IS_NPC(ch))
     return;
+
+  /* GET_CLASS indexes spell_info[].min_level[]; it comes from the pfile,
+   * which does not range-check it. A bad class can never cast. */
+  if (!VALID_CLASS(GET_CLASS(ch))) {
+    TB_ERROR_MSG("magic", "player-class", "min_level",
+                 DIAG_CHAR_FMT " class %d not in [0,%d); cast refused",
+                 DIAG_CHAR(ch), (int) GET_CLASS(ch), NUM_CLASSES);
+    send_to_char(ch, "You do not know that spell!\r\n");
+    return;
+  }
 
   /* get: blank, spell name, target name */
   s = strtok(argument, "'");
@@ -535,7 +743,7 @@ ACMD(do_cast) {
     send_to_char(ch, "Cast what?!?\r\n");
     return;
   }
-  if (GET_LEVEL(ch) < SINFO.min_level[(int) GET_CLASS(ch)]) {
+  if (GET_LEVEL(ch) < SPELL_MIN_LEVEL(spellnum, (int) GET_CLASS(ch))) {
     send_to_char(ch, "You do not know that spell!\r\n");
     return;
   }
@@ -672,6 +880,12 @@ static void spello(int spl, const char *name, int max_mana, int min_mana,
     int mana_change, int minpos, int targets, int violent, int routines,
     const char *wearoff) {
   int i;
+
+  /* Each spell is registered once; a second spello() silently overwrote
+   * the first (SPELL_IDENTIFY once became free to cast from any position). */
+  if (spell_info[spl].name && spell_info[spl].name != unused_spellname)
+    TB_WARN_MSG("magic", "spello-duplicate", name,
+                "spell %d registered twice; the later entry wins", spl);
 
   for (i = 0; i < NUM_CLASSES; i++)
     spell_info[spl].min_level[i] = LVL_IMMORT;
@@ -906,8 +1120,6 @@ void mag_assign_spells(void) {
   TAR_CHAR_ROOM | TAR_OBJ_INV | TAR_OBJ_ROOM, FALSE, MAG_MANUAL, NULL);
 
   /* NON-castable spells should appear below here. */
-  spello(SPELL_IDENTIFY, "identify", 0, 0, 0, 0,
-  TAR_CHAR_ROOM | TAR_OBJ_INV | TAR_OBJ_ROOM, FALSE, MAG_MANUAL, NULL);
 
   /* you might want to name this one something more fitting to your theme -Welcor*/
   spello(SPELL_DG_AFFECT, "Script-inflicted", 0, 0, 0, POS_SITTING,

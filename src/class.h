@@ -23,6 +23,10 @@ int parse_class(char arg);
 void roll_real_abils(struct char_data *ch);
 byte saving_throws(int class_num, int type, int level);
 int thaco(int class_num, int level);
+/* The lookups above for a character: a table miss also names ch. */
+int char_thaco(const struct char_data *ch);
+byte char_saving_throw(const struct char_data *ch, int class_num, int type);
+int char_level_exp(const struct char_data *ch, int level);
 const char *title_female(int chclass, int level);
 const char *title_male(int chclass, int level);
 

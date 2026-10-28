@@ -8,6 +8,24 @@ endif()
 
 project(TbaMUD C)
 
+# ========== Valgrind memcheck (ctest -T memcheck) ==========
+# Must be set before include(CTest). Run from a NON-sanitizer tree:
+#   ctest --test-dir <build> -T memcheck -L native
+# Every definite/indirect leak and every invalid access is an error, and
+# --error-exitcode makes the test itself fail, so a defect cannot pass as a
+# "memcheck note". Only "native" tests are meant for this: running Valgrind
+# on the Python contract tests checks CPython, not tbaMUD.
+# Add a suppression only for a defect outside tbaMUD (libc, libsodium), in
+# tools/valgrind.supp, with a comment saying why it is not ours.
+find_program(MEMORYCHECK_COMMAND valgrind)
+set(MEMORYCHECK_COMMAND_OPTIONS
+    "--error-exitcode=99 --leak-check=full --show-leak-kinds=definite,indirect --errors-for-leak-kinds=definite,indirect --track-origins=yes --num-callers=40 --trace-children=no"
+    CACHE STRING "Valgrind options for ctest -T memcheck")
+if(EXISTS "${CMAKE_SOURCE_DIR}/tools/valgrind.supp")
+    set(MEMORYCHECK_SUPPRESSIONS_FILE "${CMAKE_SOURCE_DIR}/tools/valgrind.supp"
+        CACHE FILEPATH "Valgrind suppressions for ctest -T memcheck")
+endif()
+
 include(CTest)
 enable_testing()
 
@@ -40,9 +58,53 @@ include(CheckStructHasMember)
 include(CheckSymbolExists)
 include(CheckCSourceCompiles)
 
-# Output paths
-set(BIN_OUTPUT_DIR ${CMAKE_SOURCE_DIR}/bin)
+# ========== Fil-C toolchain ==========
+# Fil-C (filcc) reports itself as Clang, so it is told apart by the macro it
+# predefines. tests/CMakeLists.txt uses TBAMUD_FILC to set aside the tests
+# whose doubles cannot work under it (see tb_filc_skip_wrap_tests there).
+check_c_source_compiles("
+#ifndef __FILC__
+#error not Fil-C
+#endif
+int main(void) { return 0; }
+" TBAMUD_FILC)
+if(TBAMUD_FILC)
+    message(STATUS "Fil-C toolchain detected (__FILC__ is defined)")
+endif()
+
+# ========== Output paths ==========
+# Executables (circle and every test_*) go to <build>/bin by default, so each
+# build tree owns its binaries. Writing every tree to <source>/bin let an
+# ASan build, a Valgrind build and a release build overwrite one another's
+# executables, and ctest in one tree could then run another tree's binary.
+#
+# The autoconf build (src/Makefile) still writes <source>/bin/circle, which is
+# what autorun runs. To have a CMake build feed autorun instead, configure it
+# with -DTBAMUD_BIN_DIR=<source>/bin, and use only one tree that way.
+set(TBAMUD_BIN_DIR "${CMAKE_BINARY_DIR}/bin" CACHE PATH
+    "Directory for the circle server and test executables")
+set(BIN_OUTPUT_DIR ${TBAMUD_BIN_DIR})
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${BIN_OUTPUT_DIR})
+
+# Fail loudly if another build tree already writes to this directory: the
+# two trees would silently clobber each other's executables. The owner file
+# records which build tree claimed the directory.
+set(TBAMUD_BIN_OWNER_FILE "${BIN_OUTPUT_DIR}/.tbamud-build-owner")
+if(EXISTS "${TBAMUD_BIN_OWNER_FILE}")
+    file(READ "${TBAMUD_BIN_OWNER_FILE}" TBAMUD_BIN_OWNER)
+    string(STRIP "${TBAMUD_BIN_OWNER}" TBAMUD_BIN_OWNER)
+    if(NOT TBAMUD_BIN_OWNER STREQUAL CMAKE_BINARY_DIR
+       AND EXISTS "${TBAMUD_BIN_OWNER}/CMakeCache.txt")
+        message(WARNING
+            "TBAMUD_BIN_DIR ${BIN_OUTPUT_DIR} is also used by build tree "
+            "${TBAMUD_BIN_OWNER}. Building both will overwrite each other's "
+            "executables. Pick a different -DTBAMUD_BIN_DIR, or delete "
+            "${TBAMUD_BIN_OWNER_FILE} to hand the directory to this tree.")
+    endif()
+endif()
+file(MAKE_DIRECTORY "${BIN_OUTPUT_DIR}")
+file(WRITE "${TBAMUD_BIN_OWNER_FILE}" "${CMAKE_BINARY_DIR}\n")
+message(STATUS "Executables will be written to ${BIN_OUTPUT_DIR}")
 
 # Include source and build paths
 include_directories(src ${CMAKE_BINARY_DIR})
@@ -99,6 +161,20 @@ check_include_file("unistd.h" HAVE_UNISTD_H)
 check_include_file("memory.h" HAVE_MEMORY_H)
 check_include_file("assert.h" HAVE_ASSERT_H)
 check_include_file("arpa/telnet.h" HAVE_ARPA_TELNET_H)
+# A printf-style format that is not a string literal is a build error. Output
+# functions carry format(printf) attributes, so this catches player or client
+# text used as a format (e.g. a '%' in a client-reported ID) at compile time.
+# Pass untrusted text as data: write_to_output(d, "%s", text).
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    # -Wformat=2 = -Wformat plus -Wformat-nonliteral, -Wformat-security and
+    # -Wformat-y2k; the first two are promoted to errors.
+    add_compile_options(-Wformat=2 -Werror=format-security -Werror=format-nonliteral)
+    # strftime("%c") is the intended locale timestamp in logs; y2k is noise.
+    if(CMAKE_C_COMPILER_ID STREQUAL "GNU")
+        add_compile_options(-Wno-format-y2k)
+    endif()
+endif()
+
 check_include_file("arpa/inet.h" HAVE_ARPA_INET_H)
 check_include_file("sys/stat.h" HAVE_SYS_STAT_H)
 check_include_file("sys/socket.h" HAVE_SYS_SOCKET_H)
@@ -468,24 +544,126 @@ configure_file(
 # ========== Native runtime sanitizers ==========
 option(ENABLE_SANITIZERS "Enable AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
 
+# UBSan checks beyond -fsanitize=undefined. Each one names undefined or
+# almost-certainly-wrong behaviour that the "undefined" group leaves out on at
+# least one compiler; all are probed, so an older compiler just skips one.
+#   float-cast-overflow  out-of-range float->int (GCC leaves it out of
+#                        "undefined"; Clang already includes it)
+#   float-divide-by-zero x/0.0 in power curves and percentages
+#   local-bounds         Clang: out-of-bounds index into a local array whose
+#                        size is known only in the function
+#   nullability          Clang: _Nonnull contract violations (no-op until
+#                        headers use the annotations)
+# Deliberately NOT here, because tbaMUD relies on them on purpose:
+#   unsigned-integer-overflow (hashes, RNG), implicit-conversion and
+#   "integer" (char/ubyte/sh_int narrowing throughout structs.h). Turn those
+#   on for an audit run with -DSANITIZER_STRICT_INTEGER=ON.
+option(SANITIZER_STRICT_INTEGER
+    "With ENABLE_SANITIZERS: also trap implicit integer conversions and unsigned wraparound (noisy; for audits)" OFF)
+
 if(ENABLE_SANITIZERS)
     if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
-        message(STATUS "Native sanitizers enabled: address, undefined")
-        set(TB_BUILD_SANITIZERS "address,undefined")
+        include(CheckCCompilerFlag)
+        set(TB_SANITIZE_CHECKS "address,undefined")
+        set(_tb_extra_ubsan float-cast-overflow float-divide-by-zero
+            local-bounds nullability)
+        if(SANITIZER_STRICT_INTEGER)
+            list(APPEND _tb_extra_ubsan integer implicit-conversion)
+        endif()
+        foreach(_check IN LISTS _tb_extra_ubsan)
+            string(MAKE_C_IDENTIFIER "TB_HAVE_FSANITIZE_${_check}" _var)
+            set(CMAKE_REQUIRED_FLAGS "-fsanitize=${_check}")
+            set(CMAKE_REQUIRED_LINK_OPTIONS "-fsanitize=${_check}")
+            check_c_compiler_flag("-fsanitize=${_check}" ${_var})
+            unset(CMAKE_REQUIRED_FLAGS)
+            unset(CMAKE_REQUIRED_LINK_OPTIONS)
+            if(${_var})
+                string(APPEND TB_SANITIZE_CHECKS ",${_check}")
+            endif()
+        endforeach()
+        message(STATUS "Native sanitizers enabled: ${TB_SANITIZE_CHECKS}")
+        set(TB_BUILD_SANITIZERS "${TB_SANITIZE_CHECKS}")
         # Add these after configure-time feature probes so sanitizer runtimes
         # do not perturb CMake's compile-and-run capability detection.
+        # -fno-sanitize-recover=all makes every UBSan report fatal, so a
+        # finding fails the test instead of scrolling past in the log.
         add_compile_options(
-            -fsanitize=address,undefined
+            -fsanitize=${TB_SANITIZE_CHECKS}
             -fno-omit-frame-pointer
+            -fno-optimize-sibling-calls
             -fno-sanitize-recover=all
         )
         set(CMAKE_EXE_LINKER_FLAGS
-            "${CMAKE_EXE_LINKER_FLAGS} -fsanitize=address,undefined")
+            "${CMAKE_EXE_LINKER_FLAGS} -fsanitize=${TB_SANITIZE_CHECKS}")
     else()
         message(FATAL_ERROR
             "ENABLE_SANITIZERS requires GCC, Clang, or AppleClang.")
     endif()
 endif()
+
+# ========== Release hardening ==========
+# ENABLE_HARDENING builds the server the way it should run in production:
+#   _FORTIFY_SOURCE=3       glibc checks memcpy/strcpy/snprintf sizes, including
+#                           dynamic object sizes (needs optimisation, so it is
+#                           applied to every configuration except Debug)
+#   -fstack-protector-strong, -fstack-clash-protection, -fcf-protection
+#   -ftrivial-auto-var-init=pattern  uninitialised locals hold a crash-prone
+#                           pattern instead of stale stack data
+#   -Wl,-z,relro,-z,now     read-only GOT after startup
+# It is OFF by default and refused together with ENABLE_SANITIZERS: ASan
+# replaces the fortified libc entry points, and pattern-init hides the very
+# uninitialised reads Valgrind and MSan are run to find. Do not use a
+# hardened tree for Valgrind runs.
+option(ENABLE_HARDENING "Production hardening flags (FORTIFY_SOURCE=3, stack protector, pattern auto-init)" OFF)
+if(ENABLE_HARDENING)
+    if(ENABLE_SANITIZERS)
+        message(FATAL_ERROR
+            "ENABLE_HARDENING and ENABLE_SANITIZERS cannot be combined: "
+            "_FORTIFY_SOURCE conflicts with ASan's interceptors and "
+            "-ftrivial-auto-var-init hides uninitialised reads. Use separate "
+            "build trees.")
+    endif()
+    if(NOT CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+        message(FATAL_ERROR "ENABLE_HARDENING requires GCC, Clang, or AppleClang.")
+    endif()
+    include(CheckCCompilerFlag)
+    set(_tb_hardening_flags)
+    foreach(_flag -fstack-protector-strong -fstack-clash-protection
+                  -fcf-protection=full -ftrivial-auto-var-init=pattern)
+        string(MAKE_C_IDENTIFIER "TB_HAVE${_flag}" _var)
+        check_c_compiler_flag("${_flag}" ${_var})
+        if(${_var})
+            list(APPEND _tb_hardening_flags ${_flag})
+        else()
+            message(WARNING "ENABLE_HARDENING: ${CMAKE_C_COMPILER_ID} does not support ${_flag}; building without it.")
+        endif()
+    endforeach()
+    add_compile_options(${_tb_hardening_flags}
+        "$<$<NOT:$<CONFIG:Debug>>:-U_FORTIFY_SOURCE>"
+        "$<$<NOT:$<CONFIG:Debug>>:-D_FORTIFY_SOURCE=3>")
+    if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+        message(WARNING "ENABLE_HARDENING with CMAKE_BUILD_TYPE=Debug: _FORTIFY_SOURCE needs optimisation and is skipped. Use RelWithDebInfo for a fully hardened build.")
+    endif()
+    if(NOT APPLE)
+        set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,-z,relro,-z,now")
+    endif()
+    message(STATUS "Hardening enabled: ${_tb_hardening_flags} _FORTIFY_SOURCE=3 (non-Debug)")
+endif()
+
+# Runtime options for every CTest test in a sanitizer build. They live here,
+# not only in CI, so a local `ctest` traps exactly what CI traps. Override per
+# tree with -DTBAMUD_ASAN_OPTIONS=... (later keys win inside one string).
+#   detect_stack_use_after_return  returned stack frames stay poisoned
+#   check_initialization_order / strict_init_order  global ctor ordering
+#   strict_string_checks           str*() args must be NUL-terminated
+#   detect_invalid_pointer_pairs   left 0: needs -fsanitize=pointer-compare
+#   abort_on_error=0, halt_on_error=1  exit non-zero on the first report
+set(TBAMUD_ASAN_OPTIONS
+    "detect_leaks=1:halt_on_error=1:abort_on_error=0:detect_stack_use_after_return=1:check_initialization_order=1:strict_init_order=1:strict_string_checks=1:detect_odr_violation=2:print_summary=1"
+    CACHE STRING "ASAN_OPTIONS applied to CTest tests in sanitizer builds")
+set(TBAMUD_UBSAN_OPTIONS
+    "halt_on_error=1:print_stacktrace=1:report_error_type=1:print_summary=1"
+    CACHE STRING "UBSAN_OPTIONS applied to CTest tests in sanitizer builds")
 
 # Re-run conf.h generation after optional build modes (notably sanitizers)
 # have finalized provenance values.
@@ -504,7 +682,46 @@ target_link_libraries(circle ${EXTRA_LIBS})
 add_subdirectory(src/util)
 add_subdirectory(tests)
 
+# ========== libFuzzer targets ==========
+# Off by default: needs Clang's -fsanitize=fuzzer. See tests/fuzz/CMakeLists.txt.
+option(ENABLE_FUZZING "Build libFuzzer targets (Clang only) and their corpus regression tests" OFF)
+if(ENABLE_FUZZING)
+    if(NOT CMAKE_C_COMPILER_ID MATCHES "Clang")
+        message(FATAL_ERROR "ENABLE_FUZZING requires Clang (libFuzzer); configure with -DCMAKE_C_COMPILER=clang.")
+    endif()
+    if(ENABLE_HARDENING)
+        message(FATAL_ERROR "ENABLE_FUZZING builds ASan targets and cannot be combined with ENABLE_HARDENING.")
+    endif()
+    add_subdirectory(tests/fuzz)
+endif()
+
+# ========== Boot smoke test ==========
+# circle -c loads the whole world from lib/ (zones, triggers, rooms, mobs,
+# objects, shops, quests), frees it with destroy_db() and exits. Under ASan
+# or ctest -T memcheck this exercises every world-file loader and the
+# teardown path against real data. -c only reads lib/, so the test runs in
+# the source tree the way autorun does.
+add_test(NAME circle_boot_check
+         COMMAND circle -c
+         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+set_tests_properties(circle_boot_check PROPERTIES
+    LABELS "native;boot"
+    TIMEOUT 300
+    FAIL_REGULAR_EXPRESSION "ERROR: AddressSanitizer|runtime error:|LeakSanitizer")
+if(ENABLE_SANITIZERS)
+    set_tests_properties(circle_boot_check PROPERTIES ENVIRONMENT
+        "ASAN_OPTIONS=${TBAMUD_ASAN_OPTIONS};UBSAN_OPTIONS=${TBAMUD_UBSAN_OPTIONS}")
+endif()
+
 if (MEMORY_DEBUG)
+    # zfree() keeps every block until shutdown, which hides use-after-free,
+    # double free and leaks from ASan/LSan (and Valgrind). See zmalloc.c.
+    if (ENABLE_SANITIZERS)
+        message(FATAL_ERROR
+            "MEMORY_DEBUG and ENABLE_SANITIZERS are mutually exclusive: "
+            "zmalloc retains freed memory, so the sanitizers cannot see "
+            "use-after-free or leaks. Enable one or the other.")
+    endif()
     message(STATUS "MEMORY_DEBUG is activated, setting up zmalloc")
     target_compile_definitions(circle PRIVATE MEMORY_DEBUG)
 endif()

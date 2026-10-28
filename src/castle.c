@@ -58,8 +58,10 @@ SPECIAL(jerry);
 
 
 
-/* Assign castle special procedures. NOTE: The mobile number isn't fully 
- * specified. It's only an offset from the zone's base. */
+/* Assign castle special procedures. NOTE: The mobile number isn't fully
+ * specified. It's only an offset from the zone's base (zone Z_KINGS_C).
+ * If the zone or the mob is missing the proc is not assigned and a SYSERR
+ * is logged (except in mini-mud mode, where the zone is not loaded). */
 static void castle_mob_spec(mob_vnum mobnum, SPECIAL(*specproc))
 {
   mob_vnum vmv = castle_virtual(mobnum);
@@ -362,7 +364,12 @@ static void fry_victim(struct char_data *ch)
   return;
 }
 
-/* King_welmar. Control the actions and movements of the King. */
+/* King_welmar. Control the actions and movements of the King.
+ * The walk state (path, path_index, move) is function-static and therefore
+ * shared by every mob running this proc: two kings would advance one path
+ * between them. The zone ships one king. Rooms are offsets from zone
+ * Z_KINGS_C's bottom vnum (castle_real_room()); without that zone they
+ * resolve to NOWHERE and the walk never starts. */
 SPECIAL(king_welmar)
 {
   char actbuf[MAX_INPUT_LENGTH];

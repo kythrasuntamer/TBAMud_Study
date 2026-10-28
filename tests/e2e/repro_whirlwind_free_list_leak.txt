@@ -1,0 +1,28 @@
+# Reproducer: whirlwind leaks list nodes through free_list().
+#
+# Run:  tests/e2e/soak_gameplay.py --circle <ASan build>/bin/circle \
+#           --replay tests/e2e/repro_whirlwind_free_list_leak.txt
+# Expect (unfixed code): at shutdown LeakSanitizer reports item_data nodes
+#   allocated by create_item <- add_to_list <- event_whirlwind
+#   (act.offensive.c), and the syslog shows "List being freed while not empty."
+#
+# Cause: free_list() (lists.c) drains the list with simple_list(), but
+# remove_from_list() -> find_in_list() reuses simple_list()'s file-static
+# Iterator and resets it, so the drain stops after the first node and the
+# rest are leaked when the list header is freed.  event_whirlwind() builds a
+# list of every NPC in the room and frees it each spin, so a warrior with
+# whirlwind next to two or more NPCs leaks one node per extra NPC per spin.
+#
+# Only two NPCs and one spin are needed.  Skill 1 makes the spin stop after
+# one round (event_whirlwind continues while skill >= 1d101), so no event is
+# pending at shutdown; with an event pending, shutdown hits the separate bug
+# in repro_shutdown_pending_char_event.txt first.
+create Soakimp w
+create Alric w
+Soakimp: advance alric 30
+Soakimp: skillset alric 'whirlwind' 1
+Soakimp: teleport alric 3044
+Soakimp: at 3044 load mob 3062 2
+Alric: whirlwind
+expect Alric You stop spinning
+Alric: look

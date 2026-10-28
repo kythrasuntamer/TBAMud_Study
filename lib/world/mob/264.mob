@@ -10,7 +10,7 @@ slumber.
 33 9 -9 6d6+330 5d5+5
 330 108900
 5 5 1
-BareHandAttack: 16
+BareHandAttack: 14
 E
 #26401
 siobian mother~
@@ -23,7 +23,7 @@ The Mother, Siobian, lies in eternal rest next to her husband, Padrick.
 32 10 -9 6d6+320 5d5+5
 320 102400
 5 5 2
-BareHandAttack: 16
+BareHandAttack: 14
 E
 #26402
 cathari goddess~
@@ -37,7 +37,7 @@ beheld...  A true Goddess.  Maybe you should try killing her...
 34 9 -10 6d6+340 5d5+5
 340 115600
 5 5 2
-BareHandAttack: 16
+BareHandAttack: 14
 E
 #26403
 howler banshee~
@@ -64,7 +64,7 @@ she seems to float.
 32 10 -9 6d6+320 5d5+5
 320 102400
 8 8 2
-BareHandAttack: 16
+BareHandAttack: 14
 E
 #26405
 firshee banshee~

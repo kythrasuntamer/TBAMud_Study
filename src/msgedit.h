@@ -21,7 +21,7 @@
 /* Externals */
 void load_messages(void);
 void free_messages(void);
-void save_messages_to_disk(void);
+int save_messages_to_disk(void);
 void free_message_list(struct message_list * mlist);
 
 /* Defines */
@@ -40,3 +40,6 @@ void free_message_list(struct message_list * mlist);
 #define MSGEDIT_GOD_CHAR      13
 #define MSGEDIT_GOD_VICT      14
 #define MSGEDIT_GOD_ROOM      15
+/** Save prompt reached by 'Q' with unsaved changes: the answer ends the
+ * session.  Kept in OLC_MODE so the intent is per descriptor. */
+#define MSGEDIT_CONFIRM_SAVE_QUIT 16

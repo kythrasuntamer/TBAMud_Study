@@ -8,6 +8,19 @@
 *  CircleMUD is based on DikuMUD, Copyright (C) 1990, 1991.               *
 **************************************************************************/
 
+/**
+ * @file interpreter.c
+ * The command interpreter (command_interpreter(), aliases, argument
+ * splitters) and the login state machine nanny().
+ *
+ * Who controls the input: every argument string here is a line typed by a
+ * remote client, bounded to MAX_INPUT_LENGTH by comm.c, and nanny() runs
+ * before the client has authenticated. Other descriptors seen while logging
+ * in can be at any CON_* state, so their characters may have no name or
+ * idnum yet. Argument splitters write at most MAX_INPUT_LENGTH bytes to each
+ * output buffer.
+ */
+
 #include "conf.h"
 #include "sysdep.h"
 #include "structs.h"
@@ -554,6 +567,10 @@ void sort_commands(void)
     num_of_cmds++;
   num_of_cmds++;  /* \n */
 
+  /* Called at boot and again after every aedit save (the command list is
+   * rebuilt then), so release the previous order instead of leaking it. */
+  free(cmd_sort_info);
+  cmd_sort_info = NULL;
   CREATE(cmd_sort_info, int, num_of_cmds);
 
   for (a = 0; a < num_of_cmds; a++)
@@ -600,11 +617,22 @@ void command_interpreter(struct char_data *ch, char *argument)
     if (cont) return;                                    /* yes, command trigger took over */
   }
 
-  /* Allow IMPLs to switch into mobs to test the commands. */
-   if (IS_NPC(ch) && ch->desc && GET_LEVEL(ch->desc->original) >= LVL_IMPL) {
-     if (script_command_interpreter(ch, argument))
-       return;
-   }
+  /* Allow IMPLs to switch into mobs to test the commands. Invariant
+   * (internal): an NPC has a descriptor only while an immortal is switched
+   * into it, and do_switch sets desc->original to that immortal. An NPC
+   * descriptor with no original breaks it; report it (every command,
+   * until fixed) instead of dereferencing NULL, and give that NPC no
+   * IMPL-only script commands. */
+  if (IS_NPC(ch) && ch->desc) {
+    if (!ch->desc->original)
+      TB_ERROR_MSG("interpreter", "switch-original", "command_interpreter",
+                   DIAG_CHAR_FMT " has descriptor %d but no original "
+                   "character; IMPL script commands skipped",
+                   DIAG_CHAR(ch), ch->desc->desc_num);
+    else if (GET_LEVEL(ch->desc->original) >= LVL_IMPL &&
+             script_command_interpreter(ch, argument))
+      return;
+  }
 
   for (length = strlen(arg), cmd = 0; *complete_cmd_info[cmd].command != '\n'; cmd++)
     if(complete_cmd_info[cmd].command_pointer != do_action &&
@@ -981,6 +1009,31 @@ int reserved_word(char *argument)
   return (search_block(argument, reserved, TRUE) >= 0);
 }
 
+/* Copy one word into an argument buffer. The argument splitters below all
+ * follow the CircleMUD contract that the output buffer holds
+ * MAX_INPUT_LENGTH bytes. Input can be longer (script-forced commands), so
+ * copy at most MAX_INPUT_LENGTH-1 bytes, keep consuming the word, and report
+ * truncation. Returns the input position just past the copied word. */
+static char *copy_arg_word(char *argument, char *first_arg, char stop_quote,
+                           const char *caller)
+{
+  char *out = first_arg, *const out_end = first_arg + MAX_INPUT_LENGTH - 1;
+  size_t length = 0;
+
+  for (; *argument && (stop_quote ? *argument != stop_quote
+                                  : !isspace((unsigned char) *argument));
+       argument++, length++)
+    if (out < out_end)
+      *out++ = LOWER(*argument);
+  *out = '\0';
+
+  if (length > (size_t) (out_end - first_arg))
+    TB_ERROR_MSG("interpreter", "parse-argument", caller,
+                 "word of %zu bytes truncated to %d", length,
+                 MAX_INPUT_LENGTH - 1);
+  return argument;
+}
+
 /* Copy the first non-fill-word, space-delimited argument of 'argument'
  * to 'first_arg'; return a pointer to the remainder of the string. */
 char *one_argument(char *argument, char *first_arg)
@@ -995,14 +1048,7 @@ char *one_argument(char *argument, char *first_arg)
 
   do {
     skip_spaces(&argument);
-
-    first_arg = begin;
-    while (*argument && !isspace(*argument)) {
-      *(first_arg++) = LOWER(*argument);
-      argument++;
-    }
-
-    *first_arg = '\0';
+    argument = copy_arg_word(argument, begin, '\0', "one_argument");
   } while (fill_word(begin));
 
   return (argument);
@@ -1015,20 +1061,12 @@ char *one_word(char *argument, char *first_arg)
     skip_spaces(&argument);
 
     if (*argument == '\"') {
-      argument++;
-      while (*argument && *argument != '\"') {
-        *(first_arg++) = LOWER(*argument);
-        argument++;
-      }
-      argument++;
-    } else {
-      while (*argument && !isspace(*argument)) {
-        *(first_arg++) = LOWER(*argument);
-        argument++;
-      }
-    }
+      argument = copy_arg_word(argument + 1, first_arg, '\"', "one_word");
+      if (*argument)
+        argument++; /* closing quote; an unclosed quote ends at the NUL */
+    } else
+      argument = copy_arg_word(argument, first_arg, '\0', "one_word");
 
-    *first_arg = '\0';
   return (argument);
 }
 
@@ -1036,15 +1074,7 @@ char *one_word(char *argument, char *first_arg)
 char *any_one_arg(char *argument, char *first_arg)
 {
   skip_spaces(&argument);
-
-  while (*argument && !isspace(*argument)) {
-    *(first_arg++) = LOWER(*argument);
-    argument++;
-  }
-
-  *first_arg = '\0';
-
-  return (argument);
+  return (copy_arg_word(argument, first_arg, '\0', "any_one_arg"));
 }
 
 /* Same as one_argument except that it takes two args and returns the rest;
@@ -1157,7 +1187,53 @@ static int parse_name_internal(char *arg, char *name)
 #define USURP		2
 #define UNSWITCH	3
 
+/**
+ * Release the editor buffers of @p k, a socket a dupe check is booting,
+ * before its character @p booted is freed.
+ *
+ * The dupe checks set k->character to NULL, and close_socket() releases
+ * k's buffers only while k->character is set, so this does it as
+ * close_socket() would: a mail being written (PLR_MAILING) owns *k->str and
+ * k->str; otherwise k->backstr, k's copy of the old text, is freed unless
+ * PLR_WRITING. Both pointers are cleared either way: at the menu's
+ * description editor (CON_PLR_DESC, or CON_CLOSE after an immortal's dc
+ * there) k->str points into @p booted, and k stays in descriptor_list until
+ * the close pass, so input k already queued is still processed this pulse
+ * by string_add(), which writes through k->str.
+ *
+ * @param k      The socket being booted; its character is about to be freed.
+ * @param booted k's character, a player not in the world.
+ */
+static void release_booted_editor(struct descriptor_data *k,
+                                  struct char_data *booted)
+{
+  if (PLR_FLAGGED(booted, PLR_MAILING) && k->str) {
+    if (*k->str)
+      free(*k->str);
+    free(k->str);
+  } else if (k->backstr && !PLR_FLAGGED(booted, PLR_WRITING))
+    free(k->backstr);
+  k->str = NULL;
+  k->backstr = NULL;
+}
+
 /* This function seems a bit over-extended. */
+/**
+ * After a correct password, make @p d the only controller of its player.
+ *
+ * Walks descriptor_list and character_list. Other descriptors holding the
+ * same idnum are closed (their characters freed or unbound), and an in-game
+ * or link-dead character with that idnum is taken over: d->character may be
+ * freed and replaced by it.
+ *
+ * Other descriptors are in any login state, so their characters may have no
+ * name yet (still at the name prompt) and no valid idnum.
+ *
+ * @pre d->character is a loaded player with a valid GET_IDNUM().
+ * @return TRUE when d was reconnected to an existing character (the caller
+ *         must not enter the game again), FALSE to continue logging in.
+ *         Either way the caller must re-read d->character afterwards.
+ */
 static int perform_dupe_check(struct descriptor_data *d)
 {
   struct descriptor_data *k, *next_k;
@@ -1194,17 +1270,31 @@ static int perform_dupe_check(struct descriptor_data *d)
 
       do_return(k->character, NULL, 0, 0);
     } else if (k->character && GET_IDNUM(k->character) == id) {
-      /* Character taking over their own body. */
-      pref_temp=GET_PREF(k->character);
+      /* Character taking over their own body. k's character stays, linkless,
+       * only if it is in the world (in the game, where it may be taken over
+       * below, in an editor, or link-dead). At the menu or another pre-game
+       * prompt it belongs to k's login alone: it is in no list, and
+       * close_socket() frees nothing once k->character is NULL, so it is
+       * freed here; it used to leak (~9 KB per login). */
+      struct char_data *other = k->character;
+      bool other_in_world = IS_PLAYING(k) || STATE(k) == CON_DISCONNECT;
+
+      pref_temp=GET_PREF(other);
 
       if (!target && STATE(k) == CON_PLAYING) {
 	write_to_output(k, "\r\nThis body has been usurped!\r\n");
-	target = k->character;
+	target = other;
 	mode = USURP;
       }
-      k->character->desc = NULL;
+      other->desc = NULL;
       k->character = NULL;
       k->original = NULL;
+      if (!other_in_world) {
+        /* k->str must not outlive other (the menu's description editor
+         * points into it); see release_booted_editor(). */
+        release_booted_editor(k, other);
+        free_char(other);
+      }
       write_to_output(k, "\r\nMultiple login detected -- disconnecting.\r\n");
       STATE(k) = CON_CLOSE;
     }
@@ -1240,10 +1330,27 @@ static int perform_dupe_check(struct descriptor_data *d)
       continue;
     }
 
-    /* we've found a duplicate - blow him away, dumping his eq in limbo. */
-    if (IN_ROOM(ch) != NOWHERE)
-      char_from_room(ch);
-    char_to_room(ch, 1);
+    /* we've found a duplicate - blow him away, dumping his eq in the mortal
+     * start room. That room is looked up by vnum: the hard-coded rnum 1 used
+     * here before was whatever room OLC had shifted into that slot, or past
+     * top_of_world (char_to_room() refused it and left the duplicate in
+     * NOWHERE). With no start room this is reported and the duplicate is
+     * extracted where it is (extract_char_final() recovers or reports one
+     * in NOWHERE). */
+    {
+      room_rnum dump = real_room(CONFIG_MORTAL_START), here = IN_ROOM(ch);
+
+      if (dump == NOWHERE)
+        TB_ERROR_MSG("interpreter", "dupe-no-start-room", "room",
+                     "mortal start room vnum %d does not exist; duplicate "
+                     DIAG_CHAR_FMT " extracted in " DIAG_ROOM_FMT,
+                     (int) CONFIG_MORTAL_START, DIAG_CHAR(ch), DIAG_ROOM(here));
+      else {
+        if (here != NOWHERE)
+          char_from_room(ch);
+        char_to_room(ch, dump);
+      }
+    }
     extract_char(ch);
   }
 
@@ -1299,6 +1406,22 @@ static int perform_dupe_check(struct descriptor_data *d)
 }
 
 /* New Char dupe-check called at the start of character creation */
+/**
+ * Close other sockets creating, or playing, a character with @p d's new name.
+ *
+ * Any client can open sockets, so the other descriptors may be at any login
+ * state. A character still at CON_GET_NAME, or one that answered 'N' at
+ * CON_NAME_CNFRM, has a NULL player.name and is skipped. A NULL name on a
+ * socket past name confirmation is reported ("new-char-dupe-check").
+ *
+ * @pre d->character is a new player whose player.name is set.
+ * @post If the name is already in game, both sockets are set to CON_CLOSE
+ *       and d->character is freed and NULL; the caller must check STATE(d).
+ *       A booted socket's character is freed unless it is in the world,
+ *       where it stays without a descriptor; before it is freed, the
+ *       socket's editor buffers are released (release_booted_editor()).
+ * @return TRUE if any socket was closed.
+ */
 static bool perform_new_char_dupe_check(struct descriptor_data *d)
 {
   struct descriptor_data *k, *next_k;
@@ -1313,17 +1436,39 @@ static bool perform_new_char_dupe_check(struct descriptor_data *d)
     if (k == d)
       continue;
 
-   if (k->character == NULL)
+    /* Any client controls the other sockets: a peer still typing its name
+     * (CON_GET_NAME) or one that answered 'N' at CON_NAME_CNFRM legitimately
+     * has a character whose player.name is NULL. Only a NULL name past name
+     * confirmation (and outside the game) breaks the login invariant. */
+    if (k->character == NULL || IS_NPC(k->character))
       continue;
+    if (GET_PC_NAME(k->character) == NULL) {
+      if (STATE(k) > CON_NAME_CNFRM && STATE(k) != CON_PLAYING)
+        TB_WARN_MSG("interpreter", "new-char-dupe-check", "descriptor",
+                    "desc %d state %d has a character with a NULL name "
+                    "while checking new " DIAG_CHAR_FMT,
+                    k->desc_num, STATE(k), DIAG_CHAR(d->character));
+      continue;
+    }
 
-    /* Do the player names match? */
-    if (!strcmp(GET_NAME(k->character), GET_NAME(d->character))) {
+    /* Do the player names match? str_cmp, as valid_name() does. */
+    if (!str_cmp(GET_PC_NAME(k->character), GET_PC_NAME(d->character))) {
       /* Check the other character is still in creation? */
       if ((STATE(k) > CON_PLAYING) && (STATE(k) < CON_QCLASS)) {
-        /* Boot the older one */
-        k->character->desc = NULL;
+        /* Boot the older one. Its character belongs to that login alone (a
+         * character in creation is in no list), and close_socket() frees
+         * nothing once k->character is NULL, so it is freed here; it used
+         * to be dropped and leaked. */
+        struct char_data *older = k->character;
+
         k->character = NULL;
         k->original = NULL;
+        older->desc = NULL;
+        /* Creation prompts have no editor, but k may be CON_CLOSE after an
+         * immortal's dc at the menu's description editor, with k->str still
+         * pointing into older. */
+        release_booted_editor(k, older);
+        free_char(older);
         write_to_output(k, "\r\nMultiple login detected -- disconnecting.\r\n");
         STATE(k) = CON_CLOSE;
 
@@ -1331,14 +1476,28 @@ static bool perform_new_char_dupe_check(struct descriptor_data *d)
 
         found = TRUE;
       } else {
-        /* Something went VERY wrong, boot both chars */
-        k->character->desc = NULL;
+        /* Something went VERY wrong, boot both chars. k's character stays,
+         * linkless, only if it is in the world (in the game, in an editor or
+         * already linkless); at the menu or another pre-game prompt it
+         * belongs to that login alone. d's character is still being created.
+         * Both of those used to be dropped and leaked; they are freed. */
+        struct char_data *other = k->character;
+        bool other_in_world = IS_PLAYING(k) || STATE(k) == CON_DISCONNECT;
+
+        other->desc = NULL;
         k->character = NULL;
         k->original = NULL;
+        if (!other_in_world) {
+          /* At the menu's description editor k->str points into other, and
+           * string_add() may still write through it this pulse. */
+          release_booted_editor(k, other);
+          free_char(other);
+        }
         write_to_output(k, "\r\nMultiple login detected -- disconnecting.\r\n");
         STATE(k) = CON_CLOSE;
 
         d->character->desc = NULL;
+        free_char(d->character);
         d->character = NULL;
         d->original = NULL;
         write_to_output(d, "\r\nSorry, due to multiple connections, all your connections are being closed.\r\n");
@@ -1347,7 +1506,9 @@ static bool perform_new_char_dupe_check(struct descriptor_data *d)
 
         mudlog(NRM, LVL_GOD, TRUE, "SYSERR: Multiple logins with 1st in-game and the 2nd in char creation.");
 
-        found = TRUE;
+        /* d->character is now NULL: stop before the next iteration reads its
+         * name. The caller sees STATE(d) == CON_CLOSE. */
+        return TRUE;
       }
     }
   }
@@ -1407,12 +1568,59 @@ int enter_player_game (struct descriptor_data *d)
   return load_result;
 }
 
+/* Append to the connection's protocol banner. snprintf() returns the length
+ * it *wanted*, so "len += snprintf(...)" runs past the buffer on truncation
+ * and the next call's size (size - len) wraps to a huge value. Stop at the
+ * buffer end and report instead. */
+static void banner_append(char *buf, size_t size, size_t *len,
+                          const char *format, ...)
+  __attribute__ ((format (printf, 4, 5)));
+static void banner_append(char *buf, size_t size, size_t *len,
+                          const char *format, ...)
+{
+  va_list args;
+  int written;
+
+  if (*len >= size - 1)
+    return; /* already truncated and reported */
+  va_start(args, format);
+  written = vsnprintf(buf + *len, size - *len, format, args);
+  va_end(args);
+  if (written < 0) {
+    TB_ERROR_ERRNO("network", "protocol-banner", "get_protocols",
+                   "formatting the protocol banner failed; banner cut at %zu "
+                   "bytes", *len);
+    buf[*len] = '\0';
+    *len = size - 1;
+  } else if ((size_t) written >= size - *len) {
+    TB_ERROR_MSG("network", "protocol-banner", "get_protocols",
+                 "protocol banner truncated at %zu bytes (needed %zu)",
+                 size - 1, *len + (size_t) written);
+    *len = size - 1;
+  } else
+    *len += (size_t) written;
+}
+
+/**
+ * Descriptor event: after protocol negotiation, show what the client
+ * reported and the greeting, then move the socket to CON_GET_NAME.
+ *
+ * @pre event_obj is a mud_event_data whose pStruct is the descriptor.
+ *      new_descriptor() calls init_descriptor(), whose ProtocolCreate()
+ *      allocates d->pProtocol, every pVariables[] entry and every string
+ *      value, before it queues this event; close_socket() cancels the
+ *      descriptor's events, so d is live when this runs.
+ * The client ID is client-controlled text: it is only ever passed as a %s
+ * argument. banner_append() bounds the banner to its buffer and reports a
+ * cut ("protocol-banner").
+ * @return 0 (one-shot event).
+ */
 EVENTFUNC(get_protocols)
 {
   struct descriptor_data *d;
   struct mud_event_data *pMudEvent;
   char buf[MAX_STRING_LENGTH];
-  size_t len;
+  size_t len = 0;
 
   if (event_obj == NULL)
     return 0;
@@ -1423,22 +1631,26 @@ EVENTFUNC(get_protocols)
   /* Clear extra white space from the "protocol scroll" */
   write_to_output(d, "[H[J");
 
-  len = snprintf(buf, MAX_STRING_LENGTH,   "\tO[\toClient\tO] \tw%s\tn | ", d->pProtocol->pVariables[eMSDP_CLIENT_ID]->pValueString);
+  buf[0] = '\0';
+  /* CLIENT_ID is whatever the client reported (TTYPE or MSDP): untrusted. */
+  banner_append(buf, sizeof(buf), &len, "\tO[\toClient\tO] \tw%s\tn | ", d->pProtocol->pVariables[eMSDP_CLIENT_ID]->pValueString);
 
   if (d->pProtocol->pVariables[eMSDP_XTERM_256_COLORS]->ValueInt)
-    len += snprintf(buf + len, MAX_STRING_LENGTH - len, "\tO[\toColors\tO] \tw256\tn | ");
+    banner_append(buf, sizeof(buf), &len, "\tO[\toColors\tO] \tw256\tn | ");
   else if (d->pProtocol->pVariables[eMSDP_ANSI_COLORS]->ValueInt)
-    len += snprintf(buf + len, MAX_STRING_LENGTH - len, "\tO[\toColors\tO] \twAnsi\tn | ");
+    banner_append(buf, sizeof(buf), &len, "\tO[\toColors\tO] \twAnsi\tn | ");
   else
-    len += snprintf(buf + len, MAX_STRING_LENGTH - len, "[Colors] No Color | ");
- 
-  len += snprintf(buf + len, MAX_STRING_LENGTH - len,   "\tO[\toMXP\tO] \tw%s\tn | ", d->pProtocol->bMXP ? "Yes" : "No");
-  len += snprintf(buf + len, MAX_STRING_LENGTH - len,   "\tO[\toMSDP\tO] \tw%s\tn | ", d->pProtocol->bMSDP ? "Yes" : "No");
-  tb_snprintf(buf + len, MAX_STRING_LENGTH - len, "\tO[\toATCP\tO] \tw%s\tn\r\n\r\n", d->pProtocol->bATCP ? "Yes" : "No");
-   
-  write_to_output(d, buf, 0);
-    
-  write_to_output(d, GREETINGS, 0); 
+    banner_append(buf, sizeof(buf), &len, "[Colors] No Color | ");
+
+  banner_append(buf, sizeof(buf), &len, "\tO[\toMXP\tO] \tw%s\tn | ", d->pProtocol->bMXP ? "Yes" : "No");
+  banner_append(buf, sizeof(buf), &len, "\tO[\toMSDP\tO] \tw%s\tn | ", d->pProtocol->bMSDP ? "Yes" : "No");
+  banner_append(buf, sizeof(buf), &len, "\tO[\toATCP\tO] \tw%s\tn\r\n\r\n", d->pProtocol->bATCP ? "Yes" : "No");
+
+  /* The banner holds client-supplied text: always send it as data, never as
+   * a format string (a '%' in the client ID would otherwise be interpreted). */
+  write_to_output(d, "%s", buf);
+
+  write_to_output(d, "%s", GREETINGS);
   STATE(d) = CON_GET_NAME;
   return 0;
 }
@@ -1537,7 +1749,10 @@ void nanny(struct descriptor_data *d, char *arg)
           d->character->desc = d;
           CREATE(d->character->player.name, char, strlen(tmp_name) + 1);
           strlcpy(d->character->player.name, CAP(tmp_name), strlen(tmp_name) + 1);	/* strcpy: OK (size checked above) */
-          GET_PFILEPOS(d->character) = player_i;
+          /* remove_player() dropped the old index entry (and shifted later
+           * ones down), so player_i is stale: -1 makes CON_QCLASS call
+           * create_entry() for the new character. */
+          GET_PFILEPOS(d->character) = -1;
           write_to_output(d, "Did I get that right, %s (\t(Y\t)/\t(N\t))? ", tmp_name);
           STATE(d) = CON_NAME_CNFRM;
         } else {
@@ -1583,6 +1798,10 @@ void nanny(struct descriptor_data *d, char *arg)
 	return;
       }
       perform_new_char_dupe_check(d);
+      /* The dupe check closes this socket (and drops d->character) when the
+       * same name is already in game. */
+      if (STATE(d) == CON_CLOSE || d->character == NULL)
+        return;
       write_to_output(d, "New character.\r\nGive me a password for %s: ", GET_PC_NAME(d->character));
       echo_off(d);
       STATE(d) = CON_NEWPASSWD;
@@ -1793,6 +2012,10 @@ void nanny(struct descriptor_data *d, char *arg)
     STATE(d) = CON_RMOTD;
     /* make sure the last log is updated correctly. */
     GET_PREF(d->character)= rand_number(1, 128000);
+    /* GET_HOST() was already set when the descriptor got its character;
+     * free it or every new character leaks one host string. */
+    if (GET_HOST(d->character))
+      free(GET_HOST(d->character));
     GET_HOST(d->character)= strdup(d->host);
 
     mudlog(NRM, LVL_GOD, TRUE, "%s [%s] new player.", GET_NAME(d->character), d->host);

@@ -12,6 +12,30 @@
 *  $Revision: 1.0.14 $                                                    *
 **************************************************************************/
 
+/**
+ * @file dg_triggers.c
+ * The trigger entry points the game calls when something happens: one
+ * function per trigger type and owner kind (greet_mtrigger, get_otrigger,
+ * enter_wtrigger, ...). Each finds the matching triggers on the owner and
+ * runs them through script_driver().
+ *
+ * Return contract of the int-returning entry points: nonzero lets the game
+ * action proceed, 0 means a trigger blocked it (the script returned 0) or
+ * the owner or actor did not survive the trigger. Callers must treat 0 as
+ * "do not continue with this action".
+ *
+ * Lifetime rules: a script can extract its owner, the actor, or anyone
+ * else, and can move characters between rooms. After a script_driver()
+ * call a trigger function never trusts a pointer it held before: owners and
+ * actors are re-checked by UID (obj_uid_matches(), find_char()), and loops
+ * over several triggers or room occupants walk a snapshot taken before the
+ * first dispatch (dg_cmd.h, the greet and command snapshots below).
+ *
+ * Who controls the input: the matched text (speech, command arguments) is
+ * typed by players; trigger argument lists and numeric arguments come from
+ * builders. Both are treated as untrusted strings.
+ */
+
 #include "conf.h"
 #include "sysdep.h"
 #include "structs.h"
@@ -25,12 +49,25 @@
 #include "constants.h"
 #include "spells.h"  /* for skill_name() */
 #include "act.h"    /* for cmd_door[] */
+#include "dg_cmd.h" /* snapshot helpers shared with the DG commands */
 
 /* General functions used by several triggers. */
 
-/* Copy first phrase into first_arg, returns rest of string. */
+/* Copy the first phrase of arg into first_arg and return the rest of arg.
+ * A phrase is one word, or text in double quotes (the closing quote is
+ * overwritten with a NUL in arg; an unterminated quote runs to the end).
+ * first_arg holds first_arg_size bytes (at least 1) and is always
+ * NUL-terminated; a longer phrase is truncated, reported, and still
+ * consumed from arg. (The unquoted branch used to ignore first_arg_size;
+ * only word_check()'s equal-size buffers kept it in bounds.) */
 char *one_phrase(char *arg, char *first_arg, size_t first_arg_size)
 {
+    if (first_arg_size == 0) {
+        TB_ERROR_MSG("dg", "phrase-buffer", "one_phrase",
+                     "called with a zero-size phrase buffer; nothing copied");
+        return arg;
+    }
+
     skip_spaces(&arg);
 
     if (!*arg)
@@ -43,7 +80,10 @@ char *one_phrase(char *arg, char *first_arg, size_t first_arg_size)
         p = matching_quote(arg);
         c = *p;
         *p = '\0';
-        strlcpy(first_arg, arg + 1, first_arg_size);
+        if (strlcpy(first_arg, arg + 1, first_arg_size) >= first_arg_size)
+            TB_ERROR_MSG("dg", "phrase-truncated", "one_phrase",
+                         "%zu-byte quoted phrase cut to %zu bytes",
+                         strlen(arg + 1), first_arg_size - 1);
         if (c == '\0')
             return p;
         else
@@ -52,21 +92,35 @@ char *one_phrase(char *arg, char *first_arg, size_t first_arg_size)
 
     else
     {
-        char *s, *p;
+        char *p = arg;
+        size_t len = 0;
 
-        s = first_arg;
-        p = arg;
-
-        while (*p && !isspace(*p) && *p != '"')
-            *s++ = *p++;
-
-        *s = '\0';
+        /* Bounded by first_arg_size, which this copy used to ignore. */
+        while (*p && !isspace((unsigned char)*p) && *p != '"') {
+            if (len + 1 < first_arg_size)
+                first_arg[len++] = *p;
+            p++;
+        }
+        first_arg[len] = '\0';
+        if ((size_t)(p - arg) > len)
+            TB_ERROR_MSG("dg", "phrase-truncated", "one_phrase",
+                         "%zu-byte word cut to %zu bytes",
+                         (size_t)(p - arg), len);
         return p;
     }
 
     return arg;
 }
 
+/**
+ * Whether sub occurs in string as a whole word or phrase: case-insensitive
+ * (str_str()), and bounded on each side by the string's start or end,
+ * whitespace or punctuation. Only the first occurrence is examined, so
+ * "cat" is not found in "cats cat".
+ * @param sub The word or phrase to look for; non-NULL.
+ * @param string The text searched; non-NULL.
+ * @return 1 when found as a word, else 0.
+ */
 int is_substring(char *sub, char *string)
 {
     char *s;
@@ -89,8 +143,10 @@ int is_substring(char *sub, char *string)
 }
 
 /* Return 1 if str contains a word or phrase from wordlist. Phrases are in
- * double quotes ("). if wrdlist is NULL, then return 1, if str is NULL,
- * return 0. */
+ * double quotes ("). A wordlist starting with '*' matches everything. Both
+ * arguments must be non-NULL. Only the first MAX_INPUT_LENGTH - 1 bytes of
+ * the wordlist are searched; trig_word_check() reports a trigger whose
+ * argument list is longer. */
 int word_check(char *str, char *wordlist)
 {
     char words[MAX_INPUT_LENGTH], phrase[MAX_INPUT_LENGTH], *s;
@@ -104,6 +160,24 @@ int word_check(char *str, char *wordlist)
             return 1;
 
     return 0;
+}
+
+/* word_check() on a trigger's argument list, reporting (once per trigger
+ * prototype in a row, since speech triggers run on every line said) an
+ * argument list too long to be searched in full: its last words could
+ * never fire. */
+static int trig_word_check(char *str, trig_data *t)
+{
+  static trig_rnum last_reported = NOTHING;
+  size_t length = strlen(GET_TRIG_ARG(t));
+
+  if (length >= MAX_INPUT_LENGTH && GET_TRIG_RNUM(t) != last_reported) {
+    last_reported = GET_TRIG_RNUM(t);
+    TB_WARN_MSG("dg", "wordlist-truncated", "word_check",
+                "trigger %d: argument list of %zu bytes; only the first %d "
+                "are matched", GET_TRIG_VNUM(t), length, MAX_INPUT_LENGTH - 1);
+  }
+  return word_check(str, GET_TRIG_ARG(t));
 }
 
 /*Mob triggers. */
@@ -143,93 +217,317 @@ void bribe_mtrigger(char_data *ch, char_data *actor, int amount)
   }
 }
 
+/* Snapshot script IDs rather than holding occupant-list links across callbacks.
+ * Callback-driven teleports or extraction may invalidate next_in_room.
+ * Each saved ID is re-resolved before it is dereferenced.
+ * (struct dg_memory_target is declared in dg_cmd.h.)
+ */
+static struct dg_memory_target *dg_memory_targets(room_rnum room)
+{
+  struct dg_memory_target *head = NULL, **tail = &head;
+  char_data *person;
+  for (person = world[room].people; person; person = person->next_in_room) {
+    struct dg_memory_target *node;
+    CREATE(node, struct dg_memory_target, 1);
+    node->uid = char_script_id(person);
+    node->next = NULL;
+    *tail = node;
+    tail = &node->next;
+  }
+  return head;
+}
+
+static void dg_free_memory_targets(struct dg_memory_target *head)
+{
+  while (head) {
+    struct dg_memory_target *next = head->next;
+    free(head);
+    head = next;
+  }
+}
+
+/* A script UID can remain registered until deferred character extraction.
+ * Check the pending-extraction flag as well as identity and room. */
+static int dg_memory_character_live(char_data *ch, long uid, room_rnum room)
+{
+  return ch && find_char(uid) == ch &&
+         !((IS_NPC(ch) && MOB_FLAGGED(ch, MOB_NOTDEADYET)) ||
+           (!IS_NPC(ch) && PLR_FLAGGED(ch, PLR_NOTDEADYET))) &&
+         IN_ROOM(ch) == room;
+}
+
+/* Exported forms of the snapshot helpers above, for the "all" loops of the
+ * DG commands (dg_cmd.h). */
+struct dg_memory_target *dg_room_occupant_uids(room_rnum room)
+{
+  return dg_memory_targets(room);
+}
+
+void dg_free_room_occupant_uids(struct dg_memory_target *head)
+{
+  dg_free_memory_targets(head);
+}
+
+char_data *dg_room_occupant_live(long uid, room_rnum room)
+{
+  char_data *ch = find_char(uid);
+  return dg_memory_character_live(ch, uid, room) ? ch : NULL;
+}
+
+void dg_report_occupant_skipped(long uid, room_rnum room, const char *cmd)
+{
+  char_data *ch = find_char(uid);
+
+  if (ch)
+    TB_WARN_MSG("dg", "all-target-moved", cmd,
+                DIAG_CHAR_FMT " (uid %ld) left room vnum %d or is being "
+                "extracted after an earlier callback of the same 'all' "
+                "command; skipped", DIAG_CHAR(ch), uid,
+                GET_ROOM_VNUM(room));
+  else
+    TB_WARN_MSG("dg", "all-target-moved", cmd,
+                "uid %ld from room vnum %d no longer exists after an earlier "
+                "callback of the same 'all' command; skipped", uid,
+                GET_ROOM_VNUM(room));
+}
+
+/* Mobile trigger handlers run only for a character standing in a valid room.
+ * Anything else is a caller bug: report it with the handler name and stop. */
+static int dg_trigger_actor_placed(const char_data *ch, const char *handler)
+{
+  if (ch && world && (long long)IN_ROOM(ch) >= 0 &&
+      VALID_ROOM_RNUM(IN_ROOM(ch)))
+    return TRUE;
+  TB_ERROR_MSG("dg", "trigger-dispatch", handler,
+               "invariant violated: character %p uid=%ld is not in a valid "
+               "room (rnum %ld, world %s); no triggers dispatched",
+               (const void *)ch, ch ? ch->script_id : 0L,
+               ch ? (long) IN_ROOM(ch) : -1L, world ? "loaded" : "NULL");
+  return FALSE;
+}
+
 void greet_memory_mtrigger(char_data *actor)
 {
   trig_data *t;
   char_data *ch;
-  struct script_memory *mem, *next_mem;
+  struct script_memory *mem;
   char buf[MAX_INPUT_LENGTH];
   int command_performed = 0;
+  struct dg_memory_target *targets, *target;
+  long actor_uid;
 
-  if (!valid_dg_target(actor, DG_ALLOW_GODS))
+  if (!dg_trigger_actor_placed(actor, "greet_memory_mtrigger") ||
+      !valid_dg_target(actor, DG_ALLOW_GODS))
     return;
 
-  for (ch = world[IN_ROOM(actor)].people; ch; ch = ch->next_in_room) {
+  const room_rnum origin_room = IN_ROOM(actor);
+  actor_uid = char_script_id(actor);
+  targets = dg_memory_targets(origin_room);
+
+  for (target = targets; target; target = target->next) {
+    if (!dg_memory_character_live(actor, actor_uid, origin_room))
+      break;
+    ch = find_char(target->uid);
+    if (!dg_memory_character_live(ch, target->uid, origin_room))
+      continue;
     if (!SCRIPT_MEM(ch) || !AWAKE(ch) || FIGHTING(ch) || (ch == actor) ||
         AFF_FLAGGED(ch, AFF_CHARM))
       continue;
-    /* find memory line with command only */
-    for (mem = SCRIPT_MEM(ch); mem && SCRIPT_MEM(ch); mem = next_mem) {
-      next_mem = mem->next;
-      if (char_script_id(actor)!=mem->id) continue;
+    /* Limit this dispatch to the matching memories present on entry.
+     * A callback may remember the actor again indefinitely; newly created
+     * memories belong to a subsequent dispatch, not this loop.
+     */
+    size_t remaining = 0;
+    for (mem = SCRIPT_MEM(ch); mem; mem = mem->next)
+      if (mem->id == actor_uid)
+        ++remaining;
+    /* Only access live list nodes; callbacks may edit this memory chain. */
+    while (remaining > 0 &&
+           dg_memory_character_live(actor, actor_uid, origin_room) &&
+           dg_memory_character_live(ch, target->uid, origin_room) &&
+           SCRIPT_MEM(ch)) {
+      struct script_memory **link = &SCRIPT_MEM(ch);
+      long actor_id = char_script_id(actor);
+      while (*link && (*link)->id != actor_id)
+        link = &(*link)->next;
+      if (!*link)
+        break;
+      mem = *link;
+      --remaining;
       if (mem->cmd) {
-        command_interpreter(ch, mem->cmd); /* no script */
+        long owner_uid = char_script_id(ch);
+        /* The command interpreter may delete the memory node supplying
+         * this string. Own a private copy for the whole invocation. */
+        char *command_copy = strdup(mem->cmd);
+        if (!command_copy) {
+          /* Out of memory: stop this greet dispatch, but say why (as
+           * act_mtrigger does for the same failure). */
+          TB_ERROR_ERRNO("dg", "allocate", "greet_memory_mtrigger",
+                         DIAG_CHAR_FMT ": copy of a %zu-byte memory "
+                         "command failed; greet-memory dispatch stopped",
+                         DIAG_CHAR(ch), strlen(mem->cmd) + 1);
+          goto cleanup;
+        }
+        command_interpreter(ch, command_copy);
+        free(command_copy); /* command memory itself stays linked */
+        /* The callback can remove or relocate the owner. The command node
+         * may also have been freed, so do not inspect it afterward. */
+        if (!dg_memory_character_live(ch, owner_uid, origin_room))
+          goto cleanup;
         command_performed = 1;
         break;
       }
-      /* if a command was not performed execute the memory script */
-      if (mem && !command_performed) {
+      /* Detach before executing the memory script: no post-callback search
+       * for a node that may have been removed by another script. */
+      *link = mem->next;
+      mem->next = NULL;
+      if (!command_performed && SCRIPT(ch)) {
         for (t = TRIGGERS(SCRIPT(ch)); t; t = t->next) {
           if (IS_SET(GET_TRIG_TYPE(t), MTRIG_MEMORY) &&
-              CAN_SEE(ch, actor) &&
-              !GET_TRIG_DEPTH(t) &&
+              CAN_SEE(ch, actor) && !GET_TRIG_DEPTH(t) &&
               rand_number(1, 100) <= GET_TRIG_NARG(t)) {
-              ADD_UID_VAR(buf, t, char_script_id(actor), "actor", 0);
-              script_driver(&ch, t, MOB_TRIGGER, TRIG_NEW);
-              break;
+            ADD_UID_VAR(buf, t, actor_id, "actor", 0);
+            long owner_uid = char_script_id(ch);
+            script_driver(&ch, t, MOB_TRIGGER, TRIG_NEW);
+            /* The callback can purge or replace the owner. Do not use a
+             * stale room-occupant or script-memory pointer afterward. */
+            if (!dg_memory_character_live(ch, owner_uid, origin_room)) {
+              free(mem);
+              goto cleanup;
+            }
+            break;
           }
         }
       }
-      /* delete the memory */
-      if (mem) {
-        if (SCRIPT_MEM(ch)==mem) {
-          SCRIPT_MEM(ch) = mem->next;
-        } else {
-          struct script_memory *prev;
-          prev = SCRIPT_MEM(ch);
-          while (prev->next != mem) prev = prev->next;
-          prev->next = mem->next;
-        }
-        if (mem->cmd) free(mem->cmd);
-        free(mem);
-      }
+      free(mem);
     }
   }
+cleanup:
+  dg_free_memory_targets(targets);
+}
+
+/* A pointer captured before a DG callback must be checked against the
+ * current live trigger list before dereferencing it. Pointer comparison
+ * does not dereference a trigger which has since been extracted.
+ */
+struct dg_greet_trigger_target {
+  trig_data *identity;
+  unsigned long serial;  /* distinguishes a new trigger at a reused address */
+  struct dg_greet_trigger_target *next;
+};
+
+/* current must come from a live trigger list; the snapshot is never
+ * dereferenced. Address equality alone is not identity (ABA). */
+static int dg_trigger_target_is(const trig_data *current,
+                                const struct dg_greet_trigger_target *entry)
+{
+  if (current != entry->identity)
+    return FALSE;
+  if (current->serial != entry->serial) {
+    /* The snapshotted trigger was freed during a callback and its address
+     * reused. Correctly skipped, but reported: it means a script detached
+     * and re-attached triggers mid-dispatch. */
+    TB_WARN_MSG("dg", "trigger-identity", "dispatch_snapshot",
+                "trigger address %p reused (serial %lu -> %lu, now vnum %d); "
+                "skipping the replacement", (const void *)current,
+                entry->serial, current->serial,
+                trig_index ? GET_TRIG_VNUM(current) : -1);
+    return FALSE;
+  }
+  return TRUE;
+}
+
+static struct dg_greet_trigger_target *dg_greet_trigger_targets(trig_data *first)
+{
+  struct dg_greet_trigger_target *head = NULL, **tail = &head;
+  for (trig_data *t = first; t; t = t->next) {
+    struct dg_greet_trigger_target *node;
+    CREATE(node, struct dg_greet_trigger_target, 1);
+    node->identity = t;
+    node->serial = t->serial;
+    node->next = NULL;
+    *tail = node;
+    tail = &node->next;
+  }
+  return head;
+}
+
+static void dg_free_greet_trigger_targets(struct dg_greet_trigger_target *head)
+{
+  while (head) {
+    struct dg_greet_trigger_target *next = head->next;
+    free(head);
+    head = next;
+  }
+}
+
+static trig_data *dg_find_live_greet_trigger(char_data *ch,
+    const struct dg_greet_trigger_target *entry)
+{
+  if (!SCRIPT(ch))
+    return NULL;
+  for (trig_data *t = TRIGGERS(SCRIPT(ch)); t; t = t->next)
+    if (dg_trigger_target_is(t, entry))
+      return t;
+  return NULL;
 }
 
 int greet_mtrigger(char_data *actor, int dir)
 {
-  trig_data *t;
   char_data *ch;
   char buf[MAX_INPUT_LENGTH];
-  int intermediate, final=TRUE;
-  struct trig_data *next_trig;
+  int intermediate, final = TRUE;
+  struct dg_memory_target *targets, *target;
+  room_rnum origin_room;
+  long actor_uid;
 
-  if (!valid_dg_target(actor, DG_ALLOW_GODS))
+  if (!dg_trigger_actor_placed(actor, "greet_mtrigger") ||
+      !valid_dg_target(actor, DG_ALLOW_GODS))
     return TRUE;
 
-  for (ch = world[IN_ROOM(actor)].people; ch; ch = ch->next_in_room) {
+  origin_room = IN_ROOM(actor);
+  actor_uid = char_script_id(actor);
+  targets = dg_memory_targets(origin_room);
+
+  for (target = targets; target; target = target->next) {
+    if (!dg_memory_character_live(actor, actor_uid, origin_room))
+      break;
+    ch = find_char(target->uid);
+    if (!dg_memory_character_live(ch, target->uid, origin_room))
+      continue;
     if (!SCRIPT_CHECK(ch, MTRIG_GREET | MTRIG_GREET_ALL) ||
-        !AWAKE(ch) || FIGHTING(ch) || (ch == actor) ||
+        !AWAKE(ch) || FIGHTING(ch) || ch == actor ||
         AFF_FLAGGED(ch, AFF_CHARM))
       continue;
 
-    for (t = TRIGGERS(SCRIPT(ch)); t; t = next_trig) {
-		next_trig = t->next;
-		if (((IS_SET(GET_TRIG_TYPE(t), MTRIG_GREET) && CAN_SEE(ch, actor)) ||
+    /* Only dispatch triggers present at entry to this owner's visit.
+     * A callback may detach any trigger, including the next one. */
+    struct dg_greet_trigger_target *triggers =
+      dg_greet_trigger_targets(TRIGGERS(SCRIPT(ch)));
+    for (struct dg_greet_trigger_target *entry = triggers; entry;
+         entry = entry->next) {
+      if (!dg_memory_character_live(actor, actor_uid, origin_room) ||
+          !dg_memory_character_live(ch, target->uid, origin_room))
+        break;
+      trig_data *t = dg_find_live_greet_trigger(ch, entry);
+      if (!t)
+        continue;
+      if (((IS_SET(GET_TRIG_TYPE(t), MTRIG_GREET) && CAN_SEE(ch, actor)) ||
            IS_SET(GET_TRIG_TYPE(t), MTRIG_GREET_ALL)) &&
-          !GET_TRIG_DEPTH(t) && (rand_number(1, 100) <= GET_TRIG_NARG(t))) {
-        if (dir>=0 && dir < DIR_COUNT)
+          !GET_TRIG_DEPTH(t) && rand_number(1, 100) <= GET_TRIG_NARG(t)) {
+        if (dir >= 0 && dir < DIR_COUNT)
           add_var(&GET_TRIG_VARS(t), "direction", dirs[rev_dir[dir]], 0);
         else
           add_var(&GET_TRIG_VARS(t), "direction", "none", 0);
-        ADD_UID_VAR(buf, t, char_script_id(actor), "actor", 0);
+        ADD_UID_VAR(buf, t, actor_uid, "actor", 0);
         intermediate = script_driver(&ch, t, MOB_TRIGGER, TRIG_NEW);
-        if (!intermediate) final = FALSE;
-        continue;
+        if (!intermediate)
+          final = FALSE;
       }
     }
+    dg_free_greet_trigger_targets(triggers);
   }
+  dg_free_memory_targets(targets);
   return final;
 }
 
@@ -239,43 +537,77 @@ void entry_memory_mtrigger(char_data *ch)
   char_data *actor;
   struct script_memory *mem;
   char buf[MAX_INPUT_LENGTH];
+  struct dg_memory_target *targets, *target;
+  room_rnum origin_room;
+  long owner_uid;
 
-  if (!SCRIPT_MEM(ch) || AFF_FLAGGED(ch, AFF_CHARM))
+  if (!dg_trigger_actor_placed(ch, "entry_memory_mtrigger") ||
+      !SCRIPT_MEM(ch) || AFF_FLAGGED(ch, AFF_CHARM))
     return;
 
-  for (actor = world[IN_ROOM(ch)].people; actor && SCRIPT_MEM(ch);
-       actor = actor->next_in_room) {
+  origin_room = IN_ROOM(ch);
+  owner_uid = char_script_id(ch);
+  targets = dg_memory_targets(origin_room);
+  for (target = targets; target; target = target->next) {
+    if (!dg_memory_character_live(ch, owner_uid, origin_room))
+      break;
+    if (!SCRIPT_MEM(ch))
+      break;
+    actor = find_char(target->uid);
+    if (!dg_memory_character_live(actor, target->uid, origin_room))
+      continue;
     if (actor!=ch && SCRIPT_MEM(ch)) {
-      for (mem = SCRIPT_MEM(ch); mem && SCRIPT_MEM(ch); ) {
-        struct script_memory *next_mem = mem->next;
-        if (char_script_id(actor)==mem->id) {
-          struct script_memory *prev;
-          if (mem->cmd) command_interpreter(ch, mem->cmd);
-          else {
-            for (t = TRIGGERS(SCRIPT(ch)); t; t = t->next) {
-              if (TRIGGER_CHECK(t, MTRIG_MEMORY) && (rand_number(1, 100) <=
-                  GET_TRIG_NARG(t))){
-                ADD_UID_VAR(buf, t, char_script_id(actor), "actor", 0);
-                script_driver(&ch, t, MOB_TRIGGER, TRIG_NEW);
-                break;
-              }
+      /* Bound callbacks by the matching memories present initially.
+       * Re-created memories remain queued for a later dispatch.
+       */
+      size_t remaining = 0;
+      for (mem = SCRIPT_MEM(ch); mem; mem = mem->next)
+        if (mem->id == target->uid)
+          ++remaining;
+      /* Search the live list again after each callback. A saved next pointer
+       * may have been freed or replaced by the callback. */
+      while (remaining > 0 &&
+             dg_memory_character_live(ch, owner_uid, origin_room) &&
+             dg_memory_character_live(actor, target->uid, origin_room) &&
+             SCRIPT_MEM(ch)) {
+        struct script_memory **link = &SCRIPT_MEM(ch);
+        long actor_id = char_script_id(actor);
+        while (*link && (*link)->id != actor_id)
+          link = &(*link)->next;
+        if (!*link)
+          break;
+        mem = *link;
+        --remaining;
+        *link = mem->next;
+        mem->next = NULL;
+        if (mem->cmd)
+          command_interpreter(ch, mem->cmd);
+        else if (SCRIPT(ch)) {
+          /* The remembered NPC may have no script attached; do not
+           * dereference SCRIPT(ch) just because SCRIPT_MEM(ch) exists. */
+          for (t = TRIGGERS(SCRIPT(ch)); t; t = t->next) {
+            if (TRIGGER_CHECK(t, MTRIG_MEMORY) &&
+                rand_number(1, 100) <= GET_TRIG_NARG(t)) {
+              ADD_UID_VAR(buf, t, actor_id, "actor", 0);
+              script_driver(&ch, t, MOB_TRIGGER, TRIG_NEW);
+              break;
             }
           }
-          /* delete the memory */
-          if (SCRIPT_MEM(ch)==mem) {
-            SCRIPT_MEM(ch) = mem->next;
-          } else {
-            prev = SCRIPT_MEM(ch);
-            while (prev->next != mem) prev = prev->next;
-            prev->next = mem->next;
-          }
-          if (mem->cmd) free(mem->cmd);
-          free(mem);
         }
-        mem = next_mem;
-      } /* for (mem =..... */
+        if (mem->cmd)
+          free(mem->cmd);
+        free(mem);
+        /* The callback may have purged the trigger owner. */
+        if (!dg_memory_character_live(ch, owner_uid, origin_room))
+          goto cleanup;
+        /* Retain old multi-memory behavior, but never traverse a cached
+         * link after dispatch. Further character-lifetime checks are needed. */
+      }
+
     }
   }
+cleanup:
+  dg_free_memory_targets(targets);
 }
 
 int entry_mtrigger(char_data *ch)
@@ -296,78 +628,128 @@ int entry_mtrigger(char_data *ch)
 
 int command_mtrigger(char_data *actor, char *cmd, char *argument)
 {
-  char_data *ch, *ch_next;
+  char_data *ch;
   trig_data *t;
   char buf[MAX_INPUT_LENGTH];
+  struct dg_memory_target *targets, *target;
+  room_rnum origin_room;
+  long actor_uid;
+  int handled = 0;
 
   /* prevent people we like from becoming trapped :P */
   if (!valid_dg_target(actor, 0))
     return 0;
+  if (!dg_trigger_actor_placed(actor, "command_mtrigger"))
+    return 0;
 
-  for (ch = world[IN_ROOM(actor)].people; ch; ch = ch_next) {
-    ch_next = ch->next_in_room;
+  origin_room = IN_ROOM(actor);
+  actor_uid = char_script_id(actor);
+  targets = dg_memory_targets(origin_room);
 
-    if (SCRIPT_CHECK(ch, MTRIG_COMMAND) && !AFF_FLAGGED(ch, AFF_CHARM) &&
-       ((actor!=ch) || CONFIG_SCRIPT_PLAYERS)) {
-      for (t = TRIGGERS(SCRIPT(ch)); t; t = t->next) {
-        if (!TRIGGER_CHECK(t, MTRIG_COMMAND))
-          continue;
+  for (target = targets; target && !handled; target = target->next) {
+    if (!dg_memory_character_live(actor, actor_uid, origin_room))
+      break;
+    ch = find_char(target->uid);
+    if (!dg_memory_character_live(ch, target->uid, origin_room))
+      continue;
+    if (!SCRIPT_CHECK(ch, MTRIG_COMMAND) || AFF_FLAGGED(ch, AFF_CHARM) ||
+        (actor == ch && !CONFIG_SCRIPT_PLAYERS))
+      continue;
 
-        if (!GET_TRIG_ARG(t) || !*GET_TRIG_ARG(t)) {
-          mudlog(NRM, LVL_BUILDER, TRUE, "SYSERR: Command Trigger #%d has no text argument!",
-            GET_TRIG_VNUM(t));
-          continue;
-        }
+    /* A callback returning false may detach any trigger, including the one
+     * which just ran; detached triggers are freed once the outermost script
+     * returns. Reacquire each trigger from the live list, never via t->next. */
+    struct dg_greet_trigger_target *triggers =
+      dg_greet_trigger_targets(TRIGGERS(SCRIPT(ch)));
+    for (struct dg_greet_trigger_target *entry = triggers; entry;
+         entry = entry->next) {
+      if (!dg_memory_character_live(actor, actor_uid, origin_room) ||
+          !dg_memory_character_live(ch, target->uid, origin_room))
+        break;
+      t = dg_find_live_greet_trigger(ch, entry);
+      if (!t || !TRIGGER_CHECK(t, MTRIG_COMMAND))
+        continue;
 
-        if (*GET_TRIG_ARG(t)=='*' ||
-            !strn_cmp(GET_TRIG_ARG(t), cmd, strlen(GET_TRIG_ARG(t)))) {
-          ADD_UID_VAR(buf, t, char_script_id(actor), "actor", 0);
-          skip_spaces(&argument);
-          add_var(&GET_TRIG_VARS(t), "arg", argument, 0);
-          skip_spaces(&cmd);
-          add_var(&GET_TRIG_VARS(t), "cmd", cmd, 0);
+      if (!GET_TRIG_ARG(t) || !*GET_TRIG_ARG(t)) {
+        mudlog(NRM, LVL_BUILDER, TRUE, "SYSERR: Command Trigger #%d has no text argument!",
+          GET_TRIG_VNUM(t));
+        continue;
+      }
 
-          if (script_driver(&ch, t, MOB_TRIGGER, TRIG_NEW))
-            return 1;
+      if (*GET_TRIG_ARG(t)=='*' ||
+          !strn_cmp(GET_TRIG_ARG(t), cmd, strlen(GET_TRIG_ARG(t)))) {
+        ADD_UID_VAR(buf, t, actor_uid, "actor", 0);
+        skip_spaces(&argument);
+        add_player_var(&GET_TRIG_VARS(t), "arg", argument, 0);
+        skip_spaces(&cmd);
+        add_player_var(&GET_TRIG_VARS(t), "cmd", cmd, 0);
+
+        if (script_driver(&ch, t, MOB_TRIGGER, TRIG_NEW)) {
+          handled = 1;
+          break;
         }
       }
     }
+    dg_free_greet_trigger_targets(triggers);
   }
-
-  return 0;
+  dg_free_memory_targets(targets);
+  return handled;
 }
 
 void speech_mtrigger(char_data *actor, char *str)
 {
-  char_data *ch, *ch_next;
+  char_data *ch;
   trig_data *t;
   char buf[MAX_INPUT_LENGTH];
+  struct dg_memory_target *targets, *target;
+  room_rnum origin_room;
+  long actor_uid;
 
-  for (ch = world[IN_ROOM(actor)].people; ch; ch = ch_next)
-  {
-    ch_next = ch->next_in_room;
-
-    if (SCRIPT_CHECK(ch, MTRIG_SPEECH) && AWAKE(ch) &&
-        !AFF_FLAGGED(ch, AFF_CHARM) && ((actor!=ch) || CONFIG_SCRIPT_PLAYERS))
-      for (t = TRIGGERS(SCRIPT(ch)); t; t = t->next) {
-        if (!TRIGGER_CHECK(t, MTRIG_SPEECH))
-          continue;
-
-        if (!GET_TRIG_ARG(t) || !*GET_TRIG_ARG(t)) {
-          mudlog(NRM, LVL_BUILDER, TRUE, "SYSERR: Speech Trigger #%d has no text argument!",
-            GET_TRIG_VNUM(t));
-          continue;
-        }
-
-        if (((GET_TRIG_NARG(t) && word_check(str, GET_TRIG_ARG(t))) ||
-             (!GET_TRIG_NARG(t) && is_substring(GET_TRIG_ARG(t), str)))) {
-          ADD_UID_VAR(buf, t, char_script_id(actor), "actor", 0);
-          add_var(&GET_TRIG_VARS(t), "speech", str, 0);
-          script_driver(&ch, t, MOB_TRIGGER, TRIG_NEW);
-          break;
-        }
-      }
+  if (!dg_trigger_actor_placed(actor, "speech_mtrigger"))
+    return;
+  if (!str) {
+    TB_ERROR_MSG("dg", "trigger-dispatch", "speech_mtrigger",
+                 "invariant violated: NULL speech from uid=%ld; no speech "
+                 "triggers dispatched", actor->script_id);
+    return;
   }
+
+  /* A callback may teleport or purge the next occupant, so never follow a
+   * cached next_in_room link; reacquire each listener by UID instead. */
+  origin_room = IN_ROOM(actor);
+  actor_uid = char_script_id(actor);
+  targets = dg_memory_targets(origin_room);
+
+  for (target = targets; target; target = target->next) {
+    if (!dg_memory_character_live(actor, actor_uid, origin_room))
+      break;
+    ch = find_char(target->uid);
+    if (!dg_memory_character_live(ch, target->uid, origin_room))
+      continue;
+    if (!SCRIPT_CHECK(ch, MTRIG_SPEECH) || !AWAKE(ch) ||
+        AFF_FLAGGED(ch, AFF_CHARM) || (actor == ch && !CONFIG_SCRIPT_PLAYERS))
+      continue;
+
+    for (t = TRIGGERS(SCRIPT(ch)); t; t = t->next) {
+      if (!TRIGGER_CHECK(t, MTRIG_SPEECH))
+        continue;
+
+      if (!GET_TRIG_ARG(t) || !*GET_TRIG_ARG(t)) {
+        mudlog(NRM, LVL_BUILDER, TRUE, "SYSERR: Speech Trigger #%d has no text argument!",
+          GET_TRIG_VNUM(t));
+        continue;
+      }
+
+      if (((GET_TRIG_NARG(t) && trig_word_check(str, t)) ||
+           (!GET_TRIG_NARG(t) && is_substring(GET_TRIG_ARG(t), str)))) {
+        ADD_UID_VAR(buf, t, actor_uid, "actor", 0);
+        add_player_var(&GET_TRIG_VARS(t), "speech", str, 0);
+        script_driver(&ch, t, MOB_TRIGGER, TRIG_NEW);
+        break; /* t is not used after dispatch */
+      }
+    }
+  }
+  dg_free_memory_targets(targets);
 }
 
 void act_mtrigger(const char_data *ch, char *str, char_data *actor,
@@ -389,7 +771,7 @@ void act_mtrigger(const char_data *ch, char *str, char_data *actor,
         continue;
       }
 
-      if (((GET_TRIG_NARG(t) && word_check(str, GET_TRIG_ARG(t))) ||
+      if (((GET_TRIG_NARG(t) && trig_word_check(str, t)) ||
            (!GET_TRIG_NARG(t) && is_substring(GET_TRIG_ARG(t), str)))) {
         if (actor)
           ADD_UID_VAR(buf, t, char_script_id(actor), "actor", 0);
@@ -400,12 +782,23 @@ void act_mtrigger(const char_data *ch, char *str, char_data *actor,
         if (target)
           ADD_UID_VAR(buf, t, obj_script_id(target), "target", 0);
         if (str) {
-          /* we're guaranteed to have a string ending with \r\n\0 */
-          char *nstr = strdup(str), *fstr = nstr, *p = strchr(nstr, '\r');
-          skip_spaces(&nstr);
-          *p = '\0';
-          add_var(&GET_TRIG_VARS(t), "arg", nstr, 0);
-          free(fstr);
+          /* act() supplies a string ending with \r\n\0; do not rely on it. */
+          char *nstr = strdup(str), *fstr = nstr, *p;
+          if (!nstr) {
+            TB_ERROR_ERRNO("dg", "allocate", "act_mtrigger",
+                           "cannot copy act text for trigger %d; dispatching "
+                           "without $arg", GET_TRIG_VNUM(t));
+          } else {
+            if ((p = strchr(nstr, '\r')) != NULL)
+              *p = '\0';
+            else
+              TB_ERROR_MSG("dg", "act-trigger", "act_mtrigger",
+                           "act text for trigger %d lacks the \\r\\n act() "
+                           "always appends; using it whole", GET_TRIG_VNUM(t));
+            skip_spaces(&nstr);
+            add_player_var(&GET_TRIG_VARS(t), "arg", nstr, 0);
+            free(fstr);
+          }
         }
         script_driver(&ch, t, MOB_TRIGGER, TRIG_NEW);
         break;
@@ -478,7 +871,7 @@ int receive_mtrigger(char_data *ch, char_data *actor, obj_data *obj)
       ADD_UID_VAR(buf, t, object_id, "object", 0);
       ret_val = script_driver(&ch, t, MOB_TRIGGER, TRIG_NEW);
       // check for purged item before dereferencing.
-      if (DEAD(actor) || DEAD(ch) || !has_obj_by_uid_in_lookup_table(object_id) || obj->carried_by != actor)
+      if (DEAD(actor) || DEAD(ch) || !obj_uid_matches(object_id, obj) || obj->carried_by != actor)
         return 0;
       else
         return ret_val;
@@ -508,17 +901,40 @@ int death_mtrigger(char_data *ch, char_data *actor)
   return 1;
 }
 
+/* Load triggers and SCRIPT_ERROR_CODE: when the load trigger's script
+ * returns SCRIPT_ERROR_CODE, the prototype's trigger list is freed for good,
+ * so this instance is the last one to load with scripts. script_driver()
+ * returns it on depth overflow (a load trigger that loads another copy of
+ * its own mob/object, recursively), and reports that itself; but a builder's
+ * `return -9999999` and the no-owning-script path reach it as well. The
+ * removal is therefore always reported here, with the prototype and the
+ * trigger, so builders can find out why later copies have no scripts. */
+/* Trigger vnum for diagnostics, from an rnum captured before a dispatch
+ * (the trigger itself may be freed by then). NOTHING if out of range. */
+static trig_vnum dg_trig_rnum_to_vnum(trig_rnum rnum)
+{
+  if (rnum == NOTHING || rnum >= top_of_trigt || !trig_index || !trig_index[rnum])
+    return NOTHING;
+  return trig_index[rnum]->vnum;
+}
+
 void load_mtrigger(char_data *ch)
 {
   trig_data *t;
   int result = 0;
+  mob_rnum rnum;
+  trig_rnum trig = NOTHING;
 
   if (!SCRIPT_CHECK(ch, MTRIG_LOAD))
     return;
 
+  /* The script may extract its owner (and, at the outermost level, free a
+   * detached trigger); capture the prototype and trigger rnums beforehand. */
+  rnum = GET_MOB_RNUM(ch);
   for (t = TRIGGERS(SCRIPT(ch)); t; t = t->next) {
     if (TRIGGER_CHECK(t, MTRIG_LOAD) &&
         (rand_number(1, 100) <= GET_TRIG_NARG(t))) {
+      trig = GET_TRIG_RNUM(t);
       result = script_driver(&ch, t, MOB_TRIGGER, TRIG_NEW);
       break;
     }
@@ -526,8 +942,14 @@ void load_mtrigger(char_data *ch)
   if (result == SCRIPT_ERROR_CODE) {
     /* we have recursed beyond reasonable depth */
     /* make sure this mob is the last one in the load chain */
-    if (GET_MOB_RNUM(ch) != NOBODY) {
-      free_proto_script(&mob_proto[GET_MOB_RNUM(ch)], MOB_TRIGGER);
+    TB_ERROR_MSG("dg", "load-proto-disable", "load_mtrigger",
+                 "mob vnum %d: load trigger %d returned SCRIPT_ERROR_CODE; "
+                 "the prototype's scripts are removed until reboot",
+                 (mob_index && rnum != NOBODY && rnum <= top_of_mobt)
+                   ? mob_index[rnum].vnum : NOBODY,
+                 dg_trig_rnum_to_vnum(trig));
+    if (rnum != NOBODY) {
+      free_proto_script(&mob_proto[rnum], MOB_TRIGGER);
     }
   }
 }
@@ -576,7 +998,16 @@ int damage_mtrigger(char_data *actor, char_data *victim, int dam, int attacktype
       tb_snprintf(buf, sizeof(buf), "%d", dam);
       add_var(&GET_TRIG_VARS(t), "damage", buf, 0);
       add_var(&GET_TRIG_VARS(t), "attacktype", skill_name(attacktype), 0);
-      return script_driver(&victim, t, MOB_TRIGGER, TRIG_NEW);
+      /* The result is the damage dealt ('return -1' cancels the hit). A
+       * script that does not 'return' keeps the damage: script_driver()'s
+       * usual default of 1 cut every hit on the mob to 1 point. A run that
+       * script_driver() refused (SCRIPT_ERROR_CODE, already reported) does
+       * not change the damage either. */
+      {
+        int ret = script_driver_default(&victim, t, MOB_TRIGGER, TRIG_NEW, dam);
+
+        return ret == SCRIPT_ERROR_CODE ? dam : ret;
+      }
     }
   }
 
@@ -591,6 +1022,8 @@ int leave_mtrigger(char_data *actor, int dir)
   char buf[MAX_INPUT_LENGTH];
 
   if (!valid_dg_target(actor, DG_ALLOW_GODS))
+    return 1;
+  if (!dg_trigger_actor_placed(actor, "leave_mtrigger"))
     return 1;
 
   for (ch = world[IN_ROOM(actor)].people; ch; ch = ch->next_in_room) {
@@ -619,6 +1052,9 @@ int door_mtrigger(char_data *actor, int subcmd, int dir)
   trig_data *t;
   char_data *ch;
   char buf[MAX_INPUT_LENGTH];
+
+  if (!dg_trigger_actor_placed(actor, "door_mtrigger"))
+    return 1;
 
   for (ch = world[IN_ROOM(actor)].people; ch; ch = ch->next_in_room) {
     if (!SCRIPT_CHECK(ch, MTRIG_DOOR) ||
@@ -681,18 +1117,34 @@ void random_otrigger(obj_data *obj)
 
 void timer_otrigger(struct obj_data *obj)
 {
-  trig_data *t;
+  long obj_uid;
+  struct dg_greet_trigger_target *targets, *entry;
 
-  if (!SCRIPT_CHECK(obj, OTRIG_TIMER))
+  if (!obj || !SCRIPT_CHECK(obj, OTRIG_TIMER))
     return;
 
-  for (t = TRIGGERS(SCRIPT(obj)); t; t = t->next) {
-    if (TRIGGER_CHECK(t, OTRIG_TIMER)) {
-      script_driver(&obj, t, OBJ_TRIGGER, TRIG_NEW);
+  /* The object lookup table is the authoritative lifetime check. Never
+   * follow an object or trigger pointer saved across a script callback. */
+  obj_uid = obj_script_id(obj);
+  targets = dg_greet_trigger_targets(TRIGGERS(SCRIPT(obj)));
+
+  for (entry = targets; entry; entry = entry->next) {
+    trig_data *t = NULL, *current;
+    if (!obj_uid_matches(obj_uid, obj))
+      break;
+    if (!SCRIPT(obj))
+      break;
+    for (current = TRIGGERS(SCRIPT(obj)); current; current = current->next) {
+      if (dg_trigger_target_is(current, entry)) {
+        t = current;
+        break;
+      }
     }
+    if (t && TRIGGER_CHECK(t, OTRIG_TIMER))
+      script_driver(&obj, t, OBJ_TRIGGER, TRIG_NEW);
   }
 
-  return;
+  dg_free_greet_trigger_targets(targets);
 }
 
 int get_otrigger(obj_data *obj, char_data *actor)
@@ -700,16 +1152,18 @@ int get_otrigger(obj_data *obj, char_data *actor)
   trig_data *t;
   char buf[MAX_INPUT_LENGTH];
   int ret_val;
+  long object_id;
   if (!SCRIPT_CHECK(obj, OTRIG_GET))
     return 1;
 
   for (t = TRIGGERS(SCRIPT(obj)); t; t = t->next) {
     if (TRIGGER_CHECK(t, OTRIG_GET) && (rand_number(1, 100) <= GET_TRIG_NARG(t))) {
       ADD_UID_VAR(buf, t, char_script_id(actor), "actor", 0);
+      object_id = obj_script_id(obj);
       ret_val = script_driver(&obj, t, OBJ_TRIGGER, TRIG_NEW);
       /* Don't allow a get to take place, if the actor is killed (the mud
        * would choke on obj_to_char) or the object is purged. */
-      if (DEAD(actor) || !obj)
+      if (DEAD(actor) || !obj_uid_matches(object_id, obj))
         return 0;
       else
         return ret_val;
@@ -720,65 +1174,126 @@ int get_otrigger(obj_data *obj, char_data *actor)
 }
 
 /* checks for command trigger on specific object. assumes obj has cmd trig */
+/* Object command triggers may extract their owners, triggers, or actors.
+ * Snapshot only identities; reacquire targets from live owned lists. */
+struct dg_cmd_object_target {
+  long uid;
+  obj_data *identity;
+  int type;
+  struct dg_cmd_object_target *next;
+};
+
+static void dg_cmd_append(struct dg_cmd_object_target ***tail,
+                          obj_data *obj, int type)
+{
+  struct dg_cmd_object_target *node;
+  CREATE(node, struct dg_cmd_object_target, 1);
+  node->uid = obj_script_id(obj);
+  node->identity = obj;
+  node->type = type;
+  **tail = node;
+  *tail = &node->next;
+}
+
 int cmd_otrig(obj_data *obj, char_data *actor, char *cmd,
               char *argument, int type)
 {
-  trig_data *t;
+  struct dg_greet_trigger_target *targets, *entry;
+  trig_data *t, *current;
   char buf[MAX_INPUT_LENGTH];
+  long uid, actor_uid;
+  int handled = 0;
 
-  if (obj && SCRIPT_CHECK(obj, OTRIG_COMMAND))
-    for (t = TRIGGERS(SCRIPT(obj)); t; t = t->next) {
-      if (!TRIGGER_CHECK(t, OTRIG_COMMAND))
-        continue;
-
-      if (IS_SET(GET_TRIG_NARG(t), type) &&
-          (!GET_TRIG_ARG(t) || !*GET_TRIG_ARG(t))) {
-        mudlog(NRM, LVL_BUILDER, TRUE, "SYSERR: O-Command Trigger #%d has no text argument!",
-          GET_TRIG_VNUM(t));
-        continue;
-      }
-
-      if (IS_SET(GET_TRIG_NARG(t), type) &&
-          (*GET_TRIG_ARG(t)=='*' ||
-          !strn_cmp(GET_TRIG_ARG(t), cmd, strlen(GET_TRIG_ARG(t))))) {
-
-        ADD_UID_VAR(buf, t, char_script_id(actor), "actor", 0);
-        skip_spaces(&argument);
-        add_var(&GET_TRIG_VARS(t), "arg", argument, 0);
-        skip_spaces(&cmd);
-        add_var(&GET_TRIG_VARS(t), "cmd", cmd, 0);
-
-        if (script_driver(&obj, t, OBJ_TRIGGER, TRIG_NEW))
-          return 1;
+  if (!obj || !SCRIPT_CHECK(obj, OTRIG_COMMAND))
+    return 0;
+  uid = obj_script_id(obj);
+  actor_uid = char_script_id(actor);
+  targets = dg_greet_trigger_targets(TRIGGERS(SCRIPT(obj)));
+  for (entry = targets; entry; entry = entry->next) {
+    if (!obj_uid_matches(uid, obj) || find_char(actor_uid) != actor ||
+        !SCRIPT(obj))
+      break;
+    t = NULL;
+    for (current = TRIGGERS(SCRIPT(obj)); current; current = current->next)
+      if (dg_trigger_target_is(current, entry)) { t = current; break; }
+    if (!t || !TRIGGER_CHECK(t, OTRIG_COMMAND) ||
+        !IS_SET(GET_TRIG_NARG(t), type))
+      continue;
+    if (!GET_TRIG_ARG(t) || !*GET_TRIG_ARG(t)) {
+      mudlog(NRM, LVL_BUILDER, TRUE, "SYSERR: O-Command Trigger #%d has no text argument!",
+             GET_TRIG_VNUM(t));
+      continue;
+    }
+    if (*GET_TRIG_ARG(t) == '*' ||
+        !strn_cmp(GET_TRIG_ARG(t), cmd, strlen(GET_TRIG_ARG(t)))) {
+      ADD_UID_VAR(buf, t, actor_uid, "actor", 0);
+      skip_spaces(&argument);
+      add_player_var(&GET_TRIG_VARS(t), "arg", argument, 0);
+      skip_spaces(&cmd);
+      add_player_var(&GET_TRIG_VARS(t), "cmd", cmd, 0);
+      if (script_driver(&obj, t, OBJ_TRIGGER, TRIG_NEW)) {
+        handled = 1;
+        break;
       }
     }
-
-  return 0;
+  }
+  dg_free_greet_trigger_targets(targets);
+  return handled;
 }
 
 int command_otrigger(char_data *actor, char *cmd, char *argument)
 {
+  struct dg_cmd_object_target *targets = NULL, **tail = &targets, *entry;
   obj_data *obj;
-  int i;
+  room_rnum origin;
+  long actor_uid;
+  int i, handled = 0;
 
-  /* prevent people we like from becoming trapped :P */
   if (!valid_dg_target(actor, 0))
     return 0;
-
-  for (i = 0; i < NUM_WEARS; i++)
-    if (GET_EQ(actor, i))
-      if (cmd_otrig(GET_EQ(actor, i), actor, cmd, argument, OCMD_EQUIP))
-        return 1;
-
+  /* world[origin].contents is snapshotted below, as in command_mtrigger and
+   * command_wtrigger. */
+  if (!dg_trigger_actor_placed(actor, "command_otrigger"))
+    return 0;
+  actor_uid = char_script_id(actor);
+  origin = IN_ROOM(actor);
+  for (i = 0; i < NUM_WEARS; ++i)
+    if ((obj = GET_EQ(actor, i)) != NULL)
+      dg_cmd_append(&tail, obj, OCMD_EQUIP);
   for (obj = actor->carrying; obj; obj = obj->next_content)
-    if (cmd_otrig(obj, actor, cmd, argument, OCMD_INVEN))
-      return 1;
+    dg_cmd_append(&tail, obj, OCMD_INVEN);
+  for (obj = world[origin].contents; obj; obj = obj->next_content)
+    dg_cmd_append(&tail, obj, OCMD_ROOM);
 
-  for (obj = world[IN_ROOM(actor)].contents; obj; obj = obj->next_content)
-    if (cmd_otrig(obj, actor, cmd, argument, OCMD_ROOM))
-      return 1;
-
-  return 0;
+  for (entry = targets; entry; entry = entry->next) {
+    int present = 0;
+    if (find_char(actor_uid) != actor)
+      break;
+    if (IN_ROOM(actor) != origin)
+      break;
+    if (!obj_uid_matches(entry->uid, entry->identity))
+      continue;
+    if (entry->type == OCMD_EQUIP) {
+      for (i = 0; i < NUM_WEARS; ++i)
+        if (GET_EQ(actor, i) == entry->identity) { present = 1; break; }
+    } else {
+      obj_data *head = (entry->type == OCMD_INVEN) ?
+                       actor->carrying : world[origin].contents;
+      for (obj = head; obj; obj = obj->next_content)
+        if (obj == entry->identity) { present = 1; break; }
+    }
+    if (present && cmd_otrig(entry->identity, actor, cmd,
+                            argument, entry->type)) {
+      handled = 1;
+      break;
+    }
+  }
+  while (targets) {
+    entry = targets;
+    targets = targets->next;
+    free(entry);
+  }
+  return handled;
 }
 
 int wear_otrigger(obj_data *obj, char_data *actor, int where)
@@ -786,6 +1301,7 @@ int wear_otrigger(obj_data *obj, char_data *actor, int where)
   trig_data *t;
   char buf[MAX_INPUT_LENGTH];
   int ret_val;
+  long object_id;
 
   if (!SCRIPT_CHECK(obj, OTRIG_WEAR))
     return 1;
@@ -793,9 +1309,10 @@ int wear_otrigger(obj_data *obj, char_data *actor, int where)
   for (t = TRIGGERS(SCRIPT(obj)); t; t = t->next) {
     if (TRIGGER_CHECK(t, OTRIG_WEAR)) {
       ADD_UID_VAR(buf, t, char_script_id(actor), "actor", 0);
+      object_id = obj_script_id(obj);
       ret_val = script_driver(&obj, t, OBJ_TRIGGER, TRIG_NEW);
       /* Don't allow a wear to take place, if the object is purged. */
-      if (!obj)
+      if (!obj_uid_matches(object_id, obj))
         return 0;
       else
         return ret_val;
@@ -810,6 +1327,7 @@ int remove_otrigger(obj_data *obj, char_data *actor)
   trig_data *t;
   char buf[MAX_INPUT_LENGTH];
   int ret_val;
+  long object_id;
 
   if (!SCRIPT_CHECK(obj, OTRIG_REMOVE))
     return 1;
@@ -820,9 +1338,10 @@ int remove_otrigger(obj_data *obj, char_data *actor)
   for (t = TRIGGERS(SCRIPT(obj)); t; t = t->next) {
     if (TRIGGER_CHECK(t, OTRIG_REMOVE)) {
       ADD_UID_VAR(buf, t, char_script_id(actor), "actor", 0);
+      object_id = obj_script_id(obj);
       ret_val = script_driver(&obj, t, OBJ_TRIGGER, TRIG_NEW);
       /* Don't allow a remove to take place, if the object is purged. */
-      if (!obj)
+      if (!obj_uid_matches(object_id, obj))
         return 0;
       else
         return ret_val;
@@ -837,6 +1356,7 @@ int drop_otrigger(obj_data *obj, char_data *actor)
   trig_data *t;
   char buf[MAX_INPUT_LENGTH];
   int ret_val;
+  long object_id;
 
   if (!SCRIPT_CHECK(obj, OTRIG_DROP))
     return 1;
@@ -844,9 +1364,10 @@ int drop_otrigger(obj_data *obj, char_data *actor)
   for (t = TRIGGERS(SCRIPT(obj)); t; t = t->next) {
     if (TRIGGER_CHECK(t, OTRIG_DROP) && (rand_number(1, 100) <= GET_TRIG_NARG(t))) {
       ADD_UID_VAR(buf, t, char_script_id(actor), "actor", 0);
+      object_id = obj_script_id(obj);
       ret_val = script_driver(&obj, t, OBJ_TRIGGER, TRIG_NEW);
       /* Don't allow a drop to take place, if the object is purged. */
-      if (!obj)
+      if (!obj_uid_matches(object_id, obj))
         return 0;
       else
         return ret_val;
@@ -861,6 +1382,7 @@ int give_otrigger(obj_data *obj, char_data *actor, char_data *victim)
   trig_data *t;
   char buf[MAX_INPUT_LENGTH];
   int ret_val;
+  long object_id;
 
   if (!SCRIPT_CHECK(obj, OTRIG_GIVE))
     return 1;
@@ -869,10 +1391,11 @@ int give_otrigger(obj_data *obj, char_data *actor, char_data *victim)
     if (TRIGGER_CHECK(t, OTRIG_GIVE) && (rand_number(1, 100) <= GET_TRIG_NARG(t))) {
       ADD_UID_VAR(buf, t, char_script_id(actor), "actor", 0);
       ADD_UID_VAR(buf, t, char_script_id(victim), "victim", 0);
+      object_id = obj_script_id(obj);
       ret_val = script_driver(&obj, t, OBJ_TRIGGER, TRIG_NEW);
       /* Don't allow a give to take place, if the object is purged or the
        * object is not carried by the giver. */
-      if (!obj || obj->carried_by != actor)
+      if (!obj_uid_matches(object_id, obj) || obj->carried_by != actor)
         return 0;
       else
         return ret_val;
@@ -886,13 +1409,20 @@ void load_otrigger(obj_data *obj)
 {
   trig_data *t;
   int result = 0;
+  obj_rnum rnum;
+  trig_rnum trig = NOTHING;
 
   if (!SCRIPT_CHECK(obj, OTRIG_LOAD))
     return;
 
+  /* script_driver() sets obj to NULL if the script purges it, and a script
+   * may "return" SCRIPT_ERROR_CODE itself. Capture the prototype (and the
+   * trigger, see load_mtrigger) beforehand. */
+  rnum = GET_OBJ_RNUM(obj);
   for (t = TRIGGERS(SCRIPT(obj)); t; t = t->next) {
     if (TRIGGER_CHECK(t, OTRIG_LOAD) &&
         (rand_number(1, 100) <= GET_TRIG_NARG(t))) {
+      trig = GET_TRIG_RNUM(t);
       result = script_driver(&obj, t, OBJ_TRIGGER, TRIG_NEW);
       break;
     }
@@ -900,8 +1430,14 @@ void load_otrigger(obj_data *obj)
   if (result == SCRIPT_ERROR_CODE) {
     /* we have recursed beyond reasonable depth */
     /* make sure this mob is the last one in the load chain */
-    if (GET_OBJ_RNUM(obj) != NOTHING) {
-      free_proto_script(&obj_proto[GET_OBJ_RNUM(obj)], OBJ_TRIGGER);
+    TB_ERROR_MSG("dg", "load-proto-disable", "load_otrigger",
+                 "obj vnum %d: load trigger %d returned SCRIPT_ERROR_CODE; "
+                 "the prototype's scripts are removed until reboot",
+                 (obj_index && VALID_OBJ_RNUM_NUM(rnum))
+                   ? obj_index[rnum].vnum : NOTHING,
+                 dg_trig_rnum_to_vnum(trig));
+    if (rnum != NOTHING) {
+      free_proto_script(&obj_proto[rnum], OBJ_TRIGGER);
     }
   }
 }
@@ -931,36 +1467,98 @@ int cast_otrigger(char_data *actor, obj_data *obj, int spellnum)
   return 1;
 }
 
+/* A leave callback can remove any room object, including the next one.
+ * Snapshot IDs before invoking scripts; reacquire occupants from the live room
+ * list before each dispatch instead of preserving next_content pointers. */
+struct dg_leave_object_target {
+  long uid;
+  struct dg_leave_object_target *next;
+};
+
 int leave_otrigger(room_data *room, char_data *actor, int dir)
 {
-  trig_data *t;
+  struct dg_leave_object_target *targets = NULL, **tail = &targets, *entry;
+  obj_data *obj;
   char buf[MAX_INPUT_LENGTH];
-  int temp, final = 1;
-  obj_data *obj, *obj_next;
+  int final = 1;
+  long actor_uid;
 
-  if (!valid_dg_target(actor, DG_ALLOW_GODS))
+  if (!room || !valid_dg_target(actor, DG_ALLOW_GODS))
     return 1;
 
-  for (obj = room->contents; obj; obj = obj_next) {
-    obj_next = obj->next_content;
+  actor_uid = char_script_id(actor);
+  for (obj = room->contents; obj; obj = obj->next_content) {
+    struct dg_leave_object_target *node;
     if (!SCRIPT_CHECK(obj, OTRIG_LEAVE))
       continue;
-
-    for (t = TRIGGERS(SCRIPT(obj)); t; t = t->next) {
-      if (TRIGGER_CHECK(t, OTRIG_LEAVE) &&
-          (rand_number(1, 100) <= GET_TRIG_NARG(t))) {
-        if (dir>=0 && dir < DIR_COUNT)
-          add_var(&GET_TRIG_VARS(t), "direction", dirs[dir], 0);
-        else
-          add_var(&GET_TRIG_VARS(t), "direction", "none", 0);
-        ADD_UID_VAR(buf, t, char_script_id(actor), "actor", 0);
-        temp = script_driver(&obj, t, OBJ_TRIGGER, TRIG_NEW);
-        if (temp == 0)
-          final = 0;
-      }
-    }
+    CREATE(node, struct dg_leave_object_target, 1);
+    node->uid = obj_script_id(obj);
+    *tail = node;
+    tail = &node->next;
   }
 
+  for (entry = targets; entry; entry = entry->next) {
+    if (find_char(actor_uid) != actor)
+      break;
+    struct dg_greet_trigger_target *triggers, *target;
+    trig_data *t;
+    obj = NULL;
+
+    if (entry->uid < OBJ_ID_BASE)
+      continue;
+    for (obj_data *candidate = room->contents; candidate;
+         candidate = candidate->next_content) {
+      if (candidate->script_id == entry->uid) {
+        obj = candidate;
+        break;
+      }
+    }
+    if (!obj || !SCRIPT_CHECK(obj, OTRIG_LEAVE))
+      continue;
+
+    triggers = dg_greet_trigger_targets(TRIGGERS(SCRIPT(obj)));
+    for (target = triggers; target; target = target->next) {
+      if (find_char(actor_uid) != actor)
+        break;
+      trig_data *current;
+      if (!obj_uid_matches(entry->uid, obj))
+        break;
+      obj = NULL;
+      for (obj_data *candidate = room->contents; candidate;
+           candidate = candidate->next_content) {
+        if (candidate->script_id == entry->uid) {
+          obj = candidate;
+          break;
+        }
+      }
+      if (!obj || !SCRIPT_CHECK(obj, OTRIG_LEAVE))
+        break;
+      t = NULL;
+      for (current = TRIGGERS(SCRIPT(obj)); current; current = current->next) {
+        if (dg_trigger_target_is(current, target)) {
+          t = current;
+          break;
+        }
+      }
+      if (!t || !TRIGGER_CHECK(t, OTRIG_LEAVE) ||
+          rand_number(1, 100) > GET_TRIG_NARG(t))
+        continue;
+      if (dir >= 0 && dir < DIR_COUNT)
+        add_var(&GET_TRIG_VARS(t), "direction", dirs[dir], 0);
+      else
+        add_var(&GET_TRIG_VARS(t), "direction", "none", 0);
+      ADD_UID_VAR(buf, t, actor_uid, "actor", 0);
+      if (!script_driver(&obj, t, OBJ_TRIGGER, TRIG_NEW))
+        final = 0;
+    }
+    dg_free_greet_trigger_targets(triggers);
+  }
+
+  while (targets) {
+    entry = targets;
+    targets = targets->next;
+    free(entry);
+  }
   return final;
 }
 
@@ -969,6 +1567,7 @@ int consume_otrigger(obj_data *obj, char_data *actor, int cmd)
   trig_data *t;
   char buf[MAX_INPUT_LENGTH];
   int ret_val;
+  long object_id;
 
   if (!SCRIPT_CHECK(obj, OTRIG_CONSUME))
     return 1;
@@ -987,9 +1586,10 @@ int consume_otrigger(obj_data *obj, char_data *actor, int cmd)
           add_var(&GET_TRIG_VARS(t), "command", "quaff", 0);
           break;
       }
+      object_id = obj_script_id(obj);
       ret_val = script_driver(&obj, t, OBJ_TRIGGER, TRIG_NEW);
       /* Don't allow a wear to take place, if the object is purged. */
-      if (!obj)
+      if (!obj_uid_matches(object_id, obj))
         return 0;
       else
         return ret_val;
@@ -1080,7 +1680,9 @@ int command_wtrigger(char_data *actor, char *cmd, char *argument)
   trig_data *t;
   char buf[MAX_INPUT_LENGTH];
 
-  if (!actor || !SCRIPT_CHECK(&world[IN_ROOM(actor)], WTRIG_COMMAND))
+  if (!dg_trigger_actor_placed(actor, "command_wtrigger"))
+    return 0;
+  if (!SCRIPT_CHECK(&world[IN_ROOM(actor)], WTRIG_COMMAND))
     return 0;
 
   /* prevent people we like from becoming trapped :P */
@@ -1102,9 +1704,9 @@ int command_wtrigger(char_data *actor, char *cmd, char *argument)
         !strn_cmp(GET_TRIG_ARG(t), cmd, strlen(GET_TRIG_ARG(t)))) {
       ADD_UID_VAR(buf, t, char_script_id(actor), "actor", 0);
       skip_spaces(&argument);
-      add_var(&GET_TRIG_VARS(t), "arg", argument, 0);
+      add_player_var(&GET_TRIG_VARS(t), "arg", argument, 0);
       skip_spaces(&cmd);
-      add_var(&GET_TRIG_VARS(t), "cmd", cmd, 0);
+      add_player_var(&GET_TRIG_VARS(t), "cmd", cmd, 0);
 
       return script_driver(&room, t, WLD_TRIGGER, TRIG_NEW);
     }
@@ -1119,7 +1721,15 @@ void speech_wtrigger(char_data *actor, char *str)
   trig_data *t;
   char buf[MAX_INPUT_LENGTH];
 
-  if (!actor || !SCRIPT_CHECK(&world[IN_ROOM(actor)], WTRIG_SPEECH))
+  if (!dg_trigger_actor_placed(actor, "speech_wtrigger"))
+    return;
+  if (!str) {
+    TB_ERROR_MSG("dg", "trigger-dispatch", "speech_wtrigger",
+                 "invariant violated: NULL speech from uid=%ld; no speech "
+                 "triggers dispatched", actor->script_id);
+    return;
+  }
+  if (!SCRIPT_CHECK(&world[IN_ROOM(actor)], WTRIG_SPEECH))
     return;
 
   room = &world[IN_ROOM(actor)];
@@ -1134,10 +1744,10 @@ void speech_wtrigger(char_data *actor, char *str)
     }
 
     if (*GET_TRIG_ARG(t)=='*' ||
-       (GET_TRIG_NARG(t) && word_check(str, GET_TRIG_ARG(t))) ||
+       (GET_TRIG_NARG(t) && trig_word_check(str, t)) ||
        (!GET_TRIG_NARG(t) && is_substring(GET_TRIG_ARG(t), str))) {
       ADD_UID_VAR(buf, t, char_script_id(actor), "actor", 0);
-      add_var(&GET_TRIG_VARS(t), "speech", str, 0);
+      add_player_var(&GET_TRIG_VARS(t), "speech", str, 0);
       script_driver(&room, t, WLD_TRIGGER, TRIG_NEW);
       break;
     }
@@ -1152,7 +1762,9 @@ int drop_wtrigger(obj_data *obj, char_data *actor)
   int ret_val;
   long object_id = obj_script_id(obj);
 
-  if (!actor || !SCRIPT_CHECK(&world[IN_ROOM(actor)], WTRIG_DROP))
+  if (!dg_trigger_actor_placed(actor, "drop_wtrigger"))
+    return 1;
+  if (!SCRIPT_CHECK(&world[IN_ROOM(actor)], WTRIG_DROP))
     return 1;
 
   room = &world[IN_ROOM(actor)];
@@ -1163,7 +1775,7 @@ int drop_wtrigger(obj_data *obj, char_data *actor)
       ADD_UID_VAR(buf, t, object_id, "object", 0);
       ret_val = script_driver(&room, t, WLD_TRIGGER, TRIG_NEW);
       // check for purged object before dereferencing.
-      if (!has_obj_by_uid_in_lookup_table(object_id) || obj->carried_by != actor)
+      if (!obj_uid_matches(object_id, obj) || obj->carried_by != actor)
         return 0;
       else
         return ret_val;
@@ -1178,7 +1790,9 @@ int cast_wtrigger(char_data *actor, char_data *vict, obj_data *obj, int spellnum
   trig_data *t;
   char buf[MAX_INPUT_LENGTH];
 
-  if (!actor || !SCRIPT_CHECK(&world[IN_ROOM(actor)], WTRIG_CAST))
+  if (!dg_trigger_actor_placed(actor, "cast_wtrigger"))
+    return 1;
+  if (!SCRIPT_CHECK(&world[IN_ROOM(actor)], WTRIG_CAST))
     return 1;
 
   room = &world[IN_ROOM(actor)];
@@ -1233,7 +1847,9 @@ int door_wtrigger(char_data *actor, int subcmd, int dir)
   trig_data *t;
   char buf[MAX_INPUT_LENGTH];
 
-  if (!actor || !SCRIPT_CHECK(&world[IN_ROOM(actor)], WTRIG_DOOR))
+  if (!dg_trigger_actor_placed(actor, "door_wtrigger"))
+    return 1;
+  if (!SCRIPT_CHECK(&world[IN_ROOM(actor)], WTRIG_DOOR))
     return 1;
 
   room = &world[IN_ROOM(actor)];

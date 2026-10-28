@@ -80,8 +80,19 @@ struct aq_data {
 #define QST_FUNC(i)            (aquest_table[i].func)
 #define QST_PREV(i)            (aquest_table[i].prev_quest)
 #define QST_NEXT(i)            (aquest_table[i].next_quest)
+
+/** quest_types[] name of quest r's type, or "<invalid>" when the stored type
+ * is outside 0..NUM_AQ_TYPES-1. parse_quest rejects such types at boot; this
+ * keeps display code safe if a table row is corrupted later. Evaluates r
+ * twice. */
+#define QST_TYPE_NAME(r)       ((QST_TYPE(r) >= 0 && QST_TYPE(r) < NUM_AQ_TYPES) ? \
+                                quest_types[QST_TYPE(r)] : "<invalid>")
 /* Quest Functions **************************************************** */
+/** Signature of a mob spec proc, for the questmaster secondary-proc API. */
+typedef SPECIAL(quest_spec_proc);
 /* Implemented in quest.c */
+quest_spec_proc *quest_qm_secondary(mob_vnum qm);
+void quest_set_qm_secondary(mob_vnum qm, quest_spec_proc *func);
 void destroy_quests(void);
 void assign_the_quests(void);
 void parse_quest(FILE *quest_f, int nr);

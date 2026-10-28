@@ -1,0 +1,4 @@
+# fuzz_world inputs are raw bytes (CR/LF, NULs, trailing blanks on purpose):
+# no end-of-line conversion and no text diffs or whitespace checks.
+corpus/world/** -text -diff
+known-crashes/world/** -text -diff
