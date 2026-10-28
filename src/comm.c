@@ -1396,22 +1396,26 @@ size_t vwrite_to_output(struct descriptor_data *t, const char *format, va_list a
 {
   const char *text_overflow = "\r\nOVERFLOW\r\n";
   static char txt[MAX_STRING_LENGTH];
-  size_t wantsize;
-  int size;
+  int formatted, size;
 
   /* if we're in the overflow state already, ignore this new output */
   if (t->bufspace == 0)
     return (0);
 
-  wantsize = size = vsnprintf(txt, sizeof(txt), format, args);
+  formatted = vsnprintf(txt, sizeof(txt), format, args);
 
-  strlcpy(txt, ProtocolOutput( t, txt, (int*)&wantsize ), sizeof(txt)); /* <--- Add this line */
-  size = wantsize;                    /* <--- Add this line */
-  if ( t->pProtocol->WriteOOB > 0 )   /* <--- Add this line */
-    --t->pProtocol->WriteOOB;         /* <--- Add this line */
+  /* ProtocolOutput() rewrites colour/MXP codes and stores the new length
+   * through an int *. It used to be handed (int *)&wantsize, a size_t, so
+   * only half of wantsize was written and the truncation test below read a
+   * half-stale value. size is the int it expects. */
+  size = formatted;
+  strlcpy(txt, ProtocolOutput(t, txt, &size), sizeof(txt));
+  if ( t->pProtocol->WriteOOB > 0 )
+    --t->pProtocol->WriteOOB;
 
   /* If exceeding the size of the buffer, truncate it for the overflow message */
-  if (size < 0 || wantsize >= sizeof(txt)) {
+  if (formatted < 0 || (size_t) formatted >= sizeof(txt) ||
+      size < 0 || (size_t) size >= sizeof(txt)) {
     size = sizeof(txt) - 1;
     strlcpy(txt + size - strlen(text_overflow), text_overflow, sizeof(txt) - (size_t)(size - strlen(text_overflow)));	/* strcpy: OK */
   }
