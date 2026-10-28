@@ -100,8 +100,7 @@ class Wld2HtmlTests(ToolCase):
         rc, err = self.wld("#100\nRoom~\n" + "x" * 700 + "\n~\n0 0 0\nS\n$~\n")
         self.assertEqual(rc, 1, err)
         self.assertDiag(err, "wld-line-too-long")
-        self.assertIn("room description", err)
-        self.assertIn("room #100", err)
+        self.assertIn("file in.wld line 3 room #100", err)
 
     def test_string_line_at_limit_accepted(self):
         rc, err = self.wld("#100\nRoom~\n" + "y" * 509 + "\n~\n0 0 0\nS\n$~\n")
@@ -113,6 +112,21 @@ class Wld2HtmlTests(ToolCase):
         rc, err = self.wld(b"#100\nRoom~\n\0abc\n~\n0 0 0\nS\n$~\n")
         self.assertEqual(rc, 1, err)
         self.assertDiag(err, "wld-line-nul")
+
+    def test_record_count_mismatch_stops_before_overflow(self):
+        # I3-03: a 259-byte comment line was one record line for neither
+        # pass in the counter but split by the loader so '#101' at offset
+        # 255 started a second room in a world[] sized for one.
+        rc, err = self.wld("#100\nRoom~\nDesc~\n0 0 0\nS\n*" + "a" * 254 +
+                           "#101\nRoom2~\nD~\n0 0 0\nS\n$~\n")
+        self.assertEqual(rc, 1, err)
+        self.assertDiag(err, "wld-record-capacity")
+
+    def test_multiple_files_share_record_capacity(self):
+        self.write("b.wld", "#200\nOther~\nD~\n0 0 0\nD0\n~\n~\n0 0 100\nS\n$~\n")
+        rc, err = self.wld(VALID_ROOM + "$~\n", "b.wld")
+        self.assertEqual(rc, 0, err)
+        self.assertIn(b'href = "100.html"', self.read("200.html"))
 
     def test_door_index_in_range_accepted(self):
         rc, err = self.wld("#100\nRoom~\nDesc~\n0 0 0\nD9\n~\n~\n"

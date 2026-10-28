@@ -42,6 +42,8 @@
 #define EX_PICKPROOF		(1 << 3)	/* Lock can't be picked    */
 
 #define MAX_STRING_LENGTH	8192
+/* Longest physical input line (with its terminator) any reader accepts. */
+#define WLD_MAX_LINE		512
 
 typedef signed char sbyte;
 typedef unsigned char ubyte;
@@ -125,14 +127,13 @@ static int wld_read_line(FILE *fl, char *dst, size_t dst_size, const char *what)
   size_t len = 0;
   int ch;
 
+  wld_cur_line++;	/* diagnostics below name the line being read */
   while ((ch = getc(fl)) != EOF && ch != '\n') {
     if (ch == '\0')
-      WLD_PARSE_ERROR("wld-line-nul", "line %ld of the %s contains a NUL byte",
-                      wld_cur_line + 1, what);
+      WLD_PARSE_ERROR("wld-line-nul", "%s line contains a NUL byte", what);
     if (len + 1 >= dst_size)
-      WLD_PARSE_ERROR("wld-line-too-long",
-                      "line %ld of the %s is longer than %lu bytes",
-                      wld_cur_line + 1, what, (unsigned long)(dst_size - 1));
+      WLD_PARSE_ERROR("wld-line-too-long", "%s line is longer than %lu bytes",
+                      what, (unsigned long)(dst_size - 1));
     dst[len++] = (char)ch;
   }
 
@@ -144,12 +145,12 @@ static int wld_read_line(FILE *fl, char *dst, size_t dst_size, const char *what)
                       strerror(read_errno));
     }
     if (len == 0) {
+      wld_cur_line--;	/* nothing was read: no line consumed */
       dst[0] = '\0';
       return 0;
     }
   }
 
-  wld_cur_line++;
   if (len > 0 && dst[len - 1] == '\r')
     len--;
   dst[len] = '\0';
@@ -402,15 +403,30 @@ void write_output(void)
   }
 }  
 
-/* function to count how many hash-mark delimited records exist in a file */
+/*
+ * Count the '#'-prefixed lines in a file: an upper bound on the rooms
+ * parse_room() will store from it.  The bound only holds if this pass sees
+ * the same lines as the loading pass, so both use wld_read_line(), which
+ * never splits a physical line (the old 128-byte fgets() here and 256-byte
+ * fgets() in get_line() could disagree and under-count).  The buffer is the
+ * largest line any loader reader accepts, so this pass never rejects a line
+ * the loader would accept.
+ */
 int count_hash_records(FILE * fl)
 {
-  char buf[128];
+  char buf[WLD_MAX_LINE];
   int count = 0;
 
-  while (fgets(buf, 128, fl))
-    if (*buf == '#')
+  while (wld_read_line(fl, buf, sizeof(buf), "input")) {
+    if (*buf == '#') {
+      char *cursor = buf + 1;
+
+      /* Only for diagnostic context; parse_room() validates the vnum. */
+      if (parse_int_token(&cursor, &wld_cur_vnum))
+        wld_have_vnum = 1;
       count++;
+    }
+  }
 
   return (count);
 }
@@ -430,6 +446,9 @@ void index_boot(int cnt, char **names)
     //have to loop through files twice.
     //once to get total record count
     //second time to load them
+    wld_cur_file = names[i];
+    wld_cur_line = 0;
+    wld_have_vnum = 0;
     rec_count += count_hash_records(db_file);
     tb_fclose(db_file);
   }
@@ -524,6 +543,18 @@ void parse_room(FILE * fl, int virtual_nr)
   char line[256], flags[128];
   struct extra_descr_data *new_descr;
 
+  /*
+   * room_nr is a cursor across every input file; world[] holds rec_count
+   * entries, sized by count_hash_records().  If the two passes ever
+   * disagree, stop before writing past the allocation.
+   */
+  if (room_nr < 0 || room_nr >= rec_count) {
+    WLD_REPORT(TB_SEV_ERROR, TB_ERR_INVARIANT, "wld-record-capacity",
+               "record %d is outside the %d records counted in pass one",
+               room_nr, rec_count);
+    exit(1);
+  }
+
   world[room_nr].zone = zone;
   world[room_nr].number = virtual_nr;
   world[room_nr].name = fread_string(fl, "room name");
@@ -600,11 +631,14 @@ void setup_dir(FILE * fl, int room, int dir)
   int t[5];
   char line[256];
 
-  /* Precondition (checked by parse_room): dir indexes dir_option[]. */
-  if (!VALID_DIR(dir)) {
+  /*
+   * Preconditions (checked by parse_room): room indexes world[] and dir
+   * indexes dir_option[].
+   */
+  if (room < 0 || room >= rec_count || !VALID_DIR(dir)) {
     WLD_REPORT(TB_SEV_ERROR, TB_ERR_INVARIANT, "wld-setup-dir",
-               "record %d exit D%d outside dir_option[0..%d]",
-               room, dir, NUM_OF_DIRS - 1);
+               "record %d (of %d) exit D%d outside dir_option[0..%d]",
+               room, rec_count, dir, NUM_OF_DIRS - 1);
     exit(1);
   }
 
