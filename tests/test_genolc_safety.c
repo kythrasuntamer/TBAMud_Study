@@ -1918,6 +1918,61 @@ static void add_quest_does_not_rewrap_a_shop_running_questmaster(void)
 }
 
 /* ------------------------------------------------------------------------ */
+/* Core-utils follow-up: a GET_WAS_IN that was the deleted room becomes the */
+/* character's start room, by vnum; it used to be the Void (rnum 0), where  */
+/* an idle player was put back on their next command and stranded.         */
+/* ------------------------------------------------------------------------ */
+static void delete_room_sends_was_in_to_start_room(void)
+{
+  struct char_data mortal, immortal, frozen, elsewhere;
+  make_zones(1); make_rooms(5);        /* vnums 10 20 30 40 50 */
+  CONFIG_MORTAL_START = 40;
+  CONFIG_IMMORTAL_START = 30;
+  CONFIG_FROZEN_START = 10;
+  r_mortal_start_room = 3;
+  r_immort_start_room = 2;
+  r_frozen_start_room = 0;
+  memset(&mortal, 0, sizeof(mortal));
+  memset(&immortal, 0, sizeof(immortal));
+  memset(&frozen, 0, sizeof(frozen));
+  memset(&elsewhere, 0, sizeof(elsewhere));
+  mortal.next = &immortal;
+  immortal.next = &frozen;
+  frozen.next = &elsewhere;
+  character_list = &mortal;
+  mortal.was_in_room = immortal.was_in_room = frozen.was_in_room = 1;   /* vnum 20 */
+  immortal.player.level = LVL_IMMORT;
+  SET_BIT_AR(PLR_FLAGS(&frozen), PLR_FROZEN);
+  elsewhere.was_in_room = 4;           /* vnum 50 */
+
+  TEST_ASSERT_TRUE(delete_room(1));
+
+  TEST_ASSERT_EQUAL_INT(40, world[mortal.was_in_room].number);
+  TEST_ASSERT_EQUAL_INT(30, world[immortal.was_in_room].number);
+  TEST_ASSERT_EQUAL_INT(10, world[frozen.was_in_room].number);
+  TEST_ASSERT_EQUAL_INT(50, world[elsewhere.was_in_room].number);
+  TEST_ASSERT_EQUAL_INT(3, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("room-delete-wasin", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail,
+                              "was_in room vnum 20, which was deleted; now start room vnum 10"));
+
+  /* A start vnum with no room falls back to the (renumbered) mortal start
+   * room.  Rooms are now 10 30 40 50. */
+  tb_error_capture_reset();
+  CONFIG_MORTAL_START = 99;
+  mortal.next = NULL;
+  mortal.was_in_room = 3;              /* vnum 50 */
+  TEST_ASSERT_TRUE(delete_room(3));
+  TEST_ASSERT_EQUAL_INT(40, world[mortal.was_in_room].number);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "now start room vnum 40"));
+
+  character_list = NULL;
+  CONFIG_MORTAL_START = CONFIG_IMMORTAL_START = CONFIG_FROZEN_START = 0;
+  r_mortal_start_room = r_immort_start_room = r_frozen_start_room = 0;
+}
+
+/* ------------------------------------------------------------------------ */
 /* Temporary world directory for the writers.                               */
 /* ------------------------------------------------------------------------ */
 static char test_root[] = "/tmp/tb-genolc-XXXXXX";
@@ -2035,6 +2090,7 @@ int main(void)
   RUN_TEST(delete_room_frees_cancelled_var_strings);
   RUN_TEST(add_quest_wraps_a_plain_keeper_once);
   RUN_TEST(add_quest_does_not_rewrap_a_shop_running_questmaster);
+  RUN_TEST(delete_room_sends_was_in_to_start_room);
   failures = UNITY_END();
   leave_test_root();
   return failures;

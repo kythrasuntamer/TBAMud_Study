@@ -82,6 +82,25 @@ static void cancel_zone_command(struct reset_com *cmd)
   cmd->command = '*';
 }
 
+/* Where a character whose GET_WAS_IN room was deleted is put back instead:
+ * the start room it would log in to (interpreter.c: frozen, else immortal,
+ * else mortal), found by its configured vnum in world[] as delete_room()
+ * leaves it; the mortal start room (already renumbered, the Void if it was
+ * the deleted room) when that vnum has no room. */
+static room_rnum was_in_start_room(struct char_data *ch)
+{
+  room_vnum vnum = CONFIG_MORTAL_START;
+  room_rnum start;
+
+  if (PLR_FLAGGED(ch, PLR_FROZEN))
+    vnum = CONFIG_FROZEN_START;
+  else if (!IS_NPC(ch) && GET_LEVEL(ch) >= LVL_IMMORT)
+    vnum = CONFIG_IMMORTAL_START;
+  if ((start = real_room(vnum)) == NOWHERE)
+    start = r_mortal_start_room;
+  return start;
+}
+
 /**
  * Add a new room, or update the live room with the same vnum.
  *
@@ -237,10 +256,10 @@ room_rnum add_room(struct room_data *room)
  * People and objects in it move to the Void (rnum 0); its scripts and
  * events are cancelled; exits into it are removed (or lead to NOWHERE when
  * they carry a keyword or description); reset commands that name it are
- * disabled ('*', a 'V' command's strings freed); start rooms and GET_WAS_IN
- * that were this room fall back to the Void.  world[] then shifts down
- * (see the file comment) and every stored room rnum above rnum is
- * decremented.
+ * disabled ('*', a 'V' command's strings freed); start rooms that were
+ * this room fall back to the Void, and a GET_WAS_IN that was it to the
+ * character's start room.  world[] then shifts down (see the file comment)
+ * and every stored room rnum above rnum is decremented.
  *
  * @param rnum Room rnum from redit; 0 (the Void) cannot be deleted.
  * @return TRUE when the room was deleted; FALSE, reported, otherwise.
@@ -248,6 +267,7 @@ room_rnum add_room(struct room_data *room)
 int delete_room(room_rnum rnum)
 {
   room_rnum i;
+  room_vnum deleted_vnum;
   int j;
   struct char_data *ppl, *next_ppl;
   struct obj_data *obj, *next_obj;
@@ -262,6 +282,7 @@ int delete_room(room_rnum rnum)
   }
 
   room = &world[rnum];
+  deleted_vnum = room->number;   /* room is stale once world[] shifts */
 
   add_to_save_list(zone_table[room->zone].number, SL_WLD);
 
@@ -293,20 +314,6 @@ int delete_room(room_rnum rnum)
     r_frozen_start_room = 0;	/* The Void */
   } else if (r_frozen_start_room != NOWHERE && r_frozen_start_room > rnum)
     r_frozen_start_room--;
-
-  /* GET_WAS_IN is where a linkless player returns on reconnect; renumber
-   * it like the start rooms. */
-  for (ppl = character_list; ppl; ppl = ppl->next) {
-    if (GET_WAS_IN(ppl) == NOWHERE)
-      continue;
-    if (GET_WAS_IN(ppl) == rnum) {
-      TB_WARN_MSG("olc", "room-delete-wasin", "room",
-                  DIAG_CHAR_FMT " was_in room vnum %d, which is being deleted; "
-                  "reset to the Void", DIAG_CHAR(ppl), room->number);
-      GET_WAS_IN(ppl) = 0;
-    } else if (GET_WAS_IN(ppl) > rnum)
-      GET_WAS_IN(ppl)--;
-  }
 
   /* Dump the contents of this room into the Void.  We could also just extract 
    * the people, mobs, and objects here. */
@@ -417,6 +424,23 @@ int delete_room(room_rnum rnum)
   RECREATE(world, struct room_data, top_of_world + 1);
   /* world[] was shifted and reallocated: re-point room event owners. */
   rebase_room_events();
+
+  /* GET_WAS_IN is where an idle or linkless player is put back on their
+   * next command (comm.c); renumber it like the start rooms.  One that was
+   * the deleted room gets the character's start room, looked up by vnum in
+   * the shifted world[]: the Void (rnum 0) left the player stranded there. */
+  for (ppl = character_list; ppl; ppl = ppl->next) {
+    if (GET_WAS_IN(ppl) == NOWHERE)
+      continue;
+    if (GET_WAS_IN(ppl) == rnum) {
+      GET_WAS_IN(ppl) = was_in_start_room(ppl);
+      TB_WARN_MSG("olc", "room-delete-wasin", "room",
+                  DIAG_CHAR_FMT " was_in room vnum %d, which was deleted; "
+                  "now start room vnum %d", DIAG_CHAR(ppl), deleted_vnum,
+                  world[GET_WAS_IN(ppl)].number);
+    } else if (GET_WAS_IN(ppl) > rnum)
+      GET_WAS_IN(ppl)--;
+  }
 
   return TRUE;
 }
