@@ -254,7 +254,12 @@ void	stop_follower(struct char_data *ch);
 bool	circle_follow(struct char_data *ch, struct char_data *victim);
 
 /* in act.informative.c */
-void	look_at_room(struct char_data *ch, int mode);
+/* look_at_room() records its caller, as act() does: a viewer that is not in
+ * a valid room is reported (look-unplaced) at the call site that passed it. */
+void	look_at_room_at(const char *src_file, int src_line, const char *src_func,
+	                struct char_data *ch, int mode);
+#define look_at_room(ch, mode) \
+	look_at_room_at(__FILE__, __LINE__, __func__, (ch), (mode))
 void  add_history(struct char_data *ch, char *msg, int type);
 
 /* in act.movmement.c */

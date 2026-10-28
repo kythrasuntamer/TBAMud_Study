@@ -639,12 +639,17 @@ ACMD(do_exits)
 }
 
 /**
- * Describe the room @p ch is standing in.
+ * Describe the room @p ch is standing in. Callers use the utils.h macro
+ * look_at_room(ch, mode), which passes their file, line and function.
  *
  * Exported: called by do_look, after movement and teleport, and from DG
- * callbacks. Precondition: IN_ROOM(ch) is a valid room rnum. A character
- * without a descriptor (mob, linkless player) sees nothing and the
- * function returns at once. Room name and description are required by
+ * callbacks. Precondition: IN_ROOM(ch) is a valid room rnum; every caller
+ * places ch first. A viewer outside a valid room (NOWHERE, or an rnum past
+ * top_of_world after a caller bug) would index world[] out of bounds, so
+ * it is reported as look-unplaced at the caller's location and shown
+ * nothing (G2-17). A character without a descriptor (mob, linkless
+ * player) sees nothing and the function returns at once, after that
+ * check. Room name and description are required by
  * the loader; object and mob strings shown here may be NULL and are
  * handled by the list helpers. The sector type is range-checked before
  * it indexes sector_types[].
@@ -652,12 +657,22 @@ ACMD(do_exits)
  * @param ch           Viewer.
  * @param ignore_brief Nonzero shows the full description even with BRIEF.
  */
-void look_at_room(struct char_data *ch, int ignore_brief)
+void look_at_room_at(const char *src_file, int src_line, const char *src_func,
+                     struct char_data *ch, int ignore_brief)
 {
   trig_data * t;
-  struct room_data *rm = &world[IN_ROOM(ch)];
+  struct room_data *rm;
   room_vnum target_room;
 
+  if (!VALID_ROOM_RNUM(IN_ROOM(ch))) {
+    tb_error_log_at("ERROR", "act", "look-unplaced", "world", 0,
+                    src_file, src_line, src_func,
+                    DIAG_CHAR_FMT " is in room rnum %d, not a valid room "
+                    "(top_of_world %d); nothing shown", DIAG_CHAR(ch),
+                    (int)IN_ROOM(ch), (int)top_of_world);
+    return;
+  }
+  rm = &world[IN_ROOM(ch)];
   target_room = IN_ROOM(ch);
 
   if (!ch->desc)

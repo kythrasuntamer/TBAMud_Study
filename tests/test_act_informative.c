@@ -715,6 +715,46 @@ static void history_null_text_is_reported_not_stored(void)
   free_player(ch);
 }
 
+/* --- G2-17: look_at_room for a viewer outside a valid room ------------ */
+
+/* look_at_room() indexed world[IN_ROOM(ch)] with no check, so a caller
+ * that passed an unplaced viewer read past world[] (ASan global overflow
+ * here) and nothing named the caller. */
+static void look_at_unplaced_viewer_is_reported_at_caller(void)
+{
+  struct char_data *ch = make_player(8);
+  int call_line;
+
+  enter_test_room(ch);
+  IN_ROOM(ch) = 1;                      /* one past top_of_world */
+  call_line = __LINE__ + 1;
+  look_at_room(ch, TRUE);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("look-unplaced", tb_captured_operation);
+  TEST_ASSERT_EQUAL_INT(call_line, tb_captured_line);   /* the caller */
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "player idnum 8"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "room rnum 1,"));
+  TEST_ASSERT_EQUAL_STRING("", sent);
+
+  tb_error_capture_reset();
+  IN_ROOM(ch) = NOWHERE;
+  look_at_room(ch, TRUE);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("look-unplaced", tb_captured_operation);
+  TEST_ASSERT_EQUAL_STRING("", sent);
+
+  /* A placed viewer still sees the room, with no report. */
+  tb_error_capture_reset();
+  IN_ROOM(ch) = 0;
+  look_at_room(ch, TRUE);
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  TEST_ASSERT_NOT_NULL(strstr(sent, "Test Room"));
+
+  test_room.people = NULL;
+  leave_test_room(ch);
+  free_player(ch);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -734,5 +774,6 @@ int main(void)
   RUN_TEST(look_in_overfull_drinkcon_is_reported);
   RUN_TEST(gen_ps_unknown_subcmd_is_reported);
   RUN_TEST(history_null_text_is_reported_not_stored);
+  RUN_TEST(look_at_unplaced_viewer_is_reported_at_caller);
   return UNITY_END();
 }
