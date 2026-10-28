@@ -2593,19 +2593,70 @@ ACMD(do_last)
   tb_fclose(fp);
 }
 
+/** Snapshot the UIDs of everyone in room for 'force room' (G1-07).
+ * @return a CREATEd array of *count UIDs in occupant order, which the
+ *         caller frees, or NULL with *count 0 for an empty room. */
+static long *force_room_snapshot(room_rnum room, int *count)
+{
+  struct char_data *occupant;
+  long *uids = NULL;
+  int n = 0;
+
+  for (occupant = world[room].people; occupant; occupant = occupant->next_in_room)
+    n++;
+  if (n > 0) {
+    CREATE(uids, long, n);
+    n = 0;
+    for (occupant = world[room].people; occupant; occupant = occupant->next_in_room)
+      uids[n++] = char_script_id(occupant);
+  }
+  *count = n;
+  return uids;
+}
+
+/** Re-acquire a 'force room' snapshot entry after earlier forced commands
+ * ran (G1-07). The occupant must still exist, not be pending extraction
+ * and still stand in the forced room, compared by vnum because a forced
+ * builder's dig can add rooms and shift rnums. Anything else is reported
+ * as force-room-target with the room vnum, UID and caller.
+ * @return the occupant to force, or NULL to skip it. */
+static struct char_data *force_room_target(struct char_data *ch, long uid,
+                                           room_vnum room)
+{
+  struct char_data *vict = find_char(uid);
+
+  if (!vict) {
+    TB_WARN_MSG("act", "force-room-target", "room",
+                "room vnum %d: uid %ld no longer exists; not forced (caller "
+                DIAG_CHAR_FMT ")", room, uid, DIAG_CHAR(ch));
+    return NULL;
+  }
+  if (DEAD(vict) || GET_ROOM_VNUM(IN_ROOM(vict)) != room) {
+    TB_WARN_MSG("act", "force-room-target", "room",
+                "room vnum %d: " DIAG_CHAR_FMT " uid %ld %s (now in room vnum "
+                "%d); not forced (caller " DIAG_CHAR_FMT ")", room,
+                DIAG_CHAR(vict), uid, DEAD(vict) ? "is pending extraction" :
+                "moved before its turn", GET_ROOM_VNUM(IN_ROOM(vict)),
+                DIAG_CHAR(ch));
+    return NULL;
+  }
+  return vict;
+}
+
 /** force <victim|room|all> <command>.
  * Forced commands run with the victim's privileges and without its
  * consent, can reach commands that assume ch->desc != NULL (each such
  * command checks it; see command-no-desc), and can fire DG command, enter
  * and leave triggers that move or extract other occupants. The 'room'
- * loop follows next_force across those callbacks; the safety guide's
- * snapshot-and-revalidate rule (section 2) applies and is not yet
- * implemented here (G1-07, open). Players at or above the caller's level
- * are never forced. */
+ * form therefore snapshots the occupants as UIDs and re-checks each one
+ * before forcing it (the safety guide's section 2; G1-07): an occupant
+ * that moved, for example a follower that left with its leader, or that
+ * is pending extraction is skipped and reported. Players at or above the
+ * caller's level are never forced. */
 ACMD(do_force)
 {
   struct descriptor_data *i, *next_desc;
-  struct char_data *vict, *next_force;
+  struct char_data *vict;
   char arg[MAX_INPUT_LENGTH], to_force[MAX_INPUT_LENGTH], buf1[MAX_INPUT_LENGTH + 32];
 
   half_chop(argument, arg, to_force);
@@ -2628,17 +2679,29 @@ ACMD(do_force)
       command_interpreter(vict, to_force);
     }
   } else if (!str_cmp("room", arg)) {
+    /* The command (from a GRGOD+) runs once per occupant, and each run can
+     * move or extract any occupant: a leader takes its followers along,
+     * and command, enter and leave triggers teleport or purge. So never
+     * follow next_in_room across command_interpreter(): force the
+     * occupants present now, by UID, each re-checked before its turn. */
+    const room_vnum force_vnum = GET_ROOM_VNUM(IN_ROOM(ch));
+    long *uids;
+    int count, n;
+
     send_to_char(ch, "%s", CONFIG_OK);
     mudlog(NRM, MAX(LVL_GOD, GET_INVIS_LEV(ch)), TRUE, "(GC) %s forced room %d to %s",
 		GET_NAME(ch), GET_ROOM_VNUM(IN_ROOM(ch)), to_force);
 
-    for (vict = world[IN_ROOM(ch)].people; vict; vict = next_force) {
-      next_force = vict->next_in_room;
+    uids = force_room_snapshot(IN_ROOM(ch), &count);
+    for (n = 0; n < count; n++) {
+      if (!(vict = force_room_target(ch, uids[n], force_vnum)))
+        continue;
       if (!IS_NPC(vict) && GET_LEVEL(vict) >= GET_LEVEL(ch))
 	continue;
       act(buf1, TRUE, ch, NULL, vict, TO_VICT);
       command_interpreter(vict, to_force);
     }
+    free(uids);
   } else { /* force all */
     send_to_char(ch, "%s", CONFIG_OK);
     mudlog(NRM, MAX(LVL_GOD, GET_INVIS_LEV(ch)), TRUE, "(GC) %s forced all to %s", GET_NAME(ch), to_force);
