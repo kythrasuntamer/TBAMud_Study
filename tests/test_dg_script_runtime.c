@@ -447,6 +447,50 @@ static void script_stops_when_its_mob_owner_is_extracted(void)
   remove_from_lookup_table(mob.script_id, &mob);
 }
 
+/* A saved variable longer than one pfile line used to be written anyway;
+ * on reload its tail was parsed as pfile tags.  It is now refused and
+ * reported, and the rest still round-trips. */
+static void saved_vars_never_exceed_one_pfile_line(void)
+{
+  static char_data player, reloaded;
+  static struct script_data script;
+  char long_value[READ_SIZE + 32], line[READ_SIZE];
+  struct trig_var_data *vd;
+  FILE *fp = tmpfile();
+
+  TEST_ASSERT_NOT_NULL(fp);
+  memset(&player, 0, sizeof(player));
+  memset(&reloaded, 0, sizeof(reloaded));
+  memset(&script, 0, sizeof(script));
+  GET_IDNUM(&player) = 12;
+  SCRIPT(&player) = &script;
+  memset(long_value, 'x', sizeof(long_value) - 1);
+  long_value[sizeof(long_value) - 1] = '\0';
+  add_var(&script.global_vars, "long", long_value, 0);
+  add_var(&script.global_vars, "broken", "a\nLevl: 34", 0);
+  add_var(&script.global_vars, "stage", "2", 0);
+
+  save_char_vars_ascii(fp, &player);
+  TEST_ASSERT_EQUAL_INT(2, captured_errors);
+  TEST_ASSERT_EQUAL_STRING("var-save", captured_operation);
+
+  TEST_ASSERT_EQUAL_INT(0, fseek(fp, 0L, SEEK_SET));
+  TEST_ASSERT_EQUAL_INT(1, get_line(fp, line));
+  TEST_ASSERT_EQUAL_STRING("Vars: 1", line);
+  read_saved_vars_ascii(fp, &reloaded, 1);
+  vd = SCRIPT(&reloaded)->global_vars;
+  TEST_ASSERT_NOT_NULL(vd);
+  TEST_ASSERT_EQUAL_STRING("stage", vd->name);
+  TEST_ASSERT_EQUAL_STRING("2", vd->value);
+  TEST_ASSERT_NULL(vd->next);
+  TEST_ASSERT_EQUAL_INT(0, get_line(fp, line));   /* nothing else written */
+
+  TEST_ASSERT_EQUAL_INT(0, fclose(fp));
+  free_varlist(script.global_vars);
+  free_varlist(SCRIPT(&reloaded)->global_vars);
+  free(SCRIPT(&reloaded));
+}
+
 static void restore_round_trips_neutralize(void)
 {
   char text[] = "50% off, 100%% sure";
@@ -473,5 +517,6 @@ int main(void)
   RUN_TEST(script_stops_when_its_object_owner_is_freed);
   RUN_TEST(script_runs_on_while_its_object_owner_lives);
   RUN_TEST(script_stops_when_its_mob_owner_is_extracted);
+  RUN_TEST(saved_vars_never_exceed_one_pfile_line);
   return UNITY_END();
 }

@@ -1157,7 +1157,13 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
             tb_snprintf(str, slen, "%d", GET_COND(c, THIRST));
           }
           else if (!str_cmp(field, "title")) {
-            if (!IS_NPC(c) && subfield && *subfield && valid_dg_target(c, DG_ALLOW_GODS)) {
+            if (!IS_NPC(c) && subfield && strlen(subfield) > MAX_TITLE_LENGTH)
+              script_log("Trigger: %s, VNum %d. title longer than %d characters "
+                         "refused for player idnum %ld",
+                         (trig && GET_TRIG_NAME(trig) ? GET_TRIG_NAME(trig) : "(no trigger)"),
+                         (trig ? GET_TRIG_VNUM(trig) : -1), MAX_TITLE_LENGTH,
+                         GET_IDNUM(c));
+            else if (!IS_NPC(c) && subfield && *subfield && valid_dg_target(c, DG_ALLOW_GODS)) {
               if (GET_TITLE(c)) free(GET_TITLE(c));
                 GET_TITLE(c) = strdup(subfield);
               /* The title leaves the script engine. */

@@ -3214,6 +3214,18 @@ void read_saved_vars_ascii(FILE *file, struct char_data *ch, int count)
   }
 }
 
+/* TRUE if var can be saved as one line that get_line() reads back whole.
+ * A longer line, or a line break in the value, would let the rest of the
+ * value be parsed as pfile tags of its own. */
+static int saved_var_fits(const struct trig_var_data *var)
+{
+  char line[READ_SIZE];
+  int n = snprintf(line, sizeof(line), "%s %ld %s",
+                   var->name, var->context, var->value);
+
+  return n >= 0 && (size_t)n < sizeof(line) && !strpbrk(var->value, "\r\n");
+}
+
 /* save a characters variables out to an ASCII pfile */
 void save_char_vars_ascii(FILE *file, struct char_data *ch)
 {
@@ -3231,15 +3243,23 @@ void save_char_vars_ascii(FILE *file, struct char_data *ch)
 
   /* Note that currently, context will always be zero. This may change in the 
    * future */
-  for (vars = ch->script->global_vars;vars;vars = vars->next)
-    if (*vars->name != '-')
+  for (vars = ch->script->global_vars;vars;vars = vars->next) {
+    if (*vars->name == '-') /* don't save if it begins with - */
+      continue;
+    if (saved_var_fits(vars))
       count++;
+    else
+      TB_ERROR_MSG("dg", "var-save", vars->name,
+                   "player idnum %ld: %zu-byte value does not fit one "
+                   "%d-byte pfile line or holds a line break; not saved",
+                   GET_IDNUM(ch), strlen(vars->value), READ_SIZE - 1);
+  }
 
   if (count != 0) {
 	  tb_fprintf(file, "Vars: %d\n", count);
 
   for (vars = ch->script->global_vars;vars;vars = vars->next)
-    if (*vars->name != '-') /* don't save if it begins with - */
+    if (*vars->name != '-' && saved_var_fits(vars))
       tb_fprintf(file, "%s %ld %s\n", vars->name, vars->context, vars->value);
   }
 }
