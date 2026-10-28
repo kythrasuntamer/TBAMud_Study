@@ -33,7 +33,18 @@ int	get_number(char **name);
 void	obj_to_char(struct obj_data *object, struct char_data *ch);
 void	obj_from_char(struct obj_data *object);
 
-void	equip_char(struct char_data *ch, struct obj_data *obj, int pos);
+/** Wear obj on ch at pos. A call-site-recording macro (like act()), so a
+ * rejection names the caller (zone reset, script, objsave). Preconditions:
+ * obj is in no location (not carried, in a room, in a container or worn)
+ * and pos is in [0, NUM_WEARS). On an alignment/class zap the object goes
+ * to ch's inventory. On any other rejection (slot taken, bad pos, obj still
+ * placed) an equip-reject error is reported, and a free object is put in
+ * ch's inventory rather than orphaned; a placed object stays where it is.
+ * The caller is never told which happened. */
+void	equip_char_at(const char *src_file, int src_line, const char *src_func,
+                      struct char_data *ch, struct obj_data *obj, int pos);
+#define equip_char(ch, obj, pos) \
+  equip_char_at(__FILE__, __LINE__, __func__, (ch), (obj), (pos))
 struct obj_data *unequip_char(struct char_data *ch, int pos);
 int	invalid_align(struct char_data *ch, struct obj_data *obj);
 

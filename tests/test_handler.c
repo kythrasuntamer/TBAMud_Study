@@ -20,6 +20,11 @@
 void basic_mud_log(const char *format, ...) { (void)format; }
 long obj_script_id(obj_data *obj) { return obj->script_id; }
 long char_script_id(char_data *ch) { return ch->script_id; }
+void autoquest_trigger_check(struct char_data *ch, struct char_data *vict,
+                             struct obj_data *object, int type)
+{ (void)ch; (void)vict; (void)object; (void)type; }
+int invalid_class(struct char_data *ch, struct obj_data *obj)
+{ (void)ch; (void)obj; return 0; }
 int MAX(int a, int b) { return a > b ? a : b; }
 int MIN(int a, int b) { return a < b ? a : b; }
 const char *skill_name(int num) { (void)num; return "test-spell"; }
@@ -160,6 +165,39 @@ static void test_affect_join_clamps_modifier(void)
   free(ch);
 }
 
+/* H2-12: equipping into an occupied slot (e.g. two zone 'E' commands for
+ * one slot) reports the rejection with the caller and gives the free
+ * object to the character instead of orphaning it. */
+static void test_equip_char_occupied_slot_falls_back_to_inventory(void)
+{
+  struct char_data *ch = calloc(1, sizeof(*ch));
+  struct obj_data *worn = calloc(1, sizeof(*worn));
+  struct obj_data *extra = calloc(1, sizeof(*extra));
+
+  TEST_ASSERT_NOT_NULL(ch);
+  TEST_ASSERT_NOT_NULL(worn);
+  TEST_ASSERT_NOT_NULL(extra);
+  ch->player_specials = &dummy_mob;
+  SET_BIT_AR(MOB_FLAGS(ch), MOB_ISNPC);
+  ch->nr = NOBODY;
+  extra->item_number = NOTHING;
+  IN_ROOM(extra) = NOWHERE;
+  GET_EQ(ch, WEAR_HOLD) = worn;
+
+  equip_char(ch, extra, WEAR_HOLD);
+
+  TEST_ASSERT_EQUAL_PTR(worn, GET_EQ(ch, WEAR_HOLD));
+  TEST_ASSERT_EQUAL_PTR(extra, ch->carrying);
+  TEST_ASSERT_EQUAL_PTR(ch, extra->carried_by);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("equip-reject", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "test_handler.c"));
+
+  free(extra);
+  free(worn);
+  free(ch);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -169,5 +207,6 @@ int main(void)
   RUN_TEST(test_obj_from_room_nowhere_reported);
   RUN_TEST(test_obj_from_room_clears_furniture_backpointer);
   RUN_TEST(test_affect_join_clamps_modifier);
+  RUN_TEST(test_equip_char_occupied_slot_falls_back_to_inventory);
   return UNITY_END();
 }

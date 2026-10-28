@@ -550,26 +550,50 @@ int invalid_align(struct char_data *ch, struct obj_data *obj)
   return FALSE;
 }
 
-void equip_char(struct char_data *ch, struct obj_data *obj, int pos)
+/* Report an equip_char rejection with the originating call site and, when
+ * the object is in no location, give it to ch so it is not orphaned in
+ * object_list (still counted against its max-load) until reboot. */
+static void equip_reject(const char *src_file, int src_line,
+                         const char *src_func, struct char_data *ch,
+                         struct obj_data *obj, int pos, const char *why)
+{
+  bool is_free = !obj->carried_by && IN_ROOM(obj) == NOWHERE &&
+                 !obj->in_obj && !obj->worn_by;
+
+  TB_ERROR_MSG("handler", "equip-reject", "obj",
+               "obj vnum %d uid %ld pos %d rejected (%s) for " DIAG_CHAR_FMT
+               "; %s; caller=%s:%d %s", (int) GET_OBJ_VNUM(obj),
+               obj_script_id(obj), pos, why, DIAG_CHAR(ch),
+               is_free ? "moved to inventory" : "left in place",
+               src_file, src_line, src_func);
+  if (is_free)
+    obj_to_char(obj, ch);
+}
+
+void equip_char_at(const char *src_file, int src_line, const char *src_func,
+                   struct char_data *ch, struct obj_data *obj, int pos)
 {
   int j;
 
   if (pos < 0 || pos >= NUM_WEARS) {
-    core_dump();
+    equip_reject(src_file, src_line, src_func, ch, obj, pos,
+                 "position out of range");
     return;
   }
 
   if (GET_EQ(ch, pos)) {
-    log("SYSERR: Char is already equipped: %s, %s", GET_NAME(ch),
-	    obj->short_description);
+    equip_reject(src_file, src_line, src_func, ch, obj, pos,
+                 "slot already occupied");
     return;
   }
   if (obj->carried_by) {
-    log("SYSERR: EQUIP: Obj is carried_by when equip.");
+    equip_reject(src_file, src_line, src_func, ch, obj, pos,
+                 "obj is carried");
     return;
   }
   if (IN_ROOM(obj) != NOWHERE) {
-    log("SYSERR: EQUIP: Obj is in_room when equip.");
+    equip_reject(src_file, src_line, src_func, ch, obj, pos,
+                 "obj is in a room");
     return;
   }
   if (invalid_align(ch, obj) || invalid_class(ch, obj)) {
