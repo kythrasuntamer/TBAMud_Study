@@ -103,9 +103,100 @@ static void test_sit_reports_and_repairs_furniture_desync(void)
   fx_free_char(pc);
 }
 
+static struct room_direction_data *door_exit(room_rnum from, int dir, room_rnum to)
+{
+  struct room_direction_data *ex = calloc(1, sizeof(*ex));
+  TEST_ASSERT_NOT_NULL(ex);
+  ex->to_room = to;
+  ex->key = NOTHING;
+  ex->exit_info = EX_ISDOOR | EX_CLOSED;
+  world[from].dir_option[dir] = ex;
+  return ex;
+}
+
+/* A room DOOR script running 'wdoor <room> north purge': the exit is freed
+ * and dir_option set to NULL before do_doorcmd uses it. */
+static int purge_exit_hook(enum fx_trigger kind, struct char_data *actor,
+                           struct obj_data *obj, int dir)
+{
+  (void)obj;
+  if (kind == FX_DOOR_WTRIG) {
+    free(world[IN_ROOM(actor)].dir_option[dir]);
+    world[IN_ROOM(actor)].dir_option[dir] = NULL;
+  }
+  return 1;
+}
+
+/* H1-03: the door trigger purges the exit it was fired for. */
+static void test_door_trigger_purging_exit_is_reported(void)
+{
+  struct char_data *pc = fx_new_char("hero", FALSE, 0);
+
+  door_exit(0, NORTH, 1);
+  fx_hook = purge_exit_hook;
+
+  do_gen_door(pc, arg("door north"), 0, SCMD_OPEN);
+
+  TEST_ASSERT_EQUAL_INT(1, fx_trigger_calls[FX_DOOR_WTRIG]);
+  TEST_ASSERT_NULL(world[0].dir_option[NORTH]);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("door-target-changed", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "room vnum 3000 dir 0"));
+  fx_free_char(pc);
+}
+
+/* H1-03: AUTOKEY unlocks then opens; when the unlock's trigger removes the
+ * door, the open must not run on it. */
+static void test_autokey_stops_after_failed_unlock(void)
+{
+  struct char_data *pc = fx_new_char("hero", FALSE, 0);
+  struct room_direction_data *ex = door_exit(0, NORTH, 1);
+  struct obj_data *key = fx_new_obj("key", ITEM_KEY);
+  static struct index_data key_index[1];
+  static struct obj_data key_proto[1];
+
+  /* has_key() matches by vnum, so give the key a prototype index entry. */
+  key_index[0].vnum = 3099;
+  obj_index = key_index;
+  obj_proto = key_proto;
+  key->item_number = 0;
+  ex->exit_info |= EX_LOCKED;
+  ex->key = 3099;
+  SET_BIT_AR(PRF_FLAGS(pc), PRF_AUTOKEY);
+  obj_to_char(key, pc);
+  fx_hook = purge_exit_hook;
+
+  do_gen_door(pc, arg("door north"), 0, SCMD_OPEN);
+
+  /* Only the unlock ran its triggers; the open was never attempted. */
+  TEST_ASSERT_EQUAL_INT(1, fx_trigger_calls[FX_DOOR_MTRIG]);
+  TEST_ASSERT_EQUAL_INT(1, fx_trigger_calls[FX_DOOR_WTRIG]);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("door-target-changed", tb_captured_operation);
+  fx_free_char(pc);
+  obj_index = NULL;
+  obj_proto = NULL;
+}
+
+/* H1-03: an ordinary open with no interference still works and is silent. */
+static void test_door_open_without_interference(void)
+{
+  struct char_data *pc = fx_new_char("hero", FALSE, 0);
+  struct room_direction_data *ex = door_exit(0, NORTH, 1);
+
+  do_gen_door(pc, arg("door north"), 0, SCMD_OPEN);
+
+  TEST_ASSERT_FALSE(IS_SET(ex->exit_info, EX_CLOSED));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  fx_free_char(pc);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(test_door_trigger_purging_exit_is_reported);
+  RUN_TEST(test_autokey_stops_after_failed_unlock);
+  RUN_TEST(test_door_open_without_interference);
   RUN_TEST(test_fight_unseats_character_before_second_sit);
   RUN_TEST(test_sit_reports_and_repairs_furniture_desync);
   return UNITY_END();

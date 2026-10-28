@@ -31,7 +31,7 @@ static int has_boat(struct char_data *ch);
 /* do_gen_door utility functions */
 static int find_door(struct char_data *ch, const char *type, char *dir, const char *cmdname);
 static int has_key(struct char_data *ch, obj_vnum key);
-static void do_doorcmd(struct char_data *ch, struct obj_data *obj, int door, int scmd);
+static int do_doorcmd(struct char_data *ch, struct obj_data *obj, int door, int scmd);
 static int ok_pick(struct char_data *ch, obj_vnum keynum, int pickproof, int scmd);
 
 
@@ -516,46 +516,57 @@ static const int flags_door[] =
 		(TOGGLE_BIT(GET_OBJ_VAL(obj, 1), CONT_LOCKED)) :\
 		(TOGGLE_BIT(EXITN(room, door)->exit_info, EX_LOCKED)))
 
-/* TRUE if a door trigger left the command able to proceed: the actor alive
- * in the room it started in, and the door or container it named still
- * there.  Scripts can move or kill the actor, remove the exit or purge the
- * container, and the command used to act on whatever remained. */
-static int door_target_intact(struct char_data *ch, room_rnum in_room,
-                              struct obj_data *obj, long obj_uid, int door,
-                              int scmd)
+/* After a door trigger, is the target still there? The mob and room door
+ * scripts can teleport ch ('%teleport% %actor% 3001'), purge the exit
+ * ('wdoor <room> <dir> purge' frees it and sets dir_option to NULL) or
+ * purge a container ('opurge chest'), or kill ch. The target must still be the same
+ * object (by UID) within ch's reach, or for an exit ch must still stand in
+ * was_in and the exit must still exist. Reports "door-target-changed" with
+ * the room, direction, object UID and character, and returns FALSE when it
+ * is not. */
+static int door_target_still_valid(struct char_data *ch, struct obj_data *obj,
+                                   long obj_uid, int door, room_rnum was_in,
+                                   const char *trigger)
 {
-  const char *lost = NULL;
+  /* DEAD(ch): a script can also kill the actor, who is extracted only at
+   * the end of the pulse and must not act on the door. */
+  if (!DEAD(ch) && IN_ROOM(ch) == was_in &&
+      (obj ? (obj_uid_matches(obj_uid, obj) &&
+              (obj->carried_by == ch || IN_ROOM(obj) == was_in))
+           : EXIT(ch, door) != NULL))
+    return TRUE;
 
-  if (DEAD(ch) || IN_ROOM(ch) != in_room)
-    lost = "actor left the room or died";
-  else if (obj && !obj_uid_matches(obj_uid, obj))
-    lost = "container was extracted";
-  else if (!obj && !EXIT(ch, door))
-    lost = "exit was removed";
-
-  if (lost)
-    TB_WARN_MSG("act", "door-trigger", "do_doorcmd",
-                DIAG_CHAR_FMT " %s %s: %s; command abandoned", DIAG_CHAR(ch),
-                cmd_door[scmd], obj ? "container" : dirs[door], lost);
-  return lost == NULL;
+  TB_WARN_MSG("act", "door-target-changed", "room",
+              "room vnum %d dir %d obj uid %ld changed by %s trigger for "
+              DIAG_CHAR_FMT, (int) GET_ROOM_VNUM(was_in), door, obj_uid,
+              trigger, DIAG_CHAR(ch));
+  return FALSE;
 }
 
-static void do_doorcmd(struct char_data *ch, struct obj_data *obj, int door, int scmd)
+/* Opens, closes, locks, unlocks or picks a door or container. obj and door
+ * are mutually exclusive: obj != NULL means a container (door is then -1),
+ * otherwise door indexes EXIT(ch, door), which the caller found. The door
+ * triggers run first and may refuse, or change the world; the target is
+ * re-validated after each one. Returns TRUE if the action was carried out,
+ * FALSE if a trigger refused it or the target is gone (reported). */
+static int do_doorcmd(struct char_data *ch, struct obj_data *obj, int door, int scmd)
 {
   char buf[MAX_STRING_LENGTH];
   size_t len;
   room_rnum other_room = NOWHERE;
   struct room_direction_data *back = NULL;
-  room_rnum in_room = IN_ROOM(ch);
+  room_rnum was_in = IN_ROOM(ch);
   long obj_uid = obj ? obj_script_id(obj) : 0;
 
-  if (!door_mtrigger(ch, scmd, door) ||
-      !door_target_intact(ch, in_room, obj, obj_uid, door, scmd))
-    return;
+  if (!door_mtrigger(ch, scmd, door))
+    return FALSE;
+  if (!door_target_still_valid(ch, obj, obj_uid, door, was_in, "mob door"))
+    return FALSE;
 
-  if (!door_wtrigger(ch, scmd, door) ||
-      !door_target_intact(ch, in_room, obj, obj_uid, door, scmd))
-    return;
+  if (!door_wtrigger(ch, scmd, door))
+    return FALSE;
+  if (!door_target_still_valid(ch, obj, obj_uid, door, was_in, "room door"))
+    return FALSE;
 
   len = snprintf(buf, sizeof(buf), "$n %ss ", cmd_door[scmd]);
   if (!obj && ((other_room = EXIT(ch, door)->to_room) != NOWHERE))
@@ -613,6 +624,7 @@ static void do_doorcmd(struct char_data *ch, struct obj_data *obj, int door, int
       send_to_room(EXIT(ch, door)->to_room, "The %s is %s%s from the other side.\r\n",
         back->keyword ? fname(back->keyword) : "door", cmd_door[scmd],
         scmd == SCMD_CLOSE ? "d" : "ed");
+  return TRUE;
 }
 
 static int ok_pick(struct char_data *ch, obj_vnum keynum, int pickproof, int scmd)
@@ -686,8 +698,10 @@ ACMD(do_gen_door)
     else if (!(DOOR_IS_UNLOCKED(ch, obj, door)) && IS_SET(flags_door[subcmd], NEED_UNLOCKED) && ((!IS_NPC(ch) && PRF_FLAGGED(ch, PRF_AUTOKEY))) && (has_key(ch, keynum)) )
     {
       send_to_char(ch, "It is locked, but you have the key.\r\n");
-      do_doorcmd(ch, obj, door, SCMD_UNLOCK);
-      do_doorcmd(ch, obj, door, subcmd);
+      /* The unlock runs door triggers that may refuse or remove the target;
+       * only then is the door still there to open. */
+      if (do_doorcmd(ch, obj, door, SCMD_UNLOCK))
+        do_doorcmd(ch, obj, door, subcmd);
     }
     else if (!(DOOR_IS_UNLOCKED(ch, obj, door)) && IS_SET(flags_door[subcmd], NEED_UNLOCKED) && ((!IS_NPC(ch) && PRF_FLAGGED(ch, PRF_AUTOKEY))) && (!has_key(ch, keynum)) )
     {

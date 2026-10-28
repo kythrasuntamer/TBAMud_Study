@@ -194,7 +194,10 @@ void send_to_group(struct char_data *ch, struct group_data *group, const char *m
 int thaco(int class_num, int level) { (void)class_num; (void)level; return 20; }
 void *simple_list(struct list_data *pList) { (void)pList; return NULL; }
 void free_list(struct list_data *pList) { (void)pList; }
-void event_cancel(struct event *event) { (void)event; }
+/* event_cancel() is a macro over event_cancel_at() (call-site capture). */
+void event_cancel_at(struct event *event, const char *file, int line,
+                     const char *func)
+{ (void)event; (void)file; (void)line; (void)func; }
 trig_data *read_trigger(int nr) { (void)nr; return NULL; }
 void extract_trigger(struct trig_data *trig) { (void)trig; }
 struct mud_event_data *new_mud_event(event_id iId, void *pStruct, char *sVariables)
