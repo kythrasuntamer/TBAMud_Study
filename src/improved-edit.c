@@ -3,6 +3,22 @@
 *  Usage: Routines specific to the improved editor.                       *
 **************************************************************************/
 
+/**
+ * @file improved-edit.c
+ * The "/" commands of the line editor: list, insert, delete, edit, format,
+ * replace, save and abort.
+ *
+ * Who controls the input: the command line is typed by the player (one line,
+ * at most MAX_INPUT_LENGTH, printable ASCII only). The buffer being edited,
+ * *d->str, can also hold text loaded from world, help or lib files, so it
+ * may lack a final newline and may contain colour codes, including a lone
+ * trailing '\t'.
+ *
+ * Ownership: *d->str is malloc'd and owned by the editing session (see
+ * string_write() in modify.c). Commands that change it reallocate it, so
+ * nothing may keep a pointer into it across a command.
+ */
+
 #include "conf.h"
 #include "sysdep.h"
 #include "structs.h"
@@ -562,8 +578,28 @@ void parse_edit_action(int command, char *string, struct descriptor_data *d)
   }
 }
 
-/* Re-formats message type formatted char *. (for strings edited with d->str) 
+/* Re-formats message type formatted char *. (for strings edited with d->str)
  * (mostly olc and mail). */
+/**
+ * Re-flow lines @p low..@p high of the edit buffer to PAGE_WIDTH ("/f").
+ *
+ * @param ptr_string The edit buffer (*d->str): NUL-terminated, malloc'd.
+ *        It is reallocated: the caller must not keep the old pointer. Its
+ *        text may come from world files, so it need not end in a newline and
+ *        may end in a lone '\t' colour code (dropped and reported,
+ *        "format-color").
+ * @param mode   FORMAT_INDENT to indent the first line.
+ * @param d      The editor, for messages.
+ * @param maxlen Hard cap for the result, including the final "\r\n" and NUL
+ *               (d->max_str). Must not exceed MAX_STRING_LENGTH, the size of
+ *               the local work buffers; a larger d->max_str is refused.
+ * @param low,high 1-based line range.
+ * @return 1 when the buffer was reformatted, 0 when it was left unchanged.
+ *
+ * The working copy str[] is filled with strncpy(..., sizeof(str) - 1) and is
+ * only terminated because the text is shorter than d->max_str <=
+ * MAX_STRING_LENGTH; keep that precondition if you change either bound.
+ */
 int format_text(char **ptr_string, int mode, struct descriptor_data *d, unsigned int maxlen, int low, int high)
 {
   int line_chars, cap_next = TRUE, cap_next_next = FALSE, color_chars = 0, i, pass_line = 0;
@@ -732,6 +768,16 @@ int format_text(char **ptr_string, int mode, struct descriptor_data *d, unsigned
   return 1;
 }
 
+/**
+ * Replace the first (or every, @p rep_all) @p pattern in *@p string ("/r").
+ *
+ * @param string   The edit buffer: NUL-terminated, malloc'd. On success it
+ *                 is reallocated, so the caller must not keep the old pointer.
+ * @param pattern,replacement Player-typed, NUL-terminated; pattern non-empty.
+ * @param max_size Hard cap for the result including the NUL (d->max_str).
+ * @return Number of replacements; 0 if none (buffer unchanged); -1 if the
+ *         result would exceed @p max_size (buffer unchanged).
+ */
 int replace_str(char **string, char *pattern, char *replacement, int rep_all, unsigned int max_size)
 {
   char *replace_buffer = NULL;
