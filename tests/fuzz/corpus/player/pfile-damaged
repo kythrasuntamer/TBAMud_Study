@@ -1,0 +1,20 @@
+PId  : 4242
+Ab
+Name: Broken
+Gold: 12abc
+Hit : 5
+Clas: 99
+Levl: 1000
+Sex : -3
+Act : aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+Aff : 1 2
+Titl: first
+Titl: second
+Alis: 3
+ foo
+bar
+Skil:
+5 300
+201 4
+Desc:
+unterminated description

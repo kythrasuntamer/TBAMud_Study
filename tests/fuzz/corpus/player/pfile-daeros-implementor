@@ -1,0 +1,31 @@
+PName: Daeros
+Pass: $1$fuzzseed$AAAAAAAAAAAAAAAAAAAAA.
+Titl: the Implementor
+Sex : 1
+Levl: 60
+Id  : 1
+Brth: 1792958959
+Plyd: 1364
+Last: 1793008120
+Lmot: 1792960284
+Lnew: 1792960283
+Host: 127.0.0.1
+Hite: 189
+Wate: 126
+Act : 0 0 0 0
+Aff : 0 0 0 0
+Pref: efghimno 0 0 0
+Room: 65535
+Hit : 500/500
+Mana: 100/100
+Move: 82/82
+Str : 25/100
+Int : 25
+Wis : 25
+Dex : 25
+Con : 25
+Cha : 25
+Ac  : 100
+Gold: 50
+Exp : 7000000
+Olc : 0
