@@ -980,6 +980,7 @@ static int discrete_load_text(const char *text, int mode, int capacity)
 
   boot_capacity = capacity;
   boot_records = 0;
+  boot_last_vnum = -1;
   tb_test_exit_armed = 1;
   if (setjmp(tb_test_exit_jmp) == 0) {
     discrete_load(fp, mode, (char *)"test.wld");
@@ -1020,6 +1021,41 @@ static void discrete_load_accepts_records_within_capacity(void)
   room_fixture_free();
 }
 
+/* B1-15: #70000 was stored as vnum 4464 and a descending number broke the
+ * binary search in real_room(). The first is fatal, the second (present in
+ * the stock world) is reported. */
+static void discrete_load_rejects_vnum_past_idxtype(void)
+{
+  room_fixture_use();
+  TEST_ASSERT_EQUAL_INT(1, discrete_load_text(
+    "#70000\nA~\nA.\n~\n0 0 0 0 0 0\nS\n$\n", DB_BOOT_WLD, 4));
+  TEST_ASSERT_EQUAL_STRING("record-number", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "world #70000"));
+  room_fixture_free();
+}
+
+static void discrete_load_reports_descending_vnum(void)
+{
+  room_fixture_use();
+  TEST_ASSERT_EQUAL_INT(0, discrete_load_text(
+    "#211\nA~\nA.\n~\n0 0 0 0 0 0\nS\n"
+    "#210\nB~\nB.\n~\n0 0 0 0 0 0\nS\n$\n", DB_BOOT_WLD, 4));
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("ERROR", tb_captured_severity);
+  TEST_ASSERT_EQUAL_STRING("record-number", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "previous #211"));
+  room_fixture_free();
+}
+
+static void discrete_load_warns_on_99999_stop(void)
+{
+  room_fixture_use();
+  TEST_ASSERT_EQUAL_INT(0, discrete_load_text("#99999\n", DB_BOOT_WLD, 4));
+  TEST_ASSERT_EQUAL_STRING("WARNING", tb_captured_severity);
+  TEST_ASSERT_EQUAL_STRING("record-number", tb_captured_operation);
+  room_fixture_free();
+}
+
 /* A line padded to exactly one READ_SIZE chunk and then "#99" on the same
  * physical line: get_line() returns "#99" as a record, so the count must see
  * it too. The old 127-byte chunking did not. */
@@ -1042,6 +1078,9 @@ int main(void)
   RUN_TEST(discrete_load_rejects_record_past_capacity);
   RUN_TEST(discrete_load_accepts_records_within_capacity);
   RUN_TEST(count_hash_records_counts_hash_at_get_line_chunk);
+  RUN_TEST(discrete_load_rejects_vnum_past_idxtype);
+  RUN_TEST(discrete_load_reports_descending_vnum);
+  RUN_TEST(discrete_load_warns_on_99999_stop);
   RUN_TEST(boot_social_messages_rejects_uncounted_socials);
   RUN_TEST(boot_social_messages_loads_counted_socials);
   RUN_TEST(parse_simple_mob_rejects_sex_out_of_range);

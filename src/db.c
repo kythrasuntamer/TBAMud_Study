@@ -1169,6 +1169,10 @@ ackeof:
  * line or a string can make the two passes disagree), so discrete_load()
  * checks every record against the real allocation. */
 static int boot_capacity, boot_records;
+/* The previous record number in this DB_BOOT_* mode, across all its files.
+ * real_room(), real_mobile() and real_object() binary-search the prototype
+ * arrays, so the vnums must ascend through the whole index. */
+static int boot_last_vnum;
 
 /** Count the '#'-delimited records in a world file, to size the prototype
  * arrays. Reads in READ_SIZE chunks, as get_line() does, so a '#' that
@@ -1327,6 +1331,7 @@ void index_boot(int mode)
 
   boot_capacity = rec_count;
   boot_records = 0;
+  boot_last_vnum = -1;
 
   for (line_number = 1;; ++line_number) {
     if (fscanf(db_index, "%s\n", buf1) != 1) {
@@ -1410,8 +1415,31 @@ void discrete_load(FILE *fl, int mode, char *filename)
 	log("SYSERR: Format error after %s #%d", modes[mode], last);
 	exit(1);
       }
-      if (nr >= 99999)
+      if (nr >= 99999) {
+	/* Old CircleMUD files ended with "#99999"; anything after it in the
+	 * file is ignored, so say so. */
+	TB_WARN_MSG("db", "record-number", filename,
+	            "%s #%d ends the file; any later records are skipped",
+	            modes[mode], nr);
 	return;
+      }
+      /* The record number becomes an IDXTYPE vnum (ush_int): #70000 would
+       * silently become vnum 4464, and IDXTYPE_MAX is NOWHERE/NOTHING. */
+      if (nr < 0 || nr >= IDXTYPE_MAX) {
+	TB_FATAL_MSG("db", "record-number", filename,
+	             "%s #%d out of range 0..%d (previous #%d)",
+	             modes[mode], nr, IDXTYPE_MAX - 1, boot_last_vnum);
+	exit(1);
+      }
+      /* A number that does not ascend breaks the binary search in
+       * real_room()/real_mobile()/real_object(): lookups of it, or of its
+       * neighbours, can fail. The stock world has such a record
+       * (301.wld #30170), so this is reported, not fatal. */
+      if (nr <= boot_last_vnum)
+	TB_ERROR_MSG("db", "record-number", filename,
+	             "%s #%d does not ascend (previous #%d); real-number "
+	             "lookups of it may fail", modes[mode], nr, boot_last_vnum);
+      boot_last_vnum = nr;
       /* Each record fills the next prototype slot (parse_room(),
        * parse_mobile(), parse_object()... keep their own cursor). The
        * world files are the implementor's; a record the counting pass
