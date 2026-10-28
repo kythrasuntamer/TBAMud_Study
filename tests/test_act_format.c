@@ -23,6 +23,8 @@ room_rnum top_of_world = 0;
 struct player_special_data dummy_mob;
 struct index_data *mob_index = NULL; /* recipient diagnostics name mob vnums */
 mob_rnum top_of_mobt = 0;
+struct index_data *obj_index = NULL; /* no-target diagnostics name obj vnums */
+obj_rnum top_of_objt = 0;
 void basic_mud_log(const char *format, ...) { (void)format; }
 int room_is_dark(room_rnum room) { (void)room; return 0; }
 char *fname(const char *namelist) { return (char *)namelist; }
@@ -296,6 +298,17 @@ static void nested_no_trig_act_keeps_outer_triggers(void)
   top_of_world = 0;
 }
 
+/* A room message with nobody placed was logged as a bare SYSERR. */
+static void room_act_without_target_is_reported(void)
+{
+  viewer.in_room = NOWHERE;
+  TEST_ASSERT_NULL(act("$n waves.", FALSE, &viewer, NULL, NULL, TO_ROOM));
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("no-target", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "test_act_format.c:"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "actor player idnum 0"));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -307,5 +320,6 @@ int main(void)
   RUN_TEST(oversized_literal_is_truncated);
   RUN_TEST(recipient_moved_by_trigger_is_skipped);
   RUN_TEST(nested_no_trig_act_keeps_outer_triggers);
+  RUN_TEST(room_act_without_target_is_reported);
   return UNITY_END();
 }

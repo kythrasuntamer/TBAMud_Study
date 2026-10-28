@@ -3158,7 +3158,14 @@ static char *act_body(const char *str, int hide_invisible, struct char_data *ch,
   else if (obj && IN_ROOM(obj) != NOWHERE)
     room = IN_ROOM(obj);
   else {
-    log("SYSERR: no valid target to act()!");
+    /* TO_ROOM/TO_NOTVICT need an actor or object placed in a room. */
+    TB_ERROR_MSG("act", "no-target", "act_body",
+                 "caller=%s:%d %s: TO_ROOM/TO_NOTVICT act() with no placed"
+                 " actor or object (actor %s %ld, obj vnum %ld); message"
+                 " dropped", ACT_DIAG_SITE,
+                 ch ? (IS_NPC(ch) ? "mob vnum" : "player idnum") : "none",
+                 ch ? (IS_NPC(ch) ? (long) GET_MOB_VNUM(ch) : (long) GET_IDNUM(ch)) : -1L,
+                 obj ? (long) GET_OBJ_VNUM(obj) : (long) NOTHING);
     return NULL;
   }
 
