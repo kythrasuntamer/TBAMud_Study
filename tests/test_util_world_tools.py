@@ -230,6 +230,26 @@ class SplitTests(ToolCase):
         self.assertEqual(self.read("out"), b"abc\n")
         self.assertTrue(self.exists("last"))
 
+    def test_unopenable_output_fails(self):
+        # I3-11: fopen failure was reported but split exited 0.
+        rc, err = self.split(b"=no/such/dir/x\nabc\n")
+        self.assertEqual(rc, 1, err)
+        self.assertIn('operation="fopen"', err)
+
+    def test_orphan_lines_reported(self):
+        # I3-11: lines before the first '=' vanished without a word.
+        rc, err = self.split(b"header 1\nheader 2\n=out\nabc\n")
+        self.assertEqual(rc, 0, err)
+        self.assertDiag(err, "split-orphan-lines")
+        self.assertIn("2 stdin line(s)", err)
+        self.assertEqual(self.read("out"), b"abc\n")
+
+    def test_write_failure_fails(self):
+        if not os.path.exists("/dev/full"):
+            self.skipTest("no /dev/full")
+        rc, err = self.split(b"=/dev/full\n" + b"x" * 8192 + b"\n")
+        self.assertEqual(rc, 1, err)
+
     def test_equals_at_chunk_boundary_is_data(self):
         data = b"x" * 255 + b"=notafile\n"
         rc, err = self.split(b"=out\n" + data)

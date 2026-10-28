@@ -22,12 +22,34 @@
 #include "conf.h"
 #include "sysdep.h"
 
+/*
+ * Finish writing one output stream: report a write error seen on it
+ * (split-write) or a failed close, naming the file.  Returns 0 on any
+ * failure so main() can exit non-zero; tb_fputs() already reported the
+ * individual write that failed.
+ */
+static int split_finish(FILE *fl, const char *name)
+{
+  int ok = 1;
+
+  if (ferror(fl)) {
+    TB_REPORT_DOMAIN_ERROR(TB_SEV_ERROR, TB_ERR_PERSISTENCE, "split-write",
+                           name);
+    ok = 0;
+  }
+  if (!tb_fclose_checked(fl, name))
+    ok = 0;
+  return ok;
+}
+
 int main(void)
 {
-  char line[BSZ + 1], ctx[BSZ + 128];
+  char line[BSZ + 1], ctx[BSZ + 128], out_name[BSZ + 1] = "";
   FILE *index = 0, *outfile = 0;
   long line_nr = 0;		/* 1-based stdin line of the current chunk */
+  long orphan_lines = 0;	/* lines before the first '=' marker       */
   int at_line_start = 1;	/* next chunk begins a new physical line   */
+  int failed = 0;		/* an output write or close failed         */
 
   if (!(index = fopen(INDEX_NAME, "w"))) {
     TB_REPORT_ERRNO("fopen", INDEX_NAME);
@@ -69,22 +91,41 @@ int main(void)
       }
       if (outfile) {
 /*	fputs("$\n", outfile);*/
-	tb_fclose(outfile);
+	if (!split_finish(outfile, out_name))
+	  failed = 1;
+	outfile = NULL;
       }
+      /*
+       * An output file that cannot be opened would silently lose its
+       * section, so stop with a failing status (this used to exit 0,
+       * leaving an index without its "$" terminator).
+       */
       if (!(outfile = fopen((line + 1), "a"))) {
 	TB_REPORT_ERRNO("fopen", line + 1);
-	exit(0);
+	exit(1);
       }
+      strlcpy(out_name, line + 1, sizeof(out_name));
       tb_fputs(line + 1, index);
       tb_fputs("\n", index);
     } else if (outfile)
       tb_fputs(line, outfile);
+    else if (starts_line)
+      orphan_lines++;
+  }
+
+  if (orphan_lines > 0) {
+    tb_snprintf(ctx, sizeof(ctx),
+                "%ld stdin line(s) before the first '%c' marker discarded",
+                orphan_lines, MAGIC_CHAR);
+    TB_REPORT_DOMAIN_ERROR(TB_SEV_WARN, TB_ERR_PARSER, "split-orphan-lines",
+                           ctx);
   }
 
   tb_fputs("$\r\n", index);
-  tb_fclose(index);
-  if (outfile)
-    tb_fclose(outfile);
+  if (!split_finish(index, INDEX_NAME))
+    failed = 1;
+  if (outfile && !split_finish(outfile, out_name))
+    failed = 1;
 
-  return (0);
+  return (failed ? 1 : 0);
 }
