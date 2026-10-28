@@ -30,6 +30,14 @@
 #include "dg_scripts.h"
 #include "modify.h"
 
+/** Append @p src to the char ARRAY @p dst, stopping at sizeof(dst) and always
+ * terminating. @p dst must be a real array: for a pointer, sizeof() would be
+ * the pointer's size. Evaluates @p dst three times: pass a plain array name.
+ * The append can truncate without a word, so callers that cannot lose text
+ * check the length afterwards (format_text() does). */
+#define STRNCAT_BOUNDED(dst, src) \
+  strncat((dst), (src), sizeof(dst) - strlen(dst) - 1)
+
 
 /* Return 0 for no range, 1 for one line, 2 for a range, -1 on
  * invalid/overflowing input. Whitespace around the dash is permitted. */
@@ -386,10 +394,10 @@ void parse_edit_action(int command, char *string, struct descriptor_data *d)
     if (s) {
       temp = *s;
       *s = '\0';
-      strncat(buf, t, sizeof(buf) - strlen(buf) - 1);
+      STRNCAT_BOUNDED(buf, t);
       *s = temp;
     } else
-      strncat(buf, t, sizeof(buf) - strlen(buf) - 1);
+      STRNCAT_BOUNDED(buf, t);
     /* This is kind of annoying...but some people like it. */
     tb_snprintf(buf + strlen(buf), sizeof(buf) - strlen(buf), "\r\n%d line%sshown.\r\n", total_len, (total_len != 1) ? "s " : " ");
     page_string(d, buf, TRUE);
@@ -446,18 +454,18 @@ void parse_edit_action(int command, char *string, struct descriptor_data *d)
         *s = '\0';
         char buf3[13];
         tb_snprintf(buf3, sizeof(buf3), "%4d: ", (i - 1));
-        strncat(buf, buf3, sizeof(buf) - strlen(buf) - 1);
-        strncat(buf, t, sizeof(buf) - strlen(buf) - 1);
+        STRNCAT_BOUNDED(buf, buf3);
+        STRNCAT_BOUNDED(buf, t);
         *s = temp;
         t = s;
       }
     if (s && t) {
       temp = *s;
       *s = '\0';
-      strncat(buf, t, sizeof(buf) - strlen(buf) - 1);
+      STRNCAT_BOUNDED(buf, t);
       *s = temp;
     } else if (t)
-      strncat(buf, t, sizeof(buf) - strlen(buf) - 1);
+      STRNCAT_BOUNDED(buf, t);
 
     page_string(d, buf, TRUE);
     break;
@@ -469,7 +477,7 @@ void parse_edit_action(int command, char *string, struct descriptor_data *d)
       return;
     }
     line_low = tb_parse_int_or_zero(buf);
-    strncat(buf2, "\r\n", sizeof(buf2) - strlen(buf2) - 1);
+    STRNCAT_BOUNDED(buf2, "\r\n");
 
     i = 1;
     *buf = '\0';
@@ -495,11 +503,11 @@ void parse_edit_action(int command, char *string, struct descriptor_data *d)
         return;
       }
       if (*d->str && **d->str)
-        strncat(buf, *d->str, sizeof(buf) - strlen(buf) - 1);
+        STRNCAT_BOUNDED(buf, *d->str);
       *s = temp;
-      strncat(buf, buf2, sizeof(buf) - strlen(buf) - 1);
+      STRNCAT_BOUNDED(buf, buf2);
       if (*s)
-        strncat(buf, s, sizeof(buf) - strlen(buf) - 1);
+        STRNCAT_BOUNDED(buf, s);
       RECREATE(*d->str, char, strlen(buf) + 3);
 
       memcpy(*d->str, buf, strlen(buf) + 1);
@@ -517,7 +525,7 @@ void parse_edit_action(int command, char *string, struct descriptor_data *d)
       return;
     }
     line_low = tb_parse_int_or_zero(buf);
-    strncat(buf2, "\r\n", sizeof(buf2) - strlen(buf2) - 1);
+    STRNCAT_BOUNDED(buf2, "\r\n");
 
     i = 1;
     *buf = '\0';
@@ -544,18 +552,18 @@ void parse_edit_action(int command, char *string, struct descriptor_data *d)
         temp = *s;
         *s = '\0';
         /* Put the first 'good' half of the text into storage. */
-        strncat(buf, *d->str, sizeof(buf) - strlen(buf) - 1);
+        STRNCAT_BOUNDED(buf, *d->str);
         *s = temp;
       }
       /* Put the new 'good' line into place. */
-      strncat(buf, buf2, sizeof(buf) - strlen(buf) - 1);
+      STRNCAT_BOUNDED(buf, buf2);
       if ((s = strchr(s, '\n')) != NULL) {
         /* This means that we are at the END of the line, we want out of there,
          * but we want s to point to the beginning of the line. AFTER the line 
          * we want edited. */
         s++;
         /* Now put the last 'good' half of buffer into storage. */
-        strncat(buf, s, sizeof(buf) - strlen(buf) - 1);
+        STRNCAT_BOUNDED(buf, s);
       }
       /* Check for buffer overflow. */
       if (strlen(buf) > d->max_str) {
@@ -650,7 +658,7 @@ int format_text(char **ptr_string, int mode, struct descriptor_data *d, unsigned
   }
 
   if (IS_SET(mode, FORMAT_INDENT)) {
-    strncat(formatted, "   ", sizeof(formatted) - strlen(formatted) - 1);
+    STRNCAT_BOUNDED(formatted, "   ");
     line_chars = 3;
   } else {
     line_chars = 0;
@@ -732,14 +740,14 @@ int format_text(char **ptr_string, int mode, struct descriptor_data *d, unsigned
       }
 
       if (line_chars + strlen(start) + 1 - color_chars > PAGE_WIDTH) {
-        strncat(formatted, "\r\n", sizeof(formatted) - strlen(formatted) - 1);
+        STRNCAT_BOUNDED(formatted, "\r\n");
         line_chars = 0;
         color_chars = count_color_chars(start);
       }
 
       if (!cap_next) {
         if (line_chars > 0) {
-          strncat(formatted, " ", sizeof(formatted) - strlen(formatted) - 1);
+          STRNCAT_BOUNDED(formatted, " ");
           line_chars++;
         }
       } else {
@@ -748,33 +756,33 @@ int format_text(char **ptr_string, int mode, struct descriptor_data *d, unsigned
       }
 
       line_chars += strlen(start);
-      strncat(formatted, start, sizeof(formatted) - strlen(formatted) - 1);
+      STRNCAT_BOUNDED(formatted, start);
 
       *flow = temp;
     }
 
     if (cap_next_next && *flow) {
       if (line_chars + 3 - color_chars > PAGE_WIDTH) {
-        strncat(formatted, "\r\n", sizeof(formatted) - strlen(formatted) - 1);
+        STRNCAT_BOUNDED(formatted, "\r\n");
         line_chars = 0;
         color_chars = count_color_chars(start);
       } else if (*flow == '\"' || *flow == '\'') {
         char buf[MAX_STRING_LENGTH - 1];
         tb_snprintf(buf, sizeof(buf), "%c  ", *flow);
-        strncat(formatted, buf, sizeof(formatted) - strlen(formatted) - 1);
+        STRNCAT_BOUNDED(formatted, buf);
         flow++;
         line_chars++;
       } else {
-        strncat(formatted, "  ", sizeof(formatted) - strlen(formatted) - 1);
+        STRNCAT_BOUNDED(formatted, "  ");
         line_chars += 2;
       }
     }
   }
   if (*flow)
-    strncat(formatted, "\r\n", sizeof(formatted) - strlen(formatted) - 1);
-  strncat(formatted, flow, sizeof(formatted) - strlen(formatted) - 1);
+    STRNCAT_BOUNDED(formatted, "\r\n");
+  STRNCAT_BOUNDED(formatted, flow);
   if (!*flow)
-    strncat(formatted, "\r\n", sizeof(formatted) - strlen(formatted) - 1);
+    STRNCAT_BOUNDED(formatted, "\r\n");
 
   /* Formatting adds sentence spacing and line breaks, so the result can be
    * longer than the text. Cutting it to maxlen (or to the work buffer, which
