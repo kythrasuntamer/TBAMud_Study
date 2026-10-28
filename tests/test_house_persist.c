@@ -1,7 +1,8 @@
 /* Executable tests of the production player-house code (house.c).
  *
- * The house control file (lib/etc/hcontrol) is a raw binary array of
- * struct house_control_rec, so every field in it is untrusted on read.
+ * The house control file (lib/etc/hcontrol) is a format header and a raw
+ * binary array of struct house_control_rec (format 1, still read, has no
+ * header), so every field in it is untrusted on read.
  * The tests write records into a scratch lib tree (the test chdir()s into
  * it, since HCONTROL_FILE is relative), run the real House_boot() and the
  * commands built on it, and assert on the structured diagnostic.
@@ -17,6 +18,7 @@
 #include "interpreter.h"
 #include "house.h"
 #include <stdarg.h>
+#include <stdint.h>
 #include <sys/stat.h>
 #include "tb_error_capture.h"
 #include "tb_persist_support.h"
@@ -174,7 +176,46 @@ static struct house_control_rec good_record(void)
   return rec;
 }
 
+/* The hcontrol format 2 header as house.c writes it (B2-23), spelled out
+ * here on purpose: a change to the on-disk format must fail these tests. */
+struct test_hcontrol_header {
+  unsigned char magic[8];
+  uint32_t version, record_size, record_count;
+};
+static const unsigned char test_hcontrol_magic[8] =
+  { 0xFF, 0xFF, 'T', 'B', 'H', 'C', '\r', '\n' };
+#define HCONTROL_HEADER_SIZE ((long)sizeof(struct test_hcontrol_header))
+
+/* Write hcontrol with a header claiming version/record_size/record_count,
+ * then nbytes of record data. */
+static void write_hcontrol_as(uint32_t version, uint32_t record_size,
+                              uint32_t record_count, const void *data,
+                              size_t nbytes)
+{
+  struct test_hcontrol_header hdr;
+  FILE *fl = fopen(HCONTROL_FILE, "wb");
+
+  TEST_ASSERT_NOT_NULL(fl);
+  memset(&hdr, 0, sizeof(hdr));
+  memcpy(hdr.magic, test_hcontrol_magic, sizeof(hdr.magic));
+  hdr.version = version;
+  hdr.record_size = record_size;
+  hdr.record_count = record_count;
+  TEST_ASSERT_EQUAL_size_t(1, fwrite(&hdr, sizeof(hdr), 1, fl));
+  TEST_ASSERT_EQUAL_size_t(nbytes, fwrite(data, 1, nbytes, fl));
+  TEST_ASSERT_EQUAL_INT(0, fclose(fl));
+}
+
+/* The current format: header, then count records. */
 static void write_hcontrol(const struct house_control_rec *recs, size_t count)
+{
+  write_hcontrol_as(2, sizeof(*recs), (uint32_t)count, recs,
+                    count * sizeof(*recs));
+}
+
+/* Format 1, as every build before B2-23 wrote it: the bare record array. */
+static void write_legacy_hcontrol(const struct house_control_rec *recs,
+                                  size_t count)
 {
   FILE *fl = fopen(HCONTROL_FILE, "wb");
   TEST_ASSERT_NOT_NULL(fl);
@@ -276,13 +317,14 @@ static void test_boot_skip_is_reported_and_file_kept(void)
   TEST_ASSERT_EQUAL_INT(before, file_size(HCONTROL_FILE));
 }
 
-/* B2-09: a trailing partial record is reported instead of ignored. */
+/* B2-09: a trailing partial record is reported instead of ignored. Format
+ * 1 has no record count, so only its length can show one. */
 static void test_boot_reports_partial_record(void)
 {
   struct house_control_rec rec = good_record();
   FILE *fl;
 
-  write_hcontrol(&rec, 1);
+  write_legacy_hcontrol(&rec, 1);
   fl = fopen(HCONTROL_FILE, "ab");
   TEST_ASSERT_NOT_NULL(fl);
   TEST_ASSERT_EQUAL_size_t(5, fwrite("junk!", 1, 5, fl));
@@ -305,17 +347,40 @@ static void test_clean_boot_loads_house(void)
   House_boot();
 
   TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
-  TEST_ASSERT_EQUAL_INT((long)sizeof(rec), file_size(HCONTROL_FILE));
+  TEST_ASSERT_EQUAL_INT(HCONTROL_HEADER_SIZE + (long)sizeof(rec),
+                        file_size(HCONTROL_FILE));
   TEST_ASSERT_TRUE(ROOM_FLAGGED(0, ROOM_HOUSE));
   TEST_ASSERT_TRUE(ROOM_FLAGGED(1, ROOM_ATRIUM));
 }
 
+/* Check hcontrol's header byte for byte (format 2, count records) and read
+ * its first record into rec. The second read runs only after the first
+ * succeeded, and both outputs start zeroed: clang-tidy cannot see that a
+ * failed TEST_ASSERT_EQUAL_*() does not return. */
+static void read_hcontrol_n(struct house_control_rec *rec, uint32_t count)
+{
+  struct test_hcontrol_header hdr, expect;
+  FILE *fl = fopen(HCONTROL_FILE, "rb");
+  int complete;
+
+  memset(rec, 0, sizeof(*rec));
+  memset(&hdr, 0, sizeof(hdr));
+  TEST_ASSERT_NOT_NULL(fl);
+  complete = fread(&hdr, sizeof(hdr), 1, fl) == 1 &&
+             fread(rec, sizeof(*rec), 1, fl) == 1;
+  TEST_ASSERT_EQUAL_INT(0, fclose(fl));
+  TEST_ASSERT_TRUE_MESSAGE(complete, "hcontrol is shorter than a header and one record");
+  memset(&expect, 0, sizeof(expect));
+  memcpy(expect.magic, test_hcontrol_magic, sizeof(expect.magic));
+  expect.version = 2;
+  expect.record_size = sizeof(*rec);
+  expect.record_count = count;
+  TEST_ASSERT_EQUAL_MEMORY(&expect, &hdr, sizeof(hdr));
+}
+
 static void read_hcontrol(struct house_control_rec *rec)
 {
-  FILE *fl = fopen(HCONTROL_FILE, "rb");
-  TEST_ASSERT_NOT_NULL(fl);
-  TEST_ASSERT_EQUAL_size_t(1, fread(rec, sizeof(*rec), 1, fl));
-  TEST_ASSERT_EQUAL_INT(0, fclose(fl));
+  read_hcontrol_n(rec, 1);
 }
 
 /* Leave a dirty stack behind for the next call to inherit. */
@@ -442,6 +507,189 @@ static void test_hcontrol_save_failure_keeps_live_file(void)
   TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "live file kept"));
 }
 
+/* Read all of hcontrol into buf (test files are small). */
+static size_t slurp_hcontrol(unsigned char *buf, size_t size)
+{
+  size_t n;
+  FILE *fl = fopen(HCONTROL_FILE, "rb");
+
+  TEST_ASSERT_NOT_NULL(fl);
+  n = fread(buf, 1, size, fl);
+  TEST_ASSERT_EQUAL_INT(0, fclose(fl));
+  return n;
+}
+
+static void assert_same_house(const struct house_control_rec *expect,
+                              const struct house_control_rec *actual)
+{
+  TEST_ASSERT_EQUAL_INT(expect->vnum, actual->vnum);
+  TEST_ASSERT_EQUAL_INT(expect->atrium, actual->atrium);
+  TEST_ASSERT_EQUAL_INT(expect->exit_num, actual->exit_num);
+  TEST_ASSERT_TRUE_MESSAGE(expect->built_on == actual->built_on, "built_on");
+  TEST_ASSERT_EQUAL_INT(expect->mode, actual->mode);
+  TEST_ASSERT_TRUE_MESSAGE(expect->owner == actual->owner, "owner");
+  TEST_ASSERT_EQUAL_INT(expect->num_of_guests, actual->num_of_guests);
+  TEST_ASSERT_TRUE_MESSAGE(expect->last_payment == actual->last_payment,
+                           "last_payment");
+}
+
+/* B2-23: every existing hcontrol is format 1 (no header). It must still
+ * load, be reported once, and come back from the clean boot as format 2
+ * holding the same record; the next boot then reads it silently. */
+static void test_legacy_hcontrol_loads_and_is_rewritten_with_header(void)
+{
+  struct house_control_rec rec = good_record(), on_disk;
+
+  rec.last_payment = 1234;
+  write_legacy_hcontrol(&rec, 1);
+
+  House_boot();
+
+  TEST_ASSERT_EQUAL_STRING("hcontrol-legacy\n", tb_captured_op_log);
+  TEST_ASSERT_EQUAL_STRING("WARNING", tb_captured_severity);
+  TEST_ASSERT_TRUE(ROOM_FLAGGED(0, ROOM_HOUSE));
+  TEST_ASSERT_EQUAL_INT(HCONTROL_HEADER_SIZE + (long)sizeof(rec),
+                        file_size(HCONTROL_FILE));
+  read_hcontrol(&on_disk);
+  assert_same_house(&rec, &on_disk);
+
+  REMOVE_BIT_AR(ROOM_FLAGS(0), ROOM_HOUSE);
+  tb_error_capture_reset();
+  House_boot();
+
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  TEST_ASSERT_TRUE(ROOM_FLAGGED(0, ROOM_HOUSE));
+}
+
+/* B2-23: records written with another layout (another platform, or a
+ * changed struct) used to be misread field by field. The header shows the
+ * mismatch: nothing loads, and the file is never replaced by the table in
+ * memory, which does not hold its houses. */
+static void test_hcontrol_from_other_layout_is_refused_and_kept(void)
+{
+  char cmd[] = "build 100 north owner", expect[128], path[64];
+  unsigned char other[sizeof(struct house_control_rec) + 8];
+  unsigned char before[512], after[512];
+  size_t n_before;
+
+  memset(other, 0x11, sizeof(other));
+  write_hcontrol_as(2, sizeof(other), 1, other, sizeof(other));
+  n_before = slurp_hcontrol(before, sizeof(before));
+
+  House_boot();
+
+  TEST_ASSERT_EQUAL_STRING("hcontrol-format\n", tb_captured_op_log);
+  TEST_ASSERT_TRUE(snprintf(expect, sizeof(expect),
+                            "format 2 with %zu-byte records, but this build "
+                            "reads format 2 with %zu-byte records",
+                            sizeof(other), sizeof(struct house_control_rec)) > 0);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, expect));
+  hcontrol_list_houses(&imm, (char *)"");
+  TEST_ASSERT_NOT_NULL(strstr(sent, "No houses have been defined"));
+
+  do_hcontrol(&imm, cmd, 0, 0);
+
+  TEST_ASSERT_EQUAL_STRING("hcontrol-save", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "boot could not read this file"));
+  TEST_ASSERT_EQUAL_size_t(n_before, slurp_hcontrol(after, sizeof(after)));
+  TEST_ASSERT_EQUAL_MEMORY(before, after, n_before);
+  TEST_ASSERT_TRUE(snprintf(path, sizeof(path), LIB_HOUSE "%d.house", 100) > 0);
+  (void)remove(path);
+}
+
+/* B2-23: an unknown format version is refused the same way. */
+static void test_hcontrol_unknown_version_is_refused(void)
+{
+  struct house_control_rec rec = good_record();
+
+  write_hcontrol_as(3, sizeof(rec), 1, &rec, sizeof(rec));
+
+  House_boot();
+
+  TEST_ASSERT_EQUAL_STRING("hcontrol-format\n", tb_captured_op_log);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "format 3 with"));
+  TEST_ASSERT_FALSE(ROOM_FLAGGED(0, ROOM_HOUSE));
+}
+
+/* B2-23: a header cut short is damage, not a format 1 file. */
+static void test_truncated_hcontrol_header_is_refused(void)
+{
+  char expect[64];
+  FILE *fl = fopen(HCONTROL_FILE, "wb");
+
+  TEST_ASSERT_NOT_NULL(fl);
+  TEST_ASSERT_EQUAL_size_t(8, fwrite(test_hcontrol_magic, 1, 8, fl));
+  TEST_ASSERT_EQUAL_size_t(2, fwrite("\002", 1, 2, fl));
+  TEST_ASSERT_EQUAL_INT(0, fclose(fl));
+
+  House_boot();
+
+  TEST_ASSERT_EQUAL_STRING("hcontrol-format\n", tb_captured_op_log);
+  TEST_ASSERT_TRUE(snprintf(expect, sizeof(expect), "header truncated (10 of %ld bytes)",
+                            HCONTROL_HEADER_SIZE) > 0);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, expect));
+}
+
+/* B2-23: the header's record count must match the file. A file cut off
+ * before the last record, and bytes after it, are both reported; what was
+ * read still loads, and the file is kept for repair (hcontrol-keep). */
+static void test_hcontrol_record_count_mismatch_is_reported(void)
+{
+  struct house_control_rec rec = good_record();
+  unsigned char data[sizeof(struct house_control_rec) + 5];
+  long size;
+
+  write_hcontrol_as(2, sizeof(rec), 2, &rec, sizeof(rec));
+  size = file_size(HCONTROL_FILE);
+
+  House_boot();
+
+  TEST_ASSERT_EQUAL_STRING("hcontrol-read\nhcontrol-keep\n", tb_captured_op_log);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail_log,
+                              "file ends after 1 of the 2 records"));
+  TEST_ASSERT_TRUE(ROOM_FLAGGED(0, ROOM_HOUSE));
+  TEST_ASSERT_EQUAL_INT(size, file_size(HCONTROL_FILE));
+
+  memcpy(data, &rec, sizeof(rec));
+  memset(data + sizeof(rec), 'j', 5);	/* five stray bytes */
+  write_hcontrol_as(2, sizeof(rec), 1, data, sizeof(data));
+  tb_error_capture_reset();
+
+  House_boot();
+
+  TEST_ASSERT_EQUAL_STRING("hcontrol-read\nhcontrol-keep\n", tb_captured_op_log);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail_log,
+                              "data after the 1 records the header promises"));
+  TEST_ASSERT_EQUAL_INT(HCONTROL_HEADER_SIZE + (long)sizeof(data),
+                        file_size(HCONTROL_FILE));
+}
+
+/* B2-23: a file boot could not even open may hold every house; a later
+ * hcontrol change must not replace it with the empty table in memory. */
+static void test_unopenable_hcontrol_is_not_replaced(void)
+{
+  char cmd[] = "build 100 north owner", path[64];
+  struct house_control_rec rec = good_record();
+  long before;
+
+  if (geteuid() == 0)
+    TEST_IGNORE_MESSAGE("file permissions do not bind root");
+  write_hcontrol(&rec, 1);
+  before = file_size(HCONTROL_FILE);
+  TEST_ASSERT_EQUAL_INT(0, chmod(HCONTROL_FILE, 0));
+
+  House_boot();
+  TEST_ASSERT_EQUAL_STRING("hcontrol-open\n", tb_captured_op_log);
+  do_hcontrol(&imm, cmd, 0, 0);
+
+  TEST_ASSERT_EQUAL_INT(0, chmod(HCONTROL_FILE, 0600));
+  TEST_ASSERT_EQUAL_STRING("hcontrol-save", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "boot could not read this file"));
+  TEST_ASSERT_EQUAL_INT(before, file_size(HCONTROL_FILE));
+  TEST_ASSERT_TRUE(snprintf(path, sizeof(path), LIB_HOUSE "%d.house", 100) > 0);
+  (void)remove(path);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -453,6 +701,12 @@ int main(void)
   RUN_TEST(test_deleting_last_guest_reads_inside_guests);
   RUN_TEST(test_asciiconvert_releases_objects_and_skips_missing_proto);
   RUN_TEST(test_hcontrol_save_failure_keeps_live_file);
+  RUN_TEST(test_legacy_hcontrol_loads_and_is_rewritten_with_header);
+  RUN_TEST(test_hcontrol_from_other_layout_is_refused_and_kept);
+  RUN_TEST(test_hcontrol_unknown_version_is_refused);
+  RUN_TEST(test_truncated_hcontrol_header_is_refused);
+  RUN_TEST(test_hcontrol_record_count_mismatch_is_reported);
+  RUN_TEST(test_unopenable_hcontrol_is_not_replaced);
   {
     char sub[300];
     if (snprintf(sub, sizeof(sub), "%s/etc", scratch_dir) > 0)

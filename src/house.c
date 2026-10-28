@@ -13,9 +13,10 @@
  * Player houses: the house control table (lib/etc/hcontrol), each house's
  * object file (lib/house/<vnum>.house), and the hcontrol/house commands.
  *
- * Who controls the input: hcontrol is a raw binary array of struct
- * house_control_rec (see house.h) and every field in it is untrusted on
- * read; House_boot() validates each record before it is loaded. House
+ * Who controls the input: hcontrol is a format header and a raw binary
+ * array of struct house_control_rec (see house.h and hcontrol_header
+ * below), and every field in it is untrusted on read; House_boot() checks
+ * the header and validates each record before it is loaded. House
  * object files use the rent object-record format and go through
  * objsave_parse_objects_from(). Guest names come from immortals and house
  * owners and are resolved through the player index.
@@ -38,10 +39,49 @@
 #include "house.h"
 #include "constants.h"
 #include "modify.h"
+#include <stdint.h>	/* uint32_t: the hcontrol header's fixed-width fields */
 
 /* local (file scope only) globals */
 static struct house_control_rec house_control[MAX_HOUSES];
 static int num_of_houses = 0;
+
+/* hcontrol file format (B2-23). Format 2 is a struct hcontrol_header and
+ * then record_count records. A record is still an in-memory image of
+ * struct house_control_rec, whose layout depends on the compiler ABI
+ * (house.h), so the header says which layout wrote it: a build with
+ * another record size or format version refuses the file (hcontrol-format)
+ * instead of misreading every field. The header's numbers are in host
+ * byte order, so a file from a host of the other byte order fails the
+ * version check as well. Format 1 (legacy) is the bare record array with
+ * no header; it is still read, and written back as format 2 at the next
+ * save. Bump HCONTROL_FORMAT_VERSION whenever house_control_rec changes. */
+#define HCONTROL_FORMAT_VERSION	2
+#define HCONTROL_MAGIC_LEN	8
+
+struct hcontrol_header {
+  unsigned char magic[HCONTROL_MAGIC_LEN];	/* hcontrol_magic */
+  uint32_t version;		/* HCONTROL_FORMAT_VERSION */
+  uint32_t record_size;		/* sizeof(struct house_control_rec) */
+  uint32_t record_count;	/* records after the header */
+};
+
+/* A format 1 file starts with a record's room_vnum. 0xFFFF is NOWHERE,
+ * never a house vnum, and these bytes would also make that record's
+ * exit_num 'H','C' (over 17000, far outside DIR_COUNT), so no format 1
+ * file House_boot() could load starts with this magic. */
+static const unsigned char hcontrol_magic[HCONTROL_MAGIC_LEN] =
+  { 0xFF, 0xFF, 'T', 'B', 'H', 'C', '\r', '\n' };
+
+/* hcontrol_read_header() results. */
+#define HCONTROL_LEGACY		0	/* format 1: no header; stream rewound */
+#define HCONTROL_HEADER		1	/* format 2: header read and checked */
+#define HCONTROL_UNREADABLE	2	/* already reported; load nothing */
+
+/* TRUE when House_boot() could not read HCONTROL_FILE (it could not be
+ * opened, or its header is one this build cannot use). The file may hold
+ * houses that were never loaded, so House_save_control() must not replace
+ * it with the in-memory table. */
+static int hcontrol_unread = FALSE;
 
 /* local functions */
 static int House_get_filename(room_vnum vnum, char *filename, size_t maxlen);
@@ -295,19 +335,38 @@ static int find_house(room_vnum vnum)
  * house. It is now staged beside the live file and committed only after a
  * complete write; on failure the live file is kept and the error reported
  * (hcontrol-save). The in-memory table is unchanged either way, so the
- * next successful save writes the current state. */
+ * next successful save writes the current state. The file is written in
+ * format 2 (hcontrol_header, then the records). If boot could not read
+ * the live file (hcontrol_unread), it is not replaced at all. */
 static void House_save_control(void)
 {
   FILE *fl;
   char temp[MAX_INPUT_LENGTH];
+  struct hcontrol_header hdr;
 
+  /* Replacing a file boot could not read would silently destroy every
+   * house in it; an admin repairs or moves it, then reboots. */
+  if (hcontrol_unread) {
+    TB_ERROR_MSG("house", "hcontrol-save", HCONTROL_FILE,
+                 "%d house records not saved: boot could not read this file, "
+                 "which may hold houses that were not loaded; live file kept "
+                 "for repair", num_of_houses);
+    return;
+  }
   if (!(fl = objsave_open_staged(HCONTROL_FILE, temp, sizeof(temp)))) {
     TB_ERROR_MSG("house", "hcontrol-save", HCONTROL_FILE,
                  "%d house records not saved; live file kept", num_of_houses);
     return;
   }
-  /* write all the house control recs in one fell swoop. */
-  if (fwrite(house_control, sizeof(struct house_control_rec), num_of_houses, fl) != (size_t)num_of_houses) {
+  /* Zeroed first, so no undefined byte reaches the file. */
+  memset(&hdr, 0, sizeof(hdr));
+  memcpy(hdr.magic, hcontrol_magic, sizeof(hdr.magic));
+  hdr.version = HCONTROL_FORMAT_VERSION;
+  hdr.record_size = (uint32_t) sizeof(struct house_control_rec);
+  hdr.record_count = (uint32_t) num_of_houses;
+  /* write the header, then all the house control recs in one fell swoop. */
+  if (fwrite(&hdr, sizeof(hdr), 1, fl) != 1 ||
+      fwrite(house_control, sizeof(struct house_control_rec), num_of_houses, fl) != (size_t)num_of_houses) {
     TB_ERROR_ERRNO("house", "hcontrol-save", HCONTROL_FILE,
                    "short write of %d house records; live file kept",
                    num_of_houses);
@@ -327,9 +386,72 @@ static void House_save_control(void)
                "house vnum %d atrium %d owner idnum %ld: %s; record skipped", \
                (rec).vnum, (rec).atrium, (rec).owner, (reason))
 
+/** Read and check the format 2 header at the start of hcontrol.
+ * The file is untrusted. A file that does not start with hcontrol_magic
+ * is format 1 (reported once as hcontrol-legacy) and fl is rewound to its
+ * first record. A header from another format version or record layout,
+ * or a damaged one, is reported (hcontrol-format) and nothing may load.
+ * @param fl hcontrol, opened for reading and positioned at its start.
+ * @param[out] count Records the header promises (HCONTROL_HEADER only).
+ * @return HCONTROL_HEADER, HCONTROL_LEGACY or HCONTROL_UNREADABLE. */
+static int hcontrol_read_header(FILE *fl, int *count)
+{
+  struct hcontrol_header hdr;
+  size_t got;
+
+  memset(&hdr, 0, sizeof(hdr));
+  got = fread(&hdr, 1, sizeof(hdr), fl);
+  if (ferror(fl)) {
+    TB_ERROR_ERRNO("house", "hcontrol-read", HCONTROL_FILE,
+                   "header read failed; no houses loaded");
+    return HCONTROL_UNREADABLE;
+  }
+  if (got < HCONTROL_MAGIC_LEN ||
+      memcmp(hdr.magic, hcontrol_magic, HCONTROL_MAGIC_LEN) != 0) {
+    if (fseek(fl, 0L, SEEK_SET) != 0) {
+      TB_ERROR_ERRNO("house", "hcontrol-read", HCONTROL_FILE,
+                     "cannot rewind format 1 file; no houses loaded");
+      return HCONTROL_UNREADABLE;
+    }
+    TB_WARN_MSG("house", "hcontrol-legacy", HCONTROL_FILE,
+                "no format header: format 1, read as %zu-byte records; "
+                "written as format %d at the next save",
+                sizeof(struct house_control_rec), HCONTROL_FORMAT_VERSION);
+    return HCONTROL_LEGACY;
+  }
+  if (got != sizeof(hdr)) {
+    TB_ERROR_MSG("house", "hcontrol-format", HCONTROL_FILE,
+                 "header truncated (%zu of %zu bytes); no houses loaded",
+                 got, sizeof(hdr));
+    return HCONTROL_UNREADABLE;
+  }
+  if (hdr.version != HCONTROL_FORMAT_VERSION ||
+      hdr.record_size != sizeof(struct house_control_rec)) {
+    TB_ERROR_MSG("house", "hcontrol-format", HCONTROL_FILE,
+                 "format %lu with %lu-byte records, but this build reads "
+                 "format %d with %zu-byte records (written on another "
+                 "platform or struct layout?); no houses loaded",
+                 (unsigned long) hdr.version, (unsigned long) hdr.record_size,
+                 HCONTROL_FORMAT_VERSION, sizeof(struct house_control_rec));
+    return HCONTROL_UNREADABLE;
+  }
+  if (hdr.record_count > INT_MAX) {
+    TB_ERROR_MSG("house", "hcontrol-format", HCONTROL_FILE,
+                 "header promises %lu records; no houses loaded",
+                 (unsigned long) hdr.record_count);
+    return HCONTROL_UNREADABLE;
+  }
+  *count = (int) hdr.record_count;
+  return HCONTROL_HEADER;
+}
+
 /** Load the house control records, their object files and room flags.
- * Called once from boot_db(). HCONTROL_FILE is a raw binary array of
- * struct house_control_rec (see house.h), so each record is validated:
+ * Called once from boot_db(). HCONTROL_FILE holds raw images of struct
+ * house_control_rec (see house.h) after a format header (see
+ * hcontrol_read_header(); a headerless format 1 file is still read). A
+ * header this build cannot use loads nothing and leaves the file alone,
+ * and every later save refuses to replace it (hcontrol_unread). Each
+ * record is validated:
  * owner, house and atrium rooms, uniqueness, exit, guest count and mode.
  * A record that fails is reported (boot-skip / hcontrol-record) and not
  * loaded. If any record was skipped, or the file could not be read
@@ -343,20 +465,44 @@ void House_boot(void)
   room_rnum real_house, real_atrium;
   FILE *fl;
   int record = 0, skipped = 0;
+  int expected = -1;	/* records the header promises; -1: format 1, to EOF */
   size_t got;
 
   memset((char *)house_control,0,sizeof(struct house_control_rec)*MAX_HOUSES);
   num_of_houses = 0;
+  hcontrol_unread = FALSE;
 
   if (!(fl = fopen(HCONTROL_FILE, "rb"))) {
     if (errno == ENOENT)
       log("   No houses to load. File '%s' does not exist.", HCONTROL_FILE);
-    else
+    else {
       TB_ERROR_ERRNO("house", "hcontrol-open", HCONTROL_FILE,
                      "house control file unreadable; no houses loaded");
+      hcontrol_unread = TRUE;
+    }
+    return;
+  }
+  if (hcontrol_read_header(fl, &expected) == HCONTROL_UNREADABLE) {
+    hcontrol_unread = TRUE;
+    tb_fclose(fl);
     return;
   }
   for (;;) {
+    /* Format 2 ends after the records its header promises; more bytes
+     * mean the header or the file is damaged. */
+    if (expected >= 0 && record == expected) {
+      if (fgetc(fl) != EOF) {
+        TB_ERROR_MSG("house", "hcontrol-read", HCONTROL_FILE,
+                     "data after the %d records the header promises",
+                     expected);
+        skipped++;
+      } else if (ferror(fl)) {
+        TB_ERROR_ERRNO("house", "hcontrol-read", HCONTROL_FILE,
+                       "read failed after %d records", record);
+        skipped++;
+      }
+      break;
+    }
     got = fread(&temp_house, 1, sizeof(struct house_control_rec), fl);
     if (got != sizeof(struct house_control_rec)) {
       if (ferror(fl)) {
@@ -367,6 +513,11 @@ void House_boot(void)
         TB_ERROR_MSG("house", "hcontrol-read", HCONTROL_FILE,
                      "trailing partial record (%zu of %zu bytes) after %d records",
                      got, sizeof(struct house_control_rec), record);
+        skipped++;
+      } else if (expected >= 0) {
+        TB_ERROR_MSG("house", "hcontrol-read", HCONTROL_FILE,
+                     "file ends after %d of the %d records the header promises",
+                     record, expected);
         skipped++;
       }
       break;

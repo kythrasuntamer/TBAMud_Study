@@ -18,11 +18,14 @@
 #define HOUSE_PRIVATE	0
 
 /** One house, as stored in lib/etc/hcontrol.
- * The file is a raw fwrite() of an array of these, so its layout is the
- * in-memory layout: it depends on the compiler ABI (sizes of time_t and
- * long, room_vnum/IDXTYPE, alignment padding) and on field order. Moving
- * the data between platforms or changing this struct makes existing files
- * unreadable. Any record that is written must be zeroed first (memset), so
+ * After a format header (struct hcontrol_header in house.c) the file is a
+ * raw fwrite() of an array of these, so its layout is the in-memory layout:
+ * it depends on the compiler ABI (sizes of time_t and long,
+ * room_vnum/IDXTYPE, alignment padding) and on field order. The header
+ * records the record size and format version, so a file from another
+ * platform or struct layout is refused at boot; bump
+ * HCONTROL_FORMAT_VERSION in house.c whenever this struct changes. Any
+ * record that is written must be zeroed first (memset), so
  * that the spare fields and the padding are defined. On read every field
  * is untrusted: num_of_guests in particular must be checked with
  * VALID_HOUSE_GUESTS() before guests[] is indexed. */
