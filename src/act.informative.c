@@ -59,6 +59,11 @@
 #include "asciimap.h"
 #include "quest.h"
 
+/** The character a descriptor speaks for: the immortal's own body while
+ * switched into a mob, otherwise the descriptor's character (NULL before
+ * login completes). Evaluates d twice: pass a plain variable. */
+#define REAL_CHAR(d)  ((d)->original ? (d)->original : (d)->character)
+
 /* Nonnegative level argument or low-high range with checked conversion. */
 static int parse_info_level_range(const char *input, int *low, int *high)
 {
@@ -1547,9 +1552,7 @@ ACMD(do_who)
   }
 
   for (d = descriptor_list; d && !short_list; d = d->next) {
-    if (d->original)
-      tch = d->original;
-    else if (!(tch = d->character))
+    if (!(tch = REAL_CHAR(d)))
       continue;
 
     if (CAN_SEE(ch, tch) && IS_PLAYING(d)) {
@@ -1588,9 +1591,7 @@ ACMD(do_who)
       send_to_char(ch, "%s", rank[i].disp);
 
     for (d = descriptor_list; d; d = d->next) {
-      if (d->original)
-        tch = d->original;
-      else if (!(tch = d->character))
+      if (!(tch = REAL_CHAR(d)))
         continue;
 
       if ((GET_LEVEL(tch) < rank[i].min_level || GET_LEVEL(tch) > rank[i].max_level) && !short_list)
@@ -1789,9 +1790,7 @@ ACMD(do_users)
     if (STATE(d) == CON_PLAYING && deadweight)
       continue;
     if (IS_PLAYING(d)) {
-      if (d->original)
-        tch = d->original;
-      else if (!(tch = d->character))
+      if (!(tch = REAL_CHAR(d)))
         continue;
 
       if (*host_search && !strstr(d->host, host_search))
@@ -1928,7 +1927,7 @@ static void perform_mortal_where(struct char_data *ch, char *arg)
     for (d = descriptor_list; d; d = d->next) {
       if (STATE(d) != CON_PLAYING || d->character == ch)
     continue;
-      if ((i = (d->original ? d->original : d->character)) == NULL)
+      if ((i = REAL_CHAR(d)) == NULL)
     continue;
       if (IN_ROOM(i) == NOWHERE || !CAN_SEE(ch, i))
     continue;
@@ -2055,7 +2054,7 @@ static void perform_immort_where(char_data *ch, const char *arg)
     send_to_char(ch, "-------- ------- ------------------------------ -------------------\r\n");
     for (d = descriptor_list; d; d = d->next)
       if (IS_PLAYING(d)) {
-        i = (d->original ? d->original : d->character);
+        i = REAL_CHAR(d);
         if (i && CAN_SEE(ch, i) && (IN_ROOM(i) != NOWHERE)) {
           if (d->original)
             send_to_char(ch, "%-8s%s - [%5d] %s%s (in %s%s)\r\n",
