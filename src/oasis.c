@@ -231,12 +231,16 @@ void cleanup_olc(struct descriptor_data *d, byte cleanup_type)
       free_quest(OLC_QUEST(d));
   }
 
-  /*. Check for aedit stuff -- M. Scott */
+  /*. Check for aedit stuff -- M. Scott
+   * free_action() releases a social's strings but not the struct, because
+   * it also serves soc_mess_list[] entries. The workspace's struct is
+   * aedit's own CREATE, so it is freed here in every case; with
+   * CLEANUP_STRUCTS its strings now belong to soc_mess_list and stay. */
   if (OLC_ACTION(d))  {
-    if (cleanup_type == CLEANUP_STRUCTS)
-      free(OLC_ACTION(d));
-    else
+    if (cleanup_type != CLEANUP_STRUCTS)
       free_action(OLC_ACTION(d));
+    free(OLC_ACTION(d));
+    OLC_ACTION(d) = NULL;
   }
 
   /* Used for cleanup of Hedit */

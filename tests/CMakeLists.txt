@@ -1105,3 +1105,19 @@ if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
     set_source_files_properties(${MUD_SRCDIR}/oasis.c
         PROPERTIES COMPILE_OPTIONS "-ffunction-sections;-fdata-sections")
 endif()
+
+# Production cleanup_olc() (oasis.c) releasing an aedit workspace whole, with
+# the real free_action() from act.social.c. Unreferenced sections of both are
+# discarded; the test stubs the other editors' release functions. Meaningful
+# under LeakSanitizer or Valgrind.
+add_mud_test(test_oasis_cleanup
+    ${MUD_SRCDIR}/oasis.c
+    ${MUD_SRCDIR}/act.social.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_oasis_cleanup.c
+)
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_compile_options(test_oasis_cleanup PRIVATE -ffunction-sections -fdata-sections)
+    target_link_options(test_oasis_cleanup PRIVATE -Wl,--gc-sections)
+    set_source_files_properties(${MUD_SRCDIR}/oasis.c ${MUD_SRCDIR}/act.social.c
+        PROPERTIES COMPILE_OPTIONS "-ffunction-sections;-fdata-sections")
+endif()
