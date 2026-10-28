@@ -14,13 +14,66 @@
 #include "conf.h"
 #include "sysdep.h"
 #include "structs.h"
+#include "utils.h"
 #include "comm.h"
+#include "db.h"
 #include "protocol.h"
 
 #include <stdint.h>
 
 /* Symbols protocol.c reaches outside itself. */
 struct player_special_data dummy_mob;
+
+/* db.c: DIAG_DESC (comm.h) names a descriptor's character by mob vnum or
+ * player idnum. desc.character stays NULL below, so no character is ever
+ * looked up; the tables exist only so the reference links. */
+struct index_data *mob_index = NULL;
+mob_rnum top_of_mobt = 0;
+
+/* utils.c: the structured diagnostics behind protocol.c's PROTOCOL_WARN
+ * (TB_WARN_EVERY), TB_ERROR_MSG and TB_FATAL_MSG reports. Format the detail
+ * exactly as the server would, into a sink, so a bad format or argument in
+ * a report is still caught. A FATAL report is followed by abort() at its
+ * call site, as in the server. */
+void tb_error_log_at(const char *severity, const char *subsystem,
+                     const char *operation, const char *resource, int errnum,
+                     const char *source_file, int source_line,
+                     const char *source_func, const char *detail_fmt, ...)
+{
+  static char sink[MAX_STRING_LENGTH / 2];
+  va_list args;
+
+  (void)severity; (void)subsystem; (void)operation; (void)resource;
+  (void)errnum; (void)source_file; (void)source_line; (void)source_func;
+  if (detail_fmt == NULL)
+    return;
+  va_start(args, detail_fmt);
+  if (vsnprintf(sink, sizeof(sink), detail_fmt, args) < 0)
+    sink[0] = '\0';
+  va_end(args);
+}
+
+/* utils.c: CREATE()'s allocator. The server reports a zero or overflowing
+ * count, or a failed calloc(), as FATAL and CREATE() then aborts, so any of
+ * them reached from client bytes is a finding: stop loudly, naming the
+ * CREATE() call site. */
+void *tb_calloc_array_at(size_t count, size_t element_size,
+                         const char *source_file, int source_line,
+                         const char *source_func)
+{
+  void *result = NULL;
+
+  if (count != 0 && element_size != 0 && count <= SIZE_MAX / element_size)
+    result = calloc(count, element_size);
+  if (result == NULL) {
+    fprintf(stderr, "==fuzz_protocol== ERROR: CREATE(%zu x %zu bytes) failed "
+            "at %s:%d (%s)\n", count, element_size,
+            source_file ? source_file : "?", source_line,
+            source_func ? source_func : "?");
+    abort();
+  }
+  return result;
+}
 
 /* utils.c's CHECK_PLAYER_SPECIAL reporter (an NPC read a player-only field
  * through PRF_FLAGGED). desc.character stays NULL below, so protocol.c never
