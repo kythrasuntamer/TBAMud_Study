@@ -986,6 +986,31 @@ static void parse_trigger_reads_commands(void)
 }
 
 /* ------------------------------------------------------------------------ */
+/* C2-15: an oversized quest aborts the save instead of vanishing.          */
+/* ------------------------------------------------------------------------ */
+static void save_quests_rejects_oversized_quest(void)
+{
+  static char big[MAX_STRING_LENGTH];
+  char text[64];
+  make_zones(1);
+  memset(big, 'x', sizeof(big) - 1);
+  big[sizeof(big) - 1] = '\0';
+  write_text_file(QST_PREFIX "/0.qst", "#5 previous file\n");
+  total_quests = 2;
+  CREATE(aquest_table, struct aq_data, 2);
+  aquest_table[0].vnum = 5;
+  aquest_table[1].vnum = 6;
+  aquest_table[1].desc = big;
+  aquest_table[1].info = big;
+  aquest_table[0].qm = aquest_table[1].qm = NOBODY;
+  TEST_ASSERT_FALSE(save_quests(0));
+  TEST_ASSERT_EQUAL_STRING("quest-save-size", tb_captured_operation);
+  TEST_ASSERT_FALSE(file_exists(QST_PREFIX "/0.new"));
+  read_text_file(QST_PREFIX "/0.qst", text, sizeof(text));
+  TEST_ASSERT_EQUAL_STRING("#5 previous file\n", text);
+}
+
+/* ------------------------------------------------------------------------ */
 /* Temporary world directory for the writers.                               */
 /* ------------------------------------------------------------------------ */
 static char test_root[] = "/tmp/tb-genolc-XXXXXX";
@@ -1065,6 +1090,7 @@ int main(void)
   RUN_TEST(parse_trigger_accepts_empty_body);
   RUN_TEST(parse_trigger_accepts_blank_line_body);
   RUN_TEST(parse_trigger_reads_commands);
+  RUN_TEST(save_quests_rejects_oversized_quest);
   failures = UNITY_END();
   leave_test_root();
   return failures;

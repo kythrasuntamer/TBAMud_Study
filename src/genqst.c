@@ -266,14 +266,26 @@ int save_quests(zone_rnum zone_num)
         QST_QUANTITY(rnum), QST_GOLD(rnum), QST_EXP(rnum), QST_OBJ(rnum)
       );
       
-      if(n < MAX_STRING_LENGTH) {
-        tb_fprintf(sf, "%s", convert_from_tabs(buf));
-        num_quests++;
-      } else {
-        mudlog(BRF,LVL_BUILDER,TRUE, 
-               "SYSERR: Could not save quest #%d due to size (%d > maximum of %d).", 
-               QST_NUM(rnum), n, MAX_STRING_LENGTH);
+      /* A record that does not fit (only reachable from a hand-edited .qst:
+       * qedit caps each string far below MSL) must not be skipped while the
+       * rest of the zone is committed, or the quest silently disappears
+       * from disk.  Abandon the whole zone save, as save_objects() does. */
+      if (n < 0 || n >= MAX_STRING_LENGTH) {
+        TB_ERROR_MSG("olc", "quest-save-size", filename,
+                     "quest vnum %d: record %d bytes >= %d; zone %d not saved",
+                     QST_NUM(rnum), n, MAX_STRING_LENGTH,
+                     zone_table[zone_num].number);
+        mudlog(BRF, LVL_BUILDER, TRUE,
+               "SYSERR: Could not save quest #%d due to size (%d >= maximum of %d); "
+               "zone %d not saved.", QST_NUM(rnum), n, MAX_STRING_LENGTH,
+               zone_table[zone_num].number);
+        tb_fclose(sf);
+        if (remove(filename) != 0 && errno != ENOENT)
+          TB_REPORT_ERRNO("remove", filename);
+        return FALSE;
       }
+      tb_fprintf(sf, "%s", convert_from_tabs(buf));
+      num_quests++;
     }
   }
   /* Write the final line and commit only a fully flushed temporary file. */
