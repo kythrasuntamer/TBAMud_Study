@@ -449,6 +449,29 @@ if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
 endif()
 target_link_libraries(test_boards PRIVATE ${CRYPT_LIBRARY} ${SODIUM_LIBRARY})
 
+# Production Ideas/Bugs/Typos lists (ibt.c) and the db.c readers that load
+# them. db.c defines the world globals, so test_stubs.c is not linked, and
+# interpreter.c is left out (its cmd_info[] would pull in every do_*); the
+# test supplies the few outside symbols the kept sections reference.
+add_executable(test_ibt
+    $<TARGET_OBJECTS:unity_vendor>
+    ${MUD_SRCDIR}/ibt.c
+    ${MUD_SRCDIR}/db.c
+    ${MUD_SRCDIR}/utils.c
+    ${MUD_SRCDIR}/random.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_ibt.c
+)
+target_include_directories(test_ibt PRIVATE ${TEST_INCLUDES})
+target_compile_options(test_ibt PRIVATE ${TEST_CFLAGS})
+add_test(NAME test_ibt COMMAND test_ibt)
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_compile_options(test_ibt PRIVATE -ffunction-sections -fdata-sections)
+    target_link_options(test_ibt PRIVATE
+        -Wl,--gc-sections
+        -Wl,--wrap=tb_error_log_at)
+endif()
+target_link_libraries(test_ibt PRIVATE ${CRYPT_LIBRARY} ${SODIUM_LIBRARY})
+
 find_package(Python3 COMPONENTS Interpreter QUIET)
 if(Python3_Interpreter_FOUND)
     add_test(NAME test_dg_memory_callback_contract

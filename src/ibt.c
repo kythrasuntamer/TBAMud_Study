@@ -375,6 +375,19 @@ static IBT_DATA *get_ibt_by_num(int mode, int target_num)
   return NULL;
 }
 
+/* Return the descriptor whose string editor is writing this IBT's body
+ * (d->str == &ibt->body), or NULL.  While one exists the node must not be
+ * freed: string_add() writes through d->str on the writer's next line. */
+static struct descriptor_data *ibt_body_writer(IBT_DATA *ibt)
+{
+  struct descriptor_data *d;
+
+  for (d = descriptor_list; d; d = d->next)
+    if (d->str == &(ibt->body))
+      return d;
+  return NULL;
+}
+
 /* Search the IBT list, and return true if ibt is found there */
 static bool ibt_in_list(int mode, IBT_DATA *ibt)
 {
@@ -1189,14 +1202,34 @@ void free_ibt_lists(void)
     free_ibt_list(mode);
 }
 
-void clean_ibt_list(int mode)
+/* Drop an abandoned submission.  Called from playing_string_cleanup() when
+ * 'writer' aborts an IBT (or saves it empty).
+ *
+ * 'bug submit' links its node into the list at once, with the submitter's
+ * d->str pointing at node->body until the editor closes.  So the node this
+ * writer was filling is freed whatever its body holds, and other empty
+ * nodes are freed only if no descriptor is still writing them: those are
+ * left over from writers who disconnected.  Freeing a node another player
+ * is still filling would leave that player's d->str pointing into freed
+ * memory, which string_add() writes through on their next line. */
+void clean_ibt_list(int mode, struct descriptor_data *writer)
 {
   IBT_DATA *ibtData = get_first_ibt(mode), *ibtTemp;
+  struct descriptor_data *busy;
+
   while (ibtData) {
     ibtTemp = ibtData;
     ibtData = ibtData->next;
-    if (!ibtTemp->body || !*ibtTemp->body) {
+    busy = ibt_body_writer(ibtTemp);
+    if (busy && busy == writer)
       free_ibt(mode, ibtTemp);
-    }
+    else if (busy) {
+      if (!ibtTemp->body || !*ibtTemp->body)
+        TB_WARN_MSG("ibt", "ibt-pending-free", ibt_types[mode],
+                    "empty %s logged by idnum %ld kept: descriptor %d (player idnum %ld) is still writing it",
+                    ibt_types[mode], ibtTemp->id_num, busy->desc_num,
+                    busy->character ? (long)GET_IDNUM(busy->character) : -1L);
+    } else if (!ibtTemp->body || !*ibtTemp->body)
+      free_ibt(mode, ibtTemp);
   }
 }
