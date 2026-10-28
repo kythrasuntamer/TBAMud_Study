@@ -20,6 +20,7 @@
 #include "constants.h"
 #include <float.h>
 #include "shop.h"
+#include "olc_checks.h"
 
 /* local functions */
 static void sedit_setup_new(struct descriptor_data *d);
@@ -251,6 +252,10 @@ static void sedit_products_menu(struct descriptor_data *d)
   clear_screen(d);
   write_to_output(d, "##     VNUM     Product\r\n");
   for (i = 0; S_PRODUCT(shop, i) != NOTHING; i++) {
+    if (!OLC_CHECK_RNUM(d, OLC_RNUM_OBJ, S_PRODUCT(shop, i))) {
+      write_to_output(d, "%2d - <stale object rnum %d>\r\n", i, S_PRODUCT(shop, i));
+      continue;
+    }
     write_to_output(d, "%2d - [%s%5d%s] - %s%s%s\r\n", i,
 	    cyn, obj_index[S_PRODUCT(shop, i)].vnum, nrm,
 	    yel, obj_proto[S_PRODUCT(shop, i)].short_description, nrm);
@@ -400,9 +405,14 @@ static void sedit_disp_menu(struct descriptor_data *d)
   char buf1[MAX_STRING_LENGTH];
   char buf2[MAX_STRING_LENGTH];
   struct shop_data *shop;
+  int keeper_ok;
 
   shop = OLC_SHOP(d);
   get_char_colors(d->character);
+
+  /* The keeper is a mobile rnum that other builders' medit inserts and
+   * deletes move; never index mob_proto with one that missed a renumber. */
+  keeper_ok = S_KEEPER(shop) != NOBODY && OLC_CHECK_RNUM(d, OLC_RNUM_MOB, S_KEEPER(shop));
 
   clear_screen(d);
   sprintbit(S_NOTRADE(shop), trade_letters, buf1, sizeof(buf1));
@@ -430,8 +440,9 @@ static void sedit_disp_menu(struct descriptor_data *d)
 	  "Enter Choice : ",
 
 	  cyn, OLC_NUM(d), nrm,
-	  grn, nrm, cyn, S_KEEPER(shop) == NOBODY ? -1 : mob_index[S_KEEPER(shop)].vnum,
-	  nrm, yel, S_KEEPER(shop) == NOBODY ? "None" : mob_proto[S_KEEPER(shop)].player.short_descr,
+	  grn, nrm, cyn, keeper_ok ? mob_index[S_KEEPER(shop)].vnum : -1,
+	  nrm, yel, keeper_ok ? mob_proto[S_KEEPER(shop)].player.short_descr :
+	            (S_KEEPER(shop) == NOBODY ? "None" : "<stale keeper rnum>"),
 	  grn, nrm, cyn, S_OPEN1(shop), nrm,
 	  grn, nrm, cyn, S_CLOSE1(shop),
 	  grn, nrm, cyn, S_OPEN2(shop), nrm,

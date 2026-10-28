@@ -17,6 +17,9 @@
 #include "genzon.h"
 #include "oasis.h"
 #include "dg_scripts.h"
+#include "shop.h"
+#include "genshp.h"
+#include "olc_checks.h"
 
 /* Nasty internal macros to clean up the code. */
 #define MYCMD		(OLC_ZONE(d)->cmd[subcmd])
@@ -34,6 +37,235 @@ static void zedit_disp_comtype(struct descriptor_data *d);
 static void zedit_disp_arg1(struct descriptor_data *d);
 static void zedit_disp_arg2(struct descriptor_data *d);
 static void zedit_disp_arg3(struct descriptor_data *d);
+
+/* Cross-session rnum maintenance -------------------------------------------
+ *
+ * These live in zedit.c because zone commands hold most of the rnums that
+ * other builders' inserts and deletes move; oedit, medit, redit and sedit
+ * scratch copies are adjusted here too so there is a single place to audit.
+ */
+
+static const char *olc_rnum_kind_name(int kind)
+{
+  switch (kind) {
+  case OLC_RNUM_OBJ:  return "object";
+  case OLC_RNUM_MOB:  return "mobile";
+  case OLC_RNUM_ROOM: return "room";
+  case OLC_RNUM_TRIG: return "trigger";
+  default:            return "unknown";
+  }
+}
+
+int olc_check_rnum_at(const char *file, int line, const char *func,
+                      struct descriptor_data *d, int kind, long rnum)
+{
+  struct char_data *builder = d ? d->character : NULL;
+  long top;
+  int valid;
+
+  switch (kind) {
+  case OLC_RNUM_OBJ:  valid = VALID_OBJ_RNUM_NUM(rnum); top = (long)top_of_objt; break;
+  case OLC_RNUM_MOB:  valid = VALID_MOB_RNUM(rnum);     top = (long)top_of_mobt; break;
+  case OLC_RNUM_ROOM: valid = VALID_ROOM_RNUM(rnum);    top = (long)top_of_world; break;
+  case OLC_RNUM_TRIG: valid = VALID_TRIG_RNUM(rnum);    top = (long)top_of_trigt - 1; break;
+  default:            valid = FALSE;                    top = -1; break;
+  }
+
+  if (valid)
+    return TRUE;
+
+  tb_error_log_at("ERROR", "olc", "stale-rnum", olc_rnum_kind_name(kind), 0,
+                  file, line, func,
+                  "builder %s %ld editing vnum %d holds %s rnum %ld outside [0, %ld]",
+                  builder ? (IS_NPC(builder) ? "mob vnum" : "player idnum") : "none",
+                  builder ? (IS_NPC(builder) ? (long) GET_MOB_VNUM(builder) : (long) GET_IDNUM(builder)) : -1L,
+                  (d && d->olc) ? OLC_NUM(d) : -1,
+                  olc_rnum_kind_name(kind), rnum, top);
+  return FALSE;
+}
+
+/* Move one stored rnum for an insert (delta > 0) or delete (delta < 0) at
+ * refpt. Returns TRUE when the value named the deleted entry; the caller
+ * then cancels or clears whatever held it. Negative values and 'none' are
+ * "no reference" and never move. */
+static int olc_renumber_value(long *val, long refpt, int delta, long none)
+{
+  if (*val < 0 || *val == none)
+    return FALSE;
+  if (delta > 0) {
+    RENUM_ON_INSERT(*val, refpt, none);
+    return FALSE;
+  }
+  if (*val == refpt)
+    return TRUE;
+  RENUM_ON_DELETE(*val, refpt, none);
+  return FALSE;
+}
+
+/* Renumber an int field; see olc_renumber_value(). */
+static int olc_renumber_int(int *field, long refpt, int delta, long none)
+{
+  long v = *field;
+  int hit = olc_renumber_value(&v, refpt, delta, none);
+  *field = (int)v;
+  return hit;
+}
+
+/* Renumber an IDXTYPE field (room/obj/mob rnum); see olc_renumber_value(). */
+static int olc_renumber_idx(IDXTYPE *field, long refpt, int delta)
+{
+  long v = *field;
+  int hit = olc_renumber_value(&v, refpt, delta, (long)NOWHERE);
+  *field = (IDXTYPE)v;
+  return hit;
+}
+
+static void olc_report_session_renumber(struct descriptor_data *dsc, int kind,
+                                        long refpt, const char *what, int index)
+{
+  struct char_data *builder = dsc->character;
+
+  if (builder)
+    TB_WARN_MSG("olc", "olc-session-renumber", olc_rnum_kind_name(kind),
+                "builder " DIAG_CHAR_FMT " editing vnum %d: %s %d referenced deleted %s rnum %ld",
+                DIAG_CHAR(builder), OLC_NUM(dsc), what, index,
+                olc_rnum_kind_name(kind), refpt);
+  write_to_output(dsc, "\r\nNote: another builder deleted a %s that your %s %d used; "
+                  "the reference was cleared.\r\n", olc_rnum_kind_name(kind), what, index);
+}
+
+/* Zone-command arguments that hold an rnum of the given kind. */
+static void olc_renumber_zone_cmds(struct descriptor_data *dsc, int kind,
+                                   long refpt, int delta)
+{
+  struct reset_com *cmd;
+  int i, hit;
+
+  if (!OLC_ZONE(dsc) || !OLC_ZONE(dsc)->cmd)
+    return;
+
+  for (i = 0; OLC_ZONE(dsc)->cmd[i].command != 'S'; i++) {
+    cmd = &OLC_ZONE(dsc)->cmd[i];
+    hit = FALSE;
+    switch (kind) {
+    case OLC_RNUM_OBJ:
+      switch (cmd->command) {
+      case 'P':
+        hit |= olc_renumber_int(&cmd->arg3, refpt, delta, (long)NOTHING);
+        /* Fall through. */
+      case 'O':
+      case 'G':
+      case 'E':
+        hit |= olc_renumber_int(&cmd->arg1, refpt, delta, (long)NOTHING);
+        break;
+      case 'R':
+        hit |= olc_renumber_int(&cmd->arg2, refpt, delta, (long)NOTHING);
+        break;
+      }
+      break;
+    case OLC_RNUM_MOB:
+      if (cmd->command == 'M')
+        hit |= olc_renumber_int(&cmd->arg1, refpt, delta, (long)NOBODY);
+      break;
+    case OLC_RNUM_ROOM:
+      switch (cmd->command) {
+      case 'M':
+      case 'O':
+      case 'T':
+      case 'V':
+        hit |= olc_renumber_int(&cmd->arg3, refpt, delta, (long)NOWHERE);
+        break;
+      case 'D':
+      case 'R':
+        hit |= olc_renumber_int(&cmd->arg1, refpt, delta, (long)NOWHERE);
+        break;
+      }
+      break;
+    }
+    if (hit) {
+      cmd->command = '*';
+      olc_report_session_renumber(dsc, kind, refpt, "zone command", i);
+    }
+  }
+}
+
+/* Shop products are object rnums stored in a NOTHING-terminated list. */
+static void olc_renumber_shop_products(struct descriptor_data *dsc, long refpt,
+                                       int delta)
+{
+  int i, j;
+
+  if (!OLC_SHOP(dsc) || !S_PRODUCTS(OLC_SHOP(dsc)))
+    return;
+
+  for (i = 0; S_PRODUCT(OLC_SHOP(dsc), i) != NOTHING; ) {
+    if (olc_renumber_idx(&S_PRODUCT(OLC_SHOP(dsc), i), refpt, delta)) {
+      olc_report_session_renumber(dsc, OLC_RNUM_OBJ, refpt, "shop product", i);
+      for (j = i; S_PRODUCT(OLC_SHOP(dsc), j) != NOTHING; j++)
+        S_PRODUCT(OLC_SHOP(dsc), j) = S_PRODUCT(OLC_SHOP(dsc), j + 1);
+      continue;
+    }
+    i++;
+  }
+}
+
+/* Adjust every open OLC scratch copy, except skip's, after the kind table
+ * gained (delta > 0) or lost (delta < 0) the entry at refpt. A reference to
+ * a deleted entry is cancelled ('*' for zone commands) or cleared and
+ * reported to the server log and to the affected builder. */
+void olc_renumber_sessions(int kind, int refpt, int delta,
+                           struct descriptor_data *skip)
+{
+  struct descriptor_data *dsc;
+  int i;
+
+  for (dsc = descriptor_list; dsc; dsc = dsc->next) {
+    if (dsc == skip || !dsc->olc)
+      continue;
+
+    switch (STATE(dsc)) {
+    case CON_ZEDIT:
+      olc_renumber_zone_cmds(dsc, kind, refpt, delta);
+      break;
+    case CON_SEDIT:
+      if (kind == OLC_RNUM_OBJ)
+        olc_renumber_shop_products(dsc, refpt, delta);
+      else if (kind == OLC_RNUM_MOB && OLC_SHOP(dsc) &&
+               olc_renumber_idx(&S_KEEPER(OLC_SHOP(dsc)), refpt, delta)) {
+        S_KEEPER(OLC_SHOP(dsc)) = NOBODY;
+        olc_report_session_renumber(dsc, kind, refpt, "shop keeper", 0);
+      }
+      break;
+    case CON_OEDIT:
+    case CON_IEDIT:
+      if (kind == OLC_RNUM_OBJ && OLC_OBJ(dsc) &&
+          olc_renumber_idx(&GET_OBJ_RNUM(OLC_OBJ(dsc)), refpt, delta)) {
+        GET_OBJ_RNUM(OLC_OBJ(dsc)) = NOTHING;
+        olc_report_session_renumber(dsc, kind, refpt, "edited object", 0);
+      }
+      break;
+    case CON_MEDIT:
+      if (kind == OLC_RNUM_MOB && OLC_MOB(dsc) &&
+          olc_renumber_idx(&GET_MOB_RNUM(OLC_MOB(dsc)), refpt, delta)) {
+        GET_MOB_RNUM(OLC_MOB(dsc)) = NOBODY;
+        olc_report_session_renumber(dsc, kind, refpt, "edited mobile", 0);
+      }
+      break;
+    case CON_REDIT:
+      if (kind != OLC_RNUM_ROOM || !OLC_ROOM(dsc))
+        break;
+      for (i = 0; i < DIR_COUNT; i++)
+        if (OLC_ROOM(dsc)->dir_option[i] &&
+            olc_renumber_idx(&OLC_ROOM(dsc)->dir_option[i]->to_room, refpt, delta)) {
+          OLC_ROOM(dsc)->dir_option[i]->to_room = NOWHERE;
+          olc_report_session_renumber(dsc, kind, refpt, "exit", i);
+        }
+      break;
+    default:
+      break;
+    }
+  }
+}
 
 ACMD(do_oasis_zedit)
 {
@@ -455,6 +687,10 @@ static void zedit_disp_menu(struct descriptor_data *d)
     write_to_output(d, "%s%d - %s", nrm, counter++, yel);
     switch (MYCMD.command) {
     case 'M':
+      if (!OLC_CHECK_RNUM(d, OLC_RNUM_MOB, MYCMD.arg1)) {
+        write_to_output(d, "<stale mobile rnum %d>", MYCMD.arg1);
+        break;
+      }
       write_to_output(d, "%sLoad %s [%s%d%s], Max : %d",
               MYCMD.if_flag ? " then " : "",
               mob_proto[MYCMD.arg1].player.short_descr, cyn,
@@ -462,6 +698,10 @@ static void zedit_disp_menu(struct descriptor_data *d)
               );
       break;
     case 'G':
+      if (!OLC_CHECK_RNUM(d, OLC_RNUM_OBJ, MYCMD.arg1)) {
+        write_to_output(d, "<stale object rnum %d>", MYCMD.arg1);
+        break;
+      }
       write_to_output(d, "%sGive it %s [%s%d%s], Max : %d",
 	      MYCMD.if_flag ? " then " : "",
 	      obj_proto[MYCMD.arg1].short_description,
@@ -470,6 +710,10 @@ static void zedit_disp_menu(struct descriptor_data *d)
 	      );
       break;
     case 'O':
+      if (!OLC_CHECK_RNUM(d, OLC_RNUM_OBJ, MYCMD.arg1)) {
+        write_to_output(d, "<stale object rnum %d>", MYCMD.arg1);
+        break;
+      }
       write_to_output(d, "%sLoad %s [%s%d%s], Max : %d",
 	      MYCMD.if_flag ? " then " : "",
 	      obj_proto[MYCMD.arg1].short_description,
@@ -478,6 +722,10 @@ static void zedit_disp_menu(struct descriptor_data *d)
 	      );
       break;
     case 'E':
+      if (!OLC_CHECK_RNUM(d, OLC_RNUM_OBJ, MYCMD.arg1)) {
+        write_to_output(d, "<stale object rnum %d>", MYCMD.arg1);
+        break;
+      }
       write_to_output(d, "%sEquip with %s [%s%d%s], %s, Max : %d",
 	      MYCMD.if_flag ? " then " : "",
 	      obj_proto[MYCMD.arg1].short_description,
@@ -487,6 +735,11 @@ static void zedit_disp_menu(struct descriptor_data *d)
 	      );
       break;
     case 'P':
+      if (!OLC_CHECK_RNUM(d, OLC_RNUM_OBJ, MYCMD.arg1) ||
+          !OLC_CHECK_RNUM(d, OLC_RNUM_OBJ, MYCMD.arg3)) {
+        write_to_output(d, "<stale object rnum %d or %d>", MYCMD.arg1, MYCMD.arg3);
+        break;
+      }
       write_to_output(d, "%sPut %s [%s%d%s] in %s [%s%d%s], Max : %d",
 	      MYCMD.if_flag ? " then " : "",
 	      obj_proto[MYCMD.arg1].short_description,
@@ -497,6 +750,10 @@ static void zedit_disp_menu(struct descriptor_data *d)
 	      );
       break;
     case 'R':
+      if (!OLC_CHECK_RNUM(d, OLC_RNUM_OBJ, MYCMD.arg2)) {
+        write_to_output(d, "<stale object rnum %d>", MYCMD.arg2);
+        break;
+      }
       write_to_output(d, "%sRemove %s [%s%d%s] from room.",
 	      MYCMD.if_flag ? " then " : "",
 	      obj_proto[MYCMD.arg2].short_description,
@@ -511,6 +768,10 @@ static void zedit_disp_menu(struct descriptor_data *d)
 	      );
       break;
     case 'T':
+      if (!OLC_CHECK_RNUM(d, OLC_RNUM_TRIG, MYCMD.arg2)) {
+        write_to_output(d, "<stale trigger rnum %d>", MYCMD.arg2);
+        break;
+      }
       write_to_output(d, "%sAttach trigger %s%s%s [%s%d%s] to %s",
         MYCMD.if_flag ? " then " : "",
         cyn, trig_index[MYCMD.arg2]->proto->name, yel,

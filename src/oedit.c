@@ -25,6 +25,7 @@
 #include "dg_olc.h"
 #include "fight.h"
 #include "modify.h"
+#include "olc_checks.h"
 
 /* local functions */
 
@@ -1433,9 +1434,13 @@ void oedit_parse(struct descriptor_data *d, char *arg)
 
   case OEDIT_DELETE:
     if (*arg == 'y' || *arg == 'Y') {
-      if (delete_object(GET_OBJ_RNUM(OLC_OBJ(d))) != NOTHING)
+      obj_rnum doomed = GET_OBJ_RNUM(OLC_OBJ(d));
+
+      if (delete_object(doomed) != NOTHING) {
+        /* Other builders' scratch copies hold object rnums that just moved. */
+        olc_renumber_sessions(OLC_RNUM_OBJ, doomed, -1, d);
         write_to_output(d, "Object deleted.\r\n");
-      else
+      } else
         write_to_output(d, "Couldn't delete the object!\r\n");
 
       cleanup_olc(d, CLEANUP_ALL);

@@ -26,6 +26,7 @@
 #include "screen.h"
 #include "fight.h"
 #include "modify.h"      /* for smash_tilde */
+#include "olc_checks.h"
 
 /* local functions */
 static void medit_setup_new(struct descriptor_data *d);
@@ -1073,9 +1074,13 @@ void medit_parse(struct descriptor_data *d, char *arg)
 
   case MEDIT_DELETE:
     if (*arg == 'y' || *arg == 'Y') {
-      if (delete_mobile(GET_MOB_RNUM(OLC_MOB(d))) != NOBODY)
+      mob_rnum doomed = GET_MOB_RNUM(OLC_MOB(d));
+
+      if (delete_mobile(doomed) != NOBODY) {
+        /* Other builders' scratch copies hold mobile rnums that just moved. */
+        olc_renumber_sessions(OLC_RNUM_MOB, doomed, -1, d);
         write_to_output(d, "Mobile deleted.\r\n");
-      else
+      } else
         write_to_output(d, "Couldn't delete the mobile!\r\n");
 
       cleanup_olc(d, CLEANUP_ALL);

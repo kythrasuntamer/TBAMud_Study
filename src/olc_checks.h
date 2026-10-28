@@ -1,0 +1,67 @@
+/**
+* @file olc_checks.h
+* Invariant checks shared by the OasisOLC prototype editors (oedit.c, medit.c,
+* redit.c, zedit.c, sedit.c).
+*
+* Every OLC session edits a private scratch copy (OLC_OBJ, OLC_MOB, OLC_ROOM,
+* OLC_ZONE, OLC_SHOP) that refers to other prototypes by *real* number: a
+* position in obj_proto[], mob_proto[] or world[]. Those positions shift
+* whenever any builder inserts or deletes a prototype, so an rnum held by an
+* open session can go stale while its builder is idle.
+*
+* - olc_renumber_sessions() is the one place that moves every open scratch
+*   copy in step with an insert or delete. Call it after each add_* that
+*   inserted and after each successful delete_*.
+* - OLC_CHECK_RNUM() guards every place that indexes a table with a scratch
+*   rnum; a value that missed a renumber is reported (op "stale-rnum")
+*   instead of being read out of bounds.
+*
+* Input ownership: the rnums come from builders (OLC menus) and from other
+* builders' concurrent edits; none of them may be trusted as an index.
+*/
+#ifndef TBAMUD_OLC_CHECKS_H_INCLUDED
+#define TBAMUD_OLC_CHECKS_H_INCLUDED
+
+/* Range checks for rnums held as plain numbers (zone command args, shop
+ * lists, scratch identities). VALID_ROOM_RNUM is in utils.h; VALID_OBJ_RNUM
+ * there takes an object pointer, hence the _NUM suffix here. The casts make
+ * the checks correct for int, signed and unsigned index types alike, and
+ * NOWHERE/NOTHING/NOBODY always fail them. Each evaluates r twice: pass a
+ * plain value. */
+#define VALID_MOB_RNUM(r)     ((long)(r) >= 0 && (long)(r) <= (long)top_of_mobt)
+#define VALID_OBJ_RNUM_NUM(r) ((long)(r) >= 0 && (long)(r) <= (long)top_of_objt)
+#define VALID_TRIG_RNUM(r)    ((long)(r) >= 0 && (long)(r) < (long)top_of_trigt)
+
+/* The rnum tables an OLC scratch copy can refer to. */
+#define OLC_RNUM_OBJ   0
+#define OLC_RNUM_MOB   1
+#define OLC_RNUM_ROOM  2
+#define OLC_RNUM_TRIG  3
+
+/* Renumber one stored rnum after a table insert or delete at refpt. 'none'
+ * is the sentinel (NOWHERE/NOTHING/NOBODY) that must never move. A delete
+ * of var itself is the caller's job (test var == refpt first). var is
+ * evaluated three times: pass a plain lvalue. */
+#define RENUM_ON_INSERT(var, refpt, none) \
+  ((var) += ((var) != (none) && (var) >= (refpt)))
+#define RENUM_ON_DELETE(var, refpt, none) \
+  ((var) -= ((var) != (none) && (var) > (refpt)))
+
+/* Walk the descriptors that have an OLC session in the given CON_ state.
+ * The trailing-else form keeps a following 'else' from binding to the
+ * hidden 'if'. state is evaluated once per descriptor. */
+#define FOR_EACH_OLC_SESSION(dsc, state) \
+  for ((dsc) = descriptor_list; (dsc); (dsc) = (dsc)->next) \
+    if (STATE(dsc) != (state) || !(dsc)->olc) ; else
+
+/** Report a scratch rnum outside its table as a "stale-rnum" error naming the
+ * call site, builder, edited vnum and table. Returns TRUE when r is valid. */
+#define OLC_CHECK_RNUM(d, kind, r) \
+  olc_check_rnum_at(__FILE__, __LINE__, __func__, (d), (kind), (long)(r))
+
+int olc_check_rnum_at(const char *file, int line, const char *func,
+                      struct descriptor_data *d, int kind, long rnum);
+void olc_renumber_sessions(int kind, int refpt, int delta,
+                           struct descriptor_data *skip);
+
+#endif /* TBAMUD_OLC_CHECKS_H_INCLUDED */

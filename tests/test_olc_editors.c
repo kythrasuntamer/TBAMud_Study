@@ -26,6 +26,9 @@
 #include "genzon.h"
 #include "genobj.h"
 #include "genwld.h"
+#include "shop.h"
+#include "genshp.h"
+#include "olc_checks.h"
 #include "modify.h"
 #include <stdarg.h>
 #include "tb_error_capture.h"
@@ -234,6 +237,69 @@ room_rnum real_room(room_vnum vnum)
   return NOWHERE;
 }
 
+/* Zone command lists: the same exact-size reallocation contract as genzon.c,
+ * so a stale index past the shrunken list is visible to ASan. new_command()
+ * fills the new entry with garbage, as genzon's uninitialised stack copy
+ * may, so zedit must initialise every field it later reads. */
+int top_of_trigt = 0;
+struct index_data **trig_index = NULL;
+trig_rnum real_trigger(trig_vnum vnum) { (void)vnum; return NOTHING; }
+mob_rnum real_mobile(mob_vnum vnum) { (void)vnum; return NOBODY; }
+int add_to_save_list(zone_vnum zone, int type) { (void)zone; (void)type; return TRUE; }
+room_vnum genolc_zone_bottom(zone_rnum rznum) { (void)rznum; return 0; }
+room_vnum genolc_zonep_bottom(struct zone_data *zone) { (void)zone; return 0; }
+void remove_room_zone_commands(zone_rnum zone, room_rnum room_num) { (void)zone; (void)room_num; }
+int save_zone(zone_rnum zone_num) { (void)zone_num; return TRUE; }
+
+int count_commands(struct reset_com *list)
+{
+  int count = 0;
+  while (list[count].command != 'S')
+    count++;
+  return count;
+}
+
+void add_cmd_to_list(struct reset_com **list, struct reset_com *newcmd, int pos)
+{
+  int count = count_commands(*list), i, l;
+  struct reset_com *newlist = calloc((size_t)count + 2, sizeof(*newlist));
+  TEST_ASSERT_NOT_NULL(newlist);
+  for (i = 0, l = 0; i <= count; i++)
+    newlist[i] = (i == pos) ? *newcmd : (*list)[l++];
+  newlist[count + 1].command = 'S';
+  free(*list);
+  *list = newlist;
+}
+
+int new_command(struct zone_data *zone, int pos)
+{
+  struct reset_com new_com;
+  int count = count_commands(zone->cmd);
+  if (pos < 0 || pos > count)
+    return 0;
+  memset(&new_com, 0x5a, sizeof(new_com));
+  new_com.sarg1 = new_com.sarg2 = NULL;
+  new_com.command = 'N';
+  add_cmd_to_list(&zone->cmd, &new_com, pos);
+  return 1;
+}
+
+void delete_zone_command(struct zone_data *zone, int pos)
+{
+  int count = count_commands(zone->cmd), i, l;
+  struct reset_com *newlist;
+  if (pos < 0 || pos >= count)
+    return;
+  newlist = calloc((size_t)count, sizeof(*newlist));
+  TEST_ASSERT_NOT_NULL(newlist);
+  for (i = 0, l = 0; i < count; i++)
+    if (i != pos)
+      newlist[l++] = zone->cmd[i];
+  newlist[count - 1].command = 'S';
+  free(zone->cmd);
+  zone->cmd = newlist;
+}
+
 int copy_object(struct obj_data *to, struct obj_data *from) { *to = *from; return TRUE; }
 obj_rnum add_object(struct obj_data *newobj, obj_vnum ovnum) { (void)newobj; return real_object(ovnum); }
 int delete_object(obj_rnum rnum) { (void)rnum; return NOTHING; }
@@ -425,6 +491,182 @@ static void test_redit_save_refuses_scratch_holding_live_contents(void)
   OLC_ROOM(d)->contents = NULL;
 }
 
+/* ------------------------------------------------------------------ */
+/* Prototype table fixtures: heap arrays sized exactly to the table so */
+/* ASan flags any index past the end.                                  */
+/* ------------------------------------------------------------------ */
+static struct zone_data zone_fixture;
+
+static void make_objects(int n)
+{
+  int i;
+  free(obj_index);
+  free(obj_proto);
+  obj_index = calloc((size_t)n, sizeof(*obj_index));
+  obj_proto = calloc((size_t)n, sizeof(*obj_proto));
+  for (i = 0; i < n; i++) {
+    obj_index[i].vnum = 3000 + i;
+    obj_proto[i].item_number = i;
+    obj_proto[i].short_description = (char *)"a prototype";
+  }
+  top_of_objt = n - 1;
+}
+
+static void make_zone(void)
+{
+  memset(&zone_fixture, 0, sizeof(zone_fixture));
+  zone_fixture.number = 30;
+  zone_fixture.name = (char *)"Test zone";
+  zone_table = &zone_fixture;
+  top_of_zone_table = 0;
+}
+
+/* A zedit session for room 3001 with the given commands plus 'S'. */
+static void make_zedit_session(struct descriptor_data *d, const struct reset_com *cmds, int n)
+{
+  int i;
+  CREATE(OLC_ZONE(d), struct zone_data, 1);
+  CREATE(OLC_ZONE(d)->cmd, struct reset_com, n + 1);
+  for (i = 0; i < n; i++)
+    OLC_ZONE(d)->cmd[i] = cmds[i];
+  OLC_ZONE(d)->cmd[n].command = 'S';
+  OLC_NUM(d) = 3001;
+  OLC_ZNUM(d) = 0;
+  STATE(d) = CON_ZEDIT;
+}
+
+static void free_zedit_session(struct descriptor_data *d)
+{
+  if (d->olc && OLC_ZONE(d)) {
+    free(OLC_ZONE(d)->cmd);
+    free(OLC_ZONE(d));
+    OLC_ZONE(d) = NULL;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* F1-03: deletes renumber other sessions; stale rnums are reported.   */
+/* ------------------------------------------------------------------ */
+static void test_zedit_menu_reports_stale_object_rnum_instead_of_reading_past_table(void)
+{
+  struct descriptor_data *d = &builder_desc;
+  struct reset_com cmd;
+
+  make_objects(3);
+  make_zone();
+  memset(&cmd, 0, sizeof(cmd));
+  cmd.command = 'O';
+  cmd.arg1 = 3;          /* was top_of_objt before another builder deleted */
+  cmd.arg3 = 0;
+  make_zedit_session(d, &cmd, 1);
+  OLC_MODE(d) = ZEDIT_MAIN_MENU;
+
+  zedit_parse(d, "?");   /* any unknown choice redisplays the menu */
+
+  TEST_ASSERT_EQUAL_STRING("stale-rnum", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "object rnum 3 outside [0, 2]"));
+  TEST_ASSERT_NOT_NULL(strstr(out_buf, "<stale object rnum 3>"));
+  free_zedit_session(d);
+}
+
+static void test_object_delete_renumbers_other_builders_sessions(void)
+{
+  struct descriptor_data zedit_d, sedit_d, oedit_d;
+  struct char_data zb, sb, ob;
+  struct player_special_data sp;
+  struct reset_com cmds[3];
+
+  make_objects(4);
+  memset(&sp, 0, sizeof(sp));
+  memset(cmds, 0, sizeof(cmds));
+  cmds[0].command = 'O'; cmds[0].arg1 = 1;   /* the deleted prototype */
+  cmds[1].command = 'O'; cmds[1].arg1 = 3;   /* above it: moves down */
+  cmds[2].command = 'P'; cmds[2].arg1 = 0; cmds[2].arg3 = 2;
+
+  memset(&zedit_d, 0, sizeof(zedit_d)); memset(&zb, 0, sizeof(zb));
+  zb.player_specials = &sp; GET_IDNUM(&zb) = 7; zedit_d.character = &zb;
+  CREATE(zedit_d.olc, struct oasis_olc_data, 1);
+  make_zedit_session(&zedit_d, cmds, 3);
+
+  memset(&sedit_d, 0, sizeof(sedit_d)); memset(&sb, 0, sizeof(sb));
+  sb.player_specials = &sp; GET_IDNUM(&sb) = 8; sedit_d.character = &sb;
+  CREATE(sedit_d.olc, struct oasis_olc_data, 1);
+  CREATE(OLC_SHOP(&sedit_d), struct shop_data, 1);
+  CREATE(S_PRODUCTS(OLC_SHOP(&sedit_d)), obj_vnum, 4);
+  S_PRODUCT(OLC_SHOP(&sedit_d), 0) = 1;
+  S_PRODUCT(OLC_SHOP(&sedit_d), 1) = 2;
+  S_PRODUCT(OLC_SHOP(&sedit_d), 2) = 0;
+  S_PRODUCT(OLC_SHOP(&sedit_d), 3) = NOTHING;
+  S_KEEPER(OLC_SHOP(&sedit_d)) = NOBODY;
+  STATE(&sedit_d) = CON_SEDIT;
+
+  memset(&oedit_d, 0, sizeof(oedit_d)); memset(&ob, 0, sizeof(ob));
+  ob.player_specials = &sp; GET_IDNUM(&ob) = 9; oedit_d.character = &ob;
+  CREATE(oedit_d.olc, struct oasis_olc_data, 1);
+  OLC_OBJ(&oedit_d) = scratch_obj("edited elsewhere");
+  OLC_OBJ(&oedit_d)->item_number = 3;
+  STATE(&oedit_d) = CON_OEDIT;
+
+  descriptor_list = &zedit_d;
+  zedit_d.next = &sedit_d;
+  sedit_d.next = &oedit_d;
+
+  olc_renumber_sessions(OLC_RNUM_OBJ, 1, -1, NULL);
+
+  TEST_ASSERT_EQUAL_CHAR('*', OLC_ZONE(&zedit_d)->cmd[0].command);
+  TEST_ASSERT_EQUAL_INT(2, OLC_ZONE(&zedit_d)->cmd[1].arg1);
+  TEST_ASSERT_EQUAL_INT(0, OLC_ZONE(&zedit_d)->cmd[2].arg1);
+  TEST_ASSERT_EQUAL_INT(1, OLC_ZONE(&zedit_d)->cmd[2].arg3);
+  TEST_ASSERT_EQUAL_INT(1, S_PRODUCT(OLC_SHOP(&sedit_d), 0));
+  TEST_ASSERT_EQUAL_INT(0, S_PRODUCT(OLC_SHOP(&sedit_d), 1));
+  TEST_ASSERT_EQUAL_INT(NOTHING, S_PRODUCT(OLC_SHOP(&sedit_d), 2));
+  TEST_ASSERT_EQUAL_INT(2, GET_OBJ_RNUM(OLC_OBJ(&oedit_d)));
+  TEST_ASSERT_EQUAL_INT(2, tb_captured_errors);   /* zone cmd 0, product 0 */
+  TEST_ASSERT_EQUAL_STRING("WARNING", tb_captured_severity);
+  TEST_ASSERT_EQUAL_STRING("olc-session-renumber", tb_captured_operation);
+
+  descriptor_list = NULL;
+  free_zedit_session(&zedit_d);
+  free(zedit_d.olc);
+  free(S_PRODUCTS(OLC_SHOP(&sedit_d)));
+  free(OLC_SHOP(&sedit_d));
+  free(sedit_d.olc);
+  free_scratch_obj(OLC_OBJ(&oedit_d));
+  free(oedit_d.olc);
+}
+
+static void test_room_insert_leaves_nowhere_exits_alone(void)
+{
+  struct descriptor_data redit_d;
+  struct char_data rb;
+  struct player_special_data sp;
+  struct room_direction_data *north, *south;
+
+  memset(&sp, 0, sizeof(sp));
+  memset(&redit_d, 0, sizeof(redit_d)); memset(&rb, 0, sizeof(rb));
+  rb.player_specials = &sp; redit_d.character = &rb;
+  CREATE(redit_d.olc, struct oasis_olc_data, 1);
+  CREATE(OLC_ROOM(&redit_d), struct room_data, 1);
+  CREATE(north, struct room_direction_data, 1);
+  CREATE(south, struct room_direction_data, 1);
+  north->to_room = NOWHERE;   /* exit created in the menu, not yet set */
+  south->to_room = 4;
+  OLC_ROOM(&redit_d)->dir_option[NORTH] = north;
+  OLC_ROOM(&redit_d)->dir_option[SOUTH] = south;
+  STATE(&redit_d) = CON_REDIT;
+  descriptor_list = &redit_d;
+
+  olc_renumber_sessions(OLC_RNUM_ROOM, 2, +1, NULL);
+
+  TEST_ASSERT_EQUAL_INT(NOWHERE, north->to_room);
+  TEST_ASSERT_EQUAL_INT(5, south->to_room);
+
+  descriptor_list = NULL;
+  free(north); free(south);
+  free(OLC_ROOM(&redit_d));
+  free(redit_d.olc);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -433,5 +675,8 @@ int main(void)
   RUN_TEST(test_iedit_save_live_target_copies_and_logs_from_scratch);
   RUN_TEST(test_redit_copy_does_not_alias_source_contents);
   RUN_TEST(test_redit_save_refuses_scratch_holding_live_contents);
+  RUN_TEST(test_zedit_menu_reports_stale_object_rnum_instead_of_reading_past_table);
+  RUN_TEST(test_object_delete_renumbers_other_builders_sessions);
+  RUN_TEST(test_room_insert_leaves_nowhere_exits_alone);
   return UNITY_END();
 }
