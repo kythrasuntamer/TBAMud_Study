@@ -685,6 +685,17 @@ static const char *mag_summon_msgs[] = {
   "$n animates a corpse!"
 };
 
+/* Indexes into mag_summon_msgs[] used by mag_summons(). Name them rather
+ * than writing numbers: a missing comma once shifted every later entry and
+ * clone and animate dead printed their neighbours' messages. */
+#define MSG_SUMMON_CLONE     11   /* "$n magically divides!" */
+#define MSG_SUMMON_ANIMATE   12   /* "$n animates a corpse!" */
+#define NUM_MAG_SUMMON_MSGS  13
+/* Compile-time check (C99 has no _Static_assert): the array size must
+ * be -1, an error, if the table and the indexes above drift apart. */
+typedef char mag_summon_msgs_size_check[
+  (sizeof(mag_summon_msgs) / sizeof(mag_summon_msgs[0]) == NUM_MAG_SUMMON_MSGS) ? 1 : -1];
+
 /* Keep the \r\n because these use send_to_char. */
 static const char *mag_summon_fail_msgs[] = {
   "\r\n",
@@ -716,7 +727,7 @@ void mag_summons(int level, struct char_data *ch, struct obj_data *obj,
 
   switch (spellnum) {
   case SPELL_CLONE:
-    msg = 10;
+    msg = MSG_SUMMON_CLONE;
     fmsg = rand_number(2, 6);	/* Random fail message. */
     mob_num = MOB_CLONE;
     /*
@@ -742,7 +753,7 @@ void mag_summons(int level, struct char_data *ch, struct obj_data *obj,
     handle_corpse = TRUE;
     /* The zombie's load trigger below may purge the corpse. */
     corpse_uid = obj_script_id(obj);
-    msg = 11;
+    msg = MSG_SUMMON_ANIMATE;
     fmsg = rand_number(2, 6);	/* Random fail message. */
     mob_num = MOB_ZOMBIE;
     pfail = 10;	/* 10% failure, should vary in the future. */
