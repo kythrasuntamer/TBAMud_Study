@@ -73,7 +73,8 @@ int entry_mtrigger(char_data *ch) { (void)ch; return 1; }
 int enter_wtrigger(struct room_data *room, char_data *actor, int dir)
 { (void)room; (void)actor; (void)dir; return 1; }
 void entry_memory_mtrigger(char_data *ch) { (void)ch; }
-int greet_mtrigger(char_data *actor, int dir) { (void)actor; (void)dir; return 1; }
+int greet_mtrigger(char_data *actor, int dir)
+{ return fx_fire(FX_GREET_MTRIG, actor, NULL, dir); }
 void greet_memory_mtrigger(char_data *actor) { (void)actor; }
 void extract_script(void *thing, int type) { (void)thing; (void)type; }
 void free_proto_script(void *thing, int type) { (void)thing; (void)type; }
@@ -176,6 +177,7 @@ struct index_data **trig_index;
 struct trig_data *trigger_list;
 int top_of_trigt;
 long max_obj_id = OBJ_ID_BASE;
+long max_mob_id = MOB_ID_BASE;  /* char_script_id(): follower snapshots */
 struct message_list fight_messages[MAX_MESSAGES];
 
 int House_can_enter(struct char_data *ch, room_vnum house)

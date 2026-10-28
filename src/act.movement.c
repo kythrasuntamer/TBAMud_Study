@@ -375,10 +375,59 @@ int do_simple_move(struct char_data *ch, int dir, int need_specials_check)
   return (1);
 }
 
+/* Copies leader's followers into a new array of (character, UID) marks and
+ * returns how many; *marks is NULL when there are none, otherwise the
+ * caller frees it. See struct follower_mark (act.h) for why. */
+int snapshot_followers(struct char_data *leader, struct follower_mark **marks)
+{
+  struct follow_type *k;
+  int count = 0, n = 0;
+
+  *marks = NULL;
+  for (k = leader->followers; k; k = k->next)
+    count++;
+  if (count == 0)
+    return 0;
+  CREATE(*marks, struct follower_mark, count);
+  for (k = leader->followers; k && n < count; k = k->next, n++) {
+    (*marks)[n].ch = k->follower;
+    (*marks)[n].uid = char_script_id(k->follower);
+  }
+  return n;
+}
+
+/* TRUE when mark still names a live follower of leader: the character the
+ * UID registry holds under its UID (compared before the pointer is read),
+ * not pending extraction, and still following leader. A follower that a
+ * trigger purged, killed or released since the snapshot is reported for
+ * the caller (follower-changed) and FALSE returned: it must not be used. */
+int follower_mark_live(const struct follower_mark *mark,
+                       struct char_data *leader, const char *caller)
+{
+  struct char_data *f = mark->ch;
+
+  if (find_char(mark->uid) != f) {
+    TB_WARN_MSG("act", "follower-changed", caller,
+                "follower uid %ld of " DIAG_CHAR_FMT " no longer exists;"
+                " skipped", mark->uid, DIAG_CHAR(leader));
+    return FALSE;
+  }
+  if (CHAR_PENDING_EXTRACTION(f) || f->master != leader) {
+    TB_WARN_MSG("act", "follower-changed", caller,
+                "follower " DIAG_CHAR_FMT " uid %ld of " DIAG_CHAR_FMT
+                " was %s by a trigger; skipped", DIAG_CHAR(f), mark->uid,
+                DIAG_CHAR(leader),
+                CHAR_PENDING_EXTRACTION(f) ? "extracted" : "released");
+    return FALSE;
+  }
+  return TRUE;
+}
+
 int perform_move(struct char_data *ch, int dir, int need_specials_check)
 {
   room_rnum was_in;
-  struct follow_type *k, *next;
+  struct follower_mark *marks;
+  int count, i;
 
   if (ch == NULL || dir < 0 || dir >= NUM_OF_DIRS || FIGHTING(ch))
     return (0);
@@ -400,21 +449,25 @@ int perform_move(struct char_data *ch, int dir, int need_specials_check)
       return (0);
 
     /* Each follower's perform_move() recurses (moving its own followers)
-     * and runs leave/entry/greet triggers. follow_type nodes are freed by
-     * stop_follower(), which those triggers can reach (a script that makes
-     * a mob stop following, purges a follower, or kills one); 'next' is
-     * read before the call, so a trigger that frees the next node of
-     * ch->followers leaves this loop holding a dangling pointer. Code
-     * reached from here must not call stop_follower() on another follower
-     * of ch; detaching the follower currently moving is safe. */
-    for (k = ch->followers; k; k = next) {
-      next = k->next;
-      if ((IN_ROOM(k->follower) == was_in) &&
-	  (GET_POS(k->follower) >= POS_STANDING)) {
-	act("You follow $N.\r\n", FALSE, k->follower, 0, ch, TO_CHAR);
-	perform_move(k->follower, dir, 1);
-      }
+     * and runs leave/entry/greet triggers, and act() runs act triggers.
+     * Those can make any follower of ch stop following (stop_follower()
+     * frees its follow_type node), purge or kill one, or extract ch. The
+     * loop used to keep 'next' across them, so a trigger releasing the next
+     * follower left it reading a freed node. Walk a snapshot instead and
+     * re-check each follower before it is used (struct follower_mark). */
+    count = snapshot_followers(ch, &marks);
+    for (i = 0; i < count; i++) {
+      struct char_data *f = marks[i].ch;
+
+      if (!follower_mark_live(&marks[i], ch, "perform_move") ||
+          IN_ROOM(f) != was_in || GET_POS(f) < POS_STANDING)
+        continue;
+      act("You follow $N.\r\n", FALSE, f, 0, ch, TO_CHAR);
+      if (follower_mark_live(&marks[i], ch, "perform_move") &&
+          IN_ROOM(f) == was_in)
+        perform_move(f, dir, 1);
     }
+    free(marks);
     return (1);
   }
   return (0);

@@ -189,6 +189,19 @@ ACMD(do_sleep);
 ACMD(do_stand);
 ACMD(do_unfollow);
 ACMD(do_wake);
+/* A follower recorded before a loop over leader->followers whose body runs
+ * triggers (moving, ordering): those can make any follower stop following
+ * (stop_follower() frees its follow_type node at once), purge or kill one,
+ * or extract the leader, so the list itself must not be walked across
+ * them. Snapshot it with snapshot_followers() and re-check each mark with
+ * follower_mark_live() before it is used. */
+struct follower_mark {
+  struct char_data *ch; /* compared, not read, until the UID confirms it */
+  long uid;             /* char_script_id() when the snapshot was taken */
+};
+int snapshot_followers(struct char_data *leader, struct follower_mark **marks);
+int follower_mark_live(const struct follower_mark *mark,
+                       struct char_data *leader, const char *caller);
 /* Global variables from act.movement.c */
 extern const char *cmd_door[];
 
