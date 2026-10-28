@@ -429,7 +429,8 @@ if(Python3_Interpreter_FOUND)
         COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/test_util_tools.py
                 autowiz=$<TARGET_FILE:autowiz>
-                plrtoascii=$<TARGET_FILE:plrtoascii>)
+                plrtoascii=$<TARGET_FILE:plrtoascii>
+                rebuildMailIndex=$<TARGET_FILE:rebuildMailIndex>)
 endif()
 
 # Production utils.c guards (column_list, followers, get_line, colour

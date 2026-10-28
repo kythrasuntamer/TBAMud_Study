@@ -99,6 +99,50 @@ def autowiz_high_flag_letter_is_defined(tmp):
     check("Alice" in wiz, "record with flag Z lost:\n" + wiz)
 
 
+# ------------------------------------------------------- rebuildMailIndex
+
+def mail_index(tmp, files):
+    for name, text in files.items():
+        write(os.path.join(tmp, "mail", name), text)
+    rc, out, err = run("rebuildMailIndex", [os.path.join(tmp, "index")],
+                       os.path.join(tmp, "mail"))
+    return rc, read(os.path.join(tmp, "index")), out, err
+
+
+def mail_file(flag_line):
+    return ("MlID: 7\nSend: 1\nReci: 2\nSent: 1700000000\nSubj: hi\n"
+            "Flag: %s\n" % flag_line)
+
+
+@test("rebuildMailIndex")
+def mail_index_closes_directories(tmp):
+    """I2-25: walkdir never called closedir (LSan: DIR leaked per level)."""
+    rc, index, out, err = mail_index(tmp, {"a/x.ml": mail_file("0 0 0 0")})
+    check(rc == 0, "rc=%d err=%s" % (rc, err))
+    check(re.search(r"^7 0 1 2 1700000000 +hi$", index, re.M),
+          "record missing:\n" + index)
+
+
+@test("rebuildMailIndex")
+def mail_index_skips_symlink_loop(tmp):
+    """I2-25: a directory symlink was followed through stat()."""
+    os.makedirs(os.path.join(tmp, "mail", "a"))
+    os.symlink("..", os.path.join(tmp, "mail", "a", "loop"))
+    rc, index, out, err = mail_index(tmp, {"a/x.ml": mail_file("0 0 0 0")})
+    check(rc == 0, "rc=%d err=%s" % (rc, err))
+    check("mail-symlink-skipped" in operations(err), err)
+    check(index.count("\n7 ") == 1, "record indexed more than once:\n" + index)
+
+
+@test("rebuildMailIndex")
+def mail_flag_bit31_is_defined(tmp):
+    """I2-08: flag 'F' (bit 31) was `1 << 31` on int in the flag helpers."""
+    rc, index, out, err = mail_index(tmp, {"x.ml": mail_file("F 0 0 0")})
+    check(rc == 0, "rc=%d err=%s" % (rc, err))
+    check(re.search(r"^7 0 1 2 1700000000 +hi$", index, re.M),
+          "record missing:\n" + index)
+
+
 # ------------------------------------------------------------- plrtoascii
 
 def plr_record_size(tmp):

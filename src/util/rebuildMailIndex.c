@@ -86,7 +86,7 @@ typedef enum boolean_type {
 #define MAIL_READ     5  /* Mail has been read by recipient         */
 #define MAIL_DRAFT    6  /* Mail is a draft (not yet sent)          */
 
-void walkdir(FILE* index_file, char *dir);
+int walkdir(FILE* index_file, char *dir);
 int get_line(FILE *fl, char *buf);
 unsigned long asciiflag_conv(char *flag);
 int sprintascii(char *out, unsigned long bits);
@@ -94,6 +94,7 @@ int sprintascii(char *out, unsigned long bits);
 int main(int argc, char** argv)
 {
   FILE *index_file;
+  int errors;
   if ( argc == 1 )	{
     printf("Usage: %s indexfile\n",argv[0]);
     return 0;
@@ -107,10 +108,17 @@ int main(int argc, char** argv)
   if (fprintf(index_file, "# Format: <ID> <flags> <sender ID/vnum> <recipient ID> <time> <subject>\n") < 0) UTIL_REPORT_ERRNO("fprintf", argv[1]);
   if (fprintf(index_file, "# For 'No Subject', use (null)\n") < 0) UTIL_REPORT_ERRNO("fprintf", argv[1]);
 
-  walkdir(index_file, ".");
+  errors = walkdir(index_file, ".");
 
   if (fprintf(index_file, "~\n") < 0) UTIL_REPORT_ERRNO("fprintf", argv[1]);
   if (fclose(index_file) != 0) UTIL_REPORT_ERRNO("fclose", argv[1]);
+  if (errors > 0) {
+    /* Each skipped entry was reported where it failed. */
+    TB_REPORT_DOMAIN_ERRORF(TB_SEV_ERROR, TB_ERR_PERSISTENCE,
+                            "mail-index-incomplete",
+                            "index=%s skipped=%d", argv[1], errors);
+    return 1;
+  }
   return 0;
 }
 
@@ -226,38 +234,56 @@ long parselast(FILE *plr_file) {
 }
 
 
-void walkdir(FILE *index_file, char *dir) {
+/* Index every *.ml file under dir, recursing into subdirectories.  Returns
+ * the number of entries that were reported and left out of the index (an
+ * unreadable directory, a path too long, a failed lstat or fopen), so main()
+ * can exit non-zero when the index is incomplete.  Symbolic links are not
+ * followed: a link back up the tree would otherwise recurse until the path
+ * buffer fills, and each level held an open DIR. */
+int walkdir(FILE *index_file, char *dir) {
   char filename_qfd[1000], *subject, bits[65];
   struct dirent *dp;
   long id, sender, recipient, sent_time;
-  int flags;
+  int flags, errors = 0;
   DIR *dfd;
   FILE *mail_file;
 
   if ((dfd = opendir(dir)) == NULL)
   {
     TB_REPORT_DOMAIN_ERRNO(TB_SEV_ERROR, TB_ERR_PERSISTENCE, "opendir", dir);
-    return;
+    return 1;
   }
   while ((dp = readdir(dfd)) != NULL)
   {
     struct stat stbuf ;
     if (snprintf(filename_qfd, sizeof(filename_qfd), "%s/%s", dir, dp->d_name) >= (int)sizeof(filename_qfd)) {
-    TB_REPORT_DOMAIN_ERROR(TB_SEV_ERROR, TB_ERR_PERSISTENCE,
-                           "path-build", "mail index path exceeds buffer");
+    TB_REPORT_DOMAIN_ERRORF(TB_SEV_ERROR, TB_ERR_PERSISTENCE,
+                            "path-build", "dir=%.200s entry=%.200s: mail "
+                            "index path exceeds %zu bytes", dir, dp->d_name,
+                            sizeof(filename_qfd));
+    errors++;
     continue;
   }
 
-    if( stat(filename_qfd,&stbuf ) == -1 ) {
-      if (fprintf(stdout, "Unable to stat file: %s\n", filename_qfd) < 0) UTIL_REPORT_ERRNO("fprintf", "stdout");
+    if (lstat(filename_qfd, &stbuf) == -1) {
+      UTIL_REPORT_ERRNO("lstat", filename_qfd);
+      errors++;
       continue ;
+    }
+
+    if (S_ISLNK(stbuf.st_mode)) {
+      TB_REPORT_DOMAIN_ERRORF(TB_SEV_WARN, TB_ERR_PERSISTENCE,
+                              "mail-symlink-skipped",
+                              "path=%s: symbolic links are not followed",
+                              filename_qfd);
+      continue;
     }
 
     if ( ( stbuf.st_mode & S_IFMT ) == S_IFDIR ) {
       if (!strcmp(".", dp->d_name) || !strcmp("..", dp->d_name))
         continue;
 
-      walkdir(index_file, filename_qfd);
+      errors += walkdir(index_file, filename_qfd);
   	} else {
       char *name = parsefilename(dp->d_name);
 
@@ -266,6 +292,7 @@ void walkdir(FILE *index_file, char *dir) {
         mail_file = fopen(filename_qfd, "r");
         if (!mail_file) {
           UTIL_REPORT_ERRNO("fopen", filename_qfd);
+          errors++;
           continue;
         }
 
@@ -285,6 +312,12 @@ void walkdir(FILE *index_file, char *dir) {
       }
     }
   }
+  /* Each recursion level holds one DIR (and file descriptor) until here. */
+  if (closedir(dfd) != 0) {
+    UTIL_REPORT_ERRNO("closedir", dir);
+    errors++;
+  }
+  return errors;
 }
 
 int get_line(FILE *fl, char *buf)
