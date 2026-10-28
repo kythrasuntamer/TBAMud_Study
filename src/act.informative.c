@@ -64,6 +64,12 @@
  * login completes). Evaluates d twice: pass a plain variable. */
 #define REAL_CHAR(d)  ((d)->original ? (d)->original : (d)->character)
 
+/** TRUE if a mob, object or room has a script with at least one trigger.
+ * A script_data can exist with no triggers (it may hold only global
+ * variables), so the "[T%d]"/"[TRIGS]" displays must test both before
+ * reading TRIGGERS(SCRIPT(thing))->next. Evaluates thing twice. */
+#define SCRIPT_HAS_TRIGGERS(thing)  (SCRIPT(thing) && TRIGGERS(SCRIPT(thing)))
+
 /* Nonnegative level argument or low-high range with checked conversion. */
 static int parse_info_level_range(const char *input, int *low, int *high)
 {
@@ -192,7 +198,7 @@ static void show_obj_to_char(struct obj_data *obj, struct char_data *ch, int mod
 
     if (!IS_NPC(ch) && PRF_FLAGGED(ch, PRF_SHOWVNUMS)) {
       send_to_char(ch, "[%d] ", GET_OBJ_VNUM(obj));
-      if (SCRIPT(obj)) {
+      if (SCRIPT_HAS_TRIGGERS(obj)) {
         if (!TRIGGERS(SCRIPT(obj))->next)
           send_to_char(ch, "[T%d] ", GET_TRIG_VNUM(TRIGGERS(SCRIPT(obj))));
         else
@@ -206,7 +212,7 @@ static void show_obj_to_char(struct obj_data *obj, struct char_data *ch, int mod
   case SHOW_OBJ_SHORT:
     if (!IS_NPC(ch) && PRF_FLAGGED(ch, PRF_SHOWVNUMS)) {
       send_to_char(ch, "[%d] ", GET_OBJ_VNUM(obj));
-      if (SCRIPT(obj)) {
+      if (SCRIPT_HAS_TRIGGERS(obj)) {
         if (!TRIGGERS(SCRIPT(obj))->next)
           send_to_char(ch, "[T%d] ", GET_TRIG_VNUM(TRIGGERS(SCRIPT(obj))));
         else
@@ -429,7 +435,7 @@ static void list_one_char(struct char_data *i, struct char_data *ch)
   if (!IS_NPC(ch) && PRF_FLAGGED(ch, PRF_SHOWVNUMS)) {
     if (IS_NPC(i))
       send_to_char(ch, "[%d] ", GET_MOB_VNUM(i));
-    if (SCRIPT(i) && TRIGGERS(SCRIPT(i))) {
+    if (SCRIPT_HAS_TRIGGERS(i)) {
       if (!TRIGGERS(SCRIPT(i))->next)
         send_to_char(ch, "[T%d] ", GET_TRIG_VNUM(TRIGGERS(SCRIPT(i))));
       else
@@ -1980,7 +1986,7 @@ static size_t print_object_location(const int num, const obj_data *obj, const ch
   if (len > buf_size)
     return len; // let the caller know we overflowed
 
-  if (SCRIPT(obj)) {
+  if (SCRIPT_HAS_TRIGGERS(obj)) {
     if (!TRIGGERS(SCRIPT(obj))->next)
       nlen = snprintf(buf + len, buf_size - len, "[T%d] ", GET_TRIG_VNUM(TRIGGERS(SCRIPT(obj))));
     else
@@ -2082,7 +2088,7 @@ static void perform_immort_where(char_data *ch, const char *arg)
           break;
         }
         len += nlen;
-        if (SCRIPT(i) && TRIGGERS(SCRIPT(i))) {
+        if (SCRIPT_HAS_TRIGGERS(i)) {
           if (!TRIGGERS(SCRIPT(i))->next)
             nlen = snprintf(buf + len, buf_size - len, "[T%d]", GET_TRIG_VNUM(TRIGGERS(SCRIPT(i))));
           else
