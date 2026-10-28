@@ -102,7 +102,7 @@ char *CAP(char *txt)
     if (*p == '\t') p += 2;  /* Skip \t sign and color letter/number */
     else {
       p += 2;                          /* Skip the CSI section of the ANSI code */
-      while (*p && !isalpha(*p)) p++;  /* Skip until a 'letter' is found */
+      while (*p && !isalpha((unsigned char)*p)) p++;  /* Skip until a 'letter' is found */
       if (*p) p++;                     /* Skip the letter */
     }
   }
@@ -2078,7 +2078,9 @@ IDXTYPE atoidx( const char *str_to_conv )
     return (IDXTYPE) result;
 }
 
-#define isspace_ignoretabs(c) ((c)!='\t' && isspace(c))
+/* ctype functions take an unsigned char value: a high-bit byte in a plain
+ * (signed) char would be a negative argument, which is undefined behaviour. */
+#define isspace_ignoretabs(c) ((c)!='\t' && isspace((unsigned char)(c)))
 
 /*
    strfrmt (String Format) function
