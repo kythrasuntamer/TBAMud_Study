@@ -727,9 +727,22 @@ void redit_parse(struct descriptor_data *d, char *arg)
       write_to_output(d, "Size limited to %d non-protocol characters.\r\n", MAX_ROOM_NAME / 2);
       break;
     }
+    /* Builder input. The visible length is checked above; colour codes
+     * can still push the stored bytes past MAX_ROOM_NAME - 1. Refuse that
+     * instead of cutting the string, which could split a code (and wrote
+     * arg[MAX_ROOM_NAME - 1] past the string's end, relying on the input
+     * buffer being at least that large). */
+    if (strlen(arg) >= MAX_ROOM_NAME) {
+      struct char_data *builder = d->character;
+      TB_WARN_MSG("olc", "redit-name-length", "room",
+                  "builder " DIAG_CHAR_FMT " room vnum %d name of %zu bytes refused (max %d)",
+                  DIAG_CHAR(builder), OLC_NUM(d), strlen(arg), MAX_ROOM_NAME - 1);
+      write_to_output(d, "That name is %zu bytes with colour codes; the limit is %d.\r\n",
+                      strlen(arg), MAX_ROOM_NAME - 1);
+      break;
+    }
     if (OLC_ROOM(d)->name)
       free(OLC_ROOM(d)->name);
-    arg[MAX_ROOM_NAME - 1] = '\0';
     OLC_ROOM(d)->name = str_udup(arg);
     break;
 

@@ -896,9 +896,17 @@ void medit_parse(struct descriptor_data *d, char *arg)
     if (GET_LDESC(OLC_MOB(d)))
       free(GET_LDESC(OLC_MOB(d)));
     if (arg && *arg) {
-      char buf[MAX_INPUT_LENGTH];
-  tb_snprintf(buf, sizeof(buf), "%s\r\n", arg);
-      GET_LDESC(OLC_MOB(d)) = strdup(buf);
+      /* Builder input of up to MAX_INPUT_LENGTH - 1 bytes plus "\r\n":
+       * size the copy from the input so the line ending is never cut off
+       * (a fixed MAX_INPUT_LENGTH buffer silently dropped it, and the
+       * room listing ran this mob into the next line). */
+      size_t len = strlen(arg);
+      char *ldesc;
+
+      CREATE(ldesc, char, len + 3);
+      memcpy(ldesc, arg, len);
+      memcpy(ldesc + len, "\r\n", 3);
+      GET_LDESC(OLC_MOB(d)) = ldesc;
     } else
       GET_LDESC(OLC_MOB(d)) = strdup("undefined");
 

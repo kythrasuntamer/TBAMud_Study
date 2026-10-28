@@ -244,7 +244,15 @@ void *tb_calloc_array_at(size_t count, size_t element_size,
 
 char *str_udup(const char *txt) { return strdup((txt && *txt) ? txt : "undefined"); }
 int genolc_checkstring(struct descriptor_data *d, char *arg) { (void)d; (void)arg; return TRUE; }
-int count_non_protocol_chars(char *str) { return (int)strlen(str); }
+int count_non_protocol_chars(char *str)   /* "\tX" is a colour code */
+{
+  int n = 0;
+  while (*str) {
+    if (*str == '\t' && str[1]) { str += 2; continue; }
+    n++; str++;
+  }
+  return n;
+}
 int is_number(const char *str)   /* interpreter.c */
 {
   if (*str == '-')
@@ -1845,6 +1853,32 @@ static void test_sedit_object_rnum_zero_can_be_a_product(void)
   OLC_SHOP(d) = NULL;
 }
 
+
+/* ------------------------------------------------------------------ */
+/* F1-27: long builder text is stored whole or refused, never cut.     */
+/* ------------------------------------------------------------------ */
+static void test_redit_name_over_byte_limit_is_refused_not_cut(void)
+{
+  struct descriptor_data *d = &builder_desc;
+  char name[MAX_INPUT_LENGTH];
+  int i;
+
+  for (i = 0; i < 60; i++)
+    memcpy(name + i * 3, "\tRa", 3);          /* 60 visible, 180 bytes */
+  name[180] = '\0';
+  CREATE(OLC_ROOM(d), struct room_data, 1);
+  OLC_ROOM(d)->name = strdup("Old name");
+  OLC_NUM(d) = 3001;
+  OLC_MODE(d) = REDIT_NAME;
+
+  redit_parse(d, name);
+
+  TEST_ASSERT_EQUAL_STRING("Old name", OLC_ROOM(d)->name);
+  TEST_ASSERT_EQUAL_INT(180, (int)strlen(name));
+  TEST_ASSERT_EQUAL_STRING("redit-name-length", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "room vnum 3001 name of 180 bytes"));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -1893,5 +1927,6 @@ int main(void)
   RUN_TEST(test_oedit_duplicate_apply_is_refused_and_neighbour_allowed);
   RUN_TEST(test_sedit_room_list_reports_deleted_room_without_rewriting);
   RUN_TEST(test_sedit_object_rnum_zero_can_be_a_product);
+  RUN_TEST(test_redit_name_over_byte_limit_is_refused_not_cut);
   return UNITY_END();
 }
