@@ -605,6 +605,7 @@ endif()
 add_executable(test_act_informative
     $<TARGET_OBJECTS:unity_vendor>
     ${MUD_SRCDIR}/act.informative.c
+    ${MUD_SRCDIR}/constants.c
     ${CMAKE_CURRENT_SOURCE_DIR}/test_act_informative.c
 )
 target_include_directories(test_act_informative PRIVATE ${TEST_INCLUDES})

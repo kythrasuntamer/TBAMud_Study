@@ -88,6 +88,34 @@ static size_t print_object_location(int num, const obj_data *obj, const char_dat
 #define SHOW_OBJ_SHORT    1
 #define SHOW_OBJ_ACTION   2
 
+/* Display strings of an object.
+ *
+ * The world loaders store NULL for an empty string: fread_string() returns
+ * NULL for a lone '~', and parse_object() only requires the name. Builders
+ * control these files (and oedit), so a NULL short or long description is
+ * possible in a running game. The display helpers below never dereference
+ * one: an object missing a string it needs is reported and not shown. */
+static bool obj_has_display_strings(const struct obj_data *obj, int mode)
+{
+  if (!obj->name || !obj->short_description)
+    return FALSE;
+  return mode != SHOW_OBJ_LONG || obj->description != NULL;
+}
+
+static void report_obj_display_strings(const struct obj_data *obj, int mode,
+                                       const struct char_data *ch)
+{
+  TB_ERROR_MSG("act", "obj-string-missing", "obj",
+               "obj vnum %d (room vnum %d) not shown to " DIAG_CHAR_FMT
+               " in display mode %d: name %s, short_description %s, "
+               "description %s", GET_OBJ_VNUM(obj),
+               IN_ROOM(obj) != NOWHERE ? (int)GET_ROOM_VNUM(IN_ROOM(obj)) : -1,
+               DIAG_CHAR(ch), mode,
+               obj->name ? "set" : "NULL",
+               obj->short_description ? "set" : "NULL",
+               obj->description ? "set" : "NULL");
+}
+
 static void show_obj_to_char(struct obj_data *obj, struct char_data *ch, int mode)
 {
   int found = 0;
@@ -99,6 +127,11 @@ static void show_obj_to_char(struct obj_data *obj, struct char_data *ch, int mod
      *  either the 'obj' or the 'ch' variable.  The error will indicate which
      *  was NULL by listing both of the pointers passed to it.  This is often a
      *  difficult one to trace, and may require stepping through a debugger. */
+    return;
+  }
+
+  if (mode != SHOW_OBJ_ACTION && !obj_has_display_strings(obj, mode)) {
+    report_obj_display_strings(obj, mode, ch);
     return;
   }
 
@@ -215,10 +248,18 @@ static void list_obj_to_char(struct obj_data *list, struct char_data *ch, int mo
   for (i = list; i; i = i->next_content) {
     num = 0;
 
+    /* Objects missing a display string are reported once and skipped; the
+     * grouping loops below also skip them so strcmp never sees NULL. */
+    if (!obj_has_display_strings(i, mode)) {
+      report_obj_display_strings(i, mode, ch);
+      continue;
+    }
+
     /* Check the list to see if we've already counted this object */
     for (j = list; j != i; j = j->next_content)
-      if ((j->short_description == i->short_description && j->name == i->name) ||
-          (!strcmp(j->short_description, i->short_description) && !strcmp(j->name, i->name)))
+      if (obj_has_display_strings(j, mode) &&
+          ((j->short_description == i->short_description && j->name == i->name) ||
+           (!strcmp(j->short_description, i->short_description) && !strcmp(j->name, i->name))))
         break; /* found a matching object */
     if (j != i)
       continue; /* we counted object i earlier in the list */
@@ -226,8 +267,9 @@ static void list_obj_to_char(struct obj_data *list, struct char_data *ch, int mo
     /* Count matching objects, including this one */
     for (display = j = i; j; j = j->next_content)
       /* This if-clause should be exactly the same as the one in the loop above */
-      if ((j->short_description == i->short_description && j->name == i->name) ||
-          (!strcmp(j->short_description, i->short_description) && !strcmp(j->name, i->name)))
+      if (obj_has_display_strings(j, mode) &&
+          ((j->short_description == i->short_description && j->name == i->name) ||
+           (!strcmp(j->short_description, i->short_description) && !strcmp(j->name, i->name))))
         if (CAN_SEE_OBJ(ch, j)) {
           ++num;
           /* If the original item can't be seen, switch it for this one */
@@ -372,6 +414,16 @@ static void list_one_char(struct char_data *i, struct char_data *ch)
     return;
   }
 
+  if (IS_NPC(i) && !i->player.short_descr) {
+    /* parse_mobile stores NULL for an empty short description (builder
+     * data); PERS() and this line would dereference it. */
+    TB_ERROR_MSG("act", "mob-string-missing", "char",
+                 "mob vnum %d in room vnum %d has a NULL short_descr; not "
+                 "shown to " DIAG_CHAR_FMT, (int)GET_MOB_VNUM(i),
+                 IN_ROOM(i) != NOWHERE ? (int)GET_ROOM_VNUM(IN_ROOM(i)) : -1,
+                 DIAG_CHAR(ch));
+    return;
+  }
   if (IS_NPC(i))
     send_to_char(ch, "%c%s", UPPER(*i->player.short_descr), i->player.short_descr + 1);
   else
@@ -663,9 +715,20 @@ char *find_exdesc(char *word, struct extra_descr_data *list)
 {
   struct extra_descr_data *i;
 
-  for (i = list; i; i = i->next)
+  for (i = list; i; i = i->next) {
+    /* The E-block parsers store NULL for an empty keyword line. The owner
+     * (room or object) is not known here, so the caller's location and the
+     * description length identify it. */
+    if (!i->keyword) {
+      TB_ERROR_MSG("act", "exdesc-keyword-missing", "extra_descr",
+                   "extra description with a NULL keyword skipped "
+                   "(description length %zu)",
+                   i->description ? strlen(i->description) : (size_t)0);
+      continue;
+    }
     if (*i->keyword == '.' ? isname(word, i->keyword + 1) : isname(word, i->keyword))
       return (i->description);
+  }
 
   return (NULL);
 }
@@ -796,6 +859,13 @@ ACMD(do_look)
       struct extra_descr_data *i;
 
       for (i = world[IN_ROOM(ch)].ex_description; i; i = i->next) {
+        if (!i->keyword || !i->description) {
+          TB_ERROR_MSG("act", "exdesc-keyword-missing", "extra_descr",
+                       "room vnum %d extra description has NULL %s; skipped",
+                       (int)GET_ROOM_VNUM(IN_ROOM(ch)),
+                       !i->keyword ? "keyword" : "description");
+          continue;
+        }
         if (*i->keyword != '.') {
           send_to_char(ch, "%s%s:\r\n%s",
           (found ? "\r\n" : ""), i->keyword, i->description);

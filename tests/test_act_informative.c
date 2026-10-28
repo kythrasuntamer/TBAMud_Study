@@ -23,6 +23,12 @@ struct aq_data *aquest_table = NULL;
 qst_rnum total_quests = 0;
 
 struct player_special_data dummy_mob;
+struct room_data *world = NULL;
+room_rnum top_of_world = 0;
+struct obj_data *object_list = NULL;
+struct char_data *character_list = NULL;
+struct index_data *obj_index = NULL;
+obj_rnum top_of_objt = 0;
 struct index_data *mob_index = NULL;
 mob_rnum top_of_mobt = 0;
 
@@ -37,6 +43,29 @@ int compute_armor_class(struct char_data *ch) { (void)ch; return 100; }
 int level_exp(int chclass, int level) { (void)chclass; return level * 1000; }
 bool affected_by_spell(struct char_data *ch, int spell) { (void)ch; (void)spell; return FALSE; }
 int room_is_dark(room_rnum room) { (void)room; return 0; }
+struct config_data config_info;
+struct index_data **trig_index = NULL;
+bool can_see_map(struct char_data *ch) { (void)ch; return FALSE; }
+void str_and_map(char *str, struct char_data *ch, room_vnum target_room)
+{ (void)str; (void)ch; (void)target_room; }
+void sprintbitarray(int bitvector[], const char *names[], int maxar,
+                    char *result, size_t reslen)
+{ (void)bitvector; (void)names; (void)maxar; if (reslen) *result = '\0'; }
+/* act() output is not under test; the formatter has its own tests. */
+char *act_at(const char *src_file, int src_line, const char *src_func,
+             const char *str, int hide_invisible, struct char_data *ch,
+             struct obj_data *obj, void *vict_obj, int type)
+{
+  (void)src_file; (void)src_line; (void)src_func; (void)str;
+  (void)hide_invisible; (void)ch; (void)obj; (void)vict_obj; (void)type;
+  return NULL;
+}
+/* Paged output is captured like direct output. */
+void page_string(struct descriptor_data *d, char *str, int keep_internal)
+{
+  (void)keep_internal;
+  send_to_char(d ? d->character : NULL, "%s", str);
+}
 /* Same lookup as quest.c's real_quest(): linear search by vnum. */
 qst_rnum real_quest(qst_vnum vnum)
 {
@@ -198,6 +227,131 @@ static void score_with_unloaded_quest_is_reported(void)
   free_player(ch);
 }
 
+/* --- G2-03: objects and mobs with NULL display strings ----------------- */
+
+/* One lit room (vnum 3001) the viewer stands in. */
+static struct room_data test_room;
+static struct descriptor_data viewer_desc;
+
+static void enter_test_room(struct char_data *ch)
+{
+  memset(&test_room, 0, sizeof(test_room));
+  test_room.number = 3001;
+  test_room.name = (char *)"Test Room";
+  test_room.description = (char *)"A plain room.\r\n";
+  test_room.light = 1;
+  world = &test_room;
+  top_of_world = 0;
+  memset(&viewer_desc, 0, sizeof(viewer_desc));
+  ch->desc = &viewer_desc;
+  IN_ROOM(ch) = 0;
+  test_room.people = ch;
+}
+
+static void leave_test_room(struct char_data *ch)
+{
+  ch->desc = NULL;
+  world = NULL;
+}
+
+static struct obj_data *make_room_obj(const char *name, const char *shortd,
+                                      const char *longd)
+{
+  struct obj_data *obj = calloc(1, sizeof(*obj));
+
+  TEST_ASSERT_NOT_NULL(obj);
+  obj->item_number = NOTHING;
+  obj->name = name ? strdup(name) : NULL;
+  obj->short_description = shortd ? strdup(shortd) : NULL;
+  obj->description = longd ? strdup(longd) : NULL;
+  IN_ROOM(obj) = 0;
+  obj->next_content = test_room.contents;
+  test_room.contents = obj;
+  return obj;
+}
+
+static void free_room_objs(void)
+{
+  struct obj_data *obj, *next;
+
+  for (obj = test_room.contents; obj; obj = next) {
+    next = obj->next_content;
+    free(obj->name);
+    free(obj->short_description);
+    free(obj->description);
+    free(obj);
+  }
+  test_room.contents = NULL;
+}
+
+static void look_skips_object_without_long_description(void)
+{
+  struct char_data *ch = make_player(7);
+
+  enter_test_room(ch);
+  make_room_obj("sword", "a sword", "A sword lies here.");
+  make_room_obj("ghost", "a ghost item", NULL);
+  look_at_room(ch, TRUE);
+  TEST_ASSERT_NOT_NULL(strstr(sent, "A sword lies here."));
+  TEST_ASSERT_NULL(strstr(sent, "ghost"));
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("obj-string-missing", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "room vnum 3001"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "description NULL"));
+  free_room_objs();
+  leave_test_room(ch);
+  free_player(ch);
+}
+
+/* The grouping loop strcmp()s every earlier object against the current one. */
+static void look_groups_past_object_without_short_description(void)
+{
+  struct char_data *ch = make_player(7);
+
+  enter_test_room(ch);
+  make_room_obj("coin", "a coin", "A coin lies here.");
+  make_room_obj("coin", NULL, "A broken coin lies here.");
+  make_room_obj("coin", "a coin", "A coin lies here.");
+  look_at_room(ch, TRUE);
+  TEST_ASSERT_NOT_NULL(strstr(sent, "( 2) "));
+  TEST_ASSERT_NULL(strstr(sent, "broken"));
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("obj-string-missing", tb_captured_operation);
+  free_room_objs();
+  leave_test_room(ch);
+  free_player(ch);
+}
+
+static void look_skips_mob_without_short_description(void)
+{
+  struct char_data *ch = make_player(7);
+  struct char_data *mob = make_player(0);
+  struct index_data mob_idx;
+
+  memset(&mob_idx, 0, sizeof(mob_idx));
+  mob_idx.vnum = 3010;
+  mob_index = &mob_idx;
+  top_of_mobt = 0;
+  enter_test_room(ch);
+  SET_BIT_AR(MOB_FLAGS(mob), MOB_ISNPC);
+  mob->nr = 0;
+  free(mob->player_specials);
+  mob->player_specials = &dummy_mob;
+  IN_ROOM(mob) = 0;
+  ch->next_in_room = mob;
+  look_at_room(ch, TRUE);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("mob-string-missing", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "mob vnum 3010"));
+  ch->next_in_room = NULL;
+  mob->player_specials = NULL;
+  free(mob->player.name);
+  free(mob);
+  mob_index = NULL;
+  leave_test_room(ch);
+  free_player(ch);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -206,5 +360,8 @@ int main(void)
   RUN_TEST(search_help_empty_table_misses);
   RUN_TEST(search_help_null_table_with_count_is_reported);
   RUN_TEST(score_with_unloaded_quest_is_reported);
+  RUN_TEST(look_skips_object_without_long_description);
+  RUN_TEST(look_groups_past_object_without_short_description);
+  RUN_TEST(look_skips_mob_without_short_description);
   return UNITY_END();
 }
