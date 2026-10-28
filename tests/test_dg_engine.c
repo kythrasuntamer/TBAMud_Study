@@ -1078,6 +1078,71 @@ static void wait_past_the_pulse_range_is_rejected(void)
   TEST_ASSERT_FALSE(tb_captured_has_op("event-schedule-overflow"));
 }
 
+/* Run the event queue until t's wait has fired (at most four seconds). */
+static void run_wait_out(trig_data *t)
+{
+  int i;
+
+  for (i = 0; i < 4 * PASSES_PER_SEC && GET_TRIG_WAIT(t); i++) {
+    pulse++;
+    event_process();
+  }
+  TEST_ASSERT_NULL(GET_TRIG_WAIT(t));
+}
+
+/* D2-03: OLC add_room()/delete_room() RECREATE world[], which can move every
+ * room, and update_wait_events() repoints only the rooms they shift. A room
+ * wait kept the old &world[rnum], so it was dropped as an unknown owner (or
+ * resumed on whatever room later reused the address). */
+static void room_wait_survives_world_reallocation(void)
+{
+  const char *lines[] = { "wait 1", "set done 1", "global done", NULL };
+  trig_data *t = make_trigger(WLD_TRIGGER, WTRIG_RANDOM, 0, lines);
+  room_data *old_world, *room;
+
+  CREATE(old_world, room_data, NUM_TEST_ROOMS);
+  memcpy(old_world, test_rooms, sizeof(test_rooms));
+  world = old_world;
+  room = &world[1];
+  attach_to_script(&SCRIPT(room), t);
+  script_driver(&room, t, WLD_TRIGGER, TRIG_NEW);
+  TEST_ASSERT_NOT_NULL(GET_TRIG_WAIT(t));
+
+  /* RECREATE(world) moved the array; nothing repointed this room's wait. */
+  memcpy(test_rooms, old_world, sizeof(test_rooms));
+  free(old_world);
+  world = test_rooms;
+
+  run_wait_out(t);
+  TEST_ASSERT_EQUAL_INT(0, GET_TRIG_DEPTH(t));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  TEST_ASSERT_NOT_NULL(SCRIPT(&world[1])->global_vars);
+  TEST_ASSERT_EQUAL_STRING("done", SCRIPT(&world[1])->global_vars->name);
+}
+
+/* D2-03: a room wait whose room no longer resolves is reported with the
+ * room's vnum and ends the trigger instead of leaving it at depth 1. */
+static void room_wait_with_lost_room_is_reported(void)
+{
+  const char *lines[] = { "set x 1", "wait 1", "set y 2", NULL };
+  trig_data *t = make_trigger(WLD_TRIGGER, WTRIG_RANDOM, 0, lines);
+  room_data *room = &world[top_of_world];
+
+  attach_to_script(&SCRIPT(room), t);
+  script_driver(&room, t, WLD_TRIGGER, TRIG_NEW);
+  TEST_ASSERT_NOT_NULL(GET_TRIG_WAIT(t));
+
+  world[top_of_world].number = 199;     /* vnum 102 no longer exists */
+  run_wait_out(t);
+  world[top_of_world].number = 100 + top_of_world;
+
+  TEST_ASSERT_EQUAL_INT(0, GET_TRIG_DEPTH(t));
+  TEST_ASSERT_NULL(GET_TRIG_VARS(t));
+  TEST_ASSERT_TRUE(TRIGGER_CHECK(t, WTRIG_RANDOM));
+  TEST_ASSERT_EQUAL_STRING("wait-owner-lost", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "room vnum 102"));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -1123,5 +1188,7 @@ int main(void)
   RUN_TEST(lost_remote_and_detach_miss_are_reported);
   RUN_TEST(dotted_variable_name_is_reported);
   RUN_TEST(wait_past_the_pulse_range_is_rejected);
+  RUN_TEST(room_wait_survives_world_reallocation);
+  RUN_TEST(room_wait_with_lost_room_is_reported);
   return UNITY_END();
 }

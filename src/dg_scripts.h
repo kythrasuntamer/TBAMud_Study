@@ -181,11 +181,15 @@ struct script_data {
   struct script_data *next;          /**< used for purged_scripts    */
 };
 
-/* The event data for the wait command */
+/* The event data for the wait command. For a room owner, go is only the room
+ * as it was when the wait began: OLC add_room()/delete_room() RECREATE
+ * world[], which can move every room, so trig_wait_event() finds the room
+ * again by owner_vnum. */
 struct wait_event_data {
   struct trig_data *trigger;
   void *go;
   int type;
+  room_vnum owner_vnum;   /**< WLD_TRIGGER: the room's vnum; else NOWHERE */
 };
 
 /* used for actor memory triggers */

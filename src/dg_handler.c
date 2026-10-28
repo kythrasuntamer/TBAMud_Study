@@ -464,9 +464,10 @@ void delete_variables(const char *charname)
 /** Repoint pending wait events of one room's triggers from 'from' to 'to'
  * after the room struct has been copied (genwld.c add/delete shifts).
  * @pre Called before 'from' is overwritten; reads SCRIPT(from).
- * Only covers the one room copied.  It does not fix wait events of rooms
- * that stay at the same index when RECREATE(world) moves the whole array;
- * their wait_event_data->go keeps the old address (finding D2-03). */
+ * Only covers the one room copied, so rooms that keep their index when
+ * RECREATE(world) moves the whole array keep the old address in go.  That
+ * is harmless: trig_wait_event() finds a room owner by its vnum
+ * (wait_event_data->owner_vnum) and never follows go (D2-03). */
 void update_wait_events(struct room_data *to, struct room_data *from)
 {
   struct trig_data *trig;

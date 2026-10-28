@@ -810,19 +810,46 @@ void check_time_triggers(void)
   }
 }
 
+/* TRUE when trig is one of sc's triggers (sc may be NULL). */
+static int dg_trig_in_script(const struct script_data *sc, const trig_data *trig)
+{
+  const trig_data *t;
+
+  for (t = sc ? TRIGGERS(sc) : NULL; t; t = t->next)
+    if (t == trig)
+      return TRUE;
+  return FALSE;
+}
+
 static EVENTFUNC(trig_wait_event)
 {
   struct wait_event_data *wait_event_obj = (struct wait_event_data *)event_obj;
   trig_data *trig;
   void *go;
   int type;
+  room_vnum owner_vnum;
+  room_rnum owner_rnum = NOWHERE;
 
   trig = wait_event_obj->trigger;
   go = wait_event_obj->go;
   type = wait_event_obj->type;
+  owner_vnum = wait_event_obj->owner_vnum;
 
   free(wait_event_obj);
   GET_TRIG_WAIT(trig) = NULL;
+
+  /* A room owner is found again by vnum, never through the saved pointer:
+   * OLC add_room()/delete_room() RECREATE world[], which can move every room,
+   * and update_wait_events() repoints only the rooms they shift, so go may
+   * point into the freed old array, or at another room that now occupies
+   * the address. The room the vnum names must still hold the trigger;
+   * otherwise go is NULL, which script_driver() refuses. */
+  if (type == WLD_TRIGGER) {
+    owner_rnum = real_room(owner_vnum);
+    go = (owner_rnum != NOWHERE &&
+          dg_trig_in_script(SCRIPT(&world[owner_rnum]), trig)) ?
+         &world[owner_rnum] : NULL;
+  }
 
 #if 1  /* debugging */
   {
@@ -837,24 +864,25 @@ static EVENTFUNC(trig_wait_event)
       for (obj = object_list;obj && !found;obj = obj->next)
         if (obj == (struct obj_data *)go)
           found = TRUE;
-    } else {
-      room_rnum i;
-      /* top_of_world is the last valid rnum, so it is included. Stopping
-       * short of it treated a wait on the last room as an unknown owner. */
-      for (i = 0;i<=top_of_world && !found;i++)
-        if (&world[i] == (struct room_data *)go)
-          found = TRUE;
-    }
+    } else
+      found = (go != NULL);   /* resolved by vnum above */
     if (!found) {
       /* Extraction cancels a trigger's wait event, so a missing owner is a
        * broken invariant. trig itself is still live (the event owned no
        * reference to free); end its suspended run so TRIGGER_CHECK() does
        * not refuse it forever with depth 1. */
-      TB_ERROR_MSG("dg", "wait-resume", "trig_wait_event",
-                   "trig vnum %d type %d: owner not live on resume; "
-                   "trigger ended (%d instances attached)",
-                   DIAG_TRIG_VNUM(trig), type,
-                   VALID_TRIG_RNUM(trig->nr) ? trig_index[trig->nr]->number : -1);
+      if (type == WLD_TRIGGER)
+        TB_ERROR_MSG("dg", "wait-owner-lost", "trig_wait_event",
+                     "trig vnum %d: owner room vnum %d %s on resume; "
+                     "trigger ended", DIAG_TRIG_VNUM(trig), owner_vnum,
+                     owner_rnum == NOWHERE ? "no longer exists"
+                                           : "no longer holds the trigger");
+      else
+        TB_ERROR_MSG("dg", "wait-resume", "trig_wait_event",
+                     "trig vnum %d type %d: owner not live on resume; "
+                     "trigger ended (%d instances attached)",
+                     DIAG_TRIG_VNUM(trig), type,
+                     VALID_TRIG_RNUM(trig->nr) ? trig_index[trig->nr]->number : -1);
       script_log("Trigger VNum %d: restart attempt on unknown entity.",
                  GET_TRIG_VNUM(trig));
       free_varlist(GET_TRIG_VARS(trig));
@@ -2184,6 +2212,9 @@ static int process_wait(void *go, trig_data *trig, int type, char *cmd,
   wait_event_obj->trigger = trig;
   wait_event_obj->go = go;
   wait_event_obj->type = type;
+  /* world[] can move before the wait ends; see trig_wait_event(). */
+  wait_event_obj->owner_vnum =
+    (type == WLD_TRIGGER) ? ((room_data *) go)->number : NOWHERE;
 
   GET_TRIG_WAIT(trig) = event_create(trig_wait_event, wait_event_obj, when);
   trig->curr_state = cl->next;
