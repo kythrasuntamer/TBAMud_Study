@@ -83,10 +83,43 @@ static void pager_page_on(char *out, size_t size)
     out[0] = '\0';
 }
 
+/* utils.c's contract (core-utils): a name outside [A-Za-z0-9_-] is not a
+ * safe path component and is refused with 0 (the real one also reports
+ * filename-name-invalid; this stand-in stays quiet so tests see only the
+ * caller's report). */
 int get_filename(char *filename, size_t fbufsize, int mode, const char *orig_name)
 {
+  const char *p;
+
   (void)mode;
+  if (orig_name == NULL || *orig_name == '\0')
+    return 0;
+  for (p = orig_name; *p; p++)
+    if (!isalnum((unsigned char)*p) && *p != '_' && *p != '-')
+      return 0;
   return snprintf(filename, fbufsize, "%s/%s.objs", scratch_dir, orig_name) > 0;
+}
+
+/* players.c: the fixture's player, also under the unsafe name a damaged
+ * index could hold. */
+long get_id_by_name(const char *name)
+{
+  return (!strcmp(name, "Tester") || !strcmp(name, "../evil")) ? 4242 : -1;
+}
+
+/* What the code under test told the player (or immortal). */
+static char told[MAX_STRING_LENGTH];
+size_t send_to_char(struct char_data *ch, const char *messg, ...)
+{
+  va_list args;
+  size_t used = strlen(told);
+
+  (void)ch;
+  va_start(args, messg);
+  if (vsnprintf(told + used, sizeof(told) - used, messg, args) < 0)
+    told[used] = '\0';
+  va_end(args);
+  return strlen(told);
 }
 
 /* Same contract as utils.c get_line(): skip blank and '*' lines, strip EOL,
@@ -347,6 +380,7 @@ void setUp(void)
     TEST_ASSERT_NOT_NULL(mkdtemp(scratch_dir));
   }
   paged[0] = '\0';
+  told[0] = '\0';
   pages = 0;
   live_objects = 0;
   fail_read_vnum = NOTHING;
@@ -819,6 +853,36 @@ static void test_repeated_string_tags_replace_their_copy(void)
   TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
 }
 
+/* Fuzzer PLAYER-3 (name-path): get_filename() now refuses a name that is
+ * not a safe path component, such as the "../" a damaged index or a pfile
+ * Name tag can supply. Every rent-file path must then refuse, report with
+ * the player's idnum and open or remove nothing; most returned silently. */
+static void test_rent_paths_refuse_an_unsafe_name(void)
+{
+  char unsafe[] = "../evil";
+
+  player.player.name = unsafe;
+
+  TEST_ASSERT_EQUAL_INT(1, Crash_load(&player));
+  TEST_ASSERT_FALSE(Crash_delete_crashfile(&player));
+  TEST_ASSERT_FALSE(Crash_delete_file(unsafe));
+  TEST_ASSERT_FALSE(Crash_clean_file(unsafe));
+  Crash_listrent(&player, unsafe);
+
+  TEST_ASSERT_EQUAL_STRING("rent-name\nrent-name\nrent-name\nrent-name\nrent-name\n",
+                           tb_captured_op_log);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail_log,
+                              "player idnum 4242: no safe rent file name; rent load refused"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail_log, "crash file delete refused"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail_log, "rent file delete refused"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail_log, "rent file clean refused"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail_log, "rent listing refused"));
+  TEST_ASSERT_NULL(strstr(tb_captured_detail_log, "../evil"));
+  TEST_ASSERT_NOT_NULL(strstr(told, "problem loading your objects"));
+  TEST_ASSERT_NOT_NULL(strstr(told, "That is not a valid player name."));
+  TEST_ASSERT_NULL(player.carrying);
+}
+
 /* --- receptionist fixtures: "offer" is command 1; every act() is kept. --- */
 SPECIAL(receptionist);
 static struct command_info offer_cmd_table[] = {
@@ -1044,6 +1108,7 @@ int main(void)
   RUN_TEST(test_listrent_pager_owns_its_copy);
   RUN_TEST(test_contents_without_container_reach_inventory);
   RUN_TEST(test_repeated_string_tags_replace_their_copy);
+  RUN_TEST(test_rent_paths_refuse_an_unsafe_name);
   (void)rmdir(scratch_dir);
   return UNITY_END();
 }

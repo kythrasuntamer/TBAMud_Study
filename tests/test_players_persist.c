@@ -37,9 +37,20 @@ void basic_mud_log(const char *format, ...) { (void)format; }
 void mudlog(int type, int level, int file, const char *str, ...)
 { (void)type; (void)level; (void)file; (void)str; }
 
+/* utils.c's contract (core-utils): a name outside [A-Za-z0-9_-] is not a
+ * safe path component and is refused with 0 (the real one also reports
+ * filename-name-invalid; this stand-in stays quiet so tests see only the
+ * caller's report). */
 int get_filename(char *filename, size_t fbufsize, int mode, const char *orig_name)
 {
+  const char *p;
+
   (void)mode;
+  if (orig_name == NULL || *orig_name == '\0')
+    return 0;
+  for (p = orig_name; *p; p++)
+    if (!isalnum((unsigned char)*p) && *p != '_' && *p != '-')
+      return 0;
   return snprintf(filename, fbufsize, "%s/%s.plr", scratch_dir, orig_name) > 0;
 }
 
@@ -489,6 +500,45 @@ static void test_remove_player_rejects_bad_position(void)
   leave_scratch();
 }
 
+/* Fuzzer PLAYER-3 (name-path): a damaged index can hold a name such as
+ * "../evil", which get_filename() now refuses. remove_player() skipped
+ * each refused file silently and still dropped the entry; it must delete
+ * nothing, report the idnum and keep the entry, and clean_pfiles() (which
+ * re-examines a slot after a removal) must move on rather than spin on
+ * it. The deleted player after it is still removed. */
+static void test_clean_pfiles_refuses_unsafe_name_and_moves_on(void)
+{
+  enter_scratch();
+  write_index("4242 ../evil 10 1 1000\n4243 other 5 1 1000\n~\n");
+  build_player_index();
+  TEST_ASSERT_EQUAL_INT(1, top_of_p_table);
+
+  clean_pfiles();
+
+  TEST_ASSERT_EQUAL_INT(0, top_of_p_table);
+  TEST_ASSERT_EQUAL_STRING("../evil", player_table[0].name);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_op_log, "pclean-name\n"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail_log,
+                              "player idnum 4242: no safe name for file type 0"));
+  TEST_ASSERT_NULL(strstr(tb_captured_detail_log, "../evil"));
+  leave_scratch();
+}
+
+/* Fuzzer PLAYER-3: load_char() returned -1 silently when get_filename()
+ * refused the index name; the refusal is now reported with the idnum. */
+static void test_load_char_refuses_unsafe_index_name(void)
+{
+  enter_scratch();
+  write_index("4242 ../evil 10 0 1000\n~\n");
+  build_player_index();
+
+  TEST_ASSERT_EQUAL_INT(-1, load_char("../evil", &player));
+
+  TEST_ASSERT_EQUAL_STRING("pfile-name", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "player idnum 4242: no safe player file name"));
+  leave_scratch();
+}
+
 /* B2-16: Clas/Levl/Sex index tables (class_abbrevs[], titles, exp) and
  * skills[] is unsigned char; out-of-range file values were stored as-is. */
 static void test_out_of_range_class_level_sex_skill(void)
@@ -820,6 +870,8 @@ int main(void)
   RUN_TEST(test_negative_class_is_rejected_at_load);
   RUN_TEST(test_lookups_after_free_player_index_find_nothing);
   RUN_TEST(test_remove_player_rejects_bad_position);
+  RUN_TEST(test_clean_pfiles_refuses_unsafe_name_and_moves_on);
+  RUN_TEST(test_load_char_refuses_unsafe_index_name);
   RUN_TEST(test_save_restores_worn_items_without_triggers);
   (void)rmdir(scratch_dir);
   return UNITY_END();

@@ -387,13 +387,27 @@ static void auto_equip(struct char_data *ch, struct obj_data *obj, int location)
     obj_to_char(obj, ch);
 }
 
+/* get_filename() refused a player name: it is not a safe path component
+ * (e.g. "../x" from a damaged index, a pfile Name tag, or 'show rent'
+ * text) and get_filename() reported why. Report which rent-file operation
+ * was refused, with the player's idnum (-1 for a name in no index entry);
+ * the raw name is never logged. The caller opens and removes nothing. */
+static void objsave_refused_name(long idnum, const char *operation)
+{
+  TB_ERROR_MSG("objsave", "rent-name", "rent-file",
+               "player idnum %ld: no safe rent file name; %s refused",
+               idnum, operation);
+}
+
 int Crash_delete_file(char *name)
 {
   char filename[MAX_INPUT_LENGTH];
   FILE *fl;
 
-  if (!get_filename(filename, sizeof(filename), CRASH_FILE, name))
+  if (!get_filename(filename, sizeof(filename), CRASH_FILE, name)) {
+    objsave_refused_name(name ? get_id_by_name(name) : -1, "rent file delete");
     return FALSE;
+  }
 
   if (!(fl = fopen(filename, "r"))) {
     if (errno != ENOENT)  /* if it fails but NOT because of no file */
@@ -417,8 +431,10 @@ int Crash_delete_crashfile(struct char_data *ch)
   int rentcode;
   char line[READ_SIZE];
 
-  if (!get_filename(filename, sizeof(filename), CRASH_FILE, GET_NAME(ch)))
+  if (!get_filename(filename, sizeof(filename), CRASH_FILE, GET_NAME(ch))) {
+    objsave_refused_name(GET_IDNUM(ch), "crash file delete");
     return FALSE;
+  }
 
   if (!(fl = fopen(filename, "r"))) {
     if (errno != ENOENT)  /* if it fails, NOT because of no file */
@@ -459,8 +475,10 @@ int Crash_clean_file(char *name)
   int rentcode, timed, netcost, gold, account, nitems;
   char line[READ_SIZE];
 
-  if (!get_filename(filename, sizeof(filename), CRASH_FILE, name))
+  if (!get_filename(filename, sizeof(filename), CRASH_FILE, name)) {
+    objsave_refused_name(name ? get_id_by_name(name) : -1, "rent file clean");
     return FALSE;
+  }
 
   /* Open so that permission problems will be flagged now, at boot time. */
   if (!(fl = fopen(filename, "r"))) {
@@ -530,9 +548,13 @@ void Crash_listrent(struct char_data *ch, char *name)
   int rentcode = RENT_UNDEF, timed, netcost, gold, account, nitems, numread;
   int listed = 0, total = 0;
   struct tb_buf out;
-  
-  if (!get_filename(filename, sizeof(filename), CRASH_FILE, name))
+
+  /* name is the immortal's 'show rent' argument. */
+  if (!get_filename(filename, sizeof(filename), CRASH_FILE, name)) {
+    send_to_char(ch, "That is not a valid player name.\r\n");
+    objsave_refused_name(name ? get_id_by_name(name) : -1, "rent listing");
     return;
+  }
 
   if (!(fl = fopen(filename, "r"))) {
     send_to_char(ch, "%s has no rent file.\r\n", name);
@@ -1697,8 +1719,15 @@ static int Crash_load_objs(struct char_data *ch) {
   int timed=0,netcost=0,gold,account,nitems;
 	obj_save_data *loaded, *current;
 
-  if (!get_filename(filename, sizeof(filename), CRASH_FILE, GET_NAME(ch)))
+  if (!get_filename(filename, sizeof(filename), CRASH_FILE, GET_NAME(ch))) {
+    /* GET_NAME() can come from the pfile's Name tag; the objects stay on
+     * disk for a God to recover once the name is repaired. */
+    objsave_refused_name(GET_IDNUM(ch), "rent load");
+    send_to_char(ch, "\r\n********************* NOTICE *********************\r\n"
+                     "There was a problem loading your objects from disk.\r\n"
+                     "Contact a God for assistance.\r\n");
     return 1;
+  }
 
   for (i = 0; i < MAX_BAG_ROWS; i++)
     cont_row[i] = NULL;

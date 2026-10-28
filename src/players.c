@@ -707,8 +707,16 @@ int load_char(const char *name, struct char_data *ch)
   if ((id = get_ptable_by_name(name)) < 0)
     return (-1);
   else {
-    if (!get_filename(filename, sizeof(filename), PLR_FILE, player_table[id].name))
+    /* get_filename() refuses (and reports) a name that is not a safe path
+     * component, such as "../x" from a damaged index; never open a path
+     * built from it. The raw name is not logged. */
+    if (!get_filename(filename, sizeof(filename), PLR_FILE, player_table[id].name)) {
+      TB_ERROR_MSG("player", "pfile-name", "player_table",
+                   "player idnum %ld: no safe player file name for its %zu-byte "
+                   "index name; not loaded", player_table[id].id,
+                   strlen(player_table[id].name));
       return (-1);
+    }
     if (!(fl = fopen(filename, "r"))) {
       int saved_errno = errno;
       mudlog(NRM, LVL_GOD, TRUE,
@@ -1366,7 +1374,8 @@ void tag_argument(char *argument, char *tag)
  * remove_player_from_index()); every held position >= pfilepos is stale
  * afterwards. Unlink failures other than "no such file" are logged.
  * A position outside the table, or an entry with no name, is reported
- * (index-pos) and nothing is deleted. */
+ * (index-pos) and nothing is deleted; so is a name get_filename() refuses
+ * (pclean-name), and that entry stays in the index for an admin. */
 void remove_player(int pfilepos)
 {
   char filename[MAX_STRING_LENGTH], timestr[25];
@@ -1388,6 +1397,18 @@ void remove_player(int pfilepos)
                  pfilepos, PT_IDNUM(pfilepos));
     return;
   }
+  /* Name every file before deleting any. get_filename() refuses (and
+   * reports) a name that is not a safe path component, such as "../x"
+   * from a damaged index: then nothing is unlinked, and the entry is kept
+   * rather than half-deleted. The raw name is not logged. */
+  for (i = 0; i < MAX_FILES; i++)
+    if (!get_filename(filename, sizeof(filename), i, PT_PNAME(pfilepos))) {
+      TB_ERROR_MSG("player", "pclean-name", "player_table",
+                   "player idnum %ld: no safe name for file type %d from its "
+                   "%zu-byte index name; nothing deleted", PT_IDNUM(pfilepos),
+                   i, strlen(PT_PNAME(pfilepos)));
+      return;
+    }
 
   /* Unlink all player-owned files */
   for (i = 0; i < MAX_FILES; i++) {
@@ -1426,12 +1447,25 @@ void remove_player(int pfilepos)
   save_player_index();
 }
 
+/* remove_player() for the sweep: TRUE only if the entry really left the
+ * table. remove_player() refuses (and reports) a player it cannot delete
+ * safely, e.g. one whose name get_filename() rejects; the sweep must then
+ * move on, not re-examine that slot forever. */
+static int pclean_remove(int pos)
+{
+  int before = top_of_p_table;
+
+  remove_player(pos);
+  return top_of_p_table < before;
+}
+
 /* Walk the player index and remove deleted or expired players.
  *
  * remove_player() compacts player_table: the entry after i moves into slot
  * i and top_of_p_table drops by one. The loop must therefore re-examine
  * slot i after a removal instead of advancing past it, or every player that
- * directly follows a removed one escapes the sweep. */
+ * directly follows a removed one escapes the sweep. A refused removal
+ * leaves the entry in place, so the loop moves on from it. */
 void clean_pfiles(void)
 {
   int i, ci, removed;
@@ -1445,16 +1479,14 @@ void clean_pfiles(void)
       /* If the player is already flagged for deletion, then go ahead and get
        * rid of him. */
       if (IS_SET(player_table[i].flags, PINDEX_DELETED)) {
-	remove_player(i);
-	removed = TRUE;
+	removed = pclean_remove(i);
       } else {
         /* Check to see if the player has overstayed his welcome based on level. */
 	for (ci = 0; pclean_criteria[ci].level > -1; ci++) {
 	  if (player_table[i].level <= pclean_criteria[ci].level &&
 	      ((time(0) - player_table[i].last) >
 	       (pclean_criteria[ci].days * SECS_PER_REAL_DAY))) {
-	    remove_player(i);
-	    removed = TRUE;
+	    removed = pclean_remove(i);
 	    break;
 	  }
 	}

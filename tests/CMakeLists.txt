@@ -1091,3 +1091,8 @@ if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
     set_tests_properties(test_players_extraneous_triggers_rejected PROPERTIES
         PASS_REGULAR_EXPRESSION "does not fire wear/remove triggers \\(B2-21\\)")
 endif()
+
+# clean_pfiles() re-examines a slot after a removal; if a refused removal
+# (a player whose files cannot be named safely) were counted as done, it
+# would spin forever. Fail such a regression instead of hanging.
+set_tests_properties(test_players_persist PROPERTIES TIMEOUT 60)

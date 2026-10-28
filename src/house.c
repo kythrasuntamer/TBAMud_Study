@@ -1117,7 +1117,13 @@ static int ascii_convert_house(struct char_data *ch, obj_vnum vnum)
 	struct obj_data *tmp;
 	int i, j=0, skipped = 0, saved;
 
-  House_get_filename(vnum, infile, sizeof(infile));
+  /* No name (vnum NOWHERE) leaves infile unwritten: never open it. */
+  if (!House_get_filename(vnum, infile, sizeof(infile))) {
+    TB_ERROR_MSG("house", "convert-name", "house-file",
+                 "house vnum %d has no object file name; not converted", vnum);
+    send_to_char(ch, "...no object file name; see server log\r\n");
+    return (0);
+  }
 
 	{
 	  size_t outfile_size = strlen(infile) + 7;
