@@ -17,6 +17,7 @@
 #include "oasis.h"
 #include "improved-edit.h"
 #include "modify.h"
+#include "spec_procs.h" /* assign_rooms, dump */
 
 /* local scope functions, not used externally */
 static void cedit_disp_menu(struct descriptor_data *d);
@@ -1788,14 +1789,18 @@ void cedit_parse(struct descriptor_data *d, char *arg)
   }
 }  /* End of parse_cedit() */
 
+/* Called when dts_are_dumps changes.  top_of_world is the LAST room rnum
+ * (inclusive), so the old '< top_of_world' left the last room's dump in
+ * place.  Only the dump procs that assign_rooms() hands out for this
+ * option are removed; any other room spec proc is left alone, and
+ * assign_rooms() then re-adds dumps if the option is now on. */
 static void reassign_rooms(void)
 {
-  void assign_rooms(void);
-  int i;
+  room_rnum i;
 
-  /* remove old funcs */
-  for (i = 0; i < top_of_world; i++)
-    world[i].func = NULL;
+  for (i = 0; i <= top_of_world; i++)
+    if (world[i].func == dump)
+      world[i].func = NULL;
 
   /* reassign spec_procs */
   assign_rooms();
