@@ -426,12 +426,20 @@ int save_rooms(zone_rnum rzone)
         struct extra_descr_data *xdesc;
 
 	for (xdesc = room->ex_description; xdesc; xdesc = xdesc->next) {
-	  strncpy(buf, xdesc->description, sizeof(buf) - 1);
-	  buf[sizeof(buf) - 1] = '\0';
+	  /* parse_room() stores fread_string() results, which are NULL for an
+	   * empty '~' body.  Writing an empty field round-trips to the same
+	   * NULL on the next boot, so the entry is kept, but it is reported
+	   * because nobody can look at an extra description without both. */
+	  if (!xdesc->keyword || !xdesc->description)
+	    TB_WARN_MSG("olc", "room-save-exdesc", filename,
+	                "room vnum %d zone %d: extra desc with NULL %s saved empty",
+	                room->number, zone_table[rzone].number,
+	                !xdesc->keyword ? "keyword" : "description");
+	  strlcpy(buf, xdesc->description ? xdesc->description : "", sizeof(buf));
 	  strip_cr(buf);
 	  tb_fprintf(sf,	"E\n"
 			"%s~\n"
-			"%s~\n", xdesc->keyword, buf);
+			"%s~\n", xdesc->keyword ? xdesc->keyword : "", buf);
 	}
       }
       tb_fprintf(sf, "S\n");

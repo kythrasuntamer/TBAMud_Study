@@ -792,6 +792,24 @@ static void create_new_zone_keeps_existing_file(void)
 }
 
 /* ------------------------------------------------------------------------ */
+/* C2-13: a room extra description with a NULL body is saved, not deref'd.  */
+/* ------------------------------------------------------------------------ */
+static void save_rooms_handles_null_exdesc_description(void)
+{
+  struct extra_descr_data *x;
+  char text[512];
+  make_zones(1); make_rooms(1);
+  CREATE(x, struct extra_descr_data, 1);
+  x->keyword = strdup("sign");
+  x->description = NULL;               /* fread_string("~") */
+  world[0].ex_description = x;
+  TEST_ASSERT_TRUE(save_rooms(0));
+  TEST_ASSERT_EQUAL_STRING("room-save-exdesc", tb_captured_operation);
+  read_text_file(WLD_PREFIX "/0.wld", text, sizeof(text));
+  TEST_ASSERT_NOT_NULL(strstr(text, "E\nsign~\n~\n"));
+}
+
+/* ------------------------------------------------------------------------ */
 /* Temporary world directory for the writers.                               */
 /* ------------------------------------------------------------------------ */
 static char test_root[] = "/tmp/tb-genolc-XXXXXX";
@@ -862,6 +880,7 @@ int main(void)
   RUN_TEST(create_new_zone_rejects_last_zone_number);
   RUN_TEST(create_new_zone_rejects_overlapping_range);
   RUN_TEST(create_new_zone_keeps_existing_file);
+  RUN_TEST(save_rooms_handles_null_exdesc_description);
   failures = UNITY_END();
   leave_test_root();
   return failures;
