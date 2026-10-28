@@ -172,6 +172,29 @@ static int mob_cmd_privileged(char_data *ch, const char *cmd)
                   (ch)->master ? " and has a master" : ""), TRUE) \
    : FALSE)
 
+/* A character stranded in NOWHERE by an earlier, already reported failure
+ * (char_to_room() refuses an invalid room and leaves its character there,
+ * e.g. a return from the void to a room OLC deleted) cannot be moved:
+ * char_from_room() deliberately aborts on it, and NOWHERE is no source room
+ * for "mteleport all" (dg_teleport_all() would read world[NOWHERE]). A
+ * script finds such a character by name or UID anywhere in the world.
+ *
+ * MOB_CMD_STRANDED(ch, who, op, cmd) is TRUE, after reporting, when who is
+ * in no valid room: an ERROR dg/op at the refusing ACMD's line names who
+ * and the script owner ch (the script_driver breadcrumb adds the trigger
+ * vnum), and mob_log() tells builders. op is "stranded-target" when who is
+ * the character to be moved, "stranded-actor" when who is ch and its room
+ * is the source. ch and who are evaluated several times: pass variables. */
+#define MOB_CMD_STRANDED(ch, who, op, cmd) \
+  (!VALID_ROOM_RNUM(IN_ROOM(who)) \
+   ? (TB_ERROR_MSG("dg", (op), (cmd), \
+                   DIAG_CHAR_FMT " is in no valid room (rnum %d); %s by " \
+                   DIAG_CHAR_FMT " uid %ld refused", DIAG_CHAR(who), \
+                   (int) IN_ROOM(who), (cmd), DIAG_CHAR(ch), (ch)->script_id), \
+      mob_log((ch), "%s: %s is stranded in no valid room", (cmd), \
+              (who) == (ch) ? "the mob" : "the target"), TRUE) \
+   : FALSE)
+
 /* mob commands */
 /* prints the argument to all the rooms aroud the mobile */
 ACMD(do_masound)
@@ -677,6 +700,9 @@ ACMD(do_mgoto)
         return;
     }
 
+    if (MOB_CMD_STRANDED(ch, ch, "stranded-target", "mgoto"))
+        return;
+
     if (FIGHTING(ch))
         stop_fighting(ch);
 
@@ -710,6 +736,9 @@ ACMD(do_mat)
         mob_log(ch, "mat: invalid location");
         return;
     }
+
+    if (MOB_CMD_STRANDED(ch, ch, "stranded-target", "mat"))
+        return;
 
     original = IN_ROOM(ch);
     char_from_room(ch);
@@ -754,6 +783,8 @@ ACMD(do_mteleport)
   }
 
   if (!str_cmp(arg1, "all")) {
+    if (MOB_CMD_STRANDED(ch, ch, "stranded-actor", "mteleport all"))
+      return;
     if (target == IN_ROOM(ch)) {
       mob_log(ch, "mteleport all target is itself");
       return;
@@ -765,6 +796,9 @@ ACMD(do_mteleport)
       mob_log(ch, "mteleport: victim (%s) does not exist",arg1);
       return;
     }
+
+    if (MOB_CMD_STRANDED(ch, vict, "stranded-target", "mteleport"))
+      return;
 
     if (valid_dg_target(vict, DG_ALLOW_GODS)) {
       char_from_room(vict);

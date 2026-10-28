@@ -21,9 +21,10 @@
  *
  * Who controls the input: rent files are written by this server but are
  * plain text that can be truncated or hand-edited, so every header field,
- * Loc value, flag word and string is untrusted on read. Bad values are
- * reported (objsave operations with the owner, object line and obj vnum)
- * and the record or field is skipped; reading never exits the server.
+ * Loc value, flag word, object value and string is untrusted on read. Bad
+ * values are reported (objsave operations with the owner, object line and
+ * obj vnum) and the record or field is skipped, or repaired as db.c's
+ * check_object() repairs world objects; reading never exits the server.
  *
  * Ownership and lifetime: objects read from a file are created with
  * read_object()/create_obj() (so they are on object_list) and handed to the
@@ -47,6 +48,7 @@
 #include "config.h"
 #include "modify.h"
 #include "genolc.h" /* for strip_cr and sprintascii */
+#include "oasis.h" /* for MAX_WEAPON_NDICE/MAX_WEAPON_SDICE, the oedit limits */
 
 /* these factors should be unique integers */
 #define RENT_FACTOR    1
@@ -385,13 +387,27 @@ static void auto_equip(struct char_data *ch, struct obj_data *obj, int location)
     obj_to_char(obj, ch);
 }
 
+/* get_filename() refused a player name: it is not a safe path component
+ * (e.g. "../x" from a damaged index, a pfile Name tag, or 'show rent'
+ * text) and get_filename() reported why. Report which rent-file operation
+ * was refused, with the player's idnum (-1 for a name in no index entry);
+ * the raw name is never logged. The caller opens and removes nothing. */
+static void objsave_refused_name(long idnum, const char *operation)
+{
+  TB_ERROR_MSG("objsave", "rent-name", "rent-file",
+               "player idnum %ld: no safe rent file name; %s refused",
+               idnum, operation);
+}
+
 int Crash_delete_file(char *name)
 {
   char filename[MAX_INPUT_LENGTH];
   FILE *fl;
 
-  if (!get_filename(filename, sizeof(filename), CRASH_FILE, name))
+  if (!get_filename(filename, sizeof(filename), CRASH_FILE, name)) {
+    objsave_refused_name(name ? get_id_by_name(name) : -1, "rent file delete");
     return FALSE;
+  }
 
   if (!(fl = fopen(filename, "r"))) {
     if (errno != ENOENT)  /* if it fails but NOT because of no file */
@@ -415,8 +431,10 @@ int Crash_delete_crashfile(struct char_data *ch)
   int rentcode;
   char line[READ_SIZE];
 
-  if (!get_filename(filename, sizeof(filename), CRASH_FILE, GET_NAME(ch)))
+  if (!get_filename(filename, sizeof(filename), CRASH_FILE, GET_NAME(ch))) {
+    objsave_refused_name(GET_IDNUM(ch), "crash file delete");
     return FALSE;
+  }
 
   if (!(fl = fopen(filename, "r"))) {
     if (errno != ENOENT)  /* if it fails, NOT because of no file */
@@ -457,8 +475,10 @@ int Crash_clean_file(char *name)
   int rentcode, timed, netcost, gold, account, nitems;
   char line[READ_SIZE];
 
-  if (!get_filename(filename, sizeof(filename), CRASH_FILE, name))
+  if (!get_filename(filename, sizeof(filename), CRASH_FILE, name)) {
+    objsave_refused_name(name ? get_id_by_name(name) : -1, "rent file clean");
     return FALSE;
+  }
 
   /* Open so that permission problems will be flagged now, at boot time. */
   if (!(fl = fopen(filename, "r"))) {
@@ -529,8 +549,12 @@ void Crash_listrent(struct char_data *ch, char *name)
   int listed = 0, total = 0;
   struct tb_buf out;
   
-  if (!get_filename(filename, sizeof(filename), CRASH_FILE, name))
+  /* name is the immortal's 'show rent' argument. */
+  if (!get_filename(filename, sizeof(filename), CRASH_FILE, name)) {
+    send_to_char(ch, "That is not a valid player name.\r\n");
+    objsave_refused_name(name ? get_id_by_name(name) : -1, "rent listing");
     return;
+  }
 
   if (!(fl = fopen(filename, "r"))) {
     send_to_char(ch, "%s has no rent file.\r\n", name);
@@ -609,7 +633,10 @@ void Crash_listrent(struct char_data *ch, char *name)
 		free(current);
 	}
 
-  page_string(ch->desc,buf,0);
+  /* buf lives in this frame, but a listing longer than one page is shown
+   * after we return (the immortal pages on), so the pager must keep its own
+   * copy; without keep_internal it pointed into the dead frame. */
+  page_string(ch->desc, buf, TRUE);
   tb_fclose(fl);
 }
 
@@ -1041,14 +1068,15 @@ act(buf, FALSE, recep, 0, ch, TO_VICT);
 static int Crash_report_unrentables(struct char_data *ch, struct char_data *recep,
                              struct obj_data *obj)
 {
-  char buf[128];
   int has_norents = 0;
 
   if (obj) {
     if (Crash_is_unrentable(obj)) {
       has_norents = 1;
-      tb_snprintf(buf, sizeof(buf), "$n tells you, 'You cannot store %s.'", OBJS(obj, ch));
-      act(buf, FALSE, recep, 0, ch, TO_VICT);
+      /* The object is act()'s $p, never part of the format: a short
+       * description is builder- or iedit-controlled text, and a '$' in it
+       * was read as an act() code (B2-32). */
+      act("$n tells you, 'You cannot store $p.'", FALSE, recep, obj, ch, TO_VICT);
     }
     has_norents += Crash_report_unrentables(ch, recep, obj->contains);
     has_norents += Crash_report_unrentables(ch, recep, obj->next_content);
@@ -1066,9 +1094,10 @@ static void Crash_report_rent(struct char_data *ch, struct char_data *recep, str
       (*nitems)++;
       *cost += MAX(0, (GET_OBJ_RENT(obj) * factor));
       if (display) {
-        tb_snprintf(buf, sizeof(buf), "$n tells you, '%5d coins for %s..'",
-                (GET_OBJ_RENT(obj) * factor), OBJS(obj, ch));
-        act(buf, FALSE, recep, 0, ch, TO_VICT);
+        /* Only the number is formatted in; the object is $p (B2-32). */
+        tb_snprintf(buf, sizeof(buf), "$n tells you, '%5d coins for $p..'",
+                (GET_OBJ_RENT(obj) * factor));
+        act(buf, FALSE, recep, obj, ch, TO_VICT);
       }
     }
     Crash_report_rent(ch, recep, obj->contains, cost, nitems, display, factor);
@@ -1250,7 +1279,9 @@ void Crash_save_all(void)
  * locate-1, 0 = inventory, negative = inside a container, -locate levels
  * deep (contents are written before their container). A Loc above
  * NUM_WEARS is reported and becomes inventory. A record whose prototype no
- * longer exists is skipped (missing-proto) together with its tags.
+ * longer exists is skipped (missing-proto) together with its tags. Each
+ * completed record's values get check_object()'s per-type range checks
+ * (objsave_check_values(): rent-object-check).
  *
  * Callers that know which file and owner they are reading should use
  * objsave_parse_objects_from(), so that diagnostics name them. */
@@ -1268,12 +1299,148 @@ obj_save_data *objsave_parse_objects(FILE *fl)
 #define OBJSAVE_REC_FMT "%s object line %d obj vnum %d: "
 #define OBJSAVE_REC_ARGS(vnum) owner, lineno, (int) (vnum)
 
+/* The prototype's value of string field fld of obj, or NULL for a unique
+ * object (no prototype), which owns all of its strings. Evaluates obj
+ * twice: pass a plain name. */
+#define OBJSAVE_PROTO_STR(obj, fld) \
+  (GET_OBJ_RNUM(obj) != NOTHING ? obj_proto[GET_OBJ_RNUM(obj)].fld : NULL)
+
+/** Give one of an object's string fields a new value read from a record,
+ * taking ownership of value (NULL, an empty string, is allowed). The old
+ * value is freed only if the object owns it: read_object() leaves an
+ * object's strings shared with its prototype (proto_value), and free_obj()
+ * frees only the ones that differ, as this does. A record repeating a tag
+ * used to leak the earlier copy (fuzzer PLAYER-6). */
+static void objsave_replace_string(char **field, const char *proto_value,
+                                   char *value)
+{
+  if (*field != NULL && *field != proto_value)
+    free(*field);
+  *field = value;
+}
+
+/* Set string field fld of the object being parsed to a copy of a record
+ * value, CircleMUD REPLACE_STR style (like players.c's PFILE_SET_STRING).
+ * A failed copy is reported and the field keeps its value. Uses the
+ * parser's resource, owner and lineno; obj and fld are evaluated more than
+ * once: pass plain names. */
+#define OBJSAVE_SET_STRING(obj, fld, value, tag) do { \
+  char *objsave_new_str_ = strdup(value); \
+  if (objsave_new_str_ == NULL) \
+    TB_ERROR_ERRNO("objsave", "rent-string", resource, \
+                   OBJSAVE_REC_FMT "tag %.4s not stored", \
+                   OBJSAVE_REC_ARGS(GET_OBJ_VNUM(obj)), (tag)); \
+  else \
+    objsave_replace_string(&(obj)->fld, OBJSAVE_PROTO_STR(obj, fld), \
+                           objsave_new_str_); \
+} while (0)
+
+/* A spell number an object may carry: -1 or 0 is "none", otherwise
+ * 1..TOP_SPELL_DEFINE but not a skill (MAX_SPELLS+1..MAX_SKILLS), as in
+ * db.c's check_object_spell_number(). Evaluates s several times. */
+#define OBJSAVE_SPELL_OK(s) \
+  ((s) == -1 || (s) == 0 || ((s) > 0 && (s) <= TOP_SPELL_DEFINE && \
+                             ((s) <= MAX_SPELLS || (s) > MAX_SKILLS)))
+
+/** Range-check the values a rent or house record gave obj (its Type and
+ * Vals tags, or a unique object's whole record). The file is untrusted
+ * (hand-edited or damaged) and db.c's check_object() only ever sees world
+ * prototypes, so the same per-type checks run here. A value that indexes a
+ * table or drives a loop is repaired to check_object()'s default and
+ * reported as an error: liquid (drinks[], drink_aff[], drinknames[]) to
+ * LIQ_WATER, weapon attack type (attack_hit_text[]) to 0 (hit), weapon
+ * dice clamped to the oedit limit MAX_WEAPON_NDICE d MAX_WEAPON_SDICE.
+ * check_object()'s other per-type checks only report, and so do these
+ * (warnings; the value is kept, as on a world object): spell level, spell
+ * numbers, charges and contents above their maximum. Every report is
+ * rent-object-check with the owner, the record's line and the obj vnum. */
+static void objsave_check_values(struct obj_data *obj, const char *resource,
+                                 const char *owner, int lineno)
+{
+  int i, first_spell = 1;
+
+  switch (GET_OBJ_TYPE(obj)) {
+  case ITEM_DRINKCON:
+  case ITEM_FOUNTAIN:
+    if (GET_OBJ_VAL(obj, 2) < 0 || GET_OBJ_VAL(obj, 2) >= NUM_LIQ_TYPES) {
+      TB_ERROR_MSG("objsave", "rent-object-check", resource,
+                   OBJSAVE_REC_FMT "liquid %d out of range 0..%d; using LIQ_WATER",
+                   OBJSAVE_REC_ARGS(GET_OBJ_VNUM(obj)), GET_OBJ_VAL(obj, 2),
+                   NUM_LIQ_TYPES - 1);
+      GET_OBJ_VAL(obj, 2) = LIQ_WATER;
+    }
+    if (GET_OBJ_VAL(obj, 0) > 0 && GET_OBJ_VAL(obj, 1) > GET_OBJ_VAL(obj, 0))
+      TB_WARN_MSG("objsave", "rent-object-check", resource,
+                  OBJSAVE_REC_FMT "contains %d, more than its capacity %d",
+                  OBJSAVE_REC_ARGS(GET_OBJ_VNUM(obj)), GET_OBJ_VAL(obj, 1),
+                  GET_OBJ_VAL(obj, 0));
+    break;
+  case ITEM_WEAPON:
+    if (GET_OBJ_VAL(obj, 3) < 0 || GET_OBJ_VAL(obj, 3) >= NUM_ATTACK_TYPES) {
+      TB_ERROR_MSG("objsave", "rent-object-check", resource,
+                   OBJSAVE_REC_FMT "attack type %d out of range 0..%d; using 0 (hit)",
+                   OBJSAVE_REC_ARGS(GET_OBJ_VNUM(obj)), GET_OBJ_VAL(obj, 3),
+                   NUM_ATTACK_TYPES - 1);
+      GET_OBJ_VAL(obj, 3) = 0;
+    }
+    /* dice() loops value 1 times and sums into an int on every blow. */
+    if (GET_OBJ_VAL(obj, 1) < 0 || GET_OBJ_VAL(obj, 1) > MAX_WEAPON_NDICE ||
+        GET_OBJ_VAL(obj, 2) < 0 || GET_OBJ_VAL(obj, 2) > MAX_WEAPON_SDICE) {
+      int ndice = LIMIT(GET_OBJ_VAL(obj, 1), 0, MAX_WEAPON_NDICE);
+      int sdice = LIMIT(GET_OBJ_VAL(obj, 2), 0, MAX_WEAPON_SDICE);
+
+      TB_ERROR_MSG("objsave", "rent-object-check", resource,
+                   OBJSAVE_REC_FMT "damage dice %dd%d outside 0..%dd0..%d; using %dd%d",
+                   OBJSAVE_REC_ARGS(GET_OBJ_VNUM(obj)), GET_OBJ_VAL(obj, 1),
+                   GET_OBJ_VAL(obj, 2), MAX_WEAPON_NDICE, MAX_WEAPON_SDICE,
+                   ndice, sdice);
+      GET_OBJ_VAL(obj, 1) = ndice;
+      GET_OBJ_VAL(obj, 2) = sdice;
+    }
+    break;
+  case ITEM_WAND:
+  case ITEM_STAFF:
+    first_spell = 3;
+    if (GET_OBJ_VAL(obj, 2) > GET_OBJ_VAL(obj, 1))
+      TB_WARN_MSG("objsave", "rent-object-check", resource,
+                  OBJSAVE_REC_FMT "has %d charges, more than its maximum %d",
+                  OBJSAVE_REC_ARGS(GET_OBJ_VNUM(obj)), GET_OBJ_VAL(obj, 2),
+                  GET_OBJ_VAL(obj, 1));
+    /* The level and spell checks below apply to wands and staves too. */
+    /* Fall through. */
+  case ITEM_SCROLL:
+  case ITEM_POTION:
+    if (GET_OBJ_VAL(obj, 0) < 0 || GET_OBJ_VAL(obj, 0) > LVL_IMPL)
+      TB_WARN_MSG("objsave", "rent-object-check", resource,
+                  OBJSAVE_REC_FMT "spell level %d out of range 0..%d",
+                  OBJSAVE_REC_ARGS(GET_OBJ_VNUM(obj)), GET_OBJ_VAL(obj, 0), LVL_IMPL);
+    for (i = first_spell; i <= 3; i++)
+      if (!OBJSAVE_SPELL_OK(GET_OBJ_VAL(obj, i)))
+        TB_WARN_MSG("objsave", "rent-object-check", resource,
+                    OBJSAVE_REC_FMT "value %d spell %d out of range (1..%d, not a skill)",
+                    OBJSAVE_REC_ARGS(GET_OBJ_VNUM(obj)), i, GET_OBJ_VAL(obj, i),
+                    TOP_SPELL_DEFINE);
+    break;
+  case ITEM_FURNITURE:
+    if (GET_OBJ_VAL(obj, 1) > GET_OBJ_VAL(obj, 0))
+      TB_WARN_MSG("objsave", "rent-object-check", resource,
+                  OBJSAVE_REC_FMT "seats %d, more than its capacity %d",
+                  OBJSAVE_REC_ARGS(GET_OBJ_VNUM(obj)), GET_OBJ_VAL(obj, 1),
+                  GET_OBJ_VAL(obj, 0));
+    break;
+  default:
+    break;
+  }
+}
+#undef OBJSAVE_SPELL_OK
+
 obj_save_data *objsave_parse_objects_from(FILE *fl, const char *resource,
                                           const char *owner)
 {
   obj_save_data *head, *current, *tempsave;
   char f1[128], f2[128], f3[128], f4[128], line[READ_SIZE];
   int t[4],i, nr, lineno = 0, got;
+  int record_line = 0;	/* object line of the current record's '#' */
   struct obj_data *temp;
 
   if (resource == NULL)
@@ -1309,9 +1476,10 @@ obj_save_data *objsave_parse_objects_from(FILE *fl, const char *resource,
           free(current);
         }
       }
-    else if (temp != NULL && current->obj == NULL)
+    else if (temp != NULL && current->obj == NULL) {
+      objsave_check_values(temp, resource, owner, record_line);
       current->obj = temp;
-    else if (temp == NULL && current->obj != NULL) {
+    } else if (temp == NULL && current->obj != NULL) {
       /* Do nothing. */
   } else if (temp != NULL && current->obj != NULL) {
       if (temp != current->obj)
@@ -1329,6 +1497,8 @@ obj_save_data *objsave_parse_objects_from(FILE *fl, const char *resource,
      * are ignored instead of being applied to the previous object. */
     if (*line == '#') {
       if (temp) {
+        /* The record is complete: its Type and Vals are known. */
+        objsave_check_values(temp, resource, owner, record_line);
         current->obj = temp;
         CREATE(current->next, obj_save_data, 1);
         current=current->next;
@@ -1336,6 +1506,7 @@ obj_save_data *objsave_parse_objects_from(FILE *fl, const char *resource,
         current->locate = 0;
         temp = NULL;
       }
+      record_line = lineno;
 
       if (!objsave_parse_int_fields(line + 1, &nr, 1)) {
         TB_WARN_MSG("objsave", "rent-record", resource,
@@ -1379,7 +1550,9 @@ obj_save_data *objsave_parse_objects_from(FILE *fl, const char *resource,
          * or house file would take the game down at the owner's login. */
         char *text;
         if (fread_string_checked(fl, resource, "ADes", &text))
-          temp->action_description = text;
+          objsave_replace_string(&temp->action_description,
+                                 OBJSAVE_PROTO_STR(temp, action_description),
+                                 text);
         else
           TB_ERROR_MSG("objsave", "rent-string", resource,
                        OBJSAVE_REC_FMT "unterminated or oversize ADes; "
@@ -1403,7 +1576,7 @@ obj_save_data *objsave_parse_objects_from(FILE *fl, const char *resource,
       break;
     case 'D':
       if (!strcmp(tag, "Desc"))
-        temp->description = strdup(line);
+        OBJSAVE_SET_STRING(temp, description, line, tag);
       break;
     case 'E':
       if(!strcmp(tag, "EDes")) {
@@ -1467,7 +1640,7 @@ obj_save_data *objsave_parse_objects_from(FILE *fl, const char *resource,
       break;
     case 'N':
       if (!strcmp(tag, "Name"))
-        temp->name = strdup(line);
+        OBJSAVE_SET_STRING(temp, name, line, tag);
       break;
     case 'P':
       if (!strcmp(tag, "Perm")) {
@@ -1489,7 +1662,7 @@ obj_save_data *objsave_parse_objects_from(FILE *fl, const char *resource,
       break;
     case 'S':
       if (!strcmp(tag, "Shrt"))
-        temp->short_description = strdup(line);
+        OBJSAVE_SET_STRING(temp, short_description, line, tag);
       break;
     case 'T':
       if (!strcmp(tag, "Type"))
@@ -1532,6 +1705,8 @@ obj_save_data *objsave_parse_objects_from(FILE *fl, const char *resource,
 
   return head;
 }
+#undef OBJSAVE_SET_STRING
+#undef OBJSAVE_PROTO_STR
 #undef OBJSAVE_REC_FMT
 #undef OBJSAVE_REC_ARGS
 
@@ -1546,8 +1721,15 @@ static int Crash_load_objs(struct char_data *ch) {
   int timed=0,netcost=0,gold,account,nitems;
 	obj_save_data *loaded, *current;
 
-  if (!get_filename(filename, sizeof(filename), CRASH_FILE, GET_NAME(ch)))
+  if (!get_filename(filename, sizeof(filename), CRASH_FILE, GET_NAME(ch))) {
+    /* GET_NAME() can come from the pfile's Name tag; the objects stay on
+     * disk for a God to recover once the name is repaired. */
+    objsave_refused_name(GET_IDNUM(ch), "rent load");
+    send_to_char(ch, "\r\n********************* NOTICE *********************\r\n"
+                     "There was a problem loading your objects from disk.\r\n"
+                     "Contact a God for assistance.\r\n");
     return 1;
+  }
 
   for (i = 0; i < MAX_BAG_ROWS; i++)
     cont_row[i] = NULL;
@@ -1649,6 +1831,26 @@ static int Crash_load_objs(struct char_data *ch) {
 	}
 	for (current = loaded; current != NULL; current=current->next)
 	  num_objs += handle_obj(current->obj, ch, current->locate, cont_row);
+
+	/* Contents still waiting when the file ends never got their container
+	 * (its record was skipped, or the file was cut short). handle_obj()
+	 * hands a row over only when a later object arrives, so these stayed
+	 * on object_list but nowhere in the game. Give them to the player. */
+	for (i = MAX_BAG_ROWS - 1; i >= 0; i--) {
+	  struct obj_data *obj, *next;
+	  int spilled = 0;
+
+	  for (obj = cont_row[i]; obj; obj = next) {
+	    next = obj->next_content;
+	    obj_to_char(obj, ch);
+	    spilled++;
+	  }
+	  cont_row[i] = NULL;
+	  if (spilled)
+	    TB_WARN_MSG("objsave", "rent-nesting", filename,
+	                "player idnum %ld: %d object(s) at depth %d lost their "
+	                "container; put in inventory", GET_IDNUM(ch), spilled, i + 1);
+	}
 
 	/* now it's safe to free the obj_save_data list - all members of it
 	 * have been put in the correct lists by handle_obj() */

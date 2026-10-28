@@ -231,12 +231,16 @@ void cleanup_olc(struct descriptor_data *d, byte cleanup_type)
       free_quest(OLC_QUEST(d));
   }
 
-  /*. Check for aedit stuff -- M. Scott */
+  /*. Check for aedit stuff -- M. Scott
+   * free_action() releases a social's strings but not the struct, because
+   * it also serves soc_mess_list[] entries. The workspace's struct is
+   * aedit's own CREATE, so it is freed here in every case; with
+   * CLEANUP_STRUCTS its strings now belong to soc_mess_list and stay. */
   if (OLC_ACTION(d))  {
-    if (cleanup_type == CLEANUP_STRUCTS)
-      free(OLC_ACTION(d));
-    else
+    if (cleanup_type != CLEANUP_STRUCTS)
       free_action(OLC_ACTION(d));
+    free(OLC_ACTION(d));
+    OLC_ACTION(d) = NULL;
   }
 
   /* Used for cleanup of Hedit */
@@ -349,19 +353,41 @@ int olc_attach_at(struct descriptor_data *d, struct char_data *ch,
   return TRUE;
 }
 
-void split_argument(char *argument, char *tag)
+/* Split a "key = value" line of the game configuration file (load_config;
+ * the file is written by the server administrator and by cedit): the key,
+ * with spaces dropped, goes to tag and the value moves to the start of
+ * argument. Callers use the split_argument(argument, tag) macro (oasis.h),
+ * which passes sizeof(tag). The key used to be copied with no bound (F3-19).
+ * A key that does not fit is not cut short, because a prefix could name
+ * another setting: tag is left empty, so the caller matches no key, and the
+ * key and buffer sizes are reported as tag-too-long. */
+void split_argument_bounded(char *argument, char *tag, size_t tag_size)
 {
-  char *tmp = argument, *ttag = tag, *wrt = argument;
-  int i;
+  char *tmp = argument, *wrt = argument;
+  size_t key_len = 0;
 
-  for (i = 0; *tmp; tmp++, i++) {
-    if (*tmp != ' ' && *tmp != '=')
-      *(ttag++) = *tmp;
-    else if (*tmp == '=')
+  if (tag_size == 0) {
+    TB_ERROR_MSG("config", "tag-too-long", "split_argument",
+                 "no room for a key (tag_size 0); line left unsplit");
+    return;
+  }
+
+  for (; *tmp; tmp++) {
+    if (*tmp != ' ' && *tmp != '=') {
+      if (key_len + 1 < tag_size)
+        tag[key_len] = *tmp;
+      key_len++;
+    } else if (*tmp == '=')
       break;
   }
 
-  *ttag = '\0';
+  if (key_len >= tag_size) {
+    TB_ERROR_MSG("config", "tag-too-long", "split_argument",
+                 "key of %zu bytes does not fit its %zu-byte buffer; "
+                 "key left empty", key_len, tag_size);
+    tag[0] = '\0';
+  } else
+    tag[key_len] = '\0';
 
   while (*tmp == '=' || *tmp == ' ')
     tmp++;

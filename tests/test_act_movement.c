@@ -215,9 +215,63 @@ static void test_move_into_room_with_bad_sector(void)
   zone_table = NULL;
 }
 
+/* The greet trigger fired for 'trigger_mover' (a mob's script in the room
+ * it enters) makes 'released' stop following, as an mfollow would; that
+ * frees released's follow_type node. */
+static struct char_data *trigger_mover, *released;
+static int release_on_greet_hook(enum fx_trigger kind, struct char_data *actor,
+                                 struct obj_data *obj, int dir)
+{
+  (void)obj; (void)dir;
+  if (kind == FX_GREET_MTRIG && actor == trigger_mover && released &&
+      released->master) {
+    stop_follower(released);
+    released = NULL;
+  }
+  return 1;
+}
+
+/* Ledger finding: perform_move() kept the next follow_type node across each
+ * follower's move, whose triggers can release that next follower: the loop
+ * then read a freed node (ASan heap-use-after-free). Followers are now
+ * walked from a snapshot and re-checked, so the released one stays behind
+ * and is reported. */
+static void test_follower_released_by_trigger_is_skipped(void)
+{
+  struct char_data *leader = fx_new_char("hero", FALSE, 0);
+  struct char_data *first = fx_new_char("dog", TRUE, 0);
+  struct char_data *second = fx_new_char("cat", TRUE, 0);
+  static struct zone_data zone[1];
+
+  zone[0].min_level = zone[0].max_level = -1;
+  zone_table = zone;
+  door_exit(0, NORTH, 1)->exit_info = 0;   /* a plain open exit */
+  GET_MOVE(leader) = GET_MAX_MOVE(leader) = 50;
+  add_follower(first, leader);             /* followers: second, first */
+  add_follower(second, leader);
+  trigger_mover = second;                  /* moves first ... */
+  released = first;                        /* ... and releases first */
+  fx_hook = release_on_greet_hook;
+
+  TEST_ASSERT_EQUAL_INT(1, perform_move(leader, NORTH, 0));
+
+  TEST_ASSERT_EQUAL_INT(1, IN_ROOM(leader));
+  TEST_ASSERT_EQUAL_INT(1, IN_ROOM(second));
+  TEST_ASSERT_EQUAL_INT(0, IN_ROOM(first));
+  TEST_ASSERT_NULL(first->master);
+  TEST_ASSERT_EQUAL_STRING("follower-changed", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "was released by a trigger"));
+  stop_follower(second);
+  fx_free_char(second);
+  fx_free_char(first);
+  fx_free_char(leader);
+  zone_table = NULL;
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(test_follower_released_by_trigger_is_skipped);
   RUN_TEST(test_move_into_room_with_bad_sector);
   RUN_TEST(test_door_trigger_purging_exit_is_reported);
   RUN_TEST(test_autokey_stops_after_failed_unlock);

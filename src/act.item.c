@@ -711,6 +711,19 @@ static int perform_drop(struct char_data *ch, struct obj_data *obj,
   int value;
   long object_id = obj_script_id(obj);
 
+  /* mode comes from do_drop()'s subcommand (the command table), so an
+   * unknown one is a programming error. Refuse it before any trigger runs
+   * or obj leaves ch: it used to be taken out of the inventory, announced
+   * as dropped and then put nowhere, with a SYSERR line naming nothing. */
+  if (mode != SCMD_DROP && mode != SCMD_DONATE && mode != SCMD_JUNK) {
+    TB_ERROR_MSG("act", "drop-mode", "perform_drop",
+                 "unknown drop mode %d for obj vnum %d uid %ld from "
+                 DIAG_CHAR_FMT "; nothing dropped", (int) mode,
+                 (int) GET_OBJ_VNUM(obj), object_id, DIAG_CHAR(ch));
+    send_to_char(ch, "Something is wrong with that command; nothing was dropped.\r\n");
+    return (0);
+  }
+
   if (!drop_otrigger(obj, ch) || !drop_target_held(ch, obj, object_id))
     return 0;
 
@@ -749,10 +762,7 @@ static int perform_drop(struct char_data *ch, struct obj_data *obj,
     value = MAX(1, MIN(200, GET_OBJ_COST(obj) / 16));
     extract_obj(obj);
     return (value);
-  default:
-    log("SYSERR: Incorrect argument %d passed to perform_drop.", mode);
-    /* SYSERR_DESC: This error comes from perform_drop() and is output when
-     * perform_drop() is called with an illegal 'mode' argument. */
+  default: /* unreachable: mode was checked on entry */
     break;
   }
 
@@ -786,6 +796,18 @@ static int donation_rooms(room_rnum cand[4])
       cand[n++] = r;
   }
   return n;
+}
+
+/* Boot-time form of the check above, called once from comm.c's
+ * report_world_gaps() after the rooms are indexed (also in syntax-check
+ * mode). The donation vnums come from the config file and cedit, which do
+ * not require the room to exist; a missing one is reported here, at boot,
+ * not first by a player's failed 'donate'. */
+void check_donation_rooms(void)
+{
+  room_rnum cand[4];
+
+  (void) donation_rooms(cand);
 }
 
 ACMD(do_drop)
@@ -1048,11 +1070,15 @@ ACMD(do_give)
 /** Adds weight (negative to subtract) to obj and keeps its holder's
  * totals right: obj is lifted out of its room, carrier or container,
  * changed, and put back, so IS_CARRYING_W and container weights follow.
- * Precondition: obj is on the floor, carried, or inside another object.
- * A worn object (worn_by set) is not supported: the change is skipped
- * and only a SYSERR line is logged. Nothing stops the result going
- * negative; callers (drinking, pouring) subtract at most the current
- * contents. */
+ * A worn object is changed in place: equipment is not counted in
+ * IS_CARRYING_W (perform_wear() takes an object out of the inventory
+ * before equip_char()), and create water reaches a held drink container
+ * here (TAR_OBJ_EQUIP); that change used to be skipped, so the weight
+ * drifted from the contents. An object that is nowhere breaks the callers'
+ * contract: its weight is still changed (no holder total can drift) and
+ * the call is reported with the object's vnum and UID. Nothing stops the
+ * result going negative; callers (drinking, pouring) subtract at most the
+ * current contents. */
 void weight_change_object(struct obj_data *obj, int weight)
 {
   struct obj_data *tmp_obj;
@@ -1068,11 +1094,14 @@ void weight_change_object(struct obj_data *obj, int weight)
     obj_from_obj(obj);
     GET_OBJ_WEIGHT(obj) += weight;
     obj_to_obj(obj, tmp_obj);
+  } else if (obj->worn_by) {
+    GET_OBJ_WEIGHT(obj) += weight;
   } else {
-    log("SYSERR: Unknown attempt to subtract weight from an object.");
-    /* SYSERR_DESC: weight_change_object() outputs this error when weight is
-     * attempted to be removed from an object that is not carried or in
-     * another object. */
+    TB_ERROR_MSG("act", "weight-change", "obj",
+                 "obj vnum %d uid %ld is not in a room, carried, worn or in"
+                 " a container; weight changed by %d with no holder to update",
+                 (int) GET_OBJ_VNUM(obj), obj_script_id(obj), weight);
+    GET_OBJ_WEIGHT(obj) += weight;
   }
 }
 
@@ -1455,8 +1484,12 @@ ACMD(do_pour)
     }
   }
 
+  /* Only SCMD_POUR and SCMD_FILL (the command table) set from_obj. */
   if (!from_obj) {
-    log("SYSERR: do_pour called with invalid subcommand %d.", subcmd);
+    TB_ERROR_MSG("act", "pour-subcmd", "do_pour",
+                 "invalid subcommand %d from " DIAG_CHAR_FMT
+                 "; nothing poured", subcmd, DIAG_CHAR(ch));
+    send_to_char(ch, "Something is wrong with that command; nothing was poured.\r\n");
     return;
   }
 
@@ -1859,10 +1892,15 @@ static void perform_remove(struct char_data *ch, int pos)
 {
   struct obj_data *obj;
 
-  if (!(obj = GET_EQ(ch, pos)))
-    log("SYSERR: perform_remove: bad pos %d passed.", pos);
-    /*  This error occurs when perform_remove() is passed a bad 'pos'
-     *  (location) to remove an object from. */
+  /* do_remove() passes only slots it found occupied, so a bad or empty
+   * slot is a caller bug: name the slot and the character. The range is
+   * checked before GET_EQ() indexes ch->equipment[]. */
+  if (pos < 0 || pos >= NUM_WEARS || !(obj = GET_EQ(ch, pos)))
+    TB_ERROR_MSG("act", "remove-slot", "perform_remove",
+                 "slot %d (0..%d) is %s for " DIAG_CHAR_FMT "; nothing removed",
+                 pos, NUM_WEARS - 1,
+                 (pos < 0 || pos >= NUM_WEARS) ? "out of range" : "empty",
+                 DIAG_CHAR(ch));
   else if (OBJ_FLAGGED(obj, ITEM_NODROP) && !PRF_FLAGGED(ch, PRF_NOHASSLE))
     act("You can't remove $p, it must be CURSED!", FALSE, ch, obj, 0, TO_CHAR);
   else if (IS_CARRYING_N(ch) >= CAN_CARRY_N(ch)&& !PRF_FLAGGED(ch, PRF_NOHASSLE))

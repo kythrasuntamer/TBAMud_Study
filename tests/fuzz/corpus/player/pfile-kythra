@@ -1,0 +1,52 @@
+PName: Kythra
+Pass: $1$fuzzseed$AAAAAAAAAAAAAAAAAAAAA.
+Titl: the Veteran Adventurer
+Sex : 2
+Clas: 1
+Levl: 50
+Id  : 2
+Brth: 1792959007
+Plyd: 2092
+Last: 1792998534
+Lmot: 1792960351
+Lnew: 1792960388
+Host: 127.0.0.1
+Hite: 156
+Wate: 132
+Alin: -281
+Act : gh 0 0 0
+Aff : 0 0 0 0
+Pref: efghno 0 0 0
+Room: 3001
+Lern: 118
+Hung: 21
+Thir: 7
+Hit : 404/384
+Mana: 563/563
+Move: 157/157
+Str : 13/0
+Int : 13
+Wis : 14
+Dex : 12
+Con : 10
+Cha : 10
+Ac  : 100
+Gold: 480
+Exp : 8600000
+EgXP: 13386
+EgHP: 1
+Olc : 0
+Skil:
+12 95
+13 95
+19 95
+27 95
+28 95
+36 95
+50 95
+52 95
+0 0
+Affs:
+19 52 0 0 16 0 0 0
+50 52 0 0 2048 0 0 0
+0 0 0 0 0 0 0 0

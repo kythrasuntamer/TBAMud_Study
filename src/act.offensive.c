@@ -182,7 +182,8 @@ ACMD(do_order)
   char name[MAX_INPUT_LENGTH], message[MAX_INPUT_LENGTH];
   bool found = FALSE;
   struct char_data *vict;
-  struct follow_type *k;
+  struct follower_mark *marks;
+  int count, i;
 
   half_chop(argument, name, message);
 
@@ -216,13 +217,26 @@ ACMD(do_order)
       tb_snprintf(buf, sizeof(buf), "$n issues the order '%s'.", message);
       act(buf, FALSE, ch, 0, 0, TO_ROOM);
 
-      for (k = ch->followers; k; k = k->next) {
-        if (IN_ROOM(ch) == IN_ROOM(k->follower))
-          if (AFF_FLAGGED(k->follower, AFF_CHARM)) {
-            found = TRUE;
-            command_interpreter(k->follower, message);
-          }
+      /* Each ordered command runs the follower's command and its
+       * triggers, which can release any follower (stop_follower() frees
+       * the follow_type node at once), or purge or kill one or ch
+       * (pending extraction). The loop read k->next after
+       * command_interpreter(), so a follower that stopped following (a
+       * DG mfollow in a command trigger) left it reading a freed node.
+       * Walk a snapshot of the followers and re-check each one before
+       * ordering it (struct follower_mark). */
+      count = snapshot_followers(ch, &marks);
+      for (i = 0; i < count; i++) {
+        struct char_data *f = marks[i].ch;
+
+        if (!follower_mark_live(&marks[i], ch, "do_order"))
+          continue;
+        if (IN_ROOM(ch) == IN_ROOM(f) && AFF_FLAGGED(f, AFF_CHARM)) {
+          found = TRUE;
+          command_interpreter(f, message);
+        }
       }
+      free(marks);
       if (found)
         send_to_char(ch, "%s", CONFIG_OK);
       else

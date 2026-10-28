@@ -3,6 +3,25 @@
  * directly (one translation unit) and the link discards every section the
  * tested paths do not reach. Fixtures are disposable.
  */
+#include <setjmp.h>
+#include <stdlib.h>
+
+/* The shop-file readers stop the boot with abort(). While a test has armed
+ * shop_abort_jmp, the abort() calls compiled from shop.c below jump back to
+ * it instead, so the fatal report can be asserted. stdlib.h is included
+ * first so its own declaration of abort() is not rewritten. */
+static jmp_buf shop_abort_jmp;
+static int shop_abort_armed;
+static void shop_test_abort(void) __attribute__((noreturn));
+static void shop_test_abort(void)
+{
+  if (!shop_abort_armed)
+    abort();
+  shop_abort_armed = 0;
+  longjmp(shop_abort_jmp, 1);
+}
+#define abort() shop_test_abort()
+
 #include "unity.h"
 #include "../src/shop.c" /* NOLINT(bugprone-suspicious-include): reach file-static helpers */
 
@@ -264,6 +283,252 @@ static void test_act_escape_truncates_on_pair_boundary(void)
   TEST_ASSERT_EQUAL_STRING("ab", out);
 }
 
+/* A buy type that does not fit an int was cast with (int): 4294967301
+ * became type 5 (weapon) and -4294967296 type 0, without a word. Both are
+ * now dropped and reported, and the entry after them is kept. */
+static void test_read_type_list_drops_type_past_int(void)
+{
+  static char data[] = "4294967301 sword;\n-4294967296;\n9 armor;\n-1\n";
+  struct shop_buy_data list[MAX_TRADE + 1];
+  FILE *f = fmemopen(data, strlen(data), "r");
+  int len;
+
+  TEST_ASSERT_NOT_NULL(f);
+  len = read_type_list(f, list, TRUE, MAX_TRADE);
+  TEST_ASSERT_EQUAL_INT(0, fclose(f));
+  TEST_ASSERT_EQUAL_INT(2, len); /* type 9 plus the NOTHING terminator */
+  TEST_ASSERT_EQUAL_INT(9, BUY_TYPE(list[0]));
+  TEST_ASSERT_EQUAL_STRING("armor", BUY_WORD(list[0]));
+  TEST_ASSERT_EQUAL_INT(NOTHING, BUY_TYPE(list[1]));
+  TEST_ASSERT_EQUAL_INT(2, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("buytype-range", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "shop #3010 buy type"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "does not fit an int"));
+  free(BUY_WORD(list[0]));
+}
+
+/* ---- shop-file numbers: strtol/strtof with a range check per field ---- */
+
+/* Run STMT, which must end in the readers' abort(); fail if it returns. */
+#define EXPECT_SHOP_ABORT(stmt) do { \
+  shop_abort_armed = 1; \
+  if (setjmp(shop_abort_jmp) == 0) { \
+    stmt; \
+    shop_abort_armed = 0; \
+    TEST_FAIL_MESSAGE("expected abort(): " #stmt); \
+  } \
+} while (0)
+
+/* read_line()'s vsscanf("%d") was undefined for a number outside int, and
+ * glibc stored 4294967301 as 5: a produced vnum, room vnum or keeper wrapped
+ * into another, real vnum without a word. Now the boot stops, naming the
+ * shop, the field and the value. */
+static void test_read_list_aborts_on_produce_vnum_past_int(void)
+{
+  static char data[] = "4294967301\n-1\n";
+  struct shop_buy_data list[MAX_PROD + 1];
+  FILE *volatile f = fmemopen(data, strlen(data), "r");
+
+  TEST_ASSERT_NOT_NULL(f);
+  EXPECT_SHOP_ABORT((void)read_list(f, list, TRUE, MAX_PROD, LIST_PRODUCE));
+  TEST_ASSERT_EQUAL_INT(0, fclose(f));
+  TEST_ASSERT_EQUAL_STRING("FATAL", tb_captured_severity);
+  TEST_ASSERT_EQUAL_STRING("shop-field-range", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail,
+                              "shop #3010: produced obj vnum 4294967301 out of range"));
+}
+
+/* A room vnum fits an int but not the IDXTYPE room_vnum it is stored in. */
+static void test_read_list_aborts_on_room_vnum_past_idxtype(void)
+{
+  static char data[] = "70000\n-1\n";
+  struct shop_buy_data list[2];
+  FILE *volatile f = fmemopen(data, strlen(data), "r");
+
+  TEST_ASSERT_NOT_NULL(f);
+  EXPECT_SHOP_ABORT((void)read_list(f, list, TRUE, 1, LIST_ROOM));
+  TEST_ASSERT_EQUAL_INT(0, fclose(f));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail,
+                              "shop #3010: room vnum 70000 out of range"));
+}
+
+/* Overflow past long, a malformed line and end of file all stop the boot;
+ * in-range values, including the -1 "no keeper", are returned. */
+static void test_read_shop_number_reports_each_failure(void)
+{
+  static char data[] = "-1\n65535\n99999999999999999999\nkeeper\n";
+  FILE *volatile f = fmemopen(data, strlen(data), "r");
+
+  TEST_ASSERT_NOT_NULL(f);
+  TEST_ASSERT_EQUAL_INT(-1, (int)read_shop_number(f, "keeper vnum", -1, IDXTYPE_MAX));
+  TEST_ASSERT_EQUAL_INT(65535, (int)read_shop_number(f, "keeper vnum", -1, IDXTYPE_MAX));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+
+  EXPECT_SHOP_ABORT((void)read_shop_number(f, "shop flags", 0, LONG_MAX));
+  TEST_ASSERT_EQUAL_STRING("shop-field-range", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "(past the range of long)"));
+
+  EXPECT_SHOP_ABORT((void)read_shop_number(f, "trade-with flags", INT_MIN, INT_MAX));
+  TEST_ASSERT_EQUAL_STRING("shop-file-parse", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail,
+                              "expected a number for trade-with flags, got an unparsable line"));
+
+  EXPECT_SHOP_ABORT((void)read_shop_number(f, "first opening hour", INT_MIN, INT_MAX));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "got end of file"));
+  TEST_ASSERT_EQUAL_INT(0, fclose(f));
+}
+
+/* Profit factors are finite floats, as sedit requires. */
+static void test_read_shop_profit_rejects_non_finite(void)
+{
+  static char data[] = "1.15\n1e40\nnan\n";
+  FILE *volatile f = fmemopen(data, strlen(data), "r");
+
+  TEST_ASSERT_NOT_NULL(f);
+  TEST_ASSERT_EQUAL_FLOAT(1.15f, read_shop_profit(f, "buy profit"));
+  EXPECT_SHOP_ABORT((void)read_shop_profit(f, "sell profit"));
+  TEST_ASSERT_EQUAL_STRING("shop-field-range", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "shop #3010: sell profit"));
+  EXPECT_SHOP_ABORT((void)read_shop_profit(f, "sell profit"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "is not a finite float"));
+  TEST_ASSERT_EQUAL_INT(0, fclose(f));
+}
+
+/* ---- shopping_buy(): the keeper is paid for every unit sold ---- */
+
+/* Fixtures for the purchase path (db.c, constants.c, handler.c, limits.c,
+ * utils.c). Carrying and gold follow the real bookkeeping closely enough
+ * for one keeper and one buyer in a lit room. */
+struct time_info_data time_info;
+const struct str_app_type str_app[31] = { [11] = { 0, 0, 1000, 100 } };
+/* Newer utils.h makes room_is_dark() a call-site macro over
+ * room_is_dark_at(); supply whichever this tree's utils.h calls. */
+#ifndef room_is_dark
+int room_is_dark(room_rnum room) { (void)room; return FALSE; }
+#endif
+int room_is_dark_at(room_rnum room, const char *source_file, int source_line,
+                    const char *source_func);
+int room_is_dark_at(room_rnum room, const char *source_file, int source_line,
+                    const char *source_func)
+{ (void)room; (void)source_file; (void)source_line; (void)source_func; return FALSE; }
+int increase_gold(struct char_data *ch, int amt) { return GET_GOLD(ch) += amt; }
+int decrease_gold(struct char_data *ch, int amt) { return GET_GOLD(ch) -= amt; }
+struct obj_data *read_object(obj_vnum nr, int type) { (void)nr; (void)type; return NULL; }
+void extract_obj(struct obj_data *obj) { (void)obj; }
+char *fname(const char *namelist) { return (char *)namelist; }
+int get_number(char **name) { (void)name; return 1; }	/* no "2." prefix */
+struct obj_data *get_obj_in_list_num(int num, struct obj_data *list)
+{ (void)num; (void)list; return NULL; }
+int is_number(const char *str)
+{
+  if (!*str)
+    return FALSE;
+  for (; *str; str++)
+    if (!isdigit((unsigned char)*str))
+      return FALSE;
+  return TRUE;
+}
+char *one_argument(char *argument, char *first_arg)
+{
+  while (*argument == ' ')
+    argument++;
+  while (*argument && *argument != ' ')
+    *first_arg++ = *argument++;
+  *first_arg = '\0';
+  return argument;
+}
+void obj_from_char(struct obj_data *object)
+{
+  struct char_data *ch = object->carried_by;
+  struct obj_data **pp;
+
+  for (pp = &ch->carrying; *pp; pp = &(*pp)->next_content)
+    if (*pp == object) {
+      *pp = object->next_content;
+      break;
+    }
+  IS_CARRYING_N(ch)--;
+  IS_CARRYING_W(ch) -= GET_OBJ_WEIGHT(object);
+  object->carried_by = NULL;
+  object->next_content = NULL;
+}
+void obj_to_char(struct obj_data *object, struct char_data *ch)
+{
+  object->next_content = ch->carrying;
+  ch->carrying = object;
+  object->carried_by = ch;
+  IS_CARRYING_N(ch)++;
+  IS_CARRYING_W(ch) += GET_OBJ_WEIGHT(object);
+}
+
+static struct char_data shop_keeper_mob, shop_buyer;
+static struct player_special_data shop_buyer_specials;
+
+/* A keeper (mob) in an open shop holding item, the only unit, for 100
+ * coins; a level 1 player with 1000 coins wants it. */
+static void purchase_fixture(void)
+{
+  memset(&shop_keeper_mob, 0, sizeof(shop_keeper_mob));
+  memset(&shop_buyer, 0, sizeof(shop_buyer));
+  memset(&shop_buyer_specials, 0, sizeof(shop_buyer_specials));
+  SET_BIT_AR(MOB_FLAGS(&shop_keeper_mob), MOB_ISNPC);
+  shop_keeper_mob.player_specials = &dummy_mob;
+  shop_keeper_mob.player.short_descr = (char *)"the shopkeeper";
+  shop_keeper_mob.aff_abils.cha = 11;
+  shop_buyer.player.name = (char *)"Buyer";
+  shop_buyer.player_specials = &shop_buyer_specials;
+  shop_buyer.player.level = 1;
+  shop_buyer.aff_abils.cha = 11;
+  shop_buyer.aff_abils.str = 11;
+  shop_buyer.aff_abils.dex = 11;
+  GET_GOLD(&shop_buyer) = 1000;
+
+  shop.profit_buy = 1.0f;
+  shop.profit_sell = 1.0f;
+  shop.close1 = 28;
+  time_info.hours = 12;
+  shop.message_buy = (char *)"%s That'll be %d coins, thanks.";
+
+  item.short_description = (char *)"a long sword";
+  GET_OBJ_COST(&item) = 100;
+  GET_OBJ_WEIGHT(&item) = 1;
+  obj_to_char(&item, &shop_keeper_mob);
+  SHOP_SORT(0) = 1;
+}
+
+/* shopping_buy() paid the keeper only when "obj", by then the next unit on
+ * offer, was not NULL: buying the last unit of an item the shop does not
+ * produce took the buyer's 100 coins and paid nobody. */
+static void test_buying_last_unit_pays_keeper(void)
+{
+  char arg[] = "sword";
+
+  purchase_fixture();
+  shopping_buy(arg, &shop_buyer, &shop_keeper_mob, 0);
+  TEST_ASSERT_TRUE(shop_buyer.carrying == &item);
+  TEST_ASSERT_NULL(shop_keeper_mob.carrying);
+  TEST_ASSERT_EQUAL_INT(900, GET_GOLD(&shop_buyer));
+  TEST_ASSERT_EQUAL_INT(100, GET_GOLD(&shop_keeper_mob));
+  item.short_description = NULL;
+}
+
+/* A quest item is paid in quest points, which go to nobody: the keeper's
+ * gold stays as it was, last unit or not. */
+static void test_buying_quest_item_pays_no_gold(void)
+{
+  char arg[] = "sword";
+
+  purchase_fixture();
+  SET_BIT_AR(GET_OBJ_EXTRA(&item), ITEM_QUEST);
+  GET_QUESTPOINTS(&shop_buyer) = 150;
+  shopping_buy(arg, &shop_buyer, &shop_keeper_mob, 0);
+  TEST_ASSERT_TRUE(shop_buyer.carrying == &item);
+  TEST_ASSERT_EQUAL_INT(50, GET_QUESTPOINTS(&shop_buyer));
+  TEST_ASSERT_EQUAL_INT(1000, GET_GOLD(&shop_buyer));
+  TEST_ASSERT_EQUAL_INT(0, GET_GOLD(&shop_keeper_mob));
+  item.short_description = NULL;
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -279,5 +544,12 @@ int main(void)
   RUN_TEST(test_buyword_deep_parens_rejected);
   RUN_TEST(test_buyword_many_operands_rejected);
   RUN_TEST(test_buyword_simple_matches);
+  RUN_TEST(test_read_type_list_drops_type_past_int);
+  RUN_TEST(test_read_list_aborts_on_produce_vnum_past_int);
+  RUN_TEST(test_read_list_aborts_on_room_vnum_past_idxtype);
+  RUN_TEST(test_read_shop_number_reports_each_failure);
+  RUN_TEST(test_read_shop_profit_rejects_non_finite);
+  RUN_TEST(test_buying_last_unit_pays_keeper);
+  RUN_TEST(test_buying_quest_item_pays_no_gold);
   return UNITY_END();
 }

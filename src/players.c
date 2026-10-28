@@ -49,6 +49,20 @@
 #include "quest.h"
 #include "modify.h" /* for parse_at */
 
+/* save_char() takes off every worn item and puts it back, so that base
+ * stats are written. With NO_EXTRANEOUS_TRIGGERS undefined it used to fire
+ * each item's remove and wear triggers on the way, running DG scripts while
+ * the equipment sat in a local array and the affects were stripped. A
+ * script that purged an item left a freed pointer there, which was then
+ * equipped or given back (use after free, B2-21); one that made the player
+ * wear something into an emptied slot could get that item's bonuses
+ * written into the saved stats. save_char() therefore runs no scripts, and
+ * a build that asks for those triggers stops here instead of compiling the
+ * unsafe path. */
+#ifndef NO_EXTRANEOUS_TRIGGERS
+#error "save_char() does not fire wear/remove triggers (B2-21): keep NO_EXTRANEOUS_TRIGGERS defined in dg_scripts.h"
+#endif
+
 #define LOAD_HIT	0
 #define LOAD_MANA	1
 #define LOAD_MOVE	2
@@ -76,6 +90,9 @@
 #define PT_LEVEL(i) (player_table[(i)].level)
 #define PT_FLAGS(i) (player_table[(i)].flags)
 #define PT_LLAST(i) (player_table[(i)].last)
+/** TRUE when pos names a slot of player_table[] (0..top_of_p_table; an
+ * empty table is -1). Evaluates pos twice: pass a plain variable. */
+#define VALID_PTABLE_POS(pos) ((pos) >= 0 && (pos) <= top_of_p_table)
 
 /* local functions */
 static void load_affects(FILE *fl, struct char_data *ch);
@@ -172,6 +189,30 @@ static int pfile_int_in_range(const char *line, const char *filename,
   return value;
 }
 
+/* Parse a pfile integer whose repair is its nearest bound rather than a
+ * default: a count that can only have been pushed past a limit (endgame
+ * ranks and points). A value outside lo..hi is clamped and reported
+ * (pfile-range) with the player idnum, tag and value; it used to be
+ * clamped below silently, and not at all above. */
+static int pfile_int_clamped(const char *line, const char *filename,
+                             const char *tag, long idnum, int lo, int hi)
+{
+  int value = parse_pfile_int_or_zero(line, filename, tag, idnum);
+  int fixed = value < lo ? lo : hi;
+
+  if (value < lo || value > hi) {
+    TB_ERROR_MSG("player", "pfile-range", filename,
+                 "player idnum %ld tag %.4s value %d outside %d..%d; using %d",
+                 idnum, tag, value, lo, hi, fixed);
+    return fixed;
+  }
+  return value;
+}
+
+/* Endgame HP/mana upgrade ranks run 0..100: do_endgame() (act.other.c)
+ * refuses a purchase once a rank reaches 100. Keep the two in step. */
+#define PFILE_ENDGAME_RANK_MAX 100
+
 /* Longest flag word accepted from an "Act :", "Aff :" or "Pref:" line.
  * sprintascii() writes at most 33 characters per 32-bit word, so anything
  * longer is corruption or tampering, not a flag set the server produced. */
@@ -267,10 +308,20 @@ int fread_string_checked(FILE *fl, const char *resource, const char *field,
                    "%s: end of file before '~' after %zu bytes", field, length);
       return FALSE;
     }
+    /* A NUL byte at the start of a chunk (a corrupt or partly written file)
+     * makes the chunk look empty: strchr() below returns tmp itself and the
+     * scan read tmp[-1]. Drop the chunk, as fread_string() does. */
+    if (*tmp == '\0') {
+      TB_ERROR_MSG("db", "fread-string", resource,
+                   "%s: NUL byte in string data after %zu bytes; rest of that "
+                   "line dropped", field, length);
+      continue;
+    }
     /* Strip the line ending; a trailing '~' ends the string, otherwise the
-     * line is stored with a CR/LF ending (same rules as fread_string()). */
+     * line is stored with a CR/LF ending (same rules as fread_string()).
+     * tmp is not empty, so point starts inside it. */
     point = strchr(tmp, '\0');
-    for (point--; (*point == '\r' || *point == '\n') && point > tmp; point--)
+    for (point--; point > tmp && (*point == '\r' || *point == '\n'); point--)
       ;
     if (*point == '~') {
       *point = '\0';
@@ -508,8 +559,14 @@ static void remove_player_from_index(int pos)
 {
   int i;
 
-  if (pos < 0 || pos > top_of_p_table)
+  /* Internal invariant (remove_player() checks first): a bad position
+   * used to return silently, leaving the caller believing it removed. */
+  if (!VALID_PTABLE_POS(pos)) {
+    TB_ERROR_MSG("player", "index-pos", "player_table",
+                 "position %d outside 0..%d; index unchanged", pos,
+                 top_of_p_table);
     return;
+  }
 
   /* We only need to free the name string */
   free(PT_PNAME(pos));
@@ -605,16 +662,17 @@ void free_player_index(void)
   index_kept_lines = NULL;
   index_kept_count = 0;
 
-  if (!player_table)
-    return;
-
-  for (tp = 0; tp <= top_of_p_table; tp++)
-    if (player_table[tp].name)
-      free(player_table[tp].name);
-
-  free(player_table);
-  player_table = NULL;
-  top_of_p_table = 0;
+  if (player_table) {
+    for (tp = 0; tp <= top_of_p_table; tp++)
+      if (player_table[tp].name)
+        free(player_table[tp].name);
+    free(player_table);
+    player_table = NULL;
+  }
+  /* An empty table is -1. This used to be set to 0 with player_table
+   * NULL, so any later lookup (get_ptable_by_name(), get_name_by_id(),
+   * create_entry()) read player_table[0] through NULL (B2-29). */
+  top_of_p_table = top_of_p_file = -1;
 }
 
 long get_ptable_by_name(const char *name)
@@ -661,7 +719,8 @@ char *get_name_by_id(long id)
  * File content is untrusted. A malformed or out-of-range field never fails
  * the load: it is reported (pfile-int, pfile-range, pfile-flags,
  * pfile-desc, pfile-alias, pfile-tag ...) and the field keeps its PFDEF_*
- * default. Unknown tags are reported and skipped. */
+ * default. Unknown tags are reported and skipped. A current quest that is
+ * not loaded is reported (pfile-quest) and cleared with clear_quest(). */
 int load_char(const char *name, struct char_data *ch)
 {
   int id, i;
@@ -674,8 +733,16 @@ int load_char(const char *name, struct char_data *ch)
   if ((id = get_ptable_by_name(name)) < 0)
     return (-1);
   else {
-    if (!get_filename(filename, sizeof(filename), PLR_FILE, player_table[id].name))
+    /* get_filename() refuses (and reports) a name that is not a safe path
+     * component, such as "../x" from a damaged index; never open a path
+     * built from it. The raw name is not logged. */
+    if (!get_filename(filename, sizeof(filename), PLR_FILE, player_table[id].name)) {
+      TB_ERROR_MSG("player", "pfile-name", "player_table",
+                   "player idnum %ld: no safe player file name for its %zu-byte "
+                   "index name; not loaded", player_table[id].id,
+                   strlen(player_table[id].name));
       return (-1);
+    }
     if (!(fl = fopen(filename, "r"))) {
       int saved_errno = errno;
       mudlog(NRM, LVL_GOD, TRUE,
@@ -795,10 +862,10 @@ int load_char(const char *name, struct char_data *ch)
 
       case 'E':
 	     if (!strcmp(tag, "Exp "))	GET_EXP(ch)		= parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
-             else if (!strcmp(tag, "EgAP")) GET_ENDGAME_AP(ch) = MAX(0, parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch)));
-             else if (!strcmp(tag, "EgXP")) GET_ENDGAME_XP(ch) = MAX(0, parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch)));
-             else if (!strcmp(tag, "EgHP")) GET_ENDGAME_HP_RANK(ch) = MAX(0, parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch)));
-             else if (!strcmp(tag, "EgMP")) GET_ENDGAME_MP_RANK(ch) = MAX(0, parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch)));
+             else if (!strcmp(tag, "EgAP")) GET_ENDGAME_AP(ch) = pfile_int_clamped(line, filename, tag, GET_IDNUM(ch), 0, INT_MAX);
+             else if (!strcmp(tag, "EgXP")) GET_ENDGAME_XP(ch) = pfile_int_clamped(line, filename, tag, GET_IDNUM(ch), 0, INT_MAX);
+             else if (!strcmp(tag, "EgHP")) GET_ENDGAME_HP_RANK(ch) = pfile_int_clamped(line, filename, tag, GET_IDNUM(ch), 0, PFILE_ENDGAME_RANK_MAX);
+             else if (!strcmp(tag, "EgMP")) GET_ENDGAME_MP_RANK(ch) = pfile_int_clamped(line, filename, tag, GET_IDNUM(ch), 0, PFILE_ENDGAME_RANK_MAX);
 	else pfile_unknown_tag(filename, tag, GET_IDNUM(ch));
 	break;
 
@@ -871,7 +938,7 @@ int load_char(const char *name, struct char_data *ch)
       case 'Q':
 	     if (!strcmp(tag, "Qstp"))  GET_QUESTPOINTS(ch)     = parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
        else if (!strcmp(tag, "Qpnt")) GET_QUESTPOINTS(ch) = parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch)); /* Backward compatibility */
-       else if (!strcmp(tag, "Qcur")) GET_QUEST(ch) = parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
+       else if (!strcmp(tag, "Qcur")) GET_QUEST(ch) = pfile_int_in_range(line, filename, tag, GET_IDNUM(ch), IDXTYPE_MIN, IDXTYPE_MAX, PFDEF_CURRQUEST);
        else if (!strcmp(tag, "Qcnt")) GET_QUEST_COUNTER(ch) = parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
        else if (!strcmp(tag, "Qest")) load_quests(fl, ch);
 	else pfile_unknown_tag(filename, tag, GET_IDNUM(ch));
@@ -929,6 +996,21 @@ int load_char(const char *name, struct char_data *ch)
     }
   }
 
+  /* Qcur is a quest vnum from the file, range-checked when read to the
+   * qst_vnum that real_quest() takes (current_quest is an int). Its quest
+   * can be gone by now (deleted in qedit, or its quest file removed), and
+   * real_quest() then returns NOTHING, which QST_NAME() and the other
+   * aquest_table[] accessors would use as an index (G2-02). Invariant
+   * after load: the current quest is NOTHING or a loaded quest. A stale
+   * one is left the way quest_progress() leaves a quest that is gone. */
+  if (GET_QUEST(ch) != NOTHING && real_quest(GET_QUEST(ch)) == NOTHING) {
+    TB_ERROR_MSG("player", "pfile-quest", filename,
+                 "player idnum %ld current quest vnum %d is not loaded; "
+                 "quest cleared (counter %d dropped)", GET_IDNUM(ch),
+                 GET_QUEST(ch), GET_QUEST_COUNTER(ch));
+    clear_quest(ch);
+  }
+
   affect_total(ch);
 
   /* initialization for imms */
@@ -945,11 +1027,12 @@ int load_char(const char *name, struct char_data *ch)
 
 /** Write a player's file (the ASCII player file save routine).
  * Side effects, all undone before return: every worn item is unequipped
- * (firing wear/remove triggers unless NO_EXTRANEOUS_TRIGGERS) and every
- * affect is removed so the base stats can be written, then both are put
- * back. Not reentrant: a trigger fired from here must not save the same
- * character. At most MAX_AFFECT affects are written; extra ones stay on the
- * character and are reported (save-affects).
+ * and every affect is removed so the base stats can be written, then both
+ * are put back. No wear/remove trigger fires and no script runs in between
+ * (see the B2-21 note at the top of this file), so nothing can purge an
+ * item or re-enter save_char() mid-save. At most MAX_AFFECT affects are
+ * written; extra ones stay on the character and are reported
+ * (save-affects).
  * The file is staged and replaced only after every write succeeded; any
  * failure is reported and leaves the previous file in place. Afterwards the
  * player index entry is refreshed (and the index rewritten if it changed).
@@ -1018,14 +1101,11 @@ void save_char(struct char_data * ch)
     return;
   }
 
-  /* Unaffect everything a character can be affected by. */
+  /* Unaffect everything a character can be affected by. No remove
+   * trigger: char_eq[] must not be left holding an item a script purged. */
   for (i = 0; i < NUM_WEARS; i++) {
-    if (GET_EQ(ch, i)) {
+    if (GET_EQ(ch, i))
       char_eq[i] = unequip_char(ch, i);
-#ifndef NO_EXTRANEOUS_TRIGGERS
-      remove_otrigger(char_eq[i], ch);
-#endif
-    }
     else
       char_eq[i] = NULL;
   }
@@ -1225,17 +1305,10 @@ void save_char(struct char_data * ch)
     affect_to_char(ch, &extra_aff[i]);
   free(extra_aff);
 
-  for (i = 0; i < NUM_WEARS; i++) {
+  /* Every item goes back to the slot it came from; no wear trigger (B2-21). */
+  for (i = 0; i < NUM_WEARS; i++)
     if (char_eq[i])
-#ifndef NO_EXTRANEOUS_TRIGGERS
-        if (wear_otrigger(char_eq[i], ch, i))
-#endif
-    equip_char(ch, char_eq[i], i);
-#ifndef NO_EXTRANEOUS_TRIGGERS
-          else
-          obj_to_char(char_eq[i], ch);
-#endif
-  }
+      equip_char(ch, char_eq[i], i);
   /* end char_to_store code */
 
   if (save_failed)
@@ -1325,14 +1398,43 @@ void tag_argument(char *argument, char *tag)
  * @param pfilepos The player's player_table position.
  * The entry's name is freed and later entries shift down one slot (see
  * remove_player_from_index()); every held position >= pfilepos is stale
- * afterwards. Unlink failures other than "no such file" are logged. */
+ * afterwards. Unlink failures other than "no such file" are logged.
+ * A position outside the table, or an entry with no name, is reported
+ * (index-pos) and nothing is deleted; so is a name get_filename() refuses
+ * (pclean-name), and that entry stays in the index for an admin. */
 void remove_player(int pfilepos)
 {
   char filename[MAX_STRING_LENGTH], timestr[25];
   int i;
 
-  if (!*player_table[pfilepos].name)
+  /* pfilepos comes from the caller's earlier lookup, and every removal
+   * compacts the table; a stale or bad position indexed past it (B2-29). */
+  if (!VALID_PTABLE_POS(pfilepos)) {
+    TB_ERROR_MSG("player", "index-pos", "player_table",
+                 "position %d outside 0..%d; nothing deleted", pfilepos,
+                 top_of_p_table);
     return;
+  }
+  /* Names are blanked only just before removal, so an unnamed entry is a
+   * broken index; its files cannot be found by name. */
+  if (!PT_PNAME(pfilepos) || !*PT_PNAME(pfilepos)) {
+    TB_ERROR_MSG("player", "index-pos", "player_table",
+                 "position %d (idnum %ld) has no name; nothing deleted",
+                 pfilepos, PT_IDNUM(pfilepos));
+    return;
+  }
+  /* Name every file before deleting any. get_filename() refuses (and
+   * reports) a name that is not a safe path component, such as "../x"
+   * from a damaged index: then nothing is unlinked, and the entry is kept
+   * rather than half-deleted. The raw name is not logged. */
+  for (i = 0; i < MAX_FILES; i++)
+    if (!get_filename(filename, sizeof(filename), i, PT_PNAME(pfilepos))) {
+      TB_ERROR_MSG("player", "pclean-name", "player_table",
+                   "player idnum %ld: no safe name for file type %d from its "
+                   "%zu-byte index name; nothing deleted", PT_IDNUM(pfilepos),
+                   i, strlen(PT_PNAME(pfilepos)));
+      return;
+    }
 
   /* Unlink all player-owned files */
   for (i = 0; i < MAX_FILES; i++) {
@@ -1371,12 +1473,25 @@ void remove_player(int pfilepos)
   save_player_index();
 }
 
+/* remove_player() for the sweep: TRUE only if the entry really left the
+ * table. remove_player() refuses (and reports) a player it cannot delete
+ * safely, e.g. one whose name get_filename() rejects; the sweep must then
+ * move on, not re-examine that slot forever. */
+static int pclean_remove(int pos)
+{
+  int before = top_of_p_table;
+
+  remove_player(pos);
+  return top_of_p_table < before;
+}
+
 /* Walk the player index and remove deleted or expired players.
  *
  * remove_player() compacts player_table: the entry after i moves into slot
  * i and top_of_p_table drops by one. The loop must therefore re-examine
  * slot i after a removal instead of advancing past it, or every player that
- * directly follows a removed one escapes the sweep. */
+ * directly follows a removed one escapes the sweep. A refused removal
+ * leaves the entry in place, so the loop moves on from it. */
 void clean_pfiles(void)
 {
   int i, ci, removed;
@@ -1390,16 +1505,14 @@ void clean_pfiles(void)
       /* If the player is already flagged for deletion, then go ahead and get
        * rid of him. */
       if (IS_SET(player_table[i].flags, PINDEX_DELETED)) {
-	remove_player(i);
-	removed = TRUE;
+	removed = pclean_remove(i);
       } else {
         /* Check to see if the player has overstayed his welcome based on level. */
 	for (ci = 0; pclean_criteria[ci].level > -1; ci++) {
 	  if (player_table[i].level <= pclean_criteria[ci].level &&
 	      ((time(0) - player_table[i].last) >
 	       (pclean_criteria[ci].days * SECS_PER_REAL_DAY))) {
-	    remove_player(i);
-	    removed = TRUE;
+	    removed = pclean_remove(i);
 	    break;
 	  }
 	}

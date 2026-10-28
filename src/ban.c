@@ -312,6 +312,15 @@ ACMD(do_unban)
 
 
 
+/* TRUE when descriptor d holds a new character that is still being created:
+ * it is not playing and has no idnum yet. clear_char() (db.c) leaves the
+ * idnum 0, and init_char() assigns one only when creation finishes
+ * (CON_QCLASS), so 0 marks "not in the player index". Evaluates d more
+ * than once: pass a plain variable. */
+#define CREATING_CHARACTER(d) \
+  ((d)->character && !IS_NPC((d)->character) && !IS_PLAYING(d) && \
+   GET_IDNUM((d)->character) <= 0)
+
 /* Check for invalid names (i.e., profanity, etc.) Written by Sharon P Garza. */
 int valid_name(char *newname)
 {
@@ -322,15 +331,21 @@ int valid_name(char *newname)
   /* Make sure someone isn't trying to create this same name.  We want to do a 
    * 'str_cmp' so people can't do 'Bob' and 'BoB'.  The creating login will not
    * have a character name yet and other people sitting at the prompt won't 
-   * have characters yet. New, unindexed characters (i.e., characters who are 
-   * in the process of creating) will have an idnum of -1, set by clear_char() 
-   * in db.c.  If someone is creating a character by the same name as the one 
-   * we are checking, then the name is invalid, to prevent character duping.
-   * THIS SHOULD FIX THE 'invalid name' if disconnected from OLC-bug - Welcor */
+   * have characters yet. If another connection is creating a character by
+   * the same name as the one we are checking, then the name is invalid, to
+   * prevent character duping. This used to test for an idnum of -1, which
+   * clear_char() no longer sets (it leaves 0), so the check never fired and
+   * two connections could create the same character at once.
+   * newname is player input: it is not logged, only its length. */
   for (dt = descriptor_list; dt; dt = dt->next)
-    if (dt->character && GET_NAME(dt->character) && !str_cmp(GET_NAME(dt->character), newname))
-      if (GET_IDNUM(dt->character) == -1)
-        return (IS_PLAYING(dt));
+    if (CREATING_CHARACTER(dt) && GET_NAME(dt->character) &&
+        !str_cmp(GET_NAME(dt->character), newname)) {
+      TB_WARN_MSG("ban", "name-in-creation", "valid_name",
+                  "a %zu-byte name is already being created on " DIAG_DESC_FMT
+                  " (state %d); refused", strlen(newname), DIAG_DESC(dt),
+                  STATE(dt));
+      return (0);
+    }
 
   /* count vowels */
   for (i = 0; newname[i]; i++) {

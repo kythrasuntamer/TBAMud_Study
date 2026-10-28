@@ -335,9 +335,11 @@ int command_wtrigger(struct char_data *actor, char *cmd, char *argument)
 { (void)actor; (void)cmd; (void)argument; return 0; }
 
 /* ---------- act.informative.c ---------- */
+/* look_at_room() is a utils.h macro for look_at_room_at(). */
 __attribute__((weak))
-void look_at_room(struct char_data *ch, int ignore_brief)
-{ (void)ch; (void)ignore_brief; }
+void look_at_room_at(const char *src_file, int src_line, const char *src_func,
+                     struct char_data *ch, int ignore_brief)
+{ (void)src_file; (void)src_line; (void)src_func; (void)ch; (void)ignore_brief; }
 
 /* ---------- protocol.c ---------- */
 __attribute__((weak))

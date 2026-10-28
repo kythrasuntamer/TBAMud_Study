@@ -1,0 +1,84 @@
+W#3000
+The Reading Room~
+   You are in a small, simple room which is mostly empty, save a few
+wooden desks and benches.  To the east you hear the bustle of the Temple
+of Midgaard, a sharp contrast to the relative quiet of this peaceful
+room.
+~
+30 156 0 0 0 0
+D1
+You see the Temple of Midgaard.
+~
+~
+0 -1 3001
+E
+credits info~
+   Guilds: 20-23
+~
+S
+#3001
+The Temple Of Midgaard~
+   You are in the southern end of the temple hall in the Temple of Midgaard.
+The temple has been constructed from giant marble blocks, eternal in
+appearance, and most of the walls are covered by ancient wall paintings
+picturing Gods, giants and peasants.
+   Large steps lead down through the grand temple gate, descending the huge
+mound upon which the temple is built and ends on the temple square below.
+To the west, you see the Reading Room.  The donation room is in a small
+alcove to your east.
+~
+30 156 0 0 0 0
+D0
+At the northern end of the temple hall is a statue and a huge altar.
+~
+~
+0 -1 3054
+D1
+In the east, you see a small alcove with a rickety wooden sign which
+reads "Midgaard Donation Room."
+~
+~
+0 -1 3063
+D2
+You look down the huge stone steps at the temple square below.
+~
+~
+0 -1 3005
+D3
+You see the Reading Room.
+~
+~
+0 -1 3000
+D5
+You see the temple square.
+~
+~
+0 -1 3005
+E
+paintings ancient wall peasants gods giants~
+   The paintings are numerous in style and quality.  But, they all have the same
+surreal quality that tugs at the mind to become lost in their depth and detail.
+~
+S
+T 3017
+#3002
+The Clerics' Inner Sanctum~
+   This is the inner sanctum.  A picture of the mighty Thor, is hanging on
+the wall, just above the altar which is set against the western wall.  A well
+in the middle of the floor leads down into darkness.  Vile smells waft from
+the depths.
+~
+30 12 0 0 0 0
+D1
+You see your favorite place, the bar of divination.
+~
+~
+0 -1 3003
+D5
+You can't see what is down there, it is too dark.  Looks like it would be
+impossible to climb back up.
+~
+~
+0 -1 7026
+S
+$

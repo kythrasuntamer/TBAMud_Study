@@ -158,6 +158,11 @@ static struct timeval null_time; /* zero-valued time structure */
 static volatile sig_atomic_t reread_wizlist;   /* signal: SIGUSR1 */
 static volatile sig_atomic_t emergency_unban;  /* signal: SIGUSR2 */
 static volatile sig_atomic_t shutdown_signal;  /* SIGHUP/SIGINT/SIGTERM */
+/* Set when game_loop() stops because its socket poll failed in a way it
+ * cannot recover from (a FATAL network/select record names the errno).
+ * init_game() still saves every player, then exits nonzero instead of
+ * logging a normal termination, so a supervisor sees a failure. */
+static int main_loop_failed = FALSE;
 
 static int dg_act_check;         /* toggle for act_trigger */
 static bool fCopyOver;          /* Are we booting in copyover mode? */
@@ -198,6 +203,9 @@ static void record_usage(void);
 static char *make_prompt(struct descriptor_data *point);
 static void check_idle_passwords(void);
 static void init_descriptor (struct descriptor_data *newd, int desc);
+static int mark_unpollable_descriptors(socket_t mother);
+static int poll_failure_recoverable(socket_t mother, int poll_errno, int maxdesc);
+static void report_world_gaps(void);
 
 static struct in_addr *get_bind_addr(void);
 static int parse_ip(const char *addr, struct in_addr *inaddr);
@@ -245,6 +253,24 @@ static bool parse_long_arg(const char *text, long min, long max, long *out)
   return TRUE;
 }
 
+/* Replace the heap-owned configuration string *slot with a copy of value.
+ * CONFIG_CONFFILE is freed by main() at exit and CONFIG_LOGNAME by
+ * cedit_save_internally() and free_strings(OASIS_CFG), so neither may point
+ * into argv (an invalid free), and the value being replaced (load_config()'s
+ * copy) is freed here instead of leaking. value comes from the command line
+ * or a compiled-in default. An allocation failure at boot is fatal. */
+static void set_config_string(char **slot, const char *value, const char *what)
+{
+  char *copy = strdup(value);
+
+  if (copy == NULL) {
+    TB_REPORT_FATAL_ERRNO(TB_ERR_BOOT, "strdup", what);
+    exit(1);
+  }
+  free(*slot);
+  *slot = copy;
+}
+
 /* Highest descriptor accepted for the copyover control socket. */
 #ifdef CIRCLE_WINDOWS
 #define MOTHER_DESC_MAX LONG_MAX
@@ -276,6 +302,7 @@ int main(int argc, char **argv)
 {
   int pos = 1;
   const char *dir;
+  const char *conf_arg = NULL; /* -f file name, inside argv */
 
 #ifdef MEMORY_DEBUG
   zmalloc_init();
@@ -300,9 +327,9 @@ int main(int argc, char **argv)
   while ((pos < argc) && (*(argv[pos]) == '-')) {
     if (*(argv[pos] + 1) == 'f') {
       if (*(argv[pos] + 2))
-	CONFIG_CONFFILE = argv[pos] + 2;
+	conf_arg = argv[pos] + 2;
       else if (++pos < argc)
-	CONFIG_CONFFILE = argv[pos];
+	conf_arg = argv[pos];
       else {
 	puts("SYSERR: File name to read from expected after option -f.");
 	exit(1);
@@ -312,8 +339,9 @@ int main(int argc, char **argv)
   }
   pos = 1;
 
-  if (!CONFIG_CONFFILE)
-    CONFIG_CONFFILE = strdup(CONFIG_FILE);
+  /* A heap copy: main() frees CONFIG_CONFFILE at exit. */
+  set_config_string(&CONFIG_CONFFILE, conf_arg ? conf_arg : CONFIG_FILE,
+                    "configuration file name");
 
   load_config();
 
@@ -327,10 +355,11 @@ int main(int argc, char **argv)
 	++pos;
       break;
     case 'o':
+      /* Overrides load_config()'s LOGNAME; must stay a heap copy. */
       if (*(argv[pos] + 2))
-	CONFIG_LOGNAME = argv[pos] + 2;
+	set_config_string(&CONFIG_LOGNAME, argv[pos] + 2, "log file name");
       else if (++pos < argc)
-	CONFIG_LOGNAME = argv[pos];
+	set_config_string(&CONFIG_LOGNAME, argv[pos], "log file name");
       else {
 	puts("SYSERR: File name to log to expected after option -o.");
 	exit(1);
@@ -449,9 +478,10 @@ int main(int argc, char **argv)
   }
   log("Using %s as data directory.", dir);
 
-  if (scheck)
+  if (scheck) {
     boot_world();
-  else {
+    report_world_gaps();
+  } else {
     log("Running game on port %d.", port);
     init_game(port);
   }
@@ -702,6 +732,28 @@ void copyover_recover()
   tb_fclose(fp);
 }
 
+/* Contracts between the loaded world and code that relies on it, which
+ * boot_world() does not check itself. Each gap is reported once, at boot
+ * and in syntax-check mode, as a WARNING naming the missing vnum: the
+ * server runs, but the feature that needs it would otherwise fail later
+ * with nothing pointing back at the world files. Runs once the rooms and
+ * mobiles are indexed. */
+static void report_world_gaps(void)
+{
+  /* dg_cast (dg_misc.c) loads this mob to cast spells for room and object
+   * scripts, and damage() exempts only it from ROOM_PEACEFUL; without it
+   * every such cast fails with just a script log line. */
+  if (real_mobile(DG_CASTER_PROXY) == NOBODY)
+    TB_WARN_MSG("dg", "caster-proxy-missing", "mob",
+                "vnum %d (DG_CASTER_PROXY) does not exist: room and object "
+                "scripts cannot cast spells", DG_CASTER_PROXY);
+
+  /* Donation rooms are config vnums (etc/config, cedit) that nothing
+   * checks against the world; each missing one is a donation-room-missing
+   * warning (act.item.c). */
+  check_donation_rooms();
+}
+
 /* Init sockets, run game, and cleanup sockets */
 static void init_game(ush_int local_port)
 {
@@ -725,6 +777,7 @@ static void init_game(ush_int local_port)
   init_lookup_table();
 
   boot_db();
+  report_world_gaps();
 
 #if defined(CIRCLE_UNIX) || defined(CIRCLE_MACINTOSH)
   log("Signal trapping.");
@@ -755,6 +808,14 @@ static void init_game(ush_int local_port)
 
   log("Saving current MUD time.");
   save_mud_time(&time_info);
+
+  /* game_loop() could not poll its sockets and logged a FATAL
+   * network/select record with the errno. Everyone was saved above; exit
+   * nonzero so the stop is not mistaken for an ordinary shutdown. */
+  if (main_loop_failed) {
+    log("SYSERR: Abnormal termination of game: the main loop could not poll its sockets.");
+    exit(1);
+  }
 
   if (circle_reboot) {
     log("Rebooting.");
@@ -954,11 +1015,110 @@ static int get_max_players(void)
 #endif /* CIRCLE_UNIX */
 }
 
+/* game_loop()'s poll failed with EBADF: a descriptor in its sets is not an
+ * open file, i.e. something closed a player's socket without close_socket(),
+ * and select() would fail the same way on every pulse until it is dropped.
+ * Each player connection whose socket is gone is reported and marked
+ * CON_CLOSE, for game_loop() to close at once. Returns how many were marked,
+ * or -1 when the listening (mother) socket itself is not open: no new player
+ * could ever connect, which game_loop() cannot repair. */
+static int mark_unpollable_descriptors(socket_t mother)
+{
+  int marked = 0;
+#ifndef CIRCLE_WINDOWS
+  struct descriptor_data *d;
+
+  if (fcntl(mother, F_GETFD) < 0 && errno == EBADF) {
+    TB_ERROR_ERRNO("network", "select-bad-fd", "game_loop",
+                   "listening socket fd %ld is not open; new connections "
+                   "cannot be accepted", (long) mother);
+    return -1;
+  }
+  for (d = descriptor_list; d; d = d->next) {
+    if (fcntl(d->descriptor, F_GETFD) >= 0 || errno != EBADF)
+      continue;
+    TB_ERROR_ERRNO("network", "select-bad-fd", "game_loop",
+                   DIAG_DESC_FMT " socket is not open (closed outside "
+                   "close_socket()); closing the connection", DIAG_DESC(d));
+    STATE(d) = CON_CLOSE;
+    marked++;
+  }
+#else
+  (void) mother;
+#endif
+  return marked;
+}
+
+/* Decides what game_loop() does after its non-blocking poll failed with
+ * poll_errno (the caller's errno, read straight after select()). Returns
+ * TRUE to poll again on the next pulse:
+ *  - EINTR: a signal arrived. Handlers are installed without SA_RESTART, so
+ *    SIGCHLD from reap(), SIGUSR1/SIGUSR2 ... interrupt select(); not a
+ *    failure.
+ *  - EBADF caused by player sockets that are no longer open: they are
+ *    marked CON_CLOSE (mark_unpollable_descriptors()) for the caller to
+ *    close.
+ * Anything else (EBADF with no player socket to blame or a dead listening
+ * socket, EINVAL, ENOMEM ...) would fail again on every pulse, so it is
+ * reported as FATAL with the errno and FALSE is returned: game_loop() stops
+ * and init_game() saves everyone, then exits nonzero. */
+static int poll_failure_recoverable(socket_t mother, int poll_errno, int maxdesc)
+{
+  if (poll_errno == EINTR)
+    return TRUE;
+  if (poll_errno == EBADF && mark_unpollable_descriptors(mother) > 0)
+    return TRUE;
+  TB_ERROR_LOG("FATAL", "network", "select", "game_loop", poll_errno,
+               "main descriptor poll failed (maxdesc %d); stopping the game "
+               "loop, saving players and exiting nonzero", maxdesc);
+  return FALSE;
+}
+
+/* An idle player pulled into the void (limits.c check_idling()) types
+ * again: move ch back to GET_WAS_IN, the rnum it was pulled from, and clear
+ * it. Rooms can be deleted with OLC meanwhile; an rnum left past
+ * top_of_world would make char_to_room() refuse it and strand ch, still
+ * playing, in NOWHERE (where char_from_room() aborts the server on it
+ * later). So an invalid GET_WAS_IN is reported and ch goes to the mortal
+ * start room, looked up by vnum; if that room is gone too, that is
+ * reported and ch stays where it is. Returns TRUE when ch was moved. */
+static bool return_from_void(struct char_data *ch)
+{
+  room_rnum was_in = GET_WAS_IN(ch);
+
+  GET_WAS_IN(ch) = NOWHERE;
+  if (!VALID_ROOM_RNUM(was_in)) {
+    room_rnum start = real_room(CONFIG_MORTAL_START);
+    room_rnum here = IN_ROOM(ch);
+
+    if (start == NOWHERE) {
+      TB_ERROR_MSG("comm", "void-return-no-start-room", "room",
+                   DIAG_CHAR_FMT " returns from the void to rnum %d, past "
+                   "top_of_world %d, and mortal start room vnum %d does not "
+                   "exist; left in " DIAG_ROOM_FMT, DIAG_CHAR(ch), (int) was_in,
+                   (int) top_of_world, (int) CONFIG_MORTAL_START,
+                   DIAG_ROOM(here));
+      return FALSE;
+    }
+    TB_ERROR_MSG("comm", "void-return-stale", "room",
+                 DIAG_CHAR_FMT " returns from the void to rnum %d, past "
+                 "top_of_world %d; sent to the mortal start room "
+                 DIAG_ROOM_FMT " instead", DIAG_CHAR(ch), (int) was_in,
+                 (int) top_of_world, DIAG_ROOM(start));
+    was_in = start;
+  }
+  if (IN_ROOM(ch) != NOWHERE)
+    char_from_room(ch);
+  char_to_room(ch, was_in);
+  return TRUE;
+}
+
 /* game_loop contains the main loop which drives the entire MUD.  It
  * cycles once every 0.10 seconds and is responsible for accepting new
  * new connections, polling existing connections for input, dequeueing
  * output and sending it out to players, and calling "heartbeat" functions
- * such as mobile_activity(). */
+ * such as mobile_activity(). It returns when circle_shutdown is set, or
+ * with main_loop_failed set when its socket poll cannot recover. */
 void game_loop(socket_t local_mother_desc)
 {
   fd_set input_set, output_set, exc_set, null_set;
@@ -1045,14 +1205,31 @@ void game_loop(socket_t local_mother_desc)
       timediff(&timeout, &last_time, &now);
     } while (timeout.tv_usec || timeout.tv_sec);
 
-    /* Poll (without blocking) for new input, output, and exceptions. Signal
-     * handlers are installed without SA_RESTART, so a signal arriving here
-     * (SIGCHLD from reap(), SIGUSR1 ...) is not a failure: poll again. */
+    /* Poll (without blocking) for new input, output, and exceptions.
+     * select() may rewrite its timeout and leaves it undefined after an
+     * error, and a failed poll is retried below, so reset it every time. */
+    null_time.tv_sec = 0;
+    null_time.tv_usec = 0;
     if (select(maxdesc + 1, &input_set, &output_set, &exc_set, &null_time) < 0) {
-      if (errno == EINTR)
-        continue;
-      TB_REPORT_ERRNO("select", "main descriptor poll");
-      return;
+      /* A signal, or player sockets closed behind close_socket()'s back,
+       * are recovered from; anything else stops the loop, and init_game()
+       * saves everyone and exits nonzero (see poll_failure_recoverable()).
+       * Every other failure used to return here with only a generic errno
+       * record, and the server then logged "Normal termination of game."
+       * and exited 0. */
+      if (!poll_failure_recoverable(local_mother_desc, errno, maxdesc)) {
+        main_loop_failed = TRUE;
+        return;
+      }
+      /* Close any connection marked above at once, before anything else
+       * can be handed its (now free) descriptor number; poll again on the
+       * next pulse with sets rebuilt from the remaining descriptors. */
+      for (d = descriptor_list; d; d = next_d) {
+        next_d = d->next;
+        if (STATE(d) == CON_CLOSE)
+          close_socket(d);
+      }
+      continue;
     }
     /* If there are new connections waiting, accept them. */
     if (FD_ISSET(local_mother_desc, &input_set))
@@ -1101,13 +1278,9 @@ void game_loop(socket_t local_mother_desc)
       if (d->character) {
 	/* Reset the idle timer & pull char back from void if necessary */
 	d->character->char_specials.timer = 0;
-	if (STATE(d) == CON_PLAYING && GET_WAS_IN(d->character) != NOWHERE) {
-	  if (IN_ROOM(d->character) != NOWHERE)
-	    char_from_room(d->character);
-	  char_to_room(d->character, GET_WAS_IN(d->character));
-	  GET_WAS_IN(d->character) = NOWHERE;
+	if (STATE(d) == CON_PLAYING && GET_WAS_IN(d->character) != NOWHERE &&
+	    return_from_void(d->character))
 	  act("$n has returned.", TRUE, d->character, 0, 0, TO_ROOM);
-	}
         GET_WAIT_STATE(d->character) = 1;
       }
       d->has_prompt = FALSE;

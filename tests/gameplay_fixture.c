@@ -73,15 +73,20 @@ int entry_mtrigger(char_data *ch) { (void)ch; return 1; }
 int enter_wtrigger(struct room_data *room, char_data *actor, int dir)
 { (void)room; (void)actor; (void)dir; return 1; }
 void entry_memory_mtrigger(char_data *ch) { (void)ch; }
-int greet_mtrigger(char_data *actor, int dir) { (void)actor; (void)dir; return 1; }
+int greet_mtrigger(char_data *actor, int dir)
+{ return fx_fire(FX_GREET_MTRIG, actor, NULL, dir); }
 void greet_memory_mtrigger(char_data *actor) { (void)actor; }
 void extract_script(void *thing, int type) { (void)thing; (void)type; }
 void free_proto_script(void *thing, int type) { (void)thing; (void)type; }
 
 /* ---- utils.c functions observed by the tests (linked with --wrap) ------ */
+/* rand_number() is a call-site macro over rand_number_at() (utils.h), so
+ * that is the symbol the code under test references and the one wrapped. */
 /* NOLINTNEXTLINE(cert-dcl37-c,cert-dcl51-cpp): --wrap requires this name. */
-int __wrap_rand_number(int from, int to)
+int __wrap_rand_number_at(int from, int to, const char *source_file,
+                          int source_line, const char *source_func)
 {
+  (void)source_file; (void)source_line; (void)source_func;
   if (fx_rand_value < 0)
     return from;
   if (fx_rand_value < from)
@@ -179,6 +184,7 @@ struct index_data **trig_index;
 struct trig_data *trigger_list;
 int top_of_trigt;
 long max_obj_id = OBJ_ID_BASE;
+long max_mob_id = MOB_ID_BASE;  /* char_script_id(): follower snapshots */
 struct message_list fight_messages[MAX_MESSAGES];
 
 int House_can_enter(struct char_data *ch, room_vnum house)

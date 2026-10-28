@@ -42,6 +42,7 @@
 #include "spells.h"  /* for skill_name() */
 #include "screen.h"
 #include "dg_scripts.h" /* for obj_script_id() in diagnostics */
+#include <float.h>      /* FLT_MAX: shop-file profit factors */
 
 /* Global variables definitions used externally */
 /* Constant list for printing out who we sell to */
@@ -116,8 +117,8 @@ static int sell_price(struct obj_data *obj, int shop_nr, struct char_data *keepe
 static int ok_shop_room(int shop_nr, room_vnum room);
 static int add_to_shop_list(struct shop_buy_data *list, int type, int *len, int *val);
 static int end_read_list(struct shop_buy_data *list, int len, int error);
-static void read_line(FILE *shop_f, const char *string, ...)
-  __attribute__ ((format (scanf, 2, 3)));
+static long read_shop_number(FILE *shop_f, const char *field, long lo, long hi);
+static float read_shop_profit(FILE *shop_f, const char *field);
 static void shop_format_message(char *dst, size_t size, const char *template,
                                 const char *field, int shop_nr,
                                 const char *name, int amount);
@@ -614,7 +615,7 @@ static void shopping_buy(char *arg, struct char_data *ch, struct char_data *keep
   char tempstr[MAX_INPUT_LENGTH - 10], tempbuf[MAX_INPUT_LENGTH];
   char actbuf[MAX_INPUT_LENGTH - 10];
   struct obj_data *obj, *last_obj = NULL;
-  int goldamt = 0, buynum, bought = 0;
+  int goldamt = 0, buynum, bought = 0, quest_purchase;
 
   if (!is_ok(keeper, ch, shop_nr))
     return;
@@ -639,6 +640,9 @@ static void shopping_buy(char *arg, struct char_data *ch, struct char_data *keep
   }
   if (!(obj = get_purchase_obj(ch, arg, keeper, shop_nr, TRUE)))
     return;
+  /* Paid in quest points or in gold? Decided by the item asked for: the
+   * loops below leave obj at the next unit on offer, or NULL. */
+  quest_purchase = OBJ_FLAGGED(obj, ITEM_QUEST);
 
   if (OBJ_FLAGGED(obj, ITEM_QUEST)) {
     if (GET_OBJ_COST(obj) > GET_QUESTPOINTS(ch) && !IS_GOD(ch)) {
@@ -753,7 +757,10 @@ static void shopping_buy(char *arg, struct char_data *ch, struct char_data *keep
       tb_snprintf(buf, sizeof(buf), "%s Something screwy only gave you %d.", GET_NAME(ch), bought);
     do_tell(keeper, buf, cmd_tell, 0);
   }
-  if (!IS_GOD(ch) && obj && !OBJ_FLAGGED(obj, ITEM_QUEST)) {
+  /* The keeper is paid for every unit sold for gold. This used to test the
+   * next unit on offer ("obj && !quest"), so buying the last unit of a
+   * non-produced item took the buyer's gold and paid nobody. */
+  if (!IS_GOD(ch) && !quest_purchase) {
     increase_gold(keeper, goldamt);
     if (SHOP_USES_BANK(shop_nr))
       if (GET_GOLD(keeper) > MAX_OUTSIDE_BANK) {
@@ -771,7 +778,7 @@ static void shopping_buy(char *arg, struct char_data *ch, struct char_data *keep
   tb_snprintf(tempbuf, sizeof(tempbuf), "$n buys %s.", actbuf);
   act(tempbuf, FALSE, ch, obj, 0, TO_ROOM);
 
-  if (obj && OBJ_FLAGGED(obj, ITEM_QUEST)) {
+  if (quest_purchase) {
     tb_snprintf(tempbuf, sizeof(tempbuf), "%s That has cost you %d quest points.", GET_NAME(ch), goldamt);
     do_tell(keeper, tempbuf, cmd_tell, 0);
   } else
@@ -1311,47 +1318,108 @@ static void shop_tell_message(struct char_data *keeper, struct char_data *ch,
     do_tell(keeper, buf, cmd_tell, 0);
 }
 
-/* Read one line of a shop file and parse a single value from it. The shop
- * file loader treats a malformed line as fatal. */
-static void read_line(FILE *shop_f, const char *string, ...)
-{
-  char buf[READ_SIZE];
-  va_list args;
-  int parsed = 0, got_line;
+/* Shop-file numbers.
+ *
+ * Each number sits alone on its line (anything after it is ignored, as it
+ * always was). The shop file is edited by implementors and written by
+ * sedit, which keeps values in range. strtol()/strtof() with an explicit
+ * range check replace vsscanf("%d"/"%f"), whose behaviour is undefined for
+ * a number the destination cannot hold. A missing or malformed line, or a
+ * value outside the field's range, leaves shop_index half-built, so the
+ * boot stops: shop-file-parse or shop-field-range, naming the shop vnum,
+ * the field and the value (the line's builder text is not logged). */
 
-  /* get_line() leaves buf untouched at EOF; never log it uninitialised. */
+/* Read the next shop-file line into buf (READ_SIZE bytes); 0 at end of
+ * file. get_line() leaves buf untouched at EOF, so it is cleared first. */
+static int read_shop_line(FILE *shop_f, char *buf)
+{
   buf[0] = '\0';
-  if ((got_line = get_line(shop_f, buf)) != 0) {
-    va_start(args, string);
-    parsed = vsscanf(buf, string, args);
-    va_end(args);
+  return get_line(shop_f, buf);
+}
+
+/* The next line's integer, which must lie in lo..hi. */
+static long read_shop_number(FILE *shop_f, const char *field, long lo, long hi)
+{
+  char buf[READ_SIZE], *end = buf;
+  long value = 0;
+  int got_line = read_shop_line(shop_f, buf), overflow = FALSE;
+
+  if (got_line) {
+    errno = 0;
+    value = strtol(buf, &end, 10);
+    overflow = (errno == ERANGE);
   }
-  if (parsed != 1) {
-    /* The shop file is half-read and shop_index is inconsistent; boot
-     * cannot continue. Log the line length, not its builder text. */
+  if (end == buf) {
     TB_FATAL_MSG("shop", "shop-file-parse", "shop file",
-                 "shop #%d: expected '%s', got %s (%zu bytes); aborting boot",
-                 (int) SHOP_NUM(top_shop), string,
+                 "shop #%d: expected a number for %s, got %s (%zu bytes); "
+                 "aborting boot", (int) SHOP_NUM(top_shop), field,
                  got_line ? "an unparsable line" : "end of file", strlen(buf));
     abort();
   }
+  if (overflow || value < lo || value > hi) {
+    TB_FATAL_MSG("shop", "shop-field-range", "shop file",
+                 "shop #%d: %s %ld%s out of range %ld..%ld; aborting boot",
+                 (int) SHOP_NUM(top_shop), field, value,
+                 overflow ? " (past the range of long)" : "", lo, hi);
+    abort();
+  }
+  return value;
+}
+
+/* The next line's profit factor, which must be a finite float (what sedit
+ * accepts too). */
+static float read_shop_profit(FILE *shop_f, const char *field)
+{
+  char buf[READ_SIZE], *end = buf;
+  float value = 0.0f;
+  int got_line = read_shop_line(shop_f, buf), overflow = FALSE;
+
+  if (got_line) {
+    errno = 0;
+    value = strtof(buf, &end);
+    overflow = (errno == ERANGE);
+  }
+  if (end == buf) {
+    TB_FATAL_MSG("shop", "shop-file-parse", "shop file",
+                 "shop #%d: expected a number for %s, got %s (%zu bytes); "
+                 "aborting boot", (int) SHOP_NUM(top_shop), field,
+                 got_line ? "an unparsable line" : "end of file", strlen(buf));
+    abort();
+  }
+  /* NaN compares unequal to itself; +-inf lies beyond FLT_MAX. (math.h's
+   * isfinite() cannot be used: utils.h defines log as a macro.) */
+  if (overflow || value != value || value > FLT_MAX || value < -FLT_MAX) {
+    TB_FATAL_MSG("shop", "shop-field-range", "shop file",
+                 "shop #%d: %s %g is not a finite float (max %g); aborting boot",
+                 (int) SHOP_NUM(top_shop), field, (double) value,
+                 (double) FLT_MAX);
+    abort();
+  }
+  return value;
 }
 
 static int read_list(FILE *shop_f, struct shop_buy_data *list, int new_format,
 	          int max, int type)
 {
   int count, temp, len = 0, error = 0;
+  /* Produce and room entries are vnums stored in IDXTYPE fields (NOTHING,
+   * IDXTYPE_MAX, is skipped); old-format buy types are checked against
+   * item_types[] by add_to_shop_list(). Any negative ends a new-format
+   * list. */
+  const char *field = type == LIST_PRODUCE ? "produced obj vnum" :
+                      type == LIST_ROOM ? "room vnum" : "buy type";
+  long hi = type == LIST_TRADE ? INT_MAX : IDXTYPE_MAX;
 
   if (new_format) {
     for (;;) {
-      read_line(shop_f, "%d", &temp);
+      temp = (int) read_shop_number(shop_f, field, INT_MIN, hi);
       if (temp < 0)	/* Always "-1" the string. */
         break;
       error += add_to_shop_list(list, type, &len, &temp);
     }
   } else
     for (count = 0; count < max; count++) {
-      read_line(shop_f, "%d", &temp);
+      temp = (int) read_shop_number(shop_f, field, INT_MIN, hi);
       error += add_to_shop_list(list, type, &len, &temp);
     }
   return (end_read_list(list, len, error));
@@ -1406,11 +1474,22 @@ static int read_type_list(FILE *shop_f, struct shop_buy_data *list,
     ptr = buf;
     if (num == -1) {
       char *endptr;
-      long parsed = strtol(buf, &endptr, 10);
+      long parsed;
 
+      errno = 0;
+      parsed = strtol(buf, &endptr, 10);
       if (endptr == buf) {
         num = -1;
         ptr = END_OF(buf);
+      } else if (errno == ERANGE || parsed < INT_MIN || parsed > INT_MAX) {
+        /* (int)parsed would wrap into another number, perhaps a valid type
+         * (4294967301 became 5). The shop file is the only source here
+         * (sedit offers valid types): drop the entry and keep reading. */
+        TB_ERROR_MSG("shop", "buytype-range", "shop file",
+                     "shop #%d buy type %ld does not fit an int; dropped",
+                     (int) SHOP_NUM(top_shop), parsed);
+        num = 0;	/* not the "-1" end marker: read the next line */
+        continue;
       } else {
         num = (int)parsed;
         ptr = endptr;
@@ -1526,8 +1605,8 @@ void boot_the_shops(FILE *shop_f, char *filename, int rec_count)
       for (count = 0; count < temp; count++)
 	SHOP_PRODUCT(top_shop, count) = BUY_TYPE(list[count]);
 
-      read_line(shop_f, "%f", &SHOP_BUYPROFIT(top_shop));
-      read_line(shop_f, "%f", &SHOP_SELLPROFIT(top_shop));
+      SHOP_BUYPROFIT(top_shop) = read_shop_profit(shop_f, "buy profit");
+      SHOP_SELLPROFIT(top_shop) = read_shop_profit(shop_f, "sell profit");
 
       temp = read_type_list(shop_f, list, new_format, MAX_TRADE);
       CREATE(shop_index[top_shop].type, struct shop_buy_data, temp);
@@ -1543,22 +1622,36 @@ void boot_the_shops(FILE *shop_f, char *filename, int rec_count)
       shop_index[top_shop].missing_cash2 = read_shop_message(4, SHOP_NUM(top_shop), shop_f, buf2);
       shop_index[top_shop].message_buy = read_shop_message(5, SHOP_NUM(top_shop), shop_f, buf2);
       shop_index[top_shop].message_sell = read_shop_message(6, SHOP_NUM(top_shop), shop_f, buf2);
-      read_line(shop_f, "%d", &SHOP_BROKE_TEMPER(top_shop));
-      read_line(shop_f, "%ld", &SHOP_BITVECTOR(top_shop));
-      read_line(shop_f, "%hd", &SHOP_KEEPER(top_shop));
+      SHOP_BROKE_TEMPER(top_shop) =
+        (int) read_shop_number(shop_f, "broke temper", INT_MIN, INT_MAX);
+      /* An unsigned bit set: a negative value would wrap into high bits. */
+      SHOP_BITVECTOR(top_shop) =
+        (bitvector_t) read_shop_number(shop_f, "shop flags", 0, LONG_MAX);
+      {
+        /* The keeper is a mob vnum stored in an IDXTYPE field; -1 (or
+         * NOBODY itself) means none. */
+        long keeper = read_shop_number(shop_f, "keeper vnum", -1, IDXTYPE_MAX);
+
+        SHOP_KEEPER(top_shop) = keeper < 0 ? NOBODY : (mob_rnum) keeper;
+      }
 
       SHOP_KEEPER(top_shop) = real_mobile(SHOP_KEEPER(top_shop));
-      read_line(shop_f, "%d", &SHOP_TRADE_WITH(top_shop));
+      SHOP_TRADE_WITH(top_shop) =
+        (int) read_shop_number(shop_f, "trade-with flags", INT_MIN, INT_MAX);
 
       temp = read_list(shop_f, list, new_format, 1, LIST_ROOM);
       CREATE(shop_index[top_shop].in_room, room_vnum, temp);
       for (count = 0; count < temp; count++)
 	SHOP_ROOM(top_shop, count) = BUY_TYPE(list[count]);
 
-      read_line(shop_f, "%d", &SHOP_OPEN1(top_shop));
-      read_line(shop_f, "%d", &SHOP_CLOSE1(top_shop));
-      read_line(shop_f, "%d", &SHOP_OPEN2(top_shop));
-      read_line(shop_f, "%d", &SHOP_CLOSE2(top_shop));
+      SHOP_OPEN1(top_shop) =
+        (int) read_shop_number(shop_f, "first opening hour", INT_MIN, INT_MAX);
+      SHOP_CLOSE1(top_shop) =
+        (int) read_shop_number(shop_f, "first closing hour", INT_MIN, INT_MAX);
+      SHOP_OPEN2(top_shop) =
+        (int) read_shop_number(shop_f, "second opening hour", INT_MIN, INT_MAX);
+      SHOP_CLOSE2(top_shop) =
+        (int) read_shop_number(shop_f, "second closing hour", INT_MIN, INT_MAX);
 
       SHOP_BANK(top_shop) = 0;
       SHOP_SORT(top_shop) = 0;

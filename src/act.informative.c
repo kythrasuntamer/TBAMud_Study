@@ -65,10 +65,30 @@
 #define REAL_CHAR(d)  ((d)->original ? (d)->original : (d)->character)
 
 /** TRUE if a mob, object or room has a script with at least one trigger.
- * A script_data can exist with no triggers (it may hold only global
- * variables), so the "[T%d]"/"[TRIGS]" displays must test both before
- * reading TRIGGERS(SCRIPT(thing))->next. Evaluates thing twice. */
+ * A character's script_data can exist with no triggers (it may hold only
+ * global variables: saved player variables, 'set <char> <var>'), so the
+ * "[T%d]"/"[TRIGS]" displays must test both before reading
+ * TRIGGERS(SCRIPT(thing))->next. Objects use obj_has_triggers(), which
+ * also reports the case. Evaluates thing twice. */
 #define SCRIPT_HAS_TRIGGERS(thing)  (SCRIPT(thing) && TRIGGERS(SCRIPT(thing)))
+
+/** SCRIPT_HAS_TRIGGERS for an object's trigger marker (G2-16). Unlike a
+ * character's, an object's script_data always holds a trigger: every site
+ * that creates one (boot, zone reset, attach) adds a trigger, and
+ * detaching the last trigger extracts the script. A trigger-less object
+ * script is a broken invariant, so it is reported as script-empty with the
+ * object's vnum and UID before the marker is left out. */
+static int obj_has_triggers(const struct obj_data *obj)
+{
+  if (SCRIPT_HAS_TRIGGERS(obj))
+    return TRUE;
+  if (SCRIPT(obj))
+    TB_WARN_MSG("dg", "script-empty", "obj",
+                "obj vnum %d uid %ld has script_data without triggers; no "
+                "trigger marker shown", (int)GET_OBJ_VNUM(obj),
+                obj->script_id);
+  return FALSE;
+}
 
 /** TRUE if exit @p door of ch's room leads somewhere and is listed to ch by
  * 'exits' and autoexits: closed doors only with CONFIG_DISP_CLOSED_DOORS,
@@ -207,7 +227,7 @@ static void show_obj_to_char(struct obj_data *obj, struct char_data *ch, int mod
 
     if (!IS_NPC(ch) && PRF_FLAGGED(ch, PRF_SHOWVNUMS)) {
       send_to_char(ch, "[%d] ", GET_OBJ_VNUM(obj));
-      if (SCRIPT_HAS_TRIGGERS(obj)) {
+      if (obj_has_triggers(obj)) {
         if (!TRIGGERS(SCRIPT(obj))->next)
           send_to_char(ch, "[T%d] ", GET_TRIG_VNUM(TRIGGERS(SCRIPT(obj))));
         else
@@ -221,7 +241,7 @@ static void show_obj_to_char(struct obj_data *obj, struct char_data *ch, int mod
   case SHOW_OBJ_SHORT:
     if (!IS_NPC(ch) && PRF_FLAGGED(ch, PRF_SHOWVNUMS)) {
       send_to_char(ch, "[%d] ", GET_OBJ_VNUM(obj));
-      if (SCRIPT_HAS_TRIGGERS(obj)) {
+      if (obj_has_triggers(obj)) {
         if (!TRIGGERS(SCRIPT(obj))->next)
           send_to_char(ch, "[T%d] ", GET_TRIG_VNUM(TRIGGERS(SCRIPT(obj))));
         else
@@ -639,12 +659,17 @@ ACMD(do_exits)
 }
 
 /**
- * Describe the room @p ch is standing in.
+ * Describe the room @p ch is standing in. Callers use the utils.h macro
+ * look_at_room(ch, mode), which passes their file, line and function.
  *
  * Exported: called by do_look, after movement and teleport, and from DG
- * callbacks. Precondition: IN_ROOM(ch) is a valid room rnum. A character
- * without a descriptor (mob, linkless player) sees nothing and the
- * function returns at once. Room name and description are required by
+ * callbacks. Precondition: IN_ROOM(ch) is a valid room rnum; every caller
+ * places ch first. A viewer outside a valid room (NOWHERE, or an rnum past
+ * top_of_world after a caller bug) would index world[] out of bounds, so
+ * it is reported as look-unplaced at the caller's location and shown
+ * nothing (G2-17). A character without a descriptor (mob, linkless
+ * player) sees nothing and the function returns at once, after that
+ * check. Room name and description are required by
  * the loader; object and mob strings shown here may be NULL and are
  * handled by the list helpers. The sector type is range-checked before
  * it indexes sector_types[].
@@ -652,12 +677,22 @@ ACMD(do_exits)
  * @param ch           Viewer.
  * @param ignore_brief Nonzero shows the full description even with BRIEF.
  */
-void look_at_room(struct char_data *ch, int ignore_brief)
+void look_at_room_at(const char *src_file, int src_line, const char *src_func,
+                     struct char_data *ch, int ignore_brief)
 {
   trig_data * t;
-  struct room_data *rm = &world[IN_ROOM(ch)];
+  struct room_data *rm;
   room_vnum target_room;
 
+  if (!VALID_ROOM_RNUM(IN_ROOM(ch))) {
+    tb_error_log_at("ERROR", "act", "look-unplaced", "world", 0,
+                    src_file, src_line, src_func,
+                    DIAG_CHAR_FMT " is in room rnum %d, not a valid room "
+                    "(top_of_world %d); nothing shown", DIAG_CHAR(ch),
+                    (int)IN_ROOM(ch), (int)top_of_world);
+    return;
+  }
+  rm = &world[IN_ROOM(ch)];
   target_room = IN_ROOM(ch);
 
   if (!ch->desc)
@@ -878,9 +913,11 @@ static void look_at_target(struct char_data *ch, char *arg)
     return;
   }
 
-  /* Does the argument match an extra desc in the room? */
+  /* Does the argument match an extra desc in the room? The pager keeps its
+   * text across later commands, and a redit save frees the room's old extra
+   * descriptions, so it pages its own copy (keep_internal). */
   if ((desc = find_exdesc(arg, world[IN_ROOM(ch)].ex_description)) != NULL && ++i == fnum) {
-    page_string(ch->desc, desc, FALSE);
+    page_string(ch->desc, desc, TRUE);
     return;
   }
 
@@ -1395,10 +1432,33 @@ ACMD(do_alive)
 send_to_char(ch, "Alive does not understand '%s'. \r\n", arg);
 }
 
+/* Bounded, escaped copy of player text for a log line (G2-20). Raw player
+ * text must not reach the logs: a DG-forced command is not filtered like
+ * socket input, and control characters, color escapes or quotes could split
+ * a record or imitate another one. Those bytes and anything outside
+ * printable ASCII become '?', a cut copy ends in "...", and the caller logs
+ * the full length beside it. In the style of comm.c's act_format_excerpt(). */
+static const char *player_text_excerpt(char *dst, size_t dst_size,
+                                       const char *text)
+{
+  size_t n = 0;
+
+  for (; *text && n + 4 < dst_size; text++) {
+    unsigned char c = (unsigned char) *text;
+    dst[n++] = (c < 0x20 || c >= 0x7f || c == '"' || c == '\'' ||
+                c == '\\') ? '?' : (char) c;
+  }
+  if (*text && n + 3 < dst_size)
+    dst[n++] = '.', dst[n++] = '.', dst[n++] = '.';
+  dst[n] = '\0';
+  return dst;
+}
+
 ACMD(do_help)
 {
   int mid = 0;
   int i, found = 0;
+  char excerpt[80];
 
     if (!ch->desc)
     return;
@@ -1422,8 +1482,12 @@ ACMD(do_help)
 
   if ((mid = search_help(argument, GET_LEVEL(ch))) == NOWHERE) {
     send_to_char(ch, "There is no help on that word.\r\n");
+    /* The topic is player text: log an escaped excerpt and its length. The
+     * line stays for immortals, who use it to find missing help topics. */
     mudlog(NRM, MIN(LVL_IMPL, GET_INVIS_LEV(ch)), TRUE,
-      "%s tried to get help on %s", GET_NAME(ch), argument);
+      "%s tried to get help on '%s' (%zu bytes)", GET_NAME(ch),
+      player_text_excerpt(excerpt, sizeof(excerpt), argument),
+      strlen(argument));
     for (i = 0; i < top_of_helpt; i++)  {
       if (help_table[i].min_level > GET_LEVEL(ch))
         continue;
@@ -1440,7 +1504,12 @@ ACMD(do_help)
     }
     return;
   }
-  page_string(ch->desc, help_table[mid].entry, 0);
+  /* The pager keeps its text across later commands, and an hedit save or
+   * 'reload xhelp' frees the whole help table, so it pages its own copy
+   * (keep_internal). The text files paged above need no copy:
+   * file_to_string_alloc() (db.c) refuses to replace a buffer that a
+   * descriptor is paging. */
+  page_string(ch->desc, help_table[mid].entry, TRUE);
 }
 
 /* A player's class index for who/users.
@@ -1991,7 +2060,7 @@ static size_t print_object_location(const int num, const obj_data *obj, const ch
   if (len > buf_size)
     return len; // let the caller know we overflowed
 
-  if (SCRIPT_HAS_TRIGGERS(obj)) {
+  if (obj_has_triggers(obj)) {
     if (!TRIGGERS(SCRIPT(obj))->next)
       nlen = snprintf(buf + len, buf_size - len, "[T%d] ", GET_TRIG_VNUM(TRIGGERS(SCRIPT(obj))));
     else

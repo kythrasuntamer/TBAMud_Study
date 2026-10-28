@@ -1476,6 +1476,80 @@ static void nameless_player_variable_file_is_refused(void)
   pc->player.name = name;
 }
 
+/* A character stranded in NOWHERE (char_to_room() refused its room, e.g. a
+ * return from the void to a room OLC deleted) stays in character_list, so
+ * a script finds it by UID. mteleport, wteleport and oteleport handed it to
+ * char_from_room(), which aborts the server: the production handler.c is
+ * linked here, so the unfixed code aborts this test binary. */
+static void teleport_of_a_stranded_target_is_refused(void)
+{
+  const char *mlines[] = { "mteleport %victim% 101", NULL };
+  const char *wlines[] = { "wteleport %victim% 101", NULL };
+  const char *olines[] = { "oteleport %victim% 101", NULL };
+  char_data *mob = make_mob("porter");
+  char_data *victim = make_mob("victim");
+  room_data *room = &test_rooms[0];
+  obj_data *orb = make_obj("orb");
+  trig_data *t;
+
+  char_from_room(victim);           /* stranded: listed, in no room */
+  obj_to_room(orb, 0);
+
+  t = make_trigger(MOB_TRIGGER, MTRIG_SPEECH, 0, mlines);
+  attach_to_script(&SCRIPT(mob), t);
+  uid_var(t, "victim", char_script_id(victim));
+  script_driver(&mob, t, MOB_TRIGGER, TRIG_NEW);
+  TEST_ASSERT_TRUE(tb_captured_has_op("stranded-target"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail_log, "(rnum 65535); mteleport by mob vnum"));
+  TEST_ASSERT_EQUAL_INT(NOWHERE, IN_ROOM(victim));
+
+  tb_error_capture_reset();
+  t = make_trigger(WLD_TRIGGER, WTRIG_SPEECH, 0, wlines);
+  attach_to_script(&SCRIPT(room), t);
+  uid_var(t, "victim", char_script_id(victim));
+  script_driver(&room, t, WLD_TRIGGER, TRIG_NEW);
+  TEST_ASSERT_TRUE(tb_captured_has_op("stranded-target"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail_log, "wteleport by room vnum 100 refused"));
+  TEST_ASSERT_EQUAL_INT(NOWHERE, IN_ROOM(victim));
+
+  tb_error_capture_reset();
+  t = make_trigger(OBJ_TRIGGER, OTRIG_RANDOM, 0, olines);
+  attach_to_script(&SCRIPT(orb), t);
+  uid_var(t, "victim", char_script_id(victim));
+  script_driver(&orb, t, OBJ_TRIGGER, TRIG_NEW);
+  TEST_ASSERT_TRUE(tb_captured_has_op("stranded-target"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail_log, "oteleport by obj vnum"));
+  TEST_ASSERT_EQUAL_INT(NOWHERE, IN_ROOM(victim));
+}
+
+/* A stranded mob's own mgoto and mat reached char_from_room(); its
+ * "mteleport all" read world[NOWHERE] as the source room. A script of a
+ * mob in no room now stops before its first command (mob-cmd-unplaced), so
+ * the commands' own stranded checks are driven directly as well: they stay
+ * as the second line of defence for any other caller. */
+static void stranded_mob_cannot_move_itself_or_teleport_its_room(void)
+{
+  const char *lines[] = { "mgoto 101", "mat 101 say hi", "mteleport all 101", NULL };
+  char_data *mob = make_mob("lost");
+  char go[] = "101", at[] = "101 say hi", all[] = "all 101";
+
+  char_from_room(mob);
+  run_mob_script(mob, lines);
+  TEST_ASSERT_TRUE(tb_captured_has_op("mob-cmd-unplaced"));
+  TEST_ASSERT_EQUAL_INT(NOWHERE, IN_ROOM(mob));
+
+  tb_error_capture_reset();
+  do_mgoto(mob, go, 0, 0);
+  do_mat(mob, at, 0, 0);
+  do_mteleport(mob, all, 0, 0);
+  TEST_ASSERT_TRUE(tb_captured_has_op("stranded-target"));
+  TEST_ASSERT_TRUE(tb_captured_has_op("stranded-actor"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail_log, "; mgoto by mob vnum"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail_log, "; mat by mob vnum"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail_log, "; mteleport all by mob vnum"));
+  TEST_ASSERT_EQUAL_INT(NOWHERE, IN_ROOM(mob));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -1535,5 +1609,7 @@ int main(void)
   RUN_TEST(control_keywords_match_whole_words);
   RUN_TEST(while_pause_counts_per_trigger_instance);
   RUN_TEST(nameless_player_variable_file_is_refused);
+  RUN_TEST(teleport_of_a_stranded_target_is_refused);
+  RUN_TEST(stranded_mob_cannot_move_itself_or_teleport_its_room);
   return UNITY_END();
 }

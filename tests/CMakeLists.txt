@@ -720,8 +720,10 @@ endif()
 # Gameplay regression tests (act.item.c, act.movement.c, act.offensive.c,
 # fight.c, magic.c). Each links the production gameplay sources plus the real
 # handler.c/utils.c/dg_scripts.c, and gameplay_fixture.c for DG trigger entry
-# points and world setup. utils.c's rand_number(), core_dump_real(),
-# basic_mud_log() and tb_error_log_at() are wrapped so tests can drive and
+# points and world setup. utils.c's rand_number_at() (the function behind
+# the rand_number() call-site macro; wrapping the macro name would not
+# intercept anything), core_dump_real(), basic_mud_log() and
+# tb_error_log_at() are wrapped so tests can drive and
 # observe them (tb_error_capture.h provides __wrap_tb_error_log_at).
 set(GAMEPLAY_SRCS
     ${MUD_SRCDIR}/act.item.c
@@ -744,7 +746,7 @@ macro(add_gameplay_test TEST_NAME TEST_SRC)
         target_link_options(${TEST_NAME} PRIVATE
             -Wl,--gc-sections
             -Wl,--wrap=tb_error_log_at
-            -Wl,--wrap=rand_number
+            -Wl,--wrap=rand_number_at
             -Wl,--wrap=core_dump_real
             -Wl,--wrap=basic_mud_log)
     endif()
@@ -1150,6 +1152,169 @@ endif()
 add_mud_test(test_strftime
     ${CMAKE_CURRENT_SOURCE_DIR}/test_strftime.c
 )
+# B2-21: save_char() must never fire wear/remove triggers. players.c stops
+# with an #error when NO_EXTRANEOUS_TRIGGERS is undefined; the shim header
+# undefines it behind dg_scripts.h's include guard, as a builder enabling
+# those triggers would. The test passes only if that #error is reported
+# (exit status is ignored when PASS_REGULAR_EXPRESSION is set).
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    add_test(NAME test_players_extraneous_triggers_rejected
+        COMMAND ${CMAKE_C_COMPILER} -std=gnu99 -fsyntax-only
+                -I${CMAKE_SOURCE_DIR}/src -I${CMAKE_BINARY_DIR}
+                -include ${CMAKE_CURRENT_SOURCE_DIR}/players_extraneous_triggers_shim.h
+                ${CMAKE_SOURCE_DIR}/src/players.c)
+    set_tests_properties(test_players_extraneous_triggers_rejected PROPERTIES
+        PASS_REGULAR_EXPRESSION "does not fire wear/remove triggers \\(B2-21\\)")
+endif()
+
+# clean_pfiles() re-examines a slot after a removal; if a refused removal
+# (a player whose files cannot be named safely) were counted as done, it
+# would spin forever. Fail such a regression instead of hanging.
+set_tests_properties(test_players_persist PROPERTIES TIMEOUT 60)
+
+# A1-14: game_loop()'s handling of a failed socket poll (comm.c). Signals are
+# retried, player sockets closed outside close_socket() are reported and
+# dropped, and any other failure is FATAL. test_comm_poll.c #includes comm.c
+# to reach its file-static helpers; test_stubs.c is omitted because it
+# defines comm.c's globals.
+add_executable(test_comm_poll
+    $<TARGET_OBJECTS:unity_vendor>
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_comm_poll.c
+)
+target_include_directories(test_comm_poll PRIVATE ${TEST_INCLUDES})
+target_compile_options(test_comm_poll PRIVATE ${TEST_CFLAGS})
+add_test(NAME test_comm_poll COMMAND test_comm_poll)
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_compile_options(test_comm_poll PRIVATE -ffunction-sections -fdata-sections)
+    target_link_options(test_comm_poll PRIVATE -Wl,--gc-sections)
+endif()
+
+# H1-16 (and later boot checks): comm.c's report_world_gaps() names world
+# contracts boot_world() does not check, such as a missing DG caster proxy
+# mob. test_comm_boot.c #includes comm.c to reach the file-static helper;
+# test_stubs.c is omitted because it defines comm.c's globals.
+add_executable(test_comm_boot
+    $<TARGET_OBJECTS:unity_vendor>
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_comm_boot.c
+)
+target_include_directories(test_comm_boot PRIVATE ${TEST_INCLUDES})
+target_compile_options(test_comm_boot PRIVATE ${TEST_CFLAGS})
+add_test(NAME test_comm_boot COMMAND test_comm_boot)
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_compile_options(test_comm_boot PRIVATE -ffunction-sections -fdata-sections)
+    target_link_options(test_comm_boot PRIVATE -Wl,--gc-sections)
+endif()
+
+# main()'s -f option: the server, booted in syntax-check mode with a config
+# file named on the command line, must exit cleanly. main() frees
+# CONFIG_CONFFILE at exit, and -f used to leave it pointing into argv (an
+# invalid free, which aborts under glibc and ASan). The named file need not
+# exist: load_config() then falls back to the defaults.
+add_test(NAME circle_config_option_is_heap_copy
+    COMMAND $<TARGET_FILE:circle> -c -q
+            -f${CMAKE_CURRENT_BINARY_DIR}/no-such-config
+            -d ${CMAKE_SOURCE_DIR}/lib)
+
+# F2-28: qedit's flag menu maps choice n to flag bit n-1. test_qedit_flags.c
+# #includes qedit.c with NUM_AQ_FLAGS raised to 3 so the mapping is
+# observable, and drives qedit_parse(); utils.c's tb_error_log_at() is
+# wrapped so diagnostics can be captured.
+add_mud_test(test_qedit_flags
+    ${MUD_SRCDIR}/utils.c
+    ${MUD_SRCDIR}/random.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_qedit_flags.c
+)
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_compile_options(test_qedit_flags PRIVATE -ffunction-sections -fdata-sections)
+    target_link_options(test_qedit_flags PRIVATE
+        -Wl,--gc-sections -Wl,--wrap=tb_error_log_at)
+endif()
+
+# G1: do_order() ('order followers') against the production gameplay
+# sources. command_interpreter() is wrapped so the test plays the ordered
+# command, including one whose trigger releases a follower.
+add_gameplay_test(test_act_offensive ${CMAKE_CURRENT_SOURCE_DIR}/test_act_offensive.c)
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_link_options(test_act_offensive PRIVATE -Wl,--wrap=command_interpreter)
+endif()
+
+# ---------------------------------------------------------------------------
+# test_cedit_config — production configuration editor (cedit.c) with the
+# production config loader (db.c load_config), its defaults (config.c),
+# GenOLC's save list (genolc.c), utils.c helpers and oasis.c's
+# split_argument, so a written config file is reloaded by the real loader.
+# test_stubs.c is omitted: db.c and config.c define the globals it stubs.
+# cleanup_olc and tb_error_log_at are wrapped; the test supplies both.
+# ---------------------------------------------------------------------------
+add_executable(test_cedit_config
+    $<TARGET_OBJECTS:unity_vendor>
+    ${MUD_SRCDIR}/cedit.c
+    ${MUD_SRCDIR}/db.c
+    ${MUD_SRCDIR}/config.c
+    ${MUD_SRCDIR}/genolc.c
+    ${MUD_SRCDIR}/utils.c
+    ${MUD_SRCDIR}/oasis.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_cedit_config.c
+)
+target_include_directories(test_cedit_config PRIVATE ${TEST_INCLUDES})
+target_compile_options(test_cedit_config PRIVATE ${TEST_CFLAGS})
+add_test(NAME test_cedit_config COMMAND test_cedit_config)
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_compile_options(test_cedit_config PRIVATE -ffunction-sections -fdata-sections)
+    target_link_options(test_cedit_config PRIVATE -Wl,--gc-sections
+        -Wl,--wrap=tb_error_log_at -Wl,--wrap=cleanup_olc)
+endif()
+
+# ---------------------------------------------------------------------------
+# test_close_socket — comm.c's close_socket() must release the OLC workspace
+# of a descriptor that closes in any editor state.  comm.c owns main(), so
+# this target renames it (the test #undefs the rename for its own main);
+# unreferenced sections are discarded and the test supplies the rest.
+# test_stubs.c is omitted because it defines comm.c's globals.
+# ---------------------------------------------------------------------------
+add_executable(test_close_socket
+    $<TARGET_OBJECTS:unity_vendor>
+    ${MUD_SRCDIR}/comm.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_close_socket.c
+)
+target_include_directories(test_close_socket PRIVATE ${TEST_INCLUDES})
+target_compile_options(test_close_socket PRIVATE ${TEST_CFLAGS})
+target_compile_definitions(test_close_socket PRIVATE main=tb_comm_main_unused)
+add_test(NAME test_close_socket COMMAND test_close_socket)
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_compile_options(test_close_socket PRIVATE -ffunction-sections -fdata-sections)
+    target_link_options(test_close_socket PRIVATE -Wl,--gc-sections)
+endif()
+
+# Production config-line splitter (oasis.c split_argument): the key copy is
+# bounded by the caller's buffer (F3-19). Unreferenced oasis.c sections are
+# discarded; tb_error_capture.h in the test supplies tb_error_log_at.
+add_mud_test(test_oasis_split
+    ${MUD_SRCDIR}/oasis.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_oasis_split.c
+)
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_compile_options(test_oasis_split PRIVATE -ffunction-sections -fdata-sections)
+    target_link_options(test_oasis_split PRIVATE -Wl,--gc-sections)
+    set_source_files_properties(${MUD_SRCDIR}/oasis.c
+        PROPERTIES COMPILE_OPTIONS "-ffunction-sections;-fdata-sections")
+endif()
+
+# Production cleanup_olc() (oasis.c) releasing an aedit workspace whole, with
+# the real free_action() from act.social.c. Unreferenced sections of both are
+# discarded; the test stubs the other editors' release functions. Meaningful
+# under LeakSanitizer or Valgrind.
+add_mud_test(test_oasis_cleanup
+    ${MUD_SRCDIR}/oasis.c
+    ${MUD_SRCDIR}/act.social.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_oasis_cleanup.c
+)
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_compile_options(test_oasis_cleanup PRIVATE -ffunction-sections -fdata-sections)
+    target_link_options(test_oasis_cleanup PRIVATE -Wl,--gc-sections)
+    set_source_files_properties(${MUD_SRCDIR}/oasis.c ${MUD_SRCDIR}/act.social.c
+        PROPERTIES COMPILE_OPTIONS "-ffunction-sections;-fdata-sections")
+endif()
 
 # Production manual spells (spells.c): create water refuses a liquid type
 # outside the drink tables (H1-07).

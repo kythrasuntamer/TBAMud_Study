@@ -728,8 +728,9 @@ ssize_t ProtocolInput( descriptor_t *apDescriptor, char *apData, int aSize, char
  * no surrogates); '\t[x<version>]' required MXP version; '\t!' MSP. An
  * escape cut off by the end of the text ends the translation. Malformed
  * escapes are reported (malformed-code, unicode-code) and dropped.
- * Output that would exceed MAX_OUTPUT_BUFFER is cut to fit and ends with
- * "**OVERFLOW**" (reported as output-overflow).
+ * Output that would exceed MAX_OUTPUT_BUFFER is cut to fit, between two
+ * translated units and never inside an MXP tag or link or a UTF-8
+ * character, and ends with "**OVERFLOW**" (reported as output-overflow).
  */
 const char *ProtocolOutput( descriptor_t *apDescriptor, const char *apData, int *apLength )
 {
@@ -741,10 +742,20 @@ const char *ProtocolOutput( descriptor_t *apDescriptor, const char *apData, int 
    const char LinkStart[] = "\033[1z<send>\033[7z";
    const char LinkStop[] = "\033[1z</send>\033[7z";
    bool_t bTerminate = false, bUseMXP = false, bUseMSP = false;
+   bool_t bInLink = false; /* between an MXP link start and its stop */
    int i = 0, j = 0; /* Index values */
    /* Text of a '\t[u...]' unicode substitute. It is copied into Result after
     * the escape's block has ended, so it must live at function scope. */
    char UnicodeSub[8];
+   /* An overflowing result is cut to at most CutLimit bytes so that the
+    * marker still fits below MAX_OUTPUT_BUFFER - 1. SafeCut is the last
+    * output position, no later than CutLimit, that falls between two
+    * translated units (a character or a whole escape expansion) and outside
+    * an MXP tag or link: cutting there never leaves half a colour code or
+    * an unclosed tag for the client to misread. */
+   const char OverflowMark[] = "\r\n**OVERFLOW**\r\n";
+   const int CutLimit = MAX_OUTPUT_BUFFER - 1 - (int)(sizeof(OverflowMark) - 1);
+   int SafeCut = 0;
 
    protocol_t *pProtocol = apDescriptor ? apDescriptor->pProtocol : NULL;
    if ( pProtocol == NULL || apData == NULL )
@@ -758,6 +769,9 @@ const char *ProtocolOutput( descriptor_t *apDescriptor, const char *apData, int 
    for ( ; i < MAX_OUTPUT_BUFFER && !bTerminate &&
       (*apLength <= 0 || j < *apLength) && apData[j] != '\0'; ++j )
    {
+      if ( i <= CutLimit && !bUseMXP && !bInLink )
+         SafeCut = i;
+
       if ( apData[j] == '\t' )
       {
          const char *pCopyFrom = NULL;
@@ -866,11 +880,15 @@ const char *ProtocolOutput( descriptor_t *apDescriptor, const char *apData, int 
                break;
             case '(': /* MXP link */
                if ( !pProtocol->bBlockMXP && pProtocol->pVariables[eMSDP_MXP]->ValueInt )
+               {
                   pCopyFrom = LinkStart;
+                  bInLink = true;
+               }
                break;
             case ')': /* MXP link */
                if ( !pProtocol->bBlockMXP && pProtocol->pVariables[eMSDP_MXP]->ValueInt )
                   pCopyFrom = LinkStop;
+               bInLink = false;
                pProtocol->bBlockMXP = false;
                break;
             case '<':
@@ -1099,18 +1117,22 @@ const char *ProtocolOutput( descriptor_t *apDescriptor, const char *apData, int 
     * marker and report the cut. (This used to drop the whole message, so a
     * long send_to_char() vanished with only an anonymous log line.) The
     * result is kept below MAX_OUTPUT_BUFFER - 1 so the caller's large
-    * output buffer can still take it whole. */
+    * output buffer can still take it whole. The cut is made at SafeCut, and
+    * moved back off any UTF-8 continuation byte copied from the text, so
+    * it never splits a colour code, an MXP tag or link, or a character; a
+    * fixed cut used to leave e.g. "\033[" before the marker. */
    if ( i >= MAX_OUTPUT_BUFFER )
    {
-      const char OverflowMark[] = "\r\n**OVERFLOW**\r\n";
       int Consumed = j;
 
-      i = MAX_OUTPUT_BUFFER - 1 - (int)(sizeof(OverflowMark) - 1);
+      i = SafeCut;
+      while ( i > 0 && ((unsigned char)Result[i] & 0xC0) == 0x80 )
+         --i;
       memcpy(&Result[i], OverflowMark, sizeof(OverflowMark) - 1);
       i += (int)(sizeof(OverflowMark) - 1);
       PROTOCOL_WARN(apDescriptor, "output-overflow",
                     "translated output reached %d bytes after %d input bytes;"
-                    " cut to %d bytes with an overflow marker",
+                    " cut at a code boundary to %d bytes with an overflow marker",
                     MAX_OUTPUT_BUFFER, Consumed, i);
    }
 

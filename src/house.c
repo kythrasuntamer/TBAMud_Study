@@ -13,9 +13,10 @@
  * Player houses: the house control table (lib/etc/hcontrol), each house's
  * object file (lib/house/<vnum>.house), and the hcontrol/house commands.
  *
- * Who controls the input: hcontrol is a raw binary array of struct
- * house_control_rec (see house.h) and every field in it is untrusted on
- * read; House_boot() validates each record before it is loaded. House
+ * Who controls the input: hcontrol is a format header and a raw binary
+ * array of struct house_control_rec (see house.h and hcontrol_header
+ * below), and every field in it is untrusted on read; House_boot() checks
+ * the header and validates each record before it is loaded. House
  * object files use the rent object-record format and go through
  * objsave_parse_objects_from(). Guest names come from immortals and house
  * owners and are resolved through the player index.
@@ -23,8 +24,9 @@
  * Lifetime: house_control[] is a fixed static table of num_of_houses
  * records, owned here. Both hcontrol and the object files are written
  * through staged files and committed only after a complete write.
- * Objects are restored flat into the house room: container nesting is not
- * kept across a reload (House_save() writes every record with Loc 0).
+ * Container nesting is kept across a reload: House_save() writes each
+ * record's depth as its Loc and House_load() rebuilds it (object files
+ * written before that hold only Loc 0 and load flat, as they always did).
  */
 
 #include "conf.h"
@@ -38,10 +40,49 @@
 #include "house.h"
 #include "constants.h"
 #include "modify.h"
+#include <stdint.h>	/* uint32_t: the hcontrol header's fixed-width fields */
 
 /* local (file scope only) globals */
 static struct house_control_rec house_control[MAX_HOUSES];
 static int num_of_houses = 0;
+
+/* hcontrol file format (B2-23). Format 2 is a struct hcontrol_header and
+ * then record_count records. A record is still an in-memory image of
+ * struct house_control_rec, whose layout depends on the compiler ABI
+ * (house.h), so the header says which layout wrote it: a build with
+ * another record size or format version refuses the file (hcontrol-format)
+ * instead of misreading every field. The header's numbers are in host
+ * byte order, so a file from a host of the other byte order fails the
+ * version check as well. Format 1 (legacy) is the bare record array with
+ * no header; it is still read, and written back as format 2 at the next
+ * save. Bump HCONTROL_FORMAT_VERSION whenever house_control_rec changes. */
+#define HCONTROL_FORMAT_VERSION	2
+#define HCONTROL_MAGIC_LEN	8
+
+struct hcontrol_header {
+  unsigned char magic[HCONTROL_MAGIC_LEN];	/* hcontrol_magic */
+  uint32_t version;		/* HCONTROL_FORMAT_VERSION */
+  uint32_t record_size;		/* sizeof(struct house_control_rec) */
+  uint32_t record_count;	/* records after the header */
+};
+
+/* A format 1 file starts with a record's room_vnum. 0xFFFF is NOWHERE,
+ * never a house vnum, and these bytes would also make that record's
+ * exit_num 'H','C' (over 17000, far outside DIR_COUNT), so no format 1
+ * file House_boot() could load starts with this magic. */
+static const unsigned char hcontrol_magic[HCONTROL_MAGIC_LEN] =
+  { 0xFF, 0xFF, 'T', 'B', 'H', 'C', '\r', '\n' };
+
+/* hcontrol_read_header() results. */
+#define HCONTROL_LEGACY		0	/* format 1: no header; stream rewound */
+#define HCONTROL_HEADER		1	/* format 2: header read and checked */
+#define HCONTROL_UNREADABLE	2	/* already reported; load nothing */
+
+/* TRUE when House_boot() could not read HCONTROL_FILE (it could not be
+ * opened, or its header is one this build cannot use). The file may hold
+ * houses that were never loaded, so House_save_control() must not replace
+ * it with the in-memory table. */
+static int hcontrol_unread = FALSE;
 
 /* local functions */
 static int House_get_filename(room_vnum vnum, char *filename, size_t maxlen);
@@ -71,13 +112,92 @@ static int House_get_filename(room_vnum vnum, char *filename, size_t maxlen)
   return (1);
 }
 
-/* Load all objects for a house */
+/* Container depth House_load() rebuilds (Loc -1 .. -HOUSE_NEST_ROWS), as
+ * MAX_BAG_ROWS does for rent in objsave.c. House_save() writes any depth;
+ * an object nested deeper is put on the floor and reported. */
+#define HOUSE_NEST_ROWS 5
+
+/* Put every object of a pending contents row on the house floor, and
+ * report it: its container never arrived (that record was skipped, or the
+ * file was cut short), or the object read next is not a container. */
+static void House_spill_row(struct obj_data **row, room_rnum rnum,
+                            const char *filename, room_vnum vnum, int depth,
+                            const char *why)
+{
+  struct obj_data *obj, *next;
+  int count = 0;
+
+  for (obj = *row; obj; obj = next) {
+    next = obj->next_content;
+    obj_to_room(obj, rnum);
+    count++;
+  }
+  *row = NULL;
+  if (count)
+    TB_WARN_MSG("house", "house-nesting", filename,
+                "house vnum %d: %d object(s) at depth %d %s; placed on the floor",
+                vnum, count, depth, why);
+}
+
+/** Place one object House_load() read and rebuild container nesting, as
+ * handle_obj() does for rent. House_save() writes contents (Loc -1, -2,
+ * ...) before their container, so cont_row[d] collects the objects read
+ * at depth d+1 until their container arrives (at depth d) and takes them.
+ * Loc 0 is the floor; files written before nesting was saved hold only
+ * Loc 0 and load flat, as they always did. A wear slot (Loc > 0, a rent
+ * value) is put on the floor and reported. */
+static void House_place_obj(struct obj_data *obj, int locate,
+                            struct obj_data **cont_row, room_rnum rnum,
+                            const char *filename, room_vnum vnum)
+{
+  struct obj_data *next, **tail;
+  int j;
+
+  if (locate > 0) {
+    TB_WARN_MSG("house", "house-nesting", filename,
+                "house vnum %d obj vnum %d has wear-slot Loc %d; placed on the floor",
+                vnum, GET_OBJ_VNUM(obj), locate);
+    locate = 0;
+  }
+  /* Rows deeper than this object's own contents belong to containers that
+   * never arrived. */
+  for (j = HOUSE_NEST_ROWS - 1; j > -locate; j--)
+    House_spill_row(&cont_row[j], rnum, filename, vnum, j + 1,
+                    "lost their container");
+  if (j == -locate && cont_row[j]) {
+    if (GET_OBJ_TYPE(obj) == ITEM_CONTAINER)
+      for (; cont_row[j]; cont_row[j] = next) {
+        next = cont_row[j]->next_content;
+        obj_to_obj(cont_row[j], obj);
+      }
+    else
+      House_spill_row(&cont_row[j], rnum, filename, vnum, j + 1,
+                      "precede an object that is not a container");
+  }
+  if (locate == 0)
+    obj_to_room(obj, rnum);
+  else if (locate >= -HOUSE_NEST_ROWS) {
+    /* Append, so contents keep their saved order once filled. */
+    for (tail = &cont_row[-locate - 1]; *tail; tail = &(*tail)->next_content)
+      ;
+    *tail = obj;
+  } else {
+    TB_WARN_MSG("house", "house-nesting", filename,
+                "house vnum %d obj vnum %d nested %d deep (max %d); placed on the floor",
+                vnum, GET_OBJ_VNUM(obj), -locate, HOUSE_NEST_ROWS);
+    obj_to_room(obj, rnum);
+  }
+}
+
+/* Load all objects for a house, with their container nesting. */
 static int House_load(room_vnum vnum)
 {
   FILE *fl;
   char filename[MAX_STRING_LENGTH];
 	obj_save_data *loaded, *current;
   room_rnum rnum;
+  struct obj_data *cont_row[HOUSE_NEST_ROWS];
+  int j;
 
   if ((rnum = real_room(vnum)) == NOWHERE)
     return (0);
@@ -97,11 +217,18 @@ static int House_load(room_vnum vnum)
 	  loaded = objsave_parse_objects_from(fl, filename, owner);
 	}
 
+	for (j = 0; j < HOUSE_NEST_ROWS; j++)
+	  cont_row[j] = NULL;
 	for (current = loaded; current != NULL; current = current->next)
-    obj_to_room(current->obj, rnum);
+	  House_place_obj(current->obj, current->locate, cont_row, rnum,
+	                  filename, vnum);
+	/* Contents still waiting at the end of the file never got a container. */
+	for (j = HOUSE_NEST_ROWS - 1; j >= 0; j--)
+	  House_spill_row(&cont_row[j], rnum, filename, vnum, j + 1,
+	                  "lost their container");
 
 	/* now it's safe to free the obj_save_data list - all members of it
-	 * have been put in the correct lists by obj_to_room()
+	 * have been put in the correct lists by House_place_obj()
 	 */
 	while (loaded != NULL) {
 		current = loaded;
@@ -114,31 +241,42 @@ static int House_load(room_vnum vnum)
   return (1);
 }
 
-/** Save all objects for a house (recursive). Assumes fp is open.
- * Each object's weight is subtracted from its containers while saving, so
- * the initial call MUST be followed by House_restore_weight() on the same
- * tree, on failure too. Every object is visited even after a failed record
- * so that pass stays exact. Records are written flat (Loc 0): container
- * nesting is not kept across a house reload.
- * @return 1 only when every record in the tree was written (failures below
- * the head used to be ignored); objsave_save_obj_record() reports each. */
-int House_save(struct obj_data *obj, FILE *fp)
+/* House_save() at a given Loc: 0 for the floor, -1, -2 ... for container
+ * contents. Same order as objsave.c's Crash_save(): the sibling chain,
+ * then the contents one level deeper, then obj itself, so contents come
+ * before their container, as House_place_obj() expects. Every record used
+ * to be written at Loc 0, so a reload put all contents on the floor. */
+static int House_save_at(struct obj_data *obj, FILE *fp, int location)
 {
   struct obj_data *tmp;
   int ok = 1;
 
   if (obj) {
-    if (!House_save(obj->contains, fp))
+    if (!House_save_at(obj->next_content, fp, location))
       ok = 0;
-    if (!House_save(obj->next_content, fp))
+    if (!House_save_at(obj->contains, fp, MIN(0, location) - 1))
       ok = 0;
-    if (!objsave_save_obj_record(obj, fp, 0))
+    if (!objsave_save_obj_record(obj, fp, location))
       ok = 0;
 
     for (tmp = obj->in_obj; tmp; tmp = tmp->in_obj)
       GET_OBJ_WEIGHT(tmp) -= GET_OBJ_WEIGHT(obj);
   }
   return ok;
+}
+
+/** Save all objects for a house (recursive). Assumes fp is open.
+ * Records carry their container nesting (Loc 0 on the floor, negative
+ * inside a container; see House_save_at()). Each object's weight is
+ * subtracted from its containers while saving, so the initial call MUST be
+ * followed by House_restore_weight() on the same tree, on failure too.
+ * Every object is visited even after a failed record so that pass stays
+ * exact.
+ * @return 1 only when every record in the tree was written (failures below
+ * the head used to be ignored); objsave_save_obj_record() reports each. */
+int House_save(struct obj_data *obj, FILE *fp)
+{
+  return House_save_at(obj, fp, 0);
 }
 
 /* restore weight of containers after House_save has changed them for saving */
@@ -273,7 +411,10 @@ static void House_listrent(struct char_data *ch, room_vnum vnum)
 		free(current);
 	}
 
-	page_string(ch->desc,buf,0);
+	/* buf lives in this frame, but a listing longer than one page is shown
+	 * after we return (the immortal pages on), so the pager must keep its
+	 * own copy; without keep_internal it pointed into the dead frame. */
+	page_string(ch->desc, buf, TRUE);
   tb_fclose(fl);
 }
 
@@ -295,19 +436,38 @@ static int find_house(room_vnum vnum)
  * house. It is now staged beside the live file and committed only after a
  * complete write; on failure the live file is kept and the error reported
  * (hcontrol-save). The in-memory table is unchanged either way, so the
- * next successful save writes the current state. */
+ * next successful save writes the current state. The file is written in
+ * format 2 (hcontrol_header, then the records). If boot could not read
+ * the live file (hcontrol_unread), it is not replaced at all. */
 static void House_save_control(void)
 {
   FILE *fl;
   char temp[MAX_INPUT_LENGTH];
+  struct hcontrol_header hdr;
 
+  /* Replacing a file boot could not read would silently destroy every
+   * house in it; an admin repairs or moves it, then reboots. */
+  if (hcontrol_unread) {
+    TB_ERROR_MSG("house", "hcontrol-save", HCONTROL_FILE,
+                 "%d house records not saved: boot could not read this file, "
+                 "which may hold houses that were not loaded; live file kept "
+                 "for repair", num_of_houses);
+    return;
+  }
   if (!(fl = objsave_open_staged(HCONTROL_FILE, temp, sizeof(temp)))) {
     TB_ERROR_MSG("house", "hcontrol-save", HCONTROL_FILE,
                  "%d house records not saved; live file kept", num_of_houses);
     return;
   }
-  /* write all the house control recs in one fell swoop. */
-  if (fwrite(house_control, sizeof(struct house_control_rec), num_of_houses, fl) != (size_t)num_of_houses) {
+  /* Zeroed first, so no undefined byte reaches the file. */
+  memset(&hdr, 0, sizeof(hdr));
+  memcpy(hdr.magic, hcontrol_magic, sizeof(hdr.magic));
+  hdr.version = HCONTROL_FORMAT_VERSION;
+  hdr.record_size = (uint32_t) sizeof(struct house_control_rec);
+  hdr.record_count = (uint32_t) num_of_houses;
+  /* write the header, then all the house control recs in one fell swoop. */
+  if (fwrite(&hdr, sizeof(hdr), 1, fl) != 1 ||
+      fwrite(house_control, sizeof(struct house_control_rec), num_of_houses, fl) != (size_t)num_of_houses) {
     TB_ERROR_ERRNO("house", "hcontrol-save", HCONTROL_FILE,
                    "short write of %d house records; live file kept",
                    num_of_houses);
@@ -327,9 +487,72 @@ static void House_save_control(void)
                "house vnum %d atrium %d owner idnum %ld: %s; record skipped", \
                (rec).vnum, (rec).atrium, (rec).owner, (reason))
 
+/** Read and check the format 2 header at the start of hcontrol.
+ * The file is untrusted. A file that does not start with hcontrol_magic
+ * is format 1 (reported once as hcontrol-legacy) and fl is rewound to its
+ * first record. A header from another format version or record layout,
+ * or a damaged one, is reported (hcontrol-format) and nothing may load.
+ * @param fl hcontrol, opened for reading and positioned at its start.
+ * @param[out] count Records the header promises (HCONTROL_HEADER only).
+ * @return HCONTROL_HEADER, HCONTROL_LEGACY or HCONTROL_UNREADABLE. */
+static int hcontrol_read_header(FILE *fl, int *count)
+{
+  struct hcontrol_header hdr;
+  size_t got;
+
+  memset(&hdr, 0, sizeof(hdr));
+  got = fread(&hdr, 1, sizeof(hdr), fl);
+  if (ferror(fl)) {
+    TB_ERROR_ERRNO("house", "hcontrol-read", HCONTROL_FILE,
+                   "header read failed; no houses loaded");
+    return HCONTROL_UNREADABLE;
+  }
+  if (got < HCONTROL_MAGIC_LEN ||
+      memcmp(hdr.magic, hcontrol_magic, HCONTROL_MAGIC_LEN) != 0) {
+    if (fseek(fl, 0L, SEEK_SET) != 0) {
+      TB_ERROR_ERRNO("house", "hcontrol-read", HCONTROL_FILE,
+                     "cannot rewind format 1 file; no houses loaded");
+      return HCONTROL_UNREADABLE;
+    }
+    TB_WARN_MSG("house", "hcontrol-legacy", HCONTROL_FILE,
+                "no format header: format 1, read as %zu-byte records; "
+                "written as format %d at the next save",
+                sizeof(struct house_control_rec), HCONTROL_FORMAT_VERSION);
+    return HCONTROL_LEGACY;
+  }
+  if (got != sizeof(hdr)) {
+    TB_ERROR_MSG("house", "hcontrol-format", HCONTROL_FILE,
+                 "header truncated (%zu of %zu bytes); no houses loaded",
+                 got, sizeof(hdr));
+    return HCONTROL_UNREADABLE;
+  }
+  if (hdr.version != HCONTROL_FORMAT_VERSION ||
+      hdr.record_size != sizeof(struct house_control_rec)) {
+    TB_ERROR_MSG("house", "hcontrol-format", HCONTROL_FILE,
+                 "format %lu with %lu-byte records, but this build reads "
+                 "format %d with %zu-byte records (written on another "
+                 "platform or struct layout?); no houses loaded",
+                 (unsigned long) hdr.version, (unsigned long) hdr.record_size,
+                 HCONTROL_FORMAT_VERSION, sizeof(struct house_control_rec));
+    return HCONTROL_UNREADABLE;
+  }
+  if (hdr.record_count > INT_MAX) {
+    TB_ERROR_MSG("house", "hcontrol-format", HCONTROL_FILE,
+                 "header promises %lu records; no houses loaded",
+                 (unsigned long) hdr.record_count);
+    return HCONTROL_UNREADABLE;
+  }
+  *count = (int) hdr.record_count;
+  return HCONTROL_HEADER;
+}
+
 /** Load the house control records, their object files and room flags.
- * Called once from boot_db(). HCONTROL_FILE is a raw binary array of
- * struct house_control_rec (see house.h), so each record is validated:
+ * Called once from boot_db(). HCONTROL_FILE holds raw images of struct
+ * house_control_rec (see house.h) after a format header (see
+ * hcontrol_read_header(); a headerless format 1 file is still read). A
+ * header this build cannot use loads nothing and leaves the file alone,
+ * and every later save refuses to replace it (hcontrol_unread). Each
+ * record is validated:
  * owner, house and atrium rooms, uniqueness, exit, guest count and mode.
  * A record that fails is reported (boot-skip / hcontrol-record) and not
  * loaded. If any record was skipped, or the file could not be read
@@ -343,20 +566,44 @@ void House_boot(void)
   room_rnum real_house, real_atrium;
   FILE *fl;
   int record = 0, skipped = 0;
+  int expected = -1;	/* records the header promises; -1: format 1, to EOF */
   size_t got;
 
   memset((char *)house_control,0,sizeof(struct house_control_rec)*MAX_HOUSES);
   num_of_houses = 0;
+  hcontrol_unread = FALSE;
 
   if (!(fl = fopen(HCONTROL_FILE, "rb"))) {
     if (errno == ENOENT)
       log("   No houses to load. File '%s' does not exist.", HCONTROL_FILE);
-    else
+    else {
       TB_ERROR_ERRNO("house", "hcontrol-open", HCONTROL_FILE,
                      "house control file unreadable; no houses loaded");
+      hcontrol_unread = TRUE;
+    }
+    return;
+  }
+  if (hcontrol_read_header(fl, &expected) == HCONTROL_UNREADABLE) {
+    hcontrol_unread = TRUE;
+    tb_fclose(fl);
     return;
   }
   for (;;) {
+    /* Format 2 ends after the records its header promises; more bytes
+     * mean the header or the file is damaged. */
+    if (expected >= 0 && record == expected) {
+      if (fgetc(fl) != EOF) {
+        TB_ERROR_MSG("house", "hcontrol-read", HCONTROL_FILE,
+                     "data after the %d records the header promises",
+                     expected);
+        skipped++;
+      } else if (ferror(fl)) {
+        TB_ERROR_ERRNO("house", "hcontrol-read", HCONTROL_FILE,
+                       "read failed after %d records", record);
+        skipped++;
+      }
+      break;
+    }
     got = fread(&temp_house, 1, sizeof(struct house_control_rec), fl);
     if (got != sizeof(struct house_control_rec)) {
       if (ferror(fl)) {
@@ -367,6 +614,11 @@ void House_boot(void)
         TB_ERROR_MSG("house", "hcontrol-read", HCONTROL_FILE,
                      "trailing partial record (%zu of %zu bytes) after %d records",
                      got, sizeof(struct house_control_rec), record);
+        skipped++;
+      } else if (expected >= 0) {
+        TB_ERROR_MSG("house", "hcontrol-read", HCONTROL_FILE,
+                     "file ends after %d of the %d records the header promises",
+                     record, expected);
         skipped++;
       }
       break;
@@ -459,11 +711,31 @@ static const char *HCONTROL_FORMAT =
 "       hcontrol pay <house vnum>\r\n"
 "       hcontrol show [house vnum | .]\r\n";
 
+/* Format a time read from hcontrol for 'hcontrol show'. The value is file
+ * data and can be any time_t; localtime() returns NULL for one it cannot
+ * represent, and tb_strftime() then left out unwritten, so the listing
+ * printed stack bytes (fuzzer PLAYER-2). Such a time shows as "Unknown"
+ * and is reported with the house vnum and the raw value. */
+static void House_format_time(char *out, size_t size, time_t when,
+                              room_vnum vnum, const char *field)
+{
+  const struct tm *tm = localtime(&when);
+
+  if (tm == NULL) {
+    TB_WARN_MSG("house", "hcontrol-time", HCONTROL_FILE,
+                "house vnum %d %s %lld is not a valid time; shown as Unknown",
+                vnum, field, (long long) when);
+    strlcpy(out, "Unknown", size);
+    return;
+  }
+  tb_strftime(out, size, "%a %b %d %Y", tm);
+}
+
 void hcontrol_list_houses(struct char_data *ch, char *arg)
 {
   int i;
   char *temp;
-  char built_on[128], last_pay[128], own_name[MAX_NAME_LENGTH + 1];
+  char built_on[128] = "", last_pay[128] = "", own_name[MAX_NAME_LENGTH + 1];
 
 	if (arg && *arg) {
 		room_vnum toshow;
@@ -494,14 +766,16 @@ void hcontrol_list_houses(struct char_data *ch, char *arg)
     if ((temp = get_name_by_id(house_control[i].owner)) == NULL)
       continue;
 
-    if (house_control[i].built_on) {
-      tb_strftime(built_on, sizeof(built_on), "%a %b %d %Y", localtime(&(house_control[i].built_on)));
-    } else
+    if (house_control[i].built_on)
+      House_format_time(built_on, sizeof(built_on), house_control[i].built_on,
+                        house_control[i].vnum, "built_on");
+    else
       strlcpy(built_on, "Unknown", sizeof(built_on)); /* strcpy: OK */
 
-    if (house_control[i].last_payment) {
-      tb_strftime(last_pay, sizeof(last_pay), "%a %b %d %Y", localtime(&(house_control[i].last_payment)));
-    } else
+    if (house_control[i].last_payment)
+      House_format_time(last_pay, sizeof(last_pay), house_control[i].last_payment,
+                        house_control[i].vnum, "last_payment");
+    else
       strlcpy(last_pay, "None", sizeof(last_pay));	/* strcpy: OK */
 
     /* Now we need a copy of the owner's name to capitalize. -gg 6/21/98 */
@@ -843,7 +1117,13 @@ static int ascii_convert_house(struct char_data *ch, obj_vnum vnum)
 	struct obj_data *tmp;
 	int i, j=0, skipped = 0, saved;
 
-  House_get_filename(vnum, infile, sizeof(infile));
+  /* No name (vnum NOWHERE) leaves infile unwritten: never open it. */
+  if (!House_get_filename(vnum, infile, sizeof(infile))) {
+    TB_ERROR_MSG("house", "convert-name", "house-file",
+                 "house vnum %d has no object file name; not converted", vnum);
+    send_to_char(ch, "...no object file name; see server log\r\n");
+    return (0);
+  }
 
 	{
 	  size_t outfile_size = strlen(infile) + 7;

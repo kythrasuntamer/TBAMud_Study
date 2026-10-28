@@ -617,11 +617,22 @@ void command_interpreter(struct char_data *ch, char *argument)
     if (cont) return;                                    /* yes, command trigger took over */
   }
 
-  /* Allow IMPLs to switch into mobs to test the commands. */
-   if (IS_NPC(ch) && ch->desc && GET_LEVEL(ch->desc->original) >= LVL_IMPL) {
-     if (script_command_interpreter(ch, argument))
-       return;
-   }
+  /* Allow IMPLs to switch into mobs to test the commands. Invariant
+   * (internal): an NPC has a descriptor only while an immortal is switched
+   * into it, and do_switch sets desc->original to that immortal. An NPC
+   * descriptor with no original breaks it; report it (every command,
+   * until fixed) instead of dereferencing NULL, and give that NPC no
+   * IMPL-only script commands. */
+  if (IS_NPC(ch) && ch->desc) {
+    if (!ch->desc->original)
+      TB_ERROR_MSG("interpreter", "switch-original", "command_interpreter",
+                   DIAG_CHAR_FMT " has descriptor %d but no original "
+                   "character; IMPL script commands skipped",
+                   DIAG_CHAR(ch), ch->desc->desc_num);
+    else if (GET_LEVEL(ch->desc->original) >= LVL_IMPL &&
+             script_command_interpreter(ch, argument))
+      return;
+  }
 
   for (length = strlen(arg), cmd = 0; *complete_cmd_info[cmd].command != '\n'; cmd++)
     if(complete_cmd_info[cmd].command_pointer != do_action &&
@@ -1176,6 +1187,36 @@ static int parse_name_internal(char *arg, char *name)
 #define USURP		2
 #define UNSWITCH	3
 
+/**
+ * Release the editor buffers of @p k, a socket a dupe check is booting,
+ * before its character @p booted is freed.
+ *
+ * The dupe checks set k->character to NULL, and close_socket() releases
+ * k's buffers only while k->character is set, so this does it as
+ * close_socket() would: a mail being written (PLR_MAILING) owns *k->str and
+ * k->str; otherwise k->backstr, k's copy of the old text, is freed unless
+ * PLR_WRITING. Both pointers are cleared either way: at the menu's
+ * description editor (CON_PLR_DESC, or CON_CLOSE after an immortal's dc
+ * there) k->str points into @p booted, and k stays in descriptor_list until
+ * the close pass, so input k already queued is still processed this pulse
+ * by string_add(), which writes through k->str.
+ *
+ * @param k      The socket being booted; its character is about to be freed.
+ * @param booted k's character, a player not in the world.
+ */
+static void release_booted_editor(struct descriptor_data *k,
+                                  struct char_data *booted)
+{
+  if (PLR_FLAGGED(booted, PLR_MAILING) && k->str) {
+    if (*k->str)
+      free(*k->str);
+    free(k->str);
+  } else if (k->backstr && !PLR_FLAGGED(booted, PLR_WRITING))
+    free(k->backstr);
+  k->str = NULL;
+  k->backstr = NULL;
+}
+
 /* This function seems a bit over-extended. */
 /**
  * After a correct password, make @p d the only controller of its player.
@@ -1229,17 +1270,31 @@ static int perform_dupe_check(struct descriptor_data *d)
 
       do_return(k->character, NULL, 0, 0);
     } else if (k->character && GET_IDNUM(k->character) == id) {
-      /* Character taking over their own body. */
-      pref_temp=GET_PREF(k->character);
+      /* Character taking over their own body. k's character stays, linkless,
+       * only if it is in the world (in the game, where it may be taken over
+       * below, in an editor, or link-dead). At the menu or another pre-game
+       * prompt it belongs to k's login alone: it is in no list, and
+       * close_socket() frees nothing once k->character is NULL, so it is
+       * freed here; it used to leak (~9 KB per login). */
+      struct char_data *other = k->character;
+      bool other_in_world = IS_PLAYING(k) || STATE(k) == CON_DISCONNECT;
+
+      pref_temp=GET_PREF(other);
 
       if (!target && STATE(k) == CON_PLAYING) {
 	write_to_output(k, "\r\nThis body has been usurped!\r\n");
-	target = k->character;
+	target = other;
 	mode = USURP;
       }
-      k->character->desc = NULL;
+      other->desc = NULL;
       k->character = NULL;
       k->original = NULL;
+      if (!other_in_world) {
+        /* k->str must not outlive other (the menu's description editor
+         * points into it); see release_booted_editor(). */
+        release_booted_editor(k, other);
+        free_char(other);
+      }
       write_to_output(k, "\r\nMultiple login detected -- disconnecting.\r\n");
       STATE(k) = CON_CLOSE;
     }
@@ -1275,10 +1330,27 @@ static int perform_dupe_check(struct descriptor_data *d)
       continue;
     }
 
-    /* we've found a duplicate - blow him away, dumping his eq in limbo. */
-    if (IN_ROOM(ch) != NOWHERE)
-      char_from_room(ch);
-    char_to_room(ch, 1);
+    /* we've found a duplicate - blow him away, dumping his eq in the mortal
+     * start room. That room is looked up by vnum: the hard-coded rnum 1 used
+     * here before was whatever room OLC had shifted into that slot, or past
+     * top_of_world (char_to_room() refused it and left the duplicate in
+     * NOWHERE). With no start room this is reported and the duplicate is
+     * extracted where it is (extract_char_final() recovers or reports one
+     * in NOWHERE). */
+    {
+      room_rnum dump = real_room(CONFIG_MORTAL_START), here = IN_ROOM(ch);
+
+      if (dump == NOWHERE)
+        TB_ERROR_MSG("interpreter", "dupe-no-start-room", "room",
+                     "mortal start room vnum %d does not exist; duplicate "
+                     DIAG_CHAR_FMT " extracted in " DIAG_ROOM_FMT,
+                     (int) CONFIG_MORTAL_START, DIAG_CHAR(ch), DIAG_ROOM(here));
+      else {
+        if (here != NOWHERE)
+          char_from_room(ch);
+        char_to_room(ch, dump);
+      }
+    }
     extract_char(ch);
   }
 
@@ -1344,7 +1416,10 @@ static int perform_dupe_check(struct descriptor_data *d)
  *
  * @pre d->character is a new player whose player.name is set.
  * @post If the name is already in game, both sockets are set to CON_CLOSE
- *       and d->character is NULL; the caller must check STATE(d).
+ *       and d->character is freed and NULL; the caller must check STATE(d).
+ *       A booted socket's character is freed unless it is in the world,
+ *       where it stays without a descriptor; before it is freed, the
+ *       socket's editor buffers are released (release_booted_editor()).
  * @return TRUE if any socket was closed.
  */
 static bool perform_new_char_dupe_check(struct descriptor_data *d)
@@ -1380,10 +1455,20 @@ static bool perform_new_char_dupe_check(struct descriptor_data *d)
     if (!str_cmp(GET_PC_NAME(k->character), GET_PC_NAME(d->character))) {
       /* Check the other character is still in creation? */
       if ((STATE(k) > CON_PLAYING) && (STATE(k) < CON_QCLASS)) {
-        /* Boot the older one */
-        k->character->desc = NULL;
+        /* Boot the older one. Its character belongs to that login alone (a
+         * character in creation is in no list), and close_socket() frees
+         * nothing once k->character is NULL, so it is freed here; it used
+         * to be dropped and leaked. */
+        struct char_data *older = k->character;
+
         k->character = NULL;
         k->original = NULL;
+        older->desc = NULL;
+        /* Creation prompts have no editor, but k may be CON_CLOSE after an
+         * immortal's dc at the menu's description editor, with k->str still
+         * pointing into older. */
+        release_booted_editor(k, older);
+        free_char(older);
         write_to_output(k, "\r\nMultiple login detected -- disconnecting.\r\n");
         STATE(k) = CON_CLOSE;
 
@@ -1391,14 +1476,28 @@ static bool perform_new_char_dupe_check(struct descriptor_data *d)
 
         found = TRUE;
       } else {
-        /* Something went VERY wrong, boot both chars */
-        k->character->desc = NULL;
+        /* Something went VERY wrong, boot both chars. k's character stays,
+         * linkless, only if it is in the world (in the game, in an editor or
+         * already linkless); at the menu or another pre-game prompt it
+         * belongs to that login alone. d's character is still being created.
+         * Both of those used to be dropped and leaked; they are freed. */
+        struct char_data *other = k->character;
+        bool other_in_world = IS_PLAYING(k) || STATE(k) == CON_DISCONNECT;
+
+        other->desc = NULL;
         k->character = NULL;
         k->original = NULL;
+        if (!other_in_world) {
+          /* At the menu's description editor k->str points into other, and
+           * string_add() may still write through it this pulse. */
+          release_booted_editor(k, other);
+          free_char(other);
+        }
         write_to_output(k, "\r\nMultiple login detected -- disconnecting.\r\n");
         STATE(k) = CON_CLOSE;
 
         d->character->desc = NULL;
+        free_char(d->character);
         d->character = NULL;
         d->original = NULL;
         write_to_output(d, "\r\nSorry, due to multiple connections, all your connections are being closed.\r\n");

@@ -37,9 +37,20 @@ void basic_mud_log(const char *format, ...) { (void)format; }
 void mudlog(int type, int level, int file, const char *str, ...)
 { (void)type; (void)level; (void)file; (void)str; }
 
+/* utils.c's contract (core-utils): a name outside [A-Za-z0-9_-] is not a
+ * safe path component and is refused with 0 (the real one also reports
+ * filename-name-invalid; this stand-in stays quiet so tests see only the
+ * caller's report). */
 int get_filename(char *filename, size_t fbufsize, int mode, const char *orig_name)
 {
+  const char *p;
+
   (void)mode;
+  if (orig_name == NULL || *orig_name == '\0')
+    return 0;
+  for (p = orig_name; *p; p++)
+    if (!isalnum((unsigned char)*p) && *p != '_' && *p != '-')
+      return 0;
   return snprintf(filename, fbufsize, "%s/%s.plr", scratch_dir, orig_name) > 0;
 }
 
@@ -81,6 +92,15 @@ void affect_to_char(struct char_data *ch, struct affected_type *af)
 }
 void new_affect(struct affected_type *af) { memset(af, 0, sizeof(*af)); }
 void add_completed_quest(struct char_data *ch, qst_vnum vnum) { (void)ch; (void)vnum; }
+/* quest.c: vnum 300 is the only loaded quest; clear_quest() as in quest.c. */
+qst_rnum real_quest(qst_vnum vnum) { return vnum == 300 ? 0 : NOTHING; }
+void clear_quest(struct char_data *ch)
+{
+  GET_QUEST(ch) = NOTHING;
+  GET_QUEST_TIME(ch) = -1;
+  GET_QUEST_COUNTER(ch) = 0;
+  REMOVE_BIT_AR(PRF_FLAGS(ch), PRF_QUEST);
+}
 trig_rnum real_trigger(trig_vnum vnum) { (void)vnum; return NOTHING; }
 trig_data *read_trigger(int nr) { (void)nr; return NULL; }
 void add_trigger(struct script_data *sc, trig_data *t, int loc) { (void)sc; (void)t; (void)loc; }
@@ -259,6 +279,36 @@ static void test_oversize_desc_is_skipped(void)
   TEST_ASSERT_EQUAL_INT(4, PLR_FLAGS(&player)[3]);
 }
 
+/* Write a player file that may hold NUL bytes. */
+static void write_pfile_bytes(const char *name, const char *body, size_t len)
+{
+  char path[512];
+  FILE *fl;
+
+  TEST_ASSERT_TRUE(get_filename(path, sizeof(path), PLR_FILE, name));
+  fl = fopen(path, "wb");
+  TEST_ASSERT_NOT_NULL(fl);
+  TEST_ASSERT_EQUAL_size_t(len, fwrite(body, 1, len, fl));
+  TEST_ASSERT_EQUAL_INT(0, fclose(fl));
+}
+
+/* Fuzzer PLAYER-4 (fread-string-nul): a '~'-string line whose first byte is
+ * NUL reads as empty, and fread_string_checked() scanned back from tmp[-1]
+ * (stack-buffer-underflow under ASan). That chunk is dropped and reported;
+ * the rest of the description still loads. */
+static void test_desc_line_starting_with_nul_is_dropped(void)
+{
+  static const char body[] = "Id  : 4242\nDesc:\n\0hidden\nA tall stranger.\n~\n";
+
+  write_pfile_bytes("tester", body, sizeof(body) - 1);
+
+  TEST_ASSERT_EQUAL_INT(0, load_char("tester", &player));
+
+  TEST_ASSERT_EQUAL_STRING("A tall stranger.\r\n", player.player.description);
+  TEST_ASSERT_EQUAL_STRING("fread-string\n", tb_captured_op_log);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "Desc: NUL byte in string data"));
+}
+
 static void test_terminated_desc_loads(void)
 {
   write_pfile("tester", "Id  : 4242\nDesc:\nA tall stranger.\n~\n");
@@ -405,6 +455,90 @@ static void test_clean_pfiles_removes_adjacent_deleted_players(void)
   leave_scratch();
 }
 
+/* B2-29: free_player_index() set top_of_p_table to 0 with player_table
+ * NULL, so every later lookup read player_table[0] through NULL. */
+static void test_lookups_after_free_player_index_find_nothing(void)
+{
+  char newbie[] = "Newbie";
+
+  enter_scratch();
+  write_index("4242 tester 10 0 1000\n~\n");
+  build_player_index();
+  TEST_ASSERT_EQUAL_INT(0, top_of_p_table);
+
+  free_player_index();
+
+  TEST_ASSERT_NULL(player_table);
+  TEST_ASSERT_EQUAL_INT(-1, top_of_p_table);
+  TEST_ASSERT_EQUAL_INT(-1, top_of_p_file);
+  TEST_ASSERT_EQUAL_INT(-1, get_ptable_by_name("tester"));
+  TEST_ASSERT_EQUAL_INT(-1, get_id_by_name("tester"));
+  TEST_ASSERT_NULL(get_name_by_id(4242));
+  TEST_ASSERT_EQUAL_INT(0, create_entry(newbie));
+  TEST_ASSERT_EQUAL_STRING("newbie", player_table[0].name);
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  leave_scratch();
+}
+
+/* B2-29: remove_player() indexed player_table[pfilepos] with no bounds
+ * check (heap overflow under ASan for one past the end). */
+static void test_remove_player_rejects_bad_position(void)
+{
+  enter_scratch();
+  write_index("4242 tester 10 0 1000\n~\n");
+  build_player_index();
+
+  remove_player(1);
+  TEST_ASSERT_EQUAL_STRING("index-pos", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "position 1 outside 0..0"));
+  remove_player(-1);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "position -1 outside 0..0"));
+
+  TEST_ASSERT_EQUAL_INT(2, tb_captured_errors);
+  TEST_ASSERT_EQUAL_INT(0, top_of_p_table);
+  TEST_ASSERT_EQUAL_STRING("tester", player_table[0].name);
+  leave_scratch();
+}
+
+/* Fuzzer PLAYER-3 (name-path): a damaged index can hold a name such as
+ * "../evil", which get_filename() now refuses. remove_player() skipped
+ * each refused file silently and still dropped the entry; it must delete
+ * nothing, report the idnum and keep the entry, and clean_pfiles() (which
+ * re-examines a slot after a removal) must move on rather than spin on
+ * it. The deleted player after it is still removed. */
+static void test_clean_pfiles_refuses_unsafe_name_and_moves_on(void)
+{
+  enter_scratch();
+  write_index("4242 ../evil 10 1 1000\n4243 other 5 1 1000\n~\n");
+  build_player_index();
+  TEST_ASSERT_EQUAL_INT(1, top_of_p_table);
+
+  clean_pfiles();
+
+  TEST_ASSERT_EQUAL_INT(0, top_of_p_table);
+  TEST_ASSERT_EQUAL_STRING("../evil", player_table[0].name);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_op_log, "pclean-name\n"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail_log,
+                              "player idnum 4242: no safe name for file type 0"));
+  TEST_ASSERT_NULL(strstr(tb_captured_detail_log, "../evil"));
+  leave_scratch();
+}
+
+/* Fuzzer PLAYER-3: load_char() returned -1 silently when get_filename()
+ * refused the index name; the refusal is now reported with the idnum. */
+static void test_load_char_refuses_unsafe_index_name(void)
+{
+  enter_scratch();
+  write_index("4242 ../evil 10 0 1000\n~\n");
+  build_player_index();
+
+  TEST_ASSERT_EQUAL_INT(-1, load_char("../evil", &player));
+
+  TEST_ASSERT_EQUAL_STRING("pfile-name", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "player idnum 4242: no safe player file name"));
+  leave_scratch();
+}
+
 /* B2-16: Clas/Levl/Sex index tables (class_abbrevs[], titles, exp) and
  * skills[] is unsigned char; out-of-range file values were stored as-is. */
 static void test_out_of_range_class_level_sex_skill(void)
@@ -423,6 +557,110 @@ static void test_out_of_range_class_level_sex_skill(void)
   TEST_ASSERT_EQUAL_STRING("pfile-range\npfile-range\npfile-range\npfile-range\n",
                            tb_captured_op_log);
   TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail_log, "tag Clas value 99"));
+}
+
+/* G2-12, H2-09: the class indexes class_abbrevs[] (who, users), the shift
+ * 1 << GET_CLASS (who -c) and spell_info[].min_level[] (cast). Pin the
+ * lower bound too: -1 is CLASS_UNDEFINED, and min_level[-1] reads the
+ * field before the array. Every class is validated where it is loaded. */
+static void test_negative_class_is_rejected_at_load(void)
+{
+  write_pfile("tester", "Id  : 4242\nClas: -1\n");
+
+  TEST_ASSERT_EQUAL_INT(0, load_char("tester", &player));
+
+  TEST_ASSERT_EQUAL_INT(PFDEF_CLASS, GET_CLASS(&player));
+  TEST_ASSERT_EQUAL_STRING("pfile-range\n", tb_captured_op_log);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "player idnum 4242 tag Clas value -1"));
+}
+
+/* Errloc finding: the endgame ranks EgHP/EgMP (0..100; do_endgame()
+ * refuses a purchase at 100) were clamped below 0 silently and taken as-is
+ * above 100, and EgAP/EgXP were clamped below 0 silently. Each now goes to
+ * its nearest bound and is reported. */
+static void test_endgame_values_are_clamped_and_reported(void)
+{
+  write_pfile("tester", "Id  : 4242\nEgHP: -3\nEgMP: 150\nEgAP: -7\nEgXP: 12\n");
+
+  TEST_ASSERT_EQUAL_INT(0, load_char("tester", &player));
+
+  TEST_ASSERT_EQUAL_INT(0, GET_ENDGAME_HP_RANK(&player));
+  TEST_ASSERT_EQUAL_INT(100, GET_ENDGAME_MP_RANK(&player));
+  TEST_ASSERT_EQUAL_INT(0, GET_ENDGAME_AP(&player));
+  TEST_ASSERT_EQUAL_INT(12, GET_ENDGAME_XP(&player));
+  TEST_ASSERT_EQUAL_STRING("pfile-range\npfile-range\npfile-range\n", tb_captured_op_log);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail_log,
+                              "player idnum 4242 tag EgHP value -3 outside 0..100; using 0"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail_log,
+                              "player idnum 4242 tag EgMP value 150 outside 0..100; using 100"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail_log,
+                              "player idnum 4242 tag EgAP value -7 outside 0.."));
+}
+
+/* The bounds themselves are valid ranks and load silently. */
+static void test_endgame_ranks_at_their_bounds_load(void)
+{
+  write_pfile("tester", "Id  : 4242\nEgHP: 100\nEgMP: 0\n");
+
+  TEST_ASSERT_EQUAL_INT(0, load_char("tester", &player));
+
+  TEST_ASSERT_EQUAL_INT(100, GET_ENDGAME_HP_RANK(&player));
+  TEST_ASSERT_EQUAL_INT(0, GET_ENDGAME_MP_RANK(&player));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+}
+
+/* G2-02: Qcur was loaded unchecked. A quest deleted since the save made
+ * real_quest() return NOTHING, and do_score() then read
+ * aquest_table[NOTHING]. A stale quest must be reported and cleared. */
+static void test_stale_current_quest_is_cleared(void)
+{
+  write_pfile("tester", "Id  : 4242\nQcnt: 3\nQcur: 9999\n");
+
+  TEST_ASSERT_EQUAL_INT(0, load_char("tester", &player));
+
+  TEST_ASSERT_EQUAL_INT(NOTHING, GET_QUEST(&player));
+  TEST_ASSERT_EQUAL_INT(0, GET_QUEST_COUNTER(&player));
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("pfile-quest", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "player idnum 4242"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "quest vnum 9999"));
+}
+
+static void test_loaded_current_quest_is_kept(void)
+{
+  write_pfile("tester", "Id  : 4242\nQcnt: 3\nQcur: 300\n");
+
+  TEST_ASSERT_EQUAL_INT(0, load_char("tester", &player));
+
+  TEST_ASSERT_EQUAL_INT(300, GET_QUEST(&player));
+  TEST_ASSERT_EQUAL_INT(3, GET_QUEST_COUNTER(&player));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+}
+
+/* G2-02: current_quest is an int but real_quest() takes a 16-bit
+ * qst_vnum, so Qcur 70300 was looked up as quest 4764 (a different,
+ * possibly loaded, quest). It is out of range instead. */
+static void test_out_of_range_current_quest_is_rejected(void)
+{
+  write_pfile("tester", "Id  : 4242\nQcur: 70300\n");
+
+  TEST_ASSERT_EQUAL_INT(0, load_char("tester", &player));
+
+  TEST_ASSERT_EQUAL_INT(NOTHING, GET_QUEST(&player));
+  TEST_ASSERT_EQUAL_STRING("pfile-range\n", tb_captured_op_log);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "tag Qcur value 70300"));
+}
+
+/* G2-02: Qcur -1 was kept as -1, which is not NOTHING (65535), so the
+ * player counted as on a quest that real_quest() cannot find. */
+static void test_negative_current_quest_is_rejected(void)
+{
+  write_pfile("tester", "Id  : 4242\nQcur: -1\n");
+
+  TEST_ASSERT_EQUAL_INT(0, load_char("tester", &player));
+
+  TEST_ASSERT_EQUAL_INT(NOTHING, GET_QUEST(&player));
+  TEST_ASSERT_EQUAL_STRING("pfile-range\n", tb_captured_op_log);
 }
 
 /* B2-30: integer and HMVS parse failures went to plain log() with no
@@ -536,8 +774,27 @@ static void free_affects(struct char_data *ch)
   while (ch->affected)
     affect_remove(ch, ch->affected);
 }
-struct obj_data *unequip_char(struct char_data *ch, int pos) { (void)ch; (void)pos; return NULL; }
-void equip_char_at(const char *src_file, int src_line, const char *src_func, struct char_data *ch, struct obj_data *obj, int pos) { (void)src_file; (void)src_line; (void)src_func;  (void)ch; (void)obj; (void)pos; }
+/* Like handler.c, minus the affects: an item moves between slot and hand. */
+static int equips;
+struct obj_data *unequip_char(struct char_data *ch, int pos)
+{
+  struct obj_data *obj = GET_EQ(ch, pos);
+  GET_EQ(ch, pos) = NULL;
+  return obj;
+}
+void equip_char_at(const char *src_file, int src_line, const char *src_func,
+                   struct char_data *ch, struct obj_data *obj, int pos)
+{
+  (void)src_file; (void)src_line; (void)src_func;
+  TEST_ASSERT_NULL(GET_EQ(ch, pos));
+  GET_EQ(ch, pos) = obj;
+  equips++;
+}
+/* B2-21: save_char() must run no script. These fail any test that does. */
+int remove_otrigger(obj_data *obj, char_data *actor)
+{ (void)obj; (void)actor; TEST_FAIL_MESSAGE("save_char fired a remove trigger"); return 1; }
+int wear_otrigger(obj_data *obj, char_data *actor, int where)
+{ (void)obj; (void)actor; (void)where; TEST_FAIL_MESSAGE("save_char fired a wear trigger"); return 1; }
 void strip_cr(char *buf) { (void)buf; }
 void save_char_vars_ascii(FILE *file, struct char_data *ch) { (void)file; (void)ch; }
 
@@ -589,6 +846,33 @@ static void test_save_of_unindexed_player_is_reported(void)
     (void)remove(path);
 }
 
+/* B2-21: save_char() takes every worn item off and puts it back in its own
+ * slot with no trigger in between (a remove or wear trigger it used to
+ * fire could purge an item it was still holding). */
+static void test_save_restores_worn_items_without_triggers(void)
+{
+  struct obj_data ring, cloak;
+  char path[512];
+
+  memset(&ring, 0, sizeof(ring));
+  memset(&cloak, 0, sizeof(cloak));
+  player.player.name = strdup("Tester");
+  GET_IDNUM(&player) = 4242;
+  GET_PFILEPOS(&player) = 0;
+  GET_EQ(&player, WEAR_FINGER_R) = &ring;
+  GET_EQ(&player, WEAR_ABOUT) = &cloak;
+  equips = 0;
+
+  save_char(&player);
+
+  TEST_ASSERT_EQUAL_PTR(&ring, GET_EQ(&player, WEAR_FINGER_R));
+  TEST_ASSERT_EQUAL_PTR(&cloak, GET_EQ(&player, WEAR_ABOUT));
+  TEST_ASSERT_EQUAL_INT(2, equips);
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  if (get_filename(path, sizeof(path), PLR_FILE, "Tester"))
+    (void)remove(path);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -600,6 +884,7 @@ int main(void)
   RUN_TEST(test_unterminated_desc_is_dropped_not_fatal);
   RUN_TEST(test_oversize_desc_is_skipped);
   RUN_TEST(test_terminated_desc_loads);
+  RUN_TEST(test_desc_line_starting_with_nul_is_dropped);
   RUN_TEST(test_malformed_index_record_is_skipped_and_kept);
   RUN_TEST(test_index_save_failure_keeps_live_index);
   RUN_TEST(test_remove_player_with_unrepresentable_last_login);
@@ -613,6 +898,18 @@ int main(void)
   RUN_TEST(test_huge_alias_count_is_rejected);
   RUN_TEST(test_save_keeps_affects_past_max);
   RUN_TEST(test_save_of_unindexed_player_is_reported);
+  RUN_TEST(test_stale_current_quest_is_cleared);
+  RUN_TEST(test_loaded_current_quest_is_kept);
+  RUN_TEST(test_out_of_range_current_quest_is_rejected);
+  RUN_TEST(test_negative_current_quest_is_rejected);
+  RUN_TEST(test_negative_class_is_rejected_at_load);
+  RUN_TEST(test_endgame_values_are_clamped_and_reported);
+  RUN_TEST(test_endgame_ranks_at_their_bounds_load);
+  RUN_TEST(test_lookups_after_free_player_index_find_nothing);
+  RUN_TEST(test_remove_player_rejects_bad_position);
+  RUN_TEST(test_clean_pfiles_refuses_unsafe_name_and_moves_on);
+  RUN_TEST(test_load_char_refuses_unsafe_index_name);
+  RUN_TEST(test_save_restores_worn_items_without_triggers);
   (void)rmdir(scratch_dir);
   return UNITY_END();
 }

@@ -15,6 +15,10 @@
 #include "utils.h"
 #include "comm.h"
 #include "interpreter.h"
+#include "dg_scripts.h"
+#include "db.h"
+
+#include <sodium.h>
 
 extern FILE *logfile;
 
@@ -696,8 +700,495 @@ static void test_sort_commands_twice_does_not_leak(void)
 }
 
 /* =========================================================
+ * perform_new_char_dupe_check: booted characters are freed
+ *
+ * Booting a socket set its character pointer to NULL without free_char(),
+ * and close_socket() frees nothing once d->character is NULL: a character
+ * still in creation, a twin at the menu, and the new character on d itself
+ * when both sockets were closed were all leaked. A twin in the game stays
+ * in the world, linkless.
+ * ========================================================= */
+
+/* free_char() for these tests (overrides the weak stub): a character made
+ * by heap_char() is really freed and forgotten, so ASan sees any later use
+ * and a test can tell which characters the code released. The stack
+ * characters of the fixture above are only counted. */
+enum { MAX_HEAP_CHARS = 4 };
+static struct char_data *heap_chars[MAX_HEAP_CHARS];
+static int free_char_calls;
+
+void free_char(struct char_data *ch)
+{
+  int i;
+
+  free_char_calls++;
+  for (i = 0; i < MAX_HEAP_CHARS; i++)
+    if (heap_chars[i] == ch) {
+      heap_chars[i] = NULL;
+      free(ch->player.name);
+      free(ch->player_specials);
+      free(ch);
+      return;
+    }
+}
+
+static struct char_data *heap_char(const char *name)
+{
+  struct char_data *ch = calloc(1, sizeof(*ch));
+  int i;
+
+  TEST_ASSERT_NOT_NULL(ch);
+  ch->player_specials = calloc(1, sizeof(*ch->player_specials));
+  TEST_ASSERT_NOT_NULL(ch->player_specials);
+  ch->player.name = strdup(name);
+  TEST_ASSERT_NOT_NULL(ch->player.name);
+  GET_IDNUM(ch) = -1;
+  for (i = 0; i < MAX_HEAP_CHARS && heap_chars[i]; i++)
+    ;
+  TEST_ASSERT_TRUE(i < MAX_HEAP_CHARS);
+  heap_chars[i] = ch;
+  return ch;
+}
+
+/* Compares addresses only: a released character is never dereferenced. */
+static int heap_char_live(const struct char_data *ch)
+{
+  int i;
+
+  for (i = 0; i < MAX_HEAP_CHARS; i++)
+    if (heap_chars[i] == ch)
+      return 1;
+  return 0;
+}
+
+static void free_heap_chars(void)
+{
+  int i;
+
+  for (i = 0; i < MAX_HEAP_CHARS; i++)
+    if (heap_chars[i])
+      free_char(heap_chars[i]);
+}
+
+/* d confirms the new name "Zorblaxe"; k already has a character by that
+ * name, in peer_state. */
+struct heap_dupe {
+  struct descriptor_data d, k;
+  struct char_data *dch, *kch;
+};
+
+static void setup_heap_dupe(struct heap_dupe *f, int peer_state)
+{
+  memset(f, 0, sizeof(*f));
+  f->dch = heap_char("Zorblaxe");
+  f->kch = heap_char("Zorblaxe");
+  f->dch->desc = &f->d;
+  f->d.character = f->dch;
+  f->kch->desc = &f->k;
+  f->k.character = f->kch;
+  f->d.desc_num = 2;
+  f->k.desc_num = 1;
+  STATE(&f->d) = CON_NAME_CNFRM;
+  STATE(&f->k) = peer_state;
+  f->k.next = &f->d;
+  descriptor_list = &f->k;
+  free_char_calls = 0;
+}
+
+/* d answers 'y' to confirm its new name. */
+static void finish_heap_dupe(struct heap_dupe *f)
+{
+  char arg[] = "y";
+
+  nanny(&f->d, arg);
+  descriptor_list = NULL;
+}
+
+static void run_heap_dupe(struct heap_dupe *f, int peer_state)
+{
+  setup_heap_dupe(f, peer_state);
+  finish_heap_dupe(f);
+}
+
+void test_new_char_dupe_check_frees_the_booted_creation_character(void)
+{
+  struct heap_dupe f;
+
+  run_heap_dupe(&f, CON_QSEX);
+  TEST_ASSERT_EQUAL_INT(CON_CLOSE, STATE(&f.k));
+  TEST_ASSERT_NULL(f.k.character);
+  TEST_ASSERT_FALSE(heap_char_live(f.kch));
+  TEST_ASSERT_EQUAL_INT(CON_NEWPASSWD, STATE(&f.d));   /* the new one goes on */
+  TEST_ASSERT_TRUE(heap_char_live(f.dch));
+  free_heap_chars();
+}
+
+void test_new_char_dupe_check_closing_both_keeps_only_the_in_game_twin(void)
+{
+  struct heap_dupe f;
+
+  run_heap_dupe(&f, CON_PLAYING);
+  TEST_ASSERT_EQUAL_INT(CON_CLOSE, STATE(&f.d));
+  TEST_ASSERT_NULL(f.d.character);
+  TEST_ASSERT_FALSE(heap_char_live(f.dch));            /* still in creation */
+  TEST_ASSERT_TRUE(heap_char_live(f.kch));             /* in the world */
+  TEST_ASSERT_NULL(f.kch->desc);
+  free_heap_chars();
+}
+
+void test_new_char_dupe_check_closing_both_frees_a_twin_at_the_menu(void)
+{
+  struct heap_dupe f;
+
+  run_heap_dupe(&f, CON_MENU);
+  TEST_ASSERT_EQUAL_INT(CON_CLOSE, STATE(&f.d));
+  TEST_ASSERT_EQUAL_INT(CON_CLOSE, STATE(&f.k));
+  TEST_ASSERT_FALSE(heap_char_live(f.dch));
+  TEST_ASSERT_FALSE(heap_char_live(f.kch));
+  TEST_ASSERT_EQUAL_INT(2, free_char_calls);
+  free_heap_chars();
+}
+
+/* A twin booted at the menu's description editor: k->str points into the
+ * character "boot both" frees, and string_add() still runs k's queued
+ * input this pulse (k stays in descriptor_list until the close pass), so
+ * it wrote into freed memory. k's editor buffers are released first, as
+ * perform_dupe_check() does (fd3ae09). */
+void test_new_char_dupe_check_closing_both_detaches_the_description_editor(void)
+{
+  struct heap_dupe f;
+
+  setup_heap_dupe(&f, CON_PLR_DESC);
+  /* As nanny's menu option 2 leaves it. */
+  f.k.str = &f.kch->player.description;
+  f.k.backstr = strdup("old description");
+  TEST_ASSERT_NOT_NULL(f.k.backstr);
+  finish_heap_dupe(&f);
+  TEST_ASSERT_EQUAL_INT(CON_CLOSE, STATE(&f.k));
+  TEST_ASSERT_FALSE(heap_char_live(f.kch));
+  TEST_ASSERT_NULL(f.k.str);        /* no pointer into the freed twin */
+  TEST_ASSERT_NULL(f.k.backstr);    /* released, as close_socket() would */
+  free_heap_chars();
+}
+
+/* "Boot the older one" also takes CON_CLOSE, which an immortal's dc gives a
+ * socket at the description editor while k->str still points into its
+ * character: released the same way before that character is freed. */
+void test_new_char_dupe_check_booting_a_closed_editor_detaches_it(void)
+{
+  struct heap_dupe f;
+
+  setup_heap_dupe(&f, CON_CLOSE);
+  f.k.str = &f.kch->player.description;
+  f.k.backstr = strdup("old description");
+  TEST_ASSERT_NOT_NULL(f.k.backstr);
+  finish_heap_dupe(&f);
+  TEST_ASSERT_FALSE(heap_char_live(f.kch));
+  TEST_ASSERT_NULL(f.k.str);
+  TEST_ASSERT_NULL(f.k.backstr);
+  TEST_ASSERT_EQUAL_INT(CON_NEWPASSWD, STATE(&f.d));   /* the new one goes on */
+  free_heap_chars();
+}
+
+/* =========================================================
+ * command_interpreter: switched-IMPL script commands (finding A2-07)
+ *
+ * An NPC has a descriptor only while an immortal is switched into it, and
+ * do_switch sets desc->original. The IMPL check read
+ * GET_LEVEL(ch->desc->original) without testing original.
+ * ========================================================= */
+
+/* mecho is only in the mob script table, so a call means the switched-IMPL
+ * path ran. Overrides the weak stub in test_stubs.c. */
+static int mecho_calls;
+ACMD(do_mecho)
+{
+  (void)ch; (void)argument; (void)cmd; (void)subcmd;
+  mecho_calls++;
+}
+
+/* An NPC with a descriptor whose original is @p original types "mecho". */
+static void run_switched_mecho(struct char_data *original)
+{
+  struct char_data mob;
+  struct descriptor_data d;
+  char line[] = "mecho hello";
+
+  memset(&mob, 0, sizeof(mob));
+  memset(&d, 0, sizeof(d));
+  SET_BIT_AR(MOB_FLAGS(&mob), MOB_ISNPC);
+  mob.nr = NOBODY;
+  GET_POS(&mob) = POS_STANDING;
+  mob.desc = &d;
+  d.character = &mob;
+  d.original = original;
+  d.desc_num = 5;
+  mecho_calls = 0;
+  complete_cmd_info = (struct command_info *) cmd_info;
+  command_interpreter(&mob, line);
+  complete_cmd_info = NULL;
+}
+
+void test_command_interpreter_switched_impl_runs_script_commands(void)
+{
+  struct char_data imm;
+  struct player_special_data specials;
+
+  memset(&imm, 0, sizeof(imm));
+  memset(&specials, 0, sizeof(specials));
+  imm.player_specials = &specials;
+  GET_LEVEL(&imm) = LVL_IMPL;
+  run_switched_mecho(&imm);
+  TEST_ASSERT_EQUAL_INT(1, mecho_calls);
+  TEST_ASSERT_EQUAL_INT(0, captured_errors);
+}
+
+void test_command_interpreter_npc_descriptor_without_original_is_reported(void)
+{
+  run_switched_mecho(NULL);
+  TEST_ASSERT_EQUAL_INT(0, mecho_calls);
+  TEST_ASSERT_EQUAL_INT(1, captured_errors);
+  TEST_ASSERT_EQUAL_STRING("switch-original", captured_operation);
+}
+
+/* =========================================================
  * main
  * ========================================================= */
+
+/* =========================================================
+ * perform_dupe_check: a duplicate in the world is extracted in the mortal
+ * start room, found by vnum
+ *
+ * It used char_to_room(ch, 1): rnum 1 is whatever room OLC shifted into
+ * that slot, or past top_of_world, where char_to_room() refuses and the
+ * duplicate is left in NOWHERE.
+ * ========================================================= */
+
+/* Room primitives with handler.c's contract (override the weak stubs):
+ * char_from_room() aborts on a character in no valid room, char_to_room()
+ * refuses an invalid room and leaves its character in NOWHERE. */
+static struct room_data dupe_rooms[3];
+static struct char_data *extracted_char;
+static room_rnum extracted_in;
+
+room_rnum real_room(room_vnum vnum)
+{
+  room_rnum i;
+
+  for (i = 0; world && i <= top_of_world; i++)
+    if (world[i].number == vnum)
+      return i;
+  return NOWHERE;
+}
+void char_from_room_at(const char *src_file, int src_line,
+                       const char *src_func, struct char_data *ch)
+{
+  (void)src_file; (void)src_line; (void)src_func;
+  TEST_ASSERT_TRUE_MESSAGE(VALID_ROOM_RNUM(IN_ROOM(ch)),
+                           "char_from_room on a character in no valid room "
+                           "(production aborts)");
+  IN_ROOM(ch) = NOWHERE;
+}
+void char_to_room_at(const char *src_file, int src_line, const char *src_func,
+                     struct char_data *ch, room_rnum room)
+{
+  (void)src_file; (void)src_line; (void)src_func;
+  if (VALID_ROOM_RNUM(room))
+    IN_ROOM(ch) = room;
+}
+void extract_char(struct char_data *ch)
+{
+  extracted_char = ch;
+  extracted_in = IN_ROOM(ch);
+}
+
+/* d logs in as idnum 31 with the right password, typed at CON_PASSWORD. */
+static const char dupe_password[] = "correct horse";
+static struct char_data *password_login(struct descriptor_data *d)
+{
+  struct char_data *dch = heap_char("Twinnie");
+  char hash[crypto_pwhash_STRBYTES];
+
+  TEST_ASSERT_TRUE(sodium_init() >= 0);
+  /* Minimal argon2id parameters: verifying costs microseconds, not the
+   * production work factor. */
+  TEST_ASSERT_EQUAL_INT(0, crypto_pwhash_str_alg(hash, dupe_password,
+                        strlen(dupe_password), crypto_pwhash_OPSLIMIT_MIN,
+                        crypto_pwhash_MEMLIMIT_MIN, crypto_pwhash_ALG_ARGON2ID13));
+  strlcpy(GET_PASSWD(dch), hash, sizeof(dch->player.passwd));
+  GET_IDNUM(dch) = 31;
+  memset(d, 0, sizeof(*d));
+  d->character = dch;
+  dch->desc = d;
+  d->desc_num = 2;
+  STATE(d) = CON_PASSWORD;
+  strlcpy(d->host, "127.0.0.1", sizeof(d->host));
+  return dch;
+}
+
+/* Two linkless copies of idnum 31 in the world, both in rnum 0: the first
+ * is reconnected to, the second is the duplicate. */
+static struct char_data twin1, twin2;
+static struct player_special_data twin1_ps, twin2_ps;
+
+static void dupe_world(room_vnum start)
+{
+  memset(dupe_rooms, 0, sizeof(dupe_rooms));
+  dupe_rooms[0].number = 100;
+  dupe_rooms[1].number = 101;           /* rnum 1: not the start room */
+  dupe_rooms[2].number = 3001;
+  world = dupe_rooms;
+  top_of_world = 2;
+  CONFIG_MORTAL_START = start;
+  memset(&twin1, 0, sizeof(twin1));
+  memset(&twin2, 0, sizeof(twin2));
+  memset(&twin1_ps, 0, sizeof(twin1_ps));
+  memset(&twin2_ps, 0, sizeof(twin2_ps));
+  twin1.player_specials = &twin1_ps;
+  twin2.player_specials = &twin2_ps;
+  twin1.player.name = twin2.player.name = (char *)"Twinnie";
+  GET_IDNUM(&twin1) = GET_IDNUM(&twin2) = 31;
+  IN_ROOM(&twin1) = IN_ROOM(&twin2) = 0;
+  twin1.next = &twin2;
+  character_list = &twin1;
+  extracted_char = NULL;
+  extracted_in = NOWHERE;
+}
+
+static void dupe_world_free(void)
+{
+  free(GET_HOST(&twin1));           /* the reconnect strdup()s d->host */
+  character_list = NULL;
+  descriptor_list = NULL;
+  world = NULL;
+  top_of_world = 0;
+  CONFIG_MORTAL_START = 0;
+  free_heap_chars();
+}
+
+void test_dupe_check_extracts_a_duplicate_in_the_start_room(void)
+{
+  struct descriptor_data d;
+  char arg[sizeof(dupe_password)];
+
+  dupe_world(3001);
+  password_login(&d);
+  descriptor_list = &d;
+  strlcpy(arg, dupe_password, sizeof(arg));
+  nanny(&d, arg);
+
+  TEST_ASSERT_EQUAL_PTR(&twin1, d.character);   /* reconnected */
+  TEST_ASSERT_EQUAL_PTR(&twin2, extracted_char);
+  TEST_ASSERT_EQUAL_INT(2, extracted_in);       /* rnum of vnum 3001 */
+  TEST_ASSERT_EQUAL_INT(0, captured_errors);
+  dupe_world_free();
+}
+
+void test_dupe_check_without_a_start_room_is_reported(void)
+{
+  struct descriptor_data d;
+  char arg[sizeof(dupe_password)];
+
+  dupe_world(9999);                 /* no such room */
+  password_login(&d);
+  descriptor_list = &d;
+  strlcpy(arg, dupe_password, sizeof(arg));
+  nanny(&d, arg);
+
+  TEST_ASSERT_EQUAL_PTR(&twin2, extracted_char);
+  TEST_ASSERT_EQUAL_INT(0, extracted_in);       /* where it was */
+  TEST_ASSERT_EQUAL_INT(1, captured_errors);
+  TEST_ASSERT_EQUAL_STRING("dupe-no-start-room", captured_operation);
+  dupe_world_free();
+}
+
+/* =========================================================
+ * perform_dupe_check: a booted character at the menu is freed
+ *
+ * Logging in over a connection of the same player that sits at the menu
+ * (after quit, rent or death) or another pre-game prompt booted that
+ * connection with k->character = NULL and never freed its character,
+ * which is in no list: ~9 KB leaked per login, by any player (e2e soak,
+ * tests/e2e/repro_login_over_menu_leaks_char.txt on audit-e2e-gameplay).
+ * An in-game copy is still taken over, not freed.
+ * ========================================================= */
+
+/* k holds a copy of idnum 31 in state; d then logs in as idnum 31. */
+static struct char_data *login_over(struct descriptor_data *d,
+                                    struct descriptor_data *k, int state)
+{
+  struct char_data *kch;
+
+  free_heap_chars();      /* left over only if an earlier test failed */
+  kch = heap_char("Twinnie");
+  password_login(d);
+  memset(k, 0, sizeof(*k));
+  GET_IDNUM(kch) = 31;
+  kch->desc = k;
+  k->character = kch;
+  k->desc_num = 1;
+  STATE(k) = state;
+  k->next = d;
+  descriptor_list = k;
+  free_char_calls = 0;
+  return kch;
+}
+
+static void login_over_run(struct descriptor_data *d)
+{
+  char arg[sizeof(dupe_password)];
+
+  strlcpy(arg, dupe_password, sizeof(arg));
+  nanny(d, arg);
+  descriptor_list = NULL;
+}
+
+void test_dupe_check_frees_a_twin_at_the_menu(void)
+{
+  struct descriptor_data d, k;
+  struct char_data *kch = login_over(&d, &k, CON_MENU);
+
+  login_over_run(&d);
+  TEST_ASSERT_EQUAL_INT(CON_CLOSE, STATE(&k));
+  TEST_ASSERT_NULL(k.character);
+  TEST_ASSERT_FALSE(heap_char_live(kch));       /* freed, not leaked */
+  TEST_ASSERT_EQUAL_INT(1, free_char_calls);
+  TEST_ASSERT_EQUAL_INT(CON_RMOTD, STATE(&d));  /* d logs in as usual */
+  free(GET_HOST(d.character));
+  free_heap_chars();
+}
+
+void test_dupe_check_detaches_the_menu_description_editor(void)
+{
+  struct descriptor_data d, k;
+  struct char_data *kch = login_over(&d, &k, CON_PLR_DESC);
+
+  /* As nanny's menu option 2 leaves it. */
+  k.str = &kch->player.description;
+  k.backstr = strdup("old description");
+  TEST_ASSERT_NOT_NULL(k.backstr);
+  login_over_run(&d);
+  TEST_ASSERT_FALSE(heap_char_live(kch));
+  TEST_ASSERT_NULL(k.str);          /* no pointer into the freed character */
+  TEST_ASSERT_NULL(k.backstr);      /* released, as close_socket() would */
+  free(GET_HOST(d.character));
+  free_heap_chars();
+}
+
+void test_dupe_check_takes_over_an_in_game_twin(void)
+{
+  struct descriptor_data d, k;
+  struct char_data *kch = login_over(&d, &k, CON_PLAYING);
+
+  login_over_run(&d);
+  TEST_ASSERT_EQUAL_INT(CON_CLOSE, STATE(&k));
+  TEST_ASSERT_TRUE(heap_char_live(kch));        /* in the world: kept */
+  TEST_ASSERT_EQUAL_PTR(kch, d.character);      /* and taken over */
+  TEST_ASSERT_EQUAL_INT(1, free_char_calls);    /* d's own copy only */
+  free(GET_HOST(kch));
+  kch->desc = NULL;
+  free_heap_chars();
+}
 
 int main(void)
 {
@@ -760,6 +1251,26 @@ int main(void)
     RUN_TEST(test_new_char_dupe_check_in_game_twin_closes_without_null_deref);
 
     RUN_TEST(test_sort_commands_twice_does_not_leak);
+
+    /* perform_new_char_dupe_check frees booted characters */
+    RUN_TEST(test_new_char_dupe_check_frees_the_booted_creation_character);
+    RUN_TEST(test_new_char_dupe_check_closing_both_keeps_only_the_in_game_twin);
+    RUN_TEST(test_new_char_dupe_check_closing_both_frees_a_twin_at_the_menu);
+    RUN_TEST(test_new_char_dupe_check_closing_both_detaches_the_description_editor);
+    RUN_TEST(test_new_char_dupe_check_booting_a_closed_editor_detaches_it);
+
+    /* command_interpreter switched-IMPL check */
+    RUN_TEST(test_command_interpreter_switched_impl_runs_script_commands);
+    RUN_TEST(test_command_interpreter_npc_descriptor_without_original_is_reported);
+
+    /* perform_dupe_check: duplicate extraction room */
+    RUN_TEST(test_dupe_check_extracts_a_duplicate_in_the_start_room);
+    RUN_TEST(test_dupe_check_without_a_start_room_is_reported);
+
+    /* perform_dupe_check: booted characters */
+    RUN_TEST(test_dupe_check_frees_a_twin_at_the_menu);
+    RUN_TEST(test_dupe_check_detaches_the_menu_description_editor);
+    RUN_TEST(test_dupe_check_takes_over_an_in_game_twin);
 
     return UNITY_END();
 }

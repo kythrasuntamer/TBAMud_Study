@@ -156,9 +156,8 @@ static void sub_write_to_char(char_data *ch, char *tokens[], void *otokens[], ch
  *  - |name  possessive name ("your")
  *  - ^name  his/her/its       &name  he/she/it       *name  him/her/it
  *  - `name  an object; with find_invis (every current caller) an object
- *           in the room. Without it the lookup chain below is unreliable:
- *           a room match is replaced by equipment and then inventory
- *           lookups, so it should be fixed before any caller passes FALSE.
+ *           in the room, otherwise the first object ch can see in the
+ *           room, then in ch's equipment, then in ch's inventory.
  *  - \x     the character x literally (a trailing backslash is dropped and
  *           reported)
  * A name that matches nothing renders as "someone", "it" or "something".
@@ -238,9 +237,14 @@ void sub_write(char *arg, char_data *ch, byte find_invis, int targets)
         *s = '\0';
         p = any_one_name(++p, name);
 
+        /* Each later place is searched only when the earlier ones found
+         * nothing. The tests were inverted: a miss in the room ended the
+         * search, and a room match was replaced by the equipment lookup,
+         * then the inventory one, so a visible object rendered as
+         * "something" unless it was in all three places. */
         if (find_invis) obj = get_obj_in_room(&world[IN_ROOM(ch)], name);
-        else if (!(obj = get_obj_in_list_vis(ch, name, NULL, world[IN_ROOM(ch)].contents))) ;
-        else if (!(obj = get_obj_in_equip_vis(ch, name, &tmp, ch->equipment))) ;
+        else if ((obj = get_obj_in_list_vis(ch, name, NULL, world[IN_ROOM(ch)].contents))) ;
+        else if ((obj = get_obj_in_equip_vis(ch, name, &tmp, ch->equipment))) ;
         else obj = get_obj_in_list_vis(ch, name, NULL, ch->carrying);
 
         otokens[i] = (void *)obj;

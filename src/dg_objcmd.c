@@ -646,6 +646,18 @@ static OCMD(do_oteleport)
     else
     {
         if ((ch = get_char_by_obj(obj, arg1))) {
+          /* The target is found by name or UID anywhere in the world, and
+           * may be stranded in NOWHERE by an earlier, reported failure
+           * (char_to_room() leaves a character there when it refuses a
+           * room). char_from_room() deliberately aborts on it: refuse. */
+          if (!VALID_ROOM_RNUM(IN_ROOM(ch))) {
+            TB_ERROR_MSG("dg", "stranded-target", "oteleport",
+                         DIAG_CHAR_FMT " is in no valid room (rnum %d); "
+                         "oteleport by " DIAG_OBJ_FMT " refused", DIAG_CHAR(ch),
+                         (int) IN_ROOM(ch), DIAG_OBJ(obj));
+            obj_log(obj, "oteleport: the target is stranded in no valid room");
+            return;
+          }
           if (valid_dg_target(ch, DG_ALLOW_GODS)) {
             char_from_room(ch);
             char_to_room(ch, target);
