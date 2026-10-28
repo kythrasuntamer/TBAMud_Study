@@ -1293,27 +1293,32 @@ void save_char(struct char_data * ch)
    * original error or replace an existing valid player file. */
   if (ferror(fl)) {
     TB_ERROR_MSG("PLAYER", "write", temporary_filename,
-                 "Staged player save stream reports a write error");
+                 "player idnum %ld: staged save stream reports a write error",
+                 GET_IDNUM(ch));
     save_failed = TRUE;
   }
   if (fflush(fl) != 0) {
     TB_ERROR_ERRNO("PLAYER", "fflush", temporary_filename,
-                   "Could not flush staged player save");
+                   "player idnum %ld: could not flush staged player save",
+                   GET_IDNUM(ch));
     save_failed = TRUE;
   }
   if (fclose(fl) != 0) {
     TB_ERROR_ERRNO("PLAYER", "fclose", temporary_filename,
-                   "Could not close staged player save");
+                   "player idnum %ld: could not close staged player save",
+                   GET_IDNUM(ch));
     save_failed = TRUE;
   }
   if (!save_failed && rename(temporary_filename, filename) != 0) {
     TB_ERROR_ERRNO("PLAYER", "rename", filename,
-                   "Could not commit staged player save");
+                   "player idnum %ld: could not commit staged save %s; previous file kept",
+                   GET_IDNUM(ch), temporary_filename);
     save_failed = TRUE;
   }
   if (save_failed && unlink(temporary_filename) != 0)
     TB_ERROR_ERRNO("PLAYER", "unlink", temporary_filename,
-                   "Could not clean up failed staged player save");
+                   "player idnum %ld: could not clean up failed staged player save",
+                   GET_IDNUM(ch));
 
   /* More char_to_store code to add spell and eq affections back in. */
   for (i = 0; i < MAX_AFFECT; i++) {

@@ -24,6 +24,10 @@
 #include <sys/stat.h>
 #include "tb_error_capture.h"
 #include "tb_persist_support.h"
+#ifdef TB_SAVE_FAULT_INJECTION
+#include <dirent.h>
+#include <errno.h>
+#endif
 
 /* db.c globals players.c maintains. */
 int top_of_p_table = -1;
@@ -915,9 +919,126 @@ static void test_save_restores_worn_items_without_triggers(void)
     (void)remove(path);
 }
 
+#ifdef TB_SAVE_FAULT_INJECTION
+/* save_char()'s commit as players.c sees it (this executable is linked with
+ * --wrap=rename and --wrap=fclose): fail on demand, to prove each failure is
+ * reported where it happens and never replaces the existing pfile. */
+int __real_rename(const char *from, const char *to);
+int __real_fclose(FILE *fl);
+static int fail_rename, fail_fclose;
+
+int __wrap_rename(const char *from, const char *to)
+{
+  if (fail_rename) {
+    errno = EXDEV;
+    return -1;
+  }
+  return __real_rename(from, to);
+}
+
+int __wrap_fclose(FILE *fl)
+{
+  int rc = __real_fclose(fl);   /* the stream is closed either way */
+
+  if (fail_fclose && rc == 0) {
+    errno = EIO;
+    return EOF;
+  }
+  return rc;
+}
+
+static void read_whole_file(const char *path, char *buf, size_t size)
+{
+  FILE *fl = fopen(path, "r");
+  size_t n;
+
+  TEST_ASSERT_NOT_NULL(fl);
+  n = fread(buf, 1, size - 1, fl);
+  buf[n] = '\0';
+  TEST_ASSERT_EQUAL_INT(0, fclose(fl));
+}
+
+/* Staged "<pfile>.tmpXXXXXX" files left beside the pfile at path. */
+static int staged_files_left(const char *path)
+{
+  char dir[512], prefix[256];
+  const char *slash = strrchr(path, '/');
+  struct dirent *entry;
+  DIR *dp;
+  int left = 0;
+
+  TEST_ASSERT_NOT_NULL(slash);
+  snprintf(dir, sizeof(dir), "%.*s", (int)(slash - path), path);
+  snprintf(prefix, sizeof(prefix), "%s.tmp", slash + 1);
+  dp = opendir(dir);
+  TEST_ASSERT_NOT_NULL(dp);
+  while ((entry = readdir(dp)) != NULL)
+    if (!strncmp(entry->d_name, prefix, strlen(prefix)))
+      left++;
+  TEST_ASSERT_EQUAL_INT(0, closedir(dp));
+  return left;
+}
+
+#define ORIGINAL_PFILE "Id  : 4242\nName: tester\nLevl: 7\n"
+
+static void save_with_existing_pfile(char *path, size_t size)
+{
+  write_pfile("tester", ORIGINAL_PFILE);
+  TEST_ASSERT_TRUE(get_filename(path, size, PLR_FILE, "tester"));
+  player.player.name = strdup("tester");
+  GET_IDNUM(&player) = 4242;
+  GET_PFILEPOS(&player) = 0;
+}
+
+/* A refused rename() keeps the previous pfile and removes the staged copy;
+ * the report names rename and the player.  Red before: one generic "save"
+ * record after the fact. */
+static void test_save_rename_failure_keeps_pfile_and_reports_rename(void)
+{
+  char path[512], body[256];
+
+  save_with_existing_pfile(path, sizeof(path));
+  fail_rename = 1;
+  save_char(&player);
+  fail_rename = 0;
+
+  read_whole_file(path, body, sizeof(body));
+  TEST_ASSERT_EQUAL_STRING(ORIGINAL_PFILE, body);
+  TEST_ASSERT_EQUAL_INT(0, staged_files_left(path));
+  TEST_ASSERT_EQUAL_STRING("rename", tb_captured_operation);
+  TEST_ASSERT_EQUAL_STRING("ERROR", tb_captured_severity);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "player idnum 4242"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "previous file kept"));
+}
+
+/* A failing fclose() of the staged file is reported as fclose, the commit is
+ * never attempted, and the staged copy is removed.  Red before: reported as
+ * a generic "save" failure. */
+static void test_save_close_failure_reports_fclose_and_skips_commit(void)
+{
+  char path[512], body[256];
+
+  save_with_existing_pfile(path, sizeof(path));
+  fail_fclose = 1;
+  save_char(&player);
+  fail_fclose = 0;
+
+  read_whole_file(path, body, sizeof(body));
+  TEST_ASSERT_EQUAL_STRING(ORIGINAL_PFILE, body);
+  TEST_ASSERT_EQUAL_INT(0, staged_files_left(path));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_op_log, "fclose\n"));
+  TEST_ASSERT_NULL(strstr(tb_captured_op_log, "rename\n"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail_log, "player idnum 4242"));
+}
+#endif /* TB_SAVE_FAULT_INJECTION */
+
 int main(void)
 {
   UNITY_BEGIN();
+#ifdef TB_SAVE_FAULT_INJECTION
+  RUN_TEST(test_save_rename_failure_keeps_pfile_and_reports_rename);
+  RUN_TEST(test_save_close_failure_reports_fclose_and_skips_commit);
+#endif
   RUN_TEST(test_overlong_act_flag_word_is_rejected);
   RUN_TEST(test_four_flag_words_load);
   RUN_TEST(test_short_tag_line_is_reported);

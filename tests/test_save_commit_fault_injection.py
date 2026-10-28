@@ -110,7 +110,8 @@ int main(int argc, char **argv) {
     return (!committed || !read_equal("saved.plr", "REPLACEMENT")) ? 6 : 0;
   if (committed || !reported_failure || !read_equal("saved.plr", "ORIGINAL"))
     return 7;
-  if (!strcmp(fault, "rename+unlink"))\n    return read_equal("stage.tmp", "REPLACEMENT") ? 0 : 8;
+  if (!strcmp(fault, "rename+unlink"))
+    return read_equal("stage.tmp", "REPLACEMENT") ? 0 : 8;
   if (strcmp(reported, fault) != 0) return 9;
   return 0;
 }
