@@ -56,6 +56,16 @@ struct dg_retired_script {
 static struct dg_retired_trigger *dg_retired_triggers;
 static struct dg_retired_script *dg_retired_scripts;
 
+/** TRUE while any script_driver() frame is active, so frees must be
+ * deferred to dg_script_execution_leave(). */
+#define DG_IN_SCRIPT_EXECUTION()  (dg_execution_depth != 0)
+
+/** The wait_event_data payload of trigger t's pending 'wait'.  Only valid
+ * when GET_TRIG_WAIT(t) != NULL; DG waits are never mud events.  t is
+ * evaluated twice: pass a plain variable. */
+#define TRIG_WAIT_DATA(t) \
+  ((struct wait_event_data *)GET_TRIG_WAIT(t)->event_obj)
+
 /** Mark the start of a script_driver() frame.
  * Every enter must be matched by exactly one dg_script_execution_leave()
  * on every return path of script_driver().  While any frame is active,
@@ -201,7 +211,7 @@ void extract_trigger(struct trig_data *trig)
   /* walk the trigger list and remove this one */
   REMOVE_FROM_LIST(trig, trigger_list, next_in_world);
 
-  if (dg_execution_depth) {
+  if (DG_IN_SCRIPT_EXECUTION()) {
     struct dg_retired_trigger *node;
     CREATE(node, struct dg_retired_trigger, 1);
     node->trig = trig;
@@ -292,7 +302,7 @@ void extract_script(void *thing, int type)
   TRIGGERS(sc) = NULL;
 
   /* Thanks to James Long for tracking down this memory leak */
-  if (dg_execution_depth) {
+  if (DG_IN_SCRIPT_EXECUTION()) {
     struct dg_retired_script *node;
     CREATE(node, struct dg_retired_script, 1);
     node->script = sc;
@@ -464,6 +474,6 @@ void update_wait_events(struct room_data *to, struct room_data *from)
     if (!GET_TRIG_WAIT(trig))
       continue;
 
-    ((struct wait_event_data *)GET_TRIG_WAIT(trig)->event_obj)->go = to;
+    TRIG_WAIT_DATA(trig)->go = to;
   }
 }
