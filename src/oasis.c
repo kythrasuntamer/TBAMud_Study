@@ -321,6 +321,14 @@ int olc_attach_at(struct descriptor_data *d, struct char_data *ch,
                   const char *what, const char *source_file, int source_line,
                   const char *source_func)
 {
+  /* Every caller passes the acting character; DIAG_CHAR below needs it. */
+  if (ch == NULL) {
+    tb_error_log_at("ERROR", "olc", "olc-busy", what, 0,
+                    source_file, source_line, source_func,
+                    "no character (descriptor %s)", d ? "present" : "NULL");
+    return FALSE;
+  }
+
   if (d == NULL) {
     tb_error_log_at("ERROR", "olc", "olc-busy", what, 0,
                     source_file, source_line, source_func,
@@ -329,8 +337,7 @@ int olc_attach_at(struct descriptor_data *d, struct char_data *ch,
   }
 
   if (STATE(d) != CON_PLAYING || d->olc != NULL) {
-    if (ch)
-      send_to_char(ch, "You are already editing something.\r\n");
+    send_to_char(ch, "You are already editing something.\r\n");
     tb_error_log_at("ERROR", "olc", "olc-busy", what, 0,
                     source_file, source_line, source_func,
                     DIAG_CHAR_FMT " state %d olc_num %d",
