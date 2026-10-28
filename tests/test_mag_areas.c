@@ -208,6 +208,35 @@ static void test_saving_throw_names_the_victim(void)
   TEST_ASSERT_EQUAL_INT(SAVING_SPELL, save_type);
 }
 
+/* H1-26: mag_unaffects() and mag_creations() logged bare SYSERRs (or
+ * nothing) with no caster or victim. They now report structured errors
+ * naming the spell and the characters. */
+/* db.c: no object prototype is loaded in this fixture. */
+struct obj_data *read_object(obj_vnum nr, int type)
+{ (void)nr; (void)type; return NULL; }
+void load_otrigger(obj_data *obj) { (void)obj; }
+long obj_script_id(obj_data *obj) { return obj->script_id; }
+
+static void test_unaffects_unknown_spell_names_caster_and_victim(void)
+{
+  mag_unaffects(20, &caster, &mob_a, SPELL_ARMOR, SAVING_SPELL);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("unaffects-unknown-spell", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "caster mob vnum"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "victim mob vnum"));
+}
+
+static void test_creations_report_unknown_spell_and_missing_proto(void)
+{
+  mag_creations(20, &caster, SPELL_ARMOR);
+  TEST_ASSERT_EQUAL_STRING("creations-unknown-spell", tb_captured_operation);
+
+  mag_creations(20, &caster, SPELL_CREATE_FOOD);   /* obj vnum 10 */
+  TEST_ASSERT_EQUAL_INT(2, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("creations-proto-missing", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "obj vnum 10"));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -216,5 +245,7 @@ int main(void)
   RUN_TEST(test_area_spell_stops_when_the_caster_is_purged);
   RUN_TEST(test_area_spell_without_interference_hits_everyone_else);
   RUN_TEST(test_saving_throw_names_the_victim);
+  RUN_TEST(test_unaffects_unknown_spell_names_caster_and_victim);
+  RUN_TEST(test_creations_report_unknown_spell_and_missing_proto);
   return UNITY_END();
 }
