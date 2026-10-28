@@ -698,12 +698,6 @@ if(ENABLE_SANITIZERS)
     set_tests_properties(circle_boot_check PROPERTIES ENVIRONMENT
         "ASAN_OPTIONS=${TBAMUD_ASAN_OPTIONS};UBSAN_OPTIONS=${TBAMUD_UBSAN_OPTIONS}")
 endif()
-# Known failure BOOT-UAF: destroy_db() frees world[] and sets top_of_world
-# to 0, then free_proto_script()'s "#if 1 /* debugging */" scan in
-# dg_handler.c reads world[0..top_of_world] (bound widened in 4f33b6c), a
-# heap-use-after-free that ASan and Valgrind both report. Remove this
-# DISABLED once that is fixed; ctest lists the test as "Disabled" until then.
-set_tests_properties(circle_boot_check PROPERTIES DISABLED TRUE)
 
 if (MEMORY_DEBUG)
     # zfree() keeps every block until shutdown, which hides use-after-free,

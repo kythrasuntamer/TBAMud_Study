@@ -205,7 +205,9 @@ void extract_script(void *thing, int type)
       for ( ; j ; j = j->next)
         assert(sc != SCRIPT(j));
 
-      for (k = 0; k <= top_of_world; k++)
+      /* world is NULL once destroy_db() has freed it; the objects and
+       * mobiles freed after that must not scan the freed array. */
+      for (k = 0; world && k <= top_of_world; k++)
         assert(sc != SCRIPT(&world[k]));
     }
   }
@@ -277,7 +279,8 @@ void free_proto_script(void *thing, int type)
       for ( ; j ; j = j->next)
         assert(proto != j->proto_script);
 
-      for (k = 0; k <= top_of_world; k++)
+      /* See extract_script(): skip the scan after destroy_db(). */
+      for (k = 0; world && k <= top_of_world; k++)
         assert(proto != world[k].proto_script);
     }
   }
