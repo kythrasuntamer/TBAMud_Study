@@ -1191,3 +1191,24 @@ if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
     target_link_options(test_cedit_config PRIVATE -Wl,--gc-sections
         -Wl,--wrap=tb_error_log_at -Wl,--wrap=cleanup_olc)
 endif()
+
+# ---------------------------------------------------------------------------
+# test_close_socket — comm.c's close_socket() must release the OLC workspace
+# of a descriptor that closes in any editor state.  comm.c owns main(), so
+# this target renames it (the test #undefs the rename for its own main);
+# unreferenced sections are discarded and the test supplies the rest.
+# test_stubs.c is omitted because it defines comm.c's globals.
+# ---------------------------------------------------------------------------
+add_executable(test_close_socket
+    $<TARGET_OBJECTS:unity_vendor>
+    ${MUD_SRCDIR}/comm.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_close_socket.c
+)
+target_include_directories(test_close_socket PRIVATE ${TEST_INCLUDES})
+target_compile_options(test_close_socket PRIVATE ${TEST_CFLAGS})
+target_compile_definitions(test_close_socket PRIVATE main=tb_comm_main_unused)
+add_test(NAME test_close_socket COMMAND test_close_socket)
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_compile_options(test_close_socket PRIVATE -ffunction-sections -fdata-sections)
+    target_link_options(test_close_socket PRIVATE -Wl,--gc-sections)
+endif()
