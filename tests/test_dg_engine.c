@@ -700,6 +700,27 @@ static void detach_does_not_instantiate_a_trigger(void)
                               "Trigger 9000 (test trigger) removed"));
 }
 
+/* D1-13: process_attach() instantiated the trigger before rejecting a
+ * player target (script_players off) and leaked the instance. */
+static void attach_to_player_is_refused_before_allocating(void)
+{
+  char line[64];
+  const char *lines[] = { line, NULL };
+  char_data *pc = make_mob("pc"), *mob = make_mob("mob");
+  int before;
+
+  REMOVE_BIT_AR(MOB_FLAGS(pc), MOB_ISNPC);
+  GET_IDNUM(pc) = 77;
+  snprintf(line, sizeof(line), "attach %d %ld", TEST_TRIG_VNUM, pc->script_id);
+  before = test_trig_index.number;
+  run_mob_script(mob, lines);
+  /* Only the running trigger itself is live. */
+  TEST_ASSERT_EQUAL_INT(before + 1, test_trig_index.number);
+  TEST_ASSERT_NULL(SCRIPT(pc));
+  TEST_ASSERT_EQUAL_STRING("attach-target", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "idnum 77"));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -728,5 +749,6 @@ int main(void)
   RUN_TEST(detach_object_without_trigger_argument_is_refused);
   RUN_TEST(detach_mobile_without_trigger_argument_is_refused);
   RUN_TEST(detach_does_not_instantiate_a_trigger);
+  RUN_TEST(attach_to_player_is_refused_before_allocating);
   return UNITY_END();
 }

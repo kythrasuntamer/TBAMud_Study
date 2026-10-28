@@ -2203,10 +2203,16 @@ static void process_attach(void *go, struct script_data *sc, trig_data *trig,
     }
   }
 
-  /* Refuse the target before instantiating a trigger it cannot take. */
+  /* Validate the target before read_trigger() allocates an instance; this
+   * reject used to return after the allocation and leak it. Players carry
+   * scripts only when the operator enables CONFIG_SCRIPT_PLAYERS. */
   if (c && !IS_NPC(c) && !CONFIG_SCRIPT_PLAYERS) {
-    script_log("Trigger: %s, VNum %d. attach invalid target: '%s'",
-            GET_TRIG_NAME(trig), GET_TRIG_VNUM(trig), GET_NAME(c));
+    TB_ERROR_MSG("dg", "attach-target", "process_attach",
+                 "trig vnum %d: cannot attach trig %s to player idnum %ld "
+                 "(script_players off)", GET_TRIG_VNUM(trig), trignum_s,
+                 (long)GET_IDNUM(c));
+    script_log("Trigger: %s, VNum %d. attach invalid target: player idnum %ld",
+               GET_TRIG_NAME(trig), GET_TRIG_VNUM(trig), (long)GET_IDNUM(c));
     return;
   }
 
