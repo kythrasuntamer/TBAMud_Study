@@ -1039,7 +1039,15 @@ void game_loop(socket_t local_mother_desc)
     /* Print prompts for other descriptors who had no other output */
     for (d = descriptor_list; d; d = d->next) {
       if (!d->has_prompt) {
-	      write_to_descriptor(d->descriptor, make_prompt(d));
+	      /* A failed write (already logged with errno by
+	       * write_to_descriptor) means the peer is gone: close it below
+	       * instead of writing to it again every pulse. */
+	      if (write_to_descriptor(d->descriptor, make_prompt(d)) < 0) {
+	        TB_WARN_MSG("network", "prompt-write", "game_loop",
+	                    DIAG_DESC_FMT " prompt write failed; closing",
+	                    DIAG_DESC(d));
+	        STATE(d) = CON_CLOSE;
+	      }
 	      d->has_prompt = TRUE;
       }
     }
