@@ -592,7 +592,7 @@ ACMD(do_mteleport)
 {
   char arg1[MAX_INPUT_LENGTH], arg2[MAX_INPUT_LENGTH];
   room_rnum target;
-  char_data *vict, *next_ch;
+  char_data *vict;
 
   if (!MOB_OR_IMPL(ch)) {
     send_to_char(ch, "%s", CONFIG_HUH);
@@ -622,15 +622,7 @@ ACMD(do_mteleport)
       return;
     }
 
-    for (vict = world[IN_ROOM(ch)].people; vict; vict = next_ch) {
-      next_ch = vict->next_in_room;
-
-      if (valid_dg_target(vict, DG_ALLOW_GODS)) {
-        char_from_room(vict);
-        char_to_room(vict, target);
-        enter_wtrigger(&world[IN_ROOM(vict)], vict, -1);
-      }
-    }
+    dg_teleport_all(IN_ROOM(ch), target);
   } else {
     if (*arg1 == UID_CHAR) {
       if (!(vict = get_char(arg1))) {

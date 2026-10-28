@@ -426,6 +426,7 @@ void wld_command_interpreter(room_data *room, char *argument);
  * the wrong thing.  Out-of-range text yields NOTHING, which every lookup
  * rejects and every caller already reports. */
 IDXTYPE dg_parse_vnum(const char *text);
+void dg_teleport_all(room_rnum from, room_rnum to);
 
 /* A '%' that came from player-authored text (command arguments, speech, act
  * messages, titles).  Scripts may substitute a line twice -- eval, makeuid,

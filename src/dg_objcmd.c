@@ -405,7 +405,7 @@ static OCMD(do_opurge)
 
 static OCMD(do_oteleport)
 {
-    char_data *ch, *next_ch;
+    char_data *ch;
     room_rnum target, rm;
     char arg1[MAX_INPUT_LENGTH], arg2[MAX_INPUT_LENGTH];
 
@@ -434,15 +434,7 @@ static OCMD(do_oteleport)
             return;
         }
 
-        for (ch = world[rm].people; ch; ch = next_ch)
-        {
-            next_ch = ch->next_in_room;
-            if (!valid_dg_target(ch, DG_ALLOW_GODS))
-              continue;
-            char_from_room(ch);
-            char_to_room(ch, target);
-            enter_wtrigger(&world[IN_ROOM(ch)], ch, -1);
-        }
+        dg_teleport_all(rm, target);
     }
 
     else

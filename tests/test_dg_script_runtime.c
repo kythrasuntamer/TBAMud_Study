@@ -1026,6 +1026,81 @@ static void out_of_range_vnums_name_nothing(void)
   TEST_ASSERT_EQUAL_INT(65534, dg_parse_vnum("65534"));
 }
 
+/* Room-list fixtures for dg_teleport_all(). */
+static char_data *enter_mover, *enter_moved;
+static room_rnum enter_moved_to;
+void char_from_room(struct char_data *ch)
+{
+  struct char_data **link;
+
+  for (link = &world[IN_ROOM(ch)].people; *link; link = &(*link)->next_in_room)
+    if (*link == ch) {
+      *link = ch->next_in_room;
+      break;
+    }
+  ch->next_in_room = NULL;
+  IN_ROOM(ch) = NOWHERE;
+}
+void char_to_room(struct char_data *ch, room_rnum room)
+{
+  ch->next_in_room = world[room].people;
+  world[room].people = ch;
+  IN_ROOM(ch) = room;
+}
+/* The mover's arrival sends someone else elsewhere, as an enter trigger may. */
+int enter_wtrigger(struct room_data *room, char_data *actor, int dir)
+{
+  (void)room; (void)dir;
+  if (actor == enter_mover && enter_moved) {
+    char_from_room(enter_moved);
+    char_to_room(enter_moved, enter_moved_to);
+    enter_moved = NULL;
+  }
+  return 1;
+}
+
+/* The teleport-all loops saved next_in_room before firing enter triggers;
+ * a trigger that moved that character sent the loop down another room's
+ * list. dg_teleport_all() re-finds each occupant in the source room. */
+static void teleport_all_moves_only_the_source_room(void)
+{
+  static struct room_data rooms[3];
+  static char_data a, b, c;
+  char_data *all[3] = { &a, &b, &c };
+  int i;
+
+  memset(rooms, 0, sizeof(rooms));
+  world = rooms;
+  top_of_world = 2;
+  init_lookup_table();
+  for (i = 0; i < 3; i++) {
+    memset(all[i], 0, sizeof(*all[i]));
+    SET_BIT_AR(MOB_FLAGS(all[i]), MOB_ISNPC);
+    GET_MOB_RNUM(all[i]) = NOBODY;
+    all[i]->script_id = MOB_ID_BASE + 20 + i;
+    add_to_lookup_table(all[i]->script_id, all[i]);
+  }
+  char_to_room(&b, 0);
+  char_to_room(&a, 0);                 /* room 0: a, b */
+  char_to_room(&c, 2);                 /* room 2: c */
+  enter_mover = &a;
+  enter_moved = &b;                    /* a's arrival sends b to room 2 */
+  enter_moved_to = 2;
+
+  dg_teleport_all(0, 1);
+
+  TEST_ASSERT_EQUAL_INT(1, IN_ROOM(&a));
+  TEST_ASSERT_EQUAL_INT(2, IN_ROOM(&b));   /* left before its turn */
+  TEST_ASSERT_EQUAL_INT(2, IN_ROOM(&c));   /* never in the source room */
+  TEST_ASSERT_NULL(rooms[0].people);
+
+  for (i = 0; i < 3; i++)
+    remove_from_lookup_table(all[i]->script_id, all[i]);
+  enter_mover = NULL;
+  world = NULL;
+  top_of_world = 0;
+}
+
 static void restore_round_trips_neutralize(void)
 {
   char text[] = "50% off, 100%% sure";
@@ -1071,5 +1146,6 @@ int main(void)
   RUN_TEST(uids_resolve_only_their_own_entities);
   RUN_TEST(random_trigger_may_purge_its_object);
   RUN_TEST(out_of_range_vnums_name_nothing);
+  RUN_TEST(teleport_all_moves_only_the_source_room);
   return UNITY_END();
 }

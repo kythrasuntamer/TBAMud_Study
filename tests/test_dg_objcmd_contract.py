@@ -22,8 +22,10 @@ assert "object->in_room" not in after, "the copy may be freed by now"
 # oteleport all reads the object's own room: never world[NOWHERE], and a
 # teleport onto itself stops instead of being logged and carried out.
 tele = body_of("do_oteleport")
-rm = tele[tele.index("rm = obj_room(obj);"):tele.index("for (ch = world[rm].people;")]
+rm = tele[tele.index("rm = obj_room(obj);"):tele.index("dg_teleport_all(rm, target);")]
 assert "rm == NOWHERE" in rm and rm.count("return;") == 2
+# Teleporting everyone goes through the UID snapshot, not next_in_room.
+assert "next_in_room" not in tele
 # omove stops at an invalid target instead of moving into world[NOWHERE].
 move = body_of("do_omove")
 bad = move[move.index("if (target == NOWHERE)"):move.index("obj_from_char(obj)")]

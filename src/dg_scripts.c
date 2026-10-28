@@ -310,6 +310,38 @@ static obj_data *find_obj(long n)
   return find_obj_by_uid_in_lookup_table(n);
 }
 
+/* Teleports every valid target in room from to room to, firing their enter
+ * triggers.  Those triggers can move or extract anyone, so the occupants are
+ * snapshotted by UID and each is re-found, still in from, before it moves;
+ * the old loops followed a saved next_in_room into whatever room that
+ * character had been sent to. */
+void dg_teleport_all(room_rnum from, room_rnum to)
+{
+  long *uids;
+  size_t count = 0, i;
+  char_data *ch;
+
+  for (ch = world[from].people; ch; ch = ch->next_in_room)
+    count++;
+  if (!count)
+    return;
+
+  CREATE(uids, long, count);
+  for (i = 0, ch = world[from].people; ch && i < count; ch = ch->next_in_room)
+    uids[i++] = char_script_id(ch);
+
+  for (i = 0; i < count; i++) {
+    ch = find_char(uids[i]);
+    if (!ch || IN_ROOM(ch) != from || DEAD(ch) ||
+        !valid_dg_target(ch, DG_ALLOW_GODS))
+      continue;
+    char_from_room(ch);
+    char_to_room(ch, to);
+    enter_wtrigger(&world[IN_ROOM(ch)], ch, -1);
+  }
+  free(uids);
+}
+
 IDXTYPE dg_parse_vnum(const char *text)
 {
   long vnum = tb_parse_long_or_zero(text);
