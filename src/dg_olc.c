@@ -29,6 +29,14 @@ static void trigedit_disp_types(struct descriptor_data *d);
 static void trigedit_create_index(int znum, char *type);
 static void trigedit_setup_new(struct descriptor_data *d);
 
+/* Outcome of trigedit_save_checked(). */
+enum trigedit_save_result {
+  TRIGEDIT_SAVED,              /* in memory and on disk */
+  TRIGEDIT_NOT_SAVED,          /* refused before anything changed */
+  TRIGEDIT_SAVED_MEMORY_ONLY   /* prototypes updated, zone file not written */
+};
+static int trigedit_save_checked(struct descriptor_data *d);
+
 
 /* Parse the decimal prefix of an index filename without overflowing int. */
 static int trigedit_index_number(const char *text, int *number)
@@ -648,10 +656,24 @@ void trigedit_parse(struct descriptor_data *d, char *arg)
     case TRIGEDIT_CONFIRM_SAVESTRING:
       switch(tolower(*arg)) {
         case 'y':
-          trigedit_save(d);
-          mudlog(CMP, MAX(LVL_BUILDER, GET_INVIS_LEV(d->character)), TRUE,
-                 "OLC: %s edits trigger %d", GET_NAME(d->character),
-                 OLC_NUM(d));
+          switch (trigedit_save_checked(d)) {
+            case TRIGEDIT_NOT_SAVED:
+              /* Nothing changed in memory or on disk, and the script is
+               * intact: let the builder fix it instead of losing it. */
+              write_to_output(d, "Your changes are still in the editor.\r\n");
+              OLC_MODE(d) = TRIGEDIT_MAIN_MENU;
+              return;
+            case TRIGEDIT_SAVED_MEMORY_ONLY:
+              mudlog(BRF, MAX(LVL_BUILDER, GET_INVIS_LEV(d->character)), TRUE,
+                     "OLC: %s edits trigger %d (NOT written to disk)",
+                     GET_NAME(d->character), OLC_NUM(d));
+              break;
+            default:
+              mudlog(CMP, MAX(LVL_BUILDER, GET_INVIS_LEV(d->character)), TRUE,
+                     "OLC: %s edits trigger %d", GET_NAME(d->character),
+                     OLC_NUM(d));
+              break;
+          }
           /* fall through */
         case 'n':
           cleanup_olc(d, CLEANUP_ALL);
@@ -771,8 +793,60 @@ static void trigedit_check_live_rnums(struct descriptor_data *d,
   }
 }
 
-/* save the zone's triggers to internal memory and to disk */
+/* Bytes fread_string() needs to read back one script line of cmdlen bytes:
+ * it adds CR/LF per 511-byte input chunk. */
+static size_t trig_line_disk_size(size_t cmdlen)
+{
+  return cmdlen + 2 * ((cmdlen + 511) / 511);
+}
+
+/* Read-back size of a prototype's compiled command list. */
+static size_t trig_cmdlist_disk_size(const struct cmdlist_element *cmd)
+{
+  size_t need = 0;
+
+  for (; cmd; cmd = cmd->next)
+    if (cmd->cmd)
+      need += trig_line_disk_size(strlen(cmd->cmd));
+  return need;
+}
+
+/* Read-back size of the editor's script text once trigedit_save() compiles
+ * it: one command per non-empty CR/LF-separated line (strtok semantics), or
+ * the "* No script" placeholder when there is none. */
+static size_t trig_storage_disk_size(const char *s)
+{
+  size_t need = 0, n;
+
+  while (s && *s) {
+    s += strspn(s, "\r\n");
+    n = strcspn(s, "\r\n");
+    if (n)
+      need += trig_line_disk_size(n);
+    s += n;
+  }
+  return need ? need : trig_line_disk_size(strlen("* No script"));
+}
+
+/* Tell the builder the save did not reach the disk (the details are in the
+ * structured record the caller emitted). */
+static void trigedit_tell_not_saved(struct descriptor_data *d, int in_memory)
+{
+  write_to_output(d, in_memory ?
+                  "Trigger saved in memory but NOT to disk; it will be lost "
+                  "at reboot.  Tell an implementor.\r\n" :
+                  "Trigger NOT saved.\r\n");
+}
+
+/* Save the editor's trigger and write the zone's trigger file.  The public
+ * entry point for tcopy; the editor uses trigedit_save_checked(). */
 void trigedit_save(struct descriptor_data *d)
+{
+  (void)trigedit_save_checked(d);   /* every failure is reported inside */
+}
+
+/* save the zone's triggers to internal memory and to disk */
+static int trigedit_save_checked(struct descriptor_data *d)
 {
   int i;
   size_t need;
@@ -790,6 +864,34 @@ void trigedit_save(struct descriptor_data *d)
   char buf[MAX_CMD_LENGTH];
   char bitBuf[MAX_INPUT_LENGTH];
   char fname[MAX_INPUT_LENGTH];
+
+  zone = zone_table[OLC_ZNUM(d)].number;
+  top = zone_table[OLC_ZNUM(d)].top;
+
+  /* Refuse, before anything changes, a zone the loader would reject on the
+   * next boot.  The edited trigger is measured from the editor's text, the
+   * others from their prototypes.  Checking only after the prototypes and
+   * live triggers were rewritten left memory and disk out of step (E2-07). */
+  for (i = zone_table[OLC_ZNUM(d)].bot; i <= top; i++) {
+    if (i == OLC_NUM(d))
+      need = trig_storage_disk_size(OLC_STORAGE(d));
+    else if ((rnum = real_trigger(i)) != NOTHING)
+      need = trig_cmdlist_disk_size(trig_index[rnum]->proto->cmdlist);
+    else
+      continue;
+    if (need >= MAX_STRING_LENGTH) {
+      TB_ERROR_MSG("dg", "trigedit-save-size", "script",
+                   "trigger vnum %d reads back as %lu bytes, loader cap %d; "
+                   "zone %d not saved (editing vnum %d by " DIAG_CHAR_FMT ")",
+                   i, (unsigned long)need, MAX_STRING_LENGTH - 1, zone,
+                   OLC_NUM(d), DIAG_CHAR(d->character));
+      write_to_output(d, "Trigger %d's script is %lu bytes, over the %d the "
+                         "loader accepts.\r\n", i, (unsigned long)need,
+                      MAX_STRING_LENGTH - 1);
+      trigedit_tell_not_saved(d, FALSE);
+      return TRIGEDIT_NOT_SAVED;
+    }
+  }
 
   if ((rnum = real_trigger(OLC_NUM(d))) != NOTHING) {
     proto = trig_index[rnum]->proto;
@@ -973,31 +1075,8 @@ void trigedit_save(struct descriptor_data *d)
    * this zone. We write this to disk NOW instead of letting the builder have 
    * control because if we lose this after having assigned a new trigger to an 
    * item, we will get SYSERR's upton reboot that could make things hard to 
-   * debug. */
-  zone = zone_table[OLC_ZNUM(d)].number;
-  top = zone_table[OLC_ZNUM(d)].top;
-
-  /* Refuse to write a trigger zone that the loader would reject on the next
-   * boot.  fread_string() adds CR/LF per input chunk, so count the same way. */
-  for (i = zone_table[OLC_ZNUM(d)].bot; i <= top; i++) {
-    if ((rnum = real_trigger(i)) != NOTHING) {
-      need = 0;
-      for (cmd = trig_index[rnum]->proto->cmdlist; cmd; cmd = cmd->next) {
-        if (cmd->cmd) {
-          size_t cmdlen = strlen(cmd->cmd);
-          need += cmdlen + 2 * ((cmdlen + 511) / 511);
-        }
-      }
-      if (need >= MAX_STRING_LENGTH) {
-        mudlog(BRF, MAX(LVL_GOD, GET_INVIS_LEV(d->character)), TRUE,
-               "SYSERR: OLC: Trigger %d's script reads back as %lu bytes, "
-               "over the %d the loader accepts; zone %d not written.",
-               i, (unsigned long) need, MAX_STRING_LENGTH - 1, zone);
-        return;
-      }
-    }
-  }
-
+   * debug.  From here on the in-memory save has happened; a failure leaves
+   * the trigger saved in memory only, and says so. */
 #ifdef CIRCLE_MAC
   tb_snprintf(fname, sizeof(fname), "%s:%i.new", TRG_PREFIX, zone);
 #else
@@ -1005,9 +1084,13 @@ void trigedit_save(struct descriptor_data *d)
 #endif
 
   if (!(trig_file = fopen(fname, "w"))) {
+    TB_ERROR_ERRNO("dg", "trigedit-save", fname,
+                   "trigger vnum %d zone %d by " DIAG_CHAR_FMT ": cannot open",
+                   OLC_NUM(d), zone, DIAG_CHAR(d->character));
     mudlog(BRF, MAX(LVL_GOD, GET_INVIS_LEV(d->character)), TRUE,
            "SYSERR: OLC: Can't open trig file \"%s\"", fname);
-    return;
+    trigedit_tell_not_saved(d, TRUE);
+    return TRIGEDIT_SAVED_MEMORY_ONLY;
   }
 
   for (i = zone_table[OLC_ZNUM(d)].bot; i <= top; i++) {
@@ -1015,10 +1098,18 @@ void trigedit_save(struct descriptor_data *d)
       trig = trig_index[rnum]->proto;
 
       if (fprintf(trig_file, "#%d\n", i) < 0) {
+        TB_ERROR_ERRNO("dg", "trigedit-save", fname,
+                       "trigger vnum %d zone %d by " DIAG_CHAR_FMT
+                       ": write failed at trigger %d",
+                       OLC_NUM(d), zone, DIAG_CHAR(d->character), i);
         mudlog(BRF, MAX(LVL_GOD, GET_INVIS_LEV(d->character)), TRUE,
                "SYSERR: OLC: Can't write trig file!");
         tb_fclose(trig_file);
-        return;
+        /* Never leave a partial <zone>.new behind for the next save. */
+        if (remove(fname) != 0 && errno != ENOENT)
+          TB_REPORT_ERRNO("remove", fname);
+        trigedit_tell_not_saved(d, TRUE);
+        return TRIGEDIT_SAVED_MEMORY_ONLY;
       }
       sprintascii(bitBuf, GET_TRIG_TYPE(trig));
       tb_fprintf(trig_file,      "%s%c\n"
@@ -1050,12 +1141,22 @@ void trigedit_save(struct descriptor_data *d)
 
   tb_fprintf(trig_file, "$%c\n", STRING_TERMINATOR);
   {
+    /* tb_fprintf() reports but does not stop on a failed write; the stream's
+     * error flag catches any of them here. */
+    int write_ok = !ferror(trig_file);
     int flush_ok = tb_fflush_checked(trig_file, fname);
     int close_ok = tb_fclose_checked(trig_file, fname);
-    if (!flush_ok || !close_ok) {
+    if (!write_ok || !flush_ok || !close_ok) {
+      TB_ERROR_MSG("dg", "trigedit-save", fname,
+                   "trigger vnum %d zone %d by " DIAG_CHAR_FMT
+                   ": write %s, flush %s, close %s",
+                   OLC_NUM(d), zone, DIAG_CHAR(d->character),
+                   write_ok ? "ok" : "failed", flush_ok ? "ok" : "failed",
+                   close_ok ? "ok" : "failed");
       if (remove(fname) != 0 && errno != ENOENT)
         TB_REPORT_ERRNO("remove", fname);
-      return;
+      trigedit_tell_not_saved(d, TRUE);
+      return TRIGEDIT_SAVED_MEMORY_ONLY;
     }
   }
 
@@ -1065,11 +1166,18 @@ void trigedit_save(struct descriptor_data *d)
   tb_snprintf(buf, sizeof(buf), "%s/%d.trg", TRG_PREFIX, zone);
 #endif
 
-  if (!tb_replace_file_checked(fname, buf))
-    return;
+  if (!tb_replace_file_checked(fname, buf)) {
+    TB_ERROR_MSG("dg", "trigedit-save", buf,
+                 "trigger vnum %d zone %d by " DIAG_CHAR_FMT
+                 ": cannot replace with %s",
+                 OLC_NUM(d), zone, DIAG_CHAR(d->character), fname);
+    trigedit_tell_not_saved(d, TRUE);
+    return TRIGEDIT_SAVED_MEMORY_ONLY;
+  }
 
   write_to_output(d, "Trigger saved to disk.\r\n");
   trigedit_create_index(zone, "trg");
+  return TRIGEDIT_SAVED;
 }
 
 static void trigedit_create_index(int znum, char *type)

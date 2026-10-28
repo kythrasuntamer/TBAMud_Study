@@ -476,9 +476,88 @@ static void format_script_refuses_result_over_max_str(void)
   TEST_ASSERT_NOT_NULL(strstr(bd->output, "String too long at line 2"));
 }
 
+/* E2-07: a script the loader would reject is refused before any prototype
+ * or live trigger changes, the builder is told, and the edit stays open.
+ * (Edit buffers loaded from disk may exceed MAX_CMD_LENGTH.) */
+static void oversized_script_is_refused_before_memory_changes(void)
+{
+  const int vnums[] = { 100 };
+  size_t size = MAX_STRING_LENGTH + 4096, n = 0;
+  char *big;
+
+  make_index(vnums, 1);
+  start_edit(100);
+  CREATE(big, char, size);
+  while (n + 100 < size - 1) {
+    memset(big + n, 'x', 98);
+    big[n + 98] = '\r';
+    big[n + 99] = '\n';
+    n += 100;
+  }
+  free(OLC_STORAGE(bd));
+  OLC_STORAGE(bd) = big;
+  OLC_VAL(bd) = 1;
+  clear_output();
+
+  feed(TRIGEDIT_CONFIRM_SAVESTRING, "y");
+
+  TEST_ASSERT_TRUE(tb_captured_has_op("trigedit-save-size"));
+  TEST_ASSERT_NOT_NULL(bd->olc);                        /* still editing */
+  TEST_ASSERT_EQUAL_INT(TRIGEDIT_MAIN_MENU, OLC_MODE(bd));
+  TEST_ASSERT_EQUAL_STRING("say 100", trig_index[0]->proto->cmdlist->cmd);
+  TEST_ASSERT_EQUAL_INT('x', OLC_STORAGE(bd)[100]);     /* not strtok'd */
+  TEST_ASSERT_NOT_NULL(strstr(bd->output, "NOT saved"));
+  TEST_ASSERT_EQUAL_STRING("", read_file("world/trg/1.trg"));
+}
+
+/* E2-07: a zone file that cannot be written is reported to the builder and
+ * the log, with no partial file left; the in-memory save still happened. */
+static void unwritable_zone_file_is_reported(void)
+{
+  const int vnums[] = { 100 };
+
+  make_index(vnums, 1);
+  /* fopen("w") fails on a directory even for root. */
+  TEST_ASSERT_EQUAL_INT(0, mkdir("world/trg/1.new", 0700));
+  start_edit(100);
+  set_script("say edited\r\n");
+  clear_output();
+
+  save_and_quit();
+
+  TEST_ASSERT_TRUE(tb_captured_has_op("trigedit-save"));
+  TEST_ASSERT_EQUAL_STRING("say edited", trig_index[0]->proto->cmdlist->cmd);
+  TEST_ASSERT_NOT_NULL(strstr(bd->output, "NOT to disk"));
+  TEST_ASSERT_NULL(strstr(bd->output, "Trigger saved to disk"));
+  TEST_ASSERT_EQUAL_STRING("", read_file("world/trg/1.trg"));
+}
+
+/* The normal save writes the zone file and the index entry. */
+static void save_writes_zone_file(void)
+{
+  const int vnums[] = { 100 };
+  const char *file;
+
+  make_index(vnums, 1);
+  start_edit(100);
+  set_script("say one\r\n\r\nsay two\r\n");
+  clear_output();
+  save_and_quit();
+
+  file = read_file("world/trg/1.trg");
+  TEST_ASSERT_NOT_NULL(strstr(file, "#100\n"));
+  TEST_ASSERT_NOT_NULL(strstr(file, "say one\nsay two\n~\n$~\n"));
+  TEST_ASSERT_NOT_NULL(strstr(bd->output, "Trigger saved to disk"));
+  TEST_ASSERT_NOT_NULL(strstr(read_file("world/trg/index"), "1.trg\n"));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(oversized_script_is_refused_before_memory_changes);
+  RUN_TEST(unwritable_zone_file_is_reported);
+  RUN_TEST(save_writes_zone_file);
   RUN_TEST(format_script_keeps_long_lines_whole);
   RUN_TEST(format_script_refuses_result_over_max_str);
   RUN_TEST(copy_trigger_replaces_scratch_and_keeps_save_prompt);
