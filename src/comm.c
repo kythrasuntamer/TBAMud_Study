@@ -2866,7 +2866,8 @@ void close_socket(struct descriptor_data *d)
         free(*(d->str));
       free(d->str);
       d->str = NULL;
-    } else if (d->backstr && !IS_NPC(d->character) && !PLR_FLAGGED(d->character, PLR_WRITING)) {
+    } else if (!string_abandon_in_game_edit(d) &&   /* a note: old text back */
+               d->backstr && !IS_NPC(d->character) && !PLR_FLAGGED(d->character, PLR_WRITING)) {
       free(d->backstr);      /* editing description ... not olc */
       d->backstr = NULL;
     }

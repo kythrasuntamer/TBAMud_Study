@@ -257,8 +257,42 @@ void string_add(struct descriptor_data *d, char *str)
           d->backstr = NULL;
           d->str     = NULL;
           break;
+        case CON_PLAYING:
+          /* In-game editors. Mail, board posts and bug/idea/typo reports
+           * start from an empty buffer (no backstr); playing_string_cleanup()
+           * below handles their abort. A note written on paper (do_write())
+           * passes its old text: put it back, as the OLC editors do. */
+          if (d->backstr) {
+            free(*d->str);
+            *d->str    = d->backstr;
+            d->backstr = NULL;
+          } else if (d->character && (IS_NPC(d->character) ||
+                     (!PLR_FLAGGED(d->character, PLR_MAILING) &&
+                      !PLR_FLAGGED(d->character, PLR_BUG) &&
+                      !PLR_FLAGGED(d->character, PLR_IDEA) &&
+                      !PLR_FLAGGED(d->character, PLR_TYPO))) &&
+                     d->mail_to < BOARD_MAGIC) {
+            /* A note started on blank paper: the editor allocated *d->str,
+             * so aborting discards it and the paper stays blank. */
+            free(*d->str);
+            *d->str = NULL;
+          }
+          break;
         default:
-          log("SYSERR: string_add: Aborting write from unknown origin.");
+          /* No editor in this state has an abort handler: keep the text as
+           * typed, release the saved copy, and say where it happened. */
+          TB_ERROR_MSG("modify", "string-abort", "editor",
+                       "desc #%d %s %ld state %d: abort from an editor with no "
+                       "abort handler; edited text kept",
+                       d->desc_num,
+                       !d->character ? "no character" :
+                         IS_NPC(d->character) ? "mob vnum" : "player idnum",
+                       !d->character ? -1L :
+                         IS_NPC(d->character) ? (long)GET_MOB_VNUM(d->character)
+                                              : (long)GET_IDNUM(d->character),
+                       STATE(d));
+          free(d->backstr);
+          d->backstr = NULL;
           break;
       }
       break;
