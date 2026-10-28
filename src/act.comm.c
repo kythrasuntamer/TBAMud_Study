@@ -114,18 +114,29 @@ ACMD(do_say)
 
     ACT_ESCAPE_TEXT(ch, argument, text);
     tb_snprintf(buf, sizeof(buf), "$n\tn says, '%s'", text);
-    msg = act(buf, FALSE, ch, 0, 0, TO_ROOM | DG_NO_TRIG);
-
-    for (vict = world[IN_ROOM(ch)].people; vict; vict = vict->next_in_room)
-      if (vict != ch && GET_POS(vict) > POS_SLEEPING)
+    /* Render the line once per listener. A TO_ROOM act() returns only the
+     * text rendered for the last recipient ($n as that viewer saw it, or a
+     * stale message when nobody received it), so storing its result in
+     * every listener's history leaked names a listener could not see and
+     * recorded lines for listeners act() skipped. act() returns NULL for a
+     * listener it did not deliver to (asleep, linkless, writing); such a
+     * listener gets no history entry. DG_NO_TRIG: no script runs here, so
+     * next_in_room stays valid. */
+    for (vict = world[IN_ROOM(ch)].people; vict; vict = vict->next_in_room) {
+      if (vict == ch)
+        continue;
+      msg = act(buf, FALSE, ch, 0, vict, TO_VICT | DG_NO_TRIG);
+      if (msg)
         add_history(vict, msg, HIST_SAY);
+    }
 
     if (!IS_NPC(ch) && PRF_FLAGGED(ch, PRF_NOREPEAT))
       send_to_char(ch, "%s", CONFIG_OK);
     else {
       tb_snprintf(buf, sizeof(buf), "You say, '%s'", text);
       msg = act(buf, FALSE, ch, 0, 0, TO_CHAR | DG_NO_TRIG);
-      add_history(ch, msg, HIST_SAY);
+      if (msg)    /* NULL: a linkless or forced speaker saw nothing */
+        add_history(ch, msg, HIST_SAY);
     }
   }
 
@@ -165,14 +176,16 @@ static void perform_tell(struct char_data *ch, struct char_data *vict, char *arg
   ACT_ESCAPE_TEXT(ch, arg, text);
   tb_snprintf(buf, sizeof(buf), "%s$n tells you, '%s'%s", CCRED(vict, C_NRM), text, CCNRM(vict, C_NRM));
   msg = act(buf, FALSE, ch, 0, vict, TO_VICT | TO_SLEEP);
-  add_history(vict, msg, HIST_TELL);
+  if (msg)
+    add_history(vict, msg, HIST_TELL);
 
   if (!IS_NPC(ch) && PRF_FLAGGED(ch, PRF_NOREPEAT))
     send_to_char(ch, "%s", CONFIG_OK);
   else {
     tb_snprintf(buf, sizeof(buf), "%sYou tell $N, '%s'%s", CCRED(ch, C_NRM), text, CCNRM(ch, C_NRM));
-    msg = act(buf, FALSE, ch, 0, vict, TO_CHAR | TO_SLEEP);     
-    add_history(ch, msg, HIST_TELL);
+    msg = act(buf, FALSE, ch, 0, vict, TO_CHAR | TO_SLEEP);
+    if (msg)    /* NULL: a linkless sender (e.g. forced) saw nothing */
+      add_history(ch, msg, HIST_TELL);
   }
 
   if (!IS_NPC(vict) && !IS_NPC(ch))
@@ -550,7 +563,8 @@ ACMD(do_gen_comm)
         com_msgs[subcmd][1], text, COLOR_LEV(ch) >= C_CMP ? color_on : "", CCNRM(ch, C_CMP));
     
     msg = act(buf1, FALSE, ch, 0, 0, TO_CHAR | TO_SLEEP);
-    add_history(ch, msg, hist_type[subcmd]);
+    if (msg)
+      add_history(ch, msg, hist_type[subcmd]);
   }
   if (!emoting) {
     /* With NOREPEAT the block above did not run, so escape the text here. */
@@ -575,7 +589,8 @@ ACMD(do_gen_comm)
 
     tb_snprintf(buf2, sizeof(buf2), "%s%s%s", (COLOR_LEV(i->character) >= C_NRM) ? color_on : "", buf1, KNRM); 
     msg = act(buf2, FALSE, ch, 0, i->character, TO_VICT | TO_SLEEP);
-    add_history(i->character, msg, hist_type[subcmd]);
+    if (msg)    /* NULL when act() skipped the listener (e.g. writing) */
+      add_history(i->character, msg, hist_type[subcmd]);
   }
 }
 

@@ -68,8 +68,17 @@ void parse_at(char *str) { (void)str; parse_at_calls++; }
 void speech_mtrigger(char_data *actor, char *str) { (void)actor; (void)str; }
 void speech_wtrigger(char_data *actor, char *str) { (void)actor; (void)str; }
 int room_is_dark(room_rnum room) { (void)room; return 0; }
+/* History recorder: how many entries, for whom, and whether any was NULL. */
+static int history_calls, history_null_calls;
+static struct char_data *history_last_ch;
 void add_history(struct char_data *ch, char *str, int type)
-{ (void)ch; (void)str; (void)type; }
+{
+  (void)type;
+  history_calls++;
+  history_last_ch = ch;
+  if (!str)
+    history_null_calls++;
+}
 size_t send_to_char(struct char_data *ch, const char *messg, ...)
 { (void)ch; (void)messg; return 0; }
 
@@ -78,6 +87,9 @@ static char act_format[MAX_STRING_LENGTH];
 static const void *act_vict_obj;
 static const void *act_obj;
 static int act_calls;
+/* act() delivers (returns text) only to this recipient; NULL otherwise. */
+static void *act_delivers_to;
+static char act_delivered[] = "delivered";
 char *act_at(const char *src_file, int src_line, const char *src_func,
              const char *str, int hide_invisible, struct char_data *ch,
              struct obj_data *obj, void *vict_obj, int type)
@@ -89,6 +101,8 @@ char *act_at(const char *src_file, int src_line, const char *src_func,
   act_obj = obj;
   if (snprintf(act_format, sizeof(act_format), "%s", str ? str : "") < 0)
     act_format[0] = '\0';
+  if (act_delivers_to && vict_obj == act_delivers_to)
+    return act_delivered;
   return NULL;
 }
 
@@ -112,6 +126,9 @@ void setUp(void)
   act_vict_obj = NULL;
   act_calls = 0;
   parse_at_calls = 0;
+  act_delivers_to = NULL;
+  history_calls = history_null_calls = 0;
+  history_last_ch = NULL;
   CONFIG_SPECIAL_IN_COMM = 0;
   tb_error_capture_reset();
 }
@@ -263,6 +280,36 @@ static void social_without_char_no_arg_is_reported(void)
   free(arg);
 }
 
+/* --- G2-14: history stores only what act() delivered ------------------ */
+
+static void say_history_is_per_listener_and_never_null(void)
+{
+  static struct char_data awake, asleep;
+  static struct player_special_data awake_sp, asleep_sp;
+  char *text = strdup("hello");
+
+  memset(&awake, 0, sizeof(awake));
+  memset(&asleep, 0, sizeof(asleep));
+  memset(&awake_sp, 0, sizeof(awake_sp));
+  memset(&asleep_sp, 0, sizeof(asleep_sp));
+  awake.player_specials = &awake_sp;
+  asleep.player_specials = &asleep_sp;
+  GET_POS(&awake) = POS_STANDING;
+  GET_POS(&asleep) = POS_SLEEPING;
+  speaker.next_in_room = &awake;
+  awake.next_in_room = &asleep;
+  act_delivers_to = &awake;     /* the speaker is linkless: TO_CHAR is NULL */
+
+  do_say(&speaker, text, 0, 0);
+  /* One act() per listener plus the speaker's own line. */
+  TEST_ASSERT_EQUAL_INT(3, act_calls);
+  TEST_ASSERT_EQUAL_INT(1, history_calls);
+  TEST_ASSERT_EQUAL_PTR(&awake, history_last_ch);
+  TEST_ASSERT_EQUAL_INT(0, history_null_calls);
+  speaker.next_in_room = NULL;
+  free(text);
+}
+
 /* --- G2-09: '@' as the last character of said text --------------------- */
 
 static void trailing_at_sign_stays_inside_the_text(void)
@@ -293,6 +340,7 @@ int main(void)
   RUN_TEST(body_social_using_obj_code_is_refused);
   RUN_TEST(body_social_using_t_runs);
   RUN_TEST(social_without_char_no_arg_is_reported);
+  RUN_TEST(say_history_is_per_listener_and_never_null);
   RUN_TEST(trailing_at_sign_stays_inside_the_text);
   return UNITY_END();
 }

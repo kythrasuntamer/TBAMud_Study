@@ -2673,6 +2673,16 @@ void add_history(struct char_data *ch, char *str, int type)
   if (IS_NPC(ch))
     return;
 
+  /* Callers pass act()'s return value, which is NULL when act() delivered
+   * nothing; they must check it. A NULL here is a caller bug: report it
+   * rather than store "(null)" or crash in a libc without that fallback. */
+  if (!str) {
+    TB_ERROR_MSG("act", "history-null", "history",
+                 DIAG_CHAR_FMT " history type %d: NULL text not stored",
+                 DIAG_CHAR(ch), type);
+    return;
+  }
+
   tmp = GET_HISTORY(ch, type);
   ct = time(0);
   tb_strftime(time_str, sizeof(time_str), "%H:%M ", localtime(&ct));

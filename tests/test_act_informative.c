@@ -543,6 +543,39 @@ static void who_reports_class_out_of_range(void)
   free_player(ch);
 }
 
+/* --- G2-14: add_history with act()'s NULL result ---------------------- */
+
+static void history_null_text_is_reported_not_stored(void)
+{
+  struct char_data *ch = make_player(9);
+  struct txt_block *h;
+
+  add_history(ch, NULL, HIST_SAY);
+  TEST_ASSERT_NULL(GET_HISTORY(ch, HIST_SAY));
+  TEST_ASSERT_NULL(GET_HISTORY(ch, HIST_ALL));
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("history-null", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "history type 1"));
+
+  tb_error_capture_reset();
+  add_history(ch, (char *)"Bob says, 'hi'", HIST_SAY);
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  TEST_ASSERT_NOT_NULL(GET_HISTORY(ch, HIST_SAY));
+  TEST_ASSERT_NOT_NULL(strstr(GET_HISTORY(ch, HIST_SAY)->text, "Bob says"));
+  TEST_ASSERT_NOT_NULL(GET_HISTORY(ch, HIST_ALL));
+  for (h = GET_HISTORY(ch, HIST_SAY); h; h = GET_HISTORY(ch, HIST_SAY)) {
+    GET_HISTORY(ch, HIST_SAY) = h->next;
+    free(h->text);
+    free(h);
+  }
+  for (h = GET_HISTORY(ch, HIST_ALL); h; h = GET_HISTORY(ch, HIST_ALL)) {
+    GET_HISTORY(ch, HIST_ALL) = h->next;
+    free(h->text);
+    free(h);
+  }
+  free_player(ch);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -558,5 +591,6 @@ int main(void)
   RUN_TEST(look_reports_room_sector_out_of_range);
   RUN_TEST(areas_truncates_long_listing_and_reports);
   RUN_TEST(who_reports_class_out_of_range);
+  RUN_TEST(history_null_text_is_reported_not_stored);
   return UNITY_END();
 }
