@@ -450,9 +450,35 @@ static void fread_string_keeps_blank_crlf_line(void)
   free(s);
 }
 
+/* B1-V01: a chunk whose first byte is NUL made the trailing-newline scan read
+ * tmp[-1] (ASan: stack-buffer-underflow). It is now reported and skipped. */
+static void fread_string_reports_nul_at_line_start(void)
+{
+  static const char text[] = "a\n\0zz\nb~\n";
+  char *s = read_tilde(fread_string, text, sizeof(text) - 1);
+
+  TEST_ASSERT_EQUAL_STRING("a\r\nb", s);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("fread-string", tb_captured_operation);
+  free(s);
+}
+
+static void fread_clean_string_reports_nul_at_line_start(void)
+{
+  static const char text[] = "a\n\0zz\nb~\n";
+  char *s = read_tilde(fread_clean_string, text, sizeof(text) - 1);
+
+  TEST_ASSERT_EQUAL_STRING("a\r\nb", s);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("fread-string", tb_captured_operation);
+  free(s);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(fread_string_reports_nul_at_line_start);
+  RUN_TEST(fread_clean_string_reports_nul_at_line_start);
   RUN_TEST(fread_clean_string_keeps_blank_crlf_line);
   RUN_TEST(fread_string_keeps_blank_crlf_line);
   RUN_TEST(parse_room_rejects_out_of_range_direction);

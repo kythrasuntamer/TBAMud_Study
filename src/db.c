@@ -3263,6 +3263,13 @@ char *fread_string(FILE *fl, const char *error)
       log("SYSERR: fread_string: format error at or near %s", error);
       exit(1);
     }
+    /* A NUL byte at the start of a chunk (a corrupt or partly written file)
+     * makes the chunk look empty; the scan below would then start at tmp[-1]. */
+    if (*tmp == '\0') {
+      TB_ERROR_MSG("db", "fread-string", error,
+                   "NUL byte in string data; rest of that line dropped");
+      continue;
+    }
     /* If there is a '~', end the string; else put an "\r\n" over the '\n'. */
     /* now only removes trailing ~'s -- Welcor */
     point = strchr(tmp, '\0');
@@ -3330,6 +3337,12 @@ char *fread_clean_string(FILE *fl, const char *error)
     if (!fgets(tmp, 512, fl)) {
       log("SYSERR: fread_clean_string: format error at or near %s", error);
       exit(1);
+    }
+    /* See fread_string(): a chunk starting with NUL would scan from tmp[-1]. */
+    if (*tmp == '\0') {
+      TB_ERROR_MSG("db", "fread-string", error,
+                   "NUL byte in string data; rest of that line dropped");
+      continue;
     }
     /* If there is a '~', end the string; else put an "\r\n" over the '\n'. */
     /* now only removes trailing ~'s -- Welcor */
