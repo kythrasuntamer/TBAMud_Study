@@ -423,3 +423,12 @@ if(Python3_Interpreter_FOUND)
                 ${CMAKE_CURRENT_SOURCE_DIR}/test_dg_wait_suffix_contract.py
                 ${MUD_SRCDIR}/dg_scripts.c)
 endif()
+
+# Production utils.c guards (column_list, followers, get_line, colour
+# counters, strfrmt, ...): asserts each guard reports through tb_error_log_at,
+# by reading the records it writes to logfile.
+add_mud_test(test_utils_guards
+    ${MUD_SRCDIR}/utils.c
+    ${MUD_SRCDIR}/random.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_utils_guards.c
+)

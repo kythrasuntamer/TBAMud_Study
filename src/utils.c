@@ -1529,14 +1529,26 @@ void char_from_furniture(struct char_data *ch)
      list        - a pointer to a list of strings
      list_length - So we can work with lists that don't end with /n
      show_nums   - when set to TRUE, it will show a number before the list entry.
+
+   Invariant: every write into buf is bounded by struct tb_buf, so output can
+   never pass the end of the stack buffer. The list entries (social names,
+   command names) and the viewer's screen width decide the size: social names
+   come from builders through aedit and screen width from the player (40..200),
+   so a long list on a wide screen can need more than MAX_STRING_LENGTH. When
+   that happens the list is cut at the last entry that fits, the viewer sees
+   the OVERFLOW marker, and a column-list-truncated warning names the viewer.
 */
+#define COLUMN_LIST_OVERFLOW "\r\n*** OVERFLOW ***\r\n"
+
 void column_list(struct char_data *ch, int num_cols, const char **list, int list_length, bool show_nums)
 {
-   size_t max_len = 0, len = 0, temp_len;
+   size_t max_len = 0;
    int num_per_col, col_width, r, c, i, offset = 0;
    char buf[MAX_STRING_LENGTH];
+   struct tb_buf out;
 
-   *buf='\0';
+   /* Reserve room for the overflow marker so it always fits after a cut. */
+   tb_buf_init(&out, buf, sizeof(buf) - (sizeof(COLUMN_LIST_OVERFLOW) - 1));
    /* Work out the longest list item */
    for (i=0; i<list_length; i++)
      if (max_len < strlen(list[i]))
@@ -1557,36 +1569,44 @@ void column_list(struct char_data *ch, int num_cols, const char **list, int list
    if (show_nums) col_width-=4;
 
    if (col_width < 0 || (size_t)col_width < max_len)
-     log("Warning: columns too narrow for correct output to %s in simple_column_list (utils.c)", GET_NAME(ch));
+     TB_WARN_MSG("utils", "column-list-narrow", "column_list",
+                 "col_width=%d max_len=%zu num_cols=%d for " DIAG_CHAR_FMT,
+                 col_width, max_len, num_cols, DIAG_CHAR(ch));
 
    /* Calculate how many list items there should be per column */
    num_per_col = (list_length / num_cols) + ((list_length % num_cols) ? 1 : 0);
 
-   /* Fill 'buf' with the columnised list */
-   for (r=0; r<num_per_col; r++)
+   /* Fill 'buf' with the columnised list; stop at the first cut. */
+   for (r=0; r<num_per_col && !tb_buf_truncated(&out); r++)
    {
-     for (c=0; c<num_cols; c++)
+     for (c=0; c<num_cols && !tb_buf_truncated(&out); c++)
      {
        offset = (c*num_per_col)+r;
        if (offset < list_length)
        {
          if (show_nums)
-           temp_len = snprintf(buf+len, sizeof(buf) - len, "%2d) %-*s", offset+1, col_width, list[(offset)]);
+           (void)tb_buf_appendf(&out, "%2d) %-*s", offset+1, col_width, list[(offset)]);
          else
-           temp_len = snprintf(buf+len, sizeof(buf) - len, "%-*s", col_width, list[(offset)]);
-         len += temp_len;
+           (void)tb_buf_appendf(&out, "%-*s", col_width, list[(offset)]);
        }
      }
-     temp_len = snprintf(buf+len, sizeof(buf) - len, "\r\n");
-     len += temp_len;
+     (void)tb_buf_append(&out, "\r\n");
    }
 
-   if (len >= sizeof(buf))
-     tb_snprintf((buf + MAX_STRING_LENGTH) - 22, 22, "\r\n*** OVERFLOW ***\r\n");
+   if (tb_buf_truncated(&out)) {
+     /* out.length <= its capacity - 1, so the reserved tail holds the marker. */
+     strlcpy(buf + out.length, COLUMN_LIST_OVERFLOW, sizeof(buf) - out.length);
+     TB_WARN_MSG("utils", "column-list-truncated", "column_list",
+                 "list_length=%d num_cols=%d col_width=%d max_len=%zu "
+                 "kept=%zu of capacity=%zu for " DIAG_CHAR_FMT,
+                 list_length, num_cols, col_width, max_len, out.length,
+                 sizeof(buf), DIAG_CHAR(ch));
+   }
 
    /* Send the list to the player */
    page_string(ch->desc, buf, TRUE);
 }
+#undef COLUMN_LIST_OVERFLOW
 
 
 /**
