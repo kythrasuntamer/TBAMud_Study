@@ -503,6 +503,49 @@ void char_to_room_at(const char *src_file, int src_line, const char *src_func,
   }
 }
 
+/* Snapshot the characters in room as UIDs (see handler.h). A loop that
+ * calls into scripts or combat for each occupant must not keep
+ * next_in_room: a trigger can teleport the next occupant, so the loop
+ * would carry on through another room's list (maintainer-safety-guide
+ * section 2). Characters that enter the room later are not in the
+ * snapshot. An invalid room is the caller's bug: reported, 0 occupants. */
+int room_people_uids_at(const char *src_file, int src_line,
+                        const char *src_func, room_rnum room, long **uids)
+{
+  struct char_data *tch;
+  int count = 0, i = 0;
+
+  *uids = NULL;
+  if (!VALID_ROOM_RNUM(room)) {
+    TB_ERROR_MSG("handler", "room-people-snapshot", "room",
+                 "room rnum %d not in [0,%d]; no occupants; caller=%s:%d %s",
+                 (int) room, (int) top_of_world, src_file, src_line, src_func);
+    return 0;
+  }
+  for (tch = world[room].people; tch; tch = tch->next_in_room)
+    count++;
+  if (count == 0)
+    return 0;
+  CREATE(*uids, long, count);
+  for (tch = world[room].people; tch && i < count; tch = tch->next_in_room)
+    (*uids)[i++] = char_script_id(tch);
+  return i;
+}
+
+/* Re-resolve one snapshot UID: the character only if the UID still maps to
+ * a character that is in room and not pending extraction (DEAD). The UID is
+ * looked up before anything is dereferenced, so a stale entry is never
+ * followed. A NULL result is for the caller to report: it knows the
+ * operation and the entity it was acting for. */
+struct char_data *room_person_live(long uid, room_rnum room)
+{
+  struct char_data *tch = find_char(uid);
+
+  if (tch == NULL || DEAD(tch) || IN_ROOM(tch) != room)
+    return NULL;
+  return tch;
+}
+
 /* Give an object to a char. */
 void obj_to_char(struct obj_data *object, struct char_data *ch)
 {

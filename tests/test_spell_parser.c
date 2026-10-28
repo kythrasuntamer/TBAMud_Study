@@ -1,11 +1,14 @@
 /* Executable tests of the production magic entry points (spell_parser.c),
- * linked with the production handler.c for the room movement primitives.
- * The DG cast triggers and the mag_*() routines are fixtures: the triggers
- * can purge, as a builder's script would, and the routines record who they
- * were applied to.
+ * linked with the production handler.c for the room-occupant snapshot and
+ * the room movement primitives. The DG cast triggers and the mag_*()
+ * routines are fixtures: the triggers can purge or teleport, as a builder's
+ * script would, and the routines record who they were applied to.
  *
  * H2-01: call_magic() must stop when a cast trigger purges a participant
  *        (extract_obj() frees an object at once).
+ * H2-10: a staff must not follow next_in_room pointers kept across
+ *        call_magic(): a trigger that teleports the next occupant made the
+ *        staff carry on through another room's people list.
  */
 #include "unity.h"
 #include "conf.h"
@@ -99,6 +102,9 @@ int obj_uid_matches(long uid, const obj_data *obj)
 static int purge_obj_in_otrigger;       /* "%purge% %self%" on the object */
 static struct char_data *purge_owner;   /* this mob's cast trigger ... */
 static struct char_data *purge_who;     /* ... mpurges this one */
+static struct char_data *teleport_owner;      /* trigger owner ... */
+static struct char_data *teleport_who;        /* ... teleports this one */
+static room_rnum teleport_to;
 
 int cast_wtrigger(char_data *actor, char_data *vict, obj_data *obj, int spellnum)
 { (void)actor; (void)vict; (void)obj; (void)spellnum; return 1; }
@@ -119,6 +125,11 @@ int cast_mtrigger(char_data *actor, char_data *ch, int spellnum)
   (void)actor; (void)spellnum;
   if (ch && ch == purge_owner && purge_who)
     SET_BIT_AR(MOB_FLAGS(purge_who), MOB_NOTDEADYET);  /* deferred extraction */
+  if (ch && ch == teleport_owner && teleport_who) {
+    char_from_room(teleport_who);
+    char_to_room(teleport_who, teleport_to);
+    teleport_who = NULL;
+  }
   return 1;
 }
 
@@ -224,6 +235,8 @@ void setUp(void)
 
   purge_obj_in_otrigger = 0;
   purge_owner = purge_who = NULL;
+  teleport_owner = teleport_who = NULL;
+  teleport_to = 1;
   alter_obj_calls = affect_calls = 0;
   memset(affected, 0, sizeof(affected));
   live_obj = NULL;
@@ -284,11 +297,102 @@ static void test_call_magic_casts_when_nothing_is_purged(void)
   free(target);
 }
 
+/* ---------------------------------------------------------------------
+ * H2-10: the staff loop re-resolves each occupant
+ * ------------------------------------------------------------------- */
+
+static struct obj_data *make_staff(void)
+{
+  struct obj_data *staff = make_live_obj(6001, ITEM_STAFF);
+
+  GET_OBJ_VAL(staff, 0) = 10;                 /* level */
+  GET_OBJ_VAL(staff, 2) = 3;                  /* charges */
+  GET_OBJ_VAL(staff, 3) = TEST_SPELL_CHAR;    /* spell */
+  return staff;
+}
+
+static void test_staff_skips_occupant_teleported_by_a_trigger(void)
+{
+  struct obj_data *staff = make_staff();
+  char arg[] = "";
+
+  /* mob_a's cast trigger teleports mob_b, the occupant after it, into
+   * room 1, where the bystander stands. */
+  teleport_owner = &mob_a;
+  teleport_who = &mob_b;
+  mag_objectmagic(&caster, staff, arg);
+
+  /* mob_a and mob_c are affected; mob_b (gone) and the bystander in
+   * room 1 are not. */
+  TEST_ASSERT_EQUAL_INT(2, affect_calls);
+  TEST_ASSERT_EQUAL_PTR(&mob_a, affected[0]);
+  TEST_ASSERT_EQUAL_PTR(&mob_c, affected[1]);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("staff-target-moved", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "target uid 103"));
+  TEST_ASSERT_EQUAL_INT(2, GET_OBJ_VAL(staff, 2));
+  free(staff);
+}
+
+static void test_staff_skips_occupant_purged_by_a_trigger(void)
+{
+  struct obj_data *staff = make_staff();
+  char arg[] = "";
+
+  /* mob_a's cast trigger purges mob_b, which is still in the room but
+   * pending extraction when the staff reaches it. */
+  purge_owner = &mob_a;
+  purge_who = &mob_b;
+  mag_objectmagic(&caster, staff, arg);
+
+  TEST_ASSERT_EQUAL_INT(2, affect_calls);
+  TEST_ASSERT_EQUAL_PTR(&mob_a, affected[0]);
+  TEST_ASSERT_EQUAL_PTR(&mob_c, affected[1]);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("staff-target-moved", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "target uid 103"));
+  free(staff);
+}
+
+static void test_staff_without_interference_hits_everyone_else(void)
+{
+  struct obj_data *staff = make_staff();
+  char arg[] = "";
+
+  mag_objectmagic(&caster, staff, arg);
+  TEST_ASSERT_EQUAL_INT(3, affect_calls);
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  free(staff);
+}
+
+/* The snapshot helper reports an invalid room at its caller and yields
+ * nothing to iterate. */
+static void test_room_people_uids_invalid_room_reports_caller(void)
+{
+  long *uids = (long *) &uids;    /* must be reset to NULL */
+
+  TEST_ASSERT_EQUAL_INT(0, room_people_uids(NOWHERE, &uids));
+  TEST_ASSERT_NULL(uids);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("room-people-snapshot", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "test_spell_parser.c"));
+
+  TEST_ASSERT_EQUAL_INT(4, room_people_uids(0, &uids));
+  TEST_ASSERT_EQUAL_INT(101, (int) uids[0]);
+  TEST_ASSERT_EQUAL_PTR(&mob_c, room_person_live(uids[3], 0));
+  TEST_ASSERT_NULL(room_person_live(uids[3], 1));
+  free(uids);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
   RUN_TEST(test_call_magic_stops_when_object_trigger_purges_target);
   RUN_TEST(test_call_magic_stops_when_mob_trigger_purges_victim);
   RUN_TEST(test_call_magic_casts_when_nothing_is_purged);
+  RUN_TEST(test_staff_skips_occupant_teleported_by_a_trigger);
+  RUN_TEST(test_staff_skips_occupant_purged_by_a_trigger);
+  RUN_TEST(test_staff_without_interference_hits_everyone_else);
+  RUN_TEST(test_room_people_uids_invalid_room_reports_caller);
   return UNITY_END();
 }
