@@ -17,6 +17,21 @@
 #include "improved-edit.h"
 #include "modify.h"
 
+/** @file tedit.c
+ * Editor for the whole-file texts (news, motd, greetings, help pages...).
+ *
+ * The live globals in tedit_files[] are read by the rest of the server
+ * while an edit is open (GREETINGS on every new connection, motd at
+ * login), so the editor never writes them in place: do_tedit gives the
+ * string editor a private copy in OLC_STORAGE, and tedit_string_cleanup
+ * writes the file through a verified temporary file and only then swaps
+ * the copy into the global.  Post-condition: the global is never NULL
+ * (an emptied text is published as "").  The text is builder (GRGOD/IMPL)
+ * free text, so it must only ever be printed with "%s".
+ *
+ * Concurrency.  Nothing stops two immortals editing the same file; each
+ * edits its own copy and the last save wins, for the file and the global. */
+
 extern time_t motdmod;
 extern time_t newsmod;
 
