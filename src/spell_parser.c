@@ -229,8 +229,17 @@ int call_magic(struct char_data *caster, struct char_data *cvict,
   int savetype;
   long ouid;
 
-  if (spellnum < 1 || spellnum > TOP_SPELL_DEFINE)
+  /* 0 and -1 are the documented "no spell" values of scroll and potion
+   * slots, and stay silent. Anything else out of range (object values,
+   * osetval, dg_cast) is a data error and is reported. */
+  if (spellnum < 1 || spellnum > TOP_SPELL_DEFINE) {
+    if (spellnum != 0 && spellnum != -1)
+      TB_ERROR_MSG("magic", "spellnum-range", "call_magic",
+                   "spell %d not in [1,%d] casttype %d by " DIAG_CHAR_FMT
+                   " ovict vnum %d", spellnum, TOP_SPELL_DEFINE, casttype,
+                   DIAG_CHAR(caster), ovict ? (int) GET_OBJ_VNUM(ovict) : NOTHING);
     return (0);
+  }
 
   /* Snapshot the object's identity before any script can free it. */
   ouid = ovict ? obj_script_id(ovict) : 0;
