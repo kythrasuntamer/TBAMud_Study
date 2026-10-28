@@ -1338,6 +1338,22 @@ static void script_stops_once_its_mob_is_extracted(void)
   TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "line 2"));
 }
 
+/* 'mpurge' of itself is the deliberate way for a mob's script to end its
+ * owner (stock triggers write "%purge% %self%"): the run stops after that
+ * line through the normal cleanup, and nothing is reported. */
+static void mob_purging_itself_stops_without_a_report(void)
+{
+  const char *lines[] = { "set after 1", "%purge% %self%", "global after", NULL };
+  char_data *owner = make_mob("zzpurger");
+  trig_data *t = run_mob_script(owner, lines);
+
+  TEST_ASSERT_TRUE(MOB_FLAGGED(owner, MOB_NOTDEADYET));
+  TEST_ASSERT_NULL(SCRIPT(owner)->global_vars);
+  TEST_ASSERT_EQUAL_INT(0, GET_TRIG_DEPTH(t));
+  TEST_ASSERT_NULL(GET_TRIG_VARS(t));
+  TEST_ASSERT_FALSE(tb_captured_has_op("owner-extracted"));
+}
+
 /* DGDOC-5: a damage trigger's result is the damage dealt, and a script that
  * ends without 'return' made script_driver() return 1, so a damage trigger
  * that merely reacted to hits cut every hit on its mob to 1 point. */
@@ -1417,6 +1433,7 @@ int main(void)
   RUN_TEST(vdelete_checks_the_builders_authority);
   RUN_TEST(wait_of_an_extracted_mob_does_not_resume);
   RUN_TEST(script_stops_once_its_mob_is_extracted);
+  RUN_TEST(mob_purging_itself_stops_without_a_report);
   RUN_TEST(damage_trigger_without_return_keeps_the_damage);
   return UNITY_END();
 }

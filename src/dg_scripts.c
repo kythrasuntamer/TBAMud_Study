@@ -3123,12 +3123,17 @@ int script_driver_default(void *go_adress, trig_data *trig, int type,
      TRIG_NEW     just started from dg_triggers.c
      TRIG_RESTART restarted after a 'wait'
 
- * Owner lifetime: each frame records its own owner on entry (an object's
- * UID, or whether a mobile was already dying) and checks it after every
- * command with dg_frame_owner_gone(). If the owner is gone (purged itself,
- * its container was purged, or a nested trigger purged it) the run stops
- * and, for an object, *go_adress is set to NULL so the caller sees it.
- * Nested frames check only their own owner, so they cannot end this run.
+ * Owner lifetime: a mobile (or player) owner pending extraction is refused
+ * on entry (dg/owner-extracted): its waits and random triggers can still
+ * fire in the pulse it died or quit. Each frame records its own owner (an
+ * object's UID) and checks it after every command with
+ * dg_frame_owner_gone(). If the owner is gone (purged itself, its container
+ * was purged, a damage killed it, or a nested trigger purged it) the run
+ * stops: an object's run returns at once with *go_adress set to NULL so the
+ * caller sees it; a character's run, whose owner stays allocated until
+ * extract_pending_chars(), ends through the normal cleanup and is reported
+ * as dg/owner-extracted unless the command was 'mpurge' of itself. Nested
+ * frames check only their own owner, so they cannot end this run.
  *
  * Exits: only an accepted 'wait' leaves the trigger suspended (depth 1,
  * variables kept, a wait event owning a wait_event_data). Every other exit,
@@ -3137,11 +3142,12 @@ int script_driver_default(void *go_adress, trig_data *trig, int type,
  * retired mid-run by detach/purge; it stays readable until
  * dg_script_execution_leave(). */
 /* TRUE once a command run by this frame has freed its object owner or
- * extracted its mobile owner.  Each frame checks its own owner, so nested
- * scripts can neither hide nor fake this frame's result.  Rooms are never
- * freed by scripts. */
-static int dg_frame_owner_gone(void *go, int type, long owner_uid,
-                               int owner_was_dying)
+ * extracted its mobile (or player) owner.  Each frame checks its own owner,
+ * so nested scripts can neither hide nor fake this frame's result.  Rooms
+ * are never freed by scripts.  A character owner is never pending
+ * extraction on entry (script_driver() refuses that run), so DEAD() here
+ * means this frame's commands, or a nested trigger, extracted it. */
+static int dg_frame_owner_gone(void *go, int type, long owner_uid)
 {
   switch (type) {
     case OBJ_TRIGGER:
@@ -3149,9 +3155,29 @@ static int dg_frame_owner_gone(void *go, int type, long owner_uid,
       return !obj_uid_matches(owner_uid, (obj_data *) go);
     case MOB_TRIGGER:
       /* Extracted characters stay allocated until the end of the pulse. */
-      return !owner_was_dying && MOB_FLAGGED((char_data *) go, MOB_NOTDEADYET);
+      return DEAD((char_data *) go);
   }
   return FALSE;
+}
+
+/* TRUE when a mob script's command is 'mpurge' aimed at the mob itself, the
+ * one deliberate way for a mob's command to extract its own owner (the
+ * counterpart of 'opurge self' in obj_command_interpreter()). The target is
+ * resolved the way do_mpurge() resolves it; mob is in a valid room here. */
+static int dg_mob_cmd_purges_self(char_data *mob, char *cmd)
+{
+  char word[MAX_INPUT_LENGTH], target[MAX_INPUT_LENGTH];
+  char *rest = any_one_arg(cmd, word);
+  char_data *victim;
+
+  if (str_cmp(word, "mpurge"))
+    return FALSE;
+  one_argument(rest, target);
+  if (!*target)
+    return FALSE;
+  victim = (*target == UID_CHAR) ? get_char(target)
+                                 : get_char_room_vis(mob, target, NULL);
+  return victim == mob;
 }
 
 int script_driver(void *go_adress, trig_data *trig, int type, int mode)
@@ -3159,7 +3185,7 @@ int script_driver(void *go_adress, trig_data *trig, int type, int mode)
   static int depth = 0;
   int ret_val = dg_next_default_return;   /* 1 unless script_driver_default() */
   long owner_uid = 0;
-  int owner_was_dying = FALSE;
+  int purges_self = FALSE;   /* this line is 'mpurge' of the mob itself */
   struct cmdlist_element *cl;
   char cmd[MAX_INPUT_LENGTH], *p;
   struct script_data *sc = 0;
@@ -3277,7 +3303,6 @@ int script_driver(void *go_adress, trig_data *trig, int type, int mode)
   switch (type) {
     case MOB_TRIGGER:
       owner_uid = char_script_id((char_data *) go);
-      owner_was_dying = MOB_FLAGGED((char_data *) go, MOB_NOTDEADYET);
       break;
     case OBJ_TRIGGER:
       owner_uid = obj_script_id((obj_data *) go);
@@ -3386,6 +3411,7 @@ int script_driver(void *go_adress, trig_data *trig, int type, int mode)
     }
 
     else {
+      purges_self = FALSE;
       var_subst(go, sc, trig, type, p, cmd);
 
       if (!strn_cmp(cmd, "eval ", 5))
@@ -3474,6 +3500,8 @@ int script_driver(void *go_adress, trig_data *trig, int type, int mode)
         /* The command leaves the script engine here; player text in it
          * reads as typed again. */
         dg_restore_percent(cmd);
+        if (type == MOB_TRIGGER)
+          purges_self = dg_mob_cmd_purges_self((char_data *) go, cmd);
         switch (type) {
           case MOB_TRIGGER:
             if (!script_command_interpreter((char_data *) go, cmd))
@@ -3490,27 +3518,29 @@ int script_driver(void *go_adress, trig_data *trig, int type, int mode)
 
       /* Any command, not just a purge of self, can free the owner: purging
        * the container it is in, a damage that kills it, a nested script. */
-      if (dg_frame_owner_gone(go, type, owner_uid, owner_was_dying)) {
+      if (dg_frame_owner_gone(go, type, owner_uid)) {
+        if (type == MOB_TRIGGER) {
+          /* The mob or player is pending extraction (see the entry check),
+           * still allocated and holding its script: end through the normal
+           * cleanup below. 'mpurge' of itself is the deliberate way; any
+           * other (a damage, a nested trigger) skips lines the builder
+           * wrote, so say which. */
+          char_data *mob = (char_data *) go;
+
+          if (!purges_self)
+            TB_WARN_MSG("dg", "owner-extracted", "script_driver",
+                        "trig vnum %d line %d: owner " DIAG_CHAR_FMT " uid %ld "
+                        "was extracted by its own command or a nested "
+                        "trigger; remaining lines skipped",
+                        DIAG_TRIG_VNUM(trig), dg_line_number(trig, cl),
+                        DIAG_CHAR(mob), mob->script_id);
+          break;
+        }
         depth--;
         if (type == OBJ_TRIGGER)
           *(obj_data **)go_adress = NULL;
         dg_script_execution_leave();
         return ret_val;
-      }
-
-      /* A command or a nested trigger killed or purged the mob or player
-       * owner other than by 'mpurge self': it is pending extraction (see
-       * the entry check), still allocated and holding its script, so end
-       * through the normal cleanup below. */
-      if (type == MOB_TRIGGER && DEAD((char_data *) go)) {
-        char_data *mob = (char_data *) go;
-
-        TB_WARN_MSG("dg", "owner-extracted", "script_driver",
-                    "trig vnum %d line %d: owner " DIAG_CHAR_FMT " uid %ld "
-                    "was extracted by its own command or a nested trigger; "
-                    "remaining lines skipped", DIAG_TRIG_VNUM(trig),
-                    dg_line_number(trig, cl), DIAG_CHAR(mob), mob->script_id);
-        break;
       }
     }
   }
