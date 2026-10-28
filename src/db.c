@@ -4538,6 +4538,12 @@ void free_char(struct char_data *ch)
   while (ch->affected)
     affect_remove(ch, ch->affected);
 
+  /* A MOB_MEMORY mob's remember() list (damage(), mobact.c) belongs to
+   * this instance. Only extract_char_final() cleared it, so a mob still
+   * alive when destroy_db() frees the characters leaked every record. */
+  if (MEMORY(ch))
+    clearMemory(ch);
+
   /* free any assigned scripts */
   if (SCRIPT(ch))
     extract_script(ch, MOB_TRIGGER);

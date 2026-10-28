@@ -2136,6 +2136,61 @@ static void load_config_reads_old_closed_doors_key(void)
   config_fixture_free();
 }
 
+/* ---------------------------------------------------------------------
+ * free_char(): a mob's remember() list
+ * ------------------------------------------------------------------- */
+
+/* free_char() fixtures (interpreter.c, act.comm.c, dg_*.c, handler.c,
+ * lists.c, mud_event.c, mobact.c); clearMemory() frees like mobact.c's and
+ * counts the records it freed. */
+static int fixture_memory_freed;
+void free_alias(struct alias_data *a) { (void)a; }
+void free_history(struct char_data *ch, int type) { (void)ch; (void)type; }
+void free_proto_script(void *thing, int type) { (void)thing; (void)type; }
+void affect_remove(struct char_data *ch, struct affected_type *af)
+{ (void)af; ch->affected = NULL; }
+void extract_script(void *thing, int type) { (void)thing; (void)type; }
+void *simple_list(struct list_data *pList) { (void)pList; return NULL; }
+void free_list(struct list_data *pList) { (void)pList; }
+void event_cancel(struct event *event) { (void)event; }
+void remove_from_lookup_table(long uid, const void *c) { (void)uid; (void)c; }
+void clearMemory(struct char_data *ch)
+{
+  memory_rec *curr, *next;
+
+  for (curr = MEMORY(ch); curr; curr = next) {
+    next = curr->next;
+    free(curr);
+    fixture_memory_freed++;
+  }
+  MEMORY(ch) = NULL;
+}
+
+/* damage() makes a MOB_MEMORY victim remember() its attacker, and only
+ * extract_char_final() cleared that list: destroy_db() frees the mobs still
+ * alive at shutdown with free_char(), which leaked every record
+ * (LeakSanitizer: remember <- damage <- hit <- do_hit). */
+static void free_char_releases_mob_memory(void)
+{
+  struct char_data *mob;
+  memory_rec *rec;
+  int k;
+
+  CREATE(mob, struct char_data, 1);
+  SET_BIT_AR(MOB_FLAGS(mob), MOB_ISNPC);
+  mob->nr = NOBODY;
+  mob->player_specials = &dummy_mob;
+  for (k = 0; k < 2; k++) {
+    CREATE(rec, memory_rec, 1);
+    rec->id = k + 1;
+    rec->next = MEMORY(mob);
+    MEMORY(mob) = rec;
+  }
+  fixture_memory_freed = 0;
+  free_char(mob);
+  TEST_ASSERT_EQUAL_INT(2, fixture_memory_freed);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -2213,5 +2268,6 @@ int main(void)
   RUN_TEST(parse_object_converts_legacy_affect_field);
   RUN_TEST(load_config_reports_unknown_keys);
   RUN_TEST(load_config_reads_old_closed_doors_key);
+  RUN_TEST(free_char_releases_mob_memory);
   return UNITY_END();
 }
