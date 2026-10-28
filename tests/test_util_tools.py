@@ -318,6 +318,26 @@ def shopconv_rejects_bad_ratio(tmp):
         check(out == original, "original not restored")
 
 
+# ------------------------------------------------------------ asciipasswd
+
+@test("asciipasswd")
+def asciipasswd_hashes_valid_name(tmp):
+    rc, out, err = run("asciipasswd", ["bob", "secret"], tmp)
+    check(rc == 0, "rc=%d err=%s" % (rc, err))
+    check(out.startswith("Name: Bob\nPass: ") and "secret" not in out, out)
+    check(not out.split("Pass: ")[1].startswith("*"), out)
+
+
+@test("asciipasswd")
+def asciipasswd_rejects_bad_name(tmp):
+    """I2-21: 'élan' and '' printed 'Pass: *0' (an unusable hash), rc 0."""
+    for name in ("élan", "", "a" * 21, "bo b"):
+        rc, out, err = run("asciipasswd", [name, "secret"], tmp)
+        check(rc == 1, "%r: rc=%d out=%s" % (name, rc, out))
+        check("player-name" in operations(err), err)
+        check("Pass:" not in out, out)
+
+
 # ------------------------------------------------------------- plrtoascii
 
 def plr_record_size(tmp):

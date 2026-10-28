@@ -448,7 +448,8 @@ if(Python3_Interpreter_FOUND)
                 plrtoascii=$<TARGET_FILE:plrtoascii>
                 rebuildMailIndex=$<TARGET_FILE:rebuildMailIndex>
                 rebuildIndex=$<TARGET_FILE:rebuildIndex>
-                shopconv=$<TARGET_FILE:shopconv>)
+                shopconv=$<TARGET_FILE:shopconv>
+                asciipasswd=$<TARGET_FILE:asciipasswd>)
 endif()
 
 # Production utils.c guards (column_list, followers, get_line, colour
