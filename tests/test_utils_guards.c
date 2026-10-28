@@ -124,6 +124,84 @@ static void free_player(struct char_data *ch)
 
 #define CL_ENTRIES 600
 
+/* PR #37: running out of parser-context slots is reported where the leaking
+ * loader calls begin(), names its resource and parser, and is capped at 5
+ * records a minute.  Red before: one record per call, located in utils.c's
+ * private helper, naming only a stream address. */
+void test_parse_context_exhaustion_reported_at_caller_and_capped(void)
+{
+  FILE *fp[TB_PARSE_CONTEXT_COUNT + 10];
+  int i;
+
+  for (i = 0; i < TB_PARSE_CONTEXT_COUNT + 10; i++) {
+    fp[i] = tmpfile();
+    TEST_ASSERT_NOT_NULL(fp[i]);
+    tb_parse_context_begin(fp[i], "leak.zon", "zone");
+  }
+  TEST_ASSERT_EQUAL_INT(5, count_op("parse-context-exhausted"));
+  TEST_ASSERT_NOT_NULL(strstr(log_text(), "leak.zon"));
+  TEST_ASSERT_NOT_NULL(strstr(log_text(), "parser zone"));
+  TEST_ASSERT_NOT_NULL(strstr(log_text(), "test_utils_guards.c"));
+  for (i = 0; i < TB_PARSE_CONTEXT_COUNT + 10; i++) {
+    tb_parse_context_end(fp[i]);
+    TEST_ASSERT_EQUAL_INT(0, fclose(fp[i]));
+  }
+}
+
+/* A cut breadcrumb snapshot ends in the one marker.  Red before: it used
+ * its own "...[BREADCRUMBS-TRUNCATED]". */
+void test_breadcrumb_snapshot_marks_truncation(void)
+{
+  char small[48];
+  int i;
+
+  for (i = 0; i < 8; i++)
+    tb_breadcrumb("test", "some fairly long breadcrumb detail");
+  (void)tb_breadcrumb_snapshot(small, sizeof(small));
+  TEST_ASSERT_EQUAL_size_t(sizeof(small) - 1, strlen(small));
+  TEST_ASSERT_NOT_NULL(strstr(small, "...[TRUNCATED]"));
+}
+
+/* A parser detail too long for its buffer ends in the one marker, right
+ * after the text it cut.  Red before: "...[DETAIL-TRUNCATED]". */
+void test_parse_context_error_detail_marks_truncation(void)
+{
+  char big[700];
+  FILE *fp = tmpfile();
+
+  TEST_ASSERT_NOT_NULL(fp);
+  memset(big, 'x', sizeof(big) - 1);
+  big[sizeof(big) - 1] = '\0';
+  tb_parse_context_begin(fp, "t.wld", "room");
+  TB_PARSE_CONTEXT_ERROR(fp, "%s", big);
+  TEST_ASSERT_NOT_NULL(strstr(log_text(), "xxxx...[TRUNCATED]"));
+  tb_parse_context_end(fp);
+  TEST_ASSERT_EQUAL_INT(0, fclose(fp));
+}
+
+/* tb_mark_truncated(): the marker follows the visible text, even when the
+ * text stops short of the buffer's end, and a buffer smaller than the
+ * marker still shows what fits instead of dropping it. */
+void test_mark_truncated_is_always_visible(void)
+{
+  char buf[64], tiny[6];
+
+  strlcpy(buf, "short", sizeof(buf));
+  tb_mark_truncated(buf, sizeof(buf));
+  TEST_ASSERT_EQUAL_STRING("short" TB_TRUNC_MARKER, buf);
+
+  memset(buf, 'y', sizeof(buf) - 1);
+  buf[sizeof(buf) - 1] = '\0';
+  tb_mark_truncated(buf, sizeof(buf));
+  TEST_ASSERT_EQUAL_size_t(sizeof(buf) - 1, strlen(buf));
+  TEST_ASSERT_EQUAL_STRING(TB_TRUNC_MARKER,
+                           buf + sizeof(buf) - sizeof(TB_TRUNC_MARKER));
+
+  strlcpy(tiny, "abcde", sizeof(tiny));
+  tb_mark_truncated(tiny, sizeof(tiny));
+  TEST_ASSERT_EQUAL_STRING("...[T", tiny);
+}
+
 void test_column_list_long_list_truncates_and_reports(void)
 {
   struct char_data *ch = make_player(42);
@@ -853,6 +931,10 @@ int main(void)
   RUN_TEST(test_stop_follower_without_master_reports);
   RUN_TEST(test_add_follower_twice_reports_and_keeps_one_node);
   RUN_TEST(test_get_line_long_line_tail_is_discarded_and_reported);
+  RUN_TEST(test_parse_context_exhaustion_reported_at_caller_and_capped);
+  RUN_TEST(test_breadcrumb_snapshot_marks_truncation);
+  RUN_TEST(test_parse_context_error_detail_marks_truncation);
+  RUN_TEST(test_mark_truncated_is_always_visible);
   RUN_TEST(test_get_line_exact_fit_line_is_silent);
   RUN_TEST(test_get_line_long_comment_is_skipped_silently);
   RUN_TEST(test_count_non_protocol_trailing_at_sign);
