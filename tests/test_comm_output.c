@@ -417,6 +417,22 @@ static void snooper_sees_only_sent_bytes(void)
   desc.snoop_by = NULL;
 }
 
+/* The port was narrowed to ush_int before its range check, so 70000
+ * became 4464 and was accepted; '-Cx' became fd 0. */
+static void command_line_numbers_are_range_checked(void)
+{
+  long value = -1;
+
+  TEST_ASSERT_FALSE(parse_long_arg("70000", 1025, 65535, &value));
+  TEST_ASSERT_FALSE(parse_long_arg("1024", 1025, 65535, &value));
+  TEST_ASSERT_FALSE(parse_long_arg("4000x", 1025, 65535, &value));
+  TEST_ASSERT_FALSE(parse_long_arg("", 0, MOTHER_DESC_MAX, &value));
+  TEST_ASSERT_FALSE(parse_long_arg("x", 0, MOTHER_DESC_MAX, &value));
+  TEST_ASSERT_EQUAL_INT(-1, (int)value);
+  TEST_ASSERT_TRUE(parse_long_arg("4000", 1025, 65535, &value));
+  TEST_ASSERT_EQUAL_INT(4000, (int)value);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -432,5 +448,6 @@ int main(void)
   RUN_TEST(send_to_range_includes_last_room);
   RUN_TEST(failed_log_open_keeps_stream);
   RUN_TEST(snooper_sees_only_sent_bytes);
+  RUN_TEST(command_line_numbers_are_range_checked);
   return UNITY_END();
 }

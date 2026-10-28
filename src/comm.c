@@ -189,6 +189,31 @@ static void msdp_update(void); /* KaVir plugin*/
 #define FD_CLR(x, y)
 #endif
 
+/* Parse a whole decimal command-line argument into [min, max]. FALSE for
+ * empty text, trailing characters, overflow or a value out of range; the
+ * caller reports it. */
+static bool parse_long_arg(const char *text, long min, long max, long *out)
+{
+  char *end;
+  long value;
+
+  if (text == NULL || *text == '\0')
+    return FALSE;
+  errno = 0;
+  value = strtol(text, &end, 10);
+  if (*end != '\0' || errno == ERANGE || value < min || value > max)
+    return FALSE;
+  *out = value;
+  return TRUE;
+}
+
+/* Highest descriptor accepted for the copyover control socket. */
+#ifdef CIRCLE_WINDOWS
+#define MOTHER_DESC_MAX LONG_MAX
+#else
+#define MOTHER_DESC_MAX ((long) FD_SETSIZE - 1)
+#endif
+
 /*  main game loop and related stuff */
 
 #if defined(CIRCLE_WINDOWS) || defined(CIRCLE_MACINTOSH)
@@ -274,8 +299,23 @@ int main(int argc, char **argv)
       }
       break;
     case 'C': /* -C<socket number> - recover from copyover, this is the control socket */
+      {
+       /* Written by do_copyover() when it exec()s us. A bad value used to
+        * become 0 (stdin) silently; the mother socket must be an open
+        * descriptor select() can watch. */
+       long fd;
+       if (!parse_long_arg(argv[pos] + 2, 0, MOTHER_DESC_MAX, &fd)) {
+         char fd_context[96];
+         tb_snprintf(fd_context, sizeof(fd_context),
+                     "illegal copyover control socket '%.40s' (want 0..%ld)",
+                     argv[pos] + 2, (long) MOTHER_DESC_MAX);
+         TB_REPORT_DOMAIN_ERROR(TB_SEV_FATAL, TB_ERR_BOOT,
+                                "parse-copyover-fd", fd_context);
+         exit(1);
+       }
        fCopyOver = TRUE;
-       mother_desc = tb_parse_int_or_zero(argv[pos]+2);
+       mother_desc = (socket_t) fd;
+      }
       break;
     case 'd':
       if (*(argv[pos] + 2))
@@ -338,17 +378,23 @@ int main(int argc, char **argv)
   }
 
   if (pos < argc) {
-    if (!isdigit(*argv[pos])) {
+    long parsed_port;
+
+    if (!isdigit((unsigned char) *argv[pos])) {
       printf("Usage: %s [-c] [-m] [-q] [-r] [-s] [-d pathname] [port #]\n", argv[0]);
       exit(1);
-    } else if ((port = tb_parse_int_or_zero(argv[pos])) <= 1024) {
+    }
+    /* Range-checked before narrowing: 'port' is a ush_int, so a value such
+     * as 70000 used to wrap to 4464 and pass the old '> 1024' test. */
+    if (!parse_long_arg(argv[pos], 1025, 65535, &parsed_port)) {
       char port_context[96];
       tb_snprintf(port_context, sizeof(port_context),
-                  "illegal port number %d from argument '%s'", port, argv[pos]);
+                  "illegal port number '%.40s' (want 1025..65535)", argv[pos]);
       TB_REPORT_DOMAIN_ERROR(TB_SEV_FATAL, TB_ERR_BOOT,
                              "parse-port", port_context);
       exit(1);
     }
+    port = (ush_int) parsed_port;
   }
 
   /* All arguments have been parsed, try to open log file. */
