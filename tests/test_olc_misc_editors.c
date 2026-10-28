@@ -1015,6 +1015,26 @@ static void test_aedit_rejects_out_of_range_position_and_level(void)
   TEST_ASSERT_EQUAL_INT(5, OLC_ACTION(&builder_desc)->min_level_char);
 }
 
+/* F2-25: a message starting with '#' would be read back as "no message"
+ * at the next boot; it is refused loudly and the old text is kept. */
+static void test_aedit_rejects_reserved_hash_prefix(void)
+{
+  char cmd[] = " smile";
+
+  do_oasis_aedit(&builder, cmd, 0, 0);
+  type("y");
+  type("a");
+  TEST_ASSERT_EQUAL_INT(AEDIT_NOVICT_CHAR, OLC_MODE(&builder_desc));
+  type("#1 fan smiles");
+  TEST_ASSERT_EQUAL_STRING("message-reserved-prefix", tb_captured_operation);
+  TEST_ASSERT_EQUAL_INT(AEDIT_NOVICT_CHAR, OLC_MODE(&builder_desc));
+  TEST_ASSERT_EQUAL_STRING("You smile.", OLC_ACTION(&builder_desc)->char_no_arg);
+  type("You grin, #1 fan.");
+  TEST_ASSERT_EQUAL_INT(AEDIT_MAIN_MENU, OLC_MODE(&builder_desc));
+  TEST_ASSERT_EQUAL_STRING("You grin, #1 fan.", OLC_ACTION(&builder_desc)->char_no_arg);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+}
+
 /* F2-09: a bad stored position (from the socials file) is shown as invalid
  * by the level-0 astat, with a warning, not read out of bounds. */
 static void test_astat_bad_stored_position_is_reported(void)
@@ -1292,6 +1312,7 @@ int main(void)
   RUN_TEST(test_tedit_save_commits_file_then_text);
   RUN_TEST(test_aedit_rejects_out_of_range_position_and_level);
   RUN_TEST(test_astat_bad_stored_position_is_reported);
+  RUN_TEST(test_aedit_rejects_reserved_hash_prefix);
   RUN_TEST(test_qedit_delete_unsaved_quest_is_refused_loudly);
   RUN_TEST(test_qedit_delete_saved_quest);
   RUN_TEST(test_qedit_save_frees_editor_strings);

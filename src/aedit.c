@@ -380,6 +380,22 @@ static void aedit_disp_menu(struct descriptor_data * d) {
 void aedit_parse(struct descriptor_data * d, char *arg) {
    int i;
 
+   /* fread_action() (db.c) reads any socials-file message line that starts
+    * with '#' as "no message", which is also how aedit_save_to_disk writes a
+    * NULL field.  A builder message such as "#1 fan smiles" was saved
+    * verbatim and silently vanished at the next boot, so refuse the prefix
+    * here, before the field's old text is freed, and re-prompt. */
+   if (OLC_MODE(d) >= AEDIT_NOVICT_CHAR && OLC_MODE(d) <= AEDIT_OBJ_OTHERS_FOUND &&
+       *arg == '#') {
+      TB_WARN_MSG("olc", "message-reserved-prefix", "socials",
+                  "social '%s' rnum %d mode %d input length %zu editor " DIAG_CHAR_FMT,
+                  OLC_ACTION(d)->command ? OLC_ACTION(d)->command : "(null)",
+                  (int)OLC_ZNUM(d), OLC_MODE(d), strlen(arg), DIAG_CHAR(d->character));
+      write_to_output(d, "A social message may not start with '#' (the socials file "
+                         "reads that as \"no message\").\r\n[NEW]: ");
+      return;
+   }
+
    switch (OLC_MODE(d)) {
     case AEDIT_CONFIRM_SAVESTRING:
       switch (*arg) {
@@ -674,6 +690,8 @@ void aedit_parse(struct descriptor_data * d, char *arg) {
       OLC_ACTION(d)->min_level_char = i;
       break;
 
+    /* AEDIT_NOVICT_CHAR .. AEDIT_OBJ_OTHERS_FOUND (the 15 message fields)
+     * first pass the reserved-prefix check above the switch. */
     case AEDIT_NOVICT_CHAR:
       if (OLC_ACTION(d)->char_no_arg)
         free(OLC_ACTION(d)->char_no_arg);
