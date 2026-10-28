@@ -2708,6 +2708,9 @@ int script_driver(void *go_adress, trig_data *trig, int type, int mode)
   }
 
   if (depth > MAX_SCRIPT_DEPTH) {
+    TB_ERROR_MSG("dg", "script-recursion", "script_driver",
+                 "trigger %d exceeded MAX_SCRIPT_DEPTH=%d (type=%d); its script "
+                 "is being extracted", GET_TRIG_VNUM(trig), MAX_SCRIPT_DEPTH, type);
     script_log("Trigger %d recursed beyond maximum allowed depth.", GET_TRIG_VNUM(trig));
     switch (type) {
       case MOB_TRIGGER:
@@ -2732,6 +2735,25 @@ int script_driver(void *go_adress, trig_data *trig, int type, int mode)
      * next mob. We make the calling code decide how to handle it, so it does
      * not get totally removed unless it's a load_xtrigger(). */
     return SCRIPT_ERROR_CODE;
+  }
+
+  /* Every diagnostic raised while this trigger runs carries this breadcrumb,
+   * so an error deep in a callback names the trigger and owner behind it. */
+  switch (type) {
+    case MOB_TRIGGER:
+      tb_breadcrumbf("dg", "run trig=%d mob vnum=%d uid=%ld depth=%d",
+                     GET_TRIG_VNUM(trig), GET_MOB_VNUM((char_data *) go),
+                     ((char_data *) go)->script_id, depth);
+      break;
+    case OBJ_TRIGGER:
+      tb_breadcrumbf("dg", "run trig=%d obj vnum=%d uid=%ld depth=%d",
+                     GET_TRIG_VNUM(trig), GET_OBJ_VNUM((obj_data *) go),
+                     ((obj_data *) go)->script_id, depth);
+      break;
+    case WLD_TRIGGER:
+      tb_breadcrumbf("dg", "run trig=%d room vnum=%d depth=%d",
+                     GET_TRIG_VNUM(trig), ((room_data *) go)->number, depth);
+      break;
   }
 
   depth++;
