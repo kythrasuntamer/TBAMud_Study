@@ -789,26 +789,26 @@ static void run_changelog(const char *initial, const char *text,
 
   TEST_ASSERT_NOT_NULL(dir);
   TEST_ASSERT_NOT_NULL(getcwd(old_cwd, sizeof(old_cwd)));
-  snprintf(path, sizeof(path), "%s/lib", dir);
+  (void) snprintf(path, sizeof(path), "%s/lib", dir);
   TEST_ASSERT_EQUAL_INT(0, mkdir(path, 0700));
   if (initial) {
-    snprintf(path, sizeof(path), "%s/changelog", dir);
+    (void) snprintf(path, sizeof(path), "%s/changelog", dir);
     fp = fopen(path, "w");
     TEST_ASSERT_NOT_NULL(fp);
-    fputs(initial, fp);
-    fclose(fp);
+    TEST_ASSERT_TRUE(fputs(initial, fp) >= 0);
+    TEST_ASSERT_EQUAL_INT(0, fclose(fp));
   }
-  snprintf(path, sizeof(path), "%s/lib", dir);
+  (void) snprintf(path, sizeof(path), "%s/lib", dir);
   TEST_ASSERT_EQUAL_INT(0, chdir(path));
   RUN_CMD(do_changelog, &imm, text);
   out[0] = '\0';
   if ((fp = fopen(CHANGE_LOG_FILE, "r")) != NULL) {
     n = fread(out, 1, outsize - 1, fp);
     out[n] = '\0';
-    fclose(fp);
+    TEST_ASSERT_EQUAL_INT(0, fclose(fp));
   }
-  remove(CHANGE_LOG_FILE);
-  remove(CHANGE_LOG_FILE ".bak");
+  (void) remove(CHANGE_LOG_FILE);
+  (void) remove(CHANGE_LOG_FILE ".bak");
   TEST_ASSERT_EQUAL_INT(0, chdir(old_cwd));
   TEST_ASSERT_EQUAL_INT(0, rmdir(path));
   TEST_ASSERT_EQUAL_INT(0, rmdir(dir));
@@ -840,24 +840,40 @@ static void test_changelog_empty_preamble_and_failure(void)
   TEST_ASSERT_NOT_NULL(strstr(sent, "Could not update"));
 }
 
+/* Remove the per-player directory trees make_file() created in the cwd. */
+static void remove_player_dirs(void)
+{
+  static const char *const dirs[] = { "plrfiles", "plrobjs", "plrvars", "plrtext" };
+  char path[64];
+  size_t i;
+
+  for (i = 0; i < sizeof(dirs) / sizeof(dirs[0]); i++) {
+    (void) snprintf(path, sizeof(path), "%s/A-E", dirs[i]);
+    TEST_ASSERT_EQUAL_INT(0, rmdir(path));
+    (void) snprintf(path, sizeof(path), "%s/P-T", dirs[i]);
+    TEST_ASSERT_EQUAL_INT(0, rmdir(path));
+    TEST_ASSERT_EQUAL_INT(0, rmdir(dirs[i]));
+  }
+}
+
 /* Create <dir>/<path> (and its parent) with some content. */
 static void make_file(const char *dir, const char *sub, const char *name)
 {
   char path[512];
   FILE *fp;
-  snprintf(path, sizeof(path), "%s/%s", dir, sub);
+  (void) snprintf(path, sizeof(path), "%s/%s", dir, sub);
   mkdir(path, 0700);
-  snprintf(path, sizeof(path), "%s/%s/A-E", dir, sub);
+  (void) snprintf(path, sizeof(path), "%s/%s/A-E", dir, sub);
   mkdir(path, 0700);
-  snprintf(path, sizeof(path), "%s/%s/P-T", dir, sub);
+  (void) snprintf(path, sizeof(path), "%s/%s/P-T", dir, sub);
   mkdir(path, 0700);
   if (!name)
     return;
-  snprintf(path, sizeof(path), "%s/%s/%s", dir, sub, name);
+  (void) snprintf(path, sizeof(path), "%s/%s/%s", dir, sub, name);
   fp = fopen(path, "w");
   TEST_ASSERT_NOT_NULL(fp);
-  fputs("data\n", fp);
-  fclose(fp);
+  TEST_ASSERT_TRUE(fputs("data\n", fp) >= 0);
+  TEST_ASSERT_EQUAL_INT(0, fclose(fp));
 }
 
 /* G1-15/16/17: change_player_name built "mv old new" and never ran it, so
@@ -906,7 +922,7 @@ static void test_rename_moves_player_files_and_checks_the_index(void)
   {
     FILE *fp = fopen("plrfiles/A-E/bobby.plr", "w");
     TEST_ASSERT_NOT_NULL(fp);
-    fclose(fp);
+    TEST_ASSERT_EQUAL_INT(0, fclose(fp));
   }
   TEST_ASSERT_FALSE(change_player_name(&imm, &target, (char[]){"bobby"}));
   TEST_ASSERT_EQUAL_STRING("rename-player-file", captured_operation);
@@ -920,10 +936,10 @@ static void test_rename_moves_player_files_and_checks_the_index(void)
   TEST_ASSERT_EQUAL_STRING("rename-index", captured_operation);
   TEST_ASSERT_NOT_NULL(strstr(captured_detail, "idnum 999"));
 
-  remove("plrfiles/A-E/bobby.plr");
-  remove("plrfiles/P-T/robert.plr");
-  remove("plrobjs/P-T/robert.objs");
-  TEST_ASSERT_EQUAL_INT(0, system("rm -r plrfiles plrobjs plrvars plrtext"));
+  (void) remove("plrfiles/A-E/bobby.plr");
+  (void) remove("plrfiles/P-T/robert.plr");
+  (void) remove("plrobjs/P-T/robert.objs");
+  remove_player_dirs();
   TEST_ASSERT_EQUAL_INT(0, chdir(old_cwd));
   TEST_ASSERT_EQUAL_INT(0, rmdir(dir));
   free(GET_PC_NAME(&target));
@@ -957,7 +973,7 @@ static void test_last_file_torn_tail_is_reported_and_repaired(void)
   TEST_ASSERT_NOT_NULL(fp);
   TEST_ASSERT_EQUAL_INT(2, (int) fwrite(rec, sizeof(rec[0]), 2, fp));
   TEST_ASSERT_EQUAL_INT(1, (int) fwrite(junk, sizeof(junk), 1, fp));
-  fclose(fp);
+  TEST_ASSERT_EQUAL_INT(0, fclose(fp));
 
   found = find_llog_entry(770, 77);
   TEST_ASSERT_NOT_NULL(found);
@@ -973,7 +989,7 @@ static void test_last_file_torn_tail_is_reported_and_repaired(void)
   fp = fopen(LAST_FILE, "rb");
   TEST_ASSERT_NOT_NULL(fp);
   TEST_ASSERT_EQUAL_INT(2, (int) fread(rec, sizeof(rec[0]), 2, fp));
-  fclose(fp);
+  TEST_ASSERT_EQUAL_INT(0, fclose(fp));
   TEST_ASSERT_EQUAL_INT(LAST_QUIT, rec[1].close_type);
   TEST_ASSERT_EQUAL_INT(5, rec[0].idnum);
 
@@ -987,7 +1003,7 @@ static void test_last_file_torn_tail_is_reported_and_repaired(void)
   TEST_ASSERT_EQUAL_STRING("last-file-align", captured_operation);
   target_specials.host = NULL;
 
-  remove(LAST_FILE);
+  (void) remove(LAST_FILE);
   TEST_ASSERT_EQUAL_INT(0, rmdir("etc"));
   TEST_ASSERT_EQUAL_INT(0, chdir(old_cwd));
   TEST_ASSERT_EQUAL_INT(0, rmdir(dir));
@@ -1319,7 +1335,7 @@ int main(void)
   {
     int failures = UNITY_END();
     if (logfile)
-      fclose(logfile);
+      (void) fclose(logfile);
     return failures;
   }
 }

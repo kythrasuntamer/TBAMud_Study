@@ -1091,7 +1091,8 @@ static void do_stat_character(struct char_data *ch, struct char_data *k)
 
   if (IS_NPC(k)) {
     /* attack_type comes from the mob file ('BareHandAttack') or medit. */
-    int atype = k->mob_specials.attack_type;
+    /* byte is signed: keep the sign so a negative value is reported. */
+    int atype = (int) k->mob_specials.attack_type;
 
     if (VALID_ATTACK_TYPE(atype))
       send_to_char(ch, ", Attack type: %s", attack_hit_text[atype].singular);
@@ -4396,7 +4397,7 @@ ACMD (do_zcheck)
       for (j=0;j<MAX_OBJ_AFFECT;j++) {
         /* The location comes from the object file's 'A' line or oedit and
          * is not range-checked at load (db.c). */
-        int loc = obj->affected[j].location;
+        int loc = (int) obj->affected[j].location;   /* signed byte: keep the sign */
         const struct zcheck_affs *za;
 
         if (!TABLE_INDEX_OK(loc, TB_ARRAY_LEN(zaffs))) {
@@ -5237,12 +5238,18 @@ ACMD(do_changelog)
       ok &= tb_fprintf_checked(new, CHANGE_LOG_FILE, "%s", header);
   }
 
-  /* The rest of the file, byte for byte. */
-  while ((n = fread(line, 1, sizeof(line), fl)) > 0)
-    if (fwrite(line, 1, n, new) != n) {
-      TB_ERROR_ERRNO("act", "changelog-write", CHANGE_LOG_FILE, "copy of the old entries failed");
-      ok = 0;
-      break;
+  /* The rest of the file, byte for byte. Without a header the preamble
+   * loop already read to EOF (or failed) and there is nothing left. */
+  if (found_header && !ferror(fl) && !feof(fl))
+    for (;;) {
+      n = fread(line, 1, sizeof(line), fl);
+      if (n > 0 && fwrite(line, 1, n, new) != n) {
+        TB_ERROR_ERRNO("act", "changelog-write", CHANGE_LOG_FILE, "copy of the old entries failed");
+        ok = 0;
+        break;
+      }
+      if (n < sizeof(line))   /* EOF or a read error (checked below) */
+        break;
     }
   if (ferror(fl)) {
     TB_ERROR_ERRNO("act", "changelog-read", bak, "read of the old entries failed");
