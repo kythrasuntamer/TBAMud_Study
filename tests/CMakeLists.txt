@@ -431,7 +431,8 @@ if(Python3_Interpreter_FOUND)
                 autowiz=$<TARGET_FILE:autowiz>
                 plrtoascii=$<TARGET_FILE:plrtoascii>
                 rebuildMailIndex=$<TARGET_FILE:rebuildMailIndex>
-                rebuildIndex=$<TARGET_FILE:rebuildIndex>)
+                rebuildIndex=$<TARGET_FILE:rebuildIndex>
+                shopconv=$<TARGET_FILE:shopconv>)
 endif()
 
 # Production utils.c guards (column_list, followers, get_line, colour

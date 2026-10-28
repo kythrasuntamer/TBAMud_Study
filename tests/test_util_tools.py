@@ -265,6 +265,43 @@ def rebuild_index_reports_duplicate_tag(tmp):
     check(lines == [], "%r" % lines)
 
 
+# --------------------------------------------------------------- shopconv
+
+def shop_220(misc3="0", ratio="1.5"):
+    """A one-shop 2.20 shop file (fields as boot_the_shops_conv reads them)."""
+    return ("#30~\n" + "".join("%d\n" % v for v in (3001, 3002, 0, 0, 0)) +
+            "%s\n0.5\n" % ratio + "".join("%d\n" % v for v in (1, 2, 0, 0, 0)) +
+            "".join("msg %d~\n" % i for i in range(7)) +
+            "0\n0\n%s\n3000\n0\n" % misc3 + "0\n28\n0\n0\n$~\n")
+
+
+def shopconv(tmp, text):
+    path = os.path.join(tmp, "30.shp")
+    write(path, text)
+    rc, out, err = run("shopconv", ["30.shp"], tmp)
+    return rc, read(path), err
+
+
+@test("shopconv")
+def shopconv_converts_valid_file(tmp):
+    rc, out, err = shopconv(tmp, shop_220())
+    check(rc == 0, "rc=%d err=%s" % (rc, err))
+    check(out.startswith("CircleMUD v3.0 Shop File~\n#30~\n") and
+          out.rstrip().endswith("$~"), out)
+
+
+@test("shopconv")
+def shopconv_restores_original_on_bad_field(tmp):
+    """I2-10: exit(1) mid-shop left a half-converted file under the live name."""
+    original = shop_220(misc3="XX")
+    rc, out, err = shopconv(tmp, original)
+    check(rc == 1, "rc=%d" % rc)
+    check("shop-field-parse" in operations(err), err)
+    check("shop #30 in shop file 30.shp field=misc entry=3" in err, err)
+    check(out == original, "original not restored:\n" + out)
+    check(not os.path.exists(os.path.join(tmp, "30.shp.tmp")), "tmp left")
+
+
 # ------------------------------------------------------------- plrtoascii
 
 def plr_record_size(tmp):

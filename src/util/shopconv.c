@@ -114,7 +114,36 @@ char *fread_string(FILE * fl, const char *error)
   return rslt;
 }
 
-void do_list(FILE * shop_f, FILE * newshop_f, int max)
+/*
+ * Field converters.  Each returns 1 on success, or 0 after reporting
+ * "shop-field-parse" naming where (buf2: "shop #N in shop file F"), which
+ * field and which entry of it failed.  They never exit: main() has already
+ * moved the original to "<file>.tmp" and opened "<file>" for output, and
+ * only its failure path (boot_the_shops_conv() returning 1) puts the
+ * original back.  An exit() here used to leave a half-converted shop file
+ * under the live name and the original where the server never reads it.
+ */
+/* Consume the whitespace (including the newline) after a numeric field, as
+ * the original fscanf(shop_f, "%d \n") did.  Without it the next
+ * fread_string() starts with the leftover "\n", so the following "#vnum~" or
+ * "$~" line reads as "\n#vnum" and no 2.20 file converted.  Not used after
+ * do_list()'s numbers, whose line remainder is read with fgets(). */
+static void skip_field_space(FILE *stream)
+{
+  int ch;
+
+  while ((ch = fgetc(stream)) != EOF && isspace(ch))
+    ;
+  if (ch != EOF)
+    ungetc(ch, stream);
+}
+
+#define SHOP_FIELD_ERROR(where, field, ordinal) \
+  TB_REPORT_DOMAIN_ERRORF(TB_SEV_ERROR, TB_ERR_PARSER, "shop-field-parse", \
+                          "%s field=%s entry=%d", (where), (field), (ordinal))
+
+int do_list(FILE * shop_f, FILE * newshop_f, int max, const char *where,
+            const char *field)
 {
   int count, temp;
   char buf[MAX_STRING_LENGTH];
@@ -122,56 +151,64 @@ void do_list(FILE * shop_f, FILE * newshop_f, int max)
   for (count = 0; count < max; count++) {
     if (!read_int_token(shop_f, &temp) ||
         fgets(buf, MAX_STRING_LENGTH - 1, shop_f) == NULL) {
-      tb_fprintf(stderr, "shopconv: malformed product list\n");
-      exit(1);
+      SHOP_FIELD_ERROR(where, field, count + 1);
+      return 0;
     }
     if (temp > 0)
       tb_fprintf(newshop_f, "%d%s", temp, buf);
   }
 
   tb_fprintf(newshop_f, "-1\n");
+  return 1;
 }
 
 
-void do_float(FILE * shop_f, FILE * newshop_f)
+int do_float(FILE * shop_f, FILE * newshop_f, const char *where,
+             const char *field)
 {
   float f;
   char str[20];
   if (!read_float_token(shop_f, &f)) {
-    tb_fprintf(stderr, "shopconv: malformed floating-point field\n");
-    exit(1);
+    SHOP_FIELD_ERROR(where, field, 1);
+    return 0;
   }
+  skip_field_space(shop_f);
   tb_snprintf(str, sizeof(str), "%f", f);
   while ((str[strlen(str) - 1] == '0') && (str[strlen(str) - 2] != '.'))
     str[strlen(str) - 1] = 0;
   tb_fprintf(newshop_f, "%s \n", str);
+  return 1;
 }
 
 
-void do_int(FILE * shop_f, FILE * newshop_f)
+int do_int(FILE * shop_f, FILE * newshop_f, const char *where,
+           const char *field, int ordinal)
 {
   int i;
 
   if (!read_int_token(shop_f, &i)) {
-    tb_fprintf(stderr, "shopconv: malformed integer field\n");
-    exit(1);
+    SHOP_FIELD_ERROR(where, field, ordinal);
+    return 0;
   }
+  skip_field_space(shop_f);
   tb_fprintf(newshop_f, "%d \n", i);
+  return 1;
 }
 
 
-void do_string(FILE * shop_f, FILE * newshop_f, char *msg)
+int do_string(FILE * shop_f, FILE * newshop_f, const char *where,
+              const char *field, int ordinal)
 {
   char *ptr;
 
-  ptr = fread_string(shop_f, msg);
+  ptr = fread_string(shop_f, where);
   if (ptr == NULL) {
-    tb_fprintf(stderr, "shopconv: failed reading string field near %s\n",
-               msg ? msg : "(unknown field)");
-    exit(1);
+    SHOP_FIELD_ERROR(where, field, ordinal);
+    return 0;
   }
   tb_fprintf(newshop_f, "%s~\n", ptr);
   free(ptr);
+  return 1;
 }
 
 
@@ -199,21 +236,24 @@ static int boot_the_shops_conv(FILE * shop_f, FILE * newshop_f, char *filename)
       free(buf);		/* Plug memory leak! */
       printf("   #%d\n", temp);
 
-      do_list(shop_f, newshop_f, MAX_PROD);	/* Produced Items */
-
-      do_float(shop_f, newshop_f);	/* Ratios */
-      do_float(shop_f, newshop_f);
-
-      do_list(shop_f, newshop_f, MAX_TRADE);	/* Bought Items */
+      /* Produced items, buy/sell ratios, bought items. */
+      if (!do_list(shop_f, newshop_f, MAX_PROD, buf2, "produced") ||
+          !do_float(shop_f, newshop_f, buf2, "profit-buy") ||
+          !do_float(shop_f, newshop_f, buf2, "profit-sell") ||
+          !do_list(shop_f, newshop_f, MAX_TRADE, buf2, "trade"))
+        return 1;
 
       for (count = 0; count < 7; count++)	/* Keeper msgs */
-	do_string(shop_f, newshop_f, buf2);
+	if (!do_string(shop_f, newshop_f, buf2, "message", count + 1))
+	  return 1;
 
       for (count = 0; count < 5; count++)	/* Misc   */
-	do_int(shop_f, newshop_f);
+	if (!do_int(shop_f, newshop_f, buf2, "misc", count + 1))
+	  return 1;
       tb_fprintf(newshop_f, "-1\n");
       for (count = 0; count < 4; count++)	/* Open/Close     */
-	do_int(shop_f, newshop_f);
+	if (!do_int(shop_f, newshop_f, buf2, "open-close", count + 1))
+	  return 1;
 
     } else {
       if (*buf == '$') {	/* EOF */
@@ -236,7 +276,7 @@ int main(int argc, char *argv[])
 {
   FILE *sfp, *nsfp;
   char fn[120], part[256], backup[256];
-  int result, index;
+  int result, index, failures = 0;
 
   if (argc < 2) {
     printf("Usage: shopconv <file1> [file2] [file3] ...\n");
@@ -276,10 +316,17 @@ int main(int argc, char *argv[])
       tb_fclose(nsfp);
       tb_fclose(sfp);
       if (result) {
+	      /* Put the original back over the partial output (rename replaces
+	       * it atomically on POSIX). */
 	      if (rename(part, fn) != 0) {
 	        TB_REPORT_ERRNO("rename", part);
 	        exit(1);
 	      }
+	      TB_REPORT_DOMAIN_ERRORF(TB_SEV_ERROR, TB_ERR_PARSER,
+	                              "shop-conversion-aborted",
+	                              "file=%s: not converted; original restored",
+	                              fn);
+	      failures++;
       } else {
 	      if (snprintf(backup, sizeof(backup), "%s.bak", fn) >= (int)sizeof(backup)) {
 	        tb_fprintf(stderr, "shopconv: backup filename too long: %s\n", fn);
@@ -294,5 +341,5 @@ int main(int argc, char *argv[])
     }
   }
 
-  return (0);
+  return (failures ? 1 : 0);
 }
