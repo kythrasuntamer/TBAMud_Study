@@ -11,6 +11,26 @@
 *
 * @todo Come up with a standard for descriptive arrays. Either all end with
 * newlines or all of them don not.
+*
+* Table conventions (read before adding a constant to structs.h):
+*  - Name tables that "must end with a single newline" have exactly one
+*    entry per value plus a final "\n" sentinel, i.e. NUM_x + 1 entries.
+*    sprinttype(), sprintbit() and get_flag_by_name() walk them until the
+*    sentinel, so a missing name shifts every later name by one and a
+*    lookup past the end reads the sentinel (or beyond).  connected_types
+*    and preference_bits are checked against their bounds at compile time
+*    at the bottom of this file; add such a check when you touch another.
+*  - Tables with no sentinel (wear_where, fullness, weekdays, month_name,
+*    rev_dir, movement_loss, drink_aff and the *_app attribute tables) are
+*    indexed directly: callers must pass an index already validated against
+*    the matching NUM_x / range, as nothing here can check it.
+*  - affected_bits[0] is "\0" on purpose (AFF_ flags start at 1).  Beware:
+*    get_flag_by_name() (utils.c) stops at the first empty entry, so a
+*    by-name lookup in affected_bits stops at index 0 and finds nothing.
+*  - The *_count globals at the bottom exist for five tables only (room,
+*    action, affected, extra and wear bits), count names without the
+*    sentinel, and are mutable globals: treat them as read-only.
+*  - Every table is static data: no ownership or lifetime concerns.
 */
 
 #include "conf.h"
