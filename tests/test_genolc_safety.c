@@ -465,6 +465,56 @@ static void free_object_strings_proto_reports_bad_rnum(void)
 }
 
 /* ------------------------------------------------------------------------ */
+/* C2-05: delete_quest() range check and questmaster rnum.                  */
+/* ------------------------------------------------------------------------ */
+static SPECIAL(original_spec) { (void)ch; (void)me; (void)cmd; (void)argument; return 0; }
+
+static void make_mobs(int count, int first_vnum)
+{
+  int i;
+  top_of_mobt = count - 1;
+  CREATE(mob_index, struct index_data, count);
+  for (i = 0; i < count; i++)
+    mob_index[i].vnum = first_vnum + i;
+}
+
+static void make_quest(qst_vnum vnum, mob_vnum qm)
+{
+  total_quests = 1;
+  CREATE(aquest_table, struct aq_data, 1);
+  aquest_table[0].vnum = vnum;
+  aquest_table[0].qm = qm;
+  aquest_table[0].func = original_spec;
+}
+
+static void delete_quest_rejects_nothing(void)
+{
+  make_zones(1);
+  TEST_ASSERT_FALSE(delete_quest(NOTHING));
+  TEST_ASSERT_EQUAL_STRING("quest-delete-range", tb_captured_operation);
+}
+
+/* qm 3005 is a vnum far above top_of_mobt: it must be resolved, not used
+ * as an index (the old code wrote mob_index[3005].func). */
+static void delete_quest_reports_missing_questmaster(void)
+{
+  make_zones(1); make_mobs(10, 0);
+  make_quest(50, 3005);
+  TEST_ASSERT_TRUE(delete_quest(0));
+  TEST_ASSERT_EQUAL_STRING("quest-delete-qm", tb_captured_operation);
+}
+
+static void delete_quest_restores_spec_on_questmaster_rnum(void)
+{
+  make_zones(1); make_mobs(3, 3004);
+  mob_index[1].func = questmaster;
+  make_quest(50, 3005);
+  TEST_ASSERT_TRUE(delete_quest(0));
+  TEST_ASSERT_TRUE(mob_index[1].func == original_spec);
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+}
+
+/* ------------------------------------------------------------------------ */
 /* Temporary world directory for the writers.                               */
 /* ------------------------------------------------------------------------ */
 static char test_root[] = "/tmp/tb-genolc-XXXXXX";
@@ -517,6 +567,9 @@ int main(void)
   RUN_TEST(delete_zone_command_reports_bad_position);
   RUN_TEST(delete_object_keeps_nothing_rnum);
   RUN_TEST(free_object_strings_proto_reports_bad_rnum);
+  RUN_TEST(delete_quest_rejects_nothing);
+  RUN_TEST(delete_quest_reports_missing_questmaster);
+  RUN_TEST(delete_quest_restores_spec_on_questmaster_rnum);
   failures = UNITY_END();
   leave_test_root();
   return failures;

@@ -130,13 +130,22 @@ int delete_quest(qst_rnum rnum)
 {
   qst_rnum i;
   zone_rnum rznum;
-  mob_vnum qm = QST_MASTER(rnum);
+  mob_vnum qm;
+  qst_vnum qvnum;
+  mob_rnum qmr;
   SPECIAL (*tempfunc);
   int  quests_remaining = 0;
 
-  if (rnum >= total_quests)
+  /* qedit can confirm 'delete' on a quest that was never saved, so the
+   * caller's real_quest() may return NOTHING; check before any table read. */
+  if (rnum == NOTHING || rnum >= total_quests) {
+    TB_ERROR_MSG("olc", "quest-delete-range", "quest",
+                 "rnum %d out of range 0..%d", (int)rnum, (int)total_quests - 1);
     return FALSE;
-  rznum = real_zone_by_thing(QST_NUM(rnum)); 
+  }
+  qm = QST_MASTER(rnum);
+  qvnum = QST_NUM(rnum);
+  rznum = real_zone_by_thing(QST_NUM(rnum));
   log("GenOLC: delete_quest: Deleting quest #%d (%s).",
        QST_NUM(rnum), QST_NAME(rnum));
   /* make a note of the quest master's secondary spec proc */
@@ -159,14 +168,21 @@ int delete_quest(qst_rnum rnum)
   else
     mudlog(BRF, LVL_BUILDER, TRUE,
            "SYSERR: GenOLC: Cannot determine quest zone.");
-  /* does the questmaster mob have any quests left? */
+  /* does the questmaster mob have any quests left?  QST_MASTER is a mob
+   * VNUM; mob_index[] must be indexed by the prototype's rnum. */
   if (qm != NOBODY) {
     for (i = 0; i < total_quests; i++) {
       if (QST_MASTER(i) == qm)
         quests_remaining++;
     }
-    if (quests_remaining == 0)
-      mob_index[qm].func = tempfunc; // point back to original spec proc
+    if (quests_remaining == 0) {
+      if ((qmr = real_mobile(qm)) == NOBODY)
+        TB_WARN_MSG("olc", "quest-delete-qm", "quest",
+                    "quest vnum %d: questmaster mob vnum %d has no prototype; "
+                    "spec proc not restored", qvnum, qm);
+      else
+        mob_index[qmr].func = tempfunc; /* point back to original spec proc */
+    }
   }
   return TRUE;
 }
