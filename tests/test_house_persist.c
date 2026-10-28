@@ -17,6 +17,7 @@
 #include "handler.h"
 #include "interpreter.h"
 #include "house.h"
+#include <limits.h>
 #include <stdarg.h>
 #include <stdint.h>
 #include <sys/stat.h>
@@ -989,6 +990,30 @@ static void test_house_load_odd_locs_are_reported(void)
   TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail_log, "wear-slot Loc 3"));
 }
 
+/* P2 gate (fuzz_player regression-house-loc-intmin): a Loc of INT_MIN made
+ * House_place_obj()'s "j > -locate" overflow (UB). A Loc nested deeper than
+ * OBJSAVE_LOC_MAX_DEPTH is an error naming the house and the object, and
+ * the object goes on the floor; pending contents still spill, reported. */
+static void test_house_load_int_min_loc_is_an_error(void)
+{
+  struct obj_data *gem = new_obj(ITEM_OTHER, 3);
+  struct obj_data *odd = new_obj(ITEM_OTHER, 1);
+
+  queue_parsed(gem, -2);
+  queue_parsed(odd, INT_MIN);
+
+  boot_house_with_queue();
+
+  TEST_ASSERT_EQUAL_INT(2, floor_count());
+  TEST_ASSERT_EQUAL_INT(0, IN_ROOM(odd));
+  TEST_ASSERT_EQUAL_INT(0, IN_ROOM(gem));
+  TEST_ASSERT_EQUAL_STRING("house-loc-range\nhouse-nesting\n", tb_captured_op_log);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail_log,
+                              "house vnum 100 obj vnum"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail_log,
+                              "has Loc -2147483648, nested deeper than 1000"));
+}
+
 /* Fuzzer PLAYER-2 (hcontrol-time): built_on and last_payment come from the
  * binary hcontrol file and can be any time_t. localtime() returns NULL for
  * one it cannot represent, and tb_strftime() then left the listing's
@@ -1043,6 +1068,7 @@ int main(void)
   RUN_TEST(test_house_load_flat_file_stays_flat);
   RUN_TEST(test_house_load_orphaned_contents_go_on_the_floor);
   RUN_TEST(test_house_load_odd_locs_are_reported);
+  RUN_TEST(test_house_load_int_min_loc_is_an_error);
   RUN_TEST(test_hcontrol_show_reports_unrepresentable_times);
   {
     char sub[300];

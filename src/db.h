@@ -259,6 +259,14 @@ struct obj_save_data_t {
 };
 typedef struct obj_save_data_t obj_save_data;
 
+/* Deepest container nesting a rent or house record's Loc may claim (Loc is
+ * minus the depth). The loaders rebuild only a few levels and put anything
+ * deeper loose, reported; this bound separates a deep but plausible save
+ * (warned, loaded loose) from a corrupted Loc (an error, loaded at the top
+ * level), and keeps -Loc representable: Loc INT_MIN made the loaders'
+ * "j > -locate" overflow. */
+#define OBJSAVE_LOC_MAX_DEPTH 1000
+
 
 /* public procedures in db.c */
 void  boot_db(void);

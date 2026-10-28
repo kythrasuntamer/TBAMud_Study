@@ -131,8 +131,16 @@ target_compile_options(fuzz_player PRIVATE -ftrivial-auto-var-init=pattern)
 #     earlier block had loaded (leak, players.c). Fixed on audit/p2-alias-leak:
 #     a duplicate Alis: tag is reported (pfile-alias-dup) and the later block
 #     replaces the earlier list, which is freed.
+#   PLAYER-8 regression-house-loc-intmin: a house-file object record with
+#     "Loc : -2147483648" reached House_place_obj()'s "j > -locate", and
+#     -INT_MIN overflows (UBSan, house.c:164; handle_obj() in objsave.c had
+#     the same loop). Fixed by the p2-gate-fixes branch:
+#     objsave_parse_objects_from() rejects a Loc nested deeper than
+#     OBJSAVE_LOC_MAX_DEPTH (objsave/rent-loc-range) and both loaders guard
+#     it again (house/house-loc-range, objsave/rent-loc-range).
 foreach(_crash vars-noname name-path-login name-path-index hcontrol-time
-               fread-string-nul controw-leak restrung-leak alias-dup-count0)
+               fread-string-nul controw-leak restrung-leak alias-dup-count0
+               house-loc-intmin)
     add_test(NAME fuzz_player_regression_${_crash}
              COMMAND fuzz_player ${CMAKE_CURRENT_SOURCE_DIR}/corpus/player/regression-${_crash})
     set_tests_properties(fuzz_player_regression_${_crash} PROPERTIES

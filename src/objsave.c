@@ -1278,7 +1278,8 @@ void Crash_save_all(void)
  * Each node's locate is the record's Loc: 1..NUM_WEARS = worn in slot
  * locate-1, 0 = inventory, negative = inside a container, -locate levels
  * deep (contents are written before their container). A Loc above
- * NUM_WEARS is reported and becomes inventory. A record whose prototype no
+ * NUM_WEARS or below -OBJSAVE_LOC_MAX_DEPTH is reported (rent-loc-range)
+ * and becomes inventory (0). A record whose prototype no
  * longer exists is skipped (missing-proto) together with its tags. Each
  * completed record's values get check_object()'s per-type range checks
  * (objsave_check_values(): rent-object-check).
@@ -1634,6 +1635,13 @@ obj_save_data *objsave_parse_objects_from(FILE *fl, const char *resource,
                        OBJSAVE_REC_FMT "Loc %d outside 1..%d; loading into inventory",
                        OBJSAVE_REC_ARGS(GET_OBJ_VNUM(temp)), num, NUM_WEARS);
           num = LOC_INVENTORY;
+        } else if (num < -OBJSAVE_LOC_MAX_DEPTH) {
+          /* A corrupted depth; INT_MIN would overflow every -locate. */
+          TB_ERROR_MSG("objsave", "rent-loc-range", resource,
+                       OBJSAVE_REC_FMT "Loc %d nests deeper than %d; loading at the top level",
+                       OBJSAVE_REC_ARGS(GET_OBJ_VNUM(temp)), num,
+                       OBJSAVE_LOC_MAX_DEPTH);
+          num = LOC_INVENTORY;
         }
         current->locate = num;
       }
@@ -1890,6 +1898,16 @@ static int handle_obj(struct obj_data *temp, struct char_data *ch, int locate, s
 
   if (!temp)  /* this should never happen, but.... */
     return FALSE;
+
+  /* The parser already rejects such a Loc; a caller that bypassed it must
+   * not reach the -locate arithmetic below (INT_MIN overflows). */
+  if (locate < -OBJSAVE_LOC_MAX_DEPTH) {
+    TB_ERROR_MSG("objsave", "rent-loc-range", "rent-object-record",
+                 "player idnum %ld obj vnum %d Loc %d nests deeper than %d; "
+                 "loading into inventory", GET_IDNUM(ch), GET_OBJ_VNUM(temp),
+                 locate, OBJSAVE_LOC_MAX_DEPTH);
+    locate = LOC_INVENTORY;
+  }
 
   auto_equip(ch, temp, locate);
 

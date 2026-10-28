@@ -20,6 +20,7 @@
 #include "interpreter.h"
 #include "spells.h"
 #include "oasis.h"
+#include <limits.h>
 #include <stdarg.h>
 #include <sys/stat.h>
 #include "tb_error_capture.h"
@@ -444,6 +445,45 @@ static void test_loc_past_num_wears_is_reported(void)
   TEST_ASSERT_NOT_NULL(player.carrying);
   TEST_ASSERT_EQUAL_INT(101, GET_OBJ_VNUM(player.carrying));
   TEST_ASSERT_EQUAL_STRING("rent-loc-range", tb_captured_operation);
+}
+
+/* P2 gate (fuzz_player regression-house-loc-intmin): Loc INT_MIN made the
+ * loaders' "j > -locate" overflow (UB). The parser rejects a depth past
+ * OBJSAVE_LOC_MAX_DEPTH, naming the record, and loads it into inventory. */
+static void test_loc_int_min_is_reported(void)
+{
+  char body[256];
+
+  TEST_ASSERT_TRUE(snprintf(body, sizeof(body),
+                            "%d %ld 0 0 0 0\n#101\nLoc : %d\n\n$~\n",
+                            RENT_CRASH, (long)time(0), INT_MIN) > 0);
+  write_rent_file("Tester", body);
+
+  TEST_ASSERT_EQUAL_INT(1, Crash_load(&player));
+  TEST_ASSERT_NOT_NULL(player.carrying);
+  TEST_ASSERT_EQUAL_INT(101, GET_OBJ_VNUM(player.carrying));
+  TEST_ASSERT_NULL(player.carrying->next_content);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("ERROR", tb_captured_severity);
+  TEST_ASSERT_EQUAL_STRING("rent-loc-range", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "obj vnum 101"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "Loc -2147483648 nests deeper than 1000"));
+}
+
+/* The deepest plausible Loc is still only a nesting warning, not a range
+ * error: the bound does not reject saves the loaders handle. */
+static void test_loc_at_max_depth_is_not_a_range_error(void)
+{
+  char body[256];
+
+  TEST_ASSERT_TRUE(snprintf(body, sizeof(body),
+                            "%d %ld 0 0 0 0\n#101\nLoc : %d\n\n$~\n",
+                            RENT_CRASH, (long)time(0), -OBJSAVE_LOC_MAX_DEPTH) > 0);
+  write_rent_file("Tester", body);
+
+  TEST_ASSERT_EQUAL_INT(1, Crash_load(&player));
+  TEST_ASSERT_NOT_NULL(player.carrying);
+  TEST_ASSERT_EQUAL_STRING("rent-nesting", tb_captured_operation);
 }
 
 /* B2-04: a listing longer than the page buffer used to push snprintf()'s
@@ -1092,6 +1132,8 @@ int main(void)
   UNITY_BEGIN();
   RUN_TEST(test_container_refused_by_autoeq_keeps_contents);
   RUN_TEST(test_loc_past_num_wears_is_reported);
+  RUN_TEST(test_loc_int_min_is_reported);
+  RUN_TEST(test_loc_at_max_depth_is_not_a_range_error);
   RUN_TEST(test_listrent_truncates_loudly);
   RUN_TEST(test_crashsave_failure_keeps_live_file);
   RUN_TEST(test_crashsave_commits);

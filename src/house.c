@@ -145,7 +145,8 @@ static void House_spill_row(struct obj_data **row, room_rnum rnum,
  * at depth d+1 until their container arrives (at depth d) and takes them.
  * Loc 0 is the floor; files written before nesting was saved hold only
  * Loc 0 and load flat, as they always did. A wear slot (Loc > 0, a rent
- * value) is put on the floor and reported. */
+ * value) is put on the floor and reported, and so is a Loc below
+ * -OBJSAVE_LOC_MAX_DEPTH (corrupted; reported as an error). */
 static void House_place_obj(struct obj_data *obj, int locate,
                             struct obj_data **cont_row, room_rnum rnum,
                             const char *filename, room_vnum vnum)
@@ -157,6 +158,14 @@ static void House_place_obj(struct obj_data *obj, int locate,
     TB_WARN_MSG("house", "house-nesting", filename,
                 "house vnum %d obj vnum %d has wear-slot Loc %d; placed on the floor",
                 vnum, GET_OBJ_VNUM(obj), locate);
+    locate = 0;
+  } else if (locate < -OBJSAVE_LOC_MAX_DEPTH) {
+    /* objsave_parse_objects_from() rejects this already; a corrupted depth
+     * must not reach "j > -locate" (INT_MIN overflows). */
+    TB_ERROR_MSG("house", "house-loc-range", filename,
+                 "house vnum %d obj vnum %d has Loc %d, nested deeper than %d; "
+                 "placed on the floor", vnum, GET_OBJ_VNUM(obj), locate,
+                 OBJSAVE_LOC_MAX_DEPTH);
     locate = 0;
   }
   /* Rows deeper than this object's own contents belong to containers that
