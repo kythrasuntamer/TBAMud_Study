@@ -264,6 +264,9 @@ void tearDown(void)
   character_list = NULL;
   descriptor_list = NULL;
   release_large_outbuf();
+  free(bd->showstr_head);
+  free(bd->showstr_vector);
+  free(bd->backstr);
   ProtocolDestroy(bd->pProtocol);
   free(bd);
   free(builder->player_specials);
@@ -698,9 +701,52 @@ static void type_menu_is_bounded_per_attach_type(void)
   TEST_ASSERT_EQUAL_INT(1L << 20, OLC_TRIG(bd)->trigger_type);
 }
 
+/* E2-13: colour codes make a long script's listing exceed the display
+ * buffer; the excess used to vanish without a word. */
+static void long_highlighted_listing_says_it_was_cut(void)
+{
+  const int vnums[] = { 100 };
+  const char *row = "%a% %a% %a% %a% %a%\r\n";
+  size_t size = 40000, n = 0, rl = strlen(row);
+  char *big;
+
+  make_index(vnums, 1);
+  start_edit(100);
+  CREATE(big, char, size);
+  while (n + rl < size)
+    n += (size_t)snprintf(big + n, size - n, "%s", row);
+  free(OLC_STORAGE(bd));
+  OLC_STORAGE(bd) = big;
+
+  feed(TRIGEDIT_MAIN_MENU, "6");
+
+  TEST_ASSERT_TRUE(tb_captured_has_op("trigedit-highlight-truncate"));
+  TEST_ASSERT_NOT_NULL(bd->showstr_head);
+  TEST_ASSERT_NOT_NULL(strstr(bd->showstr_head, "listing truncated"));
+  TEST_ASSERT_TRUE(OLC_STORAGE(bd) == big);           /* script untouched */
+  bd->str = NULL;
+}
+
+/* A short script is listed in full with no diagnostic. */
+static void short_highlighted_listing_is_complete(void)
+{
+  const int vnums[] = { 100 };
+
+  make_index(vnums, 1);
+  start_edit(100);
+  set_script("say one\r\nsay two\r\n");
+  feed(TRIGEDIT_MAIN_MENU, "6");
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  TEST_ASSERT_NOT_NULL(strstr(bd->output, "two"));
+  TEST_ASSERT_NULL(strstr(bd->output, "listing truncated"));
+  bd->str = NULL;
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(long_highlighted_listing_says_it_was_cut);
+  RUN_TEST(short_highlighted_listing_is_complete);
   RUN_TEST(type_menu_is_bounded_per_attach_type);
   RUN_TEST(copy_prompt_rejects_non_numbers);
   RUN_TEST(numeric_argument_rejects_text_and_reports_clamp);

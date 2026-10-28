@@ -390,14 +390,20 @@ static char *str_replace(char *string, const char *substr, const char *replaceme
         return string;
     
     newstr = strdup (string);
-    if (newstr == NULL)
+    if (newstr == NULL) {
+        /* Display only: the line is shown without this colour. */
+        TB_ERROR_ERRNO("dg", "trigedit-highlight-alloc", "str_replace",
+                       "%lu-byte line left unhighlighted", (unsigned long)strlen(string));
         return string;
+    }
     head = newstr;
     while ((tok = strstr(head, substr))) {
         oldstr = newstr;
         newstr = malloc(strlen(oldstr) - strlen(substr) + strlen (replacement) + 1);
-        // Failed to alloc mem, free old string and return NULL
+        // Failed to alloc mem: keep the caller's string, unhighlighted
         if (newstr == NULL) {
+            TB_ERROR_ERRNO("dg", "trigedit-highlight-alloc", "str_replace",
+                           "%lu-byte line left unhighlighted", (unsigned long)strlen(string));
             free(oldstr);
             return string;
         }
@@ -530,9 +536,15 @@ static const char *command_color_replacement[COMMAND_TERMS][2] =
 static void script_syntax_highlighting(struct descriptor_data *d, char *string)
 {
     ACMD(do_action);
+    /* Display only: the listing is capped at MAX_STRING_LENGTH (colour codes
+     * make it longer than the script), and blank lines are not shown.  The
+     * script itself (OLC_STORAGE) is never changed here. */
+    static const char line_end[] = "\tn\r\n";
+    static const char trunc_note[] = "[... listing truncated ...]\tn\r\n";
     char buffer[MAX_STRING_LENGTH] = "";
     char *newlist, *curtok;
-    
+    size_t used = 0, len;
+
     size_t i;
 
     if (!d || !string)
@@ -540,15 +552,24 @@ static void script_syntax_highlighting(struct descriptor_data *d, char *string)
 
     // Parse script text line by line
     newlist = strdup(string);
-    if (!newlist)
+    if (!newlist) {
+        TB_ERROR_ERRNO("dg", "trigedit-highlight-alloc", "strdup",
+                       "trigger vnum %d: %lu-byte script not listed",
+                       d->olc ? OLC_NUM(d) : -1, (unsigned long)strlen(string));
+        write_to_output(d, "(Out of memory: script listing unavailable.)\r\n");
         return;
+    }
 
     for (curtok = strtok(newlist, "\r\n"); curtok; curtok = strtok(NULL, "\r\n")) {
         char *line = strdup(curtok);
         bool comment = FALSE;
 
-        if (!line)
-            continue;
+        if (!line) {
+            TB_ERROR_ERRNO("dg", "trigedit-highlight-alloc", "strdup",
+                           "trigger vnum %d: listing stopped", d->olc ? OLC_NUM(d) : -1);
+            strlcpy(buffer + used, trunc_note, sizeof(buffer) - used);
+            break;
+        }
         
         // Find if is a comment
         for (i=0;i <= strlen(line);i++) {
@@ -592,8 +613,23 @@ static void script_syntax_highlighting(struct descriptor_data *d, char *string)
             }
         }
 
-        strncat(buffer, line, sizeof(buffer) - strlen(buffer) - 1);
-        strncat(buffer, "\tn\r\n", sizeof(buffer) - strlen(buffer) - 1);
+        /* Append whole lines only, always leaving room for the note, so a
+         * cut is visible to the builder instead of silently dropping the
+         * rest of the script (E2-13). */
+        len = strlen(line);
+        if (len + sizeof(line_end) - 1 + sizeof(trunc_note) > sizeof(buffer) - used) {
+            TB_WARN_MSG("dg", "trigedit-highlight-truncate", "buffer",
+                        "trigger vnum %d: listing cut at %lu of cap %lu bytes",
+                        d->olc ? OLC_NUM(d) : -1, (unsigned long)used,
+                        (unsigned long)sizeof(buffer));
+            strlcpy(buffer + used, trunc_note, sizeof(buffer) - used);
+            free(line);
+            break;
+        }
+        memcpy(buffer + used, line, len);
+        used += len;
+        memcpy(buffer + used, line_end, sizeof(line_end));   /* with NUL */
+        used += sizeof(line_end) - 1;
         free(line);
     }
 
