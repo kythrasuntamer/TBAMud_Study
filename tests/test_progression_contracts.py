@@ -76,10 +76,17 @@ class ProgressionContractTests(unittest.TestCase):
 
     def test_player_saves_stage_before_replacing_original(self):
         player = source("players.c")
-        save = player[player.index("void save_char("):player.index("/* Separate a 4-character id tag")]
+        save = player[player.index("void save_char("):player.index("/** Separate a 4-character id tag")]
         self.assertIn("mkstemp(temporary_filename)", save)
         self.assertIn('fdopen(temp_fd, "w")', save)
-        self.assertIn("ferror(fl) || fflush(fl) != 0", save)
+        self.assertIn("if (ferror(fl))", save)
+        self.assertIn("if (fflush(fl) != 0)", save)
+        self.assertIn('TB_ERROR_MSG("player", "write"', save)
+        self.assertIn('TB_ERROR_ERRNO("player", "fflush"', save)
+        self.assertIn('TB_ERROR_ERRNO("player", "fclose"', save)
+        self.assertIn('TB_ERROR_ERRNO("player", "rename"', save)
+        self.assertIn('TB_ERROR_ERRNO("player", "unlink"', save)
+        self.assertIn("if (save_failed && unlink(temporary_filename) != 0)", save)
         self.assertIn("fclose(fl) != 0", save)
         self.assertIn("rename(temporary_filename, filename)", save)
         self.assertIn("if (save_failed)\n    return;", save)
@@ -87,7 +94,7 @@ class ProgressionContractTests(unittest.TestCase):
 
     def test_player_save_tags_unchanged_by_checked_writes(self):
         player = source("players.c")
-        save = player[player.index("void save_char("):player.index("/* Separate a 4-character id tag")]
+        save = player[player.index("void save_char("):player.index("/** Separate a 4-character id tag")]
         for tag in ("Clas", "Levl", "Exp ", "EgAP", "EgXP", "EgHP", "EgMP"):
             with self.subTest(tag=tag):
                 self.assertIn(f'"{tag}: %d', save)
