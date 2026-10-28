@@ -113,6 +113,9 @@ static void illegal_code_is_reported_escaped(void)
   /* Quotes and control characters cannot break the log record. */
   TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "format=\"bad $Z ?quote??\""));
   TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "0x5a at offset 5"));
+  /* The recipient identity pair is expanded, not printed literally. */
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "(recipient player idnum 0)"));
+  TEST_ASSERT_NULL(strstr(tb_captured_detail, "DIAG_CHAR_FMT"));
 }
 static void oversized_literal_is_truncated(void)
 {

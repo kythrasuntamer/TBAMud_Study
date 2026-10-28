@@ -125,10 +125,6 @@ static void sub_write_to_char(char_data *ch, char *tokens[], void *otokens[], ch
   send_to_char(ch, "%s", sb);
 }
 
-#define SUB_WRITE_DIAG_SPEAKER(ch) \
-  (IS_NPC(ch) ? "mob vnum" : "player idnum"), \
-  (IS_NPC(ch) ? (long) GET_MOB_VNUM(ch) : (long) GET_IDNUM(ch))
-
 void sub_write(char *arg, char_data *ch, byte find_invis, int targets)
 {
   char str[MAX_INPUT_LENGTH * 2];
@@ -157,8 +153,8 @@ void sub_write(char *arg, char_data *ch, byte find_invis, int targets)
     if (i >= MAX_INPUT_LENGTH - 2 || s >= str + sizeof(str) - 2) {
       TB_ERROR_MSG("dg", "sub-write", "sub_write",
                    "message of %zu bytes truncated at %d tokens, %d bytes "
-                   "(speaker %s %ld)", strlen(arg), i, (int)(s - str),
-                   SUB_WRITE_DIAG_SPEAKER(ch));
+                   "(speaker " DIAG_CHAR_FMT ")", strlen(arg), i, (int)(s - str),
+                   DIAG_CHAR(ch));
       script_log("sub_write: message truncated at %d tokens, %d bytes.",
                  i, (int)(s - str));
       break;
@@ -200,7 +196,7 @@ void sub_write(char *arg, char_data *ch, byte find_invis, int targets)
         else {
           TB_ERROR_MSG("dg", "sub-write", "sub_write",
                        "message ends with an unescaped backslash; dropped it "
-                       "(speaker %s %ld)", SUB_WRITE_DIAG_SPEAKER(ch));
+                       "(speaker " DIAG_CHAR_FMT ")", DIAG_CHAR(ch));
           script_log("sub_write: message ends with a dangling backslash.");
         }
       break;

@@ -315,11 +315,11 @@ static int dg_trigger_target_is(const trig_data *current,
     /* The snapshotted trigger was freed during a callback and its address
      * reused. Correctly skipped, but reported: it means a script detached
      * and re-attached triggers mid-dispatch. */
-    TB_ERROR_LOG("WARNING", "dg", "trigger-identity", "dispatch_snapshot", 0,
-                 "trigger address %p reused (serial %lu -> %lu, now vnum %d); "
-                 "skipping the replacement", (const void *)current,
-                 entry->serial, current->serial,
-                 trig_index ? GET_TRIG_VNUM(current) : -1);
+    TB_WARN_MSG("dg", "trigger-identity", "dispatch_snapshot",
+                "trigger address %p reused (serial %lu -> %lu, now vnum %d); "
+                "skipping the replacement", (const void *)current,
+                entry->serial, current->serial,
+                trig_index ? GET_TRIG_VNUM(current) : -1);
     return FALSE;
   }
   return TRUE;

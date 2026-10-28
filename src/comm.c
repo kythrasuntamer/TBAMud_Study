@@ -2674,10 +2674,6 @@ static const char *act_format_excerpt(char *dst, size_t dst_size,
   return dst;
 }
 
-#define ACT_DIAG_RECIPIENT(to) \
-  (IS_NPC(to) ? "mob vnum" : "player idnum"), \
-  (IS_NPC(to) ? (long) GET_MOB_VNUM(to) : (long) GET_IDNUM(to))
-
 /* "caller=file:line function" of the act() call, for every act diagnostic. */
 #define ACT_DIAG_SITE \
   (act_site_file ? act_site_file : "(direct perform_act call)"), \
@@ -2785,16 +2781,16 @@ void perform_act(const char *orig, struct char_data *ch, struct obj_data *obj,
 	break;
       case '\0':
 	TB_ERROR_MSG("act", "format-parse", "perform_act",
-	             "format ends with a bare '$' caller=%s:%d %s (recipient %s %ld) "
-	             "format=\"%s\"", ACT_DIAG_SITE, ACT_DIAG_RECIPIENT(to),
+	             "format ends with a bare '$' caller=%s:%d %s (recipient " DIAG_CHAR_FMT ") "
+	             "format=\"%s\"", ACT_DIAG_SITE, DIAG_CHAR(to),
 	             act_format_excerpt(excerpt, sizeof(excerpt), format));
 	i = "";
 	break;
       default:
 	TB_ERROR_MSG("act", "format-parse", "perform_act",
 	             "illegal $-code 0x%02x at offset %ld caller=%s:%d %s (recipient "
-	             "%s %ld) format=\"%s\"", (unsigned char) *orig,
-	             (long) (orig - format), ACT_DIAG_SITE, ACT_DIAG_RECIPIENT(to),
+	             DIAG_CHAR_FMT ") format=\"%s\"", (unsigned char) *orig,
+	             (long) (orig - format), ACT_DIAG_SITE, DIAG_CHAR(to),
 	             act_format_excerpt(excerpt, sizeof(excerpt), format));
 	i = "";
 	break;
@@ -2826,8 +2822,8 @@ void perform_act(const char *orig, struct char_data *ch, struct obj_data *obj,
   if (truncated)
     TB_ERROR_MSG("act", "format-output", "perform_act",
                  "expanded output exceeded %d bytes and was truncated "
-                 "caller=%s:%d %s (recipient %s %ld) format=\"%s\"",
-                 (int) sizeof(lbuf), ACT_DIAG_SITE, ACT_DIAG_RECIPIENT(to),
+                 "caller=%s:%d %s (recipient " DIAG_CHAR_FMT ") format=\"%s\"",
+                 (int) sizeof(lbuf), ACT_DIAG_SITE, DIAG_CHAR(to),
                  act_format_excerpt(excerpt, sizeof(excerpt), format));
 
   if (to->desc)

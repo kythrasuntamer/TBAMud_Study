@@ -57,6 +57,22 @@ void tb_error_log_at(const char *severity, const char *subsystem,
 #define TB_ERROR_MSG(subsystem, operation, resource, ...) \
   TB_ERROR_LOG("ERROR", (subsystem), (operation), (resource), 0, __VA_ARGS__)
 
+/* Severity-named forms of TB_ERROR_MSG. WARNING: unexpected but handled, and
+ * the server carries on correctly. FATAL: logged immediately before abort(). */
+#define TB_WARN_MSG(subsystem, operation, resource, ...) \
+  TB_ERROR_LOG("WARNING", (subsystem), (operation), (resource), 0, __VA_ARGS__)
+#define TB_FATAL_MSG(subsystem, operation, resource, ...) \
+  TB_ERROR_LOG("FATAL", (subsystem), (operation), (resource), 0, __VA_ARGS__)
+
+/* Stable identity of a character in diagnostics: mob vnum for NPCs, player
+ * idnum for players. Use as a pair, e.g.
+ *   TB_ERROR_MSG(..., "speaker " DIAG_CHAR_FMT " ...", DIAG_CHAR(ch));
+ * DIAG_CHAR evaluates ch several times: pass a plain variable. */
+#define DIAG_CHAR_FMT "%s %ld"
+#define DIAG_CHAR(ch) \
+  (IS_NPC(ch) ? "mob vnum" : "player idnum"), \
+  (IS_NPC(ch) ? (long) GET_MOB_VNUM(ch) : (long) GET_IDNUM(ch))
+
 /*
  * Persistent-parser context.  A context follows a FILE * while a loader is
  * consuming it so diagnostics can identify the physical line, logical record,
