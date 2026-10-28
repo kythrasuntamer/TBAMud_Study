@@ -1930,6 +1930,24 @@ static size_t print_object_location(const int num, const obj_data *obj, const ch
   return len;
 }
 
+/** Mark a full 'where' listing and report it. Every append in
+ * perform_immort_where() is bounded by a budget that reserves room for
+ * @p marker, so the marker always fits after the text already in @p buf
+ * (whose end strlen() finds, since snprintf() truncation leaves a NUL at
+ * the budget's last byte). Writing the marker at the budget offset instead
+ * put it after that NUL, where page_string() never showed it. The search
+ * word comes from an immortal; the number of matches from the world. */
+static void where_overflow(const char_data *ch, char *buf, size_t bufsize,
+                           const char *marker, const char *arg, int num)
+{
+  size_t at = strnlen(buf, bufsize - 1);
+
+  tb_snprintf(buf + at, bufsize - at, "%s", marker);
+  TB_WARN_MSG("act", "where-truncated", "buf",
+              DIAG_CHAR_FMT " where '%.32s' listing cut after %d matches "
+              "at capacity %zu", DIAG_CHAR(ch), arg, num, bufsize);
+}
+
 static void perform_immort_where(char_data *ch, const char *arg)
 {
   char_data *i;
@@ -1969,7 +1987,8 @@ static void perform_immort_where(char_data *ch, const char *arg)
         nlen = snprintf(buf + len, buf_size - len, "M%4d. %-25s%s - [%5d] %-25s%s", ++num, GET_NAME(i), QNRM,
                GET_ROOM_VNUM(IN_ROOM(i)), world[IN_ROOM(i)].name, QNRM);
         if (len + nlen >= buf_size) {
-          len += snprintf(buf + len, buf_size - len, "%s", error_message);
+          where_overflow(ch, buf, sizeof(buf), error_message, arg, num);
+          len = buf_size;   /* full: the object section must not write over the marker */
           break;
         }
         len += nlen;
@@ -1980,14 +1999,16 @@ static void perform_immort_where(char_data *ch, const char *arg)
             nlen = snprintf(buf + len, buf_size - len, "[TRIGS]");
 
           if (len + nlen >= buf_size) {
-            tb_snprintf(buf + len, buf_size - len, "%s", error_message);
+            where_overflow(ch, buf, sizeof(buf), error_message, arg, num);
+            len = buf_size;   /* full: the object section must not write over the marker */
             break;
           }
           len += nlen;
         }
         nlen = snprintf(buf + len, buf_size - len, "%s\r\n", QNRM);
         if (len + nlen >= buf_size) {
-          tb_snprintf(buf + len, buf_size - len, "%s", error_message);
+          where_overflow(ch, buf, sizeof(buf), error_message, arg, num);
+          len = buf_size;   /* full: the object section must not write over the marker */
           break;
         }
         len += nlen;
@@ -1995,9 +2016,8 @@ static void perform_immort_where(char_data *ch, const char *arg)
 
     if (PRF_FLAGGED(ch, PRF_VERBOSE) && len < buf_size) {
       nlen = snprintf(buf + len, buf_size - len, "  ###  Object name                 Location\r\n");
-      if (len + nlen >= buf_size) {
-        tb_snprintf(buf + len, buf_size - len, "%s", error_message);
-      }
+      if (len + nlen >= buf_size)
+        where_overflow(ch, buf, sizeof(buf), error_message, arg, num);
       len += nlen;
     }
 
@@ -2007,7 +2027,7 @@ static void perform_immort_where(char_data *ch, const char *arg)
           found = 1;
           len = print_object_location(++num, k, ch, buf, len, buf_size, TRUE);
           if (len >= buf_size) {
-            tb_snprintf(buf + buf_size, sizeof(buf) - buf_size, "%s", error_message);
+            where_overflow(ch, buf, sizeof(buf), error_message, arg, num);
             break;
           }
         }

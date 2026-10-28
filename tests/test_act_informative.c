@@ -79,6 +79,9 @@ bitvector_t find_class_bitvector(const char *arg)
 /* The real class table (class.c is not linked). */
 const char *class_abbrevs[] = { "Wi", "Cl", "Th", "Wa", "Mo", "\n" };
 struct happyhour happy_data;
+/* Name match for 'where' (handler.c is not linked): substring is enough. */
+int isname(const char *str, const char *namelist)
+{ return namelist && strstr(namelist, str) != NULL; }
 /* act() output is not under test; the formatter has its own tests. */
 char *act_at(const char *src_file, int src_line, const char *src_func,
              const char *str, int hide_invisible, struct char_data *ch,
@@ -543,6 +546,58 @@ static void who_reports_class_out_of_range(void)
   free_player(ch);
 }
 
+/* --- G2-15: immortal 'where' with more matches than its buffer ------- */
+
+static void where_marks_and_reports_full_listing(void)
+{
+  struct char_data *ch = make_player(7);
+  struct char_data *mobs;
+  char room_name[201];
+  int nmobs = 400, i;
+
+  enter_test_room(ch);
+  viewer_desc.character = ch;
+  GET_LEVEL(ch) = LVL_IMMORT;
+  SET_BIT_AR(PRF_FLAGS(ch), PRF_HOLYLIGHT);
+  memset(room_name, 'r', sizeof(room_name) - 1);
+  room_name[sizeof(room_name) - 1] = '\0';
+  test_room.name = room_name;
+  mobs = calloc((size_t)nmobs, sizeof(*mobs));
+  TEST_ASSERT_NOT_NULL(mobs);
+  for (i = 0; i < nmobs; i++) {
+    SET_BIT_AR(MOB_FLAGS(&mobs[i]), MOB_ISNPC);
+    mobs[i].player.name = (char *)"guard";
+    mobs[i].player.short_descr = (char *)"the city guard";
+    mobs[i].player_specials = &dummy_mob;
+    mobs[i].nr = NOBODY;
+    IN_ROOM(&mobs[i]) = 0;
+    mobs[i].next = i + 1 < nmobs ? &mobs[i + 1] : NULL;
+  }
+  character_list = mobs;
+
+  do_where(ch, (char *)"guard", 0, 0);
+  /* The marker used to land after the truncation NUL (or be cut short). */
+  TEST_ASSERT_NOT_NULL(strstr(sent, "***OVERFLOW***"));
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("where-truncated", tb_captured_operation);
+  TEST_ASSERT_EQUAL_STRING("WARNING", tb_captured_severity);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "where 'guard'"));
+
+  /* A listing that fits is neither marked nor reported. */
+  sent[0] = '\0';
+  tb_error_capture_reset();
+  mobs[2].next = NULL;
+  do_where(ch, (char *)"guard", 0, 0);
+  TEST_ASSERT_NOT_NULL(strstr(sent, "M   3. the city guard"));
+  TEST_ASSERT_NULL(strstr(sent, "OVERFLOW"));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+
+  character_list = NULL;
+  free(mobs);
+  leave_test_room(ch);
+  free_player(ch);
+}
+
 /* --- G2-14: add_history with act()'s NULL result ---------------------- */
 
 static void history_null_text_is_reported_not_stored(void)
@@ -591,6 +646,7 @@ int main(void)
   RUN_TEST(look_reports_room_sector_out_of_range);
   RUN_TEST(areas_truncates_long_listing_and_reports);
   RUN_TEST(who_reports_class_out_of_range);
+  RUN_TEST(where_marks_and_reports_full_listing);
   RUN_TEST(history_null_text_is_reported_not_stored);
   return UNITY_END();
 }
