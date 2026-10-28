@@ -612,12 +612,56 @@ void test_get_filename_rejects_path_traversal(void)
 {
   char path[PATH_MAX];
 
-  path[0] = '\0';
+  strlcpy(path, "stale/path", sizeof(path));
   TEST_ASSERT_EQUAL_INT(0, get_filename(path, sizeof(path), CRASH_FILE,
                                         "../../etc/x"));
-  TEST_ASSERT_NULL(strstr(path, ".."));
-  TEST_ASSERT_EQUAL_INT(1, count_op("filename-name-invalid"));
-  TEST_ASSERT_NULL(strstr(log_text(), "etc"));   /* raw text not logged */
+  TEST_ASSERT_EQUAL_STRING("", path);     /* never a stale or partial path */
+  TEST_ASSERT_EQUAL_INT(1, count_op("filename-unsafe"));
+  TEST_ASSERT_NOT_NULL(strstr(log_text(), "name=\"../../etc/x\""));
+}
+
+/* Coordinator item (player-file fuzzer, audit-fuzz-player): names reach
+ * get_filename() from the player index and from a pfile's Name tag read
+ * before login, and must pass the legal-player-name rule: ASCII letters
+ * only, 1..MAX_NAME_LENGTH of them. Each rejection leaves "" and reports
+ * filename-unsafe with the escaped name and the mode. */
+static void expect_unsafe(const char *name, int mode)
+{
+  char path[PATH_MAX];
+  int before = count_op("filename-unsafe");
+
+  strlcpy(path, "stale/path", sizeof(path));
+  TEST_ASSERT_EQUAL_INT(0, get_filename(path, sizeof(path), mode, name));
+  TEST_ASSERT_EQUAL_STRING("", path);
+  TEST_ASSERT_EQUAL_INT(before + 1, count_op("filename-unsafe"));
+}
+
+void test_get_filename_rejects_illegal_player_names(void)
+{
+  /* name-path-login: high bytes around a separator and "..". */
+  static const char login_name[] =
+    "\xff\xff\xff\xff/../\xff\xff\xff";
+
+  expect_unsafe("../x", PLR_FILE);
+  expect_unsafe("a/b", CRASH_FILE);
+  expect_unsafe("", SCRIPT_VARS_FILE);
+  expect_unsafe("abcdefghijklmnopqrstu", PLR_FILE);    /* 21 letters */
+  expect_unsafe("Bob2", PLR_FILE);                     /* digit */
+  expect_unsafe("../", PLR_FILE);                      /* name-path-index */
+  expect_unsafe(login_name, PLR_FILE);
+  TEST_ASSERT_NOT_NULL(strstr(log_text(), "\\xff\\xff"));   /* escaped */
+  TEST_ASSERT_NOT_NULL(strstr(log_text(), "mode=0"));
+  TEST_ASSERT_NULL(strchr(log_text(), '\xff'));      /* no raw high byte */
+}
+
+void test_get_filename_accepts_longest_legal_name(void)
+{
+  char path[PATH_MAX];
+
+  TEST_ASSERT_EQUAL_INT(1, get_filename(path, sizeof(path), PLR_FILE,
+                                        "Abcdefghijklmnopqrst")); /* 20 */
+  TEST_ASSERT_NOT_NULL(strstr(path, "abcdefghijklmnopqrst."));
+  TEST_ASSERT_EQUAL_INT(0, count_records());
 }
 
 void test_get_filename_accepts_player_name(void)
@@ -827,6 +871,8 @@ int main(void)
   RUN_TEST(test_get_filename_null_name_reports);
   RUN_TEST(test_get_filename_rejects_path_traversal);
   RUN_TEST(test_get_filename_accepts_player_name);
+  RUN_TEST(test_get_filename_rejects_illegal_player_names);
+  RUN_TEST(test_get_filename_accepts_longest_legal_name);
   RUN_TEST(test_an_handles_empty_and_null);
   RUN_TEST(test_nullstr_maps_null_to_empty);
   RUN_TEST(test_class_abbr_out_of_range_class_reports_caller);

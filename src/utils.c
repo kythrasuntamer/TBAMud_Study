@@ -1410,6 +1410,62 @@ int get_line(FILE *fl, char *buf)
   return (lines);
 }
 
+/* TRUE if name is a name a player can actually have, the rule nanny
+ * enforces at character creation (_parse_name): ASCII letters only,
+ * between 1 and MAX_NAME_LENGTH of them. Anything else (dots, separators,
+ * digits, control or high bytes, overlong text) is not a player and must
+ * not become a file name. */
+static int tb_filename_name_ok(const char *name)
+{
+  size_t len;
+
+  for (len = 0; name[len] != '\0'; len++)
+    if (len >= MAX_NAME_LENGTH || !isascii((unsigned char) name[len]) ||
+        !TB_ISALPHA(name[len]))
+      return FALSE;
+  return len > 0;
+}
+
+/* Room for TB_EXCERPT_BYTES input bytes at 4 output bytes each ("\xHH"),
+ * the "..." marker and the terminator. */
+#define TB_EXCERPT_BYTES 32
+#define TB_EXCERPT_SIZE  (TB_EXCERPT_BYTES * 4 + 4)
+
+/* Copy the start of untrusted text (a name from a file) into dst for a
+ * diagnostic: printable ASCII is kept with backslash and double quote
+ * escaped, every other byte becomes \xHH, and text longer than
+ * TB_EXCERPT_BYTES ends in "...". tb_error_log_at() embeds the detail
+ * as is, so this keeps the record on one line and unforgeable. dst_size
+ * must be at least TB_EXCERPT_SIZE. */
+static void tb_escape_excerpt(char *dst, size_t dst_size, const char *src)
+{
+  static const char hex[] = "0123456789abcdef";
+  size_t used = 0, i;
+
+  for (i = 0; src[i] != '\0' && i < TB_EXCERPT_BYTES; i++) {
+    unsigned char c = (unsigned char) src[i];
+
+    if (used + 4 >= dst_size)
+      break;
+    if (c == '\\' || c == '"') {
+      dst[used++] = '\\';
+      dst[used++] = (char) c;
+    } else if (c >= 0x20 && c < 0x7f) {
+      dst[used++] = (char) c;
+    } else {
+      dst[used++] = '\\';
+      dst[used++] = 'x';
+      dst[used++] = hex[c >> 4];
+      dst[used++] = hex[c & 0x0f];
+    }
+  }
+  if (src[i] != '\0' && used + 3 < dst_size) {
+    memcpy(dst + used, "...", 3);
+    used += 3;
+  }
+  dst[used] = '\0';
+}
+
 /** Create the full path, relative to the library path, of the player type
  * file to open.
  * @todo Make the return type bool.
@@ -1423,21 +1479,26 @@ int get_line(FILE *fl, char *buf)
  * @param[in] mode What type of files can be created. Currently, recognized
  * modes are CRASH_FILE, ETEXT_FILE, SCRIPT_VARS_FILE and PLR_FILE.
  * @param[in] orig_name The player name to create the filepath (of type mode)
- * for. Usually a validated name from the player index or GET_NAME(), but
- * `show rent` passes immortal-typed text, so names outside [A-Za-z0-9_-]
- * are rejected.
- * @return 1 on success. 0, after a persist error (filename-args,
- * filename-mode or filename-name-invalid), when an argument is missing or
- * invalid. A path longer than fbufsize is cut by tb_snprintf. */
+ * for. It must be a name a player can actually have: ASCII letters only,
+ * 1 to MAX_NAME_LENGTH of them (see tb_filename_name_ok()).
+ * @return 1 on success. 0, after a persist error, when an argument is
+ * missing (filename-args), mode is unknown (filename-mode) or the name is
+ * not a legal player name (filename-unsafe); filename then holds "" (when
+ * it has room), so a caller that ignores the result opens nothing. A path
+ * longer than fbufsize is cut by tb_snprintf. */
 int get_filename(char *filename, size_t fbufsize, int mode, const char *orig_name)
 {
-  const char *prefix, *middle, *suffix, *q;
-  char name[PATH_MAX], *ptr;
+  const char *prefix, *middle, *suffix;
+  char name[MAX_NAME_LENGTH + 1], *ptr;
 
-  if (orig_name == NULL || *orig_name == '\0' || filename == NULL) {
+  /* Every failure below leaves an empty path, never a stale one. */
+  if (filename != NULL && fbufsize > 0)
+    *filename = '\0';
+
+  if (orig_name == NULL || filename == NULL) {
     TB_ERROR_MSG("persist", "filename-args", "get_filename",
                  "mode=%d name=%s filename=%s", mode,
-                 orig_name == NULL ? "NULL" : (*orig_name ? "set" : "empty"),
+                 orig_name == NULL ? "NULL" : "set",
                  filename == NULL ? "NULL" : "set");
     return (0);
   }
@@ -1468,21 +1529,22 @@ int get_filename(char *filename, size_t fbufsize, int mode, const char *orig_nam
     return (0);
   }
 
-  /* orig_name becomes a path component. Most callers pass a validated
-   * player name (letters only), but `show rent <text>` passes immortal-typed
-   * text through Crash_listrent, so "../../x" would leave lib/plrobjs.
-   * Accept only [A-Za-z0-9_-]: no separators, dots or control bytes. The
-   * raw text is not logged (it may hold line breaks); its length is. */
-  for (q = orig_name; *q; q++) {
-    unsigned char c = (unsigned char)*q;
+  /* orig_name becomes a path component, and it does not only come from
+   * the game: remove_player() and the index rebuild take it from the player
+   * index, a pfile's Name tag is read before login, and `show rent <text>`
+   * passes immortal-typed text. A crafted record named "../x" made
+   * remove_player() unlink, read_saved_vars() open and the Crash_* savers
+   * read and write files outside lib/. Accept only a legal player name;
+   * report anything else, escaped, with the mode. */
+  if (!tb_filename_name_ok(orig_name)) {
+    char excerpt[TB_EXCERPT_SIZE];
 
-    if (!(isascii(c) && (TB_ISALNUM(c) || c == '_' || c == '-'))) {
-      TB_ERROR_MSG("persist", "filename-name-invalid", "get_filename",
-                   "mode=%d name_len=%zu rejected: byte 0x%02x at offset %td "
-                   "is not [A-Za-z0-9_-]", mode, strlen(orig_name),
-                   (unsigned int)c, q - orig_name);
-      return (0);
-    }
+    tb_escape_excerpt(excerpt, sizeof(excerpt), orig_name);
+    TB_ERROR_MSG("persist", "filename-unsafe", "get_filename",
+                 "mode=%d name=\"%s\" (length %zu) is not a legal player "
+                 "name (ASCII letters only, 1..%d of them); no path built",
+                 mode, excerpt, strlen(orig_name), MAX_NAME_LENGTH);
+    return (0);
   }
 
   strlcpy(name, orig_name, sizeof(name));
