@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Regression tests for the standalone tools in src/util (wld2html, split).
 
-Usage: test_util_tools.py <wld2html> <split> [<fortified-wld2html> | -]
+Usage: test_util_world_tools.py <wld2html> <split> [<fortified-wld2html> | -]
 
 The optional third argument is a -O2 -D_FORTIFY_SOURCE=3 build of wld2html
 ("-" when the build tree has none, e.g. under sanitizers).
