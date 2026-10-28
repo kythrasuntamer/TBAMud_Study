@@ -198,6 +198,41 @@ static void test_delete_consecutive_zone_commands(void)
   TEST_ASSERT_EQUAL_INT(2, tb_captured_errors);
 }
 
+/* C1-V01 / C1-22: the renumber loops had no NOBODY guard, so a player's nr
+ * and a keeper-less shop's keeper (NOBODY = 65535 with unsigned rnums)
+ * became 65534, a valid-looking rnum; and a shop whose keeper was the
+ * deleted mob was handed to the mob at refpt - 1. */
+static void test_delete_mobile_renumbers_only_real_rnums(void)
+{
+  struct reset_com none[1];
+  struct char_data player;
+  struct player_special_data specials;
+
+  memset(&player, 0, sizeof(player));
+  memset(&specials, 0, sizeof(specials));
+  player.nr = NOBODY;
+  player.player_specials = &specials;
+  character_list = &player;
+
+  CREATE(shop_index, struct shop_data, 3);
+  top_shop = 2;
+  shop_index[0].vnum = 10; shop_index[0].keeper = NOBODY;
+  shop_index[1].vnum = 11; shop_index[1].keeper = 1;     /* the deleted mob */
+  shop_index[2].vnum = 12; shop_index[2].keeper = 2;
+
+  make_zone(none, 0);
+  drop_strings(1);
+  delete_mobile(1);
+
+  TEST_ASSERT_EQUAL_INT(NOBODY, player.nr);
+  TEST_ASSERT_EQUAL_INT(NOBODY, shop_index[0].keeper);
+  TEST_ASSERT_EQUAL_INT(NOBODY, shop_index[1].keeper);
+  TEST_ASSERT_EQUAL_INT(1, shop_index[2].keeper);
+  TEST_ASSERT_EQUAL_STRING("shop-keeper-deleted", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "shop 11 keeper mob vnum 2"));
+  character_list = NULL;
+}
+
 /* ---- delete_object (genobj.c) ----------------------------------------- */
 
 static struct reset_com zcmd(char command, int arg1, int arg2, int arg3)
@@ -265,6 +300,7 @@ int main(void)
   UNITY_BEGIN();
   RUN_TEST(test_delete_last_zone_command_stays_in_bounds);
   RUN_TEST(test_delete_consecutive_zone_commands);
+  RUN_TEST(test_delete_mobile_renumbers_only_real_rnums);
   RUN_TEST(test_delete_object_zone_commands);
   return UNITY_END();
 }

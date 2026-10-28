@@ -171,9 +171,12 @@ int delete_mobile(mob_rnum refpt)
   RECREATE(mob_index, struct index_data, top_of_mobt + 1);
   RECREATE(mob_proto, struct char_data, top_of_mobt + 1);
 
-  /* Update live mobile rnums. */
+  /* Update live mobile rnums.  Players (and unprototyped mobs) carry
+   * NOBODY, the largest value of the unsigned rnum type: it must not be
+   * shifted, or it becomes a valid-looking rnum (65534). */
   for (live_mob = character_list; live_mob; live_mob = live_mob->next)
-    GET_MOB_RNUM(live_mob) -= (GET_MOB_RNUM(live_mob) >= refpt);
+    if (GET_MOB_RNUM(live_mob) != NOBODY && GET_MOB_RNUM(live_mob) >= refpt)
+      GET_MOB_RNUM(live_mob)--;
 
   /* Update zone table.  Deleting a command shifts the rest of the list
    * (reallocated to exactly fit) down into cmd_no, so cmd_no only advances
@@ -197,10 +200,23 @@ int delete_mobile(mob_rnum refpt)
     }
   }
 
-  /* Update shop keepers. */
+  /* Update shop keepers.  A shop whose keeper was the deleted mob loses its
+   * keeper (it used to be silently handed to the mob at refpt - 1); a shop
+   * with no keeper (NOBODY) keeps none instead of wrapping to 65534. */
   if (shop_index)
-    for (counter = 0; counter <= top_shop; counter++)
-      SHOP_KEEPER(counter) -= (SHOP_KEEPER(counter) >= refpt);
+    for (counter = 0; counter <= top_shop; counter++) {
+      if (SHOP_KEEPER(counter) == refpt) {
+        TB_WARN_MSG("genolc", "shop-keeper-deleted", "shop",
+                    "shop %d keeper mob vnum %d deleted; shop now has no keeper",
+                    SHOP_NUM(counter), vnum);
+        SHOP_KEEPER(counter) = NOBODY;
+      } else if (SHOP_KEEPER(counter) != NOBODY && SHOP_KEEPER(counter) > refpt)
+        SHOP_KEEPER(counter)--;
+      if (SHOP_KEEPER(counter) != NOBODY && SHOP_KEEPER(counter) > top_of_mobt)
+        TB_ERROR_MSG("genolc", "mob-delete", "shop",
+                     TB_ERRID_INVARIANT " shop %d keeper rnum %d out of range (top %d) after deleting mob vnum %d",
+                     SHOP_NUM(counter), SHOP_KEEPER(counter), top_of_mobt, vnum);
+    }
 
   save_mobiles(real_zone_by_thing(vnum));
 
