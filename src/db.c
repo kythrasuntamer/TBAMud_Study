@@ -1406,6 +1406,11 @@ int count_hash_records(FILE *fl)
 #define INDEX_NAME_STR(n) INDEX_NAME_STR_(n)
 #define INDEX_NAME_FMT "%" INDEX_NAME_STR(INDEX_NAME_MAX) "s\n"
 
+/* Parser names for index_boot()'s parse contexts, by DB_BOOT_* mode. */
+static const char *const boot_parser_names[] = {
+  "wld", "mob", "obj", "zon", "shp", "hlp", "trg", "qst"
+};
+
 void index_boot(int mode)
 {
   const char *index_filename, *prefix = NULL;	/* NULL or egcs 1.1 complains */
@@ -1572,6 +1577,10 @@ void index_boot(int mode)
       TB_REPORT_ERRNO("fopen", buf2);
       exit(1);
     }
+    /* Parser reports (get_line, fread_number) name this file and line. */
+    tb_parse_context_begin(db_file, buf2,
+                           mode >= 0 && mode < (int)TB_ARRAY_LEN(boot_parser_names)
+                             ? boot_parser_names[mode] : "(unknown)");
     switch (mode) {
     case DB_BOOT_WLD:
     case DB_BOOT_OBJ:
@@ -1591,6 +1600,7 @@ void index_boot(int mode)
       break;
     }
 
+    tb_parse_context_end(db_file);   /* before fclose(): slots key on FILE * */
     tb_fclose(db_file);
   }
   tb_fclose(db_index);
@@ -4006,6 +4016,8 @@ char *fread_string(FILE *fl, const char *error)
       log("SYSERR: fread_string: format error at or near %s", error);
       exit(1);
     }
+    if (strchr(tmp, '\n'))   /* the last chunk of a physical line */
+      tb_parse_context_note_line(fl);
     /* A NUL byte at the start of a chunk (a corrupt or partly written file)
      * makes the chunk look empty; the scan below would then start at tmp[-1]. */
     if (*tmp == '\0') {
@@ -4102,6 +4114,8 @@ char *fread_clean_string(FILE *fl, const char *error)
                    length);
       return NULL;
     }
+    if (strchr(tmp, '\n'))   /* the last chunk of a physical line */
+      tb_parse_context_note_line(fl);
     /* See fread_string(): a chunk starting with NUL would scan from tmp[-1]. */
     if (*tmp == '\0') {
       TB_ERROR_MSG("db", "fread-string", error,

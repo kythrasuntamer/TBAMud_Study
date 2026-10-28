@@ -1586,5 +1586,13 @@ endif()
 # were counted as done it would spin forever. Fail that regression sooner.
 set_tests_properties(test_players_persist PROPERTIES TIMEOUT 60)
 
+# tools/rebalance_world_50.py: stage-and-report level-50 mobile rebalance.
+if(Python3_Interpreter_FOUND)
+    add_test(NAME test_rebalance_world_50
+        COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_CURRENT_SOURCE_DIR}/test_rebalance_world_50.py)
+    set_tests_properties(test_rebalance_world_50 PROPERTIES LABELS contract
+        ENVIRONMENT TB_SOURCE_DIR=${PROJECT_SOURCE_DIR})
+endif()
+
 # Fil-C only: set aside the tests whose -Wl,--wrap doubles it defeats.
 tb_filc_skip_wrap_tests()
