@@ -630,8 +630,11 @@ void mag_masses(int level, struct char_data *ch, int spellnum, int savetype)
  * them to work. Area spells have limited targets within the room. */
 void mag_areas(int level, struct char_data *ch, int spellnum, int savetype)
 {
-  struct char_data *tch, *next_tch;
+  struct char_data *tch;
   const char *to_char = NULL, *to_room = NULL;
+  room_rnum origin;
+  long *targets;
+  int count, i;
 
   if (ch == NULL)
     return;
@@ -651,8 +654,30 @@ void mag_areas(int level, struct char_data *ch, int spellnum, int savetype)
     act(to_room, FALSE, ch, 0, 0, TO_ROOM);
 
 
-  for (tch = world[IN_ROOM(ch)].people; tch; tch = next_tch) {
-    next_tch = tch->next_in_room;
+  /* mag_damage() runs damage and death triggers (and death itself), which
+   * can teleport or purge any occupant, so next_in_room is not kept across
+   * it: the room is snapshotted as UIDs and each occupant re-resolved. One
+   * that left the caster's room or is pending extraction is skipped and
+   * reported, and the spell stops if the caster is purged or moved (H1-19;
+   * maintainer-safety-guide section 2). */
+  origin = IN_ROOM(ch);
+  count = room_people_uids(origin, &targets);
+  for (i = 0; i < count; i++) {
+    if (DEAD(ch) || IN_ROOM(ch) != origin) {
+      TB_WARN_MSG("magic", "area-caster-moved", skill_name(spellnum),
+                  "spell %d caster " DIAG_CHAR_FMT " purged or moved during "
+                  "the area spell; %d occupant(s) of room %d skipped",
+                  spellnum, DIAG_CHAR(ch), count - i,
+                  (int) GET_ROOM_VNUM(origin));
+      break;
+    }
+    if ((tch = room_person_live(targets[i], origin)) == NULL) {
+      TB_WARN_MSG("magic", "area-target-moved", skill_name(spellnum),
+                  "spell %d target uid %ld left room %d or was purged during "
+                  "the area spell by " DIAG_CHAR_FMT "; skipped", spellnum,
+                  targets[i], (int) GET_ROOM_VNUM(origin), DIAG_CHAR(ch));
+      continue;
+    }
 
     /* The skips: 1: the caster
      *            2: immortals
@@ -675,6 +700,7 @@ void mag_areas(int level, struct char_data *ch, int spellnum, int savetype)
     /* Doesn't matter if they die here so we don't check. -gg 6/24/98 */
     mag_damage(level, ch, tch, spellnum, 1);
   }
+  free(targets);
 }
 
 /*----------------------------------------------------------------------------*/
