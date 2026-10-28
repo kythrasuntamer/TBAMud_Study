@@ -87,9 +87,30 @@ static void test_list_skills_valid_class(void)
   TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
 }
 
+/* H3-20: a list longer than buf2 used to be cut silently (the overflow
+ * marker branch was unreachable). It must carry the marker and report. */
+static void test_list_skills_truncation_is_marked(void)
+{
+  static char long_name[301];
+  int k;
+
+  memset(long_name, 'x', sizeof(long_name) - 1);
+  for (k = 0; k <= TOP_SPELL_DEFINE; k++)
+    spell_info[k].name = long_name;
+  GET_CLASS(&student) = CLASS_WARRIOR;
+
+  list_skills(&student);
+
+  TEST_ASSERT_EQUAL_INT(1, pages);
+  TEST_ASSERT_NOT_NULL(strstr(paged, "**OVERFLOW**"));
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("skill-list-truncated", tb_captured_operation);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(test_list_skills_truncation_is_marked);
   RUN_TEST(test_list_skills_rejects_out_of_range_class);
   RUN_TEST(test_list_skills_valid_class);
   return UNITY_END();

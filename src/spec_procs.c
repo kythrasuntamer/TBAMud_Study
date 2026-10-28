@@ -121,6 +121,7 @@ void list_skills(struct char_data *ch)
   const char *overflow = "\r\n**OVERFLOW**\r\n";
   int i, sortpos, ret;
   size_t len = 0;
+  bool truncated = FALSE;
   char buf2[MAX_STRING_LENGTH];
 
   if (!practice_class_ok(ch))
@@ -134,13 +135,24 @@ void list_skills(struct char_data *ch)
     i = spell_sort_info[sortpos];
     if (GET_LEVEL(ch) >= spell_info[i].min_level[(int) GET_CLASS(ch)]) {
     ret = snprintf(buf2 + len, sizeof(buf2) - len, "%-20s %s\r\n", spell_info[i].name, how_good(GET_SKILL(ch, i)));
-      if (ret < 0 || len + ret >= sizeof(buf2))
+      if (ret < 0 || len + ret >= sizeof(buf2)) {
+        truncated = TRUE;
         break;
+      }
       len += ret;
     }
   }
-  if (len >= sizeof(buf2))
-    memcpy(buf2 + sizeof(buf2) - strlen(overflow) - 1, overflow, strlen(overflow) + 1); /* strcpy: OK */
+  /* The loop stops before overflowing buf2, so the old 'len >= sizeof(buf2)'
+   * marker test could never fire and a cut-short list looked complete. Mark
+   * it (overwriting the tail if needed) and report it. */
+  if (truncated) {
+    size_t mark = strlen(overflow);
+    size_t at = (len < sizeof(buf2) - mark - 1) ? len : sizeof(buf2) - mark - 1;
+    memcpy(buf2 + at, overflow, mark + 1);
+    TB_WARN_MSG("spec", "skill-list-truncated", "buf2",
+                DIAG_CHAR_FMT " skill list cut at sort position %d (%zu of %zu bytes used)",
+                DIAG_CHAR(ch), sortpos, len, sizeof(buf2));
+  }
 
   page_string(ch->desc, buf2, TRUE);
 }
