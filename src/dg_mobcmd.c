@@ -1125,7 +1125,7 @@ ACMD(do_mfollow)
 {
   char buf[MAX_INPUT_LENGTH];
   struct char_data *leader;
-  struct follow_type *j, *k;
+  struct follow_type *k;
 
   if (!MOB_OR_IMPL(ch)) {
     send_to_char(ch, "%s", CONFIG_HUH);
@@ -1161,17 +1161,20 @@ ACMD(do_mfollow)
 
   /* stop following someone else first */
   if (ch->master) {
-    if (ch->master->followers->follower == ch) {	/* Head of follower-list? */
-      k = ch->master->followers;
-      ch->master->followers = k->next;
-      free(k);
-    } else {			/* locate follower who is not head of list */
-      for (k = ch->master->followers; k->next->follower != ch; k = k->next);
+    struct follow_type **link;
 
-      j = k->next;
-      k->next = j->next;
-      free(j);
-    }
+    /* The old unlink assumed ch was on the list and dereferenced NULL when
+     * the list was empty or did not hold it. */
+    for (link = &ch->master->followers; *link && (*link)->follower != ch;
+         link = &(*link)->next);
+    if (*link) {
+      k = *link;
+      *link = k->next;
+      free(k);
+    } else
+      TB_ERROR_MSG("dg", "follower-list", "mfollow",
+                   DIAG_CHAR_FMT " is not in its master's follower list",
+                   DIAG_CHAR(ch));
     ch->master = NULL;
   }
 
