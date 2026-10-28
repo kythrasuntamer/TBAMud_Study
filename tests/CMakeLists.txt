@@ -1023,6 +1023,15 @@ if(Python3_Interpreter_FOUND)
         COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/test_dg_detach_contract.py
                 ${MUD_SRCDIR}/dg_scripts.c)
+    # DG %actor.class% comparisons must name a class in pc_class_types[];
+    # a renamed class otherwise silently breaks guildguards (Magic User ->
+    # Wizard). The scripts read src/ and lib/world/trg from the source tree.
+    add_test(NAME test_trigger_class_names_contract
+        COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/test_trigger_class_names_contract.py)
+    add_test(NAME test_monk_guild_access
+        COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/test_monk_guild_access.py)
 
     # Runs the built src/util tools on crafted inputs and asserts on the
     # TBERR operation each malformed input must report.
@@ -1127,6 +1136,7 @@ if(Python3_Interpreter_FOUND)
         test_olc_entry_guard_contract test_iedit_contract
         test_mob_load_contract test_zedit_contract test_olc_delete_contract
         test_quest_type_contract test_oasis_list_contract
+        test_trigger_class_names_contract test_monk_guild_access
         PROPERTIES LABELS "contract")
 endif()
 
