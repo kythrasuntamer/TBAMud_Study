@@ -143,7 +143,7 @@ int get_line(FILE *fl, char *buf)
     lines++;
   } while (*temp == '*' || *temp == '\n' || *temp == '\r');
   temp[strcspn(temp, "\r\n")] = '\0';
-  strcpy(buf, temp);
+  memcpy(buf, temp, strlen(temp) + 1);   /* temp < READ_SIZE, the documented size of buf */
   return lines;
 }
 /* db.c fread_string(): text up to '~'; NULL for an empty body. */
@@ -162,7 +162,7 @@ char *fread_string(FILE *fl, const char *error)
 bitvector_t asciiflag_conv(char *flag) { (void)flag; return 0; }
 void strip_cr(char *buffer) { (void)buffer; }
 char *convert_from_tabs(char *string) { return string; }
-int sprintascii(char *out, bitvector_t bits) { (void)bits; strcpy(out, "0"); return 1; }
+int sprintascii(char *out, bitvector_t bits) { (void)bits; out[0] = '0'; out[1] = '\0'; return 1; }
 void script_save_to_disk(FILE *fp, void *item, int type) { (void)fp; (void)item; (void)type; }
 void skip_spaces(char **string) { while (**string && isspace((unsigned char)**string)) (*string)++; }
 char *str_udup(const char *txt) { return strdup(txt && *txt ? txt : "undefined"); }
@@ -266,7 +266,12 @@ void extract_obj(struct obj_data *obj)
 {
   struct obj_data **pp;
   if (obj->in_obj) obj_from_obj(obj);
-  while (obj->contains) extract_obj(obj->contains);
+  while (obj->contains) {
+    struct obj_data *content = obj->contains;
+    obj->contains = content->next_content;
+    content->in_obj = NULL;
+    extract_obj(content);
+  }
   for (pp = &object_list; *pp; pp = &(*pp)->next)
     if (*pp == obj) { *pp = obj->next; break; }
   if (GET_OBJ_RNUM(obj) != NOTHING) obj_index[GET_OBJ_RNUM(obj)].number--;
@@ -776,7 +781,7 @@ static int file_exists(const char *path)
 {
   FILE *fp = fopen(path, "r");
   if (!fp) return 0;
-  fclose(fp);
+  (void)fclose(fp);
   return 1;
 }
 
@@ -784,8 +789,8 @@ static void write_text_file(const char *path, const char *text)
 {
   FILE *fp = fopen(path, "w");
   TEST_ASSERT_NOT_NULL(fp);
-  fputs(text, fp);
-  fclose(fp);
+  (void)fputs(text, fp);
+  (void)fclose(fp);
 }
 
 static void read_text_file(const char *path, char *buf, size_t size)
@@ -795,7 +800,7 @@ static void read_text_file(const char *path, char *buf, size_t size)
   TEST_ASSERT_NOT_NULL(fp);
   n = fread(buf, 1, size - 1, fp);
   buf[n] = '\0';
-  fclose(fp);
+  (void)fclose(fp);
 }
 
 static void delete_object_drops_matching_shop_product(void)
@@ -1065,7 +1070,7 @@ static void parse_body(const char *text)
   CREATE(trig_index, struct index_data *, 1);
   top_of_trigt = 0;
   parse_trigger(fp, 100);
-  fclose(fp);
+  (void)fclose(fp);
 }
 
 static void parse_trigger_accepts_empty_body(void)
@@ -1366,7 +1371,7 @@ static void dg_read_trigger_keeps_missing_room_vnum(void)
   memset(&r, 0, sizeof(r));
   r.number = 3001;
   dg_read_trigger(fp, &r, WLD_TRIGGER);
-  fclose(fp);
+  (void)fclose(fp);
   TEST_ASSERT_NOT_NULL(r.proto_script);
   TEST_ASSERT_EQUAL_INT(998, r.proto_script->vnum);
   TEST_ASSERT_NULL(r.script);
@@ -1426,7 +1431,7 @@ static void leave_test_root(void)
       while ((entry = readdir(dir)) != NULL) {
         if (entry->d_name[0] == '.') continue;
         if (snprintf(path, sizeof(path), "%s/%s", test_dirs[i], entry->d_name) < (int)sizeof(path))
-          remove(path);
+          (void)remove(path);
       }
       closedir(dir);
     }

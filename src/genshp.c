@@ -409,7 +409,9 @@ int save_shops(zone_rnum zone_num)
                    zone_table[zone_num].number);
     mudlog(BRF, LVL_GOD, TRUE, "SYSERR: OLC: Cannot write to shop file %s!", fname);
     tb_fclose(shop_file);
-    remove(fname);   /* never leave a header-less .new behind */
+    /* never leave a header-less .new behind */
+    if (remove(fname) != 0 && errno != ENOENT)
+      TB_REPORT_ERRNO("remove", fname);
     return FALSE;
   }
   /* Search database for shops in this zone. */
