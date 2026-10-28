@@ -2386,10 +2386,11 @@ static void test_zedit_save_appends_a_new_room_block(void)
 
 /* ------------------------------------------------------------------ */
 /* Integration: an argument zedit has not filled in holds -1           */
-/* (zedit_init_new_command).  utils.h's VALID_MOB_RNUM takes -1 for a  */
-/* valid rnum and dg_scripts.h's VALID_TRIG_RNUM indexes trig_index[] */
-/* with it; the save and the menu refuse both without reading a table */
-/* (trig_index and mob_proto are NULL here: a read crashes).           */
+/* (zedit_init_new_command).  VALID_MOB_RNUM used to take -1 for a     */
+/* valid rnum and VALID_TRIG_RNUM to index trig_index[] with it; both  */
+/* refuse negatives now (utils.h tb_rnum_valid), so the save and the   */
+/* menu refuse both without reading a table (trig_index and mob_proto */
+/* are NULL here: a read crashes).                                     */
 /* ------------------------------------------------------------------ */
 static void test_zedit_save_refuses_unset_mob_and_trigger_args(void)
 {
