@@ -59,7 +59,10 @@ char *act_at(const char *src_file, int src_line, const char *src_func,
 void	write_to_q(const char *txt, struct txt_q *queue, int aliased);
 int	write_to_descriptor(socket_t desc, const char *txt);
 size_t	write_to_output(struct descriptor_data *d, const char *txt, ...) __attribute__ ((format (printf, 2, 3)));
-size_t	vwrite_to_output(struct descriptor_data *d, const char *format, va_list args);
+/* va_list form of write_to_output(); format(printf, 2, 0) marks it as
+ * forwarding a caller's checked format. */
+size_t	vwrite_to_output(struct descriptor_data *d, const char *format, va_list args)
+  __attribute__ ((format (printf, 2, 0)));
 
 typedef RETSIGTYPE sigfunc(int);
 

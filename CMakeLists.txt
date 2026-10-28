@@ -99,6 +99,14 @@ check_include_file("unistd.h" HAVE_UNISTD_H)
 check_include_file("memory.h" HAVE_MEMORY_H)
 check_include_file("assert.h" HAVE_ASSERT_H)
 check_include_file("arpa/telnet.h" HAVE_ARPA_TELNET_H)
+# A printf-style format that is not a string literal is a build error. Output
+# functions carry format(printf) attributes, so this catches player or client
+# text used as a format (e.g. a '%' in a client-reported ID) at compile time.
+# Pass untrusted text as data: write_to_output(d, "%s", text).
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    add_compile_options(-Wformat -Werror=format-security -Werror=format-nonliteral)
+endif()
+
 check_include_file("arpa/inet.h" HAVE_ARPA_INET_H)
 check_include_file("sys/stat.h" HAVE_SYS_STAT_H)
 check_include_file("sys/socket.h" HAVE_SYS_SOCKET_H)

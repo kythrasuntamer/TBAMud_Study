@@ -37,7 +37,8 @@
 /* Public functions made available from utils.c. Documentation for all functions
  * are made available with the function definition. */
 void basic_mud_log(const char *format, ...) __attribute__ ((format (printf, 1, 2)));
-void basic_mud_vlog(const char *format, va_list args);
+void basic_mud_vlog(const char *format, va_list args)
+  __attribute__ ((format (printf, 1, 0)));
 void tb_error_log_at(const char *severity, const char *subsystem,
                      const char *operation, const char *resource, int errnum,
                      const char *source_file, int source_line,

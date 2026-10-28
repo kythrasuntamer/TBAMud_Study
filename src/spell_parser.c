@@ -94,25 +94,27 @@ static char *obfuscate_spell(const char *unobfuscated) {
 
 static void say_spell(struct char_data *ch, int spellnum, struct char_data *tch,
     struct obj_data *tobj) {
-  const char *format, *spell = skill_name(spellnum);
+  const char *lead, *spell = skill_name(spellnum);
   char act_buf_original[256], act_buf_obfuscated[256], *obfuscated = obfuscate_spell(spell);
 
 
   struct char_data *i;
 
+  /* Pick the act() lead-in; the format itself stays a literal so the
+   * compiler can check it (format strings are never chosen at runtime). */
   if (tch != NULL && IN_ROOM(tch) == IN_ROOM(ch)) {
     if (tch == ch)
-      format = "$n closes $s eyes and utters the words, '%s'.";
+      lead = "$n closes $s eyes and utters the words";
     else
-      format = "$n stares at $N and utters the words, '%s'.";
+      lead = "$n stares at $N and utters the words";
   } else if (tobj != NULL
       && ((IN_ROOM(tobj) == IN_ROOM(ch)) || (tobj->carried_by == ch)))
-    format = "$n stares at $p and utters the words, '%s'.";
+    lead = "$n stares at $p and utters the words";
   else
-    format = "$n utters the words, '%s'.";
+    lead = "$n utters the words";
 
-  tb_snprintf(act_buf_original, sizeof(act_buf_original), format, spell);
-  tb_snprintf(act_buf_obfuscated, sizeof(act_buf_obfuscated), format, obfuscated);
+  tb_snprintf(act_buf_original, sizeof(act_buf_original), "%s, '%s'.", lead, spell);
+  tb_snprintf(act_buf_obfuscated, sizeof(act_buf_obfuscated), "%s, '%s'.", lead, obfuscated);
 
   for (i = world[IN_ROOM(ch)].people; i; i = i->next_in_room) {
     if (i == ch || i == tch || !i->desc || !AWAKE(i))

@@ -914,6 +914,12 @@ static inline void tb_report_error_at(const char *operation, const char *context
    (tb_report_domain_error_at(TB_SEV_ERROR, TB_ERR_INVARIANT, "invariant", \
                               (context), 0, __FILE__, __LINE__, __func__), 0))
 
+/* format(printf) type-checks every caller's format and arguments. */
+static inline void tb_snprintf_at(char *dst, size_t dst_size,
+                                  const char *source_file, int source_line,
+                                  const char *source_func,
+                                  const char *format, ...)
+  __attribute__ ((format (printf, 6, 7)));
 static inline void tb_snprintf_at(char *dst, size_t dst_size,
                                   const char *source_file, int source_line,
                                   const char *source_func,
@@ -943,6 +949,12 @@ static inline void tb_snprintf_at(char *dst, size_t dst_size,
 #define tb_snprintf(dst, dst_size, ...) \
   tb_snprintf_at((dst), (dst_size), __FILE__, __LINE__, __func__, __VA_ARGS__)
 
+/* format(printf) type-checks every caller's format and arguments. */
+static inline void tb_fprintf_at(FILE *stream,
+                                 const char *source_file, int source_line,
+                                 const char *source_func,
+                                 const char *format, ...)
+  __attribute__ ((format (printf, 5, 6)));
 static inline void tb_fprintf_at(FILE *stream,
                                  const char *source_file, int source_line,
                                  const char *source_func,
@@ -1114,6 +1126,12 @@ static inline int tb_fclose_checked_at(FILE *stream, const char *context,
 #define tb_fclose_checked(stream, context) \
   tb_fclose_checked_at((stream), (context), __FILE__, __LINE__, __func__)
 
+/* format(printf) type-checks every caller's format and arguments. */
+static inline int tb_fprintf_checked_at(FILE *stream, const char *context,
+                                        const char *source_file, int source_line,
+                                        const char *source_func,
+                                        const char *format, ...)
+  __attribute__ ((format (printf, 6, 7)));
 static inline int tb_fprintf_checked_at(FILE *stream, const char *context,
                                         const char *source_file, int source_line,
                                         const char *source_func,
@@ -1320,6 +1338,14 @@ static inline int tb_replace_file_checked_at(const char *temp_path,
 #define tb_replace_file_checked(temp_path, dest_path) \
   tb_replace_file_checked_at((temp_path), (dest_path), __FILE__, __LINE__, __func__)
 
+/* format(strftime) makes the compiler check each caller's format literal,
+ * just as format(printf) does for the output functions. */
+static inline void tb_strftime_at(char *dst, size_t dst_size,
+                                  const char *source_file, int source_line,
+                                  const char *source_func,
+                                  const char *format,
+                                  const struct tm *timeptr)
+  __attribute__ ((format (strftime, 6, 0)));
 static inline void tb_strftime_at(char *dst, size_t dst_size,
                                   const char *source_file, int source_line,
                                   const char *source_func,
@@ -1331,7 +1357,18 @@ static inline void tb_strftime_at(char *dst, size_t dst_size,
                        source_file, source_line, source_func);
     return;
   }
-  if (strftime(dst, dst_size, format, timeptr) == 0) {
+  /* format is the caller's literal, already checked at the call site via the
+   * format(strftime) attribute above; forwarding it is the one sanctioned
+   * non-literal format in the tree (-Werror=format-nonliteral elsewhere). */
+#if defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wformat-nonliteral"
+#endif
+  size_t written = strftime(dst, dst_size, format, timeptr);
+#if defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
+  if (written == 0) {
     dst[0] = '\0';
     tb_report_error_at("strftime", "buffer too small or conversion failed", 0,
                        source_file, source_line, source_func);
