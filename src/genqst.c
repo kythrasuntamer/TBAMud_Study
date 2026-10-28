@@ -268,10 +268,10 @@ int delete_quest(qst_rnum rnum)
    * players at the menu are not, and are reached through their
    * descriptors. */
   for (ch = character_list; ch; ch = ch->next)
-    delete_quest_clear_player(ch, qvnum);
+    delete_quest_clear_player(ch, deleted_vnum);
   for (dsc = descriptor_list; dsc; dsc = dsc->next)
     if (delete_quest_menu_player(dsc))
-      delete_quest_clear_player(dsc->character, qvnum);
+      delete_quest_clear_player(dsc->character, deleted_vnum);
   return TRUE;
 }
 
