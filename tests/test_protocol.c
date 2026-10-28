@@ -20,6 +20,14 @@ size_t write_to_output(struct descriptor_data *t, const char *txt, ...)
 { (void)t; (void)txt; return 0; }
 int write_to_descriptor(socket_t desc, const char *txt)
 { (void)desc; return (int)strlen(txt); }
+void *tb_calloc_array_at(size_t count, size_t element_size,
+                         const char *file, int line, const char *func)
+{
+  (void)file; (void)line; (void)func;
+  void *allocation = calloc(count, element_size);
+  if (!allocation) abort();
+  return allocation;
+}
 
 static struct descriptor_data desc;
 
@@ -138,6 +146,18 @@ static void input_nul_bytes_are_dropped_and_counted(void)
   TEST_ASSERT_EQUAL_STRING("input-nul", tb_captured_operation);
 }
 
+/* AllocString() returned NULL for NULL input or allocation failure, and its
+ * results are strcmp()'d without checks. */
+static void alloc_string_never_returns_null(void)
+{
+  char *copy = AllocString(NULL);
+  TEST_ASSERT_NOT_NULL(copy);
+  TEST_ASSERT_EQUAL_STRING("", copy);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("alloc-string", tb_captured_operation);
+  free(copy);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -147,5 +167,6 @@ int main(void)
   RUN_TEST(oversized_output_is_cut_with_marker);
   RUN_TEST(unfinished_escapes_stop_at_terminator);
   RUN_TEST(input_nul_bytes_are_dropped_and_counted);
+  RUN_TEST(alloc_string_never_returns_null);
   return UNITY_END();
 }

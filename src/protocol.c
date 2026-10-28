@@ -323,15 +323,19 @@ protocol_t *ProtocolCreate( void )
       {
          if ( VariableNameTable[i].Variable != i )
          {
-            TB_ERROR_MSG( "msdp", "table-mismatch", "ProtocolCreate",
+            /* Every MSDP lookup indexes this table by enum value, so a
+             * mismatch (a programming error) mislabels every variable. */
+            TB_FATAL_MSG( "msdp", "table-mismatch", "ProtocolCreate",
                "VariableNameTable[%d] holds variable %d; table order must match"
                " the eMSDP enum in protocol.h", i, (int) VariableNameTable[i].Variable );
-            break;
+            abort();
          }
       }
    }
 
-   pProtocol = (protocol_t *) malloc(sizeof(protocol_t));
+   /* CREATE aborts on allocation failure (with a report), so none of the
+    * stores below can go through NULL. */
+   CREATE(pProtocol, protocol_t, 1);
    pProtocol->WriteOOB = 0;
    pProtocol->bIACMode = false;
    pProtocol->bNegotiated = false;
@@ -349,11 +353,11 @@ protocol_t *ProtocolCreate( void )
    pProtocol->ScreenHeight = 0;
    pProtocol->pMXPVersion = AllocString("Unknown");
    pProtocol->pLastTTYPE = NULL;
-   pProtocol->pVariables = (MSDP_t **) malloc(sizeof(MSDP_t*)*eMSDP_MAX);
+   CREATE(pProtocol->pVariables, MSDP_t *, eMSDP_MAX);
 
    for ( i = eMSDP_NONE+1; i < eMSDP_MAX; ++i )
    {
-      pProtocol->pVariables[i] = (MSDP_t *) malloc(sizeof(MSDP_t));
+      CREATE(pProtocol->pVariables[i], MSDP_t, 1);
       pProtocol->pVariables[i]->bReport = false;
       pProtocol->pVariables[i]->bDirty = false;
       pProtocol->pVariables[i]->ValueInt = 0;
@@ -1416,9 +1420,7 @@ void MSDPSetTable( descriptor_t *apDescriptor, variable_t aMSDP, const char *apV
 
          if (value_length > (size_t)-1 - 3)
             return;
-         pTable = (char *)malloc(value_length + 3);
-         if (pTable == NULL)
-            return;
+         CREATE(pTable, char, value_length + 3);
          pTable[0] = (char)MSDP_TABLE_OPEN;
          memcpy(pTable + 1, apValue, value_length);
          pTable[value_length + 1] = (char)MSDP_TABLE_CLOSE;
@@ -1456,9 +1458,7 @@ void MSDPSetArray( descriptor_t *apDescriptor, variable_t aMSDP, const char *apV
 
          if (value_length > (size_t)-1 - 3)
             return;
-         pArray = (char *)malloc(value_length + 3);
-         if (pArray == NULL)
-            return;
+         CREATE(pArray, char, value_length + 3);
          pArray[0] = (char)MSDP_ARRAY_OPEN;
          memcpy(pArray + 1, apValue, value_length);
          pArray[value_length + 1] = (char)MSDP_ARRAY_CLOSE;
@@ -2254,8 +2254,10 @@ static void ExecuteMSDPPair( descriptor_t *apDescriptor, const char *apVariable,
                         !strcmp(apDescriptor->pProtocol->pVariables[i]->pValueString, "Unknown") )
                      {
                         /* Store the new value if it's valid */
-                        char *pBuffer = malloc(VariableNameTable[i].Max + 1);
+                        char *pBuffer;
                         int j; /* Loop counter */
+
+                        CREATE(pBuffer, char, VariableNameTable[i].Max + 1);
 
                         if ( pBuffer != NULL )
                         {
@@ -2683,19 +2685,24 @@ static bool_t IsNumber( const char *apString )
    return ( !*apString );
 }
 
+/* Heap copy of apString; never returns NULL. Callers store the result in
+ * MSDP string variables that are later strcmp()'d and sent without NULL
+ * checks, so allocation failure aborts (via CREATE) and a NULL argument is
+ * reported and replaced by an empty string. */
 static char *AllocString( const char *apString )
 {
-   char *pResult = NULL;
+   char *pResult;
+   size_t Size;
 
-   if ( apString != NULL )
+   if ( apString == NULL )
    {
-      size_t Size = strlen(apString);
-      if (Size == (size_t)-1)
-         return NULL;
-      pResult = (char *) malloc(Size + 1);
-      if ( pResult != NULL )
-         memcpy(pResult, apString, Size + 1);
+      TB_ERROR_MSG( "protocol", "alloc-string", "AllocString",
+                    "NULL source string; stored an empty string" );
+      apString = "";
    }
 
+   Size = strlen(apString);
+   CREATE(pResult, char, Size + 1);
+   memcpy(pResult, apString, Size + 1);
    return pResult;
 }
