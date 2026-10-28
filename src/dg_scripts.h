@@ -449,9 +449,14 @@ void wld_command_interpreter(room_data *room, char *argument);
 * no longer possible since script ids must be referenced with char_script_id()
 * and obj_script_id().
 */
+/* Formats into its own buffer: sizeof(buf) on a caller's char * would be
+ * pointer-sized. buf is kept for source compatibility and is unused. A UID is
+ * one marker character plus a long (at most 20 characters). */
 #define ADD_UID_VAR(buf, trig, id, name, context) do { \
-		         tb_snprintf(buf, sizeof(buf), "%c%ld", UID_CHAR, id); \
-                         add_var(&GET_TRIG_VARS(trig), name, buf, context); } while (0)
+		         char tb_uid_var_[32]; \
+		         (void)(buf); \
+		         tb_snprintf(tb_uid_var_, sizeof(tb_uid_var_), "%c%ld", UID_CHAR, (long)(id)); \
+                         add_var(&GET_TRIG_VARS(trig), name, tb_uid_var_, context); } while (0)
 
 // id helpers
 extern long char_script_id(char_data *ch);
