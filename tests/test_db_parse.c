@@ -1956,6 +1956,53 @@ static void parse_mobile_rejects_converted_record_in_no_zone(void)
   top_of_zone_table = 0;
 }
 
+/* load_zones() over len bytes of data (which may hold NUL bytes); 1 if it
+ * exit()ed. */
+static int load_zone_bytes(const char *data, size_t len)
+{
+  FILE *volatile fp = stream_of(data, len);
+  volatile int exited = 1;
+
+  zone_table = zone_load_fixture;
+  errno = 0;
+  tb_test_exit_armed = 1;
+  if (setjmp(tb_test_exit_jmp) == 0) {
+    load_zones(fp, (char *)"test.zon");
+    tb_test_exit_armed = 0;
+    exited = 0;
+  }
+  TEST_ASSERT_EQUAL_INT(0, fclose(fp));
+  return exited;
+}
+
+/* A line of only blanks, or one starting with a NUL byte, got the command
+ * letter '\0' and was then parsed from what the previous line left in the
+ * buffer, creating a junk command (or a misleading format error). Both are
+ * now skipped and reported with their line numbers. */
+static void load_zones_skips_blank_and_nul_lines(void)
+{
+  static const char text[] =
+    "#33\nbuilder~\nZone~\n3300 3399 30 2\n"
+    "M 0 3300 1 3300\n"
+    "   \n"
+    "\0M 0 3301 1 3301\n"
+    "O 0 3300 1 3300\n"
+    "S\n$\n";
+  struct reset_com *cmd;
+
+  TEST_ASSERT_EQUAL_INT(0, load_zone_bytes(text, sizeof(text) - 1));
+  cmd = zone_table[top_of_zone_table].cmd;
+  TEST_ASSERT_EQUAL_CHAR('M', cmd[0].command);
+  TEST_ASSERT_EQUAL_INT(3300, cmd[0].arg1);
+  TEST_ASSERT_EQUAL_CHAR('O', cmd[1].command);
+  TEST_ASSERT_EQUAL_CHAR('S', cmd[2].command);
+  TEST_ASSERT_EQUAL_INT(2, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("zone-parse", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail,
+                              "zone 33 line 7: NUL byte where a command was expected"));
+  zone_load_fixture_free();
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -2028,5 +2075,6 @@ int main(void)
   RUN_TEST(setup_dir_reports_bad_exit_line_with_room_and_direction);
   RUN_TEST(parse_object_rejects_converted_record_in_no_zone);
   RUN_TEST(parse_mobile_rejects_converted_record_in_no_zone);
+  RUN_TEST(load_zones_skips_blank_and_nul_lines);
   return UNITY_END();
 }

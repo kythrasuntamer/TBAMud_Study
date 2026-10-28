@@ -3128,6 +3128,18 @@ static void load_zones(FILE *fl, char *zonename)
       exit(1);
     }
 
+    /* A line of only blanks, or one that starts with a NUL byte (get_line()
+     * then returns ""), has no command letter. Reading on past its end
+     * parsed what the previous line left in buf as a junk command. The .zon
+     * file is hand-editable; zedit writes no such line. */
+    if (!*ptr) {
+      TB_ERROR_MSG("db", "zone-parse", zname,
+                   "zone %d line %d: %s where a command was expected; "
+                   "line skipped", Z.number, line_num,
+                   *buf ? "blank line" : "NUL byte");
+      continue;
+    }
+
     if ((ZCMD.command = *ptr) == '*')
       continue;
 
