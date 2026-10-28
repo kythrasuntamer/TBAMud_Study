@@ -808,6 +808,19 @@ ACMD(do_sit)
 
   switch (GET_POS(ch)) {
   case POS_STANDING:
+    /* Invariant: a standing character is on no furniture. A stale
+     * SITTING(ch) means some path stood ch up without char_from_furniture()
+     * (use POS_CHANGE_UNSEAT); linking ch into a second list below would
+     * leave the first furniture pointing at ch after ch is freed. */
+    if (SITTING(ch)) {
+      struct obj_data *stale = SITTING(ch);
+
+      TB_ERROR_MSG("act", "furniture-desync", "obj",
+                   "furniture vnum %d uid %ld still lists standing " DIAG_CHAR_FMT
+                   "; unlinking before sit",
+                   (int) GET_OBJ_VNUM(stale), obj_script_id(stale), DIAG_CHAR(ch));
+      char_from_furniture(ch);
+    }
     if (found == 0) {
       send_to_char(ch, "You sit down.\r\n");
       act("$n sits down.", FALSE, ch, 0, 0, TO_ROOM);

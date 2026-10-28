@@ -667,6 +667,42 @@ if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
         PROPERTIES COMPILE_OPTIONS "-ffunction-sections;-fdata-sections")
 endif()
 
+# Gameplay regression tests (act.item.c, act.movement.c, act.offensive.c,
+# fight.c, magic.c). Each links the production gameplay sources plus the real
+# handler.c/utils.c/dg_scripts.c, and gameplay_fixture.c for DG trigger entry
+# points and world setup. utils.c's rand_number(), core_dump_real(),
+# basic_mud_log() and tb_error_log_at() are wrapped so tests can drive and
+# observe them (tb_error_capture.h provides __wrap_tb_error_log_at).
+set(GAMEPLAY_SRCS
+    ${MUD_SRCDIR}/act.item.c
+    ${MUD_SRCDIR}/act.movement.c
+    ${MUD_SRCDIR}/act.offensive.c
+    ${MUD_SRCDIR}/fight.c
+    ${MUD_SRCDIR}/magic.c
+    ${MUD_SRCDIR}/handler.c
+    ${MUD_SRCDIR}/utils.c
+    ${MUD_SRCDIR}/random.c
+    ${MUD_SRCDIR}/interpreter.c
+    ${MUD_SRCDIR}/constants.c
+    ${MUD_SRCDIR}/dg_scripts.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/gameplay_fixture.c
+)
+macro(add_gameplay_test TEST_NAME TEST_SRC)
+    add_mud_test(${TEST_NAME} ${GAMEPLAY_SRCS} ${TEST_SRC})
+    if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+        target_compile_options(${TEST_NAME} PRIVATE -ffunction-sections -fdata-sections)
+        target_link_options(${TEST_NAME} PRIVATE
+            -Wl,--gc-sections
+            -Wl,--wrap=tb_error_log_at
+            -Wl,--wrap=rand_number
+            -Wl,--wrap=core_dump_real
+            -Wl,--wrap=basic_mud_log)
+    endif()
+    target_link_libraries(${TEST_NAME} PRIVATE ${CRYPT_LIBRARY} ${SODIUM_LIBRARY})
+endmacro()
+
+add_gameplay_test(test_act_movement ${CMAKE_CURRENT_SOURCE_DIR}/test_act_movement.c)
+
 find_package(Python3 COMPONENTS Interpreter QUIET)
 if(Python3_Interpreter_FOUND)
     add_test(NAME test_dg_memory_callback_contract

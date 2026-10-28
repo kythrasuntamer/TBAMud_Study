@@ -20,6 +20,22 @@ struct attack_hit_type {
    const char *plural;
 };
 
+/** Set ch's position to pos. A character that leaves the seated positions
+ * (pos above POS_SITTING: fighting or standing) is first unlinked from any
+ * furniture, which keeps SITTING(ch) and the furniture's sitting_here list
+ * and seat count (value 1) consistent. Code that stands a character up
+ * outside do_stand() must use this instead of assigning GET_POS directly:
+ * a stale SITTING(ch) lets do_sit() link ch into a second furniture list,
+ * and the first one keeps a pointer to ch after ch is freed.
+ * Evaluates each argument once. */
+#define POS_CHANGE_UNSEAT(ch, pos) do { \
+  struct char_data *pcu_ch_ = (ch); \
+  int pcu_pos_ = (pos); \
+  if (pcu_pos_ > POS_SITTING && SITTING(pcu_ch_)) \
+    char_from_furniture(pcu_ch_); \
+  GET_POS(pcu_ch_) = pcu_pos_; \
+} while (0)
+
 /* Functions available in fight.c */
 void appear(struct char_data *ch);
 void check_killer(struct char_data *ch, struct char_data *vict);

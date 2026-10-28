@@ -165,8 +165,8 @@ void set_fighting(struct char_data *ch, struct char_data *vict)
     affect_from_char(ch, SPELL_SLEEP);
 
   FIGHTING(ch) = vict;
-  GET_POS(ch) = POS_FIGHTING;
-
+  /* A seated character that starts fighting leaves its furniture. */
+  POS_CHANGE_UNSEAT(ch, POS_FIGHTING);
 }
 
 /* remove a char from the list of fighting chars */
@@ -180,7 +180,7 @@ void stop_fighting(struct char_data *ch)
   REMOVE_FROM_LIST(ch, combat_list, next_fighting);
   ch->next_fighting = NULL;
   FIGHTING(ch) = NULL;
-  GET_POS(ch) = POS_STANDING;
+  POS_CHANGE_UNSEAT(ch, POS_STANDING);
   update_pos(ch);
 }
 
@@ -959,7 +959,7 @@ void perform_violence(void)
       }
       GET_MOB_WAIT(ch) = 0;
       if (GET_POS(ch) < POS_FIGHTING) {
-        GET_POS(ch) = POS_FIGHTING;
+        POS_CHANGE_UNSEAT(ch, POS_FIGHTING);
         act("$n scrambles to $s feet!", TRUE, ch, 0, 0, TO_ROOM);
       }
     }
