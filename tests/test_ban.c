@@ -81,8 +81,8 @@ static void write_ban_file(const char *contents)
   FILE *fp = fopen(BAN_FILE, "w");
 
   TEST_ASSERT_NOT_NULL(fp);
-  fputs(contents, fp);
-  fclose(fp);
+  TEST_ASSERT_TRUE(fputs(contents, fp) >= 0);
+  TEST_ASSERT_EQUAL_INT(0, fclose(fp));
 }
 
 static int ban_count(void)
@@ -145,7 +145,7 @@ void test_load_reports_site_truncation(void)
 
   memset(site, 'a', sizeof(site) - 1);
   site[sizeof(site) - 1] = '\0';
-  snprintf(line, sizeof(line), "new %s 1700000000 Imm\n", site);
+  TEST_ASSERT_TRUE(snprintf(line, sizeof(line), "new %s 1700000000 Imm\n", site) > 0);
   write_ban_file(line);
   load_banned();
 
@@ -181,7 +181,7 @@ void test_do_ban_refuses_overlong_site(void)
   GET_IDNUM(&imm) = 5;
   memset(site, 'b', sizeof(site) - 1);
   site[sizeof(site) - 1] = '\0';
-  snprintf(arg, sizeof(arg), "all %s", site);
+  TEST_ASSERT_TRUE(snprintf(arg, sizeof(arg), "all %s", site) > 0);
 
   do_ban(&imm, arg, 0, 0);
 
@@ -204,7 +204,7 @@ void test_do_ban_accepts_site_at_limit(void)
   imm.player.name = (char *)"Imm";
   memset(site, 'c', sizeof(site) - 1);
   site[sizeof(site) - 1] = '\0';
-  snprintf(arg, sizeof(arg), "new %s", site);
+  TEST_ASSERT_TRUE(snprintf(arg, sizeof(arg), "new %s", site) > 0);
 
   do_ban(&imm, arg, 0, 0);
 
