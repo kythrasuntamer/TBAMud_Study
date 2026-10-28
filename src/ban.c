@@ -55,18 +55,53 @@ void load_banned(void)
       log("   Ban file '%s' doesn't exist.", BAN_FILE);
     return;
   }
+  /* BAN_FILE is written by write_ban_list() but can be hand-edited by the
+   * operator. Every record is security-relevant: a line that is skipped,
+   * mistyped or truncated silently would leave a site the operator meant to
+   * ban able to connect. Each rejection is therefore reported with its line
+   * number, and nothing malformed is inserted. */
   {
     char line[512], date_text[64], site_token[256], name_token[64], extra[2], *end;
     long parsed;
+    int lineno = 0, type, fields;
     while (fgets(line, sizeof(line), fl)) {
-      if (sscanf(line, " %99s %255s %63s %63s %1s",
-                 ban_type, site_token, date_text, name_token, extra) != 4)
+      lineno++;
+      fields = sscanf(line, " %99s %255s %63s %63s %1s",
+                      ban_type, site_token, date_text, name_token, extra);
+      if (fields == EOF)        /* blank line: no record */
         continue;
+      if (fields != 4) {
+        TB_ERROR_MSG("ban", "load-parse", BAN_FILE,
+                     "line %d: expected '<type> <site> <date> <name>'; "
+                     "record skipped", lineno);
+        continue;
+      }
       errno = 0;
       parsed = strtol(date_text, &end, 10);
-      if (end == date_text || *end || errno == ERANGE || parsed < INT_MIN || parsed > INT_MAX)
+      if (end == date_text || *end || errno == ERANGE || parsed < INT_MIN || parsed > INT_MAX) {
+        TB_ERROR_MSG("ban", "load-parse", BAN_FILE,
+                     "line %d: ban date is not an int; record skipped",
+                     lineno);
         continue;
+      }
       date = (int)parsed;
+      type = -1;
+      for (i = BAN_NEW; i <= BAN_ALL; i++)
+        if (!strcmp(ban_type, ban_types[i]))
+          type = i;
+      if (type < 0) {
+        /* "no" (BAN_NOT) bans nothing and is never written; treat it, like
+         * any unknown word, as a record that would silently ban nothing. */
+        TB_ERROR_MSG("ban", "load-type", BAN_FILE,
+                     "line %d: unrecognized ban type (%zu bytes); "
+                     "record skipped", lineno, strlen(ban_type));
+        continue;
+      }
+      if (strlen(site_token) > BANNED_SITE_LENGTH)
+        TB_WARN_MSG("ban", "load-site-truncate", BAN_FILE,
+                    "line %d: site is %zu bytes, longer than %d; stored "
+                    "truncated", lineno, strlen(site_token),
+                    BANNED_SITE_LENGTH);
       tb_snprintf(site_name, sizeof(site_name), "%s", site_token);
       tb_snprintf(name, sizeof(name), "%s", name_token);
     CREATE(next_node, struct ban_list_element, 1);
@@ -75,10 +110,7 @@ void load_banned(void)
     strncpy(next_node->name, name, MAX_NAME_LENGTH);	/* strncpy: OK (n_n->name:MAX_NAME_LENGTH+1) */
     next_node->name[MAX_NAME_LENGTH] = '\0';
     next_node->date = date;
-
-    for (i = BAN_NOT; i <= BAN_ALL; i++)
-      if (!strcmp(ban_type, ban_types[i]))
-	next_node->type = i;
+    next_node->type = type;
 
     next_node->next = ban_list;
     ban_list = next_node;

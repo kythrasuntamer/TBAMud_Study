@@ -336,6 +336,21 @@ if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
         PROPERTIES COMPILE_OPTIONS "-ffunction-sections;-fdata-sections")
 endif()
 
+# Production site-ban loader and commands (ban.c).
+add_mud_test(test_ban
+    ${MUD_SRCDIR}/ban.c
+    ${MUD_SRCDIR}/utils.c
+    ${MUD_SRCDIR}/random.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_ban.c
+)
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_compile_options(test_ban PRIVATE -ffunction-sections -fdata-sections)
+    target_link_options(test_ban PRIVATE -Wl,--gc-sections
+        -Wl,--wrap=tb_error_log_at)
+    set_source_files_properties(${MUD_SRCDIR}/ban.c
+        PROPERTIES COMPILE_OPTIONS "-ffunction-sections;-fdata-sections")
+endif()
+
 find_package(Python3 COMPONENTS Interpreter QUIET)
 if(Python3_Interpreter_FOUND)
     add_test(NAME test_dg_memory_callback_contract
