@@ -139,6 +139,11 @@ void clearMemory(struct char_data *ch);
 #define LAST_CRASH              9
 #define LAST_PLAYING            10
 
+/* A raw binary record in LAST_FILE (written and read with fwrite/fread in
+ * act.wizard.c). Its layout depends on time_t size, padding
+ * and ABI, so the file is not portable between builds; a record must be
+ * written from a zeroed instance (memset or {0}) so padding bytes and the
+ * unused tails of hostname/username never carry stack contents to disk. */
 struct last_entry {
   int close_type;
   char hostname[256];

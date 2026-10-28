@@ -8,6 +8,24 @@
 *  CircleMUD is based on DikuMUD, Copyright (C) 1990, 1991.               *
 ************************************************************************ */
 
+/*
+ * Ownership and lifetime rules for the primitives in this file:
+ *  - Objects: extract_obj() frees the object (and its contents) at once.
+ *    Any pointer to an object held across a DG script, act() trigger or
+ *    spell may be dangling afterwards; re-validate it by UID with
+ *    obj_uid_matches() (see docs/maintainer-safety-guide.md section 2).
+ *  - Characters: extract_char() only marks the character (MOB_NOTDEADYET /
+ *    PLR_NOTDEADYET); extract_pending_chars() frees it at the end of the
+ *    pulse. A character pointer stays allocated until then but must be
+ *    checked with DEAD() before it is acted on.
+ *  - Location: an object is in exactly one of room / carried_by / in_obj /
+ *    worn_by, and a character is in exactly one room. The *_to_* and
+ *    *_from_* primitives keep these lists consistent and report broken
+ *    preconditions (TB_ERROR/TB_FATAL with entity IDs and, for
+ *    char_from_room/char_to_room/equip_char, the caller's location).
+ *  - Name lists passed to fname()/isname() are builder text and are never
+ *    logged.
+ */
 #include "conf.h"
 #include "sysdep.h"
 #include "structs.h"
@@ -691,6 +709,14 @@ struct obj_data *unequip_char(struct char_data *ch, int pos)
   return (obj);
 }
 
+/**
+ * Strip a leading "N." count from *name and return N.
+ *
+ * Rewrites the caller's buffer in place (the "N." prefix is removed), so
+ * *name must point to writable memory and the original text is gone
+ * afterwards. Returns 1 when there is no prefix, and 0 when the prefix is
+ * not a number or is "0." (which player lookups treat as "a player only").
+ */
 int get_number(char **name)
 {
   int i;
@@ -914,7 +940,9 @@ void object_list_new_owner(struct obj_data *list, struct char_data *ch)
   }
 }
 
-/* Extract an object from the world */
+/* Extract an object from the world. Unlike extract_char(), this frees obj
+ * (and everything it contains) immediately: callers that hold obj pointers
+ * across scripts must re-validate them by UID (obj_uid_matches). */
 void extract_obj(struct obj_data *obj)
 {
   struct char_data *ch, *next = NULL;
@@ -1555,7 +1583,12 @@ int generic_find(char *arg, bitvector_t bitvector, struct char_data *ch,
   return (0);
 }
 
-/* a function to scan for "all" or "all.x" */
+/**
+ * Classify "all", "all.x" or a plain name. For "all.x" the buffer is
+ * rewritten in place to "x", so arg must be writable and the caller must
+ * use the rewritten text afterwards.
+ * @return FIND_ALL, FIND_ALLDOT or FIND_INDIV.
+ */
 int find_all_dots(char *arg)
 {
   if (!strcmp(arg, "all"))
@@ -1593,6 +1626,10 @@ struct group_data * create_group(struct char_data * leader)
   return (new_group);
 }
 
+/* Free a group. Precondition: the group has no members. leave_group()
+ * calls this when the last member leaves; calling it on a non-empty group
+ * would let leave_group() free the group again from inside the member
+ * loop. */
 void free_group(struct group_data * group)
 {
   struct char_data *tch;
