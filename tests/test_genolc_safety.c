@@ -893,6 +893,27 @@ static void create_new_zone_keeps_existing_file(void)
   TEST_ASSERT_EQUAL_STRING("ORIGINAL ZONE 7\n", text);
 }
 
+/* C2-29: when a later stub file cannot be created, the files this call
+ * already wrote are removed and the pre-existing file is left alone. */
+static void create_new_zone_rolls_back_created_files(void)
+{
+  const char *err = NULL;
+  char text[64];
+  FILE *fp;
+  make_zones(1);
+  write_text_file(WLD_PREFIX "/8.wld", "ORIGINAL ROOMS 8\n");
+  TEST_ASSERT_EQUAL_UINT(NOWHERE, create_new_zone(8, 800, 899, &err));
+  TEST_ASSERT_EQUAL_STRING("zone-create-exists", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "zone 8"));
+  TEST_ASSERT_EQUAL_STRING("Could not write world file.\r\n", err);
+  fp = fopen(ZON_PREFIX "/8.zon", "r");
+  TEST_ASSERT_NULL(fp);
+  read_text_file(WLD_PREFIX "/8.wld", text, sizeof(text));
+  TEST_ASSERT_EQUAL_STRING("ORIGINAL ROOMS 8\n", text);
+  TEST_ASSERT_EQUAL_INT(0, top_of_zone_table);
+  TEST_ASSERT_EQUAL_INT(0, remove(WLD_PREFIX "/8.wld"));
+}
+
 /* ------------------------------------------------------------------------ */
 /* C2-13: a room extra description with a NULL body is saved, not deref'd.  */
 /* ------------------------------------------------------------------------ */
@@ -1452,6 +1473,7 @@ int main(void)
   RUN_TEST(create_new_zone_rejects_last_zone_number);
   RUN_TEST(create_new_zone_rejects_overlapping_range);
   RUN_TEST(create_new_zone_keeps_existing_file);
+  RUN_TEST(create_new_zone_rolls_back_created_files);
   RUN_TEST(save_rooms_handles_null_exdesc_description);
   RUN_TEST(delete_room_renumbers_start_rooms);
   RUN_TEST(add_object_releases_live_instance_state);

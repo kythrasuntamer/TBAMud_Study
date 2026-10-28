@@ -72,12 +72,16 @@ zone_rnum real_zone_by_thing(room_vnum vznum)
   return (NOWHERE);
 }
 
-/* Create one file of a brand-new zone.  "x" makes the open fail if the file
- * exists: a file already on disk belongs to some zone (perhaps one that is
- * not loaded), and zedit new must never truncate it. */
-static FILE *open_new_zone_file(const char *path, zone_vnum vzone_num)
+/* Create one file of a brand-new zone and write its stub contents.  "x"
+ * makes the open fail if the file exists: a file already on disk belongs to
+ * some zone (perhaps one that is not loaded), and zedit new must never
+ * truncate it.  A failed write or close removes the partial file.  Returns
+ * TRUE when the complete file is on disk; FALSE, reported, otherwise. */
+static int write_new_zone_file(const char *path, zone_vnum vzone_num,
+                               const char *contents)
 {
   FILE *fp = fopen(path, "wx");
+  int ok;
 
   if (fp == NULL) {
     if (errno == EEXIST)
@@ -86,13 +90,22 @@ static FILE *open_new_zone_file(const char *path, zone_vnum vzone_num)
     else
       TB_ERROR_ERRNO("olc", "zone-create-file", path,
                      "zone %d: cannot create file", vzone_num);
+    return FALSE;
   }
-  return fp;
+  ok = tb_fprintf_checked(fp, path, "%s", contents);
+  if (!tb_fclose_checked(fp, path))
+    ok = FALSE;
+  if (!ok) {
+    TB_ERROR_MSG("olc", "zone-create-file", path,
+                 "zone %d: stub file not written completely; removed", vzone_num);
+    if (remove(path) != 0 && errno != ENOENT)
+      TB_REPORT_ERRNO("remove", path);
+  }
+  return ok;
 }
 
 zone_rnum create_new_zone(zone_vnum vzone_num, room_vnum bottom, room_vnum top, const char **error)
 {
-  FILE *fp;
   struct zone_data *zone;
   int i, max_zone;
   zone_rnum rznum;
@@ -145,75 +158,53 @@ zone_rnum create_new_zone(zone_vnum vzone_num, room_vnum bottom, room_vnum top, 
     }
   }
 
-  /* Create the zone file. */
-  tb_snprintf(buf, sizeof(buf), "%s/%d.zon", ZON_PREFIX, vzone_num);
-  if (!(fp = open_new_zone_file(buf, vzone_num))) {
-    mudlog(BRF, LVL_IMPL, TRUE, "SYSERR: OLC: Can't write new zone file.");
-    *error = "Could not write zone file.\r\n";
-    return NOWHERE;
-  }
-  tb_fprintf(fp, "#%d\nNone~\nNew Zone~\n%d %d 30 2\nS\n$\n", vzone_num, bottom, top);
-  tb_fclose(fp);
+  /* Create the seven stub files.  If one fails, the ones this call already
+   * created are removed again, so a retry is not refused with
+   * zone-create-exists for files of a zone that was never made. */
+  {
+    static const struct {
+      const char *prefix, *ext, *builder_error;
+    } files[] = {
+      { ZON_PREFIX, "zon", "Could not write zone file.\r\n" },
+      { WLD_PREFIX, "wld", "Could not write world file.\r\n" },
+      { MOB_PREFIX, "mob", "Could not write mobile file.\r\n" },
+      { OBJ_PREFIX, "obj", "Could not write object file.\r\n" },
+      { SHP_PREFIX, "shp", "Could not write shop file.\r\n" },
+      { QST_PREFIX, "qst", "Could not write quest file.\r\n" },
+      { TRG_PREFIX, "trg", "Could not write trigger file.\r\n" },
+    };
+    const int nfiles = (int)(sizeof(files) / sizeof(files[0]));
+    char contents[MAX_INPUT_LENGTH];
+    int f, k;
 
-  /* Create the room file. */
-  tb_snprintf(buf, sizeof(buf), "%s/%d.wld", WLD_PREFIX, vzone_num);
-  if (!(fp = open_new_zone_file(buf, vzone_num))) {
-    mudlog(BRF, LVL_IMPL, TRUE, "SYSERR: OLC: Can't write new world file.");
-    *error = "Could not write world file.\r\n";
-    return NOWHERE;
-  }
-  tb_fprintf(fp, "#%d\nThe Beginning~\nNot much here.\n~\n%d 0 0\nS\n$\n", bottom, vzone_num);
-  tb_fclose(fp);
+    for (f = 0; f < nfiles; f++) {
+      if (!strcmp(files[f].ext, "zon"))
+        tb_snprintf(contents, sizeof(contents),
+                    "#%d\nNone~\nNew Zone~\n%d %d 30 2\nS\n$\n", vzone_num, bottom, top);
+      else if (!strcmp(files[f].ext, "wld"))
+        tb_snprintf(contents, sizeof(contents),
+                    "#%d\nThe Beginning~\nNot much here.\n~\n%d 0 0\nS\n$\n", bottom, vzone_num);
+      else if (!strcmp(files[f].ext, "mob") || !strcmp(files[f].ext, "obj"))
+        tb_snprintf(contents, sizeof(contents), "$\n");
+      else
+        tb_snprintf(contents, sizeof(contents), "$~\n");
 
-  /* Create the mobile file. */
-  tb_snprintf(buf, sizeof(buf), "%s/%d.mob", MOB_PREFIX, vzone_num);
-  if (!(fp = open_new_zone_file(buf, vzone_num))) {
-    mudlog(BRF, LVL_IMPL, TRUE, "SYSERR: OLC: Can't write new mob file.");
-    *error = "Could not write mobile file.\r\n";
-    return NOWHERE;
-  }
-  tb_fprintf(fp, "$\n");
-  tb_fclose(fp);
+      tb_snprintf(buf, sizeof(buf), "%s/%d.%s", files[f].prefix, vzone_num, files[f].ext);
+      if (write_new_zone_file(buf, vzone_num, contents))
+        continue;
 
-  /* Create the object file. */
-  tb_snprintf(buf, sizeof(buf), "%s/%d.obj", OBJ_PREFIX, vzone_num);
-  if (!(fp = open_new_zone_file(buf, vzone_num))) {
-    mudlog(BRF, LVL_IMPL, TRUE, "SYSERR: OLC: Can't write new obj file.");
-    *error = "Could not write object file.\r\n";
-    return NOWHERE;
+      mudlog(BRF, LVL_IMPL, TRUE, "SYSERR: OLC: zone %d: can't write new %s file %s.",
+             vzone_num, files[f].ext, buf);
+      *error = files[f].builder_error;
+      for (k = 0; k < f; k++) {
+        tb_snprintf(buf, sizeof(buf), "%s/%d.%s", files[k].prefix, vzone_num, files[k].ext);
+        if (remove(buf) != 0 && errno != ENOENT)
+          TB_ERROR_ERRNO("olc", "zone-create-rollback", buf,
+                         "zone %d: cannot remove partly created zone file", vzone_num);
+      }
+      return NOWHERE;
+    }
   }
-  tb_fprintf(fp, "$\n");
-  tb_fclose(fp);
-
-  /* Create the shop file. */
-  tb_snprintf(buf, sizeof(buf), "%s/%d.shp", SHP_PREFIX, vzone_num);
-  if (!(fp = open_new_zone_file(buf, vzone_num))) {
-    mudlog(BRF, LVL_IMPL, TRUE, "SYSERR: OLC: Can't write new shop file.");
-    *error = "Could not write shop file.\r\n";
-    return NOWHERE;
-  }
-  tb_fprintf(fp, "$~\n");
-  tb_fclose(fp);
-
-  /* Create the quests file */
-  tb_snprintf(buf, sizeof(buf), "%s/%d.qst", QST_PREFIX, vzone_num);
-  if (!(fp = open_new_zone_file(buf, vzone_num))) {
-    mudlog(BRF, LVL_IMPL, TRUE, "SYSERR: OLC: Can't write new quest file");
-    *error = "Could not write quest file.\r\n";
-    return NOWHERE;
-  }
-  tb_fprintf(fp, "$~\n");
-  tb_fclose(fp);
-
-  /* Create the trigger file. */
-  tb_snprintf(buf, sizeof(buf), "%s/%d.trg", TRG_PREFIX, vzone_num);
-  if (!(fp = open_new_zone_file(buf, vzone_num))) {
-    mudlog(BRF, LVL_IMPL, TRUE, "SYSERR: OLC: Can't write new trigger file");
-    *error = "Could not write trigger file.\r\n";
-    return NOWHERE;
-  }
-  tb_fprintf(fp, "$~\n");
-  tb_fclose(fp);
 
   /* Update index files.  The zone files exist by now, so the zone is still
    * created in memory if an index update fails; each failure was reported
