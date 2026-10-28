@@ -25,21 +25,25 @@
 
 
 /* Local file scope functions. */
-static void mob_log(char_data *mob, const char *format, ...);
+static void mob_log(char_data *mob, const char *format, ...)
+  __attribute__ ((format (printf, 2, 3)));
 
 
 /* attaches mob's name and vnum to msg and sends it to script_log */
 static void mob_log(char_data *mob, const char *format, ...)
 {
   va_list args;
-  char output[MAX_STRING_LENGTH];
+  char message[MAX_STRING_LENGTH];
 
-  tb_snprintf(output, sizeof(output), "Mob (%s, VNum %d):: %s",
-                   GET_SHORT(mob), GET_MOB_VNUM(mob), format);
-
+  /* Format the caller's message on its own, then log it as data. Embedding
+   * the name in the format would let a '%' in a builder-written name, or in
+   * player text a script passes along, be interpreted as a conversion. */
   va_start(args, format);
-  script_vlog(output, args);
+  if (vsnprintf(message, sizeof(message), format, args) < 0)
+    strlcpy(message, "(message formatting failed)", sizeof(message));
   va_end(args);
+
+  script_log("Mob (%s, VNum %d):: %s", GET_SHORT(mob), GET_MOB_VNUM(mob), message);
 }
 
 /* Macro to determine if a mob is permitted to use these commands. */
@@ -300,7 +304,7 @@ ACMD(do_mlog)
     p = argument;
     skip_spaces(&p);
 
-    mob_log(ch, p);
+    mob_log(ch, "%s", p); /* script text, may hold player input */
 
 }
 

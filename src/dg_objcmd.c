@@ -27,7 +27,8 @@
 #define OCMD(name)  \
    void (name)(obj_data *obj, char *argument, int cmd, int subcmd)
 
-static void obj_log(obj_data *obj, const char *format, ...);
+static void obj_log(obj_data *obj, const char *format, ...)
+  __attribute__ ((format (printf, 2, 3)));
 static room_rnum find_obj_target_room(obj_data *obj, char *rawroomstr);
 static OCMD(do_oecho);
 static OCMD(do_oforce);
@@ -61,13 +62,17 @@ struct obj_command_info {
 static void obj_log(obj_data *obj, const char *format, ...)
 {
   va_list args;
-  char output[MAX_STRING_LENGTH];
+  char message[MAX_STRING_LENGTH];
 
-  tb_snprintf(output, sizeof(output), "Obj (%s, VNum %d):: %s", obj->short_description, GET_OBJ_VNUM(obj), format);
-
+  /* Format the caller's message on its own, then log it as data. Embedding
+   * the name in the format would let a '%' in a builder-written name, or in
+   * player text a script passes along, be interpreted as a conversion. */
   va_start(args, format);
-  script_vlog(output, args);
+  if (vsnprintf(message, sizeof(message), format, args) < 0)
+    strlcpy(message, "(message formatting failed)", sizeof(message));
   va_end(args);
+
+  script_log("Obj (%s, VNum %d):: %s", obj->short_description, GET_OBJ_VNUM(obj), message);
 }
 
 /* returns the real room number that the object or object's carrier is in */
@@ -160,7 +165,7 @@ static OCMD(do_olog)
   skip_spaces(&argument);
 
   if (*argument)
-    obj_log(obj, argument);
+    obj_log(obj, "%s", argument); /* script text, may hold player input */
 }
 
 static OCMD(do_oforce)

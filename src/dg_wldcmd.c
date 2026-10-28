@@ -37,7 +37,8 @@ struct wld_command_info {
     int        subcmd;
 };
 
-void wld_log(room_data *room, const char *format, ...);
+void wld_log(room_data *room, const char *format, ...)
+  __attribute__ ((format (printf, 2, 3)));
 void act_to_room(char *str, room_data *room);
 WCMD(do_wasound);
 WCMD(do_wecho);
@@ -59,13 +60,17 @@ WCMD(do_wlog);
 void wld_log(room_data *room, const char *format, ...)
 {
   va_list args;
-  char output[MAX_STRING_LENGTH];
+  char message[MAX_STRING_LENGTH];
 
-  tb_snprintf(output, sizeof(output), "Room %d :: %s", room->number, format);
-
+  /* Format the caller's message on its own, then log it as data. Embedding
+   * it in the format would let a '%' in player text a script passes along be
+   * interpreted as a conversion. */
   va_start(args, format);
-  script_vlog(output, args);
+  if (vsnprintf(message, sizeof(message), format, args) < 0)
+    strlcpy(message, "(message formatting failed)", sizeof(message));
   va_end(args);
+
+  script_log("Room %d :: %s", room->number, message);
 }
 
 /* sends str to room */
@@ -122,7 +127,7 @@ WCMD(do_wlog)
   if (!*argument)
     return;
 
-  wld_log(room, argument);
+  wld_log(room, "%s", argument); /* script text, may hold player input */
 }
 
 WCMD(do_wsend)
