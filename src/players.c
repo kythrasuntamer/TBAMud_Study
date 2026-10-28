@@ -39,19 +39,28 @@
 static void load_affects(FILE *fl, struct char_data *ch);
 static void load_skills(FILE *fl, struct char_data *ch, const char *filename);
 static void load_quests(FILE *fl, struct char_data *ch);
-static void load_HMVS(struct char_data *ch, const char *line, int mode);
+static void load_HMVS(struct char_data *ch, const char *line, int mode,
+                      const char *filename, const char *tag);
+static void pfile_unknown_tag(const char *filename, const char *tag, long idnum);
 static void write_aliases_ascii(FILE *file, struct char_data *ch);
 static void read_aliases_ascii(FILE *file, struct char_data *ch, int count,
                                const char *filename);
 
-static int parse_pfile_int_or_zero(const char *value, const char *filename, const char *tag)
+/* Parse one pfile tag's integer value. The pfile is untrusted on read
+ * (hand-edited, truncated or corrupted); a malformed or out-of-range value
+ * becomes 0 and is reported as "pfile-int" with the player idnum (as known
+ * so far: the Id tag is normally first) and the tag. The raw value is not
+ * echoed: it is file content and may be arbitrary bytes. */
+static int parse_pfile_int_or_zero(const char *value, const char *filename,
+                                   const char *tag, long idnum)
 {
   char *end = NULL;
   long parsed;
 
   if (value == NULL) {
-    log("SYSERR: pfile %s tag %.4s has NULL integer value; using 0",
-        filename ? filename : "(unknown)", tag ? tag : "????");
+    TB_ERROR_MSG("player", "pfile-int", filename ? filename : "(unknown)",
+                 "player idnum %ld tag %.4s has no integer value; using 0",
+                 idnum, tag ? tag : "????");
     return 0;
   }
 
@@ -62,22 +71,27 @@ static int parse_pfile_int_or_zero(const char *value, const char *filename, cons
 
   if (end == value || errno == ERANGE || parsed < INT_MIN || parsed > INT_MAX ||
       (end && *end != '\0')) {
-    log("SYSERR: pfile %s tag %.4s has malformed integer value '%s'; using 0",
-        filename ? filename : "(unknown)", tag ? tag : "????", value);
+    TB_ERROR_MSG("player", "pfile-int", filename ? filename : "(unknown)",
+                 "player idnum %ld tag %.4s malformed or out-of-range integer "
+                 "(%zu bytes); using 0", idnum, tag ? tag : "????",
+                 strlen(value));
     return 0;
   }
 
   return (int)parsed;
 }
 
-static long parse_pfile_long_or_zero(const char *value, const char *filename, const char *tag)
+/* As parse_pfile_int_or_zero(), for long-valued tags (Id, Brth, Last). */
+static long parse_pfile_long_or_zero(const char *value, const char *filename,
+                                     const char *tag, long idnum)
 {
   char *end = NULL;
   long parsed;
 
   if (value == NULL) {
-    log("SYSERR: pfile %s tag %.4s has NULL long value; using 0",
-        filename ? filename : "(unknown)", tag ? tag : "????");
+    TB_ERROR_MSG("player", "pfile-int", filename ? filename : "(unknown)",
+                 "player idnum %ld tag %.4s has no long value; using 0",
+                 idnum, tag ? tag : "????");
     return 0;
   }
 
@@ -87,8 +101,10 @@ static long parse_pfile_long_or_zero(const char *value, const char *filename, co
     end++;
 
   if (end == value || errno == ERANGE || (end && *end != '\0')) {
-    log("SYSERR: pfile %s tag %.4s has malformed long value '%s'; using 0",
-        filename ? filename : "(unknown)", tag ? tag : "????", value);
+    TB_ERROR_MSG("player", "pfile-int", filename ? filename : "(unknown)",
+                 "player idnum %ld tag %.4s malformed or out-of-range long "
+                 "(%zu bytes); using 0", idnum, tag ? tag : "????",
+                 strlen(value));
     return 0;
   }
 
@@ -103,7 +119,7 @@ static int pfile_int_in_range(const char *line, const char *filename,
                               const char *tag, long idnum, int lo, int hi,
                               int dflt)
 {
-  int value = parse_pfile_int_or_zero(line, filename, tag);
+  int value = parse_pfile_int_or_zero(line, filename, tag, idnum);
 
   if (value < lo || value > hi) {
     TB_ERROR_MSG("player", "pfile-range", filename,
@@ -670,27 +686,30 @@ int load_char(const char *name, struct char_data *ch)
 
       switch (*tag) {
       case 'A':
-        if (!strcmp(tag, "Ac  "))	GET_AC(ch)		= parse_pfile_int_or_zero(line, filename, tag);
+        if (!strcmp(tag, "Ac  "))	GET_AC(ch)		= parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
 	else if (!strcmp(tag, "Act ")) {
          load_pfile_flag_words(line, PLR_FLAGS(ch), filename, tag, GET_IDNUM(ch));
       } else if (!strcmp(tag, "Aff ")) {
         load_pfile_flag_words(line, AFF_FLAGS(ch), filename, tag, GET_IDNUM(ch));
 	}
-	if (!strcmp(tag, "Affs")) 	load_affects(fl, ch);
-        else if (!strcmp(tag, "Alin"))	GET_ALIGNMENT(ch)	= parse_pfile_int_or_zero(line, filename, tag);
-	else if (!strcmp(tag, "Alis"))	read_aliases_ascii(fl, ch, parse_pfile_int_or_zero(line, filename, tag), filename);
+	else if (!strcmp(tag, "Affs")) 	load_affects(fl, ch);
+        else if (!strcmp(tag, "Alin"))	GET_ALIGNMENT(ch)	= parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
+	else if (!strcmp(tag, "Alis"))	read_aliases_ascii(fl, ch, parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch)), filename);
+	else pfile_unknown_tag(filename, tag, GET_IDNUM(ch));
 	break;
 
       case 'B':
-	     if (!strcmp(tag, "Badp"))	GET_BAD_PWS(ch)		= parse_pfile_int_or_zero(line, filename, tag);
-	else if (!strcmp(tag, "Bank"))	GET_BANK_GOLD(ch)	= parse_pfile_int_or_zero(line, filename, tag);
-	else if (!strcmp(tag, "Brth"))	ch->player.time.birth	= parse_pfile_long_or_zero(line, filename, tag);
+	     if (!strcmp(tag, "Badp"))	GET_BAD_PWS(ch)		= parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
+	else if (!strcmp(tag, "Bank"))	GET_BANK_GOLD(ch)	= parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
+	else if (!strcmp(tag, "Brth"))	ch->player.time.birth	= parse_pfile_long_or_zero(line, filename, tag, GET_IDNUM(ch));
+	else pfile_unknown_tag(filename, tag, GET_IDNUM(ch));
 	break;
 
       case 'C':
-	     if (!strcmp(tag, "Cha "))	ch->real_abils.cha	= parse_pfile_int_or_zero(line, filename, tag);
+	     if (!strcmp(tag, "Cha "))	ch->real_abils.cha	= parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
 	else if (!strcmp(tag, "Clas"))	GET_CLASS(ch)		= pfile_int_in_range(line, filename, tag, GET_IDNUM(ch), 0, NUM_CLASSES - 1, PFDEF_CLASS);
-	else if (!strcmp(tag, "Con "))	ch->real_abils.con	= parse_pfile_int_or_zero(line, filename, tag);
+	else if (!strcmp(tag, "Con "))	ch->real_abils.con	= parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
+	else pfile_unknown_tag(filename, tag, GET_IDNUM(ch));
 	break;
 
       case 'D':
@@ -703,70 +722,80 @@ int load_char(const char *name, struct char_data *ch)
                          "player idnum %ld unterminated or oversize Desc; "
                          "description dropped", GET_IDNUM(ch));
         }
-	else if (!strcmp(tag, "Dex "))	ch->real_abils.dex	= parse_pfile_int_or_zero(line, filename, tag);
-	else if (!strcmp(tag, "Drnk"))	GET_COND(ch, DRUNK)	= parse_pfile_int_or_zero(line, filename, tag);
-	else if (!strcmp(tag, "Drol"))	GET_DAMROLL(ch)		= parse_pfile_int_or_zero(line, filename, tag);
+	else if (!strcmp(tag, "Dex "))	ch->real_abils.dex	= parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
+	else if (!strcmp(tag, "Drnk"))	GET_COND(ch, DRUNK)	= parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
+	else if (!strcmp(tag, "Drol"))	GET_DAMROLL(ch)		= parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
+	else pfile_unknown_tag(filename, tag, GET_IDNUM(ch));
 	break;
 
       case 'E':
-	     if (!strcmp(tag, "Exp "))	GET_EXP(ch)		= parse_pfile_int_or_zero(line, filename, tag);
-             else if (!strcmp(tag, "EgAP")) GET_ENDGAME_AP(ch) = MAX(0, parse_pfile_int_or_zero(line, filename, tag));
-             else if (!strcmp(tag, "EgXP")) GET_ENDGAME_XP(ch) = MAX(0, parse_pfile_int_or_zero(line, filename, tag));
-             else if (!strcmp(tag, "EgHP")) GET_ENDGAME_HP_RANK(ch) = MAX(0, parse_pfile_int_or_zero(line, filename, tag));
-             else if (!strcmp(tag, "EgMP")) GET_ENDGAME_MP_RANK(ch) = MAX(0, parse_pfile_int_or_zero(line, filename, tag));
+	     if (!strcmp(tag, "Exp "))	GET_EXP(ch)		= parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
+             else if (!strcmp(tag, "EgAP")) GET_ENDGAME_AP(ch) = MAX(0, parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch)));
+             else if (!strcmp(tag, "EgXP")) GET_ENDGAME_XP(ch) = MAX(0, parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch)));
+             else if (!strcmp(tag, "EgHP")) GET_ENDGAME_HP_RANK(ch) = MAX(0, parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch)));
+             else if (!strcmp(tag, "EgMP")) GET_ENDGAME_MP_RANK(ch) = MAX(0, parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch)));
+	else pfile_unknown_tag(filename, tag, GET_IDNUM(ch));
 	break;
 
       case 'F':
-	     if (!strcmp(tag, "Frez"))	GET_FREEZE_LEV(ch)	= parse_pfile_int_or_zero(line, filename, tag);
+	     if (!strcmp(tag, "Frez"))	GET_FREEZE_LEV(ch)	= parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
+	else pfile_unknown_tag(filename, tag, GET_IDNUM(ch));
 	break;
 
       case 'G':
-	     if (!strcmp(tag, "Gold"))	GET_GOLD(ch)		= parse_pfile_int_or_zero(line, filename, tag);
+	     if (!strcmp(tag, "Gold"))	GET_GOLD(ch)		= parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
+	else pfile_unknown_tag(filename, tag, GET_IDNUM(ch));
 	break;
 
       case 'H':
-	     if (!strcmp(tag, "Hit "))	load_HMVS(ch, line, LOAD_HIT);
-	else if (!strcmp(tag, "Hite"))	GET_HEIGHT(ch)		= parse_pfile_int_or_zero(line, filename, tag);
+	     if (!strcmp(tag, "Hit "))	load_HMVS(ch, line, LOAD_HIT, filename, tag);
+	else if (!strcmp(tag, "Hite"))	GET_HEIGHT(ch)		= parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
         else if (!strcmp(tag, "Host")) {
           if (GET_HOST(ch))
             free(GET_HOST(ch));
           GET_HOST(ch) = strdup(line);
         }
-        else if (!strcmp(tag, "Hrol"))	GET_HITROLL(ch)		= parse_pfile_int_or_zero(line, filename, tag);
-	else if (!strcmp(tag, "Hung"))	GET_COND(ch, HUNGER)	= parse_pfile_int_or_zero(line, filename, tag);
+        else if (!strcmp(tag, "Hrol"))	GET_HITROLL(ch)		= parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
+	else if (!strcmp(tag, "Hung"))	GET_COND(ch, HUNGER)	= parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
+	else pfile_unknown_tag(filename, tag, GET_IDNUM(ch));
 	break;
 
       case 'I':
-	     if (!strcmp(tag, "Id  "))	GET_IDNUM(ch)		= parse_pfile_long_or_zero(line, filename, tag);
-	else if (!strcmp(tag, "Int "))	ch->real_abils.intel	= parse_pfile_int_or_zero(line, filename, tag);
-	else if (!strcmp(tag, "Invs"))	GET_INVIS_LEV(ch)	= parse_pfile_int_or_zero(line, filename, tag);
+	     if (!strcmp(tag, "Id  "))	GET_IDNUM(ch)		= parse_pfile_long_or_zero(line, filename, tag, GET_IDNUM(ch));
+	else if (!strcmp(tag, "Int "))	ch->real_abils.intel	= parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
+	else if (!strcmp(tag, "Invs"))	GET_INVIS_LEV(ch)	= parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
+	else pfile_unknown_tag(filename, tag, GET_IDNUM(ch));
 	break;
 
       case 'L':
-	     if (!strcmp(tag, "Last"))	ch->player.time.logon	= parse_pfile_long_or_zero(line, filename, tag);
-  else if (!strcmp(tag, "Lern"))	GET_PRACTICES(ch)	= parse_pfile_int_or_zero(line, filename, tag);
+	     if (!strcmp(tag, "Last"))	ch->player.time.logon	= parse_pfile_long_or_zero(line, filename, tag, GET_IDNUM(ch));
+  else if (!strcmp(tag, "Lern"))	GET_PRACTICES(ch)	= parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
 	else if (!strcmp(tag, "Levl"))	GET_LEVEL(ch)		= pfile_int_in_range(line, filename, tag, GET_IDNUM(ch), 0, LVL_IMPL, PFDEF_LEVEL);
-        else if (!strcmp(tag, "Lmot"))   GET_LAST_MOTD(ch)   = parse_pfile_int_or_zero(line, filename, tag);
-        else if (!strcmp(tag, "Lnew"))   GET_LAST_NEWS(ch)   = parse_pfile_int_or_zero(line, filename, tag);
+        else if (!strcmp(tag, "Lmot"))   GET_LAST_MOTD(ch)   = parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
+        else if (!strcmp(tag, "Lnew"))   GET_LAST_NEWS(ch)   = parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
+	else pfile_unknown_tag(filename, tag, GET_IDNUM(ch));
 	break;
 
       case 'M':
-	     if (!strcmp(tag, "Mana"))	load_HMVS(ch, line, LOAD_MANA);
-	else if (!strcmp(tag, "Move"))	load_HMVS(ch, line, LOAD_MOVE);
+	     if (!strcmp(tag, "Mana"))	load_HMVS(ch, line, LOAD_MANA, filename, tag);
+	else if (!strcmp(tag, "Move"))	load_HMVS(ch, line, LOAD_MOVE, filename, tag);
+	else pfile_unknown_tag(filename, tag, GET_IDNUM(ch));
 	break;
 
       case 'N':
 	     if (!strcmp(tag, "Name"))	GET_PC_NAME(ch)	= strdup(line);
+	else pfile_unknown_tag(filename, tag, GET_IDNUM(ch));
 	break;
 
       case 'O':
-       if (!strcmp(tag, "Olc "))  GET_OLC_ZONE(ch) = parse_pfile_int_or_zero(line, filename, tag);
+       if (!strcmp(tag, "Olc "))  GET_OLC_ZONE(ch) = parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
+	else pfile_unknown_tag(filename, tag, GET_IDNUM(ch));
   break;
 
       case 'P':
-       if (!strcmp(tag, "Page"))  GET_PAGE_LENGTH(ch) = parse_pfile_int_or_zero(line, filename, tag);
+       if (!strcmp(tag, "Page"))  GET_PAGE_LENGTH(ch) = parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
 	else if (!strcmp(tag, "Pass"))	strlcpy(GET_PASSWD(ch), line, sizeof(ch->player.passwd));
-	else if (!strcmp(tag, "Plyd"))	ch->player.time.played	= parse_pfile_int_or_zero(line, filename, tag);
+	else if (!strcmp(tag, "Plyd"))	ch->player.time.played	= parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
 	else if (!strcmp(tag, "PfIn"))	POOFIN(ch)		= strdup(line);
 	else if (!strcmp(tag, "PfOt"))	POOFOUT(ch)		= strdup(line);
         else if (!strcmp(tag, "Pref")) {
@@ -774,57 +803,65 @@ int load_char(const char *name, struct char_data *ch)
            * written on this path (uninitialised or a stale Act/Aff word). */
           load_pfile_flag_words(line, PRF_FLAGS(ch), filename, tag, GET_IDNUM(ch));
 	  }
+	else pfile_unknown_tag(filename, tag, GET_IDNUM(ch));
         break;
 
       case 'Q':
-	     if (!strcmp(tag, "Qstp"))  GET_QUESTPOINTS(ch)     = parse_pfile_int_or_zero(line, filename, tag);
-       else if (!strcmp(tag, "Qpnt")) GET_QUESTPOINTS(ch) = parse_pfile_int_or_zero(line, filename, tag); /* Backward compatibility */
-       else if (!strcmp(tag, "Qcur")) GET_QUEST(ch) = parse_pfile_int_or_zero(line, filename, tag);
-       else if (!strcmp(tag, "Qcnt")) GET_QUEST_COUNTER(ch) = parse_pfile_int_or_zero(line, filename, tag);
+	     if (!strcmp(tag, "Qstp"))  GET_QUESTPOINTS(ch)     = parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
+       else if (!strcmp(tag, "Qpnt")) GET_QUESTPOINTS(ch) = parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch)); /* Backward compatibility */
+       else if (!strcmp(tag, "Qcur")) GET_QUEST(ch) = parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
+       else if (!strcmp(tag, "Qcnt")) GET_QUEST_COUNTER(ch) = parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
        else if (!strcmp(tag, "Qest")) load_quests(fl, ch);
+	else pfile_unknown_tag(filename, tag, GET_IDNUM(ch));
         break;
 
       case 'R':
-	     if (!strcmp(tag, "Room"))	GET_LOADROOM(ch)	= parse_pfile_int_or_zero(line, filename, tag);
+	     if (!strcmp(tag, "Room"))	GET_LOADROOM(ch)	= parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
+	else pfile_unknown_tag(filename, tag, GET_IDNUM(ch));
 	break;
 
       case 'S':
 	     if (!strcmp(tag, "Sex "))	GET_SEX(ch)		= pfile_int_in_range(line, filename, tag, GET_IDNUM(ch), 0, NUM_GENDERS - 1, PFDEF_SEX);
-  else if (!strcmp(tag, "ScrW"))  GET_SCREEN_WIDTH(ch) = parse_pfile_int_or_zero(line, filename, tag);
+  else if (!strcmp(tag, "ScrW"))  GET_SCREEN_WIDTH(ch) = parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
 	else if (!strcmp(tag, "Skil"))	load_skills(fl, ch, filename);
-	else if (!strcmp(tag, "Str "))	load_HMVS(ch, line, LOAD_STRENGTH);
+	else if (!strcmp(tag, "Str "))	load_HMVS(ch, line, LOAD_STRENGTH, filename, tag);
+	else pfile_unknown_tag(filename, tag, GET_IDNUM(ch));
 	break;
 
       case 'T':
-	     if (!strcmp(tag, "Thir"))	GET_COND(ch, THIRST)	= parse_pfile_int_or_zero(line, filename, tag);
-	else if (!strcmp(tag, "Thr1"))	GET_SAVE(ch, 0)		= parse_pfile_int_or_zero(line, filename, tag);
-	else if (!strcmp(tag, "Thr2"))	GET_SAVE(ch, 1)		= parse_pfile_int_or_zero(line, filename, tag);
-	else if (!strcmp(tag, "Thr3"))	GET_SAVE(ch, 2)		= parse_pfile_int_or_zero(line, filename, tag);
-	else if (!strcmp(tag, "Thr4"))	GET_SAVE(ch, 3)		= parse_pfile_int_or_zero(line, filename, tag);
-	else if (!strcmp(tag, "Thr5"))	GET_SAVE(ch, 4)		= parse_pfile_int_or_zero(line, filename, tag);
+	     if (!strcmp(tag, "Thir"))	GET_COND(ch, THIRST)	= parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
+	else if (!strcmp(tag, "Thr1"))	GET_SAVE(ch, 0)		= parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
+	else if (!strcmp(tag, "Thr2"))	GET_SAVE(ch, 1)		= parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
+	else if (!strcmp(tag, "Thr3"))	GET_SAVE(ch, 2)		= parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
+	else if (!strcmp(tag, "Thr4"))	GET_SAVE(ch, 3)		= parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
+	else if (!strcmp(tag, "Thr5"))	GET_SAVE(ch, 4)		= parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
 	else if (!strcmp(tag, "Titl"))	GET_TITLE(ch)		= strdup(line);
-        else if (!strcmp(tag, "Trig") && CONFIG_SCRIPT_PLAYERS) {
-          if ((t_rnum = real_trigger(parse_pfile_int_or_zero(line, filename, tag))) != NOTHING) {
+        else if (!strcmp(tag, "Trig")) {
+          if (CONFIG_SCRIPT_PLAYERS &&
+              (t_rnum = real_trigger(parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch)))) != NOTHING) {
             t = read_trigger(t_rnum);
           if (!SCRIPT(ch))
             CREATE(SCRIPT(ch), struct script_data, 1);
           add_trigger(SCRIPT(ch), t, -1);
           }
          }
+	else pfile_unknown_tag(filename, tag, GET_IDNUM(ch));
 	break;
 
       case 'V':
-	     if (!strcmp(tag, "Vars"))	read_saved_vars_ascii(fl, ch, parse_pfile_int_or_zero(line, filename, tag));
+	     if (!strcmp(tag, "Vars"))	read_saved_vars_ascii(fl, ch, parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch)));
+	else pfile_unknown_tag(filename, tag, GET_IDNUM(ch));
       break;
 
       case 'W':
-	     if (!strcmp(tag, "Wate"))	GET_WEIGHT(ch)		= parse_pfile_int_or_zero(line, filename, tag);
-	else if (!strcmp(tag, "Wimp"))	GET_WIMP_LEV(ch)	= parse_pfile_int_or_zero(line, filename, tag);
-	else if (!strcmp(tag, "Wis "))	ch->real_abils.wis	= parse_pfile_int_or_zero(line, filename, tag);
+	     if (!strcmp(tag, "Wate"))	GET_WEIGHT(ch)		= parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
+	else if (!strcmp(tag, "Wimp"))	GET_WIMP_LEV(ch)	= parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
+	else if (!strcmp(tag, "Wis "))	ch->real_abils.wis	= parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
+	else pfile_unknown_tag(filename, tag, GET_IDNUM(ch));
 	break;
 
       default:
-        log("SYSERR: Unknown tag '%.4s' in pfile %s with value '%s'", tag, filename, line);
+        pfile_unknown_tag(filename, tag, GET_IDNUM(ch));
         break;
       }
     }
@@ -1425,7 +1462,18 @@ void load_quests(FILE *fl, struct char_data *ch)
   }
 }
 
-static void load_HMVS(struct char_data *ch, const char *line, int mode)
+/* Report a pfile tag that load_char() does not recognise. Its line is
+ * skipped; the value is not echoed (file content, possibly arbitrary). A
+ * tag the code writes but this switch forgets would otherwise be dropped
+ * silently on every load. */
+static void pfile_unknown_tag(const char *filename, const char *tag, long idnum)
+{
+  TB_WARN_MSG("player", "pfile-tag", filename,
+              "player idnum %ld unknown tag %.4s ignored", idnum, tag);
+}
+
+static void load_HMVS(struct char_data *ch, const char *line, int mode,
+                      const char *filename, const char *tag)
 {
   char *end = NULL;
   long first, second;
@@ -1434,26 +1482,36 @@ static void load_HMVS(struct char_data *ch, const char *line, int mode)
   /* Reject malformed or overflowing saved values instead of silently
    * replacing existing statistics with zero. Legacy 'number/number'
    * fields, including signed strength modifiers, remain supported. */
-  if (line == NULL)
+  if (line == NULL) {
+    TB_ERROR_MSG("player", "pfile-int", filename,
+                 "player idnum %ld tag %.4s has no value; unchanged",
+                 GET_IDNUM(ch), tag);
     return;
+  }
   errno = 0;
   first = strtol(line, &end, 10);
   if (end == line || errno == ERANGE || first < INT_MIN || first > INT_MAX ||
       *end != '/') {
-    log("SYSERR: Invalid first player-stat value; leaving existing value unchanged");
+    TB_ERROR_MSG("player", "pfile-int", filename,
+                 "player idnum %ld tag %.4s invalid first value; unchanged",
+                 GET_IDNUM(ch), tag);
     return;
   }
   line = end + 1;
   errno = 0;
   second = strtol(line, &end, 10);
   if (end == line || errno == ERANGE || second < INT_MIN || second > INT_MAX) {
-    log("SYSERR: Invalid second player-stat value; leaving existing value unchanged");
+    TB_ERROR_MSG("player", "pfile-int", filename,
+                 "player idnum %ld tag %.4s invalid second value; unchanged",
+                 GET_IDNUM(ch), tag);
     return;
   }
   while (isspace((unsigned char)*end))
     end++;
   if (*end != '\0') {
-    log("SYSERR: Trailing junk in player-stat value; leaving existing value unchanged");
+    TB_ERROR_MSG("player", "pfile-int", filename,
+                 "player idnum %ld tag %.4s trailing junk; unchanged",
+                 GET_IDNUM(ch), tag);
     return;
   }
   num = (int)first;

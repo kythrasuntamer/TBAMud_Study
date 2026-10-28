@@ -425,6 +425,27 @@ static void test_out_of_range_class_level_sex_skill(void)
   TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail_log, "tag Clas value 99"));
 }
 
+/* B2-30: integer and HMVS parse failures went to plain log() with no
+ * idnum (and echoed the raw value), and an unknown tag whose first letter
+ * matched a case was dropped with no report at all. */
+static void test_bad_int_and_unknown_tags_are_reported(void)
+{
+  write_pfile("tester", "Id  : 4242\nGold: 12abcSECRET\nHit : 5\n"
+                        "Axyz: 1\nZzzz: 2\nTrig: 7\n");
+
+  TEST_ASSERT_EQUAL_INT(0, load_char("tester", &player));
+
+  TEST_ASSERT_EQUAL_INT(PFDEF_GOLD, GET_GOLD(&player));
+  TEST_ASSERT_EQUAL_INT(PFDEF_HIT, GET_HIT(&player));
+  TEST_ASSERT_EQUAL_STRING("pfile-int\npfile-int\npfile-tag\npfile-tag\n",
+                           tb_captured_op_log);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail_log, "player idnum 4242 tag Gold"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail_log, "player idnum 4242 tag Hit "));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail_log, "unknown tag Axyz"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail_log, "unknown tag Zzzz"));
+  TEST_ASSERT_NULL(strstr(tb_captured_detail_log, "SECRET"));
+}
+
 /* B2-17: the legacy one-word "Pref" form converted f1, which was never
  * written on that path (uninitialised, or a stale Act/Aff word). */
 static void test_legacy_pref_uses_its_own_value(void)
@@ -571,6 +592,7 @@ int main(void)
   RUN_TEST(test_clean_pfiles_removes_adjacent_deleted_players);
   RUN_TEST(test_out_of_range_class_level_sex_skill);
   RUN_TEST(test_legacy_pref_uses_its_own_value);
+  RUN_TEST(test_bad_int_and_unknown_tags_are_reported);
   RUN_TEST(test_wrong_flag_word_count_is_reported);
   RUN_TEST(test_truncated_alias_list_is_reported);
   RUN_TEST(test_huge_alias_count_is_rejected);
