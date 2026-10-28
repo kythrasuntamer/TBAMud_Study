@@ -6,6 +6,27 @@
 *  Copyright (C) 1993 The Trustees of The Johns Hopkins University        *
 ************************************************************************* */
 
+/*
+ * autowiz <wizlev> <wizlistfile> <immlev> <immlistfile> [pid]
+ *
+ * Invoked by the server (run_autowiz() in limits.c, via "nice
+ * ../bin/autowiz" from lib/) as:
+ *   autowiz <CONFIG_MIN_WIZLIST_LEV> WIZLIST_FILE LVL_IMMORT IMMLIST_FILE <server pid>
+ * and by hand the same way.  It reads plrfiles/index (relative to the
+ * working directory, lib/), the "id name level flags last" records written
+ * by save_player_index(), and writes two text lists: players at
+ * wizlev..LVL_IMPL to wizlistfile, immlev..wizlev-1 to immlistfile,
+ * skipping PINDEX_DELETED and PINDEX_NOWIZLIST.  With a pid it then sends
+ * that process SIGUSR1 so the server reloads the lists.
+ *
+ * Failure: a missing index exits 1 before any list is touched.  A malformed
+ * index record is reported (index path, line, field, idnum) and left out;
+ * both lists are still written from the records that parsed (they are
+ * truncated and rewritten only after the whole index was read), the server
+ * is still signalled, and the exit status is 1 ("index-incomplete").  The
+ * level arguments are parsed atoi-style (bad text becomes 0).
+ */
+
 #include "conf.h"
 #include "sysdep.h"
 #include <signal.h>

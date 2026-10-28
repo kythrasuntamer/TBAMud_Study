@@ -4,6 +4,29 @@
 *  All Rights Reserved                                                    *
 ************************************************************************* */
 
+/*
+ * rebuildIndex <indexfile>    (built from rebuildAsciiIndex.c)
+ *
+ * Regenerates the player index from the ASCII pfiles.  Run it from
+ * lib/plrfiles (it walks "." recursively: A-E/, F-J/, ... and indexes every
+ * "<name>.plr"), with the server stopped, then move <indexfile> to
+ * lib/plrfiles/index.
+ *
+ * Output is exactly the format build_player_index() (players.c) reads:
+ * "id name level flags last" per player, then "~".  Older versions of this
+ * tool came from a codebase with admin levels: they wrote a sixth column
+ * and clamped levels to 30, which made the server reject the whole index
+ * and demoted every immortal; do not reintroduce either.
+ *
+ * Who controls the input: pfiles are server-written, but the "Desc:" block
+ * is player-authored text and "Alis:"/"Vars:" blocks hold player- and
+ * script-chosen text, so tags are read only at record level (see
+ * pfile_scan()).  A pfile that is malformed or out of range is reported
+ * with its path and left out; the exit status is then 1, because a player
+ * missing from the index is unknown to the server and their name and
+ * idnum could be reused.  Symbolic links are not followed.
+ */
+
 #include "conf.h"
 #include "sysdep.h"
 

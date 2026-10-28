@@ -5,6 +5,24 @@
 *  Written by Jeremy Elson                                                *
 ************************************************************************* */
 
+/*
+ * sign <port> <filename | ->
+ *
+ * Serves a fixed text (e.g. "the MUD has moved to ...") on a TCP port while
+ * the MUD itself is down.  Who should run it: the operator, from a shell,
+ * on a port 1024..65535.  Behaviour to know before running it:
+ *  - it listens on ALL interfaces (INADDR_ANY) with no authentication: any
+ *    host that can reach the port gets the text;
+ *  - the text (at most MAX_FILESIZE bytes, longer input is cut with a
+ *    message on stderr) is read ONCE at start-up; later changes to the file
+ *    are not seen until sign is restarted;
+ *  - it detaches into the background (prints the daemon's pid) and forks
+ *    one short-lived child per connection, reaped by the SIGCHLD handler;
+ *    there is no connection limit.
+ * Errors (bad port, unreadable file, socket failures) are reported as TBERR
+ * records on stderr.
+ */
+
 #define MAX_FILESIZE	8192
 #define LINEBUF_SIZE	128
 

@@ -4,6 +4,24 @@
 *  All Rights Reserved                                                    *
 ************************************************************************* */
 
+/*
+ * rebuildMailIndex <indexfile>
+ *
+ * OBSOLETE in this tree.  It indexes a per-message mail store (one "*.ml"
+ * file per message, with MlID:/Send:/Reci:/Sent:/Subj:/Flag:/Gold:/Objs:
+ * tags) from another tbaMUD branch.  This tree's mail.c keeps all mail in
+ * the single file lib/etc/plrmail, and nothing reads .ml files or the
+ * index this tool writes.  It is kept (and kept memory-safe) only for
+ * operators migrating data from that branch.
+ *
+ * Usage: run from the root of the .ml tree; writes <indexfile>, one line
+ * per message: "<ID> <flags> <sender> <recipient> <time> <subject>", then
+ * "~".  The .ml files are server-written but may be hand-edited; a file
+ * whose Flag: line is malformed, or that cannot be opened, is reported and
+ * left out, and the exit status is then 1.  Symbolic links are not
+ * followed.
+ */
+
 #include "conf.h"
 #include "sysdep.h"
 

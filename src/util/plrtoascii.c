@@ -123,6 +123,27 @@ struct affected_type_plrtoascii {
 
 /* ==================== File Structure for Player ======================= */
 /*             BEWARE: Changing it will ruin the playerfile		  */
+/*
+ * plrtoascii <playerfile>
+ *
+ * Converts a CircleMUD 3.0 binary playerfile (an array of these structs,
+ * written raw by fwrite) into ASCII pfiles under plrfiles/<A-E..>/ and a
+ * new plrfiles/index.  Run it from lib/ with the server stopped; it
+ * OVERWRITES plrfiles/index and any existing <name>.plr, and opens the
+ * input read-write ("r+") although it never writes to it.
+ *
+ * ABI: the layout is the source host's in-memory layout -- the widths of
+ * time_t, long and int and the compiler's padding.  The tool must be built
+ * with the same ABI as the server that wrote the playerfile (a file from a
+ * 32-bit server cannot be read by a 64-bit build of this tool).  A file
+ * whose size is not a whole number of records is refused ("plrfile-size",
+ * which prints the record size this build expects); a matching size does
+ * not prove the ABI matches, so check the converted output.
+ *
+ * Every text field is fixed-width and may be unterminated in a corrupt
+ * file; it is printed bounded to its slot, and the name is validated
+ * before it is used as a path.
+ */
 struct char_file_u_plrtoascii {
    /* char_player_data */
    char	name[MAX_NAME_LENGTH+1];
