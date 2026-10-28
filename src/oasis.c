@@ -62,6 +62,16 @@ void cleanup_olc(struct descriptor_data *d, byte cleanup_type)
   if (d->olc == NULL)
     return;
 
+  /* F3-07: the cedit scratch configuration is a deep copy (cedit_setup and
+   * cedit_save_internally str_udup/strdup every string), so it is always
+   * owned here, whatever cleanup_type the caller passed.  It used to be
+   * freed only from inside the OLC_ROOM branch below, which cedit never
+   * sets, so every cedit session leaked the struct and its strings. */
+  if (OLC_CONFIG(d)) {
+    free_config(OLC_CONFIG(d));
+    OLC_CONFIG(d) = NULL;
+  }
+
   /* Check for a room. free_room doesn't perform sanity checks, we must be
    * careful here. */
   if (OLC_ROOM(d)) {
@@ -73,9 +83,6 @@ void cleanup_olc(struct descriptor_data *d, byte cleanup_type)
       break;
     case CLEANUP_STRUCTS:
       free(OLC_ROOM(d));
-      break;
-    case CLEANUP_CONFIG:
-      free_config(OLC_CONFIG(d));
       break;
     default: /* The caller has screwed up. */
       log("SYSERR: cleanup_olc: Unknown type!");

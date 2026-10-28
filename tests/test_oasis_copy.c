@@ -475,9 +475,46 @@ void test_rcopy_rejects_nowhere_sentinel_and_negative_target(void)
   TEST_ASSERT_TRUE(log_has("op=arg-range"));
 }
 
+/* ---------------------------------------------------------------------
+ * F3-07: cleanup_olc freed OLC_CONFIG only inside the OLC_ROOM branch,
+ * which cedit never populates, so the config copy and its strings leaked
+ * on every cedit exit.  The leak is what fails this test (LeakSanitizer /
+ * Valgrind definite leak) if the release regresses.
+ * --------------------------------------------------------------------- */
+static void attach_config_editor(void)
+{
+  CREATE(builder_desc.olc, struct oasis_olc_data, 1);
+  CREATE(OLC_CONFIG(&builder_desc), struct config_data, 1);
+  OLC_CONFIG(&builder_desc)->play.OK = strdup("Ok.\r\n");
+  OLC_CONFIG(&builder_desc)->operation.MENU = strdup("menu");
+  OLC_CONFIG(&builder_desc)->operation.LOGNAME = strdup("log/syslog");
+  STATE(&builder_desc) = CON_CEDIT;
+}
+
+void test_cleanup_config_releases_config_copy(void)
+{
+  attach_config_editor();
+
+  cleanup_olc(&builder_desc, CLEANUP_CONFIG);
+
+  TEST_ASSERT_NULL(builder_desc.olc);
+  TEST_ASSERT_EQUAL_INT(CON_PLAYING, STATE(&builder_desc));
+}
+
+void test_cleanup_all_releases_config_copy_on_link_loss(void)
+{
+  attach_config_editor();
+
+  cleanup_olc(&builder_desc, CLEANUP_ALL);   /* what close_socket passes */
+
+  TEST_ASSERT_NULL(builder_desc.olc);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(test_cleanup_config_releases_config_copy);
+  RUN_TEST(test_cleanup_all_releases_config_copy_on_link_loss);
   RUN_TEST(test_rcopy_saves_template_as_new_room);
   RUN_TEST(test_rcopy_rejects_vnum_that_would_be_narrowed);
   RUN_TEST(test_rcopy_rejects_nowhere_sentinel_and_negative_target);
