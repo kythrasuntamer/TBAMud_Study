@@ -38,6 +38,14 @@ static const char *ban_types[] = {
   "ERROR"
 };
 
+/**
+ * Replace ban_list with the records in BAN_FILE (boot time).
+ *
+ * BAN_FILE is written by write_ban_list() as "<type> <site> <date> <name>"
+ * per line and may be hand-edited by the operator. A missing file means no
+ * bans. Every malformed, unknown-type or over-long record is reported with
+ * its line number (ops "load-parse", "load-type", "load-site-truncate").
+ */
 void load_banned(void)
 {
   FILE *fl;
@@ -120,6 +128,21 @@ void load_banned(void)
   tb_fclose(fl);
 }
 
+/**
+ * Highest ban type that applies to a connecting host.
+ *
+ * @param hostname The client's host or address text (d->host). It is
+ *        lowercased IN PLACE, so pass a writable buffer you own; do not
+ *        pass a string literal or a string shared with other code.
+ * @return BAN_NOT (0) for no ban or a NULL/empty host, else the largest
+ *         BAN_NEW..BAN_ALL among the matching sites.
+ *
+ * A site matches when it is a substring of the host (so "example.com"
+ * matches "dialup.example.com"). Sites are stored lowercased by do_ban();
+ * load_banned() keeps the file's text as written, so an uppercase site in a
+ * hand-edited BAN_FILE never matches. An empty site would match every host;
+ * neither do_ban() nor the loader can store one.
+ */
 int isbanned(char *hostname)
 {
   int i;
