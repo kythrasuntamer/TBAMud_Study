@@ -162,6 +162,26 @@ class Wld2HtmlTests(ToolCase):
         self.assertEqual(rc, 1, err)
         self.assertDiag(err, "wld-flag-value")
 
+    def test_empty_room_name_and_description_reported(self):
+        # I3-10: '~' fields were NULL; tb_fputs(NULL) failed without a vnum
+        # and a nameless room was skipped as if never loaded.
+        rc, err = self.wld("#100\n~\n~\n0 0 0\nS\n$~\n")
+        self.assertEqual(rc, 0, err)
+        self.assertDiag(err, "wld-empty-field")
+        self.assertIn("room #100", err)
+        self.assertNotIn('operation="fputs"', err)
+        self.assertTrue(self.exists("100.html"))
+
+    def test_exit_to_unused_slot_is_missing_room(self):
+        # I3-10: findRoom(0) matched the zeroed slot left by '#99999' and
+        # printed its NULL name ("North to (null)").
+        rc, err = self.wld("#100\nRoom~\nDesc~\n0 0 0\nD0\n~\n~\n0 0 0\nS\n"
+                           "#99999\n$~\n")
+        self.assertEqual(rc, 0, err)
+        page = self.read("100.html")
+        self.assertNotIn(b"(null)", page)
+        self.assertIn(b"North to missing room 0", page)
+
     def test_final_line_without_newline_accepted(self):
         # I3-07: a valid file whose '$~' had no newline was rejected as a
         # format error blaming room #100.

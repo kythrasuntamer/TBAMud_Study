@@ -335,9 +335,13 @@ int main(int argc, char **argv)
 struct room_data* findRoom(int nr)
 {
   int i;
-  
+
+  /*
+   * Skip unused slots (name == NULL, see write_output): they are zeroed,
+   * so an exit to room 0 used to match one and print its NULL name.
+   */
   for (i=0;i<rec_count;i++)
-    if (world[i].number==nr)
+    if (world[i].name != NULL && world[i].number==nr)
       return &world[i];
 
   return NULL;
@@ -353,10 +357,13 @@ void write_output(void)
   for (i=0;i<rec_count;i++) {
     //print the record number, but no linefeed.
     tb_fprintf(stderr, "Record: %d ",i);
+    /*
+     * parse_room() gives every loaded room a non-NULL name, so NULL marks a
+     * slot that was counted in pass one but never loaded (a '#' line inside
+     * a string, or the #99999 sentinel).  Over-counting is expected.
+     */
     if (world[i].name == NULL) {
-      //linefeed the prior record since we're skipping this one.
-      log("");
-      //the name is blank, which means, most likely, the record is bad as well.
+      log("unused slot");
       continue;
     }
     tb_snprintf(buf, sizeof(buf), "Writing %d.html", world[i].number);
@@ -598,8 +605,23 @@ void parse_room(FILE * fl, int virtual_nr)
 
   world[room_nr].zone = zone;
   world[room_nr].number = virtual_nr;
+  /*
+   * fread_string() returns NULL for an empty "~" string.  write_output()
+   * prints both fields and treats a NULL name as "slot never loaded", so an
+   * empty field is reported and replaced by an empty allocated string.
+   */
   world[room_nr].name = fread_string(fl, "room name");
+  if (world[room_nr].name == NULL) {
+    WLD_REPORT(TB_SEV_WARN, TB_ERR_PARSER, "wld-empty-field",
+               "record %d has an empty room name", room_nr);
+    CREATE(world[room_nr].name, char, 1);
+  }
   world[room_nr].description = fread_string(fl, "room description");
+  if (world[room_nr].description == NULL) {
+    WLD_REPORT(TB_SEV_WARN, TB_ERR_PARSER, "wld-empty-field",
+               "record %d has an empty room description", room_nr);
+    CREATE(world[room_nr].description, char, 1);
+  }
 
   if (!get_line(fl, line, sizeof(line)))
     WLD_PARSE_ERROR("wld-unexpected-eof",
