@@ -22,6 +22,8 @@
 #include "genobj.h"
 #include "comm.h"
 #include "dg_event.h"
+#include <sys/stat.h>
+#include <unistd.h>
 
 /* ID counters live in db.c, which this fixture does not link. */
 long max_mob_id = MOB_ID_BASE;
@@ -680,6 +682,45 @@ static void tstat_of_a_long_script_stays_in_bounds(void)
   top_of_trigt = 0;
 }
 
+/* The legacy plrvars/ loader read each name into varname[32]. */
+static void legacy_var_file_accepts_long_names(void)
+{
+  static char_data player;
+  char dir[] = "/tmp/tb_dgvarsXXXXXX", cwd[PATH_MAX], name[] = "alice";
+  char longname[200];
+  struct trig_var_data *vd;
+  FILE *fp;
+
+  TEST_ASSERT_NOT_NULL(getcwd(cwd, sizeof(cwd)));
+  TEST_ASSERT_NOT_NULL(mkdtemp(dir));
+  TEST_ASSERT_EQUAL_INT(0, chdir(dir));
+  TEST_ASSERT_EQUAL_INT(0, mkdir("plrvars", 0700));
+  TEST_ASSERT_EQUAL_INT(0, mkdir("plrvars/A-E", 0700));
+  memset(longname, 'n', sizeof(longname) - 1);
+  longname[sizeof(longname) - 1] = '\0';
+  fp = fopen("plrvars/A-E/alice.mem", "w");
+  TEST_ASSERT_NOT_NULL(fp);
+  TEST_ASSERT_TRUE(fprintf(fp, "%s 0 kept\n", longname) > 0);
+  TEST_ASSERT_EQUAL_INT(0, fclose(fp));
+
+  memset(&player, 0, sizeof(player));
+  player.player.name = name;
+  read_saved_vars(&player);
+
+  vd = SCRIPT(&player)->global_vars;
+  TEST_ASSERT_NOT_NULL(vd);
+  TEST_ASSERT_EQUAL_STRING(longname, vd->name);
+  TEST_ASSERT_EQUAL_STRING("kept", vd->value);
+
+  TEST_ASSERT_EQUAL_INT(0, unlink("plrvars/A-E/alice.mem"));
+  TEST_ASSERT_EQUAL_INT(0, rmdir("plrvars/A-E"));
+  TEST_ASSERT_EQUAL_INT(0, rmdir("plrvars"));
+  TEST_ASSERT_EQUAL_INT(0, chdir(cwd));
+  TEST_ASSERT_EQUAL_INT(0, rmdir(dir));
+  free_varlist(SCRIPT(&player)->global_vars);
+  free(SCRIPT(&player));
+}
+
 static void restore_round_trips_neutralize(void)
 {
   char text[] = "50% off, 100%% sure";
@@ -714,5 +755,6 @@ int main(void)
   RUN_TEST(switch_still_selects_its_case);
   RUN_TEST(add_var_accepts_its_own_value);
   RUN_TEST(tstat_of_a_long_script_stays_in_bounds);
+  RUN_TEST(legacy_var_file_accepts_long_names);
   return UNITY_END();
 }

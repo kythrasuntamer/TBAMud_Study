@@ -3168,8 +3168,9 @@ void read_saved_vars(struct char_data *ch)
   long context;
   char fn[127];
   char input_line[1024], *temp, *p;
-  char varname[32];
-  char context_str[16];
+  /* any_one_arg() writes up to MAX_INPUT_LENGTH bytes. */
+  char varname[MAX_INPUT_LENGTH];
+  char context_str[MAX_INPUT_LENGTH];
 
   /* If getting to the menu from inside the game, the vars aren't removed. So 
    * let's not allocate them again. */
@@ -3252,8 +3253,9 @@ void read_saved_vars_ascii(FILE *file, struct char_data *ch, int count)
 {
   long context;
   char input_line[1024], *temp, *p;
-  char varname[READ_SIZE];
-  char context_str[READ_SIZE];
+  /* any_one_arg() writes up to MAX_INPUT_LENGTH bytes. */
+  char varname[MAX_INPUT_LENGTH];
+  char context_str[MAX_INPUT_LENGTH];
   int i;
 
   /* If getting to the menu from inside the game, the vars aren't removed. So 
