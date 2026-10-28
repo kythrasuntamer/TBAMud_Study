@@ -69,6 +69,19 @@ static void rebase_room_events(void)
 }
 
 
+/* Disable a reset command that names a deleted room: '*' is skipped by
+ * reset_zone() and dropped by save_zone().  A command list owns its
+ * commands' sarg1/sarg2 (only 'V' has them; remove_cmd_from_list() in
+ * genzon.c frees them), and destroy_db() frees them for 'V' alone, so a
+ * cancelled command gives them up here instead of leaking them. */
+static void cancel_zone_command(struct reset_com *cmd)
+{
+  free(cmd->sarg1);
+  free(cmd->sarg2);
+  cmd->sarg1 = cmd->sarg2 = NULL;
+  cmd->command = '*';
+}
+
 /**
  * Add a new room, or update the live room with the same vnum.
  *
@@ -224,8 +237,8 @@ room_rnum add_room(struct room_data *room)
  * People and objects in it move to the Void (rnum 0); its scripts and
  * events are cancelled; exits into it are removed (or lead to NOWHERE when
  * they carry a keyword or description); reset commands that name it are
- * disabled ('*'); start rooms and GET_WAS_IN that were this room fall back
- * to the Void.  world[] then shifts down
+ * disabled ('*', a 'V' command's strings freed); start rooms and GET_WAS_IN
+ * that were this room fall back to the Void.  world[] then shifts down
  * (see the file comment) and every stored room rnum above rnum is
  * decremented.
  *
@@ -361,14 +374,14 @@ int delete_room(room_rnum rnum)
       case 'T':
       case 'V':
 	if (ZCMD(i, j).arg3 == rnum)
-	  ZCMD(i, j).command = '*';	/* Cancel command. */
+	  cancel_zone_command(&ZCMD(i, j));	/* Frees a 'V' command's strings. */
 	else if (ZCMD(i, j).arg3 > rnum)
 	  ZCMD(i, j).arg3 -= (ZCMD(i, j).arg3 != NOWHERE); /* with unsigned NOWHERE > any rnum */
 	break;
       case 'D':
       case 'R':
 	if (ZCMD(i, j).arg1 == rnum)
-	  ZCMD(i, j).command = '*';	/* Cancel command. */
+	  cancel_zone_command(&ZCMD(i, j));
 	else if (ZCMD(i, j).arg1 > rnum)
 	  ZCMD(i, j).arg1 -= (ZCMD(i, j).arg1 != NOWHERE); /* with unsigned NOWHERE > any rnum */
       case 'G':

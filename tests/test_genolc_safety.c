@@ -1771,6 +1771,35 @@ static void save_rooms_keeps_previous_file_after_stream_error(void)
 }
 
 /* ------------------------------------------------------------------------ */
+/* Leftovers 3: delete_room() frees the strings of a 'V' command it         */
+/* cancels; destroy_db() frees them for 'V' alone, so a '*' leaked them.    */
+/* ------------------------------------------------------------------------ */
+static void delete_room_frees_cancelled_var_strings(void)
+{
+  static const int args[][3] = { { WLD_TRIGGER, 0, 1 },   /* 'V' in rnum 1 */
+                                 { WLD_TRIGGER, 0, 2 },   /* 'V' in rnum 2 */
+                                 { 1, 0, 0 } };           /* 'D' in rnum 1 */
+  make_zones(1); make_rooms(3);       /* vnums 10 20 30 */
+  set_zone_cmds(0, "VVD", args);
+  zone_table[0].cmd[0].sarg1 = strdup("gone");
+  zone_table[0].cmd[0].sarg2 = strdup("value");
+  zone_table[0].cmd[1].sarg1 = strdup("kept");
+  zone_table[0].cmd[1].sarg2 = strdup("value");
+
+  TEST_ASSERT_TRUE(delete_room(1));
+
+  TEST_ASSERT_EQUAL_INT('*', zone_table[0].cmd[0].command);
+  TEST_ASSERT_NULL(zone_table[0].cmd[0].sarg1);
+  TEST_ASSERT_NULL(zone_table[0].cmd[0].sarg2);
+  TEST_ASSERT_EQUAL_INT('V', zone_table[0].cmd[1].command);
+  TEST_ASSERT_EQUAL_INT(1, zone_table[0].cmd[1].arg3);
+  TEST_ASSERT_EQUAL_STRING("kept", zone_table[0].cmd[1].sarg1);
+  TEST_ASSERT_EQUAL_INT('*', zone_table[0].cmd[2].command);
+  free(zone_table[0].cmd[1].sarg1);
+  free(zone_table[0].cmd[1].sarg2);
+}
+
+/* ------------------------------------------------------------------------ */
 /* Temporary world directory for the writers.                               */
 /* ------------------------------------------------------------------------ */
 static char test_root[] = "/tmp/tb-genolc-XXXXXX";
@@ -1885,6 +1914,7 @@ int main(void)
   RUN_TEST(create_new_zone_renumbers_reset_queue);
   RUN_TEST(add_room_refuses_out_of_range_zone);
   RUN_TEST(save_rooms_keeps_previous_file_after_stream_error);
+  RUN_TEST(delete_room_frees_cancelled_var_strings);
   failures = UNITY_END();
   leave_test_root();
   return failures;
