@@ -1761,6 +1761,26 @@ static int Crash_load_objs(struct char_data *ch) {
 	for (current = loaded; current != NULL; current=current->next)
 	  num_objs += handle_obj(current->obj, ch, current->locate, cont_row);
 
+	/* Contents still waiting when the file ends never got their container
+	 * (its record was skipped, or the file was cut short). handle_obj()
+	 * hands a row over only when a later object arrives, so these stayed
+	 * on object_list but nowhere in the game. Give them to the player. */
+	for (i = MAX_BAG_ROWS - 1; i >= 0; i--) {
+	  struct obj_data *obj, *next;
+	  int spilled = 0;
+
+	  for (obj = cont_row[i]; obj; obj = next) {
+	    next = obj->next_content;
+	    obj_to_char(obj, ch);
+	    spilled++;
+	  }
+	  cont_row[i] = NULL;
+	  if (spilled)
+	    TB_WARN_MSG("objsave", "rent-nesting", filename,
+	                "player idnum %ld: %d object(s) at depth %d lost their "
+	                "container; put in inventory", GET_IDNUM(ch), spilled, i + 1);
+	}
+
 	/* now it's safe to free the obj_save_data list - all members of it
 	 * have been put in the correct lists by handle_obj() */
 	while (loaded != NULL) {

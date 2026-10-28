@@ -764,6 +764,28 @@ static void test_too_deep_nesting_is_reported(void)
   TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "player idnum 4242 obj vnum 101"));
 }
 
+/* Contents whose container never arrived (its record skipped for a missing
+ * prototype, or the file cut short) stayed in handle_obj()'s pending row
+ * when the file ended: allocated and on object_list, but nowhere in the
+ * game (a leak under LeakSanitizer here). They go to inventory, reported. */
+static void test_contents_without_container_reach_inventory(void)
+{
+  char body[256];
+
+  TEST_ASSERT_TRUE(snprintf(body, sizeof(body),
+                            "%d %ld 0 0 0 0\n#101\nLoc : -1\n\n#999\n\n$~\n",
+                            RENT_CRASH, (long)time(0)) > 0);	/* no vnum 999 */
+  write_rent_file("Tester", body);
+
+  TEST_ASSERT_EQUAL_INT(1, Crash_load(&player));
+
+  TEST_ASSERT_NOT_NULL(player.carrying);
+  TEST_ASSERT_EQUAL_INT(101, GET_OBJ_VNUM(player.carrying));
+  TEST_ASSERT_EQUAL_STRING("missing-proto\nrent-nesting\n", tb_captured_op_log);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail,
+                              "player idnum 4242: 1 object(s) at depth 1 lost their container"));
+}
+
 /* --- receptionist fixtures: "offer" is command 1; every act() is kept. --- */
 SPECIAL(receptionist);
 static struct command_info offer_cmd_table[] = {
@@ -987,6 +1009,7 @@ int main(void)
   RUN_TEST(test_rent_values_in_range_are_kept);
   RUN_TEST(test_rent_values_check_object_reports_are_kept);
   RUN_TEST(test_listrent_pager_owns_its_copy);
+  RUN_TEST(test_contents_without_container_reach_inventory);
   (void)rmdir(scratch_dir);
   return UNITY_END();
 }
