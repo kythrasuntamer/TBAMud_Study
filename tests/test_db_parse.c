@@ -1474,6 +1474,40 @@ static void check_object_repairs_attack_type_out_of_range(void)
   obj_index = NULL;
 }
 
+/* H1-18: weapon dice 2000000000d6 made dice() loop two billion times on
+ * every blow, and negative dice were kept. Both are now clamped into
+ * 0..MAX_WEAPON_NDICE d 0..MAX_WEAPON_SDICE, loudly; 0d0 and the oedit
+ * maximum pass silently. */
+static void check_object_clamps_weapon_dice(void)
+{
+  struct obj_data obj;
+
+  weapon_fixture(&obj, 2000000000, 6, 0);
+  TEST_ASSERT_TRUE(check_object(&obj));
+  TEST_ASSERT_EQUAL_INT(MAX_WEAPON_NDICE, GET_OBJ_VAL(&obj, 1));
+  TEST_ASSERT_EQUAL_INT(6, GET_OBJ_VAL(&obj, 2));
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("object-check", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail,
+                              "obj vnum 3021 damage dice 2000000000d6"));
+
+  tb_error_capture_reset();
+  weapon_fixture(&obj, -3, 1000, 0);
+  TEST_ASSERT_TRUE(check_object(&obj));
+  TEST_ASSERT_EQUAL_INT(0, GET_OBJ_VAL(&obj, 1));
+  TEST_ASSERT_EQUAL_INT(MAX_WEAPON_SDICE, GET_OBJ_VAL(&obj, 2));
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+
+  tb_error_capture_reset();
+  weapon_fixture(&obj, 0, 0, 0);
+  TEST_ASSERT_FALSE(check_object(&obj));
+  weapon_fixture(&obj, MAX_WEAPON_NDICE, MAX_WEAPON_SDICE, 0);
+  TEST_ASSERT_FALSE(check_object(&obj));
+  TEST_ASSERT_EQUAL_INT(MAX_WEAPON_NDICE, GET_OBJ_VAL(&obj, 1));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  obj_index = NULL;
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -1531,5 +1565,6 @@ int main(void)
   RUN_TEST(parse_object_replaces_empty_strings);
   RUN_TEST(parse_mobile_replaces_empty_short_description);
   RUN_TEST(check_object_repairs_attack_type_out_of_range);
+  RUN_TEST(check_object_clamps_weapon_dice);
   return UNITY_END();
 }

@@ -85,6 +85,12 @@
 #define VALID_WEAR_POS(w) ((unsigned int)(w) < NUM_WEARS)
 #define VALID_ATTACK(a)   ((unsigned int)(a) < NUM_ATTACK_TYPES)
 
+/* TRUE if n dice of s sides fit the weapon limit oedit enforces
+ * (MAX_WEAPON_NDICE d MAX_WEAPON_SDICE, oasis.h); no dice (0) is allowed.
+ * Each argument is evaluated once. */
+#define VALID_WEAPON_DICE(n, s) \
+  ((unsigned int)(n) <= MAX_WEAPON_NDICE && (unsigned int)(s) <= MAX_WEAPON_SDICE)
+
 /* TRUE if a parsed int/long can be stored in an IDXTYPE vnum field without
  * wrapping and is not the NOWHERE/NOTHING sentinel (IDXTYPE_MAX).
  * Evaluates n twice: pass a plain variable. */
@@ -4800,6 +4806,22 @@ static int check_object(struct obj_data *obj)
                    "obj vnum %d attack type %d out of range 0..%d; using 0 (hit)",
                    GET_OBJ_VNUM(obj), GET_OBJ_VAL(obj, 3), NUM_ATTACK_TYPES - 1);
       GET_OBJ_VAL(obj, 3) = 0;
+      error = TRUE;
+    }
+    /* Values 1 and 2 are the damage dice hit() rolls on every blow: dice()
+     * loops value 1 times and sums into an int, so a huge count stalls the
+     * game loop and a huge product overflows. A value past oedit's limit
+     * comes from a hand-edited .obj file: clamp it and report it. */
+    if (!VALID_WEAPON_DICE(GET_OBJ_VAL(obj, 1), GET_OBJ_VAL(obj, 2))) {
+      int ndice = LIMIT(GET_OBJ_VAL(obj, 1), 0, MAX_WEAPON_NDICE);
+      int sdice = LIMIT(GET_OBJ_VAL(obj, 2), 0, MAX_WEAPON_SDICE);
+
+      TB_ERROR_MSG("db", "object-check", "damage dice",
+                   "obj vnum %d damage dice %dd%d outside 0..%dd0..%d; using %dd%d",
+                   GET_OBJ_VNUM(obj), GET_OBJ_VAL(obj, 1), GET_OBJ_VAL(obj, 2),
+                   MAX_WEAPON_NDICE, MAX_WEAPON_SDICE, ndice, sdice);
+      GET_OBJ_VAL(obj, 1) = ndice;
+      GET_OBJ_VAL(obj, 2) = sdice;
       error = TRUE;
     }
     break;
