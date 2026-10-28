@@ -181,6 +181,11 @@ void redit_setup_existing(struct descriptor_data *d, int real_num)
   /* and you are your next_in_room          -- anderyu (10-05-22) */ 
   room->people = NULL; 
 
+  /* Nor the room's objects: a new room saved from this buffer (a copy into
+   * a new vnum) took over the source's contents list, so both rooms shared
+   * one list whose objects named only the source as their room. */
+  room->contents = NULL;
+
   /* Nullify the events structure. */
   room->events = NULL;
 
