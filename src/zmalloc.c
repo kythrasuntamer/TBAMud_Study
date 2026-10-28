@@ -49,6 +49,21 @@ static void zlogf(const char *format, ...)
   va_end(args);
 }
 
+/*
+ * Detected heap misuse (double free, freeing an untracked pointer, guard pad
+ * overwritten) means the program's ownership state is already corrupt, so it
+ * is reported through the structured reporter -- on stderr, whether or not
+ * zmalloc.log could be opened -- at the caller's file:line, and the process
+ * aborts.  zmalloc.log keeps the verbose trace and hex dumps.
+ */
+#define ZM_FATAL(op, file, line, ...) do { \
+  tb_report_domain_errorf_at(TB_SEV_FATAL, TB_ERR_INVARIANT, (op), 0, \
+                             (file), (line), __func__, __VA_ARGS__); \
+  if (zfd) \
+    (void)fflush(zfd); \
+  abort(); \
+} while (0)
+
 typedef struct meminfo {
   struct meminfo *next;
   int size; /* number of bytes malloced */
@@ -137,7 +152,10 @@ unsigned char *zmalloc(int len, char *file, int line)
 #endif
 
   if (!ret) {
-    zlogf("zmalloc: malloc FAILED");
+    /* Not misuse: the caller gets NULL and its own failure path runs. */
+    tb_report_domain_errorf_at(TB_SEV_ERROR, TB_ERR_INVARIANT, "zmalloc-alloc",
+                               errno, file, line, __func__, "%d bytes", len);
+    zlogf("zmalloc: malloc FAILED\n");
     return NULL;
   }
 #ifndef NO_MEMORY_PADDING
@@ -152,6 +170,9 @@ unsigned char *zmalloc(int len, char *file, int line)
 
   m = (meminfo *) calloc(1, sizeof(meminfo));
   if (!m) {
+    tb_report_domain_errorf_at(TB_SEV_ERROR, TB_ERR_INVARIANT, "zmalloc-alloc",
+                               errno, file, line, __func__,
+                               "bookkeeping record for %d bytes", len);
     zlogf("zmalloc: FAILED mem alloc for zmalloc struct... bailing!\n");
 #ifndef NO_MEMORY_PADDING
     free(ret - sizeof(beginPad));
@@ -165,6 +186,9 @@ unsigned char *zmalloc(int len, char *file, int line)
   m->frees = 0;
   m->file = strdup(file);
   if (!m->file) {
+    tb_report_domain_errorf_at(TB_SEV_ERROR, TB_ERR_INVARIANT, "zmalloc-alloc",
+                               errno, file, line, __func__,
+                               "bookkeeping record for %d bytes", len);
     zlogf("zmalloc: FAILED mem alloc for zmalloc struct... bailing!\n");
     free(m);
 #ifndef NO_MEMORY_PADDING
@@ -271,6 +295,9 @@ void zfree(unsigned char *what, char *file, int line)
 		    "       mallocd at %s:%d, freed at %s:%d.\n",
                     (void *)m->addr, m->size, m->file, m->line, file, line);
 	if (zmalloclogging > 1) zdump(m);
+        ZM_FATAL("zfree-double", file, line,
+                 "addr=%p size=%d allocated=%s:%d", (void *)m->addr, m->size,
+                 m->file, m->line);
       }
       gotit++;
     }
@@ -279,10 +306,14 @@ void zfree(unsigned char *what, char *file, int line)
   if (!gotit) {
     zlogf("zfree: ERR: attempt to free unallocated memory 0x%p at %s:%d.\n",
 		(void *)what, file, line);
+    ZM_FATAL("zfree-unknown", file, line,
+             "addr=%p was not allocated through zmalloc", (void *)what);
   }
   if (gotit > 1) {
     /* this shouldn't happen, eh? */
     zlogf("zfree: ERR: Multiply-allocd memory 0x%p.\n", (void *)what);
+    ZM_FATAL("zfree-multiple-records", file, line,
+             "addr=%p is tracked %d times", (void *)what, gotit);
   }
 }
 
@@ -368,13 +399,22 @@ void zmalloc_check()
 void pad_check(meminfo *m)
 {
 #ifndef NO_MEMORY_PADDING
+  /* An overwritten guard pad means a buffer under- or overrun already
+   * happened; the report names the allocation site (the overrun itself is
+   * somewhere between allocation and this check). */
   if (memcmp(m->addr - sizeof(beginPad), beginPad, sizeof(beginPad)) != 0) {
     zlogf("pad_check: ERR: beginPad was modified! (mallocd@ %s:%d)\n", m->file, m->line);
     if (zmalloclogging > 1) zdump(m);
+    ZM_FATAL("zmalloc-pad", m->file, m->line,
+             "beginPad overwritten (underrun): addr=%p size=%d",
+             (void *)m->addr, m->size);
   }
   if (memcmp(m->addr + m->size, endPad, sizeof(endPad)) != 0) {
     zlogf("pad_check: ERR: endPad was modified! (mallocd@ %s:%d)\n", m->file, m->line);
     if (zmalloclogging > 1) zdump(m);
+    ZM_FATAL("zmalloc-pad", m->file, m->line,
+             "endPad overwritten (overrun): addr=%p size=%d",
+             (void *)m->addr, m->size);
   }
 #endif
 }

@@ -387,6 +387,12 @@ if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
         PROPERTIES COMPILE_OPTIONS "-ffunction-sections;-fdata-sections")
 endif()
 
+# MEMORY_DEBUG allocator (zmalloc.c) as built: misuse is reported and aborts.
+add_mud_test(test_zmalloc
+    ${MUD_SRCDIR}/zmalloc.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_zmalloc.c
+)
+
 find_package(Python3 COMPONENTS Interpreter QUIET)
 if(Python3_Interpreter_FOUND)
     add_test(NAME test_dg_memory_callback_contract
