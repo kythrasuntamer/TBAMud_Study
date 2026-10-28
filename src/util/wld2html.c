@@ -104,6 +104,58 @@ static void wld_format_context(char *dst, size_t dst_size, const char *detail)
   exit(1); \
 } while (0)
 
+/**
+ * Read one whole physical line of builder input.
+ *
+ * Stores the line in dst without its trailing "\n" (or "\r\n") and always
+ * NUL-terminates it.  Unlike a bare fgets(), a line never comes back in
+ * pieces: a line that does not fit in dst_size - 1 bytes, or that contains
+ * a NUL byte (which would make strlen() disagree with what was read), is
+ * reported (wld-line-too-long / wld-line-nul) and the tool exits 1.  The
+ * last line of a file does not need a newline.
+ *
+ * @param fl        Input stream (a .wld file named on the command line).
+ * @param dst       Destination buffer.
+ * @param dst_size  Size of dst in bytes; must be at least 2.
+ * @param what      What is being read, for diagnostics.
+ * @return 1 when a line was read, 0 at end of file with nothing read.
+ */
+static int wld_read_line(FILE *fl, char *dst, size_t dst_size, const char *what)
+{
+  size_t len = 0;
+  int ch;
+
+  while ((ch = getc(fl)) != EOF && ch != '\n') {
+    if (ch == '\0')
+      WLD_PARSE_ERROR("wld-line-nul", "line %ld of the %s contains a NUL byte",
+                      wld_cur_line + 1, what);
+    if (len + 1 >= dst_size)
+      WLD_PARSE_ERROR("wld-line-too-long",
+                      "line %ld of the %s is longer than %lu bytes",
+                      wld_cur_line + 1, what, (unsigned long)(dst_size - 1));
+    dst[len++] = (char)ch;
+  }
+
+  if (ch == EOF) {
+    if (ferror(fl)) {
+      int read_errno = errno;
+
+      WLD_PARSE_ERROR("wld-read", "read error in the %s: %s", what,
+                      strerror(read_errno));
+    }
+    if (len == 0) {
+      dst[0] = '\0';
+      return 0;
+    }
+  }
+
+  wld_cur_line++;
+  if (len > 0 && dst[len - 1] == '\r')
+    len--;
+  dst[len] = '\0';
+  return 1;
+}
+
 static int parse_int_token(char **cursor, int *out)
 {
   char *p, *end;
@@ -599,16 +651,22 @@ char *fread_string(FILE * fl, const char *error)
   *buf = '\0';
 
   do {
-    if (!fgets(tmp, 512, fl))
+    /*
+     * Read a whole line, leaving two bytes spare for the "\r\n" appended
+     * below.  wld_read_line() rejects overlong lines and NUL bytes, so
+     * strlen(tmp) is exactly what was read and never exceeds
+     * sizeof(tmp) - 3; the old fgets() version wrote one byte past tmp
+     * for a 511-byte line and one byte before it for a leading NUL.
+     */
+    if (!wld_read_line(fl, tmp, sizeof(tmp) - 2, error))
       WLD_PARSE_ERROR("wld-unexpected-eof",
                       "file ended inside the '~'-terminated %s", error);
-    wld_cur_line++;
-    /* If there is a '~', end the string; else put an "\r\n" over the '\n'. */
+    /* If there is a '~', end the string; else end the line with "\r\n". */
     if ((point = strchr(tmp, '~')) != NULL) {
       *point = '\0';
       done = 1;
     } else {
-      point = tmp + strlen(tmp) - 1;
+      point = tmp + strlen(tmp);
       *(point++) = '\r';
       *(point++) = '\n';
       *point = '\0';

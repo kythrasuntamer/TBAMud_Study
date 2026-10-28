@@ -94,6 +94,26 @@ class Wld2HtmlTests(ToolCase):
                 self.assertIn("room #100", err)
                 self.assertFalse(self.exists("100.html"))
 
+    def test_overlong_string_line_rejected(self):
+        # I3-02 / I3-V01: a 700-byte description line wrote past tmp[512]
+        # and corrupted the heap through the strlcpy in fread_string.
+        rc, err = self.wld("#100\nRoom~\n" + "x" * 700 + "\n~\n0 0 0\nS\n$~\n")
+        self.assertEqual(rc, 1, err)
+        self.assertDiag(err, "wld-line-too-long")
+        self.assertIn("room description", err)
+        self.assertIn("room #100", err)
+
+    def test_string_line_at_limit_accepted(self):
+        rc, err = self.wld("#100\nRoom~\n" + "y" * 509 + "\n~\n0 0 0\nS\n$~\n")
+        self.assertEqual(rc, 0, err)
+        self.assertIn(b"y" * 509 + b"\r\n", self.read("100.html"))
+
+    def test_nul_in_string_line_rejected(self):
+        # I3-02: a leading NUL made fread_string write tmp[-1].
+        rc, err = self.wld(b"#100\nRoom~\n\0abc\n~\n0 0 0\nS\n$~\n")
+        self.assertEqual(rc, 1, err)
+        self.assertDiag(err, "wld-line-nul")
+
     def test_door_index_in_range_accepted(self):
         rc, err = self.wld("#100\nRoom~\nDesc~\n0 0 0\nD9\n~\n~\n"
                            "0 0 100\nS\n$~\n")
