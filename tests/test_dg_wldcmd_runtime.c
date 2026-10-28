@@ -78,9 +78,71 @@ static void test_mteleport_all_ignores_characters_moved_by_callbacks(void)
   TEST_ASSERT_EQUAL_INT(1, dgw_saw("all-target-moved"));
 }
 
+/* E1-13: a non-numeric target used to become vnum 0 (a real room). */
+static void test_wteleport_non_numeric_target_is_refused(void)
+{
+  struct char_data *m = dgw_mob(DGW_MOB_GUARD, 0);
+
+  world[0].number = 0;                 /* make vnum 0 a real room here */
+  wcmd(1, "wteleport all abc");
+  wcmd(1, "wteleport all 0x65");
+  wcmd(1, "wmove all abc");
+  world[0].number = DGW_ROOM0;
+  TEST_ASSERT_EQUAL_INT(0, IN_ROOM(m));
+  TEST_ASSERT_EQUAL_INT(3, dgw_saw("parse-vnum"));
+}
+
+/* E1-V01: 70000 does not fit a vnum; it used to wrap to 4464 (here: wrap
+ * onto room 101 = 65536 + 101 = 65637) and teleport everyone there. */
+static void test_wteleport_vnum_overflow_is_refused(void)
+{
+  struct char_data *m = dgw_mob(DGW_MOB_GUARD, 0);
+  struct obj_data *stone = dgw_obj(DGW_OBJ_STONE, 0);
+
+  wcmd(0, "wteleport all 65637");
+  wcmd(0, "wteleport all 99999999999");
+  wcmd(0, "wteleport all -65435");
+  wcmd(0, "wmove all 65637");
+  TEST_ASSERT_EQUAL_INT(0, IN_ROOM(m));
+  TEST_ASSERT_EQUAL_INT(0, IN_ROOM(stone));
+  TEST_ASSERT_EQUAL_INT(4, dgw_saw("parse-vnum"));
+
+  wcmd(0, "wteleport all 101");        /* a real vnum still works */
+  TEST_ASSERT_EQUAL_INT(1, IN_ROOM(m));
+}
+
+/* E1-13: load and damage arguments that do not parse are refused. */
+static void test_wload_and_wdamage_bad_numbers(void)
+{
+  struct char_data *m = dgw_mob(DGW_MOB_GUARD, 0);
+  char line[64];
+
+  wcmd(0, "wload obj 99999999999");
+  wcmd(0, "wload obj 65737");          /* 65536 + 201 */
+  wcmd(0, "wload mob 300 65637");      /* room target that wraps */
+  TEST_ASSERT_NULL(world[0].contents);
+  TEST_ASSERT_EQUAL_PTR(m, world[0].people);
+  TEST_ASSERT_NULL(m->next_in_room);
+  TEST_ASSERT_EQUAL_INT(3, dgw_saw("parse-vnum"));
+
+  snprintf(line, sizeof(line), "wdamage %c%ld lots", UID_CHAR,
+           char_script_id(m));
+  wcmd(0, line);
+  TEST_ASSERT_EQUAL_INT(1, dgw_saw("parse-number"));
+
+  /* The room-target form works (it never matched before: the target
+   * started with the separating space). */
+  wcmd(0, "wload mob 301 101");
+  TEST_ASSERT_NOT_NULL(world[1].people);
+  TEST_ASSERT_EQUAL_INT(DGW_MOB_OGRE, GET_MOB_VNUM(world[1].people));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(test_wteleport_non_numeric_target_is_refused);
+  RUN_TEST(test_wteleport_vnum_overflow_is_refused);
+  RUN_TEST(test_wload_and_wdamage_bad_numbers);
   RUN_TEST(test_wteleport_all_ignores_characters_moved_by_callbacks);
   RUN_TEST(test_mteleport_all_ignores_characters_moved_by_callbacks);
   return UNITY_END();

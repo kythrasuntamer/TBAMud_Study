@@ -323,6 +323,29 @@ static void test_object_target_character_in_no_room(void)
   char_to_room(m, 1);
 }
 
+/* E1-13: numeric object-command arguments are parsed strictly. */
+static void test_obj_numeric_arguments_are_checked(void)
+{
+  struct obj_data *stone = dgw_obj(DGW_OBJ_STONE, 0);
+
+  GET_OBJ_TIMER(stone) = 7;
+  ocmd(stone, "otimer 99999999999");
+  TEST_ASSERT_EQUAL_INT(7, GET_OBJ_TIMER(stone));
+  ocmd(stone, "osetval 0 99999999999");
+  TEST_ASSERT_EQUAL_INT(0, GET_OBJ_VAL(stone, 0));
+  TEST_ASSERT_EQUAL_INT(2, dgw_saw("parse-number"));
+
+  ocmd(stone, "otransform 65737");     /* 65536 + 201 */
+  TEST_ASSERT_EQUAL_INT(DGW_OBJ_STONE, GET_OBJ_VNUM(stone));
+  ocmd(stone, "oload obj 65738");
+  ocmd(stone, "omove 65637");
+  TEST_ASSERT_EQUAL_INT(0, IN_ROOM(stone));
+  TEST_ASSERT_EQUAL_INT(3, dgw_saw("parse-vnum"));
+
+  ocmd(stone, "otimer 12");
+  TEST_ASSERT_EQUAL_INT(12, GET_OBJ_TIMER(stone));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -343,5 +366,6 @@ int main(void)
   RUN_TEST(test_oteleport_all_from_unplaced_object);
   RUN_TEST(test_oteleport_all_to_own_room_is_refused);
   RUN_TEST(test_object_target_character_in_no_room);
+  RUN_TEST(test_obj_numeric_arguments_are_checked);
   return UNITY_END();
 }

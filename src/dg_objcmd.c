@@ -96,7 +96,7 @@ room_rnum obj_room(obj_data *obj)
 /* returns the real room number, or NOWHERE if not found or invalid */
 static room_rnum find_obj_target_room(obj_data *obj, char *rawroomstr)
 {
-    int tmp;
+    int vnum;
     room_rnum location;
     char_data *target_mob;
     obj_data *target_obj;
@@ -109,8 +109,8 @@ static room_rnum find_obj_target_room(obj_data *obj, char *rawroomstr)
 
     if (isdigit(*roomstr) && !strchr(roomstr, '.'))
     {
-        tmp = tb_parse_int_or_zero(roomstr);
-        if ((location = real_room(tmp)) == NOWHERE)
+        if (!DG_PARSE_VNUM_OR_REPORT(roomstr, &vnum, "find_obj_target_room", "obj vnum %d uid %ld", GET_OBJ_VNUM(obj), obj_script_id(obj)) ||
+            (location = real_room(vnum)) == NOWHERE)
             return NOWHERE;
     }
 
@@ -237,7 +237,7 @@ static OCMD(do_oforce)
 
 static OCMD(do_ozoneecho)
 {
-    int zone;
+    int zone, zone_vnum;
     char room_number[MAX_INPUT_LENGTH], buf[MAX_INPUT_LENGTH], *msg;
 
     msg = any_one_arg(argument, room_number);
@@ -246,7 +246,8 @@ static OCMD(do_ozoneecho)
     if (!*room_number || !*msg)
 	obj_log(obj, "ozoneecho called with too few args");
 
-    else if ((zone = real_zone_by_thing(tb_parse_int_or_zero(room_number))) == NOWHERE)
+    else if (!DG_PARSE_VNUM_OR_REPORT(room_number, &zone_vnum, "do_ozoneecho", "obj vnum %d uid %ld", GET_OBJ_VNUM(obj), obj_script_id(obj)) ||
+             (zone = real_zone_by_thing(zone_vnum)) == NOWHERE)
 	obj_log(obj, "ozoneecho called for nonexistant zone");
 
     else {
@@ -293,6 +294,7 @@ static OCMD(do_osend)
 static OCMD(do_orecho)
 {
     char start[MAX_INPUT_LENGTH], finish[MAX_INPUT_LENGTH], *msg;
+    int lo, hi;
 
     msg = two_arguments(argument, start, finish);
 
@@ -300,8 +302,11 @@ static OCMD(do_orecho)
 
     if (!*msg || !*start || !*finish || !is_number(start) || !is_number(finish))
       obj_log(obj, "orecho: too few args");
+    else if (!DG_PARSE_INT_OR_REPORT(start, &lo, "do_orecho", "obj vnum %d uid %ld", GET_OBJ_VNUM(obj), obj_script_id(obj)) ||
+             !DG_PARSE_INT_OR_REPORT(finish, &hi, "do_orecho", "obj vnum %d uid %ld", GET_OBJ_VNUM(obj), obj_script_id(obj)))
+      obj_log(obj, "orecho: room range out of range");
     else
-      send_to_range(tb_parse_int_or_zero(start), tb_parse_int_or_zero(finish), "%s\r\n", msg);
+      send_to_range(lo, hi, "%s\r\n", msg);
 
 }
 
@@ -309,6 +314,7 @@ static OCMD(do_orecho)
 static OCMD(do_otimer)
 {
   char arg[MAX_INPUT_LENGTH];
+  int timer;
 
   one_argument(argument, arg);
 
@@ -316,8 +322,10 @@ static OCMD(do_otimer)
     obj_log(obj, "otimer: missing argument");
   else if (!isdigit(*arg))
     obj_log(obj, "otimer: bad argument");
+  else if (!DG_PARSE_INT_OR_REPORT(arg, &timer, "do_otimer", "obj vnum %d uid %ld", GET_OBJ_VNUM(obj), obj_script_id(obj)))
+    obj_log(obj, "otimer: argument is out of range");
   else
-    GET_OBJ_TIMER(obj) = tb_parse_int_or_zero(arg);
+    GET_OBJ_TIMER(obj) = timer;
 }
 
 /* Transform into a different object. Note: this shouldn't be used with
@@ -347,7 +355,7 @@ static OCMD(do_otransform)
   struct char_data *wearer = NULL, *carrier = NULL, *sitter, *next_sitter;
   obj_rnum old_rnum;
   obj_vnum old_vnum;
-  int pos = 0, unseated = 0;
+  int pos = 0, unseated = 0, vnum;
 
   one_argument(argument, arg);
 
@@ -355,8 +363,10 @@ static OCMD(do_otransform)
     obj_log(obj, "otransform: missing argument");
   else if (!isdigit(*arg))
     obj_log(obj, "otransform: bad argument");
+  else if (!DG_PARSE_VNUM_OR_REPORT(arg, &vnum, "do_otransform", "obj vnum %d uid %ld", GET_OBJ_VNUM(obj), obj_script_id(obj)))
+    obj_log(obj, "otransform: argument is not an object vnum");
   else {
-    o = read_object(dg_parse_vnum(arg), VIRTUAL);
+    o = read_object(vnum, VIRTUAL);
     if (o==NULL) {
       obj_log(obj, "otransform: bad object vnum");
       return;
@@ -569,8 +579,13 @@ static OCMD(do_dgoload)
     int pos;
 
     target = two_arguments(argument, arg1, arg2);
+    /* two_arguments() leaves target at the separating space; without this
+     * the room-target form "load mob <vnum> <room>" never matched isdigit(). */
+    if (target)
+      skip_spaces(&target);
 
-    if (!*arg1 || !*arg2 || !is_number(arg2) || ((number = dg_parse_vnum(arg2)) == NOTHING))
+    if (!*arg1 || !*arg2 ||
+        !DG_PARSE_VNUM_OR_REPORT(arg2, &number, "do_dgoload", "obj vnum %d uid %ld", GET_OBJ_VNUM(obj), obj_script_id(obj)))
     {
         obj_log(obj, "oload: bad syntax");
         return;
@@ -588,7 +603,10 @@ static OCMD(do_dgoload)
       if (!target || !*target) {
         rnum = room;
       } else {
-        if (!isdigit(*target) || (rnum = real_room(dg_parse_vnum(target))) == NOWHERE) {
+        int target_vnum;
+        if (!isdigit(*target) ||
+            !DG_PARSE_VNUM_OR_REPORT(target, &target_vnum, "do_dgoload", "obj vnum %d uid %ld", GET_OBJ_VNUM(obj), obj_script_id(obj)) ||
+            (rnum = real_room(target_vnum)) == NOWHERE) {
           obj_log(obj, "oload: room target vnum doesn't exist "
                        "(loading mob vnum %d to room %s)", number, target);
           return;
@@ -664,13 +682,16 @@ static OCMD(do_odamage) {
 
   two_arguments(argument, name, amount);
 
-  /* who cares if it's a number ? if not it'll just be 0 */
   if (!*name || !*amount) {
       obj_log(obj, "odamage: bad syntax");
       return;
   }
 
-  dam = tb_parse_int_or_zero(amount);
+  /* Not a number used to mean 0 damage, silently; now it is reported. */
+  if (!DG_PARSE_INT_OR_REPORT(amount, &dam, "do_odamage", "obj vnum %d uid %ld", GET_OBJ_VNUM(obj), obj_script_id(obj))) {
+      obj_log(obj, "odamage: amount is not a number");
+      return;
+  }
   ch = get_char_by_obj(obj, name);
 
   if (!ch) {
@@ -864,8 +885,11 @@ static OCMD(do_osetval)
     return;
   }
 
-  position = tb_parse_int_or_zero(arg1);
-  new_value = tb_parse_int_or_zero(arg2);
+  if (!DG_PARSE_INT_OR_REPORT(arg1, &position, "do_osetval", "obj vnum %d uid %ld", GET_OBJ_VNUM(obj), obj_script_id(obj)) ||
+      !DG_PARSE_INT_OR_REPORT(arg2, &new_value, "do_osetval", "obj vnum %d uid %ld", GET_OBJ_VNUM(obj), obj_script_id(obj))) {
+    obj_log(obj, "osetval: argument out of range");
+    return;
+  }
 
   if (position>=0 && position<NUM_OBJ_VAL_POSITIONS) {
     int lo, hi;
@@ -919,7 +943,11 @@ static OCMD(do_oat)
     return;
   }
 
-  if (isdigit(*arg)) loc = real_room(dg_parse_vnum(arg));
+  if (isdigit(*arg)) {
+    int vnum;
+    if (DG_PARSE_VNUM_OR_REPORT(arg, &vnum, "do_oat", "obj vnum %d uid %ld", GET_OBJ_VNUM(obj), obj_script_id(obj)))
+      loc = real_room(vnum);
+  }
   else if ((ch = get_char_by_obj(obj, arg))) loc = IN_ROOM(ch); 
 
   if (loc == NOWHERE) {

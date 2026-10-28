@@ -365,7 +365,7 @@ ACMD(do_mlog)
 
 ACMD(do_mzoneecho)
 {
-    int zone;
+    int zone, zone_vnum;
     char room_number[MAX_INPUT_LENGTH], buf[MAX_INPUT_LENGTH], *msg;
         
     if (!MOB_OR_IMPL(ch))
@@ -379,7 +379,8 @@ ACMD(do_mzoneecho)
     if (!*room_number || !*msg)
         mob_log(ch, "mzoneecho called with too few args");
 
-    else if ((zone = real_zone_by_thing(tb_parse_int_or_zero(room_number))) == NOWHERE)
+    else if (!DG_PARSE_VNUM_OR_REPORT(room_number, &zone_vnum, "do_mzoneecho", DIAG_CHAR_FMT, DIAG_CHAR(ch)) ||
+             (zone = real_zone_by_thing(zone_vnum)) == NOWHERE)
         mob_log(ch, "mzoneecho called for nonexistant zone");
 
     else {
@@ -413,8 +414,13 @@ ACMD(do_mload)
         return;
 
     target = two_arguments(argument, arg1, arg2);
+    /* two_arguments() leaves target at the separating space; without this
+     * the room-target form "load mob <vnum> <room>" never matched isdigit(). */
+    if (target)
+      skip_spaces(&target);
 
-    if (!*arg1 || !*arg2 || !is_number(arg2) || ((number = dg_parse_vnum(arg2)) == NOTHING)) {
+    if (!*arg1 || !*arg2 ||
+        !DG_PARSE_VNUM_OR_REPORT(arg2, &number, "do_mload", DIAG_CHAR_FMT, DIAG_CHAR(ch))) {
         mob_log(ch, "mload: bad syntax");
         return;
     }
@@ -425,7 +431,10 @@ ACMD(do_mload)
       if (!target || !*target) {
         rnum = IN_ROOM(ch);
       } else {
-        if (!isdigit(*target) || (rnum = real_room(dg_parse_vnum(target))) == NOWHERE) {
+        int target_vnum;
+        if (!isdigit(*target) ||
+            !DG_PARSE_VNUM_OR_REPORT(target, &target_vnum, "do_mload", DIAG_CHAR_FMT, DIAG_CHAR(ch)) ||
+            (rnum = real_room(target_vnum)) == NOWHERE) {
           mob_log(ch, "mload: room target vnum doesn't exist "
                       "(loading mob vnum %d to room %s)", number, target);
           return;
@@ -716,13 +725,16 @@ ACMD(do_mdamage) {
 
   two_arguments(argument, name, amount);
 
-  /* who cares if it's a number ? if not it'll just be 0 */
   if (!*name || !*amount) {
       mob_log(ch, "mdamage: bad syntax");
       return;
   }
 
-  dam = tb_parse_int_or_zero(amount);
+  /* Not a number used to mean 0 damage, silently; now it is reported. */
+  if (!DG_PARSE_INT_OR_REPORT(amount, &dam, "do_mdamage", DIAG_CHAR_FMT, DIAG_CHAR(ch))) {
+      mob_log(ch, "mdamage: amount is not a number");
+      return;
+  }
   if (*name == UID_CHAR) {
     if (!(vict = get_char(name))) {
       mob_log(ch, "mdamage: victim (%s) does not exist", name);
@@ -993,7 +1005,7 @@ ACMD(do_mtransform)
   obj_data *obj[NUM_WEARS];
   mob_rnum this_rnum = GET_MOB_RNUM(ch);
   int keep_hp = 1; /* new mob keeps the old mob's hp/max hp/exp */
-  int pos;
+  int pos, vnum;
 
   if (!MOB_OR_IMPL(ch)) {
     send_to_char(ch, "%s", CONFIG_HUH);
@@ -1022,13 +1034,12 @@ ACMD(do_mtransform)
     mob_log(ch, "mtransform: missing argument");
   else if (!isdigit(*arg) && *arg!='-')
     mob_log(ch, "mtransform: bad argument");
+  else if (!DG_PARSE_VNUM_OR_REPORT(arg + (*arg == '-'), &vnum, "do_mtransform", DIAG_CHAR_FMT, DIAG_CHAR(ch)))
+    mob_log(ch, "mtransform: argument is not a mobile vnum");
   else {
-    if (isdigit(*arg))
-      m = read_mobile(dg_parse_vnum(arg), VIRTUAL);
-    else {
+    if (*arg == '-')
       keep_hp = 0;
-      m = read_mobile(dg_parse_vnum(arg+1), VIRTUAL);
-    }
+    m = read_mobile(vnum, VIRTUAL);
     if (m==NULL) {
       mob_log(ch, "mtransform: bad mobile vnum");
       return;
@@ -1306,6 +1317,7 @@ ACMD(do_mfollow)
 ACMD(do_mrecho)
 {
     char start[MAX_INPUT_LENGTH], finish[MAX_INPUT_LENGTH], *msg;
+    int lo, hi;
 
     if (!MOB_OR_IMPL(ch)) {
       send_to_char(ch, "%s", CONFIG_HUH);
@@ -1317,6 +1329,9 @@ ACMD(do_mrecho)
 
     if (!*msg || !*start || !*finish || !is_number(start) || !is_number(finish))
       mob_log(ch, "mrecho called with too few args");
+    else if (!DG_PARSE_INT_OR_REPORT(start, &lo, "do_mrecho", DIAG_CHAR_FMT, DIAG_CHAR(ch)) ||
+             !DG_PARSE_INT_OR_REPORT(finish, &hi, "do_mrecho", DIAG_CHAR_FMT, DIAG_CHAR(ch)))
+      mob_log(ch, "mrecho: room range out of range");
     else
-      send_to_range(tb_parse_int_or_zero(start), tb_parse_int_or_zero(finish), "%s\r\n", msg);
+      send_to_range(lo, hi, "%s\r\n", msg);
 }

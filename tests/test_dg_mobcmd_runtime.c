@@ -230,6 +230,29 @@ static void test_mload_container_into_its_own_name(void)
   TEST_ASSERT_EQUAL_INT(1, dgw_saw("mload-place"));
 }
 
+/* E1-13 / E1-V01: vnums that do not parse or do not fit are refused, not
+ * turned into 0 or wrapped onto another prototype (65836 = 65536 + 300). */
+static void test_mob_numeric_arguments_are_checked(void)
+{
+  struct char_data *m = dgw_mob(DGW_MOB_GUARD, 0);
+  struct char_data *v = dgw_mob(DGW_MOB_OGRE, 0);
+  ACMD(do_mdamage);
+
+  run(do_mload, m, "obj 65737");
+  run(do_mload, m, "mob 65836");
+  TEST_ASSERT_EQUAL_INT(0, count_carried(m));
+  TEST_ASSERT_EQUAL_INT(2, dgw_saw("parse-vnum"));
+  run(do_mtransform, m, "65837");
+  TEST_ASSERT_EQUAL_STRING("a guard", GET_SHORT(m));
+  TEST_ASSERT_EQUAL_INT(3, dgw_saw("parse-vnum"));
+  run(do_mdamage, m, "zzogre 99999999999");
+  TEST_ASSERT_EQUAL_INT(1, dgw_saw("parse-number"));
+
+  run(do_mload, m, "mob 301 101");     /* room target form works */
+  TEST_ASSERT_NOT_NULL(world[1].people);
+  (void)v;
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -242,5 +265,6 @@ int main(void)
   RUN_TEST(test_mjunk_plain_name_junks_one_matching_item);
   RUN_TEST(test_mjunk_all_forms);
   RUN_TEST(test_mload_container_into_its_own_name);
+  RUN_TEST(test_mob_numeric_arguments_are_checked);
   return UNITY_END();
 }

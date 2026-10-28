@@ -167,6 +167,7 @@ WCMD(do_wsend)
 WCMD(do_wzoneecho)
 {
     zone_rnum zone;
+    int zone_vnum;
     char room_num[MAX_INPUT_LENGTH], buf[MAX_INPUT_LENGTH], *msg;
 
     msg = any_one_arg(argument, room_num);
@@ -175,7 +176,8 @@ WCMD(do_wzoneecho)
     if (!*room_num || !*msg)
         wld_log(room, "wzoneecho called with too few args");
 
-    else if ((zone = real_zone_by_thing(tb_parse_int_or_zero(room_num))) == NOWHERE)
+    else if (!DG_PARSE_VNUM_OR_REPORT(room_num, &zone_vnum, "do_wzoneecho", "room vnum %d", room->number) ||
+             (zone = real_zone_by_thing(zone_vnum)) == NOWHERE)
         wld_log(room, "wzoneecho called for nonexistant zone");
 
     else {
@@ -189,6 +191,7 @@ WCMD(do_wzoneecho)
 WCMD(do_wrecho)
 {
     char start[MAX_INPUT_LENGTH], finish[MAX_INPUT_LENGTH], *msg;
+    int lo, hi;
 
     msg = two_arguments(argument, start, finish);
 
@@ -196,8 +199,11 @@ WCMD(do_wrecho)
 
     if (!*msg || !*start || !*finish || !is_number(start) || !is_number(finish))
       wld_log(room, "wrecho: too few args");
+    else if (!DG_PARSE_INT_OR_REPORT(start, &lo, "do_wrecho", "room vnum %d", room->number) ||
+             !DG_PARSE_INT_OR_REPORT(finish, &hi, "do_wrecho", "room vnum %d", room->number))
+      wld_log(room, "wrecho: room range out of range");
     else
-      send_to_range(tb_parse_int_or_zero(start), tb_parse_int_or_zero(finish), "%s\r\n", msg);
+      send_to_range(lo, hi, "%s\r\n", msg);
 
 }
 
@@ -316,6 +322,7 @@ WCMD(do_wteleport)
 {
     char_data *ch;
     room_rnum target, nr;
+    int vnum;
     char arg1[MAX_INPUT_LENGTH], arg2[MAX_INPUT_LENGTH];
 
     two_arguments(argument, arg1, arg2);
@@ -325,7 +332,11 @@ WCMD(do_wteleport)
         return;
     }
 
-    nr = dg_parse_vnum(arg2);
+    if (!DG_PARSE_VNUM_OR_REPORT(arg2, &vnum, "do_wteleport", "room vnum %d", room->number)) {
+        wld_log(room, "wteleport target is not a room vnum");
+        return;
+    }
+    nr = vnum;
     target = real_room(nr);
 
     if (target == NOWHERE)
@@ -469,8 +480,13 @@ WCMD(do_wload)
     int pos;
 
     target = two_arguments(argument, arg1, arg2);
+    /* two_arguments() leaves target at the separating space; without this
+     * the room-target form "load mob <vnum> <room>" never matched isdigit(). */
+    if (target)
+      skip_spaces(&target);
 
-    if (!*arg1 || !*arg2 || !is_number(arg2) || ((number = dg_parse_vnum(arg2)) == NOTHING)) {
+    if (!*arg1 || !*arg2 ||
+        !DG_PARSE_VNUM_OR_REPORT(arg2, &number, "do_wload", "room vnum %d", room->number)) {
         wld_log(room, "wload: bad syntax");
         return;
     }
@@ -481,7 +497,10 @@ WCMD(do_wload)
       if (!target || !*target) {
         rnum = real_room(room->number);
       } else {
-        if (!isdigit(*target) || (rnum = real_room(dg_parse_vnum(target))) == NOWHERE) {
+        int target_vnum;
+        if (!isdigit(*target) ||
+            !DG_PARSE_VNUM_OR_REPORT(target, &target_vnum, "do_wload", "room vnum %d", room->number) ||
+            (rnum = real_room(target_vnum)) == NOWHERE) {
           wld_log(room, "wload: room target vnum doesn't exist (loading mob vnum %d to room %s)", number, target);
           return;
         }
@@ -552,13 +571,16 @@ WCMD(do_wdamage) {
 
   two_arguments(argument, name, amount);
 
-  /* who cares if it's a number ? if not it'll just be 0 */
   if (!*name || !*amount) {
     wld_log(room, "wdamage: bad syntax");
     return;
   }
 
-  dam = tb_parse_int_or_zero(amount);
+  /* Not a number used to mean 0 damage, silently; now it is reported. */
+  if (!DG_PARSE_INT_OR_REPORT(amount, &dam, "do_wdamage", "room vnum %d", room->number)) {
+    wld_log(room, "wdamage: amount is not a number");
+    return;
+  }
   ch = get_char_by_room(room, name);
 
   if (!ch) {
@@ -589,7 +611,11 @@ WCMD(do_wat)
     return;
   }
 
-  if (isdigit(*arg)) loc = real_room(dg_parse_vnum(arg));
+  if (isdigit(*arg)) {
+    int vnum;
+    if (DG_PARSE_VNUM_OR_REPORT(arg, &vnum, "do_wat", "room vnum %d", room->number))
+      loc = real_room(vnum);
+  }
   else if ((ch = get_char_by_room(room, arg))) loc = IN_ROOM(ch);
   
   if (loc == NOWHERE) {
@@ -603,6 +629,7 @@ WCMD(do_wmove)
 {
     obj_data *obj, *next_obj;
     room_rnum target, nr;
+    int vnum;
     char arg1[MAX_INPUT_LENGTH], arg2[MAX_INPUT_LENGTH];
 
     two_arguments(argument, arg1, arg2);
@@ -612,7 +639,11 @@ WCMD(do_wmove)
         return;
     }
 
-    nr = dg_parse_vnum(arg2);
+    if (!DG_PARSE_VNUM_OR_REPORT(arg2, &vnum, "do_wmove", "room vnum %d", room->number)) {
+        wld_log(room, "wmove target is not a room vnum");
+        return;
+    }
+    nr = vnum;
     target = real_room(nr);
 
     if (target == NOWHERE) {
