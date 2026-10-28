@@ -39,6 +39,14 @@ static int ok_pick(struct char_data *ch, obj_vnum keynum, int pickproof, int scm
  * the loader's range check has been wrong before, so check before use. */
 #define VALID_SECTOR(s) ((s) >= 0 && (s) < NUM_ROOM_SECTORS)
 
+/* TRUE if door is a direction and ch's room has an exit there. This is
+ * the check for door commands after a trigger has run ('wdoor ... purge'
+ * frees the exit and NULLs it). CAN_GO() is the wrong predicate here: it
+ * also demands an open door and a destination room. Evaluates its
+ * arguments several times: pass plain variables. */
+#define VALID_EXIT(ch, door) \
+  ((door) >= 0 && (door) < NUM_OF_DIRS && EXIT((ch), (door)) != NULL)
+
 /* Movement cost of room's sector. An out-of-range sector is reported as
  * "sector-range" with the room vnum and costs 1, rather than reading past
  * movement_loss[]. */
@@ -577,7 +585,7 @@ static int door_target_still_valid(struct char_data *ch, struct obj_data *obj,
   if (!DEAD(ch) && IN_ROOM(ch) == was_in &&
       (obj ? (obj_uid_matches(obj_uid, obj) &&
               (obj->carried_by == ch || IN_ROOM(obj) == was_in))
-           : EXIT(ch, door) != NULL))
+           : VALID_EXIT(ch, door)))
     return TRUE;
 
   TB_WARN_MSG("act", "door-target-changed", "room",
