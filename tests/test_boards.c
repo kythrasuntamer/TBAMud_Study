@@ -353,6 +353,28 @@ static void test_load_rejects_unterminated_heading(void)
   }
 }
 
+/* C1-06: 'write' with no headline reserved a slot from the pool shared by
+ * every board and never released it; INDEX_SIZE of them disabled all
+ * boards. Now nothing is reserved and the board still accepts a post. */
+static void test_empty_headlines_do_not_leak_slots(void)
+{
+  int i;
+
+  for (i = 0; i < INDEX_SIZE + 5; i++)
+    TEST_ASSERT_EQUAL_INT(1, write_post("   ", "unused"));
+  TEST_ASSERT_NULL(writer_desc.str);
+
+  tb_error_capture_reset();
+  write_post("real", "body");
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  read_post(1);
+  TEST_ASSERT_NOT_NULL(strstr(paged, ":: real"));
+
+  tb_error_capture_reset();
+  board_clear_all();
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+}
+
 /* Saved boards load back with their headings and bodies. */
 static void test_save_load_round_trip(void)
 {
@@ -392,6 +414,7 @@ int main(void)
   RUN_TEST(test_load_short_heading_read);
   RUN_TEST(test_load_rejects_oversized_lengths);
   RUN_TEST(test_load_rejects_unterminated_heading);
+  RUN_TEST(test_empty_headlines_do_not_leak_slots);
   RUN_TEST(test_save_load_round_trip);
   return UNITY_END();
 }

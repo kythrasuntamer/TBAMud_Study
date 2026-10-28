@@ -216,8 +216,9 @@ int board_write_message(int board_type, struct char_data *ch, char *arg, struct 
 {
   time_t ct;
   char buf[MAX_INPUT_LENGTH], buf2[MAX_NAME_LENGTH + 3], tmstr[100];
-  char headline[MAX_INPUT_LENGTH];
+  char headline[MAX_INPUT_LENGTH], *heading;
   size_t arg_len;
+  int slot, used;
 
   if (GET_LEVEL(ch) < WRITE_LVL(board_type)) {
     send_to_char(ch, "You are not holy enough to write on this board.\r\n");
@@ -225,11 +226,6 @@ int board_write_message(int board_type, struct char_data *ch, char *arg, struct 
   }
   if (num_of_msgs[board_type] >= MAX_BOARD_MESSAGES) {
     send_to_char(ch, "The board is full.\r\n");
-    return (1);
-  }
-  if ((NEW_MSG_INDEX(board_type).slot_num = find_slot()) == -1) {
-    send_to_char(ch, "The board is malfunctioning - sorry.\r\n");
-    log("SYSERR: Board: failed to find empty slot on write.");
     return (1);
   }
   /* The headline is player text, and arg points into the caller's command
@@ -252,6 +248,9 @@ int board_write_message(int board_type, struct char_data *ch, char *arg, struct 
   }
   arg = headline;
 
+  /* Validate everything before reserving a slot from the pool shared by
+   * every board: a slot taken and then abandoned on an early return is
+   * never released, and enough of them disable all boards. */
   if (!*arg) {
     send_to_char(ch, "We must have a headline!\r\n");
     return (1);
@@ -261,14 +260,33 @@ int board_write_message(int board_type, struct char_data *ch, char *arg, struct 
 
   tb_snprintf(buf2, sizeof(buf2), "(%s)", GET_NAME(ch));
   tb_snprintf(buf, sizeof(buf), "%s %-12s :: %s", tmstr, buf2, arg);
-  NEW_MSG_INDEX(board_type).heading = strdup(buf);
+  if (!(heading = strdup(buf))) {
+    TB_ERROR_ERRNO("board", "board-write", FILENAME(board_type),
+                   "board vnum %d " DIAG_CHAR_FMT " could not allocate a %lu-byte heading",
+                   BOARD_VNUM(board_type), DIAG_CHAR(ch), (unsigned long)strlen(buf) + 1);
+    send_to_char(ch, "The board is malfunctioning - sorry.\r\n");
+    return (1);
+  }
+
+  if ((slot = find_slot()) == -1) {
+    for (used = 0, slot = 0; slot < INDEX_SIZE; slot++)
+      used += msg_storage_taken[slot] ? 1 : 0;
+    TB_ERROR_MSG("board", "slot-exhausted", FILENAME(board_type),
+                 "board vnum %d " DIAG_CHAR_FMT " message slot pool exhausted (%d/%d in use)",
+                 BOARD_VNUM(board_type), DIAG_CHAR(ch), used, INDEX_SIZE);
+    send_to_char(ch, "The board is malfunctioning - sorry.\r\n");
+    free(heading);
+    return (1);
+  }
+  NEW_MSG_INDEX(board_type).slot_num = slot;
+  NEW_MSG_INDEX(board_type).heading = heading;
   NEW_MSG_INDEX(board_type).level = GET_LEVEL(ch);
 
   send_to_char(ch, "Write your message.\r\n");
   send_editor_help(ch->desc);
   act("$n starts to write a message.", TRUE, ch, 0, 0, TO_ROOM);
 
-  string_write(ch->desc, &(msg_storage[NEW_MSG_INDEX(board_type).slot_num]),
+  string_write(ch->desc, &(msg_storage[slot]),
 		MAX_MESSAGE_LENGTH, board_type + BOARD_MAGIC, NULL);
 
   num_of_msgs[board_type]++;
