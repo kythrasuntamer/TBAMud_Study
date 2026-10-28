@@ -248,33 +248,4 @@ CircleMUD v3.0 Shop File~
 28
 0
 28
-#27408~
-3001
-3002
-3003
-3004
-3000
--1
-2.25
-1.00
--1
-%s Sorry, I don't stock that item.~
-%s You don't seem to have that.~
-%s I don't trade in such items.~
-%s I can't afford that!~
-%s You are too poor!~
-%s That'll be %d coins, thanks.~
-%s I'll give you %d coins for that.~
-0
-0
--1
-0
-27458
-27459
-27472
--1
-0
-28
-0
-28
 $~
