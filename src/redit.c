@@ -175,11 +175,19 @@ void redit_setup_existing(struct descriptor_data *d, int real_num)
 
   *room = world[real_num];
   
-  /* Make new room people list be empty.                          */ 
+  /* The struct copy aliases the live room's runtime state. The scratch copy
+   * must own none of it: add_room() inserts a new room with world[i] = *room,
+   * so an aliased list head would make two rooms share one object or
+   * character list (a use-after-free once either list changes).
+   *
+   * Make new room people list be empty.                          */ 
   /* Fixes bug where copying a room from within that room creates */ 
   /* an infinite loop when you next act() in the new room (goto?) */ 
   /* and you are your next_in_room          -- anderyu (10-05-22) */ 
   room->people = NULL; 
+  room->contents = NULL;
+  room->light = 0;
+  SCRIPT(room) = NULL;
 
   /* Nor the room's objects: a new room saved from this buffer (a copy into
    * a new vnum) took over the source's contents list, so both rooms shared
@@ -243,6 +251,20 @@ void redit_save_internally(struct descriptor_data *d)
 
   if (OLC_ROOM(d)->number == NOWHERE)
     new_room = TRUE;
+
+  /* Invariant: the scratch room owns no live lists (see
+   * redit_setup_existing). add_room() copies the struct into world[], so a
+   * live head here would alias another room's contents or occupants. */
+  if (OLC_ROOM(d)->contents || OLC_ROOM(d)->people) {
+    struct char_data *builder = d->character;
+    TB_ERROR_MSG("olc", "redit-scratch-alias", "room",
+                 "builder " DIAG_CHAR_FMT " room vnum %d scratch copy holds live %s%s; save refused",
+                 DIAG_CHAR(builder), OLC_NUM(d),
+                 OLC_ROOM(d)->contents ? "contents " : "",
+                 OLC_ROOM(d)->people ? "people" : "");
+    write_to_output(d, "Internal error: the room copy is linked to a live room; nothing was saved.\r\n");
+    return;
+  }
 
   OLC_ROOM(d)->number = OLC_NUM(d); 
   /* FIXME: Why is this not set elsewhere? */

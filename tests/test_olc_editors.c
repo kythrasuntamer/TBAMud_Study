@@ -25,6 +25,7 @@
 #include "genolc.h"
 #include "genzon.h"
 #include "genobj.h"
+#include "genwld.h"
 #include "modify.h"
 #include <stdarg.h>
 #include "tb_error_capture.h"
@@ -118,6 +119,10 @@ void cleanup_olc(struct descriptor_data *d, byte cleanup_type)
   if (!d->olc)
     return;
   free_scratch_obj(OLC_OBJ(d));
+  if (OLC_ROOM(d)) {
+    free_room_strings(OLC_ROOM(d));
+    free(OLC_ROOM(d));
+  }
   free(d->olc);
   d->olc = NULL;
 }
@@ -201,6 +206,34 @@ obj_rnum real_object(obj_vnum vnum)
   return NOTHING;
 }
 
+static int add_room_calls;
+static room_rnum add_room_result = NOWHERE;
+room_rnum add_room(struct room_data *room) { (void)room; add_room_calls++; return add_room_result; }
+int delete_room(room_rnum rnum) { (void)rnum; return FALSE; }
+int save_rooms(zone_rnum zone_num) { (void)zone_num; return TRUE; }
+int free_room_strings(struct room_data *room)
+{
+  int i;
+  free(room->name);
+  free(room->description);
+  for (i = 0; i < DIR_COUNT; i++)
+    if (room->dir_option[i]) {
+      free(room->dir_option[i]->general_description);
+      free(room->dir_option[i]->keyword);
+      free(room->dir_option[i]);
+    }
+  return TRUE;
+}
+
+room_rnum real_room(room_vnum vnum)
+{
+  room_rnum i;
+  for (i = 0; world && i <= top_of_world; i++)
+    if (world[i].number == vnum)
+      return i;
+  return NOWHERE;
+}
+
 int copy_object(struct obj_data *to, struct obj_data *from) { *to = *from; return TRUE; }
 obj_rnum add_object(struct obj_data *newobj, obj_vnum ovnum) { (void)newobj; return real_object(ovnum); }
 int delete_object(obj_rnum rnum) { (void)rnum; return NOTHING; }
@@ -246,6 +279,10 @@ void setUp(void)
   mudlogs = cleanups = 0;
   live_uid = 0;
   live_uid_obj = NULL;
+  add_room_calls = 0;
+  add_room_result = NOWHERE;
+  world = NULL;
+  top_of_world = 0;
   make_builder();
 }
 
@@ -329,11 +366,72 @@ static void test_iedit_save_live_target_copies_and_logs_from_scratch(void)
   free_scratch_obj(target);
 }
 
+/* ------------------------------------------------------------------ */
+/* World fixture: rooms 3000..3000+n-1 at rnums 0..n-1.                */
+/* ------------------------------------------------------------------ */
+static struct room_data world_rooms[8];
+
+static void make_world(int n)
+{
+  int i;
+  memset(world_rooms, 0, sizeof(world_rooms));
+  for (i = 0; i < n; i++) {
+    world_rooms[i].number = 3000 + i;
+    world_rooms[i].name = (char *)"A room";
+    world_rooms[i].description = (char *)"Plain.\r\n";
+  }
+  world = world_rooms;
+  top_of_world = n - 1;
+}
+
+/* ------------------------------------------------------------------ */
+/* F1-02: a room copy must not alias the source room's live lists.     */
+/* ------------------------------------------------------------------ */
+static void test_redit_copy_does_not_alias_source_contents(void)
+{
+  struct descriptor_data *d = &builder_desc;
+  struct obj_data on_floor;
+
+  memset(&on_floor, 0, sizeof(on_floor));
+  make_world(2);
+  world[1].contents = &on_floor;
+  world[1].light = 2;
+
+  redit_setup_existing(d, 1);
+
+  TEST_ASSERT_NULL(OLC_ROOM(d)->contents);
+  TEST_ASSERT_NULL(OLC_ROOM(d)->people);
+  TEST_ASSERT_EQUAL_INT(0, OLC_ROOM(d)->light);
+  TEST_ASSERT_NULL(SCRIPT(OLC_ROOM(d)));
+  TEST_ASSERT_EQUAL_PTR(&on_floor, world[1].contents);
+}
+
+static void test_redit_save_refuses_scratch_holding_live_contents(void)
+{
+  struct descriptor_data *d = &builder_desc;
+  struct obj_data on_floor;
+
+  memset(&on_floor, 0, sizeof(on_floor));
+  make_world(2);
+  redit_setup_existing(d, 1);
+  OLC_NUM(d) = 3070;
+  OLC_ROOM(d)->contents = &on_floor;   /* a broken setup path */
+
+  redit_save_internally(d);
+
+  TEST_ASSERT_EQUAL_INT(0, add_room_calls);
+  TEST_ASSERT_EQUAL_STRING("redit-scratch-alias", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "room vnum 3070"));
+  OLC_ROOM(d)->contents = NULL;
+}
+
 int main(void)
 {
   UNITY_BEGIN();
   RUN_TEST(test_iedit_save_after_target_extracted_reports_and_does_not_touch_it);
   RUN_TEST(test_iedit_save_rejects_new_object_at_reused_address);
   RUN_TEST(test_iedit_save_live_target_copies_and_logs_from_scratch);
+  RUN_TEST(test_redit_copy_does_not_alias_source_contents);
+  RUN_TEST(test_redit_save_refuses_scratch_holding_live_contents);
   return UNITY_END();
 }
