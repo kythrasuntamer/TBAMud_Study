@@ -1286,10 +1286,26 @@ static inline int tb_test_failpoint_active(unsigned int mask)
 #endif
 
 /*
- * Replace a live file with a fully-written temporary file.  On platforms
- * where rename() cannot replace an existing destination, fall back to a
- * backup/rollback sequence.  A failed commit never intentionally discards
- * the last known-good destination.
+ * Replace a live file with a fully-written temporary file.
+ *
+ * On POSIX, rename() replaces the destination atomically, so a failure of
+ * the first rename() (ENOENT for a missing temp file, EXDEV, EBUSY, ...) is
+ * a real error: it is reported with both paths and nothing else is touched.
+ *
+ * Only when the first rename() fails with EEXIST or EACCES -- what platforms
+ * whose rename() cannot replace an existing file (Windows CRT) return -- and
+ * the destination exists, it falls back to: dest -> backup, temp -> dest,
+ * then backup removed.  That sequence is not atomic: between the two renames
+ * the destination does not exist.  The backup is "<dest>.tbreplace.<pid>",
+ * never "<dest>.bak" (operators and shopconv keep their own .bak files there,
+ * and an older version deleted it), and an existing file of that name is
+ * reported and left alone.  A fallback that succeeds is reported as a
+ * "rename-fallback" warning, because the first rename did fail.
+ *
+ * Failure: returns 0 with errno set to the error of the failing step.  Every
+ * report names temp, dest and (in the fallback) backup.  If the commit fails
+ * and the rollback also fails, "rename-rollback" names the backup path: that
+ * file is then the last good copy of dest.
  */
 static inline int tb_replace_file_checked_at(const char *temp_path,
                                              const char *dest_path,
@@ -1299,7 +1315,8 @@ static inline int tb_replace_file_checked_at(const char *temp_path,
 {
   char *backup_path;
   size_t backup_len;
-  int first_errno;
+  int first_errno, written;
+  struct stat st;
 
   if (temp_path == NULL || dest_path == NULL) {
     tb_report_error_at("rename", "invalid replacement path", 0,
@@ -1315,39 +1332,63 @@ static inline int tb_replace_file_checked_at(const char *temp_path,
   }
 
   first_errno = errno;
-  backup_len = strlen(dest_path) + sizeof(".bak");
+  if ((first_errno != EEXIST && first_errno != EACCES) ||
+      stat(dest_path, &st) != 0) {
+    /* Not the "cannot replace an existing file" case: no fallback. */
+    tb_report_domain_errorf_at(TB_SEV_ERROR, TB_ERR_PERSISTENCE, "rename",
+                               first_errno, source_file, source_line,
+                               source_func, "temp=%s dest=%s", temp_path,
+                               dest_path);
+    errno = first_errno;
+    return 0;
+  }
+
+  /* 2 x 20 digits covers any long pid. */
+  backup_len = strlen(dest_path) + sizeof(".tbreplace.") + 21;
   backup_path = (char *)malloc(backup_len);
   if (backup_path == NULL) {
-    tb_report_error_at("malloc", "replacement backup path", errno,
-                       source_file, source_line, source_func);
-    errno = first_errno;
-    tb_report_error_at("rename", dest_path, first_errno,
-                       source_file, source_line, source_func);
-    return 0;
-  }
-
-  if (snprintf(backup_path, backup_len, "%s.bak", dest_path) < 0) {
-    free(backup_path);
-    tb_report_error_at("snprintf", "replacement backup path", 0,
-                       source_file, source_line, source_func);
-    return 0;
-  }
-
-  if (remove(backup_path) != 0 && errno != ENOENT) {
     int saved_errno = errno;
-    tb_report_error_at("remove", backup_path, saved_errno,
-                       source_file, source_line, source_func);
+    tb_report_domain_errorf_at(TB_SEV_ERROR, TB_ERR_PERSISTENCE, "malloc",
+                               saved_errno, source_file, source_line,
+                               source_func, "replacement backup path: temp=%s "
+                               "dest=%s first_errno=%d", temp_path, dest_path,
+                               first_errno);
+    errno = first_errno;
+    return 0;
+  }
+
+  written = snprintf(backup_path, backup_len, "%s.tbreplace.%ld", dest_path,
+                     (long)getpid());
+  if (written < 0 || (size_t)written >= backup_len) {
     free(backup_path);
+    tb_report_domain_errorf_at(TB_SEV_ERROR, TB_ERR_INVARIANT, "snprintf", 0,
+                               source_file, source_line, source_func,
+                               "replacement backup path: dest=%s", dest_path);
+    errno = first_errno;
+    return 0;
+  }
+
+  if (stat(backup_path, &st) == 0) {
+    /* Left by an earlier failed rollback (that report named it): it may be
+     * the only good copy, so never delete or overwrite it. */
+    tb_report_domain_errorf_at(TB_SEV_ERROR, TB_ERR_PERSISTENCE,
+                               "rename-backup-exists", EEXIST, source_file,
+                               source_line, source_func, "temp=%s dest=%s "
+                               "backup=%s", temp_path, dest_path, backup_path);
+    free(backup_path);
+    errno = EEXIST;
     return 0;
   }
 
   if (rename(dest_path, backup_path) != 0) {
     int saved_errno = errno;
-    errno = first_errno;
-    tb_report_error_at("rename", dest_path, first_errno,
-                       source_file, source_line, source_func);
-    errno = saved_errno;
+    tb_report_domain_errorf_at(TB_SEV_ERROR, TB_ERR_PERSISTENCE, "rename",
+                               saved_errno, source_file, source_line,
+                               source_func, "dest to backup: temp=%s dest=%s "
+                               "backup=%s first_errno=%d", temp_path,
+                               dest_path, backup_path, first_errno);
     free(backup_path);
+    errno = saved_errno;
     return 0;
   }
 
@@ -1372,14 +1413,19 @@ static inline int tb_replace_file_checked_at(const char *temp_path,
         rollback_failed = 1;
       }
 
+      tb_report_domain_errorf_at(TB_SEV_ERROR, TB_ERR_PERSISTENCE, "rename",
+                                 commit_errno, source_file, source_line,
+                                 source_func, "commit: temp=%s dest=%s "
+                                 "backup=%s", temp_path, dest_path,
+                                 backup_path);
       if (rollback_failed) {
         int rollback_errno = errno;
-        tb_report_error_at("rename", "rollback destination restore",
-                           rollback_errno, source_file, source_line, source_func);
+        tb_report_domain_errorf_at(TB_SEV_FATAL, TB_ERR_PERSISTENCE,
+                                   "rename-rollback", rollback_errno,
+                                   source_file, source_line, source_func,
+                                   "dest=%s is missing; last good copy is "
+                                   "backup=%s", dest_path, backup_path);
       }
-
-      tb_report_error_at("rename", temp_path, commit_errno,
-                         source_file, source_line, source_func);
       free(backup_path);
       errno = commit_errno;
       return 0;
@@ -1388,10 +1434,16 @@ static inline int tb_replace_file_checked_at(const char *temp_path,
 
   if (remove(backup_path) != 0 && errno != ENOENT) {
     int saved_errno = errno;
-    tb_report_error_at("remove", backup_path, saved_errno,
-                       source_file, source_line, source_func);
+    tb_report_domain_errorf_at(TB_SEV_WARN, TB_ERR_PERSISTENCE, "remove",
+                               saved_errno, source_file, source_line,
+                               source_func, "stale replacement backup=%s "
+                               "dest=%s", backup_path, dest_path);
   }
 
+  tb_report_domain_errorf_at(TB_SEV_WARN, TB_ERR_PERSISTENCE, "rename-fallback",
+                             first_errno, source_file, source_line,
+                             source_func, "first rename failed; replaced via "
+                             "backup: temp=%s dest=%s", temp_path, dest_path);
   free(backup_path);
   return 1;
 }

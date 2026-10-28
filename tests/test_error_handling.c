@@ -5,13 +5,41 @@
 
 static const char *dest_path = "tb-test-dest.txt";
 static const char *temp_path = "tb-test-temp.txt";
-static const char *backup_path = "tb-test-dest.txt.bak";
+/* An operator's own backup next to dest: tb_replace_file_checked() must
+ * never delete it (it used "<dest>.bak" as its scratch name). */
+static const char *operator_bak_path = "tb-test-dest.txt.bak";
+/* The fallback's scratch backup: "<dest>.tbreplace.<pid>". */
+static char backup_path[128];
 
 static void cleanup_files(void)
 {
   (void)remove(dest_path);
   (void)remove(temp_path);
   (void)remove(backup_path);
+  (void)remove(operator_bak_path);
+}
+
+/* Run tb_replace_file_checked() with stderr (where the TBERR records go)
+ * redirected to a file, and return the captured records in out. */
+static int replace_capturing(char *out, size_t out_size)
+{
+  FILE *capture = tmpfile();
+  int saved_fd, result;
+  size_t got;
+
+  TEST_ASSERT_NOT_NULL(capture);
+  fflush(stderr);
+  saved_fd = dup(STDERR_FILENO);
+  TEST_ASSERT_TRUE(saved_fd >= 0);
+  TEST_ASSERT_TRUE(dup2(fileno(capture), STDERR_FILENO) >= 0);
+  result = tb_replace_file_checked(temp_path, dest_path);
+  TEST_ASSERT_TRUE(dup2(saved_fd, STDERR_FILENO) >= 0);
+  TEST_ASSERT_EQUAL_INT(0, close(saved_fd));
+  rewind(capture);
+  got = fread(out, 1, out_size - 1, capture);
+  out[got] = '\0';
+  TEST_ASSERT_EQUAL_INT(0, fclose(capture));
+  return result;
 }
 
 static void write_text(const char *path, const char *text)
@@ -50,6 +78,9 @@ static void assert_file_missing(const char *path)
 
 void setUp(void)
 {
+  if (snprintf(backup_path, sizeof(backup_path), "%s.tbreplace.%ld",
+               dest_path, (long)getpid()) >= (int)sizeof(backup_path))
+    TEST_FAIL_MESSAGE("backup path too long");
   cleanup_files();
   tb_test_set_failpoints(0);
 }
@@ -158,6 +189,56 @@ void test_replace_file_reports_rollback_failure_without_destroying_backup(void)
   assert_file_text(temp_path, "new");
 }
 
+/* I2-14: a missing temp file (ENOENT) is a real error on POSIX; it used to
+ * fall into the backup dance, which deleted "<dest>.bak" first. */
+void test_replace_file_missing_temp_keeps_operator_backup(void)
+{
+  char records[4096];
+
+  write_text(dest_path, "old");
+  write_text(operator_bak_path, "operator");
+
+  TEST_ASSERT_FALSE(replace_capturing(records, sizeof(records)));
+  TEST_ASSERT_EQUAL_INT(ENOENT, errno);
+  assert_file_text(dest_path, "old");
+  assert_file_text(operator_bak_path, "operator");
+  assert_file_missing(backup_path);
+  TEST_ASSERT_NOT_NULL(strstr(records, "operation=\"rename\""));
+  TEST_ASSERT_NOT_NULL(strstr(records, "dest=tb-test-dest.txt"));
+}
+
+/* I2-14: a fallback that recovers from a failed first rename is reported. */
+void test_replace_file_reports_recovered_fallback(void)
+{
+  char records[4096];
+
+  write_text(dest_path, "old");
+  write_text(temp_path, "new");
+  write_text(operator_bak_path, "operator");
+
+  tb_test_set_failpoints(TB_FAIL_REPLACE_INITIAL);
+  TEST_ASSERT_TRUE(replace_capturing(records, sizeof(records)));
+  assert_file_text(dest_path, "new");
+  assert_file_text(operator_bak_path, "operator");
+  assert_file_missing(backup_path);
+  TEST_ASSERT_NOT_NULL(strstr(records, "operation=\"rename-fallback\""));
+}
+
+/* I2-14: a failed rollback names the backup that now holds the good copy. */
+void test_replace_file_rollback_failure_names_backup(void)
+{
+  char records[4096];
+
+  write_text(dest_path, "old");
+  write_text(temp_path, "new");
+
+  tb_test_set_failpoints(TB_FAIL_REPLACE_INITIAL | TB_FAIL_REPLACE_COMMIT |
+                         TB_FAIL_REPLACE_ROLLBACK);
+  TEST_ASSERT_FALSE(replace_capturing(records, sizeof(records)));
+  TEST_ASSERT_NOT_NULL(strstr(records, "operation=\"rename-rollback\""));
+  TEST_ASSERT_NOT_NULL(strstr(records, backup_path));
+}
+
 /* =========================================================
  * main
  * ========================================================= */
@@ -176,6 +257,9 @@ int main(void)
   RUN_TEST(test_replace_file_commits_new_contents);
   RUN_TEST(test_replace_file_rolls_back_after_commit_failure);
   RUN_TEST(test_replace_file_reports_rollback_failure_without_destroying_backup);
+  RUN_TEST(test_replace_file_missing_temp_keeps_operator_backup);
+  RUN_TEST(test_replace_file_reports_recovered_fallback);
+  RUN_TEST(test_replace_file_rollback_failure_names_backup);
 
   return UNITY_END();
 }
