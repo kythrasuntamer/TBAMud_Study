@@ -79,6 +79,14 @@ static void wear_message(struct char_data *ch, struct obj_data *obj, int where);
  * (bad player input, so no server diagnostic). */
 #define COUNT_ARG_OK(n) ((n) > 0)
 
+/* TRUE if obj is still the object registered under script UID uid (no
+ * use-after-free, no reused address; obj is not dereferenced unless it
+ * is) and ch still carries it. The re-validation after a DG callback
+ * that hands an object back to the actor. Evaluates obj twice: pass a
+ * plain variable. */
+#define OBJ_STILL_HELD_BY(uid, obj, ch) \
+  (obj_uid_matches((uid), (obj)) && (obj)->carried_by == (ch))
+
 /* Resumable position in an object list across DG triggers.
  *
  * The perform_* helpers run get/drop/give/wear/put triggers, and a script
@@ -177,16 +185,14 @@ static int perform_put(struct char_data *ch, struct obj_data *obj, struct obj_da
   if (!allowed)
     return TRUE;
 
-  /* A script that purges its own object ('the sword crumbles') is a
-   * deliberate outcome, not an error. */
-  if (!obj_uid_matches(object_id, obj))
-    return TRUE;
-
-  if (obj->carried_by != ch) {
-    TB_WARN_MSG("act", "put-target-changed", "obj",
-                "obj vnum %d uid %ld left the hands of " DIAG_CHAR_FMT
-                " during its drop trigger; not put in container uid %ld",
-                (int) GET_OBJ_VNUM(obj), object_id, DIAG_CHAR(ch), cont_id);
+  if (!OBJ_STILL_HELD_BY(object_id, obj, ch)) {
+    /* A script that purges its own object ('the sword crumbles') is a
+     * deliberate outcome, not an error; one that moved it is reported. */
+    if (obj_uid_matches(object_id, obj))
+      TB_WARN_MSG("act", "put-target-changed", "obj",
+                  "obj vnum %d uid %ld left the hands of " DIAG_CHAR_FMT
+                  " during its drop trigger; not put in container uid %ld",
+                  (int) GET_OBJ_VNUM(obj), object_id, DIAG_CHAR(ch), cont_id);
     return TRUE;
   }
 
@@ -673,6 +679,24 @@ static void perform_drop_gold(struct char_data *ch, int amount, byte mode, room_
   }
 }
 
+/* After a drop trigger: is obj (UID uid) still in ch's hands? A script
+ * that purged its own object is a deliberate outcome (FALSE, silent); one
+ * that moved it elsewhere is reported as "drop-target-changed" (FALSE),
+ * since dropping it would take it from its new holder. The bare
+ * has_obj_by_uid_in_lookup_table() check used before accepted both an
+ * object that had moved and a UID now bound to a different object. */
+static int drop_target_held(struct char_data *ch, struct obj_data *obj, long uid)
+{
+  if (OBJ_STILL_HELD_BY(uid, obj, ch))
+    return TRUE;
+  if (obj_uid_matches(uid, obj))
+    TB_WARN_MSG("act", "drop-target-changed", "obj",
+                "obj vnum %d uid %ld left the hands of " DIAG_CHAR_FMT
+                " during its drop trigger; not dropped",
+                (int) GET_OBJ_VNUM(obj), uid, DIAG_CHAR(ch));
+  return FALSE;
+}
+
 /* Drops, donates (to room RDR) or junks obj, which ch carries. Runs the
  * object's drop trigger and, for a plain drop, the room's; returns early
  * (0) if either refuses or purged obj. The triggers may also purge
@@ -687,17 +711,14 @@ static int perform_drop(struct char_data *ch, struct obj_data *obj,
   int value;
   long object_id = obj_script_id(obj);
 
-  if (!drop_otrigger(obj, ch))
+  if (!drop_otrigger(obj, ch) || !drop_target_held(ch, obj, object_id))
     return 0;
-
-  if (!has_obj_by_uid_in_lookup_table(object_id))
-    return 0; // item was extracted by script
 
   if ((mode == SCMD_DROP) && !drop_wtrigger(obj, ch))
     return 0;
 
-  if (!has_obj_by_uid_in_lookup_table(object_id))
-    return 0; // item was extracted by script
+  if (!drop_target_held(ch, obj, object_id))
+    return 0;
 
   if (OBJ_FLAGGED(obj, ITEM_NODROP) && !PRF_FLAGGED(ch, PRF_NOHASSLE)) {
     tb_snprintf(buf, sizeof(buf), "You can't %s $p, it must be CURSED!", sname);

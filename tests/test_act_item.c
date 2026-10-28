@@ -551,9 +551,44 @@ static void test_donate_reports_missing_room(void)
   fx_free_char(pc);
 }
 
+/* A drop script that hands the object to someone else ('%force% %actor%
+ * give sword bob'). */
+static struct char_data *receiver;
+static int give_away_hook(enum fx_trigger kind, struct char_data *actor,
+                          struct obj_data *obj, int argn)
+{
+  (void)argn;
+  if (kind == FX_DROP_OTRIG && obj && obj->carried_by == actor) {
+    obj_from_char(obj);
+    obj_to_char(obj, receiver);
+  }
+  return 1;
+}
+
+/* OBJ_STILL_HELD_BY in perform_drop: an object the drop trigger moved to
+ * another character is not dropped (from that character's hands). */
+static void test_drop_skips_object_moved_by_trigger(void)
+{
+  struct char_data *pc = fx_new_char("hero", FALSE, 0);
+  struct obj_data *sword = fx_new_obj("sword", ITEM_WEAPON);
+
+  receiver = fx_new_char("bob", FALSE, 1);
+  obj_to_char(sword, pc);
+  fx_hook = give_away_hook;
+
+  do_drop(pc, arg("sword"), 0, SCMD_DROP);
+
+  TEST_ASSERT_EQUAL_PTR(receiver, sword->carried_by);
+  TEST_ASSERT_NULL(world[0].contents);
+  TEST_ASSERT_EQUAL_STRING("drop-target-changed", tb_captured_operation);
+  fx_free_char(receiver);
+  fx_free_char(pc);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(test_drop_skips_object_moved_by_trigger);
   RUN_TEST(test_donate_with_only_room_three);
   RUN_TEST(test_donate_reports_missing_room);
   RUN_TEST(test_remove_rechecks_slot_after_trigger);
