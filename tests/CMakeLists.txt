@@ -616,3 +616,20 @@ target_link_libraries(test_dg_engine PRIVATE ${EXTRA_LIBS})
 # The production sources are already analysed as part of the circle target.
 set_target_properties(test_dg_engine PROPERTIES C_CLANG_TIDY "")
 add_test(NAME test_dg_engine COMMAND test_dg_engine)
+
+# ---------------------------------------------------------------------------
+# test_dg_olc — the trigger editor (dg_olc.c): trigedit_save() renumbering,
+# format_script() bounds and the editor's input handling, with the complete
+# production server linked in exactly as for test_dg_engine.
+# ---------------------------------------------------------------------------
+add_executable(test_dg_olc
+    $<TARGET_OBJECTS:unity_vendor>
+    $<TARGET_OBJECTS:tb_engine_utils>
+    ${TB_ENGINE_SRC}
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_dg_olc.c
+)
+target_include_directories(test_dg_olc PRIVATE ${TEST_INCLUDES})
+target_compile_options(test_dg_olc PRIVATE ${TEST_CFLAGS})
+target_link_libraries(test_dg_olc PRIVATE ${EXTRA_LIBS})
+set_target_properties(test_dg_olc PROPERTIES C_CLANG_TIDY "")
+add_test(NAME test_dg_olc COMMAND test_dg_olc)

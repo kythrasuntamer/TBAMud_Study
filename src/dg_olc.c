@@ -716,6 +716,43 @@ void trigedit_parse(struct descriptor_data *d, char *arg)
   trigedit_disp_menu(d);
 }
 
+/**
+ * Verify, after trig_index was renumbered by an insertion, that every live
+ * trigger still shares the command list of the prototype its rnum names.
+ * Instances are made by read_trigger(), which shares proto->cmdlist, and
+ * trigedit_save() re-points them on every edit, so a mismatch means an
+ * instance's rnum was not shifted with its prototype.  Such an instance would
+ * keep a cmdlist that the next edit of its real prototype frees.
+ * @param d The saving editor (for the diagnostic).
+ * @param inserted_rnum The slot the new prototype was inserted at.
+ */
+static void trigedit_check_live_rnums(struct descriptor_data *d,
+                                      trig_rnum inserted_rnum)
+{
+  trig_data *live_trig;
+
+  for (live_trig = trigger_list; live_trig; live_trig = live_trig->next_in_world) {
+    trig_rnum nr = GET_TRIG_RNUM(live_trig);
+
+    if (nr == NOTHING)
+      continue;
+    if (nr >= top_of_trigt || !trig_index[nr] || !trig_index[nr]->proto) {
+      TB_ERROR_MSG("dg", "trigedit-rnum-shift", "trig_index",
+                   "live trigger serial %lu nr %d is outside trig_index (top %d), "
+                   "inserted vnum %d at rnum %d",
+                   live_trig->serial, (int)nr, top_of_trigt, OLC_NUM(d),
+                   (int)inserted_rnum);
+      continue;
+    }
+    if (trig_index[nr]->proto->cmdlist != live_trig->cmdlist)
+      TB_ERROR_MSG("dg", "trigedit-rnum-shift", "trig_index",
+                   "live trigger serial %lu nr %d vnum %d cmdlist != proto, "
+                   "inserted vnum %d at rnum %d",
+                   live_trig->serial, (int)nr, trig_index[nr]->vnum,
+                   OLC_NUM(d), (int)inserted_rnum);
+  }
+}
+
 /* save the zone's triggers to internal memory and to disk */
 void trigedit_save(struct descriptor_data *d)
 {
@@ -883,20 +920,26 @@ void trigedit_save(struct descriptor_data *d)
     trig_index = new_index;
     top_of_trigt++;
 
-    /* Every prototype from rnum up moved one slot, so every live trigger
-     * and edit buffer that pointed at rnum or above follows it.  The new
-     * trigger's own buffer (d) already names rnum, and buffers for unsaved
-     * triggers (NOTHING) point nowhere. */
+    /* Every prototype that was at rnum or above moved up one slot, including
+     * the one that used to sit at rnum itself (now at rnum + 1).  Instances
+     * and editor scratch triggers still carry the old rnum, so they must
+     * follow with ">=".  With ">" the displaced trigger's live instances were
+     * left pointing at the new prototype, and the next edit of the displaced
+     * trigger freed the cmdlist they still used (E2-02).  NOTHING is the
+     * maximum IDXTYPE and must never be bumped (it would wrap to 0). */
     for (live_trig = trigger_list; live_trig; live_trig = live_trig->next_in_world)
       if (GET_TRIG_RNUM(live_trig) != NOTHING && GET_TRIG_RNUM(live_trig) >= rnum)
         GET_TRIG_RNUM(live_trig)++;
 
+    /* Update other trigs being edited.  The saving editor's own scratch was
+     * already given its final rnum above. */
     for (dsc = descriptor_list; dsc; dsc = dsc->next)
-      if (dsc != d && STATE(dsc) == CON_TRIGEDIT &&
+      if (dsc != d && STATE(dsc) == CON_TRIGEDIT && dsc->olc && OLC_TRIG(dsc) &&
           GET_TRIG_RNUM(OLC_TRIG(dsc)) != NOTHING &&
           GET_TRIG_RNUM(OLC_TRIG(dsc)) >= rnum)
         GET_TRIG_RNUM(OLC_TRIG(dsc))++;
 
+    trigedit_check_live_rnums(d, rnum);
   }
 
   /* now write the trigger out to disk, along with the rest of the triggers for
