@@ -561,7 +561,8 @@ void save_player_index(void)
                    "cannot open staged index for %d entries; live index kept",
                    top_of_p_table + 1);
     close(temp_fd);
-    unlink(temp_name);
+    if (unlink(temp_name) != 0 && errno != ENOENT)
+      TB_REPORT_ERRNO("unlink", temp_name);
     return;
   }
 
@@ -588,7 +589,8 @@ void save_player_index(void)
   if (failed) {
     TB_ERROR_ERRNO("player", "index-save", index_name,
                    "%d entries not written; live index kept", top_of_p_table + 1);
-    unlink(temp_name);
+    if (unlink(temp_name) != 0 && errno != ENOENT)
+      TB_REPORT_ERRNO("unlink", temp_name);
   }
 }
 
