@@ -12,6 +12,7 @@ hash it produced is then recorded so it can be pinned.
 import argparse
 import fnmatch
 import hashlib
+import shutil
 import io
 import json
 from pathlib import Path, PurePosixPath
@@ -96,6 +97,28 @@ def download(url):
     return b"".join(chunks), final
 
 
+def stage_files(folder, extracted):
+    """Write (relative path, bytes) pairs into folder all at once: into a
+    sibling <folder>.tmp that is renamed only when every file is in, and
+    removed on any failure. An existing folder or staging folder is refused."""
+    staging = folder.with_name(folder.name + ".tmp")
+    for path in (folder, staging):
+        if path.exists():
+            raise ValueError(f"{path} already exists; refusing to mix snapshots")
+    staging.mkdir()
+    try:
+        for rel, data in extracted:
+            if not rel or rel.startswith("/") or ".." in PurePosixPath(rel).parts:
+                raise ValueError(f"unsafe relative path {rel!r} for {folder.name}")
+            dest = staging / rel
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(data)
+        staging.rename(folder)
+    except BaseException:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--catalog", type=Path, default=Path("imports/source-catalog.json"))
@@ -126,22 +149,14 @@ def main():
             extracted, top = scan_archive(raw, entry)
             if not extracted:
                 raise ValueError("No matching source files; catalog glob or source layout changed")
-            # Write into a temporary folder and rename only when every file is in.
             folder = args.destination / repo.replace("/", "__")
-            staging = folder.with_name(folder.name + ".tmp")
-            staging.mkdir()
-            rows = []
-            for rel, data in extracted:
-                dest = staging / rel
-                dest.parent.mkdir(parents=True, exist_ok=True)
-                dest.write_bytes(data)
-                rows.append({"repo": repo, "ref": entry["ref"], "snapshot": top,
-                             "tarball_sha256": digest,
-                             "tarball_sha256_pinned": bool(entry.get("sha256")),
-                             "path": rel, "sha256": hashlib.sha256(data).hexdigest(),
-                             "bytes": len(data), "snapshot_url": final,
-                             "status": "QUARANTINED_NOT_CONVERTED"})
-            staging.rename(folder)
+            rows = [{"repo": repo, "ref": entry["ref"], "snapshot": top,
+                     "tarball_sha256": digest,
+                     "tarball_sha256_pinned": bool(entry.get("sha256")),
+                     "path": rel, "sha256": hashlib.sha256(data).hexdigest(),
+                     "bytes": len(data), "snapshot_url": final,
+                     "status": "QUARANTINED_NOT_CONVERTED"} for rel, data in extracted]
+            stage_files(folder, extracted)
             report.extend(rows)
             print(f"{repo}@{entry['ref'][:12]}: {len(extracted)} eligible-format files inventoried")
         except Exception as exc:

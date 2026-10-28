@@ -103,5 +103,47 @@ class FetchAndAuditRegressions(unittest.TestCase):
 
     tree = ImportToolRegressions.tree
 
+
+class FetchStaging(unittest.TestCase):
+    """fetch_mud_assets.stage_files: all files or none, never a leftover .tmp."""
+
+    @classmethod
+    def setUpClass(cls):
+        import importlib.util as iu
+        root = pathlib.Path(__file__).resolve().parents[1]
+        spec = iu.spec_from_file_location("fetch_mud_assets", root / "tools" / "fetch_mud_assets.py")
+        cls.fetch = iu.module_from_spec(spec)
+        spec.loader.exec_module(cls.fetch)
+
+    def test_failure_midway_leaves_no_staging_and_no_folder(self):
+        with tempfile.TemporaryDirectory() as td:
+            folder = pathlib.Path(td) / "owner__repo"
+            # the second entry's parent is the first entry's file: mkdir fails
+            files = [("area/a.wld", b"#1\n"), ("area/a.wld/b.wld", b"#2\n")]
+            with self.assertRaises(OSError):
+                self.fetch.stage_files(folder, files)
+            self.assertFalse(folder.exists())
+            self.assertFalse(folder.with_name(folder.name + ".tmp").exists())
+
+    def test_existing_destination_or_staging_is_refused(self):
+        with tempfile.TemporaryDirectory() as td:
+            folder = pathlib.Path(td) / "owner__repo"
+            folder.mkdir()
+            with self.assertRaises(ValueError):
+                self.fetch.stage_files(folder, [("a.wld", b"#1\n")])
+            folder.rmdir()
+            folder.with_name(folder.name + ".tmp").mkdir()
+            with self.assertRaises(ValueError):
+                self.fetch.stage_files(folder, [("a.wld", b"#1\n")])
+            self.assertFalse(folder.exists())
+
+    def test_success_renames_into_place(self):
+        with tempfile.TemporaryDirectory() as td:
+            folder = pathlib.Path(td) / "owner__repo"
+            self.fetch.stage_files(folder, [("area/a.wld", b"#1\n")])
+            self.assertEqual(b"#1\n", (folder / "area" / "a.wld").read_bytes())
+            self.assertFalse(folder.with_name(folder.name + ".tmp").exists())
+
+
 if __name__ == "__main__":
     unittest.main()

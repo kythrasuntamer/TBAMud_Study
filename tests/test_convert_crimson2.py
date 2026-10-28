@@ -1,7 +1,9 @@
 """Tests for tools/convert_crimson2.py: field mapping by meaning, fail-closed
 references, merge/override/link recipes, and that the installed world is
 exactly the recipe's output."""
+import contextlib
 import importlib.util
+import io
 import json
 import pathlib
 import re
@@ -169,6 +171,79 @@ class Crimson2Conversion(unittest.TestCase):
         for ext in ("wld", "mob", "obj", "zon"):
             self.assertFalse((world / ext / f"47.{ext}").exists())
             self.assertNotIn(f"47.{ext}", (world / ext / "index").read_text().split())
+
+
+    def test_zone_41_merged_mobs_fit_the_zone(self):
+        # Owner decision: Melcrin and the phantom are rescaled to zone 41
+        # (stock mobs are levels 6-13); nothing in the zone may exceed 16.
+        text = (ROOT / "lib" / "world" / "mob" / "41.mob").read_text(encoding="latin-1")
+        levels = {int(v): int(l) for v, l in re.findall(
+            r"(?m)^#(\d+)\n(?:.*\n)*?(\d+) -?\d+ -?\d+ \d+d\d+\+-?\d+ \d+d\d+\+-?\d+$", text)}
+        self.assertIn(4108, levels)
+        self.assertIn(4109, levels)
+        for vnum, level in levels.items():
+            self.assertTrue(6 <= level <= 16, f"mob {vnum} level {level} outside 6..16")
+        self.assertIn("16 15 -1 4d4+200 2d4+3", text.splitlines())
+        self.assertNotIn("35d10+24000", text)
+
+    def test_mob_override_is_applied_and_unknown_field_fails(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = self.area(td)
+            area = {"mode": "zone", "zone": 6, "offset": 500,
+                    "overrides": {"mob": {"100": {"level": 3, "hp": "1d4+20", "act": 10,
+                                                  "short": "a meek orc", "reason": "test"}}}}
+            out = base.parent.parent / "out"
+            self.assertEqual(0, conv.main(["--recipe", str(self.recipe(base, area)),
+                                           "--area", "T", "--out", str(out)]))
+            mob = (out / "mob" / "6.mob").read_text()
+            self.assertIn("a meek orc~", mob)
+            self.assertIn("3 20 5 1d4+20 1d6+1", mob.splitlines())
+            self.assertTrue(any(l.startswith("10 0 0 0 ") for l in mob.splitlines()))
+        with tempfile.TemporaryDirectory() as td:
+            base = self.area(td)
+            area = {"mode": "zone", "zone": 6, "offset": 500,
+                    "overrides": {"mob": {"100": {"levle": 3}}}}
+            self.assertEqual(1, conv.main(["--recipe", str(self.recipe(base, area)),
+                                           "--area", "T",
+                                           "--out", str(base.parent.parent / "out")]))
+
+    def test_exclude_drops_a_template_record(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = self.area(td)
+            area = {"mode": "zone", "zone": 6, "offset": 500, "exclude": {"mob": [101]}}
+            out = base.parent.parent / "out"
+            self.assertEqual(0, conv.main(["--recipe", str(self.recipe(base, area)),
+                                           "--area", "T", "--out", str(out)]))
+            mob = (out / "mob" / "6.mob").read_text()
+            self.assertIn("#600\n", mob)
+            self.assertNotIn("#601\n", mob)
+        self.assertNotIn("#5831\n", (ROOT / "lib" / "world" / "mob" / "58.mob").read_text(encoding="latin-1"))
+
+    def test_unterminated_string_names_file_line_and_vnum(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = self.area(td)
+            base.with_suffix(".mob").write_text("#100\nmob orc~\nthe orc\n#999999\n")
+            buf = io.StringIO()
+            with contextlib.redirect_stderr(buf):
+                rc, _ = self.run_tool(base)
+            self.assertEqual(1, rc)
+            self.assertRegex(buf.getvalue(), r"T\.mob:\d+ mob 100: unterminated string starting at line \d+")
+
+    def test_refused_merge_install_changes_nothing(self):
+        # A merge used to append to the first file before the second file's
+        # guard refused (here: obj does not end with "$~"); now every guard
+        # runs before any write, and nothing is left behind.
+        with tempfile.TemporaryDirectory() as td:
+            world = pathlib.Path(td)
+            for ext in ("mob", "obj"):
+                (world / ext).mkdir()
+            mob = world / "mob" / "41.mob"
+            mob.write_text("#4100\nstock\n$\n")
+            (world / "obj" / "41.obj").write_text("#4100\nstock but truncated\n")
+            with self.assertRaises(ValueError):
+                conv.install(world, 41, {"mob": "#4108\nnew\n", "obj": "#4105\nnew\n"}, "merge")
+            self.assertEqual("#4100\nstock\n$\n", mob.read_text())
+            self.assertEqual([], [p.name for p in world.rglob("*.tmp")])
 
 
 if __name__ == "__main__":

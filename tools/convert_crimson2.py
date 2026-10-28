@@ -29,6 +29,8 @@ tools/audit_world_vnums.py) and boot-test afterwards.
 import argparse
 import json
 import re
+import tempfile
+import os
 import sys
 from pathlib import Path
 
@@ -81,6 +83,10 @@ SPELL_TYPES = {2, 3, 4, 10}
 COLOUR = re.compile(r"&([nrgbymcwdRGBYMCWD])")
 OBJ_OVERRIDES = {"keywords", "wear", "values", "weight", "cost", "rent", "level",
                  "applies", "reason"}
+# Mob overrides set tbaMUD values directly: stats, money, the final action and
+# affect bitvectors, and the four texts.
+MOB_OVERRIDES = {"level", "thac0", "ac", "hp", "damage", "gold", "exp", "act",
+                 "affects", "keywords", "short", "long", "description", "reason"}
 
 
 class Area:
@@ -90,6 +96,7 @@ class Area:
         self.drop_external = drop_external
         self.map = vnum_map                   # merge mode: {"mob": {old: new}, "obj": {...}}
         self.overrides = overrides or {}
+        self.exclude = {}
         self.links = {}
         for link in links:
             self.links.setdefault(int(link["room"]), []).append(link)
@@ -115,6 +122,8 @@ class Area:
         return out
 
     def selected(self, family, vnum):
+        if vnum in self.exclude.get(family, ()):
+            return False
         return self.map is None or vnum in self.map.get(family, {})
 
     def new(self, family, vnum, where):
@@ -167,8 +176,10 @@ class Area:
         return path.name, out
 
     @staticmethod
-    def take_string(body, i):
-        """Lines up to and including the one ending in '~'; (text, next index)."""
+    def take_string(body, i, where="?"):
+        """Lines up to and including the one ending in '~'; (text, next index).
+        where (file:line and vnum) locates an unterminated string."""
+        start = body[i][0] if i < len(body) else "end of record"
         parts = []
         while i < len(body):
             text = body[i][1]
@@ -177,7 +188,7 @@ class Area:
                 return "\n".join(parts), i + 1
             parts.append(text)
             i += 1
-        raise ValueError("unterminated string")
+        raise ValueError(f"{where}: unterminated string starting at line {start}")
 
     def load(self):
         self.src = {}
@@ -200,8 +211,8 @@ class Area:
         for r in recs:
             where = f"{fname}:{r['line']} room {r['vnum']}"
             b = r["body"]
-            name, i = self.take_string(b, 0)
-            desc, i = self.take_string(b, i)
+            name, i = self.take_string(b, 0, where)
+            desc, i = self.take_string(b, i, where)
             f = b[i][1].split()
             if len(f) != 6:
                 self.error(where, f"room line has {len(f)} fields, expected 6")
@@ -221,8 +232,8 @@ class Area:
             while i < len(b):
                 tag = b[i][1].strip()
                 if re.fullmatch(r"D[0-5]", tag):
-                    edesc, i = self.take_string(b, i + 1)
-                    kw, i = self.take_string(b, i)
+                    edesc, i = self.take_string(b, i + 1, where)
+                    kw, i = self.take_string(b, i, where)
                     info, key, to = map(int, b[i][1].split())
                     i += 1
                     door = (2 if info & 2 else 1) if info & 1 else 0
@@ -245,8 +256,8 @@ class Area:
                     rows += [tag, edesc + "~", kw + "~",
                              f"{door} {nkey} {self.new('wld', to, where)}"]
                 elif tag == "E":
-                    kw, i = self.take_string(b, i + 1)
-                    text, i = self.take_string(b, i)
+                    kw, i = self.take_string(b, i + 1, where)
+                    text, i = self.take_string(b, i, where)
                     rows += ["E", kw + "~", text + "~"]
                 elif tag == "S":
                     break
@@ -277,7 +288,7 @@ class Area:
             strings = []
             i = 0
             for _ in range(4):
-                s, i = self.take_string(b, i)
+                s, i = self.take_string(b, i, where)
                 strings.append(s)
             head = b[i][1].split()
             if len(head) != 6 or head[5] != "S":
@@ -295,6 +306,24 @@ class Area:
             if len(stats) != 5 or len(money) != 2 or len(pos) != 3 or len(attrs) != 8:
                 self.error(where, "malformed numeric block")
                 continue
+            ov = self.overrides.get("mob", {}).get(str(r["vnum"]), {})
+            unknown = set(ov) - MOB_OVERRIDES
+            if unknown:
+                self.error(where, f"unknown override field(s) {sorted(unknown)}")
+            if ov:                              # recipe overrides, each reported
+                for key, k in (("level", 0), ("thac0", 1), ("ac", 2), ("hp", 3), ("damage", 4)):
+                    if key in ov:
+                        stats[k] = str(ov[key])
+                for key, k in (("gold", 0), ("exp", 1)):
+                    if key in ov:
+                        money[k] = str(ov[key])
+                act = int(ov.get("act", act))
+                affects = int(ov.get("affects", affects))
+                for key, k in (("keywords", 0), ("short", 1), ("long", 2), ("description", 3)):
+                    if key in ov:
+                        strings[k] = ov[key]
+                self.note(where, f"override {sorted(set(ov) - {'reason'})}: "
+                                 f"{ov.get('reason', 'recipe override')}")
             hp = re.fullmatch(r"(\d+)d(\d+)\+(-?\d+)", stats[3])
             dam = re.fullmatch(r"(\d+)d(\d+)\+(-?\d+)", stats[4])
             if not hp or not dam:
@@ -361,11 +390,11 @@ class Area:
             if unknown:
                 self.error(where, f"unknown override field(s) {sorted(unknown)}")
             b = r["body"]
-            name, i = self.take_string(b, 0)
+            name, i = self.take_string(b, 0, where)
             i += 1                              # db5100 skips this line (fgets)
-            short, i = self.take_string(b, i)
-            long_, i = self.take_string(b, i)
-            action, i = self.take_string(b, i)
+            short, i = self.take_string(b, i, where)
+            long_, i = self.take_string(b, i, where)
+            action, i = self.take_string(b, i, where)
             t, f1, f2, wear = map(int, b[i][1].split())
             vals = list(map(int, b[i + 1][1].split()))
             weight, cost, rent = b[i + 2][1].split()
@@ -405,8 +434,8 @@ class Area:
             while i < len(b):
                 tag = b[i][1].strip()
                 if tag == "E":
-                    kw, i = self.take_string(b, i + 1)
-                    text, i = self.take_string(b, i)
+                    kw, i = self.take_string(b, i + 1, where)
+                    text, i = self.take_string(b, i, where)
                     extras.append(("E", kw, text))
                 elif tag == "A":
                     loc, mod = map(int, b[i + 1][1].split())
@@ -501,12 +530,12 @@ def settings_from(args):
     """Merge --recipe/--area with explicit command-line options."""
     s = {"zone": args.zone, "offset": args.offset, "name": args.name,
          "builders": args.builders, "drop_external": args.drop_external,
-         "mode": "zone", "map": None, "overrides": {}, "links": [], "source": args.source}
+         "mode": "zone", "map": None, "overrides": {}, "links": [], "exclude": {}, "source": args.source}
     if args.recipe:
         recipe = json.loads(args.recipe.read_text())
         area = recipe["areas"][args.area]
         for key in ("zone", "offset", "name", "builders", "drop_external", "mode",
-                    "overrides", "links"):
+                    "overrides", "links", "exclude"):
             if key in area:
                 s[key] = area[key]
         s["source"] = str(args.recipe.parent / area["source"])
@@ -537,6 +566,10 @@ def render(ext, rows, mode):
 
 
 def install(world, zone, texts, mode):
+    """Install the converted texts. Every target is checked first; each file is
+    then written to a temporary sibling and moved into place with os.replace(),
+    so a refused install changes nothing."""
+    plan = []                                   # (path, full new text)
     if mode == "merge":
         for ext, text in texts.items():
             path = world / ext / f"{zone}.{ext}"
@@ -546,19 +579,34 @@ def install(world, zone, texts, mode):
             end = "S\n$\n" if ext == "zon" else ("$~\n" if cur.endswith("$~\n") else "$\n")
             if not cur.endswith(end):
                 raise ValueError(f"{path} does not end with {end!r}")
-            path.write_text(cur[:-len(end)] + text + end, encoding="latin-1")
-        return
-    for ext in texts:
-        if (world / ext / f"{zone}.{ext}").exists():
-            raise ValueError(f"refusing to overwrite {world / ext / f'{zone}.{ext}'}")
-    for ext, text in texts.items():
-        (world / ext / f"{zone}.{ext}").write_text(text, encoding="latin-1")
-        idx = world / ext / "index"
-        names = idx.read_text().splitlines()
-        if names[-1] != "$":
-            raise ValueError(f"{idx} does not end with $")
-        files = sorted(set(names[:-1]) | {f"{zone}.{ext}"}, key=lambda n: int(n.split(".")[0]))
-        idx.write_text("\n".join(files + ["$"]) + "\n")
+            plan.append((path, cur[:-len(end)] + text + end))
+    else:
+        for ext, text in texts.items():
+            path = world / ext / f"{zone}.{ext}"
+            if path.exists():
+                raise ValueError(f"refusing to overwrite {path}")
+            idx = world / ext / "index"
+            names = idx.read_text(encoding="latin-1").splitlines()
+            if not names or names[-1] != "$":
+                raise ValueError(f"{idx} does not end with $")
+            files = sorted(set(names[:-1]) | {f"{zone}.{ext}"}, key=lambda n: int(n.split(".")[0]))
+            plan += [(path, text), (idx, "\n".join(files + ["$"]) + "\n")]
+    staged = []
+    try:
+        for path, text in plan:
+            fd, tmp = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+            with os.fdopen(fd, "w", encoding="latin-1", newline="") as fh:
+                fh.write(text)
+            staged.append((tmp, path))
+    except BaseException:
+        for tmp, _ in staged:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+        raise
+    for tmp, path in staged:
+        os.replace(tmp, path)
 
 
 def main(argv=None):
@@ -580,6 +628,7 @@ def main(argv=None):
         s = settings_from(a)
         area = Area(s["source"], s["zone"], s["offset"], s["drop_external"],
                     s["map"], s["overrides"], s["links"])
+        area.exclude = {f: set(v) for f, v in s.get("exclude", {}).items()}
         rows = outputs(area, s)
     except (OSError, ValueError, IndexError, KeyError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
