@@ -149,11 +149,69 @@ struct guild_info_type guild_info[] = {
   { -1, NOWHERE, -1}
 };
 
-/* Saving throws for : MCTW : PARA, ROD, PETRI, BREATH, SPELL. Levels 0-40. Do
- * not forget to change extern declaration in magic.c if you add to this. */
+/* Class-table diagnostics are rate limited: saving_throws() runs once per
+ * spell target (mag_savingthrow), so a systematic gap would otherwise log on
+ * every cast.  At most CLASS_DIAG_BURST records per minute are written; the
+ * next record after a quiet spell says how many were suppressed. */
+#define CLASS_DIAG_BURST 10
+
+static void class_table_error_at(const char *table, int class_num, int type,
+                                 int level, const char *src_file, int src_line,
+                                 const char *src_func)
+{
+  static time_t window_start;
+  static int in_window, suppressed;
+  time_t now = time(0);
+
+  if (now - window_start >= 60) {
+    window_start = now;
+    in_window = 0;
+  }
+  if (in_window >= CLASS_DIAG_BURST) {
+    suppressed++;
+    return;
+  }
+  in_window++;
+  tb_error_log_at("ERROR", "class", "class-table", table, 0,
+                  src_file, src_line, src_func,
+                  TB_ERRID_INVARIANT " class %d type %d level %d is outside the %s table (%d earlier reports suppressed)",
+                  class_num, type, level, table, suppressed);
+  suppressed = 0;
+}
+
+/** Report a class/type/level that a class table does not cover, at the
+ * caller's location.  Pass -1 for a dimension the table does not have. */
+#define CLASS_TABLE_ERROR(table, class_num, type, level) \
+  class_table_error_at((table), (class_num), (type), (level), \
+                       __FILE__, __LINE__, __func__)
+
+/* Highest level each saving-throw table lists. */
+#define SAVE_TABLE_MAX_LEVEL        40
+#define SAVE_TABLE_MAX_LEVEL_WARRIOR 50
+
+/* Saving throws for : MCTW : PARA, ROD, PETRI, BREATH, SPELL.
+ *
+ * The mage, cleric and thief tables list levels 0-40 and the warrior table
+ * (also used by monks and by every NPC, see mag_savingthrow) 0-50; mortal
+ * levels run to LVL_IMMORT - 1 = 50 and staff to LVL_IMPL = 60.  Like
+ * thaco(), a level past the end of its table uses the table's last row
+ * (the best save).  Anything else -- a negative level, one above LVL_IMPL,
+ * an unknown class or save type -- is reported and returns 100, which
+ * mag_savingthrow() treats as "never saves". */
 byte saving_throws(int class_num, int type, int level)
 {
+  int table_max;
+
   if (class_num == CLASS_MONK) class_num = CLASS_WARRIOR;
+  table_max = (class_num == CLASS_WARRIOR) ? SAVE_TABLE_MAX_LEVEL_WARRIOR
+                                           : SAVE_TABLE_MAX_LEVEL;
+  if (level < 0 || level > LVL_IMPL) {
+    CLASS_TABLE_ERROR("saving-throw", class_num, type, level);
+    return 100;
+  }
+  if (level > table_max)
+    level = table_max;
+
   switch (class_num) {
   case CLASS_MAGIC_USER:
     switch (type) {

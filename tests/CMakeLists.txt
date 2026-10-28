@@ -115,6 +115,10 @@ add_mud_test(test_class
     ${MUD_SRCDIR}/random.c
     ${CMAKE_CURRENT_SOURCE_DIR}/test_class.c
 )
+# class.c's table diagnostics are captured (tb_error_capture.h).
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_link_options(test_class PRIVATE -Wl,--wrap=tb_error_log_at)
+endif()
 
 
 # ---------------------------------------------------------------------------
