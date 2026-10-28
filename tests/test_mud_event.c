@@ -28,7 +28,10 @@ void basic_mud_log(const char *format, ...) { (void)format; }
 static int mudlogs;
 void mudlog(int type, int level, int file, const char *str, ...)
 { (void)type; (void)level; (void)file; (void)str; mudlogs++; }
-int rand_number(int from, int to) { (void)to; return from; }
+/* utils.h: rand_number() is a call-site macro over rand_number_at(). */
+int rand_number_at(int from, int to, const char *source_file, int source_line,
+                   const char *source_func)
+{ (void)to; (void)source_file; (void)source_line; (void)source_func; return from; }
 void *tb_calloc_array_at(size_t count, size_t element_size,
                          const char *source_file, int source_line,
                          const char *source_func)
