@@ -1011,6 +1011,43 @@ static void save_quests_rejects_oversized_quest(void)
 }
 
 /* ------------------------------------------------------------------------ */
+/* C2-17: save_zone() checks stored rnums before converting them.           */
+/* ------------------------------------------------------------------------ */
+static void save_zone_rejects_stale_object_rnum(void)
+{
+  static const int args[][3] = { { 2, 1, 0 } };   /* obj rnum 2, top is 1 */
+  make_zones(1); make_objs(2); make_rooms(1);
+  set_zone_cmds(0, "O", args);
+  write_text_file(ZON_PREFIX "/0.zon", "previous\n");
+  TEST_ASSERT_FALSE(save_zone(0));
+  TEST_ASSERT_EQUAL_STRING("zone-save-rnum", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "line 100"));
+  TEST_ASSERT_FALSE(file_exists(ZON_PREFIX "/0.new"));
+}
+
+static void save_zone_rejects_var_without_strings(void)
+{
+  static const int args[][3] = { { 0, 0, 0 } };
+  make_zones(1); make_rooms(1);
+  set_zone_cmds(0, "V", args);
+  TEST_ASSERT_FALSE(save_zone(0));
+  TEST_ASSERT_EQUAL_STRING("zone-save-sarg", tb_captured_operation);
+}
+
+static void save_zone_writes_valid_commands(void)
+{
+  static const int args[][3] = { { 1, 5, 0 }, { 0, 2, 1 } };
+  char text[512];
+  make_zones(1); make_objs(2); make_rooms(1);
+  set_zone_cmds(0, "OD", args);
+  TEST_ASSERT_TRUE(save_zone(0));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  read_text_file(ZON_PREFIX "/0.zon", text, sizeof(text));
+  TEST_ASSERT_NOT_NULL(strstr(text, "O 0 11 5 10"));
+  TEST_ASSERT_NOT_NULL(strstr(text, "D 0 10 2 1"));
+}
+
+/* ------------------------------------------------------------------------ */
 /* Temporary world directory for the writers.                               */
 /* ------------------------------------------------------------------------ */
 static char test_root[] = "/tmp/tb-genolc-XXXXXX";
@@ -1091,6 +1128,9 @@ int main(void)
   RUN_TEST(parse_trigger_accepts_blank_line_body);
   RUN_TEST(parse_trigger_reads_commands);
   RUN_TEST(save_quests_rejects_oversized_quest);
+  RUN_TEST(save_zone_rejects_stale_object_rnum);
+  RUN_TEST(save_zone_rejects_var_without_strings);
+  RUN_TEST(save_zone_writes_valid_commands);
   failures = UNITY_END();
   leave_test_root();
   return failures;

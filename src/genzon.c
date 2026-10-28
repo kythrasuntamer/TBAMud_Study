@@ -493,59 +493,97 @@ int save_zone(zone_rnum zone_num)
 	 * ------------------------------------------------- */
 
   for (subcmd = 0; ZCMD(zone_num, subcmd).command != 'S'; subcmd++) {
-    switch (ZCMD(zone_num, subcmd).command) {
+    const struct reset_com *zc = &ZCMD(zone_num, subcmd);
+
+    /* Every stored rnum is checked against its table before it is turned
+     * back into a vnum.  A stale one (from a renumbering bug) would read
+     * past the table and write another thing's vnum, so the whole save is
+     * abandoned instead and the previous .zon stays in place. */
+#define ZSAVE_CHECK(argno, val, top) do { \
+      if ((val) < 0 || (val) > (int)(top)) { \
+        TB_ERROR_MSG("olc", "zone-save-rnum", fname, \
+                     "zone %d cmd %d '%c' (line %d) arg%d=%d out of range 0..%d; " \
+                     "zone not saved", zone_table[zone_num].number, subcmd, \
+                     zc->command, zc->line, (argno), (val), (int)(top)); \
+        goto abort_save; \
+      } \
+    } while (0)
+
+    switch (zc->command) {
     case 'M':
-      arg1 = mob_index[ZCMD(zone_num, subcmd).arg1].vnum;
-      arg2 = ZCMD(zone_num, subcmd).arg2;
-      arg3 = world[ZCMD(zone_num, subcmd).arg3].number;
-      comment = mob_proto[ZCMD(zone_num, subcmd).arg1].player.short_descr;
+      ZSAVE_CHECK(1, zc->arg1, top_of_mobt);
+      ZSAVE_CHECK(3, zc->arg3, top_of_world);
+      arg1 = mob_index[zc->arg1].vnum;
+      arg2 = zc->arg2;
+      arg3 = world[zc->arg3].number;
+      comment = mob_proto[zc->arg1].player.short_descr;
       break;
     case 'O':
-      arg1 = obj_index[ZCMD(zone_num, subcmd).arg1].vnum;
-      arg2 = ZCMD(zone_num, subcmd).arg2;
-      arg3 = world[ZCMD(zone_num, subcmd).arg3].number;
-      comment = obj_proto[ZCMD(zone_num, subcmd).arg1].short_description;
+      ZSAVE_CHECK(1, zc->arg1, top_of_objt);
+      ZSAVE_CHECK(3, zc->arg3, top_of_world);
+      arg1 = obj_index[zc->arg1].vnum;
+      arg2 = zc->arg2;
+      arg3 = world[zc->arg3].number;
+      comment = obj_proto[zc->arg1].short_description;
       break;
     case 'G':
-      arg1 = obj_index[ZCMD(zone_num, subcmd).arg1].vnum;
-      arg2 = ZCMD(zone_num, subcmd).arg2;
+      ZSAVE_CHECK(1, zc->arg1, top_of_objt);
+      arg1 = obj_index[zc->arg1].vnum;
+      arg2 = zc->arg2;
       arg3 = -1;
-      comment = obj_proto[ZCMD(zone_num, subcmd).arg1].short_description;
+      comment = obj_proto[zc->arg1].short_description;
       break;
     case 'E':
-      arg1 = obj_index[ZCMD(zone_num, subcmd).arg1].vnum;
-      arg2 = ZCMD(zone_num, subcmd).arg2;
-      arg3 = ZCMD(zone_num, subcmd).arg3;
-      comment = obj_proto[ZCMD(zone_num, subcmd).arg1].short_description;
+      ZSAVE_CHECK(1, zc->arg1, top_of_objt);
+      arg1 = obj_index[zc->arg1].vnum;
+      arg2 = zc->arg2;
+      arg3 = zc->arg3;
+      comment = obj_proto[zc->arg1].short_description;
       break;
     case 'P':
-      arg1 = obj_index[ZCMD(zone_num, subcmd).arg1].vnum;
-      arg2 = ZCMD(zone_num, subcmd).arg2;
-      arg3 = obj_index[ZCMD(zone_num, subcmd).arg3].vnum;
-      comment = obj_proto[ZCMD(zone_num, subcmd).arg1].short_description;
+      ZSAVE_CHECK(1, zc->arg1, top_of_objt);
+      ZSAVE_CHECK(3, zc->arg3, top_of_objt);
+      arg1 = obj_index[zc->arg1].vnum;
+      arg2 = zc->arg2;
+      arg3 = obj_index[zc->arg3].vnum;
+      comment = obj_proto[zc->arg1].short_description;
       break;
     case 'D':
-      arg1 = world[ZCMD(zone_num, subcmd).arg1].number;
-      arg2 = ZCMD(zone_num, subcmd).arg2;
-      arg3 = ZCMD(zone_num, subcmd).arg3;
-      comment = world[ZCMD(zone_num, subcmd).arg1].name;
+      ZSAVE_CHECK(1, zc->arg1, top_of_world);
+      arg1 = world[zc->arg1].number;
+      arg2 = zc->arg2;
+      arg3 = zc->arg3;
+      comment = world[zc->arg1].name;
       break;
     case 'R':
-      arg1 = world[ZCMD(zone_num, subcmd).arg1].number;
-      arg2 = obj_index[ZCMD(zone_num, subcmd).arg2].vnum;
-      comment = obj_proto[ZCMD(zone_num, subcmd).arg2].short_description;
+      ZSAVE_CHECK(1, zc->arg1, top_of_world);
+      ZSAVE_CHECK(2, zc->arg2, top_of_objt);
+      arg1 = world[zc->arg1].number;
+      arg2 = obj_index[zc->arg2].vnum;
+      comment = obj_proto[zc->arg2].short_description;
       arg3 = -1;
       break;
     case 'T':
-      arg1 = ZCMD(zone_num, subcmd).arg1; /* trigger type */
-      arg2 = trig_index[ZCMD(zone_num, subcmd).arg2]->vnum; /* trigger vnum */
-      arg3 = world[ZCMD(zone_num, subcmd).arg3].number; /* room num */
-      comment = GET_TRIG_NAME(trig_index[real_trigger(arg2)]->proto);
+      /* trig_index[] holds top_of_trigt entries (a count, not a top). */
+      ZSAVE_CHECK(2, zc->arg2, top_of_trigt - 1);
+      ZSAVE_CHECK(3, zc->arg3, top_of_world);
+      arg1 = zc->arg1; /* trigger type */
+      arg2 = trig_index[zc->arg2]->vnum; /* trigger vnum */
+      arg3 = world[zc->arg3].number; /* room num */
+      comment = GET_TRIG_NAME(trig_index[zc->arg2]->proto);
       break;
     case 'V':
-      arg1 = ZCMD(zone_num, subcmd).arg1; /* trigger type */
-      arg2 = ZCMD(zone_num, subcmd).arg2; /* context */
-      arg3 = world[ZCMD(zone_num, subcmd).arg3].number;
+      ZSAVE_CHECK(3, zc->arg3, top_of_world);
+      if (!zc->sarg1 || !zc->sarg2) {
+        TB_ERROR_MSG("olc", "zone-save-sarg", fname,
+                     "zone %d cmd %d 'V' (line %d) has NULL %s; zone not saved",
+                     zone_table[zone_num].number, subcmd, zc->line,
+                     !zc->sarg1 ? "variable name" : "value");
+        goto abort_save;
+      }
+      arg1 = zc->arg1; /* trigger type */
+      arg2 = zc->arg2; /* context */
+      arg3 = world[zc->arg3].number;
       break;
     case '*':
       /* Invalid commands are replaced with '*' - Ignore them. */
@@ -556,12 +594,14 @@ int save_zone(zone_rnum zone_num)
     }
     if (ZCMD(zone_num, subcmd).command != 'V')
       tb_fprintf(zfile, "%c %d %d %d %d \t(%s)\n",
-		ZCMD(zone_num, subcmd).command, ZCMD(zone_num, subcmd).if_flag, arg1, arg2, arg3, comment);
+		ZCMD(zone_num, subcmd).command, ZCMD(zone_num, subcmd).if_flag, arg1, arg2, arg3,
+		comment ? comment : "");
     else
       tb_fprintf(zfile, "%c %d %d %d %d %s %s\n",
               ZCMD(zone_num, subcmd).command, ZCMD(zone_num, subcmd).if_flag, arg1, arg2, arg3,
               ZCMD(zone_num, subcmd).sarg1, ZCMD(zone_num, subcmd).sarg2);
   }
+#undef ZSAVE_CHECK
   tb_fputs("S\n$\n", zfile);
   {
     int flush_ok = tb_fflush_checked(zfile, fname);
@@ -579,6 +619,13 @@ int save_zone(zone_rnum zone_num)
   if (in_save_list(zone_table[zone_num].number, SL_ZON))
     remove_from_save_list(zone_table[zone_num].number, SL_ZON);
   return TRUE;
+
+abort_save:
+  /* Already reported at the failing command; keep the previous .zon. */
+  tb_fclose(zfile);
+  if (remove(fname) != 0 && errno != ENOENT)
+    TB_REPORT_ERRNO("remove", fname);
+  return FALSE;
 }
 
 /* Some common code to count the number of comands in the list. */
