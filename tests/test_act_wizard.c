@@ -575,6 +575,26 @@ static void test_show_player_and_last_bad_sex_class_are_reported(void)
   TEST_ASSERT_NOT_NULL(strstr(sent, "(female) [ 1 Cl]"));
 }
 
+/* A description zcheck accepts: indented, >= 80 chars, short lines. */
+static char good_desc[] =
+  "   This is a properly formatted room description that is long enough\r\n"
+  "to pass every zcheck test for rooms.\r\n";
+
+/* G1-03: the house/OLC flag finding never set found, so its text was not
+ * printed for its own room and was carried into the next room's report;
+ * after enough such rooms the open-coded append wrapped its size. */
+static void test_zcheck_room_flag_finding_is_reported_for_its_room(void)
+{
+  rooms[0].description = good_desc;
+  rooms[1].description = good_desc;
+  rooms[0].name = (char *)"Housed";
+  SET_BIT_AR(rooms[0].room_flags, ROOM_HOUSE);
+  RUN_CMD(do_zcheck, &imm, "30");
+  TEST_ASSERT_NOT_NULL(strstr(sent, "[ 3000] Housed"));
+  TEST_ASSERT_NOT_NULL(strstr(sent, "illegal affection bits set ( HOUSE"));
+  TEST_ASSERT_EQUAL_INT(0, captured_errors);
+}
+
 int main(void)
 {
   /* basic_mud_log()/mudlog() are the real utils.c ones; keep them quiet. */
@@ -590,6 +610,7 @@ int main(void)
   RUN_TEST(test_stat_affect_bad_location_is_reported);
   RUN_TEST(test_stat_room_bad_zone_command_args_are_reported);
   RUN_TEST(test_show_player_and_last_bad_sex_class_are_reported);
+  RUN_TEST(test_zcheck_room_flag_finding_is_reported_for_its_room);
   {
     int failures = UNITY_END();
     if (logfile)

@@ -3827,6 +3827,23 @@ static const int offlimit_zones[] = {0,12,13,14,-1};  /*what zones can no room c
 #define MIN_ROOM_DESC_LENGTH   80       /* at least one line - set to 0 to not care. */
 #define MAX_COLOUMN_WIDTH      80       /* at most 80 chars per line */
 
+/** Send one zcheck entity report to ch. If the report filled its buffer,
+ * the tail is missing: say so in game and log zcheck-truncate with the
+ * entity kind and vnum and the zone vnum. */
+static void zcheck_send(struct char_data *ch, const struct tb_buf *report,
+                        const char *kind, int vnum, zone_rnum zrnum)
+{
+  send_to_char(ch, "%s", report->data);
+  if (tb_buf_truncated(report)) {
+    TB_WARN_MSG("act", "zcheck-truncate", kind,
+                "zone vnum %d %s vnum %d: report truncated at %zu bytes",
+                zone_table[zrnum].number, kind, vnum, report->capacity);
+    send_to_char(ch, "*** report truncated ***\r\n");
+  }
+}
+#define ZCHECK_SEND(ch, report, kind, vnum, zrnum) \
+  zcheck_send((ch), &(report), (kind), (vnum), (zrnum))
+
 ACMD (do_zcheck)
 {
   zone_rnum zrnum;
@@ -3836,16 +3853,22 @@ ACMD (do_zcheck)
   int ac=0;
   int affs=0, tohit, todam, value;
   int i = 0, j = 0, k = 0, l = 0, m = 0, found = 0; /* found is used as a 'send now' flag*/
-  char buf[MAX_STRING_LENGTH];
+  char arg[MAX_INPUT_LENGTH];
+  /* One entity's findings. tb_buf keeps every append inside storage; the
+   * open-coded 'len += snprintf' it replaces wrapped sizeof - len once a
+   * report grew past the buffer (G1-03). */
+  char storage[MAX_STRING_LENGTH];
+  struct tb_buf report;
   float avg_dam;
-  size_t len = 0;
   struct extra_descr_data *ext, *ext2;
-  one_argument(argument, buf);
 
-  if (!is_number(buf) || !strcmp(buf, "."))
+  tb_buf_init(&report, storage, sizeof(storage));
+  one_argument(argument, arg);
+
+  if (!is_number(arg) || !strcmp(arg, "."))
     zrnum = world[IN_ROOM(ch)].zone;
   else
-    zrnum = real_zone(tb_parse_int_or_zero(buf));
+    zrnum = real_zone(tb_parse_int_or_zero(arg));
 
   if (zrnum == NOWHERE) {
     send_to_char(ch, "Check what zone ?\r\n");
@@ -3861,45 +3884,45 @@ ACMD (do_zcheck)
       if (real_zone_by_thing(mob_index[i].vnum) == zrnum) {  /*is mob in this zone?*/
         mob = &mob_proto[i];
         if (!strcmp(mob->player.name, "mob unfinished") && (found=1))
-          len += snprintf(buf + len, sizeof(buf) - len,
+          tb_buf_appendf(&report,
                           "- Alias hasn't been set.\r\n");
 
         if (!strcmp(mob->player.short_descr, "the unfinished mob") && (found=1))
-          len += snprintf(buf + len, sizeof(buf) - len,
+          tb_buf_appendf(&report,
                           "- Short description hasn't been set.\r\n");
 
         if (!strncmp(mob->player.long_descr, "An unfinished mob stands here.", 30) && (found=1))
-          len += snprintf(buf + len, sizeof(buf) - len,
+          tb_buf_appendf(&report,
                           "- Long description hasn't been set.\r\n");
 
         if (mob->player.description && *mob->player.description) {
           if (!strncmp(mob->player.description, "It looks unfinished.", 20) && (found=1))
-            len += snprintf(buf + len, sizeof(buf) - len,
+            tb_buf_appendf(&report,
                             "- Description hasn't been set.\r\n");
           else if (strncmp(mob->player.description, "   ", 3) && (found=1))
-            len += snprintf(buf + len, sizeof(buf) - len,
+            tb_buf_appendf(&report,
                             "- Description hasn't been formatted. (/fi)\r\n");
         }
 
         if (GET_LEVEL(mob)>MAX_LEVEL_ALLOWED && (found=1))
-          len += snprintf(buf + len, sizeof(buf) - len,
+          tb_buf_appendf(&report,
                           "- Is level %d (limit: 1-%d)\r\n",
                           GET_LEVEL(mob), MAX_LEVEL_ALLOWED);
 
         if (GET_DAMROLL(mob)>MAX_DAMROLL_ALLOWED && (found=1))
-          len += snprintf(buf + len, sizeof(buf) - len,
+          tb_buf_appendf(&report,
                           "- Damroll of %d is too high (limit: %d)\r\n",
                           GET_DAMROLL(mob), MAX_DAMROLL_ALLOWED);
 
         if (GET_HITROLL(mob)>MAX_HITROLL_ALLOWED && (found=1))
-          len += snprintf(buf + len, sizeof(buf) - len,
+          tb_buf_appendf(&report,
                           "- Hitroll of %d is too high (limit: %d)\r\n",
                           GET_HITROLL(mob), MAX_HITROLL_ALLOWED);
 
         /* avg. dam including damroll per round of combat */
         avg_dam = (((mob->mob_specials.damsizedice / 2.0) * mob->mob_specials.damnodice)+GET_DAMROLL(mob));
         if (avg_dam>MAX_MOB_DAM_ALLOWED && (found=1))
-          len += snprintf(buf + len, sizeof(buf) - len,
+          tb_buf_appendf(&report,
                           "- average damage of %4.1f is too high (limit: %d)\r\n",
                           avg_dam, MAX_MOB_DAM_ALLOWED);
 
@@ -3907,36 +3930,36 @@ ACMD (do_zcheck)
             mob->mob_specials.damnodice == 1 &&
             GET_LEVEL(mob) == 0 &&
             (found=1))
-          len += snprintf(buf + len, sizeof(buf) - len,
+          tb_buf_appendf(&report,
                           "- Needs to be fixed - %sAutogenerate!%s\r\n", CCYEL(ch, C_NRM), CCNRM(ch, C_NRM));
 
         if (MOB_FLAGGED(mob, MOB_AGGRESSIVE) && (MOB_FLAGGED(mob, MOB_AGGR_GOOD) || MOB_FLAGGED(mob, MOB_AGGR_EVIL) || MOB_FLAGGED(mob, MOB_AGGR_NEUTRAL)) && (found=1))
-	 len += snprintf(buf + len, sizeof(buf) - len,
+	 tb_buf_appendf(&report,
           "- Both aggresive and agressive to align.\r\n");
 
         if ((GET_GOLD(mob) > MAX_MOB_GOLD_ALLOWED) && (found=1))
-          len += snprintf(buf + len, sizeof(buf) - len,
+          tb_buf_appendf(&report,
                           "- Set to %d Gold (limit : %d).\r\n",
                                   GET_GOLD(mob),
                                   MAX_MOB_GOLD_ALLOWED);
 
         if (GET_EXP(mob)>MAX_EXP_ALLOWED && (found=1))
-          len += snprintf(buf + len, sizeof(buf) - len,
+          tb_buf_appendf(&report,
                           "- Has %d experience (limit: %d)\r\n",
                               GET_EXP(mob), MAX_EXP_ALLOWED);
         if ((AFF_FLAGGED(mob, AFF_CHARM) || AFF_FLAGGED(mob, AFF_POISON)) && (found = 1))
-	  len += snprintf(buf + len, sizeof(buf) - len,
+	  tb_buf_appendf(&report,
                           "- Has illegal affection bits set (%s %s)\r\n",
                               AFF_FLAGGED(mob, AFF_CHARM) ? "CHARM" : "",
                               AFF_FLAGGED(mob, AFF_POISON) ? "POISON" : "");
 
 
         if (!MOB_FLAGGED(mob, MOB_SENTINEL) && !MOB_FLAGGED(mob, MOB_STAY_ZONE) && (found = 1))
-          len += snprintf(buf + len, sizeof(buf) - len,
+          tb_buf_appendf(&report,
                             "- Neither SENTINEL nor STAY_ZONE bits set.\r\n");
 
         if (MOB_FLAGGED(mob, MOB_SPEC) && (found = 1))
-          tb_snprintf(buf + len, sizeof(buf) - len,
+          tb_buf_appendf(&report,
                             "- SPEC flag needs to be removed.\r\n");
 
         /* Additional mob checks.*/
@@ -3946,12 +3969,11 @@ ACMD (do_zcheck)
                   CCCYN(ch, C_NRM), GET_MOB_VNUM(mob),
                   CCYEL(ch, C_NRM), GET_NAME(mob),
                   CCNRM(ch, C_NRM));
-          send_to_char(ch, "%s", buf);
+          ZCHECK_SEND(ch, report, "mob", GET_MOB_VNUM(mob), zrnum);
         }
         /* reset buffers and found flag */
-        strlcpy(buf, "", sizeof(buf));
+        tb_buf_init(&report, storage, sizeof(storage));
         found = 0;
-        len = 0;
       }   /* mob is in zone */
     }  /* check mobs */
 
@@ -3963,18 +3985,18 @@ ACMD (do_zcheck)
       switch (GET_OBJ_TYPE(obj)) {
         case ITEM_MONEY:
           if ((value = GET_OBJ_VAL(obj, 0))>MAX_OBJ_GOLD_ALLOWED && (found=1))
-            len += snprintf(buf + len, sizeof(buf) - len,
+            tb_buf_appendf(&report,
                             "- Is worth %d (money limit %d coins).\r\n",
                                  value, MAX_OBJ_GOLD_ALLOWED);
           break;
         case ITEM_WEAPON:
           if (!VALID_ATTACK_TYPE(GET_OBJ_VAL(obj, 3)) && (found=1))
-            len += snprintf(buf + len, sizeof(buf) - len,
+            tb_buf_appendf(&report,
                             "- has out of range attack type %d.\r\n",
                                  GET_OBJ_VAL(obj, 3));
 
           if (GET_OBJ_AVG_DAM(obj)>MAX_DAM_ALLOWED && (found=1))
-            len += snprintf(buf + len, sizeof(buf) - len,
+            tb_buf_appendf(&report,
                             "- Damroll is %2.1f (limit %d)\r\n",
                                  GET_OBJ_AVG_DAM(obj), MAX_DAM_ALLOWED);
           break;
@@ -3982,7 +4004,7 @@ ACMD (do_zcheck)
           ac=GET_OBJ_VAL(obj,0);
           for (j=0; j<TOTAL_WEAR_CHECKS;j++) {
             if (CAN_WEAR(obj,zarmor[j].bitvector) && (ac>zarmor[j].ac_allowed) && (found=1))
-              len += snprintf(buf + len, sizeof(buf) - len,
+              tb_buf_appendf(&report,
                                    "- Has AC %d (%s limit is %d)\r\n",
                                    ac, zarmor[j].message, zarmor[j].ac_allowed);
           }
@@ -3993,32 +4015,32 @@ ACMD (do_zcheck)
       if (!CAN_WEAR(obj, ITEM_WEAR_TAKE)) {
         if ((GET_OBJ_COST(obj) || (GET_OBJ_WEIGHT(obj) && GET_OBJ_TYPE(obj) != ITEM_FOUNTAIN) ||
            GET_OBJ_RENT(obj)) && (found = 1))
-          len += snprintf(buf + len, sizeof(buf) - len,
+          tb_buf_appendf(&report,
                           "- is NO_TAKE, but has cost (%d) weight (%d) or rent (%d) set.\r\n",
                           GET_OBJ_COST(obj), GET_OBJ_WEIGHT(obj), GET_OBJ_RENT(obj));
       } else {
         if (GET_OBJ_COST(obj) == 0 && (found=1) && GET_OBJ_TYPE(obj) != ITEM_TRASH)
-          len += snprintf(buf + len, sizeof(buf) - len,
+          tb_buf_appendf(&report,
                           "- has 0 cost (min. 1).\r\n");
 
         if (GET_OBJ_WEIGHT(obj) == 0 && (found=1))
-          len += snprintf(buf + len, sizeof(buf) - len,
+          tb_buf_appendf(&report,
                           "- has 0 weight (min. 1).\r\n");
 
         if (GET_OBJ_WEIGHT(obj) > MAX_OBJ_WEIGHT && (found=1))
-          len += snprintf(buf + len, sizeof(buf) - len,
+          tb_buf_appendf(&report,
                           "  Weight is too high: %d (limit  %d).\r\n",
                           GET_OBJ_WEIGHT(obj), MAX_OBJ_WEIGHT);
 
 
         if (GET_OBJ_COST(obj) > MAX_OBJ_COST && (found=1))
-          len += snprintf(buf + len, sizeof(buf) - len,
+          tb_buf_appendf(&report,
                           "- has %d cost (max %d).\r\n",
                           GET_OBJ_COST(obj), MAX_OBJ_COST);
       }
 
       if (GET_OBJ_LEVEL(obj) > LVL_IMMORT-1 && (found=1))
-        len += snprintf(buf + len, sizeof(buf) - len,
+        tb_buf_appendf(&report,
                           "- has min level set to %d (max %d).\r\n",
                           GET_OBJ_LEVEL(obj), LVL_IMMORT-1);
 
@@ -4027,7 +4049,7 @@ ACMD (do_zcheck)
           GET_OBJ_TYPE(obj) != ITEM_WAND &&
           GET_OBJ_TYPE(obj) != ITEM_SCROLL &&
           GET_OBJ_TYPE(obj) != ITEM_NOTE && (found=1))
-        len += snprintf(buf + len, sizeof(buf) - len,
+        tb_buf_appendf(&report,
                           "- has action_description set, but is inappropriate type.\r\n");
 
       /*first check for over-all affections*/
@@ -4035,7 +4057,7 @@ ACMD (do_zcheck)
         if (obj->affected[j].modifier) affs++;
 
       if (affs>MAX_AFFECTS_ALLOWED && (found=1))
-        len += snprintf(buf + len, sizeof(buf) - len,
+        tb_buf_appendf(&report,
                           "- has %d affects (limit %d).\r\n",
                              affs, MAX_AFFECTS_ALLOWED);
 
@@ -4045,7 +4067,7 @@ ACMD (do_zcheck)
             (obj->affected[j].modifier > zaffs[(int)obj->affected[j].location].max_aff ||
              obj->affected[j].modifier < zaffs[(int)obj->affected[j].location].min_aff ||
              zaffs[(int)obj->affected[j].location].min_aff == zaffs[(int)obj->affected[j].location].max_aff) && (found=1))
-          len += snprintf(buf + len, sizeof(buf) - len,
+          tb_buf_appendf(&report,
                           "- apply to %s is %d (limit %d - %d).\r\n",
                                zaffs[(int)obj->affected[j].location].message,
                                obj->affected[j].modifier,
@@ -4060,11 +4082,11 @@ ACMD (do_zcheck)
          todam += obj->affected[j].modifier;
      }
      if (abs(todam) > MAX_APPLY_DAMROLL_TOTAL && (found=1))
-       len += snprintf(buf + len, sizeof(buf) - len,
+       tb_buf_appendf(&report,
                        "- total damroll %d out of range (limit +/-%d.\r\n",
                        todam, MAX_APPLY_DAMROLL_TOTAL);
      if (abs(tohit) > MAX_APPLY_HITROLL_TOTAL && (found=1))
-       len += snprintf(buf + len, sizeof(buf) - len,
+       tb_buf_appendf(&report,
                        "- total hitroll %d out of range (limit +/-%d).\r\n",
                        tohit, MAX_APPLY_HITROLL_TOTAL);
 
@@ -4074,15 +4096,14 @@ ACMD (do_zcheck)
          ext2 = ext;
 
      if (ext2 && (found = 1))
-       tb_snprintf(buf + len, sizeof(buf) - len,
+       tb_buf_appendf(&report,
                        "- has unformatted extra description\r\n");
      /* Additional object checks. */
      if (found) {
         send_to_char(ch, "[%5d] %-30s: \r\n", GET_OBJ_VNUM(obj), obj->short_description);
-        send_to_char(ch, "%s", buf);
+        ZCHECK_SEND(ch, report, "obj", GET_OBJ_VNUM(obj), zrnum);
       }
-      strlcpy(buf, "", sizeof(buf));
-      len = 0;
+      tb_buf_init(&report, storage, sizeof(storage));
       found = 0;
     }   /*object is in zone*/
   } /*check objects*/
@@ -4105,14 +4126,14 @@ ACMD (do_zcheck)
 
         for (k=0;offlimit_zones[k] != -1;k++) {
           if (world[exroom].zone == real_zone(offlimit_zones[k]) && (found = 1))
-            len += snprintf(buf + len, sizeof(buf) - len,
+            tb_buf_appendf(&report,
                             "- Exit %s cannot connect to %d (zone off limits).\r\n",
                             dirs[j], world[exroom].number);
         } /* for (k.. */
       } /* cycle directions */
 
-     if (ROOM_FLAGGED(i, ROOM_ATRIUM) || ROOM_FLAGGED(i, ROOM_HOUSE) || ROOM_FLAGGED(i, ROOM_HOUSE_CRASH) || ROOM_FLAGGED(i, ROOM_OLC) || ROOM_FLAGGED(i, ROOM_BFS_MARK))
-         len += snprintf(buf + len, sizeof(buf) - len,
+     if ((ROOM_FLAGGED(i, ROOM_ATRIUM) || ROOM_FLAGGED(i, ROOM_HOUSE) || ROOM_FLAGGED(i, ROOM_HOUSE_CRASH) || ROOM_FLAGGED(i, ROOM_OLC) || ROOM_FLAGGED(i, ROOM_BFS_MARK)) && (found = 1))
+         tb_buf_appendf(&report,
          "- Has illegal affection bits set (%s %s %s %s %s)\r\n",
                             ROOM_FLAGGED(i, ROOM_ATRIUM) ? "ATRIUM" : "",
                             ROOM_FLAGGED(i, ROOM_HOUSE) ? "HOUSE" : "",
@@ -4121,17 +4142,17 @@ ACMD (do_zcheck)
                             ROOM_FLAGGED(i, ROOM_BFS_MARK) ? "*" : "");
 
       if ((MIN_ROOM_DESC_LENGTH) && strlen(world[i].description)<MIN_ROOM_DESC_LENGTH && (found=1))
-        len += snprintf(buf + len, sizeof(buf) - len,
+        tb_buf_appendf(&report,
           "- Room description is too short. (%4.4d of min. %d characters).\r\n",
           (int)strlen(world[i].description), MIN_ROOM_DESC_LENGTH);
 
       if (strncmp(world[i].description, "   ", 3) && (found=1))
-        len += snprintf(buf + len, sizeof(buf) - len,
+        tb_buf_appendf(&report,
                         "- Room description not formatted with indent (/fi in the editor).\r\n");
 
       /* strcspan = size of text in first arg before any character in second arg */
       if ((strcspn(world[i].description, "\r\n")>MAX_COLOUMN_WIDTH) && (found=1))
-        len += snprintf(buf + len, sizeof(buf) - len,
+        tb_buf_appendf(&report,
                         "- Room description not wrapped at %d chars (/fi in the editor).\r\n",
                              MAX_COLOUMN_WIDTH);
 
@@ -4140,17 +4161,17 @@ ACMD (do_zcheck)
          ext2 = ext;
 
      if (ext2 && (found = 1))
-       len += snprintf(buf + len, sizeof(buf) - len,
+       tb_buf_appendf(&report,
                        "- has unformatted extra description\r\n");
 
       if (found) {
         send_to_char(ch, "[%5d] %-30s: \r\n",
                        world[i].number, world[i].name ? world[i].name : "An unnamed room");
-        send_to_char(ch, "%s", buf);
-        strlcpy(buf, "", sizeof(buf));
-        len = 0;
-        found = 0;
+        ZCHECK_SEND(ch, report, "room", world[i].number, zrnum);
       }
+      /* Reset for every room, not only the ones that printed. */
+      tb_buf_init(&report, storage, sizeof(storage));
+      found = 0;
     } /*is room in this zone?*/
   } /*checking rooms*/
 
