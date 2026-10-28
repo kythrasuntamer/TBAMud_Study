@@ -460,12 +460,16 @@ void dg_teleport_all(room_rnum from, room_rnum to);
 #define GET_TRIG_DEPTH(t)         ((t)->depth)
 #define GET_TRIG_LOOPS(t)         ((t)->loops)
 
+/* TRUE when rn indexes a loaded trigger prototype. Needs db.h at the use
+ * site. Evaluates rn several times: pass a plain variable. */
+#define VALID_TRIG_RNUM(rn) \
+  ((rn) != NOTHING && (int)(rn) < top_of_trigt && trig_index[(rn)] != NULL)
+
 /* Trigger vnum for diagnostics, or -1 when there is no trigger or its rnum has
  * no trigger-table entry (never indexes trig_index out of range). Needs db.h
  * at the use site. Evaluates t several times: pass a plain variable. */
 #define DIAG_TRIG_VNUM(t) \
-  (((t) && (t)->nr != NOTHING && (int)(t)->nr < top_of_trigt && \
-    trig_index[(t)->nr]) ? (int)trig_index[(t)->nr]->vnum : -1)
+  (((t) && VALID_TRIG_RNUM((t)->nr)) ? (int)trig_index[(t)->nr]->vnum : -1)
 
 /* player id's: 0 to MOB_ID_BASE - 1
  * mob id's: MOB_ID_BASE to ROOM_ID_BASE - 1

@@ -849,7 +849,7 @@ static EVENTFUNC(trig_wait_event)
                    "trig vnum %d type %d: owner not live on resume; "
                    "trigger ended (%d instances attached)",
                    DIAG_TRIG_VNUM(trig), type,
-                   trig_index[trig->nr]->number);
+                   VALID_TRIG_RNUM(trig->nr) ? trig_index[trig->nr]->number : -1);
       script_log("Trigger VNum %d: restart attempt on unknown entity.",
                  GET_TRIG_VNUM(trig));
       free_varlist(GET_TRIG_VARS(trig));
