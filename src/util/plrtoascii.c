@@ -186,7 +186,7 @@ int convert(char *filename)
 {
   FILE *fl, *outfile, *index_file;
   struct char_file_u_plrtoascii player;
-  char index_name[40], outname[128], bits[127];
+  char index_name[40], outname[128], bits[127] = "0";
   int i, skipped = 0;
   long record = 0;
   struct char_special_data_saved_plrtoascii *csds;
@@ -257,10 +257,6 @@ int convert(char *filename)
       continue;
     }
     printf("writing: %s\n", outname);
-
-    tb_fprintf(index_file, "%ld %s %d 0 %ld\n", 
-	player.char_specials_saved.idnum, bits, player.level,
-	(long)player.last_logon);
 
     if (!(outfile = fopen(outname, "w"))) {
       TB_REPORT_ERRNO("fopen", outname);
@@ -410,6 +406,33 @@ int convert(char *filename)
     tb_fprintf(outfile, "0 0 0 0 0\n");
 
     tb_fclose(outfile);
+
+    /* Index record in the format build_player_index() (players.c) parses:
+     * "id name level flags last", name lowercased, flags as PINDEX_* ascii
+     * letters.  Written only after the record converted, so the index never
+     * names a pfile that does not exist.  The name was validated above
+     * (letters only, terminated) by plr_filename(). */
+    {
+      char index_name_text[MAX_NAME_LENGTH + 1], index_bits[127];
+      bitvector_t index_flags = 0;
+      size_t n;
+
+      for (n = 0; player.name[n] != '\0' && n < sizeof(index_name_text) - 1; n++)
+        index_name_text[n] = LOWER(player.name[n]);
+      index_name_text[n] = '\0';
+
+      if (csds->act & (1L << PLR_DELETED))
+        index_flags |= PINDEX_DELETED;
+      if (csds->act & (1L << PLR_NODELETE))
+        index_flags |= PINDEX_NODELETE;
+      if (csds->act & (1L << PLR_NOWIZLIST))
+        index_flags |= PINDEX_NOWIZLIST;
+      sprintascii(index_bits, index_flags);
+
+      tb_fprintf(index_file, "%ld %s %d %s %ld\n",
+                 player.char_specials_saved.idnum, index_name_text,
+                 (int)player.level, index_bits, (long)player.last_logon);
+    }
   }
 }
 

@@ -203,6 +203,18 @@ def plrtoascii_rejects_path_in_name(tmp):
           "path from the name was written")
 
 
+@test("plrtoascii")
+def plrtoascii_index_names_the_player(tmp):
+    """I2-03: the index line printed an uninitialised buffer as the name."""
+    size = plr_record_size(tmp)
+    rc, out, err = plrtoascii(tmp, plr_record(size, "Alice"),
+                              plr_record(size, "Bob"))
+    check(rc == 0, "rc=%d err=%s" % (rc, err))
+    index = read(os.path.join(tmp, "plrfiles", "index")).splitlines()
+    check(index == ["0 alice 0 0 0", "0 bob 0 0 0"],
+          "index is not 'id name level flags last':\n%r" % index)
+
+
 def main(argv):
     for arg in argv[1:]:
         name, _, path = arg.partition("=")
