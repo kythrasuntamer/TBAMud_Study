@@ -68,7 +68,11 @@ void tb_error_log_at(const char *severity, const char *subsystem,
 /* Stable identity of a character in diagnostics: mob vnum for NPCs, player
  * idnum for players. Use as a pair, e.g.
  *   TB_ERROR_MSG(..., "speaker " DIAG_CHAR_FMT " ...", DIAG_CHAR(ch));
- * DIAG_CHAR evaluates ch several times: pass a plain variable. */
+ * DIAG_CHAR evaluates ch several times: pass a plain variable.
+ * Limits: ch must be non-NULL (test for NULL first and log "(null)"
+ * yourself); an NPC with an invalid rnum prints "mob vnum 65535" (NOBODY);
+ * the DG UID is not included, so add char_script_id() where a script's
+ * view of the entity matters. */
 #define DIAG_CHAR_FMT "%s %ld"
 #define DIAG_CHAR(ch) \
   (IS_NPC(ch) ? "mob vnum" : "player idnum"), \
@@ -79,6 +83,18 @@ void tb_error_log_at(const char *severity, const char *subsystem,
  * consuming it so diagnostics can identify the physical line, logical record,
  * and field being parsed.  Context storage is fixed-size and allocation-free
  * so it remains usable on error paths.
+ *
+ * Usage contract:
+ *  - A loader calls tb_parse_context_begin() after fopen() and
+ *    tb_parse_context_end() *before* fclose(). Slots are keyed by the FILE *
+ *    address, so a context left behind would be inherited by the next
+ *    stream that malloc places at the same address.
+ *  - get_line() counts physical lines through tb_parse_context_note_line();
+ *    without a begin() the count stays 0 and get_line's line-too-long error
+ *    says "no parse context".
+ *  - There are TB_PARSE_CONTEXT_COUNT (16) slots. When all are in use,
+ *    begin() does nothing and later calls on that stream are no-ops, so
+ *    diagnostics fall back to "(parser context unavailable)".
  */
 void tb_parse_context_begin(FILE *stream, const char *resource, const char *parser);
 void tb_parse_context_end(FILE *stream);
@@ -348,6 +364,12 @@ static inline int circle_upper(int c)
 #define AN(string) (strchr("aeiouAEIOU", *(string)) ? "an" : "a")
 
 /** A calloc based memory allocation macro.
+ * Contract: number is converted to size_t once; a count of 0, or one whose
+ * byte size overflows, is reported as a FATAL allocation-size error and the
+ * server aborts (unlike calloc(0), which may succeed). Allocation failure is
+ * also FATAL. Both reports carry the caller's file and line through
+ * tb_report_domain_error_at(), but not the breadcrumb trail. result is
+ * assigned and then tested, so it must be an lvalue without side effects.
  * @param result Pointer to created memory.
  * @param type The type of memory (int, struct char_data, etc.).
  * @param number How many of type to make. */
@@ -361,6 +383,10 @@ static inline int circle_upper(int c)
 
 /** A realloc based memory reallocation macro. Reminder: realloc can reduce
  * the size of an array as well as increase it.
+ * Contract: same zero/overflow/failure rules as CREATE (FATAL, then abort).
+ * On failure realloc leaves the original block intact, but the macro aborts
+ * regardless, so callers never see a NULL result. result is evaluated
+ * twice: pass a plain lvalue.
  * @param result Pointer to created memory.
  * @param type The type of memory (int, struct char_data, etc.).
  * @param number How many of type to make. */
@@ -399,6 +425,9 @@ static inline int circle_upper(int c)
 /* Connect 'link' to the end of a double-linked list
  * The new item becomes the last in the linked list, and the last
  * pointer is updated.
+ * @pre link is not on any list: LINK overwrites link->next/prev without
+ * looking, so linking an already-linked node corrupts both lists.
+ * Every argument is evaluated several times: pass plain lvalues.
  * @param link  Pointer to item to remove from the list.
  * @param first Pointer to the first item of the linked list.
  * @param last  Pointer to the last item of the linked list.
@@ -420,6 +449,10 @@ do                                                              \
 /* Remove 'link' from a double-linked list
  * @post  item is removed from the list, but remains in memory, and must
    be free'd after unlinking.
+ * @pre link is on the list named by first/last. UNLINK does not check this,
+ * and it does not clear link->next/prev afterwards, so a second UNLINK of
+ * the same node rewrites its old neighbours. Every argument is evaluated
+ * several times: pass plain lvalues.
  * @param link  Pointer to item to remove from the list.
  * @param first Pointer to the first item of the linked list.
  * @param last  Pointer to the last item of the linked list.
@@ -440,6 +473,9 @@ do                                                              \
 } while(0)
 
 /* Free a pointer, and log if it was NULL
+ * The NULL report goes through legacy log() with the caller's file and line
+ * but no function name. point is evaluated several times and is set to NULL
+ * afterwards, so it must be a plain lvalue.
  * @param point The pointer to be free'd.
  * */
 #define DISPOSE(point)                                          \
@@ -455,6 +491,8 @@ do                                                              \
 
 /* String Utils */
 /* Allocate memory for a string, and return a pointer
+ * Unlike CREATE this is plain strdup(): it can return NULL on allocation
+ * failure, and point must not be NULL.
  * @param point The string to be copied.
  * */
 #define STRALLOC(point)         (strdup(point))
