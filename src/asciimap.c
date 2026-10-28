@@ -36,6 +36,12 @@
 #define MAX_MAP_SIZE ((CANVAS_WIDTH - 1) / 4)
 #define MAX_MAP      CANVAS_WIDTH
 
+/* TRUE if (x, y) is a cell of map[][]. Evaluates x and y once each. */
+#define VALID_MAP_COORD(x, y) ((unsigned)(x) < MAX_MAP && (unsigned)(y) < MAX_MAP)
+/* Largest step MapArea takes from a cell it expands on the normal map
+ * (offsets[], ±2; offsets_worldmap[] is ±1). */
+#define MAP_MAX_STEP 2
+
 #define MAX_MAP_DIR 10
 #define MAX_MAP_FOLLOW 10
 
@@ -228,8 +234,19 @@ static void MapArea(room_rnum room, struct char_data *ch, int x, int y, int min,
 {
   room_rnum prospect_room;
   struct room_direction_data *pexit;
-  int door, ew_size=0, ns_size=0, x_exit_pos=0, y_exit_pos=0;
+  int door, ew_size=0, ns_size=0, x_exit_pos=0, y_exit_pos=0, step;
   sh_int prospect_xpos, prospect_ypos;
+
+  /* Invariant: callers keep [min, max] at least MAP_MAX_STEP cells inside
+   * the grid, so every cell reached (x, and x + offset for an expanded
+   * cell) is in map[][]. min/max derive from the minimap size, which comes
+   * from the config file and cedit; check rather than trust it. */
+  if (!VALID_MAP_COORD(x, y)) {
+    TB_ERROR_MSG("map", "map-bounds", "map",
+                 DIAG_CHAR_FMT " cell (%d,%d) outside %dx%d grid (min %d max %d)",
+                 DIAG_CHAR(ch), x, y, MAX_MAP, MAX_MAP, min, max);
+    return;
+  }
 
   if (map[x][y] < 0)
     return; /* this is a door */
@@ -241,6 +258,19 @@ static void MapArea(room_rnum room, struct char_data *ch, int x, int y, int min,
     map[x][y] = SECT(room);
 
   if ( (x < min) || ( y < min) || ( x > max ) || ( y > max) ) return;
+
+  /* Expanding probes and writes cells up to one room step away: 1 cell on
+   * the world map, MAP_MAX_STEP on the normal map. (The virtual-exit branch
+   * below also uses offsets[], but ns_size/ew_size are always 0 here, so it
+   * never runs.) */
+  step = worldmap ? 1 : MAP_MAX_STEP;
+  if (!VALID_MAP_COORD(x - step, y - step) ||
+      !VALID_MAP_COORD(x + step, y + step)) {
+    TB_ERROR_MSG("map", "map-bounds", "map",
+                 DIAG_CHAR_FMT " cell (%d,%d) too close to the %dx%d grid edge to expand (min %d max %d)",
+                 DIAG_CHAR(ch), x, y, MAX_MAP, MAX_MAP, min, max);
+    return;
+  }
 
   /* Check for exits */
   for ( door = 0; door < MAX_MAP_DIR; door++ ) {
@@ -571,10 +601,24 @@ void str_and_map(char *str, struct char_data *ch, room_vnum target_room ) {
     return;
   }
 
-  size = CONFIG_MINIMAP_SIZE;
+  /* CONFIG_MINIMAP_SIZE comes from the config file (any int) or cedit.
+   * Clamp it as perform_map() does and say so: an unclamped size let
+   * MapArea read and write outside map[][]. */
+  size = URANGE(1, CONFIG_MINIMAP_SIZE, MAX_MAP_SIZE);
+  if (size != CONFIG_MINIMAP_SIZE)
+    TB_WARN_MSG("map", "minimap-size-clamp", "config",
+                "minimap size %d outside [1,%d]; using %d",
+                CONFIG_MINIMAP_SIZE, MAX_MAP_SIZE, size);
   centre = MAX_MAP/2;
-  min = centre - 2*size;
-  max = centre + 2*size;
+  /* Same reach as perform_map(): rooms are 1 cell apart on the world map
+   * and 2 cells apart (a door between) on the normal map. */
+  if (worldmap) {
+    min = centre - 2*size;
+    max = centre + 2*size;
+  } else {
+    min = centre - size;
+    max = centre + size;
+  }
 
   for (x = 0; x < MAX_MAP; ++x)
     for (y = 0; y < MAX_MAP; ++y)
