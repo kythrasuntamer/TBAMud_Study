@@ -41,7 +41,8 @@ static void load_skills(FILE *fl, struct char_data *ch, const char *filename);
 static void load_quests(FILE *fl, struct char_data *ch);
 static void load_HMVS(struct char_data *ch, const char *line, int mode);
 static void write_aliases_ascii(FILE *file, struct char_data *ch);
-static void read_aliases_ascii(FILE *file, struct char_data *ch, int count);
+static void read_aliases_ascii(FILE *file, struct char_data *ch, int count,
+                               const char *filename);
 
 static int parse_pfile_int_or_zero(const char *value, const char *filename, const char *tag)
 {
@@ -677,7 +678,7 @@ int load_char(const char *name, struct char_data *ch)
 	}
 	if (!strcmp(tag, "Affs")) 	load_affects(fl, ch);
         else if (!strcmp(tag, "Alin"))	GET_ALIGNMENT(ch)	= parse_pfile_int_or_zero(line, filename, tag);
-	else if (!strcmp(tag, "Alis"))	read_aliases_ascii(fl, ch, parse_pfile_int_or_zero(line, filename, tag));
+	else if (!strcmp(tag, "Alis"))	read_aliases_ascii(fl, ch, parse_pfile_int_or_zero(line, filename, tag), filename);
 	break;
 
       case 'B':
@@ -1438,13 +1439,29 @@ static void write_aliases_ascii(FILE *file, struct char_data *ch)
                   temp->type);
 }
 
-static void read_aliases_ascii(FILE *file, struct char_data *ch, int count)
+/* Upper bound on the "Alis: <count>" value. The count comes from the file,
+ * and every alias costs three get_line() calls at login. */
+#define PFILE_MAX_ALIASES 1000
+
+/* Read count alias records (alias line, replacement line, type line) that
+ * follow an "Alis: <count>" tag. A record cut off by end of file used to
+ * leave the line buffers uninitialised or holding the previous record, so
+ * an alias was built from garbage or duplicated; it now ends the list with
+ * a pfile-alias error. */
+static void read_aliases_ascii(FILE *file, struct char_data *ch, int count,
+                               const char *filename)
 {
   int i;
 
   if (count == 0) {
     GET_ALIASES(ch) = NULL;
     return; /* No aliases in the list. */
+  }
+  if (count < 0 || count > PFILE_MAX_ALIASES) {
+    TB_ERROR_MSG("player", "pfile-alias", filename,
+                 "player idnum %ld alias count %d outside 1..%d; aliases not loaded",
+                 GET_IDNUM(ch), count, PFILE_MAX_ALIASES);
+    return;
   }
 
   /* This code goes both ways for the old format (where alias and replacement start at the
@@ -1453,16 +1470,15 @@ static void read_aliases_ascii(FILE *file, struct char_data *ch, int count)
   for (i = 0; i < count; i++) {
     char abuf[MAX_INPUT_LENGTH+1], rbuf[MAX_INPUT_LENGTH+1], tbuf[MAX_INPUT_LENGTH];
 
-    /* Read the aliased command. */
-    get_line(file, abuf);
-
-    /* Read the replacement. This needs to have a space prepended before placing in
-     * the in-memory struct. The space may be there already, but we can't be certain! */
+    /* Read the aliased command, then the replacement (which needs a space
+     * prepended in memory; it may be there already), then the type. */
     rbuf[0] = ' ';
-    get_line(file, rbuf+1);
-
-    /* read the type */
-    get_line(file, tbuf);
+    if (!get_line(file, abuf) || !get_line(file, rbuf+1) || !get_line(file, tbuf)) {
+      TB_ERROR_MSG("player", "pfile-alias", filename,
+                   "player idnum %ld alias %d of %d truncated by end of file",
+                   GET_IDNUM(ch), i + 1, count);
+      return;
+    }
 
     if (abuf[0] && rbuf[1] && *tbuf) {
       struct alias_data *temp;
@@ -1472,6 +1488,9 @@ static void read_aliases_ascii(FILE *file, struct char_data *ch, int count)
       temp->type        = tb_parse_int_or_zero(tbuf);
       temp->next        = GET_ALIASES(ch);
       GET_ALIASES(ch)   = temp;
-    }
+    } else
+      TB_WARN_MSG("player", "pfile-alias", filename,
+                  "player idnum %ld alias %d of %d has an empty part; skipped",
+                  GET_IDNUM(ch), i + 1, count);
   }
 }

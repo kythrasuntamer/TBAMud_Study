@@ -400,6 +400,35 @@ static void test_wrong_flag_word_count_is_reported(void)
   TEST_ASSERT_EQUAL_STRING("pfile-flags", tb_captured_operation);
 }
 
+/* B2-18: get_line() results were ignored, so a short alias list reused
+ * the previous record's buffers (three copies of "foo") or read
+ * uninitialised ones. */
+static void test_truncated_alias_list_is_reported(void)
+{
+  int n = 0;
+  struct alias_data *a;
+
+  write_pfile("tester", "Id  : 4242\nAlis: 3\n foo\n bar\n0\n");
+
+  TEST_ASSERT_EQUAL_INT(0, load_char("tester", &player));
+
+  for (a = player_specials.aliases; a; a = a->next)
+    n++;
+  TEST_ASSERT_EQUAL_INT(1, n);
+  TEST_ASSERT_EQUAL_STRING("foo", player_specials.aliases->alias);
+  TEST_ASSERT_EQUAL_STRING("pfile-alias", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "alias 2 of 3"));
+}
+
+static void test_huge_alias_count_is_rejected(void)
+{
+  write_pfile("tester", "Id  : 4242\nAlis: 2000000000\n");
+
+  TEST_ASSERT_EQUAL_INT(0, load_char("tester", &player));
+  TEST_ASSERT_NULL(player_specials.aliases);
+  TEST_ASSERT_EQUAL_STRING("pfile-alias", tb_captured_operation);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -416,6 +445,8 @@ int main(void)
   RUN_TEST(test_out_of_range_class_level_sex_skill);
   RUN_TEST(test_legacy_pref_uses_its_own_value);
   RUN_TEST(test_wrong_flag_word_count_is_reported);
+  RUN_TEST(test_truncated_alias_list_is_reported);
+  RUN_TEST(test_huge_alias_count_is_rejected);
   (void)rmdir(scratch_dir);
   return UNITY_END();
 }
