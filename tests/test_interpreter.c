@@ -15,6 +15,7 @@
 #include "utils.h"
 #include "comm.h"
 #include "interpreter.h"
+#include "dg_scripts.h"
 
 extern FILE *logfile;
 
@@ -696,6 +697,67 @@ static void test_sort_commands_twice_does_not_leak(void)
 }
 
 /* =========================================================
+ * command_interpreter: switched-IMPL script commands (finding A2-07)
+ *
+ * An NPC has a descriptor only while an immortal is switched into it, and
+ * do_switch sets desc->original. The IMPL check read
+ * GET_LEVEL(ch->desc->original) without testing original.
+ * ========================================================= */
+
+/* mecho is only in the mob script table, so a call means the switched-IMPL
+ * path ran. Overrides the weak stub in test_stubs.c. */
+static int mecho_calls;
+ACMD(do_mecho)
+{
+  (void)ch; (void)argument; (void)cmd; (void)subcmd;
+  mecho_calls++;
+}
+
+/* An NPC with a descriptor whose original is @p original types "mecho". */
+static void run_switched_mecho(struct char_data *original)
+{
+  struct char_data mob;
+  struct descriptor_data d;
+  char line[] = "mecho hello";
+
+  memset(&mob, 0, sizeof(mob));
+  memset(&d, 0, sizeof(d));
+  SET_BIT_AR(MOB_FLAGS(&mob), MOB_ISNPC);
+  mob.nr = NOBODY;
+  GET_POS(&mob) = POS_STANDING;
+  mob.desc = &d;
+  d.character = &mob;
+  d.original = original;
+  d.desc_num = 5;
+  mecho_calls = 0;
+  complete_cmd_info = (struct command_info *) cmd_info;
+  command_interpreter(&mob, line);
+  complete_cmd_info = NULL;
+}
+
+void test_command_interpreter_switched_impl_runs_script_commands(void)
+{
+  struct char_data imm;
+  struct player_special_data specials;
+
+  memset(&imm, 0, sizeof(imm));
+  memset(&specials, 0, sizeof(specials));
+  imm.player_specials = &specials;
+  GET_LEVEL(&imm) = LVL_IMPL;
+  run_switched_mecho(&imm);
+  TEST_ASSERT_EQUAL_INT(1, mecho_calls);
+  TEST_ASSERT_EQUAL_INT(0, captured_errors);
+}
+
+void test_command_interpreter_npc_descriptor_without_original_is_reported(void)
+{
+  run_switched_mecho(NULL);
+  TEST_ASSERT_EQUAL_INT(0, mecho_calls);
+  TEST_ASSERT_EQUAL_INT(1, captured_errors);
+  TEST_ASSERT_EQUAL_STRING("switch-original", captured_operation);
+}
+
+/* =========================================================
  * main
  * ========================================================= */
 
@@ -760,6 +822,10 @@ int main(void)
     RUN_TEST(test_new_char_dupe_check_in_game_twin_closes_without_null_deref);
 
     RUN_TEST(test_sort_commands_twice_does_not_leak);
+
+    /* command_interpreter switched-IMPL check */
+    RUN_TEST(test_command_interpreter_switched_impl_runs_script_commands);
+    RUN_TEST(test_command_interpreter_npc_descriptor_without_original_is_reported);
 
     return UNITY_END();
 }

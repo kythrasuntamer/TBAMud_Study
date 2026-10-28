@@ -617,11 +617,22 @@ void command_interpreter(struct char_data *ch, char *argument)
     if (cont) return;                                    /* yes, command trigger took over */
   }
 
-  /* Allow IMPLs to switch into mobs to test the commands. */
-   if (IS_NPC(ch) && ch->desc && GET_LEVEL(ch->desc->original) >= LVL_IMPL) {
-     if (script_command_interpreter(ch, argument))
-       return;
-   }
+  /* Allow IMPLs to switch into mobs to test the commands. Invariant
+   * (internal): an NPC has a descriptor only while an immortal is switched
+   * into it, and do_switch sets desc->original to that immortal. An NPC
+   * descriptor with no original breaks it; report it (every command,
+   * until fixed) instead of dereferencing NULL, and give that NPC no
+   * IMPL-only script commands. */
+  if (IS_NPC(ch) && ch->desc) {
+    if (!ch->desc->original)
+      TB_ERROR_MSG("interpreter", "switch-original", "command_interpreter",
+                   DIAG_CHAR_FMT " has descriptor %d but no original "
+                   "character; IMPL script commands skipped",
+                   DIAG_CHAR(ch), ch->desc->desc_num);
+    else if (GET_LEVEL(ch->desc->original) >= LVL_IMPL &&
+             script_command_interpreter(ch, argument))
+      return;
+  }
 
   for (length = strlen(arg), cmd = 0; *complete_cmd_info[cmd].command != '\n'; cmd++)
     if(complete_cmd_info[cmd].command_pointer != do_action &&
