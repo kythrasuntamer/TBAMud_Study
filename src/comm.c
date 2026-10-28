@@ -8,6 +8,41 @@
 *  CircleMUD is based on DikuMUD, Copyright (C) 1990, 1991.               *
 **************************************************************************/
 
+/**
+ * @file comm.c
+ * Network front end and main loop: sockets, descriptors, per-connection
+ * input and output buffering, the act() message formatter, signals and
+ * copyover recovery.
+ *
+ * Who controls the input:
+ *  - Socket bytes (process_input(), via ProtocolInput()) come from remote,
+ *    unauthenticated peers and are fully untrusted. So are reverse-DNS host
+ *    names (new_descriptor()); log the numeric address instead.
+ *  - Output text (write_to_output(), send_to_*(), act()) is built from
+ *    builder data (room/object/mob strings), DG script text and player
+ *    text (say, emote, '@' colour and unicode codes), all untrusted as
+ *    format *arguments*; formats themselves are always literals.
+ *  - copyover.dat and the command line come from the previous server
+ *    process and the operator: checked, but not hostile.
+ *
+ * Ownership and lifetime:
+ *  - A descriptor_data is created by new_descriptor() (or
+ *    copyover_recover()) and freed only by close_socket(), which game_loop()
+ *    calls for the descriptor it is processing or for descriptors marked
+ *    CON_CLOSE/CON_DISCONNECT. Nothing may use a descriptor after
+ *    close_socket() returns.
+ *  - Large output buffers belong to the descriptor while it is in the large
+ *    state and are returned to the file-static bufpool afterwards (see the
+ *    output buffer state machine above outbuf_reset_small()).
+ *  - Characters are extracted at the end of the pulse, so a char_data
+ *    pointer stays allocated for the rest of the current pulse, but act
+ *    triggers can move it to another room at any time (see act_body()).
+ *
+ * Diagnostics use TB_ERROR_MSG / TB_WARN_MSG with DIAG_DESC (descriptor)
+ * and DIAG_CHAR (character) identities; conditions a peer can trigger at
+ * will use the rate-limited TB_WARN_EVERY / TB_ERROR_EVERY (comm.h).
+ */
+
 #include "conf.h"
 #include "sysdep.h"
 
@@ -456,6 +491,17 @@ int main(int argc, char **argv)
   return (0);
 }
 
+/**
+ * copyover.dat format (written by do_copyover() in act.wizard.c just before
+ * it exec()s the new binary; read once here, then unlinked):
+ *   line 1:   boot time (decimal time_t)
+ *   then one line per player: "<fd> <pref> <name> <host> <guiopt>"
+ *   terminated by a line whose fd is -1.
+ * Every field is parsed with bounds; each fd must be open and below
+ * FD_SETSIZE. A player who cannot be restored (bad fd, failed write, no
+ * pfile, deleted) is reported as copyover/bad-fd or copyover/restore-player
+ * and skipped; a malformed file aborts the boot.
+ */
 /* Reload players after a copyover */
 void copyover_recover()
 {
@@ -1569,7 +1615,13 @@ static void flush_queues(struct descriptor_data *d)
   flush_input_queue(d);
 }
 
-/* Add a new string to a player's output queue. For outside use. */
+/**
+ * Queue printf-style output for a descriptor (for use outside comm.c).
+ * @param t   Destination; must be non-NULL with a live pProtocol.
+ * @param txt Literal printf format; arguments may be untrusted text.
+ * @return Space left in the output buffer after queuing (0 = the buffer is
+ *         in the overflow state and further output is being discarded).
+ */
 size_t write_to_output(struct descriptor_data *t, const char *txt, ...)
 {
   va_list args;
@@ -1582,7 +1634,18 @@ size_t write_to_output(struct descriptor_data *t, const char *txt, ...)
   return left;
 }
 
-/* Add a new string to a player's output queue. */
+/**
+ * va_list form of write_to_output(). Formats into a static buffer, runs the
+ * result through ProtocolOutput() (colour, MXP and unicode escapes) and
+ * appends it to the descriptor's output buffer, switching from the small
+ * to a large buffer when needed and into the overflow state when even that
+ * is full (see the state machine above outbuf_reset_small()).
+ *
+ * Not reentrant: the format buffer is static. Every truncation is reported
+ * (network/output-truncate, network/output-overflow); a broken buffer
+ * invariant is reported as network/outbuf-invariant and the buffer reset.
+ * @return Space left in the output buffer; 0 means overflow state.
+ */
 size_t vwrite_to_output(struct descriptor_data *t, const char *format, va_list args)
 {
   const char *text_overflow = "\r\nOVERFLOW\r\n";
@@ -1822,7 +1885,15 @@ static void init_descriptor (struct descriptor_data *newd, int desc)
 
 /* Fixed-size IPv4 connection admission table. Avoids allocating memory for
  * unauthenticated connection attempts. Counts are reset after each window;
- * denied attempts do not extend the window indefinitely. */
+ * denied attempts do not extend the window indefinitely.
+ *
+ * Admission policy (new_descriptor()), in order: at most
+ * TB_RATE_MAX_ATTEMPTS per address per TB_RATE_WINDOW_SECONDS
+ * (network/admit-deny); fd below FD_SETSIZE (network/accept-limit);
+ * fewer than MIN(CONFIG_MAX_PLAYING, max_players) connections
+ * (network/game-full); site not BAN_ALL (mudlog). All refusals are logged,
+ * rate-limited, with the numeric address; the DNS name is peer-controlled
+ * and is only used for ban matching. */
 #define TB_RATE_SLOTS 256
 #define TB_RATE_WINDOW_SECONDS 60
 #define TB_RATE_MAX_ATTEMPTS 12
@@ -2002,12 +2073,23 @@ static int new_descriptor(socket_t s)
   return (0);
 }
 
-/* Send all of the output that we've accumulated for a player out to the
- * player's descriptor. 32 byte GARBAGE_SPACE in MAX_SOCK_BUF used for:
- *	 2 bytes: prepended \r\n
- *	14 bytes: overflow message
- *	 2 bytes: extra \r\n for non-comapct
- *      14 bytes: unused */
+/**
+ * Send a descriptor's queued output to its socket. The text sent ("osb") is
+ * t->output plus, when applicable, "**OVERFLOW**", an extra CRLF for
+ * non-compact players and the prompt; if the player was sitting at a
+ * prompt a CRLF is prepended (and not counted). 32 byte GARBAGE_SPACE in
+ * MAX_SOCK_BUF covers: 2 bytes prepended CRLF, 14 bytes overflow message,
+ * 2 bytes extra CRLF, 14 bytes unused.
+ *
+ * Partial writes: if the kernel took all of t->output but only part of the
+ * trailer, the unsent trailer becomes the new (small) buffer contents; if
+ * it took less than t->output, the rest is moved to the front of the
+ * buffer. A snooper is sent exactly the bytes that went out.
+ *
+ * @return -1 on a fatal socket error (the caller closes the descriptor),
+ *         0 if nothing could be sent (socket buffer full, try later),
+ *         otherwise the number of bytes of osb sent.
+ */
 static int process_output(struct descriptor_data *t)
 {
   char i[MAX_SOCK_BUF], *osb = i + 2;
@@ -2292,7 +2374,25 @@ static ssize_t perform_socket_read(socket_t desc, char *read_point, size_t space
   return (-1);
 }
 
-/* ASSUMPTION: There will be no newlines in the raw input buffer when this
+/**
+ * Read from a descriptor's socket and split complete lines into commands.
+ *
+ * The bytes are untrusted network input. ProtocolInput() first strips
+ * telnet/MXP negotiation and NUL bytes and appends the in-band text to
+ * t->inbuf; it returns the number of bytes appended, which is how far
+ * read_point advances. Each complete line (ended by CR or LF) is then
+ * copied to a MAX_INPUT_LENGTH command buffer: non-printable bytes are
+ * dropped, backspace/DEL erase, '$' is doubled (so act() and the
+ * interpreter see it literally) and a line that does not fit is cut, the
+ * player is told and network/input-truncate is logged. '!' and '^' use the
+ * HISTORY_SIZE ring in t->history (history_pos is the next slot to fill);
+ * "--" discards only queued input, never output. Commands beyond
+ * TB_MAX_PENDING_COMMANDS are refused and reported (network/input-flood).
+ *
+ * @return -1 to close the connection (read error, EOF, input overflow),
+ *         0 if no complete line has arrived yet, 1 otherwise.
+ *
+ * ASSUMPTION: There will be no newlines in the raw input buffer when this
  * function is called.  We must maintain that before returning.
  *
  * Ever wonder why 'tmp' had '+8' on it?  The crusty old code could write
@@ -2530,6 +2630,16 @@ static int perform_subst(struct descriptor_data *t, char *orig, char *subst)
   return (0);
 }
 
+/**
+ * Close and free a descriptor. Teardown order: unlink d from
+ * descriptor_list and close the socket; flush_queues() (the large output
+ * buffer goes back to the pool, so d must not be written to after this);
+ * end snooping in both directions; detach the character (players in game
+ * are saved and stay linkless, others are freed); free the history and
+ * pager; ProtocolDestroy(); cancel events; clean up OLC; free d. After this
+ * returns d is freed: callers in game_loop() must already hold the next
+ * pointer.
+ */
 void close_socket(struct descriptor_data *d)
 {
   struct descriptor_data *temp;
@@ -2771,7 +2881,13 @@ static RETSIGTYPE hupsig(int sig)
 
 #endif	/* CIRCLE_UNIX */
 
-/* This is an implementation of signal() using sigaction() for portability.
+/* Signal handling rules for this file: handlers may only store to
+ * volatile sig_atomic_t flags (or call async-signal-safe functions such as
+ * waitpid and sigaction) and must save and restore errno. game_loop()
+ * acts on the flags. Handlers are installed without SA_RESTART, so every
+ * blocking system call in the loop must treat EINTR as "try again".
+ *
+ * This is an implementation of signal() using sigaction() for portability.
  * (sigaction() is POSIX; signal() is not.)  Taken from Stevens' _Advanced
  * Programming in the UNIX Environment_.  We are specifying that all system
  * calls _not_ be automatically restarted for uniformity, because BSD systems
@@ -2911,6 +3027,8 @@ void send_to_outdoor(const char *messg, ...)
   }
 }
 
+/** Send a message to every connected occupant of a room. 'room' must be a
+ * valid rnum (0..top_of_world); 'messg' is a printf format. */
 void send_to_room(room_rnum room, const char *messg, ...)
 {
   struct char_data *i;
@@ -2931,7 +3049,10 @@ void send_to_room(room_rnum room, const char *messg, ...)
 
 /* Sends a message to the entire group, except for ch.
  * Send 'ch' as NULL, if you want to message to reach
- * everyone. -Vatiken */
+ * everyone. -Vatiken
+ * 'group' must be non-NULL. Iterates group->members with the shared
+ * simple_list() iterator state, so nothing called from here may start
+ * another simple_list() walk. */
 void send_to_group(struct char_data *ch, struct group_data *group, const char * msg, ...)
 {
 	struct char_data *tch;
@@ -2953,6 +3074,9 @@ void send_to_group(struct char_data *ch, struct group_data *group, const char * 
 
 
 /* Thx to Jamie Nelson of 4D for this contribution */
+/** Send a message to everyone connected in rooms whose vnums lie in
+ * [start, finish] (both ends included). A reversed range or NULL message is
+ * reported as comm/send-range and nothing is sent. */
 void send_to_range(room_vnum start, room_vnum finish, const char *messg, ...)
 {
   struct char_data *i;
@@ -3015,7 +3139,17 @@ static const char *act_format_excerpt(char *dst, size_t dst_size,
   (act_site_file ? act_site_file : "(direct perform_act call)"), \
   act_site_line, (act_site_func ? act_site_func : "-")
 
-/* higher-level communication: the act() function */
+/**
+ * Format one act() message for one recipient and deliver it: written to
+ * to->desc, and passed to to's act triggers (NPCs, unless DG_NO_TRIG).
+ * $-codes are expanded with bounds; malformed or oversized formats are
+ * reported with the act() caller's site (ACT_DIAG_SITE).
+ *
+ * Act triggers run synchronously inside this call and may move or mark
+ * for extraction any character, including ch and to. The formatted text is
+ * kept in last_act_message, which act() returns; that pointer is valid only
+ * until the next act()/perform_act() call.
+ */
 void perform_act(const char *orig, struct char_data *ch, struct obj_data *obj,
     void *vict_obj, struct char_data *to)
 {
@@ -3178,6 +3312,12 @@ void perform_act(const char *orig, struct char_data *ch, struct obj_data *obj,
 
 static char *act_body(const char *str, int hide_invisible, struct char_data *ch,
 	 struct obj_data *obj, void *vict_obj, int type);
+
+/* TO_* preconditions: TO_CHAR needs ch; TO_VICT needs vict_obj to be a
+ * char_data; TO_ROOM/TO_NOTVICT need ch or obj placed in a room;
+ * TO_GMOTE needs a player ch. TO_SLEEP and DG_NO_TRIG may be OR-ed in.
+ * dg_act_check is file-global state for the act() being delivered; see
+ * act_at() for how nesting is handled. */
 
 /* Target of the act() macro in comm.h: record the caller for diagnostics,
  * deliver the message, then restore the enclosing act()'s state. An act
