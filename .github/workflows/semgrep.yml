@@ -1,0 +1,54 @@
+name: Semgrep
+
+# Semgrep SAST with the rules configured in the Semgrep AppSec Platform
+# (deployment kythrasuntamer-personal-org). The first run that uploads a
+# scan creates the project kythrasuntamer/TBAMud_Study there; later runs
+# keep its findings current, and pull requests get diff-aware scans.
+#
+# Requires the repository secret SEMGREP_APP_TOKEN: a CI token from
+# semgrep.dev -> Settings -> Tokens, added in GitHub under Settings ->
+# Secrets and variables -> Actions. Without it the job fails with an
+# explicit error instead of skipping the check silently.
+
+on:
+  push:
+    # Security/audit work lands on audit/** branches before any PR exists;
+    # scan every push there as well as master.
+    branches: [ "master", "audit/**" ]
+  pull_request:
+    branches: [ "master" ]
+  workflow_dispatch:
+  schedule:
+    - cron: '17 9 * * 1'   # weekly full scan, Mondays 09:17 UTC
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  semgrep:
+    name: semgrep/ci
+    runs-on: ubuntu-latest
+    # Secrets are not passed to pull requests from forks.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    container:
+      image: semgrep/semgrep
+    env:
+      SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Require the Semgrep token
+      run: |
+        if [ -z "$SEMGREP_APP_TOKEN" ]; then
+          echo "::error::SEMGREP_APP_TOKEN is not set. Create a CI token at semgrep.dev (Settings -> Tokens) and add it as a repository secret (Settings -> Secrets and variables -> Actions)."
+          exit 1
+        fi
+
+    - name: Semgrep scan
+      run: semgrep ci
