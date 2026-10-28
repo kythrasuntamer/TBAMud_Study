@@ -68,6 +68,26 @@ ACMD(do_oasis_iedit)
     return;
   }
 
+  /* iedit rewrites a live instance's affects, values, type and cost, so it
+   * needs the same permission oedit needs for the prototype's zone. An
+   * object with no prototype belongs to no zone: LVL_GRGOD only. The
+   * object is chosen by the builder from what they can reach, in any
+   * zone, so this check is the only thing tying the edit to a zone. */
+  {
+    zone_rnum zone = GET_OBJ_RNUM(obj) == NOTHING ? NOWHERE
+                                                 : real_zone_by_thing(GET_OBJ_VNUM(obj));
+    int allowed = (zone == NOWHERE) ? GET_LEVEL(ch) >= LVL_GRGOD
+                                    : can_edit_zone(ch, zone);
+
+    if (!allowed) {
+      TB_WARN_MSG("olc", "iedit-permission", "object",
+                  "builder " DIAG_CHAR_FMT " obj uid %ld vnum %d zone rnum %d refused",
+                  DIAG_CHAR(ch), obj_script_id(obj), GET_OBJ_VNUM(obj), (int)zone);
+      send_to_char(ch, "You do not have permission to edit that object.\r\n");
+      return;
+    }
+  }
+
   d = ch->desc;
 
   if (d->olc) {

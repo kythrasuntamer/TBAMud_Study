@@ -1879,6 +1879,53 @@ static void test_redit_name_over_byte_limit_is_refused_not_cut(void)
   TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "room vnum 3001 name of 180 bytes"));
 }
 
+
+/* ------------------------------------------------------------------ */
+/* F1-V01: iedit needs edit permission for the object's zone.          */
+/* ------------------------------------------------------------------ */
+static struct obj_data *found_obj;
+char *one_argument(char *argument, char *first_arg)   /* interpreter.c, reduced */
+{
+  while (*argument == ' ')
+    argument++;
+  while (*argument && *argument != ' ')
+    *first_arg++ = *argument++;
+  *first_arg = '\0';
+  return argument;
+}
+void clear_object(struct obj_data *obj) { memset(obj, 0, sizeof(*obj)); obj->item_number = NOTHING; }
+int generic_find(char *arg, bitvector_t bitvector, struct char_data *ch,
+                 struct char_data **tar_ch, struct obj_data **tar_obj)
+{
+  (void)arg; (void)bitvector; (void)ch;
+  *tar_ch = NULL;
+  *tar_obj = found_obj;
+  return found_obj ? 1 : 0;
+}
+
+static void test_iedit_refuses_object_from_zone_builder_cannot_edit(void)
+{
+  struct obj_data *sword;
+
+  make_objects(3);
+  sword = scratch_obj("a zone-12 sword");
+  sword->item_number = 1;
+  found_obj = sword;
+  free(builder_desc.olc);          /* a builder in CON_PLAYING */
+  builder_desc.olc = NULL;
+  STATE(&builder_desc) = CON_PLAYING;
+  zone_editable = FALSE;
+
+  do_oasis_iedit(&builder, (char *)" sword", 0, 0);
+
+  TEST_ASSERT_NULL(builder_desc.olc);
+  TEST_ASSERT_EQUAL_STRING("iedit-permission", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "player idnum 4242 obj uid 100001 vnum 3001"));
+  TEST_ASSERT_NOT_NULL(strstr(out_buf, "do not have permission"));
+  found_obj = NULL;
+  free_scratch_obj(sword);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -1928,5 +1975,6 @@ int main(void)
   RUN_TEST(test_sedit_room_list_reports_deleted_room_without_rewriting);
   RUN_TEST(test_sedit_object_rnum_zero_can_be_a_product);
   RUN_TEST(test_redit_name_over_byte_limit_is_refused_not_cut);
+  RUN_TEST(test_iedit_refuses_object_from_zone_builder_cannot_edit);
   return UNITY_END();
 }
