@@ -1726,6 +1726,13 @@ static int handle_obj(struct obj_data *temp, struct char_data *ch, int locate, s
         obj1->next_content = temp;
       } else
         cont_row[-locate-1] = temp;
+    } else if (locate < -MAX_BAG_ROWS) {
+      /* Crash_save() writes any depth, but only MAX_BAG_ROWS levels are
+       * rebuilt: this object stays loose in inventory. */
+      TB_WARN_MSG("objsave", "rent-nesting", "rent-object-record",
+                  "player idnum %ld obj vnum %d nested %d deep (max %d); "
+                  "left in inventory", GET_IDNUM(ch), GET_OBJ_VNUM(temp),
+                  -locate, MAX_BAG_ROWS);
     }
   } /* locate less than zero */
 

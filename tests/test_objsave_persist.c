@@ -684,6 +684,25 @@ static void test_save_skips_extra_description_with_null_keyword(void)
   player.carrying->ex_description = NULL;
 }
 
+/* B2 doc gap (handle_obj): objects nested deeper than MAX_BAG_ROWS were
+ * silently left loose in inventory. */
+static void test_too_deep_nesting_is_reported(void)
+{
+  char body[256];
+
+  TEST_ASSERT_TRUE(snprintf(body, sizeof(body),
+                            "%d %ld 0 0 0 0\n#101\nLoc : %d\n\n$~\n",
+                            RENT_CRASH, (long)time(0), -6) > 0);	/* MAX_BAG_ROWS is 5 */
+  write_rent_file("Tester", body);
+
+  TEST_ASSERT_EQUAL_INT(1, Crash_load(&player));
+
+  TEST_ASSERT_NOT_NULL(player.carrying);
+  TEST_ASSERT_EQUAL_INT(101, GET_OBJ_VNUM(player.carrying));
+  TEST_ASSERT_EQUAL_STRING("rent-nesting", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "player idnum 4242 obj vnum 101"));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -702,6 +721,7 @@ int main(void)
   RUN_TEST(test_truncated_extra_description_is_dropped_not_fatal);
   RUN_TEST(test_extra_description_loads);
   RUN_TEST(test_save_skips_extra_description_with_null_keyword);
+  RUN_TEST(test_too_deep_nesting_is_reported);
   (void)rmdir(scratch_dir);
   return UNITY_END();
 }
