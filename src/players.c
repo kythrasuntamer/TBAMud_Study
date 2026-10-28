@@ -8,6 +8,31 @@
 *  CircleMUD is based on DikuMUD, Copyright (C) 1990, 1991.               *
 **************************************************************************/
 
+/**
+ * @file players.c
+ * ASCII player files (lib/plrfiles/<x>/<name>.plr) and the player index
+ * (lib/plrfiles/index).
+ *
+ * Who controls the input: both files are persistent data written by this
+ * server but readable as text, so they can be hand-edited, truncated by a
+ * full disk, or corrupted. Every value read from them is untrusted: numbers
+ * are parsed with overflow checks, values used as table indexes (class,
+ * level, sex, skills) are range-checked, and a bad field is reported
+ * ("pfile-*" / "index-*" operations with the player idnum) and replaced by
+ * its PFDEF_* default rather than aborting the load.
+ *
+ * Ownership and lifetime:
+ * - player_table[] (top_of_p_table + 1 entries) is owned here. Each name is
+ *   malloc'd. remove_player_from_index() compacts the table, so any saved
+ *   index (GET_PFILEPOS, a local player_i) at or after the removed slot
+ *   becomes stale.
+ * - load_char() allocates strings into a caller-provided character; the
+ *   caller owns them (free_char()).
+ * - Writes are staged: save_char() and save_player_index() write a
+ *   temporary file and replace the live file only after every write
+ *   succeeded, so a failed save keeps the previous file.
+ */
+
 #include "conf.h"
 #include "sysdep.h"
 #include "structs.h"
@@ -448,8 +473,12 @@ int create_entry(char *name)
 }
 
 
-/* Remove an entry from the in-memory player index table.               *
- * Requires the 'pos' value returned by the get_ptable_by_name function */
+/** Remove an entry from the in-memory player index table.
+ * @param pos A table position, as returned by get_ptable_by_name().
+ * Frees the entry's name and shifts every later entry down one slot, so
+ * any position held for an entry after pos (GET_PFILEPOS of an online
+ * character, a caller's player_i) now names a different player; callers
+ * must re-look-up by name. Does not write the index file. */
 static void remove_player_from_index(int pos)
 {
   int i;
@@ -595,8 +624,17 @@ char *get_name_by_id(long id)
 }
 
 /* Stuff related to the save/load player system. */
-/* New load_char reads ASCII Player Files. Load a char, TRUE if loaded, FALSE
- * if not. */
+/** Load an ASCII player file into ch.
+ * @param name Player name; must be in the player index.
+ * @param ch A freshly allocated, cleared character with player_specials
+ * allocated. String fields are assigned, not freed first, so loading into
+ * a character that already owns strings leaks them.
+ * @return The player's player_table index, or -1 if the name is not in the
+ * index or the file cannot be opened (reported).
+ * File content is untrusted. A malformed or out-of-range field never fails
+ * the load: it is reported (pfile-int, pfile-range, pfile-flags,
+ * pfile-desc, pfile-alias, pfile-tag ...) and the field keeps its PFDEF_*
+ * default. Unknown tags are reported and skipped. */
 int load_char(const char *name, struct char_data *ch)
 {
   int id, i;
@@ -881,8 +919,19 @@ int load_char(const char *name, struct char_data *ch)
   return(id);
 }
 
-/* Write the vital data of a player to the player file. */
-/* This is the ASCII Player Files save routine. */
+/** Write a player's file (the ASCII player file save routine).
+ * Side effects, all undone before return: every worn item is unequipped
+ * (firing wear/remove triggers unless NO_EXTRANEOUS_TRIGGERS) and every
+ * affect is removed so the base stats can be written, then both are put
+ * back. Not reentrant: a trigger fired from here must not save the same
+ * character. At most MAX_AFFECT affects are written; extra ones stay on the
+ * character and are reported (save-affects).
+ * The file is staged and replaced only after every write succeeded; any
+ * failure is reported and leaves the previous file in place. Afterwards the
+ * player index entry is refreshed (and the index rewritten if it changed).
+ * A character missing from the index is reported (save-index-missing) and
+ * the index is left as it was. NPCs and characters with no PFILEPOS are not
+ * saved. */
 void save_char(struct char_data * ch)
 {
   FILE *fl;
@@ -1246,8 +1295,13 @@ void tag_argument(char *argument, char *tag)
 
 /* Stuff related to the player file cleanup system. */
 
-/* remove_player() removes all files associated with a player who is self-deleted,
- * deleted by an immortal, or deleted by the auto-wipe system (if enabled). */
+/** Delete a player: unlink every file the player owns, drop the index entry
+ * and rewrite the index. Used for self-deletion, immortal deletion and the
+ * auto-wipe (clean_pfiles()).
+ * @param pfilepos The player's player_table position.
+ * The entry's name is freed and later entries shift down one slot (see
+ * remove_player_from_index()); every held position >= pfilepos is stale
+ * afterwards. Unlink failures other than "no such file" are logged. */
 void remove_player(int pfilepos)
 {
   char filename[MAX_STRING_LENGTH], timestr[25];
