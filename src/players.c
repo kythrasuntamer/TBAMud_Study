@@ -93,6 +93,56 @@ static long parse_pfile_long_or_zero(const char *value, const char *filename, co
   return parsed;
 }
 
+/* Longest flag word accepted from an "Act :", "Aff :" or "Pref:" line.
+ * sprintascii() writes at most 33 characters per 32-bit word, so anything
+ * longer is corruption or tampering, not a flag set the server produced. */
+#define PFILE_FLAG_WORD 128
+
+/* Parse the four flag words of an Act/Aff/Pref line into flags[0..3].
+ * The line is player-file data (get_line() hands back up to READ_SIZE-1
+ * bytes), so each word is length-checked before it is copied; the old
+ * unbounded sscanf("%s") overflowed four 128-byte stack buffers.
+ * Returns 1 when four words were stored, 0 when the line is not four words
+ * (the caller handles the legacy one-word form), and -1 when a word is too
+ * long: flags are left untouched and the rejection is reported. */
+static int load_pfile_flag_words(const char *line, int *flags,
+                                 const char *filename, const char *tag,
+                                 long idnum)
+{
+  char words[4][PFILE_FLAG_WORD];
+  const char *cursor = line;
+  int count = 0, i;
+
+  for (;;) {
+    size_t len = 0;
+
+    while (isspace((unsigned char)*cursor))
+      cursor++;
+    if (*cursor == '\0')
+      break;
+    while (cursor[len] && !isspace((unsigned char)cursor[len]))
+      len++;
+    if (count == 4)
+      return 0;
+    if (len >= PFILE_FLAG_WORD) {
+      TB_ERROR_MSG("player", "pfile-flags", filename,
+                   "player idnum %ld tag %.4s word %d is %zu bytes (max %d); "
+                   "flags left at defaults", idnum, tag, count + 1, len,
+                   PFILE_FLAG_WORD - 1);
+      return -1;
+    }
+    memcpy(words[count], cursor, len);
+    words[count][len] = '\0';
+    count++;
+    cursor += len;
+  }
+  if (count != 4)
+    return 0;
+  for (i = 0; i < 4; i++)
+    flags[i] = asciiflag_conv(words[i]);
+  return 1;
+}
+
 /* Read a whitespace-delimited signed number with overflow detection. */
 static int parse_index_long(const char **cursor, long *value)
 {
@@ -344,7 +394,7 @@ int load_char(const char *name, struct char_data *ch)
   FILE *fl;
   char filename[40];
   char buf2[128], line[MAX_INPUT_LENGTH + 1], tag[6];
-  char f1[128], f2[128], f3[128], f4[128];
+  char f1[128];
   trig_data *t = NULL;
   trig_rnum t_rnum = NOTHING;
 
@@ -428,20 +478,10 @@ int load_char(const char *name, struct char_data *ch)
       case 'A':
         if (!strcmp(tag, "Ac  "))	GET_AC(ch)		= parse_pfile_int_or_zero(line, filename, tag);
 	else if (!strcmp(tag, "Act ")) {
-         if (sscanf(line, "%s %s %s %s", f1, f2, f3, f4) == 4) {
-          PLR_FLAGS(ch)[0] = asciiflag_conv(f1);
-          PLR_FLAGS(ch)[1] = asciiflag_conv(f2);
-          PLR_FLAGS(ch)[2] = asciiflag_conv(f3);
-          PLR_FLAGS(ch)[3] = asciiflag_conv(f4);
-        } else
+         if (load_pfile_flag_words(line, PLR_FLAGS(ch), filename, tag, GET_IDNUM(ch)) == 0)
           PLR_FLAGS(ch)[0] = asciiflag_conv(line);
       } else if (!strcmp(tag, "Aff ")) {
-        if (sscanf(line, "%s %s %s %s", f1, f2, f3, f4) == 4) {
-          AFF_FLAGS(ch)[0] = asciiflag_conv(f1);
-          AFF_FLAGS(ch)[1] = asciiflag_conv(f2);
-          AFF_FLAGS(ch)[2] = asciiflag_conv(f3);
-          AFF_FLAGS(ch)[3] = asciiflag_conv(f4);
-        } else
+        if (load_pfile_flag_words(line, AFF_FLAGS(ch), filename, tag, GET_IDNUM(ch)) == 0)
           AFF_FLAGS(ch)[0] = asciiflag_conv(line);
 	}
 	if (!strcmp(tag, "Affs")) 	load_affects(fl, ch);
@@ -530,12 +570,7 @@ int load_char(const char *name, struct char_data *ch)
 	else if (!strcmp(tag, "PfIn"))	POOFIN(ch)		= strdup(line);
 	else if (!strcmp(tag, "PfOt"))	POOFOUT(ch)		= strdup(line);
         else if (!strcmp(tag, "Pref")) {
-          if (sscanf(line, "%s %s %s %s", f1, f2, f3, f4) == 4) {
-            PRF_FLAGS(ch)[0] = asciiflag_conv(f1);
-            PRF_FLAGS(ch)[1] = asciiflag_conv(f2);
-            PRF_FLAGS(ch)[2] = asciiflag_conv(f3);
-            PRF_FLAGS(ch)[3] = asciiflag_conv(f4);
-          } else
+          if (load_pfile_flag_words(line, PRF_FLAGS(ch), filename, tag, GET_IDNUM(ch)) == 0)
 	    PRF_FLAGS(ch)[0] = asciiflag_conv(f1);
 	  }
         break;

@@ -390,6 +390,19 @@ if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
         PROPERTIES COMPILE_OPTIONS "-ffunction-sections;-fdata-sections")
 endif()
 
+# Production player-file loader, index and tag parser (players.c), driven
+# through load_char()/build_player_index() against scratch player files.
+add_mud_test(test_players_persist
+    ${MUD_SRCDIR}/players.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_players_persist.c
+)
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_compile_options(test_players_persist PRIVATE -ffunction-sections -fdata-sections)
+    target_link_options(test_players_persist PRIVATE -Wl,--gc-sections)
+    set_source_files_properties(${MUD_SRCDIR}/players.c
+        PROPERTIES COMPILE_OPTIONS "-ffunction-sections;-fdata-sections")
+endif()
+
 find_package(Python3 COMPONENTS Interpreter QUIET)
 if(Python3_Interpreter_FOUND)
     add_test(NAME test_dg_memory_callback_contract
