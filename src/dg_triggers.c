@@ -186,6 +186,21 @@ static int dg_memory_character_live(char_data *ch, long uid, room_rnum room)
          IN_ROOM(ch) == room;
 }
 
+/* Mobile trigger handlers run only for a character standing in a valid room.
+ * Anything else is a caller bug: report it with the handler name and stop. */
+static int dg_trigger_actor_placed(const char_data *ch, const char *handler)
+{
+  if (ch && world && (long long)IN_ROOM(ch) >= 0 &&
+      VALID_ROOM_RNUM(IN_ROOM(ch)))
+    return TRUE;
+  TB_ERROR_MSG("dg", "trigger-dispatch", handler,
+               "invariant violated: character %p uid=%ld is not in a valid "
+               "room (rnum %ld, world %s); no triggers dispatched",
+               (const void *)ch, ch ? ch->script_id : 0L,
+               ch ? (long) IN_ROOM(ch) : -1L, world ? "loaded" : "NULL");
+  return FALSE;
+}
+
 void greet_memory_mtrigger(char_data *actor)
 {
   trig_data *t;
@@ -196,8 +211,7 @@ void greet_memory_mtrigger(char_data *actor)
   struct dg_memory_target *targets, *target;
   long actor_uid;
 
-  if (!actor || !world || (long long)IN_ROOM(actor) < 0 ||
-      !VALID_ROOM_RNUM(IN_ROOM(actor)) ||
+  if (!dg_trigger_actor_placed(actor, "greet_memory_mtrigger") ||
       !valid_dg_target(actor, DG_ALLOW_GODS))
     return;
 
@@ -355,8 +369,7 @@ int greet_mtrigger(char_data *actor, int dir)
   room_rnum origin_room;
   long actor_uid;
 
-  if (!actor || !world || (long long)IN_ROOM(actor) < 0 ||
-      !VALID_ROOM_RNUM(IN_ROOM(actor)) ||
+  if (!dg_trigger_actor_placed(actor, "greet_mtrigger") ||
       !valid_dg_target(actor, DG_ALLOW_GODS))
     return TRUE;
 
@@ -416,9 +429,8 @@ void entry_memory_mtrigger(char_data *ch)
   room_rnum origin_room;
   long owner_uid;
 
-  if (!ch || !world || (long long)IN_ROOM(ch) < 0 ||
-      !VALID_ROOM_RNUM(IN_ROOM(ch)) || !SCRIPT_MEM(ch) ||
-      AFF_FLAGGED(ch, AFF_CHARM))
+  if (!dg_trigger_actor_placed(ch, "entry_memory_mtrigger") ||
+      !SCRIPT_MEM(ch) || AFF_FLAGGED(ch, AFF_CHARM))
     return;
 
   origin_room = IN_ROOM(ch);
@@ -515,14 +527,8 @@ int command_mtrigger(char_data *actor, char *cmd, char *argument)
   /* prevent people we like from becoming trapped :P */
   if (!valid_dg_target(actor, 0))
     return 0;
-  if (!world || (long long)IN_ROOM(actor) < 0 ||
-      !VALID_ROOM_RNUM(IN_ROOM(actor))) {
-    TB_ERROR_MSG("dg", "command-trigger", "command_mtrigger",
-                 "actor uid=%ld is not in a valid room (rnum %ld); no mobile "
-                 "command triggers dispatched", actor->script_id,
-                 (long) IN_ROOM(actor));
+  if (!dg_trigger_actor_placed(actor, "command_mtrigger"))
     return 0;
-  }
 
   origin_room = IN_ROOM(actor);
   actor_uid = char_script_id(actor);
@@ -587,12 +593,12 @@ void speech_mtrigger(char_data *actor, char *str)
   room_rnum origin_room;
   long actor_uid;
 
-  if (!actor || !str || !world || (long long)IN_ROOM(actor) < 0 ||
-      !VALID_ROOM_RNUM(IN_ROOM(actor))) {
-    TB_ERROR_MSG("dg", "speech-trigger", "speech_mtrigger",
-                 "invariant violated: actor=%p str=%s room=%ld; no speech "
-                 "triggers dispatched", (void *)actor, str ? "set" : "NULL",
-                 actor ? (long) IN_ROOM(actor) : -1L);
+  if (!dg_trigger_actor_placed(actor, "speech_mtrigger"))
+    return;
+  if (!str) {
+    TB_ERROR_MSG("dg", "trigger-dispatch", "speech_mtrigger",
+                 "invariant violated: NULL speech from uid=%ld; no speech "
+                 "triggers dispatched", actor->script_id);
     return;
   }
 
@@ -870,6 +876,8 @@ int leave_mtrigger(char_data *actor, int dir)
 
   if (!valid_dg_target(actor, DG_ALLOW_GODS))
     return 1;
+  if (!dg_trigger_actor_placed(actor, "leave_mtrigger"))
+    return 1;
 
   for (ch = world[IN_ROOM(actor)].people; ch; ch = ch->next_in_room) {
     if (!SCRIPT_CHECK(ch, MTRIG_LEAVE) ||
@@ -897,6 +905,9 @@ int door_mtrigger(char_data *actor, int subcmd, int dir)
   trig_data *t;
   char_data *ch;
   char buf[MAX_INPUT_LENGTH];
+
+  if (!dg_trigger_actor_placed(actor, "door_mtrigger"))
+    return 1;
 
   for (ch = world[IN_ROOM(actor)].people; ch; ch = ch->next_in_room) {
     if (!SCRIPT_CHECK(ch, MTRIG_DOOR) ||
@@ -1509,7 +1520,9 @@ int command_wtrigger(char_data *actor, char *cmd, char *argument)
   trig_data *t;
   char buf[MAX_INPUT_LENGTH];
 
-  if (!actor || !SCRIPT_CHECK(&world[IN_ROOM(actor)], WTRIG_COMMAND))
+  if (!dg_trigger_actor_placed(actor, "command_wtrigger"))
+    return 0;
+  if (!SCRIPT_CHECK(&world[IN_ROOM(actor)], WTRIG_COMMAND))
     return 0;
 
   /* prevent people we like from becoming trapped :P */
@@ -1548,7 +1561,9 @@ void speech_wtrigger(char_data *actor, char *str)
   trig_data *t;
   char buf[MAX_INPUT_LENGTH];
 
-  if (!actor || !SCRIPT_CHECK(&world[IN_ROOM(actor)], WTRIG_SPEECH))
+  if (!dg_trigger_actor_placed(actor, "speech_wtrigger"))
+    return;
+  if (!SCRIPT_CHECK(&world[IN_ROOM(actor)], WTRIG_SPEECH))
     return;
 
   room = &world[IN_ROOM(actor)];
@@ -1581,7 +1596,9 @@ int drop_wtrigger(obj_data *obj, char_data *actor)
   int ret_val;
   long object_id = obj_script_id(obj);
 
-  if (!actor || !SCRIPT_CHECK(&world[IN_ROOM(actor)], WTRIG_DROP))
+  if (!dg_trigger_actor_placed(actor, "drop_wtrigger"))
+    return 1;
+  if (!SCRIPT_CHECK(&world[IN_ROOM(actor)], WTRIG_DROP))
     return 1;
 
   room = &world[IN_ROOM(actor)];
@@ -1607,7 +1624,9 @@ int cast_wtrigger(char_data *actor, char_data *vict, obj_data *obj, int spellnum
   trig_data *t;
   char buf[MAX_INPUT_LENGTH];
 
-  if (!actor || !SCRIPT_CHECK(&world[IN_ROOM(actor)], WTRIG_CAST))
+  if (!dg_trigger_actor_placed(actor, "cast_wtrigger"))
+    return 1;
+  if (!SCRIPT_CHECK(&world[IN_ROOM(actor)], WTRIG_CAST))
     return 1;
 
   room = &world[IN_ROOM(actor)];
@@ -1662,7 +1681,9 @@ int door_wtrigger(char_data *actor, int subcmd, int dir)
   trig_data *t;
   char buf[MAX_INPUT_LENGTH];
 
-  if (!actor || !SCRIPT_CHECK(&world[IN_ROOM(actor)], WTRIG_DOOR))
+  if (!dg_trigger_actor_placed(actor, "door_wtrigger"))
+    return 1;
+  if (!SCRIPT_CHECK(&world[IN_ROOM(actor)], WTRIG_DOOR))
     return 1;
 
   room = &world[IN_ROOM(actor)];
