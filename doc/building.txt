@@ -1618,7 +1618,7 @@ E) No Trade With  : NOBITS
    Designates certain alignments or classes that the shop will not trade with:
  
  1) Good                    2) Evil                   
- 3) Neutral                 4) Magic User             
+ 3) Neutral                 4) Wizard                 
  5) Cleric                  6) Thief                  
  7) Warrior                
 

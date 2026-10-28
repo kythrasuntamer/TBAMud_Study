@@ -50,7 +50,7 @@ const char *trade_letters[] = {
         "Good",                 /* First, the alignment based ones */
         "Evil",
         "Neutral",
-        "Magic User",           /* Then the class based ones */
+        "Wizard",               /* Then the class based ones */
         "Cleric",
         "Thief",
         "Warrior",

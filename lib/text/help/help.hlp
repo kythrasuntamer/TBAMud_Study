@@ -1798,7 +1798,7 @@ CLASSES
    There are 4 classes on tbaMUD. See the help files on each for details.
 
 WARRIOR
-MAGIC USER
+WIZARD
 CLERIC
 THIEF
 
@@ -4765,9 +4765,9 @@ Save        : Versus spell for half damage.
 Causes a bolt of magical energy to be thrown from the casters hands at the
 victim.
 #0
-MAGIC-USER WIZARD MAGE
+WIZARD MAGIC-USER MAGE
 
-This is the class of powerful and violent magic, but the magic user do not
+This is the class of powerful and violent magic, but the wizard does not
 control the nature, and can therefore not bless and such.
 
 You can improve your spells by using the practice command.
@@ -5652,7 +5652,7 @@ is 4-20 points damage.
    The question often comes up as to what damage a weapon should inflict. I 
 will attempt to explain. To understand damage you first need to know hitpoints.
 A player starts with 10 hitpoints. Then they gain a certain amount depending on
-their class when they level. Stock tbaMUD uses the following: Magic Users
+their class when they level. Stock tbaMUD uses the following: Wizards
 gain 3-8, Clerics 5-10, Thieves 7-13, Warriors 10-15. So a level 1 Warrior
 will have 20-25 hitpoints. Now, let us apply common sense. A weapon that does
 25 points of damage could kill a level 1 player in one hit. While a weapon with
@@ -8462,7 +8462,7 @@ E) No Trade With  : @cNOBITS@n
    Designates certain alignments or classes that the shop will not trade with:
  
  1) Good                    2) Evil                   
- 3) Neutral                 4) Magic User             
+ 3) Neutral                 4) Wizard                 
  5) Cleric                  6) Thief                  
  7) Warrior                
 
