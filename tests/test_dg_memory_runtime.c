@@ -859,6 +859,25 @@ static void speech_room_null_text_is_reported(void)
   TEST_ASSERT_EQUAL_STRING("trigger-dispatch", tb_captured_operation);
 }
 
+/* one_phrase() copied an unquoted word without looking at the size it was
+ * given; a heap destination lets ASan see the old overflow. */
+static void one_phrase_honours_its_buffer_size(void)
+{
+  char text[] = "abcdefghij rest";
+  char *word = malloc(4);
+  char *rest;
+
+  TEST_ASSERT_NOT_NULL(word);
+  rest = one_phrase(text, word, 4);
+  TEST_ASSERT_EQUAL_STRING("abc", word);
+  TEST_ASSERT_EQUAL_STRING(" rest", rest);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("phrase-truncated", tb_captured_operation);
+  rest = one_phrase(rest, word, 4);
+  TEST_ASSERT_EQUAL_STRING("res", word);
+  free(word);
+}
+
 /* An actor outside any room is a caller bug: reported, nothing dispatched. */
 static void unplaced_actor_is_reported(void)
 {
@@ -961,6 +980,7 @@ int main(void)
   RUN_TEST(speech_mob_baseline);
   RUN_TEST(speech_mob_listener_purged);
   RUN_TEST(speech_room_null_text_is_reported);
+  RUN_TEST(one_phrase_honours_its_buffer_size);
   RUN_TEST(unplaced_actor_is_reported);
   RUN_TEST(load_object_purged_on_error);
   return UNITY_END();

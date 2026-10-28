@@ -43,7 +43,10 @@ char *one_phrase(char *arg, char *first_arg, size_t first_arg_size)
         p = matching_quote(arg);
         c = *p;
         *p = '\0';
-        strlcpy(first_arg, arg + 1, first_arg_size);
+        if (strlcpy(first_arg, arg + 1, first_arg_size) >= first_arg_size)
+            TB_ERROR_MSG("dg", "phrase-truncated", "one_phrase",
+                         "%zu-byte quoted phrase cut to %zu bytes",
+                         strlen(arg + 1), first_arg_size - 1);
         if (c == '\0')
             return p;
         else
@@ -52,15 +55,20 @@ char *one_phrase(char *arg, char *first_arg, size_t first_arg_size)
 
     else
     {
-        char *s, *p;
+        char *p = arg;
+        size_t len = 0;
 
-        s = first_arg;
-        p = arg;
-
-        while (*p && !isspace(*p) && *p != '"')
-            *s++ = *p++;
-
-        *s = '\0';
+        /* Bounded by first_arg_size, which this copy used to ignore. */
+        while (*p && !isspace((unsigned char)*p) && *p != '"') {
+            if (len + 1 < first_arg_size)
+                first_arg[len++] = *p;
+            p++;
+        }
+        first_arg[len] = '\0';
+        if ((size_t)(p - arg) > len)
+            TB_ERROR_MSG("dg", "phrase-truncated", "one_phrase",
+                         "%zu-byte word cut to %zu bytes",
+                         (size_t)(p - arg), len);
         return p;
     }
 
