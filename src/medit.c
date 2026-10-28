@@ -249,20 +249,27 @@ static void init_mobile(struct char_data *mob)
 void medit_save_internally(struct descriptor_data *d)
 {
   int i;
-  mob_rnum new_rnum;
+  mob_rnum new_rnum, existing;
   struct char_data *mob;
+  struct trig_proto_list *old_proto;
 
-  i = (real_mobile(OLC_NUM(d)) == NOBODY);
+  existing = real_mobile(OLC_NUM(d));
+  i = (existing == NOBODY);
+  /* add_mobile() struct-copies the scratch mobile (proto_script NULL, see
+   * medit_setup_existing) over the prototype, so after it returns the old
+   * trigger list is reachable only through this pointer. */
+  old_proto = i ? NULL : mob_proto[existing].proto_script;
 
   if ((new_rnum = add_mobile(OLC_MOB(d), OLC_NUM(d))) == NOBODY) {
     log("medit_save_internally: add_mobile failed.");
     return;
   }
 
-  /* Update triggers and free old proto list */
-  if (mob_proto[new_rnum].proto_script &&
-      mob_proto[new_rnum].proto_script != OLC_SCRIPT(d))
+  /* Update triggers and free the old proto list. */
+  if (old_proto && old_proto != OLC_SCRIPT(d)) {
+    mob_proto[new_rnum].proto_script = old_proto;
     free_proto_script(&mob_proto[new_rnum], MOB_TRIGGER);
+  }
 
   /* The prototype now owns the list; clear the session's handle so
    * cleanup_olc() does not free it. */

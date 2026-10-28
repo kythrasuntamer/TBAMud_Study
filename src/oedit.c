@@ -460,9 +460,14 @@ void oedit_save_internally(struct descriptor_data *d)
   int i;
   obj_rnum robj_num, existing;
   struct obj_data *obj;
+  struct trig_proto_list *old_proto;
 
   existing = real_object(OLC_NUM(d));
   i = (existing == NOTHING);
+  /* add_object() struct-copies the scratch object (proto_script NULL, see
+   * oedit_setup_existing) over the prototype, so after it returns the old
+   * trigger list is reachable only through this pointer. */
+  old_proto = i ? NULL : obj_proto[existing].proto_script;
 
   /* add_object() -> update_all_objects() struct-copies the prototype over
    * every live instance and keeps only location and list fields, so each
@@ -485,10 +490,11 @@ void oedit_save_internally(struct descriptor_data *d)
     return;
   }
 
-  /* Update triggers and free old proto list  */
-  if (obj_proto[robj_num].proto_script &&
-      obj_proto[robj_num].proto_script != OLC_SCRIPT(d))
+  /* Update triggers and free the old proto list. */
+  if (old_proto && old_proto != OLC_SCRIPT(d)) {
+    obj_proto[robj_num].proto_script = old_proto;
     free_proto_script(&obj_proto[robj_num], OBJ_TRIGGER);
+  }
   /* this will handle new instances of the object. The prototype now owns
    * the list; clear the session's handle so cleanup_olc() does not free it. */
   obj_proto[robj_num].proto_script = OLC_SCRIPT(d);

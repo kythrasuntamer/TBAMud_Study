@@ -385,8 +385,11 @@ obj_rnum add_object(struct obj_data *newobj, obj_vnum ovnum)
   /* An update in place: genobj's update_all_objects() struct-copies the
    * prototype over each live instance, so script and proto_script become
    * the prototype's (NULL). */
-  if ((r = real_object(ovnum)) != NOTHING)
-    for (obj = object_list; obj; obj = obj->next)
+  if ((r = real_object(ovnum)) == NOTHING)
+    return r;
+  /* copy_object(&obj_proto[r], newobj) is a struct copy as well. */
+  obj_proto[r].proto_script = newobj->proto_script;
+  for (obj = object_list; obj; obj = obj->next)
       if (obj->item_number == r) {
         obj->script = NULL;
         obj->proto_script = NULL;
@@ -1076,6 +1079,32 @@ static void test_oedit_save_releases_live_instance_scripts_first(void)
   object_list = NULL;
 }
 
+
+/* ------------------------------------------------------------------ */
+/* F1-08: saving frees the prototype's previous trigger list.          */
+/* ------------------------------------------------------------------ */
+static void test_oedit_save_frees_previous_prototype_trigger_list(void)
+{
+  struct descriptor_data *d = &builder_desc;
+  struct trig_proto_list *edited = make_trig_list(1);
+
+  make_objects(3);
+  obj_proto[1].proto_script = make_trig_list(2);
+  OLC_NUM(d) = 3001;
+  oedit_setup_existing(d, 1);
+  STATE(d) = CON_OEDIT;
+  OLC_SCRIPT(d) = edited;
+
+  oedit_save_internally(d);
+
+  /* The old two-node list is freed (LeakSanitizer checks), and the
+   * prototype now holds the session's edited list. */
+  TEST_ASSERT_EQUAL_INT(1, free_proto_calls);
+  TEST_ASSERT_EQUAL_PTR(edited, obj_proto[1].proto_script);
+  free_trig_list(obj_proto[1].proto_script);
+  obj_proto[1].proto_script = NULL;
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -1099,5 +1128,6 @@ int main(void)
   RUN_TEST(test_oedit_copy_from_missing_source_keeps_scratch);
   RUN_TEST(test_redit_copy_twice_releases_each_replaced_room);
   RUN_TEST(test_oedit_save_releases_live_instance_scripts_first);
+  RUN_TEST(test_oedit_save_frees_previous_prototype_trigger_list);
   return UNITY_END();
 }

@@ -249,6 +249,8 @@ void redit_setup_existing(struct descriptor_data *d, int real_num)
 void redit_save_internally(struct descriptor_data *d)
 {
   int room_num, new_room = FALSE;
+  room_rnum existing;
+  struct trig_proto_list *old_proto;
 
   if (OLC_ROOM(d)->number == NOWHERE)
     new_room = TRUE;
@@ -271,16 +273,23 @@ void redit_save_internally(struct descriptor_data *d)
   /* FIXME: Why is this not set elsewhere? */
   OLC_ROOM(d)->zone = OLC_ZNUM(d);
 
+  /* add_room() copy_room()s the scratch room (proto_script NULL, see
+   * redit_setup_existing) over world[], so after it returns the old trigger
+   * list is reachable only through this pointer. */
+  existing = real_room(OLC_NUM(d));
+  old_proto = existing == NOWHERE ? NULL : world[existing].proto_script;
+
   if ((room_num = add_room(OLC_ROOM(d))) == NOWHERE) {
     write_to_output(d, "Something went wrong...\r\n");
     log("SYSERR: redit_save_internally: Something failed! (%d)", room_num);
     return;
   }
 
-  /* Update triggers and free old proto list */
-  if (world[room_num].proto_script &&
-      world[room_num].proto_script != OLC_SCRIPT(d))
+  /* Update triggers and free the old proto list. */
+  if (old_proto && old_proto != OLC_SCRIPT(d)) {
+    world[room_num].proto_script = old_proto;
     free_proto_script(&world[room_num], WLD_TRIGGER);
+  }
 
   /* The room now owns the list; clear the session's handle so
    * cleanup_olc() does not free it. */
