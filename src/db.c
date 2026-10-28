@@ -2216,9 +2216,22 @@ static int starts_with_article(const char *text)
          (n == 3 && !strn_cmp(text, "the", 3));
 }
 
+/** TRUE if v is in lo..hi; otherwise report the mob vnum, field and value.
+ * parse_simple_mob() stores its numbers into byte and sh_int fields, where
+ * a value outside the field's range would wrap silently. */
+static int mob_value_in_range(int nr, const char *field, long v, long lo,
+                              long hi)
+{
+  if (v >= lo && v <= hi)
+    return TRUE;
+  TB_ERROR_MSG("db", "mob-parse", field,
+               "mob vnum %d: %s %ld out of range %ld..%ld", nr, field, v, lo, hi);
+  return FALSE;
+}
+
 static void parse_simple_mob(FILE *mob_f, int i, int nr)
 {
-  int j, t[10];
+  int j, t[10], bad;
   char line[READ_SIZE];
   char n0[32], n1[32], n2[32], dice1[64], dice2[64];
 
@@ -2244,6 +2257,32 @@ static void parse_simple_mob(FILE *mob_f, int i, int nr)
     log("SYSERR: Format error in mob #%d, first line after S flag\n"
 	"...expecting line of form '# # # #d#+# #d#+#'", nr);
     exit(1);
+  }
+
+  /* Each number below goes into a field of the type named in its bound:
+   * level (unsigned char), hitroll = 20 - THAC0 and damroll (sbyte), armor
+   * class * 10 and the hit dice (sh_int), damage dice (byte); read_mobile()
+   * then rolls the hit dice into the sh_int max_hit. medit writes only
+   * values that fit, so one that does not comes from a hand-edited .mob
+   * file and would wrap silently (armor class * 10 could even overflow the
+   * int). The stock world fits every range, so as for a bad position this
+   * is fatal; every bad field of the mob is reported first. */
+  bad = !mob_value_in_range(nr, "level", t[0], 0, UCHAR_MAX);
+  bad += !mob_value_in_range(nr, "THAC0", t[1], 20 - SCHAR_MAX, 20 - SCHAR_MIN);
+  bad += !mob_value_in_range(nr, "armor class", t[2], SHRT_MIN / 10, SHRT_MAX / 10);
+  bad += !mob_value_in_range(nr, "hit dice count", t[3], 0, SHRT_MAX);
+  bad += !mob_value_in_range(nr, "hit dice size", t[4], 0, SHRT_MAX);
+  bad += !mob_value_in_range(nr, "hit point bonus", t[5], SHRT_MIN, SHRT_MAX);
+  bad += !mob_value_in_range(nr, "damage dice count", t[6], 0, SCHAR_MAX);
+  bad += !mob_value_in_range(nr, "damage dice size", t[7], 0, SCHAR_MAX);
+  bad += !mob_value_in_range(nr, "damroll", t[8], SCHAR_MIN, SCHAR_MAX);
+  if (!bad)
+    bad = !mob_value_in_range(nr, "maximum hit points",
+                              (long)t[3] * t[4] + t[5], SHRT_MIN, SHRT_MAX);
+  if (bad) {
+    BOOT_FATAL("mob-parse", "simple mob",
+               "mob vnum %d: %d value(s) on the line after S out of range",
+               nr, bad);
   }
 
   GET_LEVEL(mob_proto + i) = t[0];

@@ -1723,6 +1723,56 @@ static void parse_mobile_replaces_empty_alias_list(void)
   proto_fixture_free();
 }
 
+/* parse_simple_mob() stored its numbers into byte and sh_int fields
+ * unchecked: damage dice 200d6 wrapped to -56d6, and armor class 300000000
+ * overflowed "10 * t[2]" (UBSan: signed-integer-overflow). Each bad field is
+ * now reported with the mob vnum, and then the boot stops. */
+static void parse_simple_mob_rejects_values_that_would_wrap(void)
+{
+  TEST_ASSERT_EQUAL_INT(1, parse_simple_mob_text(
+    "1 20 300000000 1d1+1 200d6+0\n0 0\n8 8 1\n", 3012));
+  TEST_ASSERT_EQUAL_INT(3, tb_captured_errors);	/* two fields, then fatal */
+  TEST_ASSERT_EQUAL_STRING("FATAL", tb_captured_severity);
+  TEST_ASSERT_EQUAL_STRING("mob-parse", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "mob vnum 3012: 2 value(s)"));
+
+  tb_error_capture_reset();
+  TEST_ASSERT_FALSE(mob_value_in_range(3012, "damage dice count", 200, 0, SCHAR_MAX));
+  TEST_ASSERT_EQUAL_STRING("ERROR", tb_captured_severity);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail,
+                              "mob vnum 3012: damage dice count 200 out of range 0..127"));
+
+  /* Each hit dice value fits an sh_int, but read_mobile() would roll
+   * 200d200 into the sh_int max_hit. */
+  tb_error_capture_reset();
+  TEST_ASSERT_EQUAL_INT(1, parse_simple_mob_text(
+    "1 20 10 200d200+0 1d1+0\n0 0\n8 8 1\n", 3013));
+  TEST_ASSERT_EQUAL_INT(2, tb_captured_errors);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "mob vnum 3013: 1 value(s)"));
+}
+
+/* The extreme values each field can hold load silently. */
+static void parse_simple_mob_accepts_field_limits(void)
+{
+  struct char_data *mob = &simple_mob_fixture[0];
+
+  TEST_ASSERT_EQUAL_INT(0, parse_simple_mob_text(
+    "255 -107 3276 1d1+32766 127d127+127\n0 0\n8 8 1\n", 3014));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  TEST_ASSERT_EQUAL_INT(255, GET_LEVEL(mob));
+  TEST_ASSERT_EQUAL_INT(127, GET_HITROLL(mob));
+  TEST_ASSERT_EQUAL_INT(32760, GET_AC(mob));
+  TEST_ASSERT_EQUAL_INT(127, mob->mob_specials.damnodice);
+
+  TEST_ASSERT_EQUAL_INT(0, parse_simple_mob_text(
+    "0 148 -3276 0d0+-32768 0d0+-128\n0 0\n8 8 1\n", 3015));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  TEST_ASSERT_EQUAL_INT(-128, GET_HITROLL(mob));
+  TEST_ASSERT_EQUAL_INT(-32760, GET_AC(mob));
+  TEST_ASSERT_EQUAL_INT(-32768, GET_MOVE(mob));
+  TEST_ASSERT_EQUAL_INT(-128, GET_DAMROLL(mob));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -1788,5 +1838,7 @@ int main(void)
   RUN_TEST(sort_boot_records_renumbers_prototypes);
   RUN_TEST(discrete_load_marks_descending_vnum_for_sorting);
   RUN_TEST(parse_mobile_replaces_empty_alias_list);
+  RUN_TEST(parse_simple_mob_rejects_values_that_would_wrap);
+  RUN_TEST(parse_simple_mob_accepts_field_limits);
   return UNITY_END();
 }
