@@ -233,6 +233,43 @@ static void test_delete_mobile_renumbers_only_real_rnums(void)
   character_list = NULL;
 }
 
+static void make_npc(struct char_data *npc, mob_rnum rnum)
+{
+  memset(npc, 0, sizeof(*npc));
+  npc->nr = rnum;
+  npc->player = mob_proto[rnum].player;     /* shares the proto's strings */
+  npc->player_specials = &dummy_mob;
+  SET_BIT_AR(MOB_FLAGS(npc), MOB_ISNPC);
+}
+
+/* C1-23: delete_mobile() ran extract_char() on the prototype (queuing an
+ * extraction for something not in character_list) and the shift then
+ * overwrote, and leaked, its strings. Queued instances of the deleted mob
+ * were renumbered onto the previous prototype, whose live count
+ * extract_char_final() would then decrement. */
+static void test_delete_mobile_releases_prototype_and_detaches_instances(void)
+{
+  struct reset_com none[1];
+  struct char_data doomed, other;
+
+  make_npc(&doomed, 1);
+  make_npc(&other, 2);
+  doomed.next = &other;
+  character_list = &doomed;
+  make_zone(none, 0);
+
+  delete_mobile(1);                       /* LeakSanitizer: proto strings */
+
+  TEST_ASSERT_EQUAL_INT(1, extract_calls); /* the instance, not the proto */
+  TEST_ASSERT_EQUAL_INT(NOBODY, doomed.nr);
+  TEST_ASSERT_NULL(doomed.player.name);
+  TEST_ASSERT_EQUAL_INT(1, other.nr);
+  TEST_ASSERT_EQUAL_INT(3, mob_index[1].vnum);
+  TEST_ASSERT_EQUAL_PTR(other.player.name, mob_proto[1].player.name);
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  character_list = NULL;
+}
+
 /* ---- delete_object (genobj.c) ----------------------------------------- */
 
 static struct reset_com zcmd(char command, int arg1, int arg2, int arg3)
@@ -301,6 +338,7 @@ int main(void)
   RUN_TEST(test_delete_last_zone_command_stays_in_bounds);
   RUN_TEST(test_delete_consecutive_zone_commands);
   RUN_TEST(test_delete_mobile_renumbers_only_real_rnums);
+  RUN_TEST(test_delete_mobile_releases_prototype_and_detaches_instances);
   RUN_TEST(test_delete_object_zone_commands);
   return UNITY_END();
 }

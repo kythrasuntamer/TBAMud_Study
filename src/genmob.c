@@ -159,7 +159,13 @@ int delete_mobile(mob_rnum refpt)
   proto = &mob_proto[refpt];
   
   extract_mobile_all(vnum);
-  extract_char(proto);
+  /* The prototype is not a live character: extract_char() would queue it
+   * for extraction it can never get (it is not in character_list), and its
+   * strings and trigger list would be overwritten by the shift below.
+   * Release what it owns directly.  Live instances no longer share these
+   * strings: extract_mobile_all() cleared their copies of the pointers. */
+  free_mobile_strings(proto);
+  free_proto_script(proto, MOB_TRIGGER);
 
   for (counter = refpt; counter < top_of_mobt; counter++) {
     mob_index[counter] = mob_index[counter + 1];
@@ -174,9 +180,23 @@ int delete_mobile(mob_rnum refpt)
   /* Update live mobile rnums.  Players (and unprototyped mobs) carry
    * NOBODY, the largest value of the unsigned rnum type: it must not be
    * shifted, or it becomes a valid-looking rnum (65534). */
-  for (live_mob = character_list; live_mob; live_mob = live_mob->next)
-    if (GET_MOB_RNUM(live_mob) != NOBODY && GET_MOB_RNUM(live_mob) >= refpt)
+  for (live_mob = character_list; live_mob; live_mob = live_mob->next) {
+    if (GET_MOB_RNUM(live_mob) == NOBODY || GET_MOB_RNUM(live_mob) < refpt)
+      continue;
+    if (GET_MOB_RNUM(live_mob) > refpt) {
       GET_MOB_RNUM(live_mob)--;
+      continue;
+    }
+    /* Instances of the deleted mob were queued for extraction above and are
+     * freed at the end of the pulse.  Detach them from the prototype table
+     * now: renumbered to refpt - 1 they would decrement another mob's live
+     * count (mob_index[].number) when extract_char_final() runs. */
+    if (!IS_NPC(live_mob) || !MOB_FLAGGED(live_mob, MOB_NOTDEADYET))
+      TB_ERROR_MSG("genolc", "mob-delete", "mob",
+                   TB_ERRID_INVARIANT " live character still references deleted mob vnum %d (rnum %d) and is not pending extraction",
+                   vnum, refpt);
+    GET_MOB_RNUM(live_mob) = NOBODY;
+  }
 
   /* Update zone table.  Deleting a command shifts the rest of the list
    * (reallocated to exactly fit) down into cmd_no, so cmd_no only advances
