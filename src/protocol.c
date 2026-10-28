@@ -737,17 +737,25 @@ const char *ProtocolOutput( descriptor_t *apDescriptor, const char *apData, int 
                if ( tolower(apData[++j]) == 'u' )
                {
                   char *Buffer = UnicodeSub, Excerpt[sizeof(UnicodeSub)];
-                  int Index = 0;
-                  int Number = 0;
-                  bool_t bDone = false, bValid = true;
+                  int Index = 0, Digits = 0;
+                  long Number = 0;
+                  bool_t bDone = false, bValid = true, bCodeValid;
 
                   memset(UnicodeSub, '\0', sizeof(UnicodeSub));
 
-                  while ( isdigit(apData[++j]) )
+                  /* The code point is builder or player text (say/gossip
+                   * '@[u...]'). Stop accumulating once it is out of the
+                   * Unicode range so it cannot overflow; UnicodeAdd()
+                   * only encodes 1..0x10FFFF minus the surrogates, and 0
+                   * would put a NUL in Result and cut the line short. */
+                  while ( isdigit((unsigned char)apData[++j]) )
                   {
-                     Number *= 10;
-                     Number += (apData[j])-'0';
+                     ++Digits;
+                     if ( Number <= 0x10FFFF )
+                        Number = Number * 10 + (apData[j] - '0');
                   }
+                  bCodeValid = Number > 0 && Number <= 0x10FFFF &&
+                     !(Number >= 0xD800 && Number <= 0xDFFF);
 
                   if ( apData[j] == '/' )
                      ++j;
@@ -777,13 +785,20 @@ const char *ProtocolOutput( descriptor_t *apDescriptor, const char *apData, int 
                         "unicode substitute \"%s\" longer than 7 bytes; dropped (offset %d)",
                         ProtocolExcerpt(Buffer, Excerpt, sizeof(Excerpt)), j );
                   }
-                  else if ( pProtocol->pVariables[eMSDP_UTF_8]->ValueInt )
+                  else
                   {
-                     pCopyFrom = UnicodeGet(Number);
-                  }
-                  else /* Display the substitute string */
-                  {
-                     pCopyFrom = Buffer;
+                     if ( !bCodeValid && ( Digits > 0 ||
+                          pProtocol->pVariables[eMSDP_UTF_8]->ValueInt ) )
+                        PROTOCOL_WARN( apDescriptor, "unicode-code",
+                           "unicode code point %s%ld (%d digits) is not a valid"
+                           " character; substitute \"%s\" shown (offset %d)",
+                           Number > 0x10FFFF ? ">" : "", Number, Digits,
+                           ProtocolExcerpt(Buffer, Excerpt, sizeof(Excerpt)), j );
+
+                     if ( bCodeValid && pProtocol->pVariables[eMSDP_UTF_8]->ValueInt )
+                        pCopyFrom = UnicodeGet((int)Number);
+                     else /* Display the substitute string */
+                        pCopyFrom = Buffer;
                   }
 
                   /* Terminate if we've reached the end of the string */

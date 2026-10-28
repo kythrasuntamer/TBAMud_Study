@@ -72,10 +72,23 @@ static void invalid_colour_is_reported_with_descriptor(void)
   TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "colour \"9?9\" invalid"));
 }
 
+/* An over-long code point overflowed int (UBSan abort); it is now bounded,
+ * reported, and the substitute text is shown instead. */
+static void huge_unicode_code_point_is_rejected(void)
+{
+  int len;
+  const char *out = translate("x\t[u99999999999/A]y", &len);
+  TEST_ASSERT_EQUAL_STRING("xAy", out);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("unicode-code", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "(11 digits)"));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
   RUN_TEST(unicode_substitute_is_copied_in_scope);
   RUN_TEST(invalid_colour_is_reported_with_descriptor);
+  RUN_TEST(huge_unicode_code_point_is_rejected);
   return UNITY_END();
 }
