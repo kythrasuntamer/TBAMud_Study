@@ -77,6 +77,7 @@ ASPELL(spell_recall)
 ASPELL(spell_teleport)
 {
   room_rnum to_room;
+  int tries, max_tries = 10 * ((int) top_of_world + 1);
 
   if (victim == NULL || IS_NPC(victim))
     return;
@@ -86,7 +87,19 @@ ASPELL(spell_teleport)
     return;
   }
 
+  /* Random rooms until one is open to teleport. Builders control the room
+   * and zone flags; a world (or test world) with no eligible room must not
+   * spin the game loop forever, so give up after a bounded number of tries
+   * and report it. */
+  tries = 0;
   do {
+    if (++tries > max_tries) {
+      TB_WARN_MSG("magic", "teleport-no-dest", "world",
+                  "no eligible room after %d tries; caster " DIAG_CHAR_FMT,
+                  max_tries, DIAG_CHAR(ch));
+      send_to_char(ch, "You fail.\r\n");
+      return;
+    }
     to_room = rand_number(0, top_of_world);
   } while (ROOM_FLAGGED(to_room, ROOM_PRIVATE) || ROOM_FLAGGED(to_room, ROOM_DEATH) ||
            ROOM_FLAGGED(to_room, ROOM_GODROOM) || ZONE_FLAGGED(GET_ROOM_ZONE(to_room), ZONE_CLOSED) ||
