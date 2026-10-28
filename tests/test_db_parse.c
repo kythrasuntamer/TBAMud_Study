@@ -1084,7 +1084,7 @@ static void index_boot_parser_reports_name_file_and_line(void)
     exited = 0;
   }
   logfile = saved_log;
-  rewind(log_capture);
+  TEST_ASSERT_EQUAL_INT(0, fseek(log_capture, 0L, SEEK_SET));
   got = fread(logged, 1, sizeof(logged) - 1, log_capture);
   logged[got] = '\0';
   TEST_ASSERT_EQUAL_INT(0, fclose(log_capture));
