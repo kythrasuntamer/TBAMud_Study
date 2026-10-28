@@ -3805,7 +3805,12 @@ void save_char_vars(struct char_data *ch)
                  "variables not saved", (long)GET_IDNUM(ch));
     return;
   }
-  unlink(fn);
+  /* No legacy file is the normal case. Any other failure leaves a stale
+   * file that read_saved_vars() would load at a later login. */
+  if (unlink(fn) != 0 && errno != ENOENT)
+    TB_ERROR_ERRNO("dg", "vars-unlink", "script_vars",
+                   "player idnum %ld: cannot remove the old variable file %s",
+                   (long)GET_IDNUM(ch), fn);
 
   /* make sure this char has global variables to save */
   if (ch->script->global_vars == NULL) return;
