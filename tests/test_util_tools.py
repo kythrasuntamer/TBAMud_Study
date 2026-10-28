@@ -353,6 +353,17 @@ def asciipasswd_rejects_bad_name(tmp):
         check("Pass:" not in out, out)
 
 
+# Built without crypt support (CIRCLE_CRYPT undefined), CRYPT(a, b) is (a):
+# the tool must refuse loudly rather than print the plaintext as the hash.
+# CMake passes the binary under this name instead of "asciipasswd" then.
+@test("asciipasswd_nocrypt")
+def asciipasswd_without_crypt_refuses(tmp):
+    rc, out, err = run("asciipasswd_nocrypt", ["bob", "secret"], tmp)
+    check(rc == 1, "rc=%d out=%s" % (rc, out))
+    check("crypt" in operations(err), err)
+    check("Pass:" not in out and "secret" not in out, out)
+
+
 # ------------------------------------------------------------------- sign
 
 @test("sign")

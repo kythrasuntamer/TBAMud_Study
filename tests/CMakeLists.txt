@@ -1068,6 +1068,14 @@ if(Python3_Interpreter_FOUND)
 
     # Standalone src/util tools, run as built (sanitized in sanitizer trees)
     # on crafted input; asserts on their TBERR diagnostics.
+    # asciipasswd hashes only when conf.h defines CIRCLE_CRYPT (crypt() was
+    # found; not so with the Fil-C toolchain). Without it the tool must
+    # refuse, so it is handed over under the name of those tests instead.
+    if(CIRCLE_CRYPT)
+        set(_tb_asciipasswd_tool asciipasswd)
+    else()
+        set(_tb_asciipasswd_tool asciipasswd_nocrypt)
+    endif()
     add_test(NAME test_util_tools
         COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/test_util_tools.py
@@ -1076,7 +1084,7 @@ if(Python3_Interpreter_FOUND)
                 rebuildMailIndex=$<TARGET_FILE:rebuildMailIndex>
                 rebuildIndex=$<TARGET_FILE:rebuildIndex>
                 shopconv=$<TARGET_FILE:shopconv>
-                asciipasswd=$<TARGET_FILE:asciipasswd>
+                ${_tb_asciipasswd_tool}=$<TARGET_FILE:asciipasswd>
                 sign=$<TARGET_FILE:sign>)
 
     # End-to-end: boot the real server and require the login name prompt.

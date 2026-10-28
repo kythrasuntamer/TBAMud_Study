@@ -2,7 +2,8 @@
  *
  * Detected heap misuse aborts the process after a structured TBERR record on
  * stderr, so each misuse case runs in a forked child whose stderr goes to a
- * pipe; the parent asserts that the child died of SIGABRT and that the
+ * pipe; the parent asserts that the child died of SIGABRT (SIGTRAP under
+ * Fil-C, see ZM_ABORT_SIGNAL) and that the
  * expected operation was reported.  The functions are called directly (not
  * through the zmalloc.h malloc/free macros) so this file's own stdio and
  * Unity allocations stay on libc.
@@ -26,6 +27,15 @@
 #include <string.h>
 #include <sys/wait.h>
 #include <unistd.h>
+
+/* The signal an abort() leaves in the child's wait status.  Fil-C's abort()
+ * does not raise SIGABRT: it reports "filc user error: abort(3) called" and
+ * panics, and the panic ends the process with SIGTRAP. */
+#ifdef __FILC__
+#define ZM_ABORT_SIGNAL SIGTRAP
+#else
+#define ZM_ABORT_SIGNAL SIGABRT
+#endif
 
 unsigned char *zmalloc(size_t, char *, int);
 unsigned char *zcalloc(size_t, size_t, char *, int);
@@ -75,7 +85,7 @@ static void assert_aborted_with(zm_case_fn fn, const char *operation)
   char records[8192], want[128];
   int status = run_child(fn, records, sizeof(records));
 
-  TEST_ASSERT_TRUE_MESSAGE(WIFSIGNALED(status) && WTERMSIG(status) == SIGABRT,
+  TEST_ASSERT_TRUE_MESSAGE(WIFSIGNALED(status) && WTERMSIG(status) == ZM_ABORT_SIGNAL,
                            records);
   TEST_ASSERT_TRUE(snprintf(want, sizeof(want), "operation=\"%s\"",
                             operation) < (int)sizeof(want));
