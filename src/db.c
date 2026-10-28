@@ -2743,14 +2743,31 @@ static void load_zones(FILE *fl, char *zonename)
 }
 #undef Z
 
+/** Read one help-file line into buf (at least READ_SIZE bytes) without its
+ * line ending. The help files are edited by implementors and through hedit.
+ * A chunk that starts with NUL has strlen() 0, so the old "remove the last
+ * byte" wrote buf[-1]; and a line longer than READ_SIZE - 1 lost a real
+ * character. Only CR/LF are removed now, and both cases are reported. */
 static void get_one_line(FILE *fl, char *buf)
 {
+  size_t n;
+
   if (fgets(buf, READ_SIZE, fl) == NULL) {
     log("SYSERR: error reading help file: not terminated with $?");
     exit(1);
   }
 
-  buf[strlen(buf) - 1] = '\0'; /* take off the trailing \n */
+  n = strlen(buf);
+  if (n == 0)
+    TB_ERROR_MSG("db", "help-load", "get_one_line",
+                 "NUL byte at the start of a help line; line read as empty");
+  else if (buf[n - 1] != '\n' && !feof(fl))
+    TB_WARN_MSG("db", "help-load", "get_one_line",
+                "help line longer than %d bytes split after '%.40s...'",
+                READ_SIZE - 1, buf);
+
+  while (n > 0 && (buf[n - 1] == '\n' || buf[n - 1] == '\r'))
+    buf[--n] = '\0';
 }
 
 void free_help(struct help_index_element *hentry)

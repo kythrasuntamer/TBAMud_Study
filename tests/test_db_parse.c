@@ -1127,10 +1127,50 @@ static void starts_with_article_handles_long_first_word(void)
   TEST_ASSERT_FALSE(starts_with_article(""));
 }
 
+/* ---------------------------------------------------------------------
+ * get_one_line(): help-file lines
+ * ------------------------------------------------------------------- */
+
+/* B1-21: a line starting with NUL made strlen() 0 and the newline strip wrote
+ * buf[-1] (ASan: stack-buffer-underflow). */
+static void get_one_line_reports_leading_nul(void)
+{
+  static const char text[] = "\0abc\nnext\n";
+  char buf[READ_SIZE];
+  FILE *fp = stream_of(text, sizeof(text) - 1);
+
+  get_one_line(fp, buf);
+  TEST_ASSERT_EQUAL_STRING("", buf);
+  TEST_ASSERT_EQUAL_STRING("help-load", tb_captured_operation);
+  get_one_line(fp, buf);
+  TEST_ASSERT_EQUAL_STRING("next", buf);
+  fclose(fp);
+}
+
+/* A line longer than one chunk kept losing its last character; now it is
+ * split whole and reported, and CRLF endings are removed entirely. */
+static void get_one_line_keeps_long_line_characters(void)
+{
+  char text[READ_SIZE + 16], buf[READ_SIZE];
+  FILE *fp;
+
+  memset(text, 'h', READ_SIZE + 4);
+  memcpy(text + READ_SIZE + 4, "\r\n", 3);
+  fp = stream_of(text, strlen(text));
+  get_one_line(fp, buf);
+  TEST_ASSERT_EQUAL_size_t(READ_SIZE - 1, strlen(buf));
+  TEST_ASSERT_EQUAL_STRING("WARNING", tb_captured_severity);
+  get_one_line(fp, buf);
+  TEST_ASSERT_EQUAL_STRING("hhhhh", buf);
+  fclose(fp);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
   RUN_TEST(load_zones_rejects_top_nowhere);
+  RUN_TEST(get_one_line_reports_leading_nul);
+  RUN_TEST(get_one_line_keeps_long_line_characters);
   RUN_TEST(starts_with_article_handles_long_first_word);
   RUN_TEST(load_zones_disables_command_with_vnum_past_idxtype);
   RUN_TEST(discrete_load_rejects_record_past_capacity);
