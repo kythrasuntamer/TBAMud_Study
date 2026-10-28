@@ -290,6 +290,13 @@ if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
         PROPERTIES COMPILE_OPTIONS "-ffunction-sections;-fdata-sections")
 endif()
 
+# Boot the shipped world in syntax-check mode (circle -c): loads every zone,
+# room, object, mob, shop, trigger and quest, then frees it all.  Under the
+# sanitizer builds this catches load and shutdown memory errors (it found a
+# read of the freed world in destroy_db()).
+add_test(NAME test_world_boot
+    COMMAND $<TARGET_FILE:circle> -c -d ${CMAKE_SOURCE_DIR}/lib)
+
 find_package(Python3 COMPONENTS Interpreter QUIET)
 if(Python3_Interpreter_FOUND)
     add_test(NAME test_dg_memory_callback_contract
