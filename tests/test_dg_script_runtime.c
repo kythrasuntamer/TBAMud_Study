@@ -85,12 +85,16 @@ void do_dg_cast(void *go, struct script_data *sc, trig_data *t, int type, char *
 { (void)go; (void)sc; (void)t; (void)type; (void)cmd; UNREACHED(); }
 void do_dg_affect(void *go, struct script_data *sc, trig_data *t, int type, char *cmd)
 { (void)go; (void)sc; (void)t; (void)type; (void)cmd; UNREACHED(); }
-/* process_wait() schedules through this; record the delay it asked for. */
+/* process_wait() schedules through this; record the delay and keep the
+ * last event so a test can fire it.  An unfired event's object is freed. */
 static long scheduled_delay;
+static EVENTFUNC(*scheduled_func);
+static void *scheduled_obj;
 struct event *event_create(EVENTFUNC(*func), void *event_obj, long when)
 {
-  (void)func;
-  free(event_obj);
+  free(scheduled_obj);
+  scheduled_func = func;
+  scheduled_obj = event_obj;
   scheduled_delay = when;
   return NULL;
 }
@@ -369,7 +373,7 @@ int __wrap_script_command_interpreter(struct char_data *ch, char *arg)
 void __wrap_command_interpreter(struct char_data *ch, char *argument)
 { (void)ch; (void)argument; UNREACHED(); }
 void wld_command_interpreter(room_data *room, char *argument)
-{ (void)room; (void)argument; UNREACHED(); }
+{ (void)room; (void)argument; dispatched++; }
 
 static struct cmdlist_element line2 = { "second", NULL, NULL, 0 };
 static struct cmdlist_element line1 = { "first", NULL, &line2, 0 };
@@ -721,6 +725,45 @@ static void legacy_var_file_accepts_long_names(void)
   free(SCRIPT(&player));
 }
 
+/* Resuming a wait looked for the room among world[0..top_of_world-1], so
+ * a room script in the last room never resumed after "wait". */
+static void wait_resumes_in_the_last_room(void)
+{
+  static struct room_data rooms[2];
+  static struct script_data script;
+  static struct cmdlist_element after = { "after", NULL, NULL, 0 };
+  static struct cmdlist_element wait = { "wait 1", NULL, &after, 0 };
+  static struct index_data index = { 0 };
+  static struct index_data *indexes[1] = { &index };
+  room_data *owner = &rooms[1];
+
+  memset(rooms, 0, sizeof(rooms));
+  memset(&script, 0, sizeof(script));
+  world = rooms;
+  top_of_world = 1;                       /* the last room is rooms[1] */
+  SCRIPT(&rooms[1]) = &script;
+  rooms[1].number = 4201;
+  trig_index = indexes;
+  top_of_trigt = 1;
+  trig.cmdlist = &wait;
+  trig.attach_type = WLD_TRIGGER;
+  dispatched = 0;
+
+  script_driver(&owner, &trig, WLD_TRIGGER, TRIG_NEW);
+  TEST_ASSERT_EQUAL_INT(0, dispatched);
+  TEST_ASSERT_NOT_NULL(scheduled_func);
+
+  scheduled_func(scheduled_obj);          /* the wait expires */
+  scheduled_obj = NULL;                   /* the event freed it */
+  scheduled_func = NULL;
+  TEST_ASSERT_EQUAL_INT(1, dispatched);
+
+  world = NULL;
+  top_of_world = 0;
+  trig_index = NULL;
+  top_of_trigt = 0;
+}
+
 static void restore_round_trips_neutralize(void)
 {
   char text[] = "50% off, 100%% sure";
@@ -756,5 +799,6 @@ int main(void)
   RUN_TEST(add_var_accepts_its_own_value);
   RUN_TEST(tstat_of_a_long_script_stays_in_bounds);
   RUN_TEST(legacy_var_file_accepts_long_names);
+  RUN_TEST(wait_resumes_in_the_last_room);
   return UNITY_END();
 }
