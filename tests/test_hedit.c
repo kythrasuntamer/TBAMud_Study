@@ -96,10 +96,59 @@ static void declining_the_last_match_offers_an_add(void)
   TEST_ASSERT_EQUAL_INT(HEDIT_CONFIRM_ADD, OLC_MODE(&desc));
 }
 
+/* do_oasis_hedit() fixtures: a builder with a descriptor in the game.
+ * Single-word arguments only. */
+char *one_argument(char *argument, char *first_arg)
+{
+  strlcpy(first_arg, argument, MAX_INPUT_LENGTH);
+  return argument + strlen(argument);
+}
+static int search_result;
+int search_help(const char *argument, int level) { (void)argument; (void)level; return search_result; }
+int can_edit_zone(struct char_data *ch, zone_rnum rnum) { (void)ch; (void)rnum; return 1; }
+size_t send_to_char(struct char_data *ch, const char *messg, ...)
+{
+  va_list args;
+  int n;
+  (void)ch;
+  va_start(args, messg);
+  n = vsnprintf(said, sizeof(said), messg, args);
+  va_end(args);
+  return n < 0 ? 0 : (size_t)n;
+}
+
+/* A missing topic used to read help_table[NOWHERE].duplicate first. */
+static void editing_a_missing_topic_offers_an_add(void)
+{
+  static struct char_data builder;
+  static struct player_special_data specials;
+  char topic[] = "zzzz";
+
+  memset(&builder, 0, sizeof(builder));
+  memset(&specials, 0, sizeof(specials));
+  builder.player_specials = &specials;
+  builder.player.name = "Builder";
+  builder.desc = &desc;
+  desc.character = &builder;
+  desc.olc = NULL;
+  STATE(&desc) = CON_PLAYING;
+  search_result = NOWHERE;
+
+  do_oasis_hedit(&builder, topic, 0, 0);
+
+  TEST_ASSERT_NOT_NULL(desc.olc);
+  TEST_ASSERT_EQUAL_INT(NOWHERE, OLC_ZNUM(&desc));
+  TEST_ASSERT_EQUAL_INT(HEDIT_CONFIRM_ADD, OLC_MODE(&desc));
+  free(OLC_STORAGE(&desc));
+  free(desc.olc);
+  desc.olc = NULL;
+}
+
 int main(void)
 {
   UNITY_BEGIN();
   RUN_TEST(declining_offers_the_next_match);
   RUN_TEST(declining_the_last_match_offers_an_add);
+  RUN_TEST(editing_a_missing_topic_offers_an_add);
   return UNITY_END();
 }
