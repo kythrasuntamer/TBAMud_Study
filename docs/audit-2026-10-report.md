@@ -287,7 +287,7 @@ use were rebuilt with it.
 
 | Bug | Found by | Who or what triggers it | Fix (commit subject) | Where the fix is | Chunk finding | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| Text files loaded as their first 7 bytes: no login prompt for new players | new players could not log in; the B1 reviewer had also reported it (B1-01) | every new connection | `security: text files load whole again, not as their first 7 bytes` | this branch | B1-01 | adds the WarnOnSizeOfPointer clang-tidy error and tests/test_login_greeting.py; backported as `security: new players can log in again (login hotfix backport)` to 18 local branches (master: 1f228bc6) |
+| Text files loaded as their first 7 bytes: no login prompt for new players | new players could not log in; the B1 reviewer had also reported it (B1-01) | every new connection | `security: text files load whole again, not as their first 7 bytes` | this branch | B1-01 | adds the WarnOnSizeOfPointer clang-tidy error and tests/test_login_greeting.py; backported as `security: new players can log in again (login hotfix backport)` to 1 local branches (master: unknown) |
 | autowiz read player-index lines as their first 7 bytes | the sizeof-of-pointer sweep; the I2 reviewer had also reported it (I2-01) | every autowiz run (empty wizlist and immlist) | `security: autowiz reads whole index lines, not their first 7 bytes` | this branch | I2-01 | - |
 | New player-index slots written to disk uninitialised; a reused slot leaked its name | Valgrind on a live server | every new character | `security: new player-index slots start zeroed, not as realloc garbage` | this branch | - | - |
 | Host string leaked once per new character | Valgrind on a live server | every new character | `security: creating a character no longer leaks its host string` | this branch | - | - |
@@ -439,13 +439,13 @@ Merge note from the same file: cfa23ca/eed9ae3 (C2) keep missing-trigger T lines
 
 | Group | Branch | Based on | Files owned | Findings | Still partly open | Not started | Fixed | Refuted |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `commands` | `audit-deferred-commands` | `audit-fix-G1` | 5 | 8 | 0 | 0 | 8 | 0 |
-| `core-utils` | `audit-deferred-core-utils` | `audit-fix-I2` | 11 | 13 | 0 | 0 | 13 | 0 |
-| `db-loaders` | `audit-deferred-db-loaders` | `worktree-wf_c613c2c5-f9f-30` | 2 | 8 | 0 | 0 | 8 | 0 |
-| `dg` | `audit-deferred-dg` | `worktree-wf_c613c2c5-f9f-33` | 10 | 12 | 0 | 0 | 12 | 0 |
-| `errloc` | `audit-deferred-errloc` | `worktree-wf_c613c2c5-f9f-28` | 7 | 9 | 0 | 0 | 9 | 0 |
-| `gen-olc` | `audit-deferred-gen-olc` | `worktree-wf_c613c2c5-f9f-32` | 11 | 15 | 0 | 0 | 14 | 1 |
-| `player-load` | `audit-deferred-player-load` | `worktree-wf_c613c2c5-f9f-31` | 3 | 7 | 0 | 0 | 7 | 0 |
+| `commands` | - | `audit-fix-G1` | 5 | 8 | 0 | 0 | 8 | 0 |
+| `core-utils` | - | `audit-fix-I2` | 11 | 13 | 0 | 0 | 13 | 0 |
+| `db-loaders` | - | `worktree-wf_c613c2c5-f9f-30` | 2 | 8 | 0 | 0 | 8 | 0 |
+| `dg` | - | `worktree-wf_c613c2c5-f9f-33` | 10 | 12 | 0 | 0 | 12 | 0 |
+| `errloc` | - | `worktree-wf_c613c2c5-f9f-28` | 7 | 9 | 0 | 0 | 9 | 0 |
+| `gen-olc` | - | `worktree-wf_c613c2c5-f9f-32` | 11 | 15 | 0 | 0 | 14 | 1 |
+| `player-load` | - | `worktree-wf_c613c2c5-f9f-31` | 3 | 7 | 0 | 0 | 7 | 0 |
 
 **Open findings per group** (none, when every group is done):
 
@@ -490,10 +490,10 @@ Merge note from the same file: cfa23ca/eed9ae3 (C2) keep missing-trigger T lines
 | A2 | oos:utils.c count_color_chars | Out of scope (src/utils.c, line 1334). A string ending in a lone '\t' gives i += 2, then the while test reads string[len+1], one byte past the terminator. Callers include act.other.c:345 (GET_NAME) and medit.c:495. format_text no longer passes it such a string, but the function itself still needs fixing by the utils.c owner. | fixed: `security: count_color_chars stops at a lone trailing tab` |
 | A2 | oos:interpreter.c perform_new_char_dupe_check leak | Not fixed; it was not a listed finding, and the fix changes descriptor lifetime. In the 'boot the older one' branch, k->character is set to NULL without free_char(), so close_socket() leaks that pre-creation char_data. Suggested fix: leave k->character attached and set STATE(k)=CON_CLOSE so close_socket() frees it. This needs a socket-lifecycle test first. | fixed: `security: the new-character dupe check frees the characters it boots` |
 | A2 | oos:protocol.c ProtocolCreate | Out of scope (protocol.c; only protocol.h is in this chunk). The malloc() results for pVariables and each MSDP_t are used without a NULL check, so get_protocols' precondition holds only while allocation succeeds. | fixed: `security: protocol allocations abort on failure instead of writing through NULL` |
-| A2 | oos:improved-edit.c escaped \r\n | Minor, user-visible, not a listed finding. parse_edit_action PARSE_FORMAT prints "Invalid line range.\\r\\n" and "That range is invalid.\\r\\n" with doubled backslashes, so the player sees a literal \r\n. Left unchanged. | not fixed |
-| A2 | oos:ban.c site case | Documented, not changed. load_banned() keeps file sites as written, but isbanned() lowercases the host, so an uppercase site in a hand-edited BAN_FILE never matches. A follow-up could lowercase sites on load and emit a warning. | not fixed |
-| B2 | pre-existing: tests/test_warning_bounds_contracts.py test_objsave_rent_headers_are_checked | Fails at the audit base 1e03b0c as well: it expects 3 objsave_parse_rent_header(line, calls and finds 4. It is not registered with ctest and is unrelated to these commits, so it was left alone. | not fixed |
-| C2 | NEW: add_cmd_to_list pos > count | Not an assigned finding, reported for triage. add_cmd_to_list (genzon.c) does not check pos. zedit_save_internally (zedit.c:303-335) advances subcmd past G/E/P commands it refuses to save, so a later command's pos can exceed the live list's count. That command is then silently not inserted. Example: a room whose only other zone commands are [G (no mob), O] loses the O. | not fixed |
+| A2 | oos:improved-edit.c escaped \r\n | Minor, user-visible, not a listed finding. parse_edit_action PARSE_FORMAT prints "Invalid line range.\\r\\n" and "That range is invalid.\\r\\n" with doubled backslashes, so the player sees a literal \r\n. Left unchanged. | fixed: `fix: editor range errors end with a line break, not a literal \r\n` |
+| A2 | oos:ban.c site case | Documented, not changed. load_banned() keeps file sites as written, but isbanned() lowercases the host, so an uppercase site in a hand-edited BAN_FILE never matches. A follow-up could lowercase sites on load and emit a warning. | fixed: `fix: ban file sites are stored lowercased, so uppercase ones match` |
+| B2 | pre-existing: tests/test_warning_bounds_contracts.py test_objsave_rent_headers_are_checked | Fails at the audit base 1e03b0c as well: it expects 3 objsave_parse_rent_header(line, calls and finds 4. It is not registered with ctest and is unrelated to these commits, so it was left alone. | fixed: `test: rent-header contract checks every Crash_* header reader` |
+| C2 | NEW: add_cmd_to_list pos > count | Not an assigned finding, reported for triage. add_cmd_to_list (genzon.c) does not check pos. zedit_save_internally (zedit.c:303-335) advances subcmd past G/E/P commands it refuses to save, so a later command's pos can exceed the live list's count. That command is then silently not inserted. Example: a room whose only other zone commands are [G (no mob), O] loses the O. | fixed: `fix: zedit saves keep every reset command reset_zone accepts, in place` |
 | H1 | NEW: perform_move follower loop | Not in the findings list, so documented only (7d39533). perform_move saves k->next before perform_move(follower). The follower's leave/entry/greet triggers can reach stop_follower() on another follower of ch, which frees that follow_type node, and the loop then follows a dangling pointer. Suggested fix: snapshot follower UIDs and re-acquire each one with find_char() plus an IN_ROOM check. | fixed: `security: followers are moved from a snapshot, not a list triggers free` |
 
 **Infrastructure proposals still not implemented:**

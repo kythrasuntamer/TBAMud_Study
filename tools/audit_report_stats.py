@@ -414,6 +414,14 @@ OBSERVATION_FIXED = {
         "security: protocol allocations abort on failure instead of writing through NULL",
     "NEW: perform_move follower loop":
         "security: followers are moved from a snapshot, not a list triggers free",
+    "oos:improved-edit.c escaped \\r\\n":
+        "fix: editor range errors end with a line break, not a literal \\r\\n",
+    "oos:ban.c site case":
+        "fix: ban file sites are stored lowercased, so uppercase ones match",
+    "pre-existing: tests/test_warning_bounds_contracts.py test_objsave_rent_headers_are_checked":
+        "test: rent-header contract checks every Crash_* header reader",
+    "NEW: add_cmd_to_list pos > count":
+        "fix: zedit saves keep every reset command reset_zone accepts, in place",
 }
 
 # fixes/A1.json skip reason for A1-V01, shortened. The guard dates from 58ae5ed.
