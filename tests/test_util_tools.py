@@ -338,6 +338,17 @@ def asciipasswd_rejects_bad_name(tmp):
         check("Pass:" not in out, out)
 
 
+# ------------------------------------------------------------------- sign
+
+@test("sign")
+def sign_rejects_bad_port(tmp):
+    """I2-22: 70000 bound port 4464 (htons); '4000x' bound 4000."""
+    for port in ("70000", "4000x", "abc", "80"):
+        rc, out, err = run("sign", [port, "-"], tmp, stdin=b"hello\n")
+        check(rc == 1, "%s: rc=%d" % (port, rc))
+        check("port-parse" in operations(err), "%s:\n%s" % (port, err))
+
+
 # ------------------------------------------------------------- plrtoascii
 
 def plr_record_size(tmp):

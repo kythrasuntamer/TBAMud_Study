@@ -134,7 +134,16 @@ int main(int argc, char *argv[])
   ssize_t bytes_written;
   struct sigaction sa;
 
-  if (argc != 3 || (port = tb_parse_int_or_zero(argv[1])) < 1024) {
+  if (argc != 3) {
+    tb_fprintf(stderr, "usage: %s <portnum> <\"-\" | filename>\n", argv[0]);
+    exit(1);
+  }
+  /* The port goes through htons() (16 bits): 70000 used to be accepted,
+   * announced as 70000 and bound to 4464, and "4000x" bound 4000. */
+  if (!tb_parse_int_checked(argv[1], &port) || port < 1024 || port > 65535) {
+    TB_REPORT_DOMAIN_ERRORF(TB_SEV_ERROR, TB_ERR_PARSER, "port-parse",
+                            "port=%.32s: need a whole number in 1024..65535",
+                            argv[1]);
     tb_fprintf(stderr, "usage: %s <portnum> <\"-\" | filename>\n", argv[0]);
     exit(1);
   }
