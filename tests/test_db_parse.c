@@ -137,6 +137,8 @@ int add_to_save_list(zone_vnum zone, int type) { (void)zone; (void)type; return 
 zone_rnum real_zone_by_thing(room_vnum vznum) { (void)vznum; return 0; }
 void dg_read_trigger(FILE *fp, void *proto, int type)
 { (void)fp; (void)proto; (void)type; }
+void skip_spaces(char **string)                /* interpreter.c */
+{ while (**string && isspace((unsigned char)**string)) (*string)++; }
 
 void setUp(void)
 {
@@ -236,6 +238,20 @@ static void reset_zone_keeps_object_when_trigger_does_not_purge(void)
   TEST_ASSERT_EQUAL_INT(1, fixture_triggers_added);
   TEST_ASSERT_NOT_NULL(object_list);
   TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  zone_fixture_teardown();
+}
+
+/* B1-07: with top == 65535 the room_vnum counter in the reset_wtrigger walk
+ * wrapped to 0 and the loop never ended. */
+static void reset_zone_wtrigger_walk_ends_at_top_max(void)
+{
+  struct reset_com cmds[] = { { 'S', FALSE, 0, 0, 0, 1, NULL, NULL } };
+
+  zone_fixture_setup(cmds);
+  zone_fixture[0].bot = 65530;
+  zone_fixture[0].top = 65535;
+  reset_zone(0);
+  TEST_ASSERT_EQUAL_INT(0, zone_fixture[0].age);
   zone_fixture_teardown();
 }
 
@@ -551,9 +567,66 @@ static void fread_string_long_unterminated_tail_exits(void)
   TEST_ASSERT_EQUAL_INT(1, tb_test_exit_code);
 }
 
+/* ---------------------------------------------------------------------
+ * load_zones(): zone header and reset command ranges
+ * ------------------------------------------------------------------- */
+
+/* load_zones() fills zone_table[zone] for a static cursor that only moves on
+ * success, so the tests give it a table with a slot per successful load. */
+#define ZONE_LOAD_FIXTURES 8
+static struct zone_data zone_load_fixture[ZONE_LOAD_FIXTURES];
+
+static void zone_load_fixture_free(void)
+{
+  int z, c;
+  for (z = 0; z < ZONE_LOAD_FIXTURES; z++) {
+    struct zone_data *zd = &zone_load_fixture[z];
+    if (zd->cmd)
+      for (c = 0; zd->cmd[c].command != 'S' && zd->cmd[c].command; c++) {
+        free(zd->cmd[c].sarg1);
+        free(zd->cmd[c].sarg2);
+      }
+    free(zd->cmd);
+    free(zd->name);
+    free(zd->builders);
+    memset(zd, 0, sizeof(*zd));
+  }
+  zone_table = NULL;
+}
+
+/* Parse a zone file; returns 1 if load_zones() exit()ed. */
+static int load_zone_text(const char *text)
+{
+  FILE *volatile fp = stream_of(text, strlen(text));
+  volatile int exited = 1;
+
+  zone_table = zone_load_fixture;
+  tb_test_exit_armed = 1;
+  if (setjmp(tb_test_exit_jmp) == 0) {
+    load_zones(fp, (char *)"test.zon");
+    tb_test_exit_armed = 0;
+    exited = 0;
+  }
+  fclose(fp);
+  return exited;
+}
+
+static void load_zones_rejects_top_nowhere(void)
+{
+  static const char text[] =
+    "#30\nbuilder~\nZone~\n65000 65535 30 2\nS\n$\n";
+
+  TEST_ASSERT_EQUAL_INT(1, load_zone_text(text));
+  TEST_ASSERT_EQUAL_STRING("FATAL", tb_captured_severity);
+  TEST_ASSERT_EQUAL_STRING("zone-parse", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "zone 30 top 65535"));
+  zone_load_fixture_free();
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(load_zones_rejects_top_nowhere);
   RUN_TEST(fread_string_rejoins_long_line);
   RUN_TEST(fread_clean_string_rejoins_long_line);
   RUN_TEST(fread_string_long_unterminated_tail_exits);
@@ -572,5 +645,6 @@ int main(void)
   RUN_TEST(file_to_string_rejects_oversized_file);
   RUN_TEST(reset_zone_skips_trigger_after_load_purge);
   RUN_TEST(reset_zone_keeps_object_when_trigger_does_not_purge);
+  RUN_TEST(reset_zone_wtrigger_walk_ends_at_top_max);
   return UNITY_END();
 }

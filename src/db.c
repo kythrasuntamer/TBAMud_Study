@@ -2500,6 +2500,15 @@ static void load_zones(FILE *fl, char *zonename)
     log("SYSERR: Zone %d bottom (%d) > top (%d).", Z.number, Z.bot, Z.top);
     exit(1);
   }
+  /* top comes from the hand-edited .zon header (zedit caps it well below
+   * this). IDXTYPE_MAX is NOWHERE, the "no room" sentinel, so no zone may
+   * claim it; reset_zone() walks bot..top inclusive. */
+  if (Z.top >= IDXTYPE_MAX) {
+    TB_FATAL_MSG("db", "zone-parse", zname,
+                 "zone %d top %d is the reserved NOWHERE vnum (max %d)",
+                 Z.number, Z.top, IDXTYPE_MAX - 1);
+    exit(1);
+  }
 
   cmd_no = 0;
 
@@ -3005,7 +3014,8 @@ void reset_zone(zone_rnum zone)
   int cmd_no, last_cmd = 0;
   struct char_data *mob = NULL;
   struct obj_data *obj, *obj_to;
-  room_vnum rvnum;
+  int rvnum;	/* int, not room_vnum: top may be IDXTYPE_MAX - 1, and a
+		 * room_vnum counter would wrap after it and never end */
   room_rnum rrnum;
   struct char_data *tmob=NULL; /* for trigger assignment */
   struct obj_data *tobj=NULL;  /* for trigger assignment */
