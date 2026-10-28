@@ -440,6 +440,93 @@ static void command_line_numbers_are_range_checked(void)
   TEST_ASSERT_EQUAL_INT(4000, (int)value);
 }
 
+/* return_from_void(): room primitives with handler.c's contract.
+ * char_from_room() aborts on a character in no valid room; char_to_room()
+ * refuses an invalid room and leaves its character in NOWHERE. */
+struct config_data config_info;
+room_rnum real_room(room_vnum vnum)
+{
+  room_rnum i;
+
+  for (i = 0; world && i <= top_of_world; i++)
+    if (world[i].number == vnum)
+      return i;
+  return NOWHERE;
+}
+void char_from_room_at(const char *src_file, int src_line,
+                       const char *src_func, struct char_data *ch)
+{
+  (void)src_file; (void)src_line; (void)src_func;
+  TEST_ASSERT_TRUE_MESSAGE(VALID_ROOM_RNUM(IN_ROOM(ch)),
+                           "char_from_room on a character in no valid room "
+                           "(production aborts)");
+  IN_ROOM(ch) = NOWHERE;
+}
+void char_to_room_at(const char *src_file, int src_line, const char *src_func,
+                     struct char_data *ch, room_rnum room)
+{
+  (void)src_file; (void)src_line; (void)src_func;
+  if (VALID_ROOM_RNUM(room))
+    IN_ROOM(ch) = room;
+}
+
+/* An idle player pulled into the void went back to GET_WAS_IN, an rnum.
+ * After OLC deleted rooms it could be past top_of_world: char_to_room()
+ * refused it and the player, still playing, was stranded in NOWHERE. */
+static void void_return_to_a_deleted_room_goes_to_the_start_room(void)
+{
+  static struct room_data rooms[3];
+  static struct char_data ch;
+  static struct player_special_data ps;
+
+  memset(rooms, 0, sizeof(rooms));
+  rooms[0].number = 0;
+  rooms[1].number = 1;              /* the void */
+  rooms[2].number = 3001;           /* the mortal start room */
+  world = rooms;
+  top_of_world = 2;
+  memset(&ch, 0, sizeof(ch));
+  memset(&ps, 0, sizeof(ps));
+  ch.player_specials = &ps;
+  GET_IDNUM(&ch) = 42;
+  CONFIG_MORTAL_START = 3001;
+
+  /* The usual case: back to the room it was pulled from. */
+  IN_ROOM(&ch) = 1;
+  GET_WAS_IN(&ch) = 0;
+  TEST_ASSERT_TRUE(return_from_void(&ch));
+  TEST_ASSERT_EQUAL_INT(0, IN_ROOM(&ch));
+  TEST_ASSERT_EQUAL_INT(NOWHERE, GET_WAS_IN(&ch));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+
+  /* That room was deleted: its rnum is now past top_of_world. */
+  IN_ROOM(&ch) = 1;
+  GET_WAS_IN(&ch) = 3;
+  TEST_ASSERT_TRUE(return_from_void(&ch));
+  TEST_ASSERT_EQUAL_INT(2, IN_ROOM(&ch));   /* not stranded in NOWHERE */
+  TEST_ASSERT_EQUAL_INT(NOWHERE, GET_WAS_IN(&ch));
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("void-return-stale", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail,
+      "player idnum 42 returns from the void to rnum 3, past top_of_world 2"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "room vnum 3001 (rnum 2)"));
+
+  /* The start room is gone too: reported, and left in the void. */
+  tb_error_capture_reset();
+  CONFIG_MORTAL_START = 9999;
+  IN_ROOM(&ch) = 1;
+  GET_WAS_IN(&ch) = 3;
+  TEST_ASSERT_FALSE(return_from_void(&ch));
+  TEST_ASSERT_EQUAL_INT(1, IN_ROOM(&ch));
+  TEST_ASSERT_EQUAL_INT(NOWHERE, GET_WAS_IN(&ch));
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("void-return-no-start-room", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "start room vnum 9999 does not exist"));
+
+  world = NULL;
+  top_of_world = 0;
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -456,5 +543,6 @@ int main(void)
   RUN_TEST(failed_log_open_keeps_stream);
   RUN_TEST(snooper_sees_only_sent_bytes);
   RUN_TEST(command_line_numbers_are_range_checked);
+  RUN_TEST(void_return_to_a_deleted_room_goes_to_the_start_room);
   return UNITY_END();
 }
