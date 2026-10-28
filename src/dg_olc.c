@@ -678,6 +678,7 @@ void trigedit_parse(struct descriptor_data *d, char *arg)
 
     case TRIGEDIT_ARGUMENT:
       smash_tilde(arg);
+      free(OLC_TRIG(d)->arglist);   /* each new argument replaced it unfreed */
       OLC_TRIG(d)->arglist = (*arg?strdup(arg):NULL);
       OLC_VAL(d)++;
       break;

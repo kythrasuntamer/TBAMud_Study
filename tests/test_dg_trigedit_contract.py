@@ -33,4 +33,8 @@ assert "free(OLC_STORAGE(d));" in copy
 assert "GET_TRIG_RNUM(OLC_TRIG(d)) = real_trigger(OLC_NUM(d));" in copy
 existing = s[s.index("/* make the prorotype look like what we have */"):]
 assert existing.index("proto->nr = rnum;") < existing.index("go through the mud")
+# Setting the argument list replaces it: the old one is freed first.
+arg = s[s.index("case TRIGEDIT_ARGUMENT:"):]
+arg = arg[:arg.index("break;")]
+assert arg.index("free(OLC_TRIG(d)->arglist);") < arg.index("OLC_TRIG(d)->arglist = ")
 print("trigedit contract verified")
