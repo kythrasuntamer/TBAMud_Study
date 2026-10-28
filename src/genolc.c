@@ -32,7 +32,10 @@
 struct save_list_data *save_list;
 
 /* Local (file scope) variables */
-/* Structure defining all known save types. */
+/* Structure defining all known save types.  save_all() and
+ * do_show_save_list() index this table by SL_* value, so entry N must be
+ * the one whose save_type is N.  Each func follows the contract described
+ * at save_all(); SL_ACT and SL_HLP have none and are never autosaved. */
 static struct {
   int save_type;
   int (*func)(IDXTYPE rnum);
@@ -49,8 +52,26 @@ static struct {
   { SL_HLP, NULL, "help" },
   { -1, NULL, NULL },
 };
+/* TRUE if t is an SL_* value with its own save_types[] entry (the table is
+ * indexed by type, so the entry at t must say it is type t).  Evaluates t
+ * several times: pass a plain variable. */
+#define SAVE_TYPE_OK(t) \
+  ((t) >= 0 && (size_t)(t) < sizeof(save_types) / sizeof(save_types[0]) - 1 && \
+   save_types[(t)].save_type == (t))
+
 /* for Zone Export */
-static int zone_exits = 0;
+
+/* Copy a world string into an export buffer.  The copy always terminates
+ * (strncpy(buf, src, sizeof(buf) - 1) into an uninitialised buffer did not,
+ * for a source of sizeof(buf) - 1 bytes or more), and a cut is reported
+ * with the entity's vnum.  dst must be an array; the call site's location
+ * is recorded. */
+#define EXPORT_COPY(dst, src, what, vnum) do { \
+  if (strlcpy((dst), (src), sizeof(dst)) >= sizeof(dst)) \
+    TB_WARN_MSG("genolc", "export-truncate", (what), \
+                "vnum %d %s truncated to %lu bytes in the export", \
+                (int)(vnum), (what), (unsigned long)sizeof(dst) - 1); \
+} while (0)
 
 /* Local (file scope) functions */
 /* Zone export functions */
@@ -63,6 +84,8 @@ static int export_save_triggers(zone_rnum zrnum);
 static int export_mobile_record(mob_vnum mvnum, struct char_data *mob, FILE *fd);
 static void export_script_save_to_disk(FILE *fp, void *item, int type);
 static int export_info_file(zone_rnum zrnum);
+static int export_count_zone_exits(zone_rnum zrnum);
+static int export_close(FILE *fl, const char *path, zone_rnum zrnum);
 
 int genolc_checkstring(struct descriptor_data *d, char *arg)
 {
@@ -92,28 +115,72 @@ char *str_udupnl(const char *txt)
   return str;
 }
 
-/* Original use: to be called at shutdown time. */
+/* Save every zone/type queued in save_list.  Called at shutdown, from
+ * 'saveall' and when converting world files at boot.
+ *
+ * Saver contract (save_types[].func): return > 0 after writing the file and
+ * removing the (zone, type) entry with remove_from_save_list(); return
+ * <= 0, leaving the entry queued, on failure.  This loop never waits for a
+ * failing saver to succeed -- it used to retry the head entry forever, so a
+ * read-only world directory or full disk hung shutdown.  Every entry is
+ * visited once: a failure is reported and its entry dropped, as are the
+ * SL_ACT / SL_HLP entries that cannot be autosaved.
+ *
+ * Returns TRUE when every queued save succeeded. */
 int save_all(void)
 {
-  while (save_list) {
-    if (save_list->type < 0 || save_list->type > SL_MAX) {
-      switch (save_list->type) {
+  struct save_list_data *entry;
+  int all_ok = TRUE, budget = 0, result, type, zone;
+
+  for (entry = save_list; entry; entry = entry->next)
+    budget++;
+
+  while ((entry = save_list) != NULL) {
+    if (budget-- <= 0) {
+      /* A saver queued more work than it removed; stop rather than spin. */
+      TB_ERROR_MSG("genolc", "save-all", "save_list",
+                   TB_ERRID_INVARIANT " save list still holds zone %d type %d after every queued entry was tried",
+                   entry->zone, entry->type);
+      return FALSE;
+    }
+    type = entry->type;
+    zone = entry->zone;
+
+    if (!SAVE_TYPE_OK(type) || !save_types[type].func) {
+      switch (type) {
         case SL_ACT:
           log("Actions not saved - can not autosave. Use 'aedit save'.");
-          save_list = save_list->next;    /* Fatal error, skip this one. */
           break;
         case SL_HLP:
           log("Help not saved - can not autosave. Use 'hedit save'.");
-          save_list = save_list->next;    /* Fatal error, skip this one. */
           break;
         default:
-          log("SYSERR: GenOLC: Invalid save type %d in save list.\n", save_list->type);
+          TB_ERROR_MSG("genolc", "save-all", "save_list",
+                       TB_ERRID_INVARIANT " invalid save type %d for zone %d; entry dropped",
+                       type, zone);
+          all_ok = FALSE;
           break;
-        }
-      } else if ((*save_types[save_list->type].func) (real_zone(save_list->zone)) < 0)
-        save_list = save_list->next;      /* Fatal error, skip this one. */
+      }
+      save_list = entry->next;
+      free(entry);
+      continue;
     }
-    return TRUE;
+
+    result = (*save_types[type].func) (real_zone(zone));
+    if (in_save_list(zone, type)) {
+      TB_ERROR_MSG("genolc", "save-all", save_types[type].message,
+                   TB_ERRID_PERSIST_WRITE " zone %d %s save failed (result %d); entry dropped, changes not on disk",
+                   zone, save_types[type].message, result);
+      remove_from_save_list(zone, type);
+      all_ok = FALSE;
+    } else if (result <= 0) {
+      TB_ERROR_MSG("genolc", "save-all", save_types[type].message,
+                   TB_ERRID_PERSIST_WRITE " zone %d %s saver returned %d after clearing its entry",
+                   zone, save_types[type].message, result);
+      all_ok = FALSE;
+    }
+  }
+  return all_ok;
 }
 
 /* NOTE: This changes the buffer passed in. */
@@ -131,6 +198,11 @@ void strip_cr(char *buffer)
   buffer[wpos] = '\0';
 }
 
+/** Deep-copy an extra-description list into *to; the caller owns the
+ * result and releases it with free_ex_descriptions().  One node is always
+ * allocated, even when from is NULL (its keyword and description are then
+ * NULL), so callers check from first.  NULL or empty source strings become
+ * "undefined" (str_udup). */
 void copy_ex_descriptions(struct extra_descr_data **to, struct extra_descr_data *from)
 {
   struct extra_descr_data *wpos;
@@ -146,6 +218,7 @@ void copy_ex_descriptions(struct extra_descr_data **to, struct extra_descr_data 
   }
 }
 
+/** Free an extra-description list and every string in it. */
 void free_ex_descriptions(struct extra_descr_data *head)
 {
   struct extra_descr_data *thised, *next_one;
@@ -229,6 +302,7 @@ void free_save_list(void)
     next_sld = sld->next;
     free(sld);
   }
+  save_list = NULL;   /* no dangling head for a later add/save */
 }
 
 /* Used from do_show(), ideally. */
@@ -241,7 +315,12 @@ ACMD(do_show_save_list)
 
     send_to_char(ch, "The following files need saving:\r\n");
     for (item = save_list; item; item = item->next) {
-      if (item->type != SL_CFG)
+      if (!SAVE_TYPE_OK(item->type)) {
+        TB_ERROR_MSG("genolc", "save-list", "save_list",
+                     TB_ERRID_INVARIANT " entry for zone %d has unknown save type %d",
+                     item->zone, item->type);
+        send_to_char(ch, " - unknown (type %d) data for zone %d.\r\n", item->type, item->zone);
+      } else if (item->type != SL_CFG)
         send_to_char(ch, " - %s data for zone %d.\r\n", save_types[item->type].message, item->zone);
       else
         send_to_char(ch, " - Game configuration data.\r\n");
@@ -259,6 +338,10 @@ zone_vnum genolc_zone_bottom(zone_rnum rznum)
   return zone_table[rznum].bot;
 }
 
+/** Write the set bits of 'bits' as CircleMUD ascii flags ("a".."F") into
+ * out, which must hold at least 33 bytes (32 letters and the terminator).
+ * Only the low 32 bits are encoded; no bit set writes "0".  Returns the
+ * bytes written, terminator included. */
 int sprintascii(char *out, bitvector_t bits)
 {
   int i, j = 0;
@@ -266,7 +349,7 @@ int sprintascii(char *out, bitvector_t bits)
   char *flags = "abcdefghijklmnopqrstuvwxyzABCDEF";
 
   for (i = 0; flags[i] != '\0'; i++)
-    if (bits & (1 << i))
+    if (bits & ((bitvector_t)1 << i))
       out[j++] = flags[i];
 
   if (j == 0) /* Didn't write anything. */
@@ -492,6 +575,43 @@ ACMD(do_export_zone)
 #endif /* platform specific part */
 }
 
+/* Finish an export file: TRUE only if every buffered write, the flush and
+ * the close succeeded.  The writers used to return TRUE after an unchecked
+ * close, so do_export_zone archived truncated files and reported success. */
+static int export_close(FILE *fl, const char *path, zone_rnum zrnum)
+{
+  int write_ok = !ferror(fl);
+  int flush_ok = tb_fflush_checked(fl, path);
+  int close_ok = tb_fclose_checked(fl, path);
+
+  if (write_ok && flush_ok && close_ok)
+    return TRUE;
+  TB_ERROR_MSG("genolc", "export-write", path,
+               TB_ERRID_PERSIST_WRITE " zone %d export file incomplete (write %s, flush %s, close %s)",
+               zone_table[zrnum].number, write_ok ? "ok" : "failed",
+               flush_ok ? "ok" : "failed", close_ok ? "ok" : "failed");
+  return FALSE;
+}
+
+/* Count the exits that leave the zone.  The info file is written first, so
+ * it cannot rely on export_save_rooms() having counted them (it used to
+ * read a file-scope counter left over from the previous export). */
+static int export_count_zone_exits(zone_rnum zrnum)
+{
+  int i, j, count = 0;
+  room_rnum rnum;
+
+  for (i = genolc_zone_bottom(zrnum); i <= zone_table[zrnum].top; i++) {
+    if ((rnum = real_room(i)) == NOWHERE)
+      continue;
+    for (j = 0; j < DIR_COUNT; j++)
+      if (R_EXIT(&world[rnum], j) && R_EXIT(&world[rnum], j)->to_room != NOWHERE &&
+          world[R_EXIT(&world[rnum], j)->to_room].zone != zrnum)
+        count++;
+  }
+  return count;
+}
+
 static int export_info_file(zone_rnum zrnum)
 {
   int i;
@@ -518,7 +638,7 @@ static int export_info_file(zone_rnum zrnum)
   tb_fprintf(info_file, "   have been changed to QQ. In other words, if you decide to have this zone as\n");
   tb_fprintf(info_file, "   zone 123, replace all occurences of QQ with 123 and rename the qq.zon file\n");
   tb_fprintf(info_file, "   to 123.zon (etc.). And of course add 123.zon to the respective index file.\n");
-  if (zone_exits) {
+  if (export_count_zone_exits(zrnum) > 0) {
     tb_fprintf(info_file, "2. Exits out of this zone have been ZZ'd. So all doors leading out have ZZ??\n");
     tb_fprintf(info_file, "   instead of the room vnum (?? are numbers 00 - 99).\n");
     tb_fprintf(info_file, "   In this zone, the exit rooms in question are:\n");
@@ -544,7 +664,6 @@ static int export_info_file(zone_rnum zrnum)
                            room->number%100, dirs[j]);
       }
     }
-    zone_exits = 0;
   } else {
     tb_fprintf(info_file, "2. This area doesn't have any exits _out_ of the zone.\n");
     tb_fprintf(info_file, "   More info on connections can be found in the zone description room (QQ00).\n");
@@ -562,13 +681,12 @@ static int export_info_file(zone_rnum zrnum)
   tb_fprintf(info_file, "Welcor - Coder of TBA\n");
   tb_fprintf(info_file, "\ntelnet://tbamud.com:9091/\n");
 
-  tb_fclose(info_file);
-  return TRUE;
+  return export_close(info_file, "world/export/qq.info", zrnum);
 }
 
 static int export_save_shops(zone_rnum zrnum)
 {
-  int i, j, rshop;
+  int i, j, rshop, keeper_qq;
   FILE *shop_file;
   struct shop_data *shop;
 
@@ -610,6 +728,17 @@ static int export_save_shops(zone_rnum zrnum)
 		S_BUYWORD(shop, j) ? S_BUYWORD(shop, j) : "");
       tb_fprintf(shop_file, "-1\n");
 
+      /* A shop may have no keeper (sedit before one is chosen, or its keeper
+       * mob was deleted): NOBODY must not index mob_index (65535 with
+       * unsigned rnums, ~2 MB past the table). Export it as -1. */
+      if (S_KEEPER(shop) == NOBODY || S_KEEPER(shop) > top_of_mobt) {
+        TB_WARN_MSG("genolc", "export-shop", "qq.shp",
+                    "shop %d in zone %d has no valid keeper (rnum %d); exported as -1",
+                    SHOP_NUM(rshop), zone_table[zrnum].number, S_KEEPER(shop));
+        keeper_qq = -1;
+      } else
+        keeper_qq = mob_index[S_KEEPER(shop)].vnum % 100;
+
       /* Save messages. Added some defaults as sanity checks. */
       tb_fprintf(shop_file,
 	      "%s~\n"
@@ -632,7 +761,7 @@ static int export_save_shops(zone_rnum zrnum)
 	      S_SELL(shop) ? S_SELL(shop) : "%s Ke?! %d?",
 	      S_BROKE_TEMPER(shop),
 	      S_BITVECTOR(shop),
-	      mob_index[S_KEEPER(shop)].vnum%100,
+	      keeper_qq,
 	      S_NOTRADE(shop)
 	      );
 
@@ -652,9 +781,7 @@ static int export_save_shops(zone_rnum zrnum)
     }
   }
   tb_fprintf(shop_file, "$~\n");
-  tb_fclose(shop_file);
-
-  return TRUE;
+  return export_close(shop_file, "world/export/qq.shp", zrnum);
 }
 
 static int export_save_mobiles(zone_rnum rznum)
@@ -677,9 +804,7 @@ static int export_save_mobiles(zone_rnum rznum)
       log("SYSERR: export_save_mobiles: Error writing mobile #%d.", i);
   }
   tb_fputs("$\n", mob_file);
-  tb_fclose(mob_file);
-
-  return TRUE;
+  return export_close(mob_file, "world/export/qq.mob", rznum);
 }
 
 static int export_mobile_record(mob_vnum mvnum, struct char_data *mob, FILE *fd)
@@ -688,10 +813,10 @@ static int export_mobile_record(mob_vnum mvnum, struct char_data *mob, FILE *fd)
   char ldesc[MAX_STRING_LENGTH];
   char ddesc[MAX_STRING_LENGTH];
 
-  ldesc[MAX_STRING_LENGTH - 1] = '\0';
-  ddesc[MAX_STRING_LENGTH - 1] = '\0';
-  strip_cr(strncpy(ldesc, GET_LDESC(mob), MAX_STRING_LENGTH - 1));
-  strip_cr(strncpy(ddesc, GET_DDESC(mob), MAX_STRING_LENGTH - 1));
+  EXPORT_COPY(ldesc, GET_LDESC(mob), "mob long description", mvnum);
+  EXPORT_COPY(ddesc, GET_DDESC(mob), "mob description", mvnum);
+  strip_cr(ldesc);
+  strip_cr(ddesc);
 
   tb_fprintf(fd,	"#QQ%02d\n"
 		"%s%c\n"
@@ -853,9 +978,7 @@ static int export_save_zone(zone_rnum zrnum)
     }
   }
   tb_fputs("S\n$\n", zone_file);
-  tb_fclose(zone_file);
-
-  return TRUE;
+  return export_close(zone_file, "world/export/qq.zon", zrnum);
 }
 
 static int export_save_objects(zone_rnum zrnum)
@@ -880,7 +1003,7 @@ static int export_save_objects(zone_rnum zrnum)
   for (ovnum = genolc_zone_bottom(zrnum); ovnum <= zone_table[zrnum].top; ovnum++) {
     if ((ornum = real_object(ovnum)) != NOTHING) {
       if ((obj = &obj_proto[ornum])->action_description) {
-	strncpy(buf, obj->action_description, sizeof(buf) - 1);
+	EXPORT_COPY(buf, obj->action_description, "obj action description", ovnum);
 	strip_cr(buf);
       } else
 	*buf = '\0';
@@ -946,7 +1069,7 @@ static int export_save_objects(zone_rnum zrnum)
 	    mudlog(BRF, LVL_IMMORT, TRUE, "SYSERR: OLC: export_save_objects: Corrupt ex_desc!");
 	    continue;
 	  }
-	  strncpy(buf, ex_desc->description, sizeof(buf) - 1);
+	  EXPORT_COPY(buf, ex_desc->description, "obj extra description", ovnum);
 	  strip_cr(buf);
 	  tb_fprintf(obj_file, "E\n"
 		  "%s~\n"
@@ -965,9 +1088,7 @@ static int export_save_objects(zone_rnum zrnum)
 
   /* Write the final line, close the file. */
   tb_fprintf(obj_file, "$~\n");
-  tb_fclose(obj_file);
-
-  return TRUE;
+  return export_close(obj_file, "world/export/qq.obj", zrnum);
 }
 
 static int export_save_rooms(zone_rnum zrnum)
@@ -993,7 +1114,8 @@ static int export_save_rooms(zone_rnum zrnum)
       room = &world[rnum];
 
       /* Copy the description and strip off trailing newlines. */
-      strncpy(buf, room->description ? room->description : "Empty room.", sizeof(buf)-1 );
+      EXPORT_COPY(buf, room->description ? room->description : "Empty room.",
+                  "room description", room->number);
       strip_cr(buf);
 
       /* Save the numeric and string section of the file. */
@@ -1013,7 +1135,7 @@ static int export_save_rooms(zone_rnum zrnum)
 	if (R_EXIT(room, j)) {
 	  int dflag;
 	  if (R_EXIT(room, j)->general_description) {
-	    strncpy(buf, R_EXIT(room, j)->general_description, sizeof(buf)-1);
+	    EXPORT_COPY(buf, R_EXIT(room, j)->general_description, "room exit description", room->number);
 	    strip_cr(buf);
 	  } else
 	    *buf = '\0';
@@ -1028,7 +1150,7 @@ static int export_save_rooms(zone_rnum zrnum)
 	    dflag = 0;
 
 	  if (R_EXIT(room, j)->keyword)
-	    strncpy(buf1, R_EXIT(room, j)->keyword, sizeof(buf1)-1 );
+	    EXPORT_COPY(buf1, R_EXIT(room, j)->keyword, "room exit keyword", room->number);
 	  else
 	    *buf1 = '\0';
 
@@ -1058,7 +1180,6 @@ static int export_save_rooms(zone_rnum zrnum)
 			      R_EXIT(room, j)->key == NOTHING ? "" : "QQ",
 			      R_EXIT(room, j)->key == NOTHING ? -1 : R_EXIT(room, j)->key % 100 ,
 			      world[R_EXIT(room, j)->to_room].number%100);
-            zone_exits++;
           }
 	}
       }
@@ -1067,8 +1188,16 @@ static int export_save_rooms(zone_rnum zrnum)
         struct extra_descr_data *xdesc;
 
 	for (xdesc = room->ex_description; xdesc; xdesc = xdesc->next) {
-	  strncpy(buf, xdesc->description, sizeof(buf) - 1);
-	  buf[sizeof(buf) - 1] = '\0';
+	  /* fread_string() returns NULL for an empty description; the object
+	   * path below already skips such entries. */
+	  if (!xdesc->keyword || !xdesc->description || !*xdesc->keyword || !*xdesc->description) {
+	    TB_WARN_MSG("genolc", "export-room", "qq.wld",
+	                "room %d extra description with %s %s not exported",
+	                room->number, xdesc->keyword ? "keyword" : "no keyword",
+	                xdesc->description ? "and empty description" : "and no description");
+	    continue;
+	  }
+	  EXPORT_COPY(buf, xdesc->description, "room extra description", room->number);
 	  strip_cr(buf);
 	  tb_fprintf(room_file,	"E\n"
 			"%s~\n"
@@ -1082,9 +1211,7 @@ static int export_save_rooms(zone_rnum zrnum)
 
   /* Write the final line and close it. */
   tb_fprintf(room_file, "$~\n");
-  tb_fclose(room_file);
-
-  return TRUE;
+  return export_close(room_file, "world/export/qq.wld", zrnum);
 }
 
 static void export_script_save_to_disk(FILE *fp, void *item, int type)
@@ -1154,6 +1281,5 @@ static int export_save_triggers(zone_rnum zrnum)
   }
 
   tb_fprintf(trig_file, "$%c\n", STRING_TERMINATOR);
-  tb_fclose(trig_file);
-  return TRUE;
+  return export_close(trig_file, "world/export/qq.trg", zrnum);
 }

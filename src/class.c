@@ -26,18 +26,20 @@
 
 /* Names first */
 const char *class_abbrevs[] = {
-  "Mu",
+  "Wi",
   "Cl",
   "Th",
   "Wa",
+  "Mo",
   "\n"
 };
 
 const char *pc_class_types[] = {
-  "Magic User",
+  "Wizard",
   "Cleric",
   "Thief",
   "Warrior",
+  "Monk",
   "\n"
 };
 
@@ -48,7 +50,8 @@ const char *class_menu =
 "  [\t(C\t)]leric\r\n"
 "  [\t(T\t)]hief\r\n"
 "  [\t(W\t)]arrior\r\n"
-"  [\t(M\t)]agic-user\r\n";
+"  [\t(Z\t)] Wizard\r\n"
+"  [\t(O\t)] Monk\r\n";
 
 /* The code to interpret a class letter -- used in interpreter.c when a new
  * character is selecting a class and by 'set class' in act.wizard.c. */
@@ -57,10 +60,12 @@ int parse_class(char arg)
   arg = LOWER(arg);
 
   switch (arg) {
-  case 'm': return CLASS_MAGIC_USER;
+  case 'm': /* Legacy alias. */
+  case 'z': return CLASS_MAGIC_USER;
   case 'c': return CLASS_CLERIC;
   case 'w': return CLASS_WARRIOR;
   case 't': return CLASS_THIEF;
+  case 'o': return CLASS_MONK;
   default:  return CLASS_UNDEFINED;
   }
 }
@@ -114,11 +119,11 @@ bitvector_t find_class_bitvector(const char *arg)
 /* #define PRAC_TYPE		3  should it say 'spell' or 'skill'?	*/
 
 int prac_params[4][NUM_CLASSES] = {
-  /* MAG	CLE	THE	WAR */
-  { 95,		95,	85,	80	},	/* learned level */
-  { 100,	100,	12,	12	},	/* max per practice */
-  { 25,		25,	0,	0	},	/* min per practice */
-  { SPELL,	SPELL,	SKILL,	SKILL	},	/* prac name */
+  /* MAG CLE THE WAR MONK */
+  { 95, 95, 85, 80, 85 }, /* learned level */
+  { 100, 100, 12, 12, 12 }, /* max per practice */
+  { 25, 25, 0, 0, 0 }, /* min per practice */
+  { SPELL, SPELL, SKILL, SKILL, SKILL }, /* prac name */
 };
 
 /* The appropriate rooms for each guildmaster/guildguard; controls which types
@@ -144,10 +149,79 @@ struct guild_info_type guild_info[] = {
   { -1, NOWHERE, -1}
 };
 
-/* Saving throws for : MCTW : PARA, ROD, PETRI, BREATH, SPELL. Levels 0-40. Do
- * not forget to change extern declaration in magic.c if you add to this. */
+/* Class-table diagnostics are rate limited: saving_throws() runs once per
+ * spell target (mag_savingthrow), so a systematic gap would otherwise log on
+ * every cast.  At most CLASS_DIAG_BURST records per minute are written; the
+ * next record after a quiet spell says how many were suppressed. */
+#define CLASS_DIAG_BURST 10
+
+/* The character whose class and level are being looked up, while one of the
+ * char_* lookups below runs; class_table_error_at() names it (DIAG_CHAR) so
+ * a miss says whose data is outside the table. NULL for the plain lookups.
+ * The tables run no callbacks, so it is never seen by another lookup. */
+static const struct char_data *class_lookup_subject;
+
+static void class_table_error_at(const char *table, int class_num, int type,
+                                 int level, const char *src_file, int src_line,
+                                 const char *src_func)
+{
+  static time_t window_start;
+  static int in_window, suppressed;
+  time_t now = time(0);
+  char who[64] = "";
+
+  if (now - window_start >= 60) {
+    window_start = now;
+    in_window = 0;
+  }
+  if (in_window >= CLASS_DIAG_BURST) {
+    suppressed++;
+    return;
+  }
+  in_window++;
+  if (class_lookup_subject)
+    tb_snprintf(who, sizeof(who), " for " DIAG_CHAR_FMT,
+                DIAG_CHAR(class_lookup_subject));
+  tb_error_log_at("ERROR", "class", "class-table", table, 0,
+                  src_file, src_line, src_func,
+                  TB_ERRID_INVARIANT " class %d type %d level %d is outside the %s table%s (%d earlier reports suppressed)",
+                  class_num, type, level, table, who, suppressed);
+  suppressed = 0;
+}
+
+/** Report a class/type/level that a class table does not cover, at the
+ * caller's location.  Pass -1 for a dimension the table does not have. */
+#define CLASS_TABLE_ERROR(table, class_num, type, level) \
+  class_table_error_at((table), (class_num), (type), (level), \
+                       __FILE__, __LINE__, __func__)
+
+/* Highest level each saving-throw table lists. */
+#define SAVE_TABLE_MAX_LEVEL        40
+#define SAVE_TABLE_MAX_LEVEL_WARRIOR 50
+
+/* Saving throws for : MCTW : PARA, ROD, PETRI, BREATH, SPELL.
+ *
+ * The mage, cleric and thief tables list levels 0-40 and the warrior table
+ * (also used by monks and by every NPC, see mag_savingthrow) 0-50; mortal
+ * levels run to LVL_IMMORT - 1 = 50 and staff to LVL_IMPL = 60.  Like
+ * thaco(), a level past the end of its table uses the table's last row
+ * (the best save).  Anything else -- a negative level, one above LVL_IMPL,
+ * an unknown class or save type -- is reported and returns 100, which
+ * mag_savingthrow() treats as "never saves". */
 byte saving_throws(int class_num, int type, int level)
 {
+  int table_max;
+
+  if (class_num == CLASS_MONK) class_num = CLASS_WARRIOR;
+  table_max = (class_num == CLASS_WARRIOR) ? SAVE_TABLE_MAX_LEVEL_WARRIOR
+                                           : SAVE_TABLE_MAX_LEVEL;
+  if (level < 0 || level > LVL_IMPL) {
+    CLASS_TABLE_ERROR("saving-throw", class_num, type, level);
+    return 100;
+  }
+  if (level > table_max)
+    level = table_max;
+
   switch (class_num) {
   case CLASS_MAGIC_USER:
     switch (type) {
@@ -195,7 +269,7 @@ byte saving_throws(int class_num, int type, int level)
       case 39: return  0;
       case 40: return  0;
       default:
-	log("SYSERR: Missing level for mage paralyzation saving throw.");
+	CLASS_TABLE_ERROR("saving-throw", class_num, type, level);
 	return 100;
       }
     case SAVING_ROD:	/* Rods */
@@ -242,7 +316,7 @@ byte saving_throws(int class_num, int type, int level)
       case 39: return  0;
       case 40: return  0;
       default:
-	log("SYSERR: Missing level for mage rod saving throw.");
+	CLASS_TABLE_ERROR("saving-throw", class_num, type, level);
 	return 100;
       }
     case SAVING_PETRI:	/* Petrification */
@@ -289,7 +363,7 @@ byte saving_throws(int class_num, int type, int level)
       case 39: return  0;
       case 40: return  0;
       default:
-	log("SYSERR: Missing level for mage petrification saving throw.");
+	CLASS_TABLE_ERROR("saving-throw", class_num, type, level);
 	return 100;
       }
     case SAVING_BREATH:	/* Breath weapons */
@@ -336,7 +410,7 @@ byte saving_throws(int class_num, int type, int level)
       case 39: return  0;
       case 40: return  0;
       default:
-	log("SYSERR: Missing level for mage breath saving throw.");
+	CLASS_TABLE_ERROR("saving-throw", class_num, type, level);
 	return 100;
       }
     case SAVING_SPELL:	/* Generic spells */
@@ -383,11 +457,11 @@ byte saving_throws(int class_num, int type, int level)
       case 39: return  0;
       case 40: return  0;
       default:
-	log("SYSERR: Missing level for mage spell saving throw.");
+	CLASS_TABLE_ERROR("saving-throw", class_num, type, level);
 	return 100;
       }
     default:
-      log("SYSERR: Invalid saving throw type.");
+      CLASS_TABLE_ERROR("saving-throw", class_num, type, level);
       return 100;
     }
     break;
@@ -437,7 +511,7 @@ byte saving_throws(int class_num, int type, int level)
       case 39: return  0;
       case 40: return  0;
       default:
-	log("SYSERR: Missing level for cleric paralyzation saving throw.");
+	CLASS_TABLE_ERROR("saving-throw", class_num, type, level);
 	return 100;
       }
     case SAVING_ROD:	/* Rods */
@@ -484,7 +558,7 @@ byte saving_throws(int class_num, int type, int level)
       case 39: return  0;
       case 40: return  0;
       default:
-	log("SYSERR: Missing level for cleric rod saving throw.");
+	CLASS_TABLE_ERROR("saving-throw", class_num, type, level);
 	return 100;
       }
     case SAVING_PETRI:	/* Petrification */
@@ -531,7 +605,7 @@ byte saving_throws(int class_num, int type, int level)
       case 39: return  0;
       case 40: return  0;
       default:
-	log("SYSERR: Missing level for cleric petrification saving throw.");
+	CLASS_TABLE_ERROR("saving-throw", class_num, type, level);
 	return 100;
       }
     case SAVING_BREATH:	/* Breath weapons */
@@ -578,7 +652,7 @@ byte saving_throws(int class_num, int type, int level)
       case 39: return  0;
       case 40: return  0;
       default:
-	log("SYSERR: Missing level for cleric breath saving throw.");
+	CLASS_TABLE_ERROR("saving-throw", class_num, type, level);
 	return 100;
       }
     case SAVING_SPELL:	/* Generic spells */
@@ -625,11 +699,11 @@ byte saving_throws(int class_num, int type, int level)
       case 39: return  0;
       case 40: return  0;
       default:
-	log("SYSERR: Missing level for cleric spell saving throw.");
+	CLASS_TABLE_ERROR("saving-throw", class_num, type, level);
 	return 100;
       }
     default:
-      log("SYSERR: Invalid saving throw type.");
+      CLASS_TABLE_ERROR("saving-throw", class_num, type, level);
       return 100;
     }
     break;
@@ -679,7 +753,7 @@ byte saving_throws(int class_num, int type, int level)
       case 39: return  0;
       case 40: return  0;
       default:
-	log("SYSERR: Missing level for thief paralyzation saving throw.");
+	CLASS_TABLE_ERROR("saving-throw", class_num, type, level);
 	return 100;
       }
     case SAVING_ROD:	/* Rods */
@@ -726,7 +800,7 @@ byte saving_throws(int class_num, int type, int level)
       case 39: return  0;
       case 40: return  0;
       default:
-	log("SYSERR: Missing level for thief rod saving throw.");
+	CLASS_TABLE_ERROR("saving-throw", class_num, type, level);
 	return 100;
       }
     case SAVING_PETRI:	/* Petrification */
@@ -773,7 +847,7 @@ byte saving_throws(int class_num, int type, int level)
       case 39: return  0;
       case 40: return  0;
       default:
-	log("SYSERR: Missing level for thief petrification saving throw.");
+	CLASS_TABLE_ERROR("saving-throw", class_num, type, level);
 	return 100;
       }
     case SAVING_BREATH:	/* Breath weapons */
@@ -820,7 +894,7 @@ byte saving_throws(int class_num, int type, int level)
       case 39: return  0;
       case 40: return  0;
       default:
-	log("SYSERR: Missing level for thief breath saving throw.");
+	CLASS_TABLE_ERROR("saving-throw", class_num, type, level);
 	return 100;
       }
     case SAVING_SPELL:	/* Generic spells */
@@ -867,11 +941,11 @@ byte saving_throws(int class_num, int type, int level)
       case 39: return  0;
       case 40: return  0;
       default:
-	log("SYSERR: Missing level for thief spell saving throw.");
+	CLASS_TABLE_ERROR("saving-throw", class_num, type, level);
 	return 100;
       }
     default:
-      log("SYSERR: Invalid saving throw type.");
+      CLASS_TABLE_ERROR("saving-throw", class_num, type, level);
       return 100;
     }
     break;
@@ -931,7 +1005,7 @@ byte saving_throws(int class_num, int type, int level)
       case 49: return  0;
       case 50: return  0;
       default:
-	log("SYSERR: Missing level for warrior paralyzation saving throw.");
+	CLASS_TABLE_ERROR("saving-throw", class_num, type, level);
 	return 100;
       }
     case SAVING_ROD:	/* Rods */
@@ -988,7 +1062,7 @@ byte saving_throws(int class_num, int type, int level)
       case 49: return  0;
       case 50: return  0;
       default:
-	log("SYSERR: Missing level for warrior rod saving throw.");
+	CLASS_TABLE_ERROR("saving-throw", class_num, type, level);
 	return 100;
       }
     case SAVING_PETRI:	/* Petrification */
@@ -1045,7 +1119,7 @@ byte saving_throws(int class_num, int type, int level)
       case 49: return  0;
       case 50: return  0;
       default:
-	log("SYSERR: Missing level for warrior petrification saving throw.");
+	CLASS_TABLE_ERROR("saving-throw", class_num, type, level);
 	return 100;
       }
     case SAVING_BREATH:	/* Breath weapons */
@@ -1102,7 +1176,7 @@ byte saving_throws(int class_num, int type, int level)
       case 49: return  0;
       case 50: return  0;
       default:
-	log("SYSERR: Missing level for warrior breath saving throw.");
+	CLASS_TABLE_ERROR("saving-throw", class_num, type, level);
 	return 100;
       }
     case SAVING_SPELL:	/* Generic spells */
@@ -1159,15 +1233,15 @@ byte saving_throws(int class_num, int type, int level)
       case 49: return  0;
       case 50: return  0;
       default:
-	log("SYSERR: Missing level for warrior spell saving throw.");
+	CLASS_TABLE_ERROR("saving-throw", class_num, type, level);
 	return 100;
       }
     default:
-      log("SYSERR: Invalid saving throw type.");
+      CLASS_TABLE_ERROR("saving-throw", class_num, type, level);
       return 100;
     }
   default:
-    log("SYSERR: Invalid class saving throw.");
+    CLASS_TABLE_ERROR("saving-throw", class_num, type, level);
     break;
   }
 
@@ -1175,9 +1249,14 @@ byte saving_throws(int class_num, int type, int level)
   return 100;
 }
 
-/* THAC0 for classes and levels.  (To Hit Armor Class 0) */
+/* THAC0 for classes and levels.  (To Hit Armor Class 0)
+ *
+ * The tables list levels 0-34; levels 35..LVL_IMPL use the level-34 row.
+ * Anything else, or an unknown class, is reported through CLASS_TABLE_ERROR
+ * and returns 100 (cannot hit). */
 int thaco(int class_num, int level)
 {
+  if (class_num == CLASS_MONK) class_num = CLASS_WARRIOR;
   /* Legacy THAC0 tables end at 34. Preserve their terminal values
    * across expanded mortal and immortal levels. */
   if (level > 34 && level <= LVL_IMPL)
@@ -1221,7 +1300,7 @@ int thaco(int class_num, int level)
     case 33: return  10;
     case 34: return   9;
     default:
-      log("SYSERR: Missing level for mage thac0.");
+      CLASS_TABLE_ERROR("thac0", class_num, -1, level);
       return 100;
     }
   case CLASS_CLERIC:
@@ -1262,7 +1341,7 @@ int thaco(int class_num, int level)
     case 33: return   1;
     case 34: return   1;
     default:
-      log("SYSERR: Missing level for cleric thac0.");
+      CLASS_TABLE_ERROR("thac0", class_num, -1, level);
       return 100;
     }
   case CLASS_THIEF:
@@ -1303,7 +1382,7 @@ int thaco(int class_num, int level)
     case 33: return   4;
     case 34: return   4;
     default:
-      log("SYSERR: Missing level for thief thac0.");
+      CLASS_TABLE_ERROR("thac0", class_num, -1, level);
       return 100;
     }
   case CLASS_WARRIOR:
@@ -1344,11 +1423,11 @@ int thaco(int class_num, int level)
     case 33: return   1;
     case 34: return   1;
     default:
-      log("SYSERR: Missing level for warrior thac0.");
+      CLASS_TABLE_ERROR("thac0", class_num, -1, level);
       return 100;
     }
   default:
-    log("SYSERR: Unknown class in thac0 chart.");
+    CLASS_TABLE_ERROR("thac0", class_num, -1, level);
   }
 
   /* Will not get there unless something is wrong. */
@@ -1411,6 +1490,14 @@ void roll_real_abils(struct char_data *ch)
     ch->real_abils.wis = table[4];
     ch->real_abils.cha = table[5];
     break;
+  case CLASS_MONK:
+    ch->real_abils.dex = table[0];
+    ch->real_abils.wis = table[1];
+    ch->real_abils.con = table[2];
+    ch->real_abils.str = table[3];
+    ch->real_abils.intel = table[4];
+    ch->real_abils.cha = table[5];
+    break;
   case CLASS_WARRIOR:
     ch->real_abils.str = table[0];
     ch->real_abils.dex = table[1];
@@ -1456,6 +1543,9 @@ void do_start(struct char_data *ch)
     break;
 
   case CLASS_WARRIOR:
+    break;
+  case CLASS_MONK:
+    SET_SKILL(ch, SKILL_KICK, 10);
     break;
   }
 
@@ -1503,6 +1593,11 @@ void advance_level(struct char_data *ch)
     add_move = rand_number(1, 3);
     break;
 
+  case CLASS_MONK:
+    add_hp += rand_number(7, 12);
+    add_mana = 0;
+    add_move = rand_number(2, 4);
+    break;
   case CLASS_WARRIOR:
     add_hp += rand_number(10, 15);
     add_mana = 0;
@@ -1643,6 +1738,12 @@ void init_spell_levels(void)
   spell_level(SKILL_HIDE, CLASS_THIEF, 5);
   spell_level(SKILL_TRACK, CLASS_THIEF, 6);
 
+  /* Monk uses existing, functional combat skills. */
+  spell_level(SKILL_KICK, CLASS_MONK, 1);
+  spell_level(SKILL_RESCUE, CLASS_MONK, 5);
+  spell_level(SKILL_BANDAGE, CLASS_MONK, 8);
+  spell_level(SKILL_TRACK, CLASS_MONK, 12);
+
   /* WARRIORS */
   spell_level(SKILL_KICK, CLASS_WARRIOR, 1);
   spell_level(SKILL_RESCUE, CLASS_WARRIOR, 3);
@@ -1656,11 +1757,19 @@ void init_spell_levels(void)
  * exp required for immortality, plus at least 20,000 or so. */
 #define EXP_MAX  10000000
 
-/* Function to return the exp required for each class/level */
+/* Function to return the exp required for each class/level.
+ *
+ * Levels 0-30 come from the per-class tables, 31 to LVL_IMMORT from a
+ * linear extension, and immortal levels (above LVL_IMMORT, up to LVL_IMPL)
+ * sit just below EXP_MAX.  A level outside 0..LVL_IMPL returns 0; an
+ * unknown class returns 0 for levels 31..LVL_IMMORT and 123456 (the
+ * historical "tables are incomplete" marker) for 0-30;
+ * both are reported through CLASS_TABLE_ERROR. */
 int level_exp(int chclass, int level)
 {
+  if (chclass == CLASS_MONK) chclass = CLASS_WARRIOR;
   if (level > LVL_IMPL || level < 0) {
-    log("SYSERR: Requesting exp for invalid level %d!", level);
+    CLASS_TABLE_ERROR("level-exp", chclass, -1, level);
     return 0;
   }
 
@@ -1681,7 +1790,7 @@ int level_exp(int chclass, int level)
       case CLASS_CLERIC: start = 6400000; break;
       case CLASS_THIEF: start = 6650000; break;
       default:
-        log("SYSERR: Invalid class in extended level_exp");
+        CLASS_TABLE_ERROR("level-exp", chclass, -1, level);
         return 0;
     }
     return start + (level - 30) * 110000;
@@ -1846,13 +1955,51 @@ int level_exp(int chclass, int level)
   /* This statement should never be reached if the exp tables in this function
    * are set up properly.  If you see exp of 123456 then the tables above are
    * incomplete. */
-  log("SYSERR: XP tables not set up correctly in class.c!");
+  CLASS_TABLE_ERROR("level-exp", chclass, -1, level);
   return 123456;
+}
+
+/* Character-aware forms of thaco(), saving_throws() and level_exp(): the
+ * same tables and fallback values, but a miss is also reported with ch's
+ * identity, so the log says whose class or level (usually corrupt player
+ * file data) is outside the table. Use them wherever the caller has the
+ * character. char_saving_throw() takes the class explicitly because
+ * mag_savingthrow() uses the warrior table for every NPC. */
+int char_thaco(const struct char_data *ch)
+{
+  int value;
+
+  class_lookup_subject = ch;
+  value = thaco(GET_CLASS(ch), GET_LEVEL(ch));
+  class_lookup_subject = NULL;
+  return value;
+}
+
+byte char_saving_throw(const struct char_data *ch, int class_num, int type)
+{
+  byte value;
+
+  class_lookup_subject = ch;
+  value = saving_throws(class_num, type, GET_LEVEL(ch));
+  class_lookup_subject = NULL;
+  return value;
+}
+
+int char_level_exp(const struct char_data *ch, int level)
+{
+  int value;
+
+  class_lookup_subject = ch;
+  value = level_exp(GET_CLASS(ch), level);
+  class_lookup_subject = NULL;
+  return value;
 }
 
 /* Default titles of male characters. */
 const char *title_male(int chclass, int level)
 {
+  if (chclass == CLASS_MONK && level < LVL_IMMORT && level > 0)
+    return "the Monk";
   if (level <= 0 || level > LVL_IMPL)
     return "the Man";
   if (level == LVL_IMPL)
@@ -1995,6 +2142,8 @@ const char *title_male(int chclass, int level)
 /* Default titles of female characters. */
 const char *title_female(int chclass, int level)
 {
+  if (chclass == CLASS_MONK && level < LVL_IMMORT && level > 0)
+    return "the Monk";
   if (level <= 0 || level > LVL_IMPL)
     return "the Woman";
   if (level == LVL_IMPL)

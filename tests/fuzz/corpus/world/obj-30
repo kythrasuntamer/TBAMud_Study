@@ -1,0 +1,82 @@
+O#3000
+barrel beer~
+a barrel~
+A beer barrel has been left here.~
+~
+17 0 0 0 0 a 0 0 0 0 0 0 0
+50 50 1 0
+50 300 100 0 0
+#3001
+bottle beer~
+a bottle~
+A beer bottle has been left here.~
+~
+17 0 0 0 0 a 0 0 0 0 0 0 0
+8 8 1 0
+10 20 8 0 0
+#3002
+bottle dark ale~
+a bottle~
+A dark bottle of ale has been left here.~
+~
+17 0 0 0 0 a 0 0 0 0 0 0 0
+8 8 3 0
+10 10 3 0 0
+#3003
+bottle firebreather~
+a bottle~
+A bottle of firebreather has been left here.~
+~
+17 0 0 0 0 a 0 0 0 0 0 0 0
+8 8 7 0
+10 50 17 0 0
+#3004
+bottle local~
+a bottle~
+A dark bottle has been left here.~
+~
+17 0 0 0 0 a 0 0 0 0 0 0 0
+8 8 8 0
+10 20 7 0 0
+#3005
+key dull metal~
+a key of dull metal~
+A key made of a dull metal is lying on the ground here.~
+~
+18 cdq 0 0 0 ao 0 0 0 0 0 0 0
+0 0 0 0
+1 1 0 0 0
+#3006
+teleporter~
+the teleporter~
+A strange device labeled "teleporter" was left here.~
+~
+12 0 0 0 0 a 0 0 0 0 0 0 0
+0 0 0 0
+1 10 0 0 0
+T 3014
+T 3015
+E
+teleporter~
+This teleporter is used to transfer players between zones.  Accessible zones
+are listed under HELP ZONES by being CAPITALIZED.  For example to teleport to:
+  74 Newbie GRAVEyard                   -- Jojen                       3- 5
+type: teleport grave
+   The teleporter may also be used to recall back to Midgaard at any time.
+
+Uncapitalized zones are linked through a capitalized zone.
+~
+#3009
+waybread bread~
+a waybread~
+Some waybread has been put here.~
+~
+19 0 0 0 0 a 0 0 0 0 0 0 0
+24 0 0 0
+1 50 50 0 0
+E
+waybread bread~
+   The waybread is the traditional feed of elves when travelling, they call it
+lembas.  It is said to refresh the weary traveler greatly.
+~
+$

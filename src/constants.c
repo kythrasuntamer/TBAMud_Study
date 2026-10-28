@@ -11,6 +11,27 @@
 *
 * @todo Come up with a standard for descriptive arrays. Either all end with
 * newlines or all of them don not.
+*
+* Table conventions (read before adding a constant to structs.h):
+*  - Name tables that "must end with a single newline" have exactly one
+*    entry per value plus a final "\n" sentinel, i.e. NUM_x + 1 entries.
+*    sprinttype(), sprintbit() and get_flag_by_name() walk them until the
+*    sentinel, so a missing name shifts every later name by one and a
+*    lookup past the end reads the sentinel (or beyond).  Every table that
+*    has a structs.h count is checked against it at compile time at the
+*    bottom of this file (CONST_TABLE_ASSERT); add a check with any new
+*    table.
+*  - Tables with no sentinel (wear_where, fullness, weekdays, month_name,
+*    rev_dir, movement_loss, drink_aff and the *_app attribute tables) are
+*    indexed directly: callers must pass an index already validated against
+*    the matching NUM_x / range, as nothing here can check it.
+*  - affected_bits[0] is "\0" on purpose (AFF_ flags start at 1).  Beware:
+*    get_flag_by_name() (utils.c) stops at the first empty entry, so a
+*    by-name lookup in affected_bits stops at index 0 and finds nothing.
+*  - The *_count globals at the bottom exist for five tables only (room,
+*    action, affected, extra and wear bits), count names without the
+*    sentinel, and are mutable globals: treat them as read-only.
+*  - Every table is static data: no ownership or lifetime concerns.
 */
 
 #include "conf.h"
@@ -253,6 +274,7 @@ const char *preference_bits[] = {
   "AUTOKEY",
   "AUTODOOR",
   "ZONERESETS",
+  "VERBOSE",
   "\n"
 };
 
@@ -323,6 +345,7 @@ const char *connected_types[] = {
   "Preference edit",
   "IBT edit",
   "Message edit",
+  "Object inst edit",
   "Protocol Detection",
   "\n"
 };
@@ -969,3 +992,65 @@ const char *ibt_bits[] = {
 	/** Number of defined wear bit descriptions. */
 	wear_bits_count = sizeof(wear_bits) / sizeof(wear_bits[0]) - 1;
 
+
+/* --- Compile-time table/enum agreement. ---
+ * Each name table is indexed by a structs.h constant; when a constant is
+ * added without its name (CON_IEDIT once shifted every later connection
+ * state name by one), the build fails here instead of the game printing
+ * the wrong name or reading the "\n" sentinel as a name.  Tables ending in
+ * "\n" have one entry per value plus the sentinel. */
+#define CONST_TABLE_LEN(table) (sizeof(table) / sizeof((table)[0]))
+#define CONST_TABLE_ASSERT(cond, tag) \
+  typedef char const_table_assert_##tag[(cond) ? 1 : -1]
+
+/** connected_types[] covers CON_PLAYING .. CON_GET_PROTOCOL (the last). */
+CONST_TABLE_ASSERT(CONST_TABLE_LEN(connected_types) == CON_GET_PROTOCOL + 2,
+                   connected_types_len);
+
+/** preference_bits[] names every PRF_ flag (NUM_PRF_FLAGS of them). */
+CONST_TABLE_ASSERT(CONST_TABLE_LEN(preference_bits) == NUM_PRF_FLAGS + 1,
+                   preference_bits_len);
+
+/* Tables without a "\n" sentinel have exactly one entry per value; every
+ * index into them must already be range-checked by the caller. */
+CONST_TABLE_ASSERT(CONST_TABLE_LEN(dirs) == NUM_OF_DIRS + 1, dirs_len);
+CONST_TABLE_ASSERT(CONST_TABLE_LEN(autoexits) == NUM_OF_DIRS + 1,
+                   autoexits_len);
+CONST_TABLE_ASSERT(CONST_TABLE_LEN(rev_dir) == NUM_OF_DIRS, rev_dir_len);
+CONST_TABLE_ASSERT(CONST_TABLE_LEN(room_bits) == NUM_ROOM_FLAGS + 1,
+                   room_bits_len);
+CONST_TABLE_ASSERT(CONST_TABLE_LEN(zone_bits) == NUM_ZONE_FLAGS + 1,
+                   zone_bits_len);
+CONST_TABLE_ASSERT(CONST_TABLE_LEN(sector_types) == NUM_ROOM_SECTORS + 1,
+                   sector_types_len);
+CONST_TABLE_ASSERT(CONST_TABLE_LEN(movement_loss) == NUM_ROOM_SECTORS,
+                   movement_loss_len);
+CONST_TABLE_ASSERT(CONST_TABLE_LEN(genders) == NUM_GENDERS + 1, genders_len);
+CONST_TABLE_ASSERT(CONST_TABLE_LEN(position_types) == NUM_POSITIONS + 1,
+                   position_types_len);
+/* NUM_MOB_FLAGS (19) leaves out the internal MOB_NOTDEADYET (19), so medit
+ * cannot offer it; the name table still names it ("DEAD"). */
+CONST_TABLE_ASSERT(CONST_TABLE_LEN(action_bits) == MOB_NOTDEADYET + 2,
+                   action_bits_len);
+CONST_TABLE_ASSERT(CONST_TABLE_LEN(affected_bits) == NUM_AFF_FLAGS + 1,
+                   affected_bits_len);
+CONST_TABLE_ASSERT(CONST_TABLE_LEN(wear_where) == NUM_WEARS, wear_where_len);
+CONST_TABLE_ASSERT(CONST_TABLE_LEN(equipment_types) == NUM_WEARS + 1,
+                   equipment_types_len);
+CONST_TABLE_ASSERT(CONST_TABLE_LEN(item_types) == NUM_ITEM_TYPES + 1,
+                   item_types_len);
+CONST_TABLE_ASSERT(CONST_TABLE_LEN(wear_bits) == NUM_ITEM_WEARS + 1,
+                   wear_bits_len);
+CONST_TABLE_ASSERT(CONST_TABLE_LEN(extra_bits) == NUM_ITEM_FLAGS + 1,
+                   extra_bits_len);
+CONST_TABLE_ASSERT(CONST_TABLE_LEN(apply_types) == NUM_APPLIES + 1,
+                   apply_types_len);
+CONST_TABLE_ASSERT(CONST_TABLE_LEN(drinks) == NUM_LIQ_TYPES + 1, drinks_len);
+CONST_TABLE_ASSERT(CONST_TABLE_LEN(drinknames) == NUM_LIQ_TYPES + 1,
+                   drinknames_len);
+CONST_TABLE_ASSERT(CONST_TABLE_LEN(color_liquid) == NUM_LIQ_TYPES + 1,
+                   color_liquid_len);
+CONST_TABLE_ASSERT(CONST_TABLE_LEN(drink_aff) == NUM_LIQ_TYPES,
+                   drink_aff_len);
+CONST_TABLE_ASSERT(CONST_TABLE_LEN(history_types) == NUM_HIST + 1,
+                   history_types_len);

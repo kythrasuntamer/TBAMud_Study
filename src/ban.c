@@ -38,6 +38,21 @@ static const char *ban_types[] = {
   "ERROR"
 };
 
+/** Name of ban type @p t for display and for BAN_FILE. A type outside
+ * BAN_NOT..BAN_ALL (a corrupted node) shows as "ERROR" instead of reading
+ * past ban_types[]; written to BAN_FILE, it is then rejected and reported
+ * ("load-type") on the next boot. Evaluates @p t twice: pass a plain value. */
+#define BAN_TYPE_NAME(t) \
+  (((t) >= BAN_NOT && (t) <= BAN_ALL) ? ban_types[(t)] : ban_types[BAN_ALL + 1])
+
+/**
+ * Replace ban_list with the records in BAN_FILE (boot time).
+ *
+ * BAN_FILE is written by write_ban_list() as "<type> <site> <date> <name>"
+ * per line and may be hand-edited by the operator. A missing file means no
+ * bans. Every malformed, unknown-type or over-long record is reported with
+ * its line number (ops "load-parse", "load-type", "load-site-truncate").
+ */
 void load_banned(void)
 {
   FILE *fl;
@@ -55,25 +70,86 @@ void load_banned(void)
       log("   Ban file '%s' doesn't exist.", BAN_FILE);
     return;
   }
-  while (fscanf(fl, " %s %s %d %s ", ban_type, site_name, &date, name) == 4) {
+  /* BAN_FILE is written by write_ban_list() but can be hand-edited by the
+   * operator. Every record is security-relevant: a line that is skipped,
+   * mistyped or truncated silently would leave a site the operator meant to
+   * ban able to connect. Each rejection is therefore reported with its line
+   * number, and nothing malformed is inserted. */
+  {
+    char line[512], date_text[64], site_token[256], name_token[64], extra[2], *end;
+    long parsed;
+    int lineno = 0, type, fields;
+    while (fgets(line, sizeof(line), fl)) {
+      lineno++;
+      fields = sscanf(line, " %99s %255s %63s %63s %1s",
+                      ban_type, site_token, date_text, name_token, extra);
+      if (fields == EOF)        /* blank line: no record */
+        continue;
+      if (fields != 4) {
+        TB_ERROR_MSG("ban", "load-parse", BAN_FILE,
+                     "line %d: expected '<type> <site> <date> <name>'; "
+                     "record skipped", lineno);
+        continue;
+      }
+      errno = 0;
+      parsed = strtol(date_text, &end, 10);
+      if (end == date_text || *end || errno == ERANGE || parsed < INT_MIN || parsed > INT_MAX) {
+        TB_ERROR_MSG("ban", "load-parse", BAN_FILE,
+                     "line %d: ban date is not an int; record skipped",
+                     lineno);
+        continue;
+      }
+      date = (int)parsed;
+      type = -1;
+      for (i = BAN_NEW; i <= BAN_ALL; i++)
+        if (!strcmp(ban_type, ban_types[i]))
+          type = i;
+      if (type < 0) {
+        /* "no" (BAN_NOT) bans nothing and is never written; treat it, like
+         * any unknown word, as a record that would silently ban nothing. */
+        TB_ERROR_MSG("ban", "load-type", BAN_FILE,
+                     "line %d: unrecognized ban type (%zu bytes); "
+                     "record skipped", lineno, strlen(ban_type));
+        continue;
+      }
+      if (strlen(site_token) > BANNED_SITE_LENGTH)
+        TB_WARN_MSG("ban", "load-site-truncate", BAN_FILE,
+                    "line %d: site is %zu bytes, longer than %d; stored "
+                    "truncated", lineno, strlen(site_token),
+                    BANNED_SITE_LENGTH);
+      tb_snprintf(site_name, sizeof(site_name), "%s", site_token);
+      tb_snprintf(name, sizeof(name), "%s", name_token);
     CREATE(next_node, struct ban_list_element, 1);
     strncpy(next_node->site, site_name, BANNED_SITE_LENGTH);	/* strncpy: OK (n_n->site:BANNED_SITE_LENGTH+1) */
     next_node->site[BANNED_SITE_LENGTH] = '\0';
     strncpy(next_node->name, name, MAX_NAME_LENGTH);	/* strncpy: OK (n_n->name:MAX_NAME_LENGTH+1) */
     next_node->name[MAX_NAME_LENGTH] = '\0';
     next_node->date = date;
-
-    for (i = BAN_NOT; i <= BAN_ALL; i++)
-      if (!strcmp(ban_type, ban_types[i]))
-	next_node->type = i;
+    next_node->type = type;
 
     next_node->next = ban_list;
     ban_list = next_node;
   }
 
+  }
   tb_fclose(fl);
 }
 
+/**
+ * Highest ban type that applies to a connecting host.
+ *
+ * @param hostname The client's host or address text (d->host). It is
+ *        lowercased IN PLACE, so pass a writable buffer you own; do not
+ *        pass a string literal or a string shared with other code.
+ * @return BAN_NOT (0) for no ban or a NULL/empty host, else the largest
+ *         BAN_NEW..BAN_ALL among the matching sites.
+ *
+ * A site matches when it is a substring of the host (so "example.com"
+ * matches "dialup.example.com"). Sites are stored lowercased by do_ban();
+ * load_banned() keeps the file's text as written, so an uppercase site in a
+ * hand-edited BAN_FILE never matches. An empty site would match every host;
+ * neither do_ban() nor the loader can store one.
+ */
 int isbanned(char *hostname)
 {
   int i;
@@ -98,7 +174,7 @@ static void write_one_node(FILE *fp, struct ban_list_element *node)
 {
   if (node) {
     write_one_node(fp, node->next);
-    tb_fprintf(fp, "%s %s %ld %s\n", ban_types[node->type],
+    tb_fprintf(fp, "%s %s %ld %s\n", BAN_TYPE_NAME(node->type),
 	    node->site, (long) node->date, node->name);
   }
 }
@@ -146,7 +222,7 @@ ACMD(do_ban)
       } else
 	strlcpy(timestr, "Unknown", sizeof(timestr));	/* strcpy: OK (strlen("Unknown") < 16) */
 
-      send_to_char(ch, BAN_LIST_FORMAT, ban_node->site, ban_types[ban_node->type], timestr, ban_node->name);
+      send_to_char(ch, BAN_LIST_FORMAT, ban_node->site, BAN_TYPE_NAME(ban_node->type), timestr, ban_node->name);
     }
     return;
   }
@@ -158,6 +234,18 @@ ACMD(do_ban)
   }
   if (!(!str_cmp(flag, "select") || !str_cmp(flag, "all") || !str_cmp(flag, "new"))) {
     send_to_char(ch, "Flag must be ALL, SELECT, or NEW.\r\n");
+    return;
+  }
+  /* The immortal controls the site text. Storing a truncated copy would ban
+   * a different (shorter) pattern than the one typed and announced, and
+   * "unban <same site>" would then report it as not banned. Reject instead. */
+  if (strlen(site) > BANNED_SITE_LENGTH) {
+    send_to_char(ch, "Site name too long (max %d characters).\r\n",
+                 BANNED_SITE_LENGTH);
+    TB_WARN_MSG("ban", "site-length", "do_ban",
+                "site is %zu bytes, longer than %d; ban refused for "
+                DIAG_CHAR_FMT, strlen(site), BANNED_SITE_LENGTH,
+                DIAG_CHAR(ch));
     return;
   }
   for (ban_node = ban_list; ban_node; ban_node = ban_node->next) {
@@ -184,7 +272,7 @@ ACMD(do_ban)
   ban_list = ban_node;
 
   mudlog(NRM, MAX(LVL_GOD, GET_INVIS_LEV(ch)), TRUE, "%s has banned %s for %s players.",
-	GET_NAME(ch), site, ban_types[ban_node->type]);
+	GET_NAME(ch), site, BAN_TYPE_NAME(ban_node->type));
   send_to_char(ch, "Site banned.\r\n");
   write_ban_list();
 }
@@ -216,13 +304,22 @@ ACMD(do_unban)
   REMOVE_FROM_LIST(ban_node, ban_list, next);
   send_to_char(ch, "Site unbanned.\r\n");
   mudlog(NRM, MAX(LVL_GOD, GET_INVIS_LEV(ch)), TRUE, "%s removed the %s-player ban on %s.",
-	GET_NAME(ch), ban_types[ban_node->type], ban_node->site);
+	GET_NAME(ch), BAN_TYPE_NAME(ban_node->type), ban_node->site);
 
   free(ban_node);
   write_ban_list();
 }
 
 
+
+/* TRUE when descriptor d holds a new character that is still being created:
+ * it is not playing and has no idnum yet. clear_char() (db.c) leaves the
+ * idnum 0, and init_char() assigns one only when creation finishes
+ * (CON_QCLASS), so 0 marks "not in the player index". Evaluates d more
+ * than once: pass a plain variable. */
+#define CREATING_CHARACTER(d) \
+  ((d)->character && !IS_NPC((d)->character) && !IS_PLAYING(d) && \
+   GET_IDNUM((d)->character) <= 0)
 
 /* Check for invalid names (i.e., profanity, etc.) Written by Sharon P Garza. */
 int valid_name(char *newname)
@@ -234,15 +331,21 @@ int valid_name(char *newname)
   /* Make sure someone isn't trying to create this same name.  We want to do a 
    * 'str_cmp' so people can't do 'Bob' and 'BoB'.  The creating login will not
    * have a character name yet and other people sitting at the prompt won't 
-   * have characters yet. New, unindexed characters (i.e., characters who are 
-   * in the process of creating) will have an idnum of -1, set by clear_char() 
-   * in db.c.  If someone is creating a character by the same name as the one 
-   * we are checking, then the name is invalid, to prevent character duping.
-   * THIS SHOULD FIX THE 'invalid name' if disconnected from OLC-bug - Welcor */
+   * have characters yet. If another connection is creating a character by
+   * the same name as the one we are checking, then the name is invalid, to
+   * prevent character duping. This used to test for an idnum of -1, which
+   * clear_char() no longer sets (it leaves 0), so the check never fired and
+   * two connections could create the same character at once.
+   * newname is player input: it is not logged, only its length. */
   for (dt = descriptor_list; dt; dt = dt->next)
-    if (dt->character && GET_NAME(dt->character) && !str_cmp(GET_NAME(dt->character), newname))
-      if (GET_IDNUM(dt->character) == -1)
-        return (IS_PLAYING(dt));
+    if (CREATING_CHARACTER(dt) && GET_NAME(dt->character) &&
+        !str_cmp(GET_NAME(dt->character), newname)) {
+      TB_WARN_MSG("ban", "name-in-creation", "valid_name",
+                  "a %zu-byte name is already being created on " DIAG_DESC_FMT
+                  " (state %d); refused", strlen(newname), DIAG_DESC(dt),
+                  STATE(dt));
+      return (0);
+    }
 
   /* count vowels */
   for (i = 0; newname[i]; i++) {

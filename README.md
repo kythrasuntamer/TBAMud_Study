@@ -23,6 +23,13 @@ and persistence results at the call site; emitting a diagnostic alone does not
 make a failed operation safe to continue. See `tools/check_error_locality.sh`
 for the existing error-reporting checks.
 
+Read [`docs/maintainer-safety-guide.md`](docs/maintainer-safety-guide.md)
+before changing DG trigger dispatch, the UID lookup table, `act()` or other
+string builders. It explains the snapshot-and-revalidate pattern for script
+callbacks, the structured diagnostic macros and the test conventions. Audit
+history is in `docs/macro-audit.md`; per-file review status is in
+`docs/memory-safety-audit.md`.
+
 ## Denial-of-service defense roadmap
 
 Application limits: bound input and output queues, incomplete negotiation data,

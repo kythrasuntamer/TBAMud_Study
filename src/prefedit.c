@@ -30,6 +30,29 @@ static void prefedit_disp_prompt_menu(struct descriptor_data *d);
 static void prefedit_disp_color_menu(struct descriptor_data *d);
 static void prefedit_disp_syslog_menu(struct descriptor_data *d);
 
+/* Resolve the player being edited from the idnum stored at setup.  Returns
+ * NULL once that player has left the game: only characters still on
+ * character_list are considered (extract_char_final unlinks a character
+ * before free_char), and one already marked for extraction is skipped. */
+struct char_data *prefedit_target(struct descriptor_data *d)
+{
+  struct char_data *tch;
+  long idnum;
+
+  if (!d || !d->olc || !OLC_PREFS(d))
+    return NULL;
+  idnum = OLC_PREFS(d)->idnum;
+
+  if (d->character && !IS_NPC(d->character) && GET_IDNUM(d->character) == idnum)
+    return d->character;
+
+  for (tch = character_list; tch; tch = tch->next)
+    if (!IS_NPC(tch) && GET_IDNUM(tch) == idnum && !PLR_FLAGGED(tch, PLR_NOTDEADYET))
+      return tch;
+
+  return NULL;
+}
+
 /* Note: there is no setup_new, as you can ONLY edit an existing player */
 /*       vict is normally = d->character, except when imps edit players */
 static void prefedit_setup(struct descriptor_data *d, struct char_data *vict)
@@ -50,12 +73,32 @@ static void prefedit_setup(struct descriptor_data *d, struct char_data *vict)
   toggles->page_length  = GET_PAGE_LENGTH(vict);
   toggles->screen_width = GET_SCREEN_WIDTH(vict);
 
-  toggles->ch = vict;
+  toggles->idnum = GET_IDNUM(vict);
 
   /*. Attach toggles copy to editors descriptor .*/
   OLC_PREFS(d) = toggles;
   OLC_VAL(d) = 0;
   prefedit_disp_main_menu(d);
+}
+
+/* Called as a character is freed.  An implementor editing that character's
+ * preferences used to hold a pointer to it that outlived the character, and
+ * saving then wrote through freed memory.  The editor now names its target
+ * by idnum and re-resolves it on every use (prefedit_target()), but an edit
+ * of a character that has left can no longer be saved, so it is abandoned
+ * here with a message; a player's own prefedit goes away with their
+ * connection. */
+void prefedit_forget_char(struct char_data *ch)
+{
+  struct descriptor_data *d;
+
+  for (d = descriptor_list; d; d = d->next)
+    if (STATE(d) == CON_PREFEDIT && d->olc && OLC_PREFS(d) &&
+        OLC_PREFS(d)->idnum == GET_IDNUM(ch) && d->character != ch) {
+      write_to_output(d, "%s has left the game; preference edit "
+                         "abandoned.\r\n", GET_NAME(ch));
+      cleanup_olc(d, CLEANUP_ALL);
+    }
 }
 
 static void prefedit_save_to_char(struct descriptor_data *d)
@@ -193,7 +236,7 @@ static void prefedit_disp_toggles_menu(struct descriptor_data *d)
   struct char_data *vict;
 
   /* Set up the required variables and strings */
-  vict = OLC_PREFS(d)->ch;
+  vict = PREFEDIT_GET_CHAR;
 
   /* Top of the menu */
   send_to_char(d->character, "Toggle preferences for %s%-20s\r\n",
@@ -364,6 +407,18 @@ void prefedit_parse(struct descriptor_data * d, char *arg)
 {
   int number;
 
+  /* The edited player may have been extracted since the last line (an IMPL
+   * editing someone who then quit or was purged).  Everything below reads
+   * PREFEDIT_GET_CHAR, so stop here rather than act on nobody. */
+  if (!PREFEDIT_GET_CHAR) {
+    TB_WARN_MSG("olc", "prefedit-target-gone", "prefs",
+                "player idnum %ld editor " DIAG_CHAR_FMT,
+                OLC_PREFS(d) ? OLC_PREFS(d)->idnum : -1L, DIAG_CHAR(d->character));
+    send_to_char(d->character, "The player whose preferences you were editing has left the game.  Edit abandoned.\r\n");
+    cleanup_olc(d, CLEANUP_ALL);
+    return;
+  }
+
   switch (OLC_MODE(d)) {
   case PREFEDIT_CONFIRM_SAVE:
     switch (*arg) {
@@ -371,7 +426,7 @@ void prefedit_parse(struct descriptor_data * d, char *arg)
     case 'Y':
       prefedit_save_to_char(d);
       mudlog(CMP, MAX(LVL_BUILDER, GET_INVIS_LEV(d->character)), TRUE, "OLC: %s edits toggles for %s", 
-        GET_NAME(d->character), GET_NAME(OLC_PREFS(d)->ch));
+        GET_NAME(d->character), GET_NAME(PREFEDIT_GET_CHAR));
       /*. No strings to save - cleanup all .*/
       cleanup_olc(d, CLEANUP_ALL);
       break;
@@ -816,7 +871,9 @@ void prefedit_Restore_Defaults(struct descriptor_data *d)
      SET_BIT_AR(PREFEDIT_GET_FLAGS, PRF_AUTOEXIT);
 
   /* PRF_NOHASSLE   - On for Imms */
-  if (!PREFEDIT_FLAGGED(PRF_NOHASSLE) && GET_LEVEL(PREFEDIT_GET_CHAR) > LVL_IMMORT)
+  /* An immortal who already had it used to have it switched off, and the
+   * lowest immortal level was not counted as one. */
+  if (GET_LEVEL(PREFEDIT_GET_CHAR) >= LVL_IMMORT)
      SET_BIT_AR(PREFEDIT_GET_FLAGS, PRF_NOHASSLE);
   else
      REMOVE_BIT_AR(PREFEDIT_GET_FLAGS, PRF_NOHASSLE);
@@ -834,7 +891,9 @@ void prefedit_Restore_Defaults(struct descriptor_data *d)
      REMOVE_BIT_AR(PREFEDIT_GET_FLAGS, PRF_NOREPEAT);
 
   /* PRF_HOLYLIGHT  - On for Imms */
-  if (!PREFEDIT_FLAGGED(PRF_HOLYLIGHT) && GET_LEVEL(PREFEDIT_GET_CHAR) > LVL_IMMORT)
+  /* An immortal who already had it used to have it switched off, and the
+   * lowest immortal level was not counted as one. */
+  if (GET_LEVEL(PREFEDIT_GET_CHAR) >= LVL_IMMORT)
      SET_BIT_AR(PREFEDIT_GET_FLAGS, PRF_HOLYLIGHT);
   else
      REMOVE_BIT_AR(PREFEDIT_GET_FLAGS, PRF_HOLYLIGHT);
@@ -870,7 +929,9 @@ void prefedit_Restore_Defaults(struct descriptor_data *d)
      REMOVE_BIT_AR(PREFEDIT_GET_FLAGS, PRF_NOGRATZ);
 
   /* PRF_SHOWVNUMS  - On for Imms */
-  if (!PREFEDIT_FLAGGED(PRF_SHOWVNUMS) && GET_LEVEL(PREFEDIT_GET_CHAR) > LVL_IMMORT)
+  /* An immortal who already had it used to have it switched off, and the
+   * lowest immortal level was not counted as one. */
+  if (GET_LEVEL(PREFEDIT_GET_CHAR) >= LVL_IMMORT)
      SET_BIT_AR(PREFEDIT_GET_FLAGS, PRF_SHOWVNUMS);
   else
      REMOVE_BIT_AR(PREFEDIT_GET_FLAGS, PRF_SHOWVNUMS);
@@ -908,20 +969,16 @@ void prefedit_Restore_Defaults(struct descriptor_data *d)
      REMOVE_BIT_AR(PREFEDIT_GET_FLAGS, PRF_AUTOASSIST);
 
   /* PRF_AUTOMAP    - On */
-  if (PREFEDIT_FLAGGED(PRF_AUTOMAP))
-     SET_BIT_AR(PREFEDIT_GET_FLAGS, PRF_AUTOMAP);
+  SET_BIT_AR(PREFEDIT_GET_FLAGS, PRF_AUTOMAP);   /* "if flagged, set" turned nothing on */
 
   /* PRF_AUTOKEY    - On */
-  if (PREFEDIT_FLAGGED(PRF_AUTOKEY))
-     SET_BIT_AR(PREFEDIT_GET_FLAGS, PRF_AUTOKEY);
+  SET_BIT_AR(PREFEDIT_GET_FLAGS, PRF_AUTOKEY);   /* "if flagged, set" turned nothing on */
 
   /* PRF_AUTODOOR   - On */
-  if (PREFEDIT_FLAGGED(PRF_AUTODOOR))
-     SET_BIT_AR(PREFEDIT_GET_FLAGS, PRF_AUTODOOR);
+  SET_BIT_AR(PREFEDIT_GET_FLAGS, PRF_AUTODOOR);   /* "if flagged, set" turned nothing on */
 
   /* PRF_VERBOSE    - On */
-  if (PREFEDIT_FLAGGED(PRF_VERBOSE))
-    SET_BIT_AR(PREFEDIT_GET_FLAGS, PRF_VERBOSE);
+  SET_BIT_AR(PREFEDIT_GET_FLAGS, PRF_VERBOSE);   /* "if flagged, set" turned nothing on */
 
   /* Other (non-toggle) options */
   PREFEDIT_GET_WIMP_LEV   = 0;   /* Wimpy off by default */
@@ -933,9 +990,19 @@ ACMD(do_oasis_prefedit)
 {
   struct descriptor_data *d;
   struct char_data *vict;
-  char buf[MAX_STRING_LENGTH];
+  char buf[MAX_STRING_LENGTH] = "";
   char buf1[MAX_STRING_LENGTH];
   char buf2[MAX_STRING_LENGTH];
+
+  /* prefedit is level 0, so a DG "mforce" can make a linkdead player
+   * (no descriptor) run it; everything below needs ch->desc. A mob (a
+   * switched immortal's body) has no preferences of its own to edit. */
+  if (IS_NPC(ch) || !ch->desc || STATE(ch->desc) != CON_PLAYING) {
+    TB_WARN_MSG("olc", "olc-no-descriptor", "prefedit",
+                DIAG_CHAR_FMT " has_desc %d state %d", DIAG_CHAR(ch),
+                ch->desc != NULL, ch->desc ? STATE(ch->desc) : -1);
+    return;
+  }
 
   /****************************************************************************/
   /** Parse any arguments.                                                   **/
@@ -974,12 +1041,16 @@ ACMD(do_oasis_prefedit)
   /****************************************************************************/
   for (d = descriptor_list; d; d = d->next) {
     if (STATE(d) == CON_PREFEDIT) {
-      if (d->olc && OLC_PREFS(d)->ch == vict) {
+      if (d->olc && OLC_PREFS(d) && OLC_PREFS(d)->idnum == GET_IDNUM(vict)) {
+        /* buf is only formatted in the else branch; act() used to run on
+         * both, sending uninitialised stack when a player whose prefs an
+         * IMPL was editing typed "prefedit". */
         if (ch == vict)
           send_to_char(ch, "Your preferences are currently being edited by %s.\r\n", PERS(d->character, ch));
-        else
+        else {
           tb_snprintf(buf, sizeof(buf), "$S$u preferences are currently being edited by %s.", PERS(d->character, ch));
-        act(buf, FALSE, ch, 0, vict, TO_CHAR);
+          act(buf, FALSE, ch, 0, vict, TO_CHAR);
+        }
         return;
       }
     }
@@ -993,9 +1064,15 @@ ACMD(do_oasis_prefedit)
   /****************************************************************************/
   /** Give the descriptor an OLC structure.                                  **/
   /****************************************************************************/
+  /* Entry requires CON_PLAYING, where no editor is open, so a leftover
+   * d->olc is an invariant break.  free() alone leaked its substructures
+   * (help, action, quest, prefs, message list, storage); release them all
+   * and report the stale mode. */
   if (d->olc) {
-    mudlog(BRF, LVL_IMMORT, TRUE, "SYSERR: do_oasis_prefedit: Player already had olc structure.");
-    free(d->olc);
+    TB_ERROR_MSG("olc", "olc-reentry", "prefedit",
+                 DIAG_CHAR_FMT " stale mode %d state %d",
+                 DIAG_CHAR(ch), OLC_MODE(d), STATE(d));
+    cleanup_olc(d, CLEANUP_ALL);
   }
 
   CREATE(d->olc, struct oasis_olc_data, 1);

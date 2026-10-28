@@ -1,0 +1,286 @@
+"""Source-level regression guards for warning-hardening fixes.
+
+These complement compiler diagnostics and runtime regression testing.
+"""
+from pathlib import Path
+import re
+import unittest
+
+ROOT = Path(__file__).resolve().parents[1]
+UTILS = (ROOT / "src" / "utils.c").read_text(encoding="utf-8")
+
+
+class FormattingAndBoundsContracts(unittest.TestCase):
+    def test_recent_warning_fixes(self):
+        magic = (ROOT / 'src' / 'magic.c').read_text()
+        self.assertIn('(unsigned char)saving_throws(', magic)
+
+    def test_final_warning_cleanup_paths(self):
+        root = ROOT / "src"
+        for filename in ("comm.c", "ban.c", "util/autowiz.c"):
+            src = (root / filename).read_text(encoding="utf-8")
+            self.assertIn("strtol(", src)
+        comm = (root / "comm.c").read_text(encoding="utf-8")
+        self.assertNotIn('fscanf(fp, "%ld\\n", (long *)&boot_time)', comm)
+        self.assertNotIn('fscanf(fp, "%d %ld %511s', comm)
+        self.assertNotIn('fscanf(fl, " %s %s %d %s', (root / "ban.c").read_text(encoding="utf-8"))
+        self.assertNotIn('sscanf(line, "%ld %s %d %s %d"', (root / "util/autowiz.c").read_text(encoding="utf-8"))
+        for filename in ("util/rebuildAsciiIndex.c", "util/rebuildMailIndex.c"):
+            src = (root / filename).read_text(encoding="utf-8")
+            self.assertIn("if (", src)
+            self.assertIn("UTIL_REPORT_ERRNO", src)
+        self.assertIn("(unsigned char)saving_throws(", (root / "magic.c").read_text(encoding="utf-8"))
+        self.assertIn("(unsigned char)GET_CHA(tch)", (root / "spec_procs.c").read_text(encoding="utf-8"))
+
+    def test_combat_messages_and_shops_validate_numeric_ids(self):
+        msg = (ROOT / "src" / "msgedit.c").read_text(encoding="utf-8")
+        shop = (ROOT / "src" / "shop.c").read_text(encoding="utf-8")
+        for src in (msg, shop):
+            self.assertIn("strtol(p, &end, 10)", src)
+            self.assertIn("errno == ERANGE", src)
+            self.assertIn("parsed > INT_MAX", src)
+            self.assertIn("if (*end != '\\0')", src)
+        self.assertNotIn('sscanf(chk, " %d', msg)
+        self.assertNotIn('sscanf(buf, "#%d', shop)
+
+    def test_quest_numeric_records_use_checked_conversion(self):
+        src = (ROOT / "src" / "quest.c").read_text(encoding="utf-8")
+        self.assertIn("static int quest_parse_int(", src)
+        self.assertIn("static int quest_parse_record(", src)
+        self.assertIn("strtol(p, &end, 10)", src)
+        self.assertIn("value < INT_MIN || value > INT_MAX", src)
+        self.assertIn("quest_parse_record(line, t, 6, f1, sizeof(f1))", src)
+        self.assertIn("quest_parse_record(line, t, 7, NULL, 0)", src)
+        self.assertIn("quest_parse_record(line, t, 3, NULL, 0)", src)
+        self.assertIn("aquest_table[i].value[j] = t[j]", src)
+        self.assertIn("aquest_table[i].flags = asciiflag_conv(f1)", src)
+        self.assertNotIn("(retval = sscanf(line,", src)
+
+    def test_zone_saves_check_failed_tempfile_cleanup(self):
+        for filename, temp in (("genmob.c", "mobfname"),
+                               ("genobj.c", "filename"),
+                               ("genwld.c", "filename")):
+            src = (ROOT / "src" / filename).read_text(encoding="utf-8")
+            self.assertNotIn("        remove(" + temp + ");", src)
+            self.assertIn("if (remove(" + temp + ") != 0 && errno != ENOENT)", src)
+            self.assertIn('TB_REPORT_ERRNO("remove", ' + temp + ')', src)
+
+    def test_script_wait_numeric_fields_are_checked(self):
+        src = (ROOT / "src" / "dg_scripts.c").read_text(encoding="utf-8")
+        self.assertIn("static int script_wait_number(", src)
+        self.assertIn("strtol(text, &end, 10)", src)
+        self.assertIn("errno == ERANGE", src)
+        self.assertIn('script_wait_number(arg + 6, &hr, &rest)', src)
+        self.assertIn('script_wait_number(rest + 1, &min, &rest)', src)
+        self.assertIn('script_wait_number(arg, &when, &rest)', src)
+        self.assertIn("when > LONG_MAX / PASSES_PER_SEC", src)
+        self.assertNotIn('sscanf(arg, "until %ld', src)
+        self.assertNotIn('sscanf(arg, "%ld %c"', src)
+
+    def test_dg_trigger_index_and_position_parsing_is_checked(self):
+        src = (ROOT / "src" / "dg_olc.c").read_text(encoding="utf-8")
+        self.assertIn("static int trigedit_index_number(", src)
+        self.assertIn("static int trigedit_position_and_vnum(", src)
+        self.assertIn("errno == ERANGE", src)
+        self.assertIn("if (!trigedit_index_number(buf, &num))", src)
+        self.assertIn("count = trigedit_position_and_vnum(arg, &pos, &vnum)", src)
+        self.assertIn("tb_replace_file_checked(new_name, old_name)", src)
+        self.assertNotIn('sscanf(buf, "%d", &num)', src)
+        self.assertNotIn('sscanf(arg,"%d, %d",&pos,&vnum)', src)
+
+    def test_iedit_instance_field_menu_choices_persist(self):
+        src = (ROOT / "src" / "oedit.c").read_text(encoding="utf-8")
+        menu_start = src.index("static int iedit_is_forbidden_main_menu_choice(char *arg)\n{")
+        menu = src[menu_start:src.index("static void oedit_setup_new(", menu_start)]
+        for choice in ("5", "6", "7", "8", "9", "a", "b", "d", "m", "p"):
+            self.assertNotIn("case '" + choice + "':", menu)
+        for choice in ("s", "w", "x"):
+            self.assertIn("case '" + choice + "':", menu)
+        save_start = src.index("static void iedit_save_internally(struct descriptor_data *d)\n{")
+        save = src[save_start:src.index("static int iedit_is_forbidden_main_menu_choice(char *arg)\n{", save_start)]
+        for field in ("TYPE", "WEIGHT", "COST", "RENT", "TIMER", "LEVEL"):
+            self.assertIn("GET_OBJ_" + field + "(target) = GET_OBJ_" + field + "(edited)", save)
+        for field in ("EXTRA", "WEAR", "AFFECT"):
+            self.assertIn("GET_OBJ_" + field + "(target)[i] = GET_OBJ_" + field + "(edited)[i]", save)
+        self.assertIn("target->affected[i] = edited->affected[i]", save)
+
+    def test_shop_profit_input_is_checked_before_mutating_state(self):
+        src = (ROOT / "src" / "sedit.c").read_text(encoding="utf-8")
+        self.assertIn("static int parse_shop_profit(", src)
+        self.assertIn("strtof(text, &end)", src)
+        self.assertIn("errno == ERANGE", src)
+        self.assertIn("parsed != parsed || parsed > FLT_MAX || parsed < -FLT_MAX", src)
+        self.assertIn("if (*end != '\\0')", src)
+        self.assertIn("if (!parse_shop_profit(arg, &S_BUYPROFIT(OLC_SHOP(d))))", src)
+        self.assertIn("if (!parse_shop_profit(arg, &S_SELLPROFIT(OLC_SHOP(d))))", src)
+        self.assertNotIn('sscanf(arg, "%f"', src)
+
+    def test_improved_editor_ranges_use_checked_conversion(self):
+        src = (ROOT / "src" / "improved-edit.c").read_text(encoding="utf-8")
+        self.assertIn("static int parse_editor_line_range(", src)
+        self.assertIn("errno == ERANGE", src)
+        self.assertIn("first < INT_MIN || first > INT_MAX", src)
+        self.assertIn("last < INT_MIN || last > INT_MAX", src)
+        self.assertEqual(src.count("parse_editor_line_range("), 5)
+        self.assertNotIn('sscanf(string, " %d - %d "', src)
+        self.assertIn("case -1:", src)
+
+    def test_zone_index_updates_preserve_live_index_on_failure(self):
+        src = (ROOT / "src" / "genzon.c").read_text(encoding="utf-8")
+        section = src[src.index("void create_world_index(int znum"):src.index("void remove_room_zone_commands(")]
+        self.assertIn("static int parse_zone_index_number(", src)
+        self.assertIn("errno == ERANGE", src)
+        self.assertIn("value > INT_MAX", src)
+        self.assertIn("if (!parse_zone_index_number(buf, &num))", section)
+        self.assertEqual(section.count("cleanup_new_zone_index(new_name);"), 5)
+        self.assertNotIn("remove(new_name);", section)
+        self.assertIn('TB_REPORT_ERRNO("remove", path)', src)
+        self.assertIn("tb_replace_file_checked(new_name, old_name)", section)
+
+    def test_objsave_object_records_check_numeric_and_flag_fields(self):
+        src = (ROOT / "src" / "objsave.c").read_text(encoding="utf-8")
+        records = src[src.index("obj_save_data *objsave_parse_objects(FILE *fl)"):src.index("static int Crash_load_objs(struct char_data *ch) {")]
+        self.assertIn("objsave_parse_int_fields(line + 1, &nr, 1)", records)
+        self.assertIn("objsave_parse_int_fields(line, t, 3)", records)
+        self.assertIn("objsave_parse_int_fields(line, t, 4)", records)
+        self.assertIn("t[0] >= 0 && t[0] < MAX_OBJ_AFFECT", records)
+        self.assertEqual(records.count('sscanf(line, "%127s %127s %127s %127s"'), 3)
+        self.assertEqual(records.count('if (sscanf(line, "%127s'), 3)
+        self.assertNotIn('sscanf(line, "%s %s %s %s"', records)
+
+    def test_objsave_rent_headers_are_checked(self):
+        src = (ROOT / "src" / "objsave.c").read_text(encoding="utf-8")
+        self.assertIn("static int objsave_parse_int_fields(", src)
+        self.assertIn("static int objsave_parse_rent_header(", src)
+        self.assertIn("errno == ERANGE", src)
+        self.assertEqual(src.count("objsave_parse_rent_header(line,"), 3)
+        self.assertNotIn('sscanf(line, "%d %d %d %d %d %d"', src)
+        self.assertIn("if (!objsave_parse_int_fields(line, &rentcode, 1))", src)
+
+    def test_db_zone_and_help_numeric_parsers(self):
+        db = (ROOT / "src" / "db.c").read_text(encoding="utf-8")
+        zone = db[db.index("static void load_zones(FILE *fl, char *zonename)\n{"):]
+        zone = zone[:zone.index("top_of_zone_table = zone++;")]
+        self.assertIn("static int parse_zone_header(", db)
+        self.assertIn("static int parse_reset_numbers(", db)
+        self.assertIn("static int parse_hash_int(", db)
+        self.assertIn("errno == ERANGE", db)
+        self.assertIn("USHRT_MAX", db)
+        self.assertNotIn("sscanf(buf, \"#%hu\"", zone)
+        self.assertNotIn("sscanf(ptr, \" %d", zone)
+        self.assertIn("parse_zone_header(Z.name,", zone)
+        self.assertIn("parse_reset_numbers(ptr, args, 3,", zone)
+        self.assertIn("parse_reset_numbers(ptr, args, 4,", zone)
+        self.assertIn("if (!parse_hash_int(line, &el.min_level))", db)
+
+    def test_db_line_flag_word_and_eol_pushback(self):
+        db = (ROOT / "src" / "db.c").read_text(encoding="utf-8")
+        sections = [
+            db[db.index("char *fread_line(FILE *fp)"):db.index("int fread_flags(FILE *fp")],
+            db[db.index("int fread_flags(FILE *fp"):db.index("char *fread_word(FILE *fp")],
+            db[db.index("char *fread_word(FILE *fp"):db.index("void fread_to_eol(FILE *fp")],
+            db[db.index("void fread_to_eol(FILE *fp"):db.index("/* Called to free all allocated follow_type structs */")],
+        ]
+        self.assertEqual([part.count("ungetc(") for part in sections], [2, 2, 1, 1])
+        self.assertTrue(all("== EOF" in part for part in sections))
+        self.assertTrue(all("ungetc(" in part and "== EOF" in part for part in sections))
+
+    def test_db_readers_check_lookahead_pushback(self):
+        db = (ROOT / "src" / "db.c").read_text(encoding="utf-8")
+        clean = db[db.index("char *fread_clean_string(FILE *fl,"):db.index("int fread_number(FILE *fp)")]
+        number = db[db.index("int fread_number(FILE *fp)"):db.index("char *fread_line(FILE *fp)")]
+        self.assertIn("if (ungetc(c, fl) == EOF)", clean)
+        self.assertIn("if (c == EOF)", clean)
+        self.assertIn("isspace((unsigned char)c)", clean)
+        self.assertIn("c != EOF && ungetc(c, fp) == EOF", number)
+        self.assertIn("int c;", number)
+
+    def test_plist_macro_and_function_boundaries(self):
+        wizard = (ROOT / "src" / "act.wizard.c").read_text(encoding="utf-8")
+        start = wizard.index("#define PLIST_FORMAT")
+        end = wizard.index("ACMD(do_wizupdate)", start)
+        section = wizard[start:end]
+        self.assertIn('"Usage: plist [minlev[-maxlev]]', section)
+        self.assertIn("ACMD(do_plist)\n{", section)
+        self.assertNotIn("\nlse {", section)
+        self.assertIn("page_string(ch->desc, buf, TRUE);\n}", section)
+
+    def test_wizard_plist_ranges_and_last_seeks_checked(self):
+        wizard = (ROOT / "src" / "act.wizard.c").read_text(encoding="utf-8")
+        plist = wizard[wizard.index("ACMD(do_plist)"): ]
+        self.assertIn("static int parse_plist_range(", wizard)
+        self.assertIn("errno == ERANGE", wizard)
+        self.assertNotIn('sscanf(arg, "%d-%d"', plist)
+        self.assertEqual(plist.count("parse_plist_range(arg,"), 4)
+        last = wizard[wizard.index("ACMD(do_last)"):wizard.index("ACMD(do_plist)")]
+        self.assertIn("(recs = ftell(fp)) < 0", last)
+        self.assertEqual(last.count('TB_REPORT_ERRNO("seek", LAST_FILE)'), 3)
+
+    def test_area_level_flag_uses_native_bool(self):
+        source = (ROOT / "src" / "act.informative.c").read_text(encoding="utf-8")
+        self.assertIn("bool show_zone = FALSE, overlap = FALSE, overlap_shown = FALSE, lev_set;", source)
+        self.assertNotIn("zcount=0, lev_set,", source)
+
+    def test_area_level_formatter_keeps_full_zone_index(self):
+        source = (ROOT / "src" / "act.informative.c").read_text(encoding="utf-8")
+        self.assertIn("static bool get_zone_levels(int znum,", source)
+        self.assertIn("lev_set = get_zone_levels(i, lev_str, sizeof(lev_str));", source)
+
+    def test_information_level_ranges_checked(self):
+        source = (ROOT / "src" / "act.informative.c").read_text(encoding="utf-8")
+        self.assertIn("static int parse_info_level_range(", source)
+        self.assertIn("errno == ERANGE", source)
+        self.assertIn("first > INT_MAX", source)
+        self.assertIn("second > INT_MAX", source)
+        self.assertNotIn('sscanf(arg, "%d-%d"', source)
+        self.assertEqual(source.count("if (!parse_info_level_range(arg, &low, &high))"), 2)
+        self.assertIn("ret = parse_info_level_range(arg, &min_lev, &max_lev);", source)
+
+    def test_last_login_cleanup_never_deletes_original_before_replace(self):
+        wizard = (ROOT / "src" / "act.wizard.c").read_text(encoding="utf-8")
+        begin = wizard.index("void clean_llog_entries(void) {")
+        end = wizard.index("/* debugging stuff", begin)
+        routine = wizard[begin:end]
+        self.assertIn("copied != MAX_LAST_ENTRIES", routine)
+        self.assertIn("fflush(nfp) != 0", routine)
+        self.assertIn("fclose(nfp) != 0", routine)
+        self.assertIn("rename(temp_name, LAST_FILE) != 0", routine)
+        self.assertNotIn("remove(LAST_FILE)", routine)
+        self.assertIn("if (failed)", routine)
+
+    def test_last_login_record_seeks_checked(self):
+        wizard = (ROOT / "src" / "act.wizard.c").read_text(encoding="utf-8")
+        start = wizard.index("struct last_entry *find_llog_entry(")
+        end = wizard.index("void clean_llog_entries(", start)
+        section = wizard[start:end]
+        self.assertEqual(section.count('TB_REPORT_ERRNO("seek last-login file"'), 2)
+        self.assertEqual(section.count('TB_REPORT_ERRNO("seek last-login record"'), 4)
+        self.assertIn("(size = ftell(fp)) < 0", section)
+
+    def test_ibt_lookahead_checks_eof_and_ungetc(self):
+        ibt = (ROOT / "src" / "ibt.c").read_text(encoding="utf-8")
+        start = ibt.index("static IBT_DATA *read_ibt(")
+        body = ibt[start:ibt.index("ibtData = new_ibt();", start)]
+        self.assertIn("int letter;", body)
+        self.assertIn("letter == EOF", body)
+        self.assertIn("isspace((unsigned char)letter)", body)
+        self.assertIn("ungetc(letter, fp) == EOF", body)
+
+    def test_mudlog_checks_format_failure(self):
+        start = UTILS.index("void mudlog(")
+        end = UTILS.index("\n}", start)
+        body = UTILS[start:end]
+        self.assertRegex(body, r"formatted_length\s*=\s*vsnprintf\(")
+        self.assertRegex(body, r"if\s*\(formatted_length\s*<\s*0\)")
+
+    def test_strpaste_checks_remaining_capacity_without_underflow(self):
+        start = UTILS.index("char *strpaste(")
+        end = UTILS.index("\n}", start)
+        body = UTILS[start:end]
+        self.assertIn("if (used > MAX_STRING_LENGTH - 2)", body)
+        self.assertIn("ret[used++] = '\\r';", body)
+        self.assertIn("ret[used++] = '\\n';", body)
+
+
+if __name__ == "__main__":
+    unittest.main()

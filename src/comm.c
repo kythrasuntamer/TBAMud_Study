@@ -8,6 +8,41 @@
 *  CircleMUD is based on DikuMUD, Copyright (C) 1990, 1991.               *
 **************************************************************************/
 
+/**
+ * @file comm.c
+ * Network front end and main loop: sockets, descriptors, per-connection
+ * input and output buffering, the act() message formatter, signals and
+ * copyover recovery.
+ *
+ * Who controls the input:
+ *  - Socket bytes (process_input(), via ProtocolInput()) come from remote,
+ *    unauthenticated peers and are fully untrusted. So are reverse-DNS host
+ *    names (new_descriptor()); log the numeric address instead.
+ *  - Output text (write_to_output(), send_to_*(), act()) is built from
+ *    builder data (room/object/mob strings), DG script text and player
+ *    text (say, emote, '@' colour and unicode codes), all untrusted as
+ *    format *arguments*; formats themselves are always literals.
+ *  - copyover.dat and the command line come from the previous server
+ *    process and the operator: checked, but not hostile.
+ *
+ * Ownership and lifetime:
+ *  - A descriptor_data is created by new_descriptor() (or
+ *    copyover_recover()) and freed only by close_socket(), which game_loop()
+ *    calls for the descriptor it is processing or for descriptors marked
+ *    CON_CLOSE/CON_DISCONNECT. Nothing may use a descriptor after
+ *    close_socket() returns.
+ *  - Large output buffers belong to the descriptor while it is in the large
+ *    state and are returned to the file-static bufpool afterwards (see the
+ *    output buffer state machine above outbuf_reset_small()).
+ *  - Characters are extracted at the end of the pulse, so a char_data
+ *    pointer stays allocated for the rest of the current pulse, but act
+ *    triggers can move it to another room at any time (see act_body()).
+ *
+ * Diagnostics use TB_ERROR_MSG / TB_WARN_MSG with DIAG_DESC (descriptor)
+ * and DIAG_CHAR (character) identities; conditions a peer can trigger at
+ * will use the rate-limited TB_WARN_EVERY / TB_ERROR_EVERY (comm.h).
+ */
+
 #include "conf.h"
 #include "sysdep.h"
 
@@ -82,10 +117,17 @@
 #include "quest.h"
 #include "ibt.h" /* for free_ibt_lists */
 #include "mud_event.h"
+#include "asan_annotations.h"
 
 #ifndef INVALID_SOCKET
 #define INVALID_SOCKET (-1)
 #endif
+
+/* TRUE when cur is below a quarter of max (the auto-prompt threshold).
+ * Multiplies in long instead of 'cur << 2': hit points are negative while a
+ * player is incapacitated or dying, and shifting a negative value is
+ * undefined behaviour. */
+#define BELOW_QUARTER(cur, max) ((long) (cur) * 4L < (long) (max))
 
 extern time_t motdmod;
 extern time_t newsmod;
@@ -111,12 +153,26 @@ static struct txt_block *bufpool = 0;  /* pool of large output buffers */
 static int max_players = 0;   /* max descriptors available */
 static int tics_passed = 0;     /* for extern checkpointing */
 static struct timeval null_time; /* zero-valued time structure */
-static byte reread_wizlist;   /* signal: SIGUSR1 */
-static byte emergency_unban;  /* signal: SIGUSR2 */
+/* Set by signal handlers, acted on by game_loop(). Handlers only store to
+ * these; everything else (logging, freeing, exiting) happens in the loop. */
+static volatile sig_atomic_t reread_wizlist;   /* signal: SIGUSR1 */
+static volatile sig_atomic_t emergency_unban;  /* signal: SIGUSR2 */
+static volatile sig_atomic_t shutdown_signal;  /* SIGHUP/SIGINT/SIGTERM */
+/* Set when game_loop() stops because its socket poll failed in a way it
+ * cannot recover from (a FATAL network/select record names the errno).
+ * init_game() still saves every player, then exits nonzero instead of
+ * logging a normal termination, so a supervisor sees a failure. */
+static int main_loop_failed = FALSE;
 
 static int dg_act_check;         /* toggle for act_trigger */
 static bool fCopyOver;          /* Are we booting in copyover mode? */
 static char *last_act_message = NULL;
+/* Call site of the act() being formatted (NULL for direct perform_act()
+ * calls). act_at() saves and restores it because act triggers can send
+ * further act() messages while one is being delivered. */
+static const char *act_site_file = NULL;
+static int act_site_line = 0;
+static const char *act_site_func = NULL;
 
 /* static local function prototypes (current file scope only) */
 static RETSIGTYPE reread_wizlists(int sig);
@@ -140,18 +196,26 @@ static int process_input(struct descriptor_data *t);
 static void timediff(struct timeval *diff, struct timeval *a, struct timeval *b);
 static void timeadd(struct timeval *sum, struct timeval *a, struct timeval *b);
 static void flush_queues(struct descriptor_data *d);
+static void flush_input_queue(struct descriptor_data *d);
 static void nonblock(socket_t s);
 static int perform_subst(struct descriptor_data *t, char *orig, char *subst);
 static void record_usage(void);
 static char *make_prompt(struct descriptor_data *point);
 static void check_idle_passwords(void);
 static void init_descriptor (struct descriptor_data *newd, int desc);
+static int mark_unpollable_descriptors(socket_t mother);
+static int poll_failure_recoverable(socket_t mother, int poll_errno, int maxdesc);
+static void report_world_gaps(void);
 
 static struct in_addr *get_bind_addr(void);
 static int parse_ip(const char *addr, struct in_addr *inaddr);
 static int set_sendbuf(socket_t s);
 static void free_bufpool(void);
+static void bufpool_put(struct txt_block *block);
+static struct txt_block *bufpool_take(void);
 static void setup_log(const char *filename, int fd);
+static const char *act_format_excerpt(char *dst, size_t dst_size,
+                                      const char *format);
 static int open_logfile(const char *filename, FILE *stderr_fp);
 #if defined(POSIX)
 static sigfunc *my_signal(int signo, sigfunc *func);
@@ -169,6 +233,49 @@ static void msdp_update(void); /* KaVir plugin*/
 #define FD_SET(x, y) 0
 #define FD_ISSET(x, y) 0
 #define FD_CLR(x, y)
+#endif
+
+/* Parse a whole decimal command-line argument into [min, max]. FALSE for
+ * empty text, trailing characters, overflow or a value out of range; the
+ * caller reports it. */
+static bool parse_long_arg(const char *text, long min, long max, long *out)
+{
+  char *end;
+  long value;
+
+  if (text == NULL || *text == '\0')
+    return FALSE;
+  errno = 0;
+  value = strtol(text, &end, 10);
+  if (*end != '\0' || errno == ERANGE || value < min || value > max)
+    return FALSE;
+  *out = value;
+  return TRUE;
+}
+
+/* Replace the heap-owned configuration string *slot with a copy of value.
+ * CONFIG_CONFFILE is freed by main() at exit and CONFIG_LOGNAME by
+ * cedit_save_internally() and free_strings(OASIS_CFG), so neither may point
+ * into argv (an invalid free), and the value being replaced (load_config()'s
+ * copy) is freed here instead of leaking. value comes from the command line
+ * or a compiled-in default. An allocation failure at boot is fatal. */
+static void set_config_string(char **slot, const char *value, const char *what)
+{
+  char *copy = strdup(value);
+
+  if (copy == NULL) {
+    TB_REPORT_FATAL_ERRNO(TB_ERR_BOOT, "strdup", what);
+    exit(1);
+  }
+  free(*slot);
+  *slot = copy;
+}
+
+/* Highest descriptor accepted for the copyover control socket. */
+#ifdef CIRCLE_WINDOWS
+#define MOTHER_DESC_MAX LONG_MAX
+#else
+#define MOTHER_DESC_MAX ((long) FD_SETSIZE - 1)
 #endif
 
 /*  main game loop and related stuff */
@@ -195,6 +302,7 @@ int main(int argc, char **argv)
 {
   int pos = 1;
   const char *dir;
+  const char *conf_arg = NULL; /* -f file name, inside argv */
 
 #ifdef MEMORY_DEBUG
   zmalloc_init();
@@ -219,9 +327,9 @@ int main(int argc, char **argv)
   while ((pos < argc) && (*(argv[pos]) == '-')) {
     if (*(argv[pos] + 1) == 'f') {
       if (*(argv[pos] + 2))
-	CONFIG_CONFFILE = argv[pos] + 2;
+	conf_arg = argv[pos] + 2;
       else if (++pos < argc)
-	CONFIG_CONFFILE = argv[pos];
+	conf_arg = argv[pos];
       else {
 	puts("SYSERR: File name to read from expected after option -f.");
 	exit(1);
@@ -231,8 +339,9 @@ int main(int argc, char **argv)
   }
   pos = 1;
 
-  if (!CONFIG_CONFFILE)
-    CONFIG_CONFFILE = strdup(CONFIG_FILE);
+  /* A heap copy: main() frees CONFIG_CONFFILE at exit. */
+  set_config_string(&CONFIG_CONFFILE, conf_arg ? conf_arg : CONFIG_FILE,
+                    "configuration file name");
 
   load_config();
 
@@ -246,18 +355,34 @@ int main(int argc, char **argv)
 	++pos;
       break;
     case 'o':
+      /* Overrides load_config()'s LOGNAME; must stay a heap copy. */
       if (*(argv[pos] + 2))
-	CONFIG_LOGNAME = argv[pos] + 2;
+	set_config_string(&CONFIG_LOGNAME, argv[pos] + 2, "log file name");
       else if (++pos < argc)
-	CONFIG_LOGNAME = argv[pos];
+	set_config_string(&CONFIG_LOGNAME, argv[pos], "log file name");
       else {
 	puts("SYSERR: File name to log to expected after option -o.");
 	exit(1);
       }
       break;
     case 'C': /* -C<socket number> - recover from copyover, this is the control socket */
+      {
+       /* Written by do_copyover() when it exec()s us. A bad value used to
+        * become 0 (stdin) silently; the mother socket must be an open
+        * descriptor select() can watch. */
+       long fd;
+       if (!parse_long_arg(argv[pos] + 2, 0, MOTHER_DESC_MAX, &fd)) {
+         char fd_context[96];
+         tb_snprintf(fd_context, sizeof(fd_context),
+                     "illegal copyover control socket '%.40s' (want 0..%ld)",
+                     argv[pos] + 2, (long) MOTHER_DESC_MAX);
+         TB_REPORT_DOMAIN_ERROR(TB_SEV_FATAL, TB_ERR_BOOT,
+                                "parse-copyover-fd", fd_context);
+         exit(1);
+       }
        fCopyOver = TRUE;
-       mother_desc = tb_parse_int_or_zero(argv[pos]+2);
+       mother_desc = (socket_t) fd;
+      }
       break;
     case 'd':
       if (*(argv[pos] + 2))
@@ -320,17 +445,23 @@ int main(int argc, char **argv)
   }
 
   if (pos < argc) {
-    if (!isdigit(*argv[pos])) {
+    long parsed_port;
+
+    if (!isdigit((unsigned char) *argv[pos])) {
       printf("Usage: %s [-c] [-m] [-q] [-r] [-s] [-d pathname] [port #]\n", argv[0]);
       exit(1);
-    } else if ((port = tb_parse_int_or_zero(argv[pos])) <= 1024) {
+    }
+    /* Range-checked before narrowing: 'port' is a ush_int, so a value such
+     * as 70000 used to wrap to 4464 and pass the old '> 1024' test. */
+    if (!parse_long_arg(argv[pos], 1025, 65535, &parsed_port)) {
       char port_context[96];
       tb_snprintf(port_context, sizeof(port_context),
-                  "illegal port number %d from argument '%s'", port, argv[pos]);
+                  "illegal port number '%.40s' (want 1025..65535)", argv[pos]);
       TB_REPORT_DOMAIN_ERROR(TB_SEV_FATAL, TB_ERR_BOOT,
                              "parse-port", port_context);
       exit(1);
     }
+    port = (ush_int) parsed_port;
   }
 
   /* All arguments have been parsed, try to open log file. */
@@ -347,9 +478,10 @@ int main(int argc, char **argv)
   }
   log("Using %s as data directory.", dir);
 
-  if (scheck)
+  if (scheck) {
     boot_world();
-  else {
+    report_world_gaps();
+  } else {
     log("Running game on port %d.", port);
     init_game(port);
   }
@@ -374,6 +506,14 @@ int main(int argc, char **argv)
     free_ibt_lists();       /* ibt.c */
     free_recent_players();  /* act.informative.c */
     free_list(world_events); /* free up our global lists */
+    /* destroy_db() made every character leave its group, so group_list is
+     * empty. free_list() frees only the list, never the groups: a group
+     * still listed here would leak, and its members are already freed. */
+    if (group_list->iSize)
+      TB_ERROR_MSG("comm", "shutdown-groups", "group_list",
+                   "%u group(s) still listed after destroy_db(); leaked",
+                   (unsigned) group_list->iSize);
+    free_list(group_list);
     free_list(global_lists);
   }
 
@@ -392,6 +532,17 @@ int main(int argc, char **argv)
   return (0);
 }
 
+/**
+ * copyover.dat format (written by do_copyover() in act.wizard.c just before
+ * it exec()s the new binary; read once here, then unlinked):
+ *   line 1:   boot time (decimal time_t)
+ *   then one line per player: "<fd> <pref> <name> <host> <guiopt>"
+ *   terminated by a line whose fd is -1.
+ * Every field is parsed with bounds; each fd must be open and below
+ * FD_SETSIZE. A player who cannot be restored (bad fd, failed write, no
+ * pfile, deleted) is reported as copyover/bad-fd or copyover/restore-player
+ * and skipped; a malformed file aborts the boot.
+ */
 /* Reload players after a copyover */
 void copyover_recover()
 {
@@ -400,7 +551,7 @@ void copyover_recover()
   char host[1024], guiopt[1024];
   int desc, i, player_i;
   bool fOld;
-  char name[MAX_INPUT_LENGTH];
+  char name[MAX_INPUT_LENGTH], name_excerpt[48];
   long pref;
 
   log ("Copyover recovery initiated");
@@ -417,7 +568,23 @@ void copyover_recover()
   unlink (COPYOVER_FILE);
 
   /* read boot_time - first line in file */
-  i = fscanf(fp, "%ld\n", (long *)&boot_time);
+  {
+    char timestamp[128], *end;
+    long parsed;
+    if (!fgets(timestamp, sizeof(timestamp), fp)) {
+      log("SYSERR: Missing copyover timestamp in %s.", COPYOVER_FILE);
+      tb_fclose(fp);
+      exit(1);
+    }
+    errno = 0;
+    parsed = strtol(timestamp, &end, 10);
+    while (*end == ' ' || *end == '\t' || *end == '\n' ||
+           *end == '\r' || *end == '\f' || *end == '\v')
+      end++;
+    i = (end != timestamp && *end == '\0' && errno != ERANGE) ? 1 : 0;
+    if (i == 1)
+      boot_time = (time_t)parsed;
+  }
 
   if (i != 1) {
     if (ferror(fp))
@@ -431,7 +598,31 @@ void copyover_recover()
   for (;;) {
     fOld = TRUE;
     /* Field widths reserve a byte for the terminating NUL in each array. */
-    if (fscanf(fp, "%d %ld %511s %1023s %1023s\n", &desc, &pref, name, host, guiopt) != 5) {
+    {
+      char desc_text[64], pref_text[64], *end;
+      long parsed;
+      int valid = 1;
+      if (fscanf(fp, "%63s %63s %511s %1023s %1023s",
+                 desc_text, pref_text, name, host, guiopt) != 5)
+        valid = 0;
+      if (valid) {
+        errno = 0;
+        parsed = strtol(desc_text, &end, 10);
+        if (end == desc_text || *end || errno == ERANGE ||
+            parsed < INT_MIN || parsed > INT_MAX)
+          valid = 0;
+        else
+          desc = (int)parsed;
+      }
+      if (valid) {
+        errno = 0;
+        parsed = strtol(pref_text, &end, 10);
+        if (end == pref_text || *end || errno == ERANGE)
+          valid = 0;
+        else
+          pref = parsed;
+      }
+      if (!valid) {
       if (feof(fp)) {
         log("SYSERR: unexpected EOF in copyover file %s.", COPYOVER_FILE);
         break;
@@ -443,13 +634,36 @@ void copyover_recover()
         log("SYSERR: could not scan line in copyover file %s.", COPYOVER_FILE);
       tb_fclose(fp);
       exit(1);
+      }
     }
 
     if (desc == -1)
       break;
 
+    /* copyover.dat is written by do_copyover() of the previous process and
+     * names sockets it left open across exec(). Trust it only as far as it
+     * can be checked: the descriptor must be one select() can watch and
+     * must actually be open, or FD_SET in game_loop() writes out of bounds
+     * and every later write goes to the wrong file. Each player who cannot
+     * be restored is reported with the reason. */
+    act_format_excerpt(name_excerpt, sizeof(name_excerpt), name);
+#ifndef CIRCLE_WINDOWS
+    if (desc < 0 || desc >= FD_SETSIZE || fcntl(desc, F_GETFD) == -1) {
+      TB_ERROR_MSG("copyover", "bad-fd", "copyover_recover",
+                   "fd %d for player '%s' is %s; player not restored", desc,
+                   name_excerpt, (desc < 0 || desc >= FD_SETSIZE)
+                   ? "outside 0..FD_SETSIZE-1" : "not open");
+      if (desc >= FD_SETSIZE && fcntl(desc, F_GETFD) != -1)
+        close(desc);
+      continue;
+    }
+#endif
+
     /* Write something, and check if it goes error-free */
     if (write_to_descriptor (desc, "\n\rRestoring from copyover...\n\r") < 0) {
+      TB_ERROR_MSG("copyover", "restore-player", "copyover_recover",
+                   "fd %d name '%s' reason write-failed; player not restored",
+                   desc, name_excerpt);
       close (desc); /* nope */
       continue;
     }
@@ -489,6 +703,10 @@ void copyover_recover()
 
     /* Player file not found?! */
     if (!fOld) {
+      TB_ERROR_MSG("copyover", "restore-player", "copyover_recover",
+                   "fd %d name '%s' reason %s; connection closed", desc,
+                   name_excerpt, player_i < 0 ? "load_char-failed"
+                                              : "player-deleted");
       write_to_descriptor (desc, "\n\rSomehow, your character was lost in the copyover. Sorry.\n\r");
       close_socket (d);
     } else {
@@ -514,6 +732,28 @@ void copyover_recover()
   tb_fclose(fp);
 }
 
+/* Contracts between the loaded world and code that relies on it, which
+ * boot_world() does not check itself. Each gap is reported once, at boot
+ * and in syntax-check mode, as a WARNING naming the missing vnum: the
+ * server runs, but the feature that needs it would otherwise fail later
+ * with nothing pointing back at the world files. Runs once the rooms and
+ * mobiles are indexed. */
+static void report_world_gaps(void)
+{
+  /* dg_cast (dg_misc.c) loads this mob to cast spells for room and object
+   * scripts, and damage() exempts only it from ROOM_PEACEFUL; without it
+   * every such cast fails with just a script log line. */
+  if (real_mobile(DG_CASTER_PROXY) == NOBODY)
+    TB_WARN_MSG("dg", "caster-proxy-missing", "mob",
+                "vnum %d (DG_CASTER_PROXY) does not exist: room and object "
+                "scripts cannot cast spells", DG_CASTER_PROXY);
+
+  /* Donation rooms are config vnums (etc/config, cedit) that nothing
+   * checks against the world; each missing one is a donation-room-missing
+   * warning (act.item.c). */
+  check_donation_rooms();
+}
+
 /* Init sockets, run game, and cleanup sockets */
 static void init_game(ush_int local_port)
 {
@@ -537,6 +777,7 @@ static void init_game(ush_int local_port)
   init_lookup_table();
 
   boot_db();
+  report_world_gaps();
 
 #if defined(CIRCLE_UNIX) || defined(CIRCLE_MACINTOSH)
   log("Signal trapping.");
@@ -544,7 +785,8 @@ static void init_game(ush_int local_port)
 #endif
 
   /* If we made it this far, we will be able to restart without problem. */
-  remove(KILLSCRIPT_FILE);
+  if (remove(KILLSCRIPT_FILE) != 0 && errno != ENOENT)
+    TB_REPORT_ERRNO("remove", KILLSCRIPT_FILE);
 
   if (fCopyOver) /* reload players */
   copyover_recover();
@@ -566,6 +808,14 @@ static void init_game(ush_int local_port)
 
   log("Saving current MUD time.");
   save_mud_time(&time_info);
+
+  /* game_loop() could not poll its sockets and logged a FATAL
+   * network/select record with the errno. Everyone was saved above; exit
+   * nonzero so the stop is not mistaken for an ordinary shutdown. */
+  if (main_loop_failed) {
+    log("SYSERR: Abnormal termination of game: the main loop could not poll its sockets.");
+    exit(1);
+  }
 
   if (circle_reboot) {
     log("Rebooting.");
@@ -743,6 +993,18 @@ static int get_max_players(void)
   /* now calculate max _players_ based on max descs */
   max_descs = MIN(CONFIG_MAX_PLAYING, max_descs - NUM_RESERVED_DESCS);
 
+  /* game_loop() polls every socket with select(), which cannot watch a
+   * descriptor >= FD_SETSIZE; new_descriptor() refuses those too. */
+  if (max_descs > FD_SETSIZE - NUM_RESERVED_DESCS) {
+    TB_WARN_MSG("config", "max-playing", "get_max_players",
+                "player limit %d (max_playing %d, by %s) exceeds what select()"
+                " can poll; using %d (FD_SETSIZE %d less %d reserved)",
+                max_descs, CONFIG_MAX_PLAYING, method,
+                FD_SETSIZE - NUM_RESERVED_DESCS, (int) FD_SETSIZE,
+                NUM_RESERVED_DESCS);
+    max_descs = FD_SETSIZE - NUM_RESERVED_DESCS;
+  }
+
   if (max_descs <= 0) {
     log("SYSERR: Non-positive max player limit!  (Set at %d using %s).",
 	    max_descs, method);
@@ -753,11 +1015,110 @@ static int get_max_players(void)
 #endif /* CIRCLE_UNIX */
 }
 
+/* game_loop()'s poll failed with EBADF: a descriptor in its sets is not an
+ * open file, i.e. something closed a player's socket without close_socket(),
+ * and select() would fail the same way on every pulse until it is dropped.
+ * Each player connection whose socket is gone is reported and marked
+ * CON_CLOSE, for game_loop() to close at once. Returns how many were marked,
+ * or -1 when the listening (mother) socket itself is not open: no new player
+ * could ever connect, which game_loop() cannot repair. */
+static int mark_unpollable_descriptors(socket_t mother)
+{
+  int marked = 0;
+#ifndef CIRCLE_WINDOWS
+  struct descriptor_data *d;
+
+  if (fcntl(mother, F_GETFD) < 0 && errno == EBADF) {
+    TB_ERROR_ERRNO("network", "select-bad-fd", "game_loop",
+                   "listening socket fd %ld is not open; new connections "
+                   "cannot be accepted", (long) mother);
+    return -1;
+  }
+  for (d = descriptor_list; d; d = d->next) {
+    if (fcntl(d->descriptor, F_GETFD) >= 0 || errno != EBADF)
+      continue;
+    TB_ERROR_ERRNO("network", "select-bad-fd", "game_loop",
+                   DIAG_DESC_FMT " socket is not open (closed outside "
+                   "close_socket()); closing the connection", DIAG_DESC(d));
+    STATE(d) = CON_CLOSE;
+    marked++;
+  }
+#else
+  (void) mother;
+#endif
+  return marked;
+}
+
+/* Decides what game_loop() does after its non-blocking poll failed with
+ * poll_errno (the caller's errno, read straight after select()). Returns
+ * TRUE to poll again on the next pulse:
+ *  - EINTR: a signal arrived. Handlers are installed without SA_RESTART, so
+ *    SIGCHLD from reap(), SIGUSR1/SIGUSR2 ... interrupt select(); not a
+ *    failure.
+ *  - EBADF caused by player sockets that are no longer open: they are
+ *    marked CON_CLOSE (mark_unpollable_descriptors()) for the caller to
+ *    close.
+ * Anything else (EBADF with no player socket to blame or a dead listening
+ * socket, EINVAL, ENOMEM ...) would fail again on every pulse, so it is
+ * reported as FATAL with the errno and FALSE is returned: game_loop() stops
+ * and init_game() saves everyone, then exits nonzero. */
+static int poll_failure_recoverable(socket_t mother, int poll_errno, int maxdesc)
+{
+  if (poll_errno == EINTR)
+    return TRUE;
+  if (poll_errno == EBADF && mark_unpollable_descriptors(mother) > 0)
+    return TRUE;
+  TB_ERROR_LOG("FATAL", "network", "select", "game_loop", poll_errno,
+               "main descriptor poll failed (maxdesc %d); stopping the game "
+               "loop, saving players and exiting nonzero", maxdesc);
+  return FALSE;
+}
+
+/* An idle player pulled into the void (limits.c check_idling()) types
+ * again: move ch back to GET_WAS_IN, the rnum it was pulled from, and clear
+ * it. Rooms can be deleted with OLC meanwhile; an rnum left past
+ * top_of_world would make char_to_room() refuse it and strand ch, still
+ * playing, in NOWHERE (where char_from_room() aborts the server on it
+ * later). So an invalid GET_WAS_IN is reported and ch goes to the mortal
+ * start room, looked up by vnum; if that room is gone too, that is
+ * reported and ch stays where it is. Returns TRUE when ch was moved. */
+static bool return_from_void(struct char_data *ch)
+{
+  room_rnum was_in = GET_WAS_IN(ch);
+
+  GET_WAS_IN(ch) = NOWHERE;
+  if (!VALID_ROOM_RNUM(was_in)) {
+    room_rnum start = real_room(CONFIG_MORTAL_START);
+    room_rnum here = IN_ROOM(ch);
+
+    if (start == NOWHERE) {
+      TB_ERROR_MSG("comm", "void-return-no-start-room", "room",
+                   DIAG_CHAR_FMT " returns from the void to rnum %d, past "
+                   "top_of_world %d, and mortal start room vnum %d does not "
+                   "exist; left in " DIAG_ROOM_FMT, DIAG_CHAR(ch), (int) was_in,
+                   (int) top_of_world, (int) CONFIG_MORTAL_START,
+                   DIAG_ROOM(here));
+      return FALSE;
+    }
+    TB_ERROR_MSG("comm", "void-return-stale", "room",
+                 DIAG_CHAR_FMT " returns from the void to rnum %d, past "
+                 "top_of_world %d; sent to the mortal start room "
+                 DIAG_ROOM_FMT " instead", DIAG_CHAR(ch), (int) was_in,
+                 (int) top_of_world, DIAG_ROOM(start));
+    was_in = start;
+  }
+  if (IN_ROOM(ch) != NOWHERE)
+    char_from_room(ch);
+  char_to_room(ch, was_in);
+  return TRUE;
+}
+
 /* game_loop contains the main loop which drives the entire MUD.  It
  * cycles once every 0.10 seconds and is responsible for accepting new
  * new connections, polling existing connections for input, dequeueing
  * output and sending it out to players, and calling "heartbeat" functions
- * such as mobile_activity(). */
+ * such as mobile_activity(). It returns when circle_shutdown is set, or
+ * with main_loop_failed set when its socket poll cannot recover. */
 void game_loop(socket_t local_mother_desc)
 {
   fd_set input_set, output_set, exc_set, null_set;
@@ -844,10 +1205,31 @@ void game_loop(socket_t local_mother_desc)
       timediff(&timeout, &last_time, &now);
     } while (timeout.tv_usec || timeout.tv_sec);
 
-    /* Poll (without blocking) for new input, output, and exceptions */
+    /* Poll (without blocking) for new input, output, and exceptions.
+     * select() may rewrite its timeout and leaves it undefined after an
+     * error, and a failed poll is retried below, so reset it every time. */
+    null_time.tv_sec = 0;
+    null_time.tv_usec = 0;
     if (select(maxdesc + 1, &input_set, &output_set, &exc_set, &null_time) < 0) {
-      TB_REPORT_ERRNO("select", "main descriptor poll");
-      return;
+      /* A signal, or player sockets closed behind close_socket()'s back,
+       * are recovered from; anything else stops the loop, and init_game()
+       * saves everyone and exits nonzero (see poll_failure_recoverable()).
+       * Every other failure used to return here with only a generic errno
+       * record, and the server then logged "Normal termination of game."
+       * and exited 0. */
+      if (!poll_failure_recoverable(local_mother_desc, errno, maxdesc)) {
+        main_loop_failed = TRUE;
+        return;
+      }
+      /* Close any connection marked above at once, before anything else
+       * can be handed its (now free) descriptor number; poll again on the
+       * next pulse with sets rebuilt from the remaining descriptors. */
+      for (d = descriptor_list; d; d = next_d) {
+        next_d = d->next;
+        if (STATE(d) == CON_CLOSE)
+          close_socket(d);
+      }
+      continue;
     }
     /* If there are new connections waiting, accept them. */
     if (FD_ISSET(local_mother_desc, &input_set))
@@ -896,13 +1278,9 @@ void game_loop(socket_t local_mother_desc)
       if (d->character) {
 	/* Reset the idle timer & pull char back from void if necessary */
 	d->character->char_specials.timer = 0;
-	if (STATE(d) == CON_PLAYING && GET_WAS_IN(d->character) != NOWHERE) {
-	  if (IN_ROOM(d->character) != NOWHERE)
-	    char_from_room(d->character);
-	  char_to_room(d->character, GET_WAS_IN(d->character));
-	  GET_WAS_IN(d->character) = NOWHERE;
+	if (STATE(d) == CON_PLAYING && GET_WAS_IN(d->character) != NOWHERE &&
+	    return_from_void(d->character))
 	  act("$n has returned.", TRUE, d->character, 0, 0, TO_ROOM);
-	}
         GET_WAIT_STATE(d->character) = 1;
       }
       d->has_prompt = FALSE;
@@ -937,7 +1315,15 @@ void game_loop(socket_t local_mother_desc)
     /* Print prompts for other descriptors who had no other output */
     for (d = descriptor_list; d; d = d->next) {
       if (!d->has_prompt) {
-	      write_to_descriptor(d->descriptor, make_prompt(d));
+	      /* A failed write (already logged with errno by
+	       * write_to_descriptor) means the peer is gone: close it below
+	       * instead of writing to it again every pulse. */
+	      if (write_to_descriptor(d->descriptor, make_prompt(d)) < 0) {
+	        TB_WARN_MSG("network", "prompt-write", "game_loop",
+	                    DIAG_DESC_FMT " prompt write failed; closing",
+	                    DIAG_DESC(d));
+	        STATE(d) = CON_CLOSE;
+	      }
 	      d->has_prompt = TRUE;
       }
     }
@@ -970,6 +1356,12 @@ void game_loop(socket_t local_mother_desc)
       heartbeat(++pulse);
 
     /* Check for any signals we may have received. */
+    if (shutdown_signal) {
+      log("SYSERR: Received signal %d (SIGHUP, SIGINT or SIGTERM).  Shutting down...",
+          (int) shutdown_signal);
+      circle_shutdown = 1;
+    }
+
     if (reread_wizlist) {
       reread_wizlist = FALSE;
       mudlog(CMP, LVL_IMMORT, TRUE, "Signal received - rereading wizlists.");
@@ -978,10 +1370,22 @@ void game_loop(socket_t local_mother_desc)
 
     if (emergency_unban) {
       emergency_unban = FALSE;
+      int bans = 0, invalid_names = num_invalid;
+
       mudlog(BRF, LVL_IMMORT, TRUE, "Received SIGUSR2 - completely unrestricting game (emergent)");
-      ban_list = NULL;
+      /* Free what is cleared: both lists used to be dropped by resetting
+       * the pointer and count, leaking every node and name string. */
+      while (ban_list) {
+        struct ban_list_element *next_ban = ban_list->next;
+        free(ban_list);
+        ban_list = next_ban;
+        bans++;
+      }
+      free_invalid_list();
       circle_restrict = 0;
-      num_invalid = 0;
+      TB_WARN_MSG("ban", "emergency-unban", "game_loop",
+                  "SIGUSR2: cleared %d site bans and %d invalid-name"
+                  " entries; game unrestricted", bans, invalid_names);
     }
 
 
@@ -1162,17 +1566,17 @@ static char *make_prompt(struct descriptor_data *d)
     /* show only when below 25% */
     if (PRF_FLAGGED(d->character, PRF_DISPAUTO) && len < sizeof(prompt)) {
       struct char_data *ch = d->character;
-      if (GET_HIT(ch) << 2 < GET_MAX_HIT(ch) ) {
+      if (BELOW_QUARTER(GET_HIT(ch), GET_MAX_HIT(ch))) {
         count = snprintf(prompt + len, sizeof(prompt) - len, "%dH ", GET_HIT(ch));
         if (count >= 0)
           len += count;
       }
-      if (GET_MANA(ch) << 2 < GET_MAX_MANA(ch) && len < sizeof(prompt)) {
+      if (BELOW_QUARTER(GET_MANA(ch), GET_MAX_MANA(ch)) && len < sizeof(prompt)) {
         count = snprintf(prompt + len, sizeof(prompt) - len, "%dM ", GET_MANA(ch));
         if (count >= 0)
           len += count;
       }
-      if (GET_MOVE(ch) << 2 < GET_MAX_MOVE(ch) && len < sizeof(prompt)) {
+      if (BELOW_QUARTER(GET_MOVE(ch), GET_MAX_MOVE(ch)) && len < sizeof(prompt)) {
         count = snprintf(prompt + len, sizeof(prompt) - len, "%dV ", GET_MOVE(ch));
         if (count >= 0)
           len += count;
@@ -1238,18 +1642,27 @@ static char *make_prompt(struct descriptor_data *d)
  * growing an unbounded linked list while the game loop is busy. */
 #define TB_MAX_PENDING_COMMANDS 64
 
-void write_to_q(const char *txt, struct txt_q *queue, int aliased)
+/* Append a command to an input queue. Returns 1 if it was queued, 0 if it
+ * was dropped: the queue already holds TB_MAX_PENDING_COMMANDS entries
+ * (the remote player is typing faster than the game executes), allocation
+ * failed, or an argument was NULL. Every drop is reported here; the flood
+ * case is left to the caller, which knows the descriptor (process_input()
+ * reports it with DIAG_DESC and tells the player). */
+int write_to_q(const char *txt, struct txt_q *queue, int aliased)
 {
   struct txt_block *newt;
   struct txt_block *scan;
   size_t pending = 0;
 
-  if (queue == NULL || txt == NULL)
-    return;
+  if (queue == NULL || txt == NULL) {
+    TB_ERROR_MSG("network", "input-queue", "write_to_q",
+                 "NULL %s; command dropped", queue ? "text" : "queue");
+    return (0);
+  }
 
   for (scan = queue->head; scan != NULL; scan = scan->next) {
     if (++pending >= TB_MAX_PENDING_COMMANDS)
-      return; /* Drop excess commands; do not amplify the flood in logs. */
+      return (0);
   }
 
   CREATE(newt, struct txt_block, 1);
@@ -1259,7 +1672,7 @@ void write_to_q(const char *txt, struct txt_q *queue, int aliased)
     free(newt);
     errno = saved_errno;
     TB_REPORT_ERRNO("strdup", "input command queue");
-    return;
+    return (0);
   }
   newt->aliased = aliased;
 
@@ -1272,6 +1685,7 @@ void write_to_q(const char *txt, struct txt_q *queue, int aliased)
     queue->tail = newt;
     newt->next = NULL;
   }
+  return (1);
 }
 
 /* NOTE: 'dest' must be at least MAX_INPUT_LENGTH big. */
@@ -1296,22 +1710,93 @@ static int get_from_q(struct txt_q *queue, char *dest, int *aliased)
   return (1);
 }
 
-/* Empty the queues before closing connection */
-static void flush_queues(struct descriptor_data *d)
+/* Discard queued, not-yet-executed input lines (the "--" command). Output
+ * state is untouched: the descriptor keeps using its current buffer. */
+static void flush_input_queue(struct descriptor_data *d)
 {
-  if (d->large_outbuf) {
-    d->large_outbuf->next = bufpool;
-    bufpool = d->large_outbuf;
-  }
   while (d->input.head) {
     struct txt_block *tmp = d->input.head;
     d->input.head = d->input.head->next;
     free(tmp->text);
     free(tmp);
   }
+  d->input.tail = NULL;
 }
 
-/* Add a new string to a player's output queue. For outside use. */
+/* Output buffer state machine (vwrite_to_output() fills it, process_output()
+ * drains it). Exactly one buffer is live:
+ *   small: large_outbuf == NULL, output == small_outbuf;
+ *   large: output == large_outbuf->text (taken from bufpool or allocated).
+ * In both states 0 <= bufptr, 0 <= bufspace, bufptr + bufspace equals the
+ * live buffer's capacity - 1, and output[bufptr] is the terminating NUL.
+ * bufspace == 0 is the overflow state: further output is discarded until
+ * process_output() empties the buffer. Both macros evaluate d several times. */
+#define OUTBUF_CAPACITY(d) ((d)->large_outbuf ? LARGE_BUFSIZE : SMALL_BUFSIZE)
+#define OUTBUF_INVARIANT_OK(d) \
+  ((d)->bufptr >= 0 && (d)->bufspace >= 0 && \
+   (d)->output == ((d)->large_outbuf ? (d)->large_outbuf->text \
+                                     : (d)->small_outbuf) && \
+   (d)->bufptr + (d)->bufspace == OUTBUF_CAPACITY(d) - 1)
+
+/* Return d's large output buffer (if any) to the pool and leave d in the
+ * empty small-buffer state. */
+static void outbuf_reset_small(struct descriptor_data *d)
+{
+  if (d->large_outbuf) {
+    bufpool_put(d->large_outbuf);   /* poisons the text under ASan */
+    d->large_outbuf = NULL;
+  }
+  d->output = d->small_outbuf;
+  *d->output = '\0';
+  d->bufptr = 0;
+  d->bufspace = SMALL_BUFSIZE - 1;
+}
+
+/* Verify the output buffer invariant above at a state-machine boundary.
+ * 'full' also checks that the text length equals bufptr (an O(n) scan, so
+ * it is used once per flush, not on every write). A violation means earlier
+ * bookkeeping wrote outside the live buffer or will do so next; it is
+ * reported with the descriptor identity and the buffer is reset, discarding
+ * the pending output, rather than trusting a corrupt offset. */
+static bool outbuf_check(struct descriptor_data *d, const char *where, bool full)
+{
+  long len = -1;
+
+  if (OUTBUF_INVARIANT_OK(d)) {
+    if (full)
+      len = (long) strlen(d->output);
+    else if (d->output[d->bufptr] == '\0')
+      len = d->bufptr; /* terminator in place; length not rescanned */
+    if (len == d->bufptr)
+      return TRUE;
+  }
+
+  TB_ERROR_MSG("network", "outbuf-invariant", where,
+               DIAG_DESC_FMT " bufptr=%d bufspace=%d large=%d text-len=%ld:"
+               " output buffer bookkeeping is inconsistent; pending output"
+               " discarded", DIAG_DESC(d), d->bufptr, d->bufspace,
+               d->large_outbuf != NULL, len);
+  outbuf_reset_small(d);
+  return FALSE;
+}
+
+/* Release a closing connection's queues. The large output buffer goes back
+ * to the shared pool, so this descriptor must never write output again:
+ * only close_socket() may call this. The pointer is cleared so a stray later
+ * use cannot write into a buffer another descriptor now owns. */
+static void flush_queues(struct descriptor_data *d)
+{
+  outbuf_reset_small(d);
+  flush_input_queue(d);
+}
+
+/**
+ * Queue printf-style output for a descriptor (for use outside comm.c).
+ * @param t   Destination; must be non-NULL with a live pProtocol.
+ * @param txt Literal printf format; arguments may be untrusted text.
+ * @return Space left in the output buffer after queuing (0 = the buffer is
+ *         in the overflow state and further output is being discarded).
+ */
 size_t write_to_output(struct descriptor_data *t, const char *txt, ...)
 {
   va_list args;
@@ -1324,38 +1809,91 @@ size_t write_to_output(struct descriptor_data *t, const char *txt, ...)
   return left;
 }
 
-/* Add a new string to a player's output queue. */
+/**
+ * va_list form of write_to_output(). Formats into a static buffer, runs the
+ * result through ProtocolOutput() (colour, MXP and unicode escapes) and
+ * appends it to the descriptor's output buffer, switching from the small
+ * to a large buffer when needed and into the overflow state when even that
+ * is full (see the state machine above outbuf_reset_small()).
+ *
+ * Not reentrant: the format buffer is static. Every truncation is reported
+ * (network/output-truncate, network/output-overflow); a broken buffer
+ * invariant is reported as network/outbuf-invariant and the buffer reset.
+ * @return Space left in the output buffer; 0 means overflow state.
+ */
 size_t vwrite_to_output(struct descriptor_data *t, const char *format, va_list args)
 {
   const char *text_overflow = "\r\nOVERFLOW\r\n";
   static char txt[MAX_STRING_LENGTH];
-  size_t wantsize;
-  int size;
+  const char *translated;
+  int size, proto_len;
+  bool fmt_truncated;
+
+  /* The offsets below index t->output directly; never write through a
+   * broken bufptr (it would land in neighbouring descriptor fields). */
+  outbuf_check(t, "vwrite_to_output", FALSE);
 
   /* if we're in the overflow state already, ignore this new output */
   if (t->bufspace == 0)
     return (0);
 
-  wantsize = size = vsnprintf(txt, sizeof(txt), format, args);
+  size = vsnprintf(txt, sizeof(txt), format, args);
+  if (size < 0) {
+    TB_ERROR_ERRNO("network", "output-format", "vwrite_to_output",
+                   DIAG_DESC_FMT " vsnprintf failed; message dropped",
+                   DIAG_DESC(t));
+    return (t->bufspace);
+  }
+  fmt_truncated = ((size_t) size >= sizeof(txt));
+  if (fmt_truncated) {
+    TB_WARN_EVERY(60, "network", "output-truncate", "vwrite_to_output",
+                  DIAG_DESC_FMT " formatted text needs %d bytes; cut to %d",
+                  DIAG_DESC(t), size, (int) sizeof(txt) - 1);
+    size = (int) sizeof(txt) - 1;
+  }
 
-  strlcpy(txt, ProtocolOutput( t, txt, (int*)&wantsize ), sizeof(txt)); /* <--- Add this line */
-  size = wantsize;                    /* <--- Add this line */
-  if ( t->pProtocol->WriteOOB > 0 )   /* <--- Add this line */
-    --t->pProtocol->WriteOOB;         /* <--- Add this line */
+  /* KaVir's protocol layer translates colour/MXP/unicode escapes. Its
+   * length argument is an int in/out parameter (it used to be handed a
+   * size_t through an int *). The result is measured with strlen() so
+   * bufptr always matches the text actually copied. ProtocolOutput()
+   * returns its argument unchanged when there is no protocol state, so
+   * never strlcpy() txt onto itself. */
+  proto_len = size;
+  translated = ProtocolOutput(t, txt, &proto_len);
+  if (translated != txt)
+    strlcpy(txt, translated, sizeof(txt));
+  size = (int) strlen(txt);
+  if (t->pProtocol && t->pProtocol->WriteOOB > 0)
+    --t->pProtocol->WriteOOB;
 
-  /* If exceeding the size of the buffer, truncate it for the overflow message */
-  if (size < 0 || wantsize >= sizeof(txt)) {
-    size = sizeof(txt) - 1;
-    strlcpy(txt + size - strlen(text_overflow), text_overflow, sizeof(txt) - (size_t)(size - strlen(text_overflow)));	/* strcpy: OK */
+  /* Mark output that was cut above, making room for the marker if the
+   * translated text still fills txt. */
+  if (fmt_truncated) {
+    int room = (int) (sizeof(txt) - 1 - strlen(text_overflow));
+    if (size > room) {
+      size = room;
+      txt[size] = '\0';
+    }
+    strlcat(txt, text_overflow, sizeof(txt));
+    size = (int) strlen(txt);
   }
 
   /* If the text is too big to fit into even a large buffer, truncate
    * the new text to make it fit.  (This will switch to the overflow
    * state automatically because t->bufspace will end up 0.) */
   if (size + t->bufptr + 1 > LARGE_BUFSIZE) {
+    int dropped = size - (LARGE_BUFSIZE - t->bufptr - 1);
+
     size = LARGE_BUFSIZE - t->bufptr - 1;
     txt[size] = '\0';
     buf_overflows++;
+    /* Once per overflow episode: afterwards bufspace is 0 and further
+     * output is discarded at the top of this function until the buffer is
+     * flushed (the player sees **OVERFLOW**). Rate-limited because any
+     * player can cause it by requesting enough output. */
+    TB_WARN_EVERY(60, "network", "output-overflow", "vwrite_to_output",
+                  DIAG_DESC_FMT " output buffer full: dropped %d bytes"
+                  " (bufptr=%d)", DIAG_DESC(t), dropped, t->bufptr);
   }
 
   /* If we have enough space, just write to buffer and that's it! If the
@@ -1367,13 +1905,21 @@ size_t vwrite_to_output(struct descriptor_data *t, const char *format, va_list a
     return (t->bufspace);
   }
 
+  /* Already in the large buffer: the clamp above guarantees the text fits
+   * exactly (size == bufspace), leaving the overflow state. Never switch
+   * again here; that would replace large_outbuf and leak the live one. */
+  if (t->large_outbuf) {
+    strlcpy(t->output + t->bufptr, txt, (size_t)t->bufspace + 1);	/* strcpy: OK (bufptr + bufspace + 1 == LARGE_BUFSIZE) */
+    t->bufptr += size;
+    t->bufspace -= size;
+    return (t->bufspace);
+  }
+
   buf_switches++;
 
-  /* if the pool has a buffer in it, grab it */
-  if (bufpool != NULL) {
-    t->large_outbuf = bufpool;
-    bufpool = bufpool->next;
-  } else {			/* else create a new one */
+  /* if the pool has a buffer in it, grab it, else create a new one */
+  t->large_outbuf = bufpool_take();
+  if (t->large_outbuf == NULL) {
     CREATE(t->large_outbuf, struct txt_block, 1);
     CREATE(t->large_outbuf->text, char, LARGE_BUFSIZE);
     buf_largecount++;
@@ -1392,14 +1938,40 @@ size_t vwrite_to_output(struct descriptor_data *t, const char *format, va_list a
   return (t->bufspace);
 }
 
+/* The large-output-buffer pool. A pooled buffer's text is poisoned under ASan
+ * (asan_annotations.h): a descriptor that kept t->output pointing into a
+ * buffer it gave back would otherwise write into memory the next descriptor
+ * owns, and ASan could not see it because the block was never freed. The
+ * txt_block itself stays unpoisoned so the pool can follow ->next. */
+static void bufpool_put(struct txt_block *block)
+{
+  TB_ASAN_POISON(block->text, LARGE_BUFSIZE);
+  block->next = bufpool;
+  bufpool = block;
+}
+
+static struct txt_block *bufpool_take(void)
+{
+  struct txt_block *block = bufpool;
+
+  if (block == NULL)
+    return NULL;
+  bufpool = block->next;
+  block->next = NULL;
+  TB_ASAN_UNPOISON(block->text, LARGE_BUFSIZE);
+  return block;
+}
+
 static void free_bufpool(void)
 {
   struct txt_block *tmp;
 
   while (bufpool) {
     tmp = bufpool->next;
-    if (bufpool->text)
+    if (bufpool->text) {
+      TB_ASAN_UNPOISON(bufpool->text, LARGE_BUFSIZE);
       free(bufpool->text);
+    }
     free(bufpool);
     bufpool = tmp;
   }
@@ -1512,7 +2084,15 @@ static void init_descriptor (struct descriptor_data *newd, int desc)
 
 /* Fixed-size IPv4 connection admission table. Avoids allocating memory for
  * unauthenticated connection attempts. Counts are reset after each window;
- * denied attempts do not extend the window indefinitely. */
+ * denied attempts do not extend the window indefinitely.
+ *
+ * Admission policy (new_descriptor()), in order: at most
+ * TB_RATE_MAX_ATTEMPTS per address per TB_RATE_WINDOW_SECONDS
+ * (network/admit-deny); fd below FD_SETSIZE (network/accept-limit);
+ * fewer than MIN(CONFIG_MAX_PLAYING, max_players) connections
+ * (network/game-full); site not BAN_ALL (mudlog). All refusals are logged,
+ * rate-limited, with the numeric address; the DNS name is peer-controlled
+ * and is only used for ban matching. */
 #define TB_RATE_SLOTS 256
 #define TB_RATE_WINDOW_SECONDS 60
 #define TB_RATE_MAX_ATTEMPTS 12
@@ -1582,8 +2162,14 @@ static int new_descriptor(socket_t s)
     return (-1);
   }
   /* Drop bursts before hostname lookup, allocation, or protocol negotiation.
-   * Deliberately do not log individual denials to avoid disk-log amplification. */
+   * Denials are reported through TB_WARN_EVERY: the first one at once, then
+   * a count per minute, so a connection storm is visible without letting
+   * it amplify into the disk log. Only the numeric address is logged. */
   if (!tb_admit_connection((unsigned long)peer.sin_addr.s_addr, time(NULL))) {
+    TB_WARN_EVERY(60, "network", "admit-deny", "new_descriptor",
+                  "fd %ld from %s: more than %d connection attempts in %d s;"
+                  " refused", (long) desc, inet_ntoa(peer.sin_addr),
+                  TB_RATE_MAX_ATTEMPTS, TB_RATE_WINDOW_SECONDS);
     CLOSE_SOCKET(desc);
     return (0);
   }
@@ -1596,11 +2182,37 @@ static int new_descriptor(socket_t s)
     return (0);
   }
 
-  /* make sure we have room for it */
+  /* Make sure we have room for it. Three limits apply:
+   *  - CONFIG_MAX_PLAYING: set by implementors (cedit, config file), any
+   *    value is accepted there;
+   *  - max_players: what the process descriptor limit allows, computed at
+   *    boot by get_max_players();
+   *  - FD_SETSIZE: game_loop() watches every socket with select(); FD_SET
+   *    on a descriptor >= FD_SETSIZE writes past its stack fd_set.
+   * A remote peer can hit these at will, so the reports are rate-limited. */
   for (newd = descriptor_list; newd; newd = newd->next)
     sockets_connected++;
 
-  if (sockets_connected >= CONFIG_MAX_PLAYING) {
+#ifndef CIRCLE_WINDOWS /* Winsock's FD_SETSIZE counts sockets, not values */
+  if (desc >= FD_SETSIZE) {
+    TB_ERROR_EVERY(60, "network", "accept-limit", "new_descriptor",
+                   "fd %ld >= FD_SETSIZE %d (connected %d, max_playing %d,"
+                   " max_players %d): select() cannot watch it; connection"
+                   " from %s refused", (long) desc, (int) FD_SETSIZE,
+                   sockets_connected, CONFIG_MAX_PLAYING, max_players,
+                   inet_ntoa(peer.sin_addr));
+    write_to_descriptor(desc, "Sorry, the game is full right now... please try again later!\r\n");
+    CLOSE_SOCKET(desc);
+    return (0);
+  }
+#endif
+
+  if (sockets_connected >= MIN(CONFIG_MAX_PLAYING, max_players)) {
+    TB_WARN_EVERY(60, "network", "game-full", "new_descriptor",
+                  "%d connections, limit %d (max_playing %d, max_players %d):"
+                  " connection from %s refused", sockets_connected,
+                  MIN(CONFIG_MAX_PLAYING, max_players), CONFIG_MAX_PLAYING,
+                  max_players, inet_ntoa(peer.sin_addr));
     write_to_descriptor(desc, "Sorry, the game is full right now... please try again later!\r\n");
     CLOSE_SOCKET(desc);
     return (0);
@@ -1660,12 +2272,23 @@ static int new_descriptor(socket_t s)
   return (0);
 }
 
-/* Send all of the output that we've accumulated for a player out to the
- * player's descriptor. 32 byte GARBAGE_SPACE in MAX_SOCK_BUF used for:
- *	 2 bytes: prepended \r\n
- *	14 bytes: overflow message
- *	 2 bytes: extra \r\n for non-comapct
- *      14 bytes: unused */
+/**
+ * Send a descriptor's queued output to its socket. The text sent ("osb") is
+ * t->output plus, when applicable, "**OVERFLOW**", an extra CRLF for
+ * non-compact players and the prompt; if the player was sitting at a
+ * prompt a CRLF is prepended (and not counted). 32 byte GARBAGE_SPACE in
+ * MAX_SOCK_BUF covers: 2 bytes prepended CRLF, 14 bytes overflow message,
+ * 2 bytes extra CRLF, 14 bytes unused.
+ *
+ * Partial writes: if the kernel took all of t->output but only part of the
+ * trailer, the unsent trailer becomes the new (small) buffer contents; if
+ * it took less than t->output, the rest is moved to the front of the
+ * buffer. A snooper is sent exactly the bytes that went out.
+ *
+ * @return -1 on a fatal socket error (the caller closes the descriptor),
+ *         0 if nothing could be sent (socket buffer full, try later),
+ *         otherwise the number of bytes of osb sent.
+ */
 static int process_output(struct descriptor_data *t)
 {
   char i[MAX_SOCK_BUF], *osb = i + 2;
@@ -1694,8 +2317,12 @@ static int process_output(struct descriptor_data *t)
   if (t->has_prompt && !t->pProtocol->WriteOOB) {
     t->has_prompt = FALSE;
     result = write_to_descriptor(t->descriptor, i);
+    /* 'result' must count bytes of osb. If only part of the prepended CRLF
+     * went out, none of osb did. */
     if (result >= 2)
       result -= 2;
+    else if (result > 0)
+      result = 0;
   } else
     result = write_to_descriptor(t->descriptor, osb);
 
@@ -1705,34 +2332,36 @@ static int process_output(struct descriptor_data *t)
   } else if (result == 0)	/* Socket buffer full. Try later. */
     return (0);
 
-  /* Handle snooping: prepend "% " and send to snooper. */
+  /* Handle snooping: show the snooper what was actually sent, as
+   * "% <text>%". The precision (not a field width, as the old "%*s" was)
+   * limits it to the 'result' bytes the kernel accepted; unsent text is
+   * shown when it is sent. */
   if (t->snoop_by)
-    write_to_output(t->snoop_by, "%% %*s%%%%", result, t->output);
+    write_to_output(t->snoop_by, "%% %.*s%%", result, t->output);
 
   /* The common case: all saved output was handed off to the kernel buffer. */
   if (result >= t->bufptr) {
     /* If we were using a large buffer, put the large buffer on the buffer pool
      * and switch back to the small one. */
-    if (t->large_outbuf) {
-      t->large_outbuf->next = bufpool;
-      bufpool = t->large_outbuf;
-      t->large_outbuf = NULL;
-      t->output = t->small_outbuf;
-    }
-    /* reset total bufspace back to that of a small buffer */
-    t->bufspace = SMALL_BUFSIZE - 1;
-    t->bufptr = 0;
-    *(t->output) = '\0';
+    outbuf_reset_small(t);
 
-    /* If the overflow message or prompt were partially written, try to save
-     * them. There will be enough space for them if this is true.  'result'
-     * is effectively unsigned here anyway. */
-    if ((unsigned int)result < strlen(osb)) {
+    /* If the overflow message or prompt were partially written (the kernel
+     * took all of t->output but not the whole of osb), carry the unsent
+     * tail over as the start of the new small buffer. The tail is at most
+     * GARBAGE_SPACE + MAX_PROMPT_LENGTH bytes, so it always fits; the
+     * offsets are recomputed from the copied text rather than adjusted, so
+     * bufptr can never go negative (it once did, and the next write
+     * landed in d->last_input). */
+    if ((size_t)result < strlen(osb)) {
       size_t savetextlen = strlen(osb + result);
 
-      strlcat(t->output, osb + result, SMALL_BUFSIZE);
-      t->bufptr   -= savetextlen;
-      t->bufspace += savetextlen;
+      if (strlcpy(t->output, osb + result, SMALL_BUFSIZE) >= SMALL_BUFSIZE)
+        TB_ERROR_MSG("network", "output-tail-truncate", "process_output",
+                     DIAG_DESC_FMT " unsent tail of %lu bytes exceeds the"
+                     " %d-byte small buffer; tail cut", DIAG_DESC(t),
+                     (unsigned long) savetextlen, SMALL_BUFSIZE);
+      t->bufptr = (int) strlen(t->output);
+      t->bufspace = SMALL_BUFSIZE - 1 - t->bufptr;
     }
 
   } else {
@@ -1743,6 +2372,7 @@ static int process_output(struct descriptor_data *t)
     t->bufspace += result;
   }
 
+  outbuf_check(t, "process_output", TRUE);
   return (result);
 }
 
@@ -1943,7 +2573,25 @@ static ssize_t perform_socket_read(socket_t desc, char *read_point, size_t space
   return (-1);
 }
 
-/* ASSUMPTION: There will be no newlines in the raw input buffer when this
+/**
+ * Read from a descriptor's socket and split complete lines into commands.
+ *
+ * The bytes are untrusted network input. ProtocolInput() first strips
+ * telnet/MXP negotiation and NUL bytes and appends the in-band text to
+ * t->inbuf; it returns the number of bytes appended, which is how far
+ * read_point advances. Each complete line (ended by CR or LF) is then
+ * copied to a MAX_INPUT_LENGTH command buffer: non-printable bytes are
+ * dropped, backspace/DEL erase, '$' is doubled (so act() and the
+ * interpreter see it literally) and a line that does not fit is cut, the
+ * player is told and network/input-truncate is logged. '!' and '^' use the
+ * HISTORY_SIZE ring in t->history (history_pos is the next slot to fill);
+ * "--" discards only queued input, never output. Commands beyond
+ * TB_MAX_PENDING_COMMANDS are refused and reported (network/input-flood).
+ *
+ * @return -1 to close the connection (read error, EOF, input overflow),
+ *         0 if no complete line has arrived yet, 1 otherwise.
+ *
+ * ASSUMPTION: There will be no newlines in the raw input buffer when this
  * function is called.  We must maintain that before returning.
  *
  * Ever wonder why 'tmp' had '+8' on it?  The crusty old code could write
@@ -2046,9 +2694,16 @@ static int process_input(struct descriptor_data *t)
 
     *write_point = '\0';
 
-    if ((space_left <= 0) && (ptr < nl_pos)) {
+    /* The copy loop stops early only when tmp is full. It exits with
+     * space_left == 1 on ordinary text (0 only after a doubled '$'), so the
+     * old 'space_left <= 0' test missed most cut lines. */
+    if (ptr < nl_pos) {
       char buffer[MAX_INPUT_LENGTH + 64];
 
+      TB_WARN_EVERY(60, "network", "input-truncate", "process_input",
+                    DIAG_DESC_FMT " input line of %ld bytes cut to %lu",
+                    DIAG_DESC(t), (long) (nl_pos - read_point),
+                    (unsigned long) strlen(tmp));
       tb_snprintf(buffer, sizeof(buffer), "Line too long.  Truncated to:\r\n%s\r\n", tmp);
       if (write_to_descriptor(t->descriptor, buffer) < 0)
 	return (-1);
@@ -2091,12 +2746,20 @@ static int process_input(struct descriptor_data *t)
    if ( (*tmp == '-') && (*(tmp+1) == '-') && !(*(tmp+2)) )
    {
      write_to_output(t, "All queued commands cancelled.\r\n");
-     flush_queues(t);  /* Flush the command queue */
+     /* Input only: flush_queues() would hand this descriptor's live output
+      * buffer back to the shared pool while it is still in use. */
+     flush_input_queue(t);
      failed_subst = 1;  /* Allow the read point to be moved, but don't add to queue */
    }
 
-    if (!failed_subst)
-      write_to_q(tmp, &t->input, 0);
+    if (!failed_subst && !write_to_q(tmp, &t->input, 0) && t->input.head) {
+      /* Queue full: the peer is sending commands faster than they run.
+       * Rate-limited so the flood cannot be amplified into the log. */
+      TB_WARN_EVERY(60, "network", "input-flood", "process_input",
+                    DIAG_DESC_FMT " %d commands pending; command dropped",
+                    DIAG_DESC(t), TB_MAX_PENDING_COMMANDS);
+      write_to_output(t, "Too many commands queued; command ignored.\r\n");
+    }
 
     /* find the end of this line */
     while (ISNEWL(*nl_pos))
@@ -2166,6 +2829,16 @@ static int perform_subst(struct descriptor_data *t, char *orig, char *subst)
   return (0);
 }
 
+/**
+ * Close and free a descriptor. Teardown order: unlink d from
+ * descriptor_list and close the socket; flush_queues() (the large output
+ * buffer goes back to the pool, so d must not be written to after this);
+ * end snooping in both directions; detach the character (players in game
+ * are saved and stay linkless, others are freed); free the history and
+ * pager; ProtocolDestroy(); cancel events; clean up OLC; free d. After this
+ * returns d is freed: callers in game_loop() must already hold the next
+ * pointer.
+ */
 void close_socket(struct descriptor_data *d)
 {
   struct descriptor_data *temp;
@@ -2245,23 +2918,20 @@ void close_socket(struct descriptor_data *d)
 
   free_list(d->events);
 
-  /*. Kill any OLC stuff .*/
-  switch (d->connected) {
-    case CON_OEDIT:
-    case CON_REDIT:
-    case CON_ZEDIT:
-    case CON_MEDIT:
-    case CON_SEDIT:
-    case CON_TEDIT:
-    case CON_TRIGEDIT:
-    case CON_AEDIT:
-    case CON_HEDIT:
-    case CON_QEDIT:
-    case CON_MSGEDIT:
-      cleanup_olc(d, CLEANUP_ALL);
-      break;
-    default:
-      break;
+  /* Kill any OLC stuff.  d is freed below, so any attached workspace must be
+   * released here whatever the state.  The old per-state list omitted
+   * CEDIT, PREFEDIT, IBTEDIT and IEDIT, leaking their workspaces on link
+   * loss (F3-11).  A workspace outside an OLC state is an invariant break:
+   * report it, and since non-playing characters were already handed to
+   * free_char() above, do not let cleanup_olc touch d->character. */
+  if (d->olc) {
+    if (!IS_IN_OLC(d)) {
+      TB_WARN_MSG("olc", "cleanup-on-close", "descriptor",
+                  "state %d with olc attached (olc_num %d); releasing "
+                  "without character", STATE(d), (int)OLC_NUM(d));
+      d->character = NULL;
+    }
+    cleanup_olc(d, CLEANUP_ALL);
   }
 
   free(d);
@@ -2366,17 +3036,27 @@ static RETSIGTYPE unrestrict_game(int sig)
 
 #ifdef CIRCLE_UNIX
 
-/* clean up our zombie kids to avoid defunct processes */
+/* clean up our zombie kids to avoid defunct processes. waitpid() can
+ * change errno, and this handler can interrupt code that is about to read
+ * errno (perform_socket_read() checking for EAGAIN), so errno is saved and
+ * restored. */
 static RETSIGTYPE reap(int sig)
 {
+  int saved_errno = errno;
+
   while (waitpid(-1, NULL, WNOHANG) > 0);
 
   my_signal(SIGCHLD, reap);
+  errno = saved_errno;
 }
 
-/* Dying anyway... */
+/* Deadlock protection (SIGVTALRM every 180 s of CPU time). The log()
+ * before abort() is not async-signal-safe; it is kept because the process
+ * is dying anyway and this is the only record of why. errno is preserved
+ * for the code that was interrupted. */
 static RETSIGTYPE checkpointing(int sig)
 {
+  int saved_errno = errno;
 #ifndef MEMORY_DEBUG
   if (!tics_passed) {
     log("SYSERR: CHECKPOINT shutdown: tics not updated. (Infinite loop suspected)");
@@ -2384,18 +3064,26 @@ static RETSIGTYPE checkpointing(int sig)
   } else
     tics_passed = 0;
 #endif
+  errno = saved_errno;
 }
 
-/* Dying anyway... */
+/* SIGHUP/SIGINT/SIGTERM: only record the signal. log() and exit() are not
+ * async-signal-safe (the signal may arrive inside malloc or stdio);
+ * game_loop() logs it and shuts down cleanly, saving players. */
 static RETSIGTYPE hupsig(int sig)
 {
-  log("SYSERR: Received SIGHUP, SIGINT, or SIGTERM.  Shutting down...");
-  exit(1); /* perhaps something more elegant should substituted */
+  shutdown_signal = sig;
 }
 
 #endif	/* CIRCLE_UNIX */
 
-/* This is an implementation of signal() using sigaction() for portability.
+/* Signal handling rules for this file: handlers may only store to
+ * volatile sig_atomic_t flags (or call async-signal-safe functions such as
+ * waitpid and sigaction) and must save and restore errno. game_loop()
+ * acts on the flags. Handlers are installed without SA_RESTART, so every
+ * blocking system call in the loop must treat EINTR as "try again".
+ *
+ * This is an implementation of signal() using sigaction() for portability.
  * (sigaction() is POSIX; signal() is not.)  Taken from Stevens' _Advanced
  * Programming in the UNIX Environment_.  We are specifying that all system
  * calls _not_ be automatically restarted for uniformity, because BSD systems
@@ -2535,6 +3223,8 @@ void send_to_outdoor(const char *messg, ...)
   }
 }
 
+/** Send a message to every connected occupant of a room. 'room' must be a
+ * valid rnum (0..top_of_world); 'messg' is a printf format. */
 void send_to_room(room_rnum room, const char *messg, ...)
 {
   struct char_data *i;
@@ -2555,7 +3245,10 @@ void send_to_room(room_rnum room, const char *messg, ...)
 
 /* Sends a message to the entire group, except for ch.
  * Send 'ch' as NULL, if you want to message to reach
- * everyone. -Vatiken */
+ * everyone. -Vatiken
+ * 'group' must be non-NULL. Iterates group->members with the shared
+ * simple_list() iterator state, so nothing called from here may start
+ * another simple_list() walk. */
 void send_to_group(struct char_data *ch, struct group_data *group, const char * msg, ...)
 {
 	struct char_data *tch;
@@ -2577,20 +3270,31 @@ void send_to_group(struct char_data *ch, struct group_data *group, const char * 
 
 
 /* Thx to Jamie Nelson of 4D for this contribution */
+/** Send a message to everyone connected in rooms whose vnums lie in
+ * [start, finish] (both ends included). A reversed range or NULL message is
+ * reported as comm/send-range and nothing is sent. */
 void send_to_range(room_vnum start, room_vnum finish, const char *messg, ...)
 {
   struct char_data *i;
   va_list args;
   int j;
 
+  /* start and finish are room vnums, both included. DG scripts pass
+   * script-supplied numbers (zoneecho and friends). */
   if (start > finish) {
-    log("send_to_range passed start room value greater then finish.");
+    TB_ERROR_MSG("comm", "send-range", "send_to_range",
+                 "start vnum %d > finish vnum %d; message not sent",
+                 (int) start, (int) finish);
     return;
   }
-  if (messg == NULL)
+  if (messg == NULL) {
+    TB_ERROR_MSG("comm", "send-range", "send_to_range",
+                 "NULL message for vnums %d-%d", (int) start, (int) finish);
     return;
+  }
 
-  for (j = 0; j < top_of_world; j++) {
+  /* top_of_world is the highest valid rnum, so it is included. */
+  for (j = 0; j <= top_of_world; j++) {
     if (GET_ROOM_VNUM(j) >= start && GET_ROOM_VNUM(j) <= finish) {
       for (i = world[j].people; i; i = i->next_in_room) {
         if (!i->desc)
@@ -2607,13 +3311,52 @@ void send_to_range(room_vnum start, room_vnum finish, const char *messg, ...)
 static const char *ACTNULL = "<NULL>";
 #define CHECK_NULL(pointer, expression) \
   if ((pointer) == NULL) i = ACTNULL; else i = (expression);
-/* higher-level communication: the act() function */
+/* Bounded, escaped copy of an act() format for diagnostics. The format is
+ * usually a string literal, so it identifies the act() call site; it may also
+ * embed player text (emote), so control characters, quotes and backslashes
+ * are replaced to keep each log record one parseable line. */
+static const char *act_format_excerpt(char *dst, size_t dst_size,
+                                      const char *format)
+{
+  size_t n = 0;
+
+  for (; format && *format && n + 4 < dst_size; format++) {
+    unsigned char c = (unsigned char) *format;
+    dst[n++] = (c < 0x20 || c == 0x7f || c == '"' || c == '\\') ? '?' : (char) c;
+  }
+  if (format && *format && n + 3 < dst_size)
+    dst[n++] = '.', dst[n++] = '.', dst[n++] = '.';
+  dst[n] = '\0';
+  return dst;
+}
+
+/* "caller=file:line function" of the act() call, for every act diagnostic. */
+#define ACT_DIAG_SITE \
+  (act_site_file ? act_site_file : "(direct perform_act call)"), \
+  act_site_line, (act_site_func ? act_site_func : "-")
+
+/**
+ * Format one act() message for one recipient and deliver it: written to
+ * to->desc, and passed to to's act triggers (NPCs, unless DG_NO_TRIG).
+ * $-codes are expanded with bounds; malformed or oversized formats are
+ * reported with the act() caller's site (ACT_DIAG_SITE).
+ *
+ * Act triggers run synchronously inside this call and may move or mark
+ * for extraction any character, including ch and to. The formatted text is
+ * kept in last_act_message, which act() returns; that pointer is valid only
+ * until the next act()/perform_act() call.
+ */
 void perform_act(const char *orig, struct char_data *ch, struct obj_data *obj,
     void *vict_obj, struct char_data *to)
 {
+  const char *const format = orig;
+  char excerpt[96];
   const char *i = NULL;
   char lbuf[MAX_STRING_LENGTH], *buf, *j;
-  bool uppercasenext = FALSE;
+  /* Last position the terminating NUL may occupy; it is later overwritten
+   * by "\r\n\0", which needs two more bytes. */
+  char *const lbuf_end = lbuf + sizeof(lbuf) - 3;
+  bool uppercasenext = FALSE, truncated = FALSE;
   struct char_data *dg_victim = (to == vict_obj) ? vict_obj : NULL;
   struct obj_data *dg_target = NULL;
   char *dg_arg = NULL;
@@ -2621,7 +3364,12 @@ void perform_act(const char *orig, struct char_data *ch, struct obj_data *obj,
   buf = lbuf;
 
   for (;;) {
-    if (*orig == '$') {
+    if (buf >= lbuf_end) {
+      /* Substitutions such as $T carry script- and player-supplied text. */
+      *(buf++) = '\0';
+      truncated = TRUE;
+      break;
+    } else if (*orig == '$') {
       switch (*(++orig)) {
       case 'n':
 	i = PERS(ch, to);
@@ -2697,13 +3445,23 @@ void perform_act(const char *orig, struct char_data *ch, struct obj_data *obj,
       case '$':
 	i = "$";
 	break;
+      case '\0':
+	TB_ERROR_MSG("act", "format-parse", "perform_act",
+	             "format ends with a bare '$' caller=%s:%d %s (recipient " DIAG_CHAR_FMT ") "
+	             "format=\"%s\"", ACT_DIAG_SITE, DIAG_CHAR(to),
+	             act_format_excerpt(excerpt, sizeof(excerpt), format));
+	i = "";
+	break;
       default:
-	log("SYSERR: Illegal $-code to act(): %c", *orig);
-	log("SYSERR: %s", orig);
+	TB_ERROR_MSG("act", "format-parse", "perform_act",
+	             "illegal $-code 0x%02x at offset %ld caller=%s:%d %s (recipient "
+	             DIAG_CHAR_FMT ") format=\"%s\"", (unsigned char) *orig,
+	             (long) (orig - format), ACT_DIAG_SITE, DIAG_CHAR(to),
+	             act_format_excerpt(excerpt, sizeof(excerpt), format));
 	i = "";
 	break;
       }
-      while ((*buf = *(i++)))
+      while (buf < lbuf_end && (*buf = *(i++)))
         {
         if (uppercasenext && !isspace((int) *buf))
           {
@@ -2712,7 +3470,9 @@ void perform_act(const char *orig, struct char_data *ch, struct obj_data *obj,
           }
 	buf++;
         }
-      orig++;
+      /* A trailing '$' leaves orig on the terminator: do not step past it. */
+      if (*orig)
+        orig++;
     } else if (!(*(buf++) = *(orig++))) {
       break;
     } else if (uppercasenext && !isspace((int) *(buf-1))) {
@@ -2725,6 +3485,13 @@ void perform_act(const char *orig, struct char_data *ch, struct obj_data *obj,
   *(++buf) = '\n';
   *(++buf) = '\0';
 
+  if (truncated)
+    TB_ERROR_MSG("act", "format-output", "perform_act",
+                 "expanded output exceeded %d bytes and was truncated "
+                 "caller=%s:%d %s (recipient " DIAG_CHAR_FMT ") format=\"%s\"",
+                 (int) sizeof(lbuf), ACT_DIAG_SITE, DIAG_CHAR(to),
+                 act_format_excerpt(excerpt, sizeof(excerpt), format));
+
   if (to->desc)
     write_to_output(to->desc, "%s", CAP(lbuf));
 
@@ -2733,14 +3500,70 @@ void perform_act(const char *orig, struct char_data *ch, struct obj_data *obj,
 
   if (last_act_message)
     free(last_act_message);
-  last_act_message = strdup(lbuf);
+  if ((last_act_message = strdup(lbuf)) == NULL)
+    TB_ERROR_ERRNO("act", "allocate", "last_act_message",
+                   "cannot copy %zu-byte act() result; act() will return NULL "
+                   "caller=%s:%d %s", strlen(lbuf) + 1, ACT_DIAG_SITE);
 }
 
-char *act(const char *str, int hide_invisible, struct char_data *ch,
+static char *act_body(const char *str, int hide_invisible, struct char_data *ch,
+	 struct obj_data *obj, void *vict_obj, int type);
+
+/* TO_* preconditions: TO_CHAR needs ch; TO_VICT needs vict_obj to be a
+ * char_data; TO_ROOM/TO_NOTVICT need ch or obj placed in a room;
+ * TO_GMOTE needs a player ch. TO_SLEEP and DG_NO_TRIG may be OR-ed in.
+ * dg_act_check is file-global state for the act() being delivered; see
+ * act_at() for how nesting is handled. */
+
+/* Target of the act() macro in comm.h: record the caller for diagnostics,
+ * deliver the message, then restore the enclosing act()'s state. An act
+ * trigger can send further act() messages (do_say from a script uses
+ * DG_NO_TRIG) while an outer TO_ROOM act() is still delivering; the nested
+ * call sets dg_act_check for itself, so it is restored here too. Otherwise
+ * the outer act's remaining recipients silently lost (or gained) their act
+ * triggers. */
+char *act_at(const char *src_file, int src_line, const char *src_func,
+             const char *str, int hide_invisible, struct char_data *ch,
+             struct obj_data *obj, void *vict_obj, int type)
+{
+  const char *saved_file = act_site_file, *saved_func = act_site_func;
+  int saved_line = act_site_line;
+  int saved_act_check = dg_act_check;
+  char *result;
+
+  act_site_file = src_file;
+  act_site_line = src_line;
+  act_site_func = src_func;
+  result = act_body(str, hide_invisible, ch, obj, vict_obj, type);
+  act_site_file = saved_file;
+  act_site_line = saved_line;
+  act_site_func = saved_func;
+  dg_act_check = saved_act_check;
+  return result;
+}
+
+/* One snapshotted TO_ROOM/TO_NOTVICT recipient (see act_body()). */
+struct act_target {
+  struct char_data *ch;
+  long uid;
+};
+
+/* Still the same character, still registered, still in the act's room.
+ * A character pending extraction keeps its UID and room until the end of
+ * the pulse, so it still counts as present (as before the snapshot). */
+static bool act_target_live(struct char_data *ch, long uid, room_rnum room)
+{
+  return find_char(uid) == ch && IN_ROOM(ch) == room;
+}
+
+static char *act_body(const char *str, int hide_invisible, struct char_data *ch,
 	 struct obj_data *obj, void *vict_obj, int type)
 {
   struct char_data *to;
   int to_sleeping;
+  room_rnum room;
+  struct act_target local_targets[32], *targets;
+  size_t count = 0, n = 0, k;
 
   if (!str || !*str)
     return NULL;
@@ -2797,15 +3620,49 @@ char *act(const char *str, int hide_invisible, struct char_data *ch,
   /* ASSUMPTION: at this point we know type must be TO_NOTVICT or TO_ROOM */
 
   if (ch && IN_ROOM(ch) != NOWHERE)
-    to = world[IN_ROOM(ch)].people;
+    room = IN_ROOM(ch);
   else if (obj && IN_ROOM(obj) != NOWHERE)
-    to = world[IN_ROOM(obj)].people;
+    room = IN_ROOM(obj);
   else {
-    log("SYSERR: no valid target to act()!");
+    /* TO_ROOM/TO_NOTVICT need an actor or object placed in a room. */
+    TB_ERROR_MSG("act", "no-target", "act_body",
+                 "caller=%s:%d %s: TO_ROOM/TO_NOTVICT act() with no placed"
+                 " actor or object (actor %s %ld, obj vnum %ld); message"
+                 " dropped", ACT_DIAG_SITE,
+                 ch ? (IS_NPC(ch) ? "mob vnum" : "player idnum") : "none",
+                 ch ? (IS_NPC(ch) ? (long) GET_MOB_VNUM(ch) : (long) GET_IDNUM(ch)) : -1L,
+                 obj ? (long) GET_OBJ_VNUM(obj) : (long) NOTHING);
     return NULL;
   }
 
-  for (; to; to = to->next_in_room) {
+  /* perform_act() runs act triggers synchronously, and a trigger can move
+   * characters (mteleport, mforce ... ) in or out of this room: char_to_room
+   * prepends to the room list, so following to->next_in_room after a
+   * delivery could skip, repeat or loop forever over recipients. Snapshot
+   * the occupants as (pointer, UID) pairs first and re-validate each one
+   * before delivery. Extraction is deferred to the end of the pulse, so the
+   * pointers stay allocated for the whole call. */
+  for (to = world[room].people; to; to = to->next_in_room)
+    count++;
+  if (count > sizeof(local_targets) / sizeof(local_targets[0]))
+    CREATE(targets, struct act_target, count);
+  else
+    targets = local_targets;
+  for (to = world[room].people; to && n < count; to = to->next_in_room) {
+    targets[n].ch = to;
+    targets[n].uid = char_script_id(to);
+    n++;
+  }
+
+  for (k = 0; k < n; k++) {
+    to = targets[k].ch;
+    if (!act_target_live(to, targets[k].uid, room)) {
+      TB_WARN_EVERY(60, "act", "recipient-moved", "act_body",
+                    "caller=%s:%d %s recipient " DIAG_CHAR_FMT " left room"
+                    " vnum %d or was extracted during delivery; skipped",
+                    ACT_DIAG_SITE, DIAG_CHAR(to), GET_ROOM_VNUM(room));
+      continue;
+    }
     if (!SENDOK(to) || (to == ch))
       continue;
     if (hide_invisible && ch && !CAN_SEE(to, ch))
@@ -2814,6 +3671,8 @@ char *act(const char *str, int hide_invisible, struct char_data *ch,
       continue;
     perform_act(str, ch, obj, vict_obj, to);
   }
+  if (targets != local_targets)
+    free(targets);
   return last_act_message;
 }
 
@@ -2863,22 +3722,51 @@ static void setup_log(const char *filename, int fd)
   exit(1);
 }
 
+/* Open 'filename' as the log. With stderr_fp, the file is placed on that
+ * stream's descriptor so stray stderr output lands in the log too.
+ *
+ * This used freopen(filename, "w", stderr_fp), but freopen closes the
+ * stream even when opening the new file fails (C11 7.21.5.4), and
+ * setup_log() then retried the next fallback name on the closed FILE *
+ * (undefined behaviour). The file is now opened first and moved onto the
+ * stream's descriptor with dup2() only once that has succeeded, so a failed
+ * attempt leaves stderr untouched and still usable for the report. */
 static int open_logfile(const char *filename, FILE *stderr_fp)
 {
-  if (stderr_fp)	/* freopen() the descriptor. */
-    logfile = freopen(filename, "w", stderr_fp);
-  else
-    logfile = fopen(filename, "w");
+  FILE *fp = fopen(filename, "w");
 
-  if (logfile) {
-    printf("Using log file '%s'%s.\n",
-		filename, stderr_fp ? " with redirection" : "");
-    return (TRUE);
+  if (fp == NULL) {
+    TB_REPORT_DOMAIN_ERRNO(TB_SEV_ERROR, TB_ERR_PERSISTENCE,
+                           "fopen", filename);
+    return (FALSE);
   }
 
-  TB_REPORT_DOMAIN_ERRNO(TB_SEV_ERROR, TB_ERR_PERSISTENCE,
-                         "fopen", filename);
-  return (FALSE);
+  if (stderr_fp) {
+#if defined(CIRCLE_WINDOWS)
+    fclose(fp);
+    if ((logfile = freopen(filename, "w", stderr_fp)) == NULL) {
+      TB_REPORT_DOMAIN_ERRNO(TB_SEV_ERROR, TB_ERR_PERSISTENCE,
+                             "freopen", filename);
+      return (FALSE);
+    }
+#else
+    (void)fflush(stderr_fp);  /* best effort: pending stderr text */
+    if (dup2(fileno(fp), fileno(stderr_fp)) < 0) {
+      TB_REPORT_DOMAIN_ERRNO(TB_SEV_ERROR, TB_ERR_PERSISTENCE,
+                             "dup2", filename);
+      (void)fclose(fp);  /* read-only use so far; nothing to lose */
+      return (FALSE);
+    }
+    /* fp only supplied the descriptor; stderr_fp now owns the file. */
+    (void)fclose(fp);
+    logfile = stderr_fp;
+#endif
+  } else
+    logfile = fp;
+
+  printf("Using log file '%s'%s.\n",
+         filename, stderr_fp ? " with redirection" : "");
+  return (TRUE);
 }
 
 /* This may not be pretty but it keeps game_loop() neater than if it was inline. */
@@ -2900,6 +3788,25 @@ static void circle_sleep(struct timeval *timeout)
 }
 
 #endif /* CIRCLE_WINDOWS */
+
+/* Opponent health as a percentage for MSDP. max_hit comes from the mob
+ * prototype's hit dice (builder/OLC data): "0d0+0" yields max_hit 0, which
+ * would be an integer division by zero (SIGFPE, taking down the server)
+ * once per second for every player fighting that mob. Such an opponent is
+ * reported and shown as 0%. The product is computed in long so hit * 100
+ * cannot overflow. */
+static int msdp_opponent_health_percent(struct descriptor_data *d,
+                                        struct char_data *opponent)
+{
+  if (GET_MAX_HIT(opponent) <= 0) {
+    TB_ERROR_EVERY(60, "msdp", "opponent-health", "msdp_update",
+                   DIAG_DESC_FMT " opponent " DIAG_CHAR_FMT " has max_hit %d;"
+                   " health percentage needs max_hit > 0, sent 0",
+                   DIAG_DESC(d), DIAG_CHAR(opponent), GET_MAX_HIT(opponent));
+    return 0;
+  }
+  return (int) (((long) GET_HIT(opponent) * 100L) / (long) GET_MAX_HIT(opponent));
+}
 
 /* KaVir's plugin*/
 static void msdp_update( void )
@@ -2939,8 +3846,8 @@ static void msdp_update( void )
       /* This would be better moved elsewhere */
       if ( pOpponent != NULL )
       {
-          int hit_points = (GET_HIT(pOpponent) * 100) / GET_MAX_HIT(pOpponent);
-          MSDPSetNumber( d, eMSDP_OPPONENT_HEALTH, hit_points );
+          MSDPSetNumber( d, eMSDP_OPPONENT_HEALTH,
+                         msdp_opponent_health_percent(d, pOpponent) );
           MSDPSetNumber( d, eMSDP_OPPONENT_HEALTH_MAX, 100 );
           MSDPSetNumber( d, eMSDP_OPPONENT_LEVEL, GET_LEVEL(pOpponent) );
           MSDPSetString( d, eMSDP_OPPONENT_NAME, PERS(pOpponent, ch) );
