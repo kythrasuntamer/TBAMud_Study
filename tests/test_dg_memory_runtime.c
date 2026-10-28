@@ -835,6 +835,20 @@ static void speech_mob_listener_purged(void)
   TEST_ASSERT_NULL(owner);
 }
 
+/* An actor outside any room is a caller bug: reported, nothing dispatched. */
+static void unplaced_actor_is_reported(void)
+{
+  setup_ordinary_greet();
+  visitor->in_room = NOWHERE;
+  TEST_ASSERT_EQUAL_INT(1, greet_mtrigger(visitor, -1));
+  TEST_ASSERT_EQUAL_INT(0, callbacks);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("trigger-dispatch", tb_captured_operation);
+  char said[] = "hello";
+  speech_mtrigger(visitor, said);
+  TEST_ASSERT_EQUAL_INT(2, tb_captured_errors);
+}
+
 /* Load triggers: a script may "return" SCRIPT_ERROR_CODE and purge itself,
  * leaving the handler's object pointer NULL. */
 struct obj_data *obj_proto;
@@ -917,6 +931,7 @@ int main(void)
   RUN_TEST(command_mob_detached_current_trigger);
   RUN_TEST(speech_mob_baseline);
   RUN_TEST(speech_mob_listener_purged);
+  RUN_TEST(unplaced_actor_is_reported);
   RUN_TEST(load_object_purged_on_error);
   return UNITY_END();
 }
