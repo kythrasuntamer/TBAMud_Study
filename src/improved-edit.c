@@ -182,7 +182,7 @@ void parse_edit_action(int command, char *string, struct descriptor_data *d)
             "Editor command formats: /<letter>\r\n\r\n"
             "/a         -  aborts editor\r\n"
             "/c         -  clears buffer\r\n"
-            "/d#        -  deletes a line #\r\n"
+            "/d#[-#]    -  deletes line #, or lines #-#\r\n"
             "/e# <text> -  changes the line at # with <text>\r\n"
             "/f         -  formats text\r\n"
             "/fi        -  indented formatting of text\r\n"
@@ -240,11 +240,11 @@ void parse_edit_action(int command, char *string, struct descriptor_data *d)
       line_high = line_low;
       break;
     case -1:
-      write_to_output(d, "Invalid line range.\\r\\n");
+      write_to_output(d, "Invalid line range.\r\n");
       return;
     case 2:
       if (line_high < line_low) {
-        write_to_output(d, "That range is invalid.\\r\\n");
+        write_to_output(d, "That range is invalid.\r\n");
         return;
       }
     break;
@@ -289,7 +289,7 @@ void parse_edit_action(int command, char *string, struct descriptor_data *d)
     range_result = parse_editor_line_range(string, &line_low, &line_high);
     switch (range_result) {
     case -1:
-      write_to_output(d, "Invalid line range.\\r\\n");
+      write_to_output(d, "Invalid line range.\r\n");
       return;
     case 0:
       write_to_output(d, "You must specify a line number or range to delete.\r\n");
@@ -357,7 +357,7 @@ void parse_edit_action(int command, char *string, struct descriptor_data *d)
     if (*string)
       switch (parse_editor_line_range(string, &line_low, &line_high)) {
       case -1:
-        write_to_output(d, "Invalid line range.\\r\\n");
+        write_to_output(d, "Invalid line range.\r\n");
         return;
       case 0:
         line_low = 1;
@@ -418,7 +418,7 @@ void parse_edit_action(int command, char *string, struct descriptor_data *d)
     if (*string)
       switch (parse_editor_line_range(string, &line_low, &line_high)) {
       case -1:
-        write_to_output(d, "Invalid line range.\\r\\n");
+        write_to_output(d, "Invalid line range.\r\n");
         return;
       case 0:
         line_low = 1;

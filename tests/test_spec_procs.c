@@ -15,11 +15,12 @@
 #include "spells.h"
 #include "class.h"
 #include "spec_procs.h"
+#include "act.h"         /* do_move, for IS_MOVE() */
 #include <stdarg.h>
 #include "tb_error_capture.h"
 
 /* class.c / spell_parser.c tables, sized as in production. */
-int prac_params[4][NUM_CLASSES];
+/* prac_params[] and guild_info[] are class.c's own (linked). */
 struct spell_info_type spell_info[TOP_SPELL_DEFINE + 1];
 int spell_sort_info[MAX_SKILLS + 1];
 struct command_info *complete_cmd_info;
@@ -160,9 +161,83 @@ static void test_pet_shop_without_storage_room_reports(void)
   mob_index = NULL;
 }
 
+/* guild_guard as a mob in room vnum `room` sees `klass` try to leave by
+ * `dir` (the move commands are indexed by direction). TRUE = blocked. */
+static int guard_blocks(room_vnum room, int dir, int klass, int level)
+{
+  static struct room_data rooms[1];
+  static struct command_info moves[] = {
+    { "north", "n", POS_STANDING, do_move, 0, SCMD_NORTH },
+    { "east",  "e", POS_STANDING, do_move, 0, SCMD_EAST },
+    { "south", "s", POS_STANDING, do_move, 0, SCMD_SOUTH },
+    { "west",  "w", POS_STANDING, do_move, 0, SCMD_WEST },
+    { "up",    "u", POS_STANDING, do_move, 0, SCMD_UP },
+    { "down",  "d", POS_STANDING, do_move, 0, SCMD_DOWN },
+    { "\n", NULL, 0, NULL, 0, 0 } };
+  static struct char_data guard;
+  struct char_data mover = student;
+  char arg[MAX_INPUT_LENGTH] = "";
+  int blocked;
+
+  memset(rooms, 0, sizeof(rooms));
+  memset(&guard, 0, sizeof(guard));
+  rooms[0].number = room;
+  world = rooms;
+  top_of_world = 0;
+  complete_cmd_info = moves;
+  SET_BIT_AR(MOB_FLAGS(&guard), MOB_ISNPC);
+  mover.in_room = 0;
+  GET_CLASS(&mover) = klass;
+  GET_LEVEL(&mover) = level;
+  blocked = guild_guard(&mover, &guard, dir, arg);
+  world = NULL;
+  return blocked;
+}
+
+/* The Hall of Seven Paths and its passages admit each new class only to its
+ * own hall (a shared passage admits every class beyond it), the original
+ * guilds keep their rule (Monks may enter the Warrior guild), and staff pass.
+ * Red before: guild_guard never blocked anyone (its direction loop always
+ * ended at NUM_OF_DIRS). */
+static void test_guild_guards_admit_only_their_classes(void)
+{
+  static const struct { room_vnum room; int dir; int admits[4]; } exits[] = {
+    { 3034, NORTH, { CLASS_MONK, -1 } },
+    { 3034, EAST,  { CLASS_DRUID, CLASS_RANGER, CLASS_BARD, -1 } },
+    { 3034, SOUTH, { CLASS_BERSERKER, -1 } },
+    { 3034, UP,    { CLASS_SORCERER, CLASS_NECROMANCER, -1 } },
+    { 3034, DOWN,  { CLASS_PALADIN, -1 } },
+    { 3036, NORTH, { CLASS_RANGER, -1 } },
+    { 3036, SOUTH, { CLASS_BARD, -1 } },
+    { 3038, EAST,  { CLASS_NECROMANCER, -1 } },
+    { 3021, EAST,  { CLASS_WARRIOR, CLASS_MONK, -1 } },
+  };
+  size_t e;
+  int klass, k, admitted;
+  char where[64];
+
+  for (e = 0; e < sizeof(exits) / sizeof(exits[0]); e++)
+    for (klass = 0; klass < NUM_CLASSES; klass++) {
+      admitted = FALSE;
+      for (k = 0; exits[e].admits[k] != -1; k++)
+        if (exits[e].admits[k] == klass)
+          admitted = TRUE;
+      TEST_ASSERT_TRUE(snprintf(where, sizeof(where), "room %d dir %d class %d",
+                                (int)exits[e].room, exits[e].dir, klass) < (int)sizeof(where));
+      TEST_ASSERT_EQUAL_INT_MESSAGE(!admitted,
+          guard_blocks(exits[e].room, exits[e].dir, klass, 10), where);
+    }
+  /* Ways back and unguarded exits stay open; staff pass every guard. */
+  TEST_ASSERT_FALSE(guard_blocks(3034, WEST, CLASS_THIEF, 10));
+  TEST_ASSERT_FALSE(guard_blocks(3036, WEST, CLASS_RANGER, 10));
+  TEST_ASSERT_FALSE(guard_blocks(3034, NORTH, CLASS_CLERIC, LVL_IMMORT));
+  TEST_ASSERT_NOT_NULL(strstr(sent, "blocks your way"));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(test_guild_guards_admit_only_their_classes);
   RUN_TEST(test_pet_shop_without_storage_room_reports);
   RUN_TEST(test_list_skills_truncation_is_marked);
   RUN_TEST(test_list_skills_rejects_out_of_range_class);

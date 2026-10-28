@@ -11,6 +11,11 @@ You see the Temple of Midgaard.
 ~
 ~
 0 -1 3001
+D2
+A lantern-lit passage leads toward the halls of training.
+~
+~
+0 -1 3057
 E
 credits info~
    Guilds: 20-23
@@ -789,6 +794,112 @@ You see the main street.
 ~
 0 -1 3012
 S
+#3034
+The Hall of Seven Paths~
+   Seven traditions of training meet in this quiet hall. The guilds of the newer disciplines are arranged around the hall and its adjoining chambers.
+~
+30 0 0 0 0 0
+D0
+The Monk's cloister lies north.
+~
+~
+0 -1 3035
+D1
+The Druid's garden lies east.
+~
+~
+0 -1 3036
+D2
+The Berserker's hall lies south.
+~
+~
+0 -1 3037
+D3
+The passage leads back to Midgaard.
+~
+~
+0 -1 3057
+D4
+The Sorcerer's observatory lies above.
+~
+~
+0 -1 3038
+D5
+The Paladin's chapel lies below.
+~
+~
+0 -1 3039
+S
+#3035
+The Monk's Cloister~
+   A quiet training cloister with practice mats, balanced stones, and an atmosphere of intense concentration.
+~
+30 0 0 0 0 0
+D2
+The guild hall lies south.
+~
+~
+0 -1 3034
+S
+#3036
+The Druid's Garden~
+   An enclosed garden of living trees, herbs, and clear running water where druids study the natural world.
+~
+30 0 0 0 0 0
+D0
+The Ranger's lodge lies north.
+~
+~
+0 -1 3055
+D2
+The Bard's conservatory lies south.
+~
+~
+0 -1 3056
+D3
+The hall of seven paths lies west.
+~
+~
+0 -1 3034
+S
+#3037
+The Berserker's Training Hall~
+   Heavy wooden practice weapons and battered shields line the walls of this rugged martial hall.
+~
+30 0 0 0 0 0
+D0
+The guild hall lies north.
+~
+~
+0 -1 3034
+S
+#3038
+The Sorcerer's Observatory~
+   An open-domed observatory where apprentices examine arcane patterns and test their control of magic.
+~
+30 0 0 0 0 0
+D5
+The hall of seven paths lies below.
+~
+~
+0 -1 3034
+D1
+A secluded chamber of necromantic studies lies east.
+~
+~
+0 -1 3067
+S
+#3039
+The Paladin's Chapel~
+   A peaceful chapel devoted to courage, compassion, discipline, and the defense of the innocent.
+~
+30 0 0 0 0 0
+D4
+The hall of seven paths lies above.
+~
+~
+0 -1 3034
+S
 #3040
 Inside The West Gate Of Midgaard~
    You are by two small towers that have been built into the city wall and
@@ -1194,6 +1305,44 @@ just above his shoulders, his two ravens Hugin and Munin are sitting and at his
 feet are his wolves Gere and Freke.
 ~
 S
+#3055
+The Ranger's Lodge~
+   Maps, field guides, and carefully maintained equipment fill this lodge for wilderness training.
+~
+30 0 0 0 0 0
+D2
+The Druid's garden lies south.
+~
+~
+0 -1 3036
+S
+#3056
+The Bard's Conservatory~
+   Songs, stories, instruments, and lively debate fill this chamber of artistic practice.
+~
+30 0 0 0 0 0
+D0
+The Druid's garden lies north.
+~
+~
+0 -1 3036
+S
+#3057
+Midgaard Guild Passage~
+   A broad, lantern-lit passage leads from Midgaard's reading room into a hall dedicated to seven paths of training.
+~
+30 0 0 0 0 0
+D0
+Midgaard's reading room lies north.
+~
+~
+0 -1 3000
+D1
+The hall of seven paths lies east.
+~
+~
+0 -1 3034
+S
 #3058
 Ye Olde Water Shoppe~
    You are standing in the center of a small wooden shop whose walls are
@@ -1426,5 +1575,16 @@ There is a large rusty gate just to the west.
 ~
 ~
 0 -1 3600
+S
+#3067
+The Necromancer's Study~
+   A quiet, scholarly chamber lined with anatomical texts and warding diagrams. Apprentice necromancers examine mortality, preservation, and the ethics of spirit magic.
+~
+30 0 0 0 0 0
+D3
+The Sorcerer's observatory lies west.
+~
+~
+0 -1 3038
 S
 $~

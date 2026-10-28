@@ -166,6 +166,35 @@ void test_load_well_formed_file_is_silent(void)
   TEST_ASSERT_EQUAL_INT(0, captured_errors);
 }
 
+/* Ledger observation A2 (oos:ban.c site case): isbanned() lowercases the
+ * host, do_ban() stores the site lowercased and do_unban() compares with
+ * str_cmp(), but load_banned() kept a hand-edited site as written, so an
+ * uppercase site never matched and the operator was told nothing. */
+void test_load_lowercases_site_and_reports_it(void)
+{
+  char host[] = "Dialup.BadHost.Example";
+
+  write_ban_file("all BadHost.EXAMPLE 1700000000 Imm\n");
+  load_banned();
+
+  TEST_ASSERT_EQUAL_INT(1, ban_count());
+  TEST_ASSERT_EQUAL_STRING("badhost.example", ban_list->site);
+  TEST_ASSERT_EQUAL_INT(BAN_ALL, isbanned(host));
+  TEST_ASSERT_EQUAL_INT(1, captured_errors);
+  TEST_ASSERT_EQUAL_STRING("load-site-case", captured_ops[0]);
+}
+
+void test_lowercase_site_loads_silently_and_matches(void)
+{
+  char host[] = "DIALUP.GOODBAN.EXAMPLE";
+
+  write_ban_file("select goodban.example 1700000000 Imm\n");
+  load_banned();
+
+  TEST_ASSERT_EQUAL_INT(BAN_SELECT, isbanned(host));
+  TEST_ASSERT_EQUAL_INT(0, captured_errors);
+}
+
 /* Finding A2-06: an over-long site was stored truncated without a word. */
 void test_do_ban_refuses_overlong_site(void)
 {
@@ -261,6 +290,8 @@ int main(void)
   RUN_TEST(test_load_reports_malformed_records);
   RUN_TEST(test_load_reports_site_truncation);
   RUN_TEST(test_load_well_formed_file_is_silent);
+  RUN_TEST(test_load_lowercases_site_and_reports_it);
+  RUN_TEST(test_lowercase_site_loads_silently_and_matches);
   RUN_TEST(test_do_ban_refuses_overlong_site);
   RUN_TEST(test_do_ban_accepts_site_at_limit);
   RUN_TEST(test_valid_name_refuses_name_being_created);

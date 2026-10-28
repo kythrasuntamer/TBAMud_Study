@@ -24,6 +24,7 @@
 #include "act.h"
 #include "class.h"
 
+
 /* Names first */
 const char *class_abbrevs[] = {
   "Wi",
@@ -31,6 +32,7 @@ const char *class_abbrevs[] = {
   "Th",
   "Wa",
   "Mo",
+  "Dr", "Be", "So", "Pa", "Ra", "Ba", "Ne",
   "\n"
 };
 
@@ -40,6 +42,8 @@ const char *pc_class_types[] = {
   "Thief",
   "Warrior",
   "Monk",
+  "Druid", "Berserker", "Sorcerer", "Paladin",
+  "Ranger", "Bard", "Necromancer",
   "\n"
 };
 
@@ -51,7 +55,11 @@ const char *class_menu =
 "  [\t(T\t)]hief\r\n"
 "  [\t(W\t)]arrior\r\n"
 "  [\t(Z\t)] Wizard\r\n"
-"  [\t(O\t)] Monk\r\n";
+"  [\t(O\t)] Monk\r\n"
+"  [\t(D\t)] Druid      [\t(B\t)] Berserker\r\n"
+"  [\t(S\t)] Sorcerer   [\t(P\t)] Paladin\r\n"
+"  [\t(R\t)] Ranger     [\t(A\t)] Bard\r\n"
+"  [\t(N\t)] Necromancer\r\n";
 
 /* The code to interpret a class letter -- used in interpreter.c when a new
  * character is selecting a class and by 'set class' in act.wizard.c. */
@@ -66,6 +74,13 @@ int parse_class(char arg)
   case 'w': return CLASS_WARRIOR;
   case 't': return CLASS_THIEF;
   case 'o': return CLASS_MONK;
+  case 'd': return CLASS_DRUID;
+  case 'b': return CLASS_BERSERKER;
+  case 's': return CLASS_SORCERER;
+  case 'p': return CLASS_PALADIN;
+  case 'r': return CLASS_RANGER;
+  case 'a': return CLASS_BARD;
+  case 'n': return CLASS_NECROMANCER;
   default:  return CLASS_UNDEFINED;
   }
 }
@@ -119,11 +134,11 @@ bitvector_t find_class_bitvector(const char *arg)
 /* #define PRAC_TYPE		3  should it say 'spell' or 'skill'?	*/
 
 int prac_params[4][NUM_CLASSES] = {
-  /* MAG CLE THE WAR MONK */
-  { 95, 95, 85, 80, 85 }, /* learned level */
-  { 100, 100, 12, 12, 12 }, /* max per practice */
-  { 25, 25, 0, 0, 0 }, /* min per practice */
-  { SPELL, SPELL, SKILL, SKILL, SKILL }, /* prac name */
+  /* WIZ CLE THI WAR MON DRU BER SOR PAL RAN BAR NEC */
+  { 95, 95, 85, 80, 85, 95, 80, 95, 85, 85, 85, 95 },
+  { 100, 100, 12, 12, 12, 100, 12, 100, 12, 12, 12, 100 },
+  { 25, 25, 0, 0, 0, 25, 0, 25, 0, 0, 0, 25 },
+  { SPELL, SPELL, SKILL, SKILL, SKILL, SPELL, SKILL, SPELL, SKILL, SKILL, SKILL, SPELL }
 };
 
 /* The appropriate rooms for each guildmaster/guildguard; controls which types
@@ -141,6 +156,22 @@ struct guild_info_type guild_info[] = {
  { CLASS_CLERIC,        3004,    NORTH   },
  { CLASS_THIEF,         3027,    EAST   },
  { CLASS_WARRIOR,       3021,    EAST   },
+
+/* Midgaard Hall of Seven Paths (3034) and the passages beyond it.  An exit
+ * listed for several classes admits each of them: the Druid garden (3036)
+ * leads on to the Ranger and Bard halls, the Sorcerer observatory (3038) to
+ * the Necromancer study.  The guards are mobs 3030-3032 (spec_assign.c). */
+ { CLASS_MONK,          3034,    NORTH   },
+ { CLASS_DRUID,         3034,    EAST    },
+ { CLASS_RANGER,        3034,    EAST    },
+ { CLASS_BARD,          3034,    EAST    },
+ { CLASS_BERSERKER,     3034,    SOUTH   },
+ { CLASS_SORCERER,      3034,    UP      },
+ { CLASS_NECROMANCER,   3034,    UP      },
+ { CLASS_PALADIN,       3034,    DOWN    },
+ { CLASS_RANGER,        3036,    NORTH   },
+ { CLASS_BARD,          3036,    SOUTH   },
+ { CLASS_NECROMANCER,   3038,    EAST    },
 
 /* Brass Dragon */
   { -999 /* all */ ,	5065,	WEST	},
@@ -212,7 +243,7 @@ byte saving_throws(int class_num, int type, int level)
 {
   int table_max;
 
-  if (class_num == CLASS_MONK) class_num = CLASS_WARRIOR;
+  class_num = class_progression_archetype(class_num);
   table_max = (class_num == CLASS_WARRIOR) ? SAVE_TABLE_MAX_LEVEL_WARRIOR
                                            : SAVE_TABLE_MAX_LEVEL;
   if (level < 0 || level > LVL_IMPL) {
@@ -1256,7 +1287,7 @@ byte saving_throws(int class_num, int type, int level)
  * and returns 100 (cannot hit). */
 int thaco(int class_num, int level)
 {
-  if (class_num == CLASS_MONK) class_num = CLASS_WARRIOR;
+  class_num = class_progression_archetype(class_num);
   /* Legacy THAC0 tables end at 34. Preserve their terminal values
    * across expanded mortal and immortal levels. */
   if (level > 34 && level <= LVL_IMPL)
@@ -1467,6 +1498,8 @@ void roll_real_abils(struct char_data *ch)
 
   switch (GET_CLASS(ch)) {
   case CLASS_MAGIC_USER:
+  case CLASS_SORCERER:
+  case CLASS_NECROMANCER:
     ch->real_abils.intel = table[0];
     ch->real_abils.wis = table[1];
     ch->real_abils.dex = table[2];
@@ -1475,6 +1508,7 @@ void roll_real_abils(struct char_data *ch)
     ch->real_abils.cha = table[5];
     break;
   case CLASS_CLERIC:
+  case CLASS_DRUID:
     ch->real_abils.wis = table[0];
     ch->real_abils.intel = table[1];
     ch->real_abils.str = table[2];
@@ -1483,6 +1517,8 @@ void roll_real_abils(struct char_data *ch)
     ch->real_abils.cha = table[5];
     break;
   case CLASS_THIEF:
+  case CLASS_RANGER:
+  case CLASS_BARD:
     ch->real_abils.dex = table[0];
     ch->real_abils.str = table[1];
     ch->real_abils.con = table[2];
@@ -1491,6 +1527,7 @@ void roll_real_abils(struct char_data *ch)
     ch->real_abils.cha = table[5];
     break;
   case CLASS_MONK:
+  case CLASS_PALADIN:
     ch->real_abils.dex = table[0];
     ch->real_abils.wis = table[1];
     ch->real_abils.con = table[2];
@@ -1499,6 +1536,7 @@ void roll_real_abils(struct char_data *ch)
     ch->real_abils.cha = table[5];
     break;
   case CLASS_WARRIOR:
+  case CLASS_BERSERKER:
     ch->real_abils.str = table[0];
     ch->real_abils.dex = table[1];
     ch->real_abils.con = table[2];
@@ -1547,6 +1585,24 @@ void do_start(struct char_data *ch)
   case CLASS_MONK:
     SET_SKILL(ch, SKILL_KICK, 10);
     break;
+  case CLASS_DRUID:
+    break;
+  case CLASS_BERSERKER:
+    SET_SKILL(ch, SKILL_KICK, 10);
+    break;
+  case CLASS_SORCERER:
+    break;
+  case CLASS_PALADIN:
+    SET_SKILL(ch, SKILL_RESCUE, 10);
+    break;
+  case CLASS_RANGER:
+    SET_SKILL(ch, SKILL_TRACK, 10);
+    break;
+  case CLASS_BARD:
+    SET_SKILL(ch, SKILL_TRACK, 10);
+    break;
+  case CLASS_NECROMANCER:
+    break;
   }
 
   advance_level(ch);
@@ -1574,6 +1630,8 @@ void advance_level(struct char_data *ch)
   switch (GET_CLASS(ch)) {
 
   case CLASS_MAGIC_USER:
+  case CLASS_SORCERER:
+  case CLASS_NECROMANCER:
     add_hp += rand_number(3, 8);
     add_mana = rand_number(GET_LEVEL(ch), (int)(1.5 * GET_LEVEL(ch)));
     add_mana = MIN(add_mana, 10);
@@ -1581,6 +1639,7 @@ void advance_level(struct char_data *ch)
     break;
 
   case CLASS_CLERIC:
+  case CLASS_DRUID:
     add_hp += rand_number(5, 10);
     add_mana = rand_number(GET_LEVEL(ch), (int)(1.5 * GET_LEVEL(ch)));
     add_mana = MIN(add_mana, 10);
@@ -1593,15 +1652,40 @@ void advance_level(struct char_data *ch)
     add_move = rand_number(1, 3);
     break;
 
+  /* Half casters: hit points and movement of their archetype, and half the
+   * full-caster mana roll above (L/2..3L/4 instead of L..1.5L, capped at 5
+   * instead of 10). */
+  case CLASS_RANGER:
+  case CLASS_BARD:
+    add_hp += rand_number(7, 13);
+    add_mana = rand_number(GET_LEVEL(ch) / 2, (3 * GET_LEVEL(ch)) / 4);
+    add_mana = MIN(add_mana, 5);
+    add_move = rand_number(1, 3);
+    break;
+
+  case CLASS_PALADIN:
+    add_hp += rand_number(7, 12);
+    add_mana = rand_number(GET_LEVEL(ch) / 2, (3 * GET_LEVEL(ch)) / 4);
+    add_mana = MIN(add_mana, 5);
+    add_move = rand_number(2, 4);
+    break;
+
   case CLASS_MONK:
     add_hp += rand_number(7, 12);
     add_mana = 0;
     add_move = rand_number(2, 4);
     break;
   case CLASS_WARRIOR:
+  case CLASS_BERSERKER:
     add_hp += rand_number(10, 15);
     add_mana = 0;
     add_move = rand_number(1, 3);
+    break;
+
+  default:
+    /* The pfile loader clamps the class, so this is a new class without a
+     * case here: report it rather than level with no gains. */
+    CLASS_TABLE_ERROR("advance-level", GET_CLASS(ch), -1, GET_LEVEL(ch));
     break;
   }
 
@@ -1611,7 +1695,7 @@ void advance_level(struct char_data *ch)
   if (GET_LEVEL(ch) > 1)
     ch->points.max_mana += add_mana;
 
-  if (IS_MAGIC_USER(ch) || IS_CLERIC(ch))
+  if (IS_ARCHETYPE(ch, CLASS_MAGIC_USER) || IS_ARCHETYPE(ch, CLASS_CLERIC))
     GET_PRACTICES(ch) += MAX(2, wis_app[GET_WIS(ch)].bonus);
   else
     GET_PRACTICES(ch) += MIN(2, MAX(1, wis_app[GET_WIS(ch)].bonus));
@@ -1647,19 +1731,28 @@ int backstab_mult(int level)
 }
 
 /* invalid_class is used by handler.c to determine if a piece of equipment is
- * usable by a particular class, based on the ITEM_ANTI_{class} bitvectors. */
+ * usable by a particular class, based on the ITEM_ANTI_{class} bitvectors.
+ * Every class obeys the flags of its archetype: an anti-mage item is refused
+ * by Wizards, Sorcerers and Necromancers alike. */
 int invalid_class(struct char_data *ch, struct obj_data *obj)
 {
-  if (OBJ_FLAGGED(obj, ITEM_ANTI_MAGIC_USER) && IS_MAGIC_USER(ch))
+  if (!IS_NPC(ch) && (GET_CLASS(ch) < 0 || GET_CLASS(ch) >= NUM_CLASSES)) {
+    /* Unreachable for loaded players (the pfile loader clamps the class);
+     * report it where the item check happens, and keep the old answer. */
+    CLASS_TABLE_ERROR("anti-class", GET_CLASS(ch), -1, GET_LEVEL(ch));
+    return FALSE;
+  }
+
+  if (OBJ_FLAGGED(obj, ITEM_ANTI_MAGIC_USER) && IS_ITEM_ARCHETYPE(ch, CLASS_MAGIC_USER))
     return TRUE;
 
-  if (OBJ_FLAGGED(obj, ITEM_ANTI_CLERIC) && IS_CLERIC(ch))
+  if (OBJ_FLAGGED(obj, ITEM_ANTI_CLERIC) && IS_ITEM_ARCHETYPE(ch, CLASS_CLERIC))
     return TRUE;
 
-  if (OBJ_FLAGGED(obj, ITEM_ANTI_WARRIOR) && IS_WARRIOR(ch))
+  if (OBJ_FLAGGED(obj, ITEM_ANTI_WARRIOR) && IS_ITEM_ARCHETYPE(ch, CLASS_WARRIOR))
     return TRUE;
 
-  if (OBJ_FLAGGED(obj, ITEM_ANTI_THIEF) && IS_THIEF(ch))
+  if (OBJ_FLAGGED(obj, ITEM_ANTI_THIEF) && IS_ITEM_ARCHETYPE(ch, CLASS_THIEF))
     return TRUE;
 
   return FALSE;
@@ -1738,11 +1831,72 @@ void init_spell_levels(void)
   spell_level(SKILL_HIDE, CLASS_THIEF, 5);
   spell_level(SKILL_TRACK, CLASS_THIEF, 6);
 
+  /* Additional training using existing, functional abilities. */
+  spell_level(SKILL_TRACK, CLASS_MAGIC_USER, 34);
+  spell_level(SKILL_BANDAGE, CLASS_MAGIC_USER, 40);
+  spell_level(SKILL_RESCUE, CLASS_MAGIC_USER, 46);
+
+  spell_level(SKILL_TRACK, CLASS_CLERIC, 30);
+  spell_level(SKILL_BANDAGE, CLASS_CLERIC, 34);
+  spell_level(SKILL_RESCUE, CLASS_CLERIC, 40);
+
+  spell_level(SKILL_KICK, CLASS_THIEF, 18);
+  spell_level(SKILL_BANDAGE, CLASS_THIEF, 26);
+  spell_level(SKILL_RESCUE, CLASS_THIEF, 34);
+  spell_level(SKILL_BASH, CLASS_THIEF, 42);
+
   /* Monk uses existing, functional combat skills. */
   spell_level(SKILL_KICK, CLASS_MONK, 1);
   spell_level(SKILL_RESCUE, CLASS_MONK, 5);
   spell_level(SKILL_BANDAGE, CLASS_MONK, 8);
   spell_level(SKILL_TRACK, CLASS_MONK, 12);
+  spell_level(SKILL_BASH, CLASS_MONK, 20);
+  spell_level(SKILL_SNEAK, CLASS_MONK, 25);
+  spell_level(SKILL_HIDE, CLASS_MONK, 30);
+  spell_level(SKILL_WHIRLWIND, CLASS_MONK, 35);
+
+  /* New classes train only abilities already implemented by this engine. */
+  spell_level(SPELL_CURE_LIGHT, CLASS_DRUID, 1);
+  spell_level(SPELL_CREATE_WATER, CLASS_DRUID, 2);
+  spell_level(SPELL_DETECT_POISON, CLASS_DRUID, 3);
+  spell_level(SPELL_BLESS, CLASS_DRUID, 5);
+  spell_level(SPELL_CURE_CRITIC, CLASS_DRUID, 9);
+  spell_level(SPELL_CALL_LIGHTNING, CLASS_DRUID, 15);
+  spell_level(SPELL_HEAL, CLASS_DRUID, 20);
+  spell_level(SPELL_CONTROL_WEATHER, CLASS_DRUID, 25);
+  spell_level(SKILL_KICK, CLASS_BERSERKER, 1);
+  spell_level(SKILL_BASH, CLASS_BERSERKER, 4);
+  spell_level(SKILL_RESCUE, CLASS_BERSERKER, 7);
+  spell_level(SKILL_WHIRLWIND, CLASS_BERSERKER, 16);
+  spell_level(SPELL_MAGIC_MISSILE, CLASS_SORCERER, 1);
+  spell_level(SPELL_ARMOR, CLASS_SORCERER, 4);
+  spell_level(SPELL_LIGHTNING_BOLT, CLASS_SORCERER, 9);
+  spell_level(SPELL_FIREBALL, CLASS_SORCERER, 15);
+  spell_level(SPELL_FLY, CLASS_SORCERER, 22);
+  spell_level(SPELL_ENCHANT_WEAPON, CLASS_SORCERER, 26);
+  spell_level(SKILL_KICK, CLASS_PALADIN, 1);
+  spell_level(SKILL_RESCUE, CLASS_PALADIN, 3);
+  spell_level(SKILL_BANDAGE, CLASS_PALADIN, 7);
+  spell_level(SPELL_BLESS, CLASS_PALADIN, 8);
+  spell_level(SPELL_CURE_LIGHT, CLASS_PALADIN, 12);
+  spell_level(SPELL_SANCTUARY, CLASS_PALADIN, 25);
+  spell_level(SKILL_TRACK, CLASS_RANGER, 1);
+  spell_level(SKILL_SNEAK, CLASS_RANGER, 4);
+  spell_level(SKILL_HIDE, CLASS_RANGER, 5);
+  spell_level(SKILL_KICK, CLASS_RANGER, 10);
+  spell_level(SKILL_BANDAGE, CLASS_RANGER, 12);
+  spell_level(SKILL_TRACK, CLASS_BARD, 1);
+  spell_level(SKILL_SNEAK, CLASS_BARD, 3);
+  spell_level(SKILL_HIDE, CLASS_BARD, 5);
+  spell_level(SKILL_BANDAGE, CLASS_BARD, 8);
+  spell_level(SPELL_CHARM, CLASS_BARD, 16);
+  spell_level(SPELL_MAGIC_MISSILE, CLASS_NECROMANCER, 1);
+  spell_level(SPELL_DETECT_MAGIC, CLASS_NECROMANCER, 2);
+  spell_level(SPELL_SLEEP, CLASS_NECROMANCER, 8);
+  spell_level(SPELL_ENERGY_DRAIN, CLASS_NECROMANCER, 13);
+  spell_level(SPELL_CURSE, CLASS_NECROMANCER, 14);
+  spell_level(SPELL_POISON, CLASS_NECROMANCER, 14);
+  spell_level(SPELL_CHARM, CLASS_NECROMANCER, 16);
 
   /* WARRIORS */
   spell_level(SKILL_KICK, CLASS_WARRIOR, 1);
@@ -1751,6 +1905,8 @@ void init_spell_levels(void)
   spell_level(SKILL_TRACK, CLASS_WARRIOR, 9);
   spell_level(SKILL_BASH, CLASS_WARRIOR, 12);
   spell_level(SKILL_WHIRLWIND, CLASS_WARRIOR, 16);
+  spell_level(SKILL_SNEAK, CLASS_WARRIOR, 30);
+  spell_level(SKILL_HIDE, CLASS_WARRIOR, 38);
 }
 
 /* This is the exp given to implementors -- it must always be greater than the
@@ -1767,7 +1923,7 @@ void init_spell_levels(void)
  * both are reported through CLASS_TABLE_ERROR. */
 int level_exp(int chclass, int level)
 {
-  if (chclass == CLASS_MONK) chclass = CLASS_WARRIOR;
+  chclass = class_progression_archetype(chclass);
   if (level > LVL_IMPL || level < 0) {
     CLASS_TABLE_ERROR("level-exp", chclass, -1, level);
     return 0;
@@ -1996,10 +2152,29 @@ int char_level_exp(const struct char_data *ch, int level)
 }
 
 /* Default titles of male characters. */
+/* Mortal titles of the classes that have no title tables yet, like "the
+ * Monk", from CLASS_DRUID to CLASS_NECROMANCER (the typedef stops the build
+ * if a class is added without a title). */
+static const char *const new_class_titles[] = {
+  "the Druid", "the Berserker", "the Sorcerer", "the Paladin",
+  "the Ranger", "the Bard", "the Necromancer"
+};
+typedef char new_class_titles_cover_druid_to_necromancer
+  [(sizeof(new_class_titles) / sizeof(new_class_titles[0]) ==
+    CLASS_NECROMANCER - CLASS_DRUID + 1) ? 1 : -1];
+
+static const char *new_class_title(int chclass)
+{
+  return new_class_titles[chclass - CLASS_DRUID];
+}
+
 const char *title_male(int chclass, int level)
 {
   if (chclass == CLASS_MONK && level < LVL_IMMORT && level > 0)
     return "the Monk";
+  if (chclass >= CLASS_DRUID && chclass <= CLASS_NECROMANCER &&
+      level > 0 && level < LVL_IMMORT)
+    return new_class_title(chclass);
   if (level <= 0 || level > LVL_IMPL)
     return "the Man";
   if (level == LVL_IMPL)
@@ -2144,6 +2319,9 @@ const char *title_female(int chclass, int level)
 {
   if (chclass == CLASS_MONK && level < LVL_IMMORT && level > 0)
     return "the Monk";
+  if (chclass >= CLASS_DRUID && chclass <= CLASS_NECROMANCER &&
+      level > 0 && level < LVL_IMMORT)
+    return new_class_title(chclass);
   if (level <= 0 || level > LVL_IMPL)
     return "the Woman";
   if (level == LVL_IMPL)

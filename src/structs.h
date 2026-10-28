@@ -159,8 +159,16 @@
 #define CLASS_WARRIOR     3    /**< PC Class Warrior */
 /* First implemented additional player class; original IDs 0-3 remain unchanged. */
 #define CLASS_MONK        4    /**< PC Class Monk */
+#define CLASS_DRUID       5    /**< PC Class Druid */
+#define CLASS_BERSERKER   6    /**< PC Class Berserker */
+#define CLASS_SORCERER    7    /**< PC Class Sorcerer */
+#define CLASS_PALADIN     8    /**< PC Class Paladin */
+#define CLASS_RANGER      9    /**< PC Class Ranger */
+#define CLASS_BARD       10    /**< PC Class Bard */
+#define CLASS_NECROMANCER 11   /**< PC Class Necromancer */
 /** Total number of available PC Classes */
-#define NUM_CLASSES	  5
+/* Class IDs 0-11; preserve historical IDs for saved characters. */
+#define NUM_CLASSES	  12
 
 /* NPC classes (currently unused - feel free to implement!) */
 #define CLASS_OTHER       0    /**< NPC Class Other (or undefined) */
