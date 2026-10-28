@@ -190,17 +190,28 @@ static void show_messages(struct char_data *ch)
 
 #define PRINT_MSG(msg) (((msg) == NULL) ? "#" : (msg))
 
-void save_messages_to_disk(void)
+/* Write every combat message to MESS_FILE.  Called from the in-game
+ * editor, so a failure must never exit(): it used to call exit(1), dropping
+ * every player without a crash-save.  The file is written to MESS_FILE.tmp,
+ * flushed and closed with checks, and renamed over the original, so a
+ * failed save leaves the old file intact.  Returns FALSE on any failure
+ * (errno describes it); the sysdep helpers have already logged which call
+ * failed, and the caller reports it with the editor's identity. */
+int save_messages_to_disk(void)
 {
   FILE *fp;
-  int i;
+  int i, name_result, flush_ok, close_ok;
   struct message_type *msg;
+  char temp_name[MAX_STRING_LENGTH];
 
-  if (!(fp = fopen(MESS_FILE, "w"))) {
-    { int saved_errno = errno; log("SYSERR: combat-message fopen for write failed for %s: %s (errno=%d)", MESS_FILE, strerror(saved_errno), saved_errno); }
-    exit(1);
+  name_result = snprintf(temp_name, sizeof(temp_name), "%s.tmp", MESS_FILE);
+  if (name_result < 0 || (size_t)name_result >= sizeof(temp_name)) {
+    errno = ENAMETOOLONG;
+    return FALSE;
   }
- 
+  if (!(fp = fopen(temp_name, "w")))
+    return FALSE;
+
   tb_fprintf(fp, "* TBAMUD 3.64 Combat Message File\n");
  
   for (i = 0; i < MAX_MESSAGES; i++) {
@@ -241,9 +252,18 @@ void save_messages_to_disk(void)
                   PRINT_MSG(msg->god_msg.victim_msg),
                   PRINT_MSG(msg->god_msg.room_msg));
     }
-  }  
-  
-  tb_fclose(fp);
+  }
+
+  flush_ok = tb_fflush_checked(fp, temp_name);
+  close_ok = tb_fclose_checked(fp, temp_name);
+  if (!flush_ok || !close_ok) {
+    int saved_errno = errno;
+    if (remove(temp_name) != 0 && errno != ENOENT)
+      TB_REPORT_ERRNO("remove", temp_name);
+    errno = saved_errno;
+    return FALSE;
+  }
+  return tb_replace_file_checked(temp_name, MESS_FILE);
 }
 
 static void msgedit_setup(struct descriptor_data *d)
@@ -568,9 +588,16 @@ void msgedit_parse(struct descriptor_data *d, char *arg)
     case MSGEDIT_CONFIRM_SAVE:
       if (*arg && (*arg == 'Y' || *arg == 'y')) {
         copy_message_list(&fight_messages[OLC_NUM(d)], OLC_MSG_LIST(d));
-        save_messages_to_disk();
-        OLC_VAL(d) = 0;
-        write_to_output(d, "Messages saved.\r\n");
+        if (save_messages_to_disk()) {
+          OLC_VAL(d) = 0;
+          write_to_output(d, "Messages saved.\r\n");
+        } else {
+          TB_ERROR_ERRNO("olc", "msgedit-save", MESS_FILE,
+                         "slot %d editor " DIAG_CHAR_FMT,
+                         (int)OLC_NUM(d), DIAG_CHAR(d->character));
+          write_to_output(d, "Messages changed in memory, but writing %s FAILED; "
+                             "the file is unchanged.\r\n", MESS_FILE);
+        }
       } else
         write_to_output(d, "Save aborted.\r\n");
   

@@ -182,6 +182,8 @@ void cleanup_olc(struct descriptor_data *d, byte cleanup_type)
     free(OLC_HELP(d));
   }
   free(OLC_PREFS(d));
+  if (OLC_MSG_LIST(d))
+    free_message_list(OLC_MSG_LIST(d));
   if (OLC_ACTION(d)) {
     /* oasis.c calls only free_action() for CLEANUP_ALL, which frees the
      * strings but not the struct (a production leak outside these
@@ -514,6 +516,7 @@ static void type(const char *line)
   case CON_PREFEDIT: prefedit_parse(&builder_desc, buf); break;
   case CON_QEDIT: qedit_parse(&builder_desc, buf); break;
   case CON_AEDIT: aedit_parse(&builder_desc, buf); break;
+  case CON_MSGEDIT: msgedit_parse(&builder_desc, buf); break;
   default: TEST_FAIL_MESSAGE("typed into a descriptor that is not editing");
   }
 }
@@ -531,6 +534,7 @@ void setUp(void)
   help_fixture();
   quest_fixture();
   social_fixture();
+  spell_info[0].name = "!UNUSED!";
   command_list_builds = command_sorts = 0;
 }
 
@@ -540,6 +544,7 @@ void tearDown(void)
     cleanup_olc(&builder_desc, CLEANUP_ALL);
   free_help_table();
   quest_fixture_free();
+  free_messages();
   social_fixture_free();
   victim_destroy();
   descriptor_list = NULL;
@@ -1007,9 +1012,52 @@ static void test_editors_without_descriptor_refuse_loudly(void)
   TEST_ASSERT_EQUAL_STRING("olc-no-descriptor", tb_captured_operation);
 }
 
+/* ---------------------------------------------------------------------
+ * msgedit
+ * ------------------------------------------------------------------- */
+
+/* F2-14: a combat-message save that cannot be written is reported and the
+ * builder told; it used to exit(1) the whole server. */
+static void test_msgedit_failed_save_is_loud_and_does_not_exit(void)
+{
+  char cmd[] = " 1";
+
+  enter_scratch_dir(FALSE);          /* no misc/ directory */
+  do_msgedit(&builder, cmd, 0, 0);
+  TEST_ASSERT_EQUAL_INT(CON_MSGEDIT, STATE(&builder_desc));
+  type("a");
+  type("You slay $N!");
+  type("s");
+  type("y");
+  TEST_ASSERT_EQUAL_STRING("msgedit-save", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "slot 1 editor player idnum 42"));
+  TEST_ASSERT_NOT_NULL(strstr(out, "FAILED"));
+  TEST_ASSERT_NOT_NULL(builder_desc.olc);
+  leave_scratch_dir();
+}
+
+/* F2-14: a writable lib/misc commits the file. */
+static void test_msgedit_save_commits_file(void)
+{
+  char cmd[] = " 1";
+
+  enter_scratch_dir(FALSE);
+  TEST_ASSERT_EQUAL_INT(0, mkdir("misc", 0700));
+  do_msgedit(&builder, cmd, 0, 0);
+  type("a");
+  type("You slay $N!");
+  type("s");
+  type("y");
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  TEST_ASSERT_NOT_NULL(strstr(slurp("misc/messages"), "You slay $N!"));
+  leave_scratch_dir();
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(test_msgedit_failed_save_is_loud_and_does_not_exit);
+  RUN_TEST(test_msgedit_save_commits_file);
   RUN_TEST(test_editors_without_descriptor_refuse_loudly);
   RUN_TEST(test_tedit_clear_then_save_keeps_greetings_non_null);
   RUN_TEST(test_tedit_abort_leaves_live_text);
