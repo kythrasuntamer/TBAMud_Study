@@ -1,0 +1,179 @@
+/* Executable tests of the production player-house code (house.c).
+ *
+ * The house control file (lib/etc/hcontrol) is a raw binary array of
+ * struct house_control_rec, so every field in it is untrusted on read.
+ * The tests write records into a scratch lib tree (the test chdir()s into
+ * it, since HCONTROL_FILE is relative), run the real House_boot() and the
+ * commands built on it, and assert on the structured diagnostic.
+ */
+#include "unity.h"
+#include "conf.h"
+#include "sysdep.h"
+#include "structs.h"
+#include "utils.h"
+#include "comm.h"
+#include "db.h"
+#include "handler.h"
+#include "interpreter.h"
+#include "house.h"
+#include <stdarg.h>
+#include <sys/stat.h>
+#include "tb_error_capture.h"
+#include "tb_persist_support.h"
+
+/* Rooms 100 (house) and 101 (atrium), joined north/south. */
+static struct room_data rooms[2];
+static struct room_direction_data north, south;
+static char scratch_dir[256];
+static char start_dir[1024];
+static char sent[MAX_STRING_LENGTH];
+
+void basic_mud_log(const char *format, ...) { (void)format; }
+void mudlog(int type, int level, int file, const char *str, ...)
+{ (void)type; (void)level; (void)file; (void)str; }
+size_t send_to_char(struct char_data *ch, const char *messg, ...)
+{
+  va_list args;
+  size_t used = strlen(sent);
+  (void)ch;
+  va_start(args, messg);
+  if (vsnprintf(sent + used, sizeof(sent) - used, messg, args) < 0)
+    sent[used] = '\0';
+  va_end(args);
+  return strlen(sent);
+}
+
+room_rnum real_room(room_vnum vnum)
+{
+  if (vnum == 100)
+    return 0;
+  if (vnum == 101)
+    return 1;
+  return NOWHERE;
+}
+
+char *get_name_by_id(long id) { return id == 4242 ? (char *)"owner" : NULL; }
+long get_id_by_name(const char *name) { return !strcmp(name, "owner") ? 4242 : -1; }
+
+/* House object files are not under test: none exist in the scratch tree. */
+obj_save_data *objsave_parse_objects(FILE *fl) { (void)fl; return NULL; }
+int objsave_save_obj_record(struct obj_data *obj, FILE *fl, int location)
+{ (void)obj; (void)fl; (void)location; return 1; }
+
+void obj_to_room(struct obj_data *object, room_rnum room) { (void)object; (void)room; }
+void extract_obj(struct obj_data *obj) { (void)obj; }
+char *CAP(char *txt)
+{
+  if (txt && *txt)
+    *txt = (char)toupper((unsigned char)*txt);
+  return txt;
+}
+
+/* ------------------------------------------------------------------ */
+static struct house_control_rec good_record(void)
+{
+  struct house_control_rec rec;
+  memset(&rec, 0, sizeof(rec));
+  rec.vnum = 100;
+  rec.atrium = 101;
+  rec.exit_num = NORTH;
+  rec.built_on = 1000;
+  rec.mode = HOUSE_PRIVATE;
+  rec.owner = 4242;
+  rec.num_of_guests = 0;
+  return rec;
+}
+
+static void write_hcontrol(const struct house_control_rec *recs, size_t count)
+{
+  FILE *fl = fopen(HCONTROL_FILE, "wb");
+  TEST_ASSERT_NOT_NULL(fl);
+  TEST_ASSERT_EQUAL_size_t(count, fwrite(recs, sizeof(*recs), count, fl));
+  TEST_ASSERT_EQUAL_INT(0, fclose(fl));
+}
+
+static long file_size(const char *path)
+{
+  struct stat st;
+  if (stat(path, &st) != 0)
+    return -1;
+  return (long)st.st_size;
+}
+
+static struct char_data imm;
+static struct player_special_data imm_specials;
+
+void setUp(void)
+{
+  if (scratch_dir[0] == '\0') {
+    const char *base = getenv("TMPDIR");
+    char sub[300];
+    TEST_ASSERT_NOT_NULL(getcwd(start_dir, sizeof(start_dir)));
+    TEST_ASSERT_TRUE(snprintf(scratch_dir, sizeof(scratch_dir), "%s/tb_house_XXXXXX",
+                              base && *base ? base : "/tmp") > 0);
+    TEST_ASSERT_NOT_NULL(mkdtemp(scratch_dir));
+    TEST_ASSERT_TRUE(snprintf(sub, sizeof(sub), "%s/etc", scratch_dir) > 0);
+    TEST_ASSERT_EQUAL_INT(0, mkdir(sub, 0700));
+    TEST_ASSERT_TRUE(snprintf(sub, sizeof(sub), "%s/house", scratch_dir) > 0);
+    TEST_ASSERT_EQUAL_INT(0, mkdir(sub, 0700));
+  }
+  TEST_ASSERT_EQUAL_INT(0, chdir(scratch_dir));
+
+  memset(rooms, 0, sizeof(rooms));
+  memset(&north, 0, sizeof(north));
+  memset(&south, 0, sizeof(south));
+  rooms[0].number = 100;
+  rooms[1].number = 101;
+  north.to_room = 1;
+  south.to_room = 0;
+  rooms[0].dir_option[NORTH] = &north;
+  rooms[1].dir_option[SOUTH] = &south;
+  world = rooms;
+  top_of_world = 1;
+
+  memset(&imm, 0, sizeof(imm));
+  memset(&imm_specials, 0, sizeof(imm_specials));
+  imm.player_specials = &imm_specials;
+  GET_LEVEL(&imm) = LVL_IMPL;
+  sent[0] = '\0';
+  tb_error_capture_reset();
+}
+
+void tearDown(void)
+{
+  (void)remove(HCONTROL_FILE);
+  world = NULL;
+  TEST_ASSERT_EQUAL_INT(0, chdir(start_dir));
+}
+
+/* B2-08: num_of_guests from disk bounded every guests[] loop and do_house's
+ * append; a record claiming 5000 guests must be rejected at boot. */
+static void test_boot_rejects_out_of_range_guest_count(void)
+{
+  struct house_control_rec rec = good_record();
+
+  rec.num_of_guests = 5000;
+  write_hcontrol(&rec, 1);
+  House_boot();
+
+  TEST_ASSERT_EQUAL_STRING("hcontrol-record", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "house vnum 100"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "num_of_guests 5000"));
+  hcontrol_list_houses(&imm, (char *)"");
+  TEST_ASSERT_NOT_NULL(strstr(sent, "No houses have been defined"));
+}
+
+int main(void)
+{
+  UNITY_BEGIN();
+  RUN_TEST(test_boot_rejects_out_of_range_guest_count);
+  {
+    char sub[300];
+    if (snprintf(sub, sizeof(sub), "%s/etc", scratch_dir) > 0)
+      (void)rmdir(sub);
+    if (snprintf(sub, sizeof(sub), "%s/house", scratch_dir) > 0)
+      (void)rmdir(sub);
+    (void)rmdir(scratch_dir);
+  }
+  return UNITY_END();
+}

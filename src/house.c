@@ -311,6 +311,18 @@ void House_boot(void)
     if (TOROOM(real_house, temp_house.exit_num) != real_atrium)
       continue;			/* exit num mismatch -- skip */
 
+    /* num_of_guests comes straight from the binary hcontrol file and bounds
+     * every guests[] loop (House_can_enter, House_list_guests, do_house);
+     * do_house also appends at guests[num_of_guests]. HOUSE_PRIVATE is the
+     * only ownership mode the code implements. */
+    if (!VALID_HOUSE_GUESTS(&temp_house) || temp_house.mode != HOUSE_PRIVATE) {
+      TB_ERROR_MSG("house", "hcontrol-record", HCONTROL_FILE,
+                   "house vnum %d owner idnum %ld num_of_guests %d (max %d) "
+                   "mode %d; record skipped", temp_house.vnum, temp_house.owner,
+                   temp_house.num_of_guests, MAX_GUESTS, temp_house.mode);
+      continue;
+    }
+
     house_control[num_of_houses++] = temp_house;
 
     SET_BIT_AR(ROOM_FLAGS(real_house), ROOM_HOUSE);
@@ -581,7 +593,7 @@ ACMD(do_house)
 	send_to_char(ch, "Guest deleted.\r\n");
 	return;
       }
-    if (house_control[i].num_of_guests == MAX_GUESTS) {
+    if (house_control[i].num_of_guests >= MAX_GUESTS) {
       send_to_char(ch, "You have too many guests.\r\n");
       return;
     }
