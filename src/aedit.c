@@ -94,7 +94,10 @@ ACMD(do_oasis_aedit)
     return;
   }
 
-  if (!can_edit_zone(ch, AEDIT_PERMISSION)) {
+  /* The socials editor is not a zone: can_edit_zone() honours the
+   * AEDIT_PERMISSION sentinel only while the world has fewer zones than its
+   * value (F3-20), so ask the editor question directly. */
+  if (!can_use_editor(ch, AEDIT_PERMISSION)) {
     send_to_char(ch, "You don't have access to editing socials.\r\n");
     return;
   }

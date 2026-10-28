@@ -74,8 +74,10 @@ size_t send_to_char(struct char_data *ch, const char *messg, ...)
 
 const char *nrm = "", *grn = "", *cyn = "", *yel = "";
 void get_char_colors(struct char_data *ch) { (void)ch; }
-int can_edit_zone(struct char_data *ch, zone_rnum rnum)
-{ (void)ch; (void)rnum; return TRUE; }
+/* oasis.c's editor check: records what aedit asked for. */
+static int editor_perm_asked = -1, editor_allowed = TRUE;
+int can_use_editor(struct char_data *ch, int perm)
+{ (void)ch; editor_perm_asked = perm; return editor_allowed; }
 int add_to_save_list(zone_vnum zone, int type) { (void)zone; (void)type; return TRUE; }
 int remove_from_save_list(zone_vnum zone, int type) { (void)zone; (void)type; return TRUE; }
 char *delete_doubledollar(char *string) { return string; }
@@ -178,6 +180,8 @@ void setUp(void)
   builder_desc.connected = CON_PLAYING;
   descriptor_list = &builder_desc;
   social_fixture();
+  editor_perm_asked = -1;
+  editor_allowed = TRUE;
   out_buf[0] = '\0';
   tb_error_capture_reset();
 }
@@ -308,6 +312,22 @@ static void test_aedit_save_of_complete_social_is_quiet(void)
   TEST_ASSERT_NULL(strstr(out_buf, "is empty"));
 }
 
+/* F3-20: aedit asked can_edit_zone() with the AEDIT_PERMISSION sentinel,
+ * which is honoured only while the world has fewer than 1000 zones; it
+ * now asks can_use_editor() for the socials editor. */
+static void test_aedit_asks_the_socials_editor_permission(void)
+{
+  editor_allowed = FALSE;
+  aedit_cmd(" smile");
+  TEST_ASSERT_EQUAL_INT(AEDIT_PERMISSION, editor_perm_asked);
+  TEST_ASSERT_NULL(builder_desc.olc);
+  TEST_ASSERT_NOT_NULL(strstr(out_buf, "You don't have access to editing socials."));
+
+  editor_allowed = TRUE;
+  aedit_cmd(" smile");
+  TEST_ASSERT_NOT_NULL(builder_desc.olc);
+}
+
 int main(void)
 {
   char dir[] = "/tmp/tb_test_aedit.XXXXXX";
@@ -324,6 +344,7 @@ int main(void)
   RUN_TEST(test_aedit_refuses_overlong_command_and_sort_names);
   RUN_TEST(test_aedit_save_reports_missing_required_messages);
   RUN_TEST(test_aedit_save_of_complete_social_is_quiet);
+  RUN_TEST(test_aedit_asks_the_socials_editor_permission);
   failures = UNITY_END();
 
   (void)remove("misc/socials.new");
