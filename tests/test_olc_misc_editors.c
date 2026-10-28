@@ -31,12 +31,16 @@
 #include <stdarg.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <dirent.h>
 #include "tb_error_capture.h"
 
 /* ---------------------------------------------------------------------
  * Output capture
  * ------------------------------------------------------------------- */
 static char out[MAX_STRING_LENGTH * 2];
+
+static void out_append(const char *fmt, va_list args)
+  __attribute__ ((format (printf, 1, 0)));
 
 static void out_append(const char *fmt, va_list args)
 {
@@ -1118,13 +1122,42 @@ static void enter_scratch_dir(int with_text_dir)
     TEST_ASSERT_EQUAL_INT(0, mkdir("text", 0700));
 }
 
+/* Remove path and, if it is a directory, everything below it (no symlink
+ * following: lstat).  Returns 0 on success. */
+static int remove_tree(const char *path)
+{
+  struct stat st;
+  DIR *dir;
+  struct dirent *ent;
+  char child[1024];
+  int rc = 0;
+
+  if (lstat(path, &st) != 0)
+    return -1;
+  if (!S_ISDIR(st.st_mode))
+    return remove(path);
+  if (!(dir = opendir(path)))
+    return -1;
+  while ((ent = readdir(dir)) != NULL) {
+    int n;
+
+    if (!strcmp(ent->d_name, ".") || !strcmp(ent->d_name, ".."))
+      continue;
+    n = snprintf(child, sizeof(child), "%s/%s", path, ent->d_name);
+    if (n < 0 || (size_t)n >= sizeof(child) || remove_tree(child) != 0)
+      rc = -1;
+  }
+  if (closedir(dir) != 0)
+    rc = -1;
+  if (rmdir(path) != 0)
+    rc = -1;
+  return rc;
+}
+
 static void leave_scratch_dir(void)
 {
-  char cmd[512];
-
   TEST_ASSERT_EQUAL_INT(0, chdir(saved_cwd));
-  snprintf(cmd, sizeof(cmd), "rm -rf '%s'", scratch_dir);
-  TEST_ASSERT_EQUAL_INT(0, system(cmd));
+  TEST_ASSERT_EQUAL_INT(0, remove_tree(scratch_dir));
 }
 
 static char *slurp(const char *path)
@@ -1137,7 +1170,8 @@ static char *slurp(const char *path)
     return NULL;
   n = fread(buf, 1, sizeof(buf) - 1, fl);
   buf[n] = '\0';
-  fclose(fl);
+  if (fclose(fl) != 0)
+    return NULL;
   return buf;
 }
 
