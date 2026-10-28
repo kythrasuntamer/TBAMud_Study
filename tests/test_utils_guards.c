@@ -556,6 +556,28 @@ void test_is_dark_valid_room_is_silent(void)
   world_teardown();
 }
 
+/* =====================================================================
+ * I1-10: inverted rand_number bounds are reported with the caller.
+ * ===================================================================== */
+
+void test_rand_number_inverted_bounds_reports_caller(void)
+{
+  char where[64];
+  int i, v;
+
+  (void)snprintf(where, sizeof(where), "test_utils_guards.c:%d", __LINE__ + 1);
+  v = rand_number(5, 2);
+  TEST_ASSERT_TRUE(v >= 2 && v <= 5);
+  TEST_ASSERT_EQUAL_INT(1, count_op("rand-range-inverted"));
+  TEST_ASSERT_NOT_NULL(strstr(log_text(), where));
+
+  for (i = 0; i < 50; i++) {
+    v = rand_number(2, 5);
+    TEST_ASSERT_TRUE(v >= 2 && v <= 5);
+  }
+  TEST_ASSERT_EQUAL_INT(1, count_records());
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -580,5 +602,6 @@ int main(void)
   RUN_TEST(test_check_player_special_on_mob_reports_call_site);
   RUN_TEST(test_is_dark_invalid_rnum_reports_caller);
   RUN_TEST(test_is_dark_valid_room_is_silent);
+  RUN_TEST(test_rand_number_inverted_bounds_reports_caller);
   return UNITY_END();
 }

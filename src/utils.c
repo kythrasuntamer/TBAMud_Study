@@ -26,17 +26,27 @@
 #include "class.h"
 
 
-/** Aportable random number function.
+/** Aportable random number function. Call it as rand_number(from, to); the
+ * macro in utils.h supplies the caller's location.
  * @param from The lower bounds of the random number.
- * @param to The upper bounds of the random number. */
-int rand_number(int from, int to)
+ * @param to The upper bounds of the random number.
+ * @param source_file Caller's __FILE__.
+ * @param source_line Caller's __LINE__.
+ * @param source_func Caller's __func__. */
+int rand_number_at(int from, int to, const char *source_file, int source_line,
+                   const char *source_func)
 {
-  /* error checking in case people call this incorrectly */
+  /* Inverted bounds are usually builder data (e.g. read_mobile's
+   * rand_number(hit, mana) for a mob whose hit dice exceed its max hp).
+   * Swap them so the result stays in range, and say where it came from;
+   * breadcrumbs name the zone reset or trigger that was running. */
   if (from > to) {
     int tmp = from;
     from = to;
     to = tmp;
-    log("SYSERR: rand_number() should be called with lowest, then highest. (%d, %d), not (%d, %d).", from, to, to, from);
+    tb_error_log_at("WARNING", "utils", "rand-range-inverted", "rand_number",
+                    0, source_file, source_line, source_func,
+                    "called with (%d, %d); using (%d, %d)", to, from, from, to);
   }
 
   /* This should always be of the form: ((float)(to - from + 1) * rand() /

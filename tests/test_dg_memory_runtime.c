@@ -89,7 +89,9 @@ char_data *find_char(long id)
   if (active_visitor && visitor && visitor->script_id == id) return visitor;
   return NULL;
 }
-int rand_number(int low, int high) { (void)high; return low; }
+int rand_number_at(int low, int high, const char *source_file, int source_line,
+                   const char *source_func)
+{ (void)high; (void)source_file; (void)source_line; (void)source_func; return low; }
 void add_var(struct trig_var_data **vars, const char *name,
              const char *value, long context)
 { (void)vars; (void)name; (void)value; (void)context; }

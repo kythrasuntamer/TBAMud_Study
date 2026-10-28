@@ -150,7 +150,13 @@ void *tb_realloc_array_at(void *ptr, size_t count, size_t element_size,
   tb_realloc_array_at((ptr), (count), (element_size), __FILE__, __LINE__, __func__)
 int touch(const char *path);
 void mudlog(int type, int level, int file, const char *str, ...) __attribute__ ((format (printf, 4, 5)));
-int	rand_number(int from, int to);
+int	rand_number_at(int from, int to, const char *source_file, int source_line,
+	               const char *source_func);
+/** Random integer in [from, to]. Inverted bounds are swapped and reported
+ * as a rand-range-inverted warning at the caller's file, line and function.
+ * Arguments are evaluated once. */
+#define rand_number(from, to) \
+	rand_number_at((from), (to), __FILE__, __LINE__, __func__)
 int	dice(int number, int size);
 size_t	sprintbit(bitvector_t vektor, const char *names[], char *result, size_t reslen);
 size_t	sprinttype(int type, const char *names[], char *result, size_t reslen);
