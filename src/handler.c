@@ -729,9 +729,16 @@ void obj_from_room(struct obj_data *object)
   struct obj_data *temp;
   struct char_data *t, *tempch;
 
-  if (!object || IN_ROOM(object) == NOWHERE) {
-    log("SYSERR: NULL object (%p) or obj not in a room (%d) passed to obj_from_room",
-	(void *)object, IN_ROOM(object));
+  /* Internal invariant: callers pass a live object that is in a room. Report
+   * the two cases separately so the NULL case never dereferences object. */
+  if (!object) {
+    TB_ERROR_MSG("handler", "obj-from-room", "obj", "NULL object");
+    return;
+  }
+  if (IN_ROOM(object) == NOWHERE) {
+    TB_ERROR_MSG("handler", "obj-from-room", "obj",
+                 "obj vnum %d uid %ld not in a room",
+                 (int) GET_OBJ_VNUM(object), obj_script_id(object));
     return;
   }
 

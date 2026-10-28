@@ -18,6 +18,8 @@
 #include "tb_error_capture.h"
 
 void basic_mud_log(const char *format, ...) { (void)format; }
+long obj_script_id(obj_data *obj) { return obj->script_id; }
+long char_script_id(char_data *ch) { return ch->script_id; }
 
 void setUp(void) { tb_error_capture_reset(); }
 void tearDown(void) {}
@@ -50,10 +52,34 @@ static void test_fname_normal_keyword_silent(void)
   free(kw);
 }
 
+/* H2-14: obj_from_room's guard must not dereference a NULL object while
+ * reporting it, and must name the object when it is not in a room. */
+static void test_obj_from_room_null_reported(void)
+{
+  obj_from_room(NULL);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("obj-from-room", tb_captured_operation);
+}
+
+static void test_obj_from_room_nowhere_reported(void)
+{
+  struct obj_data *obj = calloc(1, sizeof(*obj));
+
+  TEST_ASSERT_NOT_NULL(obj);
+  obj->item_number = NOTHING;
+  IN_ROOM(obj) = NOWHERE;
+  obj_from_room(obj);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("obj-from-room", tb_captured_operation);
+  free(obj);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
   RUN_TEST(test_fname_long_keyword_truncated_and_reported);
   RUN_TEST(test_fname_normal_keyword_silent);
+  RUN_TEST(test_obj_from_room_null_reported);
+  RUN_TEST(test_obj_from_room_nowhere_reported);
   return UNITY_END();
 }
