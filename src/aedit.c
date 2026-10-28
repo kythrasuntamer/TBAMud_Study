@@ -20,6 +20,25 @@
 #include "act.h"
 
 
+/** @file aedit.c
+ * Social (action) editor, one editor at a time.  Builder free text goes
+ * into soc_mess_list and SOCMESS_FILE_NEW.
+ *
+ * Index rules.  top_of_socialt is the LAST index (inclusive; -1 means the
+ * list is empty), unlike help's top_of_helpt.  In this editor OLC_ZNUM is
+ * the row being edited, or a value above top_of_socialt meaning "add".
+ *
+ * Ownership.  OLC_ACTION and its strings belong to the editor until
+ * aedit_save_internally() struct-copies them into soc_mess_list; after that
+ * the list owns the strings and the caller uses CLEANUP_STRUCTS.
+ * aedit_save_internally() then calls create_command_list(), which reorders
+ * soc_mess_list and rebuilds complete_cmd_info with pointers into the
+ * social strings, and sort_commands(): command numbers and soc_mess_list
+ * indices taken before a save are invalid after it.
+ *
+ * File format.  A message line that starts with '#' is read back as "no
+ * message" (fread_action in db.c), so aedit refuses that prefix. */
+
 /* local utility functions */
 static int aedit_find_command(const char *txt);
 static void aedit_disp_menu(struct descriptor_data * d);
