@@ -73,6 +73,16 @@
  * ('\r', '\n', NUL) after the last character. */
 #define FREAD_CHUNK 512
 
+/* Range predicates for file-derived values that index a table. The unsigned
+ * cast folds "x < 0" into the upper-bound test, so each evaluates its
+ * argument once. In the CircleMUD VALID_* style (see VALID_ROOM_RNUM). */
+#define VALID_SECTOR(s)   ((unsigned int)(s) < NUM_ROOM_SECTORS)
+#define VALID_DIR(d)      ((unsigned int)(d) < NUM_OF_DIRS)
+#define VALID_LIQ(l)      ((unsigned int)(l) < NUM_LIQ_TYPES)
+#define VALID_POS(p)      ((unsigned int)(p) < NUM_POSITIONS)
+#define VALID_SEX(x)      ((unsigned int)(x) < NUM_GENDERS)
+#define VALID_WEAR_POS(w) ((unsigned int)(w) < NUM_WEARS)
+
 /*  declarations of most of the 'global' variables */
 struct config_data config_info; /* Game configuration list.	 */
 
@@ -1638,7 +1648,7 @@ void ensure_newline_terminated(struct extra_descr_data* new_descr) {
  * sector_types[], so an out-of-range value must never reach a room. */
 static int room_sector_or_inside(int vnum, int sector)
 {
-  if (sector >= 0 && sector < NUM_ROOM_SECTORS)
+  if (VALID_SECTOR(sector))
     return sector;
   TB_ERROR_MSG("db", "room-parse", "sector",
                "room vnum %d: sector %d out of range 0..%d; using SECT_INSIDE",
@@ -1817,7 +1827,7 @@ void setup_dir(FILE *fl, int room, int dir)
   /* dir comes from the world file and indexes dir_option[NUM_OF_DIRS]. An
    * index past the end lands on other room_data fields (func, script...)
    * inside the same allocation, which no sanitizer can see. */
-  if (dir < 0 || dir >= NUM_OF_DIRS) {
+  if (!VALID_DIR(dir)) {
     TB_FATAL_MSG("db", "room-parse", "setup_dir",
                  "room vnum %d: exit direction %d out of range 0..%d",
                  world[room].number, dir, NUM_OF_DIRS - 1);
@@ -2082,8 +2092,7 @@ static void parse_simple_mob(FILE *mob_f, int i, int nr)
    * position_types[], positions[] and the gender tables. medit only offers
    * valid values, so these come from a hand-edited .mob file; a value that
    * does not fit would silently truncate and index past those tables. */
-  if (t[0] < 0 || t[0] >= NUM_POSITIONS || t[1] < 0 || t[1] >= NUM_POSITIONS ||
-      t[2] < 0 || t[2] >= NUM_GENDERS) {
+  if (!VALID_POS(t[0]) || !VALID_POS(t[1]) || !VALID_SEX(t[2])) {
     TB_FATAL_MSG("db", "mob-parse", "position",
                  "mob vnum %d: position %d default %d sex %d out of range "
                  "(positions 0..%d, sex 0..%d)", nr, t[0], t[1], t[2],
@@ -3441,7 +3450,7 @@ void reset_zone(zone_rnum zone)
 	 * max-existing count), so name the object from arg1. A bad slot never
 	 * becomes valid, so the command is disabled rather than re-reported on
 	 * every reset. */
-	if (ZCMD.arg3 < 0 || ZCMD.arg3 >= NUM_WEARS) {
+	if (!VALID_WEAR_POS(ZCMD.arg3)) {
 	  TB_ERROR_MSG("db", "zone-reset", "equip",
 	               "zone %d line %d: mob vnum %d obj vnum %d invalid wear pos %d "
 	               "(0..%d); cmd disabled",
@@ -4676,7 +4685,7 @@ static int check_object(struct obj_data *obj)
      * drinknames[] (do_drink, shops). oedit only offers valid liquids, so
      * an out-of-range value comes from a hand-edited .obj file: report it
      * and make the container hold water. */
-    if (GET_OBJ_VAL(obj, 2) < 0 || GET_OBJ_VAL(obj, 2) >= NUM_LIQ_TYPES) {
+    if (!VALID_LIQ(GET_OBJ_VAL(obj, 2))) {
       TB_ERROR_MSG("db", "object-check", "liquid",
                    "obj vnum %d liquid %d out of range 0..%d; using LIQ_WATER",
                    GET_OBJ_VNUM(obj), GET_OBJ_VAL(obj, 2), NUM_LIQ_TYPES - 1);
