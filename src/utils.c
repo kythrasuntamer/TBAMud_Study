@@ -121,7 +121,7 @@ char *CAP(char *txt)
     if (*p == '\t') p += 2;  /* Skip \t sign and color letter/number */
     else {
       p += 2;                          /* Skip the CSI section of the ANSI code */
-      while (*p && !isalpha((unsigned char)*p)) p++;  /* Skip until a 'letter' is found */
+      while (*p && !TB_ISALPHA(*p)) p++;  /* Skip until a 'letter' is found */
       if (*p) p++;                     /* Skip the letter */
     }
   }
@@ -1468,7 +1468,7 @@ int get_filename(char *filename, size_t fbufsize, int mode, const char *orig_nam
   for (q = orig_name; *q; q++) {
     unsigned char c = (unsigned char)*q;
 
-    if (!(isascii(c) && (isalnum(c) || c == '_' || c == '-'))) {
+    if (!(isascii(c) && (TB_ISALNUM(c) || c == '_' || c == '-'))) {
       TB_ERROR_MSG("persist", "filename-name-invalid", "get_filename",
                    "mode=%d name_len=%zu rejected: byte 0x%02x at offset %td "
                    "is not [A-Za-z0-9_-]", mode, strlen(orig_name),
@@ -2151,7 +2151,7 @@ IDXTYPE atoidx( const char *str_to_conv )
 
 /* ctype functions take an unsigned char value: a high-bit byte in a plain
  * (signed) char would be a negative argument, which is undefined behaviour. */
-#define isspace_ignoretabs(c) ((c)!='\t' && isspace((unsigned char)(c)))
+#define isspace_ignoretabs(c) ((c)!='\t' && TB_ISSPACE(c))
 
 /*
    strfrmt (String Format) function
@@ -2435,8 +2435,8 @@ char *right_trim_whitespace(const char *string)
     size_t len = strlen(r);
 
     while (len > 0 &&
-           (isspace((unsigned char) r[len - 1]) ||
-            !isprint((unsigned char) r[len - 1])))
+           (TB_ISSPACE(r[len - 1]) ||
+            !TB_ISPRINT(r[len - 1])))
       len--;
 
     r[len] = '\0';

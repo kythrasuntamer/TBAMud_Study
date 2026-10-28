@@ -359,6 +359,16 @@ static inline int circle_upper(int c)
  * @todo Recommend using the ? operator for clarity. */
 #define ISNEWL(ch) ((ch) == '\n' || (ch) == '\r')
 
+/** <ctype.h> classifiers that are safe on a plain char. The ctype functions
+ * take an unsigned char value (or EOF); a high-bit byte in a signed char
+ * would be a negative argument, which is undefined behaviour. c is
+ * evaluated once. */
+#define TB_ISSPACE(c) isspace((unsigned char)(c))
+#define TB_ISALPHA(c) isalpha((unsigned char)(c))
+#define TB_ISDIGIT(c) isdigit((unsigned char)(c))
+#define TB_ISALNUM(c) isalnum((unsigned char)(c))
+#define TB_ISPRINT(c) isprint((unsigned char)(c))
+
 /** If string begins a vowel (upper or lower case), return "an"; else return
  * "a". */
 #define AN(string) (strchr("aeiouAEIOU", *(string)) ? "an" : "a")
