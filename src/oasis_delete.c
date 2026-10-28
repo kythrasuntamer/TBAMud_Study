@@ -27,6 +27,13 @@
 #include "oasis.h"
 #include "improved-edit.h"
 
+/** Free p and set it to NULL, so a struct that outlives the call never holds
+ * a dangling pointer.  free(NULL) is a no-op, so no test is needed.  p is
+ * evaluated twice: it must be an lvalue without side effects. */
+#ifndef FREE_NULL
+#define FREE_NULL(p) do { free(p); (p) = NULL; } while (0)
+#endif
+
 /** Free the strings of a scratch room or configuration.
  *
  * @param data A struct room_data (OASIS_WLD, OASIS_EXI) or struct
@@ -39,10 +46,9 @@
  *             return FALSE without freeing anything.
  * @return TRUE if the strings were freed, FALSE otherwise.
  *
- * Only the exits are reset to NULL.  For OASIS_WLD and OASIS_CFG the freed
- * string fields are left dangling, so the caller must discard (free) the
- * struct immediately, as free_room and free_config do; reusing it would
- * free those strings twice. */
+ * Every freed field is reset to NULL (FREE_NULL), so a second call on the
+ * same struct is harmless.  The struct itself is not freed: free_room and
+ * free_config do that right after the call. */
 int free_strings(void *data, int type)
 {
   struct room_data *room;
@@ -54,14 +60,13 @@ int free_strings(void *data, int type)
       room = (struct room_data *) data;
 
       /* Free Descriptions */
-      if (room->name)
-        free(room->name);
+      FREE_NULL(room->name);
 
-      if (room->description)
-        free(room->description);
+      FREE_NULL(room->description);
 
       if (room->ex_description)
         free_ex_descriptions(room->ex_description);
+      room->ex_description = NULL;
 
       /* Return the return value of free_strings(). */
       return (free_strings(room, OASIS_EXI));
@@ -71,16 +76,9 @@ int free_strings(void *data, int type)
 
       for (i = 0; i < NUM_OF_DIRS; i++) { /* NUM_OF_DIRS, not DIR_COUNT */
         if (room->dir_option[i]) {
-          if (room->dir_option[i]->general_description) {
-            free(room->dir_option[i]->general_description);
-            room->dir_option[i]->general_description = NULL;
-          }
-          if (room->dir_option[i]->keyword) {
-            free(room->dir_option[i]->keyword);
-            room->dir_option[i]->keyword = NULL;
-          }
-          free(room->dir_option[i]);
-          room->dir_option[i] = NULL;
+          FREE_NULL(room->dir_option[i]->general_description);
+          FREE_NULL(room->dir_option[i]->keyword);
+          FREE_NULL(room->dir_option[i]);
         }
       }
 
@@ -93,35 +91,25 @@ int free_strings(void *data, int type)
     case OASIS_CFG:
       config = (struct config_data *) data;
 
-      if (config->play.OK)
-        free(config->play.OK);
+      FREE_NULL(config->play.OK);
 
-      if (config->play.HUH)
-        free(config->play.HUH);
+      FREE_NULL(config->play.HUH);
 
-      if (config->play.NOPERSON)
-        free(config->play.NOPERSON);
+      FREE_NULL(config->play.NOPERSON);
 
-      if (config->play.NOEFFECT)
-        free(config->play.NOEFFECT);
+      FREE_NULL(config->play.NOEFFECT);
 
-      if (config->operation.DFLT_IP)
-        free(config->operation.DFLT_IP);
+      FREE_NULL(config->operation.DFLT_IP);
 
-      if (config->operation.DFLT_DIR)
-        free(config->operation.DFLT_DIR);
+      FREE_NULL(config->operation.DFLT_DIR);
 
-      if (config->operation.LOGNAME)
-        free(config->operation.LOGNAME);
+      FREE_NULL(config->operation.LOGNAME);
 
-      if (config->operation.MENU)
-        free(config->operation.MENU);
+      FREE_NULL(config->operation.MENU);
 
-      if (config->operation.WELC_MESSG)
-        free(config->operation.WELC_MESSG);
+      FREE_NULL(config->operation.WELC_MESSG);
 
-      if (config->operation.START_MESSG)
-        free(config->operation.START_MESSG);
+      FREE_NULL(config->operation.START_MESSG);
 
       return (TRUE);
 
