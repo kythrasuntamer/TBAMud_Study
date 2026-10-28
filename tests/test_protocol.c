@@ -84,11 +84,30 @@ static void huge_unicode_code_point_is_rejected(void)
   TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "(11 digits)"));
 }
 
+/* Output that translates past MAX_OUTPUT_BUFFER used to be dropped whole. */
+static void oversized_output_is_cut_with_marker(void)
+{
+  static char big[30001];
+  const char *out;
+  int len;
+
+  memset(big, 'a', 30000);
+  big[30000] = '\0';
+  out = translate(big, &len);
+  TEST_ASSERT_EQUAL_INT(MAX_OUTPUT_BUFFER - 1, len);
+  TEST_ASSERT_EQUAL_size_t((size_t)len, strlen(out));
+  TEST_ASSERT_EQUAL_CHAR('a', out[0]);
+  TEST_ASSERT_EQUAL_STRING("\r\n**OVERFLOW**\r\n", out + len - 16);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("output-overflow", tb_captured_operation);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
   RUN_TEST(unicode_substitute_is_copied_in_scope);
   RUN_TEST(invalid_colour_is_reported_with_descriptor);
   RUN_TEST(huge_unicode_code_point_is_rejected);
+  RUN_TEST(oversized_output_is_cut_with_marker);
   return UNITY_END();
 }

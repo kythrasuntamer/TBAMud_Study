@@ -926,13 +926,23 @@ const char *ProtocolOutput( descriptor_t *apDescriptor, const char *apData, int 
       }
    }
 
-   /* If we'd overflow the buffer, we don't send any output */
+   /* The translation filled Result: keep what fits, end it with a visible
+    * marker and report the cut. (This used to drop the whole message, so a
+    * long send_to_char() vanished with only an anonymous log line.) The
+    * result is kept below MAX_OUTPUT_BUFFER - 1 so the caller's large
+    * output buffer can still take it whole. */
    if ( i >= MAX_OUTPUT_BUFFER )
    {
-      i = 0;
+      const char OverflowMark[] = "\r\n**OVERFLOW**\r\n";
+      int Consumed = j;
+
+      i = MAX_OUTPUT_BUFFER - 1 - (int)(sizeof(OverflowMark) - 1);
+      memcpy(&Result[i], OverflowMark, sizeof(OverflowMark) - 1);
+      i += (int)(sizeof(OverflowMark) - 1);
       PROTOCOL_WARN(apDescriptor, "output-overflow",
-                    "translated output reached %d bytes; whole message dropped",
-                    MAX_OUTPUT_BUFFER);
+                    "translated output reached %d bytes after %d input bytes;"
+                    " cut to %d bytes with an overflow marker",
+                    MAX_OUTPUT_BUFFER, Consumed, i);
    }
 
    /* Terminate the string */
