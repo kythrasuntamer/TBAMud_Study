@@ -266,7 +266,7 @@ static const char *tb_error_id_for(const char *subsystem, const char *operation,
     if (!str_cmp(subsystem, "PARSER"))
       return TB_ERRID_PARSER_MALFORMED;
     if (!str_cmp(subsystem, "PERSISTENCE"))
-      return (!str_cmp(operation ? operation : "", "rollback"))
+      return (!str_cmp(NULLSTR(operation), "rollback"))
                ? TB_ERRID_PERSIST_ROLLBACK : TB_ERRID_PERSIST_WRITE;
     if (!str_cmp(subsystem, "NETWORK"))
       return TB_ERRID_NETWORK_IO;
@@ -910,7 +910,7 @@ void mudlog(int type, int level, int file, const char *str, ...)
  * Ideally, results will be large enough to hold the description of every bit
  * that could possibly be set in bitvector. Must be at least 1: result[0] is
  * written unconditionally. Output that does not fit is cut at the last
- * whole name, without a report.
+ * whole name and reported as sprintbit-truncated.
  * Bits past the "\n" terminator print as "UNDEFINED". */
 size_t sprintbit(bitvector_t bitvector, const char *names[], char *result, size_t reslen)
 {
@@ -923,8 +923,14 @@ size_t sprintbit(bitvector_t bitvector, const char *names[], char *result, size_
   for (nr = 0; bitvector && len < reslen; bitvector >>= 1) {
     if (IS_SET(bitvector, 1)) {
       nlen = snprintf(result + len, reslen - len, "%s ", *names[nr] != '\n' ? names[nr] : "UNDEFINED");
-      if (len + nlen >= reslen || nlen < 0)
+      if (len + nlen >= reslen || nlen < 0) {
+        /* snprintf() left part of this name behind: cut at the last whole
+         * name, as documented, and say so (I1-14). */
+        result[len] = '\0';
+        TB_WARN_MSG("utils", "sprintbit-truncated", "sprintbit",
+                    "flag names cut after %zu of %zu bytes", len, reslen);
         break;
+      }
       len += nlen;
     }
 
@@ -1017,6 +1023,8 @@ void sprintbitarray(int bitvector[], const char *names[], int maxar, char *resul
 
   if (out.length == 0)
     (void)tb_buf_append(&out, "NOBITS ");
+  /* The appends above truncate safely but only flag it (I1-14). */
+  TB_BUF_CHECK(out, "sprintbitarray-truncated");
 }
 
 /** Calculate the REAL time passed between two time invervals.
@@ -1402,6 +1410,62 @@ int get_line(FILE *fl, char *buf)
   return (lines);
 }
 
+/* TRUE if name is a name a player can actually have, the rule nanny
+ * enforces at character creation (_parse_name): ASCII letters only,
+ * between 1 and MAX_NAME_LENGTH of them. Anything else (dots, separators,
+ * digits, control or high bytes, overlong text) is not a player and must
+ * not become a file name. */
+static int tb_filename_name_ok(const char *name)
+{
+  size_t len;
+
+  for (len = 0; name[len] != '\0'; len++)
+    if (len >= MAX_NAME_LENGTH || !isascii((unsigned char) name[len]) ||
+        !TB_ISALPHA(name[len]))
+      return FALSE;
+  return len > 0;
+}
+
+/* Room for TB_EXCERPT_BYTES input bytes at 4 output bytes each ("\xHH"),
+ * the "..." marker and the terminator. */
+#define TB_EXCERPT_BYTES 32
+#define TB_EXCERPT_SIZE  (TB_EXCERPT_BYTES * 4 + 4)
+
+/* Copy the start of untrusted text (a name from a file) into dst for a
+ * diagnostic: printable ASCII is kept with backslash and double quote
+ * escaped, every other byte becomes \xHH, and text longer than
+ * TB_EXCERPT_BYTES ends in "...". tb_error_log_at() embeds the detail
+ * as is, so this keeps the record on one line and unforgeable. dst_size
+ * must be at least TB_EXCERPT_SIZE. */
+static void tb_escape_excerpt(char *dst, size_t dst_size, const char *src)
+{
+  static const char hex[] = "0123456789abcdef";
+  size_t used = 0, i;
+
+  for (i = 0; src[i] != '\0' && i < TB_EXCERPT_BYTES; i++) {
+    unsigned char c = (unsigned char) src[i];
+
+    if (used + 4 >= dst_size)
+      break;
+    if (c == '\\' || c == '"') {
+      dst[used++] = '\\';
+      dst[used++] = (char) c;
+    } else if (c >= 0x20 && c < 0x7f) {
+      dst[used++] = (char) c;
+    } else {
+      dst[used++] = '\\';
+      dst[used++] = 'x';
+      dst[used++] = hex[c >> 4];
+      dst[used++] = hex[c & 0x0f];
+    }
+  }
+  if (src[i] != '\0' && used + 3 < dst_size) {
+    memcpy(dst + used, "...", 3);
+    used += 3;
+  }
+  dst[used] = '\0';
+}
+
 /** Create the full path, relative to the library path, of the player type
  * file to open.
  * @todo Make the return type bool.
@@ -1415,21 +1479,26 @@ int get_line(FILE *fl, char *buf)
  * @param[in] mode What type of files can be created. Currently, recognized
  * modes are CRASH_FILE, ETEXT_FILE, SCRIPT_VARS_FILE and PLR_FILE.
  * @param[in] orig_name The player name to create the filepath (of type mode)
- * for. Usually a validated name from the player index or GET_NAME(), but
- * `show rent` passes immortal-typed text, so names outside [A-Za-z0-9_-]
- * are rejected.
- * @return 1 on success. 0, after a persist error (filename-args,
- * filename-mode or filename-name-invalid), when an argument is missing or
- * invalid. A path longer than fbufsize is cut by tb_snprintf. */
+ * for. It must be a name a player can actually have: ASCII letters only,
+ * 1 to MAX_NAME_LENGTH of them (see tb_filename_name_ok()).
+ * @return 1 on success. 0, after a persist error, when an argument is
+ * missing (filename-args), mode is unknown (filename-mode) or the name is
+ * not a legal player name (filename-unsafe); filename then holds "" (when
+ * it has room), so a caller that ignores the result opens nothing. A path
+ * longer than fbufsize is cut by tb_snprintf. */
 int get_filename(char *filename, size_t fbufsize, int mode, const char *orig_name)
 {
-  const char *prefix, *middle, *suffix, *q;
-  char name[PATH_MAX], *ptr;
+  const char *prefix, *middle, *suffix;
+  char name[MAX_NAME_LENGTH + 1], *ptr;
 
-  if (orig_name == NULL || *orig_name == '\0' || filename == NULL) {
+  /* Every failure below leaves an empty path, never a stale one. */
+  if (filename != NULL && fbufsize > 0)
+    *filename = '\0';
+
+  if (orig_name == NULL || filename == NULL) {
     TB_ERROR_MSG("persist", "filename-args", "get_filename",
                  "mode=%d name=%s filename=%s", mode,
-                 orig_name == NULL ? "NULL" : (*orig_name ? "set" : "empty"),
+                 orig_name == NULL ? "NULL" : "set",
                  filename == NULL ? "NULL" : "set");
     return (0);
   }
@@ -1460,21 +1529,22 @@ int get_filename(char *filename, size_t fbufsize, int mode, const char *orig_nam
     return (0);
   }
 
-  /* orig_name becomes a path component. Most callers pass a validated
-   * player name (letters only), but `show rent <text>` passes immortal-typed
-   * text through Crash_listrent, so "../../x" would leave lib/plrobjs.
-   * Accept only [A-Za-z0-9_-]: no separators, dots or control bytes. The
-   * raw text is not logged (it may hold line breaks); its length is. */
-  for (q = orig_name; *q; q++) {
-    unsigned char c = (unsigned char)*q;
+  /* orig_name becomes a path component, and it does not only come from
+   * the game: remove_player() and the index rebuild take it from the player
+   * index, a pfile's Name tag is read before login, and `show rent <text>`
+   * passes immortal-typed text. A crafted record named "../x" made
+   * remove_player() unlink, read_saved_vars() open and the Crash_* savers
+   * read and write files outside lib/. Accept only a legal player name;
+   * report anything else, escaped, with the mode. */
+  if (!tb_filename_name_ok(orig_name)) {
+    char excerpt[TB_EXCERPT_SIZE];
 
-    if (!(isascii(c) && (TB_ISALNUM(c) || c == '_' || c == '-'))) {
-      TB_ERROR_MSG("persist", "filename-name-invalid", "get_filename",
-                   "mode=%d name_len=%zu rejected: byte 0x%02x at offset %td "
-                   "is not [A-Za-z0-9_-]", mode, strlen(orig_name),
-                   (unsigned int)c, q - orig_name);
-      return (0);
-    }
+    tb_escape_excerpt(excerpt, sizeof(excerpt), orig_name);
+    TB_ERROR_MSG("persist", "filename-unsafe", "get_filename",
+                 "mode=%d name=\"%s\" (length %zu) is not a legal player "
+                 "name (ASCII letters only, 1..%d of them); no path built",
+                 mode, excerpt, strlen(orig_name), MAX_NAME_LENGTH);
+    return (0);
   }
 
   strlcpy(name, orig_name, sizeof(name));
@@ -1539,6 +1609,54 @@ void tb_player_special_on_mob_at(const struct char_data *ch, const char *field,
                   DIAG_CHAR_FMT " used player-only field '%s' (shared "
                   "dummy_mob storage)", DIAG_CHAR(ch),
                   field ? field : "(unknown)");
+}
+
+/** Report that a player's class cannot index a per-class table. Called by
+ * CLASS_ABBR() (and similar lookups) when VALID_CLASS(GET_CLASS(ch)) fails;
+ * GET_CLASS comes from the pfile 'Clas' tag with no range check, so a
+ * corrupt or hand-edited pfile reaches here (G2-12). The report carries the
+ * caller's location, the player and the bad class.
+ * @param ch The player whose class is out of range.
+ * @param table Name of the table the caller was about to index.
+ * @param source_file Caller's __FILE__.
+ * @param source_line Caller's __LINE__.
+ * @param source_func Caller's __func__.
+ * @return "??", a display placeholder in place of the table entry. */
+const char *tb_class_range_error_at(const struct char_data *ch,
+                                    const char *table,
+                                    const char *source_file, int source_line,
+                                    const char *source_func)
+{
+  tb_error_log_at("ERROR", "char", "class-range", table ? table : "(unknown)",
+                  0, source_file, source_line, source_func,
+                  DIAG_CHAR_FMT " class %d outside 0..%d", DIAG_CHAR(ch),
+                  (int) GET_CLASS(ch), NUM_CLASSES - 1);
+  return "??";
+}
+
+/** Range-checked name-table lookup behind TB_TABLE_NAME(). The index comes
+ * from world, player or script data that nothing range-checked, so an
+ * out-of-range one is a data error: it is reported at the caller's
+ * location (subsystem "table", op "name-lookup-range", resource = the
+ * table's name) and a placeholder is shown instead of reading past the
+ * table.
+ * @param table The name table.
+ * @param count Number of valid entries (the "\n" sentinel excluded).
+ * @param idx The index to look up.
+ * @param table_name The table's name, for the report.
+ * @return table[idx], or "<invalid>". */
+const char *tb_table_name_at(const char *const table[], size_t count, long idx,
+                             const char *table_name, const char *source_file,
+                             int source_line, const char *source_func)
+{
+  if (table != NULL && idx >= 0 && (size_t) idx < count && table[idx] != NULL)
+    return table[idx];
+  tb_error_log_at("ERROR", "table", "name-lookup-range",
+                  table_name ? table_name : "(unknown)", 0, source_file,
+                  source_line, source_func, "index %ld not in [0,%zu)%s",
+                  idx, count, table == NULL ? "; NULL table" :
+                  (idx >= 0 && (size_t) idx < count) ? "; NULL entry" : "");
+  return "<invalid>";
 }
 
 /** This function (derived from basic fork() abort() idea by Erwin S Andreasen)
@@ -2164,13 +2282,18 @@ IDXTYPE atoidx( const char *str_to_conv )
    Returns a static buffer that the next call overwrites (not reentrant);
    strpaste(strfrmt(...), ...) is safe only because the two use different
    buffers. A NULL str is formatted as "" with a strfrmt-null warning. Output
-   is cut silently at MAX_STRING_LENGTH and w is clamped to the line buffer.
+   that does not fit in MAX_STRING_LENGTH, a word longer than a line and
+   padding past the end are cut and reported once as strfrmt-truncated;
+   w is clamped to the line buffer.
 */
-static char *strfrmt_append(char *dst, const char *end, const char *src)
+static char *strfrmt_append(char *dst, const char *end, const char *src,
+                            int *cut)
 {
   while (*src && dst < end)
     *dst++ = *src++;
   *dst = '\0';
+  if (*src)
+    *cut = TRUE;
   return dst;
 }
 
@@ -2195,6 +2318,7 @@ char *strfrmt(char *str, int w, int h, int justify, int hpad, int vpad)
   const char *lend = line + sizeof(line) - 5;
   const char *rend = ret + sizeof(ret) - 1;
   int wlen = 0, llen = 0, lcount = 0;
+  int cut = FALSE;	/* any output byte dropped (I1-14) */
   char last_color='n';
   bool new_line_started = FALSE;
 
@@ -2249,7 +2373,7 @@ char *strfrmt(char *str, int w, int h, int justify, int hpad, int vpad)
         *lp++ = '\r';
         *lp++ = '\n';
         *lp = '\0';
-        rp = strfrmt_append(rp, rend, line);
+        rp = strfrmt_append(rp, rend, line, &cut);
         llen = 0;
         lcount++;
         lp = line;
@@ -2288,7 +2412,7 @@ char *strfrmt(char *str, int w, int h, int justify, int hpad, int vpad)
       *lp++ = '\r'; /* New line */
       *lp++ = '\n';
       *lp = '\0';
-      rp = strfrmt_append(rp, rend, line);
+      rp = strfrmt_append(rp, rend, line, &cut);
       llen = 0;
       lcount++;
       lp = line;
@@ -2310,6 +2434,8 @@ char *strfrmt(char *str, int w, int h, int justify, int hpad, int vpad)
      * broken at all, whatever its length.  Neither of those is a reason
      * to write past the end of line. */
     for( ; wp!=sp && lp<lend ; *lp++ = *wp++);
+    if (wp != sp)
+      cut = TRUE;	/* the word did not fit in the line buffer */
   }
   /* Copy over the last line */
   if(lp!=line) {
@@ -2319,7 +2445,7 @@ char *strfrmt(char *str, int w, int h, int justify, int hpad, int vpad)
     *lp++ = '\r';
     *lp++ = '\n';
     *lp = '\0';
-    rp = strfrmt_append(rp, rend, line);
+    rp = strfrmt_append(rp, rend, line, &cut);
     lcount++;
   }
   if(vpad) {
@@ -2327,17 +2453,24 @@ char *strfrmt(char *str, int w, int h, int justify, int hpad, int vpad)
       if(hpad) {
         int pad = w < rend - rp ? w : (int)(rend - rp);
 
+        if (pad < w)
+          cut = TRUE;
         if (pad > 0) {
           memset(rp, ' ', pad);
           rp += pad;
         }
       }
-      if (rp < rend) *rp++ = '\r';
-      if (rp < rend) *rp++ = '\n';
+      if (rp < rend) *rp++ = '\r'; else cut = TRUE;
+      if (rp < rend) *rp++ = '\n'; else cut = TRUE;
       lcount++;
     }
     *rp = '\0';
   }
+  if (cut)
+    TB_WARN_MSG("utils", "strfrmt-truncated", "strfrmt",
+                "text of %zu bytes did not fit: output cut at %d of %d "
+                "bytes (w=%d h=%d)", strlen(str), (int) (rp - ret),
+                (int) sizeof(ret) - 1, w, h);
   return ret;
 }
 
@@ -2348,21 +2481,26 @@ char *strfrmt(char *str, int w, int h, int justify, int hpad, int vpad)
    @param str2 The string to be displayed on the right.
    @param joiner Text placed between the two columns on every line.
    @return A static buffer overwritten by the next call (not reentrant).
-   NULL inputs are treated as "". Output stops silently at
-   MAX_STRING_LENGTH.
+   NULL inputs are treated as "". Output stops at MAX_STRING_LENGTH, and
+   text that did not fit is reported as strpaste-truncated.
 */
 char *strpaste(char *str1, char *str2, char *joiner)
 {
   static char ret[MAX_STRING_LENGTH + 1];
-  const char *sp1 = str1 ? str1 : "";
-  const char *sp2 = str2 ? str2 : "";
-  const char *safe_joiner = joiner ? joiner : "";
+  const char *sp1 = NULLSTR(str1);
+  const char *sp2 = NULLSTR(str2);
+  const char *safe_joiner = NULLSTR(joiner);
   size_t used = 0;
   size_t jlen = strlen(safe_joiner);
+  int cut = FALSE;
 
   while (used < MAX_STRING_LENGTH && (*sp1 || *sp2)) {
     while (used < MAX_STRING_LENGTH && *sp1 && !ISNEWL(*sp1))
       ret[used++] = *sp1++;
+    if (*sp1 && !ISNEWL(*sp1)) {
+      cut = TRUE;	/* out of room in the middle of a left line */
+      break;
+    }
 
     if (*sp1) {
       if (sp1[1] && sp1[1] != sp1[0] && ISNEWL(sp1[1]))
@@ -2379,6 +2517,10 @@ char *strpaste(char *str1, char *str2, char *joiner)
 
     while (used < MAX_STRING_LENGTH && *sp2 && !ISNEWL(*sp2))
       ret[used++] = *sp2++;
+    if (*sp2 && !ISNEWL(*sp2)) {
+      cut = TRUE;	/* out of room in the middle of a right line */
+      break;
+    }
 
     if (*sp2) {
       if (sp2[1] && sp2[1] != sp2[0] && ISNEWL(sp2[1]))
@@ -2393,6 +2535,13 @@ char *strpaste(char *str1, char *str2, char *joiner)
   }
 
   ret[used] = '\0';
+  /* The bounds above keep ret in range; say when they dropped text
+   * (I1-14), e.g. a long description pasted beside the automap. */
+  if (cut || *sp1 || *sp2)
+    TB_WARN_MSG("utils", "strpaste-truncated", "strpaste",
+                "output cut at %zu of %d bytes; %zu and %zu bytes of the "
+                "two columns not pasted", used, MAX_STRING_LENGTH,
+                strlen(sp1), strlen(sp2));
   return ret;
 }
 

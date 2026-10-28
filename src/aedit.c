@@ -47,6 +47,12 @@
 #define VALID_SOCIAL_RNUM(r) \
   ((long)(r) >= 0 && (long)(r) <= (long)top_of_socialt)
 
+/** Longest social command or sort name aedit accepts (builder input).  The
+ * longest built-in command has 11 characters.  Any length used to be
+ * accepted: one 60-character social widened every column of the socials
+ * listing (column_list) until it no longer fitted its buffer (I1-01). */
+#define AEDIT_NAME_MAX 30
+
 /* local utility functions */
 static int aedit_find_command(const char *txt);
 static void aedit_disp_menu(struct descriptor_data * d);
@@ -88,7 +94,10 @@ ACMD(do_oasis_aedit)
     return;
   }
 
-  if (!can_edit_zone(ch, AEDIT_PERMISSION)) {
+  /* The socials editor is not a zone: can_edit_zone() honours the
+   * AEDIT_PERMISSION sentinel only while the world has fewer zones than its
+   * value (F3-20), so ask the editor question directly. */
+  if (!can_use_editor(ch, AEDIT_PERMISSION)) {
     send_to_char(ch, "You don't have access to editing socials.\r\n");
     return;
   }
@@ -103,6 +112,17 @@ ACMD(do_oasis_aedit)
 
   if (!*arg) {
     send_to_char(ch, "Please specify a social to edit.\r\n");
+    return;
+  }
+
+  /* arg names the social to edit or, when none matches, becomes the new
+   * social's command and sort name (aedit_setup_new). */
+  if (strlen(arg) > AEDIT_NAME_MAX) {
+    TB_WARN_MSG("olc", "social-name-length", "socials",
+                "aedit argument length %zu over %d refused; editor " DIAG_CHAR_FMT,
+                strlen(arg), AEDIT_NAME_MAX, DIAG_CHAR(ch));
+    send_to_char(ch, "A social's name may be at most %d characters long.\r\n",
+                 AEDIT_NAME_MAX);
     return;
   }
 
@@ -219,6 +239,23 @@ static void aedit_setup_existing(struct descriptor_data *d, int real_num) {
    aedit_disp_menu(d);
 }
 
+/* Report a message the saved social cannot run without (G2-13).  Any
+ * message may be empty ('#' in the socials file, or cleared here), but
+ * do_action prints char_no_arg when the social is used without an argument
+ * and do_gmote prints others_found for a targeted social; act.social.c
+ * refuses such a use at run time (social-field-missing).  The save goes
+ * ahead, since the builder may fill the message in later, but says so. */
+static void aedit_report_missing_message(struct descriptor_data *d,
+                                         const char *field, const char *menu)
+{
+  TB_WARN_MSG("social", "social-field-missing", "soc_mess_list",
+              "social '%s' saved without its %s message; editor " DIAG_CHAR_FMT,
+              OLC_ACTION(d)->command ? OLC_ACTION(d)->command : "(null)",
+              field, DIAG_CHAR(d->character));
+  write_to_output(d, "Warning: %s is empty; the social cannot be used that way "
+                     "until it is set.\r\n", menu);
+}
+
 /* Stores the edit in soc_mess_list (the list takes OLC_ACTION's strings, so
  * the caller uses CLEANUP_STRUCTS) and writes the socials file.  Returns the
  * result of aedit_save_to_disk: FALSE means the edit is live in memory but
@@ -226,6 +263,11 @@ static void aedit_setup_existing(struct descriptor_data *d, int real_num) {
 static int aedit_save_internally(struct descriptor_data *d) {
    struct social_messg *new_soc_mess_list = NULL;
    int i;
+
+   if (!OLC_ACTION(d)->char_no_arg)
+     aedit_report_missing_message(d, "char_no_arg", "a) Char [NO ARG]");
+   if (OLC_ACTION(d)->char_found && !OLC_ACTION(d)->others_found)
+     aedit_report_missing_message(d, "others_found", "g) Others [VICT]");
 
    /* add a new social into the list */
    if (!VALID_SOCIAL_RNUM(OLC_ZNUM(d)))  {
@@ -671,6 +713,16 @@ void aedit_parse(struct descriptor_data * d, char *arg) {
                     OLC_MODE(d) == AEDIT_ACTION_NAME ? "command" : "sort_as",
                     strlen(arg), DIAG_CHAR(d->character));
         write_to_output(d, "It must be a single word, without spaces.\r\nEnter it again: ");
+        return;
+      }
+      if (strlen(arg) > AEDIT_NAME_MAX) {
+        TB_WARN_MSG("olc", "social-name-length", "socials",
+                    "social rnum %d field %s input length %zu over %d; editor " DIAG_CHAR_FMT,
+                    (int)OLC_ZNUM(d),
+                    OLC_MODE(d) == AEDIT_ACTION_NAME ? "command" : "sort_as",
+                    strlen(arg), AEDIT_NAME_MAX, DIAG_CHAR(d->character));
+        write_to_output(d, "It may be at most %d characters long.\r\nEnter it again: ",
+                        AEDIT_NAME_MAX);
         return;
       }
       if (OLC_MODE(d) == AEDIT_SORT_AS) {

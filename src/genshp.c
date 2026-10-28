@@ -123,6 +123,9 @@ static void copy_shop_type_list(struct shop_buy_data **tlist, struct shop_buy_da
   }
 }
 
+/* Remove entry num from a buy-type list.  num is builder input (sedit's
+ * delete-entry prompt): one outside the list changes nothing and is
+ * reported.  The caller knows which shop the list belongs to. */
 void remove_shop_from_type_list(struct shop_buy_data **list, int num)
 {
   int i, num_items;
@@ -131,8 +134,12 @@ void remove_shop_from_type_list(struct shop_buy_data **list, int num)
   /* Count number of entries. */
   for (i = 0; (*list)[i].type != NOTHING; i++);
 
-  if (num < 0 || num >= i)
+  if (num < 0 || num >= i) {
+    TB_WARN_MSG("olc", "shop-list-index", "shop",
+                "buy-type list: remove index %d out of range 0..%d; nothing removed",
+                num, i - 1);
     return;
+  }
   num_items = i;
 
   CREATE(nlist, struct shop_buy_data, num_items);
@@ -188,6 +195,10 @@ void add_shop_to_int_list(IDXTYPE **list, IDXTYPE newi)
   *list = nlist;
 }
 
+/* Remove entry num from a NOTHING-terminated room or product list.  num is
+ * builder input from sedit's delete-entry prompts (a negative number
+ * arrives as a large unsigned value): one outside the list changes nothing
+ * and is reported. */
 void remove_shop_from_int_list(IDXTYPE **list, IDXTYPE num)
 {
   IDXTYPE i, num_items, *nlist;
@@ -200,7 +211,12 @@ void remove_shop_from_int_list(IDXTYPE **list, IDXTYPE num)
 #else
   if (num < 0 || num >= i)
 #endif
+  {
+    TB_WARN_MSG("olc", "shop-list-index", "shop",
+                "room/product list: remove index %ld out of range 0..%ld; nothing removed",
+                (long)num, (long)i - 1);
     return;
+  }
   num_items = i;
 
   CREATE(nlist, IDXTYPE, num_items);
@@ -499,9 +515,17 @@ int save_shops(zone_rnum zone_num)
   }
   tb_fprintf(shop_file, "$~\n");
   {
+    /* ferror() stays set after any failed write.  tb_fprintf() reported
+     * each one, but a later flush that succeeds would hide it and commit a
+     * file with a hole in it (C2-16). */
+    int stream_ok = !ferror(shop_file);
     int flush_ok = tb_fflush_checked(shop_file, fname);
     int close_ok = tb_fclose_checked(shop_file, fname);
-    if (!flush_ok || !close_ok) {
+    if (!stream_ok)
+      TB_ERROR_MSG("olc", "save-stream-error", fname,
+                   TB_ERRID_PERSIST_WRITE " zone %d shops: a write failed; previous file kept",
+                   zone_table[zone_num].number);
+    if (!stream_ok || !flush_ok || !close_ok) {
       if (remove(fname) != 0 && errno != ENOENT)
         TB_REPORT_ERRNO("remove", fname);
       return FALSE;

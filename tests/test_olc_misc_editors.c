@@ -151,6 +151,9 @@ void get_char_colors(struct char_data *ch) { (void)ch; }
 void clear_screen(struct descriptor_data *d) { (void)d; }
 int can_edit_zone(struct char_data *ch, zone_rnum rnum)
 { (void)ch; (void)rnum; return TRUE; }
+/* hedit and aedit ask oasis.c's editor check, not can_edit_zone() (F3-20). */
+int can_use_editor(struct char_data *ch, int perm)
+{ (void)ch; (void)perm; return TRUE; }
 void add_to_save_list(zone_vnum zone, int type) { (void)zone; (void)type; }
 int remove_from_save_list(zone_vnum zone, int type)
 { (void)zone; (void)type; return TRUE; }

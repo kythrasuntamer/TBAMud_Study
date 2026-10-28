@@ -1549,7 +1549,16 @@ static inline int tb_replace_file_checked_at(const char *temp_path,
   tb_replace_file_checked_at((temp_path), (dest_path), __FILE__, __LINE__, __func__)
 
 /* format(strftime) makes the compiler check each caller's format literal,
- * just as format(printf) does for the output functions. */
+ * just as format(printf) does for the output functions.
+ *
+ * Contract: when dst is non-NULL and dst_size > 0, dst holds a NUL-terminated
+ * string on return: the formatted time, or "" on every failure path, each of
+ * which is reported at the caller's file and line. Callers print dst with
+ * "%s" without checking anything, and timeptr usually comes straight from
+ * localtime()/gmtime(), which return NULL for a time_t they cannot represent.
+ * A corrupt LAST_FILE record, pfile or index timestamp, or mail header can
+ * hold one, so leaving dst unwritten printed uninitialized stack bytes
+ * (G1-19, B2-26). */
 static inline void tb_strftime_at(char *dst, size_t dst_size,
                                   const char *source_file, int source_line,
                                   const char *source_func,
@@ -1563,7 +1572,15 @@ static inline void tb_strftime_at(char *dst, size_t dst_size,
                                   const struct tm *timeptr)
 {
   if (dst == NULL || dst_size == 0 || format == NULL || timeptr == NULL) {
-    tb_report_error_at("strftime", "invalid argument", 0,
+    /* Terminate before reporting: no failure path leaves dst unwritten. */
+    if (dst != NULL && dst_size > 0)
+      dst[0] = '\0';
+    tb_report_error_at("strftime",
+                       (dst == NULL || dst_size == 0 || format == NULL) ?
+                       "invalid argument: NULL or zero-size destination, or "
+                       "NULL format" :
+                       "invalid argument: NULL struct tm (time_t not "
+                       "representable); output set to empty", 0,
                        source_file, source_line, source_func);
     return;
   }

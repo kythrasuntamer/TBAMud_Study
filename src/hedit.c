@@ -64,7 +64,7 @@ ACMD(do_oasis_hedit)
   if (IS_NPC(ch) || !ch->desc || STATE(ch->desc) != CON_PLAYING)
     return;
 
-  if (!can_edit_zone(ch, HEDIT_PERMISSION)) {
+  if (!can_use_editor(ch, HEDIT_PERMISSION)) {
     send_to_char(ch, "You don't have access to editing help files.\r\n");
     return;
   }

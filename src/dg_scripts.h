@@ -485,10 +485,16 @@ void dg_teleport_all(room_rnum from, room_rnum to);
 #define GET_TRIG_DEPTH(t)         ((t)->depth)
 #define GET_TRIG_LOOPS(t)         ((t)->loops)
 
-/* TRUE when rn indexes a loaded trigger prototype. Needs db.h at the use
- * site. Evaluates rn several times: pass a plain variable. */
+/* TRUE when rn indexes a loaded trigger prototype: not NOTHING, not
+ * negative, below top_of_trigt (a count: the last index is
+ * top_of_trigt - 1) and its trig_index slot is set. The range test
+ * (utils.h's tb_rnum_valid) comes first, so a negative or stale rn of any
+ * integer type never indexes trig_index. The one definition: OLC code
+ * (zedit's OLC_CHECK_RNUM) uses it from here. Needs db.h at the use site.
+ * Evaluates rn twice: pass a plain variable. */
 #define VALID_TRIG_RNUM(rn) \
-  ((rn) != NOTHING && (int)(rn) < top_of_trigt && trig_index[(rn)] != NULL)
+  (tb_rnum_valid((long) (rn), (long) NOTHING, (long) top_of_trigt - 1) && \
+   trig_index[(rn)] != NULL)
 
 /* Trigger vnum for diagnostics, or -1 when there is no trigger or its rnum has
  * no trigger-table entry (never indexes trig_index out of range). Needs db.h

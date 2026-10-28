@@ -16,6 +16,7 @@
 #include "sysdep.h"
 #include "structs.h"
 #include "utils.h"
+#include "comm.h"
 #include "db.h"
 #include "shop.h"
 #include "genolc.h"
@@ -50,6 +51,7 @@ qst_rnum total_quests = 0;
 struct index_data **trig_index = NULL;
 int top_of_trigt = 0;
 struct board_info_type board_info[NUM_OF_BOARDS];
+struct reset_q_type reset_q;
 
 const char *apply_types[] = {
   "NONE", "STR", "DEX", "INT", "WIS", "CON", "CHA", "CLASS", "LEVEL", "AGE",
@@ -184,6 +186,7 @@ char *one_argument(char *argument, char *first_arg)
   return argument;
 }
 SPECIAL(questmaster) { (void)ch; (void)me; (void)cmd; (void)argument; return 0; }
+SPECIAL(shop_keeper) { (void)ch; (void)me; (void)cmd; (void)argument; return 0; }
 /* delete_quest() (genqst.c) finds the questmaster's secondary spec proc
  * through quest.c's quest_qm_secondary(), not linked here; same logic. */
 quest_spec_proc *quest_qm_secondary(mob_vnum qm)
@@ -197,6 +200,19 @@ quest_spec_proc *quest_qm_secondary(mob_vnum qm)
         QST_FUNC(rnum) != questmaster)
       return QST_FUNC(rnum);
   return NULL;
+}
+/* add_quest() (genqst.c) records the questmaster's original spec proc on
+ * every quest of that mob through quest.c's quest_set_qm_secondary(), not
+ * linked here; same logic. */
+void quest_set_qm_secondary(mob_vnum qm, quest_spec_proc *func)
+{
+  qst_rnum rnum;
+
+  if (qm == NOBODY || func == questmaster)
+    return;
+  for (rnum = 0; rnum < total_quests; rnum++)
+    if (QST_MASTER(rnum) == qm)
+      QST_FUNC(rnum) = func;
 }
 
 void free_ex_descriptions(struct extra_descr_data *ex)
@@ -984,25 +1000,36 @@ static void add_object_releases_live_instance_state(void)
 {
   struct obj_data *inst, newobj;
   struct list_data *events = (struct list_data *)&newobj; /* opaque marker */
+  struct script_data *script;
+  struct trig_proto_list *triggers;
   make_zones(1); make_objs(1);
   give_proto_strings(0);
   inst = make_instance(0);
   inst->name = strdup("restrung live name");   /* instance-owned */
-  CREATE(inst->script, struct script_data, 1);
-  CREATE(inst->proto_script, struct trig_proto_list, 1);
+  CREATE(script, struct script_data, 1);
+  CREATE(triggers, struct trig_proto_list, 1);
+  inst->script = script;
+  inst->proto_script = triggers;
   inst->events = events;
   memset(&newobj, 0, sizeof(newobj));
   newobj.name = "new";
   newobj.short_description = "a new thing";
   TEST_ASSERT_EQUAL_UINT(0, add_object(&newobj, 10));
-  TEST_ASSERT_EQUAL_INT(1, scripts_extracted);
+  /* The restring is released.  The running script (variables, pending
+   * waits) and the instance's own trigger list are kept: oedit rebuilds
+   * them only when the prototype's trigger list changes. */
+  TEST_ASSERT_EQUAL_INT(0, scripts_extracted);
   TEST_ASSERT_TRUE(inst->name == obj_proto[0].name);
   TEST_ASSERT_EQUAL_STRING("new", inst->name);
-  TEST_ASSERT_NULL(inst->script);
-  TEST_ASSERT_NULL(inst->proto_script);
+  TEST_ASSERT_TRUE(inst->script == script);
+  TEST_ASSERT_TRUE(inst->proto_script == triggers);
   TEST_ASSERT_TRUE(inst->events == events);
   TEST_ASSERT_EQUAL_STRING("obj-proto-update", tb_captured_operation);
   inst->events = NULL;
+  inst->script = NULL;
+  inst->proto_script = NULL;
+  free(script);
+  free(triggers);
 }
 
 /* ------------------------------------------------------------------------ */
@@ -1449,6 +1476,593 @@ static void new_command_reports_bad_position(void)
 }
 
 /* ------------------------------------------------------------------------ */
+/* C2-28: add_object() and the zone a vnum belongs to.                      */
+/* ------------------------------------------------------------------------ */
+
+/* A vnum in no zone (zedit shrank the range while oedit was open) made
+ * add_object() read zone_table[NOWHERE] after obj_proto had grown (ASan
+ * heap-buffer-overflow before the fix).  It is refused before any change. */
+static void add_object_refuses_vnum_outside_every_zone(void)
+{
+  struct obj_data newobj;
+  make_zones(1); make_objs(1);            /* zone 0 covers vnums 1..99 */
+  memset(&newobj, 0, sizeof(newobj));
+  newobj.name = "new";
+  TEST_ASSERT_EQUAL_UINT(NOTHING, add_object(&newobj, 500));
+  TEST_ASSERT_EQUAL_INT(0, top_of_objt);
+  TEST_ASSERT_EQUAL_INT(0, save_list_adds);
+  TEST_ASSERT_EQUAL_STRING("add-object", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "obj vnum 500 belongs to no zone"));
+
+  /* An existing prototype whose zone no longer covers it is left alone. */
+  zone_table[0].bot = 50;
+  tb_error_capture_reset();
+  TEST_ASSERT_EQUAL_UINT(NOTHING, add_object(&newobj, 10));
+  TEST_ASSERT_NULL(obj_proto[0].name);
+  TEST_ASSERT_EQUAL_STRING("add-object", tb_captured_operation);
+}
+
+/* ------------------------------------------------------------------------ */
+/* I1-03: shop list removal with a builder index outside the list.          */
+/* ------------------------------------------------------------------------ */
+
+/* sedit passes the builder's number straight to these; one outside the list
+ * used to be ignored without a word.  A valid removal still leaves a
+ * correctly terminated list (walked under ASan). */
+static void remove_shop_list_entries_reports_bad_index(void)
+{
+  struct shop_buy_data *types;
+  IDXTYPE *rooms;
+
+  CREATE(types, struct shop_buy_data, 3);
+  types[0].type = 1; BUY_WORD(types[0]) = strdup("sword");
+  types[1].type = 5;
+  types[2].type = NOTHING;
+  remove_shop_from_type_list(&types, 2);
+  TEST_ASSERT_EQUAL_STRING("shop-list-index", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "remove index 2 out of range 0..1"));
+  TEST_ASSERT_EQUAL_STRING("sword", BUY_WORD(types[0]));
+  TEST_ASSERT_EQUAL_INT(5, BUY_TYPE(types[1]));
+  remove_shop_from_type_list(&types, 0);
+  TEST_ASSERT_EQUAL_INT(5, BUY_TYPE(types[0]));
+  TEST_ASSERT_EQUAL_INT(NOTHING, BUY_TYPE(types[1]));
+  free(types);
+
+  CREATE(rooms, IDXTYPE, 2);
+  rooms[0] = 3001; rooms[1] = NOTHING;
+  tb_error_capture_reset();
+  remove_shop_from_int_list(&rooms, 1);
+  TEST_ASSERT_EQUAL_STRING("shop-list-index", tb_captured_operation);
+  TEST_ASSERT_EQUAL_INT(3001, rooms[0]);
+  remove_shop_from_int_list(&rooms, 0);
+  TEST_ASSERT_EQUAL_INT(NOTHING, rooms[0]);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  free(rooms);
+}
+
+/* ------------------------------------------------------------------------ */
+/* C2-27: a command list owns its commands' 'V' strings.                    */
+/* ------------------------------------------------------------------------ */
+
+/* Removing a 'V' command, by position or with its room, frees its strings
+ * (LeakSanitizer and the valgrind run report the old leak of the first). */
+static void remove_zone_command_frees_var_strings(void)
+{
+  static const int args[][3] = { { 0, 0, 0 }, { 0, 0, 1 }, { 0, 0, 0 } };
+  int i;
+  make_zones(1); make_rooms(2);
+  set_zone_cmds(0, "VVV", args);
+  for (i = 0; i < 3; i++) {
+    zone_table[0].cmd[i].sarg1 = strdup("name");
+    zone_table[0].cmd[i].sarg2 = strdup("value");
+  }
+  TEST_ASSERT_TRUE(delete_zone_command(&zone_table[0], 0));
+  TEST_ASSERT_EQUAL_INT(2, count_commands(zone_table[0].cmd));
+  remove_room_zone_commands(0, 0);
+  TEST_ASSERT_EQUAL_INT(1, count_commands(zone_table[0].cmd));
+  TEST_ASSERT_EQUAL_INT(1, zone_table[0].cmd[0].arg3);
+  TEST_ASSERT_EQUAL_STRING("value", zone_table[0].cmd[0].sarg2);
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  free(zone_table[0].cmd[0].sarg1);
+  free(zone_table[0].cmd[0].sarg2);
+}
+
+/* ------------------------------------------------------------------------ */
+/* G2-02: players on a deleted quest.                                       */
+/* ------------------------------------------------------------------------ */
+
+/* quest.c clear_quest(), which delete_quest() uses. */
+void clear_quest(struct char_data *ch)
+{
+  GET_QUEST(ch) = NOTHING;
+  GET_QUEST_TIME(ch) = -1;
+  GET_QUEST_COUNTER(ch) = 0;
+  REMOVE_BIT_AR(PRF_FLAGS(ch), PRF_QUEST);
+}
+
+static void make_quest_player(struct char_data *ch, struct player_special_data *sp,
+                              long idnum, qst_vnum quest)
+{
+  memset(ch, 0, sizeof(*ch));
+  memset(sp, 0, sizeof(*sp));
+  ch->player_specials = sp;
+  ch->char_specials.saved.idnum = idnum;
+  GET_QUEST(ch) = quest;
+  GET_QUEST_COUNTER(ch) = 3;
+}
+
+/* delete_quest() left every player on the deleted quest holding its vnum,
+ * which do_score then looked up as aquest_table[NOTHING].  Players in the
+ * game and at the menu are taken off it; other players keep their quests. */
+static void delete_quest_clears_players_on_it(void)
+{
+  struct char_data in_game, on_other, at_menu;
+  struct player_special_data sp1, sp2, sp3;
+  struct descriptor_data menu_desc;
+
+  make_zones(1);
+  make_quest(50, NOBODY);
+  make_quest_player(&in_game, &sp1, 101, 50);
+  make_quest_player(&on_other, &sp2, 102, 51);
+  make_quest_player(&at_menu, &sp3, 103, 50);
+  in_game.next = &on_other;
+  character_list = &in_game;
+  memset(&menu_desc, 0, sizeof(menu_desc));
+  menu_desc.connected = CON_MENU;
+  menu_desc.character = &at_menu;
+  descriptor_list = &menu_desc;
+
+  TEST_ASSERT_TRUE(delete_quest(0));
+
+  TEST_ASSERT_EQUAL_INT(NOTHING, GET_QUEST(&in_game));
+  TEST_ASSERT_EQUAL_INT(0, GET_QUEST_COUNTER(&in_game));
+  TEST_ASSERT_EQUAL_INT(51, GET_QUEST(&on_other));
+  TEST_ASSERT_EQUAL_INT(NOTHING, GET_QUEST(&at_menu));
+  TEST_ASSERT_EQUAL_INT(2, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("quest-delete-player", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "quest vnum 50 deleted while player idnum 103"));
+  character_list = NULL;
+  descriptor_list = NULL;
+}
+
+/* ------------------------------------------------------------------------ */
+/* C2-16: a writer whose stream recorded an error keeps the previous file.  */
+/* ------------------------------------------------------------------------ */
+
+/* fopen() as the code under test sees it (linked with --wrap=fopen).  When
+ * armed, the next write-only stream starts with its error indicator set,
+ * as if a write had failed earlier while the final flush still works:
+ * reading a write-only stream sets the indicator (EBADF). */
+/* NOLINTNEXTLINE(cert-dcl37-c,cert-dcl51-cpp): --wrap requires this name. */
+FILE *__real_fopen(const char *path, const char *mode);
+/* NOLINTNEXTLINE(cert-dcl37-c,cert-dcl51-cpp): --wrap requires this name. */
+FILE *__wrap_fopen(const char *path, const char *mode);
+static int poison_next_write_stream;
+
+FILE *__wrap_fopen(const char *path, const char *mode)
+{
+  FILE *fp = __real_fopen(path, mode);
+
+  if (fp && poison_next_write_stream && mode[0] == 'w' && !strchr(mode, '+')) {
+    poison_next_write_stream = 0;
+    (void)fgetc(fp);
+    TEST_ASSERT_TRUE(ferror(fp));
+  }
+  return fp;
+}
+
+/* saved is the writer's result for a stream poisoned at open. */
+static void check_previous_file_kept(int saved, const char *target, const char *temp)
+{
+  char text[64];
+  TEST_ASSERT_FALSE(saved);
+  TEST_ASSERT_EQUAL_STRING("save-stream-error", tb_captured_operation);
+  TEST_ASSERT_FALSE(file_exists(temp));
+  read_text_file(target, text, sizeof(text));
+  TEST_ASSERT_EQUAL_STRING("previous\n", text);
+}
+
+static void writers_keep_previous_file_after_stream_error(void)
+{
+  static const int args[][3] = { { 1, 5, 0 } };
+  make_zones(1); make_objs(2); make_rooms(1); make_mobs(2, 3000);
+  give_proto_strings(0);
+  set_zone_cmds(0, "O", args);
+  make_shop(5, NULL, 0);
+  shop_index[0].keeper = 1;
+  make_quest(5, NOBODY);
+
+  write_text_file(OBJ_PREFIX "/0.obj", "previous\n");
+  poison_next_write_stream = 1;
+  check_previous_file_kept(save_objects(0), OBJ_PREFIX "/0.obj", OBJ_PREFIX "/0.new");
+
+  write_text_file(ZON_PREFIX "/0.zon", "previous\n");
+  tb_error_capture_reset();
+  poison_next_write_stream = 1;
+  check_previous_file_kept(save_zone(0), ZON_PREFIX "/0.zon", ZON_PREFIX "/0.new");
+
+  write_text_file(SHP_PREFIX "/0.shp", "previous\n");
+  tb_error_capture_reset();
+  poison_next_write_stream = 1;
+  check_previous_file_kept(save_shops(0), SHP_PREFIX "/0.shp", SHP_PREFIX "/0.new");
+
+  write_text_file(QST_PREFIX "/0.qst", "previous\n");
+  tb_error_capture_reset();
+  poison_next_write_stream = 1;
+  check_previous_file_kept(save_quests(0), QST_PREFIX "/0.qst", QST_PREFIX "/0.new");
+}
+
+/* ------------------------------------------------------------------------ */
+/* O1: add_cmd_to_list() with a position past the end.                      */
+/* ------------------------------------------------------------------------ */
+
+/* The command used to be left out without a word (zedit's save gap could
+ * ask for such a position); it is now appended and reported. */
+static void add_cmd_to_list_appends_past_the_end(void)
+{
+  struct reset_com c;
+  make_zones(1);
+  memset(&c, 0, sizeof(c));
+  c.command = 'O';
+  c.arg1 = 7;
+  add_cmd_to_list(&zone_table[0].cmd, &c, 5);
+  TEST_ASSERT_EQUAL_INT(1, count_commands(zone_table[0].cmd));
+  TEST_ASSERT_EQUAL_CHAR('O', zone_table[0].cmd[0].command);
+  TEST_ASSERT_EQUAL_INT(7, zone_table[0].cmd[0].arg1);
+  TEST_ASSERT_EQUAL_STRING("zone-cmd-insert", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "insert position 5 outside 0..0"));
+}
+
+/* ------------------------------------------------------------------------ */
+/* O8d: 'zedit new' and the zone reset queue.                               */
+/* ------------------------------------------------------------------------ */
+
+/* create_new_zone() shifted zone_table but not the reset queue, whose
+ * entries hold zone rnums: a queued zone above the new one was reset under
+ * the wrong rnum, and its own zone stayed at ZO_DEAD. */
+static void create_new_zone_renumbers_reset_queue(void)
+{
+  static const char *const prefixes[] = { ZON_PREFIX, WLD_PREFIX, MOB_PREFIX,
+    OBJ_PREFIX, SHP_PREFIX, QST_PREFIX, TRG_PREFIX };
+  static const char *const types[] = { "zon", "wld", "mob", "obj", "shp", "qst", "trg" };
+  struct reset_q_element low, high;
+  const char *err = NULL;
+  char path[128];
+  size_t i;
+
+  make_zones(2);
+  zone_table[1].number = 5;              /* zone 5 at rnum 1: 501-599 */
+  zone_table[1].bot = 501;
+  zone_table[1].top = 599;
+  for (i = 0; i < sizeof(prefixes) / sizeof(prefixes[0]); i++) {
+    (void)snprintf(path, sizeof(path), "%s/index", prefixes[i]);
+    write_text_file(path, "$\n");
+  }
+  memset(&low, 0, sizeof(low));
+  memset(&high, 0, sizeof(high));
+  low.zone_to_reset = 0;
+  low.next = &high;
+  high.zone_to_reset = 1;                /* zone 5, waiting for its reset */
+  reset_q.head = &low;
+  reset_q.tail = &high;
+
+  TEST_ASSERT_EQUAL_UINT(1, create_new_zone(3, 300, 399, &err));
+  TEST_ASSERT_EQUAL_INT(3, zone_table[1].number);
+  TEST_ASSERT_EQUAL_INT(5, zone_table[2].number);
+  TEST_ASSERT_EQUAL_INT(0, low.zone_to_reset);
+  TEST_ASSERT_EQUAL_INT(2, high.zone_to_reset);      /* still zone 5 */
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+
+  reset_q.head = reset_q.tail = NULL;
+  free(zone_table[1].name);
+  free(zone_table[1].builders);
+  for (i = 0; i < sizeof(prefixes) / sizeof(prefixes[0]); i++) {
+    (void)snprintf(path, sizeof(path), "%s/3.%s", prefixes[i], types[i]);
+    (void)remove(path);
+    (void)snprintf(path, sizeof(path), "%s/index", prefixes[i]);
+    (void)remove(path);
+  }
+}
+
+/* ------------------------------------------------------------------------ */
+/* Leftovers 1: add_room() refuses a zone rnum outside zone_table.          */
+/* ------------------------------------------------------------------------ */
+
+/* Both the insert and the update path indexed zone_table[room->zone] for the
+ * save list (an ASan heap overflow for zone rnum 5 of a one-zone table). */
+static void add_room_refuses_out_of_range_zone(void)
+{
+  struct room_data nr;
+  make_zones(1); make_rooms(2);       /* vnums 10 20 */
+  memset(&nr, 0, sizeof(nr));
+  nr.number = 15;                      /* new: would be inserted */
+  nr.zone = 5;
+  nr.name = "n";
+  nr.description = "d";
+  TEST_ASSERT_EQUAL_UINT(NOWHERE, add_room(&nr));
+  TEST_ASSERT_EQUAL_UINT(1, top_of_world);
+  TEST_ASSERT_EQUAL_INT(20, world[1].number);
+  TEST_ASSERT_EQUAL_STRING("room-add-zone", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "room vnum 15: zone rnum 5"));
+
+  tb_error_capture_reset();
+  nr.number = 20;                      /* existing: would be updated */
+  nr.zone = NOWHERE;
+  TEST_ASSERT_EQUAL_UINT(NOWHERE, add_room(&nr));
+  TEST_ASSERT_EQUAL_STRING("room", world[1].name);
+  TEST_ASSERT_EQUAL_STRING("room-add-zone", tb_captured_operation);
+  TEST_ASSERT_EQUAL_INT(0, save_list_adds);
+}
+
+/* ------------------------------------------------------------------------ */
+/* Leftovers 2: save_rooms() keeps the previous file after a write error,   */
+/* like the other writers (C2-16 above).                                    */
+/* ------------------------------------------------------------------------ */
+static void save_rooms_keeps_previous_file_after_stream_error(void)
+{
+  make_zones(1); make_rooms(2);
+  write_text_file(WLD_PREFIX "/0.wld", "previous\n");
+  poison_next_write_stream = 1;
+  check_previous_file_kept(save_rooms(0), WLD_PREFIX "/0.wld", WLD_PREFIX "/0.new");
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "zone 0 rooms"));
+
+  /* A clean stream still commits. */
+  tb_error_capture_reset();
+  TEST_ASSERT_TRUE(save_rooms(0));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  TEST_ASSERT_FALSE(file_exists(WLD_PREFIX "/0.new"));
+}
+
+/* ------------------------------------------------------------------------ */
+/* Leftovers 3: delete_room() frees the strings of a 'V' command it         */
+/* cancels; destroy_db() frees them for 'V' alone, so a '*' leaked them.    */
+/* ------------------------------------------------------------------------ */
+static void delete_room_frees_cancelled_var_strings(void)
+{
+  static const int args[][3] = { { WLD_TRIGGER, 0, 1 },   /* 'V' in rnum 1 */
+                                 { WLD_TRIGGER, 0, 2 },   /* 'V' in rnum 2 */
+                                 { 1, 0, 0 } };           /* 'D' in rnum 1 */
+  make_zones(1); make_rooms(3);       /* vnums 10 20 30 */
+  set_zone_cmds(0, "VVD", args);
+  zone_table[0].cmd[0].sarg1 = strdup("gone");
+  zone_table[0].cmd[0].sarg2 = strdup("value");
+  zone_table[0].cmd[1].sarg1 = strdup("kept");
+  zone_table[0].cmd[1].sarg2 = strdup("value");
+
+  TEST_ASSERT_TRUE(delete_room(1));
+
+  TEST_ASSERT_EQUAL_INT('*', zone_table[0].cmd[0].command);
+  TEST_ASSERT_NULL(zone_table[0].cmd[0].sarg1);
+  TEST_ASSERT_NULL(zone_table[0].cmd[0].sarg2);
+  TEST_ASSERT_EQUAL_INT('V', zone_table[0].cmd[1].command);
+  TEST_ASSERT_EQUAL_INT(1, zone_table[0].cmd[1].arg3);
+  TEST_ASSERT_EQUAL_STRING("kept", zone_table[0].cmd[1].sarg1);
+  TEST_ASSERT_EQUAL_INT('*', zone_table[0].cmd[2].command);
+  free(zone_table[0].cmd[1].sarg1);
+  free(zone_table[0].cmd[1].sarg2);
+}
+
+/* ------------------------------------------------------------------------ */
+/* O4: add_quest() never wraps a shop_keeper that already chains to         */
+/* questmaster(); the two procs called each other until the stack ran out. */
+/* ------------------------------------------------------------------------ */
+
+/* Follow mob rnum r's spec procs the way the runtime dispatches them:
+ * shop_keeper() calls the S_FUNC of the first shop r keeps, questmaster()
+ * the secondary proc quest_qm_secondary() finds on r's quests.  Returns the
+ * number of wrapper calls before an ordinary proc (or none) ends the chain,
+ * or -1 when a wrapper would run a second time: an endless loop. */
+static int spec_chain_length(mob_rnum r)
+{
+  SPECIAL((*proc)) = mob_index[r].func;
+  int calls = 0, seen_shop = 0, seen_quest = 0, i;
+
+  for (;;) {
+    if (proc == shop_keeper) {
+      if (seen_shop++)
+        return -1;
+      for (i = 0; i <= top_shop && SHOP_KEEPER(i) != r; i++)
+        ;
+      proc = i <= top_shop ? SHOP_FUNC(i) : NULL;
+    } else if (proc == questmaster) {
+      if (seen_quest++)
+        return -1;
+      proc = quest_qm_secondary(mob_index[r].vnum);
+    } else
+      return calls;
+    calls++;
+  }
+}
+
+/* Mob 3001 (rnum 1) keeps shop 5, whose secondary proc is shop_func. */
+static void make_keeper_3001(SPECIAL((*shop_func)))
+{
+  make_zones(1); make_mobs(2, 3000);
+  make_shop(5, NULL, 0);
+  shop_index[0].keeper = 1;
+  shop_index[0].func = shop_func;
+  mob_index[1].func = shop_keeper;
+}
+
+static void free_quest_table_strings(void)
+{
+  qst_rnum i;
+  for (i = 0; i < total_quests; i++)
+    free_quest_strings(&aquest_table[i]);
+}
+
+/* assign_the_shopkeepers() then assign_the_quests() at boot, or a qedit
+ * save: questmaster() -> shop_keeper() -> the original proc.  Saving the
+ * quest again changes nothing. */
+static void add_quest_wraps_a_plain_keeper_once(void)
+{
+  struct aq_data q;
+  make_keeper_3001(original_spec);
+  memset(&q, 0, sizeof(q));
+  q.vnum = 7;
+  q.qm = 3001;
+
+  add_quest(&q);
+  TEST_ASSERT_EQUAL_PTR(questmaster, mob_index[1].func);
+  TEST_ASSERT_EQUAL_PTR(shop_keeper, QST_FUNC(0));
+  TEST_ASSERT_EQUAL_INT(2, spec_chain_length(1));
+
+  q.func = QST_FUNC(0);                /* qedit's copy of the live quest */
+  add_quest(&q);
+  TEST_ASSERT_EQUAL_PTR(questmaster, mob_index[1].func);
+  TEST_ASSERT_EQUAL_PTR(shop_keeper, QST_FUNC(0));
+  TEST_ASSERT_EQUAL_INT(2, spec_chain_length(1));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  free_quest_table_strings();
+}
+
+/* sedit made a questmaster the keeper: shop_keeper() -> questmaster().
+ * Wrapping that shop_keeper in questmaster made the loop. */
+static void add_quest_does_not_rewrap_a_shop_running_questmaster(void)
+{
+  struct aq_data q;
+  make_keeper_3001(questmaster);
+  memset(&q, 0, sizeof(q));
+  q.vnum = 7;
+  q.qm = 3001;
+
+  add_quest(&q);
+  TEST_ASSERT_EQUAL_PTR(shop_keeper, mob_index[1].func);
+  TEST_ASSERT_NULL(QST_FUNC(0));
+  TEST_ASSERT_EQUAL_INT(2, spec_chain_length(1));
+  TEST_ASSERT_EQUAL_STRING("spec-proc-cycle", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail,
+                              "quest vnum 7: questmaster mob vnum 3001 already runs questmaster through shop_keeper"));
+
+  /* A qedit copy taken while questmaster() still chained to shop_keeper
+   * would close the loop through QST_FUNC: the secondary is dropped. */
+  tb_error_capture_reset();
+  q.func = shop_keeper;
+  add_quest(&q);
+  TEST_ASSERT_EQUAL_PTR(shop_keeper, mob_index[1].func);
+  TEST_ASSERT_NULL(QST_FUNC(0));
+  TEST_ASSERT_EQUAL_INT(2, spec_chain_length(1));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "secondary proc leads back to questmaster; dropped"));
+  free_quest_table_strings();
+}
+
+/* ------------------------------------------------------------------------ */
+/* Core-utils follow-up: a GET_WAS_IN that was the deleted room becomes the */
+/* character's start room, by vnum; it used to be the Void (rnum 0), where  */
+/* an idle player was put back on their next command and stranded.         */
+/* ------------------------------------------------------------------------ */
+static void delete_room_sends_was_in_to_start_room(void)
+{
+  struct char_data mortal, immortal, frozen, elsewhere;
+  make_zones(1); make_rooms(5);        /* vnums 10 20 30 40 50 */
+  CONFIG_MORTAL_START = 40;
+  CONFIG_IMMORTAL_START = 30;
+  CONFIG_FROZEN_START = 10;
+  r_mortal_start_room = 3;
+  r_immort_start_room = 2;
+  r_frozen_start_room = 0;
+  memset(&mortal, 0, sizeof(mortal));
+  memset(&immortal, 0, sizeof(immortal));
+  memset(&frozen, 0, sizeof(frozen));
+  memset(&elsewhere, 0, sizeof(elsewhere));
+  mortal.next = &immortal;
+  immortal.next = &frozen;
+  frozen.next = &elsewhere;
+  character_list = &mortal;
+  mortal.was_in_room = immortal.was_in_room = frozen.was_in_room = 1;   /* vnum 20 */
+  immortal.player.level = LVL_IMMORT;
+  SET_BIT_AR(PLR_FLAGS(&frozen), PLR_FROZEN);
+  elsewhere.was_in_room = 4;           /* vnum 50 */
+
+  TEST_ASSERT_TRUE(delete_room(1));
+
+  TEST_ASSERT_EQUAL_INT(40, world[mortal.was_in_room].number);
+  TEST_ASSERT_EQUAL_INT(30, world[immortal.was_in_room].number);
+  TEST_ASSERT_EQUAL_INT(10, world[frozen.was_in_room].number);
+  TEST_ASSERT_EQUAL_INT(50, world[elsewhere.was_in_room].number);
+  TEST_ASSERT_EQUAL_INT(3, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("room-delete-wasin", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail,
+                              "was_in room vnum 20, which was deleted; now start room vnum 10"));
+
+  /* A start vnum with no room falls back to the (renumbered) mortal start
+   * room.  Rooms are now 10 30 40 50. */
+  tb_error_capture_reset();
+  CONFIG_MORTAL_START = 99;
+  mortal.next = NULL;
+  mortal.was_in_room = 3;              /* vnum 50 */
+  TEST_ASSERT_TRUE(delete_room(3));
+  TEST_ASSERT_EQUAL_INT(40, world[mortal.was_in_room].number);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "now start room vnum 40"));
+
+  character_list = NULL;
+  CONFIG_MORTAL_START = CONFIG_IMMORTAL_START = CONFIG_FROZEN_START = 0;
+  r_mortal_start_room = r_immort_start_room = r_frozen_start_room = 0;
+}
+
+/* ------------------------------------------------------------------------ */
+/* Leftovers round 2: delete_quest() keeps the questmaster's other procs    */
+/* and never leaves a proc calling itself.                                  */
+/* ------------------------------------------------------------------------ */
+
+/* sedit made the questmaster a keeper: shop_keeper() -> questmaster() ->
+ * original.  Deleting its last quest takes questmaster out of the shop; it
+ * used to overwrite shop_keeper itself with the original, closing the
+ * shop. */
+static void delete_quest_keeps_the_shop_of_a_keeper_questmaster(void)
+{
+  make_keeper_3001(questmaster);
+  make_quest(7, 3001);                 /* secondary original_spec */
+  TEST_ASSERT_TRUE(delete_quest(0));
+  TEST_ASSERT_EQUAL_PTR(shop_keeper, mob_index[1].func);
+  TEST_ASSERT_EQUAL_PTR(original_spec, shop_index[0].func);
+  TEST_ASSERT_EQUAL_INT(1, spec_chain_length(1));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+}
+
+/* Boot order: questmaster() -> shop_keeper() -> original, the secondary on
+ * quest 7 only.  Deleting quest 7 hands it to quest 8, which questmaster()
+ * calls now; it used to be dropped, and the shop with it. */
+static void delete_quest_hands_the_secondary_to_a_remaining_quest(void)
+{
+  make_keeper_3001(original_spec);
+  mob_index[1].func = questmaster;
+  total_quests = 2;
+  CREATE(aquest_table, struct aq_data, 2);
+  aquest_table[0].vnum = 7;
+  aquest_table[0].qm = 3001;
+  aquest_table[0].func = shop_keeper;
+  aquest_table[1].vnum = 8;
+  aquest_table[1].qm = 3001;
+
+  TEST_ASSERT_TRUE(delete_quest(0));
+  TEST_ASSERT_EQUAL_PTR(questmaster, mob_index[1].func);
+  TEST_ASSERT_EQUAL_PTR(shop_keeper, QST_FUNC(0));
+  TEST_ASSERT_EQUAL_INT(2, spec_chain_length(1));
+
+  /* The last quest goes: shop_keeper takes questmaster's place. */
+  TEST_ASSERT_TRUE(delete_quest(0));
+  TEST_ASSERT_EQUAL_PTR(shop_keeper, mob_index[1].func);
+  TEST_ASSERT_EQUAL_INT(1, spec_chain_length(1));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+}
+
+/* A questmaster mob that runs some other proc keeps it, reported; it used
+ * to get the quest's secondary (here none) in its place. */
+static void delete_quest_leaves_an_unrelated_proc(void)
+{
+  make_zones(1); make_mobs(2, 3000);
+  make_quest(7, 3001);
+  aquest_table[0].func = NULL;
+  mob_index[1].func = original_spec;
+  TEST_ASSERT_TRUE(delete_quest(0));
+  TEST_ASSERT_EQUAL_PTR(original_spec, mob_index[1].func);
+  TEST_ASSERT_EQUAL_STRING("quest-delete-qm-proc", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "quest vnum 7: questmaster mob vnum 3001"));
+}
+
+/* ------------------------------------------------------------------------ */
 /* Temporary world directory for the writers.                               */
 /* ------------------------------------------------------------------------ */
 static char test_root[] = "/tmp/tb-genolc-XXXXXX";
@@ -1554,6 +2168,22 @@ int main(void)
   RUN_TEST(dg_read_trigger_keeps_missing_room_vnum);
   RUN_TEST(new_command_is_zeroed);
   RUN_TEST(new_command_reports_bad_position);
+  RUN_TEST(add_object_refuses_vnum_outside_every_zone);
+  RUN_TEST(remove_shop_list_entries_reports_bad_index);
+  RUN_TEST(remove_zone_command_frees_var_strings);
+  RUN_TEST(delete_quest_clears_players_on_it);
+  RUN_TEST(writers_keep_previous_file_after_stream_error);
+  RUN_TEST(add_cmd_to_list_appends_past_the_end);
+  RUN_TEST(create_new_zone_renumbers_reset_queue);
+  RUN_TEST(add_room_refuses_out_of_range_zone);
+  RUN_TEST(save_rooms_keeps_previous_file_after_stream_error);
+  RUN_TEST(delete_room_frees_cancelled_var_strings);
+  RUN_TEST(add_quest_wraps_a_plain_keeper_once);
+  RUN_TEST(add_quest_does_not_rewrap_a_shop_running_questmaster);
+  RUN_TEST(delete_room_sends_was_in_to_start_room);
+  RUN_TEST(delete_quest_keeps_the_shop_of_a_keeper_questmaster);
+  RUN_TEST(delete_quest_hands_the_secondary_to_a_remaining_quest);
+  RUN_TEST(delete_quest_leaves_an_unrelated_proc);
   failures = UNITY_END();
   leave_test_root();
   return failures;

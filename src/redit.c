@@ -243,15 +243,30 @@ void redit_setup_existing(struct descriptor_data *d, int real_num)
     }
   }
 
-  /* Extra descriptions, if necessary. */
+  /* Extra descriptions, if necessary.  parse_room() keeps NULL for an empty
+   * '~' keyword or description in the world file (world-file input), and
+   * strdup(NULL) crashed here.  Such an entry is copied incomplete: the
+   * extra-description menu shows the missing part as <NONE>, and backing
+   * out of an incomplete entry deletes it. */
   if (world[real_num].ex_description) {
     struct extra_descr_data *tdesc, *temp, *temp2;
+    int n = 1;
     CREATE(temp, struct extra_descr_data, 1);
 
     room->ex_description = temp;
-    for (tdesc = world[real_num].ex_description; tdesc; tdesc = tdesc->next) {
-      temp->keyword = strdup(tdesc->keyword);
-      temp->description = strdup(tdesc->description);
+    for (tdesc = world[real_num].ex_description; tdesc; tdesc = tdesc->next, n++) {
+      temp->keyword = tdesc->keyword ? strdup(tdesc->keyword) : NULL;
+      temp->description = tdesc->description ? strdup(tdesc->description) : NULL;
+      if (!tdesc->keyword || !tdesc->description) {
+        struct char_data *builder = d->character;
+        const char *missing = !tdesc->keyword ?
+          (!tdesc->description ? "keyword or description" : "keyword") : "description";
+
+        TB_WARN_MSG("olc", "redit-exdesc-incomplete", "room",
+                    "builder " DIAG_CHAR_FMT " room vnum %d extra desc %d has no %s; copied incomplete",
+                    DIAG_CHAR(builder), world[real_num].number, n, missing);
+        write_to_output(d, "Extra description %d of this room has no %s.\r\n", n, missing);
+      }
       if (tdesc->next) {
 	CREATE(temp2, struct extra_descr_data, 1);
 	temp->next = temp2;

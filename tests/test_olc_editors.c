@@ -28,6 +28,7 @@
 #include "genwld.h"
 #include "shop.h"
 #include "genshp.h"
+#include "quest.h"
 #include "olc_checks.h"
 #include "modify.h"
 #include <stdarg.h>
@@ -277,7 +278,17 @@ void sprintbitarray(int bitvector[], const char *names[], int maxar, char *resul
 void string_write(struct descriptor_data *d, char **txt, size_t len, long mailto, void *data)
 { (void)d; (void)txt; (void)len; (void)mailto; free(data); }
 void copy_ex_descriptions(struct extra_descr_data **to, struct extra_descr_data *from) { (void)from; *to = NULL; }
-void free_ex_descriptions(struct extra_descr_data *head) { (void)head; }
+/* As genolc.c: the list owns its nodes and their strings. */
+void free_ex_descriptions(struct extra_descr_data *head)
+{
+  struct extra_descr_data *next;
+  for (; head; head = next) {
+    next = head->next;
+    free(head->keyword);
+    free(head->description);
+    free(head);
+  }
+}
 void dg_olc_script_copy(struct descriptor_data *d) { OLC_SCRIPT(d) = NULL; }
 void dg_script_menu(struct descriptor_data *d) { (void)d; }
 int dg_script_edit_parse(struct descriptor_data *d, char *arg) { (void)d; (void)arg; return 1; }
@@ -335,7 +346,9 @@ static struct trig_proto_list *make_trig_list(int n)
 }
 void copy_proto_script(void *source, void *dest, int type) { (void)source; (void)dest; (void)type; }
 
-zone_rnum real_zone_by_thing(room_vnum vznum) { (void)vznum; return 0; }
+/* Every vnum is in zone 0 unless a test moves it out (NOWHERE). */
+static zone_rnum zone_by_thing_result = 0;
+zone_rnum real_zone_by_thing(room_vnum vznum) { (void)vznum; return zone_by_thing_result; }
 int save_objects(zone_rnum zone_num) { (void)zone_num; return TRUE; }
 
 obj_rnum real_object(obj_vnum vnum)
@@ -357,6 +370,7 @@ int free_room_strings(struct room_data *room)
   int i;
   free(room->name);
   free(room->description);
+  free_ex_descriptions(room->ex_description);
   for (i = 0; i < DIR_COUNT; i++)
     if (room->dir_option[i]) {
       free(room->dir_option[i]->general_description);
@@ -401,7 +415,28 @@ mob_rnum add_mobile(struct char_data *mob, mob_vnum vnum)
 int add_to_save_list(zone_vnum zone, int type) { (void)zone; (void)type; return TRUE; }
 room_vnum genolc_zone_bottom(zone_rnum rznum) { (void)rznum; return 0; }
 room_vnum genolc_zonep_bottom(struct zone_data *zone) { (void)zone; return 0; }
-void remove_room_zone_commands(zone_rnum zone, room_rnum room_num) { (void)zone; (void)room_num; }
+/* As genzon.c: drop the room's commands ('M', 'O', 'T', 'V' by arg3, 'D',
+ * 'R' by arg1; 'G', 'E', 'P', '*' go with the command before them).  The
+ * delete_zone_command() model below frees their 'V' strings. */
+int delete_zone_command(struct zone_data *zone, int pos);
+void remove_room_zone_commands(zone_rnum zone, room_rnum room_num)
+{
+  int subcmd = 0, cmd_room = -2;
+  while (zone_table[zone].cmd[subcmd].command != 'S') {
+    switch (zone_table[zone].cmd[subcmd].command) {
+    case 'M': case 'O': case 'T': case 'V':
+      cmd_room = zone_table[zone].cmd[subcmd].arg3;
+      break;
+    case 'D': case 'R':
+      cmd_room = zone_table[zone].cmd[subcmd].arg1;
+      break;
+    default:
+      break;
+    }
+    if (cmd_room != room_num || !delete_zone_command(&zone_table[zone], subcmd))
+      subcmd++;
+  }
+}
 int save_zone(zone_rnum zone_num) { (void)zone_num; return TRUE; }
 
 int count_commands(struct reset_com *list)
@@ -437,21 +472,25 @@ int new_command(struct zone_data *zone, int pos)
   return 1;
 }
 
+/* Returns TRUE when the command was removed and, like genzon.c's, frees
+ * the removed command's 'V' strings: the list owns them. */
 int delete_zone_command(struct zone_data *zone, int pos)
 {
   int count = count_commands(zone->cmd), i, l;
   struct reset_com *newlist;
   if (pos < 0 || pos >= count)
-    return 0;
+    return FALSE;
   newlist = calloc((size_t)count, sizeof(*newlist));
   TEST_ASSERT_NOT_NULL(newlist);
   for (i = 0, l = 0; i < count; i++)
     if (i != pos)
       newlist[l++] = zone->cmd[i];
   newlist[count - 1].command = 'S';
+  free(zone->cmd[pos].sarg1);
+  free(zone->cmd[pos].sarg2);
   free(zone->cmd);
   zone->cmd = newlist;
-  return 1;
+  return TRUE;
 }
 
 static char *dup_or_null(const char *s) { return s ? strdup(s) : NULL; }
@@ -469,22 +508,16 @@ static int add_object_result = -1;   /* < 0: update in place */
 obj_rnum add_object(struct obj_data *newobj, obj_vnum ovnum)
 {
   obj_rnum r;
-  struct obj_data *obj;
   (void)newobj;
   if (add_object_result >= 0)
     return (obj_rnum)add_object_result;
   /* An update in place: genobj's update_all_objects() struct-copies the
-   * prototype over each live instance, so script and proto_script become
-   * the prototype's (NULL). */
+   * prototype over each live instance but keeps the instance's own script
+   * and trigger list, which this model leaves untouched. */
   if ((r = real_object(ovnum)) == NOTHING)
     return r;
   /* copy_object(&obj_proto[r], newobj) is a struct copy as well. */
   obj_proto[r].proto_script = newobj->proto_script;
-  for (obj = object_list; obj; obj = obj->next)
-      if (obj->item_number == r) {
-        obj->script = NULL;
-        obj->proto_script = NULL;
-      }
   return r;
 }
 
@@ -513,9 +546,16 @@ void free_shop(struct shop_data *shop) { free(shop); }
 void modify_shop_string(char **str, char *newstr) { free(*str); *str = strdup(newstr); }
 static long last_int_list_add = -2;
 void add_shop_to_int_list(IDXTYPE **tlist, IDXTYPE newi) { (void)tlist; last_int_list_add = (long)newi; }
-void remove_shop_from_int_list(IDXTYPE **list, IDXTYPE num) { (void)list; (void)num; }
+/* Quest table and questmaster(): sedit checks a keeper's quests before
+ * wrapping its spec proc (O4). */
+struct aq_data *aquest_table = NULL;
+qst_rnum total_quests = 0;
+SPECIAL(questmaster) { (void)ch; (void)me; (void)cmd; (void)argument; return FALSE; }
+
+static long last_int_list_remove = -2, last_type_list_remove = -2;
+void remove_shop_from_int_list(IDXTYPE **list, IDXTYPE num) { (void)list; last_int_list_remove = (long)num; }
 void add_shop_to_type_list(struct shop_buy_data **list, struct shop_buy_data *newl) { (void)list; (void)newl; }
-void remove_shop_from_type_list(struct shop_buy_data **list, int num) { (void)list; (void)num; }
+void remove_shop_from_type_list(struct shop_buy_data **list, int num) { (void)list; last_type_list_remove = num; }
 
 static int zone_editable = TRUE;
 int can_edit_zone(struct char_data *ch, zone_rnum rnum) { (void)ch; (void)rnum; return zone_editable; }
@@ -564,6 +604,7 @@ void setUp(void)
   add_room_calls = 0;
   deleted_rnum = -1;
   add_object_result = -1;
+  zone_by_thing_result = 0;
   delete_calls = 0;
   zone_editable = TRUE;
   add_room_result = NOWHERE;
@@ -1228,6 +1269,7 @@ static void test_oedit_save_releases_live_instance_scripts_first(void)
   OLC_NUM(d) = 3001;
   oedit_setup_existing(d, 1);
   STATE(d) = CON_OEDIT;
+  OLC_SCRIPT(d) = make_trig_list(1);    /* a changed list: rebuild */
 
   oedit_save_internally(d);
 
@@ -1235,6 +1277,8 @@ static void test_oedit_save_releases_live_instance_scripts_first(void)
   TEST_ASSERT_EQUAL_PTR(&instance, last_extracted_thing);
   TEST_ASSERT_NULL(instance.proto_script);
   TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  free_trig_list(obj_proto[1].proto_script);
+  obj_proto[1].proto_script = NULL;
   object_list = NULL;
 }
 
@@ -2032,6 +2076,588 @@ static void test_zedit_unknown_mode_aborts_and_reports(void)
   TEST_ASSERT_EQUAL_STRING("zedit-bad-mode", tb_captured_operation);
 }
 
+
+/* ------------------------------------------------------------------ */
+/* C2-28: a save for a vnum that no longer belongs to any zone (zedit  */
+/* shrank the range during the session) is refused before the live    */
+/* instances' scripts are torn down.                                   */
+/* ------------------------------------------------------------------ */
+static void test_oedit_save_outside_every_zone_keeps_live_scripts(void)
+{
+  struct descriptor_data *d = &builder_desc;
+  struct obj_data instance;
+  struct script_data fake_script;
+  struct trig_proto_list *instance_list = make_trig_list(1);
+
+  make_objects(3);
+  memset(&instance, 0, sizeof(instance));
+  memset(&fake_script, 0, sizeof(fake_script));
+  instance.item_number = 1;
+  instance.script = &fake_script;
+  instance.proto_script = instance_list;
+  object_list = &instance;
+
+  OLC_NUM(d) = 3001;
+  oedit_setup_existing(d, 1);
+  STATE(d) = CON_OEDIT;
+  OLC_SCRIPT(d) = make_trig_list(2);      /* the trigger list was edited */
+  zone_by_thing_result = NOWHERE;
+
+  oedit_save_internally(d);
+
+  TEST_ASSERT_EQUAL_INT(0, extract_script_calls);
+  TEST_ASSERT_EQUAL_PTR(&fake_script, instance.script);
+  TEST_ASSERT_EQUAL_PTR(instance_list, instance.proto_script);
+  TEST_ASSERT_EQUAL_STRING("oedit-save", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "obj vnum 3001 belongs to no zone"));
+  free_trig_list(instance_list);
+  object_list = NULL;
+}
+
+
+/* ------------------------------------------------------------------ */
+/* C2-13: a room extra description read with an empty '~' body keeps   */
+/* a NULL description; redit_setup_existing() strdup()ed it (SEGV).    */
+/* ------------------------------------------------------------------ */
+static void test_redit_copies_incomplete_world_exdesc_and_reports_it(void)
+{
+  struct descriptor_data *d = &builder_desc;
+  struct extra_descr_data sign, plaque;
+
+  make_world(2);
+  memset(&sign, 0, sizeof(sign));
+  memset(&plaque, 0, sizeof(plaque));
+  sign.keyword = (char *)"sign";          /* "E\nsign~\n~\n": no body */
+  sign.next = &plaque;
+  plaque.keyword = (char *)"plaque";
+  plaque.description = (char *)"Bronze.\r\n";
+  world[1].ex_description = &sign;
+
+  redit_setup_existing(d, 1);
+
+  TEST_ASSERT_NOT_NULL(OLC_ROOM(d)->ex_description);
+  TEST_ASSERT_EQUAL_STRING("sign", OLC_ROOM(d)->ex_description->keyword);
+  TEST_ASSERT_NULL(OLC_ROOM(d)->ex_description->description);
+  TEST_ASSERT_NOT_NULL(OLC_ROOM(d)->ex_description->next);
+  TEST_ASSERT_EQUAL_STRING("Bronze.\r\n", OLC_ROOM(d)->ex_description->next->description);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("redit-exdesc-incomplete", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "room vnum 3001 extra desc 1 has no description"));
+  TEST_ASSERT_NOT_NULL(strstr(out_buf, "Extra description 1 of this room has no description"));
+  world[1].ex_description = NULL;
+}
+
+
+/* ------------------------------------------------------------------ */
+/* C2-27: only a 'V' command owns strings; one retyped to another      */
+/* command drops them instead of carrying them unused (destroy_db and  */
+/* save_zone ignore a non-'V' command's strings).                      */
+/* ------------------------------------------------------------------ */
+static void test_zedit_retyping_a_global_drops_its_strings(void)
+{
+  struct descriptor_data *d = zedit_v_session();
+
+  OLC_MODE(d) = ZEDIT_COMMAND_TYPE;
+  zedit_parse(d, "x");             /* invalid: the strings stay */
+  TEST_ASSERT_EQUAL_STRING("oldname", OLC_ZONE(d)->cmd[0].sarg1);
+  zedit_parse(d, "m");
+
+  TEST_ASSERT_EQUAL_INT('M', OLC_ZONE(d)->cmd[0].command);
+  TEST_ASSERT_NULL(OLC_ZONE(d)->cmd[0].sarg1);
+  TEST_ASSERT_NULL(OLC_ZONE(d)->cmd[0].sarg2);
+  free_zedit_session(d);
+}
+
+
+/* ------------------------------------------------------------------ */
+/* DG docs item 7: a save rebuilt the scripts of every live instance,  */
+/* discarding their variables and pending waits, even when the trigger */
+/* list had not changed.                                               */
+/* ------------------------------------------------------------------ */
+static void test_oedit_save_with_unchanged_triggers_keeps_live_scripts(void)
+{
+  struct descriptor_data *d = &builder_desc;
+  struct obj_data instance;
+  struct script_data fake_script;
+  struct trig_proto_list *instance_list = make_trig_list(2);
+
+  make_objects(3);
+  obj_proto[1].proto_script = make_trig_list(2);
+  memset(&instance, 0, sizeof(instance));
+  memset(&fake_script, 0, sizeof(fake_script));
+  instance.item_number = 1;
+  instance.script = &fake_script;
+  instance.proto_script = instance_list;
+  object_list = &instance;
+
+  OLC_NUM(d) = 3001;
+  oedit_setup_existing(d, 1);
+  STATE(d) = CON_OEDIT;
+  OLC_SCRIPT(d) = make_trig_list(2);      /* the same vnums: unchanged */
+
+  oedit_save_internally(d);
+
+  TEST_ASSERT_EQUAL_INT(0, extract_script_calls);
+  TEST_ASSERT_EQUAL_PTR(&fake_script, instance.script);
+  TEST_ASSERT_EQUAL_PTR(instance_list, instance.proto_script);
+  TEST_ASSERT_EQUAL_INT(1, free_proto_calls);   /* the old prototype list */
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  free_trig_list(instance_list);
+  free_trig_list(obj_proto[1].proto_script);
+  obj_proto[1].proto_script = NULL;
+  object_list = NULL;
+}
+
+/* One live mob of prototype 3001 (rnum 1) holding a script, and a medit
+ * session saving 3001 with the given trigger list. */
+static struct char_data live_mob;
+static struct script_data live_mob_script;
+
+static void medit_save_with_live_mob(struct trig_proto_list *proto_list,
+                                     struct trig_proto_list *live_list,
+                                     struct trig_proto_list *edited)
+{
+  struct descriptor_data *d = &builder_desc;
+  struct char_data *scratch;
+  int i;
+
+  mob_index = calloc(3, sizeof(*mob_index));
+  mob_proto = calloc(3, sizeof(*mob_proto));
+  TEST_ASSERT_NOT_NULL(mob_index);
+  TEST_ASSERT_NOT_NULL(mob_proto);
+  for (i = 0; i < 3; i++) {
+    mob_index[i].vnum = 3000 + i;
+    mob_proto[i].nr = i;
+  }
+  top_of_mobt = 2;
+  mob_proto[1].proto_script = proto_list;
+
+  memset(&live_mob, 0, sizeof(live_mob));
+  memset(&live_mob_script, 0, sizeof(live_mob_script));
+  live_mob.nr = 1;
+  live_mob.script = &live_mob_script;
+  live_mob.proto_script = live_list;
+  character_list = &live_mob;
+
+  CREATE(scratch, struct char_data, 1);
+  scratch->nr = 1;
+  OLC_MOB(d) = scratch;
+  OLC_NUM(d) = 3001;
+  STATE(d) = CON_MEDIT;
+  OLC_SCRIPT(d) = edited;
+
+  medit_save_internally(d);
+
+  free(scratch);
+  OLC_MOB(d) = NULL;
+  character_list = NULL;
+}
+
+static void free_medit_fixture(void)
+{
+  free_trig_list(mob_proto[1].proto_script);
+  free(mob_index); mob_index = NULL;
+  free(mob_proto); mob_proto = NULL;
+  top_of_mobt = 0;
+}
+
+static void test_medit_save_with_unchanged_triggers_keeps_live_scripts(void)
+{
+  struct trig_proto_list *live_list = make_trig_list(1);
+
+  medit_save_with_live_mob(make_trig_list(1), live_list, make_trig_list(1));
+
+  TEST_ASSERT_EQUAL_INT(0, extract_script_calls);
+  TEST_ASSERT_EQUAL_PTR(&live_mob_script, live_mob.script);
+  TEST_ASSERT_EQUAL_PTR(live_list, live_mob.proto_script);
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  free_trig_list(live_list);
+  free_medit_fixture();
+}
+
+static void test_medit_save_with_changed_triggers_rebuilds_live_scripts(void)
+{
+  medit_save_with_live_mob(make_trig_list(1), make_trig_list(1), make_trig_list(2));
+
+  TEST_ASSERT_EQUAL_INT(1, extract_script_calls);
+  TEST_ASSERT_EQUAL_PTR(&live_mob, last_extracted_thing);
+  TEST_ASSERT_NULL(live_mob.proto_script);       /* freed, then rebuilt */
+  free_medit_fixture();
+}
+
+
+/* ------------------------------------------------------------------ */
+/* O1: the zedit save kept a 'G'/'E' only right after an 'M' and a 'P' */
+/* only right after an 'O', so room 4030's "M snake, G carcass, P      */
+/* coins" lost its 'P' on every save (75 commands in the shipped       */
+/* zones); a refused command also left a gap that pulled another       */
+/* room's command into the block, and the block moved to the top.      */
+/* ------------------------------------------------------------------ */
+static struct reset_com zc(char command, int if_flag, int arg1, int arg2, int arg3)
+{
+  struct reset_com c;
+  memset(&c, 0, sizeof(c));
+  c.command = command;
+  c.if_flag = if_flag;
+  c.arg1 = arg1;
+  c.arg2 = arg2;
+  c.arg3 = arg3;
+  return c;
+}
+
+/* Zone 30's list: the given commands, then 'S', sized to fit. */
+static void set_zone_list(const struct reset_com *cmds, int n)
+{
+  int i;
+  CREATE(zone_fixture.cmd, struct reset_com, n + 1);
+  for (i = 0; i < n; i++)
+    zone_fixture.cmd[i] = cmds[i];
+  zone_fixture.cmd[n].command = 'S';
+}
+
+static void assert_zone_list(const struct reset_com *want, int n)
+{
+  int i;
+  TEST_ASSERT_EQUAL_INT(n, count_commands(zone_fixture.cmd));
+  for (i = 0; i < n; i++) {
+    TEST_ASSERT_EQUAL_CHAR(want[i].command, zone_fixture.cmd[i].command);
+    TEST_ASSERT_EQUAL_INT(want[i].if_flag, zone_fixture.cmd[i].if_flag);
+    TEST_ASSERT_EQUAL_INT(want[i].arg1, zone_fixture.cmd[i].arg1);
+    TEST_ASSERT_EQUAL_INT(want[i].arg2, zone_fixture.cmd[i].arg2);
+    TEST_ASSERT_EQUAL_INT(want[i].arg3, zone_fixture.cmd[i].arg3);
+  }
+}
+
+/* Save a zedit session on room 3001 (rnum 1) holding block[0..n-1]. */
+static void save_room_3001_block(const struct reset_com *block, int n)
+{
+  struct descriptor_data *d = &builder_desc;
+  make_zedit_session(d, block, n);
+  OLC_MODE(d) = ZEDIT_CONFIRM_SAVESTRING;
+  zedit_parse(d, "y");
+  TEST_ASSERT_NULL(d->olc);
+}
+
+static void free_zone_list(void)
+{
+  free(zone_fixture.cmd);
+  zone_fixture.cmd = NULL;
+  top_of_mobt = 0;
+}
+
+static void test_zedit_save_keeps_room_block_and_zone_order(void)
+{
+  const struct reset_com zone[] = {
+    zc('M', 0, 0, 1, 0),        /* room 3000: a mob with an item */
+    zc('G', 1, 0, 1, -1),
+    zc('M', 0, 1, 1, 1),        /* room 3001: the snake, as room 4030 */
+    zc('G', 1, 1, 1, -1),       /*   with a carcass */
+    zc('P', 1, 2, 1, 1),        /*   holding coins */
+    zc('E', 1, 0, 1, 5),        /*   and wearing a ring */
+    zc('O', 0, 2, 1, 2),        /* room 3002: an object, and a put */
+    zc('P', 1, 0, 1, 2),
+  };
+
+  make_world(3);
+  make_objects(3);
+  make_zone();
+  top_of_mobt = 1;
+  set_zone_list(zone, 8);
+
+  save_room_3001_block(&zone[2], 4);
+
+  assert_zone_list(zone, 8);            /* nothing lost, nothing moved */
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  TEST_ASSERT_NULL(strstr(out_buf, "not saved"));
+  free_zone_list();
+}
+
+/* Only what reset_zone() would refuse is refused, it is reported, and the
+ * commands after it close up instead of leaving a gap. */
+static void test_zedit_save_refuses_orphan_give_without_a_gap(void)
+{
+  const struct reset_com zone[] = {
+    zc('O', 0, 0, 1, 0),        /* room 3000; no mob anywhere */
+    zc('O', 0, 1, 1, 1),        /* room 3001 */
+    zc('P', 1, 2, 1, 1),
+    zc('O', 0, 2, 1, 2),        /* room 3002 */
+  };
+  const struct reset_com block[] = {
+    zc('G', 0, 2, 1, -1),       /* no mobile is loaded before it */
+    zc('O', 0, 1, 1, 1),
+    zc('P', 1, 2, 1, 1),
+  };
+
+  make_world(3);
+  make_objects(3);
+  make_zone();
+  set_zone_list(zone, 4);
+
+  save_room_3001_block(block, 3);
+
+  assert_zone_list(zone, 4);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("zedit-save", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail,
+                              "zone 30 room vnum 3001 command 0 'G' not saved: no mobile is loaded before it"));
+  TEST_ASSERT_NOT_NULL(strstr(out_buf, "Command 0 (G) was not saved"));
+  free_zone_list();
+}
+
+/* A room that had no commands gets its block at the end of the zone, so it
+ * does not land in front of another room's commands. */
+static void test_zedit_save_appends_a_new_room_block(void)
+{
+  const struct reset_com zone[] = {
+    zc('M', 0, 0, 1, 0),        /* room 3000 */
+    zc('G', 1, 0, 1, -1),
+  };
+  const struct reset_com block[] = {
+    zc('O', 0, 1, 1, 1),        /* room 3001's first command */
+  };
+  const struct reset_com want[] = { zone[0], zone[1], block[0] };
+
+  make_world(3);
+  make_objects(3);
+  make_zone();
+  set_zone_list(zone, 2);
+
+  save_room_3001_block(block, 1);
+
+  assert_zone_list(want, 3);
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  free_zone_list();
+}
+
+/* ------------------------------------------------------------------ */
+/* Integration: an argument zedit has not filled in holds -1           */
+/* (zedit_init_new_command).  VALID_MOB_RNUM used to take -1 for a     */
+/* valid rnum and VALID_TRIG_RNUM to index trig_index[] with it; both  */
+/* refuse negatives now (utils.h tb_rnum_valid), so the save and the   */
+/* menu refuse both without reading a table (trig_index and mob_proto */
+/* are NULL here: a read crashes).                                     */
+/* ------------------------------------------------------------------ */
+static void test_zedit_save_refuses_unset_mob_and_trigger_args(void)
+{
+  const struct reset_com zone[] = {
+    zc('O', 0, 0, 1, 0),        /* room 3000 */
+  };
+  const struct reset_com block[] = {
+    zc('M', 0, -1, 1, 1),       /* mobile never chosen */
+    zc('T', 0, WLD_TRIGGER, -1, 1),  /* trigger never chosen */
+  };
+
+  make_world(3);
+  make_objects(3);
+  make_zone();
+  set_zone_list(zone, 1);
+
+  save_room_3001_block(block, 2);
+
+  assert_zone_list(zone, 1);
+  TEST_ASSERT_EQUAL_INT(2, tb_captured_errors);
+  TEST_ASSERT_NOT_NULL(strstr(out_buf, "Command 0 (M) was not saved: its mobile does not exist"));
+  TEST_ASSERT_NOT_NULL(strstr(out_buf, "Command 1 (T) was not saved: its trigger does not exist"));
+  free_zone_list();
+}
+
+static void test_zedit_menu_reports_unset_mob_and_trigger_args(void)
+{
+  struct descriptor_data *d = &builder_desc;
+  const struct reset_com cmds[] = {
+    zc('M', 0, -1, 1, 1),
+    zc('T', 0, WLD_TRIGGER, -1, 1),
+  };
+
+  make_zone();
+  make_zedit_session(d, cmds, 2);
+  OLC_MODE(d) = ZEDIT_MAIN_MENU;
+
+  zedit_parse(d, "?");   /* any unknown choice redisplays the menu */
+
+  TEST_ASSERT_NOT_NULL(strstr(out_buf, "<stale mobile rnum -1>"));
+  TEST_ASSERT_NOT_NULL(strstr(out_buf, "<stale trigger rnum -1>"));
+  TEST_ASSERT_EQUAL_STRING("stale-rnum", tb_captured_operation);
+  free_zedit_session(d);
+}
+
+/* ------------------------------------------------------------------ */
+/* Leftovers 5: a delete-entry index outside a shop list is refused in */
+/* sedit, reported with the shop and builder, and explained.  genshp.c */
+/* refused it with a log line only: the builder just saw the menu      */
+/* again with nothing deleted.                                         */
+/* ------------------------------------------------------------------ */
+static void test_sedit_delete_index_outside_list_is_refused_and_explained(void)
+{
+  struct descriptor_data *d = &builder_desc;
+  struct shop_data scratch;
+  IDXTYPE products[] = { 0, 1, NOTHING };
+  IDXTYPE rooms[] = { NOWHERE };
+  struct shop_buy_data types[2];
+
+  make_objects(2);
+  memset(&scratch, 0, sizeof(scratch));
+  memset(types, 0, sizeof(types));
+  BUY_TYPE(types[0]) = 0;
+  BUY_TYPE(types[1]) = NOTHING;
+  S_PRODUCTS(&scratch) = products;
+  S_ROOMS(&scratch) = rooms;
+  S_NAMELISTS(&scratch) = types;
+  OLC_SHOP(d) = &scratch;
+  OLC_NUM(d) = 3000;
+  last_int_list_remove = last_type_list_remove = -2;
+
+  OLC_MODE(d) = SEDIT_DELETE_PRODUCT;
+  sedit_parse(d, "2");
+  TEST_ASSERT_EQUAL_INT(-2, last_int_list_remove);
+  TEST_ASSERT_EQUAL_STRING("shop-list-index", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail,
+                              "shop vnum 3000 product list: delete index 2 out of range 0..1"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "player idnum 4242"));
+  TEST_ASSERT_NOT_NULL(strstr(out_buf, "There is no product 2 (choose 0 to 1); nothing deleted."));
+  TEST_ASSERT_EQUAL_INT(SEDIT_PRODUCTS_MENU, OLC_MODE(d));
+
+  OLC_MODE(d) = SEDIT_DELETE_TYPE;
+  sedit_parse(d, "-1");
+  TEST_ASSERT_EQUAL_INT(-2, last_type_list_remove);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "entry list: delete index -1 out of range 0..0"));
+
+  out_buf[0] = '\0';
+  OLC_MODE(d) = SEDIT_DELETE_ROOM;
+  sedit_parse(d, "0");
+  TEST_ASSERT_EQUAL_INT(-2, last_int_list_remove);
+  TEST_ASSERT_NOT_NULL(strstr(out_buf, "There is no room to delete."));
+
+  OLC_MODE(d) = SEDIT_DELETE_PRODUCT;
+  sedit_parse(d, "99999999999");   /* digits, but no int */
+  TEST_ASSERT_EQUAL_INT(-2, last_int_list_remove);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "delete answer (11 chars) is not an int"));
+  TEST_ASSERT_EQUAL_INT(4, tb_captured_errors);
+
+  /* An index in the list is still passed on, silently. */
+  OLC_MODE(d) = SEDIT_DELETE_PRODUCT;
+  sedit_parse(d, "1");
+  TEST_ASSERT_EQUAL_INT(1, last_int_list_remove);
+  OLC_MODE(d) = SEDIT_DELETE_TYPE;
+  sedit_parse(d, "0");
+  TEST_ASSERT_EQUAL_INT(0, last_type_list_remove);
+  TEST_ASSERT_EQUAL_INT(4, tb_captured_errors);
+
+  OLC_SHOP(d) = NULL;
+  free(obj_index); obj_index = NULL;
+  free(obj_proto); obj_proto = NULL;
+  top_of_objt = 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* O4: sedit never wraps a questmaster whose quests already chain to   */
+/* shop_keeper (assign_the_quests() leaves a keeper that gives quests  */
+/* like that): shop_keeper -> questmaster -> shop_keeper looped until  */
+/* the stack ran out.                                                  */
+/* ------------------------------------------------------------------ */
+
+/* Mob 1201 (rnum 1) gives quest 50, whose secondary proc is qst_func. */
+static void make_questmaster_1201(SPECIAL((*qst_func)))
+{
+  make_keeper_mobs();
+  mob_index[1].func = questmaster;
+  aquest_table = calloc(1, sizeof(*aquest_table));
+  TEST_ASSERT_NOT_NULL(aquest_table);
+  total_quests = 1;
+  aquest_table[0].vnum = 50;
+  aquest_table[0].qm = 1201;
+  aquest_table[0].func = qst_func;
+}
+
+static void free_questmaster_1201(void)
+{
+  free(aquest_table); aquest_table = NULL;
+  total_quests = 0;
+  free_keeper_mobs();
+}
+
+static void save_shop_3000_with_keeper_1201(struct shop_data *scratch)
+{
+  struct descriptor_data *d = &builder_desc;
+
+  memset(scratch, 0, sizeof(*scratch));
+  S_KEEPER(scratch) = NOBODY;
+  OLC_SHOP(d) = scratch;
+  OLC_NUM(d) = 3000;
+  OLC_MODE(d) = SEDIT_KEEPER;
+  sedit_parse(d, "1201");
+  sedit_save_internally(d);
+  OLC_SHOP(d) = NULL;
+}
+
+static void test_sedit_keeper_running_shop_through_questmaster_is_not_rewrapped(void)
+{
+  static struct shop_data scratch;   /* outlives the OLC session pointer */
+
+  make_questmaster_1201(shop_keeper);
+  save_shop_3000_with_keeper_1201(&scratch);
+
+  TEST_ASSERT_EQUAL_PTR(questmaster, mob_index[1].func);
+  TEST_ASSERT_NULL(S_FUNC(&scratch));
+  TEST_ASSERT_EQUAL_PTR(shop_keeper, aquest_table[0].func);
+  TEST_ASSERT_EQUAL_STRING("spec-proc-cycle", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail,
+                              "shop vnum 3000 keeper vnum 1201 already runs shop_keeper through questmaster"));
+  TEST_ASSERT_NOT_NULL(strstr(out_buf, "Mobile 1201 is a questmaster that already runs shop code"));
+  free_questmaster_1201();
+}
+
+/* A questmaster whose quests do not run shop_keeper is wrapped as before:
+ * shop_keeper -> questmaster -> its own secondary, which ends the chain. */
+static void test_sedit_plain_questmaster_keeper_is_wrapped_once(void)
+{
+  static struct shop_data scratch;   /* outlives the OLC session pointer */
+
+  make_questmaster_1201(test_guild_proc);
+  save_shop_3000_with_keeper_1201(&scratch);
+
+  TEST_ASSERT_EQUAL_PTR(shop_keeper, mob_index[1].func);
+  TEST_ASSERT_EQUAL_PTR(questmaster, S_FUNC(&scratch));
+  TEST_ASSERT_EQUAL_PTR(test_guild_proc, aquest_table[0].func);
+  TEST_ASSERT_EQUAL_STRING("shop-keeper-func", tb_captured_operation);
+  free_questmaster_1201();
+}
+
+/* Leftovers round 2: the old keeper of a shop that moves to another mob gets
+ * its original proc back even when it runs shop_keeper through
+ * questmaster() (assign_the_quests() at boot): the quest's secondary
+ * becomes the shop's saved proc again.  It used to stay shop_keeper. */
+static void test_sedit_keeper_change_restores_questmaster_keepers_proc(void)
+{
+  static struct shop_data scratch;   /* outlives the OLC session pointer */
+  struct descriptor_data *d = &builder_desc;
+
+  make_questmaster_1201(shop_keeper);
+  shop_index = calloc(1, sizeof(*shop_index));
+  TEST_ASSERT_NOT_NULL(shop_index);
+  top_shop = 0;
+  shop_index[0].vnum = 3000;
+  shop_index[0].keeper = 1;             /* mob 1201 */
+  shop_index[0].func = test_guild_proc;
+
+  memset(&scratch, 0, sizeof(scratch));
+  S_KEEPER(&scratch) = 1;
+  OLC_SHOP(d) = &scratch;
+  OLC_NUM(d) = 3000;
+  OLC_MODE(d) = SEDIT_KEEPER;
+  sedit_parse(d, "1202");
+  sedit_save_internally(d);
+  OLC_SHOP(d) = NULL;
+
+  TEST_ASSERT_EQUAL_PTR(questmaster, mob_index[1].func);
+  TEST_ASSERT_EQUAL_PTR(test_guild_proc, aquest_table[0].func);
+  TEST_ASSERT_EQUAL_PTR(shop_keeper, mob_index[2].func);
+
+  free(shop_index); shop_index = NULL;
+  top_shop = -1;
+  free_questmaster_1201();
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -2086,5 +2712,20 @@ int main(void)
   RUN_TEST(test_iedit_start_with_stale_session_reports_and_releases_it);
   RUN_TEST(test_sedit_unknown_mode_aborts_without_touching_freed_session);
   RUN_TEST(test_zedit_unknown_mode_aborts_and_reports);
+  RUN_TEST(test_oedit_save_outside_every_zone_keeps_live_scripts);
+  RUN_TEST(test_redit_copies_incomplete_world_exdesc_and_reports_it);
+  RUN_TEST(test_zedit_retyping_a_global_drops_its_strings);
+  RUN_TEST(test_oedit_save_with_unchanged_triggers_keeps_live_scripts);
+  RUN_TEST(test_medit_save_with_unchanged_triggers_keeps_live_scripts);
+  RUN_TEST(test_medit_save_with_changed_triggers_rebuilds_live_scripts);
+  RUN_TEST(test_zedit_save_keeps_room_block_and_zone_order);
+  RUN_TEST(test_zedit_save_refuses_orphan_give_without_a_gap);
+  RUN_TEST(test_zedit_save_appends_a_new_room_block);
+  RUN_TEST(test_zedit_save_refuses_unset_mob_and_trigger_args);
+  RUN_TEST(test_zedit_menu_reports_unset_mob_and_trigger_args);
+  RUN_TEST(test_sedit_delete_index_outside_list_is_refused_and_explained);
+  RUN_TEST(test_sedit_keeper_running_shop_through_questmaster_is_not_rewrapped);
+  RUN_TEST(test_sedit_plain_questmaster_keeper_is_wrapped_once);
+  RUN_TEST(test_sedit_keeper_change_restores_questmaster_keepers_proc);
   return UNITY_END();
 }

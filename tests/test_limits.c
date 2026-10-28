@@ -255,6 +255,39 @@ static void test_orphaned_corpse_contents_reported(void)
   TEST_ASSERT_EQUAL_STRING("corpse-orphan", tb_captured_operation);
 }
 
+/* C1-19 adoption: gain_exp() asks for the next level's experience through
+ * char_level_exp(), so a class-table miss names the player. */
+static const struct char_data *exp_subject;
+static int exp_level;
+int char_level_exp(const struct char_data *ch, int level)
+{ exp_subject = ch; exp_level = level; return 1000000; }
+
+/* gain_exp()'s level-up path (not reached: the player gains too little). */
+void advance_level(struct char_data *ch) { (void)ch; UNREACHED(); }
+void reboot_wizlists(void) { UNREACHED(); }
+const char *title_male(int chclass, int level)
+{ (void)chclass; (void)level; UNREACHED(); return ""; }
+const char *title_female(int chclass, int level)
+{ (void)chclass; (void)level; UNREACHED(); return ""; }
+
+static void test_gain_exp_names_the_player(void)
+{
+  struct char_data pc;
+  struct player_special_data pc_specials;
+
+  memset(&pc, 0, sizeof(pc));
+  memset(&pc_specials, 0, sizeof(pc_specials));
+  pc.player_specials = &pc_specials;
+  GET_LEVEL(&pc) = 1;
+  config_info.play.max_exp_gain = 1000;
+  exp_subject = NULL;
+  gain_exp(&pc, 100);
+  TEST_ASSERT_EQUAL_PTR(&pc, exp_subject);
+  TEST_ASSERT_EQUAL_INT(2, exp_level);
+  TEST_ASSERT_EQUAL_INT(1, GET_LEVEL(&pc));    /* not enough to level */
+  config_info.play.max_exp_gain = 0;
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -265,5 +298,6 @@ int main(void)
   RUN_TEST(test_in_range_changes_are_silent);
   RUN_TEST(test_timer_script_purging_next_object);
   RUN_TEST(test_unexpired_timers_count_down);
+  RUN_TEST(test_gain_exp_names_the_player);
   return UNITY_END();
 }

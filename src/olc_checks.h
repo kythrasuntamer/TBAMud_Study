@@ -23,17 +23,15 @@
 #define TBAMUD_OLC_CHECKS_H_INCLUDED
 
 /* Range checks for rnums held as plain numbers (zone command args, shop
- * lists, scratch identities). VALID_ROOM_RNUM is in utils.h; VALID_OBJ_RNUM
- * there takes an object pointer, hence the _NUM suffix here. The casts make
- * the checks correct for int, signed and unsigned index types alike, and
- * NOWHERE/NOTHING/NOBODY always fail them. Each evaluates r twice: pass a
- * plain value. */
-/* VALID_MOB_RNUM(r) comes from utils.h (NOBODY excluded, r <= top_of_mobt). */
-#define VALID_OBJ_RNUM_NUM(r) ((long)(r) >= 0 && (long)(r) <= (long)top_of_objt)
-/* Token-identical to dg_scripts.h's definition (rejects NOTHING and empty
- * index slots), so including both headers is not a redefinition. */
-#define VALID_TRIG_RNUM(rn) \
-  ((rn) != NOTHING && (int)(rn) < top_of_trigt && trig_index[(rn)] != NULL)
+ * lists, scratch identities). VALID_ROOM_RNUM and VALID_MOB_RNUM are in
+ * utils.h and VALID_TRIG_RNUM in dg_scripts.h; VALID_OBJ_RNUM in utils.h
+ * takes an object pointer, hence the _NUM suffix here. All of them follow
+ * utils.h's tb_rnum_valid(): correct for int, long, signed and unsigned
+ * index types alike, and NOWHERE, NOTHING, NOBODY and negative values (an
+ * unset zone-command argument is -1) always fail them. VALID_OBJ_RNUM_NUM
+ * evaluates r once. */
+#define VALID_OBJ_RNUM_NUM(r) \
+	tb_rnum_valid((long) (r), (long) NOTHING, (long) top_of_objt)
 
 /* The rnum tables an OLC scratch copy can refer to. */
 #define OLC_RNUM_OBJ   0
@@ -158,5 +156,9 @@ void olc_renumber_sessions(int kind, int refpt, int delta,
 /** Free OLC_SCRIPT(d) unless a save already handed it to a prototype (save
  * paths set it to NULL). Called by cleanup_olc() and before 'W' re-setup. */
 void olc_free_script_copy(struct descriptor_data *d);
+/** TRUE when two trigger lists name the same vnums in the same order. A
+ * save rebuilds live instances' scripts only when the list changed. */
+int olc_trig_lists_equal(const struct trig_proto_list *a,
+                         const struct trig_proto_list *b);
 
 #endif /* TBAMUD_OLC_CHECKS_H_INCLUDED */

@@ -36,14 +36,6 @@ struct attack_hit_type {
   GET_POS(pcu_ch_) = pcu_pos_; \
 } while (0)
 
-/** TRUE if ch has been extracted (killed, purged) and awaits
- * extract_pending_chars() at the end of the pulse. The pointer is still
- * allocated, but ch must not act or be acted on. MOB_FLAGS and PLR_FLAGS
- * share storage, so the flag must be chosen by IS_NPC. Evaluates ch more
- * than once: pass a plain variable. */
-#define CHAR_PENDING_EXTRACTION(ch) \
-  (IS_NPC(ch) ? MOB_FLAGGED((ch), MOB_NOTDEADYET) : PLR_FLAGGED((ch), PLR_NOTDEADYET))
-
 /** TRUE if t (an attack type relative to TYPE_HIT: weapon value 3 or a
  * mob's attack_type) indexes attack_hit_text[], which has NUM_ATTACK_TYPES
  * entries. */

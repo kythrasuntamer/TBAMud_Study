@@ -13,7 +13,9 @@
 #include "structs.h"
 #include "utils.h"
 #include "db.h"
+#include "comm.h"
 #include "quest.h"
+#include "shop.h"   /* shop_keeper(), the other spec-proc wrapper */
 #include "genolc.h"
 #include "genzon.h" /* for create_world_index */
 
@@ -31,7 +33,9 @@
  * Questmaster spec procs: a mob that is some quest's questmaster runs
  * questmaster().  If it already had another spec proc, that one is kept in
  * the quest's QST_FUNC and questmaster() chains to it; delete_quest()
- * restores it when the mob is no longer a questmaster of any quest.
+ * restores it when the mob is no longer a questmaster of any quest.  A
+ * shopkeeper whose shop_keeper() already chains to questmaster() is not
+ * wrapped again (add_quest()): the two procs would call each other.
  * Changing a quest's questmaster in qedit does not restore the previous
  * mob's spec proc (it stays questmaster() until reboot).
  */
@@ -98,6 +102,25 @@ void free_quest(struct aq_data *quest)
 
 /*-------------------------------------------------------------------*/
 
+/* TRUE when proc, run for questmaster mob rnum qm, leads back to
+ * questmaster(): it is questmaster itself, or shop_keeper() for a keeper
+ * one of whose shops keeps questmaster as the secondary proc (S_FUNC) that
+ * shop_keeper() calls first (sedit wrapped a questmaster in its shop).
+ * Every such shop counts, not only the one shop_keeper() picks today. */
+static int quest_proc_reaches_questmaster(mob_rnum qm, SPECIAL((*proc)))
+{
+  int s;
+
+  if (proc == questmaster)
+    return TRUE;
+  if (proc != shop_keeper)
+    return FALSE;
+  for (s = 0; s <= top_shop; s++)
+    if (SHOP_KEEPER(s) == qm && SHOP_FUNC(s) == questmaster)
+      return TRUE;
+  return FALSE;
+}
+
 /**
  * Add a quest, or update the quest with the same vnum, from qedit's copy.
  *
@@ -105,7 +128,11 @@ void free_quest(struct aq_data *quest)
  * quests up one slot (their string pointers move with them, so the new
  * slot is filled without freeing).  The questmaster mob (if it has a
  * prototype) gets questmaster() as its spec proc, its previous spec proc
- * being saved in QST_FUNC.
+ * being kept as the secondary proc of every quest of that mob
+ * (quest_set_qm_secondary()), unless that proc already leads to
+ * questmaster() (spec-proc-cycle reported, nothing wrapped).  A QST_FUNC
+ * (from qedit's copy) that would lead back to questmaster() is dropped and
+ * reported the same way.
  *
  * @return The quest's rnum.
  */
@@ -137,12 +164,32 @@ int add_quest(struct aq_data *nqst)
     copy_quest(&aquest_table[rnum], nqst, FALSE);
   }
   qmrnum = real_mobile(QST_MASTER(rnum));
-  /* Make sure we assign spec procs to the questmaster */
-  if (qmrnum != NOBODY && mob_index[qmrnum].func &&
-     mob_index[qmrnum].func != questmaster)
-     quest_set_qm_secondary(QST_MASTER(rnum), mob_index[qmrnum].func);
-  if(qmrnum != NOBODY) 
+  /* Make sure we assign spec procs to the questmaster, but never wrap a
+   * proc that already leads to questmaster(): questmaster itself, or a
+   * shop_keeper() that chains to it.  Wrapping that shop_keeper would close
+   * the loop questmaster() -> shop_keeper() -> questmaster() (a stack
+   * overflow on the next command in the mob's room). */
+  if (qmrnum != NOBODY &&
+      quest_proc_reaches_questmaster(qmrnum, mob_index[qmrnum].func)) {
+    if (mob_index[qmrnum].func != questmaster)
+      TB_WARN_MSG("olc", "spec-proc-cycle", "quest",
+                  "quest vnum %d: questmaster mob vnum %d already runs questmaster through shop_keeper; not wrapped again",
+                  QST_NUM(rnum), QST_MASTER(rnum));
+  } else if (qmrnum != NOBODY) {
+    if (mob_index[qmrnum].func)
+      quest_set_qm_secondary(QST_MASTER(rnum), mob_index[qmrnum].func);
     mob_index[qmrnum].func = questmaster;
+  }
+  /* The secondary questmaster() calls must not lead back to it either: a
+   * qedit copy taken earlier can still hold shop_keeper for a mob whose
+   * shop has since come to chain to questmaster(). */
+  if (qmrnum != NOBODY && QST_FUNC(rnum) &&
+      quest_proc_reaches_questmaster(qmrnum, QST_FUNC(rnum))) {
+    TB_WARN_MSG("olc", "spec-proc-cycle", "quest",
+                "quest vnum %d: questmaster mob vnum %d secondary proc leads back to questmaster; dropped",
+                QST_NUM(rnum), QST_MASTER(rnum));
+    QST_FUNC(rnum) = NULL;
+  }
 
   /* And make sure we save the updated quest information to disk */
   if (rznum != NOWHERE)
@@ -156,13 +203,77 @@ int add_quest(struct aq_data *nqst)
 
 /*-------------------------------------------------------------------*/
 
+/* Take player ch off quest vnum qvnum, which delete_quest() just removed,
+ * as quest_quit() does for a quest that no longer exists.  A player left
+ * on it would keep a vnum that real_quest() no longer finds (do_score read
+ * aquest_table[NOTHING] for it) and save it to the player file. */
+static void delete_quest_clear_player(struct char_data *ch, qst_vnum qvnum)
+{
+  if (IS_NPC(ch) || !ch->player_specials || GET_QUEST(ch) != qvnum)
+    return;
+  TB_WARN_MSG("olc", "quest-delete-player", "quest",
+              "quest vnum %d deleted while " DIAG_CHAR_FMT " was on it; quest cleared",
+              qvnum, DIAG_CHAR(ch));
+  clear_quest(ch);
+  send_to_char(ch, "The quest you were on has been removed.\r\n");
+}
+
+/* TRUE when dsc holds a loaded player who is out of the game (login MOTD,
+ * main menu and the menu's prompts), so not on character_list. */
+static bool delete_quest_menu_player(const struct descriptor_data *dsc)
+{
+  switch (STATE(dsc)) {
+  case CON_RMOTD:
+  case CON_MENU:
+  case CON_PLR_DESC:
+  case CON_CHPWD_GETOLD:
+  case CON_CHPWD_GETNEW:
+  case CON_CHPWD_VRFY:
+  case CON_DELCNF1:
+  case CON_DELCNF2:
+    return dsc->character != NULL;
+  default:
+    return FALSE;
+  }
+}
+
+/* Questmaster mob rnum qmr gives no quest any more: take questmaster() out
+ * of its spec-proc chain and put back the proc it wrapped (secondary),
+ * leaving every other proc in place.  questmaster() is either the mob's
+ * own proc or the secondary of a shop it keeps (sedit wrapped a
+ * questmaster in shop_keeper()); the shop then keeps shop_keeper() and
+ * gets the secondary.  A mob that runs neither is reported and left as it
+ * is.  A secondary that is the outer wrapper itself is dropped, so no
+ * proc ends up calling itself. */
+static void delete_quest_unwrap(mob_rnum qmr, qst_vnum qvnum, SPECIAL((*secondary)))
+{
+  int s, unwrapped = FALSE;
+
+  if (mob_index[qmr].func == questmaster) {
+    mob_index[qmr].func = secondary == questmaster ? NULL : secondary;
+    return;
+  }
+  if (mob_index[qmr].func == shop_keeper)
+    for (s = 0; s <= top_shop; s++)
+      if (SHOP_KEEPER(s) == qmr && SHOP_FUNC(s) == questmaster) {
+        SHOP_FUNC(s) = secondary == shop_keeper ? NULL : secondary;
+        unwrapped = TRUE;
+      }
+  if (!unwrapped)
+    TB_WARN_MSG("olc", "quest-delete-qm-proc", "quest",
+                "quest vnum %d: questmaster mob vnum %d does not run questmaster; "
+                "its spec proc is left as it is", qvnum, mob_index[qmr].vnum);
+}
+
 /**
  * Delete quest rnum (qedit delete).
  *
  * Precondition: rnum < total_quests; NOTHING (a quest never saved) and any
  * other out-of-range value are reported and refused.  Frees the quest's
- * strings, shifts later quests down, and restores the questmaster's saved
- * spec proc when no remaining quest uses that mob.
+ * strings, shifts later quests down, keeps the questmaster's saved spec
+ * proc (on its remaining quests or, when none is left, where questmaster()
+ * was in the mob's chain: delete_quest_unwrap()), and takes every loaded
+ * player who was on the quest off it.
  *
  * @return TRUE when deleted; FALSE, reported, otherwise.
  */
@@ -175,6 +286,8 @@ int delete_quest(qst_rnum rnum)
   qst_vnum deleted_vnum;
   SPECIAL (*tempfunc);
   int  quests_remaining = 0;
+  struct char_data *ch;
+  struct descriptor_data *dsc;
 
   /* qedit can confirm 'delete' on a quest that was never saved, so the
    * caller's real_quest() may return NOTHING; check before any table read. */
@@ -217,15 +330,30 @@ int delete_quest(qst_rnum rnum)
         quests_remaining++;
     }
     /* QST_MASTER is a mob VNUM: mob_index[] is indexed by rnum. */
-    if (quests_remaining == 0) {
-      if ((qmr = real_mobile(qm)) == NOBODY)
-        TB_ERROR_MSG("genqst", "delete-quest-qm", "mob_index",
-                     "quest vnum %d qm mob vnum %d has no rnum; spec proc not restored",
-                     (int) deleted_vnum, (int) qm);
-      else
-        mob_index[qmr].func = tempfunc; // point back to original spec proc
-    }
+    if (quests_remaining > 0) {
+      /* questmaster() calls the secondary found on its remaining quests
+       * (quest_qm_secondary()): give the deleted quest's to every quest of
+       * this questmaster that has none, as quest_set_qm_secondary() records
+       * it, or the proc it wrapped (a shop_keeper, say) stops running. */
+      if (tempfunc)
+        for (i = 0; i < total_quests; i++)
+          if (QST_MASTER(i) == qm && !QST_FUNC(i))
+            QST_FUNC(i) = tempfunc;
+    } else if ((qmr = real_mobile(qm)) == NOBODY)
+      TB_ERROR_MSG("genqst", "delete-quest-qm", "mob_index",
+                   "quest vnum %d qm mob vnum %d has no rnum; spec proc not restored",
+                   (int) deleted_vnum, (int) qm);
+    else
+      delete_quest_unwrap(qmr, deleted_vnum, tempfunc);
   }
+  /* Players in the game (link-dead ones included) are on character_list;
+   * players at the menu are not, and are reached through their
+   * descriptors. */
+  for (ch = character_list; ch; ch = ch->next)
+    delete_quest_clear_player(ch, deleted_vnum);
+  for (dsc = descriptor_list; dsc; dsc = dsc->next)
+    if (delete_quest_menu_player(dsc))
+      delete_quest_clear_player(dsc->character, deleted_vnum);
   return TRUE;
 }
 
@@ -329,9 +457,17 @@ int save_quests(zone_rnum zone_num)
   /* Write the final line and commit only a fully flushed temporary file. */
   tb_fprintf(sf, "$~\n");
   {
+    /* ferror() stays set after any failed write.  tb_fprintf() reported
+     * each one, but a later flush that succeeds would hide it and commit a
+     * file with a hole in it (C2-16). */
+    int stream_ok = !ferror(sf);
     int flush_ok = tb_fflush_checked(sf, filename);
     int close_ok = tb_fclose_checked(sf, filename);
-    if (!flush_ok || !close_ok) {
+    if (!stream_ok)
+      TB_ERROR_MSG("olc", "save-stream-error", filename,
+                   TB_ERRID_PERSIST_WRITE " zone %d quests: a write failed; previous file kept",
+                   zone_table[zone_num].number);
+    if (!stream_ok || !flush_ok || !close_ok) {
       if (remove(filename) != 0 && errno != ENOENT)
         TB_REPORT_ERRNO("remove", filename);
       return FALSE;

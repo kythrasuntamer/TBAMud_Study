@@ -41,8 +41,21 @@ static void extract_mobile_all(mob_vnum vnum);
 int add_mobile(struct char_data *mob, mob_vnum vnum)
 {
   int rnum, i, found = FALSE, shop, cmd_no;
-  zone_rnum zone;
+  zone_rnum zone, rznum;
   struct char_data *live_mob;
+
+  /* Invariant: a prototype's vnum lies in a zone's range; that zone names
+   * the file it is saved to.  The vnum comes from medit (builder input),
+   * which checked the zone when the session started, but zedit can shrink
+   * a zone's range while the session is open, leaving the vnum in no zone.
+   * real_zone_by_thing() then returns NOWHERE, and zone_table[NOWHERE] is
+   * far past the table.  Refuse before mob_proto or mob_index change. */
+  rznum = real_zone_by_thing(vnum);
+  if (!VALID_ZONE_RNUM(rznum)) {
+    TB_ERROR_MSG("genolc", "add-mobile", "mob",
+                 "mob vnum %d belongs to no zone; not added", vnum);
+    return NOBODY;
+  }
 
   if ((rnum = real_mobile(vnum)) != NOBODY) {
     /* Copy over the mobile and free() the old strings. */
@@ -53,7 +66,7 @@ int add_mobile(struct char_data *mob, mob_vnum vnum)
       if (rnum == live_mob->nr)
         update_mobile_strings(live_mob, &mob_proto[rnum]);
 
-    add_to_save_list(zone_table[real_zone_by_thing(vnum)].number, SL_MOB);
+    add_to_save_list(zone_table[rznum].number, SL_MOB);
     log("GenOLC: add_mobile: Updated existing mobile #%d.", vnum);
     return rnum;
   }
@@ -103,7 +116,7 @@ int add_mobile(struct char_data *mob, mob_vnum vnum)
     for (shop = 0; shop <= top_shop; shop++)
       SHOP_KEEPER(shop) += (SHOP_KEEPER(shop) != NOTHING && SHOP_KEEPER(shop) >= found);
 
-  add_to_save_list(zone_table[real_zone_by_thing(vnum)].number, SL_MOB);
+  add_to_save_list(zone_table[rznum].number, SL_MOB);
   return found;
 }
 
@@ -228,7 +241,18 @@ int delete_mobile(mob_rnum refpt)
           TB_WARN_MSG("genolc", "zcmd-delete", "zone",
                       "zone %d cmd %d removed: it loads mob vnum %d, which was deleted",
                       zone_table[zone].number, cmd_no, vnum);
-          delete_zone_command(&zone_table[zone], cmd_no);
+          if (!delete_zone_command(&zone_table[zone], cmd_no)) {
+            /* delete_zone_command() reported why.  The command is still
+             * here, so revisiting cmd_no would never end: step past it. */
+            TB_ERROR_MSG("genolc", "zone-cmd-remove", "zone",
+                         "zone %d cmd %d still loads deleted mob vnum %d",
+                         zone_table[zone].number, cmd_no, vnum);
+            cmd_no++;
+            continue;
+          }
+          /* The reset list changed: write the zone file at the next save,
+           * or the deleted mob's load comes back at reboot. */
+          add_to_save_list(zone_table[zone].number, SL_ZON);
           continue;
         }
         ZCMD(zone, cmd_no).arg1 -= (ZCMD(zone, cmd_no).arg1 > refpt);
@@ -345,13 +369,16 @@ int free_mobile(struct char_data *mob)
   return TRUE;
 }
 
+/* Write zone rznum's mob prototypes to its .mob file through a temporary
+ * file.  Returns TRUE when the file was replaced; FALSE, reported, when the
+ * previous file was kept. */
 int save_mobiles(zone_rnum rznum)
 {
   zone_vnum vznum;
   FILE *mobfd;
   room_vnum i;
   mob_rnum rmob;
-  int written;
+  long written;
   char mobfname[64], usedfname[64];
 
 #if CIRCLE_UNSIGNED_INDEX
@@ -382,11 +409,19 @@ int save_mobiles(zone_rnum rznum)
     }
   }
   tb_fputs("$\n", mobfd);
-  written = ftell(mobfd);
+  written = ftell(mobfd);       /* for the log line; ftell() returns a long */
   {
+    /* ferror() stays set after any failed write.  tb_fprintf() and
+     * tb_fputs() reported each one, but a later flush that succeeds would
+     * hide it and commit a file with a hole in it (C1-29). */
+    int stream_ok = !ferror(mobfd);
     int flush_ok = tb_fflush_checked(mobfd, mobfname);
     int close_ok = tb_fclose_checked(mobfd, mobfname);
-    if (!flush_ok || !close_ok) {
+    if (!stream_ok)
+      TB_ERROR_MSG("genolc", "save-stream-error", mobfname,
+                   TB_ERRID_PERSIST_WRITE " zone %d mobiles: a write failed; previous file kept",
+                   vznum);
+    if (!stream_ok || !flush_ok || !close_ok) {
       if (remove(mobfname) != 0 && errno != ENOENT)
         TB_REPORT_ERRNO("remove", mobfname);
       return FALSE;
@@ -398,8 +433,8 @@ int save_mobiles(zone_rnum rznum)
 
   if (in_save_list(vznum, SL_MOB))
     remove_from_save_list(vznum, SL_MOB);
-  log("GenOLC: '%s' saved, %d bytes written.", usedfname, written);
-  return written;
+  log("GenOLC: '%s' saved, %ld bytes written.", usedfname, written);
+  return TRUE;
 }
 
 int write_mobile_espec(mob_vnum mvnum, struct char_data *mob, FILE *fd)

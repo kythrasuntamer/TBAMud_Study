@@ -303,21 +303,6 @@ if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
         PROPERTIES COMPILE_OPTIONS "-ffunction-sections;-fdata-sections")
 endif()
 
-# Production social editor (aedit.c).
-add_mud_test(test_aedit
-    ${MUD_SRCDIR}/aedit.c
-    ${MUD_SRCDIR}/constants.c
-    ${MUD_SRCDIR}/utils.c
-    ${MUD_SRCDIR}/random.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/test_aedit.c
-)
-if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
-    target_compile_options(test_aedit PRIVATE -ffunction-sections -fdata-sections)
-    target_link_options(test_aedit PRIVATE -Wl,--gc-sections)
-    set_source_files_properties(${MUD_SRCDIR}/aedit.c
-        PROPERTIES COMPILE_OPTIONS "-ffunction-sections;-fdata-sections")
-endif()
-
 # Production zone-command editing (genzon.c).
 add_mud_test(test_genzon
     ${MUD_SRCDIR}/genzon.c
@@ -1158,6 +1143,146 @@ if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
         -Wl,--wrap=tb_error_log_at)
     set_source_files_properties(${MUD_SRCDIR}/act.wizard.c
         PROPERTIES COMPILE_OPTIONS "-ffunction-sections;-fdata-sections")
+endif()
+
+# tb_strftime() (sysdep.h): dst is a terminated string on every failure
+# path, and each failure is reported at the caller (G1-19, B2-26).
+add_mud_test(test_strftime
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_strftime.c
+)
+
+# Production manual spells (spells.c): create water refuses a liquid type
+# outside the drink tables (H1-07).
+add_mud_test(test_spells
+    ${MUD_SRCDIR}/spells.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_spells.c
+)
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_compile_options(test_spells PRIVATE -ffunction-sections -fdata-sections)
+    target_link_options(test_spells PRIVATE -Wl,--gc-sections)
+    set_source_files_properties(${MUD_SRCDIR}/spells.c
+        PROPERTIES COMPILE_OPTIONS "-ffunction-sections;-fdata-sections")
+endif()
+
+# Production call_magic() and mag_objectmagic() (spell_parser.c) with the
+# production handler.c: cast triggers that purge participants (H2-01) and
+# the staff's per-occupant loop (H2-10).
+add_mud_test(test_spell_parser
+    ${MUD_SRCDIR}/spell_parser.c
+    ${MUD_SRCDIR}/handler.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_spell_parser.c
+)
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_compile_options(test_spell_parser PRIVATE -ffunction-sections -fdata-sections)
+    target_link_options(test_spell_parser PRIVATE -Wl,--gc-sections)
+    set_source_files_properties(${MUD_SRCDIR}/spell_parser.c ${MUD_SRCDIR}/handler.c
+        PROPERTIES COMPILE_OPTIONS "-ffunction-sections;-fdata-sections")
+endif()
+
+# Production mag_areas() (magic.c) with the production handler.c: damage
+# and death triggers that teleport or purge occupants mid-spell (H1-19).
+add_mud_test(test_mag_areas
+    ${MUD_SRCDIR}/magic.c
+    ${MUD_SRCDIR}/handler.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_mag_areas.c
+)
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_compile_options(test_mag_areas PRIVATE -ffunction-sections -fdata-sections)
+    target_link_options(test_mag_areas PRIVATE -Wl,--gc-sections)
+    set_source_files_properties(${MUD_SRCDIR}/magic.c ${MUD_SRCDIR}/handler.c
+        PROPERTIES COMPILE_OPTIONS "-ffunction-sections;-fdata-sections")
+endif()
+
+# test_handler runs update_char_objects() on a small-stack thread (H2-25).
+find_package(Threads REQUIRED)
+target_link_libraries(test_handler PRIVATE Threads::Threads)
+
+# test_handler also links the production lists.c for the group lists
+# (H2-26).
+target_sources(test_handler PRIVATE ${MUD_SRCDIR}/lists.c)
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    set_source_files_properties(${MUD_SRCDIR}/lists.c
+        PROPERTIES COMPILE_OPTIONS "-ffunction-sections;-fdata-sections")
+endif()
+
+# Production social editor (aedit.c): name-length refusals and the report of
+# messages a saved social cannot run without.  utils.c supplies str_cmp,
+# mudlog and convert_from_tabs; the test supplies the OLC, social and
+# command-table collaborators and discards the rest by section GC.
+add_mud_test(test_aedit
+    ${MUD_SRCDIR}/aedit.c
+    ${MUD_SRCDIR}/utils.c
+    ${MUD_SRCDIR}/random.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_aedit.c
+)
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_compile_options(test_aedit PRIVATE -ffunction-sections -fdata-sections)
+    target_link_options(test_aedit PRIVATE
+        -Wl,--gc-sections
+        -Wl,--wrap=tb_error_log_at)
+endif()
+target_link_libraries(test_aedit PRIVATE ${TB_CRYPT_LIBS} ${SODIUM_LIBRARY})
+
+# C2-16: test_genolc_safety wraps fopen() so a test can hand the GenOLC
+# writers a stream whose error indicator is already set.
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_link_options(test_genolc_safety PRIVATE -Wl,--wrap=fopen)
+endif()
+
+# C1-29: test_genmob wraps fopen() the same way for save_mobiles().
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_link_options(test_genmob PRIVATE -Wl,--wrap=fopen)
+endif()
+
+# Production zone and editor access checks (oasis.c can_edit_zone and
+# can_use_editor): bounded zone_table index, editor sentinels kept out of
+# the real zone range (F3-20). Unreferenced oasis.c sections are discarded;
+# tb_error_capture.h in the test supplies tb_error_log_at.
+add_mud_test(test_oasis_access
+    ${MUD_SRCDIR}/oasis.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_oasis_access.c
+)
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_compile_options(test_oasis_access PRIVATE -ffunction-sections -fdata-sections)
+    target_link_options(test_oasis_access PRIVATE -Wl,--gc-sections)
+    set_source_files_properties(${MUD_SRCDIR}/oasis.c
+        PROPERTIES COMPILE_OPTIONS "-ffunction-sections;-fdata-sections")
+endif()
+
+# test_rnum_macros — the VALID_*_RNUM checks (utils.h tb_rnum_valid and the
+# checks built on it in genzon.h, oasis.h, olc_checks.h and dg_scripts.h): a
+# negative value of any integer type is refused before a table is indexed,
+# the sentinels never pass, and VALID_TRIG_RNUM never reads trig_index[-1].
+# The test source is compiled with -Wtype-limits -Werror: the checks must
+# keep comparing as long (no "always true" warning for the unsigned rnum
+# types), and a VALID_ZONE_RNUM copy that drifts from utils.h's ("redefined")
+# fails the build.
+add_mud_test(test_rnum_macros
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_rnum_macros.c
+)
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/test_rnum_macros.c
+        PROPERTIES COMPILE_OPTIONS "-Wtype-limits;-Werror")
+endif()
+
+# Leftovers O6c/O6d: the production text-file editor (tedit.c) and
+# combat-message editor (msgedit.c).  A live text must never become NULL and
+# a failed save must never stop the server; the test supplies the editor,
+# OLC and output collaborators and discards the rest by section GC.
+add_mud_test(test_tedit_msgedit
+    ${MUD_SRCDIR}/tedit.c
+    ${MUD_SRCDIR}/msgedit.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_tedit_msgedit.c
+)
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_compile_options(test_tedit_msgedit PRIVATE -ffunction-sections -fdata-sections)
+    target_link_options(test_tedit_msgedit PRIVATE -Wl,--gc-sections)
+endif()
+
+# test_tedit_msgedit wraps fopen() so a test can hand the tedit and msgedit
+# savers a stream whose error indicator is already set (the C2-16 check).
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_link_options(test_tedit_msgedit PRIVATE -Wl,--wrap=fopen)
 endif()
 
 # ---------------------------------------------------------------------------

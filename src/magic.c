@@ -46,7 +46,9 @@ int mag_savingthrow(struct char_data *ch, int type, int modifier)
   if (!IS_NPC(ch))
     class_sav = (int)GET_CLASS(ch);
 
-  save = (unsigned char)saving_throws(class_sav, type, GET_LEVEL(ch));
+  /* char_saving_throw() names ch in the class-table report if its class
+   * or level misses the table (C1-19). */
+  save = (unsigned char)char_saving_throw(ch, class_sav, type);
   save += GET_SAVE(ch, type);
   save += modifier;
 
@@ -630,8 +632,11 @@ void mag_masses(int level, struct char_data *ch, int spellnum, int savetype)
  * them to work. Area spells have limited targets within the room. */
 void mag_areas(int level, struct char_data *ch, int spellnum, int savetype)
 {
-  struct char_data *tch, *next_tch;
+  struct char_data *tch;
   const char *to_char = NULL, *to_room = NULL;
+  room_rnum origin;
+  long *targets;
+  int count, i;
 
   if (ch == NULL)
     return;
@@ -651,8 +656,31 @@ void mag_areas(int level, struct char_data *ch, int spellnum, int savetype)
     act(to_room, FALSE, ch, 0, 0, TO_ROOM);
 
 
-  for (tch = world[IN_ROOM(ch)].people; tch; tch = next_tch) {
-    next_tch = tch->next_in_room;
+  /* mag_damage() runs damage and death triggers (and death itself), which
+   * can teleport or purge any occupant, so next_in_room is not kept across
+   * it: the room is snapshotted as UIDs and each occupant re-resolved. One
+   * that left the caster's room or is pending extraction is skipped and
+   * reported, and the spell stops if the caster is purged or moved (H1-19;
+   * maintainer-safety-guide section 2). */
+  origin = IN_ROOM(ch);
+  count = room_people_uids(origin, &targets);
+  for (i = 0; i < count; i++) {
+    if (DEAD(ch) || IN_ROOM(ch) != origin) {
+      TB_WARN_MSG("magic", "area-caster-moved", skill_name(spellnum),
+                  "spell %d caster " DIAG_CHAR_FMT " purged or moved during "
+                  "the area spell; %d occupant(s) of " DIAG_ROOM_FMT
+                  " skipped", spellnum, DIAG_CHAR(ch), count - i,
+                  DIAG_ROOM(origin));
+      break;
+    }
+    if ((tch = room_person_live(targets[i], origin)) == NULL) {
+      TB_WARN_MSG("magic", "area-target-moved", skill_name(spellnum),
+                  "spell %d target uid %ld left " DIAG_ROOM_FMT " or was "
+                  "purged during the area spell by " DIAG_CHAR_FMT
+                  "; skipped", spellnum, targets[i], DIAG_ROOM(origin),
+                  DIAG_CHAR(ch));
+      continue;
+    }
 
     /* The skips: 1: the caster
      *            2: immortals
@@ -675,6 +703,7 @@ void mag_areas(int level, struct char_data *ch, int spellnum, int savetype)
     /* Doesn't matter if they die here so we don't check. -gg 6/24/98 */
     mag_damage(level, ch, tch, spellnum, 1);
   }
+  free(targets);
 }
 
 /*----------------------------------------------------------------------------*/
@@ -705,10 +734,10 @@ static const char *mag_summon_msgs[] = {
 #define MSG_SUMMON_CLONE     11   /* "$n magically divides!" */
 #define MSG_SUMMON_ANIMATE   12   /* "$n animates a corpse!" */
 #define NUM_MAG_SUMMON_MSGS  13
-/* Compile-time check (C99 has no _Static_assert): the array size must
- * be -1, an error, if the table and the indexes above drift apart. */
-typedef char mag_summon_msgs_size_check[
-  (sizeof(mag_summon_msgs) / sizeof(mag_summon_msgs[0]) == NUM_MAG_SUMMON_MSGS) ? 1 : -1];
+/* Compile-time check: the build fails if the table and the indexes above
+ * drift apart. */
+TB_STATIC_ASSERT(TB_ARRAY_LEN(mag_summon_msgs) == NUM_MAG_SUMMON_MSGS,
+                 mag_summon_msgs_size);
 
 /* Keep the \r\n because these use send_to_char. */
 static const char *mag_summon_fail_msgs[] = {
@@ -809,7 +838,7 @@ void mag_summons(int level, struct char_data *ch, struct obj_data *obj,
     load_mtrigger(mob);
     /* A load script that purges its own mob leaves it pending extraction:
      * it must not become a follower or group member. */
-    if (CHAR_PENDING_EXTRACTION(mob)) {
+    if (DEAD(mob)) {
       TB_WARN_MSG("magic", "summon-mob-purged", "char",
                   "summoned mob vnum %d purged by its load trigger; not "
                   "following " DIAG_CHAR_FMT, (int) mob_num, DIAG_CHAR(ch));
@@ -829,7 +858,7 @@ void mag_summons(int level, struct char_data *ch, struct obj_data *obj,
                   DIAG_CHAR_FMT, corpse_uid, (int) mob_num, DIAG_CHAR(ch));
       return;
     }
-    if (CHAR_PENDING_EXTRACTION(mob))
+    if (DEAD(mob))
       return;		/* reported above; the corpse keeps its contents */
     for (tobj = obj->contains; tobj; tobj = next_obj) {
       next_obj = tobj->next_content;
@@ -907,7 +936,13 @@ void mag_unaffects(int level, struct char_data *ch, struct char_data *victim,
     to_vict = "You don't feel so unlucky.";
     break;
   default:
-    log("SYSERR: unknown spellnum %d passed to mag_unaffects.", spellnum);
+    /* Internal invariant: call_magic() routes a spell here only when its
+     * spell_info[] routines include MAG_UNAFFECTS, so each such spell
+     * needs a case above; a new one without a case lands here (H1-26). */
+    TB_ERROR_MSG("magic", "unaffects-unknown-spell", skill_name(spellnum),
+                 "spell %d has MAG_UNAFFECTS but no case in mag_unaffects(); "
+                 "caster " DIAG_CHAR_FMT " victim " DIAG_CHAR_FMT, spellnum,
+                 DIAG_CHAR(ch), DIAG_CHAR(victim));
     return;
   }
 
@@ -1005,14 +1040,21 @@ void mag_creations(int level, struct char_data *ch, int spellnum)
     z = 10;
     break;
   default:
+    /* The same invariant for MAG_CREATIONS. */
+    TB_ERROR_MSG("magic", "creations-unknown-spell", skill_name(spellnum),
+                 "spell %d has MAG_CREATIONS but no case in "
+                 "mag_creations(); caster " DIAG_CHAR_FMT, spellnum,
+                 DIAG_CHAR(ch));
     send_to_char(ch, "Spell unimplemented, it would seem.\r\n");
     return;
   }
 
+  /* The created object's prototype comes from the world files. */
   if (!(tobj = read_object(z, VIRTUAL))) {
     send_to_char(ch, "I seem to have goofed.\r\n");
-    log("SYSERR: spell_creations, spell %d, obj %d: obj not found",
-	    spellnum, z);
+    TB_ERROR_MSG("magic", "creations-proto-missing", skill_name(spellnum),
+                 "spell %d creates obj vnum %d, which is not loaded; caster "
+                 DIAG_CHAR_FMT, spellnum, (int) z, DIAG_CHAR(ch));
     return;
   }
   obj_to_char(tobj, ch);

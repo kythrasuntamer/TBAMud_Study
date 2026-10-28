@@ -32,6 +32,17 @@
 #define MOB_STILL_ACTING(ch) (!MOB_FLAGGED((ch), MOB_NOTDEADYET) && \
                               VALID_ROOM_RNUM(IN_ROOM(ch)))
 
+/* TRUE if mob ch picks its own fights: it can see, and no charm puts it
+ * under a master's control. CircleMUD 3.0 wrote this as
+ * !AFF_FLAGGED(ch, AFF_BLIND | AFF_CHARM); the conversion to flag arrays
+ * turned it into !blind || !charm, which excluded only mobs that were
+ * both, so a charmed pet attacked players, its own master included, as an
+ * aggressive or helper mob. Charmed mobs still turn on their master
+ * through the memory and rebellion checks, which roll
+ * aggressive_mob_on_a_leash(). Evaluates ch twice. */
+#define MOB_ACTS_FREELY(ch) \
+  (!AFF_FLAGGED((ch), AFF_BLIND) && !AFF_FLAGGED((ch), AFF_CHARM))
+
 /* local file scope only function prototypes */
 static bool aggressive_mob_on_a_leash(struct char_data *slave, struct char_data *master, struct char_data *attack);
 
@@ -116,7 +127,7 @@ void mobile_activity(void)
       continue;
 
     /* Aggressive Mobs */
-     if (!MOB_FLAGGED(ch, MOB_HELPER) && (!AFF_FLAGGED(ch, AFF_BLIND) || !AFF_FLAGGED(ch, AFF_CHARM))) {
+     if (!MOB_FLAGGED(ch, MOB_HELPER) && MOB_ACTS_FREELY(ch)) {
       found = FALSE;
       for (vict = world[IN_ROOM(ch)].people; vict && !found; vict = vict->next_in_room) {
 	if (IS_NPC(vict) || !CAN_SEE(ch, vict) || PRF_FLAGGED(vict, PRF_NOHASSLE))
@@ -183,7 +194,7 @@ void mobile_activity(void)
       continue;
 
     /* Helper Mobs */
-    if (MOB_FLAGGED(ch, MOB_HELPER) && (!AFF_FLAGGED(ch, AFF_BLIND) || !AFF_FLAGGED(ch, AFF_CHARM))) 
+    if (MOB_FLAGGED(ch, MOB_HELPER) && MOB_ACTS_FREELY(ch)) 
     {
       found = FALSE;
       for (vict = world[IN_ROOM(ch)].people; vict && !found; vict = vict->next_in_room) 

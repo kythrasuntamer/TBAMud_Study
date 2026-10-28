@@ -17,13 +17,15 @@
 #include "tb_error_capture.h"
 
 void basic_mud_log(const char *format, ...) { (void)format; }
-/* utils.h: rand_number() and room_is_dark() are call-site macros over these. */
+/* 0 makes the scavenger roll succeed; the default skips scavenging. */
+static int scavenge_roll = 18;
+/* utils.h maps rand_number() and room_is_dark() to their _at forms. */
 int rand_number_at(int from, int to, const char *source_file, int source_line,
                    const char *source_func)
-{
-  (void)to; (void)source_file; (void)source_line; (void)source_func;
-  return from == 0 ? 18 : from;
-}
+{ (void)source_file; (void)source_line; (void)source_func;
+  if (from == 0 && to == 10)
+    return scavenge_roll;         /* the scavenger's 1-in-11 roll */
+  return from == 0 ? 18 : from; }
 int MAX(int a, int b) { return a > b ? a : b; }
 int MIN(int a, int b) { return a < b ? a : b; }
 
@@ -42,13 +44,16 @@ int perform_move(struct char_data *ch, int dir, int following)
 { (void)ch; (void)dir; (void)following; return 0; }
 void stop_follower(struct char_data *ch) { (void)ch; }
 int num_followers_charmed(struct char_data *ch) { (void)ch; return 0; }
-void obj_from_room(struct obj_data *object) { (void)object; }
+/* The object the scavenger took out of the room, if any. */
+static struct obj_data *taken_obj;
+void obj_from_room(struct obj_data *object) { taken_obj = object; }
 void obj_to_char(struct obj_data *object, struct char_data *ch) { (void)object; (void)ch; }
 int room_is_dark_at(room_rnum room, const char *source_file, int source_line,
                     const char *source_func)
-{ (void)room; (void)source_file; (void)source_line; (void)source_func; return 0; }
+{ (void)room; (void)source_file; (void)source_line; (void)source_func;
+  return 0; }
 int find_command(const char *command) { (void)command; return 0; }
-/* Scavenging (CAN_CARRY_W) is not exercised: the mob is not a scavenger. */
+/* CAN_CARRY_W: all zero, so only weightless objects can be carried. */
 const struct str_app_type str_app[26];
 
 static struct room_data room;
@@ -88,6 +93,8 @@ void setUp(void)
   character_list = &mob;
   hits = 0;
   purge_on_hunt = 0;
+  scavenge_roll = 18;
+  taken_obj = NULL;
   tb_error_capture_reset();
 }
 
@@ -109,10 +116,88 @@ static void test_purged_mob_stops_acting(void)
   TEST_ASSERT_EQUAL_INT(0, hits);
 }
 
+/* H2-06: a scavenger must not carry off furniture someone is sitting on.
+ * obj_from_room() would unseat the sitter; do_get() refuses the same way. */
+static void test_scavenger_leaves_occupied_furniture(void)
+{
+  struct obj_data chair;
+
+  memset(&chair, 0, sizeof(chair));
+  chair.item_number = NOTHING;
+  chair.in_room = 0;
+  SET_BIT_AR(GET_OBJ_WEAR(&chair), ITEM_WEAR_TAKE);
+  GET_OBJ_COST(&chair) = 100;
+  room.contents = &chair;
+  SET_BIT_AR(MOB_FLAGS(&mob), MOB_SCAVENGER);
+  scavenge_roll = 0;
+
+  OBJ_SAT_IN_BY(&chair) = &player;
+  mobile_activity();
+  TEST_ASSERT_NULL(taken_obj);
+
+  /* Control: the same chair, empty, is taken. */
+  OBJ_SAT_IN_BY(&chair) = NULL;
+  mobile_activity();
+  TEST_ASSERT_EQUAL_PTR(&chair, taken_obj);
+  room.contents = NULL;
+}
+
+/* Coordinator item (a): the aggression and helper checks read
+ * !AFF_BLIND || !AFF_CHARM, so only a mob both blind and charmed was held
+ * back. A charmed aggressive pet attacked the player beside it (here its
+ * own master), and a charmed or blind helper "jumped to the aid" of any
+ * NPC fighting a player. */
+static void test_charmed_aggressive_mob_does_not_attack(void)
+{
+  SET_BIT_AR(AFF_FLAGS(&mob), AFF_CHARM);
+  mob.master = &player;
+  mobile_activity();
+  TEST_ASSERT_EQUAL_INT(0, hits);
+}
+
+static struct char_data brawler;   /* an NPC fighting the player */
+
+static void make_helper_scene(void)
+{
+  memset(&brawler, 0, sizeof(brawler));
+  SET_BIT_AR(MOB_FLAGS(&brawler), MOB_ISNPC);
+  brawler.nr = 0;
+  brawler.in_room = 0;
+  brawler.player_specials = &dummy_mob;
+  brawler.char_specials.fighting = &player;
+  player.next_in_room = &brawler;
+  REMOVE_BIT_AR(MOB_FLAGS(&mob), MOB_AGGRESSIVE);
+  SET_BIT_AR(MOB_FLAGS(&mob), MOB_HELPER);
+}
+
+static void test_charmed_or_blind_helper_does_not_help(void)
+{
+  make_helper_scene();
+  SET_BIT_AR(AFF_FLAGS(&mob), AFF_CHARM);
+  mobile_activity();
+  TEST_ASSERT_EQUAL_INT(0, hits);
+
+  REMOVE_BIT_AR(AFF_FLAGS(&mob), AFF_CHARM);
+  SET_BIT_AR(AFF_FLAGS(&mob), AFF_BLIND);
+  mobile_activity();
+  TEST_ASSERT_EQUAL_INT(0, hits);
+}
+
+static void test_free_helper_helps(void)
+{
+  make_helper_scene();
+  mobile_activity();
+  TEST_ASSERT_EQUAL_INT(1, hits);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
   RUN_TEST(test_aggressive_mob_attacks);
   RUN_TEST(test_purged_mob_stops_acting);
+  RUN_TEST(test_scavenger_leaves_occupied_furniture);
+  RUN_TEST(test_charmed_aggressive_mob_does_not_attack);
+  RUN_TEST(test_charmed_or_blind_helper_does_not_help);
+  RUN_TEST(test_free_helper_helps);
   return UNITY_END();
 }

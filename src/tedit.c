@@ -78,7 +78,7 @@ static int tedit_write_file(const char *filename, const char *text)
 {
   FILE *fl;
   char temp_name[MAX_STRING_LENGTH];
-  int name_result, flush_ok, close_ok;
+  int name_result, stream_ok, flush_ok, close_ok;
 
   name_result = snprintf(temp_name, sizeof(temp_name), "%s.tmp", filename);
   if (name_result < 0 || (size_t)name_result >= sizeof(temp_name)) {
@@ -88,10 +88,16 @@ static int tedit_write_file(const char *filename, const char *text)
   if (!(fl = fopen(temp_name, "w")))
     return FALSE;
   tb_fputs(text, fl);
+  /* ferror() stays set after a failed write.  tb_fputs() reported it, but
+   * a later flush that succeeds would hide it and commit a cut file. */
+  stream_ok = !ferror(fl);
   flush_ok = tb_fflush_checked(fl, temp_name);
   close_ok = tb_fclose_checked(fl, temp_name);
-  if (!flush_ok || !close_ok) {
-    int saved_errno = errno;
+  if (!stream_ok)
+    TB_ERROR_MSG("olc", "save-stream-error", temp_name,
+                 TB_ERRID_PERSIST_WRITE " %s: a write failed; previous file kept", filename);
+  if (!stream_ok || !flush_ok || !close_ok) {
+    int saved_errno = flush_ok && close_ok ? EIO : errno;
     if (remove(temp_name) != 0 && errno != ENOENT)
       TB_REPORT_ERRNO("remove", temp_name);
     errno = saved_errno;

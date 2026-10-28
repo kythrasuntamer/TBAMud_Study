@@ -308,7 +308,7 @@ void gain_exp(struct char_data *ch, int gain)
     GET_EXP(ch) += gain;
     while (GET_LEVEL(ch) < LVL_IMMORT - 1 &&
            GET_LEVEL(ch) < LVL_IMMORT - CONFIG_NO_MORT_TO_IMMORT &&
-	GET_EXP(ch) >= level_exp(GET_CLASS(ch), GET_LEVEL(ch) + 1)) {
+	GET_EXP(ch) >= char_level_exp(ch, GET_LEVEL(ch) + 1)) {
       GET_LEVEL(ch) += 1;
       num_levels++;
       advance_level(ch);
@@ -350,7 +350,7 @@ void gain_exp_regardless(struct char_data *ch, int gain)
 
   if (!IS_NPC(ch)) {
     while (GET_LEVEL(ch) < LVL_IMPL &&
-	GET_EXP(ch) >= level_exp(GET_CLASS(ch), GET_LEVEL(ch) + 1)) {
+	GET_EXP(ch) >= char_level_exp(ch, GET_LEVEL(ch) + 1)) {
       GET_LEVEL(ch) += 1;
       num_levels++;
       advance_level(ch);
@@ -577,8 +577,11 @@ void point_update(void)
     }
   }
 
-  /* objects. Pass 1 runs no callbacks: it counts every timer down and
-   * snapshots the objects that expired as (address, UID) pairs. Pass 2 then
+  /* objects. This is the only place object timers count down: once per
+   * tick for every object, carried and worn ones included
+   * (update_char_objects() above only burns lights). Pass 1 runs no
+   * callbacks: it counts every timer down and snapshots the objects that
+   * expired as (address, UID) pairs. Pass 2 then
    * decays corpses and fires timer triggers. Both can run scripts (act
    * triggers, the timer trigger itself) that purge ANY object, and
    * extract_obj() frees immediately, so no saved list pointer (j->next) is

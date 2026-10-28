@@ -34,11 +34,6 @@ static int has_key(struct char_data *ch, obj_vnum key);
 static int do_doorcmd(struct char_data *ch, struct obj_data *obj, int door, int scmd);
 static int ok_pick(struct char_data *ch, obj_vnum keynum, int pickproof, int scmd);
 
-/* TRUE if s indexes the per-sector tables (movement_loss[] has
- * NUM_ROOM_SECTORS entries). A room's sector comes from its .wld file and
- * the loader's range check has been wrong before, so check before use. */
-#define VALID_SECTOR(s) ((s) >= 0 && (s) < NUM_ROOM_SECTORS)
-
 /* TRUE if door is a direction and ch's room has an exit there. This is
  * the check for door commands after a trigger has run ('wdoor ... purge'
  * frees the exit and NULLs it). CAN_GO() is the wrong predicate here: it

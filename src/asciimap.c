@@ -247,7 +247,7 @@ static int map_sector(room_rnum room)
   static room_rnum last_reported = NOWHERE;
   int sector = SECT(room);
 
-  if (sector >= 0 && sector < NUM_ROOM_SECTORS)
+  if (VALID_SECTOR(sector))
     return sector;
   if (room != last_reported) {
     TB_WARN_MSG("map", "bad-sector", "world",
@@ -650,6 +650,18 @@ void str_and_map(char *str, struct char_data *ch, room_vnum target_room ) {
   int size, centre, x, y, min, max, char_size;
   int ew_size=0, ns_size=0;
   bool worldmap;
+  char no_description[1] = "";
+
+  /* str is the room description from the world file, and fread_string()
+   * stores NULL for an empty one ("~" alone). strfrmt() copes with NULL but
+   * cannot say which room it came from, so name the room here and lay out
+   * an empty description instead (I1-07). */
+  if (str == NULL) {
+    TB_ERROR_MSG("world", "room-description-null", "str_and_map",
+                 DIAG_ROOM_FMT " has a NULL description; viewer "
+                 DIAG_CHAR_FMT, DIAG_ROOM(target_room), DIAG_CHAR(ch));
+    str = no_description;
+  }
 
   /* Check MUDs map config options - if disabled, just show room decsription */
   if (!can_see_map(ch)) {

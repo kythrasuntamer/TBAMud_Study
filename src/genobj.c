@@ -65,6 +65,17 @@ obj_rnum add_object(struct obj_data *newobj, obj_vnum ovnum)
   int found = NOTHING;
   zone_rnum rznum = real_zone_by_thing(ovnum);
 
+  /* Invariant: a prototype's vnum lies in a zone's range; that zone names
+   * the file it is saved to.  oedit (builder input) checked the zone when
+   * the session started, but zedit can shrink a zone's range while the
+   * session is open, and real_zone_by_thing() then returns NOWHERE, far
+   * past zone_table.  Refuse before obj_proto or any live instance changes. */
+  if (!VALID_ZONE_RNUM(rznum)) {
+    TB_ERROR_MSG("olc", "add-object", "object",
+                 "obj vnum %d belongs to no zone; not added", ovnum);
+    return NOTHING;
+  }
+
   /* Write object to internal tables. */
   if ((newobj->item_number = real_object(ovnum)) != NOTHING) {
     obj_rnum rnum = newobj->item_number;
@@ -76,8 +87,8 @@ obj_rnum add_object(struct obj_data *newobj, obj_vnum ovnum)
     update_all_objects(&obj_proto[rnum]);
     if (reset > 0)
       TB_WARN_MSG("olc", "obj-proto-update", "object",
-                  "proto vnum %d: %d live instances lost restrung text or "
-                  "running scripts on prototype update", ovnum, reset);
+                  "proto vnum %d: %d live instances lost restrung text on "
+                  "prototype update", ovnum, reset);
     add_to_save_list(zone_table[rznum].number, SL_OBJ);
     return rnum;
   }
@@ -89,10 +100,12 @@ obj_rnum add_object(struct obj_data *newobj, obj_vnum ovnum)
 }
 
 /* Free what each live instance of prototype rnum owns privately and that
- * update_all_objects() is about to overwrite: its running script (which
- * also cancels its wait events), its private proto_script copy, and any
- * restrung text (strings that are not the prototype's).  Returns how many
- * instances lost a restring or a running script. */
+ * update_all_objects() is about to overwrite: restrung text (strings that
+ * are not the prototype's).  Its running script and trigger list are kept
+ * (update_all_objects() restores them); the caller rebuilds them when the
+ * prototype's trigger list changes (oedit_save_checked()), since a rebuild
+ * discards the script's variables and pending waits.  Returns how many
+ * instances lost a restring. */
 static int release_instance_state(obj_rnum rnum)
 {
   struct obj_data *obj;
@@ -108,14 +121,10 @@ static int release_instance_state(obj_rnum rnum)
                 obj->short_description != obj_proto[rnum].short_description ||
                 obj->action_description != obj_proto[rnum].action_description ||
                 obj->ex_description != obj_proto[rnum].ex_description);
-    if (restrung || SCRIPT(obj))
+    if (restrung) {
       lost++;
-    if (SCRIPT(obj))
-      extract_script(obj, OBJ_TRIGGER);
-    if (obj->proto_script && obj->proto_script != obj_proto[rnum].proto_script)
-      free_proto_script(obj, OBJ_TRIGGER);
-    if (restrung)
       free_object_strings_proto(obj);
+    }
   }
   return lost;
 }
@@ -125,8 +134,9 @@ static int release_instance_state(obj_rnum rnum)
  * this prototype. If object is pointing to this prototype, then we need to
  * replace it with the new one.  release_instance_state() must have run
  * first: everything not restored below is replaced by the prototype's value.
- * Location, list links, UID and events stay with the instance; triggers are
- * left empty for the caller to re-attach (oedit_save_internally()). */
+ * Location, list links, UID, events, the running script and the private
+ * trigger list stay with the instance; the caller rebuilds the triggers
+ * when the prototype's list changed (oedit_save_checked()). */
 static int update_all_objects(struct obj_data *refobj)
 {
   struct obj_data *obj, swap;
@@ -156,9 +166,10 @@ static int update_all_objects(struct obj_data *refobj)
     /* Pending events point at this instance; losing the list would leave
      * them unreachable by extract_obj() and firing after the free. */
     obj->events = swap.events;
-    /* Never share the prototype's runtime script or trigger list. */
-    obj->script = NULL;
-    obj->proto_script = NULL;
+    /* The instance's own script (variables, pending waits) and trigger list
+     * stay; the prototype's are never shared. */
+    obj->script = swap.script;
+    obj->proto_script = swap.proto_script;
   }
 
   return count;
@@ -278,7 +289,7 @@ int save_objects(zone_rnum zone_num)
   }
 
   tb_snprintf(filename, sizeof(filename), "%s/%d.new", OBJ_PREFIX, zone_table[zone_num].number);
-  if (!(fp = fopen(filename, "w+"))) {
+  if (!(fp = fopen(filename, "w"))) {
     TB_ERROR_ERRNO("olc", "obj-save-open", filename, "zone %d objects not saved",
                    zone_table[zone_num].number);
     mudlog(BRF, LVL_IMMORT, TRUE, "SYSERR: OLC: Cannot open objects file %s!", filename);
@@ -394,9 +405,17 @@ int save_objects(zone_rnum zone_num)
   /* Write the final line and commit only a fully flushed temporary file. */
   tb_fprintf(fp, "$~\n");
   {
+    /* ferror() stays set after any failed write.  tb_fprintf() reported
+     * each one, but a later flush that succeeds would hide it and commit a
+     * file with a hole in it (C2-16). */
+    int stream_ok = !ferror(fp);
     int flush_ok = tb_fflush_checked(fp, filename);
     int close_ok = tb_fclose_checked(fp, filename);
-    if (!flush_ok || !close_ok) {
+    if (!stream_ok)
+      TB_ERROR_MSG("olc", "save-stream-error", filename,
+                   TB_ERRID_PERSIST_WRITE " zone %d objects: a write failed; previous file kept",
+                   zone_table[zone_num].number);
+    if (!stream_ok || !flush_ok || !close_ok) {
       if (remove(filename) != 0 && errno != ENOENT)
         TB_REPORT_ERRNO("remove", filename);
       return FALSE;

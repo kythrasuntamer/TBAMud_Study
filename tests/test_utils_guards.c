@@ -612,12 +612,56 @@ void test_get_filename_rejects_path_traversal(void)
 {
   char path[PATH_MAX];
 
-  path[0] = '\0';
+  strlcpy(path, "stale/path", sizeof(path));
   TEST_ASSERT_EQUAL_INT(0, get_filename(path, sizeof(path), CRASH_FILE,
                                         "../../etc/x"));
-  TEST_ASSERT_NULL(strstr(path, ".."));
-  TEST_ASSERT_EQUAL_INT(1, count_op("filename-name-invalid"));
-  TEST_ASSERT_NULL(strstr(log_text(), "etc"));   /* raw text not logged */
+  TEST_ASSERT_EQUAL_STRING("", path);     /* never a stale or partial path */
+  TEST_ASSERT_EQUAL_INT(1, count_op("filename-unsafe"));
+  TEST_ASSERT_NOT_NULL(strstr(log_text(), "name=\"../../etc/x\""));
+}
+
+/* Coordinator item (player-file fuzzer, audit-fuzz-player): names reach
+ * get_filename() from the player index and from a pfile's Name tag read
+ * before login, and must pass the legal-player-name rule: ASCII letters
+ * only, 1..MAX_NAME_LENGTH of them. Each rejection leaves "" and reports
+ * filename-unsafe with the escaped name and the mode. */
+static void expect_unsafe(const char *name, int mode)
+{
+  char path[PATH_MAX];
+  int before = count_op("filename-unsafe");
+
+  strlcpy(path, "stale/path", sizeof(path));
+  TEST_ASSERT_EQUAL_INT(0, get_filename(path, sizeof(path), mode, name));
+  TEST_ASSERT_EQUAL_STRING("", path);
+  TEST_ASSERT_EQUAL_INT(before + 1, count_op("filename-unsafe"));
+}
+
+void test_get_filename_rejects_illegal_player_names(void)
+{
+  /* name-path-login: high bytes around a separator and "..". */
+  static const char login_name[] =
+    "\xff\xff\xff\xff/../\xff\xff\xff";
+
+  expect_unsafe("../x", PLR_FILE);
+  expect_unsafe("a/b", CRASH_FILE);
+  expect_unsafe("", SCRIPT_VARS_FILE);
+  expect_unsafe("abcdefghijklmnopqrstu", PLR_FILE);    /* 21 letters */
+  expect_unsafe("Bob2", PLR_FILE);                     /* digit */
+  expect_unsafe("../", PLR_FILE);                      /* name-path-index */
+  expect_unsafe(login_name, PLR_FILE);
+  TEST_ASSERT_NOT_NULL(strstr(log_text(), "\\xff\\xff"));   /* escaped */
+  TEST_ASSERT_NOT_NULL(strstr(log_text(), "mode=0"));
+  TEST_ASSERT_NULL(strchr(log_text(), '\xff'));      /* no raw high byte */
+}
+
+void test_get_filename_accepts_longest_legal_name(void)
+{
+  char path[PATH_MAX];
+
+  TEST_ASSERT_EQUAL_INT(1, get_filename(path, sizeof(path), PLR_FILE,
+                                        "Abcdefghijklmnopqrst")); /* 20 */
+  TEST_ASSERT_NOT_NULL(strstr(path, "abcdefghijklmnopqrst."));
+  TEST_ASSERT_EQUAL_INT(0, count_records());
 }
 
 void test_get_filename_accepts_player_name(void)
@@ -641,6 +685,160 @@ void test_an_handles_empty_and_null(void)
   TEST_ASSERT_EQUAL_STRING("a", AN("pear"));
   TEST_ASSERT_EQUAL_STRING("a", AN(""));
   TEST_ASSERT_EQUAL_STRING("a", TANA(none));
+}
+
+void test_nullstr_maps_null_to_empty(void)
+{
+  const char *none = NULL;
+  int calls = 0;
+
+  TEST_ASSERT_EQUAL_STRING("", NULLSTR(none));
+  TEST_ASSERT_EQUAL_STRING("x", NULLSTR("x"));
+  /* The argument is evaluated once. */
+  TEST_ASSERT_EQUAL_STRING("", NULLSTR((calls++, none)));
+  TEST_ASSERT_EQUAL_INT(1, calls);
+}
+
+/* =====================================================================
+ * G2-12: CLASS_ABBR range-checks a pfile class before indexing
+ * class_abbrevs[], and reports the player and the caller.
+ * ===================================================================== */
+
+/* class.c's table (not linked here). */
+const char *class_abbrevs[] = { "Wi", "Cl", "Th", "Wa", "Mo", "\n" };
+
+void test_class_abbr_out_of_range_class_reports_caller(void)
+{
+  struct char_data *c = make_player(4242);
+  char where[64];
+  const char *abbr;
+
+  GET_CLASS(c) = 40;              /* 'Clas: 40' from a hand-edited pfile */
+  (void)snprintf(where, sizeof(where), "test_utils_guards.c:%d", __LINE__ + 1);
+  abbr = CLASS_ABBR(c);
+  TEST_ASSERT_EQUAL_STRING("??", abbr);
+  TEST_ASSERT_EQUAL_INT(1, count_op("class-range"));
+  TEST_ASSERT_NOT_NULL(strstr(log_text(), where));
+  TEST_ASSERT_NOT_NULL(strstr(log_text(), "player idnum 4242 class 40"));
+
+  GET_CLASS(c) = -3;
+  TEST_ASSERT_EQUAL_STRING("??", CLASS_ABBR(c));
+  TEST_ASSERT_EQUAL_INT(2, count_op("class-range"));
+  free_player(c);
+}
+
+void test_class_abbr_valid_class_and_npc_are_silent(void)
+{
+  struct char_data *c = make_player(7);
+
+  GET_CLASS(c) = CLASS_WARRIOR;
+  TEST_ASSERT_EQUAL_STRING("Wa", CLASS_ABBR(c));
+  GET_CLASS(c) = NUM_CLASSES - 1;
+  TEST_ASSERT_EQUAL_STRING("Mo", CLASS_ABBR(c));
+  SET_BIT_AR(MOB_FLAGS(c), MOB_ISNPC);
+  GET_CLASS(c) = 40;              /* NPC classes never index the table */
+  TEST_ASSERT_EQUAL_STRING("--", CLASS_ABBR(c));
+  TEST_ASSERT_EQUAL_INT(0, count_records());
+  free_player(c);
+}
+
+/* =====================================================================
+ * TB_TABLE_NAME: a name-table lookup that reports a bad index at its
+ * caller instead of reading past the table.
+ * ===================================================================== */
+
+void test_table_name_out_of_range_reports_caller(void)
+{
+  static const char *colours[] = { "red", "green", "\n" };
+  char where[64];
+
+  (void)snprintf(where, sizeof(where), "test_utils_guards.c:%d", __LINE__ + 1);
+  TEST_ASSERT_EQUAL_STRING("<invalid>", TB_TABLE_NAME(colours, 2, 7));
+  TEST_ASSERT_EQUAL_INT(1, count_op("name-lookup-range"));
+  TEST_ASSERT_NOT_NULL(strstr(log_text(), where));
+  TEST_ASSERT_NOT_NULL(strstr(log_text(), "resource=colours"));
+  TEST_ASSERT_NOT_NULL(strstr(log_text(), "index 7 not in [0,2)"));
+
+  TEST_ASSERT_EQUAL_STRING("<invalid>", TB_TABLE_NAME(colours, 2, -1));
+  TEST_ASSERT_EQUAL_INT(2, count_op("name-lookup-range"));
+}
+
+void test_table_name_valid_index_is_silent(void)
+{
+  static const char *colours[] = { "red", "green", "\n" };
+
+  TEST_ASSERT_EQUAL_STRING("red", TB_TABLE_NAME(colours, 2, 0));
+  TEST_ASSERT_EQUAL_STRING("green", TB_TABLE_NAME(colours, 2, 1));
+  TEST_ASSERT_EQUAL_INT(0, count_records());
+}
+
+/* =====================================================================
+ * I1-14: the bounded string builders report what they cut.
+ * ===================================================================== */
+
+static const char *test_flag_names[] = { "ALPHA", "BETA", "GAMMA", "\n" };
+
+void test_sprintbitarray_small_buffer_reports(void)
+{
+  int bits[1] = { 0x7 };        /* ALPHA BETA GAMMA */
+  char small[8], big[64];
+
+  sprintbitarray(bits, test_flag_names, 1, small, sizeof(small));
+  TEST_ASSERT_EQUAL_INT(1, count_op("sprintbitarray-truncated"));
+  TEST_ASSERT_TRUE(strlen(small) < sizeof(small));
+
+  sprintbitarray(bits, test_flag_names, 1, big, sizeof(big));
+  TEST_ASSERT_EQUAL_STRING("ALPHA BETA GAMMA ", big);
+  TEST_ASSERT_EQUAL_INT(1, count_records());
+}
+
+void test_sprintbit_cuts_at_whole_name_and_reports(void)
+{
+  char small[9], big[64];
+
+  /* "ALPHA " fits, "BETA " does not: no partial "BE" may be left. */
+  sprintbit(0x3, test_flag_names, small, sizeof(small));
+  TEST_ASSERT_EQUAL_STRING("ALPHA ", small);
+  TEST_ASSERT_EQUAL_INT(1, count_op("sprintbit-truncated"));
+
+  sprintbit(0x3, test_flag_names, big, sizeof(big));
+  TEST_ASSERT_EQUAL_STRING("ALPHA BETA ", big);
+  TEST_ASSERT_EQUAL_INT(1, count_records());
+}
+
+void test_strpaste_long_column_reports(void)
+{
+  char *left = malloc(MAX_STRING_LENGTH + 100);
+  char right[] = "map";
+  char joiner[] = " | ";
+
+  TEST_ASSERT_NOT_NULL(left);
+  memset(left, 'a', MAX_STRING_LENGTH + 99);
+  left[MAX_STRING_LENGTH + 99] = '\0';
+  (void)strpaste(left, right, joiner);
+  TEST_ASSERT_EQUAL_INT(1, count_op("strpaste-truncated"));
+
+  (void)strpaste(right, right, joiner);
+  TEST_ASSERT_EQUAL_INT(1, count_records());
+  free(left);
+}
+
+void test_strfrmt_long_text_reports(void)
+{
+  size_t n = 2 * MAX_STRING_LENGTH, i;
+  char *text = malloc(n + 1);
+  char small_text[] = "A short room description.";
+
+  TEST_ASSERT_NOT_NULL(text);
+  for (i = 0; i < n; i++)
+    text[i] = (i % 5 == 4) ? ' ' : 'w';
+  text[n] = '\0';
+  (void)strfrmt(text, 60, 1, FALSE, FALSE, FALSE);
+  TEST_ASSERT_EQUAL_INT(1, count_op("strfrmt-truncated"));
+
+  (void)strfrmt(small_text, 60, 1, FALSE, FALSE, FALSE);
+  TEST_ASSERT_EQUAL_INT(1, count_records());
+  free(text);
 }
 
 int main(void)
@@ -673,6 +871,17 @@ int main(void)
   RUN_TEST(test_get_filename_null_name_reports);
   RUN_TEST(test_get_filename_rejects_path_traversal);
   RUN_TEST(test_get_filename_accepts_player_name);
+  RUN_TEST(test_get_filename_rejects_illegal_player_names);
+  RUN_TEST(test_get_filename_accepts_longest_legal_name);
   RUN_TEST(test_an_handles_empty_and_null);
+  RUN_TEST(test_nullstr_maps_null_to_empty);
+  RUN_TEST(test_class_abbr_out_of_range_class_reports_caller);
+  RUN_TEST(test_class_abbr_valid_class_and_npc_are_silent);
+  RUN_TEST(test_table_name_out_of_range_reports_caller);
+  RUN_TEST(test_table_name_valid_index_is_silent);
+  RUN_TEST(test_sprintbitarray_small_buffer_reports);
+  RUN_TEST(test_sprintbit_cuts_at_whole_name_and_reports);
+  RUN_TEST(test_strpaste_long_column_reports);
+  RUN_TEST(test_strfrmt_long_text_reports);
   return UNITY_END();
 }

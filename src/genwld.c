@@ -69,6 +69,38 @@ static void rebase_room_events(void)
 }
 
 
+/* Disable a reset command that names a deleted room: '*' is skipped by
+ * reset_zone() and dropped by save_zone().  A command list owns its
+ * commands' sarg1/sarg2 (only 'V' has them; remove_cmd_from_list() in
+ * genzon.c frees them), and destroy_db() frees them for 'V' alone, so a
+ * cancelled command gives them up here instead of leaking them. */
+static void cancel_zone_command(struct reset_com *cmd)
+{
+  free(cmd->sarg1);
+  free(cmd->sarg2);
+  cmd->sarg1 = cmd->sarg2 = NULL;
+  cmd->command = '*';
+}
+
+/* Where a character whose GET_WAS_IN room was deleted is put back instead:
+ * the start room it would log in to (interpreter.c: frozen, else immortal,
+ * else mortal), found by its configured vnum in world[] as delete_room()
+ * leaves it; the mortal start room (already renumbered, the Void if it was
+ * the deleted room) when that vnum has no room. */
+static room_rnum was_in_start_room(struct char_data *ch)
+{
+  room_vnum vnum = CONFIG_MORTAL_START;
+  room_rnum start;
+
+  if (PLR_FLAGGED(ch, PLR_FROZEN))
+    vnum = CONFIG_FROZEN_START;
+  else if (!IS_NPC(ch) && GET_LEVEL(ch) >= LVL_IMMORT)
+    vnum = CONFIG_IMMORTAL_START;
+  if ((start = real_room(vnum)) == NOWHERE)
+    start = r_mortal_start_room;
+  return start;
+}
+
 /**
  * Add a new room, or update the live room with the same vnum.
  *
@@ -85,7 +117,8 @@ static void rebase_room_events(void)
  *
  * @param room Room to add, built by redit or rcopy; room->zone must be a
  *             valid zone rnum.
- * @return The room's rnum, or NOWHERE (reported) when room is NULL.
+ * @return The room's rnum, or NOWHERE (reported) when room is NULL or its
+ *         zone rnum is out of range; world[] is then unchanged.
  */
 room_rnum add_room(struct room_data *room)
 {
@@ -96,6 +129,16 @@ room_rnum add_room(struct room_data *room)
 
   if (room == NULL) {
     TB_ERROR_MSG("olc", "room-add-null", "room", "called with no room; nothing added");
+    return NOWHERE;
+  }
+
+  /* Both paths below index zone_table[room->zone] for the save list.  The
+   * caller sets it from its own zone rnum, so a bad one is a broken caller:
+   * refuse before world[] changes. */
+  if (!VALID_ZONE_RNUM(room->zone)) {
+    TB_ERROR_MSG("olc", "room-add-zone", "room",
+                 "room vnum %d: zone rnum %d out of range 0..%d; nothing added",
+                 room->number, (int)room->zone, (int)top_of_zone_table);
     return NOWHERE;
   }
 
@@ -215,10 +258,10 @@ room_rnum add_room(struct room_data *room)
  * People and objects in it move to the Void (rnum 0); its scripts and
  * events are cancelled; exits into it are removed (or lead to NOWHERE when
  * they carry a keyword or description); reset commands that name it are
- * disabled ('*'); start rooms and GET_WAS_IN that were this room fall back
- * to the Void.  world[] then shifts down
- * (see the file comment) and every stored room rnum above rnum is
- * decremented.
+ * disabled ('*', a 'V' command's strings freed); start rooms that were
+ * this room fall back to the Void, and a GET_WAS_IN that was it to the
+ * character's start room.  world[] then shifts down (see the file comment)
+ * and every stored room rnum above rnum is decremented.
  *
  * @param rnum Room rnum from redit; 0 (the Void) cannot be deleted.
  * @return TRUE when the room was deleted; FALSE, reported, otherwise.
@@ -226,6 +269,7 @@ room_rnum add_room(struct room_data *room)
 int delete_room(room_rnum rnum)
 {
   room_rnum i;
+  room_vnum deleted_vnum;
   int j;
   struct char_data *ppl, *next_ppl;
   struct obj_data *obj, *next_obj;
@@ -240,6 +284,7 @@ int delete_room(room_rnum rnum)
   }
 
   room = &world[rnum];
+  deleted_vnum = room->number;   /* room is stale once world[] shifts */
 
   add_to_save_list(zone_table[room->zone].number, SL_WLD);
 
@@ -271,20 +316,6 @@ int delete_room(room_rnum rnum)
     r_frozen_start_room = 0;	/* The Void */
   } else if (r_frozen_start_room != NOWHERE && r_frozen_start_room > rnum)
     r_frozen_start_room--;
-
-  /* GET_WAS_IN is where a linkless player returns on reconnect; renumber
-   * it like the start rooms. */
-  for (ppl = character_list; ppl; ppl = ppl->next) {
-    if (GET_WAS_IN(ppl) == NOWHERE)
-      continue;
-    if (GET_WAS_IN(ppl) == rnum) {
-      TB_WARN_MSG("olc", "room-delete-wasin", "room",
-                  DIAG_CHAR_FMT " was_in room vnum %d, which is being deleted; "
-                  "reset to the Void", DIAG_CHAR(ppl), room->number);
-      GET_WAS_IN(ppl) = 0;
-    } else if (GET_WAS_IN(ppl) > rnum)
-      GET_WAS_IN(ppl)--;
-  }
 
   /* Dump the contents of this room into the Void.  We could also just extract 
    * the people, mobs, and objects here. */
@@ -352,14 +383,14 @@ int delete_room(room_rnum rnum)
       case 'T':
       case 'V':
 	if (ZCMD(i, j).arg3 == rnum)
-	  ZCMD(i, j).command = '*';	/* Cancel command. */
+	  cancel_zone_command(&ZCMD(i, j));	/* Frees a 'V' command's strings. */
 	else if (ZCMD(i, j).arg3 > rnum)
 	  ZCMD(i, j).arg3 -= (ZCMD(i, j).arg3 != NOWHERE); /* with unsigned NOWHERE > any rnum */
 	break;
       case 'D':
       case 'R':
 	if (ZCMD(i, j).arg1 == rnum)
-	  ZCMD(i, j).command = '*';	/* Cancel command. */
+	  cancel_zone_command(&ZCMD(i, j));
 	else if (ZCMD(i, j).arg1 > rnum)
 	  ZCMD(i, j).arg1 -= (ZCMD(i, j).arg1 != NOWHERE); /* with unsigned NOWHERE > any rnum */
       case 'G':
@@ -395,6 +426,23 @@ int delete_room(room_rnum rnum)
   RECREATE(world, struct room_data, top_of_world + 1);
   /* world[] was shifted and reallocated: re-point room event owners. */
   rebase_room_events();
+
+  /* GET_WAS_IN is where an idle or linkless player is put back on their
+   * next command (comm.c); renumber it like the start rooms.  One that was
+   * the deleted room gets the character's start room, looked up by vnum in
+   * the shifted world[]: the Void (rnum 0) left the player stranded there. */
+  for (ppl = character_list; ppl; ppl = ppl->next) {
+    if (GET_WAS_IN(ppl) == NOWHERE)
+      continue;
+    if (GET_WAS_IN(ppl) == rnum) {
+      GET_WAS_IN(ppl) = was_in_start_room(ppl);
+      TB_WARN_MSG("olc", "room-delete-wasin", "room",
+                  DIAG_CHAR_FMT " was_in room vnum %d, which was deleted; "
+                  "now start room vnum %d", DIAG_CHAR(ppl), deleted_vnum,
+                  world[GET_WAS_IN(ppl)].number);
+    } else if (GET_WAS_IN(ppl) > rnum)
+      GET_WAS_IN(ppl)--;
+  }
 
   return TRUE;
 }
@@ -537,9 +585,17 @@ int save_rooms(zone_rnum rzone)
   /* Write the final line and commit only a fully flushed temporary file. */
   tb_fprintf(sf, "$~\n");
   {
+    /* ferror() stays set after any failed write.  tb_fprintf() reported
+     * each one, but a later flush that succeeds would hide it and commit a
+     * file with a hole in it (C2-16). */
+    int stream_ok = !ferror(sf);
     int flush_ok = tb_fflush_checked(sf, filename);
     int close_ok = tb_fclose_checked(sf, filename);
-    if (!flush_ok || !close_ok) {
+    if (!stream_ok)
+      TB_ERROR_MSG("olc", "save-stream-error", filename,
+                   TB_ERRID_PERSIST_WRITE " zone %d rooms: a write failed; previous file kept",
+                   zone_table[rzone].number);
+    if (!stream_ok || !flush_ok || !close_ok) {
       if (remove(filename) != 0 && errno != ENOENT)
         TB_REPORT_ERRNO("remove", filename);
       return FALSE;

@@ -79,6 +79,19 @@ void	extract_char(struct char_data *ch);
 void	extract_char_final(struct char_data *ch);
 void	extract_pending_chars(void);
 
+/* Room occupant snapshots, for loops whose body runs callbacks (cast,
+ * damage and death triggers) that can move, purge or extract any occupant,
+ * so next_in_room must not be kept across the body. room_people_uids()
+ * returns the number of occupants and a CREATE'd array of their UIDs in
+ * *uids (NULL when empty; the caller frees it); an invalid room is reported
+ * at the caller and yields 0. room_person_live() re-resolves one UID: the
+ * character if it is still in room and not pending extraction, else NULL. */
+int	room_people_uids_at(const char *src_file, int src_line,
+                            const char *src_func, room_rnum room, long **uids);
+#define room_people_uids(room, uids) \
+  room_people_uids_at(__FILE__, __LINE__, __func__, (room), (uids))
+struct char_data *room_person_live(long uid, room_rnum room);
+
 /* find if character can see */
 struct char_data *get_player_vis(struct char_data *ch, char *name, int *number, int inroom);
 struct char_data *get_char_vis(struct char_data *ch, char *name, int *number, int where);

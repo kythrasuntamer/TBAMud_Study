@@ -299,6 +299,40 @@ void test_class_table_misses_name_their_inputs(void)
 
     TEST_ASSERT_EQUAL_INT(100, saving_throws(CLASS_CLERIC, 42, 10));
     TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "class 1 type 42 level 10"));
+    TEST_ASSERT_NULL(strstr(tb_captured_detail, " for ")); /* no character */
+}
+
+/* C1-19: a lookup made for a character also names it, so a player whose
+ * saved class or level is outside a table is identified by the record
+ * itself (fight.c's compute_thaco() uses char_thaco()). Three reports: the
+ * class tables write at most ten a minute. */
+void test_class_table_misses_name_the_character(void)
+{
+    struct char_data ch;
+
+    memset(&ch, 0, sizeof(ch));
+    GET_CLASS(&ch) = 7;            /* corrupt player file data */
+    GET_LEVEL(&ch) = 10;
+    GET_IDNUM(&ch) = 1234;
+
+    tb_error_capture_reset();
+    TEST_ASSERT_EQUAL_INT(100, char_thaco(&ch));
+    TEST_ASSERT_EQUAL_STRING("class-table", tb_captured_operation);
+    TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail,
+        "class 7 type -1 level 10 is outside the thac0 table for player idnum 1234"));
+
+    TEST_ASSERT_EQUAL_INT(123456, char_level_exp(&ch, 11));
+    TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail,
+        "class 7 type -1 level 11 is outside the level-exp table for player idnum 1234"));
+
+    TEST_ASSERT_EQUAL_INT(100, char_saving_throw(&ch, 7, SAVING_SPELL));
+    TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "saving-throw table for player idnum 1234"));
+    TEST_ASSERT_EQUAL_INT(3, tb_captured_errors);
+
+    /* A character whose class and level are in range is not reported. */
+    GET_CLASS(&ch) = CLASS_WARRIOR;
+    TEST_ASSERT_EQUAL_INT(thaco(CLASS_WARRIOR, 10), char_thaco(&ch));
+    TEST_ASSERT_EQUAL_INT(3, tb_captured_errors);
 }
 
 /* =========================================================
@@ -315,6 +349,7 @@ int main(void)
     RUN_TEST(test_saving_throws_past_table_use_last_row);
     RUN_TEST(test_saving_throws_invalid_level_is_reported);
     RUN_TEST(test_class_table_misses_name_their_inputs);
+    RUN_TEST(test_class_table_misses_name_the_character);
 
     /* parse_class */
     RUN_TEST(test_parse_class_magic_user_lowercase);

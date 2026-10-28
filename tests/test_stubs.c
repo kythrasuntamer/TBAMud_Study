@@ -119,6 +119,15 @@ void tb_player_special_on_mob_at(const struct char_data *ch, const char *field,
                                  const char *source_func)
 { (void)ch; (void)field; (void)source_file; (void)source_line; (void)source_func; }
 
+/* CLASS_ABBR's out-of-range reporter, for tests that do not link utils.c. */
+__attribute__((weak))
+const char *tb_class_range_error_at(const struct char_data *ch,
+                                    const char *table,
+                                    const char *source_file, int source_line,
+                                    const char *source_func)
+{ (void)ch; (void)table; (void)source_file; (void)source_line;
+  (void)source_func; return "??"; }
+
 /* ---------- modify.c ---------- */
 __attribute__((weak))
 void page_string(struct descriptor_data *d, char *str, int keep_internal)

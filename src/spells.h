@@ -189,7 +189,7 @@ struct spell_info_type {
 
    /* Indexed by class. The player's class comes from the pfile, which is
     * not range-checked on load: index through SPELL_MIN_LEVEL() or check
-    * VALID_CLASS_NUM() first. */
+    * VALID_CLASS() (utils.h) first. */
    int min_level[NUM_CLASSES];
    int routines;
    byte violent;
@@ -204,13 +204,11 @@ struct spell_info_type {
  * pass a plain variable. */
 #define VALID_SPELLNUM(spl)	((spl) >= 1 && (spl) <= TOP_SPELL_DEFINE)
 
-/** TRUE when c may index spell_info[].min_level[]. c evaluated twice. */
-#define VALID_CLASS_NUM(c)	((c) >= 0 && (c) < NUM_CLASSES)
 /** Minimum level at which class c learns spell spl; an invalid class can
  * never cast (LVL_IMPL + 1), the fail-closed answer. spl must already be a
  * valid spell number. c evaluated twice: pass a plain variable. */
 #define SPELL_MIN_LEVEL(spl, c) \
-  (VALID_CLASS_NUM(c) ? spell_info[(spl)].min_level[(c)] : LVL_IMPL + 1)
+  (VALID_CLASS(c) ? spell_info[(spl)].min_level[(c)] : LVL_IMPL + 1)
 
 /* Possible targets: see the TAR_* bits above (spell_info_type.targets).
  * An older bit-number list here disagreed with those values and was

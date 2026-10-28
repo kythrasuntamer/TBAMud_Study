@@ -164,12 +164,16 @@ struct oasis_olc_data {
 /* Exported globals. */
 extern const char *nrm, *grn, *cyn, *yel;
 
-/* Index-validity checks for prototype and zone table rnums, in the style of
- * VALID_ROOM_RNUM (utils.h).  utils.h's VALID_OBJ_RNUM takes an object, not
- * an index, hence the _IDX suffix.  r is evaluated twice: pass a plain
- * variable. */
-#define VALID_OBJ_RNUM_IDX(r)  ((r) != NOTHING && (r) <= top_of_objt)
-#define VALID_ZONE_RNUM(r)     ((r) != NOWHERE && (r) <= top_of_zone_table)
+/* Index-validity checks for prototype and zone table rnums, with the rule
+ * of VALID_ROOM_RNUM (utils.h tb_rnum_valid): not the sentinel, not
+ * negative, at most the table's top, for any integer type.  utils.h's
+ * VALID_OBJ_RNUM takes an object, not an index, hence the _IDX suffix.
+ * VALID_ZONE_RNUM has the same text as utils.h's, so the two coexist until
+ * the final cleanup removes this copy.  r is evaluated once. */
+#define VALID_OBJ_RNUM_IDX(r) \
+	tb_rnum_valid((long) (r), (long) NOTHING, (long) top_of_objt)
+#define VALID_ZONE_RNUM(r) \
+	tb_rnum_valid((long) (r), (long) NOWHERE, (long) top_of_zone_table)
 
 /* Descriptor access macros. */
 #define OLC(d)         ((d)->olc)
@@ -468,6 +472,7 @@ int  save_config( IDXTYPE nowhere );
 /* Prototypes to keep. */
 void clear_screen(struct descriptor_data *);
 int can_edit_zone(struct char_data *ch, zone_rnum rnum);
+int can_use_editor(struct char_data *ch, int perm);
 ACMD(do_oasis);
 
 /* public functions from medit.c */

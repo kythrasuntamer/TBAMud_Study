@@ -203,6 +203,7 @@ zone_rnum real_zone_by_thing(room_vnum vznum) { (void)vznum; return NOWHERE; }
 void send_to_group(struct char_data *ch, struct group_data *group, const char *msg, ...)
 { (void)ch; (void)group; (void)msg; }
 int thaco(int class_num, int level) { (void)class_num; (void)level; return 20; }
+int char_thaco(const struct char_data *ch) { (void)ch; return 20; }
 void *simple_list_at(struct list_data *pList, const char *src_file, int src_line, const char *src_func) { (void)src_file; (void)src_line; (void)src_func;  (void)pList; return NULL; }
 void free_list_at(struct list_data *pList, const char *src_file, int src_line, const char *src_func) { (void)src_file; (void)src_line; (void)src_func;  (void)pList; }
 /* event_cancel() is a macro over event_cancel_at() (call-site capture). */
