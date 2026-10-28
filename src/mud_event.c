@@ -227,6 +227,7 @@ struct mud_event_data * char_has_mud_event(struct char_data * ch, event_id iId)
 {
   struct event * pEvent;
   struct mud_event_data * pMudEvent = NULL;
+  struct iterator_data it;
   bool found = FALSE;
 
   if (ch->events == NULL)
@@ -235,9 +236,10 @@ struct mud_event_data * char_has_mud_event(struct char_data * ch, event_id iId)
   if (ch->events->iSize == 0)
     return NULL;
 
-  clear_simple_list();  
-
-  while ((pEvent = (struct event *) simple_list(ch->events)) != NULL) {
+  /* A private iterator: breaking out of a simple_list() loop would leave
+   * the global cursor parked mid-list for the next caller. */
+  for (pEvent = (struct event *) merge_iterator(&it, ch->events); pEvent;
+       pEvent = (struct event *) next_in_list(&it)) {
     if (!pEvent->isMudEvent)
       continue;
      pMudEvent = (struct mud_event_data * ) pEvent->event_obj;
@@ -246,6 +248,7 @@ struct mud_event_data * char_has_mud_event(struct char_data * ch, event_id iId)
      break;
     }
   }
+  remove_iterator(&it);
 
   if (found)
     return (pMudEvent);

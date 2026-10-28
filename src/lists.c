@@ -12,9 +12,41 @@
 #include "db.h"
 #include "dg_event.h"
 
+/* simple_list() cursor: one global, non-reentrant iterator. Iterator.pItem
+ * is the NEXT item simple_list() will hand out (prefetched), so the loop
+ * body may remove the item it was just given; unlink_item() advances the
+ * cursor if the body removes the next one, and free_list() drops the
+ * cursor if the body frees the list. Only this cursor gets that care:
+ * merge_iterator() iterators belong to their callers. */
 static struct iterator_data Iterator;
 static bool loop = FALSE;
 static struct list_data *pLastList = NULL;
+
+/* Unlink pItem from pList and free it (not its content). */
+static void unlink_item(struct list_data *pList, struct item_data *pItem)
+{
+  if (loop && pLastList == pList && Iterator.pItem == pItem)
+    Iterator.pItem = pItem->pNextItem;
+
+  if (pItem == pList->pFirstItem)
+    pList->pFirstItem = pItem->pNextItem;
+
+  if (pItem == pList->pLastItem)
+    pList->pLastItem = pItem->pPrevItem;
+
+  if (pItem->pPrevItem)
+    pItem->pPrevItem->pNextItem = pItem->pNextItem;
+
+  if (pItem->pNextItem)
+    pItem->pNextItem->pPrevItem = pItem->pPrevItem;
+
+  pList->iSize--;
+  if (pList->iSize == 0) {
+    pList->pFirstItem = NULL;
+    pList->pLastItem  = NULL;
+  }
+  free(pItem);
+}
 
 /* Global lists */
 struct list_data * global_lists = NULL;
@@ -56,17 +88,24 @@ static struct item_data * create_item(void)
 
 void free_list(struct list_data * pList)
 {
-  void * pContent;
-  
-  clear_simple_list();  
-    
-  if (pList->iSize)
-    while ((pContent = simple_list(pList)))
-      remove_from_list(pContent, pList);
-    
-  if (pList->iSize > 0)
-    mudlog(CMP, LVL_GOD, TRUE, "List being freed while not empty.");
-      
+  /* A simple_list() cursor on this list dies with it (e.g. an event cancel
+   * loop whose last cancel frees the owner's list). */
+  if (Iterator.pList == pList || (loop && pLastList == pList))
+    clear_simple_list();
+  /* Freeing a non-empty list is normal (the contents are not owned by the
+   * list): drain it from the head. This used to iterate with simple_list(),
+   * which remove_from_list() reset after the first item, leaking the rest. */
+  while (pList->pFirstItem)
+    unlink_item(pList, pList->pFirstItem);
+
+  /* Invariant: the item chain and the counters agree, and no caller still
+   * iterates the list. */
+  if (pList->iSize != 0 || pList->iIterators != 0)
+    TB_ERROR_MSG("lists", "free-nonempty", "list_data",
+                 "list %p freed with size %u and %u live iterators after draining",
+                 (void *) pList, (unsigned) pList->iSize,
+                 (unsigned) pList->iIterators);
+
   /* Global List for debugging */
   if (pList != global_lists)
     remove_from_list(pList, global_lists);  
@@ -112,24 +151,7 @@ void remove_from_list(void * pContent, struct list_data * pList)
     return;
   }
 
-  if (pRemovedItem == pList->pFirstItem)
-    pList->pFirstItem = pRemovedItem->pNextItem;  
-
-  if (pRemovedItem == pList->pLastItem)
-    pList->pLastItem = pRemovedItem->pPrevItem;  
- 
-  if (pRemovedItem->pPrevItem)
-    pRemovedItem->pPrevItem->pNextItem = pRemovedItem->pNextItem;
- 
-  if (pRemovedItem->pNextItem)
-    pRemovedItem->pNextItem->pPrevItem = pRemovedItem->pPrevItem;
-  
-  pList->iSize--;
-  if (pList->iSize == 0) {
-    pList->pFirstItem = NULL;
-    pList->pLastItem  = NULL;
-  }
-  free(pRemovedItem);
+  unlink_item(pList, pRemovedItem);
 }
 
 /** Merges an iterator with a list
@@ -188,6 +210,10 @@ void * next_in_list(struct iterator_data * pIterator)
     return NULL;
   }
 
+  /* Already past the end: stay there. */
+  if (pIterator->pItem == NULL)
+    return NULL;
+
   /* Cycle down the list */
   pTempItem = pIterator->pItem->pNextItem;
   pIterator->pItem = pTempItem;
@@ -205,39 +231,32 @@ void * next_in_list(struct iterator_data * pIterator)
 
 struct item_data * find_in_list(void * pContent, struct list_data * pList)
 {
-  void * pFoundItem;
-  struct item_data *pItem = NULL;
-  bool found;
+  struct item_data *pItem;
 
-  pFoundItem = merge_iterator(&Iterator, pList);
-
-  for (found = FALSE; pFoundItem != NULL; pFoundItem = next_in_list(&Iterator)) {
-    if (pFoundItem == pContent) {
-      found = TRUE;
-      break;
-    }
-  }
-
-  if (found)
-    pItem = Iterator.pItem;
-
-  remove_iterator(&Iterator);
-
-  if (found)
-    return (pItem);
-  else
+  /* A plain walk: this used to borrow simple_list()'s global Iterator, so
+   * every remove_from_list() inside a simple_list() loop ended that loop. */
+  if (pList == NULL)
     return NULL;
+  for (pItem = pList->pFirstItem; pItem; pItem = pItem->pNextItem)
+    if (pItem->pContent == pContent)
+      return pItem;
+  return NULL;
 }
 
 void clear_simple_list(void)
 {
+  /* Release a cursor abandoned mid-list (a loop that broke out early). */
+  if (Iterator.pList)
+    remove_iterator(&Iterator);
+  Iterator.pList = NULL;
+  Iterator.pItem = NULL;
   loop = FALSE;
-  pLastList = NULL;  
+  pLastList = NULL;
 }
 
 void * simple_list(struct list_data * pList)
 {
-  void * pContent;
+  struct item_data *pItem;
 
   /* Reset List */
   if (pList == NULL) {
@@ -246,23 +265,27 @@ void * simple_list(struct list_data * pList)
   }
 
   if (!loop || pLastList != pList) {
-    if (loop && pLastList != pList)
+    if (loop && pLastList != pList) {
       mudlog(CMP, LVL_GRGOD, TRUE, "SYSERR: simple_list() forced to reset itself.");
-  
-    pContent = merge_iterator(&Iterator, pList);
-    if (pContent != NULL) {
-      pLastList = pList;    
-      loop = TRUE;
-      return (pContent);
-    } else
-      return NULL;
-  }
-   
-  if ((pContent = next_in_list(&Iterator)) != NULL)
-    return (pContent);
+      clear_simple_list();
+    }
 
-  remove_iterator(&Iterator);  
+    if (merge_iterator(&Iterator, pList) == NULL)
+      return NULL;
+    pLastList = pList;
+    loop = TRUE;
+  }
+
+  /* Hand out the prefetched item and prefetch its successor before the
+   * caller can remove it. */
+  if ((pItem = Iterator.pItem) != NULL) {
+    Iterator.pItem = pItem->pNextItem;
+    return (pItem->pContent);
+  }
+
+  remove_iterator(&Iterator);
   loop = FALSE;
+  pLastList = NULL;
   return NULL;
 }
 

@@ -145,6 +145,82 @@ static void test_room_event_for_deleted_room_reports(void)
   TEST_ASSERT_EQUAL_STRING("room-gone", tb_captured_operation);
 }
 
+static int items[4];
+
+static struct list_data *list_of(int n)
+{
+  struct list_data *l = create_list();
+  int k;
+  for (k = 0; k < n; k++)
+    add_to_list(&items[k], l);
+  return l;
+}
+
+/* H3-14: free_list() on a 3-item list used to free one item and leak two
+ * (find_in_list reset simple_list's shared iterator). LSan checks the
+ * leak; nothing is reported for a normal non-empty free. */
+static void test_free_list_frees_every_item(void)
+{
+  free_list(list_of(3));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  TEST_ASSERT_EQUAL_INT(0, mudlogs);
+}
+
+/* H3-14: the event-cancel loop shape removes every item, not just the
+ * first; removing the item just handed out is safe. */
+static void test_simple_list_body_may_remove_current(void)
+{
+  struct list_data *l = list_of(3);
+  void *c;
+  int seen = 0;
+
+  clear_simple_list();
+  while ((c = simple_list(l)) != NULL) {
+    remove_from_list(c, l);
+    seen++;
+  }
+  TEST_ASSERT_EQUAL_INT(3, seen);
+  TEST_ASSERT_EQUAL_INT(0, l->iSize);
+  TEST_ASSERT_EQUAL_INT(0, l->iIterators);
+  free_list(l);
+  TEST_ASSERT_EQUAL_INT(0, mudlogs);
+}
+
+/* Removing the NEXT item from inside the loop skips it instead of reading
+ * a freed item. */
+static void test_simple_list_body_may_remove_next(void)
+{
+  struct list_data *l = list_of(3);
+  void *c;
+  int seen = 0;
+
+  clear_simple_list();
+  while ((c = simple_list(l)) != NULL) {
+    if (c == &items[0])
+      remove_from_list(&items[1], l);
+    seen++;
+  }
+  TEST_ASSERT_EQUAL_INT(2, seen);
+  free_list(l);
+}
+
+/* A loop body that frees the list it iterates ends the loop cleanly. */
+static void test_simple_list_body_may_free_list(void)
+{
+  struct list_data *l = list_of(2);
+  void *c;
+  int seen = 0;
+
+  clear_simple_list();
+  while ((c = simple_list(l)) != NULL) {
+    seen++;
+    free_list(l);
+    l = NULL;
+  }
+  TEST_ASSERT_EQUAL_INT(1, seen);
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+}
+
 int main(void)
 {
   int rc;
@@ -152,6 +228,10 @@ int main(void)
   /* boot_db() order: the first list created is the registry of lists. */
   global_lists = create_list();
   UNITY_BEGIN();
+  RUN_TEST(test_free_list_frees_every_item);
+  RUN_TEST(test_simple_list_body_may_remove_current);
+  RUN_TEST(test_simple_list_body_may_remove_next);
+  RUN_TEST(test_simple_list_body_may_free_list);
   RUN_TEST(test_room_event_survives_world_realloc);
   RUN_TEST(test_room_event_for_deleted_room_reports);
   rc = UNITY_END();
