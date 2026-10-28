@@ -1242,7 +1242,8 @@ int command_otrigger(char_data *actor, char *cmd, char *argument)
 
   if (!valid_dg_target(actor, 0))
     return 0;
-  /* The room's objects are scanned below: world[NOWHERE] otherwise. */
+  /* world[origin].contents is snapshotted below, as in command_mtrigger and
+   * command_wtrigger. */
   if (!dg_trigger_actor_placed(actor, "command_otrigger"))
     return 0;
   actor_uid = char_script_id(actor);
