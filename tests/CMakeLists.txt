@@ -434,6 +434,13 @@ if(Python3_Interpreter_FOUND)
         COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/test_dg_detach_contract.py
                 ${MUD_SRCDIR}/dg_scripts.c)
+
+    # Runs the built src/util tools on crafted inputs and asserts on the
+    # TBERR operation each malformed input must report.
+    add_test(NAME test_util_world_tools
+        COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/test_util_world_tools.py
+                $<TARGET_FILE:wld2html> $<TARGET_FILE:split>)
     add_test(NAME test_dg_wait_suffix_contract
         COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/test_dg_wait_suffix_contract.py

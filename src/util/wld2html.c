@@ -58,6 +58,49 @@ char arg[MAX_STRING_LENGTH];
 
 int get_line(FILE * fl, char *buf, size_t buflen);
 
+/*
+ * Parse context for diagnostics.  The input .wld files are builder data
+ * named on the command line; when one is malformed the operator needs the
+ * file, the physical line and the room vnum to fix it, so every loader
+ * diagnostic goes through WLD_REPORT / WLD_PARSE_ERROR, which prefix that
+ * context.  wld_cur_line counts lines consumed by get_line() and
+ * fread_string(); wld_cur_vnum is the room being parsed.
+ */
+static const char *wld_cur_file = "(no file)";
+static long wld_cur_line = 0;
+static int wld_cur_vnum = 0;
+static int wld_have_vnum = 0;	/* 0 until the first '#<vnum>' is parsed */
+static int wld_write_failed = 0;	/* set when any HTML write fails     */
+
+static void wld_format_context(char *dst, size_t dst_size, const char *detail)
+{
+  if (wld_have_vnum)
+    tb_snprintf(dst, dst_size, "file %s line %ld room #%d: %s",
+                wld_cur_file, wld_cur_line, wld_cur_vnum, detail);
+  else
+    tb_snprintf(dst, dst_size, "file %s line %ld (before first room): %s",
+                wld_cur_file, wld_cur_line, detail);
+}
+
+/*
+ * WLD_REPORT(severity, category, op, fmt, ...) emits a structured diagnostic
+ * carrying the caller's __FILE__/__LINE__/__func__ plus the input file, line
+ * and vnum.  WLD_PARSE_ERROR(op, fmt, ...) does the same at ERROR/PARSER
+ * severity and then exits with status 1, because a malformed world file is
+ * never converted partially.  Both evaluate their arguments once.
+ */
+#define WLD_REPORT(severity, category, op, ...) do { \
+  char wld_detail_[512], wld_ctx_[1024]; \
+  tb_snprintf(wld_detail_, sizeof(wld_detail_), __VA_ARGS__); \
+  wld_format_context(wld_ctx_, sizeof(wld_ctx_), wld_detail_); \
+  TB_REPORT_DOMAIN_ERROR((severity), (category), (op), wld_ctx_); \
+} while (0)
+
+#define WLD_PARSE_ERROR(op, ...) do { \
+  WLD_REPORT(TB_SEV_ERROR, TB_ERR_PARSER, (op), __VA_ARGS__); \
+  exit(1); \
+} while (0)
+
 static int parse_int_token(char **cursor, int *out)
 {
   char *p, *end;
@@ -186,7 +229,7 @@ int rec_count = 0;
 
 
 /* local functions */
-char *fread_string(FILE * fl, char *error);
+char *fread_string(FILE * fl, const char *error);
 void setup_dir(FILE * fl, int room, int dir);
 void index_boot(int cnt, char **name);
 void discrete_load(FILE * fl);
@@ -220,7 +263,8 @@ int main(int argc, char **argv)
   write_output();
   log("Done.");
 
-  return (0);
+  /* A failed HTML write was already reported where it happened. */
+  return (wld_write_failed ? 1 : 0);
 }
 
 /* Since the world is loaded into memory by index
@@ -293,7 +337,13 @@ void write_output(void)
       }
     if (!found)
       tb_fprintf(fl, "None!");
-    tb_fclose(fl);
+    if (ferror(fl)) {
+      TB_REPORT_DOMAIN_ERROR(TB_SEV_ERROR, TB_ERR_PERSISTENCE,
+                             "wld-html-write", buf);
+      wld_write_failed = 1;
+    }
+    if (!tb_fclose_checked(fl, buf))
+      wld_write_failed = 1;
   }
 }  
 
@@ -345,6 +395,9 @@ void index_boot(int cnt, char **names)
       TB_REPORT_ERRNO("fopen", names[i]);
       exit(1);
     }
+    wld_cur_file = names[i];
+    wld_cur_line = 0;
+    wld_have_vnum = 0;
     discrete_load(db_file);
     tb_fclose(db_file);
   }
@@ -357,10 +410,9 @@ void discrete_load(FILE * fl)
   char line[256];
 
   for (;;) {
-    if (!get_line(fl, line, sizeof(line))) {
-      tb_fprintf(stderr, "Format error after room #%d\n", nr);
-      exit(1);
-    }
+    if (!get_line(fl, line, sizeof(line)))
+      WLD_PARSE_ERROR("wld-unexpected-eof",
+                      "file ended without the '$' end-of-file marker");
     if (*line == 'T') //Toss triggers. THey currently break this util.
       continue;
 	  
@@ -371,20 +423,19 @@ void discrete_load(FILE * fl)
       last = nr;
       {
         char *cursor = line + 1;
-        if (!parse_int_token(&cursor, &nr)) {
-          tb_fprintf(stderr, "Format error after room #%d\n", last);
-          exit(1);
-        }
+        if (!parse_int_token(&cursor, &nr))
+          WLD_PARSE_ERROR("wld-room-vnum",
+                          "'#' line after room #%d has no integer vnum", last);
       }
+      wld_cur_vnum = nr;
+      wld_have_vnum = 1;
       if (nr >= 99999)
 	return;
       else
 	parse_room(fl, nr);
-    } else {
-      tb_fprintf(stderr, "Format error in world file near room #%d\n", nr);
-      tb_fprintf(stderr, "Offending line: '%s'\n", line);
-      exit(1);
-    }
+    } else
+      WLD_PARSE_ERROR("wld-record-start",
+                      "expected '#<vnum>', 'T' or '$', got '%.40s'", line);
   }
 }
 
@@ -418,25 +469,21 @@ void parse_room(FILE * fl, int virtual_nr)
   char line[256], flags[128];
   struct extra_descr_data *new_descr;
 
-  tb_snprintf(buf2, sizeof(buf2), "room #%d", virtual_nr);
-
   world[room_nr].zone = zone;
   world[room_nr].number = virtual_nr;
-  world[room_nr].name = fread_string(fl, buf2);
-  world[room_nr].description = fread_string(fl, buf2);
+  world[room_nr].name = fread_string(fl, "room name");
+  world[room_nr].description = fread_string(fl, "room description");
 
-  if (!get_line(fl, line, sizeof(line))) {
-    tb_fprintf(stderr, "Format error in room #%d\n", virtual_nr);
-    exit(1);
-  }
+  if (!get_line(fl, line, sizeof(line)))
+    WLD_PARSE_ERROR("wld-unexpected-eof",
+                    "file ended before the '<zone> <flags> <sector>' line");
   {
     char *cursor = line;
     if (!parse_int_token(&cursor, &t[0]) ||
         !parse_word_token(&cursor, flags, sizeof(flags)) ||
-        !parse_int_token(&cursor, &t[2])) {
-      tb_fprintf(stderr, "Format error in room #%d\n", virtual_nr);
-      exit(1);
-    }
+        !parse_int_token(&cursor, &t[2]))
+      WLD_PARSE_ERROR("wld-room-flags-line",
+                      "expected '<zone> <flags> <sector>'");
   }
   /* t[0] is the zone number; ignored with the zone-file system */
   world[room_nr].room_flags = asciiflag_conv(flags);
@@ -449,21 +496,18 @@ void parse_room(FILE * fl, int virtual_nr)
 
   world[room_nr].ex_description = NULL;
 
-  tb_snprintf(buf, sizeof(buf), "Format error in room #%d (expecting D/E/S)", virtual_nr);
-
   for (;;) {
-    if (!get_line(fl, line, sizeof(line))) {
-      tb_fprintf(stderr, "%s\n", buf);
-      exit(1);
-    }
+    if (!get_line(fl, line, sizeof(line)))
+      WLD_PARSE_ERROR("wld-unexpected-eof",
+                      "file ended inside the room (expecting D/E/S)");
     switch (*line) {
     case 'D':
       setup_dir(fl, room_nr, tb_parse_int_or_zero(line + 1));
       break;
     case 'E':
       CREATE(new_descr, struct extra_descr_data, 1);
-      new_descr->keyword = fread_string(fl, buf2);
-      new_descr->description = fread_string(fl, buf2);
+      new_descr->keyword = fread_string(fl, "extra description keyword");
+      new_descr->description = fread_string(fl, "extra description text");
       new_descr->next = world[room_nr].ex_description;
       world[room_nr].ex_description = new_descr;
       break;
@@ -472,8 +516,8 @@ void parse_room(FILE * fl, int virtual_nr)
       return;
       break;
     default:
-      tb_fprintf(stderr, "%s\n", buf);
-      exit(1);
+      WLD_PARSE_ERROR("wld-room-section",
+                      "expected a D, E or S line, got '%.40s'", line);
       break;
     }
   }
@@ -487,24 +531,22 @@ void setup_dir(FILE * fl, int room, int dir)
   int t[5];
   char line[256];
 
-  tb_snprintf(buf2, sizeof(buf2), "room #%d, direction D%d", world[room].number, dir);
+  tb_snprintf(buf2, sizeof(buf2), "exit D%d text", dir);
 
   CREATE(world[room].dir_option[dir], struct room_direction_data, 1);
   world[room].dir_option[dir]->general_description = fread_string(fl, buf2);
   world[room].dir_option[dir]->keyword = fread_string(fl, buf2);
 
-  if (!get_line(fl, line, sizeof(line))) {
-    tb_fprintf(stderr, "Format error, %s\n", buf2);
-    exit(1);
-  }
+  if (!get_line(fl, line, sizeof(line)))
+    WLD_PARSE_ERROR("wld-unexpected-eof",
+                    "file ended before the D%d '<door> <key> <to-room>' line", dir);
   {
     char *cursor = line;
     if (!parse_int_token(&cursor, &t[0]) ||
         !parse_int_token(&cursor, &t[1]) ||
-        !parse_int_token(&cursor, &t[2])) {
-      tb_fprintf(stderr, "Format error, %s\n", buf2);
-      exit(1);
-    }
+        !parse_int_token(&cursor, &t[2]))
+      WLD_PARSE_ERROR("wld-door-line",
+                      "D%d expected '<door-flag> <key> <to-room>'", dir);
   }
   if (t[0] == 1)
     world[room].dir_option[dir]->exit_info = EX_ISDOOR;
@@ -523,7 +565,7 @@ void setup_dir(FILE * fl, int room, int dir)
 *********************************************************************** */
 
 /* read and allocate space for a '~'-terminated string from a given file */
-char *fread_string(FILE * fl, char *error)
+char *fread_string(FILE * fl, const char *error)
 {
   char buf[MAX_STRING_LENGTH], tmp[512], *rslt;
   register char *point;
@@ -532,11 +574,10 @@ char *fread_string(FILE * fl, char *error)
   *buf = '\0';
 
   do {
-    if (!fgets(tmp, 512, fl)) {
-      tb_fprintf(stderr, "SYSERR: fread_string: format error at or near %s\n",
-	      error);
-      exit(1);
-    }
+    if (!fgets(tmp, 512, fl))
+      WLD_PARSE_ERROR("wld-unexpected-eof",
+                      "file ended inside the '~'-terminated %s", error);
+    wld_cur_line++;
     /* If there is a '~', end the string; else put an "\r\n" over the '\n'. */
     if ((point = strchr(tmp, '~')) != NULL) {
       *point = '\0';
@@ -551,9 +592,8 @@ char *fread_string(FILE * fl, char *error)
     templength = strlen(tmp);
 
     if (length + templength >= MAX_STRING_LENGTH) {
-      log("SYSERR: fread_string: string too large (db.c)");
-      log(error);
-      exit(1);
+      WLD_PARSE_ERROR("wld-string-too-long",
+                      "%s exceeds %d bytes", error, MAX_STRING_LENGTH - 1);
     } else {
       strlcat(buf, tmp, sizeof(buf));
       length += templength;
@@ -583,6 +623,7 @@ int get_line(FILE * fl, char *buf, size_t buflen)
   do {
     if (fgets(temp, sizeof(temp), fl) == NULL)
       return 0;
+    wld_cur_line++;
     if (*temp)
       temp[strlen(temp) - 1] = '\0';
   } while (*temp == '*' || !*temp);
