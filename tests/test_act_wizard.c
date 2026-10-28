@@ -124,7 +124,8 @@ void extract_char_final(struct char_data *ch)
   extract_final_calls++;
   UNREACHED();
 }
-void save_char(struct char_data *ch) { (void)ch; save_char_calls++; }
+static struct char_data *saved_char;   /* last save_char() argument */
+void save_char(struct char_data *ch) { saved_char = ch; save_char_calls++; }
 void clear_char(struct char_data *ch)
 {
   memset(ch, 0, sizeof(*ch));
@@ -197,9 +198,10 @@ struct zone_data *zone_table;
  * Functions the tests never expect to reach.
  * --------------------------------------------------------------------- */
 const char *ColourRGB(descriptor_t *d, const char *rgb) { (void)d; (void)rgb; return ""; }
-const char *CopyoverGet(descriptor_t *d) { (void)d; UNREACHED(); return ""; }
+const char *CopyoverGet(descriptor_t *d) { (void)d; return ""; }
 void Crash_listrent(struct char_data *ch, char *name) { (void)ch; (void)name; UNREACHED(); }
-void Crash_rentsave(struct char_data *ch, int cost) { (void)ch; (void)cost; UNREACHED(); }
+static struct char_data *rentsaved_char;
+void Crash_rentsave(struct char_data *ch, int cost) { (void)cost; rentsaved_char = ch; }
 int House_can_enter(struct char_data *ch, room_vnum house) { (void)ch; (void)house; return 1; }
 void House_save_all(void) { UNREACHED(); }
 void add_completed_quest(struct char_data *ch, qst_vnum vnum) { (void)ch; (void)vnum; UNREACHED(); }
@@ -314,6 +316,7 @@ static void reset_counters(void)
   sent[0] = '\0';
   char_to_room_calls = char_from_room_calls = free_char_calls = 0;
   save_char_calls = extract_final_calls = run_autowiz_calls = 0;
+  saved_char = rentsaved_char = NULL;
 }
 
 void setUp(void)
@@ -710,6 +713,33 @@ static void test_copyover_aborts_before_exec_when_state_file_fails(void)
   TEST_ASSERT_NOT_NULL(strstr(sent, "not writeable"));
 }
 
+/* G1-06: copyover captured och = d->character before returning a switched
+ * immortal, so it saved (and recorded) the NPC body, not the player. */
+static void test_copyover_saves_the_switched_players_own_body(void)
+{
+  static struct char_data body;
+  memset(&body, 0, sizeof(body));
+  body.player.short_descr = (char *)"the cityguard";
+  SET_BIT_AR(MOB_FLAGS(&body), MOB_ISNPC);
+  body.nr = NOBODY;
+  IN_ROOM(&body) = 1;
+  body.desc = &imm_desc;
+  imm_desc.character = &body;
+  imm_desc.original = &imm;
+  imm.desc = NULL;
+  descriptor_list = &imm_desc;
+
+  run_copyover_in("full");
+  descriptor_list = NULL;
+
+  TEST_ASSERT_EQUAL_PTR(&imm, imm_desc.character);
+  TEST_ASSERT_NULL(imm_desc.original);
+  TEST_ASSERT_EQUAL_PTR(&imm, saved_char);
+  TEST_ASSERT_EQUAL_PTR(&imm, rentsaved_char);
+  TEST_ASSERT_EQUAL_INT(1, save_char_calls);
+  TEST_ASSERT_EQUAL_STRING("copyover-write", captured_operation);
+}
+
 int main(void)
 {
   /* basic_mud_log()/mudlog() are the real utils.c ones; keep them quiet. */
@@ -730,6 +760,7 @@ int main(void)
   RUN_TEST(test_zcheck_null_room_description_is_reported);
   RUN_TEST(test_zcheck_checks_the_last_room);
   RUN_TEST(test_copyover_aborts_before_exec_when_state_file_fails);
+  RUN_TEST(test_copyover_saves_the_switched_players_own_body);
   {
     int failures = UNITY_END();
     if (logfile)

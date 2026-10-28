@@ -4502,19 +4502,31 @@ ACMD(do_copyover)
 
    /* For each playing descriptor, save its state */
    for (d = descriptor_list; d ; d = d_next) {
-     struct char_data * och = d->character;
-   
-   /* If d is currently in someone else's body, return them. */  
-   if (och && d->original)
-     return_to_char(och);
-        
+     struct char_data *och;
+
+   /* If d is currently in someone else's body, return them. The record
+    * and the saves below are for the player's own body, so och is read
+    * only after the return: d->character is then the original. */
+   if (d->character && d->original)
+     return_to_char(d->character);
+   och = d->character;
+
    /* We delete from the list , so need to save this */
      d_next = d->next;
 
   /* drop those logging on */
-   if (!d->character || d->connected > CON_PLAYING) {
+   if (!och || d->connected > CON_PLAYING) {
      write_to_descriptor (d->descriptor, "\n\rSorry, we are rebooting. Come back in a few minutes.\n\r");
      close_socket (d); /* throw'em out */
+   } else if (IS_NPC(och)) {
+     /* Invariant: after the return above a playing descriptor holds its
+      * player. copyover_recover parses "desc pref name host" and would
+      * misread an NPC's multi-word name. */
+     TB_ERROR_MSG("act", "copyover-save", "descriptor",
+                  "desc %d character " DIAG_CHAR_FMT " is not a player; dropped",
+                  d->desc_num, DIAG_CHAR(och));
+     write_to_descriptor (d->descriptor, "\n\rSorry, we are rebooting. Come back in a few minutes.\n\r");
+     close_socket (d);
    } else {
       write_ok &= tb_fprintf_checked(fp, COPYOVER_FILE, "%d %ld %s %s %s\n",
                                      d->descriptor, GET_PREF(och), GET_NAME(och),
