@@ -848,14 +848,14 @@ void destroy_db(void)
     if (zone_table[cnt].builders)
       free(zone_table[cnt].builders);
     if (zone_table[cnt].cmd) {
-      /* first see if any vars were defined in this zone */
-      for (itr = 0;THIS_CMD.command != 'S';itr++)
-        if (THIS_CMD.command == 'V') {
-          if (THIS_CMD.sarg1)
-            free(THIS_CMD.sarg1);
-          if (THIS_CMD.sarg2)
-            free(THIS_CMD.sarg2);
-        }
+      /* Free every command's variable strings, not only those of a 'V':
+       * renum_zone_table() and load_zones() disable a bad 'V' by rewriting
+       * it to '*', and it still owns sarg1/sarg2. Commands that never had
+       * strings hold NULL (the table is CREATE()d zeroed). */
+      for (itr = 0;THIS_CMD.command != 'S';itr++) {
+        free(THIS_CMD.sarg1);
+        free(THIS_CMD.sarg2);
+      }
       /* then free the command list */
       free(zone_table[cnt].cmd);
     }
