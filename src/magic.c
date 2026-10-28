@@ -666,16 +666,17 @@ void mag_areas(int level, struct char_data *ch, int spellnum, int savetype)
     if (DEAD(ch) || IN_ROOM(ch) != origin) {
       TB_WARN_MSG("magic", "area-caster-moved", skill_name(spellnum),
                   "spell %d caster " DIAG_CHAR_FMT " purged or moved during "
-                  "the area spell; %d occupant(s) of room %d skipped",
-                  spellnum, DIAG_CHAR(ch), count - i,
-                  (int) GET_ROOM_VNUM(origin));
+                  "the area spell; %d occupant(s) of " DIAG_ROOM_FMT
+                  " skipped", spellnum, DIAG_CHAR(ch), count - i,
+                  DIAG_ROOM(origin));
       break;
     }
     if ((tch = room_person_live(targets[i], origin)) == NULL) {
       TB_WARN_MSG("magic", "area-target-moved", skill_name(spellnum),
-                  "spell %d target uid %ld left room %d or was purged during "
-                  "the area spell by " DIAG_CHAR_FMT "; skipped", spellnum,
-                  targets[i], (int) GET_ROOM_VNUM(origin), DIAG_CHAR(ch));
+                  "spell %d target uid %ld left " DIAG_ROOM_FMT " or was "
+                  "purged during the area spell by " DIAG_CHAR_FMT
+                  "; skipped", spellnum, targets[i], DIAG_ROOM(origin),
+                  DIAG_CHAR(ch));
       continue;
     }
 

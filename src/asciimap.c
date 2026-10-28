@@ -658,9 +658,8 @@ void str_and_map(char *str, struct char_data *ch, room_vnum target_room ) {
    * an empty description instead (I1-07). */
   if (str == NULL) {
     TB_ERROR_MSG("world", "room-description-null", "str_and_map",
-                 "room vnum %d (rnum %d) has a NULL description; viewer "
-                 DIAG_CHAR_FMT, (int) GET_ROOM_VNUM(target_room),
-                 (int) target_room, DIAG_CHAR(ch));
+                 DIAG_ROOM_FMT " has a NULL description; viewer "
+                 DIAG_CHAR_FMT, DIAG_ROOM(target_room), DIAG_CHAR(ch));
     str = no_description;
   }
 

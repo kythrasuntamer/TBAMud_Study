@@ -518,8 +518,9 @@ int room_people_uids_at(const char *src_file, int src_line,
   *uids = NULL;
   if (!VALID_ROOM_RNUM(room)) {
     TB_ERROR_MSG("handler", "room-people-snapshot", "room",
-                 "room rnum %d not in [0,%d]; no occupants; caller=%s:%d %s",
-                 (int) room, (int) top_of_world, src_file, src_line, src_func);
+                 DIAG_ROOM_FMT " not in [0,%d]; no occupants; caller=%s:%d %s",
+                 DIAG_ROOM(room), (int) top_of_world, src_file, src_line,
+                 src_func);
     return 0;
   }
   for (tch = world[room].people; tch; tch = tch->next_in_room)
