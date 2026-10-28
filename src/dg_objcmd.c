@@ -125,6 +125,16 @@ static room_rnum find_obj_target_room(obj_data *obj, char *rawroomstr)
     else
         return NOWHERE;
 
+    /* A target character or object can itself be in no room (being
+     * extracted, or not placed): ROOM_FLAGGED() would index world[NOWHERE]. */
+    if (!VALID_ROOM_RNUM(location)) {
+        TB_ERROR_MSG("dg", "target-room", "find_obj_target_room",
+                     "obj vnum %d uid %ld: target resolved to rnum %ld, not a "
+                     "room", GET_OBJ_VNUM(obj), obj_script_id(obj),
+                     (long)location);
+        return NOWHERE;
+    }
+
     /* a room has been found.  Check for permission */
     if (ROOM_FLAGGED(location, ROOM_GODROOM) ||
 #ifdef ROOM_IMPROOM
@@ -503,9 +513,16 @@ static OCMD(do_oteleport)
 
     else if (!str_cmp(arg1, "all"))
     {
+        /* obj_room() is NOWHERE for an object that is not placed anywhere
+         * (e.g. carried by nobody after a failed move); world[NOWHERE] is far
+         * past the end of the world table. */
         rm = obj_room(obj);
-        if (rm == NOWHERE) {
-            obj_log(obj, "oteleport all: the object is in no room");
+        if (!VALID_ROOM_RNUM(rm)) {
+            TB_ERROR_MSG("dg", "oteleport-origin", "do_oteleport",
+                         "obj vnum %d uid %ld is not in a room (rnum %ld); "
+                         "nobody teleported", GET_OBJ_VNUM(obj),
+                         obj_script_id(obj), (long)rm);
+            obj_log(obj, "oteleport all: object is not in a room");
             return;
         }
         if (target == rm) {

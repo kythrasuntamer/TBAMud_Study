@@ -280,6 +280,49 @@ static void test_omove_to_invalid_room_keeps_the_object(void)
   TEST_ASSERT_EQUAL_INT(2, IN_ROOM(stone));
 }
 
+/* E1-09: 'oteleport all' from an object that is not in any room read
+ * world[NOWHERE].people (far past the end of the world table). */
+static void test_oteleport_all_from_unplaced_object(void)
+{
+  struct obj_data *stone = dgw_obj(DGW_OBJ_STONE, NOWHERE);
+
+  ocmd(stone, "oteleport all 101");
+  TEST_ASSERT_EQUAL_INT(1, dgw_saw("oteleport-origin"));
+  obj_to_room(stone, 0);   /* so teardown finds it placed */
+}
+
+/* E1-09: teleporting everyone into the room they are in is refused, not
+ * logged and then done anyway (re-firing every enter trigger). */
+static void test_oteleport_all_to_own_room_is_refused(void)
+{
+  struct obj_data *stone = dgw_obj(DGW_OBJ_STONE, 0);
+  struct char_data *m = dgw_mob(DGW_MOB_GUARD, 0);
+  struct char_data *other = dgw_mob(DGW_MOB_OGRE, 0);
+
+  ocmd(stone, "oteleport all 100");
+  TEST_ASSERT_EQUAL_PTR(other, world[0].people);   /* order untouched */
+  TEST_ASSERT_EQUAL_PTR(m, other->next_in_room);
+
+  ocmd(stone, "oteleport all 101");
+  TEST_ASSERT_EQUAL_INT(1, IN_ROOM(m));
+  TEST_ASSERT_EQUAL_INT(1, IN_ROOM(other));
+}
+
+/* E1-09 (same class): a target character who is in no room. */
+static void test_object_target_character_in_no_room(void)
+{
+  struct obj_data *stone = dgw_obj(DGW_OBJ_STONE, 0);
+  struct char_data *m = dgw_mob(DGW_MOB_GUARD, 1);
+  char cmd[64];
+
+  char_from_room(m);
+  snprintf(cmd, sizeof(cmd), "omove %c%ld", UID_CHAR, char_script_id(m));
+  ocmd(stone, cmd);
+  TEST_ASSERT_EQUAL_INT(1, dgw_saw("target-room"));
+  TEST_ASSERT_EQUAL_INT(0, IN_ROOM(stone));
+  char_to_room(m, 1);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -297,5 +340,8 @@ int main(void)
   RUN_TEST(test_otransform_recomputes_weights);
   RUN_TEST(test_otransform_moves_the_instance_count);
   RUN_TEST(test_omove_to_invalid_room_keeps_the_object);
+  RUN_TEST(test_oteleport_all_from_unplaced_object);
+  RUN_TEST(test_oteleport_all_to_own_room_is_refused);
+  RUN_TEST(test_object_target_character_in_no_room);
   return UNITY_END();
 }
