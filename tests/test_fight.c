@@ -251,9 +251,34 @@ static void test_autoloot_takes_the_new_corpse(void)
   fx_free_char(pc);
 }
 
+/* H1-18: a weapon with 2e9 damage dice ('osetval 1 2000000000') used to
+ * make dice() loop 2e9 times; it is clamped and reported. */
+static void test_hit_clamps_weapon_dice(void)
+{
+  struct char_data *pc = fx_new_char("hero", FALSE, 0);
+  struct char_data *mob = fx_new_char("guard", TRUE, 0);
+  struct obj_data *club = wield(pc, "club");
+
+  GET_OBJ_VAL(club, 1) = 2000000000;
+  GET_MAX_HIT(mob) = GET_HIT(mob) = 1000;
+  GET_POS(mob) = POS_SLEEPING;
+
+  hit(pc, mob, TYPE_UNDEFINED);
+
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("weapon-dice-range", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "dice 2000000000d4"));
+  TEST_ASSERT_TRUE(GET_HIT(mob) < 1000);
+  if (FIGHTING(mob)) stop_fighting(mob);
+  if (FIGHTING(pc)) stop_fighting(pc);
+  fx_free_char(mob);
+  fx_free_char(pc);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(test_hit_clamps_weapon_dice);
   RUN_TEST(test_autoloot_takes_the_new_corpse);
   RUN_TEST(test_hit_rejects_weapon_attack_type_out_of_range);
   RUN_TEST(test_hit_rejects_mob_attack_type_out_of_range);

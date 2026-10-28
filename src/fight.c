@@ -900,6 +900,31 @@ int damage(struct char_data *ch, struct char_data *victim, int dam, int attackty
   return (dam);
 }
 
+/* Rolls ch's damage dice: weapon values 1 and 2 (weapon != NULL) or the
+ * mob's bare-hand dice. Both come from world files, OLC and scripts
+ * ('osetval 1 2000000000'), and dice() loops num times summing into an
+ * int: a huge count stalls the single-threaded game loop and num*size can
+ * overflow. damage() caps a blow at 100 anyway, so dice beyond
+ * FIGHT_MAX_DICE_NUM d FIGHT_MAX_DICE_SIZE are clamped and reported. */
+static int hit_dice(struct char_data *ch, struct obj_data *weapon, int num, int size)
+{
+  if (num >= 0 && num <= FIGHT_MAX_DICE_NUM && size >= 0 && size <= FIGHT_MAX_DICE_SIZE)
+    return dice(num, size);
+
+  if (weapon)
+    TB_ERROR_MSG("fight", "weapon-dice-range", "obj",
+                 "weapon vnum %d uid %ld dice %dd%d outside %dd%d, wielder "
+                 DIAG_CHAR_FMT "; clamped", (int) GET_OBJ_VNUM(weapon),
+                 obj_script_id(weapon), num, size, FIGHT_MAX_DICE_NUM,
+                 FIGHT_MAX_DICE_SIZE, DIAG_CHAR(ch));
+  else
+    TB_ERROR_MSG("fight", "weapon-dice-range", "char",
+                 DIAG_CHAR_FMT " bare-hand dice %dd%d outside %dd%d; clamped",
+                 DIAG_CHAR(ch), num, size, FIGHT_MAX_DICE_NUM,
+                 FIGHT_MAX_DICE_SIZE);
+  return DICE_BOUNDED(num, size);
+}
+
 /* Calculate the THAC0 of the attacker. 'victim' currently isn't used but you
  * could use it for special cases like weapons that hit evil creatures easier
  * or a weapon that always misses attacking an animal. */
@@ -1024,11 +1049,11 @@ void hit(struct char_data *ch, struct char_data *victim, int type)
     /* Maybe holding arrow? */
     if (wielded && GET_OBJ_TYPE(wielded) == ITEM_WEAPON) {
       /* Add weapon-based damage if a weapon is being wielded */
-      dam += dice(GET_OBJ_VAL(wielded, 1), GET_OBJ_VAL(wielded, 2));
+      dam += hit_dice(ch, wielded, GET_OBJ_VAL(wielded, 1), GET_OBJ_VAL(wielded, 2));
     } else {
       /* If no weapon, add bare hand damage instead */
         if (IS_NPC(ch))
-          dam += dice(ch->mob_specials.damnodice, ch->mob_specials.damsizedice);
+          dam += hit_dice(ch, NULL, ch->mob_specials.damnodice, ch->mob_specials.damsizedice);
         else
           dam += rand_number(0, 2);	/* Max 2 bare hand damage for players */
     }

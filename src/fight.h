@@ -49,6 +49,19 @@ struct attack_hit_type {
  * entries. */
 #define VALID_ATTACK_TYPE(t) ((t) >= 0 && (t) < NUM_ATTACK_TYPES)
 
+/** Largest damage dice hit() rolls: weapon values 1/2 and mob
+ * damnodice/damsizedice beyond these are clamped (damage() caps a single
+ * blow at 100, so nothing larger is meaningful). */
+#define FIGHT_MAX_DICE_NUM   100
+#define FIGHT_MAX_DICE_SIZE  1000
+/** dice(num, size) with both clamped into [0, FIGHT_MAX_DICE_*], so a
+ * builder- or script-supplied count can neither stall the game loop nor
+ * overflow dice()'s int sum. Evaluates num and size twice: no side
+ * effects. Silent by itself; hit() reports before using it. */
+#define DICE_BOUNDED(num, size) \
+  dice(MIN(MAX((num), 0), FIGHT_MAX_DICE_NUM), \
+       MIN(MAX((size), 0), FIGHT_MAX_DICE_SIZE))
+
 /* Functions available in fight.c */
 void appear(struct char_data *ch);
 void check_killer(struct char_data *ch, struct char_data *vict);
