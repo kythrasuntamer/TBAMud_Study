@@ -289,6 +289,24 @@ static void test_export_room_extra_descriptions(void)
   free(huge);
 }
 
+/* ---- save list teardown ----------------------------------------------- */
+
+/* Leftovers 4: free_save_list() (comm.c, at shutdown) freed every node but
+ * left save_list pointing at the first, so any later add, lookup or save
+ * walked freed memory.  The head is cleared now (C1-20). */
+static void test_free_save_list_clears_the_head(void)
+{
+  add_to_save_list(30, SL_MOB);
+  add_to_save_list(0, SL_OBJ);
+  free_save_list();
+  TEST_ASSERT_NULL(save_list);
+
+  TEST_ASSERT_TRUE(add_to_save_list(30, SL_WLD));
+  TEST_ASSERT_TRUE(in_save_list(30, SL_WLD));
+  TEST_ASSERT_FALSE(in_save_list(30, SL_MOB));
+  TEST_ASSERT_NULL(save_list->next);
+}
+
 int main(void)
 {
   char dir[] = "/tmp/tb_test_genolc.XXXXXX";
@@ -309,5 +327,6 @@ int main(void)
   RUN_TEST(test_successful_saves_empty_the_list);
   RUN_TEST(test_unsavable_types_are_freed);
   RUN_TEST(test_show_save_list_reports_unknown_type);
+  RUN_TEST(test_free_save_list_clears_the_head);
   return UNITY_END();
 }
