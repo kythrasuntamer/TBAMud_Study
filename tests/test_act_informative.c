@@ -802,6 +802,60 @@ static void object_script_without_triggers_is_reported(void)
   free_player(ch);
 }
 
+/* --- G2-20: do_help logs an escaped excerpt of a missed topic --------- */
+
+/* do_help mudlogged the player's topic verbatim. Raw player text must not
+ * reach the logs (a DG-forced command can carry control codes and quotes
+ * that split or imitate a record). The miss is still logged, to the log
+ * file and the immortals' syslog channel, escaped and with its length. */
+static void help_miss_logs_escaped_topic(void)
+{
+  const char *keys[] = { "SCORE" };
+  const char *expect = "tried to get help on 'evil?quote?back?slash' (21 bytes)";
+  struct char_data *ch = make_player(11);
+  struct char_data *imm = make_player(12);
+  struct descriptor_data ch_desc, imm_desc;
+  char topic[] = "evil\"quote\\back\tslash";
+  char logged[512];
+  size_t got;
+  FILE *log_fp = tmpfile();
+
+  TEST_ASSERT_NOT_NULL(log_fp);
+  help_table = make_help_table(1, keys);
+  top_of_helpt = 1;
+  memset(&ch_desc, 0, sizeof(ch_desc));
+  memset(&imm_desc, 0, sizeof(imm_desc));
+  ch->desc = &ch_desc;
+  ch_desc.character = ch;
+  GET_LEVEL(imm) = LVL_IMPL;
+  SET_BIT_AR(PRF_FLAGS(imm), PRF_LOG1);
+  SET_BIT_AR(PRF_FLAGS(imm), PRF_LOG2);
+  imm->desc = &imm_desc;
+  imm_desc.character = imm;
+  STATE(&imm_desc) = CON_PLAYING;
+  descriptor_list = &imm_desc;
+  logfile = log_fp;
+
+  do_help(ch, topic, 0, 0);
+
+  logfile = NULL;
+  descriptor_list = NULL;
+  rewind(log_fp);
+  got = fread(logged, 1, sizeof(logged) - 1, log_fp);
+  logged[got] = '\0';
+  TEST_ASSERT_EQUAL_INT(0, fclose(log_fp));
+  TEST_ASSERT_NOT_NULL(strstr(sent, "There is no help on that word."));
+  TEST_ASSERT_NOT_NULL(strstr(sent, expect));
+  TEST_ASSERT_NOT_NULL(strstr(logged, expect));
+  TEST_ASSERT_NULL(strstr(logged, "evil\""));
+  TEST_ASSERT_NULL(strchr(logged, '\t'));
+
+  ch->desc = imm->desc = NULL;
+  free_help_fixture();
+  free_player(imm);
+  free_player(ch);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -823,5 +877,6 @@ int main(void)
   RUN_TEST(history_null_text_is_reported_not_stored);
   RUN_TEST(look_at_unplaced_viewer_is_reported_at_caller);
   RUN_TEST(object_script_without_triggers_is_reported);
+  RUN_TEST(help_miss_logs_escaped_topic);
   return UNITY_END();
 }

@@ -1430,10 +1430,33 @@ ACMD(do_alive)
 send_to_char(ch, "Alive does not understand '%s'. \r\n", arg);
 }
 
+/* Bounded, escaped copy of player text for a log line (G2-20). Raw player
+ * text must not reach the logs: a DG-forced command is not filtered like
+ * socket input, and control characters, color escapes or quotes could split
+ * a record or imitate another one. Those bytes and anything outside
+ * printable ASCII become '?', a cut copy ends in "...", and the caller logs
+ * the full length beside it. In the style of comm.c's act_format_excerpt(). */
+static const char *player_text_excerpt(char *dst, size_t dst_size,
+                                       const char *text)
+{
+  size_t n = 0;
+
+  for (; *text && n + 4 < dst_size; text++) {
+    unsigned char c = (unsigned char) *text;
+    dst[n++] = (c < 0x20 || c >= 0x7f || c == '"' || c == '\'' ||
+                c == '\\') ? '?' : (char) c;
+  }
+  if (*text && n + 3 < dst_size)
+    dst[n++] = '.', dst[n++] = '.', dst[n++] = '.';
+  dst[n] = '\0';
+  return dst;
+}
+
 ACMD(do_help)
 {
   int mid = 0;
   int i, found = 0;
+  char excerpt[80];
 
     if (!ch->desc)
     return;
@@ -1457,8 +1480,12 @@ ACMD(do_help)
 
   if ((mid = search_help(argument, GET_LEVEL(ch))) == NOWHERE) {
     send_to_char(ch, "There is no help on that word.\r\n");
+    /* The topic is player text: log an escaped excerpt and its length. The
+     * line stays for immortals, who use it to find missing help topics. */
     mudlog(NRM, MIN(LVL_IMPL, GET_INVIS_LEV(ch)), TRUE,
-      "%s tried to get help on %s", GET_NAME(ch), argument);
+      "%s tried to get help on '%s' (%zu bytes)", GET_NAME(ch),
+      player_text_excerpt(excerpt, sizeof(excerpt), argument),
+      strlen(argument));
     for (i = 0; i < top_of_helpt; i++)  {
       if (help_table[i].min_level > GET_LEVEL(ch))
         continue;
