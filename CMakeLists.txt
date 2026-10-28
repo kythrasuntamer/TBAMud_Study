@@ -134,7 +134,13 @@ check_include_file("arpa/telnet.h" HAVE_ARPA_TELNET_H)
 # text used as a format (e.g. a '%' in a client-reported ID) at compile time.
 # Pass untrusted text as data: write_to_output(d, "%s", text).
 if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
-    add_compile_options(-Wformat -Werror=format-security -Werror=format-nonliteral)
+    # -Wformat=2 = -Wformat plus -Wformat-nonliteral, -Wformat-security and
+    # -Wformat-y2k; the first two are promoted to errors.
+    add_compile_options(-Wformat=2 -Werror=format-security -Werror=format-nonliteral)
+    # strftime("%c") is the intended locale timestamp in logs; y2k is noise.
+    if(CMAKE_C_COMPILER_ID STREQUAL "GNU")
+        add_compile_options(-Wno-format-y2k)
+    endif()
 endif()
 
 check_include_file("arpa/inet.h" HAVE_ARPA_INET_H)
@@ -561,6 +567,55 @@ if(ENABLE_SANITIZERS)
         message(FATAL_ERROR
             "ENABLE_SANITIZERS requires GCC, Clang, or AppleClang.")
     endif()
+endif()
+
+# ========== Release hardening ==========
+# ENABLE_HARDENING builds the server the way it should run in production:
+#   _FORTIFY_SOURCE=3       glibc checks memcpy/strcpy/snprintf sizes, including
+#                           dynamic object sizes (needs optimisation, so it is
+#                           applied to every configuration except Debug)
+#   -fstack-protector-strong, -fstack-clash-protection, -fcf-protection
+#   -ftrivial-auto-var-init=pattern  uninitialised locals hold a crash-prone
+#                           pattern instead of stale stack data
+#   -Wl,-z,relro,-z,now     read-only GOT after startup
+# It is OFF by default and refused together with ENABLE_SANITIZERS: ASan
+# replaces the fortified libc entry points, and pattern-init hides the very
+# uninitialised reads Valgrind and MSan are run to find. Do not use a
+# hardened tree for Valgrind runs.
+option(ENABLE_HARDENING "Production hardening flags (FORTIFY_SOURCE=3, stack protector, pattern auto-init)" OFF)
+if(ENABLE_HARDENING)
+    if(ENABLE_SANITIZERS)
+        message(FATAL_ERROR
+            "ENABLE_HARDENING and ENABLE_SANITIZERS cannot be combined: "
+            "_FORTIFY_SOURCE conflicts with ASan's interceptors and "
+            "-ftrivial-auto-var-init hides uninitialised reads. Use separate "
+            "build trees.")
+    endif()
+    if(NOT CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+        message(FATAL_ERROR "ENABLE_HARDENING requires GCC, Clang, or AppleClang.")
+    endif()
+    include(CheckCCompilerFlag)
+    set(_tb_hardening_flags)
+    foreach(_flag -fstack-protector-strong -fstack-clash-protection
+                  -fcf-protection=full -ftrivial-auto-var-init=pattern)
+        string(MAKE_C_IDENTIFIER "TB_HAVE${_flag}" _var)
+        check_c_compiler_flag("${_flag}" ${_var})
+        if(${_var})
+            list(APPEND _tb_hardening_flags ${_flag})
+        else()
+            message(WARNING "ENABLE_HARDENING: ${CMAKE_C_COMPILER_ID} does not support ${_flag}; building without it.")
+        endif()
+    endforeach()
+    add_compile_options(${_tb_hardening_flags}
+        "$<$<NOT:$<CONFIG:Debug>>:-U_FORTIFY_SOURCE>"
+        "$<$<NOT:$<CONFIG:Debug>>:-D_FORTIFY_SOURCE=3>")
+    if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+        message(WARNING "ENABLE_HARDENING with CMAKE_BUILD_TYPE=Debug: _FORTIFY_SOURCE needs optimisation and is skipped. Use RelWithDebInfo for a fully hardened build.")
+    endif()
+    if(NOT APPLE)
+        set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,-z,relro,-z,now")
+    endif()
+    message(STATUS "Hardening enabled: ${_tb_hardening_flags} _FORTIFY_SOURCE=3 (non-Debug)")
 endif()
 
 # Runtime options for every CTest test in a sanitizer build. They live here,
