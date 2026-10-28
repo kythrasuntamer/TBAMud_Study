@@ -572,6 +572,61 @@ static void time_trigger_self_purge_keeps_scanning(void)
   TEST_ASSERT_NULL(tail->next);
 }
 
+/* D1-07a: purging the owner's container freed the owner and the next line
+ * dereferenced the freed object. script_driver() now checks its own owner's
+ * UID after every command (dg_frame_owner_gone()). */
+static void purging_owner_container_stops_script(void)
+{
+  obj_data *box = make_obj("box"), *owner = make_obj("owner");
+  char first[64];
+  const char *lines[] = { first, "%echo% still here", "context 7", NULL };
+  trig_data *t;
+  obj_data *ref = owner;
+
+  obj_to_room(box, 0);
+  obj_to_obj(owner, box);
+  snprintf(first, sizeof(first), "%%purge%% %c%ld", UID_CHAR,
+           obj_script_id(box));
+  t = make_trigger(OBJ_TRIGGER, OTRIG_RANDOM, 100, lines);
+  attach_to_script(&SCRIPT(owner), t);
+  script_driver(&ref, t, OBJ_TRIGGER, TRIG_NEW);
+  TEST_ASSERT_NULL(ref);
+  TEST_ASSERT_NULL(object_list);
+  /* obj_command_interpreter() (dg_objcmd.c) names the command that
+   * destroyed its own owner indirectly as owner-extracted. */
+  TEST_ASSERT_TRUE(tb_captured_has_op("owner-extracted") ||
+                   tb_captured_has_op("owner-purged"));
+}
+
+/* D1-07c: a nested trigger's self-purge used to end the outer object script
+ * too, NULL its caller's live object and leave its trigger at depth 1. Each
+ * frame now checks only its own owner. */
+static void nested_self_purge_does_not_end_outer_script(void)
+{
+  const char *outer[] = { "%load% obj 150", "context 7", NULL };
+  const char *inner[] = { "%purge% %self%", NULL };
+  struct trig_proto_list proto_trig = { TEST_TRIG_VNUM, NULL };
+  obj_data *owner = make_obj("owner"), *ref = owner, *dummy = make_obj("dummy");
+  trig_data *t = make_trigger(OBJ_TRIGGER, OTRIG_RANDOM, 100, outer);
+
+  /* The object prototype carries a load trigger that purges itself. Loading
+   * it from the owner's script runs that trigger nested in the owner's. */
+  test_obj_proto.proto_script = &proto_trig;
+
+  attach_to_script(&SCRIPT(owner), t);
+  /* The prototype's trigger is made last, so oload's read_trigger() copies
+   * it; the instance made here is parked on an inert object. */
+  attach_to_script(&SCRIPT(dummy), make_trigger(OBJ_TRIGGER, OTRIG_LOAD, 100, inner));
+  obj_to_room(owner, 0);
+  script_driver(&ref, t, OBJ_TRIGGER, TRIG_NEW);
+
+  test_obj_proto.proto_script = NULL;
+  TEST_ASSERT_EQUAL_INT(0, test_obj_index.number);   /* loaded and purged */
+  TEST_ASSERT_EQUAL_PTR(owner, ref);
+  TEST_ASSERT_EQUAL_INT(7, SCRIPT(owner)->context);
+  TEST_ASSERT_EQUAL_INT(0, GET_TRIG_DEPTH(t));
+}
+
 /* D1-08: find_done() returned NULL for a block without 'done' nested near
  * the end, and find_case() / the 'break' handler followed it. */
 static void switch_with_unterminated_nested_while_is_reported(void)
@@ -1025,6 +1080,8 @@ int main(void)
   RUN_TEST(random_trigger_self_purge_keeps_scanning);
   RUN_TEST(random_trigger_purging_next_object_is_safe);
   RUN_TEST(time_trigger_self_purge_keeps_scanning);
+  RUN_TEST(purging_owner_container_stops_script);
+  RUN_TEST(nested_self_purge_does_not_end_outer_script);
   RUN_TEST(switch_with_unterminated_nested_while_is_reported);
   RUN_TEST(break_without_done_is_reported);
   RUN_TEST(well_formed_switch_still_selects_its_case);
