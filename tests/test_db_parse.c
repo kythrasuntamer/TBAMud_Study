@@ -1773,6 +1773,67 @@ static void parse_simple_mob_accepts_field_limits(void)
   TEST_ASSERT_EQUAL_INT(-128, GET_DAMROLL(mob));
 }
 
+/* ---------------------------------------------------------------------
+ * room_zone(): every room lies inside a zone
+ * ------------------------------------------------------------------- */
+
+static struct zone_data gap_zone_fixture[2];
+static int gap_zone_cursor;	/* static: survives the EXPECT_EXIT longjmp */
+
+/* Zone 10 holds rooms 1000-1099 and zone 20 rooms 2000-2099. */
+static void gap_zone_fixture_use(void)
+{
+  gap_zone_cursor = 0;
+  memset(gap_zone_fixture, 0, sizeof(gap_zone_fixture));
+  gap_zone_fixture[0].number = 10;
+  gap_zone_fixture[0].bot = 1000;
+  gap_zone_fixture[0].top = 1099;
+  gap_zone_fixture[1].number = 20;
+  gap_zone_fixture[1].bot = 2000;
+  gap_zone_fixture[1].top = 2099;
+  zone_table = gap_zone_fixture;
+  top_of_zone_table = 1;
+}
+
+/* Room 1500 lies between the zones. parse_room() attached it to zone 20,
+ * whose reset and redit save walk 2000-2099, so it was never reset and
+ * vanished on the next zone save. It is now fatal, naming both zones. */
+static void room_zone_rejects_room_between_zones(void)
+{
+  gap_zone_fixture_use();
+  EXPECT_EXIT((void)room_zone(1500, &gap_zone_cursor));
+  TEST_ASSERT_EQUAL_INT(1, tb_test_exit_code);
+  TEST_ASSERT_EQUAL_STRING("FATAL", tb_captured_severity);
+  TEST_ASSERT_EQUAL_STRING("room-parse", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail,
+                              "room vnum 1500 lies between zone 10 (1000-1099) "
+                              "and zone 20 (2000-2099)"));
+  zone_table = NULL;
+  top_of_zone_table = 0;
+}
+
+/* Rooms inside a zone move the cursor forward only; rooms below the
+ * cursor's zone or above the last zone stay fatal. */
+static void room_zone_follows_ascending_rooms(void)
+{
+  gap_zone_fixture_use();
+  TEST_ASSERT_EQUAL_INT(0, room_zone(1000, &gap_zone_cursor));
+  TEST_ASSERT_EQUAL_INT(0, room_zone(1099, &gap_zone_cursor));
+  TEST_ASSERT_EQUAL_INT(1, room_zone(2000, &gap_zone_cursor));
+  TEST_ASSERT_EQUAL_INT(1, gap_zone_cursor);
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+
+  EXPECT_EXIT((void)room_zone(1050, &gap_zone_cursor));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail,
+                              "room vnum 1050 is below zone 20 (2000-2099)"));
+  gap_zone_cursor = 1;
+  EXPECT_EXIT((void)room_zone(2100, &gap_zone_cursor));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail,
+                              "room vnum 2100 is above the last zone 20"));
+  zone_table = NULL;
+  top_of_zone_table = 0;
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -1840,5 +1901,7 @@ int main(void)
   RUN_TEST(parse_mobile_replaces_empty_alias_list);
   RUN_TEST(parse_simple_mob_rejects_values_that_would_wrap);
   RUN_TEST(parse_simple_mob_accepts_field_limits);
+  RUN_TEST(room_zone_rejects_room_between_zones);
+  RUN_TEST(room_zone_follows_ascending_rooms);
   return UNITY_END();
 }

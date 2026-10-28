@@ -1856,11 +1856,45 @@ static char *world_string(char *str, const char *record, int vnum,
   return str;
 }
 
+/** Move parse_room()'s zone cursor *zone forward to the zone whose
+ * bot..top holds room vnum, and return it. Rooms (the .wld files) must
+ * ascend through the zones (the .zon headers), both hand-editable; redit
+ * and zedit keep them consistent. A room below the cursor's zone, between
+ * two zones or above the last zone has no zone that holds it: attached to a
+ * neighbour, the zone's reset and redit's save (both walk bot..top) would
+ * skip it, so each case is fatal. */
+static int room_zone(int vnum, int *zone)
+{
+  if (vnum < zone_table[*zone].bot) {
+    BOOT_FATAL("room-parse", "zone", "room vnum %d is below zone %d (%d-%d)",
+               vnum, zone_table[*zone].number, zone_table[*zone].bot,
+               zone_table[*zone].top);
+  }
+  while (vnum > zone_table[*zone].top)
+    if (*zone == top_of_zone_table) {
+      BOOT_FATAL("room-parse", "zone",
+                 "room vnum %d is above the last zone %d (%d-%d)", vnum,
+                 zone_table[*zone].number, zone_table[*zone].bot,
+                 zone_table[*zone].top);
+    } else
+      ++*zone;
+  /* The loop stops at the first zone that does not end below the room;
+   * the room is in a gap if it also starts above it. */
+  if (vnum < zone_table[*zone].bot) {
+    BOOT_FATAL("room-parse", "zone",
+               "room vnum %d lies between zone %d (%d-%d) and zone %d (%d-%d)",
+               vnum, zone_table[*zone - 1].number, zone_table[*zone - 1].bot,
+               zone_table[*zone - 1].top, zone_table[*zone].number,
+               zone_table[*zone].bot, zone_table[*zone].top);
+  }
+  return *zone;
+}
+
 /** Parse room #virtual_nr into the next world[] slot.
  *
  * Boot-only, one sequential pass: the room cursor and the zone cursor are
  * statics that only move forward, so rooms must ascend through zones that
- * were loaded first (a room below its zone's bottom is fatal). Capacity is
+ * were loaded first (a room no zone holds is fatal: room_zone()). Capacity is
  * checked by discrete_load(). Calling this after boot (from OLC) would write
  * past the table. */
 void parse_room(FILE *fl, int virtual_nr)
@@ -1876,16 +1910,7 @@ void parse_room(FILE *fl, int virtual_nr)
   /* This really had better fit or there are other problems. */
   tb_snprintf(buf2, sizeof(buf2), "room #%d", virtual_nr);
 
-  if (virtual_nr < zone_table[zone].bot) {
-    log("SYSERR: Room #%d is below zone %d (bot=%d, top=%d).", virtual_nr, zone_table[zone].number, zone_table[zone].bot, zone_table[zone].top);
-    exit(1);
-  }
-  while (virtual_nr > zone_table[zone].top)
-    if (++zone > top_of_zone_table) {
-      log("SYSERR: Room %d is outside of any zone.", virtual_nr);
-      exit(1);
-    }
-  world[room_nr].zone = zone;
+  world[room_nr].zone = room_zone(virtual_nr, &zone);
   world[room_nr].number = virtual_nr;
   world[room_nr].name =
     world_string(fread_string(fl, buf2), "room", virtual_nr, "name");
