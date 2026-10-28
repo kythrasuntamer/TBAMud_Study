@@ -132,18 +132,6 @@
 extern time_t motdmod;
 extern time_t newsmod;
 
-/*
- * Server-lifecycle globals visible to other modules.
- *
- * descriptor_list owns the active connection chain. circle_shutdown and
- * circle_reboot communicate the requested termination mode to the main
- * game loop; neither flag by itself guarantees a clean disconnect or
- * durable player save. Connection cleanup and persistence must still run
- * through their respective code paths.
- *
- * Keep changes to these shared flags synchronized with shutdown, signal,
- * and copyover behavior. They are process state, not per-player state.
- */
 /* locally defined globals, used externally */
 struct descriptor_data *descriptor_list = NULL;   /* master desc list */
 int buf_largecount = 0;   /* # of large buffers which exist */
@@ -160,15 +148,6 @@ socket_t mother_desc;
 int next_tick = SECS_PER_MUD_HOUR;  /* Tick countdown */
 
 
-/*
- * File-local network and lifecycle state.
- *
- * These fields are shared across game-loop iterations. In particular,
- * bufpool manages reusable output buffers; do not treat a pooled buffer as
- * owned by a descriptor after it has been released to the pool.
- * Signal-associated flags should be handled in normal control flow rather
- * than expanding signal handlers into complex game operations.
- */
 /* static local global variable declarations (current file scope only) */
 static struct txt_block *bufpool = 0;  /* pool of large output buffers */
 static int max_players = 0;   /* max descriptors available */
@@ -2522,13 +2501,11 @@ int write_to_descriptor(socket_t desc, const char *txt)
   return (write_total);
 }
 
-/* Same information about perform_socket_write applies here. I like
- * standards, there are so many of them. -gg 6/30/98 */
-/* Platform-specific socket read adapter. A positive result is a byte count;
- * zero means a retryable/interrupted operation, not peer EOF (EOF maps to
- * -1 here). A negative result signals a closed or failed connection.
- * The caller owns the buffer and must reserve room for any terminator.
- */
+/* Same information about perform_socket_write applies here (-gg 6/30/98).
+ * Returns the byte count (> 0); 0 when the read would block or was
+ * interrupted (EINTR/EAGAIN/EWOULDBLOCK); -1 on peer EOF (logged as a
+ * warning), ECONNRESET, or any other error (logged). The caller reserves
+ * room for its own terminator. */
 static ssize_t perform_socket_read(socket_t desc, char *read_point, size_t space_left)
 {
   ssize_t ret;
@@ -2627,11 +2604,6 @@ static ssize_t perform_socket_read(socket_t desc, char *read_point, size_t space
  * above, 'tmp' lost the '+8' since it doesn't need it and the code has been
  * changed to reserve space by accepting one less character. (Do you really
  * need 256 characters on a line?) -gg 1/21/2000 */
-/* Read a descriptor's incoming bytes into bounded protocol/input buffers,
- * then separate complete commands for later dispatch. MAX_RAW_INPUT_LENGTH
- * and MAX_PROTOCOL_BUFFER guard different stages: changes to either size
- * must preserve NUL-termination and the overflow/disconnect path.
- */
 static int process_input(struct descriptor_data *t)
 {
   int buf_length, failed_subst;

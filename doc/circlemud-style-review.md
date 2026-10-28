@@ -1,7 +1,9 @@
 # CircleMUD 3.0 style and modernization review
 
-Status: initial comparative review, 2026-10-26. This is **not** a completed
-line-by-line audit of the entire repository or a claim of tested behavior.
+Status: comparative review, 2026-10-26, mapped to the completed audit on
+2026-10-28. The audit itself is in
+[docs/memory-safety-audit.md](../docs/memory-safety-audit.md) (the ledger)
+and [docs/audit-2026-10-report.md](../docs/audit-2026-10-report.md).
 
 ## Style baseline
 
@@ -26,10 +28,14 @@ Elson's original work whenever feasible. Prefer the following ordering:
 
 ### Macro safety rules
 
+- One definition per macro, in utils.h/structs.h or the subsystem header
+  that owns its meaning; CircleMUD style is preferred where it aids
+  readability. See [docs/macro-audit.md](../docs/macro-audit.md).
 - Each macro parameter should be evaluated once wherever practical. Avoid
   arguments with side effects in legacy macros that expand arguments more
-  than once; prefer a static inline function when reliable single evaluation
-  and type checking are necessary.
+  than once; use a static inline function, or an unsigned-cast
+  single-evaluation form as in VALID_ATTACK, when reliable single
+  evaluation and type checking are necessary.
 - Fully parenthesize expressions and parameters in expression-like macros.
 - Preserve signedness and integer width; never use shifts or casts that can
   invoke undefined behavior. Use checked helpers for bounds and arithmetic.
@@ -52,12 +58,13 @@ to that project.
 ## Reviewed reference points
 
 Reference: CircleMUD 3.x source, notably
-[`src/comm.c`](https://github.com/Yuffster/CircleMUD/blob/master/src/comm.c),
-[`src/db.c`](https://github.com/Yuffster/CircleMUD/blob/master/src/db.c),
-[`src/interpreter.c`](https://github.com/Yuffster/CircleMUD/blob/master/src/interpreter.c),
-and [`src/fight.c`](https://github.com/Yuffster/CircleMUD/blob/master/src/fight.c).
-This reference repository should be pinned to an exact verified 3.0 patchlevel
-before using it for precise historical behavior claims.
+[`src/comm.c`](https://github.com/Yuffster/CircleMUD/blob/12a0cedbb563465029c46de9537c96854bc11610/src/comm.c),
+[`src/db.c`](https://github.com/Yuffster/CircleMUD/blob/12a0cedbb563465029c46de9537c96854bc11610/src/db.c),
+[`src/interpreter.c`](https://github.com/Yuffster/CircleMUD/blob/12a0cedbb563465029c46de9537c96854bc11610/src/interpreter.c),
+and [`src/fight.c`](https://github.com/Yuffster/CircleMUD/blob/12a0cedbb563465029c46de9537c96854bc11610/src/fight.c).
+The links are pinned to commit 12a0ced of that repository. It is a public
+CircleMUD 3.x mirror, not a verified 3.0 patchlevel, so it supports style
+comparisons, not precise historical behavior claims.
 
 Current fork equivalents have the same broad division of responsibilities:
 communication/game loop, global world data, command interpretation and combat.
@@ -65,18 +72,17 @@ The fork also contains additional systems such as DG scripts, Oasis OLC,
 libsodium password hashing and CMake/CI instrumentation. Those additions
 cannot be forced into a 1990s source layout without losing necessary behavior.
 
-### Findings and follow-up work
+### Findings and where the audit covers them
 
-| Area | Observation | Required follow-up |
+| Area | Observation | Audit coverage (ledger) |
 | --- | --- | --- |
-| Server lifecycle | Global descriptor/game-loop state survives from the classic architecture | Audit disconnects, partial reads/writes, signal handling and copyover under fault injection |
-| World database | Shared room/mobile/object tables retain cross-subsystem numeric references | Verify VNUM/rnum invariants during reload, OLC commit and zone reset |
-| Login | Current interpreter has Argon2id/legacy crypt verification branches absent from original CircleMUD | Exercise successful/failed login, hash upgrade and resource-exhaustion cases |
-| Persistence | Player ASCII-file save/load and player index are coupled to long-lived save tags | Recheck stage/flush/rename behavior, crash recovery and backward compatibility |
-| Scripting | DG scripting adds mutable expression evaluation and deferred trigger lifetimes | Audit expression depth, malformed input and entity lifetime |
-| Combat | Familiar combat-list/THAC0 structure persists alongside newer callbacks | Test removal during iteration, death/extraction and trigger side effects |
-| OLC | Oasis editor ownership and save paths increase complexity beyond base CircleMUD | Validate editor cancel/commit cleanup, authorization and disk failure handling |
-| Documentation | Many interfaces still lack ownership/error-contract descriptions | Incrementally annotate the real contracts without changing code |
+| Server lifecycle | Global descriptor/game-loop state survives from the classic architecture | Area A (untrusted network input) |
+| World database | Shared room/mobile/object tables retain cross-subsystem numeric references | Areas B and H; rnum checks go through tb_rnum_valid (VALID_*_RNUM) |
+| Login | Current interpreter has Argon2id/legacy crypt verification branches absent from original CircleMUD | Area A; legacy hashes are upgraded on login |
+| Persistence | Player ASCII-file save/load and player index are coupled to long-lived save tags | Area B |
+| Scripting | DG scripting adds mutable expression evaluation and deferred trigger lifetimes | Areas D and E; expression depth is bounded by line length (see eval_expr) |
+| Combat | Familiar combat-list/THAC0 structure persists alongside newer callbacks | Area H |
+| OLC | Oasis editor ownership and save paths increase complexity beyond base CircleMUD | Area F |
 
 
 ## Upstream tbaMUD comparison (initial sample)

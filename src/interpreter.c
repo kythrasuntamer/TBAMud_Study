@@ -67,7 +67,8 @@ static int tb_password_is_argon2id(const char *hash)
  * New Argon2id hashes use libsodium; legacy crypt hashes are accepted only
  * when that compatibility path is compiled in. Missing inputs and crypto
  * initialization failures reject authentication. Never compare plaintext
- * against stored data as a fallback.
+ * against stored data as a fallback. Failures are not reported here; the
+ * caller reports.
  */
 static int tb_password_verify(const char *password, const char *hash)
 {
@@ -1669,12 +1670,9 @@ EVENTFUNC(get_protocols)
   return 0;
 }
 
-/* Login/connection state dispatcher. Oasis editor states are dispatched
- * before normal login handling; a descriptor in an editing state must not
- * interpret the same input as a login command. Preserve these state routes
- * when modifying authentication or OLC authorization.
- */
-/* deal with newcomers and other non-playing sockets */
+/* Deal with newcomers and other non-playing sockets. OLC editor states are
+ * dispatched (olc_functions[]) before the login switch, so a descriptor in
+ * an editing state never has its input read as a login command. */
 void nanny(struct descriptor_data *d, char *arg)
 {
   int load_result;	/* Overloaded variable */

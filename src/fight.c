@@ -28,11 +28,9 @@
 
 
 /* locally defined global variables, used externally */
-/* The active-combat list is traversed while combat actions can change
- * participants' fighting state. Keep traversal and removal rules consistent
- * with next_combat_list to avoid visiting removed combatants.
- */
-/* head of l-list of fighting chars */
+/* head of l-list of fighting chars. Add only through set_fighting() and
+ * remove only through stop_fighting(), which keeps perform_violence()'s
+ * next_combat_list iterator valid. */
 struct char_data *combat_list = NULL;
 /* Weapon attack texts */
 struct attack_hit_type attack_hit_text[] =
@@ -722,11 +720,7 @@ int skill_message(int dam, struct char_data *ch, struct char_data *vict,
   return (0);
 }
 
-/* Central damage path may initiate character death or extraction. Callers
- * must not assume a victim remains alive after a fatal return, and must
- * account for fight triggers modifying combat state.
- *
- * This function returns the following codes:
+/* This function returns the following codes:
  *	< 0	Victim died.
  *	= 0	No damage.
  *	> 0	How much damage done.
@@ -1008,11 +1002,10 @@ static int compute_thaco(struct char_data *ch, struct char_data *victim)
   return calc_thaco;
 }
 
-/* Resolve a conventional attack using weapon type, THAC0, armor, damage,
- * and relevant fight triggers. Triggers may change room membership, so the
- * routine rechecks co-location before resolving the attack. Future combat
- * mechanics must retain those guards and established damage side effects.
- */
+/* One attack. fight_mtrigger() runs first and may move, purge or rearm
+ * either side, so hit() then checks co-location (else stop_fighting),
+ * DEAD() on both (reported as fight/hit-after-trigger) and reads the
+ * wielded weapon only after the trigger. Keep those guards. */
 void hit(struct char_data *ch, struct char_data *victim, int type)
 {
   struct obj_data *wielded;
@@ -1156,12 +1149,10 @@ void hit(struct char_data *ch, struct char_data *victim, int type)
   hitprcnt_mtrigger(victim);
 }
 
-/* Process one scheduled combat pulse. The next-list pointer is captured
- * before handling a character because attacks, movement, and triggers may
- * stop combat or change the active list during iteration. NPC wait state
- * and actor position are checked before advancing normal attacks.
- */
-/* control the fights going on.  Called every 2 seconds from comm.c. */
+/* One combat round (every PULSE_VIOLENCE). next_combat_list is taken before
+ * ch acts; stop_fighting() advances it if the round removes that character.
+ * NPCs wait out GET_MOB_WAIT and stand up; anyone below POS_FIGHTING skips
+ * the attack. */
 void perform_violence(void)
 {
   struct char_data *ch, *tch;

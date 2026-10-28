@@ -63,15 +63,8 @@
 #error "save_char() does not fire wear/remove triggers (B2-21): keep NO_EXTRANEOUS_TRIGGERS defined in dg_scripts.h"
 #endif
 
-/*
- * Player-file maintenance notes:
- *
- * ASCII player files are persistent, external input. They may be malformed,
- * truncated, or written by an older server version. Keep legacy save tags
- * and the meaning of existing progression fields stable when editing readers
- * or writers. LOAD_* selectors identify load_HMVS fields; they are not file
- * format versions.
- */
+/* LOAD_* select which load_HMVS() field a line fills; they are not
+ * file-format versions. */
 #define LOAD_HIT	0
 #define LOAD_MANA	1
 #define LOAD_MOVE	2
@@ -372,6 +365,13 @@ int fread_string_checked(FILE *fl, const char *resource, const char *field,
 }
 
 /* Read a whitespace-delimited signed number with overflow detection. */
+/*
+ * Consume one whitespace-delimited signed long from *cursor.
+ * On success, update *value and advance the cursor, returning TRUE.
+ * On failure, return FALSE without changing *value; leading whitespace may
+ * already have been consumed from *cursor. Callers requiring rollback must
+ * save the original cursor themselves. Valid, non-NULL pointers are required.
+ */
 static int parse_index_long(const char **cursor, long *value)
 {
   char *end;

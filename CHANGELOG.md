@@ -1,88 +1,51 @@
-# Changelog
+# Changelog (IronCircle fork)
 
-Notable changes to the public tbaMUD modernization project are recorded here.
+Fork-level changes. The historic tbaMUD log is `changelog` (frozen 2013).
+Per-finding detail lives in [docs/memory-safety-audit.md](docs/memory-safety-audit.md)
+(the ledger) and [docs/audit-2026-10-report.md](docs/audit-2026-10-report.md)
+(the summary); this file does not repeat it.
 
-This file distinguishes changes on the repository's default branch from **proposed**
-changes in feature branches and pull requests. A PR is not released or merged simply
-because it is listed here. Consult the linked PRs and their CI results before
-treating any feature as production-ready.
+## 2026-10-28: pull requests merged after the audit
 
-## Unreleased — documentation branch (2026-10-26)
+Each was merged only after the full gate: gcc ASan+UBSan ctest, Valgrind,
+the clang fuzz targets, clang-tidy with no findings,
+tools/check_error_locality.sh, the end-to-end soaks with an ASan server
+where the change touches gameplay or OLC, and Fil-C.
 
-### Documentation
-- Published `ROADMAP.md` covering only intended public engine modernization,
-  and linked it from `README.md`; private game plans are excluded.
-- Extended the style review with an initial upstream tbaMUD comparison and a
-  process for safely restoring classic CircleMUD idioms in modified code.
-- Documented room, mobile, and object-instance Oasis editing contracts in
-  `src/redit.c`, `src/medit.c`, and `src/oedit.c`.
-- Clarified zone-index staging cleanup and index number validation in
-  `src/genzon.c`.
-- Added `doc/circlemud-style-review.md`, comparing the classic CircleMUD
-  structure with current modernization concerns and establishing the original
-  C idiom (including careful macro use) as the preferred style.
-- Added maintainability comments in `src/players.c` describing ASCII player-file
-  parsing fallbacks, field interpretation, and index-parser behavior.
-- Added lifecycle and buffer-ownership notes in `src/comm.c`.
-- Added world database, player-index, and zone-reset reference notes in `src/db.c`.
-- Documented Argon2id and legacy password verification behavior, hashing
-  failure handling, and login/Oasis state dispatch in `src/interpreter.c`.
-- Added DG script execution and trigger-lifetime maintenance notes to
-  `src/dg_scripts.c`.
-- Documented active-combat list traversal, attack guards, and combat pulse
-  expectations in `src/fight.c`.
-- Annotated bounded input processing, output buffering, and socket-read return
-  conventions in `src/comm.c`.
-- Added player-file loading, staged saving, and compatibility notes to
-  `src/players.c`.
-- Documented Oasis OLC cleanup ownership and editor lifecycle concerns in
-  `src/oasis.c`.
-- Introduced this public changelog and expanded the README with the project's
-  scope, contribution workflow, and verification policy.
+- #49 zedit: a zone header with no builders string saves safely; a header
+  with no name is refused before any live change, and every refusal is
+  reported with the builder, zone and room.
+- #38 save_char: each step of the staged player save (write, flush, close,
+  rename, cleanup) is reported where it fails and names the player; a
+  failed save never replaces the previous pfile; native fault-injection
+  tests (test_players_save_faults).
+- #37 diagnostics: parser-context exhaustion is reported at the caller and
+  rate-limited; index_boot() records the file, line and parser of each
+  load; one truncation marker, `...[TRUNCATED]`.
+<!-- PLACEHOLDER-MERGED: add one entry per PR merged after this file was
+     written (#41 movement index checks, #40 password verify / persistence
+     style, #50 level-50 rebalance tool, #36 seven-class guilds, #18 area
+     imports, and any fix/leftover-* branches), then delete this comment. -->
 
-- Explained DG expression mutation, evaluation and historical conditional truth
-  semantics in `src/dg_scripts.c`.
-- Clarified corpse creation and the death/extraction risk in the central
-  damage path of `src/fight.c`.
-- Documented editor text normalization and allocated extra-description list
-  ownership in `src/genolc.c`.
+## 2026-10-28: memory-safety and error-locality audit merged
 
-These are documentation-only edits; no intended gameplay, persistence format, or
-network behavior changes.
+- Phase 1 (2c180c9b) and phase 2 (3d3a06ef) merged the full audit: every
+  finding fixed or recorded in the ledger; no finding open.
+- Structured diagnostics (TB_ERROR_*/TB_WARN_*/DIAG_*) with call-site and
+  entity IDs; tools/check_error_locality.sh ratchets legacy SYSERR logging.
+- Build/test: ASan+UBSan options shared with CI, ENABLE_HARDENING,
+  Valgrind memcheck, Fil-C CI, Semgrep and clang-tidy (sizeof-pointer as
+  error), compile-time failure injection (TB_TEST_FAILURE_INJECTION),
+  libFuzzer targets fuzz_protocol, fuzz_player and fuzz_world with
+  regression corpora in ctest.
+- Persistence: staged player/index/zone-index writes; untrusted pfile
+  fields range-checked or clamped and reported; endgame ranks clamped.
+- Login: Argon2id (libsodium), with legacy crypt hashes upgraded on login.
+- Follow-ups merged: #43 to #48 (DG memory unlink, OLC flag shift, DG wait
+  suffix, crash-save headers, macro inventory).
 
-## Public modernization work — status snapshot (2026-10-26)
-
-The default branch includes CMake/Unity test support, clang-tidy integration,
-the required libsodium dependency for Argon2id work, and security/error-locality
-guidance. The README and source are the authority for what is actually merged.
-Work in the following PRs remains **proposed** and should not be described as
-shipped until reviewed, tested, and merged:
-
-- [PR #38](https://github.com/kythrasuntamer/TBAMud_Study/pull/38) —
-  player save I/O failure locality; CI C/C++ regression harness failure was
-  reported on commit `51f33c55a5f6acf36e8ce356cd2966c1b00415df`.
-- [PR #37](https://github.com/kythrasuntamer/TBAMud_Study/pull/37) —
-  diagnostic context exhaustion and truncation visibility.
-- [PR #36](https://github.com/kythrasuntamer/TBAMud_Study/pull/36) —
-  seven-class guild-room scaffolding; does not constitute complete playable
-  class implementations.
-- [PR #33](https://github.com/kythrasuntamer/TBAMud_Study/pull/33) —
-  checked parsing for player-stat fields.
-- [PR #32](https://github.com/kythrasuntamer/TBAMud_Study/pull/32) —
-  character and progression migration contracts.
-- [PR #27](https://github.com/kythrasuntamer/TBAMud_Study/pull/27) —
-  level-50 Advancement Points and HP/mana purchase integration candidate.
-- [PR #20](https://github.com/kythrasuntamer/TBAMud_Study/pull/20) —
-  experimental TLS frontend and loopback-backend deployment.
-
-This list is a selected overview, not a complete release history. Multiple
-proposals have branch dependencies, so avoid merging them out of order.
-
-## Change documentation policy
-
-For subsequent changes, update this file in the same PR. Describe the
-user-visible behavior, compatibility effects, affected subsystems, and tests
-actually run. Document unresolved failures as unresolved; do not substitute
-planned tests for completed tests. Preserve full build output and warnings
-in persistent logs. No migration or deletion of existing character data is
-implied by an entry here.
+## Open proposals (not merged)
+<!-- PLACEHOLDER-OPEN: list the PRs still open when this branch merges, or
+     write "None." -->
+See the [open pull requests](https://github.com/kythrasuntamer/TBAMud_Study/pulls)
+for their status.

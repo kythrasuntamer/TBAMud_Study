@@ -27,10 +27,15 @@ current stable public engine contract.
 For planned **public engine** work, read [ROADMAP.md](ROADMAP.md). The roadmap
 intentionally excludes private game design and unreleased content.
 
-**Implementation status matters:** Some capabilities are already present on
-the default branch; other improvements remain in draft PRs or prototype
-branches. See [CHANGELOG.md](CHANGELOG.md) for a public, status-aware overview.
-Do not infer that a proposed PR is merged, fully tested, or production-ready.
+**Implementation status matters:** see [CHANGELOG.md](CHANGELOG.md) for what is
+merged and what is still a proposal. Do not infer that a proposed PR is
+merged, fully tested, or production-ready.
+
+**Architecture and audit:** [docs/architecture/README.md](docs/architecture/README.md)
+describes each subsystem's ownership and invariants;
+[docs/audit-2026-10-report.md](docs/audit-2026-10-report.md) summarizes the
+memory-safety and error-locality audit (fuzzing, failure injection and the
+CI gates) and what remains open.
 
 ## Documentation and contribution policy
 
@@ -76,12 +81,4 @@ callbacks, the structured diagnostic macros and the test conventions. Audit
 history is in `docs/macro-audit.md`; per-file review status is in
 `docs/memory-safety-audit.md`.
 
-## Denial-of-service defense roadmap
-
-Application limits: bound input and output queues, incomplete negotiation data,
-login attempts, script execution work, and per-tick processing. Test each
-limit and its release on disconnect; limits should be fair to legitimate
-players behind shared IP addresses. Network-level and volumetric attack
-mitigation also require infrastructure outside the MUD process (for example,
-provider filtering/proxying and connection controls); application code alone
-cannot prevent uplink saturation.
+The denial-of-service defense plan is in [ROADMAP.md](ROADMAP.md).

@@ -51,10 +51,9 @@ static void cleanup_new_zone_index(const char *path)
     TB_REPORT_ERRNO("remove", path);
 }
 
-/* Parse a zone index number using strtol with overflow and suffix checks.
- * Returns failure without modifying *number when the input is invalid.
- * The caller must still validate the number against known zone boundaries.
- */
+/* Parse the leading zone number of an index line ("30.zon"): decimal
+ * 0..INT_MAX, then '.', blank or end of line. Returns 0 and leaves *number
+ * unchanged on anything else, including NULL arguments. */
 static int parse_zone_index_number(const char *text, int *number)
 {
   char *end;

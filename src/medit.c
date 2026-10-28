@@ -192,10 +192,9 @@ static void medit_save_to_disk(zone_vnum foo)
   save_mobiles(real_zone(foo));
 }
 
-/* Allocate a scratch mobile, initialize its baseline fields, then attach
- * default descriptions.  Editor teardown must release this temporary
- * character without extracting an unrelated live mobile.
- */
+/* Scratch mobile for a new vnum: init_mobile() defaults, nr NOBODY,
+ * placeholder strings, no script. cleanup_olc() frees it with free_mobile()
+ * on every exit; a save copies it into mob_proto[] first. */
 static void medit_setup_new(struct descriptor_data *d)
 {
   struct char_data *mob;
@@ -592,10 +591,11 @@ static void medit_disp_stats_menu(struct descriptor_data *d)
   OLC_MODE(d) = MEDIT_STATS_MENU;
 }
 
-/* Mobile editor input dispatcher.  Numeric and string editing modes have
- * different parsing paths; field-specific range checks must occur before
- * an edited value is published to a mobile prototype.
- */
+/* Mobile editor input, by OLC_MODE. Numeric modes refuse anything but a
+ * whole number (the delete y/n excepted); string modes go through
+ * genolc_checkstring(). Edits touch only the scratch OLC_MOB; mob_proto[]
+ * changes only via medit_save_checked() at the save prompt or the delete
+ * confirmation. Every exit ends in cleanup_olc(d, CLEANUP_ALL). */
 void medit_parse(struct descriptor_data *d, char *arg)
 {
   int i = -1, j;

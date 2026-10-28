@@ -23,37 +23,53 @@ recognizably CircleMUD in style and straightforward to operate and extend.
 - Keep public documentation accurate: distinguish merged features from open
   PRs, experiments, and future proposals.
 
-## Near term: reliability and diagnostic foundations
+## Done on master
 
-**Status: actively being developed and reviewed.**
+See [CHANGELOG.md](CHANGELOG.md) and the audit report for details.
 
-1. Improve error locality across parsing, network I/O, storage, and script
-   evaluation. Include enough context to locate the original failing
-   operation, while avoiding the disclosure of passwords or other secrets.
-2. Strengthen player-file write and recovery paths, including error handling
-   for staging, writing, flushing, closing, renaming, and cleanup. Verify
-   preservation of legacy player and progression fields.
-3. Expand targeted regression tests and deterministic fault-injection
-   coverage. Do not equate a passing compile with safe persistence.
-4. Audit dangerous memory lifetimes, numeric boundaries, string formatting,
-   and malformed input paths.
-5. Continue source commentary and architecture documentation, including
-   debugging guides and a changelog of verified improvements.
+- Error locality: structured TB_ERROR_*/DIAG_* reports at the failing call,
+  ratcheted by tools/check_error_locality.sh.
+- Staged player, index and zone-index writes, each step reported at its
+  source; deterministic failure injection (TB_TEST_FAILURE_INJECTION).
+- The memory-lifetime audit of every source file
+  ([docs/memory-safety-audit.md](docs/memory-safety-audit.md)), including
+  OLC ownership (F3-08).
+- Argon2id passwords, with legacy crypt hashes upgraded on a successful
+  login.
+- A connection admission throttle (comm.c tb_admit_connection()).
+- CI: ASan+UBSan, Valgrind, Fil-C, Semgrep and clang-tidy; libFuzzer
+  targets for the protocol, player-file and world loaders.
 
-## Medium term: public-server hardening
+## Open
 
-**Status: planned and partly prototyped.**
+Taken from "What remains open" in
+[docs/audit-2026-10-report.md](docs/audit-2026-10-report.md):
 
-1. Complete authentication hardening, including robust Argon2id handling,
-   legacy-account migration, and authorization checks.
-2. Harden connection lifecycle, protocol parsing, queues, input limits,
-   account/IP throttling, and resource exhaustion handling.
-3. Improve safe script execution and area-file validation so untrusted or
-   malformed content cannot destabilize the server.
-4. Expand compiler/sanitizer/static-analysis coverage and make the intended
-   CI quality gates consistently enforceable.
-5. Provide documented secure deployment patterns, monitoring, backup/restore
-   exercises, and operational recovery procedures.
+1. Time-boxed fuzzing in CI, and a MEMORY_DEBUG+ASan CI job.
+2. Sanitizer and hardening switches for the autoconf build.
+3. The Semgrep CI job needs the repository secret `SEMGREP_APP_TOKEN`.
+4. `src/class.c`'s level tables (lines ~800-2170) were not read line by
+   line.
+5. Non-memory observations still marked "not fixed" in the report
+   (improved-edit's doubled `\r\n`, ban-site case, add_cmd_to_list with a
+   position past the end, and the objsave rent-header contract test).
+
+## Public-server hardening (planned)
+
+1. Harden connection lifecycle, protocol parsing, queues, input limits and
+   resource exhaustion beyond the existing admission throttle.
+2. Improve script execution limits and area-file validation so malformed
+   content cannot destabilize the server.
+3. Provide documented secure deployment patterns, monitoring, backup and
+   restore exercises, and operational recovery procedures.
+4. Denial-of-service defense. Application limits: bound input and output
+   queues, incomplete negotiation data, login attempts, script execution
+   work and per-tick processing. Test each limit and its release on
+   disconnect, and keep limits fair to legitimate players behind shared IP
+   addresses. Network-level and volumetric mitigation also needs
+   infrastructure outside the MUD process (provider filtering, proxying,
+   connection controls); application code alone cannot prevent uplink
+   saturation.
 
 ## Longer term: developer and builder tooling
 
