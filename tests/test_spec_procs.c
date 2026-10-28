@@ -133,7 +133,8 @@ static void test_pet_shop_without_storage_room_reports(void)
   static struct room_data rooms[2];
   static struct command_info cmds[] = { { "list" }, { "buy" }, { "\n" } };
   static struct index_data mobidx[1];
-  struct char_data shopper, npc;
+  static struct char_data npc;  /* rooms[1].people outlives this call */
+  struct char_data shopper;
   char arg[MAX_INPUT_LENGTH] = "";
 
   memset(rooms, 0, sizeof(rooms));
