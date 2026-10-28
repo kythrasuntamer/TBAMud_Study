@@ -244,6 +244,15 @@ void *tb_calloc_array_at(size_t count, size_t element_size,
   return calloc(count ? count : 1, element_size ? element_size : 1);
 }
 
+/* ---------- improved-edit.c parse_edit_action() callees ---------- */
+__attribute__((weak))
+int format_script(struct descriptor_data *d) { (void)d; return 0; }
+__attribute__((weak))
+void parse_at(char *str) { (void)str; }
+__attribute__((weak))
+void half_chop(char *string, char *arg1, char *arg2)
+{ (void)string; *arg1 = '\0'; *arg2 = '\0'; }
+
 /* ---------- modify.c string_add() dispatch targets ---------- */
 __attribute__((weak))
 void store_mail(long to, long from, char *message_pointer)

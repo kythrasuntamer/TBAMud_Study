@@ -72,8 +72,15 @@ int improved_editor_execute(struct descriptor_data *d, char *str)
   if (*str != '/')
     return STRINGADD_OK;
 
-  strncpy(actions, str + 2, sizeof(actions) - 1);
-  actions[sizeof(actions) - 1] = '\0';
+  /* str is the player's input line. A bare "/" has no command letter, and
+   * str + 2 would then point past its terminator into stale buffer bytes. */
+  if (!str[1]) {
+    write_to_output(d, "Invalid option.\r\n");
+    *str = '\0';
+    return STRINGADD_ACTION;
+  }
+
+  strlcpy(actions, str + 2, sizeof(actions));
   *str = '\0';
 
   switch (str[1]) {

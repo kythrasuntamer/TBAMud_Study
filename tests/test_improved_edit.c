@@ -12,6 +12,7 @@
 #include "db.h"
 #include "interpreter.h"
 #include "improved-edit.h"
+#include "modify.h"
 #include <stdarg.h>
 
 /* utils.c owns tb_error_log_at(); the link wraps it (--wrap) so the tests can
@@ -108,6 +109,29 @@ void test_format_keeps_complete_colour_codes(void)
   TEST_ASSERT_EQUAL_INT(0, captured_errors);
 }
 
+/* Finding A2-03: a bare "/" has no command letter; actions used to be copied
+ * from str + 2, past the line's terminator. An exact-size heap copy makes
+ * that read visible to ASan. */
+void test_bare_slash_is_rejected_without_reading_past_it(void)
+{
+  char *line = strdup("/");
+
+  TEST_ASSERT_NOT_NULL(line);
+  TEST_ASSERT_EQUAL_INT(STRINGADD_ACTION, improved_editor_execute(&d, line));
+  TEST_ASSERT_EQUAL_STRING("Invalid option.\r\n", output);
+  TEST_ASSERT_EQUAL_STRING("", line);
+  free(line);
+}
+
+void test_save_command_still_parses(void)
+{
+  char *line = strdup("/s");
+
+  TEST_ASSERT_NOT_NULL(line);
+  TEST_ASSERT_EQUAL_INT(STRINGADD_SAVE, improved_editor_execute(&d, line));
+  free(line);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -115,5 +139,7 @@ int main(void)
   RUN_TEST(test_format_text_without_trailing_newline);
   RUN_TEST(test_format_sentence_end_without_trailing_newline);
   RUN_TEST(test_format_keeps_complete_colour_codes);
+  RUN_TEST(test_bare_slash_is_rejected_without_reading_past_it);
+  RUN_TEST(test_save_command_still_parses);
   return UNITY_END();
 }
