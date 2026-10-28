@@ -18,7 +18,8 @@
 #include <string.h>
 #include <ctype.h>
 #include <stdarg.h>
-#include <stdint.h>	/* SIZE_MAX */
+#include <stdint.h>	/* SIZE_MAX, uintptr_t */
+#include <stddef.h>	/* offsetof */
 
 /*
  * zfree() never releases memory: every block stays reachable from memlist
@@ -50,13 +51,48 @@
 
 //#define NO_MEMORY_PADDING
 
-#ifndef NO_MEMORY_PADDING
-static unsigned char beginPad[4] = {
-  0xde, 0xad, 0xde, 0xad };
+/*
+ * Strictest fundamental alignment, as malloc() guarantees it.  The block
+ * handed out is calloc() + sizeof(beginPad), so the begin pad must be a
+ * multiple of this or every MEMORY_DEBUG allocation is misaligned (it was 4
+ * bytes: a struct holding a double, long or pointer then sat at an address
+ * % 8 == 4, which is undefined behaviour, a SIGBUS on strict-alignment
+ * CPUs and a UBSan "misaligned address" report on nearly every CREATE).
+ * max_align_t is C11; this union stands in for it in the C99 build.
+ */
+typedef union zm_max_align {
+  long double ld;
+  long long ll;
+  double d;
+  void *p;
+  void (*fp)(void);
+} zm_max_align;
+struct zm_align_probe { char c; zm_max_align u; };
+#define ZM_ALIGN offsetof(struct zm_align_probe, u)
 
-static unsigned char endPad[4] = {
-  0xde, 0xad, 0xde, 0xad };
+#ifndef NO_MEMORY_PADDING
+#define ZM_PAD_BYTES 16
+static unsigned char beginPad[ZM_PAD_BYTES] = {
+  0xde, 0xad, 0xde, 0xad, 0xde, 0xad, 0xde, 0xad,
+  0xde, 0xad, 0xde, 0xad, 0xde, 0xad, 0xde, 0xad };
+
+/* The end pad starts at ret + len, wherever that falls: it is only ever
+ * accessed with memcpy/memcmp, so it needs no alignment. */
+static unsigned char endPad[ZM_PAD_BYTES] = {
+  0xde, 0xad, 0xde, 0xad, 0xde, 0xad, 0xde, 0xad,
+  0xde, 0xad, 0xde, 0xad, 0xde, 0xad, 0xde, 0xad };
+
+/* Compile-time: the begin pad keeps calloc()'s alignment. */
+typedef char zm_pad_keeps_alignment[(sizeof(beginPad) % ZM_ALIGN == 0) ? 1 : -1];
 #endif
+
+/* Runtime backstop for the same invariant (calloc() itself misbehaving). */
+#define ZM_CHECK_ALIGNED(ptr, file, line) do { \
+  if (((uintptr_t)(ptr)) % ZM_ALIGN != 0) \
+    ZM_FATAL("zmalloc-align", (file), (line), \
+             "addr=%p is not %zu-byte aligned", (void *)(ptr), \
+             (size_t)ZM_ALIGN); \
+} while (0)
 
 static FILE *zfd = NULL;
 
@@ -232,6 +268,7 @@ unsigned char *zmalloc(size_t len, char *file, int line)
   /* insert begin and end padding to detect buffer under/overruns: */
   memcpy(ret, beginPad, sizeof(beginPad));
   ret +=  sizeof(beginPad);  /* make ret skip begin pad */
+  ZM_CHECK_ALIGNED(ret, file, line);
   memcpy(ret + len, endPad, sizeof(endPad));
 #endif
 
@@ -309,6 +346,7 @@ unsigned char *zrealloc(unsigned char *what, size_t len, char *file, int line)
 	/* insert begin and end padding to detect buffer under/overruns: */
 	memcpy(ret, beginPad, sizeof(beginPad));
 	ret +=  sizeof(beginPad);  /* make ret skip begin pad */
+	ZM_CHECK_ALIGNED(ret, file, line);
 	memcpy(ret + len, endPad, sizeof(endPad));
 #endif
 	if (zmalloclogging > 2)

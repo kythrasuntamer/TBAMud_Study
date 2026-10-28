@@ -137,6 +137,33 @@ void test_calloc_zero_fills_count_times_size(void)
   zfree(p, ZM_FILE, __LINE__);
 }
 
+/* ---- I2-V01: blocks keep malloc()'s alignment ---- */
+
+struct zm_wide { double d; long l; void *p; long double ld; };
+
+void test_blocks_are_max_aligned(void)
+{
+  struct zm_wide *w;
+  unsigned char *p;
+  size_t align = __alignof__(long double);
+
+  if (__alignof__(long long) > align)
+    align = __alignof__(long long);
+  p = zmalloc(sizeof(*w), ZM_FILE, __LINE__);
+  TEST_ASSERT_NOT_NULL(p);
+  TEST_ASSERT_EQUAL_UINT(0, (unsigned)((uintptr_t)p % align));
+  w = (struct zm_wide *)(void *)p;
+  w->d = 1.5;			/* UBSan: misaligned access before the fix */
+  w->l = 2;
+  w->p = w;
+  w->ld = 3.0L;
+  p = zrealloc(p, 3 * sizeof(*w), ZM_FILE, __LINE__);
+  TEST_ASSERT_NOT_NULL(p);
+  TEST_ASSERT_EQUAL_UINT(0, (unsigned)((uintptr_t)p % align));
+  TEST_ASSERT_TRUE(((struct zm_wide *)(void *)p)->d == 1.5);
+  zfree(p, ZM_FILE, __LINE__);
+}
+
 /* ---- I2-18: realloc of an untracked block ---- */
 
 static void case_realloc_untracked(void)
@@ -254,6 +281,7 @@ int main(void)
   RUN_TEST(test_realloc_after_free_is_fatal);
   RUN_TEST(test_oversized_request_is_refused_and_reported);
   RUN_TEST(test_calloc_zero_fills_count_times_size);
+  RUN_TEST(test_blocks_are_max_aligned);
 #if defined(__SANITIZE_ADDRESS__)
   RUN_TEST(test_read_after_free_is_seen_by_asan);
 #endif
