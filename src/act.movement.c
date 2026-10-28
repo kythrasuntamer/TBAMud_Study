@@ -133,6 +133,33 @@ static int has_scuba(struct char_data *ch)
   return (0);
 }
 
+/* Report and refuse a move whose room or zone indices are not valid, at the
+ * stage that found it: a corrupt exit, or a special or leave trigger that
+ * changed the world while the move was pending. was_in already indexed
+ * world[] (EXIT() used it); it is re-checked here only to report it. */
+static int move_indices_valid_at(struct char_data *ch, int dir,
+                                 room_rnum was_in, room_rnum going_to,
+                                 zone_rnum zone, const char *stage,
+                                 const char *file, int line, const char *func)
+{
+  if (zone_table && VALID_ROOM_RNUM(was_in) &&
+      VALID_ROOM_RNUM(going_to) && VALID_ZONE_RNUM(zone) &&
+      world[going_to].zone == zone)
+    return TRUE;
+  tb_error_log_at("ERROR", "movement", "move-index", "room", 0,
+                  file, line, func,
+                  DIAG_CHAR_FMT " moving %s: " DIAG_ROOM_FMT " -> "
+                  DIAG_ROOM_FMT " (top %ld), zone %ld (top %ld) not valid "
+                  "at %s; move refused",
+                  DIAG_CHAR(ch), dirs[dir], DIAG_ROOM(was_in),
+                  DIAG_ROOM(going_to), (long)top_of_world, (long)zone,
+                  (long)top_of_zone_table, stage);
+  return FALSE;
+}
+#define MOVE_INDICES_VALID(stage) \
+  move_indices_valid_at(ch, dir, was_in, going_to, destination_zone, (stage), \
+                        __FILE__, __LINE__, __func__)
+
 /** Move a PC/NPC character from their current location to a new location. This
  * is the standard movement locomotion function that all normal walking
  * movement by characters should be sent through. This function also defines
@@ -171,6 +198,7 @@ int do_simple_move(struct char_data *ch, int dir, int need_specials_check)
   room_rnum was_in = IN_ROOM(ch);
   /* ... and the room the character will move into. */
   room_rnum going_to = EXIT(ch, dir)->to_room;
+  zone_rnum destination_zone;
   /* How many movement points are required to travel from was_in to going_to.
    * We redefine this later when we need it. */
   int need_movement = 0;
@@ -179,6 +207,13 @@ int do_simple_move(struct char_data *ch, int dir, int need_specials_check)
   /*---------------------------------------------------------------------*/
   /* End Local variable definitions */
 
+
+  /* Reject a corrupt exit before any room or zone array access; never
+   * bypass zone restrictions for a destination with no valid zone. */
+  destination_zone = (world && VALID_ROOM_RNUM(going_to)) ? world[going_to].zone
+                                                          : NOWHERE;
+  if (!MOVE_INDICES_VALID("exit"))
+    return 0;
 
   /* Begin checks that can prevent a character from leaving the was_in room. */
   /* Future checks should be implemented within this section and return 0.   */
@@ -191,12 +226,21 @@ int do_simple_move(struct char_data *ch, int dir, int need_specials_check)
   if (need_specials_check && special(ch, dir + 1, spec_proc_args))
     return 0;
 
+  /* Specials and leave triggers run arbitrary game logic: a character they
+   * moved is simply not moved again; a world they changed is reported. */
+  if (IN_ROOM(ch) != was_in || !MOVE_INDICES_VALID("special"))
+    return 0;
+
   /* Leave Trigger Checks: Does a leave trigger block exit from the room? */
   if (!leave_mtrigger(ch, dir) || IN_ROOM(ch) != was_in) /* prevent teleport crashes */
     return 0;
-  if (!leave_wtrigger(&world[IN_ROOM(ch)], ch, dir) || IN_ROOM(ch) != was_in) /* prevent teleport crashes */
+  if (!MOVE_INDICES_VALID("leave-mtrigger") ||
+      !leave_wtrigger(&world[IN_ROOM(ch)], ch, dir) || IN_ROOM(ch) != was_in)
     return 0;
-  if (!leave_otrigger(&world[IN_ROOM(ch)], ch, dir) || IN_ROOM(ch) != was_in) /* prevent teleport crashes */
+  if (!MOVE_INDICES_VALID("leave-wtrigger") ||
+      !leave_otrigger(&world[IN_ROOM(ch)], ch, dir) || IN_ROOM(ch) != was_in)
+    return 0;
+  if (!MOVE_INDICES_VALID("leave-otrigger"))
     return 0;
 
   /* Charm effect: Does it override the movement? */
@@ -248,16 +292,16 @@ int do_simple_move(struct char_data *ch, int dir, int need_specials_check)
   }
 
   /* Check zone level recommendations */
-  if ((ZONE_MINLVL(GET_ROOM_ZONE(going_to)) != -1) && ZONE_MINLVL(GET_ROOM_ZONE(going_to)) > GET_LEVEL(ch)) {
+  if ((ZONE_MINLVL(destination_zone) != -1) && ZONE_MINLVL(destination_zone) > GET_LEVEL(ch)) {
     send_to_char(ch, "This zone is above your recommended level.\r\n");
   }
 
   /* Check zone flag restrictions */
-  if (ZONE_FLAGGED(GET_ROOM_ZONE(going_to), ZONE_CLOSED)) {
+  if (ZONE_FLAGGED(destination_zone, ZONE_CLOSED)) {
     send_to_char(ch, "A mysterious barrier forces you back! That area is off-limits.\r\n");
     return (0);
   }
-  if (ZONE_FLAGGED(GET_ROOM_ZONE(going_to), ZONE_NOIMMORT) && (GET_LEVEL(ch) >= LVL_IMMORT) && (GET_LEVEL(ch) < LVL_GRGOD)) {
+  if (ZONE_FLAGGED(destination_zone, ZONE_NOIMMORT) && (GET_LEVEL(ch) >= LVL_IMMORT) && (GET_LEVEL(ch) < LVL_GRGOD)) {
     send_to_char(ch, "A mysterious barrier forces you back! That area is off-limits.\r\n");
     return (0);
   }
