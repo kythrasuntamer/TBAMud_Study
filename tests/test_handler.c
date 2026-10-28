@@ -20,6 +20,20 @@
 void basic_mud_log(const char *format, ...) { (void)format; }
 long obj_script_id(obj_data *obj) { return obj->script_id; }
 long char_script_id(char_data *ch) { return ch->script_id; }
+int MAX(int a, int b) { return a > b ? a : b; }
+int MIN(int a, int b) { return a < b ? a : b; }
+const char *skill_name(int num) { (void)num; return "test-spell"; }
+void core_dump_real(const char *who, int line) { (void)who; (void)line; }
+void *tb_calloc_array_at(size_t count, size_t element_size,
+                         const char *file, int line, const char *func)
+{
+  void *p;
+
+  (void)file; (void)line; (void)func;
+  if (!(p = calloc(count, element_size)))
+    abort();
+  return p;
+}
 
 void setUp(void) { tb_error_capture_reset(); }
 void tearDown(void) {}
@@ -116,6 +130,36 @@ static void test_obj_from_room_clears_furniture_backpointer(void)
   free(chair);
 }
 
+/* H2-11: stacking an accumulating affect past the sbyte range must clamp
+ * (and report), never wrap -129 into +127. */
+static void test_affect_join_clamps_modifier(void)
+{
+  struct char_data *ch = calloc(1, sizeof(*ch));
+  struct affected_type af;
+
+  TEST_ASSERT_NOT_NULL(ch);
+  ch->player_specials = &dummy_mob;
+  GET_IDNUM(ch) = 7;
+  memset(&af, 0, sizeof(af));
+  af.spell = SPELL_CURSE;
+  af.location = APPLY_NONE;
+  af.duration = 10;
+  af.modifier = -100;
+  affect_to_char(ch, &af);
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+
+  affect_join(ch, &af, TRUE, FALSE, TRUE, FALSE);
+  TEST_ASSERT_NOT_NULL(ch->affected);
+  TEST_ASSERT_NULL(ch->affected->next);
+  TEST_ASSERT_EQUAL_INT(SCHAR_MIN, ch->affected->modifier);
+  TEST_ASSERT_EQUAL_INT(20, ch->affected->duration);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("affect-join-clamp", tb_captured_operation);
+
+  free(ch->affected);
+  free(ch);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -124,5 +168,6 @@ int main(void)
   RUN_TEST(test_obj_from_room_null_reported);
   RUN_TEST(test_obj_from_room_nowhere_reported);
   RUN_TEST(test_obj_from_room_clears_furniture_backpointer);
+  RUN_TEST(test_affect_join_clamps_modifier);
   return UNITY_END();
 }

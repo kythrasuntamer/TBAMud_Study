@@ -373,14 +373,33 @@ void affect_join(struct char_data *ch, struct affected_type *af,
     next = hjp->next;
 
     if ((hjp->spell == af->spell) && (hjp->location == af->location)) {
+      /* Accumulating affects (e.g. SPELL_CURSE, -1 hitroll per cast) sum
+       * into an sbyte modifier and sh_int duration. Players control how
+       * often they stack (scrolls bypass the self-cast check), so sum in
+       * int and clamp: a wrap would turn -129 into +127, or a long
+       * duration into -1 (permanent). */
+      int dur = af->duration, mod = af->modifier;
+
       if (add_dur)
-	af->duration += hjp->duration;
+	dur += hjp->duration;
       else if (avg_dur)
-        af->duration = (af->duration+hjp->duration)/2;
+        dur = (dur + hjp->duration) / 2;
       if (add_mod)
-	af->modifier += hjp->modifier;
+	mod += hjp->modifier;
       else if (avg_mod)
-        af->modifier = (af->modifier+hjp->modifier)/2;
+        mod = (mod + hjp->modifier) / 2;
+
+      if (dur > SHRT_MAX - 1 || mod < SCHAR_MIN || mod > SCHAR_MAX) {
+        TB_WARN_MSG("affect", "affect-join-clamp", skill_name(af->spell),
+                    DIAG_CHAR_FMT " spell %d location %d modifier %d "
+                    "duration %d clamped to [%d,%d] / max %d", DIAG_CHAR(ch),
+                    af->spell, af->location, mod, dur, SCHAR_MIN, SCHAR_MAX,
+                    SHRT_MAX - 1);
+        dur = MIN(dur, SHRT_MAX - 1);
+        mod = MAX(SCHAR_MIN, MIN(mod, SCHAR_MAX));
+      }
+      af->duration = (sh_int) dur;
+      af->modifier = (sbyte) mod;
 
       affect_remove(ch, hjp);
       affect_to_char(ch, af);
