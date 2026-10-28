@@ -1159,6 +1159,46 @@ static void test_medit_save_repairs_and_reports_wrong_scratch_nr(void)
   top_of_mobt = 0;
 }
 
+
+/* ------------------------------------------------------------------ */
+/* F1-14: a room saved to a new vnum renumbers other sessions even     */
+/* when its scratch copy still carries the 'W' source's number.        */
+/* ------------------------------------------------------------------ */
+static void test_redit_copy_saved_to_new_vnum_renumbers_other_sessions(void)
+{
+  struct descriptor_data *d = &builder_desc, zd;
+  struct char_data zb;
+  struct player_special_data sp;
+  struct reset_com load;
+
+  make_world(3);
+  memset(&sp, 0, sizeof(sp));
+  memset(&load, 0, sizeof(load));
+  load.command = 'M'; load.arg1 = 0; load.arg3 = 2;   /* mob into rnum 2 */
+
+  memset(&zd, 0, sizeof(zd)); memset(&zb, 0, sizeof(zb));
+  zb.player_specials = &sp; zd.character = &zb;
+  CREATE(zd.olc, struct oasis_olc_data, 1);
+  make_zedit_session(&zd, &load, 1);
+  descriptor_list = &zd;
+
+  /* New room 3070 copied from 3001: the scratch still says 3001. */
+  CREATE(OLC_ROOM(d), struct room_data, 1);
+  OLC_ROOM(d)->name = strdup("A copied room");
+  OLC_ROOM(d)->description = strdup("Copied.\r\n");
+  OLC_ROOM(d)->number = 3001;
+  OLC_NUM(d) = 2999;
+  add_room_result = 0;
+  redit_save_internally(d);
+
+  TEST_ASSERT_EQUAL_INT(3, OLC_ZONE(&zd)->cmd[0].arg3);
+  TEST_ASSERT_EQUAL_INT(2999, OLC_ROOM(d)->number);
+
+  descriptor_list = NULL;
+  free_zedit_session(&zd);
+  free(zd.olc);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -1184,5 +1224,6 @@ int main(void)
   RUN_TEST(test_oedit_save_releases_live_instance_scripts_first);
   RUN_TEST(test_oedit_save_frees_previous_prototype_trigger_list);
   RUN_TEST(test_medit_save_repairs_and_reports_wrong_scratch_nr);
+  RUN_TEST(test_redit_copy_saved_to_new_vnum_renumbers_other_sessions);
   return UNITY_END();
 }

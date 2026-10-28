@@ -252,8 +252,14 @@ void redit_save_internally(struct descriptor_data *d)
   room_rnum existing;
   struct trig_proto_list *old_proto;
 
-  if (OLC_ROOM(d)->number == NOWHERE)
-    new_room = TRUE;
+  /* Whether add_room() inserts (and shifts world[]) depends only on
+   * whether OLC_NUM exists, so decide "new room" the same way. The scratch
+   * copy's own number is not authoritative: rcopy (oasis_copy.c) and 'W'
+   * hand in a copy that still names its source, and an insert treated as
+   * an update skipped the renumbering of other builders' sessions. It is
+   * overwritten with OLC_NUM below. */
+  existing = real_room(OLC_NUM(d));
+  new_room = (existing == NOWHERE);
 
   /* Invariant: the scratch room owns no live lists (see
    * redit_setup_existing). add_room() copies the struct into world[], so a
@@ -276,7 +282,6 @@ void redit_save_internally(struct descriptor_data *d)
   /* add_room() copy_room()s the scratch room (proto_script NULL, see
    * redit_setup_existing) over world[], so after it returns the old trigger
    * list is reachable only through this pointer. */
-  existing = real_room(OLC_NUM(d));
   old_proto = existing == NOWHERE ? NULL : world[existing].proto_script;
 
   if ((room_num = add_room(OLC_ROOM(d))) == NOWHERE) {
