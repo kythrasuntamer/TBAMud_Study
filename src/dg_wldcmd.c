@@ -20,6 +20,7 @@
 #include "constants.h"
 #include "genzon.h" /* for zone_rnum real_zone_by_thing */
 #include "fight.h"  /* for die() */
+#include "dg_cmd.h" /* occupant snapshots for the "all" commands */
 
 /* Local functions, macros, defines and structs */
 
@@ -356,7 +357,9 @@ WCMD(do_wteleport)
 
 WCMD(do_wforce)
 {
-    char_data *ch, *next_ch;
+    char_data *ch;
+    struct dg_memory_target *targets, *t;
+    room_rnum origin;
     char arg1[MAX_INPUT_LENGTH], *line;
 
     line = one_argument(argument, arg1);
@@ -368,15 +371,22 @@ WCMD(do_wforce)
 
     if (!str_cmp(arg1, "all"))
     {
-        for (ch = room->people; ch; ch = next_ch)
+        /* A forced command can move the next occupant too (a leader's move
+         * takes the followers along): walk a UID snapshot (dg_cmd.h). */
+        origin = real_room(room->number);
+        targets = dg_room_occupant_uids(origin);
+        for (t = targets; t; t = t->next)
         {
-            next_ch = ch->next_in_room;
-
+            if (!(ch = dg_room_occupant_live(t->uid, origin))) {
+                dg_report_occupant_skipped(t->uid, origin, "do_wforce");
+                continue;
+            }
             if (valid_dg_target(ch, 0))
             {
                 command_interpreter(ch, line);
             }
         }
+        dg_free_room_occupant_uids(targets);
     }
 
     else

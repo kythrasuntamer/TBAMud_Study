@@ -148,6 +148,15 @@ static trig_data trig;
 static struct index_data default_index;
 static struct index_data *default_indexes[1] = { &default_index };
 
+/* dg_teleport_all() reports occupants moved by an earlier callback through
+ * dg_triggers.c, which this test does not link; count the reports. */
+static int occupant_skips;
+void dg_report_occupant_skipped(long uid, room_rnum room, const char *cmd)
+{
+  (void)uid; (void)room; (void)cmd;
+  occupant_skips++;
+}
+
 void setUp(void)
 {
   memset(&trig, 0, sizeof(trig));

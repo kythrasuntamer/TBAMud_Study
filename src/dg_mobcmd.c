@@ -22,6 +22,7 @@
 #include "genzon.h" /* for real_zone_by_thing */
 #include "act.h"
 #include "fight.h"
+#include "dg_cmd.h" /* occupant snapshots for the "all" commands */
 
 
 /* Local file scope functions. */

@@ -20,6 +20,7 @@
 #include "constants.h"
 #include "genzon.h" /* for access to real_zone_by_thing */
 #include "fight.h" /* for die() */
+#include "dg_cmd.h" /* occupant snapshots for the "all" commands */
 #include "spells.h" /* for NUM_ATTACK_TYPES */
 #include "genobj.h" /* for free_object_strings[_proto]() */
 
@@ -182,7 +183,8 @@ static OCMD(do_olog)
 
 static OCMD(do_oforce)
 {
-    char_data *ch, *next_ch;
+    char_data *ch;
+    struct dg_memory_target *targets, *t;
     int room;
     char arg1[MAX_INPUT_LENGTH], *line;
 
@@ -200,14 +202,21 @@ static OCMD(do_oforce)
             obj_log(obj, "oforce called by object in NOWHERE");
         else
         {
-            for (ch = world[room].people; ch; ch = next_ch)
+            /* A forced command can move the next occupant too (a leader's
+             * move takes the followers along): walk a UID snapshot. */
+            targets = dg_room_occupant_uids(room);
+            for (t = targets; t; t = t->next)
             {
-                next_ch = ch->next_in_room;
+                if (!(ch = dg_room_occupant_live(t->uid, room))) {
+                    dg_report_occupant_skipped(t->uid, room, "do_oforce");
+                    continue;
+                }
                 if (valid_dg_target(ch, 0))
                 {
                     command_interpreter(ch, line);
                 }
             }
+            dg_free_room_occupant_uids(targets);
         }
     }
 

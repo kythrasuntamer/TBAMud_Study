@@ -30,6 +30,7 @@
 #include "sysdep.h"
 #include "structs.h"
 #include "dg_scripts.h"
+#include "dg_cmd.h"
 #include "utils.h"
 #include "comm.h"
 #include "interpreter.h"
@@ -351,8 +352,12 @@ void dg_teleport_all(room_rnum from, room_rnum to)
 
   for (i = 0; i < count; i++) {
     ch = find_char(uids[i]);
-    if (!ch || IN_ROOM(ch) != from || DEAD(ch) ||
-        !valid_dg_target(ch, DG_ALLOW_GODS))
+    if (!ch || IN_ROOM(ch) != from || DEAD(ch)) {
+      /* An earlier enter trigger moved or extracted this occupant. */
+      dg_report_occupant_skipped(uids[i], from, "teleport all");
+      continue;
+    }
+    if (!valid_dg_target(ch, DG_ALLOW_GODS))
       continue;
     char_from_room(ch);
     char_to_room(ch, to);

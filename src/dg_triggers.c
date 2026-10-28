@@ -25,6 +25,7 @@
 #include "constants.h"
 #include "spells.h"  /* for skill_name() */
 #include "act.h"    /* for cmd_door[] */
+#include "dg_cmd.h" /* snapshot helpers shared with the DG commands */
 
 /* General functions used by several triggers. */
 
@@ -154,12 +155,8 @@ void bribe_mtrigger(char_data *ch, char_data *actor, int amount)
 /* Snapshot script IDs rather than holding occupant-list links across callbacks.
  * Callback-driven teleports or extraction may invalidate next_in_room.
  * Each saved ID is re-resolved before it is dereferenced.
+ * (struct dg_memory_target is declared in dg_cmd.h.)
  */
-struct dg_memory_target {
-  long uid;
-  struct dg_memory_target *next;
-};
-
 static struct dg_memory_target *dg_memory_targets(room_rnum room)
 {
   struct dg_memory_target *head = NULL, **tail = &head;
@@ -192,6 +189,41 @@ static int dg_memory_character_live(char_data *ch, long uid, room_rnum room)
          !((IS_NPC(ch) && MOB_FLAGGED(ch, MOB_NOTDEADYET)) ||
            (!IS_NPC(ch) && PLR_FLAGGED(ch, PLR_NOTDEADYET))) &&
          IN_ROOM(ch) == room;
+}
+
+/* Exported forms of the snapshot helpers above, for the "all" loops of the
+ * DG commands (dg_cmd.h). */
+struct dg_memory_target *dg_room_occupant_uids(room_rnum room)
+{
+  return dg_memory_targets(room);
+}
+
+void dg_free_room_occupant_uids(struct dg_memory_target *head)
+{
+  dg_free_memory_targets(head);
+}
+
+char_data *dg_room_occupant_live(long uid, room_rnum room)
+{
+  char_data *ch = find_char(uid);
+  return dg_memory_character_live(ch, uid, room) ? ch : NULL;
+}
+
+void dg_report_occupant_skipped(long uid, room_rnum room, const char *cmd)
+{
+  char_data *ch = find_char(uid);
+
+  if (ch)
+    TB_WARN_MSG("dg", "all-target-moved", cmd,
+                DIAG_CHAR_FMT " (uid %ld) left room vnum %d or is being "
+                "extracted after an earlier callback of the same 'all' "
+                "command; skipped", DIAG_CHAR(ch), uid,
+                GET_ROOM_VNUM(room));
+  else
+    TB_WARN_MSG("dg", "all-target-moved", cmd,
+                "uid %ld from room vnum %d no longer exists after an earlier "
+                "callback of the same 'all' command; skipped", uid,
+                GET_ROOM_VNUM(room));
 }
 
 /* Mobile trigger handlers run only for a character standing in a valid room.
