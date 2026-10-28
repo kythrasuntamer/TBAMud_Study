@@ -48,7 +48,6 @@ static int extractions_pending = 0;
 
 /* local file scope functions */
 static int apply_ac(struct char_data *ch, int eq_pos);
-static void update_object(struct obj_data *obj, int use);
 static void affect_modify_ar(struct char_data * ch, byte loc, sbyte mod, int bitv[], bool add);
 
 /**
@@ -1052,22 +1051,13 @@ void extract_obj(struct obj_data *obj)
   free_obj(obj);
 }
 
-/* Count down the timers of obj, its later siblings and everything they
- * contain. Siblings are walked with a loop and only ->contains recurses, so
- * stack depth follows container nesting, not how many objects a character
- * carries (H2-25: one frame per object let a hoard of thousands of items,
- * an immortal's or a scavenger's, overflow the stack in point_update). */
-static void update_object(struct obj_data *obj, int use)
-{
-  for (; obj; obj = obj->next_content) {
-    /* dont update objects with a timer trigger */
-    if (!SCRIPT_CHECK(obj, OTRIG_TIMER) && (GET_OBJ_TIMER(obj) > 0))
-      GET_OBJ_TIMER(obj) -= use;
-    if (obj->contains)
-      update_object(obj->contains, use);
-  }
-}
-
+/* Burn down ch's light once per tick (point_update(), players only).
+ * Object timers are not touched here: point_update()'s object pass counts
+ * down every object's timer, carried and worn ones included, once per tick
+ * and fires the expiry there. This used to count a player's carried
+ * objects down again here (by 1) and worn ones (by 2), so their timers
+ * ran two and three times as fast as anyone else's: a carried corpse
+ * decayed in half the time. */
 void update_char_objects(struct char_data *ch)
 {
   int i;
@@ -1085,13 +1075,6 @@ void update_char_objects(struct char_data *ch)
 	  world[IN_ROOM(ch)].light--;
 	}
       }
-
-  for (i = 0; i < NUM_WEARS; i++)
-    if (GET_EQ(ch, i))
-      update_object(GET_EQ(ch, i), 2);
-
-  if (ch->carrying)
-    update_object(ch->carrying, 1);
 }
 
 /* Extract a ch completely from the world, and leave his stuff behind */

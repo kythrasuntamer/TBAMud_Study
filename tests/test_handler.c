@@ -220,11 +220,13 @@ static void test_char_to_room_invalid_room_names_caller(void)
   free(ch);
 }
 
-/* H2-25: update_object() and object_list_new_owner() recursed once per
- * object in a list, so stack depth grew with the size of an inventory,
- * not with container nesting. Run both on a thread with a 256 KB stack:
- * 50,000 frames do not fit (ASan stack-overflow on the old code), a loop
- * over siblings does. */
+/* H2-25: object_list_new_owner() (and the former update_object()) recursed
+ * once per object in a list, so stack depth grew with the size of an
+ * inventory, not with container nesting. Run on a thread with a 256 KB
+ * stack: 50,000 frames do not fit (ASan stack-overflow on the old code), a
+ * loop over siblings does. update_char_objects() no longer walks the
+ * objects at all: their timers count down in point_update()'s object pass
+ * (coordinator item b), so the timers must come back unchanged. */
 #define HOARD_SIZE 50000
 static struct obj_data *hoard;
 static struct obj_data bag;          /* one container, holding the hoard */
@@ -270,9 +272,9 @@ static void test_long_inventory_is_updated_without_deep_recursion(void)
   TEST_ASSERT_EQUAL_INT(0, pthread_join(thread, NULL));
   TEST_ASSERT_EQUAL_INT(0, pthread_attr_destroy(&attr));
 
-  TEST_ASSERT_EQUAL_INT(4, GET_OBJ_TIMER(&hoard[0]));
-  TEST_ASSERT_EQUAL_INT(4, GET_OBJ_TIMER(&hoard[HOARD_SIZE - 1]));
-  TEST_ASSERT_EQUAL_INT(4, GET_OBJ_TIMER(&bag));
+  TEST_ASSERT_EQUAL_INT(5, GET_OBJ_TIMER(&hoard[0]));
+  TEST_ASSERT_EQUAL_INT(5, GET_OBJ_TIMER(&hoard[HOARD_SIZE - 1]));
+  TEST_ASSERT_EQUAL_INT(5, GET_OBJ_TIMER(&bag));
   TEST_ASSERT_NULL(hoard[0].carried_by);
   TEST_ASSERT_NULL(hoard[HOARD_SIZE - 1].carried_by);
   TEST_ASSERT_NULL(bag.carried_by);
@@ -389,6 +391,37 @@ static void test_extract_stranded_character_is_recovered(void)
   free(loot);
 }
 
+/* Coordinator item (b): a player's carried and worn object timers were
+ * counted down here as well as in point_update()'s object pass, so they
+ * ran two and three times as fast. update_char_objects() now burns only
+ * the light. */
+static void test_update_char_objects_burns_light_only(void)
+{
+  struct char_data player;
+  struct obj_data lamp, sword, scroll;
+
+  memset(&player, 0, sizeof(player));
+  memset(&lamp, 0, sizeof(lamp));
+  memset(&sword, 0, sizeof(sword));
+  memset(&scroll, 0, sizeof(scroll));
+  player.player_specials = &dummy_mob;
+  GET_OBJ_TYPE(&lamp) = ITEM_LIGHT;
+  GET_OBJ_VAL(&lamp, 2) = 5;          /* hours of light left */
+  GET_OBJ_TIMER(&lamp) = 7;
+  GET_OBJ_TIMER(&sword) = 7;
+  GET_OBJ_TIMER(&scroll) = 7;
+  player.equipment[WEAR_LIGHT] = &lamp;
+  player.equipment[WEAR_WIELD] = &sword;
+  player.carrying = &scroll;
+
+  update_char_objects(&player);
+
+  TEST_ASSERT_EQUAL_INT(4, GET_OBJ_VAL(&lamp, 2));
+  TEST_ASSERT_EQUAL_INT(7, GET_OBJ_TIMER(&lamp));
+  TEST_ASSERT_EQUAL_INT(7, GET_OBJ_TIMER(&sword));
+  TEST_ASSERT_EQUAL_INT(7, GET_OBJ_TIMER(&scroll));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -403,5 +436,6 @@ int main(void)
   RUN_TEST(test_long_inventory_is_updated_without_deep_recursion);
   RUN_TEST(test_free_group_with_members_is_refused);
   RUN_TEST(test_extract_stranded_character_is_recovered);
+  RUN_TEST(test_update_char_objects_burns_light_only);
   return UNITY_END();
 }

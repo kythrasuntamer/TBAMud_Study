@@ -577,8 +577,11 @@ void point_update(void)
     }
   }
 
-  /* objects. Pass 1 runs no callbacks: it counts every timer down and
-   * snapshots the objects that expired as (address, UID) pairs. Pass 2 then
+  /* objects. This is the only place object timers count down: once per
+   * tick for every object, carried and worn ones included
+   * (update_char_objects() above only burns lights). Pass 1 runs no
+   * callbacks: it counts every timer down and snapshots the objects that
+   * expired as (address, UID) pairs. Pass 2 then
    * decays corpses and fires timer triggers. Both can run scripts (act
    * triggers, the timer trigger itself) that purge ANY object, and
    * extract_obj() frees immediately, so no saved list pointer (j->next) is
