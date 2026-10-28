@@ -18,7 +18,8 @@
 enum attack { QUIET, FORGET_REMAINING, RELOCATE_OWNER, PURGE_OWNER,
               PURGE_ACTOR, REENTER, RECREATE_MEMORY, PURGE_NEXT_TRIGGER, PURGE_TIMER_OBJECT, PURGE_TIMER_OBJECT_FALSE,
               PURGE_NEXT_TRIGGER_FALSE, PURGE_CURRENT_TRIGGER_FALSE,
-              PURGE_LOAD_OBJECT_ERROR, REUSE_NEXT_TRIGGER_ADDRESS };
+              PURGE_LOAD_OBJECT_ERROR, REUSE_NEXT_TRIGGER_ADDRESS,
+              REPLACE_NEXT_TRIGGER_ID };
 /* Standalone DG test executable: the full game's direction tables are
  * deliberately not linked. These definitions match constants.h's types
  * and support both valid and invalid direction test paths.
@@ -176,6 +177,12 @@ static void mutate(void)
     if (next_trigger && next_trigger->serial != 99)
       next_trigger->serial = 99;
     break;
+  case REPLACE_NEXT_TRIGGER_ID:
+    /* As REUSE_NEXT_TRIGGER_ADDRESS, but the script returns false, so the
+     * dispatch goes on to look for the next trigger. */
+    if (next_trigger)
+      next_trigger->serial += 1000;
+    break;
   case RECREATE_MEMORY:
     /* A malicious trigger keeps re-remembering the same actor. */
     if (owner && visitor) {
@@ -211,7 +218,8 @@ int script_driver(void *go, trig_data *t, int type, int mode)
   mutate();
   return attack != PURGE_TIMER_OBJECT_FALSE &&
          attack != PURGE_NEXT_TRIGGER_FALSE &&
-         attack != PURGE_CURRENT_TRIGGER_FALSE;
+         attack != PURGE_CURRENT_TRIGGER_FALSE &&
+         attack != REPLACE_NEXT_TRIGGER_ID;
 }
 void command_interpreter(char_data *ch, char *command)
 {
@@ -735,6 +743,30 @@ static void command_object_removed_next_trigger(void)
   TEST_ASSERT_EQUAL_INT(1, callbacks);
 }
 
+/* An object command trigger freed by a false-returning script and replaced
+ * by a new trigger at the same address is not the trigger snapshotted for
+ * this command: the dispatch skips it and reports the reuse. */
+static void command_replaced_trigger_identity(void)
+{
+  setup_command_object();
+  next_trigger = calloc(1, sizeof(*next_trigger));
+  TEST_ASSERT_NOT_NULL(next_trigger);
+  next_trigger->trigger_type = OTRIG_COMMAND;
+  next_trigger->narg = OCMD_ROOM;
+  next_trigger->arglist = strdup("*");
+  TEST_ASSERT_NOT_NULL(next_trigger->arglist);
+  trigger->serial = 1;
+  next_trigger->serial = 2;
+  trigger->next = next_trigger;
+  char cmd[] = "look", arg[] = "";
+  attack = REPLACE_NEXT_TRIGGER_ID;
+  TEST_ASSERT_EQUAL_INT(0, command_otrigger(owner, cmd, arg));
+  TEST_ASSERT_EQUAL_INT(1, callbacks);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("WARNING", tb_captured_severity);
+  TEST_ASSERT_EQUAL_STRING("trigger-identity", tb_captured_operation);
+}
+
 static void leave_actor_extracted_mid_dispatch(void)
 {
   setup_timer_object();
@@ -974,6 +1006,7 @@ int main(void)
   RUN_TEST(command_object_baseline);
   RUN_TEST(command_object_extracted_on_false);
   RUN_TEST(command_object_removed_next_trigger);
+  RUN_TEST(command_replaced_trigger_identity);
   RUN_TEST(leave_actor_extracted_mid_dispatch);
   RUN_TEST(command_mob_baseline);
   RUN_TEST(command_mob_detached_current_trigger);

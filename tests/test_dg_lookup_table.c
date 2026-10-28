@@ -1,5 +1,6 @@
 /* Executable tests of the production DG UID lookup table (dg_scripts.c):
- * ownership-checked removal across UID rebinding and in-range ID allocation.
+ * ownership-checked removal across UID rebinding (player UIDs only; mobile
+ * and object UIDs are never rebound) and in-range ID allocation.
  * Entities are zeroed fixtures; only their addresses and script_id are used.
  */
 #include "unity.h"
@@ -79,6 +80,39 @@ static void stale_holder_removal_keeps_rebound_uid(void)
   TEST_ASSERT_EQUAL_STRING("uid-remove", tb_captured_operation);
   old_ch.script_id = 0;
 }
+/* Registering the same entity again changes nothing and reports nothing:
+ * a player back from the menu re-enters with the character still bound. */
+static void same_entity_registration_is_silent(void)
+{
+  new_ch.script_id = 42;
+  add_to_lookup_table(42, &new_ch);
+  add_to_lookup_table(42, &new_ch);
+  TEST_ASSERT_EQUAL_PTR(&new_ch, find_char(42));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+}
+/* Mobile and object UIDs are allocated unique: a second entity claiming a
+ * registered one is refused and reported, and lookups keep finding the
+ * registered entity. */
+static void mobile_and_object_uids_are_never_rebound(void)
+{
+  mob_a.script_id = mob_b.script_id = MOB_ID_BASE;
+  add_to_lookup_table(MOB_ID_BASE, &mob_a);
+  add_to_lookup_table(MOB_ID_BASE, &mob_b);
+  TEST_ASSERT_EQUAL_PTR(&mob_a, find_char(MOB_ID_BASE));
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("ERROR", tb_captured_severity);
+  TEST_ASSERT_EQUAL_STRING("uid-rebind", tb_captured_operation);
+  mob_b.script_id = 0;
+
+  obj_a.script_id = obj_b.script_id = OBJ_ID_BASE;
+  add_to_lookup_table(OBJ_ID_BASE, &obj_a);
+  add_to_lookup_table(OBJ_ID_BASE, &obj_b);
+  TEST_ASSERT_TRUE(obj_uid_matches(OBJ_ID_BASE, &obj_a));
+  TEST_ASSERT_FALSE(obj_uid_matches(OBJ_ID_BASE, &obj_b));
+  TEST_ASSERT_EQUAL_INT(2, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("uid-rebind", tb_captured_operation);
+  obj_b.script_id = 0;
+}
 static void owner_removal_unregisters_uid(void)
 {
   new_ch.script_id = 42;
@@ -142,6 +176,8 @@ int main(void)
 {
   UNITY_BEGIN();
   RUN_TEST(stale_holder_removal_keeps_rebound_uid);
+  RUN_TEST(same_entity_registration_is_silent);
+  RUN_TEST(mobile_and_object_uids_are_never_rebound);
   RUN_TEST(owner_removal_unregisters_uid);
   RUN_TEST(mob_ids_skip_registered_uid);
   RUN_TEST(mob_ids_wrap_within_mobile_range);

@@ -3482,24 +3482,47 @@ int obj_uid_matches(long uid, const obj_data *obj)
 }
 
 
+/* uid is already registered to bound, and c asks for it.
+ *  - The same entity again changes nothing (a player who went back to the
+ *    menu re-enters the game with the character still registered).
+ *  - A player UID (an idnum, below MOB_ID_BASE) moves to the new character:
+ *    a player logs in again while the earlier character with the same idnum
+ *    awaits extraction. remove_from_lookup_table() then refuses to drop the
+ *    new binding when the old character is freed.
+ *  - Mobile and object UIDs are allocated unique (char_script_id() and
+ *    obj_script_id() skip registered IDs), so a second entity claiming one
+ *    is a bug. It is refused: lookups keep finding the registered entity,
+ *    never a newcomer that may be a temporary copy.
+ * Returns TRUE if the binding should move to c. */
+static int lookup_rebind_allowed(long uid, const void *bound, const void *c)
+{
+  if (bound == c)
+    return FALSE;
+  if (uid < MOB_ID_BASE) {
+    TB_WARN_MSG("dg", "uid-rebind", "lookup_table",
+                "uid=%ld rebound from %p to %p", uid, bound, c);
+    return TRUE;
+  }
+  TB_ERROR_MSG("dg", "uid-rebind", "lookup_table",
+               "uid=%ld is bound to %p; refusing to rebind it to %p "
+               "(mobile and object UIDs are unique)", uid, bound, c);
+  return FALSE;
+}
+
 void add_to_lookup_table(long uid, void *c)
 {
   struct lookup_table_t *lt = get_bucket_head(uid);
 
   if (lt && lt->uid == uid) {
-    TB_WARN_MSG("dg", "uid-rebind", "lookup_table",
-                "uid=%ld rebound from %p to %p (bucket head)", uid, lt->c, c);
-    lt->c = c;
+    if (lookup_rebind_allowed(uid, lt->c, c))
+      lt->c = c;
     return;
   }
 
   for (;lt && lt->next; lt = lt->next)
     if (lt->next->uid == uid) {
-      /* Expected when a player logs in while an earlier character with the
-       * same idnum awaits extraction; unexpected anywhere else. */
-      TB_WARN_MSG("dg", "uid-rebind", "lookup_table",
-                  "uid=%ld rebound from %p to %p", uid, lt->next->c, c);
-      lt->next->c = c;
+      if (lookup_rebind_allowed(uid, lt->next->c, c))
+        lt->next->c = c;
       return;
     }
 
