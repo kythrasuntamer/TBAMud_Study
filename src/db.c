@@ -132,7 +132,7 @@ static int check_object_spell_number(struct obj_data *obj, int val);
 static int check_object_level(struct obj_data *obj, int val);
 static int check_object(struct obj_data *);
 static void load_zones(FILE *fl, char *zonename);
-static int file_to_string(const char *name, char *buf);
+static int file_to_string(const char *name, char *buf, size_t buf_size);
 static int file_to_string_alloc(const char *name, char **buf);
 static int count_alias_records(FILE *fl);
 static void parse_simple_mob(FILE *mob_f, int i, int nr);
@@ -3701,7 +3701,7 @@ static int file_to_string_alloc(const char *name, char **buf)
       return (-1);
 
   /* Lets not free() what used to be there unless we succeeded. */
-  if (file_to_string(name, temp) < 0)
+  if (file_to_string(name, temp, sizeof(temp)) < 0)
     return (-1);
 
   for (in_use = descriptor_list; in_use; in_use = in_use->next) {
@@ -3724,14 +3724,24 @@ static int file_to_string_alloc(const char *name, char **buf)
   return (0);
 }
 
-/* read contents of a text file, and place in buf */
-static int file_to_string(const char *name, char *buf)
+/** Read a whole text file into buf, converting each line ending to "\r\n".
+ * @param name     Path of the text file (greetings, motd, news, ...).
+ * @param buf      Destination; always NUL-terminated, empty on failure.
+ * @param buf_size Size of buf in bytes. It must be passed explicitly: buf is
+ *                 a pointer here, so sizeof(buf) would be the size of a
+ *                 pointer (8), and a copy bounded by it silently cut every
+ *                 text file to 7 characters (the login greeting lost its
+ *                 name prompt).
+ * @return 0 on success, -1 if the file cannot be opened or does not fit. */
+static int file_to_string(const char *name, char *buf, size_t buf_size)
 {
   FILE *fl;
   char tmp[READ_SIZE + 3];
   int len;
   struct stat statbuf;
 
+  if (buf_size == 0)
+    return (-1);
   *buf = '\0';
 
   if (!(fl = fopen(name, "r"))) {
@@ -3758,13 +3768,15 @@ static int file_to_string(const char *name, char *buf)
       tmp[len - 1] = '\0'; /* take off the trailing \n */
     strlcat(tmp, "\r\n", sizeof(tmp));	/* strcat: OK (tmp:READ_SIZE+3) */
 
-    if (strlen(buf) + strlen(tmp) + 1 > MAX_STRING_LENGTH) {
-      log("SYSERR: %s: string too big (%d max)", name, MAX_STRING_LENGTH);
+    if (strlen(buf) + strlen(tmp) + 1 > buf_size) {
+      TB_ERROR_MSG("db", "text-file-load", name,
+                   "text file does not fit in %zu bytes; not loaded",
+                   buf_size);
       *buf = '\0';
       tb_fclose(fl);
       return (-1);
     }
-    strlcat(buf, tmp, sizeof(buf));	/* strcat: OK (size checked above) */
+    strlcat(buf, tmp, buf_size);	/* fits: checked above */
   }
 
   tb_fclose(fl);

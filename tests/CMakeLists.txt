@@ -329,4 +329,10 @@ if(Python3_Interpreter_FOUND)
         COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/test_dg_wait_suffix_contract.py
                 ${MUD_SRCDIR}/dg_scripts.c)
+    # End-to-end: boot the real server and require the login name prompt.
+    add_test(NAME test_login_greeting
+        COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/test_login_greeting.py
+                $<TARGET_FILE:circle>
+                ${CMAKE_SOURCE_DIR}/lib)
 endif()
