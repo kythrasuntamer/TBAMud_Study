@@ -1098,7 +1098,12 @@ int search_help(const char *argument, int level)
   int chk, bot, top, mid, minlen;
 
    bot = 0;
-   top = top_of_helpt;
+   /* top_of_helpt is the number of entries (load_help() fills
+    * help_table[top_of_helpt++]), so the last index is top_of_helpt - 1.
+    * Starting at top_of_helpt let a topic that sorts after every keyword
+    * ("help zzzz", typed by any player) read one entry past the end of the
+    * table. An empty table gives top == -1 and the loop does not run. */
+   top = top_of_helpt - 1;
    minlen = strlen(argument);
 
   while (bot <= top) {

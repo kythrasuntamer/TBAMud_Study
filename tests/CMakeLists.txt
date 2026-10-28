@@ -541,4 +541,10 @@ if(ENABLE_SANITIZERS)
                 ${CMAKE_CURRENT_SOURCE_DIR}/test_login_greeting.py
                 $<TARGET_FILE:circle>
                 ${CMAKE_SOURCE_DIR}/lib)
+    # End-to-end: boot the real server and look up help past the last key.
+    add_test(NAME test_help_search
+        COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/test_help_search.py
+                $<TARGET_FILE:circle>
+                ${CMAKE_SOURCE_DIR}/lib)
 endif()
