@@ -55,7 +55,12 @@
 #define IS_TRIGEDITING(d)  (STATE(d) == CON_TRIGEDIT && (d)->olc && OLC_TRIG(d))
 
 /* prototype exported functions from dg_olc.c */
-void script_save_to_disk(FILE *fp, void *item, int type);
+int script_save_to_disk_at(FILE *fp, void *item, int type, const char *file,
+                           int line, const char *func);
+/** Write item's "T vnum" lines; 0, or -1 after a dg/script-save-type report
+ * naming the calling saver (bad type, NULL file or item). */
+#define script_save_to_disk(fp, item, type) \
+  script_save_to_disk_at((fp), (item), (type), __FILE__, __LINE__, __func__)
 void dg_olc_script_copy(struct descriptor_data *d);
 void dg_script_menu(struct descriptor_data *d);
 int dg_script_edit_parse(struct descriptor_data *d, char *arg);

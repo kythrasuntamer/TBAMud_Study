@@ -216,11 +216,23 @@ ACMD(do_oasis_trigedit)
          GET_NAME(ch), zone_table[OLC_ZNUM(d)].number, GET_OLC_ZONE(ch));
 }
 
-/* Called when a mob or object is being saved to disk, so its script can be 
- * saved. */
-void script_save_to_disk(FILE *fp, void *item, int type)
+/* Called when a mob or object is being saved to disk, so its script can be
+ * saved.  Called through the script_save_to_disk() macro (dg_olc.h) so a
+ * report names the saver.  The gen*.c savers pass literal types; a bad type
+ * or a NULL file or item writes no 'T' lines, so the saved mob, object or
+ * room would silently lose its triggers on the next boot: it is reported as
+ * dg/script-save-type and -1 is returned.  Returns 0 otherwise. */
+int script_save_to_disk_at(FILE *fp, void *item, int type, const char *file,
+                           int line, const char *func)
 {
   struct trig_proto_list *t;
+
+  if (!fp || !item) {
+    tb_error_log_at("ERROR", "dg", "script-save-type", "proto_script", 0,
+                    file, line, func, "fp %p item %p type %d; no trigger "
+                    "lines written", (void *)fp, item, type);
+    return -1;
+  }
 
   if (type==MOB_TRIGGER)
     t = ((struct char_data *)item)->proto_script;
@@ -229,8 +241,11 @@ void script_save_to_disk(FILE *fp, void *item, int type)
   else if (type==WLD_TRIGGER)
     t = ((struct room_data *)item)->proto_script;
   else {
-    log("SYSERR: Invalid type passed to script_save_to_disk()");
-    return;
+    tb_error_log_at("ERROR", "dg", "script-save-type", "proto_script", 0,
+                    file, line, func, "invalid type %d for item %p (expected "
+                    "%d/%d/%d); no trigger lines written", type, item,
+                    MOB_TRIGGER, OBJ_TRIGGER, WLD_TRIGGER);
+    return -1;
   }
 
   while (t)
@@ -238,6 +253,7 @@ void script_save_to_disk(FILE *fp, void *item, int type)
     tb_fprintf(fp,"T %d\n", t->vnum);
     t = t->next;
   }
+  return 0;
 }
 
 static void trigedit_setup_new(struct descriptor_data *d)

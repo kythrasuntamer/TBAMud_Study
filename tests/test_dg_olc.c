@@ -806,6 +806,28 @@ static void scratch_trigger_never_borrows_a_cmdlist(void)
   TEST_ASSERT_EQUAL_STRING("say 102", trig_index[1]->proto->cmdlist->cmd);
 }
 
+/* E2-15: script_save_to_disk() logged a bare SYSERR (no type, entity or
+ * caller) for a bad type, and dereferenced a NULL item; the saver went on
+ * writing the entity without its trigger lines. */
+static void script_save_rejects_bad_arguments_loudly(void)
+{
+  struct trig_proto_list one = { 100, NULL };
+  FILE *fp = tmpfile();
+
+  TEST_ASSERT_NOT_NULL(fp);
+  test_room.proto_script = &one;
+  TEST_ASSERT_EQUAL_INT(0, script_save_to_disk(fp, &test_room, WLD_TRIGGER));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  TEST_ASSERT_EQUAL_INT(-1, script_save_to_disk(fp, &test_room, 99));
+  TEST_ASSERT_EQUAL_STRING("script-save-type", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "invalid type 99"));
+  TEST_ASSERT_EQUAL_INT(-1, script_save_to_disk(fp, NULL, MOB_TRIGGER));
+  TEST_ASSERT_EQUAL_INT(2, tb_captured_errors);
+  TEST_ASSERT_EQUAL_INT(6, (int)ftell(fp));    /* "T 100\n" and nothing more */
+  test_room.proto_script = NULL;
+  TEST_ASSERT_EQUAL_INT(0, fclose(fp));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -833,5 +855,6 @@ int main(void)
   RUN_TEST(stale_olc_structure_is_released_and_reported);
   RUN_TEST(script_menu_lists_a_missing_trigger);
   RUN_TEST(scratch_trigger_never_borrows_a_cmdlist);
+  RUN_TEST(script_save_rejects_bad_arguments_loudly);
   return UNITY_END();
 }
