@@ -602,8 +602,9 @@ const char *ProtocolOutput( descriptor_t *apDescriptor, const char *apData, int 
    if ( pProtocol->bMSP || pProtocol->pVariables[eMSDP_SOUND]->ValueInt )
       bUseMSP = true;
 
-   for ( ; i < MAX_OUTPUT_BUFFER && apData[j] != '\0' && !bTerminate && 
-      (*apLength <= 0 || j < *apLength); ++j )
+   /* The length bound is tested before apData[j] is read. */
+   for ( ; i < MAX_OUTPUT_BUFFER && !bTerminate &&
+      (*apLength <= 0 || j < *apLength) && apData[j] != '\0'; ++j )
    {
       if ( apData[j] == '\t' )
       {
@@ -730,11 +731,20 @@ const char *ProtocolOutput( descriptor_t *apDescriptor, const char *apData, int 
                {
                   while ( apData[j] != '\0' && apData[j] != '>' )
                      ++j;
+                  if ( apData[j] == '\0' )
+                     PROTOCOL_WARN( apDescriptor, "malformed-code",
+                        "MXP tag not closed with '>' before the end of the text"
+                        " (offset %d)", j );
                }
                pProtocol->bBlockMXP = false;
                break;
             case '[':
-               if ( tolower(apData[++j]) == 'u' )
+               if ( apData[++j] == '\0' )
+               {
+                  PROTOCOL_WARN( apDescriptor, "malformed-code",
+                     "'\\t[' at the end of the text (offset %d)", j );
+               }
+               else if ( tolower((unsigned char)apData[j]) == 'u' )
                {
                   char *Buffer = UnicodeSub, Excerpt[sizeof(UnicodeSub)];
                   int Index = 0, Digits = 0;
@@ -899,6 +909,13 @@ const char *ProtocolOutput( descriptor_t *apDescriptor, const char *apData, int 
             default:
                break;
          }
+
+         /* Every branch leaves j on the last byte it consumed. If that is
+          * the terminator (an unfinished escape at the end of the text,
+          * reported above), stop here: the loop's ++j would step past it
+          * and read beyond the string. */
+         if ( apData[j] == '\0' )
+            bTerminate = true;
 
          /* Copy the colour code, if any. */
          if ( pCopyFrom != NULL )

@@ -102,6 +102,28 @@ static void oversized_output_is_cut_with_marker(void)
   TEST_ASSERT_EQUAL_STRING("output-overflow", tb_captured_operation);
 }
 
+/* Unfinished escapes at the end of the text left j on the terminator, and
+ * the loop's ++j read one byte past it (heap over-read under ASan). */
+static void unfinished_escapes_stop_at_terminator(void)
+{
+  int len;
+
+  TEST_ASSERT_EQUAL_STRING("a", translate("a\t[", &len));
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("malformed-code", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "at the end of the text"));
+
+  tb_error_capture_reset();
+  TEST_ASSERT_EQUAL_STRING("a", translate("a\t<b", &len)); /* MXP off */
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "not closed with '>'"));
+
+  tb_error_capture_reset();
+  TEST_ASSERT_EQUAL_STRING("a", translate("a\t[F12", &len));
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "not terminated with ']'"));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -109,5 +131,6 @@ int main(void)
   RUN_TEST(invalid_colour_is_reported_with_descriptor);
   RUN_TEST(huge_unicode_code_point_is_rejected);
   RUN_TEST(oversized_output_is_cut_with_marker);
+  RUN_TEST(unfinished_escapes_stop_at_terminator);
   return UNITY_END();
 }
