@@ -237,13 +237,42 @@ static bool delete_quest_menu_player(const struct descriptor_data *dsc)
   }
 }
 
+/* Questmaster mob rnum qmr gives no quest any more: take questmaster() out
+ * of its spec-proc chain and put back the proc it wrapped (secondary),
+ * leaving every other proc in place.  questmaster() is either the mob's
+ * own proc or the secondary of a shop it keeps (sedit wrapped a
+ * questmaster in shop_keeper()); the shop then keeps shop_keeper() and
+ * gets the secondary.  A mob that runs neither is reported and left as it
+ * is.  A secondary that is the outer wrapper itself is dropped, so no
+ * proc ends up calling itself. */
+static void delete_quest_unwrap(mob_rnum qmr, qst_vnum qvnum, SPECIAL((*secondary)))
+{
+  int s, unwrapped = FALSE;
+
+  if (mob_index[qmr].func == questmaster) {
+    mob_index[qmr].func = secondary == questmaster ? NULL : secondary;
+    return;
+  }
+  if (mob_index[qmr].func == shop_keeper)
+    for (s = 0; s <= top_shop; s++)
+      if (SHOP_KEEPER(s) == qmr && SHOP_FUNC(s) == questmaster) {
+        SHOP_FUNC(s) = secondary == shop_keeper ? NULL : secondary;
+        unwrapped = TRUE;
+      }
+  if (!unwrapped)
+    TB_WARN_MSG("olc", "quest-delete-qm-proc", "quest",
+                "quest vnum %d: questmaster mob vnum %d does not run questmaster; "
+                "its spec proc is left as it is", qvnum, mob_index[qmr].vnum);
+}
+
 /**
  * Delete quest rnum (qedit delete).
  *
  * Precondition: rnum < total_quests; NOTHING (a quest never saved) and any
  * other out-of-range value are reported and refused.  Frees the quest's
- * strings, shifts later quests down, restores the questmaster's saved
- * spec proc when no remaining quest uses that mob, and takes every loaded
+ * strings, shifts later quests down, keeps the questmaster's saved spec
+ * proc (on its remaining quests or, when none is left, where questmaster()
+ * was in the mob's chain: delete_quest_unwrap()), and takes every loaded
  * player who was on the quest off it.
  *
  * @return TRUE when deleted; FALSE, reported, otherwise.
@@ -301,14 +330,21 @@ int delete_quest(qst_rnum rnum)
         quests_remaining++;
     }
     /* QST_MASTER is a mob VNUM: mob_index[] is indexed by rnum. */
-    if (quests_remaining == 0) {
-      if ((qmr = real_mobile(qm)) == NOBODY)
-        TB_ERROR_MSG("genqst", "delete-quest-qm", "mob_index",
-                     "quest vnum %d qm mob vnum %d has no rnum; spec proc not restored",
-                     (int) deleted_vnum, (int) qm);
-      else
-        mob_index[qmr].func = tempfunc; // point back to original spec proc
-    }
+    if (quests_remaining > 0) {
+      /* questmaster() calls the secondary found on its remaining quests
+       * (quest_qm_secondary()): give the deleted quest's to every quest of
+       * this questmaster that has none, as quest_set_qm_secondary() records
+       * it, or the proc it wrapped (a shop_keeper, say) stops running. */
+      if (tempfunc)
+        for (i = 0; i < total_quests; i++)
+          if (QST_MASTER(i) == qm && !QST_FUNC(i))
+            QST_FUNC(i) = tempfunc;
+    } else if ((qmr = real_mobile(qm)) == NOBODY)
+      TB_ERROR_MSG("genqst", "delete-quest-qm", "mob_index",
+                   "quest vnum %d qm mob vnum %d has no rnum; spec proc not restored",
+                   (int) deleted_vnum, (int) qm);
+    else
+      delete_quest_unwrap(qmr, deleted_vnum, tempfunc);
   }
   /* Players in the game (link-dead ones included) are on character_list;
    * players at the menu are not, and are reached through their

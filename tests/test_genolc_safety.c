@@ -1973,6 +1973,67 @@ static void delete_room_sends_was_in_to_start_room(void)
 }
 
 /* ------------------------------------------------------------------------ */
+/* Leftovers round 2: delete_quest() keeps the questmaster's other procs    */
+/* and never leaves a proc calling itself.                                  */
+/* ------------------------------------------------------------------------ */
+
+/* sedit made the questmaster a keeper: shop_keeper() -> questmaster() ->
+ * original.  Deleting its last quest takes questmaster out of the shop; it
+ * used to overwrite shop_keeper itself with the original, closing the
+ * shop. */
+static void delete_quest_keeps_the_shop_of_a_keeper_questmaster(void)
+{
+  make_keeper_3001(questmaster);
+  make_quest(7, 3001);                 /* secondary original_spec */
+  TEST_ASSERT_TRUE(delete_quest(0));
+  TEST_ASSERT_EQUAL_PTR(shop_keeper, mob_index[1].func);
+  TEST_ASSERT_EQUAL_PTR(original_spec, shop_index[0].func);
+  TEST_ASSERT_EQUAL_INT(1, spec_chain_length(1));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+}
+
+/* Boot order: questmaster() -> shop_keeper() -> original, the secondary on
+ * quest 7 only.  Deleting quest 7 hands it to quest 8, which questmaster()
+ * calls now; it used to be dropped, and the shop with it. */
+static void delete_quest_hands_the_secondary_to_a_remaining_quest(void)
+{
+  make_keeper_3001(original_spec);
+  mob_index[1].func = questmaster;
+  total_quests = 2;
+  CREATE(aquest_table, struct aq_data, 2);
+  aquest_table[0].vnum = 7;
+  aquest_table[0].qm = 3001;
+  aquest_table[0].func = shop_keeper;
+  aquest_table[1].vnum = 8;
+  aquest_table[1].qm = 3001;
+
+  TEST_ASSERT_TRUE(delete_quest(0));
+  TEST_ASSERT_EQUAL_PTR(questmaster, mob_index[1].func);
+  TEST_ASSERT_EQUAL_PTR(shop_keeper, QST_FUNC(0));
+  TEST_ASSERT_EQUAL_INT(2, spec_chain_length(1));
+
+  /* The last quest goes: shop_keeper takes questmaster's place. */
+  TEST_ASSERT_TRUE(delete_quest(0));
+  TEST_ASSERT_EQUAL_PTR(shop_keeper, mob_index[1].func);
+  TEST_ASSERT_EQUAL_INT(1, spec_chain_length(1));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+}
+
+/* A questmaster mob that runs some other proc keeps it, reported; it used
+ * to get the quest's secondary (here none) in its place. */
+static void delete_quest_leaves_an_unrelated_proc(void)
+{
+  make_zones(1); make_mobs(2, 3000);
+  make_quest(7, 3001);
+  aquest_table[0].func = NULL;
+  mob_index[1].func = original_spec;
+  TEST_ASSERT_TRUE(delete_quest(0));
+  TEST_ASSERT_EQUAL_PTR(original_spec, mob_index[1].func);
+  TEST_ASSERT_EQUAL_STRING("quest-delete-qm-proc", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "quest vnum 7: questmaster mob vnum 3001"));
+}
+
+/* ------------------------------------------------------------------------ */
 /* Temporary world directory for the writers.                               */
 /* ------------------------------------------------------------------------ */
 static char test_root[] = "/tmp/tb-genolc-XXXXXX";
@@ -2091,6 +2152,9 @@ int main(void)
   RUN_TEST(add_quest_wraps_a_plain_keeper_once);
   RUN_TEST(add_quest_does_not_rewrap_a_shop_running_questmaster);
   RUN_TEST(delete_room_sends_was_in_to_start_room);
+  RUN_TEST(delete_quest_keeps_the_shop_of_a_keeper_questmaster);
+  RUN_TEST(delete_quest_hands_the_secondary_to_a_remaining_quest);
+  RUN_TEST(delete_quest_leaves_an_unrelated_proc);
   failures = UNITY_END();
   leave_test_root();
   return failures;
