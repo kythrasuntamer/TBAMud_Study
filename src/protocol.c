@@ -401,6 +401,8 @@ ssize_t ProtocolInput( descriptor_t *apDescriptor, char *apData, int aSize, char
    static char IacBuf[MAX_PROTOCOL_BUFFER+1];
    ssize_t CmdIndex = 0;
    ssize_t IacIndex = 0;
+   ssize_t NulBytes = 0;
+   size_t OutLength;
    ssize_t Index;
 
    protocol_t *pProtocol = apDescriptor ? apDescriptor->pProtocol : NULL;
@@ -565,6 +567,8 @@ ssize_t ProtocolInput( descriptor_t *apDescriptor, char *apData, int aSize, char
                   break;
             }
          }
+         else if ( apData[Index] == '\0' )
+            ++NulBytes; /* see below */
          else
             CmdBuf[CmdIndex++] = apData[Index];
       }
@@ -574,9 +578,23 @@ ssize_t ProtocolInput( descriptor_t *apDescriptor, char *apData, int aSize, char
    IacBuf[IacIndex] = '\0';
    CmdBuf[CmdIndex] = '\0';
 
-   /* Copy the input buffer back to the player. */
-   strlcat(apOut, CmdBuf, aOutSize);
-   return (CmdIndex);
+   /* NUL bytes from the network are dropped: apOut is a C string, and the
+    * caller (process_input) advances its read pointer by our return value,
+    * so a NUL inside CmdBuf used to make the count exceed what strlcat()
+    * appended and desynchronise its newline framing. */
+   if ( NulBytes > 0 )
+      PROTOCOL_WARN( apDescriptor, "input-nul",
+                     "%ld NUL byte(s) in %d bytes of input dropped",
+                     (long)NulBytes, aSize );
+
+   /* Copy the input buffer back to the player, and return what was
+    * actually appended (strlcat may also stop at aOutSize). */
+   OutLength = strlen(apOut);
+   if ( strlcat(apOut, CmdBuf, aOutSize) >= aOutSize )
+      PROTOCOL_WARN( apDescriptor, "input-overflow",
+                     "%ld bytes of input do not fit the %lu-byte input buffer;"
+                     " excess dropped", (long)CmdIndex, (unsigned long)aOutSize );
+   return (ssize_t)(strlen(apOut) - OutLength);
 }
 
 const char *ProtocolOutput( descriptor_t *apDescriptor, const char *apData, int *apLength )

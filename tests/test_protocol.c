@@ -124,6 +124,20 @@ static void unfinished_escapes_stop_at_terminator(void)
   TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "not terminated with ']'"));
 }
 
+/* A NUL in the input used to stop strlcat() short while the full count was
+ * returned, offsetting process_input()'s read pointer past the real data. */
+static void input_nul_bytes_are_dropped_and_counted(void)
+{
+  char in[] = { 'l', 'o', '\0', 'o', 'k', '\n' };
+  char out[64] = "x";
+  ssize_t n = ProtocolInput(&desc, in, (int)sizeof(in), out, sizeof(out));
+
+  TEST_ASSERT_EQUAL_STRING("xlook\n", out);
+  TEST_ASSERT_EQUAL_INT(5, (int)n);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("input-nul", tb_captured_operation);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -132,5 +146,6 @@ int main(void)
   RUN_TEST(huge_unicode_code_point_is_rejected);
   RUN_TEST(oversized_output_is_cut_with_marker);
   RUN_TEST(unfinished_escapes_stop_at_terminator);
+  RUN_TEST(input_nul_bytes_are_dropped_and_counted);
   return UNITY_END();
 }
