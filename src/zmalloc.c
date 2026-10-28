@@ -257,10 +257,19 @@ unsigned char *zrealloc(unsigned char *what, int len, char *file, int line)
     }
   }
 
-  /* NULL or invalid pointer given */
-  zlogf("zrealloc: invalid pointer 0x%p, %d bytes to realloc at %s:%d.\n",
-	    (void *)what, len, file, line);
+  if (what != NULL) {
+    /* Not a block zmalloc handed out (libc-allocated, already released by
+     * zmalloc_check, or a wild pointer).  Returning a fresh zeroed block, as
+     * this used to, silently dropped the caller's contents and leaked the
+     * old block. */
+    zlogf("zrealloc: invalid pointer 0x%p, %d bytes to realloc at %s:%d.\n",
+	      (void *)what, len, file, line);
+    ZM_FATAL("zrealloc-untracked", file, line,
+             "addr=%p was not allocated through zmalloc; %d bytes requested",
+             (void *)what, len);
+  }
 
+  /* realloc(NULL, len) is malloc(len). */
   return (zmalloc(len, file, line));
 }
 

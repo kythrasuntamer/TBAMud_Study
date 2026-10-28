@@ -100,6 +100,31 @@ static void case_begin_pad_underrun(void)
   zfree(p, ZM_FILE, __LINE__);
 }
 
+/* ---- I2-18: realloc of an untracked block ---- */
+
+static void case_realloc_untracked(void)
+{
+  static unsigned char not_heap[8] = "keepme";
+  (void)zrealloc(not_heap, 16, ZM_FILE, __LINE__);
+}
+
+void test_realloc_of_untracked_pointer_is_fatal(void)
+{
+  assert_aborted_with(case_realloc_untracked, "zrealloc-untracked");
+}
+
+void test_realloc_null_allocates(void)
+{
+  unsigned char *p = zrealloc(NULL, 8, ZM_FILE, __LINE__);
+
+  TEST_ASSERT_NOT_NULL(p);
+  memcpy(p, "abcdefg", 8);
+  p = zrealloc(p, 64, ZM_FILE, __LINE__);
+  TEST_ASSERT_NOT_NULL(p);
+  TEST_ASSERT_EQUAL_STRING("abcdefg", (char *)p);
+  zfree(p, ZM_FILE, __LINE__);
+}
+
 void test_double_free_is_fatal(void)
 {
   assert_aborted_with(case_double_free, "zfree-double");
@@ -150,6 +175,8 @@ int main(void)
   RUN_TEST(test_end_pad_overrun_is_fatal);
   RUN_TEST(test_begin_pad_underrun_is_fatal);
   RUN_TEST(test_clean_alloc_free_reports_nothing);
+  RUN_TEST(test_realloc_of_untracked_pointer_is_fatal);
+  RUN_TEST(test_realloc_null_allocates);
 
   zmalloc_check();		/* releases every tracked block */
   return UNITY_END();
