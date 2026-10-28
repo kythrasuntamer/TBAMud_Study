@@ -235,6 +235,39 @@ static void test_long_headline_is_truncated_and_reported(void)
   TEST_ASSERT_NOT_NULL(strstr(paged, expect));
 }
 
+static void remove_post(int num)
+{
+  char arg[16];
+  snprintf(arg, sizeof(arg), "%d", num);
+  TEST_ASSERT_EQUAL_INT(1, board_remove_msg(0, &writer, arg, &board_obj));
+}
+
+/* C1-03: removing a message left the vacated last index entry holding the
+ * previous last entry's heading and slot, so clearing the board at shutdown
+ * freed them twice (ASan double-free before the fix). */
+static void test_remove_first_of_two_then_clear(void)
+{
+  write_post("first", "body one");
+  write_post("second", "body two");
+  remove_post(1);
+  read_post(1);
+  TEST_ASSERT_NOT_NULL(strstr(paged, "body two"));
+  tb_error_capture_reset();
+  board_clear_all();
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+}
+
+/* C1-03: removing the last message left its freed heading in the entry. */
+static void test_remove_last_then_clear(void)
+{
+  write_post("first", "body one");
+  write_post("second", "body two");
+  remove_post(2);
+  tb_error_capture_reset();
+  board_clear_all();
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+}
+
 int main(void)
 {
   char dir[] = "/tmp/tb_test_boards.XXXXXX";
@@ -252,5 +285,7 @@ int main(void)
   RUN_TEST(test_gen_board_finds_board_by_object_vnum);
   RUN_TEST(test_late_headline_does_not_write_past_caller_buffer);
   RUN_TEST(test_long_headline_is_truncated_and_reported);
+  RUN_TEST(test_remove_first_of_two_then_clear);
+  RUN_TEST(test_remove_last_then_clear);
   return UNITY_END();
 }

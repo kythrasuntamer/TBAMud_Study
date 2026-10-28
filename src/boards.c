@@ -455,6 +455,12 @@ int board_remove_msg(int board_type, struct char_data *ch, char *arg, struct obj
     MSG_LEVEL(board_type, ind) = MSG_LEVEL(board_type, ind + 1);
   }
   num_of_msgs[board_type]--;
+  /* The shift leaves the old last entry duplicated in the vacated position
+   * (or, when the last message was removed, still holding the heading just
+   * freed).  Entries at or past num_of_msgs must own nothing: reset it, or
+   * board_clear_board() frees that heading and slot a second time. */
+  memset(&msg_index[board_type][num_of_msgs[board_type]], 0, sizeof(struct board_msginfo));
+  msg_index[board_type][num_of_msgs[board_type]].slot_num = -1;
 
   send_to_char(ch, "Message removed.\r\n");
   tb_snprintf(buf, sizeof(buf), "$n just removed message %d.", msg);
@@ -683,19 +689,42 @@ void board_clear_all(void)
     board_clear_board(i);
 }
 
-/* Clear the in-memory structures. */
+/* Clear the in-memory structures.  Only entries [0, num_of_msgs) own a
+ * heading and a storage slot.  An entry past that which still names a slot
+ * breaks the index invariant: it is a stale copy of an owning entry, so it
+ * is reported and reset without freeing anything (freeing it would free the
+ * owner's heading and body a second time). */
 void board_clear_board(int board_type)
 {
-  int i;
+  int i, slot, num = num_of_msgs[board_type];
+
+  if (num < 0 || num > MAX_BOARD_MESSAGES) {
+    TB_ERROR_MSG("board", "msg-index-invariant", FILENAME(board_type),
+                 TB_ERRID_INVARIANT " board vnum %d message count %d outside 0..%d; nothing freed",
+                 BOARD_VNUM(board_type), num, MAX_BOARD_MESSAGES);
+    num = 0;
+  }
 
   for (i = 0; i < MAX_BOARD_MESSAGES; i++) {
-    if (MSG_SLOTNUM(board_type, i) == -1)
-      continue; /* don't try to free non-existant slots */
-    if (MSG_HEADING(board_type, i))
-      free(MSG_HEADING(board_type, i));
-    if (msg_storage[MSG_SLOTNUM(board_type, i)])
-      free(msg_storage[MSG_SLOTNUM(board_type, i)]);
-    msg_storage_taken[MSG_SLOTNUM(board_type, i)] = 0;
+    slot = MSG_SLOTNUM(board_type, i);
+    if (i >= num) {
+      if (slot != -1 || MSG_HEADING(board_type, i))
+        TB_ERROR_MSG("board", "msg-index-invariant", FILENAME(board_type),
+                     TB_ERRID_INVARIANT " board vnum %d stale entry %d (count %d) slot %d",
+                     BOARD_VNUM(board_type), i, num, slot);
+    } else {
+      if (MSG_HEADING(board_type, i))
+        free(MSG_HEADING(board_type, i));
+      if (slot >= 0 && slot < INDEX_SIZE) {
+        if (msg_storage[slot])
+          free(msg_storage[slot]);
+        msg_storage[slot] = NULL;
+        msg_storage_taken[slot] = 0;
+      } else if (slot != -1)
+        TB_ERROR_MSG("board", "msg-index-invariant", FILENAME(board_type),
+                     TB_ERRID_INVARIANT " board vnum %d message %d slot %d outside 0..%d",
+                     BOARD_VNUM(board_type), i, slot, INDEX_SIZE - 1);
+    }
     memset((char *)&(msg_index[board_type][i]),0,sizeof(struct board_msginfo));
     msg_index[board_type][i].slot_num = -1;
   }
