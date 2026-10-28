@@ -5,6 +5,28 @@
 *  Copyright 1996 by Harvey Gilpin, 1997-2001 by George Greer.            *
 **************************************************************************/
 
+/**
+ * @file genobj.c
+ * Object prototype table maintenance for OLC (oedit), the object file
+ * writer, and the oset setters used by DG scripts and the oset command.
+ *
+ * Input: prototypes come from builders through oedit; oset values come from
+ * DG scripts (builder-written) and immortals.  None of it is trusted for
+ * length or range.
+ *
+ * Ownership: obj_proto[r] owns its strings, extra descriptions and
+ * proto_script.  A live instance shares those pointers until it is
+ * restrung; a pointer that differs from the prototype's belongs to the
+ * instance.  An object with rnum NOTHING (corpse, money) owns everything.
+ * Runtime state (script, events, location and list links) belongs to the
+ * instance and is never copied between objects.
+ *
+ * Index stability: add_object() and delete_object() shift obj_proto[] and
+ * obj_index[]; every stored object rnum (live objects, zone commands, shop
+ * products, boards) is renumbered here.  obj_rnum is unsigned and NOTHING
+ * is its maximum, so every renumber must skip NOTHING explicitly.
+ */
+
 #include "conf.h"
 #include "sysdep.h"
 #include <stddef.h>  /* offsetof, for oset_replace_string() */
@@ -398,7 +420,20 @@ void free_object_strings(struct obj_data *obj)
     free_ex_descriptions(obj->ex_description);
 }
 
-/* For object instances that are not the prototype. */
+/**
+ * Free the strings a live instance owns, leaving the ones it shares with
+ * its prototype.
+ *
+ * Precondition: GET_OBJ_RNUM(obj) is a valid prototype rnum (free_obj()
+ * guarantees it; a NOTHING-rnum object owns everything and is freed with
+ * free_object_strings()).  A bad rnum is reported and nothing is freed.
+ *
+ * Extra descriptions are shared per node and per string: an instance may
+ * hold the prototype's node, a private node pointing at the prototype's
+ * keyword or description, or a fully private node.  Each keyword,
+ * description and node is freed only when no prototype node has the same
+ * pointer.
+ */
 void free_object_strings_proto(struct obj_data *obj)
 {
   obj_rnum robj_num = GET_OBJ_RNUM(obj);
@@ -459,17 +494,43 @@ static void copy_object_strings(struct obj_data *to, struct obj_data *from)
     to->ex_description = NULL;
 }
 
+/**
+ * Copy prototype data from `from` into `to`, which owns its old strings.
+ *
+ * The struct is copied by value, then the strings and extra descriptions
+ * are deep-copied, so `to` owns new copies and `from` keeps its own.  `to`
+ * keeps its running script and events.  proto_script, contains,
+ * item_number and the other pointers are copied by value: afterwards `to`
+ * and `from` share proto_script, and the caller decides which one keeps
+ * it (oedit re-attaches it to the prototype).  `to`'s old strings and old
+ * trigger list are freed first.
+ *
+ * @return TRUE.
+ */
 int copy_object(struct obj_data *to, struct obj_data *from)
 {
   free_object_strings(to);
   return copy_object_main(to, from, TRUE);
 }
 
+/**
+ * Like copy_object(), but frees nothing in `to`: for a slot whose old
+ * pointers now belong to a neighbour after a table shift (insert_object()).
+ * The caller must make sure nothing still owned by `to` is lost.
+ */
 int copy_object_preserve(struct obj_data *to, struct obj_data *from)
 {
   return copy_object_main(to, from, FALSE);
 }
 
+/**
+ * Shared body of copy_object() and copy_object_preserve().
+ *
+ * @param free_object TRUE when `to`'s old proto_script belongs to it and is
+ *        to be freed (unless `from` shares the same list); FALSE when the
+ *        old pointers belong to someone else.  Strings are freed by
+ *        copy_object() itself, not here.
+ */
 int copy_object_main(struct obj_data *to, struct obj_data *from, int free_object)
 {
   struct script_data *to_script = to->script;
@@ -491,6 +552,25 @@ int copy_object_main(struct obj_data *to, struct obj_data *from, int free_object
   return TRUE;
 }
 
+/**
+ * Delete object prototype rnum and every live instance of it.
+ *
+ * Preconditions: no oedit session is editing this rnum's working copy in a
+ * way that will be saved back (the rnum would be stale), and the object is
+ * not a board (refused, obj-delete-board).
+ *
+ * Effects: each instance's contents move to the instance's room, carrier,
+ * wearer or container (or are extracted, reported, when it has none); the
+ * instances are extracted; the prototype's strings and triggers are freed;
+ * obj_proto[]/obj_index[] shift down; live objects, boards, shop products
+ * and zone commands with a higher rnum are decremented; shop products and
+ * zone commands naming the deleted prototype are removed and reported.
+ * The object's zone file is rewritten.
+ *
+ * @param rnum Prototype rnum from oedit (may be NOTHING for an object that
+ *             was never saved; reported).
+ * @return rnum on success; NOTHING, reported, when nothing was deleted.
+ */
 int delete_object(obj_rnum rnum)
 {
   obj_rnum i;
@@ -757,6 +837,18 @@ bool oset_alias(struct obj_data *obj, char * argument)
                              "alias", argument, 64);
 }
 
+/**
+ * Add `<amount>` to one apply of a live object: "oset apply <name> <amount>".
+ *
+ * Input comes from a DG script or the immortal oset command.  The apply
+ * name must abbreviate an apply_types[] entry, the amount must be a
+ * non-zero integer, and the resulting modifier must fit an sbyte.  An apply
+ * that reaches 0 frees its slot.
+ *
+ * @return TRUE when the apply changed; FALSE, reported as oset-reject,
+ *         otherwise.  dg_variables.c's handle_oset() ignores the result, so
+ *         the diagnostic is the only trace of a rejected change.
+ */
 bool oset_apply(struct obj_data *obj, char * argument)
 { 
   int i = 0, apply = -1, location = -1, mod = 0, empty = -1, value;
