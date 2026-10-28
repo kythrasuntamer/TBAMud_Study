@@ -254,6 +254,20 @@ static void test_free_list_null_reports(void)
   TEST_ASSERT_EQUAL_STRING("free-null", tb_captured_operation);
 }
 
+/* H3-22: list misuse is reported with the caller's location, not only a
+ * fixed mudlog string. */
+static void test_list_misuse_names_caller(void)
+{
+  struct list_data *l = list_of(1);
+
+  remove_from_list(&items[3], l);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("remove-missing", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "test_mud_event.c"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "test_list_misuse_names_caller"));
+  free_list(l);
+}
+
 int main(void)
 {
   int rc;
@@ -265,6 +279,7 @@ int main(void)
   RUN_TEST(test_simple_list_body_may_remove_current);
   RUN_TEST(test_simple_list_body_may_remove_next);
   RUN_TEST(test_simple_list_body_may_free_list);
+  RUN_TEST(test_list_misuse_names_caller);
   RUN_TEST(test_owner_cancel_loop_with_one_room_event);
   RUN_TEST(test_free_list_null_reports);
   RUN_TEST(test_room_event_survives_world_realloc);

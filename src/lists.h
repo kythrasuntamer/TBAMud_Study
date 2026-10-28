@@ -36,16 +36,35 @@ extern struct list_data * global_lists;
 extern struct list_data * group_list;
 
 /* Locals */
-void add_to_list(void * pContent, struct list_data * pList);
 void * random_from_list(struct list_data * pList);
 struct list_data * randomize_list(struct list_data * pList);
 struct list_data * create_list(void);
-void * merge_iterator(struct iterator_data * pIterator, struct list_data * pList);
-void remove_iterator(struct iterator_data * pIterator);
-void * next_in_list(struct iterator_data * pIterator);
-void remove_from_list(void * pContent, struct list_data * pList);
 struct item_data * find_in_list(void * pContent, struct list_data * pList);
-void * simple_list(struct list_data * pList);
-void free_list(struct list_data * pList);
 void clear_simple_list(void);
+
+/* The functions that can detect a broken list invariant take the caller's
+ * location, so their diagnostics name the code that misused the list rather
+ * than lists.c. Call them through the macros below, exactly as before. */
+void add_to_list_at(void * pContent, struct list_data * pList,
+                    const char *file, int line, const char *func);
+void * merge_iterator_at(struct iterator_data * pIterator, struct list_data * pList,
+                         const char *file, int line, const char *func);
+void remove_iterator_at(struct iterator_data * pIterator,
+                        const char *file, int line, const char *func);
+void * next_in_list_at(struct iterator_data * pIterator,
+                       const char *file, int line, const char *func);
+void remove_from_list_at(void * pContent, struct list_data * pList,
+                         const char *file, int line, const char *func);
+void * simple_list_at(struct list_data * pList,
+                      const char *file, int line, const char *func);
+void free_list_at(struct list_data * pList,
+                  const char *file, int line, const char *func);
+
+#define add_to_list(c, l)       add_to_list_at((c), (l), __FILE__, __LINE__, __func__)
+#define merge_iterator(it, l)   merge_iterator_at((it), (l), __FILE__, __LINE__, __func__)
+#define remove_iterator(it)     remove_iterator_at((it), __FILE__, __LINE__, __func__)
+#define next_in_list(it)        next_in_list_at((it), __FILE__, __LINE__, __func__)
+#define remove_from_list(c, l)  remove_from_list_at((c), (l), __FILE__, __LINE__, __func__)
+#define simple_list(l)          simple_list_at((l), __FILE__, __LINE__, __func__)
+#define free_list(l)            free_list_at((l), __FILE__, __LINE__, __func__)
 #endif
