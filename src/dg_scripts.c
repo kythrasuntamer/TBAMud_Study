@@ -3202,6 +3202,27 @@ static int dg_mob_cmd_purges_self(char_data *mob, char *cmd)
   return victim == mob;
 }
 
+/* The trigger of the innermost running script_driver() frame, for
+ * diagnostics raised by commands that are not handed one: %damage% reaches
+ * script_damage() through command_interpreter() and the obj/wld command
+ * interpreters. NULL when no script is running (an implementor typing
+ * mdamage). The trigger stays allocated while its frame runs (retired
+ * triggers are freed at the outermost dg_script_execution_leave()). */
+static trig_data *running_trigger;
+
+trig_data *dg_running_trigger(void)
+{
+  return running_trigger;
+}
+
+/* Every return of a script_driver() frame that entered: give the outer
+ * frame back its running trigger, then leave. */
+static void dg_frame_leave(trig_data *outer)
+{
+  running_trigger = outer;
+  dg_script_execution_leave();
+}
+
 int script_driver(void *go_adress, trig_data *trig, int type, int mode)
 {
   static int depth = 0;
@@ -3213,6 +3234,7 @@ int script_driver(void *go_adress, trig_data *trig, int type, int mode)
   struct script_data *sc = 0;
   struct cmdlist_element *temp;
   void *go = NULL;
+  trig_data *outer_trigger;
 
   void obj_command_interpreter(obj_data *obj, char *argument);
   void wld_command_interpreter(struct room_data *room, char *argument);
@@ -3333,6 +3355,8 @@ int script_driver(void *go_adress, trig_data *trig, int type, int mode)
 
   depth++;
   dg_script_execution_enter();
+  outer_trigger = running_trigger;
+  running_trigger = trig;
 
   if (mode == TRIG_NEW) {
     GET_TRIG_DEPTH(trig) = 1;
@@ -3404,7 +3428,7 @@ int script_driver(void *go_adress, trig_data *trig, int type, int mode)
         if (GET_TRIG_LOOPS(trig) % 30 == 0) {
           if (process_wait(go, trig, type, "wait 1", cl)) {
             depth--;
-            dg_script_execution_leave();
+            dg_frame_leave(outer_trigger);
             return ret_val;
           }
           TB_ERROR_MSG("dg", "wait-invalid", "script_driver",
@@ -3486,7 +3510,7 @@ int script_driver(void *go_adress, trig_data *trig, int type, int mode)
          * depth at 1, so TRIGGER_CHECK() refused it until extraction. */
         if (process_wait(go, trig, type, cmd, cl)) {
           depth--;
-          dg_script_execution_leave();
+          dg_frame_leave(outer_trigger);
           return ret_val;
         }
         TB_ERROR_MSG("dg", "wait-invalid", "script_driver",
@@ -3560,7 +3584,7 @@ int script_driver(void *go_adress, trig_data *trig, int type, int mode)
         depth--;
         if (type == OBJ_TRIGGER)
           *(obj_data **)go_adress = NULL;
-        dg_script_execution_leave();
+        dg_frame_leave(outer_trigger);
         return ret_val;
       }
     }
@@ -3576,7 +3600,7 @@ int script_driver(void *go_adress, trig_data *trig, int type, int mode)
   GET_TRIG_DEPTH(trig) = 0;
 
   depth--;
-  dg_script_execution_leave();
+  dg_frame_leave(outer_trigger);
   return ret_val;
 }
 

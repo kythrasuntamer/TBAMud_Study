@@ -917,7 +917,7 @@ static void field_setters_saturate_instead_of_wrapping(void)
   GET_WAIT_STATE(mob) = 0;
 
   tb_error_capture_reset();
-  script_damage(mob, -40000);
+  script_damage(t, mob, -40000);
   TEST_ASSERT_EQUAL_INT(GET_MAX_HIT(mob), GET_HIT(mob));
   TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
 }

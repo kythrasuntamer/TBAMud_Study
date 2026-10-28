@@ -289,6 +289,54 @@ static void test_mob_rejection_is_reported_as_cmd_rejected(void)
   TEST_ASSERT_NOT_NULL(strstr(dgw_detail("cmd-rejected"), "mob vnum 300"));
 }
 
+/* "<command> <victim uid> 99999" into line; fails the test if it is cut. */
+static void damage_line(char *line, size_t size, const char *command,
+                        struct char_data *victim)
+{
+  int n = snprintf(line, size, "%s %c%ld 99999", command, UID_CHAR,
+                   char_script_id(victim));
+
+  TEST_ASSERT_TRUE(n > 0 && (size_t)n < size);
+}
+
+/* Live finding: %damage% gave the field-clamp diagnostic no trigger, so
+ * trigger 1970's "%damage% %actor% 99999" was logged as "trig vnum -1" and
+ * only the breadcrumbs named it. mdamage, odamage and wdamage now pass the
+ * running trigger (every fixture trigger is vnum 400), and the register is
+ * clear again once the script has returned. */
+static void test_clamped_script_damage_names_the_trigger(void)
+{
+  char line[64];
+  const char *const lines[] = { line, NULL };
+  struct char_data *m = dgw_mob(DGW_MOB_GUARD, 0);
+  struct obj_data *o = dgw_obj(DGW_OBJ_STONE, 0);
+  struct room_data *room = &world[0];
+  struct char_data *v;
+
+  v = dgw_mob(DGW_MOB_OGRE, 0);
+  damage_line(line, sizeof(line), "mdamage", v);
+  SCRIPT(m) = dgw_script_with(MOB_TRIGGER, MTRIG_COMMAND, lines);
+  script_driver(&m, SCRIPT(m)->trig_list, MOB_TRIGGER, TRIG_NEW);
+  TEST_ASSERT_EQUAL_INT(1, dgw_saw("field-clamp"));
+  TEST_ASSERT_NOT_NULL(strstr(dgw_detail("field-clamp"), "trig vnum 400 field damage"));
+
+  v = dgw_mob(DGW_MOB_OGRE, 0);
+  damage_line(line, sizeof(line), "odamage", v);
+  SCRIPT(o) = dgw_script_with(OBJ_TRIGGER, OTRIG_COMMAND, lines);
+  script_driver(&o, SCRIPT(o)->trig_list, OBJ_TRIGGER, TRIG_NEW);
+  TEST_ASSERT_EQUAL_INT(2, dgw_saw("field-clamp"));
+  TEST_ASSERT_NOT_NULL(strstr(dgw_detail("field-clamp"), "trig vnum 400 field damage"));
+
+  v = dgw_mob(DGW_MOB_OGRE, 0);
+  damage_line(line, sizeof(line), "wdamage", v);
+  SCRIPT(room) = dgw_script_with(WLD_TRIGGER, WTRIG_COMMAND, lines);
+  script_driver(&room, SCRIPT(room)->trig_list, WLD_TRIGGER, TRIG_NEW);
+  TEST_ASSERT_EQUAL_INT(3, dgw_saw("field-clamp"));
+  TEST_ASSERT_NOT_NULL(strstr(dgw_detail("field-clamp"), "trig vnum 400 field damage"));
+
+  TEST_ASSERT_NULL(dg_running_trigger());
+}
+
 /* E1-22: mlog is the script author's own message, not a rejection. */
 static void test_mlog_is_not_a_rejection(void)
 {
@@ -315,6 +363,7 @@ static void test_charmed_mob_refusal_is_reported(void)
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(test_clamped_script_damage_names_the_trigger);
   RUN_TEST(test_player_with_triggers_is_refused_privileged_commands);
   RUN_TEST(test_switched_mob_follows_the_controller_level);
   RUN_TEST(test_script_driven_mob_may_load);

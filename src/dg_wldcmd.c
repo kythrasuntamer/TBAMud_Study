@@ -672,7 +672,7 @@ WCMD(do_wdamage) {
     return;
   }
 
-  script_damage(ch, dam);
+  script_damage(dg_running_trigger(), ch, dam);
 }
 
 WCMD(do_wat)     

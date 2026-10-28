@@ -789,7 +789,7 @@ static OCMD(do_odamage) {
     obj_log(obj, "odamage: target not found");
     return;
   }
-  script_damage(ch, dam);
+  script_damage(dg_running_trigger(), ch, dam);
 }
 
 static OCMD(do_oasound)

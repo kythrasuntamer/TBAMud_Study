@@ -335,6 +335,8 @@ int script_driver(void *go_adress, trig_data *trig, int type, int mode);
  * script ends without 'return' (a damage trigger keeps the damage). */
 int script_driver_default(void *go_adress, trig_data *trig, int type,
                           int mode, int default_return);
+/* The trigger whose script is running now, or NULL (dg_scripts.c). */
+trig_data *dg_running_trigger(void);
 void dg_script_execution_enter(void);
 void dg_script_execution_leave(void);
 trig_rnum real_trigger(trig_vnum vnum);
@@ -396,7 +398,7 @@ void do_dg_affect(void *go, struct script_data *sc, trig_data *trig,
     int type, char *cmd);
 void send_char_pos(struct char_data *ch, int dam);
 int valid_dg_target(char_data *ch, int bitvector);
-void script_damage(char_data *vict, int dam);
+void script_damage(trig_data *trig, char_data *vict, int dam);
 
 /* Saturating field arithmetic for DG setters (dg_variables.c). */
 int dg_bounded_add(int cur, int add, int lo, int hi);

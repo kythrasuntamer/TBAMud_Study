@@ -44,7 +44,8 @@
  * the rule always was. dg_clamp_char_field() / dg_clamp_obj_field() guard
  * the storage type: reaching their bounds means the script asked for a
  * value the field cannot hold, so they report dg/field-clamp naming the
- * trigger, the field and the entity. trig may be NULL (script_damage). */
+ * trigger, the field and the entity. trig is NULL only when no script is
+ * running (script_damage() for an implementor typing mdamage). */
 int dg_bounded_add(int cur, int add, int lo, int hi)
 {
   long long v = (long long)cur + add;
