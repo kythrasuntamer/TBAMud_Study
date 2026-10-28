@@ -236,8 +236,12 @@ ACMD(do_gmote)
         break;
 
   if ((act_nr = find_action(cmd)) < 0) {
-    tb_snprintf(buf, sizeof(buf), "Gemote: $n%s", argument);
-    act(buf, FALSE, ch, 0, vict, TO_GMOTE);
+    /* Free-form gemote: the player's text goes into the act() format. */
+    char text[MAX_STRING_LENGTH / 2], fmt[MAX_STRING_LENGTH];
+
+    ACT_ESCAPE_TEXT(ch, argument, text);
+    tb_snprintf(fmt, sizeof(fmt), "Gemote: $n%s", text);
+    act(fmt, FALSE, ch, 0, vict, TO_GMOTE);
     return;
   }
 

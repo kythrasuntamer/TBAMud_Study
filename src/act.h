@@ -44,6 +44,14 @@ ACMD(do_qcomm);
 ACMD(do_spec_comm);
 #define SCMD_WHISPER  0
 #define SCMD_ASK      1
+/* Copy player or script text for splicing into an act() format. */
+char *act_escape_text_at(const char *src_file, int src_line,
+                         const char *src_func, const struct char_data *ch,
+                         const char *text, char *dst, size_t dst_size);
+/** Escape TEXT into the array DST for use inside an act() format; reports
+ * at the caller's file/line/function. DST must be an array (sizeof). */
+#define ACT_ESCAPE_TEXT(ch, text, dst) \
+  act_escape_text_at(__FILE__, __LINE__, __func__, (ch), (text), (dst), sizeof(dst))
 /* functions without subcommands */
 ACMD(do_say);
 ACMD(do_gsay);

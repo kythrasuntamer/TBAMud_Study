@@ -24,6 +24,64 @@
 
 static bool legal_communication(char * arg);
 
+/**
+ * Copy player or script text so it can be spliced into an act() format
+ * without being interpreted as $-codes.
+ *
+ * Text typed on a socket already has every '$' doubled by process_input()
+ * (comm.c), so "$$" pairs are copied unchanged and still print one '$'.
+ * Text that reaches a command through command_interpreter() from DG
+ * (%force%, mob command lines) skips that step: a lone '$' there used to
+ * be a live act() code, and "$N" or "$p" made perform_act() treat the
+ * victim pointer, or the string itself, as the wrong struct type. Every
+ * lone '$' is now doubled, so it prints literally, and reported once per
+ * call as "act-code-in-text".
+ *
+ * Output that does not fit is cut at a character boundary (never between
+ * the two '$' of a pair) and reported as "act-text-truncated".
+ * Diagnostics name the caller's file, line and function.
+ *
+ * @return dst, always NUL-terminated (dst_size must be > 0).
+ */
+char *act_escape_text_at(const char *src_file, int src_line,
+                         const char *src_func, const struct char_data *ch,
+                         const char *text, char *dst, size_t dst_size)
+{
+  size_t n = 0;
+  int lone = 0, truncated = 0;
+
+  for (; text && *text; text++) {
+    size_t need = (*text == '$') ? 2 : 1;
+
+    if (n + need >= dst_size) {
+      truncated = 1;
+      break;
+    }
+    if (*text == '$') {
+      if (text[1] == '$')
+        text++;           /* an already escaped pair */
+      else
+        lone++;
+      dst[n++] = '$';
+    }
+    dst[n++] = *text;
+  }
+  dst[n] = '\0';
+
+  if (lone)
+    tb_error_log_at("WARNING", "act", "act-code-in-text", "format", 0,
+                    src_file, src_line, src_func,
+                    DIAG_CHAR_FMT " sent text with %d unescaped '$' code(s) "
+                    "(not typed on a socket: forced or script command); "
+                    "shown literally", DIAG_CHAR(ch), lone);
+  if (truncated)
+    tb_error_log_at("WARNING", "act", "act-text-truncated", "format", 0,
+                    src_file, src_line, src_func,
+                    DIAG_CHAR_FMT " text truncated to %zu of %zu bytes",
+                    DIAG_CHAR(ch), n, n + strlen(text));
+  return dst;
+}
+
 static bool legal_communication(char * arg) 
 {
   while (*arg) {
@@ -44,13 +102,14 @@ ACMD(do_say)
   if (!*argument)
     send_to_char(ch, "Yes, but WHAT do you want to say?\r\n");
   else {
-    char buf[MAX_INPUT_LENGTH + 14], *msg;
+    char buf[MAX_STRING_LENGTH], text[MAX_STRING_LENGTH / 2], *msg;
     struct char_data *vict;
- 
+
     if (CONFIG_SPECIAL_IN_COMM && legal_communication(argument))
       parse_at(argument);
 
-    tb_snprintf(buf, sizeof(buf), "$n\tn says, '%s'", argument);
+    ACT_ESCAPE_TEXT(ch, argument, text);
+    tb_snprintf(buf, sizeof(buf), "$n\tn says, '%s'", text);
     msg = act(buf, FALSE, ch, 0, 0, TO_ROOM | DG_NO_TRIG);
 
     for (vict = world[IN_ROOM(ch)].people; vict; vict = vict->next_in_room)
@@ -60,7 +119,7 @@ ACMD(do_say)
     if (!IS_NPC(ch) && PRF_FLAGGED(ch, PRF_NOREPEAT))
       send_to_char(ch, "%s", CONFIG_OK);
     else {
-      tb_snprintf(buf, sizeof(buf), "You say, '%s'", argument);
+      tb_snprintf(buf, sizeof(buf), "You say, '%s'", text);
       msg = act(buf, FALSE, ch, 0, 0, TO_CHAR | DG_NO_TRIG);
       add_history(ch, msg, HIST_SAY);
     }
@@ -97,16 +156,17 @@ ACMD(do_gsay)
 
 static void perform_tell(struct char_data *ch, struct char_data *vict, char *arg)
 {
-  char buf[MAX_STRING_LENGTH], *msg;
+  char buf[MAX_STRING_LENGTH], text[MAX_STRING_LENGTH / 2], *msg;
 
-  tb_snprintf(buf, sizeof(buf), "%s$n tells you, '%s'%s", CCRED(vict, C_NRM), arg, CCNRM(vict, C_NRM));
+  ACT_ESCAPE_TEXT(ch, arg, text);
+  tb_snprintf(buf, sizeof(buf), "%s$n tells you, '%s'%s", CCRED(vict, C_NRM), text, CCNRM(vict, C_NRM));
   msg = act(buf, FALSE, ch, 0, vict, TO_VICT | TO_SLEEP);
   add_history(vict, msg, HIST_TELL);
 
   if (!IS_NPC(ch) && PRF_FLAGGED(ch, PRF_NOREPEAT))
     send_to_char(ch, "%s", CONFIG_OK);
   else {
-    tb_snprintf(buf, sizeof(buf), "%sYou tell $N, '%s'%s", CCRED(ch, C_NRM), arg, CCNRM(ch, C_NRM));
+    tb_snprintf(buf, sizeof(buf), "%sYou tell $N, '%s'%s", CCRED(ch, C_NRM), text, CCNRM(ch, C_NRM));
     msg = act(buf, FALSE, ch, 0, vict, TO_CHAR | TO_SLEEP);     
     add_history(ch, msg, HIST_TELL);
   }
@@ -229,12 +289,13 @@ ACMD(do_spec_comm)
   else if (vict == ch)
     send_to_char(ch, "You can't get your mouth close enough to your ear...\r\n");
   else {
-    char buf1[MAX_STRING_LENGTH];
+    char buf1[MAX_STRING_LENGTH], text[MAX_STRING_LENGTH / 2];
 
     if (CONFIG_SPECIAL_IN_COMM && legal_communication(argument))
       parse_at(buf2);
 
-    tb_snprintf(buf1, sizeof(buf1), "$n %s you, '%s'", action_plur, buf2);
+    ACT_ESCAPE_TEXT(ch, buf2, text);
+    tb_snprintf(buf1, sizeof(buf1), "$n %s you, '%s'", action_plur, text);
     act(buf1, FALSE, ch, 0, vict, TO_VICT);
 
     if ((!IS_NPC(ch)) && (PRF_FLAGGED(ch, PRF_NOREPEAT))) 
@@ -337,9 +398,10 @@ ACMD(do_page)
   else if (!*arg)
     send_to_char(ch, "Whom do you wish to page?\r\n");
   else {
-    char buf[MAX_STRING_LENGTH];
+    char buf[MAX_STRING_LENGTH], text[MAX_STRING_LENGTH / 2];
 
-    tb_snprintf(buf, sizeof(buf), "\007\007*$n* %s", buf2);
+    ACT_ESCAPE_TEXT(ch, buf2, text);
+    tb_snprintf(buf, sizeof(buf), "\007\007*$n* %s", text);
     if (!str_cmp(arg, "all")) {
       if (GET_LEVEL(ch) > LVL_GOD) {
 	for (d = descriptor_list; d; d = d->next)
@@ -365,7 +427,9 @@ ACMD(do_gen_comm)
 {
   struct descriptor_data *i;
   char color_on[24];
-  char buf1[MAX_INPUT_LENGTH], buf2[MAX_INPUT_LENGTH + 50], *msg;   // + 50 to make room for color codes
+  /* buf1/buf2 hold act() formats built around the escaped text, which can
+   * be up to twice the input length. */
+  char buf1[MAX_STRING_LENGTH], buf2[MAX_STRING_LENGTH], text[MAX_STRING_LENGTH / 2], *msg;
   bool emoting = FALSE;
 
   /* Array of flags which must _not_ be set in order for comm to be heard. */
@@ -476,15 +540,20 @@ ACMD(do_gen_comm)
   else {
 		if (CONFIG_SPECIAL_IN_COMM && legal_communication(argument))
       parse_at(argument);
-      
+
+    ACT_ESCAPE_TEXT(ch, argument, text);
     tb_snprintf(buf1, sizeof(buf1), "%sYou %s, '%s%s'%s", COLOR_LEV(ch) >= C_CMP ? color_on : "",
-        com_msgs[subcmd][1], argument, COLOR_LEV(ch) >= C_CMP ? color_on : "", CCNRM(ch, C_CMP));
+        com_msgs[subcmd][1], text, COLOR_LEV(ch) >= C_CMP ? color_on : "", CCNRM(ch, C_CMP));
     
     msg = act(buf1, FALSE, ch, 0, 0, TO_CHAR | TO_SLEEP);
     add_history(ch, msg, hist_type[subcmd]);
   }
-  if (!emoting)
-    tb_snprintf(buf1, sizeof(buf1), "$n %ss, '%s'", com_msgs[subcmd][1], argument);
+  if (!emoting) {
+    /* With NOREPEAT the block above did not run, so escape the text here. */
+    if (!IS_NPC(ch) && PRF_FLAGGED(ch, PRF_NOREPEAT))
+      ACT_ESCAPE_TEXT(ch, argument, text);
+    tb_snprintf(buf1, sizeof(buf1), "$n %ss, '%s'", com_msgs[subcmd][1], text);
+  }
 
   /* Now send all the strings out. */
   for (i = descriptor_list; i; i = i->next) {
@@ -517,24 +586,28 @@ ACMD(do_qcomm)
   if (!*argument)
     send_to_char(ch, "%c%s?  Yes, fine, %s we must, but WHAT??\r\n", UPPER(*CMD_NAME), CMD_NAME + 1, CMD_NAME);
   else {
-    char buf[MAX_STRING_LENGTH];
+    char buf[MAX_STRING_LENGTH], text[MAX_STRING_LENGTH / 2];
     struct descriptor_data *i;
-    
+
     if (CONFIG_SPECIAL_IN_COMM && legal_communication(argument))
       parse_at(argument);
+
+    /* The text was passed both as the act() format and as vict_obj, so a
+     * forced "qsay $N" made perform_act() read the string as a char_data. */
+    ACT_ESCAPE_TEXT(ch, argument, text);
 
     if (!IS_NPC(ch) && PRF_FLAGGED(ch, PRF_NOREPEAT))
       send_to_char(ch, "%s", CONFIG_OK);
     else if (subcmd == SCMD_QSAY) {
-      tb_snprintf(buf, sizeof(buf), "You quest-say, '%s'", argument);
-      act(buf, FALSE, ch, 0, argument, TO_CHAR);
+      tb_snprintf(buf, sizeof(buf), "You quest-say, '%s'", text);
+      act(buf, FALSE, ch, 0, NULL, TO_CHAR);
     } else
-      act(argument, FALSE, ch, 0, argument, TO_CHAR);
+      act(text, FALSE, ch, 0, NULL, TO_CHAR);
 
     if (subcmd == SCMD_QSAY)
-      tb_snprintf(buf, sizeof(buf), "$n quest-says, '%s'", argument);
+      tb_snprintf(buf, sizeof(buf), "$n quest-says, '%s'", text);
     else {
-      strlcpy(buf, argument, sizeof(buf));
+      strlcpy(buf, text, sizeof(buf));
       mudlog(CMP, MAX(LVL_BUILDER, GET_INVIS_LEV(ch)), TRUE, "(GC) %s qechoed: %s", GET_NAME(ch), argument);
     }
     for (i = descriptor_list; i; i = i->next)
