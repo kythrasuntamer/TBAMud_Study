@@ -556,14 +556,17 @@ WCMD(do_wload)
           wld_log(room, "wload: bad object vnum");
           return;
       }
+      /* Set lastloaded for every placement, as mload and oload do; it was
+       * set only when no target was given, so '%lastloaded%' named the
+       * previous load after 'wload obj <vnum> <char|container>'. */
+      if (SCRIPT(room)) { /* It _should_ have, but it might be detached. */
+        char buf[MAX_INPUT_LENGTH];
+        tb_snprintf(buf, sizeof(buf), "%c%ld", UID_CHAR, obj_script_id(object));
+        add_var(&(SCRIPT(room)->global_vars), "lastloaded", buf, 0);
+      }
       /* special handling to make objects able to load on a person/in a container/worn etc. */
       if (!target || !*target) {
         obj_to_room(object, real_room(room->number));
-        if (SCRIPT(room)) { /* It _should_ have, but it might be detached. */
-          char buf[MAX_INPUT_LENGTH];
-          tb_snprintf(buf, sizeof(buf), "%c%ld", UID_CHAR, obj_script_id(object));
-          add_var(&(SCRIPT(room)->global_vars), "lastloaded", buf, 0);
-        }
         load_otrigger(object);
         return;
       }

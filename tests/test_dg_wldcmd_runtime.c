@@ -175,9 +175,38 @@ static void test_wdoor_new_exit_leads_nowhere(void)
   TEST_ASSERT_NULL(world[0].dir_option[UP]);
 }
 
+static const char *global_var(room_rnum r, const char *name)
+{
+  struct trig_var_data *v;
+  for (v = SCRIPT(&world[r])->global_vars; v; v = v->next)
+    if (!strcmp(v->name, name))
+      return v->value;
+  return "";
+}
+
+/* E1-19: 'wload obj <vnum> <target>' updates %lastloaded% too. */
+static void test_wload_with_target_sets_lastloaded(void)
+{
+  struct char_data *m = dgw_mob(DGW_MOB_GUARD, 0);
+  char expect[32];
+
+  world[0].script = dgw_script();
+  wcmd(0, "wload obj 201");
+  snprintf(expect, sizeof(expect), "%c%ld", UID_CHAR,
+           obj_script_id(world[0].contents));
+  TEST_ASSERT_EQUAL_STRING(expect, global_var(0, "lastloaded"));
+
+  wcmd(0, "wload obj 205 zzguard");
+  TEST_ASSERT_NOT_NULL(m->carrying);
+  snprintf(expect, sizeof(expect), "%c%ld", UID_CHAR,
+           obj_script_id(m->carrying));
+  TEST_ASSERT_EQUAL_STRING(expect, global_var(0, "lastloaded"));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(test_wload_with_target_sets_lastloaded);
   RUN_TEST(test_wdoor_new_exit_leads_nowhere);
   RUN_TEST(test_wteleport_non_numeric_target_is_refused);
   RUN_TEST(test_wteleport_vnum_overflow_is_refused);
