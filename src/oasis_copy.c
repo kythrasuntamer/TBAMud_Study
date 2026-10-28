@@ -397,7 +397,11 @@ int buildwalk(struct char_data *ch, int dir)
 
       /* Report room creation to user */
       send_to_char(ch, "%sRoom #%d created by BuildWalk.%s\r\n", yel, vnum, nrm);
-      cleanup_olc(d, CLEANUP_STRUCTS);
+      /* F3-09: add_room deep-copies the template's strings into world[]
+       * (copy_room_strings), so the strdup'd name and description above are
+       * still owned by the template.  CLEANUP_STRUCTS freed only the struct
+       * and leaked both strings for every room buildwalk created. */
+      cleanup_olc(d, CLEANUP_ALL);
 
       return (1);
 

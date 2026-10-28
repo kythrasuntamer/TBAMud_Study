@@ -574,9 +574,27 @@ void test_cleanup_never_frees_script_owned_by_live_room(void)
   TEST_ASSERT_EQUAL_INT(3000, world[0].proto_script->vnum); /* still valid */
 }
 
+/* ---------------------------------------------------------------------
+ * F3-09: buildwalk released its template with CLEANUP_STRUCTS, leaking the
+ * strdup'd name and description (add_room copies them).  LeakSanitizer /
+ * Valgrind fail this test if that regresses.
+ * --------------------------------------------------------------------- */
+void test_buildwalk_releases_template_strings(void)
+{
+  SET_BIT_AR(PRF_FLAGS(&builder), PRF_BUILDWALK);
+
+  TEST_ASSERT_EQUAL_INT(1, buildwalk(&builder, NORTH));
+
+  TEST_ASSERT_EQUAL_INT(1, save_calls);
+  TEST_ASSERT_NULL(builder_desc.olc);
+  TEST_ASSERT_NOT_EQUAL(NOWHERE, real_room(3000));
+  TEST_ASSERT_NOT_NULL(world[real_room(3000)].name);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(test_buildwalk_releases_template_strings);
   RUN_TEST(test_cleanup_frees_unsaved_script_on_link_loss);
   RUN_TEST(test_cleanup_frees_script_reattached_to_scratch_once);
   RUN_TEST(test_cleanup_never_frees_script_owned_by_live_room);
