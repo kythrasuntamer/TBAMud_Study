@@ -39,6 +39,17 @@
 #include "spells.h"
 #include "act.h"
 
+/** Read an optional social message field. Every field may be NULL ('#' in
+ * the socials file, or cleared in aedit); SOC_MSG gives @p dflt instead, so
+ * the NULL contract is visible where the field is printed. Evaluates
+ * action twice: pass a plain variable. */
+#define SOC_MSG(action, field, dflt) \
+  ((action)->field ? (action)->field : (dflt))
+
+/* Defaults shared by do_action and do_gmote for optional fields. */
+#define SOC_DFLT_NOT_FOUND  "I don't see anything by that name here."
+#define SOC_DFLT_CHAR_AUTO  "Erm, no."
+
 /* local defined functions for local use */
 /* do_action and do_gmote utility function */
 static int find_action(int cmd);
@@ -61,7 +72,7 @@ static void social_misconfigured(struct char_data *ch,
 {
   TB_WARN_MSG("social", "social-field-missing", "soc_mess_list",
               "social '%s' has no %s message (used by " DIAG_CHAR_FMT ")",
-              action->command ? action->command : "(null)", field,
+              SOC_MSG(action, command, "(null)"), field,
               DIAG_CHAR(ch));
   send_to_char(ch, "That social is misconfigured; please tell an immortal.\r\n");
 }
@@ -85,7 +96,7 @@ static bool social_body_msg_ok(const struct social_messg *action,
       TB_ERROR_MSG("social", "act-code", "soc_mess_list",
                    "social '%s' field %s uses $%c with a body-part string "
                    "target; only $t may name the body part",
-                   action->command ? action->command : "(null)", field, p[1]);
+                   SOC_MSG(action, command, "(null)"), field, p[1]);
       return FALSE;
     }
   }
@@ -144,18 +155,12 @@ ACMD(do_action)
         return;
       }
     }
-    if (action->not_found)
-      send_to_char(ch, "%s\r\n", action->not_found);
-    else
-      send_to_char(ch, "I don't see anything by that name here.\r\n");
+    send_to_char(ch, "%s\r\n", SOC_MSG(action, not_found, SOC_DFLT_NOT_FOUND));
     return;
   }
 
   if (vict == ch) {
-    if (action->char_auto)
-      send_to_char(ch, "%s\r\n", action->char_auto);
-    else
-      send_to_char(ch, "Erm, no.\r\n");
+    send_to_char(ch, "%s\r\n", SOC_MSG(action, char_auto, SOC_DFLT_CHAR_AUTO));
     act(action->others_auto, action->hide, ch, 0, 0, TO_ROOM);
     return;
   }
@@ -341,13 +346,11 @@ action = &soc_mess_list[act_nr];
     }
     tb_snprintf(buf, sizeof(buf), "Gemote: %s", action->others_no_arg);
   } else if (!(vict = get_char_vis(ch, arg, NULL, FIND_CHAR_WORLD))) {
-    /* Same default as do_action for this optional field. */
-    send_to_char(ch, "%s\r\n", action->not_found ? action->not_found :
-                 "I don't see anything by that name here.");
+    send_to_char(ch, "%s\r\n", SOC_MSG(action, not_found, SOC_DFLT_NOT_FOUND));
     return;
   } else if (vict == ch) {
     if(!action->others_auto || !*action->others_auto) {
-      send_to_char(ch, "%s\r\n", action->char_auto ? action->char_auto : "Erm, no.");
+      send_to_char(ch, "%s\r\n", SOC_MSG(action, char_auto, SOC_DFLT_CHAR_AUTO));
       return;
     }
     tb_snprintf(buf, sizeof(buf), "Gemote: %s", action->others_auto);
