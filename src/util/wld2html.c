@@ -62,6 +62,14 @@
 /* True when d may index room_data.dir_option[].  Evaluates d twice. */
 #define VALID_DIR(d)   ((d) >= 0 && (d) < NUM_OF_DIRS)
 
+/*
+ * Exit num of world[] record room (an index, not a vnum).  Same name and
+ * meaning as W_EXIT in src/utils.h, which this standalone tool cannot
+ * include.  The caller must have checked room < rec_count and
+ * VALID_DIR(num); each argument is evaluated once.
+ */
+#define W_EXIT(room, num)     (world[(room)].dir_option[(num)])
+
 #define CREATE(result, type, number)  do {\
 	if (!((result) = (type *) calloc ((number), sizeof(type))))\
 		{ TB_REPORT_ERRNO("malloc", "wld2html allocation"); abort(); } } while(0)
@@ -416,13 +424,13 @@ void write_output(void)
 
     found = 0;
     for (door = 0; door < NUM_OF_DIRS; door++)
-      if (world[i].dir_option[door] &&
-          world[i].dir_option[door]->to_room != NOWHERE) {
+      if (W_EXIT(i, door) &&
+          W_EXIT(i, door)->to_room != NOWHERE) {
         found = 1;
 	//this call gets a pointer to the room referenced by the to_room for the door.
 	//This fixes a lot of issues introduced with the whole 'renumbering rooms' call
 	//and the binary search that didn't work well.
-	struct room_data* to_room = findRoom(world[i].dir_option[door]->to_room);
+	struct room_data* to_room = findRoom(W_EXIT(i, door)->to_room);
         if (to_room) {
           tb_fprintf(fl, "<a href = \"%d.html\"> %s to ",
                   to_room->number,
@@ -431,7 +439,7 @@ void write_output(void)
           tb_fprintf(fl, "</a> <p>\n");
         } else
           tb_fprintf(fl, "%s to missing room %d <p>\n",
-                  dir_names[door], world[i].dir_option[door]->to_room);
+                  dir_names[door], W_EXIT(i, door)->to_room);
       }
     if (!found)
       tb_fprintf(fl, "None!");
@@ -700,7 +708,7 @@ void parse_room(FILE * fl, int virtual_nr)
   world[room_nr].light = 0;	/* Zero light sources */
 
   for (i = 0; i < NUM_OF_DIRS; i++)
-    world[room_nr].dir_option[i] = NULL;
+    W_EXIT(room_nr, i) = NULL;
 
   world[room_nr].ex_description = NULL;
 
@@ -749,7 +757,7 @@ void parse_room(FILE * fl, int virtual_nr)
 
 /**
  * Read one "D<dir>" exit block (general description~, keyword~ and the
- * "<door-flag> <key> <to-room>" line) into world[room].dir_option[dir].
+ * "<door-flag> <key> <to-room>" line) into W_EXIT(room, dir).
  *
  * Preconditions, all re-checked here: 0 <= room < rec_count,
  * VALID_DIR(dir) (parse_room() validates the builder's D<dir> first), and
@@ -779,14 +787,14 @@ void setup_dir(FILE * fl, int room, int dir)
    * to CREATE over the first, leaking it and silently keeping whichever
    * came last.
    */
-  if (world[room].dir_option[dir] != NULL)
+  if (W_EXIT(room, dir) != NULL)
     WLD_PARSE_ERROR("wld-duplicate-door", "exit D%d is defined twice", dir);
 
   tb_snprintf(buf2, sizeof(buf2), "exit D%d text", dir);
 
-  CREATE(world[room].dir_option[dir], struct room_direction_data, 1);
-  world[room].dir_option[dir]->general_description = fread_string(fl, buf2);
-  world[room].dir_option[dir]->keyword = fread_string(fl, buf2);
+  CREATE(W_EXIT(room, dir), struct room_direction_data, 1);
+  W_EXIT(room, dir)->general_description = fread_string(fl, buf2);
+  W_EXIT(room, dir)->keyword = fread_string(fl, buf2);
 
   if (!get_line(fl, line, sizeof(line)))
     WLD_PARSE_ERROR("wld-unexpected-eof",
@@ -800,14 +808,14 @@ void setup_dir(FILE * fl, int room, int dir)
                       "D%d expected '<door-flag> <key> <to-room>'", dir);
   }
   if (t[0] == 1)
-    world[room].dir_option[dir]->exit_info = EX_ISDOOR;
+    W_EXIT(room, dir)->exit_info = EX_ISDOOR;
   else if (t[0] == 2)
-    world[room].dir_option[dir]->exit_info = EX_ISDOOR | EX_PICKPROOF;
+    W_EXIT(room, dir)->exit_info = EX_ISDOOR | EX_PICKPROOF;
   else
-    world[room].dir_option[dir]->exit_info = 0;
+    W_EXIT(room, dir)->exit_info = 0;
 
-  world[room].dir_option[dir]->key = t[1];
-  world[room].dir_option[dir]->to_room = t[2];
+  W_EXIT(room, dir)->key = t[1];
+  W_EXIT(room, dir)->to_room = t[2];
 }
 
 
