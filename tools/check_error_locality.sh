@@ -79,15 +79,15 @@ forbid "non-kebab-case TB_ERROR_*/TB_WARN_MSG/TB_FATAL_MSG operation" \
 
 # A literal "SYSERR" line carries no severity, category or source location.
 ratchet 'puts("SYSERR...")' 5 '(^|[^A-Za-z0-9_])puts[[:space:]]*\([[:space:]]*"SYSERR'
-ratchet 'log("SYSERR...")' 236 '(^|[^A-Za-z0-9_])log[[:space:]]*\([[:space:]]*"SYSERR'
-ratchet 'mudlog(..."SYSERR...")' 51 '(^|[^A-Za-z0-9_])mudlog[[:space:]]*\([^;]*"SYSERR'
+ratchet 'log("SYSERR...")' 223 '(^|[^A-Za-z0-9_])log[[:space:]]*\([[:space:]]*"SYSERR'
+ratchet 'mudlog(..."SYSERR...")' 50 '(^|[^A-Za-z0-9_])mudlog[[:space:]]*\([^;]*"SYSERR'
 
 # unlink/remove/rename as a bare statement discards the result: a file that
 # should be gone (or renamed into place) silently is not. A bare statement is
 # a line that starts with the call and either ends it with ';' or carries its
 # arguments on to the next line. A checked call that continues a longer
 # condition, such as the line "    rename(to, from) != 0)", is not counted.
-ratchet "unchecked unlink/remove/rename" 4 \
+ratchet "unchecked unlink/remove/rename" 3 \
   '^[[:space:]]*(unlink|remove|rename)[[:space:]]*\(([^;]*\)[[:space:]]*;|[^;]*,[[:space:]]*$|[[:space:]]*$)'
 
 # TB_REPORT_* operations name the failing call or step ("fopen",
