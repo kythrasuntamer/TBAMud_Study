@@ -92,7 +92,16 @@ static void bfs_clear_queue(void)
 /* find_first_step: given a source room and a target room, find the first step 
  * on the shortest path from the source to the target. Intended usage: in 
  * mobile_activity, give a mob a dir to go if they're tracking another mob or a
- * PC.  Or, a 'track' skill for PCs. */
+ * PC.  Or, a 'track' skill for PCs.
+ *
+ * Returns a direction (0..DIR_COUNT-1), BFS_ALREADY_THERE (src == target),
+ * BFS_NO_PATH, or BFS_ERROR (src or target not a valid rnum).
+ *
+ * Cost and state: clears the ROOM_BFS_MARK flag on every room, then marks
+ * rooms as it searches (O(rooms) per call). The marks live in the room
+ * flags and are left set after the search, so a room saved by OLC between
+ * searches may carry the flag; the next search clears it first. The search
+ * queue is file-static: not reentrant, one search at a time. */
 static int find_first_step(room_rnum src, room_rnum target)
 {
   int curr_dir;

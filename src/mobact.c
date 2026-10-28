@@ -35,6 +35,14 @@
 /* local file scope only function prototypes */
 static bool aggressive_mob_on_a_leash(struct char_data *slave, struct char_data *master, struct char_data *attack);
 
+/* Run one round of default NPC behaviour (called every PULSE_MOBILE): spec
+ * procs, hunting, scavenging, wandering, aggression, memory, charm rebellion
+ * and helping. Stages that can run DG scripts (spec procs, hunt_victim,
+ * perform_move, act, hit) may purge this mob or others. Extraction is
+ * deferred to the end of the pulse, so ch and next_ch stay allocated, but a
+ * purged ch is MOB_NOTDEADYET: MOB_STILL_ACTING(ch) is re-checked after each
+ * such stage before ch acts again. Victims found in a room scan are used
+ * immediately, never kept across a callback. */
 void mobile_activity(void)
 {
   struct char_data *ch, *next_ch, *vict;
