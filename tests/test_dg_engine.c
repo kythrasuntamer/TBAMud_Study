@@ -721,6 +721,19 @@ static void attach_to_player_is_refused_before_allocating(void)
   TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "idnum 77"));
 }
 
+/* D1-14: when a script detached itself, script_driver() skipped freeing the
+ * trigger's variables and then dropped the pointer. LSan (ASan build) and
+ * Valgrind report the leak if it returns. */
+static void self_detaching_script_frees_its_variables(void)
+{
+  const char *lines[] = { "set x 1", "set y 2", "detach all %self.id%", NULL };
+  char_data *mob = make_mob("mob");
+
+  run_mob_script(mob, lines);
+  TEST_ASSERT_NULL(SCRIPT(mob));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -750,5 +763,6 @@ int main(void)
   RUN_TEST(detach_mobile_without_trigger_argument_is_refused);
   RUN_TEST(detach_does_not_instantiate_a_trigger);
   RUN_TEST(attach_to_player_is_refused_before_allocating);
+  RUN_TEST(self_detaching_script_frees_its_variables);
   return UNITY_END();
 }

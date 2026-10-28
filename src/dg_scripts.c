@@ -3198,8 +3198,11 @@ int script_driver(void *go_adress, trig_data *trig, int type, int mode)
     }
   }
 
-  /* Free the run's variables even if the script was detached: the trigger
-   * itself is only retired until the outermost frame returns. */
+  /* The script may have detached itself ("detach all %self.id%"), leaving
+   * the owner with no script. trig itself stays allocated until
+   * dg_script_execution_leave() (extract_trigger() retires it while any
+   * script runs), so its variables are always ours to free here. Freeing
+   * them only when the owner still had a script leaked them otherwise. */
   free_varlist(GET_TRIG_VARS(trig));
   GET_TRIG_VARS(trig) = NULL;
   GET_TRIG_DEPTH(trig) = 0;
