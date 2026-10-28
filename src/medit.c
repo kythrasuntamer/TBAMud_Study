@@ -1073,7 +1073,9 @@ void medit_parse(struct descriptor_data *d, char *arg)
 
   case MEDIT_DELETE:
     if (*arg == 'y' || *arg == 'Y') {
-      if (delete_mobile(GET_MOB_RNUM(OLC_MOB(d))) != NOBODY)
+      /* Delete the vnum being edited: after a copy the buffer's rnum is
+       * the source's, and deleting by it removed the source. */
+      if (delete_mobile(real_mobile(OLC_NUM(d))) != NOBODY)
         write_to_output(d, "Mobile deleted.\r\n");
       else
         write_to_output(d, "Couldn't delete the mobile!\r\n");

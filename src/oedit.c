@@ -1427,7 +1427,9 @@ void oedit_parse(struct descriptor_data *d, char *arg)
 
   case OEDIT_DELETE:
     if (*arg == 'y' || *arg == 'Y') {
-      if (delete_object(GET_OBJ_RNUM(OLC_OBJ(d))) != NOTHING)
+      /* Delete the vnum being edited: after a copy the buffer's rnum is
+       * the source's, and deleting by it removed the source. */
+      if (delete_object(real_object(OLC_NUM(d))) != NOTHING)
         write_to_output(d, "Object deleted.\r\n");
       else
         write_to_output(d, "Couldn't delete the object!\r\n");

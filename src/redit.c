@@ -899,7 +899,9 @@ void redit_parse(struct descriptor_data *d, char *arg)
   
   case REDIT_DELETE:
     if (*arg == 'y' || *arg == 'Y') {
-      if (delete_room(real_room(OLC_ROOM(d)->number)))
+      /* Delete the vnum being edited: after a copy the buffer holds the
+       * source's number, and deleting by it removed the source. */
+      if (delete_room(real_room(OLC_NUM(d))))
         write_to_output(d, "Room deleted.\r\n");
      else
         write_to_output(d, "Couldn't delete the room!.\r\n");
