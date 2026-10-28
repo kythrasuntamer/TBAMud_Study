@@ -179,6 +179,20 @@ if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
         PROPERTIES COMPILE_OPTIONS "-ffunction-sections;-fdata-sections")
 endif()
 
+# Production trigedit script formatter (dg_olc.c format_script).
+add_mud_test(test_dg_format_script
+    ${MUD_SRCDIR}/dg_olc.c
+    ${MUD_SRCDIR}/utils.c
+    ${MUD_SRCDIR}/random.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_dg_format_script.c
+)
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_compile_options(test_dg_format_script PRIVATE -ffunction-sections -fdata-sections)
+    target_link_options(test_dg_format_script PRIVATE -Wl,--gc-sections)
+    set_source_files_properties(${MUD_SRCDIR}/dg_olc.c
+        PROPERTIES COMPILE_OPTIONS "-ffunction-sections;-fdata-sections")
+endif()
+
 # Production act()/perform_act() formatter. comm.c owns main(); rename it and
 # discard sections the formatter does not reach. test_stubs.c is omitted
 # because it defines comm.c's globals; the test supplies its own fixtures.

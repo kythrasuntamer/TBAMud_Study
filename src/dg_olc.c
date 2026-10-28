@@ -1256,7 +1256,7 @@ int format_script(struct descriptor_data *d)
   char nsc[MAX_CMD_LENGTH], *t, line[READ_SIZE];
   char *sc;
   size_t len = 0, nlen = 0, llen = 0;
-  int indent = 0, indent_next = FALSE, line_num = 0, ret, i; // Declare i here
+  int indent = 0, indent_next = FALSE, line_num = 0, ret;
   int block_stack[READ_SIZE]; // Stack to track block types
   int stack_top = -1; // Initialize stack as empty
   int switch_indent[READ_SIZE]; // Array to track switch indent levels
@@ -1274,6 +1274,16 @@ int format_script(struct descriptor_data *d)
   while (t) {
     line_num++;
     skip_spaces(&t);
+
+    /* Every opener pushes one entry; switch_indent never holds more. */
+    if ((!strn_cmp(t, "switch ", 7) || !strn_cmp(t, "if ", 3) ||
+         !strn_cmp(t, "while ", 6)) &&
+        stack_top + 1 >= (int)(sizeof(block_stack) / sizeof(*block_stack))) {
+      write_to_output(d, "Blocks nested too deeply to format (line %d)!\r\n",
+                      line_num);
+      free(sc);
+      return FALSE;
+    }
 
     if (!strn_cmp(t, "switch ", 7)) {
       indent_next = TRUE;
@@ -1326,15 +1336,20 @@ int format_script(struct descriptor_data *d)
       indent_next = FALSE; // Ensure no automatic increase for next line after break
     }
 
-    *line = '\0';
-    for (nlen = 0, i = 0; i < indent; i++) {
-      strncat(line, "  ", sizeof(line) - strlen(line) - 1);
-      nlen += 2;
+    /* The indented line must fit whole: nlen past the buffer used to wrap
+     * the snprintf size, and a long line was cut silently. */
+    nlen = indent > 0 ? 2 * (size_t)indent : 0;
+    if (nlen + strlen(t) + 2 >= sizeof(line)) {
+      write_to_output(d, "Line %d is too long to indent, formatting aborted\r\n",
+                      line_num);
+      free(sc);
+      return FALSE;
     }
-
+    memset(line, ' ', nlen);
     ret = snprintf(line + nlen, sizeof(line) - nlen, "%s\r\n", t);
     llen = (size_t)ret;
-    if (ret < 0 || llen + nlen + len > d->max_str - 1) {
+    if (ret < 0 || llen + nlen + len > d->max_str - 1 ||
+        llen + nlen + len >= sizeof(nsc)) {
       write_to_output(d, "String too long, formatting aborted\r\n");
       free(sc);
       return FALSE;
