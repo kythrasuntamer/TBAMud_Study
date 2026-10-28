@@ -51,6 +51,10 @@ struct attack_hit_type attack_hit_text[] =
 };
 
 /* local (file scope only) variables */
+/* perform_violence()'s iterator over combat_list. A round can stop any
+ * fighter (hit() -> damage() -> die(), flee, triggers), so stop_fighting()
+ * advances this iterator when it removes the character it points at; that
+ * is what lets hit() end arbitrary fights without breaking the walk. */
 static struct char_data *next_combat_list = NULL;
 
 /* local file scope utility functions */
@@ -187,7 +191,11 @@ void set_fighting_at(const char *src_file, int src_line, const char *src_func,
   POS_CHANGE_UNSEAT(ch, POS_FIGHTING);
 }
 
-/* remove a char from the list of fighting chars */
+/* remove a char from the list of fighting chars. Side effects: clears
+ * FIGHTING(ch), stands ch up (POS_CHANGE_UNSEAT, which unlinks any
+ * furniture) and then update_pos() lowers the position again for a
+ * wounded ch; advances next_combat_list past ch if perform_violence() was
+ * about to visit it. Safe to call on a ch that is not fighting. */
 void stop_fighting(struct char_data *ch)
 {
   struct char_data *temp;
@@ -202,6 +210,12 @@ void stop_fighting(struct char_data *ch)
   update_pos(ch);
 }
 
+/* Builds ch's corpse in ch's room. Order: the inventory moves to the
+ * corpse in one step (ch->carrying, count and weight cleared) before any
+ * trigger runs; then each worn item, after its remove trigger, which may
+ * purge or swap it (the slot is re-read); then anything a trigger handed
+ * to ch meanwhile; then the gold as a money object. Records the corpse
+ * for damage()'s autoloot (last_corpse). ch itself is not freed here. */
 static void make_corpse(struct char_data *ch)
 {
   char buf2[MAX_NAME_LENGTH + 64];
@@ -335,6 +349,12 @@ void death_cry(struct char_data *ch)
       send_to_room(world[IN_ROOM(ch)].dir_option[door]->to_room, "Your blood freezes as you hear someone's death cry.\r\n");
 }
 
+/* Kills ch: stops its fight, strips affects, runs its death trigger
+ * (killer != NULL; the script may suppress the death cry), credits kill
+ * quests, makes the corpse (make_corpse) and calls extract_char(). The
+ * extraction is deferred: ch stays allocated, flagged NOTDEADYET
+ * (CHAR_PENDING_EXTRACTION), until extract_pending_chars() at the end of
+ * the pulse, so callers may still read ch but must not act with it. */
 void raw_kill(struct char_data * ch, struct char_data * killer)
 {
 struct char_data *i;
@@ -378,6 +398,8 @@ struct char_data *i;
   }
 }
 
+/* raw_kill() plus the death penalty: ch loses half its experience, and a
+ * player loses the KILLER and THIEF flags. Same lifetime as raw_kill(). */
 void die(struct char_data * ch, struct char_data * killer)
 {
   gain_exp(ch, -(GET_EXP(ch) / 2));
@@ -498,7 +520,10 @@ static char *replace_string(const char *str, const char *weapon_singular, const 
   return (buf);
 }
 
-/* message for doing damage with a weapon */
+/* message for doing damage with a weapon. w_type is an IS_WEAPON() type;
+ * w_type - TYPE_HIT indexes attack_hit_text[] (NUM_ATTACK_TYPES entries)
+ * and is range-checked here as a backstop. The messages are built in
+ * replace_string()'s static buffer, used before the next call. */
 static void dam_message(int dam, struct char_data *ch, struct char_data *victim,
 		      int w_type)
 {
@@ -696,7 +721,18 @@ int skill_message(int dam, struct char_data *ch, struct char_data *vict,
 /* This function returns the following codes:
  *	< 0	Victim died.
  *	= 0	No damage.
- *	> 0	How much damage done. */
+ *	> 0	How much damage done.
+ *
+ * Side effects beyond the return code: damage() starts fights
+ * (set_fighting), runs the damage trigger, may make a wimpy or linkless
+ * victim flee (do_flee) and move a linkless player to room 0
+ * (char_to_room), kills via die() (death trigger, corpse, deferred
+ * extraction), and after a kill runs
+ * get_from_container/do_split/sacrifice_obj for ch's AUTOGOLD, AUTOLOOT,
+ * AUTOSPLIT and AUTOSAC, which run get triggers in turn. Callers must
+ * assume that ch and victim may have changed room or be pending
+ * extraction afterwards (check IN_ROOM and CHAR_PENDING_EXTRACTION), and
+ * must not use object pointers read before the call. */
 int damage(struct char_data *ch, struct char_data *victim, int dam, int attacktype)
 {
   long local_gold = 0, happy_gold = 0;
