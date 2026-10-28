@@ -14,6 +14,11 @@
 #include <stdarg.h>
 #include "tb_error_capture.h"
 
+/* quest.c defines this with external linkage but quest.h does not declare it
+ * (the questmaster spec proc is its only production caller). */
+void quest_list(struct char_data *ch, struct char_data *qm,
+                char argument[MAX_INPUT_LENGTH]);
+
 /* db.c owns these; this fixture does not link db.c. */
 struct aq_data *aquest_table;
 qst_rnum total_quests;
@@ -232,9 +237,44 @@ static void test_reward_equal_to_target_pays_once(void)
   TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
 }
 
+/* H3-03: 'quest list 1' at the questmaster for a quest whose prev_quest
+ * names a deleted quest must print a marker and report the dangling link,
+ * not read aquest_table[NOTHING].name. */
+static void test_quest_list_dangling_prev_reports(void)
+{
+  char arg[MAX_INPUT_LENGTH] = "1";
+
+  add_quest_fixture(0, 11, AQ_ROOM_FIND, 3001, 1);
+  quests[0].qm = 500;
+  quests[0].prev_quest = 99;
+
+  quest_list(&player, &npc[0], arg);
+
+  TEST_ASSERT_NOT_NULL(strstr(sent, "(missing quest 99)"));
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("dangling-chain", tb_captured_operation);
+}
+
+/* H3-03: a completed quest whose next_quest dangles reports the link and
+ * leaves the player without a quest. */
+static void test_complete_dangling_next_reports(void)
+{
+  add_quest_fixture(0, 100, AQ_ROOM_FIND, 3001, 1);
+  quests[0].next_quest = 98;
+  set_quest(&player, 0);
+
+  autoquest_trigger_check(&player, NULL, NULL, AQ_ROOM_FIND);
+
+  TEST_ASSERT_EQUAL_INT(NOTHING, GET_QUEST(&player));
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("dangling-chain", tb_captured_operation);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(test_quest_list_dangling_prev_reports);
+  RUN_TEST(test_complete_dangling_next_reports);
   RUN_TEST(test_reward_equal_to_target_pays_once);
   RUN_TEST(test_mob_find_two_targets_completes_once);
   RUN_TEST(test_mob_find_does_not_count_against_chained_quest);

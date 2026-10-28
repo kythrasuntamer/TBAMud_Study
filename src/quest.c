@@ -79,6 +79,35 @@ int is_complete(struct char_data *ch, qst_vnum vnum)
   return FALSE;
 }
 
+/* Report a prev/next link of quest `from` that names no existing quest.
+ * Links are builder data: qedit stores any number typed and delete_quest()
+ * never repairs the links that pointed at the deleted quest. */
+static void quest_report_dangling(qst_rnum from, qst_vnum link)
+{
+  TB_WARN_MSG("quest", "dangling-chain", "aquest_table",
+              "quest vnum %d prev %d next %d: linked quest vnum %d does not exist",
+              (int) QST_NUM(from), (int) QST_PREV(from), (int) QST_NEXT(from),
+              (int) link);
+}
+
+/* Display text (name or description) of the quest that link `link` of quest
+ * `from` names, or a "(missing quest N)" marker, reported, when the link
+ * dangles. The marker lives in a static buffer overwritten by the next call. */
+static const char *quest_link_text(qst_rnum from, qst_vnum link, int want_name)
+{
+  static char missing[48];
+  qst_rnum to = real_quest(link);
+  const char *text;
+
+  if (VALID_QST_RNUM(to)) {
+    text = want_name ? QST_NAME(to) : QST_DESC(to);
+    return text ? text : "";
+  }
+  quest_report_dangling(from, link);
+  tb_snprintf(missing, sizeof(missing), "(missing quest %d)", (int) link);
+  return missing;
+}
+
 qst_vnum find_quest_by_qmnum(struct char_data *ch, mob_vnum qm, int num)
 {
   qst_rnum rnum;
@@ -261,6 +290,11 @@ void assign_the_quests(void)
   cmd_tell = find_command("tell");
 
   for (rnum = 0; rnum < total_quests; rnum ++) {
+    /* All quests are loaded now: report chain links naming no quest. */
+    if (QST_PREV(rnum) != NOTHING && real_quest(QST_PREV(rnum)) == NOTHING)
+      quest_report_dangling(rnum, QST_PREV(rnum));
+    if (QST_NEXT(rnum) != NOTHING && real_quest(QST_NEXT(rnum)) == NOTHING)
+      quest_report_dangling(rnum, QST_NEXT(rnum));
     if (QST_MASTER(rnum) == NOBODY) {
       log("SYSERR: Quest #%d has no questmaster specified.", QST_NUM(rnum));
       continue;
@@ -462,7 +496,9 @@ void generic_complete_quest(struct char_data *ch)
       }
     }
     completing_quest = FALSE;
-    if ((real_quest(next) != NOTHING) &&
+    if (next != NOTHING && real_quest(next) == NOTHING)
+      quest_report_dangling(rnum, next);
+    else if ((real_quest(next) != NOTHING) &&
         (next != vnum) &&
         !is_complete(ch, next)) {
       rnum = real_quest(next);
@@ -691,7 +727,7 @@ void quest_list(struct char_data *ch, struct char_data *qm, char argument[MAX_IN
          QST_INFO(rnum));
     if (QST_PREV(rnum) != NOTHING)
       send_to_char(ch, "You have to have completed quest %s first.\r\n",
-          QST_NAME(real_quest(QST_PREV(rnum))));
+          quest_link_text(rnum, QST_PREV(rnum), TRUE));
     if (QST_TIME(rnum) != -1)
       send_to_char(ch,
          "There is a time limit of %d turn%s to complete the quest.\r\n",
@@ -857,13 +893,13 @@ static void quest_stat(struct char_data *ch, char *argument)
       send_to_char(ch, " \tyNone.\tn\r\n");
     else
       send_to_char(ch, " [\ty%5d\tn] \tc%s\tn\r\n",
-        QST_PREV(rnum), QST_DESC(real_quest(QST_PREV(rnum))));
+        QST_PREV(rnum), quest_link_text(rnum, QST_PREV(rnum), FALSE));
     send_to_char(ch, "Next  :");
     if (QST_NEXT(rnum) == NOTHING)
       send_to_char(ch, " \tyNone.\tn\r\n");
     else
       send_to_char(ch, " [\ty%5d\tn] \tc%s\tn\r\n",
-        QST_NEXT(rnum), QST_DESC(real_quest(QST_NEXT(rnum))));
+        QST_NEXT(rnum), quest_link_text(rnum, QST_NEXT(rnum), FALSE));
   }
 }
 
