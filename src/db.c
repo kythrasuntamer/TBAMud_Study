@@ -941,10 +941,10 @@ void destroy_db(void)
     if (zone_table[cnt].builders)
       free(zone_table[cnt].builders);
     if (zone_table[cnt].cmd) {
-      /* Free every command's variable strings, not only those of a 'V':
-       * renum_zone_table() and load_zones() disable a bad 'V' by rewriting
-       * it to '*', and it still owns sarg1/sarg2. Commands that never had
-       * strings hold NULL (the table is CREATE()d zeroed). */
+      /* Free every command's variable strings, not only those of a 'V'
+       * (a backstop: cancel_zone_command() already freed those of a 'V'
+       * disabled to '*'). Commands that never had strings hold NULL
+       * (the table is CREATE()d zeroed). */
       for (itr = 0;THIS_CMD.command != 'S';itr++) {
         free(THIS_CMD.sarg1);
         free(THIS_CMD.sarg2);
@@ -2179,6 +2179,18 @@ void renum_world(void)
 #endif
 #define ZCMD zone_table[zone].cmd[cmd_no]
 
+/* Disable a zone reset command: reset_zone() skips '*' and save_zone()
+ * drops it. A command list owns its commands' sarg1/sarg2 (only a 'V'
+ * has them) and the code that drops a command frees them, as
+ * cancel_zone_command() in genwld.c does; '*' keeps no strings. */
+static void cancel_zone_command(struct reset_com *cmd)
+{
+  free(cmd->sarg1);
+  free(cmd->sarg2);
+  cmd->sarg1 = cmd->sarg2 = NULL;
+  cmd->command = '*';
+}
+
 /* Resolve vnums into rnums in the zone reset tables. In English: Once all of
  * the zone reset tables have been loaded, we resolve the virtual numbers into
  * real numbers all at once so we don't have to do it repeatedly while the game
@@ -2243,7 +2255,7 @@ static void renum_zone_table(void)
 	               zone_table[zone].number, ZCMD.line, ZCMD.command,
 	               a == NOWHERE ? 1 : b == NOWHERE ? 2 : 3,
 	               a == NOWHERE ? olda : b == NOWHERE ? oldb : oldc);
-	ZCMD.command = '*';
+	cancel_zone_command(&ZCMD);
       }
     }
 }
@@ -3205,7 +3217,7 @@ static void load_zones(FILE *fl, char *zonename)
     ZCMD.line = line_num;
     if (!zone_cmd_vnums_in_range(&ZCMD, Z.number, zname, line_num) ||
         !zone_cmd_indexes_in_range(&ZCMD, Z.number, zname, line_num))
-      ZCMD.command = '*';	/* a 'V' still owns its sarg1/sarg2 strings */
+      cancel_zone_command(&ZCMD);
     cmd_no++;
   }
 

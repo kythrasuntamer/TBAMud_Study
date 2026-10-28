@@ -431,13 +431,18 @@ static void reset_zone_object_variable_uses_arg2_context(void)
 static void renum_zone_table_reports_missing_variable_room(void)
 {
   struct reset_com cmds[] = {
-    { 'V', FALSE, WLD_TRIGGER, 0, 34999, 7, (char *)"foo", (char *)"bar" },
+    { 'V', FALSE, WLD_TRIGGER, 0, 34999, 7, NULL, NULL },
     { 'S', FALSE, 0, 0, 0, 8, NULL, NULL },
   };
 
+  /* The disabled 'V' gives up its strings (round 5): heap copies. */
+  cmds[0].sarg1 = strdup("foo");
+  cmds[0].sarg2 = strdup("bar");
   zone_fixture_setup(cmds);
   renum_zone_table();
   TEST_ASSERT_EQUAL_CHAR('*', cmds[0].command);
+  TEST_ASSERT_NULL(cmds[0].sarg1);
+  TEST_ASSERT_NULL(cmds[0].sarg2);
   TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
   TEST_ASSERT_EQUAL_STRING("zone-renum", tb_captured_operation);
   TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "zone 30 line 7 cmd V: arg3 vnum 34999"));
@@ -2191,6 +2196,31 @@ static void free_char_releases_mob_memory(void)
   TEST_ASSERT_EQUAL_INT(2, fixture_memory_freed);
 }
 
+/* load_zones() and renum_zone_table() disable a bad 'V' by retyping it
+ * '*', and it kept its variable name and value: code that frees only a
+ * 'V''s strings (zedit's list copy, genolc) leaked them, the leak d1076b1
+ * fixed in delete_room(). Both now cancel through cancel_zone_command().
+ * Here load_zones() disables a 'V' whose room vnum 70000 does not fit. */
+static void load_zones_cancelled_variable_keeps_no_strings(void)
+{
+  static const char text[] =
+    "#34\nbuilder~\nZone~\n3400 3499 30 2\n"
+    "V 0 2 0 70000 foo bar\n"
+    "V 0 2 0 3400 baz qux\n"
+    "S\n$\n";
+  struct reset_com *cmd;
+
+  TEST_ASSERT_EQUAL_INT(0, load_zone_text(text));
+  cmd = zone_table[top_of_zone_table].cmd;
+  TEST_ASSERT_EQUAL_CHAR('*', cmd[0].command);
+  TEST_ASSERT_NULL(cmd[0].sarg1);
+  TEST_ASSERT_NULL(cmd[0].sarg2);
+  TEST_ASSERT_EQUAL_CHAR('V', cmd[1].command);
+  TEST_ASSERT_EQUAL_STRING("baz", cmd[1].sarg1);
+  TEST_ASSERT_EQUAL_STRING("qux", cmd[1].sarg2);
+  zone_load_fixture_free();
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -2269,5 +2299,6 @@ int main(void)
   RUN_TEST(load_config_reports_unknown_keys);
   RUN_TEST(load_config_reads_old_closed_doors_key);
   RUN_TEST(free_char_releases_mob_memory);
+  RUN_TEST(load_zones_cancelled_variable_keeps_no_strings);
   return UNITY_END();
 }
