@@ -108,6 +108,7 @@ static void cancel_room_reset_commands(zone_rnum zone, room_rnum rnum,
                                        room_vnum deleted_vnum)
 {
   int j, mob_gone = FALSE, tmob_gone = FALSE, tobj_gone = FALSE, ngone = 0;
+  int prev_gone = FALSE;
   obj_rnum gone_containers[DELETE_ROOM_MAX_GONE_CONTAINERS];
 
   for (j = 0; zone_table[zone].cmd[j].command != 'S'; j++) {
@@ -116,10 +117,13 @@ static void cancel_room_reset_commands(zone_rnum zone, room_rnum rnum,
     int gone = FALSE;
 
     switch (cmd) {
-    case 'M':
-    case 'O':
     case 'T':
     case 'V':
+      if (c->arg1 != WLD_TRIGGER)
+        break;          /* a mob/object target: arg3 is not a room */
+      /* fall through */
+    case 'M':
+    case 'O':
       if (c->arg3 == rnum)
         gone = TRUE;
       else if (c->arg3 > rnum)
@@ -155,6 +159,16 @@ static void cancel_room_reset_commands(zone_rnum zone, room_rnum rnum,
     }
     if (gone)
       cancel_zone_command(c);	/* Frees a 'V' command's strings. */
+    else if (c->if_flag && prev_gone)
+      /* reset_zone() runs it only if the command before it succeeded, and a
+       * cancelled ('*') command never does: it will not run again. Kept as
+       * is (its own target still exists), but the builder must know. */
+      TB_WARN_MSG("olc", "room-delete-orphan", "zone",
+                  "zone %d line %d command %d '%c' runs only after the command "
+                  "before it, cancelled with deleted room vnum %d; it will "
+                  "never run", zone_table[zone].number, c->line, j, cmd,
+                  deleted_vnum);
+    prev_gone = gone;
 
     /* What the following commands act on, as reset_zone() tracks it. */
     switch (cmd) {
