@@ -416,6 +416,40 @@ void test_get_line_long_comment_is_skipped_silently(void)
   TEST_ASSERT_EQUAL_INT(0, fclose(fp));
 }
 
+/* =====================================================================
+ * I1-05: count_non_protocol_chars stops at the terminator inside an escape.
+ * Heap copies sized exactly by strdup() let ASan see any over-read.
+ * ===================================================================== */
+
+static int visible_chars(const char *text)
+{
+  char *copy = strdup(text);
+  int n;
+
+  TEST_ASSERT_NOT_NULL(copy);
+  n = count_non_protocol_chars(copy);
+  free(copy);
+  return n;
+}
+
+void test_count_non_protocol_trailing_at_sign(void)
+{
+  TEST_ASSERT_EQUAL_INT(4, visible_chars("Room@"));
+  TEST_ASSERT_EQUAL_INT(1, count_op("protocol-escape-truncated"));
+}
+
+void test_count_non_protocol_unterminated_bracket(void)
+{
+  TEST_ASSERT_EQUAL_INT(1, visible_chars("x\t[ab"));
+  TEST_ASSERT_EQUAL_INT(1, count_op("protocol-escape-truncated"));
+}
+
+void test_count_non_protocol_complete_escapes_are_silent(void)
+{
+  TEST_ASSERT_EQUAL_INT(5, visible_chars("\tRHall\t[b]x"));
+  TEST_ASSERT_EQUAL_INT(0, count_records());
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -430,5 +464,8 @@ int main(void)
   RUN_TEST(test_get_line_long_line_tail_is_discarded_and_reported);
   RUN_TEST(test_get_line_exact_fit_line_is_silent);
   RUN_TEST(test_get_line_long_comment_is_skipped_silently);
+  RUN_TEST(test_count_non_protocol_trailing_at_sign);
+  RUN_TEST(test_count_non_protocol_unterminated_bracket);
+  RUN_TEST(test_count_non_protocol_complete_escapes_are_silent);
   return UNITY_END();
 }

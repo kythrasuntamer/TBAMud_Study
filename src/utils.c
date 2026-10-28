@@ -1487,12 +1487,28 @@ int count_non_protocol_chars(char * str)
       continue;
     }
     if (*string == '@' || *string == '\t') {
+      /* Every extra step must first check for the terminator: str is raw
+       * builder text (redit room names) and may end inside an escape. */
       string++;
+      if (!*string) {
+        TB_WARN_MSG("utils", "protocol-escape-truncated",
+                    "count_non_protocol_chars",
+                    "string ends inside an escape at offset %td",
+                    string - str);
+        break;
+      }
       if (*string != '[' && *string != '<' && *string != '>' && *string != '(' && *string != ')')
         string++;
       else if (*string == '[') {
         while (*string && *string != ']')
           string++;
+        if (!*string) {
+          TB_WARN_MSG("utils", "protocol-escape-truncated",
+                      "count_non_protocol_chars",
+                      "unterminated '[' escape runs to the end at offset %td",
+                      string - str);
+          break;
+        }
         string++;
       } else
         string++;
