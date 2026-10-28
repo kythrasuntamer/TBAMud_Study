@@ -545,9 +545,10 @@ void free_shop(struct shop_data *shop) { free(shop); }
 void modify_shop_string(char **str, char *newstr) { free(*str); *str = strdup(newstr); }
 static long last_int_list_add = -2;
 void add_shop_to_int_list(IDXTYPE **tlist, IDXTYPE newi) { (void)tlist; last_int_list_add = (long)newi; }
-void remove_shop_from_int_list(IDXTYPE **list, IDXTYPE num) { (void)list; (void)num; }
+static long last_int_list_remove = -2, last_type_list_remove = -2;
+void remove_shop_from_int_list(IDXTYPE **list, IDXTYPE num) { (void)list; last_int_list_remove = (long)num; }
 void add_shop_to_type_list(struct shop_buy_data **list, struct shop_buy_data *newl) { (void)list; (void)newl; }
-void remove_shop_from_type_list(struct shop_buy_data **list, int num) { (void)list; (void)num; }
+void remove_shop_from_type_list(struct shop_buy_data **list, int num) { (void)list; last_type_list_remove = num; }
 
 static int zone_editable = TRUE;
 int can_edit_zone(struct char_data *ch, zone_rnum rnum) { (void)ch; (void)rnum; return zone_editable; }
@@ -2435,6 +2436,74 @@ static void test_zedit_menu_reports_unset_mob_and_trigger_args(void)
   free_zedit_session(d);
 }
 
+/* ------------------------------------------------------------------ */
+/* Leftovers 5: a delete-entry index outside a shop list is refused in */
+/* sedit, reported with the shop and builder, and explained.  genshp.c */
+/* refused it with a log line only: the builder just saw the menu      */
+/* again with nothing deleted.                                         */
+/* ------------------------------------------------------------------ */
+static void test_sedit_delete_index_outside_list_is_refused_and_explained(void)
+{
+  struct descriptor_data *d = &builder_desc;
+  struct shop_data scratch;
+  IDXTYPE products[] = { 0, 1, NOTHING };
+  IDXTYPE rooms[] = { NOWHERE };
+  struct shop_buy_data types[2];
+
+  make_objects(2);
+  memset(&scratch, 0, sizeof(scratch));
+  memset(types, 0, sizeof(types));
+  BUY_TYPE(types[0]) = 0;
+  BUY_TYPE(types[1]) = NOTHING;
+  S_PRODUCTS(&scratch) = products;
+  S_ROOMS(&scratch) = rooms;
+  S_NAMELISTS(&scratch) = types;
+  OLC_SHOP(d) = &scratch;
+  OLC_NUM(d) = 3000;
+  last_int_list_remove = last_type_list_remove = -2;
+
+  OLC_MODE(d) = SEDIT_DELETE_PRODUCT;
+  sedit_parse(d, "2");
+  TEST_ASSERT_EQUAL_INT(-2, last_int_list_remove);
+  TEST_ASSERT_EQUAL_STRING("shop-list-index", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail,
+                              "shop vnum 3000 product list: delete index 2 out of range 0..1"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "player idnum 4242"));
+  TEST_ASSERT_NOT_NULL(strstr(out_buf, "There is no product 2 (choose 0 to 1); nothing deleted."));
+  TEST_ASSERT_EQUAL_INT(SEDIT_PRODUCTS_MENU, OLC_MODE(d));
+
+  OLC_MODE(d) = SEDIT_DELETE_TYPE;
+  sedit_parse(d, "-1");
+  TEST_ASSERT_EQUAL_INT(-2, last_type_list_remove);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "entry list: delete index -1 out of range 0..0"));
+
+  out_buf[0] = '\0';
+  OLC_MODE(d) = SEDIT_DELETE_ROOM;
+  sedit_parse(d, "0");
+  TEST_ASSERT_EQUAL_INT(-2, last_int_list_remove);
+  TEST_ASSERT_NOT_NULL(strstr(out_buf, "There is no room to delete."));
+
+  OLC_MODE(d) = SEDIT_DELETE_PRODUCT;
+  sedit_parse(d, "99999999999");   /* digits, but no int */
+  TEST_ASSERT_EQUAL_INT(-2, last_int_list_remove);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "delete answer (11 chars) is not an int"));
+  TEST_ASSERT_EQUAL_INT(4, tb_captured_errors);
+
+  /* An index in the list is still passed on, silently. */
+  OLC_MODE(d) = SEDIT_DELETE_PRODUCT;
+  sedit_parse(d, "1");
+  TEST_ASSERT_EQUAL_INT(1, last_int_list_remove);
+  OLC_MODE(d) = SEDIT_DELETE_TYPE;
+  sedit_parse(d, "0");
+  TEST_ASSERT_EQUAL_INT(0, last_type_list_remove);
+  TEST_ASSERT_EQUAL_INT(4, tb_captured_errors);
+
+  OLC_SHOP(d) = NULL;
+  free(obj_index); obj_index = NULL;
+  free(obj_proto); obj_proto = NULL;
+  top_of_objt = 0;
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -2499,5 +2568,6 @@ int main(void)
   RUN_TEST(test_zedit_save_appends_a_new_room_block);
   RUN_TEST(test_zedit_save_refuses_unset_mob_and_trigger_args);
   RUN_TEST(test_zedit_menu_reports_unset_mob_and_trigger_args);
+  RUN_TEST(test_sedit_delete_index_outside_list_is_refused_and_explained);
   return UNITY_END();
 }
