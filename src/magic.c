@@ -732,10 +732,10 @@ static const char *mag_summon_msgs[] = {
 #define MSG_SUMMON_CLONE     11   /* "$n magically divides!" */
 #define MSG_SUMMON_ANIMATE   12   /* "$n animates a corpse!" */
 #define NUM_MAG_SUMMON_MSGS  13
-/* Compile-time check (C99 has no _Static_assert): the array size must
- * be -1, an error, if the table and the indexes above drift apart. */
-typedef char mag_summon_msgs_size_check[
-  (sizeof(mag_summon_msgs) / sizeof(mag_summon_msgs[0]) == NUM_MAG_SUMMON_MSGS) ? 1 : -1];
+/* Compile-time check: the build fails if the table and the indexes above
+ * drift apart. */
+TB_STATIC_ASSERT(TB_ARRAY_LEN(mag_summon_msgs) == NUM_MAG_SUMMON_MSGS,
+                 mag_summon_msgs_size);
 
 /* Keep the \r\n because these use send_to_char. */
 static const char *mag_summon_fail_msgs[] = {

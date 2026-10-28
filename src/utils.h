@@ -184,6 +184,30 @@ void *tb_realloc_array_at(void *ptr, size_t count, size_t element_size,
   tb_calloc_array_at((count), (element_size), __FILE__, __LINE__, __func__)
 #define TB_REALLOC_ARRAY(ptr, count, element_size) \
   tb_realloc_array_at((ptr), (count), (element_size), __FILE__, __LINE__, __func__)
+
+/** Number of elements in array a. With GCC and Clang it does not compile
+ * when a is a pointer: sizeof on a pointer parameter used as an array or
+ * buffer size was a recurring bug (B1-01, I2-01, the file_to_string bound).
+ * a is not evaluated. */
+#if defined(__GNUC__)
+#define TB_ARRAY_LEN(a) \
+  (sizeof(a) / sizeof((a)[0]) + 0 * sizeof(struct { int tb_not_an_array_ : \
+    1 - 2 * __builtin_types_compatible_p(__typeof__(a), __typeof__(&(a)[0])); }))
+#else
+#define TB_ARRAY_LEN(a) (sizeof(a) / sizeof((a)[0]))
+#endif
+
+/** Compile-time assertion, e.g. that a name table and its count agree:
+ *   TB_STATIC_ASSERT(TB_ARRAY_LEN(table) == NUM_ENTRIES, table_size);
+ * tag is an identifier naming the check. Before C11 (this tree builds as
+ * C99) it declares the typedef tb_static_assert_<tag>, so use it at file
+ * scope, once per tag. */
+#if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
+#define TB_STATIC_ASSERT(cond, tag) _Static_assert((cond), #tag)
+#else
+#define TB_STATIC_ASSERT(cond, tag) \
+  typedef char tb_static_assert_##tag[(cond) ? 1 : -1]
+#endif
 int touch(const char *path);
 void mudlog(int type, int level, int file, const char *str, ...) __attribute__ ((format (printf, 4, 5)));
 int	rand_number_at(int from, int to, const char *source_file, int source_line,
