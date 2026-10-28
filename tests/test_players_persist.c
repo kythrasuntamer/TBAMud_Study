@@ -81,6 +81,15 @@ void affect_to_char(struct char_data *ch, struct affected_type *af)
 }
 void new_affect(struct affected_type *af) { memset(af, 0, sizeof(*af)); }
 void add_completed_quest(struct char_data *ch, qst_vnum vnum) { (void)ch; (void)vnum; }
+/* quest.c: vnum 300 is the only loaded quest; clear_quest() as in quest.c. */
+qst_rnum real_quest(qst_vnum vnum) { return vnum == 300 ? 0 : NOTHING; }
+void clear_quest(struct char_data *ch)
+{
+  GET_QUEST(ch) = NOTHING;
+  GET_QUEST_TIME(ch) = -1;
+  GET_QUEST_COUNTER(ch) = 0;
+  REMOVE_BIT_AR(PRF_FLAGS(ch), PRF_QUEST);
+}
 trig_rnum real_trigger(trig_vnum vnum) { (void)vnum; return NOTHING; }
 trig_data *read_trigger(int nr) { (void)nr; return NULL; }
 void add_trigger(struct script_data *sc, trig_data *t, int loc) { (void)sc; (void)t; (void)loc; }
@@ -425,6 +434,60 @@ static void test_out_of_range_class_level_sex_skill(void)
   TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail_log, "tag Clas value 99"));
 }
 
+/* G2-02: Qcur was loaded unchecked. A quest deleted since the save made
+ * real_quest() return NOTHING, and do_score() then read
+ * aquest_table[NOTHING]. A stale quest must be reported and cleared. */
+static void test_stale_current_quest_is_cleared(void)
+{
+  write_pfile("tester", "Id  : 4242\nQcnt: 3\nQcur: 9999\n");
+
+  TEST_ASSERT_EQUAL_INT(0, load_char("tester", &player));
+
+  TEST_ASSERT_EQUAL_INT(NOTHING, GET_QUEST(&player));
+  TEST_ASSERT_EQUAL_INT(0, GET_QUEST_COUNTER(&player));
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("pfile-quest", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "player idnum 4242"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "quest vnum 9999"));
+}
+
+static void test_loaded_current_quest_is_kept(void)
+{
+  write_pfile("tester", "Id  : 4242\nQcnt: 3\nQcur: 300\n");
+
+  TEST_ASSERT_EQUAL_INT(0, load_char("tester", &player));
+
+  TEST_ASSERT_EQUAL_INT(300, GET_QUEST(&player));
+  TEST_ASSERT_EQUAL_INT(3, GET_QUEST_COUNTER(&player));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+}
+
+/* G2-02: current_quest is an int but real_quest() takes a 16-bit
+ * qst_vnum, so Qcur 70300 was looked up as quest 4764 (a different,
+ * possibly loaded, quest). It is out of range instead. */
+static void test_out_of_range_current_quest_is_rejected(void)
+{
+  write_pfile("tester", "Id  : 4242\nQcur: 70300\n");
+
+  TEST_ASSERT_EQUAL_INT(0, load_char("tester", &player));
+
+  TEST_ASSERT_EQUAL_INT(NOTHING, GET_QUEST(&player));
+  TEST_ASSERT_EQUAL_STRING("pfile-range\n", tb_captured_op_log);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "tag Qcur value 70300"));
+}
+
+/* G2-02: Qcur -1 was kept as -1, which is not NOTHING (65535), so the
+ * player counted as on a quest that real_quest() cannot find. */
+static void test_negative_current_quest_is_rejected(void)
+{
+  write_pfile("tester", "Id  : 4242\nQcur: -1\n");
+
+  TEST_ASSERT_EQUAL_INT(0, load_char("tester", &player));
+
+  TEST_ASSERT_EQUAL_INT(NOTHING, GET_QUEST(&player));
+  TEST_ASSERT_EQUAL_STRING("pfile-range\n", tb_captured_op_log);
+}
+
 /* B2-30: integer and HMVS parse failures went to plain log() with no
  * idnum (and echoed the raw value), and an unknown tag whose first letter
  * matched a case was dropped with no report at all. */
@@ -613,6 +676,10 @@ int main(void)
   RUN_TEST(test_huge_alias_count_is_rejected);
   RUN_TEST(test_save_keeps_affects_past_max);
   RUN_TEST(test_save_of_unindexed_player_is_reported);
+  RUN_TEST(test_stale_current_quest_is_cleared);
+  RUN_TEST(test_loaded_current_quest_is_kept);
+  RUN_TEST(test_out_of_range_current_quest_is_rejected);
+  RUN_TEST(test_negative_current_quest_is_rejected);
   (void)rmdir(scratch_dir);
   return UNITY_END();
 }

@@ -659,7 +659,8 @@ char *get_name_by_id(long id)
  * File content is untrusted. A malformed or out-of-range field never fails
  * the load: it is reported (pfile-int, pfile-range, pfile-flags,
  * pfile-desc, pfile-alias, pfile-tag ...) and the field keeps its PFDEF_*
- * default. Unknown tags are reported and skipped. */
+ * default. Unknown tags are reported and skipped. A current quest that is
+ * not loaded is reported (pfile-quest) and cleared with clear_quest(). */
 int load_char(const char *name, struct char_data *ch)
 {
   int id, i;
@@ -869,7 +870,7 @@ int load_char(const char *name, struct char_data *ch)
       case 'Q':
 	     if (!strcmp(tag, "Qstp"))  GET_QUESTPOINTS(ch)     = parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
        else if (!strcmp(tag, "Qpnt")) GET_QUESTPOINTS(ch) = parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch)); /* Backward compatibility */
-       else if (!strcmp(tag, "Qcur")) GET_QUEST(ch) = parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
+       else if (!strcmp(tag, "Qcur")) GET_QUEST(ch) = pfile_int_in_range(line, filename, tag, GET_IDNUM(ch), IDXTYPE_MIN, IDXTYPE_MAX, PFDEF_CURRQUEST);
        else if (!strcmp(tag, "Qcnt")) GET_QUEST_COUNTER(ch) = parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
        else if (!strcmp(tag, "Qest")) load_quests(fl, ch);
 	else pfile_unknown_tag(filename, tag, GET_IDNUM(ch));
@@ -925,6 +926,21 @@ int load_char(const char *name, struct char_data *ch)
         break;
       }
     }
+  }
+
+  /* Qcur is a quest vnum from the file, range-checked when read to the
+   * qst_vnum that real_quest() takes (current_quest is an int). Its quest
+   * can be gone by now (deleted in qedit, or its quest file removed), and
+   * real_quest() then returns NOTHING, which QST_NAME() and the other
+   * aquest_table[] accessors would use as an index (G2-02). Invariant
+   * after load: the current quest is NOTHING or a loaded quest. A stale
+   * one is left the way quest_progress() leaves a quest that is gone. */
+  if (GET_QUEST(ch) != NOTHING && real_quest(GET_QUEST(ch)) == NOTHING) {
+    TB_ERROR_MSG("player", "pfile-quest", filename,
+                 "player idnum %ld current quest vnum %d is not loaded; "
+                 "quest cleared (counter %d dropped)", GET_IDNUM(ch),
+                 GET_QUEST(ch), GET_QUEST_COUNTER(ch));
+    clear_quest(ch);
   }
 
   affect_total(ch);
