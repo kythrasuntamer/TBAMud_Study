@@ -67,12 +67,38 @@ obj_save_data *objsave_parse_objects_from(FILE *fl, const char *resource,
 int objsave_save_obj_record(struct obj_data *obj, FILE *fl, int location)
 { (void)obj; (void)fl; (void)location; return 1; }
 
-/* Reached through do_hcontrol(); no house object files are written here. */
+/* Same contract as objsave.c's staged-file helpers: mkstemp() beside dest,
+ * rename() over it on commit. House_save_control() stages hcontrol. */
 FILE *objsave_open_staged(const char *dest, char *temp, size_t temp_size)
-{ (void)dest; (void)temp; (void)temp_size; return NULL; }
+{
+  int fd;
+  FILE *fp;
+  if (snprintf(temp, temp_size, "%s.tmpXXXXXX", dest) >= (int)temp_size)
+    return NULL;
+  if ((fd = mkstemp(temp)) < 0)
+    return NULL;
+  if (!(fp = fdopen(fd, "w"))) {
+    close(fd);
+    unlink(temp);
+  }
+  return fp;
+}
 int objsave_commit_staged(FILE *fp, const char *temp, const char *dest)
-{ (void)fp; (void)temp; (void)dest; return 0; }
-void objsave_abort_staged(FILE *fp, const char *temp) { (void)fp; (void)temp; }
+{
+  int failed = fflush(fp) != 0;
+  failed |= fclose(fp) != 0;
+  if (failed || rename(temp, dest) != 0) {
+    unlink(temp);
+    return 0;
+  }
+  return 1;
+}
+void objsave_abort_staged(FILE *fp, const char *temp)
+{
+  if (fp)
+    fclose(fp);
+  unlink(temp);
+}
 /* Vnum 300 is the only object prototype (rnum 0); used by asciiconvert. */
 static int live_objects;
 obj_rnum real_object(obj_vnum vnum) { return vnum == 300 ? 0 : NOTHING; }
@@ -392,6 +418,30 @@ static void test_asciiconvert_releases_objects_and_skips_missing_proto(void)
   TEST_ASSERT_EQUAL_INT(0, remove(ascii));
 }
 
+/* House_save_control() truncated hcontrol in place; a failed write left
+ * it empty and every house was lost at the next boot. It must keep the
+ * live file and report. */
+static void test_hcontrol_save_failure_keeps_live_file(void)
+{
+  char cmd[] = "build 100 north owner";
+  struct house_control_rec none = good_record();
+  long before;
+
+  if (geteuid() == 0)
+    TEST_IGNORE_MESSAGE("directory permissions do not bind root");
+  write_hcontrol(&none, 0);
+  House_boot();
+  before = file_size(HCONTROL_FILE);
+  TEST_ASSERT_EQUAL_INT(0, chmod("etc", 0500));
+
+  do_hcontrol(&imm, cmd, 0, 0);
+
+  TEST_ASSERT_EQUAL_INT(0, chmod("etc", 0700));
+  TEST_ASSERT_EQUAL_INT(before, file_size(HCONTROL_FILE));
+  TEST_ASSERT_EQUAL_STRING("hcontrol-save", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "live file kept"));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -402,6 +452,7 @@ int main(void)
   RUN_TEST(test_built_house_record_has_no_stack_garbage);
   RUN_TEST(test_deleting_last_guest_reads_inside_guests);
   RUN_TEST(test_asciiconvert_releases_objects_and_skips_missing_proto);
+  RUN_TEST(test_hcontrol_save_failure_keeps_live_file);
   {
     char sub[300];
     if (snprintf(sub, sizeof(sub), "%s/etc", scratch_dir) > 0)

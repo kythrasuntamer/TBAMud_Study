@@ -270,29 +270,36 @@ static int find_house(room_vnum vnum)
   return (NOWHERE);
 }
 
-/* Save the house control information */
+/** Save the house control records to HCONTROL_FILE.
+ * The file used to be truncated in place with fopen("wb"): a failed or
+ * short write left it empty or partial, and the next boot then lost every
+ * house. It is now staged beside the live file and committed only after a
+ * complete write; on failure the live file is kept and the error reported
+ * (hcontrol-save). The in-memory table is unchanged either way, so the
+ * next successful save writes the current state. */
 static void House_save_control(void)
 {
   FILE *fl;
+  char temp[MAX_INPUT_LENGTH];
 
-  if (!(fl = fopen(HCONTROL_FILE, "wb"))) {
-    TB_REPORT_ERRNO("fopen", HCONTROL_FILE);
+  if (!(fl = objsave_open_staged(HCONTROL_FILE, temp, sizeof(temp)))) {
+    TB_ERROR_MSG("house", "hcontrol-save", HCONTROL_FILE,
+                 "%d house records not saved; live file kept", num_of_houses);
     return;
   }
   /* write all the house control recs in one fell swoop. */
   if (fwrite(house_control, sizeof(struct house_control_rec), num_of_houses, fl) != (size_t)num_of_houses) {
-    if (ferror(fl)) {
-      int saved_errno = errno;
-      log("SYSERR: house control write failed for %s after %d records: %s (errno=%d)",
-          HCONTROL_FILE, num_of_houses, strerror(saved_errno), saved_errno);
-    } else
-      log("SYSERR: short write saving %d house-control records to %s",
-          num_of_houses, HCONTROL_FILE);
-    tb_fclose(fl);
+    TB_ERROR_ERRNO("house", "hcontrol-save", HCONTROL_FILE,
+                   "short write of %d house records; live file kept",
+                   num_of_houses);
+    objsave_abort_staged(fl, temp);
     return;
   }
 
-  tb_fclose(fl);
+  if (!objsave_commit_staged(fl, temp, HCONTROL_FILE))
+    TB_ERROR_MSG("house", "hcontrol-save", HCONTROL_FILE,
+                 "%d house records not committed; live file kept",
+                 num_of_houses);
 }
 
 /* Report one hcontrol record that House_boot() will not load. */
