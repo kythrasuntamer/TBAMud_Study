@@ -288,6 +288,16 @@ if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
         PROPERTIES COMPILE_OPTIONS "-ffunction-sections;-fdata-sections")
 endif()
 
+# Production shop buyword evaluator and shop-file readers. test_shop.c
+# includes shop.c to reach its file-static helpers.
+add_mud_test(test_shop
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_shop.c
+)
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_compile_options(test_shop PRIVATE -ffunction-sections -fdata-sections)
+    target_link_options(test_shop PRIVATE -Wl,--gc-sections)
+endif()
+
 find_package(Python3 COMPONENTS Interpreter QUIET)
 if(Python3_Interpreter_FOUND)
     add_test(NAME test_dg_memory_callback_contract

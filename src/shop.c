@@ -47,8 +47,17 @@ const char *shop_bits[] = {
 };
 
 
+/* Who is evaluating a buyword expression, for diagnostics. */
+struct shop_expr_ctx {
+  struct obj_data *obj;  /* item being offered */
+  int shop_nr;           /* shop rnum */
+  int type_idx;          /* index into the shop's buy-type list */
+  bool failed;           /* evaluation aborted; the result must be rejected */
+};
+
 /* local (file scope) function prototypes  */
-static void push(struct stack_data *stack, int pushval); /**< @todo Move to utils.c */
+static void push(struct stack_data *stack, int pushval,
+    struct shop_expr_ctx *ctx); /**< @todo Move to utils.c */
 static int top(struct stack_data *stack); /**< @todo Move to utils.c */
 static int pop(struct stack_data *stack); /**< @todo Move to utils.c */
 static char *list_object(struct obj_data *obj, int cnt, int oindex, int shop_nr, struct char_data *keeper, struct char_data *seller);
@@ -72,9 +81,11 @@ static void list_detailed_shop(struct char_data *ch, int shop_nr);
 static int is_ok_char(struct char_data *keeper, struct char_data *ch, int shop_nr);
 static int is_open(struct char_data *keeper, int shop_nr, int msg);
 static int is_ok(struct char_data *keeper, struct char_data *ch, int shop_nr);
-static void evaluate_operation(struct stack_data *ops, struct stack_data *vals);
+static void evaluate_operation(struct stack_data *ops, struct stack_data *vals,
+    struct shop_expr_ctx *ctx);
 static int find_oper_num(char token);
-static int evaluate_expression(struct obj_data *obj, char *expr);
+static int evaluate_expression(struct obj_data *obj, char *expr, int shop_nr,
+    int type_idx);
 static int trade_with(struct obj_data *item, int shop_nr);
 static int same_obj(struct obj_data *obj1, struct obj_data *obj2);
 static int shop_producing(struct obj_data *item, int shop_nr);
@@ -178,8 +189,23 @@ static int is_ok(struct char_data *keeper, struct char_data *ch, int shop_nr)
     return (FALSE);
 }
 
-static void push(struct stack_data *stack, int pushval)
+/* Push onto a fixed-size expression stack. The expression is builder text
+ * (sedit, shop file) whose only limit is its length, so an expression with
+ * more than S_CAPACITY nested operators or operands must be rejected, not
+ * written past the array. Reports buyword-eval and marks ctx failed. */
+static void push(struct stack_data *stack, int pushval,
+    struct shop_expr_ctx *ctx)
 {
+  if (S_FULL(stack)) {
+    if (!ctx->failed)
+      TB_ERROR_MSG("shop", "buyword-eval", "stack",
+                   "shop #%d buy type %d expression exceeds %d tokens; "
+                   "obj vnum %d rejected", (int) SHOP_NUM(ctx->shop_nr),
+                   SHOP_BUYTYPE(ctx->shop_nr, ctx->type_idx),
+                   S_CAPACITY(stack), (int) GET_OBJ_VNUM(ctx->obj));
+    ctx->failed = TRUE;
+    return;
+  }
   S_DATA(stack, S_LEN(stack)++) = pushval;
 }
 
@@ -201,21 +227,22 @@ static int pop(struct stack_data *stack)
   }
 }
 
-static void evaluate_operation(struct stack_data *ops, struct stack_data *vals)
+static void evaluate_operation(struct stack_data *ops, struct stack_data *vals,
+    struct shop_expr_ctx *ctx)
 {
   int oper;
 
   if ((oper = pop(ops)) == OPER_NOT)
-    push(vals, !pop(vals));
+    push(vals, !pop(vals), ctx);
   else {
     int val1 = pop(vals),
 	val2 = pop(vals);
 
     /* Compiler would previously short-circuit these. */
     if (oper == OPER_AND)
-      push(vals, val1 && val2);
+      push(vals, val1 && val2, ctx);
     else if (oper == OPER_OR)
-      push(vals, val1 || val2);
+      push(vals, val1 || val2, ctx);
   }
 }
 
@@ -229,18 +256,24 @@ static int find_oper_num(char token)
   return (NOTHING);
 }
 
-static int evaluate_expression(struct obj_data *obj, char *expr)
+static int evaluate_expression(struct obj_data *obj, char *expr, int shop_nr,
+    int type_idx)
 {
   struct stack_data ops, vals;
+  struct shop_expr_ctx ctx;
   char *ptr, *end, name[MAX_STRING_LENGTH];
   int temp, eindex;
 
   if (!expr || !*expr)	/* Allows opening ( first. */
     return (TRUE);
 
+  ctx.obj = obj;
+  ctx.shop_nr = shop_nr;
+  ctx.type_idx = type_idx;
+  ctx.failed = FALSE;
   ops.len = vals.len = 0;
   ptr = expr;
-  while (*ptr) {
+  while (*ptr && !ctx.failed) {
     if (isspace(*ptr))
       ptr++;
     else {
@@ -252,15 +285,15 @@ static int evaluate_expression(struct obj_data *obj, char *expr)
 	name[ptr - end] = '\0';
 	for (eindex = 0; *extra_bits[eindex] != '\n'; eindex++)
 	  if (!str_cmp(name, extra_bits[eindex])) {
-	    push(&vals, OBJ_FLAGGED(obj, eindex));
+	    push(&vals, OBJ_FLAGGED(obj, eindex), &ctx);
 	    break;
 	  }
 	if (*extra_bits[eindex] == '\n')
-	  push(&vals, isname(name, obj->name));
+	  push(&vals, isname(name, obj->name), &ctx);
       } else {
 	if (temp != OPER_OPEN_PAREN)
 	  while (top(&ops) > temp)
-	    evaluate_operation(&ops, &vals);
+	    evaluate_operation(&ops, &vals, &ctx);
 
 	if (temp == OPER_CLOSE_PAREN) {
 	  if ((temp = pop(&ops)) != OPER_OPEN_PAREN) {
@@ -268,13 +301,15 @@ static int evaluate_expression(struct obj_data *obj, char *expr)
 	    return (FALSE);
 	  }
 	} else
-	  push(&ops, temp);
+	  push(&ops, temp, &ctx);
 	ptr++;
       }
     }
   }
-  while (top(&ops) != -1)
-    evaluate_operation(&ops, &vals);
+  while (!ctx.failed && top(&ops) != -1)
+    evaluate_operation(&ops, &vals, &ctx);
+  if (ctx.failed)
+    return (FALSE);
   temp = pop(&vals);
   if (top(&vals) != -1) {
     log("SYSERR: Extra operands left on shop keyword expression stack.");
@@ -299,7 +334,8 @@ static int trade_with(struct obj_data *item, int shop_nr)
 		(GET_OBJ_TYPE(item) == ITEM_WAND ||
 		 GET_OBJ_TYPE(item) == ITEM_STAFF))
 	return (OBJECT_DEAD);
-      else if (evaluate_expression(item, SHOP_BUYWORD(shop_nr, counter)))
+      else if (evaluate_expression(item, SHOP_BUYWORD(shop_nr, counter),
+                                   shop_nr, counter))
 	return (OBJECT_OK);
     }
   return (OBJECT_NOTOK);
