@@ -85,6 +85,18 @@ ssize_t __wrap_read(int fd, void *buf, size_t count)  /* NOLINT(cert-dcl37-c,cer
   return (ssize_t)n;
 }
 
+/* With _FORTIFY_SOURCE (the hardened RelWithDebInfo build) glibc turns
+ * comm.c's read() into __read_chk(), which --wrap=read does not catch: the
+ * real read() then ran on the fake descriptor and returned -1. Keep the
+ * fortify check (count must fit the destination) and read the script. */
+ssize_t __wrap___read_chk(int fd, void *buf, size_t count, size_t buflen);  /* NOLINT(cert-dcl37-c,cert-dcl51-cpp) */
+ssize_t __wrap___read_chk(int fd, void *buf, size_t count, size_t buflen)  /* NOLINT(cert-dcl37-c,cert-dcl51-cpp) */
+{
+  if (count > buflen)
+    abort();
+  return __wrap_read(fd, buf, count);
+}
+
 /* History ('!') helpers from interpreter.c; unused by these inputs. */
 int is_abbrev(const char *arg1, const char *arg2) { (void)arg1; (void)arg2; return 0; }
 void skip_spaces(char **string) { (void)string; }
