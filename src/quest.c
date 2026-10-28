@@ -399,14 +399,27 @@ void add_completed_quest(struct char_data *ch, qst_vnum vnum)
   qst_vnum *temp;
   int count, i;
 
-  if (!ch || !ch->player_specials)
+  if (!ch || !ch->player_specials) {
+    TB_ERROR_MSG("quest", "completed-list-owner", "player_specials",
+                 "quest vnum %d completed by %s", (int) vnum,
+                 ch ? "a character with no player_specials" : "NULL character");
     return;
+  }
 
+  /* Invariant: GET_NUM_QUESTS(ch) is the length of completed_quests (both
+   * come from the pfile). If they disagree the list is rebuilt from what is
+   * usable, and the lost history is reported. */
   count = GET_NUM_QUESTS(ch);
-  if (count < 0)
+  if (count < 0) {
+    TB_ERROR_MSG("quest", "completed-list-corrupt", "player_specials",
+                 DIAG_CHAR_FMT " completed quest count %d is negative; reset to 0",
+                 DIAG_CHAR(ch), count);
     count = 0;
+  }
   if (count > 0 && !ch->player_specials->saved.completed_quests) {
-    log("SYSERR: Character has %d completed quests but no quest list.", count);
+    TB_ERROR_MSG("quest", "completed-list-corrupt", "player_specials",
+                 DIAG_CHAR_FMT " completed quest count %d but no list; history dropped",
+                 DIAG_CHAR(ch), count);
     count = 0;
   }
 
@@ -549,12 +562,18 @@ void generic_complete_quest(struct char_data *ch)
       }
     }
     if (QST_OBJ(rnum) && QST_OBJ(rnum) != NOTHING) {
-      if (real_object(QST_OBJ(rnum)) != NOTHING) {
-        if ((new_obj = read_object((QST_OBJ(rnum)),VIRTUAL)) != NULL) {
-            obj_to_char(new_obj, ch);
-            send_to_char(ch, "You have been presented with %s%s for your service.\r\n",
-                GET_OBJ_SHORT(new_obj), CCNRM(ch, C_NRM));
-        }
+      /* The reward vnum is builder data; the object may have been deleted
+       * since the quest was written. Tell the player and the log. */
+      if (real_object(QST_OBJ(rnum)) == NOTHING ||
+          (new_obj = read_object((QST_OBJ(rnum)),VIRTUAL)) == NULL) {
+        TB_ERROR_MSG("quest", "reward-missing", "obj_proto",
+                     DIAG_CHAR_FMT " quest vnum %d reward obj vnum %d could not be loaded",
+                     DIAG_CHAR(ch), (int) vnum, (int) QST_OBJ(rnum));
+        send_to_char(ch, "The reward object for this quest could not be found; please tell an immortal.\r\n");
+      } else {
+        obj_to_char(new_obj, ch);
+        send_to_char(ch, "You have been presented with %s%s for your service.\r\n",
+            GET_OBJ_SHORT(new_obj), CCNRM(ch, C_NRM));
       }
     }
     completing_quest = FALSE;

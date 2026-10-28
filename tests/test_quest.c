@@ -454,9 +454,38 @@ static void test_delete_last_quest_unknown_qm_reports(void)
   TEST_ASSERT_EQUAL_STRING("delete-quest-qm", tb_captured_operation);
 }
 
+/* H3-07: a deleted reward object is reported to the log and the player. */
+static void test_missing_reward_object_reports(void)
+{
+  add_quest_fixture(0, 100, AQ_ROOM_FIND, 3001, 1);
+  quests[0].obj_reward = 4444;      /* no such prototype */
+  set_quest(&player, 0);
+
+  autoquest_trigger_check(&player, NULL, NULL, AQ_ROOM_FIND);
+
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("reward-missing", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "reward obj vnum 4444"));
+  TEST_ASSERT_NOT_NULL(strstr(sent, "could not be found"));
+}
+
+/* H3-07: a quest count with no list is reported, not silently reset. */
+static void test_completed_list_corrupt_reports(void)
+{
+  GET_NUM_QUESTS(&player) = 3;      /* but completed_quests == NULL */
+
+  add_completed_quest(&player, 100);
+
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("completed-list-corrupt", tb_captured_operation);
+  TEST_ASSERT_EQUAL_INT(1, GET_NUM_QUESTS(&player));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(test_missing_reward_object_reports);
+  RUN_TEST(test_completed_list_corrupt_reports);
   RUN_TEST(test_delete_last_quest_restores_qm_by_rnum);
   RUN_TEST(test_delete_last_quest_unknown_qm_reports);
   RUN_TEST(test_questmaster_finds_secondary_on_any_quest);
