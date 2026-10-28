@@ -1218,6 +1218,21 @@ int __wrap_sodium_init(void)
   return (fail_sodium_init ? -1 : __real_sodium_init());
 }
 
+/* Counts Argon2id verifications (--wrap=crypto_pwhash_str_verify). */
+static int pwhash_verifies;
+/* NOLINTNEXTLINE(cert-dcl37-c,cert-dcl51-cpp): --wrap requires this name. */
+int __real_crypto_pwhash_str_verify(const char *str, const char *passwd,
+                                    unsigned long long passwdlen);
+/* NOLINTNEXTLINE(cert-dcl37-c,cert-dcl51-cpp): --wrap requires this name. */
+int __wrap_crypto_pwhash_str_verify(const char *str, const char *passwd,
+                                    unsigned long long passwdlen);
+int __wrap_crypto_pwhash_str_verify(const char *str, const char *passwd,
+                                    unsigned long long passwdlen)
+{
+  pwhash_verifies++;
+  return (__real_crypto_pwhash_str_verify(str, passwd, passwdlen));
+}
+
 /* A login whose password cannot be checked closes with a message, is
  * reported once with the idnum, and counts as neither a bad password nor a
  * rate-limit failure. */
@@ -1348,9 +1363,14 @@ void test_legacy_hash_without_crypt_is_reported_not_counted(void)
   strlcpy(GET_PASSWD(dch), "abJnggxhB/yWI", sizeof(dch->player.passwd)); /* DES */
   descriptor_list = &d;
   strlcpy(arg, dupe_password, sizeof(arg));
+  pwhash_verifies = 0;
   nanny(&d, arg);
 
   assert_unverifiable_login(&d, dch, "no crypt()");
+  /* The legacy path does the same Argon2id work as a mismatch, so its
+   * response time does not single out legacy-hash accounts.  Red before:
+   * it returned at once (0 verifications). */
+  TEST_ASSERT_EQUAL_INT(1, pwhash_verifies);
   dupe_world_free();
 }
 

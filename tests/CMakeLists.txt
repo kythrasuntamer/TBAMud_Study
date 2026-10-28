@@ -188,7 +188,8 @@ target_compile_definitions(test_interpreter_nocrypt PRIVATE NOCRYPT)
 target_link_libraries(test_interpreter_nocrypt PRIVATE ${SODIUM_LIBRARY})
 if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
     target_link_options(test_interpreter_nocrypt PRIVATE
-        -Wl,--wrap=tb_error_log_at -Wl,--wrap=sodium_init)
+        -Wl,--wrap=tb_error_log_at -Wl,--wrap=sodium_init
+        -Wl,--wrap=crypto_pwhash_str_verify)
 endif()
 
 # ---------------------------------------------------------------------------

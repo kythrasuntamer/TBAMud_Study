@@ -113,6 +113,23 @@ static enum tb_pw_result tb_password_verify_at(const char *password,
             ? TB_PW_MATCH : TB_PW_MISMATCH);
   }
 #else
+  {
+    /* Spend the same Argon2id work as a real mismatch, so the response time
+     * does not reveal which accounts still hold a legacy hash.  The dummy
+     * hash uses the production parameters and is computed once. */
+    static char dummy[crypto_pwhash_STRBYTES];
+    static int dummy_ready;
+    static const char dummy_secret[] = "tbamud-legacy-timing-dummy";
+
+    if (!dummy_ready)
+      dummy_ready = crypto_pwhash_str_alg(dummy, dummy_secret,
+                                          sizeof(dummy_secret) - 1,
+                                          crypto_pwhash_OPSLIMIT_INTERACTIVE,
+                                          crypto_pwhash_MEMLIMIT_INTERACTIVE,
+                                          crypto_pwhash_ALG_ARGON2ID13) == 0;
+    if (dummy_ready)
+      (void)crypto_pwhash_str_verify(dummy, password, strlen(password));
+  }
   tb_pw_unverifiable_at("crypt", idnum, name,
                         "legacy (non-Argon2id) hash but this build has no crypt()",
                         file, line, func);
@@ -188,10 +205,8 @@ static struct tb_login_rate_entry *tb_login_rate_entry_for(const char *name,
   }
 
   entry = &tb_login_rates[slot];
-  if (strcmp(entry->account, name) != 0) {
+  if (strcmp(entry->account, name) != 0)
     entry->pw_suppressed = 0;          /* a different account's slot */
-    entry->window_start = 0;
-  }
   if (strcmp(entry->account, name) != 0 ||
       now < entry->window_start ||
       now - entry->window_start >= TB_LOGIN_WINDOW) {
