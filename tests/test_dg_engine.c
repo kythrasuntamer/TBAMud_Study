@@ -834,6 +834,39 @@ static void obj_extra_lists_every_flag(void)
   TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
 }
 
+/* D1-20: setters added a script int to sbyte/sh_int fields in int and stored
+ * the wrapped result; cha(250) wrapped before its 3..max clamp ran, and
+ * wait(INT_MAX) overflowed int (UBSan). */
+static void field_setters_saturate_instead_of_wrapping(void)
+{
+  char_data *mob = make_mob("mob");
+  trig_data *t = idle_mob_trigger(mob);
+  char out[MAX_INPUT_LENGTH];
+
+  uid_var(t, "a", mob->script_id);
+  GET_HIT(mob) = 100;
+  subst(mob, t, "%a.hitp(40000)%", out);
+  TEST_ASSERT_EQUAL_INT(SHRT_MAX, GET_HIT(mob));
+  TEST_ASSERT_EQUAL_STRING("field-clamp", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "hitp"));
+
+  tb_error_capture_reset();
+  mob->real_abils.cha = 10;
+  subst(mob, t, "%a.cha(250)%", out);
+  TEST_ASSERT_EQUAL_INT(25, mob->real_abils.cha);   /* the NPC game maximum */
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+
+  subst(mob, t, "%a.wait(2147483647)%", out);
+  TEST_ASSERT_EQUAL_INT(INT_MAX, GET_WAIT_STATE(mob));
+  TEST_ASSERT_EQUAL_STRING("field-clamp", tb_captured_operation);
+  GET_WAIT_STATE(mob) = 0;
+
+  tb_error_capture_reset();
+  script_damage(mob, -40000);
+  TEST_ASSERT_EQUAL_INT(GET_MAX_HIT(mob), GET_HIT(mob));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -868,5 +901,6 @@ int main(void)
   RUN_TEST(tstat_of_long_script_is_truncated_and_reported);
   RUN_TEST(legacy_saved_var_with_long_name_is_read_in_bounds);
   RUN_TEST(obj_extra_lists_every_flag);
+  RUN_TEST(field_setters_saturate_instead_of_wrapping);
   return UNITY_END();
 }

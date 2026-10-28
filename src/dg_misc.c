@@ -305,8 +305,11 @@ void script_damage(struct char_data *vict, int dam)
     return;
   }
 
-  GET_HIT(vict) -= dam;
-  GET_HIT(vict) = MIN(GET_HIT(vict), GET_MAX_HIT(vict));
+  /* dam is a script int; GET_HIT is sh_int. Subtracting in int and storing
+   * back wrapped, so a large negative "damage" could kill. */
+  GET_HIT(vict) = (sh_int)dg_clamp_char_field(NULL, vict, "damage",
+                      MIN((long long)GET_HIT(vict) - dam, GET_MAX_HIT(vict)),
+                      SHRT_MIN, SHRT_MAX);
 
   update_pos(vict);
   send_char_pos(vict, dam);

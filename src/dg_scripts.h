@@ -375,6 +375,13 @@ void send_char_pos(struct char_data *ch, int dam);
 int valid_dg_target(char_data *ch, int bitvector);
 void script_damage(char_data *vict, int dam);
 
+/* Saturating field arithmetic for DG setters (dg_variables.c). */
+int dg_bounded_add(int cur, int add, int lo, int hi);
+long dg_clamp_char_field(trig_data *trig, char_data *ch, const char *field,
+                         long long value, long lo, long hi);
+long dg_clamp_obj_field(trig_data *trig, obj_data *obj, const char *field,
+                        long long value, long lo, long hi);
+
 /* from dg_mobcmd.c */
 ACMD(do_masound);
 ACMD(do_mat);
