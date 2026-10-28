@@ -270,6 +270,22 @@ static void test_delete_mobile_releases_prototype_and_detaches_instances(void)
   character_list = NULL;
 }
 
+/* check_mobile_strings() named the mob through mob_index[mob->nr]; an OLC
+ * working copy of a new mob has nr NOBODY (65535), far past the table. */
+static void test_check_mobile_strings_with_unprototyped_mob(void)
+{
+  struct char_data scratch;
+
+  memset(&scratch, 0, sizeof(scratch));
+  scratch.nr = NOBODY;
+  scratch.player.name = strdup("x");
+  scratch.player.short_descr = strdup("an x");
+  scratch.player.long_descr = strdup("An x is here.\r\n");
+  scratch.player.description = strdup("It is an x.\r\n");
+  check_mobile_strings(&scratch);
+  free_mobile_strings(&scratch);
+}
+
 /* ---- delete_object (genobj.c) ----------------------------------------- */
 
 static struct reset_com zcmd(char command, int arg1, int arg2, int arg3)
@@ -339,6 +355,7 @@ int main(void)
   RUN_TEST(test_delete_consecutive_zone_commands);
   RUN_TEST(test_delete_mobile_renumbers_only_real_rnums);
   RUN_TEST(test_delete_mobile_releases_prototype_and_detaches_instances);
+  RUN_TEST(test_check_mobile_strings_with_unprototyped_mob);
   RUN_TEST(test_delete_object_zone_commands);
   return UNITY_END();
 }

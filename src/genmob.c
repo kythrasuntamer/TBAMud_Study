@@ -499,11 +499,12 @@ int write_mobile_record(mob_vnum mvnum, struct char_data *mob, FILE *fd)
 }
 
 /* Replace missing mob strings with placeholders (check_mobile_string).
- * Precondition: mob->nr is a valid rnum; it indexes mob_index only to name
- * the mob in the report. */
+ * mob->nr is used only to name the mob in the report; an OLC working copy
+ * of a new mob carries NOBODY there, which must not index mob_index. */
 void check_mobile_strings(struct char_data *mob)
 {
-  mob_vnum mvnum = mob_index[mob->nr].vnum;
+  mob_vnum mvnum = (mob->nr != NOBODY && mob->nr <= top_of_mobt) ?
+                   mob_index[mob->nr].vnum : NOBODY;
   check_mobile_string(mvnum, &GET_LDESC(mob), "long description");
   check_mobile_string(mvnum, &GET_DDESC(mob), "detailed description");
   check_mobile_string(mvnum, &GET_ALIAS(mob), "alias list");
