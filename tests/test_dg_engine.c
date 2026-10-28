@@ -203,7 +203,7 @@ static void uid_var(trig_data *t, const char *name, long uid)
 {
   char buf[32];
 
-  snprintf(buf, sizeof(buf), "%c%ld", UID_CHAR, uid);
+  (void)snprintf(buf, sizeof(buf), "%c%ld", UID_CHAR, uid);
   add_var(&GET_TRIG_VARS(t), name, buf, 0);
 }
 
@@ -293,7 +293,7 @@ void tearDown(void)
   trig_index = NULL;
   top_of_trigt = 0;
   if (logfile)
-    fclose(logfile);
+    (void)fclose(logfile);
   logfile = NULL;
 }
 
@@ -551,7 +551,7 @@ static void random_trigger_purging_next_object_is_safe(void)
   char first[64];
   const char *purge[] = { first, "%purge% %self%", NULL };
 
-  snprintf(first, sizeof(first), "%%purge%% %c%ld", UID_CHAR,
+  (void)snprintf(first, sizeof(first), "%%purge%% %c%ld", UID_CHAR,
            obj_script_id(tail));
   make_scripted_obj("purger", OTRIG_RANDOM, 100, purge);
   script_trigger_check();
@@ -585,7 +585,7 @@ static void purging_owner_container_stops_script(void)
 
   obj_to_room(box, 0);
   obj_to_obj(owner, box);
-  snprintf(first, sizeof(first), "%%purge%% %c%ld", UID_CHAR,
+  (void)snprintf(first, sizeof(first), "%%purge%% %c%ld", UID_CHAR,
            obj_script_id(box));
   t = make_trigger(OBJ_TRIGGER, OTRIG_RANDOM, 100, lines);
   attach_to_script(&SCRIPT(owner), t);
@@ -673,7 +673,7 @@ static void object_uid_never_aliases_a_room(void)
   TEST_ASSERT_EQUAL_INT64(30027108, o->script_id);
   attach_to_script(&SCRIPT(o), make_trigger(OBJ_TRIGGER, OTRIG_RANDOM, 0, quiet));
   attach_to_script(&SCRIPT(&world[0]), make_trigger(WLD_TRIGGER, WTRIG_RANDOM, 0, quiet));
-  snprintf(second, sizeof(second), "remote qflag %ld", o->script_id);
+  (void)snprintf(second, sizeof(second), "remote qflag %ld", o->script_id);
   run_mob_script(make_mob("mob"), lines);
 
   TEST_ASSERT_NULL(SCRIPT(&world[0])->global_vars);
@@ -687,10 +687,10 @@ static void wrapping_room_vnum_is_rejected(void)
 {
   char name[16];
 
-  snprintf(name, sizeof(name), "%d", 65536 + 100);
+  (void)snprintf(name, sizeof(name), "%d", 65536 + 100);
   TEST_ASSERT_NULL(get_room(name));
   TEST_ASSERT_EQUAL_STRING("uid-namespace", tb_captured_operation);
-  snprintf(name, sizeof(name), "%c%ld", UID_CHAR, (long)ROOM_ID_BASE + 100);
+  (void)snprintf(name, sizeof(name), "%c%ld", UID_CHAR, (long)ROOM_ID_BASE + 100);
   TEST_ASSERT_EQUAL_PTR(&world[0], get_room(name));
 }
 
@@ -774,7 +774,7 @@ static void attach_to_player_is_refused_before_allocating(void)
 
   REMOVE_BIT_AR(MOB_FLAGS(pc), MOB_ISNPC);
   GET_IDNUM(pc) = 77;
-  snprintf(line, sizeof(line), "attach %d %ld", TEST_TRIG_VNUM, pc->script_id);
+  (void)snprintf(line, sizeof(line), "attach %d %ld", TEST_TRIG_VNUM, pc->script_id);
   before = test_trig_index.number;
   run_mob_script(mob, lines);
   /* Only the running trigger itself is live. */
@@ -855,12 +855,12 @@ static void legacy_saved_var_with_long_name_is_read_in_bounds(void)
   name[sizeof(name) - 1] = '\0';
   fl = fopen("plrvars/U-Z/zzvars.mem", "w");
   TEST_ASSERT_NOT_NULL(fl);
-  fprintf(fl, "%s 12345678901234567890 value\n", name);
-  fclose(fl);
+  (void)fprintf(fl, "%s 12345678901234567890 value\n", name);
+  (void)fclose(fl);
 
   read_saved_vars(ch);
 
-  remove("plrvars/U-Z/zzvars.mem");
+  (void)remove("plrvars/U-Z/zzvars.mem");
   rmdir("plrvars/U-Z");
   rmdir("plrvars");
   TEST_ASSERT_EQUAL_INT(0, chdir(cwd));
@@ -930,21 +930,21 @@ static void dg_affect_out_of_range_is_refused(void)
   const char *lines[] = { line, NULL };
   char_data *target = make_mob("target");
 
-  snprintf(line, sizeof(line), "dg_affect %c%ld SANCT 1 65536", UID_CHAR,
+  (void)snprintf(line, sizeof(line), "dg_affect %c%ld SANCT 1 65536", UID_CHAR,
            target->script_id);
   run_mob_script(make_mob("mob"), lines);
   TEST_ASSERT_NULL(target->affected);
   TEST_ASSERT_EQUAL_STRING("affect-range", tb_captured_operation);
 
   tb_error_capture_reset();
-  snprintf(line, sizeof(line), "dg_affect %c%ld str 200 10", UID_CHAR,
+  (void)snprintf(line, sizeof(line), "dg_affect %c%ld str 200 10", UID_CHAR,
            target->script_id);
   run_mob_script(make_mob("mob2"), lines);
   TEST_ASSERT_NULL(target->affected);
   TEST_ASSERT_EQUAL_STRING("affect-range", tb_captured_operation);
 
   tb_error_capture_reset();
-  snprintf(line, sizeof(line), "dg_affect %c%ld str 2 10", UID_CHAR,
+  (void)snprintf(line, sizeof(line), "dg_affect %c%ld str 2 10", UID_CHAR,
            target->script_id);
   run_mob_script(make_mob("mob3"), lines);
   TEST_ASSERT_NOT_NULL(target->affected);
@@ -1036,13 +1036,13 @@ static void lost_remote_and_detach_miss_are_reported(void)
   char_data *bare = make_mob("bare"), *scripted = make_mob("scripted");
 
   attach_to_script(&SCRIPT(scripted), make_trigger(MOB_TRIGGER, MTRIG_SPEECH, 0, quiet));
-  snprintf(remote_line, sizeof(remote_line), "remote flag %ld", bare->script_id);
+  (void)snprintf(remote_line, sizeof(remote_line), "remote flag %ld", bare->script_id);
   run_mob_script(make_mob("mob"), remote_lines);
   TEST_ASSERT_EQUAL_STRING("remote-target", tb_captured_operation);
   TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "flag"));
 
   tb_error_capture_reset();
-  snprintf(detach_line, sizeof(detach_line), "detach 4242 %ld",
+  (void)snprintf(detach_line, sizeof(detach_line), "detach 4242 %ld",
            scripted->script_id);
   run_mob_script(make_mob("mob2"), detach_lines);
   TEST_ASSERT_EQUAL_STRING("detach-miss", tb_captured_operation);
@@ -1286,19 +1286,19 @@ static void vdelete_checks_the_builders_authority(void)
   give_global_flag(&SCRIPT(pc));
   give_global_flag(&SCRIPT(&world[0]));
 
-  snprintf(cmd, sizeof(cmd), " flag %ld", mob->script_id);
+  (void)snprintf(cmd, sizeof(cmd), " flag %ld", mob->script_id);
   immortal_command(do_vdelete, b, cmd);
   TEST_ASSERT_NOT_NULL(SCRIPT(mob)->global_vars);
   TEST_ASSERT_EQUAL_STRING("vdelete-denied", tb_captured_operation);
 
   tb_error_capture_reset();
-  snprintf(cmd, sizeof(cmd), " flag %ld", pc->script_id);
+  (void)snprintf(cmd, sizeof(cmd), " flag %ld", pc->script_id);
   immortal_command(do_vdelete, b, cmd);
   TEST_ASSERT_NOT_NULL(SCRIPT(pc)->global_vars);
   TEST_ASSERT_EQUAL_STRING("vdelete-denied", tb_captured_operation);
 
   tb_error_capture_reset();
-  snprintf(cmd, sizeof(cmd), " flag %ld", room_script_id(&world[0]));
+  (void)snprintf(cmd, sizeof(cmd), " flag %ld", room_script_id(&world[0]));
   immortal_command(do_vdelete, b, cmd);
   TEST_ASSERT_NULL(SCRIPT(&world[0])->global_vars);
   TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);

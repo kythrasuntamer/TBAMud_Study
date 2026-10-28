@@ -83,7 +83,7 @@ static void make_index(const int *vnums, int count)
     CREATE(p, trig_data, 1);
     p->nr = i;
     p->name = strdup("proto");
-    snprintf(cmd, sizeof(cmd), "say %d", vnums[i]);
+    (void)snprintf(cmd, sizeof(cmd), "say %d", vnums[i]);
     p->cmdlist = make_cmdlist(cmd);
     trig_index[i]->proto = p;
   }
@@ -106,7 +106,7 @@ static void write_file(const char *path, const char *text)
   FILE *fp = fopen(path, "w");
 
   TEST_ASSERT_NOT_NULL(fp);
-  fputs(text, fp);
+  (void)fputs(text, fp);
   TEST_ASSERT_EQUAL_INT(0, fclose(fp));
 }
 
@@ -122,7 +122,7 @@ static const char *read_file(const char *path)
     return buf;
   n = fread(buf, 1, sizeof(buf) - 1, fp);
   buf[n] = '\0';
-  fclose(fp);
+  (void)fclose(fp);
   return buf;
 }
 
@@ -131,7 +131,7 @@ static void start_edit(int vnum)
 {
   char arg[32];
 
-  snprintf(arg, sizeof(arg), "%d", vnum);
+  (void)snprintf(arg, sizeof(arg), "%d", vnum);
   do_oasis_trigedit(builder, arg, 0, 0);
   TEST_ASSERT_NOT_NULL(bd->olc);
   TEST_ASSERT_EQUAL_INT(CON_TRIGEDIT, STATE(bd));
@@ -189,7 +189,7 @@ void setUp(void)
   logfile = fopen("/dev/null", "w");
 
   TEST_ASSERT_NOT_NULL(getcwd(old_cwd, sizeof(old_cwd)));
-  snprintf(test_dir, sizeof(test_dir), "/tmp/tb_dg_olc_XXXXXX");
+  (void)snprintf(test_dir, sizeof(test_dir), "/tmp/tb_dg_olc_XXXXXX");
   TEST_ASSERT_NOT_NULL(mkdtemp(test_dir));
   TEST_ASSERT_EQUAL_INT(0, chdir(test_dir));
   TEST_ASSERT_EQUAL_INT(0, mkdir("world", 0700));
@@ -284,16 +284,16 @@ void tearDown(void)
   world = NULL;
   zone_table = NULL;
 
-  remove("world/trg/index");
-  remove("world/trg/newindex");
-  remove("world/trg/1.trg");
-  remove("world/trg/1.new");
+  (void)remove("world/trg/index");
+  (void)remove("world/trg/newindex");
+  (void)remove("world/trg/1.trg");
+  (void)remove("world/trg/1.new");
   rmdir("world/trg");
   rmdir("world");
   TEST_ASSERT_EQUAL_INT(0, chdir(old_cwd));
   rmdir(test_dir);
   if (logfile)
-    fclose(logfile);
+    (void)fclose(logfile);
   logfile = NULL;
 }
 
