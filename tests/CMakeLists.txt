@@ -1212,3 +1212,102 @@ if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
     target_compile_options(test_close_socket PRIVATE -ffunction-sections -fdata-sections)
     target_link_options(test_close_socket PRIVATE -Wl,--gc-sections)
 endif()
+
+# Production config-line splitter (oasis.c split_argument): the key copy is
+# bounded by the caller's buffer (F3-19). Unreferenced oasis.c sections are
+# discarded; tb_error_capture.h in the test supplies tb_error_log_at.
+add_mud_test(test_oasis_split
+    ${MUD_SRCDIR}/oasis.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_oasis_split.c
+)
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_compile_options(test_oasis_split PRIVATE -ffunction-sections -fdata-sections)
+    target_link_options(test_oasis_split PRIVATE -Wl,--gc-sections)
+    set_source_files_properties(${MUD_SRCDIR}/oasis.c
+        PROPERTIES COMPILE_OPTIONS "-ffunction-sections;-fdata-sections")
+endif()
+
+# Production zone and editor access checks (oasis.c can_edit_zone and
+# can_use_editor): bounded zone_table index, editor sentinels kept out of
+# the real zone range (F3-20). Unreferenced oasis.c sections are discarded;
+# tb_error_capture.h in the test supplies tb_error_log_at.
+add_mud_test(test_oasis_access
+    ${MUD_SRCDIR}/oasis.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_oasis_access.c
+)
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_compile_options(test_oasis_access PRIVATE -ffunction-sections -fdata-sections)
+    target_link_options(test_oasis_access PRIVATE -Wl,--gc-sections)
+    set_source_files_properties(${MUD_SRCDIR}/oasis.c
+        PROPERTIES COMPILE_OPTIONS "-ffunction-sections;-fdata-sections")
+endif()
+
+# Production cleanup_olc() (oasis.c) releasing an aedit workspace whole, with
+# the real free_action() from act.social.c. Unreferenced sections of both are
+# discarded; the test stubs the other editors' release functions. Meaningful
+# under LeakSanitizer or Valgrind.
+add_mud_test(test_oasis_cleanup
+    ${MUD_SRCDIR}/oasis.c
+    ${MUD_SRCDIR}/act.social.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_oasis_cleanup.c
+)
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_compile_options(test_oasis_cleanup PRIVATE -ffunction-sections -fdata-sections)
+    target_link_options(test_oasis_cleanup PRIVATE -Wl,--gc-sections)
+    set_source_files_properties(${MUD_SRCDIR}/oasis.c ${MUD_SRCDIR}/act.social.c
+        PROPERTIES COMPILE_OPTIONS "-ffunction-sections;-fdata-sections")
+endif()
+
+# Production manual spells (spells.c): create water refuses a liquid type
+# outside the drink tables (H1-07).
+add_mud_test(test_spells
+    ${MUD_SRCDIR}/spells.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_spells.c
+)
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_compile_options(test_spells PRIVATE -ffunction-sections -fdata-sections)
+    target_link_options(test_spells PRIVATE -Wl,--gc-sections)
+    set_source_files_properties(${MUD_SRCDIR}/spells.c
+        PROPERTIES COMPILE_OPTIONS "-ffunction-sections;-fdata-sections")
+endif()
+
+# Production call_magic() and mag_objectmagic() (spell_parser.c) with the
+# production handler.c: cast triggers that purge participants (H2-01) and
+# the staff's per-occupant loop (H2-10).
+add_mud_test(test_spell_parser
+    ${MUD_SRCDIR}/spell_parser.c
+    ${MUD_SRCDIR}/handler.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_spell_parser.c
+)
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_compile_options(test_spell_parser PRIVATE -ffunction-sections -fdata-sections)
+    target_link_options(test_spell_parser PRIVATE -Wl,--gc-sections)
+    set_source_files_properties(${MUD_SRCDIR}/spell_parser.c ${MUD_SRCDIR}/handler.c
+        PROPERTIES COMPILE_OPTIONS "-ffunction-sections;-fdata-sections")
+endif()
+
+# Production mag_areas() (magic.c) with the production handler.c: damage
+# and death triggers that teleport or purge occupants mid-spell (H1-19).
+add_mud_test(test_mag_areas
+    ${MUD_SRCDIR}/magic.c
+    ${MUD_SRCDIR}/handler.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_mag_areas.c
+)
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_compile_options(test_mag_areas PRIVATE -ffunction-sections -fdata-sections)
+    target_link_options(test_mag_areas PRIVATE -Wl,--gc-sections)
+    set_source_files_properties(${MUD_SRCDIR}/magic.c ${MUD_SRCDIR}/handler.c
+        PROPERTIES COMPILE_OPTIONS "-ffunction-sections;-fdata-sections")
+endif()
+
+# test_handler runs update_char_objects() on a small-stack thread (H2-25).
+find_package(Threads REQUIRED)
+target_link_libraries(test_handler PRIVATE Threads::Threads)
+
+# test_handler also links the production lists.c for the group lists
+# (H2-26).
+target_sources(test_handler PRIVATE ${MUD_SRCDIR}/lists.c)
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    set_source_files_properties(${MUD_SRCDIR}/lists.c
+        PROPERTIES COMPILE_OPTIONS "-ffunction-sections;-fdata-sections")
+endif()

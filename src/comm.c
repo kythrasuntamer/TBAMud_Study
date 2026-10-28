@@ -1066,6 +1066,45 @@ static int poll_failure_recoverable(socket_t mother, int poll_errno, int maxdesc
   return FALSE;
 }
 
+/* An idle player pulled into the void (limits.c check_idling()) types
+ * again: move ch back to GET_WAS_IN, the rnum it was pulled from, and clear
+ * it. Rooms can be deleted with OLC meanwhile; an rnum left past
+ * top_of_world would make char_to_room() refuse it and strand ch, still
+ * playing, in NOWHERE (where char_from_room() aborts the server on it
+ * later). So an invalid GET_WAS_IN is reported and ch goes to the mortal
+ * start room, looked up by vnum; if that room is gone too, that is
+ * reported and ch stays where it is. Returns TRUE when ch was moved. */
+static bool return_from_void(struct char_data *ch)
+{
+  room_rnum was_in = GET_WAS_IN(ch);
+
+  GET_WAS_IN(ch) = NOWHERE;
+  if (!VALID_ROOM_RNUM(was_in)) {
+    room_rnum start = real_room(CONFIG_MORTAL_START);
+    room_rnum here = IN_ROOM(ch);
+
+    if (start == NOWHERE) {
+      TB_ERROR_MSG("comm", "void-return-no-start-room", "room",
+                   DIAG_CHAR_FMT " returns from the void to rnum %d, past "
+                   "top_of_world %d, and mortal start room vnum %d does not "
+                   "exist; left in " DIAG_ROOM_FMT, DIAG_CHAR(ch), (int) was_in,
+                   (int) top_of_world, (int) CONFIG_MORTAL_START,
+                   DIAG_ROOM(here));
+      return FALSE;
+    }
+    TB_ERROR_MSG("comm", "void-return-stale", "room",
+                 DIAG_CHAR_FMT " returns from the void to rnum %d, past "
+                 "top_of_world %d; sent to the mortal start room "
+                 DIAG_ROOM_FMT " instead", DIAG_CHAR(ch), (int) was_in,
+                 (int) top_of_world, DIAG_ROOM(start));
+    was_in = start;
+  }
+  if (IN_ROOM(ch) != NOWHERE)
+    char_from_room(ch);
+  char_to_room(ch, was_in);
+  return TRUE;
+}
+
 /* game_loop contains the main loop which drives the entire MUD.  It
  * cycles once every 0.10 seconds and is responsible for accepting new
  * new connections, polling existing connections for input, dequeueing
@@ -1231,13 +1270,9 @@ void game_loop(socket_t local_mother_desc)
       if (d->character) {
 	/* Reset the idle timer & pull char back from void if necessary */
 	d->character->char_specials.timer = 0;
-	if (STATE(d) == CON_PLAYING && GET_WAS_IN(d->character) != NOWHERE) {
-	  if (IN_ROOM(d->character) != NOWHERE)
-	    char_from_room(d->character);
-	  char_to_room(d->character, GET_WAS_IN(d->character));
-	  GET_WAS_IN(d->character) = NOWHERE;
+	if (STATE(d) == CON_PLAYING && GET_WAS_IN(d->character) != NOWHERE &&
+	    return_from_void(d->character))
 	  act("$n has returned.", TRUE, d->character, 0, 0, TO_ROOM);
-	}
         GET_WAIT_STATE(d->character) = 1;
       }
       d->has_prompt = FALSE;

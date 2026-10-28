@@ -35,6 +35,18 @@ ASPELL(spell_create_water)
   /* level = MAX(MIN(level, LVL_IMPL), 1);	 - not used */
 
   if (GET_OBJ_TYPE(obj) == ITEM_DRINKCON) {
+    /* Value 2 (the liquid) comes from world files and 'osetval 2 N' with no
+     * range check, and both branches below hand it to name_from_drinkcon(),
+     * which indexes drinknames[] with it. Refuse a container whose liquid
+     * has no table entry, naming it and the caster (H1-07). */
+    if (!VALID_LIQ_TYPE(GET_OBJ_VAL(obj, 2))) {
+      TB_ERROR_MSG("magic", "liquid-type-range", "obj",
+                   DIAG_OBJ_FMT " liquid %d not in [0,%d) during create "
+                   "water by " DIAG_CHAR_FMT, DIAG_OBJ(obj),
+                   GET_OBJ_VAL(obj, 2), NUM_LIQ_TYPES, DIAG_CHAR(ch));
+      act("You can't make out what is in $p.", FALSE, ch, obj, 0, TO_CHAR);
+      return;
+    }
     if ((GET_OBJ_VAL(obj, 2) != LIQ_WATER) && (GET_OBJ_VAL(obj, 1) != 0)) {
       name_from_drinkcon(obj);
       GET_OBJ_VAL(obj, 2) = LIQ_SLIME;
@@ -54,9 +66,30 @@ ASPELL(spell_create_water)
   }
 }
 
+/* Recall, teleport and summon move a character, and summon finds its
+ * victim by name across the world. A character stranded in NOWHERE by an
+ * earlier, reported failure (see extract_char_final()) cannot be moved: its
+ * zone flags would be read from zone_table[] out of bounds and
+ * char_from_room() aborts on it. Report the spell, the stranded character
+ * and the caster, and refuse. */
+static bool spell_target_placed(struct char_data *ch, struct char_data *victim,
+                                const char *spell)
+{
+  if (VALID_ROOM_RNUM(IN_ROOM(victim)))
+    return TRUE;
+  TB_ERROR_MSG("magic", "victim-nowhere", spell,
+               DIAG_CHAR_FMT " is in no valid room (rnum %d); %s by "
+               DIAG_CHAR_FMT " refused", DIAG_CHAR(victim),
+               (int) IN_ROOM(victim), spell, DIAG_CHAR(ch));
+  send_to_char(ch, "You failed.\r\n");
+  return FALSE;
+}
+
 ASPELL(spell_recall)
 {
   if (victim == NULL || IS_NPC(victim))
+    return;
+  if (!spell_target_placed(ch, victim, "recall"))
     return;
 
   if (ZONE_FLAGGED(GET_ROOM_ZONE(IN_ROOM(victim)), ZONE_NOASTRAL)) {
@@ -80,6 +113,8 @@ ASPELL(spell_teleport)
   int tries, max_tries = 10 * ((int) top_of_world + 1);
 
   if (victim == NULL || IS_NPC(victim))
+    return;
+  if (!spell_target_placed(ch, victim, "teleport"))
     return;
 
   if (ZONE_FLAGGED(GET_ROOM_ZONE(IN_ROOM(victim)), ZONE_NOASTRAL)) {
@@ -120,6 +155,8 @@ ASPELL(spell_teleport)
 ASPELL(spell_summon)
 {
   if (ch == NULL || victim == NULL)
+    return;
+  if (!spell_target_placed(ch, victim, "summon"))
     return;
 
   if (GET_LEVEL(victim) > MIN(LVL_IMMORT - 1, level + 3)) {

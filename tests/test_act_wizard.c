@@ -27,6 +27,7 @@
 #include "constants.h"
 #include "modify.h"
 #include "protocol.h"
+#include "oasis.h"
 #include <stdarg.h>
 #include <unistd.h>
 #include <sys/stat.h>
@@ -37,6 +38,7 @@
  * --------------------------------------------------------------------- */
 static int captured_errors;
 static int captured_zone_truncations;   /* show-zone-truncate reports */
+static int captured_force_skips;        /* force-room-target reports */
 static char captured_operation[64];
 static char captured_detail[512];
 /* NOLINTNEXTLINE(cert-dcl37-c,cert-dcl51-cpp): --wrap requires this name. */
@@ -59,6 +61,8 @@ void __wrap_tb_error_log_at(const char *severity, const char *subsystem,
   captured_errors++;
   if (operation && !strcmp(operation, "show-zone-truncate"))
     captured_zone_truncations++;
+  if (operation && !strcmp(operation, "force-room-target"))
+    captured_force_skips++;
   strlcpy(captured_operation, operation ? operation : "",
           sizeof(captured_operation));
   va_start(args, detail_fmt);
@@ -110,6 +114,11 @@ void char_to_room_at(const char *src_file, int src_line, const char *src_func, s
 void char_from_room_at(const char *src_file, int src_line, const char *src_func, struct char_data *ch)
 { (void)src_file; (void)src_line; (void)src_func; 
   char_from_room_calls++;
+  /* Production (handler.c) logs FATAL char-from-nowhere and aborts on a
+   * character in no valid room; a command that gets here with one fails. */
+  TEST_ASSERT_TRUE_MESSAGE(VALID_ROOM_RNUM(IN_ROOM(ch)),
+                           "char_from_room on a character in no valid room "
+                           "(production aborts)");
   IN_ROOM(ch) = NOWHERE;
 }
 void free_char(struct char_data *ch)
@@ -223,6 +232,19 @@ void appear(struct char_data *ch) { (void)ch; UNREACHED(); }
 int can_edit_zone(struct char_data *ch, zone_rnum rnum) { (void)ch; (void)rnum; return 1; }
 void clearMemory(struct char_data *ch) { (void)ch; UNREACHED(); }
 void close_socket(struct descriptor_data *d) { (void)d; UNREACHED(); }
+/* oasis.c is not linked: the part of cleanup_olc() dc's editor exit relies
+ * on (workspace freed, PLR_WRITING cleared, back to CON_PLAYING). */
+static int cleanup_olc_calls;
+void cleanup_olc(struct descriptor_data *d, byte cleanup_type)
+{
+  (void)cleanup_type;
+  cleanup_olc_calls++;
+  free(d->olc);
+  d->olc = NULL;
+  if (d->character)
+    REMOVE_BIT_AR(PLR_FLAGS(d->character), PLR_WRITING);
+  STATE(d) = CON_PLAYING;
+}
 int count_quests(qst_vnum low, qst_vnum high) { (void)low; (void)high; return 0; }
 const char *dg_display_value(const char *value, char *buf, size_t size)
 { strlcpy(buf, value, size); return buf; }
@@ -231,7 +253,16 @@ void do_sstat_object(char_data *ch, obj_data *j) { (void)ch; (void)j; }
 void do_sstat_room(struct char_data *ch, room_data *r) { (void)ch; (void)r; }
 int enter_wtrigger(room_data *room, char_data *actor, int dir)
 { (void)room; (void)actor; (void)dir; return 1; }
-struct char_data *find_char(long n) { (void)n; return NULL; }
+/* UIDs: find_char() looks the fixture's script_id up in character_list,
+ * so 'force room' can re-acquire the occupants it snapshotted (G1-07). */
+struct char_data *find_char(long n)
+{
+  struct char_data *k;
+  for (k = character_list; n > 0 && k; k = k->next)
+    if (k->script_id == n)
+      return k;
+  return NULL;
+}
 void find_uid_name(char *uid, char *name, size_t nlen) { (void)uid; strlcpy(name, "", nlen); }
 void get_char_colors(struct char_data *ch) { (void)ch; }
 int get_number(char **name) { (void)name; return 1; }
@@ -313,7 +344,7 @@ int vnum_object(char *searchname, struct char_data *ch) { (void)searchname; (voi
 int vnum_room(char *s, struct char_data *ch) { (void)s; (void)ch; return 0; }
 int vnum_trig(char *s, struct char_data *ch) { (void)s; (void)ch; return 0; }
 int write_to_descriptor(socket_t desc, const char *txt) { (void)desc; (void)txt; return 0; }
-long char_script_id(char_data *ch) { (void)ch; return 0; }
+long char_script_id(char_data *ch) { return ch->script_id; }
 long obj_script_id(obj_data *obj) { (void)obj; return 0; }
 
 /* ---------------------------------------------------------------------
@@ -336,12 +367,14 @@ static void reset_counters(void)
 {
   captured_errors = 0;
   captured_zone_truncations = 0;
+  captured_force_skips = 0;
   captured_operation[0] = captured_detail[0] = '\0';
   sent[0] = '\0';
   char_to_room_calls = char_from_room_calls = free_char_calls = 0;
   save_char_calls = extract_final_calls = run_autowiz_calls = 0;
   saved_char = rentsaved_char = NULL;
   save_index_calls = 0;
+  cleanup_olc_calls = 0;
 }
 
 void setUp(void)
@@ -1292,6 +1325,266 @@ static void test_checkload_object_in_nowhere_room_is_safe(void)
   TEST_ASSERT_NOT_NULL(strstr(sent, "<invalid room> (1 Max)"));
 }
 
+/* ---------------------------------------------------------------------
+ * 'force room' (G1-07). do_move stands in for act.movement.c: it records
+ * who was forced from which room, runs on_forced_move (a test's world
+ * change during the command), then moves the mover from rooms[0] north to
+ * rooms[1] together with its followers there, as perform_move() does.
+ * --------------------------------------------------------------------- */
+enum { MAX_FORCED = 8 };
+static struct char_data *forced_who[MAX_FORCED];
+static room_vnum forced_from[MAX_FORCED];
+static int forced_count;
+static void (*on_forced_move)(void);
+
+/* char_from_room() and char_to_room() on the real people lists. */
+static void unlink_occupant(struct char_data *ch)
+{
+  struct char_data **link = &world[IN_ROOM(ch)].people;
+  while (*link && *link != ch)
+    link = &(*link)->next_in_room;
+  if (*link)
+    *link = ch->next_in_room;
+  ch->next_in_room = NULL;
+  IN_ROOM(ch) = NOWHERE;
+}
+static void move_occupant(struct char_data *ch, room_rnum to)
+{
+  unlink_occupant(ch);
+  ch->next_in_room = world[to].people;   /* char_to_room() prepends */
+  world[to].people = ch;
+  IN_ROOM(ch) = to;
+}
+
+ACMD(do_move)
+{
+  void (*hook)(void) = on_forced_move;
+  struct char_data *k;
+  (void)argument; (void)cmd; (void)subcmd;
+  if (forced_count < MAX_FORCED) {
+    forced_who[forced_count] = ch;
+    forced_from[forced_count] = GET_ROOM_VNUM(IN_ROOM(ch));
+  }
+  forced_count++;
+  on_forced_move = NULL;
+  if (hook)
+    hook();
+  if (IN_ROOM(ch) != 0)
+    return;
+  move_occupant(ch, 1);
+  do {
+    for (k = world[0].people; k && k->master != ch; k = k->next_in_room)
+      ;
+    if (k)
+      move_occupant(k, 1);
+  } while (k);
+}
+
+/* A standing NPC with a UID, registered in character_list for find_char()
+ * and placed in rooms[room] behind the occupants already there. */
+static void make_occupant(struct char_data *mob, long uid, room_rnum room)
+{
+  struct char_data **tail = &world[room].people;
+  memset(mob, 0, sizeof(*mob));
+  SET_BIT_AR(MOB_FLAGS(mob), MOB_ISNPC);
+  mob->player.name = (char *)"mob";
+  mob->player.short_descr = (char *)"a mob";
+  mob->script_id = uid;
+  GET_POS(mob) = POS_STANDING;
+  IN_ROOM(mob) = room;
+  mob->next = character_list;
+  character_list = mob;
+  while (*tail)
+    tail = &(*tail)->next_in_room;
+  *tail = mob;
+}
+
+/* The forcing immortal stands last in rooms[0], with its login UID. */
+static void begin_force_room(void)
+{
+  struct char_data **tail = &rooms[0].people;
+  while (*tail)
+    tail = &(*tail)->next_in_room;
+  *tail = &imm;
+  imm.script_id = GET_IDNUM(&imm);
+  imm.next = character_list;
+  character_list = &imm;
+  /* command_interpreter() dispatches through the real command table. */
+  complete_cmd_info = (struct command_info *) cmd_info;
+  forced_count = 0;
+  on_forced_move = NULL;
+}
+static void end_force_room(void)
+{
+  complete_cmd_info = NULL;
+  character_list = NULL;
+  rooms[0].people = rooms[1].people = NULL;
+  imm.next_in_room = imm.next = NULL;
+}
+
+/* G1-07: the room loop saved next_in_room before forcing each occupant.
+ * The leader went north and took its follower along, so the loop went on
+ * in the north room: it forced the follower, the leader again and a
+ * bystander who was never in the forced room, and never reached the rest
+ * of the forced room. */
+static void test_force_room_skips_occupants_that_moved(void)
+{
+  static struct char_data leader, follower, other, bystander;
+  make_occupant(&bystander, 2004, 1);
+  make_occupant(&leader, 2001, 0);
+  make_occupant(&follower, 2002, 0);
+  make_occupant(&other, 2003, 0);
+  follower.master = &leader;
+  begin_force_room();
+
+  RUN_CMD(do_force, &imm, "room north");
+
+  TEST_ASSERT_EQUAL_INT(2, forced_count);
+  TEST_ASSERT_EQUAL_PTR(&leader, forced_who[0]);
+  TEST_ASSERT_EQUAL_PTR(&other, forced_who[1]);
+  TEST_ASSERT_EQUAL_INT(3000, forced_from[0]);
+  TEST_ASSERT_EQUAL_INT(3000, forced_from[1]);
+  TEST_ASSERT_EQUAL_INT(1, IN_ROOM(&follower));   /* left with the leader */
+  TEST_ASSERT_EQUAL_INT(1, captured_force_skips);
+  TEST_ASSERT_EQUAL_STRING("force-room-target", captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(captured_detail, "room vnum 3000"));
+  TEST_ASSERT_NOT_NULL(strstr(captured_detail, "uid 2002 moved before its turn"));
+  TEST_ASSERT_NOT_NULL(strstr(captured_detail, "now in room vnum 3014"));
+  TEST_ASSERT_NOT_NULL(strstr(captured_detail, "caller player idnum 1"));
+  end_force_room();
+}
+
+/* What a purge trigger fired by the first forced command does: one
+ * occupant is pending extraction (still in the room until the end of the
+ * pulse), another is extracted and gone from the UID table. */
+static struct char_data *force_doomed, *force_gone;
+static void purge_during_force(void)
+{
+  struct char_data **link = &character_list;
+  SET_BIT_AR(MOB_FLAGS(force_doomed), MOB_NOTDEADYET);
+  unlink_occupant(force_gone);                  /* extract_char_final() */
+  while (*link && *link != force_gone)
+    link = &(*link)->next;
+  if (*link)
+    *link = force_gone->next;
+}
+
+/* G1-07: occupants that an earlier forced command purged were still
+ * forced while pending extraction. */
+static void test_force_room_skips_extracted_occupants(void)
+{
+  static struct char_data first, doomed, gone;
+  make_occupant(&first, 2101, 0);
+  make_occupant(&doomed, 2102, 0);
+  make_occupant(&gone, 2103, 0);
+  force_doomed = &doomed;
+  force_gone = &gone;
+  begin_force_room();
+  on_forced_move = purge_during_force;
+
+  RUN_CMD(do_force, &imm, "room north");
+
+  TEST_ASSERT_EQUAL_INT(1, forced_count);
+  TEST_ASSERT_EQUAL_PTR(&first, forced_who[0]);
+  TEST_ASSERT_EQUAL_INT(2, captured_force_skips);
+  /* The last report is the vanished occupant. */
+  TEST_ASSERT_EQUAL_STRING("force-room-target", captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(captured_detail, "uid 2103 no longer exists"));
+  end_force_room();
+
+  /* The pending-extraction report on its own. */
+  reset_counters();
+  make_occupant(&first, 2101, 0);
+  make_occupant(&doomed, 2102, 0);
+  begin_force_room();
+  SET_BIT_AR(MOB_FLAGS(&doomed), MOB_NOTDEADYET);
+  RUN_CMD(do_force, &imm, "room north");
+  TEST_ASSERT_EQUAL_INT(1, forced_count);
+  TEST_ASSERT_EQUAL_INT(1, captured_force_skips);
+  TEST_ASSERT_NOT_NULL(strstr(captured_detail, "uid 2102 is pending extraction"));
+  end_force_room();
+}
+
+/* ---------------------------------------------------------------------
+ * 'dc' (do_dc): descriptor 7, a builder (idnum 88) whose character is in
+ * the world, alone in descriptor_list.
+ * --------------------------------------------------------------------- */
+static struct char_data dc_victim;
+static struct player_special_data dc_victim_specials;
+static struct descriptor_data dc_desc;
+
+static void make_dc_victim(int state)
+{
+  memset(&dc_victim, 0, sizeof(dc_victim));
+  memset(&dc_victim_specials, 0, sizeof(dc_victim_specials));
+  memset(&dc_desc, 0, sizeof(dc_desc));
+  dc_victim.player_specials = &dc_victim_specials;
+  dc_victim.player.name = (char *)"Builder";
+  GET_IDNUM(&dc_victim) = 88;
+  GET_LEVEL(&dc_victim) = LVL_BUILDER;
+  dc_victim.desc = &dc_desc;
+  dc_desc.character = &dc_victim;
+  dc_desc.desc_num = 7;
+  STATE(&dc_desc) = state;
+  descriptor_list = &dc_desc;
+}
+
+/* dc set CON_CLOSE on every descriptor not in CON_PLAYING, OLC editors
+ * included. close_socket() then free_char()ed a builder still linked into
+ * its room and character_list (use-after-free) and, the state being
+ * CON_CLOSE, never released the editor's workspace. */
+static void test_dc_builder_in_editor_takes_link_loss_path(void)
+{
+  char *field = strdup("half-typed text");   /* the field being edited */
+
+  TEST_ASSERT_NOT_NULL(field);
+  make_dc_victim(CON_REDIT);
+  CREATE(dc_desc.olc, struct oasis_olc_data, 1);
+  dc_desc.str = &field;
+  dc_desc.backstr = strdup("original text");
+  SET_BIT_AR(PLR_FLAGS(&dc_victim), PLR_WRITING);
+
+  RUN_CMD(do_dc, &imm, "7");
+
+  TEST_ASSERT_EQUAL_INT(CON_DISCONNECT, STATE(&dc_desc));
+  TEST_ASSERT_EQUAL_INT(1, cleanup_olc_calls);
+  TEST_ASSERT_NULL(dc_desc.olc);
+  TEST_ASSERT_NULL(dc_desc.str);
+  TEST_ASSERT_NULL(dc_desc.backstr);
+  TEST_ASSERT_EQUAL_STRING("original text", field);   /* as the editor's /a */
+  TEST_ASSERT_FALSE(PLR_FLAGGED(&dc_victim, PLR_WRITING));
+  TEST_ASSERT_NOT_NULL(strstr(sent, "Connection #7 closed."));
+  TEST_ASSERT_EQUAL_INT(0, captured_errors);
+  free(field);
+  descriptor_list = NULL;
+}
+
+/* Out-of-game sockets still close outright and players still go linkless.
+ * A target at or above the caller's level is refused, and the refusal is
+ * now reported with both identities. */
+static void test_dc_other_states_and_refusal(void)
+{
+  make_dc_victim(CON_PASSWORD);
+  RUN_CMD(do_dc, &imm, "7");
+  TEST_ASSERT_EQUAL_INT(CON_CLOSE, STATE(&dc_desc));
+
+  make_dc_victim(CON_PLAYING);
+  RUN_CMD(do_dc, &imm, "7");
+  TEST_ASSERT_EQUAL_INT(CON_DISCONNECT, STATE(&dc_desc));
+  TEST_ASSERT_EQUAL_INT(0, cleanup_olc_calls);
+  TEST_ASSERT_EQUAL_INT(0, captured_errors);
+
+  make_dc_victim(CON_REDIT);
+  GET_LEVEL(&dc_victim) = LVL_IMPL;
+  RUN_CMD(do_dc, &imm, "7");
+  TEST_ASSERT_EQUAL_INT(CON_REDIT, STATE(&dc_desc));
+  TEST_ASSERT_EQUAL_INT(1, captured_errors);
+  TEST_ASSERT_EQUAL_STRING("dc-denied", captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(captured_detail, "caller player idnum 1 level"));
+  TEST_ASSERT_NOT_NULL(strstr(captured_detail, "desc 7 player idnum 88"));
+  descriptor_list = NULL;
+}
+
 /* RUN_TEST, filtered: with TB_TEST_ONLY=<substring> in the environment
  * only the matching tests run (e.g. to give one regression test its own
  * Valgrind run). */
@@ -1300,6 +1593,117 @@ static void test_checkload_object_in_nowhere_room_is_safe(void)
   if (!only_ || strstr(#fn, only_)) \
     RUN_TEST(fn); \
 } while (0)
+
+/* A character stranded in NOWHERE (char_to_room() refused its room, e.g. a
+ * return from the void to a room OLC deleted) reached char_from_room(),
+ * which aborts the server, through goto/at by a stranded immortal and
+ * trans/teleport of a stranded player; trans by a stranded immortal moved
+ * the victim into NOWHERE. Each is now refused and reported. */
+static void test_goto_and_at_by_a_stranded_immortal_are_refused(void)
+{
+  IN_ROOM(&imm) = NOWHERE;
+  RUN_CMD(do_goto, &imm, "3014");
+  TEST_ASSERT_EQUAL_STRING("stranded-target", captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(captured_detail, "target player idnum 1 is in no valid room"));
+  TEST_ASSERT_NOT_NULL(strstr(captured_detail, "'goto' by player idnum 1 refused"));
+  TEST_ASSERT_NOT_NULL(strstr(sent, "stranded in no valid room"));
+  TEST_ASSERT_EQUAL_INT(0, char_from_room_calls);
+  TEST_ASSERT_EQUAL_INT(0, char_to_room_calls);
+  TEST_ASSERT_EQUAL_INT(NOWHERE, IN_ROOM(&imm));
+
+  reset_counters();
+  RUN_CMD(do_at, &imm, "3014 stat room");
+  TEST_ASSERT_EQUAL_INT(1, captured_errors);
+  TEST_ASSERT_EQUAL_STRING("stranded-target", captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(captured_detail, "'at' by player idnum 1 refused"));
+  TEST_ASSERT_EQUAL_INT(0, char_from_room_calls + char_to_room_calls);
+  TEST_ASSERT_EQUAL_INT(NOWHERE, IN_ROOM(&imm));
+}
+
+static void test_trans_and_teleport_of_a_stranded_player_are_refused(void)
+{
+  make_player();                  /* Bobby, idnum 77, in NOWHERE */
+  RUN_CMD(do_trans, &imm, "bobby");
+  TEST_ASSERT_EQUAL_INT(1, captured_errors);
+  TEST_ASSERT_EQUAL_STRING("stranded-target", captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(captured_detail, "target player idnum 77 is in no valid room (rnum 65535)"));
+  TEST_ASSERT_NOT_NULL(strstr(captured_detail, "'trans' by player idnum 1 refused"));
+  TEST_ASSERT_NOT_NULL(strstr(sent, "Bobby is stranded in no valid room"));
+  TEST_ASSERT_EQUAL_INT(0, char_from_room_calls + char_to_room_calls);
+
+  reset_counters();
+  RUN_CMD(do_teleport, &imm, "bobby 3014");
+  TEST_ASSERT_EQUAL_INT(1, captured_errors);
+  TEST_ASSERT_EQUAL_STRING("stranded-target", captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(captured_detail, "'teleport' by player idnum 1"));
+  TEST_ASSERT_NULL(strstr(sent, "Okay."));
+  TEST_ASSERT_EQUAL_INT(0, char_from_room_calls + char_to_room_calls);
+  TEST_ASSERT_EQUAL_INT(NOWHERE, IN_ROOM(&target));
+
+  /* Placed again, the same commands work. */
+  reset_counters();
+  IN_ROOM(&target) = 1;
+  RUN_CMD(do_teleport, &imm, "bobby 3000");
+  TEST_ASSERT_EQUAL_INT(0, captured_errors);
+  TEST_ASSERT_EQUAL_INT(0, IN_ROOM(&target));
+  in_game_char = NULL;
+}
+
+static void test_trans_by_a_stranded_immortal_is_refused(void)
+{
+  make_player();
+  IN_ROOM(&target) = 1;
+  IN_ROOM(&imm) = NOWHERE;
+  RUN_CMD(do_trans, &imm, "bobby");
+  TEST_ASSERT_EQUAL_INT(1, captured_errors);
+  TEST_ASSERT_EQUAL_STRING("stranded-actor", captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(captured_detail, "actor player idnum 1 is in no valid room"));
+  TEST_ASSERT_EQUAL_INT(0, char_from_room_calls + char_to_room_calls);
+  TEST_ASSERT_EQUAL_INT(1, IN_ROOM(&target));   /* not moved into NOWHERE */
+
+  reset_counters();
+  RUN_CMD(do_trans, &imm, "all");
+  TEST_ASSERT_EQUAL_INT(1, captured_errors);
+  TEST_ASSERT_EQUAL_STRING("stranded-actor", captured_operation);
+  TEST_ASSERT_EQUAL_INT(0, char_from_room_calls + char_to_room_calls);
+  in_game_char = NULL;
+}
+
+/* trans all skips (and reports) a stranded player and still moves the
+ * others. */
+static void test_trans_all_skips_a_stranded_player(void)
+{
+  static struct char_data placed;
+  static struct player_special_data placed_specials;
+  static struct descriptor_data stranded_desc, placed_desc;
+
+  make_player();                  /* Bobby, stranded */
+  memset(&placed, 0, sizeof(placed));
+  memset(&placed_specials, 0, sizeof(placed_specials));
+  memset(&stranded_desc, 0, sizeof(stranded_desc));
+  memset(&placed_desc, 0, sizeof(placed_desc));
+  placed.player_specials = &placed_specials;
+  placed.player.name = (char *)"Placid";
+  GET_IDNUM(&placed) = 78;
+  GET_LEVEL(&placed) = 10;
+  IN_ROOM(&placed) = 1;
+  stranded_desc.character = &target;
+  placed_desc.character = &placed;
+  STATE(&stranded_desc) = STATE(&placed_desc) = CON_PLAYING;
+  stranded_desc.next = &placed_desc;
+  descriptor_list = &stranded_desc;
+
+  RUN_CMD(do_trans, &imm, "all");
+  descriptor_list = NULL;
+  TEST_ASSERT_EQUAL_INT(1, captured_errors);
+  TEST_ASSERT_EQUAL_STRING("stranded-target", captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(captured_detail, "target player idnum 77"));
+  TEST_ASSERT_NOT_NULL(strstr(captured_detail, "'trans all'"));
+  TEST_ASSERT_EQUAL_INT(NOWHERE, IN_ROOM(&target));
+  TEST_ASSERT_EQUAL_INT(0, IN_ROOM(&placed));   /* moved to the immortal */
+  TEST_ASSERT_EQUAL_INT(1, char_from_room_calls);
+  in_game_char = NULL;
+}
 
 int main(void)
 {
@@ -1341,6 +1745,14 @@ int main(void)
   RUN_SELECTED(test_show_zones_overflow_is_clamped_and_reported);
   RUN_SELECTED(test_recent_list_is_reusable_after_free);
   RUN_SELECTED(test_checkload_object_in_nowhere_room_is_safe);
+  RUN_SELECTED(test_force_room_skips_occupants_that_moved);
+  RUN_SELECTED(test_force_room_skips_extracted_occupants);
+  RUN_SELECTED(test_dc_builder_in_editor_takes_link_loss_path);
+  RUN_SELECTED(test_dc_other_states_and_refusal);
+  RUN_SELECTED(test_goto_and_at_by_a_stranded_immortal_are_refused);
+  RUN_SELECTED(test_trans_and_teleport_of_a_stranded_player_are_refused);
+  RUN_SELECTED(test_trans_by_a_stranded_immortal_is_refused);
+  RUN_SELECTED(test_trans_all_skips_a_stranded_player);
   {
     int failures = UNITY_END();
     if (logfile)

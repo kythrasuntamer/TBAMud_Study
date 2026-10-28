@@ -248,6 +248,18 @@ int call_magic(struct char_data *caster, struct char_data *cvict,
     return (0);
   }
 
+  /* The cast triggers and the room flag checks below index world[] with
+   * the caster's room. A caster stranded in NOWHERE by an earlier, reported
+   * failure (see extract_char_final()) can still type 'cast': refuse it
+   * rather than read past world[]. */
+  if (!VALID_ROOM_RNUM(IN_ROOM(caster))) {
+    TB_ERROR_MSG("magic", "caster-nowhere", "call_magic",
+                 "spell %d casttype %d by " DIAG_CHAR_FMT " from no valid "
+                 "room (rnum %d); refused", spellnum, casttype,
+                 DIAG_CHAR(caster), (int) IN_ROOM(caster));
+    return (0);
+  }
+
   /* Snapshot the object's identity before any script can free it. */
   ouid = ovict ? obj_script_id(ovict) : 0;
 
@@ -446,7 +458,7 @@ void mag_objectmagic(struct char_data *ch, struct obj_data *obj, char *argument)
   char arg[MAX_INPUT_LENGTH];
   int i, k, spl, vnum;
   long uid;
-  struct char_data *tch = NULL, *next_tch;
+  struct char_data *tch = NULL;
   struct obj_data *tobj = NULL;
 
   one_argument(argument, arg);
@@ -494,12 +506,37 @@ void mag_objectmagic(struct char_data *ch, struct obj_data *obj, char *argument)
         while (i-- > 0 && obj_uid_matches(uid, obj))
           call_magic(ch, NULL, NULL, spl, k, CAST_STAFF);
       } else {
-        for (tch = world[IN_ROOM(ch)].people; tch && obj_uid_matches(uid, obj);
-            tch = next_tch) {
-          next_tch = tch->next_in_room;
+        /* call_magic() runs cast triggers, and the spell itself can kill
+         * (death triggers): any of them can teleport or purge the next
+         * occupant, so next_in_room is not kept across it. The room is
+         * snapshotted as UIDs and each target re-resolved; one that left
+         * the caster's room or is pending extraction is skipped and
+         * reported, and the staff stops if the caster itself is purged or
+         * moved (H2-10). */
+        room_rnum origin = IN_ROOM(ch);
+        long *targets;
+        int count = room_people_uids(origin, &targets);
+
+        for (i = 0; i < count && obj_uid_matches(uid, obj); i++) {
+          if (DEAD(ch) || IN_ROOM(ch) != origin) {
+            TB_WARN_MSG("magic", "staff-caster-moved", "staff",
+                        "obj vnum %d uid %ld: caster " DIAG_CHAR_FMT
+                        " purged or moved during the staff cast; %d "
+                        "target(s) skipped", vnum, uid, DIAG_CHAR(ch),
+                        count - i);
+            break;
+          }
+          if ((tch = room_person_live(targets[i], origin)) == NULL) {
+            TB_WARN_MSG("magic", "staff-target-moved", "staff",
+                        "target uid %ld moved or purged during the staff "
+                        "cast of obj vnum %d by " DIAG_CHAR_FMT "; skipped",
+                        targets[i], vnum, DIAG_CHAR(ch));
+            continue;
+          }
           if (ch != tch)
             call_magic(ch, tch, NULL, spl, k, CAST_STAFF);
         }
+        free(targets);
       }
       if (!obj_uid_matches(uid, obj))
         TB_WARN_MSG("magic", "magic-item-purged", "staff",

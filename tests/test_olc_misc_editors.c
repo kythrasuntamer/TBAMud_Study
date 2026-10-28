@@ -151,6 +151,8 @@ void get_char_colors(struct char_data *ch) { (void)ch; }
 void clear_screen(struct descriptor_data *d) { (void)d; }
 int can_edit_zone(struct char_data *ch, zone_rnum rnum)
 { (void)ch; (void)rnum; return TRUE; }
+int can_use_editor(struct char_data *ch, int perm)
+{ (void)ch; (void)perm; return TRUE; }
 void add_to_save_list(zone_vnum zone, int type) { (void)zone; (void)type; }
 int remove_from_save_list(zone_vnum zone, int type)
 { (void)zone; (void)type; return TRUE; }
@@ -1384,6 +1386,47 @@ static void test_msgedit_quit_intent_is_per_descriptor(void)
   TEST_ASSERT_NULL(builder_desc.olc);
 }
 
+/* F2-27: hedit_save_to_disk copied each entry with strncpy into its
+ * MAX_STRING_LENGTH stack buffer without terminating it, so with a writable
+ * help directory an entry that long was read past the buffer by strip_cr
+ * (ASan stack-buffer-overflow) and written cut short. It now fails the save
+ * before anything is written, and says which row and why. */
+static void test_hedit_save_refuses_entry_longer_than_buffer(void)
+{
+  char tmpl[] = "/tmp/tb_hedit_XXXXXX";
+  char old_cwd[4096], cmd[] = " save", expect[64];
+  char *dir = mkdtemp(tmpl);
+  char *big = malloc(MAX_STRING_LENGTH + 1);
+
+  TEST_ASSERT_NOT_NULL(dir);
+  TEST_ASSERT_NOT_NULL(big);
+  TEST_ASSERT_NOT_NULL(getcwd(old_cwd, sizeof(old_cwd)));
+  TEST_ASSERT_EQUAL_INT(0, chdir(dir));
+  TEST_ASSERT_EQUAL_INT(0, mkdir(LIB_TEXT, 0700));
+  TEST_ASSERT_EQUAL_INT(0, mkdir(HLP_PREFIX, 0700));
+  memset(big, 'x', MAX_STRING_LENGTH);
+  big[MAX_STRING_LENGTH] = '\0';
+  free(help_table[2].entry);
+  help_table[2].entry = big;                /* one byte too long for buf1 */
+
+  do_oasis_hedit(&builder, cmd, 0, 0);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("hedit-truncate", tb_captured_operation);
+  TEST_ASSERT_TRUE(snprintf(expect, sizeof(expect), "help row 2 entry is %d bytes",
+                            MAX_STRING_LENGTH) > 0);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, expect));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "player idnum 42"));
+  TEST_ASSERT_NOT_NULL(strstr(out, "FAILED"));
+  TEST_ASSERT_EQUAL_INT(0, help_reboots);
+  TEST_ASSERT_NOT_EQUAL(0, access(HLP_PREFIX HELP_FILE ".tmp", F_OK));
+  TEST_ASSERT_NOT_EQUAL(0, access(HLP_PREFIX HELP_FILE, F_OK));
+
+  TEST_ASSERT_EQUAL_INT(0, rmdir(HLP_PREFIX));
+  TEST_ASSERT_EQUAL_INT(0, rmdir(LIB_TEXT));
+  TEST_ASSERT_EQUAL_INT(0, chdir(old_cwd));
+  TEST_ASSERT_EQUAL_INT(0, rmdir(dir));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -1419,6 +1462,7 @@ int main(void)
   RUN_TEST(test_hedit_failed_disk_save_is_loud);
   RUN_TEST(test_qedit_failed_disk_save_is_loud);
   RUN_TEST(test_aedit_failed_disk_save_is_loud);
+  RUN_TEST(test_hedit_save_refuses_entry_longer_than_buffer);
   RUN_TEST(test_hedit_new_topic_does_not_index_nowhere);
   RUN_TEST(test_hedit_duplicate_redirects_to_owner);
   RUN_TEST(test_hedit_orphan_duplicate_is_refused_loudly);

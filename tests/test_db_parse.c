@@ -148,9 +148,28 @@ unsigned long circle_random(void) { return 0; }
  * whole: it is data only, and load_config() reads its defaults. */
 size_t room_bits_count = 32;
 int add_to_save_list(zone_vnum zone, int type) { (void)zone; (void)type; return 0; }
-zone_rnum real_zone_by_thing(room_vnum vznum) { (void)vznum; return 0; }
+/* genzon.c's contract: the zone whose bot..top holds vznum, else NOWHERE. */
+zone_rnum real_zone_by_thing(room_vnum vznum)
+{
+  zone_rnum z;
+
+  for (z = 0; zone_table && z <= top_of_zone_table; z++)
+    if (zone_table[z].bot <= vznum && vznum <= zone_table[z].top)
+      return z;
+  return NOWHERE;
+}
+/* dg_db_scripts.c's trigger readers name a missing trigger's owner by
+ * GET_MOB_VNUM(), the room's number or GET_OBJ_VNUM(); these fixtures
+ * record that vnum (dg_read_trigger() also consumes its "T <vnum>" line). */
+static int fixture_trigger_owner_vnum;
 void dg_read_trigger(FILE *fp, void *proto, int type)
-{ (void)fp; (void)proto; (void)type; }
+{
+  char line[READ_SIZE];
+
+  (void)get_line(fp, line);
+  fixture_trigger_owner_vnum = type == MOB_TRIGGER ?
+    (int) GET_MOB_VNUM((char_data *) proto) : (int) ((room_data *) proto)->number;
+}
 /* check_object() fixtures (constants.c, spell_parser.c, interpreter.c,
  * handler.c). Zero bit counts make check_bitvector_names() accept nothing
  * set, and the test objects set no flags. */
@@ -178,19 +197,29 @@ char *find_exdesc(char *word, struct extra_descr_data *list)
 size_t action_bits_count = 0;
 void parse_trigger(FILE *trig_f, int nr) { (void)trig_f; (void)nr; }
 void parse_quest(FILE *quest_f, int nr) { (void)quest_f; (void)nr; }
-void dg_obj_trigger(char *line, struct obj_data *obj) { (void)line; (void)obj; }
+void dg_obj_trigger(char *line, struct obj_data *obj)
+{ (void)line; fixture_trigger_owner_vnum = (int) GET_OBJ_VNUM(obj); }
 void skip_spaces(char **string)                /* interpreter.c */
 { while (**string && isspace((unsigned char)**string)) (*string)++; }
-void split_argument(char *argument, char *tag) /* oasis.c, verbatim logic */
+/* oasis.c's logic, without its tag-too-long report; load_config() calls it
+ * through the oasis.h split_argument(argument, tag) macro, which passes
+ * sizeof(tag). */
+void split_argument_bounded(char *argument, char *tag, size_t tag_size)
 {
-  char *tmp = argument, *ttag = tag, *wrt = argument;
+  char *tmp = argument, *wrt = argument;
+  size_t key_len = 0;
+
+  if (tag_size == 0)
+    return;
   for (; *tmp; tmp++) {
-    if (*tmp != ' ' && *tmp != '=')
-      *(ttag++) = *tmp;
-    else if (*tmp == '=')
+    if (*tmp != ' ' && *tmp != '=') {
+      if (key_len + 1 < tag_size)
+        tag[key_len] = *tmp;
+      key_len++;
+    } else if (*tmp == '=')
       break;
   }
-  *ttag = '\0';
+  tag[key_len < tag_size ? key_len : 0] = '\0';
   while (*tmp == '=' || *tmp == ' ')
     tmp++;
   while (*tmp)
@@ -402,13 +431,18 @@ static void reset_zone_object_variable_uses_arg2_context(void)
 static void renum_zone_table_reports_missing_variable_room(void)
 {
   struct reset_com cmds[] = {
-    { 'V', FALSE, WLD_TRIGGER, 0, 34999, 7, (char *)"foo", (char *)"bar" },
+    { 'V', FALSE, WLD_TRIGGER, 0, 34999, 7, NULL, NULL },
     { 'S', FALSE, 0, 0, 0, 8, NULL, NULL },
   };
 
+  /* The disabled 'V' gives up its strings (round 5): heap copies. */
+  cmds[0].sarg1 = strdup("foo");
+  cmds[0].sarg2 = strdup("bar");
   zone_fixture_setup(cmds);
   renum_zone_table();
   TEST_ASSERT_EQUAL_CHAR('*', cmds[0].command);
+  TEST_ASSERT_NULL(cmds[0].sarg1);
+  TEST_ASSERT_NULL(cmds[0].sarg2);
   TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
   TEST_ASSERT_EQUAL_STRING("zone-renum", tb_captured_operation);
   TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "zone 30 line 7 cmd V: arg3 vnum 34999"));
@@ -1023,8 +1057,17 @@ static void social_fixture_free(int slots)
 {
   int k;
   for (k = 0; k < slots; k++) {
-    free(soc_mess_list[k].command);
-    free(soc_mess_list[k].sort_as);
+    struct social_messg *soc = &soc_mess_list[k];
+
+    free(soc->command);
+    free(soc->sort_as);
+    free(soc->char_no_arg);       free(soc->others_no_arg);
+    free(soc->char_found);        free(soc->others_found);
+    free(soc->vict_found);        free(soc->not_found);
+    free(soc->char_auto);         free(soc->others_auto);
+    free(soc->char_body_found);   free(soc->others_body_found);
+    free(soc->vict_body_found);   free(soc->char_obj_found);
+    free(soc->others_obj_found);
   }
   free(soc_mess_list);
   soc_mess_list = NULL;
@@ -1036,6 +1079,8 @@ static void social_fixture_free(int slots)
 }
 
 #define SOCIAL_BODY "#\n#\n#\n#\n#\n#\n#\n#\n#\n#\n#\n#\n#\n"
+/* A complete social that takes no target: only char_no_arg is required. */
+#define SOCIAL_SOLO "You grin.\n#\n#\n#\n#\n#\n#\n#\n#\n#\n#\n#\n#\n"
 
 /* B1-13: the count sees only lines starting with '~', but fscanf(" %s ")
  * skips leading blanks, so " ~b" and " ~c" were parsed without being counted
@@ -1054,8 +1099,8 @@ static void boot_social_messages_rejects_uncounted_socials(void)
 
 static void boot_social_messages_loads_counted_socials(void)
 {
-  social_fixture_use("~a a 0 0 0 0\n" SOCIAL_BODY "\n"
-                     "~b b 0 0 0 0\n" SOCIAL_BODY "\n$\n");
+  social_fixture_use("~a a 0 0 0 0\n" SOCIAL_SOLO "\n"
+                     "~b b 0 0 0 0\n" SOCIAL_SOLO "\n$\n");
   boot_social_messages();
   TEST_ASSERT_EQUAL_INT(1, top_of_socialt);
   TEST_ASSERT_EQUAL_STRING("b", soc_mess_list[1].command);
@@ -1309,6 +1354,883 @@ static void fread_number_reports_bad_format(void)
   TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "expected a digit"));
 }
 
+/* ---------------------------------------------------------------------
+ * Empty ("~") world strings the game prints unchecked (G2-03)
+ * ------------------------------------------------------------------- */
+
+/* parse_object()/parse_mobile() keep their slot cursors in statics, like
+ * parse_room(): the tests share one prototype table of each kind. */
+#define PROTO_FIXTURES 8
+static struct obj_data obj_proto_fixture[PROTO_FIXTURES];
+static struct index_data obj_index_fixture[PROTO_FIXTURES];
+static struct char_data mob_proto_fixture[PROTO_FIXTURES];
+static struct index_data mob_index_fixture[PROTO_FIXTURES];
+
+static void proto_fixture_free(void)
+{
+  int k;
+
+  for (k = 0; k < PROTO_FIXTURES; k++) {
+    struct obj_data *obj = &obj_proto_fixture[k];
+    struct char_data *mob = &mob_proto_fixture[k];
+
+    free(obj->name);
+    free(obj->short_description);
+    free(obj->description);
+    free(obj->action_description);
+    free_extra_descriptions(obj->ex_description);
+    memset(obj, 0, sizeof(*obj));
+    free(mob->player.name);
+    free(mob->player.short_descr);
+    free(mob->player.long_descr);
+    free(mob->player.description);
+    memset(mob, 0, sizeof(*mob));
+  }
+  obj_proto = NULL;
+  obj_index = NULL;
+  mob_proto = NULL;
+  mob_index = NULL;
+}
+
+/* fread_string() returns NULL for "~"; parse_room() stored it as the room
+ * name and description and as an extra description keyword, which 'look'
+ * and find_exdesc() dereference. */
+static void parse_room_replaces_empty_strings(void)
+{
+  static const char text[] =
+    "~\n~\n0 0 0 0 0 0\nE\n~\nA brass plaque.\n~\nS\n$\n";
+  struct room_data *room;
+
+  room_fixture_use();
+  parse_room_text(text, 108);
+  room = &world[top_of_world];
+  TEST_ASSERT_EQUAL_STRING("undefined", room->name);
+  TEST_ASSERT_EQUAL_STRING("undefined", room->description);
+  TEST_ASSERT_NOT_NULL(room->ex_description);
+  TEST_ASSERT_EQUAL_STRING("undefined", room->ex_description->keyword);
+  TEST_ASSERT_EQUAL_STRING("A brass plaque.\r\n", room->ex_description->description);
+  TEST_ASSERT_EQUAL_INT(3, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("world-string-missing", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail,
+                              "room vnum 108: empty extra description keyword"));
+  room_fixture_free();
+}
+
+/* An object with an empty short and long description: list_obj_to_char()
+ * read *description and strcmp()ed short descriptions (UBSan: load of null
+ * pointer), and an empty extra description keyword reached find_exdesc(). */
+static void parse_object_replaces_empty_strings(void)
+{
+  static const char text[] =
+    "sword~\n~\n~\n~\n"
+    "12 0 0 0 0 0 0 0 0 0 0 0 0\n0 0 0 0\n1 2 3 4 5\n"
+    "E\n~\nThe blade is notched.\n~\n$\n";
+  struct obj_data *obj;
+  FILE *fp = stream_of(text, sizeof(text) - 1);
+
+  obj_proto = obj_proto_fixture;
+  obj_index = obj_index_fixture;
+  (void)parse_object(fp, 3020);
+  TEST_ASSERT_EQUAL_INT(0, fclose(fp));
+  obj = &obj_proto[top_of_objt];
+  TEST_ASSERT_EQUAL_STRING("sword", obj->name);
+  TEST_ASSERT_EQUAL_STRING("undefined", obj->short_description);
+  TEST_ASSERT_EQUAL_STRING("Undefined", obj->description);  /* CAP()ed */
+  TEST_ASSERT_NULL(obj->action_description);  /* optional: stays NULL */
+  TEST_ASSERT_NOT_NULL(obj->ex_description);
+  TEST_ASSERT_EQUAL_STRING("undefined", obj->ex_description->keyword);
+  TEST_ASSERT_EQUAL_INT(3, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("world-string-missing", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail,
+                              "obj vnum 3020: empty extra description keyword"));
+  proto_fixture_free();
+}
+
+/* A mob with an empty short description: list_one_char() ran
+ * UPPER(*short_descr) and act() prints it as the mob's name. */
+static void parse_mobile_replaces_empty_short_description(void)
+{
+  static const char text[] =
+    "guard~\n~\nA guard stands here.\n~\nHe looks tough.\n~\n"
+    "0 0 0 0 0 0 0 0 0 S\n1 20 10 1d1+1 1d1+0\n0 0\n8 8 1\n$\n";
+  struct char_data *mob;
+  FILE *fp = stream_of(text, sizeof(text) - 1);
+
+  mob_proto = mob_proto_fixture;
+  mob_index = mob_index_fixture;
+  parse_mobile(fp, 3010);
+  TEST_ASSERT_EQUAL_INT(0, fclose(fp));
+  mob = &mob_proto[top_of_mobt];
+  TEST_ASSERT_EQUAL_STRING("undefined", mob->player.short_descr);
+  TEST_ASSERT_EQUAL_STRING("guard", mob->player.name);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("world-string-missing", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail,
+                              "mob vnum 3010: empty short description"));
+  proto_fixture_free();
+}
+
+/* ---------------------------------------------------------------------
+ * check_object(): weapon values hit() uses
+ * ------------------------------------------------------------------- */
+
+static struct index_data weapon_index_fixture[1];
+
+/* A weapon prototype with the given damage dice and attack type. */
+static void weapon_fixture(struct obj_data *obj, int ndice, int sdice, int type)
+{
+  memset(obj, 0, sizeof(*obj));
+  weapon_index_fixture[0].vnum = 3021;
+  obj_index = weapon_index_fixture;
+  obj->item_number = 0;
+  obj->name = (char *)"dagger";
+  obj->short_description = (char *)"a dagger";
+  GET_OBJ_TYPE(obj) = ITEM_WEAPON;
+  GET_OBJ_VAL(obj, 1) = ndice;
+  GET_OBJ_VAL(obj, 2) = sdice;
+  GET_OBJ_VAL(obj, 3) = type;
+}
+
+/* H1-08: weapon value 3 = 40 passed check_object() and later indexed
+ * attack_hit_text[] (NUM_ATTACK_TYPES entries) in dam_message() and
+ * 'stat'. It is now replaced by 0 (hit), loudly. */
+static void check_object_repairs_attack_type_out_of_range(void)
+{
+  struct obj_data obj;
+
+  weapon_fixture(&obj, 1, 4, 40);
+  TEST_ASSERT_TRUE(check_object(&obj));
+  TEST_ASSERT_EQUAL_INT(0, GET_OBJ_VAL(&obj, 3));
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("object-check", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "obj vnum 3021 attack type 40"));
+
+  tb_error_capture_reset();
+  weapon_fixture(&obj, 1, 4, -1);
+  TEST_ASSERT_TRUE(check_object(&obj));
+  TEST_ASSERT_EQUAL_INT(0, GET_OBJ_VAL(&obj, 3));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "attack type -1"));
+
+  tb_error_capture_reset();
+  weapon_fixture(&obj, 1, 4, NUM_ATTACK_TYPES - 1);
+  TEST_ASSERT_FALSE(check_object(&obj));
+  TEST_ASSERT_EQUAL_INT(NUM_ATTACK_TYPES - 1, GET_OBJ_VAL(&obj, 3));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  obj_index = NULL;
+}
+
+/* H1-18: weapon dice 2000000000d6 made dice() loop two billion times on
+ * every blow, and negative dice were kept. Both are now clamped into
+ * 0..MAX_WEAPON_NDICE d 0..MAX_WEAPON_SDICE, loudly; 0d0 and the oedit
+ * maximum pass silently. */
+static void check_object_clamps_weapon_dice(void)
+{
+  struct obj_data obj;
+
+  weapon_fixture(&obj, 2000000000, 6, 0);
+  TEST_ASSERT_TRUE(check_object(&obj));
+  TEST_ASSERT_EQUAL_INT(MAX_WEAPON_NDICE, GET_OBJ_VAL(&obj, 1));
+  TEST_ASSERT_EQUAL_INT(6, GET_OBJ_VAL(&obj, 2));
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("object-check", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail,
+                              "obj vnum 3021 damage dice 2000000000d6"));
+
+  tb_error_capture_reset();
+  weapon_fixture(&obj, -3, 1000, 0);
+  TEST_ASSERT_TRUE(check_object(&obj));
+  TEST_ASSERT_EQUAL_INT(0, GET_OBJ_VAL(&obj, 1));
+  TEST_ASSERT_EQUAL_INT(MAX_WEAPON_SDICE, GET_OBJ_VAL(&obj, 2));
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+
+  tb_error_capture_reset();
+  weapon_fixture(&obj, 0, 0, 0);
+  TEST_ASSERT_FALSE(check_object(&obj));
+  weapon_fixture(&obj, MAX_WEAPON_NDICE, MAX_WEAPON_SDICE, 0);
+  TEST_ASSERT_FALSE(check_object(&obj));
+  TEST_ASSERT_EQUAL_INT(MAX_WEAPON_NDICE, GET_OBJ_VAL(&obj, 1));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  obj_index = NULL;
+}
+
+/* F1-16: load_zones() kept 'E 1 3201 1 40' and 'D 0 3200 42 1', and zedit's
+ * command list then read equipment_types[40] and dirs[42]. Both commands
+ * are now disabled at load, loudly; the last valid slot and direction
+ * (NUM_WEARS - 1, NUM_OF_DIRS - 1) stay. */
+static void load_zones_disables_bad_wear_position_and_direction(void)
+{
+  static const char text[] =
+    "#32\nbuilder~\nZone~\n3200 3299 30 2\n"
+    "M 0 3200 1 3200\n"
+    "E 1 3201 1 40\n"
+    "D 0 3200 42 1\n"
+    "E 1 3201 1 17\n"
+    "D 0 3200 9 1\n"
+    "S\n$\n";
+  struct reset_com *cmd;
+
+  TEST_ASSERT_EQUAL_INT(0, load_zone_text(text));
+  cmd = zone_table[top_of_zone_table].cmd;
+  TEST_ASSERT_EQUAL_CHAR('M', cmd[0].command);
+  TEST_ASSERT_EQUAL_CHAR('*', cmd[1].command);
+  TEST_ASSERT_EQUAL_CHAR('*', cmd[2].command);
+  TEST_ASSERT_EQUAL_CHAR('E', cmd[3].command);
+  TEST_ASSERT_EQUAL_CHAR('D', cmd[4].command);
+  TEST_ASSERT_EQUAL_INT(2, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("zone-parse", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail,
+                              "zone 32 line 7 cmd D direction 42"));
+  zone_load_fixture_free();
+}
+
+/* G2-13 (boot half): do_action needs char_no_arg, and do_gmote needs
+ * others_found once char_found is set; a '#' line left them NULL and the
+ * social failed only when a player used it. Boot now names each one. */
+static void boot_social_messages_reports_missing_required_messages(void)
+{
+  social_fixture_use("~a a 0 0 0 0\n" SOCIAL_BODY "\n"
+                     "~b b 0 0 0 0\n"
+                     "You smile.\n#\nYou smile at $N.\n"
+                     "#\n#\n#\n#\n#\n#\n#\n#\n#\n#\n\n"
+                     "~c c 0 0 0 0\n" SOCIAL_SOLO "\n$\n");
+  boot_social_messages();
+  TEST_ASSERT_EQUAL_INT(2, top_of_socialt);
+  TEST_ASSERT_EQUAL_INT(2, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("WARNING", tb_captured_severity);
+  TEST_ASSERT_EQUAL_STRING("social-field-missing", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail,
+                              "social 'b' has char_found but no others_found"));
+  social_fixture_free(3);
+}
+
+/* ---------------------------------------------------------------------
+ * sort_boot_records(): tables loaded out of vnum order (B1-15)
+ * ------------------------------------------------------------------- */
+
+/* Rooms with the given vnums in world[]; light records the file slot. */
+static void sorted_room_fixture(const int *vnums, int n)
+{
+  int k;
+
+  memset(room_fixture, 0, sizeof(room_fixture));
+  world = room_fixture;
+  for (k = 0; k < n; k++) {
+    room_fixture[k].number = vnums[k];
+    room_fixture[k].light = (byte)k;
+  }
+  top_of_world = n - 1;
+}
+
+/* B1-15: discrete_load() only reported a number that did not ascend, and
+ * real_room()'s binary search then missed rooms (the stock 301.wld listed
+ * #30170 after #30172, which hid 30171 and 30172). Here 102 between 104 and
+ * 105 is not found until index_boot()'s sort puts it back. */
+static void sort_boot_records_restores_room_order(void)
+{
+  static const int vnums[] = { 100, 101, 103, 104, 102, 105, 106 };
+  const int n = (int)(sizeof(vnums) / sizeof(vnums[0]));
+  int k;
+
+  sorted_room_fixture(vnums, n);
+  TEST_ASSERT_EQUAL_INT(NOWHERE, real_room(102));
+  sort_boot_records(DB_BOOT_WLD, "world/wld/index");
+  for (k = 0; k < n; k++) {
+    TEST_ASSERT_EQUAL_INT(100 + k, world[k].number);
+    TEST_ASSERT_EQUAL_INT(k, real_room(100 + k));
+  }
+  TEST_ASSERT_EQUAL_INT(4, world[2].light);	/* 102 came from slot 4 */
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  room_fixture_free();
+}
+
+/* A shared vnum cannot be sorted apart: both records stay, in file order,
+ * and the duplicate is reported. */
+static void sort_boot_records_reports_duplicate_vnum(void)
+{
+  static const int vnums[] = { 5, 7, 5 };
+
+  sorted_room_fixture(vnums, 3);
+  sort_boot_records(DB_BOOT_WLD, "world/wld/index");
+  TEST_ASSERT_EQUAL_INT(5, world[0].number);
+  TEST_ASSERT_EQUAL_INT(0, world[0].light);
+  TEST_ASSERT_EQUAL_INT(5, world[1].number);
+  TEST_ASSERT_EQUAL_INT(2, world[1].light);
+  TEST_ASSERT_EQUAL_INT(7, world[2].number);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("record-number", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail,
+                              "vnum 5 is used by more than one record"));
+  room_fixture_free();
+}
+
+/* Mobs and objects live in two parallel arrays and store their own rnum
+ * (nr, item_number); triggers store it in their prototype. Each moves with
+ * its index entry and is renumbered. */
+static void sort_boot_records_renumbers_prototypes(void)
+{
+  static const int vnums[] = { 20, 10, 30 };
+  static struct index_data trig_idx[2];
+  static struct trig_data trig_protos[2];
+  struct index_data *trig_slots[2];
+  int k;
+
+  mob_proto = mob_proto_fixture;
+  mob_index = mob_index_fixture;
+  obj_proto = obj_proto_fixture;
+  obj_index = obj_index_fixture;
+  for (k = 0; k < 3; k++) {
+    mob_index[k].vnum = obj_index[k].vnum = vnums[k];
+    mob_proto[k].nr = obj_proto[k].item_number = k;
+    GET_LEVEL(&mob_proto[k]) = vnums[k];	/* follows its prototype */
+    GET_OBJ_WEIGHT(&obj_proto[k]) = vnums[k];
+  }
+  top_of_mobt = top_of_objt = 2;
+  sort_boot_records(DB_BOOT_MOB, "world/mob/index");
+  sort_boot_records(DB_BOOT_OBJ, "world/obj/index");
+  for (k = 0; k < 3; k++) {
+    TEST_ASSERT_EQUAL_INT(10 * (k + 1), mob_index[k].vnum);
+    TEST_ASSERT_EQUAL_INT(10 * (k + 1), GET_LEVEL(&mob_proto[k]));
+    TEST_ASSERT_EQUAL_INT(k, mob_proto[k].nr);
+    TEST_ASSERT_EQUAL_INT(k, real_mobile(10 * (k + 1)));
+    TEST_ASSERT_EQUAL_INT(10 * (k + 1), obj_index[k].vnum);
+    TEST_ASSERT_EQUAL_INT(10 * (k + 1), GET_OBJ_WEIGHT(&obj_proto[k]));
+    TEST_ASSERT_EQUAL_INT(k, obj_proto[k].item_number);
+    TEST_ASSERT_EQUAL_INT(k, real_object(10 * (k + 1)));
+  }
+  proto_fixture_free();
+
+  for (k = 0; k < 2; k++) {
+    trig_idx[k].vnum = (k == 0) ? 9 : 5;
+    trig_idx[k].proto = &trig_protos[k];
+    trig_protos[k].nr = k;
+    trig_slots[k] = &trig_idx[k];
+  }
+  trig_index = trig_slots;
+  top_of_trigt = 2;
+  sort_boot_records(DB_BOOT_TRG, "world/trg/index");
+  TEST_ASSERT_EQUAL_INT(5, trig_index[0]->vnum);
+  TEST_ASSERT_TRUE(trig_index[0]->proto == &trig_protos[1]);
+  TEST_ASSERT_EQUAL_INT(0, trig_index[0]->proto->nr);
+  TEST_ASSERT_EQUAL_INT(1, trig_index[1]->proto->nr);
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  trig_index = NULL;
+  top_of_trigt = 0;
+}
+
+/* discrete_load() marks the pass so index_boot() sorts it. */
+static void discrete_load_marks_descending_vnum_for_sorting(void)
+{
+  room_fixture_use();
+  boot_disordered = FALSE;
+  TEST_ASSERT_EQUAL_INT(0, discrete_load_text(
+    "#221\nA~\nA.\n~\n0 0 0 0 0 0\nS\n"
+    "#220\nB~\nB.\n~\n0 0 0 0 0 0\nS\n$\n", DB_BOOT_WLD, 4));
+  TEST_ASSERT_TRUE(boot_disordered);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail,
+                              "#220 does not ascend (previous #221); the "
+                              "table is sorted after loading"));
+  boot_disordered = FALSE;
+  room_fixture_free();
+}
+
+/* An empty ("~") mob alias list stayed NULL; isname() tolerates that, but
+ * medit, DG name lookups and the pet shop print it with %s. */
+static void parse_mobile_replaces_empty_alias_list(void)
+{
+  static const char text[] =
+    "~\nthe guard~\nA guard stands here.\n~\nHe looks tough.\n~\n"
+    "0 0 0 0 0 0 0 0 0 S\n1 20 10 1d1+1 1d1+0\n0 0\n8 8 1\n$\n";
+  struct char_data *mob;
+  FILE *fp = stream_of(text, sizeof(text) - 1);
+
+  mob_proto = mob_proto_fixture;
+  mob_index = mob_index_fixture;
+  parse_mobile(fp, 3011);
+  TEST_ASSERT_EQUAL_INT(0, fclose(fp));
+  mob = &mob_proto[top_of_mobt];
+  TEST_ASSERT_EQUAL_STRING("undefined", mob->player.name);
+  TEST_ASSERT_EQUAL_STRING("the guard", mob->player.short_descr);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("world-string-missing", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail,
+                              "mob vnum 3011: empty alias list"));
+  proto_fixture_free();
+}
+
+/* parse_simple_mob() stored its numbers into byte and sh_int fields
+ * unchecked: damage dice 200d6 wrapped to -56d6, and armor class 300000000
+ * overflowed "10 * t[2]" (UBSan: signed-integer-overflow). Each bad field is
+ * now reported with the mob vnum, and then the boot stops. */
+static void parse_simple_mob_rejects_values_that_would_wrap(void)
+{
+  TEST_ASSERT_EQUAL_INT(1, parse_simple_mob_text(
+    "1 20 300000000 1d1+1 200d6+0\n0 0\n8 8 1\n", 3012));
+  TEST_ASSERT_EQUAL_INT(3, tb_captured_errors);	/* two fields, then fatal */
+  TEST_ASSERT_EQUAL_STRING("FATAL", tb_captured_severity);
+  TEST_ASSERT_EQUAL_STRING("mob-parse", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "mob vnum 3012: 2 value(s)"));
+
+  tb_error_capture_reset();
+  TEST_ASSERT_FALSE(mob_value_in_range(3012, "damage dice count", 200, 0, SCHAR_MAX));
+  TEST_ASSERT_EQUAL_STRING("ERROR", tb_captured_severity);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail,
+                              "mob vnum 3012: damage dice count 200 out of range 0..127"));
+
+  /* Each hit dice value fits an sh_int, but read_mobile() would roll
+   * 200d200 into the sh_int max_hit. */
+  tb_error_capture_reset();
+  TEST_ASSERT_EQUAL_INT(1, parse_simple_mob_text(
+    "1 20 10 200d200+0 1d1+0\n0 0\n8 8 1\n", 3013));
+  TEST_ASSERT_EQUAL_INT(2, tb_captured_errors);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "mob vnum 3013: 1 value(s)"));
+}
+
+/* The extreme values each field can hold load silently. */
+static void parse_simple_mob_accepts_field_limits(void)
+{
+  struct char_data *mob = &simple_mob_fixture[0];
+
+  TEST_ASSERT_EQUAL_INT(0, parse_simple_mob_text(
+    "255 -107 3276 1d1+32766 127d127+127\n0 0\n8 8 1\n", 3014));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  TEST_ASSERT_EQUAL_INT(255, GET_LEVEL(mob));
+  TEST_ASSERT_EQUAL_INT(127, GET_HITROLL(mob));
+  TEST_ASSERT_EQUAL_INT(32760, GET_AC(mob));
+  TEST_ASSERT_EQUAL_INT(127, mob->mob_specials.damnodice);
+
+  TEST_ASSERT_EQUAL_INT(0, parse_simple_mob_text(
+    "0 148 -3276 0d0+-32768 0d0+-128\n0 0\n8 8 1\n", 3015));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  TEST_ASSERT_EQUAL_INT(-128, GET_HITROLL(mob));
+  TEST_ASSERT_EQUAL_INT(-32760, GET_AC(mob));
+  TEST_ASSERT_EQUAL_INT(-32768, GET_MOVE(mob));
+  TEST_ASSERT_EQUAL_INT(-128, GET_DAMROLL(mob));
+}
+
+/* ---------------------------------------------------------------------
+ * room_zone(): every room lies inside a zone
+ * ------------------------------------------------------------------- */
+
+static struct zone_data gap_zone_fixture[2];
+static int gap_zone_cursor;	/* static: survives the EXPECT_EXIT longjmp */
+
+/* Zone 10 holds rooms 1000-1099 and zone 20 rooms 2000-2099. */
+static void gap_zone_fixture_use(void)
+{
+  gap_zone_cursor = 0;
+  memset(gap_zone_fixture, 0, sizeof(gap_zone_fixture));
+  gap_zone_fixture[0].number = 10;
+  gap_zone_fixture[0].bot = 1000;
+  gap_zone_fixture[0].top = 1099;
+  gap_zone_fixture[1].number = 20;
+  gap_zone_fixture[1].bot = 2000;
+  gap_zone_fixture[1].top = 2099;
+  zone_table = gap_zone_fixture;
+  top_of_zone_table = 1;
+}
+
+/* Room 1500 lies between the zones. parse_room() attached it to zone 20,
+ * whose reset and redit save walk 2000-2099, so it was never reset and
+ * vanished on the next zone save. It is now fatal, naming both zones. */
+static void room_zone_rejects_room_between_zones(void)
+{
+  gap_zone_fixture_use();
+  EXPECT_EXIT((void)room_zone(1500, &gap_zone_cursor));
+  TEST_ASSERT_EQUAL_INT(1, tb_test_exit_code);
+  TEST_ASSERT_EQUAL_STRING("FATAL", tb_captured_severity);
+  TEST_ASSERT_EQUAL_STRING("room-parse", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail,
+                              "room vnum 1500 lies between zone 10 (1000-1099) "
+                              "and zone 20 (2000-2099)"));
+  zone_table = NULL;
+  top_of_zone_table = 0;
+}
+
+/* Rooms inside a zone move the cursor forward only; rooms below the
+ * cursor's zone or above the last zone stay fatal. */
+static void room_zone_follows_ascending_rooms(void)
+{
+  gap_zone_fixture_use();
+  TEST_ASSERT_EQUAL_INT(0, room_zone(1000, &gap_zone_cursor));
+  TEST_ASSERT_EQUAL_INT(0, room_zone(1099, &gap_zone_cursor));
+  TEST_ASSERT_EQUAL_INT(1, room_zone(2000, &gap_zone_cursor));
+  TEST_ASSERT_EQUAL_INT(1, gap_zone_cursor);
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+
+  EXPECT_EXIT((void)room_zone(1050, &gap_zone_cursor));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail,
+                              "room vnum 1050 is below zone 20 (2000-2099)"));
+  gap_zone_cursor = 1;
+  EXPECT_EXIT((void)room_zone(2100, &gap_zone_cursor));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail,
+                              "room vnum 2100 is above the last zone 20"));
+  zone_table = NULL;
+  top_of_zone_table = 0;
+}
+
+/* setup_dir()'s format errors named the room through a context string that
+ * used to read GET_ROOM_VNUM(room) + 1, which is NOWHERE + 1 during boot.
+ * They now stop the boot naming the room's own vnum and the direction. */
+static void setup_dir_reports_bad_exit_line_with_room_and_direction(void)
+{
+  static const char bad[] =
+    "Hall~\nA hall.\n~\n0 0 0 0 0 0\nD2\nA door.\n~\ndoor~\nnot numbers\nS\n$\n";
+  static const char cut[] =
+    "Hall~\nA hall.\n~\n0 0 0 0 0 0\nD3\nA door.\n~\ndoor~\n";
+  FILE *volatile fp = stream_of(bad, sizeof(bad) - 1);
+
+  room_fixture_use();
+  EXPECT_EXIT(parse_room(fp, 110));
+  TEST_ASSERT_EQUAL_INT(0, fclose(fp));
+  TEST_ASSERT_EQUAL_INT(1, tb_test_exit_code);
+  TEST_ASSERT_EQUAL_STRING("FATAL", tb_captured_severity);
+  TEST_ASSERT_EQUAL_STRING("room-parse", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail,
+                              "room vnum 110 direction D2: malformed"));
+  room_fixture_free();
+
+  fp = stream_of(cut, sizeof(cut) - 1);
+  room_fixture_use();
+  EXPECT_EXIT(parse_room(fp, 111));
+  TEST_ASSERT_EQUAL_INT(0, fclose(fp));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail,
+                              "room vnum 111 direction D3: file ends"));
+  room_fixture_free();
+}
+
+/* ---------------------------------------------------------------------
+ * Legacy-record conversion: the converted record's zone must exist
+ * ------------------------------------------------------------------- */
+
+/* FUZZ-W2 (tests/fuzz/known-crashes/world/obj-convert-zone-nowhere): a
+ * legacy 3-field object line is converted to 128-bit flags, and with
+ * bitsavetodisk on (the default) parse_object() read
+ * zone_table[real_zone_by_thing(vnum)]: zone_table[NOWHERE] for a vnum in
+ * no zone, 4.7 MB past the table (ASan: SEGV). Object 1500 lies between
+ * zones 10 and 20; it now stops the boot, and 1050 converts as before. */
+static void parse_object_rejects_converted_record_in_no_zone(void)
+{
+  static const char text[] =
+    "sword~\na sword~\nA sword lies here.~\n~\n"
+    "12 0 0\n0 0 0 0\n1 2 3 4 5\n$\n";
+  FILE *volatile fp = stream_of(text, sizeof(text) - 1);
+
+  gap_zone_fixture_use();
+  obj_proto = obj_proto_fixture;
+  obj_index = obj_index_fixture;
+  EXPECT_EXIT((void)parse_object(fp, 1500));
+  TEST_ASSERT_EQUAL_INT(0, fclose(fp));
+  TEST_ASSERT_EQUAL_STRING("FATAL", tb_captured_severity);
+  TEST_ASSERT_EQUAL_STRING("world-convert", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail,
+                              "obj vnum 1500 is in no zone"));
+  proto_fixture_free();
+
+  tb_error_capture_reset();
+  fp = stream_of(text, sizeof(text) - 1);
+  obj_proto = obj_proto_fixture;
+  obj_index = obj_index_fixture;
+  (void)parse_object(fp, 1050);
+  TEST_ASSERT_EQUAL_INT(0, fclose(fp));
+  TEST_ASSERT_EQUAL_STRING("sword", obj_proto[top_of_objt].name);
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  proto_fixture_free();
+  zone_table = NULL;
+  top_of_zone_table = 0;
+}
+
+/* FUZZ-W4 (mob-convert-zone-nowhere): the same zone_table[NOWHERE] read in
+ * parse_mobile() for a legacy 4-field flag line. */
+static void parse_mobile_rejects_converted_record_in_no_zone(void)
+{
+  static const char text[] =
+    "guard~\nthe guard~\nA guard stands here.\n~\nHe looks tough.\n~\n"
+    "0 0 0 S\n1 20 10 1d1+1 1d1+0\n0 0\n8 8 1\n$\n";
+  FILE *volatile fp = stream_of(text, sizeof(text) - 1);
+
+  gap_zone_fixture_use();
+  mob_proto = mob_proto_fixture;
+  mob_index = mob_index_fixture;
+  EXPECT_EXIT(parse_mobile(fp, 1500));
+  TEST_ASSERT_EQUAL_INT(0, fclose(fp));
+  TEST_ASSERT_EQUAL_STRING("FATAL", tb_captured_severity);
+  TEST_ASSERT_EQUAL_STRING("world-convert", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail,
+                              "mob vnum 1500 is in no zone"));
+  proto_fixture_free();
+
+  tb_error_capture_reset();
+  fp = stream_of(text, sizeof(text) - 1);
+  mob_proto = mob_proto_fixture;
+  mob_index = mob_index_fixture;
+  parse_mobile(fp, 1050);
+  TEST_ASSERT_EQUAL_INT(0, fclose(fp));
+  TEST_ASSERT_EQUAL_STRING("guard", mob_proto[top_of_mobt].player.name);
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  proto_fixture_free();
+  zone_table = NULL;
+  top_of_zone_table = 0;
+}
+
+/* load_zones() over len bytes of data (which may hold NUL bytes); 1 if it
+ * exit()ed. */
+static int load_zone_bytes(const char *data, size_t len)
+{
+  FILE *volatile fp = stream_of(data, len);
+  volatile int exited = 1;
+
+  zone_table = zone_load_fixture;
+  errno = 0;
+  tb_test_exit_armed = 1;
+  if (setjmp(tb_test_exit_jmp) == 0) {
+    load_zones(fp, (char *)"test.zon");
+    tb_test_exit_armed = 0;
+    exited = 0;
+  }
+  TEST_ASSERT_EQUAL_INT(0, fclose(fp));
+  return exited;
+}
+
+/* A line of only blanks, or one starting with a NUL byte, got the command
+ * letter '\0' and was then parsed from what the previous line left in the
+ * buffer, creating a junk command (or a misleading format error). Both are
+ * now skipped and reported with their line numbers. */
+static void load_zones_skips_blank_and_nul_lines(void)
+{
+  static const char text[] =
+    "#33\nbuilder~\nZone~\n3300 3399 30 2\n"
+    "M 0 3300 1 3300\n"
+    "   \n"
+    "\0M 0 3301 1 3301\n"
+    "O 0 3300 1 3300\n"
+    "S\n$\n";
+  struct reset_com *cmd;
+
+  TEST_ASSERT_EQUAL_INT(0, load_zone_bytes(text, sizeof(text) - 1));
+  cmd = zone_table[top_of_zone_table].cmd;
+  TEST_ASSERT_EQUAL_CHAR('M', cmd[0].command);
+  TEST_ASSERT_EQUAL_INT(3300, cmd[0].arg1);
+  TEST_ASSERT_EQUAL_CHAR('O', cmd[1].command);
+  TEST_ASSERT_EQUAL_CHAR('S', cmd[2].command);
+  TEST_ASSERT_EQUAL_INT(2, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("zone-parse", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail,
+                              "zone 33 line 7: NUL byte where a command was expected"));
+  zone_load_fixture_free();
+}
+
+/* dg_read_trigger() and dg_obj_trigger() name a missing trigger's owner by
+ * GET_MOB_VNUM()/GET_OBJ_VNUM(). parse_mobile() set the mob's rnum and
+ * top_of_mobt only after its 'T' lines, and parse_object() top_of_objt
+ * only after its own, so both reports named 65535 (NOBODY/NOTHING; for
+ * objects from the second one on). The owner's real vnum is seen now. */
+static void trigger_lines_see_their_owner_vnum(void)
+{
+  static const char mob_text[] =
+    "guard~\nthe guard~\nA guard stands here.\n~\nHe looks tough.\n~\n"
+    "0 0 0 0 0 0 0 0 0 S\n1 20 10 1d1+1 1d1+0\n0 0\n8 8 1\nT 999\n$\n";
+  static const char obj_text[] =
+    "sword~\na sword~\nA sword lies here.~\n~\n"
+    "12 0 0 0 0 0 0 0 0 0 0 0 0\n0 0 0 0\n1 2 3 4 5\nT 999\n$\n";
+  FILE *fp;
+  int k;
+
+  mob_proto = mob_proto_fixture;
+  mob_index = mob_index_fixture;
+  fixture_trigger_owner_vnum = -1;
+  fp = stream_of(mob_text, sizeof(mob_text) - 1);
+  parse_mobile(fp, 3016);
+  TEST_ASSERT_EQUAL_INT(0, fclose(fp));
+  TEST_ASSERT_EQUAL_INT(3016, fixture_trigger_owner_vnum);
+
+  /* Two objects: the first slot also passed when top_of_objt was 0. */
+  obj_proto = obj_proto_fixture;
+  obj_index = obj_index_fixture;
+  for (k = 0; k < 2; k++) {
+    fixture_trigger_owner_vnum = -1;
+    fp = stream_of(obj_text, sizeof(obj_text) - 1);
+    (void)parse_object(fp, 3017 + k);
+    TEST_ASSERT_EQUAL_INT(0, fclose(fp));
+    TEST_ASSERT_EQUAL_INT(3017 + k, fixture_trigger_owner_vnum);
+  }
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  proto_fixture_free();
+}
+
+/* A legacy 3-field object line ("type extra wear") has no affect field,
+ * but the conversion parsed f3 for the affect flags anyway: sscanf() had
+ * left it unset, so it read uninitialised stack bytes (Valgrind:
+ * conditional jump on uninitialised value in asciiflag_conv_aff()). The
+ * 4-field form keeps its affect letters. */
+static void parse_object_converts_legacy_affect_field(void)
+{
+  static const char three[] =
+    "sword~\na sword~\nA sword lies here.~\n~\n"
+    "12 a b\n0 0 0 0\n1 2 3 4 5\n$\n";
+  static const char four[] =
+    "sword~\na sword~\nA sword lies here.~\n~\n"
+    "12 a b c\n0 0 0 0\n1 2 3 4 5\n$\n";
+  struct obj_data *obj;
+  FILE *fp;
+
+  gap_zone_fixture_use();
+  obj_proto = obj_proto_fixture;
+  obj_index = obj_index_fixture;
+  fp = stream_of(three, sizeof(three) - 1);
+  (void)parse_object(fp, 1060);
+  TEST_ASSERT_EQUAL_INT(0, fclose(fp));
+  obj = &obj_proto[top_of_objt];
+  TEST_ASSERT_EQUAL_INT(1, GET_OBJ_EXTRA(obj)[0]);	/* 'a' */
+  TEST_ASSERT_EQUAL_INT(2, GET_OBJ_WEAR(obj)[0]);	/* 'b' */
+  TEST_ASSERT_EQUAL_INT(0, GET_OBJ_AFFECT(obj)[0]);
+
+  fp = stream_of(four, sizeof(four) - 1);
+  (void)parse_object(fp, 1061);
+  TEST_ASSERT_EQUAL_INT(0, fclose(fp));
+  obj = &obj_proto[top_of_objt];
+  TEST_ASSERT_EQUAL_INT(8, GET_OBJ_AFFECT(obj)[0]);	/* 'c', affect bit 3 */
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  proto_fixture_free();
+  zone_table = NULL;
+  top_of_zone_table = 0;
+}
+
+/* ---------------------------------------------------------------------
+ * load_config(): unknown keys and the old cedit key name
+ * ------------------------------------------------------------------- */
+
+/* load_config() ignored unknown keys without a word, which hid cedit
+ * writing "disp_closed_doors" while the loader read "display_closed_doors".
+ * Each unknown key is now reported with its line (comment lines and the
+ * lines of a multi-line value count), and loading goes on. */
+static void load_config_reports_unknown_keys(void)
+{
+  load_config_text("* comment\n"
+                   "max_playing = 77\n"
+                   "bogus_key = 5\n"
+                   "menu\nLine one\nLine two\n~\n"
+                   "zzz = 1\n"
+                   "tunnel_size = 3\n");
+  TEST_ASSERT_EQUAL_INT(77, CONFIG_MAX_PLAYING);
+  TEST_ASSERT_EQUAL_INT(3, CONFIG_TUNNEL_SIZE);
+  TEST_ASSERT_EQUAL_STRING("Line one\r\nLine two\r\n", CONFIG_MENU);
+  TEST_ASSERT_EQUAL_INT(2, tb_captured_errors);	/* bogus_key, zzz */
+  TEST_ASSERT_EQUAL_STRING("ERROR", tb_captured_severity);
+  TEST_ASSERT_EQUAL_STRING("config-unknown-key", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail,
+                              "line 8: unknown key 'zzz' ignored"));
+  config_fixture_free();
+}
+
+/* The old name keeps its setting (the last line wins, as for any key) and
+ * is reported once per load; the current name loads silently. */
+static void load_config_reads_old_closed_doors_key(void)
+{
+  load_config_text("disp_closed_doors = 1\ndisp_closed_doors = 0\n");
+  TEST_ASSERT_EQUAL_INT(0, CONFIG_DISP_CLOSED_DOORS);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("WARNING", tb_captured_severity);
+  TEST_ASSERT_EQUAL_STRING("config-key-alias", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "line 1: 'disp_closed_doors'"));
+  config_fixture_free();
+
+  tb_error_capture_reset();
+  load_config_text("display_closed_doors = 1\n");
+  TEST_ASSERT_EQUAL_INT(1, CONFIG_DISP_CLOSED_DOORS);
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  config_fixture_free();
+}
+
+/* ---------------------------------------------------------------------
+ * free_char(): a mob's remember() list
+ * ------------------------------------------------------------------- */
+
+/* free_char() fixtures (interpreter.c, act.comm.c, dg_*.c, handler.c,
+ * lists.c, mud_event.c, mobact.c); clearMemory() frees like mobact.c's and
+ * counts the records it freed. */
+static int fixture_memory_freed;
+void free_alias(struct alias_data *a) { (void)a; }
+void free_history(struct char_data *ch, int type) { (void)ch; (void)type; }
+void free_proto_script(void *thing, int type) { (void)thing; (void)type; }
+void affect_remove(struct char_data *ch, struct affected_type *af)
+{ (void)af; ch->affected = NULL; }
+void extract_script(void *thing, int type) { (void)thing; (void)type; }
+/* simple_list(), free_list() and event_cancel() are call-site macros over
+ * these (lists.h, dg_event.h). */
+void *simple_list_at(struct list_data *pList, const char *file, int line,
+                     const char *func)
+{ (void)pList; (void)file; (void)line; (void)func; return NULL; }
+void free_list_at(struct list_data *pList, const char *file, int line,
+                  const char *func)
+{ (void)pList; (void)file; (void)line; (void)func; }
+void event_cancel_at(struct event *event, const char *file, int line,
+                     const char *func)
+{ (void)event; (void)file; (void)line; (void)func; }
+void remove_from_lookup_table(long uid, const void *c) { (void)uid; (void)c; }
+/* free_char() calls it for a player only (prefedit.c, c5a3600). */
+void prefedit_forget_char(struct char_data *ch) { (void)ch; }
+void clearMemory(struct char_data *ch)
+{
+  memory_rec *curr, *next;
+
+  for (curr = MEMORY(ch); curr; curr = next) {
+    next = curr->next;
+    free(curr);
+    fixture_memory_freed++;
+  }
+  MEMORY(ch) = NULL;
+}
+
+/* damage() makes a MOB_MEMORY victim remember() its attacker, and only
+ * extract_char_final() cleared that list: destroy_db() frees the mobs still
+ * alive at shutdown with free_char(), which leaked every record
+ * (LeakSanitizer: remember <- damage <- hit <- do_hit). */
+static void free_char_releases_mob_memory(void)
+{
+  struct char_data *mob;
+  memory_rec *rec;
+  int k;
+
+  CREATE(mob, struct char_data, 1);
+  SET_BIT_AR(MOB_FLAGS(mob), MOB_ISNPC);
+  mob->nr = NOBODY;
+  mob->player_specials = &dummy_mob;
+  for (k = 0; k < 2; k++) {
+    CREATE(rec, memory_rec, 1);
+    rec->id = k + 1;
+    rec->next = MEMORY(mob);
+    MEMORY(mob) = rec;
+  }
+  fixture_memory_freed = 0;
+  free_char(mob);
+  TEST_ASSERT_EQUAL_INT(2, fixture_memory_freed);
+}
+
+/* load_zones() and renum_zone_table() disable a bad 'V' by retyping it
+ * '*', and it kept its variable name and value: code that frees only a
+ * 'V''s strings (zedit's list copy, genolc) leaked them, the leak d1076b1
+ * fixed in delete_room(). Both now cancel through cancel_zone_command().
+ * Here load_zones() disables a 'V' whose room vnum 70000 does not fit. */
+static void load_zones_cancelled_variable_keeps_no_strings(void)
+{
+  static const char text[] =
+    "#34\nbuilder~\nZone~\n3400 3499 30 2\n"
+    "V 0 2 0 70000 foo bar\n"
+    "V 0 2 0 3400 baz qux\n"
+    "S\n$\n";
+  struct reset_com *cmd;
+
+  TEST_ASSERT_EQUAL_INT(0, load_zone_text(text));
+  cmd = zone_table[top_of_zone_table].cmd;
+  TEST_ASSERT_EQUAL_CHAR('*', cmd[0].command);
+  TEST_ASSERT_NULL(cmd[0].sarg1);
+  TEST_ASSERT_NULL(cmd[0].sarg2);
+  TEST_ASSERT_EQUAL_CHAR('V', cmd[1].command);
+  TEST_ASSERT_EQUAL_STRING("baz", cmd[1].sarg1);
+  TEST_ASSERT_EQUAL_STRING("qux", cmd[1].sarg2);
+  zone_load_fixture_free();
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -1362,5 +2284,31 @@ int main(void)
   RUN_TEST(reset_zone_put_without_container_creates_nothing);
   RUN_TEST(reset_zone_object_variable_uses_arg2_context);
   RUN_TEST(renum_zone_table_reports_missing_variable_room);
+  RUN_TEST(parse_room_replaces_empty_strings);
+  RUN_TEST(parse_object_replaces_empty_strings);
+  RUN_TEST(parse_mobile_replaces_empty_short_description);
+  RUN_TEST(check_object_repairs_attack_type_out_of_range);
+  RUN_TEST(check_object_clamps_weapon_dice);
+  RUN_TEST(load_zones_disables_bad_wear_position_and_direction);
+  RUN_TEST(boot_social_messages_reports_missing_required_messages);
+  RUN_TEST(sort_boot_records_restores_room_order);
+  RUN_TEST(sort_boot_records_reports_duplicate_vnum);
+  RUN_TEST(sort_boot_records_renumbers_prototypes);
+  RUN_TEST(discrete_load_marks_descending_vnum_for_sorting);
+  RUN_TEST(parse_mobile_replaces_empty_alias_list);
+  RUN_TEST(parse_simple_mob_rejects_values_that_would_wrap);
+  RUN_TEST(parse_simple_mob_accepts_field_limits);
+  RUN_TEST(room_zone_rejects_room_between_zones);
+  RUN_TEST(room_zone_follows_ascending_rooms);
+  RUN_TEST(setup_dir_reports_bad_exit_line_with_room_and_direction);
+  RUN_TEST(parse_object_rejects_converted_record_in_no_zone);
+  RUN_TEST(parse_mobile_rejects_converted_record_in_no_zone);
+  RUN_TEST(load_zones_skips_blank_and_nul_lines);
+  RUN_TEST(trigger_lines_see_their_owner_vnum);
+  RUN_TEST(parse_object_converts_legacy_affect_field);
+  RUN_TEST(load_config_reports_unknown_keys);
+  RUN_TEST(load_config_reads_old_closed_doors_key);
+  RUN_TEST(free_char_releases_mob_memory);
+  RUN_TEST(load_zones_cancelled_variable_keeps_no_strings);
   return UNITY_END();
 }

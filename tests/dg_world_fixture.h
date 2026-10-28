@@ -225,6 +225,7 @@ static inline struct trig_data *dgw_trigger(int attach_type, long trigger_type,
   t->narg = 100;
   t->name = strdup("dgw test trigger");
   tail = &t->cmdlist;
+  /* NOLINTNEXTLINE(clang-analyzer-security.ArrayBound): every caller's list ends in NULL. */
   for (i = 0; lines && lines[i]; i++) {
     CREATE(*tail, struct cmdlist_element, 1);
     (*tail)->cmd = strdup(lines[i]);

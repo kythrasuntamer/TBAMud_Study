@@ -351,6 +351,52 @@ ACMD(do_send)
     send_to_char(ch, "You send '%s' to %s.\r\n", buf, GET_NAME(vict));
 }
 
+/** TRUE when who is in a valid room; otherwise reports, tells ch, and
+ * returns FALSE, and the immortal command must refuse. Used by the commands
+ * that move a character (goto, at, trans, teleport) before they call
+ * char_from_room() or use ch's room as the destination.
+ *
+ * A character can be stranded in NOWHERE by an earlier, already reported
+ * failure: char_to_room() refuses an invalid room and leaves its character
+ * there (e.g. a return from the void to a room that OLC deleted).
+ * char_from_room() deliberately aborts on such a character, and NOWHERE is
+ * no destination (char_to_room() would strand whoever is moved there).
+ *
+ * The ERROR names the command, the stranded character and the immortal,
+ * at the caller's line: op stranded-target when who is the character to
+ * be moved, stranded-actor when ch's own room is the destination.
+ * 'set <name> room <vnum>' places a stranded character (it skips
+ * char_from_room() for one in NOWHERE). Reached through WIZ_TARGET_PLACED()
+ * and WIZ_ACTOR_PLACED(). */
+static bool wiz_char_placed_at(struct char_data *ch, struct char_data *who,
+                               bool is_target, const char *cmd,
+                               const char *file, int line, const char *func)
+{
+  if (VALID_ROOM_RNUM(IN_ROOM(who)))
+    return TRUE;
+  tb_error_log_at("ERROR", "act", is_target ? "stranded-target" : "stranded-actor",
+                  cmd, 0, file, line, func,
+                  "%s " DIAG_CHAR_FMT " is in no valid room (rnum %d); '%s' by "
+                  DIAG_CHAR_FMT " refused", is_target ? "target" : "actor",
+                  DIAG_CHAR(who), (int) IN_ROOM(who), cmd, DIAG_CHAR(ch));
+  if (who == ch)
+    send_to_char(ch, "You are stranded in no valid room, so '%s' cannot work; "
+                 "'set <name> room <vnum>' places a stranded character.\r\n", cmd);
+  else
+    send_to_char(ch, "%s is stranded in no valid room and cannot be moved; "
+                 "'set <name> room <vnum>' places a stranded character.\r\n",
+                 GET_NAME(who) ? GET_NAME(who) : "That character");
+  return FALSE;
+}
+/* victim, the character cmd is about to move (it may be ch itself), is in a
+ * valid room. FALSE, after reporting stranded-target: refuse the command. */
+#define WIZ_TARGET_PLACED(ch, victim, cmd) \
+  wiz_char_placed_at((ch), (victim), TRUE, (cmd), __FILE__, __LINE__, __func__)
+/* ch's own room, cmd's destination, is valid. FALSE, after reporting
+ * stranded-actor: refuse the command. */
+#define WIZ_ACTOR_PLACED(ch, cmd) \
+  wiz_char_placed_at((ch), (ch), FALSE, (cmd), __FILE__, __LINE__, __func__)
+
 /** Resolve a room argument for goto, at, teleport, and the DG mgoto/mat/
  * mteleport/wteleport family.  -je 4/6/93
  * @param rawroomstr A room vnum, or a mob/object name (N.name allowed). It
@@ -453,6 +499,8 @@ ACMD(do_at)
 
   if ((location = find_target_room(ch, buf)) == NOWHERE)
     return;
+  if (!WIZ_TARGET_PLACED(ch, ch, "at"))
+    return;
 
   /* a location has been found. Remember both rooms by vnum: the command
    * runs with ch moved and may add or delete rooms (dig, redit, rdelete),
@@ -486,6 +534,8 @@ ACMD(do_goto)
   room_rnum location;
 
   if ((location = find_target_room(ch, argument)) == NOWHERE)
+    return;
+  if (!WIZ_TARGET_PLACED(ch, ch, "goto"))
     return;
 
   if (ZONE_FLAGGED(GET_ROOM_ZONE(location), ZONE_NOIMMORT) && (GET_LEVEL(ch) >= LVL_IMMORT) && (GET_LEVEL(ch) < LVL_GRGOD)) {
@@ -525,6 +575,8 @@ ACMD(do_trans)
 	send_to_char(ch, "Go transfer someone your own size.\r\n");
 	return;
       }
+      if (!WIZ_ACTOR_PLACED(ch, "trans") || !WIZ_TARGET_PLACED(ch, victim, "trans"))
+        return;
       act("$n disappears in a mushroom cloud.", FALSE, victim, 0, 0, TO_ROOM);
       char_from_room(victim);
       char_to_room(victim, IN_ROOM(ch));
@@ -539,12 +591,16 @@ ACMD(do_trans)
       send_to_char(ch, "I think not.\r\n");
       return;
     }
+    if (!WIZ_ACTOR_PLACED(ch, "trans all"))
+      return;
 
     for (i = descriptor_list; i; i = i->next)
       if (STATE(i) == CON_PLAYING && i->character && i->character != ch) {
 	victim = i->character;
 	if (GET_LEVEL(victim) >= GET_LEVEL(ch))
 	  continue;
+	if (!WIZ_TARGET_PLACED(ch, victim, "trans all"))
+	  continue;     /* reported; the others are still transferred */
 	act("$n disappears in a mushroom cloud.", FALSE, victim, 0, 0, TO_ROOM);
 	char_from_room(victim);
 	char_to_room(victim, IN_ROOM(ch));
@@ -576,6 +632,8 @@ ACMD(do_teleport)
   else if (!*buf2)
     send_to_char(ch, "Where do you wish to send this person?\r\n");
   else if ((target = find_target_room(ch, buf2)) != NOWHERE) {
+    if (!WIZ_TARGET_PLACED(ch, victim, "teleport"))
+      return;
     send_to_char(ch, "%s", CONFIG_OK);
     act("$n disappears in a puff of smoke.", FALSE, victim, 0, 0, TO_ROOM);
     char_from_room(victim);
@@ -2047,6 +2105,40 @@ ACMD(do_gecho)
   }
 }
 
+/** Take a descriptor out of its OLC editor before 'dc' hands it to the
+ * link-loss path, as the builder's own exit would. close_socket() releases
+ * a workspace only while the descriptor is still in an OLC state, and a
+ * text being written points d->str into that workspace (or, for tedit,
+ * into a live text buffer). So the text is abandoned first, exactly as the
+ * editor's /a does it (string_add, STRINGADD_ABORT: the original goes
+ * back), then cleanup_olc() frees the workspace, clears PLR_WRITING and
+ * returns the state to CON_PLAYING. */
+static void dc_leave_editor(struct descriptor_data *d)
+{
+  if (d->str) {
+    if (d->backstr) {
+      free(*d->str);
+      *d->str = d->backstr;
+      d->backstr = NULL;
+    }
+    d->str = NULL;
+    d->max_str = 0;
+    d->mail_to = 0;
+  }
+  if (d->olc)
+    cleanup_olc(d, CLEANUP_ALL);
+}
+
+/** dc <descriptor number>: disconnect a socket (LVL_GOD; the number comes
+ * from the immortal, as listed by 'users').
+ * Invariant: a descriptor in the game (CON_PLAYING or an OLC editor, see
+ * IS_PLAYING) has its character in the world. It must take the link-loss
+ * path, CON_DISCONNECT, which keeps the character. CON_CLOSE makes
+ * close_socket() free_char() the character, so it is only for descriptors
+ * that never entered the game; dc used it for builders in an editor, which
+ * freed a character still linked into its room and character_list. A
+ * target at or above the caller's level is refused and reported (dc-denied,
+ * both identities). */
 ACMD(do_dc)
 {
   char arg[MAX_INPUT_LENGTH];
@@ -2065,6 +2157,12 @@ ACMD(do_dc)
     return;
   }
   if (d->character && GET_LEVEL(d->character) >= GET_LEVEL(ch)) {
+    struct char_data *target = d->character;
+
+    TB_WARN_MSG("act", "dc-denied", "descriptor",
+                "caller " DIAG_CHAR_FMT " level %d may not disconnect desc %d "
+                DIAG_CHAR_FMT " level %d", DIAG_CHAR(ch), GET_LEVEL(ch),
+                d->desc_num, DIAG_CHAR(target), GET_LEVEL(target));
     if (!CAN_SEE(ch, d->character))
       send_to_char(ch, "No such connection.\r\n");
     else
@@ -2086,10 +2184,14 @@ ACMD(do_dc)
     act("$E's already being disconnected.", FALSE, ch, 0, d->character, TO_CHAR);
   else {
     /* Remember that we can disconnect people not in the game and that rather
-     * confuses the code when it expected there to be a character context. */
-    if (STATE(d) == CON_PLAYING)
+     * confuses the code when it expected there to be a character context.
+     * In-game states, editors included, take the link-loss path (see the
+     * function comment); an editor is left first. */
+    if (IS_PLAYING(d)) {
+      if (IS_IN_OLC(d))
+        dc_leave_editor(d);
       STATE(d) = CON_DISCONNECT;
-    else
+    } else
       STATE(d) = CON_CLOSE;
 
     send_to_char(ch, "Connection #%d closed.\r\n", num_to_dc);
@@ -2593,19 +2695,70 @@ ACMD(do_last)
   tb_fclose(fp);
 }
 
+/** Snapshot the UIDs of everyone in room for 'force room' (G1-07).
+ * @return a CREATEd array of *count UIDs in occupant order, which the
+ *         caller frees, or NULL with *count 0 for an empty room. */
+static long *force_room_snapshot(room_rnum room, int *count)
+{
+  struct char_data *occupant;
+  long *uids = NULL;
+  int n = 0;
+
+  for (occupant = world[room].people; occupant; occupant = occupant->next_in_room)
+    n++;
+  if (n > 0) {
+    CREATE(uids, long, n);
+    n = 0;
+    for (occupant = world[room].people; occupant; occupant = occupant->next_in_room)
+      uids[n++] = char_script_id(occupant);
+  }
+  *count = n;
+  return uids;
+}
+
+/** Re-acquire a 'force room' snapshot entry after earlier forced commands
+ * ran (G1-07). The occupant must still exist, not be pending extraction
+ * and still stand in the forced room, compared by vnum because a forced
+ * builder's dig can add rooms and shift rnums. Anything else is reported
+ * as force-room-target with the room vnum, UID and caller.
+ * @return the occupant to force, or NULL to skip it. */
+static struct char_data *force_room_target(struct char_data *ch, long uid,
+                                           room_vnum room)
+{
+  struct char_data *vict = find_char(uid);
+
+  if (!vict) {
+    TB_WARN_MSG("act", "force-room-target", "room",
+                "room vnum %d: uid %ld no longer exists; not forced (caller "
+                DIAG_CHAR_FMT ")", room, uid, DIAG_CHAR(ch));
+    return NULL;
+  }
+  if (DEAD(vict) || GET_ROOM_VNUM(IN_ROOM(vict)) != room) {
+    TB_WARN_MSG("act", "force-room-target", "room",
+                "room vnum %d: " DIAG_CHAR_FMT " uid %ld %s (now in room vnum "
+                "%d); not forced (caller " DIAG_CHAR_FMT ")", room,
+                DIAG_CHAR(vict), uid, DEAD(vict) ? "is pending extraction" :
+                "moved before its turn", GET_ROOM_VNUM(IN_ROOM(vict)),
+                DIAG_CHAR(ch));
+    return NULL;
+  }
+  return vict;
+}
+
 /** force <victim|room|all> <command>.
  * Forced commands run with the victim's privileges and without its
  * consent, can reach commands that assume ch->desc != NULL (each such
  * command checks it; see command-no-desc), and can fire DG command, enter
  * and leave triggers that move or extract other occupants. The 'room'
- * loop follows next_force across those callbacks; the safety guide's
- * snapshot-and-revalidate rule (section 2) applies and is not yet
- * implemented here (G1-07, open). Players at or above the caller's level
- * are never forced. */
+ * form therefore snapshots the occupants as UIDs and re-checks each one
+ * before forcing it (the safety guide's section 2; G1-07): an occupant
+ * that moved, for example a follower that left with its leader, or that
+ * is pending extraction is skipped and reported. Players at or above the
+ * caller's level are never forced. */
 ACMD(do_force)
 {
   struct descriptor_data *i, *next_desc;
-  struct char_data *vict, *next_force;
+  struct char_data *vict;
   char arg[MAX_INPUT_LENGTH], to_force[MAX_INPUT_LENGTH], buf1[MAX_INPUT_LENGTH + 32];
 
   half_chop(argument, arg, to_force);
@@ -2628,17 +2781,29 @@ ACMD(do_force)
       command_interpreter(vict, to_force);
     }
   } else if (!str_cmp("room", arg)) {
+    /* The command (from a GRGOD+) runs once per occupant, and each run can
+     * move or extract any occupant: a leader takes its followers along,
+     * and command, enter and leave triggers teleport or purge. So never
+     * follow next_in_room across command_interpreter(): force the
+     * occupants present now, by UID, each re-checked before its turn. */
+    const room_vnum force_vnum = GET_ROOM_VNUM(IN_ROOM(ch));
+    long *uids;
+    int count, n;
+
     send_to_char(ch, "%s", CONFIG_OK);
     mudlog(NRM, MAX(LVL_GOD, GET_INVIS_LEV(ch)), TRUE, "(GC) %s forced room %d to %s",
 		GET_NAME(ch), GET_ROOM_VNUM(IN_ROOM(ch)), to_force);
 
-    for (vict = world[IN_ROOM(ch)].people; vict; vict = next_force) {
-      next_force = vict->next_in_room;
+    uids = force_room_snapshot(IN_ROOM(ch), &count);
+    for (n = 0; n < count; n++) {
+      if (!(vict = force_room_target(ch, uids[n], force_vnum)))
+        continue;
       if (!IS_NPC(vict) && GET_LEVEL(vict) >= GET_LEVEL(ch))
 	continue;
       act(buf1, TRUE, ch, NULL, vict, TO_VICT);
       command_interpreter(vict, to_force);
     }
+    free(uids);
   } else { /* force all */
     send_to_char(ch, "%s", CONFIG_OK);
     mudlog(NRM, MAX(LVL_GOD, GET_INVIS_LEV(ch)), TRUE, "(GC) %s forced all to %s", GET_NAME(ch), to_force);

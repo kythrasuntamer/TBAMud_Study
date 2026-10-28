@@ -231,12 +231,16 @@ void cleanup_olc(struct descriptor_data *d, byte cleanup_type)
       free_quest(OLC_QUEST(d));
   }
 
-  /*. Check for aedit stuff -- M. Scott */
+  /*. Check for aedit stuff -- M. Scott
+   * free_action() releases a social's strings but not the struct, because
+   * it also serves soc_mess_list[] entries. The workspace's struct is
+   * aedit's own CREATE, so it is freed here in every case; with
+   * CLEANUP_STRUCTS its strings now belong to soc_mess_list and stay. */
   if (OLC_ACTION(d))  {
-    if (cleanup_type == CLEANUP_STRUCTS)
-      free(OLC_ACTION(d));
-    else
+    if (cleanup_type != CLEANUP_STRUCTS)
       free_action(OLC_ACTION(d));
+    free(OLC_ACTION(d));
+    OLC_ACTION(d) = NULL;
   }
 
   /* Used for cleanup of Hedit */
@@ -349,19 +353,41 @@ int olc_attach_at(struct descriptor_data *d, struct char_data *ch,
   return TRUE;
 }
 
-void split_argument(char *argument, char *tag)
+/* Split a "key = value" line of the game configuration file (load_config;
+ * the file is written by the server administrator and by cedit): the key,
+ * with spaces dropped, goes to tag and the value moves to the start of
+ * argument. Callers use the split_argument(argument, tag) macro (oasis.h),
+ * which passes sizeof(tag). The key used to be copied with no bound (F3-19).
+ * A key that does not fit is not cut short, because a prefix could name
+ * another setting: tag is left empty, so the caller matches no key, and the
+ * key and buffer sizes are reported as tag-too-long. */
+void split_argument_bounded(char *argument, char *tag, size_t tag_size)
 {
-  char *tmp = argument, *ttag = tag, *wrt = argument;
-  int i;
+  char *tmp = argument, *wrt = argument;
+  size_t key_len = 0;
 
-  for (i = 0; *tmp; tmp++, i++) {
-    if (*tmp != ' ' && *tmp != '=')
-      *(ttag++) = *tmp;
-    else if (*tmp == '=')
+  if (tag_size == 0) {
+    TB_ERROR_MSG("config", "tag-too-long", "split_argument",
+                 "no room for a key (tag_size 0); line left unsplit");
+    return;
+  }
+
+  for (; *tmp; tmp++) {
+    if (*tmp != ' ' && *tmp != '=') {
+      if (key_len + 1 < tag_size)
+        tag[key_len] = *tmp;
+      key_len++;
+    } else if (*tmp == '=')
       break;
   }
 
-  *ttag = '\0';
+  if (key_len >= tag_size) {
+    TB_ERROR_MSG("config", "tag-too-long", "split_argument",
+                 "key of %zu bytes does not fit its %zu-byte buffer; "
+                 "key left empty", key_len, tag_size);
+    tag[0] = '\0';
+  } else
+    tag[key_len] = '\0';
 
   while (*tmp == '=' || *tmp == ' ')
     tmp++;
@@ -381,16 +407,44 @@ static void free_config(struct config_data *data)
   free(data);
 }
 
+/** Checks whether ch may use the help (HEDIT_PERMISSION) or socials
+ * (AEDIT_PERMISSION) editor, which are not tied to a zone: ch's 'set olc'
+ * value is ALL_PERMISSION or that editor's permission, or ch is LVL_GRGOD
+ * or above.  A character with no descriptor (linkless, or an NPC) is
+ * denied, as by can_edit_zone().  Any other perm is a caller bug and is
+ * reported as editor-permission (F3-20).
+ * @return TRUE if ch may use the editor, otherwise FALSE. */
+int can_use_editor(struct char_data *ch, int perm)
+{
+  if (!ch->desc || IS_NPC(ch))
+    return FALSE;
+
+  if (perm != HEDIT_PERMISSION && perm != AEDIT_PERMISSION) {
+    TB_ERROR_MSG("olc", "editor-permission", "can_use_editor",
+                 "perm %d is neither HEDIT_PERMISSION nor AEDIT_PERMISSION; "
+                 DIAG_CHAR_FMT " denied", perm, DIAG_CHAR(ch));
+    return FALSE;
+  }
+
+  if (GET_OLC_ZONE(ch) == ALL_PERMISSION || GET_OLC_ZONE(ch) == perm)
+    return TRUE;
+
+  return GET_LEVEL(ch) >= LVL_GRGOD;
+}
+
 /** Checks to see if a builder can modify the specified zone.
  *
  * @param ch   The immortal requesting access.  A character with no
  *             descriptor (linkless, or an NPC) is always denied, which is
  *             also what keeps buildwalk inert for linkless characters.
- * @param rnum Either a real zone number (0..top_of_zone_table) or one of
- *             the permission sentinels HEDIT_PERMISSION, AEDIT_PERMISSION or
- *             ALL_PERMISSION.  The sentinels share the zone_rnum space: in a
- *             world with more than 666 zones a real rnum can equal one, and
- *             would then be treated as the sentinel.  NOWHERE is denied.
+ * @param rnum A real zone number (0..top_of_zone_table), from OLC_ZNUM or
+ *             world[].zone.  The socials editor still passes its
+ *             AEDIT_PERMISSION sentinel here (hedit calls can_use_editor()
+ *             itself); a sentinel is honoured only when it is above
+ *             top_of_zone_table, because in a world with that many zones the
+ *             same number is a real zone, which must keep its NOBUILD and
+ *             builder checks (F3-20).  Any other rnum outside the table is
+ *             reported as zone-index and denied.  NOWHERE is denied.
  * @return TRUE if the builder has access, otherwise FALSE. */
 int can_edit_zone(struct char_data *ch, zone_rnum rnum)
 {
@@ -398,17 +452,23 @@ int can_edit_zone(struct char_data *ch, zone_rnum rnum)
   if (!ch->desc || IS_NPC(ch) || rnum == NOWHERE)
     return FALSE;
 
+  /* Invariant (internal): rnum indexes zone_table[] below, so it must be in
+   * range unless it is an editor sentinel that no real zone can have. */
+  if (!VALID_ZONE_RNUM(rnum)) {
+    if (rnum == HEDIT_PERMISSION || rnum == AEDIT_PERMISSION)
+      return can_use_editor(ch, rnum);
+    TB_ERROR_MSG("olc", "zone-index", "zone_table",
+                 "rnum %d > top_of_zone_table %d for " DIAG_CHAR_FMT
+                 "; access denied", (int)rnum, (int)top_of_zone_table,
+                 DIAG_CHAR(ch));
+    return FALSE;
+  }
+
   /* If zone is flagged NOBUILD, then No-one can edit it (use zunlock to open it) */
-  if (rnum != HEDIT_PERMISSION && rnum != AEDIT_PERMISSION && ZONE_FLAGGED(rnum, ZONE_NOBUILD) )
+  if (ZONE_FLAGGED(rnum, ZONE_NOBUILD))
     return FALSE;
 
   if (GET_OLC_ZONE(ch) == ALL_PERMISSION)
-    return TRUE;
-
-  if (GET_OLC_ZONE(ch) == HEDIT_PERMISSION && rnum == HEDIT_PERMISSION)
-    return TRUE;
-
-  if (GET_OLC_ZONE(ch) == AEDIT_PERMISSION && rnum == AEDIT_PERMISSION)
     return TRUE;
 
   /* always access if ch is high enough level */
@@ -416,9 +476,8 @@ int can_edit_zone(struct char_data *ch, zone_rnum rnum)
     return (TRUE);
 
   /* always access if a player helped build the zone in the first place */
-  if (rnum != HEDIT_PERMISSION && rnum != AEDIT_PERMISSION)
-    if (is_name(GET_NAME(ch), zone_table[rnum].builders))
-      return (TRUE);
+  if (is_name(GET_NAME(ch), zone_table[rnum].builders))
+    return (TRUE);
 
   /* no access if you haven't been assigned a zone */
   if (GET_OLC_ZONE(ch) == NOWHERE) {

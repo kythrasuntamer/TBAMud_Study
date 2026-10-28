@@ -89,7 +89,12 @@ int olc_attach_at(struct descriptor_data *d, struct char_data *ch,
 #define OLC_ATTACH(d, ch, what) \
   olc_attach_at((d), (ch), (what), __FILE__, __LINE__, __func__)
 void get_char_colors(struct char_data *ch);
-void split_argument(char *argument, char *tag);
+/* Split a "key = value" config line: the key goes to tag, bounded by tag's
+ * size (an over-long key is refused and reported), and the value moves to
+ * the start of argument. tag must be an array (sizeof is taken here). */
+void split_argument_bounded(char *argument, char *tag, size_t tag_size);
+#define split_argument(argument, tag) \
+  split_argument_bounded((argument), (tag), sizeof(tag))
 void send_cannot_edit(struct char_data *ch, zone_vnum zone);
 
 /* OLC structures. */
@@ -468,6 +473,7 @@ int  save_config( IDXTYPE nowhere );
 /* Prototypes to keep. */
 void clear_screen(struct descriptor_data *);
 int can_edit_zone(struct char_data *ch, zone_rnum rnum);
+int can_use_editor(struct char_data *ch, int perm);
 ACMD(do_oasis);
 
 /* public functions from medit.c */

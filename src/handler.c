@@ -444,10 +444,15 @@ void char_from_room_at(const char *src_file, int src_line,
                  src_func);
     abort();
   }
-  if (IN_ROOM(ch) == NOWHERE) {
+  /* NOWHERE, or an rnum past top_of_world, which would index world[] out
+   * of bounds below. Callers that can meet a stranded character (one left
+   * in NOWHERE by an earlier, reported failure) must check first and
+   * refuse; see extract_char_final(). */
+  if (!VALID_ROOM_RNUM(IN_ROOM(ch))) {
     TB_FATAL_MSG("handler", "char-from-nowhere", "room",
-                 DIAG_CHAR_FMT " is in NOWHERE; caller=%s:%d %s",
-                 DIAG_CHAR(ch), src_file, src_line, src_func);
+                 DIAG_CHAR_FMT " is in no valid room (rnum %d); "
+                 "caller=%s:%d %s", DIAG_CHAR(ch), (int) IN_ROOM(ch),
+                 src_file, src_line, src_func);
     abort();
   }
 
@@ -501,6 +506,50 @@ void char_to_room_at(const char *src_file, int src_line, const char *src_func,
       stop_fighting(ch);
     }
   }
+}
+
+/* Snapshot the characters in room as UIDs (see handler.h). A loop that
+ * calls into scripts or combat for each occupant must not keep
+ * next_in_room: a trigger can teleport the next occupant, so the loop
+ * would carry on through another room's list (maintainer-safety-guide
+ * section 2). Characters that enter the room later are not in the
+ * snapshot. An invalid room is the caller's bug: reported, 0 occupants. */
+int room_people_uids_at(const char *src_file, int src_line,
+                        const char *src_func, room_rnum room, long **uids)
+{
+  struct char_data *tch;
+  int count = 0, i = 0;
+
+  *uids = NULL;
+  if (!VALID_ROOM_RNUM(room)) {
+    TB_ERROR_MSG("handler", "room-people-snapshot", "room",
+                 DIAG_ROOM_FMT " not in [0,%d]; no occupants; caller=%s:%d %s",
+                 DIAG_ROOM(room), (int) top_of_world, src_file, src_line,
+                 src_func);
+    return 0;
+  }
+  for (tch = world[room].people; tch; tch = tch->next_in_room)
+    count++;
+  if (count == 0)
+    return 0;
+  CREATE(*uids, long, count);
+  for (tch = world[room].people; tch && i < count; tch = tch->next_in_room)
+    (*uids)[i++] = char_script_id(tch);
+  return i;
+}
+
+/* Re-resolve one snapshot UID: the character only if the UID still maps to
+ * a character that is in room and not pending extraction (DEAD). The UID is
+ * looked up before anything is dereferenced, so a stale entry is never
+ * followed. A NULL result is for the caller to report: it knows the
+ * operation and the entity it was acting for. */
+struct char_data *room_person_live(long uid, room_rnum room)
+{
+  struct char_data *tch = find_char(uid);
+
+  if (tch == NULL || DEAD(tch) || IN_ROOM(tch) != room)
+    return NULL;
+  return tch;
 }
 
 /* Give an object to a char. */
@@ -931,12 +980,14 @@ void obj_from_obj(struct obj_data *obj)
   obj->next_content = NULL;
 }
 
-/* Set all carried_by to point to new owner */
+/* Set all carried_by to point to new owner. Siblings are walked with a
+ * loop and only ->contains recurses, so stack depth follows container
+ * nesting, not the length of the list (H2-25: one frame per object let a
+ * large hoard, e.g. a corpse's contents, overflow the stack). */
 void object_list_new_owner(struct obj_data *list, struct char_data *ch)
 {
-  if (list) {
+  for (; list; list = list->next_content) {
     object_list_new_owner(list->contains, ch);
-    object_list_new_owner(list->next_content, ch);
     list->carried_by = ch;
   }
 }
@@ -1001,15 +1052,20 @@ void extract_obj(struct obj_data *obj)
   free_obj(obj);
 }
 
+/* Count down the timers of obj, its later siblings and everything they
+ * contain. Siblings are walked with a loop and only ->contains recurses, so
+ * stack depth follows container nesting, not how many objects a character
+ * carries (H2-25: one frame per object let a hoard of thousands of items,
+ * an immortal's or a scavenger's, overflow the stack in point_update). */
 static void update_object(struct obj_data *obj, int use)
 {
-  /* dont update objects with a timer trigger */
-  if (!SCRIPT_CHECK(obj, OTRIG_TIMER) && (GET_OBJ_TIMER(obj) > 0))
-    GET_OBJ_TIMER(obj) -= use;
-  if (obj->contains)
-    update_object(obj->contains, use);
-  if (obj->next_content)
-    update_object(obj->next_content, use);
+  for (; obj; obj = obj->next_content) {
+    /* dont update objects with a timer trigger */
+    if (!SCRIPT_CHECK(obj, OTRIG_TIMER) && (GET_OBJ_TIMER(obj) > 0))
+      GET_OBJ_TIMER(obj) -= use;
+    if (obj->contains)
+      update_object(obj->contains, use);
+  }
 }
 
 void update_char_objects(struct char_data *ch)
@@ -1046,12 +1102,27 @@ void extract_char_final(struct char_data *ch)
   struct obj_data *obj;
   int i;
 
-  /* Every live character is in a room; a NOWHERE character here means the
-   * room lists are already inconsistent. Abort with a core. */
-  if (IN_ROOM(ch) == NOWHERE) {
+  /* Every live character should be in a room, but ordinary input can
+   * strand one in NOWHERE after an earlier, already reported failure:
+   * char_to_room() refuses an invalid room and leaves its character in
+   * NOWHERE (e.g. comm.c's return from the void to a was_in rnum that OLC
+   * room deletion made stale), and the stranded player then quits or is
+   * purged. Recover rather than take the server down: report it and place
+   * it in the mortal start room, so its objects and room links are handled
+   * as usual below. A corrupt rnum, or no start room to recover into, is
+   * unrecoverable. */
+  if (IN_ROOM(ch) == NOWHERE && VALID_ROOM_RNUM(r_mortal_start_room)) {
+    TB_ERROR_MSG("handler", "extract-from-nowhere", "char",
+                 DIAG_CHAR_FMT " is in NOWHERE at final extraction; placed "
+                 "in " DIAG_ROOM_FMT " to be extracted", DIAG_CHAR(ch),
+                 DIAG_ROOM(r_mortal_start_room));
+    char_to_room(ch, r_mortal_start_room);
+  }
+  if (!VALID_ROOM_RNUM(IN_ROOM(ch))) {
     TB_FATAL_MSG("handler", "extract-from-nowhere", "char",
-                 DIAG_CHAR_FMT " is in NOWHERE at final extraction",
-                 DIAG_CHAR(ch));
+                 DIAG_CHAR_FMT " is in no valid room (rnum %d) at final "
+                 "extraction and cannot be recovered", DIAG_CHAR(ch),
+                 (int) IN_ROOM(ch));
     abort();
   }
 
@@ -1633,16 +1704,25 @@ struct group_data * create_group(struct char_data * leader)
  * loop. */
 void free_group(struct group_data * group)
 {
-  struct char_data *tch;
-	struct iterator_data Iterator;
-	
+  /* Internal invariant, enforced: the old drain here called leave_group()
+   * for each member while iterating the list leave_group() edits, and the
+   * last leave_group() re-entered free_group(), so the list and the group
+   * were freed twice (H2-26; latent, no caller passes a non-empty group).
+   * Members of a non-empty group still point at it through ch->group, so
+   * report the misuse and keep the group intact instead. */
   if (group->members->iSize) {
-		for (tch = (struct char_data *) merge_iterator(&Iterator, group->members);
-		  tch; 
-		    tch = next_in_list(&Iterator))
-          leave_group(tch);
-          
-    remove_iterator(&Iterator);
+    struct char_data *leader = GROUP_LEADER(group);
+
+    if (leader)
+      TB_ERROR_MSG("group", "free-nonempty", "group",
+                   "group led by " DIAG_CHAR_FMT " still has %d member(s); "
+                   "not freed", DIAG_CHAR(leader),
+                   (int) group->members->iSize);
+    else
+      TB_ERROR_MSG("group", "free-nonempty", "group",
+                   "leaderless group still has %d member(s); not freed",
+                   (int) group->members->iSize);
+    return;
   }
   
   free_list(group->members);

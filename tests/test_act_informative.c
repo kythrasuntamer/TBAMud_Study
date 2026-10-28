@@ -14,6 +14,7 @@
 #include "quest.h"
 #include "class.h"
 #include "handler.h"
+#include "dg_scripts.h"
 
 #include "tb_error_capture.h"
 
@@ -95,10 +96,21 @@ char *act_at(const char *src_file, int src_line, const char *src_func,
   (void)hide_invisible; (void)ch; (void)obj; (void)vict_obj; (void)type;
   return NULL;
 }
-/* Paged output is captured like direct output. */
+/* Paged output is captured like direct output. Like modify.c's pager, the
+ * text is also kept for the reader's later pages: a copy when keep_internal
+ * is set, otherwise the caller's own pointer, which must then outlive the
+ * paging. paged_text is that kept text. */
+static char *paged_text, *paged_copy;
 void page_string(struct descriptor_data *d, char *str, int keep_internal)
 {
-  (void)keep_internal;
+  free(paged_copy);
+  paged_copy = NULL;
+  paged_text = str;
+  if (keep_internal && str) {
+    paged_copy = strdup(str);
+    TEST_ASSERT_NOT_NULL(paged_copy);
+    paged_text = paged_copy;
+  }
   send_to_char(d ? d->character : NULL, "%s", str);
 }
 /* Same lookup as quest.c's real_quest(): linear search by vnum. */
@@ -132,7 +144,11 @@ void setUp(void)
   sent[0] = '\0';
   tb_error_capture_reset();
 }
-void tearDown(void) {}
+void tearDown(void)
+{
+  free(paged_copy);
+  paged_copy = paged_text = NULL;
+}
 
 /* --- G2-01: search_help bounds ----------------------------------------- */
 
@@ -715,6 +731,210 @@ static void history_null_text_is_reported_not_stored(void)
   free_player(ch);
 }
 
+/* --- G2-17: look_at_room for a viewer outside a valid room ------------ */
+
+/* look_at_room() indexed world[IN_ROOM(ch)] with no check, so a caller
+ * that passed an unplaced viewer read past world[] (ASan global overflow
+ * here) and nothing named the caller. */
+static void look_at_unplaced_viewer_is_reported_at_caller(void)
+{
+  struct char_data *ch = make_player(8);
+  int call_line;
+
+  enter_test_room(ch);
+  IN_ROOM(ch) = 1;                      /* one past top_of_world */
+  call_line = __LINE__ + 1;
+  look_at_room(ch, TRUE);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("look-unplaced", tb_captured_operation);
+  TEST_ASSERT_EQUAL_INT(call_line, tb_captured_line);   /* the caller */
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "player idnum 8"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "room rnum 1,"));
+  TEST_ASSERT_EQUAL_STRING("", sent);
+
+  tb_error_capture_reset();
+  IN_ROOM(ch) = NOWHERE;
+  look_at_room(ch, TRUE);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("look-unplaced", tb_captured_operation);
+  TEST_ASSERT_EQUAL_STRING("", sent);
+
+  /* A placed viewer still sees the room, with no report. */
+  tb_error_capture_reset();
+  IN_ROOM(ch) = 0;
+  look_at_room(ch, TRUE);
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  TEST_ASSERT_NOT_NULL(strstr(sent, "Test Room"));
+
+  test_room.people = NULL;
+  leave_test_room(ch);
+  free_player(ch);
+}
+
+/* --- G2-16: an object script without triggers ------------------------- */
+
+/* The showvnums and 'where' object markers tested only SCRIPT(obj) before
+ * reading TRIGGERS(SCRIPT(obj))->next (the character markers also tested
+ * TRIGGERS). An object's script always holds a trigger, so a trigger-less
+ * one is reported, and no marker is shown. */
+static void object_script_without_triggers_is_reported(void)
+{
+  struct char_data *ch = make_player(10);
+  struct script_data sc;
+  struct obj_data *obj;
+
+  enter_test_room(ch);
+  viewer_desc.character = ch;
+  GET_LEVEL(ch) = LVL_IMMORT;
+  SET_BIT_AR(PRF_FLAGS(ch), PRF_SHOWVNUMS);
+  SET_BIT_AR(PRF_FLAGS(ch), PRF_HOLYLIGHT);
+  obj = make_room_obj("orb", "an orb", "An orb hums here.");
+  memset(&sc, 0, sizeof(sc));
+  SCRIPT(obj) = &sc;                    /* no triggers */
+  obj->script_id = 4242;
+
+  look_at_room(ch, TRUE);               /* show_obj_to_char() */
+  TEST_ASSERT_NOT_NULL(strstr(sent, "An orb hums here."));
+  TEST_ASSERT_NULL(strstr(sent, "[T"));
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("script-empty", tb_captured_operation);
+  TEST_ASSERT_EQUAL_STRING("WARNING", tb_captured_severity);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "uid 4242"));
+
+  sent[0] = '\0';
+  tb_error_capture_reset();
+  object_list = obj;
+  do_where(ch, (char *)"orb", 0, 0);    /* print_object_location() */
+  TEST_ASSERT_NOT_NULL(strstr(sent, "an orb"));
+  TEST_ASSERT_NULL(strstr(sent, "[T"));
+  TEST_ASSERT_EQUAL_STRING("script-empty", tb_captured_operation);
+
+  object_list = NULL;
+  SCRIPT(obj) = NULL;
+  free_room_objs();
+  test_room.people = NULL;
+  leave_test_room(ch);
+  free_player(ch);
+}
+
+/* --- G2-20: do_help logs an escaped excerpt of a missed topic --------- */
+
+/* do_help mudlogged the player's topic verbatim. Raw player text must not
+ * reach the logs (a DG-forced command can carry control codes and quotes
+ * that split or imitate a record). The miss is still logged, to the log
+ * file and the immortals' syslog channel, escaped and with its length. */
+static void help_miss_logs_escaped_topic(void)
+{
+  const char *keys[] = { "SCORE" };
+  const char *expect = "tried to get help on 'evil?quote?back?slash' (21 bytes)";
+  struct char_data *ch = make_player(11);
+  struct char_data *imm = make_player(12);
+  struct descriptor_data ch_desc, imm_desc;
+  char topic[] = "evil\"quote\\back\tslash";
+  char logged[512];
+  size_t got;
+  FILE *log_fp = tmpfile();
+
+  TEST_ASSERT_NOT_NULL(log_fp);
+  help_table = make_help_table(1, keys);
+  top_of_helpt = 1;
+  memset(&ch_desc, 0, sizeof(ch_desc));
+  memset(&imm_desc, 0, sizeof(imm_desc));
+  ch->desc = &ch_desc;
+  ch_desc.character = ch;
+  GET_LEVEL(imm) = LVL_IMPL;
+  SET_BIT_AR(PRF_FLAGS(imm), PRF_LOG1);
+  SET_BIT_AR(PRF_FLAGS(imm), PRF_LOG2);
+  imm->desc = &imm_desc;
+  imm_desc.character = imm;
+  STATE(&imm_desc) = CON_PLAYING;
+  descriptor_list = &imm_desc;
+  logfile = log_fp;
+
+  do_help(ch, topic, 0, 0);
+
+  logfile = NULL;
+  descriptor_list = NULL;
+  TEST_ASSERT_EQUAL_INT(0, fseek(log_fp, 0L, SEEK_SET));
+  got = fread(logged, 1, sizeof(logged) - 1, log_fp);
+  logged[got] = '\0';
+  TEST_ASSERT_EQUAL_INT(0, fclose(log_fp));
+  TEST_ASSERT_NOT_NULL(strstr(sent, "There is no help on that word."));
+  TEST_ASSERT_NOT_NULL(strstr(sent, expect));
+  TEST_ASSERT_NOT_NULL(strstr(logged, expect));
+  TEST_ASSERT_NULL(strstr(logged, "evil\""));
+  TEST_ASSERT_NULL(strchr(logged, '\t'));
+
+  ch->desc = imm->desc = NULL;
+  free_help_fixture();
+  free_player(imm);
+  free_player(ch);
+}
+
+/* --- Pager ownership: help entries and room extra descriptions -------- */
+
+/* The reader's next page: the pager reads the text it kept. */
+static size_t next_page_length(void)
+{
+  return paged_text ? strlen(paged_text) : 0;
+}
+
+/* do_help paged help_table[mid].entry without a copy, so an hedit save or a
+ * 'reload xhelp' (both free the whole help table) while the reader was
+ * still paging left the pager reading freed memory (ASan heap-use-after-free
+ * here before the fix). */
+static void help_entry_pager_owns_its_text(void)
+{
+  const char *keys[] = { "SCORE" };
+  struct char_data *ch = make_player(13);
+  struct descriptor_data desc;
+  char topic[] = "score";
+
+  help_table = make_help_table(1, keys);
+  top_of_helpt = 1;
+  memset(&desc, 0, sizeof(desc));
+  ch->desc = &desc;
+  desc.character = ch;
+
+  do_help(ch, topic, 0, 0);
+  TEST_ASSERT_NOT_NULL(strstr(sent, "entry"));
+  free_help_fixture();                       /* 'reload xhelp' */
+  TEST_ASSERT_EQUAL_UINT(strlen("entry"), next_page_length());
+
+  ch->desc = NULL;
+  free_player(ch);
+}
+
+/* 'look <keyword>' paged a room extra description without a copy, and a
+ * redit save frees the room's old extra descriptions. */
+static void room_extra_description_pager_owns_its_text(void)
+{
+  static const char text[] = "The sign reads: keep out.\r\n";
+  struct char_data *ch = make_player(14);
+  struct extra_descr_data *ex = calloc(1, sizeof(*ex));
+  char arg[] = "sign";
+
+  TEST_ASSERT_NOT_NULL(ex);
+  enter_test_room(ch);
+  ex->keyword = strdup("sign");
+  ex->description = strdup(text);
+  TEST_ASSERT_NOT_NULL(ex->keyword);
+  TEST_ASSERT_NOT_NULL(ex->description);
+  test_room.ex_description = ex;
+
+  do_look(ch, arg, 0, SCMD_LOOK);
+  TEST_ASSERT_NOT_NULL(strstr(sent, "keep out"));
+  test_room.ex_description = NULL;           /* redit save */
+  free(ex->keyword);
+  free(ex->description);
+  free(ex);
+  TEST_ASSERT_EQUAL_UINT(strlen(text), next_page_length());
+
+  test_room.people = NULL;
+  leave_test_room(ch);
+  free_player(ch);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -734,5 +954,10 @@ int main(void)
   RUN_TEST(look_in_overfull_drinkcon_is_reported);
   RUN_TEST(gen_ps_unknown_subcmd_is_reported);
   RUN_TEST(history_null_text_is_reported_not_stored);
+  RUN_TEST(look_at_unplaced_viewer_is_reported_at_caller);
+  RUN_TEST(object_script_without_triggers_is_reported);
+  RUN_TEST(help_miss_logs_escaped_topic);
+  RUN_TEST(help_entry_pager_owns_its_text);
+  RUN_TEST(room_extra_description_pager_owns_its_text);
   return UNITY_END();
 }
