@@ -96,12 +96,35 @@ static const char *prac_types[] = {
 #define MAXGAIN(ch) (prac_params[MAX_PER_PRAC][(int)GET_CLASS(ch)])
 #define SPLSKL(ch) (prac_types[prac_params[PRAC_TYPE][(int)GET_CLASS(ch)]])
 
+/* TRUE if c indexes the per-class tables (prac_params[][NUM_CLASSES],
+ * spell_info[].min_level[]). Evaluates c twice. */
+#define VALID_CLASS(c) ((c) >= 0 && (c) < NUM_CLASSES)
+
+/* The tables above are indexed by GET_CLASS(ch), which is read from the
+ * pfile without a range check (players.c). Report and refuse a character
+ * whose class cannot index them, instead of reading past prac_params[]. */
+static bool practice_class_ok(struct char_data *ch)
+{
+  int chclass = (int) GET_CLASS(ch);
+
+  if (VALID_CLASS(chclass))
+    return TRUE;
+  TB_ERROR_MSG("spec", "class-range", "prac_params",
+               DIAG_CHAR_FMT " class %d outside [0,%d); cannot practice",
+               DIAG_CHAR(ch), chclass, NUM_CLASSES);
+  send_to_char(ch, "Something is wrong with your class; please tell an immortal.\r\n");
+  return FALSE;
+}
+
 void list_skills(struct char_data *ch)
 {
   const char *overflow = "\r\n**OVERFLOW**\r\n";
   int i, sortpos, ret;
   size_t len = 0;
   char buf2[MAX_STRING_LENGTH];
+
+  if (!practice_class_ok(ch))
+    return;
 
   len = snprintf(buf2, sizeof(buf2), "You have %d practice session%s remaining.\r\n"
 	"You know of the following %ss:\r\n", GET_PRACTICES(ch),
@@ -128,6 +151,9 @@ SPECIAL(guild)
 
   if (IS_NPC(ch) || !CMD_IS("practice"))
     return (FALSE);
+
+  if (!practice_class_ok(ch))
+    return (TRUE);
 
   skip_spaces(&argument);
 
