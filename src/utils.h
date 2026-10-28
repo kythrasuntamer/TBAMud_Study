@@ -165,7 +165,11 @@ void tb_player_special_on_mob_at(const struct char_data *ch, const char *field,
                                  const char *source_file, int source_line,
                                  const char *source_func);
 int count_color_chars(char *string);
-int room_is_dark(room_rnum room);
+int room_is_dark_at(room_rnum room, const char *source_file, int source_line,
+                    const char *source_func);
+/** TRUE if the room has no light. An invalid rnum is reported as a
+ * room-rnum-invalid error naming the caller's file, line and function. */
+#define room_is_dark(room) room_is_dark_at((room), __FILE__, __LINE__, __func__)
 int levenshtein_distance(const char *s1, const char *s2);
 struct time_info_data *real_time_passed(time_t t2, time_t t1);
 struct time_info_data *mud_time_passed(time_t t2, time_t t1);
@@ -578,7 +582,7 @@ do                                                              \
 #define GET_ROOM_ZONE(room)	(VALID_ROOM_RNUM(room) ? world[(room)].zone : NOWHERE)
 
 /** TRUE if the room has no light, FALSE if not. */
-#define IS_DARK(room)	room_is_dark((room))
+#define IS_DARK(room)	room_is_dark((room))  /* reports its caller */
 /** TRUE if the room has light, FALSE if not. */
 #define IS_LIGHT(room)  (!IS_DARK(room))
 

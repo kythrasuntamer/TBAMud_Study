@@ -338,9 +338,10 @@ void basic_mud_log(const char *format, ...)
 {
   (void)format;
 }
-int room_is_dark(room_rnum room)
+int room_is_dark_at(room_rnum room, const char *source_file, int source_line,
+                    const char *source_func)
 {
-  (void)room;
+  (void)room; (void)source_file; (void)source_line; (void)source_func;
   return 0;
 }
 int valid_dg_target(char_data *ch, int flags)

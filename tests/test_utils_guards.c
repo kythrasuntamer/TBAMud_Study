@@ -528,6 +528,34 @@ void test_check_player_special_on_mob_reports_call_site(void)
   TEST_ASSERT_NOT_NULL(strstr(log_text(), "mob vnum"));
 }
 
+/* =====================================================================
+ * I1-09: an invalid rnum in IS_DARK is reported with the caller.
+ * ===================================================================== */
+
+void test_is_dark_invalid_rnum_reports_caller(void)
+{
+  char where[64];
+  int dark;
+
+  world_setup();
+  (void)snprintf(where, sizeof(where), "test_utils_guards.c:%d", __LINE__ + 1);
+  dark = IS_DARK(NOWHERE);
+
+  TEST_ASSERT_FALSE(dark);
+  TEST_ASSERT_EQUAL_INT(1, count_op("room-rnum-invalid"));
+  TEST_ASSERT_NOT_NULL(strstr(log_text(), where));
+  TEST_ASSERT_NOT_NULL(strstr(log_text(), "function=test_is_dark_invalid_rnum_reports_caller"));
+  world_teardown();
+}
+
+void test_is_dark_valid_room_is_silent(void)
+{
+  world_setup();
+  TEST_ASSERT_FALSE(IS_DARK(0));
+  TEST_ASSERT_EQUAL_INT(0, count_records());
+  world_teardown();
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -550,5 +578,7 @@ int main(void)
   RUN_TEST(test_strfrmt_null_text_reports_and_returns_empty);
   RUN_TEST(test_strfrmt_empty_text_does_not_return_previous_output);
   RUN_TEST(test_check_player_special_on_mob_reports_call_site);
+  RUN_TEST(test_is_dark_invalid_rnum_reports_caller);
+  RUN_TEST(test_is_dark_valid_room_is_silent);
   return UNITY_END();
 }

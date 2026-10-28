@@ -1550,13 +1550,25 @@ int count_non_protocol_chars(char * str)
 
 /** Tests to see if a room is dark. Rules (unless overridden by ROOM_DARK):
  * Inside and City rooms are always lit. Outside rooms are dark at sunset and
- * night.
+ * night. Call it as room_is_dark(room) or IS_DARK(room); the macro passes
+ * the caller's location.
  * @todo Make the return value a bool.
- * @param room The real room to test for. */
-int room_is_dark(room_rnum room)
+ * @param room The real room to test for.
+ * @param source_file Caller's __FILE__.
+ * @param source_line Caller's __LINE__.
+ * @param source_func Caller's __func__. */
+int room_is_dark_at(room_rnum room, const char *source_file, int source_line,
+                    const char *source_func)
 {
+  /* Invariant: callers pass a valid rnum, usually IN_ROOM(ch). A character
+   * at NOWHERE (pending extraction, mid-login) reaches here through
+   * CAN_SEE/LIGHT_OK; the room is treated as lit, as before, and the
+   * caller's location says which path skipped the placement check. */
   if (!VALID_ROOM_RNUM(room)) {
-    log("room_is_dark: Invalid room rnum %d. (0-%d)", room, top_of_world);
+    tb_error_log_at("ERROR", "world", "room-rnum-invalid", "room_is_dark", 0,
+                    source_file, source_line, source_func,
+                    "rnum=%d top_of_world=%d; treated as lit",
+                    (int)room, (int)top_of_world);
     return (FALSE);
   }
 

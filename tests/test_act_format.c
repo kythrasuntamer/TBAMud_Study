@@ -28,7 +28,9 @@ void tb_player_special_on_mob_at(const struct char_data *ch, const char *field,
                                  const char *source_file, int source_line,
                                  const char *source_func)
 { (void)ch; (void)field; (void)source_file; (void)source_line; (void)source_func; }
-int room_is_dark(room_rnum room) { (void)room; return 0; }
+int room_is_dark_at(room_rnum room, const char *source_file, int source_line,
+                    const char *source_func)
+{ (void)room; (void)source_file; (void)source_line; (void)source_func; return 0; }
 char *fname(const char *namelist) { return (char *)namelist; }
 /* Reached only for descriptor output, which these tests never produce. */
 char *CAP(char *txt) { return txt; }
