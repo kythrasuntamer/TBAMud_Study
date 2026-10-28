@@ -196,9 +196,15 @@ ACMD(do_tedit)
   send_editor_help(ch->desc);
   send_to_char(ch, "Edit file below:\r\n\r\n");
 
+  /* Entry requires CON_PLAYING, where no editor is open, so a leftover
+   * d->olc is an invariant break.  free() alone leaked its substructures
+   * (help, action, quest, prefs, message list, storage); release them all
+   * and report the stale mode. */
   if (ch->desc->olc) {
-    mudlog(BRF, LVL_IMMORT, TRUE, "SYSERR: do_tedit: Player already had olc structure.");
-    free(ch->desc->olc);
+    TB_ERROR_MSG("olc", "olc-reentry", "tedit",
+                 DIAG_CHAR_FMT " stale mode %d state %d",
+                 DIAG_CHAR(ch), OLC_MODE(ch->desc), STATE(ch->desc));
+    cleanup_olc(ch->desc, CLEANUP_ALL);
   }
   CREATE(ch->desc->olc, struct oasis_olc_data, 1);
 

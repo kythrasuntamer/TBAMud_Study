@@ -739,6 +739,36 @@ static void test_hedit_null_entry_round_trip(void)
   TEST_ASSERT_EQUAL_INT(HEDIT_MAIN_MENU, OLC_MODE(&builder_desc));
 }
 
+/* F2-24: a stale d->olc left on a CON_PLAYING descriptor is released with
+ * cleanup_olc (LeakSanitizer/Valgrind see its substructures leak with a bare
+ * free) and reported with the stale mode. */
+static void test_editor_entry_releases_stale_olc_loudly(void)
+{
+  char hcmd[] = " beta", acmd[] = " smile";
+
+  CREATE(builder_desc.olc, struct oasis_olc_data, 1);
+  CREATE(OLC_HELP(&builder_desc), struct help_index_element, 1);
+  OLC_HELP(&builder_desc)->keywords = strdup("stale");
+  OLC_HELP(&builder_desc)->entry = strdup("stale entry");
+  OLC_STORAGE(&builder_desc) = strdup("stale");
+  OLC_MODE(&builder_desc) = 77;
+  search_result = 2;
+  do_oasis_hedit(&builder, hcmd, 0, 0);
+  TEST_ASSERT_EQUAL_STRING("olc-reentry", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "stale mode 77"));
+  TEST_ASSERT_EQUAL_INT(HEDIT_CONFIRM_EDIT, OLC_MODE(&builder_desc));
+  TEST_ASSERT_EQUAL_STRING("beta", OLC_STORAGE(&builder_desc));
+  type("q");
+
+  CREATE(builder_desc.olc, struct oasis_olc_data, 1);
+  CREATE(OLC_ACTION(&builder_desc), struct social_messg, 1);
+  OLC_ACTION(&builder_desc)->command = strdup("stale");
+  tb_error_capture_reset();
+  do_oasis_aedit(&builder, acmd, 0, 0);
+  TEST_ASSERT_EQUAL_STRING("olc-reentry", tb_captured_operation);
+  TEST_ASSERT_EQUAL_INT(CON_AEDIT, STATE(&builder_desc));
+}
+
 /* F2-29: an impossible editor mode is reported with the mode and editor,
  * not a mudlog whose arguments were in the wrong order. */
 static void test_hedit_bad_mode_is_reported(void)
@@ -1277,6 +1307,7 @@ int main(void)
   RUN_TEST(test_hedit_replace_frees_old_row_and_keeps_duplicates_valid);
   RUN_TEST(test_hedit_save_to_duplicate_row_is_refused_loudly);
   RUN_TEST(test_hedit_bad_mode_is_reported);
+  RUN_TEST(test_editor_entry_releases_stale_olc_loudly);
   RUN_TEST(test_hedit_failed_disk_save_is_loud);
   RUN_TEST(test_qedit_failed_disk_save_is_loud);
   RUN_TEST(test_aedit_failed_disk_save_is_loud);

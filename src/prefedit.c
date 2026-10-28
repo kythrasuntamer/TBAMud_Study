@@ -1058,9 +1058,15 @@ ACMD(do_oasis_prefedit)
   /****************************************************************************/
   /** Give the descriptor an OLC structure.                                  **/
   /****************************************************************************/
+  /* Entry requires CON_PLAYING, where no editor is open, so a leftover
+   * d->olc is an invariant break.  free() alone leaked its substructures
+   * (help, action, quest, prefs, message list, storage); release them all
+   * and report the stale mode. */
   if (d->olc) {
-    mudlog(BRF, LVL_IMMORT, TRUE, "SYSERR: do_oasis_prefedit: Player already had olc structure.");
-    free(d->olc);
+    TB_ERROR_MSG("olc", "olc-reentry", "prefedit",
+                 DIAG_CHAR_FMT " stale mode %d state %d",
+                 DIAG_CHAR(ch), OLC_MODE(d), STATE(d));
+    cleanup_olc(d, CLEANUP_ALL);
   }
 
   CREATE(d->olc, struct oasis_olc_data, 1);
