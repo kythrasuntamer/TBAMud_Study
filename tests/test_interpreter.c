@@ -19,6 +19,7 @@
 #include "db.h"
 
 #include <sodium.h>
+#include <stdarg.h>
 
 extern FILE *logfile;
 
@@ -26,6 +27,14 @@ extern FILE *logfile;
  * assert which structured diagnostic the code under test emitted. */
 static int captured_errors;
 static char captured_operation[64];
+static char captured_detail[512];
+/* NOLINTNEXTLINE(cert-dcl37-c,cert-dcl51-cpp): --wrap requires this name. */
+void __wrap_tb_error_log_at(const char *severity, const char *subsystem,
+                            const char *operation, const char *resource,
+                            int errnum, const char *source_file,
+                            int source_line, const char *source_func,
+                            const char *detail_fmt, ...)
+                            __attribute__ ((format (printf, 9, 10)));
 /* NOLINTNEXTLINE(cert-dcl37-c,cert-dcl51-cpp): --wrap requires this name. */
 void __wrap_tb_error_log_at(const char *severity, const char *subsystem,
                             const char *operation, const char *resource,
@@ -33,8 +42,14 @@ void __wrap_tb_error_log_at(const char *severity, const char *subsystem,
                             int source_line, const char *source_func,
                             const char *detail_fmt, ...)
 {
+  va_list args;
+
   (void)severity; (void)subsystem; (void)resource; (void)errnum;
-  (void)source_file; (void)source_line; (void)source_func; (void)detail_fmt;
+  (void)source_file; (void)source_line; (void)source_func;
+  va_start(args, detail_fmt);
+  if (vsnprintf(captured_detail, sizeof(captured_detail), detail_fmt, args) < 0)
+    *captured_detail = '\0';
+  va_end(args);
   captured_errors++;
   strlcpy(captured_operation, operation ? operation : "",
           sizeof(captured_operation));
@@ -45,6 +60,7 @@ void setUp(void)
   logfile = stderr;
   captured_errors = 0;
   *captured_operation = '\0';
+  *captured_detail = '\0';
 }
 void tearDown(void) { logfile = NULL; }
 
@@ -1190,6 +1206,194 @@ void test_dupe_check_takes_over_an_in_game_twin(void)
   free_heap_chars();
 }
 
+#ifdef NOCRYPT
+/* test_interpreter_nocrypt: interpreter.c built without crypt(), and linked
+ * with --wrap=sodium_init so libsodium can fail to start on demand. */
+/* NOLINTNEXTLINE(cert-dcl37-c,cert-dcl51-cpp): --wrap requires this name. */
+int __real_sodium_init(void);
+static int fail_sodium_init;
+/* NOLINTNEXTLINE(cert-dcl37-c,cert-dcl51-cpp): --wrap requires this name. */
+int __wrap_sodium_init(void)
+{
+  return (fail_sodium_init ? -1 : __real_sodium_init());
+}
+
+/* Counts Argon2id verifications (--wrap=crypto_pwhash_str_verify). */
+static int pwhash_verifies;
+/* NOLINTNEXTLINE(cert-dcl37-c,cert-dcl51-cpp): --wrap requires this name. */
+int __real_crypto_pwhash_str_verify(const char *str, const char *passwd,
+                                    unsigned long long passwdlen);
+/* NOLINTNEXTLINE(cert-dcl37-c,cert-dcl51-cpp): --wrap requires this name. */
+int __wrap_crypto_pwhash_str_verify(const char *str, const char *passwd,
+                                    unsigned long long passwdlen);
+int __wrap_crypto_pwhash_str_verify(const char *str, const char *passwd,
+                                    unsigned long long passwdlen)
+{
+  pwhash_verifies++;
+  return (__real_crypto_pwhash_str_verify(str, passwd, passwdlen));
+}
+
+/* A login whose password cannot be checked closes with a message, is
+ * reported once with the idnum, and counts as neither a bad password nor a
+ * rate-limit failure. */
+static void assert_unverifiable_login(struct descriptor_data *d,
+                                      struct char_data *dch, const char *why)
+{
+  TEST_ASSERT_EQUAL_INT(CON_CLOSE, STATE(d));
+  TEST_ASSERT_EQUAL_INT(0, d->bad_pws);
+  TEST_ASSERT_EQUAL_INT(0, GET_BAD_PWS(dch));
+  TEST_ASSERT_EQUAL_INT(1, captured_errors);
+  TEST_ASSERT_EQUAL_STRING("password-verify", captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(captured_detail, "player idnum 31 name Twinnie"));
+  TEST_ASSERT_NOT_NULL(strstr(captured_detail, why));
+}
+
+/* What the player was shown (write_to_output is weak in test_stubs.c). */
+static char shown[2048];
+size_t write_to_output(struct descriptor_data *d, const char *txt, ...)
+{
+  va_list args;
+  size_t used = strlen(shown);
+  int n;
+
+  (void)d;
+  va_start(args, txt);
+  n = vsnprintf(shown + used, sizeof(shown) - used, txt, args);
+  va_end(args);
+  return n < 0 ? 0 : (size_t)n;
+}
+
+/* A character called name at state, whose stored hash is a legacy DES
+ * hash this crypt()-less build cannot check. */
+static struct char_data *legacy_char_at(struct descriptor_data *d,
+                                        const char *name, int state)
+{
+  struct char_data *dch = heap_char(name);
+
+  strlcpy(GET_PASSWD(dch), "abJnggxhB/yWI", sizeof(dch->player.passwd));
+  GET_IDNUM(dch) = 0;                  /* as during character creation */
+  memset(d, 0, sizeof(*d));
+  d->character = dch;
+  dch->desc = d;
+  STATE(d) = state;
+  *shown = '\0';
+  return dch;
+}
+
+/* Each password prompt after login treats an unverifiable password as the
+ * server's problem: it says so, reports the name (idnum is 0 in creation)
+ * and either closes (an unconfirmed new hash is in memory) or returns to
+ * the menu.  Red before: "Passwords don't match" / "Incorrect password",
+ * and CON_CNFPASSWD looped forever. */
+static void check_unverifiable_prompt(const char *name, int state, int want)
+{
+  struct descriptor_data d;
+  struct char_data *dch = legacy_char_at(&d, name, state);
+  char arg[] = "whatever1";
+  char who[64];
+
+  captured_errors = 0;
+  nanny(&d, arg);
+  TEST_ASSERT_EQUAL_INT_MESSAGE(want, STATE(&d), name);
+  TEST_ASSERT_NOT_NULL_MESSAGE(strstr(shown, "cannot be checked"), name);
+  TEST_ASSERT_NULL_MESSAGE(strstr(shown, "don't match"), name);
+  TEST_ASSERT_NULL_MESSAGE(strstr(shown, "Incorrect password"), name);
+  TEST_ASSERT_EQUAL_INT_MESSAGE(1, captured_errors, name);
+  TEST_ASSERT_EQUAL_STRING("password-verify", captured_operation);
+  TEST_ASSERT_TRUE(snprintf(who, sizeof(who), "player idnum 0 name %s", name)
+                   < (int)sizeof(who));
+  TEST_ASSERT_NOT_NULL_MESSAGE(strstr(captured_detail, who), name);
+  dch->desc = NULL;
+  free_heap_chars();
+}
+
+void test_unverifiable_password_at_each_prompt(void)
+{
+  check_unverifiable_prompt("Cnfone", CON_CNFPASSWD, CON_CLOSE);
+  check_unverifiable_prompt("Vrfyone", CON_CHPWD_VRFY, CON_CLOSE);
+  check_unverifiable_prompt("Oldone", CON_CHPWD_GETOLD, CON_MENU);
+  check_unverifiable_prompt("Delone", CON_DELCNF1, CON_MENU);
+}
+
+/* A reconnect loop against one legacy-hash account: at most
+ * TB_PW_REPORT_BURST (5) records, then one "withheld" record; each attempt
+ * counts against the account's login rate limit (never as a bad password),
+ * so the loop is cut off with "Too many login attempts".  Red before: one
+ * ERROR record per attempt, forever. */
+void test_unverifiable_login_flood_is_rate_limited(void)
+{
+  struct descriptor_data d;
+  struct char_data *dch;
+  char arg[] = "whatever1";
+  int i, reports = 0, withheld = 0, cut_off = 0;
+
+  for (i = 0; i < 20 && !cut_off; i++) {
+    dch = legacy_char_at(&d, "Floodie", CON_PASSWORD);
+    captured_errors = 0;
+    *captured_operation = '\0';
+    nanny(&d, arg);
+    if (strstr(shown, "Too many login attempts"))
+      cut_off = 1;
+    else
+      TEST_ASSERT_NOT_NULL(strstr(shown, "cannot be checked"));
+    if (!strcmp(captured_operation, "password-verify"))
+      reports += captured_errors;
+    else if (!strcmp(captured_operation, "password-verify-suppressed"))
+      withheld += captured_errors;
+    TEST_ASSERT_EQUAL_INT(0, d.bad_pws);
+    TEST_ASSERT_EQUAL_INT(0, GET_BAD_PWS(dch));
+    dch->desc = NULL;
+    free_heap_chars();
+  }
+  TEST_ASSERT_EQUAL_INT(5, reports);
+  TEST_ASSERT_EQUAL_INT(1, withheld);
+  TEST_ASSERT_TRUE(cut_off);
+  TEST_ASSERT_TRUE(i <= 9);            /* TB_LOGIN_MAX_FAILURES (8) + 1 */
+}
+
+/* Red before: the legacy hash was silently a wrong password (3 strikes). */
+void test_legacy_hash_without_crypt_is_reported_not_counted(void)
+{
+  struct descriptor_data d;
+  struct char_data *dch;
+  char arg[sizeof(dupe_password)];
+
+  dupe_world(3001);
+  dch = password_login(&d);
+  strlcpy(GET_PASSWD(dch), "abJnggxhB/yWI", sizeof(dch->player.passwd)); /* DES */
+  descriptor_list = &d;
+  strlcpy(arg, dupe_password, sizeof(arg));
+  pwhash_verifies = 0;
+  nanny(&d, arg);
+
+  assert_unverifiable_login(&d, dch, "no crypt()");
+  /* The legacy path does the same Argon2id work as a mismatch, so its
+   * response time does not single out legacy-hash accounts.  Red before:
+   * it returned at once (0 verifications). */
+  TEST_ASSERT_EQUAL_INT(1, pwhash_verifies);
+  dupe_world_free();
+}
+
+/* Red before: a libsodium start-up failure was silently a wrong password. */
+void test_sodium_init_failure_is_reported_not_counted(void)
+{
+  struct descriptor_data d;
+  struct char_data *dch;
+  char arg[sizeof(dupe_password)];
+
+  dupe_world(3001);
+  dch = password_login(&d);
+  descriptor_list = &d;
+  strlcpy(arg, dupe_password, sizeof(arg));
+  fail_sodium_init = 1;
+  nanny(&d, arg);
+  fail_sodium_init = 0;
+
+  assert_unverifiable_login(&d, dch, "sodium_init failed");
+  dupe_world_free();
+}
+#endif /* NOCRYPT */
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -1271,6 +1475,12 @@ int main(void)
     RUN_TEST(test_dupe_check_frees_a_twin_at_the_menu);
     RUN_TEST(test_dupe_check_detaches_the_menu_description_editor);
     RUN_TEST(test_dupe_check_takes_over_an_in_game_twin);
+#ifdef NOCRYPT
+    RUN_TEST(test_legacy_hash_without_crypt_is_reported_not_counted);
+    RUN_TEST(test_sodium_init_failure_is_reported_not_counted);
+    RUN_TEST(test_unverifiable_password_at_each_prompt);
+    RUN_TEST(test_unverifiable_login_flood_is_rate_limited);
+#endif
 
     return UNITY_END();
 }
