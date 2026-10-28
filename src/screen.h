@@ -71,8 +71,22 @@
                          */ 
 #define CRVS  "\x1B[7m" /* Reverse video ANSI code */ 
 
-/* conditional color.  pass it a pointer to a char_data and a color level. */ 
-#define C_OFF   0 
+/* conditional color.  pass it a pointer to a char_data and a color level.
+ *
+ * Contract for _clrlevel(), clr(), COLOR_LEV() and every CCxxx and CBxxx macro:
+ *  - ch must be a valid, non-NULL struct char_data * (it is dereferenced);
+ *    an NPC always gets level 0 (no colour).
+ *  - ch is evaluated up to three times and lvl once per use: pass a plain
+ *    variable, never an expression with side effects (e.g. not
+ *    CCRED(next_ch(), C_NRM)).
+ *  - The result is a string literal (KRED/KNUL...), never NULL.
+ *
+ * The Q* shorthands below (QRED, QNRM, ...) take no argument: they expand
+ * to CC*(ch, C_SPR) and silently capture whatever variable named `ch` is in
+ * scope at the use site.  Use them only in functions whose `ch` is the
+ * character receiving the text; elsewhere use the CC* form with the
+ * recipient named explicitly. */
+#define C_OFF   0
 #define C_SPR   1 
 #define C_NRM   2 
 #define C_CMP   3 

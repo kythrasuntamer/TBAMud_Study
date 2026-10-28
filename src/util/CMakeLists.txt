@@ -25,9 +25,10 @@ foreach(tool ${TOOLS})
         add_executable(${tool} ${tool}.c)
     endif()
 
-    # Set output location
+    # Same per-build-tree directory as circle (see BIN_OUTPUT_DIR in the
+    # top-level CMakeLists.txt), so build trees do not clobber each other.
     set_target_properties(${tool} PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/bin
+        RUNTIME_OUTPUT_DIRECTORY ${BIN_OUTPUT_DIR}
     )
 
     # Link to libcrypt for asciipasswd

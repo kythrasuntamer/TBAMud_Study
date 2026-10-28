@@ -20,6 +20,40 @@ struct attack_hit_type {
    const char *plural;
 };
 
+/** Set ch's position to pos. A character that leaves the seated positions
+ * (pos above POS_SITTING: fighting or standing) is first unlinked from any
+ * furniture, which keeps SITTING(ch) and the furniture's sitting_here list
+ * and seat count (value 1) consistent. Code that stands a character up
+ * outside do_stand() must use this instead of assigning GET_POS directly:
+ * a stale SITTING(ch) lets do_sit() link ch into a second furniture list,
+ * and the first one keeps a pointer to ch after ch is freed.
+ * Evaluates each argument once. */
+#define POS_CHANGE_UNSEAT(ch, pos) do { \
+  struct char_data *pcu_ch_ = (ch); \
+  int pcu_pos_ = (pos); \
+  if (pcu_pos_ > POS_SITTING && SITTING(pcu_ch_)) \
+    char_from_furniture(pcu_ch_); \
+  GET_POS(pcu_ch_) = pcu_pos_; \
+} while (0)
+
+/** TRUE if t (an attack type relative to TYPE_HIT: weapon value 3 or a
+ * mob's attack_type) indexes attack_hit_text[], which has NUM_ATTACK_TYPES
+ * entries. */
+#define VALID_ATTACK_TYPE(t) ((t) >= 0 && (t) < NUM_ATTACK_TYPES)
+
+/** Largest damage dice hit() rolls: weapon values 1/2 and mob
+ * damnodice/damsizedice beyond these are clamped (damage() caps a single
+ * blow at 100, so nothing larger is meaningful). */
+#define FIGHT_MAX_DICE_NUM   100
+#define FIGHT_MAX_DICE_SIZE  1000
+/** dice(num, size) with both clamped into [0, FIGHT_MAX_DICE_*], so a
+ * builder- or script-supplied count can neither stall the game loop nor
+ * overflow dice()'s int sum. Evaluates num and size twice: no side
+ * effects. Silent by itself; hit() reports before using it. */
+#define DICE_BOUNDED(num, size) \
+  dice(MIN(MAX((num), 0), FIGHT_MAX_DICE_NUM), \
+       MIN(MAX((size), 0), FIGHT_MAX_DICE_SIZE))
+
 /* Functions available in fight.c */
 void appear(struct char_data *ch);
 void check_killer(struct char_data *ch, struct char_data *vict);
@@ -30,7 +64,15 @@ void die(struct char_data * ch, struct char_data * killer);
 void hit(struct char_data *ch, struct char_data *victim, int type);
 void perform_violence(void);
 void raw_kill(struct char_data * ch, struct char_data * killer);
-void  set_fighting(struct char_data *ch, struct char_data *victim);
+/** Starts ch fighting victim: links ch into combat_list and sets
+ * POS_FIGHTING (unseating ch from furniture). ch must not already be
+ * fighting; a violation is reported as "set-fighting-twice" naming both
+ * characters and the originating call site, which set_fighting() passes
+ * in. */
+void set_fighting_at(const char *src_file, int src_line, const char *src_func,
+                     struct char_data *ch, struct char_data *victim);
+#define set_fighting(ch, victim) \
+  set_fighting_at(__FILE__, __LINE__, __func__, (ch), (victim))
 int skill_message(int dam, struct char_data *ch, struct char_data *vict,
           int attacktype);
 void  stop_fighting(struct char_data *ch);
@@ -38,6 +80,10 @@ bool pk_allowed(struct char_data *ch, struct char_data *victim);
 
 
 /* Global variables */
+/** Verb forms for each attack type, NUM_ATTACK_TYPES entries, indexed by
+ * (attack type - TYPE_HIT): weapon value 3 or a mob's attack_type. Those
+ * come from world files, OLC and scripts, so check VALID_ATTACK_TYPE()
+ * before indexing. */
 extern struct attack_hit_type attack_hit_text[];
 extern struct char_data *combat_list;
 

@@ -84,15 +84,18 @@ __attribute__((weak))
 size_t send_to_char(struct char_data *ch, const char *messg, ...)
 { (void)ch; (void)messg; return 0; }
 
+/* act() is a call-site-recording macro for act_at(); see comm.h. */
 __attribute__((weak))
-char *act(const char *str, int hide_invisible, struct char_data *ch,
-          struct obj_data *obj, void *vict_obj, int type)
-{ (void)str; (void)hide_invisible; (void)ch;
-  (void)obj; (void)vict_obj; (void)type; return NULL; }
+char *act_at(const char *src_file, int src_line, const char *src_func,
+             const char *str, int hide_invisible, struct char_data *ch,
+             struct obj_data *obj, void *vict_obj, int type)
+{ (void)src_file; (void)src_line; (void)src_func; (void)str;
+  (void)hide_invisible; (void)ch; (void)obj; (void)vict_obj; (void)type;
+  return NULL; }
 
 __attribute__((weak))
-void write_to_q(const char *txt, struct txt_q *queue, int aliased)
-{ (void)txt; (void)queue; (void)aliased; }
+int write_to_q(const char *txt, struct txt_q *queue, int aliased)
+{ (void)txt; (void)queue; (void)aliased; return 1; }
 
 __attribute__((weak))
 size_t write_to_output(struct descriptor_data *d, const char *txt, ...)
@@ -107,6 +110,23 @@ void echo_off(struct descriptor_data *d) { (void)d; }
 
 __attribute__((weak))
 void echo_on(struct descriptor_data *d) { (void)d; }
+
+/* ---------- utils.c ---------- */
+/* CHECK_PLAYER_SPECIAL's reporter, for tests that do not link utils.c. */
+__attribute__((weak))
+void tb_player_special_on_mob_at(const struct char_data *ch, const char *field,
+                                 const char *source_file, int source_line,
+                                 const char *source_func)
+{ (void)ch; (void)field; (void)source_file; (void)source_line; (void)source_func; }
+
+/* CLASS_ABBR's out-of-range reporter, for tests that do not link utils.c. */
+__attribute__((weak))
+const char *tb_class_range_error_at(const struct char_data *ch,
+                                    const char *table,
+                                    const char *source_file, int source_line,
+                                    const char *source_func)
+{ (void)ch; (void)table; (void)source_file; (void)source_line;
+  (void)source_func; return "??"; }
 
 /* ---------- modify.c ---------- */
 __attribute__((weak))
@@ -132,11 +152,14 @@ __attribute__((weak))
 void extract_char_final(struct char_data *ch) { (void)ch; }
 
 __attribute__((weak))
-void char_from_room(struct char_data *ch) { (void)ch; }
+void char_from_room_at(const char *src_file, int src_line,
+                       const char *src_func, struct char_data *ch)
+{ (void)src_file; (void)src_line; (void)src_func; (void)ch; }
 
 __attribute__((weak))
-void char_to_room(struct char_data *ch, room_rnum room)
-{ (void)ch; (void)room; }
+void char_to_room_at(const char *src_file, int src_line, const char *src_func,
+                     struct char_data *ch, room_rnum room)
+{ (void)src_file; (void)src_line; (void)src_func; (void)ch; (void)room; }
 
 __attribute__((weak))
 void free_char(struct char_data *ch) { (void)ch; }
@@ -205,7 +228,7 @@ __attribute__((weak))
 void free_char_from_db(struct char_data *ch) { (void)ch; }
 
 __attribute__((weak))
-void Crash_crashsave(struct char_data *ch) { (void)ch; }
+int Crash_crashsave(struct char_data *ch) { (void)ch; return 1; }
 
 __attribute__((weak))
 int Crash_load(struct char_data *ch) { (void)ch; return 0; }
@@ -227,6 +250,55 @@ int has_mail(long recipient) { (void)recipient; return 0; }
 /* ---------- improved-edit.c ---------- */
 __attribute__((weak))
 void send_editor_help(struct descriptor_data *d) { (void)d; }
+
+/* ---------- utils.c (for tests that link a source file without it) ---- */
+__attribute__((weak))
+int MIN(int a, int b) { return a < b ? a : b; }
+__attribute__((weak))
+int MAX(int a, int b) { return a > b ? a : b; }
+__attribute__((weak))
+void *tb_calloc_array_at(size_t count, size_t element_size,
+                         const char *file, int line, const char *func)
+{
+  (void)file; (void)line; (void)func;
+  return calloc(count ? count : 1, element_size ? element_size : 1);
+}
+
+/* ---------- improved-edit.c parse_edit_action() callees ---------- */
+__attribute__((weak))
+int format_script(struct descriptor_data *d) { (void)d; return 0; }
+__attribute__((weak))
+void parse_at(char *str) { (void)str; }
+__attribute__((weak))
+void half_chop(char *string, char *arg1, char *arg2)
+{ (void)string; *arg1 = '\0'; *arg2 = '\0'; }
+
+/* ---------- modify.c string_add() dispatch targets ---------- */
+__attribute__((weak))
+void store_mail(long to, long from, char *message_pointer)
+{ (void)to; (void)from; (void)message_pointer; }
+__attribute__((weak))
+void notify_if_playing(struct char_data *from, int recipient_id)
+{ (void)from; (void)recipient_id; }
+__attribute__((weak))
+void board_save_board(int board_type) { (void)board_type; }
+__attribute__((weak))
+void save_ibt_file(int mode) { (void)mode; }
+__attribute__((weak))
+void clean_ibt_list(int mode) { (void)mode; }
+#define STUB_STRING_CLEANUP(name) \
+  __attribute__((weak)) \
+  void name(struct descriptor_data *d, int terminator) { (void)d; (void)terminator; }
+STUB_STRING_CLEANUP(cedit_string_cleanup)
+STUB_STRING_CLEANUP(hedit_string_cleanup)
+STUB_STRING_CLEANUP(ibtedit_string_cleanup)
+STUB_STRING_CLEANUP(medit_string_cleanup)
+STUB_STRING_CLEANUP(oedit_string_cleanup)
+STUB_STRING_CLEANUP(qedit_string_cleanup)
+STUB_STRING_CLEANUP(redit_string_cleanup)
+STUB_STRING_CLEANUP(tedit_string_cleanup)
+STUB_STRING_CLEANUP(trigedit_string_cleanup)
+#undef STUB_STRING_CLEANUP
 
 /* ---------- dg_scripts.c ---------- */
 __attribute__((weak))
@@ -263,9 +335,11 @@ int command_wtrigger(struct char_data *actor, char *cmd, char *argument)
 { (void)actor; (void)cmd; (void)argument; return 0; }
 
 /* ---------- act.informative.c ---------- */
+/* look_at_room() is a utils.h macro for look_at_room_at(). */
 __attribute__((weak))
-void look_at_room(struct char_data *ch, int ignore_brief)
-{ (void)ch; (void)ignore_brief; }
+void look_at_room_at(const char *src_file, int src_line, const char *src_func,
+                     struct char_data *ch, int ignore_brief)
+{ (void)src_file; (void)src_line; (void)src_func; (void)ch; (void)ignore_brief; }
 
 /* ---------- protocol.c ---------- */
 __attribute__((weak))
@@ -342,6 +416,15 @@ STUB_ACMD(do_drop)
 STUB_ACMD(do_eat)
 STUB_ACMD(do_echo)
 STUB_ACMD(do_enter)
+/* The endgame handler is not part of the interpreter unit-test link.
+ * Provide a strong test-only definition for Fil-C's command table. */
+ACMD(do_endgame)
+{
+  (void)ch;
+  (void)argument;
+  (void)cmd;
+  (void)subcmd;
+}
 STUB_ACMD(do_equipment)
 STUB_ACMD(do_examine)
 STUB_ACMD(do_exits)
@@ -516,12 +599,14 @@ STUB_ACMD(do_zunlock)
 struct descriptor_data;
 struct char_data;
 
+__attribute__((weak))
 void iedit_parse(struct descriptor_data *d, char *arg)
 {
   (void)d;
   (void)arg;
 }
 
+__attribute__((weak))
 void do_oasis_iedit(struct char_data *ch, char *argument, int cmd, int subcmd)
 {
   (void)ch;

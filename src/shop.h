@@ -84,6 +84,8 @@ struct shop_data {
 /** Total number of trade types */
 #define NUM_TRADERS     7
 
+/** Fixed-size stack for shop.c's buyword evaluator. Expressions are builder
+ * text, so pushes are bounded by S_CAPACITY (see push() in shop.c). */
 struct stack_data {
    int data[100];
    int len;
@@ -91,6 +93,17 @@ struct stack_data {
 
 #define S_DATA(stack, index)	((stack)->data[(index)])
 #define S_LEN(stack)		((stack)->len)
+/** Number of slots in a stack_data; a buyword expression deeper than this
+ * is rejected by push() in shop.c. */
+#define S_CAPACITY(stack)	((int) (sizeof((stack)->data) / sizeof((stack)->data[0])))
+/** TRUE when another push would overflow the stack. */
+#define S_FULL(stack)		(S_LEN(stack) >= S_CAPACITY(stack))
+
+/* VALID_LIQ_TYPE(t), TRUE when t may index drinks[], is defined in utils.h,
+ * which every file includes before this header. A second definition here
+ * with a different parameter name was a conflicting macro redefinition. */
+/** TRUE when t may index item_types[] (a shop buy type). t evaluated twice. */
+#define VALID_ITEM_TYPE(t)	((t) >= 0 && (t) < NUM_ITEM_TYPES)
 
 /* Which expression type we are now parsing */
 #define OPER_OPEN_PAREN		0

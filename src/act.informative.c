@@ -8,6 +8,36 @@
 *  CircleMUD is based on DikuMUD, Copyright (C) 1990, 1991.               *
 **************************************************************************/
 
+/**
+ * @file act.informative.c
+ * Player and immortal commands that show the world: look, examine, score,
+ * who, users, where, help, areas, toggles and communication history.
+ *
+ * Input and trust:
+ * - Command arguments come from the player (or from DG scripts and
+ *   'force'); they are bounded by MAX_INPUT_LENGTH and are never used as
+ *   format strings.
+ * - Displayed strings come from world files, OLC and player files. The
+ *   loaders store NULL for an empty string (fread_string()), so object
+ *   and mob strings may be NULL; the display helpers check them and report
+ *   obj-string-missing rather than dereference.
+ * - Indexes read from files (positions, sectors, classes, quest vnums) are
+ *   range-checked before they index a name table, and a value outside its
+ *   table is reported (position-range, sector-range, class-range,
+ *   score-quest-lookup).
+ *
+ * Ownership: nothing here owns world data. Listings are built in fixed
+ * stack buffers whose truncation is marked "***OVERFLOW***" and reported
+ * (areas-truncated, where-truncated, commands-truncated). do_whois may
+ * build a temporary char_data from the player file and frees it before
+ * returning. Communication history (add_history) is owned by the player's
+ * player_specials and freed by free_history().
+ */
+
+#include <errno.h>
+#include <limits.h>
+#include <stdlib.h>
+#include <ctype.h>
 #include "conf.h"
 #include "sysdep.h"
 #include "structs.h"
@@ -28,6 +58,69 @@
 #include "modify.h"
 #include "asciimap.h"
 #include "quest.h"
+
+/** TRUE if a mob, object or room has a script with at least one trigger.
+ * A character's script_data can exist with no triggers (it may hold only
+ * global variables: saved player variables, 'set <char> <var>'), so the
+ * "[T%d]"/"[TRIGS]" displays must test both before reading
+ * TRIGGERS(SCRIPT(thing))->next. Objects use obj_has_triggers(), which
+ * also reports the case. Evaluates thing twice. */
+#define SCRIPT_HAS_TRIGGERS(thing)  (SCRIPT(thing) && TRIGGERS(SCRIPT(thing)))
+
+/** SCRIPT_HAS_TRIGGERS for an object's trigger marker (G2-16). Unlike a
+ * character's, an object's script_data always holds a trigger: every site
+ * that creates one (boot, zone reset, attach) adds a trigger, and
+ * detaching the last trigger extracts the script. A trigger-less object
+ * script is a broken invariant, so it is reported as script-empty with the
+ * object's vnum and UID before the marker is left out. */
+static int obj_has_triggers(const struct obj_data *obj)
+{
+  if (SCRIPT_HAS_TRIGGERS(obj))
+    return TRUE;
+  if (SCRIPT(obj))
+    TB_WARN_MSG("dg", "script-empty", "obj",
+                "obj vnum %d uid %ld has script_data without triggers; no "
+                "trigger marker shown", (int)GET_OBJ_VNUM(obj),
+                obj->script_id);
+  return FALSE;
+}
+
+/** TRUE if exit @p door of ch's room leads somewhere and is listed to ch by
+ * 'exits' and autoexits: closed doors only with CONFIG_DISP_CLOSED_DOORS,
+ * hidden exits only with HOLYLIGHT. Keeps the two listings in step.
+ * Evaluates ch and door several times. */
+#define EXIT_SHOWN_TO(ch, door) \
+  (EXIT(ch, door) && EXIT(ch, door)->to_room != NOWHERE && \
+   (!EXIT_FLAGGED(EXIT(ch, door), EX_CLOSED) || CONFIG_DISP_CLOSED_DOORS) && \
+   (!EXIT_FLAGGED(EXIT(ch, door), EX_HIDDEN) || PRF_FLAGGED(ch, PRF_HOLYLIGHT)))
+
+/* Nonnegative level argument or low-high range with checked conversion. */
+static int parse_info_level_range(const char *input, int *low, int *high)
+{
+  char *end;
+  long first, second;
+
+  if (!input || !isdigit((unsigned char)*input))
+    return 0;
+  errno = 0;
+  first = strtol(input, &end, 10);
+  if (errno == ERANGE || first > INT_MAX)
+    return 0;
+  if (*end == '\0') {
+    *low = (int)first;
+    return 1;
+  }
+  if (*end != '-' || !isdigit((unsigned char)end[1]))
+    return 0;
+  input = end + 1;
+  errno = 0;
+  second = strtol(input, &end, 10);
+  if (errno == ERANGE || second > INT_MAX || *end != '\0')
+    return 0;
+  *low = (int)first;
+  *high = (int)second;
+  return 2;
+}
 
 /* prototypes of local functions */
 /* do_diagnose utility functions */
@@ -56,17 +149,54 @@ static size_t print_object_location(int num, const obj_data *obj, const char_dat
 #define SHOW_OBJ_SHORT    1
 #define SHOW_OBJ_ACTION   2
 
+/* Display strings of an object.
+ *
+ * The world loaders store NULL for an empty string: fread_string() returns
+ * NULL for a lone '~', and parse_object() only requires the name. Builders
+ * control these files (and oedit), so a NULL short or long description is
+ * possible in a running game. The display helpers below never dereference
+ * one: an object missing a string it needs is reported and not shown. */
+static bool obj_has_display_strings(const struct obj_data *obj, int mode)
+{
+  if (!obj->name || !obj->short_description)
+    return FALSE;
+  return mode != SHOW_OBJ_LONG || obj->description != NULL;
+}
+
+static void report_obj_display_strings(const struct obj_data *obj, int mode,
+                                       const struct char_data *ch)
+{
+  TB_ERROR_MSG("act", "obj-string-missing", "obj",
+               "obj vnum %d (room vnum %d) not shown to " DIAG_CHAR_FMT
+               " in display mode %d: name %s, short_description %s, "
+               "description %s", GET_OBJ_VNUM(obj),
+               IN_ROOM(obj) != NOWHERE ? (int)GET_ROOM_VNUM(IN_ROOM(obj)) : -1,
+               DIAG_CHAR(ch), mode,
+               obj->name ? "set" : "NULL",
+               obj->short_description ? "set" : "NULL",
+               obj->description ? "set" : "NULL");
+}
+
 static void show_obj_to_char(struct obj_data *obj, struct char_data *ch, int mode)
 {
   int found = 0;
   struct char_data *temp;
 
   if (!obj || !ch) {
-    log("SYSERR: NULL pointer in show_obj_to_char(): obj=%p ch=%p", (void *)obj, (void *)ch);
-    /*  SYSERR_DESC: Somehow a NULL pointer was sent to show_obj_to_char() in
-     *  either the 'obj' or the 'ch' variable.  The error will indicate which
-     *  was NULL by listing both of the pointers passed to it.  This is often a
-     *  difficult one to trace, and may require stepping through a debugger. */
+    /* Callers are internal display paths; a NULL here is a caller bug. The
+     * source location in the diagnostic names this function; the mode and
+     * whichever entity is present identify the call. */
+    TB_ERROR_MSG("act", "show-obj-null", "obj",
+                 "show_obj_to_char mode %d with obj %s (vnum %d) and ch %s "
+                 "(%s %ld)", mode, obj ? "set" : "NULL",
+                 obj ? GET_OBJ_VNUM(obj) : NOTHING, ch ? "set" : "NULL",
+                 ch ? (IS_NPC(ch) ? "mob vnum" : "player idnum") : "none",
+                 ch ? (IS_NPC(ch) ? (long) GET_MOB_VNUM(ch) : (long) GET_IDNUM(ch)) : -1L);
+    return;
+  }
+
+  if (mode != SHOW_OBJ_ACTION && !obj_has_display_strings(obj, mode)) {
+    report_obj_display_strings(obj, mode, ch);
     return;
   }
 
@@ -92,7 +222,7 @@ static void show_obj_to_char(struct obj_data *obj, struct char_data *ch, int mod
 
     if (!IS_NPC(ch) && PRF_FLAGGED(ch, PRF_SHOWVNUMS)) {
       send_to_char(ch, "[%d] ", GET_OBJ_VNUM(obj));
-      if (SCRIPT(obj)) {
+      if (obj_has_triggers(obj)) {
         if (!TRIGGERS(SCRIPT(obj))->next)
           send_to_char(ch, "[T%d] ", GET_TRIG_VNUM(TRIGGERS(SCRIPT(obj))));
         else
@@ -106,7 +236,7 @@ static void show_obj_to_char(struct obj_data *obj, struct char_data *ch, int mod
   case SHOW_OBJ_SHORT:
     if (!IS_NPC(ch) && PRF_FLAGGED(ch, PRF_SHOWVNUMS)) {
       send_to_char(ch, "[%d] ", GET_OBJ_VNUM(obj));
-      if (SCRIPT(obj)) {
+      if (obj_has_triggers(obj)) {
         if (!TRIGGERS(SCRIPT(obj))->next)
           send_to_char(ch, "[T%d] ", GET_TRIG_VNUM(TRIGGERS(SCRIPT(obj))));
         else
@@ -139,12 +269,11 @@ static void show_obj_to_char(struct obj_data *obj, struct char_data *ch, int mod
     break;
 
   default:
-    log("SYSERR: Bad display mode (%d) in show_obj_to_char().", mode);
-    /*  SYSERR_DESC:  show_obj_to_char() has some predefined 'mode's (argument
-     *  #3) to tell it what to display to the character when it is called.  If
-     *  the mode is not one of these, it will output this error, and indicate
-     *  what mode was passed to it.  To correct it, you will need to find the
-     *  call with the incorrect mode and change it to an acceptable mode. */
+    /* mode is one of the SHOW_OBJ_* constants chosen by the caller; any
+     * other value is a caller bug. */
+    TB_ERROR_MSG("act", "show-obj-mode", "obj",
+                 DIAG_CHAR_FMT " obj vnum %d: unknown display mode %d",
+                 DIAG_CHAR(ch), GET_OBJ_VNUM(obj), mode);
     return;
   }
   end:
@@ -171,6 +300,19 @@ static void show_obj_modifiers(struct obj_data *obj, struct char_data *ch)
     send_to_char(ch, " ..It emits a faint humming sound!");
 }
 
+/**
+ * List the objects in @p list to @p ch, grouping identical prototypes.
+ *
+ * Objects missing a string the mode needs (name, short_description, or
+ * description for SHOW_OBJ_LONG; the loaders store NULL for empty
+ * strings) are reported by show_obj_to_char() and skipped, not shown.
+ *
+ * @param list Head of a next_content chain (room contents, inventory or
+ *             container contents); may be NULL.
+ * @param ch   Viewer; output goes through send_to_char().
+ * @param mode SHOW_OBJ_LONG, SHOW_OBJ_SHORT or SHOW_OBJ_ACTION.
+ * @param show TRUE prints " Nothing." for an empty listing.
+ */
 static void list_obj_to_char(struct obj_data *list, struct char_data *ch, int mode, int show)
 {
   struct obj_data *i, *j, *display;
@@ -183,10 +325,18 @@ static void list_obj_to_char(struct obj_data *list, struct char_data *ch, int mo
   for (i = list; i; i = i->next_content) {
     num = 0;
 
+    /* Objects missing a display string are reported once and skipped; the
+     * grouping loops below also skip them so strcmp never sees NULL. */
+    if (!obj_has_display_strings(i, mode)) {
+      report_obj_display_strings(i, mode, ch);
+      continue;
+    }
+
     /* Check the list to see if we've already counted this object */
     for (j = list; j != i; j = j->next_content)
-      if ((j->short_description == i->short_description && j->name == i->name) ||
-          (!strcmp(j->short_description, i->short_description) && !strcmp(j->name, i->name)))
+      if (obj_has_display_strings(j, mode) &&
+          ((j->short_description == i->short_description && j->name == i->name) ||
+           (!strcmp(j->short_description, i->short_description) && !strcmp(j->name, i->name))))
         break; /* found a matching object */
     if (j != i)
       continue; /* we counted object i earlier in the list */
@@ -194,8 +344,9 @@ static void list_obj_to_char(struct obj_data *list, struct char_data *ch, int mo
     /* Count matching objects, including this one */
     for (display = j = i; j; j = j->next_content)
       /* This if-clause should be exactly the same as the one in the loop above */
-      if ((j->short_description == i->short_description && j->name == i->name) ||
-          (!strcmp(j->short_description, i->short_description) && !strcmp(j->name, i->name)))
+      if (obj_has_display_strings(j, mode) &&
+          ((j->short_description == i->short_description && j->name == i->name) ||
+           (!strcmp(j->short_description, i->short_description) && !strcmp(j->name, i->name))))
         if (CAN_SEE_OBJ(ch, j)) {
           ++num;
           /* If the original item can't be seen, switch it for this one */
@@ -283,6 +434,13 @@ static void look_at_char(struct char_data *i, struct char_data *ch)
   }
 }
 
+/**
+ * Show one character @p i in the room to the viewer @p ch.
+ *
+ * A mob's short_descr and long_descr may be NULL (empty in the world
+ * file); its position comes from the world file and is range-checked
+ * against positions[] before use. Neither is dereferenced unchecked.
+ */
 static void list_one_char(struct char_data *i, struct char_data *ch)
 {
   struct obj_data *furniture;
@@ -301,7 +459,7 @@ static void list_one_char(struct char_data *i, struct char_data *ch)
   if (!IS_NPC(ch) && PRF_FLAGGED(ch, PRF_SHOWVNUMS)) {
     if (IS_NPC(i))
       send_to_char(ch, "[%d] ", GET_MOB_VNUM(i));
-    if (SCRIPT(i) && TRIGGERS(SCRIPT(i))) {
+    if (SCRIPT_HAS_TRIGGERS(i)) {
       if (!TRIGGERS(SCRIPT(i))->next)
         send_to_char(ch, "[T%d] ", GET_TRIG_VNUM(TRIGGERS(SCRIPT(i))));
       else
@@ -340,6 +498,16 @@ static void list_one_char(struct char_data *i, struct char_data *ch)
     return;
   }
 
+  if (IS_NPC(i) && !i->player.short_descr) {
+    /* parse_mobile stores NULL for an empty short description (builder
+     * data); PERS() and this line would dereference it. */
+    TB_ERROR_MSG("act", "mob-string-missing", "char",
+                 "mob vnum %d in room vnum %d has a NULL short_descr; not "
+                 "shown to " DIAG_CHAR_FMT, (int)GET_MOB_VNUM(i),
+                 IN_ROOM(i) != NOWHERE ? (int)GET_ROOM_VNUM(IN_ROOM(i)) : -1,
+                 DIAG_CHAR(ch));
+    return;
+  }
   if (IS_NPC(i))
     send_to_char(ch, "%c%s", UPPER(*i->player.short_descr), i->player.short_descr + 1);
   else
@@ -359,7 +527,16 @@ static void list_one_char(struct char_data *i, struct char_data *ch)
     send_to_char(ch, " (AFK)");
 
   if (GET_POS(i) != POS_FIGHTING) {
-    if (!SITTING(i))
+    /* A mob's position comes straight from its world file (parse_simple_mob
+     * stores t[0]/t[1] unchecked), so it is file-controlled here. */
+    if ((int) GET_POS(i) < 0 || (int) GET_POS(i) >= (int) (sizeof(positions) / sizeof(positions[0]))) {
+      TB_ERROR_MSG("act", "position-range", "positions",
+                   DIAG_CHAR_FMT " in room vnum %d has position %d outside "
+                   "0..%d", DIAG_CHAR(i),
+                   IN_ROOM(i) != NOWHERE ? (int)GET_ROOM_VNUM(IN_ROOM(i)) : -1,
+                   (int) GET_POS(i), (int) (sizeof(positions) / sizeof(positions[0])) - 1);
+      send_to_char(ch, " is here.");
+    } else if (!SITTING(i))
       send_to_char(ch, "%s", positions[(int) GET_POS(i)]);
     else {
       furniture = SITTING(i);
@@ -421,11 +598,7 @@ static void do_auto_exits(struct char_data *ch)
   send_to_char(ch, "%s[ Exits: ", CCCYN(ch, C_NRM));
 
   for (door = 0; door < DIR_COUNT; door++) {
-    if (!EXIT(ch, door) || EXIT(ch, door)->to_room == NOWHERE)
-      continue;
-    if (EXIT_FLAGGED(EXIT(ch, door), EX_CLOSED) && !CONFIG_DISP_CLOSED_DOORS)
-      continue;
-    if (EXIT_FLAGGED(EXIT(ch, door), EX_HIDDEN) && !PRF_FLAGGED(ch, PRF_HOLYLIGHT))
+    if (!EXIT_SHOWN_TO(ch, door))
       continue;
     if (EXIT_FLAGGED(EXIT(ch, door), EX_CLOSED))
       send_to_char(ch, "%s(%s)%s ", EXIT_FLAGGED(EXIT(ch, door), EX_HIDDEN) ? CCWHT(ch, C_NRM) : CCRED(ch, C_NRM), autoexits[door], CCCYN(ch, C_NRM));
@@ -453,11 +626,7 @@ ACMD(do_exits)
 
   for (door = 0; door < DIR_COUNT; door++)
   {
-    if (!EXIT(ch, door) || EXIT(ch, door)->to_room == NOWHERE)
-      continue;
-    if (EXIT_FLAGGED(EXIT(ch, door), EX_CLOSED) && !CONFIG_DISP_CLOSED_DOORS)
-      continue;
-    if (EXIT_FLAGGED(EXIT(ch, door), EX_HIDDEN) && !PRF_FLAGGED(ch, PRF_HOLYLIGHT))
+    if (!EXIT_SHOWN_TO(ch, door))
       continue;
 
     len++;
@@ -484,12 +653,41 @@ ACMD(do_exits)
       send_to_char(ch, " None.\r\n");
 }
 
-void look_at_room(struct char_data *ch, int ignore_brief)
+/**
+ * Describe the room @p ch is standing in. Callers use the utils.h macro
+ * look_at_room(ch, mode), which passes their file, line and function.
+ *
+ * Exported: called by do_look, after movement and teleport, and from DG
+ * callbacks. Precondition: IN_ROOM(ch) is a valid room rnum; every caller
+ * places ch first. A viewer outside a valid room (NOWHERE, or an rnum past
+ * top_of_world after a caller bug) would index world[] out of bounds, so
+ * it is reported as look-unplaced at the caller's location and shown
+ * nothing (G2-17). A character without a descriptor (mob, linkless
+ * player) sees nothing and the function returns at once, after that
+ * check. Room name and description are required by
+ * the loader; object and mob strings shown here may be NULL and are
+ * handled by the list helpers. The sector type is range-checked before
+ * it indexes sector_types[].
+ *
+ * @param ch           Viewer.
+ * @param ignore_brief Nonzero shows the full description even with BRIEF.
+ */
+void look_at_room_at(const char *src_file, int src_line, const char *src_func,
+                     struct char_data *ch, int ignore_brief)
 {
   trig_data * t;
-  struct room_data *rm = &world[IN_ROOM(ch)];
+  struct room_data *rm;
   room_vnum target_room;
 
+  if (!VALID_ROOM_RNUM(IN_ROOM(ch))) {
+    tb_error_log_at("ERROR", "act", "look-unplaced", "world", 0,
+                    src_file, src_line, src_func,
+                    DIAG_CHAR_FMT " is in room rnum %d, not a valid room "
+                    "(top_of_world %d); nothing shown", DIAG_CHAR(ch),
+                    (int)IN_ROOM(ch), (int)top_of_world);
+    return;
+  }
+  rm = &world[IN_ROOM(ch)];
   target_room = IN_ROOM(ch);
 
   if (!ch->desc)
@@ -507,10 +705,22 @@ void look_at_room(struct char_data *ch, int ignore_brief)
   send_to_char(ch, "%s", CCYEL(ch, C_NRM));
   if (!IS_NPC(ch) && PRF_FLAGGED(ch, PRF_SHOWVNUMS)) {
     char buf[MAX_STRING_LENGTH];
+    const char *sector = "<invalid>";
+    int sect = world[IN_ROOM(ch)].sector_type;
+
+    /* sector_type is read from the world file (parse_room) and only loosely
+     * checked there, so range-check it before indexing sector_types[]. */
+    if (sect >= 0 && sect < NUM_ROOM_SECTORS)
+      sector = sector_types[sect];
+    else
+      TB_ERROR_MSG("act", "sector-range", "sector_types",
+                   "room vnum %d has sector %d outside 0..%d (viewer "
+                   DIAG_CHAR_FMT ")", (int)GET_ROOM_VNUM(IN_ROOM(ch)), sect,
+                   NUM_ROOM_SECTORS - 1, DIAG_CHAR(ch));
 
     sprintbitarray(ROOM_FLAGS(IN_ROOM(ch)), room_bits, RF_ARRAY_MAX, buf, sizeof(buf));
     send_to_char(ch, "[%5d] ", GET_ROOM_VNUM(IN_ROOM(ch)));
-    send_to_char(ch, "%s[ %s][ %s ]", world[IN_ROOM(ch)].name, buf, sector_types[world[IN_ROOM(ch)].sector_type]);
+    send_to_char(ch, "%s[ %s][ %s ]", world[IN_ROOM(ch)].name, buf, sector);
 
     if (SCRIPT(rm)) {
       send_to_char(ch, "[T");
@@ -603,9 +813,19 @@ static void look_in_obj(struct char_data *ch, char *arg)
           sprinttype(GET_OBJ_VAL(obj, 2), color_liquid, buf2, sizeof(buf2));
           send_to_char(ch, "It's full of a %s liquid.\r\n", buf2);
         }
-        else if (GET_OBJ_VAL(obj,1)>GET_OBJ_VAL(obj,0))
-          send_to_char(ch, "Its contents seem somewhat murky.\r\n"); /* BUG */
-        else
+        else if (GET_OBJ_VAL(obj, 1) > GET_OBJ_VAL(obj, 0) ||
+                 GET_OBJ_VAL(obj, 1) < 0) {
+          /* A drink container holds 0..capacity (value 0) drinks (value 1).
+           * The values come from the world file or oedit, and are changed
+           * at run time only by drinking, pouring and filling. More than
+           * capacity, or a negative amount, is corrupt object data: say
+           * so to the player as before, and report it. */
+          TB_WARN_MSG("act", "drinkcon-invariant", "obj",
+                      "obj vnum %d amount %d outside 0..capacity %d (seen by "
+                      DIAG_CHAR_FMT ")", GET_OBJ_VNUM(obj), GET_OBJ_VAL(obj, 1),
+                      GET_OBJ_VAL(obj, 0), DIAG_CHAR(ch));
+          send_to_char(ch, "Its contents seem somewhat murky.\r\n");
+        } else
         {
           char buf2[MAX_STRING_LENGTH];
 
@@ -631,9 +851,20 @@ char *find_exdesc(char *word, struct extra_descr_data *list)
 {
   struct extra_descr_data *i;
 
-  for (i = list; i; i = i->next)
+  for (i = list; i; i = i->next) {
+    /* The E-block parsers store NULL for an empty keyword line. The owner
+     * (room or object) is not known here, so the caller's location and the
+     * description length identify it. */
+    if (!i->keyword) {
+      TB_ERROR_MSG("act", "exdesc-keyword-missing", "extra_descr",
+                   "extra description with a NULL keyword skipped "
+                   "(description length %zu)",
+                   i->description ? strlen(i->description) : (size_t)0);
+      continue;
+    }
     if (*i->keyword == '.' ? isname(word, i->keyword + 1) : isname(word, i->keyword))
       return (i->description);
+  }
 
   return (NULL);
 }
@@ -677,9 +908,11 @@ static void look_at_target(struct char_data *ch, char *arg)
     return;
   }
 
-  /* Does the argument match an extra desc in the room? */
+  /* Does the argument match an extra desc in the room? The pager keeps its
+   * text across later commands, and a redit save frees the room's old extra
+   * descriptions, so it pages its own copy (keep_internal). */
   if ((desc = find_exdesc(arg, world[IN_ROOM(ch)].ex_description)) != NULL && ++i == fnum) {
-    page_string(ch->desc, desc, FALSE);
+    page_string(ch->desc, desc, TRUE);
     return;
   }
 
@@ -764,6 +997,13 @@ ACMD(do_look)
       struct extra_descr_data *i;
 
       for (i = world[IN_ROOM(ch)].ex_description; i; i = i->next) {
+        if (!i->keyword || !i->description) {
+          TB_ERROR_MSG("act", "exdesc-keyword-missing", "extra_descr",
+                       "room vnum %d extra description has NULL %s; skipped",
+                       (int)GET_ROOM_VNUM(IN_ROOM(ch)),
+                       !i->keyword ? "keyword" : "description");
+          continue;
+        }
         if (*i->keyword != '.') {
           send_to_char(ch, "%s%s:\r\n%s",
           (found ? "\r\n" : ""), i->keyword, i->description);
@@ -843,9 +1083,11 @@ ACMD(do_score)
   send_to_char(ch, "You have %d exp, %d gold coins, and %d questpoints.\r\n",
       GET_EXP(ch), GET_GOLD(ch), GET_QUESTPOINTS(ch));
 
-  if (GET_LEVEL(ch) < LVL_IMMORT)
+  if (GET_LEVEL(ch) == LVL_IMMORT - 1)
+    send_to_char(ch, "You have reached the maximum mortal level.\r\n");
+  else if (GET_LEVEL(ch) < LVL_IMMORT - 1)
     send_to_char(ch, "You need %d exp to reach your next level.\r\n",
-    level_exp(GET_CLASS(ch), GET_LEVEL(ch) + 1) - GET_EXP(ch));
+        level_exp(GET_CLASS(ch), GET_LEVEL(ch) + 1) - GET_EXP(ch));
 
   send_to_char(ch, "You have earned %d quest points.\r\n", GET_QUESTPOINTS(ch));
   send_to_char(ch, "You have completed %d quest%s, ",
@@ -855,7 +1097,20 @@ ACMD(do_score)
     send_to_char(ch, "and you are not on a quest at the moment.\r\n");
   else
   {
-    send_to_char(ch, "and your current quest is: %s", QST_NAME(real_quest(GET_QUEST(ch))));
+    /* GET_QUEST comes from the player file (Qcur) and survives quest
+     * deletion in qedit or a quest file removed between boots, so it can
+     * name a vnum with no loaded quest. Never index aquest_table with an
+     * unchecked rnum. */
+    qst_rnum qrnum = real_quest(GET_QUEST(ch));
+
+    if (qrnum == NOTHING || qrnum >= total_quests) {
+      TB_WARN_MSG("quest", "score-quest-lookup", "aquest_table",
+                  DIAG_CHAR_FMT " holds quest vnum %d, which is not loaded "
+                  "(rnum %d, %d quests)", DIAG_CHAR(ch), (int)GET_QUEST(ch),
+                  (int)qrnum, (int)total_quests);
+      send_to_char(ch, "and your current quest is: an unknown quest");
+    } else
+      send_to_char(ch, "and your current quest is: %s", QST_NAME(qrnum));
 
     if (!IS_NPC(ch) && PRF_FLAGGED(ch, PRF_SHOWVNUMS))
         send_to_char(ch, " [%d]\r\n", GET_QUEST(ch));
@@ -1059,12 +1314,38 @@ void space_to_minus(char *str)
     *str = '-';
 }
 
+/**
+ * Binary search of the sorted help table for a keyword prefix.
+ *
+ * top_of_helpt is a COUNT of entries (help_table[0 .. top_of_helpt-1]),
+ * unlike top_of_socialt, which is the last index. The boot loader allocates
+ * exactly that many entries; hedit reallocates with spare slots, which hid
+ * the old 'top = top_of_helpt' off-by-one at runtime after an hedit save.
+ * help_table is sorted case-insensitively by keywords (hsort in db.c).
+ *
+ * @param argument Player-controlled keyword prefix (any length).
+ * @param level    Reader's level; entries above it are skipped.
+ * @return Index of the first visible matching entry, or NOWHERE on a miss.
+ */
 int search_help(const char *argument, int level)
 {
   int chk, bot, top, mid, minlen;
 
+  if (top_of_helpt > 0 && !help_table) {
+    TB_ERROR_MSG("help", "search-index", "help_table",
+                 "help table is NULL but top_of_helpt counts %d entries "
+                 "(key length %zu, level %d)", top_of_helpt,
+                 strlen(argument), level);
+    return NOWHERE;
+  }
+
    bot = 0;
-   top = top_of_helpt;
+   /* top_of_helpt is the number of entries (load_help() fills
+    * help_table[top_of_helpt++]), so the last index is top_of_helpt - 1.
+    * Starting at top_of_helpt let a topic that sorts after every keyword
+    * ("help zzzz", typed by any player) read one entry past the end of the
+    * table. An empty table gives top == -1 and the loop does not run. */
+   top = top_of_helpt - 1;
    minlen = strlen(argument);
 
   while (bot <= top) {
@@ -1146,10 +1427,33 @@ ACMD(do_alive)
 send_to_char(ch, "Alive does not understand '%s'. \r\n", arg);
 }
 
+/* Bounded, escaped copy of player text for a log line (G2-20). Raw player
+ * text must not reach the logs: a DG-forced command is not filtered like
+ * socket input, and control characters, color escapes or quotes could split
+ * a record or imitate another one. Those bytes and anything outside
+ * printable ASCII become '?', a cut copy ends in "...", and the caller logs
+ * the full length beside it. In the style of comm.c's act_format_excerpt(). */
+static const char *player_text_excerpt(char *dst, size_t dst_size,
+                                       const char *text)
+{
+  size_t n = 0;
+
+  for (; *text && n + 4 < dst_size; text++) {
+    unsigned char c = (unsigned char) *text;
+    dst[n++] = (c < 0x20 || c >= 0x7f || c == '"' || c == '\'' ||
+                c == '\\') ? '?' : (char) c;
+  }
+  if (*text && n + 3 < dst_size)
+    dst[n++] = '.', dst[n++] = '.', dst[n++] = '.';
+  dst[n] = '\0';
+  return dst;
+}
+
 ACMD(do_help)
 {
   int mid = 0;
   int i, found = 0;
+  char excerpt[80];
 
     if (!ch->desc)
     return;
@@ -1173,8 +1477,12 @@ ACMD(do_help)
 
   if ((mid = search_help(argument, GET_LEVEL(ch))) == NOWHERE) {
     send_to_char(ch, "There is no help on that word.\r\n");
+    /* The topic is player text: log an escaped excerpt and its length. The
+     * line stays for immortals, who use it to find missing help topics. */
     mudlog(NRM, MIN(LVL_IMPL, GET_INVIS_LEV(ch)), TRUE,
-      "%s tried to get help on %s", GET_NAME(ch), argument);
+      "%s tried to get help on '%s' (%zu bytes)", GET_NAME(ch),
+      player_text_excerpt(excerpt, sizeof(excerpt), argument),
+      strlen(argument));
     for (i = 0; i < top_of_helpt; i++)  {
       if (help_table[i].min_level > GET_LEVEL(ch))
         continue;
@@ -1191,7 +1499,43 @@ ACMD(do_help)
     }
     return;
   }
-  page_string(ch->desc, help_table[mid].entry, 0);
+  /* The pager keeps its text across later commands, and an hedit save or
+   * 'reload xhelp' frees the whole help table, so it pages its own copy
+   * (keep_internal). The text files paged above need no copy:
+   * file_to_string_alloc() (db.c) refuses to replace a buffer that a
+   * descriptor is paging. */
+  page_string(ch->desc, help_table[mid].entry, TRUE);
+}
+
+/* A player's class index for who/users.
+ *
+ * GET_CLASS is loaded from the player file (Clas) and is not re-validated
+ * at login, so a corrupt or hand-edited pfile can hold any value. Those
+ * listings shift by it ('who -c') and index class_abbrevs[] (CLASS_ABBR),
+ * which is undefined for values outside 0..NUM_CLASSES-1. NPCs have no
+ * class: CLASS_ABBR prints "--" for them and no class filter matches. */
+static bool who_class_index_ok(const struct char_data *tch)
+{
+  if (IS_NPC(tch) || (GET_CLASS(tch) >= 0 && GET_CLASS(tch) < NUM_CLASSES))
+    return TRUE;
+  TB_ERROR_MSG("act", "class-range", "class_abbrevs",
+               DIAG_CHAR_FMT " has class %d outside 0..%d",
+               DIAG_CHAR(tch), (int) GET_CLASS(tch), NUM_CLASSES - 1);
+  return FALSE;
+}
+
+/* CLASS_ABBR, or "??" (reported) for an out-of-range class. */
+static const char *who_class_abbr(const struct char_data *tch)
+{
+  return who_class_index_ok(tch) ? CLASS_ABBR(tch) : "??";
+}
+
+/* TRUE if tch's class is in a 'who/users -c' class bit mask. */
+static bool who_class_in_mask(int showclass, const struct char_data *tch)
+{
+  if (IS_NPC(tch) || !who_class_index_ok(tch))
+    return FALSE;
+  return (showclass & (1 << GET_CLASS(tch))) != 0;
 }
 
 #define WHO_FORMAT \
@@ -1229,7 +1573,10 @@ ACMD(do_who)
 
     half_chop(buf, arg, buf1);
     if (isdigit(*arg)) {
-      sscanf(arg, "%d-%d", &low, &high);
+      if (!parse_info_level_range(arg, &low, &high)) {
+        send_to_char(ch, "Invalid level range.\r\n");
+        return;
+      }
       strlcpy(buf, buf1, sizeof(buf));   /* strcpy: OK (sizeof: buf1 == buf) */
     } else if (*arg == '-') {
       mode = *(arg + 1);       /* just in case; we destroy arg in the switch */
@@ -1280,9 +1627,7 @@ ACMD(do_who)
   }
 
   for (d = descriptor_list; d && !short_list; d = d->next) {
-    if (d->original)
-      tch = d->original;
-    else if (!(tch = d->character))
+    if (!(tch = REAL_CHAR(d)))
       continue;
 
     if (CAN_SEE(ch, tch) && IS_PLAYING(d)) {
@@ -1299,7 +1644,7 @@ ACMD(do_who)
         continue;
       if (who_room && (IN_ROOM(tch) != IN_ROOM(ch)))
         continue;
-      if (showclass && !(showclass & (1 << GET_CLASS(tch))))
+      if (showclass && !who_class_in_mask(showclass, tch))
         continue;
       if (showgroup && !GROUP(tch))
         continue;
@@ -1321,9 +1666,7 @@ ACMD(do_who)
       send_to_char(ch, "%s", rank[i].disp);
 
     for (d = descriptor_list; d; d = d->next) {
-      if (d->original)
-        tch = d->original;
-      else if (!(tch = d->character))
+      if (!(tch = REAL_CHAR(d)))
         continue;
 
       if ((GET_LEVEL(tch) < rank[i].min_level || GET_LEVEL(tch) > rank[i].max_level) && !short_list)
@@ -1343,7 +1686,7 @@ ACMD(do_who)
         continue;
       if (who_room && (IN_ROOM(tch) != IN_ROOM(ch)))
         continue;
-      if (showclass && !(showclass & (1 << GET_CLASS(tch))))
+      if (showclass && !who_class_in_mask(showclass, tch))
         continue;
       if (showgroup && !GROUP(tch))
         continue;
@@ -1353,13 +1696,13 @@ ACMD(do_who)
       if (short_list) {
         send_to_char(ch, "%s[%2d %s] %-12.12s%s%s",
           (GET_LEVEL(tch) >= LVL_IMMORT ? CCYEL(ch, C_SPR) : ""),
-          GET_LEVEL(tch), CLASS_ABBR(tch), GET_NAME(tch),
+          GET_LEVEL(tch), who_class_abbr(tch), GET_NAME(tch),
           CCNRM(ch, C_SPR), ((!(++num_can_see % 4)) ? "\r\n" : ""));
       } else {
         num_can_see++;
         send_to_char(ch, "%s[%2d %s] %s%s%s%s",
             (GET_LEVEL(tch) >= LVL_IMMORT ? CCYEL(ch, C_SPR) : ""),
-            GET_LEVEL(tch), CLASS_ABBR(tch),
+            GET_LEVEL(tch), who_class_abbr(tch),
             GET_NAME(tch), (*GET_TITLE(tch) ? " " : ""), GET_TITLE(tch),
             CCNRM(ch, C_SPR));
 
@@ -1480,7 +1823,10 @@ ACMD(do_users)
       case 'l':
     playing = 1;
     half_chop(buf1, arg, buf);
-    sscanf(arg, "%d-%d", &low, &high);
+    if (!parse_info_level_range(arg, &low, &high)) {
+      send_to_char(ch, "Invalid level range.\r\n");
+      return;
+    }
     break;
       case 'n':
     playing = 1;
@@ -1519,9 +1865,7 @@ ACMD(do_users)
     if (STATE(d) == CON_PLAYING && deadweight)
       continue;
     if (IS_PLAYING(d)) {
-      if (d->original)
-        tch = d->original;
-      else if (!(tch = d->character))
+      if (!(tch = REAL_CHAR(d)))
         continue;
 
       if (*host_search && !strstr(d->host, host_search))
@@ -1533,17 +1877,17 @@ ACMD(do_users)
       if (outlaws && !PLR_FLAGGED(tch, PLR_KILLER) &&
       !PLR_FLAGGED(tch, PLR_THIEF))
         continue;
-      if (showclass && !(showclass & (1 << GET_CLASS(tch))))
+      if (showclass && !who_class_in_mask(showclass, tch))
         continue;
       if (GET_INVIS_LEV(tch) > GET_LEVEL(ch))
         continue;
 
       if (d->original)
     tb_snprintf(classname, sizeof(classname), "[%2d %s]", GET_LEVEL(d->original),
-        CLASS_ABBR(d->original));
+        who_class_abbr(d->original));
       else
     tb_snprintf(classname, sizeof(classname), "[%2d %s]", GET_LEVEL(d->character),
-        CLASS_ABBR(d->character));
+        who_class_abbr(d->character));
     } else
       strlcpy(classname, "   -   ", sizeof(classname));
 
@@ -1632,7 +1976,10 @@ ACMD(do_gen_ps)
     send_to_char(ch, "%s\r\n", GET_NAME(ch));
     break;
   default:
-    log("SYSERR: Unhandled case in do_gen_ps. (%d)", subcmd);
+    /* subcmd comes from cmd_info[] (interpreter.c), not from the player. */
+    TB_ERROR_MSG("act", "bad-subcmd", "cmd_info",
+                 DIAG_CHAR_FMT " do_gen_ps cmd %d subcmd %d has no case",
+                 DIAG_CHAR(ch), cmd, subcmd);
     /* SYSERR_DESC: General page string function for such things as 'credits',
      * 'news', 'wizlist', 'clear', 'version'.  This occurs when a call is made
      * to this routine that is not one of the predefined calls.  To correct it,
@@ -1655,7 +2002,7 @@ static void perform_mortal_where(struct char_data *ch, char *arg)
     for (d = descriptor_list; d; d = d->next) {
       if (STATE(d) != CON_PLAYING || d->character == ch)
     continue;
-      if ((i = (d->original ? d->original : d->character)) == NULL)
+      if ((i = REAL_CHAR(d)) == NULL)
     continue;
       if (IN_ROOM(i) == NOWHERE || !CAN_SEE(ch, i))
     continue;
@@ -1678,6 +2025,21 @@ static void perform_mortal_where(struct char_data *ch, char *arg)
   }
 }
 
+/**
+ * Append the location of @p obj to an immortal 'where' listing.
+ *
+ * @param num      Match number to print, or 0 for a container line.
+ * @param buf      Listing buffer.
+ * @param len      Bytes already used in @p buf (must be < @p buf_size).
+ * @param buf_size Budget for listing text. The caller reserves room for its
+ *                 overflow marker beyond this, so it is less than the real
+ *                 size of @p buf.
+ * @param recur    Nonzero follows in_obj up through nested containers; the
+ *                 recursion depth equals the nesting depth.
+ * @return The would-be total length. A value >= @p buf_size means the text
+ *         was truncated; snprintf() then left the NUL at buf[buf_size - 1],
+ *         and the caller appends the marker with where_overflow().
+ */
 static size_t print_object_location(const int num, const obj_data *obj, const char_data *ch, // NOLINT(*-no-recursion)
                    char *buf, size_t len, const size_t buf_size, const int recur)
 {
@@ -1693,7 +2055,7 @@ static size_t print_object_location(const int num, const obj_data *obj, const ch
   if (len > buf_size)
     return len; // let the caller know we overflowed
 
-  if (SCRIPT(obj)) {
+  if (obj_has_triggers(obj)) {
     if (!TRIGGERS(SCRIPT(obj))->next)
       nlen = snprintf(buf + len, buf_size - len, "[T%d] ", GET_TRIG_VNUM(TRIGGERS(SCRIPT(obj))));
     else
@@ -1733,6 +2095,24 @@ static size_t print_object_location(const int num, const obj_data *obj, const ch
   return len;
 }
 
+/** Mark a full 'where' listing and report it. Every append in
+ * perform_immort_where() is bounded by a budget that reserves room for
+ * @p marker, so the marker always fits after the text already in @p buf
+ * (whose end strlen() finds, since snprintf() truncation leaves a NUL at
+ * the budget's last byte). Writing the marker at the budget offset instead
+ * put it after that NUL, where page_string() never showed it. The search
+ * word comes from an immortal; the number of matches from the world. */
+static void where_overflow(const char_data *ch, char *buf, size_t bufsize,
+                           const char *marker, const char *arg, int num)
+{
+  size_t at = strnlen(buf, bufsize - 1);
+
+  tb_snprintf(buf + at, bufsize - at, "%s", marker);
+  TB_WARN_MSG("act", "where-truncated", "buf",
+              DIAG_CHAR_FMT " where '%.32s' listing cut after %d matches "
+              "at capacity %zu", DIAG_CHAR(ch), arg, num, bufsize);
+}
+
 static void perform_immort_where(char_data *ch, const char *arg)
 {
   char_data *i;
@@ -1749,7 +2129,7 @@ static void perform_immort_where(char_data *ch, const char *arg)
     send_to_char(ch, "-------- ------- ------------------------------ -------------------\r\n");
     for (d = descriptor_list; d; d = d->next)
       if (IS_PLAYING(d)) {
-        i = (d->original ? d->original : d->character);
+        i = REAL_CHAR(d);
         if (i && CAN_SEE(ch, i) && (IN_ROOM(i) != NOWHERE)) {
           if (d->original)
             send_to_char(ch, "%-8s%s - [%5d] %s%s (in %s%s)\r\n",
@@ -1772,25 +2152,28 @@ static void perform_immort_where(char_data *ch, const char *arg)
         nlen = snprintf(buf + len, buf_size - len, "M%4d. %-25s%s - [%5d] %-25s%s", ++num, GET_NAME(i), QNRM,
                GET_ROOM_VNUM(IN_ROOM(i)), world[IN_ROOM(i)].name, QNRM);
         if (len + nlen >= buf_size) {
-          len += snprintf(buf + len, buf_size - len, "%s", error_message);
+          where_overflow(ch, buf, sizeof(buf), error_message, arg, num);
+          len = buf_size;   /* full: the object section must not write over the marker */
           break;
         }
         len += nlen;
-        if (SCRIPT(i) && TRIGGERS(SCRIPT(i))) {
+        if (SCRIPT_HAS_TRIGGERS(i)) {
           if (!TRIGGERS(SCRIPT(i))->next)
             nlen = snprintf(buf + len, buf_size - len, "[T%d]", GET_TRIG_VNUM(TRIGGERS(SCRIPT(i))));
           else
             nlen = snprintf(buf + len, buf_size - len, "[TRIGS]");
 
           if (len + nlen >= buf_size) {
-            tb_snprintf(buf + len, buf_size - len, "%s", error_message);
+            where_overflow(ch, buf, sizeof(buf), error_message, arg, num);
+            len = buf_size;   /* full: the object section must not write over the marker */
             break;
           }
           len += nlen;
         }
         nlen = snprintf(buf + len, buf_size - len, "%s\r\n", QNRM);
         if (len + nlen >= buf_size) {
-          tb_snprintf(buf + len, buf_size - len, "%s", error_message);
+          where_overflow(ch, buf, sizeof(buf), error_message, arg, num);
+          len = buf_size;   /* full: the object section must not write over the marker */
           break;
         }
         len += nlen;
@@ -1798,9 +2181,8 @@ static void perform_immort_where(char_data *ch, const char *arg)
 
     if (PRF_FLAGGED(ch, PRF_VERBOSE) && len < buf_size) {
       nlen = snprintf(buf + len, buf_size - len, "  ###  Object name                 Location\r\n");
-      if (len + nlen >= buf_size) {
-        tb_snprintf(buf + len, buf_size - len, "%s", error_message);
-      }
+      if (len + nlen >= buf_size)
+        where_overflow(ch, buf, sizeof(buf), error_message, arg, num);
       len += nlen;
     }
 
@@ -1810,7 +2192,7 @@ static void perform_immort_where(char_data *ch, const char *arg)
           found = 1;
           len = print_object_location(++num, k, ch, buf, len, buf_size, TRUE);
           if (len >= buf_size) {
-            tb_snprintf(buf + buf_size, sizeof(buf) - buf_size, "%s", error_message);
+            where_overflow(ch, buf, sizeof(buf), error_message, arg, num);
             break;
           }
         }
@@ -1850,7 +2232,7 @@ ACMD(do_levels)
 
   if (*arg) {
     if (isdigit(*arg)) {
-      ret = sscanf(arg, "%d-%d", &min_lev, &max_lev);
+      ret = parse_info_level_range(arg, &min_lev, &max_lev);
       if (ret == 0) {
         /* No valid args found */
         min_lev = 1;
@@ -1981,6 +2363,12 @@ ACMD(do_toggle)
   int toggle, tp, wimp_lev, result = 0, len = 0, i;
   const char *types[] = { "off", "brief", "normal", "on", "\n" };
 
+    /* Row order must match the SCMD_* toggle constants in act.h: the
+     * selected row's index is compared with SCMD_* values in the switch
+     * below (for example SCMD_COLOR), and do_gen_tog() in act.other.c
+     * indexes its own tog_messages[] by the same constants. A row inserted
+     * out of order silently mismatches messages and cases; change this
+     * table, act.h and act.other.c together. */
     const struct {
     char *command;
     bitvector_t toggle; /* this needs changing once hashmaps are implemented */
@@ -2408,11 +2796,20 @@ ACMD(do_commands)
       continue;
 
     if (--overflow < 0)
-      continue;
+      continue;     /* counted, and reported once after the loop */
 
     /* matching command: copy to commands list */
     commands[no++] = complete_cmd_info[i].command;
   }
+
+  /* commands[] holds every command a mortal can list; more than that means
+   * cmd_info[] (or the socials file) grew past it, and the excess entries
+   * would otherwise vanish from the list without a trace. */
+  if (overflow < 0)
+    TB_WARN_MSG("act", "commands-truncated", "commands",
+                DIAG_CHAR_FMT " %s list shows %d of %d entries (capacity %d)",
+                DIAG_CHAR(ch), socials ? "socials" : "commands", no,
+                no - overflow, (int) (sizeof(commands) / sizeof(commands[0])));
 
   /* display commands list in a nice columnized format */
   column_list(ch, 0, commands, no, FALSE);
@@ -2466,6 +2863,19 @@ ACMD(do_history)
 }
 
 #define HIST_LENGTH 100
+/**
+ * Append a line to a player's communication history.
+ *
+ * @param ch   Owner; NPCs keep no history and are ignored.
+ * @param str  Text to store, usually act()'s return value. Must not be
+ *             NULL (act() returns NULL when it delivered nothing; callers
+ *             check that). A NULL is reported as history-null and dropped.
+ *             The text is copied; the caller keeps ownership of @p str.
+ * @param type HIST_* channel index, below NUM_HIST. Every entry is also
+ *             added to HIST_ALL.
+ *
+ * Each channel keeps the newest HIST_LENGTH entries; older ones are freed.
+ */
 void add_history(struct char_data *ch, char *str, int type)
 {
   int i = 0;
@@ -2475,6 +2885,16 @@ void add_history(struct char_data *ch, char *str, int type)
 
   if (IS_NPC(ch))
     return;
+
+  /* Callers pass act()'s return value, which is NULL when act() delivered
+   * nothing; they must check it. A NULL here is a caller bug: report it
+   * rather than store "(null)" or crash in a libc without that fallback. */
+  if (!str) {
+    TB_ERROR_MSG("act", "history-null", "history",
+                 DIAG_CHAR_FMT " history type %d: NULL text not stored",
+                 DIAG_CHAR(ch), type);
+    return;
+  }
 
   tmp = GET_HISTORY(ch, type);
   ct = time(0);
@@ -2507,6 +2927,16 @@ void add_history(struct char_data *ch, char *str, int type)
     add_history(ch, str, HIST_ALL);
 }
 
+/**
+ * Show public information about a player, online or from the player file.
+ *
+ * When get_player_vis() does not find the target (offline, or online but
+ * invisible to @p ch), a temporary char_data is built with load_char().
+ * That copy is never placed in a room, the character list or the UID
+ * table, and free_char() releases it on every exit path. An invisible
+ * online player is therefore read from file a second time; the file copy
+ * shows the last saved state.
+ */
 ACMD(do_whois)
 {
   struct char_data *victim = 0;
@@ -2596,7 +3026,7 @@ ACMD(do_whois)
     free_char (victim);
 }
 
-static bool get_zone_levels(zone_rnum znum, char *buf, size_t buflen)
+static bool get_zone_levels(int znum, char *buf, size_t buflen)
 {
   /* Create a string for the level restrictions for this zone. */
   if ((zone_table[znum].min_level == -1) && (zone_table[znum].max_level == -1)) {
@@ -2620,9 +3050,17 @@ static bool get_zone_levels(zone_rnum znum, char *buf, size_t buflen)
 
 ACMD(do_areas)
 {
-  int i, hilev=-1, lolev=-1, zcount=0, lev_set, len=0, tmp_len=0;
+  int i, hilev=-1, lolev=-1, zcount=0;
   char arg[MAX_INPUT_LENGTH], *second, lev_str[MAX_INPUT_LENGTH], buf[MAX_STRING_LENGTH];
-  bool show_zone = FALSE, overlap = FALSE, overlap_shown = FALSE;
+  /* The listing grows with the zone count and zone name lengths, which
+   * builders control (zedit). Any player can run 'areas', so it is built
+   * with the bounded tb_buf and truncation is reported, not overrun. */
+  const char *overflow_marker = "***OVERFLOW***\r\n";
+  struct tb_buf out;
+  bool show_zone = FALSE, overlap = FALSE, overlap_shown = FALSE, lev_set;
+
+  /* Reserve the tail of buf for the overflow marker. */
+  tb_buf_init(&out, buf, sizeof(buf) - strlen(overflow_marker));
 
   one_argument(argument, arg);
 
@@ -2655,11 +3093,11 @@ ACMD(do_areas)
     hilev = i;
   }
   if (hilev != -1)
-    len = snprintf(buf, sizeof(buf), "Checking range: %s%d to %d%s\r\n", QYEL, lolev, hilev, QNRM);
+    tb_buf_appendf(&out, "Checking range: %s%d to %d%s\r\n", QYEL, lolev, hilev, QNRM);
   else if (lolev != -1)
-    len = snprintf(buf, sizeof(buf), "Checking level: %s%d%s\r\n", QYEL, lolev, QNRM);
+    tb_buf_appendf(&out, "Checking level: %s%d%s\r\n", QYEL, lolev, QNRM);
   else
-    len = snprintf(buf, sizeof(buf), "Checking all areas.\r\n");
+    tb_buf_append(&out, "Checking all areas.\r\n");
 
   for (i = 0; i <= top_of_zone_table; i++) {    /* Go through the whole zone table */
     show_zone = FALSE;
@@ -2692,17 +3130,24 @@ ACMD(do_areas)
     if (show_zone) {
       if (overlap) overlap_shown = TRUE;
       lev_set = get_zone_levels(i, lev_str, sizeof(lev_str));
-      tmp_len = snprintf(buf+len, sizeof(buf)-len, "\tn(%3d) %s%-*s\tn %s%s\tn\r\n", ++zcount, overlap ? QRED : QCYN,
+      tb_buf_appendf(&out, "\tn(%3d) %s%-*s\tn %s%s\tn\r\n", ++zcount, overlap ? QRED : QCYN,
                  count_color_chars(zone_table[i].name)+30, zone_table[i].name,
                  lev_set ? "\tc" : "\tn", lev_set ? lev_str : "All Levels");
-      len += tmp_len;
     }
   }
-  tmp_len = snprintf(buf+len, sizeof(buf)-len, "%s%d%s area%s found.\r\n", QYEL, zcount, QNRM, zcount == 1 ? "" : "s");
-  len += tmp_len;
+  tb_buf_appendf(&out, "%s%d%s area%s found.\r\n", QYEL, zcount, QNRM, zcount == 1 ? "" : "s");
 
   if (overlap_shown) {
-    tb_snprintf(buf+len, sizeof(buf)-len, "Areas shown in \trred\tn may have some creatures outside the specified range.\r\n");
+    tb_buf_append(&out, "Areas shown in \trred\tn may have some creatures outside the specified range.\r\n");
+  }
+
+  if (tb_buf_truncated(&out)) {
+    TB_WARN_MSG("act", "areas-truncated", "buf",
+                DIAG_CHAR_FMT " areas listing truncated at %zu bytes: %d of "
+                "%d zones matched", DIAG_CHAR(ch), out.capacity, zcount,
+                top_of_zone_table + 1);
+    /* out.length <= capacity - 1, so the reserved tail holds the marker. */
+    strlcpy(buf + out.length, overflow_marker, sizeof(buf) - out.length);
   }
 
   if (zcount == 0)

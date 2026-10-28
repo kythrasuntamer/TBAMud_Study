@@ -35,6 +35,18 @@ ASPELL(spell_create_water)
   /* level = MAX(MIN(level, LVL_IMPL), 1);	 - not used */
 
   if (GET_OBJ_TYPE(obj) == ITEM_DRINKCON) {
+    /* Value 2 (the liquid) comes from world files and 'osetval 2 N' with no
+     * range check, and both branches below hand it to name_from_drinkcon(),
+     * which indexes drinknames[] with it. Refuse a container whose liquid
+     * has no table entry, naming it and the caster (H1-07). */
+    if (!VALID_LIQ_TYPE(DRINK_CON_TYPE(obj))) {
+      TB_ERROR_MSG("magic", "liquid-type-range", "obj",
+                   DIAG_OBJ_FMT " liquid %d not in [0,%d) during create "
+                   "water by " DIAG_CHAR_FMT, DIAG_OBJ(obj),
+                   DRINK_CON_TYPE(obj), NUM_LIQ_TYPES, DIAG_CHAR(ch));
+      act("You can't make out what is in $p.", FALSE, ch, obj, 0, TO_CHAR);
+      return;
+    }
     if ((GET_OBJ_VAL(obj, 2) != LIQ_WATER) && (GET_OBJ_VAL(obj, 1) != 0)) {
       name_from_drinkcon(obj);
       GET_OBJ_VAL(obj, 2) = LIQ_SLIME;
@@ -54,9 +66,96 @@ ASPELL(spell_create_water)
   }
 }
 
+/* Recall, teleport and summon move a character, and summon finds its
+ * victim by name across the world. A character stranded in NOWHERE by an
+ * earlier, reported failure (see extract_char_final()) cannot be moved: its
+ * zone flags would be read from zone_table[] out of bounds and
+ * char_from_room() aborts on it. Report the spell, the stranded character
+ * and the caster, and refuse. */
+static bool spell_target_placed(struct char_data *ch, struct char_data *victim,
+                                const char *spell)
+{
+  if (VALID_ROOM_RNUM(IN_ROOM(victim)))
+    return TRUE;
+  TB_ERROR_MSG("magic", "victim-nowhere", spell,
+               DIAG_CHAR_FMT " is in no valid room (rnum %d); %s by "
+               DIAG_CHAR_FMT " refused", DIAG_CHAR(victim),
+               (int) IN_ROOM(victim), spell, DIAG_CHAR(ch));
+  send_to_char(ch, "You failed.\r\n");
+  return FALSE;
+}
+
+/* A trigger refused victim's entry to to_room: send it back to was_in, as
+ * walking does -- unless a script has meanwhile purged it or moved it on,
+ * in which case where it is now is the script's decision. */
+static void spell_move_back(struct char_data *victim, room_rnum was_in,
+                            room_rnum to_room)
+{
+  if (DEAD(victim) || IN_ROOM(victim) != to_room)
+    return;
+  char_from_room(victim);
+  char_to_room(victim, was_in);
+}
+
+/* Move victim into to_room by magic (recall, teleport, summon) with the
+ * entry checks walking runs in act.movement.c's do_simple_move(): the
+ * entering mob's entry trigger and the room's enter trigger, then, once
+ * the arrival is shown, a death trap, the memory triggers and the greet
+ * triggers. An enter or greet trigger that refuses sends victim back
+ * where it came from, as for a walker; the triggers tell the room why.
+ * dir is -1: magic has no direction. Each spell keeps its own wording:
+ * arrive_msg goes to the destination room (hide_invis as for act()), and
+ * vict_msg, when set, from caster to the victim. Scripts run here can
+ * purge or move victim, so it is re-checked after each trigger.
+ * Returns TRUE if victim arrived and stayed. */
+static bool spell_move_char(struct char_data *victim, room_rnum to_room,
+                            const char *arrive_msg, int hide_invis,
+                            struct char_data *caster, const char *vict_msg)
+{
+  room_rnum was_in = IN_ROOM(victim);
+
+  char_from_room(victim);
+  char_to_room(victim, to_room);
+
+  if (!entry_mtrigger(victim) || !enter_wtrigger(&world[to_room], victim, -1)) {
+    spell_move_back(victim, was_in, to_room);
+    return FALSE;
+  }
+  if (DEAD(victim) || IN_ROOM(victim) != to_room)
+    return FALSE;
+
+  act(arrive_msg, hide_invis, victim, 0, 0, TO_ROOM);
+  if (vict_msg != NULL)
+    act(vict_msg, FALSE, caster, 0, victim, TO_VICT);
+  look_at_room(victim, 0);
+
+  if (ROOM_FLAGGED(to_room, ROOM_DEATH) && GET_LEVEL(victim) < LVL_IMMORT) {
+    mudlog(BRF, LVL_IMMORT, TRUE, "%s hit death trap #%d (%s)",
+           GET_NAME(victim), GET_ROOM_VNUM(to_room), world[to_room].name);
+    death_cry(victim);
+    extract_char(victim);
+    return FALSE;
+  }
+
+  entry_memory_mtrigger(victim);
+  if (!greet_mtrigger(victim, -1)) {
+    if (!DEAD(victim) && IN_ROOM(victim) == to_room) {
+      spell_move_back(victim, was_in, to_room);
+      look_at_room(victim, 0);
+    }
+    return FALSE;
+  }
+  if (DEAD(victim) || IN_ROOM(victim) != to_room)
+    return FALSE;
+  greet_memory_mtrigger(victim);
+  return TRUE;
+}
+
 ASPELL(spell_recall)
 {
   if (victim == NULL || IS_NPC(victim))
+    return;
+  if (!spell_target_placed(ch, victim, "recall"))
     return;
 
   if (ZONE_FLAGGED(GET_ROOM_ZONE(IN_ROOM(victim)), ZONE_NOASTRAL)) {
@@ -65,20 +164,18 @@ ASPELL(spell_recall)
   }
 
   act("$n disappears.", TRUE, victim, 0, 0, TO_ROOM);
-  char_from_room(victim);
-  char_to_room(victim, r_mortal_start_room);
-  act("$n appears in the middle of the room.", TRUE, victim, 0, 0, TO_ROOM);
-  look_at_room(victim, 0);
-  entry_memory_mtrigger(victim);
-  greet_mtrigger(victim, -1);
-  greet_memory_mtrigger(victim);
+  spell_move_char(victim, r_mortal_start_room,
+                  "$n appears in the middle of the room.", TRUE, NULL, NULL);
 }
 
 ASPELL(spell_teleport)
 {
   room_rnum to_room;
+  int tries, max_tries = 10 * ((int) top_of_world + 1);
 
   if (victim == NULL || IS_NPC(victim))
+    return;
+  if (!spell_target_placed(ch, victim, "teleport"))
     return;
 
   if (ZONE_FLAGGED(GET_ROOM_ZONE(IN_ROOM(victim)), ZONE_NOASTRAL)) {
@@ -86,7 +183,19 @@ ASPELL(spell_teleport)
     return;
   }
 
+  /* Random rooms until one is open to teleport. Builders control the room
+   * and zone flags; a world (or test world) with no eligible room must not
+   * spin the game loop forever, so give up after a bounded number of tries
+   * and report it. */
+  tries = 0;
   do {
+    if (++tries > max_tries) {
+      TB_WARN_MSG("magic", "teleport-no-dest", "world",
+                  "no eligible room after %d tries; caster " DIAG_CHAR_FMT,
+                  max_tries, DIAG_CHAR(ch));
+      send_to_char(ch, "You fail.\r\n");
+      return;
+    }
     to_room = rand_number(0, top_of_world);
   } while (ROOM_FLAGGED(to_room, ROOM_PRIVATE) || ROOM_FLAGGED(to_room, ROOM_DEATH) ||
            ROOM_FLAGGED(to_room, ROOM_GODROOM) || ZONE_FLAGGED(GET_ROOM_ZONE(to_room), ZONE_CLOSED) ||
@@ -94,19 +203,16 @@ ASPELL(spell_teleport)
 
   act("$n slowly fades out of existence and is gone.",
       FALSE, victim, 0, 0, TO_ROOM);
-  char_from_room(victim);
-  char_to_room(victim, to_room);
-  act("$n slowly fades into existence.", FALSE, victim, 0, 0, TO_ROOM);
-  look_at_room(victim, 0);
-  entry_memory_mtrigger(victim);
-  greet_mtrigger(victim, -1);
-  greet_memory_mtrigger(victim);
+  spell_move_char(victim, to_room, "$n slowly fades into existence.", FALSE,
+                  NULL, NULL);
 }
 
 #define SUMMON_FAIL "You failed.\r\n"
 ASPELL(spell_summon)
 {
   if (ch == NULL || victim == NULL)
+    return;
+  if (!spell_target_placed(ch, victim, "summon"))
     return;
 
   if (GET_LEVEL(victim) > MIN(LVL_IMMORT - 1, level + 3)) {
@@ -149,16 +255,8 @@ ASPELL(spell_summon)
   }
 
   act("$n disappears suddenly.", TRUE, victim, 0, 0, TO_ROOM);
-
-  char_from_room(victim);
-  char_to_room(victim, IN_ROOM(ch));
-
-  act("$n arrives suddenly.", TRUE, victim, 0, 0, TO_ROOM);
-  act("$n has summoned you!", FALSE, ch, 0, victim, TO_VICT);
-  look_at_room(victim, 0);
-  entry_memory_mtrigger(victim);
-  greet_mtrigger(victim, -1);
-  greet_memory_mtrigger(victim);
+  spell_move_char(victim, IN_ROOM(ch), "$n arrives suddenly.", TRUE, ch,
+                  "$n has summoned you!");
 }
 
 /* Used by the locate object spell to check the alias list on objects */
@@ -219,8 +317,20 @@ ASPELL(spell_locate_object)
     return;
   }
 
-  /*  added a global var to catch 2nd arg. */
-  tb_snprintf(name, sizeof(name), "%s", cast_arg2);
+  /* cast_arg2 holds the keyword typed to 'cast'; other cast paths (wands,
+   * scrolls, dg_cast) leave it empty, so search for the target object's own
+   * first keyword instead. An empty keyword would match every object. */
+  if (*cast_arg2)
+    tb_snprintf(name, sizeof(name), "%s", cast_arg2);
+  else
+    tb_snprintf(name, sizeof(name), "%s", obj->name ? fname(obj->name) : "");
+  if (!*name) {
+    TB_WARN_MSG("magic", "locate-no-keyword", "cast_arg2",
+                DIAG_CHAR_FMT " cast locate object with no keyword (target "
+                "obj vnum %d)", DIAG_CHAR(ch), (int) GET_OBJ_VNUM(obj));
+    send_to_char(ch, "You sense nothing.\r\n");
+    return;
+  }
 
   j = GET_LEVEL(ch) / 2;  /* # items to show = twice char's level */
 
@@ -228,7 +338,17 @@ ASPELL(spell_locate_object)
     if (!isname_obj(name, i->name))
       continue;
 
-  send_to_char(ch, "%c%s", UPPER(*i->short_description), i->short_description + 1);
+    /* fread_string() returns NULL for an empty world-file string and
+     * parse_object does not reject it, so a short description may be NULL
+     * or "": never step past its first byte unchecked. */
+    if (!i->short_description || !*i->short_description) {
+      TB_WARN_MSG("magic", "obj-sdesc-empty", "locate",
+                  "obj vnum %d uid %ld has no short description",
+                  (int) GET_OBJ_VNUM(i), obj_script_id(i));
+      send_to_char(ch, "Something");
+    } else
+      send_to_char(ch, "%c%s", UPPER(*i->short_description),
+                   i->short_description + 1);
 
     if (i->carried_by)
       send_to_char(ch, " is being carried by %s.\r\n", PERS(i->carried_by, ch));

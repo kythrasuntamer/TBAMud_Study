@@ -1,9 +1,28 @@
-/**************************************************************************
-*  File: sedit.c                                           Part of tbaMUD *
-*  Usage: Oasis OLC - Shops.                                              *
-*                                                                         *
-* Copyright 1996 Harvey Gilpin. 1997-2001 George Greer.                   *
-**************************************************************************/
+/**
+* @file sedit.c
+* Oasis OLC - Shops: the shop editor.
+*
+* sedit edits a deep copy of shop_index[real_shop(OLC_NUM)] (copy_shop) and
+* saves it with add_shop(). The keeper's spec proc is changed only at save
+* time (sedit_install_keeper).
+*
+* Shared contract of the OasisOLC prototype editors (oedit, medit, redit,
+* zedit, sedit; see olc_checks.h):
+* - Each session edits a private scratch copy in d->olc; nothing reaches the
+*   live tables until the builder answers 'y' at the save prompt, and the
+*   copy is released by cleanup_olc() on every exit path.
+* - Scratch copies refer to other prototypes by rnum. Those positions move
+*   when any builder inserts or deletes a prototype; olc_renumber_sessions()
+*   moves every open copy, and OLC_CHECK_RNUM() guards every table index.
+* - *_parse(d, arg): arg is the builder's line, a mutable pointer into the
+*   descriptor's input buffer (at least MAX_INPUT_LENGTH bytes, ASCII after
+*   process_input). It is builder-controlled: validate before storing, and
+*   report a refused or clamped value (OLC_SET_CLAMPED, TB_WARN_MSG).
+* - Diagnostics use op names in kebab-case with OLC_DIAG / DIAG_CHAR
+*   identity; "should never get here" paths use OLC_ABORT.
+*
+* Copyright 1996 Harvey Gilpin. 1997-2001 George Greer.
+*/
 
 #include "conf.h"
 #include "sysdep.h"
@@ -18,7 +37,10 @@
 #include "genzon.h"
 #include "oasis.h"
 #include "constants.h"
+#include <float.h>
 #include "shop.h"
+#include "quest.h"
+#include "olc_checks.h"
 
 /* local functions */
 static void sedit_setup_new(struct descriptor_data *d);
@@ -33,9 +55,197 @@ static void sedit_types_menu(struct descriptor_data *d);
 static void sedit_disp_menu(struct descriptor_data *d);
 
 
+/* Reject invalid or overflowing shop profit input without modifying the
+ * existing multiplier. Preserve valid floating point values, including zero. */
+static int parse_shop_profit(const char *text, float *result)
+{
+  char *end;
+  float parsed;
+  if (!text || !result)
+    return 0;
+  while (isspace((unsigned char)*text))
+    text++;
+  errno = 0;
+  parsed = strtof(text, &end);
+  if (text == end || errno == ERANGE || parsed != parsed || parsed > FLT_MAX || parsed < -FLT_MAX)
+    return 0;
+  while (isspace((unsigned char)*end))
+    end++;
+  if (*end != '\0')
+    return 0;
+  *result = parsed;
+  return 1;
+}
+
+/* Entries before the NOTHING terminator of a shop's product or room list
+ * (a NULL list has none). */
+static int sedit_int_list_len(const IDXTYPE *list)
+{
+  int n = 0;
+
+  if (list)
+    while (list[n] != NOTHING)
+      n++;
+  return n;
+}
+
+/* Entries before the NOTHING-type terminator of a shop's buy-type list. */
+static int sedit_type_list_len(const struct shop_buy_data *list)
+{
+  int n = 0;
+
+  if (list)
+    while (BUY_TYPE(list[n]) != NOTHING)
+      n++;
+  return n;
+}
+
+/* Builder's answer to a "Delete which <what>?" prompt: an index 0..count-1,
+ * as the list menus number the entries (sedit_parse() has already refused
+ * anything but an optional '-' and digits).  genshp.c's remove functions
+ * refuse an index outside the list but cannot tell the builder, so it is
+ * checked here: a refusal is reported (shop-list-index, with the shop and
+ * builder) and the builder told that nothing was deleted.  Returns TRUE
+ * with *index set when the entry exists. */
+static int sedit_delete_index(struct descriptor_data *d, const char *arg,
+                              const char *what, int count, int *index)
+{
+  struct char_data *builder = d->character;
+  int i = 0;
+  int parsed = tb_parse_int_checked(arg, &i);
+
+  if (parsed && i >= 0 && i < count) {
+    *index = i;
+    return TRUE;
+  }
+  if (parsed)
+    TB_WARN_MSG("olc", "shop-list-index", "shop",
+                "builder " DIAG_CHAR_FMT " shop vnum %d %s list: delete index %d out of range 0..%d; nothing removed",
+                DIAG_CHAR(builder), OLC_NUM(d), what, i, count - 1);
+  else
+    TB_WARN_MSG("olc", "shop-list-index", "shop",
+                "builder " DIAG_CHAR_FMT " shop vnum %d %s list: delete answer (%lu chars) is not an int; nothing removed",
+                DIAG_CHAR(builder), OLC_NUM(d), what, (unsigned long)strlen(arg));
+  if (count == 0)
+    write_to_output(d, "There is no %s to delete.\r\n", what);
+  else if (parsed)
+    write_to_output(d, "There is no %s %d (choose 0 to %d); nothing deleted.\r\n",
+                    what, i, count - 1);
+  else
+    write_to_output(d, "That number is out of range (choose 0 to %d); nothing deleted.\r\n",
+                    count - 1);
+  return FALSE;
+}
+
+/* A shop other than skip (a shop_index rnum, or NOWHERE) whose shopkeeper
+ * is keeper, or NOWHERE. */
+static shop_rnum sedit_other_shop_of_keeper(mob_rnum keeper, shop_rnum skip)
+{
+  shop_rnum s;
+
+  for (s = 0; s <= top_shop; s++)
+    if (s != skip && SHOP_KEEPER(s) == keeper)
+      return s;
+  return NOWHERE;
+}
+
+/* TRUE when mob rnum keeper's spec proc already runs shop_keeper() through
+ * questmaster(): one of its quests keeps shop_keeper as the secondary proc
+ * questmaster() calls first (assign_the_quests() at boot, or add_quest(),
+ * wrapped the shop_keeper of a mob that also gives quests).  Every such
+ * quest counts, not only the one questmaster() picks today. */
+static int sedit_questmaster_runs_shop(mob_rnum keeper)
+{
+  qst_rnum q;
+
+  if (mob_index[keeper].func != questmaster)
+    return FALSE;
+  for (q = 0; q < total_quests; q++)
+    if (QST_MASTER(q) == mob_index[keeper].vnum && QST_FUNC(q) == shop_keeper)
+      return TRUE;
+  return FALSE;
+}
+
+/* Mob rnum keeper keeps no shop any more but runs shop_keeper() through
+ * questmaster(): every quest of its that keeps shop_keeper as its secondary
+ * gets original instead, the proc shop_keeper() wrapped (the shop's
+ * S_FUNC), so questmaster() -> original as before the shop.  original is
+ * never questmaster itself, which would make questmaster() call itself. */
+static void sedit_unwrap_quest_shop(mob_rnum keeper, SPECIAL((*original)))
+{
+  qst_rnum q;
+
+  for (q = 0; q < total_quests; q++)
+    if (QST_MASTER(q) == mob_index[keeper].vnum && QST_FUNC(q) == shop_keeper)
+      QST_FUNC(q) = original == questmaster ? NULL : original;
+}
+
+/* Install the shop's keeper in the live mob_index at save time, never
+ * while editing: SEDIT_KEEPER only records the choice, so an abandoned edit
+ * leaves every mobile's spec proc untouched.
+ *
+ * Contract (mirrors assign_the_shopkeepers in shop.c): the keeper's
+ * mob_index[].func becomes shop_keeper, and the spec proc it had before is
+ * kept in the shop's S_FUNC and called first by shop_keeper. When the
+ * keeper changes, the previous keeper gets that spec proc back unless
+ * another shop still uses it (through questmaster() when it gives quests:
+ * sedit_unwrap_quest_shop()).  A keeper that already runs shop_keeper
+ * through questmaster() is left alone (see sedit_questmaster_runs_shop()):
+ * wrapping it again would make each proc call the other forever. */
+static void sedit_install_keeper(struct descriptor_data *d)
+{
+  struct shop_data *shop = OLC_SHOP(d);
+  shop_rnum existing = real_shop(OLC_NUM(d));
+  mob_rnum old_keeper = existing != NOWHERE ? SHOP_KEEPER(existing) : NOBODY;
+  mob_rnum new_keeper = S_KEEPER(shop);
+  struct char_data *builder = d->character;
+
+  if (new_keeper == old_keeper)
+    return;
+
+  if (VALID_MOB_RNUM(old_keeper) && mob_index[old_keeper].func == shop_keeper &&
+      sedit_other_shop_of_keeper(old_keeper, existing) == NOWHERE)
+    mob_index[old_keeper].func = SHOP_FUNC(existing);
+  else if (VALID_MOB_RNUM(old_keeper) && sedit_questmaster_runs_shop(old_keeper) &&
+           sedit_other_shop_of_keeper(old_keeper, existing) == NOWHERE)
+    sedit_unwrap_quest_shop(old_keeper, SHOP_FUNC(existing));
+
+  S_FUNC(shop) = NULL;
+  if (!VALID_MOB_RNUM(new_keeper))
+    return;
+  if (mob_index[new_keeper].func == shop_keeper) {
+    /* Already keeps another shop, which holds its original spec proc. */
+    shop_rnum other = sedit_other_shop_of_keeper(new_keeper, existing);
+    if (other != NOWHERE)
+      S_FUNC(shop) = SHOP_FUNC(other);
+  } else if (sedit_questmaster_runs_shop(new_keeper)) {
+    /* questmaster() -> shop_keeper() already.  Storing questmaster in
+     * S_FUNC and installing shop_keeper would close the loop
+     * shop_keeper() -> questmaster() -> shop_keeper() (a stack overflow on
+     * the next command in the keeper's room).  Leave questmaster() outside;
+     * another shop of this keeper holds its original spec proc. */
+    shop_rnum other = sedit_other_shop_of_keeper(new_keeper, existing);
+    TB_WARN_MSG("olc", "spec-proc-cycle", "mobile",
+                "builder " DIAG_CHAR_FMT " shop vnum %d keeper vnum %d already runs shop_keeper through questmaster; not wrapped again",
+                DIAG_CHAR(builder), OLC_NUM(d), mob_index[new_keeper].vnum);
+    write_to_output(d, "Mobile %d is a questmaster that already runs shop code; "
+                       "its special procedure is left as it is.\r\n", mob_index[new_keeper].vnum);
+    if (other != NOWHERE)
+      S_FUNC(shop) = SHOP_FUNC(other);
+    return;
+  } else if (mob_index[new_keeper].func) {
+    TB_WARN_MSG("olc", "shop-keeper-func", "mobile",
+                "builder " DIAG_CHAR_FMT " shop vnum %d keeper vnum %d: its spec proc now runs before shop_keeper",
+                DIAG_CHAR(builder), OLC_NUM(d), mob_index[new_keeper].vnum);
+    S_FUNC(shop) = mob_index[new_keeper].func;
+  }
+  mob_index[new_keeper].func = shop_keeper;
+}
+
 void sedit_save_internally(struct descriptor_data *d)
 {
   OLC_SHOP(d)->vnum = OLC_NUM(d);
+  sedit_install_keeper(d);
   add_shop(OLC_SHOP(d));
 }
 
@@ -112,11 +322,8 @@ ACMD(do_oasis_sedit)
   d = ch->desc;
 
   /* Give the descriptor an OLC structure. */
-  if (d->olc) {
-    mudlog(BRF, LVL_IMMORT, TRUE,
-      "SYSERR: do_oasis_sedit: Player already had olc structure.");
-    free(d->olc);
-  }
+  if (d->olc)
+    OLC_DISCARD_STALE_SESSION(d, ch);
 
   CREATE(d->olc, struct oasis_olc_data, 1);
 
@@ -171,6 +378,16 @@ ACMD(do_oasis_sedit)
     GET_NAME(ch), zone_table[OLC_ZNUM(d)].number, GET_OLC_ZONE(ch));
 }
 
+/* Start a new shop with default messages and empty lists.
+ *
+ * List contents (all terminated by NOTHING / NOWHERE):
+ * - S_PRODUCTS holds object *rnums* (allocated as obj_vnum, but genobj and
+ *   olc_renumber_sessions renumber them as rnums).
+ * - S_ROOMS holds room *vnums* (allocated as room_rnum).
+ * The messages are templates expanded by shop.c's shop_format_message(),
+ * never used as printf formats: %s is the customer's name, %d the amount
+ * (S_BUY / S_SELL), %% a literal '%'; any other '%' sequence is printed
+ * literally and reported there. */
 static void sedit_setup_new(struct descriptor_data *d)
 {
   struct shop_data *shop;
@@ -228,6 +445,10 @@ static void sedit_products_menu(struct descriptor_data *d)
   clear_screen(d);
   write_to_output(d, "##     VNUM     Product\r\n");
   for (i = 0; S_PRODUCT(shop, i) != NOTHING; i++) {
+    if (!OLC_CHECK_RNUM(d, OLC_RNUM_OBJ, S_PRODUCT(shop, i))) {
+      write_to_output(d, "%2d - <stale object rnum %d>\r\n", i, S_PRODUCT(shop, i));
+      continue;
+    }
     write_to_output(d, "%2d - [%s%5d%s] - %s%s%s\r\n", i,
 	    cyn, obj_index[S_PRODUCT(shop, i)].vnum, nrm,
 	    yel, obj_proto[S_PRODUCT(shop, i)].short_description, nrm);
@@ -279,11 +500,20 @@ static void sedit_rooms_menu(struct descriptor_data *d)
   clear_screen(d);
   write_to_output(d, "##     VNUM     Room\r\n\r\n");
   for (i = 0; S_ROOM(shop, i) != NOWHERE; i++) {
+    /* S_ROOMS holds room vnums. A room deleted since the shop was loaded
+     * has no rnum: show it as deleted and leave the vnum alone so the
+     * builder can remove it ('D'). Displaying must never change the shop
+     * (this used to rewrite it to room 0, the Void, which a save kept). */
     rnum = real_room(S_ROOM(shop, i));
-    /* if the room has been deleted, this may crash us otherwise. */
-    /* set to 0 to be deletable.   -- Welcor 09/04                */
-    if (rnum == NOWHERE)
-      S_ROOM(shop, i) = rnum = 0;
+    if (rnum == NOWHERE) {
+      struct char_data *builder = d->character;
+      TB_WARN_MSG("olc", "shop-room-missing", "shop",
+                  "builder " DIAG_CHAR_FMT " shop vnum %d room vnum %d (entry %d) does not exist",
+                  DIAG_CHAR(builder), OLC_NUM(d), S_ROOM(shop, i), i);
+      write_to_output(d, "%2d - [%s%5d%s] - %s<deleted room>%s\r\n", i, cyn, S_ROOM(shop, i), nrm,
+                      yel, nrm);
+      continue;
+    }
 
     write_to_output(d, "%2d - [%s%5d%s] - %s%s%s\r\n", i, cyn, S_ROOM(shop, i), nrm,
 	    yel, world[rnum].name, nrm);
@@ -310,7 +540,7 @@ static void sedit_namelist_menu(struct descriptor_data *d)
   write_to_output(d, "##              Type   Namelist\r\n\r\n");
   for (i = 0; S_BUYTYPE(shop, i) != NOTHING; i++) {
     write_to_output(d, "%2d - %s%15s%s - %s%s%s\r\n", i, cyn,
-		item_types[S_BUYTYPE(shop, i)], nrm, yel,
+		OLC_TABLE_NAME(d, item_types, NUM_ITEM_TYPES, S_BUYTYPE(shop, i)), nrm, yel,
 		S_BUYWORD(shop, i) ? S_BUYWORD(shop, i) : "<None>", nrm);
   }
   write_to_output(d, "\r\n"
@@ -377,9 +607,14 @@ static void sedit_disp_menu(struct descriptor_data *d)
   char buf1[MAX_STRING_LENGTH];
   char buf2[MAX_STRING_LENGTH];
   struct shop_data *shop;
+  int keeper_ok;
 
   shop = OLC_SHOP(d);
   get_char_colors(d->character);
+
+  /* The keeper is a mobile rnum that other builders' medit inserts and
+   * deletes move; never index mob_proto with one that missed a renumber. */
+  keeper_ok = S_KEEPER(shop) != NOBODY && OLC_CHECK_RNUM(d, OLC_RNUM_MOB, S_KEEPER(shop));
 
   clear_screen(d);
   sprintbit(S_NOTRADE(shop), trade_letters, buf1, sizeof(buf1));
@@ -407,8 +642,9 @@ static void sedit_disp_menu(struct descriptor_data *d)
 	  "Enter Choice : ",
 
 	  cyn, OLC_NUM(d), nrm,
-	  grn, nrm, cyn, S_KEEPER(shop) == NOBODY ? -1 : mob_index[S_KEEPER(shop)].vnum,
-	  nrm, yel, S_KEEPER(shop) == NOBODY ? "None" : mob_proto[S_KEEPER(shop)].player.short_descr,
+	  grn, nrm, cyn, keeper_ok ? mob_index[S_KEEPER(shop)].vnum : -1,
+	  nrm, yel, keeper_ok ? mob_proto[S_KEEPER(shop)].player.short_descr :
+	            (S_KEEPER(shop) == NOBODY ? "None" : "<stale keeper rnum>"),
 	  grn, nrm, cyn, S_OPEN1(shop), nrm,
 	  grn, nrm, cyn, S_CLOSE1(shop),
 	  grn, nrm, cyn, S_OPEN2(shop), nrm,
@@ -436,7 +672,11 @@ void sedit_parse(struct descriptor_data *d, char *arg)
   int i;
 
   if (OLC_MODE(d) > SEDIT_NUMERICAL_RESPONSE) {
-    if (!isdigit(arg[0]) && ((*arg == '-') && (!isdigit(arg[1])))) {
+    /* Builder input: a whole number, except the profit factors, which
+     * parse_shop_profit() validates as floats. tb_parse_int_or_zero()
+     * reads "abc" as 0, so refuse it here. */
+    if (OLC_MODE(d) != SEDIT_BUY_PROFIT && OLC_MODE(d) != SEDIT_SELL_PROFIT &&
+        !is_number(arg)) {
       write_to_output(d, "Field must be numerical, try again : ");
       return;
     }
@@ -681,43 +921,61 @@ void sedit_parse(struct descriptor_data *d, char *arg)
 
     /* Numerical responses. */
   case SEDIT_KEEPER:
-    if ((i = tb_parse_int_or_zero(arg)) != -1)
-      if ((i = real_mobile(i)) == NOBODY) {
+    /* Builder input: a mob vnum, or -1 for no keeper. Only the choice is
+     * recorded here; sedit_install_keeper() changes the live mob_index at
+     * save time. The keeper's spec proc is replaced, so its zone must be
+     * one this builder may edit. */
+    if ((i = tb_parse_int_or_zero(arg)) != -1) {
+      mob_vnum keeper_vnum = i;
+      struct char_data *builder = d->character;
+
+      if ((i = real_mobile(keeper_vnum)) == NOBODY) {
 	write_to_output(d, "That mobile does not exist, try again : ");
 	return;
       }
+      if (!can_edit_zone(builder, real_zone_by_thing(keeper_vnum))) {
+        TB_WARN_MSG("olc", "shop-keeper-permission", "mobile",
+                    "builder " DIAG_CHAR_FMT " shop vnum %d keeper vnum %d refused: zone not editable",
+                    DIAG_CHAR(builder), OLC_NUM(d), keeper_vnum);
+        write_to_output(d, "You cannot make mobile %d a shopkeeper: you may not edit its zone.\r\n"
+                        "Enter vnum number of shop keeper : ", keeper_vnum);
+        return;
+      }
+    }
     S_KEEPER(OLC_SHOP(d)) = i;
-    if (i == -1)
-      break;
-    /* Fiddle with special procs. */
-    S_FUNC(OLC_SHOP(d)) = mob_index[i].func != shop_keeper ? mob_index[i].func : NULL;
-    mob_index[i].func = shop_keeper;
     break;
   case SEDIT_OPEN1:
-    S_OPEN1(OLC_SHOP(d)) = LIMIT(tb_parse_int_or_zero(arg), 0, 28);
+    OLC_SET_CLAMPED(d, S_OPEN1(OLC_SHOP(d)), tb_parse_int_or_zero(arg), 0, 28, "Opening hour");
     break;
   case SEDIT_OPEN2:
-    S_OPEN2(OLC_SHOP(d)) = LIMIT(tb_parse_int_or_zero(arg), 0, 28);
+    OLC_SET_CLAMPED(d, S_OPEN2(OLC_SHOP(d)), tb_parse_int_or_zero(arg), 0, 28, "Second opening hour");
     break;
   case SEDIT_CLOSE1:
-    S_CLOSE1(OLC_SHOP(d)) = LIMIT(tb_parse_int_or_zero(arg), 0, 28);
+    OLC_SET_CLAMPED(d, S_CLOSE1(OLC_SHOP(d)), tb_parse_int_or_zero(arg), 0, 28, "Closing hour");
     break;
   case SEDIT_CLOSE2:
-    S_CLOSE2(OLC_SHOP(d)) = LIMIT(tb_parse_int_or_zero(arg), 0, 28);
+    OLC_SET_CLAMPED(d, S_CLOSE2(OLC_SHOP(d)), tb_parse_int_or_zero(arg), 0, 28, "Second closing hour");
     break;
   case SEDIT_BUY_PROFIT:
-    sscanf(arg, "%f", &S_BUYPROFIT(OLC_SHOP(d)));
+    if (!parse_shop_profit(arg, &S_BUYPROFIT(OLC_SHOP(d)))) {
+      write_to_output(d, "Invalid buying profit multiplier, try again: ");
+      return;
+    }
     break;
   case SEDIT_SELL_PROFIT:
-    sscanf(arg, "%f", &S_SELLPROFIT(OLC_SHOP(d)));
+    if (!parse_shop_profit(arg, &S_SELLPROFIT(OLC_SHOP(d)))) {
+      write_to_output(d, "Invalid selling profit multiplier, try again: ");
+      return;
+    }
     break;
   case SEDIT_TYPE_MENU:
-    OLC_VAL(d) = LIMIT(tb_parse_int_or_zero(arg), 0, NUM_ITEM_TYPES - 1);
+    OLC_SET_CLAMPED(d, OLC_VAL(d), tb_parse_int_or_zero(arg), 0, NUM_ITEM_TYPES - 1, "Item type");
     write_to_output(d, "Enter namelist (return for none) :-\r\n] ");
     OLC_MODE(d) = SEDIT_NAMELIST;
     return;
   case SEDIT_DELETE_TYPE:
-    remove_shop_from_type_list(&(S_NAMELISTS(OLC_SHOP(d))), tb_parse_int_or_zero(arg));
+    if (sedit_delete_index(d, arg, "entry", sedit_type_list_len(S_NAMELISTS(OLC_SHOP(d))), &i))
+      remove_shop_from_type_list(&(S_NAMELISTS(OLC_SHOP(d))), i);
     sedit_namelist_menu(d);
     return;
   case SEDIT_NEW_PRODUCT:
@@ -726,12 +984,14 @@ void sedit_parse(struct descriptor_data *d, char *arg)
 	write_to_output(d, "That object does not exist, try again : ");
 	return;
       }
-    if (i > 0)
+    /* i is an object rnum, and rnum 0 is a real object; -1 means none. */
+    if (i >= 0)
       add_shop_to_int_list(&(S_PRODUCTS(OLC_SHOP(d))), i);
     sedit_products_menu(d);
     return;
   case SEDIT_DELETE_PRODUCT:
-    remove_shop_from_int_list(&(S_PRODUCTS(OLC_SHOP(d))), tb_parse_int_or_zero(arg));
+    if (sedit_delete_index(d, arg, "product", sedit_int_list_len(S_PRODUCTS(OLC_SHOP(d))), &i))
+      remove_shop_from_int_list(&(S_PRODUCTS(OLC_SHOP(d))), i);
     sedit_products_menu(d);
     return;
   case SEDIT_NEW_ROOM:
@@ -745,18 +1005,32 @@ void sedit_parse(struct descriptor_data *d, char *arg)
     sedit_rooms_menu(d);
     return;
   case SEDIT_DELETE_ROOM:
-    remove_shop_from_int_list(&(S_ROOMS(OLC_SHOP(d))), tb_parse_int_or_zero(arg));
+    if (sedit_delete_index(d, arg, "room", sedit_int_list_len(S_ROOMS(OLC_SHOP(d))), &i))
+      remove_shop_from_int_list(&(S_ROOMS(OLC_SHOP(d))), i);
     sedit_rooms_menu(d);
     return;
   case SEDIT_SHOP_FLAGS:
-    if ((i = LIMIT(tb_parse_int_or_zero(arg), 0, NUM_SHOP_FLAGS)) > 0) {
+    /* Builder input: 0 leaves, 1..NUM_SHOP_FLAGS toggles. Clamping used to
+     * turn any larger number into the last flag. */
+    if ((i = tb_parse_int_or_zero(arg)) < 0 || i > NUM_SHOP_FLAGS) {
+      write_to_output(d, "Choose 0 to %d.\r\n", NUM_SHOP_FLAGS);
+      sedit_shop_flags_menu(d);
+      return;
+    }
+    if (i > 0) {
       TOGGLE_BIT(S_BITVECTOR(OLC_SHOP(d)), 1 << (i - 1));
       sedit_shop_flags_menu(d);
       return;
     }
     break;
   case SEDIT_NOTRADE:
-    if ((i = LIMIT(tb_parse_int_or_zero(arg), 0, NUM_TRADERS)) > 0) {
+    /* Builder input: 0 leaves, 1..NUM_TRADERS toggles (see above). */
+    if ((i = tb_parse_int_or_zero(arg)) < 0 || i > NUM_TRADERS) {
+      write_to_output(d, "Choose 0 to %d.\r\n", NUM_TRADERS);
+      sedit_no_trade_menu(d);
+      return;
+    }
+    if (i > 0) {
       TOGGLE_BIT(S_NOTRADE(OLC_SHOP(d)), 1 << (i - 1));
       sedit_no_trade_menu(d);
       return;
@@ -764,6 +1038,10 @@ void sedit_parse(struct descriptor_data *d, char *arg)
     break;
   case SEDIT_COPY:
     if ((i = real_shop(tb_parse_int_or_zero(arg))) != NOWHERE) {
+      /* setup allocates a fresh scratch shop: release this session's copy
+       * first, as cleanup_olc() would. */
+      free_shop(OLC_SHOP(d));
+      OLC_SHOP(d) = NULL;
       sedit_setup_existing(d, i);
     } else
       write_to_output(d, "That shop does not exist.\r\n");
@@ -771,10 +1049,7 @@ void sedit_parse(struct descriptor_data *d, char *arg)
 
   default:
     /* We should never get here. */
-    cleanup_olc(d, CLEANUP_ALL);
-    mudlog(BRF, LVL_BUILDER, TRUE, "SYSERR: OLC: sedit_parse(): Reached default case!");
-    write_to_output(d, "Oops...\r\n");
-    break;
+    OLC_ABORT(d, "sedit-bad-mode");
   }
 
 /* If we get here, we have probably changed something, and now want to return 

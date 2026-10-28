@@ -2,7 +2,9 @@ name: Native Sanitizers
 
 on:
   push:
-    branches: [ "master" ]
+    # Security/audit work lands on audit/** branches before any PR exists;
+    # sanitize every push there so memory errors surface per commit.
+    branches: [ "master", "audit/**" ]
   pull_request:
     branches: [ "master" ]
 
@@ -17,14 +19,19 @@ jobs:
   asan-ubsan:
     runs-on: ubuntu-latest
 
-    env:
-      ASAN_OPTIONS: detect_leaks=1:halt_on_error=1:strict_string_checks=1:check_initialization_order=1
-      UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+    # ASAN_OPTIONS/UBSAN_OPTIONS come from TBAMUD_ASAN_OPTIONS and
+    # TBAMUD_UBSAN_OPTIONS in CMakeLists.txt, which CTest applies to every
+    # test, so CI and a local ctest trap exactly the same things.
 
     steps:
     - name: Checkout
       uses: actions/checkout@v4
 
+    - name: Install libsodium development headers
+      run: sudo apt-get update && sudo apt-get install -y libsodium-dev
+
+    # ENABLE_FUZZING builds the libFuzzer targets in tests/fuzz; ctest then
+    # replays each seed corpus once, so a saved crash input fails CI.
     - name: Configure with Clang sanitizers
       run: >
         cmake -S . -B build-sanitize
@@ -32,6 +39,7 @@ jobs:
         -DCMAKE_C_COMPILER=clang
         -DSTATIC_ANALYSIS=OFF
         -DENABLE_SANITIZERS=ON
+        -DENABLE_FUZZING=ON
 
     - name: Build
       shell: bash
@@ -54,3 +62,75 @@ jobs:
           sanitizer-build.log
           sanitizer-test.log
         if-no-files-found: ignore
+
+  valgrind-memcheck:
+    # Valgrind sees what ASan cannot: uninitialised reads (--track-origins)
+    # and code built without instrumentation. Runs a separate, unsanitized
+    # tree; Valgrind and ASan cannot share a binary.
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Install Valgrind and libsodium development headers
+      run: sudo apt-get update && sudo apt-get install -y valgrind libsodium-dev
+
+    - name: Configure unsanitized Debug build
+      run: >
+        cmake -S . -B build-memcheck
+        -DCMAKE_BUILD_TYPE=Debug
+        -DSTATIC_ANALYSIS=OFF
+
+    - name: Build
+      shell: bash
+      run: |
+        set -o pipefail
+        cmake --build build-memcheck --parallel 2 2>&1 | tee memcheck-build.log
+
+    - name: ctest -T memcheck on native tests and the boot check
+      # MEMORYCHECK_COMMAND_OPTIONS (CMakeLists.txt) sets --error-exitcode,
+      # so any invalid access or definite/indirect leak fails this step.
+      # circle_boot_check (circle -c against lib/) carries the "native"
+      # label and runs here once its DISABLED property is removed.
+      shell: bash
+      run: |
+        set -o pipefail
+        ctest --test-dir build-memcheck -T memcheck -L native --output-on-failure 2>&1 | tee memcheck-test.log
+
+    - name: Upload Valgrind logs
+      uses: actions/upload-artifact@v4
+      if: ${{ always() }}
+      with:
+        name: valgrind-logs
+        path: |
+          memcheck-build.log
+          memcheck-test.log
+          build-memcheck/Testing/Temporary/MemoryChecker.*.log
+        if-no-files-found: ignore
+
+  hardened-release:
+    # The production flag set: _FORTIFY_SOURCE=3 needs optimisation, so this
+    # is RelWithDebInfo. Fortify aborts on a detected overflow, which fails
+    # the tests.
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Install libsodium development headers
+      run: sudo apt-get update && sudo apt-get install -y libsodium-dev
+
+    - name: Configure hardened RelWithDebInfo build
+      run: >
+        cmake -S . -B build-hardened
+        -DCMAKE_BUILD_TYPE=RelWithDebInfo
+        -DSTATIC_ANALYSIS=OFF
+        -DENABLE_HARDENING=ON
+
+    - name: Build
+      run: cmake --build build-hardened --parallel 2
+
+    - name: Test
+      run: ctest --test-dir build-hardened --output-on-failure

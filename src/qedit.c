@@ -25,6 +25,20 @@
 #include "modify.h"
 #include "quest.h"
 
+/** @file qedit.c
+ * Quest editor.  In this editor OLC_NUM is the quest vnum being edited and
+ * OLC_ZNUM the rnum of the zone that holds it; a quest opened with a new
+ * vnum is not in aquest_table (real_quest() == NOTHING) until it is saved.
+ *
+ * Ownership.  OLC_QUEST and all five of its strings always belong to the
+ * editor: qedit_setup_existing() copies a row in with copy_quest(), and
+ * add_quest() (genqst.c) copies the edit back into aquest_table with
+ * str_udup, so every exit, including a successful save, uses CLEANUP_ALL.
+ *
+ * Input.  Names, texts and numbers are builder free text; numbers go
+ * through QEDIT_PARSE_INT with an explicit range, and quest types from the
+ * quest file are shown through qedit_type_name(), never indexed raw. */
+
 /*-------------------------------------------------------------------*/
 /*. Function prototypes . */
 
@@ -32,18 +46,92 @@ static void qedit_setup_new(struct descriptor_data *d);
 static void qedit_setup_existing(struct descriptor_data *d, qst_rnum rnum);
 static void qedit_disp_menu(struct descriptor_data *d);
 static void qedit_save_internally(struct descriptor_data *d);
-static void qedit_save_to_disk(int num);
+static int qedit_save_to_disk(struct descriptor_data *d, zone_rnum num);
+static int qedit_parse_int_range_at(struct descriptor_data *d, const char *arg,
+                                    long lo, long hi, int *out,
+                                    const char *operation, const char *field,
+                                    const char *file, int line, const char *func);
+
+/** Parse the builder's numeric answer for quest field 'field' into *out.
+ * TRUE when arg is a whole number in lo..hi.  Otherwise a WARNING with op
+ * 'operation', the quest vnum, the field, the range and the editor is
+ * logged at the call site, the builder is re-prompted with the range, and
+ * FALSE is returned; the caller returns with OLC_MODE unchanged so the next
+ * line answers again.  Junk used to become 0, out-of-range rewards and
+ * limits were silently clamped, and vnums wider than IDXTYPE were
+ * truncated (68537 -> 3001) before real_mobile()/real_object(). */
+#define QEDIT_PARSE_INT(d, arg, lo, hi, out, operation, field) \
+  qedit_parse_int_range_at((d), (arg), (lo), (hi), (out), (operation), (field), \
+                           __FILE__, __LINE__, __func__)
+
+/** Range for a vnum answer where -1 means "none": the stored types are
+ * IDXTYPE, whose all-ones value is NOBODY/NOTHING. */
+#define QEDIT_VNUM_MIN  (-1L)
+#define QEDIT_VNUM_MAX  ((long)IDXTYPE_MAX - 1)
+
+/** Quest flag bit for flag-menu choice n.  qedit_disp_flag_menu() numbers
+ * aq_flags[] from 1 (column_list(..., TRUE)), and entry n-1 names bit n-1
+ * (AQ_REPEATABLE is 1 << 0), so choice n toggles 1 << (n-1).  The choice
+ * itself used to be used as the mask, which is right only for choice 1:
+ * once a third flag exists, choice 3 would toggle bits 0 and 1 together
+ * and corrupt the saved flags.  n must be 1..NUM_AQ_FLAGS. */
+#define QEDIT_FLAG_BIT(n)  (1L << ((n) - 1))
 
 /*-------------------------------------------------------------------*/
 
+/* Name of a quest type for display.  quest_types[] has NUM_AQ_TYPES
+ * entries; a new quest starts as AQ_UNDEFINED (-1), and a loaded quest's
+ * type comes from the quest file, so neither may be used as an index
+ * unchecked. */
+static const char *qedit_type_name(const struct aq_data *quest)
+{
+  if (quest->type >= 0 && quest->type < NUM_AQ_TYPES)
+    return quest_types[quest->type];
+  if (quest->type != AQ_UNDEFINED)
+    TB_WARN_MSG("quest", "quest-type-range", "aquest_table",
+                "quest vnum %d type %d outside 0..%d",
+                (int)quest->vnum, quest->type, NUM_AQ_TYPES - 1);
+  return "Undefined";
+}
+
+/* Stores the edit in aquest_table.  add_quest() copies every
+ * string and never takes OLC_QUEST, so the caller still owns it and uses
+ * CLEANUP_ALL; add_quest cannot fail (it returns the new rnum). */
 static void qedit_save_internally(struct descriptor_data *d)
 {
   add_quest(OLC_QUEST(d));
 }
 
-static void qedit_save_to_disk(int num)
+/* Writes zone rnum num's quests.  save_quests() reports the I/O cause;
+ * this adds the editor and zone, so a failed save is never reported to the
+ * builder as "saved".  Returns FALSE when the quest file was not written. */
+static int qedit_save_to_disk(struct descriptor_data *d, zone_rnum num)
 {
-  save_quests(num);
+  if (save_quests(num))
+    return TRUE;
+  TB_ERROR_MSG("olc", "qedit-save", "quest file",
+               "zone rnum %d (top %d) quest vnum %d not written; editor " DIAG_CHAR_FMT,
+               (int)num, (int)top_of_zone_table, (int)OLC_NUM(d), DIAG_CHAR(d->character));
+  return FALSE;
+}
+
+static int qedit_parse_int_range_at(struct descriptor_data *d, const char *arg,
+                                    long lo, long hi, int *out,
+                                    const char *operation, const char *field,
+                                    const char *file, int line, const char *func)
+{
+  long value;
+
+  if (tb_parse_long_checked(arg, &value) && value >= lo && value <= hi) {
+    *out = (int)value;
+    return TRUE;
+  }
+  /* Only the length of the input is logged: it is free text. */
+  tb_error_log_at("WARNING", "olc", operation, field, 0, file, line, func,
+                  "quest vnum %d input length %zu not a number in %ld..%ld; editor " DIAG_CHAR_FMT,
+                  (int)OLC_NUM(d), strlen(arg), lo, hi, DIAG_CHAR(d->character));
+  write_to_output(d, "Enter a number from %ld to %ld : ", lo, hi);
+  return FALSE;
 }
 
 /*-------------------------------------------------------------------*\
@@ -57,6 +145,15 @@ ACMD(do_oasis_qedit)
   struct descriptor_data *d;
   char buf1[MAX_INPUT_LENGTH];
   char buf2[MAX_INPUT_LENGTH];
+
+  /* A forced immortal, or a mob or switched body, may have no descriptor,
+   * and the editor lives on ch->desc. */
+  if (IS_NPC(ch) || !ch->desc || STATE(ch->desc) != CON_PLAYING) {
+    TB_WARN_MSG("olc", "olc-no-descriptor", "qedit",
+                DIAG_CHAR_FMT " has_desc %d state %d", DIAG_CHAR(ch),
+                ch->desc != NULL, ch->desc ? STATE(ch->desc) : -1);
+    return;
+  }
 
   /****************************************************************************/
   /** Parse any arguments.                                                   **/
@@ -123,10 +220,15 @@ ACMD(do_oasis_qedit)
   /****************************************************************************/
   /** Give the descriptor an OLC structure.                                  **/
   /****************************************************************************/
+  /* Entry requires CON_PLAYING, where no editor is open, so a leftover
+   * d->olc is an invariant break.  free() alone leaked its substructures
+   * (help, action, quest, prefs, message list, storage); release them all
+   * and report the stale mode. */
   if (d->olc) {
-    mudlog(BRF, LVL_IMMORT, TRUE,
-      "SYSERR: do_oasis_quest: Player already had olc structure.");
-    free(d->olc);
+    TB_ERROR_MSG("olc", "olc-reentry", "qedit",
+                 DIAG_CHAR_FMT " stale mode %d state %d",
+                 DIAG_CHAR(ch), OLC_MODE(d), STATE(d));
+    cleanup_olc(d, CLEANUP_ALL);
   }
 
   CREATE(d->olc, struct oasis_olc_data, 1);
@@ -165,7 +267,8 @@ ACMD(do_oasis_qedit)
     /**************************************************************************/
     /** Save the quest to the quest file.                                    **/
     /**************************************************************************/
-    qedit_save_to_disk(OLC_ZNUM(d));
+    if (!qedit_save_to_disk(d, OLC_ZNUM(d)))
+      send_to_char(ch, "Saving the quest file FAILED; the file on disk is unchanged.\r\n");
 
     /**************************************************************************/
     /** Free the OLC structure.                                              **/
@@ -177,7 +280,8 @@ ACMD(do_oasis_qedit)
 
   OLC_NUM(d) = number;
 
-  if ((real_num = real_quest(number)) != NOTHING)
+  real_num = real_quest(number);
+  if (VALID_QUEST_RNUM(real_num))
     qedit_setup_existing(d, real_num);
   else
     qedit_setup_new(d);
@@ -330,7 +434,7 @@ static void qedit_disp_menu(struct descriptor_data *d)
     quest->quit && (str_cmp(quest->quit, "undefined"))
      ? quest->quit : "Nothing\r\n",
     quest_flags,
-    quest_types[quest->type],
+    qedit_type_name(quest),
     quest->type == AQ_OBJ_RETURN ? buf2 : "",
     quest->qm == NOBODY ? -1 :     quest->qm,
     real_mobile(quest->qm) == NOBODY ? "Invalid Mob" : mob_proto[(real_mobile(quest->qm))].player.short_descr,
@@ -391,11 +495,17 @@ void qedit_parse(struct descriptor_data *d, char *arg)
           mudlog(CMP, MAX(LVL_BUILDER, GET_INVIS_LEV(d->character)), TRUE,
      "OLC: %s edits quest %d", GET_NAME(d->character), OLC_NUM(d));
           if (CONFIG_OLC_SAVE) {
-            qedit_save_to_disk(real_zone_by_thing(OLC_NUM(d)));
-            write_to_output(d, "Quest %d saved to disk.\r\n", OLC_NUM(d));
+            if (qedit_save_to_disk(d, real_zone_by_thing(OLC_NUM(d))))
+              write_to_output(d, "Quest %d saved to disk.\r\n", OLC_NUM(d));
+            else
+              write_to_output(d, "Quest %d saved to memory, but writing the quest file "
+                                 "FAILED; the file on disk is unchanged.\r\n", OLC_NUM(d));
           } else
             write_to_output(d, "Quest %d saved to memory.\r\n", OLC_NUM(d));
-          cleanup_olc(d, CLEANUP_STRUCTS);
+          /* add_quest copies every string into aquest_table (copy_quest ->
+           * str_udup), so the editor still owns OLC_QUEST's strings: free
+           * them too.  CLEANUP_STRUCTS leaked all five on every save. */
+          cleanup_olc(d, CLEANUP_ALL);
    return;
         case 'n':
         case 'N':
@@ -410,14 +520,40 @@ void qedit_parse(struct descriptor_data *d, char *arg)
     case QEDIT_CONFIRM_DELETE:
       switch (*arg) {
         case 'y':
-        case 'Y':
-          if (delete_quest(real_quest(OLC_NUM(d))))
+        case 'Y': {
+          /* A quest opened with "qedit <new vnum>" is not in aquest_table
+           * until it is saved, so real_quest() is NOTHING; delete_quest()
+           * read aquest_table[NOTHING] before its own range test (and the
+           * table is NULL when no quests exist).  Check here, where the
+           * vnum and the builder are known. */
+          qst_rnum del_rnum = real_quest(OLC_NUM(d));
+
+          if (!VALID_QUEST_RNUM(del_rnum)) {
+            TB_WARN_MSG("olc", "qedit-delete-unsaved", "aquest_table",
+                        "quest vnum %d has no table row; editor " DIAG_CHAR_FMT,
+                        (int)OLC_NUM(d), DIAG_CHAR(d->character));
+            write_to_output(d, "Quest %d was never saved; there is nothing to delete.\r\n",
+                            (int)OLC_NUM(d));
+            cleanup_olc(d, CLEANUP_ALL);
+            return;
+          }
+          if (delete_quest(del_rnum))
             write_to_output(d, "Quest deleted.\r\n");
-   else
+          else {
+            TB_ERROR_MSG("olc", "qedit-delete", "aquest_table",
+                         "delete_quest failed for vnum %d rnum %d editor " DIAG_CHAR_FMT,
+                         (int)OLC_NUM(d), (int)del_rnum, DIAG_CHAR(d->character));
             write_to_output(d, "Couldn't delete the quest!\r\n");
+            cleanup_olc(d, CLEANUP_ALL);
+            return;
+          }
+          }
           if (CONFIG_OLC_SAVE) {
-            qedit_save_to_disk(real_zone_by_thing(OLC_NUM(d)));
-            write_to_output(d, "Quest file saved to disk.\r\n");
+            if (qedit_save_to_disk(d, real_zone_by_thing(OLC_NUM(d))))
+              write_to_output(d, "Quest file saved to disk.\r\n");
+            else
+              write_to_output(d, "Quest deleted in memory, but writing the quest file "
+                                 "FAILED; the file on disk is unchanged.\r\n");
           } else
             write_to_output(d, "Quest file saved to memory.\r\n");
           cleanup_olc(d, CLEANUP_ALL);
@@ -596,6 +732,9 @@ void qedit_parse(struct descriptor_data *d, char *arg)
       OLC_QUEST(d)->desc = str_udup(arg);
       break;
     case QEDIT_QUESTMASTER:
+      if (!QEDIT_PARSE_INT(d, arg, QEDIT_VNUM_MIN, QEDIT_VNUM_MAX, &number,
+                           "vnum-range", "questmaster"))
+        return;
       if (number != -1)
         if (real_mobile(number) == NOBODY) {
           write_to_output(d, "That mobile does not exist, try again : ");
@@ -624,21 +763,30 @@ void qedit_parse(struct descriptor_data *d, char *arg)
       } else if (number == 0)
         break;
       else {
-        TOGGLE_BIT(OLC_QUEST(d)->flags, number );
+        TOGGLE_BIT(OLC_QUEST(d)->flags, QEDIT_FLAG_BIT(number));
         qedit_disp_flag_menu(d);
       }
       return;
     case QEDIT_QUANTITY:
-      OLC_QUEST(d)->value[6] = LIMIT(number, 1, 50);
+      if (!QEDIT_PARSE_INT(d, arg, 1, 50, &number, "input-range", "quantity"))
+        return;
+      OLC_QUEST(d)->value[6] = number;
       break;
     case QEDIT_POINTSCOMP:
-      OLC_QUEST(d)->value[0] = LIMIT(number, 0, 999999);
+      if (!QEDIT_PARSE_INT(d, arg, 0, 999999, &number, "input-range", "points_complete"))
+        return;
+      OLC_QUEST(d)->value[0] = number;
       break;
     case QEDIT_POINTSQUIT:
-      OLC_QUEST(d)->value[1] = LIMIT(number, 0, 999999);
+      if (!QEDIT_PARSE_INT(d, arg, 0, 999999, &number, "input-range", "points_quit"))
+        return;
+      OLC_QUEST(d)->value[1] = number;
       break;
     case QEDIT_PREREQ:
-      if ((number = tb_parse_int_or_zero(arg)) != -1)
+      if (!QEDIT_PARSE_INT(d, arg, QEDIT_VNUM_MIN, QEDIT_VNUM_MAX, &number,
+                           "vnum-range", "prereq"))
+        return;
+      if (number != -1)
         if (real_object(number) == NOTHING) {
           write_to_output(d, "That object does not exist, try again : ");
           return;
@@ -672,10 +820,15 @@ void qedit_parse(struct descriptor_data *d, char *arg)
         break;
       }
     case QEDIT_TIMELIMIT:
-      OLC_QUEST(d)->value[4] = LIMIT(number, -1, 100);
+      if (!QEDIT_PARSE_INT(d, arg, -1, 100, &number, "input-range", "time_limit"))
+        return;
+      OLC_QUEST(d)->value[4] = number;
       break;
     case QEDIT_RETURNMOB:
-      if ((number = tb_parse_int_or_zero(arg)) != -1)
+      if (!QEDIT_PARSE_INT(d, arg, QEDIT_VNUM_MIN, QEDIT_VNUM_MAX, &number,
+                           "vnum-range", "return_mob"))
+        return;
+      if (number != -1)
         if (real_mobile(number) == NOBODY) {
           write_to_output(d, "That mobile does not exist, try again : ");
           return;
@@ -683,34 +836,50 @@ void qedit_parse(struct descriptor_data *d, char *arg)
       OLC_QUEST(d)->value[5] = number;
       break;
     case QEDIT_TARGET:
+      if (!QEDIT_PARSE_INT(d, arg, QEDIT_VNUM_MIN, QEDIT_VNUM_MAX, &number,
+                           "vnum-range", "target"))
+        return;
       OLC_QUEST(d)->target = number;
       break;
     case QEDIT_NEXTQUEST:
-      if ((number = tb_parse_int_or_zero(arg)) != -1) {
+      if (!QEDIT_PARSE_INT(d, arg, QEDIT_VNUM_MIN, QEDIT_VNUM_MAX, &number,
+                           "vnum-range", "next_quest"))
+        return;
+      if (number != -1) {
         if (real_quest(number) == NOTHING) {
           write_to_output(d, "That is not a valid quest, try again (-1 for none) : ");
           return;
         }
       }
-      OLC_QUEST(d)->next_quest = (number == -1 ? NOTHING : tb_parse_int_or_zero(arg));
+      OLC_QUEST(d)->next_quest = (number == -1 ? NOTHING : (qst_vnum)number);
       break;
     case QEDIT_PREVQUEST:
-      if ((number = tb_parse_int_or_zero(arg)) != -1) {
+      if (!QEDIT_PARSE_INT(d, arg, QEDIT_VNUM_MIN, QEDIT_VNUM_MAX, &number,
+                           "vnum-range", "prev_quest"))
+        return;
+      if (number != -1) {
         if (real_quest(number) == NOTHING) {
           write_to_output(d, "That is not a valid quest, try again (-1 for none) : ");
           return;
         }
       }
-      OLC_QUEST(d)->prev_quest = (number == -1 ? NOTHING : tb_parse_int_or_zero(arg));
+      OLC_QUEST(d)->prev_quest = (number == -1 ? NOTHING : (qst_vnum)number);
       break;
     case QEDIT_GOLD:
-      OLC_QUEST(d)->gold_reward = LIMIT(number, 0, 99999);
+      if (!QEDIT_PARSE_INT(d, arg, 0, 99999, &number, "input-range", "gold_reward"))
+        return;
+      OLC_QUEST(d)->gold_reward = number;
       break;
     case QEDIT_EXP:
-      OLC_QUEST(d)->exp_reward = LIMIT(number, 0, 99999);
+      if (!QEDIT_PARSE_INT(d, arg, 0, 99999, &number, "input-range", "exp_reward"))
+        return;
+      OLC_QUEST(d)->exp_reward = number;
       break;
     case QEDIT_OBJ:
-      if ((number = tb_parse_int_or_zero(arg)) != -1)
+      if (!QEDIT_PARSE_INT(d, arg, QEDIT_VNUM_MIN, QEDIT_VNUM_MAX, &number,
+                           "vnum-range", "obj_reward"))
+        return;
+      if (number != -1)
         if (real_object(number) == NOTHING) {
           write_to_output(d, "That object does not exist, try again : ");
           return;
@@ -723,7 +892,7 @@ void qedit_parse(struct descriptor_data *d, char *arg)
       mudlog(BRF, LVL_BUILDER, TRUE, "SYSERR: OLC: qedit_parse(): "
         "Reached default case!");
       write_to_output(d, "Oops...\r\n");
-      break;
+      return;   /* the editor is gone: the menu below would use it */
   }
   /*-------------------------------------------------------------------*/
   /*. END OF CASE

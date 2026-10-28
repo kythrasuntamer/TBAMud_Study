@@ -1,0 +1,57 @@
+R2 1792998627 3 480 0 9
+#100
+Loc : -2
+Name: inner pouch
+Shrt: an inner pouch
+
+#101
+Loc : -1
+
+#100
+Loc : -1
+
+#108
+Loc : 0
+ADes:
+The lid creaks open.
+~
+
+#102
+Loc : 11
+Vals: 25 0 0 0
+
+#103
+Loc : 1
+
+#104
+Loc : 6
+Aff : 0 13 12
+Aff : 1 4 2
+
+#105
+Loc : 17
+Flag: 1024 0 0 0
+
+#106
+Loc : 2
+Perm: 1024 0 0 0
+
+#107
+Loc : 4
+
+#65535
+Name: unique gem
+Shrt: a unique gem
+Desc: A unique gem sparkles here.
+Type: 8
+Wght: 1
+Cost: 1000
+Rent: 50
+Vals: 1 2 3 4
+Wear: 1 0 0 0
+EDes:
+gem~
+It sparkles.
+~
+
+$~

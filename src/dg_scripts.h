@@ -26,8 +26,13 @@
 /* spells cast by objects and rooms use this level */
 #define DG_SPELL_LEVEL  25
 
-/* Define this if you don't want wear/remove triggers to fire when a player
- * is saved. */
+/* Required; do not undefine. save_char() (players.c) takes off and puts back
+ * every worn item to save base stats. Wear/remove triggers fired there ran
+ * DG scripts while the items sat in a local array with their affects
+ * stripped: a script that purged one left a freed pointer to be equipped
+ * again, and one that equipped another item had its bonuses saved
+ * (finding B2-21). Since that fix players.c runs no such triggers and
+ * stops the build with #error if this is undefined. */
 #define NO_EXTRANEOUS_TRIGGERS
 
 /* %actor.room% behaviour :
@@ -131,12 +136,13 @@
 
 #define SCRIPT_ERROR_CODE     (-9999999) /* this shouldn't happen too often */
 
-/* one line of the trigger */
+/* one line of the trigger.  A command list is shared by the prototype and
+ * every instance of the trigger, so it must hold no per-run state. */
 struct cmdlist_element {
   char *cmd;				/* one line of a trigger */
-  struct cmdlist_element *original;
+  struct cmdlist_element *original; /* 'done': its while line (same for all) */
   struct cmdlist_element *next;
-  int loops;        /* for counting number of runs in a while loop */
+  int loops;        /* unused: a while loop counts GET_TRIG_LOOPS() */
 };
 
 struct trig_var_data {
@@ -163,6 +169,8 @@ struct trig_data {
     struct event *wait_event;           /**< event to pause the trigger  */
     ubyte purged;                       /**< trigger is set to be purged     */
     struct trig_var_data *var_list;	    /**< list of local vars for trigger  */
+    unsigned long serial;               /**< unique per instance; detects
+                                             reuse of a freed trigger's address */
 
     struct trig_data *next;
     struct trig_data *next_in_world;    /**< next in the global trigger list */
@@ -179,11 +187,15 @@ struct script_data {
   struct script_data *next;          /**< used for purged_scripts    */
 };
 
-/* The event data for the wait command */
+/* The event data for the wait command. For a room owner, go is only the room
+ * as it was when the wait began: OLC add_room()/delete_room() RECREATE
+ * world[], which can move every room, so trig_wait_event() finds the room
+ * again by owner_vnum. */
 struct wait_event_data {
   struct trig_data *trigger;
   void *go;
   int type;
+  room_vnum owner_vnum;   /**< WLD_TRIGGER: the room's vnum; else NOWHERE */
 };
 
 /* used for actor memory triggers */
@@ -296,10 +308,20 @@ void do_sstat_room(struct char_data * ch, room_data *r);
 void do_sstat_object(char_data *ch, obj_data *j);
 void do_sstat_character(char_data *ch, char_data *k);
 void add_trigger(struct script_data *sc, trig_data *t, int loc);
-void script_vlog(const char *format, va_list args);
+void script_vlog(const char *format, va_list args)
+  __attribute__ ((format (printf, 1, 0)));
 void script_log(const char *format, ...) __attribute__ ((format (printf, 1, 2)));
 char *matching_quote(char *p);
 struct room_data *dg_room_of_obj(struct obj_data *obj);
+room_rnum dg_owner_room_at(void *go, int type, const trig_data *trig,
+                           const char *what, const char *file, int line,
+                           const char *func);
+/** rnum of the room a script owner (go, of trigger type type) is in, for
+ * code about to index world[]; NOWHERE, after reporting dg/owner-unplaced
+ * with the trigger, the owner and this call site, when it is in no valid
+ * room. what names the lookup (a string literal). */
+#define DG_OWNER_ROOM(go, type, trig, what) \
+  dg_owner_room_at((go), (type), (trig), (what), __FILE__, __LINE__, __func__)
 bool check_flags_by_name_ar(int *array, int numflags, char *search, const char *namelist[]);
 void read_saved_vars_ascii(FILE *file, struct char_data *ch, int count);
 void save_char_vars_ascii(FILE *file, struct char_data *ch);
@@ -309,6 +331,14 @@ int trig_is_attached(struct script_data *sc, int trig_num);
 /* To maintain strict-aliasing we'll have to do this trick with a union */
 /* Thanks to Chris Gilbert for reminding me that there are other options. */
 int script_driver(void *go_adress, trig_data *trig, int type, int mode);
+/* script_driver() whose run returns default_return instead of 1 when the
+ * script ends without 'return' (a damage trigger keeps the damage). */
+int script_driver_default(void *go_adress, trig_data *trig, int type,
+                          int mode, int default_return);
+/* The trigger whose script is running now, or NULL (dg_scripts.c). */
+trig_data *dg_running_trigger(void);
+void dg_script_execution_enter(void);
+void dg_script_execution_leave(void);
 trig_rnum real_trigger(trig_vnum vnum);
 void process_eval(void *go, struct script_data *sc, trig_data *trig,
                  int type, char *cmd);
@@ -316,7 +346,7 @@ void read_saved_vars(struct char_data *ch);
 void save_char_vars(struct char_data *ch);
 void init_lookup_table(void);
 void add_to_lookup_table(long uid, void *c);
-void remove_from_lookup_table(long uid);
+void remove_from_lookup_table(long uid, const void *c);
 
 /* from dg_db_scripts.c */
 void parse_trigger(FILE *trig_f, int nr);
@@ -328,13 +358,18 @@ void assign_triggers(void *i, int type);
 
 /* From dg_variables.c */
 void add_var(struct trig_var_data **var_list, const char *name, const char *value, long id);
+void add_player_var(struct trig_var_data **var_list, const char *name,
+                    const char *value, long id);
+void dg_neutralize_percent(char *text);
+void dg_restore_percent(char *text);
+const char *dg_display_value(const char *value, char *buf, size_t size);
 int item_in_list(char *item, obj_data *list);
 char *skill_percent(struct char_data *ch, char *skill);
 int char_has_item(char *item, struct char_data *ch);
 void var_subst(void *go, struct script_data *sc, trig_data *trig,
                int type, char *line, char *buf);
-int text_processed(char *field, char *subfield, struct trig_var_data *vd,
-                   char *str, size_t slen);
+int text_processed(trig_data *trig, char *field, char *subfield,
+                   struct trig_var_data *vd, char *str, size_t slen);
 void find_replacement(void *go, struct script_data *sc, trig_data *trig,
                 int type, char *var, char *field, char *subfield, char *str, size_t slen);
 
@@ -363,7 +398,14 @@ void do_dg_affect(void *go, struct script_data *sc, trig_data *trig,
     int type, char *cmd);
 void send_char_pos(struct char_data *ch, int dam);
 int valid_dg_target(char_data *ch, int bitvector);
-void script_damage(char_data *vict, int dam);
+void script_damage(trig_data *trig, char_data *vict, int dam);
+
+/* Saturating field arithmetic for DG setters (dg_variables.c). */
+int dg_bounded_add(int cur, int add, int lo, int hi);
+long dg_clamp_char_field(trig_data *trig, char_data *ch, const char *field,
+                         long long value, long lo, long hi);
+long dg_clamp_obj_field(trig_data *trig, obj_data *obj, const char *field,
+                        long long value, long lo, long hi);
 
 /* from dg_mobcmd.c */
 ACMD(do_masound);
@@ -407,6 +449,30 @@ void wld_command_interpreter(room_data *room, char *argument);
 
 /* Macros for scripts */
 #define UID_CHAR   '}'
+/* Parses the digits of a UID (after UID_CHAR, or a bare id).  Object UIDs
+ * grow for the life of the server, so they are longs; an int parse turned
+ * any UID above INT_MAX into 0. */
+#define PARSE_UID(text) tb_parse_long_or_zero(text)
+/* Parses a vnum from script text.  Vnums are 16-bit, so an int parse handed
+ * to read_object() or real_room() turned 70000 into 4464 and loaded or found
+ * the wrong thing.  Out-of-range text yields NOTHING, which every lookup
+ * rejects and every caller already reports. */
+IDXTYPE dg_parse_vnum(const char *text);
+void dg_teleport_all(room_rnum from, room_rnum to);
+
+/* A '%' that came from player-authored text (command arguments, speech, act
+ * messages, titles).  Scripts may substitute a line twice -- eval, makeuid,
+ * attach and detach evaluate text that var_subst() has already expanded, which
+ * the %%name%% idiom relies on -- so a literal '%' typed by a player would
+ * otherwise become live variable syntax such as %actor.level(34)%.  Player
+ * text is stored with this byte instead (add_player_var()); var_subst() never
+ * treats it as syntax, and dg_restore_percent() turns it back into '%' where
+ * text leaves the script engine.  comm.c only accepts printable ASCII, so a
+ * player cannot type it. */
+#define DG_INERT_PERCENT '\x1a'
+
+/* Longest delay a script 'wait' may schedule, in pulses: one mud year. */
+#define DG_MAX_WAIT_PULSES ((long)SECS_PER_MUD_YEAR * PASSES_PER_SEC)
 #define GET_TRIG_NAME(t)          ((t)->name)
 #define GET_TRIG_RNUM(t)          ((t)->nr)
 #define GET_TRIG_VNUM(t)	  (trig_index[(t)->nr]->vnum)
@@ -419,6 +485,23 @@ void wld_command_interpreter(room_data *room, char *argument);
 #define GET_TRIG_DEPTH(t)         ((t)->depth)
 #define GET_TRIG_LOOPS(t)         ((t)->loops)
 
+/* TRUE when rn indexes a loaded trigger prototype: not NOTHING, not
+ * negative, below top_of_trigt (a count: the last index is
+ * top_of_trigt - 1) and its trig_index slot is set. The range test
+ * (utils.h's tb_rnum_valid) comes first, so a negative or stale rn of any
+ * integer type never indexes trig_index. The one definition: OLC code
+ * (zedit's OLC_CHECK_RNUM) uses it from here. Needs db.h at the use site.
+ * Evaluates rn twice: pass a plain variable. */
+#define VALID_TRIG_RNUM(rn) \
+  (tb_rnum_valid((long) (rn), (long) NOTHING, (long) top_of_trigt - 1) && \
+   trig_index[(rn)] != NULL)
+
+/* Trigger vnum for diagnostics, or -1 when there is no trigger or its rnum has
+ * no trigger-table entry (never indexes trig_index out of range). Needs db.h
+ * at the use site. Evaluates t several times: pass a plain variable. */
+#define DIAG_TRIG_VNUM(t) \
+  (((t) && VALID_TRIG_RNUM((t)->nr)) ? (int)trig_index[(t)->nr]->vnum : -1)
+
 /* player id's: 0 to MOB_ID_BASE - 1
  * mob id's: MOB_ID_BASE to ROOM_ID_BASE - 1
  * room id's: ROOM_ID_BASE to OBJ_ID_BASE - 1
@@ -426,6 +509,13 @@ void wld_command_interpreter(room_data *room, char *argument);
 #define MOB_ID_BASE	  10000000  /* 10000000 player IDNUMS should suffice */
 #define ROOM_ID_BASE    (10000000 + MOB_ID_BASE) /* 10000000 Mobs */
 #define OBJ_ID_BASE     (10000000 + ROOM_ID_BASE) /* 10000000 Rooms */
+
+/* Which namespace a UID belongs to (see the ranges above). Each resolver
+ * accepts only its own range, so an object UID can never alias a room.
+ * Evaluate u more than once: pass a plain long. */
+#define UID_IS_CHAR(u)  ((u) > 0 && (u) < ROOM_ID_BASE)
+#define UID_IS_ROOM(u)  ((u) >= ROOM_ID_BASE && (u) < OBJ_ID_BASE)
+#define UID_IS_OBJ(u)   ((u) >= OBJ_ID_BASE)
 
 #define SCRIPT(o)		  ((o)->script)
 #define SCRIPT_MEM(c)             ((c)->memory)
@@ -445,14 +535,20 @@ void wld_command_interpreter(room_data *room, char *argument);
 * no longer possible since script ids must be referenced with char_script_id()
 * and obj_script_id().
 */
+/* Formats into its own buffer: sizeof(buf) on a caller's char * would be
+ * pointer-sized. buf is kept for source compatibility and is unused. A UID is
+ * one marker character plus a long (at most 20 characters). */
 #define ADD_UID_VAR(buf, trig, id, name, context) do { \
-		         sprintf(buf, "%c%ld", UID_CHAR, id); \
-                         add_var(&GET_TRIG_VARS(trig), name, buf, context); } while (0)
+		         char tb_uid_var_[32]; \
+		         (void)(buf); \
+		         tb_snprintf(tb_uid_var_, sizeof(tb_uid_var_), "%c%ld", UID_CHAR, (long)(id)); \
+                         add_var(&GET_TRIG_VARS(trig), name, tb_uid_var_, context); } while (0)
 
 // id helpers
 extern long char_script_id(char_data *ch);
 extern long obj_script_id(obj_data *obj);
 extern int has_obj_by_uid_in_lookup_table(long uid);
+extern int obj_uid_matches(long uid, const obj_data *obj);
 
 #define room_script_id(room)  ((long)(room)->number + ROOM_ID_BASE)
 

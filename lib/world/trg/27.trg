@@ -597,7 +597,7 @@ wait 2 s
 %load% obj 2727
 %echo% @BThe shard whispers: Healer... heal thyself.@n
 %purge% %self%
-elseif (%actor.class% == Magic User)
+elseif (%actor.class% == Wizard)
 %echoaround% %actor% @MThe shard suddenly glows purple in %actor.name%'s hand.@n
 %send% %actor% @MThe shard suddenly glows purple in your hand, causing you to drop it.@n
 wait 2 s
@@ -730,7 +730,7 @@ end
 (2727) blue shard for healer~
 1 j 100
 ~
-if (%actor.class% == Magic User)
+if (%actor.class% == Wizard)
 %send% %actor% @MThe shard whispers: I am not for you, Seeker.@n
 return 0
 elseif (%actor.class% == Thief)
@@ -745,7 +745,7 @@ end
 (2728) red shard for conqueror~
 1 j 100
 ~
-if (%actor.class% == Magic User)
+if (%actor.class% == Wizard)
 %send% %actor% @MThe shard whispers: I am not for you, Seeker.@n
 return 0
 elseif (%actor.class% == Cleric)
@@ -760,7 +760,7 @@ end
 (2729) green shard for deceiver~
 1 j 100
 ~
-if (%actor.class% == Magic User)
+if (%actor.class% == Wizard)
 %send% %actor% @MThe shard whispers: I am not for you, Seeker.@n
 return 0
 elseif (%actor.class% == Cleric)
@@ -1000,7 +1000,7 @@ end
 if %actor.class% == Warrior
   set zn27_class conqueror
 end
-if %actor.class% == Magic User
+if %actor.class% == Wizard
   set zn27_class seeker
 end
 if %actor.class% == Thief
@@ -1066,7 +1066,7 @@ end
 if %actor.class% == Warrior
   set zn27_class conqueror
 end
-if %actor.class% == Magic User
+if %actor.class% == Wizard
   set zn27_class seeker
 end
 if %actor.class% == Thief

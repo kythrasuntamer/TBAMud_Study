@@ -39,9 +39,9 @@ Object Spells~
 1 c 1
 c~
 * By Rumble of The Builder Academy    tbamud.com 9091
-* Allow a magic user to cast fireshield, but only twice.
+* Allow a wizard to cast fireshield, but only twice.
 if %cmd.mudcommand% == cast && fireshield /= %arg%
-  if %actor.class% == Magic User
+  if %actor.class% == Wizard
     %echoaround% %actor% %self.shortdesc% that %actor.name% is wearing glows brightly for a moment.
     %send% %actor% Your %self.shortdesc% glows brightly for a moment.
     dg_cast 'armor' %actor%
