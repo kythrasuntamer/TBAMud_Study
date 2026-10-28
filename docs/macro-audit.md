@@ -688,3 +688,43 @@ Not yet covered by executable tests: `perform_act` and `sub_write` (their
 translation units need the full server link), and `load_mtrigger`.
 Outstanding from earlier passes: trigger-pointer ABA, and
 `add_to_lookup_table()` silent rebinding.
+
+## Thirteenth pass: follow-up hardening and fail-loud diagnostics
+
+Project priorities for this and later passes: memory safety, error correction,
+error reporting and error handling. Guards must fail loudly, with the
+strongest practical error locality; silent clamps or skips are defects.
+
+Memory-safety follow-ups (all with ASan regression tests):
+- `speech_mtrigger` reacquires listeners by UID instead of a cached
+  `next_in_room`.
+- **Trigger ABA closed.** Every trigger instance gets a never-reused serial
+  in `trig_data_init()`. Snapshot matches require both address and serial,
+  and a reused address is reported as a WARNING.
+- **UID registry.** `remove_from_lookup_table(uid, entity)` refuses to drop a
+  mapping now owned by another entity; this fixes a login-while-pending-
+  extraction rebind that unregistered the live character. Mobile IDs stay in
+  their range; allocators skip registered IDs; exhaustion aborts loudly.
+- `ADD_UID_VAR` formats into its own buffer, not `sizeof(caller buf)`.
+
+Diagnostics (structured `TB_ERROR_*` with file/line/function, breadcrumbs
+and correlation IDs):
+- `script_driver()` breadcrumbs each dispatch (trigger vnum, owner, depth),
+  so any error inside a DG callback names its trigger.
+- `perform_act()` errors include an escaped excerpt of the `act()` format
+  string, which normally identifies the calling site.
+- Every new guard in `sub_write`, `any_one_name`, the DG trigger handlers and
+  the lookup table reports what was rejected or truncated, and why.
+- Tests assert that each diagnostic fires (`tests/tb_error_capture.h`).
+
+New executable tests: `test_dg_lookup_table`, `test_act_format`, and
+`test_dg_sub_write`. The latter two reproduce the original over-reads
+against the unpatched code. 12/12 suites pass under GCC ASan/UBSan/LSan with
+CI's `ASAN_OPTIONS`; the Clang job has not been run locally.
+
+Open decisions:
+- `tb_snprintf` (562 call sites) reports formatting failure but not
+  truncation.
+- `act()` call-site file/line could be captured with a wrapper macro.
+- `greet_mtrigger`/memory handlers still return silently on invalid rooms.
+- Sanitizer CI runs only for PRs and pushes to `master`.
