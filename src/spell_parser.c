@@ -147,7 +147,8 @@ const char *skill_name(int num) {
 int find_skill_num(char *name) {
   int skindex, ok;
   char *temp, *temp2;
-  char first[256], first2[256], tempbuf[256];
+  /* any_one_arg() fills MAX_INPUT_LENGTH-byte buffers; name is player input. */
+  char first[MAX_INPUT_LENGTH], first2[MAX_INPUT_LENGTH], tempbuf[MAX_INPUT_LENGTH];
 
   for (skindex = 1; skindex <= TOP_SPELL_DEFINE; skindex++) {
     if (is_abbrev(name, spell_info[skindex].name))

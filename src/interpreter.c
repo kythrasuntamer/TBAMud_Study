@@ -981,6 +981,31 @@ int reserved_word(char *argument)
   return (search_block(argument, reserved, TRUE) >= 0);
 }
 
+/* Copy one word into an argument buffer. The argument splitters below all
+ * follow the CircleMUD contract that the output buffer holds
+ * MAX_INPUT_LENGTH bytes. Input can be longer (script-forced commands), so
+ * copy at most MAX_INPUT_LENGTH-1 bytes, keep consuming the word, and report
+ * truncation. Returns the input position just past the copied word. */
+static char *copy_arg_word(char *argument, char *first_arg, char stop_quote,
+                           const char *caller)
+{
+  char *out = first_arg, *const out_end = first_arg + MAX_INPUT_LENGTH - 1;
+  size_t length = 0;
+
+  for (; *argument && (stop_quote ? *argument != stop_quote
+                                  : !isspace((unsigned char) *argument));
+       argument++, length++)
+    if (out < out_end)
+      *out++ = LOWER(*argument);
+  *out = '\0';
+
+  if (length > (size_t) (out_end - first_arg))
+    TB_ERROR_MSG("interpreter", "parse-argument", caller,
+                 "word of %zu bytes truncated to %d", length,
+                 MAX_INPUT_LENGTH - 1);
+  return argument;
+}
+
 /* Copy the first non-fill-word, space-delimited argument of 'argument'
  * to 'first_arg'; return a pointer to the remainder of the string. */
 char *one_argument(char *argument, char *first_arg)
@@ -995,14 +1020,7 @@ char *one_argument(char *argument, char *first_arg)
 
   do {
     skip_spaces(&argument);
-
-    first_arg = begin;
-    while (*argument && !isspace(*argument)) {
-      *(first_arg++) = LOWER(*argument);
-      argument++;
-    }
-
-    *first_arg = '\0';
+    argument = copy_arg_word(argument, begin, '\0', "one_argument");
   } while (fill_word(begin));
 
   return (argument);
@@ -1015,20 +1033,12 @@ char *one_word(char *argument, char *first_arg)
     skip_spaces(&argument);
 
     if (*argument == '\"') {
-      argument++;
-      while (*argument && *argument != '\"') {
-        *(first_arg++) = LOWER(*argument);
-        argument++;
-      }
-      argument++;
-    } else {
-      while (*argument && !isspace(*argument)) {
-        *(first_arg++) = LOWER(*argument);
-        argument++;
-      }
-    }
+      argument = copy_arg_word(argument + 1, first_arg, '\"', "one_word");
+      if (*argument)
+        argument++; /* closing quote; an unclosed quote ends at the NUL */
+    } else
+      argument = copy_arg_word(argument, first_arg, '\0', "one_word");
 
-    *first_arg = '\0';
   return (argument);
 }
 
@@ -1036,15 +1046,7 @@ char *one_word(char *argument, char *first_arg)
 char *any_one_arg(char *argument, char *first_arg)
 {
   skip_spaces(&argument);
-
-  while (*argument && !isspace(*argument)) {
-    *(first_arg++) = LOWER(*argument);
-    argument++;
-  }
-
-  *first_arg = '\0';
-
-  return (argument);
+  return (copy_arg_word(argument, first_arg, '\0', "any_one_arg"));
 }
 
 /* Same as one_argument except that it takes two args and returns the rest;

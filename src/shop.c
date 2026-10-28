@@ -436,11 +436,8 @@ static struct obj_data *get_purchase_obj(struct char_data *ch, char *arg, struct
     else
       obj = get_slide_obj_vis(ch, name, keeper->carrying);
     if (!obj) {
-      if (msg) {
-        char buf[MAX_INPUT_LENGTH];
-
+      if (msg)
 	SHOP_TELL(keeper, ch, shop_nr, no_such_item1, 0);
-      }
       return (NULL);
     }
     if (GET_OBJ_COST(obj) <= 0) {
@@ -777,8 +774,6 @@ static void shopping_sell(char *arg, struct char_data *ch, struct char_data *kee
     return;
 
   if (!IS_SET(SHOP_BITVECTOR(shop_nr), HAS_UNLIMITED_CASH) && GET_GOLD(keeper) + SHOP_BANK(shop_nr) < sell_price(obj, shop_nr, keeper, ch)) {
-    char buf[MAX_INPUT_LENGTH];
-
     SHOP_TELL(keeper, ch, shop_nr, missing_cash1, 0);
     return;
   }
