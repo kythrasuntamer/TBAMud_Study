@@ -3373,7 +3373,6 @@ int script_driver(void *go_adress, trig_data *trig, int type, int mode)
       if (process_if(p + 6, go, sc, trig, type)) {
          temp->original = cl;
       } else {
-         cl->loops = 0;
          cl = temp;
       }
     } else if (!strn_cmp("switch ", p, 7)) {
@@ -3396,10 +3395,11 @@ int script_driver(void *go_adress, trig_data *trig, int type, int mode)
       if (cl->original && process_if(orig_cmd + 6, go, sc, trig,
           type)) {
         cl = cl->original;
-        cl->loops++;
         GET_TRIG_LOOPS(trig)++;
-        if (cl->loops == 30) {
-          cl->loops = 0;
+        /* Pause every 30 passes. The count must be this instance's own:
+         * cl->loops lived in the command list that every instance of the
+         * trigger shares, so one mob's loop advanced or reset another's. */
+        if (GET_TRIG_LOOPS(trig) % 30 == 0) {
           if (process_wait(go, trig, type, "wait 1", cl)) {
             depth--;
             dg_script_execution_leave();

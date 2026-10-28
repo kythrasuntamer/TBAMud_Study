@@ -1420,6 +1420,37 @@ static void control_keywords_match_whole_words(void)
   TEST_ASSERT_EQUAL_STRING("1", room_global("c"));
 }
 
+/* DGDOC-6: the every-30-passes loop pause counted in cmdlist->loops, which
+ * every instance of a trigger shares (and which kept its count after a loop
+ * ended), so a second instance paused after 6 passes on the first's count.
+ * The pause itself must still happen. */
+static void while_pause_counts_per_trigger_instance(void)
+{
+  const char *lines[] = { "set i 0", "while %i% < 25", "eval i %i% + 1",
+                          "done", NULL };
+  const char *long_loop[] = { "set i 0", "while %i% < 40", "eval i %i% + 1",
+                              "done", NULL };
+  room_data *ra = &world[1], *rb = &world[2], *rc = &world[0];
+  trig_data *a = make_trigger(WLD_TRIGGER, WTRIG_RANDOM, 0, lines);
+  trig_data *b = read_trigger(0), *c;
+
+  TEST_ASSERT_TRUE(a->cmdlist == b->cmdlist);
+  attach_to_script(&SCRIPT(ra), a);
+  attach_to_script(&SCRIPT(rb), b);
+  script_driver(&ra, a, WLD_TRIGGER, TRIG_NEW);
+  TEST_ASSERT_NULL(GET_TRIG_WAIT(a));
+  script_driver(&rb, b, WLD_TRIGGER, TRIG_NEW);
+  TEST_ASSERT_NULL(GET_TRIG_WAIT(b));
+  TEST_ASSERT_EQUAL_INT(0, GET_TRIG_DEPTH(b));
+
+  c = make_trigger(WLD_TRIGGER, WTRIG_RANDOM, 0, long_loop);
+  attach_to_script(&SCRIPT(rc), c);
+  script_driver(&rc, c, WLD_TRIGGER, TRIG_NEW);
+  TEST_ASSERT_NOT_NULL(GET_TRIG_WAIT(c));     /* paused at 30 passes */
+  TEST_ASSERT_EQUAL_INT(30, GET_TRIG_LOOPS(c));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -1477,5 +1508,6 @@ int main(void)
   RUN_TEST(mob_purging_itself_stops_without_a_report);
   RUN_TEST(damage_trigger_without_return_keeps_the_damage);
   RUN_TEST(control_keywords_match_whole_words);
+  RUN_TEST(while_pause_counts_per_trigger_instance);
   return UNITY_END();
 }

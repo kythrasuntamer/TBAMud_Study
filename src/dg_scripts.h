@@ -131,12 +131,13 @@
 
 #define SCRIPT_ERROR_CODE     (-9999999) /* this shouldn't happen too often */
 
-/* one line of the trigger */
+/* one line of the trigger.  A command list is shared by the prototype and
+ * every instance of the trigger, so it must hold no per-run state. */
 struct cmdlist_element {
   char *cmd;				/* one line of a trigger */
-  struct cmdlist_element *original;
+  struct cmdlist_element *original; /* 'done': its while line (same for all) */
   struct cmdlist_element *next;
-  int loops;        /* for counting number of runs in a while loop */
+  int loops;        /* unused: a while loop counts GET_TRIG_LOOPS() */
 };
 
 struct trig_var_data {
