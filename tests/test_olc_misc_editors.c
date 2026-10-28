@@ -1211,11 +1211,50 @@ static void test_msgedit_save_commits_file(void)
   leave_scratch_dir();
 }
 
+/* F2-16: one GOD's 'Q' (save prompt that ends the session) must not make
+ * another GOD's 'S' prompt end theirs; the intent used to be a static. */
+static void test_msgedit_quit_intent_is_per_descriptor(void)
+{
+  char cmd1[] = " 1", cmd2[] = " 2", buf[MAX_INPUT_LENGTH];
+  struct descriptor_data other;
+
+  do_msgedit(&builder, cmd1, 0, 0);
+  type("a");
+  type("You slay $N!");
+  type("q");
+  TEST_ASSERT_EQUAL_INT(MSGEDIT_CONFIRM_SAVE_QUIT, OLC_MODE(&builder_desc));
+
+  /* A second GOD on another descriptor edits slot 2 and answers 'S'/'n'. */
+  memset(&other, 0, sizeof(other));
+  other.character = &builder;
+  other.connected = CON_PLAYING;
+  other.next = descriptor_list;
+  descriptor_list = &other;
+  builder.desc = &other;
+  do_msgedit(&builder, cmd2, 0, 0);
+  TEST_ASSERT_NOT_NULL(other.olc);
+  strlcpy(buf, "s", sizeof(buf));
+  msgedit_parse(&other, buf);
+  TEST_ASSERT_EQUAL_INT(MSGEDIT_CONFIRM_SAVE, OLC_MODE(&other));
+  strlcpy(buf, "n", sizeof(buf));
+  msgedit_parse(&other, buf);
+  TEST_ASSERT_NOT_NULL_MESSAGE(other.olc, "'S' then 'n' must not end the session");
+  TEST_ASSERT_EQUAL_INT(MSGEDIT_MAIN_MENU, OLC_MODE(&other));
+  cleanup_olc(&other, CLEANUP_ALL);
+  descriptor_list = other.next;
+  builder.desc = &builder_desc;
+
+  /* The first GOD's answer still ends their session. */
+  type("n");
+  TEST_ASSERT_NULL(builder_desc.olc);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
   RUN_TEST(test_msgedit_failed_save_is_loud_and_does_not_exit);
   RUN_TEST(test_msgedit_save_commits_file);
+  RUN_TEST(test_msgedit_quit_intent_is_per_descriptor);
   RUN_TEST(test_editors_without_descriptor_refuse_loudly);
   RUN_TEST(test_tedit_clear_then_save_keeps_greetings_non_null);
   RUN_TEST(test_tedit_abort_leaves_live_text);

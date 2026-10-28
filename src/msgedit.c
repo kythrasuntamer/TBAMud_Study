@@ -456,7 +456,10 @@ static void msgedit_main_menu(struct descriptor_data * d)
 void msgedit_parse(struct descriptor_data *d, char *arg)
 {
   struct message_type * temp;
-  static bool quit = FALSE;
+  /* Whether this answer ends the session is per descriptor: it is the
+   * mode itself (CONFIRM_SAVE_QUIT after 'Q').  It used to be a function
+   * static, so one GOD's 'Q' made another GOD's 'S' exit and vice versa. */
+  bool quit;
   
   switch (OLC_MODE(d)) {
     case MSGEDIT_MAIN_MENU:
@@ -575,8 +578,7 @@ void msgedit_parse(struct descriptor_data *d, char *arg)
         case 'Q':
         case 'q':
           if (OLC_VAL(d)) {
-            OLC_MODE(d) = MSGEDIT_CONFIRM_SAVE;
-            quit = TRUE;
+            OLC_MODE(d) = MSGEDIT_CONFIRM_SAVE_QUIT;
             write_to_output(d, "Do you wish to save? Y/N : ");
             return;
           }
@@ -586,6 +588,8 @@ void msgedit_parse(struct descriptor_data *d, char *arg)
       }
     break;
     case MSGEDIT_CONFIRM_SAVE:
+    case MSGEDIT_CONFIRM_SAVE_QUIT:
+      quit = (OLC_MODE(d) == MSGEDIT_CONFIRM_SAVE_QUIT);
       if (*arg && (*arg == 'Y' || *arg == 'y')) {
         copy_message_list(&fight_messages[OLC_NUM(d)], OLC_MSG_LIST(d));
         if (save_messages_to_disk()) {
@@ -602,7 +606,6 @@ void msgedit_parse(struct descriptor_data *d, char *arg)
         write_to_output(d, "Save aborted.\r\n");
   
       if (quit) {
-        quit = FALSE;
         write_to_output(d, "Exiting message editor.\r\n");
         cleanup_olc(d, CLEANUP_ALL);     
         return;     
