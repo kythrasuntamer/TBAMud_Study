@@ -364,7 +364,6 @@ int fread_string_checked(FILE *fl, const char *resource, const char *field,
   return TRUE;
 }
 
-/* Read a whitespace-delimited signed number with overflow detection. */
 /*
  * Consume one whitespace-delimited signed long from *cursor.
  * On success, update *value and advance the cursor, returning TRUE.

@@ -65,10 +65,11 @@ static int tb_password_is_argon2id(const char *hash)
 
 /* Verify an entered password against a stored encoded hash.
  * New Argon2id hashes use libsodium; legacy crypt hashes are accepted only
- * when that compatibility path is compiled in. Missing inputs and crypto
- * initialization failures reject authentication. Never compare plaintext
- * against stored data as a fallback. Failures are not reported here; the
- * caller reports.
+ * when that compatibility path is compiled in. Never compares plaintext
+ * against stored data as a fallback. Returns 0 for a mismatch, missing
+ * inputs or a crypto initialization failure, and does not report; callers
+ * cannot tell these apart (the login prompt logs all of them as a bad
+ * password).
  */
 static int tb_password_verify(const char *password, const char *hash)
 {

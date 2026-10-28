@@ -10,7 +10,9 @@ Per-finding detail lives in [docs/memory-safety-audit.md](docs/memory-safety-aud
 Each was merged only after the full gate: gcc ASan+UBSan ctest, Valgrind,
 the clang fuzz targets, clang-tidy with no findings,
 tools/check_error_locality.sh, the end-to-end soaks with an ASan server
-where the change touches gameplay or OLC, and Fil-C.
+where the change touches gameplay or OLC, and Fil-C. (#49 was merged on the
+owner's instruction before its last gate steps finished; they all passed
+afterwards, see the PR.)
 
 - #49 zedit: a zone header with no builders string saves safely; a header
   with no name is refused before any live change, and every refusal is
@@ -29,7 +31,7 @@ where the change touches gameplay or OLC, and Fil-C.
 
 ## 2026-10-28: memory-safety and error-locality audit merged
 
-- Phase 1 (2c180c9b) and phase 2 (3d3a06ef) merged the full audit: every
+- Phase 1 (up to 2c180c9b) and phase 2 (3d3a06ef) merged the full audit: every
   finding fixed or recorded in the ledger; no finding open.
 - Structured diagnostics (TB_ERROR_*/TB_WARN_*/DIAG_*) with call-site and
   entity IDs; tools/check_error_locality.sh ratchets legacy SYSERR logging.
@@ -41,8 +43,10 @@ where the change touches gameplay or OLC, and Fil-C.
 - Persistence: staged player/index/zone-index writes; untrusted pfile
   fields range-checked or clamped and reported; endgame ranks clamped.
 - Login: Argon2id (libsodium), with legacy crypt hashes upgraded on login.
-- Follow-ups merged: #43 to #48 (DG memory unlink, OLC flag shift, DG wait
-  suffix, crash-save headers, macro inventory).
+- Follow-ups merged: #43 DG memory unlink before callbacks, #44 genolc
+  sprintascii unsigned shift, #45 DG wait seconds suffix, #46 crash-save
+  header validation, #48 Claude GitHub Actions workflows; the read-only
+  source macro inventory tool was merged directly (319caeb).
 
 ## Open proposals (not merged)
 <!-- PLACEHOLDER-OPEN: list the PRs still open when this branch merges, or

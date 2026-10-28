@@ -594,8 +594,9 @@ static void medit_disp_stats_menu(struct descriptor_data *d)
 /* Mobile editor input, by OLC_MODE. Numeric modes refuse anything but a
  * whole number (the delete y/n excepted); string modes go through
  * genolc_checkstring(). Edits touch only the scratch OLC_MOB; mob_proto[]
- * changes only via medit_save_checked() at the save prompt or the delete
- * confirmation. Every exit ends in cleanup_olc(d, CLEANUP_ALL). */
+ * changes only at the save prompt (medit_save_checked()) or at the delete
+ * confirmation (the delete path, delete_mobile()). Every exit ends in
+ * cleanup_olc(d, CLEANUP_ALL). */
 void medit_parse(struct descriptor_data *d, char *arg)
 {
   int i = -1, j;
