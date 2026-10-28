@@ -904,7 +904,9 @@ static void zedit_disp_arg2(struct descriptor_data *d)
     write_to_output(d, "Input the maximum number that can exist on the mud : ");
     break;
   case 'D':
-    for (i = 0; *dirs[i] != '\n'; i++) {
+    /* Only the directions this game uses (DIR_COUNT is 6 without
+     * diagonals): ZEDIT_ARG2 accepts exactly these. */
+    for (i = 0; i < DIR_COUNT && *dirs[i] != '\n'; i++) {
       write_to_output(d, "%d) Exit %s.\r\n", i, dirs[i]);
     }
     write_to_output(d, "Enter exit number for door : ");
@@ -1349,9 +1351,11 @@ void zedit_parse(struct descriptor_data *d, char *arg)
       break;
     case 'D':
       pos = tb_parse_int_or_zero(arg);
-      /* Count directions. */
-      if (pos < 0 || pos > DIR_COUNT)
-	write_to_output(d, "Try again : ");
+      /* Valid directions are 0..DIR_COUNT-1; dirs[DIR_COUNT] is the "\n"
+       * sentinel (or a diagonal when CONFIG_DIAGONAL_DIRS is off), which
+       * reset_zone would later reject. Builder input: re-prompt. */
+      if (pos < 0 || pos >= DIR_COUNT)
+	write_to_output(d, "Direction must be 0 to %d, try again : ", DIR_COUNT - 1);
       else {
 	OLC_CMD(d).arg2 = pos;
 	zedit_disp_arg3(d);

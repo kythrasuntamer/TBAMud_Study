@@ -1248,6 +1248,39 @@ static void test_zedit_abort_with_stale_index_is_reported(void)
   free_zedit_session(d);
 }
 
+
+/* ------------------------------------------------------------------ */
+/* F1-19: a door direction must name one of the game's exits.          */
+/* ------------------------------------------------------------------ */
+static void test_zedit_door_direction_rejects_dir_count_and_disabled_diagonals(void)
+{
+  struct descriptor_data *d = &builder_desc;
+  struct reset_com cmd;
+
+  make_zone();
+  memset(&cmd, 0, sizeof(cmd));
+  cmd.command = 'D';
+  cmd.arg2 = 1;
+  make_zedit_session(d, &cmd, 1);
+  OLC_VAL(d) = 0;
+
+  CONFIG_DIAGONAL_DIRS = TRUE;
+  OLC_MODE(d) = ZEDIT_ARG2;
+  zedit_parse(d, "10");            /* dirs[10] is the "\n" sentinel */
+  TEST_ASSERT_EQUAL_INT(1, OLC_ZONE(d)->cmd[0].arg2);
+  TEST_ASSERT_NOT_NULL(strstr(out_buf, "Direction must be 0 to 9"));
+
+  CONFIG_DIAGONAL_DIRS = FALSE;
+  out_buf[0] = '\0';
+  zedit_parse(d, "6");             /* northwest, but diagonals are off */
+  TEST_ASSERT_EQUAL_INT(1, OLC_ZONE(d)->cmd[0].arg2);
+  TEST_ASSERT_NOT_NULL(strstr(out_buf, "Direction must be 0 to 5"));
+
+  zedit_parse(d, "5");
+  TEST_ASSERT_EQUAL_INT(5, OLC_ZONE(d)->cmd[0].arg2);
+  free_zedit_session(d);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -1276,5 +1309,6 @@ int main(void)
   RUN_TEST(test_redit_copy_saved_to_new_vnum_renumbers_other_sessions);
   RUN_TEST(test_zedit_abort_after_deletes_stays_in_bounds);
   RUN_TEST(test_zedit_abort_with_stale_index_is_reported);
+  RUN_TEST(test_zedit_door_direction_rejects_dir_count_and_disabled_diagonals);
   return UNITY_END();
 }
