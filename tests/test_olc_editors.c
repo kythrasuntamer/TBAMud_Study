@@ -377,8 +377,21 @@ int copy_object(struct obj_data *to, struct obj_data *from)
 static int add_object_result = -1;   /* < 0: update in place */
 obj_rnum add_object(struct obj_data *newobj, obj_vnum ovnum)
 {
+  obj_rnum r;
+  struct obj_data *obj;
   (void)newobj;
-  return add_object_result >= 0 ? (obj_rnum)add_object_result : real_object(ovnum);
+  if (add_object_result >= 0)
+    return (obj_rnum)add_object_result;
+  /* An update in place: genobj's update_all_objects() struct-copies the
+   * prototype over each live instance, so script and proto_script become
+   * the prototype's (NULL). */
+  if ((r = real_object(ovnum)) != NOTHING)
+    for (obj = object_list; obj; obj = obj->next)
+      if (obj->item_number == r) {
+        obj->script = NULL;
+        obj->proto_script = NULL;
+      }
+  return r;
 }
 
 static int deleted_rnum = -1, delete_calls;
@@ -1028,6 +1041,41 @@ static void test_redit_copy_twice_releases_each_replaced_room(void)
   TEST_ASSERT_EQUAL_INT(3001, OLC_ROOM(d)->number);
 }
 
+
+/* ------------------------------------------------------------------ */
+/* F1-07: saving a prototype releases each live instance's script      */
+/* before add_object() overwrites it.                                  */
+/* ------------------------------------------------------------------ */
+static void test_oedit_save_releases_live_instance_scripts_first(void)
+{
+  struct descriptor_data *d = &builder_desc;
+  struct obj_data instance, other;
+  struct script_data fake_script;
+
+  make_objects(3);
+  memset(&instance, 0, sizeof(instance));
+  memset(&other, 0, sizeof(other));
+  memset(&fake_script, 0, sizeof(fake_script));
+  instance.item_number = 1;
+  instance.script = &fake_script;
+  instance.proto_script = make_trig_list(2);
+  other.item_number = 2;
+  instance.next = &other;
+  object_list = &instance;
+
+  OLC_NUM(d) = 3001;
+  oedit_setup_existing(d, 1);
+  STATE(d) = CON_OEDIT;
+
+  oedit_save_internally(d);
+
+  TEST_ASSERT_EQUAL_INT(1, extract_script_calls);
+  TEST_ASSERT_EQUAL_PTR(&instance, last_extracted_thing);
+  TEST_ASSERT_NULL(instance.proto_script);
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  object_list = NULL;
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -1050,5 +1098,6 @@ int main(void)
   RUN_TEST(test_oedit_copy_twice_releases_each_replaced_scratch);
   RUN_TEST(test_oedit_copy_from_missing_source_keeps_scratch);
   RUN_TEST(test_redit_copy_twice_releases_each_replaced_room);
+  RUN_TEST(test_oedit_save_releases_live_instance_scripts_first);
   return UNITY_END();
 }

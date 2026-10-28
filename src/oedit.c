@@ -458,10 +458,27 @@ void oedit_setup_existing(struct descriptor_data *d, int real_num)
 void oedit_save_internally(struct descriptor_data *d)
 {
   int i;
-  obj_rnum robj_num;
+  obj_rnum robj_num, existing;
   struct obj_data *obj;
 
-  i = (real_object(OLC_NUM(d)) == NOTHING);
+  existing = real_object(OLC_NUM(d));
+  i = (existing == NOTHING);
+
+  /* add_object() -> update_all_objects() struct-copies the prototype over
+   * every live instance and keeps only location and list fields, so each
+   * instance's script (triggers, globals, pending waits) and its private
+   * proto_script list would be overwritten with the prototype's NULLs and
+   * leaked, leaving its triggers orphaned on trigger_list. Tear them down
+   * properly first; the refresh loop below rebuilds them from the new
+   * prototype. */
+  if (!i)
+    for (obj = object_list; obj; obj = obj->next) {
+      if (obj->item_number != existing)
+        continue;
+      if (SCRIPT(obj))
+        extract_script(obj, OBJ_TRIGGER);
+      free_proto_script(obj, OBJ_TRIGGER);
+    }
 
   if ((robj_num = add_object(OLC_OBJ(d), OLC_NUM(d))) == NOTHING) {
     log("oedit_save_internally: add_object failed.");
@@ -481,11 +498,18 @@ void oedit_save_internally(struct descriptor_data *d)
   for (obj = object_list; obj; obj = obj->next) {
     if (obj->item_number != robj_num)
       continue;
-    /* remove any old scripts */
-    if (SCRIPT(obj))
-      extract_script(obj, OBJ_TRIGGER);
-
-    free_proto_script(obj, OBJ_TRIGGER);
+    /* Invariant: the teardown above released every instance's script, and
+     * a prototype never carries one, so anything here was struct-copied
+     * from the prototype and is shared. Detach it without freeing. */
+    if (SCRIPT(obj) || obj->proto_script) {
+      TB_ERROR_MSG("olc", "oedit-script-refresh", "object",
+                   "obj vnum %d instance uid %ld still holds %s%s after add_object; detached unfreed",
+                   OLC_NUM(d), obj->script_id,
+                   SCRIPT(obj) ? "a script " : "",
+                   obj->proto_script ? "a proto_script" : "");
+      SCRIPT(obj) = NULL;
+      obj->proto_script = NULL;
+    }
     copy_proto_script(&obj_proto[robj_num], obj, OBJ_TRIGGER);
     assign_triggers(obj, OBJ_TRIGGER);
   }
