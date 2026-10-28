@@ -764,6 +764,53 @@ static void wait_resumes_in_the_last_room(void)
   top_of_trigt = 0;
 }
 
+/* A mob in no room used to have world[NOWHERE] searched by name lookups
+ * and %random.char%; with no world at all that is a NULL dereference. */
+static void owner_in_no_room_is_not_indexed(void)
+{
+  static char_data owner, target;
+  static struct script_data target_script;
+  static struct index_data index = { 0 };
+  static struct index_data *indexes[1] = { &index };
+  char line[MAX_INPUT_LENGTH], out[MAX_INPUT_LENGTH];
+
+  memset(&owner, 0, sizeof(owner));
+  memset(&target, 0, sizeof(target));
+  memset(&target_script, 0, sizeof(target_script));
+  trig_index = indexes;                   /* diagnostics name the trigger */
+  top_of_trigt = 1;
+  world = NULL;
+  SET_BIT_AR(MOB_FLAGS(&owner), MOB_ISNPC);
+  GET_MOB_RNUM(&owner) = NOBODY;
+  IN_ROOM(&owner) = NOWHERE;
+  IN_ROOM(&target) = NOWHERE;
+  SET_BIT_AR(MOB_FLAGS(&target), MOB_ISNPC);
+  target.script_id = MOB_ID_BASE + 9;
+  SCRIPT(&target) = &target_script;
+  add_var(&target_script.global_vars, "quest", "stage3", 0);
+  init_lookup_table();
+  add_to_lookup_table(target.script_id, &target);
+  tb_snprintf(line, sizeof(line), "%c%ld", UID_CHAR, target.script_id);
+  add_var(&GET_TRIG_VARS(&trig), "m", line, 0);
+
+  strlcpy(line, "[%m.global(quest)%]", sizeof(line));
+  var_subst(&owner, NULL, &trig, MOB_TRIGGER, line, out);
+  TEST_ASSERT_EQUAL_STRING("[stage3]", out);
+  TEST_ASSERT_EQUAL_STRING("owner-nowhere", captured_operation);
+
+  captured_errors = 0;
+  strlcpy(line, "[%random.char%]", sizeof(line));
+  var_subst(&owner, NULL, &trig, MOB_TRIGGER, line, out);
+  TEST_ASSERT_EQUAL_STRING("[]", out);
+  TEST_ASSERT_EQUAL_INT(1, captured_errors);
+  TEST_ASSERT_EQUAL_STRING("owner-nowhere", captured_operation);
+
+  remove_from_lookup_table(target.script_id, &target);
+  free_varlist(target_script.global_vars);
+  trig_index = NULL;
+  top_of_trigt = 0;
+}
+
 static void restore_round_trips_neutralize(void)
 {
   char text[] = "50% off, 100%% sure";
@@ -800,5 +847,6 @@ int main(void)
   RUN_TEST(tstat_of_a_long_script_stays_in_bounds);
   RUN_TEST(legacy_var_file_accepts_long_names);
   RUN_TEST(wait_resumes_in_the_last_room);
+  RUN_TEST(owner_in_no_room_is_not_indexed);
   return UNITY_END();
 }

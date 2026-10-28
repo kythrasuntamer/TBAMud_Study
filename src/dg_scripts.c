@@ -2262,9 +2262,16 @@ static void makeuid_var(void *go, struct script_data *sc, trig_data *trig,
           break;
         case MOB_TRIGGER:
           if ((o = get_obj_in_list_vis((struct char_data *)go, name, NULL,
-                    ((struct char_data *)go)->carrying)) == NULL)
-            o = get_obj_in_list_vis((struct char_data *)go, name, NULL,
-                    world[IN_ROOM((struct char_data *)go)].contents);
+                    ((struct char_data *)go)->carrying)) == NULL) {
+            if (IN_ROOM((struct char_data *)go) != NOWHERE)
+              o = get_obj_in_list_vis((struct char_data *)go, name, NULL,
+                      world[IN_ROOM((struct char_data *)go)].contents);
+            else
+              TB_WARN_MSG("dg", "owner-nowhere", "makeuid",
+                          "trigger %d: mob vnum %d is in no room; its room is "
+                          "not searched", GET_TRIG_VNUM(trig),
+                          GET_MOB_VNUM((struct char_data *)go));
+          }
           break;
       }
       if (o)
