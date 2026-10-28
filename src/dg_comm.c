@@ -136,12 +136,21 @@ void sub_write(char *arg, char_data *ch, byte find_invis, int targets)
   int i, tmp;
   int to_sleeping = 1; /* mainly for windows compiles */
 
-  /* Every caller passes a message and a character standing in a room. */
-  if (!arg || !ch || IN_ROOM(ch) == NOWHERE) {
-    TB_ERROR_MSG("dg", "sub-write", "sub_write",
-                 "invariant violated: arg=%s ch=%p room=%s; message dropped",
-                 arg ? "set" : "NULL", (void *)ch,
-                 !ch ? "n/a" : (IN_ROOM(ch) == NOWHERE ? "NOWHERE" : "valid"));
+  /* Every caller passes a message and a character standing in a room; the
+   * room is indexed below (world[IN_ROOM(ch)]), so any rnum past the world
+   * table is as bad as NOWHERE. */
+  if (!arg || !ch || !VALID_ROOM_RNUM(IN_ROOM(ch))) {
+    if (!ch)
+      TB_ERROR_MSG("dg", "sub-write", "sub_write",
+                   "invariant violated: arg=%s, no speaker; message dropped",
+                   arg ? "set" : "NULL");
+    else
+      TB_ERROR_MSG("dg", "sub-write", "sub_write",
+                   "invariant violated: arg=%s, speaker " DIAG_CHAR_FMT
+                   " uid %ld at rnum %ld (%s); message dropped",
+                   arg ? "set" : "NULL", DIAG_CHAR(ch), ch->script_id,
+                   (long)IN_ROOM(ch),
+                   VALID_ROOM_RNUM(IN_ROOM(ch)) ? "a room" : "not a room");
     return;
   }
 

@@ -141,9 +141,26 @@ static void missing_speaker_is_rejected(void)
   TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "invariant violated"));
 }
 
+/* E1-21: a misplaced speaker is named (vnum, UID, rnum), and an rnum past
+ * the world table is rejected like NOWHERE instead of indexing world[]. */
+static void misplaced_speaker_is_named(void)
+{
+  char text[] = "hello";
+  SET_BIT_AR(MOB_FLAGS(&speaker), MOB_ISNPC);
+  speaker.nr = NOBODY;
+  speaker.script_id = 10000042;
+  speaker.in_room = 5;           /* top_of_world is 0 */
+  sub_write(text, &speaker, TRUE, TO_CHAR);
+  TEST_ASSERT_EQUAL_INT(0, sends);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "uid 10000042 at rnum 5"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "mob vnum"));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(misplaced_speaker_is_named);
   RUN_TEST(escaped_token_is_literal);
   RUN_TEST(trailing_backslash_stops_at_terminator);
   RUN_TEST(token_flood_is_bounded);
