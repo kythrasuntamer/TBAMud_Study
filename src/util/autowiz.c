@@ -374,6 +374,7 @@ int read_index_line(FILE * fl, char *buf, size_t buf_size, const char *path,
              long *line_no)
 {
   char temp[256];
+  size_t len;
 
   do {
     if (fgets(temp, sizeof(temp), fl) == NULL)
@@ -381,7 +382,25 @@ int read_index_line(FILE * fl, char *buf, size_t buf_size, const char *path,
     (*line_no)++;
   } while (*temp == '*' || *temp == '\n');
 
-  temp[strlen(temp) - 1] = '\0';
+  len = strlen(temp);
+  /* fgets() filled temp without reaching a newline: the record is longer
+   * than any the server writes.  Drain the rest of the physical line so the
+   * next call starts on a record boundary, and reject this one. */
+  if (len > 0 && temp[len - 1] != '\n' && !feof(fl)) {
+    int ch;
+
+    while ((ch = fgetc(fl)) != EOF && ch != '\n')
+      ;
+    TB_REPORT_DOMAIN_ERRORF(TB_SEV_ERROR, TB_ERR_PARSER, "index-line-too-long",
+                            "index=%s line=%ld limit=%zu", path, *line_no,
+                            sizeof(temp) - 1);
+    return (-1);
+  }
+  /* Strip only real line endings.  A line that begins with a NUL byte has
+   * length 0 (the old `temp[strlen(temp) - 1]` wrote temp[-1]), and a last
+   * line without '\n' must keep its final character. */
+  while (len > 0 && (temp[len - 1] == '\n' || temp[len - 1] == '\r'))
+    temp[--len] = '\0';
   if (strlcpy(buf, temp, buf_size) >= buf_size) {
     TB_REPORT_DOMAIN_ERRORF(TB_SEV_ERROR, TB_ERR_PARSER, "index-line-truncated",
                             "index=%s line=%ld length=%zu buffer=%zu", path,

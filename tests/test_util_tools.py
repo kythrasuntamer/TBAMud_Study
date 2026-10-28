@@ -120,6 +120,18 @@ def autowiz_reports_non_letter_name(tmp):
     check("field=name-chars" in err, err)
 
 
+@test("autowiz")
+def autowiz_line_ending_edge_cases(tmp):
+    """I2-09: a NUL-first line wrote temp[-1]; a last line lost a byte."""
+    rc, wiz, imm, err = autowiz(tmp, b"\0abc\n"
+                                     b"2 bob 52 0 1700000000\n"
+                                     b"3 " + b"x" * 300 + b" 52 0 1\n"
+                                     b"1 alice 60 0 1700000005")
+    check(rc == 1, "rc=%d err=%s" % (rc, err))
+    check("index-line-too-long" in operations(err), err)
+    check("Alice" in wiz and "Bob" in wiz, "records lost:\n" + wiz)
+
+
 # ------------------------------------------------------- rebuildMailIndex
 
 def mail_index(tmp, files):
