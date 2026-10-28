@@ -3510,6 +3510,17 @@ ACMD(do_set)
   if (*(set_fields[mode].cmd) == '\n') {
     retval = 0; /* skips saving below */
     send_to_char(ch, "Can't set that!\r\n");
+  } else if (is_file && !strcmp(set_fields[mode].cmd, "room")) {
+    /* Invariant: a file-loaded player (cbuf) is a temporary copy with no
+     * world linkage, freed with free_char() below. free_char() does not
+     * unlink from world[].people, so placing cbuf in a room would leave a
+     * dangling occupant (use-after-free on the next look/goto). The caller
+     * is an immortal; the target name comes from them. */
+    TB_WARN_MSG("act", "set-file-room", set_fields[mode].cmd,
+                "player idnum %ld: room needs an in-game character; caller "
+                DIAG_CHAR_FMT, GET_IDNUM(cbuf), DIAG_CHAR(ch));
+    send_to_char(ch, "A player loaded from file has no room; use 'set file <name> loadroom <vnum>'.\r\n");
+    retval = 0;
   } else
   /* perform the set */
   retval = perform_set(ch, vict, mode, buf);
@@ -3526,8 +3537,17 @@ ACMD(do_set)
   }
 
   /* free the memory if we allocated it earlier */
-  if (is_file)
+  if (is_file) {
+    /* Defense in depth: free_char() leaves world[].people untouched, so a
+     * temp char that somehow entered a room must leave it first. */
+    if (IN_ROOM(cbuf) != NOWHERE) {
+      TB_ERROR_MSG("act", "set-file-free", "cbuf",
+                   "player idnum %ld still in room vnum %d before free",
+                   GET_IDNUM(cbuf), GET_ROOM_VNUM(IN_ROOM(cbuf)));
+      char_from_room(cbuf);
+    }
     free_char(cbuf);
+  }
 }
 
 ACMD(do_saveall)

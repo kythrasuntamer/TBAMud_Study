@@ -701,3 +701,22 @@ if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
         ${MUD_SRCDIR}/zedit.c ${MUD_SRCDIR}/sedit.c
         PROPERTIES COMPILE_OPTIONS "-ffunction-sections;-fdata-sections")
 endif()
+
+# Production immortal commands (act.wizard.c): guards on file-loaded players,
+# descriptor-less callers and out-of-range world data.
+add_mud_test(test_act_wizard
+    ${MUD_SRCDIR}/act.wizard.c
+    ${MUD_SRCDIR}/interpreter.c
+    ${MUD_SRCDIR}/constants.c
+    ${MUD_SRCDIR}/utils.c
+    ${MUD_SRCDIR}/random.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_act_wizard.c
+)
+target_link_libraries(test_act_wizard PRIVATE ${CRYPT_LIBRARY} ${SODIUM_LIBRARY})
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_compile_options(test_act_wizard PRIVATE -ffunction-sections -fdata-sections)
+    target_link_options(test_act_wizard PRIVATE -Wl,--gc-sections
+        -Wl,--wrap=tb_error_log_at)
+    set_source_files_properties(${MUD_SRCDIR}/act.wizard.c
+        PROPERTIES COMPILE_OPTIONS "-ffunction-sections;-fdata-sections")
+endif()
