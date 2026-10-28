@@ -37,7 +37,8 @@
 /* Public functions made available from utils.c. Documentation for all functions
  * are made available with the function definition. */
 void basic_mud_log(const char *format, ...) __attribute__ ((format (printf, 1, 2)));
-void basic_mud_vlog(const char *format, va_list args);
+void basic_mud_vlog(const char *format, va_list args)
+  __attribute__ ((format (printf, 1, 0)));
 void tb_error_log_at(const char *severity, const char *subsystem,
                      const char *operation, const char *resource, int errnum,
                      const char *source_file, int source_line,
@@ -57,13 +58,78 @@ void tb_error_log_at(const char *severity, const char *subsystem,
 #define TB_ERROR_MSG(subsystem, operation, resource, ...) \
   TB_ERROR_LOG("ERROR", (subsystem), (operation), (resource), 0, __VA_ARGS__)
 
+/* Severity-named forms of TB_ERROR_MSG. WARNING: unexpected but handled, and
+ * the server carries on correctly. FATAL: logged immediately before abort(). */
+#define TB_WARN_MSG(subsystem, operation, resource, ...) \
+  TB_ERROR_LOG("WARNING", (subsystem), (operation), (resource), 0, __VA_ARGS__)
+#define TB_FATAL_MSG(subsystem, operation, resource, ...) \
+  TB_ERROR_LOG("FATAL", (subsystem), (operation), (resource), 0, __VA_ARGS__)
+
+/* Stable identity of a character in diagnostics: mob vnum for NPCs, player
+ * idnum for players. Use as a pair, e.g.
+ *   TB_ERROR_MSG(..., "speaker " DIAG_CHAR_FMT " ...", DIAG_CHAR(ch));
+ * DIAG_CHAR evaluates ch several times: pass a plain variable.
+ * Limits: ch must be non-NULL (test for NULL first and log "(null)"
+ * yourself); an NPC with an invalid rnum prints "mob vnum 65535" (NOBODY);
+ * the DG UID is not included, so add char_script_id() where a script's
+ * view of the entity matters. */
+#define DIAG_CHAR_FMT "%s %ld"
+#define DIAG_CHAR(ch) \
+  (IS_NPC(ch) ? "mob vnum" : "player idnum"), \
+  (IS_NPC(ch) ? (long) GET_MOB_VNUM(ch) : (long) GET_IDNUM(ch))
+
+/* Stable identity of an object in diagnostics: its prototype vnum (NOTHING
+ * for a unique object) and its DG UID. Use as a pair, e.g.
+ *   TB_ERROR_MSG(..., DIAG_OBJ_FMT " ...", DIAG_OBJ(obj));
+ * The UID is printed as stored, 0 until a script first asks for one:
+ * DIAG_OBJ never assigns one (obj_script_id() would register the object in
+ * the UID table), so it has no side effects and is safe on prototypes and
+ * during boot. obj must be non-NULL. Evaluates obj several times: pass a
+ * plain variable. */
+#define DIAG_OBJ_FMT "obj vnum %d uid %ld"
+#define DIAG_OBJ(obj) (int) GET_OBJ_VNUM(obj), (long) (obj)->script_id
+
+/* Stable identity of a room in diagnostics: its vnum (-1 when r is not a
+ * valid rnum) and the rnum itself, so a bad index is visible as such. Use
+ * as a pair, e.g.
+ *   TB_ERROR_MSG(..., DIAG_ROOM_FMT " ...", DIAG_ROOM(rnum));
+ * Evaluates r several times: pass a plain variable. */
+#define DIAG_ROOM_FMT "room vnum %d (rnum %d)"
+#define DIAG_ROOM(r) \
+  (VALID_ROOM_RNUM(r) ? (int) world[(r)].number : -1), (int) (r)
+
 /*
  * Persistent-parser context.  A context follows a FILE * while a loader is
  * consuming it so diagnostics can identify the physical line, logical record,
  * and field being parsed.  Context storage is fixed-size and allocation-free
  * so it remains usable on error paths.
+ *
+ * Usage contract:
+ *  - A loader calls tb_parse_context_begin() after fopen() and
+ *    tb_parse_context_end() *before* fclose(). Slots are keyed by the FILE *
+ *    address, so a context left behind would be inherited by the next
+ *    stream that malloc places at the same address.
+ *  - get_line(), fread_string() and fread_clean_string() count physical
+ *    lines through tb_parse_context_note_line(); the getc() readers
+ *    (fread_number, fread_letter, fread_line) do not, so a line reported
+ *    after them can be low. Without a begin() the count stays 0 and
+ *    get_line's line-too-long error says "no parse context". index_boot()
+ *    begins a context for every world, mob, object, zone, shop, help,
+ *    trigger and quest file it loads.
+ *  - There are TB_PARSE_CONTEXT_COUNT (16) slots. When all are in use,
+ *    begin() logs parse-context-exhausted at the caller's location, naming
+ *    the resource and parser (at most 5 records a minute; the next one says
+ *    how many were suppressed), and later calls on that stream are no-ops,
+ *    so diagnostics fall back to "(parser context unavailable)". Running
+ *    out of slots means some loader is missing tb_parse_context_end().
  */
-void tb_parse_context_begin(FILE *stream, const char *resource, const char *parser);
+#define TB_PARSE_CONTEXT_COUNT 16   /* parser-context slots */
+void tb_parse_context_begin_at(FILE *stream, const char *resource,
+                               const char *parser, const char *src_file,
+                               int src_line, const char *src_func);
+#define tb_parse_context_begin(stream, resource, parser) \
+  tb_parse_context_begin_at((stream), (resource), (parser), \
+                            __FILE__, __LINE__, __func__)
 void tb_parse_context_end(FILE *stream);
 void tb_parse_context_record(FILE *stream, const char *record_type, long record_id);
 void tb_parse_context_field(FILE *stream, const char *field);
@@ -97,6 +163,16 @@ void tb_correlation_end(unsigned long id);
 unsigned long tb_correlation_current(void);
 
 /* Fixed-size rolling breadcrumbs: no allocation, safe to use on error paths. */
+/** The one in-place truncation marker for free text that has to be cut to
+ * fit a buffer (log messages, breadcrumbs, parser details); grep for
+ * "[TRUNCATED]". Structured TB_ERROR records name their cut fields in
+ * truncated_fields= instead. */
+#define TB_TRUNC_MARKER "...[TRUNCATED]"
+/** Mark buf (size bytes, NUL-terminated) as truncated: the marker replaces
+ * the end of the visible text, so it is never hidden behind the NUL, and
+ * a buffer too small for all of it still shows as much as fits. */
+void tb_mark_truncated(char *buf, size_t size);
+
 void tb_breadcrumb(const char *kind, const char *detail);
 void tb_breadcrumbf(const char *kind, const char *format, ...)
                     __attribute__ ((format (printf, 2, 3)));
@@ -118,6 +194,19 @@ int tb_buf_appendf(struct tb_buf *buf, const char *format, ...)
 size_t tb_buf_remaining(const struct tb_buf *buf);
 int tb_buf_truncated(const struct tb_buf *buf);
 
+/** Report a tb_buf that ran out of room while it was built: a WARNING with
+ * operation op (e.g. "sprintbitarray-truncated"), naming the function that
+ * built it and the bytes kept of its capacity. tb_buf truncates safely but
+ * only records the fact in ->truncated; call this once the buffer is
+ * complete so the loss is not silent. name is the struct tb_buf itself (not
+ * a pointer) and is evaluated several times. */
+#define TB_BUF_CHECK(name, op) do { \
+  if (tb_buf_truncated(&(name))) \
+    TB_WARN_MSG("utils", (op), __func__, \
+                "output truncated at %zu of %zu bytes", \
+                (name).length, (name).capacity); \
+} while (0)
+
 /* Checked allocation arithmetic used by CREATE/RECREATE and direct callers. */
 int tb_size_mul_checked(size_t count, size_t element_size, size_t *out);
 void *tb_calloc_array_at(size_t count, size_t element_size,
@@ -131,9 +220,39 @@ void *tb_realloc_array_at(void *ptr, size_t count, size_t element_size,
   tb_calloc_array_at((count), (element_size), __FILE__, __LINE__, __func__)
 #define TB_REALLOC_ARRAY(ptr, count, element_size) \
   tb_realloc_array_at((ptr), (count), (element_size), __FILE__, __LINE__, __func__)
+
+/** Number of elements in array a. With GCC and Clang it does not compile
+ * when a is a pointer: sizeof on a pointer parameter used as an array or
+ * buffer size was a recurring bug (B1-01, I2-01, the file_to_string bound).
+ * a is not evaluated. */
+#if defined(__GNUC__)
+#define TB_ARRAY_LEN(a) \
+  (sizeof(a) / sizeof((a)[0]) + 0 * sizeof(struct { int tb_not_an_array_ : \
+    1 - 2 * __builtin_types_compatible_p(__typeof__(a), __typeof__(&(a)[0])); }))
+#else
+#define TB_ARRAY_LEN(a) (sizeof(a) / sizeof((a)[0]))
+#endif
+
+/** Compile-time assertion, e.g. that a name table and its count agree:
+ *   TB_STATIC_ASSERT(TB_ARRAY_LEN(table) == NUM_ENTRIES, table_size);
+ * tag is an identifier naming the check. Before C11 (this tree builds as
+ * C99) it declares the typedef tb_static_assert_<tag>, so use it at file
+ * scope, once per tag. */
+#if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
+#define TB_STATIC_ASSERT(cond, tag) _Static_assert((cond), #tag)
+#else
+#define TB_STATIC_ASSERT(cond, tag) \
+  typedef char tb_static_assert_##tag[(cond) ? 1 : -1]
+#endif
 int touch(const char *path);
 void mudlog(int type, int level, int file, const char *str, ...) __attribute__ ((format (printf, 4, 5)));
-int	rand_number(int from, int to);
+int	rand_number_at(int from, int to, const char *source_file, int source_line,
+	               const char *source_func);
+/** Random integer in [from, to]. Inverted bounds are swapped and reported
+ * as a rand-range-inverted warning at the caller's file, line and function.
+ * Arguments are evaluated once. */
+#define rand_number(from, to) \
+	rand_number_at((from), (to), __FILE__, __LINE__, __func__)
 int	dice(int number, int size);
 size_t	sprintbit(bitvector_t vektor, const char *names[], char *result, size_t reslen);
 size_t	sprinttype(int type, const char *names[], char *result, size_t reslen);
@@ -144,8 +263,32 @@ time_t mud_time_to_secs(struct time_info_data *now);
 struct time_info_data *age(struct char_data *ch);
 int num_pc_in_room(struct room_data *room);
 void core_dump_real(const char *who, int line);
+void tb_player_special_on_mob_at(const struct char_data *ch, const char *field,
+                                 const char *source_file, int source_line,
+                                 const char *source_func);
+const char *tb_class_range_error_at(const struct char_data *ch,
+                                    const char *table,
+                                    const char *source_file, int source_line,
+                                    const char *source_func);
+const char *tb_table_name_at(const char *const table[], size_t count, long idx,
+                             const char *table_name, const char *source_file,
+                             int source_line, const char *source_func);
+/** table[idx] when 0 <= idx < count and the entry is set; otherwise
+ * "<invalid>", after a table/name-lookup-range error naming the table, the
+ * index, the count and the caller's file, line and function. For name
+ * tables (item_types[], genders[], position_types[], ...) indexed by world,
+ * player or script data. count is the number of real entries, not counting
+ * a trailing "\n" sentinel: a NUM_* constant or TB_ARRAY_LEN(table) - 1.
+ * Each argument is evaluated once. */
+#define TB_TABLE_NAME(table, count, idx) \
+  tb_table_name_at((table), (count), (long) (idx), #table, \
+                   __FILE__, __LINE__, __func__)
 int count_color_chars(char *string);
-int room_is_dark(room_rnum room);
+int room_is_dark_at(room_rnum room, const char *source_file, int source_line,
+                    const char *source_func);
+/** TRUE if the room has no light. An invalid rnum is reported as a
+ * room-rnum-invalid error naming the caller's file, line and function. */
+#define room_is_dark(room) room_is_dark_at((room), __FILE__, __LINE__, __func__)
 int levenshtein_distance(const char *s1, const char *s2);
 struct time_info_data *real_time_passed(time_t t2, time_t t1);
 struct time_info_data *mud_time_passed(time_t t2, time_t t1);
@@ -208,7 +351,12 @@ void	stop_follower(struct char_data *ch);
 bool	circle_follow(struct char_data *ch, struct char_data *victim);
 
 /* in act.informative.c */
-void	look_at_room(struct char_data *ch, int mode);
+/* look_at_room() records its caller, as act() does: a viewer that is not in
+ * a valid room is reported (look-unplaced) at the call site that passed it. */
+void	look_at_room_at(const char *src_file, int src_line, const char *src_func,
+	                struct char_data *ch, int mode);
+#define look_at_room(ch, mode) \
+	look_at_room_at(__FILE__, __LINE__, __func__, (ch), (mode))
 void  add_history(struct char_data *ch, char *msg, int type);
 
 /* in act.movmement.c */
@@ -313,11 +461,47 @@ static inline int circle_upper(int c)
  * @todo Recommend using the ? operator for clarity. */
 #define ISNEWL(ch) ((ch) == '\n' || (ch) == '\r')
 
+/** <ctype.h> classifiers that are safe on a plain char. The ctype functions
+ * take an unsigned char value (or EOF); a high-bit byte in a signed char
+ * would be a negative argument, which is undefined behaviour. c is
+ * evaluated once. */
+#define TB_ISSPACE(c) isspace((unsigned char)(c))
+#define TB_ISALPHA(c) isalpha((unsigned char)(c))
+#define TB_ISDIGIT(c) isdigit((unsigned char)(c))
+#define TB_ISALNUM(c) isalnum((unsigned char)(c))
+#define TB_ISPRINT(c) isprint((unsigned char)(c))
+
+/** TRUE if s is a non-empty string starting with a vowel (either case).
+ * strchr() also matches the terminator, so the bare
+ * strchr("aeiou...", *s) idiom called "" a vowel and crashed on NULL;
+ * this does neither. s is evaluated once. */
+static inline int tb_starts_with_vowel(const char *s)
+{
+  return s != NULL && *s != '\0' && strchr("aeiouAEIOU", *s) != NULL;
+}
+#define STARTS_WITH_VOWEL(s) tb_starts_with_vowel((s))
+
 /** If string begins a vowel (upper or lower case), return "an"; else return
  * "a". */
-#define AN(string) (strchr("aeiouAEIOU", *(string)) ? "an" : "a")
+#define AN(string) (STARTS_WITH_VOWEL(string) ? "an" : "a")
+
+/** s, or "" when s is NULL. For "%s" arguments and string comparisons that
+ * may meet NULL: world strings fread_string() stored as NULL, unset OLC
+ * fields, optional parameters. Passing NULL to "%s" is undefined behaviour.
+ * s is evaluated once. */
+static inline const char *tb_nullstr(const char *s)
+{
+  return s != NULL ? s : "";
+}
+#define NULLSTR(s) tb_nullstr((s))
 
 /** A calloc based memory allocation macro.
+ * Contract: number is converted to size_t once; a count of 0, or one whose
+ * byte size overflows, is reported as a FATAL allocation-size error and the
+ * server aborts (unlike calloc(0), which may succeed). Allocation failure is
+ * also FATAL. Both reports carry the caller's file and line through
+ * tb_report_domain_error_at(), but not the breadcrumb trail. result is
+ * assigned and then tested, so it must be an lvalue without side effects.
  * @param result Pointer to created memory.
  * @param type The type of memory (int, struct char_data, etc.).
  * @param number How many of type to make. */
@@ -331,6 +515,10 @@ static inline int circle_upper(int c)
 
 /** A realloc based memory reallocation macro. Reminder: realloc can reduce
  * the size of an array as well as increase it.
+ * Contract: same zero/overflow/failure rules as CREATE (FATAL, then abort).
+ * On failure realloc leaves the original block intact, but the macro aborts
+ * regardless, so callers never see a NULL result. result is evaluated
+ * twice: pass a plain lvalue.
  * @param result Pointer to created memory.
  * @param type The type of memory (int, struct char_data, etc.).
  * @param number How many of type to make. */
@@ -342,6 +530,12 @@ static inline int circle_upper(int c)
     abort(); \
   (result) = (type *)recreate_new_ptr; \
 } while (0)
+
+/** Free p and set it to NULL, so a later free() or use sees NULL rather
+ * than a dangling pointer. p must be an lvalue without side effects: it is
+ * evaluated twice. The counterpart of CREATE for pointers that outlive the
+ * free (struct fields, globals). */
+#define FREE_NULL(p) do { free(p); (p) = NULL; } while (0)
 
 /** Remove an item from a linked list and reset the links.
  * If item is at the list head, change the head, else traverse the
@@ -369,6 +563,9 @@ static inline int circle_upper(int c)
 /* Connect 'link' to the end of a double-linked list
  * The new item becomes the last in the linked list, and the last
  * pointer is updated.
+ * @pre link is not on any list: LINK overwrites link->next/prev without
+ * looking, so linking an already-linked node corrupts both lists.
+ * Every argument is evaluated several times: pass plain lvalues.
  * @param link  Pointer to item to remove from the list.
  * @param first Pointer to the first item of the linked list.
  * @param last  Pointer to the last item of the linked list.
@@ -390,6 +587,10 @@ do                                                              \
 /* Remove 'link' from a double-linked list
  * @post  item is removed from the list, but remains in memory, and must
    be free'd after unlinking.
+ * @pre link is on the list named by first/last. UNLINK does not check this,
+ * and it does not clear link->next/prev afterwards, so a second UNLINK of
+ * the same node rewrites its old neighbours. Every argument is evaluated
+ * several times: pass plain lvalues.
  * @param link  Pointer to item to remove from the list.
  * @param first Pointer to the first item of the linked list.
  * @param last  Pointer to the last item of the linked list.
@@ -410,6 +611,9 @@ do                                                              \
 } while(0)
 
 /* Free a pointer, and log if it was NULL
+ * The NULL report goes through legacy log() with the caller's file and line
+ * but no function name. point is evaluated several times and is set to NULL
+ * afterwards, so it must be a plain lvalue.
  * @param point The pointer to be free'd.
  * */
 #define DISPOSE(point)                                          \
@@ -425,6 +629,8 @@ do                                                              \
 
 /* String Utils */
 /* Allocate memory for a string, and return a pointer
+ * Unlike CREATE this is plain strdup(): it can return NULL on allocation
+ * failure, and point must not be NULL.
  * @param point The string to be copied.
  * */
 #define STRALLOC(point)         (strdup(point))
@@ -463,10 +669,15 @@ do                                                              \
  * for it, 'wimpy' would be an extremely bad thing for a mob to do, as an
  * example.  If you really couldn't care less, change this to a '#if 0'. */
 #if 1
-/** Warn if accessing player_specials on a mob.
- * @todo Subtle bug in the var reporting, but works well for now. */
+/** Report access to player_specials on a mob, then continue with the shared
+ * dummy_mob storage (long-standing behaviour: reads see zero, and a write
+ * changes the value every mob sees). The report is a player-special-on-mob
+ * error carrying the caller's file, line and function, the mob vnum and the
+ * field expression, so the offending call site and mob can be found.
+ * ch is evaluated more than once: pass a plain variable. */
 #define CHECK_PLAYER_SPECIAL(ch, var) \
-	(*(((ch)->player_specials == &dummy_mob) ? (log("SYSERR: Mob using '"#var"' at %s:%d.", __FILE__, __LINE__), &(var)) : &(var)))
+	(*(((ch)->player_specials == &dummy_mob) ? \
+	   (tb_player_special_on_mob_at((ch), #var, __FILE__, __LINE__, __func__), &(var)) : &(var)))
 #else
 #define CHECK_PLAYER_SPECIAL(ch, var)	(var)
 #endif
@@ -495,14 +706,13 @@ do                                                              \
 /** References the routine element for a spell. Currently unused. */
 #define SPELL_ROUTINES(spl)	(spell_info[spl].routines)
 
-/* IS_MOB() acts as a VALID_MOB_RNUM()-like function.*/
+/* IS_MOB() is IS_NPC() plus a VALID_MOB_RNUM() check of the prototype rnum. */
 /** 1 if the character has the NPC bit set, 0 if the character does not.
  * Used to prevents NPCs and mobs from doing things they shouldn't, even
  * when mobs are possessed or charmed by a player. */
 #define IS_NPC(ch)	(IS_SET_AR(MOB_FLAGS(ch), MOB_ISNPC))
 /** 1 if the character is a real NPC, 0 if the character is not. */
-#define IS_MOB(ch)	(IS_NPC(ch) && GET_MOB_RNUM(ch) <= top_of_mobt && \
-				GET_MOB_RNUM(ch) != NOBODY)
+#define IS_MOB(ch)	(IS_NPC(ch) && VALID_MOB_RNUM(GET_MOB_RNUM(ch)))
 
 /** 1 if ch is flagged an NPC and flag is set in the act bitarray, 0 if not. */
 #define MOB_FLAGGED(ch, flag) (IS_NPC(ch) && IS_SET_AR(MOB_FLAGS(ch), (flag)))
@@ -539,7 +749,12 @@ do                                                              \
 /** Toggle flag in ch PRF_FLAGS; turns on if off, or off if on. */
 #define PRF_TOG_CHK(ch,flag) ((TOGGLE_BIT_AR(PRF_FLAGS(ch), (flag))) & Q_BIT(flag))
 
-/** Checks to see if a PC or NPC is dead. */
+/** TRUE if ch (PC or NPC) has been extracted (killed, purged) and awaits
+ * extract_pending_chars() at the end of the pulse. The pointer is still
+ * allocated, but ch must not act or be acted on. MOB_FLAGS and PLR_FLAGS
+ * share storage; PLR_FLAGGED and MOB_FLAGGED test IS_NPC, so each flag is
+ * read only for its own kind. Evaluates ch more than once: pass a plain
+ * variable. (fight.h's CHAR_PENDING_EXTRACTION was the same test.) */
 #define DEAD(ch) (PLR_FLAGGED((ch), PLR_NOTDEADYET) || MOB_FLAGGED((ch), MOB_NOTDEADYET))
 
 /* room utils */
@@ -553,12 +768,64 @@ do                                                              \
 #define GET_ROOM_ZONE(room)	(VALID_ROOM_RNUM(room) ? world[(room)].zone : NOWHERE)
 
 /** TRUE if the room has no light, FALSE if not. */
-#define IS_DARK(room)	room_is_dark((room))
+#define IS_DARK(room)	room_is_dark((room))  /* reports its caller */
 /** TRUE if the room has light, FALSE if not. */
 #define IS_LIGHT(room)  (!IS_DARK(room))
 
-/** 1 if this is a valid room number, 0 if not. */
-#define VALID_ROOM_RNUM(rnum)	((rnum) != NOWHERE && (rnum) <= top_of_world)
+/** The rule behind every VALID_*_RNUM check: TRUE when rnum is not the
+ * table's sentinel none (NOWHERE, NOTHING or NOBODY) and indexes a table
+ * whose last valid index is top. All three are compared as long, so the
+ * answer does not depend on the caller's integer type. A plain int or long
+ * holding -1 (a zone-command argument the builder has not set yet, a lookup
+ * result kept in an int) used to pass the unsigned sentinel test and the
+ * "<= top" test and index table[-1]; it is refused here. No comparison is
+ * made in an unsigned rnum type, where "rnum >= 0" is always true and draws
+ * -Wtype-limits. An empty table (top -1) accepts nothing. */
+static inline int tb_rnum_valid(long rnum, long none, long top)
+{
+  return rnum != none && rnum >= 0 && rnum <= top;
+}
+
+/** TRUE if rnum indexes world[]: not NOWHERE, not negative, at most
+ * top_of_world. Any integer type; rnum is evaluated once. */
+#define VALID_ROOM_RNUM(rnum) \
+	tb_rnum_valid((long) (rnum), (long) NOWHERE, (long) top_of_world)
+/** TRUE if rnum indexes mob_proto[]/mob_index[]: not NOBODY, not negative,
+ * at most top_of_mobt. Any integer type; rnum is evaluated once. */
+#define VALID_MOB_RNUM(rnum) \
+	tb_rnum_valid((long) (rnum), (long) NOBODY, (long) top_of_mobt)
+/** TRUE when r names a loaded zone: usable as zone_table[r] (not NOWHERE,
+ * not negative, at most top_of_zone_table). Any integer type; r is
+ * evaluated once. */
+#define VALID_ZONE_RNUM(r) \
+	tb_rnum_valid((long) (r), (long) NOWHERE, (long) top_of_zone_table)
+/** TRUE if r, an object rnum held as a plain number (a zone-command
+ * argument, a shop or list entry), indexes obj_proto[]/obj_index[]: not
+ * NOTHING, not negative, at most top_of_objt. VALID_OBJ_RNUM takes an
+ * object pointer, hence the _NUM suffix. Any integer type; r is evaluated
+ * once. */
+#define VALID_OBJ_RNUM_NUM(r) \
+	tb_rnum_valid((long) (r), (long) NOTHING, (long) top_of_objt)
+/** TRUE if r indexes a live aquest_table row (0..total_quests-1).
+ * real_quest() returns NOTHING for a vnum with no row (prev/next links are
+ * not repaired when a quest is deleted), and an int holding -1 must not
+ * reach aquest_table[] or delete_quest(). Any integer type; r is evaluated
+ * once. */
+#define VALID_QUEST_RNUM(r) \
+	tb_rnum_valid((long) (r), (long) NOTHING, (long) total_quests - 1)
+
+/* Range predicates for values that index a fixed table and come from world,
+ * player or script data: sector_type (movement_loss[], map glyphs),
+ * directions (dir_option[], dirs[]), positions (position_types[]), sexes
+ * (genders[]) and wear slots (GET_EQ, wear_where[]). The unsigned cast folds
+ * "x < 0" into the upper-bound test, so each evaluates its argument once;
+ * the argument must be an int-sized value (a long beyond UINT_MAX would
+ * wrap). */
+#define VALID_SECTOR(s)   ((unsigned int)(s) < NUM_ROOM_SECTORS)
+#define VALID_DIR(d)      ((unsigned int)(d) < NUM_OF_DIRS)
+#define VALID_POS(p)      ((unsigned int)(p) < NUM_POSITIONS)
+#define VALID_SEX(x)      ((unsigned int)(x) < NUM_GENDERS)
+#define VALID_WEAR_POS(w) ((unsigned int)(w) < NUM_WEARS)
 /** The room number if this is a valid room, NOWHERE if it is not */
 #define GET_ROOM_VNUM(rnum) \
 	((room_vnum)(VALID_ROOM_RNUM(rnum) ? world[(rnum)].number : NOWHERE))
@@ -591,11 +858,21 @@ do                                                              \
 /** Gets the level of a player even if the player is switched.
  * @todo Make this the definition of GET_LEVEL. */
 #define GET_REAL_LEVEL(ch) \
-   ((ch)->desc && (ch)->desc->original ? GET_LEVEL((ch)->desc->original) : \
-    GET_LEVEL((ch)))
+   (IS_SWITCHED(ch) ? GET_LEVEL((ch)->desc->original) : GET_LEVEL((ch)))
+/** TRUE if ch is a body that an immortal has switched into: its descriptor
+ * belongs to the switcher, whose own character is desc->original.
+ * Evaluates ch twice: pass a plain variable. */
+#define IS_SWITCHED(ch) ((ch)->desc && (ch)->desc->original)
 
 /** Class of ch. */
 #define GET_CLASS(ch)   ((ch)->player.chclass)
+/** TRUE if c indexes the per-class tables (class_abbrevs[], pc_class_types[],
+ * prac_params[][NUM_CLASSES], spell_info[].min_level[]). GET_CLASS is read
+ * from the pfile 'Clas' tag, which a corrupt or hand-edited pfile can set to
+ * anything, so check before indexing. Evaluates c twice: no side effects.
+ * The one definition: spells.h's SPELL_MIN_LEVEL() and spec_procs.c's
+ * practice check use it. */
+#define VALID_CLASS(c) ((c) >= 0 && (c) < NUM_CLASSES)
 /** Height of ch. */
 #define GET_HEIGHT(ch)	((ch)->player.height)
 /** Weight of ch. */
@@ -799,17 +1076,23 @@ do                                                              \
 /** Defines whether d is playing or not. */
 #define IS_PLAYING(d)   (IS_IN_OLC(d) || STATE(d) == CON_PLAYING)
 
+/** The player behind descriptor d: the switcher's own character while it
+ * is switched into another body, else d->character (NULL until login
+ * completes). Evaluates d twice: pass a plain variable. */
+#define REAL_CHAR(d)  ((d)->original ? (d)->original : (d)->character)
+
 /** Defines if it is ok to send a message to ch. */
 #define SENDOK(ch)	(((ch)->desc || SCRIPT_CHECK((ch), MTRIG_ACT)) && \
 			(to_sleeping || AWAKE(ch)) && \
 			!PLR_FLAGGED((ch), PLR_WRITING))
 
 /* object utils */
-/** Check for NOWHERE or the top array index? If using unsigned types, the top
- * array index will catch everything. If using signed types, NOTHING will
- * catch the majority of bad accesses. */
-#define VALID_OBJ_RNUM(obj)	(GET_OBJ_RNUM(obj) <= top_of_objt && \
-				 GET_OBJ_RNUM(obj) != NOTHING)
+/** TRUE if obj's prototype rnum indexes obj_proto[]/obj_index[]: not
+ * NOTHING (an object without a prototype), not negative and at most
+ * top_of_objt, with signed and unsigned index types alike (tb_rnum_valid).
+ * obj is evaluated once. */
+#define VALID_OBJ_RNUM(obj) \
+	tb_rnum_valid((long) GET_OBJ_RNUM(obj), (long) NOTHING, (long) top_of_objt)
 
 /** Level of obj. */
 #define GET_OBJ_LEVEL(obj)      ((obj)->obj_flags.level)
@@ -829,6 +1112,17 @@ do                                                              \
 #define GET_OBJ_WEAR(obj)	((obj)->obj_flags.wear_flags)
 /** Return value val for obj. */
 #define GET_OBJ_VAL(obj, val)	((obj)->obj_flags.value[(val)])
+/** TRUE if t indexes drinks[], drinknames[] and drink_aff[] (NUM_LIQ_TYPES
+ * entries each). The liquid type is value 2 of a drink container or
+ * fountain: it comes from world files and from scripts ('osetval 2 N'),
+ * and neither validates it, so check before every table lookup. The
+ * unsigned cast folds "t < 0" into the upper-bound test, so t is evaluated
+ * once; t must be int-sized. */
+#define VALID_LIQ_TYPE(t) ((unsigned int)(t) < NUM_LIQ_TYPES)
+/** The liquid type (value 2) of a drink container or fountain: an index
+ * into drinks[], drinknames[] and drink_aff[] once VALID_LIQ_TYPE() has
+ * accepted it. */
+#define DRINK_CON_TYPE(cont) (GET_OBJ_VAL((cont), 2))
 /** Weight of obj. */
 #define GET_OBJ_WEIGHT(obj)	((obj)->obj_flags.weight)
 /** Current timer of obj. */
@@ -865,11 +1159,11 @@ do                                                              \
 #define HMHR(ch) (GET_SEX(ch) ? (GET_SEX(ch)==SEX_MALE ? "him":"her") : "it")
 
 /** "An" or "A" for object (uppercased) */
-#define ANA(obj) (strchr("aeiouAEIOU", *(obj)->name) ? "An" : "A")
+#define ANA(obj) (STARTS_WITH_VOWEL((obj)->name) ? "An" : "A")
 /** "an" or "a" for object (lowercased) */
-#define SANA(obj) (strchr("aeiouAEIOU", *(obj)->name) ? "an" : "a")
+#define SANA(obj) (STARTS_WITH_VOWEL((obj)->name) ? "an" : "a")
 /** "an" or "a" for text (lowercased) */
-#define TANA(obj) (strchr("aeiouAEIOU", *(obj)) ? "an" : "a")
+#define TANA(obj) (STARTS_WITH_VOWEL(obj) ? "an" : "a")
 
 /* Various macros building up to CAN_SEE */
 
@@ -923,10 +1217,16 @@ do                                                              \
    (((IS_CARRYING_W(ch) + GET_OBJ_WEIGHT(obj)) <= CAN_CARRY_W(ch)) &&   \
     ((IS_CARRYING_N(ch) + 1) <= CAN_CARRY_N(ch)))
 
-/** Can ch pick up obj? */
+/** Can ch pick up obj? It must be takeable, within ch's carrying limits and
+ * visible to ch, and nobody may be sitting on it: do_get() refuses occupied
+ * furniture the same way. Moving occupied furniture out of its room unseats
+ * the sitters (obj_from_room() reports furniture-move-occupied), so a
+ * scavenger mob must not carry off a chair with players in it (H2-06).
+ * This is a selection rule, not an error, so it reports nothing.
+ * Evaluates ch and obj several times: pass plain variables. */
 #define CAN_GET_OBJ(ch, obj)   \
    (CAN_WEAR((obj), ITEM_WEAR_TAKE) && CAN_CARRY_OBJ((ch),(obj)) && \
-    CAN_SEE_OBJ((ch),(obj)))
+    CAN_SEE_OBJ((ch),(obj)) && !OBJ_SAT_IN_BY(obj))
 
 /** If vict can see ch, return ch name, else return "someone". */
 #define PERS(ch, vict)   (CAN_SEE(vict, ch) ? GET_NAME(ch) : (GET_LEVEL(ch) > LVL_IMMORT ? "an immortal" : "someone"))
@@ -962,8 +1262,15 @@ do                                                              \
 #define IS_DIAGONAL(dir) (((dir) == NORTHWEST) || ((dir) == NORTHEAST) || \
 		((dir) == SOUTHEAST) || ((dir) == SOUTHWEST) )
 
-/** Return the class abbreviation for ch. */
-#define CLASS_ABBR(ch) (IS_NPC(ch) ? "--" : class_abbrevs[(int)GET_CLASS(ch)])
+/** Return the class abbreviation for ch: "--" for an NPC, class_abbrevs[]
+ * for a player whose class passes VALID_CLASS(), and "??" otherwise. The
+ * class comes from the pfile unchecked, so an out-of-range one (who, users)
+ * is reported as a class-range error naming the player and the caller's
+ * file, line and function instead of reading past class_abbrevs[] (G2-12).
+ * Evaluates ch several times: pass a plain variable. */
+#define CLASS_ABBR(ch) (IS_NPC(ch) ? "--" : \
+	VALID_CLASS(GET_CLASS(ch)) ? class_abbrevs[(int)GET_CLASS(ch)] : \
+	tb_class_range_error_at((ch), "class_abbrevs", __FILE__, __LINE__, __func__))
 
 /** 1 if ch is magic user class, 0 if not. */
 #define IS_MAGIC_USER(ch)	(!IS_NPC(ch) && \

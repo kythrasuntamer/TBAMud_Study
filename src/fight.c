@@ -55,12 +55,24 @@ struct attack_hit_type attack_hit_text[] =
 };
 
 /* local (file scope only) variables */
+/* perform_violence()'s iterator over combat_list. A round can stop any
+ * fighter (hit() -> damage() -> die(), flee, triggers), so stop_fighting()
+ * advances this iterator when it removes the character it points at; that
+ * is what lets hit() end arbitrary fights without breaking the walk. */
 static struct char_data *next_combat_list = NULL;
 
 /* local file scope utility functions */
 static void perform_group_gain(struct char_data *ch, int base, struct char_data *victim);
 static void dam_message(int dam, struct char_data *ch, struct char_data *victim, int w_type);
 static void make_corpse(struct char_data *ch);
+static struct obj_data *autoloot_corpse(struct char_data *ch, struct char_data *victim);
+
+/* The corpse make_corpse() created most recently, and its script UID.
+ * damage()'s autogold/autoloot/autosac act on this object. A lookup by the
+ * name "corpse" would find an older corpse first: obj_to_room() appends,
+ * and 'get' searches the inventory before the room. */
+static struct obj_data *last_corpse;
+static long last_corpse_uid;
 static void change_alignment(struct char_data *ch, struct char_data *victim);
 static void group_gain(struct char_data *ch, struct char_data *victim);
 static void solo_gain(struct char_data *ch, struct char_data *victim);
@@ -146,12 +158,22 @@ bool pk_allowed(struct char_data *ch, struct char_data *victim)
 
 
 /* start one char fighting another (yes, it is horrible, I know... )  */
-void set_fighting(struct char_data *ch, struct char_data *vict)
+void set_fighting_at(const char *src_file, int src_line, const char *src_func,
+                     struct char_data *ch, struct char_data *vict)
 {
   if (ch == vict)
     return;
 
   if (FIGHTING(ch)) {
+    struct char_data *cur = FIGHTING(ch);
+
+    /* Reported at the caller's location: which combat path double-started
+     * the fight is what the log must say. */
+    tb_error_log_at("ERROR", "fight", "set-fighting-twice", "char", 0,
+                    src_file, src_line, src_func,
+                    DIAG_CHAR_FMT " already fighting " DIAG_CHAR_FMT
+                    ", new target " DIAG_CHAR_FMT, DIAG_CHAR(ch),
+                    DIAG_CHAR(cur), DIAG_CHAR(vict));
     core_dump();
     return;
   }
@@ -169,11 +191,15 @@ void set_fighting(struct char_data *ch, struct char_data *vict)
     affect_from_char(ch, SPELL_SLEEP);
 
   FIGHTING(ch) = vict;
-  GET_POS(ch) = POS_FIGHTING;
-
+  /* A seated character that starts fighting leaves its furniture. */
+  POS_CHANGE_UNSEAT(ch, POS_FIGHTING);
 }
 
-/* remove a char from the list of fighting chars */
+/* remove a char from the list of fighting chars. Side effects: clears
+ * FIGHTING(ch), stands ch up (POS_CHANGE_UNSEAT, which unlinks any
+ * furniture) and then update_pos() lowers the position again for a
+ * wounded ch; advances next_combat_list past ch if perform_violence() was
+ * about to visit it. Safe to call on a ch that is not fighting. */
 void stop_fighting(struct char_data *ch)
 {
   struct char_data *temp;
@@ -184,14 +210,16 @@ void stop_fighting(struct char_data *ch)
   REMOVE_FROM_LIST(ch, combat_list, next_fighting);
   ch->next_fighting = NULL;
   FIGHTING(ch) = NULL;
-  GET_POS(ch) = POS_STANDING;
+  POS_CHANGE_UNSEAT(ch, POS_STANDING);
   update_pos(ch);
 }
 
-/* Create a container object holding a defeated character's remains.
- * Corpse ownership and contents affect item recovery, world object lifetime,
- * and equipment-loss rules; keep object transfers and extraction consistent.
- */
+/* Builds ch's corpse in ch's room. Order: the inventory moves to the
+ * corpse in one step (ch->carrying, count and weight cleared) before any
+ * trigger runs; then each worn item, after its remove trigger, which may
+ * purge or swap it (the slot is re-read); then anything a trigger handed
+ * to ch meanwhile; then the gold as a money object. Records the corpse
+ * for damage()'s autoloot (last_corpse). ch itself is not freed here. */
 static void make_corpse(struct char_data *ch)
 {
   char buf2[MAX_NAME_LENGTH + 64];
@@ -229,18 +257,44 @@ static void make_corpse(struct char_data *ch)
   else
     GET_OBJ_TIMER(corpse) = CONFIG_MAX_PC_CORPSE_TIME;
 
-  /* transfer character's inventory to the corpse */
+  /* Transfer the inventory to the corpse in one step, before any trigger
+   * runs: ch and the corpse must never share a half-moved list. A remove
+   * trigger below that gives ch a new object ('oload obj N %actor%') then
+   * starts a fresh ch->carrying list, swept into the corpse afterwards. */
   corpse->contains = ch->carrying;
+  ch->carrying = NULL;
+  IS_CARRYING_N(ch) = 0;
+  IS_CARRYING_W(ch) = 0;
   for (o = corpse->contains; o != NULL; o = o->next_content)
     o->in_obj = corpse;
   object_list_new_owner(corpse, NULL);
 
-  /* transfer character's equipment to the corpse */
+  /* Transfer the equipment. remove_otrigger() runs a script that may
+   * purge, swap or remove the item, so the slot is re-read after it. */
   for (i = 0; i < NUM_WEARS; i++)
-    if (GET_EQ(ch, i)) {
-      remove_otrigger(GET_EQ(ch, i), ch);
+    if ((o = GET_EQ(ch, i)) != NULL) {
+      long uid = obj_script_id(o);
+
+      remove_otrigger(o, ch);
+      if (GET_EQ(ch, i) != o || !obj_uid_matches(uid, o)) {
+        TB_WARN_MSG("fight", "corpse-eq-changed", "obj",
+                    "slot %d (obj uid %ld) changed by remove trigger on "
+                    DIAG_CHAR_FMT " during death", i, uid, DIAG_CHAR(ch));
+        if (!GET_EQ(ch, i))
+          continue;
+      }
       obj_to_obj(unequip_char(ch, i), corpse);
     }
+
+  /* Objects a remove trigger handed to ch while it died. */
+  while ((o = ch->carrying) != NULL) {
+    TB_WARN_MSG("fight", "corpse-inventory-added", "obj",
+                "obj vnum %d uid %ld given to " DIAG_CHAR_FMT
+                " by a trigger during death; moved to the corpse",
+                (int) GET_OBJ_VNUM(o), obj_script_id(o), DIAG_CHAR(ch));
+    obj_from_char(o);
+    obj_to_obj(o, corpse);
+  }
 
   /* transfer gold */
   if (GET_GOLD(ch) > 0) {
@@ -255,11 +309,29 @@ static void make_corpse(struct char_data *ch)
     }
     GET_GOLD(ch) = 0;
   }
-  ch->carrying = NULL;
-  IS_CARRYING_N(ch) = 0;
-  IS_CARRYING_W(ch) = 0;
 
   obj_to_room(corpse, IN_ROOM(ch));
+  last_corpse = corpse;
+  last_corpse_uid = obj_script_id(corpse);
+}
+
+/* The corpse damage() just produced, if it is still the same object and in
+ * ch's room; otherwise NULL. A corpse that vanished (a get trigger during
+ * autoloot can purge it) is reported as "autoloot-corpse-missing". A
+ * corpse ch cannot see is skipped silently, as 'get' would. */
+static struct obj_data *autoloot_corpse(struct char_data *ch,
+                                        struct char_data *victim)
+{
+  if (!last_corpse || !obj_uid_matches(last_corpse_uid, last_corpse) ||
+      IN_ROOM(last_corpse) != IN_ROOM(ch)) {
+    TB_WARN_MSG("fight", "autoloot-corpse-missing", "obj",
+                "corpse uid %ld of " DIAG_CHAR_FMT " gone before auto "
+                "loot/sac by " DIAG_CHAR_FMT, last_corpse_uid,
+                DIAG_CHAR(victim), DIAG_CHAR(ch));
+    last_corpse = NULL;
+    return NULL;
+  }
+  return CAN_SEE_OBJ(ch, last_corpse) ? last_corpse : NULL;
 }
 
 /* When ch kills victim */
@@ -281,6 +353,12 @@ void death_cry(struct char_data *ch)
       send_to_room(world[IN_ROOM(ch)].dir_option[door]->to_room, "Your blood freezes as you hear someone's death cry.\r\n");
 }
 
+/* Kills ch: stops its fight, strips affects, runs its death trigger
+ * (killer != NULL; the script may suppress the death cry), credits kill
+ * quests, makes the corpse (make_corpse) and calls extract_char(). The
+ * extraction is deferred: ch stays allocated, flagged NOTDEADYET
+ * (DEAD(ch)), until extract_pending_chars() at the end of
+ * the pulse, so callers may still read ch but must not act with it. */
 void raw_kill(struct char_data * ch, struct char_data * killer)
 {
 struct char_data *i;
@@ -324,6 +402,8 @@ struct char_data *i;
   }
 }
 
+/* raw_kill() plus the death penalty: ch loses half its experience, and a
+ * player loses the KILLER and THIEF flags. Same lifetime as raw_kill(). */
 void die(struct char_data * ch, struct char_data * killer)
 {
   gain_exp(ch, -(GET_EXP(ch) / 2));
@@ -410,34 +490,44 @@ static void solo_gain(struct char_data *ch, struct char_data *victim)
   change_alignment(ch, victim);
 }
 
+/* Expands a dam_weapons template: "#w" becomes weapon_singular and "#W"
+ * weapon_plural; any other character, including a lone '#', is copied.
+ * Returns a static buffer that the next call overwrites. The output is
+ * bounded by the buffer; a longer expansion is truncated and reported. */
 static char *replace_string(const char *str, const char *weapon_singular, const char *weapon_plural)
 {
   static char buf[256];
-  char *cp = buf;
+  const char *tmpl = str;
+  size_t len = 0;
 
   for (; *str; str++) {
-    if (*str == '#') {
-      switch (*(++str)) {
-      case 'W':
-	for (; *weapon_plural; *(cp++) = *(weapon_plural++));
-	break;
-      case 'w':
-	for (; *weapon_singular; *(cp++) = *(weapon_singular++));
-	break;
-      default:
-	*(cp++) = '#';
-	break;
-      }
-    } else
-      *(cp++) = *str;
+    char single[2] = { *str, '\0' };
+    const char *src = single;
 
-    *cp = 0;
-  }				/* For */
+    if (*str == '#' && (str[1] == 'W' || str[1] == 'w'))
+      src = (*++str == 'W') ? weapon_plural : weapon_singular;
+
+    for (; *src; src++) {
+      if (len + 1 >= sizeof(buf)) {
+        buf[len] = '\0';
+        TB_ERROR_MSG("fight", "damage-message-truncated", "buf",
+                     "template of %zu bytes with weapon words of %zu/%zu "
+                     "bytes exceeds %zu bytes; truncated", strlen(tmpl),
+                     strlen(weapon_singular), strlen(weapon_plural), sizeof(buf));
+        return (buf);
+      }
+      buf[len++] = *src;
+    }
+  }
+  buf[len] = '\0';
 
   return (buf);
 }
 
-/* message for doing damage with a weapon */
+/* message for doing damage with a weapon. w_type is an IS_WEAPON() type;
+ * w_type - TYPE_HIT indexes attack_hit_text[] (NUM_ATTACK_TYPES entries)
+ * and is range-checked here as a backstop. The messages are built in
+ * replace_string()'s static buffer, used before the next call. */
 static void dam_message(int dam, struct char_data *ch, struct char_data *victim,
 		      int w_type)
 {
@@ -508,6 +598,16 @@ static void dam_message(int dam, struct char_data *ch, struct char_data *victim,
   };
 
   w_type -= TYPE_HIT;		/* Change to base of table with text */
+
+  /* IS_WEAPON() admits [TYPE_HIT, TYPE_SUFFERING), wider than the table;
+   * hit() validates weapon and mob attack types, so this is a backstop
+   * for any other caller of damage(). */
+  if (!VALID_ATTACK_TYPE(w_type)) {
+    TB_ERROR_MSG("fight", "attack-type-range", "attack_hit_text",
+                 "attack type %d not in [0,%d) for " DIAG_CHAR_FMT
+                 "; using hit", w_type, NUM_ATTACK_TYPES, DIAG_CHAR(ch));
+    w_type = 0;
+  }
 
   if (dam == 0)		msgnum = 0;
   else if (dam <= 2)    msgnum = 1;
@@ -629,12 +729,23 @@ int skill_message(int dam, struct char_data *ch, struct char_data *vict,
  * This function returns the following codes:
  *	< 0	Victim died.
  *	= 0	No damage.
- *	> 0	How much damage done. */
+ *	> 0	How much damage done.
+ *
+ * Side effects beyond the return code: damage() starts fights
+ * (set_fighting), runs the damage trigger, may make a wimpy or linkless
+ * victim flee (do_flee) and move a linkless player to room 0
+ * (char_to_room), kills via die() (death trigger, corpse, deferred
+ * extraction), and after a kill runs
+ * get_from_container/do_split/sacrifice_obj for ch's AUTOGOLD, AUTOLOOT,
+ * AUTOSPLIT and AUTOSAC, which run get triggers in turn. Callers must
+ * assume that ch and victim may have changed room or be pending
+ * extraction afterwards (check IN_ROOM and DEAD()), and
+ * must not use object pointers read before the call. */
 int damage(struct char_data *ch, struct char_data *victim, int dam, int attacktype)
 {
   long local_gold = 0, happy_gold = 0;
   char local_buf[256];
-  struct char_data *tmp_char;
+  char loot_arg[16];   /* writable: get_from_container strips "all." */
   struct obj_data *corpse_obj;
 
   if (GET_POS(victim) <= POS_DEAD) {
@@ -642,8 +753,15 @@ int damage(struct char_data *ch, struct char_data *victim, int dam, int attackty
     if (PLR_FLAGGED(victim, PLR_NOTDEADYET) || MOB_FLAGGED(victim, MOB_NOTDEADYET))
       return (-1);
 
-    log("SYSERR: Attempt to damage corpse '%s' in room #%d by '%s'.",
-        GET_NAME(victim), GET_ROOM_VNUM(IN_ROOM(victim)), GET_NAME(ch));
+    /* Dead but never killed: whatever set POS_DEAD did not call die().
+     * Name both characters, the room and the attack type (which tells the
+     * calling path apart), then finish the kill. */
+    TB_ERROR_MSG("fight", "damage-corpse", "damage",
+                 "victim " DIAG_CHAR_FMT " is dead (pos %d) but not killed;"
+                 " attacker " DIAG_CHAR_FMT " attack type %d in room %d;"
+                 " killing it now", DIAG_CHAR(victim), (int) GET_POS(victim),
+                 DIAG_CHAR(ch), attacktype,
+                 (int) GET_ROOM_VNUM(IN_ROOM(victim)));
     die(victim, ch);
     return (-1);			/* -je, 7/7/92 */
   }
@@ -654,8 +772,11 @@ int damage(struct char_data *ch, struct char_data *victim, int dam, int attackty
     return (0);
   }
 
-  /* peaceful rooms */
-  if (ch->nr != real_mobile(DG_CASTER_PROXY) &&
+  /* peaceful rooms. Only the DG caster proxy mob (dg_cast's stand-in) may
+   * hurt there. Compare by vnum and only for NPCs: players have nr ==
+   * NOBODY, which is also what real_mobile() returns on a world without
+   * the proxy mob, and that used to exempt every player. */
+  if (!(IS_NPC(ch) && GET_MOB_VNUM(ch) == DG_CASTER_PROXY) &&
       ch != victim && ROOM_FLAGGED(IN_ROOM(ch), ROOM_PEACEFUL)) {
     send_to_char(ch, "This room just has such a peaceful, easy feeling...\r\n");
     return (0);
@@ -810,26 +931,62 @@ int damage(struct char_data *ch, struct char_data *victim, int dam, int attackty
       tb_snprintf(local_buf, sizeof(local_buf), "%ld", (long)local_gold);
     }
 
+    last_corpse = NULL;
     die(victim, ch);
+    /* Each step re-acquires the corpse die() made: the get triggers that
+     * looting runs may purge or move it. */
     if (GROUP(ch) && (local_gold > 0) && PRF_FLAGGED(ch, PRF_AUTOSPLIT) ) {
-      generic_find("corpse", FIND_OBJ_ROOM, ch, &tmp_char, &corpse_obj);
-      if (corpse_obj) {
-        do_get(ch, "all.coin corpse", 0, 0);
+      if ((corpse_obj = autoloot_corpse(ch, victim)) != NULL) {
+        strlcpy(loot_arg, "all.coin", sizeof(loot_arg));
+        get_from_container(ch, corpse_obj, loot_arg, FIND_OBJ_ROOM, 1);
         do_split(ch, local_buf, 0, 0);
       }
       /* need to remove the gold from the corpse */
     } else if (!IS_NPC(ch) && (ch != victim) && PRF_FLAGGED(ch, PRF_AUTOGOLD)) {
-      do_get(ch, "all.coin corpse", 0, 0);
+      if ((corpse_obj = autoloot_corpse(ch, victim)) != NULL) {
+        strlcpy(loot_arg, "all.coin", sizeof(loot_arg));
+        get_from_container(ch, corpse_obj, loot_arg, FIND_OBJ_ROOM, 1);
+      }
     }
     if (!IS_NPC(ch) && (ch != victim) && PRF_FLAGGED(ch, PRF_AUTOLOOT)) {
-      do_get(ch, "all corpse", 0, 0);
+      if ((corpse_obj = autoloot_corpse(ch, victim)) != NULL) {
+        strlcpy(loot_arg, "all", sizeof(loot_arg));
+        get_from_container(ch, corpse_obj, loot_arg, FIND_OBJ_ROOM, 1);
+      }
     }
     if (IS_NPC(victim) && !IS_NPC(ch) && PRF_FLAGGED(ch, PRF_AUTOSAC)) {
-      do_sac(ch,"corpse",0,0);
+      if ((corpse_obj = autoloot_corpse(ch, victim)) != NULL)
+        sacrifice_obj(ch, corpse_obj);
     }
+    last_corpse = NULL;
     return (-1);
   }
   return (dam);
+}
+
+/* Rolls ch's damage dice: weapon values 1 and 2 (weapon != NULL) or the
+ * mob's bare-hand dice. Both come from world files, OLC and scripts
+ * ('osetval 1 2000000000'), and dice() loops num times summing into an
+ * int: a huge count stalls the single-threaded game loop and num*size can
+ * overflow. damage() caps a blow at 100 anyway, so dice beyond
+ * FIGHT_MAX_DICE_NUM d FIGHT_MAX_DICE_SIZE are clamped and reported. */
+static int hit_dice(struct char_data *ch, struct obj_data *weapon, int num, int size)
+{
+  if (num >= 0 && num <= FIGHT_MAX_DICE_NUM && size >= 0 && size <= FIGHT_MAX_DICE_SIZE)
+    return dice(num, size);
+
+  if (weapon)
+    TB_ERROR_MSG("fight", "weapon-dice-range", "obj",
+                 "weapon vnum %d uid %ld dice %dd%d outside %dd%d, wielder "
+                 DIAG_CHAR_FMT "; clamped", (int) GET_OBJ_VNUM(weapon),
+                 obj_script_id(weapon), num, size, FIGHT_MAX_DICE_NUM,
+                 FIGHT_MAX_DICE_SIZE, DIAG_CHAR(ch));
+  else
+    TB_ERROR_MSG("fight", "weapon-dice-range", "char",
+                 DIAG_CHAR_FMT " bare-hand dice %dd%d outside %dd%d; clamped",
+                 DIAG_CHAR(ch), num, size, FIGHT_MAX_DICE_NUM,
+                 FIGHT_MAX_DICE_SIZE);
+  return DICE_BOUNDED(num, size);
 }
 
 /* Calculate the THAC0 of the attacker. 'victim' currently isn't used but you
@@ -840,7 +997,7 @@ static int compute_thaco(struct char_data *ch, struct char_data *victim)
   int calc_thaco;
 
   if (!IS_NPC(ch))
-    calc_thaco = thaco(GET_CLASS(ch), GET_LEVEL(ch));
+    calc_thaco = char_thaco(ch); /* a table miss names ch */
   else		/* THAC0 for monsters is set in the HitRoll */
     calc_thaco = 20;
   calc_thaco -= str_app[STRENGTH_APPLY_INDEX(ch)].tohit;
@@ -858,11 +1015,16 @@ static int compute_thaco(struct char_data *ch, struct char_data *victim)
  */
 void hit(struct char_data *ch, struct char_data *victim, int type)
 {
-  struct obj_data *wielded = GET_EQ(ch, WEAR_WIELD);
-  int w_type, victim_ac, calc_thaco, dam, diceroll;
+  struct obj_data *wielded;
+  int w_type, victim_ac, calc_thaco, dam, diceroll, was_pending;
 
   /* Check that the attacker and victim exist */
   if (!ch || !victim) return;
+
+  /* A victim killed earlier this round is "normal" with delayed extraction
+   * (damage() ignores it); a fight already pending is noted here so only a
+   * change made by the trigger below is reported. */
+  was_pending = DEAD(ch) || DEAD(victim);
 
   /* check if the character has a fight trigger */
   fight_mtrigger(ch);
@@ -874,13 +1036,47 @@ void hit(struct char_data *ch, struct char_data *victim, int type)
     return;
   }
 
-  /* Find the weapon type (for display purposes only) */
-  if (wielded && GET_OBJ_TYPE(wielded) == ITEM_WEAPON)
-    w_type = GET_OBJ_VAL(wielded, 3) + TYPE_HIT;
-  else {
-    if (IS_NPC(ch) && ch->mob_specials.attack_type != 0)
-      w_type = ch->mob_specials.attack_type + TYPE_HIT;
-    else
+  /* The fight script may have purged ch or victim (extraction is deferred,
+   * so the pointers stay allocated but must not fight on). */
+  if (DEAD(ch) || DEAD(victim)) {
+    if (!was_pending)
+      TB_WARN_MSG("fight", "hit-after-trigger", "char",
+                  DIAG_CHAR_FMT " vs " DIAG_CHAR_FMT ": one was purged by the "
+                  "fight trigger; hit skipped", DIAG_CHAR(ch), DIAG_CHAR(victim));
+    return;
+  }
+
+  /* Only now look at the weapon: the fight script can junk, purge or swap
+   * it ('mjunk dagger'), so a pointer read before the trigger may be freed. */
+  wielded = GET_EQ(ch, WEAR_WIELD);
+
+  /* Find the weapon type (for display purposes only). It indexes
+   * attack_hit_text[]: weapon value 3 comes from world files and scripts
+   * ('osetval 3 N') unvalidated, so an out-of-range value falls back to a
+   * plain hit and is reported with the weapon and wielder. */
+  if (wielded && GET_OBJ_TYPE(wielded) == ITEM_WEAPON) {
+    if (VALID_ATTACK_TYPE(GET_OBJ_VAL(wielded, 3)))
+      w_type = GET_OBJ_VAL(wielded, 3) + TYPE_HIT;
+    else {
+      TB_ERROR_MSG("fight", "attack-type-range", "obj",
+                   "weapon vnum %d uid %ld val3 %d not in [0,%d), wielder "
+                   DIAG_CHAR_FMT, (int) GET_OBJ_VNUM(wielded),
+                   obj_script_id(wielded), GET_OBJ_VAL(wielded, 3),
+                   NUM_ATTACK_TYPES, DIAG_CHAR(ch));
+      w_type = TYPE_HIT;
+    }
+  } else {
+    if (IS_NPC(ch) && ch->mob_specials.attack_type != 0) {
+      if (VALID_ATTACK_TYPE(ch->mob_specials.attack_type))
+        w_type = ch->mob_specials.attack_type + TYPE_HIT;
+      else {
+        TB_ERROR_MSG("fight", "attack-type-range", "char",
+                     DIAG_CHAR_FMT " attack type %d not in [0,%d)",
+                     DIAG_CHAR(ch), ch->mob_specials.attack_type,
+                     NUM_ATTACK_TYPES);
+        w_type = TYPE_HIT;
+      }
+    } else
       w_type = TYPE_HIT;
   }
 
@@ -922,11 +1118,11 @@ void hit(struct char_data *ch, struct char_data *victim, int type)
     /* Maybe holding arrow? */
     if (wielded && GET_OBJ_TYPE(wielded) == ITEM_WEAPON) {
       /* Add weapon-based damage if a weapon is being wielded */
-      dam += dice(GET_OBJ_VAL(wielded, 1), GET_OBJ_VAL(wielded, 2));
+      dam += hit_dice(ch, wielded, GET_OBJ_VAL(wielded, 1), GET_OBJ_VAL(wielded, 2));
     } else {
       /* If no weapon, add bare hand damage instead */
         if (IS_NPC(ch))
-          dam += dice(ch->mob_specials.damnodice, ch->mob_specials.damsizedice);
+          dam += hit_dice(ch, NULL, ch->mob_specials.damnodice, ch->mob_specials.damsizedice);
         else
           dam += rand_number(0, 2);	/* Max 2 bare hand damage for players */
     }
@@ -938,10 +1134,14 @@ void hit(struct char_data *ch, struct char_data *victim, int type)
      * Position stunned  2.33 x normal
      * Position incap    2.66 x normal
      * Position mortally 3.00 x normal
-     * Note, this is a hack because it depends on the particular
-     * values of the POSITION_XXX constants. */
+     * i.e. one third more per position below fighting. It used to be
+     * computed as dam *= 1 + (POS_FIGHTING - pos) / 3 in integer
+     * arithmetic, which gave x1 sitting and resting and x2 sleeping,
+     * stunned and incapacitated: multiply before dividing (dam stays far
+     * below INT_MAX / 10, see DICE_BOUNDED). Note, this is a hack because
+     * it depends on the particular values of the POSITION_XXX constants. */
     if (GET_POS(victim) < POS_FIGHTING)
-      dam *= 1 + (POS_FIGHTING - GET_POS(victim)) / 3;
+      dam = dam * (3 + (POS_FIGHTING - GET_POS(victim))) / 3;
 
     /* at least 1 hp damage min per hit */
     dam = MAX(1, dam);
@@ -981,7 +1181,7 @@ void perform_violence(void)
       }
       GET_MOB_WAIT(ch) = 0;
       if (GET_POS(ch) < POS_FIGHTING) {
-        GET_POS(ch) = POS_FIGHTING;
+        POS_CHANGE_UNSEAT(ch, POS_FIGHTING);
         act("$n scrambles to $s feet!", TRUE, ch, 0, 0, TO_ROOM);
       }
     }
@@ -991,11 +1191,11 @@ void perform_violence(void)
       continue;
     }
 
- if (GROUP(ch) && GROUP(ch)->members && GROUP(ch)->members->iSize) {
+    if (GROUP(ch) && GROUP(ch)->members && GROUP(ch)->members->iSize) {
       struct iterator_data Iterator;
 
       tch = (struct char_data *) merge_iterator(&Iterator, GROUP(ch)->members);
-    for (; tch ; tch = next_in_list(&Iterator)) {
+      for (; tch ; tch = next_in_list(&Iterator)) {
         if (tch == ch)
           continue;
         if (!IS_NPC(tch) && !PRF_FLAGGED(tch, PRF_AUTOASSIST))
@@ -1009,8 +1209,13 @@ void perform_violence(void)
         if (!CAN_SEE(tch, ch))
           continue;
       
-        do_assist(tch, GET_NAME(ch), 0, 0);				  
+        do_assist(tch, GET_NAME(ch), 0, 0);
       }
+      /* merge_iterator() registered a live iterator on the member list;
+       * without this every round leaked one, and free_group() later found
+       * the list "freed with N live iterators". The loop above has no
+       * break or return, so this is its only exit. */
+      remove_iterator(&Iterator);
     }
 
     hit(ch, FIGHTING(ch), TYPE_UNDEFINED);

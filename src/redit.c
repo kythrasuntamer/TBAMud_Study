@@ -1,9 +1,29 @@
-/**************************************************************************
-*  File: redit.c                                           Part of tbaMUD *
-*  Usage: Oasis OLC - Rooms.                                              *
-*                                                                         *
-* By Levork. Copyright 1996 Harvey Gilpin. 1997-2001 George Greer.        *
-**************************************************************************/
+/**
+* @file redit.c
+* Oasis OLC - Rooms: the room editor.
+*
+* redit edits a scratch copy of world[real_room(OLC_NUM)] that owns no live
+* state (no people, contents, light, script or events) and saves it with
+* add_room(). Exits hold room rnums, which other builders' inserts and
+* deletes move.
+*
+* Shared contract of the OasisOLC prototype editors (oedit, medit, redit,
+* zedit, sedit; see olc_checks.h):
+* - Each session edits a private scratch copy in d->olc; nothing reaches the
+*   live tables until the builder answers 'y' at the save prompt, and the
+*   copy is released by cleanup_olc() on every exit path.
+* - Scratch copies refer to other prototypes by rnum. Those positions move
+*   when any builder inserts or deletes a prototype; olc_renumber_sessions()
+*   moves every open copy, and OLC_CHECK_RNUM() guards every table index.
+* - *_parse(d, arg): arg is the builder's line, a mutable pointer into the
+*   descriptor's input buffer (at least MAX_INPUT_LENGTH bytes, ASCII after
+*   process_input). It is builder-controlled: validate before storing, and
+*   report a refused or clamped value (OLC_SET_CLAMPED, TB_WARN_MSG).
+* - Diagnostics use op names in kebab-case with OLC_DIAG / DIAG_CHAR
+*   identity; "should never get here" paths use OLC_ABORT.
+*
+* By Levork. Copyright 1996 Harvey Gilpin. 1997-2001 George Greer.
+*/
 
 #include "conf.h"
 #include "sysdep.h"
@@ -21,6 +41,7 @@
 #include "dg_olc.h"
 #include "constants.h"
 #include "modify.h"
+#include "olc_checks.h"
 
 /* local functions */
 static void redit_setup_new(struct descriptor_data *d);
@@ -30,6 +51,7 @@ static void redit_disp_exit_flag_menu(struct descriptor_data *d);
 static void redit_disp_flag_menu(struct descriptor_data *d);
 static void redit_disp_sector_menu(struct descriptor_data *d);
 static void redit_disp_menu(struct descriptor_data *d);
+static int redit_exit_vnum(struct descriptor_data *d, int dir);
 
 /* Utils and exported functions. */
 ACMD(do_oasis_redit)
@@ -97,10 +119,8 @@ ACMD(do_oasis_redit)
   d = ch->desc;
 
   /* Give the descriptor an OLC structure. */
-  if (d->olc) {
-    mudlog(BRF, LVL_IMMORT, TRUE, "SYSERR: do_oasis_redit: Player already had olc structure.");
-    free(d->olc);
-  }
+  if (d->olc)
+    OLC_DISCARD_STALE_SESSION(d, ch);
 
   /* Create the OLC structure. */
   CREATE(d->olc, struct oasis_olc_data, 1);
@@ -168,6 +188,14 @@ static void redit_setup_new(struct descriptor_data *d)
   OLC_VAL(d) = 0;
 }
 
+/* Start editing a copy of world[real_num].
+ *
+ * The struct copy would alias the live room's runtime state: people,
+ * contents, light, script and events are cleared below; func is kept (a
+ * function pointer, not owned state). Strings, exits and extra
+ * descriptions are deep-copied; proto_script is replaced by the session's
+ * OLC_SCRIPT copy. The number and zone fields are not authoritative: save
+ * uses OLC_NUM / OLC_ZNUM, and 'W' resets number to the edited vnum. */
 void redit_setup_existing(struct descriptor_data *d, int real_num)
 {
   struct room_data *room;
@@ -178,11 +206,23 @@ void redit_setup_existing(struct descriptor_data *d, int real_num)
 
   *room = world[real_num];
   
-  /* Make new room people list be empty.                          */ 
+  /* The struct copy aliases the live room's runtime state. The scratch copy
+   * must own none of it: add_room() inserts a new room with world[i] = *room,
+   * so an aliased list head would make two rooms share one object or
+   * character list (a use-after-free once either list changes).
+   *
+   * Make new room people list be empty.                          */ 
   /* Fixes bug where copying a room from within that room creates */ 
   /* an infinite loop when you next act() in the new room (goto?) */ 
   /* and you are your next_in_room          -- anderyu (10-05-22) */ 
-  room->people = NULL; 
+  room->people = NULL;
+  room->light = 0;
+  SCRIPT(room) = NULL;
+
+  /* Nor the room's objects: a new room saved from this buffer (a copy into
+   * a new vnum) took over the source's contents list, so both rooms shared
+   * one list whose objects named only the source as their room. */
+  room->contents = NULL;
 
   /* Nullify the events structure. */
   room->events = NULL;
@@ -206,15 +246,30 @@ void redit_setup_existing(struct descriptor_data *d, int real_num)
     }
   }
 
-  /* Extra descriptions, if necessary. */
+  /* Extra descriptions, if necessary.  parse_room() keeps NULL for an empty
+   * '~' keyword or description in the world file (world-file input), and
+   * strdup(NULL) crashed here.  Such an entry is copied incomplete: the
+   * extra-description menu shows the missing part as <NONE>, and backing
+   * out of an incomplete entry deletes it. */
   if (world[real_num].ex_description) {
     struct extra_descr_data *tdesc, *temp, *temp2;
+    int n = 1;
     CREATE(temp, struct extra_descr_data, 1);
 
     room->ex_description = temp;
-    for (tdesc = world[real_num].ex_description; tdesc; tdesc = tdesc->next) {
-      temp->keyword = strdup(tdesc->keyword);
-      temp->description = strdup(tdesc->description);
+    for (tdesc = world[real_num].ex_description; tdesc; tdesc = tdesc->next, n++) {
+      temp->keyword = tdesc->keyword ? strdup(tdesc->keyword) : NULL;
+      temp->description = tdesc->description ? strdup(tdesc->description) : NULL;
+      if (!tdesc->keyword || !tdesc->description) {
+        struct char_data *builder = d->character;
+        const char *missing = !tdesc->keyword ?
+          (!tdesc->description ? "keyword or description" : "keyword") : "description";
+
+        TB_WARN_MSG("olc", "redit-exdesc-incomplete", "room",
+                    "builder " DIAG_CHAR_FMT " room vnum %d extra desc %d has no %s; copied incomplete",
+                    DIAG_CHAR(builder), world[real_num].number, n, missing);
+        write_to_output(d, "Extra description %d of this room has no %s.\r\n", n, missing);
+      }
       if (tdesc->next) {
 	CREATE(temp2, struct extra_descr_data, 1);
 	temp->next = temp2;
@@ -234,65 +289,93 @@ void redit_setup_existing(struct descriptor_data *d, int real_num)
   SCRIPT(room) = NULL;
 }
 
-void redit_save_internally(struct descriptor_data *d)
+/* Save the scratch room as world[real_room(OLC_NUM)].
+ *
+ * Precondition: the scratch room owns no live lists (checked:
+ * redit-scratch-alias). add_room() copy_room()s it over an existing room
+ * (keeping that room's people and contents) or inserts it, shifting
+ * world[]; it does not take ownership of proto_script. This function frees
+ * the previous trigger list and gives the room OLC_SCRIPT (clearing the
+ * session's handle). Postcondition on insert: other sessions' room rnums
+ * were moved. Returns FALSE, after reporting, when nothing was saved. */
+static int redit_save_checked(struct descriptor_data *d)
 {
-  int j, room_num, new_room = FALSE;
-  struct descriptor_data *dsc;
+  int room_num, new_room = FALSE;
+  room_rnum existing;
+  struct trig_proto_list *old_proto;
 
-  if (OLC_ROOM(d)->number == NOWHERE)
-    new_room = TRUE;
+  /* Whether add_room() inserts (and shifts world[]) depends only on
+   * whether OLC_NUM exists, so decide "new room" the same way. The scratch
+   * copy's own number is not authoritative: rcopy (oasis_copy.c) and 'W'
+   * hand in a copy that still names its source, and an insert treated as
+   * an update skipped the renumbering of other builders' sessions. It is
+   * overwritten with OLC_NUM below. */
+  existing = real_room(OLC_NUM(d));
+  new_room = (existing == NOWHERE);
+
+  /* Invariant: the scratch room owns no live lists (see
+   * redit_setup_existing). add_room() copies the struct into world[], so a
+   * live head here would alias another room's contents or occupants. */
+  if (OLC_ROOM(d)->contents || OLC_ROOM(d)->people) {
+    struct char_data *builder = d->character;
+    TB_ERROR_MSG("olc", "redit-scratch-alias", "room",
+                 "builder " DIAG_CHAR_FMT " room vnum %d scratch copy holds live %s%s; save refused",
+                 DIAG_CHAR(builder), OLC_NUM(d),
+                 OLC_ROOM(d)->contents ? "contents " : "",
+                 OLC_ROOM(d)->people ? "people" : "");
+    write_to_output(d, "Internal error: the room copy is linked to a live room; nothing was saved.\r\n");
+    return FALSE;
+  }
 
   OLC_ROOM(d)->number = OLC_NUM(d); 
   /* FIXME: Why is this not set elsewhere? */
   OLC_ROOM(d)->zone = OLC_ZNUM(d);
 
+  /* add_room() copy_room()s the scratch room (proto_script NULL, see
+   * redit_setup_existing) over world[], so after it returns the old trigger
+   * list is reachable only through this pointer. */
+  old_proto = existing == NOWHERE ? NULL : world[existing].proto_script;
+
   if ((room_num = add_room(OLC_ROOM(d))) == NOWHERE) {
-    write_to_output(d, "Something went wrong...\r\n");
-    log("SYSERR: redit_save_internally: Something failed! (%d)", room_num);
-    return;
+    struct char_data *builder = d->character;
+    TB_ERROR_MSG("olc", "redit-save", "room",
+                 "builder " DIAG_CHAR_FMT " room vnum %d zone rnum %d: add_room returned NOWHERE; edits not saved",
+                 DIAG_CHAR(builder), OLC_NUM(d), (int)OLC_ZNUM(d));
+    return FALSE;
   }
 
-  /* Update triggers and free old proto list */
-  if (world[room_num].proto_script &&
-      world[room_num].proto_script != OLC_SCRIPT(d))
+  /* Update triggers and free the old proto list. */
+  if (old_proto && old_proto != OLC_SCRIPT(d)) {
+    world[room_num].proto_script = old_proto;
     free_proto_script(&world[room_num], WLD_TRIGGER);
+  }
 
+  /* The room now owns the list; clear the session's handle so
+   * cleanup_olc() does not free it. */
   world[room_num].proto_script = OLC_SCRIPT(d);
+  OLC_SCRIPT(d) = NULL; /* now owned by the room; see cleanup_olc */
   assign_triggers(&world[room_num], WLD_TRIGGER);
   /* end trigger update */
 
   /* Don't adjust numbers on a room update. */
   if (!new_room)
-    return;
+    return TRUE;
 
-  /* Idea contributed by C.Raehl 4/27/99 */
-  for (dsc = descriptor_list; dsc; dsc = dsc->next) {
-    if (dsc == d)
-      continue;
+  /* add_room() shifted world[] up from room_num. Move other open sessions'
+   * room rnums with it (idea contributed by C.Raehl 4/27/99). The shared
+   * helper leaves NOWHERE exits alone (room_rnum is unsigned, so NOWHERE
+   * + 1 would wrap to the Void) and moves only arg1 of 'D' commands: arg2
+   * there is a direction, not a room. */
+  olc_renumber_sessions(OLC_RNUM_ROOM, room_num, +1, d);
+  return TRUE;
+}
 
-    if (STATE(dsc) == CON_ZEDIT) {
-      for (j = 0; OLC_ZONE(dsc)->cmd[j].command != 'S'; j++)
-        switch (OLC_ZONE(dsc)->cmd[j].command) {
-          case 'O':
-          case 'M':
-          case 'T':
-          case 'V':
-            OLC_ZONE(dsc)->cmd[j].arg3 += (OLC_ZONE(dsc)->cmd[j].arg3 >= room_num);
-            break;
-          case 'D':
-            OLC_ZONE(dsc)->cmd[j].arg2 += (OLC_ZONE(dsc)->cmd[j].arg2 >= room_num);
-            /* Fall through */
-          case 'R':
-            OLC_ZONE(dsc)->cmd[j].arg1 += (OLC_ZONE(dsc)->cmd[j].arg1 >= room_num);
-            break;
-          }
-    } else if (STATE(dsc) == CON_REDIT) {
-      for (j = 0; j < DIR_COUNT; j++)
-        if (OLC_ROOM(dsc)->dir_option[j])
-          if (OLC_ROOM(dsc)->dir_option[j]->to_room >= room_num)
-            OLC_ROOM(dsc)->dir_option[j]->to_room++;
-    }
-  }
+/* Save the scratch room into world[]; FALSE (reported) when nothing was saved.
+ * Entry point for oasis_copy.c's copy table, which has no failure path;
+ * the failure was already reported by redit_save_checked(). */
+void redit_save_internally(struct descriptor_data *d)
+{
+  (void)redit_save_checked(d);
 }
 
 void redit_save_to_disk(zone_vnum zone_num)
@@ -311,6 +394,21 @@ void free_room(struct room_data *room)
 
   /* Free the room. */
   free(room);	/* XXX ? */
+}
+
+/* The vnum an exit of the scratch room leads to, or -1 for none. to_room is
+ * an rnum that other builders' room inserts and deletes move (see
+ * olc_renumber_sessions()); a value that missed a renumber is reported as
+ * stale instead of indexing world[] out of bounds. */
+static int redit_exit_vnum(struct descriptor_data *d, int dir)
+{
+  struct room_direction_data *exit = OLC_ROOM(d)->dir_option[dir];
+
+  if (!exit || exit->to_room == NOWHERE)
+    return -1;
+  if (!OLC_CHECK_RNUM(d, OLC_RNUM_ROOM, exit->to_room))
+    return -1;
+  return world[exit->to_room].number;
 }
 
 /* Menu functions */
@@ -369,7 +467,7 @@ static void redit_disp_exit_menu(struct descriptor_data *d)
 	  "%s6%s) Purge exit.\r\n"
 	  "Enter choice, 0 to quit : ",
 
-	  grn, nrm, cyn, OLC_EXIT(d)->to_room != NOWHERE ? world[OLC_EXIT(d)->to_room].number : -1,
+	  grn, nrm, cyn, redit_exit_vnum(d, OLC_VAL(d)),
 	  grn, nrm, yel, OLC_EXIT(d)->general_description ? OLC_EXIT(d)->general_description : "<NONE>",
 	  grn, nrm, yel, OLC_EXIT(d)->keyword ? OLC_EXIT(d)->keyword : "<NONE>",
 	  grn, nrm, cyn, OLC_EXIT(d)->key != NOTHING ? OLC_EXIT(d)->key : -1,
@@ -400,7 +498,7 @@ static void redit_disp_flag_menu(struct descriptor_data *d)
   clear_screen(d);
   column_list(d->character, 0, room_bits, NUM_ROOM_FLAGS, TRUE);
 
-  sprintbitarray(OLC_ROOM(d)->room_flags, room_bits, RF_ARRAY_MAX, bits, sizeof(bits));
+  SPRINTBITARRAY_FIELD(OLC_ROOM(d)->room_flags, room_bits, bits);
   write_to_output(d, "\r\nRoom flags: %s%s%s\r\n"
 	  "Enter room flags, 0 to quit : ", cyn, bits, nrm);
   OLC_MODE(d) = REDIT_FLAGS;
@@ -426,7 +524,7 @@ static void redit_disp_menu(struct descriptor_data *d)
   clear_screen(d);
   room = OLC_ROOM(d);
 
-  sprintbitarray(room->room_flags, room_bits, RF_ARRAY_MAX, buf1, sizeof(buf1));
+  SPRINTBITARRAY_FIELD(room->room_flags, room_bits, buf1);
   sprinttype(room->sector_type, sector_types, buf2, sizeof(buf2));
   write_to_output(d,
       "-- Room number : [%s%d%s] Room zone: [%s%d%s]\r\n"
@@ -449,17 +547,13 @@ static void redit_disp_menu(struct descriptor_data *d)
       "%s7%s) Exit south  : %s%d\r\n"
       "%s8%s) Exit west   : %s%d\r\n",
       grn, nrm, cyn,
-      room->dir_option[NORTH] && room->dir_option[NORTH]->to_room != NOWHERE ?
-      world[room->dir_option[NORTH]->to_room].number : -1,
+      redit_exit_vnum(d, NORTH),
       grn, nrm, cyn,
-      room->dir_option[EAST] && room->dir_option[EAST]->to_room != NOWHERE ?
-      world[room->dir_option[EAST]->to_room].number : -1,
+      redit_exit_vnum(d, EAST),
       grn, nrm, cyn,
-      room->dir_option[SOUTH] && room->dir_option[SOUTH]->to_room != NOWHERE ?
-      world[room->dir_option[SOUTH]->to_room].number : -1,
+      redit_exit_vnum(d, SOUTH),
       grn, nrm, cyn,
-      room->dir_option[WEST] && room->dir_option[WEST]->to_room != NOWHERE ?
-      world[room->dir_option[WEST]->to_room].number : -1);
+      redit_exit_vnum(d, WEST));
   } else {
     write_to_output(d,
       "%s5%s) Exit north  : %s%-6d%s,  %sB%s) Exit northwest : %s%d\r\n"
@@ -467,29 +561,21 @@ static void redit_disp_menu(struct descriptor_data *d)
       "%s7%s) Exit south  : %s%-6d%s,  %sD%s) Exit southeast : %s%d\r\n"
       "%s8%s) Exit west   : %s%-6d%s,  %sE%s) Exit southwest : %s%d\r\n",
       grn, nrm, cyn,
-      room->dir_option[NORTH] && room->dir_option[NORTH]->to_room != NOWHERE ?
-      world[room->dir_option[NORTH]->to_room].number : -1, nrm,
+      redit_exit_vnum(d, NORTH), nrm,
       grn, nrm, cyn,
-      room->dir_option[NORTHWEST] && room->dir_option[NORTHWEST]->to_room != NOWHERE ?
-      world[room->dir_option[NORTHWEST]->to_room].number : -1,
+      redit_exit_vnum(d, NORTHWEST),
       grn, nrm, cyn,
-      room->dir_option[EAST] && room->dir_option[EAST]->to_room != NOWHERE ?
-      world[room->dir_option[EAST]->to_room].number : -1, nrm,
+      redit_exit_vnum(d, EAST), nrm,
       grn, nrm, cyn,
-      room->dir_option[NORTHEAST] && room->dir_option[NORTHEAST]->to_room != NOWHERE ?
-      world[room->dir_option[NORTHEAST]->to_room].number : -1,
+      redit_exit_vnum(d, NORTHEAST),
       grn, nrm, cyn,
-      room->dir_option[SOUTH] && room->dir_option[SOUTH]->to_room != NOWHERE ?
-      world[room->dir_option[SOUTH]->to_room].number : -1, nrm,
+      redit_exit_vnum(d, SOUTH), nrm,
       grn, nrm, cyn,
-      room->dir_option[SOUTHEAST] && room->dir_option[SOUTHEAST]->to_room != NOWHERE ?
-      world[room->dir_option[SOUTHEAST]->to_room].number : -1,
+      redit_exit_vnum(d, SOUTHEAST),
       grn, nrm, cyn,
-      room->dir_option[WEST] && room->dir_option[WEST]->to_room != NOWHERE ?
-      world[room->dir_option[WEST]->to_room].number : -1, nrm,
+      redit_exit_vnum(d, WEST), nrm,
       grn, nrm, cyn,
-      room->dir_option[SOUTHWEST] && room->dir_option[SOUTHWEST]->to_room != NOWHERE ?
-      world[room->dir_option[SOUTHWEST]->to_room].number : -1
+      redit_exit_vnum(d, SOUTHWEST)
       );
   }
   write_to_output(d,
@@ -502,11 +588,9 @@ static void redit_disp_menu(struct descriptor_data *d)
       "%sQ%s) Quit\r\n"
       "Enter choice : ",
       grn, nrm, cyn,
-      room->dir_option[UP] && room->dir_option[UP]->to_room != NOWHERE ?
-      world[room->dir_option[UP]->to_room].number : -1,
+      redit_exit_vnum(d, UP),
       grn, nrm, cyn,
-      room->dir_option[DOWN] && room->dir_option[DOWN]->to_room != NOWHERE ?
-      world[room->dir_option[DOWN]->to_room].number : -1,
+      redit_exit_vnum(d, DOWN),
       grn, nrm,
           grn, nrm, cyn, OLC_SCRIPT(d) ? "Set." : "Not Set.",
           grn, nrm,
@@ -533,7 +617,11 @@ void redit_parse(struct descriptor_data *d, char *arg)
     switch (*arg) {
     case 'y':
     case 'Y':
-      redit_save_internally(d);
+      if (!redit_save_checked(d)) {
+        write_to_output(d, "Room %d could not be saved; nothing was changed.\r\n", OLC_NUM(d));
+        cleanup_olc(d, CLEANUP_ALL);
+        break;
+      }
       mudlog(CMP, MAX(LVL_BUILDER, GET_INVIS_LEV(d->character)), TRUE, "OLC: %s edits room %d.", GET_NAME(d->character), OLC_NUM(d));
       if (CONFIG_OLC_SAVE) {
         redit_save_to_disk(real_zone_by_thing(OLC_NUM(d)));
@@ -545,10 +633,7 @@ void redit_parse(struct descriptor_data *d, char *arg)
       break;
     case 'n':
     case 'N':
-      /* If not saving, we must free the script_proto list. We do so by 
-       * assigning it to the edited room and letting free_room in 
-       * cleanup_olc handle it. */
-      OLC_ROOM(d)->proto_script = OLC_SCRIPT(d);
+      /* Not saving: cleanup_olc() frees the unsaved OLC_SCRIPT copy. */
       cleanup_olc(d, CLEANUP_ALL);
       break;
     default:
@@ -699,15 +784,26 @@ void redit_parse(struct descriptor_data *d, char *arg)
       write_to_output(d, "Size limited to %d non-protocol characters.\r\n", MAX_ROOM_NAME / 2);
       break;
     }
-    if (OLC_ROOM(d)->name)
-      free(OLC_ROOM(d)->name);
-    arg[MAX_ROOM_NAME - 1] = '\0';
-    OLC_ROOM(d)->name = str_udup(arg);
+    /* Builder input. The visible length is checked above; colour codes
+     * can still push the stored bytes past MAX_ROOM_NAME - 1. Refuse that
+     * instead of cutting the string, which could split a code (and wrote
+     * arg[MAX_ROOM_NAME - 1] past the string's end, relying on the input
+     * buffer being at least that large). */
+    if (strlen(arg) >= MAX_ROOM_NAME) {
+      struct char_data *builder = d->character;
+      TB_WARN_MSG("olc", "redit-name-length", "room",
+                  "builder " DIAG_CHAR_FMT " room vnum %d name of %zu bytes refused (max %d)",
+                  DIAG_CHAR(builder), OLC_NUM(d), strlen(arg), MAX_ROOM_NAME - 1);
+      write_to_output(d, "That name is %zu bytes with colour codes; the limit is %d.\r\n",
+                      strlen(arg), MAX_ROOM_NAME - 1);
+      break;
+    }
+    OLC_REPLACE_STRING(OLC_ROOM(d)->name, arg);
     break;
 
   case REDIT_DESC:
     /* We will NEVER get here, we hope. */
-    mudlog(BRF, LVL_BUILDER, TRUE, "SYSERR: Reached REDIT_DESC case in parse_redit().");
+    TB_ERROR_MSG("olc", "redit-bad-mode", "olc", OLC_DIAG_FMT " (REDIT_DESC belongs to the string editor)", OLC_DIAG(d));
     write_to_output(d, "Oops, in REDIT_DESC.\r\n");
     break;
 
@@ -795,14 +891,12 @@ void redit_parse(struct descriptor_data *d, char *arg)
 
   case REDIT_EXIT_DESCRIPTION:
     /* We should NEVER get here, hopefully. */
-    mudlog(BRF, LVL_BUILDER, TRUE, "SYSERR: Reached REDIT_EXIT_DESC case in parse_redit");
+    TB_ERROR_MSG("olc", "redit-bad-mode", "olc", OLC_DIAG_FMT " (REDIT_EXIT_DESCRIPTION belongs to the string editor)", OLC_DIAG(d));
     write_to_output(d, "Oops, in REDIT_EXIT_DESCRIPTION.\r\n");
     break;
 
   case REDIT_EXIT_KEYWORD:
-    if (OLC_EXIT(d)->keyword)
-      free(OLC_EXIT(d)->keyword);
-    OLC_EXIT(d)->keyword = str_udup(arg);
+    OLC_REPLACE_STRING(OLC_EXIT(d)->keyword, arg);
     redit_disp_exit_menu(d);
     return;
 
@@ -834,9 +928,7 @@ void redit_parse(struct descriptor_data *d, char *arg)
 
   case REDIT_EXTRADESC_KEY:
     if (genolc_checkstring(d, arg)) {
-      if (OLC_DESC(d)->keyword)
-        free(OLC_DESC(d)->keyword);
-      OLC_DESC(d)->keyword = str_udup(arg);
+      OLC_REPLACE_STRING(OLC_DESC(d)->keyword, arg);
     }
     redit_disp_extradesc_menu(d);
     return;
@@ -856,6 +948,7 @@ void redit_parse(struct descriptor_data *d, char *arg)
 	/* Clean up pointers. */
 	REMOVE_FROM_LIST(OLC_DESC(d), OLC_ROOM(d)->ex_description, next);
 	free(OLC_DESC(d));
+	OLC_DESC(d) = NULL;   /* as oedit does: never leave it dangling */
       }
       break;
     case 1:
@@ -895,16 +988,57 @@ void redit_parse(struct descriptor_data *d, char *arg)
 
   case REDIT_COPY:
     if ((number = real_room(tb_parse_int_or_zero(arg))) != NOWHERE) {
+      /* setup allocates a fresh scratch room and trigger list: release the
+       * ones this session holds first, as cleanup_olc() would. */
+      olc_free_script_copy(d);
+      free_room(OLC_ROOM(d));
+      OLC_ROOM(d) = NULL;
       redit_setup_existing(d, number);
+      /* The struct copy kept the source's vnum, but this session still
+       * edits OLC_NUM(d). NOWHERE marks a room that does not exist yet. */
+      OLC_ROOM(d)->number = real_room(OLC_NUM(d)) != NOWHERE ? OLC_NUM(d) : NOWHERE;
     } else
       write_to_output(d, "That room does not exist.\r\n");
     break;
   
   case REDIT_DELETE:
     if (*arg == 'y' || *arg == 'Y') {
-      if (delete_room(real_room(OLC_ROOM(d)->number)))
+      /* Delete the room this session edits (OLC_NUM), never the scratch
+       * copy's number: after 'W' that names the copy source, possibly in a
+       * zone the builder cannot edit. */
+      room_rnum doomed = real_room(OLC_NUM(d));
+      struct char_data *builder = d->character;
+
+      if (doomed == NOWHERE) {
+        TB_WARN_MSG("olc", "delete-target-missing", "room",
+                    "builder " DIAG_CHAR_FMT " room vnum %d does not exist to delete",
+                    DIAG_CHAR(builder), OLC_NUM(d));
+        write_to_output(d, "Room %d has never been saved; there is nothing to delete.\r\n", OLC_NUM(d));
+        cleanup_olc(d, CLEANUP_ALL);
+        return;
+      }
+      if (!can_edit_zone(builder, real_zone_by_thing(OLC_NUM(d)))) {
+        TB_WARN_MSG("olc", "delete-permission", "room",
+                    "builder " DIAG_CHAR_FMT " room vnum %d delete refused: zone not editable",
+                    DIAG_CHAR(builder), OLC_NUM(d));
+        write_to_output(d, "You do not have permission to delete room %d.\r\n", OLC_NUM(d));
+        cleanup_olc(d, CLEANUP_ALL);
+        return;
+      }
+      if (OLC_ROOM(d)->number != OLC_NUM(d)) {
+        TB_ERROR_MSG("olc", "delete-target-mismatch", "room",
+                     "builder " DIAG_CHAR_FMT " editing room vnum %d (rnum %d) but scratch vnum is %d; delete refused",
+                     DIAG_CHAR(builder), OLC_NUM(d), doomed, OLC_ROOM(d)->number);
+        write_to_output(d, "Internal error: this editor lost track of room %d; nothing was deleted.\r\n", OLC_NUM(d));
+        cleanup_olc(d, CLEANUP_ALL);
+        return;
+      }
+
+      if (delete_room(doomed)) {
+        /* Other builders' scratch copies hold room rnums that just moved. */
+        olc_renumber_sessions(OLC_RNUM_ROOM, doomed, -1, d);
         write_to_output(d, "Room deleted.\r\n");
-     else
+      } else
         write_to_output(d, "Couldn't delete the room!.\r\n");
 
       cleanup_olc(d, CLEANUP_ALL);
@@ -920,7 +1054,7 @@ void redit_parse(struct descriptor_data *d, char *arg)
 
   default:
     /* We should never get here. */
-    mudlog(BRF, LVL_BUILDER, TRUE, "SYSERR: Reached default case in parse_redit");
+    TB_ERROR_MSG("olc", "redit-bad-mode", "olc", OLC_DIAG_FMT, OLC_DIAG(d));
     break;
   }
   /* If we get this far, something has been changed. */

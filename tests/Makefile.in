@@ -56,7 +56,7 @@ test_random: $(UNITY_SRC) $(STUBS_SRC) $(UTILS_SRC) test_random.c
 # ---------------------------------------------------------------------------
 test_interpreter: $(UNITY_SRC) $(STUBS_SRC) $(UTILS_SRC) \
                   $(SRCDIR)/interpreter.c test_interpreter.c
-	$(COMPILE) -o $@ $^ $(LIBS)
+	$(COMPILE) -o $@ $^ -Wl,--wrap=tb_error_log_at $(LIBS)
 
 # ---------------------------------------------------------------------------
 # test_class — covers src/class.c

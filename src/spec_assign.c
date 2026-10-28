@@ -18,6 +18,7 @@
 #include "ban.h" /* for SPECIAL(gen_board) */
 #include "boards.h"
 #include "mail.h"
+#include <stdint.h> /* uintptr_t: spec proc addresses in diagnostics */
 
 SPECIAL(questmaster); 
 SPECIAL(shop_keeper);
@@ -191,16 +192,41 @@ static struct spec_func_data spec_func_list[] = {
   {"Guildmaster",    guild }, 
   {"Guild Guard",    guild_guard }, 
   {"Questmaster",    questmaster }, 
-  {"Shopkeeper",     shop_keeper }, 
-  {"\n", NULL} 
-}; 
+  {"Shopkeeper",     shop_keeper },
+  {"Castle Guard",   CastleGuard },
+  {"King Welmar",    king_welmar },
+  {"Training Master", training_master },
+  {"Castle Butler",  James },
+  {"Castle Cleaner", cleaning },
+  {"Castle Twin",    tim },
+  {"Castle Twin",    tom },
+  {"Treasury Guard", DicknDavid },
+  {"Peter",          peter },
+  {"Gambler",        jerry },
+  {"\n", NULL}
+};
 
-const char *get_spec_func_name(SPECIAL(*func)) 
-{ 
-  int i; 
-  for (i=0; *(spec_func_list[i].name) != '\n'; i++) { 
-    if (func == spec_func_list[i].func) return (spec_func_list[i].name); 
-  } 
-  return NULL; 
-} 
+const char *get_spec_func_name(SPECIAL(*func))
+{
+  /* Procs already reported, so 'stat' on many mobs logs each proc once. */
+  static uintptr_t reported[16];
+  static size_t nreported = 0;
+  uintptr_t addr = (uintptr_t) func;
+  size_t k;
+  int i;
+
+  for (i=0; *(spec_func_list[i].name) != '\n'; i++) {
+    if (func == spec_func_list[i].func) return (spec_func_list[i].name);
+  }
+  /* Callers pass the result to %s: never return NULL. */
+  for (k = 0; k < nreported; k++)
+    if (reported[k] == addr)
+      return "Unknown";
+  if (nreported < sizeof(reported) / sizeof(reported[0]))
+    reported[nreported++] = addr;
+  TB_WARN_MSG("spec", "unnamed-spec", "spec_func_list",
+              "spec proc at 0x%lx is not listed in spec_func_list",
+              (unsigned long) addr);
+  return "Unknown";
+}
 

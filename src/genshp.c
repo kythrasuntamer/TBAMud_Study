@@ -15,6 +15,26 @@
 #include "genshp.h"
 #include "genzon.h"
 
+/**
+ * @file genshp.c
+ * Shop table maintenance for OLC (sedit) and the shop file writer.
+ *
+ * Input: shop data comes from builders through sedit; keeper messages are
+ * free text typed by the builder.
+ *
+ * List conventions: in_room and producing are IDXTYPE arrays terminated by
+ * NOTHING; the buy-type list is a shop_buy_data array terminated by an
+ * entry whose type is NOTHING (BUY_TYPE()).  producing is declared as
+ * obj_vnum * in shop.h but holds object prototype RNUMs while the server
+ * runs (converted from vnums at boot, back to vnums by save_shops()), so
+ * delete_object()/add_object() renumber it.  keeper is a mob RNUM (or
+ * NOBODY).  Stored rnums are range-checked before save_shops() indexes
+ * with them.
+ *
+ * Ownership: each shop_index[] entry owns its lists and message strings;
+ * see add_shop() for the one place where a slot is filled without freeing.
+ */
+
 /* NOTE (gg): Didn't modify sedit much. Don't consider it as 'recent' as the
  * other editors with regard to updates or style. */
 
@@ -103,6 +123,9 @@ static void copy_shop_type_list(struct shop_buy_data **tlist, struct shop_buy_da
   }
 }
 
+/* Remove entry num from a buy-type list.  num is builder input (sedit's
+ * delete-entry prompt): one outside the list changes nothing and is
+ * reported.  The caller knows which shop the list belongs to. */
 void remove_shop_from_type_list(struct shop_buy_data **list, int num)
 {
   int i, num_items;
@@ -111,8 +134,12 @@ void remove_shop_from_type_list(struct shop_buy_data **list, int num)
   /* Count number of entries. */
   for (i = 0; (*list)[i].type != NOTHING; i++);
 
-  if (num < 0 || num >= i)
+  if (num < 0 || num >= i) {
+    TB_WARN_MSG("olc", "shop-list-index", "shop",
+                "buy-type list: remove index %d out of range 0..%d; nothing removed",
+                num, i - 1);
     return;
+  }
   num_items = i;
 
   CREATE(nlist, struct shop_buy_data, num_items);
@@ -168,6 +195,10 @@ void add_shop_to_int_list(IDXTYPE **list, IDXTYPE newi)
   *list = nlist;
 }
 
+/* Remove entry num from a NOTHING-terminated room or product list.  num is
+ * builder input from sedit's delete-entry prompts (a negative number
+ * arrives as a large unsigned value): one outside the list changes nothing
+ * and is reported. */
 void remove_shop_from_int_list(IDXTYPE **list, IDXTYPE num)
 {
   IDXTYPE i, num_items, *nlist;
@@ -180,7 +211,12 @@ void remove_shop_from_int_list(IDXTYPE **list, IDXTYPE num)
 #else
   if (num < 0 || num >= i)
 #endif
+  {
+    TB_WARN_MSG("olc", "shop-list-index", "shop",
+                "room/product list: remove index %ld out of range 0..%ld; nothing removed",
+                (long)num, (long)i - 1);
     return;
+  }
   num_items = i;
 
   CREATE(nlist, IDXTYPE, num_items);
@@ -270,7 +306,19 @@ shop_rnum real_shop(shop_vnum vnum)
   return NOWHERE;
 }
 
-/* Generic string modifier for shop keeper messages. */
+/**
+ * Replace a shop keeper message with builder text, prefixing "%s " when
+ * the text does not start with '%' (the customer's name comes first).
+ *
+ * The result is a template, not a printf format: shop.c renders it with
+ * shop_format_message(), which substitutes only %s (customer name), %d
+ * (amount, buy/sell messages) and %%, and copies and reports anything
+ * else.  So no format validation is needed here, and a message must never
+ * be passed to a printf-family function as the format.
+ *
+ * @param str   Message field to replace; the old string is freed.
+ * @param new_s Builder text from sedit.
+ */
 void modify_shop_string(char **str, char *new_s)
 {
 
@@ -289,6 +337,19 @@ void modify_shop_string(char **str, char *new_s)
   *str = strdup(pointer);
 }
 
+/**
+ * Add a new shop or update the one with the same vnum, from sedit's copy.
+ *
+ * Update: the live entry's lists and strings are freed and replaced by deep
+ * copies.  Insert: shop_index[] grows by one and later shops shift up by
+ * struct copy, so each shifted slot's pointers now belong to the slot
+ * above.  The new slot is therefore filled with copy_shop(..., FALSE)
+ * after its list pointers are cleared: its old strings are still owned by
+ * the neighbour and must not be freed.  nshp keeps its own copies.
+ *
+ * @return The shop's rnum.  A vnum outside every zone is reported to
+ *         builders and the shop is not queued for saving.
+ */
 int add_shop(struct shop_data *nshp)
 {
   shop_rnum rshop;
@@ -348,22 +409,25 @@ int save_shops(zone_rnum zone_num)
   char fname[128], oldname[128];
   struct shop_data *shop;
 
-#if CIRCLE_UNSIGNED_INDEX
-  if (zone_num == NOWHERE || zone_num > top_of_zone_table) {
-#else
-  if (zone_num < 0 || zone_num > top_of_zone_table) {
-#endif
+  if (!VALID_ZONE_RNUM(zone_num)) {
     log("SYSERR: GenOLC: save_shops: Invalid real zone number %d. (0-%d)", zone_num, top_of_zone_table);
     return FALSE;
   }
 
   tb_snprintf(fname, sizeof(fname), "%s/%d.new", SHP_PREFIX, zone_table[zone_num].number);
   if (!(shop_file = fopen(fname, "w"))) {
-    mudlog(BRF, LVL_GOD, TRUE, "SYSERR: OLC: Cannot open shop file!");
+    TB_ERROR_ERRNO("olc", "shop-save-open", fname, "zone %d shops not saved",
+                   zone_table[zone_num].number);
+    mudlog(BRF, LVL_GOD, TRUE, "SYSERR: OLC: Cannot open shop file %s!", fname);
     return FALSE;
   } else if (fprintf(shop_file, "CircleMUD v3.0 Shop File~\n") < 0) {
-    mudlog(BRF, LVL_GOD, TRUE, "SYSERR: OLC: Cannot write to shop file!");
+    TB_ERROR_ERRNO("olc", "shop-save-write", fname, "zone %d shops not saved",
+                   zone_table[zone_num].number);
+    mudlog(BRF, LVL_GOD, TRUE, "SYSERR: OLC: Cannot write to shop file %s!", fname);
     tb_fclose(shop_file);
+    /* never leave a header-less .new behind */
+    if (remove(fname) != 0 && errno != ENOENT)
+      TB_REPORT_ERRNO("remove", fname);
     return FALSE;
   }
   /* Search database for shops in this zone. */
@@ -372,9 +436,22 @@ int save_shops(zone_rnum zone_num)
       tb_fprintf(shop_file, "#%d~\n", i);
       shop = shop_index + rshop;
 
-      /* Save the products. */
-      for (j = 0; S_PRODUCT(shop, j) != NOTHING; j++)
+      /* Save the products.  producing[] holds prototype rnums kept in step
+       * by the OLC renumberers; a stale one would read past obj_index[], so
+       * the whole zone save is abandoned rather than write a wrong vnum. */
+      for (j = 0; S_PRODUCT(shop, j) != NOTHING; j++) {
+        if (S_PRODUCT(shop, j) > top_of_objt) {
+          TB_ERROR_MSG("olc", "shop-save-product", fname,
+                       "shop vnum %d product %d rnum %d > top %d; zone %d not saved",
+                       S_NUM(shop), j, (int)S_PRODUCT(shop, j), (int)top_of_objt,
+                       zone_table[zone_num].number);
+          tb_fclose(shop_file);
+          if (remove(fname) != 0 && errno != ENOENT)
+            TB_REPORT_ERRNO("remove", fname);
+          return FALSE;
+        }
 	tb_fprintf(shop_file, "%d\n", obj_index[S_PRODUCT(shop, j)].vnum);
+      }
       tb_fprintf(shop_file, "-1\n");
 
       /* Save the rates. */
@@ -407,6 +484,18 @@ int save_shops(zone_rnum zone_num)
               convert_from_tabs(S_BUY(shop) ? S_BUY(shop) : "%s Ke?! %d?"));
       tb_fprintf(shop_file, "%s~\n",
               convert_from_tabs(S_SELL(shop) ? S_SELL(shop) : "%s Ke?! %d?"));
+      /* keeper is a mob rnum kept in step by delete_mobile(); a stale value
+       * (e.g. NOBODY decremented to 65534) would read past mob_index[]. */
+      if (S_KEEPER(shop) != NOBODY && S_KEEPER(shop) > top_of_mobt) {
+        TB_ERROR_MSG("olc", "shop-save-keeper", fname,
+                     "shop vnum %d keeper rnum %d > top %d; zone %d not saved",
+                     S_NUM(shop), (int)S_KEEPER(shop), (int)top_of_mobt,
+                     zone_table[zone_num].number);
+        tb_fclose(shop_file);
+        if (remove(fname) != 0 && errno != ENOENT)
+          TB_REPORT_ERRNO("remove", fname);
+        return FALSE;
+      }
       tb_fprintf(shop_file, "%d\n%ld\n%d\n%d\n",
               S_BROKE_TEMPER(shop),
               S_BITVECTOR(shop),
@@ -426,9 +515,17 @@ int save_shops(zone_rnum zone_num)
   }
   tb_fprintf(shop_file, "$~\n");
   {
+    /* ferror() stays set after any failed write.  tb_fprintf() reported
+     * each one, but a later flush that succeeds would hide it and commit a
+     * file with a hole in it (C2-16). */
+    int stream_ok = !ferror(shop_file);
     int flush_ok = tb_fflush_checked(shop_file, fname);
     int close_ok = tb_fclose_checked(shop_file, fname);
-    if (!flush_ok || !close_ok) {
+    if (!stream_ok)
+      TB_ERROR_MSG("olc", "save-stream-error", fname,
+                   TB_ERRID_PERSIST_WRITE " zone %d shops: a write failed; previous file kept",
+                   zone_table[zone_num].number);
+    if (!stream_ok || !flush_ok || !close_ok) {
       if (remove(fname) != 0 && errno != ENOENT)
         TB_REPORT_ERRNO("remove", fname);
       return FALSE;
@@ -438,8 +535,10 @@ int save_shops(zone_rnum zone_num)
   if (!tb_replace_file_checked(fname, oldname))
     return FALSE;
 
-  if (num_shops > 0)
-    create_world_index(zone_table[zone_num].number, "shp");
+  /* The .shp file is committed, but without an index entry it is not
+   * loaded at boot: keep the zone in the save list so a later save retries. */
+  if (num_shops > 0 && !create_world_index(zone_table[zone_num].number, "shp"))
+    return FALSE;
 
   if (in_save_list(zone_table[zone_num].number, SL_SHP))
     remove_from_save_list(zone_table[zone_num].number, SL_SHP);

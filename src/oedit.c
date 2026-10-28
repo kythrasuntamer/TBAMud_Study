@@ -1,9 +1,30 @@
-/**************************************************************************
-*  File: oedit.c                                           Part of tbaMUD *
-*  Usage: Oasis OLC - Objects.                                            *
-*                                                                         *
-* By Levork. Copyright 1996 Harvey Gilpin. 1997-2001 George Greer.        *
-**************************************************************************/
+/**
+* @file oedit.c
+* Oasis OLC - Objects: the object prototype editor (oedit) and the live
+* object instance editor (iedit).
+*
+* oedit edits a scratch copy of obj_proto[real_object(OLC_NUM)] and saves
+* it with add_object(), which also rewrites every live instance (see
+* oedit_save_checked). iedit edits one live object: OLC_IEDIT_OBJ is a
+* borrowed pointer validated by UID before use (see iedit_save_internally).
+*
+* Shared contract of the OasisOLC prototype editors (oedit, medit, redit,
+* zedit, sedit; see olc_checks.h):
+* - Each session edits a private scratch copy in d->olc; nothing reaches the
+*   live tables until the builder answers 'y' at the save prompt, and the
+*   copy is released by cleanup_olc() on every exit path.
+* - Scratch copies refer to other prototypes by rnum. Those positions move
+*   when any builder inserts or deletes a prototype; olc_renumber_sessions()
+*   moves every open copy, and OLC_CHECK_RNUM() guards every table index.
+* - *_parse(d, arg): arg is the builder's line, a mutable pointer into the
+*   descriptor's input buffer (at least MAX_INPUT_LENGTH bytes, ASCII after
+*   process_input). It is builder-controlled: validate before storing, and
+*   report a refused or clamped value (OLC_SET_CLAMPED, TB_WARN_MSG).
+* - Diagnostics use op names in kebab-case with OLC_DIAG / DIAG_CHAR
+*   identity; "should never get here" paths use OLC_ABORT.
+*
+* By Levork. Copyright 1996 Harvey Gilpin. 1997-2001 George Greer.
+*/
 
 #include "conf.h"
 #include "sysdep.h"
@@ -25,11 +46,37 @@
 #include "dg_olc.h"
 #include "fight.h"
 #include "modify.h"
+#include "olc_checks.h"
 
 /* local functions */
 
 
-/* iedit only copies string fields back into the live instance in this MVP. */
+/* iedit (live object instance editor) ---------------------------------------
+ *
+ * Lifetime: OLC_IEDIT_OBJ(d) is a borrowed pointer to a live object with no
+ * lifetime guarantee; any player, script or zone reset may extract it while
+ * the builder edits, and malloc may reuse the address. It is followed only
+ * after obj_uid_matches(OLC_IEDIT_UID(d), ptr) proves it is still the same
+ * object (iedit_save_internally).
+ *
+ * Scratch copy: OLC_OBJ(d) is copy_object() of the live object. Its
+ * carried_by, worn_by, in_obj, contains, next_content and script_id were
+ * copied from the live object and must never be followed or saved; its
+ * script and proto_script are cleared.
+ *
+ * Copied back on save: strings and extra descriptions (prototype-shared
+ * ones are never freed), type, weight, cost, rent, timer, level, extra /
+ * wear / AFF bits, affected[] and values. Type, weight, affects and AFF
+ * bits are accounted for by the handler while the object is worn, carried
+ * or contained, so save takes it out (unequip_char / obj_from_char /
+ * obj_from_obj) and puts it back around the writes. Scripts, copy ('W')
+ * and delete ('X') are not offered.
+ *
+ * Permission: the builder needs can_edit_zone() for the prototype's zone
+ * (LVL_GRGOD for an object without a prototype).
+ */
+
+/* String field ids for iedit_is_prototype_string(). */
 #define IEDIT_STRING_NAME   0
 #define IEDIT_STRING_LONG   1
 #define IEDIT_STRING_SHORT  2
@@ -37,10 +84,9 @@
 
 /* Forward declarations needed because iedit is inserted before oedit's normal static prototypes. */
 static void oedit_disp_menu(struct descriptor_data *d);
-static int iedit_object_still_exists(struct obj_data *obj);
 static int iedit_is_prototype_string(struct obj_data *obj, char *str, int field_id);
 static void iedit_replace_string(struct obj_data *obj, char **field, char *new_string, int field_id);
-static void iedit_save_internally(struct descriptor_data *d);
+static int iedit_save_internally(struct descriptor_data *d);
 static int iedit_is_forbidden_main_menu_choice(char *arg);
 
 /* Edit an existing object instance rather than the global prototype.
@@ -73,17 +119,38 @@ ACMD(do_oasis_iedit)
     return;
   }
 
+  /* iedit rewrites a live instance's affects, values, type and cost, so it
+   * needs the same permission oedit needs for the prototype's zone. An
+   * object with no prototype belongs to no zone: LVL_GRGOD only. The
+   * object is chosen by the builder from what they can reach, in any
+   * zone, so this check is the only thing tying the edit to a zone. */
+  {
+    zone_rnum zone = GET_OBJ_RNUM(obj) == NOTHING ? NOWHERE
+                                                 : real_zone_by_thing(GET_OBJ_VNUM(obj));
+    int allowed = (zone == NOWHERE) ? GET_LEVEL(ch) >= LVL_GRGOD
+                                    : can_edit_zone(ch, zone);
+
+    if (!allowed) {
+      TB_WARN_MSG("olc", "iedit-permission", "object",
+                  "builder " DIAG_CHAR_FMT " obj uid %ld vnum %d zone rnum %d refused",
+                  DIAG_CHAR(ch), obj_script_id(obj), GET_OBJ_VNUM(obj), (int)zone);
+      send_to_char(ch, "You do not have permission to edit that object.\r\n");
+      return;
+    }
+  }
+
   d = ch->desc;
 
-  if (d->olc) {
-    mudlog(BRF, LVL_IMMORT, TRUE,
-           "SYSERR: do_oasis_iedit: Player already had an OLC structure.");
-    cleanup_olc(d, CLEANUP_ALL);
-  }
+  if (d->olc)
+    OLC_DISCARD_STALE_SESSION(d, ch);
 
   CREATE(d->olc, struct oasis_olc_data, 1);
 
+  /* The live object can be extracted (and its memory reused) by any player,
+   * script or zone reset while the builder edits. Keep its UID: save
+   * re-validates the pointer against the UID table before touching it. */
   OLC_IEDIT_OBJ(d) = obj;
+  OLC_IEDIT_UID(d) = obj_script_id(obj);
   OLC_NUM(d) = GET_OBJ_VNUM(obj);
   OLC_ZNUM(d) = NOWHERE;
 
@@ -106,17 +173,6 @@ ACMD(do_oasis_iedit)
   mudlog(CMP, MAX(LVL_IMMORT, GET_INVIS_LEV(ch)), TRUE,
          "OLC: %s starts iediting %s",
          GET_NAME(ch), obj->short_description ? obj->short_description : "an object");
-}
-
-static int iedit_object_still_exists(struct obj_data *target)
-{
-  struct obj_data *obj;
-
-  for (obj = object_list; obj; obj = obj->next)
-    if (obj == target)
-      return TRUE;
-
-  return FALSE;
 }
 
 static int iedit_is_prototype_string(struct obj_data *obj, char *str, int field)
@@ -184,26 +240,55 @@ static void iedit_replace_values(struct obj_data *target, struct obj_data *edite
   if (!target || !edited)
     return;
 
-  /* Values only make sense relative to the object type. iedit does not allow
-   * changing type, but this guard keeps the save path defensive. */
-  if (GET_OBJ_TYPE(target) != GET_OBJ_TYPE(edited))
-    return;
-
+  /* Values are interpreted by the object type, which iedit copies first
+   * (menu '5' may change it), so they are always copied together. */
   for (i = 0; i < NUM_OBJ_VAL_POSITIONS; i++)
     GET_OBJ_VAL(target, i) = GET_OBJ_VAL(edited, i);
 }
 
-static void iedit_save_internally(struct descriptor_data *d)
+/* Copy the scratch edits back into the live object. Returns FALSE, after
+ * reporting, when the target is gone.
+ *
+ * Invariant: OLC_IEDIT_OBJ(d) may be followed only while OLC_IEDIT_UID(d)
+ * still maps to that address. extract_obj() unregisters the UID before the
+ * object is freed, and UIDs are not reused while registered, so
+ * obj_uid_matches() rejects both a freed target and a new object that malloc
+ * placed at the same address, without dereferencing the pointer. */
+static int iedit_save_internally(struct descriptor_data *d)
 {
   struct obj_data *target = OLC_IEDIT_OBJ(d);
   struct obj_data *edited = OLC_OBJ(d);
-  struct obj_data *top_obj;
-  struct char_data *owner = NULL;
+  struct obj_data *top_obj, *container;
+  struct char_data *owner = NULL, *wearer, *carrier;
+  struct char_data *builder = d->character;
+  int wear_pos;
 
-  if (!target || !edited || !iedit_object_still_exists(target)) {
-    write_to_output(d, "The object you were editing no longer exists.\r\n");
-    return;
+  if (!edited || !obj_uid_matches(OLC_IEDIT_UID(d), target)) {
+    TB_ERROR_MSG("olc", "iedit-target-gone", "object",
+                 "builder " DIAG_CHAR_FMT " obj uid %ld vnum %d extracted during iedit; edits discarded",
+                 DIAG_CHAR(builder), OLC_IEDIT_UID(d), OLC_NUM(d));
+    write_to_output(d, "The object you were editing no longer exists; nothing was saved.\r\n");
+    OLC_IEDIT_OBJ(d) = NULL;
+    return FALSE;
   }
+
+  /* Invariant: carry weight, container weight, character affects and room
+   * light were accounted for from the object's current type, weight,
+   * affected[] and AFF bits when it was equipped, picked up or put in a
+   * container. Writing new values in place would leave that accounting
+   * wrong (a +10 HIT ring edited to +50 removes 50 on unequip). Take the
+   * object out through the handler first and put it back afterwards, so
+   * the handler subtracts the old values and adds the new ones. */
+  wearer = target->worn_by;
+  wear_pos = target->worn_on;
+  carrier = target->carried_by;
+  container = target->in_obj;
+  if (wearer)
+    unequip_char(wearer, wear_pos);
+  else if (carrier)
+    obj_from_char(target);
+  else if (container)
+    obj_from_obj(target);
 
   iedit_replace_string(target, &target->name, edited->name, IEDIT_STRING_NAME);
   iedit_replace_string(target, &target->short_description, edited->short_description, IEDIT_STRING_SHORT);
@@ -231,6 +316,15 @@ static void iedit_save_internally(struct descriptor_data *d)
   }
   iedit_replace_values(target, edited);
 
+  /* Re-insert with the new values (equip_char may refuse a now-invalid
+   * item and leave it in the wearer's inventory, with its usual message). */
+  if (wearer)
+    equip_char(wearer, target, wear_pos);
+  else if (carrier)
+    obj_to_char(target, carrier);
+  else if (container)
+    obj_to_obj(target, container);
+
   /* If the object, or its top-level container, belongs to a player, make sure
    * the crash/rent save code notices the change. */
   for (top_obj = target; top_obj->in_obj; top_obj = top_obj->in_obj)
@@ -243,6 +337,8 @@ static void iedit_save_internally(struct descriptor_data *d)
 
   if (owner && !IS_NPC(owner))
     SET_BIT_AR(PLR_FLAGS(owner), PLR_CRASH);
+
+  return TRUE;
 }
 
 static int iedit_is_forbidden_main_menu_choice(char *arg)
@@ -275,17 +371,13 @@ static void oedit_disp_wear_menu(struct descriptor_data *d);
 static void oedit_disp_menu(struct descriptor_data *d);
 static void oedit_disp_perm_menu(struct descriptor_data *d);
 static void oedit_save_to_disk(int zone_num);
-static int iedit_object_still_exists(struct obj_data *obj);
 static int iedit_is_prototype_string(struct obj_data *obj, char *str, int field);
 static int iedit_is_prototype_ex_description(struct obj_data *obj);
 static void iedit_replace_string(struct obj_data *obj, char **field, char *new_string, int field_id);
 static void iedit_replace_ex_descriptions(struct obj_data *target, struct obj_data *edited);
 static void iedit_replace_values(struct obj_data *target, struct obj_data *edited);
-static void iedit_save_internally(struct descriptor_data *d);
+static int iedit_save_internally(struct descriptor_data *d);
 static int iedit_is_forbidden_main_menu_choice(char *arg);
-
-/* handy macro */
-#define S_PRODUCT(s, i) ((s)->producing[(i)])
 
 
 /* Utility and exported functions */
@@ -356,11 +448,8 @@ ACMD(do_oasis_oedit)
   d = ch->desc;
 
   /* Give the descriptor an OLC structure. */
-  if (d->olc) {
-    mudlog(BRF, LVL_IMMORT, TRUE,
-      "SYSERR: do_oasis: Player already had olc structure.");
-    free(d->olc);
-  }
+  if (d->olc)
+    OLC_DISCARD_STALE_SESSION(d, ch);
 
   CREATE(d->olc, struct oasis_olc_data, 1);
 
@@ -456,71 +545,122 @@ void oedit_setup_existing(struct descriptor_data *d, int real_num)
   OLC_OBJ(d)->proto_script = NULL;
 }
 
-void oedit_save_internally(struct descriptor_data *d)
+/* Save the scratch object as obj_proto[real_object(OLC_NUM)].
+ *
+ * Precondition: OLC_OBJ(d) is the session's scratch copy with proto_script
+ * NULL; OLC_SCRIPT(d) is its edited trigger list (or NULL).
+ * add_object() overwrites the prototype by struct copy and, for an existing
+ * prototype, struct-copies it over every live instance (update_all_objects
+ * keeps location, list fields, events, script and trigger list). So this
+ * function, not add_object, owns: freeing the prototype's previous trigger
+ * list, giving the prototype OLC_SCRIPT (and clearing the session's
+ * handle), and, only when the trigger list changed, tearing down each
+ * instance's script and proto list beforehand and rebuilding them after.
+ * Postcondition on insert: every other open session's object rnums were
+ * moved (olc_renumber_sessions). Delete renumbers in OEDIT_DELETE.
+ * Returns FALSE, after reporting oedit-save, when nothing was saved. */
+static int oedit_save_checked(struct descriptor_data *d)
 {
-  int i;
-  obj_rnum robj_num;
-  struct descriptor_data *dsc;
+  int i, rebuild_scripts;
+  obj_rnum robj_num, existing;
+  zone_rnum rznum;
   struct obj_data *obj;
+  struct trig_proto_list *old_proto;
 
-  i = (real_object(OLC_NUM(d)) == NOTHING);
-
-  if ((robj_num = add_object(OLC_OBJ(d), OLC_NUM(d))) == NOTHING) {
-    log("oedit_save_internally: add_object failed.");
-    return;
+  /* add_object() refuses a vnum in no zone (zedit can shrink the range
+   * while this session is open).  Refuse here first: the teardown below
+   * strips every live instance's script, and a refused save must leave the
+   * live objects as they were. */
+  rznum = real_zone_by_thing(OLC_NUM(d));
+  if (!VALID_ZONE_RNUM(rznum)) {
+    struct char_data *builder = d->character;
+    TB_ERROR_MSG("olc", "oedit-save", "object",
+                 "builder " DIAG_CHAR_FMT " obj vnum %d belongs to no zone; edits not saved",
+                 DIAG_CHAR(builder), OLC_NUM(d));
+    return FALSE;
   }
 
-  /* Update triggers and free old proto list  */
-  if (obj_proto[robj_num].proto_script &&
-      obj_proto[robj_num].proto_script != OLC_SCRIPT(d))
+  existing = real_object(OLC_NUM(d));
+  i = (existing == NOTHING);
+  /* add_object() struct-copies the scratch object (proto_script NULL, see
+   * oedit_setup_existing) over the prototype, so after it returns the old
+   * trigger list is reachable only through this pointer. */
+  old_proto = i ? NULL : obj_proto[existing].proto_script;
+  /* add_object() leaves each live instance's script (triggers, variables,
+   * pending waits) and its private trigger list as they are.  Rebuilding
+   * them discards that state, so do it only when the trigger list changed.
+   * A new object has no live instances. */
+  rebuild_scripts = !i && !olc_trig_lists_equal(old_proto, OLC_SCRIPT(d));
+
+  /* The list changed: tear each instance's script and trigger list down
+   * properly first; the refresh loop below rebuilds them from the new
+   * prototype. */
+  if (rebuild_scripts)
+    for (obj = object_list; obj; obj = obj->next) {
+      if (obj->item_number != existing)
+        continue;
+      if (SCRIPT(obj))
+        extract_script(obj, OBJ_TRIGGER);
+      free_proto_script(obj, OBJ_TRIGGER);
+    }
+
+  if ((robj_num = add_object(OLC_OBJ(d), OLC_NUM(d))) == NOTHING) {
+    struct char_data *builder = d->character;
+    TB_ERROR_MSG("olc", "oedit-save", "object",
+                 "builder " DIAG_CHAR_FMT " obj vnum %d: add_object returned NOTHING; edits not saved",
+                 DIAG_CHAR(builder), OLC_NUM(d));
+    return FALSE;
+  }
+
+  /* Update triggers and free the old proto list. */
+  if (old_proto && old_proto != OLC_SCRIPT(d)) {
+    obj_proto[robj_num].proto_script = old_proto;
     free_proto_script(&obj_proto[robj_num], OBJ_TRIGGER);
-  /* this will handle new instances of the object: */
+  }
+  /* this will handle new instances of the object. The prototype now owns
+   * the list; clear the session's handle so cleanup_olc() does not free it. */
   obj_proto[robj_num].proto_script = OLC_SCRIPT(d);
+  OLC_SCRIPT(d) = NULL; /* now owned by the prototype; see cleanup_olc */
 
   /* this takes care of the objects currently in-game */
-  for (obj = object_list; obj; obj = obj->next) {
+  for (obj = object_list; rebuild_scripts && obj; obj = obj->next) {
     if (obj->item_number != robj_num)
       continue;
-    /* remove any old scripts */
-    if (SCRIPT(obj))
-      extract_script(obj, OBJ_TRIGGER);
-
-    free_proto_script(obj, OBJ_TRIGGER);
+    /* Invariant: the teardown above released every instance's script, and
+     * add_object() leaves instance scripts as they are, so nothing is here.
+     * Anything that is has no known owner: detach it without freeing (a
+     * leak, never a double free). */
+    if (SCRIPT(obj) || obj->proto_script) {
+      TB_ERROR_MSG("olc", "oedit-script-refresh", "object",
+                   "obj vnum %d instance uid %ld still holds %s%s after add_object; detached unfreed",
+                   OLC_NUM(d), obj->script_id,
+                   SCRIPT(obj) ? "a script " : "",
+                   obj->proto_script ? "a proto_script" : "");
+      SCRIPT(obj) = NULL;
+      obj->proto_script = NULL;
+    }
     copy_proto_script(&obj_proto[robj_num], obj, OBJ_TRIGGER);
     assign_triggers(obj, OBJ_TRIGGER);
   }
   /* end trigger update */
 
   if (!i)	/* If it's not a new object, don't renumber. */
-    return;
+    return TRUE;
 
-  /* Renumber produce in shops being edited. */
-  for (dsc = descriptor_list; dsc; dsc = dsc->next)
-    if (STATE(dsc) == CON_SEDIT)
-      for (i = 0; S_PRODUCT(OLC_SHOP(dsc), i) != NOTHING; i++)
-	if (S_PRODUCT(OLC_SHOP(dsc), i) >= robj_num)
-	  S_PRODUCT(OLC_SHOP(dsc), i)++;
+  /* insert_object() shifted obj_proto up from robj_num. Move every other
+   * open session's object rnums with it: zedit commands, sedit products
+   * and the scratch identity of other oedit/iedit sessions (a stale one
+   * would make their delete or save act on a neighbouring object). */
+  olc_renumber_sessions(OLC_RNUM_OBJ, robj_num, +1, d);
+  return TRUE;
+}
 
-
-  /* Update other people in zedit too. From: C.Raehl 4/27/99 */
-  for (dsc = descriptor_list; dsc; dsc = dsc->next)
-    if (STATE(dsc) == CON_ZEDIT)
-      for (i = 0; OLC_ZONE(dsc)->cmd[i].command != 'S'; i++)
-        switch (OLC_ZONE(dsc)->cmd[i].command) {
-          case 'P':
-            OLC_ZONE(dsc)->cmd[i].arg3 += (OLC_ZONE(dsc)->cmd[i].arg3 >= robj_num);
-            /* Fall through. */
-          case 'E':
-          case 'G':
-          case 'O':
-            OLC_ZONE(dsc)->cmd[i].arg1 += (OLC_ZONE(dsc)->cmd[i].arg1 >= robj_num);
-            break;
-          case 'R':
-            OLC_ZONE(dsc)->cmd[i].arg2 += (OLC_ZONE(dsc)->cmd[i].arg2 >= robj_num);
-            break;
-          default:
-          break;
-        }
+/* Save the scratch object into obj_proto[]; FALSE (reported) when nothing was saved.
+ * Entry point for oasis_copy.c's copy table, which has no failure path;
+ * the failure was already reported by oedit_save_checked(). */
+void oedit_save_internally(struct descriptor_data *d)
+{
+  (void)oedit_save_checked(d);
 }
 
 static void oedit_save_to_disk(int zone_num)
@@ -692,7 +832,8 @@ static void oedit_disp_val1_menu(struct descriptor_data *d)
     oedit_disp_menu(d);
     break;
   default:
-    mudlog(BRF, LVL_BUILDER, TRUE, "SYSERR: OLC: Reached default case in oedit_disp_val1_menu()!");
+    TB_ERROR_MSG("olc", "oedit-bad-item-type", "object", OLC_DIAG_FMT " item type %d has no value menu",
+                 OLC_DIAG(d), GET_OBJ_TYPE(OLC_OBJ(d)));
     break;
   }
 }
@@ -813,7 +954,7 @@ static void oedit_disp_extra_menu(struct descriptor_data *d)
     write_to_output(d, "%s%2d%s) %-20.20s %s", grn, counter + 1, nrm,
 		extra_bits[counter], !(++columns % 2) ? "\r\n" : "");
   }
-  sprintbitarray(GET_OBJ_EXTRA(OLC_OBJ(d)), extra_bits, EF_ARRAY_MAX, bits, sizeof(bits));
+  SPRINTBITARRAY_FIELD(GET_OBJ_EXTRA(OLC_OBJ(d)), extra_bits, bits);
   write_to_output(d, "\r\nObject flags: %s%s%s\r\n"
 	  "Enter object extra flag (0 to quit) : ",
 	  cyn, bits, nrm);
@@ -831,7 +972,7 @@ static void oedit_disp_perm_menu(struct descriptor_data *d)
   for (counter = 1; counter < NUM_AFF_FLAGS; counter++) {
     write_to_output(d, "%s%2d%s) %-20.20s %s", grn, counter, nrm, affected_bits[counter], !(++columns % 2) ? "\r\n" : "");
   }
-  sprintbitarray(GET_OBJ_AFFECT(OLC_OBJ(d)), affected_bits, EF_ARRAY_MAX, bits, sizeof(bits));
+  SPRINTBITARRAY_FIELD(GET_OBJ_AFFECT(OLC_OBJ(d)), affected_bits, bits);
   write_to_output(d, "\r\nObject permanent flags: %s%s%s\r\n"
           "Enter object perm flag (0 to quit) : ", cyn, bits, nrm);
 }
@@ -849,7 +990,7 @@ static void oedit_disp_wear_menu(struct descriptor_data *d)
     write_to_output(d, "%s%2d%s) %-20.20s %s", grn, counter + 1, nrm,
 		wear_bits[counter], !(++columns % 2) ? "\r\n" : "");
   }
-  sprintbitarray(GET_OBJ_WEAR(OLC_OBJ(d)), wear_bits, TW_ARRAY_MAX, bits, sizeof(bits));
+  SPRINTBITARRAY_FIELD(GET_OBJ_WEAR(OLC_OBJ(d)), wear_bits, bits);
   write_to_output(d, "\r\nWear flags: %s%s%s\r\n"
 	  "Enter wear flag, 0 to quit : ", cyn, bits, nrm);
 }
@@ -867,7 +1008,7 @@ static void oedit_disp_menu(struct descriptor_data *d)
 
   /* Build buffers for first part of menu. */
   sprinttype(GET_OBJ_TYPE(obj), item_types, buf1, sizeof(buf1));
-  sprintbitarray(GET_OBJ_EXTRA(obj), extra_bits, EF_ARRAY_MAX, buf2, sizeof(buf2));
+  SPRINTBITARRAY_FIELD(GET_OBJ_EXTRA(obj), extra_bits, buf2);
 
   /* Build first half of menu. */
   write_to_output(d,
@@ -888,8 +1029,8 @@ static void oedit_disp_menu(struct descriptor_data *d)
 	  grn, nrm, cyn, buf2
 	  );
   /* Send first half then build second half of menu. */
-  sprintbitarray(GET_OBJ_WEAR(OLC_OBJ(d)), wear_bits, EF_ARRAY_MAX, buf1, sizeof(buf1));
-  sprintbitarray(GET_OBJ_AFFECT(OLC_OBJ(d)), affected_bits, EF_ARRAY_MAX, buf2, sizeof(buf2));
+  SPRINTBITARRAY_FIELD(GET_OBJ_WEAR(OLC_OBJ(d)), wear_bits, buf1);
+  SPRINTBITARRAY_FIELD(GET_OBJ_AFFECT(OLC_OBJ(d)), affected_bits, buf2);
 
   write_to_output(d,
 	  "%s7%s) Wear flags  : %s%s\r\n"
@@ -940,7 +1081,11 @@ void oedit_parse(struct descriptor_data *d, char *arg)
     switch (*arg) {
     case 'y':
     case 'Y':
-      oedit_save_internally(d);
+      if (!oedit_save_checked(d)) {
+        write_to_output(d, "Internal error: object %d could not be saved; nothing was changed.\r\n", OLC_NUM(d));
+        cleanup_olc(d, CLEANUP_ALL);
+        return;
+      }
       mudlog(CMP, MAX(LVL_BUILDER, GET_INVIS_LEV(d->character)), TRUE,
               "OLC: %s edits obj %d", GET_NAME(d->character), OLC_NUM(d));
       if (CONFIG_OLC_SAVE) {
@@ -952,9 +1097,7 @@ void oedit_parse(struct descriptor_data *d, char *arg)
       return;
     case 'n':
     case 'N':
-      /* If not saving, we must free the script_proto list. */
-      OLC_OBJ(d)->proto_script = OLC_SCRIPT(d);
-      free_proto_script(OLC_OBJ(d), OBJ_TRIGGER);
+      /* Not saving: cleanup_olc() frees the unsaved OLC_SCRIPT copy. */
       cleanup_olc(d, CLEANUP_ALL);
       return;
     case 'a': /* abort quit */
@@ -1093,25 +1236,19 @@ void oedit_parse(struct descriptor_data *d, char *arg)
   case OEDIT_KEYWORD:
     if (!genolc_checkstring(d, arg))
       break;
-    if (OLC_OBJ(d)->name)
-      free(OLC_OBJ(d)->name);
-    OLC_OBJ(d)->name = str_udup(arg);
+    OLC_REPLACE_STRING(OLC_OBJ(d)->name, arg);
     break;
 
   case OEDIT_SHORTDESC:
     if (!genolc_checkstring(d, arg))
       break;
-    if (OLC_OBJ(d)->short_description)
-      free(OLC_OBJ(d)->short_description);
-    OLC_OBJ(d)->short_description = str_udup(arg);
+    OLC_REPLACE_STRING(OLC_OBJ(d)->short_description, arg);
     break;
 
   case OEDIT_LONGDESC:
     if (!genolc_checkstring(d, arg))
       break;
-    if (OLC_OBJ(d)->description)
-      free(OLC_OBJ(d)->description);
-    OLC_OBJ(d)->description = str_udup(arg);
+    OLC_REPLACE_STRING(OLC_OBJ(d)->description, arg);
     break;
 
   case OEDIT_TYPE:
@@ -1154,32 +1291,36 @@ void oedit_parse(struct descriptor_data *d, char *arg)
     }
 
   case OEDIT_WEIGHT:
-    GET_OBJ_WEIGHT(OLC_OBJ(d)) = LIMIT(tb_parse_int_or_zero(arg), 0, MAX_OBJ_WEIGHT);
+    OLC_SET_CLAMPED(d, GET_OBJ_WEIGHT(OLC_OBJ(d)), tb_parse_int_or_zero(arg), 0, MAX_OBJ_WEIGHT, "Weight");
     break;
 
   case OEDIT_COST:
-    GET_OBJ_COST(OLC_OBJ(d)) = LIMIT(tb_parse_int_or_zero(arg), 0, MAX_OBJ_COST);
+    OLC_SET_CLAMPED(d, GET_OBJ_COST(OLC_OBJ(d)), tb_parse_int_or_zero(arg), 0, MAX_OBJ_COST, "Cost");
     break;
 
   case OEDIT_COSTPERDAY:
-    GET_OBJ_RENT(OLC_OBJ(d)) = LIMIT(tb_parse_int_or_zero(arg), 0, MAX_OBJ_RENT);
+    OLC_SET_CLAMPED(d, GET_OBJ_RENT(OLC_OBJ(d)), tb_parse_int_or_zero(arg), 0, MAX_OBJ_RENT, "Rent");
     break;
 
   case OEDIT_TIMER:
-    GET_OBJ_TIMER(OLC_OBJ(d)) = LIMIT(tb_parse_int_or_zero(arg), 0, MAX_OBJ_TIMER);
+    OLC_SET_CLAMPED(d, GET_OBJ_TIMER(OLC_OBJ(d)), tb_parse_int_or_zero(arg), 0, MAX_OBJ_TIMER, "Timer");
     break;
 
   case OEDIT_LEVEL:
-    GET_OBJ_LEVEL(OLC_OBJ(d)) = LIMIT(tb_parse_int_or_zero(arg), 0, LVL_IMPL);
+    OLC_SET_CLAMPED(d, GET_OBJ_LEVEL(OLC_OBJ(d)), tb_parse_int_or_zero(arg), 0, LVL_IMPL, "Level");
     break;
 
   case OEDIT_PERM:
     if ((number = tb_parse_int_or_zero(arg)) == 0)
       break;
     if (number > 0 && number < NUM_AFF_FLAGS) {
-      /* Setting AFF_CHARM on objects like this is dangerous. */
+      /* Setting AFF_CHARM on objects like this is dangerous: refuse it,
+       * and say so. */
       if (number != AFF_CHARM) {
         TOGGLE_BIT_AR(GET_OBJ_AFFECT(OLC_OBJ(d)), number);
+      } else {
+        write_to_output(d, "CHARM cannot be set on an object.\r\n");
+        return;
       }
     }
     oedit_disp_perm_menu(d);
@@ -1189,18 +1330,22 @@ void oedit_parse(struct descriptor_data *d, char *arg)
     number = tb_parse_int_or_zero(arg);
     switch (GET_OBJ_TYPE(OLC_OBJ(d))) {
     case ITEM_FURNITURE:
-      if (number < 0 || number > MAX_PEOPLE)
+      /* Builder input. Re-prompt for value 1 on a bad seat count; both
+       * paths return, so the common "proceed to menu 2" below neither
+       * skips the bad value nor shows menu 2 twice. */
+      if (number < 0 || number > MAX_PEOPLE) {
+        write_to_output(d, "Seats must be 0 to %d.\r\n", MAX_PEOPLE);
         oedit_disp_val1_menu(d);
-      else {
+      } else {
         GET_OBJ_VAL(OLC_OBJ(d), 0) = number;
         oedit_disp_val2_menu(d);
       }
-      break;
+      return;
     case ITEM_WEAPON:
-      GET_OBJ_VAL(OLC_OBJ(d), 0) = MIN(MAX(tb_parse_int_or_zero(arg), -50), 50);
+      OLC_SET_CLAMPED(d, GET_OBJ_VAL(OLC_OBJ(d), 0), number, -50, 50, "Weapon value 0");
       break;
     case ITEM_CONTAINER:
-      GET_OBJ_VAL(OLC_OBJ(d), 0) = LIMIT(tb_parse_int_or_zero(arg), -1, MAX_CONTAINER_SIZE);
+      OLC_SET_CLAMPED(d, GET_OBJ_VAL(OLC_OBJ(d), 0), number, -1, MAX_CONTAINER_SIZE, "Container capacity");
       break;
     default:
       GET_OBJ_VAL(OLC_OBJ(d), 0) = tb_parse_int_or_zero(arg);
@@ -1217,7 +1362,7 @@ void oedit_parse(struct descriptor_data *d, char *arg)
       if (number == 0 || number == -1)
 	GET_OBJ_VAL(OLC_OBJ(d), 1) = -1;
       else
-	GET_OBJ_VAL(OLC_OBJ(d), 1) = LIMIT(number, 1, NUM_SPELLS);
+	OLC_SET_CLAMPED(d, GET_OBJ_VAL(OLC_OBJ(d), 1), number, 1, NUM_SPELLS, "Spell");
 
       oedit_disp_val3_menu(d);
       break;
@@ -1233,7 +1378,7 @@ void oedit_parse(struct descriptor_data *d, char *arg)
 	oedit_disp_val3_menu(d);
       break;
     case ITEM_WEAPON:
-      GET_OBJ_VAL(OLC_OBJ(d), 1) = LIMIT(number, 1, MAX_WEAPON_NDICE);
+      OLC_SET_CLAMPED(d, GET_OBJ_VAL(OLC_OBJ(d), 1), number, 1, MAX_WEAPON_NDICE, "Number of damage dice");
       oedit_disp_val3_menu(d);
       break;
 
@@ -1280,7 +1425,7 @@ void oedit_parse(struct descriptor_data *d, char *arg)
       min_val = -65000;
       max_val = 65000;
     }
-    GET_OBJ_VAL(OLC_OBJ(d), 2) = LIMIT(number, min_val, max_val);
+    OLC_SET_CLAMPED(d, GET_OBJ_VAL(OLC_OBJ(d), 2), number, min_val, max_val, "Value 3");
     oedit_disp_val4_menu(d);
     return;
 
@@ -1311,7 +1456,7 @@ void oedit_parse(struct descriptor_data *d, char *arg)
       max_val = 65000;
       break;
     }
-    GET_OBJ_VAL(OLC_OBJ(d), 3) = LIMIT(number, min_val, max_val);
+    OLC_SET_CLAMPED(d, GET_OBJ_VAL(OLC_OBJ(d), 3), number, min_val, max_val, "Value 4");
     break;
 
   case OEDIT_PROMPT_APPLY:
@@ -1336,11 +1481,17 @@ void oedit_parse(struct descriptor_data *d, char *arg)
     else {
       int counter;
 
-      /* add in check here if already applied.. deny builders another */
+      /* Below LVL_IMPL an apply may appear only once. Menu choice number
+       * stores location number - 1 (below), so compare against that, and
+       * ignore the slot being replaced. */
       if (GET_LEVEL(d->character) < LVL_IMPL) {
         for (counter = 0; counter < MAX_OBJ_AFFECT; counter++) {
-          if (OLC_OBJ(d)->affected[counter].location == number) {
-            write_to_output(d, "Object already has that apply.");
+          if (counter != OLC_VAL(d) &&
+              OLC_OBJ(d)->affected[counter].modifier &&
+              OLC_OBJ(d)->affected[counter].location == number - 1) {
+            write_to_output(d, "Object already has that apply in slot %d; only an implementor may add it twice.\r\n",
+                            counter + 1);
+            oedit_disp_apply_menu(d);
             return;
           }
         }
@@ -1359,9 +1510,7 @@ void oedit_parse(struct descriptor_data *d, char *arg)
 
   case OEDIT_EXTRADESC_KEY:
     if (genolc_checkstring(d, arg)) {
-      if (OLC_DESC(d)->keyword)
-        free(OLC_DESC(d)->keyword);
-      OLC_DESC(d)->keyword = str_udup(arg);
+      OLC_REPLACE_STRING(OLC_DESC(d)->keyword, arg);
     }
     oedit_disp_extradesc_menu(d);
     return;
@@ -1425,16 +1574,58 @@ void oedit_parse(struct descriptor_data *d, char *arg)
 
   case OEDIT_COPY:
     if ((number = real_object(tb_parse_int_or_zero(arg))) != NOTHING) {
+      /* setup allocates a fresh scratch object and trigger list: release
+       * the ones this session holds first, as cleanup_olc() would. */
+      olc_free_script_copy(d);
+      free_object_strings(OLC_OBJ(d));
+      free(OLC_OBJ(d));
+      OLC_OBJ(d) = NULL;
       oedit_setup_existing(d, number);
+      /* copy_object() kept the source's rnum, but this session still edits
+       * OLC_NUM(d): delete and save must never act on the copy source. */
+      GET_OBJ_RNUM(OLC_OBJ(d)) = real_object(OLC_NUM(d));
     } else
       write_to_output(d, "That object does not exist.\r\n");
     break;
 
   case OEDIT_DELETE:
     if (*arg == 'y' || *arg == 'Y') {
-      if (delete_object(GET_OBJ_RNUM(OLC_OBJ(d))) != NOTHING)
+      /* Delete the prototype this session edits (OLC_NUM), never whatever
+       * rnum the scratch copy holds: after 'W' or a missed renumber that
+       * names another object, possibly in a zone the builder cannot edit. */
+      obj_rnum doomed = real_object(OLC_NUM(d));
+      struct char_data *builder = d->character;
+
+      if (doomed == NOTHING) {
+        TB_WARN_MSG("olc", "delete-target-missing", "object",
+                    "builder " DIAG_CHAR_FMT " obj vnum %d has no prototype to delete",
+                    DIAG_CHAR(builder), OLC_NUM(d));
+        write_to_output(d, "Object %d has never been saved; there is nothing to delete.\r\n", OLC_NUM(d));
+        cleanup_olc(d, CLEANUP_ALL);
+        return;
+      }
+      if (!can_edit_zone(builder, real_zone_by_thing(OLC_NUM(d)))) {
+        TB_WARN_MSG("olc", "delete-permission", "object",
+                    "builder " DIAG_CHAR_FMT " obj vnum %d delete refused: zone not editable",
+                    DIAG_CHAR(builder), OLC_NUM(d));
+        write_to_output(d, "You do not have permission to delete object %d.\r\n", OLC_NUM(d));
+        cleanup_olc(d, CLEANUP_ALL);
+        return;
+      }
+      if (GET_OBJ_RNUM(OLC_OBJ(d)) != doomed) {
+        TB_ERROR_MSG("olc", "delete-target-mismatch", "object",
+                     "builder " DIAG_CHAR_FMT " editing obj vnum %d (rnum %d) but scratch rnum is %d; delete refused",
+                     DIAG_CHAR(builder), OLC_NUM(d), doomed, GET_OBJ_RNUM(OLC_OBJ(d)));
+        write_to_output(d, "Internal error: this editor lost track of object %d; nothing was deleted.\r\n", OLC_NUM(d));
+        cleanup_olc(d, CLEANUP_ALL);
+        return;
+      }
+
+      if (delete_object(doomed) != NOTHING) {
+        /* Other builders' scratch copies hold object rnums that just moved. */
+        olc_renumber_sessions(OLC_RNUM_OBJ, doomed, -1, d);
         write_to_output(d, "Object deleted.\r\n");
-      else
+      } else
         write_to_output(d, "Couldn't delete the object!\r\n");
 
       cleanup_olc(d, CLEANUP_ALL);
@@ -1445,7 +1636,7 @@ void oedit_parse(struct descriptor_data *d, char *arg)
       write_to_output(d, "Please answer 'Y' or 'N': ");
     return;
   default:
-    mudlog(BRF, LVL_BUILDER, TRUE, "SYSERR: OLC: Reached default case in oedit_parse()!");
+    TB_ERROR_MSG("olc", "oedit-bad-mode", "olc", OLC_DIAG_FMT, OLC_DIAG(d));
     write_to_output(d, "Oops...\r\n");
     break;
   }
@@ -1463,13 +1654,16 @@ void iedit_parse(struct descriptor_data *d, char *arg)
     switch (*arg) {
     case 'y':
     case 'Y':
-      iedit_save_internally(d);
-      mudlog(CMP, MAX(LVL_BUILDER, GET_INVIS_LEV(d->character)), TRUE,
-             "OLC: %s iedits object instance %s",
-             GET_NAME(d->character),
-             (OLC_IEDIT_OBJ(d) && OLC_IEDIT_OBJ(d)->short_description) ?
-               OLC_IEDIT_OBJ(d)->short_description : "unknown");
-      write_to_output(d, "Object instance saved.\r\n");
+      if (iedit_save_internally(d)) {
+        /* Name the instance from the scratch copy: it holds the same text and,
+         * unlike the live object, is owned by this session. */
+        mudlog(CMP, MAX(LVL_BUILDER, GET_INVIS_LEV(d->character)), TRUE,
+               "OLC: %s iedits object instance %s (uid %ld)",
+               GET_NAME(d->character),
+               OLC_OBJ(d)->short_description ? OLC_OBJ(d)->short_description : "unknown",
+               OLC_IEDIT_UID(d));
+        write_to_output(d, "Object instance saved.\r\n");
+      }
       cleanup_olc(d, CLEANUP_ALL);
       return;
     case 'n':

@@ -187,6 +187,9 @@ struct spell_info_type {
    int mana_max;	/* Max amount of mana used by a spell (lowest lev) */
    int mana_change;	/* Change in mana used by spell from lev to lev */
 
+   /* Indexed by class. The player's class comes from the pfile, which is
+    * not range-checked on load: index through SPELL_MIN_LEVEL() or check
+    * VALID_CLASS() (utils.h) first. */
    int min_level[NUM_CLASSES];
    int routines;
    byte violent;
@@ -195,27 +198,48 @@ struct spell_info_type {
    const char *wear_off_msg;	/* Input size not limited. Originates from string constants. */
 };
 
-/* Possible Targets:
-   bit 0 : IGNORE TARGET
-   bit 1 : PC/NPC in room
-   bit 2 : PC/NPC in world
-   bit 3 : Object held
-   bit 4 : Object in inventory
-   bit 5 : Object in room
-   bit 6 : Object in world
-   bit 7 : If fighting, and no argument, select tar_char as self
-   bit 8 : If fighting, and no argument, select tar_char as victim (fighting)
-   bit 9 : If no argument, select self, if argument check that it IS self. */
+/** TRUE when spl names a real spell or skill slot in spell_info[] (slot 0
+ * is the reserved "no spell"). Spell numbers come from object values,
+ * scripts and player input, so check before indexing. spl evaluated twice:
+ * pass a plain variable. */
+#define VALID_SPELLNUM(spl)	((spl) >= 1 && (spl) <= TOP_SPELL_DEFINE)
+
+/** Minimum level at which class c learns spell spl; an invalid class can
+ * never cast (LVL_IMPL + 1), the fail-closed answer. spl must already be a
+ * valid spell number. c evaluated twice: pass a plain variable. */
+#define SPELL_MIN_LEVEL(spl, c) \
+  (VALID_CLASS(c) ? spell_info[(spl)].min_level[(c)] : LVL_IMPL + 1)
+
+/* Possible targets: see the TAR_* bits above (spell_info_type.targets).
+ * An older bit-number list here disagreed with those values and was
+ * removed; the TAR_* definitions are authoritative. */
 #define SPELL_TYPE_SPELL   0
 #define SPELL_TYPE_POTION  1
 #define SPELL_TYPE_WAND    2
 #define SPELL_TYPE_STAFF   3
 #define SPELL_TYPE_SCROLL  4
 
+/** Declare or define a manual spell routine (MAG_MANUAL), called only from
+ * call_magic() through MANUAL_SPELL after the cast triggers ran and the
+ * participants were re-validated.
+ *
+ * Arguments: ch is the caster and is never NULL. victim and obj are
+ * call_magic's cvict and ovict and may each be NULL whatever the spell's
+ * TAR_* bits say, because wands, scrolls, staves and dg_cast reach
+ * call_magic without do_cast's target parsing. Each routine must check
+ * the one it uses:
+ *   spell_charm, spell_recall, spell_teleport, spell_summon - victim
+ *   spell_create_water, spell_enchant_weapon,
+ *   spell_locate_object                                     - obj
+ *   spell_identify, spell_detect_poison           - obj or victim
+ * The routines may move victim (recall, teleport, summon), which runs
+ * further triggers; call_magic() does not use either pointer after the
+ * routine returns. */
 #define ASPELL(spellname) \
 void	spellname(int level, struct char_data *ch, \
 		  struct char_data *victim, struct obj_data *obj)
 
+/** Call a manual spell with call_magic()'s locals (caster, cvict, ovict). */
 #define MANUAL_SPELL(spellname)	spellname(level, caster, cvict, ovict);
 
 ASPELL(spell_create_water);

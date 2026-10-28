@@ -32,7 +32,11 @@ static void perform_mag_groups(int level, struct char_data *ch, struct char_data
 /* Negative apply_saving_throw[] values make saving throws better! So do
  * negative modifiers.  Though people may be used to the reverse of that.
  * It's due to the code modifying the target saving throw instead of the
- * random number of the character as in some other systems. */
+ * random number of the character as in some other systems.
+ * Precondition: 0 <= type < NUM_OF_SAVING_THROWS (it indexes the class
+ * tables and GET_SAVE). The (unsigned char) cast of saving_throws() is
+ * intentional: the tables hold 0..100 values in a byte-sized type, and
+ * the cast keeps that range rather than a sign-extended negative. */
 int mag_savingthrow(struct char_data *ch, int type, int modifier)
 {
   /* NPCs use warrior tables according to some book */
@@ -42,7 +46,9 @@ int mag_savingthrow(struct char_data *ch, int type, int modifier)
   if (!IS_NPC(ch))
     class_sav = (int)GET_CLASS(ch);
 
-  save = (unsigned char)saving_throws(class_sav, type, GET_LEVEL(ch));
+  /* char_saving_throw() names ch in the class-table report if its class
+   * or level misses the table (C1-19). */
+  save = (unsigned char)char_saving_throw(ch, class_sav, type);
   save += GET_SAVE(ch, type);
   save += modifier;
 
@@ -54,7 +60,12 @@ int mag_savingthrow(struct char_data *ch, int type, int modifier)
   return (FALSE);
 }
 
-/* affect_update: called from comm.c (causes spells to wear off) */
+/* affect_update: called from comm.c (causes spells to wear off) once per
+ * mud hour. Duration semantics: a positive duration counts down by one;
+ * -1 is permanent and never touched; 0, or any other negative value,
+ * expires now (the wear-off message is sent once for a run of affects of
+ * the same spell, on the last one). 'next' is read before affect_remove()
+ * frees af; affect_remove() runs no scripts. */
 void affect_update(void)
 {
   struct affected_type *af, *next;
@@ -572,7 +583,12 @@ static void perform_mag_groups(int level, struct char_data *ch,
  * contains the switch statement to send us to the right magic. Group spells
  * affect everyone grouped with the caster who is in the room, caster last. To
  * add new group spells, you shouldn't have to change anything in mag_groups.
- * Just add a new case to perform_mag_groups. */
+ * Just add a new case to perform_mag_groups.
+ * Re-entrancy: simple_list() keeps one static iterator for the whole
+ * server and is not re-entrant. A perform_mag_groups() callee (for example
+ * spell_recall, or anything reaching a DG trigger) must not call
+ * simple_list() on another list while this walk is in progress, or the
+ * walk silently restarts or stops on the wrong list. */
 void mag_groups(int level, struct char_data *ch, int spellnum, int savetype)
 {
   struct char_data *tch;
@@ -616,8 +632,11 @@ void mag_masses(int level, struct char_data *ch, int spellnum, int savetype)
  * them to work. Area spells have limited targets within the room. */
 void mag_areas(int level, struct char_data *ch, int spellnum, int savetype)
 {
-  struct char_data *tch, *next_tch;
+  struct char_data *tch;
   const char *to_char = NULL, *to_room = NULL;
+  room_rnum origin;
+  long *targets;
+  int count, i;
 
   if (ch == NULL)
     return;
@@ -637,8 +656,31 @@ void mag_areas(int level, struct char_data *ch, int spellnum, int savetype)
     act(to_room, FALSE, ch, 0, 0, TO_ROOM);
 
 
-  for (tch = world[IN_ROOM(ch)].people; tch; tch = next_tch) {
-    next_tch = tch->next_in_room;
+  /* mag_damage() runs damage and death triggers (and death itself), which
+   * can teleport or purge any occupant, so next_in_room is not kept across
+   * it: the room is snapshotted as UIDs and each occupant re-resolved. One
+   * that left the caster's room or is pending extraction is skipped and
+   * reported, and the spell stops if the caster is purged or moved (H1-19;
+   * maintainer-safety-guide section 2). */
+  origin = IN_ROOM(ch);
+  count = room_people_uids(origin, &targets);
+  for (i = 0; i < count; i++) {
+    if (DEAD(ch) || IN_ROOM(ch) != origin) {
+      TB_WARN_MSG("magic", "area-caster-moved", skill_name(spellnum),
+                  "spell %d caster " DIAG_CHAR_FMT " purged or moved during "
+                  "the area spell; %d occupant(s) of " DIAG_ROOM_FMT
+                  " skipped", spellnum, DIAG_CHAR(ch), count - i,
+                  DIAG_ROOM(origin));
+      break;
+    }
+    if ((tch = room_person_live(targets[i], origin)) == NULL) {
+      TB_WARN_MSG("magic", "area-target-moved", skill_name(spellnum),
+                  "spell %d target uid %ld left " DIAG_ROOM_FMT " or was "
+                  "purged during the area spell by " DIAG_CHAR_FMT
+                  "; skipped", spellnum, targets[i], DIAG_ROOM(origin),
+                  DIAG_CHAR(ch));
+      continue;
+    }
 
     /* The skips: 1: the caster
      *            2: immortals
@@ -661,6 +703,7 @@ void mag_areas(int level, struct char_data *ch, int spellnum, int savetype)
     /* Doesn't matter if they die here so we don't check. -gg 6/24/98 */
     mag_damage(level, ch, tch, spellnum, 1);
   }
+  free(targets);
 }
 
 /*----------------------------------------------------------------------------*/
@@ -685,6 +728,17 @@ static const char *mag_summon_msgs[] = {
   "$n animates a corpse!"
 };
 
+/* Indexes into mag_summon_msgs[] used by mag_summons(). Name them rather
+ * than writing numbers: a missing comma once shifted every later entry and
+ * clone and animate dead printed their neighbours' messages. */
+#define MSG_SUMMON_CLONE     11   /* "$n magically divides!" */
+#define MSG_SUMMON_ANIMATE   12   /* "$n animates a corpse!" */
+#define NUM_MAG_SUMMON_MSGS  13
+/* Compile-time check: the build fails if the table and the indexes above
+ * drift apart. */
+TB_STATIC_ASSERT(TB_ARRAY_LEN(mag_summon_msgs) == NUM_MAG_SUMMON_MSGS,
+                 mag_summon_msgs_size);
+
 /* Keep the \r\n because these use send_to_char. */
 static const char *mag_summon_fail_msgs[] = {
   "\r\n",
@@ -702,12 +756,19 @@ static const char *mag_summon_fail_msgs[] = {
 #define OBJ_CLONE            161  /**< vnum for clone material. */
 #define MOB_ZOMBIE           11   /**< vnum for the zombie mob. */
 
+/* Summons num creatures (mob vnum by spell) that follow ch, using the
+ * named message indexes into mag_summon_msgs[]. For SPELL_ANIMATE_DEAD,
+ * obj must be a corpse (IS_CORPSE): it is consumed, its contents going to
+ * the zombie. Each summoned mob's load trigger runs arbitrary script code
+ * and may purge the mob or the corpse; both are re-validated (mob by
+ * pending-extraction state, corpse by UID) before they are used again. */
 void mag_summons(int level, struct char_data *ch, struct obj_data *obj,
 		      int spellnum, int savetype)
 {
   struct char_data *mob = NULL;
   struct obj_data *tobj, *next_obj;
   int pfail = 0, msg = 0, fmsg = 0, num = 1, handle_corpse = FALSE, i;
+  long corpse_uid = 0;
   mob_vnum mob_num;
 
   if (ch == NULL)
@@ -715,7 +776,7 @@ void mag_summons(int level, struct char_data *ch, struct obj_data *obj,
 
   switch (spellnum) {
   case SPELL_CLONE:
-    msg = 10;
+    msg = MSG_SUMMON_CLONE;
     fmsg = rand_number(2, 6);	/* Random fail message. */
     mob_num = MOB_CLONE;
     /*
@@ -739,7 +800,9 @@ void mag_summons(int level, struct char_data *ch, struct obj_data *obj,
       return;
     }
     handle_corpse = TRUE;
-    msg = 11;
+    /* The zombie's load trigger below may purge the corpse. */
+    corpse_uid = obj_script_id(obj);
+    msg = MSG_SUMMON_ANIMATE;
     fmsg = rand_number(2, 6);	/* Random fail message. */
     mob_num = MOB_ZOMBIE;
     pfail = 10;	/* 10% failure, should vary in the future. */
@@ -773,12 +836,30 @@ void mag_summons(int level, struct char_data *ch, struct obj_data *obj,
     }
     act(mag_summon_msgs[msg], FALSE, ch, 0, mob, TO_ROOM);
     load_mtrigger(mob);
+    /* A load script that purges its own mob leaves it pending extraction:
+     * it must not become a follower or group member. */
+    if (DEAD(mob)) {
+      TB_WARN_MSG("magic", "summon-mob-purged", "char",
+                  "summoned mob vnum %d purged by its load trigger; not "
+                  "following " DIAG_CHAR_FMT, (int) mob_num, DIAG_CHAR(ch));
+      continue;
+    }
     add_follower(mob, ch);
-    
+
     if (GROUP(ch) && GROUP_LEADER(GROUP(ch)) == ch)
-      join_group(mob, GROUP(ch));    
+      join_group(mob, GROUP(ch));
   }
   if (handle_corpse) {
+    /* The load trigger ran arbitrary script code: the corpse may be gone
+     * (freed) and the zombie may be pending extraction. */
+    if (!obj_uid_matches(corpse_uid, obj)) {
+      TB_WARN_MSG("magic", "summon-corpse-gone", "obj",
+                  "corpse uid %ld purged by load trigger of mob vnum %d for "
+                  DIAG_CHAR_FMT, corpse_uid, (int) mob_num, DIAG_CHAR(ch));
+      return;
+    }
+    if (DEAD(mob))
+      return;		/* reported above; the corpse keeps its contents */
     for (tobj = obj->contains; tobj; tobj = next_obj) {
       next_obj = tobj->next_content;
       obj_from_obj(tobj);
@@ -855,7 +936,13 @@ void mag_unaffects(int level, struct char_data *ch, struct char_data *victim,
     to_vict = "You don't feel so unlucky.";
     break;
   default:
-    log("SYSERR: unknown spellnum %d passed to mag_unaffects.", spellnum);
+    /* Internal invariant: call_magic() routes a spell here only when its
+     * spell_info[] routines include MAG_UNAFFECTS, so each such spell
+     * needs a case above; a new one without a case lands here (H1-26). */
+    TB_ERROR_MSG("magic", "unaffects-unknown-spell", skill_name(spellnum),
+                 "spell %d has MAG_UNAFFECTS but no case in mag_unaffects(); "
+                 "caster " DIAG_CHAR_FMT " victim " DIAG_CHAR_FMT, spellnum,
+                 DIAG_CHAR(ch), DIAG_CHAR(victim));
     return;
   }
 
@@ -953,14 +1040,21 @@ void mag_creations(int level, struct char_data *ch, int spellnum)
     z = 10;
     break;
   default:
+    /* The same invariant for MAG_CREATIONS. */
+    TB_ERROR_MSG("magic", "creations-unknown-spell", skill_name(spellnum),
+                 "spell %d has MAG_CREATIONS but no case in "
+                 "mag_creations(); caster " DIAG_CHAR_FMT, spellnum,
+                 DIAG_CHAR(ch));
     send_to_char(ch, "Spell unimplemented, it would seem.\r\n");
     return;
   }
 
+  /* The created object's prototype comes from the world files. */
   if (!(tobj = read_object(z, VIRTUAL))) {
     send_to_char(ch, "I seem to have goofed.\r\n");
-    log("SYSERR: spell_creations, spell %d, obj %d: obj not found",
-	    spellnum, z);
+    TB_ERROR_MSG("magic", "creations-proto-missing", skill_name(spellnum),
+                 "spell %d creates obj vnum %d, which is not loaded; caster "
+                 DIAG_CHAR_FMT, spellnum, (int) z, DIAG_CHAR(ch));
     return;
   }
   obj_to_char(tobj, ch);
@@ -969,6 +1063,11 @@ void mag_creations(int level, struct char_data *ch, int spellnum)
   load_otrigger(tobj);
 }
 
+/* Room-affecting spells (currently only darkness): sets the room flag and
+ * schedules its expiry. Lifetime: the expiry event identifies the room by
+ * vnum text in sVariables, never by a room_data pointer, because OLC room
+ * add/delete reallocates or shifts world[] while the event is pending;
+ * event_countdown() resolves the vnum when it fires. */
 void mag_rooms(int level, struct char_data *ch, int spellnum)
 {
   room_rnum rnum;
@@ -1006,5 +1105,14 @@ void mag_rooms(int level, struct char_data *ch, int spellnum)
   send_to_char(ch, "%s\r\n", msg);
   act(room, FALSE, ch, 0, 0, TO_ROOM);
   
-  NEW_EVENT(eSPL_DARKNESS, &world[rnum], NULL, duration * PASSES_PER_SEC);
+  /* The expiry event is keyed by room vnum, never by &world[rnum]: OLC
+   * room creation reallocates world[] and room deletion shifts it while
+   * the event is pending, and event_countdown() would then read a freed
+   * or wrong room. eSPL_DARKNESS is a world event for the same reason. */
+  {
+    char vnum_buf[32];
+
+    tb_snprintf(vnum_buf, sizeof(vnum_buf), "%d", (int) GET_ROOM_VNUM(rnum));
+    NEW_EVENT(eSPL_DARKNESS, NULL, vnum_buf, duration * PASSES_PER_SEC);
+  }
 }

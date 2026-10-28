@@ -1,9 +1,28 @@
-/**************************************************************************
-*  File: medit.c                                           Part of tbaMUD *
-*  Usage: Oasis OLC - Mobiles.                                            *
-*                                                                         *
-* Copyright 1996 Harvey Gilpin. 1997-2001 George Greer.                   *
-**************************************************************************/
+/**
+* @file medit.c
+* Oasis OLC - Mobiles: the mobile prototype editor.
+*
+* medit edits a scratch copy of mob_proto[real_mobile(OLC_NUM)] and saves
+* it with add_mobile(). The scratch copy's nr must name the prototype being
+* edited (or NOBODY): free_mobile(), delete and save rely on it.
+*
+* Shared contract of the OasisOLC prototype editors (oedit, medit, redit,
+* zedit, sedit; see olc_checks.h):
+* - Each session edits a private scratch copy in d->olc; nothing reaches the
+*   live tables until the builder answers 'y' at the save prompt, and the
+*   copy is released by cleanup_olc() on every exit path.
+* - Scratch copies refer to other prototypes by rnum. Those positions move
+*   when any builder inserts or deletes a prototype; olc_renumber_sessions()
+*   moves every open copy, and OLC_CHECK_RNUM() guards every table index.
+* - *_parse(d, arg): arg is the builder's line, a mutable pointer into the
+*   descriptor's input buffer (at least MAX_INPUT_LENGTH bytes, ASCII after
+*   process_input). It is builder-controlled: validate before storing, and
+*   report a refused or clamped value (OLC_SET_CLAMPED, TB_WARN_MSG).
+* - Diagnostics use op names in kebab-case with OLC_DIAG / DIAG_CHAR
+*   identity; "should never get here" paths use OLC_ABORT.
+*
+* Copyright 1996 Harvey Gilpin. 1997-2001 George Greer.
+*/
 
 #include "conf.h"
 #include "sysdep.h"
@@ -26,6 +45,7 @@
 #include "screen.h"
 #include "fight.h"
 #include "modify.h"      /* for smash_tilde */
+#include "olc_checks.h"
 
 /* local functions */
 static void medit_setup_new(struct descriptor_data *d);
@@ -106,11 +126,8 @@ ACMD(do_oasis_medit)
   d = ch->desc;
 
   /* Give descriptor an OLC structure. */
-  if (d->olc) {
-    mudlog(BRF, LVL_IMMORT, TRUE,
-      "SYSERR: do_oasis_medit: Player already had olc structure.");
-    free(d->olc);
-  }
+  if (d->olc)
+    OLC_DISCARD_STALE_SESSION(d, ch);
 
   CREATE(d->olc, struct oasis_olc_data, 1);
 
@@ -203,6 +220,11 @@ static void medit_setup_new(struct descriptor_data *d)
   OLC_ITEM_TYPE(d) = MOB_TRIGGER;
 }
 
+/* Start editing a copy of mob_proto[rmob_num]. The copy keeps the source's
+ * nr (copy_mobile is a struct copy); callers that copy a different
+ * prototype into this session ('W') must reset nr to
+ * real_mobile(OLC_NUM(d)): free_mobile(), delete and save treat nr as the
+ * identity of the prototype being edited. */
 void medit_setup_existing(struct descriptor_data *d, int rmob_num)
 {
   struct char_data *mob;
@@ -249,29 +271,71 @@ static void init_mobile(struct char_data *mob)
 }
 
 /* Save new/edited mob to memory. */
-void medit_save_internally(struct descriptor_data *d)
+/* Save the scratch mobile as mob_proto[real_mobile(OLC_NUM)].
+ *
+ * Precondition: OLC_MOB(d)->nr is real_mobile(OLC_NUM) or NOBODY (repaired
+ * and reported as mob-proto-nr otherwise); its proto_script is NULL and
+ * OLC_SCRIPT(d) holds the edited trigger list. add_mobile() overwrites the
+ * prototype by struct copy and does not take ownership of proto_script:
+ * this function frees the previous list, gives the prototype OLC_SCRIPT
+ * (clearing the session's handle) and, when the list changed, rebuilds
+ * live mobs' triggers.
+ * Postcondition on insert: other sessions' mobile rnums were moved.
+ * Returns FALSE, after reporting medit-save, when nothing was saved. */
+static int medit_save_checked(struct descriptor_data *d)
 {
-  int i;
-  mob_rnum new_rnum;
-  struct descriptor_data *dsc;
+  int i, rebuild_scripts;
+  mob_rnum new_rnum, existing;
   struct char_data *mob;
+  struct trig_proto_list *old_proto;
 
-  i = (real_mobile(OLC_NUM(d)) == NOBODY);
+  existing = real_mobile(OLC_NUM(d));
+  i = (existing == NOBODY);
+  /* add_mobile() struct-copies the scratch mobile (proto_script NULL, see
+   * medit_setup_existing) over the prototype, so after it returns the old
+   * trigger list is reachable only through this pointer. */
+  old_proto = i ? NULL : mob_proto[existing].proto_script;
+  /* Rebuilding a live mob's triggers discards its script variables and
+   * pending waits: do it only when the trigger list changed.  A new mob has
+   * no live instances. */
+  rebuild_scripts = !i && !olc_trig_lists_equal(old_proto, OLC_SCRIPT(d));
 
-  if ((new_rnum = add_mobile(OLC_MOB(d), OLC_NUM(d))) == NOBODY) {
-    log("medit_save_internally: add_mobile failed.");
-    return;
+  /* Invariant: the scratch copy's nr is the rnum of the prototype this
+   * session edits (OLC_NUM), or NOBODY for a new one. add_mobile()'s update
+   * branch struct-copies it into mob_proto[], and read_mobile() copies it
+   * into every new instance, so a wrong nr (left by 'W' or a missed
+   * renumber) would make that prototype's mobs report another vnum and
+   * drift both mob_index counters. OLC_NUM is the authority: repair it. */
+  if (GET_MOB_RNUM(OLC_MOB(d)) != existing) {
+    struct char_data *builder = d->character;
+    TB_ERROR_MSG("olc", "mob-proto-nr", "mobile",
+                 "builder " DIAG_CHAR_FMT " mob vnum %d scratch nr %d != rnum %d; repaired before save",
+                 DIAG_CHAR(builder), OLC_NUM(d),
+                 (int)GET_MOB_RNUM(OLC_MOB(d)), (int)existing);
+    GET_MOB_RNUM(OLC_MOB(d)) = existing;
   }
 
-  /* Update triggers and free old proto list */
-  if (mob_proto[new_rnum].proto_script &&
-      mob_proto[new_rnum].proto_script != OLC_SCRIPT(d))
-    free_proto_script(&mob_proto[new_rnum], MOB_TRIGGER);
+  if ((new_rnum = add_mobile(OLC_MOB(d), OLC_NUM(d))) == NOBODY) {
+    struct char_data *builder = d->character;
+    TB_ERROR_MSG("olc", "medit-save", "mobile",
+                 "builder " DIAG_CHAR_FMT " mob vnum %d: add_mobile returned NOBODY; edits not saved",
+                 DIAG_CHAR(builder), OLC_NUM(d));
+    return FALSE;
+  }
 
+  /* Update triggers and free the old proto list. */
+  if (old_proto && old_proto != OLC_SCRIPT(d)) {
+    mob_proto[new_rnum].proto_script = old_proto;
+    free_proto_script(&mob_proto[new_rnum], MOB_TRIGGER);
+  }
+
+  /* The prototype now owns the list; clear the session's handle so
+   * cleanup_olc() does not free it. */
   mob_proto[new_rnum].proto_script = OLC_SCRIPT(d);
+  OLC_SCRIPT(d) = NULL; /* now owned by the prototype; see cleanup_olc */
 
   /* this takes care of the mobs currently in-game */
-  for (mob = character_list; mob; mob = mob->next) {
+  for (mob = character_list; rebuild_scripts && mob; mob = mob->next) {
     if (GET_MOB_RNUM(mob) != new_rnum)
       continue;
 
@@ -286,23 +350,21 @@ void medit_save_internally(struct descriptor_data *d)
   /* end trigger update */
 
   if (!i)	/* Only renumber on new mobiles. */
-    return;
+    return TRUE;
 
-  /* Update keepers in shops being edited and other mobs being edited. */
-  for (dsc = descriptor_list; dsc; dsc = dsc->next) {
-    if (STATE(dsc) == CON_SEDIT)
-      S_KEEPER(OLC_SHOP(dsc)) += (S_KEEPER(OLC_SHOP(dsc)) != NOTHING && S_KEEPER(OLC_SHOP(dsc)) >= new_rnum);
-    else if (STATE(dsc) == CON_MEDIT)
-      GET_MOB_RNUM(OLC_MOB(dsc)) += (GET_MOB_RNUM(OLC_MOB(dsc)) != NOTHING && GET_MOB_RNUM(OLC_MOB(dsc)) >= new_rnum);
-  }
+  /* add_mobile() shifted mob_proto up from new_rnum. Move every other open
+   * session's mobile rnums with it: zedit 'M' commands, sedit keepers and
+   * other medit scratch identities. */
+  olc_renumber_sessions(OLC_RNUM_MOB, new_rnum, +1, d);
+  return TRUE;
+}
 
-  /* Update other people in zedit too. From: C.Raehl 4/27/99 */
-  for (dsc = descriptor_list; dsc; dsc = dsc->next)
-    if (STATE(dsc) == CON_ZEDIT)
-      for (i = 0; OLC_ZONE(dsc)->cmd[i].command != 'S'; i++)
-        if (OLC_ZONE(dsc)->cmd[i].command == 'M')
-          if (OLC_ZONE(dsc)->cmd[i].arg1 >= new_rnum)
-            OLC_ZONE(dsc)->cmd[i].arg1++;
+/* Save the scratch mobile into mob_proto[]; FALSE (reported) when nothing was saved.
+ * Entry point for oasis_copy.c's copy table, which has no failure path;
+ * the failure was already reported by medit_save_checked(). */
+void medit_save_internally(struct descriptor_data *d)
+{
+  (void)medit_save_checked(d);
 }
 
 /* Menu functions
@@ -389,7 +451,7 @@ static void medit_disp_mob_flags(struct descriptor_data *d)
                 !(++columns % 2) ? "\r\n" : "");
   }
 
-  sprintbitarray(MOB_FLAGS(OLC_MOB(d)), action_bits, AF_ARRAY_MAX, flags, sizeof(flags));
+  SPRINTBITARRAY_FIELD(MOB_FLAGS(OLC_MOB(d)), action_bits, flags);
   write_to_output(d, "\r\nCurrent flags : %s%s%s\r\nEnter mob flags (0 to quit) : ", cyn, flags, nrm);
 }
 
@@ -402,7 +464,7 @@ static void medit_disp_aff_flags(struct descriptor_data *d)
   clear_screen(d);
   /* +1/-1 antics needed because AFF_FLAGS doesn't start at 0. */
   column_list(d->character, 0, affected_bits + 1, NUM_AFF_FLAGS - 1, TRUE);
-  sprintbitarray(AFF_FLAGS(OLC_MOB(d)), affected_bits, AF_ARRAY_MAX, flags, sizeof(flags));
+  SPRINTBITARRAY_FIELD(AFF_FLAGS(OLC_MOB(d)), affected_bits, flags);
   write_to_output(d, "\r\nCurrent flags   : %s%s%s\r\nEnter aff flags (0 to quit) : ",
                           cyn, flags, nrm);
 }
@@ -425,15 +487,15 @@ static void medit_disp_menu(struct descriptor_data *d)
   "%s5%s) D-Desc:-\r\n%s%s\r\n",
 
 	  cyn, OLC_NUM(d), nrm,
-	  grn, nrm, yel, genders[(int)GET_SEX(mob)], nrm,
+	  grn, nrm, yel, OLC_TABLE_NAME(d, genders, NUM_GENDERS, (int)GET_SEX(mob)), nrm,
 	  grn, nrm, yel, GET_ALIAS(mob),
 	  grn, nrm, yel, GET_SDESC(mob),
 	  grn, nrm, yel, GET_LDESC(mob),
 	  grn, nrm, yel, GET_DDESC(mob)
 	  );
 
-  sprintbitarray(MOB_FLAGS(mob), action_bits, AF_ARRAY_MAX, flags, sizeof(flags));
-  sprintbitarray(AFF_FLAGS(mob), affected_bits, AF_ARRAY_MAX, flag2, sizeof(flag2));
+  SPRINTBITARRAY_FIELD(MOB_FLAGS(mob), action_bits, flags);
+  SPRINTBITARRAY_FIELD(AFF_FLAGS(mob), affected_bits, flag2);
   write_to_output(d,
 	  "%s6%s) Position  : %s%s\r\n"
 	  "%s7%s) Default   : %s%s\r\n"
@@ -447,9 +509,10 @@ static void medit_disp_menu(struct descriptor_data *d)
 	  "%sQ%s) Quit\r\n"
 	  "Enter choice : ",
 
-	  grn, nrm, yel, position_types[(int)GET_POS(mob)],
-	  grn, nrm, yel, position_types[(int)GET_DEFAULT_POS(mob)],
-	  grn, nrm, yel, attack_hit_text[(int)GET_ATTACK(mob)].singular,
+	  grn, nrm, yel, OLC_TABLE_NAME(d, position_types, NUM_POSITIONS, (int)GET_POS(mob)),
+	  grn, nrm, yel, OLC_TABLE_NAME(d, position_types, NUM_POSITIONS, (int)GET_DEFAULT_POS(mob)),
+	  grn, nrm, yel, OLC_CHECK_INDEX(d, "attack_hit_text", (int)GET_ATTACK(mob), NUM_ATTACK_TYPES) ?
+	                 attack_hit_text[(int)GET_ATTACK(mob)].singular : "<invalid>",
 	  grn, nrm,
 	  grn, nrm, cyn, flags,
 	  grn, nrm, cyn, flag2,
@@ -540,8 +603,11 @@ void medit_parse(struct descriptor_data *d, char *arg)
 
   if (OLC_MODE(d) > MEDIT_NUMERICAL_RESPONSE) {
     i = tb_parse_int_or_zero(arg);
-    if (!*arg || (!isdigit(arg[0]) && ((*arg == '-') && !isdigit(arg[1])))) {
-      write_to_output(d, "Try again : ");
+    /* Builder input: every numeric mode but the y/n delete prompt takes a
+     * whole number. tb_parse_int_or_zero() reads "abc" as 0, so refuse
+     * anything else here rather than store a 0 the builder never typed. */
+    if (!*arg || (OLC_MODE(d) != MEDIT_DELETE && !is_number(arg))) {
+      write_to_output(d, "Please enter a whole number, try again : ");
       return;
     }
   } else {	/* String response. */
@@ -556,7 +622,11 @@ void medit_parse(struct descriptor_data *d, char *arg)
     case 'y':
     case 'Y':
       /* Save the mob in memory and to disk. */
-      medit_save_internally(d);
+      if (!medit_save_checked(d)) {
+        write_to_output(d, "Internal error: mobile %d could not be saved; nothing was changed.\r\n", OLC_NUM(d));
+        cleanup_olc(d, CLEANUP_ALL);
+        return;
+      }
       mudlog(CMP, MAX(LVL_BUILDER, GET_INVIS_LEV(d->character)), TRUE, "OLC: %s edits mob %d", GET_NAME(d->character), OLC_NUM(d));
       if (CONFIG_OLC_SAVE) {
         medit_save_to_disk(zone_table[real_zone_by_thing(OLC_NUM(d))].number);
@@ -567,10 +637,7 @@ void medit_parse(struct descriptor_data *d, char *arg)
       return;
     case 'n':
     case 'N':
-      /* If not saving, we must free the script_proto list. We do so by
-       * assigning it to the edited mob and letting free_mobile in
-       * cleanup_olc handle it. */
-      OLC_MOB(d)->proto_script = OLC_SCRIPT(d);
+      /* Not saving: cleanup_olc() frees the unsaved OLC_SCRIPT copy. */
       cleanup_olc(d, CLEANUP_ALL);
       return;
     default:
@@ -856,16 +923,12 @@ void medit_parse(struct descriptor_data *d, char *arg)
 
   case MEDIT_KEYWORD:
     smash_tilde(arg);
-    if (GET_ALIAS(OLC_MOB(d)))
-      free(GET_ALIAS(OLC_MOB(d)));
-    GET_ALIAS(OLC_MOB(d)) = str_udup(arg);
+    OLC_REPLACE_STRING(GET_ALIAS(OLC_MOB(d)), arg);
     break;
 
   case MEDIT_S_DESC:
     smash_tilde(arg);
-    if (GET_SDESC(OLC_MOB(d)))
-      free(GET_SDESC(OLC_MOB(d)));
-    GET_SDESC(OLC_MOB(d)) = str_udup(arg);
+    OLC_REPLACE_STRING(GET_SDESC(OLC_MOB(d)), arg);
     break;
 
   case MEDIT_L_DESC:
@@ -873,9 +936,16 @@ void medit_parse(struct descriptor_data *d, char *arg)
     if (GET_LDESC(OLC_MOB(d)))
       free(GET_LDESC(OLC_MOB(d)));
     if (arg && *arg) {
-      char buf[MAX_INPUT_LENGTH];
-  tb_snprintf(buf, sizeof(buf), "%s\r\n", arg);
-      GET_LDESC(OLC_MOB(d)) = strdup(buf);
+      /* Builder input of up to MAX_INPUT_LENGTH - 1 bytes plus "\r\n":
+       * size the copy from the input so the line ending is never cut off
+       * (a fixed MAX_INPUT_LENGTH buffer silently dropped it, and the
+       * room listing ran this mob into the next line). */
+      size_t len = strlen(arg);
+      char *ldesc;
+
+      CREATE(ldesc, char, len + 3);
+      tb_snprintf(ldesc, len + 3, "%s\r\n", arg);   /* fits exactly */
+      GET_LDESC(OLC_MOB(d)) = ldesc;
     } else
       GET_LDESC(OLC_MOB(d)) = strdup("undefined");
 
@@ -885,10 +955,7 @@ void medit_parse(struct descriptor_data *d, char *arg)
     /*
      * We should never get here.
      */
-    cleanup_olc(d, CLEANUP_ALL);
-    mudlog(BRF, LVL_BUILDER, TRUE, "SYSERR: OLC: medit_parse(): Reached D_DESC case!");
-    write_to_output(d, "Oops...\r\n");
-    break;
+    OLC_ABORT(d, "medit-bad-mode");
 
   case MEDIT_NPC_FLAGS:
     if ((i = tb_parse_int_or_zero(arg)) <= 0)
@@ -919,171 +986,216 @@ void medit_parse(struct descriptor_data *d, char *arg)
 /* Numerical responses. */
 
   case MEDIT_SEX:
-    GET_SEX(OLC_MOB(d)) = LIMIT(i - 1, 0, NUM_GENDERS - 1);
+    OLC_SET_CLAMPED(d, i, i, 1, NUM_GENDERS, "Gender choice");
+    GET_SEX(OLC_MOB(d)) = i - 1;
     break;
 
   case MEDIT_HITROLL:
-    GET_HITROLL(OLC_MOB(d)) = LIMIT(i, 0, 50);
+    OLC_SET_CLAMPED(d, GET_HITROLL(OLC_MOB(d)), i, 0, 50, "Hitroll");
     OLC_VAL(d) = TRUE;
     medit_disp_stats_menu(d);
     return;
 
   case MEDIT_DAMROLL:
-    GET_DAMROLL(OLC_MOB(d)) = LIMIT(i, 0, 50);
+    OLC_SET_CLAMPED(d, GET_DAMROLL(OLC_MOB(d)), i, 0, 50, "Damroll");
     OLC_VAL(d) = TRUE;
     medit_disp_stats_menu(d);
     return;
 
   case MEDIT_NDD:
-    GET_NDD(OLC_MOB(d)) = LIMIT(i, 0, 30);
+    OLC_SET_CLAMPED(d, GET_NDD(OLC_MOB(d)), i, 0, 30, "Damage dice count");
     OLC_VAL(d) = TRUE;
     medit_disp_stats_menu(d);
     return;
 
   case MEDIT_SDD:
-    GET_SDD(OLC_MOB(d)) = LIMIT(i, 0, 127);
+    OLC_SET_CLAMPED(d, GET_SDD(OLC_MOB(d)), i, 0, 127, "Damage dice size");
     OLC_VAL(d) = TRUE;
     medit_disp_stats_menu(d);
     return;
 
   case MEDIT_NUM_HP_DICE:
-    GET_HIT(OLC_MOB(d)) = LIMIT(i, 0, 30);
+    OLC_SET_CLAMPED(d, GET_HIT(OLC_MOB(d)), i, 0, 30, "HP dice count");
     OLC_VAL(d) = TRUE;
     medit_disp_stats_menu(d);
     return;
 
   case MEDIT_SIZE_HP_DICE:
-    GET_MANA(OLC_MOB(d)) = LIMIT(i, 0, 1000);
+    OLC_SET_CLAMPED(d, GET_MANA(OLC_MOB(d)), i, 0, 1000, "HP dice size");
     OLC_VAL(d) = TRUE;
     medit_disp_stats_menu(d);
     return;
 
   case MEDIT_ADD_HP:
-    GET_MOVE(OLC_MOB(d)) = LIMIT(i, 0, 30000);
+    OLC_SET_CLAMPED(d, GET_MOVE(OLC_MOB(d)), i, 0, 30000, "HP bonus");
     OLC_VAL(d) = TRUE;
     medit_disp_stats_menu(d);
     return;
 
   case MEDIT_AC:
-    GET_AC(OLC_MOB(d)) = LIMIT(i, -200, 200);
+    OLC_SET_CLAMPED(d, GET_AC(OLC_MOB(d)), i, -200, 200, "Armor class");
     OLC_VAL(d) = TRUE;
     medit_disp_stats_menu(d);
     return;
 
   case MEDIT_EXP:
-    GET_EXP(OLC_MOB(d)) = LIMIT(i, 0, MAX_MOB_EXP);
+    OLC_SET_CLAMPED(d, GET_EXP(OLC_MOB(d)), i, 0, MAX_MOB_EXP, "Experience");
     OLC_VAL(d) = TRUE;
     medit_disp_stats_menu(d);
     return;
 
   case MEDIT_GOLD:
-    GET_GOLD(OLC_MOB(d)) = LIMIT(i, 0, MAX_MOB_GOLD);
+    OLC_SET_CLAMPED(d, GET_GOLD(OLC_MOB(d)), i, 0, MAX_MOB_GOLD, "Gold");
     OLC_VAL(d) = TRUE;
     medit_disp_stats_menu(d);
     return;
 
   case MEDIT_STR:
-    GET_STR(OLC_MOB(d)) = LIMIT(i, 11, 25);
+    OLC_SET_CLAMPED(d, GET_STR(OLC_MOB(d)), i, 11, 25, "Strength");
     OLC_VAL(d) = TRUE;
     medit_disp_stats_menu(d);
     return;
 
   case MEDIT_INT:
-    GET_INT(OLC_MOB(d)) = LIMIT(i, 11, 25);
+    OLC_SET_CLAMPED(d, GET_INT(OLC_MOB(d)), i, 11, 25, "Intelligence");
     OLC_VAL(d) = TRUE;
     medit_disp_stats_menu(d);
     return;
 
   case MEDIT_WIS:
-    GET_WIS(OLC_MOB(d)) = LIMIT(i, 11, 25);
+    OLC_SET_CLAMPED(d, GET_WIS(OLC_MOB(d)), i, 11, 25, "Wisdom");
     OLC_VAL(d) = TRUE;
     medit_disp_stats_menu(d);
     return;
 
   case MEDIT_DEX:
-    GET_DEX(OLC_MOB(d)) = LIMIT(i, 11, 25);
+    OLC_SET_CLAMPED(d, GET_DEX(OLC_MOB(d)), i, 11, 25, "Dexterity");
     OLC_VAL(d) = TRUE;
     medit_disp_stats_menu(d);
     return;
 
   case MEDIT_CON:
-    GET_CON(OLC_MOB(d)) = LIMIT(i, 11, 25);
+    OLC_SET_CLAMPED(d, GET_CON(OLC_MOB(d)), i, 11, 25, "Constitution");
     OLC_VAL(d) = TRUE;
     medit_disp_stats_menu(d);
     return;
 
   case MEDIT_CHA:
-    GET_CHA(OLC_MOB(d)) = LIMIT(i, 11, 25);
+    OLC_SET_CLAMPED(d, GET_CHA(OLC_MOB(d)), i, 11, 25, "Charisma");
     OLC_VAL(d) = TRUE;
     medit_disp_stats_menu(d);
     return;
 
   case MEDIT_PARA:
-    GET_SAVE(OLC_MOB(d), SAVING_PARA) = LIMIT(i, 0, 100);
+    OLC_SET_CLAMPED(d, GET_SAVE(OLC_MOB(d), SAVING_PARA), i, 0, 100, "Save vs paralysis");
     OLC_VAL(d) = TRUE;
     medit_disp_stats_menu(d);
     return;
 
   case MEDIT_ROD:
-    GET_SAVE(OLC_MOB(d), SAVING_ROD) = LIMIT(i, 0, 100);
+    OLC_SET_CLAMPED(d, GET_SAVE(OLC_MOB(d), SAVING_ROD), i, 0, 100, "Save vs rods");
     OLC_VAL(d) = TRUE;
     medit_disp_stats_menu(d);
     return;
 
   case MEDIT_PETRI:
-    GET_SAVE(OLC_MOB(d), SAVING_PETRI) = LIMIT(i, 0, 100);
+    OLC_SET_CLAMPED(d, GET_SAVE(OLC_MOB(d), SAVING_PETRI), i, 0, 100, "Save vs petrification");
     OLC_VAL(d) = TRUE;
     medit_disp_stats_menu(d);
     return;
 
   case MEDIT_BREATH:
-    GET_SAVE(OLC_MOB(d), SAVING_BREATH) = LIMIT(i, 0, 100);
+    OLC_SET_CLAMPED(d, GET_SAVE(OLC_MOB(d), SAVING_BREATH), i, 0, 100, "Save vs breath");
     OLC_VAL(d) = TRUE;
     medit_disp_stats_menu(d);
     return;
 
   case MEDIT_SPELL:
-    GET_SAVE(OLC_MOB(d), SAVING_SPELL) = LIMIT(i, 0, 100);
+    OLC_SET_CLAMPED(d, GET_SAVE(OLC_MOB(d), SAVING_SPELL), i, 0, 100, "Save vs spells");
     OLC_VAL(d) = TRUE;
     medit_disp_stats_menu(d);
     return;
 
   case MEDIT_POS:
-    GET_POS(OLC_MOB(d)) = LIMIT(i - 1, 0, NUM_POSITIONS - 1);
+    OLC_SET_CLAMPED(d, i, i, 1, NUM_POSITIONS, "Position choice");
+    GET_POS(OLC_MOB(d)) = i - 1;
     break;
 
   case MEDIT_DEFAULT_POS:
-    GET_DEFAULT_POS(OLC_MOB(d)) = LIMIT(i - 1, 0, NUM_POSITIONS - 1);
+    OLC_SET_CLAMPED(d, i, i, 1, NUM_POSITIONS, "Default position choice");
+    GET_DEFAULT_POS(OLC_MOB(d)) = i - 1;
     break;
 
   case MEDIT_ATTACK:
-    GET_ATTACK(OLC_MOB(d)) = LIMIT(i, 0, NUM_ATTACK_TYPES - 1);
+    OLC_SET_CLAMPED(d, GET_ATTACK(OLC_MOB(d)), i, 0, NUM_ATTACK_TYPES - 1, "Attack type");
     break;
 
   case MEDIT_LEVEL:
-    GET_LEVEL(OLC_MOB(d)) = LIMIT(i, 1, LVL_IMPL);
+    OLC_SET_CLAMPED(d, GET_LEVEL(OLC_MOB(d)), i, 1, LVL_IMPL, "Level");
     OLC_VAL(d) = TRUE;
     medit_disp_stats_menu(d);
     return;
 
   case MEDIT_ALIGNMENT:
-    GET_ALIGNMENT(OLC_MOB(d)) = LIMIT(i, -1000, 1000);
+    OLC_SET_CLAMPED(d, GET_ALIGNMENT(OLC_MOB(d)), i, -1000, 1000, "Alignment");
     OLC_VAL(d) = TRUE;
     medit_disp_stats_menu(d);
     return;
 
   case MEDIT_COPY:
-    if ((i = real_mobile(tb_parse_int_or_zero(arg))) != NOWHERE) {
+    if ((i = real_mobile(tb_parse_int_or_zero(arg))) != NOBODY) {
+      /* setup allocates a fresh scratch mobile and trigger list: release
+       * the ones this session holds first, as cleanup_olc() would. */
+      olc_free_script_copy(d);
+      free_mobile(OLC_MOB(d));
+      OLC_MOB(d) = NULL;
       medit_setup_existing(d, i);
+      /* copy_mobile() kept the source's rnum (nr), but this session still
+       * edits OLC_NUM(d): delete, save and free_mobile() rely on nr naming
+       * that prototype or NOBODY. */
+      GET_MOB_RNUM(OLC_MOB(d)) = real_mobile(OLC_NUM(d));
     } else
       write_to_output(d, "That mob does not exist.\r\n");
     break;
 
   case MEDIT_DELETE:
     if (*arg == 'y' || *arg == 'Y') {
-      if (delete_mobile(GET_MOB_RNUM(OLC_MOB(d))) != NOBODY)
+      /* Delete the prototype this session edits (OLC_NUM), never whatever
+       * rnum the scratch copy holds: after 'W' or a missed renumber that
+       * names another mobile, possibly in a zone the builder cannot edit. */
+      mob_rnum doomed = real_mobile(OLC_NUM(d));
+      struct char_data *builder = d->character;
+
+      if (doomed == NOBODY) {
+        TB_WARN_MSG("olc", "delete-target-missing", "mobile",
+                    "builder " DIAG_CHAR_FMT " mob vnum %d has no prototype to delete",
+                    DIAG_CHAR(builder), OLC_NUM(d));
+        write_to_output(d, "Mobile %d has never been saved; there is nothing to delete.\r\n", OLC_NUM(d));
+        cleanup_olc(d, CLEANUP_ALL);
+        return;
+      }
+      if (!can_edit_zone(builder, real_zone_by_thing(OLC_NUM(d)))) {
+        TB_WARN_MSG("olc", "delete-permission", "mobile",
+                    "builder " DIAG_CHAR_FMT " mob vnum %d delete refused: zone not editable",
+                    DIAG_CHAR(builder), OLC_NUM(d));
+        write_to_output(d, "You do not have permission to delete mobile %d.\r\n", OLC_NUM(d));
+        cleanup_olc(d, CLEANUP_ALL);
+        return;
+      }
+      if (GET_MOB_RNUM(OLC_MOB(d)) != doomed) {
+        TB_ERROR_MSG("olc", "delete-target-mismatch", "mobile",
+                     "builder " DIAG_CHAR_FMT " editing mob vnum %d (rnum %d) but scratch rnum is %d; delete refused",
+                     DIAG_CHAR(builder), OLC_NUM(d), doomed, GET_MOB_RNUM(OLC_MOB(d)));
+        write_to_output(d, "Internal error: this editor lost track of mobile %d; nothing was deleted.\r\n", OLC_NUM(d));
+        cleanup_olc(d, CLEANUP_ALL);
+        return;
+      }
+
+      if (delete_mobile(doomed) != NOBODY) {
+        /* Other builders' scratch copies hold mobile rnums that just moved. */
+        olc_renumber_sessions(OLC_RNUM_MOB, doomed, -1, d);
         write_to_output(d, "Mobile deleted.\r\n");
-      else
+      } else
         write_to_output(d, "Couldn't delete the mobile!\r\n");
 
       cleanup_olc(d, CLEANUP_ALL);
@@ -1098,10 +1210,7 @@ void medit_parse(struct descriptor_data *d, char *arg)
 
   default:
     /* We should never get here. */
-    cleanup_olc(d, CLEANUP_ALL);
-    mudlog(BRF, LVL_BUILDER, TRUE, "SYSERR: OLC: medit_parse(): Reached default case!");
-    write_to_output(d, "Oops...\r\n");
-    break;
+    OLC_ABORT(d, "medit-bad-mode");
   }
 
 /* END OF CASE If we get here, we have probably changed something, and now want

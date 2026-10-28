@@ -2,6 +2,18 @@
 * @file db.h
 * Header file for database handling.
 *
+* Declares the world tables (world[], mob_proto[], obj_proto[], zone_table[]
+* and their index tables), the boot and reset entry points, and the file
+* readers (fread_string() and friends) shared with other loaders.
+*
+* Ownership: the tables are allocated once by index_boot() and freed by
+* destroy_db(). Prototype strings are owned by the prototype; instances made
+* by read_mobile()/read_object() share them by pointer.
+*
+* Input: world, zone, help and text files under lib/ are written by OLC and
+* by implementors by hand, so every loader treats them as untrusted and
+* reports bad values with TB_ERROR_* naming the file and the vnum.
+*
 * Part of the core tbaMUD source code distribution, which is a derivative
 * of, and continuation of, CircleMUD.
 *
@@ -147,28 +159,40 @@
 #define REAL 0
 #define VIRTUAL 1
 
-/* structure for the reset commands */
+/** One zone reset command.
+ *
+ * load_zones() fills arg1..arg3 with the file's vnums; renum_zone_table()
+ * then replaces the vnum arguments with rnums, so after boot they index
+ * world[], mob_proto[], obj_proto[] and trig_index[] directly. A command
+ * that names something missing or out of range is disabled by rewriting
+ * command to '*' (reset_zone() skips it and clears last_cmd).
+ *
+ * Arguments per command (after renum_zone_table()):
+ *  - 'M' arg1 mob rnum, arg2 max existing, arg3 room rnum
+ *  - 'O' arg1 obj rnum, arg2 max existing, arg3 room rnum (or NOWHERE)
+ *  - 'G' arg1 obj rnum, arg2 max existing (to the last 'M')
+ *  - 'E' arg1 obj rnum, arg2 max existing, arg3 wear position
+ *  - 'P' arg1 obj rnum, arg2 max existing, arg3 container obj rnum
+ *  - 'D' arg1 room rnum, arg2 direction, arg3 door state 0..2
+ *  - 'R' arg1 room rnum, arg2 obj rnum to remove
+ *  - 'T' arg1 trigger type, arg2 trigger rnum, arg3 room rnum
+ *  - 'V' arg1 trigger type, arg2 variable context, arg3 room rnum,
+ *        sarg1 name, sarg2 value
+ *
+ * Ownership: sarg1/sarg2 are strdup()ed by load_zones() or zedit for 'V'
+ * only, and stay owned by the command after it is disabled to '*';
+ * destroy_db() frees them whatever the command letter (they are NULL for
+ * every other command because the table is CREATE()d zeroed). */
 struct reset_com {
-   char	command;   /* current command                      */
+   char	command;   /**< command letter, or '*' when disabled       */
 
-   bool if_flag;	/* if TRUE: exe only if preceding exe'd */
-   int	arg1;		/*                                      */
-   int	arg2;		/* Arguments to the command             */
-   int	arg3;		/*                                      */
-   int line;		/* line number this command appears on  */
-   char *sarg1;		/* string argument                      */
-   char *sarg2;		/* string argument                      */
-
-   /* Commands:
-    *  'M': Read a mobile
-    *  'O': Read an object
-    *  'G': Give obj to mob
-    *  'P': Put obj in obj
-    *  'G': Obj to char
-    *  'E': Obj to char equip
-    *  'D': Set state of door
-    *  'T': Trigger command
-    *  'V': Assign a variable */
+   bool if_flag;	/**< if TRUE: run only if the previous command ran */
+   int	arg1;		/**< see the table above                          */
+   int	arg2;		/**< see the table above                          */
+   int	arg3;		/**< see the table above                          */
+   int line;		/**< line number of this command in the .zon file */
+   char *sarg1;		/**< 'V' variable name (owned)                    */
+   char *sarg2;		/**< 'V' variable value (owned)                   */
 };
 
 /* zone definition structure. for the 'zone-table'   */
@@ -235,6 +259,14 @@ struct obj_save_data_t {
 };
 typedef struct obj_save_data_t obj_save_data;
 
+/* Deepest container nesting a rent or house record's Loc may claim (Loc is
+ * minus the depth). The loaders rebuild only a few levels and put anything
+ * deeper loose, reported; this bound separates a deep but plausible save
+ * (warned, loaded loose) from a corrupted Loc (an error, loaded at the top
+ * level), and keeps -Loc representable: Loc INT_MIN made the loaders'
+ * "j > -locate" overflow. */
+#define OBJSAVE_LOC_MAX_DEPTH 1000
+
 
 /* public procedures in db.c */
 void  boot_db(void);
@@ -265,23 +297,29 @@ obj_rnum real_object(obj_vnum vnum);
 
 /* Public Procedures from objsave.c */
 void  Crash_save_all(void);
-void  Crash_idlesave(struct char_data *ch);
-void  Crash_crashsave(struct char_data *ch);
+int   Crash_idlesave(struct char_data *ch);
+int   Crash_crashsave(struct char_data *ch);
 int Crash_load(struct char_data *ch);
 void  Crash_listrent(struct char_data *ch, char *name);
 int Crash_clean_file(char *name);
 int Crash_delete_crashfile(struct char_data *ch);
 int Crash_delete_file(char *name);
 void update_obj_file(void);
-void Crash_rentsave(struct char_data *ch, int cost);
+int  Crash_rentsave(struct char_data *ch, int cost);
 obj_save_data *objsave_parse_objects(FILE *fl);
+obj_save_data *objsave_parse_objects_from(FILE *fl, const char *resource,
+                                          const char *owner);
 int objsave_save_obj_record(struct obj_data *obj, FILE *fl, int location);
+FILE *objsave_open_staged(const char *dest, char *temp, size_t temp_size);
+int objsave_commit_staged(FILE *fp, const char *temp, const char *dest);
+void objsave_abort_staged(FILE *fp, const char *temp);
 /* Special functions */
 SPECIAL(receptionist);
 SPECIAL(cryogenicist);
 
 /* Functions from players.c */
 void   tag_argument(char *argument, char *tag);
+int    fread_string_checked(FILE *fl, const char *resource, const char *field, char **out);
 int    load_char(const char *name, struct char_data *ch);
 void   save_char(struct char_data *ch);
 void   init_char(struct char_data *ch);
@@ -388,7 +426,6 @@ extern struct trig_data *trigger_list;
 extern int top_of_trigt;
 extern long max_mob_id;
 extern long max_obj_id;
-extern int dg_owner_purged;
 
 extern struct message_list fight_messages[MAX_MESSAGES];
 
