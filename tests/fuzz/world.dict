@@ -1,0 +1,102 @@
+# libFuzzer dictionary for fuzz_world: tokens of the CircleMUD/tbaMUD world
+# file formats (.wld .mob .obj .zon .trg), the string/line readers, and the
+# boundary numbers their range checks guard.
+#   bin/fuzz_world -dict=tests/fuzz/world.dict ...
+
+# Mode bytes (first byte of an input) and record structure
+mode_wld="W"
+mode_wld_diag="w"
+mode_mob="M"
+mode_obj="O"
+mode_zon="Z"
+mode_trg="T"
+tilde="~"
+tilde_nl="~\x0a"
+empty_string="\x0a~\x0a"
+crlf="\x0d\x0a"
+record="#"
+record_99999="#99999"
+end_of_file="$\x0a"
+end_of_file_tilde="$~"
+comment_line="*"
+nul="\x00"
+
+# Rooms: exits, extra descriptions, end of room, trigger lines
+room_flags_line="0 0 0 0 0 0"
+room_flags_legacy="0 0 0"
+exit_d0="D0\x0a"
+exit_d5="D5\x0a"
+exit_d6="D6\x0a"
+exit_d9="D9\x0a"
+exit_d10="D10\x0a"
+exit_neg="D-1\x0a"
+exit_numbers="1 -1 3001"
+extra_desc="E\x0a"
+room_end="S\x0a"
+trigger_line="T 3000\x0a"
+
+# Mobiles
+mob_flags_line="0 0 0 0 0 0 0 0 0 S"
+mob_flags_legacy="0 0 0 S"
+mob_enhanced=" E\x0a"
+dice="1d1+1"
+dice_big="2147483647d2147483647+2147483647"
+pos_line="8 8 0"
+espec_attack="BareHandAttack: "
+espec_str="Str: "
+espec_stradd="StrAdd: "
+espec_int="Int: "
+espec_wis="Wis: "
+espec_dex="Dex: "
+espec_con="Con: "
+espec_cha="Cha: "
+espec_para="SavingPara: "
+espec_rod="SavingRod: "
+espec_petri="SavingPetri: "
+espec_breath="SavingBreath: "
+espec_spell="SavingSpell: "
+espec_end="E\x0a"
+
+# Objects
+obj_flags_line="0 0 0 0 0 0 0 0 0 0 0 0 0"
+obj_values="0 0 0 0"
+obj_weight_line="0 0 0 0 0"
+affect="A\x0a"
+
+# Zones: header and reset commands
+zone_header="0 99 30 2 0 0 0 0 0 100"
+zone_header_legacy="0 99 30 2"
+zcmd_m="M 0 3000 1 3001"
+zcmd_o="O 0 3022 1 3001"
+zcmd_g="G 1 3022 1"
+zcmd_e="E 1 3022 1 16"
+zcmd_p="P 1 3022 1 3022"
+zcmd_d="D 0 3001 0 1"
+zcmd_r="R 0 3001 3022"
+zcmd_t="T 0 1 3000 3001"
+zcmd_v="V 0 2 0 3001 name value"
+zcmd_s="S\x0a"
+
+# Triggers: header line and DG script words
+trig_header="0 g 100"
+trig_cmd_wait="wait 1"
+trig_cmd_if="if %actor%"
+trig_cmd_end="end"
+
+# Colour/tab codes parse_at() rewrites
+at_code="@n"
+at_double="@@"
+tab="\x09"
+
+# Boundary numbers
+n_minus1="-1"
+n_zero="0"
+n_65534="65534"
+n_65535="65535"
+n_65536="65536"
+n_70000="70000"
+n_int_max="2147483647"
+n_int_min="-2147483648"
+n_over_int="2147483648"
+n_long="99999999999999999999"
+flag_letters="abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"

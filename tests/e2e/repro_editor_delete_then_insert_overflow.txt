@@ -1,0 +1,39 @@
+# Reproducer: the string editor's delete-last-line then insert reads past a
+# heap buffer (heap-buffer-overflow, server abort under ASan).
+#
+# Run:  tests/e2e/soak_gameplay.py --circle <ASan build>/bin/circle \
+#           --replay tests/e2e/repro_editor_delete_then_insert_overflow.txt
+#       (or a plain build with --valgrind -- Valgrind reports an invalid read)
+# Expect (unfixed code), the moment the "/i1" line is sent -- the server
+# aborts mid-session, before any shutdown:
+#   ERROR: AddressSanitizer: heap-buffer-overflow ... READ of size 3
+#     #1 parse_edit_action improved-edit.c:469  (strlen(s + 1))
+#     #2 improved_editor_execute improved-edit.c:104
+#     #3 string_add modify.c:142
+#   "0 bytes after 3-byte region ... allocated by ... parse_edit_action
+#    improved-edit.c:305" (the RECREATE in the delete path).
+#
+# Cause: PARSE_DELETE of the only line sets *t='\0' and then
+#   RECREATE(*d->str, char, strlen(*d->str) + 3)       (improved-edit.c:305)
+# leaving *d->str a 3-byte block whose bytes 1..2 are uninitialised (realloc
+# does not zero).  A following "/i<n> text" (PARSE_INSERT) walks to the
+# insertion point, sets *s = '\0', then evaluates
+#   strlen(*d->str) + strlen(buf2) + strlen(s + 1) + 3   (improved-edit.c:469)
+# s points at the just-written terminator (the empty buffer's byte 0), so
+# strlen(s + 1) reads from byte 1 of the 3-byte block and runs off the end.
+#
+# Any player reaches the editor: mail, boards (write), bug/idea/typo submit,
+# the menu description editor (choice 2), OLC descriptions.  This replay uses
+# "idea submit", available to every mortal.  No audit branch changes
+# improved-edit.c's delete/insert paths (the strlen(s + 1) line and the
+# delete-path RECREATE are byte-identical on audit/full-hardening-integration).
+#
+# Minimal: enter the editor, one line of text, delete it, insert a line.
+create Soakimp w
+create Alric w
+Alric!: idea submit editor overflow check
+expect Alric Terminate
+Alric!: the only line of text
+Alric!: /d1
+Alric!: /i1 inserted after delete
+sleep 3

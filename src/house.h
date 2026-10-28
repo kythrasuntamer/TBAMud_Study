@@ -17,6 +17,18 @@
 
 #define HOUSE_PRIVATE	0
 
+/** One house, as stored in lib/etc/hcontrol.
+ * After a format header (struct hcontrol_header in house.c) the file is a
+ * raw fwrite() of an array of these, so its layout is the in-memory layout:
+ * it depends on the compiler ABI (sizes of time_t and long,
+ * room_vnum/IDXTYPE, alignment padding) and on field order. The header
+ * records the record size and format version, so a file from another
+ * platform or struct layout is refused at boot; bump
+ * HCONTROL_FORMAT_VERSION in house.c whenever this struct changes. Any
+ * record that is written must be zeroed first (memset), so
+ * that the spare fields and the padding are defined. On read every field
+ * is untrusted: num_of_guests in particular must be checked with
+ * VALID_HOUSE_GUESTS() before guests[] is indexed. */
 struct house_control_rec {
    room_vnum vnum;		/* vnum of this house		*/
    room_vnum atrium;		/* vnum of atrium		*/
@@ -36,6 +48,12 @@ struct house_control_rec {
    long spare6;
    long spare7;
 };
+
+/** TRUE when a house record's guest count fits guests[]. num_of_guests is
+ * read from the binary hcontrol file, so check it before any guests[] loop.
+ * Evaluates h twice: pass a plain pointer. */
+#define VALID_HOUSE_GUESTS(h) \
+  ((h)->num_of_guests >= 0 && (h)->num_of_guests <= MAX_GUESTS)
 
 #define TOROOM(room, dir) (world[room].dir_option[dir] ? \
 			    world[room].dir_option[dir]->to_room : NOWHERE)

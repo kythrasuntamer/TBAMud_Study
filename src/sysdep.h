@@ -154,41 +154,24 @@ extern void abort(), exit();
 #include <limits.h>
 #endif
 
+/*
+ * TB_SCAN_STR(width): a scanf "%<width>s" conversion built from a named
+ * length constant, so the field width and the buffer size cannot drift
+ * apart and an unbounded "%s" (I2-04) is never written by hand.  width must
+ * be an integer literal or a macro expanding to one (it is stringified, not
+ * evaluated); the buffer must hold width + 1 bytes.  The result is a string
+ * literal, so -Wformat still checks the call.
+ *   #define TOKEN_LEN 63
+ *   char token[TOKEN_LEN + 1];
+ *   fscanf(fp, TB_SCAN_STR(TOKEN_LEN), token);
+ */
+#define TB_STR_(x)          #x
+#define TB_XSTR(x)          TB_STR_(x)
+#define TB_SCAN_STR(width)  "%" TB_XSTR(width) "s"
+
 #ifdef HAVE_ERRNO_H
 #include <errno.h>
 #endif
-
-/*
- * Checked replacements for legacy atoi()/atol() call sites.
- * They preserve the historical "no conversion => 0" behavior while detecting
- * range errors instead of invoking undefined or implementation-dependent
- * overflow behavior.
- */
-static inline long tb_parse_long_or_zero(const char *text)
-{
-  char *end = NULL;
-  long value;
-
-  if (text == NULL)
-    return 0;
-
-  errno = 0;
-  value = strtol(text, &end, 10);
-  if (end == text || errno == ERANGE)
-    return 0;
-
-  return value;
-}
-
-static inline int tb_parse_int_or_zero(const char *text)
-{
-  long value = tb_parse_long_or_zero(text);
-
-  if (value < INT_MIN || value > INT_MAX)
-    return 0;
-
-  return (int)value;
-}
 
 static inline int tb_ascii_space(unsigned char ch)
 {
@@ -312,9 +295,14 @@ static inline int tb_parse_float_checked(const char *text, float *out)
 #endif
 
 #ifndef HAVE_STRUCT_IN_ADDR
+/* Fallback for platforms whose headers lack struct in_addr.  s_addr is an
+ * IPv4 address: exactly 32 bits (unsigned long is 64 bits on LP64).  The
+ * terminating ';' was missing, so this fused with the next declaration and
+ * failed to parse inside the following system header. */
+#include <stdint.h>
 struct in_addr {
-  unsigned long int s_addr;	/* for inet_addr, etc. */
-}
+  uint32_t s_addr;	/* for inet_addr, etc. */
+};
 #endif
 
 #ifdef HAVE_SYS_SELECT_H
@@ -798,6 +786,24 @@ static inline int tb_diag_emit(const char *record, size_t length)
   return ok;
 }
 
+/**
+ * Emit one structured "TBERR ..." record on stderr: severity, category,
+ * operation, context, errno (number, symbolic name, strerror text) and the
+ * source file/line/function of the call site, all escaped so a record is
+ * always one line.  The allocation-free, utils.c-free reporter for headers,
+ * standalone tools and early boot; elsewhere prefer TB_ERROR_* (utils.h),
+ * which add breadcrumbs and a correlation ID.
+ *
+ * Contract and limits:
+ *  - errno is preserved for the caller.
+ *  - Not async-signal-safe (strerror, gmtime, snprintf): never call it from
+ *    a signal handler.
+ *  - Each escaped field is bounded (context: 1023 bytes after escaping;
+ *    record: 4095); longer text is cut without a marker.  Callers that build
+ *    a context with several values should use TB_REPORT_DOMAIN_ERRORF,
+ *    which marks its own truncation.
+ *  - Uses about 6.5 KB of stack (the record and escape buffers).
+ */
 static inline void tb_report_domain_error_at(tb_error_severity severity,
                                              tb_error_category category,
                                              const char *operation,
@@ -942,11 +948,161 @@ static inline void tb_report_error_at(const char *operation, const char *context
   tb_report_domain_error_at((severity), (category), (operation), (context), 0, \
                             __FILE__, __LINE__, __func__)
 
+/*
+ * Formatted-context form of tb_report_domain_error_at(), for callers that must
+ * name several entities (path, line number, idnum, vnum) in one record.
+ * The context is formatted into a fixed 1024-byte buffer; when it does not
+ * fit, it ends in "[context-truncated]" so a reader knows text is missing.
+ * Not async-signal-safe (vsnprintf), like tb_report_domain_error_at().
+ */
+static inline void tb_report_domain_errorf_at(tb_error_severity severity,
+                                              tb_error_category category,
+                                              const char *operation,
+                                              int errnum,
+                                              const char *source_file,
+                                              int source_line,
+                                              const char *source_func,
+                                              const char *context_fmt, ...)
+  __attribute__ ((format (printf, 8, 9)));
+static inline void tb_report_domain_errorf_at(tb_error_severity severity,
+                                              tb_error_category category,
+                                              const char *operation,
+                                              int errnum,
+                                              const char *source_file,
+                                              int source_line,
+                                              const char *source_func,
+                                              const char *context_fmt, ...)
+{
+  static const char marker[] = " [context-truncated]";
+  int caller_errno = errno;
+  char context[1024];
+  va_list args;
+  int result;
+
+  if (context_fmt == NULL) {
+    context[0] = '\0';
+  } else {
+    va_start(args, context_fmt);
+    result = vsnprintf(context, sizeof(context), context_fmt, args);
+    va_end(args);
+    if (result < 0)
+      (void)snprintf(context, sizeof(context), "%s", "(context format failed)");
+    else if ((size_t)result >= sizeof(context))
+      memcpy(context + sizeof(context) - sizeof(marker), marker, sizeof(marker));
+  }
+
+  tb_report_domain_error_at(severity, category, operation, context, errnum,
+                            source_file, source_line, source_func);
+  errno = caller_errno;
+}
+
+/* TB_REPORT_DOMAIN_ERRORF(sev, cat, "op", "path=%s line=%ld", ...) */
+#define TB_REPORT_DOMAIN_ERRORF(severity, category, operation, ...) \
+  tb_report_domain_errorf_at((severity), (category), (operation), 0, \
+                             __FILE__, __LINE__, __func__, __VA_ARGS__)
+
+/* Same, capturing errno at the call site before any argument is evaluated. */
+#define TB_REPORT_DOMAIN_ERRNOF(severity, category, operation, ...) do { \
+  int tb_saved_errnof_ = errno; \
+  tb_report_domain_errorf_at((severity), (category), (operation), \
+                             tb_saved_errnof_, __FILE__, __LINE__, __func__, \
+                             __VA_ARGS__); \
+} while (0)
+
+/*
+ * Replacements for legacy atoi()/atol() call sites, with atoi()'s contract
+ * kept on purpose:
+ *   - text with no leading number ("", "abc") returns 0, silently;
+ *   - trailing text is ignored ("12abc" returns 12, "10d4" returns 10),
+ *     silently -- several legacy callers rely on parsing a number prefix;
+ *   - a value outside long (or, for the int form, int) returns 0 AND emits
+ *     one TBERR WARN record, category PARSER, operation
+ *     "parse-number-overflow", naming the text (first 40 bytes, escaped),
+ *     the limit that was exceeded and the call site.  Overflow is never a
+ *     legitimate value, so unlike the two cases above it is always reported
+ *     (I2-26): a DG script's %actor.prac(99999999999)% or an over-long field
+ *     in a world or player file is visible in the log instead of quietly
+ *     becoming 0.
+ * The text is controlled by whoever wrote it: players and builders (command
+ * arguments, DG script text, OLC input), or the files on disk.
+ *
+ * So the caller still cannot tell "0" and "garbage" apart.  Use these only
+ * for legacy fields where 0 is a safe, expected value for bad input.  New
+ * code, and any input whose rejection matters (file formats, command
+ * arguments that select or size something), should use
+ * tb_parse_long_checked() / tb_parse_int_checked() above and report the
+ * failure with its own entity IDs.
+ *
+ * The public names are macros so each report carries the caller's
+ * __FILE__/__LINE__/__func__; text is evaluated exactly once.  Errno is left
+ * as strtol() set it (ERANGE after an overflow); the report preserves it.
+ * Not async-signal-safe (the reporter is not).
+ */
+#define TB_PARSE_EXCERPT_LEN 40   /* bytes of the offending text quoted */
+
+static inline long tb_parse_long_or_zero_at(const char *text,
+                                            const char *source_file,
+                                            int source_line,
+                                            const char *source_func)
+{
+  char *end = NULL;
+  long value;
+
+  if (text == NULL)
+    return 0;
+
+  errno = 0;
+  value = strtol(text, &end, 10);
+  if (end == text)
+    return 0;
+  if (errno == ERANGE) {
+    tb_report_domain_errorf_at(TB_SEV_WARN, TB_ERR_PARSER,
+                               "parse-number-overflow", ERANGE,
+                               source_file, source_line, source_func,
+                               "text=\"%.*s\" limit=long result=0",
+                               TB_PARSE_EXCERPT_LEN, text);
+    return 0;
+  }
+
+  return value;
+}
+
+static inline int tb_parse_int_or_zero_at(const char *text,
+                                          const char *source_file,
+                                          int source_line,
+                                          const char *source_func)
+{
+  long value = tb_parse_long_or_zero_at(text, source_file, source_line,
+                                        source_func);
+
+  if (value < INT_MIN || value > INT_MAX) {
+    tb_report_domain_errorf_at(TB_SEV_WARN, TB_ERR_PARSER,
+                               "parse-number-overflow", 0,
+                               source_file, source_line, source_func,
+                               "text=\"%.*s\" limit=int value=%ld result=0",
+                               TB_PARSE_EXCERPT_LEN, text, value);
+    return 0;
+  }
+
+  return (int)value;
+}
+
+#define tb_parse_long_or_zero(text) \
+  tb_parse_long_or_zero_at((text), __FILE__, __LINE__, __func__)
+#define tb_parse_int_or_zero(text) \
+  tb_parse_int_or_zero_at((text), __FILE__, __LINE__, __func__)
+
 #define TB_INVARIANT(expr, context) \
   ((expr) ? 1 : \
    (tb_report_domain_error_at(TB_SEV_ERROR, TB_ERR_INVARIANT, "invariant", \
                               (context), 0, __FILE__, __LINE__, __func__), 0))
 
+/* format(printf) type-checks every caller's format and arguments. */
+static inline void tb_snprintf_at(char *dst, size_t dst_size,
+                                  const char *source_file, int source_line,
+                                  const char *source_func,
+                                  const char *format, ...)
+  __attribute__ ((format (printf, 6, 7)));
 static inline void tb_snprintf_at(char *dst, size_t dst_size,
                                   const char *source_file, int source_line,
                                   const char *source_func,
@@ -976,6 +1132,12 @@ static inline void tb_snprintf_at(char *dst, size_t dst_size,
 #define tb_snprintf(dst, dst_size, ...) \
   tb_snprintf_at((dst), (dst_size), __FILE__, __LINE__, __func__, __VA_ARGS__)
 
+/* format(printf) type-checks every caller's format and arguments. */
+static inline void tb_fprintf_at(FILE *stream,
+                                 const char *source_file, int source_line,
+                                 const char *source_func,
+                                 const char *format, ...)
+  __attribute__ ((format (printf, 5, 6)));
 static inline void tb_fprintf_at(FILE *stream,
                                  const char *source_file, int source_line,
                                  const char *source_func,
@@ -1147,6 +1309,12 @@ static inline int tb_fclose_checked_at(FILE *stream, const char *context,
 #define tb_fclose_checked(stream, context) \
   tb_fclose_checked_at((stream), (context), __FILE__, __LINE__, __func__)
 
+/* format(printf) type-checks every caller's format and arguments. */
+static inline int tb_fprintf_checked_at(FILE *stream, const char *context,
+                                        const char *source_file, int source_line,
+                                        const char *source_func,
+                                        const char *format, ...)
+  __attribute__ ((format (printf, 6, 7)));
 static inline int tb_fprintf_checked_at(FILE *stream, const char *context,
                                         const char *source_file, int source_line,
                                         const char *source_func,
@@ -1214,6 +1382,14 @@ static inline int tb_fwrite_checked_at(const void *ptr, size_t size, size_t coun
 /*
  * Test-only failure injection. Production builds compile this to a constant
  * false and expose no runtime switch that can sabotage I/O.
+ *
+ * Scope: tb_test_failpoints_ is a `static` variable in a header, so every
+ * translation unit compiled with TB_TEST_FAILURE_INJECTION gets its own
+ * copy.  tb_test_set_failpoints() therefore affects only the
+ * tb_replace_file_checked() calls compiled into the same .c file as the
+ * call to it (tests/test_error_handling.c calls both itself).  A test that
+ * needs to fail a replacement inside another .c file must set the failpoint
+ * from that file.
  */
 #define TB_FAIL_REPLACE_INITIAL  0x01u
 #define TB_FAIL_REPLACE_COMMIT   0x02u
@@ -1240,10 +1416,26 @@ static inline int tb_test_failpoint_active(unsigned int mask)
 #endif
 
 /*
- * Replace a live file with a fully-written temporary file.  On platforms
- * where rename() cannot replace an existing destination, fall back to a
- * backup/rollback sequence.  A failed commit never intentionally discards
- * the last known-good destination.
+ * Replace a live file with a fully-written temporary file.
+ *
+ * On POSIX, rename() replaces the destination atomically, so a failure of
+ * the first rename() (ENOENT for a missing temp file, EXDEV, EBUSY, ...) is
+ * a real error: it is reported with both paths and nothing else is touched.
+ *
+ * Only when the first rename() fails with EEXIST or EACCES -- what platforms
+ * whose rename() cannot replace an existing file (Windows CRT) return -- and
+ * the destination exists, it falls back to: dest -> backup, temp -> dest,
+ * then backup removed.  That sequence is not atomic: between the two renames
+ * the destination does not exist.  The backup is "<dest>.tbreplace.<pid>",
+ * never "<dest>.bak" (operators and shopconv keep their own .bak files there,
+ * and an older version deleted it), and an existing file of that name is
+ * reported and left alone.  A fallback that succeeds is reported as a
+ * "rename-fallback" warning, because the first rename did fail.
+ *
+ * Failure: returns 0 with errno set to the error of the failing step.  Every
+ * report names temp, dest and (in the fallback) backup.  If the commit fails
+ * and the rollback also fails, "rename-rollback" names the backup path: that
+ * file is then the last good copy of dest.
  */
 static inline int tb_replace_file_checked_at(const char *temp_path,
                                              const char *dest_path,
@@ -1253,7 +1445,8 @@ static inline int tb_replace_file_checked_at(const char *temp_path,
 {
   char *backup_path;
   size_t backup_len;
-  int first_errno;
+  int first_errno, written;
+  struct stat st;
 
   if (temp_path == NULL || dest_path == NULL) {
     tb_report_error_at("rename", "invalid replacement path", 0,
@@ -1269,39 +1462,63 @@ static inline int tb_replace_file_checked_at(const char *temp_path,
   }
 
   first_errno = errno;
-  backup_len = strlen(dest_path) + sizeof(".bak");
+  if ((first_errno != EEXIST && first_errno != EACCES) ||
+      stat(dest_path, &st) != 0) {
+    /* Not the "cannot replace an existing file" case: no fallback. */
+    tb_report_domain_errorf_at(TB_SEV_ERROR, TB_ERR_PERSISTENCE, "rename",
+                               first_errno, source_file, source_line,
+                               source_func, "temp=%s dest=%s", temp_path,
+                               dest_path);
+    errno = first_errno;
+    return 0;
+  }
+
+  /* 2 x 20 digits covers any long pid. */
+  backup_len = strlen(dest_path) + sizeof(".tbreplace.") + 21;
   backup_path = (char *)malloc(backup_len);
   if (backup_path == NULL) {
-    tb_report_error_at("malloc", "replacement backup path", errno,
-                       source_file, source_line, source_func);
-    errno = first_errno;
-    tb_report_error_at("rename", dest_path, first_errno,
-                       source_file, source_line, source_func);
-    return 0;
-  }
-
-  if (snprintf(backup_path, backup_len, "%s.bak", dest_path) < 0) {
-    free(backup_path);
-    tb_report_error_at("snprintf", "replacement backup path", 0,
-                       source_file, source_line, source_func);
-    return 0;
-  }
-
-  if (remove(backup_path) != 0 && errno != ENOENT) {
     int saved_errno = errno;
-    tb_report_error_at("remove", backup_path, saved_errno,
-                       source_file, source_line, source_func);
+    tb_report_domain_errorf_at(TB_SEV_ERROR, TB_ERR_PERSISTENCE, "malloc",
+                               saved_errno, source_file, source_line,
+                               source_func, "replacement backup path: temp=%s "
+                               "dest=%s first_errno=%d", temp_path, dest_path,
+                               first_errno);
+    errno = first_errno;
+    return 0;
+  }
+
+  written = snprintf(backup_path, backup_len, "%s.tbreplace.%ld", dest_path,
+                     (long)getpid());
+  if (written < 0 || (size_t)written >= backup_len) {
     free(backup_path);
+    tb_report_domain_errorf_at(TB_SEV_ERROR, TB_ERR_INVARIANT, "snprintf", 0,
+                               source_file, source_line, source_func,
+                               "replacement backup path: dest=%s", dest_path);
+    errno = first_errno;
+    return 0;
+  }
+
+  if (stat(backup_path, &st) == 0) {
+    /* Left by an earlier failed rollback (that report named it): it may be
+     * the only good copy, so never delete or overwrite it. */
+    tb_report_domain_errorf_at(TB_SEV_ERROR, TB_ERR_PERSISTENCE,
+                               "rename-backup-exists", EEXIST, source_file,
+                               source_line, source_func, "temp=%s dest=%s "
+                               "backup=%s", temp_path, dest_path, backup_path);
+    free(backup_path);
+    errno = EEXIST;
     return 0;
   }
 
   if (rename(dest_path, backup_path) != 0) {
     int saved_errno = errno;
-    errno = first_errno;
-    tb_report_error_at("rename", dest_path, first_errno,
-                       source_file, source_line, source_func);
-    errno = saved_errno;
+    tb_report_domain_errorf_at(TB_SEV_ERROR, TB_ERR_PERSISTENCE, "rename",
+                               saved_errno, source_file, source_line,
+                               source_func, "dest to backup: temp=%s dest=%s "
+                               "backup=%s first_errno=%d", temp_path,
+                               dest_path, backup_path, first_errno);
     free(backup_path);
+    errno = saved_errno;
     return 0;
   }
 
@@ -1326,14 +1543,19 @@ static inline int tb_replace_file_checked_at(const char *temp_path,
         rollback_failed = 1;
       }
 
+      tb_report_domain_errorf_at(TB_SEV_ERROR, TB_ERR_PERSISTENCE, "rename",
+                                 commit_errno, source_file, source_line,
+                                 source_func, "commit: temp=%s dest=%s "
+                                 "backup=%s", temp_path, dest_path,
+                                 backup_path);
       if (rollback_failed) {
         int rollback_errno = errno;
-        tb_report_error_at("rename", "rollback destination restore",
-                           rollback_errno, source_file, source_line, source_func);
+        tb_report_domain_errorf_at(TB_SEV_FATAL, TB_ERR_PERSISTENCE,
+                                   "rename-rollback", rollback_errno,
+                                   source_file, source_line, source_func,
+                                   "dest=%s is missing; last good copy is "
+                                   "backup=%s", dest_path, backup_path);
       }
-
-      tb_report_error_at("rename", temp_path, commit_errno,
-                         source_file, source_line, source_func);
       free(backup_path);
       errno = commit_errno;
       return 0;
@@ -1342,10 +1564,16 @@ static inline int tb_replace_file_checked_at(const char *temp_path,
 
   if (remove(backup_path) != 0 && errno != ENOENT) {
     int saved_errno = errno;
-    tb_report_error_at("remove", backup_path, saved_errno,
-                       source_file, source_line, source_func);
+    tb_report_domain_errorf_at(TB_SEV_WARN, TB_ERR_PERSISTENCE, "remove",
+                               saved_errno, source_file, source_line,
+                               source_func, "stale replacement backup=%s "
+                               "dest=%s", backup_path, dest_path);
   }
 
+  tb_report_domain_errorf_at(TB_SEV_WARN, TB_ERR_PERSISTENCE, "rename-fallback",
+                             first_errno, source_file, source_line,
+                             source_func, "first rename failed; replaced via "
+                             "backup: temp=%s dest=%s", temp_path, dest_path);
   free(backup_path);
   return 1;
 }
@@ -1353,6 +1581,23 @@ static inline int tb_replace_file_checked_at(const char *temp_path,
 #define tb_replace_file_checked(temp_path, dest_path) \
   tb_replace_file_checked_at((temp_path), (dest_path), __FILE__, __LINE__, __func__)
 
+/* format(strftime) makes the compiler check each caller's format literal,
+ * just as format(printf) does for the output functions.
+ *
+ * Contract: when dst is non-NULL and dst_size > 0, dst holds a NUL-terminated
+ * string on return: the formatted time, or "" on every failure path, each of
+ * which is reported at the caller's file and line. Callers print dst with
+ * "%s" without checking anything, and timeptr usually comes straight from
+ * localtime()/gmtime(), which return NULL for a time_t they cannot represent.
+ * A corrupt LAST_FILE record, pfile or index timestamp, or mail header can
+ * hold one, so leaving dst unwritten printed uninitialized stack bytes
+ * (G1-19, B2-26). */
+static inline void tb_strftime_at(char *dst, size_t dst_size,
+                                  const char *source_file, int source_line,
+                                  const char *source_func,
+                                  const char *format,
+                                  const struct tm *timeptr)
+  __attribute__ ((format (strftime, 6, 0)));
 static inline void tb_strftime_at(char *dst, size_t dst_size,
                                   const char *source_file, int source_line,
                                   const char *source_func,
@@ -1360,11 +1605,30 @@ static inline void tb_strftime_at(char *dst, size_t dst_size,
                                   const struct tm *timeptr)
 {
   if (dst == NULL || dst_size == 0 || format == NULL || timeptr == NULL) {
-    tb_report_error_at("strftime", "invalid argument", 0,
+    /* Terminate before reporting: no failure path leaves dst unwritten. */
+    if (dst != NULL && dst_size > 0)
+      dst[0] = '\0';
+    tb_report_error_at("strftime",
+                       (dst == NULL || dst_size == 0 || format == NULL) ?
+                       "invalid argument: NULL or zero-size destination, or "
+                       "NULL format" :
+                       "invalid argument: NULL struct tm (time_t not "
+                       "representable); output set to empty", 0,
                        source_file, source_line, source_func);
     return;
   }
-  if (strftime(dst, dst_size, format, timeptr) == 0) {
+  /* format is the caller's literal, already checked at the call site via the
+   * format(strftime) attribute above; forwarding it is the one sanctioned
+   * non-literal format in the tree (-Werror=format-nonliteral elsewhere). */
+#if defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wformat-nonliteral"
+#endif
+  size_t written = strftime(dst, dst_size, format, timeptr);
+#if defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
+  if (written == 0) {
     dst[0] = '\0';
     tb_report_error_at("strftime", "buffer too small or conversion failed", 0,
                        source_file, source_line, source_func);

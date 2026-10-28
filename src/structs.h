@@ -46,6 +46,13 @@
 # define NOFLAG   ((IDXTYPE)-1)    /**< nil reference for flags   */
 #endif
 
+/* TRUE if a parsed int/long can be stored in an IDXTYPE vnum field without
+ * wrapping and is not the NOWHERE/NOTHING sentinel (IDXTYPE_MAX with the
+ * default unsigned index type). Loaders, OLC and DG parse vnums as int or
+ * long and narrow them into IDXTYPE fields. Evaluates n twice: pass a plain
+ * variable. */
+#define VNUM_STORABLE(n)  ((long)(n) >= IDXTYPE_MIN && (long)(n) < IDXTYPE_MAX)
+
 /** Function macro for the mob, obj and room special functions */
 #define SPECIAL(name) \
    int (name)(struct char_data *ch, void *me, int cmd, char *argument)
@@ -235,6 +242,10 @@
 #define MOB_NOKILL         18   /**< Mob can't be attacked */
 #define MOB_NOTDEADYET     19   /**< (R) Mob being extracted */
 
+/** Number of mob flags shown to builders. Deliberately 19, one less than
+ * the highest bit: MOB_NOTDEADYET (19) is the extraction marker (DEAD()),
+ * and keeping it out of NUM_MOB_FLAGS hides it from medit and oasis_list.
+ * Do not "fix" this to 20; a builder could then set or clear the marker. */
 #define NUM_MOB_FLAGS      19
 
 /* Preference flags: used by char_data.player_specials.pref */
@@ -525,7 +536,11 @@
 #define RENT_FORCED     4 /**< Character inv save status = forced rent */
 #define RENT_TIMEDOUT   5 /**< Character inv save status = timed out */
 
-/* Settings for Bit Vectors */
+/* Settings for Bit Vectors
+ * Despite the "# Bytes" wording below, each value is the number of int
+ * words in the array (4 x 32 = 128 flag bits). Each must be at least
+ * ceil(NUM_*_FLAGS / 32) for its flag set, and the values are part of the
+ * player, world and object file formats: do not shrink them. */
 #define RF_ARRAY_MAX    4  /**< # Bytes in Bit vector - Room flags */
 #define PM_ARRAY_MAX    4  /**< # Bytes in Bit vector - Act and Player flags */
 #define PR_ARRAY_MAX    4  /**< # Bytes in Bit vector - Player Pref Flags */
@@ -810,7 +825,9 @@ struct room_data
   char *description; /**< Shown when entered, looked at */
   struct extra_descr_data *ex_description; /**< Additional things to look at */
   struct room_direction_data *dir_option[NUM_OF_DIRS]; /**< Directions */
-  byte light;        /**< Number of lightsources in room */
+  byte light;        /**< Number of lightsources in room. A signed byte:
+                       *  valid 0..127; it wraps past 127, so writers must
+                       *  stay in range. */
   SPECIAL(*func);    /**< Points to special function attached to room */
   struct trig_proto_list *proto_script; /**< list of default triggers */
   struct script_data *script; /**< script info for the room */
@@ -898,7 +915,10 @@ struct char_ability_data
   sbyte cha;     /**< Charisma */
 };
 
-/** Character 'points', or health statistics. */
+/** Character 'points', or health statistics.
+ * All six fields are sh_int (-32768..32767). OLC, DG scripts and
+ * equipment bonuses that add to them must clamp to that range and report
+ * when they do; an unchecked sum wraps to a negative value. */
 struct char_point_data
 {
   sh_int mana;     /**< Current mana level  */
@@ -944,7 +964,9 @@ struct char_special_data
   byte position; /**< Standing, fighting, sleeping, etc. */
 
   int carry_weight; /**< Carried weight */
-  byte carry_items; /**< Number of items carried */
+  byte carry_items; /**< Number of items carried. A signed byte: valid
+                     *  0..127; it wraps past 127, so writers must stay in
+                     *  range. */
   int timer;        /**< Timer for update */
 
   struct char_special_data_saved saved; /**< Constants saved for PCs. */

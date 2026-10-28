@@ -6,6 +6,19 @@
 * 2002 Kip Potter [Mythran].                                              *
 **************************************************************************/
 
+/**
+ * @file oasis_copy.c
+ * One-shot OLC commands that create world data without opening an editor:
+ * rcopy/ocopy/mcopy/scopy/tcopy (do_oasis_copy), dig, and buildwalk.
+ *
+ * Each borrows the caller's descriptor OLC slot through OLC_ATTACH, drives
+ * an editor's setup_existing/save_internally back end, and releases the
+ * slot with cleanup_olc(d, CLEANUP_ALL) before returning.  Inputs are
+ * builder-typed vnums and directions (LVL_BUILDER commands) plus movement
+ * for buildwalk; every vnum is range-checked before it is narrowed to
+ * IDXTYPE.
+ */
+
 #include "conf.h"
 #include "sysdep.h"
 #include "structs.h"
@@ -35,6 +48,19 @@ static room_vnum redit_find_new_vnum(zone_rnum zone);
 * determined by the subcmd variable and the functions are  *
 * looked up in a table.                                    *
 ***********************************************************/
+/** Copy one prototype to a new vnum (rcopy, ocopy, mcopy, scopy, tcopy).
+ *
+ * The source may be in any zone; the target must not exist, must lie in a
+ * zone the builder can edit, and must not be open in another editor.
+ *
+ * Contract with the editor back ends: setup_existing must produce a scratch
+ * copy that is safe to insert as a NEW entity, i.e. one that shares no
+ * runtime lists with the source (room contents, people and events are
+ * cleared, and re-checked here for rooms, op=room-copy), and for rooms its
+ * number is set to NOWHERE so redit_save_internally runs its new-room
+ * renumbering of other builders' open editors.  save_func returns void, so
+ * success is confirmed by looking the target up again afterwards
+ * (op=copy-failed if it is missing). */
 ACMD(do_oasis_copy)
 {
   int i, src_vnum, src_rnum, dst_vnum, dst_rnum;
@@ -62,13 +88,29 @@ ACMD(do_oasis_copy)
   for (i = 0; *(oasis_copy_info[i].text) != '\n'; i++)
     if (subcmd == oasis_copy_info[i].con_type)
       break;
-  /* If not found, we don't support copying that type of data. */
-  if (*(oasis_copy_info[i].text) == '\n')
+  /* F3-14: subcmd comes from the command table (interpreter.c), so a miss
+   * here is a table mismatch, not user error: report it instead of making
+   * the command silently do nothing. */
+  if (*(oasis_copy_info[i].text) == '\n') {
+    send_to_char(ch, "That kind of data cannot be copied.\r\n");
+    TB_ERROR_MSG("olc", "copy-dispatch", "oasis_copy_info",
+                 "subcmd %d not in table for " DIAG_CHAR_FMT,
+                 subcmd, DIAG_CHAR(ch));
     return;
+  }
 
-  /* No copying as a mob or while being forced. */
-  if (IS_NPC(ch) || !ch->desc || STATE(ch->desc) != CON_PLAYING) 
+  /* No copying as a mob, without a connection (switched/linkless), or while
+   * the descriptor is in another editor (e.g. forced from inside medit):
+   * the copy borrows d->olc.  Say why rather than returning silently. */
+  if (IS_NPC(ch) || !ch->desc || STATE(ch->desc) != CON_PLAYING) {
+    send_to_char(ch, "You can only %s from normal play, not as a mob or "
+                 "while editing.\r\n", oasis_copy_info[i].command);
+    TB_WARN_MSG("olc", "copy-refused", oasis_copy_info[i].command,
+                "npc %d desc %s state %d for " DIAG_CHAR_FMT,
+                IS_NPC(ch) ? 1 : 0, ch->desc ? "yes" : "no",
+                ch->desc ? STATE(ch->desc) : -1, DIAG_CHAR(ch));
     return;
+  }
 
   /* We need two arguments. */
   two_arguments(argument, buf1, buf2);
@@ -82,7 +124,20 @@ ACMD(do_oasis_copy)
   /* We can't copy non-existing data. */
   /* Note: the source data can be in any zone. It's not restricted */
   /* to the builder's designated OLC zone. */
-  src_vnum = tb_parse_int_or_zero(buf1);
+  /* F3-06: both vnums are builder-typed ints but every lookup and OLC_NUM
+   * are IDXTYPE (ush_int).  Without a range check 68538 silently became
+   * 3002, and the "already being edited" check below compared the narrowed
+   * OLC_NUM against the unnarrowed int, so it could never match.  NOWHERE
+   * (IDXTYPE_MAX) is the "no vnum" sentinel and is not a valid target. */
+  if (!tb_parse_int_checked(buf1, &src_vnum) || !tb_parse_int_checked(buf2, &dst_vnum) ||
+      src_vnum < 0 || src_vnum >= IDXTYPE_MAX || dst_vnum < 0 || dst_vnum >= IDXTYPE_MAX) {
+    send_to_char(ch, "Vnums must be numbers from 0 to %d.\r\n", IDXTYPE_MAX - 1);
+    TB_WARN_MSG("olc", "arg-range", oasis_copy_info[i].command,
+                "vnum '%s' or '%s' outside [0,%d] from " DIAG_CHAR_FMT,
+                buf1, buf2, IDXTYPE_MAX - 1, DIAG_CHAR(ch));
+    return;
+  }
+
   src_rnum = (*oasis_copy_info[i].binary_search)(src_vnum);
   if (src_rnum == NOWHERE) {
     send_to_char(ch, "The source %s (#%d) does not exist.\r\n", oasis_copy_info[i].text, src_vnum);
@@ -90,7 +145,6 @@ ACMD(do_oasis_copy)
   }
 
   /* Don't copy if the target already exists. */
-  dst_vnum = tb_parse_int_or_zero(buf2);
   dst_rnum = (*oasis_copy_info[i].binary_search)(dst_vnum);
   if (dst_rnum != NOWHERE) {
     send_to_char(ch, "The target %s (#%d) already exists.\r\n", oasis_copy_info[i].text, dst_vnum);
@@ -110,14 +164,9 @@ ACMD(do_oasis_copy)
 
   d = ch->desc;
 
-  /* Give the descriptor an OLC structure. */
-  if (d->olc) {
-    mudlog(BRF, LVL_IMMORT, TRUE, "SYSERR: do_oasis_copy: Player already had olc structure.");
-    free(d->olc);
-  }
-
-  /* Create the OLC structure. */
-  CREATE(d->olc, struct oasis_olc_data, 1);
+  /* Give the descriptor an OLC structure (refused loudly if it has one). */
+  if (!OLC_ATTACH(d, ch, oasis_copy_info[i].command))
+    return;
 
   /* Find the zone. */
   if ((OLC_ZNUM(d) = real_zone_by_thing(dst_vnum)) == NOWHERE) {
@@ -141,14 +190,64 @@ ACMD(do_oasis_copy)
   /* Perform the copy. */
   send_to_char(ch, "Copying %s: source: #%d, dest: #%d.\r\n", oasis_copy_info[i].text, src_vnum, dst_vnum);
   (*oasis_copy_info[i].setup_existing)(d, src_rnum);
+
+  /* F3-05: the scratch room is inserted into world[] as a brand-new room.
+   * Its object list, occupant list and event list belong to the source room;
+   * a copied head pointer would leave the new room sharing (and later
+   * dangling into) the source's lists.  redit_setup_existing clears them;
+   * re-check here because the insert path in add_room trusts the template. */
+  if (subcmd == CON_REDIT && OLC_ROOM(d) &&
+      (OLC_ROOM(d)->contents || OLC_ROOM(d)->people || OLC_ROOM(d)->events)) {
+    TB_ERROR_MSG("olc", "room-copy", "world",
+                 "template for new room vnum %d (copy of vnum %d) carries "
+                 "contents %p people %p events %p; clearing for " DIAG_CHAR_FMT,
+                 dst_vnum, src_vnum, (void *)OLC_ROOM(d)->contents,
+                 (void *)OLC_ROOM(d)->people, (void *)OLC_ROOM(d)->events,
+                 DIAG_CHAR(ch));
+    OLC_ROOM(d)->contents = NULL;
+    OLC_ROOM(d)->people = NULL;
+    OLC_ROOM(d)->events = NULL;
+  }
+
+  /* F3-06: redit_save_internally treats the save as a new room (and
+   * renumbers the rnums held by other builders' open editors) only when the
+   * template's number is NOWHERE.  setup_existing leaves the source vnum
+   * there, so without this the renumber pass was skipped and other open
+   * editors' exits silently pointed one room off after the insert. */
+  if (subcmd == CON_REDIT && OLC_ROOM(d))
+    OLC_ROOM(d)->number = NOWHERE;
+
   (*oasis_copy_info[i].save_func)(d);
 
   /* Currently CLEANUP_ALL should be used for everything. */
   cleanup_olc(d, CLEANUP_ALL);
+
+  /* F3-14: the *_save_internally helpers return void and report their own
+   * failures only to the builder (e.g. redit's "Something went wrong").
+   * The target did not exist before the save, so it exists now exactly when
+   * the copy worked; check that before claiming success. */
+  if ((*oasis_copy_info[i].binary_search)(dst_vnum) == NOWHERE) {
+    send_to_char(ch, "The copy failed: %s #%d was not created.\r\n",
+                 oasis_copy_info[i].text, dst_vnum);
+    TB_ERROR_MSG("olc", "copy-failed", oasis_copy_info[i].command,
+                 "src %d dst %d not created for " DIAG_CHAR_FMT,
+                 src_vnum, dst_vnum, DIAG_CHAR(ch));
+    return;
+  }
   send_to_char(ch, "Done.\r\n");
 }
 
 /* Commands */
+/** dig <direction> <vnum | -1>: link the caller's room to vnum, creating
+ * the target room if it does not exist; -1 removes the exit.
+ *
+ * Borrows ch->desc's OLC slot (OLC_ATTACH), so it requires STATE(d) ==
+ * CON_PLAYING; do_force can run it on a builder who is inside an editor,
+ * and OLC_ATTACH then refuses (op=olc-busy).  Creating a room goes through
+ * add_room, which may reallocate world[] and shift rnums: IN_ROOM(ch) and
+ * any rnum computed earlier must be re-read afterwards.  The new room's
+ * strings are strdup'd here and deep-copied by add_room, so the scratch
+ * copy is released with CLEANUP_ALL. */
 ACMD(do_dig)
 {
   char sdir[MAX_INPUT_LENGTH], sroom[MAX_INPUT_LENGTH], *new_room_name;
@@ -169,7 +268,20 @@ ACMD(do_dig)
     return;
   }
 
-  rawvnum = tb_parse_int_or_zero(sroom);
+  /* F3-18: sroom is builder-typed.  -1 means "delete the exit"; anything
+   * else must be a whole number that fits room_vnum without becoming the
+   * NOWHERE sentinel.  Unchecked, `dig north 68001` narrowed to 2465,
+   * `dig north 65535` equalled NOWHERE and deleted the exit, and a
+   * non-numeric argument parsed as 0 (limbo). */
+  if (!tb_parse_int_checked(sroom, &rawvnum) ||
+      (rawvnum != -1 && (rawvnum < 0 || rawvnum >= IDXTYPE_MAX))) {
+    send_to_char(ch, "'%s' is not a room vnum: use 1 to %d, or -1 to remove the exit.\r\n",
+                 sroom, IDXTYPE_MAX - 1);
+    TB_WARN_MSG("olc", "arg-range", "dig",
+                "value '%s' outside {-1} or [0,%d] from " DIAG_CHAR_FMT,
+                sroom, IDXTYPE_MAX - 1, DIAG_CHAR(ch));
+    return;
+  }
   if (rawvnum == -1)
     rvnum = NOWHERE;
   else
@@ -232,11 +344,8 @@ ACMD(do_dig)
   if (rrnum == NOWHERE) {
     /* Give the descriptor an olc struct. This way we can let 
      * redit_save_internally handle the room adding. */
-    if (d->olc) {
-      mudlog(BRF, LVL_IMMORT, TRUE, "SYSERR: do_dig: Player already had olc structure.");
-      free(d->olc);
-    }
-    CREATE(d->olc, struct oasis_olc_data, 1);
+    if (!OLC_ATTACH(d, ch, "dig"))
+      return;
     OLC_ZNUM(d) = zone;
     OLC_NUM(d) = rvnum;
     CREATE(OLC_ROOM(d), struct room_data, 1);
@@ -308,6 +417,16 @@ static room_vnum redit_find_new_vnum(zone_rnum zone)
   return(vnum);
 }
 
+/** Called on every move of a character with PRF_BUILDWALK: when moving in
+ * a direction with no exit, create a room at the zone's next free vnum and
+ * link it.  Returns 1 if a room was created (the caller then moves ch).
+ *
+ * Same borrowing rules as do_dig: OLC_ATTACH refuses while ch's descriptor
+ * is in an editor; add_room may reallocate world[], so the new room's rnum
+ * is looked up again after the save; the strdup'd name and description are
+ * owned by the scratch room and freed by cleanup_olc(d, CLEANUP_ALL).
+ * can_edit_zone denies a character with no descriptor, so a linkless
+ * builder never reaches the OLC slot. */
 int buildwalk(struct char_data *ch, int dir)
 {
   char buf[MAX_INPUT_LENGTH];
@@ -327,11 +446,8 @@ int buildwalk(struct char_data *ch, int dir)
       struct descriptor_data *d = ch->desc;
       /* Give the descriptor an olc struct. This way we can let 
        * redit_save_internally handle the room adding. */
-      if (d->olc) {
-        mudlog(BRF, LVL_IMMORT, TRUE, "SYSERR: buildwalk(): Player already had olc structure.");
-        free(d->olc);
-      }
-      CREATE(d->olc, struct oasis_olc_data, 1);
+      if (!OLC_ATTACH(d, ch, "buildwalk"))
+        return (0);
       OLC_ZNUM(d) = world[IN_ROOM(ch)].zone;
       OLC_NUM(d) = vnum;
       CREATE(OLC_ROOM(d), struct room_data, 1);
@@ -358,7 +474,11 @@ int buildwalk(struct char_data *ch, int dir)
 
       /* Report room creation to user */
       send_to_char(ch, "%sRoom #%d created by BuildWalk.%s\r\n", yel, vnum, nrm);
-      cleanup_olc(d, CLEANUP_STRUCTS);
+      /* F3-09: add_room deep-copies the template's strings into world[]
+       * (copy_room_strings), so the strdup'd name and description above are
+       * still owned by the template.  CLEANUP_STRUCTS freed only the struct
+       * and leaked both strings for every room buildwalk created. */
+      cleanup_olc(d, CLEANUP_ALL);
 
       return (1);
 

@@ -40,7 +40,11 @@ struct mud_event_data {
   event_id        iId;         /***< General ID reference */  
   void          * pStruct;     /***< Pointer to NULL, Descriptor, Character .... */
   char          * sVariables;	 /***< String variable */
-}; 
+  room_vnum       iRoomVnum;   /***< EVENT_ROOM owner. A room is named by vnum:
+                                *    redit's add_room() reallocates world[], so
+                                *    a struct room_data * would dangle. For
+                                *    EVENT_ROOM, pStruct is NULL. */
+};
 
 /* Externals */
 extern struct list_data * world_events;

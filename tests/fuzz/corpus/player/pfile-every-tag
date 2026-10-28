@@ -1,0 +1,88 @@
+PName: Fuzzer
+Pass: $1$fuzzseed$AAAAAAAAAAAAAAAAAAAAA.
+Titl: the Tester
+Desc:
+A tall, lanky tester with @Ra red cloak@n.
+He looks like he has seen a few bad files.
+~
+PfIn: arrives in a puff of @@smoke.
+PfOt: vanishes.
+Sex : 1
+Clas: 3
+Levl: 12
+Id  : 4242
+Brth: 1792958959
+Plyd: 2092
+Last: 1792998534
+Lmot: 1792960351
+Lnew: 1792960388
+Host: 127.0.0.1
+Hite: 180
+Wate: 160
+Alin: -350
+Act : d 0 0 0
+Aff : 0 0 0 0
+Pref: efghno 0 0 0
+Thr1: 1
+Thr2: 2
+Thr3: 3
+Thr4: 4
+Thr5: 5
+Wimp: 10
+Frez: 0
+Invs: 0
+Room: 3001
+Badp: 1
+Lern: 5
+Hung: 20
+Thir: 18
+Drnk: 2
+Hit : 120/150
+Mana: 80/100
+Move: 90/110
+Str : 18/50
+Int : 13
+Wis : 12
+Dex : 16
+Con : 15
+Cha : 9
+Ac  : 90
+Gold: 1500
+Bank: 25000
+Exp : 120000
+EgAP: 3
+EgXP: 1000
+EgHP: 1
+EgMP: 2
+Hrol: 2
+Drol: 3
+Olc : 30
+Page: 22
+ScrW: 80
+Qstp: 7
+Qpnt: 7
+Qcnt: 3
+Qest:
+1
+2
+65535
+Qcur: 1
+Trig: 1
+Skil:
+134 85
+12 95
+0 0
+Affs:
+19 52 0 0 16 0 0 0
+50 52 2 1 2048 0 0 0
+0 0 0 0 0 0 0 0
+Alis: 2
+ kk
+kill kobold
+0
+ gg
+get all corpse
+1
+Vars: 2
+questflag 0 1
+greeting 0 hello there
