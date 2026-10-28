@@ -20,5 +20,9 @@ M 0 4107 1 4119 	(the kobold)
 G 1 4104 10 -1 	(a green slime mould)
 D 0 4119 3 1 	(The Cave)
 D 0 4121 1 1 	(The Secret Tunnel)
+M 0 4109 4 4106 	(The phantom)
+M 0 4109 4 4113 	(The phantom)
+M 0 4108 1 4115 	(Melcrin, sovereign of the trolls)
+E 1 4105 1 16 	(@GBlade of the moors trolls@n)
 S
 $

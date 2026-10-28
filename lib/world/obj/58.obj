@@ -1,17 +1,9 @@
 #5830
-rusty hoop~
+torch rusty hoop~
 A torch~
 A torch is lying here.~
 ~
-1 0 0 0 0 1 0 0 0 0 0 0 0
-0 0 10 0
-1 5 5 0
-A
-18 100
-A
-19 15
-A
-19 30
-A
-19 100
+1 0 0 0 0 16385 0 0 0 0 0 0 0
+0 0 24 0
+1 10 10 0
 $~

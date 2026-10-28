@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Convert one Crimson 2 area (.wld/.mob/.obj/.zon) into tbaMUD world files.
+"""Convert a Crimson 2 area (.wld/.mob/.obj/.zon) into tbaMUD world data.
 
 Field meanings follow Crimson 2's own loader (src/db.c and structs.h at
 c2admins/Crimson-2-MUD 2b7207b): rooms db4300_boot_world, mobiles
@@ -9,33 +9,42 @@ tbaMUD cannot represent is dropped and reported as "file:line vnum: ...".
 An unresolved reference or an unconvertible value is an error: nothing is
 written and the exit status is 1.
 
-    convert_crimson2.py imports/quarantine/crimson2/Moria34 --zone 47 \\
-        --offset 600 --out /tmp/c2-staged [--drop-external]
+Two modes:
+  zone   the area becomes its own zone: <zone>.{wld,mob,obj,zon}
+  merge  only the mobiles/objects named in "map" (old vnum -> new vnum) and
+         the resets that load them are converted, as <zone>.{mob,obj,zon}.add
+         fragments for an existing stock zone whose rooms the area shares.
 
-writes /tmp/c2-staged/{wld,mob,obj,zon}/47.<ext>; stage, validate
-(tools/validate_import_refs.py, tools/audit_world_vnums.py) and boot-test
-before installing into lib/world.
+The installed Crimson 2 content is described by
+imports/quarantine/crimson2/recipe.json; reproduce and install it with
+
+    convert_crimson2.py --recipe imports/quarantine/crimson2/recipe.json \\
+        --area Shatterstone --out /tmp/c2 [--install lib/world]
+
+--install copies a zone (and lists it in the indexes) or appends merge
+fragments before the stock files' end markers; it refuses to overwrite or to
+append twice. Validate (tools/validate_import_refs.py,
+tools/audit_world_vnums.py) and boot-test afterwards.
 """
 import argparse
+import json
 import re
 import sys
 from pathlib import Path
 
 MAX_VNUM = 65534                          # IDXTYPE; 65535 is NOWHERE
+DIRS = {"north": 0, "east": 1, "south": 2, "west": 3, "up": 4, "down": 5}
 
 # --- Crimson -> tbaMUD tables ----------------------------------------------
-# Room flags word 1 (RM1_*) -> ROOM_* bit. RM1_BFS_MARK is runtime state.
 ROOM1 = {0: 0, 1: 1, 2: 2, 3: 3, 7: 7, 8: 8, 9: 9, 16: 4, 18: 5, 21: 6}
-ROOM1_RUNTIME = {20}
+ROOM1_RUNTIME = {20}                      # RM1_BFS_MARK is runtime state
 ROOM1_NAMES = {4: "ANTI_GOOD", 5: "ANTI_NEUTRAL", 6: "ANTI_EVIL", 10: "DRAIN_MAGIC",
                11: "HARMFULL1", 12: "HARMFULL2", 14: "NOSTEAL", 15: "NOPKILL (PvP)",
                17: "WATER", 19: "DUMP", 22: "MAZE", 23: "ANTI_MAGIC", 24: "INN",
                25: "MYST", 26: "FALL_DMG", 28: "NO_TELEPORT_IN",
                29: "NO_TELEPORT_OUT", 30: "NO_SUMMON_OUT"}
 ROOM2_NAMES = {20: "ARENA (PvP)"}
-# Sectors 0-7 share numbering; Crimson SECT_UNDERWATER 8 is tbaMUD 9.
-SECTOR = {0: 0, 1: 1, 2: 2, 3: 3, 4: 4, 5: 5, 6: 6, 7: 7, 8: 9}
-# Mob act word 1 (PLR1_*) -> MOB_* bit.
+SECTOR = {0: 0, 1: 1, 2: 2, 3: 3, 4: 4, 5: 5, 6: 6, 7: 7, 8: 9}   # underwater 8 -> 9
 ACT1 = {1: 1, 2: 2, 3: 3, 6: 6, 7: 7, 13: 8, 14: 10, 15: 9, 18: 13, 29: 18}
 ACT1_NAMES = {0: "UNFILTER", 4: "CLASS_DEMON", 5: "CHAR_WAS_HELD", 8: "SIGNAL_HUNT_HELP",
               9: "GUARD1", 10: "GUARD2", 11: "NOSTEAL", 12: "INJURED_ATTACK",
@@ -43,21 +52,17 @@ ACT1_NAMES = {0: "UNFILTER", 4: "CLASS_DEMON", 5: "CHAR_WAS_HELD", 8: "SIGNAL_HU
               21: "CLASS_VAMPIRE", 22: "CLASS_DRAGON", 23: "CLASS_GIANT",
               24: "CLASS_ANIMAL", 25: "CLASS_UNDEAD", 26: "CANT_HUNT",
               27: "HUNTASSIST", 28: "NOFOLLOW", 30: "NOHOLD"}
-# Affects (AFF_*) -> AFF_* bit.
 AFF = {0: 1, 1: 2, 2: 3, 3: 4, 4: 5, 5: 6, 7: 8, 9: 7, 10: 10, 12: 12, 13: 13,
        14: 17, 17: 15, 19: 19, 20: 20, 24: 18, 25: 11}
 AFF_NAMES = {6: "HASTE", 8: "GROUP", 11: "SILENCE", 15: "RAGE", 16: "HOLD_PERSON",
              18: "BLOCK_SUMMON", 21: "DEMON_FLESH", 22: "CHARM", 23: "FOLLOW",
              26: "REGENERATION", 27: "TRANSFORMED", 28: "HEMMORAGE",
              29: "MAGIC_RESIST", 30: "MAGIC_IMMUNE"}
-# Attack types: Crimson TYPE_HIT=100.. order -> tbaMUD attack index (TYPE_HIT=300..).
-ATTACK = {0: 0, 1: 5, 2: 11, 3: 3, 4: 2, 5: 8, 6: 4, 7: 1, 8: 6}
+ATTACK = {0: 0, 1: 5, 2: 11, 3: 3, 4: 2, 5: 8, 6: 4, 7: 1, 8: 6}  # Crimson TYPE_HIT=100 order
 ATTACK_NAMES = {9: "ARROW", 10: "DUALWIELD"}
-# Object types sharing meaning and numbering in both engines.
 OBJ_TYPES = {1, 2, 3, 4, 5, 8, 9, 10, 11, 12, 13, 15, 16, 17, 18, 19, 20, 22}
-# Object flags word 1 (OBJ1_*) -> ITEM_* extra bit. Note thief/cleric swap.
 OBJ1 = {0: 0, 1: 1, 5: 5, 6: 6, 7: 7, 8: 8, 9: 9, 10: 10, 11: 11, 12: 12,
-        13: 14, 14: 13, 15: 15, 18: 2, 30: 17}
+        13: 14, 14: 13, 15: 15, 18: 2, 30: 17}     # note the thief/cleric swap
 OBJ1_LEVEL = {19: 10, 20: 20, 21: 30, 22: 41}
 OBJ1_NAMES = {2: "DARK", 3: "OMAX", 4: "EVIL", 16: "ANTI_DRAGON", 17: "GOOD",
               23: "NO_SEE", 24: "SMALL_ONLY", 25: "LARGE_ONLY", 26: "NORMAL_ONLY",
@@ -70,15 +75,26 @@ OBJ2_NAMES = {0: "LOCKED", 1: "VEHICLE_REV", 2: "NO_IDENTIFY", 7: "ANTI_DRUID",
 WEAR_BITS = 15                            # ITEM_TAKE..ITEM_HOLD share bits 0-14
 APPLY_MAX = 24                            # APPLY_NONE..APPLY_SAVING_SPELL shared
 SPELLS = {53: 52}                         # SPELL_IDENTIFY
-SPELL_TYPES = {2, 3, 4, 10}               # scroll, wand, staff, potion
+SPELL_TYPES = {2, 3, 4, 10}
+# Crimson colour codes "&X" -> tbaMUD's "@X" (protocol.c ProtocolOutput) for
+# the colours both engines name the same way; "&n" ends a colour in both.
+COLOUR = re.compile(r"&([nrgbymcwdRGBYMCWD])")
+OBJ_OVERRIDES = {"keywords", "wear", "values", "weight", "cost", "rent", "level",
+                 "applies", "reason"}
 
 
 class Area:
-    def __init__(self, base, zone, offset, drop_external):
+    def __init__(self, base, zone, offset=0, drop_external=False, vnum_map=None,
+                 overrides=None, links=()):
         self.base, self.zone, self.offset = Path(base), zone, offset
         self.drop_external = drop_external
+        self.map = vnum_map                   # merge mode: {"mob": {old: new}, "obj": {...}}
+        self.overrides = overrides or {}
+        self.links = {}
+        for link in links:
+            self.links.setdefault(int(link["room"]), []).append(link)
         self.notes, self.errors, self.magic_users = [], [], []
-        self.ids = {}
+        self.ids, self.short = {}, {}
 
     # -- reporting ----------------------------------------------------------
     def note(self, where, msg):
@@ -98,7 +114,17 @@ class Area:
                 self.note(where, f"dropped {label} {names.get(b, f'bit {b}')}")
         return out
 
+    def selected(self, family, vnum):
+        return self.map is None or vnum in self.map.get(family, {})
+
     def new(self, family, vnum, where):
+        if self.map is not None:
+            if family == "wld":
+                return vnum                       # merge: the stock zone's own rooms
+            if vnum not in self.map.get(family, {}):
+                self.error(where, f"{family} vnum {vnum} is not selected by the merge map")
+                return vnum
+            return self.map[family][vnum]
         if vnum not in self.ids.get(family, ()):
             self.error(where, f"{family} vnum {vnum} is not defined in this area")
             return vnum
@@ -106,6 +132,14 @@ class Area:
         if not 1 <= nv <= MAX_VNUM:
             self.error(where, f"{family} vnum {vnum} -> {nv} outside 1..{MAX_VNUM}")
         return nv
+
+    def keywords(self, namelist, prefix, where):
+        """Crimson prefixes every namelist with its record type ("mob ...")."""
+        words = namelist.split()
+        if len(words) > 1 and words[0] == prefix:
+            self.note(where, f"dropped Crimson keyword prefix '{prefix}'")
+            return " ".join(words[1:])
+        return namelist
 
     # -- reading --------------------------------------------------------------
     def records(self, ext):
@@ -124,14 +158,6 @@ class Area:
             if cur is not None:
                 cur["body"].append((no, line))
         return path.name, out
-
-    def keywords(self, namelist, prefix, where):
-        """Crimson prefixes every namelist with its record type ("mob ...")."""
-        words = namelist.split()
-        if len(words) > 1 and words[0] == prefix:
-            self.note(where, f"dropped Crimson keyword prefix '{prefix}'")
-            return " ".join(words[1:])
-        return namelist
 
     @staticmethod
     def take_string(body, i):
@@ -152,6 +178,11 @@ class Area:
             name, recs = self.records(ext)
             self.src[ext] = (name, recs)
             self.ids[ext] = {r["vnum"] for r in recs}
+        if self.map is not None:
+            for family, entries in self.map.items():
+                for old in entries:
+                    if old not in self.ids.get(family, ()):
+                        self.error("merge map", f"{family} {old} is not defined in this area")
         self.zon_name = self.base.with_suffix(".zon").name
         self.zon_lines = self.base.with_suffix(".zon").read_text(encoding="latin-1").splitlines()
 
@@ -178,18 +209,16 @@ class Area:
                 continue
             rows = [f"#{self.new('wld', r['vnum'], where)}", name + "~", desc + "~",
                     f"{self.zone} {flags} 0 0 0 {SECTOR[sect]}"]
+            used = set()
             i += 1
             while i < len(b):
                 tag = b[i][1].strip()
                 if re.fullmatch(r"D[0-5]", tag):
                     edesc, i = self.take_string(b, i + 1)
                     kw, i = self.take_string(b, i)
-                    ex = b[i][1].split()
+                    info, key, to = map(int, b[i][1].split())
                     i += 1
-                    info, key, to = map(int, ex)
-                    door = 0
-                    if info & 1:
-                        door = 2 if info & 2 else 1
+                    door = (2 if info & 2 else 1) if info & 1 else 0
                     if info & ~3:
                         self.bits(info & ~3, {}, {2: "LOCKED (set by resets)", 3: "CLOSED (set by resets)",
                                                   4: "HIDDEN", 5: "NOMOB", 6: "NOCHAR",
@@ -205,6 +234,7 @@ class Area:
                             continue
                         self.error(where, f"exit {tag} leads to room {to} outside this area")
                         continue
+                    used.add(int(tag[1]))
                     rows += [tag, edesc + "~", kw + "~",
                              f"{door} {nkey} {self.new('wld', to, where)}"]
                 elif tag == "E":
@@ -216,6 +246,14 @@ class Area:
                 else:
                     self.error(where, f"unexpected line {tag!r}")
                     break
+            for link in self.links.get(r["vnum"], []):
+                d = DIRS[link["dir"]]
+                if d in used:
+                    self.error(where, f"link {link['dir']} would replace an existing exit")
+                    continue
+                rows += [f"D{d}", link.get("description", "") + "~", "~",
+                         f"0 -1 {int(link['to'])}"]
+                self.note(where, f"linked {link['dir']} to stock room {link['to']}")
             rows.append("S")
             out += rows
         return out
@@ -225,6 +263,8 @@ class Area:
         fname, recs = self.src["mob"]
         out = []
         for r in recs:
+            if not self.selected("mob", r["vnum"]):
+                continue
             where = f"{fname}:{r['line']} mob {r['vnum']}"
             b = r["body"]
             strings = []
@@ -240,7 +280,6 @@ class Area:
             act = self.bits(act1, ACT1, ACT1_NAMES, where, "mob flag") | (1 << 3)
             if act2:
                 self.note(where, f"dropped act2 bits {act2:#x} (Crimson-only)")
-            # act3 is Crimson's PLR3 word: the loader forces BRIEF/AUTOAGGR itself.
             affects = self.bits(aff, AFF, AFF_NAMES, where, "affect")
             stats = b[i + 1][1].split()
             money = b[i + 2][1].split()
@@ -287,15 +326,17 @@ class Area:
                     self.note(where, f"dropped {len(attacks) - 1} extra attack(s) {attacks[1:]} (one per round in tbaMUD)")
             if skills:
                 self.note(where, f"dropped {skills} ATTACK_SKILL line(s)")
-            if spells:
-                self.magic_users.append(r["vnum"] + self.offset)
-                self.note(where, "casts " + ", ".join(spells) +
-                          "; give it the magic_user spec proc to keep it a caster")
             level = int(stats[0])
             if not 1 <= level <= 50:
                 self.error(where, f"level {level} outside mortal 1..50")
+            nv = self.new("mob", r["vnum"], where)
+            if spells:
+                self.magic_users.append(nv)
+                self.note(where, "casts " + ", ".join(spells) +
+                          "; give it the magic_user spec proc to keep it a caster")
             strings[0] = self.keywords(strings[0], "mob", where)
-            out += [f"#{self.new('mob', r['vnum'], where)}", *[s + "~" for s in strings],
+            self.short[("mob", nv)] = strings[1]
+            out += [f"#{nv}", *[s + "~" for s in strings],
                     f"{act} 0 0 0 {affects} 0 0 0 {align} E",
                     " ".join(stats), " ".join(money), " ".join(pos), *especs, "E"]
         return out
@@ -305,7 +346,13 @@ class Area:
         fname, recs = self.src["obj"]
         out = []
         for r in recs:
+            if not self.selected("obj", r["vnum"]):
+                continue
             where = f"{fname}:{r['line']} obj {r['vnum']}"
+            ov = self.overrides.get("obj", {}).get(str(r["vnum"]), {})
+            unknown = set(ov) - OBJ_OVERRIDES
+            if unknown:
+                self.error(where, f"unknown override field(s) {sorted(unknown)}")
             b = r["body"]
             name, i = self.take_string(b, 0)
             i += 1                              # db5100 skips this line (fgets)
@@ -314,7 +361,7 @@ class Area:
             action, i = self.take_string(b, i)
             t, f1, f2, wear = map(int, b[i][1].split())
             vals = list(map(int, b[i + 1][1].split()))
-            wcr = b[i + 2][1].split()
+            weight, cost, rent = b[i + 2][1].split()
             i += 3
             if t not in OBJ_TYPES:
                 self.error(where, f"object type {t} has no tbaMUD equivalent")
@@ -347,91 +394,188 @@ class Area:
             elif t == 15 and vals[2] > 0:       # container key
                 vals[2] = self.new("obj", vals[2], where + " container key")
             name = self.keywords(name, "obj", where)
-            rows = [f"#{self.new('obj', r['vnum'], where)}", name + "~", short + "~",
-                    long_ + "~", action + "~",
-                    f"{t} {extra} 0 0 0 {wear} 0 0 0 0 0 0 0",
-                    " ".join(map(str, vals)),
-                    f"{wcr[0]} {wcr[1]} {wcr[2]} {level}"]
-            applies = 0
+            extras = []                         # ("E", keyword, text) / ("A", loc, mod)
             while i < len(b):
                 tag = b[i][1].strip()
                 if tag == "E":
                     kw, i = self.take_string(b, i + 1)
                     text, i = self.take_string(b, i)
-                    rows += ["E", kw + "~", text + "~"]
+                    extras.append(("E", kw, text))
                 elif tag == "A":
                     loc, mod = map(int, b[i + 1][1].split())
                     i += 2
                     if not 0 < loc <= APPLY_MAX:
                         self.note(where, f"dropped Crimson-only apply {loc} {mod:+d}")
                         continue
-                    applies += 1
-                    if applies > 6:
-                        self.error(where, "more than 6 applies (MAX_OBJ_AFFECT)")
-                    rows += ["A", f"{loc} {mod}"]
+                    extras.append(("A", loc, mod))
                 elif tag in ("", "$~"):
                     i += 1
                 else:
                     self.error(where, f"unexpected object line {tag!r}")
                     break
+            if ov:                              # recipe overrides, each reported
+                name = ov.get("keywords", name)
+                wear = int(ov.get("wear", wear))
+                vals = [int(v) for v in ov.get("values", vals)]
+                weight = str(ov.get("weight", weight))
+                cost = str(ov.get("cost", cost))
+                rent = str(ov.get("rent", rent))
+                level = int(ov.get("level", level))
+                if "applies" in ov:
+                    extras = [x for x in extras if x[0] == "E"] + \
+                             [("A", int(l), int(m)) for l, m in ov["applies"]]
+                self.note(where, f"override {sorted(set(ov) - {'reason'})}: "
+                                 f"{ov.get('reason', 'recipe override')}")
+            if sum(1 for x in extras if x[0] == "A") > 6:
+                self.error(where, "more than 6 applies (MAX_OBJ_AFFECT)")
+            nv = self.new("obj", r["vnum"], where)
+            self.short[("obj", nv)] = short
+            rows = [f"#{nv}", name + "~", short + "~", long_ + "~", action + "~",
+                    f"{t} {extra} 0 0 0 {wear} 0 0 0 0 0 0 0",
+                    " ".join(map(str, vals)), f"{weight} {cost} {rent} {level}"]
+            for x in extras:
+                rows += ["E", x[1] + "~", x[2] + "~"] if x[0] == "E" else ["A", f"{x[1]} {x[2]}"]
             out += rows
         return out
 
     # -- zone -----------------------------------------------------------------
-    def zone_file(self, name, builders):
-        lines = self.zon_lines
-        header = lines[2].split()
-        lifespan, reset_mode = int(header[1]), int(header[2])
-        bottom, top = self.zone * 100, self.zone * 100 + 99
-        rows = [f"#{self.zone}", builders + "~", name + "~",
-                f"{bottom} {top} {lifespan} {reset_mode}"]
-        for no, line in enumerate(lines, 1):
+    def resets(self):
+        rows, parent_loaded = [], False
+        for no, line in enumerate(self.zon_lines, 1):
             p = line.split()
-            if not p or p[0] not in "MOGEPDR" or len(p[0]) != 1:
+            if not p or len(p[0]) != 1 or p[0] not in "MOGEPDR":
                 continue
             where = f"{self.zon_name}:{no}"
             c, ifl = p[0], p[1]
             a = list(map(int, p[2:]))
             if c == "M":
-                rows.append(f"M {ifl} {self.new('mob', a[0], where)} {a[1]} {self.new('wld', a[2], where)}")
-            elif c == "O":
-                rows.append(f"O {ifl} {self.new('obj', a[0], where)} {a[1]} {self.new('wld', a[2], where)}")
-            elif c == "G":
-                rows.append(f"G {ifl} {self.new('obj', a[0], where)} {a[1]} -1")
-            elif c == "E":
-                mx = a[1]
-                if mx < 1:
-                    self.note(where, "E max 0 (unused by Crimson) written as 1, or tbaMUD never loads it")
-                    mx = 1
-                rows.append(f"E {ifl} {self.new('obj', a[0], where)} {mx} {a[2]}")
-            elif c == "P":
-                rows.append(f"P {ifl} {self.new('obj', a[0], where)} {a[1]} {self.new('obj', a[2], where)}")
-            elif c == "D":
+                parent_loaded = self.selected("mob", a[0])
+                if not parent_loaded:
+                    continue
+                nv = self.new("mob", a[0], where)
+                rows.append(f"M {ifl} {nv} {a[1]} {self.new('wld', a[2], where)} "
+                            f"\t({self.short.get(('mob', nv), '')})")
+            elif c in "GE":
+                if not parent_loaded:
+                    continue                    # follows a mob that is not converted
+                if not self.selected("obj", a[0]):
+                    self.error(where, f"{c} {a[0]} follows a selected mob but is not selected")
+                    continue
+                nv = self.new("obj", a[0], where)
+                if c == "G":
+                    rows.append(f"G {ifl} {nv} {a[1]} -1 \t({self.short.get(('obj', nv), '')})")
+                else:
+                    mx = a[1]
+                    if mx < 1:
+                        self.note(where, "E max 0 (unused by Crimson) written as 1, or tbaMUD never loads it")
+                        mx = 1
+                    rows.append(f"E {ifl} {nv} {mx} {a[2]} \t({self.short.get(('obj', nv), '')})")
+            elif c in "OP":
+                if not self.selected("obj", a[0]):
+                    continue
+                nv = self.new("obj", a[0], where)
+                dest = self.new("wld" if c == "O" else "obj", a[2], where)
+                rows.append(f"{c} {ifl} {nv} {a[1]} {dest} \t({self.short.get(('obj', nv), '')})")
+            elif c == "D" and self.map is None:
                 rows.append(f"D {ifl} {self.new('wld', a[0], where)} {a[1]} {a[2]}")
-            elif c == "R":
+            elif c == "R" and self.map is None:
                 rows.append(f"R {ifl} {self.new('wld', a[0], where)} {self.new('obj', a[1], where)}")
-        return rows + ["S", "$"]
+        return rows
+
+    def zone_file(self, name, builders):
+        header = self.zon_lines[2].split()
+        lifespan, reset_mode = int(header[1]), int(header[2])
+        bottom, top = self.zone * 100, self.zone * 100 + 99
+        return ([f"#{self.zone}", builders + "~", name + "~",
+                 f"{bottom} {top} {lifespan} {reset_mode}"] + self.resets() + ["S", "$"])
+
+
+def settings_from(args):
+    """Merge --recipe/--area with explicit command-line options."""
+    s = {"zone": args.zone, "offset": args.offset, "name": args.name,
+         "builders": args.builders, "drop_external": args.drop_external,
+         "mode": "zone", "map": None, "overrides": {}, "links": [], "source": args.source}
+    if args.recipe:
+        recipe = json.loads(args.recipe.read_text())
+        area = recipe["areas"][args.area]
+        for key in ("zone", "offset", "name", "builders", "drop_external", "mode",
+                    "overrides", "links"):
+            if key in area:
+                s[key] = area[key]
+        s["source"] = str(args.recipe.parent / area["source"])
+        if area.get("map"):
+            s["map"] = {fam: {int(o): int(n) for o, n in m.items()}
+                        for fam, m in area["map"].items()}
+    if s["zone"] is None or not s["source"]:
+        raise ValueError("need a source and --zone, or --recipe and --area")
+    return s
+
+
+def outputs(area, s):
+    area.load()
+    if s["mode"] == "merge":
+        mobs, objs = area.mobs(), area.objs()
+        return {"mob": mobs, "obj": objs, "zon": area.resets()}
+    rooms, mobs, objs = area.rooms(), area.mobs(), area.objs()
+    return {"wld": rooms, "mob": mobs, "obj": objs,
+            "zon": area.zone_file(s["name"] or area.zon_lines[1].rstrip("~"),
+                                  s["builders"] or "Crimson 2 import")}
+
+
+def render(ext, rows, mode):
+    if mode == "merge":
+        return "\n".join(rows) + "\n" if rows else ""
+    tail = [] if ext == "zon" else ["$~"]
+    return "\n".join(rows + tail) + "\n"
+
+
+def install(world, zone, texts, mode):
+    if mode == "merge":
+        for ext, text in texts.items():
+            path = world / ext / f"{zone}.{ext}"
+            cur = path.read_text(encoding="latin-1")
+            if text and text in cur:
+                raise ValueError(f"{path} already holds this fragment")
+            end = "S\n$\n" if ext == "zon" else ("$~\n" if cur.endswith("$~\n") else "$\n")
+            if not cur.endswith(end):
+                raise ValueError(f"{path} does not end with {end!r}")
+            path.write_text(cur[:-len(end)] + text + end, encoding="latin-1")
+        return
+    for ext in texts:
+        if (world / ext / f"{zone}.{ext}").exists():
+            raise ValueError(f"refusing to overwrite {world / ext / f'{zone}.{ext}'}")
+    for ext, text in texts.items():
+        (world / ext / f"{zone}.{ext}").write_text(text, encoding="latin-1")
+        idx = world / ext / "index"
+        names = idx.read_text().splitlines()
+        if names[-1] != "$":
+            raise ValueError(f"{idx} does not end with $")
+        files = sorted(set(names[:-1]) | {f"{zone}.{ext}"}, key=lambda n: int(n.split(".")[0]))
+        idx.write_text("\n".join(files + ["$"]) + "\n")
 
 
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("source", help="area path without extension, e.g. .../Moria34")
-    p.add_argument("--zone", type=int, required=True)
+    p.add_argument("source", nargs="?", help="area path without extension, e.g. .../Moria34")
+    p.add_argument("--recipe", type=Path)
+    p.add_argument("--area", help="area name inside --recipe")
+    p.add_argument("--zone", type=int)
     p.add_argument("--offset", type=int, default=0, help="added to every vnum")
     p.add_argument("--out", type=Path, required=True)
+    p.add_argument("--install", type=Path, help="world root to install into (lib/world)")
     p.add_argument("--name")
-    p.add_argument("--builders", default="Crimson 2 import")
+    p.add_argument("--builders")
     p.add_argument("--drop-external", action="store_true",
                    help="drop (and report) exits that leave the area instead of failing")
     a = p.parse_args(argv)
-    area = Area(a.source, a.zone, a.offset, a.drop_external)
     try:
-        area.load()
-        files = {"wld": area.rooms(), "mob": area.mobs(), "obj": area.objs(),
-                 "zon": area.zone_file(a.name or area.zon_lines[1].rstrip("~"), a.builders)}
-    except (OSError, ValueError, IndexError) as exc:
-        print(f"ERROR: {a.source}: {exc}", file=sys.stderr)
+        s = settings_from(a)
+        area = Area(s["source"], s["zone"], s["offset"], s["drop_external"],
+                    s["map"], s["overrides"], s["links"])
+        rows = outputs(area, s)
+    except (OSError, ValueError, IndexError, KeyError) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
         return 1
     for n in area.notes:
         print(f"NOTE: {n}")
@@ -441,17 +585,28 @@ def main(argv=None):
         for e in area.errors:
             print(f"ERROR: {e}", file=sys.stderr)
         return 1
-    for ext, rows in files.items():
-        out = a.out / ext / f"{a.zone}.{ext}"
-        if out.exists():
-            print(f"ERROR: refusing to overwrite {out}", file=sys.stderr)
+    suffix = ".add" if s["mode"] == "merge" else ""
+    texts = {}
+    for ext, r in rows.items():
+        texts[ext], n = COLOUR.subn(r"@\1", render(ext, r, s["mode"]))
+        if n:
+            print(f"NOTE: {s['zone']}.{ext}: {n} Crimson colour code(s) &X written as @X")
+    for ext in texts:
+        if (a.out / ext / f"{s['zone']}.{ext}{suffix}").exists():
+            print(f"ERROR: refusing to overwrite {a.out / ext}", file=sys.stderr)
             return 1
-    for ext, rows in files.items():
-        out = a.out / ext / f"{a.zone}.{ext}"
+    for ext, text in texts.items():
+        out = a.out / ext / f"{s['zone']}.{ext}{suffix}"
         out.parent.mkdir(parents=True, exist_ok=True)
-        tail = [] if ext == "zon" else ["$~"]
-        out.write_text("\n".join(rows + tail) + "\n", encoding="latin-1")
-    print(f"converted {a.source} -> zone {a.zone} in {a.out}")
+        out.write_text(text, encoding="latin-1")
+    if a.install:
+        try:
+            install(a.install, s["zone"], texts, s["mode"])
+        except (OSError, ValueError) as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 1
+    print(f"converted {s['source']} ({s['mode']}) -> zone {s['zone']} in {a.out}"
+          + (f", installed into {a.install}" if a.install else ""))
     return 0
 
 

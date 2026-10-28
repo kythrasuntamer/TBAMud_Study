@@ -100,4 +100,45 @@ A green kobold is here.
 70 4900
 8 8 1
 E
+#4109
+phantom~
+The phantom~
+A shadowy phantom floats about, looking for a soul.
+~
+  The soul of a dead warrior, risen by the powers of evil, the phantom 
+now spends its days looking for souls of the living to feed off of.
+~
+1996 0 0 0 2048 0 0 0 -200 E
+18 22 26 10d29+150 4d5+15
+0 5480
+8 8 1
+BareHandAttack: 0
+Str: 16
+Int: 17
+Wis: 14
+Dex: 15
+Con: 12
+Cha: 10
+E
+#4108
+Melcrin troll sovereign leader~
+Melcrin, sovereign of the trolls~
+A huge troll is here, grinding boulders with his fists.
+~
+ Born a godling, Melcrin abuses his power as much as possible. Anything
+within his power to further the cause of the moors trolls is his goal.
+Perhaps this is the reason he is so highly revered by his charges.
+~
+1802 0 0 0 320 0 0 0 -1000 E
+48 4 -35 35d10+24000 20d20+50
+50000 1500000
+8 8 1
+BareHandAttack: 8
+Str: 17
+Int: 16
+Wis: 15
+Dex: 14
+Con: 12
+Cha: 13
+E
 $

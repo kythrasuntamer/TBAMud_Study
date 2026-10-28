@@ -1,0 +1,47 @@
+{
+  "about": "How the Crimson 2 specimens in this folder are installed (tools/convert_crimson2.py --recipe this-file --area NAME). Owner decisions of 2026-10-28: Moria34 is Crimson's edition of stock zone 41 (25 of 26 rooms identical), so only its new mobiles/objects and the resets that load them are merged into zone 41; Shatterstone becomes zone 58, linked from the Dwarven Kingdom.",
+  "areas": {
+    "Moria34": {
+      "source": "Moria34",
+      "mode": "merge",
+      "zone": 41,
+      "map": {
+        "mob": {"4108": 4108, "4104": 4109},
+        "obj": {"4105": 4105}
+      },
+      "notes": "4108 Melcrin, sovereign of the trolls (new; keeps 4108). 4104 the phantom becomes 4109 because stock 4104 is the orc. 4105 Blade of the moors trolls (new; keeps 4105). Resets use zone 41's own rooms 4106, 4113 and 4115, as in Crimson's zone file."
+    },
+    "Shatterstone": {
+      "source": "Shatterstone",
+      "mode": "zone",
+      "zone": 58,
+      "offset": 0,
+      "name": "Shatterstone (Crimson 2, unfinished)",
+      "builders": "Crimson 2 import",
+      "drop_external": true,
+      "overrides": {
+        "obj": {
+          "5830": {
+            "keywords": "torch rusty hoop",
+            "wear": 16385,
+            "values": [0, 0, 24, 0],
+            "weight": 1,
+            "cost": 10,
+            "rent": 10,
+            "level": 0,
+            "applies": [],
+            "reason": "unfinished-template torch carried +100 hitroll and +145 damroll and could not be picked up as 'torch'; now the stock torch (obj 3030): take+hold, 24 hours of light, cost 10"
+          }
+        }
+      },
+      "links": [
+        {
+          "room": 5830,
+          "dir": "up",
+          "to": 6542,
+          "description": "A narrow crack in the cavern roof leads up into a sooty mineshaft."
+        }
+      ]
+    }
+  }
+}
