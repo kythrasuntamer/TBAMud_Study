@@ -52,6 +52,8 @@ static const char *ban_types[] = {
  * per line and may be hand-edited by the operator. A missing file means no
  * bans. Every malformed, unknown-type or over-long record is reported with
  * its line number (ops "load-parse", "load-type", "load-site-truncate").
+ * Sites are stored lowercased, as do_ban() stores them; a site the file
+ * spells with uppercase letters is reported ("load-site-case").
  */
 void load_banned(void)
 {
@@ -119,6 +121,23 @@ void load_banned(void)
                     BANNED_SITE_LENGTH);
       tb_snprintf(site_name, sizeof(site_name), "%s", site_token);
       tb_snprintf(name, sizeof(name), "%s", name_token);
+      /* isbanned() lowercases the host before matching and do_ban() stores
+       * sites lowercased, so a hand-edited "Bad.Example" would never match:
+       * store it lowercased too, and tell the operator the file differs. */
+      {
+        int recased = FALSE;
+        char *nextchar;
+
+        for (nextchar = site_name; *nextchar; nextchar++)
+          if (*nextchar != LOWER(*nextchar)) {
+            *nextchar = LOWER(*nextchar);
+            recased = TRUE;
+          }
+        if (recased)
+          TB_WARN_MSG("ban", "load-site-case", BAN_FILE,
+                      "line %d: site has uppercase letters; stored as '%s' "
+                      "so it can match a host", lineno, site_name);
+      }
     CREATE(next_node, struct ban_list_element, 1);
     strncpy(next_node->site, site_name, BANNED_SITE_LENGTH);	/* strncpy: OK (n_n->site:BANNED_SITE_LENGTH+1) */
     next_node->site[BANNED_SITE_LENGTH] = '\0';
@@ -145,9 +164,9 @@ void load_banned(void)
  *         BAN_NEW..BAN_ALL among the matching sites.
  *
  * A site matches when it is a substring of the host (so "example.com"
- * matches "dialup.example.com"). Sites are stored lowercased by do_ban();
- * load_banned() keeps the file's text as written, so an uppercase site in a
- * hand-edited BAN_FILE never matches. An empty site would match every host;
+ * matches "dialup.example.com"). do_ban() and load_banned() both store
+ * sites lowercased, so lowercasing the host makes the match case-blind.
+ * An empty site would match every host;
  * neither do_ban() nor the loader can store one.
  */
 int isbanned(char *hostname)

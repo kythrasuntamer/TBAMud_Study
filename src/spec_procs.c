@@ -129,7 +129,7 @@ void list_skills(struct char_data *ch)
 
   for (sortpos = 1; sortpos <= MAX_SKILLS; sortpos++) {
     i = spell_sort_info[sortpos];
-    if (GET_LEVEL(ch) >= spell_info[i].min_level[(int) GET_CLASS(ch)]) {
+    if (GET_LEVEL(ch) >= SPELL_MIN_LEVEL(i, (int) GET_CLASS(ch))) {
     ret = snprintf(buf2 + len, sizeof(buf2) - len, "%-20s %s\r\n", spell_info[i].name, how_good(GET_SKILL(ch, i)));
       if (ret < 0 || len + ret >= sizeof(buf2)) {
         truncated = TRUE;
@@ -177,7 +177,7 @@ SPECIAL(guild)
   skill_num = find_skill_num(argument);
 
   if (skill_num < 1 ||
-      GET_LEVEL(ch) < spell_info[skill_num].min_level[(int) GET_CLASS(ch)]) {
+      GET_LEVEL(ch) < SPELL_MIN_LEVEL(skill_num, (int) GET_CLASS(ch))) {
     send_to_char(ch, "You do not know of that %s.\r\n", SPLSKL(ch));
     return (TRUE);
   }
@@ -460,49 +460,49 @@ SPECIAL(magic_user)
 }
 
 /* Special procedures for mobiles. */
-SPECIAL(guild_guard) 
-{ 
-  int i, direction; 
-  struct char_data *guard = (struct char_data *)me; 
-  const char *buf = "The guard humiliates you, and blocks your way.\r\n"; 
-  const char *buf2 = "The guard humiliates $n, and blocks $s way."; 
+SPECIAL(guild_guard)
+{
+  int i, direction, guarded = FALSE, admitted = FALSE;
+  struct char_data *guard = (struct char_data *)me;
+  const char *buf = "The guard humiliates you, and blocks your way.\r\n";
+  const char *buf2 = "The guard humiliates $n, and blocks $s way.";
 
-  if (!IS_MOVE(cmd) || AFF_FLAGGED(guard, AFF_BLIND)) 
-    return (FALSE); 
-     
-  if (GET_LEVEL(ch) >= LVL_IMMORT) 
-    return (FALSE); 
-   
-  /* find out what direction they are trying to go */ 
-  for (direction = 0; direction < NUM_OF_DIRS; direction++)
-    if (!strcmp(cmd_info[cmd].command, dirs[direction]))
-      for (direction = 0; direction < DIR_COUNT; direction++)
-		if (!strcmp(cmd_info[cmd].command, dirs[direction]) ||
-			!strcmp(cmd_info[cmd].command, autoexits[direction]))
-	      break; 
+  if (!IS_MOVE(cmd) || AFF_FLAGGED(guard, AFF_BLIND))
+    return (FALSE);
 
-  for (i = 0; guild_info[i].guild_room != NOWHERE; i++) { 
-    /* Wrong guild. */ 
-    if (GET_ROOM_VNUM(IN_ROOM(ch)) != guild_info[i].guild_room) 
-      continue; 
+  if (GET_LEVEL(ch) >= LVL_IMMORT)
+    return (FALSE);
 
-    /* Wrong direction. */ 
-    if (direction != guild_info[i].direction) 
-      continue; 
+  /* The exit the command names (a direction or its abbreviation).  This used
+   * to reuse its loop index inside a second loop and always finish at
+   * NUM_OF_DIRS, and it read cmd_info[] with a complete_cmd_info[] index,
+   * so no guard assigned this procedure ever blocked anyone. */
+  for (direction = 0; direction < DIR_COUNT; direction++)
+    if (!strcmp(CMD_NAME, dirs[direction]) ||
+        !strcmp(CMD_NAME, autoexits[direction]))
+      break;
+  if (direction >= DIR_COUNT)
+    return (FALSE);
 
-    /* Allow the people of the guild through. */ 
-    /* Monks share the Warrior training hall until a dedicated guild exists.
-     * Keep all original four class/guard restrictions unchanged. */
+  /* An exit may be listed for several classes (a shared passage): it is
+   * closed only to a character no entry for it admits.  Monks share the
+   * Warrior training hall as well as having their own. */
+  for (i = 0; guild_info[i].guild_room != NOWHERE; i++) {
+    if (GET_ROOM_VNUM(IN_ROOM(ch)) != guild_info[i].guild_room ||
+        direction != guild_info[i].direction)
+      continue;
+    guarded = TRUE;
     if (!IS_NPC(ch) && (GET_CLASS(ch) == guild_info[i].pc_class ||
-        (GET_CLASS(ch) == CLASS_MONK && guild_info[i].pc_class == CLASS_WARRIOR))) 
-      continue; 
+        (GET_CLASS(ch) == CLASS_MONK && guild_info[i].pc_class == CLASS_WARRIOR)))
+      admitted = TRUE;
+  }
+  if (!guarded || admitted)
+    return (FALSE);
 
-    send_to_char(ch, "%s", buf); 
-    act(buf2, FALSE, ch, 0, 0, TO_ROOM); 
-    return (TRUE); 
-  } 
-  return (FALSE); 
-} 
+  send_to_char(ch, "%s", buf);
+  act(buf2, FALSE, ch, 0, 0, TO_ROOM);
+  return (TRUE);
+}
 
 SPECIAL(puff)
 {
