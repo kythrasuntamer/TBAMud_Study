@@ -11,7 +11,7 @@
 #include "unity.h" /* before comm.c: unity.h pulls in <math.h>, whose log()
                       * clashes with utils.h's log macro */
 #define main tb_comm_main_unused
-#include "../src/comm.c"
+#include "../src/comm.c" /* NOLINT(bugprone-suspicious-include): white-box test of static helpers */
 #undef main
 
 #include "protocol.h"
@@ -42,8 +42,9 @@ static size_t write_budget;
 static char written[MAX_SOCK_BUF * 2];
 static size_t written_len;
 
-ssize_t __wrap_write(int fd, const void *buf, size_t count);
-ssize_t __wrap_write(int fd, const void *buf, size_t count)
+/* __wrap_ names are fixed by the linker's --wrap option. */
+ssize_t __wrap_write(int fd, const void *buf, size_t count);  /* NOLINT(cert-dcl37-c,cert-dcl51-cpp) */
+ssize_t __wrap_write(int fd, const void *buf, size_t count)  /* NOLINT(cert-dcl37-c,cert-dcl51-cpp) */
 {
   size_t n = count < write_budget ? count : write_budget;
   (void)fd;
@@ -64,8 +65,8 @@ ssize_t __wrap_write(int fd, const void *buf, size_t count)
 static char read_script[MAX_RAW_INPUT_LENGTH];
 static size_t read_script_len;
 
-ssize_t __wrap_read(int fd, void *buf, size_t count);
-ssize_t __wrap_read(int fd, void *buf, size_t count)
+ssize_t __wrap_read(int fd, void *buf, size_t count);  /* NOLINT(cert-dcl37-c,cert-dcl51-cpp) */
+ssize_t __wrap_read(int fd, void *buf, size_t count)  /* NOLINT(cert-dcl37-c,cert-dcl51-cpp) */
 {
   size_t n = read_script_len < count ? read_script_len : count;
   (void)fd;
@@ -383,16 +384,16 @@ static void failed_log_open_keeps_stream(void)
 
   TEST_ASSERT_TRUE(open_logfile(path, stream));
   TEST_ASSERT_EQUAL_PTR(stream, logfile);
-  fprintf(logfile, "logged\n");
-  fflush(logfile);
+  TEST_ASSERT_TRUE(fprintf(logfile, "logged\n") > 0);
+  TEST_ASSERT_EQUAL_INT(0, fflush(logfile));
   check = fopen(path, "r");
   TEST_ASSERT_NOT_NULL(check);
   TEST_ASSERT_NOT_NULL(fgets(line, sizeof(line), check));
   TEST_ASSERT_EQUAL_STRING("logged\n", line);
-  fclose(check);
-  fclose(stream);
+  TEST_ASSERT_EQUAL_INT(0, fclose(check));
+  TEST_ASSERT_EQUAL_INT(0, fclose(stream));
   logfile = NULL;
-  remove(path);
+  TEST_ASSERT_EQUAL_INT(0, remove(path));
 }
 
 /* The snoop copy used "%*s" (a field width, so the whole buffer including

@@ -7,7 +7,7 @@
  */
 #include "unity.h" /* before protocol.c: unity.h pulls in <math.h>, whose
                       * log() clashes with utils.h's log macro */
-#include "../src/protocol.c"
+#include "../src/protocol.c" /* NOLINT(bugprone-suspicious-include): white-box test of static helpers */
 
 #include "tb_error_capture.h"
 

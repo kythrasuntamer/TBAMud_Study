@@ -3546,14 +3546,15 @@ static int open_logfile(const char *filename, FILE *stderr_fp)
       return (FALSE);
     }
 #else
-    fflush(stderr_fp);
+    (void)fflush(stderr_fp);  /* best effort: pending stderr text */
     if (dup2(fileno(fp), fileno(stderr_fp)) < 0) {
       TB_REPORT_DOMAIN_ERRNO(TB_SEV_ERROR, TB_ERR_PERSISTENCE,
                              "dup2", filename);
-      fclose(fp);
+      (void)fclose(fp);  /* read-only use so far; nothing to lose */
       return (FALSE);
     }
-    fclose(fp);
+    /* fp only supplied the descriptor; stderr_fp now owns the file. */
+    (void)fclose(fp);
     logfile = stderr_fp;
 #endif
   } else
