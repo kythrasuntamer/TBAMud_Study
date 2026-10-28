@@ -1134,3 +1134,9 @@ if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
     target_compile_options(test_tedit_msgedit PRIVATE -ffunction-sections -fdata-sections)
     target_link_options(test_tedit_msgedit PRIVATE -Wl,--gc-sections)
 endif()
+
+# test_tedit_msgedit wraps fopen() so a test can hand the tedit and msgedit
+# savers a stream whose error indicator is already set (the C2-16 check).
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_link_options(test_tedit_msgedit PRIVATE -Wl,--wrap=fopen)
+endif()

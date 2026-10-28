@@ -307,6 +307,85 @@ static void test_msgedit_save_commits_the_messages_file(void)
   TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
 }
 
+/* ------------------------------------------------------------------ */
+/* A save whose stream recorded a write error keeps the previous file  */
+/* (the C2-16 check the GenOLC writers make).                          */
+/* ------------------------------------------------------------------ */
+
+/* fopen() as tedit.c and msgedit.c see it (linked with --wrap=fopen).
+ * When armed, the next write-only stream starts with its error indicator
+ * set, as if a write had failed while the final flush still works:
+ * reading a write-only stream sets the indicator (EBADF). */
+FILE *__real_fopen(const char *path, const char *mode);
+FILE *__wrap_fopen(const char *path, const char *mode);
+static int poison_next_write_stream;
+
+FILE *__wrap_fopen(const char *path, const char *mode)
+{
+  FILE *fp = __real_fopen(path, mode);
+
+  if (fp && poison_next_write_stream && mode[0] == 'w' && !strchr(mode, '+')) {
+    poison_next_write_stream = 0;
+    (void)fgetc(fp);
+    TEST_ASSERT_TRUE(ferror(fp));
+  }
+  return fp;
+}
+
+static void write_previous(const char *path)
+{
+  FILE *fl = fopen(path, "w");
+
+  TEST_ASSERT_NOT_NULL(fl);
+  TEST_ASSERT_TRUE(fputs("previous\n", fl) >= 0);
+  TEST_ASSERT_EQUAL_INT(0, fclose(fl));
+}
+
+static void test_tedit_save_after_write_error_keeps_file_and_text(void)
+{
+  char cmd[] = " motd";
+  char *before;
+
+  enter_scratch_dir("text", MOTD_FILE);
+  write_previous(MOTD_FILE);
+  motd = strdup("Old motd\r\n");
+  before = motd;
+  do_tedit(&builder, cmd, 0, 0);
+  free(*builder_desc.str);             /* the builder typed a new text */
+  *builder_desc.str = strdup("New motd\r\n");
+  free(builder_desc.backstr);          /* string_add()'s save */
+  builder_desc.backstr = NULL;
+  poison_next_write_stream = 1;
+
+  tedit_string_cleanup(&builder_desc, STRINGADD_SAVE);
+
+  TEST_ASSERT_EQUAL_INT(2, tb_captured_errors);   /* save-stream-error, tedit-save */
+  TEST_ASSERT_EQUAL_STRING("tedit-save", tb_captured_operation);
+  TEST_ASSERT_EQUAL_STRING("previous\n", slurp(MOTD_FILE));
+  TEST_ASSERT_NULL(slurp(MOTD_FILE ".tmp"));
+  TEST_ASSERT_TRUE(motd == before);
+  TEST_ASSERT_NOT_NULL(strstr(out_buf, "Save FAILED"));
+
+  free(motd);
+  motd = NULL;
+}
+
+static void test_msgedit_save_after_write_error_keeps_file(void)
+{
+  int saved;
+
+  enter_scratch_dir("misc", MESS_FILE);
+  write_previous(MESS_FILE);
+  poison_next_write_stream = 1;
+
+  saved = save_messages_to_disk();
+  TEST_ASSERT_EQUAL_INT(EIO, errno);
+  TEST_ASSERT_FALSE(saved);
+  TEST_ASSERT_EQUAL_STRING("save-stream-error", tb_captured_operation);
+  TEST_ASSERT_EQUAL_STRING("previous\n", slurp(MESS_FILE));
+  TEST_ASSERT_NULL(slurp(MESS_FILE ".tmp"));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -314,5 +393,7 @@ int main(void)
   RUN_TEST(test_tedit_lost_link_leaves_live_text);
   RUN_TEST(test_msgedit_failed_save_is_reported_and_server_keeps_running);
   RUN_TEST(test_msgedit_save_commits_the_messages_file);
+  RUN_TEST(test_tedit_save_after_write_error_keeps_file_and_text);
+  RUN_TEST(test_msgedit_save_after_write_error_keeps_file);
   return UNITY_END();
 }
