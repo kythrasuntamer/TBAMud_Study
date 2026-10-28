@@ -534,6 +534,17 @@ static void huge_wait_is_capped_at_one_mud_year(void)
   remove_from_lookup_table(obj.script_id, &obj);
 }
 
+/* The (subfield) buffer was shared by every reference on a line, so the
+ * second reference saw "ab" instead of "b". */
+static void each_reference_has_its_own_subfield(void)
+{
+  char line[] = "%x.contains(a)% %x.contains(b)%", out[MAX_INPUT_LENGTH];
+
+  add_var(&GET_TRIG_VARS(&trig), "x", "b", 0);
+  var_subst(NULL, NULL, &trig, MOB_TRIGGER, line, out);
+  TEST_ASSERT_EQUAL_STRING("0 1", out);
+}
+
 static void restore_round_trips_neutralize(void)
 {
   char text[] = "50% off, 100%% sure";
@@ -562,5 +573,6 @@ int main(void)
   RUN_TEST(script_stops_when_its_mob_owner_is_extracted);
   RUN_TEST(saved_vars_never_exceed_one_pfile_line);
   RUN_TEST(huge_wait_is_capped_at_one_mud_year);
+  RUN_TEST(each_reference_has_its_own_subfield);
   return UNITY_END();
 }

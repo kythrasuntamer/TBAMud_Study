@@ -1754,6 +1754,11 @@ void var_subst(void *go, struct script_data *sc, trig_data *trig,
     /* so it wasn't double %'s */
     else if (*p && (left > 0)) {
 
+      /* Each reference collects its own (subfield). */
+      subfield_p = subfield;
+      *subfield = '\0';
+      paren_count = 0;
+
       /* search until end of var or beginning of field */
       for (var = p; *p && (*p != '%') && (*p != '.'); p++);
 
