@@ -1129,3 +1129,13 @@ if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
     target_compile_options(test_comm_boot PRIVATE -ffunction-sections -fdata-sections)
     target_link_options(test_comm_boot PRIVATE -Wl,--gc-sections)
 endif()
+
+# main()'s -f option: the server, booted in syntax-check mode with a config
+# file named on the command line, must exit cleanly. main() frees
+# CONFIG_CONFFILE at exit, and -f used to leave it pointing into argv (an
+# invalid free, which aborts under glibc and ASan). The named file need not
+# exist: load_config() then falls back to the defaults.
+add_test(NAME circle_config_option_is_heap_copy
+    COMMAND $<TARGET_FILE:circle> -c -q
+            -f${CMAKE_CURRENT_BINARY_DIR}/no-such-config
+            -d ${CMAKE_SOURCE_DIR}/lib)

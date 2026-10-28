@@ -6,6 +6,8 @@
  * exempt every player from ROOM_PEACEFUL (fixed in damage() itself), and
  * nothing ever told the operator that mob vnum DG_CASTER_PROXY was gone.
  * H1-27: configured donation rooms were never checked against the world.
+ * main()'s -f and -o options stored pointers into argv in strings that are
+ * freed later (set_config_string()).
  *
  * comm.c is #included so its file-static functions can be called directly;
  * main() is renamed and unreferenced sections are discarded at link time.
@@ -67,9 +69,34 @@ static void missing_caster_proxy_is_reported(void)
   TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, expect));
 }
 
+/* -f and -o: CONFIG_CONFFILE and CONFIG_LOGNAME are freed later (main(),
+ * cedit_save_internally(), free_strings()), so they must hold heap copies,
+ * never pointers into argv, and the value they replace must be freed. Under
+ * ASan a pointer into argv_text is an invalid free below, and an old value
+ * that was not freed is a leak. */
+static void config_strings_are_heap_copies(void)
+{
+  char argv_text[] = "log/test.syslog";  /* stands in for argv[i] */
+  char *slot = strdup("log/syslog");      /* load_config()'s copy */
+
+  TEST_ASSERT_NOT_NULL(slot);
+  set_config_string(&slot, argv_text, "log file name");
+  TEST_ASSERT_TRUE(slot != argv_text);
+  TEST_ASSERT_EQUAL_STRING("log/test.syslog", slot);
+  free(slot);
+
+  slot = NULL;                            /* -f: nothing to replace yet */
+  set_config_string(&slot, argv_text, "configuration file name");
+  TEST_ASSERT_TRUE(slot != argv_text);
+  TEST_ASSERT_EQUAL_STRING("log/test.syslog", slot);
+  free(slot);
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(config_strings_are_heap_copies);
   RUN_TEST(complete_world_reports_nothing);
   RUN_TEST(missing_caster_proxy_is_reported);
   RUN_TEST(donation_rooms_are_checked_at_boot);

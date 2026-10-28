@@ -253,6 +253,24 @@ static bool parse_long_arg(const char *text, long min, long max, long *out)
   return TRUE;
 }
 
+/* Replace the heap-owned configuration string *slot with a copy of value.
+ * CONFIG_CONFFILE is freed by main() at exit and CONFIG_LOGNAME by
+ * cedit_save_internally() and free_strings(OASIS_CFG), so neither may point
+ * into argv (an invalid free), and the value being replaced (load_config()'s
+ * copy) is freed here instead of leaking. value comes from the command line
+ * or a compiled-in default. An allocation failure at boot is fatal. */
+static void set_config_string(char **slot, const char *value, const char *what)
+{
+  char *copy = strdup(value);
+
+  if (copy == NULL) {
+    TB_REPORT_FATAL_ERRNO(TB_ERR_BOOT, "strdup", what);
+    exit(1);
+  }
+  free(*slot);
+  *slot = copy;
+}
+
 /* Highest descriptor accepted for the copyover control socket. */
 #ifdef CIRCLE_WINDOWS
 #define MOTHER_DESC_MAX LONG_MAX
@@ -284,6 +302,7 @@ int main(int argc, char **argv)
 {
   int pos = 1;
   const char *dir;
+  const char *conf_arg = NULL; /* -f file name, inside argv */
 
 #ifdef MEMORY_DEBUG
   zmalloc_init();
@@ -308,9 +327,9 @@ int main(int argc, char **argv)
   while ((pos < argc) && (*(argv[pos]) == '-')) {
     if (*(argv[pos] + 1) == 'f') {
       if (*(argv[pos] + 2))
-	CONFIG_CONFFILE = argv[pos] + 2;
+	conf_arg = argv[pos] + 2;
       else if (++pos < argc)
-	CONFIG_CONFFILE = argv[pos];
+	conf_arg = argv[pos];
       else {
 	puts("SYSERR: File name to read from expected after option -f.");
 	exit(1);
@@ -320,8 +339,9 @@ int main(int argc, char **argv)
   }
   pos = 1;
 
-  if (!CONFIG_CONFFILE)
-    CONFIG_CONFFILE = strdup(CONFIG_FILE);
+  /* A heap copy: main() frees CONFIG_CONFFILE at exit. */
+  set_config_string(&CONFIG_CONFFILE, conf_arg ? conf_arg : CONFIG_FILE,
+                    "configuration file name");
 
   load_config();
 
@@ -335,10 +355,11 @@ int main(int argc, char **argv)
 	++pos;
       break;
     case 'o':
+      /* Overrides load_config()'s LOGNAME; must stay a heap copy. */
       if (*(argv[pos] + 2))
-	CONFIG_LOGNAME = argv[pos] + 2;
+	set_config_string(&CONFIG_LOGNAME, argv[pos] + 2, "log file name");
       else if (++pos < argc)
-	CONFIG_LOGNAME = argv[pos];
+	set_config_string(&CONFIG_LOGNAME, argv[pos], "log file name");
       else {
 	puts("SYSERR: File name to log to expected after option -o.");
 	exit(1);
