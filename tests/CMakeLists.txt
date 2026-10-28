@@ -1076,3 +1076,17 @@ if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
     set_source_files_properties(${MUD_SRCDIR}/act.wizard.c
         PROPERTIES COMPILE_OPTIONS "-ffunction-sections;-fdata-sections")
 endif()
+
+# Production config-line splitter (oasis.c split_argument): the key copy is
+# bounded by the caller's buffer (F3-19). Unreferenced oasis.c sections are
+# discarded; tb_error_capture.h in the test supplies tb_error_log_at.
+add_mud_test(test_oasis_split
+    ${MUD_SRCDIR}/oasis.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_oasis_split.c
+)
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_compile_options(test_oasis_split PRIVATE -ffunction-sections -fdata-sections)
+    target_link_options(test_oasis_split PRIVATE -Wl,--gc-sections)
+    set_source_files_properties(${MUD_SRCDIR}/oasis.c
+        PROPERTIES COMPILE_OPTIONS "-ffunction-sections;-fdata-sections")
+endif()
