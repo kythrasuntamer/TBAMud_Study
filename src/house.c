@@ -544,6 +544,10 @@ static void hcontrol_build_house(struct char_data *ch, char *arg)
     return;
   }
 
+  /* House_save_control() fwrite()s the whole record, so the spare fields
+   * and struct padding must be defined: zero the record before filling it
+   * rather than writing stack garbage into hcontrol. */
+  memset(&temp_house, 0, sizeof(temp_house));
   temp_house.mode = HOUSE_PRIVATE;
   temp_house.vnum = virt_house;
   temp_house.atrium = virt_atrium;

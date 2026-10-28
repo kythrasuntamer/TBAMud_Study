@@ -53,12 +53,26 @@ room_rnum real_room(room_vnum vnum)
 }
 
 char *get_name_by_id(long id) { return id == 4242 ? (char *)"owner" : NULL; }
-long get_id_by_name(const char *name) { return !strcmp(name, "owner") ? 4242 : -1; }
+long get_id_by_name(const char *name)
+{
+  if (!strcmp(name, "owner"))
+    return 4242;
+  return !strcmp(name, "guest") ? 5000 : -1;
+}
 
 /* House object files are not under test: none exist in the scratch tree. */
 obj_save_data *objsave_parse_objects(FILE *fl) { (void)fl; return NULL; }
 int objsave_save_obj_record(struct obj_data *obj, FILE *fl, int location)
 { (void)obj; (void)fl; (void)location; return 1; }
+
+/* Reached through do_hcontrol(); no house object files are written here. */
+FILE *objsave_open_staged(const char *dest, char *temp, size_t temp_size)
+{ (void)dest; (void)temp; (void)temp_size; return NULL; }
+int objsave_commit_staged(FILE *fp, const char *temp, const char *dest)
+{ (void)fp; (void)temp; (void)dest; return 0; }
+void objsave_abort_staged(FILE *fp, const char *temp) { (void)fp; (void)temp; }
+obj_rnum real_object(obj_vnum vnum) { (void)vnum; return NOTHING; }
+struct obj_data *read_object(obj_vnum nr, int type) { (void)nr; (void)type; return NULL; }
 
 void obj_to_room(struct obj_data *object, room_rnum room) { (void)object; (void)room; }
 void extract_obj(struct obj_data *obj) { (void)obj; }
@@ -67,6 +81,39 @@ char *CAP(char *txt)
   if (txt && *txt)
     *txt = (char)toupper((unsigned char)*txt);
   return txt;
+}
+
+/* Command parsing used by do_hcontrol()/do_house(): plain word splitting. */
+const char *dirs[] = { "north", "east", "south", "west", "up", "down", "\n" };
+int rev_dir[] = { SOUTH, WEST, NORTH, EAST, DOWN, UP };
+int is_abbrev(const char *arg1, const char *arg2)
+{
+  return *arg1 && !strncmp(arg1, arg2, strlen(arg1));
+}
+char *one_argument(char *argument, char *first_arg)
+{
+  while (*argument == ' ')
+    argument++;
+  while (*argument && *argument != ' ')
+    *first_arg++ = *argument++;
+  *first_arg = '\0';
+  return argument;
+}
+void half_chop(char *string, char *arg1, char *arg2)
+{
+  string = one_argument(string, arg1);
+  while (*string == ' ')
+    string++;
+  strlcpy(arg2, string, MAX_INPUT_LENGTH);
+}
+int search_block(char *arg, const char **list, int exact)
+{
+  int i;
+  (void)exact;
+  for (i = 0; *list[i] != '\n'; i++)
+    if (!strcmp(arg, list[i]))
+      return i;
+  return -1;
 }
 
 /* ------------------------------------------------------------------ */
@@ -220,6 +267,48 @@ static void test_clean_boot_loads_house(void)
   TEST_ASSERT_TRUE(ROOM_FLAGGED(1, ROOM_ATRIUM));
 }
 
+static void read_hcontrol(struct house_control_rec *rec)
+{
+  FILE *fl = fopen(HCONTROL_FILE, "rb");
+  TEST_ASSERT_NOT_NULL(fl);
+  TEST_ASSERT_EQUAL_size_t(1, fread(rec, sizeof(*rec), 1, fl));
+  TEST_ASSERT_EQUAL_INT(0, fclose(fl));
+}
+
+/* Leave a dirty stack behind for the next call to inherit. */
+static void __attribute__((noinline)) dirty_stack(void)
+{
+  volatile unsigned char junk[8192];
+  size_t i;
+  for (i = 0; i < sizeof(junk); i++)
+    junk[i] = 0xA5;
+}
+
+/* B2-23: hcontrol_build_house() filled a stack record field by field and
+ * House_save_control() fwrite()s all of it, spare fields and padding
+ * included, so stack garbage reached hcontrol. */
+static void test_built_house_record_has_no_stack_garbage(void)
+{
+  char cmd[] = "build 100 north owner";
+  struct house_control_rec on_disk, expect, none = good_record();
+
+  write_hcontrol(&none, 0);
+  House_boot();
+  dirty_stack();
+  do_hcontrol(&imm, cmd, 0, 0);
+  TEST_ASSERT_NOT_NULL(strstr(sent, "House built"));
+
+  read_hcontrol(&on_disk);
+  memset(&expect, 0, sizeof(expect));
+  expect.vnum = 100;
+  expect.atrium = 101;
+  expect.exit_num = NORTH;
+  expect.built_on = on_disk.built_on;
+  expect.mode = HOUSE_PRIVATE;
+  expect.owner = 4242;
+  TEST_ASSERT_EQUAL_MEMORY(&expect, &on_disk, sizeof(expect));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -227,6 +316,7 @@ int main(void)
   RUN_TEST(test_boot_skip_is_reported_and_file_kept);
   RUN_TEST(test_boot_reports_partial_record);
   RUN_TEST(test_clean_boot_loads_house);
+  RUN_TEST(test_built_house_record_has_no_stack_garbage);
   {
     char sub[300];
     if (snprintf(sub, sizeof(sub), "%s/etc", scratch_dir) > 0)
