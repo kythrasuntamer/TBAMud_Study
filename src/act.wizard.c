@@ -4811,12 +4811,29 @@ ACMD(do_file)
    page_string(ch->desc, buf, 1);
 }
 
+/** Put the changelog backup back after a failed update, so a failure never
+ * leaves CHANGE_LOG_FILE missing. */
+static void changelog_restore(const char *bak)
+{
+  if (rename(bak, CHANGE_LOG_FILE) != 0)
+    TB_ERROR_ERRNO("act", "changelog-restore", CHANGE_LOG_FILE,
+                   "could not restore from %s; the changelog is only in the backup", bak);
+}
+
+/** changelog <text>: insert a dated entry by the caller into
+ * CHANGE_LOG_FILE, after the preamble (every line before the first '['
+ * header). The text comes from an implementor and is written as is.
+ * The old file is kept as CHANGE_LOG_FILE.bak. Lines are copied raw, so
+ * comments, blank lines and lines of any length survive. On any I/O
+ * failure the new file is discarded, the backup is renamed back, and the
+ * failure is reported as changelog-* with errno. */
 ACMD(do_changelog)
 {
   time_t rawtime;
-  char timestr[12], line[READ_SIZE], last_buf[READ_SIZE],
-      buf[READ_SIZE];
+  char timestr[12], line[READ_SIZE], header[READ_SIZE], bak[READ_SIZE];
   FILE *fl, *new;
+  int ok = 1, at_line_start = 1, found_header = 0;
+  size_t n;
 
   skip_spaces(&argument);
 
@@ -4825,51 +4842,80 @@ ACMD(do_changelog)
     return;
   }
 
-  tb_snprintf(buf, sizeof(buf), "%s.bak", CHANGE_LOG_FILE);
-  if (rename(CHANGE_LOG_FILE, buf)) {
-    mudlog(BRF, LVL_IMPL, TRUE,
-           "SYSERR: Error making backup changelog file (%s)", buf);
+  tb_snprintf(bak, sizeof(bak), "%s.bak", CHANGE_LOG_FILE);
+  if (rename(CHANGE_LOG_FILE, bak)) {
+    TB_ERROR_ERRNO("act", "changelog-backup", CHANGE_LOG_FILE,
+                   "rename to %s failed; caller " DIAG_CHAR_FMT, bak, DIAG_CHAR(ch));
+    send_to_char(ch, "Could not update the changelog (see the log).\r\n");
     return;
   }
 
-  if (!(fl = fopen(buf, "r"))) {
-    mudlog(BRF, LVL_IMPL, TRUE,
-           "SYSERR: Error opening backup changelog file (%s)", buf);
+  if (!(fl = fopen(bak, "r"))) {
+    TB_ERROR_ERRNO("act", "changelog-open", bak, "cannot read the backup");
+    changelog_restore(bak);
+    send_to_char(ch, "Could not update the changelog (see the log).\r\n");
     return;
   }
 
   if (!(new = fopen(CHANGE_LOG_FILE, "w"))) {
-    mudlog(BRF, LVL_IMPL, TRUE,
-           "SYSERR: Error opening new changelog file (%s)", CHANGE_LOG_FILE);
+    TB_ERROR_ERRNO("act", "changelog-open", CHANGE_LOG_FILE, "cannot create the new file");
     tb_fclose(fl);
+    changelog_restore(bak);
+    send_to_char(ch, "Could not update the changelog (see the log).\r\n");
     return;
   }
 
-  while (get_line(fl, line)) {
-    if (*line != '[')
-      tb_fprintf(new, "%s\n", line);
-    else {
-      strlcpy(last_buf, line, sizeof(last_buf));
+  /* Copy the preamble up to the first line that starts with '['. */
+  while (fgets(line, sizeof(line), fl)) {
+    if (at_line_start && *line == '[') {
+      found_header = 1;
+      strlcpy(header, line, sizeof(header));
       break;
     }
+    ok &= tb_fprintf_checked(new, CHANGE_LOG_FILE, "%s", line);
+    n = strlen(line);
+    at_line_start = (n > 0 && line[n - 1] == '\n');
   }
 
   rawtime = time(0);
+  timestr[0] = '\0';
   tb_strftime(timestr, sizeof(timestr), "%b %d %Y", localtime(&rawtime));
 
-  tb_snprintf(buf, sizeof(buf), "[%s] - %s", timestr, GET_NAME(ch));
+  tb_snprintf(line, sizeof(line), "[%s] - %s", timestr, GET_NAME(ch));
+  ok &= tb_fprintf_checked(new, CHANGE_LOG_FILE, "%s\n  %s\n", line, argument);
 
-  tb_fprintf(new, "%s\n", buf);
-  tb_fprintf(new, "  %s\n", argument);
+  /* Same date and author as the newest entry: the new line joins it. */
+  if (found_header) {
+    size_t hlen = strcspn(header, "\r\n");
+    if (hlen != strlen(line) || strncmp(header, line, hlen))
+      ok &= tb_fprintf_checked(new, CHANGE_LOG_FILE, "%s", header);
+  }
 
-  if (strcmp(buf, last_buf))
-    tb_fprintf(new, "%s\n", line);
-
-  while (get_line(fl, line))
-    tb_fprintf(new, "%s\n", line);
+  /* The rest of the file, byte for byte. */
+  while ((n = fread(line, 1, sizeof(line), fl)) > 0)
+    if (fwrite(line, 1, n, new) != n) {
+      TB_ERROR_ERRNO("act", "changelog-write", CHANGE_LOG_FILE, "copy of the old entries failed");
+      ok = 0;
+      break;
+    }
+  if (ferror(fl)) {
+    TB_ERROR_ERRNO("act", "changelog-read", bak, "read of the old entries failed");
+    ok = 0;
+  }
 
   tb_fclose(fl);
-  tb_fclose(new);
+  ok &= tb_fflush_checked(new, CHANGE_LOG_FILE);
+  ok &= tb_fclose_checked(new, CHANGE_LOG_FILE);
+
+  if (!ok) {
+    TB_ERROR_MSG("act", "changelog-write", CHANGE_LOG_FILE,
+                 "update by " DIAG_CHAR_FMT " discarded; restoring %s", DIAG_CHAR(ch), bak);
+    if (remove(CHANGE_LOG_FILE) != 0)
+      TB_ERROR_ERRNO("act", "changelog-remove", CHANGE_LOG_FILE, "partial file left behind");
+    changelog_restore(bak);
+    send_to_char(ch, "Could not update the changelog (see the log).\r\n");
+    return;
+  }
   send_to_char(ch, "Change added.\r\n");
 }
 

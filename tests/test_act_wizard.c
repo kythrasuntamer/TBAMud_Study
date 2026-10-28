@@ -740,6 +740,70 @@ static void test_copyover_saves_the_switched_players_own_body(void)
   TEST_ASSERT_EQUAL_STRING("copyover-write", captured_operation);
 }
 
+/* Run "changelog <text>" in <tmp>/lib with <tmp>/changelog holding
+ * initial (NULL: no file). Returns the resulting file in out. */
+static void run_changelog(const char *initial, const char *text,
+                          char *out, size_t outsize)
+{
+  char tmpl[] = "/tmp/tb_changelog_XXXXXX";
+  char old_cwd[4096], path[256];
+  char *dir = mkdtemp(tmpl);
+  FILE *fp;
+  size_t n = 0;
+
+  TEST_ASSERT_NOT_NULL(dir);
+  TEST_ASSERT_NOT_NULL(getcwd(old_cwd, sizeof(old_cwd)));
+  snprintf(path, sizeof(path), "%s/lib", dir);
+  TEST_ASSERT_EQUAL_INT(0, mkdir(path, 0700));
+  if (initial) {
+    snprintf(path, sizeof(path), "%s/changelog", dir);
+    fp = fopen(path, "w");
+    TEST_ASSERT_NOT_NULL(fp);
+    fputs(initial, fp);
+    fclose(fp);
+  }
+  snprintf(path, sizeof(path), "%s/lib", dir);
+  TEST_ASSERT_EQUAL_INT(0, chdir(path));
+  RUN_CMD(do_changelog, &imm, text);
+  out[0] = '\0';
+  if ((fp = fopen(CHANGE_LOG_FILE, "r")) != NULL) {
+    n = fread(out, 1, outsize - 1, fp);
+    out[n] = '\0';
+    fclose(fp);
+  }
+  remove(CHANGE_LOG_FILE);
+  remove(CHANGE_LOG_FILE ".bak");
+  TEST_ASSERT_EQUAL_INT(0, chdir(old_cwd));
+  TEST_ASSERT_EQUAL_INT(0, rmdir(path));
+  TEST_ASSERT_EQUAL_INT(0, rmdir(dir));
+}
+
+/* G1-13: with no '[' header in the file, do_changelog compared and wrote
+ * uninitialised stack buffers; get_line() also dropped comment and blank
+ * lines; a failed update left the changelog missing. */
+static void test_changelog_empty_preamble_and_failure(void)
+{
+  char out[2048];
+
+  run_changelog("", "fixed the thing", out, sizeof(out));
+  TEST_ASSERT_EQUAL_INT(0, captured_errors);
+  TEST_ASSERT_NOT_NULL(strstr(out, "] - Implo\n  fixed the thing\n"));
+  TEST_ASSERT_EQUAL_INT('[', out[0]);
+  TEST_ASSERT_NOT_NULL(strstr(sent, "Change added."));
+
+  reset_counters();
+  run_changelog("* comment\n\nPreamble\n[Jan 01 2020] - Old\n  old entry\n",
+                "new entry", out, sizeof(out));
+  TEST_ASSERT_EQUAL_INT(0, captured_errors);
+  TEST_ASSERT_EQUAL_INT(0, strncmp(out, "* comment\n\nPreamble\n[", 21));
+  TEST_ASSERT_NOT_NULL(strstr(out, "  new entry\n[Jan 01 2020] - Old\n  old entry\n"));
+
+  reset_counters();
+  run_changelog(NULL, "no file", out, sizeof(out));
+  TEST_ASSERT_EQUAL_STRING("changelog-backup", captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(sent, "Could not update"));
+}
+
 int main(void)
 {
   /* basic_mud_log()/mudlog() are the real utils.c ones; keep them quiet. */
@@ -761,6 +825,7 @@ int main(void)
   RUN_TEST(test_zcheck_checks_the_last_room);
   RUN_TEST(test_copyover_aborts_before_exec_when_state_file_fails);
   RUN_TEST(test_copyover_saves_the_switched_players_own_body);
+  RUN_TEST(test_changelog_empty_preamble_and_failure);
   {
     int failures = UNITY_END();
     if (logfile)
