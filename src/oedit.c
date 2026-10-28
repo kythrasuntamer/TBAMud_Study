@@ -90,11 +90,8 @@ ACMD(do_oasis_iedit)
 
   d = ch->desc;
 
-  if (d->olc) {
-    mudlog(BRF, LVL_IMMORT, TRUE,
-           "SYSERR: do_oasis_iedit: Player already had an OLC structure.");
-    cleanup_olc(d, CLEANUP_ALL);
-  }
+  if (d->olc)
+    OLC_DISCARD_STALE_SESSION(d, ch);
 
   CREATE(d->olc, struct oasis_olc_data, 1);
 
@@ -400,11 +397,8 @@ ACMD(do_oasis_oedit)
   d = ch->desc;
 
   /* Give the descriptor an OLC structure. */
-  if (d->olc) {
-    mudlog(BRF, LVL_IMMORT, TRUE,
-      "SYSERR: do_oasis: Player already had olc structure.");
-    free(d->olc);
-  }
+  if (d->olc)
+    OLC_DISCARD_STALE_SESSION(d, ch);
 
   CREATE(d->olc, struct oasis_olc_data, 1);
 

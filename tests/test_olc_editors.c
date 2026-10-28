@@ -1926,6 +1926,36 @@ static void test_iedit_refuses_object_from_zone_builder_cannot_edit(void)
   free_scratch_obj(sword);
 }
 
+
+/* ------------------------------------------------------------------ */
+/* F1-21: a stale OLC structure found at session start is reported and */
+/* released fully.                                                     */
+/* ------------------------------------------------------------------ */
+static void test_iedit_start_with_stale_session_reports_and_releases_it(void)
+{
+  struct obj_data *sword;
+
+  make_objects(3);
+  sword = scratch_obj("a sword");
+  sword->item_number = 1;
+  found_obj = sword;
+  STATE(&builder_desc) = CON_PLAYING;
+  OLC_MODE(&builder_desc) = OEDIT_MAIN_MENU;
+  OLC_NUM(&builder_desc) = 3002;
+  OLC_OBJ(&builder_desc) = scratch_obj("a stale scratch object");
+
+  do_oasis_iedit(&builder, (char *)" sword", 0, 0);
+
+  TEST_ASSERT_EQUAL_INT(1, cleanups);   /* LeakSanitizer checks the rest */
+  TEST_ASSERT_EQUAL_STRING("olc-stale-state", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "player idnum 4242 stale olc mode 1 vnum 3002"));
+  TEST_ASSERT_NOT_NULL(builder_desc.olc);
+  TEST_ASSERT_EQUAL_INT(CON_IEDIT, STATE(&builder_desc));
+  found_obj = NULL;
+  cleanup_olc(&builder_desc, CLEANUP_ALL);
+  free_scratch_obj(sword);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -1976,5 +2006,6 @@ int main(void)
   RUN_TEST(test_sedit_object_rnum_zero_can_be_a_product);
   RUN_TEST(test_redit_name_over_byte_limit_is_refused_not_cut);
   RUN_TEST(test_iedit_refuses_object_from_zone_builder_cannot_edit);
+  RUN_TEST(test_iedit_start_with_stale_session_reports_and_releases_it);
   return UNITY_END();
 }

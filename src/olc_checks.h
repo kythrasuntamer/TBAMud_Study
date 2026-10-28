@@ -77,6 +77,18 @@
     (lval) = olc_v_; \
   } while (0)
 
+/** A builder starting an OLC session must not already have one: every exit
+ * path ends in cleanup_olc(), which frees d->olc. If one is found anyway,
+ * report olc-stale-state with the builder and the stale session's mode and
+ * vnum, and release it fully (a bare free(d->olc) leaked its scratch copy
+ * and trigger list). Statement macro; ch is the builder. */
+#define OLC_DISCARD_STALE_SESSION(d, ch) do { \
+    TB_ERROR_MSG("olc", "olc-stale-state", "descriptor", \
+                 "builder " DIAG_CHAR_FMT " stale olc mode %d vnum %d; discarded", \
+                 DIAG_CHAR(ch), OLC_MODE(d), OLC_NUM(d)); \
+    cleanup_olc((d), CLEANUP_ALL); \
+  } while (0)
+
 /** Report a scratch rnum outside its table as a "stale-rnum" error naming the
  * call site, builder, edited vnum and table. Returns TRUE when r is valid. */
 #define OLC_CHECK_RNUM(d, kind, r) \

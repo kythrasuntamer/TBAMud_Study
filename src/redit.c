@@ -99,10 +99,8 @@ ACMD(do_oasis_redit)
   d = ch->desc;
 
   /* Give the descriptor an OLC structure. */
-  if (d->olc) {
-    mudlog(BRF, LVL_IMMORT, TRUE, "SYSERR: do_oasis_redit: Player already had olc structure.");
-    free(d->olc);
-  }
+  if (d->olc)
+    OLC_DISCARD_STALE_SESSION(d, ch);
 
   /* Create the OLC structure. */
   CREATE(d->olc, struct oasis_olc_data, 1);

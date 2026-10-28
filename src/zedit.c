@@ -401,11 +401,8 @@ ACMD(do_oasis_zedit)
   d = ch->desc;
 
   /* Give the builder's descriptor an OLC structure. */
-  if (d->olc) {
-    mudlog(BRF, LVL_IMMORT, TRUE, "SYSERR: do_oasis_zedit: Player already "
-      "had olc structure.");
-    free(d->olc);
-  }
+  if (d->olc)
+    OLC_DISCARD_STALE_SESSION(d, ch);
 
   CREATE(d->olc, struct oasis_olc_data, 1);
 
