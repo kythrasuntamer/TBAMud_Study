@@ -1201,32 +1201,36 @@ void oedit_parse(struct descriptor_data *d, char *arg)
     }
 
   case OEDIT_WEIGHT:
-    GET_OBJ_WEIGHT(OLC_OBJ(d)) = LIMIT(tb_parse_int_or_zero(arg), 0, MAX_OBJ_WEIGHT);
+    OLC_SET_CLAMPED(d, GET_OBJ_WEIGHT(OLC_OBJ(d)), tb_parse_int_or_zero(arg), 0, MAX_OBJ_WEIGHT, "Weight");
     break;
 
   case OEDIT_COST:
-    GET_OBJ_COST(OLC_OBJ(d)) = LIMIT(tb_parse_int_or_zero(arg), 0, MAX_OBJ_COST);
+    OLC_SET_CLAMPED(d, GET_OBJ_COST(OLC_OBJ(d)), tb_parse_int_or_zero(arg), 0, MAX_OBJ_COST, "Cost");
     break;
 
   case OEDIT_COSTPERDAY:
-    GET_OBJ_RENT(OLC_OBJ(d)) = LIMIT(tb_parse_int_or_zero(arg), 0, MAX_OBJ_RENT);
+    OLC_SET_CLAMPED(d, GET_OBJ_RENT(OLC_OBJ(d)), tb_parse_int_or_zero(arg), 0, MAX_OBJ_RENT, "Rent");
     break;
 
   case OEDIT_TIMER:
-    GET_OBJ_TIMER(OLC_OBJ(d)) = LIMIT(tb_parse_int_or_zero(arg), 0, MAX_OBJ_TIMER);
+    OLC_SET_CLAMPED(d, GET_OBJ_TIMER(OLC_OBJ(d)), tb_parse_int_or_zero(arg), 0, MAX_OBJ_TIMER, "Timer");
     break;
 
   case OEDIT_LEVEL:
-    GET_OBJ_LEVEL(OLC_OBJ(d)) = LIMIT(tb_parse_int_or_zero(arg), 0, LVL_IMPL);
+    OLC_SET_CLAMPED(d, GET_OBJ_LEVEL(OLC_OBJ(d)), tb_parse_int_or_zero(arg), 0, LVL_IMPL, "Level");
     break;
 
   case OEDIT_PERM:
     if ((number = tb_parse_int_or_zero(arg)) == 0)
       break;
     if (number > 0 && number < NUM_AFF_FLAGS) {
-      /* Setting AFF_CHARM on objects like this is dangerous. */
+      /* Setting AFF_CHARM on objects like this is dangerous: refuse it,
+       * and say so. */
       if (number != AFF_CHARM) {
         TOGGLE_BIT_AR(GET_OBJ_AFFECT(OLC_OBJ(d)), number);
+      } else {
+        write_to_output(d, "CHARM cannot be set on an object.\r\n");
+        return;
       }
     }
     oedit_disp_perm_menu(d);
@@ -1244,10 +1248,10 @@ void oedit_parse(struct descriptor_data *d, char *arg)
       }
       break;
     case ITEM_WEAPON:
-      GET_OBJ_VAL(OLC_OBJ(d), 0) = MIN(MAX(tb_parse_int_or_zero(arg), -50), 50);
+      OLC_SET_CLAMPED(d, GET_OBJ_VAL(OLC_OBJ(d), 0), number, -50, 50, "Weapon value 0");
       break;
     case ITEM_CONTAINER:
-      GET_OBJ_VAL(OLC_OBJ(d), 0) = LIMIT(tb_parse_int_or_zero(arg), -1, MAX_CONTAINER_SIZE);
+      OLC_SET_CLAMPED(d, GET_OBJ_VAL(OLC_OBJ(d), 0), number, -1, MAX_CONTAINER_SIZE, "Container capacity");
       break;
     default:
       GET_OBJ_VAL(OLC_OBJ(d), 0) = tb_parse_int_or_zero(arg);
@@ -1264,7 +1268,7 @@ void oedit_parse(struct descriptor_data *d, char *arg)
       if (number == 0 || number == -1)
 	GET_OBJ_VAL(OLC_OBJ(d), 1) = -1;
       else
-	GET_OBJ_VAL(OLC_OBJ(d), 1) = LIMIT(number, 1, NUM_SPELLS);
+	OLC_SET_CLAMPED(d, GET_OBJ_VAL(OLC_OBJ(d), 1), number, 1, NUM_SPELLS, "Spell");
 
       oedit_disp_val3_menu(d);
       break;
@@ -1280,7 +1284,7 @@ void oedit_parse(struct descriptor_data *d, char *arg)
 	oedit_disp_val3_menu(d);
       break;
     case ITEM_WEAPON:
-      GET_OBJ_VAL(OLC_OBJ(d), 1) = LIMIT(number, 1, MAX_WEAPON_NDICE);
+      OLC_SET_CLAMPED(d, GET_OBJ_VAL(OLC_OBJ(d), 1), number, 1, MAX_WEAPON_NDICE, "Number of damage dice");
       oedit_disp_val3_menu(d);
       break;
 
@@ -1327,7 +1331,7 @@ void oedit_parse(struct descriptor_data *d, char *arg)
       min_val = -65000;
       max_val = 65000;
     }
-    GET_OBJ_VAL(OLC_OBJ(d), 2) = LIMIT(number, min_val, max_val);
+    OLC_SET_CLAMPED(d, GET_OBJ_VAL(OLC_OBJ(d), 2), number, min_val, max_val, "Value 3");
     oedit_disp_val4_menu(d);
     return;
 
@@ -1358,7 +1362,7 @@ void oedit_parse(struct descriptor_data *d, char *arg)
       max_val = 65000;
       break;
     }
-    GET_OBJ_VAL(OLC_OBJ(d), 3) = LIMIT(number, min_val, max_val);
+    OLC_SET_CLAMPED(d, GET_OBJ_VAL(OLC_OBJ(d), 3), number, min_val, max_val, "Value 4");
     break;
 
   case OEDIT_PROMPT_APPLY:

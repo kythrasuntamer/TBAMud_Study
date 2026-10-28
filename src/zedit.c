@@ -1216,7 +1216,7 @@ void zedit_parse(struct descriptor_data *d, char *arg)
 /*-------------------------------------------------------------------*/
   case ZEDIT_LEV_MIN:
     pos = tb_parse_int_or_zero(arg);
-    OLC_ZONE(d)->min_level = MIN(MAX(pos,-1), 100);
+    OLC_SET_CLAMPED(d, OLC_ZONE(d)->min_level, pos, -1, 100, "Minimum level");
     OLC_ZONE(d)->number = 1;
     zedit_disp_levels(d);
     break;
@@ -1224,7 +1224,7 @@ void zedit_parse(struct descriptor_data *d, char *arg)
 /*-------------------------------------------------------------------*/
   case ZEDIT_LEV_MAX:
     pos = tb_parse_int_or_zero(arg);
-    OLC_ZONE(d)->max_level = MIN(MAX(pos,-1), 100);
+    OLC_SET_CLAMPED(d, OLC_ZONE(d)->max_level, pos, -1, 100, "Maximum level");
     OLC_ZONE(d)->number = 1;
     zedit_disp_levels(d);
     break;
@@ -1389,17 +1389,17 @@ void zedit_parse(struct descriptor_data *d, char *arg)
     switch (OLC_CMD(d).command) {
     case 'M':
     case 'O':
-      OLC_CMD(d).arg2 = MIN(MAX_DUPLICATES, tb_parse_int_or_zero(arg));
+      OLC_SET_CLAMPED(d, OLC_CMD(d).arg2, tb_parse_int_or_zero(arg), 0, MAX_DUPLICATES, "Max load");
       OLC_CMD(d).arg3 = real_room(OLC_NUM(d));
       zedit_disp_menu(d);
       break;
     case 'G':
-      OLC_CMD(d).arg2 = MIN(MAX_DUPLICATES, tb_parse_int_or_zero(arg));
+      OLC_SET_CLAMPED(d, OLC_CMD(d).arg2, tb_parse_int_or_zero(arg), 0, MAX_DUPLICATES, "Max load");
       zedit_disp_menu(d);
       break;
     case 'P':
     case 'E':
-      OLC_CMD(d).arg2 = MIN(MAX_DUPLICATES, tb_parse_int_or_zero(arg));
+      OLC_SET_CLAMPED(d, OLC_CMD(d).arg2, tb_parse_int_or_zero(arg), 0, MAX_DUPLICATES, "Max load");
       zedit_disp_arg3(d);
       break;
     case 'V':
@@ -1613,9 +1613,9 @@ void zedit_parse(struct descriptor_data *d, char *arg)
   case ZEDIT_ZONE_BOT:
     /* Parse and add new bottom room in zone and return to main menu. */
     if (OLC_ZNUM(d) == 0)
-      OLC_ZONE(d)->bot = LIMIT(tb_parse_int_or_zero(arg), 0, OLC_ZONE(d)->top);
+      OLC_SET_CLAMPED(d, OLC_ZONE(d)->bot, tb_parse_int_or_zero(arg), 0, OLC_ZONE(d)->top, "Zone bottom");
     else
-      OLC_ZONE(d)->bot = LIMIT(tb_parse_int_or_zero(arg), zone_table[OLC_ZNUM(d) - 1].top + 1, OLC_ZONE(d)->top);
+      OLC_SET_CLAMPED(d, OLC_ZONE(d)->bot, tb_parse_int_or_zero(arg), zone_table[OLC_ZNUM(d) - 1].top + 1, OLC_ZONE(d)->top, "Zone bottom");
     OLC_ZONE(d)->number = 1;
     zedit_disp_menu(d);
     break;
@@ -1624,9 +1624,9 @@ void zedit_parse(struct descriptor_data *d, char *arg)
   case ZEDIT_ZONE_TOP:
     /* Parse and add new top room in zone and return to main menu. */
     if (OLC_ZNUM(d) == top_of_zone_table)
-      OLC_ZONE(d)->top = LIMIT(tb_parse_int_or_zero(arg), genolc_zonep_bottom(OLC_ZONE(d)), 32000);
+      OLC_SET_CLAMPED(d, OLC_ZONE(d)->top, tb_parse_int_or_zero(arg), genolc_zonep_bottom(OLC_ZONE(d)), 32000, "Zone top");
     else
-      OLC_ZONE(d)->top = LIMIT(tb_parse_int_or_zero(arg), genolc_zonep_bottom(OLC_ZONE(d)), genolc_zone_bottom(OLC_ZNUM(d) + 1) - 1);
+      OLC_SET_CLAMPED(d, OLC_ZONE(d)->top, tb_parse_int_or_zero(arg), genolc_zonep_bottom(OLC_ZONE(d)), genolc_zone_bottom(OLC_ZNUM(d) + 1) - 1, "Zone top");
     OLC_ZONE(d)->number = 1;
     zedit_disp_menu(d);
     break;

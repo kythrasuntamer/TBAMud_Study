@@ -524,7 +524,11 @@ void sedit_parse(struct descriptor_data *d, char *arg)
   int i;
 
   if (OLC_MODE(d) > SEDIT_NUMERICAL_RESPONSE) {
-    if (!isdigit(arg[0]) && ((*arg == '-') && (!isdigit(arg[1])))) {
+    /* Builder input: a whole number, except the profit factors, which
+     * parse_shop_profit() validates as floats. tb_parse_int_or_zero()
+     * reads "abc" as 0, so refuse it here. */
+    if (OLC_MODE(d) != SEDIT_BUY_PROFIT && OLC_MODE(d) != SEDIT_SELL_PROFIT &&
+        !is_number(arg)) {
       write_to_output(d, "Field must be numerical, try again : ");
       return;
     }
@@ -793,16 +797,16 @@ void sedit_parse(struct descriptor_data *d, char *arg)
     S_KEEPER(OLC_SHOP(d)) = i;
     break;
   case SEDIT_OPEN1:
-    S_OPEN1(OLC_SHOP(d)) = LIMIT(tb_parse_int_or_zero(arg), 0, 28);
+    OLC_SET_CLAMPED(d, S_OPEN1(OLC_SHOP(d)), tb_parse_int_or_zero(arg), 0, 28, "Opening hour");
     break;
   case SEDIT_OPEN2:
-    S_OPEN2(OLC_SHOP(d)) = LIMIT(tb_parse_int_or_zero(arg), 0, 28);
+    OLC_SET_CLAMPED(d, S_OPEN2(OLC_SHOP(d)), tb_parse_int_or_zero(arg), 0, 28, "Second opening hour");
     break;
   case SEDIT_CLOSE1:
-    S_CLOSE1(OLC_SHOP(d)) = LIMIT(tb_parse_int_or_zero(arg), 0, 28);
+    OLC_SET_CLAMPED(d, S_CLOSE1(OLC_SHOP(d)), tb_parse_int_or_zero(arg), 0, 28, "Closing hour");
     break;
   case SEDIT_CLOSE2:
-    S_CLOSE2(OLC_SHOP(d)) = LIMIT(tb_parse_int_or_zero(arg), 0, 28);
+    OLC_SET_CLAMPED(d, S_CLOSE2(OLC_SHOP(d)), tb_parse_int_or_zero(arg), 0, 28, "Second closing hour");
     break;
   case SEDIT_BUY_PROFIT:
     if (!parse_shop_profit(arg, &S_BUYPROFIT(OLC_SHOP(d)))) {
@@ -817,7 +821,7 @@ void sedit_parse(struct descriptor_data *d, char *arg)
     }
     break;
   case SEDIT_TYPE_MENU:
-    OLC_VAL(d) = LIMIT(tb_parse_int_or_zero(arg), 0, NUM_ITEM_TYPES - 1);
+    OLC_SET_CLAMPED(d, OLC_VAL(d), tb_parse_int_or_zero(arg), 0, NUM_ITEM_TYPES - 1, "Item type");
     write_to_output(d, "Enter namelist (return for none) :-\r\n] ");
     OLC_MODE(d) = SEDIT_NAMELIST;
     return;
@@ -854,14 +858,27 @@ void sedit_parse(struct descriptor_data *d, char *arg)
     sedit_rooms_menu(d);
     return;
   case SEDIT_SHOP_FLAGS:
-    if ((i = LIMIT(tb_parse_int_or_zero(arg), 0, NUM_SHOP_FLAGS)) > 0) {
+    /* Builder input: 0 leaves, 1..NUM_SHOP_FLAGS toggles. Clamping used to
+     * turn any larger number into the last flag. */
+    if ((i = tb_parse_int_or_zero(arg)) < 0 || i > NUM_SHOP_FLAGS) {
+      write_to_output(d, "Choose 0 to %d.\r\n", NUM_SHOP_FLAGS);
+      sedit_shop_flags_menu(d);
+      return;
+    }
+    if (i > 0) {
       TOGGLE_BIT(S_BITVECTOR(OLC_SHOP(d)), 1 << (i - 1));
       sedit_shop_flags_menu(d);
       return;
     }
     break;
   case SEDIT_NOTRADE:
-    if ((i = LIMIT(tb_parse_int_or_zero(arg), 0, NUM_TRADERS)) > 0) {
+    /* Builder input: 0 leaves, 1..NUM_TRADERS toggles (see above). */
+    if ((i = tb_parse_int_or_zero(arg)) < 0 || i > NUM_TRADERS) {
+      write_to_output(d, "Choose 0 to %d.\r\n", NUM_TRADERS);
+      sedit_no_trade_menu(d);
+      return;
+    }
+    if (i > 0) {
       TOGGLE_BIT(S_NOTRADE(OLC_SHOP(d)), 1 << (i - 1));
       sedit_no_trade_menu(d);
       return;

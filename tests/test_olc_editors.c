@@ -245,6 +245,17 @@ void *tb_calloc_array_at(size_t count, size_t element_size,
 char *str_udup(const char *txt) { return strdup((txt && *txt) ? txt : "undefined"); }
 int genolc_checkstring(struct descriptor_data *d, char *arg) { (void)d; (void)arg; return TRUE; }
 int count_non_protocol_chars(char *str) { return (int)strlen(str); }
+int is_number(const char *str)   /* interpreter.c */
+{
+  if (*str == '-')
+    str++;
+  if (!*str)
+    return 0;
+  while (*str)
+    if (!isdigit((unsigned char)*(str++)))
+      return 0;
+  return 1;
+}
 void get_char_colors(struct char_data *ch) { (void)ch; }
 void clear_screen(struct descriptor_data *d) { (void)d; }
 void column_list(struct char_data *ch, int num_cols, const char **list, int list_length, bool show_nums)
@@ -1682,6 +1693,63 @@ static void test_zedit_save_for_vanished_room_is_reported_not_announced(void)
   free_zedit_session(d);
 }
 
+
+/* ------------------------------------------------------------------ */
+/* F1-23: out-of-range builder input is clamped loudly, and non-numeric */
+/* input is refused instead of read as 0.                               */
+/* ------------------------------------------------------------------ */
+static void test_oedit_weight_over_max_is_clamped_and_reported(void)
+{
+  struct descriptor_data *d = &builder_desc;
+  char input[32];
+
+  OLC_OBJ(d) = scratch_obj("a heavy thing");
+  OLC_NUM(d) = 3001;
+  OLC_MODE(d) = OEDIT_WEIGHT;
+  snprintf(input, sizeof(input), "%d", MAX_OBJ_WEIGHT + 1);
+
+  oedit_parse(d, input);
+
+  TEST_ASSERT_EQUAL_INT(MAX_OBJ_WEIGHT, GET_OBJ_WEIGHT(OLC_OBJ(d)));
+  TEST_ASSERT_EQUAL_STRING("WARNING", tb_captured_severity);
+  TEST_ASSERT_EQUAL_STRING("olc-clamp", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "vnum 3001 Weight input"));
+  TEST_ASSERT_NOT_NULL(strstr(out_buf, "is out of range"));
+}
+
+static void test_oedit_weight_in_range_is_silent(void)
+{
+  struct descriptor_data *d = &builder_desc;
+
+  OLC_OBJ(d) = scratch_obj("a light thing");
+  OLC_NUM(d) = 3001;
+  OLC_MODE(d) = OEDIT_WEIGHT;
+
+  oedit_parse(d, "12");
+
+  TEST_ASSERT_EQUAL_INT(12, GET_OBJ_WEIGHT(OLC_OBJ(d)));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+}
+
+static void test_sedit_non_numeric_input_is_refused(void)
+{
+  struct descriptor_data *d = &builder_desc;
+  struct shop_data scratch;
+
+  memset(&scratch, 0, sizeof(scratch));
+  S_OPEN1(&scratch) = 6;
+  OLC_SHOP(d) = &scratch;
+  OLC_NUM(d) = 3000;
+  OLC_MODE(d) = SEDIT_OPEN1;
+
+  sedit_parse(d, "abc");
+
+  TEST_ASSERT_EQUAL_INT(6, S_OPEN1(&scratch));
+  TEST_ASSERT_EQUAL_INT(SEDIT_OPEN1, OLC_MODE(d));
+  TEST_ASSERT_NOT_NULL(strstr(out_buf, "Field must be numerical"));
+  OLC_SHOP(d) = NULL;
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -1723,5 +1791,8 @@ int main(void)
   RUN_TEST(test_sedit_keeper_from_foreign_zone_is_refused);
   RUN_TEST(test_oedit_failed_save_is_reported_not_announced);
   RUN_TEST(test_zedit_save_for_vanished_room_is_reported_not_announced);
+  RUN_TEST(test_oedit_weight_over_max_is_clamped_and_reported);
+  RUN_TEST(test_oedit_weight_in_range_is_silent);
+  RUN_TEST(test_sedit_non_numeric_input_is_refused);
   return UNITY_END();
 }

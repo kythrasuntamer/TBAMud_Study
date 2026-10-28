@@ -559,8 +559,11 @@ void medit_parse(struct descriptor_data *d, char *arg)
 
   if (OLC_MODE(d) > MEDIT_NUMERICAL_RESPONSE) {
     i = tb_parse_int_or_zero(arg);
-    if (!*arg || (!isdigit(arg[0]) && ((*arg == '-') && !isdigit(arg[1])))) {
-      write_to_output(d, "Try again : ");
+    /* Builder input: every numeric mode but the y/n delete prompt takes a
+     * whole number. tb_parse_int_or_zero() reads "abc" as 0, so refuse
+     * anything else here rather than store a 0 the builder never typed. */
+    if (!*arg || (OLC_MODE(d) != MEDIT_DELETE && !is_number(arg))) {
+      write_to_output(d, "Please enter a whole number, try again : ");
       return;
     }
   } else {	/* String response. */
@@ -939,155 +942,158 @@ void medit_parse(struct descriptor_data *d, char *arg)
 /* Numerical responses. */
 
   case MEDIT_SEX:
-    GET_SEX(OLC_MOB(d)) = LIMIT(i - 1, 0, NUM_GENDERS - 1);
+    OLC_SET_CLAMPED(d, i, i, 1, NUM_GENDERS, "Gender choice");
+    GET_SEX(OLC_MOB(d)) = i - 1;
     break;
 
   case MEDIT_HITROLL:
-    GET_HITROLL(OLC_MOB(d)) = LIMIT(i, 0, 50);
+    OLC_SET_CLAMPED(d, GET_HITROLL(OLC_MOB(d)), i, 0, 50, "Hitroll");
     OLC_VAL(d) = TRUE;
     medit_disp_stats_menu(d);
     return;
 
   case MEDIT_DAMROLL:
-    GET_DAMROLL(OLC_MOB(d)) = LIMIT(i, 0, 50);
+    OLC_SET_CLAMPED(d, GET_DAMROLL(OLC_MOB(d)), i, 0, 50, "Damroll");
     OLC_VAL(d) = TRUE;
     medit_disp_stats_menu(d);
     return;
 
   case MEDIT_NDD:
-    GET_NDD(OLC_MOB(d)) = LIMIT(i, 0, 30);
+    OLC_SET_CLAMPED(d, GET_NDD(OLC_MOB(d)), i, 0, 30, "Damage dice count");
     OLC_VAL(d) = TRUE;
     medit_disp_stats_menu(d);
     return;
 
   case MEDIT_SDD:
-    GET_SDD(OLC_MOB(d)) = LIMIT(i, 0, 127);
+    OLC_SET_CLAMPED(d, GET_SDD(OLC_MOB(d)), i, 0, 127, "Damage dice size");
     OLC_VAL(d) = TRUE;
     medit_disp_stats_menu(d);
     return;
 
   case MEDIT_NUM_HP_DICE:
-    GET_HIT(OLC_MOB(d)) = LIMIT(i, 0, 30);
+    OLC_SET_CLAMPED(d, GET_HIT(OLC_MOB(d)), i, 0, 30, "HP dice count");
     OLC_VAL(d) = TRUE;
     medit_disp_stats_menu(d);
     return;
 
   case MEDIT_SIZE_HP_DICE:
-    GET_MANA(OLC_MOB(d)) = LIMIT(i, 0, 1000);
+    OLC_SET_CLAMPED(d, GET_MANA(OLC_MOB(d)), i, 0, 1000, "HP dice size");
     OLC_VAL(d) = TRUE;
     medit_disp_stats_menu(d);
     return;
 
   case MEDIT_ADD_HP:
-    GET_MOVE(OLC_MOB(d)) = LIMIT(i, 0, 30000);
+    OLC_SET_CLAMPED(d, GET_MOVE(OLC_MOB(d)), i, 0, 30000, "HP bonus");
     OLC_VAL(d) = TRUE;
     medit_disp_stats_menu(d);
     return;
 
   case MEDIT_AC:
-    GET_AC(OLC_MOB(d)) = LIMIT(i, -200, 200);
+    OLC_SET_CLAMPED(d, GET_AC(OLC_MOB(d)), i, -200, 200, "Armor class");
     OLC_VAL(d) = TRUE;
     medit_disp_stats_menu(d);
     return;
 
   case MEDIT_EXP:
-    GET_EXP(OLC_MOB(d)) = LIMIT(i, 0, MAX_MOB_EXP);
+    OLC_SET_CLAMPED(d, GET_EXP(OLC_MOB(d)), i, 0, MAX_MOB_EXP, "Experience");
     OLC_VAL(d) = TRUE;
     medit_disp_stats_menu(d);
     return;
 
   case MEDIT_GOLD:
-    GET_GOLD(OLC_MOB(d)) = LIMIT(i, 0, MAX_MOB_GOLD);
+    OLC_SET_CLAMPED(d, GET_GOLD(OLC_MOB(d)), i, 0, MAX_MOB_GOLD, "Gold");
     OLC_VAL(d) = TRUE;
     medit_disp_stats_menu(d);
     return;
 
   case MEDIT_STR:
-    GET_STR(OLC_MOB(d)) = LIMIT(i, 11, 25);
+    OLC_SET_CLAMPED(d, GET_STR(OLC_MOB(d)), i, 11, 25, "Strength");
     OLC_VAL(d) = TRUE;
     medit_disp_stats_menu(d);
     return;
 
   case MEDIT_INT:
-    GET_INT(OLC_MOB(d)) = LIMIT(i, 11, 25);
+    OLC_SET_CLAMPED(d, GET_INT(OLC_MOB(d)), i, 11, 25, "Intelligence");
     OLC_VAL(d) = TRUE;
     medit_disp_stats_menu(d);
     return;
 
   case MEDIT_WIS:
-    GET_WIS(OLC_MOB(d)) = LIMIT(i, 11, 25);
+    OLC_SET_CLAMPED(d, GET_WIS(OLC_MOB(d)), i, 11, 25, "Wisdom");
     OLC_VAL(d) = TRUE;
     medit_disp_stats_menu(d);
     return;
 
   case MEDIT_DEX:
-    GET_DEX(OLC_MOB(d)) = LIMIT(i, 11, 25);
+    OLC_SET_CLAMPED(d, GET_DEX(OLC_MOB(d)), i, 11, 25, "Dexterity");
     OLC_VAL(d) = TRUE;
     medit_disp_stats_menu(d);
     return;
 
   case MEDIT_CON:
-    GET_CON(OLC_MOB(d)) = LIMIT(i, 11, 25);
+    OLC_SET_CLAMPED(d, GET_CON(OLC_MOB(d)), i, 11, 25, "Constitution");
     OLC_VAL(d) = TRUE;
     medit_disp_stats_menu(d);
     return;
 
   case MEDIT_CHA:
-    GET_CHA(OLC_MOB(d)) = LIMIT(i, 11, 25);
+    OLC_SET_CLAMPED(d, GET_CHA(OLC_MOB(d)), i, 11, 25, "Charisma");
     OLC_VAL(d) = TRUE;
     medit_disp_stats_menu(d);
     return;
 
   case MEDIT_PARA:
-    GET_SAVE(OLC_MOB(d), SAVING_PARA) = LIMIT(i, 0, 100);
+    OLC_SET_CLAMPED(d, GET_SAVE(OLC_MOB(d), SAVING_PARA), i, 0, 100, "Save vs paralysis");
     OLC_VAL(d) = TRUE;
     medit_disp_stats_menu(d);
     return;
 
   case MEDIT_ROD:
-    GET_SAVE(OLC_MOB(d), SAVING_ROD) = LIMIT(i, 0, 100);
+    OLC_SET_CLAMPED(d, GET_SAVE(OLC_MOB(d), SAVING_ROD), i, 0, 100, "Save vs rods");
     OLC_VAL(d) = TRUE;
     medit_disp_stats_menu(d);
     return;
 
   case MEDIT_PETRI:
-    GET_SAVE(OLC_MOB(d), SAVING_PETRI) = LIMIT(i, 0, 100);
+    OLC_SET_CLAMPED(d, GET_SAVE(OLC_MOB(d), SAVING_PETRI), i, 0, 100, "Save vs petrification");
     OLC_VAL(d) = TRUE;
     medit_disp_stats_menu(d);
     return;
 
   case MEDIT_BREATH:
-    GET_SAVE(OLC_MOB(d), SAVING_BREATH) = LIMIT(i, 0, 100);
+    OLC_SET_CLAMPED(d, GET_SAVE(OLC_MOB(d), SAVING_BREATH), i, 0, 100, "Save vs breath");
     OLC_VAL(d) = TRUE;
     medit_disp_stats_menu(d);
     return;
 
   case MEDIT_SPELL:
-    GET_SAVE(OLC_MOB(d), SAVING_SPELL) = LIMIT(i, 0, 100);
+    OLC_SET_CLAMPED(d, GET_SAVE(OLC_MOB(d), SAVING_SPELL), i, 0, 100, "Save vs spells");
     OLC_VAL(d) = TRUE;
     medit_disp_stats_menu(d);
     return;
 
   case MEDIT_POS:
-    GET_POS(OLC_MOB(d)) = LIMIT(i - 1, 0, NUM_POSITIONS - 1);
+    OLC_SET_CLAMPED(d, i, i, 1, NUM_POSITIONS, "Position choice");
+    GET_POS(OLC_MOB(d)) = i - 1;
     break;
 
   case MEDIT_DEFAULT_POS:
-    GET_DEFAULT_POS(OLC_MOB(d)) = LIMIT(i - 1, 0, NUM_POSITIONS - 1);
+    OLC_SET_CLAMPED(d, i, i, 1, NUM_POSITIONS, "Default position choice");
+    GET_DEFAULT_POS(OLC_MOB(d)) = i - 1;
     break;
 
   case MEDIT_ATTACK:
-    GET_ATTACK(OLC_MOB(d)) = LIMIT(i, 0, NUM_ATTACK_TYPES - 1);
+    OLC_SET_CLAMPED(d, GET_ATTACK(OLC_MOB(d)), i, 0, NUM_ATTACK_TYPES - 1, "Attack type");
     break;
 
   case MEDIT_LEVEL:
-    GET_LEVEL(OLC_MOB(d)) = LIMIT(i, 1, LVL_IMPL);
+    OLC_SET_CLAMPED(d, GET_LEVEL(OLC_MOB(d)), i, 1, LVL_IMPL, "Level");
     OLC_VAL(d) = TRUE;
     medit_disp_stats_menu(d);
     return;
 
   case MEDIT_ALIGNMENT:
-    GET_ALIGNMENT(OLC_MOB(d)) = LIMIT(i, -1000, 1000);
+    OLC_SET_CLAMPED(d, GET_ALIGNMENT(OLC_MOB(d)), i, -1000, 1000, "Alignment");
     OLC_VAL(d) = TRUE;
     medit_disp_stats_menu(d);
     return;

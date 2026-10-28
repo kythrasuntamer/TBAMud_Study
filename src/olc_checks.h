@@ -57,6 +57,26 @@
   for ((dsc) = descriptor_list; (dsc); (dsc) = (dsc)->next) \
     if (STATE(dsc) != (state) || !(dsc)->olc) ; else
 
+/** Store builder input clamped to [lo, hi] in lval. A value outside the
+ * range is never changed silently: the builder is told what was stored and
+ * an "olc-clamp" warning names the call site, builder, edited vnum, field,
+ * input and stored value. Replaces LIMIT() for builder input, which clamps
+ * silently and evaluates its first argument up to three times. input, lo
+ * and hi are evaluated once; d several times; field is a string literal. */
+#define OLC_SET_CLAMPED(d, lval, input, lo, hi, field) do { \
+    long olc_in_ = (long)(input), olc_lo_ = (long)(lo), olc_hi_ = (long)(hi); \
+    long olc_v_ = olc_in_ < olc_lo_ ? olc_lo_ : (olc_in_ > olc_hi_ ? olc_hi_ : olc_in_); \
+    if (olc_v_ != olc_in_) { \
+      struct char_data *olc_builder_ = (d)->character; \
+      write_to_output((d), "%s %ld is out of range [%ld..%ld]; set to %ld.\r\n", \
+                      (field), olc_in_, olc_lo_, olc_hi_, olc_v_); \
+      TB_WARN_MSG("olc", "olc-clamp", (field), \
+                  "builder " DIAG_CHAR_FMT " vnum %d %s input %ld clamped to %ld", \
+                  DIAG_CHAR(olc_builder_), OLC_NUM(d), (field), olc_in_, olc_v_); \
+    } \
+    (lval) = olc_v_; \
+  } while (0)
+
 /** Report a scratch rnum outside its table as a "stale-rnum" error naming the
  * call site, builder, edited vnum and table. Returns TRUE when r is valid. */
 #define OLC_CHECK_RNUM(d, kind, r) \
