@@ -56,6 +56,17 @@
 #include "quest.h"
 #include "ibt.h"
 
+/** End paging on descriptor @p d: free the page-start vector and the pager's
+ * own copy of the text (if page_string() kept one) and mark the pager idle.
+ * Safe to repeat. Evaluates @p d several times: pass a plain variable. */
+#define PAGER_RESET(d) do { \
+    free((d)->showstr_vector); \
+    (d)->showstr_vector = NULL; \
+    (d)->showstr_count = 0; \
+    free((d)->showstr_head); \
+    (d)->showstr_head = NULL; \
+  } while (0)
+
 /* local (file scope) function prototpyes  */
 static char *next_page(char *str, struct char_data *ch);
 static int count_pages(char *str, struct char_data *ch);
@@ -612,13 +623,7 @@ void show_string(struct descriptor_data *d, char *input)
 
   /* Q is for quit. :) */
   if (LOWER(*buf) == 'q') {
-    free(d->showstr_vector);
-    d->showstr_vector = NULL;
-    d->showstr_count = 0;
-    if (d->showstr_head) {
-      free(d->showstr_head);
-      d->showstr_head = NULL;
-    }
+    PAGER_RESET(d);
     return;
   }
   /* Back up one page internally so we can display it again. */
@@ -642,27 +647,21 @@ void show_string(struct descriptor_data *d, char *input)
    * bleeding. - Welcor */
   if (d->showstr_page + 1 >= d->showstr_count) {
     send_to_char(d->character, "%s\tn", d->showstr_vector[d->showstr_page]);
-    free(d->showstr_vector);
-    d->showstr_vector = NULL;
-    d->showstr_count = 0;
-    if (d->showstr_head) {
-      free(d->showstr_head);
-      d->showstr_head = NULL;
-    }
+    PAGER_RESET(d);
   }
   /* Or if we have more to show.... */
   else {
     raw_diff = d->showstr_vector[d->showstr_page + 1] -
                d->showstr_vector[d->showstr_page]; /* NOLINT(clang-analyzer-security.ArrayBound): this branch guarantees a following page. */
     if (raw_diff <= 0) {
-      log("SYSERR: Invalid pager offsets for descriptor %d.", d->desc_num);
-      free(d->showstr_vector);
-      d->showstr_vector = NULL;
-      d->showstr_count = 0;
-      if (d->showstr_head) {
-        free(d->showstr_head);
-        d->showstr_head = NULL;
-      }
+      /* paginate_string() stores strictly increasing page starts; anything
+       * else means the paged text changed or was freed under the pager. */
+      TB_ERROR_MSG("pager", "page-offsets", "show_string",
+                   "desc %d page %d/%d: next page starts %td bytes after "
+                   "this one; paging stopped; " DIAG_CHAR_FMT, d->desc_num,
+                   d->showstr_page + 1, d->showstr_count, raw_diff,
+                   DIAG_CHAR(d->character));
+      PAGER_RESET(d);
       return;
     }
 
