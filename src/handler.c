@@ -974,12 +974,14 @@ void obj_from_obj(struct obj_data *obj)
   obj->next_content = NULL;
 }
 
-/* Set all carried_by to point to new owner */
+/* Set all carried_by to point to new owner. Siblings are walked with a
+ * loop and only ->contains recurses, so stack depth follows container
+ * nesting, not the length of the list (H2-25: one frame per object let a
+ * large hoard, e.g. a corpse's contents, overflow the stack). */
 void object_list_new_owner(struct obj_data *list, struct char_data *ch)
 {
-  if (list) {
+  for (; list; list = list->next_content) {
     object_list_new_owner(list->contains, ch);
-    object_list_new_owner(list->next_content, ch);
     list->carried_by = ch;
   }
 }
@@ -1044,15 +1046,20 @@ void extract_obj(struct obj_data *obj)
   free_obj(obj);
 }
 
+/* Count down the timers of obj, its later siblings and everything they
+ * contain. Siblings are walked with a loop and only ->contains recurses, so
+ * stack depth follows container nesting, not how many objects a character
+ * carries (H2-25: one frame per object let a hoard of thousands of items,
+ * an immortal's or a scavenger's, overflow the stack in point_update). */
 static void update_object(struct obj_data *obj, int use)
 {
-  /* dont update objects with a timer trigger */
-  if (!SCRIPT_CHECK(obj, OTRIG_TIMER) && (GET_OBJ_TIMER(obj) > 0))
-    GET_OBJ_TIMER(obj) -= use;
-  if (obj->contains)
-    update_object(obj->contains, use);
-  if (obj->next_content)
-    update_object(obj->next_content, use);
+  for (; obj; obj = obj->next_content) {
+    /* dont update objects with a timer trigger */
+    if (!SCRIPT_CHECK(obj, OTRIG_TIMER) && (GET_OBJ_TIMER(obj) > 0))
+      GET_OBJ_TIMER(obj) -= use;
+    if (obj->contains)
+      update_object(obj->contains, use);
+  }
 }
 
 void update_char_objects(struct char_data *ch)

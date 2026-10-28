@@ -15,6 +15,7 @@
 #include "dg_scripts.h"
 #include <stdlib.h>
 #include <string.h>
+#include <pthread.h>
 #include "tb_error_capture.h"
 
 void basic_mud_log(const char *format, ...) { (void)format; }
@@ -218,6 +219,66 @@ static void test_char_to_room_invalid_room_names_caller(void)
   free(ch);
 }
 
+/* H2-25: update_object() and object_list_new_owner() recursed once per
+ * object in a list, so stack depth grew with the size of an inventory,
+ * not with container nesting. Run both on a thread with a 256 KB stack:
+ * 50,000 frames do not fit (ASan stack-overflow on the old code), a loop
+ * over siblings does. */
+#define HOARD_SIZE 50000
+static struct obj_data *hoard;
+static struct obj_data bag;          /* one container, holding the hoard */
+static struct char_data hoarder;
+
+static void *update_hoard(void *arg)
+{
+  (void)arg;
+  update_char_objects(&hoarder);
+  object_list_new_owner(hoarder.carrying, NULL);
+  return NULL;
+}
+
+static void test_long_inventory_is_updated_without_deep_recursion(void)
+{
+  pthread_attr_t attr;
+  pthread_t thread;
+  int i;
+
+  hoard = calloc(HOARD_SIZE, sizeof(*hoard));
+  TEST_ASSERT_NOT_NULL(hoard);
+  memset(&bag, 0, sizeof(bag));
+  memset(&hoarder, 0, sizeof(hoarder));
+  hoarder.player_specials = &dummy_mob;
+  for (i = 0; i < HOARD_SIZE; i++) {
+    hoard[i].item_number = NOTHING;
+    hoard[i].in_room = NOWHERE;
+    hoard[i].carried_by = &hoarder;
+    GET_OBJ_TIMER(&hoard[i]) = 5;
+    hoard[i].next_content = (i + 1 < HOARD_SIZE) ? &hoard[i + 1] : NULL;
+  }
+  /* The last object contains a bag: contents are still visited. */
+  bag.item_number = NOTHING;
+  bag.in_room = NOWHERE;
+  bag.carried_by = &hoarder;
+  GET_OBJ_TIMER(&bag) = 5;
+  hoard[HOARD_SIZE - 1].contains = &bag;
+  hoarder.carrying = &hoard[0];
+
+  TEST_ASSERT_EQUAL_INT(0, pthread_attr_init(&attr));
+  TEST_ASSERT_EQUAL_INT(0, pthread_attr_setstacksize(&attr, 256 * 1024));
+  TEST_ASSERT_EQUAL_INT(0, pthread_create(&thread, &attr, update_hoard, NULL));
+  TEST_ASSERT_EQUAL_INT(0, pthread_join(thread, NULL));
+  TEST_ASSERT_EQUAL_INT(0, pthread_attr_destroy(&attr));
+
+  TEST_ASSERT_EQUAL_INT(4, GET_OBJ_TIMER(&hoard[0]));
+  TEST_ASSERT_EQUAL_INT(4, GET_OBJ_TIMER(&hoard[HOARD_SIZE - 1]));
+  TEST_ASSERT_EQUAL_INT(4, GET_OBJ_TIMER(&bag));
+  TEST_ASSERT_NULL(hoard[0].carried_by);
+  TEST_ASSERT_NULL(hoard[HOARD_SIZE - 1].carried_by);
+  TEST_ASSERT_NULL(bag.carried_by);
+  free(hoard);
+  hoard = NULL;
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -229,5 +290,6 @@ int main(void)
   RUN_TEST(test_affect_join_clamps_modifier);
   RUN_TEST(test_equip_char_occupied_slot_falls_back_to_inventory);
   RUN_TEST(test_char_to_room_invalid_room_names_caller);
+  RUN_TEST(test_long_inventory_is_updated_without_deep_recursion);
   return UNITY_END();
 }

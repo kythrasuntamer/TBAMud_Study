@@ -1124,3 +1124,7 @@ if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
     set_source_files_properties(${MUD_SRCDIR}/magic.c ${MUD_SRCDIR}/handler.c
         PROPERTIES COMPILE_OPTIONS "-ffunction-sections;-fdata-sections")
 endif()
+
+# test_handler runs update_char_objects() on a small-stack thread (H2-25).
+find_package(Threads REQUIRED)
+target_link_libraries(test_handler PRIVATE Threads::Threads)
