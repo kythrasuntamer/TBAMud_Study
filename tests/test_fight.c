@@ -178,9 +178,53 @@ static void test_corpse_skips_slot_emptied_by_remove_trigger(void)
   fx_free_char(mob);
 }
 
+/* H1-08: weapon value 3 past attack_hit_text[] ('osetval 3 40') falls back
+ * to a plain hit and names the weapon and wielder. */
+static void test_hit_rejects_weapon_attack_type_out_of_range(void)
+{
+  struct char_data *pc = fx_new_char("hero", FALSE, 0);
+  struct char_data *mob = fx_new_char("guard", TRUE, 0);
+  struct obj_data *dagger = wield(pc, "dagger");
+
+  GET_OBJ_VAL(dagger, 3) = 40;
+  GET_POS(mob) = POS_SLEEPING;   /* a sleeping victim is always hit */
+
+  hit(pc, mob, TYPE_UNDEFINED);
+
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("attack-type-range", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "val3 40"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "player idnum 4242"));
+  TEST_ASSERT_TRUE(GET_HIT(mob) < 100);
+  if (FIGHTING(mob)) stop_fighting(mob);
+  if (FIGHTING(pc)) stop_fighting(pc);
+  fx_free_char(mob);
+  fx_free_char(pc);
+}
+
+/* H1-08: a mob attack type out of range is reported too. */
+static void test_hit_rejects_mob_attack_type_out_of_range(void)
+{
+  struct char_data *mob = fx_new_char("guard", TRUE, 0);
+  struct char_data *rat = fx_new_char("rat", TRUE, 0);
+
+  mob->mob_specials.attack_type = -5;
+  GET_POS(rat) = POS_SLEEPING;
+
+  hit(mob, rat, TYPE_UNDEFINED);
+
+  TEST_ASSERT_EQUAL_STRING("attack-type-range", tb_captured_operation);
+  if (FIGHTING(mob)) stop_fighting(mob);
+  if (FIGHTING(rat)) stop_fighting(rat);
+  fx_free_char(rat);
+  fx_free_char(mob);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(test_hit_rejects_weapon_attack_type_out_of_range);
+  RUN_TEST(test_hit_rejects_mob_attack_type_out_of_range);
   RUN_TEST(test_hit_reads_weapon_after_fight_trigger);
   RUN_TEST(test_hit_skips_victim_purged_by_trigger);
   RUN_TEST(test_corpse_collects_objects_given_by_remove_trigger);

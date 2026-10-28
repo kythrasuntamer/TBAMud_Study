@@ -425,29 +425,36 @@ static void solo_gain(struct char_data *ch, struct char_data *victim)
   change_alignment(ch, victim);
 }
 
+/* Expands a dam_weapons template: "#w" becomes weapon_singular and "#W"
+ * weapon_plural; any other character, including a lone '#', is copied.
+ * Returns a static buffer that the next call overwrites. The output is
+ * bounded by the buffer; a longer expansion is truncated and reported. */
 static char *replace_string(const char *str, const char *weapon_singular, const char *weapon_plural)
 {
   static char buf[256];
-  char *cp = buf;
+  const char *tmpl = str;
+  size_t len = 0;
 
   for (; *str; str++) {
-    if (*str == '#') {
-      switch (*(++str)) {
-      case 'W':
-	for (; *weapon_plural; *(cp++) = *(weapon_plural++));
-	break;
-      case 'w':
-	for (; *weapon_singular; *(cp++) = *(weapon_singular++));
-	break;
-      default:
-	*(cp++) = '#';
-	break;
-      }
-    } else
-      *(cp++) = *str;
+    char single[2] = { *str, '\0' };
+    const char *src = single;
 
-    *cp = 0;
-  }				/* For */
+    if (*str == '#' && (str[1] == 'W' || str[1] == 'w'))
+      src = (*++str == 'W') ? weapon_plural : weapon_singular;
+
+    for (; *src; src++) {
+      if (len + 1 >= sizeof(buf)) {
+        buf[len] = '\0';
+        TB_ERROR_MSG("fight", "damage-message-truncated", "buf",
+                     "template of %zu bytes with weapon words of %zu/%zu "
+                     "bytes exceeds %zu bytes; truncated", strlen(tmpl),
+                     strlen(weapon_singular), strlen(weapon_plural), sizeof(buf));
+        return (buf);
+      }
+      buf[len++] = *src;
+    }
+  }
+  buf[len] = '\0';
 
   return (buf);
 }
@@ -523,6 +530,16 @@ static void dam_message(int dam, struct char_data *ch, struct char_data *victim,
   };
 
   w_type -= TYPE_HIT;		/* Change to base of table with text */
+
+  /* IS_WEAPON() admits [TYPE_HIT, TYPE_SUFFERING), wider than the table;
+   * hit() validates weapon and mob attack types, so this is a backstop
+   * for any other caller of damage(). */
+  if (!VALID_ATTACK_TYPE(w_type)) {
+    TB_ERROR_MSG("fight", "attack-type-range", "attack_hit_text",
+                 "attack type %d not in [0,%d) for " DIAG_CHAR_FMT
+                 "; using hit", w_type, NUM_ATTACK_TYPES, DIAG_CHAR(ch));
+    w_type = 0;
+  }
 
   if (dam == 0)		msgnum = 0;
   else if (dam <= 2)    msgnum = 1;
@@ -899,13 +916,33 @@ void hit(struct char_data *ch, struct char_data *victim, int type)
    * it ('mjunk dagger'), so a pointer read before the trigger may be freed. */
   wielded = GET_EQ(ch, WEAR_WIELD);
 
-  /* Find the weapon type (for display purposes only) */
-  if (wielded && GET_OBJ_TYPE(wielded) == ITEM_WEAPON)
-    w_type = GET_OBJ_VAL(wielded, 3) + TYPE_HIT;
-  else {
-    if (IS_NPC(ch) && ch->mob_specials.attack_type != 0)
-      w_type = ch->mob_specials.attack_type + TYPE_HIT;
-    else
+  /* Find the weapon type (for display purposes only). It indexes
+   * attack_hit_text[]: weapon value 3 comes from world files and scripts
+   * ('osetval 3 N') unvalidated, so an out-of-range value falls back to a
+   * plain hit and is reported with the weapon and wielder. */
+  if (wielded && GET_OBJ_TYPE(wielded) == ITEM_WEAPON) {
+    if (VALID_ATTACK_TYPE(GET_OBJ_VAL(wielded, 3)))
+      w_type = GET_OBJ_VAL(wielded, 3) + TYPE_HIT;
+    else {
+      TB_ERROR_MSG("fight", "attack-type-range", "obj",
+                   "weapon vnum %d uid %ld val3 %d not in [0,%d), wielder "
+                   DIAG_CHAR_FMT, (int) GET_OBJ_VNUM(wielded),
+                   obj_script_id(wielded), GET_OBJ_VAL(wielded, 3),
+                   NUM_ATTACK_TYPES, DIAG_CHAR(ch));
+      w_type = TYPE_HIT;
+    }
+  } else {
+    if (IS_NPC(ch) && ch->mob_specials.attack_type != 0) {
+      if (VALID_ATTACK_TYPE(ch->mob_specials.attack_type))
+        w_type = ch->mob_specials.attack_type + TYPE_HIT;
+      else {
+        TB_ERROR_MSG("fight", "attack-type-range", "char",
+                     DIAG_CHAR_FMT " attack type %d not in [0,%d)",
+                     DIAG_CHAR(ch), ch->mob_specials.attack_type,
+                     NUM_ATTACK_TYPES);
+        w_type = TYPE_HIT;
+      }
+    } else
       w_type = TYPE_HIT;
   }
 

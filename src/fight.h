@@ -44,6 +44,11 @@ struct attack_hit_type {
 #define CHAR_PENDING_EXTRACTION(ch) \
   (IS_NPC(ch) ? MOB_FLAGGED((ch), MOB_NOTDEADYET) : PLR_FLAGGED((ch), PLR_NOTDEADYET))
 
+/** TRUE if t (an attack type relative to TYPE_HIT: weapon value 3 or a
+ * mob's attack_type) indexes attack_hit_text[], which has NUM_ATTACK_TYPES
+ * entries. */
+#define VALID_ATTACK_TYPE(t) ((t) >= 0 && (t) < NUM_ATTACK_TYPES)
+
 /* Functions available in fight.c */
 void appear(struct char_data *ch);
 void check_killer(struct char_data *ch, struct char_data *vict);
