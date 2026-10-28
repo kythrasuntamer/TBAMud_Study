@@ -394,6 +394,34 @@ static void test_delete_mobile_queues_changed_zone_for_save(void)
   TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
 }
 
+/* C1-28: add_mobile() indexed zone_table with real_zone_by_thing(vnum)
+ * unchecked.  A vnum in no zone (zedit shrank the range while medit was
+ * open) read zone_table[NOWHERE] (ASan heap-buffer-overflow before the fix,
+ * after mob_proto had already grown). */
+static void test_add_mobile_refuses_vnum_outside_every_zone(void)
+{
+  struct reset_com none[1];
+  struct char_data scratch;
+
+  memset(none, 0, sizeof(none));
+  make_zone(none, 0);                     /* zone 0 covers vnums 0..99 */
+  memset(&scratch, 0, sizeof(scratch));
+  scratch.nr = NOBODY;
+  scratch.player_specials = &dummy_mob;
+
+  TEST_ASSERT_EQUAL_INT(NOBODY, add_mobile(&scratch, 500));
+  TEST_ASSERT_EQUAL_INT(NMOBS - 1, top_of_mobt);
+  TEST_ASSERT_EQUAL_STRING("add-mobile", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "mob vnum 500 belongs to no zone"));
+
+  /* An existing prototype whose zone no longer covers it is left alone. */
+  zone_table[0].bot = 50;
+  tb_error_capture_reset();
+  TEST_ASSERT_EQUAL_INT(NOBODY, add_mobile(&scratch, 2));
+  TEST_ASSERT_EQUAL_STRING("mob", mob_proto[1].player.name);
+  TEST_ASSERT_EQUAL_STRING("add-mobile", tb_captured_operation);
+}
+
 int main(void)
 {
   logfile = stderr;
@@ -406,5 +434,6 @@ int main(void)
   RUN_TEST(test_check_mobile_strings_with_unprototyped_mob);
   RUN_TEST(test_delete_object_zone_commands);
   RUN_TEST(test_delete_mobile_queues_changed_zone_for_save);
+  RUN_TEST(test_add_mobile_refuses_vnum_outside_every_zone);
   return UNITY_END();
 }

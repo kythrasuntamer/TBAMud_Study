@@ -41,8 +41,21 @@ static void extract_mobile_all(mob_vnum vnum);
 int add_mobile(struct char_data *mob, mob_vnum vnum)
 {
   int rnum, i, found = FALSE, shop, cmd_no;
-  zone_rnum zone;
+  zone_rnum zone, rznum;
   struct char_data *live_mob;
+
+  /* Invariant: a prototype's vnum lies in a zone's range; that zone names
+   * the file it is saved to.  The vnum comes from medit (builder input),
+   * which checked the zone when the session started, but zedit can shrink
+   * a zone's range while the session is open, leaving the vnum in no zone.
+   * real_zone_by_thing() then returns NOWHERE, and zone_table[NOWHERE] is
+   * far past the table.  Refuse before mob_proto or mob_index change. */
+  rznum = real_zone_by_thing(vnum);
+  if (!VALID_ZONE_RNUM(rznum)) {
+    TB_ERROR_MSG("genolc", "add-mobile", "mob",
+                 "mob vnum %d belongs to no zone; not added", vnum);
+    return NOBODY;
+  }
 
   if ((rnum = real_mobile(vnum)) != NOBODY) {
     /* Copy over the mobile and free() the old strings. */
@@ -53,7 +66,7 @@ int add_mobile(struct char_data *mob, mob_vnum vnum)
       if (rnum == live_mob->nr)
         update_mobile_strings(live_mob, &mob_proto[rnum]);
 
-    add_to_save_list(zone_table[real_zone_by_thing(vnum)].number, SL_MOB);
+    add_to_save_list(zone_table[rznum].number, SL_MOB);
     log("GenOLC: add_mobile: Updated existing mobile #%d.", vnum);
     return rnum;
   }
@@ -103,7 +116,7 @@ int add_mobile(struct char_data *mob, mob_vnum vnum)
     for (shop = 0; shop <= top_shop; shop++)
       SHOP_KEEPER(shop) += (SHOP_KEEPER(shop) != NOTHING && SHOP_KEEPER(shop) >= found);
 
-  add_to_save_list(zone_table[real_zone_by_thing(vnum)].number, SL_MOB);
+  add_to_save_list(zone_table[rznum].number, SL_MOB);
   return found;
 }
 
