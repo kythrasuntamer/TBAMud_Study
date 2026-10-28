@@ -354,6 +354,12 @@ unsigned char *zrealloc(unsigned char *what, size_t len, char *file, int line)
                    (void *)m->addr, m->size, m->file, m->line, m->frees);
 	ret = (unsigned char *) realloc(ZM_BASE(what), len + ZM_PAD_TOTAL);
 	if (!ret) {
+	  /* Like realloc(): the old block is untouched and still tracked. */
+	  tb_report_domain_errorf_at(TB_SEV_ERROR, TB_ERR_INVARIANT,
+	                             "zmalloc-alloc", errno, file, line, __func__,
+	                             "realloc of addr=%p (%zu bytes, allocated "
+	                             "%s:%d) to %zu bytes", (void *)m->addr,
+	                             m->size, m->file, m->line, len);
 	  zlogf("zrealloc: FAILED for 0x%p %zu bytes mallocd at %s:%d,\n"
 		      "          %zu bytes reallocd at %s:%d.\n",
 		    (void *)m->addr, m->size, m->file, m->line, len, file, line);
