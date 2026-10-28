@@ -688,6 +688,13 @@ SPECIAL(bank)
       send_to_char(ch, "You don't have that many coins!\r\n");
       return (TRUE);
     }
+    /* Refuse before debiting: increase_bank() clamps at MAX_BANK, and the
+     * excess would already have left the purse. */
+    if ((long long) GET_BANK_GOLD(ch) + amount > MAX_BANK) {
+      send_to_char(ch, "Your account cannot hold that much; it can take at most %d more coins.\r\n",
+                   MAX(0, MAX_BANK - GET_BANK_GOLD(ch)));
+      return (TRUE);
+    }
     decrease_gold(ch, amount);
 	increase_bank(ch, amount);
     send_to_char(ch, "You deposit %d coins.\r\n", amount);
@@ -700,6 +707,13 @@ SPECIAL(bank)
     }
     if (GET_BANK_GOLD(ch) < amount) {
       send_to_char(ch, "You don't have that many coins deposited!\r\n");
+      return (TRUE);
+    }
+    /* Refuse before crediting: increase_gold() clamps at MAX_GOLD, and the
+     * full amount would still leave the account. */
+    if ((long long) GET_GOLD(ch) + amount > MAX_GOLD) {
+      send_to_char(ch, "You cannot carry that much; you can take at most %d more coins.\r\n",
+                   MAX(0, MAX_GOLD - GET_GOLD(ch)));
       return (TRUE);
     }
     increase_gold(ch, amount);

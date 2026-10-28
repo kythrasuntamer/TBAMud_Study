@@ -165,9 +165,70 @@ static void test_unexpired_timers_count_down(void)
   TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
 }
 
+static struct char_data payer;
+static struct player_special_data payer_specials;
+
+static void reset_payer(void)
+{
+  memset(&payer, 0, sizeof(payer));
+  memset(&payer_specials, 0, sizeof(payer_specials));
+  payer.player_specials = &payer_specials;
+  GET_IDNUM(&payer) = 77;
+}
+
+/* H3-09: 2,139,000,000 + 10,000,000 overflowed int (UBSan) before the cap
+ * test. It must clamp at MAX_GOLD and report the coins not applied. */
+static void test_increase_gold_near_cap_clamps_loudly(void)
+{
+  reset_payer();
+  GET_GOLD(&payer) = 2139000000;
+
+  TEST_ASSERT_EQUAL_INT(MAX_GOLD, increase_gold(&payer, 10000000));
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("gold-clamp", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "player idnum 77"));
+}
+
+static void test_increase_bank_near_cap_clamps_loudly(void)
+{
+  reset_payer();
+  GET_BANK_GOLD(&payer) = 2100000000;
+
+  TEST_ASSERT_EQUAL_INT(MAX_BANK, increase_bank(&payer, 100000000));
+  TEST_ASSERT_EQUAL_STRING("bank-clamp", tb_captured_operation);
+}
+
+/* decrease_*(INT_MIN) used to negate INT_MIN in int. */
+static void test_decrease_int_min_does_not_overflow(void)
+{
+  reset_payer();
+  GET_GOLD(&payer) = 5;
+
+  TEST_ASSERT_EQUAL_INT(MAX_GOLD, decrease_gold(&payer, INT_MIN));
+  TEST_ASSERT_EQUAL_STRING("gold-clamp", tb_captured_operation);
+}
+
+/* In-range changes are exact and silent. */
+static void test_in_range_changes_are_silent(void)
+{
+  reset_payer();
+  GET_GOLD(&payer) = 100;
+  GET_BANK_GOLD(&payer) = 100;
+
+  TEST_ASSERT_EQUAL_INT(150, increase_gold(&payer, 50));
+  TEST_ASSERT_EQUAL_INT(70, decrease_gold(&payer, 80));
+  TEST_ASSERT_EQUAL_INT(160, increase_bank(&payer, 60));
+  TEST_ASSERT_EQUAL_INT(0, decrease_bank(&payer, 160));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(test_increase_gold_near_cap_clamps_loudly);
+  RUN_TEST(test_increase_bank_near_cap_clamps_loudly);
+  RUN_TEST(test_decrease_int_min_does_not_overflow);
+  RUN_TEST(test_in_range_changes_are_silent);
   RUN_TEST(test_timer_script_purging_next_object);
   RUN_TEST(test_unexpired_timers_count_down);
   return UNITY_END();

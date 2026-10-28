@@ -585,22 +585,34 @@ void point_update(void)
   }
 }
 
+/* Coins: purse (GET_GOLD) and bank (GET_BANK_GOLD) both live in [0, cap].
+ *
+ * The caps (MAX_GOLD, MAX_BANK) sit only ~7.5M below INT_MAX, so the sum is
+ * computed in long long: an int sum would be signed overflow before any
+ * comparison could catch it. A change that would leave the range is applied
+ * up to the boundary and the coins that could not be applied are reported
+ * (op "gold-clamp" / "bank-clamp"): a clamp destroys or invents money, so it
+ * is never silent. Callers that move coins between purse and bank (the bank
+ * spec proc) must refuse a transfer that would clamp BEFORE debiting the
+ * other side. */
+static int add_coins_clamped(struct char_data *ch, int *field, long long amt,
+                             int cap, const char *op, const char *resource)
+{
+  long long want = (long long) *field + amt;
+  long long got = want < 0 ? 0 : (want > cap ? cap : want);
+
+  if (got != want)
+    TB_WARN_MSG("economy", op, resource,
+                DIAG_CHAR_FMT " curr %d amt %lld range [0,%d]: %lld coins not applied",
+                DIAG_CHAR(ch), *field, amt, cap, want - got);
+  *field = (int) got;
+  return *field;
+}
+
 /* Note: amt may be negative */
 int increase_gold(struct char_data *ch, int amt)
 {
-  int curr_gold;
-
-  curr_gold = GET_GOLD(ch);
-
-  if (amt < 0) {
-    GET_GOLD(ch) = MAX(0, curr_gold+amt);
-    /* Validate to prevent overflow */
-    if (GET_GOLD(ch) > curr_gold) GET_GOLD(ch) = 0;
-  } else {
-    GET_GOLD(ch) = MIN(MAX_GOLD, curr_gold+amt);
-    /* Validate to prevent overflow */
-    if (GET_GOLD(ch) < curr_gold) GET_GOLD(ch) = MAX_GOLD;
-  }
+  add_coins_clamped(ch, &GET_GOLD(ch), amt, MAX_GOLD, "gold-clamp", "points.gold");
   if (GET_GOLD(ch) == MAX_GOLD)
     send_to_char(ch, "%sYou have reached the maximum gold!\r\n%sYou must spend it or bank it before you can gain any more.\r\n", QBRED, QNRM);
 
@@ -609,29 +621,18 @@ int increase_gold(struct char_data *ch, int amt)
 
 int decrease_gold(struct char_data *ch, int deduction)
 {
-  int amt;
-  amt = (deduction * -1);
-  increase_gold(ch, amt);
+  /* Negated in long long: -INT_MIN does not fit in an int. */
+  add_coins_clamped(ch, &GET_GOLD(ch), -(long long) deduction, MAX_GOLD,
+                    "gold-clamp", "points.gold");
   return (GET_GOLD(ch));
 }
 
 int increase_bank(struct char_data *ch, int amt)
 {
-  int curr_bank;
-
   if (IS_NPC(ch)) return 0;
 
-  curr_bank = GET_BANK_GOLD(ch);
-
-  if (amt < 0) {
-    GET_BANK_GOLD(ch) = MAX(0, curr_bank+amt);
-    /* Validate to prevent overflow */
-    if (GET_BANK_GOLD(ch) > curr_bank) GET_BANK_GOLD(ch) = 0;
-  } else {
-    GET_BANK_GOLD(ch) = MIN(MAX_BANK, curr_bank+amt);
-    /* Validate to prevent overflow */
-    if (GET_BANK_GOLD(ch) < curr_bank) GET_BANK_GOLD(ch) = MAX_BANK;
-  }
+  add_coins_clamped(ch, &GET_BANK_GOLD(ch), amt, MAX_BANK, "bank-clamp",
+                    "player_specials.bank_gold");
   if (GET_BANK_GOLD(ch) == MAX_BANK)
     send_to_char(ch, "%sYou have reached the maximum bank balance!\r\n%sYou cannot put more into your account unless you withdraw some first.\r\n", QBRED, QNRM);
   return (GET_BANK_GOLD(ch));
@@ -639,8 +640,9 @@ int increase_bank(struct char_data *ch, int amt)
 
 int decrease_bank(struct char_data *ch, int deduction)
 {
-  int amt;
-  amt = (deduction * -1);
-  increase_bank(ch, amt);
+  if (IS_NPC(ch)) return 0;
+
+  add_coins_clamped(ch, &GET_BANK_GOLD(ch), -(long long) deduction, MAX_BANK,
+                    "bank-clamp", "player_specials.bank_gold");
   return (GET_BANK_GOLD(ch));
 }
