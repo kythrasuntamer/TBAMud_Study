@@ -353,6 +353,21 @@ int call_magic(struct char_data *caster, struct char_data *cvict,
   return (1);
 }
 
+/* Check a magic item's spell value before it indexes spell_info[]. Reports
+ * item-spellnum (obj vnum/UID, value slot, user) and tells the user it
+ * fizzles when the value is not a real spell. */
+static bool item_spell_valid(struct char_data *ch, struct obj_data *obj,
+    int spl, int slot, const char *kind) {
+  if (spl >= 1 && spl <= TOP_SPELL_DEFINE)
+    return TRUE;
+  TB_ERROR_MSG("magic", "item-spellnum", kind,
+               "obj vnum %d uid %ld value%d spell %d out of range [1,%d]; "
+               "used by " DIAG_CHAR_FMT, (int) GET_OBJ_VNUM(obj),
+               obj_script_id(obj), slot, spl, TOP_SPELL_DEFINE, DIAG_CHAR(ch));
+  send_to_char(ch, "It fizzles.\r\n");
+  return FALSE;
+}
+
 /* mag_objectmagic: This is the entry-point for all magic items.  This should
  * only be called by the 'quaff', 'use', 'recite', etc. routines.
  * For reference, object values 0-3:
@@ -372,6 +387,14 @@ void mag_objectmagic(struct char_data *ch, struct obj_data *obj, char *argument)
 
   k = generic_find(arg, FIND_CHAR_ROOM | FIND_OBJ_INV | FIND_OBJ_ROOM |
   FIND_OBJ_EQUIP, ch, &tch, &tobj);
+
+  /* Wand and staff value 3 indexes spell_info[] below. It comes from the
+   * world file (boot only logs a bad value), OLC, or DG osetval (any int),
+   * so it is untrusted: -1 ("no spell") and out-of-range values fizzle. */
+  if ((GET_OBJ_TYPE(obj) == ITEM_WAND || GET_OBJ_TYPE(obj) == ITEM_STAFF) &&
+      !item_spell_valid(ch, obj, GET_OBJ_VAL(obj, 3), 3,
+                        GET_OBJ_TYPE(obj) == ITEM_WAND ? "wand" : "staff"))
+    return;
 
   switch (GET_OBJ_TYPE(obj)) {
   case ITEM_STAFF:
