@@ -777,6 +777,10 @@ static OCMD(do_oat)
   }
 
   if (!(object = read_object(GET_OBJ_VNUM(obj), VIRTUAL))) {
+    TB_ERROR_MSG("dg", "oat-clone", "do_oat",
+                 "obj vnum %d uid %ld: read_object could not clone the owner; "
+                 "command (%zu bytes) not run", GET_OBJ_VNUM(obj),
+                 obj_script_id(obj), strlen(command));
     obj_log(obj, "oat: cannot create a copy of object %d", GET_OBJ_VNUM(obj));
     return;
   }

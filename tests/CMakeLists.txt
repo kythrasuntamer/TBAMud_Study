@@ -549,6 +549,9 @@ add_mud_test(test_dg_handler
     ${CMAKE_CURRENT_SOURCE_DIR}/test_dg_handler.c
 )
 
+# DG script commands against the real server objects and a tiny world.
+add_subdirectory(dg_world)
+
 find_package(Python3 COMPONENTS Interpreter QUIET)
 if(Python3_Interpreter_FOUND)
     add_test(NAME test_dg_memory_callback_contract
