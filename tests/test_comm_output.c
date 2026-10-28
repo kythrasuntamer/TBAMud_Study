@@ -202,6 +202,29 @@ static void opponent_with_zero_max_hit_is_reported(void)
   mob_index = NULL;
 }
 
+/* The auto prompt compared 'hit << 2' with max_hit: undefined for the
+ * negative hit points of an incapacitated or dying player (UBSan abort). */
+static void auto_prompt_handles_negative_hit_points(void)
+{
+  static char_data player;
+  static struct player_special_data specials;
+
+  memset(&player, 0, sizeof(player));
+  memset(&specials, 0, sizeof(specials));
+  player.player_specials = &specials;
+  SET_BIT_AR(PRF_FLAGS(&player), PRF_DISPAUTO);
+  GET_HIT(&player) = -5;
+  GET_MAX_HIT(&player) = 100;
+  GET_MANA(&player) = GET_MAX_MANA(&player) = 100;
+  GET_MOVE(&player) = GET_MAX_MOVE(&player) = 100;
+  desc.str = NULL;
+  desc.character = &player;
+
+  TEST_ASSERT_EQUAL_STRING("-5H > ", make_prompt(&desc));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  desc.character = NULL;
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -210,5 +233,6 @@ int main(void)
   RUN_TEST(corrupt_bufptr_is_reported_not_used);
   RUN_TEST(overflow_of_large_buffer_keeps_it);
   RUN_TEST(opponent_with_zero_max_hit_is_reported);
+  RUN_TEST(auto_prompt_handles_negative_hit_points);
   return UNITY_END();
 }

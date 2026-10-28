@@ -87,6 +87,12 @@
 #define INVALID_SOCKET (-1)
 #endif
 
+/* TRUE when cur is below a quarter of max (the auto-prompt threshold).
+ * Multiplies in long instead of 'cur << 2': hit points are negative while a
+ * player is incapacitated or dying, and shifting a negative value is
+ * undefined behaviour. */
+#define BELOW_QUARTER(cur, max) ((long) (cur) * 4L < (long) (max))
+
 extern time_t motdmod;
 extern time_t newsmod;
 
@@ -1223,17 +1229,17 @@ static char *make_prompt(struct descriptor_data *d)
     /* show only when below 25% */
     if (PRF_FLAGGED(d->character, PRF_DISPAUTO) && len < sizeof(prompt)) {
       struct char_data *ch = d->character;
-      if (GET_HIT(ch) << 2 < GET_MAX_HIT(ch) ) {
+      if (BELOW_QUARTER(GET_HIT(ch), GET_MAX_HIT(ch))) {
         count = snprintf(prompt + len, sizeof(prompt) - len, "%dH ", GET_HIT(ch));
         if (count >= 0)
           len += count;
       }
-      if (GET_MANA(ch) << 2 < GET_MAX_MANA(ch) && len < sizeof(prompt)) {
+      if (BELOW_QUARTER(GET_MANA(ch), GET_MAX_MANA(ch)) && len < sizeof(prompt)) {
         count = snprintf(prompt + len, sizeof(prompt) - len, "%dM ", GET_MANA(ch));
         if (count >= 0)
           len += count;
       }
-      if (GET_MOVE(ch) << 2 < GET_MAX_MOVE(ch) && len < sizeof(prompt)) {
+      if (BELOW_QUARTER(GET_MOVE(ch), GET_MAX_MOVE(ch)) && len < sizeof(prompt)) {
         count = snprintf(prompt + len, sizeof(prompt) - len, "%dV ", GET_MOVE(ch));
         if (count >= 0)
           len += count;
