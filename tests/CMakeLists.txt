@@ -1094,3 +1094,9 @@ if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
         -Wl,--wrap=tb_error_log_at)
 endif()
 target_link_libraries(test_aedit PRIVATE ${CRYPT_LIBRARY} ${SODIUM_LIBRARY})
+
+# C2-16: test_genolc_safety wraps fopen() so a test can hand the GenOLC
+# writers a stream whose error indicator is already set.
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_link_options(test_genolc_safety PRIVATE -Wl,--wrap=fopen)
+endif()

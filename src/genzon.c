@@ -702,9 +702,17 @@ int save_zone(zone_rnum zone_num)
 #undef ZSAVE_CHECK
   tb_fputs("S\n$\n", zfile);
   {
+    /* ferror() stays set after any failed write.  tb_fprintf() reported
+     * each one, but a later flush that succeeds would hide it and commit a
+     * file with a hole in it (C2-16). */
+    int stream_ok = !ferror(zfile);
     int flush_ok = tb_fflush_checked(zfile, fname);
     int close_ok = tb_fclose_checked(zfile, fname);
-    if (!flush_ok || !close_ok) {
+    if (!stream_ok)
+      TB_ERROR_MSG("olc", "save-stream-error", fname,
+                   TB_ERRID_PERSIST_WRITE " zone %d: a write failed; previous file kept",
+                   zone_table[zone_num].number);
+    if (!stream_ok || !flush_ok || !close_ok) {
       if (remove(fname) != 0 && errno != ENOENT)
         TB_REPORT_ERRNO("remove", fname);
       return FALSE;

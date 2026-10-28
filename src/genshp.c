@@ -515,9 +515,17 @@ int save_shops(zone_rnum zone_num)
   }
   tb_fprintf(shop_file, "$~\n");
   {
+    /* ferror() stays set after any failed write.  tb_fprintf() reported
+     * each one, but a later flush that succeeds would hide it and commit a
+     * file with a hole in it (C2-16). */
+    int stream_ok = !ferror(shop_file);
     int flush_ok = tb_fflush_checked(shop_file, fname);
     int close_ok = tb_fclose_checked(shop_file, fname);
-    if (!flush_ok || !close_ok) {
+    if (!stream_ok)
+      TB_ERROR_MSG("olc", "save-stream-error", fname,
+                   TB_ERRID_PERSIST_WRITE " zone %d shops: a write failed; previous file kept",
+                   zone_table[zone_num].number);
+    if (!stream_ok || !flush_ok || !close_ok) {
       if (remove(fname) != 0 && errno != ENOENT)
         TB_REPORT_ERRNO("remove", fname);
       return FALSE;

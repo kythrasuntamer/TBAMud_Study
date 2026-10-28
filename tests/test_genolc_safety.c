@@ -1582,6 +1582,71 @@ static void delete_quest_clears_players_on_it(void)
 }
 
 /* ------------------------------------------------------------------------ */
+/* C2-16: a writer whose stream recorded an error keeps the previous file.  */
+/* ------------------------------------------------------------------------ */
+
+/* fopen() as the code under test sees it (linked with --wrap=fopen).  When
+ * armed, the next write-only stream starts with its error indicator set,
+ * as if a write had failed earlier while the final flush still works:
+ * reading a write-only stream sets the indicator (EBADF). */
+FILE *__real_fopen(const char *path, const char *mode);
+FILE *__wrap_fopen(const char *path, const char *mode);
+static int poison_next_write_stream;
+
+FILE *__wrap_fopen(const char *path, const char *mode)
+{
+  FILE *fp = __real_fopen(path, mode);
+
+  if (fp && poison_next_write_stream && mode[0] == 'w' && !strchr(mode, '+')) {
+    poison_next_write_stream = 0;
+    (void)fgetc(fp);
+    TEST_ASSERT_TRUE(ferror(fp));
+  }
+  return fp;
+}
+
+/* saved is the writer's result for a stream poisoned at open. */
+static void check_previous_file_kept(int saved, const char *target, const char *temp)
+{
+  char text[64];
+  TEST_ASSERT_FALSE(saved);
+  TEST_ASSERT_EQUAL_STRING("save-stream-error", tb_captured_operation);
+  TEST_ASSERT_FALSE(file_exists(temp));
+  read_text_file(target, text, sizeof(text));
+  TEST_ASSERT_EQUAL_STRING("previous\n", text);
+}
+
+static void writers_keep_previous_file_after_stream_error(void)
+{
+  static const int args[][3] = { { 1, 5, 0 } };
+  make_zones(1); make_objs(2); make_rooms(1); make_mobs(2, 3000);
+  give_proto_strings(0);
+  set_zone_cmds(0, "O", args);
+  make_shop(5, NULL, 0);
+  shop_index[0].keeper = 1;
+  make_quest(5, NOBODY);
+
+  write_text_file(OBJ_PREFIX "/0.obj", "previous\n");
+  poison_next_write_stream = 1;
+  check_previous_file_kept(save_objects(0), OBJ_PREFIX "/0.obj", OBJ_PREFIX "/0.new");
+
+  write_text_file(ZON_PREFIX "/0.zon", "previous\n");
+  tb_error_capture_reset();
+  poison_next_write_stream = 1;
+  check_previous_file_kept(save_zone(0), ZON_PREFIX "/0.zon", ZON_PREFIX "/0.new");
+
+  write_text_file(SHP_PREFIX "/0.shp", "previous\n");
+  tb_error_capture_reset();
+  poison_next_write_stream = 1;
+  check_previous_file_kept(save_shops(0), SHP_PREFIX "/0.shp", SHP_PREFIX "/0.new");
+
+  write_text_file(QST_PREFIX "/0.qst", "previous\n");
+  tb_error_capture_reset();
+  poison_next_write_stream = 1;
+  check_previous_file_kept(save_quests(0), QST_PREFIX "/0.qst", QST_PREFIX "/0.new");
+}
+
+/* ------------------------------------------------------------------------ */
 /* Temporary world directory for the writers.                               */
 /* ------------------------------------------------------------------------ */
 static char test_root[] = "/tmp/tb-genolc-XXXXXX";
@@ -1691,6 +1756,7 @@ int main(void)
   RUN_TEST(remove_shop_list_entries_reports_bad_index);
   RUN_TEST(remove_zone_command_frees_var_strings);
   RUN_TEST(delete_quest_clears_players_on_it);
+  RUN_TEST(writers_keep_previous_file_after_stream_error);
   failures = UNITY_END();
   leave_test_root();
   return failures;
