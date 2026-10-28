@@ -1750,6 +1750,53 @@ static void test_sedit_non_numeric_input_is_refused(void)
   OLC_SHOP(d) = NULL;
 }
 
+
+/* ------------------------------------------------------------------ */
+/* F1-24: furniture seats re-prompt; the duplicate-apply check matches */
+/* the stored location.                                                */
+/* ------------------------------------------------------------------ */
+static void test_oedit_furniture_bad_seat_count_reprompts_value_1(void)
+{
+  struct descriptor_data *d = &builder_desc;
+
+  OLC_OBJ(d) = scratch_obj("a bench");
+  GET_OBJ_TYPE(OLC_OBJ(d)) = ITEM_FURNITURE;
+  GET_OBJ_VAL(OLC_OBJ(d), 0) = 2;
+  OLC_MODE(d) = OEDIT_VALUE_1;
+
+  oedit_parse(d, "99");
+  TEST_ASSERT_EQUAL_INT(OEDIT_VALUE_1, OLC_MODE(d));
+  TEST_ASSERT_EQUAL_INT(2, GET_OBJ_VAL(OLC_OBJ(d), 0));
+
+  /* Furniture has no value 2, so menu 2 returns straight to the main
+   * menu; before the fix it was shown twice. */
+  out_buf[0] = '\0';
+  oedit_parse(d, "3");
+  TEST_ASSERT_EQUAL_INT(OEDIT_MAIN_MENU, OLC_MODE(d));
+  TEST_ASSERT_EQUAL_INT(3, GET_OBJ_VAL(OLC_OBJ(d), 0));
+  TEST_ASSERT_NULL(strstr(out_buf, "Seats must be"));
+}
+
+static void test_oedit_duplicate_apply_is_refused_and_neighbour_allowed(void)
+{
+  struct descriptor_data *d = &builder_desc;
+
+  OLC_OBJ(d) = scratch_obj("a ring");
+  OLC_OBJ(d)->affected[0].location = 3;      /* menu choice 4 */
+  OLC_OBJ(d)->affected[0].modifier = 2;
+  OLC_VAL(d) = 1;                            /* editing slot 2 */
+
+  OLC_MODE(d) = OEDIT_APPLY;
+  oedit_parse(d, "4");                       /* the same apply again */
+  TEST_ASSERT_EQUAL_INT(0, OLC_OBJ(d)->affected[1].location);
+  TEST_ASSERT_NOT_NULL(strstr(out_buf, "already has that apply in slot 1"));
+
+  OLC_MODE(d) = OEDIT_APPLY;
+  oedit_parse(d, "3");                       /* location 2: a different apply */
+  TEST_ASSERT_EQUAL_INT(2, OLC_OBJ(d)->affected[1].location);
+  TEST_ASSERT_EQUAL_INT(OEDIT_APPLYMOD, OLC_MODE(d));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -1794,5 +1841,7 @@ int main(void)
   RUN_TEST(test_oedit_weight_over_max_is_clamped_and_reported);
   RUN_TEST(test_oedit_weight_in_range_is_silent);
   RUN_TEST(test_sedit_non_numeric_input_is_refused);
+  RUN_TEST(test_oedit_furniture_bad_seat_count_reprompts_value_1);
+  RUN_TEST(test_oedit_duplicate_apply_is_refused_and_neighbour_allowed);
   return UNITY_END();
 }

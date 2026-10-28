@@ -1240,13 +1240,17 @@ void oedit_parse(struct descriptor_data *d, char *arg)
     number = tb_parse_int_or_zero(arg);
     switch (GET_OBJ_TYPE(OLC_OBJ(d))) {
     case ITEM_FURNITURE:
-      if (number < 0 || number > MAX_PEOPLE)
+      /* Builder input. Re-prompt for value 1 on a bad seat count; both
+       * paths return, so the common "proceed to menu 2" below neither
+       * skips the bad value nor shows menu 2 twice. */
+      if (number < 0 || number > MAX_PEOPLE) {
+        write_to_output(d, "Seats must be 0 to %d.\r\n", MAX_PEOPLE);
         oedit_disp_val1_menu(d);
-      else {
+      } else {
         GET_OBJ_VAL(OLC_OBJ(d), 0) = number;
         oedit_disp_val2_menu(d);
       }
-      break;
+      return;
     case ITEM_WEAPON:
       OLC_SET_CLAMPED(d, GET_OBJ_VAL(OLC_OBJ(d), 0), number, -50, 50, "Weapon value 0");
       break;
@@ -1387,11 +1391,17 @@ void oedit_parse(struct descriptor_data *d, char *arg)
     else {
       int counter;
 
-      /* add in check here if already applied.. deny builders another */
+      /* Below LVL_IMPL an apply may appear only once. Menu choice number
+       * stores location number - 1 (below), so compare against that, and
+       * ignore the slot being replaced. */
       if (GET_LEVEL(d->character) < LVL_IMPL) {
         for (counter = 0; counter < MAX_OBJ_AFFECT; counter++) {
-          if (OLC_OBJ(d)->affected[counter].location == number) {
-            write_to_output(d, "Object already has that apply.");
+          if (counter != OLC_VAL(d) &&
+              OLC_OBJ(d)->affected[counter].modifier &&
+              OLC_OBJ(d)->affected[counter].location == number - 1) {
+            write_to_output(d, "Object already has that apply in slot %d; only an implementor may add it twice.\r\n",
+                            counter + 1);
+            oedit_disp_apply_menu(d);
             return;
           }
         }
