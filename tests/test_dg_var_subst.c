@@ -34,7 +34,7 @@ struct index_data **trig_index;
 struct trig_data *trigger_list;
 struct zone_data *zone_table;
 
-#define UNREACHED() TEST_FAIL_MESSAGE("entity code reached")
+#define UNREACHED() TEST_FAIL_MESSAGE(__func__)
 void affect_total(struct char_data *ch) { (void)ch; UNREACHED(); }
 int can_edit_zone(struct char_data *ch, zone_rnum rnum)
 { (void)ch; (void)rnum; UNREACHED(); return 0; }
@@ -72,7 +72,8 @@ trig_data *read_trigger(int nr) { (void)nr; UNREACHED(); return NULL; }
 qst_rnum real_quest(qst_vnum vnum) { (void)vnum; UNREACHED(); return NOTHING; }
 zone_rnum real_zone_by_thing(room_vnum vznum) { (void)vznum; UNREACHED(); return NOWHERE; }
 void update_pos(struct char_data *victim) { (void)victim; UNREACHED(); }
-int valid_dg_target(char_data *ch, int bitvector) { (void)ch; (void)bitvector; UNREACHED(); return 0; }
+/* Name lookups filter targets with this; every fixture is a valid target. */
+int valid_dg_target(char_data *ch, int bitvector) { (void)ch; (void)bitvector; return 1; }
 
 /* dg_handler.c is not linked; this matches its list free. */
 void free_varlist(struct trig_var_data *vd)
@@ -266,6 +267,46 @@ static void car_is_bounded_by_destination(void)
   free(str);
 }
 
+/* %mob.global(name)% passed a NULL field to find_replacement(), which
+ * dereferenced it; the value it looked up was then overwritten anyway. */
+static void mob_global_field_reads_the_variable(void)
+{
+  static char_data owner, target;
+  static struct script_data target_script;
+  static struct room_data room;
+  char line[MAX_INPUT_LENGTH], out[MAX_INPUT_LENGTH];
+
+  memset(&owner, 0, sizeof(owner));
+  memset(&target, 0, sizeof(target));
+  memset(&target_script, 0, sizeof(target_script));
+  memset(&room, 0, sizeof(room));
+  /* An empty one-room world: the name search scans the owner's room. */
+  world = &room;
+  IN_ROOM(&owner) = 0;
+  IN_ROOM(&target) = NOWHERE;
+  SET_BIT_AR(MOB_FLAGS(&target), MOB_ISNPC);
+  target.script_id = MOB_ID_BASE + 7;
+  SCRIPT(&target) = &target_script;
+  add_var(&target_script.global_vars, "quest", "stage2", 0);
+  init_lookup_table();
+  add_to_lookup_table(target.script_id, &target);
+
+  tb_snprintf(line, sizeof(line), "%c%ld", UID_CHAR, target.script_id);
+  add_var(&GET_TRIG_VARS(&trig), "m", line, 0);
+
+  strlcpy(line, "[%m.global(quest)%]", sizeof(line));
+  var_subst(&owner, NULL, &trig, MOB_TRIGGER, line, out);
+  TEST_ASSERT_EQUAL_STRING("[stage2]", out);
+
+  strlcpy(line, "[%m.global(unset)%]", sizeof(line));
+  var_subst(&owner, NULL, &trig, MOB_TRIGGER, line, out);
+  TEST_ASSERT_EQUAL_STRING("[]", out);
+
+  remove_from_lookup_table(target.script_id, &target);
+  free_varlist(target_script.global_vars);
+  world = NULL;
+}
+
 static void restore_round_trips_neutralize(void)
 {
   char text[] = "50% off, 100%% sure";
@@ -288,5 +329,6 @@ int main(void)
   RUN_TEST(unclosed_paren_stops_at_line_end);
   RUN_TEST(closed_reference_reports_nothing);
   RUN_TEST(car_is_bounded_by_destination);
+  RUN_TEST(mob_global_field_reads_the_variable);
   return UNITY_END();
 }

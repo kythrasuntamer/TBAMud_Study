@@ -645,10 +645,23 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
 
     if (c) {
       if (!str_cmp(field, "global")) { /* get global of something else */
-        if (IS_NPC(c) && c->script) {
-          find_replacement(go, c->script, NULL, MOB_TRIGGER,
-            subfield, NULL, NULL, str, slen);
+        *str = '\0';
+        if (!subfield || !*subfield) {
+          script_log("Trigger: %s, VNum %d. %s.global() needs a variable name",
+                     (trig && GET_TRIG_NAME(trig) ? GET_TRIG_NAME(trig) : "(no trigger)"),
+                     (trig ? GET_TRIG_VNUM(trig) : -1), var);
+          return;
         }
+        /* An unset global reads as empty, as it does for the script's own. */
+        if (IS_NPC(c) && c->script) {
+          for (vd = c->script->global_vars; vd; vd = vd->next)
+            if (!str_cmp(vd->name, subfield) &&
+                (vd->context == 0 || vd->context == c->script->context))
+              break;
+          if (vd)
+            tb_snprintf(str, slen, "%s", vd->value);
+        }
+        return;
       }
       /* set str to some 'non-text' first */
       *str = '\x1';
