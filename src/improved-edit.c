@@ -333,7 +333,16 @@ void parse_edit_action(int command, char *string, struct descriptor_data *d)
       } else
         total_len--;
       *t = '\0';
-      RECREATE(*d->str, char, strlen(*d->str) + 3);
+      {
+        /* Deleting the last line leaves "" in a 3-byte block. Keep the two
+         * spare bytes every RECREATE here allows for, and NUL them: they
+         * held stale text, and the insert below used to read past the
+         * terminator into them (and beyond). */
+        size_t len = strlen(*d->str);
+
+        RECREATE(*d->str, char, len + 3);
+        memset(*d->str + len, '\0', 3);
+      }
 
       write_to_output(d, "%d line%sdeleted.\r\n", total_len, (total_len != 1 ? "s " : " "));
     } else {
@@ -497,7 +506,11 @@ void parse_edit_action(int command, char *string, struct descriptor_data *d)
       }
       temp = *s;
       *s = '\0';
-      if ((strlen(*d->str) + strlen(buf2) + strlen(s + 1) + 3) > d->max_str) {
+      /* s is the insertion point. When it is the terminator (an empty
+       * buffer, or inserting after the last line) there is no tail, and
+       * s + 1 lies past the string, possibly past the block: strlen(s + 1)
+       * was an ASan heap-buffer-overflow after "/d1" emptied the buffer. */
+      if ((strlen(*d->str) + strlen(buf2) + (temp ? strlen(s + 1) : 0) + 3) > d->max_str) {
         *s = temp;
         write_to_output(d, "Insert text pushes buffer over maximum size, insert aborted.\r\n");
         return;
