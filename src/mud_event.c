@@ -294,10 +294,17 @@ void clear_char_event_list(struct char_data * ch)
     
   if (ch->events->iSize == 0)
     return;
-    
-  clear_simple_list();  
 
-  while ((pEvent = (struct event *) simple_list(ch->events)) != NULL) {
+  /* event_cancel() -> free_mud_event() unlinks each event, so the list
+   * drains from the head without touching simple_list()'s global cursor. */
+  LIST_DRAIN(ch->events, pEvent) {
     event_cancel(pEvent);
-  } 
+    /* Compared by address only: pEvent has been freed. */
+    if (ch->events->pFirstItem && ch->events->pFirstItem->pContent == pEvent) {
+      TB_ERROR_MSG("event", "cancel-unlinked", "char_data.events",
+                   DIAG_CHAR_FMT " cancelled event was not removed from its list",
+                   DIAG_CHAR(ch));
+      remove_from_list(pEvent, ch->events);
+    }
+  }
 }

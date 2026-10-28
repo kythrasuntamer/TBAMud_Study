@@ -268,6 +268,26 @@ static void test_list_misuse_names_caller(void)
   free_list(l);
 }
 
+/* clear_char_event_list() (extract_char) cancels every event, not only the
+ * first, and leaves the emptied list for free_char() to free. */
+static void test_clear_char_event_list_cancels_all(void)
+{
+  struct char_data fighter;
+
+  memset(&fighter, 0, sizeof(fighter));
+  NEW_EVENT(eWHIRLWIND, &fighter, NULL, 5);
+  NEW_EVENT(eWHIRLWIND, &fighter, NULL, 6);
+  NEW_EVENT(eWHIRLWIND, &fighter, NULL, 7);
+  TEST_ASSERT_EQUAL_INT(3, fighter.events->iSize);
+
+  clear_char_event_list(&fighter);
+
+  TEST_ASSERT_NOT_NULL(fighter.events);
+  TEST_ASSERT_EQUAL_INT(0, fighter.events->iSize);
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  free_list(fighter.events);
+}
+
 int main(void)
 {
   int rc;
@@ -279,6 +299,7 @@ int main(void)
   RUN_TEST(test_simple_list_body_may_remove_current);
   RUN_TEST(test_simple_list_body_may_remove_next);
   RUN_TEST(test_simple_list_body_may_free_list);
+  RUN_TEST(test_clear_char_event_list_cancels_all);
   RUN_TEST(test_list_misuse_names_caller);
   RUN_TEST(test_owner_cancel_loop_with_one_room_event);
   RUN_TEST(test_free_list_null_reports);
