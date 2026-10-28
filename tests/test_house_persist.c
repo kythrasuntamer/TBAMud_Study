@@ -309,6 +309,35 @@ static void test_built_house_record_has_no_stack_garbage(void)
   TEST_ASSERT_EQUAL_MEMORY(&expect, &on_disk, sizeof(expect));
 }
 
+/* B2-24: deleting the last of MAX_GUESTS guests shifted guests[j + 1] down
+ * for j = MAX_GUESTS - 1, reading past guests[] (into last_payment). */
+static void test_deleting_last_guest_reads_inside_guests(void)
+{
+  char arg[] = "guest";
+  struct house_control_rec rec = good_record(), on_disk;
+  int j;
+
+  for (j = 0; j < MAX_GUESTS; j++)
+    rec.guests[j] = 6000 + j;
+  rec.guests[MAX_GUESTS - 1] = 5000;
+  rec.num_of_guests = MAX_GUESTS;
+  rec.last_payment = 1234;
+  write_hcontrol(&rec, 1);
+  House_boot();
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+
+  GET_IDNUM(&imm) = 4242;
+  IN_ROOM(&imm) = 0;
+  do_house(&imm, arg, 0, 0);
+  TEST_ASSERT_NOT_NULL(strstr(sent, "Guest deleted"));
+
+  read_hcontrol(&on_disk);
+  TEST_ASSERT_EQUAL_INT(MAX_GUESTS - 1, on_disk.num_of_guests);
+  TEST_ASSERT_EQUAL_INT(6000, on_disk.guests[0]);
+  TEST_ASSERT_EQUAL_INT(0, on_disk.guests[MAX_GUESTS - 1]);
+  TEST_ASSERT_EQUAL_INT(1234, on_disk.last_payment);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -317,6 +346,7 @@ int main(void)
   RUN_TEST(test_boot_reports_partial_record);
   RUN_TEST(test_clean_boot_loads_house);
   RUN_TEST(test_built_house_record_has_no_stack_garbage);
+  RUN_TEST(test_deleting_last_guest_reads_inside_guests);
   {
     char sub[300];
     if (snprintf(sub, sizeof(sub), "%s/etc", scratch_dir) > 0)

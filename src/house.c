@@ -673,9 +673,14 @@ ACMD(do_house)
   else {
     for (j = 0; j < house_control[i].num_of_guests; j++)
       if (house_control[i].guests[j] == id) {
-	for (; j < house_control[i].num_of_guests; j++)
+	/* Shift the later guests down one slot. Stop one short of the
+	 * count: guests[num_of_guests] is past the list (and past guests[]
+	 * itself when the list is full). Zero the vacated last slot so the
+	 * spare entry written to hcontrol is not a stale idnum. */
+	for (; j < house_control[i].num_of_guests - 1; j++)
 	  house_control[i].guests[j] = house_control[i].guests[j + 1];
 	house_control[i].num_of_guests--;
+	house_control[i].guests[house_control[i].num_of_guests] = 0;
 	House_save_control();
 	send_to_char(ch, "Guest deleted.\r\n");
 	return;
