@@ -93,6 +93,7 @@ static int save_char_calls, extract_final_calls, run_autowiz_calls;
 static int load_char_result = -1;
 static int load_char_level = 1;
 static long load_char_idnum = 77;
+static int load_char_sex = SEX_MALE, load_char_class = CLASS_WARRIOR;
 static struct char_data *in_game_char;   /* returned by player lookups */
 
 void char_to_room(struct char_data *ch, room_rnum room)
@@ -135,6 +136,8 @@ int load_char(const char *name, struct char_data *ch)
     return load_char_result;
   GET_LEVEL(ch) = load_char_level;
   GET_IDNUM(ch) = load_char_idnum;
+  GET_SEX(ch) = load_char_sex;
+  GET_CLASS(ch) = load_char_class;
   return load_char_result;
 }
 room_rnum real_room(room_vnum vnum)
@@ -335,6 +338,8 @@ void setUp(void)
   load_char_result = -1;
   load_char_level = 1;
   load_char_idnum = 77;
+  load_char_sex = SEX_MALE;
+  load_char_class = CLASS_WARRIOR;
   reset_counters();
 }
 void tearDown(void) {}
@@ -542,6 +547,34 @@ static void test_stat_room_bad_zone_command_args_are_reported(void)
   mob_index = obj_index = NULL;
 }
 
+/* G1-12: 'show player' and 'last <name>' indexed genders[] and
+ * class_abbrevs[] with the pfile's unchecked Sex/Clas values. */
+static void test_show_player_and_last_bad_sex_class_are_reported(void)
+{
+  load_char_result = 0;
+  load_char_sex = 90;
+  load_char_class = -3;
+  RUN_CMD(do_show, &imm, "player bobby");
+  TEST_ASSERT_EQUAL_INT(2, captured_errors);
+  TEST_ASSERT_EQUAL_STRING("show-player-field", captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(captured_detail, "player idnum 77"));
+  TEST_ASSERT_NOT_NULL(strstr(sent, "(<invalid>) [ 1 <invalid>]"));
+  TEST_ASSERT_EQUAL_INT(1, free_char_calls);
+
+  reset_counters();
+  RUN_CMD(do_last, &imm, "bobby");
+  TEST_ASSERT_EQUAL_INT(1, captured_errors);
+  TEST_ASSERT_EQUAL_STRING("last-player-field", captured_operation);
+  TEST_ASSERT_EQUAL_INT(1, free_char_calls);
+
+  reset_counters();
+  load_char_sex = SEX_FEMALE;
+  load_char_class = CLASS_CLERIC;
+  RUN_CMD(do_show, &imm, "player bobby");
+  TEST_ASSERT_EQUAL_INT(0, captured_errors);
+  TEST_ASSERT_NOT_NULL(strstr(sent, "(female) [ 1 Cl]"));
+}
+
 int main(void)
 {
   /* basic_mud_log()/mudlog() are the real utils.c ones; keep them quiet. */
@@ -556,6 +589,7 @@ int main(void)
   RUN_TEST(test_stat_weapon_bad_attack_type_is_reported);
   RUN_TEST(test_stat_affect_bad_location_is_reported);
   RUN_TEST(test_stat_room_bad_zone_command_args_are_reported);
+  RUN_TEST(test_show_player_and_last_bad_sex_class_are_reported);
   {
     int failures = UNITY_END();
     if (logfile)
