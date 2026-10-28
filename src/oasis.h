@@ -129,10 +129,13 @@ void send_cannot_edit(struct char_data *ch, zone_vnum zone);
  * - zone_num: real zone number, or NOWHERE for editors not tied to a zone
  *   (iedit, cedit, hedit, ...).  Check before indexing zone_table.
  * - number: vnum of the subject; NOWHERE in some editors' "new" paths.
- * - value: two unrelated uses.  Most editors use it as the 'has changed'
- *   flag; redit's exit menus use it as the direction index behind
- *   OLC_EXIT(d), and zedit as the command index behind OLC_CMD(d).  Only
- *   the editor's own mode logic knows which meaning is live. */
+ * - value: overloaded per editor.  Most editors' main menus use it as the
+ *   'has changed' flag; redit's exit menus use it as the direction index
+ *   behind OLC_EXIT(d); zedit as the command index behind OLC_CMD(d) (reset
+ *   to 0 on delete); oedit's apply menu as the affected[] slot being edited;
+ *   sedit's type menu as the buy type being added.  Only the editor's own
+ *   mode logic knows which meaning is live, and any use as an index must be
+ *   range-checked again after the list it indexes changes. */
 struct oasis_olc_data {
   int mode;                      /* how to parse input       */
   zone_rnum zone_num;            /* current zone             */
