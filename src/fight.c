@@ -221,18 +221,44 @@ static void make_corpse(struct char_data *ch)
   else
     GET_OBJ_TIMER(corpse) = CONFIG_MAX_PC_CORPSE_TIME;
 
-  /* transfer character's inventory to the corpse */
+  /* Transfer the inventory to the corpse in one step, before any trigger
+   * runs: ch and the corpse must never share a half-moved list. A remove
+   * trigger below that gives ch a new object ('oload obj N %actor%') then
+   * starts a fresh ch->carrying list, swept into the corpse afterwards. */
   corpse->contains = ch->carrying;
+  ch->carrying = NULL;
+  IS_CARRYING_N(ch) = 0;
+  IS_CARRYING_W(ch) = 0;
   for (o = corpse->contains; o != NULL; o = o->next_content)
     o->in_obj = corpse;
   object_list_new_owner(corpse, NULL);
 
-  /* transfer character's equipment to the corpse */
+  /* Transfer the equipment. remove_otrigger() runs a script that may
+   * purge, swap or remove the item, so the slot is re-read after it. */
   for (i = 0; i < NUM_WEARS; i++)
-    if (GET_EQ(ch, i)) {
-      remove_otrigger(GET_EQ(ch, i), ch);
+    if ((o = GET_EQ(ch, i)) != NULL) {
+      long uid = obj_script_id(o);
+
+      remove_otrigger(o, ch);
+      if (GET_EQ(ch, i) != o || !obj_uid_matches(uid, o)) {
+        TB_WARN_MSG("fight", "corpse-eq-changed", "obj",
+                    "slot %d (obj uid %ld) changed by remove trigger on "
+                    DIAG_CHAR_FMT " during death", i, uid, DIAG_CHAR(ch));
+        if (!GET_EQ(ch, i))
+          continue;
+      }
       obj_to_obj(unequip_char(ch, i), corpse);
     }
+
+  /* Objects a remove trigger handed to ch while it died. */
+  while ((o = ch->carrying) != NULL) {
+    TB_WARN_MSG("fight", "corpse-inventory-added", "obj",
+                "obj vnum %d uid %ld given to " DIAG_CHAR_FMT
+                " by a trigger during death; moved to the corpse",
+                (int) GET_OBJ_VNUM(o), obj_script_id(o), DIAG_CHAR(ch));
+    obj_from_char(o);
+    obj_to_obj(o, corpse);
+  }
 
   /* transfer gold */
   if (GET_GOLD(ch) > 0) {
@@ -247,9 +273,6 @@ static void make_corpse(struct char_data *ch)
     }
     GET_GOLD(ch) = 0;
   }
-  ch->carrying = NULL;
-  IS_CARRYING_N(ch) = 0;
-  IS_CARRYING_W(ch) = 0;
 
   obj_to_room(corpse, IN_ROOM(ch));
 }
