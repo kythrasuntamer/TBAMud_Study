@@ -20,7 +20,10 @@ workflow's results directory:
 
 The repository (--repo, default ".") is only read, with git: line counts at
 the review base, whether an extra fix is already on HEAD, the subjects of
-the infrastructure commits, and how many login-hotfix backports exist.
+the infrastructure commits.  Facts about local branches that were later
+deleted (the deferred-group branches, the login-hotfix backports) are the
+recorded constants DEFERRED_GROUP_BRANCHES and HOTFIX_BACKPORTS, not live
+refs, so cleaning up branches does not change the documents.
 
 Usage, from the repository root:
   python3 -I tools/audit_report_stats.py --results DIR           # headlines
@@ -54,6 +57,15 @@ REVIEW_BASE = "18f80ce"   # the commit the chunk reviewers read
 LEDGER = os.path.join("docs", "memory-safety-audit.md")
 REPORT = os.path.join("docs", "audit-2026-10-report.md")
 HOTFIX_SUBJECT = "security: new players can log in again (login hotfix backport)"
+# Recorded when the documents were first generated.  The branches were
+# deleted locally on 2026-10-28 (06:38) and are kept in
+# audit-results-20261027/branch-backup-20261028.bundle; reading live refs
+# would turn these historical cells into "-" and "unknown".
+HOTFIX_BACKPORTS = 18           # local branches carrying HOTFIX_SUBJECT
+HOTFIX_MASTER = "1f228bc6"      # the backport commit on master
+DEFERRED_GROUP_BRANCHES = frozenset((   # audit-deferred-<group> branches
+    "cedit", "commands", "core-utils", "db-loaders", "dg", "errloc",
+    "gen-olc", "leftovers", "player-load", "stranded"))
 QUEUED_FILE = "queued-nonmemory-in-owned-files.json"
 DG_DOCS_FILE = "new-findings-from-dg-docs.md"
 
@@ -810,28 +822,6 @@ class Git:
         out = self.run("log", "-1", "--format=%s", sha)
         return out.strip() if out else None
 
-    def branch_exists(self, name):
-        return self.run("rev-parse", "--verify", "--quiet", "refs/heads/" + name) is not None
-
-    def commits_with_subject(self, subject):
-        out = self.run("log", "--all", "--format=%h", "--fixed-strings", "--grep", subject)
-        if out is None:
-            return None
-        shas = []
-        for sha in unique(out.split()):
-            if self.subject(sha) == subject:
-                shas.append(sha)
-        return shas
-
-    def sha_on(self, ref, subject):
-        """The newest commit on ref whose subject is exactly subject."""
-        out = self.run("log", "--format=%h%x09%s", "--fixed-strings", "--grep", subject, ref)
-        for line in (out or "").splitlines():
-            sha, _, subj = line.partition("\t")
-            if subj == subject:
-                return sha
-        return None
-
 
 # --- Loading and classification --------------------------------------------
 
@@ -1218,10 +1208,8 @@ def compute(a):
     n["dg_docs_open"] = sum(1 for x in a["dg_docs"]["items"] if not x["fixes"])
     n["observations"] = len(a["observations"])
     n["problems"] = list(a["problems"])
-    git = a["git"]
-    shas = git.commits_with_subject(HOTFIX_SUBJECT)
-    n["hotfix_backports"] = len(shas) if shas is not None else None
-    n["hotfix_master"] = git.sha_on("master", HOTFIX_SUBJECT)
+    n["hotfix_backports"] = HOTFIX_BACKPORTS
+    n["hotfix_master"] = HOTFIX_MASTER
     return n
 
 
@@ -1428,13 +1416,12 @@ def gen_dg_docs(a, n):
 
 
 def gen_groups(a, n):
-    git = a["git"]
     rows = []
     for g, d in a["groups"].items():
         ids = unique(x["id"] for x in d["findings"])
         r = collections.Counter(a["findings"][i]["resolution"] for i in ids)
         branch = f"audit-deferred-{g}"
-        rows.append([code(g), code(branch) if git.branch_exists(branch) else "-",
+        rows.append([code(g), code(branch) if g in DEFERRED_GROUP_BRANCHES else "-",
                      code(d.get("base_branch", "")), len(d.get("owned_files", [])), len(ids),
                      r[PART_DEFERRED], r[DEFERRED], r[FIXED], r[REFUTED]])
     # (Fixed counts both chunk-branch fixes and fixes from this group's rounds.)

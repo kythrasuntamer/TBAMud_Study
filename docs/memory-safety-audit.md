@@ -1041,7 +1041,7 @@ Fixed directly by the coordinator. A related chunk finding means a chunk reviewe
 
 | Bug | Found by | Who or what triggers it | Fix (commit subject) | Where the fix is | Chunk finding | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| Text files loaded as their first 7 bytes: no login prompt for new players | new players could not log in; the B1 reviewer had also reported it (B1-01) | every new connection | `security: text files load whole again, not as their first 7 bytes` | this branch | B1-01 | adds the WarnOnSizeOfPointer clang-tidy error and tests/test_login_greeting.py; backported as `security: new players can log in again (login hotfix backport)` to 1 local branches (master: unknown) |
+| Text files loaded as their first 7 bytes: no login prompt for new players | new players could not log in; the B1 reviewer had also reported it (B1-01) | every new connection | `security: text files load whole again, not as their first 7 bytes` | this branch | B1-01 | adds the WarnOnSizeOfPointer clang-tidy error and tests/test_login_greeting.py; backported as `security: new players can log in again (login hotfix backport)` to 18 local branches (master: 1f228bc6) |
 | autowiz read player-index lines as their first 7 bytes | the sizeof-of-pointer sweep; the I2 reviewer had also reported it (I2-01) | every autowiz run (empty wizlist and immlist) | `security: autowiz reads whole index lines, not their first 7 bytes` | this branch | I2-01 | - |
 | New player-index slots written to disk uninitialised; a reused slot leaked its name | Valgrind on a live server | every new character | `security: new player-index slots start zeroed, not as realloc garbage` | this branch | - | - |
 | Host string leaked once per new character | Valgrind on a live server | every new character | `security: creating a character no longer leaks its host string` | this branch | - | - |
@@ -1077,12 +1077,12 @@ Findings whose fix needs files outside the reporting chunk, the plausible low an
 
 | Group | Branch | Based on | Files owned | Findings | Still partly open | Not started | Fixed | Refuted |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `commands` | - | `audit-fix-G1` | 5 | 8 | 0 | 0 | 8 | 0 |
-| `core-utils` | - | `audit-fix-I2` | 11 | 13 | 0 | 0 | 13 | 0 |
-| `db-loaders` | - | `worktree-wf_c613c2c5-f9f-30` | 2 | 8 | 0 | 0 | 8 | 0 |
-| `dg` | - | `worktree-wf_c613c2c5-f9f-33` | 10 | 12 | 0 | 0 | 12 | 0 |
-| `errloc` | - | `worktree-wf_c613c2c5-f9f-28` | 7 | 9 | 0 | 0 | 9 | 0 |
-| `gen-olc` | - | `worktree-wf_c613c2c5-f9f-32` | 11 | 15 | 0 | 0 | 14 | 1 |
-| `player-load` | - | `worktree-wf_c613c2c5-f9f-31` | 3 | 7 | 0 | 0 | 7 | 0 |
+| `commands` | `audit-deferred-commands` | `audit-fix-G1` | 5 | 8 | 0 | 0 | 8 | 0 |
+| `core-utils` | `audit-deferred-core-utils` | `audit-fix-I2` | 11 | 13 | 0 | 0 | 13 | 0 |
+| `db-loaders` | `audit-deferred-db-loaders` | `worktree-wf_c613c2c5-f9f-30` | 2 | 8 | 0 | 0 | 8 | 0 |
+| `dg` | `audit-deferred-dg` | `worktree-wf_c613c2c5-f9f-33` | 10 | 12 | 0 | 0 | 12 | 0 |
+| `errloc` | `audit-deferred-errloc` | `worktree-wf_c613c2c5-f9f-28` | 7 | 9 | 0 | 0 | 9 | 0 |
+| `gen-olc` | `audit-deferred-gen-olc` | `worktree-wf_c613c2c5-f9f-32` | 11 | 15 | 0 | 0 | 14 | 1 |
+| `player-load` | `audit-deferred-player-load` | `worktree-wf_c613c2c5-f9f-31` | 3 | 7 | 0 | 0 | 7 | 0 |
 
 <!-- END GENERATED: ledger-outside -->
