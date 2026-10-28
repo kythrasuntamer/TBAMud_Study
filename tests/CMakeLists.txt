@@ -487,6 +487,24 @@ if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
 endif()
 target_link_libraries(test_genolc PRIVATE ${CRYPT_LIBRARY} ${SODIUM_LIBRARY})
 
+# Production GenOLC mobile deleter (genmob.c) and zone-command removal
+# (genzon.c): zone-command, live-mob and shopkeeper renumbering.
+add_mud_test(test_genmob
+    ${MUD_SRCDIR}/genmob.c
+    ${MUD_SRCDIR}/genzon.c
+    ${MUD_SRCDIR}/genolc.c
+    ${MUD_SRCDIR}/utils.c
+    ${MUD_SRCDIR}/random.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_genmob.c
+)
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_compile_options(test_genmob PRIVATE -ffunction-sections -fdata-sections)
+    target_link_options(test_genmob PRIVATE
+        -Wl,--gc-sections
+        -Wl,--wrap=tb_error_log_at)
+endif()
+target_link_libraries(test_genmob PRIVATE ${CRYPT_LIBRARY} ${SODIUM_LIBRARY})
+
 find_package(Python3 COMPONENTS Interpreter QUIET)
 if(Python3_Interpreter_FOUND)
     add_test(NAME test_dg_memory_callback_contract

@@ -175,15 +175,27 @@ int delete_mobile(mob_rnum refpt)
   for (live_mob = character_list; live_mob; live_mob = live_mob->next)
     GET_MOB_RNUM(live_mob) -= (GET_MOB_RNUM(live_mob) >= refpt);
 
-  /* Update zone table. */
-  for (zone = 0; zone <= top_of_zone_table; zone++)
-    for (cmd_no = 0; ZCMD(zone, cmd_no).command != 'S'; cmd_no++)
-      if (ZCMD(zone, cmd_no).command == 'M'){
-       if (ZCMD(zone, cmd_no).arg1 == refpt) {
-        delete_zone_command(&zone_table[zone], cmd_no);
-        } else
-          ZCMD(zone, cmd_no).arg1 -= (ZCMD(zone, cmd_no).arg1 > refpt);
+  /* Update zone table.  Deleting a command shifts the rest of the list
+   * (reallocated to exactly fit) down into cmd_no, so cmd_no only advances
+   * when nothing was deleted: advancing past a deletion skipped the next
+   * command and, when the deleted one was last, stepped over the 'S'
+   * terminator and read past the end of the list. */
+  for (zone = 0; zone <= top_of_zone_table; zone++) {
+    cmd_no = 0;
+    while (ZCMD(zone, cmd_no).command != 'S') {
+      if (ZCMD(zone, cmd_no).command == 'M') {
+        if (ZCMD(zone, cmd_no).arg1 == refpt) {
+          TB_WARN_MSG("genolc", "zcmd-delete", "zone",
+                      "zone %d cmd %d removed: it loads mob vnum %d, which was deleted",
+                      zone_table[zone].number, cmd_no, vnum);
+          delete_zone_command(&zone_table[zone], cmd_no);
+          continue;
         }
+        ZCMD(zone, cmd_no).arg1 -= (ZCMD(zone, cmd_no).arg1 > refpt);
+      }
+      cmd_no++;
+    }
+  }
 
   /* Update shop keepers. */
   if (shop_index)
