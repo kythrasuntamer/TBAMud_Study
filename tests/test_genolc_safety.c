@@ -226,7 +226,10 @@ void free_proto_script(void *thing, int type)
 }
 void update_wait_events(struct room_data *to, struct room_data *from) { (void)to; (void)from; }
 void add_trigger(struct script_data *sc, trig_data *t, int loc) { (void)sc; (void)t; (void)loc; }
-void event_cancel(struct event *event) { (void)event; }
+/* event_cancel() is a macro over event_cancel_at() (call-site capture). */
+void event_cancel_at(struct event *event, const char *file, int line,
+                     const char *func)
+{ (void)event; (void)file; (void)line; (void)func; }
 void *simple_list(struct list_data *list) { (void)list; return NULL; }
 void free_list(struct list_data *list) { (void)list; }
 

@@ -59,6 +59,14 @@ zone_rnum real_zone(zone_vnum vnum)
   return NOWHERE;
 }
 
+/* delete_object() strips a deleted prototype from shop product lists; this
+ * fixture has no shops (top_shop == -1), so reaching it is a test bug. */
+void remove_shop_from_int_list(IDXTYPE **list, IDXTYPE num)
+{
+  (void)list; (void)num;
+  TEST_FAIL_MESSAGE("remove_shop_from_int_list reached without shops");
+}
+
 mob_rnum real_mobile(mob_vnum vnum)
 {
   mob_rnum i;
@@ -73,6 +81,7 @@ void free_proto_script(void *thing, int type) { (void)thing; (void)type; }
  * the sanitizer's global metadata keeps in the link; never called here. */
 struct obj_data *obj_proto = NULL;
 struct index_data **trig_index = NULL;
+int top_of_trigt = 0;	/* save_zone() bounds trigger rnums by it */
 trig_rnum real_trigger(trig_vnum vnum) { (void)vnum; return NOTHING; }
 int save_shops(zone_rnum z) { (void)z; return FALSE; }
 
@@ -316,6 +325,10 @@ static void make_objs(int n)
   int i;
 
   top_of_objt = n - 1;
+  /* No board owns these objects: delete_object() refuses a board's object,
+   * and a zero-filled board_info[] would claim rnum 0 for every board. */
+  for (i = 0; i < NUM_OF_BOARDS; i++)
+    board_info[i].rnum = NOTHING;
   CREATE(obj_proto, struct obj_data, n);
   CREATE(obj_index, struct index_data, n);
   for (i = 0; i < n; i++) {

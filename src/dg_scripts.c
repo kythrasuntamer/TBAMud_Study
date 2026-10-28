@@ -1295,7 +1295,7 @@ ACMD(do_detach)
   char arg1[MAX_INPUT_LENGTH], arg2[MAX_INPUT_LENGTH], arg3[MAX_INPUT_LENGTH], *snum;
   char *trigger = 0;
   /* Vnum and name of the trigger remove_trigger() actually removed. This
-   * used to instantiate the prototype named by arg3 with read_trigger() on
+   * used to instantiate the prototype named by arg3 (a read_trigger call) on
    * every call, leaking one trigger (and bumping its live count) each time. */
   char removed_name[MAX_INPUT_LENGTH];
   trig_vnum removed_vnum = NOTHING;
