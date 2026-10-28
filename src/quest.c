@@ -199,6 +199,17 @@ static int quest_parse_record(const char *line, int *fields, size_t count,
   return *p == '\0';
 }
 
+/* A malformed .qst record stops the boot (as every world-file loader does),
+ * naming the quest vnum, the line that failed and the file offset. The raw
+ * line is not logged. Expands at the call site so the record names the
+ * failing check. */
+#define QUEST_PARSE_FATAL(fl, vnum, what) do { \
+    TB_FATAL_MSG("quest", "parse", "qst-file", \
+                 "quest vnum %d: missing or malformed %s line near byte %ld", \
+                 (vnum), (what), ftell(fl)); \
+    exit(1); \
+  } while (0)
+
 void parse_quest(FILE *quest_f, int nr)
 {
   static char line[256];
@@ -233,10 +244,8 @@ void parse_quest(FILE *quest_f, int nr)
   aquest_table[i].done = fread_string(quest_f, buf2);
   aquest_table[i].quit = fread_string(quest_f, buf2);
   if (!get_line(quest_f, line) ||
-      !quest_parse_record(line, t, 6, f1, sizeof(f1))) {
-    log("Format error in quest header numeric line, %s\n", line);
-    exit(1);
-  }
+      !quest_parse_record(line, t, 6, f1, sizeof(f1)))
+    QUEST_PARSE_FATAL(quest_f, nr, "header (type qm flags target prev next prereq)");
   /* The type indexes quest_types[] and selects the trigger check; only qedit
    * limits it, so a hand-edited .qst file can hold anything. */
   if (t[0] < 0 || t[0] >= NUM_AQ_TYPES) {
@@ -246,24 +255,28 @@ void parse_quest(FILE *quest_f, int nr)
     exit(1);
   }
   aquest_table[i].type = t[0];
-  aquest_table[i].qm = (real_mobile(t[1]) == NOBODY) ? NOBODY : t[1];
+  /* Mobiles are loaded before quests (boot_world), so an unknown QM vnum here
+   * is a real world-file error; the quest still loads but has no QM. */
+  if (real_mobile(t[1]) == NOBODY) {
+    TB_WARN_MSG("quest", "unknown-questmaster", "aquest_table",
+                "quest vnum %d qm mob vnum %d does not exist; quest has no questmaster",
+                nr, t[1]);
+    aquest_table[i].qm = NOBODY;
+  } else
+    aquest_table[i].qm = t[1];
   aquest_table[i].flags = asciiflag_conv(f1);
   aquest_table[i].target = (t[2] == -1) ? NOTHING : t[2];
   aquest_table[i].prev_quest = (t[3] == -1) ? NOTHING : t[3];
   aquest_table[i].next_quest = (t[4] == -1) ? NOTHING : t[4];
   aquest_table[i].prereq = (t[5] == -1) ? NOTHING : t[5];
   if (!get_line(quest_f, line) ||
-      !quest_parse_record(line, t, 7, NULL, 0)) {
-    log("Format error in quest values numeric line, %s\n", line);
-    exit(1);
-  }
+      !quest_parse_record(line, t, 7, NULL, 0))
+    QUEST_PARSE_FATAL(quest_f, nr, "values (7 integers)");
   for (j = 0; j < 7; j++)
     aquest_table[i].value[j] = t[j];
   if (!get_line(quest_f, line) ||
-      !quest_parse_record(line, t, 3, NULL, 0)) {
-    log("Format error in quest rewards numeric line, %s\n", line);
-    exit(1);
-  }
+      !quest_parse_record(line, t, 3, NULL, 0))
+    QUEST_PARSE_FATAL(quest_f, nr, "rewards (gold exp obj)");
 
   aquest_table[i].gold_reward = t[0];
   aquest_table[i].exp_reward  = t[1];
@@ -278,14 +291,18 @@ void parse_quest(FILE *quest_f, int nr)
                 nr, aquest_table[i].type, (int) aquest_table[i].target);
 
   for (;;) {
-    if (!get_line(quest_f, line)) {
-      log("Format error in %s\n", line);
-      exit(1);
-    }
+    if (!get_line(quest_f, line))
+      QUEST_PARSE_FATAL(quest_f, nr, "terminator ('S' before end of file)");
     switch(*line) {
     case 'S':
       total_quests = ++i;
       return;
+    default:
+      /* No other record lines are defined; say what is being ignored. */
+      TB_WARN_MSG("quest", "parse-skip-line", "qst-file",
+                  "quest vnum %d: ignoring unknown line starting 0x%02x (%zu bytes) near byte %ld",
+                  nr, (unsigned char) *line, strlen(line), ftell(quest_f));
+      break;
     }
   }
 } /* parse_quest */
@@ -304,11 +321,15 @@ void assign_the_quests(void)
     if (QST_NEXT(rnum) != NOTHING && real_quest(QST_NEXT(rnum)) == NOTHING)
       quest_report_dangling(rnum, QST_NEXT(rnum));
     if (QST_MASTER(rnum) == NOBODY) {
-      log("SYSERR: Quest #%d has no questmaster specified.", QST_NUM(rnum));
+      TB_WARN_MSG("quest", "no-questmaster", "aquest_table",
+                  "quest vnum %d has no questmaster; nobody can offer it",
+                  (int) QST_NUM(rnum));
       continue;
     }
     if ((mrnum = real_mobile(QST_MASTER(rnum))) == NOBODY) {
-      log("SYSERR: Quest #%d has an invalid questmaster.", QST_NUM(rnum));
+      TB_WARN_MSG("quest", "unknown-questmaster", "aquest_table",
+                  "quest vnum %d qm mob vnum %d does not exist",
+                  (int) QST_NUM(rnum), (int) QST_MASTER(rnum));
       continue;
     }
     if (mob_index[(mrnum)].func &&

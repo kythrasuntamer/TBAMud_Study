@@ -311,9 +311,70 @@ static void test_invalid_type_reported_and_named_safely(void)
   TEST_ASSERT_NOT_NULL(strstr(sent, "<invalid>"));
 }
 
+/* db.c's readers, reduced to what parse_quest needs: '~'-terminated strings
+ * and the next non-blank line. */
+char *fread_string(FILE *fl, const char *error)
+{
+  char buf[256];
+  size_t n = 0;
+  int c;
+  (void)error;
+  while ((c = fgetc(fl)) != EOF && c != '~' && n + 1 < sizeof(buf))
+    buf[n++] = (char)c;
+  buf[n] = '\0';
+  while (c != EOF && c != '\n')
+    c = fgetc(fl);
+  return strdup(buf);
+}
+int get_line(FILE *fl, char *buf)
+{
+  char tmp[256];
+  do {
+    if (!fgets(tmp, sizeof(tmp), fl))
+      return 0;
+    tmp[strcspn(tmp, "\r\n")] = '\0';
+  } while (!*tmp);
+  strlcpy(buf, tmp, 256);
+  return 1;
+}
+bitvector_t asciiflag_conv(char *flag) { (void)flag; return 0; }
+
+/* H3-05: an unknown questmaster vnum and unknown record lines are reported
+ * with the quest vnum instead of being dropped silently. */
+static void test_parse_reports_unknown_qm_and_skipped_lines(void)
+{
+  static const char record[] =
+    "name~\ndesc~\ninfo~\ndone~\nquit~\n"
+    "1 777 0 3001 -1 -1 -1\n"
+    "5 0 1 30 -1 0 1\n"
+    "0 0 -1\n"
+    "X junk\n"
+    "S\n";
+  struct aq_data *row;
+  FILE *fl = fmemopen((void *)record, sizeof(record) - 1, "r");
+
+  TEST_ASSERT_NOT_NULL(fl);
+  aquest_table = quests;
+  parse_quest(fl, 1234);
+  fclose(fl);
+
+  TEST_ASSERT_EQUAL_INT(1, total_quests);
+  row = &quests[0];
+  TEST_ASSERT_EQUAL_INT(1234, row->vnum);
+  TEST_ASSERT_EQUAL_INT(NOBODY, row->qm);
+  TEST_ASSERT_EQUAL_INT(AQ_ROOM_FIND, row->type);
+  TEST_ASSERT_EQUAL_INT(2, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("parse-skip-line", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "quest vnum 1234"));
+  free(row->name); free(row->desc); free(row->info);
+  free(row->done); free(row->quit);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  /* parse_quest keeps its row index across calls: run it first, once. */
+  RUN_TEST(test_parse_reports_unknown_qm_and_skipped_lines);
   RUN_TEST(test_invalid_type_reported_and_named_safely);
   RUN_TEST(test_quest_list_dangling_prev_reports);
   RUN_TEST(test_complete_dangling_next_reports);
