@@ -5,6 +5,27 @@
 *  Copyright 1996 by Harvey Gilpin, 1997-2001 by George Greer.            *
 **************************************************************************/
 
+/**
+ * @file genzon.c
+ * Zone table maintenance for OLC: zone lookup by vnum, zedit new (stub
+ * files and world index updates), the zone file writer, and the reset
+ * command list helpers used by zedit and the prototype renumberers.
+ *
+ * Input: zone numbers and ranges come from an implementor (zedit new is
+ * LVL_IMPL); reset commands come from builders through zedit.  The world
+ * index files are admin-edited and parsed defensively.
+ *
+ * Invariants: zone_table is sorted by number and by room range, ranges do
+ * not overlap, and top_of_zone_table >= 0 once the world is loaded.  A zone
+ * command list is always terminated by an 'S' command.  Stored command
+ * arguments are rnums; they are converted back to vnums only when saving,
+ * and a stale rnum aborts the save rather than being indexed.
+ *
+ * Ownership: struct reset_com is copied by value between lists, so the
+ * sarg1/sarg2 strings of a 'V' command are shared between zedit's working
+ * copy and zone_table (see remove_cmd_from_list()).
+ */
+
 #include "conf.h"
 #include "sysdep.h"
 #include "structs.h"
@@ -42,7 +63,17 @@ static int parse_zone_index_number(const char *text, int *number)
   return 1;
 }
 
-/* real zone of room/mobile/object/shop given */
+/**
+ * Find the zone whose room range contains vznum (a room, mobile, object,
+ * shop, quest or trigger vnum: they share the zone's range).
+ *
+ * Binary search: zone_table must be sorted with non-overlapping ranges and
+ * top_of_zone_table >= 0.
+ *
+ * @return The zone rnum, or NOWHERE when vznum falls in no zone (a gap
+ *         between zones counts).  Callers must check before indexing
+ *         zone_table.
+ */
 zone_rnum real_zone_by_thing(room_vnum vznum)
 {
   zone_rnum bot, top, mid;
@@ -104,6 +135,21 @@ static int write_new_zone_file(const char *path, zone_vnum vzone_num,
   return ok;
 }
 
+/**
+ * zedit new: create zone vzone_num covering rooms bottom..top.
+ *
+ * Refuses a number already loaded or a range overlapping a loaded zone.
+ * Writes the seven stub files (.zon .wld .mob .obj .shp .qst .trg) with
+ * exclusive create, so an existing file is never truncated; if one fails,
+ * the files already written by this call are removed.  Then adds the zone
+ * to each world index (failures are reported; the zone still exists in
+ * memory but will not fully load at the next boot) and inserts it into
+ * zone_table in number order, shifting later zones and renumbering their
+ * rooms' zone field.
+ *
+ * @param error Set to a builder-facing message on failure.
+ * @return The new zone's rnum, or NOWHERE with *error set (reported).
+ */
 zone_rnum create_new_zone(zone_vnum vzone_num, room_vnum bottom, room_vnum top, const char **error)
 {
   struct zone_data *zone;
@@ -275,6 +321,20 @@ rznum = i;
   return rznum;
 }
 
+/**
+ * Add "<znum>.<type>" to the world index file for type.
+ *
+ * Index format: one "<number>.<ext>" entry per line, sorted by number, and
+ * a terminating "$" line.  The new entry is inserted before the first
+ * larger number (or before "$"), the result written to a temporary file and
+ * committed by rename only when complete.  An unparsable entry, a missing
+ * "$" terminator, an unknown type or an I/O error leaves the index
+ * unchanged.  An entry already present is a no-op.
+ *
+ * @param znum Zone number from zedit new.
+ * @param type One of "zon", "wld", "mob", "obj", "shp", "qst", "trg".
+ * @return TRUE when the index holds the entry; FALSE, reported, otherwise.
+ */
 int create_world_index(int znum, const char *type)
 {
   FILE *newfile, *oldfile;
@@ -677,8 +737,18 @@ int count_commands(struct reset_com *list)
   return count;
 }
 
-/* Adds a new reset command into a list.  Takes a pointer to the list so that
- * it may play with the memory locations. */
+/**
+ * Insert a copy of *newcmd at index pos of a zone command list.
+ *
+ * The list is reallocated (every pointer into it is invalidated) and the
+ * command is copied by value, so a 'V' command's sarg1/sarg2 become shared
+ * with newcmd's owner.  pos is expected in 0..count; a larger pos is not
+ * checked and the command is not inserted.
+ *
+ * @param list   Address of the list (zone_table[z].cmd or zedit's copy).
+ * @param newcmd Command to copy in.
+ * @param pos    Insert position.
+ */
 void add_cmd_to_list(struct reset_com **list, struct reset_com *newcmd, int pos)
 {
   int count, i, l;
@@ -759,7 +829,12 @@ static int remove_cmd_from_list(struct reset_com **list, int pos, zone_vnum znum
   return TRUE;
 }
 
-/* Error check user input and then add new (blank) command. */
+/**
+ * zedit: insert a blank 'N' command at pos (builder input).
+ *
+ * @return 1 when inserted; 0, reported as zone-cmd-index, when pos is
+ *         outside 0..count.
+ */
 int new_command(struct zone_data *zone, int pos)
 {
   int subcmd = 0;
