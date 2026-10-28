@@ -1408,8 +1408,17 @@ ACMD(do_switch)
   }
 }
 
+/** tbaMUD's implementor recovery: "return" while not switched restores
+ * player idnum 1 to LVL_IMPL. Whoever holds idnum 1 (e.g. the first
+ * character created after the player index is reset) gets IMPL this way,
+ * so every restore that changes the level is logged like any other level
+ * change ((GC) mudlog plus a cheat-restore warning with the idnum).
+ * Build with -DTB_NO_CHEAT_RESTORE to remove the path entirely. */
 static void do_cheat(struct char_data *ch)
 {
+#ifndef TB_NO_CHEAT_RESTORE
+  int old_level = GET_LEVEL(ch);
+
   switch (GET_IDNUM(ch)) {
     case    1: // IMP
       GET_LEVEL(ch) = LVL_IMPL;
@@ -1418,8 +1427,18 @@ static void do_cheat(struct char_data *ch)
       send_to_char(ch, "You do not have access to this command.\r\n");
   return;
   }
+  if (old_level != LVL_IMPL) {
+    mudlog(BRF, LVL_IMPL, TRUE, "(GC) %s (idnum %ld) restored own level %d -> %d via 'return'",
+           GET_NAME(ch), GET_IDNUM(ch), old_level, LVL_IMPL);
+    TB_WARN_MSG("act", "cheat-restore", "level",
+                "player idnum %ld restored from level %d to %d",
+                GET_IDNUM(ch), old_level, LVL_IMPL);
+  }
   send_to_char(ch, "Your level has been restored, for now!\r\n");
   save_char(ch);
+#else
+  send_to_char(ch, "You do not have access to this command.\r\n");
+#endif
 }
 
 void return_to_char(struct char_data * ch)

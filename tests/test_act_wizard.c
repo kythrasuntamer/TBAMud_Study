@@ -1134,6 +1134,22 @@ static void test_show_errors_overflow_is_marked_and_reported(void)
   TEST_ASSERT_TRUE(strlen(sent) < MAX_STRING_LENGTH);
 }
 
+/* G1-26: 'return' as unswitched idnum 1 silently set LVL_IMPL and saved,
+ * with no log entry; every other level change is logged. */
+static void test_idnum1_level_restore_is_logged(void)
+{
+  GET_LEVEL(&imm) = LVL_GOD;
+  RUN_CMD(do_return, &imm, "");
+  TEST_ASSERT_EQUAL_INT(LVL_IMPL, GET_LEVEL(&imm));
+  TEST_ASSERT_EQUAL_STRING("cheat-restore", captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(captured_detail, "player idnum 1 restored from level"));
+
+  /* Already IMPL: no change, nothing logged. */
+  reset_counters();
+  RUN_CMD(do_return, &imm, "");
+  TEST_ASSERT_EQUAL_INT(0, captured_errors);
+}
+
 int main(void)
 {
   /* basic_mud_log()/mudlog() are the real utils.c ones; keep them quiet. */
@@ -1167,6 +1183,7 @@ int main(void)
   RUN_TEST(test_set_other_players_poof_below_impl_is_refused);
   RUN_TEST(test_at_returns_by_vnum_after_rooms_shift);
   RUN_TEST(test_show_errors_overflow_is_marked_and_reported);
+  RUN_TEST(test_idnum1_level_restore_is_logged);
   {
     int failures = UNITY_END();
     if (logfile)
