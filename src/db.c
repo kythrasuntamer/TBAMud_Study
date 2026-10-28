@@ -218,7 +218,7 @@ static int parse_int_fields(const char *text, int *values, size_t max_fields)
     return -1;
 
   while (count < max_fields) {
-    while (isspace((unsigned char)*p))
+    while (*p != '\0' && isspace((unsigned char)*p))
       p++;
     if (*p == '\0')
       break;
@@ -232,7 +232,7 @@ static int parse_int_fields(const char *text, int *values, size_t max_fields)
     p = end;
   }
 
-  while (isspace((unsigned char)*p))
+  while (*p != '\0' && isspace((unsigned char)*p))	/* NUL ends the scan */
     p++;
   if (*p != '\0')
     return -1;
@@ -3826,17 +3826,15 @@ int fread_number(FILE *fp)
   int c;
 
   do
-  {
-    if( feof( fp ) )
-    {
-      TB_ERROR_MSG("db", "fread-number", "eof",
-                   "EOF before a number at file line %lu",
-                   tb_parse_context_line(fp));
-      return 0;
-    }
     c = getc( fp );
+  while( c != EOF && isspace( c ) );
+
+  if (c == EOF) {
+    TB_ERROR_MSG("db", "fread-number", "eof",
+                 "EOF before a number at file line %lu",
+                 tb_parse_context_line(fp));
+    return 0;
   }
-  while( isspace( c ) );
 
   if( c == '+' )
     c = getc( fp );
@@ -3859,7 +3857,8 @@ int fread_number(FILE *fp)
       if (number > (long long)INT_MAX + 1)	/* INT_MIN's magnitude fits */
         overflow = TRUE;
     }
-    c = getc( fp );
+    /* getc() returns EOF on error or end of file, which ends the loop. */
+    c = getc( fp ); /* NOLINT(clang-analyzer-unix.Stream) */
   }
 
   if( sign )
@@ -3880,7 +3879,7 @@ int fread_number(FILE *fp)
       return 0;
     }
     number += rest;
-  } else if (c != ' ' && c != EOF && ungetc(c, fp) == EOF) {
+  } else if (c != ' ' && c != EOF && ungetc(c, fp) == EOF) { /* NOLINT(clang-analyzer-unix.Stream): c is a real character here */
     log("SYSERR: fread_number: cannot restore lookahead");
     return 0;
   }

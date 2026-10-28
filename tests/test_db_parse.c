@@ -36,6 +36,7 @@ static void tb_test_exit(int code)
 
 /* Run STMT, which must end in exit(); fail the test if it returns. */
 #define EXPECT_EXIT(stmt) do { \
+  errno = 0; \
   tb_test_exit_armed = 1; \
   if (setjmp(tb_test_exit_jmp) == 0) { \
     stmt; \
@@ -45,6 +46,7 @@ static void tb_test_exit(int code)
 } while (0)
 
 #define exit(code) tb_test_exit(code)
+/* NOLINTNEXTLINE(bugprone-suspicious-include): reach db.c's statics. */
 #include "db.c"
 #undef exit
 
@@ -440,7 +442,7 @@ static FILE *stream_of(const char *data, size_t len)
   FILE *fp = tmpfile();
   TEST_ASSERT_NOT_NULL(fp);
   TEST_ASSERT_EQUAL_size_t(len, fwrite(data, 1, len, fp));
-  rewind(fp);
+  TEST_ASSERT_EQUAL_INT(0, fseek(fp, 0L, SEEK_SET));
   return fp;
 }
 
@@ -459,7 +461,7 @@ static void file_to_string_loads_whole_multiline_file(void)
   TEST_ASSERT_EQUAL_INT(0, file_to_string(temp_path, buf, sizeof(buf)));
   TEST_ASSERT_EQUAL_STRING("Welcome to the game.\r\nSecond line here.\r\n", buf);
   TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
-  remove(temp_path);
+  (void)remove(temp_path);
 }
 
 /* Lines longer than one fgets() chunk are joined, and a final line without
@@ -476,7 +478,7 @@ static void file_to_string_joins_long_lines_and_keeps_last_char(void)
   write_temp_file(text, strlen(text));
   TEST_ASSERT_EQUAL_INT(0, file_to_string(temp_path, buf, sizeof(buf)));
   TEST_ASSERT_EQUAL_STRING(expect, buf);
-  remove(temp_path);
+  (void)remove(temp_path);
 }
 
 /* A file larger than the buffer is rejected whole, loudly. */
@@ -490,7 +492,7 @@ static void file_to_string_rejects_oversized_file(void)
   TEST_ASSERT_EQUAL_STRING("", buf);
   TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
   TEST_ASSERT_EQUAL_STRING("text-file-load", tb_captured_operation);
-  remove(temp_path);
+  (void)remove(temp_path);
 }
 
 /* B1-30: file_to_string_alloc() returned -1 whenever a pager was reading the
@@ -517,7 +519,7 @@ static void file_to_string_alloc_reloads_while_paged(void)
   TEST_ASSERT_NOT_NULL(d.showstr_head);
   TEST_ASSERT_EQUAL_STRING("Old text.\r\n", d.showstr_head);
   TEST_ASSERT_TRUE(vector[0] == d.showstr_head);
-  remove(temp_path);
+  (void)remove(temp_path);
   descriptor_list = NULL;
   free(d.showstr_head);
   free(global);
@@ -567,7 +569,7 @@ static void parse_room_text(const char *text, int vnum)
 {
   FILE *fp = stream_of(text, strlen(text));
   parse_room(fp, vnum);
-  fclose(fp);
+  TEST_ASSERT_EQUAL_INT(0, fclose(fp));
 }
 
 /* "D11" used to CREATE() into dir_option[11], i.e. room_data's func/script
@@ -580,7 +582,7 @@ static void parse_room_rejects_out_of_range_direction(void)
 
   room_fixture_use();
   EXPECT_EXIT(parse_room(fp, 100));
-  fclose(fp);
+  TEST_ASSERT_EQUAL_INT(0, fclose(fp));
   TEST_ASSERT_EQUAL_INT(1, tb_test_exit_code);
   TEST_ASSERT_EQUAL_STRING("FATAL", tb_captured_severity);
   TEST_ASSERT_EQUAL_STRING("room-parse", tb_captured_operation);
@@ -597,7 +599,7 @@ static void parse_room_rejects_negative_direction(void)
 
   room_fixture_use();
   EXPECT_EXIT(parse_room(fp, 101));
-  fclose(fp);
+  TEST_ASSERT_EQUAL_INT(0, fclose(fp));
   TEST_ASSERT_EQUAL_STRING("room-parse", tb_captured_operation);
   TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "direction -1"));
   room_fixture_free();
@@ -706,7 +708,7 @@ static char *read_tilde(char *(*reader)(FILE *, const char *),
 {
   FILE *fp = stream_of(text, len);
   char *s = reader(fp, "test-string");
-  fclose(fp);
+  TEST_ASSERT_EQUAL_INT(0, fclose(fp));
   return s;
 }
 
@@ -788,7 +790,7 @@ static void fread_string_long_unterminated_tail_exits(void)
   memset(text, 'z', 511);
   fp = stream_of(text, 511);
   EXPECT_EXIT(free(fread_string(fp, "test-string")));
-  fclose(fp);
+  TEST_ASSERT_EQUAL_INT(0, fclose(fp));
   TEST_ASSERT_EQUAL_INT(1, tb_test_exit_code);
 }
 
@@ -826,13 +828,14 @@ static int load_zone_text(const char *text)
   volatile int exited = 1;
 
   zone_table = zone_load_fixture;
+  errno = 0;
   tb_test_exit_armed = 1;
   if (setjmp(tb_test_exit_jmp) == 0) {
     load_zones(fp, (char *)"test.zon");
     tb_test_exit_armed = 0;
     exited = 0;
   }
-  fclose(fp);
+  TEST_ASSERT_EQUAL_INT(0, fclose(fp));
   return exited;
 }
 
@@ -866,7 +869,7 @@ static void load_config_text(const char *text)
   write_temp_file(text, strlen(text));
   CONFIG_CONFFILE = temp_path;
   load_config();
-  remove(temp_path);
+  (void)remove(temp_path);
 }
 
 /* B1-08: line[] was READ_SIZE - 2 bytes, but get_line() writes up to
@@ -876,9 +879,9 @@ static void load_config_reads_full_length_line(void)
 {
   char text[400];
 
-  memcpy(text, "ok = ", 5);
+  strlcpy(text, "ok = ", sizeof(text));
   memset(text + 5, 'O', 300);
-  memcpy(text + 305, "\n", 2);
+  strlcpy(text + 305, "\n", sizeof(text) - 305);
   load_config_text(text);
   TEST_ASSERT_NOT_NULL(CONFIG_OK);
   TEST_ASSERT_EQUAL_CHAR('O', CONFIG_OK[0]);
@@ -950,13 +953,14 @@ static int parse_simple_mob_text(const char *text, int nr)
 
   memset(simple_mob_fixture, 0, sizeof(simple_mob_fixture));
   mob_proto = simple_mob_fixture;
+  errno = 0;
   tb_test_exit_armed = 1;
   if (setjmp(tb_test_exit_jmp) == 0) {
     parse_simple_mob(fp, 0, nr);
     tb_test_exit_armed = 0;
     exited = 0;
   }
-  fclose(fp);
+  TEST_ASSERT_EQUAL_INT(0, fclose(fp));
   mob_proto = NULL;
   return exited;
 }
@@ -1024,10 +1028,10 @@ static void social_fixture_free(int slots)
   }
   free(soc_mess_list);
   soc_mess_list = NULL;
-  remove(SOCMESS_FILE_NEW);
-  rmdir("misc");
+  (void)remove(SOCMESS_FILE_NEW);
+  (void)rmdir("misc");
   TEST_ASSERT_EQUAL_INT(0, chdir(social_cwd));
-  rmdir(social_dir);
+  (void)rmdir(social_dir);
   CONFIG_NEW_SOCIALS = FALSE;
 }
 
@@ -1072,13 +1076,14 @@ static int discrete_load_text(const char *text, int mode, int capacity)
   boot_capacity = capacity;
   boot_records = 0;
   boot_last_vnum = -1;
+  errno = 0;
   tb_test_exit_armed = 1;
   if (setjmp(tb_test_exit_jmp) == 0) {
     discrete_load(fp, mode, (char *)"test.wld");
     tb_test_exit_armed = 0;
     exited = 0;
   }
-  fclose(fp);
+  TEST_ASSERT_EQUAL_INT(0, fclose(fp));
   return exited;
 }
 
@@ -1159,7 +1164,7 @@ static void count_hash_records_counts_hash_at_get_line_chunk(void)
   memcpy(text + READ_SIZE - 1, "#99\n", 5);
   fp = stream_of(text, strlen(text));
   TEST_ASSERT_EQUAL_INT(1, count_hash_records(fp));
-  fclose(fp);
+  TEST_ASSERT_EQUAL_INT(0, fclose(fp));
 }
 
 /* B1-16: an 'M' naming mob 70000 was narrowed to vnum 4464 by real_mobile()
@@ -1217,7 +1222,7 @@ static void get_one_line_reports_leading_nul(void)
   TEST_ASSERT_EQUAL_STRING("help-load", tb_captured_operation);
   get_one_line(fp, buf);
   TEST_ASSERT_EQUAL_STRING("next", buf);
-  fclose(fp);
+  TEST_ASSERT_EQUAL_INT(0, fclose(fp));
 }
 
 /* A line longer than one chunk kept losing its last character; now it is
@@ -1235,28 +1240,32 @@ static void get_one_line_keeps_long_line_characters(void)
   TEST_ASSERT_EQUAL_STRING("WARNING", tb_captured_severity);
   get_one_line(fp, buf);
   TEST_ASSERT_EQUAL_STRING("hhhhh", buf);
-  fclose(fp);
+  TEST_ASSERT_EQUAL_INT(0, fclose(fp));
 }
 
 /* B1-27: E-spec values were parsed with tb_parse_int_or_zero() (garbage
  * became 0) and clamped by RANGE() without a word. */
 static void interpret_espec_reports_clamp_and_garbage(void)
 {
+  /* Arrays, not literals: parse_espec() hands interpret_espec() a pointer
+   * into a line buffer, and the analyzer misreads literals here. */
+  char v_str[] = "40", v_add[] = "x7", v_dex[] = "18";
+
   memset(simple_mob_fixture, 0, sizeof(simple_mob_fixture));
   mob_proto = simple_mob_fixture;
 
-  interpret_espec("Str", "40", 0, 3008);
+  interpret_espec("Str", v_str, 0, 3008);
   TEST_ASSERT_EQUAL_INT(25, mob_proto[0].real_abils.str);
   TEST_ASSERT_EQUAL_STRING("mob-espec", tb_captured_operation);
   TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "mob vnum 3008 Str value '40' clamped to [3,25]"));
 
   tb_error_capture_reset();
-  interpret_espec("StrAdd", "x7", 0, 3008);
+  interpret_espec("StrAdd", v_add, 0, 3008);
   TEST_ASSERT_EQUAL_INT(0, mob_proto[0].real_abils.str_add);
   TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "'x7' is not a number"));
 
   tb_error_capture_reset();
-  interpret_espec("Dex", "18", 0, 3008);
+  interpret_espec("Dex", v_dex, 0, 3008);
   TEST_ASSERT_EQUAL_INT(18, mob_proto[0].real_abils.dex);
   TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
   mob_proto = NULL;
@@ -1270,7 +1279,7 @@ static int read_number(const char *text)
 {
   FILE *fp = stream_of(text, strlen(text));
   int n = fread_number(fp);
-  fclose(fp);
+  TEST_ASSERT_EQUAL_INT(0, fclose(fp));
   return n;
 }
 
