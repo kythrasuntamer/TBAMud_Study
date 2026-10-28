@@ -137,6 +137,13 @@ static void hedit_save_internally(struct descriptor_data *d)
 {
   struct help_index_element *new_help_table = NULL;
 
+  if (OLC_ZNUM(d) != NOWHERE && OLC_ZNUM(d) >= top_of_helpt) {
+    TB_ERROR_MSG("olc", "help-index", "hedit_save_internally",
+                 "help index %d is past the %d-entry table; saving as a new "
+                 "entry", (int)OLC_ZNUM(d), top_of_helpt);
+    OLC_ZNUM(d) = NOWHERE;
+  }
+
   if (OLC_ZNUM(d) == NOWHERE) {
     int i;
     CREATE(new_help_table, struct help_index_element, top_of_helpt + 2);
@@ -263,14 +270,15 @@ void hedit_parse(struct descriptor_data *d, char *arg)
       cleanup_olc(d, CLEANUP_ALL);
       break;       
     case 'n': case 'N':
-      OLC_ZNUM(d)++;
-      for (; OLC_ZNUM(d) < top_of_helpt; OLC_ZNUM(d)++)
+      /* Offer the next entry that matches, or adding a new one.  The old
+       * loop gave up at the first entry that did not match and left
+       * OLC_ZNUM at top_of_helpt + 2, which a save then wrote to. */
+      for (OLC_ZNUM(d)++; OLC_ZNUM(d) < top_of_helpt; OLC_ZNUM(d)++)
         if (is_abbrev(OLC_STORAGE(d), help_table[OLC_ZNUM(d)].keywords))
           break;
-        else
-          OLC_ZNUM(d) = top_of_helpt + 1;
 
-      if (OLC_ZNUM(d) > top_of_helpt) {
+      if (OLC_ZNUM(d) >= top_of_helpt) {
+        OLC_ZNUM(d) = NOWHERE;            /* a new entry is appended */
         write_to_output(d, "Do you wish to add the '%s' help file? ",
             OLC_STORAGE(d));
         OLC_MODE(d) = HEDIT_CONFIRM_ADD;
