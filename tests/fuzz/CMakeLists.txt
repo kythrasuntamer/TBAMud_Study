@@ -128,13 +128,13 @@ target_compile_options(fuzz_player PRIVATE -ftrivial-auto-var-init=pattern)
 #   PLAYER-7 regression-alias-dup-count0: a pfile with several "Alis:" tags,
 #     one of which ("Alis:Gold 3") parses to count 0; read_aliases_ascii()
 #     set GET_ALIASES(ch) to NULL for count 0 without freeing the aliases an
-#     earlier block had loaded (leak, players.c). Fixed on audit/p2-alias-leak:
+#     earlier block had loaded (leak, players.c). Fixed by a866d80c:
 #     a duplicate Alis: tag is reported (pfile-alias-dup) and the later block
 #     replaces the earlier list, which is freed.
 #   PLAYER-8 regression-house-loc-intmin: a house-file object record with
 #     "Loc : -2147483648" reached House_place_obj()'s "j > -locate", and
 #     -INT_MIN overflows (UBSan, house.c:164; handle_obj() in objsave.c had
-#     the same loop). Fixed by the p2-gate-fixes branch:
+#     the same loop). Fixed by 3eff6033:
 #     objsave_parse_objects_from() rejects a Loc nested deeper than
 #     OBJSAVE_LOC_MAX_DEPTH (objsave/rent-loc-range) and both loaders guard
 #     it again (house/house-loc-range, objsave/rent-loc-range).
