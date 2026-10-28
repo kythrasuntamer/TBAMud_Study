@@ -54,6 +54,58 @@ void get_char_colors(struct char_data *ch)
   yel = CCYEL(ch, C_NRM);
 }
 
+/* Release the descriptor's working trigger list (OLC_SCRIPT).
+ *
+ * Ownership rule (F3-08): dg_olc_script_copy gives the descriptor a private
+ * copy of the edited entity's trigger list.  The descriptor owns it until a
+ * *_save_internally hands it to the live prototype, which then sets
+ * OLC_SCRIPT(d) to NULL.  Every other exit (quit without changes, link loss
+ * through close_socket, editor errors) reaches here still owning it.
+ *
+ * The 'n' (abandon) paths in redit/medit re-attach the list to the scratch
+ * entity's proto_script; detach it there so it is freed exactly once.  A
+ * list that is also a live prototype's proto_script means a save path forgot
+ * to clear OLC_SCRIPT: report it and do not free what the world still uses. */
+static void olc_release_script(struct descriptor_data *d)
+{
+  struct trig_proto_list *script = OLC_SCRIPT(d), *next;
+  struct trig_proto_list *live = NULL;
+  room_rnum rr;
+  obj_rnum ro;
+  mob_rnum rm;
+
+  if (script == NULL)
+    return;
+  OLC_SCRIPT(d) = NULL;
+
+  if (OLC_ROOM(d) && (rr = real_room(OLC_NUM(d))) != NOWHERE)
+    live = world[rr].proto_script;
+  else if (OLC_OBJ(d) && (ro = real_object(OLC_NUM(d))) != NOTHING)
+    live = obj_proto[ro].proto_script;
+  else if (OLC_MOB(d) && (rm = real_mobile(OLC_NUM(d))) != NOBODY)
+    live = mob_proto[rm].proto_script;
+
+  if (live == script) {
+    TB_ERROR_MSG("olc", "script-owner", "trig_proto_list",
+                 "OLC_SCRIPT still set after save for vnum %d (state %d) of "
+                 DIAG_CHAR_FMT "; left with the prototype",
+                 (int)OLC_NUM(d), STATE(d), DIAG_CHAR(d->character));
+    return;
+  }
+
+  if (OLC_ROOM(d) && OLC_ROOM(d)->proto_script == script)
+    OLC_ROOM(d)->proto_script = NULL;
+  if (OLC_OBJ(d) && OLC_OBJ(d)->proto_script == script)
+    OLC_OBJ(d)->proto_script = NULL;
+  if (OLC_MOB(d) && OLC_MOB(d)->proto_script == script)
+    OLC_MOB(d)->proto_script = NULL;
+
+  for (; script; script = next) {
+    next = script->next;
+    free(script);
+  }
+}
+
 /* This procedure frees up the strings and/or the structures attatched to a
  * descriptor, sets all flags back to how they should be. */
 void cleanup_olc(struct descriptor_data *d, byte cleanup_type)
@@ -61,6 +113,9 @@ void cleanup_olc(struct descriptor_data *d, byte cleanup_type)
   /* Clean up WHAT? */
   if (d->olc == NULL)
     return;
+
+  /* Before the scratch entities: the script may be attached to one. */
+  olc_release_script(d);
 
   /* F3-07: the cedit scratch configuration is a deep copy (cedit_setup and
    * cedit_save_internally str_udup/strdup every string), so it is always
@@ -203,11 +258,6 @@ void cleanup_olc(struct descriptor_data *d, byte cleanup_type)
      free(OLC_PREFS(d));
      OLC_PREFS(d) = NULL;
    }
-
-   /* OLC_SCRIPT is the session's private trigger list (dg_olc_script_copy).
-    * A save hands it to the prototype and sets OLC_SCRIPT to NULL; any list
-    * still here was never handed off (quit, 'n', failed save, lost link). */
-   olc_free_script_copy(d);
 
   /* Restore descriptor playing status. */
   if (d->character) {

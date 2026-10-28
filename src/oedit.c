@@ -600,7 +600,7 @@ static int oedit_save_checked(struct descriptor_data *d)
   /* this will handle new instances of the object. The prototype now owns
    * the list; clear the session's handle so cleanup_olc() does not free it. */
   obj_proto[robj_num].proto_script = OLC_SCRIPT(d);
-  OLC_SCRIPT(d) = NULL;
+  OLC_SCRIPT(d) = NULL; /* now owned by the prototype; see cleanup_olc */
 
   /* this takes care of the objects currently in-game */
   for (obj = object_list; obj; obj = obj->next) {

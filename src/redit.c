@@ -335,7 +335,7 @@ static int redit_save_checked(struct descriptor_data *d)
   /* The room now owns the list; clear the session's handle so
    * cleanup_olc() does not free it. */
   world[room_num].proto_script = OLC_SCRIPT(d);
-  OLC_SCRIPT(d) = NULL;
+  OLC_SCRIPT(d) = NULL; /* now owned by the room; see cleanup_olc */
   assign_triggers(&world[room_num], WLD_TRIGGER);
   /* end trigger update */
 

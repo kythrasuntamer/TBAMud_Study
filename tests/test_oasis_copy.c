@@ -42,6 +42,8 @@
  * --------------------------------------------------------------------- */
 struct zone_data *zone_table        = NULL;
 zone_rnum         top_of_zone_table = 0;
+struct obj_data  *obj_proto         = NULL;
+struct char_data *mob_proto         = NULL;
 
 /* ---------------------------------------------------------------------
  * Output capture.
@@ -510,9 +512,74 @@ void test_cleanup_all_releases_config_copy_on_link_loss(void)
   TEST_ASSERT_NULL(builder_desc.olc);
 }
 
+/* ---------------------------------------------------------------------
+ * F3-08: OLC_SCRIPT (the editor's private trigger list) was freed only on
+ * the explicit 'n' paths; quitting without changes or losing link leaked it.
+ * --------------------------------------------------------------------- */
+static struct trig_proto_list *make_script(int n)
+{
+  struct trig_proto_list *head = NULL, *node;
+  while (n-- > 0) {
+    CREATE(node, struct trig_proto_list, 1);
+    node->vnum = 3000 + n;
+    node->next = head;
+    head = node;
+  }
+  return head;
+}
+
+static void attach_room_editor(room_vnum vnum)
+{
+  CREATE(builder_desc.olc, struct oasis_olc_data, 1);
+  CREATE(OLC_ROOM(&builder_desc), struct room_data, 1);
+  OLC_ROOM(&builder_desc)->name = strdup("scratch");
+  OLC_ROOM(&builder_desc)->description = strdup("scratch\r\n");
+  OLC_NUM(&builder_desc) = vnum;
+  OLC_ZNUM(&builder_desc) = 0;
+  OLC_SCRIPT(&builder_desc) = make_script(2);
+  STATE(&builder_desc) = CON_REDIT;
+}
+
+void test_cleanup_frees_unsaved_script_on_link_loss(void)
+{
+  attach_room_editor(3001);
+
+  cleanup_olc(&builder_desc, CLEANUP_ALL);
+
+  TEST_ASSERT_NULL(builder_desc.olc);
+  TEST_ASSERT_FALSE(log_has("op=script-owner"));
+}
+
+void test_cleanup_frees_script_reattached_to_scratch_once(void)
+{
+  attach_room_editor(3001);
+  /* redit/medit 'n' path: hand the list back to the scratch entity. */
+  OLC_ROOM(&builder_desc)->proto_script = OLC_SCRIPT(&builder_desc);
+
+  cleanup_olc(&builder_desc, CLEANUP_ALL);   /* ASan: no double free */
+
+  TEST_ASSERT_NULL(builder_desc.olc);
+}
+
+void test_cleanup_never_frees_script_owned_by_live_room(void)
+{
+  attach_room_editor(3001);
+  /* A save path that forgot to clear OLC_SCRIPT after the hand-off. */
+  world[0].proto_script = OLC_SCRIPT(&builder_desc);
+
+  cleanup_olc(&builder_desc, CLEANUP_ALL);
+
+  TEST_ASSERT_TRUE(log_has("op=script-owner"));
+  TEST_ASSERT_NOT_NULL(world[0].proto_script);
+  TEST_ASSERT_EQUAL_INT(3000, world[0].proto_script->vnum); /* still valid */
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(test_cleanup_frees_unsaved_script_on_link_loss);
+  RUN_TEST(test_cleanup_frees_script_reattached_to_scratch_once);
+  RUN_TEST(test_cleanup_never_frees_script_owned_by_live_room);
   RUN_TEST(test_cleanup_config_releases_config_copy);
   RUN_TEST(test_cleanup_all_releases_config_copy_on_link_loss);
   RUN_TEST(test_rcopy_saves_template_as_new_room);

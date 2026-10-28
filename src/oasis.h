@@ -108,7 +108,11 @@ struct oasis_olc_data {
   int script_mode;
   int trigger_position;
   int item_type;
-  struct trig_proto_list *script; /* for assigning triggers in [r|o|m]edit*/
+  struct trig_proto_list *script; /* for assigning triggers in [r|o|m]edit.
+                                   * Owned by the descriptor until a
+                                   * *_save_internally hands it to the
+                                   * prototype and NULLs it; cleanup_olc
+                                   * frees whatever is still here. */
   struct help_index_element*help;   /* Hedit uses this */
 };
 

@@ -323,7 +323,7 @@ static int medit_save_checked(struct descriptor_data *d)
   /* The prototype now owns the list; clear the session's handle so
    * cleanup_olc() does not free it. */
   mob_proto[new_rnum].proto_script = OLC_SCRIPT(d);
-  OLC_SCRIPT(d) = NULL;
+  OLC_SCRIPT(d) = NULL; /* now owned by the prototype; see cleanup_olc */
 
   /* this takes care of the mobs currently in-game */
   for (mob = character_list; mob; mob = mob->next) {
