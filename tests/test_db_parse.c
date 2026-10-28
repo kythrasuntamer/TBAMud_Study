@@ -1699,6 +1699,30 @@ static void discrete_load_marks_descending_vnum_for_sorting(void)
   room_fixture_free();
 }
 
+/* An empty ("~") mob alias list stayed NULL; isname() tolerates that, but
+ * medit, DG name lookups and the pet shop print it with %s. */
+static void parse_mobile_replaces_empty_alias_list(void)
+{
+  static const char text[] =
+    "~\nthe guard~\nA guard stands here.\n~\nHe looks tough.\n~\n"
+    "0 0 0 0 0 0 0 0 0 S\n1 20 10 1d1+1 1d1+0\n0 0\n8 8 1\n$\n";
+  struct char_data *mob;
+  FILE *fp = stream_of(text, sizeof(text) - 1);
+
+  mob_proto = mob_proto_fixture;
+  mob_index = mob_index_fixture;
+  parse_mobile(fp, 3011);
+  TEST_ASSERT_EQUAL_INT(0, fclose(fp));
+  mob = &mob_proto[top_of_mobt];
+  TEST_ASSERT_EQUAL_STRING("undefined", mob->player.name);
+  TEST_ASSERT_EQUAL_STRING("the guard", mob->player.short_descr);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("world-string-missing", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail,
+                              "mob vnum 3011: empty alias list"));
+  proto_fixture_free();
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -1763,5 +1787,6 @@ int main(void)
   RUN_TEST(sort_boot_records_reports_duplicate_vnum);
   RUN_TEST(sort_boot_records_renumbers_prototypes);
   RUN_TEST(discrete_load_marks_descending_vnum_for_sorting);
+  RUN_TEST(parse_mobile_replaces_empty_alias_list);
   return UNITY_END();
 }

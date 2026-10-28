@@ -1837,9 +1837,10 @@ static int room_sector_or_inside(int vnum, int sector)
 
 /** Return str, or a new WORLD_STRING_UNDEFINED with a diagnostic when it is
  * NULL. fread_string() returns NULL for an empty ("~") string, but room
- * names and descriptions, mob and object short descriptions, object long
- * descriptions and extra descriptions are printed and dereferenced without
- * a NULL check ('look' crashed on an object with no long description). OLC
+ * names and descriptions, mob alias lists, mob and object short
+ * descriptions, object long descriptions and extra descriptions are printed
+ * and dereferenced without a NULL check ('look' crashed on an object with
+ * no long description). OLC
  * never saves one empty, so a NULL comes from a hand-edited world file;
  * record and vnum name it in the report. */
 static char *world_string(char *str, const char *record, int vnum,
@@ -2481,7 +2482,10 @@ void parse_mobile(FILE *mob_f, int nr)
   tb_snprintf(buf2, sizeof(buf2), "mob vnum %d", nr);	/* sprintf: OK (for 'buf2 >= 19') */
 
   /* String data */
-  mob_proto[i].player.name = fread_string(mob_f, buf2);
+  /* The alias list is printed with %s by medit, DG name lookups and the pet
+   * shop, not only matched by isname(). */
+  mob_proto[i].player.name =
+    world_string(fread_string(mob_f, buf2), "mob", nr, "alias list");
   /* The short description is the mob's name in act() and the room list. */
   tmpptr = mob_proto[i].player.short_descr =
     world_string(fread_string(mob_f, buf2), "mob", nr, "short description");
