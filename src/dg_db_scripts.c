@@ -24,6 +24,22 @@
 #include "constants.h"
 #include "interpreter.h" /* For half_chop */
 
+/**
+ * @file dg_db_scripts.c
+ * Boot-time loading of DG triggers (.trg files), the 'T' trigger lines of
+ * mob/obj/room records, and instantiation of trigger prototypes.
+ *
+ * Input: .trg and world files are written by trigedit/OLC but are also
+ * hand-edited, so every record is parsed defensively and reported with the
+ * trigger vnum and the owner's vnum.
+ *
+ * Ownership: trig_index[r]->proto owns the trigger's name, arglist and
+ * cmdlist.  An instance made by read_trigger() owns copies of name and
+ * arglist but SHARES the prototype's cmdlist and must never free it.
+ * A prototype's proto_script lists trigger vnums (not rnums), including
+ * vnums that do not exist yet, so OLC saves write them back unchanged.
+ */
+
 /* local functions */
 static void trig_data_init(trig_data *this_data);
 
@@ -45,6 +61,24 @@ static int parse_int_token(const char *text, int *out)
   return 1;
 }
 
+/**
+ * Read one trigger record (after its "#<vnum>" line) and append it to
+ * trig_index[] at top_of_trigt.
+ *
+ * Record grammar:
+ *   <name>~
+ *   <attach type> <trigger flags> [<numeric arg>]
+ *   <arglist>~
+ *   <command lines>~
+ * A malformed header line is fatal at boot (exit(1), logged with the
+ * vnum).  An empty command body is reported (trigger-parse-empty) and
+ * loaded as a single "* No script" line, because every instance shares the
+ * cmdlist and needs at least one element.
+ *
+ * @param trig_f Open .trg file positioned after the vnum line.
+ * @param nr     Trigger VNUM (stored in the index; the rnum is
+ *               top_of_trigt).
+ */
 void parse_trigger(FILE *trig_f, int nr)
 {
     int k, attach_type, narg = 0;
@@ -108,7 +142,16 @@ void parse_trigger(FILE *trig_f, int nr)
     trig_index[top_of_trigt++] = t_index;
 }
 
-/* Create a new trigger from a prototype. nr is the real number of the trigger. */
+/**
+ * Create a new trigger instance from prototype rnum nr.
+ *
+ * The instance gets a fresh serial (0 is reserved for unserialized data),
+ * its own copies of name and arglist, and the prototype's shared cmdlist.
+ *
+ * @param nr Trigger RNUM (from real_trigger()); not a vnum.
+ * @return The new trigger, or NULL when nr is not a loaded trigger.
+ *         add_trigger() does not accept NULL, so callers must check.
+ */
 trig_data *read_trigger(int nr)
 {
     index_data *t_index;
@@ -194,7 +237,20 @@ static void report_missing_trigger(int vnum, const char *owner_type, int owner_v
          vnum, owner_type, owner_vnum);
 }
 
-/* for mobs and rooms: */
+/**
+ * Read a "T <vnum>" line of a mob or room record at boot.
+ *
+ * The vnum is always appended to the owner's proto_script (even when no
+ * such trigger exists, reported as trigger-attach-missing) so a later OLC
+ * save keeps it.  A room gets an instance attached immediately; mobs get
+ * theirs when they are loaded (assign_triggers()).
+ *
+ * @param fp    World file positioned at the 'T' line.
+ * @param proto struct char_data * (MOB_TRIGGER, a mob prototype) or
+ *              struct room_data * (WLD_TRIGGER).  Objects use
+ *              dg_obj_trigger().
+ * @param type  MOB_TRIGGER or WLD_TRIGGER; anything else is reported.
+ */
 void dg_read_trigger(FILE *fp, void *proto, int type)
 {
   char line[READ_SIZE];
@@ -244,6 +300,13 @@ void dg_read_trigger(FILE *fp, void *proto, int type)
   }
 }
 
+/**
+ * Record the trigger vnum of an object prototype's "T <vnum>" line in its
+ * proto_script (kept, and reported, when the trigger does not exist).
+ *
+ * @param line The 'T' line already read by the object parser.
+ * @param obj  Object prototype being loaded.
+ */
 void dg_obj_trigger(char *line, struct obj_data *obj)
 {
   char junk[8], vnum_text[32];
