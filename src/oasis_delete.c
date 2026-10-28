@@ -6,6 +6,15 @@
 * 2002 Kip Potter [Mythran].                                              *
 **************************************************************************/
 
+/**
+ * @file oasis_delete.c
+ * free_strings(): release the heap strings of an OLC scratch room or
+ * configuration.  The server's only caller is free_config() in oasis.c
+ * (cedit cleanup through cleanup_olc); rooms are released with redit's
+ * free_room(), which uses free_room_strings() instead.  The room cases are
+ * kept for API compatibility and for tests.
+ */
+
 #include "conf.h"
 #include "sysdep.h"
 #include "structs.h"
@@ -18,9 +27,22 @@
 #include "oasis.h"
 #include "improved-edit.h"
 
-/* Free's strings from any object, room, mobiles, or player. TRUE if successful,
- * otherwise, it returns FALSE. Type - The OLC type constant relating to the 
- * data type of data. */
+/** Free the strings of a scratch room or configuration.
+ *
+ * @param data A struct room_data (OASIS_WLD, OASIS_EXI) or struct
+ *             config_data (OASIS_CFG), as selected by type.
+ * @param type OASIS_WLD frees name, description, extra descriptions and
+ *             then the exits (as OASIS_EXI).  OASIS_EXI frees every exit and
+ *             its strings and NULLs the dir_option slots.  OASIS_CFG frees
+ *             the play.* messages and the operation.* strings except
+ *             CONFFILE.  OASIS_MOB and OASIS_OBJ are not implemented and
+ *             return FALSE without freeing anything.
+ * @return TRUE if the strings were freed, FALSE otherwise.
+ *
+ * Only the exits are reset to NULL.  For OASIS_WLD and OASIS_CFG the freed
+ * string fields are left dangling, so the caller must discard (free) the
+ * struct immediately, as free_room and free_config do; reusing it would
+ * free those strings twice. */
 int free_strings(void *data, int type)
 {
   struct room_data *room;
