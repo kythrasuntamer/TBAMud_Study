@@ -265,6 +265,49 @@ static void test_aedit_refuses_overlong_command_and_sort_names(void)
   TEST_ASSERT_EQUAL_STRING(NAME_30, OLC_ACTION(&builder_desc)->sort_as);
 }
 
+/* G2-13: a social saved without char_no_arg (printed when it is used with
+ * no argument) or, when it takes a target, without others_found (printed
+ * by gemote) cannot run that way.  The save still goes ahead, but the
+ * builder and the log are told. */
+static void test_aedit_save_reports_missing_required_messages(void)
+{
+  free(soc_mess_list[0].others_found);
+  soc_mess_list[0].others_found = NULL;
+  aedit_cmd(" smile");
+  type("y");
+  type("a");
+  type("");                               /* clears char_no_arg */
+  type("q");
+  TEST_ASSERT_EQUAL_INT(AEDIT_CONFIRM_SAVESTRING, OLC_MODE(&builder_desc));
+  tb_error_capture_reset();
+  type("y");
+
+  TEST_ASSERT_NULL(builder_desc.olc);
+  TEST_ASSERT_NULL(soc_mess_list[0].char_no_arg);       /* saved anyway */
+  TEST_ASSERT_EQUAL_INT(2, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("social-field-missing", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail,
+                              "social 'smile' saved without its others_found message"));
+  TEST_ASSERT_NOT_NULL(strstr(out_buf, "a) Char [NO ARG] is empty"));
+  TEST_ASSERT_NOT_NULL(strstr(out_buf, "g) Others [VICT] is empty"));
+  TEST_ASSERT_NOT_NULL(strstr(out_buf, "Action saved to disk"));
+}
+
+/* G2-13: a complete social saves without a warning. */
+static void test_aedit_save_of_complete_social_is_quiet(void)
+{
+  aedit_cmd(" smile");
+  type("y");
+  type("5");                              /* toggle hidden: a change */
+  type("q");
+  tb_error_capture_reset();
+  type("y");
+
+  TEST_ASSERT_NULL(builder_desc.olc);
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  TEST_ASSERT_NULL(strstr(out_buf, "is empty"));
+}
+
 int main(void)
 {
   char dir[] = "/tmp/tb_test_aedit.XXXXXX";
@@ -279,6 +322,8 @@ int main(void)
   UNITY_BEGIN();
   RUN_TEST(test_aedit_refuses_overlong_new_social_name);
   RUN_TEST(test_aedit_refuses_overlong_command_and_sort_names);
+  RUN_TEST(test_aedit_save_reports_missing_required_messages);
+  RUN_TEST(test_aedit_save_of_complete_social_is_quiet);
   failures = UNITY_END();
 
   (void)remove("misc/socials.new");

@@ -236,6 +236,23 @@ static void aedit_setup_existing(struct descriptor_data *d, int real_num) {
    aedit_disp_menu(d);
 }
 
+/* Report a message the saved social cannot run without (G2-13).  Any
+ * message may be empty ('#' in the socials file, or cleared here), but
+ * do_action prints char_no_arg when the social is used without an argument
+ * and do_gmote prints others_found for a targeted social; act.social.c
+ * refuses such a use at run time (social-field-missing).  The save goes
+ * ahead, since the builder may fill the message in later, but says so. */
+static void aedit_report_missing_message(struct descriptor_data *d,
+                                         const char *field, const char *menu)
+{
+  TB_WARN_MSG("social", "social-field-missing", "soc_mess_list",
+              "social '%s' saved without its %s message; editor " DIAG_CHAR_FMT,
+              OLC_ACTION(d)->command ? OLC_ACTION(d)->command : "(null)",
+              field, DIAG_CHAR(d->character));
+  write_to_output(d, "Warning: %s is empty; the social cannot be used that way "
+                     "until it is set.\r\n", menu);
+}
+
 /* Stores the edit in soc_mess_list (the list takes OLC_ACTION's strings, so
  * the caller uses CLEANUP_STRUCTS) and writes the socials file.  Returns the
  * result of aedit_save_to_disk: FALSE means the edit is live in memory but
@@ -243,6 +260,11 @@ static void aedit_setup_existing(struct descriptor_data *d, int real_num) {
 static int aedit_save_internally(struct descriptor_data *d) {
    struct social_messg *new_soc_mess_list = NULL;
    int i;
+
+   if (!OLC_ACTION(d)->char_no_arg)
+     aedit_report_missing_message(d, "char_no_arg", "a) Char [NO ARG]");
+   if (OLC_ACTION(d)->char_found && !OLC_ACTION(d)->others_found)
+     aedit_report_missing_message(d, "others_found", "g) Others [VICT]");
 
    /* add a new social into the list */
    if (!VALID_SOCIAL_RNUM(OLC_ZNUM(d)))  {
