@@ -1763,7 +1763,23 @@ void var_subst(void *go, struct script_data *sc, trig_data *trig,
         } /* for (field.. */
       } /* if *p == '.' */
 
-      *(p++) = '\0';
+      if (*p)
+        *(p++) = '\0';
+      else {
+        /* The reference ran to the end of the line: no closing '%', or an
+         * unclosed '('.  Substitute what was read, but never step past the
+         * terminator. */
+        int vnum = (trig && trig_index) ? GET_TRIG_VNUM(trig) : NOTHING;
+        int column = (int)(var - tmp);
+
+        TB_ERROR_MSG("dg", "var-unterminated", "var_subst",
+                     "trigger %d: variable reference at column %d %s",
+                     vnum, column, paren_count > 0 ? "has an unclosed '('"
+                                                   : "has no closing '%'");
+        script_log("Trigger VNum %d: variable reference at column %d %s.",
+                   vnum, column, paren_count > 0 ? "has an unclosed '('"
+                                                 : "has no closing '%'");
+      }
       *subfield_p = '\0';
 
       if (*subfield) {

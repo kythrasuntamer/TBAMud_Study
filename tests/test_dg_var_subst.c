@@ -87,11 +87,31 @@ void free_varlist(struct trig_var_data *vd)
   }
 }
 
+/* utils.c owns tb_error_log_at(); the link wraps it (--wrap) to count the
+ * structured diagnostics the code under test emits. */
+static int captured_errors;
+static char captured_operation[64];
+/* NOLINTNEXTLINE(cert-dcl37-c,cert-dcl51-cpp): --wrap requires this name. */
+void __wrap_tb_error_log_at(const char *severity, const char *subsystem,
+                            const char *operation, const char *resource,
+                            int errnum, const char *source_file,
+                            int source_line, const char *source_func,
+                            const char *detail_fmt, ...)
+{
+  (void)severity; (void)subsystem; (void)resource; (void)errnum;
+  (void)source_file; (void)source_line; (void)source_func; (void)detail_fmt;
+  captured_errors++;
+  strlcpy(captured_operation, operation ? operation : "",
+          sizeof(captured_operation));
+}
+
 static trig_data trig;
 
 void setUp(void)
 {
   memset(&trig, 0, sizeof(trig));
+  captured_errors = 0;
+  *captured_operation = '\0';
 }
 void tearDown(void)
 {
@@ -175,6 +195,50 @@ static void chained_field_value_is_not_evaluated(void)
   TEST_ASSERT_EQUAL_STRING("3", var("len"));
 }
 
+/* A reference with no closing '%' used to step past the line's terminator
+ * and keep substituting stale stack bytes; with a full-length line that read
+ * past the end of var_subst()'s buffer. */
+static void substitute_full_line(const char *tail, char *out)
+{
+  char line[MAX_INPUT_LENGTH];
+  size_t fill = sizeof(line) - 1 - strlen(tail);
+
+  memset(line, 'a', fill);
+  strlcpy(line + fill, tail, sizeof(line) - fill);
+  TEST_ASSERT_EQUAL_size_t(MAX_INPUT_LENGTH - 1, strlen(line));
+  var_subst(NULL, NULL, &trig, MOB_TRIGGER, line, out);
+}
+
+static void unterminated_reference_stops_at_line_end(void)
+{
+  char out[MAX_INPUT_LENGTH];
+
+  add_var(&GET_TRIG_VARS(&trig), "x", "X", 0);
+  substitute_full_line("%x", out);
+  TEST_ASSERT_EQUAL_CHAR('X', out[strlen(out) - 1]);
+  TEST_ASSERT_EQUAL_INT(1, captured_errors);
+  TEST_ASSERT_EQUAL_STRING("var-unterminated", captured_operation);
+}
+
+static void unclosed_paren_stops_at_line_end(void)
+{
+  char out[MAX_INPUT_LENGTH];
+
+  substitute_full_line("%x.y(z", out);
+  TEST_ASSERT_EQUAL_INT(1, captured_errors);
+  TEST_ASSERT_EQUAL_STRING("var-unterminated", captured_operation);
+}
+
+static void closed_reference_reports_nothing(void)
+{
+  char line[] = "say %x% done", out[MAX_INPUT_LENGTH];
+
+  add_var(&GET_TRIG_VARS(&trig), "x", "X", 0);
+  var_subst(NULL, NULL, &trig, MOB_TRIGGER, line, out);
+  TEST_ASSERT_EQUAL_STRING("say X done", out);
+  TEST_ASSERT_EQUAL_INT(0, captured_errors);
+}
+
 static void restore_round_trips_neutralize(void)
 {
   char text[] = "50% off, 100%% sure";
@@ -193,5 +257,8 @@ int main(void)
   RUN_TEST(script_built_double_evaluation_still_works);
   RUN_TEST(chained_field_value_is_not_evaluated);
   RUN_TEST(restore_round_trips_neutralize);
+  RUN_TEST(unterminated_reference_stops_at_line_end);
+  RUN_TEST(unclosed_paren_stops_at_line_end);
+  RUN_TEST(closed_reference_reports_nothing);
   return UNITY_END();
 }
