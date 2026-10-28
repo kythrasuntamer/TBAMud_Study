@@ -913,7 +913,10 @@ void zedit_parse(struct descriptor_data *d, char *arg)
     /* Parse the input for which line to edit, and goto next quiz. Abort edit,
        and return to main menu idea from Mark Garringer zizazat@hotmail.com */
     if (toupper(*arg) == 'A') {
-      if (OLC_CMD(d).command == 'N') {
+      /* OLC_VAL is left over from the last command edited and can be past
+       * the end of the list once commands have been deleted. */
+      if (OLC_VAL(d) >= 0 && OLC_VAL(d) < count_commands(OLC_ZONE(d)->cmd) &&
+          OLC_CMD(d).command == 'N') {
         OLC_CMD(d).command = '*';
       }
       zedit_disp_menu(d);
