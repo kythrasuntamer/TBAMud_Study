@@ -646,11 +646,24 @@ SPECIAL(pet_shops)
   room_rnum pet_room;
   struct char_data *pet;
 
-  /* Gross. */
-  pet_room = IN_ROOM(ch) + 1;
+  if (!CMD_IS("list") && !CMD_IS("buy"))
+    return (FALSE);	/* All commands except list and buy */
 
-  if (pet_room > top_of_world)
-    return (FALSE);
+  /* The pets wait in the room whose VNUM follows the shop's, in the same
+   * zone. This used to be rnum + 1, which names an unrelated room once
+   * redit adds or deletes rooms, letting players buy whatever NPC stood
+   * there. */
+  pet_room = real_room(GET_ROOM_VNUM(IN_ROOM(ch)) + 1);
+  if (!VALID_ROOM_RNUM(pet_room) ||
+      world[pet_room].zone != world[IN_ROOM(ch)].zone) {
+    TB_ERROR_MSG("spec", "pet-room-missing", "world",
+                 "pet shop room vnum %d: storage room vnum %d %s",
+                 (int) GET_ROOM_VNUM(IN_ROOM(ch)),
+                 (int) GET_ROOM_VNUM(IN_ROOM(ch)) + 1,
+                 VALID_ROOM_RNUM(pet_room) ? "is in another zone" : "does not exist");
+    send_to_char(ch, "The pet shop has no pets to offer right now.\r\n");
+    return (TRUE);
+  }
 
   if (CMD_IS("list")) {
     send_to_char(ch, "Available pets are:\r\n");

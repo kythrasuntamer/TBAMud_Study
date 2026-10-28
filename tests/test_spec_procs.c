@@ -107,9 +107,62 @@ static void test_list_skills_truncation_is_marked(void)
   TEST_ASSERT_EQUAL_STRING("skill-list-truncated", tb_captured_operation);
 }
 
+/* 'buy' path: not exercised (the test only lists). */
+#define UNREACHED() TEST_FAIL_MESSAGE(__func__)
+char *two_arguments(char *argument, char *first_arg, char *second_arg)
+{ (void)first_arg; (void)second_arg; UNREACHED(); return argument; }
+struct char_data *get_char_room(char *name, int *num, room_rnum room)
+{ (void)name; (void)num; (void)room; UNREACHED(); return NULL; }
+int decrease_gold(struct char_data *ch, int amt) { (void)ch; (void)amt; UNREACHED(); return 0; }
+struct char_data *read_mobile(mob_vnum nr, int type) { (void)nr; (void)type; UNREACHED(); return NULL; }
+void add_follower(struct char_data *ch, struct char_data *leader) { (void)ch; (void)leader; UNREACHED(); }
+
+room_rnum real_room(room_vnum vnum)
+{
+  room_rnum r;
+  for (r = 0; world && r <= top_of_world; r++)
+    if (world[r].number == vnum)
+      return r;
+  return NOWHERE;
+}
+
+/* H3-21: pet shop vnum 3031 whose storage room 3032 was deleted, so rnum + 1
+ * is room 3033 with an unrelated NPC in it. 'list' must not offer it. */
+static void test_pet_shop_without_storage_room_reports(void)
+{
+  static struct room_data rooms[2];
+  static struct command_info cmds[] = { { "list" }, { "buy" }, { "\n" } };
+  static struct index_data mobidx[1];
+  struct char_data shopper, npc;
+  char arg[MAX_INPUT_LENGTH] = "";
+
+  memset(rooms, 0, sizeof(rooms));
+  memset(&npc, 0, sizeof(npc));
+  rooms[0].number = 3031;
+  rooms[1].number = 3033;
+  world = rooms;
+  top_of_world = 1;
+  complete_cmd_info = cmds;
+  mob_index = mobidx;
+  top_of_mobt = 0;
+  SET_BIT_AR(MOB_FLAGS(&npc), MOB_ISNPC);
+  npc.player.short_descr = (char *)"the cityguard";
+  rooms[1].people = &npc;
+  shopper = student;
+  shopper.in_room = 0;
+
+  TEST_ASSERT_TRUE(pet_shops(&shopper, NULL, 0, arg));
+  TEST_ASSERT_NULL(strstr(sent, "cityguard"));
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("pet-room-missing", tb_captured_operation);
+  world = NULL;
+  mob_index = NULL;
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(test_pet_shop_without_storage_room_reports);
   RUN_TEST(test_list_skills_truncation_is_marked);
   RUN_TEST(test_list_skills_rejects_out_of_range_class);
   RUN_TEST(test_list_skills_valid_class);
