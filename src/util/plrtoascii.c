@@ -151,14 +151,44 @@ struct char_file_u_plrtoascii {
 /* ====================================================================== */
 
 int sprintascii(char *out, bitvector_t bits);
-int plr_filename(char *orig_name, char *filename);
+int plr_filename(const char *name_field, size_t name_field_size,
+                 char *filename, size_t filename_size);
 
-void convert(char *filename)
+/* Length of a fixed-width char field read raw from the binary playerfile.
+ * The old server NUL-terminated these fields, but a corrupt or crafted file
+ * need not, so never run strlen() past the field: returns field_size when
+ * there is no NUL inside it. */
+static size_t plr_field_len(const char *field, size_t field_size)
+{
+  const char *nul = memchr(field, '\0', field_size);
+
+  return nul ? (size_t)(nul - field) : field_size;
+}
+
+/* Warn about a fixed-width text field that fills its slot with no NUL.  The
+ * caller prints it bounded to the field (%.*s), so the converted pfile keeps
+ * the field's bytes but the operator learns the record was not well formed. */
+static void plr_check_terminated(const char *filename, long record,
+                                 long idnum, const char *tag,
+                                 const char *field, size_t field_size)
+{
+  if (memchr(field, '\0', field_size) == NULL)
+    TB_REPORT_DOMAIN_ERRORF(TB_SEV_WARN, TB_ERR_PERSISTENCE,
+                            "plr-field-unterminated",
+                            "file=%s record=%ld idnum=%ld field=%s size=%zu: "
+                            "written bounded to the field", filename, record,
+                            idnum, tag, field_size);
+}
+
+/* Converts every record of the binary playerfile.  Returns the number of
+ * records that were reported and skipped (0 when all converted). */
+int convert(char *filename)
 {
   FILE *fl, *outfile, *index_file;
   struct char_file_u_plrtoascii player;
-  char index_name[40], outname[40], bits[127];
-  int i;
+  char index_name[40], outname[128], bits[127];
+  int i, skipped = 0;
+  long record = 0;
   struct char_special_data_saved_plrtoascii *csds;
   struct player_special_data_saved_plrtoascii *psds;
   struct char_ability_data_plrtoascii *cad;
@@ -202,7 +232,7 @@ void convert(char *filename)
       if (feof(fl)) {
         tb_fclose(fl);
         tb_fclose(index_file);
-        return;
+        return (skipped);
       }
       TB_REPORT_ERRNO("fread", filename);
       tb_fclose(fl);
@@ -210,8 +240,22 @@ void convert(char *filename)
       exit(1);
     }
 
-    if (!plr_filename(player.name, outname))
-      exit(1);
+    record++;
+
+    /* player.name is the raw 21-byte field from the file.  plr_filename()
+     * validates it (terminated, non-empty, letters only) because it becomes
+     * a path: a name such as "../../x" would otherwise write outside
+     * plrfiles/.  The reason is reported there; the record is named here. */
+    if (!plr_filename(player.name, sizeof(player.name), outname, sizeof(outname))) {
+      TB_REPORT_DOMAIN_ERRORF(TB_SEV_ERROR, TB_ERR_PERSISTENCE, "plr-name",
+                              "file=%s record=%ld offset=%lld idnum=%ld: "
+                              "record skipped", filename, record,
+                              (long long)(record - 1) *
+                              (long long)sizeof(player),
+                              player.char_specials_saved.idnum);
+      skipped++;
+      continue;
+    }
     printf("writing: %s\n", outname);
 
     tb_fprintf(index_file, "%ld %s %d 0 %ld\n", 
@@ -224,11 +268,28 @@ void convert(char *filename)
     }
 
 /* char_file_u */
-    tb_fprintf(outfile, "Name: %s\n", player.name);
-    tb_fprintf(outfile, "Pass: %s\n", player.pwd);
-    tb_fprintf(outfile, "Titl: %s\n", player.title);
+    /* Every text field is printed bounded to its slot: the file is raw
+     * structs and an unterminated field would otherwise be read on into the
+     * following fields (or past the record). */
+    plr_check_terminated(filename, record, player.char_specials_saved.idnum,
+                         "Pass", player.pwd, sizeof(player.pwd));
+    plr_check_terminated(filename, record, player.char_specials_saved.idnum,
+                         "Titl", player.title, sizeof(player.title));
+    plr_check_terminated(filename, record, player.char_specials_saved.idnum,
+                         "Desc", player.description, sizeof(player.description));
+    plr_check_terminated(filename, record, player.char_specials_saved.idnum,
+                         "Host", player.host, sizeof(player.host));
+    tb_fprintf(outfile, "Name: %s\n", player.name);	/* validated above */
+    tb_fprintf(outfile, "Pass: %.*s\n",
+               (int)plr_field_len(player.pwd, sizeof(player.pwd)), player.pwd);
+    tb_fprintf(outfile, "Titl: %.*s\n",
+               (int)plr_field_len(player.title, sizeof(player.title)),
+               player.title);
     if (*player.description)
-      tb_fprintf(outfile, "Desc:\n%s~\n", player.description);
+      tb_fprintf(outfile, "Desc:\n%.*s~\n",
+                 (int)plr_field_len(player.description,
+                                    sizeof(player.description)),
+                 player.description);
     if (player.sex != PFDEF_SEX)
       tb_fprintf(outfile, "Sex : %d\n", (int)player.sex); 
     if (player.chclass != PFDEF_CLASS)
@@ -238,7 +299,9 @@ void convert(char *filename)
     tb_fprintf(outfile, "Brth: %d\n", (int)player.birth);
     tb_fprintf(outfile, "Plyd: %d\n", (int)player.played);
     tb_fprintf(outfile, "Last: %d\n", (int)player.last_logon);
-    tb_fprintf(outfile, "Host: %s\n", player.host);
+    tb_fprintf(outfile, "Host: %.*s\n",
+               (int)plr_field_len(player.host, sizeof(player.host)),
+               player.host);
     if (player.height != PFDEF_HEIGHT)
       tb_fprintf(outfile, "Hite: %d\n", (int)player.height);
     if (player.weight != PFDEF_WEIGHT)
@@ -353,11 +416,18 @@ void convert(char *filename)
 
 int main(int argc, char **argv)
 {
-  if (argc != 2)
+  if (argc != 2) {
     printf("Usage: %s playerfile-name\n", argv[0]);
-  else
-    convert(argv[1]);
-
+    return 1;
+  }
+  if (convert(argv[1]) > 0) {
+    /* Each skipped record was reported where it was rejected. */
+    TB_REPORT_DOMAIN_ERRORF(TB_SEV_ERROR, TB_ERR_PERSISTENCE,
+                            "plrfile-incomplete",
+                            "file=%s: one or more records were skipped",
+                            argv[1]);
+    return 1;
+  }
   return 0;
 }
 
@@ -381,21 +451,57 @@ int sprintascii(char *out, bitvector_t bits)
 }
 
 
-int plr_filename(char *orig_name, char *filename)
+/*
+ * Build "plrfiles/<A-E..>/<name>.plr" for one record.
+ *
+ * name_field is the raw fixed-width name slot from the binary file (not a C
+ * string: it may be unterminated or hold any bytes).  The name becomes a path
+ * component, so it must be NUL-terminated inside the slot, non-empty and made
+ * of ASCII letters only, as the server's own name rules require; anything
+ * else ("../x", "a/b", control bytes) is reported as "plr-name" and rejected.
+ * filename_size is the caller's real buffer size; a path that does not fit is
+ * reported as "plr-path-truncated" and rejected.  Returns 1 on success.
+ */
+int plr_filename(const char *name_field, size_t name_field_size,
+                 char *filename, size_t filename_size)
 {
   const char *middle;
-  char name[64], *ptr;
+  char name[MAX_NAME_LENGTH + 1];
+  size_t len, i;
+  int written;
 
-  if (orig_name == NULL || *orig_name == '\0' || filename == NULL) {
-    TB_REPORT_ERROR("plr_filename", "invalid player name or output buffer");
+  if (name_field == NULL || filename == NULL || filename_size == 0) {
+    TB_REPORT_DOMAIN_ERROR(TB_SEV_ERROR, TB_ERR_INVARIANT, "plr-name",
+                           "NULL name field or output buffer");
     return (0);
   }
 
-  strlcpy(name, orig_name, sizeof(name));
-  for (ptr = name; *ptr; ptr++)
-    *ptr = LOWER(*ptr);
+  len = plr_field_len(name_field, name_field_size);
+  if (len == name_field_size || len >= sizeof(name)) {
+    TB_REPORT_DOMAIN_ERRORF(TB_SEV_ERROR, TB_ERR_PERSISTENCE, "plr-name",
+                            "name field of %zu bytes has no terminator",
+                            name_field_size);
+    return (0);
+  }
+  if (len == 0) {
+    TB_REPORT_DOMAIN_ERROR(TB_SEV_ERROR, TB_ERR_PERSISTENCE, "plr-name",
+                           "empty name");
+    return (0);
+  }
+  for (i = 0; i < len; i++) {
+    unsigned char ch = (unsigned char)name_field[i];
 
-  switch (LOWER(*name)) {
+    if (ch > 127 || !isalpha(ch)) {
+      TB_REPORT_DOMAIN_ERRORF(TB_SEV_ERROR, TB_ERR_PERSISTENCE, "plr-name",
+                              "byte %zu of the name is 0x%02x, not a letter",
+                              i, (unsigned int)ch);
+      return (0);
+    }
+    name[i] = (char)tolower(ch);
+  }
+  name[len] = '\0';
+
+  switch (*name) {
   case 'a':  case 'b':  case 'c':  case 'd':  case 'e':
     middle = "A-E";
     break;
@@ -408,14 +514,18 @@ int plr_filename(char *orig_name, char *filename)
   case 'p':  case 'q':  case 'r':  case 's':  case 't':
     middle = "P-T";
     break;
-  case 'u':  case 'v':  case 'w':  case 'x':  case 'y':  case 'z':
+  default:	/* 'u'..'z': the name was checked to be letters only */
     middle = "U-Z";
-    break;
-  default:
-    middle = "ZZZ";
     break;
   }
 
-  tb_snprintf(filename, MAX_STRING_LENGTH, "%s%s"SLASH"%s.%s", LIB_PLRFILES, middle, name, SUF_PLR);
+  written = snprintf(filename, filename_size, "%s%s"SLASH"%s.%s",
+                     LIB_PLRFILES, middle, name, SUF_PLR);
+  if (written < 0 || (size_t)written >= filename_size) {
+    TB_REPORT_DOMAIN_ERRORF(TB_SEV_ERROR, TB_ERR_PERSISTENCE,
+                            "plr-path-truncated", "need=%d have=%zu",
+                            written, filename_size);
+    return (0);
+  }
   return (1);
 }

@@ -114,6 +114,43 @@ def plrtoascii_rejects_partial_record(tmp):
     check("writing:" not in out, "converted despite bad size:\n" + out)
 
 
+def plr_record(size, name):
+    """A zero-filled binary record whose first bytes are the name field."""
+    name = name.encode() if isinstance(name, str) else name
+    return name + b"\0" * (size - len(name))
+
+
+def plrtoascii(tmp, *records):
+    for d in ("A-E", "F-J", "K-O", "P-T", "U-Z", "ZZZ"):
+        os.makedirs(os.path.join(tmp, "plrfiles", d), exist_ok=True)
+    write(os.path.join(tmp, "players"), b"".join(records))
+    return run("plrtoascii", ["players"], tmp)
+
+
+@test("plrtoascii")
+def plrtoascii_rejects_unterminated_name(tmp):
+    """I2-02: an unterminated name overflowed outname[40] on the stack."""
+    size = plr_record_size(tmp)
+    rc, out, err = plrtoascii(tmp, plr_record(size, "a" * 60),
+                              plr_record(size, "alice"))
+    check(rc == 1, "rc=%d err=%s" % (rc, err))
+    check("plr-name" in operations(err), err)
+    check("record=1" in err, err)
+    check(os.path.exists(os.path.join(tmp, "plrfiles", "A-E", "alice.plr")),
+          "valid record after the bad one was not converted:\n" + out)
+
+
+@test("plrtoascii")
+def plrtoascii_rejects_path_in_name(tmp):
+    """I2-02: '../x' was used as a path component (plrfiles/ZZZ/../x.plr)."""
+    size = plr_record_size(tmp)
+    rc, out, err = plrtoascii(tmp, plr_record(size, "../evil"))
+    check(rc == 1, "rc=%d" % rc)
+    check("plr-name" in operations(err), err)
+    check(not os.path.exists(os.path.join(tmp, "plrfiles", "evil.plr")),
+          "path from the name was written")
+
+
 def main(argv):
     for arg in argv[1:]:
         name, _, path = arg.partition("=")
