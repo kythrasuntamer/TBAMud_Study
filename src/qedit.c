@@ -75,6 +75,14 @@ static int qedit_parse_int_range_at(struct descriptor_data *d, const char *arg,
  * pass a plain variable. */
 #define VALID_QUEST_RNUM(r)  ((r) != NOTHING && (r) < total_quests)
 
+/** Quest flag bit for flag-menu choice n.  qedit_disp_flag_menu() numbers
+ * aq_flags[] from 1 (column_list(..., TRUE)), and entry n-1 names bit n-1
+ * (AQ_REPEATABLE is 1 << 0), so choice n toggles 1 << (n-1).  The choice
+ * itself used to be used as the mask, which is right only for choice 1:
+ * once a third flag exists, choice 3 would toggle bits 0 and 1 together
+ * and corrupt the saved flags.  n must be 1..NUM_AQ_FLAGS. */
+#define QEDIT_FLAG_BIT(n)  (1L << ((n) - 1))
+
 /*-------------------------------------------------------------------*/
 
 /* Name of a quest type for display.  quest_types[] has NUM_AQ_TYPES
@@ -761,7 +769,7 @@ void qedit_parse(struct descriptor_data *d, char *arg)
       } else if (number == 0)
         break;
       else {
-        TOGGLE_BIT(OLC_QUEST(d)->flags, number );
+        TOGGLE_BIT(OLC_QUEST(d)->flags, QEDIT_FLAG_BIT(number));
         qedit_disp_flag_menu(d);
       }
       return;

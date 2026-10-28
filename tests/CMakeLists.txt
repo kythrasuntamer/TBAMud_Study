@@ -1139,3 +1139,18 @@ add_test(NAME circle_config_option_is_heap_copy
     COMMAND $<TARGET_FILE:circle> -c -q
             -f${CMAKE_CURRENT_BINARY_DIR}/no-such-config
             -d ${CMAKE_SOURCE_DIR}/lib)
+
+# F2-28: qedit's flag menu maps choice n to flag bit n-1. test_qedit_flags.c
+# #includes qedit.c with NUM_AQ_FLAGS raised to 3 so the mapping is
+# observable, and drives qedit_parse(); utils.c's tb_error_log_at() is
+# wrapped so diagnostics can be captured.
+add_mud_test(test_qedit_flags
+    ${MUD_SRCDIR}/utils.c
+    ${MUD_SRCDIR}/random.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_qedit_flags.c
+)
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_compile_options(test_qedit_flags PRIVATE -ffunction-sections -fdata-sections)
+    target_link_options(test_qedit_flags PRIVATE
+        -Wl,--gc-sections -Wl,--wrap=tb_error_log_at)
+endif()
