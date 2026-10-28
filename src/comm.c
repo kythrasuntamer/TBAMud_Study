@@ -1086,10 +1086,22 @@ void game_loop(socket_t local_mother_desc)
 
     if (emergency_unban) {
       emergency_unban = FALSE;
+      int bans = 0, invalid_names = num_invalid;
+
       mudlog(BRF, LVL_IMMORT, TRUE, "Received SIGUSR2 - completely unrestricting game (emergent)");
-      ban_list = NULL;
+      /* Free what is cleared: both lists used to be dropped by resetting
+       * the pointer and count, leaking every node and name string. */
+      while (ban_list) {
+        struct ban_list_element *next_ban = ban_list->next;
+        free(ban_list);
+        ban_list = next_ban;
+        bans++;
+      }
+      free_invalid_list();
       circle_restrict = 0;
-      num_invalid = 0;
+      TB_WARN_MSG("ban", "emergency-unban", "game_loop",
+                  "SIGUSR2: cleared %d site bans and %d invalid-name"
+                  " entries; game unrestricted", bans, invalid_names);
     }
 
 
