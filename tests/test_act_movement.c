@@ -254,7 +254,8 @@ static void test_move_through_exit_past_world_is_refused(void)
 
   W_EXIT(0, NORTH)->to_room = top_of_world + 5;
   assert_move_refused_at(pc, "exit");
-  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "dir 0"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "moving north"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "-> room vnum -1 (rnum "));
   fx_free_char(pc);
   zone_table = NULL;
 }

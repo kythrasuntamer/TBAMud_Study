@@ -133,6 +133,33 @@ static int has_scuba(struct char_data *ch)
   return (0);
 }
 
+/* Report and refuse a move whose room or zone indices are not valid, at the
+ * stage that found it: a corrupt exit, or a special or leave trigger that
+ * changed the world while the move was pending. was_in already indexed
+ * world[] (EXIT() used it); it is re-checked here only to report it. */
+static int move_indices_valid_at(struct char_data *ch, int dir,
+                                 room_rnum was_in, room_rnum going_to,
+                                 zone_rnum zone, const char *stage,
+                                 const char *file, int line, const char *func)
+{
+  if (zone_table && VALID_ROOM_RNUM(was_in) &&
+      VALID_ROOM_RNUM(going_to) && VALID_ZONE_RNUM(zone) &&
+      world[going_to].zone == zone)
+    return TRUE;
+  tb_error_log_at("ERROR", "movement", "move-index", "room", 0,
+                  file, line, func,
+                  DIAG_CHAR_FMT " moving %s: " DIAG_ROOM_FMT " -> "
+                  DIAG_ROOM_FMT " (top %ld), zone %ld (top %ld) not valid "
+                  "at %s; move refused",
+                  DIAG_CHAR(ch), dirs[dir], DIAG_ROOM(was_in),
+                  DIAG_ROOM(going_to), (long)top_of_world, (long)zone,
+                  (long)top_of_zone_table, stage);
+  return FALSE;
+}
+#define MOVE_INDICES_VALID(stage) \
+  move_indices_valid_at(ch, dir, was_in, going_to, destination_zone, (stage), \
+                        __FILE__, __LINE__, __func__)
+
 /** Move a PC/NPC character from their current location to a new location. This
  * is the standard movement locomotion function that all normal walking
  * movement by characters should be sent through. This function also defines
@@ -160,30 +187,6 @@ static int has_scuba(struct char_data *ch)
  * enter_wtrigger and greet_mtrigger after it; any of them may teleport,
  * purge or kill ch, so callers re-check IN_ROOM(ch) rather than assume the
  * destination. */
-/* Report and refuse a move whose room or zone indices are not valid, at the
- * stage that found it: a corrupt exit, or a special or leave trigger that
- * changed the world while the move was pending. */
-static int move_indices_valid_at(struct char_data *ch, int dir,
-                                 room_rnum was_in, room_rnum going_to,
-                                 zone_rnum zone, const char *stage,
-                                 const char *file, int line, const char *func)
-{
-  if (world && zone_table && VALID_ROOM_RNUM(was_in) &&
-      VALID_ROOM_RNUM(going_to) && VALID_ZONE_RNUM(zone) &&
-      world[going_to].zone == zone)
-    return TRUE;
-  tb_error_log_at("ERROR", "movement", "move-index", "room", 0,
-                  file, line, func,
-                  DIAG_CHAR_FMT " dir %d: room rnum %d -> %d (top %d), zone %d "
-                  "(top %d) not valid at %s; move refused",
-                  DIAG_CHAR(ch), dir, (int)was_in, (int)going_to,
-                  (int)top_of_world, (int)zone, (int)top_of_zone_table, stage);
-  return FALSE;
-}
-#define MOVE_INDICES_VALID(stage) \
-  move_indices_valid_at(ch, dir, was_in, going_to, destination_zone, (stage), \
-                        __FILE__, __LINE__, __func__)
-
 int do_simple_move(struct char_data *ch, int dir, int need_specials_check)
 {
   /* Begin Local variable definitions */
