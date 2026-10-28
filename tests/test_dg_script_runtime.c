@@ -613,6 +613,21 @@ static void switch_still_selects_its_case(void)
   TEST_ASSERT_EQUAL_INT(0, captured_errors);
 }
 
+/* "remote x %self.id%" re-adds a variable from its own value: add_var()
+ * freed the old value and then copied from it. */
+static void add_var_accepts_its_own_value(void)
+{
+  struct trig_var_data *list = NULL;
+
+  add_var(&list, "x", "stage two", 0);
+  add_var(&list, "x", list->value, 0);
+  TEST_ASSERT_EQUAL_STRING("stage two", list->value);
+  add_var(&list, "x", list->value + 6, 0);
+  TEST_ASSERT_EQUAL_STRING("two", list->value);
+  TEST_ASSERT_NULL(list->next);
+  free_varlist(list);
+}
+
 static void restore_round_trips_neutralize(void)
 {
   char text[] = "50% off, 100%% sure";
@@ -645,5 +660,6 @@ int main(void)
   RUN_TEST(break_without_done_ends_the_script);
   RUN_TEST(switch_with_unclosed_nested_while_ends_the_script);
   RUN_TEST(switch_still_selects_its_case);
+  RUN_TEST(add_var_accepts_its_own_value);
   return UNITY_END();
 }

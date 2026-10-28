@@ -35,17 +35,25 @@
 void add_var(struct trig_var_data **var_list, const char *name, const char *value, long id)
 {
   struct trig_var_data *vd;
+  size_t len;
+  char *copy;
 
   if (strchr(name, '.')) {
     log("add_var() : Attempt to add illegal var: %s", name);
     return;
   }
 
+  /* Copy first: value may be (part of) the value being replaced, as when a
+   * script runs "remote var %self.id%" on its own globals. */
+  len = strlen(value) + 1;
+  CREATE(copy, char, len);
+  memcpy(copy, value, len);
+
   for (vd = *var_list; vd && str_cmp(vd->name, name); vd = vd->next);
 
   if (vd && (!vd->context || vd->context==id)) {
     free(vd->value);
-    CREATE(vd->value, char, strlen(value) + 1);
+    vd->value = copy;
   }
 
   else {
@@ -54,14 +62,12 @@ void add_var(struct trig_var_data **var_list, const char *name, const char *valu
     CREATE(vd->name, char, strlen(name) + 1);
     memcpy(vd->name, name, strlen(name) + 1);
 
-    CREATE(vd->value, char, strlen(value) + 1);
+    vd->value = copy;
 
     vd->next = *var_list;
     vd->context = id;
     *var_list = vd;
   }
-
-  memcpy(vd->value, value, strlen(value) + 1);
 }
 
 /* Makes every '%' in text inert; see DG_INERT_PERCENT. */
