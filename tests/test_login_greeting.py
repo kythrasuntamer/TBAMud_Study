@@ -10,6 +10,12 @@ parameter, so every text file (greetings, motd, news, ...) was loaded as its
 first 7 characters. The greeting lost its name prompt and every client sat
 at a blank screen until the 30-second idle timeout.
 
+Environment: TB_TEST_SHUTDOWN_GRACE is how many seconds to wait for the
+server to exit after SIGTERM (default 30). A server that is still running
+then is killed and the test fails, since its shutdown (and any leak report
+from a sanitizer or Valgrind) was lost. Freeing the world under Valgrind
+took 14-28 s on a loaded machine, so raise it (e.g. 120) for such runs.
+
 Usage: test_login_greeting.py <circle binary> <source lib dir>
 """
 import os
@@ -25,6 +31,31 @@ BOOT_TIMEOUT = 300   # generous: the binary may be sanitizer-instrumented
 PROMPT_TIMEOUT = 20
 
 
+def shutdown_grace():
+    """TB_TEST_SHUTDOWN_GRACE in seconds; a bad value fails before boot."""
+    text = os.environ.get("TB_TEST_SHUTDOWN_GRACE", "30")
+    try:
+        grace = float(text)
+    except ValueError:
+        grace = float("nan")
+    if not 0 < grace < float("inf"):
+        sys.exit(f"FAIL: TB_TEST_SHUTDOWN_GRACE={text!r} is not a positive number of seconds")
+    return grace
+
+
+def stop_server(server, grace):
+    """SIGTERM, wait up to grace seconds, then kill. None, or why it failed."""
+    server.terminate()
+    try:
+        server.wait(timeout=grace)
+        return None
+    except subprocess.TimeoutExpired:
+        server.kill()
+        server.wait()
+        return (f"FAIL: server still running {grace:g}s after SIGTERM; killed, so its "
+                f"shutdown and leak report were lost (raise TB_TEST_SHUTDOWN_GRACE)")
+
+
 def free_port():
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
@@ -33,6 +64,7 @@ def free_port():
 
 def main():
     circle, src_lib = sys.argv[1], sys.argv[2]
+    grace = shutdown_grace()
     greeting = open(os.path.join(src_lib, "text", "greetings"), "rb").read()
     expected = greeting.strip().splitlines()[-1].strip()   # the name prompt
 
@@ -78,12 +110,12 @@ def main():
                      f"tail {received[-120:]!r}")
         print(f"PASS: name prompt received ({len(received)} bytes)")
     finally:
-        server.terminate()
-        try:
-            server.wait(timeout=30)
-        except subprocess.TimeoutExpired:
-            server.kill()
+        stopped = stop_server(server, grace)
+        if stopped:
+            print(stopped, file=sys.stderr)
         shutil.rmtree(work, ignore_errors=True)
+    if stopped:
+        sys.exit(1)
 
 
 if __name__ == "__main__":
