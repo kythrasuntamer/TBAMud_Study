@@ -3348,7 +3348,10 @@ void read_saved_vars(struct char_data *ch)
   long context;
   char fn[127];
   char input_line[1024], *temp, *p;
-  /* any_one_arg() writes up to MAX_INPUT_LENGTH bytes. */
+  /* any_one_arg() writes up to MAX_INPUT_LENGTH bytes (its contract). These
+   * were 32 and 16 bytes, so a legacy plrvars line with a long first or
+   * second word overflowed the stack. get_line() limits lines to READ_SIZE,
+   * which is smaller, so neither word can be truncated either. */
   char varname[MAX_INPUT_LENGTH];
   char context_str[MAX_INPUT_LENGTH];
 
@@ -3366,9 +3369,10 @@ void read_saved_vars(struct char_data *ch)
   get_filename(fn, sizeof(fn), SCRIPT_VARS_FILE, GET_NAME(ch));
   file = fopen(fn,"r");
 
-  /* if we failed to open the file, return */
+  /* No legacy file is the normal case: nothing writes plrvars any more. */
   if( !file ) {
-    log("%s had no variable file", GET_NAME(ch));
+    log("read_saved_vars: player idnum %ld has no legacy variable file %s",
+        (long)GET_IDNUM(ch), fn);
     return;
   }
   /* walk through each line in the file parsing variables */
@@ -3433,7 +3437,7 @@ void read_saved_vars_ascii(FILE *file, struct char_data *ch, int count)
 {
   long context;
   char input_line[1024], *temp, *p;
-  /* any_one_arg() writes up to MAX_INPUT_LENGTH bytes. */
+  /* Sized for any_one_arg()'s MAX_INPUT_LENGTH contract, not READ_SIZE. */
   char varname[MAX_INPUT_LENGTH];
   char context_str[MAX_INPUT_LENGTH];
   int i;

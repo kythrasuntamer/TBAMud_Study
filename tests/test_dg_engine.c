@@ -783,6 +783,39 @@ static void tstat_of_long_script_is_truncated_and_reported(void)
   TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "9000"));
 }
 
+/* D1-17: read_saved_vars() parsed legacy plrvars lines into 32- and 16-byte
+ * buffers with any_one_arg(), which writes up to MAX_INPUT_LENGTH bytes. */
+static void legacy_saved_var_with_long_name_is_read_in_bounds(void)
+{
+  char dir[] = "/tmp/tb_plrvars_XXXXXX", cwd[4096], name[71];
+  char_data *ch = make_mob("zzvars");
+  FILE *fl;
+
+  TEST_ASSERT_NOT_NULL(getcwd(cwd, sizeof(cwd)));
+  TEST_ASSERT_NOT_NULL(mkdtemp(dir));
+  TEST_ASSERT_EQUAL_INT(0, chdir(dir));
+  TEST_ASSERT_EQUAL_INT(0, mkdir("plrvars", 0700));
+  TEST_ASSERT_EQUAL_INT(0, mkdir("plrvars/U-Z", 0700));
+  memset(name, 'v', sizeof(name) - 1);
+  name[sizeof(name) - 1] = '\0';
+  fl = fopen("plrvars/U-Z/zzvars.mem", "w");
+  TEST_ASSERT_NOT_NULL(fl);
+  fprintf(fl, "%s 12345678901234567890 value\n", name);
+  fclose(fl);
+
+  read_saved_vars(ch);
+
+  remove("plrvars/U-Z/zzvars.mem");
+  rmdir("plrvars/U-Z");
+  rmdir("plrvars");
+  TEST_ASSERT_EQUAL_INT(0, chdir(cwd));
+  rmdir(dir);
+  TEST_ASSERT_NOT_NULL(SCRIPT(ch));
+  TEST_ASSERT_NOT_NULL(SCRIPT(ch)->global_vars);
+  TEST_ASSERT_EQUAL_STRING(name, SCRIPT(ch)->global_vars->name);
+  TEST_ASSERT_EQUAL_STRING("value", SCRIPT(ch)->global_vars->value);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -815,5 +848,6 @@ int main(void)
   RUN_TEST(self_detaching_script_frees_its_variables);
   RUN_TEST(extract_past_last_word_stops_and_reports);
   RUN_TEST(tstat_of_long_script_is_truncated_and_reported);
+  RUN_TEST(legacy_saved_var_with_long_name_is_read_in_bounds);
   return UNITY_END();
 }
