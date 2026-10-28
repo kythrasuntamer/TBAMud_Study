@@ -93,8 +93,14 @@ struct event *event_create(EVENTFUNC(*func), void *event_obj, long when)
 {
   struct event *new_event;
 
-  if (when < 1) /* make sure its in the future */
+  if (when < 1) { /* make sure its in the future */
+    /* A DG 'wait 0', 'wait -5' or an 'until' time already past reaches
+     * here; the event still runs next pulse (legacy behaviour), but the
+     * builder's script asked for something else, so say so. */
+    TB_ERROR_LOG("WARN", "dg", "event-when-clamped", "event", 0,
+                 "when=%ld is not in the future; clamped to 1 pulse", when);
     when = 1;
+  }
 
 
   CREATE(new_event, struct event, 1);

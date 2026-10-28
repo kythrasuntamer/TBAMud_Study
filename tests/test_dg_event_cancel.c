@@ -76,6 +76,7 @@ void free_mud_event(struct mud_event_data *pMudEvent)
 static struct event *self_event;
 static long self_return;
 static int self_calls;
+static int never_calls;
 
 /* A mud event callback that (like event_whirlwind -> hit -> die ->
  * extract_char -> clear_char_event_list) cancels its own running event and
@@ -107,6 +108,8 @@ void setUp(void)
   n_captured = 0;
   mud_frees = 0;
   self_calls = 0;
+  never_calls = 0;
+  huge_calls = 0;
   pulse = 0;
   event_init();
 }
@@ -137,6 +140,13 @@ static void test_cancel_running_event_is_deferred_and_not_requeued(void)
   TEST_ASSERT_EQUAL_INT(1, self_calls);
 }
 
+static EVENTFUNC(never_fire)
+{
+  (void)event_obj;
+  never_calls++;
+  return 0;
+}
+
 /* D2-09: cancelling NULL names the operation instead of a bare SYSERR. */
 static void test_cancel_null_is_reported(void)
 {
@@ -144,9 +154,22 @@ static void test_cancel_null_is_reported(void)
   TEST_ASSERT_TRUE(captured("event-cancel-null"));
 }
 
+/* D2-10: a non-positive delay still fires next pulse but is reported. */
+static void test_nonpositive_when_is_clamped_loudly(void)
+{
+  never_calls = 0;
+  pulse = 5;
+  event_create(never_fire, NULL, -5);
+  TEST_ASSERT_TRUE(captured("event-when-clamped"));
+  pulse = 6;
+  event_process();
+  TEST_ASSERT_EQUAL_INT(1, never_calls);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(test_nonpositive_when_is_clamped_loudly);
   RUN_TEST(test_cancel_null_is_reported);
   RUN_TEST(test_cancel_running_event_is_deferred_and_not_requeued);
   return UNITY_END();
