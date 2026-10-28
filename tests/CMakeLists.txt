@@ -1154,3 +1154,11 @@ if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
     target_link_options(test_qedit_flags PRIVATE
         -Wl,--gc-sections -Wl,--wrap=tb_error_log_at)
 endif()
+
+# G1: do_order() ('order followers') against the production gameplay
+# sources. command_interpreter() is wrapped so the test plays the ordered
+# command, including one whose trigger releases a follower.
+add_gameplay_test(test_act_offensive ${CMAKE_CURRENT_SOURCE_DIR}/test_act_offensive.c)
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_link_options(test_act_offensive PRIVATE -Wl,--wrap=command_interpreter)
+endif()
