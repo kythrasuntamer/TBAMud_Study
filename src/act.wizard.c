@@ -5059,11 +5059,72 @@ ACMD(do_wizupdate)
   send_to_char(ch, "Wizlists updated.\n\r");
 }
 
+/* Per-player files that follow the name (get_filename() modes). The pfile
+ * is first: perform_set re-saves it under the new name anyway. */
+static const int player_file_modes[] = { PLR_FILE, CRASH_FILE, SCRIPT_VARS_FILE, ETEXT_FILE };
+
+/** Rename every per-player file of old_name to new_name. A file that does
+ * not exist (no objects, no saved variables) is skipped. A destination that
+ * already exists is never overwritten. On any failure the files already
+ * moved are moved back and rename-player-file is reported with errno, the
+ * paths and the player idnum.
+ * @return TRUE when every existing file was moved. */
+static bool rename_player_files(struct char_data *vict, const char *old_name,
+                                const char *new_name)
+{
+  char from[PATH_MAX], to[PATH_MAX];
+  int moved[TB_ARRAY_LEN(player_file_modes)];
+  size_t m, undo;
+
+  for (m = 0; m < TB_ARRAY_LEN(player_file_modes); m++) {
+    moved[m] = 0;
+    if (!get_filename(from, sizeof(from), player_file_modes[m], old_name) ||
+        !get_filename(to, sizeof(to), player_file_modes[m], new_name)) {
+      TB_ERROR_MSG("act", "rename-player-file", "path",
+                   "player idnum %ld: no file name for mode %d", GET_IDNUM(vict),
+                   player_file_modes[m]);
+      goto rollback;
+    }
+    if (access(from, F_OK) != 0) {
+      if (errno == ENOENT)
+        continue;
+      TB_ERROR_ERRNO("act", "rename-player-file", from,
+                     "player idnum %ld: cannot check the old file", GET_IDNUM(vict));
+      goto rollback;
+    }
+    if (access(to, F_OK) == 0) {
+      TB_ERROR_MSG("act", "rename-player-file", to,
+                   "player idnum %ld: destination exists; not overwriting it",
+                   GET_IDNUM(vict));
+      goto rollback;
+    }
+    if (rename(from, to) != 0) {
+      TB_ERROR_ERRNO("act", "rename-player-file", to,
+                     "player idnum %ld: %s -> %s", GET_IDNUM(vict), from, to);
+      goto rollback;
+    }
+    moved[m] = 1;
+  }
+  return TRUE;
+
+rollback:
+  for (undo = 0; undo < m; undo++) {
+    if (!moved[undo])
+      continue;
+    if (get_filename(from, sizeof(from), player_file_modes[undo], old_name) &&
+        get_filename(to, sizeof(to), player_file_modes[undo], new_name) &&
+        rename(to, from) != 0)
+      TB_ERROR_ERRNO("act", "rename-player-rollback", from,
+                     "player idnum %ld: could not move %s back", GET_IDNUM(vict), to);
+  }
+  return FALSE;
+}
+
 /* NOTE: This is called from perform_set */
 bool change_player_name(struct char_data *ch, struct char_data *vict, char *new_name)
 {
   int i, k;
-  char old_name[MAX_NAME_LENGTH], old_pfile[50], new_pfile[50], buf[MAX_STRING_LENGTH];
+  char old_name[MAX_NAME_LENGTH + 1];
 
   if (!ch)
   {
@@ -5112,14 +5173,11 @@ bool change_player_name(struct char_data *ch, struct char_data *vict, char *new_
 
   /* Set up a few variables that will be needed */
   tb_snprintf(old_name, sizeof(old_name), "%s", GET_NAME(vict));
-  if (!get_filename(old_pfile, sizeof(old_pfile), PLR_FILE, old_name))
-  {
-    send_to_char(ch, "Unable to ascertain player's old pfile name.\r\n");
-    return FALSE;
-  }
-  if (!get_filename(new_pfile, sizeof(new_pfile), PLR_FILE, new_name))
-  {
-    send_to_char(ch, "Unable to ascertain player's new pfile name.\r\n");
+
+  /* Move the per-player files before touching the index, so a failure
+   * leaves the player exactly as before. */
+  if (!rename_player_files(vict, old_name, new_name)) {
+    send_to_char(ch, "Could not rename the player's files (see the log).\r\n");
     return FALSE;
   }
 
@@ -5130,9 +5188,6 @@ bool change_player_name(struct char_data *ch, struct char_data *vict, char *new_
 
   free(GET_PC_NAME(vict));
   GET_PC_NAME(vict) = strdup(CAP(new_name));    // Change the name in the victims char struct
-
-  /* Rename the player's pfile */
-  tb_snprintf(buf, sizeof(buf), "mv %s %s", old_pfile, new_pfile);
 
   /* Save the changed player index - the pfile is saved by perform_set */
   save_player_index();

@@ -832,10 +832,10 @@ static void make_file(const char *dir, const char *sub, const char *name)
   fclose(fp);
 }
 
-/* G1-16: change_player_name's disk probe for the new name leaked a
- * char_data whenever the name was free (LSan reports it at exit).
- * G1-17: a missing index entry was detected by reading player_table one
- * past the end (ASan heap-buffer-overflow). */
+/* G1-15/16/17: change_player_name built "mv old new" and never ran it, so
+ * the pfile, objects and variables were orphaned under the old name; its
+ * disk probe leaked a char_data on success; and a missing index entry was
+ * detected by reading player_table one past the end. */
 static void test_rename_moves_player_files_and_checks_the_index(void)
 {
   static struct player_index_element ptable[1];
@@ -863,10 +863,27 @@ static void test_rename_moves_player_files_and_checks_the_index(void)
   TEST_ASSERT_FALSE(change_player_name(&imm, &target, taken));
   TEST_ASSERT_NOT_NULL(strstr(sent, "already exists"));
 
+  /* G1-15: the pfile and object file follow the new name. */
   reset_counters();
   TEST_ASSERT_TRUE(change_player_name(&imm, &target, new_name));
+  TEST_ASSERT_EQUAL_INT(0, captured_errors);
+  TEST_ASSERT_EQUAL_INT(0, access("plrfiles/P-T/robert.plr", F_OK));
+  TEST_ASSERT_EQUAL_INT(0, access("plrobjs/P-T/robert.objs", F_OK));
+  TEST_ASSERT_NOT_EQUAL(0, access("plrfiles/A-E/bobby.plr", F_OK));
   TEST_ASSERT_EQUAL_STRING("robert", ptable[0].name);
   TEST_ASSERT_EQUAL_INT(1, save_index_calls);
+
+  /* A destination that exists is not overwritten; nothing moves. */
+  reset_counters();
+  {
+    FILE *fp = fopen("plrfiles/A-E/bobby.plr", "w");
+    TEST_ASSERT_NOT_NULL(fp);
+    fclose(fp);
+  }
+  TEST_ASSERT_FALSE(change_player_name(&imm, &target, (char[]){"bobby"}));
+  TEST_ASSERT_EQUAL_STRING("rename-player-file", captured_operation);
+  TEST_ASSERT_EQUAL_INT(0, access("plrfiles/P-T/robert.plr", F_OK));
+  TEST_ASSERT_EQUAL_STRING("robert", ptable[0].name);
 
   /* G1-17: a victim missing from the index is reported, not read past. */
   reset_counters();
@@ -877,7 +894,6 @@ static void test_rename_moves_player_files_and_checks_the_index(void)
 
   remove("plrfiles/A-E/bobby.plr");
   remove("plrfiles/P-T/robert.plr");
-  remove("plrobjs/A-E/bobby.objs");
   remove("plrobjs/P-T/robert.objs");
   TEST_ASSERT_EQUAL_INT(0, system("rm -r plrfiles plrobjs plrvars plrtext"));
   TEST_ASSERT_EQUAL_INT(0, chdir(old_cwd));
