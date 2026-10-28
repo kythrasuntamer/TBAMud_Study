@@ -72,6 +72,24 @@ zone_rnum real_zone_by_thing(room_vnum vznum)
   return (NOWHERE);
 }
 
+/* Create one file of a brand-new zone.  "x" makes the open fail if the file
+ * exists: a file already on disk belongs to some zone (perhaps one that is
+ * not loaded), and zedit new must never truncate it. */
+static FILE *open_new_zone_file(const char *path, zone_vnum vzone_num)
+{
+  FILE *fp = fopen(path, "wx");
+
+  if (fp == NULL) {
+    if (errno == EEXIST)
+      TB_ERROR_ERRNO("olc", "zone-create-exists", path,
+                     "zone %d: file already exists; not overwritten", vzone_num);
+    else
+      TB_ERROR_ERRNO("olc", "zone-create-file", path,
+                     "zone %d: cannot create file", vzone_num);
+  }
+  return fp;
+}
+
 zone_rnum create_new_zone(zone_vnum vzone_num, room_vnum bottom, room_vnum top, const char **error)
 {
   FILE *fp;
@@ -107,15 +125,29 @@ zone_rnum create_new_zone(zone_vnum vzone_num, room_vnum bottom, room_vnum top, 
     return NOWHERE;
   }
 
-  for (i = 0; i < top_of_zone_table; i++)
+  /* Check every loaded zone, the last one included.  zone_table must stay
+   * free of duplicate numbers and overlapping vnum ranges: real_zone_by_thing()
+   * binary-searches the ranges, and the files below are named by number. */
+  for (i = 0; i <= top_of_zone_table; i++) {
     if (zone_table[i].number == vzone_num) {
+      TB_WARN_MSG("olc", "zone-create-duplicate", "zone",
+                  "zone %d already loaded at rnum %d; not created", vzone_num, i);
       *error = "That virtual zone already exists.\r\n";
       return NOWHERE;
-     }
+    }
+    if (bottom <= zone_table[i].top && top >= genolc_zone_bottom(i)) {
+      TB_WARN_MSG("olc", "zone-create-overlap", "zone",
+                  "zone %d range %d-%d overlaps zone %d (%d-%d); not created",
+                  vzone_num, bottom, top, zone_table[i].number,
+                  genolc_zone_bottom(i), zone_table[i].top);
+      *error = "That room range overlaps an existing zone.\r\n";
+      return NOWHERE;
+    }
+  }
 
   /* Create the zone file. */
   tb_snprintf(buf, sizeof(buf), "%s/%d.zon", ZON_PREFIX, vzone_num);
-  if (!(fp = fopen(buf, "w"))) {
+  if (!(fp = open_new_zone_file(buf, vzone_num))) {
     mudlog(BRF, LVL_IMPL, TRUE, "SYSERR: OLC: Can't write new zone file.");
     *error = "Could not write zone file.\r\n";
     return NOWHERE;
@@ -125,7 +157,7 @@ zone_rnum create_new_zone(zone_vnum vzone_num, room_vnum bottom, room_vnum top, 
 
   /* Create the room file. */
   tb_snprintf(buf, sizeof(buf), "%s/%d.wld", WLD_PREFIX, vzone_num);
-  if (!(fp = fopen(buf, "w"))) {
+  if (!(fp = open_new_zone_file(buf, vzone_num))) {
     mudlog(BRF, LVL_IMPL, TRUE, "SYSERR: OLC: Can't write new world file.");
     *error = "Could not write world file.\r\n";
     return NOWHERE;
@@ -135,7 +167,7 @@ zone_rnum create_new_zone(zone_vnum vzone_num, room_vnum bottom, room_vnum top, 
 
   /* Create the mobile file. */
   tb_snprintf(buf, sizeof(buf), "%s/%d.mob", MOB_PREFIX, vzone_num);
-  if (!(fp = fopen(buf, "w"))) {
+  if (!(fp = open_new_zone_file(buf, vzone_num))) {
     mudlog(BRF, LVL_IMPL, TRUE, "SYSERR: OLC: Can't write new mob file.");
     *error = "Could not write mobile file.\r\n";
     return NOWHERE;
@@ -145,7 +177,7 @@ zone_rnum create_new_zone(zone_vnum vzone_num, room_vnum bottom, room_vnum top, 
 
   /* Create the object file. */
   tb_snprintf(buf, sizeof(buf), "%s/%d.obj", OBJ_PREFIX, vzone_num);
-  if (!(fp = fopen(buf, "w"))) {
+  if (!(fp = open_new_zone_file(buf, vzone_num))) {
     mudlog(BRF, LVL_IMPL, TRUE, "SYSERR: OLC: Can't write new obj file.");
     *error = "Could not write object file.\r\n";
     return NOWHERE;
@@ -155,7 +187,7 @@ zone_rnum create_new_zone(zone_vnum vzone_num, room_vnum bottom, room_vnum top, 
 
   /* Create the shop file. */
   tb_snprintf(buf, sizeof(buf), "%s/%d.shp", SHP_PREFIX, vzone_num);
-  if (!(fp = fopen(buf, "w"))) {
+  if (!(fp = open_new_zone_file(buf, vzone_num))) {
     mudlog(BRF, LVL_IMPL, TRUE, "SYSERR: OLC: Can't write new shop file.");
     *error = "Could not write shop file.\r\n";
     return NOWHERE;
@@ -165,7 +197,7 @@ zone_rnum create_new_zone(zone_vnum vzone_num, room_vnum bottom, room_vnum top, 
 
   /* Create the quests file */
   tb_snprintf(buf, sizeof(buf), "%s/%d.qst", QST_PREFIX, vzone_num);
-  if (!(fp = fopen(buf, "w"))) {
+  if (!(fp = open_new_zone_file(buf, vzone_num))) {
     mudlog(BRF, LVL_IMPL, TRUE, "SYSERR: OLC: Can't write new quest file");
     *error = "Could not write quest file.\r\n";
     return NOWHERE;
@@ -175,7 +207,7 @@ zone_rnum create_new_zone(zone_vnum vzone_num, room_vnum bottom, room_vnum top, 
 
   /* Create the trigger file. */
   tb_snprintf(buf, sizeof(buf), "%s/%d.trg", TRG_PREFIX, vzone_num);
-  if (!(fp = fopen(buf, "w"))) {
+  if (!(fp = open_new_zone_file(buf, vzone_num))) {
     mudlog(BRF, LVL_IMPL, TRUE, "SYSERR: OLC: Can't write new trigger file");
     *error = "Could not write trigger file.\r\n";
     return NOWHERE;

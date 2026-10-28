@@ -740,6 +740,58 @@ static void save_shops_writes_valid_shop(void)
 }
 
 /* ------------------------------------------------------------------------ */
+/* C2-12: zedit new never duplicates a zone or truncates its files.         */
+/* ------------------------------------------------------------------------ */
+static void write_text_file(const char *path, const char *text)
+{
+  FILE *fp = fopen(path, "w");
+  TEST_ASSERT_NOT_NULL(fp);
+  fputs(text, fp);
+  fclose(fp);
+}
+
+static void read_text_file(const char *path, char *buf, size_t size)
+{
+  FILE *fp = fopen(path, "r");
+  size_t n;
+  TEST_ASSERT_NOT_NULL(fp);
+  n = fread(buf, 1, size - 1, fp);
+  buf[n] = '\0';
+  fclose(fp);
+}
+
+/* The last zone in the table was never compared. */
+static void create_new_zone_rejects_last_zone_number(void)
+{
+  const char *err = NULL;
+  make_zones(1);
+  TEST_ASSERT_EQUAL_UINT(NOWHERE, create_new_zone(0, 200, 299, &err));
+  TEST_ASSERT_EQUAL_INT(0, (int)top_of_zone_table);
+  TEST_ASSERT_EQUAL_STRING("zone-create-duplicate", tb_captured_operation);
+  TEST_ASSERT_FALSE(file_exists(WLD_PREFIX "/0.wld"));
+}
+
+static void create_new_zone_rejects_overlapping_range(void)
+{
+  const char *err = NULL;
+  make_zones(2);                       /* 1-99 and 101-199 */
+  TEST_ASSERT_EQUAL_UINT(NOWHERE, create_new_zone(5, 150, 250, &err));
+  TEST_ASSERT_EQUAL_STRING("zone-create-overlap", tb_captured_operation);
+}
+
+static void create_new_zone_keeps_existing_file(void)
+{
+  const char *err = NULL;
+  char text[64];
+  make_zones(1);
+  write_text_file(ZON_PREFIX "/7.zon", "ORIGINAL ZONE 7\n");
+  TEST_ASSERT_EQUAL_UINT(NOWHERE, create_new_zone(7, 700, 799, &err));
+  TEST_ASSERT_EQUAL_STRING("zone-create-exists", tb_captured_operation);
+  read_text_file(ZON_PREFIX "/7.zon", text, sizeof(text));
+  TEST_ASSERT_EQUAL_STRING("ORIGINAL ZONE 7\n", text);
+}
+
+/* ------------------------------------------------------------------------ */
 /* Temporary world directory for the writers.                               */
 /* ------------------------------------------------------------------------ */
 static char test_root[] = "/tmp/tb-genolc-XXXXXX";
@@ -807,6 +859,9 @@ int main(void)
   RUN_TEST(save_shops_rejects_stale_product);
   RUN_TEST(save_shops_rejects_stale_keeper);
   RUN_TEST(save_shops_writes_valid_shop);
+  RUN_TEST(create_new_zone_rejects_last_zone_number);
+  RUN_TEST(create_new_zone_rejects_overlapping_range);
+  RUN_TEST(create_new_zone_keeps_existing_file);
   failures = UNITY_END();
   leave_test_root();
   return failures;
