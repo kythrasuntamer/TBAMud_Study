@@ -30,11 +30,15 @@ size_t write_to_output(struct descriptor_data *d, const char *txt, ...)
 }
 
 static struct descriptor_data desc;
+static struct char_data editor;
 static char *text;
 
 void setUp(void)
 {
   memset(&desc, 0, sizeof(desc));
+  /* An OLC descriptor always has a character; refusals name it. */
+  memset(&editor, 0, sizeof(editor));
+  desc.character = &editor;
   *said = '\0';
   text = NULL;
   desc.str = &text;
@@ -64,13 +68,15 @@ static void ordinary_script_is_indented(void)
   TEST_ASSERT_EQUAL_STRING("if 1\r\n  say hi\r\nend\r\n", text);
 }
 
-/* 200 levels need 400 bytes of indent on a 256-byte line. */
+/* 200 levels need 400 bytes of indent per line; the indented script no
+ * longer fits the result buffer, so formatting is refused (whole lines
+ * are written straight into it, with no per-line cap). */
 static void deep_indent_is_refused_not_overflowed(void)
 {
   text = nested_ifs(200);
   desc.max_str = 100000;
   TEST_ASSERT_FALSE(format_script(&desc));
-  TEST_ASSERT_NOT_NULL(strstr(said, "too long to indent"));
+  TEST_ASSERT_NOT_NULL(strstr(said, "formatting aborted"));
   /* Refused formatting leaves the text as it was. */
   TEST_ASSERT_EQUAL_INT(0, strncmp(text, "if 1\r\nif 1\r\n", 12));
 }

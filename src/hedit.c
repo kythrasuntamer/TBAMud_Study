@@ -25,12 +25,33 @@
 #include "hedit.h"
 #include "modify.h"
 
+/** @file hedit.c
+ * Help editor: edits one help_table entry at a time (one editor at a time,
+ * see do_oasis_hedit), builder level and HEDIT_PERMISSION only.
+ *
+ * Index rules.  help_table holds top_of_helpt rows; top_of_helpt is a COUNT
+ * (rows 0..top_of_helpt-1), unlike top_of_socialt or top_of_world.  Each
+ * keyword of an entry is its own row, sorted by keyword; the first row of
+ * an entry owns 'entry' and the others are duplicates (duplicate != 0) that
+ * alias the same pointer and are skipped by hedit_save_to_disk.  In this
+ * editor OLC_ZNUM is either a live OWNING row (VALID_HELP_RNUM) or NOWHERE,
+ * meaning "add a new entry"; nothing else may be stored there, and
+ * search_help() results are range-checked before use.
+ *
+ * Ownership.  OLC_HELP and its keywords/entry strings belong to the editor
+ * until hedit_save_internally() succeeds; then the table row owns them and
+ * the caller uses CLEANUP_STRUCTS.  Every other exit uses CLEANUP_ALL.
+ * hedit_save_to_disk() frees and reboots the whole table after a committed
+ * write, so no help_table index or pointer may be held across it.
+ *
+ * Input.  Topic names, entry text and levels are builder free text. */
+
 /* local functions */
 static void hedit_disp_menu(struct descriptor_data *);
 static void hedit_setup_new(struct descriptor_data *);
 static void hedit_setup_existing(struct descriptor_data *, int);
-static void hedit_save_to_disk(struct descriptor_data *);
-static void hedit_save_internally(struct descriptor_data *);
+static int hedit_save_to_disk(struct descriptor_data *);
+static int hedit_save_internally(struct descriptor_data *);
 
 
 ACMD(do_oasis_hedit)
@@ -67,30 +88,61 @@ ACMD(do_oasis_hedit)
   if (!str_cmp("save", arg)) {
     mudlog(CMP, MAX(LVL_BUILDER, GET_INVIS_LEV(ch)), TRUE, "OLC: %s saves help files.",
            GET_NAME(ch));
-    hedit_save_to_disk(d);
     send_to_char(ch, "Saving help files.\r\n");
+    if (!hedit_save_to_disk(d))
+      send_to_char(ch, "Saving the help file FAILED; the file on disk is unchanged.\r\n");
     return;
   }
 
   /* Give descriptor an OLC structure. */
+  /* Entry requires CON_PLAYING, where no editor is open, so a leftover
+   * d->olc is an invariant break.  free() alone leaked its substructures
+   * (help, action, quest, prefs, message list, storage); release them all
+   * and report the stale mode. */
   if (d->olc) {
-    mudlog(BRF, LVL_IMMORT, TRUE, "SYSERR: do_oasis: Player already had olc structure.");
-    free(d->olc);
+    TB_ERROR_MSG("olc", "olc-reentry", "hedit",
+                 DIAG_CHAR_FMT " stale mode %d state %d",
+                 DIAG_CHAR(ch), OLC_MODE(d), STATE(d));
+    cleanup_olc(d, CLEANUP_ALL);
   }
 
   CREATE(d->olc, struct oasis_olc_data, 1);
   OLC_NUM(d) = 0;
   OLC_STORAGE(d) = strdup(arg);
   
+  /* search_help() returns a row or NOWHERE on a miss.  Test the miss
+   * before touching help_table: OLC_ZNUM is unsigned, so NOWHERE indexed
+   * row 65535 of a table a few thousand rows long on every "hedit <new
+   * topic>". */
   OLC_ZNUM(d) = search_help(OLC_STORAGE(d), LVL_IMPL);
 
-  /* A topic that does not exist is NOWHERE: look nothing up for it. */
+  if (OLC_ZNUM(d) != NOWHERE && !VALID_HELP_RNUM(OLC_ZNUM(d))) {
+    TB_ERROR_MSG("olc", "hedit-rnum-range", "help_table",
+                 "search_help returned rnum %d top_of_helpt %d editor " DIAG_CHAR_FMT,
+                 (int)OLC_ZNUM(d), top_of_helpt, DIAG_CHAR(ch));
+    send_to_char(ch, "The help index is inconsistent; edit refused.\r\n");
+    cleanup_olc(d, CLEANUP_ALL);
+    return;
+  }
+
+  /* A duplicate row shares its owner's entry text and is not written by
+   * hedit_save_to_disk, so edit the owner instead.  A duplicate with no
+   * owner would be edited and then silently dropped on save: refuse it. */
   if (OLC_ZNUM(d) != NOWHERE && help_table[OLC_ZNUM(d)].duplicate) {
+    int dup = OLC_ZNUM(d);
+
     for (i = 0; i < top_of_helpt; i++)
-      if (help_table[i].duplicate == 0 && help_table[i].entry == help_table[OLC_ZNUM(d)].entry) {
-        OLC_ZNUM(d) = i;
+      if (help_table[i].duplicate == 0 && help_table[i].entry == help_table[dup].entry)
         break;
-      }
+    if (i >= top_of_helpt) {
+      TB_WARN_MSG("olc", "hedit-duplicate-owner", "help_table",
+                  "rnum %d has no owning entry; editor " DIAG_CHAR_FMT,
+                  dup, DIAG_CHAR(ch));
+      send_to_char(ch, "That help keyword shares an entry that no longer exists; edit refused.\r\n");
+      cleanup_olc(d, CLEANUP_ALL);
+      return;
+    }
+    OLC_ZNUM(d) = i;
   }
 
   if (OLC_ZNUM(d) == NOWHERE) {
@@ -123,6 +175,19 @@ static void hedit_setup_new(struct descriptor_data *d)
 
 static void hedit_setup_existing(struct descriptor_data *d, int rnum)
 {
+  /* rnum comes from OLC_ZNUM, which do_oasis_hedit and the CONFIRM_EDIT walk
+   * set from search_help() and a scan of help_table.  Anything outside the
+   * table here is an editor bug, and copying from it would read past the
+   * allocation, so refuse loudly rather than open a garbage entry. */
+  if (!VALID_HELP_RNUM(rnum)) {
+    TB_ERROR_MSG("olc", "hedit-rnum-range", "help_table",
+                 "setup rnum %d top_of_helpt %d editor " DIAG_CHAR_FMT,
+                 rnum, top_of_helpt, DIAG_CHAR(d->character));
+    write_to_output(d, "That help entry no longer exists; nothing to edit.\r\n");
+    cleanup_olc(d, CLEANUP_ALL);
+    return;
+  }
+
   CREATE(OLC_HELP(d), struct help_index_element, 1);
 
   OLC_HELP(d)->keywords		= str_udup(help_table[rnum].keywords);
@@ -134,15 +199,22 @@ static void hedit_setup_existing(struct descriptor_data *d, int rnum)
   hedit_disp_menu(d);
 }
 
-static void hedit_save_internally(struct descriptor_data *d)
+/* Stores the edit in help_table.  Returns FALSE, having reported why, when
+ * the edit cannot be stored; the caller still owns OLC_HELP and its strings
+ * and must use CLEANUP_ALL.  On TRUE the table owns the strings (use
+ * CLEANUP_STRUCTS) and the caller writes the file with hedit_save_to_disk. */
+static int hedit_save_internally(struct descriptor_data *d)
 {
   struct help_index_element *new_help_table = NULL;
 
-  if (OLC_ZNUM(d) != NOWHERE && OLC_ZNUM(d) >= top_of_helpt) {
-    TB_ERROR_MSG("olc", "help-index", "hedit_save_internally",
-                 "help index %d is past the %d-entry table; saving as a new "
-                 "entry", (int)OLC_ZNUM(d), top_of_helpt);
-    OLC_ZNUM(d) = NOWHERE;
+  /* OLC_ZNUM is NOWHERE (append) or a live row (replace); see
+   * VALID_HELP_RNUM.  A stale or walked-off index here used to be written
+   * through, past the end of help_table. */
+  if (OLC_ZNUM(d) != NOWHERE && !VALID_HELP_RNUM(OLC_ZNUM(d))) {
+    TB_ERROR_MSG("olc", "hedit-rnum-range", "help_table",
+                 "save rnum %d top_of_helpt %d editor " DIAG_CHAR_FMT,
+                 (int)OLC_ZNUM(d), top_of_helpt, DIAG_CHAR(d->character));
+    return FALSE;
   }
 
   if (OLC_ZNUM(d) == NOWHERE) {
@@ -155,14 +227,45 @@ static void hedit_save_internally(struct descriptor_data *d)
     new_help_table[top_of_helpt++] = *OLC_HELP(d);
     free(help_table);
     help_table = new_help_table;
-  } else
-    help_table[OLC_ZNUM(d)] = *OLC_HELP(d);
+  } else {
+    struct help_index_element *row = &help_table[OLC_ZNUM(d)];
+    char *old_entry = row->entry;
+    int i;
+
+    /* do_oasis_hedit redirects a duplicate keyword to its owning row, so
+     * the row being replaced owns its entry.  A duplicate row is skipped by
+     * hedit_save_to_disk, so storing an edit there would be dropped without
+     * a word: refuse it instead. */
+    if (row->duplicate || OLC_HELP(d)->duplicate) {
+      TB_ERROR_MSG("olc", "hedit-duplicate-save", "help_table",
+                   "rnum %d keywords '%s' row duplicate %d edit duplicate %d editor " DIAG_CHAR_FMT,
+                   (int)OLC_ZNUM(d), row->keywords ? row->keywords : "(null)",
+                   row->duplicate, OLC_HELP(d)->duplicate, DIAG_CHAR(d->character));
+      return FALSE;
+    }
+
+    /* The struct copy below replaces the row's strings; free the old ones
+     * (they used to leak on every edit).  Duplicate rows alias the owner's
+     * entry pointer, so move them to the new text first: if the disk write
+     * below fails the table is not rebooted and they stay in use. */
+    for (i = 0; i < top_of_helpt; i++)
+      if (help_table[i].duplicate && help_table[i].entry == old_entry)
+        help_table[i].entry = OLC_HELP(d)->entry;
+    free(row->keywords);
+    free(old_entry);
+    *row = *OLC_HELP(d);
+  }
 
   add_to_save_list(HEDIT_PERMISSION, SL_HLP);
-  hedit_save_to_disk(d);
+  return TRUE;
 }
 
-static void hedit_save_to_disk(struct descriptor_data *d)
+/* Writes help_table to the help index through a verified temporary file,
+ * then frees and reboots the table, so no help_table index or pointer may
+ * be held across this call.  Returns FALSE, having reported the failure
+ * with the editor named, when the file on disk was not replaced; the
+ * in-memory table is then unchanged and stays on the save list. */
+static int hedit_save_to_disk(struct descriptor_data *d)
 {
   FILE *fp;
   char buf1[MAX_STRING_LENGTH], index_name[READ_SIZE], temp_name[READ_SIZE];
@@ -172,13 +275,12 @@ static void hedit_save_to_disk(struct descriptor_data *d)
   name_result = snprintf(temp_name, sizeof(temp_name), "%s.tmp", index_name);
   if (name_result < 0 || (size_t)name_result >= sizeof(temp_name)) {
     log("SYSERR: help temporary filename is too long for %s", index_name);
-    return;
+    goto failed;
   }
 
   if (!(fp = fopen(temp_name, "w"))) {
     TB_REPORT_ERRNO("fopen", temp_name);
-    log("SYSERR: Could not write temporary help index file");
-    return;
+    goto failed;
   }
 
   for (i = 0; i < top_of_helpt; i++) {
@@ -198,18 +300,27 @@ static void hedit_save_to_disk(struct descriptor_data *d)
     if (!flush_ok || !close_ok) {
       if (remove(temp_name) != 0 && errno != ENOENT)
         TB_REPORT_ERRNO("remove", temp_name);
-      return;
+      goto failed;
     }
   }
 
   if (!tb_replace_file_checked(temp_name, index_name))
-    return;
+    goto failed;
 
   remove_from_save_list(HEDIT_PERMISSION, SL_HLP);
 
   /* Reboot the help files only after the replacement committed. */
   free_help_table();
   index_boot(DB_BOOT_HLP);
+  return TRUE;
+
+failed:
+  /* The low-level cause (errno, path) was reported above; this names the
+   * editor and the table size so the failed save can be traced. */
+  TB_ERROR_MSG("olc", "hedit-save", index_name,
+               "help index not written; %d rows stay in memory only; editor " DIAG_CHAR_FMT,
+               top_of_helpt, DIAG_CHAR(d->character));
+  return FALSE;
 }
 
 /* The main menu. */
@@ -234,7 +345,10 @@ static void hedit_disp_menu(struct descriptor_data *d)
 void hedit_parse(struct descriptor_data *d, char *arg)
 {
   char buf[MAX_STRING_LENGTH];
-  char *oldtext = "";
+  /* The improved editor keeps this as d->backstr and free()s it on save or
+   * restores it as the entry on abort, so it must be heap or NULL.  It was
+   * the literal "", which '/c' then '/s' handed to free(). */
+  char *oldtext = NULL;
   int number;
 
   switch (OLC_MODE(d)) {
@@ -244,9 +358,17 @@ void hedit_parse(struct descriptor_data *d, char *arg)
     case 'Y':
       tb_snprintf(buf, sizeof(buf), "OLC: %s edits help for %s.", GET_NAME(d->character),
                OLC_HELP(d)->keywords);
-      mudlog(TRUE, MAX(LVL_BUILDER, GET_INVIS_LEV(d->character)), CMP, "%s", buf);
-      write_to_output(d, "Help saved to disk.\r\n");
-      hedit_save_internally(d);
+      mudlog(CMP, MAX(LVL_BUILDER, GET_INVIS_LEV(d->character)), TRUE, "%s", buf);
+      if (!hedit_save_internally(d)) {
+        write_to_output(d, "Save refused: the help entry being edited is no longer valid.\r\n");
+        cleanup_olc(d, CLEANUP_ALL);
+        break;
+      }
+      if (hedit_save_to_disk(d))
+        write_to_output(d, "Help saved to disk.\r\n");
+      else
+        write_to_output(d, "Help saved to memory, but writing the help file FAILED; "
+                           "the file on disk is unchanged.\r\n");
 
       /* Do not free strings, just the help structure. */
       cleanup_olc(d, CLEANUP_STRUCTS);
@@ -270,25 +392,35 @@ void hedit_parse(struct descriptor_data *d, char *arg)
     case 'q': case 'Q': 
       cleanup_olc(d, CLEANUP_ALL);
       break;       
-    case 'n': case 'N':
-      /* Offer the next entry that matches, or adding a new one.  The old
-       * loop gave up at the first entry that did not match and left
-       * OLC_ZNUM at top_of_helpt + 2, which a save then wrote to. */
-      for (OLC_ZNUM(d)++; OLC_ZNUM(d) < top_of_helpt; OLC_ZNUM(d)++)
-        if (is_abbrev(OLC_STORAGE(d), help_table[OLC_ZNUM(d)].keywords))
+    case 'n': case 'N': {
+      /* Offer the next row that matches, or fall through to "add".  The old
+       * loop set OLC_ZNUM to top_of_helpt + 1 on the first non-matching row
+       * and then incremented it, leaving top_of_helpt + 2: past the table but
+       * not NOWHERE, so "add" then overwrote help_table[top + 2].  Search
+       * with a local and store only a live row or NOWHERE. */
+      int next;
+
+      /* Duplicate rows are other keywords of an entry owned by another row;
+       * hedit_save_internally refuses them because hedit_save_to_disk skips
+       * them, so only offer owning rows here. */
+      for (next = (int)OLC_ZNUM(d) + 1; next < top_of_helpt; next++)
+        if (!help_table[next].duplicate &&
+            is_abbrev(OLC_STORAGE(d), help_table[next].keywords))
           break;
 
-      if (OLC_ZNUM(d) >= top_of_helpt) {
-        OLC_ZNUM(d) = NOWHERE;            /* a new entry is appended */
+      if (next >= top_of_helpt) {
+        OLC_ZNUM(d) = NOWHERE;
         write_to_output(d, "Do you wish to add the '%s' help file? ",
             OLC_STORAGE(d));
         OLC_MODE(d) = HEDIT_CONFIRM_ADD;
       } else {
+        OLC_ZNUM(d) = next;
         write_to_output(d, "Do you wish to edit the '%s' help file? ",
             help_table[OLC_ZNUM(d)].keywords);
         OLC_MODE(d) = HEDIT_CONFIRM_EDIT;
-      }     
+      }
       break;
+    }
     default:
       write_to_output(d, "Invalid choice!\r\n"
                          "Do you wish to edit the '%s' help file? ",
@@ -359,8 +491,11 @@ void hedit_parse(struct descriptor_data *d, char *arg)
     break;
 
   case HEDIT_ENTRY:
-    /* We will NEVER get here, we hope. */
-    mudlog(TRUE, LVL_BUILDER, BRF, "SYSERR: Reached HEDIT_ENTRY case in parse_hedit");
+    /* Input in HEDIT_ENTRY goes to string_add, not here; reaching this means
+     * the descriptor's mode and its string editor disagree. */
+    TB_ERROR_MSG("olc", "bad-mode", "hedit",
+                 "mode %d (HEDIT_ENTRY) reached hedit_parse state %d " DIAG_CHAR_FMT,
+                 OLC_MODE(d), STATE(d), DIAG_CHAR(d->character));
     break;
 
   case HEDIT_MIN_LEVEL:
@@ -374,8 +509,10 @@ void hedit_parse(struct descriptor_data *d, char *arg)
     return;
 
   default:
-    /* We should never get here. */
-    mudlog(TRUE, LVL_BUILDER, BRF, "SYSERR: Reached default case in parse_hedit");
+    /* OLC_MODE is set only by this file; an unknown value is an editor bug. */
+    TB_ERROR_MSG("olc", "bad-mode", "hedit",
+                 "unknown mode %d state %d " DIAG_CHAR_FMT,
+                 OLC_MODE(d), STATE(d), DIAG_CHAR(d->character));
     break;
   }
 
@@ -388,6 +525,23 @@ void hedit_string_cleanup(struct descriptor_data *d, int terminator)
 {
   switch (OLC_MODE(d)) {
   case HEDIT_ENTRY:
+    /* '/c' leaves the entry NULL, string_add's save keeps it NULL, and an
+     * abort restores a NULL backstr.  The menu prints it with %s and
+     * hedit_save_to_disk writes it as the entry, whose first line must be
+     * the keywords, so put back a parseable placeholder and say so. */
+    if (OLC_HELP(d)->entry == NULL) {
+      char placeholder[MAX_STRING_LENGTH];
+
+      TB_WARN_MSG("olc", "hedit-empty-entry", "help_table",
+                  "terminator %d keywords length %zu editor " DIAG_CHAR_FMT,
+                  terminator, strlen(OLC_HELP(d)->keywords ? OLC_HELP(d)->keywords : ""),
+                  DIAG_CHAR(d->character));
+      tb_snprintf(placeholder, sizeof(placeholder),
+                  "%s\r\n\r\nThis help file is unfinished.\r\n",
+                  OLC_HELP(d)->keywords ? OLC_HELP(d)->keywords : "KEYWORDS");
+      OLC_HELP(d)->entry = strdup(placeholder);
+      write_to_output(d, "The entry was empty; a placeholder was put back.\r\n");
+    }
     hedit_disp_menu(d);
     break;
   }

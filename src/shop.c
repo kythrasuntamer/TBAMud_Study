@@ -9,6 +9,22 @@
 *  By Jeff Fink.                                                          *
 **************************************************************************/
 
+/*
+ * Who controls the input:
+ *  - Shop files (lib/world/shp) and sedit (builders): produced vnums, buy
+ *    types, buyword expressions, messages, keeper vnum. The loader rejects
+ *    out-of-range buy types and missing produced vnums with a diagnostic
+ *    (buytype-range, produce-vnum); a missing keeper leaves the shop inert
+ *    (keeper-vnum).
+ *  - Players: buy/sell/list/value arguments. They are rewritten in place by
+ *    transaction_amt() and never logged.
+ *  - Object data (world files, oedit, DG osetval): liquid and type values
+ *    are range-checked before they index drinks[] or item_types[].
+ * Lifetime: slide_obj() may extract a sold item and return a prototype
+ * pointer; get_purchase_obj() extracts zero-cost stock. Builder text spliced
+ * into act() formats is escaped with shop_act_escape().
+ */
+
 #include "conf.h"
 #include "sysdep.h"
 #include "structs.h"
@@ -25,6 +41,7 @@
 #include "modify.h"
 #include "spells.h"  /* for skill_name() */
 #include "screen.h"
+#include "dg_scripts.h" /* for obj_script_id() in diagnostics */
 
 /* Global variables definitions used externally */
 /* Constant list for printing out who we sell to */
@@ -47,10 +64,21 @@ const char *shop_bits[] = {
 };
 
 
+/* Who is evaluating a buyword expression, for diagnostics. */
+struct shop_expr_ctx {
+  struct obj_data *obj;  /* item being offered */
+  int shop_nr;           /* shop rnum */
+  int type_idx;          /* index into the shop's buy-type list */
+  bool failed;           /* evaluation aborted; the result must be rejected */
+};
+
 /* local (file scope) function prototypes  */
-static void push(struct stack_data *stack, int pushval); /**< @todo Move to utils.c */
+static void push(struct stack_data *stack, int pushval,
+    struct shop_expr_ctx *ctx); /**< @todo Move to utils.c */
 static int top(struct stack_data *stack); /**< @todo Move to utils.c */
-static int pop(struct stack_data *stack); /**< @todo Move to utils.c */
+static int pop(struct stack_data *stack,
+    struct shop_expr_ctx *ctx); /**< @todo Move to utils.c */
+static void buyword_parse_error(struct shop_expr_ctx *ctx, const char *what);
 static char *list_object(struct obj_data *obj, int cnt, int oindex, int shop_nr, struct char_data *keeper, struct char_data *seller);
 static void sort_keeper_objs(struct char_data *keeper, int shop_nr);
 static char *read_shop_message(int mnum, room_vnum shr, FILE *shop_f, const char *why);
@@ -72,14 +100,17 @@ static void list_detailed_shop(struct char_data *ch, int shop_nr);
 static int is_ok_char(struct char_data *keeper, struct char_data *ch, int shop_nr);
 static int is_open(struct char_data *keeper, int shop_nr, int msg);
 static int is_ok(struct char_data *keeper, struct char_data *ch, int shop_nr);
-static void evaluate_operation(struct stack_data *ops, struct stack_data *vals);
+static void evaluate_operation(struct stack_data *ops, struct stack_data *vals,
+    struct shop_expr_ctx *ctx);
 static int find_oper_num(char token);
-static int evaluate_expression(struct obj_data *obj, char *expr);
+static int evaluate_expression(struct obj_data *obj, char *expr, int shop_nr,
+    int type_idx);
 static int trade_with(struct obj_data *item, int shop_nr);
 static int same_obj(struct obj_data *obj1, struct obj_data *obj2);
 static int shop_producing(struct obj_data *item, int shop_nr);
 static int transaction_amt(char *arg);
 static char *times_message(struct obj_data *obj, char *name, int num);
+static int shop_act_escape(char *dst, size_t size, const char *src);
 static int buy_price(struct obj_data *obj, int shop_nr, struct char_data *keeper, struct char_data *buyer);
 static int sell_price(struct obj_data *obj, int shop_nr, struct char_data *keeper, struct char_data *seller);
 static int ok_shop_room(int shop_nr, room_vnum room);
@@ -178,8 +209,23 @@ static int is_ok(struct char_data *keeper, struct char_data *ch, int shop_nr)
     return (FALSE);
 }
 
-static void push(struct stack_data *stack, int pushval)
+/* Push onto a fixed-size expression stack. The expression is builder text
+ * (sedit, shop file) whose only limit is its length, so an expression with
+ * more than S_CAPACITY nested operators or operands must be rejected, not
+ * written past the array. Reports buyword-eval and marks ctx failed. */
+static void push(struct stack_data *stack, int pushval,
+    struct shop_expr_ctx *ctx)
 {
+  if (S_FULL(stack)) {
+    if (!ctx->failed)
+      TB_ERROR_MSG("shop", "buyword-eval", "stack",
+                   "shop #%d buy type %d expression exceeds %d tokens; "
+                   "obj vnum %d rejected", (int) SHOP_NUM(ctx->shop_nr),
+                   SHOP_BUYTYPE(ctx->shop_nr, ctx->type_idx),
+                   S_CAPACITY(stack), (int) GET_OBJ_VNUM(ctx->obj));
+    ctx->failed = TRUE;
+    return;
+  }
   S_DATA(stack, S_LEN(stack)++) = pushval;
 }
 
@@ -191,31 +237,44 @@ static int top(struct stack_data *stack)
     return (-1);
 }
 
-static int pop(struct stack_data *stack)
+/* Report a malformed buyword (builder text) once per evaluation, naming
+ * the shop, buy type and item, and mark the evaluation failed so the caller
+ * refuses the sale instead of using a partial result. */
+static void buyword_parse_error(struct shop_expr_ctx *ctx, const char *what)
+{
+  if (!ctx->failed)
+    TB_ERROR_MSG("shop", "buyword-parse", "expression",
+                 "shop #%d buy type %d: %s (obj vnum %d)",
+                 (int) SHOP_NUM(ctx->shop_nr),
+                 SHOP_BUYTYPE(ctx->shop_nr, ctx->type_idx), what,
+                 (int) GET_OBJ_VNUM(ctx->obj));
+  ctx->failed = TRUE;
+}
+
+static int pop(struct stack_data *stack, struct shop_expr_ctx *ctx)
 {
   if (S_LEN(stack) > 0)
     return (S_DATA(stack, --S_LEN(stack)));
-  else {
-    log("SYSERR: Illegal expression %d in shop keyword list.", S_LEN(stack));
-    return (0);
-  }
+  buyword_parse_error(ctx, "operator missing an operand");
+  return (0);
 }
 
-static void evaluate_operation(struct stack_data *ops, struct stack_data *vals)
+static void evaluate_operation(struct stack_data *ops, struct stack_data *vals,
+    struct shop_expr_ctx *ctx)
 {
   int oper;
 
-  if ((oper = pop(ops)) == OPER_NOT)
-    push(vals, !pop(vals));
+  if ((oper = pop(ops, ctx)) == OPER_NOT)
+    push(vals, !pop(vals, ctx), ctx);
   else {
-    int val1 = pop(vals),
-	val2 = pop(vals);
+    int val1 = pop(vals, ctx),
+	val2 = pop(vals, ctx);
 
     /* Compiler would previously short-circuit these. */
     if (oper == OPER_AND)
-      push(vals, val1 && val2);
+      push(vals, val1 && val2, ctx);
     else if (oper == OPER_OR)
-      push(vals, val1 || val2);
+      push(vals, val1 || val2, ctx);
   }
 }
 
@@ -229,18 +288,32 @@ static int find_oper_num(char token)
   return (NOTHING);
 }
 
-static int evaluate_expression(struct obj_data *obj, char *expr)
+/* Evaluate a buyword expression (builder text from sedit or the shop file)
+ * against obj. Grammar: operands are extra-flag names (GLOW, HUM, ...) or
+ * keywords matched with isname(); operators, by increasing precedence, are
+ * '|' or '+' (or), '&' or '*' (and), '^' or '\'' (not, prefix); '[', '(' or '{'
+ * open and ']', ')' or '}' close a group. Each operator/operand stack holds
+ * S_CAPACITY (100) entries. A malformed or too-deep expression is reported
+ * (buyword-parse / buyword-eval, naming the shop and buy type) and
+ * evaluates FALSE, so the sale is refused. An empty expression is TRUE. */
+static int evaluate_expression(struct obj_data *obj, char *expr, int shop_nr,
+    int type_idx)
 {
   struct stack_data ops, vals;
+  struct shop_expr_ctx ctx;
   char *ptr, *end, name[MAX_STRING_LENGTH];
   int temp, eindex;
 
   if (!expr || !*expr)	/* Allows opening ( first. */
     return (TRUE);
 
+  ctx.obj = obj;
+  ctx.shop_nr = shop_nr;
+  ctx.type_idx = type_idx;
+  ctx.failed = FALSE;
   ops.len = vals.len = 0;
   ptr = expr;
-  while (*ptr) {
+  while (*ptr && !ctx.failed) {
     if (isspace(*ptr))
       ptr++;
     else {
@@ -252,32 +325,36 @@ static int evaluate_expression(struct obj_data *obj, char *expr)
 	name[ptr - end] = '\0';
 	for (eindex = 0; *extra_bits[eindex] != '\n'; eindex++)
 	  if (!str_cmp(name, extra_bits[eindex])) {
-	    push(&vals, OBJ_FLAGGED(obj, eindex));
+	    push(&vals, OBJ_FLAGGED(obj, eindex), &ctx);
 	    break;
 	  }
 	if (*extra_bits[eindex] == '\n')
-	  push(&vals, isname(name, obj->name));
+	  push(&vals, isname(name, obj->name), &ctx);
       } else {
 	if (temp != OPER_OPEN_PAREN)
-	  while (top(&ops) > temp)
-	    evaluate_operation(&ops, &vals);
+	  while (!ctx.failed && top(&ops) > temp)
+	    evaluate_operation(&ops, &vals, &ctx);
 
 	if (temp == OPER_CLOSE_PAREN) {
-	  if ((temp = pop(&ops)) != OPER_OPEN_PAREN) {
-	    log("SYSERR: Illegal parenthesis in shop keyword expression.");
+	  if (S_LEN(&ops) == 0 || (temp = pop(&ops, &ctx)) != OPER_OPEN_PAREN) {
+	    buyword_parse_error(&ctx, "unbalanced closing parenthesis");
 	    return (FALSE);
 	  }
 	} else
-	  push(&ops, temp);
+	  push(&ops, temp, &ctx);
 	ptr++;
       }
     }
   }
-  while (top(&ops) != -1)
-    evaluate_operation(&ops, &vals);
-  temp = pop(&vals);
+  while (!ctx.failed && top(&ops) != -1)
+    evaluate_operation(&ops, &vals, &ctx);
+  if (ctx.failed)
+    return (FALSE);
+  temp = pop(&vals, &ctx);
+  if (ctx.failed)
+    return (FALSE);
   if (top(&vals) != -1) {
-    log("SYSERR: Extra operands left on shop keyword expression stack.");
+    buyword_parse_error(&ctx, "extra operands left on the stack");
     return (FALSE);
   }
   return (temp);
@@ -299,7 +376,8 @@ static int trade_with(struct obj_data *item, int shop_nr)
 		(GET_OBJ_TYPE(item) == ITEM_WAND ||
 		 GET_OBJ_TYPE(item) == ITEM_STAFF))
 	return (OBJECT_DEAD);
-      else if (evaluate_expression(item, SHOP_BUYWORD(shop_nr, counter)))
+      else if (evaluate_expression(item, SHOP_BUYWORD(shop_nr, counter),
+                                   shop_nr, counter))
 	return (OBJECT_OK);
     }
   return (OBJECT_NOTOK);
@@ -339,6 +417,13 @@ static int shop_producing(struct obj_data *item, int shop_nr)
   return (FALSE);
 }
 
+/* Parse a leading count from 'buy 5 sword' / 'buy 5 #3'. When the first
+ * token is a number and more text follows, the count and exactly one
+ * following byte are removed from arg in place (arg must be writable) and
+ * the count is returned; otherwise arg is unchanged and 1 is returned. It
+ * assumes no leading whitespace: one_argument() skips spaces and fill words
+ * but the in-place strip does not, so such input strips the wrong bytes
+ * (harmlessly: the rest is still a NUL-terminated name). */
 static int transaction_amt(char *arg)
 {
   char buf[MAX_INPUT_LENGTH];
@@ -377,6 +462,33 @@ static char *times_message(struct obj_data *obj, char *name, int num)
     tb_snprintf(buf + len, sizeof(buf) - len, " (x %d)", num);
 
   return (buf);
+}
+
+/* Copy src into dst for use inside an act() format, doubling every '$' so
+ * perform_act() prints it literally instead of interpreting builder text
+ * (short descriptions) or player keywords as $-codes ('$t' would print the
+ * obj_data struct as a string). Never splits a "$$" pair on truncation.
+ * Returns the number of '$' escaped. */
+static int shop_act_escape(char *dst, size_t size, const char *src)
+{
+  size_t o = 0;
+  int escaped = 0;
+
+  if (size == 0)
+    return 0;
+  for (; *src; src++) {
+    size_t need = (*src == '$') ? 2 : 1;
+
+    if (o + need >= size)
+      break;
+    dst[o++] = *src;
+    if (*src == '$') {
+      dst[o++] = '$';
+      escaped++;
+    }
+  }
+  dst[o] = '\0';
+  return escaped;
 }
 
 static struct obj_data *get_slide_obj_vis(struct char_data *ch, char *name, struct obj_data *list)
@@ -441,6 +553,20 @@ static struct obj_data *get_purchase_obj(struct char_data *ch, char *arg, struct
       return (NULL);
     }
     if (GET_OBJ_COST(obj) <= 0) {
+      /* A worthless item can't be sold; the keeper destroys it. Report it
+       * (a builder mistake) and keep the sorted-prefix count (SHOP_SORT)
+       * consistent with keeper->carrying. */
+      struct obj_data *o;
+      int pos = 0;
+
+      for (o = keeper->carrying; o && o != obj; o = o->next_content)
+        pos++;
+      if (o && pos < SHOP_SORT(shop_nr))
+        SHOP_SORT(shop_nr)--;
+      TB_WARN_MSG("shop", "zero-cost-item", "obj",
+                  "shop #%d keeper mob vnum %d destroyed obj vnum %d cost %d",
+                  (int) SHOP_NUM(shop_nr), (int) GET_MOB_VNUM(keeper),
+                  (int) GET_OBJ_VNUM(obj), GET_OBJ_COST(obj));
       extract_obj(obj);
       obj = NULL;
     }
@@ -486,6 +612,7 @@ static int sell_price(struct obj_data *obj, int shop_nr, struct char_data *keepe
 static void shopping_buy(char *arg, struct char_data *ch, struct char_data *keeper, int shop_nr)
 {
   char tempstr[MAX_INPUT_LENGTH - 10], tempbuf[MAX_INPUT_LENGTH];
+  char actbuf[MAX_INPUT_LENGTH - 10];
   struct obj_data *obj, *last_obj = NULL;
   int goldamt = 0, buynum, bought = 0;
 
@@ -635,8 +762,13 @@ static void shopping_buy(char *arg, struct char_data *ch, struct char_data *keep
       }
   }
   strlcpy(tempstr, times_message(ch->carrying, 0, bought), sizeof(tempstr));
+  if (shop_act_escape(actbuf, sizeof(actbuf), tempstr) > 0)
+    TB_WARN_MSG("shop", "act-dollar", "short_description",
+                "shop #%d obj vnum %d short description contains '$'; escaped",
+                (int) SHOP_NUM(shop_nr),
+                ch->carrying ? (int) GET_OBJ_VNUM(ch->carrying) : NOTHING);
 
-  tb_snprintf(tempbuf, sizeof(tempbuf), "$n buys %s.", tempstr);
+  tb_snprintf(tempbuf, sizeof(tempbuf), "$n buys %s.", actbuf);
   act(tempbuf, FALSE, ch, obj, 0, TO_ROOM);
 
   if (obj && OBJ_FLAGGED(obj, ITEM_QUEST)) {
@@ -693,6 +825,11 @@ static struct obj_data *get_selling_obj(struct char_data *ch, char *name, struct
  * is put together, and manipulating the order of the objects on the list. (But
  * since most of DIKU is not encapsulated, and information hiding is almost
  * never used, it isn't that big a deal). -JF */
+/* Give a sold obj to the keeper, keeping identical items adjacent.
+ * Returns obj, or, when the shop produces this item, extracts (frees) obj and
+ * returns &obj_proto[rnum]: a prototype that callers must never modify,
+ * extract or place. Relies on obj_to_char() inserting at the list head, and
+ * maintains the SHOP_SORT invariant (see sort_keeper_objs). */
 static struct obj_data *slide_obj(struct obj_data *obj, struct char_data *keeper, int shop_nr)
 {
   struct obj_data *loop;
@@ -723,6 +860,11 @@ static struct obj_data *slide_obj(struct obj_data *obj, struct char_data *keeper
   return (obj);
 }
 
+/* Invariant: the first SHOP_SORT(shop_nr) entries of keeper->carrying are
+ * sorted (identical items adjacent) and SHOP_SORT(shop_nr) <=
+ * IS_CARRYING_N(keeper). Code that removes keeper items outside shop.c
+ * (scripts, purges) breaks the count without adjusting it; the next sale
+ * re-sorts, so the cost is ordering, not memory safety. */
 static void sort_keeper_objs(struct char_data *keeper, int shop_nr)
 {
   struct obj_data *list = NULL, *temp;
@@ -749,6 +891,7 @@ static void sort_keeper_objs(struct char_data *keeper, int shop_nr)
 static void shopping_sell(char *arg, struct char_data *ch, struct char_data *keeper, int shop_nr)
 {
   char tempstr[MAX_INPUT_LENGTH - 10], name[MAX_INPUT_LENGTH], tempbuf[MAX_INPUT_LENGTH]; // - 10 to make room for constants in format
+  char actbuf[MAX_INPUT_LENGTH - 10];
   struct obj_data *obj;
   int sellnum, sold = 0, goldamt = 0;
 
@@ -805,7 +948,13 @@ static void shopping_sell(char *arg, struct char_data *ch, struct char_data *kee
   increase_gold(ch, goldamt);
 
   strlcpy(tempstr, times_message(0, name, sold), sizeof(tempstr));
-  tb_snprintf(tempbuf, sizeof(tempbuf), "$n sells %s.", tempstr);
+  /* name is the seller's typed keyword (player text): escape it, and
+   * report only that it happened, never the text. */
+  if (shop_act_escape(actbuf, sizeof(actbuf), tempstr) > 0)
+    TB_WARN_MSG("shop", "act-dollar", "sell keyword",
+                "shop #%d sell keyword from " DIAG_CHAR_FMT " contains '$'; escaped",
+                (int) SHOP_NUM(shop_nr), DIAG_CHAR(ch));
+  tb_snprintf(tempbuf, sizeof(tempbuf), "$n sells %s.", actbuf);
   act(tempbuf, FALSE, ch, obj, 0, TO_ROOM);
 
   SHOP_TELL(keeper, ch, shop_nr, message_sell, goldamt);
@@ -853,7 +1002,16 @@ static char *list_object(struct obj_data *obj, int cnt, int aindex, int shop_nr,
 
   switch (GET_OBJ_TYPE(obj)) {
   case ITEM_DRINKCON:
-    if (GET_OBJ_VAL(obj, 1))
+    /* Value 2 (liquid) indexes drinks[]. Boot does not range-check it and
+     * osetval writes any int, so an out-of-range value is reported and
+     * shown as "<bad liquid>" instead of reading past the table. */
+    if (GET_OBJ_VAL(obj, 1) && !VALID_LIQ_TYPE(GET_OBJ_VAL(obj, 2))) {
+      TB_ERROR_MSG("shop", "liquid-index", "drinks",
+                   "shop #%d obj vnum %d uid %ld liquid %d not in [0,%d)",
+                   (int) SHOP_NUM(shop_nr), (int) GET_OBJ_VNUM(obj),
+                   obj_script_id(obj), GET_OBJ_VAL(obj, 2), NUM_LIQ_TYPES);
+      tb_snprintf(itemname, sizeof(itemname), "%s of <bad liquid>", obj->short_description);
+    } else if (GET_OBJ_VAL(obj, 1))
       tb_snprintf(itemname, sizeof(itemname), "%s of %s", obj->short_description, drinks[GET_OBJ_VAL(obj, 2)]);
     else
       strlcpy(itemname, obj->short_description, sizeof(itemname));
@@ -1029,9 +1187,27 @@ int ok_damage_shopkeeper(struct char_data *ch, struct char_data *victim)
 static int add_to_shop_list(struct shop_buy_data *list, int type, int *len, int *val)
 {
   if (*val != NOTHING && *val >= 0) { /* necessary after changing to unsigned v/rnums -- Welcor */
+    /* A buy type indexes item_types[] (list_detailed_shop) and is compared
+     * with GET_OBJ_TYPE. The shop file is the only source here (sedit
+     * clamps), so drop an out-of-range type and keep reading. */
+    if (type == LIST_TRADE && !VALID_ITEM_TYPE(*val)) {
+      TB_ERROR_MSG("shop", "buytype-range", "shop file",
+                   "shop #%d buy type %d not in [0,%d); dropped",
+                   (int) SHOP_NUM(top_shop), *val, NUM_ITEM_TYPES);
+      return (FALSE);
+    }
     if (*len < MAX_SHOP_OBJ) {
-      if (type == LIST_PRODUCE)
+      if (type == LIST_PRODUCE) {
+        obj_vnum vnum = *val;
+
 	*val = real_object(*val);
+        /* A produced item whose prototype was deleted cannot be sold;
+         * dropping it silently would leave the builder guessing. */
+        if (*val == NOTHING)
+          TB_ERROR_MSG("shop", "produce-vnum", "shop file",
+                       "shop #%d produces missing obj vnum %d; dropped",
+                       (int) SHOP_NUM(top_shop), (int) vnum);
+      }
       if (*val != NOTHING) {
 	BUY_TYPE(list[*len]) = *val;
 	BUY_WORD(list[(*len)++]) = NULL;
@@ -1047,7 +1223,10 @@ static int add_to_shop_list(struct shop_buy_data *list, int type, int *len, int 
 static int end_read_list(struct shop_buy_data *list, int len, int error)
 {
   if (error)
-    log("SYSERR: Raise MAX_SHOP_OBJ constant in shop.h to %d", len + error);
+    TB_ERROR_MSG("shop", "list-overflow", "shop file",
+                 "shop #%d list has %d entries, %d dropped; raise MAX_SHOP_OBJ "
+                 "in shop.h to %d", (int) SHOP_NUM(top_shop), len + error,
+                 error, len + error);
   BUY_WORD(list[len]) = NULL;
   BUY_TYPE(list[len++]) = NOTHING;
   return (len);
@@ -1138,16 +1317,23 @@ static void read_line(FILE *shop_f, const char *string, ...)
 {
   char buf[READ_SIZE];
   va_list args;
-  int parsed = 0;
+  int parsed = 0, got_line;
 
-  if (get_line(shop_f, buf)) {
+  /* get_line() leaves buf untouched at EOF; never log it uninitialised. */
+  buf[0] = '\0';
+  if ((got_line = get_line(shop_f, buf)) != 0) {
     va_start(args, string);
     parsed = vsscanf(buf, string, args);
     va_end(args);
   }
   if (parsed != 1) {
-    log("SYSERR: Error in shop #%d, near '%s' with '%s'", SHOP_NUM(top_shop), buf, string);
-    exit(1);
+    /* The shop file is half-read and shop_index is inconsistent; boot
+     * cannot continue. Log the line length, not its builder text. */
+    TB_FATAL_MSG("shop", "shop-file-parse", "shop file",
+                 "shop #%d: expected '%s', got %s (%zu bytes); aborting boot",
+                 (int) SHOP_NUM(top_shop), string,
+                 got_line ? "an unparsable line" : "end of file", strlen(buf));
+    abort();
   }
 }
 
@@ -1193,8 +1379,19 @@ static int read_type_list(FILE *shop_f, struct shop_buy_data *list,
     }
     if ((ptr = strchr(buf, ';')) != NULL)
       *ptr = '\0';
-    else
-      *(END_OF(buf) - 1) = '\0';
+    else {
+      /* Strip only a real line ending: a line that begins with a NUL byte
+       * has strlen 0 (stripping would write buf[-1]), and a final line
+       * without a newline must keep its last character. */
+      size_t blen = strlen(buf);
+
+      if (blen == 0)
+        TB_ERROR_MSG("shop", "shop-file-parse", "shop file",
+                     "shop #%d type list line starts with a NUL byte",
+                     (int) SHOP_NUM(top_shop));
+      while (blen > 0 && (buf[blen - 1] == '\n' || buf[blen - 1] == '\r'))
+        buf[--blen] = '\0';
+    }
 
     num = -1;
 
@@ -1389,8 +1586,14 @@ void assign_the_shopkeepers(void)
   cmd_puke = find_command("puke");
 
   for (cindex = 0; cindex <= top_shop; cindex++) {
-    if (SHOP_KEEPER(cindex) == NOBODY)
+    /* The keeper vnum was resolved with real_mobile() at load; NOBODY means
+     * the mob does not exist and the shop can never trade. */
+    if (SHOP_KEEPER(cindex) == NOBODY) {
+      TB_ERROR_MSG("shop", "keeper-vnum", "shop",
+                   "shop #%d has no keeper mob; shop inert",
+                   (int) SHOP_NUM(cindex));
       continue;
+    }
 
     if (SHOP_KEEPER(cindex) > top_of_mobt) {
     	log ("shop %d had mob out of bounds", cindex);
@@ -1596,8 +1799,13 @@ static void list_detailed_shop(struct char_data *ch, int shop_nr)
       column += 2;
     }
 
+    if (!VALID_ITEM_TYPE(SHOP_BUYTYPE(shop_nr, sindex)))
+      TB_ERROR_MSG("shop", "buytype-range", "shop",
+                   "shop #%d buy type %d not in [0,%d)", (int) SHOP_NUM(shop_nr),
+                   SHOP_BUYTYPE(shop_nr, sindex), NUM_ITEM_TYPES);
     linelen = snprintf(buf1, sizeof(buf1), "%s (#%d) [%s]",
-		item_types[SHOP_BUYTYPE(shop_nr, sindex)],
+		VALID_ITEM_TYPE(SHOP_BUYTYPE(shop_nr, sindex)) ?
+		  item_types[SHOP_BUYTYPE(shop_nr, sindex)] : "<invalid>",
 		SHOP_BUYTYPE(shop_nr, sindex),
 		SHOP_BUYWORD(shop_nr, sindex) ? SHOP_BUYWORD(shop_nr, sindex) : "all");
 

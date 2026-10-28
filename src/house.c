@@ -8,6 +8,25 @@
 *  CircleMUD is based on DikuMUD, Copyright (C) 1990, 1991.               *
 **************************************************************************/
 
+/**
+ * @file house.c
+ * Player houses: the house control table (lib/etc/hcontrol), each house's
+ * object file (lib/house/<vnum>.house), and the hcontrol/house commands.
+ *
+ * Who controls the input: hcontrol is a raw binary array of struct
+ * house_control_rec (see house.h) and every field in it is untrusted on
+ * read; House_boot() validates each record before it is loaded. House
+ * object files use the rent object-record format and go through
+ * objsave_parse_objects_from(). Guest names come from immortals and house
+ * owners and are resolved through the player index.
+ *
+ * Lifetime: house_control[] is a fixed static table of num_of_houses
+ * records, owned here. Both hcontrol and the object files are written
+ * through staged files and committed only after a complete write.
+ * Objects are restored flat into the house room: container nesting is not
+ * kept across a reload (House_save() writes every record with Loc 0).
+ */
+
 #include "conf.h"
 #include "sysdep.h"
 #include "structs.h"
@@ -72,7 +91,11 @@ static int House_load(room_vnum vnum)
     return (0);
   }
 
-	loaded = objsave_parse_objects(fl);
+	{
+	  char owner[32];
+	  tb_snprintf(owner, sizeof(owner), "house vnum %d", vnum);
+	  loaded = objsave_parse_objects_from(fl, filename, owner);
+	}
 
 	for (current = loaded; current != NULL; current = current->next)
     obj_to_room(current->obj, rnum);
@@ -91,24 +114,31 @@ static int House_load(room_vnum vnum)
   return (1);
 }
 
-/* Save all objects for a house (recursive; initial call must be followed by a 
- * call to House_restore_weight)  Assumes file is open already. */
+/** Save all objects for a house (recursive). Assumes fp is open.
+ * Each object's weight is subtracted from its containers while saving, so
+ * the initial call MUST be followed by House_restore_weight() on the same
+ * tree, on failure too. Every object is visited even after a failed record
+ * so that pass stays exact. Records are written flat (Loc 0): container
+ * nesting is not kept across a house reload.
+ * @return 1 only when every record in the tree was written (failures below
+ * the head used to be ignored); objsave_save_obj_record() reports each. */
 int House_save(struct obj_data *obj, FILE *fp)
 {
   struct obj_data *tmp;
-  int result;
+  int ok = 1;
 
   if (obj) {
-    House_save(obj->contains, fp);
-    House_save(obj->next_content, fp);
-    result = objsave_save_obj_record(obj, fp, 0);
-    if (!result)
-      return (0);
+    if (!House_save(obj->contains, fp))
+      ok = 0;
+    if (!House_save(obj->next_content, fp))
+      ok = 0;
+    if (!objsave_save_obj_record(obj, fp, 0))
+      ok = 0;
 
     for (tmp = obj->in_obj; tmp; tmp = tmp->in_obj)
       GET_OBJ_WEIGHT(tmp) -= GET_OBJ_WEIGHT(obj);
   }
-  return (1);
+  return ok;
 }
 
 /* restore weight of containers after House_save has changed them for saving */
@@ -122,31 +152,45 @@ static void House_restore_weight(struct obj_data *obj)
   }
 }
 
-/* Save all objects in a house */
+/* Save all objects in a house. The object file is staged beside the live
+ * one and replaced only after a complete write, so a failed save keeps the
+ * previous contents. ROOM_HOUSE_CRASH stays set on failure, so
+ * House_save_all() retries. */
 void House_crashsave(room_vnum vnum)
 {
   int rnum;
-  char buf[MAX_STRING_LENGTH];
+  char buf[MAX_STRING_LENGTH], temp[MAX_STRING_LENGTH + 16];
   FILE *fp;
 
-  if ((rnum = real_room(vnum)) == NOWHERE)
+  if ((rnum = real_room(vnum)) == NOWHERE) {
+    TB_ERROR_MSG("house", "crashsave", "house-file",
+                 "house vnum %d has no room; objects not saved", vnum);
     return;
+  }
   if (!House_get_filename(vnum, buf, sizeof(buf)))
     return;
-  if (!(fp = fopen(buf, "wb"))) {
-    int saved_errno = errno;
-    log("SYSERR: House_crashsave could not open %s for house #%d: %s (errno=%d)",
-        buf, vnum, strerror(saved_errno), saved_errno);
+  if (!(fp = objsave_open_staged(buf, temp, sizeof(temp)))) {
+    TB_ERROR_MSG("house", "crashsave", buf,
+                 "house vnum %d objects not saved; live file kept", vnum);
     return;
   }
   if (!House_save(world[rnum].contents, fp)) {
-    tb_fclose(fp);
+    House_restore_weight(world[rnum].contents);
+    objsave_abort_staged(fp, temp);
+    TB_ERROR_MSG("house", "crashsave", buf,
+                 "house vnum %d object write failed; live file kept", vnum);
     return;
   }
-  tb_fclose(fp);
+  if (!objsave_commit_staged(fp, temp, buf)) {
+    House_restore_weight(world[rnum].contents);
+    TB_ERROR_MSG("house", "crashsave", buf,
+                 "house vnum %d objects not committed; live file kept", vnum);
+    return;
+  }
   House_restore_weight(world[rnum].contents);
   REMOVE_BIT_AR(ROOM_FLAGS(rnum), ROOM_HOUSE_CRASH);
 }
+
 
 /* Delete a house save file */
 static void House_delete_file(room_vnum vnum)
@@ -175,7 +219,9 @@ static void House_listrent(struct char_data *ch, room_vnum vnum)
   char filename[MAX_STRING_LENGTH];
   char buf[MAX_STRING_LENGTH];
 	obj_save_data *loaded, *current;
-	int len = 0;
+	int listed = 0, total = 0;
+	struct tb_buf out;
+	static const char truncated[] = "*** listing truncated; see server log ***\r\n";
 
   if (!House_get_filename(vnum, filename, sizeof(filename)))
     return;
@@ -190,14 +236,32 @@ static void House_listrent(struct char_data *ch, room_vnum vnum)
     }
     return;
   }
-  *buf = '\0';
-	len = snprintf(buf, sizeof(buf), "filename: %s\r\n", filename);
+  /* Bounded by buf: a house may hold any number of objects with
+   * builder- or restring-length descriptions. */
+  tb_buf_init(&out, buf, sizeof(buf) - sizeof(truncated));
+	tb_buf_appendf(&out, "filename: %s\r\n", filename);
 
-	loaded = objsave_parse_objects(fl);
+	{
+	  char owner[32];
+	  tb_snprintf(owner, sizeof(owner), "house vnum %d", vnum);
+	  loaded = objsave_parse_objects_from(fl, filename, owner);
+	}
 
-	for (current = loaded; current != NULL; current = current->next)
-	  len += snprintf(buf+len, sizeof(buf)-len, " [%5d] (%5dau) %s\r\n",
-	    GET_OBJ_VNUM(current->obj), GET_OBJ_RENT(current->obj), current->obj->short_description);
+	for (current = loaded; current != NULL; current = current->next) {
+	  total++;
+	  if (!tb_buf_truncated(&out) &&
+	      tb_buf_appendf(&out, " [%5d] (%5dau) %s\r\n",
+	        GET_OBJ_VNUM(current->obj), GET_OBJ_RENT(current->obj),
+	        current->obj->short_description ? current->obj->short_description
+	                                        : "<no short description>"))
+	    listed++;
+	}
+	if (tb_buf_truncated(&out)) {
+	  TB_WARN_MSG("house", "listrent-truncate", filename,
+	              "house vnum %d: %d objects listed of %d; listing exceeds %zu bytes",
+	              vnum, listed, total, sizeof(buf));
+	  strlcat(buf, truncated, sizeof(buf));
+	}
 
 	/* now it's safe to free the obj_save_data list - all members of it
 	 * have been put in the correct lists by obj_to_room()
@@ -225,75 +289,146 @@ static int find_house(room_vnum vnum)
   return (NOWHERE);
 }
 
-/* Save the house control information */
+/** Save the house control records to HCONTROL_FILE.
+ * The file used to be truncated in place with fopen("wb"): a failed or
+ * short write left it empty or partial, and the next boot then lost every
+ * house. It is now staged beside the live file and committed only after a
+ * complete write; on failure the live file is kept and the error reported
+ * (hcontrol-save). The in-memory table is unchanged either way, so the
+ * next successful save writes the current state. */
 static void House_save_control(void)
 {
   FILE *fl;
+  char temp[MAX_INPUT_LENGTH];
 
-  if (!(fl = fopen(HCONTROL_FILE, "wb"))) {
-    TB_REPORT_ERRNO("fopen", HCONTROL_FILE);
+  if (!(fl = objsave_open_staged(HCONTROL_FILE, temp, sizeof(temp)))) {
+    TB_ERROR_MSG("house", "hcontrol-save", HCONTROL_FILE,
+                 "%d house records not saved; live file kept", num_of_houses);
     return;
   }
   /* write all the house control recs in one fell swoop. */
   if (fwrite(house_control, sizeof(struct house_control_rec), num_of_houses, fl) != (size_t)num_of_houses) {
-    if (ferror(fl)) {
-      int saved_errno = errno;
-      log("SYSERR: house control write failed for %s after %d records: %s (errno=%d)",
-          HCONTROL_FILE, num_of_houses, strerror(saved_errno), saved_errno);
-    } else
-      log("SYSERR: short write saving %d house-control records to %s",
-          num_of_houses, HCONTROL_FILE);
-    tb_fclose(fl);
+    TB_ERROR_ERRNO("house", "hcontrol-save", HCONTROL_FILE,
+                   "short write of %d house records; live file kept",
+                   num_of_houses);
+    objsave_abort_staged(fl, temp);
     return;
   }
 
-  tb_fclose(fl);
+  if (!objsave_commit_staged(fl, temp, HCONTROL_FILE))
+    TB_ERROR_MSG("house", "hcontrol-save", HCONTROL_FILE,
+                 "%d house records not committed; live file kept",
+                 num_of_houses);
 }
 
-/* Call from boot_db - will load control recs, load objs, set atrium bits. 
- * Should do sanity checks on vnums & remove invalid records. */
+/* Report one hcontrol record that House_boot() will not load. */
+#define HOUSE_BOOT_SKIP(rec, reason) \
+  TB_ERROR_MSG("house", "boot-skip", HCONTROL_FILE, \
+               "house vnum %d atrium %d owner idnum %ld: %s; record skipped", \
+               (rec).vnum, (rec).atrium, (rec).owner, (reason))
+
+/** Load the house control records, their object files and room flags.
+ * Called once from boot_db(). HCONTROL_FILE is a raw binary array of
+ * struct house_control_rec (see house.h), so each record is validated:
+ * owner, house and atrium rooms, uniqueness, exit, guest count and mode.
+ * A record that fails is reported (boot-skip / hcontrol-record) and not
+ * loaded. If any record was skipped, or the file could not be read
+ * completely, hcontrol is NOT rewritten: a transient problem (a truncated
+ * player index, a zone file that failed to load) must not delete houses
+ * permanently. The file is rewritten only after a clean boot, which
+ * normalises it to the records that were loaded. */
 void House_boot(void)
 {
   struct house_control_rec temp_house;
   room_rnum real_house, real_atrium;
   FILE *fl;
+  int record = 0, skipped = 0;
+  size_t got;
 
   memset((char *)house_control,0,sizeof(struct house_control_rec)*MAX_HOUSES);
+  num_of_houses = 0;
 
   if (!(fl = fopen(HCONTROL_FILE, "rb"))) {
     if (errno == ENOENT)
       log("   No houses to load. File '%s' does not exist.", HCONTROL_FILE);
-    else {
-      int saved_errno = errno;
-      log("SYSERR: Unable to open house control file %s: %s (errno=%d)",
-          HCONTROL_FILE, strerror(saved_errno), saved_errno);
-    }
+    else
+      TB_ERROR_ERRNO("house", "hcontrol-open", HCONTROL_FILE,
+                     "house control file unreadable; no houses loaded");
     return;
   }
-  while (!feof(fl) && num_of_houses < MAX_HOUSES) {
-    if (fread(&temp_house, sizeof(struct house_control_rec), 1, fl) != 1)
+  for (;;) {
+    got = fread(&temp_house, 1, sizeof(struct house_control_rec), fl);
+    if (got != sizeof(struct house_control_rec)) {
+      if (ferror(fl)) {
+        TB_ERROR_ERRNO("house", "hcontrol-read", HCONTROL_FILE,
+                       "read failed after %d records", record);
+        skipped++;
+      } else if (got != 0) {
+        TB_ERROR_MSG("house", "hcontrol-read", HCONTROL_FILE,
+                     "trailing partial record (%zu of %zu bytes) after %d records",
+                     got, sizeof(struct house_control_rec), record);
+        skipped++;
+      }
       break;
+    }
+    record++;
 
-    if (feof(fl))
+    if (num_of_houses >= MAX_HOUSES) {
+      TB_ERROR_MSG("house", "hcontrol-read", HCONTROL_FILE,
+                   "more than MAX_HOUSES (%d) records; record %d and later ignored",
+                   MAX_HOUSES, record);
+      skipped++;
       break;
+    }
 
-    if (get_name_by_id(temp_house.owner) == NULL)
-      continue;			/* owner no longer exists -- skip */
+    if (get_name_by_id(temp_house.owner) == NULL) {
+      HOUSE_BOOT_SKIP(temp_house, "owner not in player index");
+      skipped++;
+      continue;
+    }
 
-    if ((real_house = real_room(temp_house.vnum)) == NOWHERE)
-      continue;			/* this vnum doesn't exist -- skip */
+    if ((real_house = real_room(temp_house.vnum)) == NOWHERE) {
+      HOUSE_BOOT_SKIP(temp_house, "house room does not exist");
+      skipped++;
+      continue;
+    }
 
-    if (find_house(temp_house.vnum) != NOWHERE)
-      continue;			/* this vnum is already a house -- skip */
+    if (find_house(temp_house.vnum) != NOWHERE) {
+      HOUSE_BOOT_SKIP(temp_house, "duplicate house vnum");
+      skipped++;
+      continue;
+    }
 
-    if ((real_atrium = real_room(temp_house.atrium)) == NOWHERE)
-      continue;			/* house doesn't have an atrium -- skip */
+    if ((real_atrium = real_room(temp_house.atrium)) == NOWHERE) {
+      HOUSE_BOOT_SKIP(temp_house, "atrium room does not exist");
+      skipped++;
+      continue;
+    }
 
-    if (temp_house.exit_num < 0 || temp_house.exit_num >= DIR_COUNT)
-      continue;			/* invalid exit num -- skip */
+    if (temp_house.exit_num < 0 || temp_house.exit_num >= DIR_COUNT) {
+      HOUSE_BOOT_SKIP(temp_house, "exit direction out of range");
+      skipped++;
+      continue;
+    }
 
-    if (TOROOM(real_house, temp_house.exit_num) != real_atrium)
-      continue;			/* exit num mismatch -- skip */
+    if (TOROOM(real_house, temp_house.exit_num) != real_atrium) {
+      HOUSE_BOOT_SKIP(temp_house, "exit does not lead to the atrium");
+      skipped++;
+      continue;
+    }
+
+    /* num_of_guests comes straight from the binary hcontrol file and bounds
+     * every guests[] loop (House_can_enter, House_list_guests, do_house);
+     * do_house also appends at guests[num_of_guests]. HOUSE_PRIVATE is the
+     * only ownership mode the code implements. */
+    if (!VALID_HOUSE_GUESTS(&temp_house) || temp_house.mode != HOUSE_PRIVATE) {
+      TB_ERROR_MSG("house", "hcontrol-record", HCONTROL_FILE,
+                   "house vnum %d owner idnum %ld num_of_guests %d (max %d) "
+                   "mode %d; record skipped", temp_house.vnum, temp_house.owner,
+                   temp_house.num_of_guests, MAX_GUESTS, temp_house.mode);
+      skipped++;
+      continue;
+    }
 
     house_control[num_of_houses++] = temp_house;
 
@@ -304,8 +439,18 @@ void House_boot(void)
   }
 
   tb_fclose(fl);
+  if (skipped) {
+    TB_ERROR_MSG("house", "hcontrol-keep", HCONTROL_FILE,
+                 "%d of %d records not loaded; file left unchanged at boot "
+                 "(the next hcontrol or house change rewrites it without them)",
+                 skipped, record);
+    return;
+  }
   House_save_control();
 }
+
+#undef HOUSE_BOOT_SKIP
+
 
 /* "House Control" functions */
 static const char *HCONTROL_FORMAT =
@@ -433,6 +578,10 @@ static void hcontrol_build_house(struct char_data *ch, char *arg)
     return;
   }
 
+  /* House_save_control() fwrite()s the whole record, so the spare fields
+   * and struct padding must be defined: zero the record before filling it
+   * rather than writing stack garbage into hcontrol. */
+  memset(&temp_house, 0, sizeof(temp_house));
   temp_house.mode = HOUSE_PRIVATE;
   temp_house.vnum = virt_house;
   temp_house.atrium = virt_atrium;
@@ -558,14 +707,19 @@ ACMD(do_house)
   else {
     for (j = 0; j < house_control[i].num_of_guests; j++)
       if (house_control[i].guests[j] == id) {
-	for (; j < house_control[i].num_of_guests; j++)
+	/* Shift the later guests down one slot. Stop one short of the
+	 * count: guests[num_of_guests] is past the list (and past guests[]
+	 * itself when the list is full). Zero the vacated last slot so the
+	 * spare entry written to hcontrol is not a stale idnum. */
+	for (; j < house_control[i].num_of_guests - 1; j++)
 	  house_control[i].guests[j] = house_control[i].guests[j + 1];
 	house_control[i].num_of_guests--;
+	house_control[i].guests[house_control[i].num_of_guests] = 0;
 	House_save_control();
 	send_to_char(ch, "Guest deleted.\r\n");
 	return;
       }
-    if (house_control[i].num_of_guests == MAX_GUESTS) {
+    if (house_control[i].num_of_guests >= MAX_GUESTS) {
       send_to_char(ch, "You have too many guests.\r\n");
       return;
     }
@@ -687,7 +841,7 @@ static int ascii_convert_house(struct char_data *ch, obj_vnum vnum)
 	FILE *in, *out;
 	char infile[MAX_INPUT_LENGTH], *outfile;
 	struct obj_data *tmp;
-	int i, j=0;
+	int i, j=0, skipped = 0, saved;
 
   House_get_filename(vnum, infile, sizeof(infile));
 
@@ -738,12 +892,31 @@ static int ascii_convert_house(struct char_data *ch, obj_vnum vnum)
       break;
     }
 
+    /* The binary record's vnum comes from an old house file; its prototype
+     * may have been deleted since. That is not a write error: skip and
+     * report the record, as the ASCII loader does. */
     tmp = Obj_from_store(object, &i);
-    if (!tmp || !objsave_save_obj_record(tmp, out, i)) {
+    if (!tmp) {
+      TB_WARN_MSG("house", "convert-missing-proto", infile,
+                  "house vnum %d record %d obj vnum %d has no prototype; skipped",
+                  vnum, j + skipped, object.item_number);
+      skipped++;
+      continue;
+    }
+    /* Obj_from_store() built a live object (read_object() put it on
+     * object_list) only to serialise it; release it whether or not the
+     * write worked, or every converted object leaks into the world. */
+    saved = objsave_save_obj_record(tmp, out, i);
+    extract_obj(tmp);
+    if (!saved) {
+      TB_ERROR_MSG("house", "convert-write", outfile,
+                   "house vnum %d record %d obj vnum %d not written; "
+                   "conversion aborted", vnum, j + skipped, object.item_number);
       send_to_char(ch, "...write error in house rent file.\r\n");
-      free(outfile);
       tb_fclose(in);
       tb_fclose(out);
+      (void) remove(outfile);
+      free(outfile);
       return 0;
     }
     j++;
@@ -757,6 +930,8 @@ static int ascii_convert_house(struct char_data *ch, obj_vnum vnum)
 	free(outfile);
 
 	send_to_char(ch, "...%d items", j);
+	if (skipped)
+	  send_to_char(ch, " (%d skipped, no prototype; see server log)", skipped);
 	return 1;
 }
 
@@ -771,7 +946,12 @@ static struct obj_data *Obj_from_store(struct obj_file_elem object, int *locatio
   if ((itemnum = real_object(object.item_number)) == NOTHING)
     return (NULL);
 
-  obj = read_object(itemnum, REAL);
+  if ((obj = read_object(itemnum, REAL)) == NULL) {
+    TB_ERROR_MSG("house", "convert-read-object", "Obj_from_store",
+                 "obj vnum %d rnum %d could not be instantiated",
+                 object.item_number, itemnum);
+    return (NULL);
+  }
 #if USE_AUTOEQ
   *location = object.location;
 #endif

@@ -12,6 +12,19 @@
 *  $Revision: 1.0.14 $                                                    *
 **************************************************************************/
 
+/**
+ * @file dg_comm.c
+ * Message output for DG scripts: sub_write() (the m/o/w echo and send commands'
+ * token substitution), send_to_zone(), and any_one_name().
+ *
+ * Who controls the input: messages are builder-written trigger text after
+ * var_subst(), and so can carry player text. They are copied into bounded
+ * buffers (truncation is reported) and always sent as data ("%s").
+ *
+ * Lifetime: nothing here runs a callback (no triggers, no act()), so a
+ * room's people list is stable while it is walked.
+ */
+
 #include "conf.h"
 #include "sysdep.h"
 #include "structs.h"
@@ -53,6 +66,14 @@ char *any_one_name(char *argument, char *first_arg)
   return argument;
 }
 
+/**
+ * Assembles and sends one viewer's copy of a sub_write() message: the text
+ * pieces in tokens[], each followed by the viewer-specific rendering of the
+ * referenced character or object in otokens[] (type[] holds the token
+ * character), up to the NULL sentinel. The result is bounded by
+ * MAX_STRING_LENGTH (strlcat truncates).
+ * @param ch The viewer.
+ */
 static void sub_write_to_char(char_data *ch, char *tokens[], void *otokens[], char type[])
 {
   char sb[MAX_STRING_LENGTH];
@@ -125,6 +146,34 @@ static void sub_write_to_char(char_data *ch, char *tokens[], void *otokens[], ch
   send_to_char(ch, "%s", sb);
 }
 
+/**
+ * Sends a script message with per-viewer name substitution.
+ *
+ * Token grammar: each token character is followed by a name (read by
+ * any_one_name(), so it ends at whitespace or punctuation other than '#'
+ * and '-'):
+ *  - ~name  the character's name as the viewer sees it ("you" for itself)
+ *  - |name  possessive name ("your")
+ *  - ^name  his/her/its       &name  he/she/it       *name  him/her/it
+ *  - `name  an object; with find_invis (every current caller) an object
+ *           in the room. Without it the lookup chain below is unreliable:
+ *           a room match is replaced by equipment and then inventory
+ *           lookups, so it should be fixed before any caller passes FALSE.
+ *  - \x     the character x literally (a trailing backslash is dropped and
+ *           reported)
+ * A name that matches nothing renders as "someone", "it" or "something".
+ *
+ * @param arg The message; at most MAX_INPUT_LENGTH * 2 - 2 bytes and
+ * MAX_INPUT_LENGTH - 2 tokens are used, the rest is reported and dropped.
+ * @param ch The character the message is anchored on: the acting mob, or
+ * for object and room scripts the target character or the room's first
+ * occupant. Its room is where names are looked up and where TO_ROOM sends;
+ * it must be a valid room, anything else is reported ("sub-write") and the
+ * message dropped.
+ * @param find_invis TRUE looks names up regardless of visibility (scripts
+ * see everything); FALSE uses what ch can see.
+ * @param targets TO_CHAR and/or TO_ROOM (everyone in the room but ch).
+ */
 void sub_write(char *arg, char_data *ch, byte find_invis, int targets)
 {
   char str[MAX_INPUT_LENGTH * 2];
@@ -136,12 +185,21 @@ void sub_write(char *arg, char_data *ch, byte find_invis, int targets)
   int i, tmp;
   int to_sleeping = 1; /* mainly for windows compiles */
 
-  /* Every caller passes a message and a character standing in a room. */
-  if (!arg || !ch || IN_ROOM(ch) == NOWHERE) {
-    TB_ERROR_MSG("dg", "sub-write", "sub_write",
-                 "invariant violated: arg=%s ch=%p room=%s; message dropped",
-                 arg ? "set" : "NULL", (void *)ch,
-                 !ch ? "n/a" : (IN_ROOM(ch) == NOWHERE ? "NOWHERE" : "valid"));
+  /* Every caller passes a message and a character standing in a room; the
+   * room is indexed below (world[IN_ROOM(ch)]), so any rnum past the world
+   * table is as bad as NOWHERE. */
+  if (!arg || !ch || !VALID_ROOM_RNUM(IN_ROOM(ch))) {
+    if (!ch)
+      TB_ERROR_MSG("dg", "sub-write", "sub_write",
+                   "invariant violated: arg=%s, no speaker; message dropped",
+                   arg ? "set" : "NULL");
+    else
+      TB_ERROR_MSG("dg", "sub-write", "sub_write",
+                   "invariant violated: arg=%s, speaker " DIAG_CHAR_FMT
+                   " uid %ld at rnum %ld (%s); message dropped",
+                   arg ? "set" : "NULL", DIAG_CHAR(ch), ch->script_id,
+                   (long)IN_ROOM(ch),
+                   VALID_ROOM_RNUM(IN_ROOM(ch)) ? "a room" : "not a room");
     return;
   }
 
@@ -219,6 +277,12 @@ void sub_write(char *arg, char_data *ch, byte find_invis, int targets)
       sub_write_to_char(to, tokens, otokens, type);
 }
 
+/**
+ * Sends messg to every awake, playing character in a zone. An empty or NULL
+ * message sends nothing.
+ * @param messg Finished text, sent as data.
+ * @param zone The zone's rnum.
+ */
 void send_to_zone(char *messg, zone_rnum zone)
 {
   struct descriptor_data *i;

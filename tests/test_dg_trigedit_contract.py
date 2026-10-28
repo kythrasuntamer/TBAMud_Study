@@ -28,10 +28,17 @@ assert "GET_TRIG_RNUM(OLC_TRIG(dsc)) >= rnum" in edit
 copy = s[s.index("case TRIGEDIT_COPY:"):]
 copy = copy[:copy.index("break;")]
 assert "!= NOTHING" in copy
-assert "free_trigger(OLC_TRIG(d));" in copy, "the replaced buffer is released"
-assert "free(OLC_STORAGE(d));" in copy
+assert "tb_parse_int_checked(arg, &i)" in copy, "a non-numeric answer is not trigger #0"
+# trigedit_setup_existing() releases the old scratch trigger and buffer
+# itself; freeing them here as well was a double free.
+assert "free_trigger(OLC_TRIG(d));" not in copy, "setup_existing releases the buffer"
+assert "free(OLC_STORAGE(d));" not in copy
 assert "GET_TRIG_RNUM(OLC_TRIG(d)) = real_trigger(OLC_NUM(d));" in copy
-existing = s[s.index("/* make the prorotype look like what we have */"):]
+setup = s[s.index("void trigedit_setup_existing("):]
+setup = setup[:setup.index("\n}\n")]
+assert "free_trigger(OLC_TRIG(d));" in setup and "OLC_TRIG(d) = NULL;" in setup
+assert "free(OLC_STORAGE(d));" in setup and "OLC_STORAGE(d) = NULL;" in setup
+existing = s[s.index("make the prorotype look like what we have"):]
 assert existing.index("proto->nr = rnum;") < existing.index("go through the mud")
 # Setting the argument list replaces it: the old one is freed first.
 arg = s[s.index("case TRIGEDIT_ARGUMENT:"):]

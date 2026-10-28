@@ -7,6 +7,26 @@
 *  $Revision: 1.0.14 $                                                    *
 **************************************************************************/
 
+/**
+ * @file dg_wldcmd.c
+ * The room script commands (wecho, wload, wpurge, wteleport, wdoor, wat,
+ * ...) and wld_command_interpreter(), which script_driver() calls for each
+ * command line of a room trigger after variable substitution.
+ *
+ * Who controls the input: builder-written trigger code, which after
+ * var_subst() can carry player text (%speech%, %arg%, %actor.name%). All
+ * arguments are parsed as untrusted; free text is logged only as data.
+ *
+ * Lifetime rules: a room is never freed while its script runs, but anything
+ * in it can be. Commands that act on every occupant ("all") walk a UID
+ * snapshot (dg_cmd.h) and re-acquire each character, because the callback
+ * they run (a forced command, an enter trigger) can move or extract the
+ * next one.
+ *
+ * Failures are reported with wld_log(): one script_log line for builders
+ * plus a structured "cmd-rejected" warning naming the room and call site.
+ */
+
 #include "conf.h"
 #include "sysdep.h"
 #include "structs.h"
@@ -20,6 +40,7 @@
 #include "constants.h"
 #include "genzon.h" /* for zone_rnum real_zone_by_thing */
 #include "fight.h"  /* for die() */
+#include "dg_cmd.h" /* occupant snapshots for the "all" commands */
 
 /* Local functions, macros, defines and structs */
 
@@ -37,8 +58,12 @@ struct wld_command_info {
     int        subcmd;
 };
 
-void wld_log(room_data *room, const char *format, ...)
-  __attribute__ ((format (printf, 2, 3)));
+static void wld_log_at(room_data *room, const char *src_file, int src_line,
+                       const char *src_func, const char *format, ...)
+  __attribute__ ((format (printf, 5, 6)));
+/** Reports a rejected w-command; the diagnostic names the calling line. */
+#define wld_log(room, ...) \
+  wld_log_at((room), __FILE__, __LINE__, __func__, __VA_ARGS__)
 void act_to_room(char *str, room_data *room);
 WCMD(do_wasound);
 WCMD(do_wecho);
@@ -56,8 +81,18 @@ WCMD(do_wmove);
 WCMD(do_wlog);
 
 
-/* attaches room vnum to msg and sends it to script_log */
-void wld_log(room_data *room, const char *format, ...)
+/**
+ * Reports a w-command that refused or could not finish what the script
+ * asked. The line goes to the script log (syslog and builders) and, as a
+ * structured "cmd-rejected" warning, to the error log with the room vnum and
+ * UID; the script_driver breadcrumb supplies the trigger vnum. wlog, whose
+ * text is the script author's own message, calls script_log itself.
+ * @param room The script owner.
+ * @param src_file,src_line,src_func The refusing call site (from wld_log()).
+ * @param format printf format for the reason.
+ */
+static void wld_log_at(room_data *room, const char *src_file, int src_line,
+                       const char *src_func, const char *format, ...)
 {
   va_list args;
   char message[MAX_STRING_LENGTH];
@@ -71,9 +106,21 @@ void wld_log(room_data *room, const char *format, ...)
   va_end(args);
 
   script_log("Room %d :: %s", room->number, message);
+  tb_error_log_at("WARNING", "dg", "cmd-rejected", "w-command", 0,
+                  src_file, src_line, src_func, "room vnum %d uid %ld: %s",
+                  room->number, room_script_id(room), message);
 }
 
 /* sends str to room */
+/**
+ * Sends an act() message to everyone in a room. act() needs an actor, so the
+ * message goes out through the room's first occupant: TO_ROOM for everyone
+ * else, then TO_CHAR for that occupant. $n and the other actor codes
+ * therefore name the first occupant, not the room; callers pass text with no
+ * act() codes. An empty room gets nothing.
+ * @param str act() format text.
+ * @param room Any room.
+ */
 void act_to_room(char *str, room_data *room)
 {
     /* no one is in the room */
@@ -127,7 +174,9 @@ WCMD(do_wlog)
   if (!*argument)
     return;
 
-  wld_log(room, "%s", argument); /* script text, may hold player input */
+  /* Script text, may hold player input: logged as data, and not a
+   * rejection, so it bypasses wld_log's cmd-rejected warning. */
+  script_log("Room %d :: %s", room->number, argument);
 }
 
 WCMD(do_wsend)
@@ -166,6 +215,7 @@ WCMD(do_wsend)
 WCMD(do_wzoneecho)
 {
     zone_rnum zone;
+    int zone_vnum;
     char room_num[MAX_INPUT_LENGTH], buf[MAX_INPUT_LENGTH], *msg;
 
     msg = any_one_arg(argument, room_num);
@@ -174,7 +224,8 @@ WCMD(do_wzoneecho)
     if (!*room_num || !*msg)
         wld_log(room, "wzoneecho called with too few args");
 
-    else if ((zone = real_zone_by_thing(tb_parse_int_or_zero(room_num))) == NOWHERE)
+    else if (!DG_PARSE_VNUM_OR_REPORT(room_num, &zone_vnum, "do_wzoneecho", "room vnum %d", room->number) ||
+             (zone = real_zone_by_thing(zone_vnum)) == NOWHERE)
         wld_log(room, "wzoneecho called for nonexistant zone");
 
     else {
@@ -188,6 +239,7 @@ WCMD(do_wzoneecho)
 WCMD(do_wrecho)
 {
     char start[MAX_INPUT_LENGTH], finish[MAX_INPUT_LENGTH], *msg;
+    int lo, hi;
 
     msg = two_arguments(argument, start, finish);
 
@@ -195,9 +247,100 @@ WCMD(do_wrecho)
 
     if (!*msg || !*start || !*finish || !is_number(start) || !is_number(finish))
       wld_log(room, "wrecho: too few args");
+    else if (!DG_PARSE_INT_OR_REPORT(start, &lo, "do_wrecho", "room vnum %d", room->number) ||
+             !DG_PARSE_INT_OR_REPORT(finish, &hi, "do_wrecho", "room vnum %d", room->number))
+      wld_log(room, "wrecho: room range out of range");
     else
-      send_to_range(tb_parse_int_or_zero(start), tb_parse_int_or_zero(finish), "%s\r\n", msg);
+      send_to_range(lo, hi, "%s\r\n", msg);
 
+}
+
+/* Shared body of mdoor, odoor and wdoor: apply one field edit to exit dir of
+ * room rm. field indexes the door_field[] table the commands share (0 purge,
+ * 1 description, 2 flags, 3 key, 4 name, 5 room); value is script text.
+ *
+ * A missing exit is created for any field but "purge". It is created
+ * leading NOWHERE: CREATE() zero-fills, and to_room 0 is a real room, so an
+ * exit made by "flags" or "name" alone used to be a walkable exit into
+ * rnum 0. Such an exit is reported, since it stays unusable until its room
+ * is set. Returns FALSE (after reporting, with cmd as the resource) when
+ * the room or key value is rejected; the caller adds its builder-log line. */
+int dg_door_edit(room_data *rm, int dir, int field, char *value,
+                 const char *cmd)
+{
+  struct room_direction_data *exit_p = rm->dir_option[dir];
+  long key;
+  int vnum;
+  room_rnum to_room;
+
+  if (field == 0) {               /* purge */
+    if (exit_p) {
+      free(exit_p->general_description);
+      free(exit_p->keyword);
+      free(exit_p);
+      rm->dir_option[dir] = NULL;
+    }
+    return TRUE;
+  }
+
+  if (!exit_p) {
+    CREATE(exit_p, struct room_direction_data, 1);
+    exit_p->to_room = NOWHERE;
+    exit_p->key = NOTHING;
+    rm->dir_option[dir] = exit_p;
+    if (field != 5)
+      TB_WARN_MSG("dg", "door-create", cmd,
+                  "room vnum %d dir %s: field %d set on a missing exit; "
+                  "created it leading nowhere until its room is set",
+                  rm->number, dirs[dir], field);
+  }
+
+  switch (field) {
+  case 1:  /* description */
+    {
+      size_t desc_size = strlen(value) + 3;
+      free(exit_p->general_description);
+      CREATE(exit_p->general_description, char, desc_size);
+      strlcpy(exit_p->general_description, value, desc_size);
+      strlcat(exit_p->general_description, "\r\n", desc_size);
+    }
+    break;
+  case 2:  /* flags       */
+    exit_p->exit_info = (sh_int)asciiflag_conv(value);
+    break;
+  case 3:  /* key: an object vnum, or -1 for none */
+    if (!tb_parse_long_checked(value, &key) || key < -1 ||
+        key >= (long)IDXTYPE_MAX) {
+      TB_ERROR_MSG("dg", "parse-vnum", cmd,
+                   "room vnum %d dir %s: key argument of %zu bytes is not an "
+                   "object vnum or -1; key unchanged", rm->number, dirs[dir],
+                   strlen(value));
+      return FALSE;
+    }
+    exit_p->key = key < 0 ? NOTHING : (obj_vnum)key;
+    break;
+  case 4:  /* name        */
+    {
+      size_t keyword_size = strlen(value) + 1;
+      free(exit_p->keyword);
+      CREATE(exit_p->keyword, char, keyword_size);
+      strlcpy(exit_p->keyword, value, keyword_size);
+    }
+    break;
+  case 5:  /* room        */
+    if (dg_parse_vnum_strict(value, &vnum) && (to_room = real_room(vnum)) != NOWHERE)
+      exit_p->to_room = to_room;
+    else {
+      exit_p->to_room = NOWHERE;
+      TB_ERROR_MSG("dg", "door-target", cmd,
+                   "room vnum %d dir %s: room argument of %zu bytes is not an "
+                   "existing room vnum; exit leads nowhere", rm->number,
+                   dirs[dir], strlen(value));
+      return FALSE;
+    }
+    break;
+  }
+  return TRUE;
 }
 
 WCMD(do_wdoor)
@@ -205,8 +348,7 @@ WCMD(do_wdoor)
     char target[MAX_INPUT_LENGTH], direction[MAX_INPUT_LENGTH];
     char field[MAX_INPUT_LENGTH], *value;
     room_data *rm;
-    struct room_direction_data *newexit;
-    int dir, fd, to_room;
+    int dir, fd;
 
     const char *door_field[] = {
         "purge",
@@ -253,68 +395,15 @@ WCMD(do_wdoor)
         return;
     }
 
-    newexit = rm->dir_option[dir];
-
-    /* purge exit */
-    if (fd == 0) {
-        if (newexit) {
-            if (newexit->general_description)
-                free(newexit->general_description);
-            if (newexit->keyword)
-                free(newexit->keyword);
-            free(newexit);
-            rm->dir_option[dir] = NULL;
-        }
-    }
-
-    else {
-        if (!newexit) {
-            CREATE(newexit, struct room_direction_data, 1);
-            rm->dir_option[dir] = newexit;
-        }
-
-        switch (fd) {
-        case 1:  /* description */
-            if (newexit->general_description)
-                free(newexit->general_description);
-            {
-                size_t desc_size = strlen(value) + 3;
-                CREATE(newexit->general_description, char, desc_size);
-                strlcpy(newexit->general_description, value, desc_size);
-                strlcat(newexit->general_description, "\r\n", desc_size);
-            }
-            break;
-        case 2:  /* flags       */
-            newexit->exit_info = (sh_int)asciiflag_conv(value);
-            break;
-        case 3:  /* key         */
-            newexit->key = tb_parse_int_or_zero(value);
-            break;
-        case 4:  /* name        */
-            if (newexit->keyword)
-                free(newexit->keyword);
-            {
-                size_t keyword_size = strlen(value) + 1;
-                CREATE(newexit->keyword, char, keyword_size);
-                strlcpy(newexit->keyword, value, keyword_size);
-            }
-            break;
-        case 5:  /* room        */
-            if ((to_room = real_room(dg_parse_vnum(value))) != NOWHERE)
-                newexit->to_room = to_room;
-            else {
-                newexit->to_room = NOWHERE;
-                wld_log(room, "wdoor: invalid door target (arg == %s)", value);
-            }
-            break;
-        }
-    }
+    if (!dg_door_edit(rm, dir, fd, value, "do_wdoor"))
+        wld_log(room, "wdoor: invalid %s (arg == %s)", door_field[fd], value);
 }
 
 WCMD(do_wteleport)
 {
     char_data *ch;
     room_rnum target, nr;
+    int vnum;
     char arg1[MAX_INPUT_LENGTH], arg2[MAX_INPUT_LENGTH];
 
     two_arguments(argument, arg1, arg2);
@@ -324,7 +413,11 @@ WCMD(do_wteleport)
         return;
     }
 
-    nr = dg_parse_vnum(arg2);
+    if (!DG_PARSE_VNUM_OR_REPORT(arg2, &vnum, "do_wteleport", "room vnum %d", room->number)) {
+        wld_log(room, "wteleport target is not a room vnum");
+        return;
+    }
+    nr = vnum;
     target = real_room(nr);
 
     if (target == NOWHERE)
@@ -356,7 +449,9 @@ WCMD(do_wteleport)
 
 WCMD(do_wforce)
 {
-    char_data *ch, *next_ch;
+    char_data *ch;
+    struct dg_memory_target *targets, *t;
+    room_rnum origin;
     char arg1[MAX_INPUT_LENGTH], *line;
 
     line = one_argument(argument, arg1);
@@ -368,15 +463,22 @@ WCMD(do_wforce)
 
     if (!str_cmp(arg1, "all"))
     {
-        for (ch = room->people; ch; ch = next_ch)
+        /* A forced command can move the next occupant too (a leader's move
+         * takes the followers along): walk a UID snapshot (dg_cmd.h). */
+        origin = real_room(room->number);
+        targets = dg_room_occupant_uids(origin);
+        for (t = targets; t; t = t->next)
         {
-            next_ch = ch->next_in_room;
-
+            if (!(ch = dg_room_occupant_live(t->uid, origin))) {
+                dg_report_occupant_skipped(t->uid, origin, "do_wforce");
+                continue;
+            }
             if (valid_dg_target(ch, 0))
             {
                 command_interpreter(ch, line);
             }
         }
+        dg_free_room_occupant_uids(targets);
     }
 
     else
@@ -459,8 +561,13 @@ WCMD(do_wload)
     int pos;
 
     target = two_arguments(argument, arg1, arg2);
+    /* two_arguments() leaves target at the separating space; without this
+     * the room-target form "load mob <vnum> <room>" never matched isdigit(). */
+    if (target)
+      skip_spaces(&target);
 
-    if (!*arg1 || !*arg2 || !is_number(arg2) || ((number = dg_parse_vnum(arg2)) == NOTHING)) {
+    if (!*arg1 || !*arg2 ||
+        !DG_PARSE_VNUM_OR_REPORT(arg2, &number, "do_wload", "room vnum %d", room->number)) {
         wld_log(room, "wload: bad syntax");
         return;
     }
@@ -471,7 +578,10 @@ WCMD(do_wload)
       if (!target || !*target) {
         rnum = real_room(room->number);
       } else {
-        if (!isdigit(*target) || (rnum = real_room(dg_parse_vnum(target))) == NOWHERE) {
+        int target_vnum;
+        if (!isdigit(*target) ||
+            !DG_PARSE_VNUM_OR_REPORT(target, &target_vnum, "do_wload", "room vnum %d", room->number) ||
+            (rnum = real_room(target_vnum)) == NOWHERE) {
           wld_log(room, "wload: room target vnum doesn't exist (loading mob vnum %d to room %s)", number, target);
           return;
         }
@@ -494,14 +604,17 @@ WCMD(do_wload)
           wld_log(room, "wload: bad object vnum");
           return;
       }
+      /* Set lastloaded for every placement, as mload and oload do; it was
+       * set only when no target was given, so '%lastloaded%' named the
+       * previous load after 'wload obj <vnum> <char|container>'. */
+      if (SCRIPT(room)) { /* It _should_ have, but it might be detached. */
+        char buf[MAX_INPUT_LENGTH];
+        tb_snprintf(buf, sizeof(buf), "%c%ld", UID_CHAR, obj_script_id(object));
+        add_var(&(SCRIPT(room)->global_vars), "lastloaded", buf, 0);
+      }
       /* special handling to make objects able to load on a person/in a container/worn etc. */
       if (!target || !*target) {
         obj_to_room(object, real_room(room->number));
-        if (SCRIPT(room)) { /* It _should_ have, but it might be detached. */
-          char buf[MAX_INPUT_LENGTH];
-          tb_snprintf(buf, sizeof(buf), "%c%ld", UID_CHAR, obj_script_id(object));
-          add_var(&(SCRIPT(room)->global_vars), "lastloaded", buf, 0);
-        }
         load_otrigger(object);
         return;
       }
@@ -542,13 +655,16 @@ WCMD(do_wdamage) {
 
   two_arguments(argument, name, amount);
 
-  /* who cares if it's a number ? if not it'll just be 0 */
   if (!*name || !*amount) {
     wld_log(room, "wdamage: bad syntax");
     return;
   }
 
-  dam = tb_parse_int_or_zero(amount);
+  /* Not a number used to mean 0 damage, silently; now it is reported. */
+  if (!DG_PARSE_INT_OR_REPORT(amount, &dam, "do_wdamage", "room vnum %d", room->number)) {
+    wld_log(room, "wdamage: amount is not a number");
+    return;
+  }
   ch = get_char_by_room(room, name);
 
   if (!ch) {
@@ -579,7 +695,11 @@ WCMD(do_wat)
     return;
   }
 
-  if (isdigit(*arg)) loc = real_room(dg_parse_vnum(arg));
+  if (isdigit(*arg)) {
+    int vnum;
+    if (DG_PARSE_VNUM_OR_REPORT(arg, &vnum, "do_wat", "room vnum %d", room->number))
+      loc = real_room(vnum);
+  }
   else if ((ch = get_char_by_room(room, arg))) loc = IN_ROOM(ch);
   
   if (loc == NOWHERE) {
@@ -593,6 +713,7 @@ WCMD(do_wmove)
 {
     obj_data *obj, *next_obj;
     room_rnum target, nr;
+    int vnum;
     char arg1[MAX_INPUT_LENGTH], arg2[MAX_INPUT_LENGTH];
 
     two_arguments(argument, arg1, arg2);
@@ -602,7 +723,11 @@ WCMD(do_wmove)
         return;
     }
 
-    nr = dg_parse_vnum(arg2);
+    if (!DG_PARSE_VNUM_OR_REPORT(arg2, &vnum, "do_wmove", "room vnum %d", room->number)) {
+        wld_log(room, "wmove target is not a room vnum");
+        return;
+    }
+    nr = vnum;
     target = real_room(nr);
 
     if (target == NOWHERE) {
@@ -654,7 +779,18 @@ static const struct wld_command_info wld_cmd_info[] = {
     { "\n", 0, 0 }        /* this must be last */
 };
 
-/* This is the command interpreter used by rooms, called by script_driver. */
+/**
+ * Runs one room-script command line; called by script_driver().
+ *
+ * The first word (lowercased by any_one_arg()) is matched as a prefix
+ * against wld_cmd_info[] in table order, so an abbreviation runs the first
+ * entry it abbreviates: "w" is wasound, "wd" is wdoor. The trailing space in
+ * most entries has no effect (a word holds no space); wlog has none. The
+ * leading "RESERVED" placeholder has no function, and no lowercased word can
+ * match it. An unknown word is reported with wld_log().
+ * @param room The script owner.
+ * @param argument The substituted command line; commands may modify it.
+ */
 void wld_command_interpreter(room_data *room, char *argument)
 {
     int cmd, length;

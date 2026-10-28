@@ -18,7 +18,30 @@
 
 extern FILE *logfile;
 
-void setUp(void)    { logfile = stderr; }
+/* utils.c owns tb_error_log_at(); the link wraps it (--wrap) so the tests can
+ * assert which structured diagnostic the code under test emitted. */
+static int captured_errors;
+static char captured_operation[64];
+/* NOLINTNEXTLINE(cert-dcl37-c,cert-dcl51-cpp): --wrap requires this name. */
+void __wrap_tb_error_log_at(const char *severity, const char *subsystem,
+                            const char *operation, const char *resource,
+                            int errnum, const char *source_file,
+                            int source_line, const char *source_func,
+                            const char *detail_fmt, ...)
+{
+  (void)severity; (void)subsystem; (void)resource; (void)errnum;
+  (void)source_file; (void)source_line; (void)source_func; (void)detail_fmt;
+  captured_errors++;
+  strlcpy(captured_operation, operation ? operation : "",
+          sizeof(captured_operation));
+}
+
+void setUp(void)
+{
+  logfile = stderr;
+  captured_errors = 0;
+  *captured_operation = '\0';
+}
 void tearDown(void) { logfile = NULL; }
 
 /* =========================================================
@@ -27,7 +50,7 @@ void tearDown(void) { logfile = NULL; }
  * the queue is actually populated and we can inspect its contents.
  * ========================================================= */
 
-void write_to_q(const char *txt, struct txt_q *queue, int aliased)
+int write_to_q(const char *txt, struct txt_q *queue, int aliased)
 {
     struct txt_block *newt;
     CREATE(newt, struct txt_block, 1);
@@ -41,6 +64,7 @@ void write_to_q(const char *txt, struct txt_q *queue, int aliased)
         queue->tail       = newt;
         newt->next        = NULL;
     }
+    return 1;
 }
 
 /* =========================================================
@@ -539,6 +563,139 @@ void test_pca_overflow_token(void)
 }
 
 /* =========================================================
+ * nanny CON_NAME_CNFRM -> perform_new_char_dupe_check (finding A2-01)
+ *
+ * Any unauthenticated client can sit at the name prompt with a character
+ * whose player.name is still NULL. Confirming a new name on another socket
+ * must not strcmp() that NULL name.
+ * ========================================================= */
+
+struct dupe_fixture {
+  struct descriptor_data d, k;
+  struct char_data dch, kch;
+  struct player_special_data dps, kps;
+};
+
+static void dupe_fixture_init(struct dupe_fixture *f, int peer_state)
+{
+  memset(f, 0, sizeof(*f));
+  f->dch.player_specials = &f->dps;
+  f->kch.player_specials = &f->kps;
+  GET_IDNUM(&f->dch) = -1;
+  GET_IDNUM(&f->kch) = -1;
+  f->dch.player.name = strdup("Zorblaxe");
+  f->dch.desc = &f->d;
+  f->kch.desc = &f->k;          /* peer: name not entered yet (NULL) */
+  f->d.character = &f->dch;
+  f->k.character = &f->kch;
+  f->d.desc_num = 2;
+  f->k.desc_num = 1;
+  STATE(&f->d) = CON_NAME_CNFRM;
+  STATE(&f->k) = peer_state;
+  f->k.next = &f->d;
+  descriptor_list = &f->k;
+}
+
+static void dupe_fixture_free(struct dupe_fixture *f)
+{
+  descriptor_list = NULL;
+  free(f->dch.player.name);
+}
+
+void test_new_char_dupe_check_skips_peer_still_at_name_prompt(void)
+{
+  struct dupe_fixture f;
+  char arg[] = "y";
+
+  dupe_fixture_init(&f, CON_GET_NAME);
+  nanny(&f.d, arg);
+
+  TEST_ASSERT_EQUAL_INT(CON_NEWPASSWD, STATE(&f.d));
+  TEST_ASSERT_EQUAL_INT(CON_GET_NAME, STATE(&f.k));
+  TEST_ASSERT_EQUAL_INT(0, captured_errors);
+  dupe_fixture_free(&f);
+}
+
+void test_new_char_dupe_check_reports_unnamed_peer_past_confirmation(void)
+{
+  struct dupe_fixture f;
+  char arg[] = "y";
+
+  dupe_fixture_init(&f, CON_NEWPASSWD);
+  nanny(&f.d, arg);
+
+  TEST_ASSERT_EQUAL_INT(CON_NEWPASSWD, STATE(&f.d));
+  TEST_ASSERT_EQUAL_INT(1, captured_errors);
+  TEST_ASSERT_EQUAL_STRING("new-char-dupe-check", captured_operation);
+  dupe_fixture_free(&f);
+}
+
+void test_new_char_dupe_check_ignores_name_case(void)
+{
+  struct dupe_fixture f;
+  char arg[] = "y";
+
+  dupe_fixture_init(&f, CON_QSEX);
+  f.kch.player.name = strdup("ZORBLAXE");
+  nanny(&f.d, arg);
+
+  /* The older in-creation socket is booted; the new one proceeds. */
+  TEST_ASSERT_EQUAL_INT(CON_CLOSE, STATE(&f.k));
+  TEST_ASSERT_EQUAL_INT(CON_NEWPASSWD, STATE(&f.d));
+  free(f.kch.player.name);
+  dupe_fixture_free(&f);
+}
+
+void test_new_char_dupe_check_in_game_twin_closes_without_null_deref(void)
+{
+  struct dupe_fixture f;
+  char arg[] = "y";
+  char *dname;
+
+  dupe_fixture_init(&f, CON_PLAYING);
+  f.kch.player.name = strdup("Zorblaxe");
+  dname = f.dch.player.name;
+  nanny(&f.d, arg);
+
+  TEST_ASSERT_EQUAL_INT(CON_CLOSE, STATE(&f.k));
+  TEST_ASSERT_EQUAL_INT(CON_CLOSE, STATE(&f.d));
+  TEST_ASSERT_NULL(f.d.character);
+  free(f.kch.player.name);
+  f.dch.player.name = dname;
+  dupe_fixture_free(&f);
+}
+
+/* =========================================================
+ * sort_commands
+ * ========================================================= */
+
+/* F2-17: sort_commands runs at boot and again after every aedit save; a
+ * second call must replace cmd_sort_info, not leak the first array
+ * (LeakSanitizer / Valgrind report the leak if it does). */
+static void test_sort_commands_twice_does_not_leak(void)
+{
+    struct command_info cmds[] = {
+        { "RESERVED", "", 0, 0, 0, 0 },
+        { "zap", "zap", 0, 0, 0, 0 },
+        { "apple", "apple", 0, 0, 0, 0 },
+        { "\n", "zzzzzzz", 0, 0, 0, 0 }
+    };
+    struct command_info *saved = complete_cmd_info;
+
+    complete_cmd_info = cmds;
+    sort_commands();
+    sort_commands();
+    TEST_ASSERT_NOT_NULL(cmd_sort_info);
+    TEST_ASSERT_EQUAL_INT(0, cmd_sort_info[0]);
+    TEST_ASSERT_EQUAL_INT(2, cmd_sort_info[1]);
+    TEST_ASSERT_EQUAL_INT(1, cmd_sort_info[2]);
+    TEST_ASSERT_EQUAL_INT(3, cmd_sort_info[3]);
+    free(cmd_sort_info);
+    cmd_sort_info = NULL;
+    complete_cmd_info = saved;
+}
+
+/* =========================================================
  * main
  * ========================================================= */
 
@@ -595,6 +752,14 @@ int main(void)
     RUN_TEST(test_pca_trailing_dollar_keeps_earlier_segments);
     RUN_TEST(test_pca_overflow_glob);
     RUN_TEST(test_pca_overflow_token);
+
+    /* nanny / perform_new_char_dupe_check */
+    RUN_TEST(test_new_char_dupe_check_skips_peer_still_at_name_prompt);
+    RUN_TEST(test_new_char_dupe_check_reports_unnamed_peer_past_confirmation);
+    RUN_TEST(test_new_char_dupe_check_ignores_name_case);
+    RUN_TEST(test_new_char_dupe_check_in_game_twin_closes_without_null_deref);
+
+    RUN_TEST(test_sort_commands_twice_does_not_leak);
 
     return UNITY_END();
 }

@@ -7,6 +7,34 @@
 *  $Revision: 1.0.14 $                                                    *
 **************************************************************************/
 
+/**
+ * @file dg_olc.c
+ * The trigger editor (trigedit), the script-attachment submenu used by
+ * medit/oedit/redit, and the trigger zone-file writer.
+ *
+ * Who controls the input: builders.  Everything typed into the editor
+ * (names, arguments, numbers, the script text and its "/f" formatting) is
+ * builder input and is bounded or rejected here; builder typos are answered
+ * with a re-prompt, not a server log.  Trigger files and the trigger index
+ * are written by administrators and by this file.
+ *
+ * Ownership and lifetime:
+ * - OLC_TRIG(d) is a private scratch trigger.  Its name and arglist are its
+ *   own; its cmdlist is borrowed from the prototype it was copied from and is
+ *   never freed through the scratch (free_trigger() leaves cmdlist alone).
+ *   cleanup_olc() frees the scratch.
+ * - OLC_STORAGE(d) is the script text being edited (a heap buffer of at least
+ *   MAX_CMD_LENGTH bytes).  trigedit_save() compiles it into a new cmdlist.
+ * - A prototype (trig_index[rnum]->proto) owns its cmdlist.  Every live
+ *   instance made by read_trigger() shares that list, and its nr must equal
+ *   the prototype's rnum.  Saving an existing trigger frees the old list and
+ *   re-points every instance with that rnum.  Creating a trigger inserts a
+ *   prototype and shifts every rnum at or above the insertion point.  An
+ *   instance whose rnum is not shifted keeps a list that the next edit frees.
+ * - OLC_SCRIPT(d) (the attachment submenu) is a private copy of a mob, object
+ *   or room's proto_script; see dg_olc_script_copy().
+ */
+
 #include "conf.h"
 #include "sysdep.h"
 #include "structs.h"
@@ -26,8 +54,29 @@
 /* local functions */
 static void trigedit_disp_menu(struct descriptor_data *d);
 static void trigedit_disp_types(struct descriptor_data *d);
-static void trigedit_create_index(int znum, char *type);
+static int trigedit_create_index(int znum, char *type);
 static void trigedit_setup_new(struct descriptor_data *d);
+
+/* Outcome of trigedit_save_checked(). */
+enum trigedit_save_result {
+  TRIGEDIT_SAVED,              /* in memory and on disk */
+  TRIGEDIT_NOT_SAVED,          /* refused before anything changed */
+  TRIGEDIT_SAVED_MEMORY_ONLY   /* prototypes updated, zone file not written */
+};
+static int trigedit_save_checked(struct descriptor_data *d);
+
+/* strdup() that, like CREATE(), never yields NULL: running out of memory is
+ * fatal and is logged at the call site first.  src must not be NULL.  Used
+ * where a NULL string would be stored into a trigger or editor and
+ * dereferenced later (E2-14). */
+#define TRIGEDIT_STRDUP(dst, src) do { \
+    const char *trigedit_sd_src_ = (src); \
+    if (((dst) = strdup(trigedit_sd_src_)) == NULL) { \
+      TB_FATAL_MSG("dg", "trigedit-alloc", "strdup", "%lu bytes", \
+                   (unsigned long)strlen(trigedit_sd_src_) + 1); \
+      abort(); \
+    } \
+  } while (0)
 
 
 /* Parse the decimal prefix of an index filename without overflowing int. */
@@ -102,21 +151,19 @@ ACMD(do_oasis_trigedit)
     return;
   }
 
-  number = tb_parse_int_or_zero(argument);
-
-  if (number < IDXTYPE_MIN || number > IDXTYPE_MAX) {
+  /* An overflowing number used to parse as 0 and open trigger #0. */
+  if (!tb_parse_int_prefix_checked(argument, &number, NULL) ||
+      number < IDXTYPE_MIN || number > IDXTYPE_MAX) {
     send_to_char(ch, "That trigger VNUM can't exist.\r\n");
     return;
   }
 
   /* Check that it isn't already being edited. */
   for (d = descriptor_list; d; d = d->next) {
-    if (STATE(d) == CON_TRIGEDIT) {
-      if (d->olc && OLC_NUM(d) == number) {
-        send_to_char(ch, "That trigger is currently being edited by %s.\r\n",
-          GET_NAME(d->character));
-        return;
-      }
+    if (IS_TRIGEDITING(d) && OLC_NUM(d) == number) {
+      send_to_char(ch, "That trigger is currently being edited by %s.\r\n",
+        GET_NAME(d->character));
+      return;
     }
   }
   d = ch->desc;
@@ -197,7 +244,7 @@ static void trigedit_setup_new(struct descriptor_data *d)
   trig->nr = NOWHERE;
 
   /* Set up some defaults. */
-  trig->name = strdup("new trigger");
+  TRIGEDIT_STRDUP(trig->name, "new trigger");
   trig->trigger_type = MTRIG_GREET;
 
   /* cmdlist will be a large char string until the trigger is saved */
@@ -210,11 +257,40 @@ static void trigedit_setup_new(struct descriptor_data *d)
   OLC_VAL(d) = 0;  /* Has changed flag. (It hasn't so far, we just made it.) */
 }
 
+/**
+ * Fill the editor's scratch trigger and script buffer from a prototype.
+ * Used by trigedit on an existing trigger, by "W) Copy Trigger", and by
+ * tcopy (oasis_copy.c).
+ * @pre d->olc is allocated and rtrg_num is a valid rnum (callers obtain it
+ * from real_trigger() and check it against NOTHING).
+ * @post Any previous OLC_TRIG/OLC_STORAGE is released and replaced.  The
+ * scratch borrows the prototype's cmdlist and carries its nr, which a caller
+ * filling the scratch for a different vnum must reset (see TRIGEDIT_COPY).
+ * OLC_VAL(d) is 0.  OLC_STORAGE is sized to the whole script, so it can be
+ * larger than MAX_CMD_LENGTH for a trigger loaded from disk; the text
+ * editor's max_str is still MAX_CMD_LENGTH, so such a script cannot be
+ * appended to or formatted (both refuse loudly) until it is shortened.
+ * @param d The editing descriptor.
+ * @param rtrg_num The rnum of the prototype to copy.
+ */
 void trigedit_setup_existing(struct descriptor_data *d, int rtrg_num)
 {
   struct trig_data *trig;
   struct cmdlist_element *c;
   size_t len;
+
+  /* This function owns the editor's scratch state.  "W) Copy Trigger" calls
+   * it on a descriptor that already has a scratch trigger and edit buffer;
+   * release them first (E2-04).  free_trigger() leaves cmdlist alone: the
+   * scratch only borrows its prototype's list. */
+  if (OLC_TRIG(d)) {
+    free_trigger(OLC_TRIG(d));
+    OLC_TRIG(d) = NULL;
+  }
+  if (OLC_STORAGE(d)) {
+    free(OLC_STORAGE(d));
+    OLC_STORAGE(d) = NULL;
+  }
 
   /* Allocate a scratch trigger structure. */
   CREATE(trig, struct trig_data, 1);
@@ -244,24 +320,50 @@ void trigedit_setup_existing(struct descriptor_data *d, int rtrg_num)
   OLC_VAL(d) = 0;  /* Has changed flag. (It hasn't so far, we just made it.) */
 }
 
+/**
+ * The trigger-type name table for an attach type, and its length.  The
+ * tables differ in length (trig_types has NUM_TRIG_TYPE_FLAGS names,
+ * otrig_types and wtrig_types one fewer), so a single bound let the type
+ * menu show the "\n" sentinel as option 21 for objects and rooms and toggle
+ * a bit those triggers do not define (E2-11).
+ * @param attach_type MOB_TRIGGER, OBJ_TRIGGER or WLD_TRIGGER (others: mob).
+ * @param[out] count Number of names before the "\n" sentinel, at most
+ * NUM_TRIG_TYPE_FLAGS.
+ * @return The name table, terminated by "\n".
+ */
+static const char **trigedit_type_names(int attach_type, int *count)
+{
+  const char **types;
+  int n;
+
+  switch (attach_type) {
+    case WLD_TRIGGER: types = wtrig_types; break;
+    case OBJ_TRIGGER: types = otrig_types; break;
+    default:          types = trig_types;  break;
+  }
+  for (n = 0; n < NUM_TRIG_TYPE_FLAGS && *types[n] != '\n'; n++)
+    ;
+  *count = n;
+  return types;
+}
+
 static void trigedit_disp_menu(struct descriptor_data *d)
 {
   struct trig_data *trig = OLC_TRIG(d);
   char *attach_type;
   char trgtypes[256];
+  int ntypes;
 
   get_char_colors(d->character);
 
-  if (trig->attach_type==OBJ_TRIGGER) {
+  if (trig->attach_type==OBJ_TRIGGER)
     attach_type = "Objects";
-    sprintbit(GET_TRIG_TYPE(trig), otrig_types, trgtypes, sizeof(trgtypes));
-  } else if (trig->attach_type==WLD_TRIGGER) {
+  else if (trig->attach_type==WLD_TRIGGER)
     attach_type = "Rooms";
-    sprintbit(GET_TRIG_TYPE(trig), wtrig_types, trgtypes, sizeof(trgtypes));
-  } else {
+  else
     attach_type = "Mobiles";
-    sprintbit(GET_TRIG_TYPE(trig), trig_types, trgtypes, sizeof(trgtypes));
-  }
+  sprintbit(GET_TRIG_TYPE(trig), trigedit_type_names(trig->attach_type, &ntypes),
+            trgtypes, sizeof(trgtypes));
 
   clear_screen(d);
 
@@ -291,28 +393,14 @@ static void trigedit_disp_menu(struct descriptor_data *d)
 
 static void trigedit_disp_types(struct descriptor_data *d)
 {
-  int i, columns = 0;
-  const char **types;
+  int i, columns = 0, ntypes;
+  const char **types = trigedit_type_names(OLC_TRIG(d)->attach_type, &ntypes);
   char bitbuf[MAX_STRING_LENGTH];
-
-  switch(OLC_TRIG(d)->attach_type)
-  {
-    case WLD_TRIGGER:
-      types = wtrig_types;
-      break;
-    case OBJ_TRIGGER:
-      types = otrig_types;
-      break;
-    case MOB_TRIGGER:
-    default:
-      types = trig_types;
-      break;
-  }
 
   get_char_colors(d->character);
   clear_screen(d);
 
-  for (i = 0; i < NUM_TRIG_TYPE_FLAGS; i++) {
+  for (i = 0; i < ntypes; i++) {
     write_to_output(d, "%s%2d%s) %-20.20s  %s", grn, i + 1, nrm, types[i],
               !(++columns % 2) ? "\r\n" : "");
   }
@@ -342,7 +430,13 @@ static void trigedit_disp_types(struct descriptor_data *d)
  suggests the licensor endorses you or your use.
  *****************************************************************************************/
 
-// Change a string for another without memory bugs
+/**
+ * Replace every occurrence of substr in string with replacement.
+ * Takes ownership of string: the result is either string itself (nothing to
+ * do, or an allocation failed, which is reported) or a new heap string, in
+ * which case string has been freed.  The caller frees the result.
+ * @return NULL only when string is NULL.
+ */
 static char *str_replace(char *string, const char *substr, const char *replacement) {
     char *tok = NULL;
     char *newstr = NULL;
@@ -357,14 +451,20 @@ static char *str_replace(char *string, const char *substr, const char *replaceme
         return string;
     
     newstr = strdup (string);
-    if (newstr == NULL)
+    if (newstr == NULL) {
+        /* Display only: the line is shown without this colour. */
+        TB_ERROR_ERRNO("dg", "trigedit-highlight-alloc", "str_replace",
+                       "%lu-byte line left unhighlighted", (unsigned long)strlen(string));
         return string;
+    }
     head = newstr;
     while ((tok = strstr(head, substr))) {
         oldstr = newstr;
         newstr = malloc(strlen(oldstr) - strlen(substr) + strlen (replacement) + 1);
-        // Failed to alloc mem, free old string and return NULL
+        // Failed to alloc mem: keep the caller's string, unhighlighted
         if (newstr == NULL) {
+            TB_ERROR_ERRNO("dg", "trigedit-highlight-alloc", "str_replace",
+                           "%lu-byte line left unhighlighted", (unsigned long)strlen(string));
             free(oldstr);
             return string;
         }
@@ -494,12 +594,25 @@ static const char *command_color_replacement[COMMAND_TERMS][2] =
 };
 
 
+/**
+ * Page a colour-highlighted listing of a script to the builder.
+ * Display only: string is not modified.  The listing is capped at
+ * MAX_STRING_LENGTH bytes and says so when cut; blank lines are not shown.
+ * @param d The descriptor to page to.
+ * @param string The script text (CR/LF separated lines).
+ */
 static void script_syntax_highlighting(struct descriptor_data *d, char *string)
 {
     ACMD(do_action);
+    /* Display only: the listing is capped at MAX_STRING_LENGTH (colour codes
+     * make it longer than the script), and blank lines are not shown.  The
+     * script itself (OLC_STORAGE) is never changed here. */
+    static const char line_end[] = "\tn\r\n";
+    static const char trunc_note[] = "[... listing truncated ...]\tn\r\n";
     char buffer[MAX_STRING_LENGTH] = "";
     char *newlist, *curtok;
-    
+    size_t used = 0, len;
+
     size_t i;
 
     if (!d || !string)
@@ -507,15 +620,24 @@ static void script_syntax_highlighting(struct descriptor_data *d, char *string)
 
     // Parse script text line by line
     newlist = strdup(string);
-    if (!newlist)
+    if (!newlist) {
+        TB_ERROR_ERRNO("dg", "trigedit-highlight-alloc", "strdup",
+                       "trigger vnum %d: %lu-byte script not listed",
+                       d->olc ? OLC_NUM(d) : -1, (unsigned long)strlen(string));
+        write_to_output(d, "(Out of memory: script listing unavailable.)\r\n");
         return;
+    }
 
     for (curtok = strtok(newlist, "\r\n"); curtok; curtok = strtok(NULL, "\r\n")) {
         char *line = strdup(curtok);
         bool comment = FALSE;
 
-        if (!line)
-            continue;
+        if (!line) {
+            TB_ERROR_ERRNO("dg", "trigedit-highlight-alloc", "strdup",
+                           "trigger vnum %d: listing stopped", d->olc ? OLC_NUM(d) : -1);
+            strlcpy(buffer + used, trunc_note, sizeof(buffer) - used);
+            break;
+        }
         
         // Find if is a comment
         for (i=0;i <= strlen(line);i++) {
@@ -559,8 +681,23 @@ static void script_syntax_highlighting(struct descriptor_data *d, char *string)
             }
         }
 
-        strncat(buffer, line, sizeof(buffer) - strlen(buffer) - 1);
-        strncat(buffer, "\tn\r\n", sizeof(buffer) - strlen(buffer) - 1);
+        /* Append whole lines only, always leaving room for the note, so a
+         * cut is visible to the builder instead of silently dropping the
+         * rest of the script (E2-13). */
+        len = strlen(line);
+        if (len + sizeof(line_end) - 1 + sizeof(trunc_note) > sizeof(buffer) - used) {
+            TB_WARN_MSG("dg", "trigedit-highlight-truncate", "buffer",
+                        "trigger vnum %d: listing cut at %lu of cap %lu bytes",
+                        d->olc ? OLC_NUM(d) : -1, (unsigned long)used,
+                        (unsigned long)sizeof(buffer));
+            strlcpy(buffer + used, trunc_note, sizeof(buffer) - used);
+            free(line);
+            break;
+        }
+        memcpy(buffer + used, line, len);
+        used += len;
+        memcpy(buffer + used, line_end, sizeof(line_end));   /* with NUL */
+        used += sizeof(line_end) - 1;
         free(line);
     }
 
@@ -613,7 +750,7 @@ void trigedit_parse(struct descriptor_data *d, char *arg)
          if (OLC_STORAGE(d)) {
            clear_screen(d);
            script_syntax_highlighting(d, OLC_STORAGE(d));
-           d->backstr = strdup(OLC_STORAGE(d));
+           TRIGEDIT_STRDUP(d->backstr, OLC_STORAGE(d));
          }
          d->str = &OLC_STORAGE(d);
          d->max_str = MAX_CMD_LENGTH;
@@ -635,10 +772,24 @@ void trigedit_parse(struct descriptor_data *d, char *arg)
     case TRIGEDIT_CONFIRM_SAVESTRING:
       switch(tolower(*arg)) {
         case 'y':
-          trigedit_save(d);
-          mudlog(CMP, MAX(LVL_BUILDER, GET_INVIS_LEV(d->character)), TRUE,
-                 "OLC: %s edits trigger %d", GET_NAME(d->character),
-                 OLC_NUM(d));
+          switch (trigedit_save_checked(d)) {
+            case TRIGEDIT_NOT_SAVED:
+              /* Nothing changed in memory or on disk, and the script is
+               * intact: let the builder fix it instead of losing it. */
+              write_to_output(d, "Your changes are still in the editor.\r\n");
+              OLC_MODE(d) = TRIGEDIT_MAIN_MENU;
+              return;
+            case TRIGEDIT_SAVED_MEMORY_ONLY:
+              mudlog(BRF, MAX(LVL_BUILDER, GET_INVIS_LEV(d->character)), TRUE,
+                     "OLC: %s edits trigger %d (NOT written to disk)",
+                     GET_NAME(d->character), OLC_NUM(d));
+              break;
+            default:
+              mudlog(CMP, MAX(LVL_BUILDER, GET_INVIS_LEV(d->character)), TRUE,
+                     "OLC: %s edits trigger %d", GET_NAME(d->character),
+                     OLC_NUM(d));
+              break;
+          }
           /* fall through */
         case 'n':
           cleanup_olc(d, CLEANUP_ALL);
@@ -656,13 +807,14 @@ void trigedit_parse(struct descriptor_data *d, char *arg)
       smash_tilde(arg);
       if (OLC_TRIG(d)->name)
         free(OLC_TRIG(d)->name);
-      OLC_TRIG(d)->name = strdup((arg && *arg) ? arg : "undefined");
+      TRIGEDIT_STRDUP(OLC_TRIG(d)->name, (arg && *arg) ? arg : "undefined");
       OLC_VAL(d)++;
       break;
 
+    /* Menu answers are builder typing: a non-number re-prompts instead of
+     * silently meaning 0 (E2-10).  None of them is worth a server log. */
     case TRIGEDIT_INTENDED:
-      i = tb_parse_int_or_zero(arg);
-      if (i >= MOB_TRIGGER && i <= WLD_TRIGGER) {
+      if (tb_parse_int_checked(arg, &i) && i >= MOB_TRIGGER && i <= WLD_TRIGGER) {
         OLC_TRIG(d)->attach_type = i;
         OLC_VAL(d)++;
       } else {
@@ -672,37 +824,63 @@ void trigedit_parse(struct descriptor_data *d, char *arg)
       break;
 
     case TRIGEDIT_NARG:
-      OLC_TRIG(d)->narg = LIMIT(tb_parse_int_or_zero(arg), 0, 100);
+      if (!tb_parse_int_checked(arg, &i)) {
+        write_to_output(d, "Please enter a number (0-100): ");
+        return;
+      }
+      OLC_TRIG(d)->narg = LIMIT(i, 0, 100);
+      if (OLC_TRIG(d)->narg != i)
+        write_to_output(d, "Numeric argument limited to %d.\r\n", OLC_TRIG(d)->narg);
       OLC_VAL(d)++;
       break;
 
     case TRIGEDIT_ARGUMENT:
       smash_tilde(arg);
-      free(OLC_TRIG(d)->arglist);   /* each new argument replaced it unfreed */
-      OLC_TRIG(d)->arglist = (*arg?strdup(arg):NULL);
+      /* The old arglist is ours (strdup'd by trig_data_copy() or by an
+       * earlier edit here). */
+      free(OLC_TRIG(d)->arglist);
+      OLC_TRIG(d)->arglist = NULL;
+      if (*arg)
+        TRIGEDIT_STRDUP(OLC_TRIG(d)->arglist, arg);
       OLC_VAL(d)++;
       break;
 
     case TRIGEDIT_TYPES:
-      if ((i = tb_parse_int_or_zero(arg)) == 0)
+      if (!tb_parse_int_checked(arg, &i)) {
+        trigedit_disp_types(d);
+        write_to_output(d, "Please enter a type number: ");
+        return;
+      }
+      if (i == 0)
         break;
-      else if (!((i < 0) || (i > NUM_TRIG_TYPE_FLAGS)))
-        TOGGLE_BIT((GET_TRIG_TYPE(OLC_TRIG(d))), 1 << (i - 1));
+      {
+        int ntypes;
+
+        (void)trigedit_type_names(OLC_TRIG(d)->attach_type, &ntypes);
+        if (i < 0 || i > ntypes) {
+          trigedit_disp_types(d);
+          write_to_output(d, "Please enter 1-%d, or 0 to quit: ", ntypes);
+          return;
+        }
+        TOGGLE_BIT((GET_TRIG_TYPE(OLC_TRIG(d))), 1L << (i - 1));
+      }
       OLC_VAL(d)++;
       trigedit_disp_types(d);
       return;
 
     case TRIGEDIT_COPY:
-      if ((i = real_trigger(dg_parse_vnum(arg))) != NOTHING) {
-        /* Replace the edit buffer with the source's contents, but keep the
-         * identity of the trigger being edited: a buffer naming the
-         * source's rnum gave the saved prototype that rnum, and later
-         * edits then missed (and freed the commands under) its instances. */
-        free_trigger(OLC_TRIG(d));
-        free(OLC_STORAGE(d));
-        OLC_STORAGE(d) = NULL;
+      /* "abc" used to mean trigger #0 and overwrite the work in progress
+       * with it; a vnum outside IDXTYPE would be truncated by real_trigger. */
+      if (!tb_parse_int_checked(arg, &i) || i < IDXTYPE_MIN || i > IDXTYPE_MAX)
+        write_to_output(d, "That is not a trigger vnum.\r\n");
+      else if ((i = real_trigger(i)) != NOTHING) {
         trigedit_setup_existing(d, i);
+        /* The scratch now holds the source's rnum, but it is still the work
+         * in progress for OLC_NUM(d) (E2-03). */
         GET_TRIG_RNUM(OLC_TRIG(d)) = real_trigger(OLC_NUM(d));
+        /* The copy replaced the work in progress: quitting must still ask
+         * whether to save it. */
+        OLC_VAL(d) = 1;
       } else
         write_to_output(d, "That trigger does not exist.\r\n");
       break;
@@ -716,8 +894,119 @@ void trigedit_parse(struct descriptor_data *d, char *arg)
   trigedit_disp_menu(d);
 }
 
-/* save the zone's triggers to internal memory and to disk */
+/**
+ * Verify, after trig_index was renumbered by an insertion, that every live
+ * trigger still shares the command list of the prototype its rnum names.
+ * Instances are made by read_trigger(), which shares proto->cmdlist, and
+ * trigedit_save() re-points them on every edit, so a mismatch means an
+ * instance's rnum was not shifted with its prototype.  Such an instance would
+ * keep a cmdlist that the next edit of its real prototype frees.
+ * @param d The saving editor (for the diagnostic).
+ * @param inserted_rnum The slot the new prototype was inserted at.
+ */
+static void trigedit_check_live_rnums(struct descriptor_data *d,
+                                      trig_rnum inserted_rnum)
+{
+  trig_data *live_trig;
+
+  for (live_trig = trigger_list; live_trig; live_trig = live_trig->next_in_world) {
+    trig_rnum nr = GET_TRIG_RNUM(live_trig);
+
+    if (nr == NOTHING)
+      continue;
+    if (nr >= top_of_trigt || !trig_index[nr] || !trig_index[nr]->proto) {
+      TB_ERROR_MSG("dg", "trigedit-rnum-shift", "trig_index",
+                   "live trigger serial %lu nr %d is outside trig_index (top %d), "
+                   "inserted vnum %d at rnum %d",
+                   live_trig->serial, (int)nr, top_of_trigt, OLC_NUM(d),
+                   (int)inserted_rnum);
+      continue;
+    }
+    if (trig_index[nr]->proto->cmdlist != live_trig->cmdlist)
+      TB_ERROR_MSG("dg", "trigedit-rnum-shift", "trig_index",
+                   "live trigger serial %lu nr %d vnum %d cmdlist != proto, "
+                   "inserted vnum %d at rnum %d",
+                   live_trig->serial, (int)nr, trig_index[nr]->vnum,
+                   OLC_NUM(d), (int)inserted_rnum);
+  }
+}
+
+/* Bytes fread_string() needs to read back one script line of cmdlen bytes:
+ * it adds CR/LF per 511-byte input chunk. */
+static size_t trig_line_disk_size(size_t cmdlen)
+{
+  return cmdlen + 2 * ((cmdlen + 511) / 511);
+}
+
+/* Read-back size of a prototype's compiled command list. */
+static size_t trig_cmdlist_disk_size(const struct cmdlist_element *cmd)
+{
+  size_t need = 0;
+
+  for (; cmd; cmd = cmd->next)
+    if (cmd->cmd)
+      need += trig_line_disk_size(strlen(cmd->cmd));
+  return need;
+}
+
+/* Read-back size of the editor's script text once trigedit_save() compiles
+ * it: one command per non-empty CR/LF-separated line (strtok semantics), or
+ * the "* No script" placeholder when there is none. */
+static size_t trig_storage_disk_size(const char *s)
+{
+  size_t need = 0, n;
+
+  while (s && *s) {
+    s += strspn(s, "\r\n");
+    n = strcspn(s, "\r\n");
+    if (n)
+      need += trig_line_disk_size(n);
+    s += n;
+  }
+  return need ? need : trig_line_disk_size(strlen("* No script"));
+}
+
+/* Tell the builder the save did not reach the disk (the details are in the
+ * structured record the caller emitted). */
+static void trigedit_tell_not_saved(struct descriptor_data *d, int in_memory)
+{
+  write_to_output(d, in_memory ?
+                  "Trigger saved in memory but NOT to disk; it will be lost "
+                  "at reboot.  Tell an implementor.\r\n" :
+                  "Trigger NOT saved.\r\n");
+}
+
+/* Save the editor's trigger and write the zone's trigger file.  The public
+ * entry point for tcopy; the editor uses trigedit_save_checked(). */
 void trigedit_save(struct descriptor_data *d)
+{
+  (void)trigedit_save_checked(d);   /* every failure is reported inside */
+}
+
+/**
+ * Save the editor's trigger into memory, then write the zone's trigger file.
+ *
+ * Order and rollback: the zone size check runs first and changes nothing.
+ * After it passes, the prototype (and for a new vnum, trig_index) is
+ * rewritten in memory, live triggers are re-pointed, and only then is the
+ * file written.  A disk failure does not roll the memory change back; it
+ * returns TRIGEDIT_SAVED_MEMORY_ONLY and the builder is told.
+ *
+ * Structures that hold rnums and must follow an insertion: live triggers
+ * (trigger_list) and other editors' scratch triggers.  Prototypes' own nr
+ * fields are renumbered in the index loop.
+ *
+ * @pre d is in CON_TRIGEDIT (or tcopy) with OLC_TRIG, OLC_NUM and OLC_ZNUM
+ * set.
+ * @post OLC_STORAGE is consumed by strtok() once the in-memory save starts.
+ * OLC_TRIG->cmdlist then belongs to the prototype.  The caller must run
+ * cleanup_olc() afterwards, except after TRIGEDIT_NOT_SAVED, when the editor
+ * state is untouched and editing may continue.
+ * @param d The editing descriptor.
+ * @return One of enum trigedit_save_result.  Every failure has been reported
+ * to the builder and the server log.
+ */
+static int trigedit_save_checked(struct descriptor_data *d)
 {
   int i;
   size_t need;
@@ -735,6 +1024,34 @@ void trigedit_save(struct descriptor_data *d)
   char buf[MAX_CMD_LENGTH];
   char bitBuf[MAX_INPUT_LENGTH];
   char fname[MAX_INPUT_LENGTH];
+
+  zone = zone_table[OLC_ZNUM(d)].number;
+  top = zone_table[OLC_ZNUM(d)].top;
+
+  /* Refuse, before anything changes, a zone the loader would reject on the
+   * next boot.  The edited trigger is measured from the editor's text, the
+   * others from their prototypes.  Checking only after the prototypes and
+   * live triggers were rewritten left memory and disk out of step (E2-07). */
+  for (i = zone_table[OLC_ZNUM(d)].bot; i <= top; i++) {
+    if (i == OLC_NUM(d))
+      need = trig_storage_disk_size(OLC_STORAGE(d));
+    else if ((rnum = real_trigger(i)) != NOTHING)
+      need = trig_cmdlist_disk_size(trig_index[rnum]->proto->cmdlist);
+    else
+      continue;
+    if (need >= MAX_STRING_LENGTH) {
+      TB_ERROR_MSG("dg", "trigedit-save-size", "script",
+                   "trigger vnum %d reads back as %lu bytes, loader cap %d; "
+                   "zone %d not saved (editing vnum %d by " DIAG_CHAR_FMT ")",
+                   i, (unsigned long)need, MAX_STRING_LENGTH - 1, zone,
+                   OLC_NUM(d), DIAG_CHAR(d->character));
+      write_to_output(d, "Trigger %d's script is %lu bytes, over the %d the "
+                         "loader accepts.\r\n", i, (unsigned long)need,
+                      MAX_STRING_LENGTH - 1);
+      trigedit_tell_not_saved(d, FALSE);
+      return TRIGEDIT_NOT_SAVED;
+    }
+  }
 
   if ((rnum = real_trigger(OLC_NUM(d))) != NOTHING) {
     proto = trig_index[rnum]->proto;
@@ -756,21 +1073,30 @@ void trigedit_save(struct descriptor_data *d)
     if (s) {
       char *t = strtok(s, "\n\r"); /* strtok returns NULL if s is "\r\n" */
       if (t)
-        trig->cmdlist->cmd = strdup(t);
+        TRIGEDIT_STRDUP(trig->cmdlist->cmd, t);
       else
-        trig->cmdlist->cmd = strdup("* No script");
+        TRIGEDIT_STRDUP(trig->cmdlist->cmd, "* No script");
 
       cmd = trig->cmdlist;
       while ((s = strtok(NULL, "\n\r"))) {
         CREATE(cmd->next, struct cmdlist_element, 1);
         cmd = cmd->next;
-        cmd->cmd = strdup(s);
+        TRIGEDIT_STRDUP(cmd->cmd, s);
       }
     } else
-      trig->cmdlist->cmd = strdup("* No Script");
+      TRIGEDIT_STRDUP(trig->cmdlist->cmd, "* No Script");
 
-    /* make the prorotype look like what we have */
+    /* make the prorotype look like what we have.  The scratch trigger may
+     * carry another prototype's rnum (it was filled from "W) Copy Trigger" or
+     * tcopy), and trig_data_copy() copies nr; every instance read_trigger()
+     * makes from this prototype inherits it.  The prototype's nr must be its
+     * own slot (E2-03). */
+    GET_TRIG_RNUM(trig) = rnum;
     trig_data_copy(proto, trig);
+    if (GET_TRIG_RNUM(proto) != rnum)
+      TB_ERROR_MSG("dg", "trigedit-proto-nr", "trig_index",
+                   "trigger vnum %d rnum %d proto nr %d",
+                   OLC_NUM(d), (int)rnum, (int)GET_TRIG_RNUM(proto));
     proto->nr = rnum;   /* the slot it lives in, whatever the buffer said */
 
     /* go through the mud and replace existing triggers         */
@@ -788,9 +1114,9 @@ void trigedit_save(struct descriptor_data *d)
         }
 
         if (proto->arglist)
-          live_trig->arglist = strdup(proto->arglist);
+          TRIGEDIT_STRDUP(live_trig->arglist, proto->arglist);
         if (proto->name)
-          live_trig->name = strdup(proto->name);
+          TRIGEDIT_STRDUP(live_trig->name, proto->name);
 
         /* anything could have happened so we don't want to keep these */
         if (GET_TRIG_WAIT(live_trig)) {
@@ -825,16 +1151,16 @@ void trigedit_save(struct descriptor_data *d)
     if (s) {
       /* strtok returns NULL if s is "\r\n" */
       char *t = strtok(s, "\n\r");
-      trig->cmdlist->cmd = strdup(t ? t : "* No script");
+      TRIGEDIT_STRDUP(trig->cmdlist->cmd, t ? t : "* No script");
       cmd = trig->cmdlist;
 
       while ((s = strtok(NULL, "\n\r"))) {
         CREATE(cmd->next, struct cmdlist_element, 1);
         cmd = cmd->next;
-        cmd->cmd = strdup(s);
+        TRIGEDIT_STRDUP(cmd->cmd, s);
       }
     } else
-      trig->cmdlist->cmd = strdup("* No Script");
+      TRIGEDIT_STRDUP(trig->cmdlist->cmd, "* No Script");
 
     for (i = 0; i < top_of_trigt; i++) {
       if (!found) {
@@ -883,51 +1209,34 @@ void trigedit_save(struct descriptor_data *d)
     trig_index = new_index;
     top_of_trigt++;
 
-    /* Every prototype from rnum up moved one slot, so every live trigger
-     * and edit buffer that pointed at rnum or above follows it.  The new
-     * trigger's own buffer (d) already names rnum, and buffers for unsaved
-     * triggers (NOTHING) point nowhere. */
+    /* Every prototype that was at rnum or above moved up one slot, including
+     * the one that used to sit at rnum itself (now at rnum + 1).  Instances
+     * and editor scratch triggers still carry the old rnum, so they must
+     * follow with ">=".  With ">" the displaced trigger's live instances were
+     * left pointing at the new prototype, and the next edit of the displaced
+     * trigger freed the cmdlist they still used (E2-02).  NOTHING is the
+     * maximum IDXTYPE and must never be bumped (it would wrap to 0). */
     for (live_trig = trigger_list; live_trig; live_trig = live_trig->next_in_world)
       if (GET_TRIG_RNUM(live_trig) != NOTHING && GET_TRIG_RNUM(live_trig) >= rnum)
         GET_TRIG_RNUM(live_trig)++;
 
+    /* Update other trigs being edited.  The saving editor's own scratch was
+     * already given its final rnum above. */
     for (dsc = descriptor_list; dsc; dsc = dsc->next)
-      if (dsc != d && STATE(dsc) == CON_TRIGEDIT &&
+      if (dsc != d && IS_TRIGEDITING(dsc) &&
           GET_TRIG_RNUM(OLC_TRIG(dsc)) != NOTHING &&
           GET_TRIG_RNUM(OLC_TRIG(dsc)) >= rnum)
         GET_TRIG_RNUM(OLC_TRIG(dsc))++;
 
+    trigedit_check_live_rnums(d, rnum);
   }
 
   /* now write the trigger out to disk, along with the rest of the triggers for
    * this zone. We write this to disk NOW instead of letting the builder have 
    * control because if we lose this after having assigned a new trigger to an 
    * item, we will get SYSERR's upton reboot that could make things hard to 
-   * debug. */
-  zone = zone_table[OLC_ZNUM(d)].number;
-  top = zone_table[OLC_ZNUM(d)].top;
-
-  /* Refuse to write a trigger zone that the loader would reject on the next
-   * boot.  fread_string() adds CR/LF per input chunk, so count the same way. */
-  for (i = zone_table[OLC_ZNUM(d)].bot; i <= top; i++) {
-    if ((rnum = real_trigger(i)) != NOTHING) {
-      need = 0;
-      for (cmd = trig_index[rnum]->proto->cmdlist; cmd; cmd = cmd->next) {
-        if (cmd->cmd) {
-          size_t cmdlen = strlen(cmd->cmd);
-          need += cmdlen + 2 * ((cmdlen + 511) / 511);
-        }
-      }
-      if (need >= MAX_STRING_LENGTH) {
-        mudlog(BRF, MAX(LVL_GOD, GET_INVIS_LEV(d->character)), TRUE,
-               "SYSERR: OLC: Trigger %d's script reads back as %lu bytes, "
-               "over the %d the loader accepts; zone %d not written.",
-               i, (unsigned long) need, MAX_STRING_LENGTH - 1, zone);
-        return;
-      }
-    }
-  }
-
+   * debug.  From here on the in-memory save has happened; a failure leaves
+   * the trigger saved in memory only, and says so. */
 #ifdef CIRCLE_MAC
   tb_snprintf(fname, sizeof(fname), "%s:%i.new", TRG_PREFIX, zone);
 #else
@@ -935,9 +1244,13 @@ void trigedit_save(struct descriptor_data *d)
 #endif
 
   if (!(trig_file = fopen(fname, "w"))) {
+    TB_ERROR_ERRNO("dg", "trigedit-save", fname,
+                   "trigger vnum %d zone %d by " DIAG_CHAR_FMT ": cannot open",
+                   OLC_NUM(d), zone, DIAG_CHAR(d->character));
     mudlog(BRF, MAX(LVL_GOD, GET_INVIS_LEV(d->character)), TRUE,
            "SYSERR: OLC: Can't open trig file \"%s\"", fname);
-    return;
+    trigedit_tell_not_saved(d, TRUE);
+    return TRIGEDIT_SAVED_MEMORY_ONLY;
   }
 
   for (i = zone_table[OLC_ZNUM(d)].bot; i <= top; i++) {
@@ -945,10 +1258,18 @@ void trigedit_save(struct descriptor_data *d)
       trig = trig_index[rnum]->proto;
 
       if (fprintf(trig_file, "#%d\n", i) < 0) {
+        TB_ERROR_ERRNO("dg", "trigedit-save", fname,
+                       "trigger vnum %d zone %d by " DIAG_CHAR_FMT
+                       ": write failed at trigger %d",
+                       OLC_NUM(d), zone, DIAG_CHAR(d->character), i);
         mudlog(BRF, MAX(LVL_GOD, GET_INVIS_LEV(d->character)), TRUE,
                "SYSERR: OLC: Can't write trig file!");
         tb_fclose(trig_file);
-        return;
+        /* Never leave a partial <zone>.new behind for the next save. */
+        if (remove(fname) != 0 && errno != ENOENT)
+          TB_REPORT_ERRNO("remove", fname);
+        trigedit_tell_not_saved(d, TRUE);
+        return TRIGEDIT_SAVED_MEMORY_ONLY;
       }
       sprintascii(bitBuf, GET_TRIG_TYPE(trig));
       tb_fprintf(trig_file,      "%s%c\n"
@@ -980,12 +1301,22 @@ void trigedit_save(struct descriptor_data *d)
 
   tb_fprintf(trig_file, "$%c\n", STRING_TERMINATOR);
   {
+    /* tb_fprintf() reports but does not stop on a failed write; the stream's
+     * error flag catches any of them here. */
+    int write_ok = !ferror(trig_file);
     int flush_ok = tb_fflush_checked(trig_file, fname);
     int close_ok = tb_fclose_checked(trig_file, fname);
-    if (!flush_ok || !close_ok) {
+    if (!write_ok || !flush_ok || !close_ok) {
+      TB_ERROR_MSG("dg", "trigedit-save", fname,
+                   "trigger vnum %d zone %d by " DIAG_CHAR_FMT
+                   ": write %s, flush %s, close %s",
+                   OLC_NUM(d), zone, DIAG_CHAR(d->character),
+                   write_ok ? "ok" : "failed", flush_ok ? "ok" : "failed",
+                   close_ok ? "ok" : "failed");
       if (remove(fname) != 0 && errno != ENOENT)
         TB_REPORT_ERRNO("remove", fname);
-      return;
+      trigedit_tell_not_saved(d, TRUE);
+      return TRIGEDIT_SAVED_MEMORY_ONLY;
     }
   }
 
@@ -995,19 +1326,41 @@ void trigedit_save(struct descriptor_data *d)
   tb_snprintf(buf, sizeof(buf), "%s/%d.trg", TRG_PREFIX, zone);
 #endif
 
-  if (!tb_replace_file_checked(fname, buf))
-    return;
+  if (!tb_replace_file_checked(fname, buf)) {
+    TB_ERROR_MSG("dg", "trigedit-save", buf,
+                 "trigger vnum %d zone %d by " DIAG_CHAR_FMT
+                 ": cannot replace with %s",
+                 OLC_NUM(d), zone, DIAG_CHAR(d->character), fname);
+    trigedit_tell_not_saved(d, TRUE);
+    return TRIGEDIT_SAVED_MEMORY_ONLY;
+  }
 
   write_to_output(d, "Trigger saved to disk.\r\n");
-  trigedit_create_index(zone, "trg");
+  /* The zone file is written; only a zone new to the index needs the entry,
+   * but a failure is still the builder's to hear about. */
+  if (!trigedit_create_index(zone, "trg"))
+    write_to_output(d, "The trigger index was NOT updated; if this zone has "
+                       "no trigger file yet, tell an implementor.\r\n");
+  return TRIGEDIT_SAVED;
 }
 
-static void trigedit_create_index(int znum, char *type)
+/**
+ * Make sure the trigger index lists "<znum>.<type>", rewriting it in order.
+ * The index (TRG_PREFIX "index") holds one "<zone>.trg" line per zone in
+ * ascending zone order and ends with a "$" line.  It is read with get_line(),
+ * which skips blank and '*' comment lines (so the rewrite drops comments) and
+ * reads at most READ_SIZE - 1 bytes per line.  The new index is written to
+ * "newindex" and swapped in only when complete.
+ * @retval TRUE The index lists the zone (it was already there or was added).
+ * @retval FALSE The index could not be read, parsed or replaced; the old
+ * index is kept and the reason has been logged.
+ */
+static int trigedit_create_index(int znum, char *type)
 {
   FILE *newfile, *oldfile;
   char new_name[128], old_name[128], *prefix;
   char buf[MAX_STRING_LENGTH], buf1[MAX_STRING_LENGTH];
-  int num, found = FALSE;
+  int num, found = FALSE, terminated = FALSE, entry = 0;
 
   prefix = TRG_PREFIX;
 
@@ -1015,31 +1368,43 @@ static void trigedit_create_index(int znum, char *type)
   tb_snprintf(new_name, sizeof(new_name), "%s/newindex", prefix);
 
   if (!(oldfile = fopen(old_name, "r"))) {
-    TB_REPORT_ERRNO("fopen", old_name);
+    TB_ERROR_ERRNO("dg", "trigger-index-io", old_name,
+                   "zone %d: cannot open index", znum);
     mudlog(BRF, LVL_IMPL, TRUE, "SYSERR: DG_OLC: Failed to open %s", old_name);
-    return;
+    return FALSE;
   } else if (!(newfile = fopen(new_name, "w"))) {
-    TB_REPORT_ERRNO("fopen", new_name);
+    TB_ERROR_ERRNO("dg", "trigger-index-io", new_name,
+                   "zone %d: cannot create new index", znum);
     mudlog(BRF, LVL_IMPL, TRUE, "SYSERR: DG_OLC: Failed to open %s", new_name);
     tb_fclose(oldfile);
-    return;
+    return FALSE;
   }
 
   /* Index contents must be in order: search through the old file for the right
-   * place, insert the new file, then copy the rest over. */
+   * place, insert the new file, then copy the rest over.  The index is
+   * written by administrators; a malformed entry or a missing '$' terminator
+   * keeps the old index in place rather than writing one the loader would
+   * misread. */
   tb_snprintf(buf1, sizeof(buf1), "%d.%s", znum, type);
   while (get_line(oldfile, buf)) {
+    entry++;
     if (*buf == '$') {
-      tb_fprintf(newfile, "%s\n$\n", (!found ? buf1 : ""));
+      if (!found)
+        tb_fprintf(newfile, "%s\n", buf1);
+      tb_fprintf(newfile, "$\n");   /* no blank line before it on re-save */
+      terminated = TRUE;
       break;
     } else if (!found) {
       if (!trigedit_index_number(buf, &num)) {
-        TB_REPORT_ERROR("trigger-index-parse", old_name);
+        TB_ERROR_MSG("dg", "trigger-index-parse", old_name,
+                     "zone %d: entry %d is not '<zone>.%s' (%lu bytes); "
+                     "index not updated", znum, entry, type,
+                     (unsigned long)strlen(buf));
         tb_fclose(newfile);
         tb_fclose(oldfile);
         if (remove(new_name) != 0 && errno != ENOENT)
           TB_REPORT_ERRNO("remove", new_name);
-        return;
+        return FALSE;
       }
       if (num == znum)
         found = TRUE;
@@ -1051,28 +1416,53 @@ static void trigedit_create_index(int znum, char *type)
     tb_fprintf(newfile, "%s\n", buf);
   }
 
-  /* Preserve the previous index if the new one could not be written. */
-  if (ferror(oldfile) || ferror(newfile)) {
-    TB_REPORT_ERROR("trigger-index-io", old_name);
+  /* Preserve the previous index if the new one could not be written, or if
+   * the old one ended without its '$' terminator. */
+  if (!terminated || ferror(oldfile) || ferror(newfile)) {
+    if (!terminated && !ferror(oldfile))
+      TB_ERROR_MSG("dg", "trigger-index-terminator", old_name,
+                   "zone %d: index ended after %d entries without '$'; "
+                   "index not updated", znum, entry);
+    else
+      TB_ERROR_MSG("dg", "trigger-index-io", old_name,
+                   "zone %d: read %s, write %s; index not updated", znum,
+                   ferror(oldfile) ? "failed" : "ok",
+                   ferror(newfile) ? "failed" : "ok");
     tb_fclose(newfile);
     tb_fclose(oldfile);
     if (remove(new_name) != 0 && errno != ENOENT)
       TB_REPORT_ERRNO("remove", new_name);
-    return;
+    return FALSE;
   }
   {
     int close_new_ok = tb_fclose_checked(newfile, new_name);
     int close_old_ok = tb_fclose_checked(oldfile, old_name);
     if (!close_new_ok || !close_old_ok) {
+      TB_ERROR_MSG("dg", "trigger-index-io", new_name,
+                   "zone %d: close failed; index not updated", znum);
       if (remove(new_name) != 0 && errno != ENOENT)
         TB_REPORT_ERRNO("remove", new_name);
-      return;
+      return FALSE;
     }
   }
-  if (!tb_replace_file_checked(new_name, old_name))
-    TB_REPORT_ERROR("trigger-index-commit", old_name);
+  if (!tb_replace_file_checked(new_name, old_name)) {
+    TB_ERROR_MSG("dg", "trigger-index-commit", old_name,
+                 "zone %d: cannot replace with %s", znum, new_name);
+    return FALSE;
+  }
+  return TRUE;
 }
 
+/**
+ * Give the editor a private copy of the edited thing's trigger list.
+ * Ownership: OLC_SCRIPT(d) belongs to the editor.  On save, medit/oedit/redit
+ * install it as the prototype's proto_script (freeing the old list); on quit
+ * without saving it is freed and the prototype is untouched.
+ * @pre OLC_ITEM_TYPE(d) is set and the matching OLC_MOB/OLC_OBJ/OLC_ROOM
+ * pointer is valid.  OLC_SCRIPT(d) is NULL or already owned elsewhere; it is
+ * overwritten, not freed.
+ * @param d The editing descriptor.
+ */
 void dg_olc_script_copy(struct descriptor_data *d)
 {
   struct trig_proto_list *origscript, *editscript;
@@ -1134,6 +1524,15 @@ void dg_script_menu(struct descriptor_data *d)
     grn, nrm, grn, nrm, grn, nrm);
 }
 
+/**
+ * Handle one line of builder input in the trigger-attachment submenu.
+ * New entries are accepted only when real_trigger() resolves their vnum;
+ * dg_script_menu() relies on every vnum in OLC_SCRIPT(d) resolving.
+ * @param d The editing descriptor (OLC_SCRIPT(d) as for dg_olc_script_copy()).
+ * @param arg The builder's input line.
+ * @retval 0 The builder quit the submenu; the caller returns to its own menu.
+ * @retval 1 The submenu handled the input and stays active.
+ */
 int dg_script_edit_parse(struct descriptor_data *d, char *arg)
 {
   struct trig_proto_list *trig, *currtrig;
@@ -1252,23 +1651,89 @@ void trigedit_string_cleanup(struct descriptor_data *d, int terminator)
   }
 }
 
+/* Depth of format_script()'s block and switch stacks. */
+#define FORMAT_SCRIPT_MAX_DEPTH  READ_SIZE
+
+/**
+ * Check that format_script() may open one more block.  The nesting depth is
+ * builder input: each "if"/"while"/"switch" line pushes an entry, and a
+ * "break" lowers the indent without popping, so a few kilobytes of
+ * "if 1"/"break" pairs reach any depth well inside max_str.  A push past
+ * FORMAT_SCRIPT_MAX_DEPTH would write past block_stack/switch_indent.
+ * Every switch push is also a block push, so switch_top <= stack_top; both
+ * are checked anyway.  Reports a refusal to the builder and the server log.
+ * @param d The editing descriptor.
+ * @param line_num The script line that opens the block.
+ * @param stack_top Current top of the block stack (-1 when empty).
+ * @param switch_top Current top of the switch stack (-1 when empty).
+ * @retval TRUE There is room for the push.
+ * @retval FALSE The script nests too deeply; formatting must stop.
+ */
+static int format_script_can_push(struct descriptor_data *d, int line_num,
+                                  int stack_top, int switch_top)
+{
+  if (stack_top + 1 < FORMAT_SCRIPT_MAX_DEPTH &&
+      switch_top + 1 < FORMAT_SCRIPT_MAX_DEPTH)
+    return TRUE;
+
+  write_to_output(d, "Script nests deeper than %d blocks (line %d); "
+                     "formatting aborted.\r\n", FORMAT_SCRIPT_MAX_DEPTH, line_num);
+  TB_WARN_MSG("dg", "trigedit-format-nesting", "block_stack",
+              "trigger vnum %d line %d depth %d cap %d editor " DIAG_CHAR_FMT,
+              d->olc ? OLC_NUM(d) : -1, line_num, MAX(stack_top, switch_top) + 2,
+              FORMAT_SCRIPT_MAX_DEPTH, DIAG_CHAR(d->character));
+  return FALSE;
+}
+
+/**
+ * Re-indent the script being edited (the editor's "/f" command).
+ * Only improved-edit.c calls it, and only for a descriptor in CON_TRIGEDIT,
+ * so *d->str is OLC_STORAGE(d).
+ *
+ * Caps: blocks nest at most FORMAT_SCRIPT_MAX_DEPTH deep, and the result,
+ * terminator included, must fit MIN(d->max_str, MAX_CMD_LENGTH).  Lines have
+ * no length limit of their own.  Exceeding a cap aborts with a message to the
+ * builder and a structured warning.  Unbalanced blocks are formatted anyway,
+ * with a note.
+ * @param d The editing descriptor.
+ * @retval TRUE *d->str was freed and replaced by a new heap copy (ownership
+ * stays with the descriptor's editor).
+ * @retval FALSE *d->str is untouched; the reason has been sent to the builder.
+ */
 int format_script(struct descriptor_data *d)
 {
-  char nsc[MAX_CMD_LENGTH], *t, line[READ_SIZE];
+  char nsc[MAX_CMD_LENGTH], *t;
   char *sc;
   size_t len = 0, nlen = 0, llen = 0;
-  int indent = 0, indent_next = FALSE, line_num = 0, ret;
-  int block_stack[READ_SIZE]; // Stack to track block types
+  /* Room for the formatted script, terminator included: the editor's limit,
+   * never more than nsc.  len < cap holds throughout. */
+  size_t cap = MIN(d->max_str, sizeof(nsc));
+  int indent = 0, indent_next = FALSE, line_num = 0;
+  int block_stack[FORMAT_SCRIPT_MAX_DEPTH]; // Stack to track block types
   int stack_top = -1; // Initialize stack as empty
-  int switch_indent[READ_SIZE]; // Array to track switch indent levels
+  int switch_indent[FORMAT_SCRIPT_MAX_DEPTH]; // Array to track switch indent levels
   int switch_top = -1; // Index for switch_indent array
   int case_indent = 0; // Track indent for case blocks
   int in_switch = 0; // Flag to indicate if we're inside a switch block
 
   if (!d->str || !*d->str)
     return FALSE;
+  if (cap < 1) {
+    TB_ERROR_MSG("dg", "trigedit-format-too-long", "max_str",
+                 "editor max_str is 0, editor " DIAG_CHAR_FMT,
+                 DIAG_CHAR(d->character));
+    return FALSE;
+  }
 
   sc = strdup(*d->str); // Work on a copy
+  if (!sc) {
+    /* strtok(NULL) would continue some earlier tokenisation. */
+    TB_ERROR_ERRNO("dg", "trigedit-alloc", "strdup",
+                   "trigger vnum %d: %lu-byte script not formatted",
+                   d->olc ? OLC_NUM(d) : -1, (unsigned long)strlen(*d->str));
+    write_to_output(d, "Out of memory, formatting aborted\r\n");
+    return FALSE;
+  }
   t = strtok(sc, "\n\r");
   *nsc = '\0';
 
@@ -1276,17 +1741,11 @@ int format_script(struct descriptor_data *d)
     line_num++;
     skip_spaces(&t);
 
-    /* Every opener pushes one entry; switch_indent never holds more. */
-    if ((!strn_cmp(t, "switch ", 7) || !strn_cmp(t, "if ", 3) ||
-         !strn_cmp(t, "while ", 6)) &&
-        stack_top + 1 >= (int)(sizeof(block_stack) / sizeof(*block_stack))) {
-      write_to_output(d, "Blocks nested too deeply to format (line %d)!\r\n",
-                      line_num);
-      free(sc);
-      return FALSE;
-    }
-
     if (!strn_cmp(t, "switch ", 7)) {
+      if (!format_script_can_push(d, line_num, stack_top, switch_top)) {
+        free(sc);
+        return FALSE;
+      }
       indent_next = TRUE;
       stack_top++;
       block_stack[stack_top] = 's'; // 's' for switch
@@ -1300,6 +1759,10 @@ int format_script(struct descriptor_data *d)
         case_indent = indent; // Save indent for case block
       }
     } else if (!strn_cmp(t, "if ", 3) || !strn_cmp(t, "while ", 6)) {
+      if (!format_script_can_push(d, line_num, stack_top, switch_top)) {
+        free(sc);
+        return FALSE;
+      }
       indent_next = TRUE;
       stack_top++;
       block_stack[stack_top] = 'l'; // 'l' for loop or conditional
@@ -1337,26 +1800,30 @@ int format_script(struct descriptor_data *d)
       indent_next = FALSE; // Ensure no automatic increase for next line after break
     }
 
-    /* The indented line must fit whole: nlen past the buffer used to wrap
-     * the snprintf size, and a long line was cut silently. */
-    nlen = indent > 0 ? 2 * (size_t)indent : 0;
-    if (nlen + strlen(t) + 2 >= sizeof(line)) {
-      write_to_output(d, "Line %d is too long to indent, formatting aborted\r\n",
-                      line_num);
+    /* Write "<indent><line>\r\n" straight into nsc.  Lines come from the
+     * builder (up to MAX_INPUT_LENGTH per editor line) or from a trigger
+     * file, and have no length limit of their own.  The old 256-byte line
+     * buffer silently cut longer lines, dropping their CRLF and gluing the
+     * next command onto them (E2-06).  The only cap is the result's: the
+     * editor's max_str and nsc.  indent can go negative after unbalanced
+     * "break"/"end" lines; treat that as no indent. */
+    nlen = 2 * (size_t)MAX(indent, 0);
+    llen = strlen(t);
+    if (nlen + llen + 2 >= cap - len) {
+      write_to_output(d, "String too long at line %d (limit %lu bytes), "
+                         "formatting aborted\r\n", line_num, (unsigned long)(cap - 1));
+      TB_WARN_MSG("dg", "trigedit-format-too-long", "nsc",
+                  "trigger vnum %d line %d needs %lu bytes, cap %lu editor " DIAG_CHAR_FMT,
+                  d->olc ? OLC_NUM(d) : -1, line_num,
+                  (unsigned long)(len + nlen + llen + 3), (unsigned long)cap,
+                  DIAG_CHAR(d->character));
       free(sc);
       return FALSE;
     }
-    memset(line, ' ', nlen);
-    ret = snprintf(line + nlen, sizeof(line) - nlen, "%s\r\n", t);
-    llen = (size_t)ret;
-    if (ret < 0 || llen + nlen + len > d->max_str - 1 ||
-        llen + nlen + len >= sizeof(nsc)) {
-      write_to_output(d, "String too long, formatting aborted\r\n");
-      free(sc);
-      return FALSE;
-    }
-    len = len + nlen + llen;
-    strlcat(nsc, line, sizeof(nsc));  /* strcat OK, size checked above */
+    memset(nsc + len, ' ', nlen);
+    memcpy(nsc + len + nlen, t, llen);
+    memcpy(nsc + len + nlen + llen, "\r\n", 3);   /* with the terminator */
+    len += nlen + llen + 2;
 
     if (indent_next) {
       indent++;
@@ -1368,9 +1835,19 @@ int format_script(struct descriptor_data *d)
   if (stack_top >= 0)
     write_to_output(d, "Unmatched block statements ignored.\r\n");
 
-  free(*d->str);
-  *d->str = strdup(nsc);
   free(sc);
+  /* Copy before freeing, so a failure leaves the editor's text in place
+   * instead of a NULL *d->str. */
+  sc = strdup(nsc);
+  if (!sc) {
+    TB_ERROR_ERRNO("dg", "trigedit-alloc", "strdup",
+                   "trigger vnum %d: %lu-byte formatted script dropped",
+                   d->olc ? OLC_NUM(d) : -1, (unsigned long)len);
+    write_to_output(d, "Out of memory, formatting aborted\r\n");
+    return FALSE;
+  }
+  free(*d->str);
+  *d->str = sc;
 
   return TRUE;
 }

@@ -31,8 +31,36 @@ static int has_boat(struct char_data *ch);
 /* do_gen_door utility functions */
 static int find_door(struct char_data *ch, const char *type, char *dir, const char *cmdname);
 static int has_key(struct char_data *ch, obj_vnum key);
-static void do_doorcmd(struct char_data *ch, struct obj_data *obj, int door, int scmd);
+static int do_doorcmd(struct char_data *ch, struct obj_data *obj, int door, int scmd);
 static int ok_pick(struct char_data *ch, obj_vnum keynum, int pickproof, int scmd);
+
+/* TRUE if s indexes the per-sector tables (movement_loss[] has
+ * NUM_ROOM_SECTORS entries). A room's sector comes from its .wld file and
+ * the loader's range check has been wrong before, so check before use. */
+#define VALID_SECTOR(s) ((s) >= 0 && (s) < NUM_ROOM_SECTORS)
+
+/* TRUE if door is a direction and ch's room has an exit there. This is
+ * the check for door commands after a trigger has run ('wdoor ... purge'
+ * frees the exit and NULLs it). CAN_GO() is the wrong predicate here: it
+ * also demands an open door and a destination room. Evaluates its
+ * arguments several times: pass plain variables. */
+#define VALID_EXIT(ch, door) \
+  ((door) >= 0 && (door) < NUM_OF_DIRS && EXIT((ch), (door)) != NULL)
+
+/* Movement cost of room's sector. An out-of-range sector is reported as
+ * "sector-range" with the room vnum and costs 1, rather than reading past
+ * movement_loss[]. */
+static int sect_move_loss(room_rnum room)
+{
+  int sect = SECT(room);
+
+  if (VALID_SECTOR(sect))
+    return movement_loss[sect];
+  TB_ERROR_MSG("act", "sector-range", "room",
+               "room vnum %d sector %d not in [0,%d); move cost 1",
+               (int) GET_ROOM_VNUM(room), sect, NUM_ROOM_SECTORS);
+  return 1;
+}
 
 
 /* simple function to determine if char can walk on water */
@@ -123,9 +151,20 @@ static int has_scuba(struct char_data *ch)
  * @param ch The character structure to attempt to move.
  * @param dir The defined direction (NORTH, SOUTH, etc...) to attempt to
  * move into.
- * @param need_specials_check If TRUE will cause 
- * @retval int 1 for a successful move (ch is now in a new location)		
- * or 0 for a failed move (ch is still in the original location). */
+ * @pre EXIT(ch, dir) exists and leads to a room (perform_move checks).
+ * @param need_specials_check If TRUE, ch is a follower being dragged along
+ * by its leader's move: room special procedures are checked with a NULL
+ * argument instead of the movement command, and the move is suppressed if
+ * one of them claims it.
+ * @retval int 1 for a successful move (ch is now in a new location)
+ * or 0 for a failed move. A 0 does not always mean ch is where it was: a
+ * move into a death trap returns 0 after death_cry() and extract_char()
+ * (ch is then pending extraction and must not act again), and an entry or
+ * greet trigger that refuses the move puts ch back in the old room.
+ * Triggers: the leave triggers run before the move and entry_mtrigger,
+ * enter_wtrigger and greet_mtrigger after it; any of them may teleport,
+ * purge or kill ch, so callers re-check IN_ROOM(ch) rather than assume the
+ * destination. */
 int do_simple_move(struct char_data *ch, int dir, int need_specials_check)
 {
   /* Begin Local variable definitions */
@@ -249,8 +288,7 @@ int do_simple_move(struct char_data *ch, int dir, int need_specials_check)
   /* All checks passed, nothing will prevent movement now other than lack of
    * move points. */
   /* move points needed is avg. move loss for src and destination sect type */
-  need_movement = (movement_loss[SECT(was_in)] +
-		   movement_loss[SECT(going_to)]) / 2;
+  need_movement = (sect_move_loss(was_in) + sect_move_loss(going_to)) / 2;
 
   /* Move Point Requirement Check */
   if (GET_MOVE(ch) < need_movement && !IS_NPC(ch))
@@ -361,6 +399,14 @@ int perform_move(struct char_data *ch, int dir, int need_specials_check)
     if (!do_simple_move(ch, dir, need_specials_check))
       return (0);
 
+    /* Each follower's perform_move() recurses (moving its own followers)
+     * and runs leave/entry/greet triggers. follow_type nodes are freed by
+     * stop_follower(), which those triggers can reach (a script that makes
+     * a mob stop following, purges a follower, or kills one); 'next' is
+     * read before the call, so a trigger that frees the next node of
+     * ch->followers leaves this loop holding a dangling pointer. Code
+     * reached from here must not call stop_follower() on another follower
+     * of ch; detaching the follower currently moving is safe. */
     for (k = ch->followers; k; k = next) {
       next = k->next;
       if ((IN_ROOM(k->follower) == was_in) &&
@@ -499,6 +545,12 @@ static const int flags_door[] =
   NEED_CLOSED | NEED_LOCKED
 };
 
+/* Door/container helpers. Every macro below takes (room or ch, obj, door)
+ * where obj and door are mutually exclusive: obj != NULL means a container
+ * and door is then -1 (never index EXIT with it); obj == NULL means
+ * EXITN(room, door) / EXIT(ch, door), which must be non-NULL. The exit is
+ * only known to exist when do_gen_door looked it up: after any door
+ * trigger, do_doorcmd re-validates it (door_target_still_valid). */
 #define EXITN(room, door)		(world[room].dir_option[door])
 #define OPEN_DOOR(room, obj, door)	((obj) ?\
 		(REMOVE_BIT(GET_OBJ_VAL(obj, 1), CONT_CLOSED)) :\
@@ -516,46 +568,57 @@ static const int flags_door[] =
 		(TOGGLE_BIT(GET_OBJ_VAL(obj, 1), CONT_LOCKED)) :\
 		(TOGGLE_BIT(EXITN(room, door)->exit_info, EX_LOCKED)))
 
-/* TRUE if a door trigger left the command able to proceed: the actor alive
- * in the room it started in, and the door or container it named still
- * there.  Scripts can move or kill the actor, remove the exit or purge the
- * container, and the command used to act on whatever remained. */
-static int door_target_intact(struct char_data *ch, room_rnum in_room,
-                              struct obj_data *obj, long obj_uid, int door,
-                              int scmd)
+/* After a door trigger, is the target still there? The mob and room door
+ * scripts can teleport ch ('%teleport% %actor% 3001'), purge the exit
+ * ('wdoor <room> <dir> purge' frees it and sets dir_option to NULL) or
+ * purge a container ('opurge chest'), or kill ch. The target must still be the same
+ * object (by UID) within ch's reach, or for an exit ch must still stand in
+ * was_in and the exit must still exist. Reports "door-target-changed" with
+ * the room, direction, object UID and character, and returns FALSE when it
+ * is not. */
+static int door_target_still_valid(struct char_data *ch, struct obj_data *obj,
+                                   long obj_uid, int door, room_rnum was_in,
+                                   const char *trigger)
 {
-  const char *lost = NULL;
+  /* DEAD(ch): a script can also kill the actor, who is extracted only at
+   * the end of the pulse and must not act on the door. */
+  if (!DEAD(ch) && IN_ROOM(ch) == was_in &&
+      (obj ? (obj_uid_matches(obj_uid, obj) &&
+              (obj->carried_by == ch || IN_ROOM(obj) == was_in))
+           : VALID_EXIT(ch, door)))
+    return TRUE;
 
-  if (DEAD(ch) || IN_ROOM(ch) != in_room)
-    lost = "actor left the room or died";
-  else if (obj && !obj_uid_matches(obj_uid, obj))
-    lost = "container was extracted";
-  else if (!obj && !EXIT(ch, door))
-    lost = "exit was removed";
-
-  if (lost)
-    TB_WARN_MSG("act", "door-trigger", "do_doorcmd",
-                DIAG_CHAR_FMT " %s %s: %s; command abandoned", DIAG_CHAR(ch),
-                cmd_door[scmd], obj ? "container" : dirs[door], lost);
-  return lost == NULL;
+  TB_WARN_MSG("act", "door-target-changed", "room",
+              "room vnum %d dir %d obj uid %ld changed by %s trigger for "
+              DIAG_CHAR_FMT, (int) GET_ROOM_VNUM(was_in), door, obj_uid,
+              trigger, DIAG_CHAR(ch));
+  return FALSE;
 }
 
-static void do_doorcmd(struct char_data *ch, struct obj_data *obj, int door, int scmd)
+/* Opens, closes, locks, unlocks or picks a door or container. obj and door
+ * are mutually exclusive: obj != NULL means a container (door is then -1),
+ * otherwise door indexes EXIT(ch, door), which the caller found. The door
+ * triggers run first and may refuse, or change the world; the target is
+ * re-validated after each one. Returns TRUE if the action was carried out,
+ * FALSE if a trigger refused it or the target is gone (reported). */
+static int do_doorcmd(struct char_data *ch, struct obj_data *obj, int door, int scmd)
 {
   char buf[MAX_STRING_LENGTH];
   size_t len;
   room_rnum other_room = NOWHERE;
   struct room_direction_data *back = NULL;
-  room_rnum in_room = IN_ROOM(ch);
+  room_rnum was_in = IN_ROOM(ch);
   long obj_uid = obj ? obj_script_id(obj) : 0;
 
-  if (!door_mtrigger(ch, scmd, door) ||
-      !door_target_intact(ch, in_room, obj, obj_uid, door, scmd))
-    return;
+  if (!door_mtrigger(ch, scmd, door))
+    return FALSE;
+  if (!door_target_still_valid(ch, obj, obj_uid, door, was_in, "mob door"))
+    return FALSE;
 
-  if (!door_wtrigger(ch, scmd, door) ||
-      !door_target_intact(ch, in_room, obj, obj_uid, door, scmd))
-    return;
+  if (!door_wtrigger(ch, scmd, door))
+    return FALSE;
+  if (!door_target_still_valid(ch, obj, obj_uid, door, was_in, "room door"))
+    return FALSE;
 
   len = snprintf(buf, sizeof(buf), "$n %ss ", cmd_door[scmd]);
   if (!obj && ((other_room = EXIT(ch, door)->to_room) != NOWHERE))
@@ -613,6 +676,7 @@ static void do_doorcmd(struct char_data *ch, struct obj_data *obj, int door, int
       send_to_room(EXIT(ch, door)->to_room, "The %s is %s%s from the other side.\r\n",
         back->keyword ? fname(back->keyword) : "door", cmd_door[scmd],
         scmd == SCMD_CLOSE ? "d" : "ed");
+  return TRUE;
 }
 
 static int ok_pick(struct char_data *ch, obj_vnum keynum, int pickproof, int scmd)
@@ -686,8 +750,10 @@ ACMD(do_gen_door)
     else if (!(DOOR_IS_UNLOCKED(ch, obj, door)) && IS_SET(flags_door[subcmd], NEED_UNLOCKED) && ((!IS_NPC(ch) && PRF_FLAGGED(ch, PRF_AUTOKEY))) && (has_key(ch, keynum)) )
     {
       send_to_char(ch, "It is locked, but you have the key.\r\n");
-      do_doorcmd(ch, obj, door, SCMD_UNLOCK);
-      do_doorcmd(ch, obj, door, subcmd);
+      /* The unlock runs door triggers that may refuse or remove the target;
+       * only then is the door still there to open. */
+      if (do_doorcmd(ch, obj, door, SCMD_UNLOCK))
+        do_doorcmd(ch, obj, door, subcmd);
     }
     else if (!(DOOR_IS_UNLOCKED(ch, obj, door)) && IS_SET(flags_door[subcmd], NEED_UNLOCKED) && ((!IS_NPC(ch) && PRF_FLAGGED(ch, PRF_AUTOKEY))) && (!has_key(ch, keynum)) )
     {
@@ -792,6 +858,16 @@ ACMD(do_stand)
   }
 }
 
+/* Furniture invariant (do_sit, do_rest, do_sleep, do_stand, handler.c):
+ *  - SITTING(ch) != NULL exactly when ch is in that furniture's
+ *    sitting_here list (OBJ_SAT_IN_BY(furniture), chained through
+ *    NEXT_SITTING), and GET_OBJ_VAL(furniture, 1) counts that list;
+ *  - only POS_SITTING, POS_RESTING and POS_SLEEPING characters are seated.
+ * Every path that moves ch out of the seated positions or out of the room
+ * must call char_from_furniture() first: do_stand, char_from_room,
+ * extract_char, and the fight code through POS_CHANGE_UNSEAT (fight.h).
+ * Assigning GET_POS(ch) = POS_STANDING/POS_FIGHTING directly breaks it;
+ * do_sit reports such a desync ("furniture-desync") and repairs it. */
 ACMD(do_sit)
 {
   char arg[MAX_STRING_LENGTH];
@@ -808,6 +884,19 @@ ACMD(do_sit)
 
   switch (GET_POS(ch)) {
   case POS_STANDING:
+    /* Invariant: a standing character is on no furniture. A stale
+     * SITTING(ch) means some path stood ch up without char_from_furniture()
+     * (use POS_CHANGE_UNSEAT); linking ch into a second list below would
+     * leave the first furniture pointing at ch after ch is freed. */
+    if (SITTING(ch)) {
+      struct obj_data *stale = SITTING(ch);
+
+      TB_ERROR_MSG("act", "furniture-desync", "obj",
+                   "furniture vnum %d uid %ld still lists standing " DIAG_CHAR_FMT
+                   "; unlinking before sit",
+                   (int) GET_OBJ_VNUM(stale), obj_script_id(stale), DIAG_CHAR(ch));
+      char_from_furniture(ch);
+    }
     if (found == 0) {
       send_to_char(ch, "You sit down.\r\n");
       act("$n sits down.", FALSE, ch, 0, 0, TO_ROOM);

@@ -2,6 +2,13 @@
 *  File: dg_variables.c                                    Part of tbaMUD *
 *  Usage: Contains the functions dealing with variable substitution.      *
 *                                                                         *
+*  Input: the line is builder script text; variable VALUES may be player  *
+*  text (%speech%, %arg%, %cmd%, titles), stored with '%' inert so a      *
+*  second substitution pass cannot expand it. Field "getters" are not     *
+*  pure: many take a subfield and change game state (gold, exp, stats,    *
+*  flags, title, level, oset), so expanding a variable has side effects.  *
+*  Every writer honours the str/slen contract of find_replacement().      *
+*                                                                         *
 *  $Author: Mark A. Heilpern/egreen/Welcor $                              *
 *  $Date: 2004/10/11 12:07:00 $                                           *
 *  $Revision: 1.0.14 $                                                    *
@@ -27,11 +34,57 @@
 #include "act.h"
 #include "genobj.h"
 
+/* Field setters (%actor.hitp(N)%, %obj.cost(N)% ...) add a script-supplied
+ * int to fields that are often narrower (sbyte, sh_int). Adding in int and
+ * storing back wrapped silently: hitp(40000) on 100 hit points stored
+ * -25436, and cha(250) wrapped before the 3..max game clamp ran. The sum is
+ * now formed in long long and saturated to the field's range.
+ *
+ * dg_bounded_add() applies a game rule (ability scores) and is silent, as
+ * the rule always was. dg_clamp_char_field() / dg_clamp_obj_field() guard
+ * the storage type: reaching their bounds means the script asked for a
+ * value the field cannot hold, so they report dg/field-clamp naming the
+ * trigger, the field and the entity. trig may be NULL (script_damage). */
+int dg_bounded_add(int cur, int add, int lo, int hi)
+{
+  long long v = (long long)cur + add;
+
+  return v < lo ? lo : v > hi ? hi : (int)v;
+}
+
+long dg_clamp_char_field(trig_data *trig, char_data *ch, const char *field,
+                         long long value, long lo, long hi)
+{
+  if (value >= lo && value <= hi)
+    return (long)value;
+  TB_WARN_MSG("dg", "field-clamp", "find_replacement",
+              "trig vnum %d field %s on " DIAG_CHAR_FMT ": %lld clamped to "
+              "[%ld,%ld]", DIAG_TRIG_VNUM(trig), field, DIAG_CHAR(ch), value,
+              lo, hi);
+  return value < lo ? lo : hi;
+}
+
+long dg_clamp_obj_field(trig_data *trig, obj_data *obj, const char *field,
+                        long long value, long lo, long hi)
+{
+  if (value >= lo && value <= hi)
+    return (long)value;
+  TB_WARN_MSG("dg", "field-clamp", "find_replacement",
+              "trig vnum %d field %s on obj vnum %d uid %ld: %lld clamped to "
+              "[%ld,%ld]", DIAG_TRIG_VNUM(trig), field, GET_OBJ_VNUM(obj),
+              obj_script_id(obj), value, lo, hi);
+  return value < lo ? lo : hi;
+}
+
 /* Utility functions */
 
 /* Thanks to James Long for his assistance in plugging the memory leak that
  * used to be here. - Welcor */
-/* Adds a variable with given name and value to trigger. */
+/* Adds a variable with given name and value to trigger.
+ * name and value are copied; the caller keeps ownership of both. An
+ * existing variable of that name is updated only when its context is 0 or
+ * equals id; otherwise a new entry is pushed. A name containing '.' cannot
+ * be referenced and is rejected with dg/var-name. */
 void add_var(struct trig_var_data **var_list, const char *name, const char *value, long id)
 {
   struct trig_var_data *vd;
@@ -39,7 +92,10 @@ void add_var(struct trig_var_data **var_list, const char *name, const char *valu
   char *copy;
 
   if (strchr(name, '.')) {
-    log("add_var() : Attempt to add illegal var: %s", name);
+    /* No trigger is in scope here; the call site and the script_driver
+     * breadcrumb identify the running trigger. */
+    TB_WARN_MSG("dg", "var-name", "add_var",
+                "variable name '%s' contains '.'; not set", name);
     return;
   }
 
@@ -223,13 +279,10 @@ static int handle_oset(struct obj_data * obj, char * argument)
   return 1;
 }
 
-int text_processed(char *field, char *subfield, struct trig_var_data *vd,
-                   char *str, size_t slen)
+int text_processed(trig_data *trig, char *field, char *subfield,
+                   struct trig_var_data *vd, char *str, size_t slen)
 {
-  char *p, *p2;
-  char tmpvar[MAX_STRING_LENGTH];
-
-  if (!str_cmp(field, "strlen")) {                     /* strlen    */
+  if (!str_cmp(field, "strlen")) {                    /* strlen    */
     tb_snprintf(str, slen, "%d", (int)strlen(vd->value));
     return TRUE;
   } else if (!str_cmp(field, "toupper")) {             /* toupper   */
@@ -238,18 +291,29 @@ int text_processed(char *field, char *subfield, struct trig_var_data *vd,
       tb_snprintf(str, slen, "%c%s", UPPER(*upper), upper + 1);
     return TRUE;
   } else if (!str_cmp(field, "trim")) {                /* trim      */
-    /* trim whitespace from ends */
-    tb_snprintf(tmpvar, sizeof(tmpvar)-1 , "%s", vd->value); /* -1 to use later*/
-    p = tmpvar;
-    p2 = tmpvar + strlen(tmpvar) - 1;
-    while (*p && isspace(*p)) p++;
-    while ((p<=p2) && isspace(*p2)) p2--;
-    if (p>p2) { /* nothing left */
-      *str = '\0';
+    /* Trim whitespace from both ends, by index: the old pointer walk formed
+     * tmpvar - 1 for an empty value (undefined behaviour), and copied the
+     * value through a fixed buffer first. The value may be player text of
+     * any length, so a result longer than slen - 1 is cut and reported. */
+    const char *v = vd->value;
+    size_t start = 0, end = strlen(v), n;
+
+    while (start < end && isspace((unsigned char)v[start]))
+      start++;
+    while (end > start && isspace((unsigned char)v[end - 1]))
+      end--;
+    n = end - start;
+    if (slen == 0)
       return TRUE;
+    if (n >= slen) {
+      TB_ERROR_MSG("dg", "field-truncate", "text_processed",
+                   "trig vnum %d: field trim of var '%s' is %zu bytes; "
+                   "truncated to %zu", DIAG_TRIG_VNUM(trig), vd->name, n,
+                   slen - 1);
+      n = slen - 1;
     }
-    *(++p2) = '\0';                                         /* +1 ok (see above) */
-    tb_snprintf(str, slen, "%s", p);
+    memcpy(str, v + start, n);
+    str[n] = '\0';
     return TRUE;
   } else if (!str_cmp(field, "contains")) {            /* contains  */
     if (str_str(vd->value, subfield))
@@ -258,20 +322,22 @@ int text_processed(char *field, char *subfield, struct trig_var_data *vd,
       strlcpy(str, "0", slen);
     return TRUE;
   } else if (!str_cmp(field, "car")) {                 /* car       */
-    const char *car = vd->value;
-    size_t len = 0;
+    /* First word of the value. The value may be raw player text (%speech%,
+     * %arg%), so its length is not bounded by the script: copy at most
+     * slen - 1 bytes and report a word that does not fit. */
+    size_t n = strcspn(vd->value, " \t\n\v\f\r");
 
-    while (car[len] && !isspace((unsigned char)car[len]))
-      len++;
-    /* Values are unbounded; the destination is not. */
-    if (len >= slen) {
-      TB_ERROR_MSG("dg", "field-truncated", "car",
-                   "var %s: %zu-byte first word truncated to %zu bytes",
-                   vd->name, len, slen - 1);
-      len = slen - 1;
+    if (slen == 0)
+      return TRUE;
+    if (n >= slen) {
+      TB_ERROR_MSG("dg", "field-truncate", "text_processed",
+                   "trig vnum %d: field car of var '%s' is %zu bytes; "
+                   "truncated to %zu", DIAG_TRIG_VNUM(trig), vd->name, n,
+                   slen - 1);
+      n = slen - 1;
     }
-    memcpy(str, car, len);
-    str[len] = '\0';
+    memcpy(str, vd->value, n);
+    str[n] = '\0';
     return TRUE;
 
   } else if (!str_cmp(field, "cdr")) {                 /* cdr       */
@@ -309,7 +375,13 @@ int text_processed(char *field, char *subfield, struct trig_var_data *vd,
   return FALSE;
 }
 
-/* sets str to be the value of var.field */
+/* sets str to be the value of var.field.
+ * str holds slen bytes; every branch writes at most slen - 1 bytes plus the
+ * terminator (text_processed() included).
+ * trig may be NULL on the X.global() path; diagnostics use
+ * DIAG_TRIG_VNUM(). go must be the live owner of type `type`: a mob or an
+ * object in a valid room (dg_room_of_obj()) or a room. subfield is the
+ * already-substituted text inside (...), so it can carry player text. */
 void find_replacement(void *go, struct script_data *sc, trig_data *trig,
                 int type, char *var, char *field, char *subfield, char *str, size_t slen)
 {
@@ -416,7 +488,7 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
     return;
   }
 
-  else if (vd && text_processed(field, subfield, vd, str, slen)) return;
+  else if (vd && text_processed(trig, field, subfield, vd, str, slen)) return;
 
   else {
     if (vd) {
@@ -485,7 +557,8 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
         struct script_data *thescript = SCRIPT(&world[0]);
         *str = '\0';
         if (!thescript) {
-          script_log("Attempt to find global var. Apparently the void has no script.");
+          script_log("Trigger VNum %d: global var lookup, but room 0 (the "
+                     "void) has no script.", DIAG_TRIG_VNUM(trig));
           return;
         }
         for (vd = thescript->global_vars; vd ; vd = vd->next)
@@ -535,14 +608,17 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
  * Addition inspired by Jamie Nelson */
       else if (!str_cmp(var, "findmob")) {
         if (!*field || !subfield || !*subfield) {
-          script_log("findmob.vnum(mvnum) - illegal syntax");
+          script_log("Trigger VNum %d: findmob.vnum(mvnum) - illegal syntax",
+                     DIAG_TRIG_VNUM(trig));
           strlcpy(str, "0", slen);
         } else {
           room_rnum rrnum = real_room(dg_parse_vnum(field));
           mob_vnum mvnum = tb_parse_int_or_zero(subfield);
 
           if (rrnum == NOWHERE) {
-            script_log("findmob.vnum(ovnum): No room with vnum %d", tb_parse_int_or_zero(field));
+            script_log("Trigger VNum %d: findmob.vnum(mvnum): no room with "
+                       "vnum %d", DIAG_TRIG_VNUM(trig),
+                       tb_parse_int_or_zero(field));
             strlcpy(str, "0", slen);
           } else {
             for (i = 0, ch = world[rrnum].people; ch; ch = ch->next_in_room)
@@ -556,13 +632,16 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
       /* Addition inspired by Jamie Nelson. */
       else if (!str_cmp(var, "findobj")) {
         if (!*field || !subfield || !*subfield) {
-          script_log("findobj.vnum(ovnum) - illegal syntax");
+          script_log("Trigger VNum %d: findobj.vnum(ovnum) - illegal syntax",
+                     DIAG_TRIG_VNUM(trig));
           strlcpy(str, "0", slen);
         } else {
           room_rnum rrnum = real_room(dg_parse_vnum(field));
 
           if (rrnum == NOWHERE) {
-            script_log("findobj.vnum(ovnum): No room with vnum %d", tb_parse_int_or_zero(field));
+            script_log("Trigger VNum %d: findobj.vnum(ovnum): no room with "
+                       "vnum %d", DIAG_TRIG_VNUM(trig),
+                       tb_parse_int_or_zero(field));
             strlcpy(str, "0", slen);
           } else {
             /* item_in_list looks within containers as well. */
@@ -729,9 +808,7 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
             if (subfield && *subfield) {
               int addition = tb_parse_int_or_zero(subfield);
               int max = (IS_NPC(c) || GET_LEVEL(c) >= LVL_GRGOD) ? 25 : 18;
-              c->real_abils.cha += addition;
-              if (c->real_abils.cha > max) c->real_abils.cha = max;
-              if (c->real_abils.cha < 3) c->real_abils.cha = 3;
+              c->real_abils.cha = (sbyte)dg_bounded_add(c->real_abils.cha, addition, 3, max);
               affect_total(c);
             }
             tb_snprintf(str, slen, "%d", GET_CHA(c));
@@ -752,9 +829,7 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
             if (subfield && *subfield) {
               int addition = tb_parse_int_or_zero(subfield);
               int max = (IS_NPC(c) || GET_LEVEL(c) >= LVL_GRGOD) ? 25 : 18;
-              c->real_abils.con += addition;
-              if (c->real_abils.con > max) c->real_abils.con = max;
-              if (c->real_abils.con < 3) c->real_abils.con = 3;
+              c->real_abils.con = (sbyte)dg_bounded_add(c->real_abils.con, addition, 3, max);
               affect_total(c);
             }
             tb_snprintf(str, slen, "%d", GET_CON(c));
@@ -764,16 +839,15 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
           if (!str_cmp(field, "damroll")) {
             if (subfield && *subfield) {
               int addition = tb_parse_int_or_zero(subfield);
-              GET_DAMROLL(c) = MAX(1, GET_DAMROLL(c) + addition);
+              GET_DAMROLL(c) = (sbyte)dg_clamp_char_field(trig, c, "damroll",
+                  MAX(1, (long long)GET_DAMROLL(c) + addition), SCHAR_MIN, SCHAR_MAX);
             }
             tb_snprintf(str, slen, "%d", GET_DAMROLL(c));
             } else if (!str_cmp(field, "dex")) {
               if (subfield && *subfield) {
                 int addition = tb_parse_int_or_zero(subfield);
                 int max = (IS_NPC(c) || GET_LEVEL(c) >= LVL_GRGOD) ? 25 : 18;
-                c->real_abils.dex += addition;
-                if (c->real_abils.dex > max) c->real_abils.dex = max;
-                if (c->real_abils.dex < 3) c->real_abils.dex = 3;
+                c->real_abils.dex = (sbyte)dg_bounded_add(c->real_abils.dex, addition, 3, max);
                 affect_total(c);
               }
             tb_snprintf(str, slen, "%d", GET_DEX(c));
@@ -862,7 +936,8 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
           else if (!str_cmp(field, "hitp")) {
             if (subfield && *subfield) {
               int addition = tb_parse_int_or_zero(subfield);
-              GET_HIT(c) += addition;
+              GET_HIT(c) = (sh_int)dg_clamp_char_field(trig, c, "hitp",
+                  (long long)GET_HIT(c) + addition, SHRT_MIN, SHRT_MAX);
               update_pos(c);
             }
             tb_snprintf(str, slen, "%d", GET_HIT(c));
@@ -870,7 +945,8 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
           else if (!str_cmp(field, "hitroll")) {
             if (subfield && *subfield) {
               int addition = tb_parse_int_or_zero(subfield);
-              GET_HITROLL(c) = MAX(1, GET_HITROLL(c) + addition);
+              GET_HITROLL(c) = (sbyte)dg_clamp_char_field(trig, c, "hitroll",
+                  MAX(1, (long long)GET_HITROLL(c) + addition), SCHAR_MIN, SCHAR_MAX);
             }
             tb_snprintf(str, slen, "%d", GET_HITROLL(c));
           }
@@ -896,9 +972,7 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
             if (subfield && *subfield) {
               int addition = tb_parse_int_or_zero(subfield);
               int max = (IS_NPC(c) || GET_LEVEL(c) >= LVL_GRGOD) ? 25 : 18;
-              c->real_abils.intel += addition;
-              if (c->real_abils.intel > max) c->real_abils.intel = max;
-              if (c->real_abils.intel < 3) c->real_abils.intel = 3;
+              c->real_abils.intel = (sbyte)dg_bounded_add(c->real_abils.intel, addition, 3, max);
               affect_total(c);
             }
             tb_snprintf(str, slen, "%d", GET_INT(c));
@@ -922,7 +996,14 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
             }
           }
           else if (!str_cmp(field, "is_killer")) {
-            if (subfield && *subfield) {
+            /* PLR_FLAGS and MOB_FLAGS share one array, so on a mob this
+             * bit is a MOB_ flag (PLR_THIEF is MOB_SENTINEL). */
+            if (subfield && *subfield && IS_NPC(c))
+              TB_WARN_MSG("dg", "field-target", "find_replacement",
+                          "trig vnum %d: setting is_killer on mob vnum %d uid %ld "
+                          "ignored; players only", DIAG_TRIG_VNUM(trig),
+                          GET_MOB_VNUM(c), char_script_id(c));
+            else if (subfield && *subfield) {
               if (!str_cmp("on", subfield))
                 SET_BIT_AR(PLR_FLAGS(c), PLR_KILLER);
               else if (!str_cmp("off", subfield))
@@ -934,7 +1015,14 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
               strlcpy(str, "0", slen);
           }
           else if (!str_cmp(field, "is_thief")) {
-            if (subfield && *subfield) {
+            /* PLR_FLAGS and MOB_FLAGS share one array, so on a mob this
+             * bit is a MOB_ flag (PLR_THIEF is MOB_SENTINEL). */
+            if (subfield && *subfield && IS_NPC(c))
+              TB_WARN_MSG("dg", "field-target", "find_replacement",
+                          "trig vnum %d: setting is_thief on mob vnum %d uid %ld "
+                          "ignored; players only", DIAG_TRIG_VNUM(trig),
+                          GET_MOB_VNUM(c), char_script_id(c));
+            else if (subfield && *subfield) {
               if (!str_cmp("on", subfield))
                 SET_BIT_AR(PLR_FLAGS(c), PLR_THIEF);
               else if (!str_cmp("off", subfield))
@@ -959,7 +1047,8 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
           if (!str_cmp(field, "mana")) {
             if (subfield && *subfield) {
               int addition = tb_parse_int_or_zero(subfield);
-              GET_MANA(c) += addition;
+              GET_MANA(c) = (sh_int)dg_clamp_char_field(trig, c, "mana",
+                  (long long)GET_MANA(c) + addition, SHRT_MIN, SHRT_MAX);
             }
             tb_snprintf(str, slen, "%d", GET_MANA(c));
           }
@@ -972,28 +1061,32 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
           else if (!str_cmp(field, "maxhitp")) {
             if (subfield && *subfield) {
               int addition = tb_parse_int_or_zero(subfield);
-              GET_MAX_HIT(c) = MAX(GET_MAX_HIT(c) + addition, 1);
+              GET_MAX_HIT(c) = (sh_int)dg_clamp_char_field(trig, c, "maxhitp",
+                  MAX((long long)GET_MAX_HIT(c) + addition, 1), SHRT_MIN, SHRT_MAX);
             }
             tb_snprintf(str, slen, "%d", GET_MAX_HIT(c));
           }
           else if (!str_cmp(field, "maxmana")) {
             if (subfield && *subfield) {
               int addition = tb_parse_int_or_zero(subfield);
-              GET_MAX_MANA(c) = MAX(GET_MAX_MANA(c) + addition, 1);
+              GET_MAX_MANA(c) = (sh_int)dg_clamp_char_field(trig, c, "maxmana",
+                  MAX((long long)GET_MAX_MANA(c) + addition, 1), SHRT_MIN, SHRT_MAX);
             }
             tb_snprintf(str, slen, "%d", GET_MAX_MANA(c));
           }
           else if (!str_cmp(field, "maxmove")) {
             if (subfield && *subfield) {
               int addition = tb_parse_int_or_zero(subfield);
-              GET_MAX_MOVE(c) = MAX(GET_MAX_MOVE(c) + addition, 1);
+              GET_MAX_MOVE(c) = (sh_int)dg_clamp_char_field(trig, c, "maxmove",
+                  MAX((long long)GET_MAX_MOVE(c) + addition, 1), SHRT_MIN, SHRT_MAX);
             }
             tb_snprintf(str, slen, "%d", GET_MAX_MOVE(c));
           }
           else if (!str_cmp(field, "move")) {
             if (subfield && *subfield) {
               int addition = tb_parse_int_or_zero(subfield);
-              GET_MOVE(c) += addition;
+              GET_MOVE(c) = (sh_int)dg_clamp_char_field(trig, c, "move",
+                  (long long)GET_MOVE(c) + addition, SHRT_MIN, SHRT_MAX);
             }
             tb_snprintf(str, slen, "%d", GET_MOVE(c));
           }
@@ -1040,7 +1133,8 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
           else if (!str_cmp(field, "prac")) {
             if (subfield && *subfield) {
               int addition = tb_parse_int_or_zero(subfield);
-              GET_PRACTICES(c) = MAX(0, GET_PRACTICES(c) + addition);
+              GET_PRACTICES(c) = (int)dg_clamp_char_field(trig, c, "prac",
+                  MAX(0, (long long)GET_PRACTICES(c) + addition), INT_MIN, INT_MAX);
             }
             tb_snprintf(str, slen, "%d", GET_PRACTICES(c));
           }
@@ -1061,7 +1155,8 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
           {
             if (subfield && *subfield) {
               int addition = tb_parse_int_or_zero(subfield);
-              GET_QUESTPOINTS(c) += addition;
+              GET_QUESTPOINTS(c) = (int)dg_clamp_char_field(trig, c, "questpoints",
+                  (long long)GET_QUESTPOINTS(c) + addition, INT_MIN, INT_MAX);
             }
             tb_snprintf(str, slen, "%d", GET_QUESTPOINTS(c));
           }
@@ -1100,35 +1195,40 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
           if (!str_cmp(field, "saving_breath")) {
             if (subfield && *subfield) {
               int addition = tb_parse_int_or_zero(subfield);
-              GET_SAVE(c, SAVING_BREATH) += addition;
+              GET_SAVE(c, SAVING_BREATH) = (sh_int)dg_clamp_char_field(trig, c, "saving_breath",
+                  (long long)GET_SAVE(c, SAVING_BREATH) + addition, SHRT_MIN, SHRT_MAX);
             }
             tb_snprintf(str, slen, "%d", GET_SAVE(c, SAVING_BREATH));
           }
           else if (!str_cmp(field, "saving_para")) {
             if (subfield && *subfield) {
               int addition = tb_parse_int_or_zero(subfield);
-              GET_SAVE(c, SAVING_PARA) += addition;
+              GET_SAVE(c, SAVING_PARA) = (sh_int)dg_clamp_char_field(trig, c, "saving_para",
+                  (long long)GET_SAVE(c, SAVING_PARA) + addition, SHRT_MIN, SHRT_MAX);
             }
             tb_snprintf(str, slen, "%d", GET_SAVE(c, SAVING_PARA));
           }
           else if (!str_cmp(field, "saving_petri")) {
             if (subfield && *subfield) {
               int addition = tb_parse_int_or_zero(subfield);
-              GET_SAVE(c, SAVING_PETRI) += addition;
+              GET_SAVE(c, SAVING_PETRI) = (sh_int)dg_clamp_char_field(trig, c, "saving_petri",
+                  (long long)GET_SAVE(c, SAVING_PETRI) + addition, SHRT_MIN, SHRT_MAX);
             }
             tb_snprintf(str, slen, "%d", GET_SAVE(c, SAVING_PETRI));
           }
           else if (!str_cmp(field, "saving_rod")) {
             if (subfield && *subfield) {
               int addition = tb_parse_int_or_zero(subfield);
-              GET_SAVE(c, SAVING_ROD) += addition;
+              GET_SAVE(c, SAVING_ROD) = (sh_int)dg_clamp_char_field(trig, c, "saving_rod",
+                  (long long)GET_SAVE(c, SAVING_ROD) + addition, SHRT_MIN, SHRT_MAX);
             }
             tb_snprintf(str, slen, "%d", GET_SAVE(c, SAVING_ROD));
           }
           else if (!str_cmp(field, "saving_spell")) {
             if (subfield && *subfield) {
               int addition = tb_parse_int_or_zero(subfield);
-              GET_SAVE(c, SAVING_SPELL) += addition;
+              GET_SAVE(c, SAVING_SPELL) = (sh_int)dg_clamp_char_field(trig, c, "saving_spell",
+                  (long long)GET_SAVE(c, SAVING_SPELL) + addition, SHRT_MIN, SHRT_MAX);
             }
             tb_snprintf(str, slen, "%d", GET_SAVE(c, SAVING_SPELL));
           }
@@ -1155,9 +1255,7 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
             if (subfield && *subfield) {
               int addition = tb_parse_int_or_zero(subfield);
               int max = (IS_NPC(c) || GET_LEVEL(c) >= LVL_GRGOD) ? 25 : 18;
-              c->real_abils.str += addition;
-              if (c->real_abils.str > max) c->real_abils.str = max;
-              if (c->real_abils.str < 3) c->real_abils.str = 3;
+              c->real_abils.str = (sbyte)dg_bounded_add(c->real_abils.str, addition, 3, max);
               affect_total(c);
             }
             tb_snprintf(str, slen, "%d", GET_STR(c));
@@ -1166,9 +1264,7 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
             if (GET_STR(c) >= 18) {
               if (subfield && *subfield) {
                 int addition = tb_parse_int_or_zero(subfield);
-                c->real_abils.str_add += addition;
-                if (c->real_abils.str_add > 100) c->real_abils.str_add = 100;
-                if (c->real_abils.str_add < 0) c->real_abils.str_add = 0;
+                c->real_abils.str_add = (sbyte)dg_bounded_add(c->real_abils.str_add, addition, 0, 100);
                 affect_total(c);
               }
               tb_snprintf(str, slen, "%d", GET_ADD(c));
@@ -1240,9 +1336,7 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
             if (subfield && *subfield) {
               int addition = tb_parse_int_or_zero(subfield);
               int max = (IS_NPC(c) || GET_LEVEL(c) >= LVL_GRGOD) ? 25 : 18;
-              c->real_abils.wis += addition;
-              if (c->real_abils.wis > max) c->real_abils.wis = max;
-              if (c->real_abils.wis < 3) c->real_abils.wis = 3;
+              c->real_abils.wis = (sbyte)dg_bounded_add(c->real_abils.wis, addition, 3, max);
               affect_total(c);
             }
             tb_snprintf(str, slen, "%d", GET_WIS(c));
@@ -1253,7 +1347,8 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
             if (subfield && *subfield)
             {
               int addition = tb_parse_int_or_zero(subfield);
-              WAIT_STATE(c, addition * ( PULSE_VIOLENCE / 2) ); // by default violence is 2 seconds
+              WAIT_STATE(c, (int)dg_clamp_char_field(trig, c, "wait",
+                  (long long)addition * (PULSE_VIOLENCE / 2), INT_MIN, INT_MAX)); // by default violence is 2 seconds
             }
             tb_snprintf(str, slen, "%d", GET_WAIT_STATE(c));
           }
@@ -1300,7 +1395,8 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
           if (!str_cmp(field, "cost")) {
             if (subfield && *subfield) {
               int addition = tb_parse_int_or_zero(subfield);
-              GET_OBJ_COST(o) = MAX(1, addition + GET_OBJ_COST(o));
+              GET_OBJ_COST(o) = (int)dg_clamp_obj_field(trig, o, "cost",
+                  MAX(1, (long long)addition + GET_OBJ_COST(o)), INT_MIN, INT_MAX);
             }
             tb_snprintf(str, slen, "%d", GET_OBJ_COST(o));
           }
@@ -1308,7 +1404,8 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
           else if (!str_cmp(field, "cost_per_day")) {
             if (subfield && *subfield) {
               int addition = tb_parse_int_or_zero(subfield);
-              GET_OBJ_RENT(o) = MAX(1, addition + GET_OBJ_RENT(o));
+              GET_OBJ_RENT(o) = (int)dg_clamp_obj_field(trig, o, "cost_per_day",
+                  MAX(1, (long long)addition + GET_OBJ_RENT(o)), INT_MIN, INT_MAX);
             }
             tb_snprintf(str, slen, "%d", GET_OBJ_RENT(o));
           }
@@ -1342,7 +1439,18 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
               else
                 tb_snprintf(str, slen, "0");
             } else {
-              sprintbitarray(GET_OBJ_EXTRA(o), extra_bits, EF_ARRAY_MAX, str, slen);
+              /* str is a parameter, so sizeof(str) was the pointer size and
+               * the list was cut to 7 bytes. Render in full, then copy into
+               * the caller's slen bytes and report anything that is cut. */
+              char flags[MAX_STRING_LENGTH];
+
+              sprintbitarray(GET_OBJ_EXTRA(o), extra_bits, EF_ARRAY_MAX,
+                             flags, sizeof(flags));
+              if (strlcpy(str, flags, slen) >= slen)
+                TB_WARN_MSG("dg", "field-truncate", "find_replacement",
+                            "trig vnum %d: obj vnum %d uid %ld field extra "
+                            "truncated to %zu bytes", DIAG_TRIG_VNUM(trig),
+                            GET_OBJ_VNUM(o), obj_script_id(o), slen - 1);
             }
           }
           break;
@@ -1450,7 +1558,8 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
 	  else if (!str_cmp(field, "weight")){
             if (subfield && *subfield) {
               int addition = tb_parse_int_or_zero(subfield);
-              GET_OBJ_WEIGHT(o) = MAX(1, addition + GET_OBJ_WEIGHT(o));
+              GET_OBJ_WEIGHT(o) = (int)dg_clamp_obj_field(trig, o, "weight",
+                  MAX(1, (long long)addition + GET_OBJ_WEIGHT(o)), INT_MIN, INT_MAX);
             }
             tb_snprintf(str, slen, "%d", GET_OBJ_WEIGHT(o));
           }
@@ -1733,7 +1842,15 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
  * %actor.gold(%actor.gold%)% will double the actors gold every time its called.
  * - Jamie Nelson */
 
-/* substitutes any variables into line and returns it as buf */
+/* substitutes any variables into line and returns it as buf.
+ * buf must hold MAX_INPUT_LENGTH bytes (the parameter carries no size);
+ * output is cut at MAX_INPUT_LENGTH - 1. line is copied first and not
+ * modified. Syntax: %name%, %name.field%, %name.field(subfield)%, chains
+ * %a.b.c% (each link is bound to "tmpvr" as-is, not evaluated), and %% for
+ * a literal '%'. A reference with no closing '%' or an unclosed '(' is
+ * substituted up to the line end and reported (var-unterminated); a lone
+ * '%' ending the line is kept (subst-unterminated); an extra ')' is
+ * reported (subst-paren). Subfields are themselves substituted first. */
 void var_subst(void *go, struct script_data *sc, trig_data *trig,
                int type, char *line, char *buf)
 {
@@ -1741,6 +1858,8 @@ void var_subst(void *go, struct script_data *sc, trig_data *trig,
   char *var = NULL, *field = NULL, *p = NULL;
   char tmp2[MAX_INPUT_LENGTH];
   char *subfield_p, subfield[MAX_INPUT_LENGTH];
+  /* Name of the temporary variable a field chain stores each link in. */
+  char tmpvr_name[] = "tmpvr";
   int left, len;
   int paren_count = 0;
   int dots = 0;
@@ -1770,6 +1889,19 @@ void var_subst(void *go, struct script_data *sc, trig_data *trig,
 
     *buf = '\0';
 
+    /* A lone '%' that ends the line opens no variable: keep it literally. */
+    if (*p == '%' && p[1] == '\0') {
+      TB_WARN_MSG("dg", "subst-unterminated", "var_subst",
+                  "trig vnum %d: '%%' at column %ld ends the line; copied "
+                  "literally", DIAG_TRIG_VNUM(trig), (long)(p - tmp));
+      if (left > 0) {
+        *(buf++) = '%';
+        *buf = '\0';
+        left--;
+      }
+      break;
+    }
+
     /* double % */
     if (*p && (*(++p) == '%') && (left > 0)) {
       *(buf++) = *(p++);
@@ -1780,6 +1912,16 @@ void var_subst(void *go, struct script_data *sc, trig_data *trig,
 
     /* so it wasn't double %'s */
     else if (*p && (left > 0)) {
+      /* Offset of this variable's opening '%' in line (tmp is a copy). */
+      size_t open_off = (size_t)(p - tmp) - 1;
+
+      /* Each variable starts with an empty subfield and no open parentheses.
+       * They were set once per call, so in "%a.gold(5)% ... %a.gold%" the
+       * second variable re-ran the setter with the first one's "5". */
+      subfield_p = subfield;
+      *subfield = '\0';
+      paren_count = 0;
+      dots = 0;
 
       /* Each reference collects its own (subfield). */
       subfield_p = subfield;
@@ -1803,11 +1945,22 @@ void var_subst(void *go, struct script_data *sc, trig_data *trig,
                * other field text. */
               add_var(&GET_TRIG_VARS(trig), "tmpvr", repl_str,
                       sc ? sc->context : 0);
-              strlcpy(var, "tmpvr", sizeof(tmp) - (size_t)(var - tmp));
+              /* Point at the temporary's name. Copying "tmpvr" over var in
+               * tmp overwrote the following field (and possibly the closing
+               * '%') whenever var.field was shorter than five bytes. */
+              var = tmpvr_name;
               field = p;
               dots = 0;
+              /* The next field in the chain has its own subfield. */
+              subfield_p = subfield;
+              *subfield = '\0';
               continue;
             }
+            /* The link resolved to nothing: the rest of the chain is
+             * dropped and the variable resolves through its first field. */
+            TB_WARN_MSG("dg", "subst-chain", "var_subst",
+                        "trig vnum %d: %%-variable at column %zu: chained "
+                        "field lookup failed", DIAG_TRIG_VNUM(trig), open_off);
             dots = 0;
           } else if (*p=='(') {
             *p = '\0';
@@ -1831,7 +1984,8 @@ void var_subst(void *go, struct script_data *sc, trig_data *trig,
          * unclosed '('.  Substitute what was read, but never step past the
          * terminator. */
         int vnum = (trig && trig_index) ? GET_TRIG_VNUM(trig) : NOTHING;
-        int column = (int)(var - tmp);
+        /* var may point at tmpvr_name after a field chain. */
+        int column = (int)open_off;
 
         TB_ERROR_MSG("dg", "var-unterminated", "var_subst",
                      "trigger %d: variable reference at column %d %s",
@@ -1842,6 +1996,14 @@ void var_subst(void *go, struct script_data *sc, trig_data *trig,
                                                  : "has no closing '%'");
       }
       *subfield_p = '\0';
+
+      /* An extra ')' closes the variable early; the text after it is lost.
+       * An unclosed '(' at the line end was already reported above. */
+      if (paren_count < 0)
+        TB_WARN_MSG("dg", "subst-paren", "var_subst",
+                    "trig vnum %d: %%-variable at column %zu has unbalanced "
+                    "parentheses (%d unmatched)", DIAG_TRIG_VNUM(trig),
+                    open_off, paren_count);
 
       if (*subfield) {
         var_subst(go, sc, trig, type, subfield, tmp2);

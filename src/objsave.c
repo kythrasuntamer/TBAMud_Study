@@ -8,6 +8,31 @@
 *  CircleMUD is based on DikuMUD, Copyright (C) 1990, 1991.               *
 **************************************************************************/
 
+/**
+ * @file objsave.c
+ * Rent and crash-save files (lib/plrobjs/<x>/<name>.objs): the objects a
+ * player wears and carries while logged out, plus the shared object-record
+ * reader/writer that house.c uses for house contents.
+ *
+ * File format: one rent header line "rentcode timed netcost gold account
+ * nitems", then object records ("#vnum" followed by "Tag : value" lines
+ * that differ from the prototype), ended by "$~". Each record's "Loc"
+ * encodes where the object was (see objsave_parse_objects_from()).
+ *
+ * Who controls the input: rent files are written by this server but are
+ * plain text that can be truncated or hand-edited, so every header field,
+ * Loc value, flag word and string is untrusted on read. Bad values are
+ * reported (objsave operations with the owner, object line and obj vnum)
+ * and the record or field is skipped; reading never exits the server.
+ *
+ * Ownership and lifetime: objects read from a file are created with
+ * read_object()/create_obj() (so they are on object_list) and handed to the
+ * caller, which must place or extract each one. Writes are staged through
+ * objsave_open_staged()/objsave_commit_staged(); rented objects are
+ * extracted only after the file is committed, so a failed save never loses
+ * them.
+ */
+
 #include "conf.h"
 #include "sysdep.h"
 #include "structs.h"
@@ -30,6 +55,15 @@
 #define LOC_INVENTORY  0
 #define MAX_BAG_ROWS   5
 
+/* Short description for listings and diagnostics. A unique (vnum -1)
+ * object loaded from a rent file without a "Shrt" tag has none, and
+ * printf("%s", NULL) is undefined. Evaluates obj twice. */
+#define OBJSAVE_SDESC(obj) \
+  ((obj)->short_description ? (obj)->short_description : "<no short description>")
+
+/* Appended when a rent or house listing does not fit its page buffer. */
+#define OBJSAVE_LIST_TRUNCATED "*** listing truncated; see server log ***\r\n"
+
 /* local functions */
 static int Crash_save(struct obj_data *obj, FILE *fp, int location);
 static void Crash_extract_norent_eq(struct char_data *ch);
@@ -45,7 +79,7 @@ static int Crash_is_unrentable(struct obj_data *obj);
 static void Crash_extract_norents(struct obj_data *obj);
 static void Crash_extract_expensive(struct obj_data *obj);
 static void Crash_calculate_rent(struct obj_data *obj, int *cost);
-static void Crash_cryosave(struct char_data *ch, int cost);
+static int Crash_cryosave(struct char_data *ch, int cost);
 static int Crash_load_objs(struct char_data *ch);
 static int handle_obj(struct obj_data *obj, struct char_data *ch, int locate, struct obj_data **cont_rows);
 static int objsave_write_rentcode(FILE *fl, int rentcode, int cost_per_day, struct char_data *ch);
@@ -92,7 +126,17 @@ static int objsave_parse_rent_header(const char *text, int *rentcode,
   return 1;
 }
 
-/* Writes one object record to FILE.  Old name: Obj_to_store() */
+/** Write one object record to fp (old name: Obj_to_store()).
+ * Only fields that differ from the object's prototype are written. To
+ * compare, a full prototype instance is created with read_object() (which
+ * bumps obj_index[].number and attaches prototype triggers) and extracted
+ * again before return, on every path.
+ * @param locate The record's Loc: wear slot + 1, 0 for inventory, or minus
+ * the container nesting depth.
+ * ADes and EDes bodies are cut at MAX_STRING_LENGTH. Extra descriptions
+ * with an empty or NULL keyword or text are not written (write-edesc).
+ * @return 1 on success, 0 after reporting a write or prototype failure; the
+ * caller must then abandon the staged file. */
 int objsave_save_obj_record(struct obj_data *obj, FILE *fp, int locate)
 {
   int counter2;
@@ -205,8 +249,15 @@ int objsave_save_obj_record(struct obj_data *obj, FILE *fp, int locate)
          obj->ex_description != temp->ex_description) ||
         !obj->ex_description || !temp->ex_description) {
       for (ex_desc = obj->ex_description; ex_desc; ex_desc = ex_desc->next) {
-        /*. Sanity check to prevent nasty protection faults . */
-        if (!*ex_desc->keyword || !*ex_desc->description) {
+        /* A keyword or description can be NULL: fread_string() and the rent
+         * loader return NULL for an empty "~" string, and OLC can leave
+         * either empty. The old check dereferenced them. An entry without
+         * both cannot be written in the EDes format and is dropped, loudly. */
+        if (!ex_desc->keyword || !*ex_desc->keyword ||
+            !ex_desc->description || !*ex_desc->description) {
+          TB_WARN_MSG("objsave", "write-edesc", "rent-object-record",
+                      "obj vnum %d extra description with empty keyword or "
+                      "text not saved", GET_OBJ_VNUM(obj));
           continue;
         }
         strlcpy(buf1, ex_desc->description, sizeof(buf1));
@@ -232,7 +283,14 @@ int objsave_save_obj_record(struct obj_data *obj, FILE *fp, int locate)
 #undef TEST_OBJS
 #undef TEST_OBJN
 
-/* AutoEQ by Burkhard Knopf. */
+/** Put a freshly loaded object where its rent record says (AutoEQ by
+ * Burkhard Knopf).
+ * @param location The record's Loc. Above 0 asks for wear slot location-1;
+ * the object is equipped only if the slot is in range and free, the object
+ * can be worn there, and the wearer passes the alignment/class checks.
+ * Otherwise, and for every location <= 0, the object goes to inventory.
+ * Callers must therefore not assume the object ended up equipped: check
+ * GET_EQ(ch, location-1) == obj (handle_obj() does). */
 static void auto_equip(struct char_data *ch, struct obj_data *obj, int location)
 {
   int j;
@@ -467,7 +525,9 @@ void Crash_listrent(struct char_data *ch, char *name)
   FILE *fl;
   char filename[MAX_INPUT_LENGTH], buf[MAX_STRING_LENGTH], line[READ_SIZE];
   obj_save_data *loaded, *current;
-  int rentcode = RENT_UNDEF, timed, netcost, gold, account, nitems, numread, len;
+  int rentcode = RENT_UNDEF, timed, netcost, gold, account, nitems, numread;
+  int listed = 0, total = 0;
+  struct tb_buf out;
   
   if (!get_filename(filename, sizeof(filename), CRASH_FILE, name))
     return;
@@ -476,7 +536,11 @@ void Crash_listrent(struct char_data *ch, char *name)
     send_to_char(ch, "%s has no rent file.\r\n", name);
     return;
   }
-  len = snprintf(buf, sizeof(buf),"%s\r\n", filename);
+  /* The listing is bounded by buf; a rent file may hold any number of
+   * objects with builder- or restring-length descriptions. Keep room for the
+   * truncation marker. */
+  tb_buf_init(&out, buf, sizeof(buf) - sizeof(OBJSAVE_LIST_TRUNCATED));
+  tb_buf_appendf(&out, "%s\r\n", filename);
 
   numread = get_line(fl, line);
 
@@ -498,30 +562,44 @@ void Crash_listrent(struct char_data *ch, char *name)
 
   switch (rentcode) {
   case RENT_RENTED:
-    len += snprintf(buf+len, sizeof(buf)-len, "Rent\r\n");
+    tb_buf_append(&out, "Rent\r\n");
     break;
   case RENT_CRASH:
-    len += snprintf(buf+len, sizeof(buf)-len,"Crash\r\n");
+    tb_buf_append(&out, "Crash\r\n");
     break;
   case RENT_CRYO:
-    len += snprintf(buf+len, sizeof(buf)-len, "Cryo\r\n");
+    tb_buf_append(&out, "Cryo\r\n");
     break;
   case RENT_TIMEDOUT:
   case RENT_FORCED:
-    len += snprintf(buf+len, sizeof(buf)-len, "TimedOut\r\n");
+    tb_buf_append(&out, "TimedOut\r\n");
     break;
   default:
-    len += snprintf(buf+len, sizeof(buf)-len, "Undef\r\n");
+    tb_buf_append(&out, "Undef\r\n");
     break;
   }
 
-	loaded = objsave_parse_objects(fl);
+	{
+	  char owner[MAX_NAME_LENGTH + 16];
+	  tb_snprintf(owner, sizeof(owner), "player %s", name);
+	  loaded = objsave_parse_objects_from(fl, filename, owner);
+	}
 
-	for (current = loaded; current != NULL; current=current->next)
-	  len += snprintf(buf+len, sizeof(buf)-len, "[%5d] (%5dau) %-20s\r\n",
+	for (current = loaded; current != NULL; current=current->next) {
+	  total++;
+	  if (!tb_buf_truncated(&out) &&
+	      tb_buf_appendf(&out, "[%5d] (%5dau) %-20s\r\n",
                 GET_OBJ_VNUM(current->obj),
                 GET_OBJ_RENT(current->obj),
-                current->obj->short_description);
+                OBJSAVE_SDESC(current->obj)))
+	    listed++;
+	}
+	if (tb_buf_truncated(&out)) {
+	  TB_WARN_MSG("objsave", "listrent-truncate", filename,
+	              "%d objects listed of %d; listing exceeds %zu bytes",
+	              listed, total, sizeof(buf));
+	  strlcat(buf, OBJSAVE_LIST_TRUNCATED, sizeof(buf));
+	}
 
 	/* Now it's safe to free the obj_save_data list and the objects on it. */
 	while (loaded != NULL) {
@@ -544,24 +622,35 @@ int Crash_load(struct char_data *ch)
   return (Crash_load_objs(ch));
 }
 
+/** Write obj, its later siblings and all their contents to fp.
+ * Order: the sibling chain first, then the contents (Loc one level deeper,
+ * negative), then obj itself, so on reload contents precede their
+ * container, as handle_obj() expects. Each object's weight is subtracted
+ * from the containers holding it, so a reloaded container is not counted
+ * twice; the caller MUST run Crash_restore_weight() on the same tree
+ * afterwards, on failure too. Every object is visited even after a failed
+ * record, so the restore pass stays exact.
+ * @return TRUE only when every record in the tree was written (failures
+ * deeper in the tree used to be ignored and the file committed without
+ * them). objsave_save_obj_record() reports each failed record. */
 static int Crash_save(struct obj_data *obj, FILE *fp, int location)
 {
   struct obj_data *tmp;
-  int result;
+  int ok = TRUE;
 
   if (obj) {
-    Crash_save(obj->next_content, fp, location);
-    Crash_save(obj->contains, fp, MIN(0, location) - 1);
+    if (!Crash_save(obj->next_content, fp, location))
+      ok = FALSE;
+    if (!Crash_save(obj->contains, fp, MIN(0, location) - 1))
+      ok = FALSE;
 
-    result = objsave_save_obj_record(obj, fp, location);
+    if (!objsave_save_obj_record(obj, fp, location))
+      ok = FALSE;
 
     for (tmp = obj->in_obj; tmp; tmp = tmp->in_obj)
       GET_OBJ_WEIGHT(tmp) -= GET_OBJ_WEIGHT(obj);
-
-    if (!result)
-      return FALSE;
   }
-  return (TRUE);
+  return ok;
 }
 
 static void Crash_restore_weight(struct obj_data *obj)
@@ -646,61 +735,207 @@ static void Crash_calculate_rent(struct obj_data *obj, int *cost)
   }
 }
 
-void Crash_crashsave(struct char_data *ch)
+/** Open a staged replacement for a rent or house object file.
+ * The live file is never truncated in place: the new contents go to a
+ * mkstemp() file beside it, and objsave_commit_staged() replaces the live
+ * file only after a complete, flushed write.
+ * @param dest Live file path.
+ * @param[out] temp Receives the temporary path (pass it to commit/abort).
+ * @return The stream, or NULL after reporting stage-open. */
+FILE *objsave_open_staged(const char *dest, char *temp, size_t temp_size)
 {
-  char buf[MAX_INPUT_LENGTH];
-  int j;
+  int fd;
   FILE *fp;
 
-  if (IS_NPC(ch))
-    return;
-
-  if (!get_filename(buf, sizeof(buf), CRASH_FILE, GET_NAME(ch)))
-    return;
-
-  if (!(fp = fopen(buf, "w")))
-    return;
-
-  if (!objsave_write_rentcode(fp, RENT_CRASH, 0, ch)) {
-    tb_fclose(fp);
-    return;
+  if (snprintf(temp, temp_size, "%s.tmpXXXXXX", dest) >= (int)temp_size) {
+    TB_ERROR_MSG("objsave", "stage-open", dest, "temporary path too long");
+    return NULL;
   }
-
-  for (j = 0; j < NUM_WEARS; j++)
-    if (GET_EQ(ch, j)) {
-      if (!Crash_save(GET_EQ(ch, j), fp, j + 1)) {
-        tb_fclose(fp);
-        return;
-      }
-      Crash_restore_weight(GET_EQ(ch, j));
-    }
-
-  if (!Crash_save(ch->carrying, fp, 0)) {
-    tb_fclose(fp);
-    return;
+  if ((fd = mkstemp(temp)) < 0) {
+    TB_ERROR_ERRNO("objsave", "stage-open", dest, "cannot create staged file");
+    return NULL;
   }
-  Crash_restore_weight(ch->carrying);
-
-  tb_fprintf(fp, "$~\n");
-  tb_fclose(fp);
-  REMOVE_BIT_AR(PLR_FLAGS(ch), PLR_CRASH);
+  if (!(fp = fdopen(fd, "w"))) {
+    TB_ERROR_ERRNO("objsave", "stage-open", temp, "cannot open staged file");
+    close(fd);
+    unlink(temp);
+    return NULL;
+  }
+  return fp;
 }
 
-void Crash_idlesave(struct char_data *ch)
+/** Discard a staged file: close the stream and remove the temporary path. */
+void objsave_abort_staged(FILE *fp, const char *temp)
 {
-  char buf[MAX_INPUT_LENGTH];
-  int j;
-  int cost, cost_eq;
+  if (fp)
+    (void) fclose(fp);	/* discarding the staged file; nothing to keep */
+  (void) unlink(temp);
+}
+
+/** Flush, close and commit a staged file over dest. Always closes fp.
+ * @return TRUE when dest now holds the new contents; FALSE after reporting
+ * stage-commit, with dest unchanged and the temporary file removed. */
+int objsave_commit_staged(FILE *fp, const char *temp, const char *dest)
+{
+  int failed = FALSE;
+
+  if (ferror(fp) || fflush(fp) != 0)
+    failed = TRUE;
+  if (fclose(fp) != 0)
+    failed = TRUE;
+  if (!failed && !tb_replace_file_checked(temp, dest))
+    failed = TRUE;
+  if (failed) {
+    TB_ERROR_ERRNO("objsave", "stage-commit", dest,
+                   "write or rename failed; live file kept");
+    unlink(temp);
+    return FALSE;
+  }
+  return TRUE;
+}
+
+/* Open the staged rent file for ch, reporting rent-open with the player
+ * and rent code on failure. */
+static FILE *Crash_open_rentfile(struct char_data *ch, int rentcode,
+                                 char *filename, size_t filename_size,
+                                 char *temp, size_t temp_size)
+{
   FILE *fp;
 
+  if (!get_filename(filename, filename_size, CRASH_FILE, GET_NAME(ch))) {
+    TB_ERROR_MSG("objsave", "rent-open", "rent-file",
+                 "player idnum %ld rentcode %d: no rent file name",
+                 GET_IDNUM(ch), rentcode);
+    return NULL;
+  }
+  if (!(fp = objsave_open_staged(filename, temp, temp_size)))
+    TB_ERROR_MSG("objsave", "rent-open", filename,
+                 "player idnum %ld rentcode %d: rent file not written",
+                 GET_IDNUM(ch), rentcode);
+  return fp;
+}
+
+/* Report a rent save that did not reach the disk. */
+#define CRASH_SAVE_FAILED(ch, filename, rentcode) \
+  TB_ERROR_MSG("objsave", "rent-write", (filename), \
+               "player idnum %ld rentcode %d: rent file not written; " \
+               "objects kept on the character", GET_IDNUM(ch), (rentcode))
+
+static int objsave_write_rentcode(FILE *fl, int rentcode, int cost_per_day, struct char_data *ch)
+{
+  if (fprintf(fl, "%d %ld %d %d %d %d\r\n",
+          rentcode,
+          (long) time(0),
+          cost_per_day,
+          GET_GOLD(ch),
+          GET_BANK_GOLD(ch),
+          0)
+       < 1)
+    {
+       TB_REPORT_ERRNO("fprintf", "rent code");
+       return FALSE;
+    }
+  return TRUE;
+
+}
+
+/* Write the rent header, every equipped object (Loc = slot + 1, with its
+ * contents) and the inventory, then the "$~" terminator. Container weights
+ * are always restored. Nothing is extracted here: the caller extracts only
+ * after objsave_commit_staged() succeeds, so a failed write never leaves
+ * the player with objects that exist neither in the game nor on disk.
+ * @return TRUE when every record was written; FALSE after reporting
+ * rent-write with the slot and obj vnum. */
+static int Crash_write_char_objs(struct char_data *ch, FILE *fp,
+                                 const char *filename, int rentcode, int cost)
+{
+  int j;
+
+  if (!objsave_write_rentcode(fp, rentcode, cost, ch))
+    return FALSE;
+  for (j = 0; j < NUM_WEARS; j++)
+    if (GET_EQ(ch, j)) {
+      int ok = Crash_save(GET_EQ(ch, j), fp, j + 1);
+      Crash_restore_weight(GET_EQ(ch, j));
+      if (!ok) {
+        TB_ERROR_MSG("objsave", "rent-write", filename,
+                     "player idnum %ld failed at slot %d obj vnum %d",
+                     GET_IDNUM(ch), j, GET_OBJ_VNUM(GET_EQ(ch, j)));
+        return FALSE;
+      }
+    }
+  if (ch->carrying) {
+    int ok = Crash_save(ch->carrying, fp, 0);
+    Crash_restore_weight(ch->carrying);
+    if (!ok) {
+      TB_ERROR_MSG("objsave", "rent-write", filename,
+                   "player idnum %ld failed in inventory (first obj vnum %d)",
+                   GET_IDNUM(ch), GET_OBJ_VNUM(ch->carrying));
+      return FALSE;
+    }
+  }
+  return fprintf(fp, "$~\n") >= 0;
+}
+
+/* Extract everything a character wears and carries (after a committed
+ * rent save). */
+static void Crash_extract_char_objs(struct char_data *ch)
+{
+  int j;
+
+  for (j = 0; j < NUM_WEARS; j++)
+    if (GET_EQ(ch, j))
+      Crash_extract_objs(GET_EQ(ch, j));
+  Crash_extract_objs(ch->carrying);
+}
+
+/* Stage, write and commit ch's rent file. @return TRUE when committed. */
+static int Crash_save_char_file(struct char_data *ch, int rentcode, int cost)
+{
+  char filename[MAX_INPUT_LENGTH], temp[MAX_INPUT_LENGTH + 16];
+  FILE *fp;
+
+  if (!(fp = Crash_open_rentfile(ch, rentcode, filename, sizeof(filename),
+                                 temp, sizeof(temp))))
+    return FALSE;
+  if (!Crash_write_char_objs(ch, fp, filename, rentcode, cost)) {
+    objsave_abort_staged(fp, temp);
+    CRASH_SAVE_FAILED(ch, filename, rentcode);
+    return FALSE;
+  }
+  if (!objsave_commit_staged(fp, temp, filename)) {
+    CRASH_SAVE_FAILED(ch, filename, rentcode);
+    return FALSE;
+  }
+  return TRUE;
+}
+
+/** Crash-save a player's equipment and inventory (rent code RENT_CRASH).
+ * Objects stay on the character. PLR_CRASH is cleared only on success, so a
+ * failed save is retried. @return TRUE when the file was written. */
+int Crash_crashsave(struct char_data *ch)
+{
   if (IS_NPC(ch))
-    return;
+    return FALSE;
+  if (!Crash_save_char_file(ch, RENT_CRASH, 0))
+    return FALSE;
+  REMOVE_BIT_AR(PLR_FLAGS(ch), PLR_CRASH);
+  return TRUE;
+}
 
-  if (!get_filename(buf, sizeof(buf), CRASH_FILE, GET_NAME(ch)))
-    return;
+/** Force-rent an idle player (RENT_TIMEDOUT, twice the normal rent).
+ * !RENT objects are extracted first; if gold is short the most expensive
+ * objects are extracted until the rent is affordable. The saved objects are
+ * extracted only after the file is committed; on failure they stay on the
+ * character. @return TRUE when the file was written (or nothing was left
+ * to save). */
+int Crash_idlesave(struct char_data *ch)
+{
+  int j;
+  int cost, cost_eq;
 
-  if (!(fp = fopen(buf, "w")))
-    return;
+  if (IS_NPC(ch))
+    return FALSE;
 
   Crash_extract_norent_eq(ch);
   Crash_extract_norents(ch->carrying);
@@ -731,141 +966,58 @@ void Crash_idlesave(struct char_data *ch)
   if (ch->carrying == NULL) {
     for (j = 0; j < NUM_WEARS && GET_EQ(ch, j) == NULL; j++) /* Nothing */ ;
     if (j == NUM_WEARS) {  /* No equipment or inventory. */
-      tb_fclose(fp);
       Crash_delete_file(GET_NAME(ch));
-      return;
+      return TRUE;
     }
   }
 
-  if (!objsave_write_rentcode(fp, RENT_TIMEDOUT, cost, ch)) {
-    tb_fclose(fp);
-    return;
-  }
-
-  for (j = 0; j < NUM_WEARS; j++) {
-    if (GET_EQ(ch, j)) {
-      if (!Crash_save(GET_EQ(ch, j), fp, j + 1)) {
-        tb_fclose(fp);
-        return;
-      }
-      Crash_restore_weight(GET_EQ(ch, j));
-      Crash_extract_objs(GET_EQ(ch, j));
-    }
-  }
-  if (!Crash_save(ch->carrying, fp, 0)) {
-    tb_fclose(fp);
-    return;
-  }
-  tb_fprintf(fp, "$~\n");
-  tb_fclose(fp);
-
-  Crash_extract_objs(ch->carrying);
-}
-
-void Crash_rentsave(struct char_data *ch, int cost)
-{
-  char buf[MAX_INPUT_LENGTH];
-  int j;
-  FILE *fp;
-
-  if (IS_NPC(ch))
-    return;
-
-  if (!get_filename(buf, sizeof(buf), CRASH_FILE, GET_NAME(ch)))
-    return;
-
-  if (!(fp = fopen(buf, "w")))
-    return;
-
-  Crash_extract_norent_eq(ch);
-  Crash_extract_norents(ch->carrying);
-
-  if (!objsave_write_rentcode(fp, RENT_RENTED, cost, ch)) {
-    tb_fclose(fp);
-    return;
-  }
-
-  for (j = 0; j < NUM_WEARS; j++)
-    if (GET_EQ(ch, j)) {
-      if (!Crash_save(GET_EQ(ch,j), fp, j + 1)) {
-        tb_fclose(fp);
-        return;
-      }
-      Crash_restore_weight(GET_EQ(ch, j));
-      Crash_extract_objs(GET_EQ(ch, j));
-
-    }
-  if (!Crash_save(ch->carrying, fp, 0)) {
-    tb_fclose(fp);
-    return;
-  }
-  tb_fprintf(fp, "$~\n");
-  tb_fclose(fp);
-
-  Crash_extract_objs(ch->carrying);
-}
-
-static int objsave_write_rentcode(FILE *fl, int rentcode, int cost_per_day, struct char_data *ch)
-{
-  if (fprintf(fl, "%d %ld %d %d %d %d\r\n",
-          rentcode,
-          (long) time(0),
-          cost_per_day,
-          GET_GOLD(ch),
-          GET_BANK_GOLD(ch),
-          0)
-       < 1)
-    {
-       TB_REPORT_ERRNO("fprintf", "rent code");
-       return FALSE;
-    }
+  if (!Crash_save_char_file(ch, RENT_TIMEDOUT, cost))
+    return FALSE;
+  Crash_extract_char_objs(ch);
   return TRUE;
-
 }
 
-static void Crash_cryosave(struct char_data *ch, int cost)
+/** Rent a player out (RENT_RENTED) at cost per day. !RENT objects are
+ * extracted first; the saved objects are extracted only after the file is
+ * committed. @return TRUE when the file was written. */
+int Crash_rentsave(struct char_data *ch, int cost)
 {
-  char buf[MAX_INPUT_LENGTH];
-  int j;
-  FILE *fp;
-
   if (IS_NPC(ch))
-    return;
-
-  if (!get_filename(buf, sizeof(buf), CRASH_FILE, GET_NAME(ch)))
-    return;
-
-  if (!(fp = fopen(buf, "w")))
-    return;
+    return FALSE;
 
   Crash_extract_norent_eq(ch);
   Crash_extract_norents(ch->carrying);
 
+  if (!Crash_save_char_file(ch, RENT_RENTED, cost))
+    return FALSE;
+  Crash_extract_char_objs(ch);
+  return TRUE;
+}
+
+/** Cryo-rent a player (RENT_CRYO): cost is taken from gold on hand (the
+ * header records the reduced gold), the saved objects are extracted and
+ * PLR_CRYO is set, all only after the file is committed. On failure the
+ * gold is given back and the objects stay. @return TRUE when written. */
+static int Crash_cryosave(struct char_data *ch, int cost)
+{
+  int old_gold;
+
+  if (IS_NPC(ch))
+    return FALSE;
+
+  Crash_extract_norent_eq(ch);
+  Crash_extract_norents(ch->carrying);
+
+  old_gold = GET_GOLD(ch);
   GET_GOLD(ch) = MAX(0, GET_GOLD(ch) - cost);
 
-  if (!objsave_write_rentcode(fp, RENT_CRYO, 0, ch)) {
-    tb_fclose(fp);
-    return;
+  if (!Crash_save_char_file(ch, RENT_CRYO, 0)) {
+    GET_GOLD(ch) = old_gold;
+    return FALSE;
   }
-
-  for (j = 0; j < NUM_WEARS; j++)
-    if (GET_EQ(ch, j)) {
-      if (!Crash_save(GET_EQ(ch, j), fp, j + 1)) {
-        tb_fclose(fp);
-        return;
-      }
-      Crash_restore_weight(GET_EQ(ch, j));
-      Crash_extract_objs(GET_EQ(ch, j));
-    }
-  if (!Crash_save(ch->carrying, fp, 0)) {
-    tb_fclose(fp);
-    return;
-  }
-  tb_fprintf(fp, "$~\n");
-  tb_fclose(fp);
-
-  Crash_extract_objs(ch->carrying);
+  Crash_extract_char_objs(ch);
   SET_BIT_AR(PLR_FLAGS(ch), PLR_CRYO);
+  return TRUE;
 }
 
 /* Routines used for the receptionist. */
@@ -1024,17 +1176,28 @@ static int gen_receptionist(struct char_data *ch, struct char_data *recep, int c
     if (cost && (mode == RENT_FACTOR))
       Crash_rent_deadline(ch, recep, cost);
 
+    /* The player is extracted below, so a rent that did not reach the disk
+     * must stop here: logging "has rented" and extracting would lose
+     * everything the player carries. The saver has reported the cause. */
     if (mode == RENT_FACTOR) {
+      if (!Crash_rentsave(ch, cost)) {
+        act("$n tells you, 'I'm sorry, I could not store your belongings. "
+            "Please try again later.'", FALSE, recep, 0, ch, TO_VICT);
+        return (TRUE);
+      }
       act("$n stores your belongings and helps you into your private chamber.", FALSE, recep, 0, ch, TO_VICT);
-      Crash_rentsave(ch, cost);
       mudlog(NRM, MAX(LVL_IMMORT, GET_INVIS_LEV(ch)), TRUE, "%s has rented (%d/day, %d tot.)",
 		GET_NAME(ch), cost, GET_GOLD(ch) + GET_BANK_GOLD(ch));
     } else {			/* cryo */
+      if (!Crash_cryosave(ch, cost)) {
+        act("$n tells you, 'I'm sorry, I could not store your belongings. "
+            "Please try again later.'", FALSE, recep, 0, ch, TO_VICT);
+        return (TRUE);
+      }
       act("$n stores your belongings and helps you into your private chamber.\r\n"
 	  "A white mist appears in the room, chilling you to the bone...\r\n"
 	  "You begin to lose consciousness...",
 	  FALSE, recep, 0, ch, TO_VICT);
-      Crash_cryosave(ch, cost);
       mudlog(NRM, MAX(LVL_IMMORT, GET_INVIS_LEV(ch)), TRUE, "%s has cryo-rented.", GET_NAME(ch));
       SET_BIT_AR(PLR_FLAGS(ch), PLR_CRYO);
     }
@@ -1066,23 +1229,55 @@ void Crash_save_all(void)
   for (d = descriptor_list; d; d = d->next) {
     if ((STATE(d) == CON_PLAYING) && !IS_NPC(d->character)) {
       if (PLR_FLAGGED(d->character, PLR_CRASH)) {
+        /* Crash_crashsave() clears PLR_CRASH only after a committed write,
+         * so a failed save is retried on the next pass. */
         Crash_crashsave(d->character);
         save_char(d->character);
-        REMOVE_BIT_AR(PLR_FLAGS(d->character), PLR_CRASH);
       }
     }
   }
 }
 
-/* Parses the object records stored in fl, and returns the first object in a
- * linked list, which also handles location if worn. This list can then be
- * handled by house code, listrent code, autoeq code, etc. */
+/** Parse the object records in fl (positioned after any rent header).
+ * @return A malloc'd obj_save_data list in file order, or NULL if there
+ * are no records. Each node's obj is a live object (on object_list) that is
+ * in no room, inventory or container yet: the caller must place it
+ * (obj_to_char, obj_to_room, handle_obj ...) or extract_obj() it, and must
+ * free() every node.
+ * Each node's locate is the record's Loc: 1..NUM_WEARS = worn in slot
+ * locate-1, 0 = inventory, negative = inside a container, -locate levels
+ * deep (contents are written before their container). A Loc above
+ * NUM_WEARS is reported and becomes inventory. A record whose prototype no
+ * longer exists is skipped (missing-proto) together with its tags.
+ *
+ * Callers that know which file and owner they are reading should use
+ * objsave_parse_objects_from(), so that diagnostics name them. */
 obj_save_data *objsave_parse_objects(FILE *fl)
+{
+  return objsave_parse_objects_from(fl, "rent-object-record", "unknown owner");
+}
+
+/* Every record diagnostic carries the file (resource), the owner ("player
+ * idnum N" / "house vnum N"), the "object line" (lines read by this parser,
+ * counting from the line after any rent header the caller consumed, so it is
+ * the file line minus one for rent files and the file line for house files)
+ * and, once known, the record's object vnum. The file is untrusted: a corrupted or hand-edited
+ * rent or house file must point an admin at the exact record. */
+#define OBJSAVE_REC_FMT "%s object line %d obj vnum %d: "
+#define OBJSAVE_REC_ARGS(vnum) owner, lineno, (int) (vnum)
+
+obj_save_data *objsave_parse_objects_from(FILE *fl, const char *resource,
+                                          const char *owner)
 {
   obj_save_data *head, *current, *tempsave;
   char f1[128], f2[128], f3[128], f4[128], line[READ_SIZE];
-  int t[4],i, nr;
+  int t[4],i, nr, lineno = 0, got;
   struct obj_data *temp;
+
+  if (resource == NULL)
+    resource = "rent-object-record";
+  if (owner == NULL)
+    owner = "unknown owner";
 
   CREATE(current, obj_save_data, 1);
   head = current;
@@ -1094,7 +1289,9 @@ obj_save_data *objsave_parse_objects(FILE *fl)
     int num;
 
     /* if the file is done, wrap it all up */
-    if(get_line(fl, line) == FALSE || (*line == '$' && line[1] == '~')) {
+    got = get_line(fl, line);
+    lineno += got;	/* get_line() returns the lines it consumed */
+    if(got == FALSE || (*line == '$' && line[1] == '~')) {
       if (temp == NULL && current->obj == NULL) {
         /* Remove current from list. */
         tempsave = head;
@@ -1116,50 +1313,48 @@ obj_save_data *objsave_parse_objects(FILE *fl)
       /* Do nothing. */
   } else if (temp != NULL && current->obj != NULL) {
       if (temp != current->obj)
-        log("inconsistent object pointers in objsave_parse_objects: %p/%p", (void *)temp, (void *)current->obj);
+        TB_ERROR_MSG("objsave", "parse-state", resource,
+                     "%s object line %d: inconsistent object pointers %p/%p",
+                     owner, lineno, (void *)temp, (void *)current->obj);
     }
 
     break;
   }
 
-    /* if it's a new record, wrap up the old one, and make space for a new one */
+    /* A '#' line starts a new record. Wrap up the previous object FIRST:
+     * if this record is then skipped (malformed line, missing prototype),
+     * temp must be NULL so the skipped record's tags (Loc, Vals, Name...)
+     * are ignored instead of being applied to the previous object. */
     if (*line == '#') {
-      /* check for false alarm. */
-      if (objsave_parse_int_fields(line + 1, &nr, 1)) {
-        /* If we attempt to load an object with a legal VNUM 0-65534, that
-         * does not exist, skip it. If the object has a VNUM of NOTHING or
-         * 65535, then we assume it doesn't exist on purpose. (Custom Item,
-         * Coins, Corpse, etc...) */
-        if (real_object(nr) == NOTHING && nr != NOTHING) {
-            log("SYSERR: Prevented loading of non-existant item #%d.", nr);
-            continue;
-          }
-          
-        if (temp) {
-          current->obj = temp;
-          CREATE(current->next, obj_save_data, 1);
-          current=current->next;
+      if (temp) {
+        current->obj = temp;
+        CREATE(current->next, obj_save_data, 1);
+        current=current->next;
 
-          current->locate = 0;
-          temp = NULL;
-        }
-      } else
+        current->locate = 0;
+        temp = NULL;
+      }
+
+      if (!objsave_parse_int_fields(line + 1, &nr, 1)) {
+        TB_WARN_MSG("objsave", "rent-record", resource,
+                    "%s object line %d: malformed '#' record line; record skipped",
+                    owner, lineno);
         continue;
-        
-      /* we have the number, check it, load obj. */
+      }
+
+      /* If we attempt to load an object with a legal VNUM 0-65534, that
+       * does not exist, skip it. If the object has a VNUM of NOTHING or
+       * 65535, then we assume it doesn't exist on purpose. (Custom Item,
+       * Coins, Corpse, etc...) */
       if (nr == NOTHING) {   /* then it is unique */
         temp = create_obj();
         temp->item_number=NOTHING;
-      } else if (nr < 0) {
-        continue;
-      } else {
-        if(real_object(nr) != NOTHING) {
-          temp=read_object(nr,VIRTUAL);
-	/* Go read next line - nothing more to see here. */
-        } else {
-          log("Nonexistent object %d found in rent file.", nr);
-        }
-      }
+      } else if (nr < 0 || real_object(nr) == NOTHING) {
+        TB_WARN_MSG("objsave", "missing-proto", resource,
+                    "%s object line %d: rent record vnum %d has no prototype; "
+                    "record skipped", owner, lineno, nr);
+      } else
+        temp=read_object(nr,VIRTUAL);
       /* go read next line - nothing more to see here. */
       continue;
     }
@@ -1171,18 +1366,27 @@ obj_save_data *objsave_parse_objects(FILE *fl)
       continue;
 
     tag_argument(line, tag);
+    if (!*tag)
+      continue;	/* short line, already reported by tag_argument() */
     num = tb_parse_int_or_zero(line);
 
     switch(*tag) {
     case 'A':
       if (!strcmp(tag, "ADes")) {
-        char error[40];
-        tb_snprintf(error, sizeof(error)-1, "rent(Ades):%s", temp->name);
-        temp->action_description = fread_string(fl, error);
+        /* fread_string() exit(1)s the server at EOF, so one truncated rent
+         * or house file would take the game down at the owner's login. */
+        char *text;
+        if (fread_string_checked(fl, resource, "ADes", &text))
+          temp->action_description = text;
+        else
+          TB_ERROR_MSG("objsave", "rent-string", resource,
+                       OBJSAVE_REC_FMT "unterminated or oversize ADes; "
+                       "prototype text kept", OBJSAVE_REC_ARGS(GET_OBJ_VNUM(temp)));
       } else if (!strcmp(tag, "Aff ")) {
         if (!objsave_parse_int_fields(line, t, 3)) {
-          TB_ERROR_MSG("objsave", "parse-affect", "rent-object-record",
-                       "malformed saved object affect");
+          TB_ERROR_MSG("objsave", "parse-affect", resource,
+                       OBJSAVE_REC_FMT "malformed saved object affect",
+                       OBJSAVE_REC_ARGS(GET_OBJ_VNUM(temp)));
           break;
         }
         if (t[0] >= 0 && t[0] < MAX_OBJ_AFFECT) {
@@ -1202,8 +1406,20 @@ obj_save_data *objsave_parse_objects(FILE *fl)
     case 'E':
       if(!strcmp(tag, "EDes")) {
         struct extra_descr_data *new_desc;
-        char error[40];
-        tb_snprintf(error, sizeof(error)-1, "rent(Edes): %s", temp->name);
+        char *keyword = NULL, *description = NULL;
+
+        /* Read both strings before touching the object: a truncated file
+         * (no closing '~') must neither exit(1) via fread_string() nor
+         * leave half an extra description behind. */
+        if (!fread_string_checked(fl, resource, "EDes keyword", &keyword) ||
+            !fread_string_checked(fl, resource, "EDes description", &description)) {
+          free(keyword);
+          TB_ERROR_MSG("objsave", "rent-string", resource,
+                       OBJSAVE_REC_FMT "unterminated or oversize EDes; "
+                       "extra description dropped",
+                       OBJSAVE_REC_ARGS(GET_OBJ_VNUM(temp)));
+          break;
+        }
         if (temp->item_number != NOTHING && temp->ex_description) {
           obj_rnum proto_rnum = real_object(temp->item_number);
 
@@ -1212,8 +1428,8 @@ obj_save_data *objsave_parse_objects(FILE *fl)
             temp->ex_description = NULL;
         }
         CREATE(new_desc, struct extra_descr_data, 1);
-        new_desc->keyword = fread_string(fl, error);
-        new_desc->description = fread_string(fl, error);
+        new_desc->keyword = keyword;
+        new_desc->description = description;
         new_desc->next = temp->ex_description;
         temp->ex_description = new_desc;
       }
@@ -1221,8 +1437,9 @@ obj_save_data *objsave_parse_objects(FILE *fl)
     case 'F':
       if (!strcmp(tag, "Flag")) {
         if (sscanf(line, "%127s %127s %127s %127s", f1, f2, f3, f4) != 4) {
-          TB_ERROR_MSG("objsave", "parse-flags", "rent-object-record",
-                       "malformed saved object extra flags");
+          TB_ERROR_MSG("objsave", "parse-flags", resource,
+                       OBJSAVE_REC_FMT "malformed saved object extra flags",
+                       OBJSAVE_REC_ARGS(GET_OBJ_VNUM(temp)));
           break;
         }
         GET_OBJ_EXTRA(temp)[0] = asciiflag_conv(f1);
@@ -1232,8 +1449,19 @@ obj_save_data *objsave_parse_objects(FILE *fl)
       }
       break;
     case 'L':
-      if(!strcmp(tag, "Loc "))
+      if(!strcmp(tag, "Loc ")) {
+        /* Loc is 1..NUM_WEARS for a worn slot, 0 for inventory, and negative
+         * for the nesting depth inside a container (Crash_save writes depths
+         * past MAX_BAG_ROWS, which handle_obj flattens). A worn slot past
+         * NUM_WEARS would index ch->equipment out of bounds. */
+        if (num > NUM_WEARS) {
+          TB_ERROR_MSG("objsave", "rent-loc-range", resource,
+                       OBJSAVE_REC_FMT "Loc %d outside 1..%d; loading into inventory",
+                       OBJSAVE_REC_ARGS(GET_OBJ_VNUM(temp)), num, NUM_WEARS);
+          num = LOC_INVENTORY;
+        }
         current->locate = num;
+      }
       break;
     case 'N':
       if (!strcmp(tag, "Name"))
@@ -1242,8 +1470,9 @@ obj_save_data *objsave_parse_objects(FILE *fl)
     case 'P':
       if (!strcmp(tag, "Perm")) {
         if (sscanf(line, "%127s %127s %127s %127s", f1, f2, f3, f4) != 4) {
-          TB_ERROR_MSG("objsave", "parse-flags", "rent-object-record",
-                       "malformed saved object permanent flags");
+          TB_ERROR_MSG("objsave", "parse-flags", resource,
+                       OBJSAVE_REC_FMT "malformed saved object permanent flags",
+                       OBJSAVE_REC_ARGS(GET_OBJ_VNUM(temp)));
           break;
         }
         GET_OBJ_AFFECT(temp)[0] = asciiflag_conv(f1);
@@ -1267,8 +1496,9 @@ obj_save_data *objsave_parse_objects(FILE *fl)
     case 'W':
       if (!strcmp(tag, "Wear")) {
         if (sscanf(line, "%127s %127s %127s %127s", f1, f2, f3, f4) != 4) {
-          TB_ERROR_MSG("objsave", "parse-flags", "rent-object-record",
-                       "malformed saved object wear flags");
+          TB_ERROR_MSG("objsave", "parse-flags", resource,
+                       OBJSAVE_REC_FMT "malformed saved object wear flags",
+                       OBJSAVE_REC_ARGS(GET_OBJ_VNUM(temp)));
           break;
         }
         GET_OBJ_WEAR(temp)[0] = asciiflag_conv(f1);
@@ -1282,8 +1512,9 @@ obj_save_data *objsave_parse_objects(FILE *fl)
     case 'V':
       if (!strcmp(tag, "Vals")) {
         if (!objsave_parse_int_fields(line, t, 4)) {
-          TB_ERROR_MSG("objsave", "parse-values", "rent-object-record",
-                       "malformed saved object values");
+          TB_ERROR_MSG("objsave", "parse-values", resource,
+                       OBJSAVE_REC_FMT "malformed saved object values",
+                       OBJSAVE_REC_ARGS(GET_OBJ_VNUM(temp)));
           break;
         }
         for (i = 0; i < NUM_OBJ_VAL_POSITIONS; i++)
@@ -1291,21 +1522,23 @@ obj_save_data *objsave_parse_objects(FILE *fl)
       }
       break;
     default:
-      log("Unknown tag in rentfile: %s", tag);
+      TB_WARN_MSG("objsave", "rent-tag", resource,
+                  OBJSAVE_REC_FMT "unknown tag %.4s ignored",
+                  OBJSAVE_REC_ARGS(GET_OBJ_VNUM(temp)), tag);
     }
   }
 
   return head;
 }
+#undef OBJSAVE_REC_FMT
+#undef OBJSAVE_REC_ARGS
 
 static int Crash_load_objs(struct char_data *ch) {
   FILE *fl;
   char filename[PATH_MAX];
   char line[READ_SIZE];
   char buf[MAX_STRING_LENGTH];
-  char str[64];
-  int i, num_of_days, orig_rent_code, num_objs=0;
-  unsigned long cost;
+  int i, orig_rent_code, num_objs=0;
   struct obj_data *cont_row[MAX_BAG_ROWS];
   int rentcode = RENT_UNDEF;
   int timed=0,netcost=0,gold,account,nitems;
@@ -1344,18 +1577,41 @@ static int Crash_load_objs(struct char_data *ch) {
   }
 
   if (rentcode == RENT_RENTED || rentcode == RENT_TIMEDOUT) {
-    tb_snprintf(str, sizeof(str), "%d", SECS_PER_REAL_DAY);
-    num_of_days = (int)((float) (time(0) - timed) / tb_parse_int_or_zero(str));
-    cost = (unsigned int) (netcost * num_of_days);
-    if (cost > (unsigned int)GET_GOLD(ch) + (unsigned int)GET_BANK_GOLD(ch)) {
+    /* 'timed' and 'netcost' come from the rent file (written by the server,
+     * but hand-editable and exposed to clock changes). A timestamp in the
+     * future made the day count negative, and the old unsigned cost then
+     * wrapped to a huge value and destroyed the rented equipment. The old
+     * unsigned deduction also wrapped when gold on hand exceeded the cost
+     * and credited the bank. All arithmetic is now signed 64-bit. */
+    long long elapsed = (long long) time(0) - (long long) timed;
+    long long days, cost, on_hand = GET_GOLD(ch), in_bank = GET_BANK_GOLD(ch);
+
+    if (elapsed < 0) {
+      TB_ERROR_MSG("objsave", "rent-clock", filename,
+                   "player idnum %ld rent timed %d is %lld s in the future; "
+                   "charging 0 days", GET_IDNUM(ch), timed, -elapsed);
+      elapsed = 0;
+    }
+    if (netcost < 0) {
+      TB_ERROR_MSG("objsave", "rent-clock", filename,
+                   "player idnum %ld negative rent netcost %d; charging 0",
+                   GET_IDNUM(ch), netcost);
+      netcost = 0;
+    }
+    days = elapsed / SECS_PER_REAL_DAY;
+    cost = (long long) netcost * days;
+    if (cost > on_hand + in_bank) {
       tb_fclose(fl);
       mudlog(BRF, MAX(LVL_IMMORT, GET_INVIS_LEV(ch)), TRUE,
              "%s entering game, rented equipment lost (no $).", GET_NAME(ch));
       Crash_crashsave(ch);
       return 2;
     } else {
-      GET_BANK_GOLD(ch) -= MAX(cost - GET_GOLD(ch), 0);
-      GET_GOLD(ch) = MAX(GET_GOLD(ch) - cost, 0);
+      if (cost > on_hand) {
+        GET_BANK_GOLD(ch) = (int) (in_bank - (cost - on_hand));
+        GET_GOLD(ch) = 0;
+      } else
+        GET_GOLD(ch) = (int) (on_hand - cost);
       save_char(ch);
     }
   }
@@ -1384,7 +1640,11 @@ static int Crash_load_objs(struct char_data *ch) {
     break;
   }
 
-	loaded = objsave_parse_objects(fl);
+	{
+	  char owner[64];
+	  tb_snprintf(owner, sizeof(owner), "player idnum %ld", GET_IDNUM(ch));
+	  loaded = objsave_parse_objects_from(fl, filename, owner);
+	}
 	for (current = loaded; current != NULL; current=current->next)
 	  num_objs += handle_obj(current->obj, ch, current->locate, cont_row);
 
@@ -1408,6 +1668,17 @@ static int Crash_load_objs(struct char_data *ch) {
     return 1;
 }
 
+/** Place one parsed rent object on ch and rebuild container nesting.
+ * cont_row[MAX_BAG_ROWS] is per-load state, NULL-initialised by the
+ * caller: cont_row[d] holds the objects read so far at nesting depth d+1
+ * whose container has not been seen yet (contents are written before their
+ * container). When a container arrives at depth d, it takes cont_row[d] as
+ * its contents. A row whose container never arrives is spilled into ch's
+ * inventory. An object nested deeper than MAX_BAG_ROWS stays loose in
+ * inventory (reported as rent-nesting).
+ * A worn container is filled only if auto_equip() really equipped it;
+ * otherwise it is filled in inventory and reported (autoeq-container).
+ * @return TRUE if temp was placed (counts toward the hoarding total). */
 static int handle_obj(struct obj_data *temp, struct char_data *ch, int locate, struct obj_data **cont_row)
 {
   int j;
@@ -1440,7 +1711,14 @@ static int handle_obj(struct obj_data *temp, struct char_data *ch, int locate, s
         cont_row[j] = NULL;
       }
     if (cont_row[0]) { /* content list existing */
-      if (GET_OBJ_TYPE(temp) == ITEM_CONTAINER) {
+      /* auto_equip() may have refused the slot recorded in the rent file
+       * (wrong wear flags, alignment/class zap, slot already taken, slot out
+       * of range) and put the container in inventory instead. The file's
+       * Loc value is player-file data, so never assume the object is worn:
+       * unequip_char() on an empty slot returns NULL, and on an occupied slot
+       * it returns a different object. Fill the container where it really is. */
+      if (GET_OBJ_TYPE(temp) == ITEM_CONTAINER &&
+          locate - 1 < NUM_WEARS && GET_EQ(ch, locate - 1) == temp) {
         /* rem item ; fill ; equip again */
         temp = unequip_char(ch, locate-1);
         temp->contains = NULL; /* should be empty - but who knows */
@@ -1449,6 +1727,18 @@ static int handle_obj(struct obj_data *temp, struct char_data *ch, int locate, s
           obj_to_obj(cont_row[0], temp);
         }
         equip_char(ch, temp, locate-1);
+      } else if (GET_OBJ_TYPE(temp) == ITEM_CONTAINER) {
+        TB_ERROR_MSG("objsave", "autoeq-container", "rent-object-record",
+                     "player idnum %ld obj vnum %d locate %d not equipped; "
+                     "contents restored into the container in inventory",
+                     GET_IDNUM(ch), GET_OBJ_VNUM(temp), locate);
+        obj_from_char(temp);
+        temp->contains = NULL;
+        for (;cont_row[0];cont_row[0] = obj1) {
+          obj1 = cont_row[0]->next_content;
+          obj_to_obj(cont_row[0], temp);
+        }
+        obj_to_char(temp, ch);
       } else { /* object isn't container -> empty content list */
         for (;cont_row[0];cont_row[0] = obj1) {
           obj1 = cont_row[0]->next_content;
@@ -1497,6 +1787,13 @@ static int handle_obj(struct obj_data *temp, struct char_data *ch, int locate, s
         obj1->next_content = temp;
       } else
         cont_row[-locate-1] = temp;
+    } else if (locate < -MAX_BAG_ROWS) {
+      /* Crash_save() writes any depth, but only MAX_BAG_ROWS levels are
+       * rebuilt: this object stays loose in inventory. */
+      TB_WARN_MSG("objsave", "rent-nesting", "rent-object-record",
+                  "player idnum %ld obj vnum %d nested %d deep (max %d); "
+                  "left in inventory", GET_IDNUM(ch), GET_OBJ_VNUM(temp),
+                  -locate, MAX_BAG_ROWS);
     }
   } /* locate less than zero */
 

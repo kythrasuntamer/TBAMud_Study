@@ -23,14 +23,37 @@
 #include "act.h"
 #include "quest.h"
 
+/*
+ * Lifetime rules for this file.
+ *
+ * Who controls the input: command arguments come from players; object
+ * values (liquid type, weights, costs, container capacity) come from world
+ * files, OLC and DG scripts ('osetval'), and are range-checked before they
+ * index a table.
+ *
+ * Every perform_* helper runs DG triggers (get/drop/give/receive/wear/
+ * remove/consume), and a script can extract, move or swap any object or
+ * character: the object being handled, its container, its siblings in the
+ * same list, or the actor. Therefore:
+ *  - a perform_* helper re-validates what it touches after its trigger:
+ *    the object by script UID (obj_uid_matches) and location, the
+ *    container with container_still_reachable(), the equipment slot by
+ *    comparing GET_EQ again;
+ *  - after any perform_* call, a caller may use no pointer it read before
+ *    the call except through a UID re-check. Loops over object lists use
+ *    obj_iter_mark()/obj_iter_resume() rather than a saved next_content;
+ *  - helpers that return a status (perform_put, perform_get_from_container)
+ *    return FALSE when the container is gone, and the caller must stop.
+ */
+
 
 /* local function prototypes */
 /* do_get utility functions */
 static int can_take_obj(struct char_data *ch, struct obj_data *obj);
 static void get_check_money(struct char_data *ch, struct obj_data *obj);
-static void get_from_container(struct char_data *ch, struct obj_data *cont, char *arg, int mode, int amount);
+/* get_from_container() is shared with fight.c (autoloot); see act.h. */
 static void get_from_room(struct char_data *ch, char *arg, int amount);
-static void perform_get_from_container(struct char_data *ch, struct obj_data *obj, struct obj_data *cont, int mode);
+static int perform_get_from_container(struct char_data *ch, struct obj_data *obj, struct obj_data *cont, int mode);
 static int perform_get_from_room(struct char_data *ch, struct obj_data *obj);
 /* do_give utility functions */
 static struct char_data *give_find_vict(struct char_data *ch, char *arg);
@@ -40,25 +63,138 @@ static void perform_give_gold(struct char_data *ch, struct char_data *vict, int 
 static int perform_drop(struct char_data *ch, struct obj_data *obj, byte mode, const char *sname, room_rnum RDR);
 static void perform_drop_gold(struct char_data *ch, int amount, byte mode, room_rnum RDR);
 /* do_put utility functions */
-static void perform_put(struct char_data *ch, struct obj_data *obj, struct obj_data *cont);
+static int perform_put(struct char_data *ch, struct obj_data *obj, struct obj_data *cont);
+static int container_still_reachable(struct char_data *ch, struct obj_data *cont,
+                                     long cont_uid, const char *op);
 /* do_remove utility functions */
 static void perform_remove(struct char_data *ch, int pos);
 /* do_wear utility functions */
 static void perform_wear(struct char_data *ch, struct obj_data *obj, int where);
 static void wear_message(struct char_data *ch, struct obj_data *obj, int where);
 
+/* TRUE if n is a usable "get/put/give/drop N items" count. is_number()
+ * accepts a leading '-', so the parsed count can be zero, negative or
+ * INT_MIN: a negative count used to mean "all of them" and 'howmany--' on
+ * INT_MIN overflowed. Commands refuse such counts with a player message
+ * (bad player input, so no server diagnostic). */
+#define COUNT_ARG_OK(n) ((n) > 0)
 
+/* TRUE if obj is still the object registered under script UID uid (no
+ * use-after-free, no reused address; obj is not dereferenced unless it
+ * is) and ch still carries it. The re-validation after a DG callback
+ * that hands an object back to the actor. Evaluates obj twice: pass a
+ * plain variable. */
+#define OBJ_STILL_HELD_BY(uid, obj, ch) \
+  (obj_uid_matches((uid), (obj)) && (obj)->carried_by == (ch))
 
+/* Resumable position in an object list across DG triggers.
+ *
+ * The perform_* helpers run get/drop/give/wear/put triggers, and a script
+ * may extract or move any object (for example 'opurge' with no argument
+ * purges every other object in the room). A loop over an object list must
+ * therefore never follow a next_content pointer saved before the call.
+ * Instead it marks the next object together with its script UID, and after
+ * the call re-acquires it with obj_iter_resume(), which checks that the
+ * address still belongs to that UID (no use-after-free, no reused address)
+ * and that the object is still in the list being walked. A vanished or
+ * moved object ends the loop with an "item-iter-stale" warning; the player
+ * can simply repeat the command for whatever is left. */
+struct obj_iter_mark {
+  struct obj_data *obj;   /* next object to visit, or NULL at the list end */
+  long uid;               /* obj's script UID when the mark was taken */
+};
 
-static void perform_put(struct char_data *ch, struct obj_data *obj, struct obj_data *cont)
+static void obj_iter_mark(struct obj_iter_mark *mark, struct obj_data *next)
+{
+  mark->obj = next;
+  mark->uid = next ? obj_script_id(next) : 0;
+}
+
+/* Returns the marked object if it is still live and still in the list the
+ * caller walks: carried by holder (holder != NULL), inside cont (cont !=
+ * NULL), or on the floor of room. For a room walk, ch must also still be in
+ * that room. Returns NULL at the list end, or after reporting a stale mark.
+ * sname names the command in the diagnostic. */
+static struct obj_data *obj_iter_resume(const struct obj_iter_mark *mark,
+                                        struct char_data *ch,
+                                        struct char_data *holder,
+                                        struct obj_data *cont, room_rnum room,
+                                        const char *sname)
+{
+  struct obj_data *obj = mark->obj;
+
+  if (!obj)
+    return NULL;
+  /* Compares the registered address before obj is dereferenced. */
+  if (!obj_uid_matches(mark->uid, obj)) {
+    TB_WARN_MSG("act", "item-iter-stale", "obj",
+                "obj uid %ld vanished during %s by " DIAG_CHAR_FMT,
+                mark->uid, sname, DIAG_CHAR(ch));
+    return NULL;
+  }
+  if (holder ? obj->carried_by != holder :
+      cont ? obj->in_obj != cont :
+      (IN_ROOM(obj) != room || IN_ROOM(ch) != room)) {
+    TB_WARN_MSG("act", "item-iter-stale", "obj",
+                "obj vnum %d uid %ld left the list walked by %s for "
+                DIAG_CHAR_FMT, (int) GET_OBJ_VNUM(obj), mark->uid, sname,
+                DIAG_CHAR(ch));
+    return NULL;
+  }
+  return obj;
+}
+
+/* After a trigger, is cont (UID cont_uid) still the same live object, and
+ * still carried by ch or on the floor of ch's room? A get or drop script
+ * can purge the container ('opurge bag') or move it. When it cannot be
+ * used any more, reports op (naming the container UID and ch) and returns
+ * FALSE so the caller stops using cont. */
+static int container_still_reachable(struct char_data *ch, struct obj_data *cont,
+                                     long cont_uid, const char *op)
+{
+  if (!obj_uid_matches(cont_uid, cont)) {
+    TB_WARN_MSG("act", op, "obj",
+                "container uid %ld was extracted by a trigger during an "
+                "item command by " DIAG_CHAR_FMT, cont_uid, DIAG_CHAR(ch));
+    return FALSE;
+  }
+  if (cont->carried_by != ch &&
+      (IN_ROOM(cont) == NOWHERE || IN_ROOM(cont) != IN_ROOM(ch))) {
+    TB_WARN_MSG("act", op, "obj",
+                "container vnum %d uid %ld was moved out of reach of "
+                DIAG_CHAR_FMT " by a trigger", (int) GET_OBJ_VNUM(cont),
+                cont_uid, DIAG_CHAR(ch));
+    return FALSE;
+  }
+  return TRUE;
+}
+
+/* Puts obj (carried by ch) into cont. drop_otrigger() can extract or move
+ * obj, cont or any sibling, so both are re-validated after it. Returns FALSE
+ * when cont can no longer be used, so a 'put all' loop must stop; TRUE
+ * otherwise (whether or not obj went in). */
+static int perform_put(struct char_data *ch, struct obj_data *obj, struct obj_data *cont)
 {
   long object_id = obj_script_id(obj);
+  long cont_id = obj_script_id(cont);
+  int allowed = drop_otrigger(obj, ch);
 
-  if (!drop_otrigger(obj, ch))
-    return;
+  if (!container_still_reachable(ch, cont, cont_id, "put-target-changed"))
+    return FALSE;
 
-  if (!has_obj_by_uid_in_lookup_table(object_id)) /* object might be extracted by drop_otrigger */
-    return;
+  if (!allowed)
+    return TRUE;
+
+  if (!OBJ_STILL_HELD_BY(object_id, obj, ch)) {
+    /* A script that purges its own object ('the sword crumbles') is a
+     * deliberate outcome, not an error; one that moved it is reported. */
+    if (obj_uid_matches(object_id, obj))
+      TB_WARN_MSG("act", "put-target-changed", "obj",
+                  "obj vnum %d uid %ld left the hands of " DIAG_CHAR_FMT
+                  " during its drop trigger; not put in container uid %ld",
+                  (int) GET_OBJ_VNUM(obj), object_id, DIAG_CHAR(ch), cont_id);
+    return TRUE;
+  }
 
   if ((GET_OBJ_VAL(cont, 0) > 0) &&
       (GET_OBJ_WEIGHT(cont) + GET_OBJ_WEIGHT(obj) > GET_OBJ_VAL(cont, 0)))
@@ -79,6 +215,7 @@ static void perform_put(struct char_data *ch, struct obj_data *obj, struct obj_d
     } else
       act("You put $p in $P.", FALSE, ch, obj, cont, TO_CHAR);
   }
+  return TRUE;
 }
 
 /* The following put modes are supported:
@@ -93,6 +230,7 @@ ACMD(do_put)
   char arg2[MAX_INPUT_LENGTH];
   char arg3[MAX_INPUT_LENGTH];
   struct obj_data *obj, *next_obj, *cont;
+  struct obj_iter_mark mark;
   struct char_data *tmp_char;
   int obj_dotmode, cont_dotmode, found = 0, howmany = 1;
   char *theobj, *thecont;
@@ -101,6 +239,10 @@ ACMD(do_put)
 
   if (*arg3 && is_number(arg1)) {
     howmany = tb_parse_int_or_zero(arg1);
+    if (!COUNT_ARG_OK(howmany)) {
+      send_to_char(ch, "Yeah, that makes sense.\r\n");
+      return;
+    }
     theobj = arg2;
     thecont = arg3;
   } else {
@@ -132,22 +274,26 @@ ACMD(do_put)
 	  send_to_char(ch, "You attempt to fold it into itself, but fail.\r\n");
 	else {
 	  while (obj && howmany) {
-	    next_obj = obj->next_content;
+	    obj_iter_mark(&mark, obj->next_content);
             if (obj != cont) {
               howmany--;
-	      perform_put(ch, obj, cont);
+	      if (!perform_put(ch, obj, cont))
+	        break;		/* cont is gone: reported by perform_put */
             }
+	    next_obj = obj_iter_resume(&mark, ch, ch, NULL, NOWHERE, "put");
 	    obj = get_obj_in_list_vis(ch, theobj, NULL, next_obj);
 	  }
 	}
       } else {
 	for (obj = ch->carrying; obj; obj = next_obj) {
-	  next_obj = obj->next_content;
+	  obj_iter_mark(&mark, obj->next_content);
 	  if (obj != cont && CAN_SEE_OBJ(ch, obj) &&
 	      (obj_dotmode == FIND_ALL || isname(theobj, obj->name))) {
 	    found = 1;
-	    perform_put(ch, obj, cont);
+	    if (!perform_put(ch, obj, cont))
+	      break;		/* cont is gone: reported by perform_put */
 	  }
+	  next_obj = obj_iter_resume(&mark, ch, ch, NULL, NOWHERE, "put");
 	}
 	if (!found) {
 	  if (obj_dotmode == FIND_ALL)
@@ -202,13 +348,37 @@ static void get_check_money(struct char_data *ch, struct obj_data *obj)
     send_to_char(ch, "There were %d coins.\r\n", value);
 }
 
-static void perform_get_from_container(struct char_data *ch, struct obj_data *obj,
+/* Takes obj out of cont into ch's inventory. get_otrigger() can extract or
+ * move obj, cont or any sibling, so both are re-validated after it. Returns
+ * FALSE when cont can no longer be used (reported), so a 'get all' loop must
+ * stop; TRUE otherwise. */
+static int perform_get_from_container(struct char_data *ch, struct obj_data *obj,
 				     struct obj_data *cont, int mode)
 {
+  long object_id, cont_id;
+  int allowed;
+
   if (mode == FIND_OBJ_INV || can_take_obj(ch, obj)) {
-    if (IS_CARRYING_N(ch) >= CAN_CARRY_N(ch))
+    if (IS_CARRYING_N(ch) >= CAN_CARRY_N(ch)) {
       act("$p: you can't hold any more items.", FALSE, ch, obj, 0, TO_CHAR);
-    else if (get_otrigger(obj, ch)) {
+      return TRUE;
+    }
+    object_id = obj_script_id(obj);
+    cont_id = obj_script_id(cont);
+    allowed = get_otrigger(obj, ch);
+    if (!container_still_reachable(ch, cont, cont_id, "get-container-changed"))
+      return FALSE;
+    /* A script that purges its own object is a deliberate outcome. */
+    if (!allowed || !obj_uid_matches(object_id, obj))
+      return TRUE;
+    if (obj->in_obj != cont) {
+      TB_WARN_MSG("act", "get-container-changed", "obj",
+                  "obj vnum %d uid %ld left container uid %ld during its get "
+                  "trigger for " DIAG_CHAR_FMT, (int) GET_OBJ_VNUM(obj),
+                  object_id, cont_id, DIAG_CHAR(ch));
+      return TRUE;
+    }
+    {
       obj_from_obj(obj);
       obj_to_char(obj, ch);
       act("You get $p from $P.", FALSE, ch, obj, cont, TO_CHAR);
@@ -216,12 +386,14 @@ static void perform_get_from_container(struct char_data *ch, struct obj_data *ob
       get_check_money(ch, obj);
     }
   }
+  return TRUE;
 }
 
 void get_from_container(struct char_data *ch, struct obj_data *cont,
 			     char *arg, int mode, int howmany)
 {
   struct obj_data *obj, *next_obj;
+  struct obj_iter_mark mark;
   int obj_dotmode, found = 0;
 
   obj_dotmode = find_all_dots(arg);
@@ -235,11 +407,12 @@ void get_from_container(struct char_data *ch, struct obj_data *cont,
       tb_snprintf(buf, sizeof(buf), "There doesn't seem to be %s %s in $p.", AN(arg), arg);
       act(buf, FALSE, ch, cont, 0, TO_CHAR);
     } else {
-      struct obj_data *obj_next;
       while (obj && howmany--) {
-        obj_next = obj->next_content;
-        perform_get_from_container(ch, obj, cont, mode);
-        obj = get_obj_in_list_vis(ch, arg, NULL, obj_next);
+        obj_iter_mark(&mark, obj->next_content);
+        if (!perform_get_from_container(ch, obj, cont, mode))
+          return;		/* cont is gone: reported */
+        next_obj = obj_iter_resume(&mark, ch, NULL, cont, NOWHERE, "get");
+        obj = get_obj_in_list_vis(ch, arg, NULL, next_obj);
       }
     }
   } else {
@@ -248,12 +421,14 @@ void get_from_container(struct char_data *ch, struct obj_data *cont,
       return;
     }
     for (obj = cont->contains; obj; obj = next_obj) {
-      next_obj = obj->next_content;
+      obj_iter_mark(&mark, obj->next_content);
       if (CAN_SEE_OBJ(ch, obj) &&
 	  (obj_dotmode == FIND_ALL || isname(arg, obj->name))) {
 	found = 1;
-	perform_get_from_container(ch, obj, cont, mode);
+	if (!perform_get_from_container(ch, obj, cont, mode))
+	  return;		/* cont is gone: reported */
       }
+      next_obj = obj_iter_resume(&mark, ch, NULL, cont, NOWHERE, "get");
     }
     if (!found) {
       if (obj_dotmode == FIND_ALL)
@@ -268,9 +443,27 @@ void get_from_container(struct char_data *ch, struct obj_data *cont,
   }
 }
 
+/* Picks obj up from the floor. get_otrigger() can extract or move obj, so it
+ * is re-validated (same instance, still in ch's room) before it is moved. */
 static int perform_get_from_room(struct char_data *ch, struct obj_data *obj)
 {
-  if (can_take_obj(ch, obj) && get_otrigger(obj, ch)) {
+  long object_id;
+  room_rnum room = IN_ROOM(ch);
+
+  if (!can_take_obj(ch, obj))
+    return (0);
+  object_id = obj_script_id(obj);
+  if (!get_otrigger(obj, ch) || !obj_uid_matches(object_id, obj))
+    return (0);		/* refused, or the script purged its own object */
+  if (IN_ROOM(obj) != room || IN_ROOM(ch) != room) {
+    TB_WARN_MSG("act", "get-target-changed", "obj",
+                "obj vnum %d uid %ld or its taker " DIAG_CHAR_FMT
+                " left room vnum %d during the get trigger",
+                (int) GET_OBJ_VNUM(obj), object_id, DIAG_CHAR(ch),
+                (int) GET_ROOM_VNUM(room));
+    return (0);
+  }
+  {
     obj_from_room(obj);
     obj_to_char(obj, ch);
     act("You get $p.", FALSE, ch, obj, 0, TO_CHAR);
@@ -284,6 +477,8 @@ static int perform_get_from_room(struct char_data *ch, struct obj_data *obj)
 static void get_from_room(struct char_data *ch, char *arg, int howmany)
 {
   struct obj_data *obj, *next_obj;
+  struct obj_iter_mark mark;
+  room_rnum room = IN_ROOM(ch);
   int dotmode, found = 0;
 
   dotmode = find_all_dots(arg);
@@ -297,11 +492,11 @@ static void get_from_room(struct char_data *ch, char *arg, int howmany)
         }
       send_to_char(ch, "You don't see %s %s here.\r\n", AN(arg), arg);
     } else {
-      struct obj_data *obj_next;
       while(obj && howmany--) {
-	obj_next = obj->next_content;
+	obj_iter_mark(&mark, obj->next_content);
         perform_get_from_room(ch, obj);
-        obj = get_obj_in_list_vis(ch, arg, NULL, obj_next);
+        next_obj = obj_iter_resume(&mark, ch, NULL, NULL, room, "get");
+        obj = get_obj_in_list_vis(ch, arg, NULL, next_obj);
       }
     }
   } else {
@@ -309,13 +504,14 @@ static void get_from_room(struct char_data *ch, char *arg, int howmany)
       send_to_char(ch, "Get all of what?\r\n");
       return;
     }
-    for (obj = world[IN_ROOM(ch)].contents; obj; obj = next_obj) {
-      next_obj = obj->next_content;
+    for (obj = world[room].contents; obj; obj = next_obj) {
+      obj_iter_mark(&mark, obj->next_content);
       if (CAN_SEE_OBJ(ch, obj) &&
 	  (dotmode == FIND_ALL || isname(arg, obj->name))) {
 	found = 1;
 	perform_get_from_room(ch, obj);
       }
+      next_obj = obj_iter_resume(&mark, ch, NULL, NULL, room, "get");
     }
     if (!found) {
       if (dotmode == FIND_ALL)
@@ -333,7 +529,9 @@ ACMD(do_get)
   char arg3[MAX_INPUT_LENGTH];
 
   int cont_dotmode, found = 0, mode;
-  struct obj_data *cont;
+  struct obj_data *cont, *next_cont;
+  struct obj_iter_mark mark;
+  room_rnum room = IN_ROOM(ch);
   struct char_data *tmp_char;
 
   one_argument(two_arguments(argument, arg1, arg2), arg3);	/* three_arguments */
@@ -342,12 +540,14 @@ ACMD(do_get)
     send_to_char(ch, "Get what?\r\n");
   else if (!*arg2)
     get_from_room(ch, arg1, 1);
+  else if (is_number(arg1) && !COUNT_ARG_OK(tb_parse_int_or_zero(arg1)))
+    send_to_char(ch, "Yeah, that makes sense.\r\n");
   else if (is_number(arg1) && !*arg3)
     get_from_room(ch, arg2, tb_parse_int_or_zero(arg1));
   else {
     int amount = 1;
     if (is_number(arg1)) {
-      amount = tb_parse_int_or_zero(arg1);
+      amount = tb_parse_int_or_zero(arg1);   /* > 0: checked above */
       strlcpy(arg1, arg2, sizeof(arg1)); /* strcpy: OK (sizeof: arg1 == arg2) */
       strlcpy(arg2, arg3, sizeof(arg2)); /* strcpy: OK (sizeof: arg2 == arg3) */
     }
@@ -365,7 +565,10 @@ ACMD(do_get)
 	send_to_char(ch, "Get from all of what?\r\n");
 	return;
       }
-      for (cont = ch->carrying; cont; cont = cont->next_content)
+      /* get_from_container() runs get triggers: resume each walk through a
+       * UID mark, never through a next_content saved before the call. */
+      for (cont = ch->carrying; cont; cont = next_cont) {
+	obj_iter_mark(&mark, cont->next_content);
 	if (CAN_SEE_OBJ(ch, cont) &&
 	    (cont_dotmode == FIND_ALL || isname(arg2, cont->name))) {
 	  if (GET_OBJ_TYPE(cont) == ITEM_CONTAINER) {
@@ -376,7 +579,10 @@ ACMD(do_get)
 	    act("$p is not a container.", FALSE, ch, cont, 0, TO_CHAR);
 	  }
 	}
-      for (cont = world[IN_ROOM(ch)].contents; cont; cont = cont->next_content)
+	next_cont = obj_iter_resume(&mark, ch, ch, NULL, NOWHERE, "get");
+      }
+      for (cont = world[room].contents; cont && IN_ROOM(ch) == room; cont = next_cont) {
+	obj_iter_mark(&mark, cont->next_content);
 	if (CAN_SEE_OBJ(ch, cont) &&
 	    (cont_dotmode == FIND_ALL || isname(arg2, cont->name))) {
 	  if (GET_OBJ_TYPE(cont) == ITEM_CONTAINER) {
@@ -387,6 +593,8 @@ ACMD(do_get)
 	    found = 1;
 	  }
 	}
+	next_cont = obj_iter_resume(&mark, ch, NULL, NULL, room, "get");
+      }
       if (!found) {
 	if (cont_dotmode == FIND_ALL)
 	  send_to_char(ch, "You can't seem to find any containers.\r\n");
@@ -418,11 +626,37 @@ static void perform_drop_gold(struct char_data *ch, int amount, byte mode, room_
       } else {
         char buf[MAX_STRING_LENGTH];
         long object_id = obj_script_id(obj);
+        int allowed;
 
-        if (!drop_wtrigger(obj, ch)) {
-          if (has_obj_by_uid_in_lookup_table(object_id))
-            extract_obj(obj);
+        /* drop_wtrigger() treats an object its actor does not carry as
+         * gone, so the coins are in ch's hands (and out of GET_GOLD) while
+         * the room's drop script runs, exactly like a dropped object. */
+        decrease_gold(ch, amount);
+        obj_to_char(obj, ch);
+        allowed = drop_wtrigger(obj, ch);
 
+        if (!obj_uid_matches(object_id, obj)) {
+          /* The script took the coins: the drop happened, its way. */
+          TB_WARN_MSG("act", "drop-gold-vanished", "obj",
+                      "money uid %ld (%d coins) purged by a drop trigger in "
+                      "room vnum %d for " DIAG_CHAR_FMT, object_id, amount,
+                      (int) GET_ROOM_VNUM(IN_ROOM(ch)), DIAG_CHAR(ch));
+          return;
+        }
+        if (obj->carried_by != ch) {
+          TB_WARN_MSG("act", "drop-gold-vanished", "obj",
+                      "money uid %ld (%d coins) moved away from "
+                      DIAG_CHAR_FMT " by a drop trigger in room vnum %d",
+                      object_id, amount, DIAG_CHAR(ch),
+                      (int) GET_ROOM_VNUM(IN_ROOM(ch)));
+          return;
+        }
+        obj_from_char(obj);
+        if (!allowed) {
+          /* Refused: the coins go back to ch's purse. */
+          extract_obj(obj);
+          increase_gold(ch, amount);
+          send_to_char(ch, "You can't drop your gold here.\r\n");
           return;
         }
 
@@ -431,6 +665,7 @@ static void perform_drop_gold(struct char_data *ch, int amount, byte mode, room_
 
 	      send_to_char(ch, "You drop some gold.\r\n");
 	      obj_to_room(obj, IN_ROOM(ch));
+	      return;		/* gold already deducted above */
       }
     } else {
       char buf[MAX_STRING_LENGTH];
@@ -444,6 +679,29 @@ static void perform_drop_gold(struct char_data *ch, int amount, byte mode, room_
   }
 }
 
+/* After a drop trigger: is obj (UID uid) still in ch's hands? A script
+ * that purged its own object is a deliberate outcome (FALSE, silent); one
+ * that moved it elsewhere is reported as "drop-target-changed" (FALSE),
+ * since dropping it would take it from its new holder. The bare
+ * has_obj_by_uid_in_lookup_table() check used before accepted both an
+ * object that had moved and a UID now bound to a different object. */
+static int drop_target_held(struct char_data *ch, struct obj_data *obj, long uid)
+{
+  if (OBJ_STILL_HELD_BY(uid, obj, ch))
+    return TRUE;
+  if (obj_uid_matches(uid, obj))
+    TB_WARN_MSG("act", "drop-target-changed", "obj",
+                "obj vnum %d uid %ld left the hands of " DIAG_CHAR_FMT
+                " during its drop trigger; not dropped",
+                (int) GET_OBJ_VNUM(obj), uid, DIAG_CHAR(ch));
+  return FALSE;
+}
+
+/* Drops, donates (to room RDR) or junks obj, which ch carries. Runs the
+ * object's drop trigger and, for a plain drop, the room's; returns early
+ * (0) if either refuses or purged obj. The triggers may also purge
+ * siblings, so callers walking ch->carrying resume through a UID mark.
+ * Returns the junk reward in gold (0 unless obj was junked). */
 #define VANISH(mode) ((((mode) == SCMD_DONATE) || ((mode) == SCMD_JUNK)) ? \
 		      "  It vanishes in a puff of smoke!" : "")
 static int perform_drop(struct char_data *ch, struct obj_data *obj,
@@ -453,17 +711,14 @@ static int perform_drop(struct char_data *ch, struct obj_data *obj,
   int value;
   long object_id = obj_script_id(obj);
 
-  if (!drop_otrigger(obj, ch))
+  if (!drop_otrigger(obj, ch) || !drop_target_held(ch, obj, object_id))
     return 0;
-
-  if (!has_obj_by_uid_in_lookup_table(object_id))
-    return 0; // item was extracted by script
 
   if ((mode == SCMD_DROP) && !drop_wtrigger(obj, ch))
     return 0;
 
-  if (!has_obj_by_uid_in_lookup_table(object_id))
-    return 0; // item was extracted by script
+  if (!drop_target_held(ch, obj, object_id))
+    return 0;
 
   if (OBJ_FLAGGED(obj, ITEM_NODROP) && !PRF_FLAGGED(ch, PRF_NOHASSLE)) {
     tb_snprintf(buf, sizeof(buf), "You can't %s $p, it must be CURSED!", sname);
@@ -504,13 +759,43 @@ static int perform_drop(struct char_data *ch, struct obj_data *obj,
   return (0);
 }
 
+/* Fills cand[] (at least 4 entries) with the donation rooms that exist:
+ * CONFIG_DON_ROOM_1 twice (its traditional double chance), then rooms 2
+ * and 3. A slot set to NOWHERE is simply not configured; a configured vnum
+ * with no room (deleted, mistyped in cedit) is reported as
+ * "donation-room-missing" so the operator learns why donations fail.
+ * Returns the number of entries filled. */
+static int donation_rooms(room_rnum cand[4])
+{
+  const room_vnum vnums[3] = { CONFIG_DON_ROOM_1, CONFIG_DON_ROOM_2, CONFIG_DON_ROOM_3 };
+  int i, n = 0;
+
+  for (i = 0; i < 3; i++) {
+    room_rnum r;
+
+    if (vnums[i] == NOWHERE)
+      continue;
+    if ((r = real_room(vnums[i])) == NOWHERE) {
+      TB_WARN_MSG("config", "donation-room-missing", "room",
+                  "donation room %d is vnum %d, which does not exist; skipped",
+                  i + 1, (int) vnums[i]);
+      continue;
+    }
+    cand[n++] = r;
+    if (i == 0)
+      cand[n++] = r;
+  }
+  return n;
+}
+
 ACMD(do_drop)
 {
   char arg[MAX_INPUT_LENGTH];
   struct obj_data *obj, *next_obj;
+  struct obj_iter_mark mark;
   room_rnum RDR = 0;
   byte mode = SCMD_DROP;
-  int dotmode, amount = 0, multi, num_don_rooms;
+  int dotmode, amount = 0, multi;
   const char *sname;
 
   switch (subcmd) {
@@ -521,25 +806,21 @@ ACMD(do_drop)
   case SCMD_DONATE:
     sname = "donate";
     mode = SCMD_DONATE;
-    /* fail + double chance for room 1   */
-    num_don_rooms = (CONFIG_DON_ROOM_1 != NOWHERE) * 2 +
-                    (CONFIG_DON_ROOM_2 != NOWHERE)     +
-                    (CONFIG_DON_ROOM_3 != NOWHERE)     + 1 ;
-    switch (rand_number(0, num_don_rooms)) {
-    case 0:
-      mode = SCMD_JUNK;
-      break;
-    case 1:
-    case 2:
-      RDR = real_room(CONFIG_DON_ROOM_1);
-      break;
-    case 3: RDR = real_room(CONFIG_DON_ROOM_2); break;
-    case 4: RDR = real_room(CONFIG_DON_ROOM_3); break;
+    {
+      room_rnum don_rooms[4];
+      int num_don_rooms = donation_rooms(don_rooms), roll;
 
-    }
-    if (RDR == NOWHERE) {
-      send_to_char(ch, "Sorry, you can't donate anything right now.\r\n");
-      return;
+      if (!num_don_rooms) {
+        send_to_char(ch, "Sorry, you can't donate anything right now.\r\n");
+        return;
+      }
+      /* 0: the item is junked instead; otherwise one of the rooms that
+       * exist, room 1 with a double chance. */
+      roll = rand_number(0, num_don_rooms);
+      if (roll == 0)
+        mode = SCMD_JUNK;
+      else
+        RDR = don_rooms[roll - 1];
     }
     break;
   default:
@@ -565,9 +846,9 @@ ACMD(do_drop)
       send_to_char(ch, "You don't seem to have any %ss.\r\n", arg);
     else {
       do {
-        next_obj = get_obj_in_list_vis(ch, arg, NULL, obj->next_content);
+        obj_iter_mark(&mark, get_obj_in_list_vis(ch, arg, NULL, obj->next_content));
         amount += perform_drop(ch, obj, mode, sname, RDR);
-        obj = next_obj;
+        obj = obj_iter_resume(&mark, ch, ch, NULL, NOWHERE, sname);
       } while (obj && --multi);
     }
   } else {
@@ -586,8 +867,9 @@ ACMD(do_drop)
 	send_to_char(ch, "You don't seem to be carrying anything.\r\n");
       else
 	for (obj = ch->carrying; obj; obj = next_obj) {
-	  next_obj = obj->next_content;
+	  obj_iter_mark(&mark, obj->next_content);
 	  amount += perform_drop(ch, obj, mode, sname, RDR);
+	  next_obj = obj_iter_resume(&mark, ch, ch, NULL, NOWHERE, sname);
 	}
     } else if (dotmode == FIND_ALLDOT) {
       if (!*arg) {
@@ -598,9 +880,9 @@ ACMD(do_drop)
 	send_to_char(ch, "You don't seem to have any %ss.\r\n", arg);
 
       while (obj) {
-	next_obj = get_obj_in_list_vis(ch, arg, NULL, obj->next_content);
+	obj_iter_mark(&mark, get_obj_in_list_vis(ch, arg, NULL, obj->next_content));
 	amount += perform_drop(ch, obj, mode, sname, RDR);
-	obj = next_obj;
+	obj = obj_iter_resume(&mark, ch, ch, NULL, NOWHERE, sname);
       }
     } else {
       if (!(obj = get_obj_in_list_vis(ch, arg, NULL, ch->carrying)))
@@ -613,10 +895,15 @@ ACMD(do_drop)
   if (amount && (subcmd == SCMD_JUNK)) {
     send_to_char(ch, "You have been rewarded by the gods!\r\n");
     act("$n has been rewarded by the gods!", TRUE, ch, 0, 0, TO_ROOM);
-    GET_GOLD(ch) += amount;
+    increase_gold(ch, amount);   /* clamps at MAX_GOLD; never overflows */
   }
 }
 
+/* Gives obj (carried by ch) to vict. give_otrigger and receive_mtrigger
+ * return 0 when the object was purged or left ch's hands, so obj is
+ * valid whenever they allow the give; they may still purge siblings of
+ * obj or move vict, and callers walking ch->carrying resume through a UID
+ * mark. */
 static void perform_give(struct char_data *ch, struct char_data *vict,
 		       struct obj_data *obj)
 {
@@ -698,6 +985,7 @@ ACMD(do_give)
   int amount, dotmode;
   struct char_data *vict;
   struct obj_data *obj, *next_obj;
+  struct obj_iter_mark mark;
 
   argument = one_argument(argument, arg);
 
@@ -711,7 +999,9 @@ ACMD(do_give)
       if ((vict = give_find_vict(ch, arg)) != NULL)
 	perform_give_gold(ch, vict, amount);
       return;
-    } else if (!*arg) /* Give multiple code. */
+    } else if (!COUNT_ARG_OK(amount))
+      send_to_char(ch, "Yeah, that makes sense.\r\n");
+    else if (!*arg) /* Give multiple code. */
       send_to_char(ch, "What do you want to give %d of?\r\n", amount);
     else if (!(vict = give_find_vict(ch, argument)))
       return;
@@ -719,9 +1009,9 @@ ACMD(do_give)
       send_to_char(ch, "You don't seem to have any %ss.\r\n", arg);
     else {
       while (obj && amount--) {
-	next_obj = get_obj_in_list_vis(ch, arg, NULL, obj->next_content);
+	obj_iter_mark(&mark, get_obj_in_list_vis(ch, arg, NULL, obj->next_content));
 	perform_give(ch, vict, obj);
-	obj = next_obj;
+	obj = obj_iter_resume(&mark, ch, ch, NULL, NOWHERE, "give");
       }
     }
   } else {
@@ -745,15 +1035,24 @@ ACMD(do_give)
 	send_to_char(ch, "You don't seem to be holding anything.\r\n");
       else
 	for (obj = ch->carrying; obj; obj = next_obj) {
-	  next_obj = obj->next_content;
+	  obj_iter_mark(&mark, obj->next_content);
 	  if (CAN_SEE_OBJ(ch, obj) &&
 	      ((dotmode == FIND_ALL || isname(arg, obj->name))))
 	    perform_give(ch, vict, obj);
+	  next_obj = obj_iter_resume(&mark, ch, ch, NULL, NOWHERE, "give");
 	}
     }
   }
 }
 
+/** Adds weight (negative to subtract) to obj and keeps its holder's
+ * totals right: obj is lifted out of its room, carrier or container,
+ * changed, and put back, so IS_CARRYING_W and container weights follow.
+ * Precondition: obj is on the floor, carried, or inside another object.
+ * A worn object (worn_by set) is not supported: the change is skipped
+ * and only a SYSERR line is logged. Nothing stops the result going
+ * negative; callers (drinking, pouring) subtract at most the current
+ * contents. */
 void weight_change_object(struct obj_data *obj, int weight)
 {
   struct obj_data *tmp_obj;
@@ -785,7 +1084,54 @@ void weight_change_object(struct obj_data *obj, int weight)
 #define LIMITED_DRINK_CONTAINER(cont) (DRINK_CON_MAX((cont)) >= 0 && DRINK_CON_NOW((cont)) >= 0)
 #define EMPTY_DRINK_CONTAINER(cont) (LIMITED_DRINK_CONTAINER((cont)) && DRINK_CON_NOW((cont)) < 1)
 
+/* TRUE if t indexes drinks[], drinknames[] and drink_aff[] (NUM_LIQ_TYPES
+ * entries each). The liquid type is value 2 of a drink container or
+ * fountain: it comes from world files and from scripts ('osetval 2 N'),
+ * and neither validates it, so check before every table lookup. */
+#define VALID_LIQ_TYPE(t) ((t) >= 0 && (t) < NUM_LIQ_TYPES)
 
+/* Reports obj's out-of-range liquid type for the action op (ch may be NULL
+ * when no character is involved) and returns FALSE; TRUE if it is valid. */
+static int drinkcon_liquid_ok(struct obj_data *obj, struct char_data *ch,
+                              const char *action)
+{
+  if (VALID_LIQ_TYPE(DRINK_CON_TYPE(obj)))
+    return TRUE;
+  if (ch)
+    TB_ERROR_MSG("act", "liquid-type-range", "obj",
+                 "obj vnum %d uid %ld liquid %d not in [0,%d) during %s for "
+                 DIAG_CHAR_FMT, (int) GET_OBJ_VNUM(obj), obj_script_id(obj),
+                 DRINK_CON_TYPE(obj), NUM_LIQ_TYPES, action, DIAG_CHAR(ch));
+  else
+    TB_ERROR_MSG("act", "liquid-type-range", "obj",
+                 "obj vnum %d uid %ld liquid %d not in [0,%d) during %s",
+                 (int) GET_OBJ_VNUM(obj), obj_script_id(obj),
+                 DRINK_CON_TYPE(obj), NUM_LIQ_TYPES, action);
+  return FALSE;
+}
+
+/* The name helpers compare obj->name with its prototype's name to know
+ * whether it is shared (and must be copied, not freed). That needs a valid
+ * prototype rnum or NOTHING: unique objects loaded from rent files carry
+ * NOTHING. Any other out-of-range rnum is reported and the name is left
+ * alone, since it cannot be told whether it is owned. */
+static int drinkcon_proto_ok(struct obj_data *obj)
+{
+  if (GET_OBJ_RNUM(obj) == NOTHING || VALID_OBJ_RNUM(obj))
+    return TRUE;
+  TB_ERROR_MSG("act", "drinkcon-proto", "obj",
+               "obj uid %ld rnum %d not in [0,%d]; name left unchanged",
+               obj_script_id(obj), (int) GET_OBJ_RNUM(obj), (int) top_of_objt);
+  return FALSE;
+}
+
+/** Removes the liquid's name (drinknames[value 2]) from obj's keyword
+ * list when a drink container is emptied.
+ * Ownership: obj->name may alias its prototype's string
+ * (obj_proto[rnum].name); it is copied before it is modified, and the
+ * object owns the result. Preconditions: a valid prototype rnum or
+ * NOTHING (unique rent objects), and a valid liquid type; otherwise the
+ * name is left as it is and the problem is reported. */
 void name_from_drinkcon(struct obj_data *obj)
 {
   const char *liqname;
@@ -794,7 +1140,14 @@ void name_from_drinkcon(struct obj_data *obj)
   if (!obj || (GET_OBJ_TYPE(obj) != ITEM_DRINKCON && GET_OBJ_TYPE(obj) != ITEM_FOUNTAIN))
     return;
 
-  if (obj->name == obj_proto[GET_OBJ_RNUM(obj)].name)
+  /* The name cannot hold a liquid that has no name; leave it alone. */
+  if (!drinkcon_liquid_ok(obj, NULL, "name_from_drinkcon"))
+    return;
+  if (!drinkcon_proto_ok(obj))
+    return;
+
+  /* obj->name may still alias the prototype's string: copy before writing. */
+  if (GET_OBJ_RNUM(obj) != NOTHING && obj->name == obj_proto[GET_OBJ_RNUM(obj)].name)
     obj->name = strdup(obj_proto[GET_OBJ_RNUM(obj)].name);
 
   liqname = drinknames[DRINK_CON_TYPE(obj)];
@@ -805,11 +1158,26 @@ void name_from_drinkcon(struct obj_data *obj)
   obj->name = new_name;
 }
 
+/** Appends drinknames[type] to obj's keyword list when an empty drink
+ * container is filled with liquid type. The new string is always owned by
+ * obj; the old one is freed unless it is the prototype's shared name.
+ * Same preconditions as name_from_drinkcon(), with type in
+ * [0, NUM_LIQ_TYPES). */
 void name_to_drinkcon(struct obj_data *obj, int type)
 {
   char *new_name;
 
   if (!obj || (GET_OBJ_TYPE(obj) != ITEM_DRINKCON && GET_OBJ_TYPE(obj) != ITEM_FOUNTAIN))
+    return;
+
+  if (!VALID_LIQ_TYPE(type)) {
+    TB_ERROR_MSG("act", "liquid-type-range", "obj",
+                 "obj vnum %d uid %ld: liquid %d not in [0,%d); name unchanged",
+                 (int) GET_OBJ_VNUM(obj), obj_script_id(obj), type,
+                 NUM_LIQ_TYPES);
+    return;
+  }
+  if (!drinkcon_proto_ok(obj))
     return;
 
   {
@@ -887,6 +1255,10 @@ ACMD(do_drink)
   }
   if (EMPTY_DRINK_CONTAINER(temp)) {
     send_to_char(ch, "It is empty.\r\n");
+    return;
+  }
+  if (!drinkcon_liquid_ok(temp, ch, "drink")) {
+    send_to_char(ch, "You can't make out what is in it.\r\n");
     return;
   }
 
@@ -1092,6 +1464,10 @@ ACMD(do_pour)
     act("The $p is empty.", FALSE, ch, from_obj, 0, TO_CHAR);
     return;
   }
+  if (!drinkcon_liquid_ok(from_obj, ch, subcmd == SCMD_POUR ? "pour" : "fill")) {
+    act("You can't make out what is in $p.", FALSE, ch, from_obj, 0, TO_CHAR);
+    return;
+  }
   if (subcmd == SCMD_POUR) { /* pour */
     if (!*arg2) {
       send_to_char(ch, "Where do you want it?  Out or in what?\r\n");
@@ -1248,6 +1624,10 @@ static void wear_message(struct char_data *ch, struct obj_data *obj, int where)
   act(wear_messages[where][1], FALSE, ch, obj, 0, TO_CHAR);
 }
 
+/* Equips obj (carried by ch) at where. wear_otrigger returns 0 when obj
+ * was purged; obj->carried_by is re-checked because the script may have
+ * moved it. The trigger may purge siblings, so callers walking
+ * ch->carrying resume through a UID mark. */
 static void perform_wear(struct char_data *ch, struct obj_data *obj, int where)
 {
   /*
@@ -1359,6 +1739,7 @@ ACMD(do_wear)
   char arg1[MAX_INPUT_LENGTH];
   char arg2[MAX_INPUT_LENGTH];
   struct obj_data *obj, *next_obj;
+  struct obj_iter_mark mark;
   int where, dotmode, items_worn = 0;
 
   two_arguments(argument, arg1, arg2);
@@ -1375,7 +1756,7 @@ ACMD(do_wear)
   }
   if (dotmode == FIND_ALL) {
     for (obj = ch->carrying; obj; obj = next_obj) {
-      next_obj = obj->next_content;
+      obj_iter_mark(&mark, obj->next_content);
       if (CAN_SEE_OBJ(ch, obj) && (where = find_eq_pos(ch, obj, 0)) >= 0) {
         if (GET_LEVEL(ch) < GET_OBJ_LEVEL(obj))
           send_to_char(ch, "You are not experienced enough to use that.\r\n");
@@ -1384,6 +1765,7 @@ ACMD(do_wear)
 	  perform_wear(ch, obj, where);
 	}
       }
+      next_obj = obj_iter_resume(&mark, ch, ch, NULL, NOWHERE, "wear");
     }
     if (!items_worn)
       send_to_char(ch, "You don't seem to have anything wearable.\r\n");
@@ -1398,12 +1780,12 @@ ACMD(do_wear)
       send_to_char(ch, "You are not experienced enough to use that.\r\n");
     else
       while (obj) {
-	next_obj = get_obj_in_list_vis(ch, arg1, NULL, obj->next_content);
+	obj_iter_mark(&mark, get_obj_in_list_vis(ch, arg1, NULL, obj->next_content));
 	if ((where = find_eq_pos(ch, obj, 0)) >= 0)
 	  perform_wear(ch, obj, where);
 	else
 	  act("You can't wear $p.", FALSE, ch, obj, 0, TO_CHAR);
-	obj = next_obj;
+	obj = obj_iter_resume(&mark, ch, ch, NULL, NOWHERE, "wear");
       }
   } else {
     if (!(obj = get_obj_in_list_vis(ch, arg1, NULL, ch->carrying)))
@@ -1469,6 +1851,10 @@ ACMD(do_grab)
   }
 }
 
+/* Moves the item worn at pos to ch's inventory. After remove_otrigger the
+ * slot is re-read: a script that removed, swapped or purged the item is
+ * reported ("remove-slot-changed") and nothing more is done. do_remove's
+ * loops index slots, not object pointers, so they need no mark. */
 static void perform_remove(struct char_data *ch, int pos)
 {
   struct obj_data *obj;
@@ -1482,8 +1868,20 @@ static void perform_remove(struct char_data *ch, int pos)
   else if (IS_CARRYING_N(ch) >= CAN_CARRY_N(ch)&& !PRF_FLAGGED(ch, PRF_NOHASSLE))
     act("$p: you can't carry that many items!", FALSE, ch, obj, 0, TO_CHAR);
   else {
+    long uid = obj_script_id(obj);
+
     if (!remove_otrigger(obj, ch))
       return;
+
+    /* The remove script may have removed, swapped or purged the item
+     * itself (e.g. '%force% %actor% remove all' runs a nested remove that
+     * empties the slot first); unequip only the object we checked. */
+    if (!obj_uid_matches(uid, obj) || GET_EQ(ch, pos) != obj) {
+      TB_WARN_MSG("act", "remove-slot-changed", "obj",
+                  "slot %d obj uid %ld changed by remove trigger for "
+                  DIAG_CHAR_FMT, pos, uid, DIAG_CHAR(ch));
+      return;
+    }
 
     obj_to_char(unequip_char(ch, pos), ch);
     act("You stop using $p.", FALSE, ch, obj, 0, TO_CHAR);
@@ -1538,7 +1936,7 @@ ACMD(do_remove)
 ACMD(do_sac)
 {
   char arg[MAX_INPUT_LENGTH];
-  struct obj_data *j, *jj, *next_thing2;
+  struct obj_data *j;
 
   one_argument(argument, arg);
 
@@ -1546,11 +1944,21 @@ ACMD(do_sac)
     send_to_char(ch, "Sacrifice what?\n\r");
     return;
   }
-    
+
   if (!(j = get_obj_in_list_vis(ch, arg, NULL, world[IN_ROOM(ch)].contents)) && (!(j = get_obj_in_list_vis(ch, arg, NULL, ch->carrying)))) {
     send_to_char(ch, "It doesn't seem to be here.\n\r");
     return;
   }
+
+  sacrifice_obj(ch, j);
+}
+
+/* The body of 'sac', shared with damage()'s autosac, which names the
+ * corpse it just made rather than the first object called "corpse". */
+void sacrifice_obj(struct char_data *ch, struct obj_data *j)
+{
+  struct obj_data *jj, *next_thing2;
+  room_rnum dest;
 
   if (!CAN_WEAR(j, ITEM_WEAR_TAKE)) {
     send_to_char(ch, "You can't sacrifice that!\n\r");
@@ -1588,16 +1996,26 @@ ACMD(do_sac)
       increase_gold(ch, 1);
     break;
   }
+  /* The contents spill onto the floor: j's room, or for a carried j the
+   * sacrificer's room (IN_ROOM of a carried object is NOWHERE, and
+   * obj_to_room(NOWHERE) would leave each item in object_list with no
+   * location at all). With no room either, the item is reported and
+   * extracted rather than orphaned. */
+  dest = (IN_ROOM(j) != NOWHERE) ? IN_ROOM(j) : IN_ROOM(ch);
   for (jj = j->contains; jj; jj = next_thing2) {
     next_thing2 = jj->next_content;       /* Next in inventory */
     obj_from_obj(jj);
 
-    if (j->carried_by)
-      obj_to_room(jj, IN_ROOM(j));
-    else if (IN_ROOM(j) != NOWHERE)
-      obj_to_room(jj, IN_ROOM(j));
-    else
-      assert(FALSE);
+    if (dest != NOWHERE)
+      obj_to_room(jj, dest);
+    else {
+      TB_ERROR_MSG("act", "sac-orphan", "obj",
+                   "container vnum %d uid %ld content vnum %d uid %ld has "
+                   "no destination room; extracted. " DIAG_CHAR_FMT,
+                   (int) GET_OBJ_VNUM(j), obj_script_id(j),
+                   (int) GET_OBJ_VNUM(jj), obj_script_id(jj), DIAG_CHAR(ch));
+      extract_obj(jj);
+    }
   }
   extract_obj(j);
 }

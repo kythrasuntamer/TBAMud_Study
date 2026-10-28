@@ -343,8 +343,8 @@ char *skill_percent(struct char_data *ch, char *skill);
 int char_has_item(char *item, struct char_data *ch);
 void var_subst(void *go, struct script_data *sc, trig_data *trig,
                int type, char *line, char *buf);
-int text_processed(char *field, char *subfield, struct trig_var_data *vd,
-                   char *str, size_t slen);
+int text_processed(trig_data *trig, char *field, char *subfield,
+                   struct trig_var_data *vd, char *str, size_t slen);
 void find_replacement(void *go, struct script_data *sc, trig_data *trig,
                 int type, char *var, char *field, char *subfield, char *str, size_t slen);
 
@@ -374,6 +374,13 @@ void do_dg_affect(void *go, struct script_data *sc, trig_data *trig,
 void send_char_pos(struct char_data *ch, int dam);
 int valid_dg_target(char_data *ch, int bitvector);
 void script_damage(char_data *vict, int dam);
+
+/* Saturating field arithmetic for DG setters (dg_variables.c). */
+int dg_bounded_add(int cur, int add, int lo, int hi);
+long dg_clamp_char_field(trig_data *trig, char_data *ch, const char *field,
+                         long long value, long lo, long hi);
+long dg_clamp_obj_field(trig_data *trig, obj_data *obj, const char *field,
+                        long long value, long lo, long hi);
 
 /* from dg_mobcmd.c */
 ACMD(do_masound);
@@ -453,6 +460,17 @@ void dg_teleport_all(room_rnum from, room_rnum to);
 #define GET_TRIG_DEPTH(t)         ((t)->depth)
 #define GET_TRIG_LOOPS(t)         ((t)->loops)
 
+/* TRUE when rn indexes a loaded trigger prototype. Needs db.h at the use
+ * site. Evaluates rn several times: pass a plain variable. */
+#define VALID_TRIG_RNUM(rn) \
+  ((rn) != NOTHING && (int)(rn) < top_of_trigt && trig_index[(rn)] != NULL)
+
+/* Trigger vnum for diagnostics, or -1 when there is no trigger or its rnum has
+ * no trigger-table entry (never indexes trig_index out of range). Needs db.h
+ * at the use site. Evaluates t several times: pass a plain variable. */
+#define DIAG_TRIG_VNUM(t) \
+  (((t) && VALID_TRIG_RNUM((t)->nr)) ? (int)trig_index[(t)->nr]->vnum : -1)
+
 /* player id's: 0 to MOB_ID_BASE - 1
  * mob id's: MOB_ID_BASE to ROOM_ID_BASE - 1
  * room id's: ROOM_ID_BASE to OBJ_ID_BASE - 1
@@ -460,6 +478,13 @@ void dg_teleport_all(room_rnum from, room_rnum to);
 #define MOB_ID_BASE	  10000000  /* 10000000 player IDNUMS should suffice */
 #define ROOM_ID_BASE    (10000000 + MOB_ID_BASE) /* 10000000 Mobs */
 #define OBJ_ID_BASE     (10000000 + ROOM_ID_BASE) /* 10000000 Rooms */
+
+/* Which namespace a UID belongs to (see the ranges above). Each resolver
+ * accepts only its own range, so an object UID can never alias a room.
+ * Evaluate u more than once: pass a plain long. */
+#define UID_IS_CHAR(u)  ((u) > 0 && (u) < ROOM_ID_BASE)
+#define UID_IS_ROOM(u)  ((u) >= ROOM_ID_BASE && (u) < OBJ_ID_BASE)
+#define UID_IS_OBJ(u)   ((u) >= OBJ_ID_BASE)
 
 #define SCRIPT(o)		  ((o)->script)
 #define SCRIPT_MEM(c)             ((c)->memory)

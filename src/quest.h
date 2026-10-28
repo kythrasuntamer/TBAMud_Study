@@ -80,8 +80,24 @@ struct aq_data {
 #define QST_FUNC(i)            (aquest_table[i].func)
 #define QST_PREV(i)            (aquest_table[i].prev_quest)
 #define QST_NEXT(i)            (aquest_table[i].next_quest)
+
+/** TRUE if r indexes a live aquest_table row. real_quest() returns NOTHING
+ * for a vnum that does not exist (prev/next links are not repaired when a
+ * quest is deleted), so check before QST_*(r). Evaluates r twice. */
+#define VALID_QST_RNUM(r)      ((r) != NOTHING && (r) < total_quests)
+
+/** quest_types[] name of quest r's type, or "<invalid>" when the stored type
+ * is outside 0..NUM_AQ_TYPES-1. parse_quest rejects such types at boot; this
+ * keeps display code safe if a table row is corrupted later. Evaluates r
+ * twice. */
+#define QST_TYPE_NAME(r)       ((QST_TYPE(r) >= 0 && QST_TYPE(r) < NUM_AQ_TYPES) ? \
+                                quest_types[QST_TYPE(r)] : "<invalid>")
 /* Quest Functions **************************************************** */
+/** Signature of a mob spec proc, for the questmaster secondary-proc API. */
+typedef SPECIAL(quest_spec_proc);
 /* Implemented in quest.c */
+quest_spec_proc *quest_qm_secondary(mob_vnum qm);
+void quest_set_qm_secondary(mob_vnum qm, quest_spec_proc *func);
 void destroy_quests(void);
 void assign_the_quests(void);
 void parse_quest(FILE *quest_f, int nr);
@@ -143,9 +159,5 @@ int save_quests(zone_rnum zone_num);
 /* AQ Global Variables ************************************************ */
 extern const char *aq_flags[];       /* names for quest flags (quest.c) */
 extern const char *quest_types[];    /* named for quest types (quest.c) */
-/* Name of a quest type, or "Undefined" for AQ_UNDEFINED (-1, every new
- * quest) and anything else outside quest_types[].  Evaluates type twice. */
-#define QUEST_TYPE_NAME(type) \
-  (((type) >= 0 && (type) < NUM_AQ_TYPES) ? quest_types[(type)] : "Undefined")
 
 #endif /* TBAMUD_QUEST_H_INCLUDED */

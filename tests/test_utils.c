@@ -314,6 +314,33 @@ void test_count_color_chars_mixed(void)
     TEST_ASSERT_EQUAL_INT(2, count_color_chars("\tRhello"));
 }
 
+void test_count_color_chars_trailing_lone_tab_stays_in_bounds(void)
+{
+    /* F3-04: a lone trailing tab used to step i past the terminator and read
+     * string[len + 1].  strdup() gives ASan an exact-size heap block, so the
+     * old overread is a heap-buffer-overflow.  The tab counts as one
+     * overhead byte and the malformed escape is logged
+     * (op=protocol-escape-truncated). */
+    char *s = strdup("a sword\t");
+    FILE *cap = tmpfile();
+    char line[4096];
+    int seen = 0;
+
+    TEST_ASSERT_NOT_NULL(s);
+    TEST_ASSERT_NOT_NULL(cap);
+    logfile = cap;
+    TEST_ASSERT_EQUAL_INT(1, count_color_chars(s));
+    TEST_ASSERT_EQUAL_INT(0, fflush(cap));
+    TEST_ASSERT_EQUAL_INT(0, fseek(cap, 0L, SEEK_SET));
+    while (fgets(line, sizeof(line), cap))
+        if (strstr(line, "op=protocol-escape-truncated") && !strstr(line, "a sword"))
+            seen = 1;
+    logfile = stderr;
+    (void)fclose(cap);
+    free(s);
+    TEST_ASSERT_TRUE(seen);
+}
+
 /* =========================================================
  * count_non_protocol_chars
  * ========================================================= */
@@ -536,6 +563,7 @@ int main(void)
     RUN_TEST(test_count_color_chars_single_color_code);
     RUN_TEST(test_count_color_chars_double_tab);
     RUN_TEST(test_count_color_chars_mixed);
+    RUN_TEST(test_count_color_chars_trailing_lone_tab_stays_in_bounds);
 
     /* count_non_protocol_chars */
     RUN_TEST(test_count_non_protocol_chars_plain);

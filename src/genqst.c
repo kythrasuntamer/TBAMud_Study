@@ -17,6 +17,25 @@
 #include "genolc.h"
 #include "genzon.h" /* for create_world_index */
 
+/**
+ * @file genqst.c
+ * Quest table maintenance for OLC (qedit) and the quest file writer.
+ *
+ * Input: quests come from builders through qedit (string lengths capped by
+ * qedit: MAX_QUEST_NAME/DESC/MSG) or from hand-edited .qst files at boot.
+ *
+ * Table: aquest_table[0..total_quests-1] is sorted by vnum; qst_rnum is
+ * unsigned and NOTHING marks "no quest".  QST_MASTER is a mob VNUM, not an
+ * rnum: resolve it with real_mobile() before indexing mob_index.
+ *
+ * Questmaster spec procs: a mob that is some quest's questmaster runs
+ * questmaster().  If it already had another spec proc, that one is kept in
+ * the quest's QST_FUNC and questmaster() chains to it; delete_quest()
+ * restores it when the mob is no longer a questmaster of any quest.
+ * Changing a quest's questmaster in qedit does not restore the previous
+ * mob's spec proc (it stays questmaster() until reboot).
+ */
+
 
 /*-------------------------------------------------------------------*/
 
@@ -79,6 +98,17 @@ void free_quest(struct aq_data *quest)
 
 /*-------------------------------------------------------------------*/
 
+/**
+ * Add a quest, or update the quest with the same vnum, from qedit's copy.
+ *
+ * Strings are deep-copied; nqst keeps its own.  Inserting shifts later
+ * quests up one slot (their string pointers move with them, so the new
+ * slot is filled without freeing).  The questmaster mob (if it has a
+ * prototype) gets questmaster() as its spec proc, its previous spec proc
+ * being saved in QST_FUNC.
+ *
+ * @return The quest's rnum.
+ */
 int add_quest(struct aq_data *nqst)
 {
   qst_rnum rnum;
@@ -110,7 +140,7 @@ int add_quest(struct aq_data *nqst)
   /* Make sure we assign spec procs to the questmaster */
   if (qmrnum != NOBODY && mob_index[qmrnum].func &&
      mob_index[qmrnum].func != questmaster)
-     QST_FUNC(rnum) = mob_index[qmrnum].func;
+     quest_set_qm_secondary(QST_MASTER(rnum), mob_index[qmrnum].func);
   if(qmrnum != NOBODY) 
     mob_index[qmrnum].func = questmaster;
 
@@ -126,21 +156,41 @@ int add_quest(struct aq_data *nqst)
 
 /*-------------------------------------------------------------------*/
 
+/**
+ * Delete quest rnum (qedit delete).
+ *
+ * Precondition: rnum < total_quests; NOTHING (a quest never saved) and any
+ * other out-of-range value are reported and refused.  Frees the quest's
+ * strings, shifts later quests down, and restores the questmaster's saved
+ * spec proc when no remaining quest uses that mob.
+ *
+ * @return TRUE when deleted; FALSE, reported, otherwise.
+ */
 int delete_quest(qst_rnum rnum)
 {
   qst_rnum i;
   zone_rnum rznum;
-  mob_vnum qm = QST_MASTER(rnum);
+  mob_vnum qm;
+  mob_rnum qmr;
+  qst_vnum deleted_vnum;
   SPECIAL (*tempfunc);
   int  quests_remaining = 0;
 
-  if (rnum >= total_quests)
+  /* qedit can confirm 'delete' on a quest that was never saved, so the
+   * caller's real_quest() may return NOTHING; check before any table read. */
+  if (rnum == NOTHING || rnum >= total_quests) {
+    TB_ERROR_MSG("olc", "quest-delete-range", "quest",
+                 "rnum %d out of range 0..%d", (int)rnum, (int)total_quests - 1);
     return FALSE;
-  rznum = real_zone_by_thing(QST_NUM(rnum)); 
+  }
+  qm = QST_MASTER(rnum);
+  deleted_vnum = QST_NUM(rnum);
+  rznum = real_zone_by_thing(QST_NUM(rnum));
   log("GenOLC: delete_quest: Deleting quest #%d (%s).",
        QST_NUM(rnum), QST_NAME(rnum));
-  /* make a note of the quest master's secondary spec proc */
-  tempfunc = QST_FUNC(rnum);
+  /* make a note of the quest master's secondary spec proc; any of the QM's
+   * quests may hold it (see quest_qm_secondary()). */
+  tempfunc = quest_qm_secondary(qm);
 
 
   free_quest_strings(&aquest_table[rnum]);
@@ -159,14 +209,22 @@ int delete_quest(qst_rnum rnum)
   else
     mudlog(BRF, LVL_BUILDER, TRUE,
            "SYSERR: GenOLC: Cannot determine quest zone.");
-  /* does the questmaster mob have any quests left? */
+  /* does the questmaster mob have any quests left?  QST_MASTER is a mob
+   * VNUM; mob_index[] must be indexed by the prototype's rnum. */
   if (qm != NOBODY) {
     for (i = 0; i < total_quests; i++) {
       if (QST_MASTER(i) == qm)
         quests_remaining++;
     }
-    if (quests_remaining == 0)
-      mob_index[qm].func = tempfunc; // point back to original spec proc
+    /* QST_MASTER is a mob VNUM: mob_index[] is indexed by rnum. */
+    if (quests_remaining == 0) {
+      if ((qmr = real_mobile(qm)) == NOBODY)
+        TB_ERROR_MSG("genqst", "delete-quest-qm", "mob_index",
+                     "quest vnum %d qm mob vnum %d has no rnum; spec proc not restored",
+                     (int) deleted_vnum, (int) qm);
+      else
+        mob_index[qmr].func = tempfunc; // point back to original spec proc
+    }
   }
   return TRUE;
 }
@@ -182,11 +240,7 @@ int save_quests(zone_rnum zone_num)
   char buf[MAX_STRING_LENGTH];
   int i, num_quests = 0;
 
-#if CIRCLE_UNSIGNED_INDEX
-  if (zone_num == NOWHERE || zone_num > top_of_zone_table) {
-#else
-  if (zone_num < 0 || zone_num > top_of_zone_table) {
-#endif
+  if (!VALID_ZONE_RNUM(zone_num)) {
     log("SYSERR: GenOLC: save_quests: Invalid zone number %d passed! (0-%d)",
          zone_num, top_of_zone_table);
     return FALSE;
@@ -250,14 +304,26 @@ int save_quests(zone_rnum zone_num)
         QST_QUANTITY(rnum), QST_GOLD(rnum), QST_EXP(rnum), QST_OBJ(rnum)
       );
       
-      if(n < MAX_STRING_LENGTH) {
-        tb_fprintf(sf, "%s", convert_from_tabs(buf));
-        num_quests++;
-      } else {
-        mudlog(BRF,LVL_BUILDER,TRUE, 
-               "SYSERR: Could not save quest #%d due to size (%d > maximum of %d).", 
-               QST_NUM(rnum), n, MAX_STRING_LENGTH);
+      /* A record that does not fit (only reachable from a hand-edited .qst:
+       * qedit caps each string far below MSL) must not be skipped while the
+       * rest of the zone is committed, or the quest silently disappears
+       * from disk.  Abandon the whole zone save, as save_objects() does. */
+      if (n < 0 || n >= MAX_STRING_LENGTH) {
+        TB_ERROR_MSG("olc", "quest-save-size", filename,
+                     "quest vnum %d: record %d bytes >= %d; zone %d not saved",
+                     QST_NUM(rnum), n, MAX_STRING_LENGTH,
+                     zone_table[zone_num].number);
+        mudlog(BRF, LVL_BUILDER, TRUE,
+               "SYSERR: Could not save quest #%d due to size (%d >= maximum of %d); "
+               "zone %d not saved.", QST_NUM(rnum), n, MAX_STRING_LENGTH,
+               zone_table[zone_num].number);
+        tb_fclose(sf);
+        if (remove(filename) != 0 && errno != ENOENT)
+          TB_REPORT_ERRNO("remove", filename);
+        return FALSE;
       }
+      tb_fprintf(sf, "%s", convert_from_tabs(buf));
+      num_quests++;
     }
   }
   /* Write the final line and commit only a fully flushed temporary file. */
@@ -279,8 +345,10 @@ int save_quests(zone_rnum zone_num)
     return FALSE;
 
   /* Do we need to update the index file? */
-  if (num_quests > 0)
-    create_world_index(zone_table[zone_num].number, "qst");
+  /* The .qst file is committed, but without an index entry it is not
+   * loaded at boot: keep the zone in the save list so a later save retries. */
+  if (num_quests > 0 && !create_world_index(zone_table[zone_num].number, "qst"))
+    return FALSE;
 
   if (in_save_list(zone_table[zone_num].number, SL_QST))
     remove_from_save_list(zone_table[zone_num].number, SL_QST);

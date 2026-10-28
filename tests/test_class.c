@@ -15,6 +15,18 @@
 
 extern FILE *logfile;
 
+/* utils.c is linked, so its tb_error_log_at() exists; the test build wraps
+ * calls from class.c to this capturing version. */
+void __wrap_tb_error_log_at(const char *severity, const char *subsystem,
+                            const char *operation, const char *resource,
+                            int errnum, const char *source_file,
+                            int source_line, const char *source_func,
+                            const char *detail_fmt, ...)
+                            __attribute__ ((format (printf, 9, 10)));
+#define tb_error_log_at __wrap_tb_error_log_at
+#include "tb_error_capture.h"
+#undef tb_error_log_at
+
 void setUp(void)    { logfile = stderr; }
 void tearDown(void) { logfile = NULL; }
 
@@ -242,6 +254,54 @@ void test_monk_class_selection_and_combat_curves(void)
 }
 
 /* =========================================================
+ * saving_throws
+ * ========================================================= */
+
+/* C1-18: the mage/cleric/thief tables stop at 40 and the warrior table at
+ * 50, but levels run to LVL_IMPL. Past the table every save returned 100
+ * ("never saves") and logged once per call. Now the last row is used. */
+void test_saving_throws_past_table_use_last_row(void)
+{
+    tb_error_capture_reset();
+    TEST_ASSERT_EQUAL_INT(saving_throws(CLASS_MAGIC_USER, SAVING_PARA, 40),
+                          saving_throws(CLASS_MAGIC_USER, SAVING_PARA, 45));
+    TEST_ASSERT_EQUAL_INT(saving_throws(CLASS_CLERIC, SAVING_SPELL, 40),
+                          saving_throws(CLASS_CLERIC, SAVING_SPELL, LVL_IMMORT - 1));
+    TEST_ASSERT_EQUAL_INT(saving_throws(CLASS_THIEF, SAVING_ROD, 40),
+                          saving_throws(CLASS_THIEF, SAVING_ROD, LVL_IMPL));
+    TEST_ASSERT_EQUAL_INT(saving_throws(CLASS_WARRIOR, SAVING_PARA, 50),
+                          saving_throws(CLASS_WARRIOR, SAVING_PARA, LVL_IMMORT));
+    TEST_ASSERT_TRUE(saving_throws(CLASS_MAGIC_USER, SAVING_BREATH, 48) < 100);
+    TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+}
+
+/* C1-18: a level outside 0..LVL_IMPL is still an error, and says so. */
+void test_saving_throws_invalid_level_is_reported(void)
+{
+    tb_error_capture_reset();
+    TEST_ASSERT_EQUAL_INT(100, saving_throws(CLASS_MAGIC_USER, SAVING_PARA, LVL_IMPL + 1));
+    TEST_ASSERT_EQUAL_STRING("class-table", tb_captured_operation);
+    TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "level 61"));
+}
+
+/* C1-19: table misses named nothing ("XP tables not set up correctly");
+ * the record now carries the table, class, type and level. */
+void test_class_table_misses_name_their_inputs(void)
+{
+    tb_error_capture_reset();
+    TEST_ASSERT_EQUAL_INT(123456, level_exp(7, 10));
+    TEST_ASSERT_EQUAL_STRING("class-table", tb_captured_operation);
+    TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "class 7 type -1 level 10"));
+    TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "level-exp"));
+
+    TEST_ASSERT_EQUAL_INT(100, thaco(9, 5));
+    TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "class 9 type -1 level 5 is outside the thac0"));
+
+    TEST_ASSERT_EQUAL_INT(100, saving_throws(CLASS_CLERIC, 42, 10));
+    TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "class 1 type 42 level 10"));
+}
+
+/* =========================================================
  * main
  * ========================================================= */
 
@@ -250,6 +310,11 @@ int main(void)
     UNITY_BEGIN();
 
     RUN_TEST(test_monk_class_selection_and_combat_curves);
+
+    /* saving_throws */
+    RUN_TEST(test_saving_throws_past_table_use_last_row);
+    RUN_TEST(test_saving_throws_invalid_level_is_reported);
+    RUN_TEST(test_class_table_misses_name_their_inputs);
 
     /* parse_class */
     RUN_TEST(test_parse_class_magic_user_lowercase);

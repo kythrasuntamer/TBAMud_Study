@@ -9,6 +9,10 @@
 * Copyright (C) 1993, 94 by the Trustees of the Johns Hopkins University
 * CircleMUD is based on DikuMUD, Copyright (C) 1990, 1991.
 *
+* Every ACMD here may be reached with ch->desc == NULL (force, DG mforce,
+* linkdead players), and its argument text is caller-controlled; see the
+* act.wizard.c file header for the conventions the immortal commands use.
+*
 * @todo Utility functions that could easily be moved elsewhere have been
 * marked. Suggest a review of all utility functions (aka. non ACMDs) and
 * determine if the utility functions should be placed into a lower level
@@ -40,6 +44,14 @@ ACMD(do_qcomm);
 ACMD(do_spec_comm);
 #define SCMD_WHISPER  0
 #define SCMD_ASK      1
+/* Copy player or script text for splicing into an act() format. */
+char *act_escape_text_at(const char *src_file, int src_line,
+                         const char *src_func, const struct char_data *ch,
+                         const char *text, char *dst, size_t dst_size);
+/** Escape TEXT into the array DST for use inside an act() format; reports
+ * at the caller's file/line/function. DST must be an array (sizeof). */
+#define ACT_ESCAPE_TEXT(ch, text, dst) \
+  act_escape_text_at(__FILE__, __LINE__, __func__, (ch), (text), (dst), sizeof(dst))
 /* functions without subcommands */
 ACMD(do_say);
 ACMD(do_gsay);
@@ -116,6 +128,14 @@ int find_eq_pos(struct char_data *ch, struct obj_data *obj, char *arg);
 void name_from_drinkcon(struct obj_data *obj);
 void name_to_drinkcon(struct obj_data *obj, int type);
 void weight_change_object(struct obj_data *obj, int weight);
+/** Gets howmany objects matching arg (writable: "all."/"N." prefixes are
+ * stripped in place) out of cont, which ch carries (mode FIND_OBJ_INV) or
+ * sees on the floor (FIND_OBJ_ROOM). Runs get triggers: callers must
+ * re-validate cont afterwards. */
+void get_from_container(struct char_data *ch, struct obj_data *cont, char *arg, int mode, int howmany);
+/** Sacrifices obj (in ch's room or inventory) as 'sac' does: rewards ch,
+ * spills obj's contents onto the floor and extracts obj. */
+void sacrifice_obj(struct char_data *ch, struct obj_data *obj);
 /* functions with subcommands */
 /* do_drop */
 ACMD(do_drop);
@@ -277,14 +297,27 @@ ACMD(do_gmote);
  * Begin Functions and defines for act.wizard.c
  ****************************************************************************/
 /* Utility Functions */
-/** @todo should probably be moved to a more general file handler module */
+/** Trim LAST_FILE to its newest MAX_LAST_ENTRIES records; boot only (db.c).
+ * @todo should probably be moved to a more general file handler module */
 void clean_llog_entries(void);
 /** @todo This should be moved to a more general utility file */
 int script_command_interpreter(struct char_data *ch, char *arg);
+/** Resolve a room vnum or a mob/object name to an rnum for goto, at,
+ * teleport and the DG m/w teleport commands. On NOWHERE it has already
+ * told ch why; the rnum is valid only until rooms are added or deleted. */
 room_rnum find_target_room(struct char_data *ch, char *rawroomstr);
+/** Make an invisible immortal visible again (act.other.c 'visible'). */
 void perform_immort_vis(struct char_data *ch);
+/** Drop snoops that ch's level no longer allows, in either direction.
+ * Call after every level change of a character with a descriptor:
+ * advance_level() (class.c), do_advance and 'set level' do. */
 void snoop_check(struct char_data *ch);
+/** Rename vict to new_name, moving the per-player files first; the caller
+ * (perform_set) saves the pfile. vict must be in the player index.
+ * @return TRUE on success; on FALSE nothing changed and ch was told. */
 bool change_player_name(struct char_data *ch, struct char_data *vict, char *new_name);
+/** Add a login to the 'recent' list; chname/chhost are copied (and cut to
+ * the fixed field sizes). @return FALSE when chname is empty. */
 bool AddRecentPlayer(char *chname, char *chhost, bool newplr, bool cpyplr);
 /* Functions with subcommands */
 /* do_date */
@@ -331,6 +364,11 @@ ACMD(do_plist);
 ACMD(do_purge);
 ACMD(do_recent);
 ACMD(do_restore);
+/** Put a switched immortal back in its own body. ch must be the switched
+ * body: ch->desc and ch->desc->original set (otherwise return-to-char is
+ * reported and nothing changes). Afterwards ch->desc is NULL and the
+ * descriptor's character is the original. Callers: do_return, do_copyover
+ * and the DG/extraction paths that end a switch. */
 void return_to_char(struct char_data * ch);
 ACMD(do_return);
 ACMD(do_saveall);

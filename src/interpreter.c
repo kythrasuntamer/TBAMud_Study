@@ -8,6 +8,19 @@
 *  CircleMUD is based on DikuMUD, Copyright (C) 1990, 1991.               *
 **************************************************************************/
 
+/**
+ * @file interpreter.c
+ * The command interpreter (command_interpreter(), aliases, argument
+ * splitters) and the login state machine nanny().
+ *
+ * Who controls the input: every argument string here is a line typed by a
+ * remote client, bounded to MAX_INPUT_LENGTH by comm.c, and nanny() runs
+ * before the client has authenticated. Other descriptors seen while logging
+ * in can be at any CON_* state, so their characters may have no name or
+ * idnum yet. Argument splitters write at most MAX_INPUT_LENGTH bytes to each
+ * output buffer.
+ */
+
 #include "conf.h"
 #include "sysdep.h"
 #include "structs.h"
@@ -554,6 +567,10 @@ void sort_commands(void)
     num_of_cmds++;
   num_of_cmds++;  /* \n */
 
+  /* Called at boot and again after every aedit save (the command list is
+   * rebuilt then), so release the previous order instead of leaking it. */
+  free(cmd_sort_info);
+  cmd_sort_info = NULL;
   CREATE(cmd_sort_info, int, num_of_cmds);
 
   for (a = 0; a < num_of_cmds; a++)
@@ -1160,6 +1177,22 @@ static int parse_name_internal(char *arg, char *name)
 #define UNSWITCH	3
 
 /* This function seems a bit over-extended. */
+/**
+ * After a correct password, make @p d the only controller of its player.
+ *
+ * Walks descriptor_list and character_list. Other descriptors holding the
+ * same idnum are closed (their characters freed or unbound), and an in-game
+ * or link-dead character with that idnum is taken over: d->character may be
+ * freed and replaced by it.
+ *
+ * Other descriptors are in any login state, so their characters may have no
+ * name yet (still at the name prompt) and no valid idnum.
+ *
+ * @pre d->character is a loaded player with a valid GET_IDNUM().
+ * @return TRUE when d was reconnected to an existing character (the caller
+ *         must not enter the game again), FALSE to continue logging in.
+ *         Either way the caller must re-read d->character afterwards.
+ */
 static int perform_dupe_check(struct descriptor_data *d)
 {
   struct descriptor_data *k, *next_k;
@@ -1301,6 +1334,19 @@ static int perform_dupe_check(struct descriptor_data *d)
 }
 
 /* New Char dupe-check called at the start of character creation */
+/**
+ * Close other sockets creating, or playing, a character with @p d's new name.
+ *
+ * Any client can open sockets, so the other descriptors may be at any login
+ * state. A character still at CON_GET_NAME, or one that answered 'N' at
+ * CON_NAME_CNFRM, has a NULL player.name and is skipped. A NULL name on a
+ * socket past name confirmation is reported ("new-char-dupe-check").
+ *
+ * @pre d->character is a new player whose player.name is set.
+ * @post If the name is already in game, both sockets are set to CON_CLOSE
+ *       and d->character is NULL; the caller must check STATE(d).
+ * @return TRUE if any socket was closed.
+ */
 static bool perform_new_char_dupe_check(struct descriptor_data *d)
 {
   struct descriptor_data *k, *next_k;
@@ -1315,11 +1361,23 @@ static bool perform_new_char_dupe_check(struct descriptor_data *d)
     if (k == d)
       continue;
 
-   if (k->character == NULL)
+    /* Any client controls the other sockets: a peer still typing its name
+     * (CON_GET_NAME) or one that answered 'N' at CON_NAME_CNFRM legitimately
+     * has a character whose player.name is NULL. Only a NULL name past name
+     * confirmation (and outside the game) breaks the login invariant. */
+    if (k->character == NULL || IS_NPC(k->character))
       continue;
+    if (GET_PC_NAME(k->character) == NULL) {
+      if (STATE(k) > CON_NAME_CNFRM && STATE(k) != CON_PLAYING)
+        TB_WARN_MSG("interpreter", "new-char-dupe-check", "descriptor",
+                    "desc %d state %d has a character with a NULL name "
+                    "while checking new " DIAG_CHAR_FMT,
+                    k->desc_num, STATE(k), DIAG_CHAR(d->character));
+      continue;
+    }
 
-    /* Do the player names match? */
-    if (!strcmp(GET_NAME(k->character), GET_NAME(d->character))) {
+    /* Do the player names match? str_cmp, as valid_name() does. */
+    if (!str_cmp(GET_PC_NAME(k->character), GET_PC_NAME(d->character))) {
       /* Check the other character is still in creation? */
       if ((STATE(k) > CON_PLAYING) && (STATE(k) < CON_QCLASS)) {
         /* Boot the older one */
@@ -1349,7 +1407,9 @@ static bool perform_new_char_dupe_check(struct descriptor_data *d)
 
         mudlog(NRM, LVL_GOD, TRUE, "SYSERR: Multiple logins with 1st in-game and the 2nd in char creation.");
 
-        found = TRUE;
+        /* d->character is now NULL: stop before the next iteration reads its
+         * name. The caller sees STATE(d) == CON_CLOSE. */
+        return TRUE;
       }
     }
   }
@@ -1442,6 +1502,20 @@ static void banner_append(char *buf, size_t size, size_t *len,
     *len += (size_t) written;
 }
 
+/**
+ * Descriptor event: after protocol negotiation, show what the client
+ * reported and the greeting, then move the socket to CON_GET_NAME.
+ *
+ * @pre event_obj is a mud_event_data whose pStruct is the descriptor.
+ *      new_descriptor() calls init_descriptor(), whose ProtocolCreate()
+ *      allocates d->pProtocol, every pVariables[] entry and every string
+ *      value, before it queues this event; close_socket() cancels the
+ *      descriptor's events, so d is live when this runs.
+ * The client ID is client-controlled text: it is only ever passed as a %s
+ * argument. banner_append() bounds the banner to its buffer and reports a
+ * cut ("protocol-banner").
+ * @return 0 (one-shot event).
+ */
 EVENTFUNC(get_protocols)
 {
   struct descriptor_data *d;
@@ -1576,7 +1650,10 @@ void nanny(struct descriptor_data *d, char *arg)
           d->character->desc = d;
           CREATE(d->character->player.name, char, strlen(tmp_name) + 1);
           strlcpy(d->character->player.name, CAP(tmp_name), strlen(tmp_name) + 1);	/* strcpy: OK (size checked above) */
-          GET_PFILEPOS(d->character) = player_i;
+          /* remove_player() dropped the old index entry (and shifted later
+           * ones down), so player_i is stale: -1 makes CON_QCLASS call
+           * create_entry() for the new character. */
+          GET_PFILEPOS(d->character) = -1;
           write_to_output(d, "Did I get that right, %s (\t(Y\t)/\t(N\t))? ", tmp_name);
           STATE(d) = CON_NAME_CNFRM;
         } else {
@@ -1622,6 +1699,10 @@ void nanny(struct descriptor_data *d, char *arg)
 	return;
       }
       perform_new_char_dupe_check(d);
+      /* The dupe check closes this socket (and drops d->character) when the
+       * same name is already in game. */
+      if (STATE(d) == CON_CLOSE || d->character == NULL)
+        return;
       write_to_output(d, "New character.\r\nGive me a password for %s: ", GET_PC_NAME(d->character));
       echo_off(d);
       STATE(d) = CON_NEWPASSWD;

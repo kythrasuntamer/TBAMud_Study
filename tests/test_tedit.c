@@ -1,6 +1,7 @@
 /* Executable tests of the production text editor command (tedit.c): one
- * editor per file, because every editor of a file writes through the same
- * global buffer.
+ * editor per file. Each editor edits a private copy and a save replaces the
+ * whole file and its global, so a second editor's save would silently
+ * discard the first one's work.
  */
 #include "unity.h"
 #include "conf.h"
@@ -12,6 +13,7 @@
 #include "oasis.h"
 #include "modify.h"
 #include "improved-edit.h"
+#include "tb_error_capture.h"
 
 /* Text globals from db.c not already in test_stubs.c; this test only names
  * them. */
@@ -33,6 +35,9 @@ static int writes;
 void string_write(struct descriptor_data *d, char **txt, size_t len, long mailto, void *data)
 { (void)d; (void)txt; (void)len; (void)mailto; free(data); writes++; }
 void clear_screen(struct descriptor_data *d) { (void)d; }
+/* Only do_tedit()'s stale-session recovery calls it; no test opens one. */
+void cleanup_olc(struct descriptor_data *d, byte cleanup_type)
+{ (void)d; (void)cleanup_type; TEST_FAIL_MESSAGE("stale OLC session"); }
 void send_editor_help(struct descriptor_data *d) { (void)d; }
 static char said[256];
 size_t send_to_char(struct char_data *ch, const char *messg, ...)
@@ -51,52 +56,71 @@ char *one_argument(char *argument, char *first_arg)
   return argument + strlen(argument);
 }
 
-static struct char_data imp;
-static struct player_special_data specials;
+static struct char_data imp, other;
+static struct player_special_data specials, other_specials;
 static struct descriptor_data mine, theirs;
-static struct oasis_olc_data their_olc;
+
+static void playing_immortal(struct char_data *ch, struct player_special_data *sp,
+                             struct descriptor_data *d)
+{
+  memset(ch, 0, sizeof(*ch));
+  memset(sp, 0, sizeof(*sp));
+  memset(d, 0, sizeof(*d));
+  ch->player_specials = sp;
+  ch->player.level = LVL_IMPL;
+  ch->desc = d;
+  d->character = ch;
+  STATE(d) = CON_PLAYING;
+}
 
 void setUp(void)
 {
-  memset(&imp, 0, sizeof(imp));
-  memset(&specials, 0, sizeof(specials));
-  memset(&mine, 0, sizeof(mine));
-  memset(&theirs, 0, sizeof(theirs));
-  memset(&their_olc, 0, sizeof(their_olc));
-  imp.player_specials = &specials;
-  imp.player.level = LVL_IMPL;
-  imp.desc = &mine;
-  mine.character = &imp;
-  STATE(&mine) = CON_PLAYING;
-  theirs.olc = &their_olc;
-  their_olc.storage = NEWS_FILE;            /* someone has news open */
-  STATE(&theirs) = CON_TEDIT;
+  playing_immortal(&imp, &specials, &mine);
+  playing_immortal(&other, &other_specials, &theirs);
+  theirs.next = &mine;
   descriptor_list = &theirs;
   writes = 0;
+  said[0] = '\0';
+  tb_error_capture_reset();
+}
+static void release(struct descriptor_data *d)
+{
+  if (d->olc) {
+    free(d->olc->storage);
+    free(d->olc);
+    d->olc = NULL;
+  }
 }
 void tearDown(void)
 {
   descriptor_list = NULL;
-  if (mine.olc) {
-    free(mine.olc->storage);
-    free(mine.olc);
-  }
+  release(&mine);
+  release(&theirs);
 }
 
+/* Someone already has news open (through the production command), so a
+ * second editor of news is refused. */
 static void a_file_being_edited_is_refused(void)
 {
-  char which[] = "news";
-  do_tedit(&imp, which, 0, 0);
-  TEST_ASSERT_EQUAL_INT(0, writes);
+  char news_arg[] = "news", again[] = "news";
+  do_tedit(&other, news_arg, 0, 0);
+  TEST_ASSERT_EQUAL_INT(CON_TEDIT, STATE(&theirs));
+  TEST_ASSERT_EQUAL_INT(1, writes);
+
+  do_tedit(&imp, again, 0, 0);
+  TEST_ASSERT_EQUAL_INT(1, writes);
   TEST_ASSERT_NULL(mine.olc);
+  TEST_ASSERT_EQUAL_INT(CON_PLAYING, STATE(&mine));
   TEST_ASSERT_NOT_NULL(strstr(said, "already editing"));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
 }
 
 static void another_file_can_be_edited(void)
 {
-  char which[] = "motd";
-  do_tedit(&imp, which, 0, 0);
-  TEST_ASSERT_EQUAL_INT(1, writes);
+  char news_arg[] = "news", motd_arg[] = "motd";
+  do_tedit(&other, news_arg, 0, 0);
+  do_tedit(&imp, motd_arg, 0, 0);
+  TEST_ASSERT_EQUAL_INT(2, writes);
   TEST_ASSERT_EQUAL_INT(CON_TEDIT, STATE(&mine));
 }
 

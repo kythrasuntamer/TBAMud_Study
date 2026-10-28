@@ -10,6 +10,7 @@
 #include "db.h"
 #include "oasis.h"
 #include "prefedit.h"
+#include "tb_error_capture.h"
 
 static int cleanups;
 static struct descriptor_data *cleaned;
@@ -31,6 +32,8 @@ void setUp(void)
   memset(&victim, 0, sizeof(victim));
   imp.player.name = "Imp";
   victim.player.name = "Victim";
+  GET_IDNUM(&imp) = 101;
+  GET_IDNUM(&victim) = 202;
   memset(&imp_desc, 0, sizeof(imp_desc));
   memset(&own_desc, 0, sizeof(own_desc));
   imp_desc.olc = &imp_olc;
@@ -40,12 +43,13 @@ void setUp(void)
   imp_desc.character = &imp;
   own_desc.character = &victim;
   STATE(&imp_desc) = STATE(&own_desc) = CON_PREFEDIT;
-  imp_prefs.ch = &victim;               /* the implementor edits Victim */
-  own_prefs.ch = &victim;               /* and Victim edits themself */
+  imp_prefs.idnum = GET_IDNUM(&victim);  /* the implementor edits Victim */
+  own_prefs.idnum = GET_IDNUM(&victim);  /* and Victim edits themself */
   imp_desc.next = &own_desc;
   descriptor_list = &imp_desc;
   cleanups = 0;
   cleaned = NULL;
+  tb_error_capture_reset();
 }
 void tearDown(void) { descriptor_list = NULL; }
 
@@ -71,7 +75,9 @@ void mudlog(int type, int level, int file, const char *str, ...)
 { (void)type; (void)level; (void)file; (void)str; UNREACHED(); }
 struct char_data *get_player_vis(struct char_data *ch, char *name, int *number, int inroom)
 { (void)ch; (void)name; (void)number; (void)inroom; UNREACHED(); return NULL; }
-int room_is_dark(room_rnum room) { (void)room; return 0; }
+int room_is_dark_at(room_rnum room, const char *source_file, int source_line,
+                    const char *source_func)
+{ (void)room; (void)source_file; (void)source_line; (void)source_func; return 0; }
 void *tb_calloc_array_at(size_t count, size_t element_size,
                          const char *file, int line, const char *func)
 {
@@ -129,7 +135,7 @@ static void own_prefs_being_edited_sends_one_message(void)
 
 /* A character without a connection of its own (a forced mob, a switched
  * body) has no descriptor to hang the editor on; the old code
- * dereferenced ch->desc anyway. */
+ * dereferenced ch->desc anyway. The refusal is reported. */
 static void prefedit_without_a_descriptor_does_nothing(void)
 {
   char none[] = "";
@@ -139,6 +145,9 @@ static void prefedit_without_a_descriptor_does_nothing(void)
   do_oasis_prefedit(&victim, none, 0, 0);
   TEST_ASSERT_EQUAL_INT(0, sends);
   TEST_ASSERT_EQUAL_INT(0, cleanups);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("WARNING", tb_captured_severity);
+  TEST_ASSERT_EQUAL_STRING("olc-no-descriptor", tb_captured_operation);
 }
 
 /* Restoring defaults: immortals keep (or gain) nohassle, holylight and
@@ -150,7 +159,10 @@ static void restore_defaults_sets_what_it_documents(void)
   int i;
 
   memset(&imp_prefs, 0, sizeof(imp_prefs));
-  imp_prefs.ch = &victim;
+  /* The editor finds its target by idnum (prefedit_target()). */
+  imp_prefs.idnum = GET_IDNUM(&victim);
+  victim.next = NULL;
+  character_list = &victim;
   victim.player.level = LVL_IMMORT;
   SET_BIT_AR(imp_prefs.pref_flags, PRF_HOLYLIGHT);   /* already on */
 
@@ -167,6 +179,7 @@ static void restore_defaults_sets_what_it_documents(void)
   prefedit_Restore_Defaults(&imp_desc);
   TEST_ASSERT_FALSE(IS_SET_AR(imp_prefs.pref_flags, PRF_HOLYLIGHT));
   victim.player.level = 0;
+  character_list = NULL;
 }
 
 int main(void)

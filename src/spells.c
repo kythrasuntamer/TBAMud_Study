@@ -77,6 +77,7 @@ ASPELL(spell_recall)
 ASPELL(spell_teleport)
 {
   room_rnum to_room;
+  int tries, max_tries = 10 * ((int) top_of_world + 1);
 
   if (victim == NULL || IS_NPC(victim))
     return;
@@ -86,7 +87,19 @@ ASPELL(spell_teleport)
     return;
   }
 
+  /* Random rooms until one is open to teleport. Builders control the room
+   * and zone flags; a world (or test world) with no eligible room must not
+   * spin the game loop forever, so give up after a bounded number of tries
+   * and report it. */
+  tries = 0;
   do {
+    if (++tries > max_tries) {
+      TB_WARN_MSG("magic", "teleport-no-dest", "world",
+                  "no eligible room after %d tries; caster " DIAG_CHAR_FMT,
+                  max_tries, DIAG_CHAR(ch));
+      send_to_char(ch, "You fail.\r\n");
+      return;
+    }
     to_room = rand_number(0, top_of_world);
   } while (ROOM_FLAGGED(to_room, ROOM_PRIVATE) || ROOM_FLAGGED(to_room, ROOM_DEATH) ||
            ROOM_FLAGGED(to_room, ROOM_GODROOM) || ZONE_FLAGGED(GET_ROOM_ZONE(to_room), ZONE_CLOSED) ||
@@ -219,8 +232,20 @@ ASPELL(spell_locate_object)
     return;
   }
 
-  /*  added a global var to catch 2nd arg. */
-  tb_snprintf(name, sizeof(name), "%s", cast_arg2);
+  /* cast_arg2 holds the keyword typed to 'cast'; other cast paths (wands,
+   * scrolls, dg_cast) leave it empty, so search for the target object's own
+   * first keyword instead. An empty keyword would match every object. */
+  if (*cast_arg2)
+    tb_snprintf(name, sizeof(name), "%s", cast_arg2);
+  else
+    tb_snprintf(name, sizeof(name), "%s", obj->name ? fname(obj->name) : "");
+  if (!*name) {
+    TB_WARN_MSG("magic", "locate-no-keyword", "cast_arg2",
+                DIAG_CHAR_FMT " cast locate object with no keyword (target "
+                "obj vnum %d)", DIAG_CHAR(ch), (int) GET_OBJ_VNUM(obj));
+    send_to_char(ch, "You sense nothing.\r\n");
+    return;
+  }
 
   j = GET_LEVEL(ch) / 2;  /* # items to show = twice char's level */
 
@@ -228,7 +253,17 @@ ASPELL(spell_locate_object)
     if (!isname_obj(name, i->name))
       continue;
 
-  send_to_char(ch, "%c%s", UPPER(*i->short_description), i->short_description + 1);
+    /* fread_string() returns NULL for an empty world-file string and
+     * parse_object does not reject it, so a short description may be NULL
+     * or "": never step past its first byte unchecked. */
+    if (!i->short_description || !*i->short_description) {
+      TB_WARN_MSG("magic", "obj-sdesc-empty", "locate",
+                  "obj vnum %d uid %ld has no short description",
+                  (int) GET_OBJ_VNUM(i), obj_script_id(i));
+      send_to_char(ch, "Something");
+    } else
+      send_to_char(ch, "%c%s", UPPER(*i->short_description),
+                   i->short_description + 1);
 
     if (i->carried_by)
       send_to_char(ch, " is being carried by %s.\r\n", PERS(i->carried_by, ch));

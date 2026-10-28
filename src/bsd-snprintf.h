@@ -46,6 +46,22 @@
 #ifndef _BSD_SNPRINTF_H_
 #define _BSD_SNPRINTF_H_
 
+/*
+ * This fallback cannot be used safely and is disabled.  Its snprintf() and
+ * vsnprintf() return the number of characters stored, not the C99
+ * "would-have-written" length, so every `>= sizeof(buf)` truncation check in
+ * the engine and tools could never fire; it lacks the z, j and t length
+ * modifiers (a "%zu" left the size_t unconsumed and shifted every later
+ * argument); with count == 0 it wrote str[0]; and its 'w' case could step
+ * past the format's terminating NUL.  Build on a platform with a C99
+ * snprintf()/vsnprintf() (every supported one has them); a platform without
+ * them fails here, at compile time, instead of mis-handling truncation at
+ * run time.
+ */
+#if !defined(HAVE_SNPRINTF) || !defined(HAVE_VSNPRINTF)
+#error "tbaMUD requires C99 snprintf() and vsnprintf(); the bsd-snprintf fallback does not report truncation and is disabled"
+#endif
+
 #ifndef HAVE_SNPRINTF
 int snprintf(char *str, size_t count, const char *fmt, ...);
 #endif /* !HAVE_SNPRINTF */

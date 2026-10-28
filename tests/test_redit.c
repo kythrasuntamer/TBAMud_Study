@@ -9,6 +9,7 @@
 #include "comm.h"
 #include "db.h"
 #include "oasis.h"
+#include "olc_checks.h"
 
 /* genolc.c is not linked: same contract as its str_udup(). */
 char *str_udup(const char *txt) { return strdup((txt && *txt) ? txt : "undefined"); }
@@ -65,18 +66,28 @@ void assign_triggers(void *i, int type) { (void)i; (void)type; }
 size_t write_to_output(struct descriptor_data *d, const char *txt, ...)
 { (void)d; (void)txt; return 0; }
 
-/* Other builders' buffers follow the shifted room rnums -- room arguments
- * only, never NOWHERE.  The old code bumped a door's direction and
- * wrapped NOWHERE rooms to 0. */
-static void new_room_renumbers_only_room_arguments(void)
+/* zedit.c's olc_renumber_sessions() moves other builders' rnums (its own
+ * cases, door directions and NOWHERE included, are in test_olc_editors.c);
+ * here only the call is recorded. */
+static int renumber_calls, renumber_kind, renumber_refpt, renumber_delta;
+static struct descriptor_data *renumber_skip;
+void olc_renumber_sessions(int kind, int refpt, int delta,
+                           struct descriptor_data *skip)
+{
+  renumber_calls++;
+  renumber_kind = kind;
+  renumber_refpt = refpt;
+  renumber_delta = delta;
+  renumber_skip = skip;
+}
+
+/* Saving a new room moves every other open session's room rnums at or
+ * above the inserted one up by one; the saving session itself is skipped.
+ * The old code renumbered by hand, bumping a door's direction and wrapping
+ * NOWHERE rooms to 0. */
+static void new_room_renumbers_other_sessions(void)
 {
   static struct room_data saved, rooms3[3];
-  static struct descriptor_data zdesc, rdesc;
-  static struct oasis_olc_data zolc, rolc;
-  static struct zone_data zone;
-  static struct reset_com cmds[3];
-  static struct room_data other;
-  static struct room_direction_data exit_nowhere, exit_up;
 
   memset(rooms3, 0, sizeof(rooms3));
   world = rooms3;
@@ -87,50 +98,24 @@ static void new_room_renumbers_only_room_arguments(void)
   desc.olc = &olc;
   olc.room = &saved;
   OLC_NUM(&desc) = 150;
-
-  memset(cmds, 0, sizeof(cmds));
-  cmds[0].command = 'D'; cmds[0].arg1 = 3; cmds[0].arg2 = 2;
-  cmds[1].command = 'O'; cmds[1].arg3 = NOWHERE;
-  cmds[2].command = 'S';
-  memset(&zone, 0, sizeof(zone));
-  zone.cmd = cmds;
-  memset(&zdesc, 0, sizeof(zdesc));
-  memset(&zolc, 0, sizeof(zolc));
-  zdesc.olc = &zolc;
-  zolc.zone = &zone;
-  STATE(&zdesc) = CON_ZEDIT;
-
-  memset(&other, 0, sizeof(other));
-  exit_nowhere.to_room = NOWHERE;
-  exit_up.to_room = 2;
-  other.dir_option[0] = &exit_nowhere;
-  other.dir_option[1] = &exit_up;
-  memset(&rdesc, 0, sizeof(rdesc));
-  memset(&rolc, 0, sizeof(rolc));
-  rdesc.olc = &rolc;
-  rolc.room = &other;
-  STATE(&rdesc) = CON_REDIT;
-
-  zdesc.next = &rdesc;
-  descriptor_list = &zdesc;
+  renumber_calls = 0;
 
   redit_save_internally(&desc);
   /* Detach the static fixtures first so a failed assertion cannot make
    * tearDown free them. */
-  descriptor_list = NULL;
   olc.room = NULL;
 
-  TEST_ASSERT_EQUAL_INT(4, cmds[0].arg1);           /* room moved up */
-  TEST_ASSERT_EQUAL_INT(2, cmds[0].arg2);           /* direction kept */
-  TEST_ASSERT_EQUAL_INT(NOWHERE, cmds[1].arg3);
-  TEST_ASSERT_EQUAL_INT(NOWHERE, exit_nowhere.to_room);
-  TEST_ASSERT_EQUAL_INT(3, exit_up.to_room);
+  TEST_ASSERT_EQUAL_INT(1, renumber_calls);
+  TEST_ASSERT_EQUAL_INT(OLC_RNUM_ROOM, renumber_kind);
+  TEST_ASSERT_EQUAL_INT(2, renumber_refpt);
+  TEST_ASSERT_EQUAL_INT(+1, renumber_delta);
+  TEST_ASSERT_EQUAL_PTR(&desc, renumber_skip);
 }
 
 int main(void)
 {
   UNITY_BEGIN();
   RUN_TEST(edit_buffer_owns_no_objects_or_people);
-  RUN_TEST(new_room_renumbers_only_room_arguments);
+  RUN_TEST(new_room_renumbers_other_sessions);
   return UNITY_END();
 }

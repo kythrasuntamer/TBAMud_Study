@@ -20,14 +20,55 @@
 #include "act.h"
 
 
+/** @file aedit.c
+ * Social (action) editor, one editor at a time.  Builder free text goes
+ * into soc_mess_list and SOCMESS_FILE_NEW.
+ *
+ * Index rules.  top_of_socialt is the LAST index (inclusive; -1 means the
+ * list is empty), unlike help's top_of_helpt.  In this editor OLC_ZNUM is
+ * the row being edited, or a value above top_of_socialt meaning "add".
+ *
+ * Ownership.  OLC_ACTION and its strings belong to the editor until
+ * aedit_save_internally() struct-copies them into soc_mess_list; after that
+ * the list owns the strings and the caller uses CLEANUP_STRUCTS.
+ * aedit_save_internally() then calls create_command_list(), which reorders
+ * soc_mess_list and rebuilds complete_cmd_info with pointers into the
+ * social strings, and sort_commands(): command numbers and soc_mess_list
+ * indices taken before a save are invalid after it.
+ *
+ * File format.  A message line that starts with '#' is read back as "no
+ * message" (fread_action in db.c), so aedit refuses that prefix. */
+
+/** TRUE when r indexes a live soc_mess_list row.  top_of_socialt is the
+ * LAST index (inclusive; -1 when empty), unlike help's exclusive
+ * top_of_helpt.  In aedit, OLC_ZNUM is such a row or, past the end, the
+ * marker for "add a new social".  r is evaluated more than once: pass a
+ * plain variable. */
+#define VALID_SOCIAL_RNUM(r) \
+  ((long)(r) >= 0 && (long)(r) <= (long)top_of_socialt)
+
 /* local utility functions */
 static int aedit_find_command(const char *txt);
 static void aedit_disp_menu(struct descriptor_data * d);
-static void aedit_save_to_disk(struct descriptor_data *d);
+static int aedit_save_to_disk(struct descriptor_data *d);
 /* used in aedit parse */
 static void aedit_setup_new(struct descriptor_data *d);
 static void aedit_setup_existing(struct descriptor_data *d, int real_num);
-static void aedit_save_internally(struct descriptor_data *d);
+static int aedit_save_internally(struct descriptor_data *d);
+
+/* Name of a social's minimum position.  The value comes from the socials
+ * file (not range-checked by boot_social_messages) or from an older aedit
+ * that accepted any number, and do_astat shows it to mortals, so never use
+ * it as an index unchecked.  social is the soc_mess_list row, for the log. */
+static const char *aedit_position_name(int pos, int social)
+{
+  if (pos >= 0 && pos < NUM_POSITIONS)
+    return position_types[pos];
+  TB_WARN_MSG("olc", "social-position-range", "socials",
+              "social rnum %d position %d outside 0..%d",
+              social, pos, NUM_POSITIONS - 1);
+  return "<invalid>";
+}
 
 
 
@@ -70,15 +111,23 @@ ACMD(do_oasis_aedit)
   if (!str_cmp("save", arg)) {
     mudlog(CMP, MAX(LVL_BUILDER, GET_INVIS_LEV(ch)), TRUE, "OLC: %s saves socials.", GET_NAME(ch));
     send_to_char(ch, "Writing social file.\r\n");
-    aedit_save_to_disk(d);
-    send_to_char(ch, "Done.\r\n");
+    if (aedit_save_to_disk(d))
+      send_to_char(ch, "Done.\r\n");
+    else
+      send_to_char(ch, "Writing the social file FAILED; the file on disk is unchanged.\r\n");
     return;
   }
 
   /* Give descriptor an OLC structure. */
+  /* Entry requires CON_PLAYING, where no editor is open, so a leftover
+   * d->olc is an invariant break.  free() alone leaked its substructures
+   * (help, action, quest, prefs, message list, storage); release them all
+   * and report the stale mode. */
   if (d->olc) {
-    mudlog(BRF, LVL_IMMORT, TRUE, "SYSERR: do_oasis: Player already had olc structure.");
-    free(d->olc);
+    TB_ERROR_MSG("olc", "olc-reentry", "aedit",
+                 DIAG_CHAR_FMT " stale mode %d state %d",
+                 DIAG_CHAR(ch), OLC_MODE(d), STATE(d));
+    cleanup_olc(d, CLEANUP_ALL);
   }
   CREATE(d->olc, struct oasis_olc_data, 1);
 
@@ -89,7 +138,7 @@ ACMD(do_oasis_aedit)
     if (is_abbrev(OLC_STORAGE(d), soc_mess_list[OLC_ZNUM(d)].command))
       break;
 
-  if (OLC_ZNUM(d) > top_of_socialt)  {
+  if (!VALID_SOCIAL_RNUM(OLC_ZNUM(d)))  {
     if ((i = aedit_find_command(OLC_STORAGE(d))) != -1)  {
       send_to_char(ch, "The '%s' command already exists (%s).\r\n", OLC_STORAGE(d), complete_cmd_info[i].command);
       cleanup_olc(d, CLEANUP_ALL);
@@ -170,12 +219,16 @@ static void aedit_setup_existing(struct descriptor_data *d, int real_num) {
    aedit_disp_menu(d);
 }
 
-static void aedit_save_internally(struct descriptor_data *d) {
+/* Stores the edit in soc_mess_list (the list takes OLC_ACTION's strings, so
+ * the caller uses CLEANUP_STRUCTS) and writes the socials file.  Returns the
+ * result of aedit_save_to_disk: FALSE means the edit is live in memory but
+ * the file on disk was not replaced. */
+static int aedit_save_internally(struct descriptor_data *d) {
    struct social_messg *new_soc_mess_list = NULL;
    int i;
 
    /* add a new social into the list */
-   if (OLC_ZNUM(d) > top_of_socialt)  {
+   if (!VALID_SOCIAL_RNUM(OLC_ZNUM(d)))  {
       CREATE(new_soc_mess_list, struct social_messg, top_of_socialt + 2);
       for (i = 0; i <= top_of_socialt; i++)
               new_soc_mess_list[i] = soc_mess_list[i];
@@ -197,10 +250,14 @@ static void aedit_save_internally(struct descriptor_data *d) {
    sort_commands();
 
    add_to_save_list(AEDIT_PERMISSION, SL_ACT);
-   aedit_save_to_disk(d); /* autosave by Rumble */
+   return aedit_save_to_disk(d); /* autosave by Rumble */
 }
 
-static void aedit_save_to_disk(struct descriptor_data *d) {
+/* Writes soc_mess_list to SOCMESS_FILE_NEW through a verified temporary
+ * file.  Returns FALSE, having reported the failure with the editor named,
+ * when the file on disk was not replaced; the socials stay on the save
+ * list. */
+static int aedit_save_to_disk(struct descriptor_data *d) {
    FILE *fp;
    int i, name_result;
    char buf[MAX_STRING_LENGTH], temp_file[MAX_STRING_LENGTH];
@@ -208,12 +265,12 @@ static void aedit_save_to_disk(struct descriptor_data *d) {
    name_result = snprintf(temp_file, sizeof(temp_file), "%s.tmp", SOCMESS_FILE_NEW);
    if (name_result < 0 || (size_t)name_result >= sizeof(temp_file)) {
      log("SYSERR: socials temporary filename is too long for %s", SOCMESS_FILE_NEW);
-     return;
+     goto failed;
    }
 
    if (!(fp = fopen(temp_file, "w+")))  {
      TB_REPORT_ERRNO("fopen", temp_file);
-     return;
+     goto failed;
    }
 
    for (i = 0; i <= top_of_socialt; i++)  {
@@ -258,14 +315,22 @@ static void aedit_save_to_disk(struct descriptor_data *d) {
      if (!flush_ok || !close_ok) {
        if (remove(temp_file) != 0 && errno != ENOENT)
          TB_REPORT_ERRNO("remove", temp_file);
-       return;
+       goto failed;
      }
    }
 
    if (!tb_replace_file_checked(temp_file, SOCMESS_FILE_NEW))
-     return;
+     goto failed;
 
    remove_from_save_list(AEDIT_PERMISSION, SL_ACT);
+   return TRUE;
+
+failed:
+   /* The low-level cause (errno, path) was reported above. */
+   TB_ERROR_MSG("olc", "aedit-save", SOCMESS_FILE_NEW,
+                "socials not written; %d socials stay in memory only; editor " DIAG_CHAR_FMT,
+                top_of_socialt + 1, DIAG_CHAR(d->character));
+   return FALSE;
 }
 
 /* The Main Menu. */
@@ -300,9 +365,9 @@ static void aedit_disp_menu(struct descriptor_data * d) {
            grn, nrm,
            yel, action->sort_as, nrm,
            grn, nrm,
-           cyn, position_types[action->min_char_position],
+           cyn, aedit_position_name(action->min_char_position, (int)OLC_ZNUM(d)),
            grn, nrm,
-           cyn, position_types[action->min_victim_position],
+           cyn, aedit_position_name(action->min_victim_position, (int)OLC_ZNUM(d)),
            grn, nrm,
            cyn, action->min_level_char,
            grn, nrm,
@@ -342,18 +407,40 @@ static void aedit_disp_menu(struct descriptor_data * d) {
 void aedit_parse(struct descriptor_data * d, char *arg) {
    int i;
 
+   /* fread_action() (db.c) reads any socials-file message line that starts
+    * with '#' as "no message", which is also how aedit_save_to_disk writes a
+    * NULL field.  A builder message such as "#1 fan smiles" was saved
+    * verbatim and silently vanished at the next boot, so refuse the prefix
+    * here, before the field's old text is freed, and re-prompt. */
+   if (OLC_MODE(d) >= AEDIT_NOVICT_CHAR && OLC_MODE(d) <= AEDIT_OBJ_OTHERS_FOUND &&
+       *arg == '#') {
+      TB_WARN_MSG("olc", "message-reserved-prefix", "socials",
+                  "social '%s' rnum %d mode %d input length %zu editor " DIAG_CHAR_FMT,
+                  OLC_ACTION(d)->command ? OLC_ACTION(d)->command : "(null)",
+                  (int)OLC_ZNUM(d), OLC_MODE(d), strlen(arg), DIAG_CHAR(d->character));
+      write_to_output(d, "A social message may not start with '#' (the socials file "
+                         "reads that as \"no message\").\r\n[NEW]: ");
+      return;
+   }
+
    switch (OLC_MODE(d)) {
     case AEDIT_CONFIRM_SAVESTRING:
       switch (*arg) {
-       case 'y': case 'Y':
-         aedit_save_internally(d);
+       case 'y': case 'Y': {
+         int on_disk = aedit_save_internally(d);
+
          mudlog (CMP, MAX(LVL_GOD, GET_INVIS_LEV(d->character)), TRUE, "OLC: %s edits action %s",
                  GET_NAME(d->character), OLC_ACTION(d)->command);
 
          /* do not free the strings.. just the structure */
          cleanup_olc(d, CLEANUP_STRUCTS);
-         write_to_output(d, "Action saved to disk.\r\n");
+         if (on_disk)
+           write_to_output(d, "Action saved to disk.\r\n");
+         else
+           write_to_output(d, "Action saved to memory, but writing the social file FAILED; "
+                              "the file on disk is unchanged.\r\n");
          break;
+       }
        case 'n': case 'N':
          /* free everything up, including strings etc */
          cleanup_olc(d, CLEANUP_ALL);
@@ -379,7 +466,7 @@ void aedit_parse(struct descriptor_data * d, char *arg) {
            if (is_abbrev(OLC_STORAGE(d), soc_mess_list[OLC_ZNUM(d)].command))
              break;
 
-         if (OLC_ZNUM(d) > top_of_socialt) {
+         if (!VALID_SOCIAL_RNUM(OLC_ZNUM(d))) {
             if (aedit_find_command(OLC_STORAGE(d)) != -1)  {
                cleanup_olc(d, CLEANUP_ALL);
                break;
@@ -568,25 +655,33 @@ void aedit_parse(struct descriptor_data * d, char *arg) {
       return;
 
     case AEDIT_ACTION_NAME:
-      if (!*arg || strchr(arg,' ')) {
+    case AEDIT_SORT_AS:
+      /* An empty line cancels.  Both fields are written as single words on
+       * the socials file's '~command sort_as ...' line, so a space would
+       * corrupt the record; the old code dropped such input back at the
+       * menu without a word. */
+      if (!*arg) {
         aedit_disp_menu(d);
         return;
+      }
+      if (strchr(arg, ' ')) {
+        TB_WARN_MSG("olc", "input-format", "socials",
+                    "social rnum %d field %s input length %zu contains a space; editor " DIAG_CHAR_FMT,
+                    (int)OLC_ZNUM(d),
+                    OLC_MODE(d) == AEDIT_ACTION_NAME ? "command" : "sort_as",
+                    strlen(arg), DIAG_CHAR(d->character));
+        write_to_output(d, "It must be a single word, without spaces.\r\nEnter it again: ");
+        return;
+      }
+      if (OLC_MODE(d) == AEDIT_SORT_AS) {
+        free(OLC_ACTION(d)->sort_as);
+        OLC_ACTION(d)->sort_as = strdup(arg);
+        break;
       }
       if (OLC_ACTION(d)->command)
         free(OLC_ACTION(d)->command);
       OLC_ACTION(d)->command = strdup(arg);
 
-      break;
-
-    case AEDIT_SORT_AS:
-      if (!*arg || strchr(arg,' ')) {
-        aedit_disp_menu(d);
-        return;
-      }
-      if (OLC_ACTION(d)->sort_as) 
-        free(OLC_ACTION(d)->sort_as);
-      OLC_ACTION(d)->sort_as = strdup(arg);
-      
       break;
 
     case AEDIT_MIN_CHAR_POS:
@@ -595,12 +690,17 @@ void aedit_parse(struct descriptor_data * d, char *arg) {
         aedit_disp_menu(d);
         return;
       }
-      i = tb_parse_int_or_zero(arg);
-      /* "&&" here could never be true, so any number was stored and later
-       * indexed position_types[] out of bounds. */
-      if ((i < POS_DEAD) || (i > POS_STANDING))  {
-        write_to_output(d, "Position must be %d to %d.\r\n", POS_DEAD, POS_STANDING);
-        aedit_disp_menu(d);
+      /* The builder's number is stored, saved to the socials file and later
+       * used to index position_types[] (here and in the level-0 astat).
+       * The old test joined the bounds with &&, which no int satisfies, so
+       * every value was accepted.  Re-prompt on anything out of range. */
+      if (!tb_parse_int_checked(arg, &i) || i < POS_DEAD || i > POS_STANDING) {
+        TB_WARN_MSG("olc", "aedit-input-range", "socials",
+                    "social rnum %d field %s input length %zu range %d..%d editor " DIAG_CHAR_FMT,
+                    (int)OLC_ZNUM(d),
+                    OLC_MODE(d) == AEDIT_MIN_CHAR_POS ? "min_char_position" : "min_victim_position",
+                    strlen(arg), POS_DEAD, POS_STANDING, DIAG_CHAR(d->character));
+        write_to_output(d, "Enter a position between %d and %d: ", POS_DEAD, POS_STANDING);
         return;
       }
       if (OLC_MODE(d) == AEDIT_MIN_CHAR_POS)
@@ -614,14 +714,19 @@ void aedit_parse(struct descriptor_data * d, char *arg) {
         aedit_disp_menu(d);
         return;
       }
-      i = tb_parse_int_or_zero(arg);
-      if ((i < 0) && (i > LVL_IMPL))  {
-        aedit_disp_menu(d);
+      /* Same && mistake as the positions: every level was accepted. */
+      if (!tb_parse_int_checked(arg, &i) || i < 0 || i > LVL_IMPL) {
+        TB_WARN_MSG("olc", "aedit-input-range", "socials",
+                    "social rnum %d field min_level_char input length %zu range 0..%d editor " DIAG_CHAR_FMT,
+                    (int)OLC_ZNUM(d), strlen(arg), LVL_IMPL, DIAG_CHAR(d->character));
+        write_to_output(d, "Enter a level between 0 and %d: ", LVL_IMPL);
         return;
       }
       OLC_ACTION(d)->min_level_char = i;
       break;
 
+    /* AEDIT_NOVICT_CHAR .. AEDIT_OBJ_OTHERS_FOUND (the 15 message fields)
+     * first pass the reserved-prefix check above the switch. */
     case AEDIT_NOVICT_CHAR:
       if (OLC_ACTION(d)->char_no_arg)
         free(OLC_ACTION(d)->char_no_arg);
@@ -808,8 +913,8 @@ ACMD(do_astat)
 
     yel, soc_mess_list[i].command, nrm,
     yel, soc_mess_list[i].sort_as, nrm,
-    cyn, position_types[soc_mess_list[i].min_char_position], nrm,
-    cyn, position_types[soc_mess_list[i].min_victim_position], nrm,
+    cyn, aedit_position_name(soc_mess_list[i].min_char_position, i), nrm,
+    cyn, aedit_position_name(soc_mess_list[i].min_victim_position, i), nrm,
     cyn, soc_mess_list[i].min_level_char, nrm,
     cyn, (soc_mess_list[i].hide ? "HIDDEN" : "NOT HIDDEN"), nrm,
     cyn, soc_mess_list[i].char_no_arg ? soc_mess_list[i].char_no_arg : "", nrm,

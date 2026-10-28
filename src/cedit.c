@@ -17,6 +17,26 @@
 #include "oasis.h"
 #include "improved-edit.h"
 #include "modify.h"
+#include "spec_procs.h" /* assign_rooms, dump */
+
+/** @file cedit.c
+ * Game configuration editor (IMPL only; one workspace per descriptor).
+ *
+ * Ownership.  cedit_setup() copies config_info into OLC_CONFIG, strdup()ing
+ * every string (or leaving it NULL); the editor owns those copies and
+ * replaces a field only after freeing the old one.  cedit_save_internally()
+ * copies the values back into config_info with fresh strdup()s and never
+ * takes the editor's strings, so every exit, including a save, must
+ * release OLC_CONFIG through cleanup_olc(d, CLEANUP_CONFIG) -> free_config
+ * (oasis.c; that path must not depend on OLC_ROOM, audit finding F2-12).
+ *
+ * Input.  Every numeric answer goes through CEDIT_PARSE_INT with an
+ * explicit range and is re-prompted, loudly, when it does not fit.
+ *
+ * Persistence.  save_config() writes CONFIG_CONFFILE through a verified
+ * temporary file and returns FALSE on any I/O failure; its IDXTYPE
+ * parameter exists only to match the genolc save-list signature and is
+ * unused.  Callers must report a FALSE result to the builder. */
 
 /* local scope functions, not used externally */
 static void cedit_disp_menu(struct descriptor_data *d);
@@ -28,6 +48,40 @@ static void cedit_disp_operation_options(struct descriptor_data *d);
 static void cedit_disp_autowiz_options(struct descriptor_data *d);
 static void reassign_rooms(void);
 static void cedit_setup(struct descriptor_data *d);
+static int cedit_parse_int_range_at(struct descriptor_data *d, const char *arg,
+                                    long lo, long hi, int *out,
+                                    const char *operation, const char *field,
+                                    const char *file, int line, const char *func);
+
+/** Parse the builder's numeric answer for config field 'field' into *out.
+ * TRUE when arg is a whole number in lo..hi.  Otherwise a WARNING with op
+ * 'operation', the field, the range and the editor is logged at the call
+ * site, the builder is re-prompted with the range, and FALSE is returned:
+ * the caller leaves OLC_MODE unchanged so the next line answers again.
+ * The input is the IMPL builder's free text; junk used to become 0 and
+ * out-of-range values were stored or silently clamped. */
+#define CEDIT_PARSE_INT(d, arg, lo, hi, out, operation, field) \
+  cedit_parse_int_range_at((d), (arg), (lo), (hi), (out), (operation), (field), \
+                           __FILE__, __LINE__, __func__)
+
+static int cedit_parse_int_range_at(struct descriptor_data *d, const char *arg,
+                                    long lo, long hi, int *out,
+                                    const char *operation, const char *field,
+                                    const char *file, int line, const char *func)
+{
+  long value;
+
+  if (tb_parse_long_checked(arg, &value) && value >= lo && value <= hi) {
+    *out = (int)value;
+    return TRUE;
+  }
+  /* Only the length of the input is logged: it is free text. */
+  tb_error_log_at("WARNING", "olc", operation, field, 0, file, line, func,
+                  "input length %zu not a number in %ld..%ld; editor " DIAG_CHAR_FMT,
+                  strlen(arg), lo, hi, DIAG_CHAR(d->character));
+  write_to_output(d, "Enter a number from %ld to %ld : ", lo, hi);
+  return FALSE;
+}
 
 
 ACMD(do_oasis_cedit)
@@ -50,6 +104,16 @@ ACMD(do_oasis_cedit)
   d = ch->desc;
 
   if (!*buf1) {
+    /* Entry requires CON_PLAYING, where no editor is open, so a leftover
+     * d->olc is an invariant break.  free() alone leaked its substructures
+     * (help, action, quest, prefs, message list, storage); release them all
+     * and report the stale mode. */
+    if (d->olc) {
+      TB_ERROR_MSG("olc", "olc-reentry", "cedit",
+                   DIAG_CHAR_FMT " stale mode %d state %d",
+                   DIAG_CHAR(ch), OLC_MODE(d), STATE(d));
+      cleanup_olc(d, CLEANUP_ALL);
+    }
     CREATE(d->olc, struct oasis_olc_data, 1);
     OLC_ZONE(d) = 0;
     cedit_setup(d);
@@ -69,7 +133,12 @@ ACMD(do_oasis_cedit)
   mudlog(CMP, MAX(LVL_BUILDER, GET_INVIS_LEV(ch)), TRUE,
     "OLC: %s saves the game configuration.", GET_NAME(ch));
 
-  cedit_save_to_disk();
+  if (!cedit_save_to_disk()) {
+    TB_ERROR_MSG("olc", "cedit-save", CONFIG_CONFFILE,
+                 "configuration not written by 'cedit save'; editor " DIAG_CHAR_FMT,
+                 DIAG_CHAR(ch));
+    send_to_char(ch, "Saving the game configuration FAILED; the file on disk is unchanged.\r\n");
+  }
 }
 
 static void cedit_setup(struct descriptor_data *d)
@@ -308,10 +377,12 @@ static void cedit_save_internally(struct descriptor_data *d)
   add_to_save_list(NOWHERE, SL_CFG);
 }
 
-void cedit_save_to_disk( void )
+/* Writes the live configuration to CONFIG_CONFFILE.  Returns save_config's
+ * result: FALSE, with the I/O cause already reported, when the file on disk
+ * was not replaced.  Callers must report the failure to the builder. */
+int cedit_save_to_disk( void )
 {
-  /* Just call save_config and get it over with. */
-  save_config( NOWHERE );
+  return save_config( NOWHERE );
 }
 
 int save_config( IDXTYPE nowhere )
@@ -827,6 +898,7 @@ static void cedit_disp_autowiz_options(struct descriptor_data *d)
 void cedit_parse(struct descriptor_data *d, char *arg)
 {
   char *oldtext = NULL;
+  int number = 0;
 
   switch (OLC_MODE(d)) {
     case CEDIT_CONFIRM_SAVESTRING:
@@ -837,9 +909,18 @@ void cedit_parse(struct descriptor_data *d, char *arg)
           mudlog(CMP, MAX(LVL_BUILDER, GET_INVIS_LEV(d->character)), TRUE,
                  "OLC: %s modifies the game configuration.", GET_NAME(d->character));
           cleanup_olc(d, CLEANUP_CONFIG);
-	  if (CONFIG_AUTO_SAVE) {
-	    cedit_save_to_disk();
-	    write_to_output(d, "Game configuration saved to disk.\r\n");
+	  /* OLC autosave (cedit "Operation" menu), not the player crash-save
+	   * toggle CONFIG_AUTO_SAVE that this used to test. */
+	  if (CONFIG_OLC_SAVE) {
+	    if (cedit_save_to_disk())
+	      write_to_output(d, "Game configuration saved to disk.\r\n");
+	    else {
+	      TB_ERROR_MSG("olc", "cedit-save", CONFIG_CONFFILE,
+	                   "configuration applied in memory but not written; editor " DIAG_CHAR_FMT,
+	                   DIAG_CHAR(d->character));
+	      write_to_output(d, "Game configuration saved to memory, but writing the "
+	                         "configuration file FAILED; the file on disk is unchanged.\r\n");
+	    }
 	  } else
             write_to_output(d, "Game configuration saved to memory.\r\n");
           return;
@@ -1344,7 +1425,9 @@ void cedit_parse(struct descriptor_data *d, char *arg)
           "That is an invalid choice!\r\n"
           "Enter the minimum level a player must be to shout, gossip, etc : ");
       } else {
-        OLC_CONFIG(d)->play.level_can_shout = tb_parse_int_or_zero(arg);
+        if (!CEDIT_PARSE_INT(d, arg, 0, LVL_IMPL, &number, "input-range", "level_can_shout"))
+          break;
+        OLC_CONFIG(d)->play.level_can_shout = number;
         cedit_disp_game_play_options(d);
       }
       break;
@@ -1355,7 +1438,9 @@ void cedit_parse(struct descriptor_data *d, char *arg)
           "That is an invalid choice!\r\n"
           "Enter the amount it costs (in move points) to holler : ");
       } else {
-        OLC_CONFIG(d)->play.holler_move_cost = tb_parse_int_or_zero(arg);
+        if (!CEDIT_PARSE_INT(d, arg, 0, INT_MAX, &number, "input-range", "holler_move_cost"))
+          break;
+        OLC_CONFIG(d)->play.holler_move_cost = number;
         cedit_disp_game_play_options(d);
       }
       break;
@@ -1366,21 +1451,29 @@ void cedit_parse(struct descriptor_data *d, char *arg)
           "That is an invalid choice!\r\n"
           "Enter the maximum number of people allowed in a tunnel : ");
       } else {
-        OLC_CONFIG(d)->play.tunnel_size = tb_parse_int_or_zero(arg);
+        if (!CEDIT_PARSE_INT(d, arg, 0, INT_MAX, &number, "input-range", "tunnel_size"))
+          break;
+        OLC_CONFIG(d)->play.tunnel_size = number;
         cedit_disp_game_play_options(d);
       }
       break;
 
     case CEDIT_MAX_EXP_GAIN:
-      if (*arg)
-        OLC_CONFIG(d)->play.max_exp_gain = tb_parse_int_or_zero(arg);
+      if (*arg) {
+        if (!CEDIT_PARSE_INT(d, arg, 0, INT_MAX, &number, "input-range", "max_exp_gain"))
+          break;
+        OLC_CONFIG(d)->play.max_exp_gain = number;
+      }
 
       cedit_disp_game_play_options(d);
       break;
 
     case CEDIT_MAX_EXP_LOSS:
-      if (*arg)
-        OLC_CONFIG(d)->play.max_exp_loss = tb_parse_int_or_zero(arg);
+      if (*arg) {
+        if (!CEDIT_PARSE_INT(d, arg, 0, INT_MAX, &number, "input-range", "max_exp_loss"))
+          break;
+        OLC_CONFIG(d)->play.max_exp_loss = number;
+      }
 
       cedit_disp_game_play_options(d);
       break;
@@ -1391,7 +1484,9 @@ void cedit_parse(struct descriptor_data *d, char *arg)
           "That is an invalid choice!\r\n"
           "Enter the number of tics before NPC corpses decompose : ");
       } else {
-        OLC_CONFIG(d)->play.max_npc_corpse_time = tb_parse_int_or_zero(arg);
+        if (!CEDIT_PARSE_INT(d, arg, 0, INT_MAX, &number, "input-range", "max_npc_corpse_time"))
+          break;
+        OLC_CONFIG(d)->play.max_npc_corpse_time = number;
         cedit_disp_game_play_options(d);
       }
       break;
@@ -1402,7 +1497,9 @@ void cedit_parse(struct descriptor_data *d, char *arg)
           "That is an invalid choice!\r\n"
           "Enter the number of tics before PC corpses decompose : ");
         } else {
-          OLC_CONFIG(d)->play.max_pc_corpse_time = tb_parse_int_or_zero(arg);
+          if (!CEDIT_PARSE_INT(d, arg, 0, INT_MAX, &number, "input-range", "max_pc_corpse_time"))
+            break;
+          OLC_CONFIG(d)->play.max_pc_corpse_time = number;
           cedit_disp_game_play_options(d);
         }
         break;
@@ -1413,7 +1510,9 @@ void cedit_parse(struct descriptor_data *d, char *arg)
           "That is an invalid choice!\r\n"
           "Enter the number of tics before PC's are sent to the void (idle) : ");
       } else {
-        OLC_CONFIG(d)->play.idle_void = tb_parse_int_or_zero(arg);
+        if (!CEDIT_PARSE_INT(d, arg, 0, INT_MAX, &number, "input-range", "idle_void"))
+          break;
+        OLC_CONFIG(d)->play.idle_void = number;
         cedit_disp_game_play_options(d);
       }
       break;
@@ -1424,7 +1523,9 @@ void cedit_parse(struct descriptor_data *d, char *arg)
           "That is an invalid choice!\r\n"
           "Enter the number of tics before PC's are automatically rented and forced to quit : ");
       } else {
-        OLC_CONFIG(d)->play.idle_rent_time = tb_parse_int_or_zero(arg);
+        if (!CEDIT_PARSE_INT(d, arg, 0, INT_MAX, &number, "input-range", "idle_rent_time"))
+          break;
+        OLC_CONFIG(d)->play.idle_rent_time = number;
         cedit_disp_game_play_options(d);
       }
       break;
@@ -1435,7 +1536,9 @@ void cedit_parse(struct descriptor_data *d, char *arg)
           "That is an invalid choice!\r\n"
           "Enter the level a player must be to become immune to IDLE : ");
       } else {
-        OLC_CONFIG(d)->play.idle_max_level = tb_parse_int_or_zero(arg);
+        if (!CEDIT_PARSE_INT(d, arg, 0, LVL_IMPL, &number, "input-range", "idle_max_level"))
+          break;
+        OLC_CONFIG(d)->play.idle_max_level = number;
         cedit_disp_game_play_options(d);
       }
       break;
@@ -1494,7 +1597,9 @@ void cedit_parse(struct descriptor_data *d, char *arg)
           "That is an invalid choice!\r\n"
           "Enter the maximum objects a player can save : ");
         } else {
-          OLC_CONFIG(d)->csd.max_obj_save = tb_parse_int_or_zero(arg);
+          if (!CEDIT_PARSE_INT(d, arg, 0, INT_MAX, &number, "input-range", "max_obj_save"))
+            break;
+          OLC_CONFIG(d)->csd.max_obj_save = number;
           cedit_disp_crash_save_options(d);
         }
         break;
@@ -1505,7 +1610,9 @@ void cedit_parse(struct descriptor_data *d, char *arg)
           "That is an invalid choice!\r\n"
           "Enter the minimum amount it costs to rent : ");
       } else {
-        OLC_CONFIG(d)->csd.min_rent_cost = tb_parse_int_or_zero(arg);
+        if (!CEDIT_PARSE_INT(d, arg, 0, INT_MAX, &number, "input-range", "min_rent_cost"))
+          break;
+        OLC_CONFIG(d)->csd.min_rent_cost = number;
         cedit_disp_crash_save_options(d);
       }
       break;
@@ -1516,18 +1623,24 @@ void cedit_parse(struct descriptor_data *d, char *arg)
           "That is an invalid choice!\r\n"
           "Enter the interval for player's being autosaved : ");
       } else {
-        OLC_CONFIG(d)->csd.autosave_time = tb_parse_int_or_zero(arg);
+        if (!CEDIT_PARSE_INT(d, arg, 0, INT_MAX, &number, "input-range", "autosave_time"))
+          break;
+        OLC_CONFIG(d)->csd.autosave_time = number;
         cedit_disp_crash_save_options(d);
       }
       break;
 
+    /* The two file timeouts are days, multiplied by SECS_PER_REAL_DAY as an
+     * int in objsave.c, so larger values overflow. */
     case CEDIT_CRASH_FILE_TIMEOUT:
       if (!*arg) {
         write_to_output(d,
           "That is an invalid choice!\r\n"
           "Enter the lifetime of crash and idlesave files (days) : ");
       } else {
-        OLC_CONFIG(d)->csd.crash_file_timeout = tb_parse_int_or_zero(arg);
+        if (!CEDIT_PARSE_INT(d, arg, 0, INT_MAX / SECS_PER_REAL_DAY, &number, "input-range", "crash_file_timeout"))
+          break;
+        OLC_CONFIG(d)->csd.crash_file_timeout = number;
         cedit_disp_crash_save_options(d);
       }
       break;
@@ -1538,7 +1651,9 @@ void cedit_parse(struct descriptor_data *d, char *arg)
           "That is an invalid choice!\r\n"
           "Enter the lifetime of rent files (days) : ");
       } else {
-        OLC_CONFIG(d)->csd.rent_file_timeout = tb_parse_int_or_zero(arg);
+        if (!CEDIT_PARSE_INT(d, arg, 0, INT_MAX / SECS_PER_REAL_DAY, &number, "input-range", "rent_file_timeout"))
+          break;
+        OLC_CONFIG(d)->csd.rent_file_timeout = number;
         cedit_disp_crash_save_options(d);
       }
       break;
@@ -1548,12 +1663,17 @@ void cedit_parse(struct descriptor_data *d, char *arg)
         write_to_output(d,
           "That is an invalid choice!\r\n"
           "Enter the room's vnum where mortals should load into : ");
-      } else if (real_room(tb_parse_int_or_zero(arg)) == NOWHERE) {
+      } else if (!CEDIT_PARSE_INT(d, arg, IDXTYPE_MIN, IDXTYPE_MAX - 1, &number,
+                                  "vnum-range", "mortal_start_room")) {
+        /* Re-prompted.  real_room() takes a room_vnum, so an unchecked
+         * int such as 68537 was truncated to 3001 in both the existence
+         * check and the stored value. */
+      } else if (real_room((room_vnum)number) == NOWHERE) {
         write_to_output(d,
           "That room doesn't exist!\r\n"
           "Enter the room's vnum where mortals should load into : ");
       } else {
-        OLC_CONFIG(d)->room_nums.mortal_start_room = tb_parse_int_or_zero(arg);
+        OLC_CONFIG(d)->room_nums.mortal_start_room = (room_vnum)number;
         cedit_disp_room_numbers(d);
       }
       break;
@@ -1563,12 +1683,15 @@ void cedit_parse(struct descriptor_data *d, char *arg)
         write_to_output(d,
           "That is an invalid choice!\r\n"
           "Enter the room's vnum where immortals should load into : ");
-      } else if (real_room(tb_parse_int_or_zero(arg)) == NOWHERE) {
+      } else if (!CEDIT_PARSE_INT(d, arg, IDXTYPE_MIN, IDXTYPE_MAX - 1, &number,
+                                  "vnum-range", "immort_start_room")) {
+        /* Re-prompted by CEDIT_PARSE_INT. */
+      } else if (real_room((room_vnum)number) == NOWHERE) {
         write_to_output(d,
           "That room doesn't exist!\r\n"
           "Enter the room's vnum where immortals should load into : ");
       } else {
-        OLC_CONFIG(d)->room_nums.immort_start_room = tb_parse_int_or_zero(arg);
+        OLC_CONFIG(d)->room_nums.immort_start_room = (room_vnum)number;
         cedit_disp_room_numbers(d);
       }
       break;
@@ -1578,12 +1701,15 @@ void cedit_parse(struct descriptor_data *d, char *arg)
         write_to_output(d,
           "That is an invalid choice!\r\n"
           "Enter the room's vnum where frozen people should load into : ");
-      } else if (real_room(tb_parse_int_or_zero(arg)) == NOWHERE) {
+      } else if (!CEDIT_PARSE_INT(d, arg, IDXTYPE_MIN, IDXTYPE_MAX - 1, &number,
+                                  "vnum-range", "frozen_start_room")) {
+        /* Re-prompted by CEDIT_PARSE_INT. */
+      } else if (real_room((room_vnum)number) == NOWHERE) {
         write_to_output(d,
           "That room doesn't exist!\r\n"
           "Enter the room's vnum where frozen people should load into : ");
       } else {
-        OLC_CONFIG(d)->room_nums.frozen_start_room = tb_parse_int_or_zero(arg);
+        OLC_CONFIG(d)->room_nums.frozen_start_room = (room_vnum)number;
         cedit_disp_room_numbers(d);
       }
       break;
@@ -1593,12 +1719,15 @@ void cedit_parse(struct descriptor_data *d, char *arg)
         write_to_output(d,
           "That is an invalid choice!\r\n"
           "Enter the vnum for donation room #1 : ");
-      } else if (real_room(tb_parse_int_or_zero(arg)) == NOWHERE) {
+      } else if (!CEDIT_PARSE_INT(d, arg, IDXTYPE_MIN, IDXTYPE_MAX - 1, &number,
+                                  "vnum-range", "donation_room_1")) {
+        /* Re-prompted by CEDIT_PARSE_INT. */
+      } else if (real_room((room_vnum)number) == NOWHERE) {
         write_to_output(d,
           "That room doesn't exist!\r\n"
           "Enter the vnum for donation room #1 : ");
       } else {
-        OLC_CONFIG(d)->room_nums.donation_room_1 = tb_parse_int_or_zero(arg);
+        OLC_CONFIG(d)->room_nums.donation_room_1 = (room_vnum)number;
         cedit_disp_room_numbers(d);
       }
       break;
@@ -1608,12 +1737,15 @@ void cedit_parse(struct descriptor_data *d, char *arg)
         write_to_output(d,
           "That is an invalid choice!\r\n"
           "Enter the vnum for donation room #2 : ");
-      } else if (real_room(tb_parse_int_or_zero(arg)) == NOWHERE) {
+      } else if (!CEDIT_PARSE_INT(d, arg, IDXTYPE_MIN, IDXTYPE_MAX - 1, &number,
+                                  "vnum-range", "donation_room_2")) {
+        /* Re-prompted by CEDIT_PARSE_INT. */
+      } else if (real_room((room_vnum)number) == NOWHERE) {
         write_to_output(d,
           "That room doesn't exist!\r\n"
           "Enter the vnum for donation room #2 : ");
       } else {
-        OLC_CONFIG(d)->room_nums.donation_room_2 = tb_parse_int_or_zero(arg);
+        OLC_CONFIG(d)->room_nums.donation_room_2 = (room_vnum)number;
         cedit_disp_room_numbers(d);
       }
       break;
@@ -1623,18 +1755,24 @@ void cedit_parse(struct descriptor_data *d, char *arg)
         write_to_output(d,
           "That is an invalid choice!\r\n"
           "Enter the vnum for donation room #3 : ");
-      } else if (real_room(tb_parse_int_or_zero(arg)) == NOWHERE) {
+      } else if (!CEDIT_PARSE_INT(d, arg, IDXTYPE_MIN, IDXTYPE_MAX - 1, &number,
+                                  "vnum-range", "donation_room_3")) {
+        /* Re-prompted by CEDIT_PARSE_INT. */
+      } else if (real_room((room_vnum)number) == NOWHERE) {
         write_to_output(d,
           "That room doesn't exist!\r\n"
           "Enter the vnum for donation room #3 : ");
       } else {
-        OLC_CONFIG(d)->room_nums.donation_room_3 = tb_parse_int_or_zero(arg);
+        OLC_CONFIG(d)->room_nums.donation_room_3 = (room_vnum)number;
         cedit_disp_room_numbers(d);
       }
       break;
 
     case CEDIT_DFLT_PORT:
-      OLC_CONFIG(d)->operation.DFLT_PORT = tb_parse_int_or_zero(arg);
+      /* DFLT_PORT is a ush_int: wider values were truncated, junk became 0. */
+      if (!CEDIT_PARSE_INT(d, arg, 1, USHRT_MAX, &number, "input-range", "DFLT_PORT"))
+        break;
+      OLC_CONFIG(d)->operation.DFLT_PORT = (ush_int)number;
       cedit_disp_operation_options(d);
       break;
 
@@ -1644,6 +1782,8 @@ void cedit_parse(struct descriptor_data *d, char *arg)
           "That is an invalid choice!\r\n"
           "Enter the default ip address : ");
       } else {
+        /* The setup copy owns the old string; replacing it leaked it. */
+        free(OLC_CONFIG(d)->operation.DFLT_IP);
         OLC_CONFIG(d)->operation.DFLT_IP = str_udup(arg);
         cedit_disp_operation_options(d);
       }
@@ -1655,6 +1795,7 @@ void cedit_parse(struct descriptor_data *d, char *arg)
           "That is an invalid choice!\r\n"
           "Enter the default directory : ");
       } else {
+        free(OLC_CONFIG(d)->operation.DFLT_DIR);
         OLC_CONFIG(d)->operation.DFLT_DIR = str_udup(arg);
         cedit_disp_operation_options(d);
       }
@@ -1666,38 +1807,43 @@ void cedit_parse(struct descriptor_data *d, char *arg)
           "That is an invalid choice!\r\n"
           "Enter the name of the logfile : ");
       } else {
+        free(OLC_CONFIG(d)->operation.LOGNAME);
         OLC_CONFIG(d)->operation.LOGNAME = str_udup(arg);
         cedit_disp_operation_options(d);
       }
       break;
 
     case CEDIT_MAX_PLAYING:
-      OLC_CONFIG(d)->operation.max_playing = tb_parse_int_or_zero(arg);
+      if (!CEDIT_PARSE_INT(d, arg, 1, 65535, &number, "input-range", "max_playing"))
+        break;
+      OLC_CONFIG(d)->operation.max_playing = number;
       cedit_disp_operation_options(d);
       break;
 
     case CEDIT_MAX_FILESIZE:
-      OLC_CONFIG(d)->operation.max_filesize = tb_parse_int_or_zero(arg);
+      if (!CEDIT_PARSE_INT(d, arg, 0, INT_MAX, &number, "input-range", "max_filesize"))
+        break;
+      OLC_CONFIG(d)->operation.max_filesize = number;
       cedit_disp_operation_options(d);
       break;
 
     case CEDIT_MAX_BAD_PWS:
-      OLC_CONFIG(d)->operation.max_bad_pws = tb_parse_int_or_zero(arg);
+      if (!CEDIT_PARSE_INT(d, arg, 0, INT_MAX, &number, "input-range", "max_bad_pws"))
+        break;
+      OLC_CONFIG(d)->operation.max_bad_pws = number;
       cedit_disp_operation_options(d);
       break;
 
     case CEDIT_DEBUG_MODE:
-      OLC_CONFIG(d)->operation.debug_mode = LIMIT(tb_parse_int_or_zero(arg), 0, 3);
+      if (!CEDIT_PARSE_INT(d, arg, 0, 3, &number, "input-range", "debug_mode"))
+        break;
+      OLC_CONFIG(d)->operation.debug_mode = number;
       cedit_disp_operation_options(d);
       break;
 
     case CEDIT_MIN_WIZLIST_LEV:
-      if (tb_parse_int_or_zero(arg) > LVL_IMPL) {
-        write_to_output(d,
-          "The minimum wizlist level can't be greater than %d.\r\n"
-          "Enter the minimum level for players to appear on the wizlist : ", LVL_IMPL);
-      } else {
-        OLC_CONFIG(d)->autowiz.min_wizlist_lev = tb_parse_int_or_zero(arg);
+      if (CEDIT_PARSE_INT(d, arg, 0, LVL_IMPL, &number, "input-range", "min_wizlist_lev")) {
+        OLC_CONFIG(d)->autowiz.min_wizlist_lev = number;
         cedit_disp_autowiz_options(d);
       }
       break;
@@ -1707,9 +1853,9 @@ void cedit_parse(struct descriptor_data *d, char *arg)
         write_to_output(d,
           "That is an invalid choice!\r\n"
           "Select 1, 2 or 3 (0 to cancel) :");
-      } else {
-        if ((tb_parse_int_or_zero(arg) >= 1) && (tb_parse_int_or_zero(arg) <= 3))
-          OLC_CONFIG(d)->play.map_option = (tb_parse_int_or_zero(arg) - 1);
+      } else if (CEDIT_PARSE_INT(d, arg, 0, 3, &number, "input-range", "map_option")) {
+        if (number >= 1)        /* 0 cancels */
+          OLC_CONFIG(d)->play.map_option = number - 1;
         cedit_disp_game_play_options(d);
       }
       break;
@@ -1720,7 +1866,9 @@ void cedit_parse(struct descriptor_data *d, char *arg)
         OLC_CONFIG(d)->play.map_size = 6;
         cedit_disp_game_play_options(d);
       } else {
-        OLC_CONFIG(d)->play.map_size = MIN(MAX((tb_parse_int_or_zero(arg)), 1), 12);
+        if (!CEDIT_PARSE_INT(d, arg, 1, 12, &number, "input-range", "map_size"))
+          break;
+        OLC_CONFIG(d)->play.map_size = number;
         cedit_disp_game_play_options(d);
       }
       break;
@@ -1731,31 +1879,33 @@ void cedit_parse(struct descriptor_data *d, char *arg)
         OLC_CONFIG(d)->play.minimap_size = 2;
         cedit_disp_game_play_options(d);
       } else {
-        OLC_CONFIG(d)->play.minimap_size = MIN(MAX((tb_parse_int_or_zero(arg)), 1), 12);
+        if (!CEDIT_PARSE_INT(d, arg, 1, 12, &number, "input-range", "minimap_size"))
+          break;
+        OLC_CONFIG(d)->play.minimap_size = number;
         cedit_disp_game_play_options(d);
       }
       break;
 
     case CEDIT_PK_SETTING:
-      if (!*arg || (tb_parse_int_or_zero(arg) < 0) || (tb_parse_int_or_zero(arg) > 3) ) {
+      if (!*arg) {
         write_to_output(d,
           "That is an invalid choice!\r\n"
           "Select 1, 2 or 3 (0 to cancel) :");
-      } else {
-        if ((tb_parse_int_or_zero(arg) >= 1) && (tb_parse_int_or_zero(arg) <= 3))
-          OLC_CONFIG(d)->play.pk_setting = (tb_parse_int_or_zero(arg) - 1);
+      } else if (CEDIT_PARSE_INT(d, arg, 0, 3, &number, "input-range", "pk_setting")) {
+        if (number >= 1)        /* 0 cancels */
+          OLC_CONFIG(d)->play.pk_setting = number - 1;
         cedit_disp_game_play_options(d);
       }
       break;
 
     case CEDIT_PT_SETTING:
-      if (!*arg || (tb_parse_int_or_zero(arg) < 0) || (tb_parse_int_or_zero(arg) > 3) ) {
+      if (!*arg) {
         write_to_output(d,
           "That is an invalid choice!\r\n"
           "Select 1, 2 or 3 (0 to cancel) :");
-      } else {
-        if ((tb_parse_int_or_zero(arg) >= 1) && (tb_parse_int_or_zero(arg) <= 3))
-          OLC_CONFIG(d)->play.pt_setting = (tb_parse_int_or_zero(arg) - 1);
+      } else if (CEDIT_PARSE_INT(d, arg, 0, 3, &number, "input-range", "pt_setting")) {
+        if (number >= 1)        /* 0 cancels */
+          OLC_CONFIG(d)->play.pt_setting = number - 1;
         cedit_disp_game_play_options(d);
       }
       break;
@@ -1768,14 +1918,18 @@ void cedit_parse(struct descriptor_data *d, char *arg)
   }
 }  /* End of parse_cedit() */
 
+/* Called when dts_are_dumps changes.  top_of_world is the LAST room rnum
+ * (inclusive), so the old '< top_of_world' left the last room's dump in
+ * place.  Only the dump procs that assign_rooms() hands out for this
+ * option are removed; any other room spec proc is left alone, and
+ * assign_rooms() then re-adds dumps if the option is now on. */
 static void reassign_rooms(void)
 {
-  void assign_rooms(void);
-  int i;
+  room_rnum i;
 
-  /* remove old funcs */
-  for (i = 0; i < top_of_world; i++)
-    world[i].func = NULL;
+  for (i = 0; i <= top_of_world; i++)
+    if (world[i].func == dump)
+      world[i].func = NULL;
 
   /* reassign spec_procs */
   assign_rooms();

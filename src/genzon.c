@@ -5,6 +5,27 @@
 *  Copyright 1996 by Harvey Gilpin, 1997-2001 by George Greer.            *
 **************************************************************************/
 
+/**
+ * @file genzon.c
+ * Zone table maintenance for OLC: zone lookup by vnum, zedit new (stub
+ * files and world index updates), the zone file writer, and the reset
+ * command list helpers used by zedit and the prototype renumberers.
+ *
+ * Input: zone numbers and ranges come from an implementor (zedit new is
+ * LVL_IMPL); reset commands come from builders through zedit.  The world
+ * index files are admin-edited and parsed defensively.
+ *
+ * Invariants: zone_table is sorted by number and by room range, ranges do
+ * not overlap, and top_of_zone_table >= 0 once the world is loaded.  A zone
+ * command list is always terminated by an 'S' command.  Stored command
+ * arguments are rnums; they are converted back to vnums only when saving,
+ * and a stale rnum aborts the save rather than being indexed.
+ *
+ * Ownership: struct reset_com is copied by value between lists, so the
+ * sarg1/sarg2 strings of a 'V' command are shared between zedit's working
+ * copy and zone_table (see remove_cmd_from_list()).
+ */
+
 #include "conf.h"
 #include "sysdep.h"
 #include "structs.h"
@@ -15,7 +36,7 @@
 #include "dg_scripts.h"
 
 /* local functions */
-static void remove_cmd_from_list(struct reset_com **list, int pos);
+static int remove_cmd_from_list(struct reset_com **list, int pos, zone_vnum znum);
 
 /* Only the temporary index is removed on failure; preserve the live index. */
 static void cleanup_new_zone_index(const char *path)
@@ -42,7 +63,17 @@ static int parse_zone_index_number(const char *text, int *number)
   return 1;
 }
 
-/* real zone of room/mobile/object/shop given */
+/**
+ * Find the zone whose room range contains vznum (a room, mobile, object,
+ * shop, quest or trigger vnum: they share the zone's range).
+ *
+ * Binary search: zone_table must be sorted with non-overlapping ranges and
+ * top_of_zone_table >= 0.
+ *
+ * @return The zone rnum, or NOWHERE when vznum falls in no zone (a gap
+ *         between zones counts).  Callers must check before indexing
+ *         zone_table.
+ */
 zone_rnum real_zone_by_thing(room_vnum vznum)
 {
   zone_rnum bot, top, mid;
@@ -72,9 +103,55 @@ zone_rnum real_zone_by_thing(room_vnum vznum)
   return (NOWHERE);
 }
 
+/* Create one file of a brand-new zone and write its stub contents.  "x"
+ * makes the open fail if the file exists: a file already on disk belongs to
+ * some zone (perhaps one that is not loaded), and zedit new must never
+ * truncate it.  A failed write or close removes the partial file.  Returns
+ * TRUE when the complete file is on disk; FALSE, reported, otherwise. */
+static int write_new_zone_file(const char *path, zone_vnum vzone_num,
+                               const char *contents)
+{
+  FILE *fp = fopen(path, "wx");
+  int ok;
+
+  if (fp == NULL) {
+    if (errno == EEXIST)
+      TB_ERROR_ERRNO("olc", "zone-create-exists", path,
+                     "zone %d: file already exists; not overwritten", vzone_num);
+    else
+      TB_ERROR_ERRNO("olc", "zone-create-file", path,
+                     "zone %d: cannot create file", vzone_num);
+    return FALSE;
+  }
+  ok = tb_fprintf_checked(fp, path, "%s", contents);
+  if (!tb_fclose_checked(fp, path))
+    ok = FALSE;
+  if (!ok) {
+    TB_ERROR_MSG("olc", "zone-create-file", path,
+                 "zone %d: stub file not written completely; removed", vzone_num);
+    if (remove(path) != 0 && errno != ENOENT)
+      TB_REPORT_ERRNO("remove", path);
+  }
+  return ok;
+}
+
+/**
+ * zedit new: create zone vzone_num covering rooms bottom..top.
+ *
+ * Refuses a number already loaded or a range overlapping a loaded zone.
+ * Writes the seven stub files (.zon .wld .mob .obj .shp .qst .trg) with
+ * exclusive create, so an existing file is never truncated; if one fails,
+ * the files already written by this call are removed.  Then adds the zone
+ * to each world index (failures are reported; the zone still exists in
+ * memory but will not fully load at the next boot) and inserts it into
+ * zone_table in number order, shifting later zones and renumbering their
+ * rooms' zone field.
+ *
+ * @param error Set to a builder-facing message on failure.
+ * @return The new zone's rnum, or NOWHERE with *error set (reported).
+ */
 zone_rnum create_new_zone(zone_vnum vzone_num, room_vnum bottom, room_vnum top, const char **error)
 {
-  FILE *fp;
   struct zone_data *zone;
   int i, max_zone;
   zone_rnum rznum;
@@ -107,90 +184,94 @@ zone_rnum create_new_zone(zone_vnum vzone_num, room_vnum bottom, room_vnum top, 
     return NOWHERE;
   }
 
-  for (i = 0; i < top_of_zone_table; i++)
+  /* Check every loaded zone, the last one included.  zone_table must stay
+   * free of duplicate numbers and overlapping vnum ranges: real_zone_by_thing()
+   * binary-searches the ranges, and the files below are named by number. */
+  for (i = 0; i <= top_of_zone_table; i++) {
     if (zone_table[i].number == vzone_num) {
+      TB_WARN_MSG("olc", "zone-create-duplicate", "zone",
+                  "zone %d already loaded at rnum %d; not created", vzone_num, i);
       *error = "That virtual zone already exists.\r\n";
       return NOWHERE;
-     }
-
-  /* Create the zone file. */
-  tb_snprintf(buf, sizeof(buf), "%s/%d.zon", ZON_PREFIX, vzone_num);
-  if (!(fp = fopen(buf, "w"))) {
-    mudlog(BRF, LVL_IMPL, TRUE, "SYSERR: OLC: Can't write new zone file.");
-    *error = "Could not write zone file.\r\n";
-    return NOWHERE;
+    }
+    if (bottom <= zone_table[i].top && top >= genolc_zone_bottom(i)) {
+      TB_WARN_MSG("olc", "zone-create-overlap", "zone",
+                  "zone %d range %d-%d overlaps zone %d (%d-%d); not created",
+                  vzone_num, bottom, top, zone_table[i].number,
+                  genolc_zone_bottom(i), zone_table[i].top);
+      *error = "That room range overlaps an existing zone.\r\n";
+      return NOWHERE;
+    }
   }
-  tb_fprintf(fp, "#%d\nNone~\nNew Zone~\n%d %d 30 2\nS\n$\n", vzone_num, bottom, top);
-  tb_fclose(fp);
 
-  /* Create the room file. */
-  tb_snprintf(buf, sizeof(buf), "%s/%d.wld", WLD_PREFIX, vzone_num);
-  if (!(fp = fopen(buf, "w"))) {
-    mudlog(BRF, LVL_IMPL, TRUE, "SYSERR: OLC: Can't write new world file.");
-    *error = "Could not write world file.\r\n";
-    return NOWHERE;
+  /* Create the seven stub files.  If one fails, the ones this call already
+   * created are removed again, so a retry is not refused with
+   * zone-create-exists for files of a zone that was never made. */
+  {
+    static const struct {
+      const char *prefix, *ext, *builder_error;
+    } files[] = {
+      { ZON_PREFIX, "zon", "Could not write zone file.\r\n" },
+      { WLD_PREFIX, "wld", "Could not write world file.\r\n" },
+      { MOB_PREFIX, "mob", "Could not write mobile file.\r\n" },
+      { OBJ_PREFIX, "obj", "Could not write object file.\r\n" },
+      { SHP_PREFIX, "shp", "Could not write shop file.\r\n" },
+      { QST_PREFIX, "qst", "Could not write quest file.\r\n" },
+      { TRG_PREFIX, "trg", "Could not write trigger file.\r\n" },
+    };
+    const int nfiles = (int)(sizeof(files) / sizeof(files[0]));
+    char contents[MAX_INPUT_LENGTH];
+    int f, k;
+
+    for (f = 0; f < nfiles; f++) {
+      if (!strcmp(files[f].ext, "zon"))
+        tb_snprintf(contents, sizeof(contents),
+                    "#%d\nNone~\nNew Zone~\n%d %d 30 2\nS\n$\n", vzone_num, bottom, top);
+      else if (!strcmp(files[f].ext, "wld"))
+        tb_snprintf(contents, sizeof(contents),
+                    "#%d\nThe Beginning~\nNot much here.\n~\n%d 0 0\nS\n$\n", bottom, vzone_num);
+      else if (!strcmp(files[f].ext, "mob") || !strcmp(files[f].ext, "obj"))
+        tb_snprintf(contents, sizeof(contents), "$\n");
+      else
+        tb_snprintf(contents, sizeof(contents), "$~\n");
+
+      tb_snprintf(buf, sizeof(buf), "%s/%d.%s", files[f].prefix, vzone_num, files[f].ext);
+      if (write_new_zone_file(buf, vzone_num, contents))
+        continue;
+
+      mudlog(BRF, LVL_IMPL, TRUE, "SYSERR: OLC: zone %d: can't write new %s file %s.",
+             vzone_num, files[f].ext, buf);
+      *error = files[f].builder_error;
+      for (k = 0; k < f; k++) {
+        tb_snprintf(buf, sizeof(buf), "%s/%d.%s", files[k].prefix, vzone_num, files[k].ext);
+        if (remove(buf) != 0 && errno != ENOENT)
+          TB_ERROR_ERRNO("olc", "zone-create-rollback", buf,
+                         "zone %d: cannot remove partly created zone file", vzone_num);
+      }
+      return NOWHERE;
+    }
   }
-  tb_fprintf(fp, "#%d\nThe Beginning~\nNot much here.\n~\n%d 0 0\nS\n$\n", bottom, vzone_num);
-  tb_fclose(fp);
 
-  /* Create the mobile file. */
-  tb_snprintf(buf, sizeof(buf), "%s/%d.mob", MOB_PREFIX, vzone_num);
-  if (!(fp = fopen(buf, "w"))) {
-    mudlog(BRF, LVL_IMPL, TRUE, "SYSERR: OLC: Can't write new mob file.");
-    *error = "Could not write mobile file.\r\n";
-    return NOWHERE;
+  /* Update index files.  The zone files exist by now, so the zone is still
+   * created in memory if an index update fails; each failure was reported
+   * by create_world_index(), and the implementor is told the zone will not
+   * load at the next boot until the index is fixed. */
+  {
+    static const char *const index_types[] = { "qst", "zon", "wld", "mob", "obj", "shp", "trg" };
+    int failed = 0;
+
+    for (i = 0; i < (int)(sizeof(index_types) / sizeof(index_types[0])); i++)
+      if (!create_world_index(vzone_num, index_types[i]))
+        failed++;
+    if (failed) {
+      TB_ERROR_MSG("olc", "zone-create-index", "zone",
+                   "zone %d: %d of 7 world index updates failed; the zone "
+                   "will not fully load at the next boot", vzone_num, failed);
+      mudlog(BRF, LVL_IMPL, TRUE,
+             "SYSERR: OLC: zone %d created, but %d world index update(s) failed.",
+             vzone_num, failed);
+    }
   }
-  tb_fprintf(fp, "$\n");
-  tb_fclose(fp);
-
-  /* Create the object file. */
-  tb_snprintf(buf, sizeof(buf), "%s/%d.obj", OBJ_PREFIX, vzone_num);
-  if (!(fp = fopen(buf, "w"))) {
-    mudlog(BRF, LVL_IMPL, TRUE, "SYSERR: OLC: Can't write new obj file.");
-    *error = "Could not write object file.\r\n";
-    return NOWHERE;
-  }
-  tb_fprintf(fp, "$\n");
-  tb_fclose(fp);
-
-  /* Create the shop file. */
-  tb_snprintf(buf, sizeof(buf), "%s/%d.shp", SHP_PREFIX, vzone_num);
-  if (!(fp = fopen(buf, "w"))) {
-    mudlog(BRF, LVL_IMPL, TRUE, "SYSERR: OLC: Can't write new shop file.");
-    *error = "Could not write shop file.\r\n";
-    return NOWHERE;
-  }
-  tb_fprintf(fp, "$~\n");
-  tb_fclose(fp);
-
-  /* Create the quests file */
-  tb_snprintf(buf, sizeof(buf), "%s/%d.qst", QST_PREFIX, vzone_num);
-  if (!(fp = fopen(buf, "w"))) {
-    mudlog(BRF, LVL_IMPL, TRUE, "SYSERR: OLC: Can't write new quest file");
-    *error = "Could not write quest file.\r\n";
-    return NOWHERE;
-  }
-  tb_fprintf(fp, "$~\n");
-  tb_fclose(fp);
-
-  /* Create the trigger file. */
-  tb_snprintf(buf, sizeof(buf), "%s/%d.trg", TRG_PREFIX, vzone_num);
-  if (!(fp = fopen(buf, "w"))) {
-    mudlog(BRF, LVL_IMPL, TRUE, "SYSERR: OLC: Can't write new trigger file");
-    *error = "Could not write trigger file.\r\n";
-    return NOWHERE;
-  }
-  tb_fprintf(fp, "$~\n");
-  tb_fclose(fp);
-
-  /* Update index files. */
-  create_world_index(vzone_num, "qst");
-  create_world_index(vzone_num, "zon");
-  create_world_index(vzone_num, "wld");
-  create_world_index(vzone_num, "mob");
-  create_world_index(vzone_num, "obj");
-  create_world_index(vzone_num, "shp");
-  create_world_index(vzone_num, "trg");
 
   /* Make a new zone in memory. This was the source of all the zedit new
    * crashes. It was happily overwriting the stack.  This new loop by Andrew
@@ -240,11 +321,25 @@ rznum = i;
   return rznum;
 }
 
-void create_world_index(int znum, const char *type)
+/**
+ * Add "<znum>.<type>" to the world index file for type.
+ *
+ * Index format: one "<number>.<ext>" entry per line, sorted by number, and
+ * a terminating "$" line.  The new entry is inserted before the first
+ * larger number (or before "$"), the result written to a temporary file and
+ * committed by rename only when complete.  An unparsable entry, a missing
+ * "$" terminator, an unknown type or an I/O error leaves the index
+ * unchanged.  An entry already present is a no-op.
+ *
+ * @param znum Zone number from zedit new.
+ * @param type One of "zon", "wld", "mob", "obj", "shp", "qst", "trg".
+ * @return TRUE when the index holds the entry; FALSE, reported, otherwise.
+ */
+int create_world_index(int znum, const char *type)
 {
   FILE *newfile, *oldfile;
   char new_name[32], old_name[32], *prefix;
-  int num, found = FALSE;
+  int num, found = FALSE, terminated = FALSE;
   char buf[MAX_STRING_LENGTH];
   char buf1[MAX_STRING_LENGTH];
 
@@ -272,19 +367,25 @@ void create_world_index(int znum, const char *type)
     break;
   default:
     /* Caller messed up. */
-    return;
+    TB_ERROR_MSG("olc", "world-index-type", type,
+                 "zone %d: unknown index type; no index updated", znum);
+    return FALSE;
   }
 
   tb_snprintf(old_name, sizeof(old_name), "%s/index", prefix);
   tb_snprintf(new_name, sizeof(new_name), "%s/newindex", prefix);
 
   if (!(oldfile = fopen(old_name, "r"))) {
+    TB_ERROR_ERRNO("olc", "world-index-open", old_name,
+                   "zone %d type %s: index not updated", znum, type);
     mudlog(BRF, LVL_IMPL, TRUE, "SYSERR: OLC: Failed to open %s.", old_name);
-    return;
+    return FALSE;
   } else if (!(newfile = fopen(new_name, "w"))) {
+    TB_ERROR_ERRNO("olc", "world-index-open", new_name,
+                   "zone %d type %s: index not updated", znum, type);
     mudlog(BRF, LVL_IMPL, TRUE, "SYSERR: OLC: Failed to open %s.", new_name);
     tb_fclose(oldfile);
-    return;
+    return FALSE;
   }
 
   /* Index contents must be in order: search through the old file for the right
@@ -294,6 +395,7 @@ void create_world_index(int znum, const char *type)
     if (*buf == '$') {
       /* The following used to add a blank line, thanks to Brian Taylor for the fix. */
       tb_fprintf(newfile, "%s", (!found ? strncat(buf1, "\n$\n", sizeof(buf1) - strlen(buf1) - 1) : "$\n"));
+      terminated = TRUE;
       break;
     } else if (!found) {
       if (!parse_zone_index_number(buf, &num)) {
@@ -301,20 +403,32 @@ void create_world_index(int znum, const char *type)
         tb_fclose(oldfile);
         tb_fclose(newfile);
         cleanup_new_zone_index(new_name);
-        return;
+        return FALSE;
       }
       if (num > znum) {
 	found = TRUE;
 	tb_fprintf(newfile, "%s\n", buf1);
       } else if (num == znum) {
-        /* index file already had an entry for this zone. */
+        /* index file already had an entry for this zone: nothing to do. */
         tb_fclose(oldfile);
         tb_fclose(newfile);
         cleanup_new_zone_index(new_name);
-        return;
+        return TRUE;
       }
     }
     tb_fprintf(newfile, "%s\n", buf);
+  }
+
+  /* The boot loader stops at '$'.  Without one the new entry was never
+   * written (it is only emitted at the terminator or before a larger
+   * number), so committing would report success for an unchanged index. */
+  if (!terminated) {
+    TB_ERROR_MSG("olc", "world-index-unterminated", old_name,
+                 "zone %d type %s: no '$' terminator; index unchanged", znum, type);
+    tb_fclose(newfile);
+    tb_fclose(oldfile);
+    cleanup_new_zone_index(new_name);
+    return FALSE;
   }
 
   /* Verify both streams before replacing the last good index. */
@@ -323,24 +437,27 @@ void create_world_index(int znum, const char *type)
     tb_fclose(newfile);
     tb_fclose(oldfile);
     cleanup_new_zone_index(new_name);
-    return;
+    return FALSE;
   }
 
   if (fclose(newfile) == EOF) {
     TB_REPORT_ERRNO("world-index-close", new_name);
     tb_fclose(oldfile);
     cleanup_new_zone_index(new_name);
-    return;
+    return FALSE;
   }
   if (fclose(oldfile) == EOF) {
     TB_REPORT_ERRNO("world-index-close", old_name);
     cleanup_new_zone_index(new_name);
-    return;
+    return FALSE;
   }
 
   /* Never unlink the destination before a successful replacement. */
-  if (!tb_replace_file_checked(new_name, old_name))
+  if (!tb_replace_file_checked(new_name, old_name)) {
     TB_REPORT_ERROR("world-index-commit", old_name);
+    return FALSE;
+  }
+  return TRUE;
 }
 
 void remove_room_zone_commands(zone_rnum zone, room_rnum room_num)
@@ -364,9 +481,21 @@ void remove_room_zone_commands(zone_rnum zone, room_rnum room_num)
     default:
       break;
     }
-    if (cmd_room == room_num)
-      remove_cmd_from_list(&zone_table[zone].cmd, subcmd);
-    else
+    if (cmd_room == room_num) {
+      /* zone_table owns its 'V' strings (zedit_setup gives sessions deep
+       * copies); remove_cmd_from_list() only drops the struct, so free them
+       * once it has. A failed removal is already reported and keeps the
+       * command (and its strings); step past it so the scan terminates. */
+      char *sarg1 = zone_table[zone].cmd[subcmd].sarg1;
+      char *sarg2 = zone_table[zone].cmd[subcmd].sarg2;
+
+      if (remove_cmd_from_list(&zone_table[zone].cmd, subcmd,
+                               zone_table[zone].number)) {
+        free(sarg1);
+        free(sarg2);
+      } else
+        subcmd++;
+    } else
       subcmd++;
   }
 }
@@ -383,17 +512,15 @@ int save_zone(zone_rnum zone_num)
   char zbuf1[MAX_STRING_LENGTH], zbuf2[MAX_STRING_LENGTH];
   char zbuf3[MAX_STRING_LENGTH], zbuf4[MAX_STRING_LENGTH];
 
-#if CIRCLE_UNSIGNED_INDEX
-  if (zone_num == NOWHERE || zone_num > top_of_zone_table) {
-#else
-  if (zone_num < 0 || zone_num > top_of_zone_table) {
-#endif
+  if (!VALID_ZONE_RNUM(zone_num)) {
     log("SYSERR: GenOLC: save_zone: Invalid real zone number %d. (0-%d)", zone_num, top_of_zone_table);
     return FALSE;
   }
 
   tb_snprintf(fname, sizeof(fname), "%s/%d.new", ZON_PREFIX, zone_table[zone_num].number);
   if (!(zfile = fopen(fname, "w"))) {
+    TB_ERROR_ERRNO("olc", "zone-save-open", fname, "zone %d not saved",
+                   zone_table[zone_num].number);
     mudlog(BRF, LVL_BUILDER, TRUE, "SYSERR: OLC: save_zones:  Can't write zone %d.", zone_table[zone_num].number);
     return FALSE;
   }
@@ -461,75 +588,125 @@ int save_zone(zone_rnum zone_num)
 	 * ------------------------------------------------- */
 
   for (subcmd = 0; ZCMD(zone_num, subcmd).command != 'S'; subcmd++) {
-    switch (ZCMD(zone_num, subcmd).command) {
+    const struct reset_com *zc = &ZCMD(zone_num, subcmd);
+
+    /* Every stored rnum is checked against its table before it is turned
+     * back into a vnum.  A stale one (from a renumbering bug) would read
+     * past the table and write another thing's vnum, so the whole save is
+     * abandoned instead and the previous .zon stays in place. */
+#define ZSAVE_CHECK(argno, val, top) do { \
+      if ((val) < 0 || (val) > (int)(top)) { \
+        TB_ERROR_MSG("olc", "zone-save-rnum", fname, \
+                     "zone %d cmd %d '%c' (line %d) arg%d=%d out of range 0..%d; " \
+                     "zone not saved", zone_table[zone_num].number, subcmd, \
+                     zc->command, zc->line, (argno), (val), (int)(top)); \
+        goto abort_save; \
+      } \
+    } while (0)
+
+    switch (zc->command) {
     case 'M':
-      arg1 = mob_index[ZCMD(zone_num, subcmd).arg1].vnum;
-      arg2 = ZCMD(zone_num, subcmd).arg2;
-      arg3 = world[ZCMD(zone_num, subcmd).arg3].number;
-      comment = mob_proto[ZCMD(zone_num, subcmd).arg1].player.short_descr;
+      ZSAVE_CHECK(1, zc->arg1, top_of_mobt);
+      ZSAVE_CHECK(3, zc->arg3, top_of_world);
+      arg1 = mob_index[zc->arg1].vnum;
+      arg2 = zc->arg2;
+      arg3 = world[zc->arg3].number;
+      comment = mob_proto[zc->arg1].player.short_descr;
       break;
     case 'O':
-      arg1 = obj_index[ZCMD(zone_num, subcmd).arg1].vnum;
-      arg2 = ZCMD(zone_num, subcmd).arg2;
-      arg3 = world[ZCMD(zone_num, subcmd).arg3].number;
-      comment = obj_proto[ZCMD(zone_num, subcmd).arg1].short_description;
+      ZSAVE_CHECK(1, zc->arg1, top_of_objt);
+      ZSAVE_CHECK(3, zc->arg3, top_of_world);
+      arg1 = obj_index[zc->arg1].vnum;
+      arg2 = zc->arg2;
+      arg3 = world[zc->arg3].number;
+      comment = obj_proto[zc->arg1].short_description;
       break;
     case 'G':
-      arg1 = obj_index[ZCMD(zone_num, subcmd).arg1].vnum;
-      arg2 = ZCMD(zone_num, subcmd).arg2;
+      ZSAVE_CHECK(1, zc->arg1, top_of_objt);
+      arg1 = obj_index[zc->arg1].vnum;
+      arg2 = zc->arg2;
       arg3 = -1;
-      comment = obj_proto[ZCMD(zone_num, subcmd).arg1].short_description;
+      comment = obj_proto[zc->arg1].short_description;
       break;
     case 'E':
-      arg1 = obj_index[ZCMD(zone_num, subcmd).arg1].vnum;
-      arg2 = ZCMD(zone_num, subcmd).arg2;
-      arg3 = ZCMD(zone_num, subcmd).arg3;
-      comment = obj_proto[ZCMD(zone_num, subcmd).arg1].short_description;
+      ZSAVE_CHECK(1, zc->arg1, top_of_objt);
+      arg1 = obj_index[zc->arg1].vnum;
+      arg2 = zc->arg2;
+      arg3 = zc->arg3;
+      comment = obj_proto[zc->arg1].short_description;
       break;
     case 'P':
-      arg1 = obj_index[ZCMD(zone_num, subcmd).arg1].vnum;
-      arg2 = ZCMD(zone_num, subcmd).arg2;
-      arg3 = obj_index[ZCMD(zone_num, subcmd).arg3].vnum;
-      comment = obj_proto[ZCMD(zone_num, subcmd).arg1].short_description;
+      ZSAVE_CHECK(1, zc->arg1, top_of_objt);
+      ZSAVE_CHECK(3, zc->arg3, top_of_objt);
+      arg1 = obj_index[zc->arg1].vnum;
+      arg2 = zc->arg2;
+      arg3 = obj_index[zc->arg3].vnum;
+      comment = obj_proto[zc->arg1].short_description;
       break;
     case 'D':
-      arg1 = world[ZCMD(zone_num, subcmd).arg1].number;
-      arg2 = ZCMD(zone_num, subcmd).arg2;
-      arg3 = ZCMD(zone_num, subcmd).arg3;
-      comment = world[ZCMD(zone_num, subcmd).arg1].name;
+      ZSAVE_CHECK(1, zc->arg1, top_of_world);
+      arg1 = world[zc->arg1].number;
+      arg2 = zc->arg2;
+      arg3 = zc->arg3;
+      comment = world[zc->arg1].name;
       break;
     case 'R':
-      arg1 = world[ZCMD(zone_num, subcmd).arg1].number;
-      arg2 = obj_index[ZCMD(zone_num, subcmd).arg2].vnum;
-      comment = obj_proto[ZCMD(zone_num, subcmd).arg2].short_description;
+      ZSAVE_CHECK(1, zc->arg1, top_of_world);
+      ZSAVE_CHECK(2, zc->arg2, top_of_objt);
+      arg1 = world[zc->arg1].number;
+      arg2 = obj_index[zc->arg2].vnum;
+      comment = obj_proto[zc->arg2].short_description;
       arg3 = -1;
       break;
     case 'T':
-      arg1 = ZCMD(zone_num, subcmd).arg1; /* trigger type */
-      arg2 = trig_index[ZCMD(zone_num, subcmd).arg2]->vnum; /* trigger vnum */
-      arg3 = world[ZCMD(zone_num, subcmd).arg3].number; /* room num */
-      comment = GET_TRIG_NAME(trig_index[real_trigger(arg2)]->proto);
+      /* trig_index[] holds top_of_trigt entries (a count, not a top). */
+      ZSAVE_CHECK(2, zc->arg2, top_of_trigt - 1);
+      ZSAVE_CHECK(3, zc->arg3, top_of_world);
+      arg1 = zc->arg1; /* trigger type */
+      arg2 = trig_index[zc->arg2]->vnum; /* trigger vnum */
+      arg3 = world[zc->arg3].number; /* room num */
+      comment = GET_TRIG_NAME(trig_index[zc->arg2]->proto);
       break;
     case 'V':
-      arg1 = ZCMD(zone_num, subcmd).arg1; /* trigger type */
-      arg2 = ZCMD(zone_num, subcmd).arg2; /* context */
-      arg3 = world[ZCMD(zone_num, subcmd).arg3].number;
+      ZSAVE_CHECK(3, zc->arg3, top_of_world);
+      if (!zc->sarg1 || !zc->sarg2) {
+        TB_ERROR_MSG("olc", "zone-save-sarg", fname,
+                     "zone %d cmd %d 'V' (line %d) has NULL %s; zone not saved",
+                     zone_table[zone_num].number, subcmd, zc->line,
+                     !zc->sarg1 ? "variable name" : "value");
+        goto abort_save;
+      }
+      arg1 = zc->arg1; /* trigger type */
+      arg2 = zc->arg2; /* context */
+      arg3 = world[zc->arg3].number;
       break;
     case '*':
-      /* Invalid commands are replaced with '*' - Ignore them. */
+      /* Commands disabled at boot (an unresolved vnum in renum_zone_table())
+       * or by delete_room() hold no vnums to write back, so saving drops
+       * the reset line from disk for good.  Say so, per line. */
+      TB_WARN_MSG("olc", "zone-save-drop-cmd", fname,
+                  "zone %d cmd %d (line %d) disabled ('*'); not saved",
+                  zone_table[zone_num].number, subcmd, zc->line);
       continue;
     default:
-      mudlog(BRF, LVL_BUILDER, TRUE, "SYSERR: OLC: z_save_to_disk(): Unknown cmd '%c' - NOT saving", ZCMD(zone_num, subcmd).command);
+      TB_ERROR_MSG("olc", "zone-save-drop-cmd", fname,
+                   "zone %d cmd %d (line %d) unknown command '%c'; not saved",
+                   zone_table[zone_num].number, subcmd, zc->line, zc->command);
+      mudlog(BRF, LVL_BUILDER, TRUE,
+             "SYSERR: OLC: save_zone: zone %d cmd %d: unknown command '%c' - NOT saving",
+             zone_table[zone_num].number, subcmd, zc->command);
       continue;
     }
     if (ZCMD(zone_num, subcmd).command != 'V')
       tb_fprintf(zfile, "%c %d %d %d %d \t(%s)\n",
-		ZCMD(zone_num, subcmd).command, ZCMD(zone_num, subcmd).if_flag, arg1, arg2, arg3, comment);
+		ZCMD(zone_num, subcmd).command, ZCMD(zone_num, subcmd).if_flag, arg1, arg2, arg3,
+		comment ? comment : "");
     else
       tb_fprintf(zfile, "%c %d %d %d %d %s %s\n",
               ZCMD(zone_num, subcmd).command, ZCMD(zone_num, subcmd).if_flag, arg1, arg2, arg3,
               ZCMD(zone_num, subcmd).sarg1, ZCMD(zone_num, subcmd).sarg2);
   }
+#undef ZSAVE_CHECK
   tb_fputs("S\n$\n", zfile);
   {
     int flush_ok = tb_fflush_checked(zfile, fname);
@@ -547,6 +724,13 @@ int save_zone(zone_rnum zone_num)
   if (in_save_list(zone_table[zone_num].number, SL_ZON))
     remove_from_save_list(zone_table[zone_num].number, SL_ZON);
   return TRUE;
+
+abort_save:
+  /* Already reported at the failing command; keep the previous .zon. */
+  tb_fclose(zfile);
+  if (remove(fname) != 0 && errno != ENOENT)
+    TB_REPORT_ERRNO("remove", fname);
+  return FALSE;
 }
 
 /* Some common code to count the number of comands in the list. */
@@ -560,8 +744,18 @@ int count_commands(struct reset_com *list)
   return count;
 }
 
-/* Adds a new reset command into a list.  Takes a pointer to the list so that
- * it may play with the memory locations. */
+/**
+ * Insert a copy of *newcmd at index pos of a zone command list.
+ *
+ * The list is reallocated (every pointer into it is invalidated) and the
+ * command is copied by value, so a 'V' command's sarg1/sarg2 become shared
+ * with newcmd's owner.  pos is expected in 0..count; a larger pos is not
+ * checked and the command is not inserted.
+ *
+ * @param list   Address of the list (zone_table[z].cmd or zedit's copy).
+ * @param newcmd Command to copy in.
+ * @param pos    Insert position.
+ */
 void add_cmd_to_list(struct reset_com **list, struct reset_com *newcmd, int pos)
 {
   int count, i, l;
@@ -584,20 +778,43 @@ void add_cmd_to_list(struct reset_com **list, struct reset_com *newcmd, int pos)
   *list = newlist;
 }
 
-/* Remove a reset command from a list. Takes a pointer to the list so that it
- * may play with the memory locations. */
-static void remove_cmd_from_list(struct reset_com **list, int pos)
+/**
+ * Remove the reset command at pos from a zone command list.
+ *
+ * The list is reallocated to one slot fewer and every later command slides
+ * down, so a caller scanning by index must re-examine pos afterwards.
+ *
+ * Ownership: this only drops the struct; the sarg1/sarg2 strings of a 'V'
+ * command belong to zone_table and are freed by the caller once the
+ * removal succeeds (zedit_setup() gives editing sessions deep copies, so
+ * nothing else points at them; findings C2-27, F1-20).
+ *
+ * @param list Address of the zone's command list (zone_table[z].cmd).
+ * @param pos  Index to remove, 0..count-1; callers derive it from their own
+ *             scan or from builder input already range-checked.
+ * @param znum Zone vnum, for diagnostics only.
+ * @return TRUE when a command was removed; FALSE, reported, when the list
+ *         is missing or pos is out of range (the list is unchanged).
+ */
+static int remove_cmd_from_list(struct reset_com **list, int pos, zone_vnum znum)
 {
   int count, i, l;
   struct reset_com *newlist;
 
-  if (!list || !*list)
-    return;
+  if (!list || !*list) {
+    TB_ERROR_MSG("olc", "zone-cmd-remove", "zone",
+                 "zone %d: no command list; pos %d not removed", znum, pos);
+    return FALSE;
+  }
 
   /* Count number of commands (not including terminator). */
   count = count_commands(*list);
-  if (count <= 0 || pos < 0 || pos >= count)
-    return;
+  if (count <= 0 || pos < 0 || pos >= count) {
+    TB_ERROR_MSG("olc", "zone-cmd-remove", "zone",
+                 "zone %d: pos %d out of range 0..%d; not removed",
+                 znum, pos, count - 1);
+    return FALSE;
+  }
 
   /* One command is removed, so count slots are enough for the remaining
    * commands plus the terminating S command. */
@@ -613,32 +830,45 @@ static void remove_cmd_from_list(struct reset_com **list, int pos)
   newlist[count - 1].command = 'S';
   free(*list);
   *list = newlist;
+  return TRUE;
 }
 
-/* Error check user input and then add new (blank) command. */
+/**
+ * zedit: insert a blank 'N' command at pos (builder input).
+ *
+ * @return 1 when inserted; 0, reported as zone-cmd-index, when pos is
+ *         outside 0..count.
+ */
 int new_command(struct zone_data *zone, int pos)
 {
   int subcmd = 0;
-  struct reset_com new_com;
+  /* Every field is copied into the list, including if_flag, line and the
+   * 'V' string pointers, so the blank command must be fully zeroed. */
+  struct reset_com new_com = { 0 };
 
   /* Error check to ensure users hasn't given too large an index. */
   while (zone->cmd[subcmd].command != 'S')
     subcmd++;
 
-  if (pos < 0 || pos > subcmd)
+  if (pos < 0 || pos > subcmd) {
+    TB_WARN_MSG("olc", "zone-cmd-index", "zone",
+                "zone %d insert pos %d out of range 0..%d",
+                zone->number, pos, subcmd);
     return 0;
+  }
 
-  /* Ok, let's add a new (blank) command.  Only the type used to be set: the
-   * rest, sarg1/sarg2 pointers included, was stack garbage that the menu
-   * indexed with and deletion freed. */
+  /* Ok, let's add a new (blank) command.  Zero it first: the args and the
+   * sarg pointers were left uninitialised, and cleanup_olc frees sargs. */
   memset(&new_com, 0, sizeof(new_com));
   new_com.command = 'N';
   add_cmd_to_list(&zone->cmd, &new_com, pos);
   return 1;
 }
 
-/* Error check user input and then remove command. */
-void delete_zone_command(struct zone_data *zone, int pos)
+/* Error check user input and then remove command.  Returns TRUE when the
+ * command at pos was removed.  The commands after it slide down one slot, so a
+ * caller scanning by index must re-examine pos rather than advance past it. */
+int delete_zone_command(struct zone_data *zone, int pos)
 {
   int subcmd = 0;
 
@@ -646,10 +876,14 @@ void delete_zone_command(struct zone_data *zone, int pos)
   while (zone->cmd[subcmd].command != 'S')
     subcmd++;
 
-  if (pos < 0 || pos >= subcmd)
-    return;
+  if (pos < 0 || pos >= subcmd) {
+    TB_WARN_MSG("olc", "zone-cmd-index", "zone",
+                "zone %d delete pos %d out of range 0..%d",
+                zone->number, pos, subcmd - 1);
+    return FALSE;
+  }
 
   /* Ok, let's zap it. */
-  remove_cmd_from_list(&zone->cmd, pos);
+  return remove_cmd_from_list(&zone->cmd, pos, zone->number);
 }
 

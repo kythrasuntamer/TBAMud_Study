@@ -68,7 +68,11 @@ void tb_error_log_at(const char *severity, const char *subsystem,
 /* Stable identity of a character in diagnostics: mob vnum for NPCs, player
  * idnum for players. Use as a pair, e.g.
  *   TB_ERROR_MSG(..., "speaker " DIAG_CHAR_FMT " ...", DIAG_CHAR(ch));
- * DIAG_CHAR evaluates ch several times: pass a plain variable. */
+ * DIAG_CHAR evaluates ch several times: pass a plain variable.
+ * Limits: ch must be non-NULL (test for NULL first and log "(null)"
+ * yourself); an NPC with an invalid rnum prints "mob vnum 65535" (NOBODY);
+ * the DG UID is not included, so add char_script_id() where a script's
+ * view of the entity matters. */
 #define DIAG_CHAR_FMT "%s %ld"
 #define DIAG_CHAR(ch) \
   (IS_NPC(ch) ? "mob vnum" : "player idnum"), \
@@ -79,6 +83,18 @@ void tb_error_log_at(const char *severity, const char *subsystem,
  * consuming it so diagnostics can identify the physical line, logical record,
  * and field being parsed.  Context storage is fixed-size and allocation-free
  * so it remains usable on error paths.
+ *
+ * Usage contract:
+ *  - A loader calls tb_parse_context_begin() after fopen() and
+ *    tb_parse_context_end() *before* fclose(). Slots are keyed by the FILE *
+ *    address, so a context left behind would be inherited by the next
+ *    stream that malloc places at the same address.
+ *  - get_line() counts physical lines through tb_parse_context_note_line();
+ *    without a begin() the count stays 0 and get_line's line-too-long error
+ *    says "no parse context".
+ *  - There are TB_PARSE_CONTEXT_COUNT (16) slots. When all are in use,
+ *    begin() does nothing and later calls on that stream are no-ops, so
+ *    diagnostics fall back to "(parser context unavailable)".
  */
 void tb_parse_context_begin(FILE *stream, const char *resource, const char *parser);
 void tb_parse_context_end(FILE *stream);
@@ -150,7 +166,13 @@ void *tb_realloc_array_at(void *ptr, size_t count, size_t element_size,
   tb_realloc_array_at((ptr), (count), (element_size), __FILE__, __LINE__, __func__)
 int touch(const char *path);
 void mudlog(int type, int level, int file, const char *str, ...) __attribute__ ((format (printf, 4, 5)));
-int	rand_number(int from, int to);
+int	rand_number_at(int from, int to, const char *source_file, int source_line,
+	               const char *source_func);
+/** Random integer in [from, to]. Inverted bounds are swapped and reported
+ * as a rand-range-inverted warning at the caller's file, line and function.
+ * Arguments are evaluated once. */
+#define rand_number(from, to) \
+	rand_number_at((from), (to), __FILE__, __LINE__, __func__)
 int	dice(int number, int size);
 size_t	sprintbit(bitvector_t vektor, const char *names[], char *result, size_t reslen);
 size_t	sprinttype(int type, const char *names[], char *result, size_t reslen);
@@ -161,8 +183,15 @@ time_t mud_time_to_secs(struct time_info_data *now);
 struct time_info_data *age(struct char_data *ch);
 int num_pc_in_room(struct room_data *room);
 void core_dump_real(const char *who, int line);
+void tb_player_special_on_mob_at(const struct char_data *ch, const char *field,
+                                 const char *source_file, int source_line,
+                                 const char *source_func);
 int count_color_chars(char *string);
-int room_is_dark(room_rnum room);
+int room_is_dark_at(room_rnum room, const char *source_file, int source_line,
+                    const char *source_func);
+/** TRUE if the room has no light. An invalid rnum is reported as a
+ * room-rnum-invalid error naming the caller's file, line and function. */
+#define room_is_dark(room) room_is_dark_at((room), __FILE__, __LINE__, __func__)
 int levenshtein_distance(const char *s1, const char *s2);
 struct time_info_data *real_time_passed(time_t t2, time_t t1);
 struct time_info_data *mud_time_passed(time_t t2, time_t t1);
@@ -330,11 +359,37 @@ static inline int circle_upper(int c)
  * @todo Recommend using the ? operator for clarity. */
 #define ISNEWL(ch) ((ch) == '\n' || (ch) == '\r')
 
+/** <ctype.h> classifiers that are safe on a plain char. The ctype functions
+ * take an unsigned char value (or EOF); a high-bit byte in a signed char
+ * would be a negative argument, which is undefined behaviour. c is
+ * evaluated once. */
+#define TB_ISSPACE(c) isspace((unsigned char)(c))
+#define TB_ISALPHA(c) isalpha((unsigned char)(c))
+#define TB_ISDIGIT(c) isdigit((unsigned char)(c))
+#define TB_ISALNUM(c) isalnum((unsigned char)(c))
+#define TB_ISPRINT(c) isprint((unsigned char)(c))
+
+/** TRUE if s is a non-empty string starting with a vowel (either case).
+ * strchr() also matches the terminator, so the bare
+ * strchr("aeiou...", *s) idiom called "" a vowel and crashed on NULL;
+ * this does neither. s is evaluated once. */
+static inline int tb_starts_with_vowel(const char *s)
+{
+  return s != NULL && *s != '\0' && strchr("aeiouAEIOU", *s) != NULL;
+}
+#define STARTS_WITH_VOWEL(s) tb_starts_with_vowel((s))
+
 /** If string begins a vowel (upper or lower case), return "an"; else return
  * "a". */
-#define AN(string) (strchr("aeiouAEIOU", *(string)) ? "an" : "a")
+#define AN(string) (STARTS_WITH_VOWEL(string) ? "an" : "a")
 
 /** A calloc based memory allocation macro.
+ * Contract: number is converted to size_t once; a count of 0, or one whose
+ * byte size overflows, is reported as a FATAL allocation-size error and the
+ * server aborts (unlike calloc(0), which may succeed). Allocation failure is
+ * also FATAL. Both reports carry the caller's file and line through
+ * tb_report_domain_error_at(), but not the breadcrumb trail. result is
+ * assigned and then tested, so it must be an lvalue without side effects.
  * @param result Pointer to created memory.
  * @param type The type of memory (int, struct char_data, etc.).
  * @param number How many of type to make. */
@@ -348,6 +403,10 @@ static inline int circle_upper(int c)
 
 /** A realloc based memory reallocation macro. Reminder: realloc can reduce
  * the size of an array as well as increase it.
+ * Contract: same zero/overflow/failure rules as CREATE (FATAL, then abort).
+ * On failure realloc leaves the original block intact, but the macro aborts
+ * regardless, so callers never see a NULL result. result is evaluated
+ * twice: pass a plain lvalue.
  * @param result Pointer to created memory.
  * @param type The type of memory (int, struct char_data, etc.).
  * @param number How many of type to make. */
@@ -386,6 +445,9 @@ static inline int circle_upper(int c)
 /* Connect 'link' to the end of a double-linked list
  * The new item becomes the last in the linked list, and the last
  * pointer is updated.
+ * @pre link is not on any list: LINK overwrites link->next/prev without
+ * looking, so linking an already-linked node corrupts both lists.
+ * Every argument is evaluated several times: pass plain lvalues.
  * @param link  Pointer to item to remove from the list.
  * @param first Pointer to the first item of the linked list.
  * @param last  Pointer to the last item of the linked list.
@@ -407,6 +469,10 @@ do                                                              \
 /* Remove 'link' from a double-linked list
  * @post  item is removed from the list, but remains in memory, and must
    be free'd after unlinking.
+ * @pre link is on the list named by first/last. UNLINK does not check this,
+ * and it does not clear link->next/prev afterwards, so a second UNLINK of
+ * the same node rewrites its old neighbours. Every argument is evaluated
+ * several times: pass plain lvalues.
  * @param link  Pointer to item to remove from the list.
  * @param first Pointer to the first item of the linked list.
  * @param last  Pointer to the last item of the linked list.
@@ -427,6 +493,9 @@ do                                                              \
 } while(0)
 
 /* Free a pointer, and log if it was NULL
+ * The NULL report goes through legacy log() with the caller's file and line
+ * but no function name. point is evaluated several times and is set to NULL
+ * afterwards, so it must be a plain lvalue.
  * @param point The pointer to be free'd.
  * */
 #define DISPOSE(point)                                          \
@@ -442,6 +511,8 @@ do                                                              \
 
 /* String Utils */
 /* Allocate memory for a string, and return a pointer
+ * Unlike CREATE this is plain strdup(): it can return NULL on allocation
+ * failure, and point must not be NULL.
  * @param point The string to be copied.
  * */
 #define STRALLOC(point)         (strdup(point))
@@ -480,10 +551,15 @@ do                                                              \
  * for it, 'wimpy' would be an extremely bad thing for a mob to do, as an
  * example.  If you really couldn't care less, change this to a '#if 0'. */
 #if 1
-/** Warn if accessing player_specials on a mob.
- * @todo Subtle bug in the var reporting, but works well for now. */
+/** Report access to player_specials on a mob, then continue with the shared
+ * dummy_mob storage (long-standing behaviour: reads see zero, and a write
+ * changes the value every mob sees). The report is a player-special-on-mob
+ * error carrying the caller's file, line and function, the mob vnum and the
+ * field expression, so the offending call site and mob can be found.
+ * ch is evaluated more than once: pass a plain variable. */
 #define CHECK_PLAYER_SPECIAL(ch, var) \
-	(*(((ch)->player_specials == &dummy_mob) ? (log("SYSERR: Mob using '"#var"' at %s:%d.", __FILE__, __LINE__), &(var)) : &(var)))
+	(*(((ch)->player_specials == &dummy_mob) ? \
+	   (tb_player_special_on_mob_at((ch), #var, __FILE__, __LINE__, __func__), &(var)) : &(var)))
 #else
 #define CHECK_PLAYER_SPECIAL(ch, var)	(var)
 #endif
@@ -512,14 +588,13 @@ do                                                              \
 /** References the routine element for a spell. Currently unused. */
 #define SPELL_ROUTINES(spl)	(spell_info[spl].routines)
 
-/* IS_MOB() acts as a VALID_MOB_RNUM()-like function.*/
+/* IS_MOB() is IS_NPC() plus a VALID_MOB_RNUM() check of the prototype rnum. */
 /** 1 if the character has the NPC bit set, 0 if the character does not.
  * Used to prevents NPCs and mobs from doing things they shouldn't, even
  * when mobs are possessed or charmed by a player. */
 #define IS_NPC(ch)	(IS_SET_AR(MOB_FLAGS(ch), MOB_ISNPC))
 /** 1 if the character is a real NPC, 0 if the character is not. */
-#define IS_MOB(ch)	(IS_NPC(ch) && GET_MOB_RNUM(ch) <= top_of_mobt && \
-				GET_MOB_RNUM(ch) != NOBODY)
+#define IS_MOB(ch)	(IS_NPC(ch) && VALID_MOB_RNUM(GET_MOB_RNUM(ch)))
 
 /** 1 if ch is flagged an NPC and flag is set in the act bitarray, 0 if not. */
 #define MOB_FLAGGED(ch, flag) (IS_NPC(ch) && IS_SET_AR(MOB_FLAGS(ch), (flag)))
@@ -570,12 +645,15 @@ do                                                              \
 #define GET_ROOM_ZONE(room)	(VALID_ROOM_RNUM(room) ? world[(room)].zone : NOWHERE)
 
 /** TRUE if the room has no light, FALSE if not. */
-#define IS_DARK(room)	room_is_dark((room))
+#define IS_DARK(room)	room_is_dark((room))  /* reports its caller */
 /** TRUE if the room has light, FALSE if not. */
 #define IS_LIGHT(room)  (!IS_DARK(room))
 
 /** 1 if this is a valid room number, 0 if not. */
 #define VALID_ROOM_RNUM(rnum)	((rnum) != NOWHERE && (rnum) <= top_of_world)
+/** 1 if rnum indexes mob_proto[]/mob_index[], 0 if not. rnum is evaluated
+ * twice: pass a plain variable or side-effect-free expression. */
+#define VALID_MOB_RNUM(rnum)	((rnum) != NOBODY && (rnum) <= top_of_mobt)
 /** The room number if this is a valid room, NOWHERE if it is not */
 #define GET_ROOM_VNUM(rnum) \
 	((room_vnum)(VALID_ROOM_RNUM(rnum) ? world[(rnum)].number : NOWHERE))
@@ -882,11 +960,11 @@ do                                                              \
 #define HMHR(ch) (GET_SEX(ch) ? (GET_SEX(ch)==SEX_MALE ? "him":"her") : "it")
 
 /** "An" or "A" for object (uppercased) */
-#define ANA(obj) (strchr("aeiouAEIOU", *(obj)->name) ? "An" : "A")
+#define ANA(obj) (STARTS_WITH_VOWEL((obj)->name) ? "An" : "A")
 /** "an" or "a" for object (lowercased) */
-#define SANA(obj) (strchr("aeiouAEIOU", *(obj)->name) ? "an" : "a")
+#define SANA(obj) (STARTS_WITH_VOWEL((obj)->name) ? "an" : "a")
 /** "an" or "a" for text (lowercased) */
-#define TANA(obj) (strchr("aeiouAEIOU", *(obj)) ? "an" : "a")
+#define TANA(obj) (STARTS_WITH_VOWEL(obj) ? "an" : "a")
 
 /* Various macros building up to CAN_SEE */
 

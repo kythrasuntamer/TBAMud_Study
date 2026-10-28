@@ -148,6 +148,15 @@ static trig_data trig;
 static struct index_data default_index;
 static struct index_data *default_indexes[1] = { &default_index };
 
+/* dg_teleport_all() reports occupants moved by an earlier callback through
+ * dg_triggers.c, which this test does not link; count the reports. */
+static int occupant_skips;
+void dg_report_occupant_skipped(long uid, room_rnum room, const char *cmd)
+{
+  (void)uid; (void)room; (void)cmd;
+  occupant_skips++;
+}
+
 void setUp(void)
 {
   memset(&trig, 0, sizeof(trig));
@@ -296,14 +305,14 @@ static void car_is_bounded_by_destination(void)
   add_var(&GET_TRIG_VARS(&trig), "long", word, 0);
   vd = GET_TRIG_VARS(&trig);
 
-  TEST_ASSERT_TRUE(text_processed("car", "", vd, str, 16));
+  TEST_ASSERT_TRUE(text_processed(&trig, "car", "", vd, str, 16));
   TEST_ASSERT_EQUAL_size_t(15, strlen(str));
   TEST_ASSERT_EQUAL_INT(1, captured_errors);
-  TEST_ASSERT_EQUAL_STRING("field-truncated", captured_operation);
+  TEST_ASSERT_EQUAL_STRING("field-truncate", captured_operation);
 
   /* A first word that fits is copied whole and silently. */
   add_var(&GET_TRIG_VARS(&trig), "long", "short rest", 0);
-  TEST_ASSERT_TRUE(text_processed("car", "", vd, str, 16));
+  TEST_ASSERT_TRUE(text_processed(&trig, "car", "", vd, str, 16));
   TEST_ASSERT_EQUAL_STRING("short", str);
   TEST_ASSERT_EQUAL_INT(1, captured_errors);
   free(str);
@@ -1029,10 +1038,14 @@ static void out_of_range_vnums_name_nothing(void)
 /* Room-list fixtures for dg_teleport_all(). */
 static char_data *enter_mover, *enter_moved;
 static room_rnum enter_moved_to;
-void char_from_room(struct char_data *ch)
+/* handler.h's char_from_room()/char_to_room() are call-site-recording
+ * macros; these strong definitions override test_stubs.c's weak no-ops. */
+void char_from_room_at(const char *src_file, int src_line,
+                       const char *src_func, struct char_data *ch)
 {
   struct char_data **link;
 
+  (void)src_file; (void)src_line; (void)src_func;
   for (link = &world[IN_ROOM(ch)].people; *link; link = &(*link)->next_in_room)
     if (*link == ch) {
       *link = ch->next_in_room;
@@ -1041,8 +1054,10 @@ void char_from_room(struct char_data *ch)
   ch->next_in_room = NULL;
   IN_ROOM(ch) = NOWHERE;
 }
-void char_to_room(struct char_data *ch, room_rnum room)
+void char_to_room_at(const char *src_file, int src_line, const char *src_func,
+                     struct char_data *ch, room_rnum room)
 {
+  (void)src_file; (void)src_line; (void)src_func;
   ch->next_in_room = world[room].people;
   world[room].people = ch;
   IN_ROOM(ch) = room;

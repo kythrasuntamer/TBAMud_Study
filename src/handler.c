@@ -8,6 +8,24 @@
 *  CircleMUD is based on DikuMUD, Copyright (C) 1990, 1991.               *
 ************************************************************************ */
 
+/*
+ * Ownership and lifetime rules for the primitives in this file:
+ *  - Objects: extract_obj() frees the object (and its contents) at once.
+ *    Any pointer to an object held across a DG script, act() trigger or
+ *    spell may be dangling afterwards; re-validate it by UID with
+ *    obj_uid_matches() (see docs/maintainer-safety-guide.md section 2).
+ *  - Characters: extract_char() only marks the character (MOB_NOTDEADYET /
+ *    PLR_NOTDEADYET); extract_pending_chars() frees it at the end of the
+ *    pulse. A character pointer stays allocated until then but must be
+ *    checked with DEAD() before it is acted on.
+ *  - Location: an object is in exactly one of room / carried_by / in_obj /
+ *    worn_by, and a character is in exactly one room. The *_to_* and
+ *    *_from_* primitives keep these lists consistent and report broken
+ *    preconditions (TB_ERROR/TB_FATAL with entity IDs and, for
+ *    char_from_room/char_to_room/equip_char, the caller's location).
+ *  - Name lists passed to fname()/isname() are builder text and are never
+ *    logged.
+ */
 #include "conf.h"
 #include "sysdep.h"
 #include "structs.h"
@@ -33,15 +51,40 @@ static int apply_ac(struct char_data *ch, int eq_pos);
 static void update_object(struct obj_data *obj, int use);
 static void affect_modify_ar(struct char_data * ch, byte loc, sbyte mod, int bitv[], bool add);
 
+/**
+ * Return the first keyword (leading run of letters) of a namelist.
+ *
+ * Namelists are builder text: exit keywords (redit, up to MAX_INPUT_LENGTH),
+ * object aliases and mob names from OLC or world files (up to
+ * MAX_STRING_LENGTH). A keyword longer than READ_SIZE - 1 letters is
+ * truncated and reported as "fname-truncate"; only its length is logged,
+ * never the builder text.
+ *
+ * @return A static buffer that the next call overwrites. Two fname() results
+ *         in one printf alias each other; copy the first if you need both.
+ */
 char *fname(const char *namelist)
 {
   static char holder[READ_SIZE];
   char *point;
+  const char *start = namelist;
 
-  for (point = holder; isalpha(*namelist); namelist++, point++)
+  for (point = holder;
+       isalpha((unsigned char) *namelist) && point < holder + sizeof(holder) - 1;
+       namelist++, point++)
     *point = *namelist;
 
   *point = '\0';
+
+  if (isalpha((unsigned char) *namelist)) {
+    size_t len = (size_t) (namelist - start);
+
+    while (isalpha((unsigned char) start[len]))
+      len++;
+    TB_WARN_MSG("handler", "fname-truncate", "namelist",
+                "first keyword is %zu letters, exceeds %zu; truncated",
+                len, sizeof(holder) - 1);
+  }
 
   return (holder);
 }
@@ -348,14 +391,34 @@ void affect_join(struct char_data *ch, struct affected_type *af,
     next = hjp->next;
 
     if ((hjp->spell == af->spell) && (hjp->location == af->location)) {
+      /* Accumulating affects (e.g. SPELL_CURSE, -1 hitroll per cast) sum
+       * into an sbyte modifier and sh_int duration. Players control how
+       * often they stack (scrolls bypass the self-cast check), so sum in
+       * int and clamp: a wrap would turn -129 into +127, or a long
+       * duration into -1 (permanent). */
+      int dur = af->duration;
+      int mod = af->modifier; /* NOLINT(bugprone-signed-char-misuse,cert-str34-c): sbyte is a signed number, not a character */
+
       if (add_dur)
-	af->duration += hjp->duration;
+	dur += hjp->duration;
       else if (avg_dur)
-        af->duration = (af->duration+hjp->duration)/2;
+        dur = (dur + hjp->duration) / 2;
       if (add_mod)
-	af->modifier += hjp->modifier;
+	mod += hjp->modifier;
       else if (avg_mod)
-        af->modifier = (af->modifier+hjp->modifier)/2;
+        mod = (mod + hjp->modifier) / 2;
+
+      if (dur > SHRT_MAX - 1 || mod < SCHAR_MIN || mod > SCHAR_MAX) {
+        TB_WARN_MSG("affect", "affect-join-clamp", skill_name(af->spell),
+                    DIAG_CHAR_FMT " spell %d location %d modifier %d "
+                    "duration %d clamped to [%d,%d] / max %d", DIAG_CHAR(ch),
+                    af->spell, af->location, mod, dur, SCHAR_MIN, SCHAR_MAX,
+                    SHRT_MAX - 1);
+        dur = MIN(dur, SHRT_MAX - 1);
+        mod = MAX(SCHAR_MIN, MIN(mod, SCHAR_MAX));
+      }
+      af->duration = (sh_int) dur;
+      af->modifier = (sbyte) mod;
 
       affect_remove(ch, hjp);
       affect_to_char(ch, af);
@@ -366,14 +429,26 @@ void affect_join(struct char_data *ch, struct affected_type *af,
     affect_to_char(ch, af);
 }
 
-/* move a player out of a room */
-void char_from_room(struct char_data *ch)
+/* move a player out of a room. Reached through the char_from_room() macro,
+ * which records the caller. A NULL or roomless character means the room
+ * lists are already inconsistent (internal invariant), so abort with a core
+ * rather than exit(1). */
+void char_from_room_at(const char *src_file, int src_line,
+                       const char *src_func, struct char_data *ch)
 {
   struct char_data *temp;
 
-  if (ch == NULL || IN_ROOM(ch) == NOWHERE) {
-    log("SYSERR: NULL character or NOWHERE in %s, char_from_room", __FILE__);
-    exit(1);
+  if (ch == NULL) {
+    TB_FATAL_MSG("handler", "char-from-nowhere", "room",
+                 "NULL character; caller=%s:%d %s", src_file, src_line,
+                 src_func);
+    abort();
+  }
+  if (IN_ROOM(ch) == NOWHERE) {
+    TB_FATAL_MSG("handler", "char-from-nowhere", "room",
+                 DIAG_CHAR_FMT " is in NOWHERE; caller=%s:%d %s",
+                 DIAG_CHAR(ch), src_file, src_line, src_func);
+    abort();
   }
 
   if (FIGHTING(ch) != NULL)
@@ -391,12 +466,22 @@ void char_from_room(struct char_data *ch)
   ch->next_in_room = NULL;
 }
 
-/* place a character in a room */
-void char_to_room(struct char_data *ch, room_rnum room)
+/* place a character in a room. Reached through the char_to_room() macro,
+ * which records the caller. An invalid room or NULL character is rejected
+ * and reported; the character then stays in NOWHERE, which the caller
+ * must handle. */
+void char_to_room_at(const char *src_file, int src_line, const char *src_func,
+                     struct char_data *ch, room_rnum room)
 {
-  if (ch == NULL || room == NOWHERE || room > top_of_world)
-    log("SYSERR: Illegal value(s) passed to char_to_room. (Room: %d/%d Ch: %p",
-		room, top_of_world, (void *)ch);
+  if (ch == NULL)
+    TB_ERROR_MSG("handler", "char-to-room", "room",
+                 "NULL character for room rnum %d; caller=%s:%d %s",
+                 (int) room, src_file, src_line, src_func);
+  else if (room == NOWHERE || room > top_of_world)
+    TB_ERROR_MSG("handler", "char-to-room", "room",
+                 DIAG_CHAR_FMT " room rnum %d not in [0,%d]; left in NOWHERE; "
+                 "caller=%s:%d %s", DIAG_CHAR(ch), (int) room,
+                 (int) top_of_world, src_file, src_line, src_func);
   else {
     ch->next_in_room = world[room].people;
     world[room].people = ch;
@@ -434,8 +519,13 @@ void obj_to_char(struct obj_data *object, struct char_data *ch)
     /* set flag for crash-save system, but not on mobs! */
     if (!IS_NPC(ch))
       SET_BIT_AR(PLR_FLAGS(ch), PLR_CRASH);
-  } else
-    log("SYSERR: NULL obj (%p) or char (%p) passed to obj_to_char.", (void *)object, (void *)ch);
+  } else if (!object)
+    TB_ERROR_MSG("handler", "obj-to-char", "obj", "NULL object for %s",
+                 ch ? "a character" : "a NULL character");
+  else
+    TB_ERROR_MSG("handler", "obj-to-char", "obj",
+                 "obj vnum %d uid %ld given to a NULL character; not moved",
+                 (int) GET_OBJ_VNUM(object), obj_script_id(object));
 }
 
 /* take an object from a char */
@@ -444,11 +534,13 @@ void obj_from_char(struct obj_data *object)
   struct obj_data *temp;
 
   if (object == NULL) {
-    log("SYSERR: NULL object passed to obj_from_char.");
+    TB_ERROR_MSG("handler", "obj-from-char", "obj", "NULL object");
     return;
   }
   if (object->carried_by == NULL) {
-    log("SYSERR: Object %p passed to obj_from_char() is not carried by anyone.", (void *)object);
+    TB_ERROR_MSG("handler", "obj-from-char", "obj",
+                 "obj vnum %d uid %ld is not carried by anyone",
+                 (int) GET_OBJ_VNUM(object), obj_script_id(object));
     return;
   }
   REMOVE_FROM_LIST(object, object->carried_by->carrying, next_content);
@@ -506,26 +598,50 @@ int invalid_align(struct char_data *ch, struct obj_data *obj)
   return FALSE;
 }
 
-void equip_char(struct char_data *ch, struct obj_data *obj, int pos)
+/* Report an equip_char rejection with the originating call site and, when
+ * the object is in no location, give it to ch so it is not orphaned in
+ * object_list (still counted against its max-load) until reboot. */
+static void equip_reject(const char *src_file, int src_line,
+                         const char *src_func, struct char_data *ch,
+                         struct obj_data *obj, int pos, const char *why)
+{
+  bool is_free = !obj->carried_by && IN_ROOM(obj) == NOWHERE &&
+                 !obj->in_obj && !obj->worn_by;
+
+  TB_ERROR_MSG("handler", "equip-reject", "obj",
+               "obj vnum %d uid %ld pos %d rejected (%s) for " DIAG_CHAR_FMT
+               "; %s; caller=%s:%d %s", (int) GET_OBJ_VNUM(obj),
+               obj_script_id(obj), pos, why, DIAG_CHAR(ch),
+               is_free ? "moved to inventory" : "left in place",
+               src_file, src_line, src_func);
+  if (is_free)
+    obj_to_char(obj, ch);
+}
+
+void equip_char_at(const char *src_file, int src_line, const char *src_func,
+                   struct char_data *ch, struct obj_data *obj, int pos)
 {
   int j;
 
   if (pos < 0 || pos >= NUM_WEARS) {
-    core_dump();
+    equip_reject(src_file, src_line, src_func, ch, obj, pos,
+                 "position out of range");
     return;
   }
 
   if (GET_EQ(ch, pos)) {
-    log("SYSERR: Char is already equipped: %s, %s", GET_NAME(ch),
-	    obj->short_description);
+    equip_reject(src_file, src_line, src_func, ch, obj, pos,
+                 "slot already occupied");
     return;
   }
   if (obj->carried_by) {
-    log("SYSERR: EQUIP: Obj is carried_by when equip.");
+    equip_reject(src_file, src_line, src_func, ch, obj, pos,
+                 "obj is carried");
     return;
   }
   if (IN_ROOM(obj) != NOWHERE) {
-    log("SYSERR: EQUIP: Obj is in_room when equip.");
+    equip_reject(src_file, src_line, src_func, ch, obj, pos,
+                 "obj is in a room");
     return;
   }
   if (invalid_align(ch, obj) || invalid_class(ch, obj)) {
@@ -594,6 +710,14 @@ struct obj_data *unequip_char(struct char_data *ch, int pos)
   return (obj);
 }
 
+/**
+ * Strip a leading "N." count from *name and return N.
+ *
+ * Rewrites the caller's buffer in place (the "N." prefix is removed), so
+ * *name must point to writable memory and the original text is gone
+ * afterwards. Returns 1 when there is no prefix, and 0 when the prefix is
+ * not a number or is "0." (which player lookups treat as "a player only").
+ */
 int get_number(char **name)
 {
   int i;
@@ -677,9 +801,14 @@ struct char_data *get_char_num(mob_rnum nr)
 /* put an object in a room */
 void obj_to_room(struct obj_data *object, room_rnum room)
 {
-  if (!object || room == NOWHERE || room > top_of_world){
-    log("SYSERR: Illegal value(s) passed to obj_to_room. (Room #%d/%d, obj %p)",
-	room, top_of_world, (void *)object);
+  if (!object) {
+    TB_ERROR_MSG("handler", "obj-to-room", "obj",
+                 "NULL object for room rnum %d", (int) room);
+  } else if (room == NOWHERE || room > top_of_world) {
+    TB_ERROR_MSG("handler", "obj-to-room", "obj",
+                 "obj vnum %d uid %ld room rnum %d not in [0,%d]; not moved",
+                 (int) GET_OBJ_VNUM(object), obj_script_id(object), (int) room,
+                 (int) top_of_world);
   }
   else {
     if (world[room].contents == NULL){  // if list is empty
@@ -704,19 +833,39 @@ void obj_from_room(struct obj_data *object)
   struct obj_data *temp;
   struct char_data *t, *tempch;
 
-  if (!object || IN_ROOM(object) == NOWHERE) {
-    log("SYSERR: NULL object (%p) or obj not in a room (%d) passed to obj_from_room",
-	(void *)object, IN_ROOM(object));
+  /* Internal invariant: callers pass a live object that is in a room. Report
+   * the two cases separately so the NULL case never dereferences object. */
+  if (!object) {
+    TB_ERROR_MSG("handler", "obj-from-room", "obj", "NULL object");
+    return;
+  }
+  if (IN_ROOM(object) == NOWHERE) {
+    TB_ERROR_MSG("handler", "obj-from-room", "obj",
+                 "obj vnum %d uid %ld not in a room",
+                 (int) GET_OBJ_VNUM(object), obj_script_id(object));
     return;
   }
 
-   /* if people are sitting in it, toss their butt to the ground */
-  if (OBJ_SAT_IN_BY(object) != NULL) {
-    for (tempch = OBJ_SAT_IN_BY(object); tempch; tempch = t) {
+  /* If people are sitting in it, toss their butt to the ground (they keep
+   * their sitting position, on the floor). The furniture side of the link
+   * must be cleared too: once SITTING(ch) is NULL, char_from_furniture()
+   * returns early and can never remove ch from OBJ_SAT_IN_BY, so a stale
+   * back-pointer would outlive the character (use after free in
+   * extract_obj or look). Callers that move occupied furniture (scavenger
+   * mobs, omove/wmove) are not expected to, so report it. */
+  if ((tempch = OBJ_SAT_IN_BY(object)) != NULL) {
+    TB_WARN_MSG("handler", "furniture-move-occupied", "obj",
+                "obj vnum %d uid %ld left room %d with %d sitter(s); first "
+                DIAG_CHAR_FMT, (int) GET_OBJ_VNUM(object),
+                obj_script_id(object), (int) GET_ROOM_VNUM(IN_ROOM(object)),
+                GET_OBJ_VAL(object, 1), DIAG_CHAR(tempch));
+    for (; tempch; tempch = t) {
        t = NEXT_SITTING(tempch);
        SITTING(tempch) = NULL;
        NEXT_SITTING(tempch) = NULL;
     }
+    OBJ_SAT_IN_BY(object) = NULL;
+    GET_OBJ_VAL(object, 1) = 0;
   }
 
   REMOVE_FROM_LIST(object, world[IN_ROOM(object)].contents, next_content);
@@ -760,7 +909,9 @@ void obj_from_obj(struct obj_data *obj)
   struct obj_data *temp, *obj_from;
 
   if (obj->in_obj == NULL) {
-    log("SYSERR: (%s): trying to illegally extract obj from obj.", __FILE__);
+    TB_ERROR_MSG("handler", "obj-from-obj", "obj",
+                 "obj vnum %d uid %ld is not in a container",
+                 (int) GET_OBJ_VNUM(obj), obj_script_id(obj));
     return;
   }
   obj_from = obj->in_obj;
@@ -790,7 +941,9 @@ void object_list_new_owner(struct obj_data *list, struct char_data *ch)
   }
 }
 
-/* Extract an object from the world */
+/* Extract an object from the world. Unlike extract_char(), this frees obj
+ * (and everything it contains) immediately: callers that hold obj pointers
+ * across scripts must re-validate them by UID (obj_uid_matches). */
 void extract_obj(struct obj_data *obj)
 {
   struct char_data *ch, *next = NULL;
@@ -798,7 +951,9 @@ void extract_obj(struct obj_data *obj)
 
   if (obj->worn_by != NULL)
     if (unequip_char(obj->worn_by, obj->worn_on) != obj)
-      log("SYSERR: Inconsistent worn_by and worn_on pointers!!");
+      TB_ERROR_MSG("handler", "extract-obj", "obj",
+                   "obj vnum %d uid %ld worn_by/worn_on %d inconsistent",
+                   (int) GET_OBJ_VNUM(obj), obj_script_id(obj), obj->worn_on);
   if (IN_ROOM(obj) != NOWHERE)
     obj_from_room(obj);
   else if (obj->carried_by)
@@ -891,10 +1046,13 @@ void extract_char_final(struct char_data *ch)
   struct obj_data *obj;
   int i;
 
+  /* Every live character is in a room; a NOWHERE character here means the
+   * room lists are already inconsistent. Abort with a core. */
   if (IN_ROOM(ch) == NOWHERE) {
-    log("SYSERR: NOWHERE extracting char %s. (%s, extract_char_final)",
-        GET_NAME(ch), __FILE__);
-    exit(1);
+    TB_FATAL_MSG("handler", "extract-from-nowhere", "char",
+                 DIAG_CHAR_FMT " is in NOWHERE at final extraction",
+                 DIAG_CHAR(ch));
+    abort();
   }
 
   /* We're booting the character of someone who has switched so first we need
@@ -1426,7 +1584,12 @@ int generic_find(char *arg, bitvector_t bitvector, struct char_data *ch,
   return (0);
 }
 
-/* a function to scan for "all" or "all.x" */
+/**
+ * Classify "all", "all.x" or a plain name. For "all.x" the buffer is
+ * rewritten in place to "x", so arg must be writable and the caller must
+ * use the rewritten text afterwards.
+ * @return FIND_ALL, FIND_ALLDOT or FIND_INDIV.
+ */
 int find_all_dots(char *arg)
 {
   if (!strcmp(arg, "all"))
@@ -1464,6 +1627,10 @@ struct group_data * create_group(struct char_data * leader)
   return (new_group);
 }
 
+/* Free a group. Precondition: the group has no members. leave_group()
+ * calls this when the last member leaves; calling it on a non-empty group
+ * would let leave_group() free the group again from inside the member
+ * loop. */
 void free_group(struct group_data * group)
 {
   struct char_data *tch;

@@ -8,6 +8,31 @@
 *  CircleMUD is based on DikuMUD, Copyright (C) 1990, 1991.               *
 **************************************************************************/
 
+/**
+ * @file players.c
+ * ASCII player files (lib/plrfiles/<x>/<name>.plr) and the player index
+ * (lib/plrfiles/index).
+ *
+ * Who controls the input: both files are persistent data written by this
+ * server but readable as text, so they can be hand-edited, truncated by a
+ * full disk, or corrupted. Every value read from them is untrusted: numbers
+ * are parsed with overflow checks, values used as table indexes (class,
+ * level, sex, skills) are range-checked, and a bad field is reported
+ * ("pfile-*" / "index-*" operations with the player idnum) and replaced by
+ * its PFDEF_* default rather than aborting the load.
+ *
+ * Ownership and lifetime:
+ * - player_table[] (top_of_p_table + 1 entries) is owned here. Each name is
+ *   malloc'd. remove_player_from_index() compacts the table, so any saved
+ *   index (GET_PFILEPOS, a local player_i) at or after the removed slot
+ *   becomes stale.
+ * - load_char() allocates strings into a caller-provided character; the
+ *   caller owns them (free_char()).
+ * - Writes are staged: save_char() and save_player_index() write a
+ *   temporary file and replace the live file only after every write
+ *   succeeded, so a failed save keeps the previous file.
+ */
+
 #include "conf.h"
 #include "sysdep.h"
 #include "structs.h"
@@ -22,11 +47,29 @@
 #include "config.h" /* for pclean_criteria[] */
 #include "dg_scripts.h" /* To enable saving of player variables to disk */
 #include "quest.h"
+#include "modify.h" /* for parse_at */
 
 #define LOAD_HIT	0
 #define LOAD_MANA	1
 #define LOAD_MOVE	2
 #define LOAD_STRENGTH	3
+
+/** Replace a heap string field of the character being loaded with a copy
+ * of a pfile value (CircleMUD REPLACE_STR style). A tag repeated in the
+ * file used to leak the earlier copy; a failed strdup() left the field
+ * NULL silently. The old value is freed only once the copy exists.
+ * dst is evaluated more than once: pass a plain field lvalue such as
+ * GET_TITLE(ch). Only for fields load_char() owns (not shared strings). */
+#define PFILE_SET_STRING(dst, src, filename, tag, idnum) do { \
+  char *pfile_new_str_ = strdup(src); \
+  if (pfile_new_str_ == NULL) \
+    TB_ERROR_ERRNO("player", "pfile-string", (filename), \
+                   "player idnum %ld tag %.4s not stored", (long) (idnum), (tag)); \
+  else { \
+    free(dst); \
+    (dst) = pfile_new_str_; \
+  } \
+} while (0)
 
 #define PT_PNAME(i) (player_table[(i)].name)
 #define PT_IDNUM(i) (player_table[(i)].id)
@@ -36,20 +79,30 @@
 
 /* local functions */
 static void load_affects(FILE *fl, struct char_data *ch);
-static void load_skills(FILE *fl, struct char_data *ch);
+static void load_skills(FILE *fl, struct char_data *ch, const char *filename);
 static void load_quests(FILE *fl, struct char_data *ch);
-static void load_HMVS(struct char_data *ch, const char *line, int mode);
+static void load_HMVS(struct char_data *ch, const char *line, int mode,
+                      const char *filename, const char *tag);
+static void pfile_unknown_tag(const char *filename, const char *tag, long idnum);
 static void write_aliases_ascii(FILE *file, struct char_data *ch);
-static void read_aliases_ascii(FILE *file, struct char_data *ch, int count);
+static void read_aliases_ascii(FILE *file, struct char_data *ch, int count,
+                               const char *filename);
 
-static int parse_pfile_int_or_zero(const char *value, const char *filename, const char *tag)
+/* Parse one pfile tag's integer value. The pfile is untrusted on read
+ * (hand-edited, truncated or corrupted); a malformed or out-of-range value
+ * becomes 0 and is reported as "pfile-int" with the player idnum (as known
+ * so far: the Id tag is normally first) and the tag. The raw value is not
+ * echoed: it is file content and may be arbitrary bytes. */
+static int parse_pfile_int_or_zero(const char *value, const char *filename,
+                                   const char *tag, long idnum)
 {
   char *end = NULL;
   long parsed;
 
   if (value == NULL) {
-    log("SYSERR: pfile %s tag %.4s has NULL integer value; using 0",
-        filename ? filename : "(unknown)", tag ? tag : "????");
+    TB_ERROR_MSG("player", "pfile-int", filename ? filename : "(unknown)",
+                 "player idnum %ld tag %.4s has no integer value; using 0",
+                 idnum, tag ? tag : "????");
     return 0;
   }
 
@@ -60,22 +113,27 @@ static int parse_pfile_int_or_zero(const char *value, const char *filename, cons
 
   if (end == value || errno == ERANGE || parsed < INT_MIN || parsed > INT_MAX ||
       (end && *end != '\0')) {
-    log("SYSERR: pfile %s tag %.4s has malformed integer value '%s'; using 0",
-        filename ? filename : "(unknown)", tag ? tag : "????", value);
+    TB_ERROR_MSG("player", "pfile-int", filename ? filename : "(unknown)",
+                 "player idnum %ld tag %.4s malformed or out-of-range integer "
+                 "(%zu bytes); using 0", idnum, tag ? tag : "????",
+                 strlen(value));
     return 0;
   }
 
   return (int)parsed;
 }
 
-static long parse_pfile_long_or_zero(const char *value, const char *filename, const char *tag)
+/* As parse_pfile_int_or_zero(), for long-valued tags (Id, Brth, Last). */
+static long parse_pfile_long_or_zero(const char *value, const char *filename,
+                                     const char *tag, long idnum)
 {
   char *end = NULL;
   long parsed;
 
   if (value == NULL) {
-    log("SYSERR: pfile %s tag %.4s has NULL long value; using 0",
-        filename ? filename : "(unknown)", tag ? tag : "????");
+    TB_ERROR_MSG("player", "pfile-int", filename ? filename : "(unknown)",
+                 "player idnum %ld tag %.4s has no long value; using 0",
+                 idnum, tag ? tag : "????");
     return 0;
   }
 
@@ -85,12 +143,172 @@ static long parse_pfile_long_or_zero(const char *value, const char *filename, co
     end++;
 
   if (end == value || errno == ERANGE || (end && *end != '\0')) {
-    log("SYSERR: pfile %s tag %.4s has malformed long value '%s'; using 0",
-        filename ? filename : "(unknown)", tag ? tag : "????", value);
+    TB_ERROR_MSG("player", "pfile-int", filename ? filename : "(unknown)",
+                 "player idnum %ld tag %.4s malformed or out-of-range long "
+                 "(%zu bytes); using 0", idnum, tag ? tag : "????",
+                 strlen(value));
     return 0;
   }
 
   return parsed;
+}
+
+/* Parse a pfile integer that is later used as a table index or array
+ * bound (class, level, sex). The file is untrusted: an out-of-range value
+ * would index class_abbrevs[], title and experience tables out of bounds,
+ * so it is replaced by the PFDEF default and reported (pfile-range). */
+static int pfile_int_in_range(const char *line, const char *filename,
+                              const char *tag, long idnum, int lo, int hi,
+                              int dflt)
+{
+  int value = parse_pfile_int_or_zero(line, filename, tag, idnum);
+
+  if (value < lo || value > hi) {
+    TB_ERROR_MSG("player", "pfile-range", filename,
+                 "player idnum %ld tag %.4s value %d outside %d..%d; using %d",
+                 idnum, tag, value, lo, hi, dflt);
+    return dflt;
+  }
+  return value;
+}
+
+/* Longest flag word accepted from an "Act :", "Aff :" or "Pref:" line.
+ * sprintascii() writes at most 33 characters per 32-bit word, so anything
+ * longer is corruption or tampering, not a flag set the server produced. */
+#define PFILE_FLAG_WORD 128
+
+/* Load the flag words of an Act/Aff/Pref line into flags[0..3].
+ * The line is player-file data (get_line() hands back up to READ_SIZE-1
+ * bytes), so each word is length-checked before it is copied; the old
+ * unbounded sscanf("%s") overflowed four 128-byte stack buffers.
+ * Accepted forms: four words (current), or one word (legacy files, which
+ * only set flags[0]; reported as a pfile-flags-legacy warning). Anything
+ * else, or a word that is too long, leaves the flags at their defaults and
+ * is reported as a pfile-flags error. */
+static void load_pfile_flag_words(const char *line, int *flags,
+                                  const char *filename, const char *tag,
+                                  long idnum)
+{
+  char words[4][PFILE_FLAG_WORD];
+  const char *cursor = line;
+  int count = 0, i;
+
+  for (;;) {
+    size_t len = 0;
+
+    while (isspace((unsigned char)*cursor))
+      cursor++;
+    if (*cursor == '\0')
+      break;
+    while (cursor[len] && !isspace((unsigned char)cursor[len]))
+      len++;
+    if (count == 4) {
+      count++;	/* more than four words */
+      break;
+    }
+    if (len >= PFILE_FLAG_WORD) {
+      TB_ERROR_MSG("player", "pfile-flags", filename,
+                   "player idnum %ld tag %.4s word %d is %zu bytes (max %d); "
+                   "flags left at defaults", idnum, tag, count + 1, len,
+                   PFILE_FLAG_WORD - 1);
+      return;
+    }
+    memcpy(words[count], cursor, len);
+    words[count][len] = '\0';
+    count++;
+    cursor += len;
+  }
+  if (count == 1) {
+    TB_WARN_MSG("player", "pfile-flags-legacy", filename,
+                "player idnum %ld tag %.4s has the legacy one-word form; "
+                "only the first flag word loaded", idnum, tag);
+    flags[0] = asciiflag_conv(words[0]);
+    return;
+  }
+  if (count != 4) {
+    TB_ERROR_MSG("player", "pfile-flags", filename,
+                 "player idnum %ld tag %.4s has %s%d words (expected 4); "
+                 "flags left at defaults", idnum, tag, count > 4 ? "over " : "",
+                 count > 4 ? 4 : count);
+    return;
+  }
+  for (i = 0; i < 4; i++)
+    flags[i] = asciiflag_conv(words[i]);
+}
+
+/** Read a '~'-terminated string, like fread_string(), without exit(1).
+ * fread_string() terminates the whole server on end of file or on a string
+ * of MAX_STRING_LENGTH bytes or more, so a single truncated player
+ * description or mail body would take the game down. Player files and the
+ * mail file are persistent data that can be truncated on disk.
+ * @param fl Stream positioned at the first line of the string.
+ * @param resource File name, for diagnostics.
+ * @param field Which string is being read (e.g. "Desc"), for diagnostics.
+ * @param[out] out On success the string (malloc'd, CR/LF line endings, NULL
+ * for an empty string), owned by the caller. NULL on failure.
+ * @return TRUE on success. FALSE after reporting an fread-string error: at
+ * end of file the stream is at EOF; for an oversize string the rest of it
+ * is consumed up to its '~' so the caller can keep parsing. */
+int fread_string_checked(FILE *fl, const char *resource, const char *field,
+                         char **out)
+{
+  /* fgets() stores up to 511 characters; a line without its newline then
+   * gains "\r\n\0" after them, so tmp needs 514 bytes. */
+  char buf[MAX_STRING_LENGTH], tmp[514];
+  char *point;
+  size_t length = 0, templength;
+  int oversize = FALSE;
+
+  *out = NULL;
+  *buf = '\0';
+  for (;;) {
+    if (!fgets(tmp, 512, fl)) {
+      TB_ERROR_MSG("db", "fread-string", resource,
+                   "%s: end of file before '~' after %zu bytes", field, length);
+      return FALSE;
+    }
+    /* Strip the line ending; a trailing '~' ends the string, otherwise the
+     * line is stored with a CR/LF ending (same rules as fread_string()). */
+    point = strchr(tmp, '\0');
+    for (point--; (*point == '\r' || *point == '\n') && point > tmp; point--)
+      ;
+    if (*point == '~') {
+      *point = '\0';
+      templength = (size_t)(point - tmp);
+      if (!oversize && length + templength < sizeof(buf)) {
+        strlcat(buf, tmp, sizeof(buf));
+        length += templength;
+      } else
+        oversize = TRUE;
+      break;
+    }
+    if (*point == '\n' || *point == '\r')
+      *point = '\r';
+    else
+      *(++point) = '\r';
+    *(++point) = '\n';
+    *(++point) = '\0';
+    templength = (size_t)(point - tmp);
+    if (oversize || length + templength >= sizeof(buf)) {
+      oversize = TRUE;	/* keep consuming up to the '~' */
+      continue;
+    }
+    strlcat(buf, tmp, sizeof(buf));
+    length += templength;
+  }
+
+  if (oversize) {
+    TB_ERROR_MSG("db", "fread-string", resource,
+                 "%s: string exceeds %zu bytes; discarded", field, sizeof(buf) - 1);
+    return FALSE;
+  }
+  parse_at(buf);
+  if (*buf && (*out = strdup(buf)) == NULL) {
+    TB_ERROR_ERRNO("db", "fread-string", resource, "%s: strdup of %zu bytes",
+                   field, length);
+    return FALSE;
+  }
+  return TRUE;
 }
 
 /* Read a whitespace-delimited signed number with overflow detection. */
@@ -124,11 +342,38 @@ static int parse_index_word(const char **cursor, char *dest, size_t capacity)
   return TRUE;
 }
 
-/* New version to build player index for ASCII Player Files. Generate index
- * table for the player file. */
+/* Index lines that build_player_index() could not parse. They are kept
+ * verbatim and written back by save_player_index(), so a damaged record is
+ * never erased by the next index rewrite (any level, flag or logon change
+ * rewrites the index). An admin repairs them by hand; boot reports them
+ * again until then. */
+static char **index_kept_lines = NULL;
+static int index_kept_count = 0;
+
+static void keep_index_line(const char *line)
+{
+  RECREATE(index_kept_lines, char *, index_kept_count + 1);
+  index_kept_lines[index_kept_count] = strdup(line);
+  if (index_kept_lines[index_kept_count] == NULL) {
+    TB_ERROR_ERRNO("player", "index-parse", "player-index",
+                   "cannot keep malformed record; it will be lost on the next index save");
+    return;
+  }
+  index_kept_count++;
+}
+
+/** Build the in-memory player index from LIB_PLRFILES/INDEX_FILE.
+ * Each line is "<idnum> <name> <level> <ascii flags> <last logon>", and the
+ * file ends with a "~" line. A missing file means a fresh game: the table
+ * is empty and the first new character becomes implementor (init_char()).
+ * A malformed line is reported (index-parse, by line number; the line can
+ * hold a player name and is not echoed), skipped, and kept for
+ * save_player_index(); later records still load. If the file holds records
+ * but none of them parse, boot stops: an empty table would hand the next
+ * new character implementor level. */
 void build_player_index(void)
 {
-  int rec_count = 0, i;
+  int rec_count = 0, i, line_no = 0;
   FILE *plr_index;
   char index_name[40], line[256], bits[64];
   char arg2[80];
@@ -152,17 +397,23 @@ void build_player_index(void)
   if (rec_count == 0) {
     player_table = NULL;
     top_of_p_table = -1;
+    tb_fclose(plr_index);
     return;
   }
 
   CREATE(player_table, struct player_index_element, rec_count);
-  for (i = 0; i < rec_count; i++) {
+  i = 0;
+  while (line_no < rec_count) {
     int fields;
 
     if (!get_line(plr_index, line)) {
-      log("SYSERR: player index %s ended early at record %d of %d", index_name, i + 1, rec_count);
+      TB_ERROR_MSG("player", "index-parse", index_name,
+                   "index ended early at record %d of %d", line_no + 1, rec_count);
       break;
     }
+    if (*line == '~')
+      continue;
+    line_no++;
     {
       const char *cursor = line;
       long level, last;
@@ -183,19 +434,31 @@ void build_player_index(void)
       }
     }
     if (fields != 5) {
-      log("SYSERR: malformed player index record %d in %s: '%s'",
-          i + 1, index_name, line);
-      break;
+      TB_ERROR_MSG("player", "index-parse", index_name,
+                   "record %d of %d malformed; skipped and kept for the next "
+                   "index save", line_no, rec_count);
+      keep_index_line(line);
+      continue;
     }
     CREATE(player_table[i].name, char, strlen(arg2) + 1);
     memcpy(player_table[i].name, arg2, strlen(arg2) + 1);
     player_table[i].flags = asciiflag_conv(bits);
     top_idnum = MAX(top_idnum, player_table[i].id);
+    i++;
   }
 
   tb_fclose(plr_index);
   top_of_p_file = top_of_p_table = i - 1;
+
+  if (i == 0) {
+    TB_FATAL_MSG("player", "index-parse", index_name,
+                 "none of %d records parsed; refusing to boot with an empty "
+                 "index (the next new character would become implementor)",
+                 rec_count);
+    abort();
+  }
 }
+
 
 /* Create a new entry in the in-memory index table for the player file. If the
  * name already exists, by overwriting a deleted character, then we re-use the
@@ -235,8 +498,12 @@ int create_entry(char *name)
 }
 
 
-/* Remove an entry from the in-memory player index table.               *
- * Requires the 'pos' value returned by the get_ptable_by_name function */
+/** Remove an entry from the in-memory player index table.
+ * @param pos A table position, as returned by get_ptable_by_name().
+ * Frees the entry's name and shifts every later entry down one slot, so
+ * any position held for an entry after pos (GET_PFILEPOS of an online
+ * character, a caller's player_i) now names a different player; callers
+ * must re-look-up by name. Does not write the index file. */
 static void remove_player_from_index(int pos)
 {
   int i;
@@ -269,34 +536,72 @@ static void remove_player_from_index(int pos)
   }
 }
 
-/* This function necessary to save a seperate ASCII player index */
+/** Write the in-memory player index to LIB_PLRFILES/INDEX_FILE.
+ * The index is the only map from player names to player files, and an
+ * empty or truncated index makes the next new character implementor
+ * (init_char()). It is therefore staged in a mkstemp() file beside the
+ * live one, every write is checked, and the live file is replaced only
+ * after a complete, flushed write (tb_replace_file_checked()). On any
+ * failure the live index is kept and index-save is reported. */
 void save_player_index(void)
 {
-  int i;
-  char index_name[50], bits[64];
+  int i, failed = FALSE, temp_fd;
+  char index_name[50], temp_name[64], bits[64];
   FILE *index_file;
 
   tb_snprintf(index_name, sizeof(index_name), "%s%s", LIB_PLRFILES, INDEX_FILE);
-  if (!(index_file = fopen(index_name, "w"))) {
-    log("SYSERR: Could not write player index file");
+  tb_snprintf(temp_name, sizeof(temp_name), "%s.tmpXXXXXX", index_name);
+  if ((temp_fd = mkstemp(temp_name)) < 0) {
+    TB_ERROR_ERRNO("player", "index-save", index_name,
+                   "cannot stage %d entries; live index kept", top_of_p_table + 1);
+    return;
+  }
+  if (!(index_file = fdopen(temp_fd, "w"))) {
+    TB_ERROR_ERRNO("player", "index-save", temp_name,
+                   "cannot open staged index for %d entries; live index kept",
+                   top_of_p_table + 1);
+    close(temp_fd);
+    unlink(temp_name);
     return;
   }
 
-  for (i = 0; i <= top_of_p_table; i++)
+  for (i = 0; i <= top_of_p_table && !failed; i++)
     if (*player_table[i].name) {
       sprintascii(bits, player_table[i].flags);
-      tb_fprintf(index_file, "%ld %s %d %s %ld\n", player_table[i].id,
-	player_table[i].name, player_table[i].level, *bits ? bits : "0",
-        (long)player_table[i].last);
+      if (fprintf(index_file, "%ld %s %d %s %ld\n", player_table[i].id,
+                  player_table[i].name, player_table[i].level, *bits ? bits : "0",
+                  (long)player_table[i].last) < 0)
+        failed = TRUE;
     }
-  tb_fprintf(index_file, "~\n");
-
-  tb_fclose(index_file);
+  /* Records boot could not parse are carried forward, not erased. */
+  for (i = 0; i < index_kept_count && !failed; i++)
+    if (fprintf(index_file, "%s\n", index_kept_lines[i]) < 0)
+      failed = TRUE;
+  if (!failed && fprintf(index_file, "~\n") < 0)
+    failed = TRUE;
+  if (ferror(index_file) || fflush(index_file) != 0)
+    failed = TRUE;
+  if (fclose(index_file) != 0)
+    failed = TRUE;
+  if (!failed && !tb_replace_file_checked(temp_name, index_name))
+    failed = TRUE;
+  if (failed) {
+    TB_ERROR_ERRNO("player", "index-save", index_name,
+                   "%d entries not written; live index kept", top_of_p_table + 1);
+    unlink(temp_name);
+  }
 }
+
 
 void free_player_index(void)
 {
   int tp;
+
+  for (tp = 0; tp < index_kept_count; tp++)
+    free(index_kept_lines[tp]);
+  free(index_kept_lines);
+  index_kept_lines = NULL;
+  index_kept_count = 0;
 
   if (!player_table)
     return;
@@ -344,15 +649,23 @@ char *get_name_by_id(long id)
 }
 
 /* Stuff related to the save/load player system. */
-/* New load_char reads ASCII Player Files. Load a char, TRUE if loaded, FALSE
- * if not. */
+/** Load an ASCII player file into ch.
+ * @param name Player name; must be in the player index.
+ * @param ch A freshly allocated, cleared character with player_specials
+ * allocated. String fields are assigned, not freed first, so loading into
+ * a character that already owns strings leaks them.
+ * @return The player's player_table index, or -1 if the name is not in the
+ * index or the file cannot be opened (reported).
+ * File content is untrusted. A malformed or out-of-range field never fails
+ * the load: it is reported (pfile-int, pfile-range, pfile-flags,
+ * pfile-desc, pfile-alias, pfile-tag ...) and the field keeps its PFDEF_*
+ * default. Unknown tags are reported and skipped. */
 int load_char(const char *name, struct char_data *ch)
 {
   int id, i;
   FILE *fl;
   char filename[40];
-  char buf2[128], line[MAX_INPUT_LENGTH + 1], tag[6];
-  char f1[128], f2[128], f3[128], f4[128];
+  char line[MAX_INPUT_LENGTH + 1], tag[6];
   trig_data *t = NULL;
   trig_rnum t_rnum = NOTHING;
 
@@ -431,172 +744,184 @@ int load_char(const char *name, struct char_data *ch)
 
     while (get_line(fl, line)) {
       tag_argument(line, tag);
+      if (!*tag)
+        continue;	/* short line, already reported by tag_argument() */
 
       switch (*tag) {
       case 'A':
-        if (!strcmp(tag, "Ac  "))	GET_AC(ch)		= parse_pfile_int_or_zero(line, filename, tag);
+        if (!strcmp(tag, "Ac  "))	GET_AC(ch)		= parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
 	else if (!strcmp(tag, "Act ")) {
-         if (sscanf(line, "%s %s %s %s", f1, f2, f3, f4) == 4) {
-          PLR_FLAGS(ch)[0] = asciiflag_conv(f1);
-          PLR_FLAGS(ch)[1] = asciiflag_conv(f2);
-          PLR_FLAGS(ch)[2] = asciiflag_conv(f3);
-          PLR_FLAGS(ch)[3] = asciiflag_conv(f4);
-        } else
-          PLR_FLAGS(ch)[0] = asciiflag_conv(line);
+         load_pfile_flag_words(line, PLR_FLAGS(ch), filename, tag, GET_IDNUM(ch));
       } else if (!strcmp(tag, "Aff ")) {
-        if (sscanf(line, "%s %s %s %s", f1, f2, f3, f4) == 4) {
-          AFF_FLAGS(ch)[0] = asciiflag_conv(f1);
-          AFF_FLAGS(ch)[1] = asciiflag_conv(f2);
-          AFF_FLAGS(ch)[2] = asciiflag_conv(f3);
-          AFF_FLAGS(ch)[3] = asciiflag_conv(f4);
-        } else
-          AFF_FLAGS(ch)[0] = asciiflag_conv(line);
+        load_pfile_flag_words(line, AFF_FLAGS(ch), filename, tag, GET_IDNUM(ch));
 	}
-	if (!strcmp(tag, "Affs")) 	load_affects(fl, ch);
-        else if (!strcmp(tag, "Alin"))	GET_ALIGNMENT(ch)	= parse_pfile_int_or_zero(line, filename, tag);
-	else if (!strcmp(tag, "Alis"))	read_aliases_ascii(fl, ch, parse_pfile_int_or_zero(line, filename, tag));
+	else if (!strcmp(tag, "Affs")) 	load_affects(fl, ch);
+        else if (!strcmp(tag, "Alin"))	GET_ALIGNMENT(ch)	= parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
+	else if (!strcmp(tag, "Alis"))	read_aliases_ascii(fl, ch, parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch)), filename);
+	else pfile_unknown_tag(filename, tag, GET_IDNUM(ch));
 	break;
 
       case 'B':
-	     if (!strcmp(tag, "Badp"))	GET_BAD_PWS(ch)		= parse_pfile_int_or_zero(line, filename, tag);
-	else if (!strcmp(tag, "Bank"))	GET_BANK_GOLD(ch)	= parse_pfile_int_or_zero(line, filename, tag);
-	else if (!strcmp(tag, "Brth"))	ch->player.time.birth	= parse_pfile_long_or_zero(line, filename, tag);
+	     if (!strcmp(tag, "Badp"))	GET_BAD_PWS(ch)		= parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
+	else if (!strcmp(tag, "Bank"))	GET_BANK_GOLD(ch)	= parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
+	else if (!strcmp(tag, "Brth"))	ch->player.time.birth	= parse_pfile_long_or_zero(line, filename, tag, GET_IDNUM(ch));
+	else pfile_unknown_tag(filename, tag, GET_IDNUM(ch));
 	break;
 
       case 'C':
-	     if (!strcmp(tag, "Cha "))	ch->real_abils.cha	= parse_pfile_int_or_zero(line, filename, tag);
-	else if (!strcmp(tag, "Clas"))	GET_CLASS(ch)		= parse_pfile_int_or_zero(line, filename, tag);
-	else if (!strcmp(tag, "Con "))	ch->real_abils.con	= parse_pfile_int_or_zero(line, filename, tag);
+	     if (!strcmp(tag, "Cha "))	ch->real_abils.cha	= parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
+	else if (!strcmp(tag, "Clas"))	GET_CLASS(ch)		= pfile_int_in_range(line, filename, tag, GET_IDNUM(ch), 0, NUM_CLASSES - 1, PFDEF_CLASS);
+	else if (!strcmp(tag, "Con "))	ch->real_abils.con	= parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
+	else pfile_unknown_tag(filename, tag, GET_IDNUM(ch));
 	break;
 
       case 'D':
-	     if (!strcmp(tag, "Desc"))	ch->player.description	= fread_string(fl, buf2);
-	else if (!strcmp(tag, "Dex "))	ch->real_abils.dex	= parse_pfile_int_or_zero(line, filename, tag);
-	else if (!strcmp(tag, "Drnk"))	GET_COND(ch, DRUNK)	= parse_pfile_int_or_zero(line, filename, tag);
-	else if (!strcmp(tag, "Drol"))	GET_DAMROLL(ch)		= parse_pfile_int_or_zero(line, filename, tag);
+	     if (!strcmp(tag, "Desc")) {
+          /* A truncated or oversize description is dropped, not fatal:
+           * fread_string() would exit(1) the whole server here. */
+          free(ch->player.description);
+          if (!fread_string_checked(fl, filename, "Desc", &ch->player.description))
+            TB_ERROR_MSG("player", "pfile-desc", filename,
+                         "player idnum %ld unterminated or oversize Desc; "
+                         "description dropped", GET_IDNUM(ch));
+        }
+	else if (!strcmp(tag, "Dex "))	ch->real_abils.dex	= parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
+	else if (!strcmp(tag, "Drnk"))	GET_COND(ch, DRUNK)	= parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
+	else if (!strcmp(tag, "Drol"))	GET_DAMROLL(ch)		= parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
+	else pfile_unknown_tag(filename, tag, GET_IDNUM(ch));
 	break;
 
       case 'E':
-	     if (!strcmp(tag, "Exp "))	GET_EXP(ch)		= parse_pfile_int_or_zero(line, filename, tag);
-             else if (!strcmp(tag, "EgAP")) GET_ENDGAME_AP(ch) = MAX(0, parse_pfile_int_or_zero(line, filename, tag));
-             else if (!strcmp(tag, "EgXP")) GET_ENDGAME_XP(ch) = MAX(0, parse_pfile_int_or_zero(line, filename, tag));
-             else if (!strcmp(tag, "EgHP")) GET_ENDGAME_HP_RANK(ch) = MAX(0, parse_pfile_int_or_zero(line, filename, tag));
-             else if (!strcmp(tag, "EgMP")) GET_ENDGAME_MP_RANK(ch) = MAX(0, parse_pfile_int_or_zero(line, filename, tag));
+	     if (!strcmp(tag, "Exp "))	GET_EXP(ch)		= parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
+             else if (!strcmp(tag, "EgAP")) GET_ENDGAME_AP(ch) = MAX(0, parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch)));
+             else if (!strcmp(tag, "EgXP")) GET_ENDGAME_XP(ch) = MAX(0, parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch)));
+             else if (!strcmp(tag, "EgHP")) GET_ENDGAME_HP_RANK(ch) = MAX(0, parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch)));
+             else if (!strcmp(tag, "EgMP")) GET_ENDGAME_MP_RANK(ch) = MAX(0, parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch)));
+	else pfile_unknown_tag(filename, tag, GET_IDNUM(ch));
 	break;
 
       case 'F':
-	     if (!strcmp(tag, "Frez"))	GET_FREEZE_LEV(ch)	= parse_pfile_int_or_zero(line, filename, tag);
+	     if (!strcmp(tag, "Frez"))	GET_FREEZE_LEV(ch)	= parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
+	else pfile_unknown_tag(filename, tag, GET_IDNUM(ch));
 	break;
 
       case 'G':
-	     if (!strcmp(tag, "Gold"))	GET_GOLD(ch)		= parse_pfile_int_or_zero(line, filename, tag);
+	     if (!strcmp(tag, "Gold"))	GET_GOLD(ch)		= parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
+	else pfile_unknown_tag(filename, tag, GET_IDNUM(ch));
 	break;
 
       case 'H':
-	     if (!strcmp(tag, "Hit "))	load_HMVS(ch, line, LOAD_HIT);
-	else if (!strcmp(tag, "Hite"))	GET_HEIGHT(ch)		= parse_pfile_int_or_zero(line, filename, tag);
-        else if (!strcmp(tag, "Host")) {
-          if (GET_HOST(ch))
-            free(GET_HOST(ch));
-          GET_HOST(ch) = strdup(line);
-        }
-        else if (!strcmp(tag, "Hrol"))	GET_HITROLL(ch)		= parse_pfile_int_or_zero(line, filename, tag);
-	else if (!strcmp(tag, "Hung"))	GET_COND(ch, HUNGER)	= parse_pfile_int_or_zero(line, filename, tag);
+	     if (!strcmp(tag, "Hit "))	load_HMVS(ch, line, LOAD_HIT, filename, tag);
+	else if (!strcmp(tag, "Hite"))	GET_HEIGHT(ch)		= parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
+        else if (!strcmp(tag, "Host"))
+          PFILE_SET_STRING(GET_HOST(ch), line, filename, tag, GET_IDNUM(ch));
+        else if (!strcmp(tag, "Hrol"))	GET_HITROLL(ch)		= parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
+	else if (!strcmp(tag, "Hung"))	GET_COND(ch, HUNGER)	= parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
+	else pfile_unknown_tag(filename, tag, GET_IDNUM(ch));
 	break;
 
       case 'I':
-	     if (!strcmp(tag, "Id  "))	GET_IDNUM(ch)		= parse_pfile_long_or_zero(line, filename, tag);
-	else if (!strcmp(tag, "Int "))	ch->real_abils.intel	= parse_pfile_int_or_zero(line, filename, tag);
-	else if (!strcmp(tag, "Invs"))	GET_INVIS_LEV(ch)	= parse_pfile_int_or_zero(line, filename, tag);
+	     if (!strcmp(tag, "Id  "))	GET_IDNUM(ch)		= parse_pfile_long_or_zero(line, filename, tag, GET_IDNUM(ch));
+	else if (!strcmp(tag, "Int "))	ch->real_abils.intel	= parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
+	else if (!strcmp(tag, "Invs"))	GET_INVIS_LEV(ch)	= parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
+	else pfile_unknown_tag(filename, tag, GET_IDNUM(ch));
 	break;
 
       case 'L':
-	     if (!strcmp(tag, "Last"))	ch->player.time.logon	= parse_pfile_long_or_zero(line, filename, tag);
-  else if (!strcmp(tag, "Lern"))	GET_PRACTICES(ch)	= parse_pfile_int_or_zero(line, filename, tag);
-	else if (!strcmp(tag, "Levl"))	GET_LEVEL(ch)		= parse_pfile_int_or_zero(line, filename, tag);
-        else if (!strcmp(tag, "Lmot"))   GET_LAST_MOTD(ch)   = parse_pfile_int_or_zero(line, filename, tag);
-        else if (!strcmp(tag, "Lnew"))   GET_LAST_NEWS(ch)   = parse_pfile_int_or_zero(line, filename, tag);
+	     if (!strcmp(tag, "Last"))	ch->player.time.logon	= parse_pfile_long_or_zero(line, filename, tag, GET_IDNUM(ch));
+  else if (!strcmp(tag, "Lern"))	GET_PRACTICES(ch)	= parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
+	else if (!strcmp(tag, "Levl"))	GET_LEVEL(ch)		= pfile_int_in_range(line, filename, tag, GET_IDNUM(ch), 0, LVL_IMPL, PFDEF_LEVEL);
+        else if (!strcmp(tag, "Lmot"))   GET_LAST_MOTD(ch)   = parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
+        else if (!strcmp(tag, "Lnew"))   GET_LAST_NEWS(ch)   = parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
+	else pfile_unknown_tag(filename, tag, GET_IDNUM(ch));
 	break;
 
       case 'M':
-	     if (!strcmp(tag, "Mana"))	load_HMVS(ch, line, LOAD_MANA);
-	else if (!strcmp(tag, "Move"))	load_HMVS(ch, line, LOAD_MOVE);
+	     if (!strcmp(tag, "Mana"))	load_HMVS(ch, line, LOAD_MANA, filename, tag);
+	else if (!strcmp(tag, "Move"))	load_HMVS(ch, line, LOAD_MOVE, filename, tag);
+	else pfile_unknown_tag(filename, tag, GET_IDNUM(ch));
 	break;
 
       case 'N':
-	     if (!strcmp(tag, "Name"))	GET_PC_NAME(ch)	= strdup(line);
+	     if (!strcmp(tag, "Name"))	PFILE_SET_STRING(GET_PC_NAME(ch), line, filename, tag, GET_IDNUM(ch));
+	else pfile_unknown_tag(filename, tag, GET_IDNUM(ch));
 	break;
 
       case 'O':
-       if (!strcmp(tag, "Olc "))  GET_OLC_ZONE(ch) = parse_pfile_int_or_zero(line, filename, tag);
+       if (!strcmp(tag, "Olc "))  GET_OLC_ZONE(ch) = parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
+	else pfile_unknown_tag(filename, tag, GET_IDNUM(ch));
   break;
 
       case 'P':
-       if (!strcmp(tag, "Page"))  GET_PAGE_LENGTH(ch) = parse_pfile_int_or_zero(line, filename, tag);
+       if (!strcmp(tag, "Page"))  GET_PAGE_LENGTH(ch) = parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
 	else if (!strcmp(tag, "Pass"))	strlcpy(GET_PASSWD(ch), line, sizeof(ch->player.passwd));
-	else if (!strcmp(tag, "Plyd"))	ch->player.time.played	= parse_pfile_int_or_zero(line, filename, tag);
-	else if (!strcmp(tag, "PfIn"))	POOFIN(ch)		= strdup(line);
-	else if (!strcmp(tag, "PfOt"))	POOFOUT(ch)		= strdup(line);
+	else if (!strcmp(tag, "Plyd"))	ch->player.time.played	= parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
+	else if (!strcmp(tag, "PfIn"))	PFILE_SET_STRING(POOFIN(ch), line, filename, tag, GET_IDNUM(ch));
+	else if (!strcmp(tag, "PfOt"))	PFILE_SET_STRING(POOFOUT(ch), line, filename, tag, GET_IDNUM(ch));
         else if (!strcmp(tag, "Pref")) {
-          if (sscanf(line, "%s %s %s %s", f1, f2, f3, f4) == 4) {
-            PRF_FLAGS(ch)[0] = asciiflag_conv(f1);
-            PRF_FLAGS(ch)[1] = asciiflag_conv(f2);
-            PRF_FLAGS(ch)[2] = asciiflag_conv(f3);
-            PRF_FLAGS(ch)[3] = asciiflag_conv(f4);
-          } else
-	    PRF_FLAGS(ch)[0] = asciiflag_conv(f1);
+          /* The legacy fallback used to convert f1, which was never
+           * written on this path (uninitialised or a stale Act/Aff word). */
+          load_pfile_flag_words(line, PRF_FLAGS(ch), filename, tag, GET_IDNUM(ch));
 	  }
+	else pfile_unknown_tag(filename, tag, GET_IDNUM(ch));
         break;
 
       case 'Q':
-	     if (!strcmp(tag, "Qstp"))  GET_QUESTPOINTS(ch)     = parse_pfile_int_or_zero(line, filename, tag);
-       else if (!strcmp(tag, "Qpnt")) GET_QUESTPOINTS(ch) = parse_pfile_int_or_zero(line, filename, tag); /* Backward compatibility */
-       else if (!strcmp(tag, "Qcur")) GET_QUEST(ch) = parse_pfile_int_or_zero(line, filename, tag);
-       else if (!strcmp(tag, "Qcnt")) GET_QUEST_COUNTER(ch) = parse_pfile_int_or_zero(line, filename, tag);
+	     if (!strcmp(tag, "Qstp"))  GET_QUESTPOINTS(ch)     = parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
+       else if (!strcmp(tag, "Qpnt")) GET_QUESTPOINTS(ch) = parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch)); /* Backward compatibility */
+       else if (!strcmp(tag, "Qcur")) GET_QUEST(ch) = parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
+       else if (!strcmp(tag, "Qcnt")) GET_QUEST_COUNTER(ch) = parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
        else if (!strcmp(tag, "Qest")) load_quests(fl, ch);
+	else pfile_unknown_tag(filename, tag, GET_IDNUM(ch));
         break;
 
       case 'R':
-	     if (!strcmp(tag, "Room"))	GET_LOADROOM(ch)	= parse_pfile_int_or_zero(line, filename, tag);
+	     if (!strcmp(tag, "Room"))	GET_LOADROOM(ch)	= parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
+	else pfile_unknown_tag(filename, tag, GET_IDNUM(ch));
 	break;
 
       case 'S':
-	     if (!strcmp(tag, "Sex "))	GET_SEX(ch)		= parse_pfile_int_or_zero(line, filename, tag);
-  else if (!strcmp(tag, "ScrW"))  GET_SCREEN_WIDTH(ch) = parse_pfile_int_or_zero(line, filename, tag);
-	else if (!strcmp(tag, "Skil"))	load_skills(fl, ch);
-	else if (!strcmp(tag, "Str "))	load_HMVS(ch, line, LOAD_STRENGTH);
+	     if (!strcmp(tag, "Sex "))	GET_SEX(ch)		= pfile_int_in_range(line, filename, tag, GET_IDNUM(ch), 0, NUM_GENDERS - 1, PFDEF_SEX);
+  else if (!strcmp(tag, "ScrW"))  GET_SCREEN_WIDTH(ch) = parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
+	else if (!strcmp(tag, "Skil"))	load_skills(fl, ch, filename);
+	else if (!strcmp(tag, "Str "))	load_HMVS(ch, line, LOAD_STRENGTH, filename, tag);
+	else pfile_unknown_tag(filename, tag, GET_IDNUM(ch));
 	break;
 
       case 'T':
-	     if (!strcmp(tag, "Thir"))	GET_COND(ch, THIRST)	= parse_pfile_int_or_zero(line, filename, tag);
-	else if (!strcmp(tag, "Thr1"))	GET_SAVE(ch, 0)		= parse_pfile_int_or_zero(line, filename, tag);
-	else if (!strcmp(tag, "Thr2"))	GET_SAVE(ch, 1)		= parse_pfile_int_or_zero(line, filename, tag);
-	else if (!strcmp(tag, "Thr3"))	GET_SAVE(ch, 2)		= parse_pfile_int_or_zero(line, filename, tag);
-	else if (!strcmp(tag, "Thr4"))	GET_SAVE(ch, 3)		= parse_pfile_int_or_zero(line, filename, tag);
-	else if (!strcmp(tag, "Thr5"))	GET_SAVE(ch, 4)		= parse_pfile_int_or_zero(line, filename, tag);
-	else if (!strcmp(tag, "Titl"))	GET_TITLE(ch)		= strdup(line);
-        else if (!strcmp(tag, "Trig") && CONFIG_SCRIPT_PLAYERS) {
-          if ((t_rnum = real_trigger(parse_pfile_int_or_zero(line, filename, tag))) != NOTHING) {
+	     if (!strcmp(tag, "Thir"))	GET_COND(ch, THIRST)	= parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
+	else if (!strcmp(tag, "Thr1"))	GET_SAVE(ch, 0)		= parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
+	else if (!strcmp(tag, "Thr2"))	GET_SAVE(ch, 1)		= parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
+	else if (!strcmp(tag, "Thr3"))	GET_SAVE(ch, 2)		= parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
+	else if (!strcmp(tag, "Thr4"))	GET_SAVE(ch, 3)		= parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
+	else if (!strcmp(tag, "Thr5"))	GET_SAVE(ch, 4)		= parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
+	else if (!strcmp(tag, "Titl"))	PFILE_SET_STRING(GET_TITLE(ch), line, filename, tag, GET_IDNUM(ch));
+        else if (!strcmp(tag, "Trig")) {
+          if (CONFIG_SCRIPT_PLAYERS &&
+              (t_rnum = real_trigger(parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch)))) != NOTHING) {
             t = read_trigger(t_rnum);
           if (!SCRIPT(ch))
             CREATE(SCRIPT(ch), struct script_data, 1);
           add_trigger(SCRIPT(ch), t, -1);
           }
          }
+	else pfile_unknown_tag(filename, tag, GET_IDNUM(ch));
 	break;
 
       case 'V':
-	     if (!strcmp(tag, "Vars"))	read_saved_vars_ascii(fl, ch, parse_pfile_int_or_zero(line, filename, tag));
+	     if (!strcmp(tag, "Vars"))	read_saved_vars_ascii(fl, ch, parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch)));
+	else pfile_unknown_tag(filename, tag, GET_IDNUM(ch));
       break;
 
       case 'W':
-	     if (!strcmp(tag, "Wate"))	GET_WEIGHT(ch)		= parse_pfile_int_or_zero(line, filename, tag);
-	else if (!strcmp(tag, "Wimp"))	GET_WIMP_LEV(ch)	= parse_pfile_int_or_zero(line, filename, tag);
-	else if (!strcmp(tag, "Wis "))	ch->real_abils.wis	= parse_pfile_int_or_zero(line, filename, tag);
+	     if (!strcmp(tag, "Wate"))	GET_WEIGHT(ch)		= parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
+	else if (!strcmp(tag, "Wimp"))	GET_WIMP_LEV(ch)	= parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
+	else if (!strcmp(tag, "Wis "))	ch->real_abils.wis	= parse_pfile_int_or_zero(line, filename, tag, GET_IDNUM(ch));
+	else pfile_unknown_tag(filename, tag, GET_IDNUM(ch));
 	break;
 
       default:
-        log("SYSERR: Unknown tag '%.4s' in pfile %s with value '%s'", tag, filename, line);
+        pfile_unknown_tag(filename, tag, GET_IDNUM(ch));
         break;
       }
     }
@@ -616,8 +941,19 @@ int load_char(const char *name, struct char_data *ch)
   return(id);
 }
 
-/* Write the vital data of a player to the player file. */
-/* This is the ASCII Player Files save routine. */
+/** Write a player's file (the ASCII player file save routine).
+ * Side effects, all undone before return: every worn item is unequipped
+ * (firing wear/remove triggers unless NO_EXTRANEOUS_TRIGGERS) and every
+ * affect is removed so the base stats can be written, then both are put
+ * back. Not reentrant: a trigger fired from here must not save the same
+ * character. At most MAX_AFFECT affects are written; extra ones stay on the
+ * character and are reported (save-affects).
+ * The file is staged and replaced only after every write succeeded; any
+ * failure is reported and leaves the previous file in place. Afterwards the
+ * player index entry is refreshed (and the index rewritten if it changed).
+ * A character missing from the index is reported (save-index-missing) and
+ * the index is left as it was. NPCs and characters with no PFILEPOS are not
+ * saved. */
 void save_char(struct char_data * ch)
 {
   FILE *fl;
@@ -627,6 +963,8 @@ void save_char(struct char_data * ch)
   int save_failed = FALSE;
   int i, j, id, save_index = FALSE;
   struct affected_type *aff, tmp_aff[MAX_AFFECT];
+  struct affected_type *extra_aff = NULL;	/* affects past MAX_AFFECT */
+  int num_extra = 0;
   struct obj_data *char_eq[NUM_WEARS];
   trig_data *t;
 
@@ -651,12 +989,20 @@ void save_char(struct char_data * ch)
     }
   }
 
-  if (!get_filename(filename, sizeof(filename), PLR_FILE, GET_NAME(ch)))
+  if (!get_filename(filename, sizeof(filename), PLR_FILE, GET_NAME(ch))) {
+    TB_ERROR_MSG("player", "save", "player-file",
+                 "player idnum %ld has no player file name; not saved",
+                 GET_IDNUM(ch));
     return;
+  }
   /* Stage saves beside the original; never truncate a valid player file. */
-  if (snprintf(temporary_filename, sizeof(temporary_filename),
-               "%s.tmpXXXXXX", filename) < 0)
+  if ((size_t)snprintf(temporary_filename, sizeof(temporary_filename),
+               "%s.tmpXXXXXX", filename) >= sizeof(temporary_filename)) {
+    TB_ERROR_MSG("player", "save", filename,
+                 "player idnum %ld staging path too long; not saved",
+                 GET_IDNUM(ch));
     return;
+  }
   temp_fd = mkstemp(temporary_filename);
   if (temp_fd < 0) {
     TB_ERROR_ERRNO("PLAYER", "mkstemp", filename, "Unable to stage player save");
@@ -695,14 +1041,31 @@ void save_char(struct char_data * ch)
     }
   }
 
+  /* The file holds at most MAX_AFFECT affects. The rest cannot be saved,
+   * but they must not be lost from the live character either: keep copies
+   * and re-apply them with the saved ones below. (They used to be removed
+   * and dropped, silently when there was exactly one extra.) */
+  if (aff) {
+    struct affected_type *a;
+
+    for (a = aff; a; a = a->next)
+      num_extra++;
+    CREATE(extra_aff, struct affected_type, num_extra);
+    for (j = 0, a = aff; a; a = a->next, j++) {
+      extra_aff[j] = *a;
+      extra_aff[j].next = NULL;
+    }
+    TB_ERROR_MSG("player", "save-affects", filename,
+                 "player idnum %ld has %d affects; only %d saved, %d kept in "
+                 "memory only", GET_IDNUM(ch), MAX_AFFECT + num_extra,
+                 MAX_AFFECT, num_extra);
+  }
+
   /* Remove the affections so that the raw values are stored; otherwise the
    * effects are doubled when the char logs back in. */
 
   while (ch->affected)
     affect_remove(ch, ch->affected);
-
-  if ((i >= MAX_AFFECT) && aff && aff->next)
-    log("SYSERR: WARNING: OUT OF STORE ROOM FOR AFFECTED TYPES!!!");
 
   ch->aff_abils = ch->real_abils;
   /* end char_to_store code */
@@ -856,6 +1219,9 @@ void save_char(struct char_data * ch)
     if (tmp_aff[i].spell)
       affect_to_char(ch, &tmp_aff[i]);
   }
+  for (i = 0; i < num_extra; i++)
+    affect_to_char(ch, &extra_aff[i]);
+  free(extra_aff);
 
   for (i = 0; i < NUM_WEARS; i++) {
     if (char_eq[i])
@@ -873,8 +1239,16 @@ void save_char(struct char_data * ch)
   if (save_failed)
     return;
 
-  if ((id = get_ptable_by_name(GET_NAME(ch))) < 0)
+  /* The pfile is saved, but a character missing from the index cannot be
+   * found by name at the next login (and its name could be re-created over
+   * it). This used to return silently; nanny's deleted-character path once
+   * kept a stale GET_PFILEPOS and so never indexed the new character. */
+  if ((id = get_ptable_by_name(GET_NAME(ch))) < 0) {
+    TB_ERROR_MSG("player", "save-index-missing", filename,
+                 "player idnum %ld saved but not in the player index (pfilepos %ld)",
+                 GET_IDNUM(ch), (long)GET_PFILEPOS(ch));
     return;
+  }
 
   /* update the player in the player index */
   if (player_table[id].level != GET_LEVEL(ch)) {
@@ -904,11 +1278,30 @@ void save_char(struct char_data * ch)
     save_player_index();
 }
 
-/* Separate a 4-character id tag from the data it precedes */
+/** Separate a 4-character id tag from the data it precedes.
+ * Used by the player-file and rent-file parsers on lines read from disk.
+ * @param[in,out] argument A line such as "Name: Joe". On return it holds only
+ * the value ("Joe"), shifted down in place.
+ * @param[out] tag At least 5 bytes; receives the 4-character tag.
+ * A line shorter than 4 characters cannot hold a tag: the old code copied
+ * 4 bytes and stepped past the terminator, reading (and then copying)
+ * whatever followed the string. Such a line now yields an empty tag and an
+ * empty value, which callers skip, and is reported as a pfile-tag warning. */
 void tag_argument(char *argument, char *tag)
 {
   char *tmp = argument, *ttag = tag, *wrt = argument;
+  size_t len = 0;
   int i;
+
+  while (len < 4 && argument[len] != '\0')
+    len++;
+  if (len < 4) {
+    TB_WARN_MSG("player", "pfile-tag", "tag-line",
+                "short tag line (%zu bytes); line skipped", len);
+    tag[0] = '\0';
+    argument[0] = '\0';
+    return;
+  }
 
   for (i = 0; i < 4; i++)
     *(ttag++) = *(tmp++);
@@ -924,8 +1317,13 @@ void tag_argument(char *argument, char *tag)
 
 /* Stuff related to the player file cleanup system. */
 
-/* remove_player() removes all files associated with a player who is self-deleted,
- * deleted by an immortal, or deleted by the auto-wipe system (if enabled). */
+/** Delete a player: unlink every file the player owns, drop the index entry
+ * and rewrite the index. Used for self-deletion, immortal deletion and the
+ * auto-wipe (clean_pfiles()).
+ * @param pfilepos The player's player_table position.
+ * The entry's name is freed and later entries shift down one slot (see
+ * remove_player_from_index()); every held position >= pfilepos is stale
+ * afterwards. Unlink failures other than "no such file" are logged. */
 void remove_player(int pfilepos)
 {
   char filename[MAX_STRING_LENGTH], timestr[25];
@@ -945,7 +1343,21 @@ void remove_player(int pfilepos)
     }
   }
 
-  tb_strftime(timestr, sizeof(timestr), "%c", localtime(&(player_table[pfilepos].last)));
+  /* 'last' comes from the player index file. localtime() returns NULL for a
+   * value it cannot represent (around 1e17), and tb_strftime() then leaves
+   * timestr unwritten, so the log line below used to print stack garbage. */
+  {
+    const struct tm *last_tm = localtime(&(player_table[pfilepos].last));
+
+    if (last_tm == NULL) {
+      TB_WARN_MSG("player", "pclean-time", player_table[pfilepos].name,
+                  "player idnum %ld index last-login %lld is not a valid time",
+                  player_table[pfilepos].id,
+                  (long long) player_table[pfilepos].last);
+      strlcpy(timestr, "unknown", sizeof(timestr));
+    } else
+      tb_strftime(timestr, sizeof(timestr), "%c", last_tm);
+  }
   log("PCLEAN: %s Lev: %d Last: %s",
 	player_table[pfilepos].name, player_table[pfilepos].level,
 	timestr);
@@ -957,11 +1369,18 @@ void remove_player(int pfilepos)
   save_player_index();
 }
 
+/* Walk the player index and remove deleted or expired players.
+ *
+ * remove_player() compacts player_table: the entry after i moves into slot
+ * i and top_of_p_table drops by one. The loop must therefore re-examine
+ * slot i after a removal instead of advancing past it, or every player that
+ * directly follows a removed one escapes the sweep. */
 void clean_pfiles(void)
 {
-  int i, ci;
+  int i, ci, removed;
 
   for (i = 0; i <= top_of_p_table; i++) {
+    removed = FALSE;
     /* We only want to go further if the player isn't protected from deletion
      * and hasn't already been deleted. */
     if (!IS_SET(player_table[i].flags, PINDEX_NODELETE) &&
@@ -970,6 +1389,7 @@ void clean_pfiles(void)
        * rid of him. */
       if (IS_SET(player_table[i].flags, PINDEX_DELETED)) {
 	remove_player(i);
+	removed = TRUE;
       } else {
         /* Check to see if the player has overstayed his welcome based on level. */
 	for (ci = 0; pclean_criteria[ci].level > -1; ci++) {
@@ -977,6 +1397,7 @@ void clean_pfiles(void)
 	      ((time(0) - player_table[i].last) >
 	       (pclean_criteria[ci].days * SECS_PER_REAL_DAY))) {
 	    remove_player(i);
+	    removed = TRUE;
 	    break;
 	  }
 	}
@@ -984,6 +1405,8 @@ void clean_pfiles(void)
 	 * can stay a little while longer. */
       }
     }
+    if (removed)
+      i--;	/* slot i now holds the next player; examine it */
   }
   /* After everything is done, we should rebuild player_index and remove the
    * entries of the players that were just deleted. */
@@ -1072,7 +1495,7 @@ static int parse_saved_ints(const char *line, int *first, int *second)
   return *cursor == '\0' ? count : 0;
 }
 
-static void load_skills(FILE *fl, struct char_data *ch)
+static void load_skills(FILE *fl, struct char_data *ch, const char *filename)
 {
   int num, num2;
   char line[MAX_INPUT_LENGTH + 1];
@@ -1087,6 +1510,13 @@ static void load_skills(FILE *fl, struct char_data *ch)
     if (num < 1 || num > MAX_SKILLS) {
       log("SYSERR: Out-of-range skill in pfile (%s): %d", GET_NAME(ch), num);
       break;
+    }
+    /* skills[] is unsigned char: a larger value would be silently cut. */
+    if (num2 < 0 || num2 > UCHAR_MAX) {
+      TB_ERROR_MSG("player", "pfile-range", filename,
+                   "player idnum %ld skill %d value %d outside 0..%d; skill not loaded",
+                   GET_IDNUM(ch), num, num2, UCHAR_MAX);
+      continue;
     }
     GET_SKILL(ch, num) = num2;
   }
@@ -1108,7 +1538,18 @@ void load_quests(FILE *fl, struct char_data *ch)
   }
 }
 
-static void load_HMVS(struct char_data *ch, const char *line, int mode)
+/* Report a pfile tag that load_char() does not recognise. Its line is
+ * skipped; the value is not echoed (file content, possibly arbitrary). A
+ * tag the code writes but this switch forgets would otherwise be dropped
+ * silently on every load. */
+static void pfile_unknown_tag(const char *filename, const char *tag, long idnum)
+{
+  TB_WARN_MSG("player", "pfile-tag", filename,
+              "player idnum %ld unknown tag %.4s ignored", idnum, tag);
+}
+
+static void load_HMVS(struct char_data *ch, const char *line, int mode,
+                      const char *filename, const char *tag)
 {
   char *end = NULL;
   long first, second;
@@ -1117,26 +1558,36 @@ static void load_HMVS(struct char_data *ch, const char *line, int mode)
   /* Reject malformed or overflowing saved values instead of silently
    * replacing existing statistics with zero. Legacy 'number/number'
    * fields, including signed strength modifiers, remain supported. */
-  if (line == NULL)
+  if (line == NULL) {
+    TB_ERROR_MSG("player", "pfile-int", filename,
+                 "player idnum %ld tag %.4s has no value; unchanged",
+                 GET_IDNUM(ch), tag);
     return;
+  }
   errno = 0;
   first = strtol(line, &end, 10);
   if (end == line || errno == ERANGE || first < INT_MIN || first > INT_MAX ||
       *end != '/') {
-    log("SYSERR: Invalid first player-stat value; leaving existing value unchanged");
+    TB_ERROR_MSG("player", "pfile-int", filename,
+                 "player idnum %ld tag %.4s invalid first value; unchanged",
+                 GET_IDNUM(ch), tag);
     return;
   }
   line = end + 1;
   errno = 0;
   second = strtol(line, &end, 10);
   if (end == line || errno == ERANGE || second < INT_MIN || second > INT_MAX) {
-    log("SYSERR: Invalid second player-stat value; leaving existing value unchanged");
+    TB_ERROR_MSG("player", "pfile-int", filename,
+                 "player idnum %ld tag %.4s invalid second value; unchanged",
+                 GET_IDNUM(ch), tag);
     return;
   }
   while (isspace((unsigned char)*end))
     end++;
   if (*end != '\0') {
-    log("SYSERR: Trailing junk in player-stat value; leaving existing value unchanged");
+    TB_ERROR_MSG("player", "pfile-int", filename,
+                 "player idnum %ld tag %.4s trailing junk; unchanged",
+                 GET_IDNUM(ch), tag);
     return;
   }
   num = (int)first;
@@ -1185,13 +1636,29 @@ static void write_aliases_ascii(FILE *file, struct char_data *ch)
                   temp->type);
 }
 
-static void read_aliases_ascii(FILE *file, struct char_data *ch, int count)
+/* Upper bound on the "Alis: <count>" value. The count comes from the file,
+ * and every alias costs three get_line() calls at login. */
+#define PFILE_MAX_ALIASES 1000
+
+/* Read count alias records (alias line, replacement line, type line) that
+ * follow an "Alis: <count>" tag. A record cut off by end of file used to
+ * leave the line buffers uninitialised or holding the previous record, so
+ * an alias was built from garbage or duplicated; it now ends the list with
+ * a pfile-alias error. */
+static void read_aliases_ascii(FILE *file, struct char_data *ch, int count,
+                               const char *filename)
 {
   int i;
 
   if (count == 0) {
     GET_ALIASES(ch) = NULL;
     return; /* No aliases in the list. */
+  }
+  if (count < 0 || count > PFILE_MAX_ALIASES) {
+    TB_ERROR_MSG("player", "pfile-alias", filename,
+                 "player idnum %ld alias count %d outside 1..%d; aliases not loaded",
+                 GET_IDNUM(ch), count, PFILE_MAX_ALIASES);
+    return;
   }
 
   /* This code goes both ways for the old format (where alias and replacement start at the
@@ -1200,16 +1667,15 @@ static void read_aliases_ascii(FILE *file, struct char_data *ch, int count)
   for (i = 0; i < count; i++) {
     char abuf[MAX_INPUT_LENGTH+1], rbuf[MAX_INPUT_LENGTH+1], tbuf[MAX_INPUT_LENGTH];
 
-    /* Read the aliased command. */
-    get_line(file, abuf);
-
-    /* Read the replacement. This needs to have a space prepended before placing in
-     * the in-memory struct. The space may be there already, but we can't be certain! */
+    /* Read the aliased command, then the replacement (which needs a space
+     * prepended in memory; it may be there already), then the type. */
     rbuf[0] = ' ';
-    get_line(file, rbuf+1);
-
-    /* read the type */
-    get_line(file, tbuf);
+    if (!get_line(file, abuf) || !get_line(file, rbuf+1) || !get_line(file, tbuf)) {
+      TB_ERROR_MSG("player", "pfile-alias", filename,
+                   "player idnum %ld alias %d of %d truncated by end of file",
+                   GET_IDNUM(ch), i + 1, count);
+      return;
+    }
 
     if (abuf[0] && rbuf[1] && *tbuf) {
       struct alias_data *temp;
@@ -1219,6 +1685,9 @@ static void read_aliases_ascii(FILE *file, struct char_data *ch, int count)
       temp->type        = tb_parse_int_or_zero(tbuf);
       temp->next        = GET_ALIASES(ch);
       GET_ALIASES(ch)   = temp;
-    }
+    } else
+      TB_WARN_MSG("player", "pfile-alias", filename,
+                  "player idnum %ld alias %d of %d has an empty part; skipped",
+                  GET_IDNUM(ch), i + 1, count);
   }
 }

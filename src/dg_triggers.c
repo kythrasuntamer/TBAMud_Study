@@ -12,6 +12,30 @@
 *  $Revision: 1.0.14 $                                                    *
 **************************************************************************/
 
+/**
+ * @file dg_triggers.c
+ * The trigger entry points the game calls when something happens: one
+ * function per trigger type and owner kind (greet_mtrigger, get_otrigger,
+ * enter_wtrigger, ...). Each finds the matching triggers on the owner and
+ * runs them through script_driver().
+ *
+ * Return contract of the int-returning entry points: nonzero lets the game
+ * action proceed, 0 means a trigger blocked it (the script returned 0) or
+ * the owner or actor did not survive the trigger. Callers must treat 0 as
+ * "do not continue with this action".
+ *
+ * Lifetime rules: a script can extract its owner, the actor, or anyone
+ * else, and can move characters between rooms. After a script_driver()
+ * call a trigger function never trusts a pointer it held before: owners and
+ * actors are re-checked by UID (obj_uid_matches(), find_char()), and loops
+ * over several triggers or room occupants walk a snapshot taken before the
+ * first dispatch (dg_cmd.h, the greet and command snapshots below).
+ *
+ * Who controls the input: the matched text (speech, command arguments) is
+ * typed by players; trigger argument lists and numeric arguments come from
+ * builders. Both are treated as untrusted strings.
+ */
+
 #include "conf.h"
 #include "sysdep.h"
 #include "structs.h"
@@ -25,12 +49,25 @@
 #include "constants.h"
 #include "spells.h"  /* for skill_name() */
 #include "act.h"    /* for cmd_door[] */
+#include "dg_cmd.h" /* snapshot helpers shared with the DG commands */
 
 /* General functions used by several triggers. */
 
-/* Copy first phrase into first_arg, returns rest of string. */
+/* Copy the first phrase of arg into first_arg and return the rest of arg.
+ * A phrase is one word, or text in double quotes (the closing quote is
+ * overwritten with a NUL in arg; an unterminated quote runs to the end).
+ * first_arg holds first_arg_size bytes (at least 1) and is always
+ * NUL-terminated; a longer phrase is truncated, reported, and still
+ * consumed from arg. (The unquoted branch used to ignore first_arg_size;
+ * only word_check()'s equal-size buffers kept it in bounds.) */
 char *one_phrase(char *arg, char *first_arg, size_t first_arg_size)
 {
+    if (first_arg_size == 0) {
+        TB_ERROR_MSG("dg", "phrase-buffer", "one_phrase",
+                     "called with a zero-size phrase buffer; nothing copied");
+        return arg;
+    }
+
     skip_spaces(&arg);
 
     if (!*arg)
@@ -75,6 +112,15 @@ char *one_phrase(char *arg, char *first_arg, size_t first_arg_size)
     return arg;
 }
 
+/**
+ * Whether sub occurs in string as a whole word or phrase: case-insensitive
+ * (str_str()), and bounded on each side by the string's start or end,
+ * whitespace or punctuation. Only the first occurrence is examined, so
+ * "cat" is not found in "cats cat".
+ * @param sub The word or phrase to look for; non-NULL.
+ * @param string The text searched; non-NULL.
+ * @return 1 when found as a word, else 0.
+ */
 int is_substring(char *sub, char *string)
 {
     char *s;
@@ -97,8 +143,10 @@ int is_substring(char *sub, char *string)
 }
 
 /* Return 1 if str contains a word or phrase from wordlist. Phrases are in
- * double quotes ("). if wrdlist is NULL, then return 1, if str is NULL,
- * return 0. */
+ * double quotes ("). A wordlist starting with '*' matches everything. Both
+ * arguments must be non-NULL. Only the first MAX_INPUT_LENGTH - 1 bytes of
+ * the wordlist are searched; trig_word_check() reports a trigger whose
+ * argument list is longer. */
 int word_check(char *str, char *wordlist)
 {
     char words[MAX_INPUT_LENGTH], phrase[MAX_INPUT_LENGTH], *s;
@@ -112,6 +160,24 @@ int word_check(char *str, char *wordlist)
             return 1;
 
     return 0;
+}
+
+/* word_check() on a trigger's argument list, reporting (once per trigger
+ * prototype in a row, since speech triggers run on every line said) an
+ * argument list too long to be searched in full: its last words could
+ * never fire. */
+static int trig_word_check(char *str, trig_data *t)
+{
+  static trig_rnum last_reported = NOTHING;
+  size_t length = strlen(GET_TRIG_ARG(t));
+
+  if (length >= MAX_INPUT_LENGTH && GET_TRIG_RNUM(t) != last_reported) {
+    last_reported = GET_TRIG_RNUM(t);
+    TB_WARN_MSG("dg", "wordlist-truncated", "word_check",
+                "trigger %d: argument list of %zu bytes; only the first %d "
+                "are matched", GET_TRIG_VNUM(t), length, MAX_INPUT_LENGTH - 1);
+  }
+  return word_check(str, GET_TRIG_ARG(t));
 }
 
 /*Mob triggers. */
@@ -154,12 +220,8 @@ void bribe_mtrigger(char_data *ch, char_data *actor, int amount)
 /* Snapshot script IDs rather than holding occupant-list links across callbacks.
  * Callback-driven teleports or extraction may invalidate next_in_room.
  * Each saved ID is re-resolved before it is dereferenced.
+ * (struct dg_memory_target is declared in dg_cmd.h.)
  */
-struct dg_memory_target {
-  long uid;
-  struct dg_memory_target *next;
-};
-
 static struct dg_memory_target *dg_memory_targets(room_rnum room)
 {
   struct dg_memory_target *head = NULL, **tail = &head;
@@ -192,6 +254,41 @@ static int dg_memory_character_live(char_data *ch, long uid, room_rnum room)
          !((IS_NPC(ch) && MOB_FLAGGED(ch, MOB_NOTDEADYET)) ||
            (!IS_NPC(ch) && PLR_FLAGGED(ch, PLR_NOTDEADYET))) &&
          IN_ROOM(ch) == room;
+}
+
+/* Exported forms of the snapshot helpers above, for the "all" loops of the
+ * DG commands (dg_cmd.h). */
+struct dg_memory_target *dg_room_occupant_uids(room_rnum room)
+{
+  return dg_memory_targets(room);
+}
+
+void dg_free_room_occupant_uids(struct dg_memory_target *head)
+{
+  dg_free_memory_targets(head);
+}
+
+char_data *dg_room_occupant_live(long uid, room_rnum room)
+{
+  char_data *ch = find_char(uid);
+  return dg_memory_character_live(ch, uid, room) ? ch : NULL;
+}
+
+void dg_report_occupant_skipped(long uid, room_rnum room, const char *cmd)
+{
+  char_data *ch = find_char(uid);
+
+  if (ch)
+    TB_WARN_MSG("dg", "all-target-moved", cmd,
+                DIAG_CHAR_FMT " (uid %ld) left room vnum %d or is being "
+                "extracted after an earlier callback of the same 'all' "
+                "command; skipped", DIAG_CHAR(ch), uid,
+                GET_ROOM_VNUM(room));
+  else
+    TB_WARN_MSG("dg", "all-target-moved", cmd,
+                "uid %ld from room vnum %d no longer exists after an earlier "
+                "callback of the same 'all' command; skipped", uid,
+                GET_ROOM_VNUM(room));
 }
 
 /* Mobile trigger handlers run only for a character standing in a valid room.
@@ -262,8 +359,15 @@ void greet_memory_mtrigger(char_data *actor)
         /* The command interpreter may delete the memory node supplying
          * this string. Own a private copy for the whole invocation. */
         char *command_copy = strdup(mem->cmd);
-        if (!command_copy)
+        if (!command_copy) {
+          /* Out of memory: stop this greet dispatch, but say why (as
+           * act_mtrigger does for the same failure). */
+          TB_ERROR_ERRNO("dg", "allocate", "greet_memory_mtrigger",
+                         DIAG_CHAR_FMT ": copy of a %zu-byte memory "
+                         "command failed; greet-memory dispatch stopped",
+                         DIAG_CHAR(ch), strlen(mem->cmd) + 1);
           goto cleanup;
+        }
         command_interpreter(ch, command_copy);
         free(command_copy); /* command memory itself stays linked */
         /* The callback can remove or relocate the owner. The command node
@@ -636,7 +740,7 @@ void speech_mtrigger(char_data *actor, char *str)
         continue;
       }
 
-      if (((GET_TRIG_NARG(t) && word_check(str, GET_TRIG_ARG(t))) ||
+      if (((GET_TRIG_NARG(t) && trig_word_check(str, t)) ||
            (!GET_TRIG_NARG(t) && is_substring(GET_TRIG_ARG(t), str)))) {
         ADD_UID_VAR(buf, t, actor_uid, "actor", 0);
         add_player_var(&GET_TRIG_VARS(t), "speech", str, 0);
@@ -667,7 +771,7 @@ void act_mtrigger(const char_data *ch, char *str, char_data *actor,
         continue;
       }
 
-      if (((GET_TRIG_NARG(t) && word_check(str, GET_TRIG_ARG(t))) ||
+      if (((GET_TRIG_NARG(t) && trig_word_check(str, t)) ||
            (!GET_TRIG_NARG(t) && is_substring(GET_TRIG_ARG(t), str)))) {
         if (actor)
           ADD_UID_VAR(buf, t, char_script_id(actor), "actor", 0);
@@ -797,20 +901,40 @@ int death_mtrigger(char_data *ch, char_data *actor)
   return 1;
 }
 
+/* Load triggers and SCRIPT_ERROR_CODE: when the load trigger's script
+ * returns SCRIPT_ERROR_CODE, the prototype's trigger list is freed for good,
+ * so this instance is the last one to load with scripts. script_driver()
+ * returns it on depth overflow (a load trigger that loads another copy of
+ * its own mob/object, recursively), and reports that itself; but a builder's
+ * `return -9999999` and the no-owning-script path reach it as well. The
+ * removal is therefore always reported here, with the prototype and the
+ * trigger, so builders can find out why later copies have no scripts. */
+/* Trigger vnum for diagnostics, from an rnum captured before a dispatch
+ * (the trigger itself may be freed by then). NOTHING if out of range. */
+static trig_vnum dg_trig_rnum_to_vnum(trig_rnum rnum)
+{
+  if (rnum == NOTHING || rnum >= top_of_trigt || !trig_index || !trig_index[rnum])
+    return NOTHING;
+  return trig_index[rnum]->vnum;
+}
+
 void load_mtrigger(char_data *ch)
 {
   trig_data *t;
   int result = 0;
   mob_rnum rnum;
+  trig_rnum trig = NOTHING;
 
   if (!SCRIPT_CHECK(ch, MTRIG_LOAD))
     return;
 
-  /* The script may extract its owner; capture the prototype beforehand. */
+  /* The script may extract its owner (and, at the outermost level, free a
+   * detached trigger); capture the prototype and trigger rnums beforehand. */
   rnum = GET_MOB_RNUM(ch);
   for (t = TRIGGERS(SCRIPT(ch)); t; t = t->next) {
     if (TRIGGER_CHECK(t, MTRIG_LOAD) &&
         (rand_number(1, 100) <= GET_TRIG_NARG(t))) {
+      trig = GET_TRIG_RNUM(t);
       result = script_driver(&ch, t, MOB_TRIGGER, TRIG_NEW);
       break;
     }
@@ -818,6 +942,12 @@ void load_mtrigger(char_data *ch)
   if (result == SCRIPT_ERROR_CODE) {
     /* we have recursed beyond reasonable depth */
     /* make sure this mob is the last one in the load chain */
+    TB_ERROR_MSG("dg", "load-proto-disable", "load_mtrigger",
+                 "mob vnum %d: load trigger %d returned SCRIPT_ERROR_CODE; "
+                 "the prototype's scripts are removed until reboot",
+                 (mob_index && rnum != NOBODY && rnum <= top_of_mobt)
+                   ? mob_index[rnum].vnum : NOBODY,
+                 dg_trig_rnum_to_vnum(trig));
     if (rnum != NOBODY) {
       free_proto_script(&mob_proto[rnum], MOB_TRIGGER);
     }
@@ -1270,16 +1400,19 @@ void load_otrigger(obj_data *obj)
   trig_data *t;
   int result = 0;
   obj_rnum rnum;
+  trig_rnum trig = NOTHING;
 
   if (!SCRIPT_CHECK(obj, OTRIG_LOAD))
     return;
 
   /* script_driver() sets obj to NULL if the script purges it, and a script
-   * may "return" SCRIPT_ERROR_CODE itself. Capture the prototype beforehand. */
+   * may "return" SCRIPT_ERROR_CODE itself. Capture the prototype (and the
+   * trigger, see load_mtrigger) beforehand. */
   rnum = GET_OBJ_RNUM(obj);
   for (t = TRIGGERS(SCRIPT(obj)); t; t = t->next) {
     if (TRIGGER_CHECK(t, OTRIG_LOAD) &&
         (rand_number(1, 100) <= GET_TRIG_NARG(t))) {
+      trig = GET_TRIG_RNUM(t);
       result = script_driver(&obj, t, OBJ_TRIGGER, TRIG_NEW);
       break;
     }
@@ -1287,6 +1420,12 @@ void load_otrigger(obj_data *obj)
   if (result == SCRIPT_ERROR_CODE) {
     /* we have recursed beyond reasonable depth */
     /* make sure this mob is the last one in the load chain */
+    TB_ERROR_MSG("dg", "load-proto-disable", "load_otrigger",
+                 "obj vnum %d: load trigger %d returned SCRIPT_ERROR_CODE; "
+                 "the prototype's scripts are removed until reboot",
+                 (obj_index && rnum != NOTHING && rnum <= top_of_objt)
+                   ? obj_index[rnum].vnum : NOTHING,
+                 dg_trig_rnum_to_vnum(trig));
     if (rnum != NOTHING) {
       free_proto_script(&obj_proto[rnum], OBJ_TRIGGER);
     }
@@ -1595,7 +1734,7 @@ void speech_wtrigger(char_data *actor, char *str)
     }
 
     if (*GET_TRIG_ARG(t)=='*' ||
-       (GET_TRIG_NARG(t) && word_check(str, GET_TRIG_ARG(t))) ||
+       (GET_TRIG_NARG(t) && trig_word_check(str, t)) ||
        (!GET_TRIG_NARG(t) && is_substring(GET_TRIG_ARG(t), str))) {
       ADD_UID_VAR(buf, t, char_script_id(actor), "actor", 0);
       add_player_var(&GET_TRIG_VARS(t), "speech", str, 0);

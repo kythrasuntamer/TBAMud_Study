@@ -1,6 +1,20 @@
 /**
 * @file dg_scripts.c
 * Contains the main script driver interface.
+*
+* Ownership and input rules (maintainer summary):
+* - Trigger command lists belong to the prototype (trig_index[rn]->proto) and
+*   are shared by every instance; script_driver() copies each line into a
+*   MAX_INPUT_LENGTH buffer and runs var_subst() on the copy before dispatch.
+* - Script text is builder input (trigedit, world files). Variable values can
+*   be player text (%speech%, %arg%, %cmd%); dg_triggers.c stores them with
+*   '%' made inert so they never become variable syntax again.
+* - A trigger extracted while any script runs is retired, not freed, until
+*   dg_script_execution_leave(); owners (mob, obj, room) can be extracted by
+*   any command a script runs, so pointers to them are revalidated after
+*   every callback (script_driver, random/time dispatch).
+* - UIDs live in disjoint namespaces (see dg_scripts.h); each resolver accepts
+*   only its own range.
 * 
 * Part of the core tbaMUD source code distribution, which is a derivative
 * of, and continuation of, CircleMUD.
@@ -16,6 +30,7 @@
 #include "sysdep.h"
 #include "structs.h"
 #include "dg_scripts.h"
+#include "dg_cmd.h"
 #include "utils.h"
 #include "comm.h"
 #include "interpreter.h"
@@ -32,12 +47,17 @@
 
 #define PULSES_PER_MUD_HOUR     (SECS_PER_MUD_HOUR*PASSES_PER_SEC)
 
+/* 'wait until' accepts 0:00 through 24:00 (stock scripts use "24:00"). */
+#define DG_WAIT_MAX_MINUTES     (24 * 60)
+
 /* Local functions not used elsewhere */
 static obj_data *find_obj(long n);
 static room_data *find_room(long n);
 static void do_stat_trigger(struct char_data *ch, trig_data *trig);
 static void script_stat(char_data *ch, struct script_data *sc);
-static int remove_trigger(struct script_data *sc, char *name);
+static int remove_trigger(struct script_data *sc, char *name,
+                          trig_vnum *vnum_out, char *name_out,
+                          size_t name_size);
 static int is_num(char *arg);
 static void eval_op(char *op, char *lhs, char *rhs, char *result, void *go,
           struct script_data *sc, trig_data *trig);
@@ -291,7 +311,7 @@ int can_wear_on_pos(struct obj_data *obj, int pos)
  */
 struct char_data *find_char(long n)
 {
-  if (n>=ROOM_ID_BASE) /* See note in dg_scripts.h */
+  if (!UID_IS_CHAR(n)) /* See note in dg_scripts.h */
     return NULL;
 
   return find_char_by_uid_in_lookup_table(n);
@@ -304,7 +324,7 @@ struct char_data *find_char(long n)
  */
 static obj_data *find_obj(long n)
 {
-  if (n < OBJ_ID_BASE) /* see note in dg_scripts.h */
+  if (!UID_IS_OBJ(n)) /* see note in dg_scripts.h */
     return NULL;
 
   return find_obj_by_uid_in_lookup_table(n);
@@ -332,8 +352,12 @@ void dg_teleport_all(room_rnum from, room_rnum to)
 
   for (i = 0; i < count; i++) {
     ch = find_char(uids[i]);
-    if (!ch || IN_ROOM(ch) != from || DEAD(ch) ||
-        !valid_dg_target(ch, DG_ALLOW_GODS))
+    if (!ch || IN_ROOM(ch) != from || DEAD(ch)) {
+      /* An earlier enter trigger moved or extracted this occupant. */
+      dg_report_occupant_skipped(uids[i], from, "teleport all");
+      continue;
+    }
+    if (!valid_dg_target(ch, DG_ALLOW_GODS))
       continue;
     char_from_room(ch);
     char_to_room(ch, to);
@@ -360,11 +384,22 @@ static room_data *find_room(long n)
 {
   room_rnum rnum;
 
-  /* A room UID is ROOM_ID_BASE + vnum.  Anything past the largest vnum (an
-   * object UID, say) used to be truncated onto some real room. */
-  if (n < ROOM_ID_BASE || n - ROOM_ID_BASE > IDXTYPE_MAX)
+  /* Room UIDs are ROOM_ID_BASE + vnum, below OBJ_ID_BASE. An object UID such
+   * as 30030009 used to truncate onto room_vnum 3001, so remote, rdelete,
+   * attach and detach acted on that room. Callers try several namespaces in
+   * turn, so a UID outside this one is not an error here. The vnum bound is
+   * IDXTYPE_MAX, as in dg_parse_vnum(), so it also holds for signed builds
+   * where NOWHERE is -1. */
+  if (!UID_IS_ROOM(n))
     return NULL;
-  rnum = real_room((room_vnum)(n - ROOM_ID_BASE));
+  n -= ROOM_ID_BASE;
+  if (n >= IDXTYPE_MAX) {
+    TB_WARN_MSG("dg", "uid-namespace", "find_room",
+                "room uid %ld names vnum %ld, outside room_vnum [0,%d)",
+                n + ROOM_ID_BASE, n, (int)IDXTYPE_MAX);
+    return NULL;
+  }
+  rnum = real_room((room_vnum)n);
 
   if (rnum != NOWHERE)
     return &world[rnum];
@@ -526,13 +561,23 @@ obj_data *get_obj(char *name)
 room_data *get_room(char *name)
 {
   room_rnum nr;
+  long vnum;
 
   if (*name == UID_CHAR)
     return find_room(PARSE_UID(name + 1));
-  else if ((nr = real_room(dg_parse_vnum(name))) == NOWHERE)
+
+  /* A plain number is a room vnum. Script text controls it: reject values
+   * that would wrap when narrowed to room_vnum (70537 used to be 5001),
+   * with the same bound as dg_parse_vnum(). */
+  vnum = tb_parse_long_or_zero(name);
+  if (vnum < 0 || vnum >= IDXTYPE_MAX) {
+    TB_WARN_MSG("dg", "uid-namespace", "get_room",
+                "room vnum %ld outside room_vnum [0,%d)", vnum, (int)IDXTYPE_MAX);
     return NULL;
-  else
-    return &world[nr];
+  }
+  if ((nr = real_room((room_vnum)vnum)) == NOWHERE)
+    return NULL;
+  return &world[nr];
 }
 
 /* Returns a pointer to the first character in world by name name, or NULL if 
@@ -794,15 +839,27 @@ static EVENTFUNC(trig_wait_event)
           found = TRUE;
     } else {
       room_rnum i;
+      /* top_of_world is the last valid rnum, so it is included. Stopping
+       * short of it treated a wait on the last room as an unknown owner. */
       for (i = 0;i<=top_of_world && !found;i++)
         if (&world[i] == (struct room_data *)go)
           found = TRUE;
     }
     if (!found) {
-      log("Trigger restarted on unknown entity. Vnum: %d", GET_TRIG_VNUM(trig));
-      log("Type: %s trigger", type==MOB_TRIGGER ? "Mob" : type == OBJ_TRIGGER ? "Obj" : "Room");
-      log("attached %d places", trig_index[trig->nr]->number);
-      script_log("Trigger restart attempt on unknown entity.");
+      /* Extraction cancels a trigger's wait event, so a missing owner is a
+       * broken invariant. trig itself is still live (the event owned no
+       * reference to free); end its suspended run so TRIGGER_CHECK() does
+       * not refuse it forever with depth 1. */
+      TB_ERROR_MSG("dg", "wait-resume", "trig_wait_event",
+                   "trig vnum %d type %d: owner not live on resume; "
+                   "trigger ended (%d instances attached)",
+                   DIAG_TRIG_VNUM(trig), type,
+                   VALID_TRIG_RNUM(trig->nr) ? trig_index[trig->nr]->number : -1);
+      script_log("Trigger VNum %d: restart attempt on unknown entity.",
+                 GET_TRIG_VNUM(trig));
+      free_varlist(GET_TRIG_VARS(trig));
+      GET_TRIG_VARS(trig) = NULL;
+      GET_TRIG_DEPTH(trig) = 0;
       return 0;
     }
   }
@@ -814,36 +871,13 @@ static EVENTFUNC(trig_wait_event)
   return 0;
 }
 
-/* Appends formatted text to sb (size bytes) at *len, never past its end.
- * Returns FALSE, leaving sb terminated at the end, once the text does not
- * fit; snprintf's would-be length used to carry len past the buffer. */
-static int stat_appendf(char *sb, size_t size, size_t *len, const char *fmt, ...)
-  __attribute__ ((format (printf, 4, 5)));
-static int stat_appendf(char *sb, size_t size, size_t *len, const char *fmt, ...)
-{
-  va_list args;
-  int n;
-
-  if (*len >= size)
-    return FALSE;
-  va_start(args, fmt);
-  n = vsnprintf(sb + *len, size - *len, fmt, args);
-  va_end(args);
-  if (n < 0 || (size_t)n >= size - *len) {
-    *len = size - 1;
-    return FALSE;
-  }
-  *len += (size_t)n;
-  return TRUE;
-}
-
 static void do_stat_trigger(struct char_data *ch, trig_data *trig)
 {
+    /* Room kept free at the end of sb for the overflow notice. */
+    static const char overflow_notice[] = "*** Overflow - script too long! ***\r\n";
     struct cmdlist_element *cmd_list;
     char sb[MAX_STRING_LENGTH], buf[MAX_STRING_LENGTH];
-    size_t len = 0;
-    /* Everything but the last 80 bytes; those hold the overflow notice. */
-    const size_t limit = sizeof(sb) - 80;
+    struct tb_buf out;
 
     if (!trig)
     {
@@ -851,38 +885,46 @@ static void do_stat_trigger(struct char_data *ch, trig_data *trig)
         return;
     }
 
-    stat_appendf(sb, limit, &len, "Name: '%s%s%s',  VNum: [%s%5d%s], RNum: [%5d]\r\n",
+    /* The command list is builder text of any total length. Summing raw
+     * snprintf() returns let one long line push the offset past sb, and the
+     * overflow notice was then written beyond it with a wrapped size. The
+     * bounded builder stops at its capacity; the notice fits in the space
+     * reserved after it. */
+    tb_buf_init(&out, sb, sizeof(sb) - sizeof(overflow_notice));
+
+    tb_buf_appendf(&out, "Name: '%s%s%s',  VNum: [%s%5d%s], RNum: [%5d]\r\n",
               CCYEL(ch, C_NRM), GET_TRIG_NAME(trig), CCNRM(ch, C_NRM),
               CCGRN(ch, C_NRM), GET_TRIG_VNUM(trig), CCNRM(ch, C_NRM),
               GET_TRIG_RNUM(trig));
 
     if (trig->attach_type==OBJ_TRIGGER) {
-      stat_appendf(sb, limit, &len, "Trigger Intended Assignment: Objects\r\n");
+      tb_buf_append(&out, "Trigger Intended Assignment: Objects\r\n");
       sprintbit(GET_TRIG_TYPE(trig), otrig_types, buf, sizeof(buf));
     } else if (trig->attach_type==WLD_TRIGGER) {
-      stat_appendf(sb, limit, &len, "Trigger Intended Assignment: Rooms\r\n");
+      tb_buf_append(&out, "Trigger Intended Assignment: Rooms\r\n");
       sprintbit(GET_TRIG_TYPE(trig), wtrig_types, buf, sizeof(buf));
     } else {
-      stat_appendf(sb, limit, &len, "Trigger Intended Assignment: Mobiles\r\n");
+      tb_buf_append(&out, "Trigger Intended Assignment: Mobiles\r\n");
       sprintbit(GET_TRIG_TYPE(trig), trig_types, buf, sizeof(buf));
     }
 
-    stat_appendf(sb, limit, &len, "Trigger Type: %s, Numeric Arg: %d, Arg list: %s\r\n",
+    tb_buf_appendf(&out, "Trigger Type: %s, Numeric Arg: %d, Arg list: %s\r\n",
                      buf, GET_TRIG_NARG(trig),
                     ((GET_TRIG_ARG(trig) && *GET_TRIG_ARG(trig))
                      ? GET_TRIG_ARG(trig) : "None"));
 
-    stat_appendf(sb, limit, &len, "Commands:\r\n");
+    tb_buf_append(&out, "Commands:\r\n");
 
-    cmd_list = trig->cmdlist;
-    while (cmd_list) {
-      if (cmd_list->cmd &&
-          !stat_appendf(sb, limit, &len, "%s\r\n", cmd_list->cmd)) {
-        tb_snprintf(sb + len, sizeof(sb)-len, "*** Overflow - script too long! ***\r\n");
-        break;
-      }
-      
-      cmd_list = cmd_list->next;
+    for (cmd_list = trig->cmdlist; cmd_list && !tb_buf_truncated(&out);
+         cmd_list = cmd_list->next)
+      if (cmd_list->cmd)
+        tb_buf_appendf(&out, "%s\r\n", cmd_list->cmd);
+
+    if (tb_buf_truncated(&out)) {
+      TB_WARN_MSG("dg", "tstat-truncate", "do_stat_trigger",
+                  "trig vnum %d: listing truncated at %zu bytes",
+                  GET_TRIG_VNUM(trig), out.length);
+      strlcat(sb, overflow_notice, sizeof(sb));
     }
 
     page_string(ch->desc, sb, 1);
@@ -1164,13 +1206,24 @@ ACMD(do_attach)
     send_to_char(ch, "Please specify 'mob', 'obj', or 'room'.\r\n");
 }
 
-/* Removes the trigger specified by name, and the script of o if it removes the
+/* name is modified in place (a '.' is replaced by NUL) and must not be NULL.
+ * A number matches either a list position or a vnum; "N.name" matches the
+ * Nth trigger with that name. extract_trigger() defers the free while any
+ * script runs.
+ *
+ * Removes the trigger specified by name, and the script of o if it removes the
  * last trigger.  name can either be a number, or a 'silly' name for the 
  * trigger, including things like 2.beggar-death. Returns 0 if did not find the
  * trigger, otherwise 1.  If it matters, you might need to check to see if all 
  * the triggers were removed after this function returns, in order to remove 
- * the script. */
-static int remove_trigger(struct script_data *sc, char *name)
+ * the script.
+ *
+ * When vnum_out / name_out are non-NULL they receive the removed trigger's
+ * vnum and name, captured before the trigger is freed, so callers can report
+ * what they removed without instantiating a prototype copy. */
+static int remove_trigger(struct script_data *sc, char *name,
+                          trig_vnum *vnum_out, char *name_out,
+                          size_t name_size)
 {
   trig_data *i, *j;
   int num = 0, string = FALSE, n;
@@ -1179,6 +1232,13 @@ static int remove_trigger(struct script_data *sc, char *name)
 
   if (!sc)
     return 0;
+
+  /* name is immortal or script text; every caller must supply one. */
+  if (!name) {
+    TB_ERROR_MSG("dg", "detach-arg", "remove_trigger",
+                 "called with a NULL trigger name; nothing removed");
+    return 0;
+  }
 
   if ((cname = strstr(name,".")) || (!isdigit(*name)) ) {
     string = TRUE;
@@ -1206,6 +1266,11 @@ static int remove_trigger(struct script_data *sc, char *name)
   }
 
   if (i) {
+    if (vnum_out)
+      *vnum_out = GET_TRIG_VNUM(i);
+    if (name_out && name_size)
+      strlcpy(name_out, GET_TRIG_NAME(i) ? GET_TRIG_NAME(i) : "(unnamed)",
+              name_size);
     if (j) {
       j->next = i->next;
       extract_trigger(i);
@@ -1227,28 +1292,18 @@ static int remove_trigger(struct script_data *sc, char *name)
     return 0;
 }
 
-/* Names the trigger a detach argument selected, for the confirmation: the
- * prototype's vnum and name when it is a vnum, else the argument itself. */
-static const char *detach_label(const char *arg, char *buf, size_t size)
-{
-  trig_rnum rn = real_trigger(dg_parse_vnum(arg));
-
-  if (rn != NOTHING)
-    tb_snprintf(buf, size, "%d (%s)", trig_index[rn]->vnum,
-                GET_TRIG_NAME(trig_index[rn]->proto));
-  else
-    tb_snprintf(buf, size, "'%s'", arg);
-  return buf;
-}
-
 ACMD(do_detach)
 {
   char_data *victim = NULL;
   obj_data *object = NULL;
   struct room_data *room;
   char arg1[MAX_INPUT_LENGTH], arg2[MAX_INPUT_LENGTH], arg3[MAX_INPUT_LENGTH], *snum;
-  char label[MAX_INPUT_LENGTH * 2];
   char *trigger = 0;
+  /* Vnum and name of the trigger remove_trigger() actually removed. This
+   * used to instantiate the prototype named by arg3 (a read_trigger call) on
+   * every call, leaking one trigger (and bumping its live count) each time. */
+  char removed_name[MAX_INPUT_LENGTH];
+  trig_vnum removed_vnum = NOTHING;
   int num_arg;
   room_rnum rnum;
 
@@ -1293,9 +1348,10 @@ ACMD(do_detach)
       else
         snum = arg2;
 
-    if (remove_trigger(SCRIPT(room), snum)) {
-      send_to_char(ch, "Trigger %s removed from %d.\r\n",
-                   detach_label(snum, label, sizeof(label)), world[rnum].number);
+    if (remove_trigger(SCRIPT(room), snum, &removed_vnum, removed_name,
+                       sizeof(removed_name))) {
+      send_to_char(ch, "Trigger %d (%s) removed from %d.\r\n", removed_vnum,
+                   removed_name, world[rnum].number);
       
       if (!TRIGGERS(SCRIPT(room)))
         extract_script(room, WLD_TRIGGER);
@@ -1319,10 +1375,11 @@ ACMD(do_detach)
         }
       }
 
-      if (!*arg3)
+      if (!*arg3) {
         send_to_char(ch, "You must specify a trigger to remove.\r\n");
-      else
-        trigger = arg3;
+        return;
+      }
+      trigger = arg3;
     }
 
     else if (is_abbrev(arg1, "object") || !str_cmp(arg1, "otr")) {
@@ -1344,10 +1401,11 @@ ACMD(do_detach)
         }
       }
 
-      if (!*arg3)
+      if (!*arg3) {
         send_to_char(ch, "You must specify a trigger to remove.\r\n");
-      else
-        trigger = arg3;
+        return;
+      }
+      trigger = arg3;
     }
     else  {
       /* Thanks to Carlos Myers for fixing the line below */
@@ -1376,10 +1434,10 @@ ACMD(do_detach)
         send_to_char(ch, "All triggers removed from %s.\r\n", IS_NPC(victim) ? GET_SHORT(victim) : GET_NAME(victim));
       }
 
-      else if (trigger && remove_trigger(SCRIPT(victim), trigger)) {
-        send_to_char(ch, "Trigger %s removed from %s.\r\n",
-          detach_label(trigger, label, sizeof(label)),
-          IS_NPC(victim) ? GET_SHORT(victim) : GET_NAME(victim));
+      else if (trigger && remove_trigger(SCRIPT(victim), trigger, &removed_vnum,
+                                         removed_name, sizeof(removed_name))) {
+        send_to_char(ch, "Trigger %d (%s) removed from %s.\r\n", 
+          removed_vnum, removed_name, IS_NPC(victim) ? GET_SHORT(victim) : GET_NAME(victim));
 
         if (!TRIGGERS(SCRIPT(victim))) {
           extract_script(victim, MOB_TRIGGER);
@@ -1403,10 +1461,11 @@ ACMD(do_detach)
                 object->name);
       }
 
-      else if (trigger && remove_trigger(SCRIPT(object), trigger)) {
-        send_to_char(ch, "Trigger %s removed from %s.\r\n",
-          detach_label(trigger, label, sizeof(label)),
-          object->short_description ? object->short_description : object->name);
+      else if (trigger && remove_trigger(SCRIPT(object), trigger, &removed_vnum,
+                                         removed_name, sizeof(removed_name))) {
+        send_to_char(ch, "Trigger %d (%s) removed from %s.\r\n", 
+          removed_vnum, removed_name, object->short_description ? object->short_description : 
+          object->name);
         if (!TRIGGERS(SCRIPT(object))) {
           extract_script(object, OBJ_TRIGGER);
         }
@@ -1485,29 +1544,45 @@ static int is_num(char *arg)
    return TRUE;
 }
 
-static int script_int_value(const char *arg)
+/* Script arithmetic is int. Operands and results outside int saturate to
+ * INT_MIN / INT_MAX, as they always have, but now say so: a saturated
+ * value is never what the builder meant. Operand text is not logged, since
+ * either side may be player text. */
+static void report_script_arith(const trig_data *trig, const char *op,
+                                const char *what)
+{
+  TB_WARN_MSG("dg", "script-arith", "eval_op",
+              "trig vnum %d: %s (op %s) clamped to int range",
+              DIAG_TRIG_VNUM(trig), what, op);
+  script_log("Trigger VNum %d: %s (op %s) clamped to int range.",
+             DIAG_TRIG_VNUM(trig), what, op);
+}
+
+static int script_int_value(const trig_data *trig, const char *op,
+                            const char *arg)
 {
   long value;
 
   errno = 0;
   value = strtol(arg, NULL, 10);
 
-  if (errno == ERANGE)
-    return (*arg == '-') ? INT_MIN : INT_MAX;
-  if (value > INT_MAX)
-    return INT_MAX;
-  if (value < INT_MIN)
-    return INT_MIN;
+  if (errno == ERANGE || value > INT_MAX || value < INT_MIN) {
+    report_script_arith(trig, op, "operand");
+    if (errno == ERANGE)
+      return (*arg == '-') ? INT_MIN : INT_MAX;
+    return value > INT_MAX ? INT_MAX : INT_MIN;
+  }
 
   return (int)value;
 }
 
-static int clamp_script_int(long long value)
+static int clamp_script_int(const trig_data *trig, const char *op,
+                            long long value)
 {
-  if (value > INT_MAX)
-    return INT_MAX;
-  if (value < INT_MIN)
-    return INT_MIN;
+  if (value > INT_MAX || value < INT_MIN) {
+    report_script_arith(trig, op, "result");
+    return value > INT_MAX ? INT_MAX : INT_MIN;
+  }
   return (int)value;
 }
 
@@ -1555,42 +1630,42 @@ static void eval_op(char *op, char *lhs, char *rhs, char *result, void *go,
 
   else if (!strcmp("==", op)) {
     if (is_num(lhs) && is_num(rhs))
-      tb_snprintf(result, MAX_INPUT_LENGTH, "%d", script_int_value(lhs) == script_int_value(rhs));
+      tb_snprintf(result, MAX_INPUT_LENGTH, "%d", script_int_value(trig, op, lhs) == script_int_value(trig, op, rhs));
     else
       tb_snprintf(result, MAX_INPUT_LENGTH, "%d", !str_cmp(lhs, rhs));
   }
 
   else if (!strcmp("!=", op)) {
     if (is_num(lhs) && is_num(rhs))
-      tb_snprintf(result, MAX_INPUT_LENGTH, "%d", script_int_value(lhs) != script_int_value(rhs));
+      tb_snprintf(result, MAX_INPUT_LENGTH, "%d", script_int_value(trig, op, lhs) != script_int_value(trig, op, rhs));
     else
       tb_snprintf(result, MAX_INPUT_LENGTH, "%d", str_cmp(lhs, rhs));
   }
 
   else if (!strcmp("<=", op)) {
     if (is_num(lhs) && is_num(rhs))
-      tb_snprintf(result, MAX_INPUT_LENGTH, "%d", script_int_value(lhs) <= script_int_value(rhs));
+      tb_snprintf(result, MAX_INPUT_LENGTH, "%d", script_int_value(trig, op, lhs) <= script_int_value(trig, op, rhs));
     else
       tb_snprintf(result, MAX_INPUT_LENGTH, "%d", str_cmp(lhs, rhs) <= 0);
   }
 
   else if (!strcmp(">=", op)) {
     if (is_num(lhs) && is_num(rhs))
-      tb_snprintf(result, MAX_INPUT_LENGTH, "%d", script_int_value(lhs) >= script_int_value(rhs));
+      tb_snprintf(result, MAX_INPUT_LENGTH, "%d", script_int_value(trig, op, lhs) >= script_int_value(trig, op, rhs));
     else
       tb_snprintf(result, MAX_INPUT_LENGTH, "%d", str_cmp(lhs, rhs) >= 0);
   }
 
   else if (!strcmp("<", op)) {
     if (is_num(lhs) && is_num(rhs))
-      tb_snprintf(result, MAX_INPUT_LENGTH, "%d", script_int_value(lhs) < script_int_value(rhs));
+      tb_snprintf(result, MAX_INPUT_LENGTH, "%d", script_int_value(trig, op, lhs) < script_int_value(trig, op, rhs));
     else
       tb_snprintf(result, MAX_INPUT_LENGTH, "%d", str_cmp(lhs, rhs) < 0);
   }
 
   else if (!strcmp(">", op)) {
     if (is_num(lhs) && is_num(rhs))
-      tb_snprintf(result, MAX_INPUT_LENGTH, "%d", script_int_value(lhs) > script_int_value(rhs));
+      tb_snprintf(result, MAX_INPUT_LENGTH, "%d", script_int_value(trig, op, lhs) > script_int_value(trig, op, rhs));
     else
       tb_snprintf(result, MAX_INPUT_LENGTH, "%d", str_cmp(lhs, rhs) > 0);
   }
@@ -1599,40 +1674,42 @@ static void eval_op(char *op, char *lhs, char *rhs, char *result, void *go,
     tb_snprintf(result, MAX_INPUT_LENGTH, "%c", str_str(lhs, rhs) ? '1' : '0');
 
   else if (!strcmp("*", op)) {
-    lhs_num = script_int_value(lhs);
-    rhs_num = script_int_value(rhs);
+    lhs_num = script_int_value(trig, op, lhs);
+    rhs_num = script_int_value(trig, op, rhs);
     arithmetic = (long long)lhs_num * (long long)rhs_num;
-    tb_snprintf(result, MAX_INPUT_LENGTH, "%d", clamp_script_int(arithmetic));
+    tb_snprintf(result, MAX_INPUT_LENGTH, "%d", clamp_script_int(trig, op, arithmetic));
   }
 
   else if (!strcmp("/", op)) {
-    lhs_num = script_int_value(lhs);
-    rhs_num = script_int_value(rhs);
-    if (rhs_num == 0)
+    lhs_num = script_int_value(trig, op, lhs);
+    rhs_num = script_int_value(trig, op, rhs);
+    if (rhs_num == 0) {
+      /* Division by zero yields 0 (legacy), reported. */
+      report_script_arith(trig, op, "division by zero");
       strlcpy(result, "0", MAX_INPUT_LENGTH);
-    else {
+    } else {
       arithmetic = (long long)lhs_num / (long long)rhs_num;
-      tb_snprintf(result, MAX_INPUT_LENGTH, "%d", clamp_script_int(arithmetic));
+      tb_snprintf(result, MAX_INPUT_LENGTH, "%d", clamp_script_int(trig, op, arithmetic));
     }
   }
 
   else if (!strcmp("+", op)) {
-    lhs_num = script_int_value(lhs);
-    rhs_num = script_int_value(rhs);
+    lhs_num = script_int_value(trig, op, lhs);
+    rhs_num = script_int_value(trig, op, rhs);
     arithmetic = (long long)lhs_num + (long long)rhs_num;
-    tb_snprintf(result, MAX_INPUT_LENGTH, "%d", clamp_script_int(arithmetic));
+    tb_snprintf(result, MAX_INPUT_LENGTH, "%d", clamp_script_int(trig, op, arithmetic));
   }
 
   else if (!strcmp("-", op)) {
-    lhs_num = script_int_value(lhs);
-    rhs_num = script_int_value(rhs);
+    lhs_num = script_int_value(trig, op, lhs);
+    rhs_num = script_int_value(trig, op, rhs);
     arithmetic = (long long)lhs_num - (long long)rhs_num;
-    tb_snprintf(result, MAX_INPUT_LENGTH, "%d", clamp_script_int(arithmetic));
+    tb_snprintf(result, MAX_INPUT_LENGTH, "%d", clamp_script_int(trig, op, arithmetic));
   }
 
   else if (!strcmp("!", op)) {
     if (is_num(rhs))
-      tb_snprintf(result, MAX_INPUT_LENGTH, "%d", !script_int_value(rhs));
+      tb_snprintf(result, MAX_INPUT_LENGTH, "%d", !script_int_value(trig, op, rhs));
     else
       tb_snprintf(result, MAX_INPUT_LENGTH, "%d", !*rhs);
   }
@@ -1673,7 +1750,15 @@ static char *matching_paren(char *p)
   return --p;
 }
 
-/* evaluates line, and returns answer in result */
+/* evaluates line, and returns answer in result.
+ * result must hold MAX_INPUT_LENGTH bytes. line has normally been through
+ * var_subst() already; operators are split on copies. Precedence, lowest
+ * first: ||, &&, comparisons (== != <= >= /= < >), + -, * /, then unary !.
+ * Parentheses recurse, so depth is bounded by the line length. A leaf with
+ * no operator goes through var_subst() a second time (the legacy %%var%%
+ * idiom); player-authored values are stored with '%' inert, so only
+ * script-built text expands twice. Arithmetic is int and saturates,
+ * reporting dg/script-arith (see eval_op()). */
 static void eval_expr(char *line, char *result, void *go, struct script_data *sc,
                trig_data *trig, int type)
 {
@@ -1812,7 +1897,8 @@ static int process_if(char *cond, void *go, struct script_data *sc,
 }
 
 /* Scans for end of if-block.  returns the line containg 'end', or the last
- * line of the trigger if not found. */
+ * line of the trigger if not found (reported to the builder). Nested if
+ * blocks are skipped. Never returns NULL for a non-NULL cl. */
 static struct cmdlist_element *find_end(trig_data *trig, struct cmdlist_element *cl)
 {
   struct cmdlist_element *c;
@@ -1843,8 +1929,10 @@ static struct cmdlist_element *find_end(trig_data *trig, struct cmdlist_element 
   return c;
 }
 
-/* Searches for valid elseif, else, or end to continue execution at. Returns 
- * line of elseif, else, or end if found, or last line of trigger. */
+/* Searches for valid elseif, else, or end to continue execution at. Returns
+ * line of elseif, else, or end if found, or last line of trigger.
+ * Side effect: when it stops on a true elseif or an else it increments
+ * GET_TRIG_DEPTH(trig), entering that branch as script_driver() would. */
 static struct cmdlist_element *find_else_end(trig_data *trig,
     struct cmdlist_element *cl, void *go, struct script_data *sc, int type)
 {
@@ -1889,6 +1977,19 @@ static struct cmdlist_element *find_else_end(trig_data *trig,
   return c;
 }
 
+/* UID of a script owner for diagnostics; never allocates an ID. */
+static long dg_owner_uid(void *go, int type)
+{
+  if (!go)
+    return 0;
+  switch (type) {
+    case MOB_TRIGGER: return ((char_data *) go)->script_id;
+    case OBJ_TRIGGER: return ((obj_data *) go)->script_id;
+    case WLD_TRIGGER: return room_script_id((room_data *) go);
+    default:          return 0;
+  }
+}
+
 /* Read one bounded long, retaining a pointer to the remaining suffix. */
 static int script_wait_number(const char *text, long *number, const char **rest)
 {
@@ -1905,8 +2006,17 @@ static int script_wait_number(const char *text, long *number, const char **rest)
   return TRUE;
 }
 
-/* processes any 'wait' commands in a trigger.  Returns TRUE once the rest of
- * the script is scheduled, FALSE (after logging why) if the wait is invalid. */
+/* Accepted forms: "wait N" (pulses), "wait Ns" (seconds), "wait Nt" (mud
+ * hours), "wait until H[:MM]" (next mud time of day). A wait below one
+ * pulse waits one pulse (reported); a scaled wait above DG_WAIT_MAX_PULSES,
+ * an unknown suffix or an out-of-day time is rejected with dg/wait-range
+ * or a script_log. The wait_event_data allocated here is owned by the event
+ * and freed by trig_wait_event() (or by event_cancel() on extraction).
+ *
+ * Processes a 'wait' command. Returns TRUE when the wait event was created
+ * and the trigger is now suspended at cl->next; FALSE when the wait was
+ * rejected (already reported), in which case the caller must end the trigger
+ * through its normal cleanup rather than leave it half-suspended. */
 static int process_wait(void *go, trig_data *trig, int type, char *cmd,
                   struct cmdlist_element *cl)
 {
@@ -1950,6 +2060,19 @@ static int process_wait(void *go, trig_data *trig, int type, char *cmd,
       rest++;
     if (*rest) {
       script_log("Trigger: %s, VNum %d. invalid wait until suffix: '%s'",
+              GET_TRIG_NAME(trig), GET_TRIG_VNUM(trig), cl->cmd);
+      return FALSE;
+    }
+
+    /* The time is script text: keep it within one day before scaling it to
+     * pulses, so the multiplication below cannot overflow. */
+    if (min < 0 || min > DG_WAIT_MAX_MINUTES) {
+      TB_ERROR_MSG("dg", "wait-range", "process_wait",
+                   "trig vnum %d owner type %d uid %ld: wait until %ld "
+                   "minutes after midnight is outside [0,%d]; wait rejected",
+                   DIAG_TRIG_VNUM(trig), type, dg_owner_uid(go, type), min,
+                   DG_WAIT_MAX_MINUTES);
+      script_log("Trigger: %s, VNum %d. wait until time out of range: '%s'",
               GET_TRIG_NAME(trig), GET_TRIG_VNUM(trig), cl->cmd);
       return FALSE;
     }
@@ -2004,6 +2127,16 @@ static int process_wait(void *go, trig_data *trig, int type, char *cmd,
               GET_TRIG_NAME(trig), GET_TRIG_VNUM(trig), cl->cmd);
       return FALSE;
     }
+    /* A wait shorter than one pulse has always run on the next pulse
+     * (event_create() clamps it); keep that, but say so. */
+    if (when < 1) {
+      TB_WARN_MSG("dg", "wait-range", "process_wait",
+                  "trig vnum %d owner type %d uid %ld: wait %ld is below 1; "
+                  "waiting 1 pulse", DIAG_TRIG_VNUM(trig), type,
+                  dg_owner_uid(go, type), when);
+      when = 1;
+      fields = 1;
+    }
     if (fields == 2) {
       long unit = (c == 't') ? PULSES_PER_MUD_HOUR : PASSES_PER_SEC;
 
@@ -2019,6 +2152,10 @@ static int process_wait(void *go, trig_data *trig, int type, char *cmd,
 
   /* A wait longer than a mud year is a script error, not a schedule. */
   if (when > DG_MAX_WAIT_PULSES) {
+    TB_WARN_MSG("dg", "wait-range", "process_wait",
+                "trig vnum %d owner type %d uid %ld: wait %ld exceeds one mud "
+                "year (%ld pulses); capped", DIAG_TRIG_VNUM(trig), type,
+                dg_owner_uid(go, type), when, (long) DG_MAX_WAIT_PULSES);
     script_log("Trigger: %s, VNum %d. wait longer than one mud year "
                "shortened to one year: '%s'",
                GET_TRIG_NAME(trig), GET_TRIG_VNUM(trig), cl->cmd);
@@ -2123,10 +2260,16 @@ static void process_attach(void *go, struct script_data *sc, trig_data *trig,
     }
   }
 
-  /* Refuse the target before instantiating a trigger it cannot take. */
+  /* Validate the target before read_trigger() allocates an instance; this
+   * reject used to return after the allocation and leak it. Players carry
+   * scripts only when the operator enables CONFIG_SCRIPT_PLAYERS. */
   if (c && !IS_NPC(c) && !CONFIG_SCRIPT_PLAYERS) {
-    script_log("Trigger: %s, VNum %d. attach invalid target: '%s'",
-            GET_TRIG_NAME(trig), GET_TRIG_VNUM(trig), GET_NAME(c));
+    TB_ERROR_MSG("dg", "attach-target", "process_attach",
+                 "trig vnum %d: cannot attach trig %s to player idnum %ld "
+                 "(script_players off)", GET_TRIG_VNUM(trig), trignum_s,
+                 (long)GET_IDNUM(c));
+    script_log("Trigger: %s, VNum %d. attach invalid target: player idnum %ld",
+               GET_TRIG_NAME(trig), GET_TRIG_VNUM(trig), (long)GET_IDNUM(c));
     return;
   }
 
@@ -2158,6 +2301,17 @@ static void process_attach(void *go, struct script_data *sc, trig_data *trig,
     add_trigger(SCRIPT(r), newtrig, -1);
     return;
   }
+}
+
+/* process_detach() found nothing to remove. */
+static void report_detach_miss(const trig_data *trig, long uid,
+                               const char *trignum_s, const char *why)
+{
+  TB_WARN_MSG("dg", "detach-miss", "process_detach",
+              "trig vnum %d: target uid %ld trigger '%s': %s",
+              DIAG_TRIG_VNUM(trig), uid, trignum_s, why);
+  script_log("Trigger: %s, VNum %d. detach: uid %ld trigger '%s': %s",
+             GET_TRIG_NAME(trig), GET_TRIG_VNUM(trig), uid, trignum_s, why);
 }
 
 /* script detaching a trigger from something */
@@ -2207,16 +2361,20 @@ static void process_detach(void *go, struct script_data *sc, trig_data *trig,
   }
 
 
+  /* A detach that removes nothing used to return silently, hiding a wrong
+   * trigger number or target from the builder. "all" on a target with no
+   * script has nothing to do and stays quiet. trignum_s is script text. */
   if (c && SCRIPT(c)) {
     if (!strcmp(trignum_s, "all")) {
       extract_script(c, MOB_TRIGGER);
       return;
     }
-    if (remove_trigger(SCRIPT(c), trignum_s)) {
+    if (remove_trigger(SCRIPT(c), trignum_s, NULL, NULL, 0)) {
       if (!TRIGGERS(SCRIPT(c))) {
         extract_script(c, MOB_TRIGGER);
       }
-    }
+    } else
+      report_detach_miss(trig, id, trignum_s, "trigger not attached");
     return;
   }
 
@@ -2225,11 +2383,12 @@ static void process_detach(void *go, struct script_data *sc, trig_data *trig,
       extract_script(o, OBJ_TRIGGER);
       return;
     }
-    if (remove_trigger(SCRIPT(o), trignum_s)) {
+    if (remove_trigger(SCRIPT(o), trignum_s, NULL, NULL, 0)) {
       if (!TRIGGERS(SCRIPT(o))) {
         extract_script(o, OBJ_TRIGGER);
       }
-    }
+    } else
+      report_detach_miss(trig, id, trignum_s, "trigger not attached");
     return;
   }
 
@@ -2238,14 +2397,17 @@ static void process_detach(void *go, struct script_data *sc, trig_data *trig,
       extract_script(r, WLD_TRIGGER);
       return;
     }
-    if (remove_trigger(SCRIPT(r), trignum_s)) {
+    if (remove_trigger(SCRIPT(r), trignum_s, NULL, NULL, 0)) {
       if (!TRIGGERS(SCRIPT(r))) {
         extract_script(r, WLD_TRIGGER);
       }
-    }
+    } else
+      report_detach_miss(trig, id, trignum_s, "trigger not attached");
     return;
   }
 
+  if (strcmp(trignum_s, "all"))
+    report_detach_miss(trig, id, trignum_s, "target has no script");
 }
 
 struct room_data *dg_room_of_obj(struct obj_data *obj)
@@ -2472,7 +2634,17 @@ static void process_remote(struct script_data *sc, trig_data *trig, char *cmd)
     return;
   }
 
-  if (sc_remote==NULL) return; /* no script to assign */
+  /* A target without a script cannot hold globals: the write is lost, so
+   * say so. The variable name is script text, never player text. */
+  if (sc_remote==NULL) {
+    TB_WARN_MSG("dg", "remote-target", "process_remote",
+                "trig vnum %d: target uid %ld has no script; var '%s' not "
+                "stored", DIAG_TRIG_VNUM(trig), uid, vd->name);
+    script_log("Trigger: %s, VNum %d. remote: uid %ld has no script; var '%s' "
+               "not stored", GET_TRIG_NAME(trig), GET_TRIG_VNUM(trig), uid,
+               vd->name);
+    return;
+  }
 
   add_var(&(sc_remote->global_vars), vd->name, vd->value, context);
 }
@@ -2630,6 +2802,9 @@ static void process_rdelete(struct script_data *sc, trig_data *trig, char *cmd)
     return;
   }
 
+  /* rdelete is "make sure it is gone": a target with no script or no such
+   * global already satisfies it, and scripts routinely rdelete flags that
+   * may never have been set, so those cases stay quiet by design. */
   if (sc_remote==NULL) return; /* no script to delete a trigger from */
   if (sc_remote->global_vars==NULL) return; /* no script globals */
 
@@ -2712,15 +2887,35 @@ static void extract_value(struct script_data *sc, trig_data *trig, char *cmd)
 
   num = tb_parse_int_or_zero(buf);
   if (num < 1) {
-    script_log("extract number < 1!");
+    TB_WARN_MSG("dg", "extract-range", "extract_value",
+                "trig vnum %d: word number %d < 1; variable not set",
+                DIAG_TRIG_VNUM(trig), num);
+    script_log("Trigger: %s, VNum %d. extract number < 1!",
+               GET_TRIG_NAME(trig), GET_TRIG_VNUM(trig));
     return;
   }
 
   half_chop(buf, buf3, buf2);
 
-  while (num>0) {
-    half_chop(buf2, buf, buf2);
-    num--;
+  /* num is script-controlled (up to INT_MAX) and the string may be player
+   * text. Each pass consumes one word, so stop once the words run out
+   * instead of spinning num times on an empty string, which stalled the
+   * game loop for seconds. A word past the end yields an empty value, as
+   * before, but now says so. */
+  {
+    int wanted = num;
+
+    while (num > 0) {
+      if (!*buf2) {
+        TB_WARN_MSG("dg", "extract-range", "extract_value",
+                    "trig vnum %d: word %d requested beyond end of string; "
+                    "variable set empty", DIAG_TRIG_VNUM(trig), wanted);
+        *buf = '\0';
+        break;
+      }
+      half_chop(buf2, buf, buf2);
+      num--;
+    }
   }
 
   add_var(&GET_TRIG_VARS(trig), to, buf, sc ? sc->context : 0);
@@ -2783,7 +2978,21 @@ static void dg_letter_value(struct script_data *sc, trig_data *trig, char *cmd)
  *
  * int mode
      TRIG_NEW     just started from dg_triggers.c
-     TRIG_RESTART restarted after a 'wait' */
+     TRIG_RESTART restarted after a 'wait'
+
+ * Owner lifetime: each frame records its own owner on entry (an object's
+ * UID, or whether a mobile was already dying) and checks it after every
+ * command with dg_frame_owner_gone(). If the owner is gone (purged itself,
+ * its container was purged, or a nested trigger purged it) the run stops
+ * and, for an object, *go_adress is set to NULL so the caller sees it.
+ * Nested frames check only their own owner, so they cannot end this run.
+ *
+ * Exits: only an accepted 'wait' leaves the trigger suspended (depth 1,
+ * variables kept, a wait event owning a wait_event_data). Every other exit,
+ * including a rejected wait and a malformed while/switch, frees var_list and
+ * resets depth to 0 so TRIGGER_CHECK() accepts the trigger again. sc may be
+ * retired mid-run by detach/purge; it stays readable until
+ * dg_script_execution_leave(). */
 /* TRUE once a command run by this frame has freed its object owner or
  * extracted its mobile owner.  Each frame checks its own owner, so nested
  * scripts can neither hide nor fake this frame's result.  Rooms are never
@@ -2947,10 +3156,11 @@ int script_driver(void *go_adress, trig_data *trig, int type, int mode)
     } else if (!strn_cmp("while ", p, 6)) {
       temp = find_done(cl);
       if (!temp) {
+        /* End through the normal cleanup below: returning here left the
+         * trigger at depth 1, so TRIGGER_CHECK() refused it until its owner
+         * was extracted. */
         report_unterminated_block(trig, "while");
-        depth--;
-        dg_script_execution_leave();
-        return ret_val;
+        break;
       }
       if (process_if(p + 6, go, sc, trig, type)) {
          temp->original = cl;
@@ -2959,7 +3169,9 @@ int script_driver(void *go_adress, trig_data *trig, int type, int mode)
          cl = temp;
       }
     } else if (!strn_cmp("switch ", p, 7)) {
-      cl = find_case(trig, cl, go, sc, type, p + 7);
+      /* NULL: the switch has no 'done' (reported); end the trigger. */
+      if (!(cl = find_case(trig, cl, go, sc, type, p + 7)))
+        break;
     } else if (!strn_cmp("end", p, 3)) {
       /* If not in an if-block, ignore the extra 'end' and warn about it. */
       if (GET_TRIG_DEPTH(trig) == 1) {
@@ -2980,10 +3192,16 @@ int script_driver(void *go_adress, trig_data *trig, int type, int mode)
         GET_TRIG_LOOPS(trig)++;
         if (cl->loops == 30) {
           cl->loops = 0;
-          process_wait(go, trig, type, "wait 1", cl);
-           depth--;
-          dg_script_execution_leave();
-          return ret_val;
+          if (process_wait(go, trig, type, "wait 1", cl)) {
+            depth--;
+            dg_script_execution_leave();
+            return ret_val;
+          }
+          TB_ERROR_MSG("dg", "wait-invalid", "script_driver",
+                       "trig vnum %d owner type %d uid %ld: loop pause "
+                       "rejected; trigger ended", DIAG_TRIG_VNUM(trig), type,
+                       dg_owner_uid(go, type));
+          break;
         }
           if (GET_TRIG_LOOPS(trig) >= 100) {
           script_log("Trigger VNum %d has looped 100 times!!!",
@@ -3051,13 +3269,20 @@ int script_driver(void *go_adress, trig_data *trig, int type, int mode)
         process_unset(sc, trig, cmd);
 
       else if (!strn_cmp(cmd, "wait ", 5)) {
-        /* An invalid wait ends this run normally; leaving it suspended with
-         * no event would keep the trigger busy, so it never fired again. */
-        if (!process_wait(go, trig, type, cmd, cl))
-          break;
-        depth--;
-        dg_script_execution_leave();
-        return ret_val;
+        /* Only a scheduled wait may leave the trigger suspended (depth and
+         * variables kept for trig_wait_event()). A rejected wait ends the
+         * trigger through the cleanup below: returning here instead left
+         * depth at 1, so TRIGGER_CHECK() refused it until extraction. */
+        if (process_wait(go, trig, type, cmd, cl)) {
+          depth--;
+          dg_script_execution_leave();
+          return ret_val;
+        }
+        TB_ERROR_MSG("dg", "wait-invalid", "script_driver",
+                     "trig vnum %d owner type %d uid %ld: wait rejected; "
+                     "trigger ended", DIAG_TRIG_VNUM(trig), type,
+                     dg_owner_uid(go, type));
+        break;
       }
 
       else if (!strn_cmp(cmd, "attach ", 7))
@@ -3096,8 +3321,11 @@ int script_driver(void *go_adress, trig_data *trig, int type, int mode)
     }
   }
 
-  /* Free the run's variables even if the script was detached: the trigger
-   * itself is only retired until the outermost frame returns. */
+  /* The script may have detached itself ("detach all %self.id%"), leaving
+   * the owner with no script. trig itself stays allocated until
+   * dg_script_execution_leave() (extract_trigger() retires it while any
+   * script runs), so its variables are always ours to free here. Freeing
+   * them only when the owner still had a script leaked them otherwise. */
   free_varlist(GET_TRIG_VARS(trig));
   GET_TRIG_VARS(trig) = NULL;
   GET_TRIG_DEPTH(trig) = 0;
@@ -3231,14 +3459,21 @@ static struct cmdlist_element *find_done(struct cmdlist_element *cl)
 }
 
 
-/* load in a character's saved variables */
+/* load in a character's saved variables.
+ * Legacy plrvars file, one "name context value" per line; get_line() caps a
+ * line at READ_SIZE - 1 bytes. Nothing writes these files any more (the
+ * ASCII pfile Vars section replaced them), so the input is a legacy or
+ * admin-placed file. */
 void read_saved_vars(struct char_data *ch)
 {
   FILE *file;
   long context;
   char fn[127];
   char input_line[1024], *temp, *p;
-  /* any_one_arg() writes up to MAX_INPUT_LENGTH bytes. */
+  /* any_one_arg() writes up to MAX_INPUT_LENGTH bytes (its contract). These
+   * were 32 and 16 bytes, so a legacy plrvars line with a long first or
+   * second word overflowed the stack. get_line() limits lines to READ_SIZE,
+   * which is smaller, so neither word can be truncated either. */
   char varname[MAX_INPUT_LENGTH];
   char context_str[MAX_INPUT_LENGTH];
 
@@ -3256,9 +3491,10 @@ void read_saved_vars(struct char_data *ch)
   get_filename(fn, sizeof(fn), SCRIPT_VARS_FILE, GET_NAME(ch));
   file = fopen(fn,"r");
 
-  /* if we failed to open the file, return */
+  /* No legacy file is the normal case: nothing writes plrvars any more. */
   if( !file ) {
-    log("%s had no variable file", GET_NAME(ch));
+    log("read_saved_vars: player idnum %ld has no legacy variable file %s",
+        (long)GET_IDNUM(ch), fn);
     return;
   }
   /* walk through each line in the file parsing variables */
@@ -3279,7 +3515,8 @@ void read_saved_vars(struct char_data *ch)
   tb_fclose(file);
 }
 
-/* save a characters variables out to disk */
+/* save a characters variables out to disk (legacy format; no callers).
+ * Variables whose name starts with '-' are never saved. */
 void save_char_vars(struct char_data *ch)
 {
   FILE *file;
@@ -3323,7 +3560,7 @@ void read_saved_vars_ascii(FILE *file, struct char_data *ch, int count)
 {
   long context;
   char input_line[1024], *temp, *p;
-  /* any_one_arg() writes up to MAX_INPUT_LENGTH bytes. */
+  /* Sized for any_one_arg()'s MAX_INPUT_LENGTH contract, not READ_SIZE. */
   char varname[MAX_INPUT_LENGTH];
   char context_str[MAX_INPUT_LENGTH];
   int i;
@@ -3446,10 +3683,11 @@ static struct char_data *find_char_by_uid_in_lookup_table(long uid)
 {
   struct lookup_table_t *lt = find_element_by_uid_in_lookup_table(uid);
 
+  /* A miss is routine (a UID that left the game, a probe in the wrong
+   * namespace). The plain log() that was here named no caller or trigger;
+   * callers that treat a miss as an error report it with that context. */
   if (lt)
     return (struct char_data *)(lt->c);
-
-  log("find_char_by_uid_in_lookup_table : No entity with number %ld in lookup table", uid);
   return NULL;
 }
 
@@ -3457,17 +3695,16 @@ static struct obj_data *find_obj_by_uid_in_lookup_table(long uid)
 {
   struct lookup_table_t *lt = find_element_by_uid_in_lookup_table(uid);
 
+  /* See find_char_by_uid_in_lookup_table(): misses are reported by callers. */
   if (lt)
     return (struct obj_data *)(lt->c);
-
-  log("find_obj_by_uid_in_lookup_table : No entity with number %ld in lookup table", uid);
   return NULL;
 }
 
 int has_obj_by_uid_in_lookup_table(long uid)
 {
   /* Only object-range UIDs name objects; see note in dg_scripts.h. */
-  return uid >= OBJ_ID_BASE && find_element_by_uid_in_lookup_table(uid) != NULL;
+  return UID_IS_OBJ(uid) && find_element_by_uid_in_lookup_table(uid) != NULL;
 }
 
 /* Validate both the object UID namespace and the original allocation's
@@ -3475,7 +3712,7 @@ int has_obj_by_uid_in_lookup_table(long uid)
 int obj_uid_matches(long uid, const obj_data *obj)
 {
   struct lookup_table_t *entry;
-  if (!obj || uid < OBJ_ID_BASE)
+  if (!obj || !UID_IS_OBJ(uid))
     return FALSE;
   entry = find_element_by_uid_in_lookup_table(uid);
   return entry && entry->c == (const void *)obj;
