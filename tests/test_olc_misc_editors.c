@@ -65,6 +65,23 @@ size_t send_to_char(struct char_data *ch, const char *messg, ...)
   return strlen(out);
 }
 
+/* act() calls made with TO_CHAR, with the message as passed. */
+static int act_to_char_calls;
+static char act_last[MAX_STRING_LENGTH];
+
+char *act_at(const char *src_file, int src_line, const char *src_func,
+             const char *str, int hide_invisible, struct char_data *ch,
+             struct obj_data *obj, void *vict_obj, int type)
+{
+  (void)src_file; (void)src_line; (void)src_func; (void)hide_invisible;
+  (void)ch; (void)obj; (void)vict_obj;
+  if (type == TO_CHAR) {
+    act_to_char_calls++;
+    strlcpy(act_last, str ? str : "(null)", sizeof(act_last));
+  }
+  return NULL;
+}
+
 void basic_mud_log(const char *format, ...) { (void)format; }
 void mudlog(int type, int level, int file, const char *str, ...)
 { (void)type; (void)level; (void)file; (void)str; }
@@ -498,6 +515,8 @@ void setUp(void)
   tb_error_capture_reset();
   out[0] = '\0';
   cleanups = help_reboots = string_writes = 0;
+  act_to_char_calls = 0;
+  act_last[0] = '\0';
   string_write_target = NULL;
   string_write_backstr = NULL;
   builder_fixture();
@@ -668,6 +687,30 @@ static void test_prefedit_target_extracted_mid_edit(void)
   TEST_ASSERT_EQUAL_INT(CON_PLAYING, STATE(&builder_desc));
   TEST_ASSERT_EQUAL_STRING("prefedit-target-gone", tb_captured_operation);
   TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "player idnum 77"));
+}
+
+/* F2-10: the player whose prefs an IMPL is editing types "prefedit".  They
+ * get the send_to_char notice only: act() used to run as well, with a
+ * buffer formatted only in the other branch. */
+static void test_prefedit_self_while_being_edited_sends_one_message(void)
+{
+  char cmd[] = " bob", none[] = "";
+  struct descriptor_data victim_desc;
+
+  victim = victim_create("Bob", 77);
+  memset(&victim_desc, 0, sizeof(victim_desc));
+  victim_desc.character = victim;
+  victim_desc.connected = CON_PLAYING;
+  victim->desc = &victim_desc;
+
+  do_oasis_prefedit(&builder, cmd, 0, 0);
+  TEST_ASSERT_EQUAL_INT(CON_PREFEDIT, STATE(&builder_desc));
+  out[0] = '\0';
+  do_oasis_prefedit(victim, none, 0, 0);
+  TEST_ASSERT_NOT_NULL(strstr(out, "Your preferences are currently being edited"));
+  TEST_ASSERT_EQUAL_INT(0, act_to_char_calls);
+  TEST_ASSERT_NULL(victim_desc.olc);
+  victim->desc = NULL;
 }
 
 /* F2-06: editing one's own preferences still works. */
@@ -940,6 +983,7 @@ int main(void)
   RUN_TEST(test_qedit_bad_stored_type_is_reported);
   RUN_TEST(test_prefedit_target_extracted_mid_edit);
   RUN_TEST(test_prefedit_self_still_resolves);
+  RUN_TEST(test_prefedit_self_while_being_edited_sends_one_message);
   RUN_TEST(test_hedit_null_entry_round_trip);
   RUN_TEST(test_hedit_no_then_add_appends_instead_of_writing_past_table);
   RUN_TEST(test_hedit_no_offers_next_matching_row);
