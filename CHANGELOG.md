@@ -24,10 +24,38 @@ afterwards, see the PR.)
 - #37 diagnostics: parser-context exhaustion is reported at the caller and
   rate-limited; index_boot() records the file, line and parser of each
   load; one truncation marker, `...[TRUNCATED]`.
-<!-- PLACEHOLDER-MERGED: add one entry per PR merged after this file was
-     written (#41 movement index checks, #40 password verify / persistence
-     style, #50 level-50 rebalance tool, #36 seven-class guilds, #18 area
-     imports, and any fix/leftover-* branches), then delete this comment. -->
+- #41 movement: do_simple_move() checks the room and zone indices before
+  any world[]/zone_table[] access and again after every special and leave
+  trigger; a bad index refuses the move and is reported at the stage that
+  found it, with the character, direction and both rooms (vnum and rnum).
+- #50 tools/rebalance_world_50.py: stages a level-50 rebalance of the
+  mobile files with a per-mobile report and never edits the live world;
+  levels 11 and up are stretched monotonically onto 11-50, and immortal
+  levels are rejected with file:line.
+- #51 leftover ledger fixes: editor range errors end with a real line
+  break; ban sites are lowercased on load so uppercase sites match; the
+  rent-header contract checks every Crash_* reader and runs in ctest;
+  tools/audit_report_stats.py renders the same report on every clone.
+- #36 seven classes: Druid, Berserker, Sorcerer, Paladin, Ranger, Bard and
+  Necromancer join Wizard, Cleric, Thief, Warrior and Monk (12 classes;
+  saved IDs 0-4 unchanged). Each new class uses its archetype's THAC0,
+  saving throw and experience tables and its anti-class item and shop
+  rules; Monk keeps its exemption from those item and shop rules.
+  Paladin, Ranger and Bard gain half-caster mana; new classes have titles
+  ("the Druid"). Eight new Midgaard training halls, reached through guarded
+  passages that admit only the matching classes. The guild_guard spec proc
+  never blocked anyone (its direction loop overran and it read the wrong
+  command table); it is fixed, but no stock mob carried it: the four
+  original guilds have always been guarded by DG triggers 3000-3003, and
+  nothing changes there. A Wizard's mana discount stops at the spell's
+  minimum cost; `show thaco` and `show exp` name which newer classes use
+  each column. Every TBERR record now ends with `truncated_fields=` (empty
+  unless a field was cut): update external log parsers. Back up the player
+  files before deploying: a binary from before #36 loads class 5-11
+  characters as the default class.
+<!-- PLACEHOLDER-MERGED: add an entry for each PR merged after this one
+     (#40 password verify / persistence style, #18 area imports, and the
+     string_add fix if it merges), then delete this comment. -->
 
 ## 2026-10-28: memory-safety and error-locality audit merged
 

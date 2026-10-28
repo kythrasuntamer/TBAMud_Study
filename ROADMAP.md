@@ -50,9 +50,6 @@ Taken from "What remains open" in
 3. The Semgrep CI job needs the repository secret `SEMGREP_APP_TOKEN`.
 4. `src/class.c`'s level tables (lines ~800-2170) were not read line by
    line.
-5. Non-memory observations still marked "not fixed" in the report
-   (improved-edit's doubled `\r\n`, ban-site case, add_cmd_to_list with a
-   position past the end, and the objsave rent-header contract test).
 
 ## Public-server hardening (planned)
 
