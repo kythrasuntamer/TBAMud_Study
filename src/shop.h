@@ -84,6 +84,8 @@ struct shop_data {
 /** Total number of trade types */
 #define NUM_TRADERS     7
 
+/** Fixed-size stack for shop.c's buyword evaluator. Expressions are builder
+ * text, so pushes are bounded by S_CAPACITY (see push() in shop.c). */
 struct stack_data {
    int data[100];
    int len;

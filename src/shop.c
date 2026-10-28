@@ -9,6 +9,22 @@
 *  By Jeff Fink.                                                          *
 **************************************************************************/
 
+/*
+ * Who controls the input:
+ *  - Shop files (lib/world/shp) and sedit (builders): produced vnums, buy
+ *    types, buyword expressions, messages, keeper vnum. The loader rejects
+ *    out-of-range buy types and missing produced vnums with a diagnostic
+ *    (buytype-range, produce-vnum); a missing keeper leaves the shop inert
+ *    (keeper-vnum).
+ *  - Players: buy/sell/list/value arguments. They are rewritten in place by
+ *    transaction_amt() and never logged.
+ *  - Object data (world files, oedit, DG osetval): liquid and type values
+ *    are range-checked before they index drinks[] or item_types[].
+ * Lifetime: slide_obj() may extract a sold item and return a prototype
+ * pointer; get_purchase_obj() extracts zero-cost stock. Builder text spliced
+ * into act() formats is escaped with shop_act_escape().
+ */
+
 #include "conf.h"
 #include "sysdep.h"
 #include "structs.h"
@@ -272,6 +288,14 @@ static int find_oper_num(char token)
   return (NOTHING);
 }
 
+/* Evaluate a buyword expression (builder text from sedit or the shop file)
+ * against obj. Grammar: operands are extra-flag names (GLOW, HUM, ...) or
+ * keywords matched with isname(); operators, by increasing precedence, are
+ * '|' or '+' (or), '&' or '*' (and), '^' or '\'' (not, prefix); '[', '(' or '{'
+ * open and ']', ')' or '}' close a group. Each operator/operand stack holds
+ * S_CAPACITY (100) entries. A malformed or too-deep expression is reported
+ * (buyword-parse / buyword-eval, naming the shop and buy type) and
+ * evaluates FALSE, so the sale is refused. An empty expression is TRUE. */
 static int evaluate_expression(struct obj_data *obj, char *expr, int shop_nr,
     int type_idx)
 {
@@ -393,6 +417,13 @@ static int shop_producing(struct obj_data *item, int shop_nr)
   return (FALSE);
 }
 
+/* Parse a leading count from 'buy 5 sword' / 'buy 5 #3'. When the first
+ * token is a number and more text follows, the count and exactly one
+ * following byte are removed from arg in place (arg must be writable) and
+ * the count is returned; otherwise arg is unchanged and 1 is returned. It
+ * assumes no leading whitespace: one_argument() skips spaces and fill words
+ * but the in-place strip does not, so such input strips the wrong bytes
+ * (harmlessly: the rest is still a NUL-terminated name). */
 static int transaction_amt(char *arg)
 {
   char buf[MAX_INPUT_LENGTH];
@@ -794,6 +825,11 @@ static struct obj_data *get_selling_obj(struct char_data *ch, char *name, struct
  * is put together, and manipulating the order of the objects on the list. (But
  * since most of DIKU is not encapsulated, and information hiding is almost
  * never used, it isn't that big a deal). -JF */
+/* Give a sold obj to the keeper, keeping identical items adjacent.
+ * Returns obj, or, when the shop produces this item, extracts (frees) obj and
+ * returns &obj_proto[rnum]: a prototype that callers must never modify,
+ * extract or place. Relies on obj_to_char() inserting at the list head, and
+ * maintains the SHOP_SORT invariant (see sort_keeper_objs). */
 static struct obj_data *slide_obj(struct obj_data *obj, struct char_data *keeper, int shop_nr)
 {
   struct obj_data *loop;
@@ -824,6 +860,11 @@ static struct obj_data *slide_obj(struct obj_data *obj, struct char_data *keeper
   return (obj);
 }
 
+/* Invariant: the first SHOP_SORT(shop_nr) entries of keeper->carrying are
+ * sorted (identical items adjacent) and SHOP_SORT(shop_nr) <=
+ * IS_CARRYING_N(keeper). Code that removes keeper items outside shop.c
+ * (scripts, purges) breaks the count without adjusting it; the next sale
+ * re-sorts, so the cost is ordering, not memory safety. */
 static void sort_keeper_objs(struct char_data *keeper, int shop_nr)
 {
   struct obj_data *list = NULL, *temp;
