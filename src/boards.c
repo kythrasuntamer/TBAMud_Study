@@ -689,6 +689,15 @@ void board_load_board(int board_type)
       free(tmp1);
       goto load_fail;
     }
+    /* The writer stores strlen + 1 bytes.  Without the terminator, every
+     * later %s and strstr() on the heading reads past the allocation. */
+    if (tmp1[len1 - 1] != '\0') {
+      TB_ERROR_MSG("board", "board-load", FILENAME(board_type),
+                   TB_ERRID_PARSER_MALFORMED " board vnum %d message %d field heading not NUL-terminated (%d bytes); resetting",
+                   BOARD_VNUM(board_type), i, len1);
+      free(tmp1);
+      goto load_fail;
+    }
 
     if ((slot = find_slot()) == -1) {
       TB_ERROR_MSG("board", "slot-exhausted", FILENAME(board_type),
@@ -702,6 +711,15 @@ void board_load_board(int board_type)
     if (len2 > 0) {
       CREATE(tmp2, char, len2);
       if (!BOARD_READ_EXACT(tmp2, sizeof(char), (size_t)len2, fl, board_type, i, "body")) {
+        free(tmp2);
+        free(tmp1);
+        msg_storage_taken[slot] = 0;
+        goto load_fail;
+      }
+      if (tmp2[len2 - 1] != '\0') {
+        TB_ERROR_MSG("board", "board-load", FILENAME(board_type),
+                     TB_ERRID_PARSER_MALFORMED " board vnum %d message %d field body not NUL-terminated (%d bytes); resetting",
+                     BOARD_VNUM(board_type), i, len2);
         free(tmp2);
         free(tmp1);
         msg_storage_taken[slot] = 0;

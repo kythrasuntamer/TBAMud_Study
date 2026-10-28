@@ -334,6 +334,25 @@ static void test_load_rejects_oversized_lengths(void)
   TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, TB_ERRID_PARSER_RANGE));
 }
 
+/* C1-05: a heading without its terminator was kept, and the owner check in
+ * board_remove_msg() strstr'd past the 5-byte block (ASan before the fix). */
+static void test_load_rejects_unterminated_heading(void)
+{
+  struct board_msginfo rec;
+
+  memset(&rec, 0, sizeof(rec));
+  rec.heading_len = 5;
+  write_board_file(&rec, "hello", 5);
+  board_load_board(0);
+  TEST_ASSERT_EQUAL_STRING("board-load", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "heading not NUL-terminated"));
+
+  {
+    char arg[] = "1";
+    board_remove_msg(0, &writer, arg, &board_obj);
+  }
+}
+
 /* Saved boards load back with their headings and bodies. */
 static void test_save_load_round_trip(void)
 {
@@ -372,6 +391,7 @@ int main(void)
   RUN_TEST(test_load_ignores_on_disk_pointer_and_slot);
   RUN_TEST(test_load_short_heading_read);
   RUN_TEST(test_load_rejects_oversized_lengths);
+  RUN_TEST(test_load_rejects_unterminated_heading);
   RUN_TEST(test_save_load_round_trip);
   return UNITY_END();
 }
