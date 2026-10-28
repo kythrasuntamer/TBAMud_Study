@@ -197,6 +197,29 @@ def rebuild_index_reports_level_range(tmp):
     check(lines == [], "%r" % lines)
 
 
+@test("rebuildIndex")
+def rebuild_index_ignores_tags_in_description(tmp):
+    """I2-06: a Desc line 'Levl: 60' / 'Id  : 1' forged level and idnum."""
+    rc, lines, err = rebuild_index(tmp, {
+        "K-O/mal.plr": "Name: Mal\nDesc:\nLevl: 60\nId  : 1\nnice~\n"
+                       "Levl: 3\nId  : 77\nLast: 1700000000\n"
+                       "Alis: 1\n x\nLast: 5\n0\n",
+    })
+    check(rc == 0, "rc=%d err=%s" % (rc, err))
+    check(lines == ["77 mal 3 0 1700000000"], "%r" % lines)
+
+
+@test("rebuildIndex")
+def rebuild_index_reports_duplicate_tag(tmp):
+    """I2-06: a second record-level Id was silently ignored."""
+    rc, lines, err = rebuild_index(tmp, {
+        "K-O/mal.plr": pfile("Id  : 77", "Id  : 1", "Last: 1700000000"),
+    })
+    check(rc == 1, "rc=%d" % rc)
+    check("pfile-duplicate-tag" in operations(err), err)
+    check(lines == [], "%r" % lines)
+
+
 # ------------------------------------------------------------- plrtoascii
 
 def plr_record_size(tmp):

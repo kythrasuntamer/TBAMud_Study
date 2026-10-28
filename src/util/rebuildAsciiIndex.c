@@ -22,14 +22,12 @@
 #include "db.h"		/* PINDEX_* */
 #include "pfdefaults.h"	/* PFDEF_LEVEL */
 
-#define READ_SIZE 256
 
 #define UTIL_REPORT_ERRNO(operation, context) \
   TB_REPORT_ERRNO((operation), (context))
 
 
 int walkdir(FILE* index_file, char *dir);
-int get_line(FILE *fl, char *buf);
 
 int main(int argc, char** argv)
 {
@@ -72,17 +70,140 @@ char *parsename(char *filename) {
 	return copy;
 }
 
-char *findLine(FILE *plr_file, char *tag) {
-	static char line[5000];
-	if (fseek(plr_file, 0L, SEEK_SET) != 0)
-		return NULL;
+/* The record-level tags the index needs, as text after "Tag:" (NULL when the
+ * pfile has no such tag).  Each points into its own buffer below. */
+struct pfile_tags {
+  char *id, *levl, *last, *act;
+  char id_buf[64], levl_buf[64], last_buf[64], act_buf[128];
+};
 
-	while (get_line(plr_file, line)) {
-		if(!strncmp(tag, line, strlen(tag))) {
-			return line+strlen(tag);
-		}
-	}
-	return NULL;
+/* Store one tag value; a second occurrence or an over-long value is
+ * reported and rejects the pfile. */
+static int pfile_store_tag(char **slot, char *buf, size_t buf_size,
+                           const char *value, const char *path,
+                           const char *tag, long line_no)
+{
+  if (*slot != NULL) {
+    TB_REPORT_DOMAIN_ERRORF(TB_SEV_ERROR, TB_ERR_PARSER, "pfile-duplicate-tag",
+                            "pfile=%s tag=%s line=%ld: record skipped", path,
+                            tag, line_no);
+    return 0;
+  }
+  if (strlcpy(buf, value, buf_size) >= buf_size) {
+    TB_REPORT_DOMAIN_ERRORF(TB_SEV_ERROR, TB_ERR_PARSER, "pfile-tag-value",
+                            "pfile=%s tag=%s line=%ld: value longer than %zu "
+                            "bytes; record skipped", path, tag, line_no,
+                            buf_size - 1);
+    return 0;
+  }
+  *slot = buf;
+  return 1;
+}
+
+/* Number of lines a counted block ("Alis: N", "Vars: N") occupies after its
+ * tag line, or -1 (reported) when N is not a sane count. */
+static long pfile_block_lines(const char *value, long per_entry,
+                              const char *path, const char *tag, long line_no)
+{
+  long count;
+
+  if (!tb_parse_long_checked(value, &count) || count < 0 || count > 100000) {
+    TB_REPORT_DOMAIN_ERRORF(TB_SEV_ERROR, TB_ERR_PARSER, "pfile-tag-value",
+                            "pfile=%s tag=%s line=%ld value=%.32s: record "
+                            "skipped", path, tag, line_no, value);
+    return -1;
+  }
+  return count * per_entry;
+}
+
+/*
+ * Read one pfile, collecting the record-level Id/Levl/Last/Act tags.
+ *
+ * Only tag lines at record level count, as load_char() (players.c) reads
+ * them.  The "Desc:" block is player-written free text up to a line ending
+ * in '~', and the "Alis:" (3 lines per alias) and "Vars:" (1 line per
+ * variable) blocks hold player- or script-chosen text; a line inside them
+ * that happens to read "Levl: 60" or "Id  : 1" must not be taken as the
+ * player's level or idnum (an older first-match search let a mortal forge
+ * both through their description).  A tag seen twice at record level, an
+ * unterminated description or an over-long line is reported and rejects
+ * the pfile.  Returns 1 on success.
+ */
+static int pfile_scan(FILE *plr_file, const char *path, struct pfile_tags *tags)
+{
+  char line[8192];
+  long line_no = 0, skip_lines = 0;
+  int in_desc = 0;
+
+  memset(tags, 0, sizeof(*tags));
+  while (fgets(line, sizeof(line), plr_file) != NULL) {
+    size_t len = strlen(line);
+
+    line_no++;
+    if (len > 0 && line[len - 1] != '\n' && !feof(plr_file)) {
+      TB_REPORT_DOMAIN_ERRORF(TB_SEV_ERROR, TB_ERR_PARSER, "pfile-line-too-long",
+                              "pfile=%s line=%ld limit=%zu: record skipped",
+                              path, line_no, sizeof(line) - 1);
+      return 0;
+    }
+    while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r'))
+      line[--len] = '\0';
+
+    if (in_desc) {		/* player text: ends at a line ending in '~' */
+      if (len > 0 && line[len - 1] == '~')
+        in_desc = 0;
+      continue;
+    }
+    if (skip_lines > 0) {	/* inside an Alis/Vars block */
+      skip_lines--;
+      continue;
+    }
+    if (len < 5 || line[4] != ':')	/* not a tag line (block data, blank) */
+      continue;
+
+    if (!strncmp(line, "Desc:", 5))
+      in_desc = 1;
+    else if (!strncmp(line, "Alis:", 5)) {
+      if ((skip_lines = pfile_block_lines(line + 5, 3, path, "Alis", line_no)) < 0)
+        return 0;
+    } else if (!strncmp(line, "Vars:", 5)) {
+      if ((skip_lines = pfile_block_lines(line + 5, 1, path, "Vars", line_no)) < 0)
+        return 0;
+    } else if (!strncmp(line, "Id  :", 5)) {
+      if (!pfile_store_tag(&tags->id, tags->id_buf, sizeof(tags->id_buf),
+                           line + 5, path, "Id", line_no))
+        return 0;
+    } else if (!strncmp(line, "Levl:", 5)) {
+      if (!pfile_store_tag(&tags->levl, tags->levl_buf, sizeof(tags->levl_buf),
+                           line + 5, path, "Levl", line_no))
+        return 0;
+    } else if (!strncmp(line, "Last:", 5)) {
+      if (!pfile_store_tag(&tags->last, tags->last_buf, sizeof(tags->last_buf),
+                           line + 5, path, "Last", line_no))
+        return 0;
+    } else if (!strncmp(line, "Act :", 5)) {
+      if (!pfile_store_tag(&tags->act, tags->act_buf, sizeof(tags->act_buf),
+                           line + 5, path, "Act", line_no))
+        return 0;
+    }
+  }
+  if (ferror(plr_file)) {
+    UTIL_REPORT_ERRNO("fgets", path);
+    return 0;
+  }
+  if (in_desc) {
+    TB_REPORT_DOMAIN_ERRORF(TB_SEV_ERROR, TB_ERR_PARSER, "pfile-desc-unterminated",
+                            "pfile=%s: Desc block has no '~' line; record "
+                            "skipped", path);
+    return 0;
+  }
+  if (skip_lines > 0) {
+    TB_REPORT_DOMAIN_ERRORF(TB_SEV_ERROR, TB_ERR_PARSER, "pfile-block-truncated",
+                            "pfile=%s missing=%ld: Alis/Vars block ends early; "
+                            "record skipped", path, skip_lines);
+    return 0;
+  }
+  return 1;
 }
 
 /* Convert a pfile "Act :" word (letters a-z = bits 0-25, A-Z = 26-51, or a
@@ -153,6 +274,7 @@ static int index_pfile(FILE *index_file, FILE *plr_file, const char *path,
                        const char *name)
 {
   char *value, flag_text[64] = "0", index_flags[40];
+  struct pfile_tags tags;
   long id, last, level = PFDEF_LEVEL;
   const char *p;
 
@@ -169,7 +291,10 @@ static int index_pfile(FILE *index_file, FILE *plr_file, const char *path,
     return 0;
   }
 
-  if ((value = findLine(plr_file, "Id  :")) == NULL) {
+  if (!pfile_scan(plr_file, path, &tags))	/* reported there */
+    return 0;
+
+  if ((value = tags.id) == NULL) {
     TB_REPORT_DOMAIN_ERRORF(TB_SEV_ERROR, TB_ERR_PARSER, "pfile-tag-missing",
                             "pfile=%s tag=Id: record skipped", path);
     return 0;
@@ -180,7 +305,7 @@ static int index_pfile(FILE *index_file, FILE *plr_file, const char *path,
                             path, value);
     return 0;
   }
-  if ((value = findLine(plr_file, "Levl:")) != NULL &&
+  if ((value = tags.levl) != NULL &&
       !tb_parse_long_checked(value, &level)) {
     TB_REPORT_DOMAIN_ERRORF(TB_SEV_ERROR, TB_ERR_PARSER, "pfile-tag-value",
                             "pfile=%s idnum=%ld tag=Levl value=%.32s: record "
@@ -193,7 +318,7 @@ static int index_pfile(FILE *index_file, FILE *plr_file, const char *path,
                             "skipped", path, id, level, LVL_IMPL);
     return 0;
   }
-  if ((value = findLine(plr_file, "Last:")) == NULL) {
+  if ((value = tags.last) == NULL) {
     TB_REPORT_DOMAIN_ERRORF(TB_SEV_ERROR, TB_ERR_PARSER, "pfile-tag-missing",
                             "pfile=%s idnum=%ld tag=Last: record skipped",
                             path, id);
@@ -206,7 +331,7 @@ static int index_pfile(FILE *index_file, FILE *plr_file, const char *path,
     return 0;
   }
   /* "Act : w0 w1 w2 w3": only word 0 holds the flags the index carries. */
-  if ((value = findLine(plr_file, "Act :")) != NULL &&
+  if ((value = tags.act) != NULL &&
       sscanf(value, "%63s", flag_text) != 1) {
     TB_REPORT_DOMAIN_ERRORF(TB_SEV_ERROR, TB_ERR_PARSER, "pfile-tag-value",
                             "pfile=%s idnum=%ld tag=Act: record skipped",
@@ -286,25 +411,4 @@ int walkdir(FILE *index_file, char *dir) {
     skipped++;
   }
   return skipped;
-}
-
-int get_line(FILE *fl, char *buf)
-{
-  char temp[READ_SIZE];
-  int lines = 0;
-  int sl;
-
-  do {
-    if (!fgets(temp, READ_SIZE, fl))
-      return (0);
-    lines++;
-  } while (*temp == '*' || *temp == '\n' || *temp == '\r');
-
-  /* Last line of file doesn't always have a \n, but it should. */
-  sl = strlen(temp);
-  while (sl > 0 && (temp[sl - 1] == '\n' || temp[sl - 1] == '\r'))
-    temp[--sl] = '\0';
-
-  memcpy(buf, temp, strlen(temp) + 1);
-  return (lines);
 }
