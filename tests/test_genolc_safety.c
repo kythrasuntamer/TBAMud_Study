@@ -515,6 +515,58 @@ static void delete_quest_restores_spec_on_questmaster_rnum(void)
 }
 
 /* ------------------------------------------------------------------------ */
+/* C2-03: room mud events follow their room when world[] moves.             */
+/* ------------------------------------------------------------------------ */
+struct room_event_fixture {
+  struct list_data list;
+  struct item_data item;
+  struct event ev;
+  struct mud_event_data mud;
+};
+
+static void attach_room_event(struct room_event_fixture *f, room_rnum room)
+{
+  memset(f, 0, sizeof(*f));
+  f->mud.iId = eSPL_DARKNESS;
+  f->mud.pStruct = &world[room];
+  f->ev.isMudEvent = TRUE;
+  f->ev.event_obj = &f->mud;
+  f->item.pContent = &f->ev;
+  f->list.pFirstItem = f->list.pLastItem = &f->item;
+  f->list.iSize = 1;
+  world[room].events = &f->list;
+}
+
+static void add_room_rebases_room_events(void)
+{
+  struct room_event_fixture f;
+  struct room_data nr;
+  room_rnum moved;
+  make_zones(1); make_rooms(2);
+  attach_room_event(&f, 0);
+  memset(&nr, 0, sizeof(nr));
+  nr.number = 5;          /* sorts first: every existing room shifts up */
+  nr.name = "new";
+  nr.description = "new";
+  add_room(&nr);
+  moved = real_room(10);
+  TEST_ASSERT_EQUAL_UINT(1, moved);
+  TEST_ASSERT_TRUE(f.mud.pStruct == &world[moved]);
+  world[moved].events = NULL;
+}
+
+static void delete_room_rebases_room_events(void)
+{
+  struct room_event_fixture f;
+  make_zones(1); make_rooms(3);
+  attach_room_event(&f, 2);
+  TEST_ASSERT_TRUE(delete_room(1));
+  TEST_ASSERT_TRUE(f.mud.pStruct == &world[1]);
+  TEST_ASSERT_EQUAL_INT(30, world[1].number);
+  world[1].events = NULL;
+}
+
+/* ------------------------------------------------------------------------ */
 /* Temporary world directory for the writers.                               */
 /* ------------------------------------------------------------------------ */
 static char test_root[] = "/tmp/tb-genolc-XXXXXX";
@@ -570,6 +622,8 @@ int main(void)
   RUN_TEST(delete_quest_rejects_nothing);
   RUN_TEST(delete_quest_reports_missing_questmaster);
   RUN_TEST(delete_quest_restores_spec_on_questmaster_rnum);
+  RUN_TEST(add_room_rebases_room_events);
+  RUN_TEST(delete_room_rebases_room_events);
   failures = UNITY_END();
   leave_test_root();
   return failures;

@@ -18,6 +18,35 @@
 #include "shop.h"
 #include "dg_olc.h"
 #include "mud_event.h"
+#include "dg_event.h"
+
+/* Room mud events (e.g. eSPL_DARKNESS from magic.c) store a raw
+ * struct room_data * in mud_event_data.pStruct.  add_room() and
+ * delete_room() reallocate and shift world[], which moves every room, so
+ * after each such change every room's events must point back at the room
+ * that owns their list.  The events list itself travels with the room in the
+ * struct copy; only the back pointer goes stale. */
+static void rebase_room_events(void)
+{
+  room_rnum r;
+  struct item_data *item;
+
+  for (r = 0; r <= top_of_world; r++) {
+    if (world[r].events == NULL)
+      continue;
+    for (item = world[r].events->pFirstItem; item; item = item->pNextItem) {
+      struct event *pEvent = (struct event *)item->pContent;
+
+      if (pEvent == NULL || !pEvent->isMudEvent || pEvent->event_obj == NULL) {
+        TB_ERROR_MSG("olc", "room-event-rebase", "room",
+                     "room vnum %d rnum %d: events list holds a non-mud event; "
+                     "its room pointer was not updated", world[r].number, r);
+        continue;
+      }
+      ((struct mud_event_data *)pEvent->event_obj)->pStruct = &world[r];
+    }
+  }
+}
 
 
 /* This function will copy the strings so be sure you free your own copies of 
@@ -72,6 +101,8 @@ room_rnum add_room(struct room_data *room)
     world[0] = *room;	/* Last place, in front. */
     copy_room_strings(&world[0], room);
   }
+  /* world[] was reallocated and shifted: re-point room event owners. */
+  rebase_room_events();
 
   log("GenOLC: add_room: Added room %d at index #%d.", room->number, found);
   /* found is equal to the array index where we added the room. */
@@ -257,6 +288,8 @@ int delete_room(room_rnum rnum)
 
   top_of_world--;
   RECREATE(world, struct room_data, top_of_world + 1);
+  /* world[] was shifted and reallocated: re-point room event owners. */
+  rebase_room_events();
 
   return TRUE;
 }
