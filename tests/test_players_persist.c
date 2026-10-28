@@ -268,6 +268,36 @@ static void test_oversize_desc_is_skipped(void)
   TEST_ASSERT_EQUAL_INT(4, PLR_FLAGS(&player)[3]);
 }
 
+/* Write a player file that may hold NUL bytes. */
+static void write_pfile_bytes(const char *name, const char *body, size_t len)
+{
+  char path[512];
+  FILE *fl;
+
+  TEST_ASSERT_TRUE(get_filename(path, sizeof(path), PLR_FILE, name));
+  fl = fopen(path, "wb");
+  TEST_ASSERT_NOT_NULL(fl);
+  TEST_ASSERT_EQUAL_size_t(len, fwrite(body, 1, len, fl));
+  TEST_ASSERT_EQUAL_INT(0, fclose(fl));
+}
+
+/* Fuzzer PLAYER-4 (fread-string-nul): a '~'-string line whose first byte is
+ * NUL reads as empty, and fread_string_checked() scanned back from tmp[-1]
+ * (stack-buffer-underflow under ASan). That chunk is dropped and reported;
+ * the rest of the description still loads. */
+static void test_desc_line_starting_with_nul_is_dropped(void)
+{
+  static const char body[] = "Id  : 4242\nDesc:\n\0hidden\nA tall stranger.\n~\n";
+
+  write_pfile_bytes("tester", body, sizeof(body) - 1);
+
+  TEST_ASSERT_EQUAL_INT(0, load_char("tester", &player));
+
+  TEST_ASSERT_EQUAL_STRING("A tall stranger.\r\n", player.player.description);
+  TEST_ASSERT_EQUAL_STRING("fread-string\n", tb_captured_op_log);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "Desc: NUL byte in string data"));
+}
+
 static void test_terminated_desc_loads(void)
 {
   write_pfile("tester", "Id  : 4242\nDesc:\nA tall stranger.\n~\n");
@@ -769,6 +799,7 @@ int main(void)
   RUN_TEST(test_unterminated_desc_is_dropped_not_fatal);
   RUN_TEST(test_oversize_desc_is_skipped);
   RUN_TEST(test_terminated_desc_loads);
+  RUN_TEST(test_desc_line_starting_with_nul_is_dropped);
   RUN_TEST(test_malformed_index_record_is_skipped_and_kept);
   RUN_TEST(test_index_save_failure_keeps_live_index);
   RUN_TEST(test_remove_player_with_unrepresentable_last_login);

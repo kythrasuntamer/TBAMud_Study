@@ -284,10 +284,20 @@ int fread_string_checked(FILE *fl, const char *resource, const char *field,
                    "%s: end of file before '~' after %zu bytes", field, length);
       return FALSE;
     }
+    /* A NUL byte at the start of a chunk (a corrupt or partly written file)
+     * makes the chunk look empty: strchr() below returns tmp itself and the
+     * scan read tmp[-1]. Drop the chunk, as fread_string() does. */
+    if (*tmp == '\0') {
+      TB_ERROR_MSG("db", "fread-string", resource,
+                   "%s: NUL byte in string data after %zu bytes; rest of that "
+                   "line dropped", field, length);
+      continue;
+    }
     /* Strip the line ending; a trailing '~' ends the string, otherwise the
-     * line is stored with a CR/LF ending (same rules as fread_string()). */
+     * line is stored with a CR/LF ending (same rules as fread_string()).
+     * tmp is not empty, so point starts inside it. */
     point = strchr(tmp, '\0');
-    for (point--; (*point == '\r' || *point == '\n') && point > tmp; point--)
+    for (point--; point > tmp && (*point == '\r' || *point == '\n'); point--)
       ;
     if (*point == '~') {
       *point = '\0';
