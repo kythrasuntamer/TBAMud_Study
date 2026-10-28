@@ -917,7 +917,45 @@ ACMD(do_mforget)
    }
 }
 
-/* transform into a different mobile */
+/* Free the description strings ch owns before mtransform overwrites them.
+ * Same rule as free_char(): strings that are not the prototype's belong to
+ * this instance (an earlier mtransform strdup()ed them). */
+static void mtransform_release_strings(char_data *ch, mob_rnum rnum)
+{
+  struct char_player_data *own = &ch->player;
+  const struct char_player_data *proto =
+    (rnum != NOBODY && rnum <= top_of_mobt) ? &mob_proto[rnum].player : NULL;
+
+#define MTRANSFORM_RELEASE(field) \
+  do { if (own->field && (!proto || own->field != proto->field)) \
+         free(own->field); own->field = NULL; } while (0)
+  MTRANSFORM_RELEASE(name);
+  MTRANSFORM_RELEASE(title);
+  MTRANSFORM_RELEASE(short_descr);
+  MTRANSFORM_RELEASE(long_descr);
+  MTRANSFORM_RELEASE(description);
+#undef MTRANSFORM_RELEASE
+}
+
+/* Transform into a different mobile.
+ *
+ * The new prototype instance m is copied over ch field by field, so ch keeps
+ * its address and every pointer other code holds to it stays valid. What ch
+ * keeps (everything else comes from m):
+ *  - identity and links: script_id, script, proto_script, script memory,
+ *    events, room/world/combat list links, followers, master, group;
+ *  - inventory and equipment, affects, hp/max hp/exp (unless "-vnum"), gold,
+ *    position, carried weight and count, fighting and hunting targets;
+ *  - the furniture it sits on (SITTING/NEXT_SITTING): the furniture's
+ *    sitting_here list points at ch, and losing the link left the furniture
+ *    pointing at ch after ch was freed;
+ *  - mob memory (MEMORY), which only ch's extraction frees;
+ *  - a pending extraction (MOB_NOTDEADYET), which extract_pending_chars()
+ *    has already counted.
+ * Strings: m's strings are prototype strings; ch gets private copies, and
+ * the copies an earlier mtransform gave ch are freed first.
+ * Only NPCs can be transformed: a player (one who owns triggers can reach
+ * here when link-dead) would lose player_specials. */
 ACMD(do_mtransform)
 {
   char arg[MAX_INPUT_LENGTH];
@@ -937,6 +975,14 @@ ACMD(do_mtransform)
 
   if (ch->desc) {
     send_to_char(ch, "You've got no VNUM to return to, dummy! try 'switch'\r\n");
+    return;
+  }
+
+  if (!IS_NPC(ch)) {
+    TB_ERROR_MSG("dg", "mtransform", "do_mtransform",
+                 DIAG_CHAR_FMT " is not an NPC; transform refused",
+                 DIAG_CHAR(ch));
+    mob_log(ch, "mtransform: only NPCs can transform");
     return;
   }
 
@@ -970,6 +1016,7 @@ ACMD(do_mtransform)
     char_to_room(m, IN_ROOM(ch));
 
     memcpy(&tmpmob, m, sizeof(*m));
+    mtransform_release_strings(ch, this_rnum);
 
     /* Thanks to Russell Ryan for this fix. RRfon we need to copy the
        the strings so we don't end up free'ing the prototypes later */
@@ -1015,6 +1062,11 @@ ACMD(do_mtransform)
     IS_CARRYING_N(&tmpmob) = IS_CARRYING_N(ch);
     FIGHTING(&tmpmob) = FIGHTING(ch);
     HUNTING(&tmpmob) = HUNTING(ch);
+    SITTING(&tmpmob) = SITTING(ch);
+    NEXT_SITTING(&tmpmob) = NEXT_SITTING(ch);
+    MEMORY(&tmpmob) = MEMORY(ch);
+    if (MOB_FLAGGED(ch, MOB_NOTDEADYET))
+      SET_BIT_AR(MOB_FLAGS(&tmpmob), MOB_NOTDEADYET);
     memcpy(ch, &tmpmob, sizeof(*ch));
 
     for (pos = 0; pos < NUM_WEARS; pos++) {

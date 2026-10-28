@@ -23,6 +23,7 @@ ACMD(do_mforce);
 ACMD(do_mhunt);
 ACMD(do_mremember);
 ACMD(do_mforget);
+ACMD(do_mtransform);
 
 void setUp(void) { dgw_setup(); }
 void tearDown(void) { dgw_teardown(); }
@@ -105,11 +106,73 @@ static void test_script_driven_mob_may_load(void)
   TEST_ASSERT_EQUAL_INT(0, dgw_saw("mob-cmd-denied"));
 }
 
+/* E1-06: a mob sitting on furniture keeps its seat across mtransform. The
+ * bench's sitter list points at the mob; losing SITTING() left the bench
+ * pointing at the mob after it was freed (teardown extracts the mob, then
+ * the bench: heap-use-after-free before the fix). */
+static void test_mtransform_keeps_furniture_link(void)
+{
+  struct char_data *m = dgw_mob(DGW_MOB_GUARD, 0);
+  struct obj_data *bench = dgw_obj(DGW_OBJ_BENCH, 0);
+
+  SITTING(m) = bench;
+  NEXT_SITTING(m) = NULL;
+  OBJ_SAT_IN_BY(bench) = m;
+  GET_OBJ_VAL(bench, 1) = 1;
+  GET_POS(m) = POS_SITTING;
+
+  run(do_mtransform, m, "301");
+
+  TEST_ASSERT_EQUAL_INT(DGW_MOB_GUARD, GET_MOB_VNUM(m)); /* keeps its rnum */
+  TEST_ASSERT_EQUAL_STRING("an ogre", GET_SHORT(m));
+  TEST_ASSERT_EQUAL_PTR(bench, SITTING(m));
+  TEST_ASSERT_EQUAL_PTR(m, OBJ_SAT_IN_BY(bench));
+}
+
+/* E1-06: mob memory survives (and is freed once, at extraction); strings
+ * from an earlier transform are freed, not leaked (LSan). */
+static void test_mtransform_keeps_memory_and_frees_old_strings(void)
+{
+  struct char_data *m = dgw_mob(DGW_MOB_GUARD, 0);
+  memory_rec *mem;
+
+  CREATE(mem, memory_rec, 1);
+  mem->id = 4242;
+  MEMORY(m) = mem;
+
+  run(do_mtransform, m, "301");
+  run(do_mtransform, m, "300");
+  run(do_mtransform, m, "-301");
+
+  TEST_ASSERT_EQUAL_PTR(mem, MEMORY(m));
+  TEST_ASSERT_EQUAL_STRING("an ogre", GET_SHORT(m));
+}
+
+/* E1-06: a link-dead player who owns triggers passes MOB_OR_IMPL; it must
+ * not be overwritten with a mobile. */
+static void test_mtransform_refuses_players(void)
+{
+  struct char_data *p = dgw_player(43, 0);
+  struct descriptor_data *d = p->desc;
+
+  p->desc = NULL;   /* link-dead */
+  run(do_mtransform, p, "301");
+  p->desc = d;
+
+  TEST_ASSERT_EQUAL_INT(1, dgw_saw("mtransform"));
+  TEST_ASSERT_FALSE(IS_NPC(p));
+  TEST_ASSERT_EQUAL_STRING("Zzplayer", GET_NAME(p));
+  dgw_free_player(p);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
   RUN_TEST(test_player_with_triggers_is_refused_privileged_commands);
   RUN_TEST(test_switched_mob_follows_the_controller_level);
   RUN_TEST(test_script_driven_mob_may_load);
+  RUN_TEST(test_mtransform_keeps_furniture_link);
+  RUN_TEST(test_mtransform_keeps_memory_and_frees_old_strings);
+  RUN_TEST(test_mtransform_refuses_players);
   return UNITY_END();
 }
