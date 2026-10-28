@@ -307,6 +307,48 @@ void test_obj_aff_list_short_list_is_not_reported_truncated(void)
   TEST_ASSERT_FALSE(log_has("op=list-truncated"));
 }
 
+/* ---------------------------------------------------------------------
+ * F3-03: olist type <n> indexed item_types[] with an unchecked builder
+ * number, and valid-but-unhandled types (FURNITURE, FREE, FREE2) returned
+ * from inside the loop, discarding the listing.
+ * --------------------------------------------------------------------- */
+void test_obj_type_list_rejects_out_of_range_type_loudly(void)
+{
+  make_objects(2, "a chair");
+
+  run_list(SCMD_OASIS_OLIST, "type 100000");
+
+  TEST_ASSERT_EQUAL_INT(0, paged_calls);
+  TEST_ASSERT_NOT_NULL(strstr(sent, "Invalid item type"));
+  TEST_ASSERT_TRUE(log_has("op=arg-range"));
+  TEST_ASSERT_TRUE(log_has("resource=olist-type"));
+}
+
+void test_obj_type_list_rejects_negative_and_non_numeric_type(void)
+{
+  make_objects(2, "a chair");
+
+  run_list(SCMD_OASIS_OLIST, "type -1");
+  TEST_ASSERT_EQUAL_INT(0, paged_calls);
+  run_list(SCMD_OASIS_OLIST, "type 3x");
+  TEST_ASSERT_EQUAL_INT(0, paged_calls);
+  TEST_ASSERT_TRUE(log_has("op=arg-range"));
+}
+
+void test_obj_type_list_lists_types_the_switch_does_not_special_case(void)
+{
+  make_objects(2, "a rocking chair");
+  obj_proto[0].obj_flags.type_flag = ITEM_FURNITURE;
+  obj_proto[1].obj_flags.type_flag = ITEM_FURNITURE;
+
+  run_list(SCMD_OASIS_OLIST, "type 6");
+
+  TEST_ASSERT_EQUAL_INT(1, paged_calls);
+  TEST_ASSERT_NOT_NULL(strstr(paged, "[FURNITURE]"));
+  TEST_ASSERT_NOT_NULL(strstr(paged, "  2) "));
+  TEST_ASSERT_NULL(strstr(sent, "Not a valid item type"));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -314,5 +356,8 @@ int main(void)
   RUN_TEST(test_obj_aff_list_generic_affect_uses_row_rnum);
   RUN_TEST(test_obj_aff_list_truncates_loudly_instead_of_overflowing);
   RUN_TEST(test_obj_aff_list_short_list_is_not_reported_truncated);
+  RUN_TEST(test_obj_type_list_rejects_out_of_range_type_loudly);
+  RUN_TEST(test_obj_type_list_rejects_negative_and_non_numeric_type);
+  RUN_TEST(test_obj_type_list_lists_types_the_switch_does_not_special_case);
   return UNITY_END();
 }

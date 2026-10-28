@@ -197,7 +197,19 @@ static void perform_obj_type_list(struct char_data * ch, char *arg)
   obj_rnum r_num;
   char buf[MAX_STRING_LENGTH];
 
-  itemtype = tb_parse_int_or_zero(arg);
+  /* F3-03: arg is builder-typed ("olist type <num>") and indexes the
+   * item_types[] name table directly.  Reject anything that is not a whole
+   * number in [0, NUM_ITEM_TYPES) before the lookup; an out-of-range index
+   * read past the table and was formatted with %s. */
+  if (!tb_parse_int_checked(arg, &itemtype) ||
+      itemtype < 0 || itemtype >= NUM_ITEM_TYPES) {
+    send_to_char(ch, "Invalid item type '%s': expected a number from 0 to %d.\r\n",
+                 arg, NUM_ITEM_TYPES - 1);
+    TB_WARN_MSG("olc", "arg-range", "olist-type",
+                "item type '%s' outside [0,%d) from " DIAG_CHAR_FMT,
+                arg, NUM_ITEM_TYPES, DIAG_CHAR(ch));
+    return;
+  }
 
   len = snprintf(buf, sizeof(buf), "Listing all objects of type %s[%s]%s\r\n",
        QYEL, item_types[itemtype], QNRM);
@@ -275,7 +287,11 @@ static void perform_obj_type_list(struct char_data * ch, char *arg)
                  QGRN, ++found, QNRM, QCYN, QYEL, ov, QCYN, obj_proto[r_num].short_description, QNRM, QYEL, v1, QNRM);
             break;
 
-          /* The 'normal' items - don't provide extra info */
+          /* The 'normal' items - don't provide extra info.  Any other valid
+           * type (UNDEFINED, FURNITURE, FREE, FREE2, ...) uses the same row;
+           * the old default returned from inside the loop and discarded the
+           * listing built so far. */
+          default:
           case ITEM_TREASURE:
           case ITEM_TRASH:
           case ITEM_OTHER:
@@ -287,10 +303,6 @@ static void perform_obj_type_list(struct char_data * ch, char *arg)
             tmp_len = snprintf(buf+len, sizeof(buf)-len,"%s%3d%s) %s[%s%8d%s] %s%s\r\n",
                  QGRN, ++found, QNRM, QCYN, QYEL, ov, QCYN, obj_proto[r_num].short_description, QNRM);
             break;
-
-          default:
-            send_to_char(ch, "Not a valid item type");
-            return;
         }
         if (len + tmp_len < sizeof(buf) - 1)
           len += tmp_len;
