@@ -12,17 +12,25 @@
 /* Toggle structure held for OLC purposes */
 struct prefs_data
 {
-  struct char_data *ch;            /* Pointer to char being edited   */
+  /* The player being edited, by identity.  An IMPL may edit another
+   * player, who can quit, drop link and be extracted (freed) while the
+   * editor is open, so no char_data pointer is kept across input lines;
+   * prefedit_target() re-resolves this on every use. */
+  long  idnum;                     /* GET_IDNUM of the player edited */
   int   pref_flags[PR_ARRAY_MAX];  /* Copy of player's pref flags    */
   int   wimp_level;                /* Copy of player's wimp level    */
   int   page_length;               /* Copy of player's pagelength    */
   int   screen_width;              /* Copy of player's screenwidth   */
 };
 
+struct char_data *prefedit_target(struct descriptor_data *d);
+
 /* Prefedit utility macros */
 
-/** Get the character being edited */
-#define PREFEDIT_GET_CHAR        (OLC_PREFS(d)->ch ? (OLC_PREFS(d)->ch) : (d->character))
+/** Get the character being edited, or NULL once that player is gone.
+ * prefedit_parse() checks it before dispatching, so the menus below it may
+ * dereference the result. */
+#define PREFEDIT_GET_CHAR        prefedit_target(d)
 
 /** Get a pointer to the pref toggles of the character being edited   */
 #define PREFEDIT_GET_FLAGS       OLC_PREFS(d)->pref_flags

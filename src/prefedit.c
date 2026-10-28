@@ -30,6 +30,29 @@ static void prefedit_disp_prompt_menu(struct descriptor_data *d);
 static void prefedit_disp_color_menu(struct descriptor_data *d);
 static void prefedit_disp_syslog_menu(struct descriptor_data *d);
 
+/* Resolve the player being edited from the idnum stored at setup.  Returns
+ * NULL once that player has left the game: only characters still on
+ * character_list are considered (extract_char_final unlinks a character
+ * before free_char), and one already marked for extraction is skipped. */
+struct char_data *prefedit_target(struct descriptor_data *d)
+{
+  struct char_data *tch;
+  long idnum;
+
+  if (!d || !d->olc || !OLC_PREFS(d))
+    return NULL;
+  idnum = OLC_PREFS(d)->idnum;
+
+  if (d->character && !IS_NPC(d->character) && GET_IDNUM(d->character) == idnum)
+    return d->character;
+
+  for (tch = character_list; tch; tch = tch->next)
+    if (!IS_NPC(tch) && GET_IDNUM(tch) == idnum && !PLR_FLAGGED(tch, PLR_NOTDEADYET))
+      return tch;
+
+  return NULL;
+}
+
 /* Note: there is no setup_new, as you can ONLY edit an existing player */
 /*       vict is normally = d->character, except when imps edit players */
 static void prefedit_setup(struct descriptor_data *d, struct char_data *vict)
@@ -50,7 +73,7 @@ static void prefedit_setup(struct descriptor_data *d, struct char_data *vict)
   toggles->page_length  = GET_PAGE_LENGTH(vict);
   toggles->screen_width = GET_SCREEN_WIDTH(vict);
 
-  toggles->ch = vict;
+  toggles->idnum = GET_IDNUM(vict);
 
   /*. Attach toggles copy to editors descriptor .*/
   OLC_PREFS(d) = toggles;
@@ -210,7 +233,7 @@ static void prefedit_disp_toggles_menu(struct descriptor_data *d)
   struct char_data *vict;
 
   /* Set up the required variables and strings */
-  vict = OLC_PREFS(d)->ch;
+  vict = PREFEDIT_GET_CHAR;
 
   /* Top of the menu */
   send_to_char(d->character, "Toggle preferences for %s%-20s\r\n",
@@ -381,6 +404,18 @@ void prefedit_parse(struct descriptor_data * d, char *arg)
 {
   int number;
 
+  /* The edited player may have been extracted since the last line (an IMPL
+   * editing someone who then quit or was purged).  Everything below reads
+   * PREFEDIT_GET_CHAR, so stop here rather than act on nobody. */
+  if (!PREFEDIT_GET_CHAR) {
+    TB_WARN_MSG("olc", "prefedit-target-gone", "prefs",
+                "player idnum %ld editor " DIAG_CHAR_FMT,
+                OLC_PREFS(d) ? OLC_PREFS(d)->idnum : -1L, DIAG_CHAR(d->character));
+    send_to_char(d->character, "The player whose preferences you were editing has left the game.  Edit abandoned.\r\n");
+    cleanup_olc(d, CLEANUP_ALL);
+    return;
+  }
+
   switch (OLC_MODE(d)) {
   case PREFEDIT_CONFIRM_SAVE:
     switch (*arg) {
@@ -388,7 +423,7 @@ void prefedit_parse(struct descriptor_data * d, char *arg)
     case 'Y':
       prefedit_save_to_char(d);
       mudlog(CMP, MAX(LVL_BUILDER, GET_INVIS_LEV(d->character)), TRUE, "OLC: %s edits toggles for %s", 
-        GET_NAME(d->character), GET_NAME(OLC_PREFS(d)->ch));
+        GET_NAME(d->character), GET_NAME(PREFEDIT_GET_CHAR));
       /*. No strings to save - cleanup all .*/
       cleanup_olc(d, CLEANUP_ALL);
       break;
@@ -991,7 +1026,7 @@ ACMD(do_oasis_prefedit)
   /****************************************************************************/
   for (d = descriptor_list; d; d = d->next) {
     if (STATE(d) == CON_PREFEDIT) {
-      if (d->olc && OLC_PREFS(d)->ch == vict) {
+      if (d->olc && OLC_PREFS(d) && OLC_PREFS(d)->idnum == GET_IDNUM(vict)) {
         if (ch == vict)
           send_to_char(ch, "Your preferences are currently being edited by %s.\r\n", PERS(d->character, ch));
         else

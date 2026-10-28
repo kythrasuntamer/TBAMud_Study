@@ -20,6 +20,8 @@
 #include "interpreter.h"
 #include "oasis.h"
 #include "hedit.h"
+#include "prefedit.h"
+#include "protocol.h"
 #include "modify.h"
 #include "improved-edit.h"
 #include <stdarg.h>
@@ -110,6 +112,9 @@ char *one_argument(char *argument, char *first_arg)
   first_arg[n] = '\0';
   return argument;
 }
+char *two_arguments(char *argument, char *first_arg, char *second_arg)
+{ return one_argument(one_argument(argument, first_arg), second_arg); }
+int room_is_dark(room_rnum room) { (void)room; return 0; }
 
 /* ---------------------------------------------------------------------
  * OLC / editor collaborators
@@ -153,6 +158,7 @@ void cleanup_olc(struct descriptor_data *d, byte cleanup_type)
     }
     free(OLC_HELP(d));
   }
+  free(OLC_PREFS(d));
   free(OLC_STORAGE(d));
   STATE(d) = CON_PLAYING;
   free(d->olc);
@@ -220,6 +226,9 @@ int is_abbrev(const char *arg1, const char *arg2)
 static struct char_data builder;
 static struct player_special_data builder_specials;
 static struct descriptor_data builder_desc;
+static protocol_t builder_protocol;
+static MSDP_t builder_msdp[eMSDP_MAX];
+static MSDP_t *builder_msdp_ptrs[eMSDP_MAX];
 
 static void builder_fixture(void)
 {
@@ -233,7 +242,59 @@ static void builder_fixture(void)
   builder.desc = &builder_desc;
   builder_desc.character = &builder;
   builder_desc.connected = CON_PLAYING;
+  {
+    int i;
+    memset(&builder_protocol, 0, sizeof(builder_protocol));
+    memset(builder_msdp, 0, sizeof(builder_msdp));
+    for (i = 0; i < eMSDP_MAX; i++)
+      builder_msdp_ptrs[i] = &builder_msdp[i];
+    builder_protocol.pVariables = builder_msdp_ptrs;
+    builder_desc.pProtocol = &builder_protocol;
+  }
   descriptor_list = &builder_desc;
+  character_list = &builder;
+}
+
+/* A second, heap-allocated player for editors that target someone else;
+ * freeing it lets ASan catch any pointer an editor kept. */
+static struct char_data *victim;
+
+static struct char_data *victim_create(const char *name, long idnum)
+{
+  struct char_data *v = calloc(1, sizeof(*v));
+
+  v->player_specials = calloc(1, sizeof(*v->player_specials));
+  v->player.name = strdup(name);
+  v->player.level = 1;
+  v->char_specials.saved.idnum = idnum;
+  v->next = character_list;
+  character_list = v;
+  return v;
+}
+
+/* As extract_char_final + free_char: unlink, then free. */
+static void victim_destroy(void)
+{
+  struct char_data **pp;
+
+  if (!victim)
+    return;
+  for (pp = &character_list; *pp; pp = &(*pp)->next)
+    if (*pp == victim) {
+      *pp = victim->next;
+      break;
+    }
+  free(victim->player.name);
+  free(victim->player_specials);
+  free(victim);
+  victim = NULL;
+}
+
+struct char_data *get_player_vis(struct char_data *ch, char *name,
+                                 int *number, int inroom)
+{
+  (void)ch; (void)number; (void)inroom;
+  return (victim && !strcasecmp(name, GET_NAME(victim))) ? victim : NULL;
 }
 
 static void type(const char *line)
@@ -244,6 +305,7 @@ static void type(const char *line)
   out[0] = '\0';
   switch (STATE(&builder_desc)) {
   case CON_HEDIT: hedit_parse(&builder_desc, buf); break;
+  case CON_PREFEDIT: prefedit_parse(&builder_desc, buf); break;
   default: TEST_FAIL_MESSAGE("typed into a descriptor that is not editing");
   }
 }
@@ -264,7 +326,9 @@ void tearDown(void)
   if (builder_desc.olc)
     cleanup_olc(&builder_desc, CLEANUP_ALL);
   free_help_table();
+  victim_destroy();
   descriptor_list = NULL;
+  character_list = NULL;
 }
 
 /* ---------------------------------------------------------------------
@@ -395,9 +459,46 @@ static void test_hedit_null_entry_round_trip(void)
   TEST_ASSERT_EQUAL_INT(HEDIT_MAIN_MENU, OLC_MODE(&builder_desc));
 }
 
+/* ---------------------------------------------------------------------
+ * prefedit
+ * ------------------------------------------------------------------- */
+
+/* F2-06: the edited player is extracted while an IMPL's editor is open;
+ * the next input must not touch the freed character. */
+static void test_prefedit_target_extracted_mid_edit(void)
+{
+  char cmd[] = " bob";
+
+  victim = victim_create("Bob", 77);
+  do_oasis_prefedit(&builder, cmd, 0, 0);
+  TEST_ASSERT_EQUAL_INT(CON_PREFEDIT, STATE(&builder_desc));
+  TEST_ASSERT_EQUAL_INT(77, OLC_PREFS(&builder_desc)->idnum);
+
+  victim_destroy();
+  type("t");
+  TEST_ASSERT_NULL(builder_desc.olc);
+  TEST_ASSERT_EQUAL_INT(CON_PLAYING, STATE(&builder_desc));
+  TEST_ASSERT_EQUAL_STRING("prefedit-target-gone", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "player idnum 77"));
+}
+
+/* F2-06: editing one's own preferences still works. */
+static void test_prefedit_self_still_resolves(void)
+{
+  char cmd[] = "";
+
+  do_oasis_prefedit(&builder, cmd, 0, 0);
+  TEST_ASSERT_EQUAL_INT(CON_PREFEDIT, STATE(&builder_desc));
+  type("t");
+  TEST_ASSERT_NOT_NULL(builder_desc.olc);
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(test_prefedit_target_extracted_mid_edit);
+  RUN_TEST(test_prefedit_self_still_resolves);
   RUN_TEST(test_hedit_null_entry_round_trip);
   RUN_TEST(test_hedit_no_then_add_appends_instead_of_writing_past_table);
   RUN_TEST(test_hedit_no_offers_next_matching_row);
