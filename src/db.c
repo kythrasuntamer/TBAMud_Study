@@ -88,6 +88,15 @@
  * Evaluates n twice: pass a plain variable. */
 #define VNUM_STORABLE(n)  ((long)(n) >= IDXTYPE_MIN && (long)(n) < IDXTYPE_MAX)
 
+/* Report a fatal boot-time defect in the "db" subsystem with call-site
+ * locality and stop: the structured replacement for the CircleMUD
+ * log("SYSERR: ..."); exit(1); pair. Use only where continuing would index
+ * past a table or corrupt the world. */
+#define BOOT_FATAL(op, resource, ...) do { \
+  TB_FATAL_MSG("db", (op), (resource), __VA_ARGS__); \
+  exit(1); \
+} while (0)
+
 /*  declarations of most of the 'global' variables */
 struct config_data config_info; /* Game configuration list.	 */
 
@@ -501,12 +510,11 @@ static void boot_social_messages(void)
      * old-format last social with no blank line after it); a social past
      * them would write beyond the array. */
     if (curr_soc + 1 > top_of_socialt) {
-      TB_FATAL_MSG("db", "social-parse", socfile,
-                   "social '%s' is past the %d slots allocated for %d counted "
-                   "socials; check for leading whitespace on a name or "
-                   "separator line", soc_name, top_of_socialt + 1,
-                   top_of_socialt);
-      exit(1);
+      BOOT_FATAL("social-parse", socfile,
+                 "social '%s' is past the %d slots allocated for %d counted "
+                 "socials; check for leading whitespace on a name or "
+                 "separator line", soc_name, top_of_socialt + 1,
+                 top_of_socialt);
     }
 
     if (CONFIG_NEW_SOCIALS == TRUE) {
@@ -1483,10 +1491,9 @@ void discrete_load(FILE *fl, int mode, char *filename)
       /* The record number becomes an IDXTYPE vnum (ush_int): #70000 would
        * silently become vnum 4464, and IDXTYPE_MAX is NOWHERE/NOTHING. */
       if (!VNUM_STORABLE(nr)) {
-	TB_FATAL_MSG("db", "record-number", filename,
+	BOOT_FATAL("record-number", filename,
 	             "%s #%d out of range 0..%d (previous #%d)",
 	             modes[mode], nr, IDXTYPE_MAX - 1, boot_last_vnum);
-	exit(1);
       }
       /* A number that does not ascend breaks the binary search in
        * real_room()/real_mobile()/real_object(): lookups of it, or of its
@@ -1502,10 +1509,9 @@ void discrete_load(FILE *fl, int mode, char *filename)
        * world files are the implementor's; a record the counting pass
        * missed would be written past the array index_boot() allocated. */
       if (boot_records >= boot_capacity) {
-	TB_FATAL_MSG("db", "proto-slot", filename,
+	BOOT_FATAL("proto-slot", filename,
 	             "%s #%d exceeds the %d records counted at boot",
 	             modes[mode], nr, boot_capacity);
-	exit(1);
       }
       boot_records++;
       switch (mode) {
@@ -1779,9 +1785,8 @@ void parse_room(FILE *fl, int virtual_nr)
 
       /* The direction indexes dir_option[]; setup_dir() range-checks it. */
       if (!parse_int_text_strict(line + 1, &dir)) {
-        TB_FATAL_MSG("db", "room-parse", "setup_dir",
-                     "room vnum %d: malformed exit direction line", virtual_nr);
-        exit(1);
+        BOOT_FATAL("room-parse", "setup_dir",
+                   "room vnum %d: malformed exit direction line", virtual_nr);
       }
       setup_dir(fl, room_nr, dir);
       break;
@@ -1833,10 +1838,9 @@ void setup_dir(FILE *fl, int room, int dir)
    * index past the end lands on other room_data fields (func, script...)
    * inside the same allocation, which no sanitizer can see. */
   if (!VALID_DIR(dir)) {
-    TB_FATAL_MSG("db", "room-parse", "setup_dir",
-                 "room vnum %d: exit direction %d out of range 0..%d",
-                 world[room].number, dir, NUM_OF_DIRS - 1);
-    exit(1);
+    BOOT_FATAL("room-parse", "setup_dir",
+               "room vnum %d: exit direction %d out of range 0..%d",
+               world[room].number, dir, NUM_OF_DIRS - 1);
   }
 
   /* With diagonal directions off the exit is dropped, but its two strings
@@ -2098,11 +2102,10 @@ static void parse_simple_mob(FILE *mob_f, int i, int nr)
    * valid values, so these come from a hand-edited .mob file; a value that
    * does not fit would silently truncate and index past those tables. */
   if (!VALID_POS(t[0]) || !VALID_POS(t[1]) || !VALID_SEX(t[2])) {
-    TB_FATAL_MSG("db", "mob-parse", "position",
-                 "mob vnum %d: position %d default %d sex %d out of range "
-                 "(positions 0..%d, sex 0..%d)", nr, t[0], t[1], t[2],
-                 NUM_POSITIONS - 1, NUM_GENDERS - 1);
-    exit(1);
+    BOOT_FATAL("mob-parse", "position",
+               "mob vnum %d: position %d default %d sex %d out of range "
+               "(positions 0..%d, sex 0..%d)", nr, t[0], t[1], t[2],
+               NUM_POSITIONS - 1, NUM_GENDERS - 1);
   }
 
   GET_POS(mob_proto + i) = t[0];
@@ -2785,10 +2788,9 @@ static void load_zones(FILE *fl, char *zonename)
    * this). IDXTYPE_MAX is NOWHERE, the "no room" sentinel, so no zone may
    * claim it; reset_zone() walks bot..top inclusive. */
   if (Z.top >= IDXTYPE_MAX) {
-    TB_FATAL_MSG("db", "zone-parse", zname,
-                 "zone %d top %d is the reserved NOWHERE vnum (max %d)",
-                 Z.number, Z.top, IDXTYPE_MAX - 1);
-    exit(1);
+    BOOT_FATAL("zone-parse", zname,
+               "zone %d top %d is the reserved NOWHERE vnum (max %d)",
+               Z.number, Z.top, IDXTYPE_MAX - 1);
   }
 
   cmd_no = 0;
