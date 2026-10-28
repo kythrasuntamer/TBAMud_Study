@@ -1191,12 +1191,21 @@ int count_hash_records(FILE *fl)
   return (count);
 }
 
+/* Longest data-file name an index line may hold, and the matching scanf
+ * width ("%1023s"); the two-level stringify turns the number into text. */
+#define INDEX_NAME_MAX 1023
+#define INDEX_NAME_STR_(n) #n
+#define INDEX_NAME_STR(n) INDEX_NAME_STR_(n)
+#define INDEX_NAME_FMT "%" INDEX_NAME_STR(INDEX_NAME_MAX) "s\n"
+
 void index_boot(int mode)
 {
   const char *index_filename, *prefix = NULL;	/* NULL or egcs 1.1 complains */
   FILE *db_index, *db_file;
   int line_number, rec_count = 0, size[2];
-  char buf2[PATH_MAX], buf1[PATH_MAX - 100];   // - 100 to make room for prefix
+  /* buf1 holds one index line (a file name, bounded by INDEX_NAME_FMT);
+   * buf2 is prefix + that name; index_path names the index file itself. */
+  char buf2[PATH_MAX], buf1[INDEX_NAME_MAX + 1], index_path[PATH_MAX];
 
   switch (mode) {
   case DB_BOOT_WLD:
@@ -1233,21 +1242,21 @@ void index_boot(int mode)
   else
     index_filename = INDEX_FILE;
 
-  tb_snprintf(buf2, sizeof(buf2), "%s%s", prefix, index_filename);
-  if (!(db_index = fopen(buf2, "r"))) {
-    TB_REPORT_ERRNO("fopen", buf2);
+  tb_snprintf(index_path, sizeof(index_path), "%s%s", prefix, index_filename);
+  if (!(db_index = fopen(index_path, "r"))) {
+    TB_REPORT_ERRNO("fopen", index_path);
     exit(1);
   }
 
   for (line_number = 0;; ++line_number) {
     /* first, count the number of records in the file so we can malloc */
-    if (fscanf(db_index, "%s\n", buf1) != 1) {
+    if (fscanf(db_index, INDEX_NAME_FMT, buf1) != 1) {
       if (feof(db_index))
         log("SYSERR: boot error -- unexpected end of file encountered in index file ./%s%s. "
             "Ensure that the last line of the file starts with the character '$'.",
             prefix, index_filename);
       else if (ferror(db_index))
-        TB_REPORT_ERRNO("fscanf", buf2);
+        TB_REPORT_ERRNO("fscanf", index_path);
       else
         log("SYSERR: boot error -- error parsing index file %s%s on line %d",
             prefix, index_filename, line_number);
@@ -1325,7 +1334,7 @@ void index_boot(int mode)
   }
 
   if (fseek(db_index, 0L, SEEK_SET) != 0) {
-    TB_REPORT_ERRNO("fseek", buf2);
+    TB_REPORT_ERRNO("fseek", index_path);
     exit(1);
   }
 
@@ -1334,12 +1343,12 @@ void index_boot(int mode)
   boot_last_vnum = -1;
 
   for (line_number = 1;; ++line_number) {
-    if (fscanf(db_index, "%s\n", buf1) != 1) {
+    if (fscanf(db_index, INDEX_NAME_FMT, buf1) != 1) {
       if (feof(db_index))
         log("SYSERR: boot error -- unexpected end of file encountered in index file ./%s%s",
             prefix, index_filename);
       else if (ferror(db_index))
-        TB_REPORT_ERRNO("fscanf", buf2);
+        TB_REPORT_ERRNO("fscanf", index_path);
       else
         log("SYSERR: boot error -- error parsing index file ./%s%s on line %d",
             prefix, index_filename, line_number);
