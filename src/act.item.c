@@ -1756,6 +1756,7 @@ ACMD(do_sac)
 {
   char arg[MAX_INPUT_LENGTH];
   struct obj_data *j, *jj, *next_thing2;
+  room_rnum dest;
 
   one_argument(argument, arg);
 
@@ -1805,16 +1806,26 @@ ACMD(do_sac)
       increase_gold(ch, 1);
     break;
   }
+  /* The contents spill onto the floor: j's room, or for a carried j the
+   * sacrificer's room (IN_ROOM of a carried object is NOWHERE, and
+   * obj_to_room(NOWHERE) would leave each item in object_list with no
+   * location at all). With no room either, the item is reported and
+   * extracted rather than orphaned. */
+  dest = (IN_ROOM(j) != NOWHERE) ? IN_ROOM(j) : IN_ROOM(ch);
   for (jj = j->contains; jj; jj = next_thing2) {
     next_thing2 = jj->next_content;       /* Next in inventory */
     obj_from_obj(jj);
 
-    if (j->carried_by)
-      obj_to_room(jj, IN_ROOM(j));
-    else if (IN_ROOM(j) != NOWHERE)
-      obj_to_room(jj, IN_ROOM(j));
-    else
-      assert(FALSE);
+    if (dest != NOWHERE)
+      obj_to_room(jj, dest);
+    else {
+      TB_ERROR_MSG("act", "sac-orphan", "obj",
+                   "container vnum %d uid %ld content vnum %d uid %ld has "
+                   "no destination room; extracted. " DIAG_CHAR_FMT,
+                   (int) GET_OBJ_VNUM(j), obj_script_id(j),
+                   (int) GET_OBJ_VNUM(jj), obj_script_id(jj), DIAG_CHAR(ch));
+      extract_obj(jj);
+    }
   }
   extract_obj(j);
 }

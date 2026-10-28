@@ -301,9 +301,34 @@ static void test_name_to_drinkcon_rejects_bad_type(void)
   TEST_ASSERT_EQUAL_STRING("liquid-type-range", tb_captured_operation);
 }
 
+/* H1-12: sacrificing a carried container spills its contents into the
+ * sacrificer's room instead of orphaning them (IN_ROOM of a carried
+ * object is NOWHERE). */
+static void test_sac_carried_container_spills_into_room(void)
+{
+  struct char_data *pc = fx_new_char("hero", FALSE, 1);
+  struct obj_data *pack = fx_new_obj("backpack", ITEM_CONTAINER);
+  struct obj_data *a = fx_new_obj("apple", ITEM_OTHER);
+  struct obj_data *b = fx_new_obj("bread", ITEM_OTHER);
+
+  obj_to_obj(a, pack);
+  obj_to_obj(b, pack);
+  obj_to_char(pack, pc);
+
+  do_sac(pc, arg("backpack"), 0, 0);
+
+  TEST_ASSERT_NULL(pc->carrying);
+  TEST_ASSERT_EQUAL_INT(1, IN_ROOM(a));
+  TEST_ASSERT_EQUAL_INT(1, IN_ROOM(b));
+  TEST_ASSERT_EQUAL_INT(0, fx_log_lines);       /* no obj_to_room SYSERR */
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  fx_free_char(pc);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(test_sac_carried_container_spills_into_room);
   RUN_TEST(test_drink_rejects_liquid_out_of_range);
   RUN_TEST(test_pour_rejects_negative_liquid);
   RUN_TEST(test_name_to_drinkcon_rejects_bad_type);
