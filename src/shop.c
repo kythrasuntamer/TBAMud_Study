@@ -1101,8 +1101,17 @@ static int add_to_shop_list(struct shop_buy_data *list, int type, int *len, int 
       return (FALSE);
     }
     if (*len < MAX_SHOP_OBJ) {
-      if (type == LIST_PRODUCE)
+      if (type == LIST_PRODUCE) {
+        obj_vnum vnum = *val;
+
 	*val = real_object(*val);
+        /* A produced item whose prototype was deleted cannot be sold;
+         * dropping it silently would leave the builder guessing. */
+        if (*val == NOTHING)
+          TB_ERROR_MSG("shop", "produce-vnum", "shop file",
+                       "shop #%d produces missing obj vnum %d; dropped",
+                       (int) SHOP_NUM(top_shop), (int) vnum);
+      }
       if (*val != NOTHING) {
 	BUY_TYPE(list[*len]) = *val;
 	BUY_WORD(list[(*len)++]) = NULL;
@@ -1118,7 +1127,10 @@ static int add_to_shop_list(struct shop_buy_data *list, int type, int *len, int 
 static int end_read_list(struct shop_buy_data *list, int len, int error)
 {
   if (error)
-    log("SYSERR: Raise MAX_SHOP_OBJ constant in shop.h to %d", len + error);
+    TB_ERROR_MSG("shop", "list-overflow", "shop file",
+                 "shop #%d list has %d entries, %d dropped; raise MAX_SHOP_OBJ "
+                 "in shop.h to %d", (int) SHOP_NUM(top_shop), len + error,
+                 error, len + error);
   BUY_WORD(list[len]) = NULL;
   BUY_TYPE(list[len++]) = NOTHING;
   return (len);
@@ -1460,8 +1472,14 @@ void assign_the_shopkeepers(void)
   cmd_puke = find_command("puke");
 
   for (cindex = 0; cindex <= top_shop; cindex++) {
-    if (SHOP_KEEPER(cindex) == NOBODY)
+    /* The keeper vnum was resolved with real_mobile() at load; NOBODY means
+     * the mob does not exist and the shop can never trade. */
+    if (SHOP_KEEPER(cindex) == NOBODY) {
+      TB_ERROR_MSG("shop", "keeper-vnum", "shop",
+                   "shop #%d has no keeper mob; shop inert",
+                   (int) SHOP_NUM(cindex));
       continue;
+    }
 
     if (SHOP_KEEPER(cindex) > top_of_mobt) {
     	log ("shop %d had mob out of bounds", cindex);

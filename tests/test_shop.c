@@ -210,9 +210,28 @@ static void test_read_type_list_drops_out_of_range_type(void)
   free(BUY_WORD(list[0]));
 }
 
+/* H2-19: a produced vnum with no prototype is dropped loudly, naming the
+ * shop (real_object() here resolves nothing). */
+static void test_read_list_reports_missing_produce_vnum(void)
+{
+  static char data[] = "3020\n-1\n";
+  struct shop_buy_data list[MAX_PROD + 1];
+  FILE *f = fmemopen(data, strlen(data), "r");
+  int len;
+
+  TEST_ASSERT_NOT_NULL(f);
+  len = read_list(f, list, TRUE, MAX_PROD, LIST_PRODUCE);
+  fclose(f);
+  TEST_ASSERT_EQUAL_INT(1, len); /* only the NOTHING terminator */
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("produce-vnum", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "shop #3010"));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(test_read_list_reports_missing_produce_vnum);
   RUN_TEST(test_read_type_list_drops_out_of_range_type);
   RUN_TEST(test_list_object_bad_liquid_reported);
   RUN_TEST(test_buyword_unbalanced_paren_reported);
