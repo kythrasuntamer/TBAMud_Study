@@ -11,4 +11,11 @@ change = s[s.index("case ZEDIT_CHANGE_ENTRY:"):]
 abort = change[change.index("if (toupper(*arg) == 'A') {"):change.index("zedit_disp_menu(d);")]
 guard = "OLC_VAL(d) < count_commands(OLC_ZONE(d)->cmd)"
 assert guard in abort and abort.index(guard) < abort.index("OLC_CMD(d).command")
+# A door direction must be a real one: DIR_COUNT is one past the end.
+door = s[s.index("/* Count directions. */"):]
+assert "pos >= DIR_COUNT" in door[:200]
+# The menu shows zone-file commands before any reset has checked them.
+for guard in ("MYCMD.arg2 >= 0 && MYCMD.arg2 < NUM_OF_DIRS",
+              "MYCMD.arg3 >= 0 && MYCMD.arg3 < NUM_WEARS"):
+    assert guard in s, guard
 print("zedit contract verified")
