@@ -1292,6 +1292,15 @@ static void test_checkload_object_in_nowhere_room_is_safe(void)
   TEST_ASSERT_NOT_NULL(strstr(sent, "<invalid room> (1 Max)"));
 }
 
+/* RUN_TEST, filtered: with TB_TEST_ONLY=<substring> in the environment
+ * only the matching tests run (e.g. to give one regression test its own
+ * Valgrind run). */
+#define RUN_SELECTED(fn) do { \
+  const char *only_ = getenv("TB_TEST_ONLY"); \
+  if (!only_ || strstr(#fn, only_)) \
+    RUN_TEST(fn); \
+} while (0)
+
 int main(void)
 {
   /* basic_mud_log()/mudlog() are the real utils.c ones; keep them quiet. */
@@ -1300,38 +1309,38 @@ int main(void)
   setenv("TZ", "UTC0", 1);
   tzset();
   UNITY_BEGIN();
-  RUN_TEST(test_set_file_room_is_refused_and_reported);
-  RUN_TEST(test_stat_file_frees_copy_without_extracting);
-  RUN_TEST(test_stat_file_outranked_is_denied_before_side_effects);
-  RUN_TEST(test_stat_file_of_player_in_world_is_refused);
-  RUN_TEST(test_return_and_switch_without_descriptor_are_reported);
-  RUN_TEST(test_return_to_char_requires_switched_body);
-  RUN_TEST(test_stat_weapon_bad_attack_type_is_reported);
-  RUN_TEST(test_stat_affect_bad_location_is_reported);
-  RUN_TEST(test_stat_room_bad_zone_command_args_are_reported);
-  RUN_TEST(test_show_player_and_last_bad_sex_class_are_reported);
-  RUN_TEST(test_zcheck_room_flag_finding_is_reported_for_its_room);
-  RUN_TEST(test_zcheck_bad_apply_location_is_reported);
-  RUN_TEST(test_zcheck_null_room_description_is_reported);
-  RUN_TEST(test_zcheck_checks_the_last_room);
-  RUN_TEST(test_copyover_aborts_before_exec_when_state_file_fails);
-  RUN_TEST(test_copyover_saves_the_switched_players_own_body);
-  RUN_TEST(test_changelog_empty_preamble_and_failure);
-  RUN_TEST(test_rename_moves_player_files_and_checks_the_index);
-  RUN_TEST(test_last_file_torn_tail_is_reported_and_repaired);
-  RUN_TEST(test_stat_out_of_range_time_prints_placeholder);
-  RUN_TEST(test_show_player_last_logon_has_minutes);
-  RUN_TEST(test_out_of_range_vnums_are_rejected);
-  RUN_TEST(test_set_other_players_poof_below_impl_is_refused);
-  RUN_TEST(test_at_returns_by_vnum_after_rooms_shift);
-  RUN_TEST(test_show_errors_overflow_is_marked_and_reported);
-  RUN_TEST(test_idnum1_level_restore_is_logged);
-  RUN_TEST(test_zpurge_all_below_god_is_refused);
-  RUN_TEST(test_set_level_demotion_drops_disallowed_snoop);
-  RUN_TEST(test_wizutil_unknown_subcmd_is_reported_without_save);
-  RUN_TEST(test_show_zones_overflow_is_clamped_and_reported);
-  RUN_TEST(test_recent_list_is_reusable_after_free);
-  RUN_TEST(test_checkload_object_in_nowhere_room_is_safe);
+  RUN_SELECTED(test_set_file_room_is_refused_and_reported);
+  RUN_SELECTED(test_stat_file_frees_copy_without_extracting);
+  RUN_SELECTED(test_stat_file_outranked_is_denied_before_side_effects);
+  RUN_SELECTED(test_stat_file_of_player_in_world_is_refused);
+  RUN_SELECTED(test_return_and_switch_without_descriptor_are_reported);
+  RUN_SELECTED(test_return_to_char_requires_switched_body);
+  RUN_SELECTED(test_stat_weapon_bad_attack_type_is_reported);
+  RUN_SELECTED(test_stat_affect_bad_location_is_reported);
+  RUN_SELECTED(test_stat_room_bad_zone_command_args_are_reported);
+  RUN_SELECTED(test_show_player_and_last_bad_sex_class_are_reported);
+  RUN_SELECTED(test_zcheck_room_flag_finding_is_reported_for_its_room);
+  RUN_SELECTED(test_zcheck_bad_apply_location_is_reported);
+  RUN_SELECTED(test_zcheck_null_room_description_is_reported);
+  RUN_SELECTED(test_zcheck_checks_the_last_room);
+  RUN_SELECTED(test_copyover_aborts_before_exec_when_state_file_fails);
+  RUN_SELECTED(test_copyover_saves_the_switched_players_own_body);
+  RUN_SELECTED(test_changelog_empty_preamble_and_failure);
+  RUN_SELECTED(test_rename_moves_player_files_and_checks_the_index);
+  RUN_SELECTED(test_last_file_torn_tail_is_reported_and_repaired);
+  RUN_SELECTED(test_stat_out_of_range_time_prints_placeholder);
+  RUN_SELECTED(test_show_player_last_logon_has_minutes);
+  RUN_SELECTED(test_out_of_range_vnums_are_rejected);
+  RUN_SELECTED(test_set_other_players_poof_below_impl_is_refused);
+  RUN_SELECTED(test_at_returns_by_vnum_after_rooms_shift);
+  RUN_SELECTED(test_show_errors_overflow_is_marked_and_reported);
+  RUN_SELECTED(test_idnum1_level_restore_is_logged);
+  RUN_SELECTED(test_zpurge_all_below_god_is_refused);
+  RUN_SELECTED(test_set_level_demotion_drops_disallowed_snoop);
+  RUN_SELECTED(test_wizutil_unknown_subcmd_is_reported_without_save);
+  RUN_SELECTED(test_show_zones_overflow_is_clamped_and_reported);
+  RUN_SELECTED(test_recent_list_is_reusable_after_free);
+  RUN_SELECTED(test_checkload_object_in_nowhere_room_is_safe);
   {
     int failures = UNITY_END();
     if (logfile)
