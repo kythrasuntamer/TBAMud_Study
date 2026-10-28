@@ -19,6 +19,25 @@
 #include "modify.h"
 #include "spec_procs.h" /* assign_rooms, dump */
 
+/** @file cedit.c
+ * Game configuration editor (IMPL only; one workspace per descriptor).
+ *
+ * Ownership.  cedit_setup() copies config_info into OLC_CONFIG, strdup()ing
+ * every string (or leaving it NULL); the editor owns those copies and
+ * replaces a field only after freeing the old one.  cedit_save_internally()
+ * copies the values back into config_info with fresh strdup()s and never
+ * takes the editor's strings, so every exit, including a save, must
+ * release OLC_CONFIG through cleanup_olc(d, CLEANUP_CONFIG) -> free_config
+ * (oasis.c; that path must not depend on OLC_ROOM, audit finding F2-12).
+ *
+ * Input.  Every numeric answer goes through CEDIT_PARSE_INT with an
+ * explicit range and is re-prompted, loudly, when it does not fit.
+ *
+ * Persistence.  save_config() writes CONFIG_CONFFILE through a verified
+ * temporary file and returns FALSE on any I/O failure; its IDXTYPE
+ * parameter exists only to match the genolc save-list signature and is
+ * unused.  Callers must report a FALSE result to the builder. */
+
 /* local scope functions, not used externally */
 static void cedit_disp_menu(struct descriptor_data *d);
 static void cedit_save_internally(struct descriptor_data *d);
