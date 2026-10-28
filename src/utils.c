@@ -811,8 +811,14 @@ void mudlog(int type, int level, int file, const char *str, ...)
   struct descriptor_data *i;
   va_list args;
 
-  if (str == NULL)
-    return;	/* eh, oh well. */
+  /* A NULL format means a caller lost the message it meant to log; drop it,
+   * but leave a record (breadcrumbs carry the running command/trigger). */
+  if (str == NULL) {
+    TB_ERROR_MSG("log", "mudlog-null-format", "mudlog",
+                 "NULL format type=%d level=%d file=%d; message dropped",
+                 type, level, file);
+    return;
+  }
 
   if (file) {
     va_start(args, str);
@@ -1358,8 +1364,10 @@ int get_filename(char *filename, size_t fbufsize, int mode, const char *orig_nam
   char name[PATH_MAX], *ptr;
 
   if (orig_name == NULL || *orig_name == '\0' || filename == NULL) {
-    log("SYSERR: NULL pointer or empty string passed to get_filename(), %p or %p.",
-		(const void *)orig_name, (void *)filename);
+    TB_ERROR_MSG("persist", "filename-args", "get_filename",
+                 "mode=%d name=%s filename=%s", mode,
+                 orig_name == NULL ? "NULL" : (*orig_name ? "set" : "empty"),
+                 filename == NULL ? "NULL" : "set");
     return (0);
   }
 
@@ -1381,6 +1389,11 @@ int get_filename(char *filename, size_t fbufsize, int mode, const char *orig_nam
     suffix = SUF_PLR;
     break;
   default:
+    /* Internal invariant: mode is one of the *_FILE constants above. A new
+     * mode added to callers but not here would make every save fail. */
+    TB_ERROR_MSG("persist", "filename-mode", "get_filename",
+                 "unknown mode %d for name of length %zu", mode,
+                 strlen(orig_name));
     return (0);
   }
 

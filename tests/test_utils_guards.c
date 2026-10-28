@@ -578,6 +578,32 @@ void test_rand_number_inverted_bounds_reports_caller(void)
   TEST_ASSERT_EQUAL_INT(1, count_records());
 }
 
+/* =====================================================================
+ * I1-12: mudlog(NULL) and an unknown get_filename mode are reported.
+ * ===================================================================== */
+
+void test_mudlog_null_format_reports(void)
+{
+  mudlog(NRM, LVL_IMMORT, TRUE, NULL);
+  TEST_ASSERT_EQUAL_INT(1, count_op("mudlog-null-format"));
+}
+
+void test_get_filename_unknown_mode_reports(void)
+{
+  char path[PATH_MAX];
+
+  TEST_ASSERT_EQUAL_INT(0, get_filename(path, sizeof(path), 9999, "bob"));
+  TEST_ASSERT_EQUAL_INT(1, count_op("filename-mode"));
+}
+
+void test_get_filename_null_name_reports(void)
+{
+  char path[PATH_MAX];
+
+  TEST_ASSERT_EQUAL_INT(0, get_filename(path, sizeof(path), PLR_FILE, NULL));
+  TEST_ASSERT_EQUAL_INT(1, count_op("filename-args"));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -603,5 +629,8 @@ int main(void)
   RUN_TEST(test_is_dark_invalid_rnum_reports_caller);
   RUN_TEST(test_is_dark_valid_room_is_silent);
   RUN_TEST(test_rand_number_inverted_bounds_reports_caller);
+  RUN_TEST(test_mudlog_null_format_reports);
+  RUN_TEST(test_get_filename_unknown_mode_reports);
+  RUN_TEST(test_get_filename_null_name_reports);
   return UNITY_END();
 }
