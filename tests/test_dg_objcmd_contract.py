@@ -1,0 +1,22 @@
+#!/usr/bin/env python3
+"""Guard object script commands (dg_objcmd.c) that act after a callback."""
+from pathlib import Path
+import sys
+
+s = Path(sys.argv[1]).read_text(encoding="utf-8")
+
+
+def body_of(name):
+    start = s.index(f"static OCMD({name})\n{{")
+    return s[start:s.index("\n}\n", start)]
+
+
+# oat runs its command through a temporary copy that the command may purge
+# or move: the copy is checked by UID and always removed, never read raw.
+oat = body_of("do_oat")
+assert "copy_uid = obj_script_id(object);" in oat
+assert oat.index("copy_uid = obj_script_id(object);") < oat.index("obj_command_interpreter(")
+after = oat[oat.index("obj_command_interpreter("):]
+assert "obj_uid_matches(copy_uid, object)" in after
+assert "object->in_room" not in after, "the copy may be freed by now"
+print("object command contract verified")

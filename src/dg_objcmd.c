@@ -754,6 +754,7 @@ static OCMD(do_oat)
   struct char_data *ch;
   struct obj_data *object;
   char arg[MAX_INPUT_LENGTH], *command;
+  long copy_uid;
 
   command = any_one_arg(argument, arg);
 
@@ -777,13 +778,19 @@ static OCMD(do_oat)
     return;
   }
 
-  if (!(object = read_object(GET_OBJ_VNUM(obj), VIRTUAL)))
+  if (!(object = read_object(GET_OBJ_VNUM(obj), VIRTUAL))) {
+    obj_log(obj, "oat: cannot create a copy of object %d", GET_OBJ_VNUM(obj));
     return;
+  }
 
+  /* The command runs through a temporary copy.  It may purge the copy
+   * (reading object afterwards was a use-after-free) or move it (the copy
+   * was then never extracted), so check it by UID and always remove it. */
+  copy_uid = obj_script_id(object);
   obj_to_room(object, loc);
   obj_command_interpreter(object, command);
 
-  if (object->in_room == loc) 
+  if (obj_uid_matches(copy_uid, object))
     extract_obj(object);
 }
 
