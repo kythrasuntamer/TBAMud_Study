@@ -83,6 +83,11 @@
 #define VALID_SEX(x)      ((unsigned int)(x) < NUM_GENDERS)
 #define VALID_WEAR_POS(w) ((unsigned int)(w) < NUM_WEARS)
 
+/* TRUE if a parsed int/long can be stored in an IDXTYPE vnum field without
+ * wrapping and is not the NOWHERE/NOTHING sentinel (IDXTYPE_MAX).
+ * Evaluates n twice: pass a plain variable. */
+#define VNUM_STORABLE(n)  ((long)(n) >= IDXTYPE_MIN && (long)(n) < IDXTYPE_MAX)
+
 /*  declarations of most of the 'global' variables */
 struct config_data config_info; /* Game configuration list.	 */
 
@@ -1477,7 +1482,7 @@ void discrete_load(FILE *fl, int mode, char *filename)
       }
       /* The record number becomes an IDXTYPE vnum (ush_int): #70000 would
        * silently become vnum 4464, and IDXTYPE_MAX is NOWHERE/NOTHING. */
-      if (nr < 0 || nr >= IDXTYPE_MAX) {
+      if (!VNUM_STORABLE(nr)) {
 	TB_FATAL_MSG("db", "record-number", filename,
 	             "%s #%d out of range 0..%d (previous #%d)",
 	             modes[mode], nr, IDXTYPE_MAX - 1, boot_last_vnum);
@@ -2664,7 +2669,7 @@ static int zone_cmd_vnums_in_range(const struct reset_com *cmd, int zone_vnum,
       continue;
     if (cmd->command == 'O' && n == 2 && args[n] == NOWHERE)
       continue;
-    if (args[n] < 0 || args[n] >= IDXTYPE_MAX) {
+    if (!VNUM_STORABLE(args[n])) {
       TB_ERROR_MSG("db", "zone-parse", zname,
                    "zone %d line %d cmd %c arg%d=%d out of vnum range 0..%d; "
                    "cmd disabled", zone_vnum, line_num, cmd->command, n + 1,
