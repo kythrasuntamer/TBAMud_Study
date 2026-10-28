@@ -523,6 +523,108 @@ static void test_turning_off_dt_dumps_clears_every_room_including_the_last(void)
                            "the last room kept its dump proc");
 }
 
+/* ---------------------------------------------------------------------
+ * The OLC save list: configuration changes that are only in memory must
+ * be listed by 'olc' and written by save_all() ('saveall', shutdown).
+ * ------------------------------------------------------------------- */
+static int config_entries_queued(void)
+{
+  struct save_list_data *entry;
+  int n = 0;
+
+  for (entry = save_list; entry; entry = entry->next)
+    if (entry->type == SL_CFG)
+      n++;
+  return n;
+}
+
+/* One cedit session that toggles Free Rent and keeps the change. */
+static void toggle_free_rent_and_apply(void)
+{
+  open_cedit();
+  type("c");          /* Crashsave/Rent Options */
+  type("a");          /* toggle Free Rent */
+  type("q");          /* back to the main menu */
+  quit_and_apply();
+}
+
+/* cedit_save_internally() called add_to_save_list(NOWHERE, SL_CFG), which
+ * refuses SL_CFG, so a change kept only in memory was never queued:
+ * 'olc' said everything was saved and save_all() never wrote it. */
+static void test_change_kept_in_memory_is_queued_and_listed(void)
+{
+  char none[] = "";
+
+  CONFIG_OLC_SAVE = NO;
+  toggle_free_rent_and_apply();
+  TEST_ASSERT_NOT_NULL(strstr(out, "saved to memory"));
+  TEST_ASSERT_TRUE(in_save_list(NOWHERE, SL_CFG));
+
+  out[0] = '\0';
+  do_show_save_list(&builder, none, 0, 0);
+  TEST_ASSERT_NOT_NULL(strstr(out, "Game configuration data"));
+
+  toggle_free_rent_and_apply();    /* a second change: still one entry */
+  TEST_ASSERT_EQUAL_INT(1, config_entries_queued());
+}
+
+static void test_saveall_writes_the_queued_config(void)
+{
+  int changed = !free_rent;
+
+  CONFIG_OLC_SAVE = NO;
+  toggle_free_rent_and_apply();
+  TEST_ASSERT_EQUAL_INT(changed, CONFIG_FREE_RENT);
+
+  TEST_ASSERT_TRUE(save_all());
+  TEST_ASSERT_NULL(save_list);
+  boot_config_from(conf_path);
+  TEST_ASSERT_EQUAL_INT(changed, CONFIG_FREE_RENT);
+}
+
+static void test_cedit_save_command_clears_the_queued_config(void)
+{
+  char save[] = " save";
+
+  CONFIG_OLC_SAVE = NO;
+  toggle_free_rent_and_apply();
+  TEST_ASSERT_TRUE(in_save_list(NOWHERE, SL_CFG));
+
+  do_oasis_cedit(&builder, save, 0, 0);
+  TEST_ASSERT_FALSE(in_save_list(NOWHERE, SL_CFG));
+  TEST_ASSERT_NULL(strstr(out, "FAILED"));
+}
+
+/* OLC autosave on, but the file cannot be written: the builder is told,
+ * the failure is reported, and the change stays queued for a later
+ * 'cedit save' or save_all(). */
+static void test_failed_autosave_keeps_the_config_queued(void)
+{
+  char missing[600];
+  int n = snprintf(missing, sizeof(missing), "%s/missing/config", scratch_dir);
+
+  TEST_ASSERT_TRUE(n > 0 && (size_t)n < sizeof(missing));
+  free(CONFIG_CONFFILE);
+  CONFIG_CONFFILE = strdup(missing);
+  TEST_ASSERT_NOT_NULL(CONFIG_CONFFILE);
+  CONFIG_OLC_SAVE = YES;
+
+  toggle_free_rent_and_apply();
+  TEST_ASSERT_NOT_NULL(strstr(out, "FAILED"));
+  TEST_ASSERT_EQUAL_STRING("cedit-save", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "player idnum 42"));
+  TEST_ASSERT_TRUE(in_save_list(NOWHERE, SL_CFG));
+}
+
+static void test_successful_autosave_leaves_nothing_queued(void)
+{
+  CONFIG_OLC_SAVE = YES;
+  toggle_free_rent_and_apply();
+  TEST_ASSERT_NOT_NULL(strstr(out, "saved to disk"));
+  TEST_ASSERT_FALSE(in_save_list(NOWHERE, SL_CFG));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -530,5 +632,10 @@ int main(void)
   RUN_TEST(test_min_rent_cost_survives_save_and_reboot);
   RUN_TEST(test_every_setting_survives_save_and_reboot);
   RUN_TEST(test_turning_off_dt_dumps_clears_every_room_including_the_last);
+  RUN_TEST(test_change_kept_in_memory_is_queued_and_listed);
+  RUN_TEST(test_saveall_writes_the_queued_config);
+  RUN_TEST(test_cedit_save_command_clears_the_queued_config);
+  RUN_TEST(test_failed_autosave_keeps_the_config_queued);
+  RUN_TEST(test_successful_autosave_leaves_nothing_queued);
   return UNITY_END();
 }

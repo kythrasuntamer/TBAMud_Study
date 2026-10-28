@@ -36,7 +36,10 @@
  * Persistence.  save_config() writes CONFIG_CONFFILE through a verified
  * temporary file and returns FALSE on any I/O failure; its IDXTYPE
  * parameter exists only to match the genolc save-list signature and is
- * unused.  Callers must report a FALSE result to the builder. */
+ * unused.  Callers must report a FALSE result to the builder.  A change
+ * applied to config_info is queued on GenOLC's save list (one
+ * (NOWHERE, SL_CFG) entry, cedit_queue_config_save()) until save_config()
+ * replaces the file, so 'olc' and save_all() know it is not on disk. */
 
 /* local scope functions, not used externally */
 static void cedit_disp_menu(struct descriptor_data *d);
@@ -47,6 +50,7 @@ static void cedit_disp_room_numbers(struct descriptor_data *d);
 static void cedit_disp_operation_options(struct descriptor_data *d);
 static void cedit_disp_autowiz_options(struct descriptor_data *d);
 static void reassign_rooms(void);
+static void cedit_queue_config_save(void);
 static void cedit_setup(struct descriptor_data *d);
 static int cedit_parse_int_range_at(struct descriptor_data *d, const char *arg,
                                     long lo, long hi, int *out,
@@ -374,7 +378,28 @@ static void cedit_save_internally(struct descriptor_data *d)
   if (reassign)
     reassign_rooms();
 
-  add_to_save_list(NOWHERE, SL_CFG);
+  cedit_queue_config_save();
+}
+
+/* Puts the live configuration on GenOLC's save list as its one
+ * (NOWHERE, SL_CFG) entry, so 'olc' lists it as unsaved and save_all()
+ * ('saveall', shutdown) writes it with save_config(), which removes the
+ * entry once the file is replaced.  add_to_save_list() (genolc.c) returns
+ * FALSE for SL_CFG before its zone check and queues nothing, so the entry
+ * is linked here; the list owns it, and remove_from_save_list() and
+ * free_save_list() free it. */
+static void cedit_queue_config_save(void)
+{
+  struct save_list_data *entry;
+
+  if (in_save_list(NOWHERE, SL_CFG))
+    return;                     /* already queued by an earlier change */
+
+  CREATE(entry, struct save_list_data, 1);
+  entry->zone = NOWHERE;
+  entry->type = SL_CFG;
+  entry->next = save_list;
+  save_list = entry;
 }
 
 /* Writes the live configuration to CONFIG_CONFFILE.  Returns save_config's
