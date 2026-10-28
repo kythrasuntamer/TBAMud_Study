@@ -3,7 +3,7 @@
 from pathlib import Path
 import sys
 s = Path(sys.argv[1]).read_text(encoding="utf-8")
-start = s.index("static void process_wait(void *go", s.index("static int script_wait_number"))
+start = s.index("static int process_wait(void *go", s.index("static int script_wait_number"))
 body = s[start:s.index("GET_TRIG_WAIT(trig) = event_create", start)]
 for token in ("s", "sec", "secs", "second", "seconds", "t"):
     assert f'strcmp(suffix, "{token}") == 0' in body, token

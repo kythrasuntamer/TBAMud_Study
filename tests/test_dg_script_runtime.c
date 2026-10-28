@@ -890,6 +890,20 @@ static void switch_leaves_case_text_unchanged(void)
   TEST_ASSERT_EQUAL_STRING("case 2   ", case2);
 }
 
+/* An invalid wait returned with the trigger still marked as running and no
+ * event to resume it, so TRIGGER_CHECK() refused it from then on. */
+static void invalid_wait_leaves_the_trigger_usable(void)
+{
+  static const char *const lines[] = { "eval x 1", "wait soon", "after", NULL };
+
+  TEST_ASSERT_EQUAL_INT(0, run_object_lines(lines));
+  TEST_ASSERT_EQUAL_INT(0, GET_TRIG_DEPTH(&trig));
+  TEST_ASSERT_NULL(GET_TRIG_VARS(&trig));
+  /* It fires again normally. */
+  TEST_ASSERT_EQUAL_INT(0, run_object_lines(lines));
+  TEST_ASSERT_EQUAL_INT(0, GET_TRIG_DEPTH(&trig));
+}
+
 static void restore_round_trips_neutralize(void)
 {
   char text[] = "50% off, 100%% sure";
@@ -931,5 +945,6 @@ int main(void)
   RUN_TEST(detached_script_frees_its_variables);
   RUN_TEST(attach_to_a_player_is_refused_before_loading);
   RUN_TEST(switch_leaves_case_text_unchanged);
+  RUN_TEST(invalid_wait_leaves_the_trigger_usable);
   return UNITY_END();
 }

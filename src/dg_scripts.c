@@ -51,7 +51,7 @@ static int process_if(char *cond, void *go, struct script_data *sc,
 static struct cmdlist_element *find_end(trig_data *trig, struct cmdlist_element *cl);
 static struct cmdlist_element *find_else_end(trig_data *trig,
           struct cmdlist_element *cl, void *go, struct script_data *sc, int type);
-static void process_wait(void *go, trig_data *trig, int type, char *cmd,
+static int process_wait(void *go, trig_data *trig, int type, char *cmd,
           struct cmdlist_element *cl);
 static void process_set(struct script_data *sc, trig_data *trig, char *cmd);
 static void process_attach(void *go, struct script_data *sc, trig_data *trig,
@@ -1845,8 +1845,9 @@ static int script_wait_number(const char *text, long *number, const char **rest)
   return TRUE;
 }
 
-/* processes any 'wait' commands in a trigger */
-static void process_wait(void *go, trig_data *trig, int type, char *cmd,
+/* processes any 'wait' commands in a trigger.  Returns TRUE once the rest of
+ * the script is scheduled, FALSE (after logging why) if the wait is invalid. */
+static int process_wait(void *go, trig_data *trig, int type, char *cmd,
                   struct cmdlist_element *cl)
 {
   char buf[MAX_INPUT_LENGTH], *arg;
@@ -1860,7 +1861,7 @@ static void process_wait(void *go, trig_data *trig, int type, char *cmd,
   if (!*arg) {
     script_log("Trigger: %s, VNum %d. wait w/o an arg: '%s'",
             GET_TRIG_NAME(trig), GET_TRIG_VNUM(trig), cl->cmd);
-    return;
+    return FALSE;
   }
 
   if (!strn_cmp(arg, "until ", 6)) {
@@ -1868,7 +1869,7 @@ static void process_wait(void *go, trig_data *trig, int type, char *cmd,
     if (!script_wait_number(arg + 6, &hr, &rest)) {
       script_log("Trigger: %s, VNum %d. wait until w/o a time: '%s'",
               GET_TRIG_NAME(trig), GET_TRIG_VNUM(trig), cl->cmd);
-      return;
+      return FALSE;
     }
     while (isspace((unsigned char)*rest))
       rest++;
@@ -1879,7 +1880,7 @@ static void process_wait(void *go, trig_data *trig, int type, char *cmd,
           (min < 0 && hr * 60 < LONG_MIN - min)) {
         script_log("Trigger: %s, VNum %d. invalid wait until time: '%s'",
                 GET_TRIG_NAME(trig), GET_TRIG_VNUM(trig), cl->cmd);
-        return;
+        return FALSE;
       }
       min += hr * 60;
     } else {
@@ -1890,7 +1891,7 @@ static void process_wait(void *go, trig_data *trig, int type, char *cmd,
     if (*rest) {
       script_log("Trigger: %s, VNum %d. invalid wait until suffix: '%s'",
               GET_TRIG_NAME(trig), GET_TRIG_VNUM(trig), cl->cmd);
-      return;
+      return FALSE;
     }
 
     /* calculate the pulse of the day of "until" time */
@@ -1912,7 +1913,7 @@ static void process_wait(void *go, trig_data *trig, int type, char *cmd,
     if (!script_wait_number(arg, &when, &rest)) {
       script_log("Trigger: %s, VNum %d. wait w/o a number: '%s'",
               GET_TRIG_NAME(trig), GET_TRIG_VNUM(trig), cl->cmd);
-      return;
+      return FALSE;
     }
     while (isspace((unsigned char)*rest))
       rest++;
@@ -1928,7 +1929,7 @@ static void process_wait(void *go, trig_data *trig, int type, char *cmd,
     if (*suffix_end || suffix_len >= sizeof(suffix)) {
       script_log("Trigger: %s, VNum %d. invalid wait suffix: '%s'",
               GET_TRIG_NAME(trig), GET_TRIG_VNUM(trig), cl->cmd);
-      return;
+      return FALSE;
     }
     memcpy(suffix, rest, suffix_len);
     suffix[suffix_len] = '\0';
@@ -1941,7 +1942,7 @@ static void process_wait(void *go, trig_data *trig, int type, char *cmd,
           strcmp(suffix, "seconds") == 0 || strcmp(suffix, "t") == 0)) {
       script_log("Trigger: %s, VNum %d. invalid wait suffix: '%s'",
               GET_TRIG_NAME(trig), GET_TRIG_VNUM(trig), cl->cmd);
-      return;
+      return FALSE;
     }
     if (fields == 2) {
       long unit = (c == 't') ? PULSES_PER_MUD_HOUR : PASSES_PER_SEC;
@@ -1971,6 +1972,7 @@ static void process_wait(void *go, trig_data *trig, int type, char *cmd,
 
   GET_TRIG_WAIT(trig) = event_create(trig_wait_event, wait_event_obj, when);
   trig->curr_state = cl->next;
+  return TRUE;
 }
 
 /* processes a script set command */
@@ -2989,7 +2991,10 @@ int script_driver(void *go_adress, trig_data *trig, int type, int mode)
         process_unset(sc, trig, cmd);
 
       else if (!strn_cmp(cmd, "wait ", 5)) {
-        process_wait(go, trig, type, cmd, cl);
+        /* An invalid wait ends this run normally; leaving it suspended with
+         * no event would keep the trigger busy, so it never fired again. */
+        if (!process_wait(go, trig, type, cmd, cl))
+          break;
         depth--;
         dg_script_execution_leave();
         return ret_val;
