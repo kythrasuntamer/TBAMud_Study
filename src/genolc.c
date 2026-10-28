@@ -32,7 +32,10 @@
 struct save_list_data *save_list;
 
 /* Local (file scope) variables */
-/* Structure defining all known save types. */
+/* Structure defining all known save types.  save_all() and
+ * do_show_save_list() index this table by SL_* value, so entry N must be
+ * the one whose save_type is N.  Each func follows the contract described
+ * at save_all(); SL_ACT and SL_HLP have none and are never autosaved. */
 static struct {
   int save_type;
   int (*func)(IDXTYPE rnum);
@@ -188,6 +191,11 @@ void strip_cr(char *buffer)
   buffer[wpos] = '\0';
 }
 
+/** Deep-copy an extra-description list into *to; the caller owns the
+ * result and releases it with free_ex_descriptions().  One node is always
+ * allocated, even when from is NULL (its keyword and description are then
+ * NULL), so callers check from first.  NULL or empty source strings become
+ * "undefined" (str_udup). */
 void copy_ex_descriptions(struct extra_descr_data **to, struct extra_descr_data *from)
 {
   struct extra_descr_data *wpos;
@@ -203,6 +211,7 @@ void copy_ex_descriptions(struct extra_descr_data **to, struct extra_descr_data 
   }
 }
 
+/** Free an extra-description list and every string in it. */
 void free_ex_descriptions(struct extra_descr_data *head)
 {
   struct extra_descr_data *thised, *next_one;
@@ -317,6 +326,10 @@ zone_vnum genolc_zone_bottom(zone_rnum rznum)
   return zone_table[rznum].bot;
 }
 
+/** Write the set bits of 'bits' as CircleMUD ascii flags ("a".."F") into
+ * out, which must hold at least 33 bytes (32 letters and the terminator).
+ * Only the low 32 bits are encoded; no bit set writes "0".  Returns the
+ * bytes written, terminator included. */
 int sprintascii(char *out, bitvector_t bits)
 {
   int i, j = 0;
