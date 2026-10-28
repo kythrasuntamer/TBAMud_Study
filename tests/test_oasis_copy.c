@@ -591,9 +591,62 @@ void test_buildwalk_releases_template_strings(void)
   TEST_ASSERT_NOT_NULL(world[real_room(3000)].name);
 }
 
+/* ---------------------------------------------------------------------
+ * F3-10: dig/buildwalk free()d an existing d->olc and replaced it, leaking
+ * the open editor's scratch entity (reachable via do_force on a builder
+ * who is in medit).  They must refuse and leave the editor intact.
+ * --------------------------------------------------------------------- */
+static struct oasis_olc_data *attach_mob_editor(void)
+{
+  CREATE(builder_desc.olc, struct oasis_olc_data, 1);
+  CREATE(OLC_MOB(&builder_desc), struct char_data, 1);
+  OLC_NUM(&builder_desc) = 3001;
+  STATE(&builder_desc) = CON_MEDIT;
+  return builder_desc.olc;
+}
+
+void test_dig_refuses_while_another_editor_is_open(void)
+{
+  struct oasis_olc_data *open_editor = attach_mob_editor();
+
+  run_cmd(do_dig, "north 3050", 0);
+
+  TEST_ASSERT_EQUAL_PTR(open_editor, builder_desc.olc);
+  TEST_ASSERT_EQUAL_INT(0, save_calls);
+  TEST_ASSERT_NOT_NULL(strstr(sent, "already editing"));
+  TEST_ASSERT_TRUE(log_has("op=olc-busy"));
+  TEST_ASSERT_TRUE(log_has("resource=dig"));
+}
+
+void test_buildwalk_refuses_while_another_editor_is_open(void)
+{
+  struct oasis_olc_data *open_editor = attach_mob_editor();
+  SET_BIT_AR(PRF_FLAGS(&builder), PRF_BUILDWALK);
+
+  TEST_ASSERT_EQUAL_INT(0, buildwalk(&builder, NORTH));
+
+  TEST_ASSERT_EQUAL_PTR(open_editor, builder_desc.olc);
+  TEST_ASSERT_EQUAL_INT(0, save_calls);
+  TEST_ASSERT_TRUE(log_has("op=olc-busy"));
+  TEST_ASSERT_TRUE(log_has("resource=buildwalk"));
+}
+
+void test_dig_creates_room_when_idle(void)
+{
+  run_cmd(do_dig, "north 3050", 0);
+
+  TEST_ASSERT_EQUAL_INT(1, save_calls);
+  TEST_ASSERT_NULL(builder_desc.olc);
+  TEST_ASSERT_NOT_EQUAL(NOWHERE, real_room(3050));
+  TEST_ASSERT_FALSE(log_has("op=olc-busy"));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(test_dig_refuses_while_another_editor_is_open);
+  RUN_TEST(test_buildwalk_refuses_while_another_editor_is_open);
+  RUN_TEST(test_dig_creates_room_when_idle);
   RUN_TEST(test_buildwalk_releases_template_strings);
   RUN_TEST(test_cleanup_frees_unsaved_script_on_link_loss);
   RUN_TEST(test_cleanup_frees_script_reattached_to_scratch_once);

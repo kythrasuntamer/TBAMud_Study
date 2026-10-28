@@ -76,6 +76,18 @@
 
 /* Utilities exported from oasis.c. */
 void cleanup_olc(struct descriptor_data *d, byte cleanup_type);
+int olc_attach_at(struct descriptor_data *d, struct char_data *ch,
+                  const char *what, const char *source_file, int source_line,
+                  const char *source_func);
+
+/** Give d a fresh, zeroed OLC workspace for a one-shot internal user (dig,
+ * buildwalk, the copy commands).  Returns TRUE on success.  Refuses, telling
+ * ch and logging TB-style "olc-busy" at the caller's location, when d is
+ * NULL, is not CON_PLAYING (e.g. a builder forced into the command while in
+ * an editor), or already has d->olc: freeing that workspace would leak the
+ * editor's scratch entity and silently end the builder's session. */
+#define OLC_ATTACH(d, ch, what) \
+  olc_attach_at((d), (ch), (what), __FILE__, __LINE__, __func__)
 void get_char_colors(struct char_data *ch);
 void split_argument(char *argument, char *tag);
 void send_cannot_edit(struct char_data *ch, zone_vnum zone);

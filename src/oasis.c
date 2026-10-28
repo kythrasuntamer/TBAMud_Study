@@ -289,6 +289,34 @@ void cleanup_olc(struct descriptor_data *d, byte cleanup_type)
   d->olc = NULL;
 }
 
+/* See OLC_ATTACH in oasis.h.  F3-10: do_dig and buildwalk used to free()
+ * an existing d->olc (shallowly, leaking the editor's scratch entity) and
+ * carry on; do_force can put a builder who is mid-edit into either. */
+int olc_attach_at(struct descriptor_data *d, struct char_data *ch,
+                  const char *what, const char *source_file, int source_line,
+                  const char *source_func)
+{
+  if (d == NULL) {
+    tb_error_log_at("ERROR", "olc", "olc-busy", what, 0,
+                    source_file, source_line, source_func,
+                    "no descriptor for " DIAG_CHAR_FMT, DIAG_CHAR(ch));
+    return FALSE;
+  }
+
+  if (STATE(d) != CON_PLAYING || d->olc != NULL) {
+    if (ch)
+      send_to_char(ch, "You are already editing something.\r\n");
+    tb_error_log_at("ERROR", "olc", "olc-busy", what, 0,
+                    source_file, source_line, source_func,
+                    DIAG_CHAR_FMT " state %d olc_num %d",
+                    DIAG_CHAR(ch), STATE(d), d->olc ? (int)OLC_NUM(d) : -1);
+    return FALSE;
+  }
+
+  CREATE(d->olc, struct oasis_olc_data, 1);
+  return TRUE;
+}
+
 void split_argument(char *argument, char *tag)
 {
   char *tmp = argument, *ttag = tag, *wrt = argument;
