@@ -62,11 +62,12 @@ void initialize(void)
   }
 }
 
+static int read_index_line(FILE * fl, char *buf, size_t buf_size);
+
 void read_file(void)
 {
   void add_name(byte level, char *name);
   char *CAP(char *txt);
-  int get_line(FILE * fl, char *buf);
   bitvector_t asciiflag_conv(char *flag);
 
   FILE *fl;
@@ -81,7 +82,7 @@ void read_file(void)
   }
   /* count the number of players in the index */
   recs = 0;
-  while (get_line(fl, line))
+  while (read_index_line(fl, line, sizeof(line)))
     if (*line != '~')
       recs++;
   if (fseek(fl, 0L, SEEK_SET) != 0) {
@@ -91,7 +92,7 @@ void read_file(void)
   }
 
   for (i = 0; i < recs; i++) {
-    get_line(fl, line);
+    read_index_line(fl, line, sizeof(line));
     {
       char id_text[64], level_text[64], last_text[64], name_text[128], extra[2], *end;
       long parsed;
@@ -290,11 +291,12 @@ char *CAP(char *txt)
   return (txt);
 }
 
-/* get_line reads the next non-blank line off of the input stream. The newline 
+/* read_index_line reads the next non-blank line off of the input stream. The newline 
  * character is removed from the input.  Lines which begin with '*' are 
  * considered to be comments. Returns the number of lines advanced in the 
- * file. */
-int get_line(FILE * fl, char *buf)
+ * file. buf_size is the size of buf: buf is a pointer here, so sizeof(buf)
+ * would be the size of a pointer and cut every line to 7 characters. */
+static int read_index_line(FILE * fl, char *buf, size_t buf_size)
 {
   char temp[256];
   int lines = 0;
@@ -306,7 +308,7 @@ int get_line(FILE * fl, char *buf)
   } while (*temp == '*' || *temp == '\n');
 
   temp[strlen(temp) - 1] = '\0';
-  strlcpy(buf, temp, sizeof(buf));
+  strlcpy(buf, temp, buf_size);
   return (lines);
 }
 
