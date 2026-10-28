@@ -298,6 +298,13 @@ static struct char_data imm;
 static struct player_special_data imm_specials;
 static struct descriptor_data imm_desc;
 
+/* One-entry mob and object tables: zcheck and 'show zone' walk them up to
+ * the inclusive top_of_mobt/top_of_objt (0). Tests that need their own
+ * prototypes point mob_proto/obj_proto at them; setUp restores these. */
+static struct char_data default_mob;
+static struct obj_data default_obj;
+static struct index_data default_mob_index, default_obj_index;
+
 static void reset_counters(void)
 {
   captured_errors = 0;
@@ -331,6 +338,19 @@ void setUp(void)
   IN_ROOM(&imm) = 0;
   imm.desc = &imm_desc;
   imm_desc.character = &imm;
+
+  memset(&default_mob, 0, sizeof(default_mob));
+  memset(&default_obj, 0, sizeof(default_obj));
+  default_mob.player.name = (char *)"dummy";
+  default_mob.player.short_descr = (char *)"the dummy";
+  default_mob_index.vnum = 1;   /* outside zone 30 */
+  default_obj_index.vnum = 1;
+  mob_proto = &default_mob;
+  obj_proto = &default_obj;
+  mob_index = &default_mob_index;
+  obj_index = &default_obj_index;
+  top_of_mobt = 0;
+  top_of_objt = 0;
 
   in_game_char = NULL;
   vis_obj = NULL;
@@ -542,9 +562,6 @@ static void test_stat_room_bad_zone_command_args_are_reported(void)
   TEST_ASSERT_NOT_NULL(strstr(sent, "<invalid>, Max"));
   TEST_ASSERT_NOT_NULL(strstr(sent, "Set door <invalid> as open"));
   zones[0].cmd = NULL;
-  mob_proto = NULL;
-  obj_proto = NULL;
-  mob_index = obj_index = NULL;
 }
 
 /* G1-12: 'show player' and 'last <name>' indexed genders[] and
@@ -607,7 +624,6 @@ static void test_zcheck_bad_apply_location_is_reported(void)
   oindex.vnum = 3022;
   obj_proto = &obj;
   obj_index = &oindex;
-  top_of_objt = 1;      /* the '<' loop bound checks rnum 0 only */
   zone_by_thing = 0;
   obj.affected[1].location = 100;
   obj.affected[1].modifier = 2;
@@ -618,10 +634,6 @@ static void test_zcheck_bad_apply_location_is_reported(void)
   TEST_ASSERT_EQUAL_STRING("zcheck-apply", captured_operation);
   TEST_ASSERT_NOT_NULL(strstr(captured_detail, "obj vnum 3022 apply slot 1 location 100"));
   TEST_ASSERT_NOT_NULL(strstr(sent, "- apply slot 1 has invalid location 100."));
-
-  obj_proto = NULL;
-  obj_index = NULL;
-  top_of_objt = 0;
 }
 
 /* G1-20: an empty ('~') room description or extra description is NULL
@@ -642,6 +654,18 @@ static void test_zcheck_null_room_description_is_reported(void)
   TEST_ASSERT_NOT_NULL(strstr(sent, "- has unformatted extra description"));
 }
 
+/* G1-25: top_of_world is the last valid rnum, but zcheck looped with '<'
+ * and never checked the highest room (here 3014). */
+static void test_zcheck_checks_the_last_room(void)
+{
+  rooms[0].description = good_desc;
+  rooms[1].description = (char *)"bad";
+  rooms[1].name = (char *)"Last";
+  RUN_CMD(do_zcheck, &imm, "30");
+  TEST_ASSERT_NOT_NULL(strstr(sent, "[ 3014] Last"));
+  TEST_ASSERT_NOT_NULL(strstr(sent, "Room description is too short"));
+}
+
 int main(void)
 {
   /* basic_mud_log()/mudlog() are the real utils.c ones; keep them quiet. */
@@ -660,6 +684,7 @@ int main(void)
   RUN_TEST(test_zcheck_room_flag_finding_is_reported_for_its_room);
   RUN_TEST(test_zcheck_bad_apply_location_is_reported);
   RUN_TEST(test_zcheck_null_room_description_is_reported);
+  RUN_TEST(test_zcheck_checks_the_last_room);
   {
     int failures = UNITY_END();
     if (logfile)

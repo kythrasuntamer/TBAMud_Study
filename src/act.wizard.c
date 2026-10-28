@@ -2666,15 +2666,17 @@ static size_t print_zone_to_buf(char *bufptr, size_t left, zone_rnum zone, int l
 	zone_table[zone].bot, zone_table[zone].top);
         j = k = l = m = n = o = 0;
 
-        for (i = 0; i < top_of_world; i++)
+        /* top_of_world/objt/mobt are the last valid rnums (inclusive);
+         * top_of_trigt is a count (exclusive). */
+        for (i = 0; i <= top_of_world; i++)
           if (world[i].number >= zone_table[zone].bot && world[i].number <= zone_table[zone].top)
             j++;
 
-        for (i = 0; i < top_of_objt; i++)
+        for (i = 0; i <= top_of_objt; i++)
           if (obj_index[i].vnum >= zone_table[zone].bot && obj_index[i].vnum <= zone_table[zone].top)
             k++;
 
-        for (i = 0; i < top_of_mobt; i++)
+        for (i = 0; i <= top_of_mobt; i++)
           if (mob_index[i].vnum >= zone_table[zone].bot && mob_index[i].vnum <= zone_table[zone].top)
             l++;
 
@@ -2909,7 +2911,7 @@ ACMD(do_show)
 	j, top_of_mobt + 1,
 	k, top_of_objt + 1,
 	top_of_world + 1, top_of_zone_table + 1,
-	top_of_trigt + 1, top_shop + 1,
+	top_of_trigt, top_shop + 1,   /* top_of_trigt is a count, not a top index */
 	buf_largecount, total_quests,
 	buf_switches, buf_overflows, global_lists->iSize
 	);
@@ -3892,7 +3894,7 @@ ACMD (do_zcheck)
 
   send_to_char(ch, "Checking Mobs for limits...\r\n");
   /*check mobs first*/
-  for (i=0; i<top_of_mobt;i++) {
+  for (i=0; i <= top_of_mobt;i++) {
       if (real_zone_by_thing(mob_index[i].vnum) == zrnum) {  /*is mob in this zone?*/
         mob = &mob_proto[i];
         /* Mob strings may be NULL when the file text was empty. */
@@ -3992,7 +3994,7 @@ ACMD (do_zcheck)
 
  /* Check objects */
   send_to_char(ch, "\r\nChecking Objects for limits...\r\n");
-  for (i=0; i<top_of_objt; i++) {
+  for (i=0; i <= top_of_objt; i++) {
     if (real_zone_by_thing(obj_index[i].vnum) == zrnum) { /*is object in this zone?*/
       obj = &obj_proto[i];
       switch (GET_OBJ_TYPE(obj)) {
@@ -4138,7 +4140,7 @@ ACMD (do_zcheck)
 
   /* Check rooms */
   send_to_char(ch, "\r\nChecking Rooms for limits...\r\n");
-  for (i=0; i<top_of_world;i++) {
+  for (i=0; i <= top_of_world;i++) {
     if (world[i].zone==zrnum) {
       for (j = 0; j < DIR_COUNT; j++) {
         /*check for exit, but ignore off limits if you're in an offlimit zone*/
@@ -4213,7 +4215,7 @@ ACMD (do_zcheck)
     } /*is room in this zone?*/
   } /*checking rooms*/
 
-  for (i=0; i<top_of_world;i++) {
+  for (i=0; i <= top_of_world;i++) {
     if (world[i].zone==zrnum) {
       m++;
       for (j = 0, k = 0; j < DIR_COUNT; j++)
@@ -4406,7 +4408,7 @@ static void trg_checkload(struct char_data *ch, trig_vnum tvnum)
     } /*for cmd_no......*/
   }  /*for zone...*/
 
-  for (i = 0; i < top_of_mobt; i++) {
+  for (i = 0; i <= top_of_mobt; i++) {
     if (!mob_proto[i].proto_script)
       continue;
 
@@ -4419,7 +4421,7 @@ static void trg_checkload(struct char_data *ch, trig_vnum tvnum)
       }
   }
 
-  for (j = 0; j < top_of_objt; j++) {
+  for (j = 0; j <= top_of_objt; j++) {
     if (!obj_proto[j].proto_script)
       continue;
 
@@ -4432,7 +4434,7 @@ static void trg_checkload(struct char_data *ch, trig_vnum tvnum)
       }
   }
 
-  for (k = 0;k < top_of_world; k++) {
+  for (k = 0;k <= top_of_world; k++) {
     if (!world[k].proto_script)
       continue;
 
