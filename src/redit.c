@@ -275,24 +275,30 @@ void redit_save_internally(struct descriptor_data *d)
     if (STATE(dsc) == CON_ZEDIT) {
       for (j = 0; OLC_ZONE(dsc)->cmd[j].command != 'S'; j++)
         switch (OLC_ZONE(dsc)->cmd[j].command) {
+          /* Room rnums at or above the new room moved up one, as add_room()
+           * does for the live table.  A door's arg2 is its direction, not a
+           * room, and NOWHERE must stay NOWHERE: both used to be shifted. */
           case 'O':
           case 'M':
           case 'T':
           case 'V':
-            OLC_ZONE(dsc)->cmd[j].arg3 += (OLC_ZONE(dsc)->cmd[j].arg3 >= room_num);
+            if (OLC_ZONE(dsc)->cmd[j].arg3 != NOWHERE &&
+                OLC_ZONE(dsc)->cmd[j].arg3 >= room_num)
+              OLC_ZONE(dsc)->cmd[j].arg3++;
             break;
           case 'D':
-            OLC_ZONE(dsc)->cmd[j].arg2 += (OLC_ZONE(dsc)->cmd[j].arg2 >= room_num);
-            /* Fall through */
           case 'R':
-            OLC_ZONE(dsc)->cmd[j].arg1 += (OLC_ZONE(dsc)->cmd[j].arg1 >= room_num);
+            if (OLC_ZONE(dsc)->cmd[j].arg1 != NOWHERE &&
+                OLC_ZONE(dsc)->cmd[j].arg1 >= room_num)
+              OLC_ZONE(dsc)->cmd[j].arg1++;
             break;
           }
     } else if (STATE(dsc) == CON_REDIT) {
       for (j = 0; j < DIR_COUNT; j++)
-        if (OLC_ROOM(dsc)->dir_option[j])
-          if (OLC_ROOM(dsc)->dir_option[j]->to_room >= room_num)
-            OLC_ROOM(dsc)->dir_option[j]->to_room++;
+        if (OLC_ROOM(dsc)->dir_option[j] &&
+            OLC_ROOM(dsc)->dir_option[j]->to_room != NOWHERE &&
+            OLC_ROOM(dsc)->dir_option[j]->to_room >= room_num)
+          OLC_ROOM(dsc)->dir_option[j]->to_room++;
     }
   }
 }
