@@ -182,6 +182,27 @@ static void make_objects(int count, const char *short_desc)
   }
 }
 
+static void free_rooms(void)
+{
+  free(world);
+  world = NULL;
+  top_of_world = 0;
+}
+
+/* count rooms (vnums 300..) named name, all in zone rnum 0, no exits. */
+static void make_rooms(int count, const char *name)
+{
+  int i;
+  free_rooms();
+  CREATE(world, struct room_data, count);
+  top_of_world = count - 1;
+  for (i = 0; i < count; i++) {
+    world[i].number = 300 + i;
+    world[i].zone = 0;
+    world[i].name = (char *)name;
+  }
+}
+
 static void free_mobiles(void)
 {
   free(mob_proto);
@@ -253,6 +274,7 @@ void tearDown(void)
 {
   free_objects();
   free_mobiles();
+  free_rooms();
   logfile = NULL;
   if (capture_log)
     fclose(capture_log);
@@ -410,6 +432,90 @@ void test_mob_flag_list_reads_prototypes_without_instantiating(void)
   TEST_ASSERT_NULL(strstr(paged, "200"));
 }
 
+/* ---------------------------------------------------------------------
+ * F3-15: every list builder stopped at the buffer limit without telling
+ * the builder or the log.  A full list now ends in the truncation trailer
+ * after the last whole row and logs op=list-truncated naming the command.
+ * --------------------------------------------------------------------- */
+static char *long_text(char *buf, size_t size)
+{
+  memset(buf, 'y', size - 1);
+  buf[size - 1] = '\0';
+  return buf;
+}
+
+void test_obj_name_list_reports_truncation(void)
+{
+  char desc[501];
+  int i;
+
+  struct zone_data zone0;
+
+  /* do_oasis_list resolves a lone argument as a zone first; a world always
+   * has zone 0, and only then does a non-numeric argument become a name. */
+  memset(&zone0, 0, sizeof(zone0));
+  zone_table = &zone0;
+  top_of_zone_table = 0;
+
+  make_objects(120, long_text(desc, sizeof(desc)));
+  for (i = 0; i <= top_of_objt; i++)
+    obj_proto[i].name = (char *)"widget";
+
+  run_list(SCMD_OASIS_OLIST, "widget");
+  zone_table = NULL;
+
+  TEST_ASSERT_EQUAL_INT(1, paged_calls);
+  TEST_ASSERT_TRUE(strlen(paged) < MAX_STRING_LENGTH);
+  TEST_ASSERT_NOT_NULL(strstr(paged, "*** list truncated ***"));
+  TEST_ASSERT_TRUE(log_has("op=list-truncated"));
+  TEST_ASSERT_TRUE(log_has("resource=olist-name"));
+  for (i = 0; i <= top_of_objt; i++)
+    obj_proto[i].name = NULL;
+}
+
+void test_obj_range_list_reports_truncation(void)
+{
+  char desc[501];
+
+  make_objects(120, long_text(desc, sizeof(desc)));
+
+  run_list(SCMD_OASIS_OLIST, "100 300");
+
+  TEST_ASSERT_EQUAL_INT(1, paged_calls);
+  TEST_ASSERT_NOT_NULL(strstr(paged, "*** list truncated ***"));
+  TEST_ASSERT_TRUE(log_has("resource=olist "));
+}
+
+void test_room_list_truncates_on_a_whole_row(void)
+{
+  char name[501];
+  const char *trailer;
+
+  make_rooms(120, long_text(name, sizeof(name)));
+
+  run_list(SCMD_OASIS_RLIST, "300 500");
+
+  TEST_ASSERT_EQUAL_INT(1, paged_calls);
+  trailer = strstr(paged, "\r\n*** list truncated ***");
+  TEST_ASSERT_NOT_NULL(trailer);
+  /* The row before the trailer is complete: it ends in its own CRLF. */
+  TEST_ASSERT_TRUE(trailer - paged >= 2);
+  TEST_ASSERT_EQUAL_MEMORY("\r\n", trailer - 2, 2);
+  TEST_ASSERT_TRUE(log_has("resource=rlist "));
+}
+
+void test_short_room_list_is_not_reported_truncated(void)
+{
+  make_rooms(3, "a quiet glade");
+
+  run_list(SCMD_OASIS_RLIST, "300 500");
+
+  TEST_ASSERT_EQUAL_INT(1, paged_calls);
+  TEST_ASSERT_NOT_NULL(strstr(paged, "a quiet glade"));
+  TEST_ASSERT_NULL(strstr(paged, "*** list truncated ***"));
+  TEST_ASSERT_FALSE(log_has("op=list-truncated"));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -422,5 +528,9 @@ int main(void)
   RUN_TEST(test_obj_type_list_lists_types_the_switch_does_not_special_case);
   RUN_TEST(test_mob_level_list_reads_prototypes_without_instantiating);
   RUN_TEST(test_mob_flag_list_reads_prototypes_without_instantiating);
+  RUN_TEST(test_obj_name_list_reports_truncation);
+  RUN_TEST(test_obj_range_list_reports_truncation);
+  RUN_TEST(test_room_list_truncates_on_a_whole_row);
+  RUN_TEST(test_short_room_list_is_not_reported_truncated);
   return UNITY_END();
 }

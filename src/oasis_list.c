@@ -100,8 +100,8 @@ static void list_zones(struct char_data *ch, zone_rnum rnum, zone_vnum vmin, zon
 static void perform_mob_flag_list(struct char_data * ch, char *arg)
 {
   int num, mob_flag, found = 0;
-  size_t len;
   char buf[MAX_STRING_LENGTH];
+  struct tb_buf tb;
 
   mob_flag = tb_parse_int_or_zero(arg);
 
@@ -110,7 +110,10 @@ static void perform_mob_flag_list(struct char_data * ch, char *arg)
     return;
   }
 
-  len = snprintf(buf, sizeof(buf), "Listing mobiles with %s%s%s flag set.\r\n", QYEL, action_bits[mob_flag], QNRM);
+  /* F3-15: rows go through olc_list_rowf(), which refuses a row that does
+   * not fit; OLC_LIST_FINISH reports any truncation to the builder and log. */
+  olc_list_begin(&tb, buf, sizeof(buf));
+  tb_buf_appendf(&tb, "Listing mobiles with %s%s%s flag set.\r\n", QYEL, action_bits[mob_flag], QNRM);
 
   for (num = 0; num <= top_of_mobt; num++) {
     if (IS_SET_AR((mob_proto[num].char_specials.saved.act), mob_flag)) {
@@ -120,26 +123,25 @@ static void perform_mob_flag_list(struct char_data * ch, char *arg)
        * and its scripts into the live world, and extract_char only queues
        * the removal, so every listed mob sat in room 0 until the next
        * extract_pending_chars(). */
-      len += snprintf(buf + len, sizeof(buf) - len, "%s%3d. %s[%s%5d%s]%s Level %s%-3d%s %s%s\r\n", CCNRM(ch, C_NRM),++found,
+      if (!olc_list_rowf(&tb, "%s%3d. %s[%s%5d%s]%s Level %s%-3d%s %s%s\r\n", CCNRM(ch, C_NRM), found + 1,
                     CCCYN(ch, C_NRM), CCYEL(ch, C_NRM), mob_index[num].vnum, CCCYN(ch, C_NRM), CCNRM(ch, C_NRM),
                     CCYEL(ch, C_NRM), mob_proto[num].player.level, CCNRM(ch, C_NRM),
-                    mob_proto[num].player.short_descr, CCNRM(ch, C_NRM));
-      if (len > sizeof(buf))
+                    mob_proto[num].player.short_descr, CCNRM(ch, C_NRM)))
         break;
+      found++;
     }
   }
-  if (!found)
+  if (!found && !tb_buf_truncated(&tb))
     send_to_char(ch,"None Found!\r\n");
   else
-    page_string(ch->desc, buf, TRUE);
-  return;
+    OLC_LIST_FINISH(ch, &tb, "mlist-flags", found);
 }
 
 static void perform_mob_level_list(struct char_data * ch, char *arg)
 {
   int num, mob_level, found = 0;
-  size_t len;
   char buf[MAX_STRING_LENGTH];
+  struct tb_buf tb;
 
   mob_level = tb_parse_int_or_zero(arg);
 
@@ -148,23 +150,24 @@ static void perform_mob_level_list(struct char_data * ch, char *arg)
     return;
   }
 
-  len = snprintf(buf, sizeof(buf), "Listing mobiles of level %s%d%s\r\n", QYEL, mob_level, QNRM);
+  /* F3-15: rows go through olc_list_rowf(), which refuses a row that does
+   * not fit; OLC_LIST_FINISH reports any truncation to the builder and log. */
+  olc_list_begin(&tb, buf, sizeof(buf));
+  tb_buf_appendf(&tb, "Listing mobiles of level %s%d%s\r\n", QYEL, mob_level, QNRM);
   for (num = 0; num <= top_of_mobt; num++) {
     if ((mob_proto[num].player.level) == mob_level) {
       /* F3-17: prototype fields only; see perform_mob_flag_list. */
-      len += snprintf(buf + len, sizeof(buf) - len, "%s%3d. %s[%s%5d%s]%s %s%s\r\n", CCNRM(ch, C_NRM),++found,
+      if (!olc_list_rowf(&tb, "%s%3d. %s[%s%5d%s]%s %s%s\r\n", CCNRM(ch, C_NRM), found + 1,
                     CCCYN(ch, C_NRM), CCYEL(ch, C_NRM), mob_index[num].vnum, CCCYN(ch, C_NRM), CCNRM(ch, C_NRM),
-                    mob_proto[num].player.short_descr, CCNRM(ch, C_NRM));
-      if (len > sizeof(buf))
+                    mob_proto[num].player.short_descr, CCNRM(ch, C_NRM)))
         break;
+      found++;
     }
   }
-  if (!found)
+  if (!found && !tb_buf_truncated(&tb))
     send_to_char(ch,"None Found!\r\n");
   else
-    page_string(ch->desc, buf, TRUE);
-
-  return;
+    OLC_LIST_FINISH(ch, &tb, "mlist-level", found);
 }
 
 static void add_to_obj_list(struct obj_list_item *lst, int num_items, obj_vnum nvo, int nval)
@@ -188,11 +191,11 @@ static void add_to_obj_list(struct obj_list_item *lst, int num_items, obj_vnum n
 
 static void perform_obj_type_list(struct char_data * ch, char *arg)
 {
-  int num, itemtype, v1, v2, found = 0;
-  size_t len = 0, tmp_len = 0;
+  int num, itemtype, v1, v2, found = 0, ok;
   obj_vnum ov;
   obj_rnum r_num;
   char buf[MAX_STRING_LENGTH];
+  struct tb_buf tb;
 
   /* F3-03: arg is builder-typed ("olist type <num>") and indexes the
    * item_types[] name table directly.  Reject anything that is not a whole
@@ -208,7 +211,10 @@ static void perform_obj_type_list(struct char_data * ch, char *arg)
     return;
   }
 
-  len = snprintf(buf, sizeof(buf), "Listing all objects of type %s[%s]%s\r\n",
+  /* F3-15: rows go through olc_list_rowf(), which refuses a row that does
+   * not fit; OLC_LIST_FINISH reports any truncation to the builder and log. */
+  olc_list_begin(&tb, buf, sizeof(buf));
+  tb_buf_appendf(&tb, "Listing all objects of type %s[%s]%s\r\n",
        QYEL, item_types[itemtype], QNRM);
 
   for (num = 0; num <= top_of_objt; num++) {
@@ -222,66 +228,66 @@ static void perform_obj_type_list(struct char_data * ch, char *arg)
           case ITEM_LIGHT:
             v1 = (obj_proto[num].obj_flags.value[2]);
             if (v1 == -1)
-              tmp_len = snprintf(buf+len, sizeof(buf)-len, "%s%3d%s) %s[%s%5d%s]%s INFINITE%s %s%s\r\n",
-                   QGRN, ++found, QNRM, QCYN, QYEL, ov, QCYN, QBRED, QCYN, obj_proto[r_num].short_description, QNRM);
+              ok = olc_list_rowf(&tb, "%s%3d%s) %s[%s%5d%s]%s INFINITE%s %s%s\r\n",
+                   QGRN, found + 1, QNRM, QCYN, QYEL, ov, QCYN, QBRED, QCYN, obj_proto[r_num].short_description, QNRM);
             else
-              tmp_len = snprintf(buf+len, sizeof(buf)-len,"%s%3d%s) %s[%s%5d%s]%s (%-3dhrs) %s%s%s\r\n",
-                   QGRN, ++found, QNRM, QCYN, QYEL, ov, QCYN, QNRM, v1, QCYN, obj_proto[r_num].short_description, QNRM);
+              ok = olc_list_rowf(&tb, "%s%3d%s) %s[%s%5d%s]%s (%-3dhrs) %s%s%s\r\n",
+                   QGRN, found + 1, QNRM, QCYN, QYEL, ov, QCYN, QNRM, v1, QCYN, obj_proto[r_num].short_description, QNRM);
             break;
 
           case ITEM_SCROLL:
           case ITEM_POTION:
-            tmp_len = snprintf(buf+len, sizeof(buf)-len,"%s%3d%s) %s[%s%8d%s] %s%s\r\n",
-                 QGRN, ++found, QNRM, QCYN, QYEL, ov, QCYN, obj_proto[r_num].short_description, QNRM);
+            ok = olc_list_rowf(&tb, "%s%3d%s) %s[%s%8d%s] %s%s\r\n",
+                 QGRN, found + 1, QNRM, QCYN, QYEL, ov, QCYN, obj_proto[r_num].short_description, QNRM);
             break;
 
           case ITEM_WAND:
           case ITEM_STAFF:
             v1 = (obj_proto[num].obj_flags.value[1]);
             v2 = (obj_proto[num].obj_flags.value[3]);
-            tmp_len = snprintf(buf+len, sizeof(buf)-len,"%s%3d%s) %s[%s%8d%s]%s (%dx%s) %s%s%s\r\n",
-                 QGRN, ++found, QNRM, QCYN, QYEL, ov, QCYN, QNRM, v1, skill_name(v2), QCYN, obj_proto[r_num].short_description, QNRM);
+            ok = olc_list_rowf(&tb, "%s%3d%s) %s[%s%8d%s]%s (%dx%s) %s%s%s\r\n",
+                 QGRN, found + 1, QNRM, QCYN, QYEL, ov, QCYN, QNRM, v1, skill_name(v2), QCYN, obj_proto[r_num].short_description, QNRM);
             break;
 
           case ITEM_WEAPON:
             v1 = ((obj_proto[num].obj_flags.value[2]+1)*(obj_proto[r_num].obj_flags.value[1])) / 2;
-            tmp_len = snprintf(buf+len, sizeof(buf)-len,"%s%3d%s) %s[%s%8d%s]%s (%d Avg Dam) %s%s%s\r\n",
-                 QGRN, ++found, QNRM, QCYN, QYEL, ov, QCYN, QNRM, v1, QCYN, obj_proto[r_num].short_description, QNRM);
+            ok = olc_list_rowf(&tb, "%s%3d%s) %s[%s%8d%s]%s (%d Avg Dam) %s%s%s\r\n",
+                 QGRN, found + 1, QNRM, QCYN, QYEL, ov, QCYN, QNRM, v1, QCYN, obj_proto[r_num].short_description, QNRM);
             break;
 
           case ITEM_ARMOR:
-            tmp_len = snprintf(buf+len, sizeof(buf)-len,"%s%3d%s) %s[%s%8d%s]%s (%dAC) %s%s%s\r\n",
-                 QGRN, ++found, QNRM, QCYN, QYEL, ov, QCYN, QNRM, v1, QCYN, obj_proto[r_num].short_description, QNRM);
+            ok = olc_list_rowf(&tb, "%s%3d%s) %s[%s%8d%s]%s (%dAC) %s%s%s\r\n",
+                 QGRN, found + 1, QNRM, QCYN, QYEL, ov, QCYN, QNRM, v1, QCYN, obj_proto[r_num].short_description, QNRM);
             break;
 
           case ITEM_CONTAINER:
-            tmp_len = snprintf(buf+len, sizeof(buf)-len,"%s%3d%s) %s[%s%8d%s]%s (Max: %d) %s%s%s\r\n",
-                 QGRN, ++found, QNRM, QCYN, QYEL, ov, QCYN, QNRM, v1, QCYN, obj_proto[r_num].short_description, QNRM);
+            ok = olc_list_rowf(&tb, "%s%3d%s) %s[%s%8d%s]%s (Max: %d) %s%s%s\r\n",
+                 QGRN, found + 1, QNRM, QCYN, QYEL, ov, QCYN, QNRM, v1, QCYN, obj_proto[r_num].short_description, QNRM);
             break;
 
           case ITEM_DRINKCON:
           case ITEM_FOUNTAIN:
             if (v1 != -1)
-              tmp_len = snprintf(buf+len, sizeof(buf)-len,"%s%3d%s) %s[%s%8d%s]%s (Max: %d) %s%s%s\r\n",
-                   QGRN, ++found, QNRM, QCYN, QYEL, ov, QCYN, QNRM, v1, QCYN, obj_proto[r_num].short_description, QNRM);
+              ok = olc_list_rowf(&tb, "%s%3d%s) %s[%s%8d%s]%s (Max: %d) %s%s%s\r\n",
+                   QGRN, found + 1, QNRM, QCYN, QYEL, ov, QCYN, QNRM, v1, QCYN, obj_proto[r_num].short_description, QNRM);
             else
-              tmp_len = snprintf(buf+len, sizeof(buf)-len,"%s%3d%s) %s[%s%8d%s] %sINFINITE%s %s%s\r\n",
-                   QGRN, ++found, QNRM, QCYN, QYEL, ov, QCYN, QBRED, QCYN, obj_proto[r_num].short_description, QNRM);
+              ok = olc_list_rowf(&tb, "%s%3d%s) %s[%s%8d%s] %sINFINITE%s %s%s\r\n",
+                   QGRN, found + 1, QNRM, QCYN, QYEL, ov, QCYN, QBRED, QCYN, obj_proto[r_num].short_description, QNRM);
             break;
 
           case ITEM_FOOD:
             v2 = (obj_proto[num].obj_flags.value[3]);
             if (v2 != 0)
-              tmp_len = snprintf(buf+len, sizeof(buf)-len,"%s%3d%s) %s[%s%8d%s]%s (%dhrs) %s%s %sPoisoned!%s\r\n",
-                   QGRN, ++found, QNRM, QCYN, QYEL, ov, QCYN, QNRM, v1, QCYN, obj_proto[r_num].short_description, QBGRN, QNRM);
+              ok = olc_list_rowf(&tb, "%s%3d%s) %s[%s%8d%s]%s (%dhrs) %s%s %sPoisoned!%s\r\n",
+                   QGRN, found + 1, QNRM, QCYN, QYEL, ov, QCYN, QNRM, v1, QCYN, obj_proto[r_num].short_description, QBGRN, QNRM);
             else
-              tmp_len = snprintf(buf+len, sizeof(buf)-len,"%s%3d%s) %s[%s%8d%s]%s (%dhrs) %s%s%s\r\n",
-                   QGRN, ++found, QNRM, QCYN, QYEL, ov, QCYN, QNRM, v1, QCYN, obj_proto[r_num].short_description, QNRM);
+              ok = olc_list_rowf(&tb, "%s%3d%s) %s[%s%8d%s]%s (%dhrs) %s%s%s\r\n",
+                   QGRN, found + 1, QNRM, QCYN, QYEL, ov, QCYN, QNRM, v1, QCYN, obj_proto[r_num].short_description, QNRM);
             break;
 
           case ITEM_MONEY:
-            tmp_len = snprintf(buf+len, sizeof(buf)-len,"%s%3d%s) %s[%s%8d%s] %s%s (%s%d coins%s)\r\n",
-                 QGRN, ++found, QNRM, QCYN, QYEL, ov, QCYN, obj_proto[r_num].short_description, QNRM, QYEL, v1, QNRM);
+            ok = olc_list_rowf(&tb, "%s%3d%s) %s[%s%8d%s] %s%s (%s%d coins%s)\r\n",
+                 QGRN, found + 1, QNRM, QCYN, QYEL, ov, QCYN, obj_proto[r_num].short_description, QNRM, QYEL, v1, QNRM);
             break;
 
           /* The 'normal' items - don't provide extra info.  Any other valid
@@ -297,20 +303,17 @@ static void perform_obj_type_list(struct char_data * ch, char *arg)
           case ITEM_PEN:
           case ITEM_BOAT:
           case ITEM_KEY:
-            tmp_len = snprintf(buf+len, sizeof(buf)-len,"%s%3d%s) %s[%s%8d%s] %s%s\r\n",
-                 QGRN, ++found, QNRM, QCYN, QYEL, ov, QCYN, obj_proto[r_num].short_description, QNRM);
+            ok = olc_list_rowf(&tb, "%s%3d%s) %s[%s%8d%s] %s%s\r\n",
+                 QGRN, found + 1, QNRM, QCYN, QYEL, ov, QCYN, obj_proto[r_num].short_description, QNRM);
             break;
         }
-        if (len + tmp_len < sizeof(buf) - 1)
-          len += tmp_len;
-        else {
-		  buf[sizeof(buf) -1] = '\0';
-		  break;	
-		}
+        if (!ok)
+          break;
+        found++;
       }
     }
   }
-  page_string(ch->desc, buf, TRUE);
+  OLC_LIST_FINISH(ch, &tb, "olist-type", found);
 }
 
 static void perform_obj_aff_list(struct char_data * ch, char *arg)
@@ -423,28 +426,30 @@ static void perform_obj_aff_list(struct char_data * ch, char *arg)
 static void perform_obj_name_list(struct char_data * ch, char *arg)
 {
   int num, found = 0;
-  size_t len = 0, tmp_len = 0;
   obj_vnum ov;
   char buf[MAX_STRING_LENGTH];
+  struct tb_buf tb;
 
-  len = snprintf(buf, sizeof(buf), "Objects with the name '%s'\r\n"
+  /* F3-15: rows go through olc_list_rowf(), which refuses a row that does
+   * not fit; OLC_LIST_FINISH reports any truncation to the builder and log. */
+  olc_list_begin(&tb, buf, sizeof(buf));
+  tb_buf_appendf(&tb, "Objects with the name '%s'\r\n"
   "Index VNum    Num   Object Name                                Object Type\r\n"
   "----- ------- ----- ------------------------------------------ ----------------\r\n", arg);
   for (num = 0; num <= top_of_objt; num++) {
     if (is_name(arg, obj_proto[num].name)) {
       ov = obj_index[num].vnum;
-      tmp_len = snprintf(buf+len, sizeof(buf)-len, "%s%4d%s) %s[%s%5d%s] %s(%s%3d%s)%s %-*s%s [%s]%s%s\r\n",
-                QGRN, ++found, QNRM, QCYN, QYEL, ov, QCYN, QNRM,
+      if (!olc_list_rowf(&tb, "%s%4d%s) %s[%s%5d%s] %s(%s%3d%s)%s %-*s%s [%s]%s%s\r\n",
+                QGRN, found + 1, QNRM, QCYN, QYEL, ov, QCYN, QNRM,
                 QGRN, obj_index[num].number, QNRM, QCYN, 42+count_color_chars(obj_proto[num].short_description),
                 obj_proto[num].short_description, QYEL, item_types[obj_proto[num].obj_flags.type_flag], QNRM,
-                obj_proto[num].proto_script ? " [TRIG]" : "");
-      len += tmp_len;
-      if (len > sizeof(buf))
+                obj_proto[num].proto_script ? " [TRIG]" : ""))
         break;
+      found++;
     }
   }
 
-  page_string(ch->desc, buf, TRUE);
+  OLC_LIST_FINISH(ch, &tb, "olist-name", found);
 }
 
 /* Ingame Commands */
@@ -645,9 +650,10 @@ static void list_rooms(struct char_data *ch, zone_rnum rnum, room_vnum vmin, roo
 {
   room_rnum i;
   room_vnum bottom, top;
-  int j, counter = 0, nlen;
-  size_t len;
+  int j, counter = 0, ok;
+  size_t row_start;
   char buf[MAX_STRING_LENGTH];
+  struct tb_buf tb;
 
   /* Expect a minimum / maximum number if the rnum for the zone is NOWHERE. */
   if (rnum != NOWHERE) {
@@ -658,59 +664,53 @@ static void list_rooms(struct char_data *ch, zone_rnum rnum, room_vnum vmin, roo
     top    = vmax;
   }
 
-  len = strlcpy(buf,
+  /* F3-15: a room row is written in pieces (name, one entry per exit that
+   * leaves the zone, CRLF).  If any piece does not fit, the whole row is
+   * rolled back to row_start so the list never ends in a half-written row,
+   * and OLC_LIST_FINISH reports the truncation to the builder and log. */
+  olc_list_begin(&tb, buf, sizeof(buf));
+  tb_buf_append(&tb,
   "Index VNum    Room Name                                    Exits\r\n"
-  "----- ------- -------------------------------------------- -----\r\n",
-  sizeof(buf));
+  "----- ------- -------------------------------------------- -----\r\n");
 
   for (i = 0; i <= top_of_world; i++) {
 
     /** Check to see if this room is one of the ones needed to be listed.    **/
     if ((world[i].number >= bottom) && (world[i].number <= top)) {
-      counter++;
+      row_start = tb.length;
 
-      nlen = snprintf(buf + len, sizeof(buf) - len, "%4d) [%s%-5d%s] %s%-*s%s %s",
-                          counter, QGRN, world[i].number, QNRM,
+      ok = olc_list_rowf(&tb, "%4d) [%s%-5d%s] %s%-*s%s %s",
+                          counter + 1, QGRN, world[i].number, QNRM,
                           QCYN, count_color_chars(world[i].name)+44, world[i].name, QNRM,
                           world[i].proto_script ? "[TRIG] " : ""
                           );
-      if (nlen < 0 || len + (size_t)nlen >= sizeof(buf)) {
-        buf[len] = '\0';
-        break;
-      }
-      len += (size_t)nlen;
 
-      for (j = 0; j < DIR_COUNT; j++) {
+      for (j = 0; ok && j < DIR_COUNT; j++) {
         if (W_EXIT(i, j) == NULL)
           continue;
         if (W_EXIT(i, j)->to_room == NOWHERE)
           continue;
 
-        if (world[W_EXIT(i, j)->to_room].zone != world[i].zone) {
-          nlen = snprintf(buf + len, sizeof(buf) - len, "(%s%d%s)", QYEL,
+        if (world[W_EXIT(i, j)->to_room].zone != world[i].zone)
+          ok = olc_list_rowf(&tb, "(%s%d%s)", QYEL,
                           world[W_EXIT(i, j)->to_room].number, QNRM);
-          if (nlen < 0 || len + (size_t)nlen >= sizeof(buf)) {
-            buf[len] = '\0';
-            break;
-          }
-          len += (size_t)nlen;
-        }
-
       }
 
-      nlen = snprintf(buf + len, sizeof(buf) - len, "\r\n");
-      if (nlen < 0 || len + (size_t)nlen >= sizeof(buf)) {
-        buf[len] = '\0';
+      if (ok)
+        ok = olc_list_rowf(&tb, "\r\n");
+      if (!ok) {
+        tb.length = row_start;
+        tb.data[row_start] = '\0';
         break;
       }
-      len += (size_t)nlen;
+      counter++;
     }
   }
 
-  if (counter == 0)
+  if (counter == 0 && !tb_buf_truncated(&tb))
     send_to_char(ch, "No rooms found for zone/range specified.\r\n");
   else
-    page_string(ch->desc, buf, TRUE);
+    OLC_LIST_FINISH(ch, &tb, "rlist", counter);
 }
 
 /* List all mobiles in a zone. */
@@ -719,8 +719,8 @@ static void list_mobiles(struct char_data *ch, zone_rnum rnum, mob_vnum vmin, mo
   mob_rnum i;
   mob_vnum bottom, top;
   int counter = 0;
-  size_t len;
   char buf[MAX_STRING_LENGTH];
+  struct tb_buf tb;
 
   if (rnum != NOWHERE) {
     bottom = zone_table[rnum].bot;
@@ -730,33 +730,33 @@ static void list_mobiles(struct char_data *ch, zone_rnum rnum, mob_vnum vmin, mo
     top    = vmax;
   }
 
-  len = strlcpy(buf,
+  /* F3-15: rows go through olc_list_rowf(), which refuses a row that does
+   * not fit; OLC_LIST_FINISH reports any truncation to the builder and log. */
+  olc_list_begin(&tb, buf, sizeof(buf));
+  tb_buf_append(&tb,
   "Index VNum    Mobile Name                                  Level\r\n"
-  "----- ------- -------------------------------------------- -----\r\n",
-  sizeof(buf));
+  "----- ------- -------------------------------------------- -----\r\n");
 
   if (!top_of_mobt)
     return;
 
   for (i = 0; i <= top_of_mobt; i++) {
     if (mob_index[i].vnum >= bottom && mob_index[i].vnum <= top) {
-      counter++;
-
-      len += snprintf(buf + len, sizeof(buf) - len, "%s%4d%s) [%s%-5d%s] %s%-*s %s[%4d]%s%s\r\n",
-                   QGRN, counter, QNRM, QGRN, mob_index[i].vnum, QNRM,
+      if (!olc_list_rowf(&tb, "%s%4d%s) [%s%-5d%s] %s%-*s %s[%4d]%s%s\r\n",
+                   QGRN, counter + 1, QNRM, QGRN, mob_index[i].vnum, QNRM,
                    QCYN, count_color_chars(mob_proto[i].player.short_descr)+44, mob_proto[i].player.short_descr,
                    QYEL, mob_proto[i].player.level, QNRM,
                    mob_proto[i].proto_script ? " [TRIG]" : ""
-              );
-      if (len > sizeof(buf))
-		break;
+              ))
+        break;
+      counter++;
     }
   }
 
-  if (counter == 0)
+  if (counter == 0 && !tb_buf_truncated(&tb))
     send_to_char(ch, "None found.\r\n");
   else
-    page_string(ch->desc, buf, TRUE);
+    OLC_LIST_FINISH(ch, &tb, "mlist", counter);
 }
 
 /* List all objects in a zone. */
@@ -766,7 +766,7 @@ static void list_objects(struct char_data *ch, zone_rnum rnum, obj_vnum vmin, ob
   obj_vnum bottom, top;
   char buf[MAX_STRING_LENGTH];
   int counter = 0;
-  size_t len;
+  struct tb_buf tb;
 
   if (rnum != NOWHERE) {
     bottom = zone_table[rnum].bot;
@@ -776,34 +776,33 @@ static void list_objects(struct char_data *ch, zone_rnum rnum, obj_vnum vmin, ob
     top    = vmax;
   }
 
-  len = strlcpy(buf,
+  /* F3-15: rows go through olc_list_rowf(), which refuses a row that does
+   * not fit; OLC_LIST_FINISH reports any truncation to the builder and log. */
+  olc_list_begin(&tb, buf, sizeof(buf));
+  tb_buf_append(&tb,
 	"Index VNum    Object Name                                  Object Type\r\n"
-	"----- ------- -------------------------------------------- ----------------\r\n",
-	sizeof(buf));
+	"----- ------- -------------------------------------------- ----------------\r\n");
 
   if (!top_of_objt)
     return;
 
   for (i = 0; i <= top_of_objt; i++) {
     if (obj_index[i].vnum >= bottom && obj_index[i].vnum <= top) {
-      counter++;
-
-      len += snprintf(buf + len, sizeof(buf) - len, "%s%4d%s) [%s%-5d%s] %s%-*s %s[%s]%s%s\r\n",
-                   QGRN, counter, QNRM, QGRN, obj_index[i].vnum, QNRM,
+      if (!olc_list_rowf(&tb, "%s%4d%s) [%s%-5d%s] %s%-*s %s[%s]%s%s\r\n",
+                   QGRN, counter + 1, QNRM, QGRN, obj_index[i].vnum, QNRM,
                    QCYN, count_color_chars(obj_proto[i].short_description)+44, obj_proto[i].short_description, QYEL,
                    item_types[obj_proto[i].obj_flags.type_flag], QNRM,
                    obj_proto[i].proto_script ? " [TRIG]" : ""
-              );
-
-      if (len > sizeof(buf))
-		break;
+              ))
+        break;
+      counter++;
     }
   }
 
-  if (counter == 0)
+  if (counter == 0 && !tb_buf_truncated(&tb))
     send_to_char(ch, "None found.\r\n");
   else
-    page_string(ch->desc, buf, TRUE);
+    OLC_LIST_FINISH(ch, &tb, "olist", counter);
 }
 
 /* List all shops in a zone. */
@@ -854,10 +853,10 @@ static void list_shops(struct char_data *ch, zone_rnum rnum, shop_vnum vmin, sho
 static void list_zones(struct char_data *ch, zone_rnum rnum, zone_vnum vmin, zone_vnum vmax, char *name)
 {
   int counter = 0;
-  size_t len = 0, tmp_len = 0;
   zone_rnum i;
   zone_vnum bottom, top;
   char buf[MAX_STRING_LENGTH];
+  struct tb_buf tb;
   bool use_name=FALSE;
 
   bottom = vmin;
@@ -875,7 +874,10 @@ static void list_zones(struct char_data *ch, zone_rnum rnum, zone_vnum vmin, zon
       top    = zone_table[top_of_zone_table].number; /* Highest Zone */
   }
 
-  len = snprintf(buf, sizeof(buf),
+  /* F3-15: rows go through olc_list_rowf(), which refuses a row that does
+   * not fit; OLC_LIST_FINISH reports any truncation to the builder and log. */
+  olc_list_begin(&tb, buf, sizeof(buf));
+  tb_buf_append(&tb,
   "VNum  Zone Name                      Builder(s)\r\n"
   "----- ------------------------------ --------------------------------------\r\n");
 
@@ -885,22 +887,19 @@ static void list_zones(struct char_data *ch, zone_rnum rnum, zone_vnum vmin, zon
   for (i = 0; i <= top_of_zone_table; i++) {
     if (zone_table[i].number >= bottom && zone_table[i].number <= top) {
       if ((!use_name) || (is_name(name, zone_table[i].builders))) {
-        counter++;
-
-        tmp_len = snprintf(buf+len, sizeof(buf)-len, "[%s%3d%s] %s%-*s %s%-1s%s\r\n",
+        if (!olc_list_rowf(&tb, "[%s%3d%s] %s%-*s %s%-1s%s\r\n",
             QGRN, zone_table[i].number, QNRM, QCYN, count_color_chars(zone_table[i].name)+30, zone_table[i].name,
-            QYEL, zone_table[i].builders ? zone_table[i].builders : "None.", QNRM);
-        len += tmp_len;
-        if (len > sizeof(buf))
+            QYEL, zone_table[i].builders ? zone_table[i].builders : "None.", QNRM))
           break;
+        counter++;
       }
     }
   }
 
-  if (!counter)
+  if (!counter && !tb_buf_truncated(&tb))
     send_to_char(ch, "  None found within those parameters.\r\n");
   else
-    page_string(ch->desc, buf, TRUE);
+    OLC_LIST_FINISH(ch, &tb, "zlist", counter);
 }
 
 /* Prints all of the zone information for the selected zone. */
