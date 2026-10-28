@@ -1075,7 +1075,9 @@ static void wait_past_the_pulse_range_is_rejected(void)
   TEST_ASSERT_NULL(GET_TRIG_VARS(t));
   TEST_ASSERT_TRUE(tb_captured_has_op("wait-overflow"));
   TEST_ASSERT_TRUE(tb_captured_has_op("wait-invalid"));
-  TEST_ASSERT_FALSE(tb_captured_has_op("event-schedule-overflow"));
+  /* Rejected before event_create(), whose clamp (event_key()) would have
+   * reported event/event-time without naming the trigger. */
+  TEST_ASSERT_FALSE(tb_captured_has_op("event-time"));
 }
 
 /* Run the event queue until t's wait has fired (at most four seconds). */

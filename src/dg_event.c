@@ -83,8 +83,8 @@ void event_init(void)
  * pass in NULL.
  * @param when Number of pulses between firing(s) of this event.  Valid
  * range is 1 .. LONG_MAX - pulse; smaller values are clamped to 1 with a
- * WARN (dg/event-when-clamped), larger ones are parked at key LONG_MAX
- * (never fire) with dg/event-schedule-overflow.
+ * WARN (dg/event-when-clamped), larger ones to LONG_MAX - pulse (queue key
+ * LONG_MAX) with event/event-time, by event_key().
  * @pre event_init() has run and event_free_all() has not (otherwise
  * FATAL dg/event-queue-uninit).
  * @retval event * Returns a pointer to the newly created event, never NULL.
@@ -368,10 +368,12 @@ int event_is_queued_at(struct event *event, const char *file, int line,
  * Begin generic (abstract) priority queue functions
  **************************************************************************/
 /** Bucket index for a queue key.
- * Invariant: keys are non-negative (event_create() and event_process()
- * reject overflowing keys).  A negative key would index head[]/tail[] out
- * of bounds, a corruption Valgrind cannot see because the neighbouring
- * memory is addressable, so stop the process instead. */
+ * Invariant: keys are non-negative (event_key() clamps every key that
+ * event_create() and event_process() make to at most LONG_MAX; only a pulse
+ * counter past LONG_MAX, after about 6.8 years of uptime where long is 32
+ * bits, could still make one negative).  A negative key would index
+ * head[]/tail[] out of bounds, a corruption Valgrind cannot see because the
+ * neighbouring memory is addressable, so stop the process instead. */
 static int event_bucket(long key)
 {
   if (key < 0) {

@@ -2084,12 +2084,13 @@ static int script_wait_number(const char *text, long *number, const char **rest)
 
 /* Accepted forms: "wait N" (pulses), "wait Ns" (seconds), "wait Nt" (mud
  * hours), "wait until H[:MM]" (next mud time of day). A wait below one
- * pulse waits one pulse (reported); a scaled wait above DG_WAIT_MAX_PULSES,
- * an unknown suffix or an out-of-day time is rejected with dg/wait-range
- * or a script_log, and a wait whose queue key (when + pulse) would pass
- * LONG_MAX with dg/wait-overflow. The wait_event_data allocated here is
- * owned by the event and freed by trig_wait_event() (or by event_cancel()
- * on extraction).
+ * pulse waits one pulse, and a scaled wait above DG_MAX_WAIT_PULSES (one
+ * mud year) waits that long; both are reported as dg/wait-range warnings.
+ * A missing or malformed number or an unknown suffix is rejected with a
+ * script_log, an out-of-day 'until' time with dg/wait-range, and a wait
+ * whose queue key (when + pulse) would pass LONG_MAX with dg/wait-overflow.
+ * The wait_event_data allocated here is owned by the event and freed by
+ * trig_wait_event() (or by event_cancel() on extraction).
  *
  * Processes a 'wait' command. Returns TRUE when the wait event was created
  * and the trigger is now suspended at cl->next; FALSE when the wait was
@@ -2240,10 +2241,11 @@ static int process_wait(void *go, trig_data *trig, int type, char *cmd,
     when = DG_MAX_WAIT_PULSES;
   }
 
-  /* event_create() keys the event at when + pulse. Past LONG_MAX (a long
-   * uptime where long is 32 bits) it parks the event, which never fires, and
-   * its dg/event-schedule-overflow cannot name the trigger, which would stay
-   * suspended at depth 1. Reject here, where trigger and owner are known. */
+  /* event_create() keys the event at when + pulse. Near the end of the
+   * pulse range (a long uptime where long is 32 bits) event_key() clamps
+   * that key to LONG_MAX and reports event/event-time without the trigger,
+   * so the wait would end early; once pulse itself passes LONG_MAX no key
+   * fits at all. Reject here, where trigger and owner are known. */
   if (pulse > (unsigned long)(LONG_MAX - when)) {
     TB_ERROR_MSG("dg", "wait-overflow", "process_wait",
                  "trig vnum %d owner type %d uid %ld: wait %ld at pulse %lu "
