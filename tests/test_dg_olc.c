@@ -742,6 +742,22 @@ static void short_highlighted_listing_is_complete(void)
   bd->str = NULL;
 }
 
+/* E2-09: a descriptor still holding an OLC structure while playing was
+ * handled with free(d->olc), leaking the scratch trigger and script buffer
+ * (LeakSanitizer reports them), and was logged only by a mudlog that named
+ * no builder. */
+static void stale_olc_structure_is_released_and_reported(void)
+{
+  const int vnums[] = { 100 };
+
+  make_index(vnums, 1);
+  start_edit(100);
+  STATE(bd) = CON_PLAYING;       /* an editor that left without cleanup_olc() */
+  tb_error_capture_reset();
+  start_edit(100);
+  TEST_ASSERT_EQUAL_STRING("olc-stale-state", tb_captured_ops[0]);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -766,5 +782,6 @@ int main(void)
   RUN_TEST(format_script_indents_nested_blocks);
   RUN_TEST(inserting_a_trigger_renumbers_displaced_live_instances);
   RUN_TEST(stale_live_rnum_after_insert_is_reported);
+  RUN_TEST(stale_olc_structure_is_released_and_reported);
   return UNITY_END();
 }

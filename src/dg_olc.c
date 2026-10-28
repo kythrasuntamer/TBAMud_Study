@@ -167,11 +167,16 @@ ACMD(do_oasis_trigedit)
     }
   }
   d = ch->desc;
-  /* Give descriptor an OLC structure. */
+  /* Give descriptor an OLC structure.  Every editor leaves through
+   * cleanup_olc(), which frees d->olc, and this command requires
+   * CON_PLAYING, so a leftover structure is a broken invariant.  A bare
+   * free() leaked its scratch trigger, script buffer and copies: report it
+   * with the builder and the stale session, and release all of it. */
   if (d->olc) {
-    mudlog(BRF, LVL_BUILDER, TRUE,
-      "SYSERR: do_oasis_trigedit: Player already had olc structure.");
-    free(d->olc);
+    TB_ERROR_MSG("olc", "olc-stale-state", "descriptor",
+                 "builder " DIAG_CHAR_FMT " stale olc mode %d vnum %d; "
+                 "discarded", DIAG_CHAR(ch), OLC_MODE(d), OLC_NUM(d));
+    cleanup_olc(d, CLEANUP_ALL);
   }
   CREATE(d->olc, struct oasis_olc_data, 1);
 
