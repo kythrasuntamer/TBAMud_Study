@@ -450,6 +450,33 @@ void test_count_non_protocol_complete_escapes_are_silent(void)
   TEST_ASSERT_EQUAL_INT(0, count_records());
 }
 
+/* =====================================================================
+ * I1-06: count_color_chars and a lone trailing tab.
+ * ===================================================================== */
+
+static int color_chars(const char *text)
+{
+  char *copy = strdup(text);
+  int n;
+
+  TEST_ASSERT_NOT_NULL(copy);
+  n = count_color_chars(copy);
+  free(copy);
+  return n;
+}
+
+void test_count_color_chars_trailing_tab(void)
+{
+  TEST_ASSERT_EQUAL_INT(1, color_chars("Hall\t"));
+  TEST_ASSERT_EQUAL_INT(1, count_op("protocol-escape-truncated"));
+}
+
+void test_count_color_chars_complete_codes_are_silent(void)
+{
+  TEST_ASSERT_EQUAL_INT(4, color_chars("\tRHall\tn"));
+  TEST_ASSERT_EQUAL_INT(0, count_records());
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -467,5 +494,7 @@ int main(void)
   RUN_TEST(test_count_non_protocol_trailing_at_sign);
   RUN_TEST(test_count_non_protocol_unterminated_bracket);
   RUN_TEST(test_count_non_protocol_complete_escapes_are_silent);
+  RUN_TEST(test_count_color_chars_trailing_tab);
+  RUN_TEST(test_count_color_chars_complete_codes_are_silent);
   return UNITY_END();
 }

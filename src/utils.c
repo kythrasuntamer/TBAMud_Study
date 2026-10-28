@@ -1463,6 +1463,14 @@ int count_color_chars(char *string)
 	len = strlen(string);
   for (i = 0; i < len; i++) {
     while (string[i] == '\t') {
+      /* A tab is a two-byte colour code; a lone trailing tab (raw builder
+       * text or a world-file name) must not step past the terminator. */
+      if (string[i + 1] == '\0') {
+        num++;
+        TB_WARN_MSG("utils", "protocol-escape-truncated", "count_color_chars",
+                    "string ends inside a colour escape at offset %d", i);
+        return num;
+      }
       if (string[i + 1] == '\t')
         num++;
       else
