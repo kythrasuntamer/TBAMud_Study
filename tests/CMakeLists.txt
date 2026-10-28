@@ -1136,7 +1136,8 @@ if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
 endif()
 
 # Production call_magic() and mag_objectmagic() (spell_parser.c) with the
-# production handler.c: cast triggers that purge participants (H2-01).
+# production handler.c: cast triggers that purge participants (H2-01) and
+# the staff's per-occupant loop (H2-10).
 add_mud_test(test_spell_parser
     ${MUD_SRCDIR}/spell_parser.c
     ${MUD_SRCDIR}/handler.c
