@@ -29,9 +29,14 @@ size_t send_to_char(struct char_data *ch, const char *messg, ...)
   va_end(args);
   return strlen(sent);
 }
-/* Layout helpers (utils.c): the tests inspect map state, not layout. */
+/* Layout helpers (utils.c): the tests inspect map state, not layout.
+ * strfrmt_null_text counts NULL texts handed down by str_and_map(). */
+static int strfrmt_null_text;
 char *strfrmt(char *str, int w, int h, int justify, int hpad, int vpad)
-{ (void)w; (void)h; (void)justify; (void)hpad; (void)vpad; return str; }
+{ (void)w; (void)h; (void)justify; (void)hpad; (void)vpad;
+  if (str == NULL)
+    strfrmt_null_text++;
+  return str; }
 char *strpaste(char *str1, char *str2, char *joiner)
 { (void)str1; (void)joiner; return str2; }
 void basic_mud_log(const char *format, ...) { (void)format; }
@@ -77,6 +82,7 @@ void setUp(void)
   SET_BIT_AR(PRF_FLAGS(&viewer), PRF_AUTOMAP);
   CONFIG_MAP = MAP_ON;
   sent[0] = '\0';
+  strfrmt_null_text = 0;
   tb_error_capture_reset();
 }
 
@@ -133,6 +139,25 @@ static void test_exit_out_of_range_reported(void)
   TEST_ASSERT_EQUAL_STRING("exit-range", tb_captured_operation);
 }
 
+/* I1-07: an empty world-file description loads as NULL (fread_string()).
+ * str_and_map must name the room and lay out "" on both the automap and
+ * the plain path, never hand NULL on to strfrmt(). */
+static void test_null_description_names_the_room(void)
+{
+  CONFIG_MINIMAP_SIZE = 4;
+  str_and_map(NULL, &viewer, IN_ROOM(&viewer));
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("room-description-null", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "room vnum 1015"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "player idnum 9"));
+  TEST_ASSERT_EQUAL_INT(0, strfrmt_null_text);
+
+  REMOVE_BIT_AR(PRF_FLAGS(&viewer), PRF_AUTOMAP);
+  str_and_map(NULL, &viewer, IN_ROOM(&viewer));
+  TEST_ASSERT_EQUAL_INT(2, tb_captured_errors);
+  TEST_ASSERT_EQUAL_INT(0, strfrmt_null_text);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -140,5 +165,6 @@ int main(void)
   RUN_TEST(test_bad_sector_drawn_as_unknown);
   RUN_TEST(test_minimap_max_size_stays_in_grid);
   RUN_TEST(test_minimap_oversize_is_clamped_loudly);
+  RUN_TEST(test_null_description_names_the_room);
   return UNITY_END();
 }
