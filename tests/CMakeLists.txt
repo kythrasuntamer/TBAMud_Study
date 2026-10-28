@@ -649,6 +649,24 @@ if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
         PROPERTIES COMPILE_OPTIONS "-ffunction-sections;-fdata-sections")
 endif()
 
+# Production miscellaneous player commands (act.other.c), with lists.c for
+# group iteration.
+add_executable(test_act_other
+    $<TARGET_OBJECTS:unity_vendor>
+    ${MUD_SRCDIR}/act.other.c
+    ${MUD_SRCDIR}/lists.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_act_other.c
+)
+target_include_directories(test_act_other PRIVATE ${TEST_INCLUDES})
+target_compile_options(test_act_other PRIVATE ${TEST_CFLAGS})
+add_test(NAME test_act_other COMMAND test_act_other)
+if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_compile_options(test_act_other PRIVATE -ffunction-sections -fdata-sections)
+    target_link_options(test_act_other PRIVATE -Wl,--gc-sections)
+    set_source_files_properties(${MUD_SRCDIR}/act.other.c ${MUD_SRCDIR}/lists.c
+        PROPERTIES COMPILE_OPTIONS "-ffunction-sections;-fdata-sections")
+endif()
+
 find_package(Python3 COMPONENTS Interpreter QUIET)
 if(Python3_Interpreter_FOUND)
     add_test(NAME test_dg_memory_callback_contract

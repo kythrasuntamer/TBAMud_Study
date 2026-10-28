@@ -515,7 +515,7 @@ ACMD(do_split)
   char buf[MAX_INPUT_LENGTH];
   int amount, num = 0, share, rest;
   size_t len;
-  struct char_data *k;
+  struct char_data *k, *blocked;
   
   if (IS_NPC(ch))
     return;
@@ -543,6 +543,27 @@ ACMD(do_split)
       rest = amount % num;
     } else {
       send_to_char(ch, "With whom do you wish to share your gold?\r\n");
+      return;
+    }
+
+    /* Gold is conserved only if every share fits: increase_gold() clamps
+     * at MAX_GOLD and silently drops the excess, after the splitter has
+     * already been debited. Check every recipient first (walking the whole
+     * list, since simple_list() keeps iterator state) and refuse the split
+     * if any share would pass the cap. */
+    blocked = NULL;
+    while ((k = (struct char_data *) simple_list(GROUP(ch)->members)) != NULL)
+      if (k != ch && IN_ROOM(ch) == IN_ROOM(k) && !IS_NPC(k) && !blocked &&
+          (long long) GET_GOLD(k) + share > MAX_GOLD)
+        blocked = k;
+    if (blocked) {
+      TB_WARN_MSG("gold", "split-gold-cap", "points.gold",
+                  DIAG_CHAR_FMT " split of %d refused: recipient " DIAG_CHAR_FMT
+                  " holds %d and a share of %d would pass MAX_GOLD %d",
+                  DIAG_CHAR(ch), amount, DIAG_CHAR(blocked), GET_GOLD(blocked),
+                  share, MAX_GOLD);
+      send_to_char(ch, "%s cannot carry that much more gold; nothing was split.\r\n",
+                   GET_NAME(blocked));
       return;
     }
 
