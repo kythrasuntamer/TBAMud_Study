@@ -18,6 +18,23 @@
 #include "dg_olc.h"
 #include "spells.h"
 
+/* OWNERSHIP AND RENUMBERING
+ * - mob_proto[rnum] owns its strings and proto_script.  Live instances
+ *   share the prototype's string pointers until something gives them their
+ *   own copy, so freeing an instance's string is only correct when it
+ *   differs from the prototype's (free_mobile, extract_mobile_all).
+ * - add_mobile()/copy_mobile() deep-copy strings (copy_mobile_strings) but
+ *   shallow-copy everything else in the OLC working mob, including
+ *   proto_script, affected and script pointers: the caller hands those
+ *   over and must not free them afterwards.
+ * - add_mobile() and delete_mobile() RECREATE mob_proto/mob_index, which
+ *   invalidates every 'struct char_data *' into mob_proto, and shift rnums.
+ *   Everything that stores a mob rnum (live mobs, zone 'M' commands, shop
+ *   keepers) is renumbered here; NOBODY (the largest rnum value) is never
+ *   shifted.  Instances of a deleted mob are queued for extraction and
+ *   detached (rnum NOBODY) before renumbering.
+ * - Who controls the input: builders, through medit. */
+
 /* local functions */
 static void extract_mobile_all(mob_vnum vnum);
 
@@ -481,6 +498,9 @@ int write_mobile_record(mob_vnum mvnum, struct char_data *mob, FILE *fd)
   return TRUE;
 }
 
+/* Replace missing mob strings with placeholders (check_mobile_string).
+ * Precondition: mob->nr is a valid rnum; it indexes mob_index only to name
+ * the mob in the report. */
 void check_mobile_strings(struct char_data *mob)
 {
   mob_vnum mvnum = mob_index[mob->nr].vnum;
