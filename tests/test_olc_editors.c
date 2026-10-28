@@ -463,6 +463,31 @@ obj_rnum add_object(struct obj_data *newobj, obj_vnum ovnum)
 static int deleted_rnum = -1, delete_calls;
 int delete_object(obj_rnum rnum) { delete_calls++; deleted_rnum = rnum; return rnum; }
 
+/* Shop tables and genshp.c, reduced to what sedit_parse links against. */
+struct shop_data *shop_index = NULL;
+int top_shop = -1;
+const char *trade_letters[] = { "\n" };
+const char *shop_bits[] = { "\n" };
+SPECIAL(shop_keeper) { (void)ch; (void)me; (void)cmd; (void)argument; return FALSE; }
+shop_rnum real_shop(shop_vnum vnum)
+{
+  int i;
+  for (i = 0; i <= top_shop; i++)
+    if (shop_index[i].vnum == vnum)
+      return i;
+  return NOWHERE;
+}
+int add_shop(struct shop_data *shop) { (void)shop; return TRUE; }
+int save_shops(zone_rnum zone_num) { (void)zone_num; return TRUE; }
+void copy_shop(struct shop_data *tshop, struct shop_data *fshop, int free_old_strings)
+{ (void)free_old_strings; *tshop = *fshop; }
+void free_shop(struct shop_data *shop) { free(shop); }
+void modify_shop_string(char **str, char *newstr) { free(*str); *str = strdup(newstr); }
+void add_shop_to_int_list(IDXTYPE **tlist, IDXTYPE newi) { (void)tlist; (void)newi; }
+void remove_shop_from_int_list(IDXTYPE **list, IDXTYPE num) { (void)list; (void)num; }
+void add_shop_to_type_list(struct shop_buy_data **list, struct shop_buy_data *newl) { (void)list; (void)newl; }
+void remove_shop_from_type_list(struct shop_buy_data **list, int num) { (void)list; (void)num; }
+
 static int zone_editable = TRUE;
 int can_edit_zone(struct char_data *ch, zone_rnum rnum) { (void)ch; (void)rnum; return zone_editable; }
 
@@ -1521,6 +1546,87 @@ static void test_iedit_affect_change_on_worn_object_is_reapplied(void)
   free_scratch_obj(target);
 }
 
+
+/* ------------------------------------------------------------------ */
+/* F1-18: choosing a keeper changes no live spec proc until save, and  */
+/* needs the keeper's zone to be editable.                             */
+/* ------------------------------------------------------------------ */
+static int guild_proc_calls;
+static SPECIAL(test_guild_proc) { (void)ch; (void)me; (void)cmd; (void)argument; guild_proc_calls++; return FALSE; }
+
+static void make_keeper_mobs(void)
+{
+  int i;
+  mob_index = calloc(3, sizeof(*mob_index));
+  mob_proto = calloc(3, sizeof(*mob_proto));
+  TEST_ASSERT_NOT_NULL(mob_index);
+  TEST_ASSERT_NOT_NULL(mob_proto);
+  for (i = 0; i < 3; i++) {
+    mob_index[i].vnum = 1200 + i;
+    mob_proto[i].nr = i;
+  }
+  top_of_mobt = 2;
+  mob_index[1].func = test_guild_proc;   /* a guildmaster, mob 1201 */
+}
+
+static void free_keeper_mobs(void)
+{
+  free(mob_index); mob_index = NULL;
+  free(mob_proto); mob_proto = NULL;
+  top_of_mobt = 0;
+}
+
+static void test_sedit_keeper_choice_leaves_spec_proc_until_save(void)
+{
+  struct descriptor_data *d = &builder_desc;
+  struct shop_data scratch;
+
+  make_keeper_mobs();
+  memset(&scratch, 0, sizeof(scratch));
+  S_KEEPER(&scratch) = NOBODY;
+  OLC_SHOP(d) = &scratch;
+  OLC_NUM(d) = 3000;
+  OLC_MODE(d) = SEDIT_KEEPER;
+
+  sedit_parse(d, "1201");
+
+  TEST_ASSERT_EQUAL_INT(1, S_KEEPER(&scratch));
+  TEST_ASSERT_EQUAL_PTR(test_guild_proc, mob_index[1].func);
+
+  sedit_save_internally(d);
+
+  TEST_ASSERT_EQUAL_PTR(shop_keeper, mob_index[1].func);
+  TEST_ASSERT_EQUAL_PTR(test_guild_proc, S_FUNC(&scratch));
+  TEST_ASSERT_EQUAL_STRING("shop-keeper-func", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "shop vnum 3000 keeper vnum 1201"));
+
+  OLC_SHOP(d) = NULL;
+  free_keeper_mobs();
+}
+
+static void test_sedit_keeper_from_foreign_zone_is_refused(void)
+{
+  struct descriptor_data *d = &builder_desc;
+  struct shop_data scratch;
+
+  make_keeper_mobs();
+  memset(&scratch, 0, sizeof(scratch));
+  S_KEEPER(&scratch) = NOBODY;
+  OLC_SHOP(d) = &scratch;
+  OLC_NUM(d) = 3000;
+  OLC_MODE(d) = SEDIT_KEEPER;
+  zone_editable = FALSE;
+
+  sedit_parse(d, "1201");
+
+  TEST_ASSERT_EQUAL_INT(NOBODY, S_KEEPER(&scratch));
+  TEST_ASSERT_EQUAL_INT(SEDIT_KEEPER, OLC_MODE(d));
+  TEST_ASSERT_EQUAL_STRING("shop-keeper-permission", tb_captured_operation);
+
+  OLC_SHOP(d) = NULL;
+  free_keeper_mobs();
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -1558,5 +1664,7 @@ int main(void)
   RUN_TEST(test_iedit_weight_change_on_carried_object_keeps_carry_weight);
   RUN_TEST(test_iedit_weight_change_inside_container_updates_container);
   RUN_TEST(test_iedit_affect_change_on_worn_object_is_reapplied);
+  RUN_TEST(test_sedit_keeper_choice_leaves_spec_proc_until_save);
+  RUN_TEST(test_sedit_keeper_from_foreign_zone_is_refused);
   return UNITY_END();
 }

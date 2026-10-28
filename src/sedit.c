@@ -57,9 +57,63 @@ static int parse_shop_profit(const char *text, float *result)
   return 1;
 }
 
+/* A shop other than skip (a shop_index rnum, or NOWHERE) whose shopkeeper
+ * is keeper, or NOWHERE. */
+static shop_rnum sedit_other_shop_of_keeper(mob_rnum keeper, shop_rnum skip)
+{
+  shop_rnum s;
+
+  for (s = 0; s <= top_shop; s++)
+    if (s != skip && SHOP_KEEPER(s) == keeper)
+      return s;
+  return NOWHERE;
+}
+
+/* Install the shop's keeper in the live mob_index at save time, never
+ * while editing: SEDIT_KEEPER only records the choice, so an abandoned edit
+ * leaves every mobile's spec proc untouched.
+ *
+ * Contract (mirrors assign_the_shopkeepers in shop.c): the keeper's
+ * mob_index[].func becomes shop_keeper, and the spec proc it had before is
+ * kept in the shop's S_FUNC and called first by shop_keeper. When the
+ * keeper changes, the previous keeper gets that spec proc back unless
+ * another shop still uses it. */
+static void sedit_install_keeper(struct descriptor_data *d)
+{
+  struct shop_data *shop = OLC_SHOP(d);
+  shop_rnum existing = real_shop(OLC_NUM(d));
+  mob_rnum old_keeper = existing != NOWHERE ? SHOP_KEEPER(existing) : NOBODY;
+  mob_rnum new_keeper = S_KEEPER(shop);
+  struct char_data *builder = d->character;
+
+  if (new_keeper == old_keeper)
+    return;
+
+  if (VALID_MOB_RNUM(old_keeper) && mob_index[old_keeper].func == shop_keeper &&
+      sedit_other_shop_of_keeper(old_keeper, existing) == NOWHERE)
+    mob_index[old_keeper].func = SHOP_FUNC(existing);
+
+  S_FUNC(shop) = NULL;
+  if (!VALID_MOB_RNUM(new_keeper))
+    return;
+  if (mob_index[new_keeper].func == shop_keeper) {
+    /* Already keeps another shop, which holds its original spec proc. */
+    shop_rnum other = sedit_other_shop_of_keeper(new_keeper, existing);
+    if (other != NOWHERE)
+      S_FUNC(shop) = SHOP_FUNC(other);
+  } else if (mob_index[new_keeper].func) {
+    TB_WARN_MSG("olc", "shop-keeper-func", "mobile",
+                "builder " DIAG_CHAR_FMT " shop vnum %d keeper vnum %d: its spec proc now runs before shop_keeper",
+                DIAG_CHAR(builder), OLC_NUM(d), mob_index[new_keeper].vnum);
+    S_FUNC(shop) = mob_index[new_keeper].func;
+  }
+  mob_index[new_keeper].func = shop_keeper;
+}
+
 void sedit_save_internally(struct descriptor_data *d)
 {
   OLC_SHOP(d)->vnum = OLC_NUM(d);
+  sedit_install_keeper(d);
   add_shop(OLC_SHOP(d));
 }
 
@@ -715,17 +769,28 @@ void sedit_parse(struct descriptor_data *d, char *arg)
 
     /* Numerical responses. */
   case SEDIT_KEEPER:
-    if ((i = tb_parse_int_or_zero(arg)) != -1)
-      if ((i = real_mobile(i)) == NOBODY) {
+    /* Builder input: a mob vnum, or -1 for no keeper. Only the choice is
+     * recorded here; sedit_install_keeper() changes the live mob_index at
+     * save time. The keeper's spec proc is replaced, so its zone must be
+     * one this builder may edit. */
+    if ((i = tb_parse_int_or_zero(arg)) != -1) {
+      mob_vnum keeper_vnum = i;
+      struct char_data *builder = d->character;
+
+      if ((i = real_mobile(keeper_vnum)) == NOBODY) {
 	write_to_output(d, "That mobile does not exist, try again : ");
 	return;
       }
+      if (!can_edit_zone(builder, real_zone_by_thing(keeper_vnum))) {
+        TB_WARN_MSG("olc", "shop-keeper-permission", "mobile",
+                    "builder " DIAG_CHAR_FMT " shop vnum %d keeper vnum %d refused: zone not editable",
+                    DIAG_CHAR(builder), OLC_NUM(d), keeper_vnum);
+        write_to_output(d, "You cannot make mobile %d a shopkeeper: you may not edit its zone.\r\n"
+                        "Enter vnum number of shop keeper : ", keeper_vnum);
+        return;
+      }
+    }
     S_KEEPER(OLC_SHOP(d)) = i;
-    if (i == -1)
-      break;
-    /* Fiddle with special procs. */
-    S_FUNC(OLC_SHOP(d)) = mob_index[i].func != shop_keeper ? mob_index[i].func : NULL;
-    mob_index[i].func = shop_keeper;
     break;
   case SEDIT_OPEN1:
     S_OPEN1(OLC_SHOP(d)) = LIMIT(tb_parse_int_or_zero(arg), 0, 28);
