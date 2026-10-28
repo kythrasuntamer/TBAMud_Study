@@ -26,8 +26,13 @@
 /* spells cast by objects and rooms use this level */
 #define DG_SPELL_LEVEL  25
 
-/* Define this if you don't want wear/remove triggers to fire when a player
- * is saved. */
+/* Required; do not undefine. save_char() (players.c) takes off and puts back
+ * every worn item to save base stats. Wear/remove triggers fired there ran
+ * DG scripts while the items sat in a local array with their affects
+ * stripped: a script that purged one left a freed pointer to be equipped
+ * again, and one that equipped another item had its bonuses saved
+ * (finding B2-21). Since that fix players.c runs no such triggers and
+ * stops the build with #error if this is undefined. */
 #define NO_EXTRANEOUS_TRIGGERS
 
 /* %actor.room% behaviour :
