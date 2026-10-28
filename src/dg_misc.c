@@ -342,6 +342,8 @@ int valid_dg_target(struct char_data *ch, int bitvector)
  * field-clamp diagnostic; NULL when no script is running. */
 void script_damage(trig_data *trig, struct char_data *vict, int dam)
 {
+  long long result;
+
   if (GET_LEVEL(vict)>=LVL_IMMORT && (dam > 0)) {
     send_to_char(vict, "Being the cool immortal you are, you sidestep a trap, "
         "obviously placed to kill you.\r\n");
@@ -350,9 +352,16 @@ void script_damage(trig_data *trig, struct char_data *vict, int dam)
 
   /* dam is a script int; GET_HIT is sh_int. Subtracting in int and storing
    * back wrapped, so a large negative "damage" could kill. */
-  GET_HIT(vict) = (sh_int)dg_clamp_char_field(trig, vict, "damage",
-                      MIN((long long)GET_HIT(vict) - dam, GET_MAX_HIT(vict)),
-                      SHRT_MIN, SHRT_MAX);
+  result = MIN((long long)GET_HIT(vict) - dam, GET_MAX_HIT(vict));
+  if (dam > 0 && result < SHRT_MIN)
+    /* Overkill: the victim dies either way, as damage() kills on overkill.
+     * Death traps do this on purpose ("%damage% %actor% 99999"), so store
+     * the floor without a field-clamp report; a player's death is still
+     * logged below ("killed by script"). */
+    GET_HIT(vict) = SHRT_MIN;
+  else
+    GET_HIT(vict) = (sh_int)dg_clamp_char_field(trig, vict, "damage", result,
+                                                SHRT_MIN, SHRT_MAX);
 
   update_pos(vict);
   send_char_pos(vict, dam);

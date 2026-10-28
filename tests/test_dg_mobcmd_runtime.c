@@ -299,12 +299,12 @@ static void damage_line(char *line, size_t size, const char *command,
   TEST_ASSERT_TRUE(n > 0 && (size_t)n < size);
 }
 
-/* Live finding: %damage% gave the field-clamp diagnostic no trigger, so
- * trigger 1970's "%damage% %actor% 99999" was logged as "trig vnum -1" and
- * only the breadcrumbs named it. mdamage, odamage and wdamage now pass the
- * running trigger (every fixture trigger is vnum 400), and the register is
- * clear again once the script has returned. */
-static void test_clamped_script_damage_names_the_trigger(void)
+/* Trigger 1970 (zone 19's sinking-tree death trap) runs
+ * "%damage% %actor% 99999": a deliberate kill. It used to log a field-clamp
+ * warning on every victim (~46 an hour on a live server). Overkill now kills
+ * quietly through mdamage, odamage and wdamage alike; the running trigger
+ * register is clear again once each script has returned. */
+static void test_script_overkill_damage_is_a_quiet_kill(void)
 {
   char line[64];
   const char *const lines[] = { line, NULL };
@@ -317,22 +317,22 @@ static void test_clamped_script_damage_names_the_trigger(void)
   damage_line(line, sizeof(line), "mdamage", v);
   SCRIPT(m) = dgw_script_with(MOB_TRIGGER, MTRIG_COMMAND, lines);
   script_driver(&m, SCRIPT(m)->trig_list, MOB_TRIGGER, TRIG_NEW);
-  TEST_ASSERT_EQUAL_INT(1, dgw_saw("field-clamp"));
-  TEST_ASSERT_NOT_NULL(strstr(dgw_detail("field-clamp"), "trig vnum 400 field damage"));
+  TEST_ASSERT_TRUE(MOB_FLAGGED(v, MOB_NOTDEADYET));
+  TEST_ASSERT_EQUAL_INT(0, dgw_saw("field-clamp"));
 
   v = dgw_mob(DGW_MOB_OGRE, 0);
   damage_line(line, sizeof(line), "odamage", v);
   SCRIPT(o) = dgw_script_with(OBJ_TRIGGER, OTRIG_COMMAND, lines);
   script_driver(&o, SCRIPT(o)->trig_list, OBJ_TRIGGER, TRIG_NEW);
-  TEST_ASSERT_EQUAL_INT(2, dgw_saw("field-clamp"));
-  TEST_ASSERT_NOT_NULL(strstr(dgw_detail("field-clamp"), "trig vnum 400 field damage"));
+  TEST_ASSERT_TRUE(MOB_FLAGGED(v, MOB_NOTDEADYET));
+  TEST_ASSERT_EQUAL_INT(0, dgw_saw("field-clamp"));
 
   v = dgw_mob(DGW_MOB_OGRE, 0);
   damage_line(line, sizeof(line), "wdamage", v);
   SCRIPT(room) = dgw_script_with(WLD_TRIGGER, WTRIG_COMMAND, lines);
   script_driver(&room, SCRIPT(room)->trig_list, WLD_TRIGGER, TRIG_NEW);
-  TEST_ASSERT_EQUAL_INT(3, dgw_saw("field-clamp"));
-  TEST_ASSERT_NOT_NULL(strstr(dgw_detail("field-clamp"), "trig vnum 400 field damage"));
+  TEST_ASSERT_TRUE(MOB_FLAGGED(v, MOB_NOTDEADYET));
+  TEST_ASSERT_EQUAL_INT(0, dgw_saw("field-clamp"));
 
   TEST_ASSERT_NULL(dg_running_trigger());
 }
@@ -363,7 +363,7 @@ static void test_charmed_mob_refusal_is_reported(void)
 int main(void)
 {
   UNITY_BEGIN();
-  RUN_TEST(test_clamped_script_damage_names_the_trigger);
+  RUN_TEST(test_script_overkill_damage_is_a_quiet_kill);
   RUN_TEST(test_player_with_triggers_is_refused_privileged_commands);
   RUN_TEST(test_switched_mob_follows_the_controller_level);
   RUN_TEST(test_script_driven_mob_may_load);

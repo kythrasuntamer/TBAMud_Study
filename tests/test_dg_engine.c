@@ -920,6 +920,14 @@ static void field_setters_saturate_instead_of_wrapping(void)
   script_damage(t, mob, -40000);
   TEST_ASSERT_EQUAL_INT(GET_MAX_HIT(mob), GET_HIT(mob));
   TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+
+  /* Overkill past the sh_int floor is a deliberate kill (death traps):
+   * the floor is stored without a field-clamp report. The hitp(40000)
+   * setter above still reports its clamp. */
+  GET_HIT(mob) = 50;
+  script_damage(t, mob, 99999);
+  TEST_ASSERT_EQUAL_INT(SHRT_MIN, GET_HIT(mob));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
 }
 
 /* D1-21: dg_affect narrowed its duration to sh_int and its value to sbyte, so
