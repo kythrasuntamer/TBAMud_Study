@@ -498,16 +498,15 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
       case MOB_TRIGGER:
         ch = (char_data *) go;
 
-        if (IN_ROOM(ch) == NOWHERE)
-          TB_WARN_MSG("dg", "owner-nowhere", "find_replacement",
-                      "trigger %d: " DIAG_CHAR_FMT " is in no room; "
-                      "its room is not searched for %s", trig ? GET_TRIG_VNUM(trig) : -1,
-                      DIAG_CHAR(ch), var);
-
         if ((o = get_object_in_equip(ch, name)));
         else if ((o = get_obj_in_list(name, ch->carrying)));
-        else if (IN_ROOM(ch) != NOWHERE && (c = get_char_in_room(&world[IN_ROOM(ch)], name)));
-        else if (IN_ROOM(ch) != NOWHERE && (o = get_obj_in_list(name,world[IN_ROOM(ch)].contents)));
+        /* The room lookups index world[IN_ROOM(ch)]; the NOWHERE test used
+         * to cover only the first of them. An owner in no valid room is
+         * reported once and only its room is skipped: a UID or a name
+         * elsewhere in the world still resolves below. */
+        else if (DG_OWNER_ROOM(go, type, trig, "variable lookup") != NOWHERE &&
+                 ((c = get_char_in_room(&world[IN_ROOM(ch)], name)) ||
+                  (o = get_obj_in_list(name, world[IN_ROOM(ch)].contents))));
         else if ((c = get_char(name)));
         else if ((o = get_obj(name)));
         else if ((r = get_room(name))) {}
@@ -654,40 +653,33 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
           rndm = NULL;
           count = 0;
 
+          /* A mob's or object's room is indexed below; random and time
+           * object triggers fire wherever the object is. */
+          if (type != WLD_TRIGGER &&
+              DG_OWNER_ROOM(go, type, trig, "%random.char%") == NOWHERE) {
+            *str = '\0';
+            return;
+          }
+
           if (type == MOB_TRIGGER) {
             ch = (char_data *) go;
-            if (IN_ROOM(ch) == NOWHERE)
-              TB_WARN_MSG("dg", "owner-nowhere", "random.char",
-                          "trigger %d: " DIAG_CHAR_FMT " is in no room; "
-                          "no character chosen", trig ? GET_TRIG_VNUM(trig) : -1,
-                          DIAG_CHAR(ch));
-            else {
-              for (c = world[IN_ROOM(ch)].people; c; c = c->next_in_room)
-                if ((c != ch) && valid_dg_target(c, DG_ALLOW_GODS) &&
-                    CAN_SEE(ch, c)) {
-                  if (!rand_number(0, count))
-                    rndm = c;
-                  count++;
-                }
-            }
+            for (c = world[IN_ROOM(ch)].people; c; c = c->next_in_room)
+              if ((c != ch) && valid_dg_target(c, DG_ALLOW_GODS) &&
+                  CAN_SEE(ch, c)) {
+                if (!rand_number(0, count))
+                  rndm = c;
+                count++;
+              }
           }
 
           else if (type == OBJ_TRIGGER) {
-            room_rnum in_room = obj_room((obj_data *) go);
-
-            if (in_room == NOWHERE)
-              TB_WARN_MSG("dg", "owner-nowhere", "random.char",
-                          "trigger %d: obj vnum %d is in no room; no character "
-                          "chosen", trig ? GET_TRIG_VNUM(trig) : -1,
-                          GET_OBJ_VNUM((obj_data *) go));
-            else {
-              for (c = world[in_room].people; c; c = c->next_in_room)
-                if (valid_dg_target(c, DG_ALLOW_GODS)) {
-                  if (!rand_number(0, count))
-                    rndm = c;
-                  count++;
-                }
-            }
+            for (c = world[obj_room((obj_data *) go)].people; c;
+                 c = c->next_in_room)
+              if (valid_dg_target(c, DG_ALLOW_GODS)) {
+                if (!rand_number(0, count))
+                  rndm = c;
+                count++;
+              }
           }
 
           else if (type == WLD_TRIGGER) {
@@ -708,19 +700,10 @@ void find_replacement(void *go, struct script_data *sc, trig_data *trig,
         }
 
         else if (!str_cmp(field, "dir")) {
-          room_rnum in_room = NOWHERE;
+          /* NOWHERE (reported) also covers an rnum past top_of_world, which
+           * the old NOWHERE-only test let through to world[]. */
+          room_rnum in_room = DG_OWNER_ROOM(go, type, trig, "%random.dir%");
 
-          switch (type) {
-            case WLD_TRIGGER:
-              in_room = real_room(((struct room_data *) go)->number);
-              break;
-            case OBJ_TRIGGER:
-              in_room = obj_room((struct obj_data *) go);
-              break;
-            case MOB_TRIGGER:
-              in_room = IN_ROOM((struct char_data *)go);
-              break;
-          }
           if (in_room == NOWHERE) {
             *str = '\0';
           } else {

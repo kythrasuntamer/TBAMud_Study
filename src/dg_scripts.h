@@ -307,6 +307,15 @@ void script_vlog(const char *format, va_list args)
 void script_log(const char *format, ...) __attribute__ ((format (printf, 1, 2)));
 char *matching_quote(char *p);
 struct room_data *dg_room_of_obj(struct obj_data *obj);
+room_rnum dg_owner_room_at(void *go, int type, const trig_data *trig,
+                           const char *what, const char *file, int line,
+                           const char *func);
+/** rnum of the room a script owner (go, of trigger type type) is in, for
+ * code about to index world[]; NOWHERE, after reporting dg/owner-unplaced
+ * with the trigger, the owner and this call site, when it is in no valid
+ * room. what names the lookup (a string literal). */
+#define DG_OWNER_ROOM(go, type, trig, what) \
+  dg_owner_room_at((go), (type), (trig), (what), __FILE__, __LINE__, __func__)
 bool check_flags_by_name_ar(int *array, int numflags, char *search, const char *namelist[]);
 void read_saved_vars_ascii(FILE *file, struct char_data *ch, int count);
 void save_char_vars_ascii(FILE *file, struct char_data *ch);

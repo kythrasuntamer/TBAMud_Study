@@ -2472,6 +2472,55 @@ struct room_data *dg_room_of_obj(struct obj_data *obj)
   return NULL;
 }
 
+/* Called through DG_OWNER_ROOM() (dg_scripts.h). Script owners are placed:
+ * characters in character_list stand in a room, and a scripted object is in
+ * a room or carried, worn or contained by something that is. NOWHERE (65535,
+ * far past world[]) or an rnum past top_of_world therefore means a broken
+ * invariant, not bad script text; it is reported here so the caller can
+ * skip its world[] lookup instead of reading out of bounds. */
+room_rnum dg_owner_room_at(void *go, int type, const trig_data *trig,
+                           const char *what, const char *file, int line,
+                           const char *func)
+{
+  char owner[64];
+  room_rnum rnum = NOWHERE;
+
+  switch (type) {
+    case MOB_TRIGGER: {
+      char_data *mob = (char_data *) go;
+
+      rnum = IN_ROOM(mob);
+      tb_snprintf(owner, sizeof(owner), DIAG_CHAR_FMT " uid %ld",
+                  DIAG_CHAR(mob), mob->script_id);
+      break;
+    }
+    case OBJ_TRIGGER: {
+      obj_data *obj = (obj_data *) go;
+
+      rnum = obj_room(obj);
+      tb_snprintf(owner, sizeof(owner), "obj vnum %d uid %ld",
+                  GET_OBJ_VNUM(obj), obj->script_id);
+      break;
+    }
+    case WLD_TRIGGER:
+      rnum = real_room(((room_data *) go)->number);
+      tb_snprintf(owner, sizeof(owner), "room vnum %d",
+                  ((room_data *) go)->number);
+      break;
+    default:
+      tb_snprintf(owner, sizeof(owner), "owner of type %d", type);
+      break;
+  }
+  if (VALID_ROOM_RNUM(rnum))
+    return rnum;
+
+  tb_error_log_at("ERROR", "dg", "owner-unplaced", "script", 0, file, line,
+                  func, "trig vnum %d: %s needs the owner's room, but %s is "
+                  "at rnum %ld (not a room); the room lookup is skipped",
+                  DIAG_TRIG_VNUM(trig), what, owner, (long) rnum);
+  return NOWHERE;
+}
+
 /* create a UID variable from the id number */
 static void makeuid_var(void *go, struct script_data *sc, trig_data *trig,
                  int type, char *cmd)
@@ -2521,7 +2570,9 @@ static void makeuid_var(void *go, struct script_data *sc, trig_data *trig,
           c = get_char_near_obj((struct obj_data *)go, name);
           break;
         case MOB_TRIGGER:
-          c = get_char_room_vis((struct char_data *)go, name, NULL);
+          /* get_char_room_vis() walks world[IN_ROOM(go)].people. */
+          if (DG_OWNER_ROOM(go, type, trig, "makeuid mob") != NOWHERE)
+            c = get_char_room_vis((struct char_data *)go, name, NULL);
           break;
       }
       if (c)
@@ -2537,33 +2588,17 @@ static void makeuid_var(void *go, struct script_data *sc, trig_data *trig,
           break;
         case MOB_TRIGGER:
           if ((o = get_obj_in_list_vis((struct char_data *)go, name, NULL,
-                    ((struct char_data *)go)->carrying)) == NULL) {
-            if (IN_ROOM((struct char_data *)go) != NOWHERE)
-              o = get_obj_in_list_vis((struct char_data *)go, name, NULL,
-                      world[IN_ROOM((struct char_data *)go)].contents);
-            else
-              TB_WARN_MSG("dg", "owner-nowhere", "makeuid",
-                          "trigger %d: mob vnum %d is in no room; its room is "
-                          "not searched", GET_TRIG_VNUM(trig),
-                          GET_MOB_VNUM((struct char_data *)go));
-          }
+                    ((struct char_data *)go)->carrying)) == NULL &&
+              DG_OWNER_ROOM(go, type, trig, "makeuid obj") != NOWHERE)
+            o = get_obj_in_list_vis((struct char_data *)go, name, NULL,
+                    world[IN_ROOM((struct char_data *)go)].contents);
           break;
       }
       if (o)
         tb_snprintf(uid, sizeof(uid), "%c%ld", UID_CHAR, obj_script_id(o));
     } else if (is_abbrev(arg, "room")) {
-      room_rnum r = NOWHERE;
-      switch (type) {
-        case WLD_TRIGGER:
-          r = real_room(((struct room_data *) go)->number);
-          break;
-        case OBJ_TRIGGER:
-          r = obj_room((struct obj_data *)go);
-          break;
-        case MOB_TRIGGER:
-          r = IN_ROOM((struct char_data *)go);
-          break;
-      }
+      room_rnum r = DG_OWNER_ROOM(go, type, trig, "makeuid room");
+
       if (r != NOWHERE)
         tb_snprintf(uid, sizeof(uid), "%c%ld", UID_CHAR, room_script_id(world + r));
     } else {

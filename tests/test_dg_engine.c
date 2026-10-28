@@ -1143,6 +1143,51 @@ static void room_wait_with_lost_room_is_reported(void)
   TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "room vnum 102"));
 }
 
+/* D1-19: lookups that index world[] by the owner's room never checked that
+ * the owner is in one: %random.char% (mob and object owners), %random.dir%,
+ * a mob's variable lookup by name and makeuid read world[NOWHERE]. Random
+ * and time object triggers fire wherever the object is. */
+static void unplaced_owner_room_lookups_are_reported(void)
+{
+  const char *idle[] = { "nop", NULL };
+  const char *mk[] = { "makeuid found obj sword", NULL };
+  obj_data *loose = make_obj("loose");         /* in no room, held by none */
+  trig_data *ot = make_trigger(OBJ_TRIGGER, OTRIG_RANDOM, 100, idle);
+  char_data *mob = make_mob("mob");
+  trig_data *mt;
+  char out[MAX_INPUT_LENGTH];
+  char *line;
+
+  attach_to_script(&SCRIPT(loose), ot);
+  line = strdup("x %random.char% %random.dir%");
+  TEST_ASSERT_NOT_NULL(line);
+  var_subst(loose, SCRIPT(loose), ot, OBJ_TRIGGER, line, out);
+  free(line);
+  TEST_ASSERT_EQUAL_STRING("x  ", out);
+  TEST_ASSERT_EQUAL_INT(2, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("owner-unplaced", tb_captured_ops[0]);
+  TEST_ASSERT_EQUAL_STRING("owner-unplaced", tb_captured_ops[1]);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "obj vnum"));
+
+  char_from_room(mob);
+  mt = idle_mob_trigger(mob);
+  tb_error_capture_reset();
+  subst(mob, mt, "x %random.char%", out);
+  TEST_ASSERT_EQUAL_STRING("x ", out);
+  TEST_ASSERT_EQUAL_STRING("owner-unplaced", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "mob vnum"));
+
+  tb_error_capture_reset();
+  add_var(&GET_TRIG_VARS(mt), "target", "nobody", 0);
+  subst(mob, mt, "x %target.name%", out);
+  TEST_ASSERT_EQUAL_STRING("owner-unplaced", tb_captured_operation);
+
+  tb_error_capture_reset();
+  run_mob_script(mob, mk);
+  TEST_ASSERT_EQUAL_STRING("owner-unplaced", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "makeuid obj"));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -1190,5 +1235,6 @@ int main(void)
   RUN_TEST(wait_past_the_pulse_range_is_rejected);
   RUN_TEST(room_wait_survives_world_reallocation);
   RUN_TEST(room_wait_with_lost_room_is_reported);
+  RUN_TEST(unplaced_owner_room_lookups_are_reported);
   return UNITY_END();
 }
