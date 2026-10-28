@@ -2155,10 +2155,20 @@ void free_proto_script(void *thing, int type) { (void)thing; (void)type; }
 void affect_remove(struct char_data *ch, struct affected_type *af)
 { (void)af; ch->affected = NULL; }
 void extract_script(void *thing, int type) { (void)thing; (void)type; }
-void *simple_list(struct list_data *pList) { (void)pList; return NULL; }
-void free_list(struct list_data *pList) { (void)pList; }
-void event_cancel(struct event *event) { (void)event; }
+/* simple_list(), free_list() and event_cancel() are call-site macros over
+ * these (lists.h, dg_event.h). */
+void *simple_list_at(struct list_data *pList, const char *file, int line,
+                     const char *func)
+{ (void)pList; (void)file; (void)line; (void)func; return NULL; }
+void free_list_at(struct list_data *pList, const char *file, int line,
+                  const char *func)
+{ (void)pList; (void)file; (void)line; (void)func; }
+void event_cancel_at(struct event *event, const char *file, int line,
+                     const char *func)
+{ (void)event; (void)file; (void)line; (void)func; }
 void remove_from_lookup_table(long uid, const void *c) { (void)uid; (void)c; }
+/* free_char() calls it for a player only (prefedit.c, c5a3600). */
+void prefedit_forget_char(struct char_data *ch) { (void)ch; }
 void clearMemory(struct char_data *ch)
 {
   memory_rec *curr, *next;
