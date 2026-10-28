@@ -46,3 +46,196 @@ foreach(_crash output-trailing-tab-overread mssp-callback-function-type)
         LABELS "fuzz"
         ENVIRONMENT "ASAN_OPTIONS=${TBAMUD_ASAN_OPTIONS};UBSAN_OPTIONS=${TBAMUD_UBSAN_OPTIONS}")
 endforeach()
+
+# Player files, the player index, rent (crash-save) files, player variable
+# files and house files: every persistent file a damaged disk or a hand edit
+# can feed to a loader. The loaders and the object/character lifecycle
+# behind them are production code; fuzz_player_stubs.c replaces only output
+# and game systems the loaders never reach (those abort if reached).
+# --gc-sections drops everything else in these files.
+set(FUZZ_PLAYER_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/fuzz_player.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/fuzz_player_stubs.c
+    ${CMAKE_SOURCE_DIR}/src/players.c
+    ${CMAKE_SOURCE_DIR}/src/objsave.c
+    ${CMAKE_SOURCE_DIR}/src/house.c
+    ${CMAKE_SOURCE_DIR}/src/handler.c
+    ${CMAKE_SOURCE_DIR}/src/db.c
+    ${CMAKE_SOURCE_DIR}/src/utils.c
+    ${CMAKE_SOURCE_DIR}/src/genobj.c
+    ${CMAKE_SOURCE_DIR}/src/genolc.c
+    ${CMAKE_SOURCE_DIR}/src/dg_scripts.c
+    ${CMAKE_SOURCE_DIR}/src/dg_variables.c
+    ${CMAKE_SOURCE_DIR}/src/dg_handler.c
+    ${CMAKE_SOURCE_DIR}/src/dg_db_scripts.c
+    ${CMAKE_SOURCE_DIR}/src/interpreter.c
+    ${CMAKE_SOURCE_DIR}/src/quest.c
+    ${CMAKE_SOURCE_DIR}/src/class.c
+    ${CMAKE_SOURCE_DIR}/src/modify.c
+    ${CMAKE_SOURCE_DIR}/src/config.c
+    ${CMAKE_SOURCE_DIR}/src/constants.c)
+add_mud_fuzzer(fuzz_player player ${FUZZ_PLAYER_SOURCES})
+# The harness sees every structured diagnostic, turns exit() and a boot-time
+# TB_FATAL refusal into a clean return, checks file names built from file
+# content, and makes core_dump() a finding (see fuzz_player.c).
+# -z start-stop-gc: libFuzzer refers to __start___sancov_pcs, which by
+# default keeps every function's coverage table, and so every function, out
+# of --gc-sections; with it only the reachable code is linked.
+target_link_options(fuzz_player PRIVATE -Wl,-z,start-stop-gc
+    -Wl,--wrap=tb_error_log_at -Wl,--wrap=exit -Wl,--wrap=core_dump_real
+    -Wl,--wrap=get_filename -Wl,--wrap=autoquest_trigger_check
+    -Wl,--wrap=page_string)
+# Uninitialised stack buffers hold a non-NUL pattern, so a string that a
+# loader leaves unwritten (e.g. after a failed strftime()) runs into an ASan
+# redzone when it is printed, instead of depending on stale stack bytes.
+target_compile_options(fuzz_player PRIVATE -ftrivial-auto-var-init=pattern)
+
+# Known crashes the player/object-save fuzzer found in code this harness does
+# not own (players.c, objsave.c, house.c, dg_scripts.c). Each is a DISABLED
+# test so ctest lists it as "Disabled" until the bug is fixed; then delete
+# DISABLED and move the file into corpus/player/. The fuzzer itself steps
+# around these with FUZZ_PLAYER_MASK=<name>[,...] so a campaign keeps finding
+# new bugs; the tests run them unmasked, so each still reproduces.
+#   PLAYER-1 vars-noname: read_saved_vars() ignores get_filename()'s result
+#     and fopen()s the unwritten fn[] when the character has no name (empty
+#     Name tag, or an Act word that sets the NPC bit); stack over-read in
+#     fopen (dg_scripts.c:3491-3492). Reached at login. Fixed by 577cae0 on
+#     audit-deferred-dg.
+#   PLAYER-2 hcontrol-time: hcontrol show prints built_on/last_pay after
+#     tb_strftime()/localtime() failed on an out-of-range time_t from the
+#     binary hcontrol file and left the buffer unwritten; the %-15s then
+#     reads a non-terminated stack buffer (house.c:498-509).
+#   PLAYER-3 name-path-login: get_filename() built a path from a file-
+#     supplied player name (here a pfile Name tag read before login) without
+#     rejecting "..", so a name like "../x" escaped lib/ for every file the
+#     name keys. get_filename() now accepts only [A-Za-z0-9_-] (2f7889b), so
+#     the traversal is fixed (the index half is regression-name-path-index
+#     below), but this input still crashes: read_saved_vars() then fopen()s
+#     the buffer get_filename() refused to write, i.e. PLAYER-1.
+#   PLAYER-4 fread-string-nul: fread_string_checked() does point-- then reads
+#     *point before the "point > tmp" guard, so a '~'-string line fgets()
+#     returns empty (its first byte is NUL) underflows tmp[] by one
+#     (players.c:273). Reached by Desc, ADes, EDes.
+#   PLAYER-5 controw-leak: Crash_load_objs() parks a rent object nested in a
+#     container whose record never arrives in cont_row[] and neither places
+#     nor frees it, so it stays on object_list (leak). objsave.c
+#     Crash_load_objs/handle_obj. Fixed on audit-deferred-player-load
+#     (e94c9bb: spill leftover rows to inventory).
+#   PLAYER-6 restrung-leak: objsave.c sets temp->name/short_description/
+#     description with a raw strdup(line) and no free, so a record repeating
+#     Name:/Shrt:/Desc: leaks the first copy (objsave.c:1404/1468/1490) --
+#     the players.c PFILE_SET_STRING fix was never applied here.
+foreach(_crash vars-noname hcontrol-time name-path-login
+               fread-string-nul controw-leak restrung-leak)
+    add_test(NAME fuzz_player_known_${_crash}
+             COMMAND fuzz_player ${CMAKE_CURRENT_SOURCE_DIR}/known-crashes/player/${_crash})
+    set_tests_properties(fuzz_player_known_${_crash} PROPERTIES
+        LABELS "fuzz" DISABLED TRUE
+        ENVIRONMENT "ASAN_OPTIONS=${TBAMUD_ASAN_OPTIONS};UBSAN_OPTIONS=${TBAMUD_UBSAN_OPTIONS}")
+endforeach()
+
+# Regression inputs: known crashes that are fixed, kept in corpus/player/ (so
+# fuzz_player_corpus replays them too) and also replayed one by one, so a
+# failure names the bug.
+#   PLAYER-3 regression-name-path-index: a player index record named "../"
+#     reached get_filename() through update_obj_file()/Crash_clean_file(),
+#     which built a path outside lib/. Fixed by 2f7889b: get_filename()
+#     rejects the name (persist/filename-name-invalid).
+foreach(_crash name-path-index)
+    add_test(NAME fuzz_player_regression_${_crash}
+             COMMAND fuzz_player ${CMAKE_CURRENT_SOURCE_DIR}/corpus/player/regression-${_crash})
+    set_tests_properties(fuzz_player_regression_${_crash} PROPERTIES
+        LABELS "fuzz"
+        ENVIRONMENT "ASAN_OPTIONS=${TBAMUD_ASAN_OPTIONS};UBSAN_OPTIONS=${TBAMUD_UBSAN_OPTIONS}")
+endforeach()
+
+# World-file loaders (db.c, dg_db_scripts.c): rooms, mobiles, objects, zones
+# and triggers, and the fread_string()/get_line()/file_to_string() readers
+# under them. Builders and implementors write these files (OLC or by hand);
+# a malformed one must be rejected with a diagnostic, never crash. The
+# harness #includes dg_db_scripts.c and a copy of db.c whose record cursors
+# it can reset (fuzz_world_db.cmake); the rest is linked from src/, and
+# --gc-sections drops what the loaders never reach.
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/fuzz_world_db.c
+    COMMAND ${CMAKE_COMMAND} -DIN=${CMAKE_SOURCE_DIR}/src/db.c
+            -DOUT=${CMAKE_CURRENT_BINARY_DIR}/fuzz_world_db.c
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/fuzz_world_db.cmake
+    DEPENDS ${CMAKE_SOURCE_DIR}/src/db.c ${CMAKE_CURRENT_SOURCE_DIR}/fuzz_world_db.cmake
+    COMMENT "Generating fuzz_world_db.c (db.c with resettable record cursors)"
+    VERBATIM)
+set_source_files_properties(${CMAKE_CURRENT_BINARY_DIR}/fuzz_world_db.c
+    PROPERTIES GENERATED TRUE HEADER_FILE_ONLY TRUE)
+add_mud_fuzzer(fuzz_world world
+    ${CMAKE_CURRENT_SOURCE_DIR}/fuzz_world.c
+    ${CMAKE_CURRENT_BINARY_DIR}/fuzz_world_db.c
+    ${CMAKE_SOURCE_DIR}/src/utils.c
+    ${CMAKE_SOURCE_DIR}/src/config.c
+    ${CMAKE_SOURCE_DIR}/src/constants.c
+    ${CMAKE_SOURCE_DIR}/src/interpreter.c
+    ${CMAKE_SOURCE_DIR}/src/modify.c
+    ${CMAKE_SOURCE_DIR}/src/genzon.c
+    ${CMAKE_SOURCE_DIR}/src/genolc.c
+    ${CMAKE_SOURCE_DIR}/src/act.informative.c
+    ${CMAKE_SOURCE_DIR}/src/handler.c)
+target_include_directories(fuzz_world PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+# The sancov PC tables are __start_/__stop_ sections, which ld keeps as GC
+# roots by default; they reference every instrumented function, so nothing
+# would be collected and the unreached parts of the linked files (which call
+# into the whole game) would fail to link.
+target_link_options(fuzz_world PRIVATE -Wl,-z,start-stop-gc)
+
+# Known crashes: inputs fuzz_world found (minimised) in loaders this harness
+# does not own. Each is a DISABLED test, so ctest lists it as "Disabled"
+# until the bug is fixed; then delete DISABLED, move the file into
+# corpus/world/ as regression-<name> and replay it as a regression test.
+# A fuzzing campaign can step past an open one with FUZZ_WORLD_MASK=<name>
+# (see fuzz_world.c). All are boot-time crashes from hand-edited or legacy
+# world files; OLC never writes these records. (FUZZ-W1 and FUZZ-W5 are
+# fixed: see the regression inputs below.)
+#   FUZZ-W2 obj-convert-zone-nowhere: parse_object() converts a legacy (3-
+#     or 4-field) object line and, with bitsavetodisk on (the default),
+#     reads zone_table[real_zone_by_thing(vnum)].number. For a vnum in no
+#     zone that is zone_table[NOWHERE], 65535 * 72 bytes past the table:
+#     wild read, SEGV. db.c:2520. Not fixed on any branch.
+#   FUZZ-W3 room-convert-zone-nowhere: the same read in parse_room()
+#     (db.c:1756). Reachable because the zone walk attaches a room in a gap
+#     between two zones to the next zone without checking its bottom, so
+#     real_zone_by_thing() finds no zone. Fixed by 8fbdff0 (a room between
+#     zones is fatal) on audit-deferred-db-loaders.
+#   FUZZ-W4 mob-convert-zone-nowhere: the same read in parse_mobile()
+#     (db.c:2366) for a legacy 4-field mob flag line. Not fixed on any
+#     branch.
+foreach(_crash obj-convert-zone-nowhere room-convert-zone-nowhere
+               mob-convert-zone-nowhere)
+    add_test(NAME fuzz_world_known_${_crash}
+             COMMAND fuzz_world ${CMAKE_CURRENT_SOURCE_DIR}/known-crashes/world/${_crash})
+    set_tests_properties(fuzz_world_known_${_crash} PROPERTIES
+        LABELS "fuzz" DISABLED TRUE
+        ENVIRONMENT "ASAN_OPTIONS=${TBAMUD_ASAN_OPTIONS};UBSAN_OPTIONS=${TBAMUD_UBSAN_OPTIONS}")
+endforeach()
+
+# Regression inputs: known crashes that are fixed, kept in corpus/world/ (so
+# fuzz_world_corpus replays them too) and also replayed one by one, so a
+# failure names the bug.
+#   FUZZ-W1 regression-trg-empty-script: parse_trigger() did
+#     strdup(strtok(s, "\n\r")) on the script fread_string() returned; for an
+#     empty '~' script s was NULL (SEGV in strtok_r, or strtok() resumed in
+#     the previous trigger's freed buffer), and for a script of only line
+#     breaks strtok() returned NULL (strdup(NULL)). Fixed by 63a3ab6 (eed9ae3
+#     on audit-deferred-gen-olc): the body loads as "* No script" with a
+#     dg/trigger-parse-empty warning.
+#   FUZZ-W5 regression-obj-note-exdesc-null-keyword: an empty "~" extra-
+#     description keyword is stored as NULL, and check_object() passes a
+#     note's extra descriptions to find_exdesc(), which read *keyword: NULL
+#     dereference. Fixed by cd48dc1 (c183774 on audit-deferred-commands):
+#     find_exdesc() skips the entry and reports act/exdesc-keyword-missing.
+#     e2f4f26 on audit-deferred-db-loaders also stops the loaders storing
+#     the NULL.
+foreach(_crash trg-empty-script obj-note-exdesc-null-keyword)
+    add_test(NAME fuzz_world_regression_${_crash}
+             COMMAND fuzz_world ${CMAKE_CURRENT_SOURCE_DIR}/corpus/world/regression-${_crash})
+    set_tests_properties(fuzz_world_regression_${_crash} PROPERTIES
+        LABELS "fuzz"
+        ENVIRONMENT "ASAN_OPTIONS=${TBAMUD_ASAN_OPTIONS};UBSAN_OPTIONS=${TBAMUD_UBSAN_OPTIONS}")
+endforeach()

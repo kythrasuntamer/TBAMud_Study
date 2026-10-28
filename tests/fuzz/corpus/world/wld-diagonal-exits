@@ -1,0 +1,31 @@
+w#3001
+Crossroads~
+Paths meet here.
+~
+30 0 0 0 0 1
+D6
+A path northwest.
+~
+path~
+0 -1 3002
+D7
+Northeast.
+~
+~
+1 3022 3003
+D8
+~
+~
+2 -1 3004
+D9
+~
+gate~
+4 65535 0
+S
+#3002
+End~
+End.
+~
+30 0 0 0 0 0
+S
+$
