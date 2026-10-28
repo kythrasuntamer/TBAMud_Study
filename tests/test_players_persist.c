@@ -414,6 +414,51 @@ static void test_clean_pfiles_removes_adjacent_deleted_players(void)
   leave_scratch();
 }
 
+/* B2-29: free_player_index() set top_of_p_table to 0 with player_table
+ * NULL, so every later lookup read player_table[0] through NULL. */
+static void test_lookups_after_free_player_index_find_nothing(void)
+{
+  char newbie[] = "Newbie";
+
+  enter_scratch();
+  write_index("4242 tester 10 0 1000\n~\n");
+  build_player_index();
+  TEST_ASSERT_EQUAL_INT(0, top_of_p_table);
+
+  free_player_index();
+
+  TEST_ASSERT_NULL(player_table);
+  TEST_ASSERT_EQUAL_INT(-1, top_of_p_table);
+  TEST_ASSERT_EQUAL_INT(-1, top_of_p_file);
+  TEST_ASSERT_EQUAL_INT(-1, get_ptable_by_name("tester"));
+  TEST_ASSERT_EQUAL_INT(-1, get_id_by_name("tester"));
+  TEST_ASSERT_NULL(get_name_by_id(4242));
+  TEST_ASSERT_EQUAL_INT(0, create_entry(newbie));
+  TEST_ASSERT_EQUAL_STRING("newbie", player_table[0].name);
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  leave_scratch();
+}
+
+/* B2-29: remove_player() indexed player_table[pfilepos] with no bounds
+ * check (heap overflow under ASan for one past the end). */
+static void test_remove_player_rejects_bad_position(void)
+{
+  enter_scratch();
+  write_index("4242 tester 10 0 1000\n~\n");
+  build_player_index();
+
+  remove_player(1);
+  TEST_ASSERT_EQUAL_STRING("index-pos", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "position 1 outside 0..0"));
+  remove_player(-1);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "position -1 outside 0..0"));
+
+  TEST_ASSERT_EQUAL_INT(2, tb_captured_errors);
+  TEST_ASSERT_EQUAL_INT(0, top_of_p_table);
+  TEST_ASSERT_EQUAL_STRING("tester", player_table[0].name);
+  leave_scratch();
+}
+
 /* B2-16: Clas/Levl/Sex index tables (class_abbrevs[], titles, exp) and
  * skills[] is unsigned char; out-of-range file values were stored as-is. */
 static void test_out_of_range_class_level_sex_skill(void)
@@ -696,6 +741,8 @@ int main(void)
   RUN_TEST(test_out_of_range_current_quest_is_rejected);
   RUN_TEST(test_negative_current_quest_is_rejected);
   RUN_TEST(test_negative_class_is_rejected_at_load);
+  RUN_TEST(test_lookups_after_free_player_index_find_nothing);
+  RUN_TEST(test_remove_player_rejects_bad_position);
   (void)rmdir(scratch_dir);
   return UNITY_END();
 }

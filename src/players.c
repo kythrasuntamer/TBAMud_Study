@@ -76,6 +76,9 @@
 #define PT_LEVEL(i) (player_table[(i)].level)
 #define PT_FLAGS(i) (player_table[(i)].flags)
 #define PT_LLAST(i) (player_table[(i)].last)
+/** TRUE when pos names a slot of player_table[] (0..top_of_p_table; an
+ * empty table is -1). Evaluates pos twice: pass a plain variable. */
+#define VALID_PTABLE_POS(pos) ((pos) >= 0 && (pos) <= top_of_p_table)
 
 /* local functions */
 static void load_affects(FILE *fl, struct char_data *ch);
@@ -508,8 +511,14 @@ static void remove_player_from_index(int pos)
 {
   int i;
 
-  if (pos < 0 || pos > top_of_p_table)
+  /* Internal invariant (remove_player() checks first): a bad position
+   * used to return silently, leaving the caller believing it removed. */
+  if (!VALID_PTABLE_POS(pos)) {
+    TB_ERROR_MSG("player", "index-pos", "player_table",
+                 "position %d outside 0..%d; index unchanged", pos,
+                 top_of_p_table);
     return;
+  }
 
   /* We only need to free the name string */
   free(PT_PNAME(pos));
@@ -603,16 +612,17 @@ void free_player_index(void)
   index_kept_lines = NULL;
   index_kept_count = 0;
 
-  if (!player_table)
-    return;
-
-  for (tp = 0; tp <= top_of_p_table; tp++)
-    if (player_table[tp].name)
-      free(player_table[tp].name);
-
-  free(player_table);
-  player_table = NULL;
-  top_of_p_table = 0;
+  if (player_table) {
+    for (tp = 0; tp <= top_of_p_table; tp++)
+      if (player_table[tp].name)
+        free(player_table[tp].name);
+    free(player_table);
+    player_table = NULL;
+  }
+  /* An empty table is -1. This used to be set to 0 with player_table
+   * NULL, so any later lookup (get_ptable_by_name(), get_name_by_id(),
+   * create_entry()) read player_table[0] through NULL (B2-29). */
+  top_of_p_table = top_of_p_file = -1;
 }
 
 long get_ptable_by_name(const char *name)
@@ -1339,14 +1349,30 @@ void tag_argument(char *argument, char *tag)
  * @param pfilepos The player's player_table position.
  * The entry's name is freed and later entries shift down one slot (see
  * remove_player_from_index()); every held position >= pfilepos is stale
- * afterwards. Unlink failures other than "no such file" are logged. */
+ * afterwards. Unlink failures other than "no such file" are logged.
+ * A position outside the table, or an entry with no name, is reported
+ * (index-pos) and nothing is deleted. */
 void remove_player(int pfilepos)
 {
   char filename[MAX_STRING_LENGTH], timestr[25];
   int i;
 
-  if (!*player_table[pfilepos].name)
+  /* pfilepos comes from the caller's earlier lookup, and every removal
+   * compacts the table; a stale or bad position indexed past it (B2-29). */
+  if (!VALID_PTABLE_POS(pfilepos)) {
+    TB_ERROR_MSG("player", "index-pos", "player_table",
+                 "position %d outside 0..%d; nothing deleted", pfilepos,
+                 top_of_p_table);
     return;
+  }
+  /* Names are blanked only just before removal, so an unnamed entry is a
+   * broken index; its files cannot be found by name. */
+  if (!PT_PNAME(pfilepos) || !*PT_PNAME(pfilepos)) {
+    TB_ERROR_MSG("player", "index-pos", "player_table",
+                 "position %d (idnum %ld) has no name; nothing deleted",
+                 pfilepos, PT_IDNUM(pfilepos));
+    return;
+  }
 
   /* Unlink all player-owned files */
   for (i = 0; i < MAX_FILES; i++) {
