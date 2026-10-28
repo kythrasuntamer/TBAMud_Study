@@ -1,0 +1,68 @@
+{
+  "schema": 1,
+  "status": "SOURCE_CATALOG_ONLY_NOT_CONVERTED",
+  "sources": [
+    {
+      "repo": "moshehbenavraham/LuminariMUD",
+      "format": "circle-extended",
+      "mob_glob": "lib/world/mob/*.mob",
+      "obj_glob": null,
+      "note": "Mobiles present; object file layout must be located and inspected",
+      "ref": "54e1630893bd606d8fa5af66c3cc72c41f445c5f",
+      "sha256": null
+    },
+    {
+      "repo": "Arthmoor/AFKMud",
+      "format": "afkmud-are",
+      "area_glob": "area/*.are",
+      "ref": "490cf5dd74f39aee244a57e21dcbdea95cc98a4c",
+      "sha256": null
+    },
+    {
+      "repo": "EmpireMUD/EmpireMUD-2.0-Beta",
+      "format": "empire-extended",
+      "mob_glob": "lib/world/mob/*.mob",
+      "obj_glob": "lib/world/obj/*.obj",
+      "ref": "43c85b16d1c6f0fc8784f77556d1986c8ed6494e",
+      "sha256": null
+    },
+    {
+      "repo": "MUDOmnibus/QuickMUD",
+      "format": "rom-are",
+      "area_glob": "area/*.are",
+      "ref": "09c6fbbf572576e26eca9df40d8c0c0a6ddf755a",
+      "sha256": null
+    },
+    {
+      "repo": "gblues/ROM",
+      "format": "rom-are",
+      "area_glob": "area/*.are",
+      "ref": "6c16ad633e59581e389599292c6c878462115ed6",
+      "sha256": null
+    },
+    {
+      "repo": "ozgyilmaz/Anatolia-Mud",
+      "format": "rom-custom-are",
+      "area_glob": "area/*.are",
+      "ref": "6e0046c832c7be555eb8319173fba70b2dded657",
+      "sha256": null
+    },
+    {
+      "repo": "nickgammon/smaugfuss",
+      "format": "smaug-fuss",
+      "area_glob": "area/*.are",
+      "ref": "d0d077f7d65d96ba6b3f9ea2fc5b94154cb6bb26",
+      "sha256": null
+    },
+    {
+      "repo": "c2admins/Crimson-2-MUD",
+      "format": "crimson-custom",
+      "mob_glob": "dev/lib/areas/*.mob",
+      "obj_glob": "dev/lib/areas/*.obj",
+      "note": "Explicit user-approved PvP-source exception; must strip PvP features",
+      "ref": "2b7207befbbf80ec18d4a274c5396af9c1fdf012",
+      "sha256": null
+    }
+  ],
+  "pinning": "ref = commit resolved 2026-10-28; sha256 = null until a verified fetch (--allow-unhashed) records the tarball hash to pin"
+}
