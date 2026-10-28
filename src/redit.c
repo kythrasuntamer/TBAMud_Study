@@ -894,6 +894,11 @@ void redit_parse(struct descriptor_data *d, char *arg)
 
   case REDIT_COPY:
     if ((number = real_room(tb_parse_int_or_zero(arg))) != NOWHERE) {
+      /* setup allocates a fresh scratch room and trigger list: release the
+       * ones this session holds first, as cleanup_olc() would. */
+      olc_free_script_copy(d);
+      free_room(OLC_ROOM(d));
+      OLC_ROOM(d) = NULL;
       redit_setup_existing(d, number);
       /* The struct copy kept the source's vnum, but this session still
        * edits OLC_NUM(d). NOWHERE marks a room that does not exist yet. */

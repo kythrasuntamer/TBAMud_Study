@@ -115,6 +115,18 @@ static void free_scratch_obj(struct obj_data *obj)
   free(obj);
 }
 
+/* genobj.c's free_object_strings(), counted so tests can see a release. */
+static int free_object_strings_calls;
+void free_object_strings(struct obj_data *obj)
+{
+  free_object_strings_calls++;
+  free(obj->name);
+  free(obj->description);
+  free(obj->short_description);
+  free(obj->action_description);
+  obj->name = obj->description = obj->short_description = obj->action_description = NULL;
+}
+
 void cleanup_olc(struct descriptor_data *d, byte cleanup_type)
 {
   (void)cleanup_type;
@@ -176,6 +188,7 @@ void *tb_calloc_array_at(size_t count, size_t element_size,
 
 char *str_udup(const char *txt) { return strdup((txt && *txt) ? txt : "undefined"); }
 int genolc_checkstring(struct descriptor_data *d, char *arg) { (void)d; (void)arg; return TRUE; }
+int count_non_protocol_chars(char *str) { return (int)strlen(str); }
 void get_char_colors(struct char_data *ch) { (void)ch; }
 void clear_screen(struct descriptor_data *d) { (void)d; }
 void column_list(struct char_data *ch, int num_cols, const char **list, int list_length, bool show_nums)
@@ -422,6 +435,7 @@ void setUp(void)
   zone_editable = TRUE;
   add_room_result = NOWHERE;
   extract_script_calls = free_proto_calls = 0;
+  free_object_strings_calls = 0;
   last_extracted_thing = NULL;
   world = NULL;
   top_of_world = 0;
@@ -748,11 +762,8 @@ static void test_room_insert_leaves_nowhere_exits_alone(void)
 /* ------------------------------------------------------------------ */
 static void oedit_copy_from(struct descriptor_data *d, const char *vnum)
 {
-  struct obj_data *before = OLC_OBJ(d);
   oedit_parse(d, "w");
   oedit_parse(d, (char *)vnum);
-  if (OLC_OBJ(d) != before)
-    free_scratch_obj(before);   /* the 'W' re-setup leak is F1-10 */
 }
 
 static void test_oedit_delete_after_copy_deletes_edited_object_not_source(void)
@@ -956,6 +967,67 @@ static void test_olc_free_script_copy_clears_session_handle(void)
   TEST_ASSERT_NULL(OLC_SCRIPT(d));
 }
 
+
+/* ------------------------------------------------------------------ */
+/* F1-10: 'W' releases the scratch copy it replaces.                   */
+/* ------------------------------------------------------------------ */
+static void test_oedit_copy_twice_releases_each_replaced_scratch(void)
+{
+  struct descriptor_data *d = &builder_desc;
+
+  make_objects(3);
+  OLC_NUM(d) = 3001;
+  oedit_setup_existing(d, 1);
+  STATE(d) = CON_OEDIT;
+  OLC_MODE(d) = OEDIT_MAIN_MENU;
+  OLC_SCRIPT(d) = make_trig_list(1);
+
+  oedit_copy_from(d, "3000");
+  oedit_copy_from(d, "3002");
+
+  /* Each replaced scratch object was released (LeakSanitizer checks the
+   * trigger lists), and the session still edits 3001. */
+  TEST_ASSERT_EQUAL_INT(2, free_object_strings_calls);
+  TEST_ASSERT_EQUAL_INT(1, GET_OBJ_RNUM(OLC_OBJ(d)));
+}
+
+static void test_oedit_copy_from_missing_source_keeps_scratch(void)
+{
+  struct descriptor_data *d = &builder_desc;
+  struct obj_data *before;
+
+  make_objects(3);
+  OLC_NUM(d) = 3001;
+  oedit_setup_existing(d, 1);
+  before = OLC_OBJ(d);
+  STATE(d) = CON_OEDIT;
+  OLC_MODE(d) = OEDIT_MAIN_MENU;
+
+  oedit_copy_from(d, "4999");
+
+  TEST_ASSERT_EQUAL_PTR(before, OLC_OBJ(d));
+  TEST_ASSERT_EQUAL_INT(0, free_object_strings_calls);
+}
+
+static void test_redit_copy_twice_releases_each_replaced_room(void)
+{
+  struct descriptor_data *d = &builder_desc;
+
+  make_world(3);
+  OLC_NUM(d) = 3001;
+  redit_setup_existing(d, 1);
+  STATE(d) = CON_REDIT;
+  OLC_MODE(d) = REDIT_MAIN_MENU;
+
+  redit_parse(d, "w");
+  redit_parse(d, "3000");
+  redit_parse(d, "w");
+  redit_parse(d, "3002");
+
+  /* LeakSanitizer fails the run if a replaced room leaked. */
+  TEST_ASSERT_EQUAL_INT(3001, OLC_ROOM(d)->number);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -975,5 +1047,8 @@ int main(void)
   RUN_TEST(test_oedit_save_hands_script_copy_to_prototype);
   RUN_TEST(test_oedit_quit_without_changes_frees_script_copy);
   RUN_TEST(test_olc_free_script_copy_clears_session_handle);
+  RUN_TEST(test_oedit_copy_twice_releases_each_replaced_scratch);
+  RUN_TEST(test_oedit_copy_from_missing_source_keeps_scratch);
+  RUN_TEST(test_redit_copy_twice_releases_each_replaced_room);
   return UNITY_END();
 }

@@ -1401,6 +1401,12 @@ void oedit_parse(struct descriptor_data *d, char *arg)
 
   case OEDIT_COPY:
     if ((number = real_object(tb_parse_int_or_zero(arg))) != NOTHING) {
+      /* setup allocates a fresh scratch object and trigger list: release
+       * the ones this session holds first, as cleanup_olc() would. */
+      olc_free_script_copy(d);
+      free_object_strings(OLC_OBJ(d));
+      free(OLC_OBJ(d));
+      OLC_OBJ(d) = NULL;
       oedit_setup_existing(d, number);
       /* copy_object() kept the source's rnum, but this session still edits
        * OLC_NUM(d): delete and save must never act on the copy source. */

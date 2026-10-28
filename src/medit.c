@@ -1055,6 +1055,11 @@ void medit_parse(struct descriptor_data *d, char *arg)
 
   case MEDIT_COPY:
     if ((i = real_mobile(tb_parse_int_or_zero(arg))) != NOWHERE) {
+      /* setup allocates a fresh scratch mobile and trigger list: release
+       * the ones this session holds first, as cleanup_olc() would. */
+      olc_free_script_copy(d);
+      free_mobile(OLC_MOB(d));
+      OLC_MOB(d) = NULL;
       medit_setup_existing(d, i);
       /* copy_mobile() kept the source's rnum (nr), but this session still
        * edits OLC_NUM(d): delete, save and free_mobile() rely on nr naming

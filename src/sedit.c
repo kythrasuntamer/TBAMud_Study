@@ -804,6 +804,10 @@ void sedit_parse(struct descriptor_data *d, char *arg)
     break;
   case SEDIT_COPY:
     if ((i = real_shop(tb_parse_int_or_zero(arg))) != NOWHERE) {
+      /* setup allocates a fresh scratch shop: release this session's copy
+       * first, as cleanup_olc() would. */
+      free_shop(OLC_SHOP(d));
+      OLC_SHOP(d) = NULL;
       sedit_setup_existing(d, i);
     } else
       write_to_output(d, "That shop does not exist.\r\n");
