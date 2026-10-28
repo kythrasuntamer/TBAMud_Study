@@ -21,6 +21,7 @@
 #include "oasis.h"
 #include "hedit.h"
 #include "modify.h"
+#include "improved-edit.h"
 #include <stdarg.h>
 #include "tb_error_capture.h"
 
@@ -371,9 +372,33 @@ static void test_hedit_orphan_duplicate_is_refused_loudly(void)
   help_table[0].entry = owner_entry;
 }
 
+/* F2-03: with a NULL entry, '1' must hand the editor a NULL (or heap)
+ * backstr, never a string literal that string_add later frees; and a save
+ * or abort that leaves the entry NULL puts back a placeholder, loudly. */
+static void test_hedit_null_entry_round_trip(void)
+{
+  char cmd[] = " beta";
+
+  search_result = 2;
+  do_oasis_hedit(&builder, cmd, 0, 0);
+  type("y");
+  free(OLC_HELP(&builder_desc)->entry);
+  OLC_HELP(&builder_desc)->entry = NULL;  /* as after '/c' then '/s' */
+  type("1");
+  TEST_ASSERT_EQUAL_INT(1, string_writes);
+  TEST_ASSERT_NULL(string_write_backstr);
+  TEST_ASSERT_TRUE(string_write_target == &OLC_HELP(&builder_desc)->entry);
+
+  hedit_string_cleanup(&builder_desc, STRINGADD_SAVE);
+  TEST_ASSERT_NOT_NULL(OLC_HELP(&builder_desc)->entry);
+  TEST_ASSERT_EQUAL_STRING("hedit-empty-entry", tb_captured_operation);
+  TEST_ASSERT_EQUAL_INT(HEDIT_MAIN_MENU, OLC_MODE(&builder_desc));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(test_hedit_null_entry_round_trip);
   RUN_TEST(test_hedit_no_then_add_appends_instead_of_writing_past_table);
   RUN_TEST(test_hedit_no_offers_next_matching_row);
   RUN_TEST(test_hedit_save_with_stale_rnum_is_refused_loudly);

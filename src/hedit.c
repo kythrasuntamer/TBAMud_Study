@@ -277,7 +277,10 @@ static void hedit_disp_menu(struct descriptor_data *d)
 void hedit_parse(struct descriptor_data *d, char *arg)
 {
   char buf[MAX_STRING_LENGTH];
-  char *oldtext = "";
+  /* The improved editor keeps this as d->backstr and free()s it on save or
+   * restores it as the entry on abort, so it must be heap or NULL.  It was
+   * the literal "", which '/c' then '/s' handed to free(). */
+  char *oldtext = NULL;
   int number;
 
   switch (OLC_MODE(d)) {
@@ -441,6 +444,23 @@ void hedit_string_cleanup(struct descriptor_data *d, int terminator)
 {
   switch (OLC_MODE(d)) {
   case HEDIT_ENTRY:
+    /* '/c' leaves the entry NULL, string_add's save keeps it NULL, and an
+     * abort restores a NULL backstr.  The menu prints it with %s and
+     * hedit_save_to_disk writes it as the entry, whose first line must be
+     * the keywords, so put back a parseable placeholder and say so. */
+    if (OLC_HELP(d)->entry == NULL) {
+      char placeholder[MAX_STRING_LENGTH];
+
+      TB_WARN_MSG("olc", "hedit-empty-entry", "help_table",
+                  "terminator %d keywords length %zu editor " DIAG_CHAR_FMT,
+                  terminator, strlen(OLC_HELP(d)->keywords ? OLC_HELP(d)->keywords : ""),
+                  DIAG_CHAR(d->character));
+      tb_snprintf(placeholder, sizeof(placeholder),
+                  "%s\r\n\r\nThis help file is unfinished.\r\n",
+                  OLC_HELP(d)->keywords ? OLC_HELP(d)->keywords : "KEYWORDS");
+      OLC_HELP(d)->entry = strdup(placeholder);
+      write_to_output(d, "The entry was empty; a placeholder was put back.\r\n");
+    }
     hedit_disp_menu(d);
     break;
   }
