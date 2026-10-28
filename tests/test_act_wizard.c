@@ -1099,6 +1099,41 @@ static void test_at_returns_by_vnum_after_rooms_shift(void)
   complete_cmd_info = NULL;
 }
 
+/* G1-24: the 'show' list builders stopped silently when the buffer
+ * filled, and in 'errors' the break left only the inner loop, so the
+ * outer loop kept rewriting the tail with partial lines. */
+static void test_show_errors_overflow_is_marked_and_reported(void)
+{
+  enum { NROOMS = 300 };
+  static struct room_data big[NROOMS];
+  static struct room_direction_data exits[NROOMS][NUM_OF_DIRS];
+  struct room_data *saved_world = world;
+  room_rnum saved_top = top_of_world;
+  const char *tail;
+  int i, d;
+
+  memset(big, 0, sizeof(big));
+  memset(exits, 0, sizeof(exits));
+  for (i = 0; i < NROOMS; i++) {
+    big[i].number = (room_vnum) (5000 + i);
+    big[i].name = (char *)"Errant";
+    for (d = 0; d < NUM_OF_DIRS; d++) {
+      exits[i][d].to_room = 0;   /* (void) exit */
+      big[i].dir_option[d] = &exits[i][d];
+    }
+  }
+  world = big;
+  top_of_world = NROOMS - 1;
+  RUN_CMD(do_show, &imm, "errors");
+  world = saved_world;
+  top_of_world = saved_top;
+
+  TEST_ASSERT_EQUAL_STRING("show-truncate", captured_operation);
+  tail = sent + strlen(sent) - strlen("*** output truncated ***\r\n");
+  TEST_ASSERT_EQUAL_STRING("*** output truncated ***\r\n", tail);
+  TEST_ASSERT_TRUE(strlen(sent) < MAX_STRING_LENGTH);
+}
+
 int main(void)
 {
   /* basic_mud_log()/mudlog() are the real utils.c ones; keep them quiet. */
@@ -1131,6 +1166,7 @@ int main(void)
   RUN_TEST(test_out_of_range_vnums_are_rejected);
   RUN_TEST(test_set_other_players_poof_below_impl_is_refused);
   RUN_TEST(test_at_returns_by_vnum_after_rooms_shift);
+  RUN_TEST(test_show_errors_overflow_is_marked_and_reported);
   {
     int failures = UNITY_END();
     if (logfile)

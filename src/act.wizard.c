@@ -2807,9 +2807,39 @@ static size_t print_zone_to_buf(char *bufptr, size_t left, zone_rnum zone, int l
 	zone_table[zone].builders, KNRM, zone_table[zone].bot, zone_table[zone].top);
 }
 
+/* Room kept at the end of a 'show' buffer for the truncation marker. */
+#define SHOW_TRUNC_MARK "\r\n*** output truncated ***\r\n"
+
+/* Start a 'show' listing in the array buf (sizeof is taken here), leaving
+ * room for SHOW_TRUNC_MARK, with title as the first line. */
+#define SHOW_BEGIN(out, buf, title) do { \
+  tb_buf_init(&(out), (buf), sizeof(buf) - sizeof(SHOW_TRUNC_MARK)); \
+  tb_buf_append(&(out), (title)); \
+} while (0)
+
+/** Page a 'show' listing to ch. A listing that filled its buffer used to
+ * end mid-line with no sign of it; it now ends with SHOW_TRUNC_MARK and is
+ * reported as show-truncate with the field and the caller. */
+static void show_page(struct char_data *ch, char *buf, size_t bufsize,
+                      int truncated, const char *field)
+{
+  if (truncated) {
+    size_t pos = strlen(buf);
+
+    if (pos > bufsize - sizeof(SHOW_TRUNC_MARK))
+      pos = bufsize - sizeof(SHOW_TRUNC_MARK);
+    strlcpy(buf + pos, SHOW_TRUNC_MARK, bufsize - pos);
+    TB_WARN_MSG("act", "show-truncate", field,
+                "caller " DIAG_CHAR_FMT ": listing exceeded %zu bytes",
+                DIAG_CHAR(ch), bufsize);
+  }
+  page_string(ch->desc, buf, TRUE);
+}
+
 ACMD(do_show)
 {
   int i, j, k, l, con, builder =0;		/* i, j, k to specifics? */
+  int zones_truncated = FALSE;
   size_t len, nlen;
   zone_rnum zrn;
   zone_vnum zvn;
@@ -2821,6 +2851,7 @@ ACMD(do_show)
 	arg[MAX_INPUT_LENGTH], buf[MAX_STRING_LENGTH];
   int r, g, b;
   char colour[16];
+  struct tb_buf out;   /* the list builders below append through this */
 
   struct show_struct {
     const char *cmd;
@@ -2910,8 +2941,10 @@ ACMD(do_show)
           free(builders_copy);
 	}
 	nlen = print_zone_to_buf(buf + len, sizeof(buf) - len, zrn, 0);
-        if (len + nlen >= sizeof(buf))
+        if (len + nlen >= sizeof(buf) - 1) {
+          zones_truncated = TRUE;
           break;
+        }
         len += nlen;
       }
     }
@@ -2919,7 +2952,7 @@ ACMD(do_show)
       send_to_char(ch, "%s has not built any zones here.\r\n", CAP(value));
     else if (builder == 2)
       send_to_char(ch, "The following zones have been built by: %s\r\n", CAP(value));
-    page_string(ch->desc, buf, TRUE);
+    show_page(ch, buf, sizeof(buf), zones_truncated, "zones");
     break;
 
   /* show player */
@@ -3012,51 +3045,36 @@ ACMD(do_show)
 
   /* show errors */
   case 5:
-    len = strlcpy(buf, "Errant Rooms\r\n------------\r\n", sizeof(buf));
-    for (i = 0, k = 0; i <= top_of_world; i++)
-      for (j = 0; j < DIR_COUNT; j++) {
+    SHOW_BEGIN(out, buf, "Errant Rooms\r\n------------\r\n");
+    /* A full buffer stops every loop, not just the innermost one. */
+    for (i = 0, k = 0; i <= top_of_world && !tb_buf_truncated(&out); i++)
+      for (j = 0; j < DIR_COUNT && !tb_buf_truncated(&out); j++) {
       	if (!W_EXIT(i,j))
       	  continue;
-        if (W_EXIT(i,j)->to_room == 0) {
-	    nlen = snprintf(buf + len, sizeof(buf) - len, "%2d: (void   ) [%5d] %-*s%s (%s)\r\n", ++k, GET_ROOM_VNUM(i), count_color_chars(world[i].name)+40, world[i].name, QNRM, dirs[j]);
-            if (len + nlen >= sizeof(buf))
-              break;
-            len += nlen;
-        }
-        if (W_EXIT(i,j)->to_room == NOWHERE && !W_EXIT(i,j)->general_description) {
-	    nlen = snprintf(buf + len, sizeof(buf) - len, "%2d: (Nowhere) [%5d] %-*s%s (%s)\r\n", ++k, GET_ROOM_VNUM(i), count_color_chars(world[i].name)+ 40, world[i].name, QNRM, dirs[j]);
-            if (len + nlen >= sizeof(buf))
-              break;
-            len += nlen;
-        }
+        if (W_EXIT(i,j)->to_room == 0)
+	    tb_buf_appendf(&out, "%2d: (void   ) [%5d] %-*s%s (%s)\r\n", ++k, GET_ROOM_VNUM(i), count_color_chars(world[i].name)+40, world[i].name, QNRM, dirs[j]);
+        if (W_EXIT(i,j)->to_room == NOWHERE && !W_EXIT(i,j)->general_description)
+	    tb_buf_appendf(&out, "%2d: (Nowhere) [%5d] %-*s%s (%s)\r\n", ++k, GET_ROOM_VNUM(i), count_color_chars(world[i].name)+ 40, world[i].name, QNRM, dirs[j]);
       }
-    page_string(ch->desc, buf, TRUE);
+    show_page(ch, buf, sizeof(buf), tb_buf_truncated(&out), "errors");
     break;
 
   /* show death */
   case 6:
-    len = strlcpy(buf, "Death Traps\r\n-----------\r\n", sizeof(buf));
-    for (i = 0, j = 0; i <= top_of_world; i++)
-      if (ROOM_FLAGGED(i, ROOM_DEATH)) {
-        nlen = snprintf(buf + len, sizeof(buf) - len, "%2d: [%5d] %s%s\r\n", ++j, GET_ROOM_VNUM(i), world[i].name, QNRM);
-        if (len + nlen >= sizeof(buf))
-          break;
-        len += nlen;
-      }
-    page_string(ch->desc, buf, TRUE);
+    SHOW_BEGIN(out, buf, "Death Traps\r\n-----------\r\n");
+    for (i = 0, j = 0; i <= top_of_world && !tb_buf_truncated(&out); i++)
+      if (ROOM_FLAGGED(i, ROOM_DEATH))
+        tb_buf_appendf(&out, "%2d: [%5d] %s%s\r\n", ++j, GET_ROOM_VNUM(i), world[i].name, QNRM);
+    show_page(ch, buf, sizeof(buf), tb_buf_truncated(&out), "death");
     break;
 
   /* show godrooms */
   case 7:
-    len = strlcpy(buf, "Godrooms\r\n--------------------------\r\n", sizeof(buf));
-    for (i = 0, j = 0; i <= top_of_world; i++)
-      if (ROOM_FLAGGED(i, ROOM_GODROOM)) {
-        nlen = snprintf(buf + len, sizeof(buf) - len, "%2d: [%5d] %s%s\r\n", ++j, GET_ROOM_VNUM(i), world[i].name, QNRM);
-        if (len + nlen >= sizeof(buf))
-          break;
-        len += nlen;
-      }
-    page_string(ch->desc, buf, TRUE);
+    SHOW_BEGIN(out, buf, "Godrooms\r\n--------------------------\r\n");
+    for (i = 0, j = 0; i <= top_of_world && !tb_buf_truncated(&out); i++)
+      if (ROOM_FLAGGED(i, ROOM_GODROOM))
+        tb_buf_appendf(&out, "%2d: [%5d] %s%s\r\n", ++j, GET_ROOM_VNUM(i), world[i].name, QNRM);
+    show_page(ch, buf, sizeof(buf), tb_buf_truncated(&out), "godrooms");
     break;
 
   /* show shops */
@@ -3089,54 +3107,43 @@ ACMD(do_show)
 
   /* show thaco */
   case 11:
-    len = strlcpy(buf, "LvL - Mu Cl Th Wa\r\n----------------\r\n", sizeof(buf));
+    SHOW_BEGIN(out, buf, "LvL - Mu Cl Th Wa\r\n----------------\r\n");
 
-    for (j = 1; j < LVL_IMMORT; j++) {
-      nlen = snprintf(buf + len, sizeof(buf) - len,  "%-3d - %-2d %-2d %-2d %-2d\r\n", j, 
+    for (j = 1; j < LVL_IMMORT && !tb_buf_truncated(&out); j++)
+      tb_buf_appendf(&out, "%-3d - %-2d %-2d %-2d %-2d\r\n", j,
 				thaco(CLASS_MAGIC_USER, j),
 				thaco(CLASS_CLERIC, j),
 				thaco(CLASS_THIEF, j),
 				thaco(CLASS_WARRIOR, j));
-      if (len + nlen >= sizeof(buf))
-        break;
-      len += nlen;
-    }
 
-    page_string(ch->desc, buf, TRUE);
+    show_page(ch, buf, sizeof(buf), tb_buf_truncated(&out), "thaco");
     break;
 
   /* show experience tables */
   case 12:
-    len = strlcpy(buf, "LvL - Mu     Cl     Th     Wa\r\n--------------------------\r\n", sizeof(buf));
+    SHOW_BEGIN(out, buf, "LvL - Mu     Cl     Th     Wa\r\n--------------------------\r\n");
 
-    for (i = 1; i < LVL_IMMORT; i++) { 
-      nlen = snprintf(buf + len, sizeof(buf) - len,  "%-3d - %-6d %-6d %-6d %-6d\r\n", i,  
+    for (i = 1; i < LVL_IMMORT && !tb_buf_truncated(&out); i++)
+      tb_buf_appendf(&out, "%-3d - %-6d %-6d %-6d %-6d\r\n", i,
 				level_exp(CLASS_MAGIC_USER, i) - level_exp(CLASS_MAGIC_USER, i - 1),
 				level_exp(CLASS_CLERIC, i) - level_exp(CLASS_CLERIC, i - 1),
 				level_exp(CLASS_THIEF, i) - level_exp(CLASS_THIEF, i - 1),
 				level_exp(CLASS_WARRIOR, i) - level_exp(CLASS_WARRIOR, i - 1));
-      if (len + nlen >= sizeof(buf))
-        break;
-      len += nlen;
-    }
 
-    page_string(ch->desc, buf, TRUE);
+    show_page(ch, buf, sizeof(buf), tb_buf_truncated(&out), "exp");
     break;
 
   case 13:
-    len = strlcpy(buf, "Colours\r\n--------------------------\r\n", sizeof(buf));
+    SHOW_BEGIN(out, buf, "Colours\r\n--------------------------\r\n");
     k = 0;
-    for (r = 0; r < 6; r++)
-      for (g = 0; g < 6; g++)
-        for (b = 0; b < 6; b++) {
+    for (r = 0; r < 6 && !tb_buf_truncated(&out); r++)
+      for (g = 0; g < 6 && !tb_buf_truncated(&out); g++)
+        for (b = 0; b < 6 && !tb_buf_truncated(&out); b++) {
           tb_snprintf(colour, sizeof(colour), "F%u%u%u",
                    (unsigned) r, (unsigned) g, (unsigned) b);
-          nlen = snprintf(buf + len, sizeof(buf) - len,  "%s%s%s", ColourRGB(ch->desc, colour), colour, ++k % 6 == 0 ? "\tn\r\n" : "    ");
-          if (len + nlen >= sizeof(buf))
-            break;
-          len += nlen;
+          tb_buf_appendf(&out, "%s%s%s", ColourRGB(ch->desc, colour), colour, ++k % 6 == 0 ? "\tn\r\n" : "    ");
         }
-    page_string(ch->desc, buf, TRUE);
+    show_page(ch, buf, sizeof(buf), tb_buf_truncated(&out), "colour");
     break;
 
   /* show what? */
