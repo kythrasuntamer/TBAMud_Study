@@ -1286,10 +1286,27 @@ static int perform_dupe_check(struct descriptor_data *d)
       continue;
     }
 
-    /* we've found a duplicate - blow him away, dumping his eq in limbo. */
-    if (IN_ROOM(ch) != NOWHERE)
-      char_from_room(ch);
-    char_to_room(ch, 1);
+    /* we've found a duplicate - blow him away, dumping his eq in the mortal
+     * start room. That room is looked up by vnum: the hard-coded rnum 1 used
+     * here before was whatever room OLC had shifted into that slot, or past
+     * top_of_world (char_to_room() refused it and left the duplicate in
+     * NOWHERE). With no start room this is reported and the duplicate is
+     * extracted where it is (extract_char_final() recovers or reports one
+     * in NOWHERE). */
+    {
+      room_rnum dump = real_room(CONFIG_MORTAL_START), here = IN_ROOM(ch);
+
+      if (dump == NOWHERE)
+        TB_ERROR_MSG("interpreter", "dupe-no-start-room", "room",
+                     "mortal start room vnum %d does not exist; duplicate "
+                     DIAG_CHAR_FMT " extracted in " DIAG_ROOM_FMT,
+                     (int) CONFIG_MORTAL_START, DIAG_CHAR(ch), DIAG_ROOM(here));
+      else {
+        if (here != NOWHERE)
+          char_from_room(ch);
+        char_to_room(ch, dump);
+      }
+    }
     extract_char(ch);
   }
 

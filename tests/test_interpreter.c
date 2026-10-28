@@ -18,6 +18,8 @@
 #include "dg_scripts.h"
 #include "db.h"
 
+#include <sodium.h>
+
 extern FILE *logfile;
 
 /* utils.c owns tb_error_log_at(); the link wraps it (--wrap) so the tests can
@@ -901,6 +903,153 @@ void test_command_interpreter_npc_descriptor_without_original_is_reported(void)
  * main
  * ========================================================= */
 
+/* =========================================================
+ * perform_dupe_check: a duplicate in the world is extracted in the mortal
+ * start room, found by vnum
+ *
+ * It used char_to_room(ch, 1): rnum 1 is whatever room OLC shifted into
+ * that slot, or past top_of_world, where char_to_room() refuses and the
+ * duplicate is left in NOWHERE.
+ * ========================================================= */
+
+/* Room primitives with handler.c's contract (override the weak stubs):
+ * char_from_room() aborts on a character in no valid room, char_to_room()
+ * refuses an invalid room and leaves its character in NOWHERE. */
+static struct room_data dupe_rooms[3];
+static struct char_data *extracted_char;
+static room_rnum extracted_in;
+
+room_rnum real_room(room_vnum vnum)
+{
+  room_rnum i;
+
+  for (i = 0; world && i <= top_of_world; i++)
+    if (world[i].number == vnum)
+      return i;
+  return NOWHERE;
+}
+void char_from_room_at(const char *src_file, int src_line,
+                       const char *src_func, struct char_data *ch)
+{
+  (void)src_file; (void)src_line; (void)src_func;
+  TEST_ASSERT_TRUE_MESSAGE(VALID_ROOM_RNUM(IN_ROOM(ch)),
+                           "char_from_room on a character in no valid room "
+                           "(production aborts)");
+  IN_ROOM(ch) = NOWHERE;
+}
+void char_to_room_at(const char *src_file, int src_line, const char *src_func,
+                     struct char_data *ch, room_rnum room)
+{
+  (void)src_file; (void)src_line; (void)src_func;
+  if (VALID_ROOM_RNUM(room))
+    IN_ROOM(ch) = room;
+}
+void extract_char(struct char_data *ch)
+{
+  extracted_char = ch;
+  extracted_in = IN_ROOM(ch);
+}
+
+/* d logs in as idnum 31 with the right password, typed at CON_PASSWORD. */
+static const char dupe_password[] = "correct horse";
+static struct char_data *password_login(struct descriptor_data *d)
+{
+  struct char_data *dch = heap_char("Twinnie");
+  char hash[crypto_pwhash_STRBYTES];
+
+  TEST_ASSERT_TRUE(sodium_init() >= 0);
+  /* Minimal argon2id parameters: verifying costs microseconds, not the
+   * production work factor. */
+  TEST_ASSERT_EQUAL_INT(0, crypto_pwhash_str_alg(hash, dupe_password,
+                        strlen(dupe_password), crypto_pwhash_OPSLIMIT_MIN,
+                        crypto_pwhash_MEMLIMIT_MIN, crypto_pwhash_ALG_ARGON2ID13));
+  strlcpy(GET_PASSWD(dch), hash, sizeof(dch->player.passwd));
+  GET_IDNUM(dch) = 31;
+  memset(d, 0, sizeof(*d));
+  d->character = dch;
+  dch->desc = d;
+  d->desc_num = 2;
+  STATE(d) = CON_PASSWORD;
+  strlcpy(d->host, "127.0.0.1", sizeof(d->host));
+  return dch;
+}
+
+/* Two linkless copies of idnum 31 in the world, both in rnum 0: the first
+ * is reconnected to, the second is the duplicate. */
+static struct char_data twin1, twin2;
+static struct player_special_data twin1_ps, twin2_ps;
+
+static void dupe_world(room_vnum start)
+{
+  memset(dupe_rooms, 0, sizeof(dupe_rooms));
+  dupe_rooms[0].number = 100;
+  dupe_rooms[1].number = 101;           /* rnum 1: not the start room */
+  dupe_rooms[2].number = 3001;
+  world = dupe_rooms;
+  top_of_world = 2;
+  CONFIG_MORTAL_START = start;
+  memset(&twin1, 0, sizeof(twin1));
+  memset(&twin2, 0, sizeof(twin2));
+  memset(&twin1_ps, 0, sizeof(twin1_ps));
+  memset(&twin2_ps, 0, sizeof(twin2_ps));
+  twin1.player_specials = &twin1_ps;
+  twin2.player_specials = &twin2_ps;
+  twin1.player.name = twin2.player.name = (char *)"Twinnie";
+  GET_IDNUM(&twin1) = GET_IDNUM(&twin2) = 31;
+  IN_ROOM(&twin1) = IN_ROOM(&twin2) = 0;
+  twin1.next = &twin2;
+  character_list = &twin1;
+  extracted_char = NULL;
+  extracted_in = NOWHERE;
+}
+
+static void dupe_world_free(void)
+{
+  free(GET_HOST(&twin1));           /* the reconnect strdup()s d->host */
+  character_list = NULL;
+  descriptor_list = NULL;
+  world = NULL;
+  top_of_world = 0;
+  CONFIG_MORTAL_START = 0;
+  free_heap_chars();
+}
+
+void test_dupe_check_extracts_a_duplicate_in_the_start_room(void)
+{
+  struct descriptor_data d;
+  char arg[sizeof(dupe_password)];
+
+  dupe_world(3001);
+  password_login(&d);
+  descriptor_list = &d;
+  strlcpy(arg, dupe_password, sizeof(arg));
+  nanny(&d, arg);
+
+  TEST_ASSERT_EQUAL_PTR(&twin1, d.character);   /* reconnected */
+  TEST_ASSERT_EQUAL_PTR(&twin2, extracted_char);
+  TEST_ASSERT_EQUAL_INT(2, extracted_in);       /* rnum of vnum 3001 */
+  TEST_ASSERT_EQUAL_INT(0, captured_errors);
+  dupe_world_free();
+}
+
+void test_dupe_check_without_a_start_room_is_reported(void)
+{
+  struct descriptor_data d;
+  char arg[sizeof(dupe_password)];
+
+  dupe_world(9999);                 /* no such room */
+  password_login(&d);
+  descriptor_list = &d;
+  strlcpy(arg, dupe_password, sizeof(arg));
+  nanny(&d, arg);
+
+  TEST_ASSERT_EQUAL_PTR(&twin2, extracted_char);
+  TEST_ASSERT_EQUAL_INT(0, extracted_in);       /* where it was */
+  TEST_ASSERT_EQUAL_INT(1, captured_errors);
+  TEST_ASSERT_EQUAL_STRING("dupe-no-start-room", captured_operation);
+  dupe_world_free();
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -971,6 +1120,10 @@ int main(void)
     /* command_interpreter switched-IMPL check */
     RUN_TEST(test_command_interpreter_switched_impl_runs_script_commands);
     RUN_TEST(test_command_interpreter_npc_descriptor_without_original_is_reported);
+
+    /* perform_dupe_check: duplicate extraction room */
+    RUN_TEST(test_dupe_check_extracts_a_duplicate_in_the_start_room);
+    RUN_TEST(test_dupe_check_without_a_start_room_is_reported);
 
     return UNITY_END();
 }
