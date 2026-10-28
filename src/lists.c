@@ -5,6 +5,31 @@
 *  By Vatiken. Copyright 2012 by Joseph Arnusch                           *
 **************************************************************************/
 
+/**
+ * @file lists.c
+ * Generic doubly linked lists of void * contents (struct list_data).
+ *
+ * Ownership: a list owns its item_data nodes, never its contents.
+ * remove_from_list() and free_list() free nodes only; the caller frees what
+ * the contents point to. Every list but global_lists itself is registered
+ * in global_lists (for debugging), so free lists with free_list(), never
+ * with free().
+ *
+ * Iteration:
+ * - merge_iterator()/next_in_list()/remove_iterator() use a caller-owned
+ *   struct iterator_data and may nest. The body must not remove the item
+ *   the iterator is on, and must call remove_iterator() even when it
+ *   breaks out early.
+ * - simple_list() is a single global, non-reentrant cursor: do not nest
+ *   it, and call clear_simple_list() after breaking out of it. Its body may
+ *   remove the current or next item, or free the list (the cursor follows).
+ *   Items appended during the loop after the cursor reached the end are not
+ *   visited.
+ *
+ * Diagnostics: the lists.h macros pass the caller's file/line/function to
+ * the *_at() functions, so misuse is reported against the calling code.
+ */
+
 #include "conf.h"
 #include "sysdep.h"
 #include "structs.h"
@@ -90,6 +115,9 @@ static struct item_data * create_item(void)
   return (pNewItem);
 }
 
+/** Free pList and its nodes (not their contents), unregistering it from
+ * global_lists. A non-empty list is normal; NULL is reported. The caller's
+ * pointer to the list is dangling afterwards: set it to NULL. */
 void free_list_at(struct list_data * pList,
                   const char *file, int line, const char *func)
 {
@@ -289,6 +317,10 @@ void clear_simple_list(void)
   pLastList = NULL;
 }
 
+/** Return the next content of pList, or NULL at the end (the cursor is
+ * then released). Calling it with a different list abandons the current
+ * loop (reported); simple_list(NULL) resets it. See the file comment for
+ * what the loop body may do. */
 void * simple_list_at(struct list_data * pList,
                       const char *file, int line, const char *func)
 {

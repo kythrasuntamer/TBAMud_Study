@@ -5,6 +5,20 @@
 *  By Vatiken. Copyright 2012 by Joseph Arnusch                           *
 **************************************************************************/
 
+/**
+ * @file mud_event.c
+ * Named, owner-attached events on top of the dg_event queue: each
+ * mud_event_data says what it is (iId, an index into mud_event_index[]) and
+ * whom it belongs to, and sits on that owner's events list so the owner can
+ * find (char_has_mud_event) and cancel its events.
+ *
+ * Lifetime: the event queue owns the struct event; the mud_event_data and
+ * its sVariables copy are freed by free_mud_event() when the event finishes
+ * or is cancelled. Owners must cancel their events before they are freed;
+ * rooms are referenced by vnum because world[] is reallocated by OLC.
+ * Input: events are created by game code only (spells, skills, protocols).
+ */
+
 #include "conf.h"
 #include "sysdep.h"
 #include "structs.h"
@@ -111,6 +125,19 @@ EVENTFUNC(event_countdown)
  * included with rooms, objects, spells or any other structure type. Adding
  * events to these other systems should be just as easy as adding the current
  * library was, and should be available in a future release. - Vat */
+/**
+ * Queue pMudEvent to fire in `time` pulses and link it on its owner's
+ * events list (created on first use).
+ *
+ * Owner by type (mud_event_index[].iEvent_Type):
+ *   EVENT_WORLD  world_events
+ *   EVENT_DESC   pStruct = descriptor; its list is made in new_descriptor()
+ *   EVENT_CHAR   pStruct = character
+ *   EVENT_ROOM   iRoomVnum; pStruct is NULL (world[] moves under redit)
+ * pStruct must stay valid until the event fires or is cancelled: every
+ * owner cancels its events before it is freed (free_char, extract_obj,
+ * delete_room, destroy_db, close_socket).
+ */
 void attach_mud_event(struct mud_event_data *pMudEvent, long time)
 {
   struct event * pEvent;
@@ -178,6 +205,13 @@ struct mud_event_data *new_mud_event(event_id iId, void *pStruct, char *sVariabl
   return (pMudEvent);
 }
 
+/**
+ * Unlink pMudEvent from its owner's events list and free it (called by
+ * dg_event.c when the event finishes or is cancelled; never call it
+ * directly on a queued event). The owner's list is left allocated, possibly
+ * empty: the owner frees it. The struct event itself is freed by the
+ * caller; its event_obj is set to NULL here.
+ */
 void free_mud_event(struct mud_event_data *pMudEvent)
 {
   struct descriptor_data * d;
