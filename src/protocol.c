@@ -2,6 +2,31 @@
  Protocol snippet by KaVir.  Released into the Public Domain in February 2011.
  ******************************************************************************/
 
+/**
+ * @file protocol.c
+ * Telnet option negotiation (TTYPE, NAWS, CHARSET, MSDP, MSSP, ATCP, MSP,
+ * MXP) and the in-band escape language ('\t' codes) used in game text.
+ *
+ * Who controls the input:
+ *  - ProtocolInput() parses raw socket bytes from remote, unauthenticated
+ *    clients: telnet commands, subnegotiations and MXP replies.
+ *  - ProtocolOutput() translates outgoing text. Its '\t' escapes come from
+ *    builders (room, object and mob strings), from DG scripts and from
+ *    players (say/gossip '@' codes are turned into '\t' codes by
+ *    parse_at), so every escape parser must stop at the terminator and
+ *    bound what it reads.
+ *  - MSDP variables are set by the game (MSDPSet*), and a few, marked
+ *    configurable in VariableNameTable, by the client (ExecuteMSDPPair).
+ *
+ * Ownership: each descriptor owns one protocol_t (ProtocolCreate() /
+ * ProtocolDestroy(), called from comm.c), including its MSDP variables and
+ * subnegotiation buffer. ProtocolInput() and ProtocolOutput() use static
+ * buffers and are not reentrant.
+ *
+ * Diagnostics go through PROTOCOL_WARN (rate-limited, DIAG_DESC, escaped
+ * excerpts only); see its definition below.
+ */
+
 /******************************************************************************
  Header files.
  ******************************************************************************/
@@ -158,6 +183,16 @@ static const char s_Gauge5[]  = "\005\002Opponent\002darkred\002OPPONENT_HEALTH\
 #define STRING_WRITE_ONCE(x,y)     true,  true,  true,  false,  x,  y,  0, NULL
 #define STRING_GUI(x)              true,  false, false, true,  -1, -1,  0, x
 
+/* One row per eMSDP_* value, in enum order: every lookup indexes this table
+ * by the enum, and ProtocolCreate() aborts (msdp/table-mismatch) if a row
+ * is out of place. Columns: is-string, client-configurable, write-once,
+ * GUI variable, Min, Max (for configurable strings: allowed length; for
+ * numbers: allowed value), numeric default, string default. Only
+ * configurable rows can be changed by the client (ExecuteMSDPPair), and
+ * only within Min..Max and with printable characters. Values set by the
+ * game (MSDPSet*) are builder and player text (room names, character
+ * names) and are sent without telnet IAC escaping, so a 0xFF byte in them
+ * reaches the client as a telnet command. */
 static variable_name_t VariableNameTable[eMSDP_MAX+1] = 
 {
    /* General */
@@ -421,6 +456,20 @@ static void FinishSubnegotiation( descriptor_t *apDescriptor )
    pProtocol->SubnegLen = 0;
 }
 
+/**
+ * Strip telnet negotiation from aSize raw bytes read from apDescriptor's
+ * socket and append the in-band text to the C string apOut (capacity
+ * aOutSize). Handshakes are answered, subnegotiations are collected in the
+ * descriptor's buffer across calls and dispatched on IAC SE, MXP replies
+ * update the client identity, IAC IAC becomes byte 255 and NUL bytes are
+ * dropped (reported as input-nul).
+ *
+ * @return Bytes appended to apOut (what the caller may advance by), or -1
+ *         to close the connection (invalid arguments, more than
+ *         MAX_PROTOCOL_BUFFER bytes of in-band text in one read, or an
+ *         oversized subnegotiation; each reported).
+ * Not reentrant: in-band text is staged in a static buffer.
+ */
 ssize_t ProtocolInput( descriptor_t *apDescriptor, char *apData, int aSize, char *apOut, size_t aOutSize )
 {
    static char CmdBuf[MAX_PROTOCOL_BUFFER+1];
@@ -649,6 +698,26 @@ ssize_t ProtocolInput( descriptor_t *apDescriptor, char *apData, int aSize, char
    return (ssize_t)(strlen(apOut) - OutLength);
 }
 
+/**
+ * Translate the '\t' escapes in apData for apDescriptor's client.
+ *
+ * @param apData   NUL-terminated text (builder, script or player content).
+ * @param apLength In/out, must be non-NULL: on entry the number of bytes to
+ *                 translate (<= 0 means up to the terminator); on return
+ *                 the length of the result.
+ * @return A static buffer, valid until the next call; or apData itself,
+ *         untouched, when the descriptor has no protocol state.
+ *
+ * Escapes: '\t\t' tab; '\t_' '\t+' '\t-' '\t=' underline, bold, blink,
+ * reverse; '\t*' '@'; '\t1'-'\t3', '\tn' and the colour letters; '\t('
+ * '\t)' MXP link; '\t<' MXP tag up to '>'; '\t[F123]' '\t[B123]' RGB
+ * colours; '\t[u<code>/<text>]' unicode with fallback text (code 1..0x10FFFF,
+ * no surrogates); '\t[x<version>]' required MXP version; '\t!' MSP. An
+ * escape cut off by the end of the text ends the translation. Malformed
+ * escapes are reported (malformed-code, unicode-code) and dropped.
+ * Output that would exceed MAX_OUTPUT_BUFFER is cut to fit and ends with
+ * "**OVERFLOW**" (reported as output-overflow).
+ */
 const char *ProtocolOutput( descriptor_t *apDescriptor, const char *apData, int *apLength )
 {
    static char Result[MAX_OUTPUT_BUFFER+1];
