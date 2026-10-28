@@ -1135,6 +1135,38 @@ static void save_zone_writes_valid_commands(void)
   TEST_ASSERT_NOT_NULL(strstr(text, "D 0 10 2 1"));
 }
 
+/* C2-25: an extra description that cannot be saved is reported with the
+ * object vnum and zone instead of an anonymous "Corrupt ex_desc!". */
+static void save_objects_reports_empty_exdesc(void)
+{
+  struct extra_descr_data *ex;
+  char text[1024];
+  make_zones(1); make_objs(1);
+  give_proto_strings(0);
+  CREATE(ex, struct extra_descr_data, 1);
+  ex->keyword = strdup("");
+  ex->description = strdup("a carving\r\n");
+  obj_proto[0].ex_description = ex;
+  TEST_ASSERT_TRUE(save_objects(0));
+  TEST_ASSERT_EQUAL_STRING("obj-save-exdesc", tb_captured_operation);
+  TEST_ASSERT_EQUAL_STRING("WARNING", tb_captured_severity);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "obj vnum 10 zone 0"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "keyword"));
+  read_text_file(OBJ_PREFIX "/0.obj", text, sizeof(text));
+  TEST_ASSERT_NULL(strstr(text, "a carving"));
+}
+
+/* C2-25: an unwritable zone file names the path and errno. */
+static void save_zone_reports_open_failure(void)
+{
+  make_zones(1); make_rooms(1);
+  TEST_ASSERT_EQUAL_INT(0, rename(LIB_WORLD "zon", LIB_WORLD "zon.moved"));
+  TEST_ASSERT_FALSE(save_zone(0));
+  TEST_ASSERT_EQUAL_INT(0, rename(LIB_WORLD "zon.moved", LIB_WORLD "zon"));
+  TEST_ASSERT_EQUAL_STRING("zone-save-open", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "zone 0"));
+}
+
 /* C2-18: disabled ('*') reset lines are reported when a save drops them. */
 static void save_zone_reports_disabled_command(void)
 {
@@ -1414,6 +1446,8 @@ int main(void)
   RUN_TEST(save_zone_rejects_var_without_strings);
   RUN_TEST(save_zone_writes_valid_commands);
   RUN_TEST(save_zone_reports_disabled_command);
+  RUN_TEST(save_objects_reports_empty_exdesc);
+  RUN_TEST(save_zone_reports_open_failure);
   RUN_TEST(create_world_index_rejects_unterminated_index);
   RUN_TEST(create_world_index_inserts_in_order);
   RUN_TEST(create_world_index_reports_unknown_type);

@@ -359,11 +359,16 @@ int save_shops(zone_rnum zone_num)
 
   tb_snprintf(fname, sizeof(fname), "%s/%d.new", SHP_PREFIX, zone_table[zone_num].number);
   if (!(shop_file = fopen(fname, "w"))) {
-    mudlog(BRF, LVL_GOD, TRUE, "SYSERR: OLC: Cannot open shop file!");
+    TB_ERROR_ERRNO("olc", "shop-save-open", fname, "zone %d shops not saved",
+                   zone_table[zone_num].number);
+    mudlog(BRF, LVL_GOD, TRUE, "SYSERR: OLC: Cannot open shop file %s!", fname);
     return FALSE;
   } else if (fprintf(shop_file, "CircleMUD v3.0 Shop File~\n") < 0) {
-    mudlog(BRF, LVL_GOD, TRUE, "SYSERR: OLC: Cannot write to shop file!");
+    TB_ERROR_ERRNO("olc", "shop-save-write", fname, "zone %d shops not saved",
+                   zone_table[zone_num].number);
+    mudlog(BRF, LVL_GOD, TRUE, "SYSERR: OLC: Cannot write to shop file %s!", fname);
     tb_fclose(shop_file);
+    remove(fname);   /* never leave a header-less .new behind */
     return FALSE;
   }
   /* Search database for shops in this zone. */

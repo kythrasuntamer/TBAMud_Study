@@ -251,6 +251,8 @@ int save_objects(zone_rnum zone_num)
 
   tb_snprintf(filename, sizeof(filename), "%s/%d.new", OBJ_PREFIX, zone_table[zone_num].number);
   if (!(fp = fopen(filename, "w+"))) {
+    TB_ERROR_ERRNO("olc", "obj-save-open", filename, "zone %d objects not saved",
+                   zone_table[zone_num].number);
     mudlog(BRF, LVL_IMMORT, TRUE, "SYSERR: OLC: Cannot open objects file %s!", filename);
     return FALSE;
   }
@@ -332,9 +334,17 @@ int save_objects(zone_rnum zone_num)
       /* Do we have extra descriptions? */
       if (obj->ex_description) {	/* Yes, save them too. */
 	for (ex_desc = obj->ex_description; ex_desc; ex_desc = ex_desc->next) {
-	  /* Sanity check to prevent nasty protection faults. */
+	  /* An extra description with an empty keyword or text cannot be read
+	   * back (the loader needs both), so it is dropped from the file.  The
+	   * builder controls these strings through oedit; say which object
+	   * lost it, because the entry disappears at the next reboot. */
 	  if (!ex_desc->keyword || !ex_desc->description || !*ex_desc->keyword || !*ex_desc->description) {
-	    mudlog(BRF, LVL_IMMORT, TRUE, "SYSERR: OLC: oedit_save_to_disk: Corrupt ex_desc!");
+	    TB_WARN_MSG("olc", "obj-save-exdesc", filename,
+	                "obj vnum %d zone %d: extra desc with empty %s dropped",
+	                GET_OBJ_VNUM(obj), zone_table[zone_num].number,
+	                (!ex_desc->keyword || !*ex_desc->keyword) ? "keyword" : "description");
+	    mudlog(BRF, LVL_IMMORT, TRUE, "SYSERR: OLC: object #%d: empty extra description dropped from save.",
+	           GET_OBJ_VNUM(obj));
 	    continue;
 	  }
 	  strlcpy(buf, ex_desc->description, sizeof(buf));

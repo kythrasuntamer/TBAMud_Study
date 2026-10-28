@@ -460,6 +460,8 @@ int save_zone(zone_rnum zone_num)
 
   tb_snprintf(fname, sizeof(fname), "%s/%d.new", ZON_PREFIX, zone_table[zone_num].number);
   if (!(zfile = fopen(fname, "w"))) {
+    TB_ERROR_ERRNO("olc", "zone-save-open", fname, "zone %d not saved",
+                   zone_table[zone_num].number);
     mudlog(BRF, LVL_BUILDER, TRUE, "SYSERR: OLC: save_zones:  Can't write zone %d.", zone_table[zone_num].number);
     return FALSE;
   }
