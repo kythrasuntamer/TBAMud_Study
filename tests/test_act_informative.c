@@ -96,10 +96,21 @@ char *act_at(const char *src_file, int src_line, const char *src_func,
   (void)hide_invisible; (void)ch; (void)obj; (void)vict_obj; (void)type;
   return NULL;
 }
-/* Paged output is captured like direct output. */
+/* Paged output is captured like direct output. Like modify.c's pager, the
+ * text is also kept for the reader's later pages: a copy when keep_internal
+ * is set, otherwise the caller's own pointer, which must then outlive the
+ * paging. paged_text is that kept text. */
+static char *paged_text, *paged_copy;
 void page_string(struct descriptor_data *d, char *str, int keep_internal)
 {
-  (void)keep_internal;
+  free(paged_copy);
+  paged_copy = NULL;
+  paged_text = str;
+  if (keep_internal && str) {
+    paged_copy = strdup(str);
+    TEST_ASSERT_NOT_NULL(paged_copy);
+    paged_text = paged_copy;
+  }
   send_to_char(d ? d->character : NULL, "%s", str);
 }
 /* Same lookup as quest.c's real_quest(): linear search by vnum. */
@@ -133,7 +144,11 @@ void setUp(void)
   sent[0] = '\0';
   tb_error_capture_reset();
 }
-void tearDown(void) {}
+void tearDown(void)
+{
+  free(paged_copy);
+  paged_copy = paged_text = NULL;
+}
 
 /* --- G2-01: search_help bounds ----------------------------------------- */
 
@@ -856,6 +871,70 @@ static void help_miss_logs_escaped_topic(void)
   free_player(ch);
 }
 
+/* --- Pager ownership: help entries and room extra descriptions -------- */
+
+/* The reader's next page: the pager reads the text it kept. */
+static size_t next_page_length(void)
+{
+  return paged_text ? strlen(paged_text) : 0;
+}
+
+/* do_help paged help_table[mid].entry without a copy, so an hedit save or a
+ * 'reload xhelp' (both free the whole help table) while the reader was
+ * still paging left the pager reading freed memory (ASan heap-use-after-free
+ * here before the fix). */
+static void help_entry_pager_owns_its_text(void)
+{
+  const char *keys[] = { "SCORE" };
+  struct char_data *ch = make_player(13);
+  struct descriptor_data desc;
+  char topic[] = "score";
+
+  help_table = make_help_table(1, keys);
+  top_of_helpt = 1;
+  memset(&desc, 0, sizeof(desc));
+  ch->desc = &desc;
+  desc.character = ch;
+
+  do_help(ch, topic, 0, 0);
+  TEST_ASSERT_NOT_NULL(strstr(sent, "entry"));
+  free_help_fixture();                       /* 'reload xhelp' */
+  TEST_ASSERT_EQUAL_UINT(strlen("entry"), next_page_length());
+
+  ch->desc = NULL;
+  free_player(ch);
+}
+
+/* 'look <keyword>' paged a room extra description without a copy, and a
+ * redit save frees the room's old extra descriptions. */
+static void room_extra_description_pager_owns_its_text(void)
+{
+  static const char text[] = "The sign reads: keep out.\r\n";
+  struct char_data *ch = make_player(14);
+  struct extra_descr_data *ex = calloc(1, sizeof(*ex));
+  char arg[] = "sign";
+
+  TEST_ASSERT_NOT_NULL(ex);
+  enter_test_room(ch);
+  ex->keyword = strdup("sign");
+  ex->description = strdup(text);
+  TEST_ASSERT_NOT_NULL(ex->keyword);
+  TEST_ASSERT_NOT_NULL(ex->description);
+  test_room.ex_description = ex;
+
+  do_look(ch, arg, 0, SCMD_LOOK);
+  TEST_ASSERT_NOT_NULL(strstr(sent, "keep out"));
+  test_room.ex_description = NULL;           /* redit save */
+  free(ex->keyword);
+  free(ex->description);
+  free(ex);
+  TEST_ASSERT_EQUAL_UINT(strlen(text), next_page_length());
+
+  test_room.people = NULL;
+  leave_test_room(ch);
+  free_player(ch);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -878,5 +957,7 @@ int main(void)
   RUN_TEST(look_at_unplaced_viewer_is_reported_at_caller);
   RUN_TEST(object_script_without_triggers_is_reported);
   RUN_TEST(help_miss_logs_escaped_topic);
+  RUN_TEST(help_entry_pager_owns_its_text);
+  RUN_TEST(room_extra_description_pager_owns_its_text);
   return UNITY_END();
 }

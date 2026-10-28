@@ -913,9 +913,11 @@ static void look_at_target(struct char_data *ch, char *arg)
     return;
   }
 
-  /* Does the argument match an extra desc in the room? */
+  /* Does the argument match an extra desc in the room? The pager keeps its
+   * text across later commands, and a redit save frees the room's old extra
+   * descriptions, so it pages its own copy (keep_internal). */
   if ((desc = find_exdesc(arg, world[IN_ROOM(ch)].ex_description)) != NULL && ++i == fnum) {
-    page_string(ch->desc, desc, FALSE);
+    page_string(ch->desc, desc, TRUE);
     return;
   }
 
@@ -1502,7 +1504,12 @@ ACMD(do_help)
     }
     return;
   }
-  page_string(ch->desc, help_table[mid].entry, 0);
+  /* The pager keeps its text across later commands, and an hedit save or
+   * 'reload xhelp' frees the whole help table, so it pages its own copy
+   * (keep_internal). The text files paged above need no copy:
+   * file_to_string_alloc() (db.c) refuses to replace a buffer that a
+   * descriptor is paging. */
+  page_string(ch->desc, help_table[mid].entry, TRUE);
 }
 
 /* A player's class index for who/users.
