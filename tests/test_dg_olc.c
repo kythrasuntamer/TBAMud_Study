@@ -784,6 +784,28 @@ static void script_menu_lists_a_missing_trigger(void)
   bd->olc = NULL;
 }
 
+/* E2-16: the scratch trigger kept its prototype's cmdlist.  Another builder
+ * saving that trigger frees the list, which left this scratch pointing at
+ * freed memory.  The script lives in OLC_STORAGE; saving still works. */
+static void scratch_trigger_never_borrows_a_cmdlist(void)
+{
+  const int vnums[] = { 100, 102 };
+
+  make_index(vnums, 2);
+  start_edit(100);
+  TEST_ASSERT_NULL(OLC_TRIG(bd)->cmdlist);
+  TEST_ASSERT_NOT_NULL(strstr(OLC_STORAGE(bd), "say 100"));
+
+  feed(TRIGEDIT_COPY, "102");
+  TEST_ASSERT_NULL(OLC_TRIG(bd)->cmdlist);
+  TEST_ASSERT_NOT_NULL(strstr(OLC_STORAGE(bd), "say 102"));
+
+  set_script("say edited\r\n");
+  save_and_quit();
+  TEST_ASSERT_EQUAL_STRING("say edited", trig_index[0]->proto->cmdlist->cmd);
+  TEST_ASSERT_EQUAL_STRING("say 102", trig_index[1]->proto->cmdlist->cmd);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -810,5 +832,6 @@ int main(void)
   RUN_TEST(stale_live_rnum_after_insert_is_reported);
   RUN_TEST(stale_olc_structure_is_released_and_reported);
   RUN_TEST(script_menu_lists_a_missing_trigger);
+  RUN_TEST(scratch_trigger_never_borrows_a_cmdlist);
   return UNITY_END();
 }

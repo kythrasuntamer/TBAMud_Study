@@ -20,8 +20,9 @@
  *
  * Ownership and lifetime:
  * - OLC_TRIG(d) is a private scratch trigger.  Its name and arglist are its
- *   own; its cmdlist is borrowed from the prototype it was copied from and is
- *   never freed through the scratch (free_trigger() leaves cmdlist alone).
+ *   own; it has no cmdlist until trigedit_save() gives it the compiled list
+ *   it hands to the prototype (free_trigger() never frees a cmdlist).  It
+ *   never points at a prototype's list, which another builder's save frees.
  *   cleanup_olc() frees the scratch.
  * - OLC_STORAGE(d) is the script text being edited (a heap buffer of at least
  *   MAX_CMD_LENGTH bytes).  trigedit_save() compiles it into a new cmdlist.
@@ -269,8 +270,9 @@ static void trigedit_setup_new(struct descriptor_data *d)
  * @pre d->olc is allocated and rtrg_num is a valid rnum (callers obtain it
  * from real_trigger() and check it against NOTHING).
  * @post Any previous OLC_TRIG/OLC_STORAGE is released and replaced.  The
- * scratch borrows the prototype's cmdlist and carries its nr, which a caller
- * filling the scratch for a different vnum must reset (see TRIGEDIT_COPY).
+ * scratch has no cmdlist (the script is in OLC_STORAGE) and carries the
+ * prototype's nr, which a caller filling the scratch for a different vnum
+ * must reset (see TRIGEDIT_COPY).
  * OLC_VAL(d) is 0.  OLC_STORAGE is sized to the whole script, so it can be
  * larger than MAX_CMD_LENGTH for a trigger loaded from disk; the text
  * editor's max_str is still MAX_CMD_LENGTH, so such a script cannot be
@@ -287,7 +289,7 @@ void trigedit_setup_existing(struct descriptor_data *d, int rtrg_num)
   /* This function owns the editor's scratch state.  "W) Copy Trigger" calls
    * it on a descriptor that already has a scratch trigger and edit buffer;
    * release them first (E2-04).  free_trigger() leaves cmdlist alone: the
-   * scratch only borrows its prototype's list. */
+   * scratch never owns one. */
   if (OLC_TRIG(d)) {
     free_trigger(OLC_TRIG(d));
     OLC_TRIG(d) = NULL;
@@ -318,8 +320,11 @@ void trigedit_setup_existing(struct descriptor_data *d, int rtrg_num)
       strlcat(OLC_STORAGE(d), c->cmd, len);
     strlcat(OLC_STORAGE(d), "\r\n", len);
   }
-  /* Now trig->cmdlist is something to pass to the text editor it will be 
-   * converted back to a real cmdlist_element list later. */
+  /* The script now lives in OLC_STORAGE; trigedit_save() compiles it into a
+   * new list.  Drop the prototype's list: another builder saving this
+   * trigger frees it, which would leave the scratch pointing at freed
+   * memory. */
+  trig->cmdlist = NULL;
 
   OLC_TRIG(d) = trig;
   OLC_VAL(d) = 0;  /* Has changed flag. (It hasn't so far, we just made it.) */
