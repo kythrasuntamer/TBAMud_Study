@@ -1076,7 +1076,7 @@ void save_char(struct char_data * ch)
   }
 
   if (!get_filename(filename, sizeof(filename), PLR_FILE, GET_NAME(ch))) {
-    TB_ERROR_MSG("PLAYER", "get_filename", "(player save path)",
+    TB_ERROR_MSG("player", "get-filename", "(player save path)",
                  "player idnum %ld has no player file name; not saved",
                  GET_IDNUM(ch));
     return;
@@ -1087,7 +1087,7 @@ void save_char(struct char_data * ch)
     int path_len = snprintf(temporary_filename, sizeof(temporary_filename),
                             "%s.tmpXXXXXX", filename);
     if (path_len < 0 || (size_t)path_len >= sizeof(temporary_filename)) {
-      TB_ERROR_MSG("PLAYER", "snprintf", filename,
+      TB_ERROR_MSG("player", "snprintf", filename,
                    "player idnum %ld: staging path cannot be formatted or is too long; not saved",
                    GET_IDNUM(ch));
       return;
@@ -1095,14 +1095,17 @@ void save_char(struct char_data * ch)
   }
   temp_fd = mkstemp(temporary_filename);
   if (temp_fd < 0) {
-    TB_ERROR_ERRNO("PLAYER", "mkstemp", filename, "Unable to stage player save");
+    TB_ERROR_ERRNO("player", "mkstemp", filename, "Unable to stage player save");
     return;
   }
   fl = fdopen(temp_fd, "w");
   if (fl == NULL) {
-    TB_ERROR_ERRNO("PLAYER", "fdopen", temporary_filename, "Unable to open staged save");
+    TB_ERROR_ERRNO("player", "fdopen", temporary_filename, "Unable to open staged save");
     close(temp_fd);
-    unlink(temporary_filename);
+    if (unlink(temporary_filename) != 0)
+      TB_ERROR_ERRNO("player", "unlink", temporary_filename,
+                     "player idnum %ld: could not remove staged save after fdopen failure",
+                     GET_IDNUM(ch));
     return;
   }
 
@@ -1292,31 +1295,31 @@ void save_char(struct char_data * ch)
   /* Report failures at their origin. Cleanup must not masquerade as the
    * original error or replace an existing valid player file. */
   if (ferror(fl)) {
-    TB_ERROR_MSG("PLAYER", "write", temporary_filename,
+    TB_ERROR_MSG("player", "write", temporary_filename,
                  "player idnum %ld: staged save stream reports a write error",
                  GET_IDNUM(ch));
     save_failed = TRUE;
   }
   if (fflush(fl) != 0) {
-    TB_ERROR_ERRNO("PLAYER", "fflush", temporary_filename,
+    TB_ERROR_ERRNO("player", "fflush", temporary_filename,
                    "player idnum %ld: could not flush staged player save",
                    GET_IDNUM(ch));
     save_failed = TRUE;
   }
   if (fclose(fl) != 0) {
-    TB_ERROR_ERRNO("PLAYER", "fclose", temporary_filename,
+    TB_ERROR_ERRNO("player", "fclose", temporary_filename,
                    "player idnum %ld: could not close staged player save",
                    GET_IDNUM(ch));
     save_failed = TRUE;
   }
   if (!save_failed && rename(temporary_filename, filename) != 0) {
-    TB_ERROR_ERRNO("PLAYER", "rename", filename,
+    TB_ERROR_ERRNO("player", "rename", filename,
                    "player idnum %ld: could not commit staged save %s; previous file kept",
                    GET_IDNUM(ch), temporary_filename);
     save_failed = TRUE;
   }
   if (save_failed && unlink(temporary_filename) != 0)
-    TB_ERROR_ERRNO("PLAYER", "unlink", temporary_filename,
+    TB_ERROR_ERRNO("player", "unlink", temporary_filename,
                    "player idnum %ld: could not clean up failed staged player save",
                    GET_IDNUM(ch));
 

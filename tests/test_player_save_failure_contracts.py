@@ -7,7 +7,7 @@ from pathlib import Path
 import unittest
 
 SOURCE = (Path(__file__).resolve().parents[1] / "src" / "players.c").read_text()
-SAVE = SOURCE.split("void save_char(", 1)[1].split("/* Separate a 4-character id tag", 1)[0]
+SAVE = SOURCE.split("void save_char(", 1)[1].split("/** Separate a 4-character id tag", 1)[0]
 
 
 class SaveFailurePathContracts(unittest.TestCase):
@@ -23,14 +23,14 @@ class SaveFailurePathContracts(unittest.TestCase):
 
     def test_staged_path_truncation_is_rejected_before_creation(self):
         self.assertIn("path_len < 0 || (size_t)path_len >= sizeof(temporary_filename)", SAVE)
-        self.assertIn('TB_ERROR_MSG("PLAYER", "snprintf"', SAVE)
+        self.assertIn('TB_ERROR_MSG("player", "snprintf"', SAVE)
         self.assertLess(SAVE.index("path_len < 0"), SAVE.index("mkstemp(temporary_filename)"))
 
     def test_each_io_failure_has_own_diagnostic(self):
         for operation in ("fflush", "fclose", "rename", "unlink"):
             with self.subTest(operation=operation):
-                self.assertIn(f'TB_ERROR_ERRNO("PLAYER", "{operation}"', SAVE)
-        self.assertIn('TB_ERROR_MSG("PLAYER", "write"', SAVE)
+                self.assertIn(f'TB_ERROR_ERRNO("player", "{operation}"', SAVE)
+        self.assertIn('TB_ERROR_MSG("player", "write"', SAVE)
 
     def test_failed_save_cannot_attempt_replace(self):
         self.assertIn(
