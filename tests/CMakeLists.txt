@@ -1076,3 +1076,9 @@ if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
     set_source_files_properties(${MUD_SRCDIR}/act.wizard.c
         PROPERTIES COMPILE_OPTIONS "-ffunction-sections;-fdata-sections")
 endif()
+
+# tb_strftime() (sysdep.h): dst is a terminated string on every failure
+# path, and each failure is reported at the caller (G1-19, B2-26).
+add_mud_test(test_strftime
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_strftime.c
+)
