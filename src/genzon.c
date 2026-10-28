@@ -481,10 +481,21 @@ void remove_room_zone_commands(zone_rnum zone, room_rnum room_num)
     default:
       break;
     }
-    /* A failed removal is already reported; step past it so the scan
-     * still terminates. */
-    if (cmd_room != room_num ||
-        !remove_cmd_from_list(&zone_table[zone].cmd, subcmd, zone_table[zone].number))
+    if (cmd_room == room_num) {
+      /* zone_table owns its 'V' strings (zedit_setup gives sessions deep
+       * copies); remove_cmd_from_list() only drops the struct, so free them
+       * once it has. A failed removal is already reported and keeps the
+       * command (and its strings); step past it so the scan terminates. */
+      char *sarg1 = zone_table[zone].cmd[subcmd].sarg1;
+      char *sarg2 = zone_table[zone].cmd[subcmd].sarg2;
+
+      if (remove_cmd_from_list(&zone_table[zone].cmd, subcmd,
+                               zone_table[zone].number)) {
+        free(sarg1);
+        free(sarg2);
+      } else
+        subcmd++;
+    } else
       subcmd++;
   }
 }
@@ -773,13 +784,10 @@ void add_cmd_to_list(struct reset_com **list, struct reset_com *newcmd, int pos)
  * The list is reallocated to one slot fewer and every later command slides
  * down, so a caller scanning by index must re-examine pos afterwards.
  *
- * Ownership: the sarg1/sarg2 strings of a removed 'V' command are NOT
- * freed.  zedit_setup() copies the live list by struct value, so the zedit
- * working copy shares those pointers, and zedit_save_internally() removes
- * the room's live commands (here) before re-adding the working copy's;
- * freeing them here would hand the re-added commands freed memory.  Until
- * zedit deep-copies its working list, a 'V' dropped by delete_room() leaks
- * its two strings (finding C2-27, reported as skipped).
+ * Ownership: this only drops the struct; the sarg1/sarg2 strings of a 'V'
+ * command belong to zone_table and are freed by the caller once the
+ * removal succeeds (zedit_setup() gives editing sessions deep copies, so
+ * nothing else points at them; findings C2-27, F1-20).
  *
  * @param list Address of the zone's command list (zone_table[z].cmd).
  * @param pos  Index to remove, 0..count-1; callers derive it from their own

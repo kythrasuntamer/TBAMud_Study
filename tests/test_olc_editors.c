@@ -659,6 +659,11 @@ static void make_zedit_session(struct descriptor_data *d, const struct reset_com
 static void free_zedit_session(struct descriptor_data *d)
 {
   if (d->olc && OLC_ZONE(d)) {
+    int i;
+    for (i = 0; OLC_ZONE(d)->cmd[i].command != 'S'; i++) {
+      free(OLC_ZONE(d)->cmd[i].sarg1);   /* the scratch list owns them */
+      free(OLC_ZONE(d)->cmd[i].sarg2);
+    }
     free(OLC_ZONE(d)->cmd);
     free(OLC_ZONE(d));
     OLC_ZONE(d) = NULL;
@@ -1281,6 +1286,88 @@ static void test_zedit_door_direction_rejects_dir_count_and_disabled_diagonals(v
   free_zedit_session(d);
 }
 
+
+/* ------------------------------------------------------------------ */
+/* F1-20: new commands are fully initialised; 'V' strings are owned    */
+/* by the scratch list and validated for the zone file format.         */
+/* ------------------------------------------------------------------ */
+static void test_zedit_new_command_has_defined_fields(void)
+{
+  struct descriptor_data *d = &builder_desc;
+  struct reset_com cmd;
+
+  make_zone();
+  memset(&cmd, 0, sizeof(cmd));
+  cmd.command = '*';
+  make_zedit_session(d, &cmd, 1);
+  OLC_MODE(d) = ZEDIT_NEW_ENTRY;
+
+  zedit_parse(d, "1");             /* new_command() fills it with 0x5a */
+
+  TEST_ASSERT_EQUAL_INT('N', OLC_ZONE(d)->cmd[1].command);
+  TEST_ASSERT_EQUAL_INT(0, OLC_ZONE(d)->cmd[1].if_flag);
+  TEST_ASSERT_EQUAL_INT(-1, OLC_ZONE(d)->cmd[1].arg1);
+  TEST_ASSERT_EQUAL_INT(-1, OLC_ZONE(d)->cmd[1].arg3);
+  TEST_ASSERT_EQUAL_INT(0, OLC_ZONE(d)->cmd[1].line);
+  TEST_ASSERT_NULL(OLC_ZONE(d)->cmd[1].sarg1);
+  free_zedit_session(d);
+}
+
+static struct descriptor_data *zedit_v_session(void)
+{
+  struct descriptor_data *d = &builder_desc;
+  struct reset_com cmd;
+
+  make_zone();
+  memset(&cmd, 0, sizeof(cmd));
+  cmd.command = 'V';
+  cmd.sarg1 = strdup("oldname");
+  cmd.sarg2 = strdup("old value");
+  make_zedit_session(d, &cmd, 1);
+  OLC_VAL(d) = 0;
+  return d;
+}
+
+static void test_zedit_global_name_with_space_is_refused_and_reported(void)
+{
+  struct descriptor_data *d = zedit_v_session();
+
+  OLC_MODE(d) = ZEDIT_SARG1;
+  zedit_parse(d, "my var");
+
+  TEST_ASSERT_EQUAL_STRING("oldname", OLC_ZONE(d)->cmd[0].sarg1);
+  TEST_ASSERT_EQUAL_INT(ZEDIT_SARG1, OLC_MODE(d));
+  TEST_ASSERT_EQUAL_STRING("zedit-sarg", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "room vnum 3001 global name len 6 refused: contains whitespace"));
+  free_zedit_session(d);
+}
+
+static void test_zedit_reediting_global_frees_previous_strings(void)
+{
+  struct descriptor_data *d = zedit_v_session();
+
+  /* LeakSanitizer fails the run if the old strings are dropped. */
+  OLC_MODE(d) = ZEDIT_SARG1;
+  zedit_parse(d, "newname");
+  zedit_parse(d, "new value");
+
+  TEST_ASSERT_EQUAL_STRING("newname", OLC_ZONE(d)->cmd[0].sarg1);
+  TEST_ASSERT_EQUAL_STRING("new value", OLC_ZONE(d)->cmd[0].sarg2);
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  free_zedit_session(d);
+}
+
+static void test_zedit_deleting_global_frees_its_strings(void)
+{
+  struct descriptor_data *d = zedit_v_session();
+
+  OLC_MODE(d) = ZEDIT_DELETE_ENTRY;
+  zedit_parse(d, "0");             /* LeakSanitizer checks the strings */
+
+  TEST_ASSERT_EQUAL_INT('S', OLC_ZONE(d)->cmd[0].command);
+  free_zedit_session(d);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -1310,5 +1397,9 @@ int main(void)
   RUN_TEST(test_zedit_abort_after_deletes_stays_in_bounds);
   RUN_TEST(test_zedit_abort_with_stale_index_is_reported);
   RUN_TEST(test_zedit_door_direction_rejects_dir_count_and_disabled_diagonals);
+  RUN_TEST(test_zedit_new_command_has_defined_fields);
+  RUN_TEST(test_zedit_global_name_with_space_is_refused_and_reported);
+  RUN_TEST(test_zedit_reediting_global_frees_previous_strings);
+  RUN_TEST(test_zedit_deleting_global_frees_its_strings);
   return UNITY_END();
 }

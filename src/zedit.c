@@ -26,9 +26,20 @@
 #define MYCMD		(OLC_ZONE(d)->cmd[subcmd])
 #define OLC_CMD(d)	(OLC_ZONE(d)->cmd[OLC_VAL(d)])
 #define MAX_DUPLICATES 100
+/* Longest 'V' global name or value load_zones() reads back: it parses them
+ * with sscanf(" %79s %79[^\f\n\r\t\v]"), so the name is one word and both
+ * stop at 79 characters. Longer input would be cut silently on reload. */
+#define ZEDIT_SARG_MAX 79
+
+/* Free a reset command's 'V' strings. The scratch list owns deep copies
+ * (zedit_setup) until a save hands them to zone_table. */
+#define ZEDIT_FREE_SARGS(c) do { \
+    free((c).sarg1); free((c).sarg2); (c).sarg1 = (c).sarg2 = NULL; \
+  } while (0)
 
 /* local functions */
 static int start_change_command(struct descriptor_data *d, int pos);
+static void zedit_init_new_command(struct descriptor_data *d, int pos);
 static void zedit_setup(struct descriptor_data *d, int room_num);
 static void zedit_new_zone(struct char_data *ch, zone_vnum vzone_num, room_vnum bottom, room_vnum top);
 static void zedit_save_internally(struct descriptor_data *d);
@@ -487,6 +498,12 @@ static void zedit_setup(struct descriptor_data *d, int room_num)
     }
     if (cmd_room == room_num) {
       add_cmd_to_list(&(zone->cmd), &ZCMD(OLC_ZNUM(d), subcmd), count);
+      /* add_cmd_to_list() copies the struct; give the scratch list its own
+       * 'V' strings so editing or deleting them never frees zone_table's. */
+      zone->cmd[count].sarg1 = ZCMD(OLC_ZNUM(d), subcmd).sarg1 ?
+                               strdup(ZCMD(OLC_ZNUM(d), subcmd).sarg1) : NULL;
+      zone->cmd[count].sarg2 = ZCMD(OLC_ZNUM(d), subcmd).sarg2 ?
+                               strdup(ZCMD(OLC_ZNUM(d), subcmd).sarg2) : NULL;
       count++;
     }
     subcmd++;
@@ -585,6 +602,8 @@ static void zedit_save_internally(struct descriptor_data *d)
         break;
     }
     add_cmd_to_list(&(zone_table[OLC_ZNUM(d)].cmd), &MYCMD, subcmd);
+    /* zone_table now owns this command's 'V' strings. */
+    MYCMD.sarg1 = MYCMD.sarg2 = NULL;
   }
 
   /* Finally, if zone headers have been changed, copy over */
@@ -620,6 +639,21 @@ static int start_change_command(struct descriptor_data *d, int pos)
   /* Ok, let's get editing. */
   OLC_VAL(d) = pos;
   return 1;
+}
+
+/* new_command() (genzon.c) inserts a command that has only .command set;
+ * everything else is whatever its stack copy held. Give every field zedit
+ * or the zone code may read before the builder fills it a defined value:
+ * no if-flag, no line number, no strings, and -1 ("no reference", which
+ * olc_renumber_sessions() never moves) for the args. */
+static void zedit_init_new_command(struct descriptor_data *d, int pos)
+{
+  struct reset_com *c = &OLC_ZONE(d)->cmd[pos];
+
+  c->if_flag = 0;
+  c->arg1 = c->arg2 = c->arg3 = -1;
+  c->line = 0;
+  c->sarg1 = c->sarg2 = NULL;
 }
 
 /*------------------------------------------------------------------*/
@@ -1042,6 +1076,7 @@ void zedit_parse(struct descriptor_data *d, char *arg)
       if (OLC_ZONE(d)->cmd[0].command == 'S') {
         /* first command */
         if (new_command(OLC_ZONE(d), 0) && start_change_command(d, 0)) {
+	  zedit_init_new_command(d, 0);
 	  zedit_disp_comtype(d);
 	  OLC_ZONE(d)->age = 1;
           break;
@@ -1173,6 +1208,7 @@ void zedit_parse(struct descriptor_data *d, char *arg)
     pos = tb_parse_int_or_zero(arg);
     if (isdigit(*arg) && new_command(OLC_ZONE(d), pos)) {
       if (start_change_command(d, pos)) {
+	zedit_init_new_command(d, pos);
 	zedit_disp_comtype(d);
 	OLC_ZONE(d)->age = 1;
       }
@@ -1185,6 +1221,10 @@ void zedit_parse(struct descriptor_data *d, char *arg)
     /* Get the line number and delete the line. */
     pos = tb_parse_int_or_zero(arg);
     if (isdigit(*arg)) {
+      /* The scratch list owns its 'V' strings; delete_zone_command() only
+       * drops the struct. */
+      if (pos >= 0 && pos < count_commands(OLC_ZONE(d)->cmd))
+        ZEDIT_FREE_SARGS(OLC_ZONE(d)->cmd[pos]);
       delete_zone_command(OLC_ZONE(d), pos);
       OLC_ZONE(d)->age = 1;
       /* The list shrank: OLC_VAL may now index past it (see
@@ -1428,21 +1468,44 @@ void zedit_parse(struct descriptor_data *d, char *arg)
 
 /*-------------------------------------------------------------------*/
   case ZEDIT_SARG1:
-    if (strlen(arg)) {
+    /* Builder input. The name is saved as one word of at most
+     * ZEDIT_SARG_MAX characters (see load_zones); anything else would load
+     * back as a different name and value. */
+    if (!*arg)
+      write_to_output(d, "Must have some name to assign : ");
+    else if (strlen(arg) > ZEDIT_SARG_MAX || strpbrk(arg, " \t\f\v\r\n")) {
+      struct char_data *builder = d->character;
+      TB_WARN_MSG("olc", "zedit-sarg", "zone",
+                  "builder " DIAG_CHAR_FMT " room vnum %d global name len %zu refused: %s",
+                  DIAG_CHAR(builder), OLC_NUM(d), strlen(arg),
+                  strlen(arg) > ZEDIT_SARG_MAX ? "too long" : "contains whitespace");
+      write_to_output(d, "The name must be one word of at most %d characters, try again : ",
+                      ZEDIT_SARG_MAX);
+    } else {
+      free(OLC_CMD(d).sarg1);
       OLC_CMD(d).sarg1 = strdup(arg);
       OLC_MODE(d) = ZEDIT_SARG2;
       write_to_output(d, "Enter the global value : ");
-    } else
-      write_to_output(d, "Must have some name to assign : ");
+    }
     break;
 
 /*-------------------------------------------------------------------*/
   case ZEDIT_SARG2:
-    if (strlen(arg)) {
+    /* Builder input; the value may contain spaces but is read back only up
+     * to ZEDIT_SARG_MAX characters (see load_zones). */
+    if (!*arg)
+      write_to_output(d, "Must have some value to set it to :");
+    else if (strlen(arg) > ZEDIT_SARG_MAX) {
+      struct char_data *builder = d->character;
+      TB_WARN_MSG("olc", "zedit-sarg", "zone",
+                  "builder " DIAG_CHAR_FMT " room vnum %d global value len %zu refused: too long",
+                  DIAG_CHAR(builder), OLC_NUM(d), strlen(arg));
+      write_to_output(d, "The value must be at most %d characters, try again : ", ZEDIT_SARG_MAX);
+    } else {
+      free(OLC_CMD(d).sarg2);
       OLC_CMD(d).sarg2 = strdup(arg);
       zedit_disp_menu(d);
-    } else
-      write_to_output(d, "Must have some value to set it to :");
+    }
     break;
 
 /*-------------------------------------------------------------------*/

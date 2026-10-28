@@ -101,8 +101,16 @@ void cleanup_olc(struct descriptor_data *d, byte cleanup_type)
       free(OLC_ZONE(d)->builders);
     if (OLC_ZONE(d)->name)
       free(OLC_ZONE(d)->name);
-    if (OLC_ZONE(d)->cmd)
+    if (OLC_ZONE(d)->cmd) {
+      int subcmd;
+      /* The scratch list owns its 'V' strings until zedit_save_internally
+       * hands them to zone_table (and clears them here). */
+      for (subcmd = 0; OLC_ZONE(d)->cmd[subcmd].command != 'S'; subcmd++) {
+        free(OLC_ZONE(d)->cmd[subcmd].sarg1);
+        free(OLC_ZONE(d)->cmd[subcmd].sarg2);
+      }
       free(OLC_ZONE(d)->cmd);
+    }
     free(OLC_ZONE(d));
   }
 
