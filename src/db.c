@@ -3109,10 +3109,19 @@ void reset_zone(zone_rnum zone)
 	break;
       }
       if (obj_index[ZCMD.arg1].number < ZCMD.arg2) {
+	/* arg3 is the wear slot from the zone file and indexes equipment[].
+	 * After renum_zone_table() the object rnum is arg1 (arg2 is the
+	 * max-existing count), so name the object from arg1. A bad slot never
+	 * becomes valid, so the command is disabled rather than re-reported on
+	 * every reset. */
 	if (ZCMD.arg3 < 0 || ZCMD.arg3 >= NUM_WEARS) {
-          char error[MAX_INPUT_LENGTH];
-	  tb_snprintf(error, sizeof(error), "invalid equipment pos number (mob %s, obj %d, pos %d)", GET_NAME(mob), obj_index[ZCMD.arg2].vnum, ZCMD.arg3);
-	  ZONE_ERROR(error);
+	  TB_ERROR_MSG("db", "zone-reset", "equip",
+	               "zone %d line %d: mob vnum %d obj vnum %d invalid wear pos %d "
+	               "(0..%d); cmd disabled",
+	               zone_table[zone].number, ZCMD.line, GET_MOB_VNUM(mob),
+	               obj_index[ZCMD.arg1].vnum, ZCMD.arg3, NUM_WEARS - 1);
+	  ZCMD.command = '*';
+	  last_cmd = 0;
 	} else {
 	  int worn = 0;
 

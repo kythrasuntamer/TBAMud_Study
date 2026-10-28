@@ -93,7 +93,8 @@ void copy_proto_script(void *source, void *dest, int type)
 void assign_triggers(void *i, int type)
 {
   obj_data *obj = i;
-  (void)type;
+  if (type != OBJ_TRIGGER)	/* mobs from the 'M' fixture get no script */
+    return;
   CREATE(SCRIPT(obj), struct script_data, 1);
   SCRIPT(obj)->types = OTRIG_LOAD;
 }
@@ -171,6 +172,8 @@ static struct obj_data zone_obj_proto[1];
 static struct index_data zone_obj_index[1];
 static struct room_data zone_rooms[1];
 static struct zone_data zone_fixture[1];
+static struct char_data zone_mob_proto[1];
+static struct index_data zone_mob_index[1];
 
 static void zone_fixture_setup(struct reset_com *cmds)
 {
@@ -178,6 +181,15 @@ static void zone_fixture_setup(struct reset_com *cmds)
   memset(zone_obj_index, 0, sizeof(zone_obj_index));
   memset(zone_rooms, 0, sizeof(zone_rooms));
   memset(zone_fixture, 0, sizeof(zone_fixture));
+  memset(zone_mob_proto, 0, sizeof(zone_mob_proto));
+  memset(zone_mob_index, 0, sizeof(zone_mob_index));
+  zone_mob_index[0].vnum = 3005;
+  zone_mob_proto[0].nr = 0;
+  SET_BIT_AR(MOB_FLAGS(&zone_mob_proto[0]), MOB_ISNPC);
+  mob_proto = zone_mob_proto;
+  mob_index = zone_mob_index;
+  top_of_mobt = 0;
+  character_list = NULL;
   zone_obj_index[0].vnum = 3022;
   zone_obj_proto[0].item_number = 0;
   zone_rooms[0].number = 3001;
@@ -202,6 +214,13 @@ static void zone_fixture_teardown(void)
 {
   while (object_list)
     fixture_free_obj(object_list);
+  while (character_list) {
+    struct char_data *next = character_list->next;
+    free(character_list);
+    character_list = next;
+  }
+  mob_proto = NULL;
+  mob_index = NULL;
   world = NULL;
   zone_table = NULL;
   obj_proto = NULL;
@@ -267,6 +286,30 @@ static void reset_zone_wtrigger_walk_ends_at_top_max(void)
   zone_fixture[0].top = 65535;
   reset_zone(0);
   TEST_ASSERT_EQUAL_INT(0, zone_fixture[0].age);
+  zone_fixture_teardown();
+}
+
+/* B1-10: an 'E' with a bad wear slot named the object from obj_index[arg2],
+ * but arg2 is the max-existing count, not an rnum (ASan: heap-buffer-
+ * overflow), and the command stayed enabled so the read repeated on every
+ * reset. Now the object comes from arg1 and the command is disabled. */
+static void reset_zone_disables_equip_with_bad_wear_pos(void)
+{
+  struct reset_com cmds[] = {
+    { 'M', FALSE, 0, 5, 0, 1, NULL, NULL },
+    { 'E', TRUE, 0, 4765, 99, 2, NULL, NULL },
+    { 'S', FALSE, 0, 0, 0, 3, NULL, NULL },
+  };
+
+  zone_fixture_setup(cmds);
+  reset_zone(0);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("zone-reset", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "mob vnum 3005"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "obj vnum 3022"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "pos 99"));
+  TEST_ASSERT_EQUAL_CHAR('*', cmds[1].command);
+  TEST_ASSERT_NULL(object_list);
   zone_fixture_teardown();
 }
 
@@ -725,5 +768,6 @@ int main(void)
   RUN_TEST(reset_zone_skips_trigger_after_load_purge);
   RUN_TEST(reset_zone_keeps_object_when_trigger_does_not_purge);
   RUN_TEST(reset_zone_wtrigger_walk_ends_at_top_max);
+  RUN_TEST(reset_zone_disables_equip_with_bad_wear_pos);
   return UNITY_END();
 }
