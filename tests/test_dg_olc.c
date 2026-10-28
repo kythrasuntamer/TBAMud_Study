@@ -437,9 +437,50 @@ static void copy_trigger_replaces_scratch_and_keeps_save_prompt(void)
   TEST_ASSERT_FALSE(tb_captured_has_op("trigedit-proto-nr"));
 }
 
+/* E2-06: a line longer than the old 256-byte line buffer lost its CRLF and
+ * the next command was glued onto it, while "/f" reported success. */
+static void format_script_keeps_long_lines_whole(void)
+{
+  const int vnums[] = { 100 };
+  char script[512], expect[512];
+
+  make_index(vnums, 1);
+  start_edit(150);
+  memset(script, 'x', 400);
+  strlcpy(script + 400, "\r\nsay two\r\n", sizeof(script) - 400);
+  memcpy(expect, script, sizeof(expect));
+  edit_script(script);
+
+  TEST_ASSERT_TRUE(format_script(bd));
+  TEST_ASSERT_EQUAL_STRING(expect, OLC_STORAGE(bd));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+}
+
+/* A formatted script that would exceed the editor's limit is refused loudly
+ * and the original is kept. */
+static void format_script_refuses_result_over_max_str(void)
+{
+  const int vnums[] = { 100 };
+  char *before;
+
+  make_index(vnums, 1);
+  start_edit(150);
+  edit_script("if 1\r\nsay a fairly long line\r\nend\r\n");
+  bd->max_str = 20;
+  before = OLC_STORAGE(bd);
+  clear_output();
+
+  TEST_ASSERT_FALSE(format_script(bd));
+  TEST_ASSERT_TRUE(tb_captured_has_op("trigedit-format-too-long"));
+  TEST_ASSERT_TRUE(OLC_STORAGE(bd) == before);
+  TEST_ASSERT_NOT_NULL(strstr(bd->output, "String too long at line 2"));
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(format_script_keeps_long_lines_whole);
+  RUN_TEST(format_script_refuses_result_over_max_str);
   RUN_TEST(copy_trigger_replaces_scratch_and_keeps_save_prompt);
   RUN_TEST(saving_keeps_the_prototype_rnum);
   RUN_TEST(format_script_refuses_nesting_past_its_stack);

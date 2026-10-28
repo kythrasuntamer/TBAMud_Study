@@ -1363,10 +1363,13 @@ static int format_script_can_push(struct descriptor_data *d, int line_num,
  */
 int format_script(struct descriptor_data *d)
 {
-  char nsc[MAX_CMD_LENGTH], *t, line[READ_SIZE];
+  char nsc[MAX_CMD_LENGTH], *t;
   char *sc;
   size_t len = 0, nlen = 0, llen = 0;
-  int indent = 0, indent_next = FALSE, line_num = 0, ret;
+  /* Room for the formatted script, terminator included: the editor's limit,
+   * never more than nsc.  len < cap holds throughout. */
+  size_t cap = MIN(d->max_str, sizeof(nsc));
+  int indent = 0, indent_next = FALSE, line_num = 0;
   int block_stack[FORMAT_SCRIPT_MAX_DEPTH]; // Stack to track block types
   int stack_top = -1; // Initialize stack as empty
   int switch_indent[FORMAT_SCRIPT_MAX_DEPTH]; // Array to track switch indent levels
@@ -1376,6 +1379,12 @@ int format_script(struct descriptor_data *d)
 
   if (!d->str || !*d->str)
     return FALSE;
+  if (cap < 1) {
+    TB_ERROR_MSG("dg", "trigedit-format-too-long", "max_str",
+                 "editor max_str is 0, editor " DIAG_CHAR_FMT,
+                 DIAG_CHAR(d->character));
+    return FALSE;
+  }
 
   sc = strdup(*d->str); // Work on a copy
   t = strtok(sc, "\n\r");
@@ -1444,26 +1453,30 @@ int format_script(struct descriptor_data *d)
       indent_next = FALSE; // Ensure no automatic increase for next line after break
     }
 
-    /* The indented line must fit whole: nlen past the buffer used to wrap
-     * the snprintf size, and a long line was cut silently. */
-    nlen = indent > 0 ? 2 * (size_t)indent : 0;
-    if (nlen + strlen(t) + 2 >= sizeof(line)) {
-      write_to_output(d, "Line %d is too long to indent, formatting aborted\r\n",
-                      line_num);
+    /* Write "<indent><line>\r\n" straight into nsc.  Lines come from the
+     * builder (up to MAX_INPUT_LENGTH per editor line) or from a trigger
+     * file, and have no length limit of their own.  The old 256-byte line
+     * buffer silently cut longer lines, dropping their CRLF and gluing the
+     * next command onto them (E2-06).  The only cap is the result's: the
+     * editor's max_str and nsc.  indent can go negative after unbalanced
+     * "break"/"end" lines; treat that as no indent. */
+    nlen = 2 * (size_t)MAX(indent, 0);
+    llen = strlen(t);
+    if (nlen + llen + 2 >= cap - len) {
+      write_to_output(d, "String too long at line %d (limit %lu bytes), "
+                         "formatting aborted\r\n", line_num, (unsigned long)(cap - 1));
+      TB_WARN_MSG("dg", "trigedit-format-too-long", "nsc",
+                  "trigger vnum %d line %d needs %lu bytes, cap %lu editor " DIAG_CHAR_FMT,
+                  d->olc ? OLC_NUM(d) : -1, line_num,
+                  (unsigned long)(len + nlen + llen + 3), (unsigned long)cap,
+                  DIAG_CHAR(d->character));
       free(sc);
       return FALSE;
     }
-    memset(line, ' ', nlen);
-    ret = snprintf(line + nlen, sizeof(line) - nlen, "%s\r\n", t);
-    llen = (size_t)ret;
-    if (ret < 0 || llen + nlen + len > d->max_str - 1 ||
-        llen + nlen + len >= sizeof(nsc)) {
-      write_to_output(d, "String too long, formatting aborted\r\n");
-      free(sc);
-      return FALSE;
-    }
-    len = len + nlen + llen;
-    strlcat(nsc, line, sizeof(nsc));  /* strcat OK, size checked above */
+    memset(nsc + len, ' ', nlen);
+    memcpy(nsc + len + nlen, t, llen);
+    memcpy(nsc + len + nlen + llen, "\r\n", 3);   /* with the terminator */
+    len += nlen + llen + 2;
 
     if (indent_next) {
       indent++;
