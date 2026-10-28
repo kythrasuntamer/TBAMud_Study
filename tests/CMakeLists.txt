@@ -62,6 +62,7 @@ macro(add_mud_test TEST_NAME)
     target_include_directories(${TEST_NAME} PRIVATE ${TEST_INCLUDES})
     target_compile_options(${TEST_NAME} PRIVATE ${TEST_CFLAGS})
     add_test(NAME ${TEST_NAME} COMMAND ${TEST_NAME})
+    set_tests_properties(${TEST_NAME} PROPERTIES LABELS "native;unit")
 endmacro()
 
 # ---------------------------------------------------------------------------
@@ -260,6 +261,7 @@ add_executable(test_act_format
 target_include_directories(test_act_format PRIVATE ${TEST_INCLUDES})
 target_compile_options(test_act_format PRIVATE ${TEST_CFLAGS})
 add_test(NAME test_act_format COMMAND test_act_format)
+set_tests_properties(test_act_format PROPERTIES LABELS "native;unit")
 if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
     target_compile_options(test_act_format PRIVATE -ffunction-sections -fdata-sections)
     target_link_options(test_act_format PRIVATE -Wl,--gc-sections)
@@ -504,6 +506,17 @@ add_mud_test(test_utils_guards
     ${MUD_SRCDIR}/random.c
     ${CMAKE_CURRENT_SOURCE_DIR}/test_utils_guards.c
 )
+
+# Source-text contract checks run CPython, not tbaMUD code: keep them out of
+# Valgrind/ASan selections that use -L native.
+if(Python3_Interpreter_FOUND)
+    set_tests_properties(
+        test_dg_memory_callback_contract test_crash_save_header_contract
+        test_dg_trigedit_contract test_dg_objcmd_contract
+        test_dg_transform_contract test_door_trigger_contract
+        test_dg_detach_contract test_dg_wait_suffix_contract
+        PROPERTIES LABELS "contract")
+endif()
 
 # ---------------------------------------------------------------------------
 # Properties shared by every test registered above

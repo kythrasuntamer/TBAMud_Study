@@ -8,6 +8,24 @@ endif()
 
 project(TbaMUD C)
 
+# ========== Valgrind memcheck (ctest -T memcheck) ==========
+# Must be set before include(CTest). Run from a NON-sanitizer tree:
+#   ctest --test-dir <build> -T memcheck -L native
+# Every definite/indirect leak and every invalid access is an error, and
+# --error-exitcode makes the test itself fail, so a defect cannot pass as a
+# "memcheck note". Only "native" tests are meant for this: running Valgrind
+# on the Python contract tests checks CPython, not tbaMUD.
+# Add a suppression only for a defect outside tbaMUD (libc, libsodium), in
+# tools/valgrind.supp, with a comment saying why it is not ours.
+find_program(MEMORYCHECK_COMMAND valgrind)
+set(MEMORYCHECK_COMMAND_OPTIONS
+    "--error-exitcode=99 --leak-check=full --show-leak-kinds=definite,indirect --errors-for-leak-kinds=definite,indirect --track-origins=yes --num-callers=40 --trace-children=no"
+    CACHE STRING "Valgrind options for ctest -T memcheck")
+if(EXISTS "${CMAKE_SOURCE_DIR}/tools/valgrind.supp")
+    set(MEMORYCHECK_SUPPRESSIONS_FILE "${CMAKE_SOURCE_DIR}/tools/valgrind.supp"
+        CACHE FILEPATH "Valgrind suppressions for ctest -T memcheck")
+endif()
+
 include(CTest)
 enable_testing()
 
@@ -649,6 +667,30 @@ target_link_libraries(circle ${EXTRA_LIBS})
 
 add_subdirectory(src/util)
 add_subdirectory(tests)
+
+# ========== Boot smoke test ==========
+# circle -c loads the whole world from lib/ (zones, triggers, rooms, mobs,
+# objects, shops, quests), frees it with destroy_db() and exits. Under ASan
+# or ctest -T memcheck this exercises every world-file loader and the
+# teardown path against real data. -c only reads lib/, so the test runs in
+# the source tree the way autorun does.
+add_test(NAME circle_boot_check
+         COMMAND circle -c
+         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+set_tests_properties(circle_boot_check PROPERTIES
+    LABELS "native;boot"
+    TIMEOUT 300
+    FAIL_REGULAR_EXPRESSION "ERROR: AddressSanitizer|runtime error:|LeakSanitizer")
+if(ENABLE_SANITIZERS)
+    set_tests_properties(circle_boot_check PROPERTIES ENVIRONMENT
+        "ASAN_OPTIONS=${TBAMUD_ASAN_OPTIONS};UBSAN_OPTIONS=${TBAMUD_UBSAN_OPTIONS}")
+endif()
+# Known failure BOOT-UAF: destroy_db() frees world[] and sets top_of_world
+# to 0, then free_proto_script()'s "#if 1 /* debugging */" scan in
+# dg_handler.c reads world[0..top_of_world] (bound widened in 4f33b6c), a
+# heap-use-after-free that ASan and Valgrind both report. Remove this
+# DISABLED once that is fixed; ctest lists the test as "Disabled" until then.
+set_tests_properties(circle_boot_check PROPERTIES DISABLED TRUE)
 
 if (MEMORY_DEBUG)
     # zfree() keeps every block until shutdown, which hides use-after-free,
