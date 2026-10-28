@@ -529,7 +529,7 @@ void test_every_class_has_one_listed_creation_letter(void)
             continue;
         TEST_ASSERT_TRUE(klass >= 0 && klass < NUM_CLASSES);
         letters_for[klass]++;
-        snprintf(tag, sizeof(tag), "\t(%c\t)", UPPER(c));
+        TEST_ASSERT_TRUE(snprintf(tag, sizeof(tag), "\t(%c\t)", UPPER(c)) > 0);
         TEST_ASSERT_NOT_NULL_MESSAGE(strstr(class_menu, tag), pc_class_types[klass]);
     }
     for (klass = 0; klass < NUM_CLASSES; ++klass)
