@@ -2556,12 +2556,41 @@ void new_affect(struct affected_type *af)
   for (i=0; i<AF_ARRAY_MAX; i++) af->bitvector[i]=0;
 }
 
-/* Handy function to get class ID number by name (abbreviations allowed) */
+/* Former class names that still name a class after a rename. "Magic User"
+ * became "Wizard" in pc_class_types[], but builders, `set <char> class` and
+ * DG %actor.class(<name>)% subfields written before the rename still say
+ * "magic user" or "mage". This table mirrors parse_class()'s legacy 'm'
+ * letter for full names. The canonical names in pc_class_types[] are tried
+ * first, so an abbreviation shared with a current class ("m" -> Monk) keeps
+ * resolving to the current class. Add a row here whenever a class is renamed. */
+static const struct {
+  const char *name;   /* former name; is_abbrev() matches abbreviations */
+  int class_num;      /* CLASS_* constant it still names */
+} legacy_class_aliases[] = {
+  { "magic user", CLASS_MAGIC_USER },
+  { "mage",       CLASS_MAGIC_USER },
+};
+
+#define NUM_LEGACY_CLASS_ALIASES \
+  (sizeof(legacy_class_aliases) / sizeof(legacy_class_aliases[0]))
+
+/* Handy function to get class ID number by name (abbreviations allowed).
+ * Current names in pc_class_types[] win; otherwise a legacy alias from
+ * legacy_class_aliases[] is accepted. Returns -1 when nothing matches. */
 int get_class_by_name(char *classname)
 {
     int i;
+    size_t a;
+
+    if (classname == NULL)
+      return (-1);
+
     for (i=0; i<NUM_CLASSES; i++)
       if (is_abbrev(classname, pc_class_types[i])) return(i);
+
+    for (a = 0; a < NUM_LEGACY_CLASS_ALIASES; a++)
+      if (is_abbrev(classname, legacy_class_aliases[a].name))
+        return (legacy_class_aliases[a].class_num);
 
     return (-1);
 }

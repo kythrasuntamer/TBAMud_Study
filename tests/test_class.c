@@ -2,6 +2,7 @@
  * @file test_class.c
  * Unit tests for pure functions in src/class.c:
  *   parse_class, thaco, backstab_mult, level_exp
+ * and get_class_by_name() from src/utils.c (class names and legacy aliases).
  */
 
 #include "unity.h"
@@ -11,6 +12,7 @@
 #include "structs.h"
 #include "utils.h"
 #include "class.h"
+#include "interpreter.h" /* is_abbrev() */
 #include "spells.h" /* SAVING_PARA and other saving throw identifiers */
 
 extern FILE *logfile;
@@ -37,6 +39,50 @@ void tearDown(void) { logfile = NULL; }
 void test_parse_class_magic_user_lowercase(void)
 {
     TEST_ASSERT_EQUAL_INT(CLASS_MAGIC_USER, parse_class('m'));
+}
+
+/* test_stubs.c's weak is_abbrev() always fails; get_class_by_name() needs
+ * the real prefix match, so this mirrors interpreter.c's is_abbrev(). */
+int is_abbrev(const char *arg1, const char *arg2)
+{
+    if (!*arg1)
+        return 0;
+    for (; *arg1 && *arg2; arg1++, arg2++)
+        if (LOWER(*arg1) != LOWER(*arg2))
+            return 0;
+    return !*arg1;
+}
+
+/* Current names in pc_class_types[] resolve, in full and abbreviated. */
+void test_get_class_by_name_current_names(void)
+{
+    TEST_ASSERT_EQUAL_INT(CLASS_MAGIC_USER, get_class_by_name("Wizard"));
+    TEST_ASSERT_EQUAL_INT(CLASS_MAGIC_USER, get_class_by_name("wiz"));
+    TEST_ASSERT_EQUAL_INT(CLASS_CLERIC, get_class_by_name("cleric"));
+    TEST_ASSERT_EQUAL_INT(CLASS_THIEF, get_class_by_name("THIEF"));
+    TEST_ASSERT_EQUAL_INT(CLASS_WARRIOR, get_class_by_name("warrior"));
+    TEST_ASSERT_EQUAL_INT(CLASS_MONK, get_class_by_name("monk"));
+}
+
+/* "Magic User" was renamed "Wizard"; the old names still mean the wizard. */
+void test_get_class_by_name_legacy_magic_user_aliases(void)
+{
+    TEST_ASSERT_EQUAL_INT(CLASS_MAGIC_USER, get_class_by_name("magic user"));
+    TEST_ASSERT_EQUAL_INT(CLASS_MAGIC_USER, get_class_by_name("Magic User"));
+    TEST_ASSERT_EQUAL_INT(CLASS_MAGIC_USER, get_class_by_name("magic"));
+    TEST_ASSERT_EQUAL_INT(CLASS_MAGIC_USER, get_class_by_name("mage"));
+    TEST_ASSERT_EQUAL_INT(CLASS_MAGIC_USER, get_class_by_name("ma"));
+}
+
+/* A current class keeps an abbreviation it shares with a legacy alias, and
+ * unknown or empty names are refused. */
+void test_get_class_by_name_current_names_win_and_misses(void)
+{
+    TEST_ASSERT_EQUAL_INT(CLASS_MONK, get_class_by_name("m"));
+    TEST_ASSERT_EQUAL_INT(-1, get_class_by_name("ranger"));
+    TEST_ASSERT_EQUAL_INT(-1, get_class_by_name("magic users"));
+    TEST_ASSERT_EQUAL_INT(-1, get_class_by_name(""));
+    TEST_ASSERT_EQUAL_INT(-1, get_class_by_name(NULL));
 }
 
 void test_parse_class_cleric_lowercase(void)
@@ -358,6 +404,11 @@ int main(void)
     RUN_TEST(test_parse_class_thief_lowercase);
     RUN_TEST(test_parse_class_uppercase);
     RUN_TEST(test_parse_class_invalid);
+
+    /* get_class_by_name (utils.c) */
+    RUN_TEST(test_get_class_by_name_current_names);
+    RUN_TEST(test_get_class_by_name_legacy_magic_user_aliases);
+    RUN_TEST(test_get_class_by_name_current_names_win_and_misses);
 
     /* thaco */
     RUN_TEST(test_thaco_magic_user_level_1);
