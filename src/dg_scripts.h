@@ -417,6 +417,10 @@ void wld_command_interpreter(room_data *room, char *argument);
 
 /* Macros for scripts */
 #define UID_CHAR   '}'
+/* Parses the digits of a UID (after UID_CHAR, or a bare id).  Object UIDs
+ * grow for the life of the server, so they are longs; an int parse turned
+ * any UID above INT_MAX into 0. */
+#define PARSE_UID(text) tb_parse_long_or_zero(text)
 
 /* A '%' that came from player-authored text (command arguments, speech, act
  * messages, titles).  Scripts may substitute a line twice -- eval, makeuid,

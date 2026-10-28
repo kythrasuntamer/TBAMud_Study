@@ -904,6 +904,46 @@ static void invalid_wait_leaves_the_trigger_usable(void)
   TEST_ASSERT_EQUAL_INT(0, GET_TRIG_DEPTH(&trig));
 }
 
+/* test_stubs.c's real_room() finds nothing; search the fixture world. */
+room_rnum real_room(room_vnum vnum)
+{
+  room_rnum i;
+
+  for (i = 0; world && i <= top_of_world; i++)
+    if (world[i].number == vnum)
+      return i;
+  return NOWHERE;
+}
+
+/* find_room() cast UID - ROOM_ID_BASE to a 16-bit vnum, so an object UID
+ * resolved to whichever room had the truncated vnum; and UIDs were parsed
+ * as int, so one above INT_MAX found nothing. */
+static void uids_resolve_only_their_own_entities(void)
+{
+  static struct room_data rooms[1];
+  static obj_data obj;
+  char name[32];
+
+  memset(rooms, 0, sizeof(rooms));
+  rooms[0].number = (room_vnum)(OBJ_ID_BASE + 5 - ROOM_ID_BASE);   /* 38533 */
+  world = rooms;
+  top_of_world = 0;
+  tb_snprintf(name, sizeof(name), "%c%ld", UID_CHAR, (long)OBJ_ID_BASE + 5);
+  TEST_ASSERT_NULL(get_room(name));
+  tb_snprintf(name, sizeof(name), "%c%ld", UID_CHAR,
+              (long)ROOM_ID_BASE + rooms[0].number);
+  TEST_ASSERT_EQUAL_PTR(&rooms[0], get_room(name));
+  world = NULL;
+
+  memset(&obj, 0, sizeof(obj));
+  obj.script_id = 3000000005L;                 /* past INT_MAX */
+  init_lookup_table();
+  add_to_lookup_table(obj.script_id, &obj);
+  tb_snprintf(name, sizeof(name), "%c%ld", UID_CHAR, obj.script_id);
+  TEST_ASSERT_EQUAL_PTR(&obj, get_obj(name));
+  remove_from_lookup_table(obj.script_id, &obj);
+}
+
 static void restore_round_trips_neutralize(void)
 {
   char text[] = "50% off, 100%% sure";
@@ -946,5 +986,6 @@ int main(void)
   RUN_TEST(attach_to_a_player_is_refused_before_loading);
   RUN_TEST(switch_leaves_case_text_unchanged);
   RUN_TEST(invalid_wait_leaves_the_trigger_usable);
+  RUN_TEST(uids_resolve_only_their_own_entities);
   return UNITY_END();
 }
