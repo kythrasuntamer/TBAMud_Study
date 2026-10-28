@@ -90,35 +90,17 @@ target_link_options(fuzz_player PRIVATE -Wl,-z,start-stop-gc
 # redzone when it is printed, instead of depending on stale stack bytes.
 target_compile_options(fuzz_player PRIVATE -ftrivial-auto-var-init=pattern)
 
-# Known crashes the player/object-save fuzzer found in code this harness does
-# not own (players.c, objsave.c, house.c, dg_scripts.c). Each is a DISABLED
-# test so ctest lists it as "Disabled" until the bug is fixed; then delete
-# DISABLED and move the file into corpus/player/. The fuzzer itself steps
-# around these with FUZZ_PLAYER_MASK=<name>[,...] so a campaign keeps finding
-# new bugs; the tests run them unmasked, so each still reproduces.
-#   PLAYER-1 vars-noname: read_saved_vars() ignores get_filename()'s result
-#     and fopen()s the unwritten fn[] when the character has no name (empty
-#     Name tag, or an Act word that sets the NPC bit); stack over-read in
-#     fopen (dg_scripts.c:3491-3492). Reached at login. Fixed by 577cae0 on
-#     audit-deferred-dg.
-#   PLAYER-3 name-path-login: get_filename() built a path from a file-
-#     supplied player name (here a pfile Name tag read before login) without
-#     rejecting "..", so a name like "../x" escaped lib/ for every file the
-#     name keys. get_filename() now accepts only [A-Za-z0-9_-] (2f7889b), so
-#     the traversal is fixed (the index half is regression-name-path-index
-#     below), but this input still crashes: read_saved_vars() then fopen()s
-#     the buffer get_filename() refused to write, i.e. PLAYER-1.
-foreach(_crash vars-noname name-path-login)
-    add_test(NAME fuzz_player_known_${_crash}
-             COMMAND fuzz_player ${CMAKE_CURRENT_SOURCE_DIR}/known-crashes/player/${_crash})
-    set_tests_properties(fuzz_player_known_${_crash} PROPERTIES
-        LABELS "fuzz" DISABLED TRUE
-        ENVIRONMENT "ASAN_OPTIONS=${TBAMUD_ASAN_OPTIONS};UBSAN_OPTIONS=${TBAMUD_UBSAN_OPTIONS}")
-endforeach()
-
 # Regression inputs: known crashes that are fixed, kept in corpus/player/ (so
 # fuzz_player_corpus replays them too) and also replayed one by one, so a
 # failure names the bug.
+#   PLAYER-1 regression-vars-noname: read_saved_vars() ignored
+#     get_filename()'s result and fopen()ed the unwritten fn[] for a character
+#     with no name (empty Name tag, or an Act word that sets the NPC bit);
+#     stack over-read in fopen. Fixed by 577cae0: the vars file is refused
+#     (dg/vars-filename) when no name can be built.
+#   PLAYER-3 regression-name-path-login: a pfile Name tag "../x" read before
+#     login. get_filename() rejects it (persist/filename-unsafe); the crash
+#     that remained was PLAYER-1's fopen of the refused buffer (577cae0).
 #   PLAYER-3 regression-name-path-index: a player index record named "../"
 #     reached get_filename() through update_obj_file()/Crash_clean_file(),
 #     which built a path outside lib/. Fixed by 2f7889b: get_filename()
@@ -143,8 +125,8 @@ endforeach()
 #     Name:/Shrt:/Desc: leaks the first copy (objsave.c:1404/1468/1490) --
 #     the players.c PFILE_SET_STRING fix was never applied here. Fixed by
 #     f8de88c: a repeated tag replaces the object's own copy.
-foreach(_crash name-path-index hcontrol-time fread-string-nul controw-leak
-               restrung-leak)
+foreach(_crash vars-noname name-path-login name-path-index hcontrol-time
+               fread-string-nul controw-leak restrung-leak)
     add_test(NAME fuzz_player_regression_${_crash}
              COMMAND fuzz_player ${CMAKE_CURRENT_SOURCE_DIR}/corpus/player/regression-${_crash})
     set_tests_properties(fuzz_player_regression_${_crash} PROPERTIES
