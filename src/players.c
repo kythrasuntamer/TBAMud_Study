@@ -118,16 +118,17 @@ static int pfile_int_in_range(const char *line, const char *filename,
  * longer is corruption or tampering, not a flag set the server produced. */
 #define PFILE_FLAG_WORD 128
 
-/* Parse the four flag words of an Act/Aff/Pref line into flags[0..3].
+/* Load the flag words of an Act/Aff/Pref line into flags[0..3].
  * The line is player-file data (get_line() hands back up to READ_SIZE-1
  * bytes), so each word is length-checked before it is copied; the old
  * unbounded sscanf("%s") overflowed four 128-byte stack buffers.
- * Returns 1 when four words were stored, 0 when the line is not four words
- * (the caller handles the legacy one-word form), and -1 when a word is too
- * long: flags are left untouched and the rejection is reported. */
-static int load_pfile_flag_words(const char *line, int *flags,
-                                 const char *filename, const char *tag,
-                                 long idnum)
+ * Accepted forms: four words (current), or one word (legacy files, which
+ * only set flags[0]; reported as a pfile-flags-legacy warning). Anything
+ * else, or a word that is too long, leaves the flags at their defaults and
+ * is reported as a pfile-flags error. */
+static void load_pfile_flag_words(const char *line, int *flags,
+                                  const char *filename, const char *tag,
+                                  long idnum)
 {
   char words[4][PFILE_FLAG_WORD];
   const char *cursor = line;
@@ -142,25 +143,38 @@ static int load_pfile_flag_words(const char *line, int *flags,
       break;
     while (cursor[len] && !isspace((unsigned char)cursor[len]))
       len++;
-    if (count == 4)
-      return 0;
+    if (count == 4) {
+      count++;	/* more than four words */
+      break;
+    }
     if (len >= PFILE_FLAG_WORD) {
       TB_ERROR_MSG("player", "pfile-flags", filename,
                    "player idnum %ld tag %.4s word %d is %zu bytes (max %d); "
                    "flags left at defaults", idnum, tag, count + 1, len,
                    PFILE_FLAG_WORD - 1);
-      return -1;
+      return;
     }
     memcpy(words[count], cursor, len);
     words[count][len] = '\0';
     count++;
     cursor += len;
   }
-  if (count != 4)
-    return 0;
+  if (count == 1) {
+    TB_WARN_MSG("player", "pfile-flags-legacy", filename,
+                "player idnum %ld tag %.4s has the legacy one-word form; "
+                "only the first flag word loaded", idnum, tag);
+    flags[0] = asciiflag_conv(words[0]);
+    return;
+  }
+  if (count != 4) {
+    TB_ERROR_MSG("player", "pfile-flags", filename,
+                 "player idnum %ld tag %.4s has %s%d words (expected 4); "
+                 "flags left at defaults", idnum, tag, count > 4 ? "over " : "",
+                 count > 4 ? 4 : count);
+    return;
+  }
   for (i = 0; i < 4; i++)
     flags[i] = asciiflag_conv(words[i]);
-  return 1;
 }
 
 /** Read a '~'-terminated string, like fread_string(), without exit(1).
@@ -572,7 +586,6 @@ int load_char(const char *name, struct char_data *ch)
   FILE *fl;
   char filename[40];
   char line[MAX_INPUT_LENGTH + 1], tag[6];
-  char f1[128];
   trig_data *t = NULL;
   trig_rnum t_rnum = NOTHING;
 
@@ -658,11 +671,9 @@ int load_char(const char *name, struct char_data *ch)
       case 'A':
         if (!strcmp(tag, "Ac  "))	GET_AC(ch)		= parse_pfile_int_or_zero(line, filename, tag);
 	else if (!strcmp(tag, "Act ")) {
-         if (load_pfile_flag_words(line, PLR_FLAGS(ch), filename, tag, GET_IDNUM(ch)) == 0)
-          PLR_FLAGS(ch)[0] = asciiflag_conv(line);
+         load_pfile_flag_words(line, PLR_FLAGS(ch), filename, tag, GET_IDNUM(ch));
       } else if (!strcmp(tag, "Aff ")) {
-        if (load_pfile_flag_words(line, AFF_FLAGS(ch), filename, tag, GET_IDNUM(ch)) == 0)
-          AFF_FLAGS(ch)[0] = asciiflag_conv(line);
+        load_pfile_flag_words(line, AFF_FLAGS(ch), filename, tag, GET_IDNUM(ch));
 	}
 	if (!strcmp(tag, "Affs")) 	load_affects(fl, ch);
         else if (!strcmp(tag, "Alin"))	GET_ALIGNMENT(ch)	= parse_pfile_int_or_zero(line, filename, tag);
@@ -758,8 +769,9 @@ int load_char(const char *name, struct char_data *ch)
 	else if (!strcmp(tag, "PfIn"))	POOFIN(ch)		= strdup(line);
 	else if (!strcmp(tag, "PfOt"))	POOFOUT(ch)		= strdup(line);
         else if (!strcmp(tag, "Pref")) {
-          if (load_pfile_flag_words(line, PRF_FLAGS(ch), filename, tag, GET_IDNUM(ch)) == 0)
-	    PRF_FLAGS(ch)[0] = asciiflag_conv(f1);
+          /* The legacy fallback used to convert f1, which was never
+           * written on this path (uninitialised or a stale Act/Aff word). */
+          load_pfile_flag_words(line, PRF_FLAGS(ch), filename, tag, GET_IDNUM(ch));
 	  }
         break;
 

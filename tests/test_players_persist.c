@@ -378,6 +378,28 @@ static void test_out_of_range_class_level_sex_skill(void)
   TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail_log, "tag Clas value 99"));
 }
 
+/* B2-17: the legacy one-word "Pref" form converted f1, which was never
+ * written on that path (uninitialised, or a stale Act/Aff word). */
+static void test_legacy_pref_uses_its_own_value(void)
+{
+  write_pfile("tester", "Id  : 4242\nAct : 9 9 9 9\nPref: 7\n");
+
+  TEST_ASSERT_EQUAL_INT(0, load_char("tester", &player));
+
+  TEST_ASSERT_EQUAL_INT(7, PRF_FLAGS(&player)[0]);
+  TEST_ASSERT_EQUAL_INT(PFDEF_PREFFLAGS, PRF_FLAGS(&player)[1]);
+  TEST_ASSERT_EQUAL_STRING("pfile-flags-legacy", tb_captured_operation);
+}
+
+static void test_wrong_flag_word_count_is_reported(void)
+{
+  write_pfile("tester", "Id  : 4242\nAff : 1 2\n");
+
+  TEST_ASSERT_EQUAL_INT(0, load_char("tester", &player));
+  TEST_ASSERT_EQUAL_INT(PFDEF_AFFFLAGS, AFF_FLAGS(&player)[0]);
+  TEST_ASSERT_EQUAL_STRING("pfile-flags", tb_captured_operation);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -392,6 +414,8 @@ int main(void)
   RUN_TEST(test_malformed_index_record_is_skipped_and_kept);
   RUN_TEST(test_index_save_failure_keeps_live_index);
   RUN_TEST(test_out_of_range_class_level_sex_skill);
+  RUN_TEST(test_legacy_pref_uses_its_own_value);
+  RUN_TEST(test_wrong_flag_word_count_is_reported);
   (void)rmdir(scratch_dir);
   return UNITY_END();
 }
