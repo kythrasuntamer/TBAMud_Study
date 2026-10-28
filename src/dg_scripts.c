@@ -3005,7 +3005,9 @@ int script_driver(void *go_adress, trig_data *trig, int type, int mode)
          cl = temp;
       }
     } else if (!strn_cmp("switch ", p, 7)) {
-      cl = find_case(trig, cl, go, sc, type, p + 7);
+      /* NULL: the switch has no 'done' (reported); end the trigger. */
+      if (!(cl = find_case(trig, cl, go, sc, type, p + 7)))
+        break;
     } else if (!strn_cmp("end", p, 3)) {
       /* If not in an if-block, ignore the extra 'end' and warn about it. */
       if (GET_TRIG_DEPTH(trig) == 1) {

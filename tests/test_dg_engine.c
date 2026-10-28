@@ -508,6 +508,38 @@ static void time_trigger_self_purge_keeps_scanning(void)
   TEST_ASSERT_NULL(tail->next);
 }
 
+/* D1-08: find_done() returned NULL for a block without 'done' nested near
+ * the end, and find_case() / the 'break' handler followed it. */
+static void switch_with_unterminated_nested_while_is_reported(void)
+{
+  const char *lines[] = { "switch 2", "case 1", "nop", "while 0", "nop", NULL };
+  trig_data *t = run_mob_script(make_mob("mob"), lines);
+
+  TEST_ASSERT_EQUAL_STRING("block-unterminated", tb_captured_operation);
+  TEST_ASSERT_EQUAL_INT(0, GET_TRIG_DEPTH(t));
+}
+
+static void break_without_done_is_reported(void)
+{
+  const char *lines[] = { "break", "while 0", "nop", "nop", NULL };
+  trig_data *t = run_mob_script(make_mob("mob"), lines);
+
+  TEST_ASSERT_EQUAL_STRING("block-unterminated", tb_captured_operation);
+  TEST_ASSERT_EQUAL_INT(0, GET_TRIG_DEPTH(t));
+}
+
+static void well_formed_switch_still_selects_its_case(void)
+{
+  const char *lines[] = { "switch 2", "case 1", "context 1", "break",
+                          "case 2", "context 2", "break", "default",
+                          "context 9", "break", "done", "nop end", NULL };
+  char_data *mob = make_mob("mob");
+
+  run_mob_script(mob, lines);
+  TEST_ASSERT_EQUAL_INT(2, SCRIPT(mob)->context);
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -528,5 +560,8 @@ int main(void)
   RUN_TEST(random_trigger_self_purge_keeps_scanning);
   RUN_TEST(random_trigger_purging_next_object_is_safe);
   RUN_TEST(time_trigger_self_purge_keeps_scanning);
+  RUN_TEST(switch_with_unterminated_nested_while_is_reported);
+  RUN_TEST(break_without_done_is_reported);
+  RUN_TEST(well_formed_switch_still_selects_its_case);
   return UNITY_END();
 }
