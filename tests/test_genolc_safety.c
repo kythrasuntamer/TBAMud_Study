@@ -1649,6 +1649,27 @@ static void writers_keep_previous_file_after_stream_error(void)
 }
 
 /* ------------------------------------------------------------------------ */
+/* O1: add_cmd_to_list() with a position past the end.                      */
+/* ------------------------------------------------------------------------ */
+
+/* The command used to be left out without a word (zedit's save gap could
+ * ask for such a position); it is now appended and reported. */
+static void add_cmd_to_list_appends_past_the_end(void)
+{
+  struct reset_com c;
+  make_zones(1);
+  memset(&c, 0, sizeof(c));
+  c.command = 'O';
+  c.arg1 = 7;
+  add_cmd_to_list(&zone_table[0].cmd, &c, 5);
+  TEST_ASSERT_EQUAL_INT(1, count_commands(zone_table[0].cmd));
+  TEST_ASSERT_EQUAL_CHAR('O', zone_table[0].cmd[0].command);
+  TEST_ASSERT_EQUAL_INT(7, zone_table[0].cmd[0].arg1);
+  TEST_ASSERT_EQUAL_STRING("zone-cmd-insert", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "insert position 5 outside 0..0"));
+}
+
+/* ------------------------------------------------------------------------ */
 /* Temporary world directory for the writers.                               */
 /* ------------------------------------------------------------------------ */
 static char test_root[] = "/tmp/tb-genolc-XXXXXX";
@@ -1759,6 +1780,7 @@ int main(void)
   RUN_TEST(remove_zone_command_frees_var_strings);
   RUN_TEST(delete_quest_clears_players_on_it);
   RUN_TEST(writers_keep_previous_file_after_stream_error);
+  RUN_TEST(add_cmd_to_list_appends_past_the_end);
   failures = UNITY_END();
   leave_test_root();
   return failures;

@@ -752,8 +752,9 @@ int count_commands(struct reset_com *list)
  * command is copied by value, so the list takes over a 'V' command's
  * sarg1/sarg2: the caller hands in fresh duplicates (zedit_setup(),
  * zedit_save_internally()) and keeps its own strings, if any, for itself.
- * pos is expected in 0..count; a larger pos is not
- * checked and the command is not inserted.
+ * pos is expected in 0..count; any other pos is reported (zone-cmd-insert)
+ * and the command appended: it used to be left out without a word, and its
+ * 'V' strings with it.
  *
  * @param list   Address of the list (zone_table[z].cmd or zedit's copy).
  * @param newcmd Command to copy in.
@@ -766,6 +767,14 @@ void add_cmd_to_list(struct reset_com **list, struct reset_com *newcmd, int pos)
 
   /* Count number of commands (not including terminator). */
   count = count_commands(*list);
+
+  if (pos < 0 || pos > count) {
+    TB_ERROR_MSG("olc", "zone-cmd-insert", "zone",
+                 "insert position %d outside 0..%d; command '%c' appended",
+                 pos, count,
+                 isprint((unsigned char)newcmd->command) ? newcmd->command : '?');
+    pos = count;
+  }
 
   /* Value is +2 for the terminator and new field to add. */
   CREATE(newlist, struct reset_com, count + 2);

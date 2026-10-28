@@ -414,7 +414,28 @@ mob_rnum add_mobile(struct char_data *mob, mob_vnum vnum)
 int add_to_save_list(zone_vnum zone, int type) { (void)zone; (void)type; return TRUE; }
 room_vnum genolc_zone_bottom(zone_rnum rznum) { (void)rznum; return 0; }
 room_vnum genolc_zonep_bottom(struct zone_data *zone) { (void)zone; return 0; }
-void remove_room_zone_commands(zone_rnum zone, room_rnum room_num) { (void)zone; (void)room_num; }
+/* As genzon.c: drop the room's commands ('M', 'O', 'T', 'V' by arg3, 'D',
+ * 'R' by arg1; 'G', 'E', 'P', '*' go with the command before them).  The
+ * delete_zone_command() model below frees their 'V' strings. */
+int delete_zone_command(struct zone_data *zone, int pos);
+void remove_room_zone_commands(zone_rnum zone, room_rnum room_num)
+{
+  int subcmd = 0, cmd_room = -2;
+  while (zone_table[zone].cmd[subcmd].command != 'S') {
+    switch (zone_table[zone].cmd[subcmd].command) {
+    case 'M': case 'O': case 'T': case 'V':
+      cmd_room = zone_table[zone].cmd[subcmd].arg3;
+      break;
+    case 'D': case 'R':
+      cmd_room = zone_table[zone].cmd[subcmd].arg1;
+      break;
+    default:
+      break;
+    }
+    if (cmd_room != room_num || !delete_zone_command(&zone_table[zone], subcmd))
+      subcmd++;
+  }
+}
 int save_zone(zone_rnum zone_num) { (void)zone_num; return TRUE; }
 
 int count_commands(struct reset_com *list)
@@ -2219,6 +2240,150 @@ static void test_medit_save_with_changed_triggers_rebuilds_live_scripts(void)
   free_medit_fixture();
 }
 
+
+/* ------------------------------------------------------------------ */
+/* O1: the zedit save kept a 'G'/'E' only right after an 'M' and a 'P' */
+/* only right after an 'O', so room 4030's "M snake, G carcass, P      */
+/* coins" lost its 'P' on every save (75 commands in the shipped       */
+/* zones); a refused command also left a gap that pulled another       */
+/* room's command into the block, and the block moved to the top.      */
+/* ------------------------------------------------------------------ */
+static struct reset_com zc(char command, int if_flag, int arg1, int arg2, int arg3)
+{
+  struct reset_com c;
+  memset(&c, 0, sizeof(c));
+  c.command = command;
+  c.if_flag = if_flag;
+  c.arg1 = arg1;
+  c.arg2 = arg2;
+  c.arg3 = arg3;
+  return c;
+}
+
+/* Zone 30's list: the given commands, then 'S', sized to fit. */
+static void set_zone_list(const struct reset_com *cmds, int n)
+{
+  int i;
+  CREATE(zone_fixture.cmd, struct reset_com, n + 1);
+  for (i = 0; i < n; i++)
+    zone_fixture.cmd[i] = cmds[i];
+  zone_fixture.cmd[n].command = 'S';
+}
+
+static void assert_zone_list(const struct reset_com *want, int n)
+{
+  int i;
+  TEST_ASSERT_EQUAL_INT(n, count_commands(zone_fixture.cmd));
+  for (i = 0; i < n; i++) {
+    TEST_ASSERT_EQUAL_CHAR(want[i].command, zone_fixture.cmd[i].command);
+    TEST_ASSERT_EQUAL_INT(want[i].if_flag, zone_fixture.cmd[i].if_flag);
+    TEST_ASSERT_EQUAL_INT(want[i].arg1, zone_fixture.cmd[i].arg1);
+    TEST_ASSERT_EQUAL_INT(want[i].arg2, zone_fixture.cmd[i].arg2);
+    TEST_ASSERT_EQUAL_INT(want[i].arg3, zone_fixture.cmd[i].arg3);
+  }
+}
+
+/* Save a zedit session on room 3001 (rnum 1) holding block[0..n-1]. */
+static void save_room_3001_block(const struct reset_com *block, int n)
+{
+  struct descriptor_data *d = &builder_desc;
+  make_zedit_session(d, block, n);
+  OLC_MODE(d) = ZEDIT_CONFIRM_SAVESTRING;
+  zedit_parse(d, "y");
+  TEST_ASSERT_NULL(d->olc);
+}
+
+static void free_zone_list(void)
+{
+  free(zone_fixture.cmd);
+  zone_fixture.cmd = NULL;
+  top_of_mobt = 0;
+}
+
+static void test_zedit_save_keeps_room_block_and_zone_order(void)
+{
+  const struct reset_com zone[] = {
+    zc('M', 0, 0, 1, 0),        /* room 3000: a mob with an item */
+    zc('G', 1, 0, 1, -1),
+    zc('M', 0, 1, 1, 1),        /* room 3001: the snake, as room 4030 */
+    zc('G', 1, 1, 1, -1),       /*   with a carcass */
+    zc('P', 1, 2, 1, 1),        /*   holding coins */
+    zc('E', 1, 0, 1, 5),        /*   and wearing a ring */
+    zc('O', 0, 2, 1, 2),        /* room 3002: an object, and a put */
+    zc('P', 1, 0, 1, 2),
+  };
+
+  make_world(3);
+  make_objects(3);
+  make_zone();
+  top_of_mobt = 1;
+  set_zone_list(zone, 8);
+
+  save_room_3001_block(&zone[2], 4);
+
+  assert_zone_list(zone, 8);            /* nothing lost, nothing moved */
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  TEST_ASSERT_NULL(strstr(out_buf, "not saved"));
+  free_zone_list();
+}
+
+/* Only what reset_zone() would refuse is refused, it is reported, and the
+ * commands after it close up instead of leaving a gap. */
+static void test_zedit_save_refuses_orphan_give_without_a_gap(void)
+{
+  const struct reset_com zone[] = {
+    zc('O', 0, 0, 1, 0),        /* room 3000; no mob anywhere */
+    zc('O', 0, 1, 1, 1),        /* room 3001 */
+    zc('P', 1, 2, 1, 1),
+    zc('O', 0, 2, 1, 2),        /* room 3002 */
+  };
+  const struct reset_com block[] = {
+    zc('G', 0, 2, 1, -1),       /* no mobile is loaded before it */
+    zc('O', 0, 1, 1, 1),
+    zc('P', 1, 2, 1, 1),
+  };
+
+  make_world(3);
+  make_objects(3);
+  make_zone();
+  set_zone_list(zone, 4);
+
+  save_room_3001_block(block, 3);
+
+  assert_zone_list(zone, 4);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("zedit-save", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail,
+                              "zone 30 room vnum 3001 command 0 'G' not saved: no mobile is loaded before it"));
+  TEST_ASSERT_NOT_NULL(strstr(out_buf, "Command 0 (G) was not saved"));
+  free_zone_list();
+}
+
+/* A room that had no commands gets its block at the end of the zone, so it
+ * does not land in front of another room's commands. */
+static void test_zedit_save_appends_a_new_room_block(void)
+{
+  const struct reset_com zone[] = {
+    zc('M', 0, 0, 1, 0),        /* room 3000 */
+    zc('G', 1, 0, 1, -1),
+  };
+  const struct reset_com block[] = {
+    zc('O', 0, 1, 1, 1),        /* room 3001's first command */
+  };
+  const struct reset_com want[] = { zone[0], zone[1], block[0] };
+
+  make_world(3);
+  make_objects(3);
+  make_zone();
+  set_zone_list(zone, 2);
+
+  save_room_3001_block(block, 1);
+
+  assert_zone_list(want, 3);
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  free_zone_list();
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -2278,5 +2443,8 @@ int main(void)
   RUN_TEST(test_oedit_save_with_unchanged_triggers_keeps_live_scripts);
   RUN_TEST(test_medit_save_with_unchanged_triggers_keeps_live_scripts);
   RUN_TEST(test_medit_save_with_changed_triggers_rebuilds_live_scripts);
+  RUN_TEST(test_zedit_save_keeps_room_block_and_zone_order);
+  RUN_TEST(test_zedit_save_refuses_orphan_give_without_a_gap);
+  RUN_TEST(test_zedit_save_appends_a_new_room_block);
   return UNITY_END();
 }
