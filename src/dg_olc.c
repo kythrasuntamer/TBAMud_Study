@@ -1295,15 +1295,54 @@ void trigedit_string_cleanup(struct descriptor_data *d, int terminator)
   }
 }
 
+/* Depth of format_script()'s block and switch stacks. */
+#define FORMAT_SCRIPT_MAX_DEPTH  READ_SIZE
+
+/**
+ * Check that format_script() may open one more block.  The nesting depth is
+ * builder input: each "if"/"while"/"switch" line pushes an entry, and a
+ * "break" lowers the indent without popping, so a few kilobytes of
+ * "if 1"/"break" pairs reach any depth well inside max_str.  A push past
+ * FORMAT_SCRIPT_MAX_DEPTH would write past block_stack/switch_indent.
+ * Every switch push is also a block push, so switch_top <= stack_top; both
+ * are checked anyway.  Reports a refusal to the builder and the server log.
+ * @param d The editing descriptor.
+ * @param line_num The script line that opens the block.
+ * @param stack_top Current top of the block stack (-1 when empty).
+ * @param switch_top Current top of the switch stack (-1 when empty).
+ * @retval TRUE There is room for the push.
+ * @retval FALSE The script nests too deeply; formatting must stop.
+ */
+static int format_script_can_push(struct descriptor_data *d, int line_num,
+                                  int stack_top, int switch_top)
+{
+  if (stack_top + 1 < FORMAT_SCRIPT_MAX_DEPTH &&
+      switch_top + 1 < FORMAT_SCRIPT_MAX_DEPTH)
+    return TRUE;
+
+  write_to_output(d, "Script nests deeper than %d blocks (line %d); "
+                     "formatting aborted.\r\n", FORMAT_SCRIPT_MAX_DEPTH, line_num);
+  TB_WARN_MSG("dg", "trigedit-format-nesting", "block_stack",
+              "trigger vnum %d line %d depth %d cap %d editor " DIAG_CHAR_FMT,
+              d->olc ? OLC_NUM(d) : -1, line_num, MAX(stack_top, switch_top) + 2,
+              FORMAT_SCRIPT_MAX_DEPTH, DIAG_CHAR(d->character));
+  return FALSE;
+}
+
+/**
+ * Re-indent the script being edited (the editor's "/f" command).
+ * On success *d->str is replaced by a new heap copy; on failure it is left
+ * untouched and the reason has been sent to the builder.
+ */
 int format_script(struct descriptor_data *d)
 {
   char nsc[MAX_CMD_LENGTH], *t, line[READ_SIZE];
   char *sc;
   size_t len = 0, nlen = 0, llen = 0;
   int indent = 0, indent_next = FALSE, line_num = 0, ret;
-  int block_stack[READ_SIZE]; // Stack to track block types
+  int block_stack[FORMAT_SCRIPT_MAX_DEPTH]; // Stack to track block types
   int stack_top = -1; // Initialize stack as empty
-  int switch_indent[READ_SIZE]; // Array to track switch indent levels
+  int switch_indent[FORMAT_SCRIPT_MAX_DEPTH]; // Array to track switch indent levels
   int switch_top = -1; // Index for switch_indent array
   int case_indent = 0; // Track indent for case blocks
   int in_switch = 0; // Flag to indicate if we're inside a switch block
@@ -1319,17 +1358,11 @@ int format_script(struct descriptor_data *d)
     line_num++;
     skip_spaces(&t);
 
-    /* Every opener pushes one entry; switch_indent never holds more. */
-    if ((!strn_cmp(t, "switch ", 7) || !strn_cmp(t, "if ", 3) ||
-         !strn_cmp(t, "while ", 6)) &&
-        stack_top + 1 >= (int)(sizeof(block_stack) / sizeof(*block_stack))) {
-      write_to_output(d, "Blocks nested too deeply to format (line %d)!\r\n",
-                      line_num);
-      free(sc);
-      return FALSE;
-    }
-
     if (!strn_cmp(t, "switch ", 7)) {
+      if (!format_script_can_push(d, line_num, stack_top, switch_top)) {
+        free(sc);
+        return FALSE;
+      }
       indent_next = TRUE;
       stack_top++;
       block_stack[stack_top] = 's'; // 's' for switch
@@ -1343,6 +1376,10 @@ int format_script(struct descriptor_data *d)
         case_indent = indent; // Save indent for case block
       }
     } else if (!strn_cmp(t, "if ", 3) || !strn_cmp(t, "while ", 6)) {
+      if (!format_script_can_push(d, line_num, stack_top, switch_top)) {
+        free(sc);
+        return FALSE;
+      }
       indent_next = TRUE;
       stack_top++;
       block_stack[stack_top] = 'l'; // 'l' for loop or conditional

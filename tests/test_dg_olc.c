@@ -163,8 +163,18 @@ static void save_and_quit(void)
   TEST_ASSERT_EQUAL_INT(CON_PLAYING, STATE(bd));
 }
 
+static void release_large_outbuf(void)
+{
+  if (bd->large_outbuf) {
+    free(bd->large_outbuf->text);
+    free(bd->large_outbuf);
+    bd->large_outbuf = NULL;
+  }
+}
+
 static void clear_output(void)
 {
+  release_large_outbuf();
   bd->output = bd->small_outbuf;
   bd->bufspace = SMALL_BUFSIZE - 1;
   bd->bufptr = 0;
@@ -248,8 +258,7 @@ void tearDown(void)
   char_from_room(builder);
   character_list = NULL;
   descriptor_list = NULL;
-  if (bd->large_outbuf)
-    free(bd->large_outbuf);
+  release_large_outbuf();
   ProtocolDestroy(bd->pProtocol);
   free(bd);
   free(builder->player_specials);
@@ -331,9 +340,60 @@ static void stale_live_rnum_after_insert_is_reported(void)
   free(foreign);
 }
 
+/* Point the text editor at the script, as option 6 of the menu does. */
+static void edit_script(const char *text)
+{
+  set_script(text);
+  bd->str = &OLC_STORAGE(bd);
+  bd->max_str = MAX_CMD_LENGTH;
+}
+
+/* E2-01: each "if 1"/"break" pair pushes a block that "break" never pops, so
+ * 300 pairs (about 4 KB) overran the 256-entry block stack. */
+static void format_script_refuses_nesting_past_its_stack(void)
+{
+  const int vnums[] = { 100 };
+  char *script, *before;
+  size_t n = 0;
+  int i;
+
+  make_index(vnums, 1);
+  start_edit(150);
+  CREATE(script, char, MAX_CMD_LENGTH);
+  for (i = 0; i < 300; i++)
+    n += (size_t)snprintf(script + n, MAX_CMD_LENGTH - n, "if 1\r\nbreak\r\n");
+  edit_script(script);
+  before = OLC_STORAGE(bd);
+  clear_output();
+
+  TEST_ASSERT_FALSE(format_script(bd));
+  TEST_ASSERT_TRUE(tb_captured_has_op("trigedit-format-nesting"));
+  TEST_ASSERT_TRUE(OLC_STORAGE(bd) == before);       /* left untouched */
+  TEST_ASSERT_EQUAL_STRING(script, OLC_STORAGE(bd));
+  TEST_ASSERT_NOT_NULL(strstr(bd->output, "nests deeper"));
+  free(script);
+}
+
+/* A well-formed nested script still formats, and with the right indents. */
+static void format_script_indents_nested_blocks(void)
+{
+  const int vnums[] = { 100 };
+
+  make_index(vnums, 1);
+  start_edit(150);
+  edit_script("if 1\r\nwhile 1\r\nsay x\r\ndone\r\nend\r\n");
+
+  TEST_ASSERT_TRUE(format_script(bd));
+  TEST_ASSERT_EQUAL_STRING("if 1\r\n  while 1\r\n    say x\r\n  done\r\nend\r\n",
+                           OLC_STORAGE(bd));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
+  RUN_TEST(format_script_refuses_nesting_past_its_stack);
+  RUN_TEST(format_script_indents_nested_blocks);
   RUN_TEST(inserting_a_trigger_renumbers_displaced_live_instances);
   RUN_TEST(stale_live_rnum_after_insert_is_reported);
   return UNITY_END();
