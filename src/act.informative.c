@@ -65,10 +65,30 @@
 #define REAL_CHAR(d)  ((d)->original ? (d)->original : (d)->character)
 
 /** TRUE if a mob, object or room has a script with at least one trigger.
- * A script_data can exist with no triggers (it may hold only global
- * variables), so the "[T%d]"/"[TRIGS]" displays must test both before
- * reading TRIGGERS(SCRIPT(thing))->next. Evaluates thing twice. */
+ * A character's script_data can exist with no triggers (it may hold only
+ * global variables: saved player variables, 'set <char> <var>'), so the
+ * "[T%d]"/"[TRIGS]" displays must test both before reading
+ * TRIGGERS(SCRIPT(thing))->next. Objects use obj_has_triggers(), which
+ * also reports the case. Evaluates thing twice. */
 #define SCRIPT_HAS_TRIGGERS(thing)  (SCRIPT(thing) && TRIGGERS(SCRIPT(thing)))
+
+/** SCRIPT_HAS_TRIGGERS for an object's trigger marker (G2-16). Unlike a
+ * character's, an object's script_data always holds a trigger: every site
+ * that creates one (boot, zone reset, attach) adds a trigger, and
+ * detaching the last trigger extracts the script. A trigger-less object
+ * script is a broken invariant, so it is reported as script-empty with the
+ * object's vnum and UID before the marker is left out. */
+static int obj_has_triggers(const struct obj_data *obj)
+{
+  if (SCRIPT_HAS_TRIGGERS(obj))
+    return TRUE;
+  if (SCRIPT(obj))
+    TB_WARN_MSG("dg", "script-empty", "obj",
+                "obj vnum %d uid %ld has script_data without triggers; no "
+                "trigger marker shown", (int)GET_OBJ_VNUM(obj),
+                obj->script_id);
+  return FALSE;
+}
 
 /** TRUE if exit @p door of ch's room leads somewhere and is listed to ch by
  * 'exits' and autoexits: closed doors only with CONFIG_DISP_CLOSED_DOORS,
@@ -207,7 +227,7 @@ static void show_obj_to_char(struct obj_data *obj, struct char_data *ch, int mod
 
     if (!IS_NPC(ch) && PRF_FLAGGED(ch, PRF_SHOWVNUMS)) {
       send_to_char(ch, "[%d] ", GET_OBJ_VNUM(obj));
-      if (SCRIPT_HAS_TRIGGERS(obj)) {
+      if (obj_has_triggers(obj)) {
         if (!TRIGGERS(SCRIPT(obj))->next)
           send_to_char(ch, "[T%d] ", GET_TRIG_VNUM(TRIGGERS(SCRIPT(obj))));
         else
@@ -221,7 +241,7 @@ static void show_obj_to_char(struct obj_data *obj, struct char_data *ch, int mod
   case SHOW_OBJ_SHORT:
     if (!IS_NPC(ch) && PRF_FLAGGED(ch, PRF_SHOWVNUMS)) {
       send_to_char(ch, "[%d] ", GET_OBJ_VNUM(obj));
-      if (SCRIPT_HAS_TRIGGERS(obj)) {
+      if (obj_has_triggers(obj)) {
         if (!TRIGGERS(SCRIPT(obj))->next)
           send_to_char(ch, "[T%d] ", GET_TRIG_VNUM(TRIGGERS(SCRIPT(obj))));
         else
@@ -2006,7 +2026,7 @@ static size_t print_object_location(const int num, const obj_data *obj, const ch
   if (len > buf_size)
     return len; // let the caller know we overflowed
 
-  if (SCRIPT_HAS_TRIGGERS(obj)) {
+  if (obj_has_triggers(obj)) {
     if (!TRIGGERS(SCRIPT(obj))->next)
       nlen = snprintf(buf + len, buf_size - len, "[T%d] ", GET_TRIG_VNUM(TRIGGERS(SCRIPT(obj))));
     else

@@ -14,6 +14,7 @@
 #include "quest.h"
 #include "class.h"
 #include "handler.h"
+#include "dg_scripts.h"
 
 #include "tb_error_capture.h"
 
@@ -755,6 +756,52 @@ static void look_at_unplaced_viewer_is_reported_at_caller(void)
   free_player(ch);
 }
 
+/* --- G2-16: an object script without triggers ------------------------- */
+
+/* The showvnums and 'where' object markers tested only SCRIPT(obj) before
+ * reading TRIGGERS(SCRIPT(obj))->next (the character markers also tested
+ * TRIGGERS). An object's script always holds a trigger, so a trigger-less
+ * one is reported, and no marker is shown. */
+static void object_script_without_triggers_is_reported(void)
+{
+  struct char_data *ch = make_player(10);
+  struct script_data sc;
+  struct obj_data *obj;
+
+  enter_test_room(ch);
+  viewer_desc.character = ch;
+  GET_LEVEL(ch) = LVL_IMMORT;
+  SET_BIT_AR(PRF_FLAGS(ch), PRF_SHOWVNUMS);
+  SET_BIT_AR(PRF_FLAGS(ch), PRF_HOLYLIGHT);
+  obj = make_room_obj("orb", "an orb", "An orb hums here.");
+  memset(&sc, 0, sizeof(sc));
+  SCRIPT(obj) = &sc;                    /* no triggers */
+  obj->script_id = 4242;
+
+  look_at_room(ch, TRUE);               /* show_obj_to_char() */
+  TEST_ASSERT_NOT_NULL(strstr(sent, "An orb hums here."));
+  TEST_ASSERT_NULL(strstr(sent, "[T"));
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("script-empty", tb_captured_operation);
+  TEST_ASSERT_EQUAL_STRING("WARNING", tb_captured_severity);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "uid 4242"));
+
+  sent[0] = '\0';
+  tb_error_capture_reset();
+  object_list = obj;
+  do_where(ch, (char *)"orb", 0, 0);    /* print_object_location() */
+  TEST_ASSERT_NOT_NULL(strstr(sent, "an orb"));
+  TEST_ASSERT_NULL(strstr(sent, "[T"));
+  TEST_ASSERT_EQUAL_STRING("script-empty", tb_captured_operation);
+
+  object_list = NULL;
+  SCRIPT(obj) = NULL;
+  free_room_objs();
+  test_room.people = NULL;
+  leave_test_room(ch);
+  free_player(ch);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -775,5 +822,6 @@ int main(void)
   RUN_TEST(gen_ps_unknown_subcmd_is_reported);
   RUN_TEST(history_null_text_is_reported_not_stored);
   RUN_TEST(look_at_unplaced_viewer_is_reported_at_caller);
+  RUN_TEST(object_script_without_triggers_is_reported);
   return UNITY_END();
 }
