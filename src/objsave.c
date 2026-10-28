@@ -758,7 +758,8 @@ FILE *objsave_open_staged(const char *dest, char *temp, size_t temp_size)
   if (!(fp = fdopen(fd, "w"))) {
     TB_ERROR_ERRNO("objsave", "stage-open", temp, "cannot open staged file");
     close(fd);
-    unlink(temp);
+    if (unlink(temp) != 0 && errno != ENOENT)
+      TB_REPORT_ERRNO("unlink", temp);
     return NULL;
   }
   return fp;
@@ -788,7 +789,8 @@ int objsave_commit_staged(FILE *fp, const char *temp, const char *dest)
   if (failed) {
     TB_ERROR_ERRNO("objsave", "stage-commit", dest,
                    "write or rename failed; live file kept");
-    unlink(temp);
+    if (unlink(temp) != 0 && errno != ENOENT)
+      TB_REPORT_ERRNO("unlink", temp);
     return FALSE;
   }
   return TRUE;
