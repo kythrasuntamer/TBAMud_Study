@@ -27,6 +27,7 @@
 #include "constants.h"
 #include "modify.h"
 #include "protocol.h"
+#include "oasis.h"
 #include <stdarg.h>
 #include <unistd.h>
 #include <sys/stat.h>
@@ -226,6 +227,19 @@ void appear(struct char_data *ch) { (void)ch; UNREACHED(); }
 int can_edit_zone(struct char_data *ch, zone_rnum rnum) { (void)ch; (void)rnum; return 1; }
 void clearMemory(struct char_data *ch) { (void)ch; UNREACHED(); }
 void close_socket(struct descriptor_data *d) { (void)d; UNREACHED(); }
+/* oasis.c is not linked: the part of cleanup_olc() dc's editor exit relies
+ * on (workspace freed, PLR_WRITING cleared, back to CON_PLAYING). */
+static int cleanup_olc_calls;
+void cleanup_olc(struct descriptor_data *d, byte cleanup_type)
+{
+  (void)cleanup_type;
+  cleanup_olc_calls++;
+  free(d->olc);
+  d->olc = NULL;
+  if (d->character)
+    REMOVE_BIT_AR(PLR_FLAGS(d->character), PLR_WRITING);
+  STATE(d) = CON_PLAYING;
+}
 int count_quests(qst_vnum low, qst_vnum high) { (void)low; (void)high; return 0; }
 const char *dg_display_value(const char *value, char *buf, size_t size)
 { strlcpy(buf, value, size); return buf; }
@@ -355,6 +369,7 @@ static void reset_counters(void)
   save_char_calls = extract_final_calls = run_autowiz_calls = 0;
   saved_char = rentsaved_char = NULL;
   save_index_calls = 0;
+  cleanup_olc_calls = 0;
 }
 
 void setUp(void)
@@ -1485,6 +1500,86 @@ static void test_force_room_skips_extracted_occupants(void)
   end_force_room();
 }
 
+/* ---------------------------------------------------------------------
+ * 'dc' (do_dc): descriptor 7, a builder (idnum 88) whose character is in
+ * the world, alone in descriptor_list.
+ * --------------------------------------------------------------------- */
+static struct char_data dc_victim;
+static struct player_special_data dc_victim_specials;
+static struct descriptor_data dc_desc;
+
+static void make_dc_victim(int state)
+{
+  memset(&dc_victim, 0, sizeof(dc_victim));
+  memset(&dc_victim_specials, 0, sizeof(dc_victim_specials));
+  memset(&dc_desc, 0, sizeof(dc_desc));
+  dc_victim.player_specials = &dc_victim_specials;
+  dc_victim.player.name = (char *)"Builder";
+  GET_IDNUM(&dc_victim) = 88;
+  GET_LEVEL(&dc_victim) = LVL_BUILDER;
+  dc_victim.desc = &dc_desc;
+  dc_desc.character = &dc_victim;
+  dc_desc.desc_num = 7;
+  STATE(&dc_desc) = state;
+  descriptor_list = &dc_desc;
+}
+
+/* dc set CON_CLOSE on every descriptor not in CON_PLAYING, OLC editors
+ * included. close_socket() then free_char()ed a builder still linked into
+ * its room and character_list (use-after-free) and, the state being
+ * CON_CLOSE, never released the editor's workspace. */
+static void test_dc_builder_in_editor_takes_link_loss_path(void)
+{
+  char *field = strdup("half-typed text");   /* the field being edited */
+
+  TEST_ASSERT_NOT_NULL(field);
+  make_dc_victim(CON_REDIT);
+  CREATE(dc_desc.olc, struct oasis_olc_data, 1);
+  dc_desc.str = &field;
+  dc_desc.backstr = strdup("original text");
+  SET_BIT_AR(PLR_FLAGS(&dc_victim), PLR_WRITING);
+
+  RUN_CMD(do_dc, &imm, "7");
+
+  TEST_ASSERT_EQUAL_INT(CON_DISCONNECT, STATE(&dc_desc));
+  TEST_ASSERT_EQUAL_INT(1, cleanup_olc_calls);
+  TEST_ASSERT_NULL(dc_desc.olc);
+  TEST_ASSERT_NULL(dc_desc.str);
+  TEST_ASSERT_NULL(dc_desc.backstr);
+  TEST_ASSERT_EQUAL_STRING("original text", field);   /* as the editor's /a */
+  TEST_ASSERT_FALSE(PLR_FLAGGED(&dc_victim, PLR_WRITING));
+  TEST_ASSERT_NOT_NULL(strstr(sent, "Connection #7 closed."));
+  TEST_ASSERT_EQUAL_INT(0, captured_errors);
+  free(field);
+  descriptor_list = NULL;
+}
+
+/* Out-of-game sockets still close outright and players still go linkless.
+ * A target at or above the caller's level is refused, and the refusal is
+ * now reported with both identities. */
+static void test_dc_other_states_and_refusal(void)
+{
+  make_dc_victim(CON_PASSWORD);
+  RUN_CMD(do_dc, &imm, "7");
+  TEST_ASSERT_EQUAL_INT(CON_CLOSE, STATE(&dc_desc));
+
+  make_dc_victim(CON_PLAYING);
+  RUN_CMD(do_dc, &imm, "7");
+  TEST_ASSERT_EQUAL_INT(CON_DISCONNECT, STATE(&dc_desc));
+  TEST_ASSERT_EQUAL_INT(0, cleanup_olc_calls);
+  TEST_ASSERT_EQUAL_INT(0, captured_errors);
+
+  make_dc_victim(CON_REDIT);
+  GET_LEVEL(&dc_victim) = LVL_IMPL;
+  RUN_CMD(do_dc, &imm, "7");
+  TEST_ASSERT_EQUAL_INT(CON_REDIT, STATE(&dc_desc));
+  TEST_ASSERT_EQUAL_INT(1, captured_errors);
+  TEST_ASSERT_EQUAL_STRING("dc-denied", captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(captured_detail, "caller player idnum 1 level"));
+  TEST_ASSERT_NOT_NULL(strstr(captured_detail, "desc 7 player idnum 88"));
+  descriptor_list = NULL;
+}
+
 /* RUN_TEST, filtered: with TB_TEST_ONLY=<substring> in the environment
  * only the matching tests run (e.g. to give one regression test its own
  * Valgrind run). */
@@ -1536,6 +1631,8 @@ int main(void)
   RUN_SELECTED(test_checkload_object_in_nowhere_room_is_safe);
   RUN_SELECTED(test_force_room_skips_occupants_that_moved);
   RUN_SELECTED(test_force_room_skips_extracted_occupants);
+  RUN_SELECTED(test_dc_builder_in_editor_takes_link_loss_path);
+  RUN_SELECTED(test_dc_other_states_and_refusal);
   {
     int failures = UNITY_END();
     if (logfile)

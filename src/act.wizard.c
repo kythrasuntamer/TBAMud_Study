@@ -2047,6 +2047,40 @@ ACMD(do_gecho)
   }
 }
 
+/** Take a descriptor out of its OLC editor before 'dc' hands it to the
+ * link-loss path, as the builder's own exit would. close_socket() releases
+ * a workspace only while the descriptor is still in an OLC state, and a
+ * text being written points d->str into that workspace (or, for tedit,
+ * into a live text buffer). So the text is abandoned first, exactly as the
+ * editor's /a does it (string_add, STRINGADD_ABORT: the original goes
+ * back), then cleanup_olc() frees the workspace, clears PLR_WRITING and
+ * returns the state to CON_PLAYING. */
+static void dc_leave_editor(struct descriptor_data *d)
+{
+  if (d->str) {
+    if (d->backstr) {
+      free(*d->str);
+      *d->str = d->backstr;
+      d->backstr = NULL;
+    }
+    d->str = NULL;
+    d->max_str = 0;
+    d->mail_to = 0;
+  }
+  if (d->olc)
+    cleanup_olc(d, CLEANUP_ALL);
+}
+
+/** dc <descriptor number>: disconnect a socket (LVL_GOD; the number comes
+ * from the immortal, as listed by 'users').
+ * Invariant: a descriptor in the game (CON_PLAYING or an OLC editor, see
+ * IS_PLAYING) has its character in the world. It must take the link-loss
+ * path, CON_DISCONNECT, which keeps the character. CON_CLOSE makes
+ * close_socket() free_char() the character, so it is only for descriptors
+ * that never entered the game; dc used it for builders in an editor, which
+ * freed a character still linked into its room and character_list. A
+ * target at or above the caller's level is refused and reported (dc-denied,
+ * both identities). */
 ACMD(do_dc)
 {
   char arg[MAX_INPUT_LENGTH];
@@ -2065,6 +2099,12 @@ ACMD(do_dc)
     return;
   }
   if (d->character && GET_LEVEL(d->character) >= GET_LEVEL(ch)) {
+    struct char_data *target = d->character;
+
+    TB_WARN_MSG("act", "dc-denied", "descriptor",
+                "caller " DIAG_CHAR_FMT " level %d may not disconnect desc %d "
+                DIAG_CHAR_FMT " level %d", DIAG_CHAR(ch), GET_LEVEL(ch),
+                d->desc_num, DIAG_CHAR(target), GET_LEVEL(target));
     if (!CAN_SEE(ch, d->character))
       send_to_char(ch, "No such connection.\r\n");
     else
@@ -2086,10 +2126,14 @@ ACMD(do_dc)
     act("$E's already being disconnected.", FALSE, ch, 0, d->character, TO_CHAR);
   else {
     /* Remember that we can disconnect people not in the game and that rather
-     * confuses the code when it expected there to be a character context. */
-    if (STATE(d) == CON_PLAYING)
+     * confuses the code when it expected there to be a character context.
+     * In-game states, editors included, take the link-loss path (see the
+     * function comment); an editor is left first. */
+    if (IS_PLAYING(d)) {
+      if (IS_IN_OLC(d))
+        dc_leave_editor(d);
       STATE(d) = CON_DISCONNECT;
-    else
+    } else
       STATE(d) = CON_CLOSE;
 
     send_to_char(ch, "Connection #%d closed.\r\n", num_to_dc);
