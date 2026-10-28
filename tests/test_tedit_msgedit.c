@@ -316,7 +316,9 @@ static void test_msgedit_save_commits_the_messages_file(void)
  * When armed, the next write-only stream starts with its error indicator
  * set, as if a write had failed while the final flush still works:
  * reading a write-only stream sets the indicator (EBADF). */
+/* NOLINTNEXTLINE(cert-dcl37-c,cert-dcl51-cpp): --wrap requires this name. */
 FILE *__real_fopen(const char *path, const char *mode);
+/* NOLINTNEXTLINE(cert-dcl37-c,cert-dcl51-cpp): --wrap requires this name. */
 FILE *__wrap_fopen(const char *path, const char *mode);
 static int poison_next_write_stream;
 

@@ -2554,7 +2554,7 @@ static void save_shop_3000_with_keeper_1201(struct shop_data *scratch)
 
 static void test_sedit_keeper_running_shop_through_questmaster_is_not_rewrapped(void)
 {
-  struct shop_data scratch;
+  static struct shop_data scratch;   /* outlives the OLC session pointer */
 
   make_questmaster_1201(shop_keeper);
   save_shop_3000_with_keeper_1201(&scratch);
@@ -2573,7 +2573,7 @@ static void test_sedit_keeper_running_shop_through_questmaster_is_not_rewrapped(
  * shop_keeper -> questmaster -> its own secondary, which ends the chain. */
 static void test_sedit_plain_questmaster_keeper_is_wrapped_once(void)
 {
-  struct shop_data scratch;
+  static struct shop_data scratch;   /* outlives the OLC session pointer */
 
   make_questmaster_1201(test_guild_proc);
   save_shop_3000_with_keeper_1201(&scratch);
