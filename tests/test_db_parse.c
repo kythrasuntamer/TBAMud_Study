@@ -110,6 +110,7 @@ int wear_otrigger(obj_data *obj, char_data *actor, int where)
 void obj_to_room(struct obj_data *object, room_rnum room)
 { IN_ROOM(object) = room; }
 trig_data *read_trigger(int nr) { (void)nr; return NULL; }
+trig_rnum real_trigger(trig_vnum vnum) { (void)vnum; return NOTHING; }
 void add_trigger(struct script_data *sc, trig_data *t, int loc)
 { (void)sc; (void)t; (void)loc; fixture_triggers_added++; }
 void add_var(struct trig_var_data **var_list, const char *name,
@@ -386,6 +387,25 @@ static void reset_zone_object_variable_uses_arg2_context(void)
   reset_zone(0);
   TEST_ASSERT_EQUAL_INT(1, fixture_vars_added);
   TEST_ASSERT_EQUAL_INT(7, (int)fixture_last_var_context);
+  zone_fixture_teardown();
+}
+
+/* B1-28: renum_zone_table() stored a 'V' command's resolved room in b, so a
+ * missing room was reported with arg2 (the context, here 0) instead of the
+ * room vnum 34999. */
+static void renum_zone_table_reports_missing_variable_room(void)
+{
+  struct reset_com cmds[] = {
+    { 'V', FALSE, WLD_TRIGGER, 0, 34999, 7, (char *)"foo", (char *)"bar" },
+    { 'S', FALSE, 0, 0, 0, 8, NULL, NULL },
+  };
+
+  zone_fixture_setup(cmds);
+  renum_zone_table();
+  TEST_ASSERT_EQUAL_CHAR('*', cmds[0].command);
+  TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
+  TEST_ASSERT_EQUAL_STRING("zone-renum", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "zone 30 line 7 cmd V: arg3 vnum 34999"));
   zone_fixture_teardown();
 }
 
@@ -1132,5 +1152,6 @@ int main(void)
   RUN_TEST(reset_zone_disables_equip_with_bad_wear_pos);
   RUN_TEST(reset_zone_put_without_container_creates_nothing);
   RUN_TEST(reset_zone_object_variable_uses_arg2_context);
+  RUN_TEST(renum_zone_table_reports_missing_variable_room);
   return UNITY_END();
 }

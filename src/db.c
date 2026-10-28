@@ -1840,7 +1840,6 @@ static void renum_zone_table(void)
   room_rnum a, b, c;
   int olda, oldb, oldc;	/* the file's vnums, untruncated, for the report */
   zone_rnum zone;
-  char buf[128];
 
   for (zone = 0; zone <= top_of_zone_table; zone++)
     for (cmd_no = 0; ZCMD.command != 'S'; cmd_no++) {
@@ -1880,15 +1879,19 @@ static void renum_zone_table(void)
         c = ZCMD.arg3 = real_room(ZCMD.arg3);
         break;
       case 'V': /* trigger variable assignment */
-        b = ZCMD.arg3 = real_room(ZCMD.arg3);
+        c = ZCMD.arg3 = real_room(ZCMD.arg3);
         break;
       }
+      /* A vnum that names nothing loaded disables the command. In mini-mud
+       * mode most of the world is absent, so only the count is noisy there
+       * and the per-command report is skipped. */
       if (a == NOWHERE || b == NOWHERE || c == NOWHERE) {
-	if (!mini_mud) {
-	  tb_snprintf(buf, sizeof(buf), "Invalid vnum %d, cmd disabled",
-			 a == NOWHERE ? olda : b == NOWHERE ? oldb : oldc);
-	  log_zone_error(zone, cmd_no, buf);
-	}
+	if (!mini_mud)
+	  TB_ERROR_MSG("db", "zone-renum", "renum_zone_table",
+	               "zone %d line %d cmd %c: arg%d vnum %d not found; cmd disabled",
+	               zone_table[zone].number, ZCMD.line, ZCMD.command,
+	               a == NOWHERE ? 1 : b == NOWHERE ? 2 : 3,
+	               a == NOWHERE ? olda : b == NOWHERE ? oldb : oldc);
 	ZCMD.command = '*';
       }
     }
