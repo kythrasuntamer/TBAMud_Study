@@ -57,6 +57,12 @@ struct descriptor_data *descriptor_list = NULL; /* comm.c */
 size_t send_to_char(struct char_data *ch, const char *messg, ...)
 { (void)ch; (void)messg; return 0; }
 void parse_at(char *str) { (void)str; }
+void paginate_string(char *str, struct descriptor_data *d)  /* modify.c */
+{
+  if (d->showstr_count)
+    *(d->showstr_vector) = str;
+  d->showstr_page = 0;
+}
 
 /* DG fixtures for reset_zone(). The object UID table is a single slot: the
  * tests load one object at a time. A load trigger "purges" its object the
@@ -485,6 +491,36 @@ static void file_to_string_rejects_oversized_file(void)
   TEST_ASSERT_EQUAL_INT(1, tb_captured_errors);
   TEST_ASSERT_EQUAL_STRING("text-file-load", tb_captured_operation);
   remove(temp_path);
+}
+
+/* B1-30: file_to_string_alloc() returned -1 whenever a pager was reading the
+ * old text in place, so the copy-on-reload code after it never ran and
+ * "reload" failed while anyone paged the file. Now the pager gets its own
+ * copy and the reload succeeds. */
+static void file_to_string_alloc_reloads_while_paged(void)
+{
+  static const char text[] = "New text.\n";
+  struct descriptor_data d;
+  char *vector[1];
+  char *global = strdup("Old text.\r\n");
+
+  memset(&d, 0, sizeof(d));
+  vector[0] = global;
+  d.showstr_vector = vector;
+  d.showstr_count = 1;
+  d.showstr_page = 0;
+  descriptor_list = &d;
+
+  write_temp_file(text, sizeof(text) - 1);
+  TEST_ASSERT_EQUAL_INT(0, file_to_string_alloc(temp_path, &global));
+  TEST_ASSERT_EQUAL_STRING("New text.\r\n", global);
+  TEST_ASSERT_NOT_NULL(d.showstr_head);
+  TEST_ASSERT_EQUAL_STRING("Old text.\r\n", d.showstr_head);
+  TEST_ASSERT_TRUE(vector[0] == d.showstr_head);
+  remove(temp_path);
+  descriptor_list = NULL;
+  free(d.showstr_head);
+  free(global);
 }
 
 /* ---------------------------------------------------------------------
@@ -1268,6 +1304,7 @@ int main(void)
   RUN_TEST(file_to_string_loads_whole_multiline_file);
   RUN_TEST(file_to_string_joins_long_lines_and_keeps_last_char);
   RUN_TEST(file_to_string_rejects_oversized_file);
+  RUN_TEST(file_to_string_alloc_reloads_while_paged);
   RUN_TEST(reset_zone_skips_trigger_after_load_purge);
   RUN_TEST(reset_zone_keeps_object_when_trigger_does_not_purge);
   RUN_TEST(reset_zone_wtrigger_walk_ends_at_top_max);

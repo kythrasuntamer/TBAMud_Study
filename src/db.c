@@ -4125,9 +4125,11 @@ static int file_to_string_alloc(const char *name, char **buf)
   char temp[MAX_STRING_LENGTH];
   struct descriptor_data *in_use;
 
-  for (in_use = descriptor_list; in_use; in_use = in_use->next)
-    if (in_use->showstr_vector && *in_use->showstr_vector == *buf)
-      return (-1);
+  /* A pager reading *buf in place (page_string() with keep_internal 0) is
+   * given its own copy below before *buf is freed. This used to return -1
+   * first whenever such a pager existed, which made that copy dead code and
+   * failed "reload" with a misleading "Cannot read" while anyone paged the
+   * file. */
 
   /* Lets not free() what used to be there unless we succeeded. */
   if (file_to_string(name, temp, sizeof(temp)) < 0)
