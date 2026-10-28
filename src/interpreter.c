@@ -63,26 +63,45 @@ static int tb_password_is_argon2id(const char *hash)
   return (hash != NULL && strncmp(hash, "$argon2id$", 10) == 0);
 }
 
-/* Verify a password against the saved hash.
- * New hashes use libsodium; existing crypt hashes are accepted only when
- * that compatibility path is enabled.  Invalid inputs and initialization
- * failures reject login; never fall back to comparing plaintext.
- */
-static int tb_password_verify(const char *password, const char *hash)
-{
-  const char *legacy;
+/* tb_password_verify() results.  TB_PW_UNVERIFIABLE means this build
+ * cannot check the stored hash at all (a legacy hash without crypt(), or
+ * libsodium failed to start): the server's fault, not the player's, so it
+ * is reported and never counted as a wrong password. */
+enum tb_pw_result { TB_PW_MISMATCH = 0, TB_PW_MATCH = 1, TB_PW_UNVERIFIABLE = 2 };
 
-  if (password == NULL || hash == NULL || !*hash || sodium_init() < 0)
-    return (0);
+/* Verify a password against player idnum's saved hash.
+ * New hashes use libsodium; existing crypt hashes are accepted only when
+ * that compatibility path is enabled.  Never falls back to comparing
+ * plaintext.  A hash this build cannot check is reported (password-verify)
+ * with the idnum, and the caller must not treat it as a match.
+ */
+static enum tb_pw_result tb_password_verify(const char *password,
+                                            const char *hash, long idnum)
+{
+  if (password == NULL || hash == NULL || !*hash)
+    return (TB_PW_MISMATCH);
+  if (sodium_init() < 0) {
+    TB_ERROR_MSG("login", "password-verify", "libsodium",
+                 "player idnum %ld: sodium_init failed; password not checked",
+                 idnum);
+    return (TB_PW_UNVERIFIABLE);
+  }
   if (tb_password_is_argon2id(hash))
-    return (crypto_pwhash_str_verify(hash, password, strlen(password)) == 0);
+    return (crypto_pwhash_str_verify(hash, password, strlen(password)) == 0
+            ? TB_PW_MATCH : TB_PW_MISMATCH);
 #if defined(CIRCLE_CRYPT) && !defined(NOCRYPT)
-  /* Reject invalid crypt results; do not allow a plaintext fallback. */
-  legacy = crypt(password, hash);
-  return (legacy != NULL && strcmp(legacy, hash) == 0);
+  {
+    /* Reject invalid crypt results; do not allow a plaintext fallback. */
+    const char *legacy = crypt(password, hash);
+
+    return (legacy != NULL && strcmp(legacy, hash) == 0
+            ? TB_PW_MATCH : TB_PW_MISMATCH);
+  }
 #else
-  (void)legacy;
-  return (0);
+  TB_ERROR_MSG("login", "password-verify", "crypt",
+               "player idnum %ld has a legacy (non-Argon2id) hash but this "
+               "build has no crypt(); password not checked", idnum);
+  return (TB_PW_UNVERIFIABLE);
 #endif
 }
 
@@ -1845,6 +1864,7 @@ void nanny(struct descriptor_data *d, char *arg)
     else {
       struct tb_login_rate_entry *rate =
         tb_login_rate_entry_for(GET_PC_NAME(d->character), time(NULL));
+      enum tb_pw_result pw;
 
       if (rate != NULL && rate->failures >= TB_LOGIN_MAX_FAILURES) {
         write_to_output(d, "Too many login attempts. Try again later.\r\n");
@@ -1852,7 +1872,17 @@ void nanny(struct descriptor_data *d, char *arg)
         return;
       }
 
-      if (!tb_password_verify(arg, GET_PASSWD(d->character))) {
+      pw = tb_password_verify(arg, GET_PASSWD(d->character),
+                              GET_IDNUM(d->character));
+      if (pw == TB_PW_UNVERIFIABLE) {
+        /* Already reported; not the player's mistake, so neither a bad
+         * password nor a rate-limit failure. */
+        write_to_output(d, "\r\nYour password cannot be checked on this server "
+                        "right now.\r\nPlease contact an administrator.\r\n");
+        STATE(d) = CON_CLOSE;
+        return;
+      }
+      if (pw != TB_PW_MATCH) {
         if (rate != NULL && rate->failures < TB_LOGIN_MAX_FAILURES)
           ++rate->failures;
 	mudlog(BRF, LVL_GOD, TRUE, "Bad PW: %s [%s]", GET_NAME(d->character), d->host);
@@ -1961,7 +1991,8 @@ void nanny(struct descriptor_data *d, char *arg)
 
   case CON_CNFPASSWD:
   case CON_CHPWD_VRFY:
-    if (!tb_password_verify(arg, GET_PASSWD(d->character))) {
+    if (tb_password_verify(arg, GET_PASSWD(d->character),
+                           GET_IDNUM(d->character)) != TB_PW_MATCH) {
       write_to_output(d, "\r\nPasswords don't match... start over.\r\nPassword: ");
       if (STATE(d) == CON_CNFPASSWD)
 	STATE(d) = CON_NEWPASSWD;
@@ -2130,7 +2161,8 @@ void nanny(struct descriptor_data *d, char *arg)
   }
 
   case CON_CHPWD_GETOLD:
-    if (!tb_password_verify(arg, GET_PASSWD(d->character))) {
+    if (tb_password_verify(arg, GET_PASSWD(d->character),
+                           GET_IDNUM(d->character)) != TB_PW_MATCH) {
       echo_on(d);
       write_to_output(d, "\r\nIncorrect password.\r\n%s", CONFIG_MENU);
       STATE(d) = CON_MENU;
@@ -2142,7 +2174,8 @@ void nanny(struct descriptor_data *d, char *arg)
 
   case CON_DELCNF1:
     echo_on(d);
-    if (!tb_password_verify(arg, GET_PASSWD(d->character))) {
+    if (tb_password_verify(arg, GET_PASSWD(d->character),
+                           GET_IDNUM(d->character)) != TB_PW_MATCH) {
       write_to_output(d, "\r\nIncorrect password.\r\n%s", CONFIG_MENU);
       STATE(d) = CON_MENU;
     } else {

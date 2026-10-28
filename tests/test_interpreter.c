@@ -19,6 +19,7 @@
 #include "db.h"
 
 #include <sodium.h>
+#include <stdarg.h>
 
 extern FILE *logfile;
 
@@ -26,6 +27,7 @@ extern FILE *logfile;
  * assert which structured diagnostic the code under test emitted. */
 static int captured_errors;
 static char captured_operation[64];
+static char captured_detail[512];
 /* NOLINTNEXTLINE(cert-dcl37-c,cert-dcl51-cpp): --wrap requires this name. */
 void __wrap_tb_error_log_at(const char *severity, const char *subsystem,
                             const char *operation, const char *resource,
@@ -33,8 +35,15 @@ void __wrap_tb_error_log_at(const char *severity, const char *subsystem,
                             int source_line, const char *source_func,
                             const char *detail_fmt, ...)
 {
+  va_list args;
+
   (void)severity; (void)subsystem; (void)resource; (void)errnum;
-  (void)source_file; (void)source_line; (void)source_func; (void)detail_fmt;
+  (void)source_file; (void)source_line; (void)source_func;
+  va_start(args, detail_fmt);
+  if (vsnprintf(captured_detail, sizeof(captured_detail),
+                detail_fmt ? detail_fmt : "", args) < 0)
+    *captured_detail = '\0';
+  va_end(args);
   captured_errors++;
   strlcpy(captured_operation, operation ? operation : "",
           sizeof(captured_operation));
@@ -45,6 +54,7 @@ void setUp(void)
   logfile = stderr;
   captured_errors = 0;
   *captured_operation = '\0';
+  *captured_detail = '\0';
 }
 void tearDown(void) { logfile = NULL; }
 
@@ -1190,6 +1200,69 @@ void test_dupe_check_takes_over_an_in_game_twin(void)
   free_heap_chars();
 }
 
+#ifdef NOCRYPT
+/* test_interpreter_nocrypt: interpreter.c built without crypt(), and linked
+ * with --wrap=sodium_init so libsodium can fail to start on demand. */
+int __real_sodium_init(void);
+static int fail_sodium_init;
+int __wrap_sodium_init(void)
+{
+  return (fail_sodium_init ? -1 : __real_sodium_init());
+}
+
+/* A login whose password cannot be checked closes with a message, is
+ * reported once with the idnum, and counts as neither a bad password nor a
+ * rate-limit failure. */
+static void assert_unverifiable_login(struct descriptor_data *d,
+                                      struct char_data *dch, const char *why)
+{
+  TEST_ASSERT_EQUAL_INT(CON_CLOSE, STATE(d));
+  TEST_ASSERT_EQUAL_INT(0, d->bad_pws);
+  TEST_ASSERT_EQUAL_INT(0, GET_BAD_PWS(dch));
+  TEST_ASSERT_EQUAL_INT(1, captured_errors);
+  TEST_ASSERT_EQUAL_STRING("password-verify", captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(captured_detail, "player idnum 31"));
+  TEST_ASSERT_NOT_NULL(strstr(captured_detail, why));
+}
+
+/* Red before: the legacy hash was silently a wrong password (3 strikes). */
+void test_legacy_hash_without_crypt_is_reported_not_counted(void)
+{
+  struct descriptor_data d;
+  struct char_data *dch;
+  char arg[sizeof(dupe_password)];
+
+  dupe_world(3001);
+  dch = password_login(&d);
+  strlcpy(GET_PASSWD(dch), "abJnggxhB/yWI", sizeof(dch->player.passwd)); /* DES */
+  descriptor_list = &d;
+  strlcpy(arg, dupe_password, sizeof(arg));
+  nanny(&d, arg);
+
+  assert_unverifiable_login(&d, dch, "no crypt()");
+  dupe_world_free();
+}
+
+/* Red before: a libsodium start-up failure was silently a wrong password. */
+void test_sodium_init_failure_is_reported_not_counted(void)
+{
+  struct descriptor_data d;
+  struct char_data *dch;
+  char arg[sizeof(dupe_password)];
+
+  dupe_world(3001);
+  dch = password_login(&d);
+  descriptor_list = &d;
+  strlcpy(arg, dupe_password, sizeof(arg));
+  fail_sodium_init = 1;
+  nanny(&d, arg);
+  fail_sodium_init = 0;
+
+  assert_unverifiable_login(&d, dch, "sodium_init failed");
+  dupe_world_free();
+}
+#endif /* NOCRYPT */
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -1271,6 +1344,10 @@ int main(void)
     RUN_TEST(test_dupe_check_frees_a_twin_at_the_menu);
     RUN_TEST(test_dupe_check_detaches_the_menu_description_editor);
     RUN_TEST(test_dupe_check_takes_over_an_in_game_twin);
+#ifdef NOCRYPT
+    RUN_TEST(test_legacy_hash_without_crypt_is_reported_not_counted);
+    RUN_TEST(test_sodium_init_failure_is_reported_not_counted);
+#endif
 
     return UNITY_END();
 }
