@@ -52,6 +52,7 @@
 #include "utils.h"
 #include "ibt.h"
 #include "oasis.h"
+#include "olc_checks.h"
 #include "improved-edit.h"
 #include "modify.h"
 
@@ -1045,11 +1046,11 @@ ACMD(do_oasis_ibtedit)
 
   d = ch->desc;
 
-  /* Give descriptor an OLC structure. */
-  if (d->olc) {
-    mudlog(BRF, LVL_IMMORT, TRUE, "SYSERR: do_oasis_ibtedit: Player already had olc structure.");
-    free(d->olc);
-  }
+  /* Give descriptor an OLC structure.  Entry requires CON_PLAYING, where no
+   * editor is open, so a leftover one is an invariant break: a bare free()
+   * leaked its IBT working copy.  Release it fully and report it. */
+  if (d->olc)
+    OLC_DISCARD_STALE_SESSION(d, ch);
 
   CREATE(d->olc, struct oasis_olc_data, 1);
 

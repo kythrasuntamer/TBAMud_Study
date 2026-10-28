@@ -578,6 +578,29 @@ static void test_show_unconvertible_date_says_unknown(void)
   TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "Bug 1"));
 }
 
+/* F1-21: a descriptor that still held an OLC structure when ibtedit started
+ * lost it with a bare free(), leaking its IBT working copy (LeakSanitizer
+ * reports it before the fix). */
+static void test_ibtedit_entry_releases_stale_olc(void)
+{
+  IBT_DATA *stale;
+
+  submit_bug(&pa, "first", "body one");
+  CREATE(imm.desc.olc, struct oasis_olc_data, 1);
+  CREATE(stale, IBT_DATA, 1);
+  stale->text = strdup("stale text");
+  stale->name = strdup("stale");
+  OLC_IBT(&imm.desc) = stale;
+
+  do_oasis_ibtedit(&imm.ch, (char[]){"1"}, bug_cmd, SCMD_BUG);
+
+  TEST_ASSERT_EQUAL_STRING("olc-stale-state", tb_captured_operation);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail, "player idnum 3"));
+  TEST_ASSERT_EQUAL_INT(CON_IBTEDIT, STATE(&imm.desc));
+  TEST_ASSERT_EQUAL_STRING("first", OLC_IBT(&imm.desc)->text);
+  olc_line(&imm, "q");
+}
+
 int main(void)
 {
   char dir[] = "/tmp/tb_test_ibt.XXXXXX";
@@ -608,5 +631,6 @@ int main(void)
   RUN_TEST(test_ibtedit_menu_shows_current_number);
   RUN_TEST(test_load_negative_date_is_reported);
   RUN_TEST(test_show_unconvertible_date_says_unknown);
+  RUN_TEST(test_ibtedit_entry_releases_stale_olc);
   return UNITY_END();
 }
