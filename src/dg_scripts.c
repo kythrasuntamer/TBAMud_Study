@@ -820,15 +820,27 @@ static EVENTFUNC(trig_wait_event)
           found = TRUE;
     } else {
       room_rnum i;
+      /* top_of_world is the last valid rnum, so it is included. Stopping
+       * short of it treated a wait on the last room as an unknown owner. */
       for (i = 0;i<=top_of_world && !found;i++)
         if (&world[i] == (struct room_data *)go)
           found = TRUE;
     }
     if (!found) {
-      log("Trigger restarted on unknown entity. Vnum: %d", GET_TRIG_VNUM(trig));
-      log("Type: %s trigger", type==MOB_TRIGGER ? "Mob" : type == OBJ_TRIGGER ? "Obj" : "Room");
-      log("attached %d places", trig_index[trig->nr]->number);
-      script_log("Trigger restart attempt on unknown entity.");
+      /* Extraction cancels a trigger's wait event, so a missing owner is a
+       * broken invariant. trig itself is still live (the event owned no
+       * reference to free); end its suspended run so TRIGGER_CHECK() does
+       * not refuse it forever with depth 1. */
+      TB_ERROR_MSG("dg", "wait-resume", "trig_wait_event",
+                   "trig vnum %d type %d: owner not live on resume; "
+                   "trigger ended (%d instances attached)",
+                   DIAG_TRIG_VNUM(trig), type,
+                   trig_index[trig->nr]->number);
+      script_log("Trigger VNum %d: restart attempt on unknown entity.",
+                 GET_TRIG_VNUM(trig));
+      free_varlist(GET_TRIG_VARS(trig));
+      GET_TRIG_VARS(trig) = NULL;
+      GET_TRIG_DEPTH(trig) = 0;
       return 0;
     }
   }

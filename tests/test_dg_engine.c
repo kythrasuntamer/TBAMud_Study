@@ -915,6 +915,27 @@ static void player_flag_setters_ignore_mobs(void)
   TEST_ASSERT_EQUAL_STRING("field-target", tb_captured_operation);
 }
 
+/* D1-23: trig_wait_event() scanned rooms with i < top_of_world, so a wait in
+ * the last room resumed as "unknown entity" and left the trigger at depth 1. */
+static void wait_in_last_room_resumes(void)
+{
+  const char *lines[] = { "wait 1", "set done 1", NULL };
+  room_data *room = &world[top_of_world];
+  trig_data *t = make_trigger(WLD_TRIGGER, WTRIG_RANDOM, 0, lines);
+  int i;
+
+  attach_to_script(&SCRIPT(room), t);
+  script_driver(&room, t, WLD_TRIGGER, TRIG_NEW);
+  TEST_ASSERT_EQUAL_INT(1, GET_TRIG_DEPTH(t));
+  for (i = 0; i < 4 * PASSES_PER_SEC && GET_TRIG_WAIT(t); i++) {
+    pulse++;
+    event_process();
+  }
+  TEST_ASSERT_NULL(GET_TRIG_WAIT(t));
+  TEST_ASSERT_EQUAL_INT(0, GET_TRIG_DEPTH(t));
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+}
+
 int main(void)
 {
   UNITY_BEGIN();
@@ -952,5 +973,6 @@ int main(void)
   RUN_TEST(field_setters_saturate_instead_of_wrapping);
   RUN_TEST(dg_affect_out_of_range_is_refused);
   RUN_TEST(player_flag_setters_ignore_mobs);
+  RUN_TEST(wait_in_last_room_resumes);
   return UNITY_END();
 }
