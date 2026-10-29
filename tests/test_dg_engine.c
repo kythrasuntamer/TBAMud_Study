@@ -1049,6 +1049,35 @@ static void lost_remote_and_detach_miss_are_reported(void)
   TEST_ASSERT_NOT_NULL(TRIGGERS(SCRIPT(scripted)));
 }
 
+/* A player with no saved variables had no script, so every
+ * 'remote <var> %actor.id%' quest flag for it was lost ("has no script");
+ * 146 stock trigger lines rely on it, e.g. zone 27's doll (trigger 2733,
+ * read back with %actor.varexists(zn27_offereddoll)%). */
+static void remote_to_player_without_script_stores_global(void)
+{
+  char remote_line[64];
+  const char *lines[] = { "set zn27_offereddoll 1", remote_line, NULL };
+  char_data *pc = make_mob("pc");
+  struct trig_var_data *vd;
+
+  REMOVE_BIT_AR(MOB_FLAGS(pc), MOB_ISNPC);     /* a player ... */
+  GET_IDNUM(pc) = 78;
+  TEST_ASSERT_NULL(SCRIPT(pc));                /* ... with no saved vars */
+  (void)snprintf(remote_line, sizeof(remote_line),
+                 "remote zn27_offereddoll %ld", pc->script_id);
+  tb_error_capture_reset();
+  run_mob_script(make_mob("girl"), lines);
+
+  TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
+  TEST_ASSERT_NOT_NULL(SCRIPT(pc));
+  for (vd = SCRIPT(pc)->global_vars; vd; vd = vd->next)
+    if (!strcmp(vd->name, "zn27_offereddoll"))
+      break;
+  TEST_ASSERT_NOT_NULL(vd);
+  TEST_ASSERT_EQUAL_STRING("1", vd->value);
+  TEST_ASSERT_EQUAL_INT(0, (int)vd->context);   /* players: global context */
+}
+
 /* D1-28: add_var()'s rejection of a dotted name was a plain log() line. */
 static void dotted_variable_name_is_reported(void)
 {
@@ -1593,6 +1622,7 @@ int main(void)
   RUN_TEST(saturated_arithmetic_is_reported);
   RUN_TEST(trim_handles_empty_and_blank_values);
   RUN_TEST(lost_remote_and_detach_miss_are_reported);
+  RUN_TEST(remote_to_player_without_script_stores_global);
   RUN_TEST(dotted_variable_name_is_reported);
   RUN_TEST(wait_past_the_pulse_range_is_rejected);
   RUN_TEST(room_wait_survives_world_reallocation);

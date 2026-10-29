@@ -2759,7 +2759,18 @@ static void process_remote(struct script_data *sc, trig_data *trig, char *cmd)
     sc_remote = SCRIPT(room);
   } else if ((mob = find_char(uid))) {
     sc_remote = SCRIPT(mob);
-    if (!IS_NPC(mob)) context = 0;
+    if (!IS_NPC(mob)) {
+      context = 0;
+      /* A player holds remote globals (quest flags, saved with the pfile by
+       * save_char_vars_ascii()) whether or not it carries triggers. Give it
+       * the holder read_saved_vars_ascii() creates when the pfile has
+       * variables; without it every 'remote <var> %actor.id%' for a player
+       * with none saved yet was lost. */
+      if (!sc_remote) {
+        CREATE(SCRIPT(mob), struct script_data, 1);
+        sc_remote = SCRIPT(mob);
+      }
+    }
   } else if ((obj = find_obj(uid))) {
     sc_remote = SCRIPT(obj);
   } else {
