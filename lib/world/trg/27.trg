@@ -646,12 +646,18 @@ wait 2 s
 wait 2 s
 %echo% Writhing, she seems to transform into a small doll lying on the ground.
 %load% obj 2723
+set doll %lastloaded%
 wait 2 s
 %echo% The doll whimpers 'Take me with you... please!'
 set Zn27_offereddoll 1
       remote Zn27_offereddoll %actor.id%
 wait 30 s
-%purge%
+eval dollroom %doll.is_inroom%
+if %dollroom%
+  if %dollroom.vnum% == 2742
+    %purge% %doll%
+  end
+end
 end
 ~
 #2734
