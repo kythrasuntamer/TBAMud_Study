@@ -338,21 +338,44 @@ int valid_dg_target(struct char_data *ch, int bitvector)
     return FALSE;  /* The rest are gods with nohassle on... */
 }
 
-/* trig is the running trigger (dg_running_trigger()), named by the
- * field-clamp diagnostic; NULL when no script is running. */
+/* trig is the running trigger (dg_running_trigger()); NULL when no script
+ * is running. script_damage() can no longer report a field clamp (see the
+ * store below), so trig is unused; it stays in the signature for its three
+ * callers (mdamage, odamage, wdamage). */
 void script_damage(trig_data *trig, struct char_data *vict, int dam)
 {
+  long long result;
+
+  (void)trig;
+
   if (GET_LEVEL(vict)>=LVL_IMMORT && (dam > 0)) {
     send_to_char(vict, "Being the cool immortal you are, you sidestep a trap, "
         "obviously placed to kill you.\r\n");
     return;
   }
 
-  /* dam is a script int; GET_HIT is sh_int. Subtracting in int and storing
-   * back wrapped, so a large negative "damage" could kill. */
-  GET_HIT(vict) = (sh_int)dg_clamp_char_field(trig, vict, "damage",
-                      MIN((long long)GET_HIT(vict) - dam, GET_MAX_HIT(vict)),
-                      SHRT_MIN, SHRT_MAX);
+  /* dam is any script int (INT_MIN..INT_MAX); GET_HIT is sh_int. Work in
+   * long long throughout: MIN() and MAX() here are int functions, and
+   * passing them this difference truncated it, so extreme values wrapped
+   * (INT_MAX "damage" healed an incapacitated victim). */
+  result = (long long)GET_HIT(vict) - (long long)dam;
+
+  /* Healing stops at max_hit but never lowers HP that is already above
+   * it (set by hitp() or affects); damage always just subtracts. */
+  if (dam < 0 && result > GET_MAX_HIT(vict))
+    result = GET_HIT(vict) > GET_MAX_HIT(vict) ? GET_HIT(vict)
+                                               : GET_MAX_HIT(vict);
+
+  /* Now result <= SHRT_MAX: a heal yields at most max(HP, max_hit), both
+   * sh_int, and damage at most the current HP. Below SHRT_MIN only damage
+   * can reach: overkill, which kills either way (as damage() does), and
+   * death traps use on purpose ("%damage% %actor% 99999"). Store the floor
+   * without a field-clamp report; a player's death is still logged below
+   * ("killed by script"). */
+  if (result < SHRT_MIN)
+    GET_HIT(vict) = SHRT_MIN;
+  else
+    GET_HIT(vict) = (sh_int)result;
 
   update_pos(vict);
   send_char_pos(vict, dam);
