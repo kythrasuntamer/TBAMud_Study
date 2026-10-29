@@ -168,6 +168,9 @@ drop journal
 4-yr-old loads on entry~
 2 g 100
 ~
+if !%actor.is_pc%
+  halt
+end
 wait 1 s
 %load% mob 11804
 %force% %actor% xx118xx

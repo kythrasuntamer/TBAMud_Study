@@ -34,6 +34,9 @@ mforget %actor.name%
 (2701) Guard offers quest~
 0 h 100
 ~
+if !%actor.is_pc%
+  halt
+end
 if (%actor.varexists(zn27_greeted)%)
   wait 1 s
   %send% %actor% The guard whispers to you 'Please do not tell me you are giving up!'
@@ -1414,6 +1417,9 @@ wear all
 (2708) Keeper gives book~
 0 gh 100
 ~
+if !%actor.is_pc%
+  halt
+end
 if (%direction% == south)
   return 1
 elseif (%direction% == west)
