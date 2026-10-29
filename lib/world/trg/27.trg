@@ -34,6 +34,9 @@ mforget %actor.name%
 (2701) Guard offers quest~
 0 h 100
 ~
+if !%actor.is_pc%
+  halt
+end
 if (%actor.varexists(zn27_greeted)%)
   wait 1 s
   %send% %actor% The guard whispers to you 'Please do not tell me you are giving up!'
@@ -109,6 +112,9 @@ emote groans with pain as you hear a loud creaking sound.
 (2708) makes shackles loosen and disintegrate~
 0 gh 100
 ~
+if !%actor.is_pc%
+  halt
+end
 wait 1 s
 eval rwrist %actor.eq(rwrist)%
 eval lwrist %actor.eq(lwrist)%
@@ -624,6 +630,9 @@ end
 (2742) Girl transforms to doll~
 2 g 100
 ~
+if !%actor.is_pc%
+  halt
+end
 if (%actor.varexists(zn27_offereddoll)%)
 wait 1 s
 %echo% A chill runs down your spine.
@@ -637,12 +646,18 @@ wait 2 s
 wait 2 s
 %echo% Writhing, she seems to transform into a small doll lying on the ground.
 %load% obj 2723
+set doll %lastloaded%
 wait 2 s
 %echo% The doll whimpers 'Take me with you... please!'
 set Zn27_offereddoll 1
       remote Zn27_offereddoll %actor.id%
 wait 30 s
-%purge%
+eval dollroom %doll.is_inroom%
+if %dollroom%
+  if %dollroom.vnum% == 2742
+    %purge% %doll%
+  end
+end
 end
 ~
 #2734
@@ -790,6 +805,9 @@ end
 (2736) fire wrm dies on entry~
 2 g 100
 ~
+if !%actor.is_pc%
+  halt
+end
 if !(%actor.varexists(wrm)%)
 wait 1 s
 %echo% A @Rfire wrm@n enters the room, squealing as the ice suddenly singes its skin.
@@ -1405,6 +1423,9 @@ wear all
 (2708) Keeper gives book~
 0 gh 100
 ~
+if !%actor.is_pc%
+  halt
+end
 if (%direction% == south)
   return 1
 elseif (%direction% == west)
