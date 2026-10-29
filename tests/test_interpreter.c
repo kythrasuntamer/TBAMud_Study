@@ -28,6 +28,9 @@ extern FILE *logfile;
 static int captured_errors;
 static char captured_operation[64];
 static char captured_detail[512];
+/* password-timing-dummy records over the whole process (never reset). */
+static int dummy_reports;
+static char dummy_report_subsystem[32];
 /* NOLINTNEXTLINE(cert-dcl37-c,cert-dcl51-cpp): --wrap requires this name. */
 void __wrap_tb_error_log_at(const char *severity, const char *subsystem,
                             const char *operation, const char *resource,
@@ -44,8 +47,13 @@ void __wrap_tb_error_log_at(const char *severity, const char *subsystem,
 {
   va_list args;
 
-  (void)severity; (void)subsystem; (void)resource; (void)errnum;
+  (void)severity; (void)resource; (void)errnum;
   (void)source_file; (void)source_line; (void)source_func;
+  if (operation != NULL && !strcmp(operation, "password-timing-dummy")) {
+    dummy_reports++;
+    strlcpy(dummy_report_subsystem, subsystem ? subsystem : "",
+            sizeof(dummy_report_subsystem));
+  }
   va_start(args, detail_fmt);
   if (vsnprintf(captured_detail, sizeof(captured_detail), detail_fmt, args) < 0)
     *captured_detail = '\0';
@@ -1222,27 +1230,63 @@ int __wrap_crypto_pwhash_str_verify(const char *str, const char *passwd,
   return (__real_crypto_pwhash_str_verify(str, passwd, passwdlen));
 }
 
+/* Counts Argon2id hashings and fails them on demand
+ * (--wrap=crypto_pwhash_str_alg, in both test targets). */
+static int pwhash_hashes, fail_pwhash_hash;
+/* NOLINTNEXTLINE(cert-dcl37-c,cert-dcl51-cpp): --wrap requires this name. */
+int __real_crypto_pwhash_str_alg(char *out, const char *passwd,
+                                 unsigned long long passwdlen,
+                                 unsigned long long opslimit, size_t memlimit,
+                                 int alg);
+/* NOLINTNEXTLINE(cert-dcl37-c,cert-dcl51-cpp): --wrap requires this name. */
+int __wrap_crypto_pwhash_str_alg(char *out, const char *passwd,
+                                 unsigned long long passwdlen,
+                                 unsigned long long opslimit, size_t memlimit,
+                                 int alg);
+int __wrap_crypto_pwhash_str_alg(char *out, const char *passwd,
+                                 unsigned long long passwdlen,
+                                 unsigned long long opslimit, size_t memlimit,
+                                 int alg)
+{
+  pwhash_hashes++;
+  if (fail_pwhash_hash)
+    return (-1);
+  return (__real_crypto_pwhash_str_alg(out, passwd, passwdlen, opslimit,
+                                       memlimit, alg));
+}
+
 /* =========================================================
  * Login timing: every hash type costs one Argon2id verification
  *
  * An Argon2id account costs one Argon2id verification per password check.
  * A legacy-hash check with crypt() used to cost only crypt() (far cheaper),
- * so the response time revealed which accounts still hold a legacy hash.
+ * and an empty stored hash cost nothing, so the response time revealed
+ * which accounts still hold a legacy (or no) hash.
+ *
+ * The dummy hash behind that work is made once per process, so the order
+ * of these tests in main() matters: see there.
  * ========================================================= */
 
-/* d logs in as idnum 31 (no twins in the world) typing typed; the stored
- * hash is legacy (a SHA-512 crypt hash of dupe_password) when legacy is
- * set, else Argon2id.  Returns the Argon2id verifications nanny() did. */
+enum stored_hash { HASH_ARGON2ID, HASH_LEGACY, HASH_EMPTY };
+
+/* d logs in as idnum 31 (no twins in the world) typing typed, with the
+ * given stored hash (HASH_LEGACY: a SHA-512 crypt hash of dupe_password;
+ * crypt() builds only).  Argon2id hashing fails during nanny() when
+ * fail_hash is set.  Returns the Argon2id verifications nanny() did;
+ * pwhash_hashes holds the hashings it did. */
 static int timed_login(struct descriptor_data *d, struct char_data **dch,
-                       int legacy, const char *typed)
+                       enum stored_hash stored, const char *typed,
+                       int fail_hash)
 {
   char arg[64];
 
   dupe_world(3001);
   character_list = NULL;
   *dch = password_login(d);
+  if (stored == HASH_EMPTY)
+    *GET_PASSWD(*dch) = '\0';
 #if defined(CIRCLE_CRYPT) && !defined(NOCRYPT)
-  if (legacy) {
+  if (stored == HASH_LEGACY) {
     const char *hash = crypt(dupe_password, "$6$tbtimingsalt$");
 
     TEST_ASSERT_NOT_NULL(hash);
@@ -1250,13 +1294,16 @@ static int timed_login(struct descriptor_data *d, struct char_data **dch,
     strlcpy(GET_PASSWD(*dch), hash, sizeof((*dch)->player.passwd));
   }
 #else
-  (void)legacy;
+  TEST_ASSERT_TRUE(stored != HASH_LEGACY);
 #endif
   descriptor_list = d;
   strlcpy(arg, typed, sizeof(arg));
   pwhash_verifies = 0;
+  pwhash_hashes = 0;
   captured_errors = 0;
+  fail_pwhash_hash = fail_hash;
   nanny(d, arg);
+  fail_pwhash_hash = 0;
   return pwhash_verifies;
 }
 
@@ -1274,17 +1321,105 @@ void test_argon2id_login_costs_one_argon2id_verify(void)
   struct descriptor_data d;
   struct char_data *dch;
 
-  TEST_ASSERT_EQUAL_INT(1, timed_login(&d, &dch, 0, "wrong horse"));
+  TEST_ASSERT_EQUAL_INT(1, timed_login(&d, &dch, HASH_ARGON2ID, "wrong horse", 0));
   TEST_ASSERT_EQUAL_INT(1, d.bad_pws);
   timed_login_free(&d);
 
-  TEST_ASSERT_EQUAL_INT(1, timed_login(&d, &dch, 0, dupe_password));
+  TEST_ASSERT_EQUAL_INT(1, timed_login(&d, &dch, HASH_ARGON2ID, dupe_password, 0));
   TEST_ASSERT_EQUAL_INT(0, d.bad_pws);
   TEST_ASSERT_EQUAL_INT(CON_RMOTD, STATE(&d));
   timed_login_free(&d);
 }
 
+/* Red before: an empty stored hash returned a mismatch at once
+ * (0 Argon2id verifications).  Still a wrong password. */
+void test_empty_stored_hash_costs_one_argon2id_verify(void)
+{
+  struct descriptor_data d;
+  struct char_data *dch;
+
+  TEST_ASSERT_EQUAL_INT(1, timed_login(&d, &dch, HASH_EMPTY, dupe_password, 0));
+  TEST_ASSERT_EQUAL_INT(1, d.bad_pws);
+  TEST_ASSERT_EQUAL_INT(1, GET_BAD_PWS(dch));
+  TEST_ASSERT_EQUAL_INT(CONFIG_MAX_BAD_PWS <= 1 ? CON_CLOSE : CON_PASSWORD,
+                        STATE(&d));
+  TEST_ASSERT_EQUAL_INT(0, captured_errors);
+  timed_login_free(&d);
+}
+
+#ifdef NOCRYPT
+/* Must be the first test to need the dummy hash (see main()).  Red before:
+ * there was no boot step; the first check made the dummy hash itself. */
+void test_password_boot_makes_the_dummy_hash_once(void)
+{
+  struct descriptor_data d;
+  struct char_data *dch;
+
+  pwhash_hashes = 0;
+  tb_password_boot();
+  TEST_ASSERT_EQUAL_INT(1, pwhash_hashes);
+  tb_password_boot();                           /* already made */
+  TEST_ASSERT_EQUAL_INT(1, pwhash_hashes);
+  TEST_ASSERT_EQUAL_INT(0, dummy_reports);
+
+  /* The first check after boot only verifies: it makes nothing. */
+  TEST_ASSERT_EQUAL_INT(1, timed_login(&d, &dch, HASH_EMPTY, dupe_password, 0));
+  TEST_ASSERT_EQUAL_INT(0, pwhash_hashes);
+  TEST_ASSERT_EQUAL_INT(1, d.bad_pws);
+  timed_login_free(&d);
+}
+#endif /* NOCRYPT */
+
 #if defined(CIRCLE_CRYPT) && !defined(NOCRYPT)
+/* Must be the first test to need the dummy hash (see main()).  If the dummy
+ * hash cannot be made, at boot or at any later check, that is reported once
+ * per process (subsystem login), every login still gets the right result,
+ * and the next check retries: once that works, the work is back. */
+void test_dummy_hash_failure_is_reported_once_and_logins_stay_correct(void)
+{
+  struct descriptor_data d;
+  struct char_data *dch;
+
+  dummy_reports = 0;
+  fail_pwhash_hash = 1;
+  tb_password_boot();
+  fail_pwhash_hash = 0;
+  TEST_ASSERT_EQUAL_INT(1, dummy_reports);
+  TEST_ASSERT_EQUAL_STRING("login", dummy_report_subsystem);
+
+  /* Wrong password, legacy hash: still wrong, no work, no new report. */
+  TEST_ASSERT_EQUAL_INT(0, timed_login(&d, &dch, HASH_LEGACY, "wrong horse", 1));
+  TEST_ASSERT_EQUAL_INT(1, pwhash_hashes);      /* the retry */
+  TEST_ASSERT_EQUAL_INT(1, d.bad_pws);
+  TEST_ASSERT_EQUAL_STRING_LEN("$6$", GET_PASSWD(dch), 3);
+  timed_login_free(&d);
+
+  /* Empty stored hash: still a mismatch. */
+  TEST_ASSERT_EQUAL_INT(0, timed_login(&d, &dch, HASH_EMPTY, dupe_password, 1));
+  TEST_ASSERT_EQUAL_INT(1, d.bad_pws);
+  timed_login_free(&d);
+
+  /* Right password, legacy hash: still a match (the Argon2id upgrade fails
+   * too, and is reported as before; the legacy hash stays usable). */
+  TEST_ASSERT_EQUAL_INT(0, timed_login(&d, &dch, HASH_LEGACY, dupe_password, 1));
+  TEST_ASSERT_EQUAL_INT(0, d.bad_pws);
+  TEST_ASSERT_EQUAL_INT(CON_RMOTD, STATE(&d));
+  TEST_ASSERT_EQUAL_STRING_LEN("$6$", GET_PASSWD(dch), 3);
+  timed_login_free(&d);
+  TEST_ASSERT_EQUAL_INT(1, dummy_reports);      /* once per process */
+
+  /* Hashing works again: the next check makes the dummy hash and does the
+   * work; the one after only verifies. */
+  TEST_ASSERT_EQUAL_INT(1, timed_login(&d, &dch, HASH_LEGACY, "wrong horse", 0));
+  TEST_ASSERT_EQUAL_INT(1, pwhash_hashes);
+  TEST_ASSERT_EQUAL_INT(1, d.bad_pws);
+  timed_login_free(&d);
+  TEST_ASSERT_EQUAL_INT(1, timed_login(&d, &dch, HASH_LEGACY, "wrong horse", 0));
+  TEST_ASSERT_EQUAL_INT(0, pwhash_hashes);
+  timed_login_free(&d);
+  TEST_ASSERT_EQUAL_INT(1, dummy_reports);
+}
+
 /* Red before: a legacy-hash wrong password cost 0 Argon2id verifications,
  * answering faster than an Argon2id account.  Still a wrong password. */
 void test_legacy_crypt_mismatch_costs_one_argon2id_verify(void)
@@ -1292,7 +1427,7 @@ void test_legacy_crypt_mismatch_costs_one_argon2id_verify(void)
   struct descriptor_data d;
   struct char_data *dch;
 
-  TEST_ASSERT_EQUAL_INT(1, timed_login(&d, &dch, 1, "wrong horse"));
+  TEST_ASSERT_EQUAL_INT(1, timed_login(&d, &dch, HASH_LEGACY, "wrong horse", 0));
   TEST_ASSERT_EQUAL_INT(1, d.bad_pws);
   TEST_ASSERT_EQUAL_INT(1, GET_BAD_PWS(dch));
   TEST_ASSERT_EQUAL_INT(CONFIG_MAX_BAD_PWS <= 1 ? CON_CLOSE : CON_PASSWORD,
@@ -1309,7 +1444,7 @@ void test_legacy_crypt_match_costs_one_argon2id_verify_and_upgrades(void)
   struct descriptor_data d;
   struct char_data *dch;
 
-  TEST_ASSERT_EQUAL_INT(1, timed_login(&d, &dch, 1, dupe_password));
+  TEST_ASSERT_EQUAL_INT(1, timed_login(&d, &dch, HASH_LEGACY, dupe_password, 0));
   TEST_ASSERT_EQUAL_INT(0, d.bad_pws);
   TEST_ASSERT_EQUAL_INT(CON_RMOTD, STATE(&d));
   TEST_ASSERT_EQUAL_PTR(dch, d.character);
@@ -1574,8 +1709,18 @@ int main(void)
     RUN_TEST(test_dupe_check_detaches_the_menu_description_editor);
     RUN_TEST(test_dupe_check_takes_over_an_in_game_twin);
 
-    /* login timing: one Argon2id verification per hash type */
+    /* login timing: one Argon2id verification per hash type.  The dummy
+     * hash is made once per process, so each target's first test here must
+     * be the first to need it: nothing above checks a legacy or empty
+     * hash. */
+#if defined(CIRCLE_CRYPT) && !defined(NOCRYPT)
+    RUN_TEST(test_dummy_hash_failure_is_reported_once_and_logins_stay_correct);
+#endif
+#ifdef NOCRYPT
+    RUN_TEST(test_password_boot_makes_the_dummy_hash_once);
+#endif
     RUN_TEST(test_argon2id_login_costs_one_argon2id_verify);
+    RUN_TEST(test_empty_stored_hash_costs_one_argon2id_verify);
 #if defined(CIRCLE_CRYPT) && !defined(NOCRYPT)
     RUN_TEST(test_legacy_crypt_mismatch_costs_one_argon2id_verify);
     RUN_TEST(test_legacy_crypt_match_costs_one_argon2id_verify_and_upgrades);

@@ -776,6 +776,10 @@ static void init_game(ush_int local_port)
   /* set up hash table for find_char() */
   init_lookup_table();
 
+  /* Make the login-timing dummy hash now, not on the first legacy login. */
+  log("Preparing password hashing.");
+  tb_password_boot();
+
   boot_db();
   report_world_gaps();
 

@@ -31,6 +31,7 @@ int	fill_word(char *argument);
 int reserved_word(char *argument);
 void	half_chop(char *string, char *arg1, char *arg2);
 void	nanny(struct descriptor_data *d, char *arg);
+void	tb_password_boot(void);
 int	is_abbrev(const char *arg1, const char *arg2);
 int	is_number(const char *str);
 int	find_command(const char *command);
