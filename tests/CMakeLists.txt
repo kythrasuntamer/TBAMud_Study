@@ -170,9 +170,13 @@ if(CRYPT_LIBRARY)
 endif()
 target_link_libraries(test_interpreter PRIVATE ${SODIUM_LIBRARY})
 # Count the structured diagnostics interpreter.c emits (see the test's
-# __wrap_tb_error_log_at).
+# __wrap_tb_error_log_at) and the Argon2id verifications a login does
+# (__wrap_crypto_pwhash_str_verify: login timing per hash type), and count
+# or fail Argon2id hashing (__wrap_crypto_pwhash_str_alg: the timing dummy
+# hash). Linked with --wrap, so Fil-C skips it.
 if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
-    target_link_options(test_interpreter PRIVATE -Wl,--wrap=tb_error_log_at)
+    target_link_options(test_interpreter PRIVATE -Wl,--wrap=tb_error_log_at
+        -Wl,--wrap=crypto_pwhash_str_verify -Wl,--wrap=crypto_pwhash_str_alg)
 endif()
 
 # The same tests with interpreter.c built without crypt() (NOCRYPT) and
@@ -189,7 +193,7 @@ target_link_libraries(test_interpreter_nocrypt PRIVATE ${SODIUM_LIBRARY})
 if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
     target_link_options(test_interpreter_nocrypt PRIVATE
         -Wl,--wrap=tb_error_log_at -Wl,--wrap=sodium_init
-        -Wl,--wrap=crypto_pwhash_str_verify)
+        -Wl,--wrap=crypto_pwhash_str_verify -Wl,--wrap=crypto_pwhash_str_alg)
 endif()
 
 # ---------------------------------------------------------------------------
