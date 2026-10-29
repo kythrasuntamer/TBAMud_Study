@@ -1902,20 +1902,21 @@ static void delete_room_cancels_orphaned_obj_dependents(void)
   TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail_log, "command 1 'P'"));
 }
 
-/* A mob/object 'T' or 'V' keeps no room in arg3; deleting the room whose
- * rnum happens to equal it must neither cancel nor renumber it. */
-static void delete_room_leaves_mob_and_obj_trigger_args_alone(void)
+/* zedit stores the edited room's rnum in arg3 of every 'T'/'V', mob and
+ * object targets too, and save_zone() writes world[arg3].number; deleting a
+ * lower room must renumber it like add_room() does, or it names a room past
+ * the end of world[]. */
+static void delete_room_renumbers_mob_and_obj_trigger_rooms(void)
 {
   static const int args[][3] = {
     { 0, 1, 2 },              /* 0 'M' mob 0 into rnum 2 (kept)          */
-    { MOB_TRIGGER, 0, 1 },    /* 1 'T' on that mob, arg3 happens to be 1 */
-    { MOB_TRIGGER, 0, 1 },    /* 2 'V' on that mob, arg3 happens to be 1 */
+    { MOB_TRIGGER, 0, 2 },    /* 1 'T' on that mob, zedit room rnum 2    */
+    { MOB_TRIGGER, 0, 2 },    /* 2 'V' on that mob, zedit room rnum 2    */
     { 0, 1, 2 },              /* 3 'O' obj 0 into rnum 2 (kept)          */
-    { OBJ_TRIGGER, 0, 1 },    /* 4 'T' on that object, arg3 1            */
-    { WLD_TRIGGER, 0, 1 },    /* 5 'T' on rnum 1 itself (deleted)        */
+    { OBJ_TRIGGER, 0, 2 },    /* 4 'T' on that object, room rnum 2       */
   };
   make_zones(1); make_rooms(3); make_objs(1); make_mobs(1, 500);
-  set_zone_cmds(0, "MTVOTT", args);
+  set_zone_cmds(0, "MTVOT", args);
   zone_table[0].cmd[2].sarg1 = strdup("v");
   zone_table[0].cmd[2].sarg2 = strdup("1");
   tb_error_capture_reset();
@@ -1923,15 +1924,37 @@ static void delete_room_leaves_mob_and_obj_trigger_args_alone(void)
   TEST_ASSERT_TRUE(delete_room(1));
 
   TEST_ASSERT_EQUAL_INT('T', zone_table[0].cmd[1].command);
-  TEST_ASSERT_EQUAL_INT(1, zone_table[0].cmd[1].arg3);    /* not renumbered */
+  TEST_ASSERT_EQUAL_INT(1, zone_table[0].cmd[1].arg3);    /* renumbered */
   TEST_ASSERT_EQUAL_INT('V', zone_table[0].cmd[2].command);
   TEST_ASSERT_EQUAL_INT(1, zone_table[0].cmd[2].arg3);
   TEST_ASSERT_EQUAL_INT('T', zone_table[0].cmd[4].command);
   TEST_ASSERT_EQUAL_INT(1, zone_table[0].cmd[4].arg3);
-  TEST_ASSERT_EQUAL_INT('*', zone_table[0].cmd[5].command); /* the room's own */
+  TEST_ASSERT_TRUE(zone_table[0].cmd[4].arg3 <= top_of_world); /* still valid */
   TEST_ASSERT_EQUAL_INT(0, tb_captured_errors);
   free(zone_table[0].cmd[2].sarg1);
   free(zone_table[0].cmd[2].sarg2);
+}
+
+/* A mob 'T' whose own room is deleted is cancelled with it. */
+static void delete_room_cancels_mob_trigger_of_its_room(void)
+{
+  static const int args[][3] = {
+    { 0, 1, 2 },              /* 0 'M' mob 0 into rnum 2 (deleted)       */
+    { MOB_TRIGGER, 0, 2 },    /* 1 'T' on that mob, zedit room rnum 2    */
+    { 0, 1, 0 },              /* 2 'M' mob 0 into rnum 0 (kept)          */
+    { MOB_TRIGGER, 0, 0 },    /* 3 'T' on that mob, room rnum 0          */
+  };
+  make_zones(1); make_rooms(3); make_mobs(1, 500);
+  set_zone_cmds(0, "MTMT", args);
+  tb_error_capture_reset();
+
+  TEST_ASSERT_TRUE(delete_room(2));
+
+  TEST_ASSERT_EQUAL_INT('*', zone_table[0].cmd[0].command);
+  TEST_ASSERT_EQUAL_INT('*', zone_table[0].cmd[1].command);
+  TEST_ASSERT_EQUAL_INT('M', zone_table[0].cmd[2].command);
+  TEST_ASSERT_EQUAL_INT('T', zone_table[0].cmd[3].command);
+  TEST_ASSERT_EQUAL_INT(0, zone_table[0].cmd[3].arg3);
 }
 
 /* A kept command with if_flag set right after a cancelled one never runs
@@ -1960,6 +1983,30 @@ static void delete_room_reports_if_flag_command_after_cancelled_one(void)
                               "zone 0 line 101 command 1 'D' runs only after "
                               "the command before it, cancelled with deleted "
                               "room vnum 20; it will never run"));
+}
+
+/* reset_zone() skips an if_flag command after one that did not run, so a
+ * chain of them after a cancelled command never runs: each is reported. */
+static void delete_room_reports_chained_if_flag_commands(void)
+{
+  static const int args[][3] = {
+    { 0, 1, 1 },              /* 0 'O' obj 0 into rnum 1 (deleted)        */
+    { 2, 0, 1 },              /* 1 'D' rnum 2 door 0, if_flag 1           */
+    { 2, 1, 1 },              /* 2 'D' rnum 2 door 1, if_flag 1           */
+  };
+  make_zones(1); make_rooms(3); make_objs(1);
+  set_zone_cmds(0, "ODD", args);
+  zone_table[0].cmd[1].if_flag = 1;
+  zone_table[0].cmd[2].if_flag = 1;
+  tb_error_capture_reset();
+
+  TEST_ASSERT_TRUE(delete_room(1));
+
+  TEST_ASSERT_EQUAL_INT('D', zone_table[0].cmd[1].command);
+  TEST_ASSERT_EQUAL_INT('D', zone_table[0].cmd[2].command);
+  TEST_ASSERT_EQUAL_INT(2, tb_captured_errors);
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail_log, "command 1 'D' runs only"));
+  TEST_ASSERT_NOT_NULL(strstr(tb_captured_detail_log, "command 2 'D' runs only"));
 }
 
 /* ------------------------------------------------------------------------ */
@@ -2300,8 +2347,10 @@ int main(void)
   RUN_TEST(delete_room_frees_cancelled_var_strings);
   RUN_TEST(delete_room_cancels_orphaned_mob_dependents);
   RUN_TEST(delete_room_cancels_orphaned_obj_dependents);
-  RUN_TEST(delete_room_leaves_mob_and_obj_trigger_args_alone);
+  RUN_TEST(delete_room_renumbers_mob_and_obj_trigger_rooms);
+  RUN_TEST(delete_room_cancels_mob_trigger_of_its_room);
   RUN_TEST(delete_room_reports_if_flag_command_after_cancelled_one);
+  RUN_TEST(delete_room_reports_chained_if_flag_commands);
   RUN_TEST(add_quest_wraps_a_plain_keeper_once);
   RUN_TEST(add_quest_does_not_rewrap_a_shop_running_questmaster);
   RUN_TEST(delete_room_sends_was_in_to_start_room);
