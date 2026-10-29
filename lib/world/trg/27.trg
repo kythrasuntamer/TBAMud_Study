@@ -109,6 +109,9 @@ emote groans with pain as you hear a loud creaking sound.
 (2708) makes shackles loosen and disintegrate~
 0 gh 100
 ~
+if !%actor.is_pc%
+  halt
+end
 wait 1 s
 eval rwrist %actor.eq(rwrist)%
 eval lwrist %actor.eq(lwrist)%
@@ -624,6 +627,9 @@ end
 (2742) Girl transforms to doll~
 2 g 100
 ~
+if !%actor.is_pc%
+  halt
+end
 if (%actor.varexists(zn27_offereddoll)%)
 wait 1 s
 %echo% A chill runs down your spine.
@@ -790,6 +796,9 @@ end
 (2736) fire wrm dies on entry~
 2 g 100
 ~
+if !%actor.is_pc%
+  halt
+end
 if !(%actor.varexists(wrm)%)
 wait 1 s
 %echo% A @Rfire wrm@n enters the room, squealing as the ice suddenly singes its skin.
