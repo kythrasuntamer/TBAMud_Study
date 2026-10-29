@@ -118,12 +118,29 @@
           "description": "A narrow crack in the cavern roof leads up into a sooty mineshaft."
         }
       ],
+      "exits": [
+        {
+          "room": 5830,
+          "dir": "down",
+          "description": "A broad stairway leads down into the city below.\n",
+          "keywords": "",
+          "reason": "the source exit text was garbled ('steps going down.Steps going down', keywords 'steps going down.'); replaced with a description matching room 5831 (a large stairway down into the city, whose up exit returns 'To the overlook.'); no door, so no keywords, like every other exit in the zone"
+        }
+      ],
+      "lifespan": 20,
+      "reset_mode": 2,
+      "resets": [
+        "M 0 5830 2 5833",
+        "E 1 5830 2 0",
+        "M 0 5830 2 5833",
+        "E 1 5830 2 0"
+      ],
       "exclude": {
         "mob": [
           5831
         ]
       },
-      "notes": "Mob 5831 'the Blank Mob' is an empty template with no content to be faithful to, so it is excluded; neither 5830 nor anything else has a reset (the source has none)."
+      "notes": "Mob 5831 'the Blank Mob' is an empty template with no content to be faithful to, so it is excluded. The source zone has no resets; the recipe adds them (fix of 2026-10-28, the guard and torch otherwise never load): room 5832 sees 'a massive gate guarded by two dwarven guards' and in 5833 'Before the gates' the guards turn out to be spirits, so two guard spirits 5830 (max 2) stand in 5833, each holding the torch 5830 in its light slot (wear position 0, WEAR_LIGHT; max 2), since the torch is a take+hold light with no other wear flag. Lifespan 20 and reset mode 2 like the Dwarven Kingdom (zone 65) it is linked from; the source header's 1 0 would never reload a killed guard."
     }
   }
 }

@@ -1,6 +1,10 @@
 #58
 Crimson 2 import~
 Shatterstone (Crimson 2, unfinished)~
-5800 5899 1 0
+5800 5899 20 2
+M 0 5830 2 5833 	(the spirit of a dwarven guard)
+E 1 5830 2 0 	(A torch)
+M 0 5830 2 5833 	(the spirit of a dwarven guard)
+E 1 5830 2 0 	(A torch)
 S
 $

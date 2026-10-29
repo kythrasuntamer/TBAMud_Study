@@ -21,6 +21,10 @@ imports/quarantine/crimson2/recipe.json; reproduce and install it with
     convert_crimson2.py --recipe imports/quarantine/crimson2/recipe.json \\
         --area Shatterstone --out /tmp/c2 [--install lib/world]
 
+A recipe area may also carry "resets" (zone commands in source vnums, for a
+zone whose upstream file has none; checked like the source's own), "exits"
+(replacement text for a converted exit) and "lifespan"/"reset_mode".
+
 --install copies a zone (and lists it in the indexes) or appends merge
 fragments before the stock files' end markers; it refuses to overwrite or to
 append twice. Validate (tools/validate_import_refs.py,
@@ -88,11 +92,15 @@ OBJ_OVERRIDES = {"keywords", "wear", "values", "weight", "cost", "rent", "level"
 MOB_OVERRIDES = {"level", "thac0", "ac", "hp", "damage", "gold", "exp", "act",
                  "affects", "keywords", "short", "long", "description",
                  "str", "int", "wis", "dex", "con", "cha", "reason"}
+# Exit text overrides replace a converted exit's description and/or keywords.
+EXIT_OVERRIDES = {"room", "dir", "description", "keywords", "reason"}
+# Arguments after the command letter and its if-flag, e.g. "M 0 mob max room".
+RESET_FIELDS = {"M": 3, "O": 3, "G": 2, "E": 3, "P": 3, "D": 3, "R": 2}
 
 
 class Area:
     def __init__(self, base, zone, offset=0, drop_external=False, vnum_map=None,
-                 overrides=None, links=()):
+                 overrides=None, links=(), resets=(), exits=()):
         self.base, self.zone, self.offset = Path(base), zone, offset
         self.drop_external = drop_external
         self.map = vnum_map                   # merge mode: {"mob": {old: new}, "obj": {...}}
@@ -101,8 +109,20 @@ class Area:
         self.links = {}
         for link in links:
             self.links.setdefault(int(link["room"]), []).append(link)
+        # Recipe resets: source-vnum zone commands appended after the source's
+        # own, for an area whose upstream zone file has none.
+        self.extra_resets = list(resets)
+        self.exit_text = {}                   # (room, dir) -> override
+        self.lifespan = self.reset_mode = None
         self.notes, self.errors, self.magic_users = [], [], []
         self.ids, self.short = {}, {}
+        for k, ex in enumerate(exits):
+            unknown = set(ex) - EXIT_OVERRIDES
+            if unknown or ex.get("dir") not in DIRS or "room" not in ex:
+                self.error(f"recipe exits[{k}]", f"needs room and dir (one of {list(DIRS)}); "
+                                                 f"unknown field(s) {sorted(unknown)}")
+                continue
+            self.exit_text[(int(ex["room"]), DIRS[ex["dir"]])] = ex
 
     # -- reporting ----------------------------------------------------------
     def note(self, where, msg):
@@ -254,6 +274,12 @@ class Area:
                         self.error(where, f"exit {tag} leads to room {to} outside this area")
                         continue
                     used.add(int(tag[1]))
+                    ex = self.exit_text.pop((r["vnum"], int(tag[1])), None)
+                    if ex is not None:              # recipe exit text, reported
+                        edesc = ex.get("description", edesc)
+                        kw = ex.get("keywords", kw)
+                        self.note(where, f"exit {tag} text replaced: "
+                                         f"{ex.get('reason', 'recipe override')}")
                     rows += [tag, edesc + "~", kw + "~",
                              f"{door} {nkey} {self.new('wld', to, where)}"]
                 elif tag == "E":
@@ -275,6 +301,8 @@ class Area:
                 self.note(where, f"linked {link['dir']} to stock room {link['to']}")
             rows.append("S")
             out += rows
+        for room, d in sorted(self.exit_text):
+            self.error("recipe exits", f"room {room} has no converted exit {d} to replace")
         return out
 
     # -- mobiles --------------------------------------------------------------
@@ -481,22 +509,38 @@ class Area:
     # -- zone -----------------------------------------------------------------
     def resets(self):
         rows, parent_loaded = [], False
-        for no, line in enumerate(self.zon_lines, 1):
+        source = [(f"{self.zon_name}:{no}", line, False)
+                  for no, line in enumerate(self.zon_lines, 1)]
+        extra = [(f"recipe resets[{k}]", line, True) for k, line in enumerate(self.extra_resets)]
+        if extra:
+            self.note("recipe resets", f"{len(extra)} reset(s) added: the source zone has none "
+                                       "for them (see the recipe notes)")
+        for k, (where, line, from_recipe) in enumerate(source + extra):
             p = line.split()
+            if from_recipe and (not p or p[0] not in RESET_FIELDS
+                                or len(p) != 2 + RESET_FIELDS[p[0]]
+                                or not all(re.fullmatch(r"-?\d+", x) for x in p[1:])):
+                self.error(where, f"malformed reset {line!r}")
+                continue
             if not p or len(p[0]) != 1 or p[0] not in "MOGEPDR":
                 continue
-            where = f"{self.zon_name}:{no}"
+            if from_recipe and k == len(source):
+                parent_loaded = False           # recipe G/E never follow a source M
             c, ifl = p[0], p[1]
             a = list(map(int, p[2:]))
             if c == "M":
                 parent_loaded = self.selected("mob", a[0])
                 if not parent_loaded:
+                    if from_recipe:
+                        self.error(where, f"M {a[0]} is not a converted mob")
                     continue
                 nv = self.new("mob", a[0], where)
                 rows.append(f"M {ifl} {nv} {a[1]} {self.new('wld', a[2], where)} "
                             f"\t({self.short.get(('mob', nv), '')})")
             elif c in "GE":
                 if not parent_loaded:
+                    if from_recipe:
+                        self.error(where, f"{c} {a[0]} does not follow a converted M")
                     continue                    # follows a mob that is not converted
                 if not self.selected("obj", a[0]):
                     self.error(where, f"{c} {a[0]} follows a selected mob but is not selected")
@@ -512,6 +556,8 @@ class Area:
                     rows.append(f"E {ifl} {nv} {mx} {a[2]} \t({self.short.get(('obj', nv), '')})")
             elif c in "OP":
                 if not self.selected("obj", a[0]):
+                    if from_recipe:
+                        self.error(where, f"{c} {a[0]} is not a converted object")
                     continue
                 nv = self.new("obj", a[0], where)
                 dest = self.new("wld" if c == "O" else "obj", a[2], where)
@@ -525,6 +571,15 @@ class Area:
     def zone_file(self, name, builders):
         header = self.zon_lines[2].split()
         lifespan, reset_mode = int(header[1]), int(header[2])
+        if self.lifespan is not None or self.reset_mode is not None:
+            new = (int(self.lifespan if self.lifespan is not None else lifespan),
+                   int(self.reset_mode if self.reset_mode is not None else reset_mode))
+            if new[0] < 1 or new[1] not in (0, 1, 2):
+                self.error("recipe", f"lifespan {new[0]} must be >= 1 and reset_mode "
+                                     f"{new[1]} one of 0, 1, 2")
+            self.note("recipe", f"zone lifespan/reset mode {lifespan} {reset_mode} -> "
+                                f"{new[0]} {new[1]}")
+            lifespan, reset_mode = new
         bottom, top = self.zone * 100, self.zone * 100 + 99
         return ([f"#{self.zone}", builders + "~", name + "~",
                  f"{bottom} {top} {lifespan} {reset_mode}"] + self.resets() + ["S", "$"])
@@ -534,12 +589,14 @@ def settings_from(args):
     """Merge --recipe/--area with explicit command-line options."""
     s = {"zone": args.zone, "offset": args.offset, "name": args.name,
          "builders": args.builders, "drop_external": args.drop_external,
-         "mode": "zone", "map": None, "overrides": {}, "links": [], "exclude": {}, "source": args.source}
+         "mode": "zone", "map": None, "overrides": {}, "links": [], "exclude": {}, "source": args.source,
+         "resets": [], "exits": [], "lifespan": None, "reset_mode": None}
     if args.recipe:
         recipe = json.loads(args.recipe.read_text())
         area = recipe["areas"][args.area]
         for key in ("zone", "offset", "name", "builders", "drop_external", "mode",
-                    "overrides", "links", "exclude"):
+                    "overrides", "links", "exclude", "resets", "exits", "lifespan",
+                    "reset_mode"):
             if key in area:
                 s[key] = area[key]
         s["source"] = str(args.recipe.parent / area["source"])
@@ -642,8 +699,9 @@ def main(argv=None):
     try:
         s = settings_from(a)
         area = Area(s["source"], s["zone"], s["offset"], s["drop_external"],
-                    s["map"], s["overrides"], s["links"])
+                    s["map"], s["overrides"], s["links"], s["resets"], s["exits"])
         area.exclude = {f: set(v) for f, v in s.get("exclude", {}).items()}
+        area.lifespan, area.reset_mode = s["lifespan"], s["reset_mode"]
         rows = outputs(area, s)
     except (OSError, ValueError, IndexError, KeyError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)

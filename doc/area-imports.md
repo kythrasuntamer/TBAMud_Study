@@ -333,16 +333,27 @@ the stock records; zone 41 keeps its own.
 
 | Zone | Vnums | Rooms / mobs / objs / resets |
 | --- | --- | --- |
-| 58 Shatterstone (Crimson 2, unfinished) | 5830-5841 | 12 / 1 / 1 / 0 |
+| 58 Shatterstone (Crimson 2, unfinished) | 5830-5841 | 12 / 1 / 1 / 4 |
 
 - **Linked** from the Dwarven Kingdom: room 6542 "At The Bottom Of The
   Mineshaft" `down` <-> 5830 "Overlooking the cavern" `up`, a plain two-way
   exit (no door, no key). A deeper descent from the dwarven mines opens on a
   ledge over a ruined dwarven city; zone 65 is the stock dwarven zone (levels
   3-33) and 6542 is the deepest point of its mine.
-- **No resets.** The upstream zone is an unfinished template ("Blank Zone",
-  a "Blank Mob", no resets) and its rooms imply no particular loads, so none
-  are invented: the rooms are explorable and empty.
+- **Resets come from the recipe.** The upstream zone is an unfinished
+  template ("Blank Zone", a "Blank Mob", no resets), so the guard and the
+  torch never loaded. The rooms say where they belong: 5832 sees "a massive
+  gate guarded by two dwarven guards", and in 5833 "Before the gates" the
+  guards turn out to be spirits. The recipe's `"resets"` (source vnums,
+  checked like the source's own) load two guard spirits 5830 in 5833, each
+  holding the torch 5830 in its light slot (`E ... 0`, WEAR_LIGHT): the torch
+  is a take+hold light with no other wear flag. The zone header becomes
+  lifespan 20, reset mode 2 (`"lifespan"`, `"reset_mode"`), like zone 65; the
+  source's `1 0` would never reload a killed guard.
+- **Exit text.** 5830's `down` exit had garbled source text (description
+  "steps going down.Steps going down", keywords "steps going down."). The
+  recipe's `"exits"` replaces it with "A broad stairway leads down into the
+  city below." and no keywords (no door), matching 5831's stairway.
 - **The guard is a real mob; the template mob is gone.** Mob 5830 was an
   unedited template (keywords "blank", level 48, 1d1+1 hp, 99d99-25 damage,
   AC -40, 2000000 exp, 100000 gold, aggressive to all). The recipe makes it a
@@ -350,12 +361,12 @@ the stock records; zone 41 keeps its own.
   4d4+200, 3d3+3, THAC0 14, AC -2), with keywords "guard spirit dwarven dwarf"
   and texts taken from the source description ("the spirit of a dwarven
   guard"). Mob 5831 "the Blank Mob" had no content to be faithful to and is
-  excluded (`"exclude"` in the recipe). Neither had a reset.
+  excluded (`"exclude"` in the recipe).
 - **The torch is an ordinary light.** In the template it carried +100 hitroll
   and +145 damroll, and its keywords ("rusty hoop") did not include "torch".
   The recipe overrides it to match the stock torch (obj 3030): take+hold, 24
   hours of light, weight 1, cost 10, rent 10, level 0, keywords
-  "torch rusty hoop". Nothing loads it yet.
+  "torch rusty hoop". Each guard holds one.
 
 ### What the conversion changed (the full list prints when the tool runs)
 - **PvP stripped:** room flag NOPKILL (Moria34 room 4115, not installed) and
