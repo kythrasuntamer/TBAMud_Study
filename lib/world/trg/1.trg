@@ -1715,11 +1715,16 @@ if %cmd% == recall
   %force% %actor% look
   %echoaround% %actor% %actor.name% appears in the room.
 elseif %cmd% == return
-  %send% %actor% You return to your previous location.
-  %echoaround% %actor% %actor.name% teleports out of the room.
-  %teleport% %actor% %actor.teleporter_return_room%
-  %force% %actor% look
-  %echoaround% %actor% %actor.name% appears in the room.
+  if !(%actor.varexists(teleporter_return_room)%)
+    %send% %actor% You have nowhere to return to.
+  else
+    %send% %actor% You return to your previous location.
+    %echoaround% %actor% %actor.name% teleports out of the room.
+    %teleport% %actor% %actor.teleporter_return_room%
+    rdelete teleporter_return_room %actor.id%
+    %force% %actor% look
+    %echoaround% %actor% %actor.name% appears in the room.
+  end
 else
   return 0
 end
